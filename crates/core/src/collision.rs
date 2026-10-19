@@ -45,6 +45,30 @@ impl Circle {
     }
 }
 
+/// A moving box that shoves circles sideways, along `across`, out to the side
+/// of its center line they are on: a train car pushing riders off its track
+/// instead of carrying them along in front of it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SideObstacle {
+    pub footprint: Aabb,
+    /// Unit direction across the obstacle (across the track).
+    pub across: Vec2,
+}
+
+impl SideObstacle {
+    /// Displacement that moves a `circle` at `center` clear of this box along
+    /// `across`, or `None` if they do not overlap.
+    pub fn push_out(&self, circle: Circle, center: Vec2) -> Option<Vec2> {
+        circle.push_out(center, &self.footprint)?;
+        // Signed distance from the box's center line, and its half-width.
+        let offset = (center - self.footprint.center()).dot(self.across);
+        let size = self.footprint.size();
+        let half = (self.across.x.abs() * size.x + self.across.y.abs() * size.y) / 2.0;
+        let side = if offset >= 0.0 { 1.0 } else { -1.0 };
+        Some(self.across * (side * (half + circle.radius) - offset))
+    }
+}
+
 /// Axis-aligned box on the ground plane: a static obstacle footprint.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Aabb {
@@ -226,6 +250,29 @@ mod tests {
             b.segment_overlap(Vec2::new(9.0, 9.0), Vec2::new(9.0, 9.0)),
             None
         );
+    }
+
+    fn car() -> SideObstacle {
+        // A 10 m car along x, 3 m wide, centered on the origin.
+        SideObstacle {
+            footprint: Aabb::from_center_size(Vec2::ZERO, Vec2::new(10.0, 3.0)),
+            across: Vec2::new(0.0, 1.0),
+        }
+    }
+
+    #[test]
+    fn side_obstacle_pushes_across_to_the_side_the_circle_is_on() {
+        let c = Circle::new(1.0);
+        assert_eq!(car().push_out(c, Vec2::new(0.0, 3.0)), None);
+        // North half: out to the north face plus the radius.
+        let push = car().push_out(c, Vec2::new(2.0, 0.5)).unwrap();
+        assert!(close(push, Vec2::new(0.0, 2.0)), "{push:?}");
+        // South of the box, overlapping its south face.
+        let push = car().push_out(c, Vec2::new(-3.0, -2.0)).unwrap();
+        assert!(close(push, Vec2::new(0.0, -0.5)), "{push:?}");
+        // Right in front of the car's end: shoved sideways, never forward.
+        let push = car().push_out(c, Vec2::new(5.5, -0.1)).unwrap();
+        assert!(push.x == 0.0 && push.y < 0.0, "{push:?}");
     }
 
     fn unit_box() -> Aabb {

@@ -1,6 +1,6 @@
 //! The static world the rider moves through: terrain and playable bounds.
 
-use crate::{Aabb, Circle, Terrain, TownLayout, Vec2};
+use crate::{Aabb, Circle, SideObstacle, Terrain, TownLayout, Vec2};
 
 /// Half the side length of the square terrain patch, in meters.
 ///
@@ -72,6 +72,8 @@ pub struct World {
     pub bounds: WorldBounds,
     /// Static footprints the rider cannot pass through.
     pub obstacles: Vec<Aabb>,
+    /// Moving footprints (the train), refreshed by the game every frame.
+    pub moving: Vec<SideObstacle>,
 }
 
 impl World {
@@ -81,6 +83,7 @@ impl World {
             terrain,
             bounds: WorldBounds::PATCH,
             obstacles: Vec::new(),
+            moving: Vec::new(),
         }
     }
 
@@ -90,12 +93,14 @@ impl World {
             terrain: terrain.with_flat_area(town.flat_area(&terrain)),
             bounds: WorldBounds::PATCH,
             obstacles: town.obstacles(),
+            moving: Vec::new(),
         }
     }
 }
 
 impl World {
-    /// Pushes a circle at `center` out of every overlapping obstacle and
+    /// Pushes a circle at `center` out of every overlapping obstacle, static
+    /// or moving, and
     /// returns where it ends up. `on_push` receives the unit direction of
     /// each push (to cancel velocity into walls). A few passes settle corners
     /// where two footprints meet.
@@ -104,15 +109,20 @@ impl World {
         let mut center = center;
         for _ in 0..PASSES {
             let mut moved = false;
-            for obstacle in &self.obstacles {
-                if let Some(push) = collider.push_out(center, obstacle) {
-                    center += push;
-                    let length = push.length();
-                    if length > 0.0 {
-                        on_push(push * (1.0 / length));
-                    }
-                    moved = true;
+            let mut apply = |push: Option<Vec2>, center: &mut Vec2| {
+                let Some(push) = push else { return };
+                *center += push;
+                let length = push.length();
+                if length > 0.0 {
+                    on_push(push * (1.0 / length));
                 }
+                moved = true;
+            };
+            for obstacle in &self.obstacles {
+                apply(collider.push_out(center, obstacle), &mut center);
+            }
+            for obstacle in &self.moving {
+                apply(obstacle.push_out(collider, center), &mut center);
             }
             if !moved {
                 break;

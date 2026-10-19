@@ -18,14 +18,16 @@ pub mod rider;
 pub mod terrain;
 pub mod town;
 pub mod townsfolk;
+pub mod train;
 pub mod world;
 
 pub use animation::AnimationState;
-pub use collision::{Aabb, Circle};
+pub use collision::{Aabb, Circle, SideObstacle};
 pub use heading::Heading;
 pub use math::Vec2;
 pub use rider::{MAX_STEP, Rider, RiderInput, RiderParams};
 pub use terrain::{FlatArea, Terrain};
 pub use town::{Building, BuildingKind, HitchingPost, Railway, Side, TetheredHorse, TownLayout};
 pub use townsfolk::{StreetGraph, Townsfolk, Townsperson};
+pub use train::{Car, CarKind, PlacedCar, Train, TrainPhase, TrainSchedule, TrainState};
 pub use world::{PATCH_HALF_EXTENT, World, WorldBounds};
