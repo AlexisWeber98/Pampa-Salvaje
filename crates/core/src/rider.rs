@@ -2,6 +2,13 @@
 
 use crate::{AnimationState, Circle, Heading, Terrain, Vec2, World};
 
+/// Longest step the game feeds the simulation, in seconds, so a hitch never
+/// teleports anything. [`Rider::step`] stays safe for longer steps anyway.
+pub const MAX_STEP: f32 = 1.0 / 20.0;
+
+/// Cap on collision sub-steps per step, so a huge `dt` cannot stall a frame.
+const MAX_SUBSTEPS: usize = 32;
+
 /// Tuning for the kinematic rider model. Speeds in m/s, rates per second.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RiderParams {
@@ -59,6 +66,27 @@ impl Rider {
     /// Collision radius of a horse and rider seen from above, in meters.
     pub const COLLIDER_RADIUS: f32 = 0.9;
 
+    /// Farthest the rider moves in one collision sub-step, in meters.
+    ///
+    /// A circle cannot tunnel through a box while each move is shorter than
+    /// its radius plus the box half-width; half the rider's radius keeps a
+    /// wide margin even for the thinnest obstacle (a 0.7 m tree trunk).
+    pub const MAX_SUBSTEP_DISTANCE: f32 = Self::COLLIDER_RADIUS * 0.5;
+
+    /// How many collision sub-steps a step of `dt` seconds needs so that no
+    /// sub-step moves farther than [`Self::MAX_SUBSTEP_DISTANCE`].
+    pub fn substeps(&self, params: &RiderParams, dt: f32) -> usize {
+        // Upper bound on the speed reached during the step.
+        let fastest = self.speed.abs() + params.acceleration.max(params.braking) * dt;
+        let reach = fastest * dt;
+        let n = (reach / Self::MAX_SUBSTEP_DISTANCE).ceil();
+        if n.is_finite() {
+            (n as usize).clamp(1, MAX_SUBSTEPS)
+        } else {
+            1
+        }
+    }
+
     pub fn new(position: Vec2, heading: Heading, terrain: &Terrain) -> Self {
         Self {
             position,
@@ -77,11 +105,24 @@ impl Rider {
         if !(dt.is_finite() && dt > 0.0) {
             return;
         }
-        let throttle = finite_or_zero(input.throttle).clamp(-1.0, 1.0);
-        let turn = finite_or_zero(input.turn).clamp(-1.0, 1.0);
+        let input = RiderInput {
+            throttle: finite_or_zero(input.throttle).clamp(-1.0, 1.0),
+            turn: finite_or_zero(input.turn).clamp(-1.0, 1.0),
+            gallop: input.gallop,
+        };
+        // Short sub-steps so fast moves cannot skip over thin obstacles.
+        let n = self.substeps(params, dt);
+        let sub_dt = dt / n as f32;
+        for _ in 0..n {
+            self.substep(input, params, world, sub_dt);
+        }
+        self.height = world.terrain.height(self.position.x, self.position.y);
+    }
 
-        self.heading = self.heading.rotated(turn * params.turn_rate * dt);
-        self.speed = next_speed(self.speed, throttle, input.gallop, params, dt);
+    /// One collision sub-step with already sanitized input.
+    fn substep(&mut self, input: RiderInput, params: &RiderParams, world: &World, dt: f32) {
+        self.heading = self.heading.rotated(input.turn * params.turn_rate * dt);
+        self.speed = next_speed(self.speed, input.throttle, input.gallop, params, dt);
         self.position += self.heading.forward() * (self.speed * dt);
 
         self.resolve_obstacles(world);
@@ -90,8 +131,6 @@ impl Rider {
         for push in [contained.push_x, contained.push_y].into_iter().flatten() {
             self.block(push);
         }
-
-        self.height = world.terrain.height(self.position.x, self.position.y);
     }
 
     /// Pushes the rider out of every overlapping obstacle. A few passes settle
@@ -434,6 +473,69 @@ mod tests {
         assert!(r.position.x <= 10.0 - Rider::COLLIDER_RADIUS + 1e-4);
         assert!(r.position.y < 0.0, "keeps moving along the wall");
         assert!(r.speed > 0.0 && r.speed < 4.0);
+    }
+
+    fn galloping_into(trunk: Vec2, params: RiderParams, world: &World) -> Rider {
+        let mut r = Rider::new(
+            trunk - Vec2::new(10.0, 0.0),
+            Heading::from_radians(0.0),
+            &world.terrain,
+        );
+        r.speed = params.gallop_max;
+        let gallop = RiderInput {
+            throttle: 1.0,
+            gallop: true,
+            ..Default::default()
+        };
+        let near_face = trunk.x - crate::town::TREE_TRUNK_RADIUS - Rider::COLLIDER_RADIUS;
+        for frame in 0..(4.0 / MAX_STEP) as usize {
+            r.step(gallop, &params, world, MAX_STEP);
+            assert!(
+                r.position.x <= near_face + 1e-3,
+                "frame {frame}: tunneled to x = {} (face {near_face})",
+                r.position.x
+            );
+        }
+        r
+    }
+
+    #[test]
+    fn galloping_head_on_into_a_plaza_tree_stays_on_the_near_side() {
+        let town = crate::TownLayout::castex_inspired();
+        let world = World::with_town(Terrain::default(), &town);
+        let trunk = town.trees[0];
+        let r = galloping_into(trunk, RiderParams::default(), &world);
+        assert!(r.speed.abs() < 1e-3, "head-on stops the rider");
+        assert!((r.position.y - trunk.y).abs() < 1e-3);
+    }
+
+    #[test]
+    fn even_a_much_faster_horse_cannot_tunnel_through_a_trunk() {
+        let trunk = Vec2::new(20.0, 0.0);
+        let mut world = World::default();
+        let size = Vec2::new(2.0, 2.0) * crate::town::TREE_TRUNK_RADIUS;
+        world.obstacles.push(Aabb::from_center_size(trunk, size));
+        // 40 m/s moves 2 m per max step: more than radius + half-width.
+        let params = RiderParams {
+            gallop_max: 40.0,
+            ..RiderParams::default()
+        };
+        let r = galloping_into(trunk, params, &world);
+        assert!(r.speed.abs() < 1e-3);
+    }
+
+    #[test]
+    fn substeps_keep_every_move_under_the_bound() {
+        let (mut r, p, _) = rider();
+        r.speed = 0.0;
+        assert_eq!(r.substeps(&p, DT), 1);
+        for (speed, dt) in [(p.gallop_max, MAX_STEP), (40.0, MAX_STEP), (-3.0, 0.25)] {
+            r.speed = speed;
+            let n = r.substeps(&p, dt);
+            let reach = (speed.abs() + p.acceleration.max(p.braking) * dt) * dt;
+            assert!(reach / n as f32 <= Rider::MAX_SUBSTEP_DISTANCE + 1e-6);
+            assert!(n < 64, "bounded work: {n}");
+        }
     }
 
     #[test]

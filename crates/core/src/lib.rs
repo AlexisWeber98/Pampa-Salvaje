@@ -23,7 +23,7 @@ pub use animation::AnimationState;
 pub use collision::{Aabb, Circle};
 pub use heading::Heading;
 pub use math::Vec2;
-pub use rider::{Rider, RiderInput, RiderParams};
+pub use rider::{MAX_STEP, Rider, RiderInput, RiderParams};
 pub use terrain::{FlatArea, Terrain};
 pub use town::{Building, BuildingKind, Railway, Side, TownLayout};
 pub use world::{PATCH_HALF_EXTENT, World, WorldBounds};

@@ -1,7 +1,7 @@
 //! The player-controlled rider: keyboard -> `RiderInput` -> core step -> visuals.
 
 use bevy::prelude::*;
-use pampa_core::{Heading, Rider, RiderInput, RiderParams, Vec2 as GroundVec2, World};
+use pampa_core::{Heading, MAX_STEP, Rider, RiderInput, RiderParams, Vec2 as GroundVec2, World};
 use pampa_render::{RiderVisual, VisualPose, world_from_ground};
 
 /// The logic rider this entity represents. Logic state lives here; the
@@ -36,9 +36,6 @@ impl Default for PlayerSpawn {
 /// Movement tuning for the player's horse.
 #[derive(Resource, Debug, Default)]
 pub struct PlayerTuning(pub RiderParams);
-
-/// Longest step fed to the simulation, so a hitch never teleports the rider.
-pub const MAX_STEP: f32 = 1.0 / 20.0;
 
 /// Systems that advance the player's logic; run cameras after this.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
