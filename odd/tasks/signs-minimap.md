@@ -42,9 +42,9 @@ Review base: `fa635fe`.
 
 | ID | Task | Route | Status | Commit | Review |
 |----|------|-------|--------|--------|--------|
-| T1 | core: named places from the town layout (test-first) | delegated (writer trigger: 2+ non-trivial files) | [x] | `af0e16a` | pending (RDD owned by parent) |
-| T2 | render: bitmap pixel font + signboard textures + facade-mounted signs | delegated | [x] | `3f6f153` | pending (RDD owned by parent) |
-| T3 | render/game: minimap (static raster + live markers, M to enlarge) + headless tests | delegated | [x] | `d71d73d` | pending (RDD owned by parent) |
+| T1 | core: named places from the town layout (test-first) | delegated (writer trigger: 2+ non-trivial files) | [x] | `af0e16a` | medium · granted · approved |
+| T2 | render: bitmap pixel font + signboard textures + facade-mounted signs | delegated | [x] | `3f6f153` | medium · granted · approved |
+| T3 | render/game: minimap (static raster + live markers, M to enlarge) + headless tests | delegated | [x] | `d71d73d` | medium · granted · approved |
 
 ## Acceptance criteria
 
@@ -92,6 +92,11 @@ Review base: `fa635fe`.
 - Checks after T3: fmt ok; clippy `-D warnings` ok; tests core 89, render 46, game 29; `cargo build -p game` ok;
   `cargo tree -p pampa-core | rg -c bevy` no match; `timeout 15 cargo run -p game` exit 124.
 - Advisory size heuristic exceeded in T2 and T3 (font tables and pixel tests are long; each task is one coherent change).
+
+- Review: native RDD over `fa635fe..8685770` (medium, slice budget reached). Consent was granted; one lens (reliability) ran and the review was approved and acknowledged under lineage `review-f59534df11071319`.
+  Advisory follow-ups (non-blocking):
+  - No test proves that walker spawns, walker targets and the player spawn stay clear of the new plaza sign obstacle (`crates/core/src/town.rs:177`).
+  - Sign placement hard-codes the terrain resolution (`crates/render/src/signs.rs:180`).
 
 ## Next step
 
