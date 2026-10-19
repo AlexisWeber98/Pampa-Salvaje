@@ -3,10 +3,6 @@
 use crate::obstacles::around;
 use crate::{Body, Circle, SideObstacle, StaticObstacles, Terrain, TownLayout, Vec2, WorldConfig};
 
-/// Half the side of the terrain patch render still draws until chunk
-/// streaming replaces it, in meters.
-pub const PATCH_HALF_EXTENT: f32 = 300.0;
-
 /// Axis-aligned playable area on the ground plane.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WorldBounds {

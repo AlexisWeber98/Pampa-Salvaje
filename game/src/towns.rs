@@ -8,12 +8,13 @@ use std::path::Path;
 
 use bevy::prelude::*;
 use pampa_content::load_towns_or_builtin;
-use pampa_core::{PlaceKind, TownLayout};
+use pampa_core::{PlaceKind, TownLayout, WorldConfig};
 use pampa_render::font;
 
 /// The town to build, and what went wrong reading it.
 #[derive(Debug, Clone)]
 pub struct LoadedTown {
+    pub world: WorldConfig,
     pub town: TownLayout,
     /// Problems found, ready to log as warnings.
     pub warnings: Vec<String>,
@@ -51,6 +52,7 @@ pub fn load_town(path: &Path) -> LoadedTown {
         }
     }
     LoadedTown {
+        world: content.world,
         town,
         warnings,
         listed: configs.len(),

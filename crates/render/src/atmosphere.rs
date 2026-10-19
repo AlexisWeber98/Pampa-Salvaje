@@ -35,6 +35,15 @@ fn spawn_sun(mut commands: Commands) {
     ));
 }
 
+/// Distance at which the dust fog leaves about 5% contrast, in meters.
+///
+/// Terrain is streamed in chunks: past
+/// [`crate::TerrainPlugin::guaranteed_reach`] (400 m with the default
+/// 3-chunk radius and 200 m chunks) the ground may not exist yet, so the fog
+/// must swallow everything well before it. The clear color is the fog
+/// color, so the missing ground beyond reads as haze.
+pub const FOG_VISIBILITY: f32 = 180.0;
+
 /// Dust fog: thin near the rider, swallowing the horizon.
 pub fn dust_fog() -> DistanceFog {
     DistanceFog {
@@ -42,7 +51,7 @@ pub fn dust_fog() -> DistanceFog {
         directional_light_color: Color::srgba(1.0, 0.85, 0.6, 0.35),
         directional_light_exponent: 20.0,
         falloff: FogFalloff::from_visibility_colors(
-            180.0,
+            FOG_VISIBILITY,
             Color::srgb(0.75, 0.62, 0.45),
             Color::srgb(0.88, 0.78, 0.60),
         ),

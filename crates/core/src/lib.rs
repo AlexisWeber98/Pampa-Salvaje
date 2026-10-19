@@ -46,4 +46,4 @@ pub use town::{
 };
 pub use townsfolk::{StreetGraph, Townsfolk, Townsperson};
 pub use train::{Car, CarKind, PlacedCar, Train, TrainPhase, TrainSchedule, TrainState};
-pub use world::{PATCH_HALF_EXTENT, World, WorldBounds};
+pub use world::{World, WorldBounds};

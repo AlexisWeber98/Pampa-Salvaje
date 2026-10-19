@@ -13,7 +13,8 @@ use pampa_core::townsfolk::TOWNSFOLK_COUNT;
 use pampa_core::{Terrain, Townsfolk, Train, TrainSchedule, World};
 use pampa_render::{
     AtmospherePlugin, CharacterVisualPlugin, MinimapPlugin, SignPlugin, SpeechBubblePlugin,
-    TerrainPlugin, TownPlugin, TrainPlugin, WorldTerrain, WorldTown, WorldTrain,
+    StreamFocus, TerrainPlugin, TownPlugin, TrainPlugin, WorldChunks, WorldTerrain, WorldTown,
+    WorldTrain,
 };
 
 /// Seed for where the townsfolk start and wander.
@@ -26,7 +27,11 @@ fn main() {
     let loaded = towns::load_town(&asset_path(TOWNS_FILE));
     let report = towns::TownReport::new(&loaded);
     let town = loaded.town;
-    let world = World::with_town(Terrain::default(), &town);
+    let world = World::with_towns(
+        loaded.world,
+        Terrain::default(),
+        std::slice::from_ref(&town),
+    );
     let (position, heading) = town.arrival();
     let crowd = Townsfolk::new(&town, TOWNSFOLK_COUNT, TOWNSFOLK_SEED);
     let train = Train::for_town(&town, TrainSchedule::default());
@@ -36,6 +41,8 @@ fn main() {
     }
     app.insert_resource(camera::CameraOccluders::from_town(&town, &world.terrain))
         .insert_resource(WorldTerrain(world.terrain.clone()))
+        .insert_resource(WorldChunks(world.config))
+        .insert_resource(StreamFocus(position))
         .insert_resource(life::Crowd(crowd))
         .insert_resource(WorldTown(town))
         .insert_resource(player::GameWorld(world))

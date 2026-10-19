@@ -2,7 +2,9 @@
 
 use bevy::prelude::*;
 use pampa_core::{Heading, MAX_STEP, Rider, RiderInput, RiderParams, Vec2 as GroundVec2, World};
-use pampa_render::{CharacterVisual, MapIcon, SheetKind, VisualPose, world_from_ground};
+use pampa_render::{
+    CharacterVisual, MapIcon, SheetKind, StreamFocus, VisualPose, world_from_ground,
+};
 
 /// The logic rider this entity represents. Logic state lives here; the
 /// entity's `Transform` and `VisualPose` are derived from it every frame.
@@ -48,8 +50,12 @@ impl Plugin for PlayerPlugin {
         app.init_resource::<PlayerTuning>()
             .init_resource::<GameWorld>()
             .init_resource::<PlayerSpawn>()
+            .init_resource::<StreamFocus>()
             .add_systems(Startup, spawn_player)
-            .add_systems(Update, drive_player.in_set(DrivePlayer));
+            .add_systems(
+                Update,
+                (drive_player, follow_player).chain().in_set(DrivePlayer),
+            );
     }
 }
 
@@ -66,6 +72,13 @@ fn spawn_player(mut commands: Commands, world: Res<GameWorld>, spawn: Res<Player
         Transform::from_translation(world_from_ground(rider.position, rider.height)),
         Player { rider },
     ));
+}
+
+/// The world streams (ground chunks, towns) around the player.
+fn follow_player(players: Query<&Player>, mut focus: ResMut<StreamFocus>) {
+    if let Some(player) = players.iter().next() {
+        focus.0 = player.rider.position;
+    }
 }
 
 /// Maps held keys to logic intent: W/S throttle, A/D turn, Shift gallop.
@@ -185,6 +198,8 @@ mod tests {
             transform.translation,
             world_from_ground(rider.position, rider.height)
         );
+        // The world streams around the rider.
+        assert_eq!(app.world().resource::<StreamFocus>().0, rider.position);
     }
 
     #[test]
