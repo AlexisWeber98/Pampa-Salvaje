@@ -52,10 +52,10 @@ Review base: `cc19b02`.
 
 | ID | Task | Route | Status | Commit | Review |
 |----|------|-------|--------|--------|--------|
-| T1 | core: pinch resolution + degenerate graph guard (test-first) | delegated (writer trigger: 2+ non-trivial files) | [x] | `fbd493d` | pending (RDD owned by parent) |
-| T2 | core + game: rider ↔ townsfolk circle collision (test-first) | delegated | [x] | `0b81e5b` | pending (RDD owned by parent) |
-| T3 | game: 360° orbit camera (mouse, Q/E, wheel zoom, recenter, cursor lock) + headless tests | delegated | [x] | `5350739` | pending (RDD owned by parent) |
-| T4 | render: rounder sprite sheets, gait cycles, correct back view | delegated | [x] | `ec2b066` | pending (RDD owned by parent) |
+| T1 | core: pinch resolution + degenerate graph guard (test-first) | delegated (writer trigger: 2+ non-trivial files) | [x] | `fbd493d` | medium · granted · approved |
+| T2 | core + game: rider ↔ townsfolk circle collision (test-first) | delegated | [x] | `0b81e5b` | medium · granted · approved |
+| T3 | game: 360° orbit camera (mouse, Q/E, wheel zoom, recenter, cursor lock) + headless tests | delegated | [x] | `5350739` | medium · granted · approved |
+| T4 | render: rounder sprite sheets, gait cycles, correct back view | delegated | [x] | `ec2b066` | medium · granted · approved |
 
 ## Acceptance criteria
 
@@ -114,6 +114,11 @@ Review base: `cc19b02`.
   without rider) plus a headless gait test (rows follow state, faster at gallop, material = cell). Verified by
   sheet dumps and an in-game screenshot (rounded outlined sprites, rider back view without a face).
 - Advisory size heuristic exceeded in T3 and T4 (camera rewrite and sheet rework are each one coherent change).
+
+- Review: native RDD over `cc19b02..c47e461` (medium, slice budget reached). Consent was granted; one lens (reliability) ran and the review was approved and acknowledged under lineage `review-6dff6ef05ecffbd5`.
+  Advisory follow-ups (non-blocking):
+  - The `resolve_among` fallback paths (no clear spot within range; clear of the world but still overlapping a body) have no test (`crates/core/src/world.rs:136-144`).
+  - The cursor grab wiring has no test (`game/src/camera.rs:162-174`).
 
 ## Next step
 
