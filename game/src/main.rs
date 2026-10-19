@@ -16,6 +16,7 @@ fn main() {
     let world = World::with_town(Terrain::default(), &town);
     let (position, heading) = town.arrival();
     App::new()
+        .insert_resource(camera::CameraOccluders::from_town(&town, &world.terrain))
         .insert_resource(WorldTerrain(world.terrain))
         .insert_resource(WorldTown(town))
         .insert_resource(player::GameWorld(world))

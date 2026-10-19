@@ -99,6 +99,34 @@ impl Aabb {
         )
     }
 
+    /// Where the segment from `from` to `to` crosses this box, as fractions
+    /// `(enter, exit)` of the way along it, clipped to `0..=1`; `None` if it
+    /// misses. A segment starting inside enters at `0`.
+    pub fn segment_overlap(&self, from: Vec2, to: Vec2) -> Option<(f32, f32)> {
+        // Slab method: intersect the parameter ranges inside each axis band.
+        let d = to - from;
+        let mut enter = 0.0_f32;
+        let mut exit = 1.0_f32;
+        for (start, delta, lo, hi) in [
+            (from.x, d.x, self.min.x, self.max.x),
+            (from.y, d.y, self.min.y, self.max.y),
+        ] {
+            if delta == 0.0 {
+                if start < lo || start > hi {
+                    return None;
+                }
+                continue;
+            }
+            let (a, b) = ((lo - start) / delta, (hi - start) / delta);
+            enter = enter.max(a.min(b));
+            exit = exit.min(a.max(b));
+            if enter > exit {
+                return None;
+            }
+        }
+        Some((enter, exit))
+    }
+
     /// The box grown by `margin` on every side.
     pub fn expanded(&self, margin: f32) -> Self {
         Self::new(
@@ -131,6 +159,73 @@ mod tests {
         assert_eq!(a.center(), Vec2::new(2.0, 1.0));
         assert_eq!(a.closest_point(Vec2::new(9.0, -3.0)), Vec2::new(4.0, 0.0));
         assert_eq!(a.expanded(1.0).size(), Vec2::new(6.0, 4.0));
+    }
+
+    #[test]
+    fn segment_overlap_reports_entry_and_exit_fractions() {
+        let b = unit_box();
+        // Straight through along x, from 2 m west to 2 m east.
+        let (enter, exit) = b
+            .segment_overlap(Vec2::new(-2.0, 1.0), Vec2::new(6.0, 1.0))
+            .unwrap();
+        assert!((enter - 0.25).abs() < 1e-6 && (exit - 0.75).abs() < 1e-6);
+        // Reversed direction swaps which face is entered.
+        let (enter, exit) = b
+            .segment_overlap(Vec2::new(6.0, 1.0), Vec2::new(-2.0, 1.0))
+            .unwrap();
+        assert!((enter - 0.25).abs() < 1e-6 && (exit - 0.75).abs() < 1e-6);
+        // Diagonal through a corner region.
+        let (enter, _) = b
+            .segment_overlap(Vec2::new(-1.0, -1.0), Vec2::new(1.0, 1.0))
+            .unwrap();
+        assert!((enter - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn segment_overlap_clips_to_the_segment() {
+        let b = unit_box();
+        // Starts inside: enters at 0.
+        let (enter, exit) = b
+            .segment_overlap(Vec2::new(2.0, 1.0), Vec2::new(8.0, 1.0))
+            .unwrap();
+        assert_eq!(enter, 0.0);
+        assert!((exit - 2.0 / 6.0).abs() < 1e-6);
+        // Ends inside: exits at 1.
+        let (_, exit) = b
+            .segment_overlap(Vec2::new(-2.0, 1.0), Vec2::new(1.0, 1.0))
+            .unwrap();
+        assert_eq!(exit, 1.0);
+        // Fully inside, and a degenerate point segment inside.
+        assert_eq!(
+            b.segment_overlap(Vec2::new(1.0, 1.0), Vec2::new(3.0, 1.5)),
+            Some((0.0, 1.0))
+        );
+        assert_eq!(
+            b.segment_overlap(Vec2::new(1.0, 1.0), Vec2::new(1.0, 1.0)),
+            Some((0.0, 1.0))
+        );
+    }
+
+    #[test]
+    fn segment_overlap_misses() {
+        let b = unit_box();
+        // Stops short, passes beside, runs parallel outside, point outside.
+        assert_eq!(
+            b.segment_overlap(Vec2::new(-3.0, 1.0), Vec2::new(-1.0, 1.0)),
+            None
+        );
+        assert_eq!(
+            b.segment_overlap(Vec2::new(-1.0, 3.0), Vec2::new(5.0, 2.5)),
+            None
+        );
+        assert_eq!(
+            b.segment_overlap(Vec2::new(-1.0, 5.0), Vec2::new(9.0, 5.0)),
+            None
+        );
+        assert_eq!(
+            b.segment_overlap(Vec2::new(9.0, 9.0), Vec2::new(9.0, 9.0)),
+            None
+        );
     }
 
     fn unit_box() -> Aabb {
