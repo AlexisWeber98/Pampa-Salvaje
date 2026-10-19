@@ -1,0 +1,742 @@
+//! Procedural low-poly town drawn from a `pampa-core` [`TownLayout`]:
+//! dirt streets, a tree-lined plaza, whitewash and brick buildings with
+//! false-front parapets or pitched sheet-metal roofs, a railway with its
+//! station, grain sheds, and windmills over round water tanks.
+//!
+//! Logic owns every footprint; this module only decides how each
+//! [`BuildingKind`] looks.
+
+use bevy::asset::RenderAssetUsages;
+use bevy::mesh::PrimitiveTopology;
+use bevy::prelude::*;
+use pampa_core::{Aabb, Building, BuildingKind, Side, Terrain, TownLayout, Vec2 as GroundVec2};
+
+use crate::coords::world_from_ground;
+use crate::terrain::{WorldTerrain, hash2};
+
+/// The town layout to draw. Insert it before startup; without it the plugin
+/// draws nothing.
+#[derive(Resource, Debug, Clone)]
+pub struct WorldTown(pub TownLayout);
+
+/// Draws the [`WorldTown`] at startup and turns windmill rotors.
+pub struct TownPlugin;
+
+impl Plugin for TownPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(Startup, spawn_town)
+            .add_systems(Update, spin_rotors);
+    }
+}
+
+/// Windmill wheel, turning about its local Z axis.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct WindmillRotor {
+    /// Radians per second.
+    pub speed: f32,
+}
+
+fn spin_rotors(time: Res<Time>, mut rotors: Query<(&WindmillRotor, &mut Transform)>) {
+    for (rotor, mut transform) in &mut rotors {
+        transform.rotate_local_z(rotor.speed * time.delta_secs());
+    }
+}
+
+/// Shared meshes, scaled per instance.
+struct Shapes {
+    cube: Handle<Mesh>,
+    /// Unit gable roof: base 1 x 1 on `y = 0`, ridge at `y = 1` along local Z.
+    gable: Handle<Mesh>,
+    cylinder: Handle<Mesh>,
+    pyramid: Handle<Mesh>,
+    canopy: Handle<Mesh>,
+}
+
+/// Earthy palette matching the dusty atmosphere.
+struct Palette {
+    whitewash: Handle<StandardMaterial>,
+    lime_wash: Handle<StandardMaterial>,
+    brick: Handle<StandardMaterial>,
+    sheet_metal: Handle<StandardMaterial>,
+    rusty_metal: Handle<StandardMaterial>,
+    timber: Handle<StandardMaterial>,
+    opening: Handle<StandardMaterial>,
+    street: Handle<StandardMaterial>,
+    plaza: Handle<StandardMaterial>,
+    path: Handle<StandardMaterial>,
+    canopy: Handle<StandardMaterial>,
+    trunk: Handle<StandardMaterial>,
+    concrete: Handle<StandardMaterial>,
+    steel: Handle<StandardMaterial>,
+    ballast: Handle<StandardMaterial>,
+}
+
+impl Palette {
+    fn new(materials: &mut Assets<StandardMaterial>) -> Self {
+        let mut matte = |r: f32, g: f32, b: f32| {
+            materials.add(StandardMaterial {
+                base_color: Color::srgb(r, g, b),
+                perceptual_roughness: 0.95,
+                reflectance: 0.15,
+                ..default()
+            })
+        };
+        let whitewash = matte(0.86, 0.82, 0.73);
+        let lime_wash = matte(0.84, 0.74, 0.58);
+        let brick = matte(0.60, 0.35, 0.25);
+        let timber = matte(0.34, 0.25, 0.18);
+        let opening = matte(0.16, 0.13, 0.11);
+        let street = matte(0.58, 0.47, 0.34);
+        let plaza = matte(0.47, 0.46, 0.29);
+        let path = matte(0.66, 0.58, 0.45);
+        let canopy = matte(0.27, 0.32, 0.17);
+        let trunk = matte(0.33, 0.26, 0.19);
+        let concrete = matte(0.62, 0.59, 0.54);
+        let ballast = matte(0.48, 0.45, 0.41);
+        let mut metal = |r: f32, g: f32, b: f32, metallic: f32| {
+            materials.add(StandardMaterial {
+                base_color: Color::srgb(r, g, b),
+                metallic,
+                perceptual_roughness: 0.55,
+                ..default()
+            })
+        };
+        Self {
+            whitewash,
+            lime_wash,
+            brick,
+            sheet_metal: metal(0.58, 0.59, 0.58, 0.5),
+            rusty_metal: metal(0.52, 0.36, 0.26, 0.3),
+            timber,
+            opening,
+            street,
+            plaza,
+            path,
+            canopy,
+            trunk,
+            concrete,
+            steel: metal(0.36, 0.34, 0.33, 0.8),
+            ballast,
+        }
+    }
+}
+
+/// Spawn helper that keeps the per-element code short.
+struct Builder<'w, 's, 'a> {
+    commands: Commands<'w, 's>,
+    shapes: &'a Shapes,
+    palette: &'a Palette,
+    terrain: Terrain,
+}
+
+impl Builder<'_, '_, '_> {
+    fn spawn(&mut self, mesh: &Handle<Mesh>, material: &Handle<StandardMaterial>, t: Transform) {
+        self.commands
+            .spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), t));
+    }
+
+    /// Axis-aligned box from world `center` with world `size`.
+    fn cube(&mut self, material: &Handle<StandardMaterial>, center: Vec3, size: Vec3) {
+        let mesh = self.shapes.cube.clone();
+        self.spawn(
+            &mesh,
+            material,
+            Transform::from_translation(center).with_scale(size),
+        );
+    }
+
+    fn ground(&self, p: GroundVec2) -> f32 {
+        self.terrain.height(p.x, p.y)
+    }
+}
+
+fn spawn_town(
+    commands: Commands,
+    town: Option<Res<WorldTown>>,
+    terrain: Res<WorldTerrain>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let Some(town) = town else {
+        return;
+    };
+    let shapes = Shapes {
+        cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
+        gable: meshes.add(gable_mesh()),
+        cylinder: meshes.add(Cylinder::new(0.5, 1.0).mesh().resolution(16)),
+        pyramid: meshes.add(Cone::new(0.71, 1.0).mesh().resolution(4)),
+        canopy: meshes.add(
+            Sphere::new(0.5)
+                .mesh()
+                .ico(1)
+                .expect("valid ico subdivision"),
+        ),
+    };
+    let palette = Palette::new(&mut materials);
+    let mut b = Builder {
+        commands,
+        shapes: &shapes,
+        palette: &palette,
+        terrain: terrain.0,
+    };
+
+    let town = &town.0;
+    for street in &town.streets {
+        let mat = palette.street.clone();
+        flat_patch(&mut b, &mat, street, 0.03);
+    }
+    plaza(&mut b, town);
+    railway(&mut b, town);
+    for (n, building) in town.buildings.iter().enumerate() {
+        spawn_building(&mut b, building, n);
+    }
+}
+
+/// A thin slab lying on (leveled) ground over `area`.
+fn flat_patch(b: &mut Builder, material: &Handle<StandardMaterial>, area: &Aabb, lift: f32) {
+    let center = area.center();
+    let size = area.size();
+    let y = b.ground(center);
+    b.cube(
+        material,
+        world_from_ground(center, y + lift - 0.05),
+        Vec3::new(size.x, 0.1, size.y),
+    );
+}
+
+fn plaza(b: &mut Builder, town: &TownLayout) {
+    let p = town.plaza;
+    let (plaza, path) = (b.palette.plaza.clone(), b.palette.path.clone());
+    flat_patch(b, &plaza, &p, 0.05);
+    // A cross of paths meeting at a small monument.
+    let c = p.center();
+    let s = p.size();
+    for size in [GroundVec2::new(s.x, 3.0), GroundVec2::new(3.0, s.y)] {
+        flat_patch(b, &path, &Aabb::from_center_size(c, size), 0.07);
+    }
+    let y = b.ground(c);
+    let (concrete, whitewash) = (b.palette.concrete.clone(), b.palette.whitewash.clone());
+    b.cube(
+        &concrete,
+        world_from_ground(c, y + 0.4),
+        Vec3::new(3.0, 0.8, 3.0),
+    );
+    b.cube(
+        &whitewash,
+        world_from_ground(c, y + 2.2),
+        Vec3::new(0.9, 2.8, 0.9),
+    );
+
+    for (n, &tree) in town.trees.iter().enumerate() {
+        let y = b.ground(tree);
+        let jitter = hash2(tree.x, tree.y);
+        let trunk_h = 2.6 + jitter;
+        let crown = 3.6 + 1.4 * hash2(tree.y, n as f32);
+        let (trunk, canopy) = (b.palette.trunk.clone(), b.palette.canopy.clone());
+        let cylinder = b.shapes.cylinder.clone();
+        b.spawn(
+            &cylinder,
+            &trunk,
+            Transform::from_translation(world_from_ground(tree, y + trunk_h / 2.0))
+                .with_scale(Vec3::new(0.5, trunk_h, 0.5)),
+        );
+        let sphere = b.shapes.canopy.clone();
+        b.spawn(
+            &sphere,
+            &canopy,
+            Transform::from_translation(world_from_ground(tree, y + trunk_h + crown * 0.3))
+                .with_rotation(Quat::from_rotation_y(jitter * 6.0))
+                .with_scale(Vec3::new(crown, crown * 0.8, crown)),
+        );
+    }
+}
+
+/// Ballast bed, sleepers and two rails following the ground.
+fn railway(b: &mut Builder, town: &TownLayout) {
+    let rail = town.railway;
+    let length = rail.start.distance(rail.end);
+    if length <= 0.0 {
+        return;
+    }
+    let along = (rail.end - rail.start) * (1.0 / length);
+    let across = GroundVec2::new(-along.y, along.x);
+    let at = |s: f32, offset: f32| rail.start + along * s + across * offset;
+
+    let (ballast, timber, steel) = (
+        b.palette.ballast.clone(),
+        b.palette.timber.clone(),
+        b.palette.steel.clone(),
+    );
+    let segment = 6.0;
+    let segments = (length / segment).ceil() as usize;
+    for k in 0..segments {
+        let (s0, s1) = (k as f32 * segment, ((k + 1) as f32 * segment).min(length));
+        stretched(
+            b,
+            &ballast,
+            at(s0, 0.0),
+            at(s1, 0.0),
+            -0.05,
+            Vec2::new(3.4, 0.4),
+        );
+        for side in [-0.5, 0.5] {
+            let offset = side * rail.gauge;
+            stretched(
+                b,
+                &steel,
+                at(s0, offset),
+                at(s1, offset),
+                0.36,
+                Vec2::new(0.09, 0.14),
+            );
+        }
+    }
+
+    let spacing = 1.2;
+    let sleepers = (length / spacing) as usize;
+    let yaw = (-along.y).atan2(along.x);
+    for k in 0..sleepers {
+        let p = at(k as f32 * spacing + spacing / 2.0, 0.0);
+        let y = b.ground(p) + 0.3;
+        let mesh = b.shapes.cube.clone();
+        b.spawn(
+            &mesh,
+            &timber,
+            Transform::from_translation(world_from_ground(p, y))
+                .with_rotation(Quat::from_rotation_y(yaw))
+                .with_scale(Vec3::new(0.25, 0.12, rail.gauge + 0.9)),
+        );
+    }
+}
+
+/// A beam from ground point `a` to `b`, raised `lift` above the ground, with
+/// `section` (width, height) across it.
+fn stretched(
+    b: &mut Builder,
+    material: &Handle<StandardMaterial>,
+    from: GroundVec2,
+    to: GroundVec2,
+    lift: f32,
+    section: Vec2,
+) {
+    let wa = world_from_ground(from, b.ground(from) + lift);
+    let wb = world_from_ground(to, b.ground(to) + lift);
+    let d = wb - wa;
+    let len = d.length();
+    if len <= 0.0 {
+        return;
+    }
+    let mesh = b.shapes.cube.clone();
+    b.spawn(
+        &mesh,
+        material,
+        Transform::from_translation((wa + wb) / 2.0 + Vec3::Y * section.y / 2.0)
+            .with_rotation(Quat::from_rotation_arc(Vec3::X, d / len))
+            .with_scale(Vec3::new(len + 0.02, section.y, section.x)),
+    );
+}
+
+/// World-space frame of a building: ground center, wall height, the footprint
+/// size along the facade (`width`) and away from it (`depth`), and the
+/// outward facade normal.
+struct Frame {
+    base: Vec3,
+    height: f32,
+    width: f32,
+    depth: f32,
+    front: Vec3,
+    /// Rotation that maps local +Z to `front`.
+    facing: Quat,
+}
+
+impl Frame {
+    fn new(b: &Builder, building: &Building) -> Self {
+        let center = building.footprint.center();
+        let size = building.footprint.size();
+        let base = world_from_ground(center, b.ground(center));
+        let (front, width, depth) = match building.front {
+            Side::North => (Vec3::NEG_Z, size.x, size.y),
+            Side::South => (Vec3::Z, size.x, size.y),
+            Side::East => (Vec3::X, size.y, size.x),
+            Side::West => (Vec3::NEG_X, size.y, size.x),
+        };
+        Self {
+            base,
+            height: building.height,
+            width,
+            depth,
+            front,
+            facing: Quat::from_rotation_arc(Vec3::Z, front),
+        }
+    }
+
+    /// World position of a point given in facade space: `x` along the facade
+    /// (right when facing it from the street is -x), `y` up, `z` toward the street.
+    fn at(&self, x: f32, y: f32, z: f32) -> Vec3 {
+        self.base + self.facing * Vec3::new(x, y, z)
+    }
+
+    /// A box in facade space.
+    fn cube(&self, b: &mut Builder, material: &Handle<StandardMaterial>, at: Vec3, size: Vec3) {
+        let mesh = b.shapes.cube.clone();
+        b.spawn(
+            &mesh,
+            material,
+            Transform::from_translation(self.at(at.x, at.y, at.z))
+                .with_rotation(self.facing)
+                .with_scale(size),
+        );
+    }
+
+    fn walls(&self, b: &mut Builder, material: &Handle<StandardMaterial>) {
+        // Sink walls slightly so they meet the ground cleanly.
+        self.cube(
+            b,
+            material,
+            Vec3::new(0.0, (self.height - 0.2) / 2.0, 0.0),
+            Vec3::new(self.width, self.height + 0.2, self.depth),
+        );
+    }
+
+    /// Gable roof on top of the walls. `ridge_along_facade` puts the ridge
+    /// parallel to the street; otherwise the gable faces the street.
+    fn gable_roof(
+        &self,
+        b: &mut Builder,
+        material: &Handle<StandardMaterial>,
+        rise: f32,
+        ridge_along_facade: bool,
+    ) {
+        let overhang = 0.4;
+        let (span, length, turn) = if ridge_along_facade {
+            (
+                self.depth,
+                self.width,
+                Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+            )
+        } else {
+            (self.width, self.depth, Quat::IDENTITY)
+        };
+        let mesh = b.shapes.gable.clone();
+        b.spawn(
+            &mesh,
+            material,
+            Transform::from_translation(self.at(0.0, self.height, 0.0))
+                .with_rotation(self.facing * turn)
+                .with_scale(Vec3::new(span + overhang, rise, length + overhang)),
+        );
+    }
+
+    /// Flat roof slab plus a stepped false front rising above it on the street side.
+    fn false_front(&self, b: &mut Builder, wall: &Handle<StandardMaterial>, extra: f32) {
+        let roof = b.palette.sheet_metal.clone();
+        self.cube(
+            b,
+            &roof,
+            Vec3::new(0.0, self.height + 0.05, -0.3),
+            Vec3::new(self.width - 0.2, 0.15, self.depth - 0.6),
+        );
+        let z = self.depth / 2.0;
+        self.cube(
+            b,
+            wall,
+            Vec3::new(0.0, self.height + extra / 2.0, z - 0.15),
+            Vec3::new(self.width + 0.2, extra, 0.3),
+        );
+        // Raised central step and a dark cornice line.
+        self.cube(
+            b,
+            wall,
+            Vec3::new(0.0, self.height + extra + 0.3, z - 0.15),
+            Vec3::new(self.width * 0.4, 0.6, 0.3),
+        );
+        let trim = b.palette.timber.clone();
+        self.cube(
+            b,
+            &trim,
+            Vec3::new(0.0, self.height + extra - 0.1, z),
+            Vec3::new(self.width + 0.3, 0.2, 0.15),
+        );
+    }
+
+    /// A door flanked by windows on the street facade.
+    fn openings(&self, b: &mut Builder, door_height: f32) {
+        let dark = b.palette.opening.clone();
+        let z = self.depth / 2.0 + 0.03;
+        self.cube(
+            b,
+            &dark,
+            Vec3::new(0.0, door_height / 2.0, z),
+            Vec3::new(1.2, door_height, 0.08),
+        );
+        let windows = if self.width > 9.0 { 2 } else { 1 };
+        for k in 1..=windows {
+            for side in [-1.0, 1.0] {
+                let x = side * (1.2 + k as f32 * self.width / (2.0 * windows as f32 + 1.0));
+                if x.abs() + 0.6 < self.width / 2.0 {
+                    self.cube(b, &dark, Vec3::new(x, 1.7, z), Vec3::new(0.9, 1.3, 0.08));
+                }
+            }
+        }
+    }
+
+    /// Veranda roof over the sidewalk, on timber posts.
+    fn veranda(&self, b: &mut Builder, depth: f32, height: f32) {
+        let (roof, posts) = (b.palette.sheet_metal.clone(), b.palette.timber.clone());
+        let z = self.depth / 2.0 + depth / 2.0;
+        self.cube(
+            b,
+            &roof,
+            Vec3::new(0.0, height, z),
+            Vec3::new(self.width, 0.12, depth),
+        );
+        let n = (self.width / 3.5).floor().max(1.0) as usize;
+        for k in 0..=n {
+            let x = -self.width / 2.0 + 0.2 + k as f32 * (self.width - 0.4) / n as f32;
+            self.cube(
+                b,
+                &posts,
+                Vec3::new(x, height / 2.0, self.depth / 2.0 + depth - 0.15),
+                Vec3::new(0.18, height, 0.18),
+            );
+        }
+    }
+}
+
+fn spawn_building(b: &mut Builder, building: &Building, n: usize) {
+    let f = Frame::new(b, building);
+    let pick = hash2(n as f32 * 1.37, building.footprint.min.x * 0.11);
+    let p = b.palette;
+    let (whitewash, lime, brick) = (p.whitewash.clone(), p.lime_wash.clone(), p.brick.clone());
+    let (metal, rust) = (p.sheet_metal.clone(), p.rusty_metal.clone());
+    match building.kind {
+        BuildingKind::House => {
+            let wall = match (pick * 3.0) as u32 {
+                0 => &brick,
+                1 => &lime,
+                _ => &whitewash,
+            };
+            f.walls(b, wall);
+            if pick < 0.45 {
+                f.false_front(b, wall, 1.3);
+            } else {
+                let roof = if pick > 0.8 { &rust } else { &metal };
+                f.gable_roof(b, roof, 1.8, true);
+            }
+            f.openings(b, 2.2);
+        }
+        BuildingKind::GeneralStore => {
+            f.walls(b, &brick);
+            f.false_front(b, &brick, 2.2);
+            f.openings(b, 2.6);
+            f.veranda(b, 3.0, 3.2);
+        }
+        BuildingKind::PoliceStation => {
+            f.walls(b, &whitewash);
+            f.false_front(b, &whitewash, 1.6);
+            f.openings(b, 2.4);
+            // Flagpole by the door.
+            let pole = b.palette.timber.clone();
+            f.cube(
+                b,
+                &pole,
+                Vec3::new(f.width / 2.0 - 0.8, f.height + 2.5, f.depth / 2.0 - 0.6),
+                Vec3::new(0.12, 5.0, 0.12),
+            );
+        }
+        BuildingKind::Church => {
+            f.walls(b, &whitewash);
+            f.gable_roof(b, &rust, 3.5, false);
+            f.openings(b, 3.2);
+            // Bell tower at the front, with a pyramid roof and a cross.
+            let tower = 4.0;
+            let top = f.height + 6.0;
+            let z = f.depth / 2.0 - tower / 2.0;
+            f.cube(
+                b,
+                &whitewash,
+                Vec3::new(0.0, top / 2.0, z),
+                Vec3::new(tower, top, tower),
+            );
+            let pyramid = b.shapes.pyramid.clone();
+            b.spawn(
+                &pyramid,
+                &rust,
+                Transform::from_translation(f.at(0.0, top + 1.25, z))
+                    .with_rotation(f.facing * Quat::from_rotation_y(std::f32::consts::FRAC_PI_4))
+                    .with_scale(Vec3::new(tower + 0.4, 2.5, tower + 0.4)),
+            );
+            let cross = b.palette.timber.clone();
+            f.cube(
+                b,
+                &cross,
+                Vec3::new(0.0, top + 3.2, z),
+                Vec3::new(0.15, 1.4, 0.15),
+            );
+            f.cube(
+                b,
+                &cross,
+                Vec3::new(0.0, top + 3.4, z),
+                Vec3::new(0.8, 0.15, 0.15),
+            );
+        }
+        BuildingKind::Station => {
+            f.walls(b, &brick);
+            f.gable_roof(b, &metal, 2.2, true);
+            f.openings(b, 2.6);
+            // Platform canopy on the track side (the back of the building).
+            let back = Frame {
+                front: -f.front,
+                facing: f.facing * Quat::from_rotation_y(std::f32::consts::PI),
+                ..f
+            };
+            back.openings(b, 2.6);
+            back.veranda(b, 5.5, 3.6);
+        }
+        BuildingKind::Platform => {
+            let concrete = b.palette.concrete.clone();
+            f.cube(
+                b,
+                &concrete,
+                Vec3::new(0.0, (f.height - 0.2) / 2.0, 0.0),
+                Vec3::new(f.width, f.height + 0.2, f.depth),
+            );
+        }
+        BuildingKind::Shed | BuildingKind::GrainStore => {
+            let walls = if pick < 0.5 { &metal } else { &rust };
+            f.walls(b, walls);
+            let rise = if building.kind == BuildingKind::GrainStore {
+                2.8
+            } else {
+                1.6
+            };
+            f.gable_roof(b, &metal, rise, building.kind == BuildingKind::GrainStore);
+            let door = b.palette.opening.clone();
+            f.cube(
+                b,
+                &door,
+                Vec3::new(0.0, f.height * 0.4, f.depth / 2.0 + 0.03),
+                Vec3::new((f.width * 0.4).min(5.0), f.height * 0.8, 0.08),
+            );
+        }
+        BuildingKind::WaterTank => {
+            let cylinder = b.shapes.cylinder.clone();
+            let diameter = f.width.min(f.depth);
+            b.spawn(
+                &cylinder,
+                &metal,
+                Transform::from_translation(f.at(0.0, f.height / 2.0, 0.0))
+                    .with_scale(Vec3::new(diameter, f.height, diameter)),
+            );
+        }
+        BuildingKind::Windmill => windmill(b, &f, n),
+    }
+}
+
+/// Lattice tower of four leaning legs with a turning wheel and a tail vane.
+fn windmill(b: &mut Builder, f: &Frame, n: usize) {
+    let steel = b.palette.steel.clone();
+    let metal = b.palette.sheet_metal.clone();
+    let foot = f.width.min(f.depth) / 2.0;
+    let top = f.height;
+    let head = 0.3;
+    for (sx, sz) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+        let a = f.at(sx * foot, -0.2, sz * foot);
+        let c = f.at(sx * head, top, sz * head);
+        beam(b, &steel, a, c, 0.12);
+    }
+    // Cross braces at two levels.
+    for level in [0.35, 0.7] {
+        let r = foot + (head - foot) * level;
+        let y = top * level;
+        for (a, c) in [
+            ((-r, -r), (r, -r)),
+            ((r, -r), (r, r)),
+            ((r, r), (-r, r)),
+            ((-r, r), (-r, -r)),
+        ] {
+            beam(b, &steel, f.at(a.0, y, a.1), f.at(c.0, y, c.1), 0.06);
+        }
+    }
+
+    // The wheel faces the prevailing wind; vary it a little per windmill.
+    let yaw = Quat::from_rotation_y(0.6 + hash2(n as f32, 3.3) * 0.8);
+    let hub = f.at(0.0, top + 0.4, 0.0);
+    let wheel = b
+        .commands
+        .spawn((
+            Name::new("Windmill wheel"),
+            WindmillRotor {
+                speed: 1.5 + hash2(n as f32, 7.7),
+            },
+            Transform::from_translation(hub + yaw * Vec3::Z * 0.6).with_rotation(yaw),
+            Visibility::default(),
+        ))
+        .id();
+    let blades = 12;
+    for k in 0..blades {
+        let angle = k as f32 * std::f32::consts::TAU / blades as f32;
+        let rot = Quat::from_rotation_z(angle);
+        b.commands.entity(wheel).with_child((
+            Mesh3d(b.shapes.cube.clone()),
+            MeshMaterial3d(metal.clone()),
+            Transform::from_translation(rot * Vec3::new(0.0, 1.1, 0.0))
+                .with_rotation(rot * Quat::from_rotation_y(0.35))
+                .with_scale(Vec3::new(0.35, 1.6, 0.03)),
+        ));
+    }
+    // Tail vane behind the hub.
+    let vane = Transform::from_translation(hub - yaw * Vec3::Z * 1.4)
+        .with_rotation(yaw)
+        .with_scale(Vec3::new(0.04, 0.9, 2.0));
+    let mesh = b.shapes.cube.clone();
+    b.spawn(&mesh, &metal, vane);
+}
+
+/// A square-section beam between two world points.
+fn beam(
+    b: &mut Builder,
+    material: &Handle<StandardMaterial>,
+    from: Vec3,
+    to: Vec3,
+    thickness: f32,
+) {
+    let d = to - from;
+    let len = d.length();
+    if len <= 0.0 {
+        return;
+    }
+    let mesh = b.shapes.cube.clone();
+    b.spawn(
+        &mesh,
+        material,
+        Transform::from_translation((from + to) / 2.0)
+            .with_rotation(Quat::from_rotation_arc(Vec3::Y, d / len))
+            .with_scale(Vec3::new(thickness, len, thickness)),
+    );
+}
+
+/// Unit gable roof prism, flat-shaded: base `[-0.5, 0.5]²` at `y = 0`, ridge
+/// along Z at `y = 1`. Scale it to span, rise and length per building.
+fn gable_mesh() -> Mesh {
+    let a = [-0.5, 0.0, -0.5];
+    let b = [0.5, 0.0, -0.5];
+    let c = [0.5, 0.0, 0.5];
+    let d = [-0.5, 0.0, 0.5];
+    let r1 = [0.0, 1.0, -0.5];
+    let r2 = [0.0, 1.0, 0.5];
+    // Counter-clockwise seen from outside.
+    let positions = vec![
+        a, d, r2, a, r2, r1, // west slope
+        c, b, r1, c, r1, r2, // east slope
+        d, c, r2, // front gable (+Z)
+        b, a, r1, // back gable (-Z)
+    ];
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::RENDER_WORLD,
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.compute_normals();
+    mesh
+}

@@ -117,7 +117,7 @@ fn ground_color(terrain: &Terrain, p: Vec3) -> [f32; 4] {
 }
 
 /// Cheap deterministic hash of a 2D point into `[0, 1)`.
-fn hash2(x: f32, y: f32) -> f32 {
+pub(crate) fn hash2(x: f32, y: f32) -> f32 {
     let v = (x * 12.9898 + y * 78.233).sin() * 43_758.547;
     v - v.floor()
 }
@@ -152,6 +152,12 @@ fn spawn_props(
         let fx = hash2(n as f32, 1.7) * 2.0 - 1.0;
         let fy = hash2(n as f32, 9.3) * 2.0 - 1.0;
         let ground = GroundVec2::new(fx * half, fy * half);
+        // Settlements are cleared ground: no rocks or shrubs on leveled land.
+        if let Some(area) = terrain.0.flat_area
+            && area.weight(ground) > 0.0
+        {
+            continue;
+        }
         let size = 0.4 + hash2(n as f32, 4.1) * 1.2;
         let yaw = hash2(n as f32, 6.6) * std::f32::consts::TAU;
         let base = world_from_ground(ground, terrain.0.height(ground.x, ground.y));
