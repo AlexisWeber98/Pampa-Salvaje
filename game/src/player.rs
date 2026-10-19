@@ -205,12 +205,12 @@ mod tests {
     #[test]
     fn minimap_arrow_follows_the_rider() {
         use pampa_core::TownLayout;
-        use pampa_render::WorldTown;
+        use pampa_render::WorldTowns;
         use pampa_render::minimap::Minimap;
 
         let mut app = headless_app(Duration::from_millis(16));
         app.init_resource::<Assets<Image>>()
-            .insert_resource(WorldTown(TownLayout::castex_inspired()))
+            .insert_resource(WorldTowns(vec![TownLayout::castex_inspired()]))
             .add_plugins(pampa_render::MinimapPlugin);
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()

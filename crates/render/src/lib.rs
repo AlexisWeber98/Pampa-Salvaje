@@ -25,5 +25,5 @@ pub use minimap::{MapIcon, MinimapPlugin};
 pub use signs::{SignPlugin, Signboard};
 pub use streaming::{StreamingPlan, StreamingSet};
 pub use terrain::{StreamFocus, TerrainChunk, TerrainPlugin, WorldChunks, WorldTerrain};
-pub use town::{TownPlugin, WindmillRotor, WorldTown};
-pub use train::{TrainCar, TrainPlugin, TrainWheel, WorldTrain};
+pub use town::{ActiveTowns, StreamTowns, TownPlugin, TownRoot, WindmillRotor, WorldTowns};
+pub use train::{TrainCar, TrainPlugin, TrainWheel, WorldTrains};

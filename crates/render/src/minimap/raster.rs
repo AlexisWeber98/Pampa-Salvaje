@@ -227,15 +227,31 @@ pub fn rasterize_town(town: &TownLayout, frame: &MapFrame) -> Canvas {
         let text = place_initial(place.kind).to_string();
         label(&mut map, &text, frame.to_map(place.center()));
     }
-    // North marker in the north-west corner.
+    // North marker in the north-west corner, the town's name along the top.
     label(&mut map, "N", Vec2::new(16.0, 18.0));
+    title(&mut map, &town.name);
     map
+}
+
+/// Writes the town's name, in capitals, centered along the top edge; at
+/// half size when it is too long for the map.
+fn title(map: &mut Canvas, name: &str) {
+    let text = name.to_uppercase();
+    let size = map.size as f32;
+    let fits = (font::text_width(&text) * LABEL_SCALE) as f32 <= size - 48.0;
+    let scale = if fits { LABEL_SCALE } else { 1 };
+    label_scaled(map, &text, Vec2::new(size / 2.0, 18.0), scale);
 }
 
 /// Writes `text` in ink at [`LABEL_SCALE`], centered on `center`, over a
 /// one-pixel paper halo so it reads on top of buildings.
 fn label(map: &mut Canvas, text: &str, center: Vec2) {
-    let s = LABEL_SCALE as i32;
+    label_scaled(map, text, center, LABEL_SCALE);
+}
+
+/// [`label`] at pixel scale `scale`.
+fn label_scaled(map: &mut Canvas, text: &str, center: Vec2, scale: usize) {
+    let s = scale as i32;
     let (first, last) = font::ink_rows(text).unwrap_or((0, GLYPH_HEIGHT - 1));
     let w = font::text_width(text) as i32 * s;
     let h = (last - first + 1) as i32 * s;

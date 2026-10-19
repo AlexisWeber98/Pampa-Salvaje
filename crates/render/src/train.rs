@@ -6,31 +6,37 @@
 //! [`CarKind`] looks.
 
 use bevy::prelude::*;
-use pampa_core::{CarKind, Train};
+use pampa_core::{CarKind, PlacedCar, Train};
 
 use crate::coords::world_from_ground;
 use crate::terrain::WorldTerrain;
+use crate::town::TownRoot;
 
-/// The train to draw. Logic state: the game advances it, render only reads
-/// it. Without it the plugin draws nothing.
-#[derive(Resource, Debug, Clone)]
-pub struct WorldTrain(pub Train);
+/// Each town's train, by town index (`None` for a town without a
+/// railway). Logic state: the game advances them, render only reads them.
+#[derive(Resource, Debug, Clone, Default)]
+pub struct WorldTrains(pub Vec<Option<Train>>);
 
-/// Draws the [`WorldTrain`] every frame.
+/// Draws the train of every built town (see [`crate::TownPlugin`]) every
+/// frame; its cars hang off the town's [`TownRoot`] and go with it.
 pub struct TrainPlugin;
 
 impl Plugin for TrainPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_cars).add_systems(
-            PostUpdate,
-            (place_cars, turn_wheels).before(bevy::transform::TransformSystems::Propagate),
-        );
+        app.init_resource::<WorldTrains>()
+            .add_systems(Update, spawn_cars)
+            .add_systems(
+                PostUpdate,
+                (place_cars, turn_wheels).before(bevy::transform::TransformSystems::Propagate),
+            );
     }
 }
 
 /// Root of one drawn car: local +X points the way the train travels.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct TrainCar {
+    /// The town whose train this car belongs to.
+    pub town: usize,
     /// Index into the consist, front first.
     pub index: usize,
 }
@@ -38,12 +44,15 @@ pub struct TrainCar {
 /// A wheel turning about its local Y axis (the axle), with its radius.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct TrainWheel {
+    /// The town whose train this wheel belongs to.
+    pub town: usize,
     pub radius: f32,
 }
 
 /// Height of the rail tops above the ground (see the town's railway).
 const RAIL_TOP: f32 = 0.5;
 
+#[derive(Clone)]
 struct Kit {
     cube: Handle<Mesh>,
     cylinder: Handle<Mesh>,
@@ -94,6 +103,7 @@ impl Kit {
 struct CarBuilder<'a, 'c> {
     car: EntityCommands<'c>,
     kit: &'a Kit,
+    town: usize,
 }
 
 impl CarBuilder<'_, '_> {
@@ -157,7 +167,10 @@ impl CarBuilder<'_, '_> {
             self.car.with_child((
                 Mesh3d(mesh.clone()),
                 MeshMaterial3d(material.clone()),
-                TrainWheel { radius },
+                TrainWheel {
+                    town: self.town,
+                    radius,
+                },
                 Transform::from_xyz(x, radius, side * 0.95)
                     .with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2))
                     .with_scale(Vec3::new(2.0 * radius, 0.18, 2.0 * radius)),
@@ -330,31 +343,54 @@ impl CarBuilder<'_, '_> {
     }
 }
 
+/// The shared car kit, made on first use.
+#[derive(Resource)]
+struct CarKit(Kit);
+
 fn spawn_cars(
     mut commands: Commands,
-    train: Option<Res<WorldTrain>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    trains: Res<WorldTrains>,
+    roots: Query<(Entity, &TownRoot), Added<TownRoot>>,
+    kit: Option<Res<CarKit>>,
+    mut assets: (ResMut<Assets<Mesh>>, ResMut<Assets<StandardMaterial>>),
 ) {
-    let Some(train) = train else {
+    let with_train = |town: &TownRoot| matches!(trains.0.get(town.0), Some(Some(_)));
+    if !roots.iter().any(|(_, town)| with_train(town)) {
         return;
+    }
+    let kit = match kit {
+        Some(kit) => kit.0.clone(),
+        None => {
+            let kit = Kit::new(&mut assets.0, &mut assets.1);
+            commands.insert_resource(CarKit(kit.clone()));
+            kit
+        }
     };
-    let kit = Kit::new(&mut meshes, &mut materials);
-    for (index, car) in train.0.cars.iter().enumerate() {
-        let root = commands.spawn((
-            Name::new(format!("Train car {index}")),
-            TrainCar { index },
-            Transform::default(),
-            Visibility::Hidden,
-        ));
-        let mut b = CarBuilder {
-            car: root,
-            kit: &kit,
+    for (root, town) in &roots {
+        let Some(Some(train)) = trains.0.get(town.0) else {
+            continue;
         };
-        match car.kind {
-            CarKind::Locomotive => b.locomotive(car.length),
-            CarKind::Boxcar => b.boxcar(car.length),
-            CarKind::Hopper => b.hopper(car.length),
+        for (index, car) in train.cars.iter().enumerate() {
+            let entity = commands.spawn((
+                Name::new(format!("Train car {index}")),
+                TrainCar {
+                    town: town.0,
+                    index,
+                },
+                Transform::default(),
+                Visibility::Hidden,
+                ChildOf(root),
+            ));
+            let mut b = CarBuilder {
+                car: entity,
+                kit: &kit,
+                town: town.0,
+            };
+            match car.kind {
+                CarKind::Locomotive => b.locomotive(car.length),
+                CarKind::Boxcar => b.boxcar(car.length),
+                CarKind::Hopper => b.hopper(car.length),
+            }
         }
     }
 }
@@ -362,16 +398,17 @@ fn spawn_cars(
 /// Puts every car where logic says, on the rails over the ground, and hides
 /// the cars that are off the railway.
 fn place_cars(
-    train: Option<Res<WorldTrain>>,
+    trains: Res<WorldTrains>,
     terrain: Res<WorldTerrain>,
     mut cars: Query<(&TrainCar, &mut Transform, &mut Visibility)>,
 ) {
-    let Some(train) = train else {
-        return;
-    };
-    let placed = train.0.placed_cars();
+    let placed: Vec<Vec<PlacedCar>> = trains
+        .0
+        .iter()
+        .map(|t| t.as_ref().map(Train::placed_cars).unwrap_or_default())
+        .collect();
     for (car, mut transform, mut visibility) in &mut cars {
-        let Some(p) = placed.get(car.index) else {
+        let Some(p) = placed.get(car.town).and_then(|cars| cars.get(car.index)) else {
             continue;
         };
         *visibility = if p.on_rail {
@@ -393,17 +430,17 @@ fn place_cars(
     }
 }
 
-/// Rolls the wheels with the train's speed.
+/// Rolls the wheels with their train's speed.
 fn turn_wheels(
     time: Res<Time>,
-    train: Option<Res<WorldTrain>>,
+    trains: Res<WorldTrains>,
     mut wheels: Query<(&TrainWheel, &mut Transform)>,
 ) {
-    let Some(train) = train else {
-        return;
-    };
-    let distance = train.0.state().speed * time.delta_secs();
     for (wheel, mut transform) in &mut wheels {
+        let Some(Some(train)) = trains.0.get(wheel.town) else {
+            continue;
+        };
+        let distance = train.state().speed * time.delta_secs();
         // The wheel's axle is its local Y; rolling forward turns it clockwise
         // seen from the car's right side.
         transform.rotate_local_y(-distance / wheel.radius);
@@ -424,8 +461,9 @@ mod tests {
             .init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
             .insert_resource(WorldTerrain(Terrain::default()))
-            .insert_resource(WorldTrain(train))
-            .add_plugins(TrainPlugin);
+            .insert_resource(crate::WorldTowns(vec![town]))
+            .insert_resource(WorldTrains(vec![Some(train)]))
+            .add_plugins((crate::TownPlugin, TrainPlugin));
         app
     }
 
@@ -446,7 +484,7 @@ mod tests {
         // Three seconds in: the locomotive is on the patch, the tail is not yet.
         let mut app = app_with_train(3.0);
         app.update();
-        let train = app.world().resource::<WorldTrain>().0.clone();
+        let train = app.world().resource::<WorldTrains>().0[0].clone().unwrap();
         let placed = train.placed_cars();
         let drawn = cars(&mut app);
         assert_eq!(drawn.len(), placed.len());

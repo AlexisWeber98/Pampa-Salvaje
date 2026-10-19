@@ -23,17 +23,18 @@ pub struct Dialogue {
     pub bumps: BumpLines,
 }
 
-/// Who may complain again, and which line was said last.
+/// Who may complain again (per town, by town index), and which line was
+/// said last.
 #[derive(Resource, Debug, Clone)]
 pub struct Complaints {
-    pub tracker: BumpTracker,
+    pub trackers: Vec<BumpTracker>,
     pub picker: LinePicker,
 }
 
 impl Default for Complaints {
     fn default() -> Self {
         Self {
-            tracker: BumpTracker::default(),
+            trackers: Vec::new(),
             picker: LinePicker::new(LINE_SEED),
         }
     }
@@ -81,16 +82,27 @@ fn complain(
     mut say: MessageWriter<Say>,
 ) {
     let complaints = &mut *complaints;
-    complaints.tracker.tick(time.delta_secs().min(MAX_STEP));
+    let dt = time.delta_secs().min(MAX_STEP);
+    for tracker in &mut complaints.trackers {
+        tracker.tick(dt);
+    }
     for shove in shoved.read() {
-        let events = complaints
-            .tracker
-            .register(&shove.walkers, shove.speed, &tuning.0);
+        if complaints.trackers.len() <= shove.town {
+            complaints
+                .trackers
+                .resize_with(shove.town + 1, BumpTracker::default);
+        }
+        let events =
+            complaints.trackers[shove.town].register(&shove.walkers, shove.speed, &tuning.0);
         let Some(dialogue) = dialogue.as_deref() else {
             continue;
         };
         for event in events {
-            let Some((speaker, _)) = walkers.iter().find(|(_, w)| w.0 == event.walker) else {
+            let speaker = Walker {
+                town: shove.town,
+                index: event.walker,
+            };
+            let Some((speaker, _)) = walkers.iter().find(|(_, w)| **w == speaker) else {
                 continue;
             };
             let pool = dialogue.bumps.pool(event.severity);
@@ -115,7 +127,7 @@ fn pool_id(severity: BumpSeverity) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::life::{Crowd, TownLifePlugin};
+    use crate::life::{Crowds, TownLifePlugin};
     use crate::player::{GameWorld, Player, PlayerPlugin};
     use bevy::time::TimeUpdateStrategy;
     use pampa_core::{RiderParams, StreetGraph, Townsfolk, Vec2 as GroundVec2, World};
@@ -158,7 +170,7 @@ mod tests {
             .init_resource::<Assets<Image>>()
             .init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
-            .insert_resource(Crowd(Townsfolk::from_graph(graph, 1, 1)))
+            .insert_resource(Crowds(vec![Townsfolk::from_graph(graph, 1, 1)]))
             .insert_resource(GameWorld(World::default()))
             .insert_resource(PlayerTuning(tuning))
             .insert_resource(Dialogue {
@@ -185,7 +197,7 @@ mod tests {
     }
 
     fn person(app: &App) -> GroundVec2 {
-        app.world().resource::<Crowd>().0.people[0].position
+        app.world().resource::<Crowds>().0[0].people[0].position
     }
 
     /// Lets go of the keys and waits until the person stands still.
@@ -196,7 +208,7 @@ mod tests {
         let mut still = 0;
         for _ in 0..400 {
             app.update();
-            let moving = app.world().resource::<Crowd>().0.people[0].speed > 0.0;
+            let moving = app.world().resource::<Crowds>().0[0].people[0].speed > 0.0;
             still = if moving { 0 } else { still + 1 };
             if still >= 10 {
                 return;

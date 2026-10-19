@@ -5,26 +5,53 @@
 //!
 //! Logic owns every footprint; this module only decides how each
 //! [`BuildingKind`] looks.
+//!
+//! Towns are streamed: a town's meshes are built under one [`TownRoot`]
+//! when the rider comes within [`TownActivation`]'s margin of it, and
+//! despawned (root and all) past the margin plus the hysteresis. Signs and
+//! the train hang their entities off the same root.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::PrimitiveTopology;
 use bevy::prelude::*;
-use pampa_core::{Aabb, Building, BuildingKind, Side, Terrain, TownLayout, Vec2 as GroundVec2};
+use pampa_core::{
+    Aabb, Building, BuildingKind, Side, Terrain, TownActivation, TownLayout, Vec2 as GroundVec2,
+};
 
 use crate::coords::world_from_ground;
-use crate::terrain::{WorldTerrain, hash2};
+use crate::terrain::{StreamFocus, WorldTerrain, hash2};
 
-/// The town layout to draw. Insert it before startup; without it the plugin
-/// draws nothing.
-#[derive(Resource, Debug, Clone)]
-pub struct WorldTown(pub TownLayout);
+/// Every town of the world, in the order the game placed them; a town's
+/// index here is its id everywhere in render. Without it nothing is drawn.
+#[derive(Resource, Debug, Clone, Default)]
+pub struct WorldTowns(pub Vec<TownLayout>);
 
-/// Draws the [`WorldTown`] at startup and turns windmill rotors.
+/// Which towns are near the rider (see [`TownActivation`]). Render builds
+/// the active towns; the game simulates their people.
+#[derive(Resource, Debug, Clone, Default)]
+pub struct ActiveTowns(pub TownActivation);
+
+/// Root of one drawn town: every mesh, sign and train car of town `.0`
+/// hangs off it, so despawning it drops the whole town.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TownRoot(pub usize);
+
+/// Updates [`ActiveTowns`] and spawns or despawns [`TownRoot`]s; runs in
+/// `PreUpdate`, so every `Update` system sees this frame's towns.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct StreamTowns;
+
+/// Draws the [`WorldTowns`] near the rider and turns windmill rotors.
 pub struct TownPlugin;
 
 impl Plugin for TownPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_town)
+        app.init_resource::<WorldTowns>()
+            .init_resource::<ActiveTowns>()
+            .init_resource::<StreamFocus>()
+            .init_resource::<WorldTerrain>()
+            .add_systems(Startup, setup_kit)
+            .add_systems(PreUpdate, stream_towns.in_set(StreamTowns))
             .add_systems(Update, spin_rotors);
     }
 }
@@ -43,6 +70,7 @@ fn spin_rotors(time: Res<Time>, mut rotors: Query<(&WindmillRotor, &mut Transfor
 }
 
 /// Shared meshes, scaled per instance.
+#[derive(Resource)]
 struct Shapes {
     cube: Handle<Mesh>,
     /// Unit gable roof: base 1 x 1 on `y = 0`, ridge at `y = 1` along local Z.
@@ -53,6 +81,7 @@ struct Shapes {
 }
 
 /// Earthy palette matching the dusty atmosphere.
+#[derive(Resource)]
 struct Palette {
     whitewash: Handle<StandardMaterial>,
     lime_wash: Handle<StandardMaterial>,
@@ -121,18 +150,24 @@ impl Palette {
     }
 }
 
-/// Spawn helper that keeps the per-element code short.
-struct Builder<'w, 's, 'a> {
-    commands: Commands<'w, 's>,
+/// Spawn helper that keeps the per-element code short. Everything it
+/// spawns hangs off the town's `root`.
+struct Builder<'c, 'w, 's, 'a> {
+    commands: &'c mut Commands<'w, 's>,
     shapes: &'a Shapes,
     palette: &'a Palette,
     terrain: &'a Terrain,
+    root: Entity,
 }
 
-impl Builder<'_, '_, '_> {
+impl Builder<'_, '_, '_, '_> {
     fn spawn(&mut self, mesh: &Handle<Mesh>, material: &Handle<StandardMaterial>, t: Transform) {
-        self.commands
-            .spawn((Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), t));
+        self.commands.spawn((
+            Mesh3d(mesh.clone()),
+            MeshMaterial3d(material.clone()),
+            t,
+            ChildOf(self.root),
+        ));
     }
 
     /// Axis-aligned box from world `center` with world `size`.
@@ -150,17 +185,12 @@ impl Builder<'_, '_, '_> {
     }
 }
 
-fn spawn_town(
-    commands: Commands,
-    town: Option<Res<WorldTown>>,
-    terrain: Res<WorldTerrain>,
+fn setup_kit(
+    mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let Some(town) = town else {
-        return;
-    };
-    let shapes = Shapes {
+    commands.insert_resource(Shapes {
         cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
         gable: meshes.add(gable_mesh()),
         cylinder: meshes.add(Cylinder::new(0.5, 1.0).mesh().resolution(16)),
@@ -171,26 +201,64 @@ fn spawn_town(
                 .ico(1)
                 .expect("valid ico subdivision"),
         ),
-    };
-    let palette = Palette::new(&mut materials);
-    let mut b = Builder {
-        commands,
-        shapes: &shapes,
-        palette: &palette,
-        terrain: &terrain.0,
-    };
+    });
+    commands.insert_resource(Palette::new(&mut materials));
+}
 
-    let town = &town.0;
+/// Shared town meshes and materials, once [`setup_kit`] ran.
+type TownKit<'a> = (Option<Res<'a, Shapes>>, Option<Res<'a, Palette>>);
+
+/// Activates the towns near [`StreamFocus`]: builds the newly active ones
+/// under a fresh [`TownRoot`] and despawns the roots of the ones left behind.
+fn stream_towns(
+    mut commands: Commands,
+    (towns, terrain, focus): (Res<WorldTowns>, Res<WorldTerrain>, Res<StreamFocus>),
+    mut active: ResMut<ActiveTowns>,
+    (shapes, palette): TownKit,
+    roots: Query<(Entity, &TownRoot)>,
+) {
+    let (Some(shapes), Some(palette)) = (shapes, palette) else {
+        return;
+    };
+    let change = active.0.update(&towns.0, focus.0);
+    for (entity, root) in &roots {
+        if change.deactivated.contains(&root.0) {
+            commands.entity(entity).despawn();
+        }
+    }
+    for index in change.activated {
+        let town = &towns.0[index];
+        let root = commands
+            .spawn((
+                Name::new(format!("Town {}", town.name)),
+                TownRoot(index),
+                Transform::default(),
+                Visibility::default(),
+            ))
+            .id();
+        let mut b = Builder {
+            commands: &mut commands,
+            shapes: &shapes,
+            palette: &palette,
+            terrain: &terrain.0,
+            root,
+        };
+        build_town(&mut b, town);
+    }
+}
+
+/// Every mesh of `town`, under the builder's root.
+fn build_town(b: &mut Builder, town: &TownLayout) {
     for street in &town.streets {
-        let mat = palette.street.clone();
-        flat_patch(&mut b, &mat, street, 0.03);
+        let mat = b.palette.street.clone();
+        flat_patch(b, &mat, street, 0.03);
     }
-    plaza(&mut b, town);
-    railway(&mut b, town);
+    plaza(b, town);
+    railway(b, town);
     for (n, building) in town.buildings.iter().enumerate() {
-        spawn_building(&mut b, building, n, town.hitching_post.veranda);
+        spawn_building(b, building, n, town.hitching_post.veranda);
     }
-    hitching_rail(&mut b, &town.hitching_post.rail);
+    hitching_rail(b, &town.hitching_post.rail);
 }
 
 /// Two timber posts with a rail between them, along the rail footprint's
@@ -705,6 +773,7 @@ fn windmill(b: &mut Builder, f: &Frame, n: usize) {
             },
             Transform::from_translation(hub + yaw * Vec3::Z * 0.6).with_rotation(yaw),
             Visibility::default(),
+            ChildOf(b.root),
         ))
         .id();
     let blades = 12;
@@ -773,4 +842,70 @@ fn gable_mesh() -> Mesh {
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.compute_normals();
     mesh
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pampa_core::{TownConfig, Vec2};
+
+    fn two_towns() -> Vec<TownLayout> {
+        let far = TownConfig {
+            name: "Lejos".into(),
+            origin: Vec2::new(3000.0, -2000.0),
+            ..TownConfig::castex()
+        };
+        vec![
+            TownLayout::castex_inspired(),
+            TownLayout::generate(&far).unwrap(),
+        ]
+    }
+
+    fn app() -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .insert_resource(WorldTowns(two_towns()))
+            .add_plugins(TownPlugin);
+        app
+    }
+
+    fn roots(app: &mut App) -> Vec<usize> {
+        let mut q = app.world_mut().query::<&TownRoot>();
+        let mut v: Vec<usize> = q.iter(app.world()).map(|r| r.0).collect();
+        v.sort_unstable();
+        v
+    }
+
+    fn town_meshes(app: &mut App) -> usize {
+        let mut q = app.world_mut().query_filtered::<(), With<Mesh3d>>();
+        q.iter(app.world()).count()
+    }
+
+    #[test]
+    fn only_towns_near_the_focus_are_built_and_far_ones_are_dropped() {
+        let mut app = app();
+        app.update();
+        assert_eq!(roots(&mut app), vec![0]);
+        let castex = town_meshes(&mut app);
+        assert!(castex > 100, "{castex} meshes");
+
+        // Ride to the far town: Castex goes, the far town comes.
+        app.world_mut().resource_mut::<StreamFocus>().0 = Vec2::new(2950.0, -1950.0);
+        app.update();
+        assert_eq!(roots(&mut app), vec![1]);
+        assert!(app.world().resource::<ActiveTowns>().0.is_active(1));
+        // Same layout shifted: about as many meshes (the long track rounds
+        // into a few more or fewer pieces far from the origin), none of them
+        // left over from Castex.
+        let far = town_meshes(&mut app);
+        assert!(far.abs_diff(castex) < castex / 50, "{far} vs {castex}");
+
+        // Halfway between them: nothing is drawn.
+        app.world_mut().resource_mut::<StreamFocus>().0 = Vec2::new(1500.0, -1000.0);
+        app.update();
+        assert!(roots(&mut app).is_empty());
+        assert_eq!(town_meshes(&mut app), 0);
+    }
 }

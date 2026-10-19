@@ -14,7 +14,7 @@ use pampa_core::{BuildingKind, PlaceKind, Side, Sign, SignMount, TownLayout};
 use crate::coords::world_from_ground;
 use crate::font::{self, GLYPH_HEIGHT};
 use crate::terrain::{WorldTerrain, hash2};
-use crate::town::WorldTown;
+use crate::town::{TownRoot, WorldTowns};
 
 /// Painted frame width around a board, in texture pixels.
 pub const BORDER: usize = 2;
@@ -161,12 +161,13 @@ pub fn paint_board(text: &str, layout: BoardLayout, style: BoardStyle, seed: f32
         .collect()
 }
 
-/// Draws the [`WorldTown`]'s place signs at startup.
+/// Draws each town's place signs when the town is built (see
+/// [`crate::TownPlugin`]); they hang off its [`TownRoot`] and go with it.
 pub struct SignPlugin;
 
 impl Plugin for SignPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_signs);
+        app.add_systems(Update, spawn_signs);
     }
 }
 
@@ -174,18 +175,45 @@ impl Plugin for SignPlugin {
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Signboard(pub PlaceKind);
 
+/// Asset stores a sign needs.
+type SignAssets<'a> = (
+    ResMut<'a, Assets<Image>>,
+    ResMut<'a, Assets<Mesh>>,
+    ResMut<'a, Assets<StandardMaterial>>,
+);
+
 fn spawn_signs(
     mut commands: Commands,
-    town: Option<Res<WorldTown>>,
-    terrain: Res<WorldTerrain>,
-    mut images: ResMut<Assets<Image>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    (towns, terrain): (Res<WorldTowns>, Res<WorldTerrain>),
+    roots: Query<(Entity, &TownRoot), Added<TownRoot>>,
+    (mut images, mut meshes, mut materials): SignAssets,
 ) {
-    let Some(town) = town else {
-        return;
-    };
-    let town = &town.0;
+    for (root, town) in &roots {
+        let Some(town) = towns.0.get(town.0) else {
+            continue;
+        };
+        spawn_town_signs(
+            &mut commands,
+            root,
+            town,
+            &terrain.0,
+            (&mut images, &mut meshes, &mut materials),
+        );
+    }
+}
+
+/// Every sign of `town`, as children of `root`.
+fn spawn_town_signs(
+    commands: &mut Commands,
+    root: Entity,
+    town: &TownLayout,
+    terrain: &pampa_core::Terrain,
+    (images, meshes, materials): (
+        &mut Assets<Image>,
+        &mut Assets<Mesh>,
+        &mut Assets<StandardMaterial>,
+    ),
+) {
     let mut cube = None;
     for place in town.places() {
         let style = BoardStyle::for_place(place.kind);
@@ -223,7 +251,7 @@ fn spawn_signs(
                 .get_or_insert_with(|| meshes.add(Cuboid::new(1.0, 1.0, 1.0)))
                 .clone();
 
-            let base = terrain.0.height(sign.anchor.x, sign.anchor.y) + sign.elevation;
+            let base = terrain.height(sign.anchor.x, sign.anchor.y) + sign.elevation;
             let center = match sign.mount {
                 SignMount::Facade => center,
                 SignMount::Posts => center + layout.height_m / 2.0,
@@ -274,6 +302,7 @@ fn spawn_signs(
                     Signboard(place.kind),
                     Transform::default(),
                     Visibility::default(),
+                    ChildOf(root),
                 ))
                 .with_children(|parent| {
                     for (mesh, material, transform) in parts {
@@ -460,8 +489,8 @@ mod tests {
             .init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
             .insert_resource(WorldTerrain(pampa_core::Terrain::default()))
-            .insert_resource(WorldTown(town.clone()))
-            .add_plugins(SignPlugin);
+            .insert_resource(WorldTowns(vec![town.clone()]))
+            .add_plugins((crate::TownPlugin, SignPlugin));
         app.update();
 
         let signs: usize = town.places().iter().map(|p| p.signs.len()).sum();

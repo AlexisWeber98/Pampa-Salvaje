@@ -74,6 +74,16 @@ const ROOF_ALLOWANCE: f32 = 3.0;
 const WALL_CLEARANCE: f32 = 0.4;
 
 impl CameraOccluders {
+    /// Every building of every town, standing on `terrain`.
+    pub fn from_towns(towns: &[TownLayout], terrain: &Terrain) -> Self {
+        Self(
+            towns
+                .iter()
+                .flat_map(|town| Self::from_town(town, terrain).0)
+                .collect(),
+        )
+    }
+
     /// Every building of `town`, standing on `terrain`.
     pub fn from_town(town: &TownLayout, terrain: &Terrain) -> Self {
         Self(
