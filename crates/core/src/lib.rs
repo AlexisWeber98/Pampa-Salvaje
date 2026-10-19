@@ -11,11 +11,13 @@
 //! positive turn is a turn to the left.
 
 pub mod animation;
+pub mod bumps;
 pub mod collision;
 pub mod heading;
 pub mod math;
 pub mod places;
 pub mod rider;
+mod rng;
 pub mod terrain;
 pub mod town;
 pub mod townsfolk;
@@ -23,6 +25,7 @@ pub mod train;
 pub mod world;
 
 pub use animation::AnimationState;
+pub use bumps::{BumpEvent, BumpSeverity, BumpTracker, LinePicker};
 pub use collision::{Aabb, Body, Circle, SideObstacle};
 pub use heading::Heading;
 pub use math::Vec2;

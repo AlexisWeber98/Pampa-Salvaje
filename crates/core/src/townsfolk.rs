@@ -5,6 +5,7 @@
 //! next one at random (avoiding turning straight back when it can). People
 //! collide with the same static obstacles as the rider.
 
+use crate::rng::Rng;
 use crate::{Aabb, AnimationState, Body, Circle, Heading, TownLayout, Vec2, World};
 
 /// Street intersections and the street segments joining them.
@@ -159,13 +160,18 @@ impl Townsfolk {
     }
 
     /// Shoves everyone overlapping `body` (a rider barging through) out of
-    /// its way, without pushing anyone into the world's obstacles.
-    pub fn make_way(&mut self, world: &World, body: Body) {
-        for person in &mut self.people {
+    /// its way, without pushing anyone into the world's obstacles. Returns
+    /// the indices of the people it touched, in order (the contacts that
+    /// [`crate::BumpTracker`] turns into complaints).
+    pub fn make_way(&mut self, world: &World, body: Body) -> Vec<usize> {
+        let mut touched = Vec::new();
+        for (index, person) in self.people.iter_mut().enumerate() {
             if let Some(push) = person.collider.push_out_of_body(person.position, &body) {
                 person.position = world.resolve(person.collider, person.position + push, |_| ());
+                touched.push(index);
             }
         }
+        touched
     }
 
     /// Where everyone stands, as obstacles for others.
@@ -266,47 +272,6 @@ impl Townsperson {
         };
         self.pause = self.rng.range(PAUSE.0, PAUSE.1);
         self.speed = 0.0;
-    }
-}
-
-/// Small deterministic xorshift generator, so `core` needs no crates.
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct Rng(u32);
-
-impl Rng {
-    /// Generator for item `index` of a `seed`ed set.
-    fn new(seed: u32, index: u32) -> Self {
-        let mut v = seed ^ index.wrapping_mul(0x9e37_79b9);
-        v ^= v >> 16;
-        v = v.wrapping_mul(0x7feb_352d);
-        v ^= v >> 15;
-        v = v.wrapping_mul(0x846c_a68b);
-        v ^= v >> 16;
-        // Xorshift must never hold zero.
-        Self(v | 1)
-    }
-
-    fn next(&mut self) -> u32 {
-        let mut x = self.0;
-        x ^= x << 13;
-        x ^= x >> 17;
-        x ^= x << 5;
-        self.0 = x;
-        x
-    }
-
-    /// Uniform in `[0, 1)`.
-    fn unit(&mut self) -> f32 {
-        (self.next() >> 8) as f32 / (1u32 << 24) as f32
-    }
-
-    fn range(&mut self, lo: f32, hi: f32) -> f32 {
-        lo + (hi - lo) * self.unit()
-    }
-
-    /// Uniform index in `0..n` (`n > 0`).
-    fn below(&mut self, n: usize) -> usize {
-        ((self.unit() * n as f32) as usize).min(n - 1)
     }
 }
 
@@ -580,6 +545,27 @@ mod tests {
             }
         }
         assert!(shoved > 0, "the rider met somebody");
+    }
+
+    #[test]
+    fn make_way_reports_exactly_the_people_it_touched() {
+        let graph = StreetGraph {
+            nodes: vec![Vec2::ZERO],
+            links: vec![vec![]],
+        };
+        let world = World::default();
+        let mut folk = Townsfolk::from_graph(graph, 3, 1);
+        folk.people[0].position = Vec2::new(0.5, 0.0);
+        folk.people[1].position = Vec2::new(10.0, 0.0);
+        folk.people[2].position = Vec2::new(-0.2, 0.9);
+        let rider = Body {
+            position: Vec2::ZERO,
+            collider: Circle::new(0.9),
+        };
+        assert_eq!(folk.make_way(&world, rider), [0, 2]);
+        assert_clear_of(&folk, rider, "shoved");
+        // Nobody left in the way: no contacts.
+        assert!(folk.make_way(&world, rider).is_empty());
     }
 
     #[test]
