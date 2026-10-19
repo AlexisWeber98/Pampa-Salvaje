@@ -2,7 +2,7 @@
 
 use bevy::prelude::*;
 use pampa_core::{Heading, MAX_STEP, Rider, RiderInput, RiderParams, Vec2 as GroundVec2, World};
-use pampa_render::{RiderVisual, VisualPose, world_from_ground};
+use pampa_render::{CharacterVisual, SheetKind, VisualPose, world_from_ground};
 
 /// The logic rider this entity represents. Logic state lives here; the
 /// entity's `Transform` and `VisualPose` are derived from it every frame.
@@ -57,7 +57,7 @@ fn spawn_player(mut commands: Commands, world: Res<GameWorld>, spawn: Res<Player
     let rider = Rider::new(spawn.position, spawn.heading, &world.0.terrain);
     commands.spawn((
         Name::new("Player"),
-        RiderVisual::Billboard,
+        CharacterVisual::Billboard(SheetKind::Rider),
         VisualPose {
             heading: rider.heading,
             animation: Default::default(),

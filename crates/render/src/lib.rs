@@ -4,13 +4,17 @@
 //! pixels. Nothing here feeds back into game rules.
 
 pub mod atmosphere;
+pub mod character;
 pub mod coords;
-pub mod rider;
 pub mod terrain;
 pub mod town;
+pub mod train;
 
 pub use atmosphere::{AtmospherePlugin, DUST_COLOR};
+pub use character::{
+    CharacterVisual, CharacterVisualPlugin, PERSON_LOOKS, SheetKind, ViewDirection, VisualPose,
+};
 pub use coords::world_from_ground;
-pub use rider::{RiderVisual, RiderVisualPlugin, ViewDirection, VisualPose};
 pub use terrain::{TerrainPlugin, WorldTerrain};
 pub use town::{TownPlugin, WindmillRotor, WorldTown};
+pub use train::{TrainCar, TrainPlugin, TrainWheel, WorldTrain};

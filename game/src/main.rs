@@ -6,7 +6,7 @@ mod player;
 use bevy::prelude::*;
 use pampa_core::{Terrain, TownLayout, World};
 use pampa_render::{
-    AtmospherePlugin, RiderVisualPlugin, TerrainPlugin, TownPlugin, WorldTerrain, WorldTown,
+    AtmospherePlugin, CharacterVisualPlugin, TerrainPlugin, TownPlugin, WorldTerrain, WorldTown,
 };
 
 fn main() {
@@ -32,7 +32,7 @@ fn main() {
             TerrainPlugin::default(),
             TownPlugin,
             AtmospherePlugin,
-            RiderVisualPlugin,
+            CharacterVisualPlugin,
             player::PlayerPlugin,
             camera::FollowCameraPlugin,
         ))

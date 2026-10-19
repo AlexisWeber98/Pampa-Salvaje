@@ -4,23 +4,23 @@
 use bevy::asset::RenderAssetUsages;
 use bevy::image::ImageSampler;
 use bevy::math::Affine2;
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::transform::TransformSystems;
 use pampa_core::{AnimationState, Heading};
 
 use super::direction::{DIRECTIONS, ViewDirection, ground_yaw};
-use super::sheet::{FRAME_SIZE, rider_sheet_pixels};
+use super::sheet::{FRAME_SIZE, SheetKind, sheet_pixels};
 
-/// How an entity is drawn. Swappable per entity without touching logic.
+/// How a character is drawn. Swappable per entity without touching logic.
 ///
-/// Only `Billboard` exists today; a `Model` variant (low-poly 3D) is planned.
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// Only billboards exist today; a `Model` variant (low-poly 3D) is planned.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 #[require(VisualPose, Transform, Visibility)]
-pub enum RiderVisual {
-    /// Camera-facing sprite picked from eight directional frames.
-    #[default]
-    Billboard,
+pub enum CharacterVisual {
+    /// Camera-facing sprite picked from eight directional frames of a sheet.
+    Billboard(SheetKind),
 }
 
 /// Logic state the visual needs, copied from `pampa-core` each frame by the game.
@@ -33,28 +33,29 @@ pub struct VisualPose {
     pub animation: AnimationState,
 }
 
-/// Child entity that draws a [`RiderVisual::Billboard`].
+/// Child entity that draws a [`CharacterVisual::Billboard`].
 #[derive(Component, Debug, Clone, Copy)]
 pub struct Billboard {
+    pub sheet: SheetKind,
     pub view: ViewDirection,
 }
 
-/// Sprite height above the entity origin (the ground contact point), in meters.
-const SPRITE_SIZE: f32 = 2.8;
-
-#[derive(Resource)]
-struct RiderSprites {
+/// Quad and per-view materials of one sheet.
+struct SheetSprites {
     mesh: Handle<Mesh>,
     /// One material per view, all sharing the sheet but offset to a column.
     materials: [Handle<StandardMaterial>; DIRECTIONS],
 }
 
-/// Draws entities carrying a [`RiderVisual`].
-pub struct RiderVisualPlugin;
+#[derive(Resource)]
+struct BillboardSprites(HashMap<SheetKind, SheetSprites>);
 
-impl Plugin for RiderVisualPlugin {
+/// Draws entities carrying a [`CharacterVisual`].
+pub struct CharacterVisualPlugin;
+
+impl Plugin for CharacterVisualPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, load_rider_sprites).add_systems(
+        app.add_systems(Startup, load_sprites).add_systems(
             PostUpdate,
             (attach_billboards, update_billboards)
                 .chain()
@@ -63,65 +64,71 @@ impl Plugin for RiderVisualPlugin {
     }
 }
 
-fn load_rider_sprites(
+fn load_sprites(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let mut sheet = Image::new(
-        Extent3d {
-            width: (FRAME_SIZE * DIRECTIONS) as u32,
-            height: FRAME_SIZE as u32,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        rider_sheet_pixels(),
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::RENDER_WORLD,
-    );
-    // Crisp pixel art, HD-2D style.
-    sheet.sampler = ImageSampler::nearest();
-    let sheet = images.add(sheet);
-
     let column = 1.0 / DIRECTIONS as f32;
-    let materials = std::array::from_fn(|k| {
-        materials.add(StandardMaterial {
-            base_color_texture: Some(sheet.clone()),
-            alpha_mode: AlphaMode::Mask(0.5),
-            // Sprites keep their painted shading; fog still applies.
-            unlit: true,
-            uv_transform: Affine2::from_scale_angle_translation(
-                Vec2::new(column, 1.0),
-                0.0,
-                Vec2::new(k as f32 * column, 0.0),
-            ),
-            ..default()
+    let sheets = SheetKind::all()
+        .map(|kind| {
+            let mut sheet = Image::new(
+                Extent3d {
+                    width: (FRAME_SIZE * DIRECTIONS) as u32,
+                    height: FRAME_SIZE as u32,
+                    depth_or_array_layers: 1,
+                },
+                TextureDimension::D2,
+                sheet_pixels(kind),
+                TextureFormat::Rgba8UnormSrgb,
+                RenderAssetUsages::RENDER_WORLD,
+            );
+            // Crisp pixel art, HD-2D style.
+            sheet.sampler = ImageSampler::nearest();
+            let sheet = images.add(sheet);
+            let materials = std::array::from_fn(|k| {
+                materials.add(StandardMaterial {
+                    base_color_texture: Some(sheet.clone()),
+                    alpha_mode: AlphaMode::Mask(0.5),
+                    // Sprites keep their painted shading; fog still applies.
+                    unlit: true,
+                    uv_transform: Affine2::from_scale_angle_translation(
+                        Vec2::new(column, 1.0),
+                        0.0,
+                        Vec2::new(k as f32 * column, 0.0),
+                    ),
+                    ..default()
+                })
+            });
+            let size = kind.sprite_size();
+            let mesh = meshes.add(Rectangle::new(size, size));
+            (kind, SheetSprites { mesh, materials })
         })
-    });
-
-    commands.insert_resource(RiderSprites {
-        mesh: meshes.add(Rectangle::new(SPRITE_SIZE, SPRITE_SIZE)),
-        materials,
-    });
+        .collect();
+    commands.insert_resource(BillboardSprites(sheets));
 }
 
 fn attach_billboards(
     mut commands: Commands,
-    sprites: Res<RiderSprites>,
-    added: Query<(Entity, &RiderVisual), Added<RiderVisual>>,
+    sprites: Res<BillboardSprites>,
+    added: Query<(Entity, &CharacterVisual), Added<CharacterVisual>>,
 ) {
     for (entity, visual) in &added {
-        match visual {
-            RiderVisual::Billboard => {
+        match *visual {
+            CharacterVisual::Billboard(sheet) => {
+                let Some(sprites) = sprites.0.get(&sheet) else {
+                    continue;
+                };
                 commands.entity(entity).with_child((
-                    Name::new("Rider billboard"),
+                    Name::new("Billboard"),
                     Billboard {
+                        sheet,
                         view: ViewDirection::AWAY,
                     },
                     Mesh3d(sprites.mesh.clone()),
                     MeshMaterial3d(sprites.materials[0].clone()),
-                    Transform::from_xyz(0.0, SPRITE_SIZE / 2.0, 0.0),
+                    Transform::from_xyz(0.0, sheet.sprite_size() / 2.0, 0.0),
                 ));
             }
         }
@@ -129,22 +136,24 @@ fn attach_billboards(
 }
 
 /// Vertical bob (amplitude in meters, frequency in Hz) per logical gait.
-fn bob(animation: AnimationState) -> (f32, f32) {
-    match animation {
-        AnimationState::Idle => (0.0, 0.0),
-        AnimationState::Walk => (0.04, 2.0),
-        AnimationState::Gallop => (0.14, 3.2),
+fn bob(sheet: SheetKind, animation: AnimationState) -> (f32, f32) {
+    match (sheet, animation) {
+        (_, AnimationState::Idle) => (0.0, 0.0),
+        // People step quicker and bounce more than a walking horse.
+        (SheetKind::Person(_), _) => (0.06, 2.2),
+        (_, AnimationState::Walk) => (0.04, 2.0),
+        (_, AnimationState::Gallop) => (0.14, 3.2),
     }
 }
 
-/// Rider roots, disjoint from their billboard children.
-type RiderRoots = (With<RiderVisual>, Without<Billboard>);
+/// Character roots, disjoint from their billboard children.
+type CharacterRoots = (With<CharacterVisual>, Without<Billboard>);
 
 fn update_billboards(
     time: Res<Time>,
-    sprites: Res<RiderSprites>,
+    sprites: Res<BillboardSprites>,
     camera: Single<&Transform, (With<Camera3d>, Without<Billboard>)>,
-    riders: Query<(&Transform, &VisualPose), RiderRoots>,
+    riders: Query<(&Transform, &VisualPose), CharacterRoots>,
     mut billboards: Query<(
         &ChildOf,
         &mut Billboard,
@@ -163,10 +172,13 @@ fn update_billboards(
             continue;
         };
 
+        let Some(sheet) = sprites.0.get(&billboard.sheet) else {
+            continue;
+        };
         let view = ViewDirection::pick(pose.heading, camera_yaw);
         if billboard.view != view {
             billboard.view = view;
-            material.0 = sprites.materials[view.index()].clone();
+            material.0 = sheet.materials[view.index()].clone();
         }
 
         // Cylindrical billboard: turn around Y to face the camera, stay upright.
@@ -174,9 +186,12 @@ fn update_billboards(
         let yaw = to_camera.x.atan2(to_camera.z);
         transform.rotation = Quat::from_rotation_y(yaw);
 
-        let (amplitude, frequency) = bob(pose.animation);
-        let phase = time.elapsed_secs() * frequency * std::f32::consts::TAU;
-        transform.translation.y = SPRITE_SIZE / 2.0 + amplitude * phase.sin().abs();
+        let (amplitude, frequency) = bob(billboard.sheet, pose.animation);
+        // Per-entity offset so a crowd does not bob in step.
+        let offset = child_of.parent().index_u32() as f32 * 0.37;
+        let phase = (time.elapsed_secs() * frequency + offset) * std::f32::consts::TAU;
+        transform.translation.y =
+            billboard.sheet.sprite_size() / 2.0 + amplitude * phase.sin().abs();
     }
 }
 
@@ -194,10 +209,13 @@ mod tests {
 
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
-            .insert_resource(RiderSprites {
-                mesh: Handle::default(),
-                materials: materials.clone(),
-            })
+            .insert_resource(BillboardSprites(HashMap::from([(
+                SheetKind::Rider,
+                SheetSprites {
+                    mesh: Handle::default(),
+                    materials: materials.clone(),
+                },
+            )])))
             .add_systems(Update, update_billboards);
         // Camera south of the origin looking north (core +y, Bevy -Z).
         app.world_mut().spawn((
@@ -222,9 +240,10 @@ mod tests {
         // is not scheduled here; the child mirrors what it would spawn.
         app.world_mut()
             .entity_mut(rider)
-            .insert(RiderVisual::Billboard);
+            .insert(CharacterVisual::Billboard(SheetKind::Rider));
         app.world_mut().spawn((
             Billboard {
+                sheet: SheetKind::Rider,
                 view: ViewDirection::AWAY,
             },
             MeshMaterial3d(first.clone()),

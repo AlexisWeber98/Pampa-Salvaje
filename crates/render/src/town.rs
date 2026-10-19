@@ -190,6 +190,37 @@ fn spawn_town(
     for (n, building) in town.buildings.iter().enumerate() {
         spawn_building(&mut b, building, n);
     }
+    hitching_rail(&mut b, &town.hitching_post.rail);
+}
+
+/// Two timber posts with a rail between them, along the rail footprint's
+/// long side. The tethered horse itself is a character billboard.
+fn hitching_rail(b: &mut Builder, rail: &Aabb) {
+    let timber = b.palette.timber.clone();
+    let size = rail.size();
+    let along_x = size.x >= size.y;
+    let length = size.x.max(size.y);
+    let c = rail.center();
+    let y = b.ground(c);
+    for end in [-0.5, 0.5] {
+        let offset = end * (length - 0.2);
+        let p = if along_x {
+            GroundVec2::new(c.x + offset, c.y)
+        } else {
+            GroundVec2::new(c.x, c.y + offset)
+        };
+        b.cube(
+            &timber,
+            world_from_ground(p, y + 0.55),
+            Vec3::new(0.16, 1.1, 0.16),
+        );
+    }
+    let bar = if along_x {
+        Vec3::new(length, 0.1, 0.1)
+    } else {
+        Vec3::new(0.1, 0.1, length)
+    };
+    b.cube(&timber, world_from_ground(c, y + 1.0), bar);
 }
 
 /// A thin slab lying on (leveled) ground over `area`.
