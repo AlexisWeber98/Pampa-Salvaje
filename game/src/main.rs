@@ -2,6 +2,7 @@
 
 mod camera;
 mod life;
+mod orbit;
 mod player;
 
 use bevy::prelude::*;

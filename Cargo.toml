@@ -11,7 +11,7 @@ publish = false
 [workspace.dependencies]
 pampa-core = { path = "crates/core" }
 pampa-render = { path = "crates/render" }
-# Lean Bevy: only what the slice needs (3D PBR, windowing, keyboard input).
+# Lean Bevy: only what the slice needs (3D PBR, windowing, keyboard and mouse input).
 bevy = { version = "=0.20.0", default-features = false, features = [
     "std",
     "multi_threaded",
@@ -22,6 +22,7 @@ bevy = { version = "=0.20.0", default-features = false, features = [
     "wayland",
     "x11",
     "keyboard",
+    "mouse",
     "bevy_render",
     "bevy_core_pipeline",
     "bevy_pbr",
