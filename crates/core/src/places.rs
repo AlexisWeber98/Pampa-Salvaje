@@ -307,7 +307,7 @@ mod tests {
         assert_eq!(board.facing, Side::North);
         assert!(platform.footprint.contains_point(board.anchor));
         assert_eq!(board.elevation, platform.height);
-        assert!(board.anchor.y < t.railway.start.y);
+        assert!(board.anchor.y < t.railway.unwrap().start.y);
         assert_eq!(board.footprint(), None, "raised on the platform");
         // Clear of the station's own canopy over the platform.
         let station_building = building(&t, BuildingKind::Station);

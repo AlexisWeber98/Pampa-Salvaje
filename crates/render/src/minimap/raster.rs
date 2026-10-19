@@ -187,23 +187,23 @@ pub fn rasterize_town(town: &TownLayout, frame: &MapFrame) -> Canvas {
         map.set(m.x as i32, m.y as i32, [96, 110, 60, 255]);
     }
 
-    // Railway: a dark line with sleeper ticks.
-    let rail = town.railway;
-    let (s, e) = (frame.to_map(rail.start), frame.to_map(rail.end));
-    let steps = s.distance(e).ceil() as usize;
-    for k in 0..=steps {
-        let p = s.lerp(e, k as f32 / steps.max(1) as f32);
-        map.fill_rect(
-            p - Vec2::new(0.5, 1.0),
-            p + Vec2::new(0.5, 1.0),
-            palette::RAIL,
-        );
-        if k % 3 == 0 {
-            map.fill_rect(
-                p - Vec2::new(0.5, 2.0),
-                p + Vec2::new(0.5, 2.0),
-                palette::RAIL,
-            );
+    // Railway: a dark line with sleeper ticks across it.
+    if let Some(rail) = town.railway {
+        let (s, e) = (frame.to_map(rail.start), frame.to_map(rail.end));
+        // Half sizes of a line dot and a tick, oriented to the track.
+        let east_west = (e.x - s.x).abs() >= (e.y - s.y).abs();
+        let (line, tick) = if east_west {
+            (Vec2::new(0.5, 1.0), Vec2::new(0.5, 2.0))
+        } else {
+            (Vec2::new(1.0, 0.5), Vec2::new(2.0, 0.5))
+        };
+        let steps = s.distance(e).ceil() as usize;
+        for k in 0..=steps {
+            let p = s.lerp(e, k as f32 / steps.max(1) as f32);
+            map.fill_rect(p - line, p + line, palette::RAIL);
+            if k % 3 == 0 {
+                map.fill_rect(p - tick, p + tick, palette::RAIL);
+            }
         }
     }
 
@@ -460,7 +460,7 @@ mod tests {
             palette::PLAZA[..3]
         );
         // The railway line is drawn where it crosses the frame.
-        let rail = GroundVec2::new(frame.center.x + 100.0, t.railway.start.y);
+        let rail = GroundVec2::new(frame.center.x + 100.0, t.railway.unwrap().start.y);
         assert_eq!(at(rail)[..3], palette::RAIL[..3]);
         // A house is painted as a house.
         let house = t

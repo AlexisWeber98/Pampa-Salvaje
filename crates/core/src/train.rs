@@ -124,19 +124,21 @@ impl Train {
         }
     }
 
-    /// The train serving `town`'s station.
-    pub fn for_town(town: &TownLayout, schedule: TrainSchedule) -> Self {
-        let (along, _) = along(&town.railway);
+    /// The train serving `town`'s station, if the town has a railway. It
+    /// stops with its middle alongside the station.
+    pub fn for_town(town: &TownLayout, schedule: TrainSchedule) -> Option<Self> {
+        let railway = town.railway?;
+        let (along, _) = along(&railway);
         let station = town
             .buildings
             .iter()
             .find(|b| b.kind == BuildingKind::Station)
-            .map_or(town.railway.start, |b| b.footprint.center());
-        Self::new(
-            town.railway,
+            .map_or(railway.start, |b| b.footprint.center());
+        Some(Self::new(
+            railway,
             schedule,
-            (station - town.railway.start).dot(along),
-        )
+            (station - railway.start).dot(along),
+        ))
     }
 
     /// Length from the locomotive's front to the last car's end, in meters.
@@ -323,7 +325,7 @@ mod tests {
 
     fn town_train() -> (TownLayout, Train) {
         let town = TownLayout::castex_inspired();
-        let train = Train::for_town(&town, TrainSchedule::default());
+        let train = Train::for_town(&town, TrainSchedule::default()).expect("a railway");
         (town, train)
     }
 
@@ -388,7 +390,7 @@ mod tests {
             // Alongside the platform, on the track.
             let half = car.length / 2.0;
             assert!(car.center.x - half >= platform.min.x && car.center.x + half <= platform.max.x);
-            assert!((car.center.y - town.railway.start.y).abs() < 1e-4);
+            assert!((car.center.y - train.railway.start.y).abs() < 1e-4);
         }
     }
 

@@ -32,7 +32,10 @@ pub use math::Vec2;
 pub use places::{Place, PlaceKind, Sign, SignMount};
 pub use rider::{MAX_STEP, Rider, RiderInput, RiderParams};
 pub use terrain::{FlatArea, Terrain};
-pub use town::{Building, BuildingKind, HitchingPost, Railway, Side, TetheredHorse, TownLayout};
+pub use town::{
+    Building, BuildingKind, HitchingPost, PlazaPlacement, Railway, RailwayConfig, Side,
+    TetheredHorse, TownConfig, TownConfigError, TownLayout,
+};
 pub use townsfolk::{StreetGraph, Townsfolk, Townsperson};
 pub use train::{Car, CarKind, PlacedCar, Train, TrainPhase, TrainSchedule, TrainState};
 pub use world::{PATCH_HALF_EXTENT, World, WorldBounds};

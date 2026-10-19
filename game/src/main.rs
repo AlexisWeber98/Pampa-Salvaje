@@ -25,11 +25,13 @@ fn main() {
     let (position, heading) = town.arrival();
     let crowd = Townsfolk::new(&town, TOWNSFOLK_COUNT, TOWNSFOLK_SEED);
     let train = Train::for_town(&town, TrainSchedule::default());
-    App::new()
-        .insert_resource(camera::CameraOccluders::from_town(&town, &world.terrain))
+    let mut app = App::new();
+    if let Some(train) = train {
+        app.insert_resource(WorldTrain(train));
+    }
+    app.insert_resource(camera::CameraOccluders::from_town(&town, &world.terrain))
         .insert_resource(WorldTerrain(world.terrain))
         .insert_resource(life::Crowd(crowd))
-        .insert_resource(WorldTrain(train))
         .insert_resource(WorldTown(town))
         .insert_resource(player::GameWorld(world))
         .insert_resource(player::PlayerSpawn { position, heading })

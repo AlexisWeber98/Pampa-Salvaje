@@ -417,7 +417,7 @@ mod tests {
 
     fn app_with_train(time: f32) -> App {
         let town = TownLayout::castex_inspired();
-        let mut train = Train::for_town(&town, TrainSchedule::default());
+        let mut train = Train::for_town(&town, TrainSchedule::default()).expect("a railway");
         train.step(time);
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)

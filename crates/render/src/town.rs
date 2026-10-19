@@ -284,7 +284,9 @@ fn plaza(b: &mut Builder, town: &TownLayout) {
 
 /// Ballast bed, sleepers and two rails following the ground.
 fn railway(b: &mut Builder, town: &TownLayout) {
-    let rail = town.railway;
+    let Some(rail) = town.railway else {
+        return;
+    };
     let length = rail.start.distance(rail.end);
     if length <= 0.0 {
         return;

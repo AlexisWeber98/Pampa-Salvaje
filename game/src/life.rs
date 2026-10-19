@@ -192,7 +192,9 @@ mod tests {
             )))
             .init_resource::<ButtonInput<KeyCode>>()
             .insert_resource(Crowd(Townsfolk::new(&town, 6, 1)))
-            .insert_resource(WorldTrain(Train::for_town(&town, TrainSchedule::default())))
+            .insert_resource(WorldTrain(
+                Train::for_town(&town, TrainSchedule::default()).expect("a railway"),
+            ))
             .insert_resource(WorldTown(town))
             .insert_resource(GameWorld(world))
             .add_plugins((PlayerPlugin, TownLifePlugin));
