@@ -14,8 +14,16 @@ The town is alive: townsfolk wander the streets between intersections, a
 saddled horse stands tied at a hitching rail in front of the general store, and
 a steam freight train rolls in from the west every 150 s, stops at the station
 for 25 s and pulls out east. The train shoves riders off its track; the rails
-themselves stay crossable. The follow camera pulls in when a building would
-block its view of the rider.
+themselves stay crossable. The rider barges through the crowd, shoving
+walkers aside, and walkers step around the rider.
+
+The camera orbits the rider a full 360° with the mouse (or Q/E), zooms with
+the wheel, eases back behind the rider after a moment without camera input
+while riding, and pulls in when a building would block its view.
+
+Characters are procedurally painted billboard sprites (no third-party art):
+rounded, shaded and outlined figures in eight view directions, with a walk
+cycle and, for horses, a gallop cycle paced by their speed.
 
 ## Architecture
 
@@ -64,6 +72,9 @@ cargo test --workspace
 | `W` / `S` | Throttle forward / brake and back up |
 | `A` / `D` | Turn left / right |
 | `Shift` (hold) | Gallop |
+| Mouse | Orbit the camera (the cursor is locked while the window has focus) |
+| `Q` / `E` | Orbit the camera left / right |
+| Mouse wheel | Zoom in / out (6–25 m) |
 | `Esc` | Quit |
 
 ## License
