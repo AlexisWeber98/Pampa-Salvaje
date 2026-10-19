@@ -44,7 +44,7 @@ Forecast: ~700 authored changed lines across all tasks.
 | ID | Task | Route | Status | Commit | Review |
 |----|------|-------|--------|--------|--------|
 | T1 | Workspace scaffold (workspace manifest, three crates, README) | delegated (writer trigger: 2+ non-trivial files) | [x] | | |
-| T2 | `core`: heading, rider kinematics, animation state + unit tests (test-first) | delegated | [ ] | | |
+| T2 | `core`: heading, rider kinematics, animation state + unit tests (test-first) | delegated | [x] | | |
 | T3 | `render`: heightmap terrain, lighting, dust fog | delegated | [ ] | | |
 | T4 | `render`: billboard rider sprite with 8-direction selection from heading (+ tests for direction mapping) | delegated | [ ] | | |
 | T5 | `game`: input -> core movement, follow camera, wire plugins; runs | delegated | [ ] | | |
@@ -72,6 +72,11 @@ Forecast: ~700 authored changed lines across all tasks.
   `tonemapping_luts`, `zstd_rust`). No audio, UI, text, glTF, scenes, picking or gamepad.
   Checks: fmt ok, clippy ok, test ok (0 tests), `cargo tree -p pampa-core | rg -c bevy` -> no match.
 
+- T2: `pampa-core` adds `Vec2`, `Heading` (continuous, `[0, TAU)`), `AnimationState`, `Circle` collider,
+  procedural `Terrain` (3 sine-product octaves, amplitude 2.5 m) and kinematic `Rider`.
+  RED: `cargo test -p pampa-core` -> 0 passed; 19 failed (`todo!()` stubs). GREEN: 19 passed.
+  Checks: fmt ok, clippy ok, `cargo tree -p pampa-core | rg -c bevy` -> no match.
+
 ## Next step
 
-T2.
+T3.
