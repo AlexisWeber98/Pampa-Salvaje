@@ -40,15 +40,35 @@ Characters are procedurally painted billboard sprites (no third-party art):
 rounded, shaded and outlined figures in eight view directions, with a walk
 cycle and, for horses, a gallop cycle paced by their speed.
 
+Townsfolk talk back: bump into somebody with the horse and they complain in a
+speech bubble above their head ("¡Eh, mirá por dónde andás!" at a walk,
+"¡Casi me pisa el pingo, che!" at a gallop). Brushing past at a crawl says
+nothing, the same person waits a few seconds before complaining again, and the
+same line never repeats twice in a row. Bubbles are paper with an ink outline,
+lettered in the bitmap font (now with lowercase, accents and `¡ ¿`), face the
+camera and fade out after about 3 s.
+
+### Dialogue is data
+
+What people say lives in editable [RON](https://github.com/ron-rs/ron) files
+under `assets/dialogue/`, not in code: `bumps.ron` holds one pool of lines per
+bump severity (`walk`, `gallop`). Edit it and restart the game; no recompiling.
+The `pampa-content` crate parses and validates it (non-empty pools, at most 40
+characters per line); the game checks the characters against the font, and
+falls back to a small built-in set of lines with a warning if the file is
+missing or invalid. See [`assets/dialogue/README.md`](assets/dialogue/README.md)
+for how to write lines.
+
 ## Architecture
 
-A Cargo workspace with three members:
+A Cargo workspace with four members:
 
 | Crate | Path | Role |
 |-------|------|------|
 | `pampa-core` | `crates/core` | Pure game logic. No Bevy, fully unit-tested. |
+| `pampa-content` | `crates/content` | Editable content (dialogue) loaded from RON files. No Bevy. |
 | `pampa-render` | `crates/render` | Bevy plugins that draw the world. |
-| `game` | `game` | Binary that wires input, core and render together. |
+| `game` | `game` | Binary that wires input, core, content and render together. |
 
 The rule: **game logic never knows how things are drawn.**
 
@@ -61,6 +81,9 @@ The rule: **game logic never knows how things are drawn.**
 - Animation is a logical state (`Idle`, `Walk`, `Gallop`) in `core`, never a frame index.
 - Townsfolk and the train are deterministic `core` simulations (`Townsfolk`,
   `Train`); the game steps them and render only reads them.
+- Bumps are decided in `core` (`BumpTracker`: speed threshold, gait severity,
+  per-walker cooldown; `LinePicker`: seeded, no immediate repeats); the words come
+  from `pampa-content`; render only draws the bubble (`Say` → `SpeechBubble`).
 - The visual representation is a swappable per-entity component in `render`
   (`CharacterVisual`: a billboard sprite sheet today, a 3D model later).
 

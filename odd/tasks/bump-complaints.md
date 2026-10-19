@@ -50,10 +50,10 @@ Review base: `e7be342`.
 
 | ID | Task | Route | Status | Commit | Review |
 |----|------|-------|--------|--------|--------|
-| T1 | core: bump detection + cooldown + seeded line pick (test-first) | delegated (writer trigger: 2+ non-trivial files) | [ ] | | |
-| T2 | pampa-content crate: RON dialogue loading, fallback, validation tests; `assets/dialogue/bumps.ron` + README | delegated | [ ] | | |
-| T3 | render: lowercase + Spanish punctuation glyphs; speech bubble billboard with wrap and fade | delegated | [ ] | | |
-| T4 | game: wire bump events → lines → bubbles; headless test | delegated | [ ] | | |
+| T1 | core: bump detection + cooldown + seeded line pick (test-first) | delegated (writer trigger: 2+ non-trivial files) | [x] | `d0fb9aa` | pending (RDD owned by parent) |
+| T2 | pampa-content crate: RON dialogue loading, fallback, validation tests; `assets/dialogue/bumps.ron` + README | delegated | [x] | `077bbd7` | pending (RDD owned by parent) |
+| T3 | render: lowercase + Spanish punctuation glyphs; speech bubble billboard with wrap and fade | delegated | [x] | `6578b2b` | pending (RDD owned by parent) |
+| T4 | game: wire bump events → lines → bubbles; headless test | delegated | [x] | `01f3cb2` | pending (RDD owned by parent) |
 
 ## Acceptance criteria
 
@@ -73,7 +73,48 @@ Review base: `e7be342`.
 ## Progress / Evidence
 
 - Branch `feat/bump-complaints` created from `e7be342`.
+- T1 (`d0fb9aa`, +364/-44): `pampa_core::bumps` — `BumpSeverity::from_speed` (nothing below
+  `BumpTracker::MIN_SPEED` = 1.5 m/s; `Gallop` exactly when the rider animation gallops, else `Walk`),
+  `BumpEvent { walker, severity }`, `BumpTracker` (`tick`, `register`; 6 s per-walker cooldown started only by
+  an event; duplicates in one contact list fire once), `LinePicker` (seeded xorshift; never the same index
+  twice in a row per pool id when n > 1; empty pool → `None`; stale index after a pool shrinks is ignored).
+  `Townsfolk::make_way` now returns the indices it shoved (contact detected where the shove happens). The
+  private xorshift `Rng` moved from `townsfolk` to a crate-private `rng` module. RED: 89 passed, 9 failed;
+  GREEN: 98.
+- T2 (`077bbd7`, +430/-1, ~9 lines `Cargo.lock`): new crate `crates/content` (`pampa-content`; deps `serde`
+  1.0.229 with derive, `ron` 0.12.2, `pampa-core`; no Bevy). `BumpLines { walk, gallop }` (unknown fields
+  ignored for forward compatibility), `parse`/`load`/`validate` (non-empty pools, no blank lines,
+  `MAX_LINE_CHARS` = 40 characters), `pool(severity)`, `builtin()`, `unsupported_chars(predicate)`,
+  `load_bumps_or_builtin` (returns the error for the caller to log), `asset_path` (workspace `assets/`
+  beside the sources via `CARGO_MANIFEST_DIR`, then `assets/` under the CWD). `assets/dialogue/bumps.ron`
+  (11 walk + 10 gallop lines, Rioplatense 1920s–30s voice) and `assets/dialogue/README.md`. Decision: the
+  font-charset check lives in the game crate (it sees both content and render), so content stays engine-free.
+  RED: 0/8; GREEN: 8.
+- T3 (`6578b2b`, +868/-26): `render::font` — cell grows to 12 rows (`BASELINE` = 9, `ASCENT` = 10, `X_TOP`
+  = 5, 2 descender rows); 5x5 lowercase a–z with ascenders/descenders (g j p q y), á é í (dotless base) ó ú
+  ñ ü with marks above the x-height, `! ?` and `¡ ¿` (upside down, descending); lowercase no longer maps to
+  capitals; `supports`, `line_rows` (signs keep `ASCENT` rows, so boards are unchanged). `render::bubble` —
+  `wrap` (16 chars/line, splits over-long words), `layout_bubble`, `paint_bubble` (rounded paper body, 1 px
+  ink outline, 4-row tail opening the bottom edge, centered lines), `bubble_alpha` (3 s life, 0.6 s fade),
+  `SpeechBubblePlugin` (`Say` message → one `SpeechBubble` child per speaker, replaced by a new line;
+  textures cached by line; unlit, alpha-blended, no shadow; Y-axis yaw toward the camera; PostUpdate before
+  transform propagation). RED: 38 passed, 22 failed (font, bubble, and signs via the `line_rows` stub);
+  GREEN: 60.
+- T4 (`01f3cb2`, +352/-5): `life` writes `Shoved { walkers, speed }` from `jostle_crowd` (speed before a
+  pinned walker stops the rider); `complaints::ComplaintsPlugin` loads `Dialogue` at startup (warns and
+  uses the built-in lines on error; warns on characters the font cannot draw), ticks the tracker, picks a
+  line per event and writes `Say` for the walker entity. `main` adds `SpeechBubblePlugin` and
+  `ComplaintsPlugin`. Headless tests: gallop bump → exactly one gallop line bubble on that walker; repeat
+  charge within the cooldown → nothing, after it → a different gallop line; walk bump → walk line; crawl
+  (walk_max 1.0) shoves but says nothing; shipped and built-in lines only use font characters; dialogue
+  loads at startup when not provided. RED: 30 passed, 5 failed; GREEN: 35.
+  Visual check by screenshots (temporary spawn/chatter edits, reverted): bubbles float above walkers'
+  heads, face the camera, wrap to two lines, accents, `¡`, descenders and the tail read correctly.
+- Checks after T4: fmt ok; clippy `-D warnings` ok; tests core 98, content 8, render 60, game 35;
+  `cargo build -p game` ok; `cargo tree -p pampa-core | rg -c bevy` and `cargo tree -p pampa-content | rg -c
+  bevy` no match; game binary run 15 s: exit 124 (timeout), no panic, no warnings.
+- Advisory size heuristic exceeded in T3 (font table and pixel tests are long; one coherent change).
 
 ## Next step
 
-T1.
+Native review of the slice (owned by the parent), then the user's delivery decision.
