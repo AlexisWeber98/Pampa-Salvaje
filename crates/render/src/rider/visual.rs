@@ -179,3 +179,100 @@ fn update_billboards(
         transform.translation.y = SPRITE_SIZE / 2.0 + amplitude * phase.sin().abs();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::f32::consts::{FRAC_PI_2, PI};
+
+    /// Headless app running only `update_billboards`, with stand-in sprite
+    /// handles: no GPU, window or asset server is needed to pick a view.
+    fn headless_app() -> (App, [Handle<StandardMaterial>; DIRECTIONS]) {
+        let mut assets = Assets::<StandardMaterial>::default();
+        let materials: [Handle<StandardMaterial>; DIRECTIONS] =
+            std::array::from_fn(|_| assets.add(StandardMaterial::default()));
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(RiderSprites {
+                mesh: Handle::default(),
+                materials: materials.clone(),
+            })
+            .add_systems(Update, update_billboards);
+        // Camera south of the origin looking north (core +y, Bevy -Z).
+        app.world_mut().spawn((
+            Camera3d::default(),
+            Transform::from_xyz(0.0, 4.0, 9.0).looking_at(Vec3::ZERO, Vec3::Y),
+        ));
+        (app, materials)
+    }
+
+    fn spawn_rider(app: &mut App, heading: f32, first: &Handle<StandardMaterial>) -> Entity {
+        let rider = app
+            .world_mut()
+            .spawn((
+                VisualPose {
+                    heading: Heading::from_radians(heading),
+                    animation: AnimationState::Idle,
+                },
+                Transform::default(),
+            ))
+            .id();
+        // Insert the visual tag without triggering `attach_billboards`, which
+        // is not scheduled here; the child mirrors what it would spawn.
+        app.world_mut()
+            .entity_mut(rider)
+            .insert(RiderVisual::Billboard);
+        app.world_mut().spawn((
+            Billboard {
+                view: ViewDirection::AWAY,
+            },
+            MeshMaterial3d(first.clone()),
+            Transform::default(),
+            ChildOf(rider),
+        ));
+        rider
+    }
+
+    fn billboard(app: &mut App) -> (ViewDirection, Handle<StandardMaterial>) {
+        let mut query = app
+            .world_mut()
+            .query::<(&Billboard, &MeshMaterial3d<StandardMaterial>)>();
+        let (billboard, material) = query.single(app.world()).expect("one billboard");
+        (billboard.view, material.0.clone())
+    }
+
+    #[test]
+    fn view_and_material_follow_heading_relative_to_camera() {
+        let (mut app, materials) = headless_app();
+        let rider = spawn_rider(&mut app, FRAC_PI_2, &materials[0]);
+
+        app.update();
+        assert_eq!(
+            billboard(&mut app),
+            (ViewDirection::AWAY, materials[0].clone())
+        );
+
+        // Turn to face south, toward the camera: front view.
+        app.world_mut()
+            .get_mut::<VisualPose>(rider)
+            .unwrap()
+            .heading = Heading::from_radians(3.0 * FRAC_PI_2);
+        app.update();
+        assert_eq!(
+            billboard(&mut app),
+            (ViewDirection::TOWARD, materials[4].clone())
+        );
+
+        // Facing west is screen-left for a camera looking north.
+        app.world_mut()
+            .get_mut::<VisualPose>(rider)
+            .unwrap()
+            .heading = Heading::from_radians(PI);
+        app.update();
+        assert_eq!(
+            billboard(&mut app),
+            (ViewDirection::LEFT, materials[2].clone())
+        );
+    }
+}

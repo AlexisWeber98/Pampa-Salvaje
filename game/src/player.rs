@@ -1,8 +1,8 @@
 //! The player-controlled rider: keyboard -> `RiderInput` -> core step -> visuals.
 
 use bevy::prelude::*;
-use pampa_core::{Heading, Rider, RiderInput, RiderParams, Vec2 as GroundVec2};
-use pampa_render::{RiderVisual, VisualPose, WorldTerrain, world_from_ground};
+use pampa_core::{Heading, Rider, RiderInput, RiderParams, Vec2 as GroundVec2, World};
+use pampa_render::{RiderVisual, VisualPose, world_from_ground};
 
 /// The logic rider this entity represents. Logic state lives here; the
 /// entity's `Transform` and `VisualPose` are derived from it every frame.
@@ -11,12 +11,17 @@ pub struct Player {
     pub rider: Rider,
 }
 
+/// The logic world the player moves through. Render draws from the same
+/// value (see `main`), so what collides is what is drawn.
+#[derive(Resource, Debug, Clone, Default)]
+pub struct GameWorld(pub World);
+
 /// Movement tuning for the player's horse.
 #[derive(Resource, Debug, Default)]
 pub struct PlayerTuning(pub RiderParams);
 
 /// Longest step fed to the simulation, so a hitch never teleports the rider.
-const MAX_STEP: f32 = 1.0 / 20.0;
+pub const MAX_STEP: f32 = 1.0 / 20.0;
 
 /// Systems that advance the player's logic; run cameras after this.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -27,17 +32,18 @@ pub struct PlayerPlugin;
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PlayerTuning>()
+            .init_resource::<GameWorld>()
             .add_systems(Startup, spawn_player)
             .add_systems(Update, drive_player.in_set(DrivePlayer));
     }
 }
 
-fn spawn_player(mut commands: Commands, terrain: Res<WorldTerrain>) {
+fn spawn_player(mut commands: Commands, world: Res<GameWorld>) {
     // Start facing north, which is where the camera initially looks.
     let rider = Rider::new(
         GroundVec2::ZERO,
         Heading::from_radians(std::f32::consts::FRAC_PI_2),
-        &terrain.0,
+        &world.0.terrain,
     );
     commands.spawn((
         Name::new("Player"),
@@ -67,14 +73,14 @@ fn drive_player(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     tuning: Res<PlayerTuning>,
-    terrain: Res<WorldTerrain>,
+    world: Res<GameWorld>,
     mut players: Query<(&mut Player, &mut Transform, &mut VisualPose)>,
 ) {
     let input = read_input(&keys);
     let dt = time.delta_secs().min(MAX_STEP);
     for (mut player, mut transform, mut pose) in &mut players {
         let rider = &mut player.rider;
-        rider.step(input, &tuning.0, &terrain.0, dt);
+        rider.step(input, &tuning.0, &world.0, dt);
         transform.translation = world_from_ground(rider.position, rider.height);
         *pose = VisualPose {
             heading: rider.heading,
@@ -86,6 +92,72 @@ fn drive_player(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::time::TimeUpdateStrategy;
+    use std::time::Duration;
+
+    /// Headless app: no window, no renderer, time advanced by hand.
+    fn headless_app(frame: Duration) -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(TimeUpdateStrategy::ManualDuration(frame))
+            .init_resource::<ButtonInput<KeyCode>>()
+            .add_plugins(PlayerPlugin);
+        app
+    }
+
+    fn player_rider(app: &mut App) -> Rider {
+        let mut query = app.world_mut().query::<&Player>();
+        query.single(app.world()).expect("one player").rider
+    }
+
+    #[test]
+    fn long_frames_are_capped_to_max_step() {
+        // Bevy's virtual clock already clamps at 0.25 s; stay below that so
+        // this exercises our own cap.
+        let mut app = headless_app(Duration::from_millis(200));
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyW);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::ShiftLeft);
+        app.update();
+        app.update();
+
+        let before = player_rider(&mut app);
+        app.update();
+        assert!((app.world().resource::<Time>().delta_secs() - 0.2).abs() < 1e-6);
+        let after = player_rider(&mut app);
+
+        let accel = app.world().resource::<PlayerTuning>().0.acceleration;
+        let expected_speed = before.speed + accel * MAX_STEP;
+        assert!(
+            (after.speed - expected_speed).abs() < 1e-5,
+            "a 0.2 s hitch must advance only {MAX_STEP} s: {} vs {expected_speed}",
+            after.speed
+        );
+        let moved = after.position.distance(before.position);
+        assert!((moved - after.speed * MAX_STEP).abs() < 1e-5);
+    }
+
+    #[test]
+    fn player_transform_follows_logic() {
+        let mut app = headless_app(Duration::from_millis(16));
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyW);
+        for _ in 0..30 {
+            app.update();
+        }
+        let rider = player_rider(&mut app);
+        assert!(rider.speed > 0.0);
+        let mut query = app.world_mut().query_filtered::<&Transform, With<Player>>();
+        let transform = query.single(app.world()).unwrap();
+        assert_eq!(
+            transform.translation,
+            world_from_ground(rider.position, rider.height)
+        );
+    }
 
     #[test]
     fn maps_keys_to_rider_input() {

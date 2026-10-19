@@ -20,6 +20,10 @@ impl Vec2 {
         self.x.hypot(self.y)
     }
 
+    pub fn dot(self, other: Self) -> f32 {
+        self.x * other.x + self.y * other.y
+    }
+
     pub fn distance(self, other: Self) -> f32 {
         (self - other).length()
     }

@@ -4,7 +4,7 @@
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::PrimitiveTopology;
 use bevy::prelude::*;
-use pampa_core::{Terrain, Vec2 as GroundVec2};
+use pampa_core::{PATCH_HALF_EXTENT, Terrain, Vec2 as GroundVec2};
 
 use crate::coords::world_from_ground;
 
@@ -16,6 +16,7 @@ pub struct WorldTerrain(pub Terrain);
 /// Builds the terrain mesh and props at startup.
 pub struct TerrainPlugin {
     /// Side length of the square patch, in meters, centered on the origin.
+    /// Defaults to the core world bounds so the drawn ground is the playable area.
     pub size: f32,
     /// Quads per side.
     pub resolution: u32,
@@ -24,7 +25,7 @@ pub struct TerrainPlugin {
 impl Default for TerrainPlugin {
     fn default() -> Self {
         Self {
-            size: 600.0,
+            size: 2.0 * PATCH_HALF_EXTENT,
             resolution: 150,
         }
     }

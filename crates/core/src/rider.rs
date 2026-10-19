@@ -1,6 +1,6 @@
 //! Kinematic rider (horse + outlaw) model.
 
-use crate::{AnimationState, Circle, Heading, Terrain, Vec2};
+use crate::{AnimationState, Circle, Heading, Terrain, Vec2, World};
 
 /// Tuning for the kinematic rider model. Speeds in m/s, rates per second.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -69,20 +69,48 @@ impl Rider {
         }
     }
 
-    /// Advances the rider by `dt` seconds.
-    pub fn step(&mut self, input: RiderInput, params: &RiderParams, terrain: &Terrain, dt: f32) {
-        let throttle = input.throttle.clamp(-1.0, 1.0);
-        let turn = input.turn.clamp(-1.0, 1.0);
+    /// Advances the rider by `dt` seconds inside `world`.
+    ///
+    /// Non-finite turn or throttle input counts as no input, and a
+    /// non-finite or non-positive `dt` leaves the rider untouched.
+    pub fn step(&mut self, input: RiderInput, params: &RiderParams, world: &World, dt: f32) {
+        if !(dt.is_finite() && dt > 0.0) {
+            return;
+        }
+        let throttle = finite_or_zero(input.throttle).clamp(-1.0, 1.0);
+        let turn = finite_or_zero(input.turn).clamp(-1.0, 1.0);
 
         self.heading = self.heading.rotated(turn * params.turn_rate * dt);
         self.speed = next_speed(self.speed, throttle, input.gallop, params, dt);
         self.position += self.heading.forward() * (self.speed * dt);
-        self.height = terrain.height(self.position.x, self.position.y);
+
+        let contained = world.bounds.contain(self.position, self.collider.radius);
+        self.position = contained.position;
+        for push in [contained.push_x, contained.push_y].into_iter().flatten() {
+            self.block(push);
+        }
+
+        self.height = world.terrain.height(self.position.x, self.position.y);
+    }
+
+    /// Removes the part of the rider's velocity that points against `normal`
+    /// (the unit direction a wall pushed the rider in), so it slides along
+    /// walls instead of sticking.
+    fn block(&mut self, normal: Vec2) {
+        let along_normal = self.heading.forward().dot(normal);
+        if self.speed * along_normal < 0.0 {
+            // v' = v - (v.n) n, projected back onto the (unchanged) heading.
+            self.speed -= self.speed * along_normal * along_normal;
+        }
     }
 
     pub fn animation(&self, params: &RiderParams) -> AnimationState {
         AnimationState::from_speed(self.speed, params.walk_max)
     }
+}
+
+fn finite_or_zero(value: f32) -> f32 {
+    if value.is_finite() { value } else { 0.0 }
 }
 
 /// Moves `value` toward `target` by at most `max_delta`, never overshooting.
@@ -124,13 +152,17 @@ mod tests {
 
     const DT: f32 = 1.0 / 60.0;
 
-    fn rider() -> (Rider, RiderParams, Terrain) {
-        let terrain = Terrain::default();
-        let r = Rider::new(Vec2::new(3.0, -2.0), Heading::from_radians(0.0), &terrain);
-        (r, RiderParams::default(), terrain)
+    fn rider() -> (Rider, RiderParams, World) {
+        let world = World::default();
+        let r = Rider::new(
+            Vec2::new(3.0, -2.0),
+            Heading::from_radians(0.0),
+            &world.terrain,
+        );
+        (r, RiderParams::default(), world)
     }
 
-    fn run(r: &mut Rider, input: RiderInput, p: &RiderParams, t: &Terrain, seconds: f32) {
+    fn run(r: &mut Rider, input: RiderInput, p: &RiderParams, t: &World, seconds: f32) {
         for _ in 0..(seconds / DT) as usize {
             r.step(input, p, t, DT);
         }
@@ -140,7 +172,7 @@ mod tests {
     fn new_rider_rests_on_terrain() {
         let (r, p, t) = rider();
         assert_eq!(r.speed, 0.0);
-        assert_eq!(r.height, t.height(3.0, -2.0));
+        assert_eq!(r.height, t.terrain.height(3.0, -2.0));
         assert_eq!(r.animation(&p), AnimationState::Idle);
     }
 
@@ -256,7 +288,7 @@ mod tests {
             gallop: true,
         };
         run(&mut r, gallop, &p, &t, 3.0);
-        assert_eq!(r.height, t.height(r.position.x, r.position.y));
+        assert_eq!(r.height, t.terrain.height(r.position.x, r.position.y));
     }
 
     #[test]
@@ -270,5 +302,77 @@ mod tests {
         r.step(wild, &p, &t, DT);
         assert!(r.speed <= p.acceleration * DT + 1e-6);
         assert!(r.heading.radians() <= p.turn_rate * DT + 1e-6);
+    }
+
+    #[test]
+    fn non_finite_input_counts_as_no_input() {
+        let (mut r, p, t) = rider();
+        let start = r;
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let input = RiderInput {
+                throttle: bad,
+                turn: bad,
+                gallop: true,
+            };
+            r.step(input, &p, &t, DT);
+            assert_eq!(r, start, "input {bad} must not move the rider");
+        }
+
+        r.speed = 2.0;
+        let nan_turn = RiderInput {
+            throttle: 1.0,
+            turn: f32::NAN,
+            gallop: false,
+        };
+        r.step(nan_turn, &p, &t, DT);
+        assert_eq!(r.heading, start.heading);
+        assert!(r.position.x.is_finite() && r.position.x > start.position.x);
+    }
+
+    #[test]
+    fn bad_dt_is_a_no_op() {
+        let (mut r, p, t) = rider();
+        r.speed = 3.0;
+        let start = r;
+        let input = RiderInput {
+            throttle: 1.0,
+            turn: 1.0,
+            gallop: true,
+        };
+        for dt in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -DT, 0.0] {
+            r.step(input, &p, &t, dt);
+            assert_eq!(r, start, "dt {dt} must not change the rider");
+        }
+    }
+
+    #[test]
+    fn cannot_leave_world_bounds() {
+        let (mut r, p, t) = rider();
+        let gallop = RiderInput {
+            throttle: 1.0,
+            gallop: true,
+            ..Default::default()
+        };
+        run(&mut r, gallop, &p, &t, 60.0);
+        let edge = t.bounds.max.x - Rider::COLLIDER_RADIUS;
+        assert!((r.position.x - edge).abs() < 1e-3, "x = {}", r.position.x);
+        assert!(r.speed.abs() < 1e-3, "head-on wall stops the rider");
+        assert_eq!(r.height, t.terrain.height(r.position.x, r.position.y));
+    }
+
+    #[test]
+    fn slides_along_world_edge() {
+        let (mut r, p, t) = rider();
+        r.position = Vec2::new(t.bounds.max.x - Rider::COLLIDER_RADIUS, 0.0);
+        // Heading 30 degrees north of east: into the east edge, partly along it.
+        r.heading = Heading::from_radians(30f32.to_radians());
+        r.speed = 4.0;
+        r.step(RiderInput::default(), &p, &t, DT);
+        assert!(r.position.x <= t.bounds.max.x - Rider::COLLIDER_RADIUS);
+        assert!(r.position.y > 0.0, "keeps moving along the edge");
+        assert!(
+            r.speed > 0.0 && r.speed < 4.0,
+            "loses only the part into the wall"
+        );
     }
 }

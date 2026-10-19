@@ -4,10 +4,15 @@ mod camera;
 mod player;
 
 use bevy::prelude::*;
-use pampa_render::{AtmospherePlugin, RiderVisualPlugin, TerrainPlugin};
+use pampa_core::World;
+use pampa_render::{AtmospherePlugin, RiderVisualPlugin, TerrainPlugin, WorldTerrain};
 
 fn main() {
+    // One logic world feeds both the simulation and the drawing.
+    let world = World::default();
     App::new()
+        .insert_resource(WorldTerrain(world.terrain))
+        .insert_resource(player::GameWorld(world))
         .add_plugins((
             DefaultPlugins.set(WindowPlugin {
                 primary_window: Some(Window {
