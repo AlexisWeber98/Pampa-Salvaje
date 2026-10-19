@@ -9,8 +9,8 @@ use bevy::prelude::*;
 use pampa_core::townsfolk::TOWNSFOLK_COUNT;
 use pampa_core::{Terrain, TownLayout, Townsfolk, Train, TrainSchedule, World};
 use pampa_render::{
-    AtmospherePlugin, CharacterVisualPlugin, TerrainPlugin, TownPlugin, TrainPlugin, WorldTerrain,
-    WorldTown, WorldTrain,
+    AtmospherePlugin, CharacterVisualPlugin, SignPlugin, TerrainPlugin, TownPlugin, TrainPlugin,
+    WorldTerrain, WorldTown, WorldTrain,
 };
 
 /// Seed for where the townsfolk start and wander.
@@ -42,6 +42,7 @@ fn main() {
             }),
             TerrainPlugin::default(),
             TownPlugin,
+            SignPlugin,
             AtmospherePlugin,
             TrainPlugin,
             CharacterVisualPlugin,

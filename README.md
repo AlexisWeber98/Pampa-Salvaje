@@ -17,6 +17,13 @@ for 25 s and pulls out east. The train shoves riders off its track; the rails
 themselves stay crossable. The rider barges through the crowd, shoving
 walkers aside, and walkers step around the rider.
 
+Landmarks carry painted signs in period Spanish: the general store
+("ALMACÉN DE RAMOS GENERALES"), the police station ("COMISARÍA"), the church
+("IGLESIA"), the station ("ESTACIÓN EDUARDO CASTEX", on its facade and on a
+name board on the platform) and the plaza. `pampa-core` names the places and
+says where each sign stands (`TownLayout::places`); render letters them in a
+procedural bitmap pixel font (no third-party font) on weathered boards.
+
 The camera orbits the rider a full 360° with the mouse (or Q/E), zooms with
 the wheel, eases back behind the rider after a moment without camera input
 while riding, and pulls in when a building would block its view.
