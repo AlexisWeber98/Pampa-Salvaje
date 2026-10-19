@@ -10,12 +10,15 @@
 //! [`Terrain`]. Angles are radians, counter-clockwise from east, so a
 //! positive turn is a turn to the left.
 
+pub mod activation;
 pub mod animation;
 pub mod bumps;
 pub mod chunk;
 pub mod collision;
 pub mod heading;
 pub mod math;
+pub mod obstacles;
+pub mod placement;
 pub mod places;
 pub mod rider;
 mod rng;
@@ -25,12 +28,15 @@ pub mod townsfolk;
 pub mod train;
 pub mod world;
 
+pub use activation::{ActivationChange, TownActivation, distance_to_town, nearest_town};
 pub use animation::AnimationState;
 pub use bumps::{BumpEvent, BumpSeverity, BumpTracker, LinePicker};
 pub use chunk::{ChunkCoord, WorldConfig, WorldConfigError};
 pub use collision::{Aabb, Body, Circle, SideObstacle};
 pub use heading::Heading;
 pub use math::Vec2;
+pub use obstacles::StaticObstacles;
+pub use placement::{PlacementError, place_towns};
 pub use places::{Place, PlaceKind, Sign, SignMount};
 pub use rider::{MAX_STEP, Rider, RiderInput, RiderParams};
 pub use terrain::{FlatArea, Terrain};

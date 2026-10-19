@@ -8,7 +8,7 @@
 
 use std::fmt;
 
-use crate::{Aabb, FlatArea, Heading, PATCH_HALF_EXTENT, Terrain, Vec2};
+use crate::{Aabb, FlatArea, Heading, Terrain, Vec2};
 
 /// What a building is, so render can pick its look and logic its role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -189,8 +189,6 @@ pub enum TownConfigError {
     NoCentralBlock { blocks: (usize, usize) },
     /// `PlazaPlacement::FacingStation` in a town without a railway.
     NoStationToFace,
-    /// The town and its leveled margin reach past the world patch.
-    OutsideWorld { reach: f32, limit: f32 },
 }
 
 impl fmt::Display for TownConfigError {
@@ -230,11 +228,6 @@ impl fmt::Display for TownConfigError {
                     "plaza `FacingStation` needs a railway, but there is none"
                 )
             }
-            Self::OutsideWorld { reach, limit } => write!(
-                f,
-                "the town and its leveled margin reach {reach:.0} m from the world center, \
-                 past the {limit:.0} m world patch"
-            ),
         }
     }
 }
@@ -256,6 +249,8 @@ pub struct TownLayout {
     pub buildings: Vec<Building>,
     /// Hitching rail in front of the general store.
     pub hitching_post: HitchingPost,
+    /// The config's seed, also used for the town's crowd.
+    pub seed: u32,
     grid: Aabb,
     extent: Aabb,
     arrival: (Vec2, Heading),
@@ -272,7 +267,6 @@ impl TownLayout {
         let plaza = grid.block(plaza_block.0, plaza_block.1);
         let bounds = grid.bounds();
         let extent = grid.extent(config.railway);
-        check_fits_the_world(extent)?;
 
         let civic = civic_blocks(&grid, plaza_block);
         let windmills = windmill_blocks(&grid, plaza_block, &civic);
@@ -295,7 +289,7 @@ impl TownLayout {
         }
         let railway = config.railway.map(|r| {
             buildings.extend(station_yard(&grid, r, plaza.center()));
-            railway_line(bounds, r)
+            railway_line(bounds, r, grid.along_half(r.side))
         });
 
         let store = buildings
@@ -311,6 +305,7 @@ impl TownLayout {
             railway,
             buildings,
             hitching_post,
+            seed: config.seed,
             grid: bounds,
             extent,
             arrival: arrival(&grid, plaza_block, config.railway),
@@ -337,6 +332,21 @@ impl TownLayout {
         self.extent
     }
 
+    /// The extent plus the band where the leveled ground blends back into
+    /// the pampa: everything the town changes on the ground.
+    pub fn leveled(&self) -> Aabb {
+        self.extent.expanded(Self::LEVELED_BAND)
+    }
+
+    /// The strip the railway runs along, a few meters to either side of the
+    /// track, from one end of the line to the other.
+    pub fn rail_corridor(&self) -> Option<Aabb> {
+        let r = self.railway?;
+        let min = Vec2::new(r.start.x.min(r.end.x), r.start.y.min(r.end.y));
+        let max = Vec2::new(r.start.x.max(r.end.x), r.start.y.max(r.end.y));
+        Some(Aabb::new(min, max).expanded(Self::RAIL_CORRIDOR_HALF))
+    }
+
     /// Ground to level under the town, at the natural height of its center.
     pub fn flat_area(&self, terrain: &Terrain) -> FlatArea {
         let extent = self.extent();
@@ -344,7 +354,7 @@ impl TownLayout {
         FlatArea {
             center,
             half_extents: extent.size() * 0.5,
-            falloff: FLAT_FALLOFF,
+            falloff: Self::LEVELED_BAND,
             height: terrain.natural_height(center.x, center.y),
         }
     }
@@ -369,8 +379,17 @@ impl TownLayout {
     }
 }
 
-/// Leveled band around the town, in meters.
-const FLAT_FALLOFF: f32 = 60.0;
+impl TownLayout {
+    /// Width of the band around the town where leveled ground blends back
+    /// into the pampa, in meters.
+    pub const LEVELED_BAND: f32 = 60.0;
+    /// How far the track runs on past either end of the grid, in meters: the
+    /// train enters and leaves the town's line out there, in the fog.
+    pub const RAIL_RUN_OUT: f32 = 400.0;
+    /// Half the width of [`Self::rail_corridor`], in meters.
+    pub const RAIL_CORRIDOR_HALF: f32 = 4.0;
+}
+
 /// Broad track gauge, in meters.
 const RAIL_GAUGE: f32 = 1.676;
 /// Block size the landmark and lot proportions were drawn for, in meters.
@@ -512,23 +531,6 @@ impl Grid {
     /// Scale of block-relative proportions.
     fn scale(&self) -> f32 {
         self.block / REFERENCE_BLOCK
-    }
-}
-
-/// The town and its leveled margin must stay inside the world patch.
-fn check_fits_the_world(extent: Aabb) -> Result<(), TownConfigError> {
-    let leveled = extent.expanded(FLAT_FALLOFF);
-    let reach = [leveled.min.x, leveled.min.y, leveled.max.x, leveled.max.y]
-        .into_iter()
-        .map(f32::abs)
-        .fold(0.0, f32::max);
-    if reach > PATCH_HALF_EXTENT {
-        Err(TownConfigError::OutsideWorld {
-            reach,
-            limit: PATCH_HALF_EXTENT,
-        })
-    } else {
-        Ok(())
     }
 }
 
@@ -888,18 +890,21 @@ fn station_yard(grid: &Grid, railway: RailwayConfig, plaza: Vec2) -> Vec<Buildin
     out
 }
 
-/// The track: parallel to the grid's `side` at `offset`, across the patch.
-fn railway_line(grid: Aabb, r: RailwayConfig) -> Railway {
+/// The track: parallel to the grid's `side` at `offset`, running
+/// [`TownLayout::RAIL_RUN_OUT`] past either end of the grid.
+fn railway_line(grid: Aabb, r: RailwayConfig, along_half: f32) -> Railway {
     // A zero-size box on the track centerline.
     let line = yard_box(grid, r.side, (0.0, 0.0), (r.offset, r.offset));
+    let reach = along_half + TownLayout::RAIL_RUN_OUT;
+    let c = grid.center();
     let (start, end) = match r.side {
         Side::North | Side::South => (
-            Vec2::new(-PATCH_HALF_EXTENT, line.min.y),
-            Vec2::new(PATCH_HALF_EXTENT, line.min.y),
+            Vec2::new(c.x - reach, line.min.y),
+            Vec2::new(c.x + reach, line.min.y),
         ),
         Side::East | Side::West => (
-            Vec2::new(line.min.x, -PATCH_HALF_EXTENT),
-            Vec2::new(line.min.x, PATCH_HALF_EXTENT),
+            Vec2::new(line.min.x, c.y - reach),
+            Vec2::new(line.min.x, c.y + reach),
         ),
     };
     Railway {
@@ -989,7 +994,7 @@ fn arrival(grid: &Grid, plaza: (usize, usize), railway: Option<RailwayConfig>) -
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::{Rider, WorldBounds};
+    use crate::Rider;
 
     /// Configs every invariant is checked against: square and oblong grids,
     /// odd and even block counts, blocks of 32–50 m, streets of 8–14 m, the
@@ -1394,7 +1399,8 @@ pub(crate) mod tests {
             let n = normal(config.side);
             let grid = t.grid();
             let along = Vec2::new(n.y.abs(), n.x.abs());
-            // A straight line parallel to the grid side, spanning the patch.
+            // A straight line parallel to the grid side, running past both
+            // ends of the grid by the run-out.
             assert!((rail.end - rail.start).dot(n).abs() < 1e-4);
             let edge =
                 grid.center().dot(n) + grid.size().dot(Vec2::new(n.x.abs(), n.y.abs())) / 2.0;
@@ -1403,8 +1409,20 @@ pub(crate) mod tests {
                 "{}",
                 c.name
             );
-            assert!(rail.start.dot(along) <= -PATCH_HALF_EXTENT);
-            assert!(rail.end.dot(along) >= PATCH_HALF_EXTENT);
+            let (lo, hi) = (
+                grid.min.dot(along) - TownLayout::RAIL_RUN_OUT,
+                grid.max.dot(along) + TownLayout::RAIL_RUN_OUT,
+            );
+            assert!((rail.start.dot(along) - lo).abs() < 1e-3, "{}", c.name);
+            assert!((rail.end.dot(along) - hi).abs() < 1e-3, "{}", c.name);
+            let corridor = t.rail_corridor().expect("a corridor");
+            assert!(corridor.contains_point(rail.start) && corridor.contains_point(rail.end));
+            assert!(
+                (corridor.size().dot(Vec2::new(n.x.abs(), n.y.abs()))
+                    - 2.0 * TownLayout::RAIL_CORRIDOR_HALF)
+                    .abs()
+                    < 1e-3
+            );
             // The station stands between the grid and the track, close to it.
             let station = find(&t, BuildingKind::Station).unwrap();
             let near = station.footprint.center().dot(n)
@@ -1435,7 +1453,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn everything_built_sits_on_level_ground_inside_the_world() {
+    fn everything_built_sits_on_level_ground() {
         let terrain = Terrain::default();
         for t in sample_towns() {
             let area = t.flat_area(&terrain);
@@ -1444,12 +1462,7 @@ pub(crate) mod tests {
                 terrain.natural_height(area.center.x, area.center.y)
             );
             let leveled = terrain.clone().with_flat_area(area);
-            let bounds = Aabb::new(WorldBounds::PATCH.min, WorldBounds::PATCH.max);
-            assert!(
-                bounds.contains(&t.extent().expanded(area.falloff)),
-                "{}",
-                t.name
-            );
+            assert_eq!(t.leveled(), t.extent().expanded(area.falloff), "{}", t.name);
             assert!(t.extent().contains(&t.grid()));
             for b in &t.buildings {
                 assert!(t.extent().contains(&b.footprint), "{}: {b:?}", t.name);
@@ -1553,8 +1566,7 @@ pub(crate) mod tests {
             for o in t.obstacles() {
                 assert!(!o.expanded(2.0).contains_point(spawn));
             }
-            let world = Aabb::new(WorldBounds::PATCH.min, WorldBounds::PATCH.max);
-            assert!(world.expanded(-5.0).contains_point(spawn));
+            assert!(t.leveled().expanded(-5.0).contains_point(spawn));
         }
     }
 
@@ -1669,13 +1681,15 @@ pub(crate) mod tests {
             assert_eq!(TownLayout::generate(&config), Err(expected.clone()));
             assert!(!expected.to_string().is_empty());
         }
+        // How far a town reaches is the world's business, not the town's:
+        // any size and origin that builds is a valid town.
         for config in [
             TownConfig {
                 blocks: (12, 5),
                 ..base.clone()
             },
             TownConfig {
-                origin: Vec2::new(150.0, 0.0),
+                origin: Vec2::new(5150.0, -2000.0),
                 ..base.clone()
             },
             TownConfig {
@@ -1683,12 +1697,57 @@ pub(crate) mod tests {
                 ..base.clone()
             },
         ] {
-            let error = TownLayout::generate(&config).unwrap_err();
-            assert!(
-                matches!(error, TownConfigError::OutsideWorld { .. }),
-                "{error}"
-            );
-            assert!(error.to_string().contains("world patch"), "{error}");
+            TownLayout::generate(&config).unwrap_or_else(|e| panic!("{e}"));
+        }
+    }
+
+    #[test]
+    fn a_town_is_the_same_wherever_it_stands() {
+        let offset = Vec2::new(3000.0, -2000.0);
+        for c in sample_configs() {
+            let here = TownLayout::generate(&c).unwrap();
+            let there = TownLayout::generate(&TownConfig {
+                origin: c.origin + offset,
+                ..c.clone()
+            })
+            .unwrap();
+            let moved = |a: Aabb| Aabb::new(a.min + offset, a.max + offset);
+            let near =
+                |a: Aabb, b: Aabb| a.min.distance(b.min) < 1e-2 && a.max.distance(b.max) < 1e-2;
+            assert!(near(there.grid(), moved(here.grid())), "{}", c.name);
+            assert!(near(there.extent(), moved(here.extent())), "{}", c.name);
+            assert!(near(there.leveled(), moved(here.leveled())), "{}", c.name);
+            assert!(near(there.plaza, moved(here.plaza)), "{}", c.name);
+            assert_eq!(there.streets.len(), here.streets.len());
+            for (a, b) in there.streets.iter().zip(&here.streets) {
+                assert!(near(*a, moved(*b)), "{}", c.name);
+            }
+            assert_eq!(there.buildings.len(), here.buildings.len());
+            for (a, b) in there.buildings.iter().zip(&here.buildings) {
+                assert_eq!((a.kind, a.front), (b.kind, b.front));
+                assert!(near(a.footprint, moved(b.footprint)), "{}", c.name);
+            }
+            assert!(there.arrival().0.distance(here.arrival().0 + offset) < 1e-2);
+            assert_eq!(there.arrival().1, here.arrival().1);
+            match (there.railway, here.railway) {
+                (Some(a), Some(b)) => {
+                    assert!(a.start.distance(b.start + offset) < 1e-2);
+                    assert!(a.end.distance(b.end + offset) < 1e-2);
+                }
+                (None, None) => {}
+                other => panic!("{other:?}"),
+            }
+            let graph = |t: &TownLayout| crate::StreetGraph::from_town(t).nodes;
+            for (a, b) in graph(&there).iter().zip(graph(&here)) {
+                assert!(a.distance(b + offset) < 1e-2, "{}", c.name);
+            }
+            for (a, b) in there.places().iter().zip(here.places()) {
+                assert_eq!(a.kind, b.kind);
+                for (sa, sb) in a.signs.iter().zip(&b.signs) {
+                    assert!(sa.anchor.distance(sb.anchor + offset) < 1e-2);
+                }
+            }
+            assert_eq!(there.seed, c.seed);
         }
     }
 

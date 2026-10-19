@@ -1,0 +1,184 @@
+//! Static obstacles indexed on a uniform grid, so collision only looks at
+//! the footprints near a point instead of every footprint in the world.
+
+use std::collections::HashMap;
+use std::ops::Deref;
+
+use crate::{Aabb, Vec2};
+
+/// Every static footprint of the world, with a uniform-grid index.
+///
+/// Reads like a slice of [`Aabb`] (in insertion order); [`Self::near`]
+/// returns only the footprints overlapping an area.
+#[derive(Debug, Clone, Default)]
+pub struct StaticObstacles {
+    items: Vec<Aabb>,
+    /// Footprint indices per grid cell.
+    cells: HashMap<(i32, i32), Vec<u32>>,
+}
+
+impl StaticObstacles {
+    /// Side of one index cell, in meters: about a house lot.
+    pub const CELL: f32 = 16.0;
+
+    /// The obstacles in `items`, indexed.
+    pub fn new(items: Vec<Aabb>) -> Self {
+        let mut obstacles = Self::default();
+        for item in items {
+            obstacles.push(item);
+        }
+        obstacles
+    }
+
+    /// Adds one footprint.
+    pub fn push(&mut self, item: Aabb) {
+        let index = self.items.len() as u32;
+        for cell in Self::cells_of(item) {
+            self.cells.entry(cell).or_default().push(index);
+        }
+        self.items.push(item);
+    }
+
+    /// Adds every footprint of `items`.
+    pub fn extend(&mut self, items: impl IntoIterator<Item = Aabb>) {
+        for item in items {
+            self.push(item);
+        }
+    }
+
+    /// Every footprint overlapping or touching `area`, once each, in
+    /// insertion order. A non-finite `area` finds nothing.
+    pub fn near(&self, area: Aabb) -> Vec<&Aabb> {
+        let finite = [area.min.x, area.min.y, area.max.x, area.max.y]
+            .iter()
+            .all(|v| v.is_finite());
+        if !finite {
+            return Vec::new();
+        }
+        let mut found: Vec<u32> = Self::cells_of(area)
+            .filter_map(|cell| self.cells.get(&cell))
+            .flatten()
+            .copied()
+            .collect();
+        found.sort_unstable();
+        found.dedup();
+        found
+            .into_iter()
+            .map(|i| &self.items[i as usize])
+            .filter(|o| touches(o, &area))
+            .collect()
+    }
+
+    /// The grid cells `area` covers.
+    fn cells_of(area: Aabb) -> impl Iterator<Item = (i32, i32)> {
+        let cell = |v: f32| (v / Self::CELL).floor() as i32;
+        let (x0, y0) = (cell(area.min.x), cell(area.min.y));
+        let (x1, y1) = (cell(area.max.x), cell(area.max.y));
+        (y0..=y1).flat_map(move |y| (x0..=x1).map(move |x| (x, y)))
+    }
+}
+
+impl Deref for StaticObstacles {
+    type Target = [Aabb];
+
+    fn deref(&self) -> &[Aabb] {
+        &self.items
+    }
+}
+
+impl<'a> IntoIterator for &'a StaticObstacles {
+    type Item = &'a Aabb;
+    type IntoIter = std::slice::Iter<'a, Aabb>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.items.iter()
+    }
+}
+
+impl PartialEq for StaticObstacles {
+    fn eq(&self, other: &Self) -> bool {
+        self.items == other.items
+    }
+}
+
+impl PartialEq<Vec<Aabb>> for StaticObstacles {
+    fn eq(&self, other: &Vec<Aabb>) -> bool {
+        &self.items == other
+    }
+}
+
+impl From<Vec<Aabb>> for StaticObstacles {
+    fn from(items: Vec<Aabb>) -> Self {
+        Self::new(items)
+    }
+}
+
+/// Whether two boxes overlap or share an edge.
+fn touches(a: &Aabb, b: &Aabb) -> bool {
+    a.min.x <= b.max.x && b.min.x <= a.max.x && a.min.y <= b.max.y && b.min.y <= a.max.y
+}
+
+/// A square query area of half side `reach` around `center`.
+pub(crate) fn around(center: Vec2, reach: f32) -> Aabb {
+    Aabb::from_center_size(center, Vec2::new(2.0 * reach, 2.0 * reach))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rng::Rng;
+
+    fn scattered(n: u32) -> Vec<Aabb> {
+        let mut rng = Rng::new(5, 0);
+        (0..n)
+            .map(|_| {
+                let c = Vec2::new(rng.range(-300.0, 300.0), rng.range(-300.0, 300.0));
+                let s = Vec2::new(rng.range(0.2, 60.0), rng.range(0.2, 25.0));
+                Aabb::from_center_size(c, s)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn near_finds_exactly_the_overlapping_footprints_once_in_order() {
+        let items = scattered(400);
+        let obstacles = StaticObstacles::new(items.clone());
+        assert_eq!(obstacles, items);
+        assert_eq!(obstacles.len(), 400);
+        let mut rng = Rng::new(8, 1);
+        for _ in 0..300 {
+            let c = Vec2::new(rng.range(-350.0, 350.0), rng.range(-350.0, 350.0));
+            let area = around(c, rng.range(0.1, 40.0));
+            let expected: Vec<&Aabb> = items.iter().filter(|o| touches(o, &area)).collect();
+            assert_eq!(obstacles.near(area), expected, "{area:?}");
+        }
+    }
+
+    #[test]
+    fn pushing_keeps_the_index_in_step() {
+        let mut obstacles = StaticObstacles::default();
+        assert!(obstacles.near(around(Vec2::ZERO, 1000.0)).is_empty());
+        let wall = Aabb::new(Vec2::new(-20.0, 2.0), Vec2::new(20.0, 6.0));
+        obstacles.push(wall);
+        obstacles.extend([Aabb::from_center_size(
+            Vec2::new(5000.0, -3000.0),
+            Vec2::new(2.0, 2.0),
+        )]);
+        assert_eq!(
+            obstacles.near(around(Vec2::new(0.0, 4.0), 0.5)),
+            vec![&wall]
+        );
+        assert_eq!(
+            obstacles
+                .near(around(Vec2::new(4999.0, -3000.0), 0.5))
+                .len(),
+            1
+        );
+        assert!(
+            obstacles
+                .near(around(Vec2::new(100.0, 100.0), 5.0))
+                .is_empty()
+        );
+        assert_eq!((&obstacles).into_iter().count(), 2);
+    }
+}

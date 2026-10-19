@@ -1,11 +1,10 @@
 //! The static world the rider moves through: terrain and playable bounds.
 
-use crate::{Aabb, Body, Circle, SideObstacle, Terrain, TownLayout, Vec2, WorldConfig};
+use crate::obstacles::around;
+use crate::{Body, Circle, SideObstacle, StaticObstacles, Terrain, TownLayout, Vec2, WorldConfig};
 
-/// Half the side length of the square terrain patch, in meters.
-///
-/// Render draws exactly this patch, so the playable bounds and the drawn
-/// ground always agree.
+/// Half the side of the terrain patch render still draws until chunk
+/// streaming replaces it, in meters.
 pub const PATCH_HALF_EXTENT: f32 = 300.0;
 
 /// Axis-aligned playable area on the ground plane.
@@ -26,9 +25,6 @@ pub struct Contained {
 }
 
 impl WorldBounds {
-    /// The drawn terrain patch, centered on the origin.
-    pub const PATCH: Self = Self::centered(PATCH_HALF_EXTENT);
-
     /// A square of side `2 * half_extent` centered on the origin.
     pub const fn centered(half_extent: f32) -> Self {
         Self {
@@ -71,8 +67,9 @@ pub struct World {
     pub config: WorldConfig,
     pub terrain: Terrain,
     pub bounds: WorldBounds,
-    /// Static footprints the rider cannot pass through.
-    pub obstacles: Vec<Aabb>,
+    /// Static footprints the rider cannot pass through, indexed so
+    /// collision only looks at the nearby ones.
+    pub obstacles: StaticObstacles,
     /// Moving footprints (the train), refreshed by the game every frame.
     pub moving: Vec<SideObstacle>,
 }
@@ -85,7 +82,7 @@ impl World {
             config,
             terrain,
             bounds: config.bounds(),
-            obstacles: Vec::new(),
+            obstacles: StaticObstacles::default(),
             moving: Vec::new(),
         }
     }
@@ -95,13 +92,26 @@ impl World {
         Self::new(WorldConfig::default(), terrain)
     }
 
-    /// `terrain` leveled under `town`, with the town's footprints as obstacles.
+    /// `terrain` leveled under `town`, with the town's footprints as
+    /// obstacles, in the default world.
     pub fn with_town(terrain: Terrain, town: &TownLayout) -> Self {
-        let area = town.flat_area(&terrain);
-        Self {
-            obstacles: town.obstacles(),
-            ..Self::open(terrain.with_flat_area(area))
+        Self::with_towns(WorldConfig::default(), terrain, std::slice::from_ref(town))
+    }
+
+    /// The world `config` describes, with `terrain` leveled under every
+    /// town and every town's footprints as obstacles. The towns should come
+    /// from [`crate::place_towns`], so they stay apart and inside.
+    pub fn with_towns(config: WorldConfig, terrain: Terrain, towns: &[TownLayout]) -> Self {
+        let mut terrain = terrain;
+        for town in towns {
+            let area = town.flat_area(&terrain);
+            terrain = terrain.with_flat_area(area);
         }
+        let mut world = Self::new(config, terrain);
+        for town in towns {
+            world.obstacles.extend(town.obstacles());
+        }
+        world
     }
 }
 
@@ -114,6 +124,8 @@ const SEARCH_STEP: f32 = 0.25;
 /// Farthest the free-spot search looks, in meters: past either end of the
 /// longest train.
 const SEARCH_RANGE: f32 = 60.0;
+/// Extra reach of the static-obstacle lookup around a circle, in meters.
+const LOOKUP_SLACK: f32 = 0.5;
 
 impl World {
     /// Pushes a circle at `center` out of every overlapping obstacle, static
@@ -182,7 +194,10 @@ impl World {
             for body in bodies {
                 apply(collider.push_out_of_body(center, body), &mut center);
             }
-            for obstacle in &self.obstacles {
+            let nearby = self
+                .obstacles
+                .near(around(center, collider.radius + LOOKUP_SLACK));
+            for obstacle in nearby {
                 apply(collider.push_out(center, obstacle), &mut center);
             }
             if with_moving {
@@ -201,7 +216,8 @@ impl World {
     fn overlap(&self, collider: Circle, center: Vec2) -> f32 {
         let footprints = self
             .obstacles
-            .iter()
+            .near(around(center, collider.radius + LOOKUP_SLACK))
+            .into_iter()
             .chain(self.moving.iter().map(|m| &m.footprint));
         footprints
             .filter_map(|o| collider.push_out(center, o))
@@ -265,6 +281,37 @@ mod tests {
     use crate::{Aabb, SideObstacle};
 
     #[test]
+    fn every_town_levels_its_ground_and_blocks_its_buildings() {
+        let configs = [
+            crate::TownConfig::castex(),
+            crate::TownConfig {
+                name: "Lejos".into(),
+                origin: Vec2::new(3000.0, -2000.0),
+                ..crate::TownConfig::castex()
+            },
+        ];
+        let (towns, errors) = crate::place_towns(&WorldConfig::default(), &configs);
+        assert!(errors.is_empty(), "{errors:?}");
+        let terrain = Terrain::default();
+        let world = World::with_towns(WorldConfig::default(), terrain.clone(), &towns);
+        assert_eq!(world.terrain.flat_areas.len(), 2);
+        let mut all = Vec::new();
+        for t in &towns {
+            let area = t.flat_area(&terrain);
+            assert!(world.terrain.flat_areas.contains(&area));
+            let c = t.grid().center();
+            assert_eq!(world.terrain.height(c.x, c.y), area.height);
+            all.extend(t.obstacles());
+        }
+        assert_eq!(world.obstacles, all);
+        // Riding into a building of the far town is blocked there too.
+        let wall = towns[1].buildings[0].footprint;
+        let c = Circle::new(0.9);
+        let end = world.resolve(c, wall.center(), |_| ());
+        assert!(deepest_overlap(&world, c, end) < 1e-3, "{end:?}");
+    }
+
+    #[test]
     fn world_bounds_follow_the_world_config() {
         assert_eq!(World::default().bounds, WorldConfig::default().bounds());
         let config = WorldConfig {
@@ -279,14 +326,14 @@ mod tests {
 
     #[test]
     fn inside_points_are_untouched() {
-        let c = WorldBounds::PATCH.contain(Vec2::new(10.0, -20.0), 1.0);
+        let c = WorldBounds::centered(300.0).contain(Vec2::new(10.0, -20.0), 1.0);
         assert_eq!(c.position, Vec2::new(10.0, -20.0));
         assert_eq!((c.push_x, c.push_y), (None, None));
     }
 
     #[test]
     fn keeps_the_whole_circle_inside_and_reports_push_directions() {
-        let c = WorldBounds::PATCH.contain(Vec2::new(400.0, -299.5), 1.0);
+        let c = WorldBounds::centered(300.0).contain(Vec2::new(400.0, -299.5), 1.0);
         assert_eq!(c.position, Vec2::new(299.0, -299.0));
         assert_eq!(c.push_x, Some(Vec2::new(-1.0, 0.0)));
         assert_eq!(c.push_y, Some(Vec2::new(0.0, 1.0)));
@@ -364,7 +411,8 @@ mod tests {
     fn a_pinch_near_the_car_end_escapes_past_the_end_when_closer() {
         // The wall only covers the car's east end, and leaves room past it.
         let mut world = pinch_world();
-        world.obstacles[0] = Aabb::new(Vec2::new(3.0, 2.0), Vec2::new(4.6, 6.0));
+        world.obstacles =
+            StaticObstacles::new(vec![Aabb::new(Vec2::new(3.0, 2.0), Vec2::new(4.6, 6.0))]);
         let c = Circle::new(0.9);
         let start = Vec2::new(4.5, 1.6);
         let end = world.resolve(c, start, |_| ());

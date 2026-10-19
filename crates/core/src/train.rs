@@ -1,6 +1,7 @@
 //! A freight train running along the railway on a fixed, deterministic
-//! schedule: it rolls in from the west edge of the patch, brakes to a stop at
-//! the station, waits, pulls out to the east, and comes back a period later.
+//! schedule: it rolls in at the start of its town's line (out in the fog,
+//! past the town), brakes to a stop at the station, waits, pulls out to the
+//! far end of the line, and comes back a period later.
 //!
 //! The train is kinematic: its state is a pure function of the schedule
 //! clock. Its cars are moving obstacles that shove riders off the track.
@@ -30,7 +31,7 @@ pub struct Car {
 pub struct TrainSchedule {
     /// Seconds from one arrival to the next. Never shorter than one pass.
     pub period: f32,
-    /// Running speed between the patch edge and the station, in m/s.
+    /// Running speed between the end of the line and the station, in m/s.
     pub cruise_speed: f32,
     /// Braking and pulling-away rate, in m/s².
     pub acceleration: f32,
@@ -41,7 +42,7 @@ pub struct TrainSchedule {
 impl Default for TrainSchedule {
     fn default() -> Self {
         Self {
-            period: 150.0,
+            period: 180.0,
             cruise_speed: 10.0,
             acceleration: 0.5,
             dwell: 25.0,
@@ -56,9 +57,9 @@ pub enum TrainPhase {
     Arriving,
     /// Standing at the station.
     Dwelling,
-    /// Pulling out and running off the patch.
+    /// Pulling out and running off the end of the line.
     Departing,
-    /// Off the patch, waiting for the next run.
+    /// Off the line, waiting for the next run.
     Away,
 }
 
@@ -262,7 +263,7 @@ impl Train {
         let length = self.length();
         let stop = self.stop_at + length / 2.0;
         let brake_distance = speed * speed / (2.0 * acceleration);
-        // Enter at the patch edge, or already braking if the stop is close.
+        // Enter at the start of the line, or already braking if the stop is close.
         let cruise_distance = (stop - brake_distance).max(0.0);
         let start = stop - brake_distance - cruise_distance;
         // Run on until the last car has left the railway.
@@ -363,7 +364,10 @@ mod tests {
         let (town, train) = town_train();
         let start = train.state_at(0.0);
         assert_eq!(start.phase, TrainPhase::Arriving);
-        assert!(start.front.abs() < 1e-3, "front enters at the patch edge");
+        assert!(
+            start.front.abs() < 1e-3,
+            "front enters at the start of the line"
+        );
         assert!((start.speed - 10.0).abs() < 1e-4);
 
         let station = town
@@ -457,7 +461,7 @@ mod tests {
     }
 
     #[test]
-    fn repeats_every_period_and_leaves_the_patch_while_away() {
+    fn repeats_every_period_and_leaves_the_line_while_away() {
         let (_, mut train) = town_train();
         let period = train.period();
         for t in [0.0, 13.7, 61.0, 99.0] {
@@ -465,15 +469,21 @@ mod tests {
             assert_eq!(a.phase, b.phase);
             assert!((a.front - b.front).abs() < 1e-2 && (a.speed - b.speed).abs() < 1e-3);
         }
-        // Stepping the clock in game-sized steps matches the pure schedule.
-        let steps = (200.0 / MAX_STEP) as usize;
+        // Stepping the clock in game-sized steps over a period matches the
+        // pure schedule (checked while away, where f32 drift cannot show).
+        let away = phases(&train)[3];
+        let steps = ((period + (away.1 + away.2) / 2.0) / MAX_STEP) as usize;
         for _ in 0..steps {
             train.step(MAX_STEP);
         }
         let expected = train.state_at(steps as f32 * MAX_STEP);
-        assert!((train.state().front - expected.front).abs() < 0.05);
+        assert!(
+            (train.state().front - expected.front).abs() < 0.05,
+            "{:?} vs {expected:?}",
+            train.state()
+        );
 
-        let away = phases(&train)[3];
+        assert_eq!(train.state().phase, TrainPhase::Away);
         train.time = (away.1 + away.2) / 2.0;
         assert!(train.placed_cars().iter().all(|c| !c.on_rail));
         assert!(train.obstacles().is_empty());
