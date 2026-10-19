@@ -10,7 +10,7 @@ use crate::coords::world_from_ground;
 
 /// The logic terrain this world is drawn from. Insert before the plugin runs,
 /// or the default terrain is used.
-#[derive(Resource, Debug, Clone, Copy, Default)]
+#[derive(Resource, Debug, Clone, Default)]
 pub struct WorldTerrain(pub Terrain);
 
 /// Builds the terrain mesh and props at startup.
@@ -153,9 +153,7 @@ fn spawn_props(
         let fy = hash2(n as f32, 9.3) * 2.0 - 1.0;
         let ground = GroundVec2::new(fx * half, fy * half);
         // Settlements are cleared ground: no rocks or shrubs on leveled land.
-        if let Some(area) = terrain.0.flat_area
-            && area.weight(ground) > 0.0
-        {
+        if terrain.0.flat_areas.iter().any(|a| a.weight(ground) > 0.0) {
             continue;
         }
         let size = 0.4 + hash2(n as f32, 4.1) * 1.2;

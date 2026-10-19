@@ -35,7 +35,7 @@ fn main() {
         app.insert_resource(WorldTrain(train));
     }
     app.insert_resource(camera::CameraOccluders::from_town(&town, &world.terrain))
-        .insert_resource(WorldTerrain(world.terrain))
+        .insert_resource(WorldTerrain(world.terrain.clone()))
         .insert_resource(life::Crowd(crowd))
         .insert_resource(WorldTown(town))
         .insert_resource(player::GameWorld(world))

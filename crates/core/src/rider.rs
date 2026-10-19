@@ -425,6 +425,8 @@ mod tests {
             gallop: true,
             ..Default::default()
         };
+        // A minute of gallop from 200 m short of the east edge.
+        r.position = Vec2::new(t.bounds.max.x - 200.0, 0.0);
         run(&mut r, gallop, &p, &t, 60.0);
         let edge = t.bounds.max.x - Rider::COLLIDER_RADIUS;
         assert!((r.position.x - edge).abs() < 1e-3, "x = {}", r.position.x);

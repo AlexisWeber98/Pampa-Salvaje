@@ -12,6 +12,7 @@
 
 pub mod animation;
 pub mod bumps;
+pub mod chunk;
 pub mod collision;
 pub mod heading;
 pub mod math;
@@ -26,6 +27,7 @@ pub mod world;
 
 pub use animation::AnimationState;
 pub use bumps::{BumpEvent, BumpSeverity, BumpTracker, LinePicker};
+pub use chunk::{ChunkCoord, WorldConfig, WorldConfigError};
 pub use collision::{Aabb, Body, Circle, SideObstacle};
 pub use heading::Heading;
 pub use math::Vec2;

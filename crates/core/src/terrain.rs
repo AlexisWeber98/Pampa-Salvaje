@@ -6,14 +6,14 @@ use crate::Vec2;
 ///
 /// [`Terrain::height`] is the single source of truth for ground height; both
 /// logic and render sample it, including any [`FlatArea`] leveled for a town.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Terrain {
     /// Peak deviation from zero height, in meters.
     pub amplitude: f32,
     /// Variation seed; changes phases of every octave.
     pub seed: u32,
-    /// Ground leveled for a settlement, if any.
-    pub flat_area: Option<FlatArea>,
+    /// Ground leveled for settlements, one area per town.
+    pub flat_areas: Vec<FlatArea>,
 }
 
 impl Default for Terrain {
@@ -21,7 +21,7 @@ impl Default for Terrain {
         Self {
             amplitude: 2.5,
             seed: 1927,
-            flat_area: None,
+            flat_areas: Vec::new(),
         }
     }
 }
@@ -59,28 +59,39 @@ impl FlatArea {
 }
 
 impl Terrain {
-    /// This terrain with `area` leveled.
-    pub fn with_flat_area(self, area: FlatArea) -> Self {
-        Self {
-            flat_area: Some(area),
-            ..self
-        }
+    /// This terrain with `area` leveled too.
+    pub fn with_flat_area(mut self, area: FlatArea) -> Self {
+        self.flat_areas.push(area);
+        self
     }
 
     /// Ground height at `(x, y)`, including any leveled area.
+    ///
+    /// Where bands overlap, the leveled heights are averaged by weight and
+    /// eased in by the strongest weight, so the ground stays continuous
+    /// everywhere (world validation keeps town bands apart, so in practice
+    /// at most one area touches any point).
     pub fn height(&self, x: f32, y: f32) -> f32 {
         let natural = self.natural_height(x, y);
-        match self.flat_area {
-            Some(area) => {
-                let w = area.weight(Vec2::new(x, y));
-                if w >= 1.0 {
-                    area.height
-                } else {
-                    natural + (area.height - natural) * w
-                }
+        let p = Vec2::new(x, y);
+        let (mut strongest, mut total, mut weighted) = (0.0_f32, 0.0, 0.0);
+        for area in &self.flat_areas {
+            let w = area.weight(p);
+            if w <= 0.0 {
+                continue;
             }
-            None => natural,
+            strongest = strongest.max(w);
+            total += w;
+            weighted += w * area.height;
         }
+        if strongest <= 0.0 {
+            return natural;
+        }
+        let leveled = weighted / total;
+        if strongest >= 1.0 {
+            return leveled;
+        }
+        natural + (leveled - natural) * strongest
     }
 
     /// Height of the untouched rolling pampa at `(x, y)`.
@@ -167,7 +178,10 @@ mod tests {
     #[test]
     fn seed_changes_shape() {
         let a = Terrain::default();
-        let b = Terrain { seed: 7, ..a };
+        let b = Terrain {
+            seed: 7,
+            ..a.clone()
+        };
         assert_ne!(a.height(10.0, 20.0), b.height(10.0, 20.0));
     }
 
@@ -210,6 +224,66 @@ mod tests {
             last = w;
         }
         assert_eq!(last, 0.0);
+    }
+
+    fn two_towns() -> (Terrain, FlatArea, FlatArea) {
+        let a = FlatArea {
+            center: Vec2::new(0.0, 0.0),
+            half_extents: Vec2::new(100.0, 120.0),
+            falloff: 60.0,
+            height: 1.5,
+        };
+        let b = FlatArea {
+            center: Vec2::new(2500.0, -1800.0),
+            half_extents: Vec2::new(80.0, 80.0),
+            falloff: 60.0,
+            height: -2.0,
+        };
+        let t = Terrain::default().with_flat_area(a).with_flat_area(b);
+        (t, a, b)
+    }
+
+    #[test]
+    fn every_flat_area_levels_its_own_ground() {
+        let (t, a, b) = two_towns();
+        assert_eq!(t.flat_areas, vec![a, b]);
+        assert_eq!(t.height(0.0, 0.0), a.height);
+        assert_eq!(t.height(-99.0, 119.0), a.height);
+        assert_eq!(t.height(2500.0, -1800.0), b.height);
+        assert_eq!(t.height(2579.0, -1879.0), b.height);
+        // Between them the pampa is untouched.
+        for (x, y) in [(1200.0, -900.0), (2500.0, -1650.0), (300.0, 0.0)] {
+            assert_eq!(t.height(x, y), t.natural_height(x, y), "({x}, {y})");
+        }
+    }
+
+    #[test]
+    fn overlapping_bands_blend_continuously() {
+        // Two areas at different heights whose bands overlap: no step.
+        let a = FlatArea {
+            center: Vec2::new(-60.0, 0.0),
+            half_extents: Vec2::new(30.0, 30.0),
+            falloff: 60.0,
+            height: 2.0,
+        };
+        let b = FlatArea {
+            center: Vec2::new(60.0, 10.0),
+            height: -2.0,
+            ..a
+        };
+        let t = Terrain::default().with_flat_area(a).with_flat_area(b);
+        assert_eq!(t.height(-60.0, 0.0), 2.0);
+        assert_eq!(t.height(60.0, 10.0), -2.0);
+        let step = 0.05;
+        for j in [-40.0, 0.0, 5.0, 25.0] {
+            let mut last = t.height(-120.0, j);
+            for i in 1..4800 {
+                let h = t.height(-120.0 + i as f32 * step, j);
+                assert!((h - last).abs() < 0.05, "step at x={}", i as f32 * step);
+                assert!(h.abs() <= t.amplitude + 1e-4);
+                last = h;
+            }
+        }
     }
 
     #[test]

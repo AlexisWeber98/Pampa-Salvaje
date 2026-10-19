@@ -288,7 +288,7 @@ mod tests {
                 FRAME,
             )))
             .init_resource::<ButtonInput<KeyCode>>()
-            .insert_resource(WorldTerrain(world.terrain))
+            .insert_resource(WorldTerrain(world.terrain.clone()))
             .insert_resource(GameWorld(world))
             .insert_resource(spawn)
             .insert_resource(occluders)
@@ -351,7 +351,7 @@ mod tests {
         let r = rider(&mut app);
         let follow = FollowCamera::default();
         let focus = world_from_ground(r.position, r.height) + Vec3::Y * follow.look_height;
-        let terrain = app.world().resource::<WorldTerrain>().0;
+        let terrain = app.world().resource::<WorldTerrain>().0.clone();
         let behind = Orbit::behind(r.heading.radians());
         let expected = follow.desired(focus, &behind, &terrain);
         let at = camera(&mut app).translation;
@@ -583,7 +583,7 @@ mod tests {
             let cam = camera(&mut app).translation;
             assert_outside(&occluders, cam, &format!("yaw {yaw}"));
             let (orbit, focus) = rig(&mut app);
-            let terrain = app.world().resource::<WorldTerrain>().0;
+            let terrain = app.world().resource::<WorldTerrain>().0.clone();
             let desired = FollowCamera::default().desired(focus, &orbit, &terrain);
             if pull_in(focus, desired, &occluders.0) != desired {
                 pulled += 1;

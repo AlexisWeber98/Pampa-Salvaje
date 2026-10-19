@@ -1443,7 +1443,7 @@ pub(crate) mod tests {
                 area.height,
                 terrain.natural_height(area.center.x, area.center.y)
             );
-            let leveled = terrain.with_flat_area(area);
+            let leveled = terrain.clone().with_flat_area(area);
             let bounds = Aabb::new(WorldBounds::PATCH.min, WorldBounds::PATCH.max);
             assert!(
                 bounds.contains(&t.extent().expanded(area.falloff)),

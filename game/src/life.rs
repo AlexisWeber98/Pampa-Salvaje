@@ -208,7 +208,7 @@ mod tests {
             app.update();
         }
         let crowd = app.world().resource::<Crowd>().0.clone();
-        let terrain = app.world().resource::<GameWorld>().0.terrain;
+        let terrain = app.world().resource::<GameWorld>().0.terrain.clone();
         let mut query = app
             .world_mut()
             .query::<(&Walker, &Transform, &VisualPose)>();

@@ -1,6 +1,6 @@
 //! The static world the rider moves through: terrain and playable bounds.
 
-use crate::{Aabb, Body, Circle, SideObstacle, Terrain, TownLayout, Vec2};
+use crate::{Aabb, Body, Circle, SideObstacle, Terrain, TownLayout, Vec2, WorldConfig};
 
 /// Half the side length of the square terrain patch, in meters.
 ///
@@ -68,6 +68,7 @@ fn clamp_axis(value: f32, lo: f32, hi: f32) -> (f32, Option<f32>) {
 /// Everything static the rider collides with or stands on.
 #[derive(Debug, Clone, PartialEq)]
 pub struct World {
+    pub config: WorldConfig,
     pub terrain: Terrain,
     pub bounds: WorldBounds,
     /// Static footprints the rider cannot pass through.
@@ -77,23 +78,29 @@ pub struct World {
 }
 
 impl World {
-    /// Open terrain inside the drawn patch, with nothing built on it.
-    pub fn open(terrain: Terrain) -> Self {
+    /// Open `terrain` inside the world `config` describes, with nothing
+    /// built on it.
+    pub fn new(config: WorldConfig, terrain: Terrain) -> Self {
         Self {
+            config,
             terrain,
-            bounds: WorldBounds::PATCH,
+            bounds: config.bounds(),
             obstacles: Vec::new(),
             moving: Vec::new(),
         }
     }
 
+    /// Open terrain in the default world, with nothing built on it.
+    pub fn open(terrain: Terrain) -> Self {
+        Self::new(WorldConfig::default(), terrain)
+    }
+
     /// `terrain` leveled under `town`, with the town's footprints as obstacles.
     pub fn with_town(terrain: Terrain, town: &TownLayout) -> Self {
+        let area = town.flat_area(&terrain);
         Self {
-            terrain: terrain.with_flat_area(town.flat_area(&terrain)),
-            bounds: WorldBounds::PATCH,
             obstacles: town.obstacles(),
-            moving: Vec::new(),
+            ..Self::open(terrain.with_flat_area(area))
         }
     }
 }
@@ -258,9 +265,16 @@ mod tests {
     use crate::{Aabb, SideObstacle};
 
     #[test]
-    fn patch_bounds_match_the_drawn_patch() {
-        assert_eq!(WorldBounds::PATCH.size(), Vec2::new(600.0, 600.0));
-        assert_eq!(WorldBounds::PATCH.min, Vec2::new(-300.0, -300.0));
+    fn world_bounds_follow_the_world_config() {
+        assert_eq!(World::default().bounds, WorldConfig::default().bounds());
+        let config = WorldConfig {
+            half_extent: 1000.0,
+            chunk_size: 100.0,
+        };
+        let world = World::new(config, Terrain::default());
+        assert_eq!(world.bounds.min, Vec2::new(-1000.0, -1000.0));
+        assert_eq!(world.bounds.size(), Vec2::new(2000.0, 2000.0));
+        assert_eq!(world.config, config);
     }
 
     #[test]
@@ -283,9 +297,9 @@ mod tests {
         for town in crate::town::tests::sample_towns() {
             let world = World::with_town(Terrain::default(), &town);
             let area = town.flat_area(&Terrain::default());
-            assert_eq!(world.terrain.flat_area, Some(area));
+            assert_eq!(world.terrain.flat_areas, vec![area]);
             assert_eq!(world.obstacles, town.obstacles());
-            assert_eq!(world.bounds, WorldBounds::PATCH);
+            assert_eq!(world.bounds, WorldConfig::default().bounds());
         }
     }
 

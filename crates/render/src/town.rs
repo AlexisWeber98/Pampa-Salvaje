@@ -126,7 +126,7 @@ struct Builder<'w, 's, 'a> {
     commands: Commands<'w, 's>,
     shapes: &'a Shapes,
     palette: &'a Palette,
-    terrain: Terrain,
+    terrain: &'a Terrain,
 }
 
 impl Builder<'_, '_, '_> {
@@ -177,7 +177,7 @@ fn spawn_town(
         commands,
         shapes: &shapes,
         palette: &palette,
-        terrain: terrain.0,
+        terrain: &terrain.0,
     };
 
     let town = &town.0;
