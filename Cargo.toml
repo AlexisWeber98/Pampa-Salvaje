@@ -1,0 +1,39 @@
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/render", "game"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+pampa-core = { path = "crates/core" }
+pampa-render = { path = "crates/render" }
+# Lean Bevy: only what the slice needs (3D PBR, windowing, keyboard input).
+bevy = { version = "=0.20.0", default-features = false, features = [
+    "std",
+    "multi_threaded",
+    "async_executor",
+    "bevy_asset",
+    "bevy_log",
+    "bevy_winit",
+    "wayland",
+    "x11",
+    "keyboard",
+    "bevy_render",
+    "bevy_core_pipeline",
+    "bevy_pbr",
+    "bevy_color",
+    "bevy_mesh",
+    "bevy_image",
+    "tonemapping_luts",
+    "zstd_rust",
+] }
+
+# Bevy is slow in pure debug builds; optimize dependencies, keep our code debuggable.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

@@ -1,0 +1,11 @@
+[package]
+name = "game"
+description = "Pampa Seca game binary: wires core logic and rendering together."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+pampa-core.workspace = true
+pampa-render.workspace = true
+bevy.workspace = true

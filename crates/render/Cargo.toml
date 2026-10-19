@@ -1,0 +1,10 @@
+[package]
+name = "pampa-render"
+description = "Bevy plugins that draw the Pampa Seca world."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+pampa-core.workspace = true
+bevy.workspace = true
