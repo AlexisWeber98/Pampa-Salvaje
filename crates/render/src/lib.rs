@@ -7,6 +7,7 @@ pub mod atmosphere;
 pub mod character;
 pub mod coords;
 pub mod font;
+pub mod minimap;
 pub mod signs;
 pub mod terrain;
 pub mod town;
@@ -17,6 +18,7 @@ pub use character::{
     CharacterVisual, CharacterVisualPlugin, PERSON_LOOKS, SheetKind, ViewDirection, VisualPose,
 };
 pub use coords::world_from_ground;
+pub use minimap::{MapIcon, MinimapPlugin};
 pub use signs::{SignPlugin, Signboard};
 pub use terrain::{TerrainPlugin, WorldTerrain};
 pub use town::{TownPlugin, WindmillRotor, WorldTown};

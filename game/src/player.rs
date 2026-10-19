@@ -2,7 +2,7 @@
 
 use bevy::prelude::*;
 use pampa_core::{Heading, MAX_STEP, Rider, RiderInput, RiderParams, Vec2 as GroundVec2, World};
-use pampa_render::{CharacterVisual, SheetKind, VisualPose, world_from_ground};
+use pampa_render::{CharacterVisual, MapIcon, SheetKind, VisualPose, world_from_ground};
 
 /// The logic rider this entity represents. Logic state lives here; the
 /// entity's `Transform` and `VisualPose` are derived from it every frame.
@@ -57,6 +57,7 @@ fn spawn_player(mut commands: Commands, world: Res<GameWorld>, spawn: Res<Player
     let rider = Rider::new(spawn.position, spawn.heading, &world.0.terrain);
     commands.spawn((
         Name::new("Player"),
+        MapIcon::Player,
         CharacterVisual::Billboard(SheetKind::Rider),
         VisualPose {
             heading: rider.heading,
@@ -184,6 +185,33 @@ mod tests {
             transform.translation,
             world_from_ground(rider.position, rider.height)
         );
+    }
+
+    #[test]
+    fn minimap_arrow_follows_the_rider() {
+        use pampa_core::TownLayout;
+        use pampa_render::WorldTown;
+        use pampa_render::minimap::Minimap;
+
+        let mut app = headless_app(Duration::from_millis(16));
+        app.init_resource::<Assets<Image>>()
+            .insert_resource(WorldTown(TownLayout::castex_inspired()))
+            .add_plugins(pampa_render::MinimapPlugin);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyW);
+        let mut marks = Vec::new();
+        for _ in 0..40 {
+            app.update();
+            let rider = player_rider(&mut app);
+            let minimap = app.world().resource::<Minimap>();
+            let (expected, _) = minimap.frame.to_map_clamped(rider.position);
+            let at = minimap.player_px.expect("player marked");
+            assert!(at.distance(expected) < 1e-3, "{at:?} vs {expected:?}");
+            marks.push(at);
+        }
+        // Riding north moves the arrow up the map.
+        assert!(marks.last().unwrap().y < marks[0].y);
     }
 
     #[test]

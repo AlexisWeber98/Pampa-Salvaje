@@ -24,6 +24,14 @@ name board on the platform) and the plaza. `pampa-core` names the places and
 says where each sign stands (`TownLayout::places`); render letters them in a
 procedural bitmap pixel font (no third-party font) on weathered boards.
 
+A paper-style minimap in the top-right corner shows the town north-up: streets,
+blocks and buildings by kind, the plaza, the railway, each place by its
+initial, walkers as dots, the train when it is in town and the player as an
+arrow along its heading. It frames the town plus a 30 m margin (not the whole
+patch) so streets stay legible; out on the pampa the arrow sticks to the map
+edge. The town layer is rasterized once; only the markers redraw each frame.
+`M` toggles an enlarged, centered map.
+
 The camera orbits the rider a full 360° with the mouse (or Q/E), zooms with
 the wheel, eases back behind the rider after a moment without camera input
 while riding, and pulls in when a building would block its view.
@@ -82,6 +90,7 @@ cargo test --workspace
 | Mouse | Orbit the camera (the cursor is locked while the window has focus) |
 | `Q` / `E` | Orbit the camera left / right |
 | Mouse wheel | Zoom in / out (6–25 m) |
+| `M` | Toggle the enlarged minimap |
 | `Esc` | Quit |
 
 ## License

@@ -8,7 +8,7 @@
 use bevy::prelude::*;
 use pampa_core::{MAX_STEP, Townsfolk};
 use pampa_render::{
-    CharacterVisual, SheetKind, VisualPose, WorldTown, WorldTrain, world_from_ground,
+    CharacterVisual, MapIcon, SheetKind, VisualPose, WorldTown, WorldTrain, world_from_ground,
 };
 
 use crate::player::{DrivePlayer, GameWorld, Player, drive_player};
@@ -56,6 +56,7 @@ fn spawn_walkers(mut commands: Commands, crowd: Option<Res<Crowd>>, world: Res<G
         commands.spawn((
             Name::new(format!("Townsperson {index}")),
             Walker(index),
+            MapIcon::Walker,
             CharacterVisual::Billboard(SheetKind::person(person.look)),
             VisualPose {
                 heading: person.heading,

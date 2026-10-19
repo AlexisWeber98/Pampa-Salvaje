@@ -11,7 +11,8 @@ publish = false
 [workspace.dependencies]
 pampa-core = { path = "crates/core" }
 pampa-render = { path = "crates/render" }
-# Lean Bevy: only what the slice needs (3D PBR, windowing, keyboard and mouse input).
+# Lean Bevy: only what the slice needs (3D PBR, windowing, keyboard and mouse input,
+# UI image nodes for the minimap; no default font: lettering is our own bitmap font).
 bevy = { version = "=0.20.0", default-features = false, features = [
     "std",
     "multi_threaded",
@@ -29,6 +30,8 @@ bevy = { version = "=0.20.0", default-features = false, features = [
     "bevy_color",
     "bevy_mesh",
     "bevy_image",
+    "bevy_ui",
+    "bevy_ui_render",
     "tonemapping_luts",
     "zstd_rust",
 ] }
