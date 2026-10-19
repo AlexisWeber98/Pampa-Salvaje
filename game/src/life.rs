@@ -60,6 +60,7 @@ fn spawn_walkers(mut commands: Commands, crowd: Option<Res<Crowd>>, world: Res<G
             VisualPose {
                 heading: person.heading,
                 animation: person.animation(),
+                speed: person.speed,
             },
             Transform::from_translation(world_from_ground(person.position, height)),
         ));
@@ -82,7 +83,7 @@ fn spawn_tethered_horse(
         CharacterVisual::Billboard(SheetKind::Horse),
         VisualPose {
             heading: horse.heading,
-            animation: Default::default(),
+            ..default()
         },
         Transform::from_translation(world_from_ground(horse.position, height)),
     ));
@@ -150,6 +151,7 @@ fn place_walkers(
         *pose = VisualPose {
             heading: person.heading,
             animation: person.animation(),
+            speed: person.speed,
         };
     }
 }

@@ -60,7 +60,7 @@ fn spawn_player(mut commands: Commands, world: Res<GameWorld>, spawn: Res<Player
         CharacterVisual::Billboard(SheetKind::Rider),
         VisualPose {
             heading: rider.heading,
-            animation: Default::default(),
+            ..default()
         },
         Transform::from_translation(world_from_ground(rider.position, rider.height)),
         Player { rider },
@@ -95,6 +95,7 @@ pub(crate) fn drive_player(
         *pose = VisualPose {
             heading: rider.heading,
             animation: rider.animation(&tuning.0),
+            speed: rider.speed.abs(),
         };
     }
 }
