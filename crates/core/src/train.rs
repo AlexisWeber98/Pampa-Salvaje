@@ -395,6 +395,51 @@ mod tests {
     }
 
     #[test]
+    fn stops_alongside_the_station_of_every_town_with_a_railway() {
+        let mut served = 0;
+        for town in crate::town::tests::sample_towns() {
+            let Some(train) = Train::for_town(&town, TrainSchedule::default()) else {
+                assert_eq!(town.railway, None, "{}", town.name);
+                continue;
+            };
+            served += 1;
+            let find = |kind| {
+                town.buildings
+                    .iter()
+                    .find(|b| b.kind == kind)
+                    .unwrap()
+                    .footprint
+            };
+            let (station, platform) = (find(BuildingKind::Station), find(BuildingKind::Platform));
+            let (direction, _) = along(&train.railway);
+            let mut at_station = train.clone();
+            at_station.time = phases(&train)[1].1 + 1.0;
+            assert_eq!(at_station.state().phase, TrainPhase::Dwelling);
+            let cars = at_station.placed_cars();
+            let middle = (cars[0].center + cars[cars.len() - 1].center) * 0.5;
+            let off = (middle - station.center()).dot(direction);
+            assert!(
+                off.abs() < 1.5,
+                "{}: stops {off} m off the station",
+                town.name
+            );
+            let (lo, hi) = (platform.min.dot(direction), platform.max.dot(direction));
+            for car in &cars {
+                let (c, half) = (car.center.dot(direction), car.length / 2.0);
+                assert!(
+                    c - half >= lo && c + half <= hi,
+                    "{}: car off the platform",
+                    town.name
+                );
+                let across = Vec2::new(-direction.y, direction.x);
+                let off_track = (car.center - train.railway.start).dot(across);
+                assert!(off_track.abs() < 1e-3, "{}: car off the track", town.name);
+            }
+        }
+        assert!(served >= 4, "{served} towns with a train");
+    }
+
+    #[test]
     fn motion_is_continuous_and_never_backs_up() {
         let (_, train) = town_train();
         let mut last = train.state_at(0.0);

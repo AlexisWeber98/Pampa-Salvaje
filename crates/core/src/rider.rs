@@ -547,15 +547,16 @@ mod tests {
         }
     }
 
-    #[test]
-    fn never_ends_a_step_inside_town_buildings() {
-        let town = crate::TownLayout::castex_inspired();
-        let world = World::with_town(Terrain::default(), &town);
+    /// Gallops a wandering path from `town`'s arrival point for `seconds`,
+    /// checking the rider never ends a step inside anything; returns how
+    /// many steps ended touching an obstacle.
+    fn wander_through(town: &crate::TownLayout, seconds: f32) -> usize {
+        let world = World::with_town(Terrain::default(), town);
         let p = RiderParams::default();
         let (start, heading) = town.arrival();
         let mut r = Rider::new(start, heading, &world.terrain);
         let mut contacts = 0;
-        for frame in 0..(240.0 / DT) as usize {
+        for frame in 0..(seconds / DT) as usize {
             // Wander: gallop with a slowly changing turn.
             let turn = ((frame as f32) * 0.004).sin() * 0.6;
             let input = RiderInput {
@@ -568,7 +569,8 @@ mod tests {
                 let gap = r.position.distance(o.closest_point(r.position));
                 assert!(
                     gap >= Rider::COLLIDER_RADIUS - 1e-3,
-                    "frame {frame}: inside {o:?} at {:?}",
+                    "{}, frame {frame}: inside {o:?} at {:?}",
+                    town.name,
                     r.position
                 );
                 if gap < Rider::COLLIDER_RADIUS + 1e-2 {
@@ -577,6 +579,21 @@ mod tests {
             }
             assert!(r.position.x.is_finite() && r.position.y.is_finite());
         }
+        contacts
+    }
+
+    #[test]
+    fn never_ends_a_step_inside_town_buildings() {
+        let contacts = wander_through(&crate::TownLayout::castex_inspired(), 240.0);
         assert!(contacts > 0, "the wander path must actually hit buildings");
+    }
+
+    #[test]
+    fn never_ends_a_step_inside_the_buildings_of_any_town() {
+        let mut contacts = 0;
+        for town in crate::town::tests::sample_towns() {
+            contacts += wander_through(&town, 90.0);
+        }
+        assert!(contacts > 0, "the wander paths must actually hit buildings");
     }
 }

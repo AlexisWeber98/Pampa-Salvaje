@@ -278,6 +278,7 @@ impl Townsperson {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::town::tests::{sample_configs, sample_towns};
     use crate::{MAX_STEP, Terrain};
 
     fn town() -> (TownLayout, World) {
@@ -295,26 +296,65 @@ mod tests {
 
     #[test]
     fn street_graph_joins_neighboring_intersections_along_streets() {
-        let (town, world) = town();
-        let graph = StreetGraph::from_town(&town);
-        assert_eq!(graph.nodes.len(), 36, "6 x 6 intersections");
-        assert_eq!(graph.links.len(), graph.nodes.len());
-        let on_street = |p: Vec2| town.streets.iter().any(|s| s.contains_point(p));
-        for (a, links) in graph.links.iter().enumerate() {
-            assert!((2..=4).contains(&links.len()), "node {a}: {links:?}");
-            for &b in links {
-                assert!(graph.links[b].contains(&a), "links are symmetric");
-                let (pa, pb) = (graph.nodes[a], graph.nodes[b]);
-                assert!(pa.x == pb.x || pa.y == pb.y, "straight along a street");
-                // Every point of the link is on a street and clear of obstacles.
-                for k in 0..=20 {
-                    let p = pa + (pb - pa) * (k as f32 / 20.0);
-                    assert!(on_street(p), "{p:?} off the street");
-                    for o in &world.obstacles {
-                        assert!(!o.expanded(1.5).contains_point(p), "{p:?} near {o:?}");
+        // A walker strays at most this far from the centerline.
+        let reach = MAX_LANE + Townsperson::COLLIDER_RADIUS;
+        for (c, town) in sample_configs().iter().zip(sample_towns()) {
+            let world = World::with_town(Terrain::default(), &town);
+            let graph = StreetGraph::from_town(&town);
+            let (cols, rows) = c.blocks;
+            assert_eq!(graph.nodes.len(), (cols + 1) * (rows + 1), "{}", c.name);
+            assert_eq!(graph.links.len(), graph.nodes.len());
+            let on_street = |p: Vec2| town.streets.iter().any(|s| s.contains_point(p));
+            for (a, links) in graph.links.iter().enumerate() {
+                assert!((2..=4).contains(&links.len()), "node {a}: {links:?}");
+                for &b in links {
+                    assert!(graph.links[b].contains(&a), "links are symmetric");
+                    let (pa, pb) = (graph.nodes[a], graph.nodes[b]);
+                    assert!(pa.x == pb.x || pa.y == pb.y, "straight along a street");
+                    // Every point of the link is on a street and clear of
+                    // obstacles by more than a walker's reach.
+                    for k in 0..=20 {
+                        let p = pa + (pb - pa) * (k as f32 / 20.0);
+                        assert!(on_street(p), "{p:?} off the street");
+                        for o in &world.obstacles {
+                            assert!(
+                                !o.expanded(reach + 0.05).contains_point(p),
+                                "{}: {p:?} near {o:?}",
+                                c.name
+                            );
+                        }
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn walkers_stay_on_the_streets_of_every_town() {
+        for town in sample_towns() {
+            let world = World::with_town(Terrain::default(), &town);
+            let mut folk = Townsfolk::new(&town, 8, 5);
+            run(&mut folk, &world, 90.0, |folk| {
+                for p in &folk.people {
+                    for o in &world.obstacles {
+                        let gap = p.position.distance(o.closest_point(p.position));
+                        assert!(
+                            gap >= p.collider.radius - 1e-3,
+                            "{}: {p:?} inside {o:?}",
+                            town.name
+                        );
+                    }
+                    let on_street = town
+                        .streets
+                        .iter()
+                        .any(|s| s.expanded(0.01).contains_point(p.position));
+                    assert!(
+                        on_street,
+                        "{}: {:?} left the streets",
+                        town.name, p.position
+                    );
+                }
+            });
         }
     }
 

@@ -280,12 +280,13 @@ mod tests {
 
     #[test]
     fn town_world_levels_ground_and_blocks_buildings() {
-        let town = TownLayout::castex_inspired();
-        let world = World::with_town(Terrain::default(), &town);
-        let area = town.flat_area(&Terrain::default());
-        assert_eq!(world.terrain.flat_area, Some(area));
-        assert_eq!(world.obstacles, town.obstacles());
-        assert_eq!(world.bounds, WorldBounds::PATCH);
+        for town in crate::town::tests::sample_towns() {
+            let world = World::with_town(Terrain::default(), &town);
+            let area = town.flat_area(&Terrain::default());
+            assert_eq!(world.terrain.flat_area, Some(area));
+            assert_eq!(world.obstacles, town.obstacles());
+            assert_eq!(world.bounds, WorldBounds::PATCH);
+        }
     }
 
     /// Deepest overlap of a circle at `p` with anything in `world`, in meters.

@@ -4,7 +4,7 @@
 //! Spanish) content; render decides the lettering, the board and its height
 //! on the facade.
 
-use crate::{Aabb, BuildingKind, Side, TownLayout, Vec2};
+use crate::{Aabb, Building, BuildingKind, Side, TownLayout, Vec2};
 
 /// Which landmark a place is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -26,13 +26,14 @@ impl PlaceKind {
         PlaceKind::Plaza,
     ];
 
-    /// The diegetic name painted on its sign (uppercase Spanish).
+    /// The diegetic name painted on its sign (uppercase Spanish). The
+    /// station's sign adds the town's name ([`Place::name`]).
     pub fn name(self) -> &'static str {
         match self {
             PlaceKind::GeneralStore => "ALMACÉN DE RAMOS GENERALES",
             PlaceKind::PoliceStation => "COMISARÍA",
             PlaceKind::Church => "IGLESIA",
-            PlaceKind::Station => "ESTACIÓN EDUARDO CASTEX",
+            PlaceKind::Station => "ESTACIÓN",
             PlaceKind::Plaza => "PLAZA",
         }
     }
@@ -84,8 +85,9 @@ impl Sign {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Place {
     pub kind: PlaceKind,
-    /// The diegetic name painted on its signs.
-    pub name: &'static str,
+    /// The diegetic name painted on its signs: the kind's name, plus the
+    /// town's name for the station (e.g. "ESTACIÓN EDUARDO CASTEX").
+    pub name: String,
     /// The landmark's ground area (building footprint, or the plaza).
     pub footprint: Aabb,
     /// Signs naming it; the first is the main, street-facing one.
@@ -138,11 +140,7 @@ impl TownLayout {
                 let station = building(BuildingKind::Station)?;
                 let mut signs = vec![facade_sign(station.footprint, station.front, 14.0)];
                 if let Some(platform) = building(BuildingKind::Platform) {
-                    signs.push(platform_board(
-                        platform.footprint,
-                        platform.height,
-                        station.footprint,
-                    ));
+                    signs.push(platform_board(platform, station));
                 }
                 (station.footprint, signs)
             }
@@ -159,9 +157,13 @@ impl TownLayout {
                 (self.plaza, vec![sign])
             }
         };
+        let name = match kind {
+            PlaceKind::Station => format!("{} {}", kind.name(), self.name.to_uppercase()),
+            _ => kind.name().to_string(),
+        };
         Some(Place {
             kind,
-            name: kind.name(),
+            name,
             footprint,
             signs,
         })
@@ -179,10 +181,16 @@ impl TownLayout {
 /// Gap between a wall and the board hung on it, in meters.
 const FACADE_GAP: f32 = 0.1;
 
-/// A board of `width` centered on the `front` facade of `footprint`.
+/// Margin a facade board leaves to the wall's ends, in meters.
+const FACADE_MARGIN: f32 = 0.5;
+
+/// A board of `width` (narrowed to fit a small facade) centered on the
+/// `front` facade of `footprint`.
 fn facade_sign(footprint: Aabb, front: Side, width: f32) -> Sign {
     let normal = side_normal(front);
     let half = footprint.size() * 0.5;
+    let facade = normal.y.abs() * footprint.size().x + normal.x.abs() * footprint.size().y;
+    let width = width.min(facade - 2.0 * FACADE_MARGIN);
     let reach = normal.x.abs() * half.x + normal.y.abs() * half.y + FACADE_GAP;
     Sign {
         anchor: footprint.center() + normal * reach,
@@ -193,15 +201,25 @@ fn facade_sign(footprint: Aabb, front: Side, width: f32) -> Sign {
     }
 }
 
-/// The station name board on posts at the track edge of the platform, west
-/// of the station canopy, reading toward the passing trains.
-fn platform_board(platform: Aabb, height: f32, station: Aabb) -> Sign {
+/// The station name board on posts at the track edge of the platform, past
+/// the west (or south) end of the station canopy, reading toward the passing
+/// trains. The station faces the town, so the track is behind it.
+fn platform_board(platform: &Building, station: &Building) -> Sign {
     let width = 7.0;
+    let track = station.front.opposite();
+    let n = side_normal(track);
+    let along = Vec2::new(n.y.abs(), n.x.abs());
+    let (p, s) = (platform.footprint, station.footprint);
+    // Where the board stands along the track, and how far toward it.
+    let at = s.min.dot(along) - 2.5 - width / 2.0;
+    let depth = p.size().dot(Vec2::new(n.x.abs(), n.y.abs()));
+    let toward = p.center().dot(n) + depth / 2.0 - 0.8;
+    let base = p.center();
     Sign {
-        anchor: Vec2::new(station.min.x - 2.5 - width / 2.0, platform.max.y - 0.8),
-        facing: Side::North,
+        anchor: base + along * (at - base.dot(along)) + n * (toward - base.dot(n)),
+        facing: track,
         mount: SignMount::Posts,
-        elevation: height,
+        elevation: platform.height,
         width,
     }
 }
@@ -219,38 +237,51 @@ pub fn side_normal(side: Side) -> Vec2 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Building;
+    use crate::town::tests::{sample_configs, sample_towns};
 
     fn town() -> TownLayout {
         TownLayout::castex_inspired()
     }
 
-    fn building(t: &TownLayout, kind: BuildingKind) -> Building {
-        *t.buildings.iter().find(|b| b.kind == kind).unwrap()
+    fn building(t: &TownLayout, kind: BuildingKind) -> Option<Building> {
+        t.buildings.iter().find(|b| b.kind == kind).copied()
     }
 
-    fn place(t: &TownLayout, kind: PlaceKind) -> Place {
-        t.places().into_iter().find(|p| p.kind == kind).unwrap()
+    fn place(t: &TownLayout, kind: PlaceKind) -> Option<Place> {
+        t.places().into_iter().find(|p| p.kind == kind)
     }
 
     #[test]
     fn one_place_per_landmark_with_its_spanish_name() {
-        let places = town().places();
-        let kinds: Vec<_> = places.iter().map(|p| p.kind).collect();
-        assert_eq!(kinds, PlaceKind::ALL);
-        for p in &places {
-            assert_eq!(p.name, p.kind.name());
-            assert!(!p.name.trim().is_empty());
-            assert_eq!(p.name, p.name.to_uppercase(), "{}", p.name);
-            assert!(!p.signs.is_empty(), "{:?} has a sign", p.kind);
-            assert!(p.signs.iter().all(|s| s.width > 0.5));
+        for (c, t) in sample_configs().iter().zip(sample_towns()) {
+            let places = t.places();
+            let kinds: Vec<_> = places.iter().map(|p| p.kind).collect();
+            let expected: Vec<_> = PlaceKind::ALL
+                .into_iter()
+                .filter(|&k| k != PlaceKind::Station || c.railway.is_some())
+                .collect();
+            assert_eq!(kinds, expected, "{}", c.name);
+            for p in &places {
+                assert!(!p.name.trim().is_empty());
+                assert_eq!(p.name, p.name.to_uppercase(), "{}", p.name);
+                assert!(p.name.starts_with(p.kind.name()), "{}", p.name);
+                assert!(!p.signs.is_empty(), "{:?} has a sign", p.kind);
+                assert!(p.signs.iter().all(|s| s.width > 0.5));
+            }
+            if let Some(station) = place(&t, PlaceKind::Station) {
+                assert_eq!(
+                    station.name,
+                    format!("ESTACIÓN {}", c.name.to_uppercase()),
+                    "the station carries the town's name"
+                );
+            }
         }
         assert_eq!(
-            place(&town(), PlaceKind::GeneralStore).name,
+            place(&town(), PlaceKind::GeneralStore).unwrap().name,
             "ALMACÉN DE RAMOS GENERALES"
         );
         assert_eq!(
-            place(&town(), PlaceKind::Station).name,
+            place(&town(), PlaceKind::Station).unwrap().name,
             "ESTACIÓN EDUARDO CASTEX"
         );
     }
@@ -262,79 +293,108 @@ mod tests {
 
     #[test]
     fn building_signs_hang_just_outside_the_street_facade() {
-        let t = town();
-        for (kind, building_kind) in [
-            (PlaceKind::GeneralStore, BuildingKind::GeneralStore),
-            (PlaceKind::PoliceStation, BuildingKind::PoliceStation),
-            (PlaceKind::Church, BuildingKind::Church),
-            (PlaceKind::Station, BuildingKind::Station),
-        ] {
-            let b = building(&t, building_kind);
-            let p = place(&t, kind);
-            assert_eq!(p.footprint, b.footprint);
-            let sign = p.signs[0];
-            assert_eq!(sign.mount, SignMount::Facade);
-            assert_eq!(sign.facing, b.front, "{kind:?}");
-            assert_eq!(sign.elevation, 0.0);
-            // Outside the wall, but only just, on the facade side.
-            assert!(!b.footprint.contains_point(sign.anchor), "{kind:?}");
-            let gap = b.footprint.closest_point(sign.anchor).distance(sign.anchor);
-            assert!(gap > 0.0 && gap < 0.3, "{kind:?} gap {gap}");
-            let normal = side_normal(b.front);
-            assert!((sign.anchor - b.footprint.center()).dot(normal) > 0.0);
-            // Centered on the facade and narrower than it.
-            let along = Vec2::new(normal.y.abs(), normal.x.abs());
-            let offset = (sign.anchor - b.footprint.center()).dot(along);
-            assert!(offset.abs() < 1e-4, "{kind:?} off center by {offset}");
-            assert!(sign.width < b.footprint.size().dot(along), "{kind:?}");
-            // A street lies a few meters out in front of it.
-            let ahead = sign.anchor + normal * 6.0;
-            assert!(
-                t.streets.iter().any(|s| s.contains_point(ahead)),
-                "{kind:?} faces a street"
-            );
+        for t in sample_towns() {
+            for (kind, building_kind) in [
+                (PlaceKind::GeneralStore, BuildingKind::GeneralStore),
+                (PlaceKind::PoliceStation, BuildingKind::PoliceStation),
+                (PlaceKind::Church, BuildingKind::Church),
+                (PlaceKind::Station, BuildingKind::Station),
+            ] {
+                let Some(b) = building(&t, building_kind) else {
+                    continue;
+                };
+                let p = place(&t, kind).unwrap();
+                assert_eq!(p.footprint, b.footprint);
+                let sign = p.signs[0];
+                assert_eq!(sign.mount, SignMount::Facade);
+                assert_eq!(sign.facing, b.front, "{kind:?}");
+                assert_eq!(sign.elevation, 0.0);
+                // Outside the wall, but only just, on the facade side.
+                assert!(!b.footprint.contains_point(sign.anchor), "{kind:?}");
+                let gap = b.footprint.closest_point(sign.anchor).distance(sign.anchor);
+                assert!(gap > 0.0 && gap < 0.3, "{kind:?} gap {gap}");
+                let normal = side_normal(b.front);
+                assert!((sign.anchor - b.footprint.center()).dot(normal) > 0.0);
+                // Centered on the facade and narrower than it.
+                let along = Vec2::new(normal.y.abs(), normal.x.abs());
+                let offset = (sign.anchor - b.footprint.center()).dot(along);
+                assert!(offset.abs() < 1e-4, "{kind:?} off center by {offset}");
+                assert!(
+                    sign.width < b.footprint.size().dot(along),
+                    "{}: {kind:?} sign wider than its facade",
+                    t.name
+                );
+                // A street lies a few meters out in front of it.
+                let faces_street = (6..=12).any(|d| {
+                    let ahead = sign.anchor + normal * d as f32;
+                    t.streets.iter().any(|s| s.contains_point(ahead))
+                });
+                assert!(faces_street, "{}: {kind:?} faces a street", t.name);
+            }
         }
     }
 
     #[test]
     fn the_station_also_has_a_name_board_on_the_platform_facing_the_track() {
-        let t = town();
-        let platform = building(&t, BuildingKind::Platform);
-        let station = place(&t, PlaceKind::Station);
-        assert_eq!(station.signs.len(), 2);
-        let board = station.signs[1];
-        assert_eq!(board.mount, SignMount::Posts);
-        assert_eq!(board.facing, Side::North);
-        assert!(platform.footprint.contains_point(board.anchor));
-        assert_eq!(board.elevation, platform.height);
-        assert!(board.anchor.y < t.railway.unwrap().start.y);
-        assert_eq!(board.footprint(), None, "raised on the platform");
-        // Clear of the station's own canopy over the platform.
-        let station_building = building(&t, BuildingKind::Station);
-        assert!(
-            board.anchor.x - board.width / 2.0 > station_building.footprint.max.x
-                || board.anchor.x + board.width / 2.0 < station_building.footprint.min.x
-        );
+        for t in sample_towns() {
+            let (Some(platform), Some(station_building), Some(railway)) = (
+                building(&t, BuildingKind::Platform),
+                building(&t, BuildingKind::Station),
+                t.railway,
+            ) else {
+                continue;
+            };
+            let station = place(&t, PlaceKind::Station).unwrap();
+            assert_eq!(station.signs.len(), 2);
+            let board = station.signs[1];
+            assert_eq!(board.mount, SignMount::Posts);
+            let track = station_building.front.opposite();
+            assert_eq!(board.facing, track, "{}", t.name);
+            assert!(
+                platform.footprint.contains_point(board.anchor),
+                "{}",
+                t.name
+            );
+            assert_eq!(board.elevation, platform.height);
+            let n = side_normal(track);
+            assert!(board.anchor.dot(n) < railway.start.dot(n), "{}", t.name);
+            assert_eq!(board.footprint(), None, "raised on the platform");
+            // Clear of the station's own canopy over the platform.
+            let along = Vec2::new(n.y.abs(), n.x.abs());
+            let (a, half) = (board.anchor.dot(along), board.width / 2.0);
+            let (lo, hi) = (
+                station_building.footprint.min.dot(along),
+                station_building.footprint.max.dot(along),
+            );
+            assert!(a - half > hi || a + half < lo, "{}", t.name);
+            // Within the platform along the track.
+            let (plo, phi) = (
+                platform.footprint.min.dot(along),
+                platform.footprint.max.dot(along),
+            );
+            assert!(a - half >= plo && a + half <= phi, "{}", t.name);
+        }
     }
 
     #[test]
     fn the_plaza_sign_stands_inside_its_south_edge_clear_of_trees() {
-        let t = town();
-        let plaza = place(&t, PlaceKind::Plaza);
-        assert_eq!(plaza.footprint, t.plaza);
-        let sign = plaza.signs[0];
-        assert_eq!(sign.mount, SignMount::Posts);
-        assert_eq!(sign.facing, Side::South);
-        let area = sign
-            .footprint()
-            .expect("a post sign on the ground collides");
-        assert!(t.plaza.contains(&area));
-        assert!(sign.anchor.y - t.plaza.min.y < 2.5);
-        for &tree in &t.trees {
-            assert!(!area.expanded(0.5).contains_point(tree), "{tree:?}");
+        for t in sample_towns() {
+            let plaza = place(&t, PlaceKind::Plaza).unwrap();
+            assert_eq!(plaza.footprint, t.plaza);
+            let sign = plaza.signs[0];
+            assert_eq!(sign.mount, SignMount::Posts);
+            assert_eq!(sign.facing, Side::South);
+            let area = sign
+                .footprint()
+                .expect("a post sign on the ground collides");
+            assert!(t.plaza.contains(&area));
+            assert!(sign.anchor.y - t.plaza.min.y < 2.5);
+            for &tree in &t.trees {
+                assert!(!area.expanded(0.5).contains_point(tree), "{tree:?}");
+            }
+            // Clear of the central path so walkers and riders can enter.
+            assert!((sign.anchor.x - t.plaza.center().x).abs() - sign.width / 2.0 > 2.0);
         }
-        // Clear of the central path so walkers and riders can enter.
-        assert!((sign.anchor.x - t.plaza.center().x).abs() - sign.width / 2.0 > 2.0);
     }
 
     #[test]
@@ -367,12 +427,13 @@ mod tests {
 
     #[test]
     fn ground_post_signs_are_obstacles() {
-        let t = town();
-        let obstacles = t.obstacles();
-        for p in t.places() {
-            for s in p.signs {
-                if let Some(area) = s.footprint() {
-                    assert!(obstacles.contains(&area), "{:?}", p.kind);
+        for t in sample_towns() {
+            let obstacles = t.obstacles();
+            for p in t.places() {
+                for s in p.signs {
+                    if let Some(area) = s.footprint() {
+                        assert!(obstacles.contains(&area), "{:?}", p.kind);
+                    }
                 }
             }
         }

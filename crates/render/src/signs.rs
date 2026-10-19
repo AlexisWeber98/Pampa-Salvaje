@@ -191,7 +191,7 @@ fn spawn_signs(
         let style = BoardStyle::for_place(place.kind);
         for (n, sign) in place.signs.iter().enumerate() {
             let (center, max_height) = mount_height(town, place.kind, sign);
-            let layout = layout_board(place.name, sign.width, max_height);
+            let layout = layout_board(&place.name, sign.width, max_height);
             let seed = place.kind as u32 as f32 * 3.0 + n as f32;
             let mut image = Image::new(
                 Extent3d {
@@ -200,7 +200,7 @@ fn spawn_signs(
                     depth_or_array_layers: 1,
                 },
                 TextureDimension::D2,
-                paint_board(place.name, layout, style, seed),
+                paint_board(&place.name, layout, style, seed),
                 TextureFormat::Rgba8UnormSrgb,
                 RenderAssetUsages::RENDER_WORLD,
             );
