@@ -4,6 +4,7 @@
 //! pixels. Nothing here feeds back into game rules.
 
 pub mod atmosphere;
+pub mod bubble;
 pub mod character;
 pub mod coords;
 pub mod font;
@@ -14,6 +15,7 @@ pub mod town;
 pub mod train;
 
 pub use atmosphere::{AtmospherePlugin, DUST_COLOR};
+pub use bubble::{Say, SpeechBubble, SpeechBubblePlugin};
 pub use character::{
     CharacterVisual, CharacterVisualPlugin, PERSON_LOOKS, SheetKind, ViewDirection, VisualPose,
 };

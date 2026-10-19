@@ -1,15 +1,24 @@
-//! A tiny procedural bitmap font for in-world lettering (signs, map labels).
+//! A tiny procedural bitmap font for in-world lettering (signs, map labels,
+//! speech bubbles).
 //!
-//! Capitals are 5x7 pixels; the cell is 10 rows tall so accents and the
-//! tilde fit above the cap height. Glyphs are const bit rows: bit 4 is the
-//! leftmost column. No third-party font is involved.
+//! Capitals are 5x7 pixels and lowercase letters 5x5 with ascenders and
+//! descenders. The cell is 12 rows tall: 3 rows above the cap height hold
+//! the capitals' accents, and 2 rows below the baseline hold descenders
+//! (`g j p q y`, `¡ ¿`). Glyphs are const bit rows: bit 4 is the leftmost
+//! column. No third-party font is involved.
 
 /// Glyph cell width in pixels.
 pub const GLYPH_WIDTH: usize = 5;
-/// Glyph cell height in pixels, accent rows included.
-pub const GLYPH_HEIGHT: usize = 10;
+/// Glyph cell height in pixels, accent and descender rows included.
+pub const GLYPH_HEIGHT: usize = 12;
 /// First row of the capitals (rows above hold accents).
 pub const CAP_TOP: usize = 3;
+/// Last row of the capitals: letters sit on it, descenders hang below.
+pub const BASELINE: usize = CAP_TOP + 6;
+/// Rows from the top of the cell down to the baseline, included.
+pub const ASCENT: usize = BASELINE + 1;
+/// First row of the lowercase x-height (the rows above hold their accents).
+pub const X_TOP: usize = CAP_TOP + 2;
 /// Blank columns between two glyphs.
 pub const LETTER_SPACING: usize = 1;
 
@@ -240,6 +249,18 @@ const BASE: &[(char, [u8; 7])] = &[
     ('-', [0, 0, 0, 0b11111, 0, 0, 0]),
     (':', [0, 0b01100, 0b01100, 0, 0b01100, 0b01100, 0]),
     ('\'', [0b00100, 0b00100, 0b01000, 0, 0, 0, 0]),
+    (
+        '!',
+        [
+            0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00000, 0b00100,
+        ],
+    ),
+    (
+        '?',
+        [
+            0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b00000, 0b00100,
+        ],
+    ),
 ];
 
 /// Marks drawn in the two rows above the capitals.
@@ -258,25 +279,99 @@ const ACCENTED: &[(char, char, [u8; 2])] = &[
     ('Ü', 'U', DIAERESIS),
 ];
 
+/// Rows of a [`LOWER`] bitmap: from the cap top down through the descender.
+const LOWER_ROWS: usize = GLYPH_HEIGHT - CAP_TOP;
+
+/// Lowercase letters and the inverted Spanish marks, drawn from the cap top
+/// ([`CAP_TOP`]) down: ascenders reach the cap top, the x-height starts at
+/// [`X_TOP`], and descenders use the rows below [`BASELINE`].
+#[rustfmt::skip]
+const LOWER: &[(char, [u8; LOWER_ROWS])] = &[
+    //     cap top  .        x-height .        .        .        baseline descender
+    ('a', [0,       0,       0b01110, 0b00001, 0b01111, 0b10001, 0b01111, 0,       0      ]),
+    ('b', [0b10000, 0b10000, 0b10110, 0b11001, 0b10001, 0b10001, 0b11110, 0,       0      ]),
+    ('c', [0,       0,       0b01110, 0b10000, 0b10000, 0b10001, 0b01110, 0,       0      ]),
+    ('d', [0b00001, 0b00001, 0b01101, 0b10011, 0b10001, 0b10001, 0b01111, 0,       0      ]),
+    ('e', [0,       0,       0b01110, 0b10001, 0b11111, 0b10000, 0b01110, 0,       0      ]),
+    ('f', [0b00110, 0b01001, 0b01000, 0b11100, 0b01000, 0b01000, 0b01000, 0,       0      ]),
+    ('g', [0,       0,       0b01111, 0b10001, 0b10001, 0b10001, 0b01111, 0b00001, 0b01110]),
+    ('h', [0b10000, 0b10000, 0b10110, 0b11001, 0b10001, 0b10001, 0b10001, 0,       0      ]),
+    ('i', [0b00100, 0,       0b01100, 0b00100, 0b00100, 0b00100, 0b01110, 0,       0      ]),
+    ('j', [0b00010, 0,       0b00110, 0b00010, 0b00010, 0b00010, 0b00010, 0b10010, 0b01100]),
+    ('k', [0b10000, 0b10000, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0,       0      ]),
+    ('l', [0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110, 0,       0      ]),
+    ('m', [0,       0,       0b11010, 0b10101, 0b10101, 0b10001, 0b10001, 0,       0      ]),
+    ('n', [0,       0,       0b10110, 0b11001, 0b10001, 0b10001, 0b10001, 0,       0      ]),
+    ('o', [0,       0,       0b01110, 0b10001, 0b10001, 0b10001, 0b01110, 0,       0      ]),
+    ('p', [0,       0,       0b11110, 0b10001, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000]),
+    ('q', [0,       0,       0b01111, 0b10001, 0b10001, 0b10001, 0b01111, 0b00001, 0b00001]),
+    ('r', [0,       0,       0b10110, 0b11001, 0b10000, 0b10000, 0b10000, 0,       0      ]),
+    ('s', [0,       0,       0b01111, 0b10000, 0b01110, 0b00001, 0b11110, 0,       0      ]),
+    ('t', [0b01000, 0b01000, 0b11100, 0b01000, 0b01000, 0b01001, 0b00110, 0,       0      ]),
+    ('u', [0,       0,       0b10001, 0b10001, 0b10001, 0b10011, 0b01101, 0,       0      ]),
+    ('v', [0,       0,       0b10001, 0b10001, 0b10001, 0b01010, 0b00100, 0,       0      ]),
+    ('w', [0,       0,       0b10001, 0b10001, 0b10101, 0b10101, 0b01010, 0,       0      ]),
+    ('x', [0,       0,       0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0,       0      ]),
+    ('y', [0,       0,       0b10001, 0b10001, 0b10001, 0b10001, 0b01111, 0b00001, 0b01110]),
+    ('z', [0,       0,       0b11111, 0b00010, 0b00100, 0b01000, 0b11111, 0,       0      ]),
+    // Opening marks: `!` and `?` upside down, from the x-height down
+    // through the descender.
+    ('¡', [0,       0,       0b00100, 0,       0b00100, 0b00100, 0b00100, 0b00100, 0b00100]),
+    ('¿', [0,       0,       0b00100, 0,       0b00100, 0b00100, 0b01000, 0b10001, 0b01110]),
+];
+
+/// A dotless `i`, the base of `í`.
+const DOTLESS_I: [u8; LOWER_ROWS] = [0, 0, 0b01100, 0b00100, 0b00100, 0b00100, 0b01110, 0, 0];
+
+/// Accented lowercase letters: (character, base bitmap, mark). The mark sits
+/// in the two rows above the x-height.
+const ACCENTED_LOWER: &[(char, char, [u8; 2])] = &[
+    ('á', 'a', ACUTE),
+    ('é', 'e', ACUTE),
+    ('í', 'i', ACUTE),
+    ('ó', 'o', ACUTE),
+    ('ú', 'u', ACUTE),
+    ('ñ', 'n', TILDE),
+    ('ü', 'u', DIAERESIS),
+];
+
 /// Every character the font can draw.
 pub fn charset() -> impl Iterator<Item = char> {
     BASE.iter()
         .map(|&(c, _)| c)
         .chain(ACCENTED.iter().map(|&(c, _, _)| c))
+        .chain(LOWER.iter().map(|&(c, _)| c))
+        .chain(ACCENTED_LOWER.iter().map(|&(c, _, _)| c))
 }
 
-/// The bitmap of `c`, or `None` if the font has no such glyph. Lowercase
-/// letters are drawn as capitals.
+/// Whether the font has a glyph for `c`.
+pub fn supports(c: char) -> bool {
+    glyph(c).is_some()
+}
+
+/// The bitmap of `c`, or `None` if the font has no such glyph.
 pub fn glyph(c: char) -> Option<Glyph> {
-    let c = c.to_uppercase().next().unwrap_or(c);
-    let base = |c: char| BASE.iter().find(|&&(k, _)| k == c).map(|&(_, rows)| rows);
-    let (rows, mark) = match ACCENTED.iter().find(|&&(k, _, _)| k == c) {
-        Some(&(_, letter, mark)) => (base(letter)?, mark),
-        None => (base(c)?, [0, 0]),
-    };
     let mut g = [0; GLYPH_HEIGHT];
-    g[..2].copy_from_slice(&mark);
-    g[CAP_TOP..].copy_from_slice(&rows);
+    let base = |c: char| BASE.iter().find(|&&(k, _)| k == c).map(|&(_, rows)| rows);
+    let lower = |c: char| LOWER.iter().find(|&&(k, _)| k == c).map(|&(_, rows)| rows);
+    if let Some(rows) = base(c) {
+        g[CAP_TOP..CAP_TOP + 7].copy_from_slice(&rows);
+    } else if let Some(&(_, letter, mark)) = ACCENTED.iter().find(|&&(k, _, _)| k == c) {
+        g[..2].copy_from_slice(&mark);
+        g[CAP_TOP..CAP_TOP + 7].copy_from_slice(&base(letter)?);
+    } else if let Some(rows) = lower(c) {
+        g[CAP_TOP..].copy_from_slice(&rows);
+    } else if let Some(&(_, letter, mark)) = ACCENTED_LOWER.iter().find(|&&(k, _, _)| k == c) {
+        let rows = if letter == 'i' {
+            DOTLESS_I
+        } else {
+            lower(letter)?
+        };
+        g[CAP_TOP..].copy_from_slice(&rows);
+        g[X_TOP - 3..X_TOP - 1].copy_from_slice(&mark);
+    } else {
+        return None;
+    }
     Some(g)
 }
 
@@ -298,6 +393,16 @@ pub fn ink_rows(text: &str) -> Option<(usize, usize)> {
     let first = rows.iter().position(|&r| r != 0)?;
     let last = rows.iter().rposition(|&r| r != 0)?;
     Some((first, last))
+}
+
+/// Rows a one-line layout of `text` needs from the top of the cell:
+/// [`ASCENT`] unless something descends below the baseline, then the whole
+/// [`GLYPH_HEIGHT`]. Capital-only text (signs) never pays for descenders.
+pub fn line_rows(text: &str) -> usize {
+    match ink_rows(text) {
+        Some((_, last)) if last > BASELINE => GLYPH_HEIGHT,
+        _ => ASCENT,
+    }
 }
 
 /// Calls `plot(x, y)` for every inked pixel of `text`, with the top-left of
@@ -329,6 +434,12 @@ mod tests {
         n
     }
 
+    /// Rows of `c` that have ink.
+    fn rows_with_ink(c: char) -> Vec<usize> {
+        let g = glyph(c).unwrap();
+        (0..GLYPH_HEIGHT).filter(|&r| g[r] != 0).collect()
+    }
+
     #[test]
     fn covers_every_character_of_every_place_name() {
         for kind in PlaceKind::ALL {
@@ -340,14 +451,97 @@ mod tests {
 
     #[test]
     fn covers_the_promised_charset() {
-        let wanted = ('A'..='Z').chain('0'..='9').chain(" .,-:'ÁÉÍÓÚÑÜ".chars());
+        let wanted = ('A'..='Z')
+            .chain('a'..='z')
+            .chain('0'..='9')
+            .chain(" .,-:'!?¡¿ÁÉÍÓÚÑÜáéíóúñü".chars());
         for c in wanted {
             assert!(glyph(c).is_some(), "{c:?}");
+            assert!(supports(c), "{c:?}");
             assert!(charset().any(|k| k == c), "{c:?}");
         }
-        assert_eq!(glyph('a'), glyph('A'));
-        assert_eq!(glyph('ñ'), glyph('Ñ'));
-        assert_eq!(glyph('#'), None);
+        for c in ['#', '"', '~', 'ç', 'ı'] {
+            assert_eq!(glyph(c), None, "{c:?}");
+            assert!(!supports(c));
+        }
+        // Every listed character has a glyph, and none is listed twice.
+        let all: Vec<char> = charset().collect();
+        assert!(all.iter().all(|&c| supports(c)));
+        let unique: std::collections::HashSet<_> = all.iter().collect();
+        assert_eq!(unique.len(), all.len());
+    }
+
+    #[test]
+    fn lowercase_letters_are_their_own_shapes() {
+        for (lower, upper) in ('a'..='z').zip('A'..='Z') {
+            assert_ne!(glyph(lower), glyph(upper), "{lower:?}");
+        }
+        let all: std::collections::HashSet<_> = ('a'..='z').map(|c| glyph(c).unwrap()).collect();
+        assert_eq!(all.len(), 26, "distinct shapes");
+    }
+
+    #[test]
+    fn lowercase_sits_on_the_baseline_with_ascenders_and_descenders() {
+        for c in 'a'..='z' {
+            let rows = rows_with_ink(c);
+            let (top, bottom) = (rows[0], *rows.last().unwrap());
+            let ascends = "bdfhklt".contains(c) || c == 'i' || c == 'j';
+            let descends = "gjpqy".contains(c);
+            if ascends {
+                assert!(top <= CAP_TOP + 1, "{c:?} reaches up ({top})");
+            } else {
+                assert_eq!(top, X_TOP, "{c:?} starts at the x-height");
+            }
+            if descends {
+                assert_eq!(bottom, GLYPH_HEIGHT - 1, "{c:?} descends");
+            } else {
+                assert_eq!(bottom, BASELINE, "{c:?} sits on the baseline");
+            }
+        }
+        // Capitals and digits never descend.
+        for c in ('A'..='Z').chain('0'..='9') {
+            assert_eq!(*rows_with_ink(c).last().unwrap(), BASELINE, "{c:?}");
+        }
+    }
+
+    #[test]
+    fn lowercase_accents_sit_above_the_x_height() {
+        for (accented, base) in [
+            ('á', 'a'),
+            ('é', 'e'),
+            ('ó', 'o'),
+            ('ú', 'u'),
+            ('ñ', 'n'),
+            ('ü', 'u'),
+        ] {
+            let (a, b) = (glyph(accented).unwrap(), glyph(base).unwrap());
+            assert_eq!(a[X_TOP..], b[X_TOP..], "{accented:?} keeps its letter");
+            assert!(
+                a[..X_TOP - 1].iter().any(|&r| r != 0),
+                "{accented:?} has a mark"
+            );
+            assert_eq!(a[X_TOP - 1], 0, "a blank row separates the mark");
+        }
+        // `í` drops the dot of the `i` for the accent.
+        let (i, i_acute) = (glyph('i').unwrap(), glyph('í').unwrap());
+        assert_eq!(i[X_TOP..], i_acute[X_TOP..]);
+        assert_ne!(i[..X_TOP], i_acute[..X_TOP]);
+        assert_eq!(i_acute[X_TOP - 1], 0);
+    }
+
+    #[test]
+    fn spanish_marks_open_and_close() {
+        // `¡` and `¿` are the upside-down `!` and `?`, hanging lower.
+        for (open, close) in [('¡', '!'), ('¿', '?')] {
+            let o = rows_with_ink(open);
+            let c = rows_with_ink(close);
+            assert_eq!(o.len(), c.len(), "{open:?}");
+            assert!(*o.last().unwrap() > BASELINE, "{open:?} descends");
+            assert_eq!(*c.last().unwrap(), BASELINE, "{close:?}");
+            let (go, gc) = (glyph(open).unwrap(), glyph(close).unwrap());
+            let ink = |g: Glyph| g.iter().map(|r| r.count_ones()).sum::<u32>();
+            assert_eq!(ink(go), ink(gc), "{open:?}");
+        }
     }
 
     #[test]
@@ -392,20 +586,32 @@ mod tests {
         assert_eq!(text_width("AB"), 2 * GLYPH_WIDTH + LETTER_SPACING);
         assert_eq!(text_width("PLAZA"), 5 * GLYPH_WIDTH + 4 * LETTER_SPACING);
         assert_eq!(text_width("ÉÑ"), text_width("EN"));
+        assert_eq!(text_width("¡eh!"), text_width("ABCD"));
     }
 
     #[test]
     fn finds_the_inked_rows() {
         assert_eq!(ink_rows(""), None);
         assert_eq!(ink_rows("   "), None);
-        assert_eq!(ink_rows("PLAZA"), Some((CAP_TOP, GLYPH_HEIGHT - 1)));
-        assert_eq!(ink_rows("COMISARÍA"), Some((0, GLYPH_HEIGHT - 1)));
+        assert_eq!(ink_rows("PLAZA"), Some((CAP_TOP, BASELINE)));
+        assert_eq!(ink_rows("COMISARÍA"), Some((0, BASELINE)));
         assert_eq!(ink_rows("-"), Some((CAP_TOP + 3, CAP_TOP + 3)));
+        assert_eq!(ink_rows("mesa"), Some((X_TOP, BASELINE)));
+        assert_eq!(ink_rows("pingo"), Some((CAP_TOP, GLYPH_HEIGHT - 1)));
+    }
+
+    #[test]
+    fn one_line_layouts_only_pay_for_descenders_when_used() {
+        assert_eq!(line_rows("ESTACIÓN EDUARDO CASTEX"), ASCENT);
+        assert_eq!(line_rows(""), ASCENT);
+        assert_eq!(line_rows("mesa"), ASCENT);
+        assert_eq!(line_rows("pingo"), GLYPH_HEIGHT);
+        assert_eq!(line_rows("¡Eh"), GLYPH_HEIGHT);
     }
 
     #[test]
     fn plots_every_set_bit_inside_the_text_box() {
-        let text = "ESTACIÓN EDUARDO CASTEX";
+        let text = "ESTACIÓN EDUARDO CASTEX ¡Qué pingo, che!";
         let bits: u32 = text
             .chars()
             .map(|c| {

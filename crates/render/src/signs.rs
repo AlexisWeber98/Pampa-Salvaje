@@ -35,7 +35,7 @@ pub struct BoardLayout {
 /// board is never narrower than the text it carries.
 pub fn layout_board(text: &str, width_m: f32, max_height_m: f32) -> BoardLayout {
     let margin = 2 * (BORDER + PADDING);
-    let height_px = GLYPH_HEIGHT + margin;
+    let height_px = font::line_rows(text) + margin;
     let min_width_px = font::text_width(text) + margin;
     // The largest pixel that fits both the text across and the height limit;
     // rounding the pixel count up only ever shrinks the pixel.
@@ -350,7 +350,7 @@ mod tests {
                     l.width_px >= text_width(text) + 2 * (BORDER + PADDING),
                     "{text}"
                 );
-                assert_eq!(l.height_px, GLYPH_HEIGHT + 2 * (BORDER + PADDING));
+                assert_eq!(l.height_px, font::ASCENT + 2 * (BORDER + PADDING));
                 assert_eq!(l.width_m, width);
                 assert!(l.height_m <= max_height + 1e-4, "{text} {l:?}");
                 let (px_w, px_h) = (
@@ -415,7 +415,7 @@ mod tests {
             min_y.abs_diff(l.height_px - 1 - max_y) <= 1,
             "{min_y} {max_y}"
         );
-        assert!(max_y - min_y >= GLYPH_HEIGHT - CAP_TOP);
+        assert!(max_y - min_y >= font::ASCENT - CAP_TOP);
     }
 
     #[test]
