@@ -10,6 +10,13 @@ town loosely inspired by 1920s–1930s La Pampa towns such as Eduardo Castex
 (not a historical reconstruction). The rider starts on the road south of town,
 collides with its buildings and cannot leave the 600 m patch.
 
+The town is alive: townsfolk wander the streets between intersections, a
+saddled horse stands tied at a hitching rail in front of the general store, and
+a steam freight train rolls in from the west every 150 s, stops at the station
+for 25 s and pulls out east. The train shoves riders off its track; the rails
+themselves stay crossable. The follow camera pulls in when a building would
+block its view of the rider.
+
 ## Architecture
 
 A Cargo workspace with three members:
@@ -29,8 +36,10 @@ The rule: **game logic never knows how things are drawn.**
 - Ground height has one source of truth, `Terrain::height`, which also levels the
   ground under the town.
 - Animation is a logical state (`Idle`, `Walk`, `Gallop`) in `core`, never a frame index.
+- Townsfolk and the train are deterministic `core` simulations (`Townsfolk`,
+  `Train`); the game steps them and render only reads them.
 - The visual representation is a swappable per-entity component in `render`
-  (a billboard sprite today, a 3D model later).
+  (`CharacterVisual`: a billboard sprite sheet today, a 3D model later).
 
 Bevy is pinned to an exact version (`=0.20.0`) and only upgraded between milestones.
 
