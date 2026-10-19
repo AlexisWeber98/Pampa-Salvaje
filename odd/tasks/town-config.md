@@ -62,10 +62,10 @@ Review base: `56bd69f`.
 
 | ID | Task | Route | Status | Commit | Review |
 |----|------|-------|--------|--------|--------|
-| T1 | core: `TownConfig`, validation errors, parametric `generate` with plaza placement rule (test-first, property-style over configs) | delegated (writer trigger: 2+ non-trivial files) | [x] | `ec5003d` | pending (RDD owned by parent) |
-| T2 | core: places, street graph, spawn/arrival and other derived data follow the config; fix hard-coded tests | delegated | [x] | `416d812` | pending (RDD owned by parent) |
-| T3 | content: `assets/world/towns.ron` loading + fallback + README; Castex 4×5 / 10 m streets / plaza facing station | delegated | [x] | `3e2ad1c` | pending (RDD owned by parent) |
-| T4 | game/render: build world from loaded towns; `.gitignore` `.claude/`; runs | delegated | [x] | `896d6de` | pending (RDD owned by parent) |
+| T1 | core: `TownConfig`, validation errors, parametric `generate` with plaza placement rule (test-first, property-style over configs) | delegated (writer trigger: 2+ non-trivial files) | [x] | `ec5003d` | medium · granted · approved |
+| T2 | core: places, street graph, spawn/arrival and other derived data follow the config; fix hard-coded tests | delegated | [x] | `416d812` | medium · granted · approved |
+| T3 | content: `assets/world/towns.ron` loading + fallback + README; Castex 4×5 / 10 m streets / plaza facing station | delegated | [x] | `3e2ad1c` | medium · granted · approved |
+| T4 | game/render: build world from loaded towns; `.gitignore` `.claude/`; runs | delegated | [x] | `896d6de` | medium · granted · approved |
 
 ## Acceptance criteria
 
@@ -97,6 +97,11 @@ Review base: `56bd69f`.
 - Landmarks: store prefers west, church north, police east of the plaza (then the other neighbors in a fixed order, then the nearest free block for corner plazas); each faces the plaza. Block-relative proportions scale with `block_size / 40`.
 - Station yard is anchored to the track and centered on the plaza along it (clamped so the 60 m platform stays within the grid's length); grain stores, shed and windmill appear only where the grid is long enough.
 - Store veranda depth is `clamp(street/2 - 2.7, 1.2, 3.0)` so the tied horse stays clear of walkers on narrow streets.
+
+- Review: native RDD over `56bd69f..61a1582` (medium, slice budget reached). Consent was granted; one lens (reliability) ran and the review was approved and acknowledged under lineage `review-17d16d5b61efd7e1`.
+  Advisory follow-ups (non-blocking):
+  - No app-level test starts the plugins without `WorldTrain` (railway-less town). Parent spot check: every `WorldTrain` system parameter is `Option<…>` (`game/src/life.rs:96`, `crates/render/src/train.rs:335,365,399`), so no startup panic is expected, but it stays unproven by a test.
+  - Minimap railway drawing on other sides (`crates/render/src/minimap/raster.rs:194-199`) and `crates/core/src/town.rs:451` are suggestions only.
 
 ## Next step
 
