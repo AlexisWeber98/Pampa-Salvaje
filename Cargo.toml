@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/render", "game"]
+members = ["crates/core", "crates/content", "crates/render", "game"]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,6 +11,9 @@ publish = false
 [workspace.dependencies]
 pampa-core = { path = "crates/core" }
 pampa-render = { path = "crates/render" }
+pampa-content = { path = "crates/content" }
+serde = { version = "1.0.229", features = ["derive"] }
+ron = "0.12.2"
 # Lean Bevy: only what the slice needs (3D PBR, windowing, keyboard and mouse input,
 # UI image nodes for the minimap; no default font: lettering is our own bitmap font).
 bevy = { version = "=0.20.0", default-features = false, features = [

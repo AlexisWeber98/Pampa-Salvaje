@@ -3465,6 +3465,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pampa-content"
+version = "0.1.0"
+dependencies = [
+ "pampa-core",
+ "ron",
+ "serde",
+]
+
+[[package]]
 name = "pampa-core"
 version = "0.1.0"
 

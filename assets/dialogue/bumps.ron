@@ -1,0 +1,31 @@
+// What townsfolk say when the rider bumps into them.
+// See README.md in this folder for the rules (characters, length).
+(
+    // Shoved at a walking pace: annoyed, but mild.
+    walk: [
+        "¡Eh, mirá por dónde andás!",
+        "¡Cuidado con el caballo, che!",
+        "¡Epa! ¿No ve que hay gente?",
+        "¡Despacito, paisano!",
+        "¡Ojo con el pingo, don!",
+        "¡Mire que no soy un poste!",
+        "¡Che, que me pisa los pies!",
+        "¿Y a usted quién lo apura?",
+        "¡Pida permiso, amigo!",
+        "¡Ay! ¡Mi alpargata!",
+        "¡Qué vergüenza, empujar así!",
+    ],
+    // Run into at a gallop: scared and angry.
+    gallop: [
+        "¡Casi me pisa el pingo, che!",
+        "¡Más despacio, que no es carrera!",
+        "¡Bárbaro! ¡Me llenó de tierra!",
+        "¡Bruto! ¡Casi me mata!",
+        "¡Ave María! ¡Qué atropellado!",
+        "¡Sujete ese caballo, por Dios!",
+        "¡Esto no es una cuadrera!",
+        "¡Voy a llamar al comisario!",
+        "¡Mire que lo denuncio, eh!",
+        "¡Pare, cristiano, pare!",
+    ],
+)
