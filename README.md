@@ -4,17 +4,19 @@ An Argentine rural-outlaw western set on the dry pampa of the 1920s–1940s,
 inspired by Red Dead Redemption. The visual direction pairs a low-poly 3D world
 with HD-2D style billboard sprites for characters.
 
-This repository currently holds a procedural pampa patch with dust fog, a
-controllable rider, a follow camera and a first settlement: a small railway
-town loosely inspired by 1920s–1930s La Pampa towns such as Eduardo Castex
-(not a historical reconstruction). The rider starts on the road south of town,
-collides with its buildings and cannot leave the 600 m patch.
+This repository currently holds an open procedural pampa (8 km x 8 km by
+default) streamed in chunks under dust fog, a controllable rider, a follow
+camera and settlements: small railway towns loosely inspired by 1920s–1930s La
+Pampa towns such as Eduardo Castex (not a historical reconstruction), each at
+its own place in the world. The rider starts on the road south of the first
+town, collides with buildings and cannot leave the world.
 
 The town is alive: townsfolk wander the streets between intersections, a
 saddled horse stands tied at a hitching rail in front of the general store, and
-a steam freight train rolls in from the west every 150 s, stops at the station
-for 25 s and pulls out east. The train shoves riders off its track; the rails
-themselves stay crossable. The rider barges through the crowd, shoving
+a steam freight train rolls in along the town's line every 180 s, stops at the
+station for 25 s and pulls out the other way. Each town's track runs 400 m
+past the town into the fog, where its train appears and disappears. The train
+shoves riders off its track; the rails themselves stay crossable. The rider barges through the crowd, shoving
 walkers aside, and walkers step around the rider.
 
 Landmarks carry painted signs in period Spanish: the general store
@@ -24,13 +26,26 @@ name board on the platform) and the plaza. `pampa-core` names the places and
 says where each sign stands (`TownLayout::places`); render letters them in a
 procedural bitmap pixel font (no third-party font) on weathered boards.
 
-A paper-style minimap in the top-right corner shows the town north-up: streets,
-blocks and buildings by kind, the plaza, the railway, each place by its
-initial, walkers as dots, the train when it is in town and the player as an
-arrow along its heading. It frames the town plus a 30 m margin (not the whole
-patch) so streets stay legible; out on the pampa the arrow sticks to the map
-edge. The town layer is rasterized once; only the markers redraw each frame.
-`M` toggles an enlarged, centered map.
+A paper-style minimap in the top-right corner shows the nearest town north-up,
+titled with its name: streets, blocks and buildings by kind, the plaza, the
+railway, each place by its initial, walkers as dots, the train when it is in
+town and the player as an arrow along its heading. It frames the town plus a
+30 m margin (not the whole world) so streets stay legible; out on the pampa the
+arrow sticks to the map edge. Each town's layer is rasterized once, the first
+time it is shown; only the markers redraw each frame. `M` toggles an enlarged,
+centered map.
+
+### An open world in chunks
+
+The ground is built in 200 m square chunks around the rider: chunks within 3
+chunks are built (at most one per frame, all of them on the first frame), and
+chunks past 4 are despawned with their rocks and shrubs, so memory stays
+bounded wherever you ride. The dust fog swallows everything well before the
+400 m that is always loaded. Towns stream the same way: a town's buildings,
+signs, train, people and tied horse appear within 600 m of it and go once you
+are 750 m away. Every town's footprints stay in the logic world at all times
+(collision looks them up in a uniform grid), and all trains keep their
+schedules. Positions are `f32`, so the world is limited to 8 km from its center.
 
 The camera orbits the rider a full 360° with the mouse (or Q/E), zooms with
 the wheel, eases back behind the rider after a moment without camera input
@@ -69,9 +84,11 @@ placement and a lot seed. `pampa-core` turns a `TownConfig` into a layout
 signs, the street graph, the hitching post, the station stop and the arrival
 point all follow the generated grid. Eduardo Castex is 4 x 5 blocks of 40 m
 with 10 m streets, and since it has no central block its plaza faces the
-station across the street, as in many pampa railway towns. The game builds the
-first town in the file and falls back to the built-in Castex with a warning
-when the file is missing or invalid. See
+station across the street, as in many pampa railway towns. The game builds
+every town in the file at its `origin`, skips (with a warning naming them)
+towns that overlap an earlier one or reach past the world edge, and falls back
+to the built-in Castex when no town is left. The file also sets the world's
+size and chunk size. See
 [`assets/world/README.md`](assets/world/README.md) for every field and rule.
 
 ## Architecture
@@ -92,10 +109,13 @@ The rule: **game logic never knows how things are drawn.**
   layout (`pampa_core::TownLayout`) owns every footprint; render only picks a look
   per building kind.
 - Ground height has one source of truth, `Terrain::height`, which also levels the
-  ground under the town.
+  ground under every town, so streamed chunks always meet without seams.
+- Which chunks and towns exist is pure bookkeeping (`StreamingSet` in `render`,
+  `TownActivation` in `core`), tested without a GPU.
 - Animation is a logical state (`Idle`, `Walk`, `Gallop`) in `core`, never a frame index.
-- Townsfolk and the train are deterministic `core` simulations (`Townsfolk`,
-  `Train`); the game steps them and render only reads them.
+- Townsfolk and trains are deterministic `core` simulations (`Townsfolk`,
+  `Train`), one of each per town; the game steps them and render only reads
+  them.
 - Bumps are decided in `core` (`BumpTracker`: speed threshold, gait severity,
   per-walker cooldown; `LinePicker`: seeded, no immediate repeats); the words come
   from `pampa-content`; render only draws the bubble (`Say` → `SpeechBubble`).
