@@ -9,4 +9,5 @@ publish.workspace = true
 [dependencies]
 pampa-core.workspace = true
 pampa-render.workspace = true
+pampa-content.workspace = true
 bevy.workspace = true

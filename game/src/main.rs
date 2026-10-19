@@ -1,6 +1,7 @@
 //! Pampa Seca: wires player input, `pampa-core` logic and `pampa-render` drawing.
 
 mod camera;
+mod complaints;
 mod life;
 mod orbit;
 mod player;
@@ -9,8 +10,8 @@ use bevy::prelude::*;
 use pampa_core::townsfolk::TOWNSFOLK_COUNT;
 use pampa_core::{Terrain, TownLayout, Townsfolk, Train, TrainSchedule, World};
 use pampa_render::{
-    AtmospherePlugin, CharacterVisualPlugin, MinimapPlugin, SignPlugin, TerrainPlugin, TownPlugin,
-    TrainPlugin, WorldTerrain, WorldTown, WorldTrain,
+    AtmospherePlugin, CharacterVisualPlugin, MinimapPlugin, SignPlugin, SpeechBubblePlugin,
+    TerrainPlugin, TownPlugin, TrainPlugin, WorldTerrain, WorldTown, WorldTrain,
 };
 
 /// Seed for where the townsfolk start and wander.
@@ -47,8 +48,10 @@ fn main() {
             AtmospherePlugin,
             TrainPlugin,
             CharacterVisualPlugin,
+            SpeechBubblePlugin,
             player::PlayerPlugin,
             life::TownLifePlugin,
+            complaints::ComplaintsPlugin,
             camera::FollowCameraPlugin,
         ))
         .add_systems(Update, quit_on_escape)

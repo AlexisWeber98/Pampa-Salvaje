@@ -34,7 +34,8 @@ pub struct TownLifePlugin;
 
 impl Plugin for TownLifePlugin {
     fn build(&self, app: &mut App) {
-        app.configure_sets(Update, SimulateTown.before(DrivePlayer))
+        app.add_message::<Shoved>()
+            .configure_sets(Update, SimulateTown.before(DrivePlayer))
             .add_systems(Startup, (spawn_walkers, spawn_tethered_horse))
             .add_systems(Update, (run_train, walk_crowd).chain().in_set(SimulateTown))
             .add_systems(
@@ -116,19 +117,35 @@ fn walk_crowd(
         .step_around(&world.0, &riders, time.delta_secs().min(MAX_STEP));
 }
 
+/// The rider shoved these walkers (indices into the [`Crowd`]) while
+/// moving at `speed` (m/s, signed).
+#[derive(Message, Debug, Clone, PartialEq)]
+pub struct Shoved {
+    pub walkers: Vec<usize>,
+    pub speed: f32,
+}
+
 /// The rider barges through: walkers in its way are shoved aside, and
 /// anyone pinned against a wall stops the rider instead.
-fn jostle_crowd(
+pub(crate) fn jostle_crowd(
     crowd: Option<ResMut<Crowd>>,
     world: Res<GameWorld>,
     mut players: Query<(&mut Player, &mut Transform)>,
+    mut shoved: MessageWriter<Shoved>,
 ) {
     let Some(mut crowd) = crowd else {
         return;
     };
     for (mut player, mut transform) in &mut players {
         let rider = &mut player.rider;
-        crowd.0.make_way(&world.0, rider.body());
+        let walkers = crowd.0.make_way(&world.0, rider.body());
+        if !walkers.is_empty() {
+            // The speed of the impact, before a pinned walker stops the rider.
+            shoved.write(Shoved {
+                walkers,
+                speed: rider.speed,
+            });
+        }
         rider.keep_clear_of(&world.0, &crowd.0.bodies());
         transform.translation = world_from_ground(rider.position, rider.height);
     }
