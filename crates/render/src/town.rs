@@ -188,7 +188,7 @@ fn spawn_town(
     plaza(&mut b, town);
     railway(&mut b, town);
     for (n, building) in town.buildings.iter().enumerate() {
-        spawn_building(&mut b, building, n);
+        spawn_building(&mut b, building, n, town.hitching_post.veranda);
     }
     hitching_rail(&mut b, &town.hitching_post.rail);
 }
@@ -536,7 +536,8 @@ impl Frame {
     }
 }
 
-fn spawn_building(b: &mut Builder, building: &Building, n: usize) {
+/// Spawns one building; `veranda` is the general store's veranda depth.
+fn spawn_building(b: &mut Builder, building: &Building, n: usize, veranda: f32) {
     let f = Frame::new(b, building);
     let pick = hash2(n as f32 * 1.37, building.footprint.min.x * 0.11);
     let p = b.palette;
@@ -562,7 +563,7 @@ fn spawn_building(b: &mut Builder, building: &Building, n: usize) {
             f.walls(b, &brick);
             f.false_front(b, &brick, 2.2);
             f.openings(b, 2.6);
-            f.veranda(b, 3.0, 3.2);
+            f.veranda(b, veranda, 3.2);
         }
         BuildingKind::PoliceStation => {
             f.walls(b, &whitewash);
