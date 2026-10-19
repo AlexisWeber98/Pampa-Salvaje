@@ -16,12 +16,14 @@ pub mod heading;
 pub mod math;
 pub mod rider;
 pub mod terrain;
+pub mod town;
 pub mod world;
 
 pub use animation::AnimationState;
-pub use collision::Circle;
+pub use collision::{Aabb, Circle};
 pub use heading::Heading;
 pub use math::Vec2;
 pub use rider::{Rider, RiderInput, RiderParams};
-pub use terrain::Terrain;
+pub use terrain::{FlatArea, Terrain};
+pub use town::{Building, BuildingKind, Railway, Side, TownLayout};
 pub use world::{PATCH_HALF_EXTENT, World, WorldBounds};
