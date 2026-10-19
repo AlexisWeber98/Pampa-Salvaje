@@ -47,7 +47,7 @@ Forecast: ~700 authored changed lines across all tasks.
 | T2 | `core`: heading, rider kinematics, animation state + unit tests (test-first) | delegated | [x] | | |
 | T3 | `render`: heightmap terrain, lighting, dust fog | delegated | [x] | | |
 | T4 | `render`: billboard rider sprite with 8-direction selection from heading (+ tests for direction mapping) | delegated | [x] | | |
-| T5 | `game`: input -> core movement, follow camera, wire plugins; runs | delegated | [ ] | | |
+| T5 | `game`: input -> core movement, follow camera, wire plugins; runs | delegated | [x] | | |
 
 ## Acceptance criteria
 
@@ -90,6 +90,13 @@ Forecast: ~700 authored changed lines across all tasks.
   RED: `cargo test -p pampa-render` -> 0 passed; 10 failed (`todo!()` stubs). GREEN: 10 passed.
   Visual wiring itself has no deterministic test (exception); verified by screenshot of an 8-heading lineup.
 
+- T5: `game` wires `PlayerPlugin` (W/S throttle, A/D turn, Shift gallop -> `RiderInput` -> `Rider::step`, dt capped
+  at 1/20 s, syncs `Transform` + `VisualPose`), `FollowCameraPlugin` (behind/above along heading, `smooth_nudge`,
+  terrain clearance), Esc quits, window titled "Pampa Seca". Unit test for key mapping (1 test).
+  Sprite tweak: neckerchief hidden in away-facing views so back and front views read differently.
+  `timeout 15 cargo run -p game` -> exit 124 (ran until killed), window created, no panic.
+  Not verified interactively: holding keys (no input-injection tool available); logic covered by core tests.
+
 ## Next step
 
-T5.
+Human play-test of feel (speeds, turn rate, camera smoothing) and visual direction; then decide next milestone.

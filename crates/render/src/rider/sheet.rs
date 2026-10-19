@@ -74,8 +74,10 @@ fn draw_frame(canvas: &mut Canvas, k: usize) {
     canvas.fill_ellipse(rx, 17.0, 3.5, 3.5, SKIN);
     canvas.fill_ellipse(rx, 14.0, 8.0, 1.6, HAT);
     canvas.fill_rect(rx - 3.5, 9.0, 7.0, 5.0, HAT);
-    // Red neckerchief on the facing side; it is visible from every view.
-    canvas.fill_ellipse(rx + side * 3.5, 21.0, 2.5, 2.0, MARKER);
+    // Red neckerchief, only visible when the rider is not facing away.
+    if depth <= 0.3 {
+        canvas.fill_ellipse(rx + side * 3.5, 21.0, 2.5, 2.0, MARKER);
+    }
 }
 
 fn draw_head(canvas: &mut Canvas, x: f32, y: f32) {
