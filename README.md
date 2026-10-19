@@ -59,6 +59,21 @@ falls back to a small built-in set of lines with a warning if the file is
 missing or invalid. See [`assets/dialogue/README.md`](assets/dialogue/README.md)
 for how to write lines.
 
+### Towns are data
+
+Towns are generated from editable configs in
+[`assets/world/towns.ron`](assets/world/towns.ron), not hard-coded: grid size
+in blocks, block and street widths, the railway's side and distance, plaza
+placement and a lot seed. `pampa-core` turns a `TownConfig` into a layout
+(`TownLayout::generate`), checking it and explaining what is wrong; buildings,
+signs, the street graph, the hitching post, the station stop and the arrival
+point all follow the generated grid. Eduardo Castex is 4 x 5 blocks of 40 m
+with 10 m streets, and since it has no central block its plaza faces the
+station across the street, as in many pampa railway towns. The game builds the
+first town in the file and falls back to the built-in Castex with a warning
+when the file is missing or invalid. See
+[`assets/world/README.md`](assets/world/README.md) for every field and rule.
+
 ## Architecture
 
 A Cargo workspace with four members:
@@ -66,7 +81,7 @@ A Cargo workspace with four members:
 | Crate | Path | Role |
 |-------|------|------|
 | `pampa-core` | `crates/core` | Pure game logic. No Bevy, fully unit-tested. |
-| `pampa-content` | `crates/content` | Editable content (dialogue) loaded from RON files. No Bevy. |
+| `pampa-content` | `crates/content` | Editable content (dialogue, towns) loaded from RON files. No Bevy. |
 | `pampa-render` | `crates/render` | Bevy plugins that draw the world. |
 | `game` | `game` | Binary that wires input, core, content and render together. |
 

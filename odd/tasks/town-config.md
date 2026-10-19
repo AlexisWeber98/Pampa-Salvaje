@@ -1,6 +1,6 @@
 # Feature: town-config
 
-Locator: `odd/tasks/town-config.md` · Engram mirror: `odd/town-config/tasks` (pending, project not registered)
+Locator: `odd/tasks/town-config.md` · Engram mirror: `odd/town-config/tasks` (pending, owned by parent)
 
 ## Objective
 
@@ -62,10 +62,10 @@ Review base: `56bd69f`.
 
 | ID | Task | Route | Status | Commit | Review |
 |----|------|-------|--------|--------|--------|
-| T1 | core: `TownConfig`, validation errors, parametric `generate` with plaza placement rule (test-first, property-style over configs) | delegated (writer trigger: 2+ non-trivial files) | [ ] | | |
-| T2 | core: places, street graph, spawn/arrival and other derived data follow the config; fix hard-coded tests | delegated | [ ] | | |
-| T3 | content: `assets/world/towns.ron` loading + fallback + README; Castex 4×5 / 10 m streets / plaza facing station | delegated | [ ] | | |
-| T4 | game/render: build world from loaded towns; `.gitignore` `.claude/`; runs | delegated | [ ] | | |
+| T1 | core: `TownConfig`, validation errors, parametric `generate` with plaza placement rule (test-first, property-style over configs) | delegated (writer trigger: 2+ non-trivial files) | [x] | `ec5003d` | pending (RDD owned by parent) |
+| T2 | core: places, street graph, spawn/arrival and other derived data follow the config; fix hard-coded tests | delegated | [x] | `416d812` | pending (RDD owned by parent) |
+| T3 | content: `assets/world/towns.ron` loading + fallback + README; Castex 4×5 / 10 m streets / plaza facing station | delegated | [x] | `3e2ad1c` | pending (RDD owned by parent) |
+| T4 | game/render: build world from loaded towns; `.gitignore` `.claude/`; runs | delegated | [x] | `896d6de` | pending (RDD owned by parent) |
 
 ## Acceptance criteria
 
@@ -85,7 +85,19 @@ Review base: `56bd69f`.
 ## Progress / Evidence
 
 - Branch `feat/town-config` created from `56bd69f`.
+- T1 `ec5003d`: `TownConfig`, `RailwayConfig`, `PlazaPlacement`, `TownConfigError` (Display + Error) and `TownLayout::generate`. RED: 17 of 18 new town tests failed on a `todo!()` generator; GREEN after implementation. Invariants run over 9 sample configs (3x3, 4x4, 4x5, 5x5, 6x4, 3x5, 5x3, 4x6; blocks 32–50 m; streets 8–14 m; railway N/S/E/W/none; Auto, FacingStation, Block). `TownLayout.railway` is now `Option<Railway>` and `Train::for_town` returns `Option<Train>`.
+- T2 `416d812`: station sign reads "ESTACIÓN <TOWN NAME>", facade boards narrow to fit small facades, platform board faces the track on any side. RED: 3 places tests failed; GREEN after. Street-graph, walker, rider, train and world tests now run over every sample config (they passed on first run because T1 already generalized the geometry). The "36 intersections" assumption became `(cols + 1) * (rows + 1)`.
+- T3 `3e2ad1c`: `pampa-content::towns` (DTOs, `parse_towns`, `load_towns`, `load_towns_or_builtin`), `assets/world/towns.ron`, `assets/world/README.md`; Castex becomes 4x5, 40 m blocks, 10 m streets, plaza facing the station. RED: 5 content tests and the Castex-shape core test failed; GREEN after.
+- T4 `896d6de`: game loads the first town (`game/src/towns.rs`), logs config and glyph warnings at startup, runs without a train for railway-less towns; render veranda depth follows `HitchingPost::veranda`; minimap draws a railway on any side; `.claude/` ignored. Headless tests cover the shipped file, a custom town and the fallback (written together with the code, no separate RED).
+- Checks: `cargo fmt --all -- --check` clean; `cargo clippy --workspace --all-targets -- -D warnings` clean; `cargo test --workspace`: core 110, content 13, render 60, game 38, all passing; `cargo build -p game` ok; `cargo tree` shows no Bevy under `pampa-core` or `pampa-content`, and `pampa-core` has no dependencies. Game ran ~16–20 s with no panic and no town warning; screenshots show the 4x5 minimap with the plaza in the top row and the station right above it, and the store veranda with the tied horse.
+
+### Rules chosen
+
+- Minimums: 3 blocks per axis, 30 m blocks, 8 m streets, railway offset 24 m; the town plus its 60 m leveled band must fit the ±300 m patch.
+- Landmarks: store prefers west, church north, police east of the plaza (then the other neighbors in a fixed order, then the nearest free block for corner plazas); each faces the plaza. Block-relative proportions scale with `block_size / 40`.
+- Station yard is anchored to the track and centered on the plaza along it (clamped so the 60 m platform stays within the grid's length); grain stores, shed and windmill appear only where the grid is long enough.
+- Store veranda depth is `clamp(street/2 - 2.7, 1.2, 3.0)` so the tied horse stays clear of walkers on narrow streets.
 
 ## Next step
 
-T1.
+Parent: native review (RDD) of the feature commits from base `56bd69f`, then the user's delivery decision.
