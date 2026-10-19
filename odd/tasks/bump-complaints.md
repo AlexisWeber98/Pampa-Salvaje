@@ -50,10 +50,10 @@ Review base: `e7be342`.
 
 | ID | Task | Route | Status | Commit | Review |
 |----|------|-------|--------|--------|--------|
-| T1 | core: bump detection + cooldown + seeded line pick (test-first) | delegated (writer trigger: 2+ non-trivial files) | [x] | `d0fb9aa` | pending (RDD owned by parent) |
-| T2 | pampa-content crate: RON dialogue loading, fallback, validation tests; `assets/dialogue/bumps.ron` + README | delegated | [x] | `077bbd7` | pending (RDD owned by parent) |
-| T3 | render: lowercase + Spanish punctuation glyphs; speech bubble billboard with wrap and fade | delegated | [x] | `6578b2b` | pending (RDD owned by parent) |
-| T4 | game: wire bump events → lines → bubbles; headless test | delegated | [x] | `01f3cb2` | pending (RDD owned by parent) |
+| T1 | core: bump detection + cooldown + seeded line pick (test-first) | delegated (writer trigger: 2+ non-trivial files) | [x] | `d0fb9aa` | medium · granted · approved |
+| T2 | pampa-content crate: RON dialogue loading, fallback, validation tests; `assets/dialogue/bumps.ron` + README | delegated | [x] | `077bbd7` | medium · granted · approved |
+| T3 | render: lowercase + Spanish punctuation glyphs; speech bubble billboard with wrap and fade | delegated | [x] | `6578b2b` | medium · granted · approved |
+| T4 | game: wire bump events → lines → bubbles; headless test | delegated | [x] | `01f3cb2` | medium · granted · approved |
 
 ## Acceptance criteria
 
@@ -114,6 +114,11 @@ Review base: `e7be342`.
   `cargo build -p game` ok; `cargo tree -p pampa-core | rg -c bevy` and `cargo tree -p pampa-content | rg -c
   bevy` no match; game binary run 15 s: exit 124 (timeout), no panic, no warnings.
 - Advisory size heuristic exceeded in T3 (font table and pixel tests are long; one coherent change).
+
+- Review: native RDD over `e7be342..c684935` (medium, slice budget reached). Consent was granted; one lens (reliability) ran and the review was approved and acknowledged under lineage `review-70476fa7ab4f4f96`.
+  Advisory follow-ups (non-blocking):
+  - Two `Say` messages for the same speaker in one frame can leave two overlapping bubbles (`crates/render/src/bubble.rs:295-306`).
+  - The complaint cooldown may be consumed without a line being spoken (`game/src/complaints.rs:86-95`).
 
 ## Next step
 
