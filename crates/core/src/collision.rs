@@ -39,10 +39,33 @@ impl Circle {
         Some(normal * (depth + self.radius))
     }
 
+    /// Smallest displacement that moves this circle at `center` clear of
+    /// `body`, or `None` if they do not overlap. Coincident centers part
+    /// along `+x`, so the result stays deterministic.
+    pub fn push_out_of_body(self, center: Vec2, body: &Body) -> Option<Vec2> {
+        let offset = center - body.position;
+        let distance = offset.length();
+        let needed = self.radius + body.collider.radius;
+        if distance >= needed {
+            None
+        } else if distance > 0.0 {
+            Some(offset * ((needed - distance) / distance))
+        } else {
+            Some(Vec2::new(needed, 0.0))
+        }
+    }
+
     /// Whether this circle at `a` overlaps `other` at `b`.
     pub fn overlaps(self, a: Vec2, other: Circle, b: Vec2) -> bool {
         a.distance(b) < self.radius + other.radius
     }
+}
+
+/// Another character standing somewhere: a circle at a position.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Body {
+    pub position: Vec2,
+    pub collider: Circle,
 }
 
 /// A moving box that shoves circles sideways, along `across`, out to the side
@@ -273,6 +296,24 @@ mod tests {
         // Right in front of the car's end: shoved sideways, never forward.
         let push = car().push_out(c, Vec2::new(5.5, -0.1)).unwrap();
         assert!(push.x == 0.0 && push.y < 0.0, "{push:?}");
+    }
+
+    #[test]
+    fn circles_push_each_other_apart_along_the_line_between_them() {
+        let c = Circle::new(0.9);
+        let walker = Body {
+            position: Vec2::new(1.0, 0.0),
+            collider: Circle::new(0.3),
+        };
+        assert_eq!(c.push_out_of_body(Vec2::new(-0.3, 0.0), &walker), None);
+        assert_eq!(c.push_out_of_body(Vec2::new(1.0, 1.2), &walker), None);
+        let push = c.push_out_of_body(Vec2::new(0.0, 0.0), &walker).unwrap();
+        assert!(close(push, Vec2::new(-0.2, 0.0)), "{push:?}");
+        let push = c.push_out_of_body(Vec2::new(1.0, 0.6), &walker).unwrap();
+        assert!(close(push, Vec2::new(0.0, 0.6)), "{push:?}");
+        // Right on top of each other: apart along +x.
+        let push = c.push_out_of_body(walker.position, &walker).unwrap();
+        assert!(close(push, Vec2::new(1.2, 0.0)), "{push:?}");
     }
 
     fn unit_box() -> Aabb {

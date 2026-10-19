@@ -79,7 +79,7 @@ pub fn read_input(keys: &ButtonInput<KeyCode>) -> RiderInput {
     }
 }
 
-fn drive_player(
+pub(crate) fn drive_player(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     tuning: Res<PlayerTuning>,

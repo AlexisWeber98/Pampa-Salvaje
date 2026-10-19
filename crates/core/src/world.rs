@@ -1,6 +1,6 @@
 //! The static world the rider moves through: terrain and playable bounds.
 
-use crate::{Aabb, Circle, SideObstacle, Terrain, TownLayout, Vec2};
+use crate::{Aabb, Body, Circle, SideObstacle, Terrain, TownLayout, Vec2};
 
 /// Half the side length of the square terrain patch, in meters.
 ///
@@ -119,15 +119,28 @@ impl World {
     /// everything instead, searching across and along the moving obstacles
     /// and along the axes. If no such spot exists nearby, static obstacles
     /// win and the circle is only pushed out of those.
-    pub fn resolve(&self, collider: Circle, center: Vec2, mut on_push: impl FnMut(Vec2)) -> Vec2 {
+    pub fn resolve(&self, collider: Circle, center: Vec2, on_push: impl FnMut(Vec2)) -> Vec2 {
+        self.resolve_among(collider, center, &[], on_push)
+    }
+
+    /// Like [`Self::resolve`], also pushing the circle clear of other
+    /// characters' `bodies`. Bodies give way to the world: when a body and
+    /// a wall pinch the circle, the wall wins.
+    pub fn resolve_among(
+        &self,
+        collider: Circle,
+        center: Vec2,
+        bodies: &[Body],
+        mut on_push: impl FnMut(Vec2),
+    ) -> Vec2 {
         let start = center;
-        let resolved = self.push_passes(collider, center, true, &mut on_push);
+        let resolved = self.push_passes(collider, center, bodies, true, &mut on_push);
         if self.overlap(collider, resolved) < CLEAR {
             return resolved;
         }
         let spot = match self.nearest_clear(collider, start) {
             Some(spot) => spot,
-            None => self.push_passes(collider, resolved, false, &mut |_| ()),
+            None => self.push_passes(collider, resolved, &[], false, &mut |_| ()),
         };
         let push = spot - resolved;
         let length = push.length();
@@ -137,12 +150,14 @@ impl World {
         spot
     }
 
-    /// Up to [`PASSES`] rounds of pushing the circle out of each obstacle in
-    /// turn (moving ones only when `with_moving`).
+    /// Up to [`PASSES`] rounds of pushing the circle out of each body, then
+    /// each obstacle in turn (moving ones only when `with_moving`), so the
+    /// world gets the last word in every round.
     fn push_passes(
         &self,
         collider: Circle,
         mut center: Vec2,
+        bodies: &[Body],
         with_moving: bool,
         on_push: &mut impl FnMut(Vec2),
     ) -> Vec2 {
@@ -157,6 +172,9 @@ impl World {
                 }
                 moved = true;
             };
+            for body in bodies {
+                apply(collider.push_out_of_body(center, body), &mut center);
+            }
             for obstacle in &self.obstacles {
                 apply(collider.push_out(center, obstacle), &mut center);
             }
@@ -337,6 +355,30 @@ mod tests {
         let end = world.resolve(c, start, |_| ());
         assert!(deepest_overlap(&world, c, end) < 1e-3, "{end:?}");
         assert!(end.distance(start) < 3.0, "nearest free spot: {end:?}");
+    }
+
+    #[test]
+    fn bodies_push_the_circle_aside_but_walls_win() {
+        let world = pinch_world();
+        let c = Circle::new(0.3);
+        let rider = Body {
+            position: Vec2::new(0.0, 10.0),
+            collider: Circle::new(0.9),
+        };
+        // Open ground: straight out of the rider.
+        let end = world.resolve_among(c, Vec2::new(0.0, 10.5), &[rider], |_| ());
+        assert!(end.distance(Vec2::new(0.0, 11.2)) < 1e-4, "{end:?}");
+        assert_eq!(
+            world.resolve(c, Vec2::new(0.0, 10.5), |_| ()),
+            Vec2::new(0.0, 10.5)
+        );
+        // A rider against the wall's north face cannot push into the wall.
+        let rider = Body {
+            position: Vec2::new(0.0, 7.0),
+            ..rider
+        };
+        let end = world.resolve_among(c, Vec2::new(0.0, 6.4), &[rider], |_| ());
+        assert!(deepest_overlap(&world, c, end) < 1e-3, "{end:?}");
     }
 
     #[test]

@@ -2,7 +2,8 @@
 //! horse tied in front of the general store.
 //!
 //! Logic lives in `pampa-core`; this module steps it once per frame, before
-//! the player, and copies the results onto entities that render draws.
+//! the player, lets the rider shove walkers aside after the player moved,
+//! and copies the results onto entities that render draws.
 
 use bevy::prelude::*;
 use pampa_core::{MAX_STEP, Townsfolk};
@@ -10,7 +11,7 @@ use pampa_render::{
     CharacterVisual, SheetKind, VisualPose, WorldTown, WorldTrain, world_from_ground,
 };
 
-use crate::player::{DrivePlayer, GameWorld};
+use crate::player::{DrivePlayer, GameWorld, Player, drive_player};
 
 /// Everyone walking around town.
 #[derive(Resource, Debug, Clone)]
@@ -35,7 +36,14 @@ impl Plugin for TownLifePlugin {
     fn build(&self, app: &mut App) {
         app.configure_sets(Update, SimulateTown.before(DrivePlayer))
             .add_systems(Startup, (spawn_walkers, spawn_tethered_horse))
-            .add_systems(Update, (run_train, walk_crowd).chain().in_set(SimulateTown));
+            .add_systems(Update, (run_train, walk_crowd).chain().in_set(SimulateTown))
+            .add_systems(
+                Update,
+                (jostle_crowd, place_walkers)
+                    .chain()
+                    .in_set(DrivePlayer)
+                    .after(drive_player),
+            );
     }
 }
 
@@ -90,16 +98,49 @@ fn run_train(time: Res<Time>, train: Option<ResMut<WorldTrain>>, mut world: ResM
     world.0.moving = train.0.obstacles();
 }
 
+/// Steps the crowd, walking around the rider where it stood last frame.
 fn walk_crowd(
     time: Res<Time>,
     crowd: Option<ResMut<Crowd>>,
     world: Res<GameWorld>,
-    mut walkers: Query<(&Walker, &mut Transform, &mut VisualPose)>,
+    players: Query<&Player>,
 ) {
     let Some(mut crowd) = crowd else {
         return;
     };
-    crowd.0.step(&world.0, time.delta_secs().min(MAX_STEP));
+    let riders: Vec<_> = players.iter().map(|p| p.rider.body()).collect();
+    crowd
+        .0
+        .step_around(&world.0, &riders, time.delta_secs().min(MAX_STEP));
+}
+
+/// The rider barges through: walkers in its way are shoved aside, and
+/// anyone pinned against a wall stops the rider instead.
+fn jostle_crowd(
+    crowd: Option<ResMut<Crowd>>,
+    world: Res<GameWorld>,
+    mut players: Query<(&mut Player, &mut Transform)>,
+) {
+    let Some(mut crowd) = crowd else {
+        return;
+    };
+    for (mut player, mut transform) in &mut players {
+        let rider = &mut player.rider;
+        crowd.0.make_way(&world.0, rider.body());
+        rider.keep_clear_of(&world.0, &crowd.0.bodies());
+        transform.translation = world_from_ground(rider.position, rider.height);
+    }
+}
+
+/// Copies the crowd's logic state onto the walker entities.
+fn place_walkers(
+    crowd: Option<Res<Crowd>>,
+    world: Res<GameWorld>,
+    mut walkers: Query<(&Walker, &mut Transform, &mut VisualPose), Without<Player>>,
+) {
+    let Some(crowd) = crowd else {
+        return;
+    };
     for (walker, mut transform, mut pose) in &mut walkers {
         let Some(person) = crowd.0.people.get(walker.0) else {
             continue;
@@ -204,5 +245,45 @@ mod tests {
                 .obstacles
                 .contains(&horse.footprint)
         );
+    }
+
+    #[test]
+    fn the_rider_shoves_walkers_aside() {
+        let mut app = town_app();
+        // Spawn the rider right on top of the first walker, galloping.
+        let at = app.world().resource::<Crowd>().0.people[0].position;
+        app.insert_resource(crate::player::PlayerSpawn {
+            position: at,
+            heading: pampa_core::Heading::from_radians(0.0),
+        });
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.press(KeyCode::KeyW);
+            keys.press(KeyCode::ShiftLeft);
+        }
+        for frame in 0..200 {
+            app.update();
+            let rider = {
+                let mut q = app.world_mut().query::<&crate::player::Player>();
+                q.single(app.world()).unwrap().rider
+            };
+            let crowd = app.world().resource::<Crowd>().0.clone();
+            for p in &crowd.people {
+                let gap = p.position.distance(rider.position);
+                assert!(
+                    gap >= p.collider.radius + rider.collider.radius - 1e-3,
+                    "frame {frame}: {p:?} inside the rider at {:?}",
+                    rider.position
+                );
+            }
+            let mut q = app
+                .world_mut()
+                .query_filtered::<&Transform, With<crate::player::Player>>();
+            let t = q.single(app.world()).unwrap();
+            assert_eq!(
+                t.translation,
+                world_from_ground(rider.position, rider.height)
+            );
+        }
     }
 }

@@ -1,6 +1,6 @@
 //! Kinematic rider (horse + outlaw) model.
 
-use crate::{AnimationState, Circle, Heading, Terrain, Vec2, World};
+use crate::{AnimationState, Body, Circle, Heading, Terrain, Vec2, World};
 
 /// Longest step the game feeds the simulation, in seconds, so a hitch never
 /// teleports anything. [`Rider::step`] stays safe for longer steps anyway.
@@ -151,6 +151,28 @@ impl Rider {
             // v' = v - (v.n) n, projected back onto the (unchanged) heading.
             self.speed -= self.speed * along_normal * along_normal;
         }
+    }
+
+    /// Where this rider stands, as an obstacle for others.
+    pub fn body(&self) -> Body {
+        Body {
+            position: self.position,
+            collider: self.collider,
+        }
+    }
+
+    /// Moves the rider out of any of `bodies` it still overlaps (people
+    /// pinned against a wall that could not make way), stopping its motion
+    /// into them.
+    pub fn keep_clear_of(&mut self, world: &World, bodies: &[Body]) {
+        let mut normals = Vec::new();
+        self.position = world.resolve_among(self.collider, self.position, bodies, |n| {
+            normals.push(n);
+        });
+        for normal in normals {
+            self.block(normal);
+        }
+        self.height = world.terrain.height(self.position.x, self.position.y);
     }
 
     pub fn animation(&self, params: &RiderParams) -> AnimationState {

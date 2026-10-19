@@ -22,7 +22,7 @@ pub mod train;
 pub mod world;
 
 pub use animation::AnimationState;
-pub use collision::{Aabb, Circle, SideObstacle};
+pub use collision::{Aabb, Body, Circle, SideObstacle};
 pub use heading::Heading;
 pub use math::Vec2;
 pub use rider::{MAX_STEP, Rider, RiderInput, RiderParams};

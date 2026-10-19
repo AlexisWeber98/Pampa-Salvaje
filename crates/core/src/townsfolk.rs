@@ -5,7 +5,7 @@
 //! next one at random (avoiding turning straight back when it can). People
 //! collide with the same static obstacles as the rider.
 
-use crate::{Aabb, AnimationState, Circle, Heading, TownLayout, Vec2, World};
+use crate::{Aabb, AnimationState, Body, Circle, Heading, TownLayout, Vec2, World};
 
 /// Street intersections and the street segments joining them.
 #[derive(Debug, Clone, PartialEq)]
@@ -90,6 +90,14 @@ impl Townsperson {
         AnimationState::from_speed(self.speed, Self::WALK_MAX)
     }
 
+    /// Where this person stands, as an obstacle for others.
+    pub fn body(&self) -> Body {
+        Body {
+            position: self.position,
+            collider: self.collider,
+        }
+    }
+
     /// Index of the intersection last reached (or walked away from).
     pub fn last_waypoint(&self) -> usize {
         self.from
@@ -136,12 +144,33 @@ impl Townsfolk {
     /// Advances everyone by `dt` seconds inside `world`. Non-finite or
     /// non-positive `dt` changes nothing.
     pub fn step(&mut self, world: &World, dt: f32) {
+        self.step_around(world, &[], dt);
+    }
+
+    /// Like [`Self::step`], with `obstacles` (the rider) that people walk
+    /// around instead of through.
+    pub fn step_around(&mut self, world: &World, obstacles: &[Body], dt: f32) {
         if !(dt.is_finite() && dt > 0.0) {
             return;
         }
         for person in &mut self.people {
-            person.step(&self.graph, world, dt);
+            person.step(&self.graph, world, obstacles, dt);
         }
+    }
+
+    /// Shoves everyone overlapping `body` (a rider barging through) out of
+    /// its way, without pushing anyone into the world's obstacles.
+    pub fn make_way(&mut self, world: &World, body: Body) {
+        for person in &mut self.people {
+            if let Some(push) = person.collider.push_out_of_body(person.position, &body) {
+                person.position = world.resolve(person.collider, person.position + push, |_| ());
+            }
+        }
+    }
+
+    /// Where everyone stands, as obstacles for others.
+    pub fn bodies(&self) -> Vec<Body> {
+        self.people.iter().map(Townsperson::body).collect()
     }
 }
 
@@ -188,7 +217,7 @@ impl Townsperson {
         }
     }
 
-    fn step(&mut self, graph: &StreetGraph, world: &World, dt: f32) {
+    fn step(&mut self, graph: &StreetGraph, world: &World, obstacles: &[Body], dt: f32) {
         if self.pause > 0.0 {
             self.pause -= dt;
             self.speed = 0.0;
@@ -208,7 +237,7 @@ impl Townsperson {
             self.position += direction * stride;
             self.speed = self.walk_speed;
         }
-        self.position = world.resolve(self.collider, self.position, |_| ());
+        self.position = world.resolve_among(self.collider, self.position, obstacles, |_| ());
 
         // Something in the way (a wall, the tethered horse): turn back.
         if self.speed > 0.0 && self.position.distance(start) < 0.25 * stride {
@@ -482,5 +511,107 @@ mod tests {
             }
         });
         assert!(folk.people.iter().any(|p| p.last_waypoint() == 2));
+    }
+
+    /// No person overlaps `body` (beyond rounding).
+    fn assert_clear_of(folk: &Townsfolk, body: Body, when: &str) {
+        for p in &folk.people {
+            let gap = p.position.distance(body.position);
+            let needed = p.collider.radius + body.collider.radius;
+            assert!(gap >= needed - 1e-3, "{when}: {p:?} overlaps {body:?}");
+        }
+    }
+
+    #[test]
+    fn people_walk_around_a_standing_rider() {
+        let (town, world) = town();
+        let mut folk = Townsfolk::new(&town, TOWNSFOLK_COUNT, 3);
+        // A rider standing still on each person's path, one at a time.
+        for i in 0..4 {
+            let p = &folk.people[i];
+            let ahead = folk.graph.nodes[p.next_waypoint()] - p.position;
+            let rider = Body {
+                position: p.position + ahead * 0.5,
+                collider: Circle::new(0.9),
+            };
+            let mut met = false;
+            for _ in 0..(60.0 / MAX_STEP) as usize {
+                folk.step_around(&world, &[rider], MAX_STEP);
+                assert_clear_of(&folk, rider, "walking");
+                met |= folk.people[i].position.distance(rider.position) < 2.0;
+            }
+            assert!(met, "person {i} came by the rider");
+        }
+    }
+
+    #[test]
+    fn a_rider_shoves_people_aside_and_cannot_pass_through_them() {
+        let (town, world) = town();
+        let mut folk = Townsfolk::new(&town, TOWNSFOLK_COUNT, 3);
+        let params = crate::RiderParams::default();
+        let gallop = crate::RiderInput {
+            throttle: 1.0,
+            gallop: true,
+            turn: 0.3,
+        };
+        // Start right on top of the first person.
+        let at = folk.people[0].position;
+        let mut rider = crate::Rider::new(at, Heading::from_radians(0.0), &world.terrain);
+        let mut shoved = 0;
+        for frame in 0..(120.0 / MAX_STEP) as usize {
+            folk.step_around(&world, &[rider.body()], MAX_STEP);
+            let input = crate::RiderInput {
+                turn: if (frame / 100) % 2 == 0 { 0.3 } else { -0.3 },
+                ..gallop
+            };
+            rider.step(input, &params, &world, MAX_STEP);
+            let before = folk.clone();
+            folk.make_way(&world, rider.body());
+            if folk != before {
+                shoved += 1;
+            }
+            rider.keep_clear_of(&world, &folk.bodies());
+            assert_clear_of(&folk, rider.body(), &format!("frame {frame}"));
+            for p in &folk.people {
+                for o in &world.obstacles {
+                    let gap = p.position.distance(o.closest_point(p.position));
+                    assert!(gap >= p.collider.radius - 1e-3, "{p:?} shoved into {o:?}");
+                }
+            }
+        }
+        assert!(shoved > 0, "the rider met somebody");
+    }
+
+    #[test]
+    fn a_person_pinned_against_a_wall_stops_the_rider() {
+        let wall = Aabb::new(Vec2::new(-10.0, 0.0), Vec2::new(10.0, 4.0));
+        let mut world = World::default();
+        world.obstacles.push(wall);
+        let graph = StreetGraph {
+            nodes: vec![Vec2::new(0.0, -0.3)],
+            links: vec![vec![]],
+        };
+        let mut folk = Townsfolk::from_graph(graph, 1, 1);
+        folk.people[0].position = Vec2::new(0.0, -0.3);
+        let north = Heading::from_radians(std::f32::consts::FRAC_PI_2);
+        let mut rider = crate::Rider::new(Vec2::new(0.0, -6.0), north, &world.terrain);
+        let params = crate::RiderParams::default();
+        let walk = crate::RiderInput {
+            throttle: 1.0,
+            ..Default::default()
+        };
+        for _ in 0..(10.0 / MAX_STEP) as usize {
+            rider.step(walk, &params, &world, MAX_STEP);
+            folk.make_way(&world, rider.body());
+            rider.keep_clear_of(&world, &folk.bodies());
+            assert_clear_of(&folk, rider.body(), "pinned");
+        }
+        let person = folk.people[0].position;
+        assert!(
+            person.y <= -0.3 + 1e-3,
+            "stays against the wall: {person:?}"
+        );
+        assert!(rider.position.y < person.y, "the rider stops short");
+        assert!(rider.speed.abs() < 1e-3, "and stops pushing");
     }
 }
