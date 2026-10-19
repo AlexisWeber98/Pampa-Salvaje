@@ -43,11 +43,11 @@ Forecast: ~700 authored changed lines across all tasks.
 
 | ID | Task | Route | Status | Commit | Review |
 |----|------|-------|--------|--------|--------|
-| T1 | Workspace scaffold (workspace manifest, three crates, README) | delegated (writer trigger: 2+ non-trivial files) | [x] | | |
-| T2 | `core`: heading, rider kinematics, animation state + unit tests (test-first) | delegated | [x] | | |
-| T3 | `render`: heightmap terrain, lighting, dust fog | delegated | [x] | | |
-| T4 | `render`: billboard rider sprite with 8-direction selection from heading (+ tests for direction mapping) | delegated | [x] | | |
-| T5 | `game`: input -> core movement, follow camera, wire plugins; runs | delegated | [x] | | |
+| T1 | Workspace scaffold (workspace manifest, three crates, README) | delegated (writer trigger: 2+ non-trivial files) | [x] | `941c956` | not run (RDD owned by parent) |
+| T2 | `core`: heading, rider kinematics, animation state + unit tests (test-first) | delegated | [x] | `d15ef85` | not run (RDD owned by parent) |
+| T3 | `render`: heightmap terrain, lighting, dust fog | delegated | [x] | `e238a2f` | not run (RDD owned by parent) |
+| T4 | `render`: billboard rider sprite with 8-direction selection from heading (+ tests for direction mapping) | delegated | [x] | `db03644` | not run (RDD owned by parent) |
+| T5 | `game`: input -> core movement, follow camera, wire plugins; runs | delegated | [x] | `e79fa43` | not run (RDD owned by parent) |
 
 ## Acceptance criteria
 
