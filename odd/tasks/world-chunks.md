@@ -56,11 +56,11 @@ Review base: `aeb1385`.
 
 | ID | Task | Route | Status | Commit | Review |
 |----|------|-------|--------|--------|--------|
-| T1 | core: chunk math, world config, multi flat areas, world bounds (test-first) | delegated (writer trigger: 2+ non-trivial files) | [x] | `b3f0f48` | pending (RDD owned by parent) |
-| T2 | core: multiple towns at origins, overlap/outside validation, spatial index for obstacles (test-first) | delegated | [x] | `2bb10d4` | pending (RDD owned by parent) |
-| T3 | content: world section + multi-town loading, compat, tests, README | delegated | [x] | `277a26b` | pending (RDD owned by parent) |
-| T4 | render: chunk streaming for terrain + props with hysteresis and per-frame budget (headless tests for the streaming set logic) | delegated | [x] | `c2d018d` | pending (RDD owned by parent) |
-| T5 | game/render: per-town spawn/despawn (meshes, signs, train), per-town crowds with activation radius, minimap nearest town; runs | delegated | [x] | `0ae25a9` | pending (RDD owned by parent) |
+| T1 | core: chunk math, world config, multi flat areas, world bounds (test-first) | delegated (writer trigger: 2+ non-trivial files) | [x] | `b3f0f48` | medium · granted · approved |
+| T2 | core: multiple towns at origins, overlap/outside validation, spatial index for obstacles (test-first) | delegated | [x] | `2bb10d4` | medium · granted · approved |
+| T3 | content: world section + multi-town loading, compat, tests, README | delegated | [x] | `277a26b` | medium · granted · approved |
+| T4 | render: chunk streaming for terrain + props with hysteresis and per-frame budget (headless tests for the streaming set logic) | delegated | [x] | `c2d018d` | medium · granted · approved |
+| T5 | game/render: per-town spawn/despawn (meshes, signs, train), per-town crowds with activation radius, minimap nearest town; runs | delegated | [x] | `0ae25a9` | medium · granted · approved |
 
 ## Acceptance criteria
 
@@ -98,6 +98,18 @@ Review base: `aeb1385`.
 
 - The minimap title shares the top edge with the clamped player arrow when the rider is north of the framed town.
 - The first frame builds all 29 chunks at once (a short startup cost by design); afterwards at most one chunk per frame.
+
+- Review: native RDD. The whole range `35e18c8..a2ce88c` exceeded the reviewer context budget (`lens_context_budget_exceeded`), so with the user's choice it was reviewed per commit. Consent was granted for each, and all five reviews were approved and acknowledged:
+  - `b3f0f48` (`review-a2d8780e0b11a4f7`)
+  - `2bb10d4` (`review-441456c9b254fb75`)
+  - `277a26b` (`review-56b4da0f92ec67c5`)
+  - `c2d018d` (`review-a8dee2d0464afa13`)
+  - `0ae25a9`+docs (`review-c925e1e0939d56cb`)
+  Advisory follow-ups (non-blocking, to address in a hardening task):
+  - `World::new` does not call `WorldConfig::validated()` (`crates/core/src/world.rs:83`).
+  - Non-finite town origins pass placement (`crates/core/src/placement.rs:130-135`). `StaticObstacles::push` does not guard non-finite or huge footprints and could hang (`crates/core/src/obstacles.rs:34-40`). Both are reachable from an edited `towns.ron` (RON accepts `inf`/`NaN`).
+  - `resolve` collects nearby obstacles once per pass with 0.5 m slack; pushes larger than that in narrow gaps may leave residual overlap (`crates/core/src/world.rs:197-200`).
+  - The content fallback Castex is not checked against a small configured world (`crates/content/src/towns.rs:201`).
 
 ## Next step
 
