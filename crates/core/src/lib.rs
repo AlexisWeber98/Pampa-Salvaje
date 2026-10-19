@@ -17,6 +17,7 @@ pub mod math;
 pub mod rider;
 pub mod terrain;
 pub mod town;
+pub mod townsfolk;
 pub mod world;
 
 pub use animation::AnimationState;
@@ -25,5 +26,6 @@ pub use heading::Heading;
 pub use math::Vec2;
 pub use rider::{MAX_STEP, Rider, RiderInput, RiderParams};
 pub use terrain::{FlatArea, Terrain};
-pub use town::{Building, BuildingKind, Railway, Side, TownLayout};
+pub use town::{Building, BuildingKind, HitchingPost, Railway, Side, TetheredHorse, TownLayout};
+pub use townsfolk::{StreetGraph, Townsfolk, Townsperson};
 pub use world::{PATCH_HALF_EXTENT, World, WorldBounds};

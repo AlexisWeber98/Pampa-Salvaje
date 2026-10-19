@@ -1,6 +1,6 @@
 //! The static world the rider moves through: terrain and playable bounds.
 
-use crate::{Aabb, Terrain, TownLayout, Vec2};
+use crate::{Aabb, Circle, Terrain, TownLayout, Vec2};
 
 /// Half the side length of the square terrain patch, in meters.
 ///
@@ -91,6 +91,34 @@ impl World {
             bounds: WorldBounds::PATCH,
             obstacles: town.obstacles(),
         }
+    }
+}
+
+impl World {
+    /// Pushes a circle at `center` out of every overlapping obstacle and
+    /// returns where it ends up. `on_push` receives the unit direction of
+    /// each push (to cancel velocity into walls). A few passes settle corners
+    /// where two footprints meet.
+    pub fn resolve(&self, collider: Circle, center: Vec2, mut on_push: impl FnMut(Vec2)) -> Vec2 {
+        const PASSES: usize = 4;
+        let mut center = center;
+        for _ in 0..PASSES {
+            let mut moved = false;
+            for obstacle in &self.obstacles {
+                if let Some(push) = collider.push_out(center, obstacle) {
+                    center += push;
+                    let length = push.length();
+                    if length > 0.0 {
+                        on_push(push * (1.0 / length));
+                    }
+                    moved = true;
+                }
+            }
+            if !moved {
+                break;
+            }
+        }
+        center
     }
 }
 

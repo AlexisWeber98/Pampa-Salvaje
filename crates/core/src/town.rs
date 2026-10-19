@@ -54,6 +54,21 @@ pub struct Railway {
     pub gauge: f32,
 }
 
+/// A saddled horse tied in front of a building: it never moves.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TetheredHorse {
+    pub position: Vec2,
+    pub heading: Heading,
+    pub footprint: Aabb,
+}
+
+/// A timber hitching rail with a horse tied alongside it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HitchingPost {
+    pub rail: Aabb,
+    pub horse: TetheredHorse,
+}
+
 /// A small railway town laid out on an orthogonal grid.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TownLayout {
@@ -65,6 +80,8 @@ pub struct TownLayout {
     pub trees: Vec<Vec2>,
     pub railway: Railway,
     pub buildings: Vec<Building>,
+    /// Hitching rail in front of the general store.
+    pub hitching_post: HitchingPost,
 }
 
 /// Blocks per side of the grid.
@@ -102,6 +119,11 @@ impl TownLayout {
         buildings.extend(station_yard());
 
         let rail_y = GRID_HALF + RAIL_OFFSET;
+        let store = buildings
+            .iter()
+            .find(|b| b.kind == BuildingKind::GeneralStore)
+            .expect("the town has a general store");
+        let hitching_post = hitching_post(store);
         Self {
             streets: streets(),
             plaza: block(PLAZA.0, PLAZA.1),
@@ -112,6 +134,7 @@ impl TownLayout {
                 gauge: RAIL_GAUGE,
             },
             buildings,
+            hitching_post,
         }
     }
 
@@ -142,13 +165,15 @@ impl TownLayout {
         }
     }
 
-    /// Static collision footprints: every building plus every tree trunk.
+    /// Static collision footprints: every building, every tree trunk, and the
+    /// hitching rail with its horse.
     pub fn obstacles(&self) -> Vec<Aabb> {
         let trunk = Vec2::new(2.0 * TREE_TRUNK_RADIUS, 2.0 * TREE_TRUNK_RADIUS);
         self.buildings
             .iter()
             .map(|b| b.footprint)
             .chain(self.trees.iter().map(|&p| Aabb::from_center_size(p, trunk)))
+            .chain([self.hitching_post.rail, self.hitching_post.horse.footprint])
             .collect()
     }
 
@@ -161,6 +186,39 @@ impl TownLayout {
             Vec2::new(road_x, -GRID_HALF - 25.0),
             Heading::from_radians(std::f32::consts::FRAC_PI_2),
         )
+    }
+}
+
+/// A rail on the street side of `store`, past its veranda, with a horse tied
+/// alongside it facing along the street.
+fn hitching_post(store: &Building) -> HitchingPost {
+    // Outward facade normal and the direction along the street.
+    let (normal, along) = match store.front {
+        Side::East => (Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0)),
+        Side::West => (Vec2::new(-1.0, 0.0), Vec2::new(0.0, 1.0)),
+        Side::North => (Vec2::new(0.0, 1.0), Vec2::new(1.0, 0.0)),
+        Side::South => (Vec2::new(0.0, -1.0), Vec2::new(1.0, 0.0)),
+    };
+    let half = store.footprint.size() * 0.5;
+    let face =
+        store.footprint.center() + normal * (normal.x.abs() * half.x + normal.y.abs() * half.y);
+    // Axis-aligned box of `length` along the street and `width` across it.
+    let boxed = |center: Vec2, length: f32, width: f32| {
+        let size = along * length + normal * width;
+        Aabb::from_center_size(center, Vec2::new(size.x.abs(), size.y.abs()))
+    };
+    // Just past the store's 3 m veranda.
+    let rail_offset = 3.2;
+    let (rail_width, horse_width, horse_length) = (0.2, 1.0, 2.4);
+    let rail = boxed(face + normal * rail_offset, 2.8, rail_width);
+    let horse_center = face + normal * (rail_offset + rail_width / 2.0 + 0.1 + horse_width / 2.0);
+    HitchingPost {
+        rail,
+        horse: TetheredHorse {
+            position: horse_center,
+            heading: Heading::from_radians(along.y.atan2(along.x)),
+            footprint: boxed(horse_center, horse_length, horse_width),
+        },
     }
 }
 
@@ -389,7 +447,7 @@ fn station_yard() -> Vec<Building> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::WorldBounds;
+    use crate::{Rider, WorldBounds};
 
     fn town() -> TownLayout {
         TownLayout::castex_inspired()
@@ -509,10 +567,44 @@ mod tests {
     fn obstacles_cover_buildings_and_trees() {
         let t = town();
         let obstacles = t.obstacles();
-        assert_eq!(obstacles.len(), t.buildings.len() + t.trees.len());
+        assert_eq!(obstacles.len(), t.buildings.len() + t.trees.len() + 2);
+        assert!(obstacles.contains(&t.hitching_post.rail));
+        assert!(obstacles.contains(&t.hitching_post.horse.footprint));
         for b in &t.buildings {
             assert!(obstacles.contains(&b.footprint));
         }
+    }
+
+    #[test]
+    fn a_horse_is_tied_in_front_of_the_general_store() {
+        let t = town();
+        let store = t
+            .buildings
+            .iter()
+            .find(|b| b.kind == BuildingKind::GeneralStore)
+            .unwrap();
+        let post = t.hitching_post;
+        let horse = post.horse;
+        // On the street the store faces, just past its 3 m veranda.
+        let street = t
+            .streets
+            .iter()
+            .find(|s| s.contains(&horse.footprint))
+            .expect("horse stands on a street");
+        assert!(street.contains(&post.rail));
+        let gap = horse.footprint.min.x - store.footprint.max.x;
+        assert!(
+            store.front == Side::East && (3.0..6.0).contains(&gap),
+            "gap {gap}"
+        );
+        assert!((horse.footprint.center().y - store.footprint.center().y).abs() < 1e-4);
+        assert_eq!(horse.position, horse.footprint.center());
+        // Faces along the street, tied alongside the rail without touching it.
+        assert!(horse.heading.forward().x.abs() < 1e-5);
+        assert!(!horse.footprint.intersects(&post.rail));
+        assert!(horse.footprint.min.x - post.rail.max.x < 0.5);
+        // Leaves room to pass: a rider fits between the horse and the far side.
+        assert!(street.max.x - horse.footprint.max.x > 4.0 * Rider::COLLIDER_RADIUS);
     }
 
     #[test]

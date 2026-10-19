@@ -133,25 +133,12 @@ impl Rider {
         }
     }
 
-    /// Pushes the rider out of every overlapping obstacle. A few passes settle
-    /// corners where two footprints meet.
+    /// Pushes the rider out of every overlapping obstacle, sliding along walls.
     fn resolve_obstacles(&mut self, world: &World) {
-        const PASSES: usize = 4;
-        for _ in 0..PASSES {
-            let mut moved = false;
-            for obstacle in &world.obstacles {
-                if let Some(push) = self.collider.push_out(self.position, obstacle) {
-                    self.position += push;
-                    let length = push.length();
-                    if length > 0.0 {
-                        self.block(push * (1.0 / length));
-                    }
-                    moved = true;
-                }
-            }
-            if !moved {
-                break;
-            }
+        let mut normals = Vec::new();
+        self.position = world.resolve(self.collider, self.position, |n| normals.push(n));
+        for normal in normals {
+            self.block(normal);
         }
     }
 
