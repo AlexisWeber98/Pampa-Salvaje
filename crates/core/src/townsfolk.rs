@@ -114,10 +114,22 @@ pub const TOWNSFOLK_COUNT: usize = 16;
 impl Townsfolk {
     /// `count` people spread over `town`'s streets, placed from `seed`.
     pub fn new(town: &TownLayout, count: usize, seed: u32) -> Self {
-        let graph = StreetGraph::from_town(town);
-        let people = (0..count)
-            .map(|i| Townsperson::spawn(&graph, Rng::new(seed, i as u32)))
-            .collect();
+        Self::from_graph(StreetGraph::from_town(town), count, seed)
+    }
+
+    /// `count` people spread over `graph`, placed from `seed`.
+    ///
+    /// Degenerate graphs never panic: with no intersections nobody spawns,
+    /// and people placed on an intersection with no streets leading away
+    /// stand there idle.
+    pub fn from_graph(graph: StreetGraph, count: usize, seed: u32) -> Self {
+        let people = if graph.nodes.is_empty() {
+            Vec::new()
+        } else {
+            (0..count)
+                .map(|i| Townsperson::spawn(&graph, Rng::new(seed, i as u32)))
+                .collect()
+        };
         Self { graph, people }
     }
 
@@ -144,9 +156,16 @@ const PACE: (f32, f32) = (1.1, Townsperson::WALK_MAX);
 const GIVE_UP: f32 = 2.0;
 
 impl Townsperson {
+    /// A person somewhere along a street of `graph` (which has nodes). On an
+    /// isolated intersection the person starts, and stays, right there.
     fn spawn(graph: &StreetGraph, mut rng: Rng) -> Self {
         let from = rng.below(graph.nodes.len());
-        let to = graph.links[from][rng.below(graph.links[from].len())];
+        let links = &graph.links[from];
+        let to = if links.is_empty() {
+            from
+        } else {
+            links[rng.below(links.len())]
+        };
         let lane = Vec2::new(
             rng.range(-MAX_LANE, MAX_LANE),
             rng.range(-MAX_LANE, MAX_LANE),
@@ -210,7 +229,12 @@ impl Townsperson {
         let links = &graph.links[self.from];
         let onward: Vec<usize> = links.iter().copied().filter(|&n| n != came_from).collect();
         let choices = if onward.is_empty() { links } else { &onward };
-        self.to = choices[self.rng.below(choices.len())];
+        // Nowhere to go from an isolated intersection: stay put.
+        self.to = if choices.is_empty() {
+            self.from
+        } else {
+            choices[self.rng.below(choices.len())]
+        };
         self.pause = self.rng.range(PAUSE.0, PAUSE.1);
         self.speed = 0.0;
     }
@@ -398,5 +422,65 @@ mod tests {
                 }
             }
         });
+    }
+
+    #[test]
+    fn a_town_without_intersections_has_nobody_walking() {
+        let (mut town, world) = town();
+        town.streets.clear();
+        let mut folk = Townsfolk::new(&town, TOWNSFOLK_COUNT, 7);
+        assert!(folk.graph.nodes.is_empty());
+        assert!(folk.people.is_empty());
+        folk.step(&world, MAX_STEP);
+    }
+
+    #[test]
+    fn people_on_an_isolated_intersection_stand_there() {
+        let (mut town, world) = town();
+        // Keep one north-south and one east-west street: a single crossing.
+        let ns = *town
+            .streets
+            .iter()
+            .find(|s| s.size().y > s.size().x)
+            .unwrap();
+        let ew = *town
+            .streets
+            .iter()
+            .find(|s| s.size().x > s.size().y)
+            .unwrap();
+        town.streets = vec![ns, ew];
+        let mut folk = Townsfolk::new(&town, 3, 7);
+        assert_eq!(folk.graph.nodes.len(), 1);
+        assert!(folk.graph.links[0].is_empty());
+        assert_eq!(folk.people.len(), 3);
+        let node = folk.graph.nodes[0];
+        run(&mut folk, &world, 30.0, |folk| {
+            for p in &folk.people {
+                assert!(p.position.distance(node) <= MAX_LANE * 1.5, "{p:?}");
+                assert_eq!(p.animation(), AnimationState::Idle);
+                assert_eq!((p.last_waypoint(), p.next_waypoint()), (0, 0));
+            }
+        });
+    }
+
+    #[test]
+    fn isolated_nodes_in_a_larger_graph_never_panic() {
+        let graph = StreetGraph {
+            nodes: vec![
+                Vec2::new(0.0, 0.0),
+                Vec2::new(20.0, 0.0),
+                Vec2::new(500.0, 500.0),
+            ],
+            links: vec![vec![1], vec![0], vec![]],
+        };
+        let world = World::default();
+        let mut folk = Townsfolk::from_graph(graph, 24, 3);
+        assert_eq!(folk.people.len(), 24);
+        run(&mut folk, &world, 60.0, |folk| {
+            for p in &folk.people {
+                assert!(p.position.x.is_finite() && p.position.y.is_finite());
+            }
+        });
+        assert!(folk.people.iter().any(|p| p.last_waypoint() == 2));
     }
 }

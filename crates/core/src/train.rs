@@ -319,7 +319,7 @@ fn along(railway: &Railway) -> (Vec2, f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Heading, MAX_STEP, Rider, RiderInput, RiderParams, Terrain, World};
+    use crate::{Aabb, Circle, Heading, MAX_STEP, Rider, RiderInput, RiderParams, Terrain, World};
 
     fn town_train() -> (TownLayout, Train) {
         let town = TownLayout::castex_inspired();
@@ -520,6 +520,40 @@ mod tests {
             } else {
                 assert!(r.position.y <= rail_y - clear, "{:?}", r.position);
             }
+        }
+    }
+
+    #[test]
+    fn a_rider_pinched_against_the_platform_ends_clear_of_both() {
+        let (mut world, train) = world_with_standing_train();
+        let platform = TownLayout::castex_inspired()
+            .buildings
+            .iter()
+            .find(|b| b.kind == crate::BuildingKind::Platform)
+            .unwrap()
+            .footprint;
+        let rail_y = train.railway.start.y;
+        let car_south = rail_y - Train::WIDTH / 2.0;
+        // Freight stacked along the platform edge narrows the gap to the
+        // standing train below a rider's width.
+        world.obstacles.push(Aabb::new(
+            Vec2::new(platform.min.x, platform.max.y),
+            Vec2::new(platform.max.x, car_south - 0.5),
+        ));
+        let platform = world.obstacles[world.obstacles.len() - 1];
+        let c = Circle::new(Rider::COLLIDER_RADIUS);
+        let mut k = 0;
+        while k <= 40 {
+            let x = platform.min.x + 1.0 + (platform.size().x - 2.0) * k as f32 / 40.0;
+            for y in [platform.max.y + 0.1, car_south - 0.05, car_south + 0.3] {
+                let start = Vec2::new(x, y);
+                let end = world.resolve(c, start, |_| ());
+                let statics = world.obstacles.iter().filter_map(|o| c.push_out(end, o));
+                let moving = world.moving.iter().filter_map(|o| o.push_out(c, end));
+                let deepest = statics.chain(moving).map(Vec2::length).fold(0.0, f32::max);
+                assert!(deepest < 1e-3, "{start:?} -> {end:?} overlaps by {deepest}");
+            }
+            k += 1;
         }
     }
 }
