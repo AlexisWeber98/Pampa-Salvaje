@@ -84,6 +84,7 @@ impl Rider {
         self.speed = next_speed(self.speed, throttle, input.gallop, params, dt);
         self.position += self.heading.forward() * (self.speed * dt);
 
+        self.resolve_obstacles(world);
         let contained = world.bounds.contain(self.position, self.collider.radius);
         self.position = contained.position;
         for push in [contained.push_x, contained.push_y].into_iter().flatten() {
@@ -91,6 +92,28 @@ impl Rider {
         }
 
         self.height = world.terrain.height(self.position.x, self.position.y);
+    }
+
+    /// Pushes the rider out of every overlapping obstacle. A few passes settle
+    /// corners where two footprints meet.
+    fn resolve_obstacles(&mut self, world: &World) {
+        const PASSES: usize = 4;
+        for _ in 0..PASSES {
+            let mut moved = false;
+            for obstacle in &world.obstacles {
+                if let Some(push) = self.collider.push_out(self.position, obstacle) {
+                    self.position += push;
+                    let length = push.length();
+                    if length > 0.0 {
+                        self.block(push * (1.0 / length));
+                    }
+                    moved = true;
+                }
+            }
+            if !moved {
+                break;
+            }
+        }
     }
 
     /// Removes the part of the rider's velocity that points against `normal`
@@ -148,6 +171,7 @@ fn next_speed(speed: f32, throttle: f32, gallop: bool, p: &RiderParams, dt: f32)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Aabb;
     use std::f32::consts::FRAC_PI_4;
 
     const DT: f32 = 1.0 / 60.0;
@@ -374,5 +398,74 @@ mod tests {
             r.speed > 0.0 && r.speed < 4.0,
             "loses only the part into the wall"
         );
+    }
+
+    fn walled_world() -> World {
+        let mut world = World::default();
+        world
+            .obstacles
+            .push(Aabb::new(Vec2::new(10.0, -10.0), Vec2::new(14.0, 10.0)));
+        world
+    }
+
+    #[test]
+    fn cannot_ride_through_a_building() {
+        let (mut r, p, _) = rider();
+        let world = walled_world();
+        let gallop = RiderInput {
+            throttle: 1.0,
+            gallop: true,
+            ..Default::default()
+        };
+        run(&mut r, gallop, &p, &world, 10.0);
+        let face = 10.0 - Rider::COLLIDER_RADIUS;
+        assert!((r.position.x - face).abs() < 1e-3, "x = {}", r.position.x);
+        assert!(r.speed.abs() < 1e-3, "head-on stops the rider");
+    }
+
+    #[test]
+    fn slides_along_a_building() {
+        let (mut r, p, _) = rider();
+        let world = walled_world();
+        r.position = Vec2::new(10.0 - Rider::COLLIDER_RADIUS, 0.0);
+        r.heading = Heading::from_radians(-30f32.to_radians());
+        r.speed = 4.0;
+        r.step(RiderInput::default(), &p, &world, DT);
+        assert!(r.position.x <= 10.0 - Rider::COLLIDER_RADIUS + 1e-4);
+        assert!(r.position.y < 0.0, "keeps moving along the wall");
+        assert!(r.speed > 0.0 && r.speed < 4.0);
+    }
+
+    #[test]
+    fn never_ends_a_step_inside_town_buildings() {
+        let town = crate::TownLayout::castex_inspired();
+        let world = World::with_town(Terrain::default(), &town);
+        let p = RiderParams::default();
+        let (start, heading) = town.arrival();
+        let mut r = Rider::new(start, heading, &world.terrain);
+        let mut contacts = 0;
+        for frame in 0..(240.0 / DT) as usize {
+            // Wander: gallop with a slowly changing turn.
+            let turn = ((frame as f32) * 0.004).sin() * 0.6;
+            let input = RiderInput {
+                throttle: 1.0,
+                turn,
+                gallop: true,
+            };
+            r.step(input, &p, &world, DT);
+            for o in &world.obstacles {
+                let gap = r.position.distance(o.closest_point(r.position));
+                assert!(
+                    gap >= Rider::COLLIDER_RADIUS - 1e-3,
+                    "frame {frame}: inside {o:?} at {:?}",
+                    r.position
+                );
+                if gap < Rider::COLLIDER_RADIUS + 1e-2 {
+                    contacts += 1;
+                }
+            }
+            assert!(r.position.x.is_finite() && r.position.y.is_finite());
+        }
+        assert!(contacts > 0, "the wander path must actually hit buildings");
     }
 }

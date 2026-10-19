@@ -13,6 +13,32 @@ impl Circle {
         Self { radius }
     }
 
+    /// Smallest displacement that moves this circle at `center` out of `aabb`,
+    /// or `None` if they do not overlap.
+    pub fn push_out(self, center: Vec2, aabb: &Aabb) -> Option<Vec2> {
+        let closest = aabb.closest_point(center);
+        let offset = center - closest;
+        let distance = offset.length();
+        if distance >= self.radius {
+            return None;
+        }
+        if distance > 0.0 {
+            return Some(offset * ((self.radius - distance) / distance));
+        }
+        // Center inside the box: leave through the nearest edge.
+        let exits = [
+            (center.x - aabb.min.x, Vec2::new(-1.0, 0.0)),
+            (aabb.max.x - center.x, Vec2::new(1.0, 0.0)),
+            (center.y - aabb.min.y, Vec2::new(0.0, -1.0)),
+            (aabb.max.y - center.y, Vec2::new(0.0, 1.0)),
+        ];
+        let (depth, normal) = exits
+            .into_iter()
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .expect("four exits");
+        Some(normal * (depth + self.radius))
+    }
+
     /// Whether this circle at `a` overlaps `other` at `b`.
     pub fn overlaps(self, a: Vec2, other: Circle, b: Vec2) -> bool {
         a.distance(b) < self.radius + other.radius
@@ -105,5 +131,52 @@ mod tests {
         assert_eq!(a.center(), Vec2::new(2.0, 1.0));
         assert_eq!(a.closest_point(Vec2::new(9.0, -3.0)), Vec2::new(4.0, 0.0));
         assert_eq!(a.expanded(1.0).size(), Vec2::new(6.0, 4.0));
+    }
+
+    fn unit_box() -> Aabb {
+        Aabb::new(Vec2::ZERO, Vec2::new(4.0, 2.0))
+    }
+
+    fn close(a: Vec2, b: Vec2) -> bool {
+        a.distance(b) < 1e-5
+    }
+
+    #[test]
+    fn separate_circle_needs_no_push() {
+        let c = Circle::new(1.0);
+        assert_eq!(c.push_out(Vec2::new(-1.5, 1.0), &unit_box()), None);
+        assert_eq!(c.push_out(Vec2::new(-1.0, 1.0), &unit_box()), None);
+        // Near a corner but outside the rounded corner region.
+        assert_eq!(c.push_out(Vec2::new(-0.8, -0.8), &unit_box()), None);
+    }
+
+    #[test]
+    fn pushes_out_through_the_nearest_face() {
+        let c = Circle::new(1.0);
+        let push = c.push_out(Vec2::new(-0.5, 1.0), &unit_box()).unwrap();
+        assert!(close(push, Vec2::new(-0.5, 0.0)), "{push:?}");
+        let push = c.push_out(Vec2::new(2.0, 2.25), &unit_box()).unwrap();
+        assert!(close(push, Vec2::new(0.0, 0.75)), "{push:?}");
+    }
+
+    #[test]
+    fn pushes_out_diagonally_at_corners() {
+        let c = Circle::new(1.0);
+        let center = Vec2::new(4.5, 2.5);
+        let push = c.push_out(center, &unit_box()).unwrap();
+        let resolved = center + push;
+        assert!((resolved.distance(Vec2::new(4.0, 2.0)) - 1.0).abs() < 1e-5);
+        assert!((push.x - push.y).abs() < 1e-5 && push.x > 0.0);
+    }
+
+    #[test]
+    fn center_inside_box_exits_through_the_closest_edge() {
+        let c = Circle::new(1.0);
+        // Closest to the bottom edge (y = 0).
+        let push = c.push_out(Vec2::new(1.5, 0.4), &unit_box()).unwrap();
+        assert!(close(push, Vec2::new(0.0, -1.4)), "{push:?}");
+        // Closest to the right edge (x = 4).
+        let push = c.push_out(Vec2::new(3.8, 1.0), &unit_box()).unwrap();
+        assert!(close(push, Vec2::new(1.2, 0.0)), "{push:?}");
     }
 }

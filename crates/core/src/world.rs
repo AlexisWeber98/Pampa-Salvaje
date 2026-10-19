@@ -1,6 +1,6 @@
 //! The static world the rider moves through: terrain and playable bounds.
 
-use crate::{Terrain, Vec2};
+use crate::{Aabb, Terrain, TownLayout, Vec2};
 
 /// Half the side length of the square terrain patch, in meters.
 ///
@@ -70,6 +70,8 @@ fn clamp_axis(value: f32, lo: f32, hi: f32) -> (f32, Option<f32>) {
 pub struct World {
     pub terrain: Terrain,
     pub bounds: WorldBounds,
+    /// Static footprints the rider cannot pass through.
+    pub obstacles: Vec<Aabb>,
 }
 
 impl World {
@@ -78,6 +80,16 @@ impl World {
         Self {
             terrain,
             bounds: WorldBounds::PATCH,
+            obstacles: Vec::new(),
+        }
+    }
+
+    /// `terrain` leveled under `town`, with the town's footprints as obstacles.
+    pub fn with_town(terrain: Terrain, town: &TownLayout) -> Self {
+        Self {
+            terrain: terrain.with_flat_area(town.flat_area(&terrain)),
+            bounds: WorldBounds::PATCH,
+            obstacles: town.obstacles(),
         }
     }
 }
@@ -111,5 +123,15 @@ mod tests {
         assert_eq!(c.position, Vec2::new(299.0, -299.0));
         assert_eq!(c.push_x, Some(Vec2::new(-1.0, 0.0)));
         assert_eq!(c.push_y, Some(Vec2::new(0.0, 1.0)));
+    }
+
+    #[test]
+    fn town_world_levels_ground_and_blocks_buildings() {
+        let town = TownLayout::castex_inspired();
+        let world = World::with_town(Terrain::default(), &town);
+        let area = town.flat_area(&Terrain::default());
+        assert_eq!(world.terrain.flat_area, Some(area));
+        assert_eq!(world.obstacles, town.obstacles());
+        assert_eq!(world.bounds, WorldBounds::PATCH);
     }
 }
