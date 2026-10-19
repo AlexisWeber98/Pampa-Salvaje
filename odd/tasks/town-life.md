@@ -46,12 +46,12 @@ Review base: `7891de3`.
 
 | ID | Task | Route | Status | Commit | Review |
 |----|------|-------|--------|--------|--------|
-| T1 | core: sub-stepped rider movement + head-on thin-obstacle test at MAX_STEP (test-first) | delegated (writer trigger: 2+ non-trivial files) | [x] | `bfc3341` | pending (RDD owned by parent) |
-| T2 | core segment-vs-AABB query; game camera occlusion pull-in; headless camera snap + occlusion tests | delegated | [x] | `b9be93c` | pending (RDD owned by parent) |
-| T3 | core: townsfolk agents (street waypoints, wandering, collisions, animation state) (test-first) | delegated | [x] | `12f9829` | pending (RDD owned by parent) |
-| T4 | core: train on the railway with schedule, station stop, moving obstacle for the rider (test-first) | delegated | [x] | `5ba4d56` | pending (RDD owned by parent) |
-| T5 | render: person billboards, low-poly train, tethered horse | delegated | [x] | `a7fc24c` | pending (RDD owned by parent) |
-| T6 | game: wire townsfolk, train, tethered horse; runs | delegated | [x] | `5ee9ba9` | pending (RDD owned by parent) |
+| T1 | core: sub-stepped rider movement + head-on thin-obstacle test at MAX_STEP (test-first) | delegated (writer trigger: 2+ non-trivial files) | [x] | `bfc3341` | medium · granted · approved |
+| T2 | core segment-vs-AABB query; game camera occlusion pull-in; headless camera snap + occlusion tests | delegated | [x] | `b9be93c` | medium · granted · approved |
+| T3 | core: townsfolk agents (street waypoints, wandering, collisions, animation state) (test-first) | delegated | [x] | `12f9829` | medium · granted · approved |
+| T4 | core: train on the railway with schedule, station stop, moving obstacle for the rider (test-first) | delegated | [x] | `5ba4d56` | medium · granted · approved |
+| T5 | render: person billboards, low-poly train, tethered horse | delegated | [x] | `a7fc24c` | medium · granted · approved |
+| T6 | game: wire townsfolk, train, tethered horse; runs | delegated | [x] | `5ee9ba9` | medium · granted · approved |
 
 ## Acceptance criteria
 
@@ -135,6 +135,11 @@ Review base: `7891de3`.
 - Known issues / follow-ups: the rider does not collide with townsfolk and townsfolk ignore the rider; the train
   is not a camera occluder; the train only runs west to east; the mounted rider's back view still shows the
   face (pre-existing sheet art).
+
+- Review: native RDD over `7891de3..025be16` (medium, slice budget reached). Consent was granted; one lens (reliability) ran and the review was approved and acknowledged under lineage `review-698c4e2b9dcd85e0`.
+  Advisory follow-ups (non-blocking):
+  - A circle pinned between a train car and a static obstacle (platform, yard buildings) may not converge in 4 resolve passes (`crates/core/src/world.rs:107-131`).
+  - `Townsperson::spawn` underflows on an empty or isolated street graph (`crates/core/src/townsfolk.rs:147-149`).
 
 ## Next step
 
