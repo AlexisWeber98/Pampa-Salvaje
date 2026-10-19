@@ -3,6 +3,7 @@ name = "game"
 description = "Pampa Seca game binary: wires core logic and rendering together."
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]

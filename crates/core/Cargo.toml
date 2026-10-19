@@ -3,6 +3,7 @@ name = "pampa-core"
 description = "Pure game logic for Pampa Seca. Must never depend on a renderer or engine."
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]
