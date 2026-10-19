@@ -46,7 +46,7 @@ Forecast: ~700 authored changed lines across all tasks.
 | T1 | Workspace scaffold (workspace manifest, three crates, README) | delegated (writer trigger: 2+ non-trivial files) | [x] | | |
 | T2 | `core`: heading, rider kinematics, animation state + unit tests (test-first) | delegated | [x] | | |
 | T3 | `render`: heightmap terrain, lighting, dust fog | delegated | [x] | | |
-| T4 | `render`: billboard rider sprite with 8-direction selection from heading (+ tests for direction mapping) | delegated | [ ] | | |
+| T4 | `render`: billboard rider sprite with 8-direction selection from heading (+ tests for direction mapping) | delegated | [x] | | |
 | T5 | `game`: input -> core movement, follow camera, wire plugins; runs | delegated | [ ] | | |
 
 ## Acceptance criteria
@@ -83,6 +83,13 @@ Forecast: ~700 authored changed lines across all tasks.
   Test-first exception: pure rendering wiring, no meaningful deterministic test; verified by running the game
   (temporary static camera) and a screenshot: rolling faceted ground fading into dust haze.
 
+- T4: `render::rider` adds `ViewDirection::pick(heading, camera_yaw)` (nearest of 8 views relative to the camera),
+  `ground_yaw` (Bevy dir -> core yaw), procedural 512x64 sprite sheet (`sheet::rider_sheet_pixels`, horse + gaucho,
+  red facing marker), `RiderVisual::Billboard` swappable component (+ `VisualPose { heading, animation }` copied from
+  core), `RiderVisualPlugin` (cylindrical billboard child, one material per view via `uv_transform`, gait bob).
+  RED: `cargo test -p pampa-render` -> 0 passed; 10 failed (`todo!()` stubs). GREEN: 10 passed.
+  Visual wiring itself has no deterministic test (exception); verified by screenshot of an 8-heading lineup.
+
 ## Next step
 
-T4.
+T5.
