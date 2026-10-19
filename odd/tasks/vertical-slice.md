@@ -43,11 +43,11 @@ Forecast: ~700 authored changed lines across all tasks.
 
 | ID | Task | Route | Status | Commit | Review |
 |----|------|-------|--------|--------|--------|
-| T1 | Workspace scaffold (workspace manifest, three crates, README) | delegated (writer trigger: 2+ non-trivial files) | [x] | `941c956` | not run (RDD owned by parent) |
-| T2 | `core`: heading, rider kinematics, animation state + unit tests (test-first) | delegated | [x] | `d15ef85` | not run (RDD owned by parent) |
-| T3 | `render`: heightmap terrain, lighting, dust fog | delegated | [x] | `e238a2f` | not run (RDD owned by parent) |
-| T4 | `render`: billboard rider sprite with 8-direction selection from heading (+ tests for direction mapping) | delegated | [x] | `db03644` | not run (RDD owned by parent) |
-| T5 | `game`: input -> core movement, follow camera, wire plugins; runs | delegated | [x] | `e79fa43` | not run (RDD owned by parent) |
+| T1 | Workspace scaffold (workspace manifest, three crates, README) | delegated (writer trigger: 2+ non-trivial files) | [x] | `941c956` | medium · granted · approved |
+| T2 | `core`: heading, rider kinematics, animation state + unit tests (test-first) | delegated | [x] | `d15ef85` | medium · granted · approved |
+| T3 | `render`: heightmap terrain, lighting, dust fog | delegated | [x] | `e238a2f` | medium · granted · approved |
+| T4 | `render`: billboard rider sprite with 8-direction selection from heading (+ tests for direction mapping) | delegated | [x] | `db03644` | medium · granted · approved |
+| T5 | `game`: input -> core movement, follow camera, wire plugins; runs | delegated | [x] | `e79fa43` | medium · granted · approved |
 
 ## Acceptance criteria
 
@@ -96,6 +96,13 @@ Forecast: ~700 authored changed lines across all tasks.
   Sprite tweak: neckerchief hidden in away-facing views so back and front views read differently.
   `timeout 15 cargo run -p game` -> exit 124 (ran until killed), window created, no panic.
   Not verified interactively: holding keys (no input-injection tool available); logic covered by core tests.
+
+- Review: native RDD over `089a28f..9e06773` (medium, slice budget reached). Consent was granted; one lens (reliability) ran and the review was approved and acknowledged under lineage `review-a6c54f7257d73fb4`.
+  Advisory follow-ups (non-blocking):
+  - No world boundary past the 300 m patch edge (`game/src/player.rs:77`).
+  - NaN or negative input/dt is not guarded in `Rider::step` (`crates/core/src/rider.rs:74`).
+  - Headless App tests are missing for the dt cap and the billboard view selection.
+- Engram mirror `odd/vertical-slice/tasks`: pending (the project is not registered in Engram).
 
 ## Next step
 
