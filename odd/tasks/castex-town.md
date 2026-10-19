@@ -42,11 +42,11 @@ Review base: `ad90d03` (the vertical slice is reviewed; `ad90d03` is a passive d
 
 | ID | Task | Route | Status | Commit | Review |
 |----|------|-------|--------|--------|--------|
-| T1 | Polish: core `WorldBounds` + finite guards in `Rider::step` (test-first); headless App tests for dt cap and billboard view | delegated (writer trigger: 2+ non-trivial files) | [x] | `ee71080` | pending (RDD owned by parent) |
-| T2 | core: town layout data (streets, plaza, rail, station, building footprints) + terrain flattening (test-first) | delegated | [x] | `f3c5722` | pending (RDD owned by parent) |
-| T3 | core: circle vs AABB collision resolution for the rider (test-first) | delegated | [x] | `6dc3b0f` | pending (RDD owned by parent) |
-| T4 | render: procedural low-poly town (buildings, facades, roofs, rails, trees, windmill) | delegated | [x] | `f7dccc8` | pending (RDD owned by parent) |
-| T5 | game: wire town, spawn at town edge, collisions active; runs | delegated | [x] | `f98a9d2` | pending (RDD owned by parent) |
+| T1 | Polish: core `WorldBounds` + finite guards in `Rider::step` (test-first); headless App tests for dt cap and billboard view | delegated (writer trigger: 2+ non-trivial files) | [x] | `ee71080` | medium · granted · approved |
+| T2 | core: town layout data (streets, plaza, rail, station, building footprints) + terrain flattening (test-first) | delegated | [x] | `f3c5722` | medium · granted · approved |
+| T3 | core: circle vs AABB collision resolution for the rider (test-first) | delegated | [x] | `6dc3b0f` | medium · granted · approved |
+| T4 | render: procedural low-poly town (buildings, facades, roofs, rails, trees, windmill) | delegated | [x] | `f7dccc8` | medium · granted · approved |
+| T5 | game: wire town, spawn at town edge, collisions active; runs | delegated | [x] | `f98a9d2` | medium · granted · approved |
 
 ## Acceptance criteria
 
@@ -109,6 +109,11 @@ Review base: `ad90d03` (the vertical slice is reviewed; `ad90d03` is a passive d
 - Not verified interactively: riding into walls by keyboard (no input injection); covered by core tests.
 - Known issues: the follow camera can clip into buildings (no camera collision); rails are not obstacles.
 - Engram mirror `odd/castex-town/tasks`: pending (the project is not registered in Engram).
+
+- Review: native RDD over `ad90d03..788e044` (medium, slice budget reached). Consent was granted; one lens (reliability) ran and the review was approved and acknowledged under lineage `review-7897dbb110ce093d`.
+  Advisory follow-ups (non-blocking):
+  - Possible tunneling through thin obstacles (0.7 m tree trunks) at `dt = MAX_STEP` (`crates/core/src/rider.rs:99-105`). Add a head-on test at max step, or sub-step / sweep the movement.
+  - The camera snap branch has no headless test (`game/src/camera.rs:74-81`).
 
 ## Next step
 
