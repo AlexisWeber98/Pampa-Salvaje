@@ -16,6 +16,23 @@ pub struct Player {
 #[derive(Resource, Debug, Clone, Default)]
 pub struct GameWorld(pub World);
 
+/// Where and facing which way the player starts.
+#[derive(Resource, Debug, Clone, Copy)]
+pub struct PlayerSpawn {
+    pub position: GroundVec2,
+    pub heading: Heading,
+}
+
+impl Default for PlayerSpawn {
+    /// The origin, facing north (where the camera initially looks).
+    fn default() -> Self {
+        Self {
+            position: GroundVec2::ZERO,
+            heading: Heading::from_radians(std::f32::consts::FRAC_PI_2),
+        }
+    }
+}
+
 /// Movement tuning for the player's horse.
 #[derive(Resource, Debug, Default)]
 pub struct PlayerTuning(pub RiderParams);
@@ -33,18 +50,14 @@ impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PlayerTuning>()
             .init_resource::<GameWorld>()
+            .init_resource::<PlayerSpawn>()
             .add_systems(Startup, spawn_player)
             .add_systems(Update, drive_player.in_set(DrivePlayer));
     }
 }
 
-fn spawn_player(mut commands: Commands, world: Res<GameWorld>) {
-    // Start facing north, which is where the camera initially looks.
-    let rider = Rider::new(
-        GroundVec2::ZERO,
-        Heading::from_radians(std::f32::consts::FRAC_PI_2),
-        &world.0.terrain,
-    );
+fn spawn_player(mut commands: Commands, world: Res<GameWorld>, spawn: Res<PlayerSpawn>) {
+    let rider = Rider::new(spawn.position, spawn.heading, &world.0.terrain);
     commands.spawn((
         Name::new("Player"),
         RiderVisual::Billboard,
@@ -138,6 +151,22 @@ mod tests {
         );
         let moved = after.position.distance(before.position);
         assert!((moved - after.speed * MAX_STEP).abs() < 1e-5);
+    }
+
+    #[test]
+    fn spawns_at_the_configured_spawn_point() {
+        let spawn = PlayerSpawn {
+            position: GroundVec2::new(26.0, -161.0),
+            heading: Heading::from_radians(1.0),
+        };
+        let mut app = headless_app(Duration::from_millis(16));
+        app.insert_resource(spawn);
+        app.update();
+        let rider = player_rider(&mut app);
+        assert_eq!(
+            (rider.position, rider.heading),
+            (spawn.position, spawn.heading)
+        );
     }
 
     #[test]

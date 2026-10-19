@@ -16,6 +16,9 @@ pub struct FollowCamera {
     pub smoothing: f32,
     /// Minimum clearance above the terrain under the camera.
     pub ground_clearance: f32,
+    /// Farther than this from where it should be, the camera jumps instead
+    /// of gliding (first frame, respawns).
+    pub snap_distance: f32,
 }
 
 impl Default for FollowCamera {
@@ -26,6 +29,7 @@ impl Default for FollowCamera {
             look_height: 1.6,
             smoothing: 4.0,
             ground_clearance: 1.0,
+            snap_distance: 50.0,
         }
     }
 }
@@ -67,9 +71,13 @@ fn follow_player(
     let ground = terrain.0.height(desired.x, -desired.z) + follow.ground_clearance;
     desired.y = desired.y.max(ground);
 
-    let dt = time.delta_secs();
-    transform
-        .translation
-        .smooth_nudge(&desired, follow.smoothing, dt);
+    if transform.translation.distance(desired) > follow.snap_distance {
+        transform.translation = desired;
+    } else {
+        let dt = time.delta_secs();
+        transform
+            .translation
+            .smooth_nudge(&desired, follow.smoothing, dt);
+    }
     transform.look_at(feet + Vec3::Y * follow.look_height, Vec3::Y);
 }
