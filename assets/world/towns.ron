@@ -1,6 +1,13 @@
-// Towns of the world. See README.md in this folder for every field.
-// The game builds the first town; edit and restart, no recompiling needed.
+// The world and its towns. See README.md in this folder for every field.
+// Edit and restart, no recompiling needed. The player starts at the first
+// town; the others appear as you ride towards them.
 (
+    world: (
+        // 4 km from the center to each edge: an 8 km x 8 km world.
+        half_extent: 4000.0,
+        // Ground is built in 200 m square chunks around the rider.
+        chunk_size: 200.0,
+    ),
     towns: [
         (
             // A small railway town inspired by 1920s–1930s Eduardo Castex,

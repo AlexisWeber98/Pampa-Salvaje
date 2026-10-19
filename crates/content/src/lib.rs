@@ -15,12 +15,12 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use pampa_core::{BumpSeverity, TownConfigError};
+use pampa_core::{BumpSeverity, PlacementError, WorldConfigError};
 use serde::Deserialize;
 
 pub mod towns;
 
-pub use towns::{TOWNS_FILE, load_towns, load_towns_or_builtin, parse_towns};
+pub use towns::{TOWNS_FILE, WorldContent, load_towns, load_towns_or_builtin, parse_towns};
 
 /// Longest line, in characters, so it fits a speech bubble.
 pub const MAX_LINE_CHARS: usize = 40;
@@ -161,13 +161,11 @@ pub enum ContentError {
         index: usize,
         chars: usize,
     },
-    /// A town config cannot be built.
-    Town {
-        /// Position of the town in the file.
-        index: usize,
-        name: String,
-        error: TownConfigError,
-    },
+    /// A town cannot be built, or does not fit the world next to the
+    /// towns before it.
+    Town(PlacementError),
+    /// The `world` section is unusable: the default world is used.
+    World(WorldConfigError),
     /// No valid town is left: the built-in one is used.
     NoTowns,
 }
@@ -183,7 +181,8 @@ impl fmt::Display for ContentError {
                 f,
                 "line {index} of `{pool}` has {chars} characters (max {MAX_LINE_CHARS})"
             ),
-            Self::Town { index, name, error } => write!(f, "town {index} `{name}`: {error}"),
+            Self::Town(error) => write!(f, "{error}"),
+            Self::World(error) => write!(f, "{error}; using the default world"),
             Self::NoTowns => write!(f, "no towns to build; using the built-in Eduardo Castex"),
         }
     }
@@ -194,7 +193,8 @@ impl std::error::Error for ContentError {
         match self {
             Self::Io { source, .. } => Some(source),
             Self::Parse(e) => Some(e),
-            Self::Town { error, .. } => Some(error),
+            Self::Town(error) => Some(error),
+            Self::World(error) => Some(error),
             _ => None,
         }
     }

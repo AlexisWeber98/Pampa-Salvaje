@@ -1,25 +1,73 @@
-//! Town configs, read from `assets/world/towns.ron`.
+//! The world and its towns, read from `assets/world/towns.ron`.
 //!
-//! The file mirrors [`pampa_core::TownConfig`] through serde DTOs, so the
-//! core crate stays free of dependencies. Every town is validated by
-//! generating it; invalid towns are reported and skipped, and when no valid
-//! town is left the built-in Eduardo Castex config takes over.
+//! The file mirrors [`pampa_core::WorldConfig`] and
+//! [`pampa_core::TownConfig`] through serde DTOs, so the core crate stays
+//! free of dependencies. The `world` section is optional (older files only
+//! list towns). Every town is validated by placing it in the world with
+//! [`pampa_core::place_towns`]: invalid towns, towns past the world edge
+//! and towns overlapping an earlier one are reported and skipped, and when
+//! no valid town is left the built-in Eduardo Castex config takes over.
 
 use std::path::Path;
 
-use pampa_core::{PlazaPlacement, RailwayConfig, Side, TownConfig, TownLayout, Vec2};
+use pampa_core::{PlazaPlacement, RailwayConfig, Side, TownConfig, Vec2, WorldConfig};
 use serde::Deserialize;
 
 use crate::ContentError;
 
-/// Where the towns live, relative to the assets folder.
+/// Where the world and its towns live, relative to the assets folder.
 pub const TOWNS_FILE: &str = "world/towns.ron";
 
-/// The towns file: a list of towns. Unknown fields are ignored, so newer
-/// files still load in older builds.
+/// The world to build: its size and its valid towns, in file order.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorldContent {
+    pub world: WorldConfig,
+    pub towns: Vec<TownConfig>,
+}
+
+impl WorldContent {
+    /// The default world with only the built-in Eduardo Castex.
+    pub fn builtin() -> Self {
+        Self {
+            world: WorldConfig::default(),
+            towns: vec![TownConfig::castex()],
+        }
+    }
+}
+
+/// The towns file: an optional world section and a list of towns. Unknown
+/// fields are ignored, so newer files still load in older builds.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 struct TownsFile {
+    #[serde(default)]
+    world: WorldDto,
     towns: Vec<TownDto>,
+}
+
+/// The `world` section (see [`WorldConfig`]); each field is optional.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+struct WorldDto {
+    #[serde(default = "default_half_extent")]
+    half_extent: f32,
+    #[serde(default = "default_chunk_size")]
+    chunk_size: f32,
+}
+
+impl Default for WorldDto {
+    fn default() -> Self {
+        Self {
+            half_extent: default_half_extent(),
+            chunk_size: default_chunk_size(),
+        }
+    }
+}
+
+fn default_half_extent() -> f32 {
+    WorldConfig::DEFAULT_HALF_EXTENT
+}
+
+fn default_chunk_size() -> f32 {
+    WorldConfig::DEFAULT_CHUNK_SIZE
 }
 
 /// One town as written in the file (see [`TownConfig`] for each field).
@@ -102,29 +150,36 @@ impl From<TownDto> for TownConfig {
     }
 }
 
-/// Parses the RON text of a towns file. Every town is checked by
-/// generating it: the valid ones are returned, in file order, with an
-/// error for each invalid one.
-pub fn parse_towns(text: &str) -> Result<(Vec<TownConfig>, Vec<ContentError>), ContentError> {
+/// Parses the RON text of a towns file. An unusable `world` section is
+/// reported and replaced by the default world. Every town is checked by
+/// placing it in the world: the valid ones are returned, in file order,
+/// with an error for each one left out.
+pub fn parse_towns(text: &str) -> Result<(WorldContent, Vec<ContentError>), ContentError> {
     let file: TownsFile = ron::from_str(text).map_err(ContentError::Parse)?;
-    let mut towns = Vec::new();
     let mut errors = Vec::new();
-    for (index, dto) in file.towns.into_iter().enumerate() {
-        let config = TownConfig::from(dto);
-        match TownLayout::generate(&config) {
-            Ok(_) => towns.push(config),
-            Err(error) => errors.push(ContentError::Town {
-                index,
-                name: config.name,
-                error,
-            }),
-        }
-    }
-    Ok((towns, errors))
+    let world = WorldConfig {
+        half_extent: file.world.half_extent,
+        chunk_size: file.world.chunk_size,
+    };
+    let world = world.validated().unwrap_or_else(|error| {
+        errors.push(ContentError::World(error));
+        WorldConfig::default()
+    });
+    let configs: Vec<TownConfig> = file.towns.into_iter().map(TownConfig::from).collect();
+    let (_, rejected) = pampa_core::place_towns(&world, &configs);
+    let left_out: Vec<usize> = rejected.iter().map(|e| e.index()).collect();
+    let towns = configs
+        .into_iter()
+        .enumerate()
+        .filter(|(index, _)| !left_out.contains(index))
+        .map(|(_, config)| config)
+        .collect();
+    errors.extend(rejected.into_iter().map(ContentError::Town));
+    Ok((WorldContent { world, towns }, errors))
 }
 
 /// Reads and parses the towns file at `path` (see [`parse_towns`]).
-pub fn load_towns(path: &Path) -> Result<(Vec<TownConfig>, Vec<ContentError>), ContentError> {
+pub fn load_towns(path: &Path) -> Result<(WorldContent, Vec<ContentError>), ContentError> {
     let text = std::fs::read_to_string(path).map_err(|source| ContentError::Io {
         path: path.to_path_buf(),
         source,
@@ -133,18 +188,19 @@ pub fn load_towns(path: &Path) -> Result<(Vec<TownConfig>, Vec<ContentError>), C
 }
 
 /// Loads the towns file at `path`, skipping invalid towns and falling back
-/// to [`TownConfig::castex`] when the file is missing, broken or has no
-/// valid town. Every problem is returned so the caller can log it.
-pub fn load_towns_or_builtin(path: &Path) -> (Vec<TownConfig>, Vec<ContentError>) {
-    let (towns, mut errors) = match load_towns(path) {
+/// to [`WorldContent::builtin`] when the file is missing or broken, and to
+/// [`TownConfig::castex`] (in the file's world) when it has no valid town.
+/// Every problem is returned so the caller can log it.
+pub fn load_towns_or_builtin(path: &Path) -> (WorldContent, Vec<ContentError>) {
+    let (mut content, mut errors) = match load_towns(path) {
         Ok(loaded) => loaded,
-        Err(error) => return (vec![TownConfig::castex()], vec![error]),
+        Err(error) => return (WorldContent::builtin(), vec![error]),
     };
-    if towns.is_empty() {
+    if content.towns.is_empty() {
         errors.push(ContentError::NoTowns);
-        return (vec![TownConfig::castex()], errors);
+        content.towns = vec![TownConfig::castex()];
     }
-    (towns, errors)
+    (content, errors)
 }
 
 #[cfg(test)]
@@ -163,22 +219,113 @@ mod tests {
     }
 
     #[test]
-    fn the_shipped_file_holds_the_castex_config() {
-        let (towns, errors) = parse_towns(SHIPPED).expect("shipped towns.ron is valid");
+    fn the_shipped_file_holds_the_castex_config_in_the_default_world() {
+        let (content, errors) = parse_towns(SHIPPED).expect("shipped towns.ron is valid");
         assert!(errors.is_empty(), "{errors:?}");
-        assert_eq!(towns.first(), Some(&TownConfig::castex()));
-        for town in &towns {
-            TownLayout::generate(town).expect("every shipped town is valid");
-        }
+        assert_eq!(content.world, WorldConfig::default());
+        assert_eq!(content.world.validated(), Ok(content.world));
+        let castex = content
+            .towns
+            .iter()
+            .find(|t| t.name == "Eduardo Castex")
+            .expect("Castex is shipped");
+        assert_eq!(castex, &TownConfig::castex());
+        let (placed, errors) = pampa_core::place_towns(&content.world, &content.towns);
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(placed.len(), content.towns.len());
+    }
+
+    #[test]
+    fn the_readme_second_town_example_fits_next_to_the_shipped_towns() {
+        const README: &str = include_str!("../../../assets/world/README.md");
+        let section = &README[README.find("### Adding a second town").expect("section")..];
+        let start = section.find("```ron").expect("example") + "```ron".len();
+        let example = &section[start..start + section[start..].find("```").unwrap()];
+        let shipped = SHIPPED.rfind("],").expect("end of the town list");
+        let text = format!("{}{example}{}", &SHIPPED[..shipped], &SHIPPED[shipped..]);
+        let (content, errors) = parse_towns(&text).unwrap();
+        assert!(errors.is_empty(), "{errors:?}");
+        let last = content.towns.last().unwrap();
+        assert_eq!(last.name, "Florencio Varela");
+        assert_eq!(last.origin, Vec2::new(3000.0, -2000.0));
+    }
+
+    #[test]
+    fn the_world_section_is_read_and_optional() {
+        let town = r#"(name: "A", blocks: (3, 3), block_size: 40.0, street_width: 10.0)"#;
+        let (content, errors) = parse_towns(&format!(
+            "(world: (half_extent: 2000.0, chunk_size: 100.0), towns: [{town}])"
+        ))
+        .unwrap();
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(
+            content.world,
+            WorldConfig {
+                half_extent: 2000.0,
+                chunk_size: 100.0,
+            }
+        );
+        // Older files: no world section at all, or only some fields.
+        let (content, _) = parse_towns(&format!("(towns: [{town}])")).unwrap();
+        assert_eq!(content.world, WorldConfig::default());
+        let (content, _) =
+            parse_towns(&format!("(world: (chunk_size: 250.0), towns: [{town}])")).unwrap();
+        assert_eq!(content.world.half_extent, WorldConfig::DEFAULT_HALF_EXTENT);
+        assert_eq!(content.world.chunk_size, 250.0);
+        assert_eq!(content.towns.len(), 1);
+    }
+
+    #[test]
+    fn a_bad_world_section_falls_back_to_the_default_world() {
+        let text = r#"(world: (half_extent: 20000.0), towns: [
+            (name: "A", blocks: (3, 3), block_size: 40.0, street_width: 10.0),
+        ])"#;
+        let (content, errors) = parse_towns(text).unwrap();
+        assert_eq!(content.world, WorldConfig::default());
+        assert_eq!(content.towns.len(), 1);
+        assert!(matches!(errors[..], [ContentError::World(_)]), "{errors:?}");
+        let message = errors[0].to_string();
+        assert!(
+            message.contains("half_extent") && message.contains("default world"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn overlapping_and_far_out_towns_are_skipped_naming_them() {
+        let text = r#"(towns: [
+            (name: "Eduardo Castex", blocks: (4, 5), block_size: 40.0, street_width: 10.0,
+             railway: Some((side: North, offset: 24.0)), seed: 7),
+            (name: "Florencio Varela", blocks: (3, 3), block_size: 40.0, street_width: 10.0),
+            (name: "Afuera", origin: (5000.0, 0.0), blocks: (3, 3), block_size: 40.0,
+             street_width: 10.0),
+            (name: "Lejos", origin: (3000.0, -2000.0), blocks: (3, 3), block_size: 40.0,
+             street_width: 10.0, railway: Some((side: South, offset: 30.0))),
+        ])"#;
+        let (content, errors) = parse_towns(text).unwrap();
+        let names: Vec<&str> = content.towns.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, ["Eduardo Castex", "Lejos"]);
+        assert_eq!(errors.len(), 2, "{errors:?}");
+        let messages: Vec<String> = errors.iter().map(ToString::to_string).collect();
+        assert!(
+            messages[0].contains("Florencio Varela") && messages[0].contains("Eduardo Castex"),
+            "{}",
+            messages[0]
+        );
+        assert!(
+            messages[1].contains("Afuera") && messages[1].contains("world edge"),
+            "{}",
+            messages[1]
+        );
     }
 
     #[test]
     fn the_shipped_file_is_found_and_loaded_from_disk() {
         let path = asset_path(TOWNS_FILE);
         assert!(path.is_file(), "{path:?}");
-        let (towns, errors) = load_towns_or_builtin(&path);
+        let (content, errors) = load_towns_or_builtin(&path);
         assert!(errors.is_empty(), "{errors:?}");
-        assert_eq!(towns, parse_towns(SHIPPED).unwrap().0);
+        assert_eq!(content, parse_towns(SHIPPED).unwrap().0);
     }
 
     #[test]
@@ -189,7 +336,7 @@ mod tests {
                 towns: [
                     (
                         name: "General Alvear",
-                        origin: (10.0, -20.0),
+                        origin: (1500.0, -2000.0),
                         blocks: (3, 4),
                         block_size: 36.0,
                         street_width: 9.0,
@@ -208,14 +355,14 @@ mod tests {
                 roads: [],
             )
         "#;
-        let (towns, errors) = parse_towns(text).unwrap();
+        let (content, errors) = parse_towns(text).unwrap();
         assert!(errors.is_empty(), "{errors:?}");
         assert_eq!(
-            towns,
+            content.towns,
             [
                 TownConfig {
                     name: "General Alvear".into(),
-                    origin: Vec2::new(10.0, -20.0),
+                    origin: Vec2::new(1500.0, -2000.0),
                     blocks: (3, 4),
                     block_size: 36.0,
                     street_width: 9.0,
@@ -243,8 +390,8 @@ mod tests {
                 r#"(towns: [(name: "A", blocks: (3, 3), block_size: 40.0, street_width: 10.0,
                     railway: Some((side: North, offset: 24.0)), plaza: {plaza})])"#
             );
-            let (towns, _) = parse_towns(&text).unwrap();
-            assert_eq!(towns.len(), 1, "{plaza}");
+            let (content, _) = parse_towns(&text).unwrap();
+            assert_eq!(content.towns.len(), 1, "{plaza}");
         }
     }
 
@@ -253,11 +400,12 @@ mod tests {
         let text = r#"(towns: [
             (name: "Chica", blocks: (2, 3), block_size: 40.0, street_width: 10.0),
             (name: "Buena", blocks: (3, 3), block_size: 40.0, street_width: 10.0),
-            (name: "Par", blocks: (4, 4), block_size: 40.0, street_width: 10.0, plaza: Center),
+            (name: "Par", origin: (2000.0, 0.0), blocks: (4, 4), block_size: 40.0,
+             street_width: 10.0, plaza: Center),
         ])"#;
-        let (towns, errors) = parse_towns(text).unwrap();
-        assert_eq!(towns.len(), 1);
-        assert_eq!(towns[0].name, "Buena");
+        let (content, errors) = parse_towns(text).unwrap();
+        assert_eq!(content.towns.len(), 1);
+        assert_eq!(content.towns[0].name, "Buena");
         assert_eq!(errors.len(), 2);
         let messages: Vec<String> = errors.iter().map(ToString::to_string).collect();
         assert!(
@@ -270,32 +418,34 @@ mod tests {
             "{}",
             messages[1]
         );
-        assert!(matches!(errors[0], ContentError::Town { index: 0, .. }));
+        assert!(matches!(&errors[0], ContentError::Town(e) if e.index() == 0));
     }
 
     #[test]
     fn missing_broken_or_empty_files_fall_back_to_castex() {
         let castex = vec![TownConfig::castex()];
-        let (towns, errors) = load_towns_or_builtin(Path::new("no/such/dir/towns.ron"));
-        assert_eq!(towns, castex);
+        let (content, errors) = load_towns_or_builtin(Path::new("no/such/dir/towns.ron"));
+        assert_eq!(content, WorldContent::builtin());
         assert!(matches!(errors[..], [ContentError::Io { .. }]));
 
         let broken = temp_file("broken", "(towns: [");
-        let (towns, errors) = load_towns_or_builtin(&broken);
-        assert_eq!(towns, castex);
+        let (content, errors) = load_towns_or_builtin(&broken);
+        assert_eq!(content, WorldContent::builtin());
         assert!(matches!(errors[..], [ContentError::Parse(_)]));
 
-        let empty = temp_file("empty", "(towns: [])");
-        let (towns, errors) = load_towns_or_builtin(&empty);
-        assert_eq!(towns, castex);
+        // An empty town list keeps the file's world.
+        let empty = temp_file("empty", "(world: (half_extent: 1000.0), towns: [])");
+        let (content, errors) = load_towns_or_builtin(&empty);
+        assert_eq!(content.towns, castex);
+        assert_eq!(content.world.half_extent, 1000.0);
         assert!(errors[0].to_string().contains("no towns"), "{}", errors[0]);
 
         let all_bad = temp_file(
             "bad",
             r#"(towns: [(name: "X", blocks: (3, 3), block_size: 10.0, street_width: 10.0)])"#,
         );
-        let (towns, errors) = load_towns_or_builtin(&all_bad);
-        assert_eq!(towns, castex);
+        let (content, errors) = load_towns_or_builtin(&all_bad);
+        assert_eq!(content.towns, castex);
         assert!(
             errors[0].to_string().contains("block_size 10 m"),
             "{}",

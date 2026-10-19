@@ -24,7 +24,8 @@ pub struct LoadedTown {
 /// Loads the towns file at `path` and generates its first town, falling
 /// back to the built-in Eduardo Castex when the file cannot be used.
 pub fn load_town(path: &Path) -> LoadedTown {
-    let (configs, errors) = load_towns_or_builtin(path);
+    let (content, errors) = load_towns_or_builtin(path);
+    let configs = content.towns;
     let mut warnings: Vec<String> = errors.iter().map(|e| format!("towns: {e}")).collect();
     // Every returned config was validated by generating it.
     let town = TownLayout::generate(&configs[0]).unwrap_or_else(|error| {

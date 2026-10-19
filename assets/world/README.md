@@ -1,14 +1,18 @@
 # World
 
-The towns of the world live in this folder as plain text files in
+The world and its towns live in this folder as plain text files in
 [RON](https://github.com/ron-rs/ron) (Rusty Object Notation). You do not need
 to know Rust to edit them: change a file, save it, and start the game again.
 No recompiling.
 
-## `towns.ron`: the towns and how they are laid out
+## `towns.ron`: the world, its towns and how they are laid out
 
 ```ron
 (
+    world: (
+        half_extent: 4000.0,
+        chunk_size: 200.0,
+    ),
     towns: [
         (
             name: "Eduardo Castex",
@@ -24,8 +28,29 @@ No recompiling.
 )
 ```
 
-For now the game builds **only the first town** in the list. More towns (and
-roads between them) will come later; they can already be listed.
+### The world
+
+| Field | Meaning | Rules |
+|-------|---------|-------|
+| `half_extent` | Distance from the world center to each edge, in meters. The world is a square of side `2 * half_extent`. | Above 0, at most 8000 (positions stay precise to about a millimeter within 8 km). Optional, `4000.0` by default. |
+| `chunk_size` | Side of the square chunks the ground is built in around the rider, in meters. | At least 50, at most the world's side. Optional, `200.0` by default. |
+
+The whole `world` section is optional: a file with only `towns: [...]` gets
+the default 8 km x 8 km world. An invalid section is reported and the default
+world is used.
+
+### Towns
+
+The game builds **every town** in the list, each at its own `origin`. The
+player starts at the first one, on the road into town; the others appear
+(with their signs, people and train) as you ride towards them. Roads and
+railways between towns will come later.
+
+Towns must keep apart: a town, its leveled band (60 m around everything
+built) and its railway (which runs 400 m past either end of the grid) must not
+touch another town or its leveled band, and must stay inside the world. A
+town that breaks this is skipped with a warning naming it and the town it
+overlaps; the towns listed before it win.
 
 | Field | Meaning | Rules |
 |-------|---------|-------|
@@ -38,8 +63,31 @@ roads between them) will come later; they can already be listed.
 | `plaza` | Which block is the plaza (see below). | Optional, `Auto` by default. |
 | `seed` | Varies which lots have houses or sheds. | Optional, `0` by default. |
 
-The whole town, plus a 60 m band of leveled ground around it, must fit inside
-the 600 m x 600 m world (300 m from the center each way).
+The whole town, plus its 60 m band of leveled ground and its railway, must fit
+inside the world (see above).
+
+### Adding a second town
+
+Add another entry to `towns`, with an `origin` far enough from the others.
+For example, a town 3 km east and 2 km south of Eduardo Castex, with the
+railway on its south side:
+
+```ron
+        (
+            name: "Florencio Varela",
+            origin: (3000.0, -2000.0),
+            blocks: (3, 4),
+            block_size: 36.0,
+            street_width: 9.0,
+            railway: Some((side: South, offset: 26.0)),
+            plaza: Auto,
+            seed: 11,
+        ),
+```
+
+Leave room for each railway's 400 m run-out: towns lined up along their
+tracks need more space between them than towns side by side across them. If
+two towns are too close, the warning names both.
 
 ### Plaza placement
 
