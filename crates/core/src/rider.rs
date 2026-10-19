@@ -551,6 +551,11 @@ mod tests {
     /// checking the rider never ends a step inside anything; returns how
     /// many steps ended touching an obstacle.
     fn wander_through(town: &crate::TownLayout, seconds: f32) -> usize {
+        wander_turning(town, seconds, 0.004)
+    }
+
+    /// Like [`wander_through`], turning at `rate` radians of phase per step.
+    fn wander_turning(town: &crate::TownLayout, seconds: f32, rate: f32) -> usize {
         let world = World::with_town(Terrain::default(), town);
         let p = RiderParams::default();
         let (start, heading) = town.arrival();
@@ -558,7 +563,7 @@ mod tests {
         let mut contacts = 0;
         for frame in 0..(seconds / DT) as usize {
             // Wander: gallop with a slowly changing turn.
-            let turn = ((frame as f32) * 0.004).sin() * 0.6;
+            let turn = ((frame as f32) * rate).sin() * 0.6;
             let input = RiderInput {
                 throttle: 1.0,
                 turn,
@@ -584,7 +589,8 @@ mod tests {
 
     #[test]
     fn never_ends_a_step_inside_town_buildings() {
-        let contacts = wander_through(&crate::TownLayout::castex_inspired(), 240.0);
+        // A turn rate whose path through Castex runs into buildings.
+        let contacts = wander_turning(&crate::TownLayout::castex_inspired(), 240.0, 0.003);
         assert!(contacts > 0, "the wander path must actually hit buildings");
     }
 

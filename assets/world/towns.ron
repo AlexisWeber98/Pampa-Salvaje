@@ -1,0 +1,18 @@
+// Towns of the world. See README.md in this folder for every field.
+// The game builds the first town; edit and restart, no recompiling needed.
+(
+    towns: [
+        (
+            // A small railway town inspired by 1920s–1930s Eduardo Castex,
+            // La Pampa. The plaza faces the station across the street.
+            name: "Eduardo Castex",
+            origin: (0.0, 0.0),
+            blocks: (4, 5),
+            block_size: 40.0,
+            street_width: 10.0,
+            railway: Some((side: North, offset: 24.0)),
+            plaza: Auto,
+            seed: 7,
+        ),
+    ],
+)

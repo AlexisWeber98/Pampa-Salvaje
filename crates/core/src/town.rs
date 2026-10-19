@@ -143,15 +143,18 @@ impl TownConfig {
     /// Closest the track may run to the grid: the station yard needs it.
     pub const MIN_RAILWAY_OFFSET: f32 = 24.0;
 
-    /// Eduardo Castex-inspired town: 5 x 5 blocks of 40 m, 12 m streets,
-    /// railway 24 m north of the grid, plaza in the central block.
+    /// Eduardo Castex-inspired town: 4 x 5 blocks of 40 m (4 east-west, 5
+    /// north-south), 10 m streets, railway 24 m north of the grid. With no
+    /// central block, `Auto` puts the plaza in the top row facing the
+    /// station. Matches the first town of `assets/world/towns.ron`, and is
+    /// the fallback when that file cannot be used.
     pub fn castex() -> Self {
         Self {
             name: "Eduardo Castex".to_string(),
             origin: Vec2::ZERO,
-            blocks: (5, 5),
+            blocks: (4, 5),
             block_size: 40.0,
-            street_width: 12.0,
+            street_width: 10.0,
             railway: Some(RailwayConfig {
                 side: Side::North,
                 offset: 24.0,
@@ -996,12 +999,7 @@ pub(crate) mod tests {
         let rail = |side, offset| Some(RailwayConfig { side, offset });
         vec![
             base.clone(),
-            TownConfig {
-                name: "Cuatro por cinco".into(),
-                blocks: (4, 5),
-                street_width: 10.0,
-                ..base.clone()
-            },
+            five_by_five(),
             TownConfig {
                 name: "Tres".into(),
                 blocks: (3, 3),
@@ -1059,6 +1057,16 @@ pub(crate) mod tests {
                 ..base
             },
         ]
+    }
+
+    /// A 5 x 5 grid of 40 m blocks and 12 m streets with a central plaza.
+    fn five_by_five() -> TownConfig {
+        TownConfig {
+            name: "Cinco por cinco".into(),
+            blocks: (5, 5),
+            street_width: 12.0,
+            ..TownConfig::castex()
+        }
     }
 
     /// Every sample town, generated.
@@ -1224,9 +1232,33 @@ pub(crate) mod tests {
 
     #[test]
     fn the_station_is_aligned_with_a_central_plaza_too() {
-        let t = TownLayout::castex_inspired();
+        let t = TownLayout::generate(&five_by_five()).unwrap();
         let station = find(&t, BuildingKind::Station).unwrap();
         assert!((station.footprint.center().x - t.plaza.center().x).abs() < 1e-3);
+    }
+
+    #[test]
+    fn castex_is_four_by_five_with_the_plaza_facing_the_station() {
+        let c = TownConfig::castex();
+        assert_eq!(c.name, "Eduardo Castex");
+        assert_eq!(
+            (c.blocks, c.block_size, c.street_width),
+            ((4, 5), 40.0, 10.0)
+        );
+        assert_eq!(c.plaza, PlazaPlacement::Auto);
+        assert_eq!(
+            c.railway,
+            Some(RailwayConfig {
+                side: Side::North,
+                offset: 24.0
+            })
+        );
+        let t = TownLayout::castex_inspired();
+        assert_plaza_faces_the_station(&c, &t);
+        // The church stands across the street south of the plaza, facing it.
+        let church = find(&t, BuildingKind::Church).unwrap();
+        assert_eq!(church.front, Side::North);
+        assert!(church.footprint.max.y < t.plaza.min.y);
     }
 
     #[test]
@@ -1284,7 +1316,7 @@ pub(crate) mod tests {
             }
         }
         // Around a central plaza: store west, police east, church north.
-        let t = TownLayout::castex_inspired();
+        let t = TownLayout::generate(&five_by_five()).unwrap();
         assert_eq!(
             find(&t, BuildingKind::GeneralStore).unwrap().front,
             Side::East
@@ -1613,7 +1645,7 @@ pub(crate) mod tests {
                 },
                 TownConfigError::PlazaOutOfRange {
                     block: (5, 0),
-                    blocks: (5, 5),
+                    blocks: (4, 5),
                 },
             ),
             (

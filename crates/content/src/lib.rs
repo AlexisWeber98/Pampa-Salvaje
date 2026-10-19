@@ -1,9 +1,10 @@
 //! Editable game content for Pampa Seca, read from RON files under `assets/`.
 //!
-//! Content is data, not code: writers edit `assets/dialogue/*.ron` and the
-//! game picks the changes up on its next start, without recompiling. This
-//! crate only parses and validates; it knows nothing about how lines are
-//! drawn and must never depend on Bevy.
+//! Content is data, not code: writers edit `assets/dialogue/*.ron` (lines)
+//! and `assets/world/towns.ron` (towns), and the game picks the changes up
+//! on its next start, without recompiling. This crate only parses and
+//! validates; it knows nothing about how anything is drawn and must never
+//! depend on Bevy.
 //!
 //! Which characters a line may use is decided by the bitmap font in
 //! `pampa-render`. This crate cannot see the font, so it offers
@@ -14,8 +15,12 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use pampa_core::BumpSeverity;
+use pampa_core::{BumpSeverity, TownConfigError};
 use serde::Deserialize;
+
+pub mod towns;
+
+pub use towns::{TOWNS_FILE, load_towns, load_towns_or_builtin, parse_towns};
 
 /// Longest line, in characters, so it fits a speech bubble.
 pub const MAX_LINE_CHARS: usize = 40;
@@ -156,6 +161,15 @@ pub enum ContentError {
         index: usize,
         chars: usize,
     },
+    /// A town config cannot be built.
+    Town {
+        /// Position of the town in the file.
+        index: usize,
+        name: String,
+        error: TownConfigError,
+    },
+    /// No valid town is left: the built-in one is used.
+    NoTowns,
 }
 
 impl fmt::Display for ContentError {
@@ -169,6 +183,8 @@ impl fmt::Display for ContentError {
                 f,
                 "line {index} of `{pool}` has {chars} characters (max {MAX_LINE_CHARS})"
             ),
+            Self::Town { index, name, error } => write!(f, "town {index} `{name}`: {error}"),
+            Self::NoTowns => write!(f, "no towns to build; using the built-in Eduardo Castex"),
         }
     }
 }
@@ -178,6 +194,7 @@ impl std::error::Error for ContentError {
         match self {
             Self::Io { source, .. } => Some(source),
             Self::Parse(e) => Some(e),
+            Self::Town { error, .. } => Some(error),
             _ => None,
         }
     }
