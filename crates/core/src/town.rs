@@ -165,8 +165,8 @@ impl TownLayout {
         }
     }
 
-    /// Static collision footprints: every building, every tree trunk, and the
-    /// hitching rail with its horse.
+    /// Static collision footprints: every building, every tree trunk, the
+    /// hitching rail with its horse, and free-standing signs.
     pub fn obstacles(&self) -> Vec<Aabb> {
         let trunk = Vec2::new(2.0 * TREE_TRUNK_RADIUS, 2.0 * TREE_TRUNK_RADIUS);
         self.buildings
@@ -174,6 +174,7 @@ impl TownLayout {
             .map(|b| b.footprint)
             .chain(self.trees.iter().map(|&p| Aabb::from_center_size(p, trunk)))
             .chain([self.hitching_post.rail, self.hitching_post.horse.footprint])
+            .chain(self.sign_obstacles())
             .collect()
     }
 
@@ -567,7 +568,10 @@ mod tests {
     fn obstacles_cover_buildings_and_trees() {
         let t = town();
         let obstacles = t.obstacles();
-        assert_eq!(obstacles.len(), t.buildings.len() + t.trees.len() + 2);
+        assert_eq!(
+            obstacles.len(),
+            t.buildings.len() + t.trees.len() + 2 + t.sign_obstacles().len()
+        );
         assert!(obstacles.contains(&t.hitching_post.rail));
         assert!(obstacles.contains(&t.hitching_post.horse.footprint));
         for b in &t.buildings {
