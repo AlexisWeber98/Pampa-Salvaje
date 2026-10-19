@@ -4,8 +4,11 @@ An Argentine rural-outlaw western set on the dry pampa of the 1920s–1940s,
 inspired by Red Dead Redemption. The visual direction pairs a low-poly 3D world
 with HD-2D style billboard sprites for characters.
 
-This repository currently holds the first vertical slice: a procedural pampa
-patch with dust fog, a controllable rider and a follow camera.
+This repository currently holds a procedural pampa patch with dust fog, a
+controllable rider, a follow camera and a first settlement: a small railway
+town loosely inspired by 1920s–1930s La Pampa towns such as Eduardo Castex
+(not a historical reconstruction). The rider starts on the road south of town,
+collides with its buildings and cannot leave the 600 m patch.
 
 ## Architecture
 
@@ -20,7 +23,11 @@ A Cargo workspace with three members:
 The rule: **game logic never knows how things are drawn.**
 
 - Heading is a continuous angle in `core`, never an 8-way enum.
-- Collision shapes are owned by logic, never derived from sprite pixels.
+- Collision shapes are owned by logic, never derived from sprite pixels. The town
+  layout (`pampa_core::TownLayout`) owns every footprint; render only picks a look
+  per building kind.
+- Ground height has one source of truth, `Terrain::height`, which also levels the
+  ground under the town.
 - Animation is a logical state (`Idle`, `Walk`, `Gallop`) in `core`, never a frame index.
 - The visual representation is a swappable per-entity component in `render`
   (a billboard sprite today, a 3D model later).
