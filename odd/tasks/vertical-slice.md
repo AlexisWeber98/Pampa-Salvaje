@@ -45,7 +45,7 @@ Forecast: ~700 authored changed lines across all tasks.
 |----|------|-------|--------|--------|--------|
 | T1 | Workspace scaffold (workspace manifest, three crates, README) | delegated (writer trigger: 2+ non-trivial files) | [x] | | |
 | T2 | `core`: heading, rider kinematics, animation state + unit tests (test-first) | delegated | [x] | | |
-| T3 | `render`: heightmap terrain, lighting, dust fog | delegated | [ ] | | |
+| T3 | `render`: heightmap terrain, lighting, dust fog | delegated | [x] | | |
 | T4 | `render`: billboard rider sprite with 8-direction selection from heading (+ tests for direction mapping) | delegated | [ ] | | |
 | T5 | `game`: input -> core movement, follow camera, wire plugins; runs | delegated | [ ] | | |
 
@@ -77,6 +77,12 @@ Forecast: ~700 authored changed lines across all tasks.
   RED: `cargo test -p pampa-core` -> 0 passed; 19 failed (`todo!()` stubs). GREEN: 19 passed.
   Checks: fmt ok, clippy ok, `cargo tree -p pampa-core | rg -c bevy` -> no match.
 
+- T3: `TerrainPlugin` (flat-shaded 600 m patch built from `pampa_core::Terrain`, vertex-colored, 400 rock/shrub props),
+  `AtmospherePlugin` (dusty `ClearColor`, warm `GlobalAmbientLight`, shadowed low sun, atmospheric `DistanceFog`
+  auto-added to every `Camera3d`), `coords::world_from_ground` (core north -> Bevy -Z).
+  Test-first exception: pure rendering wiring, no meaningful deterministic test; verified by running the game
+  (temporary static camera) and a screenshot: rolling faceted ground fading into dust haze.
+
 ## Next step
 
-T3.
+T4.
