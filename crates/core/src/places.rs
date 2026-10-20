@@ -102,71 +102,79 @@ impl Place {
 }
 
 impl TownLayout {
-    /// The town's named landmarks, one per [`PlaceKind`], in [`PlaceKind::ALL`]
-    /// order.
+    /// The town's named landmarks in [`PlaceKind::ALL`] order: every general
+    /// store, police station and plaza (bigger towns have several; the
+    /// first is the main one), the church and the station.
     pub fn places(&self) -> Vec<Place> {
         PlaceKind::ALL
             .into_iter()
-            .filter_map(|kind| self.place(kind))
+            .flat_map(|kind| self.places_of(kind))
             .collect()
     }
 
-    fn place(&self, kind: PlaceKind) -> Option<Place> {
+    fn places_of(&self, kind: PlaceKind) -> Vec<Place> {
         let building = |wanted: BuildingKind| self.buildings.iter().find(|b| b.kind == wanted);
-        let (footprint, signs) = match kind {
-            PlaceKind::GeneralStore => {
-                let store = building(BuildingKind::GeneralStore)?;
-                (
-                    store.footprint,
-                    vec![facade_sign(store.footprint, store.front, 13.0)],
-                )
-            }
-            PlaceKind::PoliceStation => {
-                let police = building(BuildingKind::PoliceStation)?;
-                (
-                    police.footprint,
-                    vec![facade_sign(police.footprint, police.front, 7.0)],
-                )
-            }
-            PlaceKind::Church => {
-                // Narrow enough for the face of the bell tower above the door.
-                let church = building(BuildingKind::Church)?;
-                (
-                    church.footprint,
-                    vec![facade_sign(church.footprint, church.front, 3.4)],
-                )
-            }
-            PlaceKind::Station => {
-                let station = building(BuildingKind::Station)?;
-                let mut signs = vec![facade_sign(station.footprint, station.front, 14.0)];
-                if let Some(platform) = building(BuildingKind::Platform) {
-                    signs.push(platform_board(platform, station));
-                }
-                (station.footprint, signs)
-            }
-            PlaceKind::Plaza => {
-                // On posts just inside the south edge, beside the central path.
-                let anchor = Vec2::new(self.plaza.center().x + 10.0, self.plaza.min.y + 1.0);
-                let sign = Sign {
-                    anchor,
-                    facing: Side::South,
-                    mount: SignMount::Posts,
-                    elevation: 0.0,
-                    width: 3.0,
-                };
-                (self.plaza, vec![sign])
-            }
+        let areas: Vec<(Aabb, Vec<Sign>)> = match kind {
+            PlaceKind::GeneralStore => self
+                .buildings
+                .iter()
+                .filter(|b| b.kind == BuildingKind::GeneralStore)
+                .map(|store| {
+                    (
+                        store.footprint,
+                        vec![facade_sign(store.footprint, store.front, 13.0)],
+                    )
+                })
+                .collect(),
+            PlaceKind::PoliceStation => self
+                .buildings
+                .iter()
+                .filter(|b| b.kind == BuildingKind::PoliceStation)
+                .map(|police| {
+                    (
+                        police.footprint,
+                        vec![facade_sign(police.footprint, police.front, 7.0)],
+                    )
+                })
+                .collect(),
+            // Narrow enough for the face of the bell tower above the door.
+            PlaceKind::Church => building(BuildingKind::Church)
+                .map(|church| {
+                    (
+                        church.footprint,
+                        vec![facade_sign(church.footprint, church.front, 3.4)],
+                    )
+                })
+                .into_iter()
+                .collect(),
+            PlaceKind::Station => building(BuildingKind::Station)
+                .map(|station| {
+                    let mut signs = vec![facade_sign(station.footprint, station.front, 14.0)];
+                    if let Some(platform) = building(BuildingKind::Platform) {
+                        signs.push(platform_board(platform, station));
+                    }
+                    (station.footprint, signs)
+                })
+                .into_iter()
+                .collect(),
+            PlaceKind::Plaza => self
+                .plazas()
+                .map(|plaza| (plaza, vec![plaza_sign(plaza)]))
+                .collect(),
         };
         let name = match kind {
             PlaceKind::Station => format!("{} {}", kind.name(), self.name.to_uppercase()),
             _ => kind.name().to_string(),
         };
-        Some(Place {
-            kind,
-            name,
-            footprint,
-            signs,
-        })
+        areas
+            .into_iter()
+            .map(|(footprint, signs)| Place {
+                kind,
+                name: name.clone(),
+                footprint,
+                signs,
+            })
+            .collect()
     }
 
     /// Footprints of free-standing signs on the ground.
@@ -175,6 +183,19 @@ impl TownLayout {
             .iter()
             .flat_map(|p| p.signs.iter().filter_map(Sign::footprint))
             .collect()
+    }
+}
+
+/// The plaza's sign on posts just inside its south edge, beside the central
+/// path (closer to it on a narrow plaza).
+fn plaza_sign(plaza: Aabb) -> Sign {
+    let offset = (plaza.size().x / 2.0 - 3.5).min(10.0);
+    Sign {
+        anchor: Vec2::new(plaza.center().x + offset, plaza.min.y + 1.0),
+        facing: Side::South,
+        mount: SignMount::Posts,
+        elevation: 0.0,
+        width: 3.0,
     }
 }
 
@@ -247,6 +268,10 @@ mod tests {
         t.buildings.iter().find(|b| b.kind == kind).copied()
     }
 
+    fn all(t: &TownLayout, kind: BuildingKind) -> usize {
+        t.buildings.iter().filter(|b| b.kind == kind).count()
+    }
+
     fn place(t: &TownLayout, kind: PlaceKind) -> Option<Place> {
         t.places().into_iter().find(|p| p.kind == kind)
     }
@@ -256,9 +281,20 @@ mod tests {
         for (c, t) in sample_configs().iter().zip(sample_towns()) {
             let places = t.places();
             let kinds: Vec<_> = places.iter().map(|p| p.kind).collect();
+            // Bigger towns have several general stores, police stations and
+            // plazas, listed together.
             let expected: Vec<_> = PlaceKind::ALL
                 .into_iter()
-                .filter(|&k| k != PlaceKind::Station || c.railway.is_some())
+                .flat_map(|k| {
+                    let n = match k {
+                        PlaceKind::GeneralStore => all(&t, BuildingKind::GeneralStore),
+                        PlaceKind::PoliceStation => all(&t, BuildingKind::PoliceStation),
+                        PlaceKind::Church => 1,
+                        PlaceKind::Station => usize::from(c.railway.is_some()),
+                        PlaceKind::Plaza => t.plazas().count(),
+                    };
+                    std::iter::repeat_n(k, n)
+                })
                 .collect();
             assert_eq!(kinds, expected, "{}", c.name);
             for p in &places {
@@ -284,6 +320,39 @@ mod tests {
             place(&town(), PlaceKind::Station).unwrap().name,
             "ESTACIÓN EDUARDO CASTEX"
         );
+    }
+
+    #[test]
+    fn places_list_every_plaza_general_store_and_police_station() {
+        for t in sample_towns() {
+            let footprints = |kind: PlaceKind| -> Vec<Aabb> {
+                t.places()
+                    .into_iter()
+                    .filter(|p| p.kind == kind)
+                    .map(|p| p.footprint)
+                    .collect()
+            };
+            assert_eq!(
+                footprints(PlaceKind::Plaza),
+                t.plazas().collect::<Vec<_>>(),
+                "{}",
+                t.name
+            );
+            let stores: Vec<Aabb> = t
+                .buildings
+                .iter()
+                .filter(|b| b.kind == BuildingKind::GeneralStore)
+                .map(|b| b.footprint)
+                .collect();
+            assert_eq!(footprints(PlaceKind::GeneralStore), stores, "{}", t.name);
+            let police: Vec<Aabb> = t
+                .buildings
+                .iter()
+                .filter(|b| b.kind == BuildingKind::PoliceStation)
+                .map(|b| b.footprint)
+                .collect();
+            assert_eq!(footprints(PlaceKind::PoliceStation), police, "{}", t.name);
+        }
     }
 
     #[test]
@@ -379,21 +448,28 @@ mod tests {
     #[test]
     fn the_plaza_sign_stands_inside_its_south_edge_clear_of_trees() {
         for t in sample_towns() {
-            let plaza = place(&t, PlaceKind::Plaza).unwrap();
-            assert_eq!(plaza.footprint, t.plaza);
-            let sign = plaza.signs[0];
-            assert_eq!(sign.mount, SignMount::Posts);
-            assert_eq!(sign.facing, Side::South);
-            let area = sign
-                .footprint()
-                .expect("a post sign on the ground collides");
-            assert!(t.plaza.contains(&area));
-            assert!(sign.anchor.y - t.plaza.min.y < 2.5);
-            for &tree in &t.trees {
-                assert!(!area.expanded(0.5).contains_point(tree), "{tree:?}");
+            let plazas: Vec<Place> = t
+                .places()
+                .into_iter()
+                .filter(|p| p.kind == PlaceKind::Plaza)
+                .collect();
+            assert_eq!(plazas.len(), t.plazas().count(), "{}", t.name);
+            for (plaza, area) in plazas.iter().zip(t.plazas()) {
+                assert_eq!(plaza.footprint, area);
+                let sign = plaza.signs[0];
+                assert_eq!(sign.mount, SignMount::Posts);
+                assert_eq!(sign.facing, Side::South);
+                let board = sign
+                    .footprint()
+                    .expect("a post sign on the ground collides");
+                assert!(area.contains(&board), "{}: {board:?}", t.name);
+                assert!(sign.anchor.y - area.min.y < 2.5);
+                for &tree in &t.trees {
+                    assert!(!board.expanded(0.5).contains_point(tree), "{tree:?}");
+                }
+                // Clear of the central path so walkers and riders can enter.
+                assert!((sign.anchor.x - area.center().x).abs() - sign.width / 2.0 > 2.0);
             }
-            // Clear of the central path so walkers and riders can enter.
-            assert!((sign.anchor.x - t.plaza.center().x).abs() - sign.width / 2.0 > 2.0);
         }
     }
 

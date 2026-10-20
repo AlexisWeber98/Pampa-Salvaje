@@ -253,7 +253,7 @@ fn build_town(b: &mut Builder, town: &TownLayout) {
         let mat = b.palette.street.clone();
         flat_patch(b, &mat, street, 0.03);
     }
-    plaza(b, town);
+    plazas(b, town);
     railway(b, town);
     for (n, building) in town.buildings.iter().enumerate() {
         spawn_building(b, building, n, town.hitching_post.veranda);
@@ -303,8 +303,17 @@ fn flat_patch(b: &mut Builder, material: &Handle<StandardMaterial>, area: &Aabb,
     );
 }
 
-fn plaza(b: &mut Builder, town: &TownLayout) {
-    let p = town.plaza;
+/// Every plaza (the main one, and a big town's second one), then the
+/// trees of all of them.
+fn plazas(b: &mut Builder, town: &TownLayout) {
+    for p in town.plazas() {
+        plaza(b, p);
+    }
+    plaza_trees(b, town);
+}
+
+/// One plaza: lawn, a cross of paths and a monument where they meet.
+fn plaza(b: &mut Builder, p: Aabb) {
     let (plaza, path) = (b.palette.plaza.clone(), b.palette.path.clone());
     flat_patch(b, &plaza, &p, 0.05);
     // A cross of paths meeting at a small monument.
@@ -325,7 +334,10 @@ fn plaza(b: &mut Builder, town: &TownLayout) {
         world_from_ground(c, y + 2.2),
         Vec3::new(0.9, 2.8, 0.9),
     );
+}
 
+/// Every plaza tree: a trunk and a round crown.
+fn plaza_trees(b: &mut Builder, town: &TownLayout) {
     for (n, &tree) in town.trees.iter().enumerate() {
         let y = b.ground(tree);
         let jitter = hash2(tree.x, tree.y);

@@ -180,8 +180,10 @@ pub fn rasterize_town(town: &TownLayout, frame: &MapFrame) -> Canvas {
         let (a, b) = frame.rect(street);
         map.fill_rect(a, b, palette::STREET);
     }
-    let (a, b) = frame.rect(&town.plaza);
-    map.fill_rect(a, b, palette::PLAZA);
+    for plaza in town.plazas() {
+        let (a, b) = frame.rect(&plaza);
+        map.fill_rect(a, b, palette::PLAZA);
+    }
     for &tree in &town.trees {
         let m = frame.to_map(tree);
         map.set(m.x as i32, m.y as i32, [96, 110, 60, 255]);
@@ -450,6 +452,29 @@ mod tests {
         assert!(close(east, Vec2::new(200.0 - EDGE, 90.0)));
         let (south_west, _) = frame.to_map_clamped(GroundVec2::new(-300.0, -300.0));
         assert!(close(south_west, Vec2::new(EDGE, 200.0 - EDGE)));
+    }
+
+    #[test]
+    fn a_very_big_town_paints_its_merged_and_station_plazas() {
+        let t = TownLayout::generate(&pampa_core::TownConfig {
+            blocks: (8, 8),
+            ..pampa_core::TownConfig::castex()
+        })
+        .unwrap();
+        let frame = MapFrame::for_town(&t, 320);
+        let map = rasterize_town(&t, &frame);
+        let at = |p: GroundVec2| {
+            let m = frame.to_map(p);
+            map.get(m.x as usize, m.y as usize)
+        };
+        let station = t.station_plaza.expect("a station plaza");
+        let spot = GroundVec2::new(station.min.x + 2.0, station.min.y + 6.0);
+        assert_eq!(at(spot)[..3], palette::PLAZA[..3]);
+        // Where the inner streets crossed, the merged plaza is lawn, not road;
+        // off the central path and monument.
+        let c = t.plaza.center();
+        let former_street = GroundVec2::new(c.x + 12.0, c.y + 3.5);
+        assert_eq!(at(former_street)[..3], palette::PLAZA[..3]);
     }
 
     #[test]
