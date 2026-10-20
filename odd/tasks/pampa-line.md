@@ -77,7 +77,7 @@ Three chained PRs, as the user requested:
 ## Acceptance criteria
 
 - `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` all pass at each commit.
-- The shipped `towns.ron` builds all three towns with no placement warnings, and General Pico has two plazas and two general stores.
+- The shipped `towns.ron` builds all three towns with no placement warnings, and General Pico (very big, 8×8) has a centered 2×2 central plaza, a station plaza, 4 general stores, 2 police stations and 51 townsfolk.
 - (PR2) Every railway town is on the line, and no link crosses another town's leveled band.
 - (PR3) Talk near Hidalgo, then reach Farachelías: the errand completes once, and the marker points the way.
 
