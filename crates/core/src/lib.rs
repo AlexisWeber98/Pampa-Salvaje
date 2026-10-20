@@ -20,6 +20,7 @@ pub mod math;
 pub mod obstacles;
 pub mod placement;
 pub mod places;
+pub mod rail;
 pub mod rider;
 mod rng;
 pub mod terrain;
@@ -38,6 +39,7 @@ pub use math::Vec2;
 pub use obstacles::StaticObstacles;
 pub use placement::{PlacementError, place_towns};
 pub use places::{Place, PlaceKind, Sign, SignMount};
+pub use rail::{RailCurve, RailLine, RailLineError, RailLink, RailSpan};
 pub use rider::{MAX_STEP, Rider, RiderInput, RiderParams};
 pub use terrain::{FlatArea, Terrain};
 pub use town::{

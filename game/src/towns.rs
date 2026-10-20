@@ -8,7 +8,7 @@ use std::path::Path;
 
 use bevy::prelude::*;
 use pampa_content::load_towns_or_builtin;
-use pampa_core::{PlaceKind, TownLayout, WorldConfig, place_towns};
+use pampa_core::{PlaceKind, RailLine, TownLayout, WorldConfig, place_towns};
 use pampa_render::font;
 
 /// The world to build, its towns, and what went wrong reading them.
@@ -18,20 +18,26 @@ pub struct LoadedWorld {
     /// Every valid town, in file order; never empty. The player starts at
     /// the first one.
     pub towns: Vec<TownLayout>,
+    /// The railway line through the towns, its links checked against them.
+    pub line: RailLine,
     /// Problems found, ready to log as warnings.
     pub warnings: Vec<String>,
 }
 
 /// Loads the towns file at `path` and places every valid town in its world,
-/// falling back to the built-in Eduardo Castex when no town can be built.
+/// falling back to the built-in Eduardo Castex when no town can be built,
+/// then runs the railway line through them.
 pub fn load_world(path: &Path) -> LoadedWorld {
     let (content, errors) = load_towns_or_builtin(path);
     let mut warnings: Vec<String> = errors.iter().map(|e| format!("towns: {e}")).collect();
     let mut world = content.world;
+    let mut names = content.line;
     // Content already placed these towns once; this only builds them.
     let (mut towns, rejected) = place_towns(&world, &content.towns);
     warnings.extend(rejected.iter().map(|e| format!("towns: {e}")));
     if towns.is_empty() {
+        // The file's line names towns that are gone.
+        names = None;
         warnings.push(
             "towns: no town fits the world; using the built-in Eduardo Castex in the default world"
                 .to_string(),
@@ -42,9 +48,12 @@ pub fn load_world(path: &Path) -> LoadedWorld {
     for town in &towns {
         warnings.extend(unsupported_glyphs(town));
     }
+    let (line, broken) = RailLine::build(names.as_deref(), &towns, world.bounds());
+    warnings.extend(broken.iter().map(|e| format!("towns: {e}")));
     LoadedWorld {
         world,
         towns,
+        line,
         warnings,
     }
 }
@@ -137,6 +146,37 @@ mod tests {
             assert_eq!(small.size, TownSize::Small, "{}", small.name);
             assert_eq!(small.station_plaza, None, "{}", small.name);
         }
+        // One railway line runs Castex, Monte Nievas, General Pico.
+        assert_eq!(loaded.line.towns, [1, 0, 2]);
+        let links: Vec<(usize, usize)> = loaded.line.links.iter().map(|l| (l.from, l.to)).collect();
+        assert_eq!(links, [(1, 0), (0, 2)]);
+    }
+
+    #[test]
+    fn a_broken_railway_line_warns_naming_the_towns_and_keeps_them() {
+        let path = temp_towns(
+            "line",
+            r#"(towns: [
+                (name: "Oeste", origin: (-2000.0, 0.0), blocks: (4, 4), block_size: 40.0,
+                 street_width: 10.0, railway: Some((side: North, offset: 24.0))),
+                (name: "Medio", blocks: (4, 4), block_size: 40.0, street_width: 10.0),
+                (name: "Este", origin: (2000.0, 0.0), blocks: (4, 4), block_size: 40.0,
+                 street_width: 10.0, railway: Some((side: North, offset: 24.0))),
+            ], line: Some(["Oeste", "Este", "Este", "Rancul"]))"#,
+        );
+        let loaded = load_world(&path);
+        assert_eq!(loaded.towns.len(), 3);
+        assert_eq!(loaded.line.towns, [0, 2]);
+        assert!(loaded.line.links.is_empty());
+        let [duplicate, unknown, crossing] = &loaded.warnings[..] else {
+            panic!("{:?}", loaded.warnings)
+        };
+        assert!(duplicate.contains("`Este`"), "{duplicate}");
+        assert!(unknown.contains("`Rancul`"), "{unknown}");
+        assert!(crossing.contains("`Medio`"), "{crossing}");
+        let report = TownReport::new(&loaded);
+        assert_eq!(report.warnings, loaded.warnings);
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
     #[test]

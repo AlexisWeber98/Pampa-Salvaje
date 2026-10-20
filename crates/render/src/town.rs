@@ -15,10 +15,12 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::PrimitiveTopology;
 use bevy::prelude::*;
 use pampa_core::{
-    Aabb, Building, BuildingKind, Side, Terrain, TownActivation, TownLayout, Vec2 as GroundVec2,
+    Aabb, Building, BuildingKind, RailSpan, Side, Terrain, TownActivation, TownLayout,
+    Vec2 as GroundVec2,
 };
 
 use crate::coords::world_from_ground;
+use crate::rail::{TrackKit, track_pieces};
 use crate::terrain::{StreamFocus, WorldTerrain, hash2};
 
 /// Every town of the world, in the order the game placed them; a town's
@@ -150,6 +152,18 @@ impl Palette {
     }
 }
 
+impl Palette {
+    /// The track materials, with the shared cube, for [`TrackKit`].
+    fn track_kit(&self, cube: Handle<Mesh>) -> TrackKit {
+        TrackKit {
+            cube,
+            ballast: self.ballast.clone(),
+            timber: self.timber.clone(),
+            steel: self.steel.clone(),
+        }
+    }
+}
+
 /// Spawn helper that keeps the per-element code short. Everything it
 /// spawns hangs off the town's `root`.
 struct Builder<'c, 'w, 's, 'a> {
@@ -190,8 +204,12 @@ fn setup_kit(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    let cube = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
+    let palette = Palette::new(&mut materials);
+    // The railway line between towns is drawn with the same track kit.
+    commands.insert_resource(palette.track_kit(cube.clone()));
     commands.insert_resource(Shapes {
-        cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
+        cube,
         gable: meshes.add(gable_mesh()),
         cylinder: meshes.add(Cylinder::new(0.5, 1.0).mesh().resolution(16)),
         pyramid: meshes.add(Cone::new(0.71, 1.0).mesh().resolution(4)),
@@ -202,7 +220,7 @@ fn setup_kit(
                 .expect("valid ico subdivision"),
         ),
     });
-    commands.insert_resource(Palette::new(&mut materials));
+    commands.insert_resource(palette);
 }
 
 /// Shared town meshes and materials, once [`setup_kit`] ran.
@@ -362,91 +380,16 @@ fn plaza_trees(b: &mut Builder, town: &TownLayout) {
     }
 }
 
-/// Ballast bed, sleepers and two rails following the ground.
+/// Ballast bed, sleepers and two rails following the ground, drawn with
+/// the pieces the railway line between towns uses too.
 fn railway(b: &mut Builder, town: &TownLayout) {
     let Some(rail) = town.railway else {
         return;
     };
-    let length = rail.start.distance(rail.end);
-    if length <= 0.0 {
-        return;
+    let kit = b.palette.track_kit(b.shapes.cube.clone());
+    for (part, transform) in track_pieces(RailSpan::whole(rail), b.terrain) {
+        b.spawn(&kit.cube, kit.material(part), transform);
     }
-    let along = (rail.end - rail.start) * (1.0 / length);
-    let across = GroundVec2::new(-along.y, along.x);
-    let at = |s: f32, offset: f32| rail.start + along * s + across * offset;
-
-    let (ballast, timber, steel) = (
-        b.palette.ballast.clone(),
-        b.palette.timber.clone(),
-        b.palette.steel.clone(),
-    );
-    let segment = 6.0;
-    let segments = (length / segment).ceil() as usize;
-    for k in 0..segments {
-        let (s0, s1) = (k as f32 * segment, ((k + 1) as f32 * segment).min(length));
-        stretched(
-            b,
-            &ballast,
-            at(s0, 0.0),
-            at(s1, 0.0),
-            -0.05,
-            Vec2::new(3.4, 0.4),
-        );
-        for side in [-0.5, 0.5] {
-            let offset = side * rail.gauge;
-            stretched(
-                b,
-                &steel,
-                at(s0, offset),
-                at(s1, offset),
-                0.36,
-                Vec2::new(0.09, 0.14),
-            );
-        }
-    }
-
-    let spacing = 1.2;
-    let sleepers = (length / spacing) as usize;
-    let yaw = (-along.y).atan2(along.x);
-    for k in 0..sleepers {
-        let p = at(k as f32 * spacing + spacing / 2.0, 0.0);
-        let y = b.ground(p) + 0.3;
-        let mesh = b.shapes.cube.clone();
-        b.spawn(
-            &mesh,
-            &timber,
-            Transform::from_translation(world_from_ground(p, y))
-                .with_rotation(Quat::from_rotation_y(yaw))
-                .with_scale(Vec3::new(0.25, 0.12, rail.gauge + 0.9)),
-        );
-    }
-}
-
-/// A beam from ground point `a` to `b`, raised `lift` above the ground, with
-/// `section` (width, height) across it.
-fn stretched(
-    b: &mut Builder,
-    material: &Handle<StandardMaterial>,
-    from: GroundVec2,
-    to: GroundVec2,
-    lift: f32,
-    section: Vec2,
-) {
-    let wa = world_from_ground(from, b.ground(from) + lift);
-    let wb = world_from_ground(to, b.ground(to) + lift);
-    let d = wb - wa;
-    let len = d.length();
-    if len <= 0.0 {
-        return;
-    }
-    let mesh = b.shapes.cube.clone();
-    b.spawn(
-        &mesh,
-        material,
-        Transform::from_translation((wa + wb) / 2.0 + Vec3::Y * section.y / 2.0)
-            .with_rotation(Quat::from_rotation_arc(Vec3::X, d / len))
-            .with_scale(Vec3::new(len + 0.02, section.y, section.x)),
-    );
 }
 
 /// World-space frame of a building: ground center, wall height, the footprint

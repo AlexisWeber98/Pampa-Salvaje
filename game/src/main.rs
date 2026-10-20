@@ -11,9 +11,9 @@ use bevy::prelude::*;
 use pampa_content::{TOWNS_FILE, asset_path};
 use pampa_core::{Terrain, Train, TrainSchedule, World};
 use pampa_render::{
-    AtmospherePlugin, CharacterVisualPlugin, MinimapPlugin, SignPlugin, SpeechBubblePlugin,
-    StreamFocus, TerrainPlugin, TownPlugin, TrainPlugin, WorldChunks, WorldTerrain, WorldTowns,
-    WorldTrains,
+    AtmospherePlugin, CharacterVisualPlugin, MinimapPlugin, RailPlugin, SignPlugin,
+    SpeechBubblePlugin, StreamFocus, TerrainPlugin, TownPlugin, TrainPlugin, WorldChunks,
+    WorldRail, WorldTerrain, WorldTowns, WorldTrains,
 };
 
 fn main() {
@@ -42,6 +42,8 @@ fn main() {
     .insert_resource(crowds)
     .insert_resource(WorldTrains(trains))
     .insert_resource(WorldTowns(loaded.towns))
+    // The railway line between towns, laid chunk by chunk.
+    .insert_resource(WorldRail(loaded.line))
     .insert_resource(player::GameWorld(world))
     .insert_resource(player::PlayerSpawn { position, heading })
     .insert_resource(report)
@@ -55,6 +57,7 @@ fn main() {
         }),
         TerrainPlugin::default(),
         TownPlugin,
+        RailPlugin,
         SignPlugin,
         MinimapPlugin,
         AtmospherePlugin,
