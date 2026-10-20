@@ -1,7 +1,10 @@
-//! The static world the rider moves through: terrain and playable bounds.
+//! The static world the rider moves through: terrain, raised floors and
+//! playable bounds.
 
 use crate::obstacles::around;
-use crate::{Body, Circle, SideObstacle, StaticObstacles, Terrain, TownLayout, Vec2, WorldConfig};
+use crate::{
+    Body, Circle, Floor, SideObstacle, StaticObstacles, Terrain, TownLayout, Vec2, WorldConfig,
+};
 
 /// Axis-aligned playable area on the ground plane.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -68,6 +71,28 @@ pub struct World {
     pub obstacles: StaticObstacles,
     /// Moving footprints (the train), refreshed by the game every frame.
     pub moving: Vec<SideObstacle>,
+    /// Raised floors people walk on (station platforms), part of
+    /// [`Self::ground_height`].
+    pub floors: Vec<Floor>,
+}
+
+/// Something that knows how high the ground is where bodies stand.
+pub trait Ground {
+    /// Height of the walkable surface at `p`, in meters.
+    fn ground_height(&self, p: Vec2) -> f32;
+}
+
+/// Bare terrain: no floors on it.
+impl Ground for Terrain {
+    fn ground_height(&self, p: Vec2) -> f32 {
+        self.height(p.x, p.y)
+    }
+}
+
+impl Ground for World {
+    fn ground_height(&self, p: Vec2) -> f32 {
+        World::ground_height(self, p)
+    }
 }
 
 impl World {
@@ -80,7 +105,20 @@ impl World {
             bounds: config.bounds(),
             obstacles: StaticObstacles::default(),
             moving: Vec::new(),
+            floors: Vec::new(),
         }
+    }
+
+    /// Height of the surface bodies stand on at `p`: the terrain, raised by
+    /// the highest floor (a platform or its ramp) there. Everything placed
+    /// on the ground (riders, people, horses, the camera floor) uses this.
+    pub fn ground_height(&self, p: Vec2) -> f32 {
+        let rise = self
+            .floors
+            .iter()
+            .filter_map(|f| f.rise_at(p))
+            .fold(0.0, f32::max);
+        self.terrain.height(p.x, p.y) + rise
     }
 
     /// Open terrain in the default world, with nothing built on it.
@@ -95,7 +133,8 @@ impl World {
     }
 
     /// The world `config` describes, with `terrain` leveled under every
-    /// town and every town's footprints as obstacles. The towns should come
+    /// town, every town's footprints as obstacles and its platforms as
+    /// floors. The towns should come
     /// from [`crate::place_towns`], so they stay apart and inside.
     pub fn with_towns(config: WorldConfig, terrain: Terrain, towns: &[TownLayout]) -> Self {
         let mut terrain = terrain;
@@ -106,6 +145,7 @@ impl World {
         let mut world = Self::new(config, terrain);
         for town in towns {
             world.obstacles.extend(town.obstacles());
+            world.floors.extend(town.floors());
         }
         world
     }
@@ -305,6 +345,60 @@ mod tests {
         let c = Circle::new(0.9);
         let end = world.resolve(c, wall.center(), |_| ());
         assert!(deepest_overlap(&world, c, end) < 1e-3, "{end:?}");
+    }
+
+    #[test]
+    fn the_ground_on_a_platform_is_its_top_and_its_ramps_lead_down() {
+        let mut checked = 0;
+        for town in crate::town::tests::sample_towns() {
+            let world = World::with_town(Terrain::default(), &town);
+            assert_eq!(world.floors, town.floors());
+            let Some(platform) = town
+                .buildings
+                .iter()
+                .find(|b| b.kind == crate::BuildingKind::Platform)
+            else {
+                assert!(world.floors.is_empty(), "{}", town.name);
+                continue;
+            };
+            let floor = world.floors[0];
+            let f = platform.footprint;
+            let terrain = |p: Vec2| world.terrain.height(p.x, p.y);
+            // Anywhere on the platform, the ground is its top.
+            for (i, j) in [(0.5, 0.5), (0.0, 0.0), (1.0, 1.0), (0.1, 0.9), (0.95, 0.2)] {
+                let p = f.min + Vec2::new(f.size().x * i, f.size().y * j);
+                assert_eq!(world.ground_height(p), terrain(p) + platform.height);
+                assert_eq!(Ground::ground_height(&world, p), world.ground_height(p));
+            }
+            // Down each ramp, steadily, to the bare ground at its foot.
+            let mid = f.center().dot(floor.across());
+            let (lo, hi) = (f.min.dot(floor.along), f.max.dot(floor.along));
+            for (end, out) in [(hi, 1.0), (lo, -1.0)] {
+                let at = |d: f32| floor.along * (end + out * d) + floor.across() * mid;
+                let mut last = world.ground_height(at(0.0));
+                for k in 1..=30 {
+                    let p = at(k as f32 * Floor::RAMP_LENGTH / 30.0);
+                    let h = world.ground_height(p);
+                    assert!(h < last, "{}: {k}", town.name);
+                    last = h;
+                }
+                assert!((last - terrain(at(Floor::RAMP_LENGTH))).abs() < 1e-4);
+                assert_eq!(world.ground_height(at(4.0)), terrain(at(4.0)));
+            }
+            // Off its long sides, the bare ground: they are steps.
+            for side in [
+                f.min.dot(floor.across()) - 0.1,
+                f.max.dot(floor.across()) + 0.1,
+            ] {
+                let p = floor.along * f.center().dot(floor.along) + floor.across() * side;
+                assert_eq!(world.ground_height(p), terrain(p), "{}", town.name);
+            }
+            // The bare terrain knows nothing of platforms.
+            let c = f.center();
+            assert_eq!(Ground::ground_height(&world.terrain, c), terrain(c));
+            checked += 1;
+        }
+        assert!(checked > 3);
     }
 
     #[test]

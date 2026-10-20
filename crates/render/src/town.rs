@@ -15,7 +15,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::PrimitiveTopology;
 use bevy::prelude::*;
 use pampa_core::{
-    Aabb, Building, BuildingKind, RailSpan, Side, Terrain, TownActivation, TownLayout,
+    Aabb, Building, BuildingKind, Floor, RailSpan, Side, Terrain, TownActivation, TownLayout,
     Vec2 as GroundVec2,
 };
 
@@ -276,7 +276,45 @@ fn build_town(b: &mut Builder, town: &TownLayout) {
     for (n, building) in town.buildings.iter().enumerate() {
         spawn_building(b, building, n, town.hitching_post.veranda);
     }
+    for floor in town.floors() {
+        floor_ramps(b, &floor);
+    }
     hitching_rail(b, &town.hitching_post.rail);
+}
+
+/// Thickness of a ramp slab, in meters.
+const RAMP_THICKNESS: f32 = 0.2;
+
+/// A concrete slab sloping from each end of a platform's top down to the
+/// ground, along the ramps logic walks people over ([`Floor::rise_at`]).
+fn floor_ramps(b: &mut Builder, floor: &Floor) {
+    let concrete = b.palette.concrete.clone();
+    let f = floor.footprint;
+    let mid = floor.across() * f.center().dot(floor.across());
+    let width = f.size().dot(floor.across());
+    let (lo, hi) = (f.min.dot(floor.along), f.max.dot(floor.along));
+    for (end, out) in [(lo, -1.0), (hi, 1.0)] {
+        // From the platform's edge (top) to the ramp's foot (ground).
+        let top = mid + floor.along * end;
+        let foot = top + floor.along * (out * Floor::RAMP_LENGTH);
+        let (top3, foot3) = (
+            world_from_ground(top, b.ground(top) + floor.height),
+            world_from_ground(foot, b.ground(foot)),
+        );
+        let slope = (foot3 - top3).normalize();
+        let side = slope.cross(Vec3::Y).normalize();
+        let up = side.cross(slope);
+        let rotation = Quat::from_mat3(&Mat3::from_cols(slope, up, side));
+        let center = (top3 + foot3) * 0.5 - up * (RAMP_THICKNESS / 2.0);
+        let mesh = b.shapes.cube.clone();
+        b.spawn(
+            &mesh,
+            &concrete,
+            Transform::from_translation(center)
+                .with_rotation(rotation)
+                .with_scale(Vec3::new(top3.distance(foot3), RAMP_THICKNESS, width)),
+        );
+    }
 }
 
 /// Two timber posts with a rail between them, along the rail footprint's

@@ -62,6 +62,64 @@ pub struct Building {
     pub front: Side,
 }
 
+/// A raised floor people walk on: the station platform. Its top is part of
+/// the ground height ([`crate::World::ground_height`]), not an obstacle.
+///
+/// A short ramp at each end leads down to the ground along the floor. Its
+/// long sides are plain steps: people walk up onto it from the town side or
+/// off it toward the track (where a standing train blocks them, its cars
+/// being moving obstacles).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Floor {
+    pub footprint: Aabb,
+    /// Height of the top above the ground, in meters.
+    pub height: f32,
+    /// Unit world axis along the floor (`+x` or `+y`), the way its ramps run.
+    pub along: Vec2,
+}
+
+impl Floor {
+    /// Length of the ramp past each end, in meters (a gentle 1:3 slope for
+    /// a 0.9 m platform).
+    pub const RAMP_LENGTH: f32 = 3.0;
+
+    /// Unit world axis across the floor.
+    pub fn across(&self) -> Vec2 {
+        Vec2::new(self.along.y, self.along.x)
+    }
+
+    /// The floor's extent along `axis`, as `(low, high)`.
+    fn span(&self, axis: Vec2) -> (f32, f32) {
+        (self.footprint.min.dot(axis), self.footprint.max.dot(axis))
+    }
+
+    /// Height above the ground at `p`: the floor's top on it, falling
+    /// linearly to zero down either ramp. `None` off the floor and ramps.
+    pub fn rise_at(&self, p: Vec2) -> Option<f32> {
+        let (lo, hi) = self.span(self.across());
+        let c = p.dot(self.across());
+        if c < lo || c > hi {
+            return None;
+        }
+        let (lo, hi) = self.span(self.along);
+        let a = p.dot(self.along);
+        let past = (lo - a).max(a - hi).max(0.0);
+        (past <= Self::RAMP_LENGTH).then(|| self.height * (1.0 - past / Self::RAMP_LENGTH))
+    }
+
+    /// The two ramps' footprints, low end first along [`Self::along`].
+    pub fn ramps(&self) -> [Aabb; 2] {
+        let reach = self.along * Self::RAMP_LENGTH;
+        let f = self.footprint;
+        let low_end = f.max - self.along * f.size().dot(self.along);
+        let high_end = f.min + self.along * f.size().dot(self.along);
+        [
+            Aabb::new(f.min - reach, low_end),
+            Aabb::new(high_end, f.max + reach),
+        ]
+    }
+}
+
 /// A straight railway line on the ground plane.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Railway {
@@ -511,12 +569,14 @@ impl TownLayout {
         }
     }
 
-    /// Static collision footprints: every building, every tree trunk, the
+    /// Static collision footprints: every building but the platform (a
+    /// floor people walk on, see [`Self::floors`]), every tree trunk, the
     /// hitching rail with its horse, and free-standing signs.
     pub fn obstacles(&self) -> Vec<Aabb> {
         let trunk = Vec2::new(2.0 * TREE_TRUNK_RADIUS, 2.0 * TREE_TRUNK_RADIUS);
         self.buildings
             .iter()
+            .filter(|b| b.kind != BuildingKind::Platform)
             .map(|b| b.footprint)
             .chain(self.trees.iter().map(|&p| Aabb::from_center_size(p, trunk)))
             .chain([self.hitching_post.rail, self.hitching_post.horse.footprint])
@@ -528,6 +588,23 @@ impl TownLayout {
     /// outside the grid, on the side away from the railway, facing into town.
     pub fn arrival(&self) -> (Vec2, Heading) {
         self.arrival
+    }
+
+    /// Raised floors people walk on: the station platform, running along
+    /// the track.
+    pub fn floors(&self) -> Vec<Floor> {
+        self.buildings
+            .iter()
+            .filter(|b| b.kind == BuildingKind::Platform)
+            .map(|b| Floor {
+                footprint: b.footprint,
+                height: b.height,
+                along: match b.front {
+                    Side::North | Side::South => Vec2::new(1.0, 0.0),
+                    Side::East | Side::West => Vec2::new(0.0, 1.0),
+                },
+            })
+            .collect()
     }
 }
 
@@ -1962,16 +2039,56 @@ pub(crate) mod tests {
     fn obstacles_cover_buildings_and_trees() {
         for t in sample_towns() {
             let obstacles = t.obstacles();
+            let solid = t
+                .buildings
+                .iter()
+                .filter(|b| b.kind != BuildingKind::Platform);
             assert_eq!(
                 obstacles.len(),
-                t.buildings.len() + t.trees.len() + 2 + t.sign_obstacles().len()
+                solid.clone().count() + t.trees.len() + 2 + t.sign_obstacles().len()
             );
             assert!(obstacles.contains(&t.hitching_post.rail));
             assert!(obstacles.contains(&t.hitching_post.horse.footprint));
-            for b in &t.buildings {
+            for b in solid {
                 assert!(obstacles.contains(&b.footprint));
             }
         }
+    }
+
+    #[test]
+    fn the_platform_is_a_floor_with_clear_ramps_not_an_obstacle() {
+        let mut checked = 0;
+        for t in sample_towns() {
+            let obstacles = t.obstacles();
+            let platforms: Vec<&Building> = t
+                .buildings
+                .iter()
+                .filter(|b| b.kind == BuildingKind::Platform)
+                .collect();
+            let floors = t.floors();
+            assert_eq!(floors.len(), platforms.len(), "{}", t.name);
+            for (floor, platform) in floors.iter().zip(platforms) {
+                assert!(!obstacles.contains(&platform.footprint), "{}", t.name);
+                assert_eq!(floor.footprint, platform.footprint);
+                assert_eq!(floor.height, platform.height);
+                // Along the track, so the ramps lead along it.
+                let rail = t.railway.unwrap();
+                let track = rail.end - rail.start;
+                assert!((floor.along.dot(track) - track.length()).abs() < 1e-3);
+                // Nothing built stands on the platform or its ramps.
+                for area in floor.ramps().into_iter().chain([floor.footprint]) {
+                    for o in &obstacles {
+                        let inside = Aabb::new(
+                            area.min + Vec2::new(0.01, 0.01),
+                            area.max - Vec2::new(0.01, 0.01),
+                        );
+                        assert!(!o.intersects(&inside), "{}: {o:?} on {area:?}", t.name);
+                    }
+                }
+                checked += 1;
+            }
+        }
+        assert!(checked > 3);
     }
 
     #[test]

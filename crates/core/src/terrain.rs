@@ -4,8 +4,10 @@ use crate::Vec2;
 
 /// Gently rolling pampa: a few summed sine octaves. Deterministic per seed.
 ///
-/// [`Terrain::height`] is the single source of truth for ground height; both
-/// logic and render sample it, including any [`FlatArea`] leveled for a town.
+/// [`Terrain::height`] is the single source of truth for the natural ground
+/// height; both logic and render sample it, including any [`FlatArea`]
+/// leveled for a town. Where bodies stand, [`crate::World::ground_height`]
+/// adds the raised floors (station platforms) on top of it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Terrain {
     /// Peak deviation from zero height, in meters.
