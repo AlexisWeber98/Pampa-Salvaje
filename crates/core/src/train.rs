@@ -201,11 +201,13 @@ impl LineTrain {
                 })
             })
             .collect();
+        // A rural mixed train: two passenger coaches behind the locomotive,
+        // then freight.
         let cars: Vec<Car> = [
             (CarKind::Locomotive, 14.0),
             (CarKind::Coach, 12.0),
             (CarKind::Coach, 12.0),
-            (CarKind::Coach, 12.0),
+            (CarKind::Boxcar, 10.0),
             (CarKind::Boxcar, 10.0),
             (CarKind::Hopper, 9.0),
             (CarKind::Hopper, 9.0),
@@ -776,11 +778,27 @@ mod line_tests {
         assert_eq!(names, ["Eduardo Castex", "Monte Nievas", "General Pico"]);
         assert!(train.stations().windows(2).all(|w| w[0].mark < w[1].mark));
         assert_eq!(train.station_of_town(0), Some(NIEVAS));
-        // Three passenger coaches more than the old freight consist.
+        // A rural consist: two passenger coaches behind the locomotive, then
+        // freight, eight cars in all.
         assert_eq!(train.cars().len(), 8);
-        let coaches = train.cars().iter().filter(|c| c.kind == CarKind::Coach);
-        assert_eq!(coaches.count(), 3);
-        assert_eq!(train.cars()[0].kind, CarKind::Locomotive);
+        let kinds: Vec<CarKind> = train.cars().iter().map(|c| c.kind).collect();
+        assert_eq!(kinds.iter().filter(|&&k| k == CarKind::Coach).count(), 2);
+        assert_eq!(
+            &kinds[..3],
+            [CarKind::Locomotive, CarKind::Coach, CarKind::Coach]
+        );
+        assert!(
+            kinds[3..]
+                .iter()
+                .all(|&k| matches!(k, CarKind::Boxcar | CarKind::Hopper))
+        );
+        // The coaches' middle: past the locomotive (14 m) and its coupling,
+        // half way along two 12 m coaches with a coupling between them.
+        assert!(
+            (train.stop_offset() - 27.5).abs() < 1e-4,
+            "{}",
+            train.stop_offset()
+        );
     }
 
     #[test]

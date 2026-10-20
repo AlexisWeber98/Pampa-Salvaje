@@ -16,6 +16,7 @@ pub mod bumps;
 pub mod chunk;
 pub mod clock;
 pub mod collision;
+pub mod errand;
 pub mod heading;
 pub mod math;
 pub mod obstacles;
@@ -28,6 +29,7 @@ pub mod terrain;
 pub mod town;
 pub mod townsfolk;
 pub mod train;
+pub mod walker;
 pub mod world;
 
 pub use activation::{ActivationChange, TownActivation, distance_to_town, nearest_town};
@@ -36,6 +38,7 @@ pub use bumps::{BumpEvent, BumpSeverity, BumpTracker, LinePicker};
 pub use chunk::{ChunkCoord, WorldConfig, WorldConfigError};
 pub use clock::{BASE_RATE, DAY_REAL_SECONDS, DAY_SECONDS, GameClock, TimeOfDay};
 pub use collision::{Aabb, Body, Circle, SideObstacle};
+pub use errand::{Errand, ErrandEvent, ErrandStage, Interaction, Npc, Standing};
 pub use heading::Heading;
 pub use math::Vec2;
 pub use obstacles::StaticObstacles;
@@ -52,4 +55,5 @@ pub use townsfolk::{StreetGraph, Townsfolk, Townsperson};
 pub use train::{
     Car, CarKind, LinePhase, LineTrain, LineTrainState, PlacedCar, Run, Station, Timetable,
 };
+pub use walker::Travel;
 pub use world::{World, WorldBounds};

@@ -4,7 +4,7 @@
 //! Spanish) content; render decides the lettering, the board and its height
 //! on the facade.
 
-use crate::{Aabb, Building, BuildingKind, Side, TownLayout, Vec2};
+use crate::{Aabb, Building, BuildingKind, Heading, Side, TownLayout, Vec2};
 
 /// Which landmark a place is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -177,6 +177,59 @@ impl TownLayout {
             .collect()
     }
 
+    /// Where somebody waits in the main plaza: on the path from the
+    /// monument toward the station (south without one), a few meters out,
+    /// facing whoever walks in from there.
+    pub fn plaza_spot(&self) -> (Vec2, Heading) {
+        let center = self.plaza.center();
+        let out = self
+            .buildings
+            .iter()
+            .find(|b| b.kind == BuildingKind::Station)
+            .map_or(Vec2::new(0.0, -1.0), |station| {
+                axis_toward(station.footprint.center() - center)
+            });
+        (center + out * PLAZA_SPOT_DISTANCE, heading_of(out))
+    }
+
+    /// Where somebody stands at the door of the first police station: on
+    /// the street side, a couple of meters out from the middle of its
+    /// facade, facing the street.
+    pub fn police_door(&self) -> Option<(Vec2, Heading)> {
+        let police = self
+            .buildings
+            .iter()
+            .find(|b| b.kind == BuildingKind::PoliceStation)?;
+        let normal = side_normal(police.front);
+        let half = police.footprint.size() * 0.5;
+        let reach = normal.x.abs() * half.x + normal.y.abs() * half.y + DOOR_SPOT_DISTANCE;
+        Some((
+            police.footprint.center() + normal * reach,
+            heading_of(normal),
+        ))
+    }
+
+    /// Where a passenger steps off the train: on the ground just past the
+    /// town end of the platform, beside the track, facing town. `None`
+    /// without a platform.
+    pub fn platform_spot(&self) -> Option<(Vec2, Heading)> {
+        let platform = self
+            .buildings
+            .iter()
+            .find(|b| b.kind == BuildingKind::Platform)?;
+        // The platform faces the track.
+        let track = side_normal(platform.front);
+        let along = Vec2::new(track.y.abs(), track.x.abs());
+        let p = platform.footprint;
+        let half = p.size() * 0.5;
+        let half_along = along.x * half.x + along.y * half.y;
+        let half_depth = track.x.abs() * half.x + track.y.abs() * half.y;
+        let at = p.center()
+            + along * (half_along + PLATFORM_SPOT_PAST_END)
+            + track * (half_depth + PLATFORM_SPOT_TOWARD_TRACK);
+        Some((at, heading_of(track * -1.0)))
+    }
+
     /// Footprints of free-standing signs on the ground.
     pub(crate) fn sign_obstacles(&self) -> Vec<Aabb> {
         self.places()
@@ -197,6 +250,35 @@ fn plaza_sign(plaza: Aabb) -> Sign {
         elevation: 0.0,
         width: 3.0,
     }
+}
+
+/// How far from the plaza's monument [`TownLayout::plaza_spot`] is, in
+/// meters: past the monument's base, well inside the ring of trees.
+const PLAZA_SPOT_DISTANCE: f32 = 6.0;
+/// How far out from a facade [`TownLayout::police_door`] is, in meters.
+const DOOR_SPOT_DISTANCE: f32 = 2.0;
+/// How far past the platform's end [`TownLayout::platform_spot`] is, in
+/// meters.
+const PLATFORM_SPOT_PAST_END: f32 = 2.5;
+/// How far from the platform's track edge toward the track
+/// [`TownLayout::platform_spot`] is, in meters: the track runs 4 m out, so
+/// this leaves room beside a 3 m wide train.
+const PLATFORM_SPOT_TOWARD_TRACK: f32 = 1.0;
+
+/// The world axis nearest the direction of `v` (south for zero).
+fn axis_toward(v: Vec2) -> Vec2 {
+    if v.x.abs() > v.y.abs() {
+        Vec2::new(v.x.signum(), 0.0)
+    } else if v.y != 0.0 {
+        Vec2::new(0.0, v.y.signum())
+    } else {
+        Vec2::new(0.0, -1.0)
+    }
+}
+
+/// The heading pointing along the unit direction `d`.
+fn heading_of(d: Vec2) -> Heading {
+    Heading::from_radians(d.y.atan2(d.x))
 }
 
 /// Gap between a wall and the board hung on it, in meters.
@@ -499,6 +581,110 @@ mod tests {
             ..sign
         };
         assert_eq!(facade.footprint(), None);
+    }
+
+    /// Gap from `p` to the nearest of `town`'s obstacles, in meters.
+    fn clearance(t: &TownLayout, p: Vec2) -> f32 {
+        t.obstacles()
+            .iter()
+            .map(|o| o.closest_point(p).distance(p))
+            .fold(f32::INFINITY, f32::min)
+    }
+
+    #[test]
+    fn the_plaza_spot_is_on_a_path_inside_the_main_plaza_and_clear() {
+        for t in sample_towns() {
+            let (at, heading) = t.plaza_spot();
+            assert!(t.plaza.contains_point(at), "{}: {at:?}", t.name);
+            let c = t.plaza.center();
+            // On one arm of the cross of paths, clear of the monument.
+            let off = at - c;
+            assert!(
+                off.x.abs() < 1.0 || off.y.abs() < 1.0,
+                "{}: {off:?}",
+                t.name
+            );
+            let d = off.length();
+            assert!(
+                (4.0..=10.0).contains(&d),
+                "{}: {d} m from the monument",
+                t.name
+            );
+            // Facing out along the arm, away from the monument.
+            assert!(heading.forward().dot(off) > 0.9 * d, "{}", t.name);
+            assert!(clearance(&t, at) > 1.5, "{}: {}", t.name, clearance(&t, at));
+            // Toward the station, when there is one.
+            if let Some(station) = building(&t, BuildingKind::Station) {
+                let to_station = station.footprint.center() - c;
+                assert!(off.dot(to_station) > 0.0, "{}", t.name);
+            }
+        }
+    }
+
+    #[test]
+    fn the_police_door_spot_is_on_the_street_in_front_of_the_door_and_clear() {
+        for t in sample_towns() {
+            let police = building(&t, BuildingKind::PoliceStation).unwrap();
+            let (at, heading) = t.police_door().expect("every town has a police station");
+            let normal = side_normal(police.front);
+            assert_eq!(heading.forward().dot(normal).round(), 1.0, "{}", t.name);
+            // Out in front of the middle of the facade.
+            let off = at - police.footprint.center();
+            let along = Vec2::new(normal.y.abs(), normal.x.abs());
+            assert!(off.dot(along).abs() < 1e-3, "{}", t.name);
+            let gap = police.footprint.closest_point(at).distance(at);
+            assert!((1.0..=3.0).contains(&gap), "{}: {gap}", t.name);
+            // Outside every obstacle, with room for a person beside it.
+            assert!(clearance(&t, at) > 1.0, "{}: {}", t.name, clearance(&t, at));
+            // A street lies just ahead.
+            let ahead = (0..=6).any(|d| {
+                let p = at + normal * d as f32;
+                t.streets.iter().any(|s| s.contains_point(p))
+            });
+            assert!(ahead, "{}", t.name);
+        }
+    }
+
+    #[test]
+    fn the_platform_spot_is_beside_the_track_past_the_platform_facing_town() {
+        let mut checked = 0;
+        for t in sample_towns() {
+            let Some(platform) = building(&t, BuildingKind::Platform) else {
+                assert_eq!(t.platform_spot(), None, "{}", t.name);
+                continue;
+            };
+            let railway = t.railway.unwrap();
+            let (at, heading) = t.platform_spot().unwrap();
+            let track = side_normal(platform.front);
+            // Clear of every obstacle by more than a person's radius.
+            assert!(
+                clearance(&t, at) > crate::Rider::PERSON_RADIUS + 0.5,
+                "{}: {}",
+                t.name,
+                clearance(&t, at)
+            );
+            // Beside the track, clear of a train standing on it.
+            let off_track = (railway.start - at).dot(track).abs();
+            let car_half = crate::LineTrain::WIDTH / 2.0;
+            assert!(
+                off_track > car_half + crate::Rider::PERSON_RADIUS + 0.5 && off_track < 4.5,
+                "{}: {off_track}",
+                t.name
+            );
+            // Just past one end of the platform along the track.
+            let along = Vec2::new(track.y.abs(), track.x.abs());
+            let (lo, hi) = (
+                platform.footprint.min.dot(along),
+                platform.footprint.max.dot(along),
+            );
+            let a = at.dot(along);
+            assert!(a > hi && a < hi + 5.0, "{}: {a} vs {hi}", t.name);
+            assert!(lo < hi);
+            // Facing town: away from the track.
+            assert_eq!(heading.forward().dot(track).round(), -1.0, "{}", t.name);
+            checked += 1;
+        }
+        assert!(checked > 3);
     }
 
     #[test]
