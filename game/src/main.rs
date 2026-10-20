@@ -9,11 +9,11 @@ mod towns;
 
 use bevy::prelude::*;
 use pampa_content::{TOWNS_FILE, asset_path};
-use pampa_core::{Terrain, Train, TrainSchedule, World};
+use pampa_core::{Terrain, World};
 use pampa_render::{
     AtmospherePlugin, CharacterVisualPlugin, MinimapPlugin, RailPlugin, SignPlugin,
     SpeechBubblePlugin, StreamFocus, TerrainPlugin, TownPlugin, TrainPlugin, WorldChunks,
-    WorldRail, WorldTerrain, WorldTowns, WorldTrains,
+    WorldClock, WorldRail, WorldTerrain, WorldTowns, WorldTrain,
 };
 
 fn main() {
@@ -26,11 +26,9 @@ fn main() {
     // The player starts on the road into the first town.
     let (position, heading) = loaded.towns[0].arrival();
     let crowds = life::Crowds::for_towns(&loaded.towns);
-    let trains = loaded
-        .towns
-        .iter()
-        .map(|town| Train::for_town(town, TrainSchedule::default()))
-        .collect();
+    // The day begins with the morning train standing at the first town's
+    // station; the clock starts there.
+    let (clock, train) = life::start_of_day(&loaded.line, &loaded.towns);
     let mut app = App::new();
     app.insert_resource(camera::CameraOccluders::from_towns(
         &loaded.towns,
@@ -40,7 +38,8 @@ fn main() {
     .insert_resource(WorldChunks(world.config))
     .insert_resource(StreamFocus(position))
     .insert_resource(crowds)
-    .insert_resource(WorldTrains(trains))
+    .insert_resource(WorldClock(clock))
+    .insert_resource(WorldTrain(train))
     .insert_resource(WorldTowns(loaded.towns))
     // The railway line between towns, laid chunk by chunk.
     .insert_resource(WorldRail(loaded.line))

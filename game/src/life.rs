@@ -1,5 +1,5 @@
-//! Town life: townsfolk walking the streets, each town's train, and the
-//! horse tied in front of each general store.
+//! Town life: the game clock, the line train, townsfolk walking the
+//! streets, and the horse tied in front of each general store.
 //!
 //! Logic lives in `pampa-core`; this module steps it once per frame, before
 //! the player, lets the rider shove walkers aside after the player moved,
@@ -8,18 +8,40 @@
 //! Every town has its own crowd, seeded from the town's seed. Only the towns
 //! near the player ([`ActiveTowns`]) have their people and tied horse
 //! spawned and simulated; without [`ActiveTowns`] (no town streaming) every
-//! crowd is. Trains run everywhere: each is a pure function of its clock.
+//! crowd is. The clock ticks every frame and the one line train follows
+//! it everywhere: departures come from the clock, running is in real
+//! seconds, and its cars are always moving obstacles (eight cars: cheap).
 
 use std::collections::BTreeSet;
 
 use bevy::prelude::*;
-use pampa_core::{MAX_STEP, TownLayout, Townsfolk};
+use pampa_core::{
+    BASE_RATE, GameClock, LineTrain, MAX_STEP, RailLine, Timetable, TownLayout, Townsfolk,
+};
 use pampa_render::{
-    ActiveTowns, CharacterVisual, MapIcon, SheetKind, VisualPose, WorldTowns, WorldTrains,
-    world_from_ground,
+    ActiveTowns, CharacterVisual, MapIcon, SheetKind, VisualPose, WorldClock, WorldTowns,
+    WorldTrain, world_from_ground,
 };
 
 use crate::player::{DrivePlayer, GameWorld, Player, drive_player};
+
+/// The clock and the line train as the game begins: the morning train
+/// stands at the first town's station (where the player starts), so the
+/// clock starts half way through that stop, and the train is jumped there
+/// from its overnight layover. Without a train the clock starts at the
+/// morning departure time.
+pub fn start_of_day(line: &RailLine, towns: &[TownLayout]) -> (GameClock, Option<LineTrain>) {
+    let mut train = LineTrain::new(line, towns, Timetable::default());
+    let start = train
+        .as_ref()
+        .and_then(|t| t.first_stop_at(0))
+        .unwrap_or(Timetable::default().depart_first);
+    let clock = GameClock::at(start);
+    if let Some(train) = &mut train {
+        train.advance(0.0, clock.elapsed(), BASE_RATE);
+    }
+    (clock, train)
+}
 
 /// Mixed with each town's seed for where its people start and wander.
 const TOWNSFOLK_SEED: u32 = 1927;
@@ -60,8 +82,9 @@ pub struct TetheredHorse(pub usize);
 #[derive(Resource, Debug, Clone, Default, PartialEq, Eq)]
 pub struct Populated(pub BTreeSet<usize>);
 
-/// Systems that advance the towns around the player; they run before it so
-/// the rider collides with this frame's trains.
+/// Systems that advance the clock, the train and the towns around the
+/// player; they run before it so the rider collides with this frame's
+/// train.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SimulateTown;
 
@@ -74,7 +97,7 @@ impl Plugin for TownLifePlugin {
             .configure_sets(Update, SimulateTown.before(DrivePlayer))
             .add_systems(
                 Update,
-                (populate_towns, run_trains, walk_crowds)
+                (populate_towns, run_clock_and_train, walk_crowds)
                     .chain()
                     .in_set(SimulateTown),
             )
@@ -173,19 +196,28 @@ fn spawn_tethered_horse(
     ));
 }
 
-/// Advances every train's schedule and hands the cars to the logic world
-/// as moving obstacles.
-fn run_trains(time: Res<Time>, trains: Option<ResMut<WorldTrains>>, mut world: ResMut<GameWorld>) {
-    let Some(mut trains) = trains else {
+/// Ticks the game clock, lets the line train follow it and hands the
+/// train's cars to the logic world as moving obstacles.
+fn run_clock_and_train(
+    time: Res<Time>,
+    clock: Option<ResMut<WorldClock>>,
+    train: Option<ResMut<WorldTrain>>,
+    mut world: ResMut<GameWorld>,
+) {
+    let Some(mut clock) = clock else {
         return;
     };
-    let dt = time.delta_secs().min(MAX_STEP);
-    let mut moving = Vec::new();
-    for train in trains.0.iter_mut().flatten() {
-        train.step(dt);
-        moving.extend(train.obstacles());
-    }
-    world.0.moving = moving;
+    let before = clock.0.elapsed();
+    // Capped like the rider's step, so a frame hitch cannot jump the train
+    // tens of meters onto a rider that was clear the frame before.
+    let game = clock.0.tick(time.delta_secs().min(MAX_STEP));
+    let mut train = train;
+    let Some(train) = train.as_mut().and_then(|t| t.0.as_mut()) else {
+        world.0.moving.clear();
+        return;
+    };
+    train.advance(before, game, clock.0.rate());
+    world.0.moving = train.obstacles();
 }
 
 /// Steps the live crowds, walking around the rider where it stood last
@@ -283,7 +315,7 @@ mod tests {
     use crate::player::PlayerPlugin;
     use bevy::time::TimeUpdateStrategy;
     use pampa_core::{
-        Terrain, TownActivation, TownConfig, Train, TrainSchedule, Vec2, World, WorldConfig,
+        LinePhase, Terrain, TimeOfDay, TownActivation, TownConfig, Vec2, World, WorldConfig,
     };
     use std::time::Duration;
 
@@ -303,10 +335,6 @@ mod tests {
             .iter()
             .map(|t| Townsfolk::new(t, people, crowd_seed(t.seed)))
             .collect();
-        let trains = towns
-            .iter()
-            .map(|t| Train::for_town(t, TrainSchedule::default()))
-            .collect();
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
@@ -314,7 +342,8 @@ mod tests {
             )))
             .init_resource::<ButtonInput<KeyCode>>()
             .insert_resource(Crowds(crowds))
-            .insert_resource(WorldTrains(trains))
+            .insert_resource(WorldClock::default())
+            .insert_resource(WorldTrain(None))
             .insert_resource(WorldTowns(towns))
             .insert_resource(GameWorld(world))
             .add_plugins((PlayerPlugin, TownLifePlugin));
@@ -438,33 +467,115 @@ mod tests {
         assert_eq!(crowds.0[0], small);
     }
 
-    #[test]
-    fn the_trains_move_and_become_obstacles_for_the_rider() {
-        let mut app = app_with(vec![TownLayout::castex_inspired(), far_town()], 2);
-        app.update();
-        let first: Vec<f32> = app
-            .world()
-            .resource::<WorldTrains>()
+    fn shipped() -> crate::towns::LoadedWorld {
+        crate::towns::load_world(&pampa_content::asset_path(pampa_content::TOWNS_FILE))
+    }
+
+    /// The shipped world with its clock at `clock` and the line train
+    /// jumped there from midnight.
+    fn shipped_app(clock: Option<GameClock>) -> App {
+        let loaded = shipped();
+        let (start, mut train) = start_of_day(&loaded.line, &loaded.towns);
+        let clock = clock.unwrap_or(start);
+        if clock != start {
+            train = LineTrain::new(&loaded.line, &loaded.towns, Timetable::default());
+            if let Some(train) = &mut train {
+                train.advance(0.0, clock.elapsed(), BASE_RATE);
+            }
+        }
+        let mut app = app_with(loaded.towns, 1);
+        app.insert_resource(WorldClock(clock))
+            .insert_resource(WorldTrain(train));
+        app
+    }
+
+    fn train(app: &App) -> LineTrain {
+        app.world()
+            .resource::<WorldTrain>()
             .0
-            .iter()
-            .map(|t| t.as_ref().unwrap().state().front)
-            .collect();
+            .clone()
+            .expect("a train")
+    }
+
+    #[test]
+    fn the_day_starts_with_the_morning_train_at_the_first_town() {
+        let loaded = shipped();
+        assert_eq!(loaded.towns[0].name, "Monte Nievas");
+        let (clock, train) = start_of_day(&loaded.line, &loaded.towns);
+        let train = train.expect("the shipped line has a train");
+        let s = train.state();
+        assert_eq!(s.phase, LinePhase::Dwelling);
+        assert_eq!(s.station, train.station_of_town(0));
+        assert_eq!(clock.day(), 0);
+        // Mid-morning, after the 07:00 departure from Castex.
+        assert!((7.0..10.0).contains(&clock.hour()), "{}", clock.hh_mm());
+    }
+
+    #[test]
+    fn the_clock_ticks_and_the_train_stays_an_obstacle() {
+        let mut app = shipped_app(None);
+        app.update();
+        let start = app.world().resource::<WorldClock>().0;
         for _ in 0..20 {
             app.update();
         }
-        let trains: Vec<Train> = app
-            .world()
-            .resource::<WorldTrains>()
-            .0
-            .iter()
-            .map(|t| t.clone().unwrap())
-            .collect();
-        for (train, first) in trains.iter().zip(first) {
-            assert!(train.state().front > first, "every schedule advances");
-            assert!(!train.obstacles().is_empty());
+        // 20 frames of 50 ms at 30×: 30 game seconds.
+        let clock = app.world().resource::<WorldClock>().0;
+        assert!((clock.elapsed() - start.elapsed() - 30.0).abs() < 1e-3);
+        let train = train(&app);
+        assert_eq!(
+            train.state().phase,
+            LinePhase::Dwelling,
+            "still at the stop"
+        );
+        assert!(!train.obstacles().is_empty());
+        assert_eq!(
+            app.world().resource::<GameWorld>().0.moving,
+            train.obstacles()
+        );
+    }
+
+    #[test]
+    fn a_frame_hitch_advances_the_clock_and_train_by_one_capped_step() {
+        let mut app = shipped_app(Some(GameClock::at(TimeOfDay::hm(7, 10))));
+        app.update();
+        let start = app.world().resource::<WorldClock>().0;
+        let before = train(&app).state();
+        assert_eq!(before.phase, LinePhase::Running);
+        // A two-second stall (window drag, load hitch) in a single frame.
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(2)));
+        app.update();
+        let clock = app.world().resource::<WorldClock>().0;
+        let capped = f64::from(MAX_STEP) * BASE_RATE;
+        assert!(
+            (clock.elapsed() - start.elapsed() - capped).abs() < 1e-3,
+            "advanced {} game s, expected {capped}",
+            clock.elapsed() - start.elapsed()
+        );
+        let after = train(&app).state();
+        let moved = (after.front - before.front).abs();
+        assert!(
+            moved <= Timetable::default().top_speed * MAX_STEP + 1e-3,
+            "the train jumped {moved} m in one frame"
+        );
+    }
+
+    #[test]
+    fn the_train_pulls_out_when_the_clock_reaches_its_departure() {
+        let mut app = shipped_app(Some(GameClock::at(TimeOfDay::hm(6, 59))));
+        app.update();
+        assert_eq!(train(&app).state().phase, LinePhase::Parked);
+        // Four real seconds: two game minutes, past 07:00.
+        for _ in 0..80 {
+            app.update();
         }
-        let expected: Vec<_> = trains.iter().flat_map(Train::obstacles).collect();
-        assert_eq!(app.world().resource::<GameWorld>().0.moving, expected);
+        let s = train(&app).state();
+        assert_eq!(s.phase, LinePhase::Running);
+        assert!(s.speed > 0.0);
+        assert_eq!(
+            app.world().resource::<GameWorld>().0.moving,
+            train(&app).obstacles()
+        );
     }
 
     #[test]

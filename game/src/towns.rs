@@ -114,7 +114,7 @@ pub fn log_town_report(report: Res<TownReport>) {
 mod tests {
     use super::*;
     use pampa_content::{TOWNS_FILE, asset_path};
-    use pampa_core::{Terrain, TownSize, Townsfolk, Train, TrainSchedule, Vec2, World};
+    use pampa_core::{BuildingKind, Terrain, TownSize, Townsfolk, Vec2, World};
 
     fn temp_towns(name: &str, text: &str) -> std::path::PathBuf {
         let dir =
@@ -195,8 +195,22 @@ mod tests {
         assert_eq!(world.obstacles, town.obstacles());
         let (spawn, _) = town.arrival();
         assert!(world.obstacles.iter().all(|o| !o.contains_point(spawn)));
-        let train = Train::for_town(&town, TrainSchedule::default()).expect("a railway");
-        assert_eq!(Some(train.railway), town.railway);
+        // The station stands beside the railway, within its span, for the
+        // line train to stop at.
+        let rail = town.railway.expect("a railway");
+        let station = town
+            .buildings
+            .iter()
+            .find(|b| b.kind == BuildingKind::Station)
+            .expect("a station")
+            .footprint
+            .center();
+        let along = rail.end - rail.start;
+        let t = (station - rail.start).dot(along) / along.dot(along);
+        assert!(
+            (0.0..=1.0).contains(&t),
+            "station off the track's span: {t}"
+        );
         let crowd = Townsfolk::new(&town, 4, 1);
         assert_eq!(crowd.graph.nodes.len(), 4 * 5);
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();

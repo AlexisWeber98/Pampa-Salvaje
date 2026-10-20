@@ -14,6 +14,7 @@ pub mod activation;
 pub mod animation;
 pub mod bumps;
 pub mod chunk;
+pub mod clock;
 pub mod collision;
 pub mod heading;
 pub mod math;
@@ -33,13 +34,14 @@ pub use activation::{ActivationChange, TownActivation, distance_to_town, nearest
 pub use animation::AnimationState;
 pub use bumps::{BumpEvent, BumpSeverity, BumpTracker, LinePicker};
 pub use chunk::{ChunkCoord, WorldConfig, WorldConfigError};
+pub use clock::{BASE_RATE, DAY_REAL_SECONDS, DAY_SECONDS, GameClock, TimeOfDay};
 pub use collision::{Aabb, Body, Circle, SideObstacle};
 pub use heading::Heading;
 pub use math::Vec2;
 pub use obstacles::StaticObstacles;
 pub use placement::{PlacementError, place_towns};
 pub use places::{Place, PlaceKind, Sign, SignMount};
-pub use rail::{RailCurve, RailLine, RailLineError, RailLink, RailSpan};
+pub use rail::{LinePath, RailCurve, RailLine, RailLineError, RailLink, RailSpan};
 pub use rider::{MAX_STEP, Rider, RiderInput, RiderParams};
 pub use terrain::{FlatArea, Terrain};
 pub use town::{
@@ -47,5 +49,7 @@ pub use town::{
     TetheredHorse, TownConfig, TownConfigError, TownLayout, TownSize,
 };
 pub use townsfolk::{StreetGraph, Townsfolk, Townsperson};
-pub use train::{Car, CarKind, PlacedCar, Train, TrainPhase, TrainSchedule, TrainState};
+pub use train::{
+    Car, CarKind, LinePhase, LineTrain, LineTrainState, PlacedCar, Run, Station, Timetable,
+};
 pub use world::{World, WorldBounds};
