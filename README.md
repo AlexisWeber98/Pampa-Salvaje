@@ -5,31 +5,36 @@ inspired by Red Dead Redemption. The visual direction pairs a low-poly 3D world
 with HD-2D style billboard sprites for characters.
 
 This repository currently holds an open procedural pampa (8 km x 8 km by
-default) streamed in chunks under dust fog, a controllable rider, a follow
-camera and settlements: small railway towns loosely inspired by 1920s–1930s La
-Pampa towns such as Eduardo Castex (not a historical reconstruction), each at
-its own place in the world. The rider starts on the road south of the first
-town, collides with buildings and cannot leave the world.
+default) streamed in chunks under dust fog, a player who goes on foot or on
+horseback, a follow camera, settlements and a first errand. The towns are
+small railway towns loosely inspired by 1920s–1930s La Pampa towns such as
+Eduardo Castex (not a historical reconstruction), each at its own place in the
+world. The player gets off the morning train on foot at the Monte Nievas
+platform, collides with buildings and cannot leave the world.
 
 The town is alive: townsfolk wander the streets between intersections, a
 saddled horse stands tied at a hitching rail in front of the general store,
-and the rider barges through the crowd, shoving walkers aside, while walkers
-step around the rider.
+and the player barges through the crowd, shoving walkers aside, while walkers
+step around the player.
 
 The day has a clock: one game day lasts 48 real minutes (30×, one game minute
 every two real seconds). The sun follows it, rising in the east, crossing the
 northern sky and setting in the west, warm and low at dawn and dusk and full
 by day; nights are dim and bluish under the moon but stay readable, and the
 dust fog takes the color of the hour without getting any thicker. The game
-begins at about 08:44, with the morning train standing at Monte Nievas.
+begins at about 08:33, with the morning train standing at Monte Nievas. The
+time of day (`HH:MM`) is shown in the top-left corner, lettered in the game's
+pixel font on a paper panel, with the current objective under it.
 
-One steam passenger train runs the whole railway line on a timetable: it
+One steam train runs the whole railway line on a timetable: a rural mixed
+train of 8 cars (93 m), the locomotive, two passenger coaches and five freight
+cars. It
 leaves Eduardo Castex at 07:00, stops 25 s at Monte Nievas, reaches General
 Pico, lays over, leaves Pico at 16:00, stops at Monte Nievas again and spends
-the night at Castex. It runs at up to 65 km/h, braking to stop with its three
-passenger coaches alongside each station, and takes about 12.4 real minutes
-from end to end (Castex 07:00, Monte Nievas 08:37, Pico 13:11; Pico 16:00,
-Monte Nievas 20:21, Castex 22:11, with the clock at its base rate). The clock
+the night at Castex. It runs at up to 65 km/h, braking to stop with the
+middle of its two coaches alongside each station, and takes about 10.7 real minutes
+over the 11.0 km of line (Castex 07:00, Monte Nievas 08:27, Pico 12:22; Pico 16:00,
+Monte Nievas 19:43, Castex 21:22, with the clock at its base rate). The clock
 only starts each run: once moving, the train runs in real seconds, and a
 jump of the clock fast-forwards it exactly where it would have been. Its
 cars follow the curves between towns and shove riders off the track; the
@@ -45,11 +50,33 @@ procedural bitmap pixel font (no third-party font) on weathered boards.
 A paper-style minimap in the top-right corner shows the nearest town north-up,
 titled with its name: streets, blocks and buildings by kind, the plaza, the
 railway, each place by its initial, walkers as dots, the train's cars when
-they are in the map and the player as an arrow along its heading. It frames the town plus a
-30 m margin (not the whole world) so streets stay legible; out on the pampa the
-arrow sticks to the map edge. Each town's layer is rasterized once, the first
+they are in the map, the errand's target as a gold diamond and the player as an
+arrow along its heading. It frames the town plus a 30 m margin (not the whole
+world) so streets stay legible; out on the pampa the arrow sticks to the map
+edge, and a target in another town is pinned to the edge on its side, so it
+points the way. Each town's layer is rasterized once, the first
 time it is shown; only the markers redraw each frame. `M` toggles an enlarged,
 centered map.
+
+### The first errand
+
+The player arrives on foot. At the Monte Nievas platform, beside the morning
+train, the objective reads "Buscá a Don Hidalgo en la plaza". Don Hidalgo
+stands in the plaza; press `F` within about 3 m to talk. Monte Nievas has no
+comisaría, so he sends the player to report to comisario Elías Farach at the
+Castex comisaría, and lends his horse, the one tied at the general store. His
+lines play one after the other in speech bubbles, a few seconds each. The horse
+is not the player's before that talk ("Este caballo no es mío."); after it,
+`F` within about 3 m of the horse mounts it: the tied horse is led away for the
+session and the player rides from where it stood. Farach stands in the street
+in front of the Castex comisaría's door; `F` within about 4 m, mounted or not,
+reports to him and ends the errand. The objective line and the minimap's target
+follow each step (Hidalgo, the horse, then Farach) and disappear once the
+errand is done. There is no dismounting yet.
+
+On foot the player walks at 6 km/h and jogs with `Shift` at 18 km/h, with the same keys, the same collision and a person-sized body.
+People make way for somebody on foot without complaint; only the horse gets
+them talking.
 
 ### An open world in chunks
 
@@ -63,9 +90,10 @@ signs, people and tied horse appear within 600 m of it and go once you are
 (collision looks them up in a uniform grid). The line train always runs; its
 cars are drawn only within 400 m of the rider. Positions are `f32`, so the world is limited to 8 km from its center.
 
-The camera orbits the rider a full 360° with the mouse (or Q/E), zooms with
-the wheel, eases back behind the rider after a moment without camera input
-while riding, and pulls in when a building would block its view.
+The camera orbits the player a full 360° with the mouse (or Q/E), zooms with
+the wheel, eases back behind the player after a moment without camera input
+while moving, looks at a lower point on foot than on horseback, and pulls in
+when a building would block its view.
 
 Characters are procedurally painted billboard sprites (no third-party art):
 rounded, shaded and outlined figures in eight view directions, with a walk
@@ -83,8 +111,9 @@ camera and fade out after about 3 s.
 
 What people say lives in editable [RON](https://github.com/ron-rs/ron) files
 under `assets/dialogue/`, not in code: `bumps.ron` holds one pool of lines per
-bump severity (`walk`, `gallop`). Edit it and restart the game; no recompiling.
-The `pampa-content` crate parses and validates it (non-empty pools, at most 40
+bump severity (`walk`, `gallop`), and `errand.ron` holds what Don Hidalgo and
+comisario Farach say during the errand. Edit them and restart the game; no
+recompiling. The `pampa-content` crate parses and validates them (non-empty pools, at most 40
 characters per line); the game checks the characters against the font, and
 falls back to a small built-in set of lines with a warning if the file is
 missing or invalid. See [`assets/dialogue/README.md`](assets/dialogue/README.md)
@@ -133,6 +162,11 @@ The rule: **game logic never knows how things are drawn.**
   (`Townsfolk`, one per town; `GameClock`; `LineTrain`, one for the whole
   line, whose run is a pure function of the real seconds since it departed);
   the game steps them and render only reads them.
+- The errand is a `core` state machine (`Errand`: `MeetHidalgo`, `TakeHorse`,
+  `ReportToFarach`, `Done`), one enum variant per stage, each transition
+  guarded by range and stage so it fires once. `core` also says where people
+  stand (`TownLayout::plaza_spot`, `police_door`, `platform_spot`); the game
+  reads the `F` key and plays the lines; render draws the HUD and the target.
 - Bumps are decided in `core` (`BumpTracker`: speed threshold, gait severity,
   per-walker cooldown; `LinePicker`: seeded, no immediate repeats); the words come
   from `pampa-content`; render only draws the bubble (`Say` → `SpeechBubble`).
@@ -159,9 +193,10 @@ cargo test --workspace
 
 | Key | Action |
 |-----|--------|
-| `W` / `S` | Throttle forward / brake and back up |
+| `W` / `S` | Walk or ride forward / brake and back up |
 | `A` / `D` | Turn left / right |
-| `Shift` (hold) | Gallop |
+| `Shift` (hold) | Jog on foot, gallop on horseback |
+| `F` | Interact: talk to somebody, or mount a horse, within a few meters |
 | Mouse | Orbit the camera (the cursor is locked while the window has focus) |
 | `Q` / `E` | Orbit the camera left / right |
 | Mouse wheel | Zoom in / out (6–25 m) |

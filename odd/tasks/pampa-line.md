@@ -40,6 +40,8 @@ Three chained PRs, as the user requested:
   | Station plaza (half block, railway side, facing the station) | no | yes | yes |
   | General stores | 1 | 2 | `n / 16` (Pico: 4) |
   | Police stations | 1 | 1 | 2 |
+
+  A town may lower its police station count with `police_stations` in `towns.ron` (down to none; never above the tier's). Monte Nievas has `Some(0)`: no comisaría, as the errand's story says.
   | Townsfolk | 16 | `max(16, round(0.8 n))` | same formula (Pico: 51) |
 
   - Small towns stay byte-for-byte identical; the layout hash test guards this.
@@ -49,13 +51,14 @@ Three chained PRs, as the user requested:
   - Castex to Monte Nievas: about 12.6 km E and 5.4 km N.
   - Monte Nievas to General Pico: about 35.8 km E and 22.4 km N.
   - Origins: Castex (-5570, -3030), Monte Nievas (-3050, -1950), General Pico (4110, 2530).
+  - **Scale changed from 1:5 to 1:6 (user-approved 2026-10-20), superseding the 1:5 origins above.** Monte Nievas keeps (-3050, -1950); Castex is (-5150, -2850) and General Pico (2917, 1783): the real offsets divided by 6. Monte Nievas to Castex is 2.28 km between centers. The shipped line validates with no warnings; both links keep full 500 m curves: Castex–Monte Nievas tangents of 301.3 m (62.1° turn, tip-to-tip chord 1378.4 m, link 1471.7 m) and Monte Nievas–General Pico tangents of 185.4 m (40.7° turn, chord 6202.8 m, link 6256.3 m).
 - **Start town:** Monte Nievas is first in `towns.ron`, so the player arrives there, where the action starts.
 - **Rail geometry:** the user chose "diagonal real". Inside a town the track stays axis-aligned along the station. Between towns, straight diagonal segments join the end of one town's track to the start of the next town's track, in the order the line lists them. Line order: Castex, Monte Nievas, General Pico. Each link leaves a town's tip straight on along its track and bends onto the diagonal (and back onto the next town's track) on circular curves of radius 500 m. A curve's tangent length `R·tan(Δ/2)` is capped at a quarter of the tip-to-tip distance, which keeps it within half of the middle straight; a capped curve gets a smaller radius. Curves are drawn as straight pieces of at most 8 m that turn at most 2° each. The curves belong to the link, so the town tracks are never cut short.
 
 ## Errand story (user, 2026-10-20; supersedes the errand bullets above where they differ)
 
 - The player arrives **on foot** at Monte Nievas by train. The game starts with the player standing on the platform next to the stopped train.
-- A few seconds later the train leaves and does not come back this session ("the train passes once a day").
+- ~~A few seconds later the train leaves and does not come back this session ("the train passes once a day").~~ **Superseded** (user-approved, 2026-10-20) by the line-train timetable: one train runs the line and passes each station twice a day, so it leaves Monte Nievas after its dwell and comes back on its up run in the evening. See `odd/tasks/line-train.md`, "Rules chosen".
 - The player walks to the plaza and meets **Don Hidalgo**, a static NPC.
 - Monte Nievas has no police station, so Hidalgo tells the player to report to **comisario Elías Farach** at the Castex comisaría.
 - The tethered horse at the general store belongs to Hidalgo. After the talk, the player may **mount it** (it is released only after talking to Hidalgo) and ride to Castex.
@@ -86,8 +89,8 @@ Three chained PRs, as the user requested:
 - [x] **T2 (PR1)** content: `towns.ron` with the three towns at their geographic origins, `half_extent: 8000`, Monte Nievas first. Update the shipped-file and fallback tests and the `assets/world/README`. Route: delegated, same writer as T1.
 - [x] **T3 (PR2)** core: `RailLine` network. Covers the order of towns, diagonal links between town tracks, segment-vs-leveled-box placement validation (the line must not cross another town), and a RON `line` section. Rail collision is not in scope: no track is an obstacle today, in town or not, so riders cross the rails freely. Review finding `R3-diagonal-rail-collision-missing` corrected this scope line. with validation. Route: delegated writer (writer trigger: core, content, game and assets).
 - [x] **T4 (PR2)** render: stream inter-town track by chunk (ballast, sleepers, rails at any angle), and draw the line on the minimap. Route: delegated writer, same as T3.
-- [ ] **T5 (PR3)** core: `Errand` state machine, giver spot in the plaza, police-station entrance spot, and static NPC obstacles. Route: delegated.
-- [ ] **T6 (PR3)** game and render: spawn Don Hidalgo and Elías Farach, talk with F, `Say` lines, minimap target marker pinned to the edge. Route: delegated.
+- [x] **T5 (errand PR)** core: `Errand` state machine, giver spot in the plaza, police-station entrance spot, the platform start spot, static NPC obstacles, on-foot travel and mounting. Route: delegated writer (writer trigger: 2+ non-trivial files across core, content, render and game).
+- [x] **T6 (errand PR)** game and render: start on foot at the Monte Nievas platform, spawn Don Hidalgo and Elías Farach, talk and mount with F, `Say` lines from `errand.ron`, HUD clock and objective, minimap target marker pinned to the edge, 2-coach rural consist. Route: delegated writer, same as T5.
 
 ## Acceptance criteria
 
@@ -144,11 +147,34 @@ cargo test --workspace
   - RED with the old `lay_track`: `a_chunk_gets_its_track_the_same_frame_it_is_built` failed (`frame 1: ChunkCoord { x: 2, y: 0 } has no track yet`). `a_chunk_despawned_before_its_track_lands_neither_panics_nor_orphans_pieces` panicked (`Entity despawned`). `a_chunk_dropped_the_frame_after_it_is_built_leaves_no_track_behind` passed before and after; it guards against regressions.
   - Checks: fmt OK, clippy clean, `cargo test --workspace` OK (core 156, render 81, game 44, content 18), `cargo build -p game` OK.
 
+- **T5 and T6** done on `feat/errand` (from `main` at fa9cacc, after the line train merged), **uncommitted**: the user reviews and commits. Route: delegated writer. The user approved doing the errand before train boarding (see `odd/tasks/line-train.md`).
+  - Core: `errand.rs` (`Errand`, `ErrandStage` `MeetHidalgo` → `TakeHorse` → `ReportToFarach` → `Done`, `ErrandEvent`, `Interaction`, `Npc`, `Standing`). `talk` and `mount` are guarded by range (3 m talk, 3 m mount, 4 m report) and by stage, so each event fires once. `target()` gives Hidalgo, the horse, then Farach. `ErrandStage::objective()` gives the Spanish HUD line. `Errand::police_town` picks Castex by name, else the nearest other town with a police station.
+  - Core spots (`places.rs`): `plaza_spot` (6 m from the plaza's monument along the path toward the station, facing out), `police_door` (2 m out from the middle of the first police station's facade, facing the street), `platform_spot` (2.5 m past the platform's end, 1 m toward the track, facing town). People stand on 0.8 m square footprints added to the world.
+  - Core on foot (`walker.rs`): `Travel` (`OnFoot`, `Riding`), `Rider::on_foot` (0.3 m collider), `RiderParams::on_foot` (walk 6 km/h, jog 18 km/h with Shift; the user tuned these on 2026-10-20 from the first 1.5 and 3.5 m/s), `Rider::mount`. `StaticObstacles::remove` rebuilds the index without the led-away horse.
+  - Content: `assets/dialogue/errand.ron` (`hidalgo`, `not_your_horse`, `farach`), loaded and validated like the bumps, with a built-in fallback.
+  - Render: `SheetKind::Gaucho` (the rider's poncho, trousers and hat, on foot), `Hidalgo` and `Comisario`. `hud.rs` letters the clock and the objective in the pixel font on a paper panel, top left. `MapTarget` draws a gold diamond, clamped to the map edge with `to_map_clamped`.
+  - Game: `errand.rs` (`ErrandPlugin`, F to interact, lines auto-advance every bubble lifetime). `life.rs` spawns the errand people with their town (`Cast`, `StandingNpc`) and never re-ties a led-away horse (`LedAway`). On foot, people make way but do not complain. The camera looks 1.1 m up on foot (1.6 m mounted).
+  - Train: the consist is the locomotive, 2 coaches and 5 freight cars (8 cars, 93 m). The stop offset is 27.5 m, and the timetable times are unchanged.
+  - RED observed: the consist test (`left: 3, right: 2`); `StaticObstacles::remove`, on-foot, spots, core errand (9 tests), content errand (5 tests), HUD (4 tests) and game errand (3 tests), all against `todo!()` stubs or missing items; the minimap raster target test and the sheets, player, life and camera tests failed to compile until the items existed. The minimap plugin target test was written together with its code.
+  - Checks: `cargo fmt --all -- --check` OK, `cargo clippy --workspace --all-targets -- -D warnings` clean, `cargo test --workspace` OK (core 186, render 98, game 58, content 23), `cargo build -p game` OK. Not run in a window.
+
+- **No comisaría in Monte Nievas** (coordinator follow-up, same PR, uncommitted). Route: delegated writer.
+  - `TownConfig::police_stations: Option<usize>` (parsed from `towns.ron` in `crates/content/src/towns.rs`), `TownConfig::police_count()`, and `TownConfigError::TooManyPoliceStations` for a value above the tier's count. `central_landmarks` places the police station only when the count is at least one, and `generate` no longer assumes three primary landmarks (`LANDMARK_PREFERENCES.len()` minus one without police).
+  - `assets/world/towns.ron`: Monte Nievas has `police_stations: Some(0)`. Documented in `assets/world/README.md`.
+  - Layout pins: only Monte Nievas was re-pinned, deliberately and with a comment (`0x048e_7ce0_c05b_12e8` → `0xe05f_3775_61a3_6ee8`), because its fixture now carries the override. The other 10 small-town pins still match.
+  - Test literals in `crates/core/src/rail.rs` and `crates/render/src/rail.rs` got `police_stations: None` (user-approved surface extension).
+  - RED: `a_police_override_of_zero_leaves_the_town_without_a_comisaria` (`Monte Nievas: left: 1, right: 0`), `the_police_override_can_lower_but_not_raise_the_tiers_count` (`Muy grande: left: 2, right: 1`), `the_shipped_monte_nievas_has_no_comisaria_and_castex_has_one` (`left: (None, 1), right: (Some(0), 0)`). Written with or after the code, no separate RED: the content parse/validation test, the minimap test (zero landmark pixels over the old police block) and the game shipped-errand assertions.
+
 ## Next step
 
-T5 (PR3): the `Errand` state machine on `feat/errand`, branched from `feat/rail-line` once the user commits PR2.
+The user reviews and commits the errand PR (T5/T6 and the no-comisaría override). Then the train-boarding PR from `odd/tasks/line-train.md`: boarding, waiting, skipping, the compass and the terminal-turnaround fix.
 
 ## Follow-ups (out of scope)
+
+- Dismounting (no dismount yet), and leaving the horse somewhere.
+- ~~Monte Nievas still has a COMISARÍA under the size-tier rule.~~ **Fixed:** the per-town `police_stations` override in `towns.ron` (see Progress / Evidence); Monte Nievas ships with `Some(0)`.
+- ~~The intro's one-shot train departure.~~ **Resolved by decision:** the train keeps its twice-a-day timetable (`odd/tasks/line-train.md`); the "does not come back" bullet in the Errand story is superseded.
+- The platform is a solid 0.9 m obstacle, so the player starts on the ground just past its end, not on top of it.
 
 - PR2 review (lineage `review-292e75db8cb4f043`, approved and acknowledged) left two advisory findings:
   - `R3-line-track-parent-relative-transform`: line track pieces use world coordinates under `ChildOf(chunk)`. This is correct today because chunks spawn with `Transform::default()` (render/terrain.rs:220), but it would break if chunks ever get an offset. Add a `GlobalTransform` test.
