@@ -220,6 +220,143 @@ impl RailLine {
     }
 }
 
+impl RailLine {
+    /// The whole line as one path a train can run, from the first town's
+    /// far run-out tip to the last connected town's far tip: each town's
+    /// straight track, tip to tip, joined by the curved links.
+    ///
+    /// The path stops at the first gap (a link left out); a line without
+    /// links is just its first town's track, and a line without towns is
+    /// empty.
+    pub fn full_path(&self, towns: &[TownLayout]) -> LinePath {
+        let served = self.connected_towns();
+        let Some(rail) = served.first().and_then(|&i| towns.get(i)?.railway) else {
+            return LinePath::default();
+        };
+        let first_link = served.get(1).and_then(|&next| self.link(served[0], next));
+        let mut points = vec![match first_link {
+            Some(link) => far_tip(rail, link.track.start),
+            None => rail.start,
+        }];
+        for pair in served.windows(2) {
+            if let Some(link) = self.link(pair[0], pair[1]) {
+                points.extend(&link.path);
+            }
+        }
+        let last = served.last().and_then(|&i| towns.get(i)?.railway);
+        if let (Some(rail), Some(&arrived)) = (last, points.last()) {
+            points.push(far_tip(rail, arrived));
+        }
+        LinePath::new(points)
+    }
+
+    /// The towns [`Self::full_path`] runs through, in line order: the first
+    /// town and every town reached from it without a gap.
+    pub fn connected_towns(&self) -> Vec<usize> {
+        let mut served: Vec<usize> = self.towns.iter().take(1).copied().collect();
+        for pair in self.towns.windows(2) {
+            if self.link(pair[0], pair[1]).is_none() {
+                break;
+            }
+            served.push(pair[1]);
+        }
+        served
+    }
+
+    /// The link from town `from` to town `to`, if the line has it.
+    fn link(&self, from: usize, to: usize) -> Option<&RailLink> {
+        self.links.iter().find(|l| l.from == from && l.to == to)
+    }
+}
+
+/// The tip of `rail` farther from `tip`.
+fn far_tip(rail: Railway, tip: Vec2) -> Vec2 {
+    if rail.start.distance(tip) < rail.end.distance(tip) {
+        rail.end
+    } else {
+        rail.start
+    }
+}
+
+/// A polyline measured by arc length: where a train runs.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct LinePath {
+    points: Vec<Vec2>,
+    /// Arc length from the first point to each point.
+    arcs: Vec<f32>,
+}
+
+impl LinePath {
+    /// The path through `points`, dropping repeated points.
+    pub fn new(points: Vec<Vec2>) -> Self {
+        let mut kept: Vec<Vec2> = Vec::with_capacity(points.len());
+        for p in points {
+            push_point(&mut kept, p);
+        }
+        let mut arcs = Vec::with_capacity(kept.len());
+        let mut total = 0.0;
+        for (i, p) in kept.iter().enumerate() {
+            if i > 0 {
+                total += kept[i - 1].distance(*p);
+            }
+            arcs.push(total);
+        }
+        Self { points: kept, arcs }
+    }
+
+    /// The corners of the path, in order.
+    pub fn points(&self) -> &[Vec2] {
+        &self.points
+    }
+
+    /// Length of the path, in meters.
+    pub fn length(&self) -> f32 {
+        self.arcs.last().copied().unwrap_or(0.0)
+    }
+
+    /// The point `distance` meters along the path, clamped to its ends.
+    pub fn at(&self, distance: f32) -> Vec2 {
+        let Some(i) = self.piece(distance) else {
+            return self.points.first().copied().unwrap_or(Vec2::ZERO);
+        };
+        let (a, b) = (self.points[i], self.points[i + 1]);
+        let span = self.arcs[i + 1] - self.arcs[i];
+        let t = ((distance - self.arcs[i]) / span).clamp(0.0, 1.0);
+        a + (b - a) * t
+    }
+
+    /// The unit direction of travel `distance` meters along the path (the
+    /// heading of the straight piece there), east on an empty path.
+    pub fn direction_at(&self, distance: f32) -> Vec2 {
+        self.piece(distance)
+            .and_then(|i| unit(self.points[i + 1] - self.points[i]))
+            .unwrap_or(Vec2::new(1.0, 0.0))
+    }
+
+    /// Distance along the path to the point of the path nearest `p`.
+    pub fn project(&self, p: Vec2) -> f32 {
+        let mut best = (f32::INFINITY, 0.0);
+        for (i, w) in self.points.windows(2).enumerate() {
+            let d = w[1] - w[0];
+            let span = d.length();
+            let t = ((p - w[0]).dot(d) / (span * span)).clamp(0.0, 1.0);
+            let gap = p.distance(w[0] + d * t);
+            if gap < best.0 {
+                best = (gap, self.arcs[i] + span * t);
+            }
+        }
+        best.1
+    }
+
+    /// Index of the straight piece holding `distance` (clamped), or `None`
+    /// when the path has no piece.
+    fn piece(&self, distance: f32) -> Option<usize> {
+        let pieces = self.points.len().checked_sub(1).filter(|&n| n > 0)?;
+        let i = self.arcs.partition_point(|&a| a <= distance);
+        Some(i.saturating_sub(1).min(pieces - 1))
+    }
+}
+
 /// The part of one straight piece of a track inside an area, measured along
 /// the whole track (a link's path, or a town's straight track) it belongs
 /// to: the piece, how far along the track the piece starts, where the part
@@ -511,7 +648,7 @@ fn unit(v: Vec2) -> Option<Vec2> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::{PlazaPlacement, RailwayConfig, Side, TownConfig, WorldConfig, place_towns};
 
@@ -720,7 +857,7 @@ mod tests {
     }
 
     /// The line as `assets/world/towns.ron` ships it.
-    fn shipped() -> (Vec<TownLayout>, RailLine) {
+    pub(crate) fn shipped() -> (Vec<TownLayout>, RailLine) {
         let (world, towns) = pampa_line();
         let list = names(&["Eduardo Castex", "Monte Nievas", "General Pico"]);
         let (line, errors) = RailLine::build(Some(&list), &towns, world.bounds());
@@ -926,5 +1063,66 @@ mod tests {
         }
         let last = parts.last().expect("parts");
         assert!((last.exit - link.length()).abs() < 1e-2);
+    }
+
+    #[test]
+    fn the_full_path_runs_castex_to_pico_through_every_town_track() {
+        let (towns, line) = shipped();
+        let path = line.full_path(&towns);
+        let rail = |i: usize| towns[i].railway.expect("a railway");
+        let (castex, nievas, pico) = (rail(1), rail(0), rail(2));
+        let points = path.points();
+        // From Castex's west run-out tip to Pico's east run-out tip.
+        assert_eq!(points[0], castex.start);
+        assert_eq!(*points.last().unwrap(), pico.end);
+        // Monte Nievas's whole straight track is one piece of the path.
+        let i = points.iter().position(|&p| p == nievas.start).unwrap();
+        assert_eq!(points[i + 1], nievas.end);
+        assert_eq!(line.connected_towns(), [1, 0, 2]);
+        // Arc length is the sum of the pieces, and it bends gently.
+        let sum: f32 = points.windows(2).map(|w| w[0].distance(w[1])).sum();
+        assert!((path.length() - sum).abs() < 1e-2);
+        assert!(sharpest_bend(points) <= RailLine::MAX_TURN + 1e-4);
+        let links: f32 = line.links.iter().map(RailLink::length).sum();
+        let tracks = [castex, nievas, pico].map(|r| r.start.distance(r.end));
+        assert!((path.length() - links - tracks.iter().sum::<f32>()).abs() < 0.5);
+    }
+
+    #[test]
+    fn line_paths_are_measured_by_arc_length() {
+        let path = LinePath::new(vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(10.0, 0.0),
+            Vec2::new(10.0, 0.0),
+            Vec2::new(10.0, 5.0),
+        ]);
+        assert_eq!(path.points().len(), 3, "repeats dropped");
+        assert_eq!(path.length(), 15.0);
+        assert_eq!(path.at(4.0), Vec2::new(4.0, 0.0));
+        assert_eq!(path.at(12.0), Vec2::new(10.0, 2.0));
+        assert_eq!(path.at(-3.0), Vec2::new(0.0, 0.0));
+        assert_eq!(path.at(99.0), Vec2::new(10.0, 5.0));
+        assert_eq!(path.direction_at(3.0), Vec2::new(1.0, 0.0));
+        assert_eq!(path.direction_at(11.0), Vec2::new(0.0, 1.0));
+        assert_eq!(path.project(Vec2::new(6.0, -2.0)), 6.0);
+        assert_eq!(path.project(Vec2::new(14.0, 3.0)), 13.0);
+        assert_eq!(LinePath::default().length(), 0.0);
+        assert_eq!(LinePath::default().at(1.0), Vec2::ZERO);
+    }
+
+    #[test]
+    fn a_gap_ends_the_full_path_and_a_lone_town_is_its_track() {
+        let towns = row(true);
+        let (mut line, _) = RailLine::build(None, &towns, WorldConfig::default().bounds());
+        assert_eq!(line.links.len(), 2);
+        line.links.remove(1);
+        assert_eq!(line.connected_towns(), [0, 1]);
+        let path = line.full_path(&towns);
+        let medio = towns[1].railway.unwrap();
+        assert_eq!(*path.points().last().unwrap(), medio.end);
+        line.links.clear();
+        let oeste = towns[0].railway.unwrap();
+        assert_eq!(line.full_path(&towns).points(), [oeste.start, oeste.end]);
+        assert_eq!(RailLine::default().full_path(&towns).length(), 0.0);
     }
 }

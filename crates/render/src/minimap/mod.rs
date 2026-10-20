@@ -1,7 +1,7 @@
 //! Minimap in the top-right corner: the town nearest the player (by
 //! distance to its extent) drawn from `pampa-core` data, north-up, titled
 //! with its name, with live markers for the player, the walkers and the
-//! town's train.
+//! line train's cars inside the map.
 //!
 //! Each town's layer is rasterized once, the first time it is shown, and
 //! kept per town (one image per town: bounded); a second, transparent image
@@ -23,7 +23,7 @@ use crate::character::VisualPose;
 use crate::rail::WorldRail;
 use crate::terrain::StreamFocus;
 use crate::town::WorldTowns;
-use crate::train::WorldTrains;
+use crate::train::WorldTrain;
 use raster::{Canvas, MapFrame, Markers, draw_markers, palette, rasterize_town};
 
 /// Side of the map images, in pixels.
@@ -243,7 +243,7 @@ fn show_town(
 /// What the minimap reads of the world: towns, trains and the railway line.
 type WorldLayers<'a> = (
     Option<Res<'a, WorldTowns>>,
-    Option<Res<'a, WorldTrains>>,
+    Option<Res<'a, WorldTrain>>,
     Option<Res<'a, WorldRail>>,
 );
 
@@ -274,9 +274,14 @@ fn update_markers(
             &mut bases,
         );
     }
-    let train = trains.and_then(|t| t.0.get(minimap.town).cloned().flatten());
+    // The line train runs between towns: the markers draw only the cars
+    // inside the shown town's frame.
     let mut markers = Markers {
-        cars: train.map(|t| t.placed_cars()).unwrap_or_default(),
+        cars: trains
+            .as_ref()
+            .and_then(|t| t.0.as_ref())
+            .map(|t| t.placed_cars())
+            .unwrap_or_default(),
         ..default()
     };
     for (icon, transform, pose) in &icons {
@@ -435,5 +440,42 @@ mod tests {
             .add_plugins(MinimapPlugin);
         app.update();
         assert!(app.world().get_resource::<Minimap>().is_none());
+    }
+
+    #[test]
+    fn marks_the_line_train_cars_in_the_shown_town() {
+        use pampa_core::{BASE_RATE, Run};
+        let (towns, mut train) = crate::train::tests::line_train();
+        // Dwelling at Monte Nievas (town 0) on the morning run.
+        let (arrive, _) = train.stop_times(Run::Down, 1).unwrap();
+        train.advance(0.0, 7.0 * 3600.0 + (arrive + 5.0) * BASE_RATE, BASE_RATE);
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<Assets<Image>>()
+            .insert_resource(WorldTowns(towns.clone()))
+            .insert_resource(WorldTrain(Some(train.clone())))
+            .add_plugins(MinimapPlugin);
+        let player = towns[0].grid().min;
+        app.world_mut().spawn((
+            MapIcon::Player,
+            Transform::from_translation(crate::world_from_ground(player, 0.0)),
+        ));
+        app.update();
+        let minimap = app.world().resource::<Minimap>();
+        assert_eq!(minimap.town, 0);
+        let images = app.world().resource::<Assets<Image>>();
+        let data = images.get(&minimap.markers).unwrap().data.as_ref().unwrap();
+        let cars = train.placed_cars();
+        let shown: Vec<_> = cars
+            .iter()
+            .filter(|c| minimap.frame.contains(c.center))
+            .collect();
+        assert!(!shown.is_empty());
+        for car in shown {
+            let at = minimap.frame.to_map(car.center);
+            let i = (at.y as usize * MAP_PX + at.x as usize) * 4;
+            assert_eq!(data[i + 3], 255, "car marked at {at:?}");
+        }
     }
 }

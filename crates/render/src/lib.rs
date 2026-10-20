@@ -16,7 +16,7 @@ pub mod terrain;
 pub mod town;
 pub mod train;
 
-pub use atmosphere::{AtmospherePlugin, DUST_COLOR};
+pub use atmosphere::{AtmospherePlugin, DUST_COLOR, Sky, Sun, WorldClock, sky_at};
 pub use bubble::{Say, SpeechBubble, SpeechBubblePlugin};
 pub use character::{
     CharacterVisual, CharacterVisualPlugin, PERSON_LOOKS, SheetKind, ViewDirection, VisualPose,
@@ -28,4 +28,4 @@ pub use signs::{SignPlugin, Signboard};
 pub use streaming::{StreamingPlan, StreamingSet};
 pub use terrain::{StreamFocus, TerrainChunk, TerrainPlugin, WorldChunks, WorldTerrain};
 pub use town::{ActiveTowns, StreamTowns, TownPlugin, TownRoot, WindmillRotor, WorldTowns};
-pub use train::{TrainCar, TrainPlugin, TrainWheel, WorldTrains};
+pub use train::{TRAIN_DRAW_RADIUS, TrainCar, TrainPlugin, TrainWheel, WorldTrain};
