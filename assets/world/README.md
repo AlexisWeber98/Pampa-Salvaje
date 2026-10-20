@@ -26,20 +26,21 @@ No recompiling.
         ),
         // ... Eduardo Castex and General Pico follow.
     ],
+    line: Some(["Eduardo Castex", "Monte Nievas", "General Pico"]),
 )
 ```
 
 ### The shipped geography
 
 The file lays out a first stretch of La Pampa: three railway towns at their
-real relative positions, with distances scaled 1:4 to fit the largest world
+real relative positions, with distances scaled 1:5 to fit the largest world
 (`half_extent: 8000`, a 16 km x 16 km square).
 
 | Town | `origin` | `blocks` | Size |
 |------|----------|----------|------|
 | Monte Nievas | `(-3050, -1950)` | 4 x 3 | small, and the player starts here |
-| Eduardo Castex | `(-6200, -3300)` | 5 x 4 | small |
-| General Pico | `(5900, 3650)` | 8 x 8 | very big (see "Town size") |
+| Eduardo Castex | `(-5570, -3030)` | 5 x 4 | small |
+| General Pico | `(4110, 2530)` | 8 x 8 | very big (see "Town size") |
 
 From Castex to Monte Nievas is about 12.6 km east and 5.4 km north in the
 real pampa; from Monte Nievas to General Pico, about 35.8 km east and
@@ -60,8 +61,9 @@ world is used.
 
 The game builds **every town** in the list, each at its own `origin`. The
 player starts at the first one, on the road into town; the others appear
-(with their signs, people and train) as you ride towards them. Roads and
-railways between towns will come later.
+(with their signs, people and train) as you ride towards them. Roads between
+towns will come later; the railway line already joins them (see "The railway
+line").
 
 Towns must keep apart: a town, its leveled band (60 m around everything
 built) and its railway (which runs 400 m past either end of the grid) must not
@@ -105,6 +107,35 @@ railway on its south side:
 Leave room for each railway's 400 m run-out: towns lined up along their
 tracks need more space between them than towns side by side across them. If
 two towns are too close, the warning names both.
+
+A town with a railway must also be added to `line` (see below), for example
+after General Pico: `line: Some(["Eduardo Castex", "Monte Nievas", "General
+Pico", "Winifreda"])`.
+
+### The railway line
+
+`line` lists the railway towns in the order one railway line runs through
+them. Inside a town the track runs straight along the station; between two
+towns listed next to each other, a link (at any angle) joins the end of one
+town's track nearest the other town to the end of the other town's track
+nearest the first. The link leaves each town's track along it and bends
+with wide 500 m curves, tightened only when the towns are too close for
+them.
+
+| Field | Meaning | Rules |
+|-------|---------|-------|
+| `line` | `Some(["Eduardo Castex", "Monte Nievas", "General Pico"])`: town names in line order. | Optional. Without it, the line runs through every railway town from west to east, by the east coordinate of each town's center, which is its `origin` (towns listed first win ties). |
+
+The line is a rule of the world:
+
+- Every town with a railway must be on it, and every name must be a town of
+  the file with a railway, listed once.
+- A link must not cross or touch another town's leveled band (60 m around
+  everything built), and must stay inside the world.
+
+A name that breaks this is left out of the line, and a link that breaks it
+is not built; each gets a warning naming the towns. The towns themselves are
+still built.
 
 ### Plaza placement
 
