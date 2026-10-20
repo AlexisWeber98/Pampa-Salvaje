@@ -18,42 +18,56 @@ pub struct StreetGraph {
 }
 
 impl StreetGraph {
-    /// The intersections of `town`'s north-south and east-west streets.
+    /// The intersections of `town`'s north-south and east-west streets, row
+    /// by row from the south-west, each linked to its neighbors one block
+    /// away. A merged plaza has no street through it: intersections inside
+    /// it are left out, and no link crosses it.
     pub fn from_town(town: &TownLayout) -> Self {
-        let by = |key: fn(&Aabb) -> f32, keep: fn(&Aabb) -> bool| {
-            let mut streets: Vec<Aabb> = town.streets.iter().copied().filter(keep).collect();
-            streets.sort_by(|a, b| key(a).total_cmp(&key(b)));
-            streets
+        // Centerlines of the streets of one direction, in order; a street
+        // cut by a plaza counts once.
+        let lines = |key: fn(&Aabb) -> f32, keep: fn(&Aabb) -> bool| {
+            let mut lines: Vec<f32> = town.streets.iter().filter(|s| keep(s)).map(key).collect();
+            lines.sort_by(f32::total_cmp);
+            lines.dedup();
+            lines
         };
-        let north_south = by(|s| s.center().x, |s| s.size().y > s.size().x);
-        let east_west = by(|s| s.center().y, |s| s.size().x > s.size().y);
-        let (columns, rows) = (north_south.len(), east_west.len());
+        let xs = lines(|s| s.center().x, |s| s.size().y > s.size().x);
+        let ys = lines(|s| s.center().y, |s| s.size().x > s.size().y);
+        let on_street = |p: Vec2| town.streets.iter().any(|s| s.contains_point(p));
 
-        let mut nodes = Vec::with_capacity(columns * rows);
-        for row in &east_west {
-            for column in &north_south {
-                nodes.push(Vec2::new(column.center().x, row.center().y));
+        // Node index of each intersection on a street, row by row.
+        let mut nodes = Vec::with_capacity(xs.len() * ys.len());
+        let mut index = vec![None; xs.len() * ys.len()];
+        for (j, &y) in ys.iter().enumerate() {
+            for (i, &x) in xs.iter().enumerate() {
+                let p = Vec2::new(x, y);
+                if on_street(p) {
+                    index[j * xs.len() + i] = Some(nodes.len());
+                    nodes.push(p);
+                }
             }
         }
-        let links = (0..nodes.len())
-            .map(|n| {
-                let (i, j) = (n % columns, n / columns);
-                let mut out = Vec::with_capacity(4);
-                if i > 0 {
-                    out.push(n - 1);
+        let columns = xs.len();
+        let mut links = vec![Vec::with_capacity(4); nodes.len()];
+        for (cell, node) in index.iter().enumerate() {
+            let Some(node) = *node else {
+                continue;
+            };
+            let (i, j) = (cell % columns, cell / columns);
+            let neighbors = [
+                (i > 0).then(|| cell - 1),
+                (i + 1 < columns).then(|| cell + 1),
+                (j > 0).then(|| cell - columns),
+                (j + 1 < ys.len()).then(|| cell + columns),
+            ];
+            for other in neighbors.into_iter().flatten() {
+                if let Some(other) = index[other]
+                    && on_street((nodes[node] + nodes[other]) * 0.5)
+                {
+                    links[node].push(other);
                 }
-                if i + 1 < columns {
-                    out.push(n + 1);
-                }
-                if j > 0 {
-                    out.push(n - columns);
-                }
-                if j + 1 < rows {
-                    out.push(n + columns);
-                }
-                out
-            })
-            .collect();
+            }
+        }
         Self { nodes, links }
     }
 }
@@ -117,7 +131,8 @@ pub struct Townsfolk {
     pub people: Vec<Townsperson>,
 }
 
-/// How many people walk around the Castex-inspired town.
+/// How many people walk around a small town, such as the Castex-inspired
+/// one. Bigger towns get more ([`TownLayout::townsfolk_count`]).
 pub const TOWNSFOLK_COUNT: usize = 16;
 
 impl Townsfolk {
@@ -302,7 +317,15 @@ mod tests {
             let world = World::with_town(Terrain::default(), &town);
             let graph = StreetGraph::from_town(&town);
             let (cols, rows) = c.blocks;
-            assert_eq!(graph.nodes.len(), (cols + 1) * (rows + 1), "{}", c.name);
+            // Intersections inside a merged plaza are gone.
+            let (w, h) = town.size.plaza_span(c.blocks);
+            let inside = (w - 1) * (h - 1);
+            assert_eq!(
+                graph.nodes.len(),
+                (cols + 1) * (rows + 1) - inside,
+                "{}",
+                c.name
+            );
             assert_eq!(graph.links.len(), graph.nodes.len());
             let on_street = |p: Vec2| town.streets.iter().any(|s| s.contains_point(p));
             for (a, links) in graph.links.iter().enumerate() {

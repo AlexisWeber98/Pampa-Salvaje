@@ -42,7 +42,7 @@ pub use rider::{MAX_STEP, Rider, RiderInput, RiderParams};
 pub use terrain::{FlatArea, Terrain};
 pub use town::{
     Building, BuildingKind, HitchingPost, PlazaPlacement, Railway, RailwayConfig, Side,
-    TetheredHorse, TownConfig, TownConfigError, TownLayout,
+    TetheredHorse, TownConfig, TownConfigError, TownLayout, TownSize,
 };
 pub use townsfolk::{StreetGraph, Townsfolk, Townsperson};
 pub use train::{Car, CarKind, PlacedCar, Train, TrainPhase, TrainSchedule, TrainState};

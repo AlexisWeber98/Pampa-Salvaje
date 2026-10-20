@@ -252,14 +252,17 @@ mod tests {
 
     #[test]
     fn placed_towns_reach_only_inside_the_world() {
-        let world = WorldConfig::default();
+        let world = WorldConfig {
+            half_extent: WorldConfig::MAX_HALF_EXTENT,
+            ..WorldConfig::default()
+        };
         let bounds = world.bounds();
         let inside = Aabb::new(bounds.min, bounds.max);
         let configs: Vec<TownConfig> = crate::town::tests::sample_configs()
             .into_iter()
             .enumerate()
             .map(|(k, c)| TownConfig {
-                origin: Vec2::new(-3000.0 + 750.0 * k as f32, 1000.0 * (k % 3) as f32 - 1000.0),
+                origin: Vec2::new(-4500.0 + 750.0 * k as f32, 1000.0 * (k % 3) as f32 - 1000.0),
                 ..c
             })
             .collect();

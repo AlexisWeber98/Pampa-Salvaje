@@ -13,7 +13,6 @@
 use std::collections::BTreeSet;
 
 use bevy::prelude::*;
-use pampa_core::townsfolk::TOWNSFOLK_COUNT;
 use pampa_core::{MAX_STEP, TownLayout, Townsfolk};
 use pampa_render::{
     ActiveTowns, CharacterVisual, MapIcon, SheetKind, VisualPose, WorldTowns, WorldTrains,
@@ -35,7 +34,7 @@ impl Crowds {
         Self(
             towns
                 .iter()
-                .map(|t| Townsfolk::new(t, TOWNSFOLK_COUNT, crowd_seed(t.seed)))
+                .map(|t| Townsfolk::new(t, t.townsfolk_count(), crowd_seed(t.seed)))
                 .collect(),
         )
     }
@@ -408,7 +407,10 @@ mod tests {
         let towns = vec![TownLayout::castex_inspired(), far_town()];
         let crowds = Crowds::for_towns(&towns);
         assert_eq!(crowds.0.len(), 2);
-        assert_eq!(crowds.0[0].people.len(), TOWNSFOLK_COUNT);
+        assert_eq!(
+            crowds.0[0].people.len(),
+            pampa_core::townsfolk::TOWNSFOLK_COUNT
+        );
         let far = towns[1].grid();
         assert!(
             crowds.0[1]
@@ -417,6 +419,23 @@ mod tests {
                 .all(|p| far.contains_point(p.position))
         );
         assert_ne!(crowd_seed(towns[0].seed), crowd_seed(towns[1].seed));
+    }
+
+    #[test]
+    fn bigger_towns_get_bigger_crowds() {
+        let pico = TownLayout::generate(&TownConfig {
+            name: "General Pico".into(),
+            blocks: (8, 8),
+            ..TownConfig::castex()
+        })
+        .unwrap();
+        let towns = vec![TownLayout::castex_inspired(), pico];
+        let crowds = Crowds::for_towns(&towns);
+        assert_eq!(crowds.0[0].people.len(), 16);
+        assert_eq!(crowds.0[1].people.len(), 51);
+        // A small town's crowd is the one it always had.
+        let small = Townsfolk::new(&towns[0], 16, crowd_seed(towns[0].seed));
+        assert_eq!(crowds.0[0], small);
     }
 
     #[test]
