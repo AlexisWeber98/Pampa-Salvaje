@@ -12,12 +12,28 @@ its own place in the world. The rider starts on the road south of the first
 town, collides with buildings and cannot leave the world.
 
 The town is alive: townsfolk wander the streets between intersections, a
-saddled horse stands tied at a hitching rail in front of the general store, and
-a steam freight train rolls in along the town's line every 180 s, stops at the
-station for 25 s and pulls out the other way. Each town's track runs 400 m
-past the town into the fog, where its train appears and disappears. The train
-shoves riders off its track; the rails themselves stay crossable. The rider barges through the crowd, shoving
-walkers aside, and walkers step around the rider.
+saddled horse stands tied at a hitching rail in front of the general store,
+and the rider barges through the crowd, shoving walkers aside, while walkers
+step around the rider.
+
+The day has a clock: one game day lasts 48 real minutes (30×, one game minute
+every two real seconds). The sun follows it, rising in the east, crossing the
+northern sky and setting in the west, warm and low at dawn and dusk and full
+by day; nights are dim and bluish under the moon but stay readable, and the
+dust fog takes the color of the hour without getting any thicker. The game
+begins at about 08:44, with the morning train standing at Monte Nievas.
+
+One steam passenger train runs the whole railway line on a timetable: it
+leaves Eduardo Castex at 07:00, stops 25 s at Monte Nievas, reaches General
+Pico, lays over, leaves Pico at 16:00, stops at Monte Nievas again and spends
+the night at Castex. It runs at up to 65 km/h, braking to stop with its three
+passenger coaches alongside each station, and takes about 12.4 real minutes
+from end to end (Castex 07:00, Monte Nievas 08:37, Pico 13:11; Pico 16:00,
+Monte Nievas 20:21, Castex 22:11, with the clock at its base rate). The clock
+only starts each run: once moving, the train runs in real seconds, and a
+jump of the clock fast-forwards it exactly where it would have been. Its
+cars follow the curves between towns and shove riders off the track; the
+rails themselves stay crossable.
 
 Landmarks carry painted signs in period Spanish: the general store
 ("ALMACÉN DE RAMOS GENERALES"), the police station ("COMISARÍA"), the church
@@ -28,8 +44,8 @@ procedural bitmap pixel font (no third-party font) on weathered boards.
 
 A paper-style minimap in the top-right corner shows the nearest town north-up,
 titled with its name: streets, blocks and buildings by kind, the plaza, the
-railway, each place by its initial, walkers as dots, the train when it is in
-town and the player as an arrow along its heading. It frames the town plus a
+railway, each place by its initial, walkers as dots, the train's cars when
+they are in the map and the player as an arrow along its heading. It frames the town plus a
 30 m margin (not the whole world) so streets stay legible; out on the pampa the
 arrow sticks to the map edge. Each town's layer is rasterized once, the first
 time it is shown; only the markers redraw each frame. `M` toggles an enlarged,
@@ -42,10 +58,10 @@ chunks are built (at most one per frame, all of them on the first frame), and
 chunks past 4 are despawned with their rocks and shrubs, so memory stays
 bounded wherever you ride. The dust fog swallows everything well before the
 400 m that is always loaded. Towns stream the same way: a town's buildings,
-signs, train, people and tied horse appear within 600 m of it and go once you
-are 750 m away. Every town's footprints stay in the logic world at all times
-(collision looks them up in a uniform grid), and all trains keep their
-schedules. Positions are `f32`, so the world is limited to 8 km from its center.
+signs, people and tied horse appear within 600 m of it and go once you are
+750 m away. Every town's footprints stay in the logic world at all times
+(collision looks them up in a uniform grid). The line train always runs; its
+cars are drawn only within 400 m of the rider. Positions are `f32`, so the world is limited to 8 km from its center.
 
 The camera orbits the rider a full 360° with the mouse (or Q/E), zooms with
 the wheel, eases back behind the rider after a moment without camera input
@@ -113,9 +129,10 @@ The rule: **game logic never knows how things are drawn.**
 - Which chunks and towns exist is pure bookkeeping (`StreamingSet` in `render`,
   `TownActivation` in `core`), tested without a GPU.
 - Animation is a logical state (`Idle`, `Walk`, `Gallop`) in `core`, never a frame index.
-- Townsfolk and trains are deterministic `core` simulations (`Townsfolk`,
-  `Train`), one of each per town; the game steps them and render only reads
-  them.
+- Townsfolk, the clock and the train are deterministic `core` simulations
+  (`Townsfolk`, one per town; `GameClock`; `LineTrain`, one for the whole
+  line, whose run is a pure function of the real seconds since it departed);
+  the game steps them and render only reads them.
 - Bumps are decided in `core` (`BumpTracker`: speed threshold, gait severity,
   per-walker cooldown; `LinePicker`: seeded, no immediate repeats); the words come
   from `pampa-content`; render only draws the bubble (`Say` → `SpeechBubble`).

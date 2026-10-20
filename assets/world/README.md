@@ -61,7 +61,7 @@ world is used.
 
 The game builds **every town** in the list, each at its own `origin`. The
 player starts at the first one, on the road into town; the others appear
-(with their signs, people and train) as you ride towards them. Roads between
+(with their signs and people) as you ride towards them. Roads between
 towns will come later; the railway line already joins them (see "The railway
 line").
 
@@ -78,7 +78,7 @@ overlaps; the towns listed before it win.
 | `blocks` | Blocks `(east-west, north-south)`: columns and rows of the grid. | At least 3 each way. |
 | `block_size` | Side of one square block, in meters. | At least 30. Buildings and lots grow with the block. |
 | `street_width` | Width of every street, ring street included, in meters. | At least 8. Narrow streets get a shallower store veranda. |
-| `railway` | `Some((side: North, offset: 24.0))`: the side of the grid the track runs along (`North`, `South`, `East`, `West`) and its distance from the grid edge, in meters. `None` for a town without a railway (no station, no train). | Optional, `None` by default. Offset at least 24 (room for the station yard). |
+| `railway` | `Some((side: North, offset: 24.0))`: the side of the grid the track runs along (`North`, `South`, `East`, `West`) and its distance from the grid edge, in meters. `None` for a town without a railway (no station, and the line train never stops there). | Optional, `None` by default. Offset at least 24 (room for the station yard). |
 | `plaza` | Which block is the plaza (see below). | Optional, `Auto` by default. |
 | `seed` | Varies which lots have houses or sheds. | Optional, `0` by default. |
 
@@ -136,6 +136,16 @@ The line is a rule of the world:
 A name that breaks this is left out of the line, and a link that breaks it
 is not built; each gets a warning naming the towns. The towns themselves are
 still built.
+
+One passenger train runs the whole line, from the first town listed to the
+last and back, stopping at every station on the way. Its timetable is in
+code (`pampa_core::Timetable`), not in this file: it leaves the first town
+at 07:00, lays over at the last one, leaves it at 16:00 and spends the night
+at the first town. It tops out at 65 km/h and stands 25 s at each station
+partway through a run. The day begins with that morning train standing at
+the first town of the `towns` list, where the player starts. The train runs
+as far as the line is unbroken: a link left out ends its run at the town
+before it, and a line with fewer than two stations has no train.
 
 ### Plaza placement
 
