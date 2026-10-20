@@ -33,18 +33,21 @@ No recompiling.
 ### The shipped geography
 
 The file lays out a first stretch of La Pampa: three railway towns at their
-real relative positions, with distances scaled 1:5 to fit the largest world
+real relative positions, with distances scaled 1:6 to fit the largest world
 (`half_extent: 8000`, a 16 km x 16 km square).
 
 | Town | `origin` | `blocks` | Size |
 |------|----------|----------|------|
 | Monte Nievas | `(-3050, -1950)` | 4 x 3 | small, and the player starts here |
-| Eduardo Castex | `(-5570, -3030)` | 5 x 4 | small |
-| General Pico | `(4110, 2530)` | 8 x 8 | very big (see "Town size") |
+| Eduardo Castex | `(-5150, -2850)` | 5 x 4 | small |
+| General Pico | `(2917, 1783)` | 8 x 8 | very big (see "Town size") |
 
 From Castex to Monte Nievas is about 12.6 km east and 5.4 km north in the
 real pampa; from Monte Nievas to General Pico, about 35.8 km east and
-22.4 km north. All three have the railway on their north side.
+22.4 km north. At 1:6 that puts Castex 2.1 km west and 0.9 km south of
+Monte Nievas (2.28 km between their centers), and Pico 5.97 km east and
+3.73 km north of it. All three have the railway on their north side, and
+Monte Nievas has no police station (`police_stations: Some(0)`).
 
 ### The world
 
@@ -81,6 +84,7 @@ overlaps; the towns listed before it win.
 | `railway` | `Some((side: North, offset: 24.0))`: the side of the grid the track runs along (`North`, `South`, `East`, `West`) and its distance from the grid edge, in meters. `None` for a town without a railway (no station, and the line train never stops there). | Optional, `None` by default. Offset at least 24 (room for the station yard). |
 | `plaza` | Which block is the plaza (see below). | Optional, `Auto` by default. |
 | `seed` | Varies which lots have houses or sheds. | Optional, `0` by default. |
+| `police_stations` | How many police stations ("COMISARÍA") the town has, instead of its size tier's count (see the size tiers below). `Some(0)` leaves the town without one; its block gets houses instead. Monte Nievas ships with `Some(0)`: the errand sends the player to Castex. | Optional, `None` (the tier's count) by default. At most the tier's count: 1 for a small or big town, 2 for a very big one. More is rejected. |
 
 The whole town, plus its 60 m band of leveled ground and its railway, must fit
 inside the world (see above).
@@ -137,13 +141,16 @@ A name that breaks this is left out of the line, and a link that breaks it
 is not built; each gets a warning naming the towns. The towns themselves are
 still built.
 
-One passenger train runs the whole line, from the first town listed to the
-last and back, stopping at every station on the way. Its timetable is in
+One train runs the whole line, from the first town listed to the last and
+back, stopping at every station on the way. It is a rural mixed train of 8
+cars (93 m): the locomotive, two passenger coaches and five freight cars, and
+it stops with the middle of its coaches at each station. Its timetable is in
 code (`pampa_core::Timetable`), not in this file: it leaves the first town
 at 07:00, lays over at the last one, leaves it at 16:00 and spends the night
 at the first town. It tops out at 65 km/h and stands 25 s at each station
 partway through a run. The day begins with that morning train standing at
-the first town of the `towns` list, where the player starts. The train runs
+the first town of the `towns` list, where the player gets off on foot (on
+the ground just past the platform's end, beside the train). The train runs
 as far as the line is unbroken: a link left out ends its run at the town
 before it, and a line with fewer than two stations has no train.
 
@@ -191,6 +198,9 @@ A town's size comes from its block count, `n` = columns times rows:
 - One general store faces the station plaza; the others, the church and the
   police stations face the main plaza. The tied horse stays at the first
   general store.
+- `police_stations` can lower the tier's police station count (down to
+  none), never raise it. A town without the field keeps the tier's count
+  and is laid out exactly as before.
 
 ### When something is wrong
 

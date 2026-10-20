@@ -665,6 +665,7 @@ pub(crate) mod tests {
             }),
             plaza: PlazaPlacement::Auto,
             seed: 1,
+            police_stations: None,
         }
     }
 
@@ -685,8 +686,8 @@ pub(crate) mod tests {
             world,
             &[
                 config("Monte Nievas", -3050.0, -1950.0, (4, 3), true),
-                config("Eduardo Castex", -5570.0, -3030.0, (5, 4), true),
-                config("General Pico", 4110.0, 2530.0, (8, 8), true),
+                config("Eduardo Castex", -5150.0, -2850.0, (5, 4), true),
+                config("General Pico", 2917.0, 1783.0, (8, 8), true),
             ],
         );
         (world, towns)
@@ -925,10 +926,12 @@ pub(crate) mod tests {
                 .filter(|p| p.start.distance(p.end) <= RailLine::CURVE_STEP + 1e-2)
                 .count();
             assert!(short >= pieces.len() - 1, "{short} of {}", pieces.len());
-            // Bending adds only a little to the straight chord.
+            // Bending adds only a little to the straight chord. At 1:6 the
+            // Castex–Monte Nievas link turns 62° and is 6.8% longer than its
+            // chord, so the bound leaves 8%.
             let chord = link.track.start.distance(link.track.end);
             assert!(
-                link.length() > chord && link.length() < chord * 1.05,
+                link.length() > chord && link.length() < chord * 1.08,
                 "{} {chord}",
                 link.length()
             );

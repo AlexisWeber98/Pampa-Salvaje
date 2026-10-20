@@ -131,6 +131,10 @@ pub struct TownConfig {
     pub plaza: PlazaPlacement,
     /// Varies house and shed lots.
     pub seed: u32,
+    /// How many police stations the town has, overriding its size tier's
+    /// count ([`TownSize`]); `None` keeps the tier's. At most the tier's
+    /// count (a town without a comisaría is `Some(0)`).
+    pub police_stations: Option<usize>,
 }
 
 impl TownConfig {
@@ -162,12 +166,20 @@ impl TownConfig {
             }),
             plaza: PlazaPlacement::Auto,
             seed: 7,
+            police_stations: None,
         }
     }
 
     /// How big the town is, from its block count.
     pub fn size(&self) -> TownSize {
         TownSize::of(self.blocks)
+    }
+
+    /// How many police stations the town gets: the override, or its size
+    /// tier's count.
+    pub fn police_count(&self) -> usize {
+        self.police_stations
+            .unwrap_or_else(|| self.size().police_stations())
     }
 }
 
@@ -223,8 +235,8 @@ impl TownSize {
         }
     }
 
-    /// Police stations.
-    fn police_stations(self) -> usize {
+    /// Police stations, unless a town overrides it.
+    pub fn police_stations(self) -> usize {
         match self {
             Self::Small | Self::Big => 1,
             Self::VeryBig => 2,
@@ -269,6 +281,8 @@ pub enum TownConfigError {
     NoCentralBlock { blocks: (usize, usize) },
     /// `PlazaPlacement::FacingStation` in a town without a railway.
     NoStationToFace,
+    /// `police_stations` asks for more than the size tier places.
+    TooManyPoliceStations { wanted: usize, max: usize },
 }
 
 impl fmt::Display for TownConfigError {
@@ -308,6 +322,10 @@ impl fmt::Display for TownConfigError {
                     "plaza `FacingStation` needs a railway, but there is none"
                 )
             }
+            Self::TooManyPoliceStations { wanted, max } => write!(
+                f,
+                "police_stations {wanted} is more than a town of this size has (max {max})"
+            ),
         }
     }
 }
@@ -355,7 +373,8 @@ impl TownLayout {
         let bounds = grid.bounds();
         let extent = grid.extent(config.railway);
 
-        let mut landmarks = central_landmarks(&grid, main, size, config.blocks);
+        let police = config.police_count();
+        let mut landmarks = central_landmarks(&grid, main, size, config.blocks, police);
         let station = (size != TownSize::Small)
             .then(|| station_plaza(&grid, main, &landmarks, config.railway));
         if let Some(station) = &station {
@@ -383,10 +402,12 @@ impl TownLayout {
                 );
             }
         }
-        // The first store, church and police station come first, in block
-        // order; extra landmarks follow in the order they were placed, so the
-        // first general store found is the one the horse is tied at.
-        for extra in &landmarks[LANDMARK_PREFERENCES.len()..] {
+        // The first store, church and police station (if the town has one)
+        // come first, in block order; extra landmarks follow in the order
+        // they were placed, so the first general store found is the one the
+        // horse is tied at.
+        let primary = LANDMARK_PREFERENCES.len() - usize::from(police == 0);
+        for extra in &landmarks[primary..] {
             let inside = grid.block(extra.block.0, extra.block.1);
             if let Some(k) = buildings
                 .iter()
@@ -586,6 +607,14 @@ impl Grid {
                 offset: r.offset,
                 min: TownConfig::MIN_RAILWAY_OFFSET,
             });
+        }
+        // Only the tier's landmark blocks are set aside: fewer police
+        // stations fit, more do not.
+        let max = config.size().police_stations();
+        if let Some(wanted) = config.police_stations
+            && wanted > max
+        {
+            return Err(TownConfigError::TooManyPoliceStations { wanted, max });
         }
         Ok(Self {
             origin: config.origin,
@@ -849,8 +878,9 @@ const LANDMARK_PREFERENCES: [(BuildingKind, [Side; 4]); 3] = [
 ];
 
 /// Places the landmarks around the main plaza: the general store, church and
-/// police station, in that order, then a bigger town's extra general stores
-/// (all but the one kept for the station plaza) and extra police stations.
+/// police station (unless `police` is zero), in that order, then a bigger
+/// town's extra general stores (all but the one kept for the station plaza)
+/// and the other `police - 1` police stations.
 ///
 /// Each takes the first free block next to the plaza in its preference
 /// order and faces the plaza across the street. When every neighbor is
@@ -862,13 +892,15 @@ fn central_landmarks(
     plaza: PlazaBlocks,
     size: TownSize,
     blocks: (usize, usize),
+    police_count: usize,
 ) -> Vec<Landmark> {
     let [store, church, police] = LANDMARK_PREFERENCES;
     let station_store = usize::from(size != TownSize::Small);
     let extra_stores = size.general_stores(blocks) - 1 - station_store;
-    let extra_police = size.police_stations() - 1;
-    let order = [store, church, police]
+    let extra_police = police_count.saturating_sub(1);
+    let order = [store, church]
         .into_iter()
+        .chain(std::iter::repeat_n(police, police_count.min(1)))
         .chain(std::iter::repeat_n(store, extra_stores))
         .chain(std::iter::repeat_n(police, extra_police));
     let mut placed: Vec<Landmark> = Vec::new();
@@ -2236,6 +2268,8 @@ pub(crate) mod tests {
                 name: "Monte Nievas".into(),
                 blocks: (4, 3),
                 seed: 7,
+                // As shipped: no comisaría (the errand's story).
+                police_stations: Some(0),
                 ..TownConfig::castex()
             },
             TownConfig {
@@ -2328,7 +2362,9 @@ pub(crate) mod tests {
             assert_eq!(t.plazas().count(), 1, "{}", c.name);
             assert_eq!(plaza_span(&c, &t), (1, 1), "{}", c.name);
             assert_eq!(count(&t, BuildingKind::GeneralStore), 1, "{}", c.name);
-            assert_eq!(count(&t, BuildingKind::PoliceStation), 1, "{}", c.name);
+            // One, unless overridden (Monte Nievas has none).
+            let police = c.police_stations.unwrap_or(1);
+            assert_eq!(count(&t, BuildingKind::PoliceStation), police, "{}", c.name);
             assert_eq!(t.townsfolk_count(), crate::townsfolk::TOWNSFOLK_COUNT);
         }
     }
@@ -2337,7 +2373,10 @@ pub(crate) mod tests {
     fn small_towns_keep_their_layout_byte_for_byte() {
         // Fingerprints of the layouts generated before big towns existed.
         let pinned = [
-            0x048e_7ce0_c05b_12e8,
+            // Monte Nievas, re-pinned on purpose: it now ships with
+            // `police_stations: Some(0)` (no comisaría), so its police
+            // station block holds houses. Was 0x048e_7ce0_c05b_12e8.
+            0xe05f_3775_61a3_6ee8,
             0x09b0_b9cc_57c5_1b3c,
             0x4278_2489_8197_3719,
             0xabab_ea79_19ae_9dd0,
@@ -2354,6 +2393,76 @@ pub(crate) mod tests {
         for (c, expected) in configs.iter().zip(pinned) {
             let t = TownLayout::generate(c).unwrap();
             assert_eq!(fingerprint(&t), expected, "{} changed", c.name);
+        }
+    }
+
+    #[test]
+    fn a_police_override_of_zero_leaves_the_town_without_a_comisaria() {
+        let mut configs = small_configs();
+        configs.extend(bigger_towns().into_iter().map(|(c, _)| c));
+        for c in configs {
+            let none = TownConfig {
+                police_stations: Some(0),
+                ..c.clone()
+            };
+            let t = TownLayout::generate(&none).unwrap();
+            assert_eq!(count(&t, BuildingKind::PoliceStation), 0, "{}", c.name);
+            assert!(
+                t.places()
+                    .iter()
+                    .all(|p| p.kind != crate::PlaceKind::PoliceStation),
+                "{}",
+                c.name
+            );
+            assert_eq!(t.police_door(), None, "{}", c.name);
+            // Everything else a town needs is still there.
+            let default = TownLayout::generate(&c).unwrap();
+            assert_eq!(count(&t, BuildingKind::Church), 1, "{}", c.name);
+            assert_eq!(
+                count(&t, BuildingKind::GeneralStore),
+                count(&default, BuildingKind::GeneralStore),
+                "{}",
+                c.name
+            );
+            assert_eq!(t.plaza, default.plaza, "{}", c.name);
+            assert_eq!(t.hitching_post, default.hitching_post, "{}", c.name);
+        }
+    }
+
+    #[test]
+    fn the_police_override_can_lower_but_not_raise_the_tiers_count() {
+        for (c, _) in bigger_towns()
+            .into_iter()
+            .filter(|(c, _)| c.size() == TownSize::VeryBig)
+        {
+            let one = TownConfig {
+                police_stations: Some(1),
+                ..c.clone()
+            };
+            let t = TownLayout::generate(&one).unwrap();
+            assert_eq!(count(&t, BuildingKind::PoliceStation), 1, "{}", c.name);
+        }
+        for c in small_configs() {
+            // The tier's own count is the same as no override.
+            let same = TownConfig {
+                police_stations: Some(1),
+                ..c.clone()
+            };
+            if c.police_stations.is_none() {
+                assert_eq!(TownLayout::generate(&same), TownLayout::generate(&c));
+            }
+            let two = TownConfig {
+                police_stations: Some(2),
+                ..c.clone()
+            };
+            let error = TownLayout::generate(&two).unwrap_err();
+            assert_eq!(
+                error,
+                TownConfigError::TooManyPoliceStations { wanted: 2, max: 1 },
+                "{}",
+                c.name
+            );
+            assert!(error.to_string().contains("police_stations 2"), "{error}");
         }
     }
 

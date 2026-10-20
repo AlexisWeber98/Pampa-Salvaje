@@ -46,6 +46,19 @@ impl StaticObstacles {
         }
     }
 
+    /// Removes the first footprint equal to `item` and rebuilds the index,
+    /// keeping the others in order. Returns whether one was removed. Rare
+    /// (a tied horse led away), so a full rebuild is fine.
+    pub fn remove(&mut self, item: &Aabb) -> bool {
+        let Some(index) = self.items.iter().position(|o| o == item) else {
+            return false;
+        };
+        let mut items = std::mem::take(&mut self.items);
+        items.remove(index);
+        *self = Self::new(items);
+        true
+    }
+
     /// Every footprint overlapping or touching `area`, once each, in
     /// insertion order. A non-finite `area` finds nothing.
     pub fn near(&self, area: Aabb) -> Vec<&Aabb> {
@@ -180,5 +193,30 @@ mod tests {
                 .is_empty()
         );
         assert_eq!((&obstacles).into_iter().count(), 2);
+    }
+
+    #[test]
+    fn removing_a_footprint_drops_it_from_the_list_and_the_index() {
+        let items = scattered(200);
+        let mut obstacles = StaticObstacles::new(items.clone());
+        let gone = items[57];
+        assert!(obstacles.remove(&gone));
+        assert_eq!(obstacles.len(), 199);
+        let mut rest = items.clone();
+        rest.remove(57);
+        assert_eq!(obstacles, rest, "the others keep their order");
+        let mut rng = Rng::new(9, 2);
+        for _ in 0..200 {
+            let c = Vec2::new(rng.range(-350.0, 350.0), rng.range(-350.0, 350.0));
+            let area = around(c, rng.range(0.1, 40.0));
+            let expected: Vec<&Aabb> = rest.iter().filter(|o| touches(o, &area)).collect();
+            assert_eq!(obstacles.near(area), expected, "{area:?}");
+        }
+        assert!(!obstacles.near(gone).contains(&&gone));
+        // Removing what is not there changes nothing.
+        assert!(!obstacles.remove(&gone));
+        let missing = Aabb::from_center_size(Vec2::new(9000.0, 9000.0), Vec2::new(1.0, 1.0));
+        assert!(!obstacles.remove(&missing));
+        assert_eq!(obstacles, rest);
     }
 }

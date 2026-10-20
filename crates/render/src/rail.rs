@@ -265,6 +265,7 @@ mod tests {
             }),
             plaza: PlazaPlacement::Auto,
             seed: 1,
+            police_stations: None,
         };
         let (towns, errors) = place_towns(&world, &[town("Oeste", -1500.0), town("Este", 1500.0)]);
         assert!(errors.is_empty(), "{errors:?}");
@@ -570,6 +571,7 @@ mod tests {
             }),
             plaza: PlazaPlacement::Auto,
             seed: 1,
+            police_stations: None,
         };
         let (towns, errors) = place_towns(
             &world,

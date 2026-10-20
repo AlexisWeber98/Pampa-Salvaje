@@ -4,7 +4,7 @@
 (
     world: (
         // 8 km from the center to each edge: a 16 km x 16 km world, the
-        // largest allowed. Room for the railway line at a 1:5 scale.
+        // largest allowed. Room for the railway line at a 1:6 scale.
         half_extent: 8000.0,
         // Ground is built in 200 m square chunks around the rider.
         chunk_size: 200.0,
@@ -12,7 +12,7 @@
     towns: [
         (
             // The player starts here, where the first errand begins. About
-            // 12.6 km east and 5.4 km north of Castex, scaled 1:5.
+            // 12.6 km east and 5.4 km north of Castex, scaled 1:6.
             name: "Monte Nievas",
             origin: (-3050.0, -1950.0),
             blocks: (4, 3),
@@ -21,12 +21,14 @@
             railway: Some((side: North, offset: 24.0)),
             plaza: Auto,
             seed: 7,
+            // No comisaría here: Don Hidalgo sends the player to Castex.
+            police_stations: Some(0),
         ),
         (
             // A small railway town inspired by 1920s–1930s Eduardo Castex,
             // La Pampa. The plaza faces the station across the street.
             name: "Eduardo Castex",
-            origin: (-5570.0, -3030.0),
+            origin: (-5150.0, -2850.0),
             blocks: (5, 4),
             block_size: 40.0,
             street_width: 10.0,
@@ -37,9 +39,9 @@
         (
             // A very big town (8 x 8 blocks): a 2 x 2 central plaza, a
             // station plaza, four general stores and two police stations.
-            // About 35.8 km east and 22.4 km north of Monte Nievas, scaled 1:5.
+            // About 35.8 km east and 22.4 km north of Monte Nievas, scaled 1:6.
             name: "General Pico",
-            origin: (4110.0, 2530.0),
+            origin: (2917.0, 1783.0),
             blocks: (8, 8),
             block_size: 40.0,
             street_width: 10.0,

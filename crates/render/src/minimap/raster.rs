@@ -146,6 +146,7 @@ pub mod palette {
     pub const PLAYER: [u8; 4] = [196, 40, 28, 255];
     pub const WALKER: [u8; 4] = [48, 40, 96, 255];
     pub const TRAIN: [u8; 4] = [28, 26, 26, 255];
+    pub const TARGET: [u8; 4] = [232, 176, 32, 255];
 }
 
 /// Pixel scale of place initials on the map.
@@ -307,12 +308,15 @@ pub struct Markers {
     pub player: Option<(GroundVec2, Heading)>,
     pub walkers: Vec<GroundVec2>,
     pub cars: Vec<PlacedCar>,
+    /// Where the errand sends the player, if anywhere.
+    pub target: Option<GroundVec2>,
 }
 
 /// Clears `canvas` and draws the markers: train cars as dark bars, walkers
-/// as dots (skipped off the map) and the player as an arrow along its
-/// heading, clamped to the edge when outside. Returns the player's marker
-/// position, if any.
+/// as dots (skipped off the map), the errand target as a gold diamond and
+/// the player as an arrow along its heading. The target and the player are
+/// clamped to the edge when outside, so they point the way. Returns the
+/// player's marker position, if any.
 pub fn draw_markers(canvas: &mut Canvas, frame: &MapFrame, markers: &Markers) -> Option<Vec2> {
     canvas.clear();
     let px = frame.meters_per_px();
@@ -333,6 +337,10 @@ pub fn draw_markers(canvas: &mut Canvas, frame: &MapFrame, markers: &Markers) ->
     for &walker in markers.walkers.iter().filter(|&&w| frame.contains(w)) {
         square(canvas, frame.to_map(walker), 1, palette::WALKER);
     }
+    if let Some(target) = markers.target {
+        let (at, _) = frame.to_map_clamped(target);
+        diamond(canvas, at);
+    }
     let (position, heading) = markers.player?;
     let (at, _) = frame.to_map_clamped(position);
     arrow(canvas, at, heading);
@@ -345,6 +353,22 @@ fn square(canvas: &mut Canvas, p: Vec2, radius: i32, color: [u8; 4]) {
     for y in cy - radius..=cy + radius {
         for x in cx - radius..=cx + radius {
             canvas.set(x, y, color);
+        }
+    }
+}
+
+/// The errand target: a gold diamond outlined in ink, centered on `at`.
+fn diamond(canvas: &mut Canvas, at: Vec2) {
+    let (cx, cy) = (at.x.floor() as i32, at.y.floor() as i32);
+    let r = 5;
+    for y in cy - r - 1..=cy + r + 1 {
+        for x in cx - r - 1..=cx + r + 1 {
+            let d = (x - cx).abs() + (y - cy).abs();
+            if d < r {
+                canvas.set(x, y, palette::TARGET);
+            } else if d <= r {
+                canvas.set(x, y, palette::INK);
+            }
         }
     }
 }
@@ -646,6 +670,7 @@ mod tests {
             player: Some((GroundVec2::new(500.0, 0.0), Heading::from_radians(0.0))),
             walkers: vec![walker, GroundVec2::new(400.0, 400.0)],
             cars: vec![car, away],
+            target: None,
         };
         let player = draw_markers(&mut canvas, &frame, &markers).unwrap();
         assert!(close(player, Vec2::new(200.0 - EDGE, 100.0)));
@@ -666,5 +691,90 @@ mod tests {
         );
         // Off-map walkers leave the corner alone.
         assert_eq!(canvas.get(199, 0)[3], 0);
+    }
+
+    fn count(canvas: &Canvas, color: [u8; 4]) -> usize {
+        canvas.pixels.chunks(4).filter(|p| *p == color).count()
+    }
+
+    #[test]
+    fn marks_the_errand_target_and_pins_it_to_the_edge_when_off_the_map() {
+        let frame = MapFrame {
+            center: GroundVec2::ZERO,
+            half_extent: 100.0,
+            size_px: 200,
+        };
+        let mut canvas = Canvas::new(200);
+        // No target, no marker.
+        draw_markers(&mut canvas, &frame, &Markers::default());
+        assert_eq!(count(&canvas, palette::TARGET), 0);
+
+        // On the map: right where it is.
+        let near = GroundVec2::new(30.0, -40.0);
+        let markers = Markers {
+            target: Some(near),
+            ..Markers::default()
+        };
+        draw_markers(&mut canvas, &frame, &markers);
+        let at = frame.to_map(near);
+        assert_eq!(canvas.get(at.x as usize, at.y as usize), palette::TARGET);
+        assert!(count(&canvas, palette::TARGET) > 8);
+        assert!(count(&canvas, palette::INK) > 8, "outlined in ink");
+
+        // Far off to the north-west (another town): pinned to the edge on
+        // that side, like the player's arrow.
+        let far = GroundVec2::new(-2500.0, 900.0);
+        let markers = Markers {
+            target: Some(far),
+            ..Markers::default()
+        };
+        draw_markers(&mut canvas, &frame, &markers);
+        let (pin, on_map) = frame.to_map_clamped(far);
+        assert!(!on_map);
+        assert!(close(pin, Vec2::new(EDGE, EDGE)), "{pin:?}");
+        assert_eq!(canvas.get(pin.x as usize, pin.y as usize), palette::TARGET);
+        assert_eq!(canvas.get(100, 100)[3], 0, "nothing left in the middle");
+
+        // The player's arrow is drawn over the target.
+        let markers = Markers {
+            target: Some(near),
+            player: Some((near, Heading::from_radians(0.0))),
+            ..Markers::default()
+        };
+        draw_markers(&mut canvas, &frame, &markers);
+        assert_eq!(canvas.get(at.x as usize, at.y as usize), palette::PLAYER);
+    }
+
+    #[test]
+    fn a_town_without_a_comisaria_is_mapped_without_one() {
+        use pampa_core::TownConfig;
+        let with = town();
+        let without = TownLayout::generate(&TownConfig {
+            police_stations: Some(0),
+            ..TownConfig::castex()
+        })
+        .unwrap();
+        let frame = MapFrame::for_town(&with, 320);
+        let police = with
+            .buildings
+            .iter()
+            .find(|b| b.kind == BuildingKind::PoliceStation)
+            .unwrap()
+            .footprint;
+        // Landmark-colored pixels over the police station's footprint: the
+        // building before, ordinary lots (or open ground) now.
+        let (lo, hi) = frame.rect(&police);
+        let landmark = |t: &TownLayout| {
+            let map = rasterize_town(t, &[], &frame);
+            let mut n = 0;
+            for y in lo.y.ceil() as usize..hi.y.floor() as usize {
+                for x in lo.x.ceil() as usize..hi.x.floor() as usize {
+                    n += usize::from(map.get(x, y) == palette::LANDMARK);
+                }
+            }
+            n
+        };
+        assert!(landmark(&with) > 20, "{}", landmark(&with));
+        assert_eq!(landmark(&without), 0);
     }
 }

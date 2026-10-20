@@ -18,8 +18,10 @@ use std::path::{Path, PathBuf};
 use pampa_core::{BumpSeverity, PlacementError, WorldConfigError};
 use serde::Deserialize;
 
+pub mod errand;
 pub mod towns;
 
+pub use errand::{ERRAND_FILE, ErrandLines, load_errand_or_builtin};
 pub use towns::{TOWNS_FILE, WorldContent, load_towns, load_towns_or_builtin, parse_towns};
 
 /// Longest line, in characters, so it fits a speech bubble.
@@ -70,21 +72,7 @@ impl BumpLines {
     /// Checks every pool has lines, and every line is non-blank and at most
     /// [`MAX_LINE_CHARS`] long.
     pub fn validate(&self) -> Result<(), ContentError> {
-        for (pool, lines) in self.pools() {
-            if lines.is_empty() {
-                return Err(ContentError::EmptyPool { pool });
-            }
-            for (index, line) in lines.iter().enumerate() {
-                let chars = line.chars().count();
-                if line.trim().is_empty() {
-                    return Err(ContentError::BlankLine { pool, index });
-                }
-                if chars > MAX_LINE_CHARS {
-                    return Err(ContentError::LineTooLong { pool, index, chars });
-                }
-            }
-        }
-        Ok(())
+        check_pools(&self.pools())
     }
 
     /// The lines for a bump of `severity`.
@@ -98,21 +86,50 @@ impl BumpLines {
     /// Every distinct character in any line that `supported` rejects, in
     /// order of first appearance.
     pub fn unsupported_chars(&self, supported: impl Fn(char) -> bool) -> Vec<char> {
-        let mut found = Vec::new();
-        for (_, lines) in self.pools() {
-            for c in lines.iter().flat_map(|l| l.chars()) {
-                if !supported(c) && !found.contains(&c) {
-                    found.push(c);
-                }
-            }
-        }
-        found
+        unsupported_in(&self.pools(), supported)
     }
 
     /// Every pool with the name it has in the file.
     fn pools(&self) -> [(&'static str, &[String]); 2] {
         [("walk", &self.walk), ("gallop", &self.gallop)]
     }
+}
+
+/// Checks every named pool has lines, and every line is non-blank and at
+/// most [`MAX_LINE_CHARS`] long.
+pub(crate) fn check_pools(pools: &[(&'static str, &[String])]) -> Result<(), ContentError> {
+    for &(pool, lines) in pools {
+        if lines.is_empty() {
+            return Err(ContentError::EmptyPool { pool });
+        }
+        for (index, line) in lines.iter().enumerate() {
+            let chars = line.chars().count();
+            if line.trim().is_empty() {
+                return Err(ContentError::BlankLine { pool, index });
+            }
+            if chars > MAX_LINE_CHARS {
+                return Err(ContentError::LineTooLong { pool, index, chars });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Every distinct character in any line of `pools` that `supported`
+/// rejects, in order of first appearance.
+pub(crate) fn unsupported_in(
+    pools: &[(&'static str, &[String])],
+    supported: impl Fn(char) -> bool,
+) -> Vec<char> {
+    let mut found = Vec::new();
+    for (_, lines) in pools {
+        for c in lines.iter().flat_map(|l| l.chars()) {
+            if !supported(c) && !found.contains(&c) {
+                found.push(c);
+            }
+        }
+    }
+    found
 }
 
 /// Loads the bumps file at `path`, falling back to [`BumpLines::builtin`].

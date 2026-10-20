@@ -184,6 +184,7 @@ mod tests {
             .insert_resource(crate::player::PlayerSpawn {
                 position: GroundVec2::new(50.0, 50.0),
                 heading: pampa_core::Heading::from_radians(0.0),
+                ..default()
             })
             .add_plugins((
                 PlayerPlugin,
