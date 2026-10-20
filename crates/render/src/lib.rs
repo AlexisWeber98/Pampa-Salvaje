@@ -8,6 +8,7 @@ pub mod bubble;
 pub mod character;
 pub mod coords;
 pub mod font;
+pub mod hud;
 pub mod minimap;
 pub mod rail;
 pub mod signs;
@@ -22,7 +23,8 @@ pub use character::{
     CharacterVisual, CharacterVisualPlugin, PERSON_LOOKS, SheetKind, ViewDirection, VisualPose,
 };
 pub use coords::world_from_ground;
-pub use minimap::{MapIcon, MinimapPlugin};
+pub use hud::{HudObjective, HudPlugin};
+pub use minimap::{MapIcon, MapTarget, MinimapPlugin};
 pub use rail::{LineTrack, RailPlugin, WorldRail};
 pub use signs::{SignPlugin, Signboard};
 pub use streaming::{StreamingPlan, StreamingSet};

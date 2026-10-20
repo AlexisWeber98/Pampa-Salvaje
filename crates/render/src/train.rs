@@ -540,13 +540,14 @@ pub(crate) mod tests {
             }),
             plaza: PlazaPlacement::Auto,
             seed: 1,
+            police_stations: None,
         };
         let (towns, errors) = place_towns(
             &world,
             &[
                 town("Monte Nievas", -3050.0, -1950.0, (4, 3)),
-                town("Eduardo Castex", -5570.0, -3030.0, (5, 4)),
-                town("General Pico", 4110.0, 2530.0, (8, 8)),
+                town("Eduardo Castex", -5150.0, -2850.0, (5, 4)),
+                town("General Pico", 2917.0, 1783.0, (8, 8)),
             ],
         );
         assert!(errors.is_empty(), "{errors:?}");
@@ -606,7 +607,7 @@ pub(crate) mod tests {
         assert_eq!(
             drawn.len(),
             8,
-            "three coaches more than the freight consist"
+            "the locomotive, two coaches and five freight cars"
         );
         for ((_, t, visibility), p) in drawn.iter().zip(&placed) {
             assert_eq!(*visibility, Visibility::Inherited);
@@ -627,7 +628,7 @@ pub(crate) mod tests {
     #[test]
     fn cars_far_from_the_focus_are_hidden() {
         // Overnight at Castex, with the focus at Pico.
-        let mut app = app_with_train(3600.0, GroundVec2::new(4110.0, 2530.0));
+        let mut app = app_with_train(3600.0, GroundVec2::new(2917.0, 1783.0));
         app.update();
         app.update();
         let drawn = cars(&mut app);

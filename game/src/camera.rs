@@ -9,7 +9,7 @@
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
-use pampa_core::{Aabb, Terrain, TownLayout, Vec2 as GroundVec2};
+use pampa_core::{Aabb, Terrain, TownLayout, Travel, Vec2 as GroundVec2};
 use pampa_render::{WorldTerrain, world_from_ground};
 
 use crate::orbit::{Orbit, OrbitInput, OrbitParams};
@@ -20,6 +20,9 @@ use crate::player::{DrivePlayer, Player};
 pub struct FollowCamera {
     /// Point above the rider's feet the camera looks at.
     pub look_height: f32,
+    /// Point above the player's feet the camera looks at on foot: a
+    /// person's chest is lower than a rider's.
+    pub on_foot_look_height: f32,
     /// Exponential catch-up rate of the look-at point (higher = snappier).
     pub smoothing: f32,
     /// Minimum clearance above the terrain under the camera.
@@ -33,6 +36,7 @@ impl Default for FollowCamera {
     fn default() -> Self {
         Self {
             look_height: 1.6,
+            on_foot_look_height: 1.1,
             smoothing: 10.0,
             ground_clearance: 1.0,
             snap_distance: 50.0,
@@ -240,7 +244,11 @@ fn follow_player(
     let rider = &player.rider;
     let (mut transform, follow, mut rig) = camera.into_inner();
     let feet = world_from_ground(rider.position, rider.height);
-    let target = feet + Vec3::Y * follow.look_height;
+    let look_height = match rider.travel() {
+        Travel::OnFoot => follow.on_foot_look_height,
+        Travel::Riding => follow.look_height,
+    };
+    let target = feet + Vec3::Y * look_height;
 
     let (orbit, focus) = match rig.0.as_mut() {
         Some((orbit, focus)) if focus.distance(target) <= follow.snap_distance => {
@@ -339,6 +347,7 @@ mod tests {
         PlayerSpawn {
             position: GroundVec2::new(x, y),
             heading: Heading::from_radians(FRAC_PI_2),
+            ..PlayerSpawn::default()
         }
     }
 
@@ -543,6 +552,7 @@ mod tests {
         let spawn = PlayerSpawn {
             position: GroundVec2::new(store.max.x + 2.5, store.center().y),
             heading: Heading::from_radians(0.0),
+            ..PlayerSpawn::default()
         };
         (
             headless_app(world, spawn, occluders.clone()),
@@ -600,5 +610,31 @@ mod tests {
             }
         }
         assert!(pulled > 0, "some angles look through the store");
+    }
+
+    #[test]
+    fn on_foot_the_camera_looks_at_a_lower_point() {
+        let mut heights = Vec::new();
+        for travel in [pampa_core::Travel::Riding, pampa_core::Travel::OnFoot] {
+            let spawn = PlayerSpawn {
+                travel,
+                ..north_at(0.0, 0.0)
+            };
+            let mut app = headless_app(World::default(), spawn, CameraOccluders::default());
+            app.update();
+            let r = rider(&mut app);
+            let feet = world_from_ground(r.position, r.height);
+            heights.push(rig(&mut app).1.y - feet.y);
+        }
+        let follow = FollowCamera::default();
+        assert!(
+            (heights[0] - follow.look_height).abs() < 1e-4,
+            "{heights:?}"
+        );
+        assert!(
+            (heights[1] - follow.on_foot_look_height).abs() < 1e-4,
+            "{heights:?}"
+        );
+        assert!(follow.on_foot_look_height < follow.look_height);
     }
 }

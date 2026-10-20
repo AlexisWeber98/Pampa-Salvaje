@@ -174,7 +174,7 @@ pub fn cadence(sheet: SheetKind, animation: AnimationState, speed: f32) -> f32 {
     match (sheet, animation) {
         (_, AnimationState::Idle) => 0.0,
         // Two steps of about 0.65 m each.
-        (SheetKind::Person(_), _) => speed.max(0.8) / 1.3,
+        (s, _) if s.on_foot() => speed.max(0.8) / 1.3,
         (_, AnimationState::Walk) => speed.max(1.0) / 1.8,
         (_, AnimationState::Gallop) => speed.max(5.0) / 4.2,
     }
@@ -185,7 +185,7 @@ pub fn cadence(sheet: SheetKind, animation: AnimationState, speed: f32) -> f32 {
 fn bob(sheet: SheetKind, animation: AnimationState) -> f32 {
     match (sheet, animation) {
         (_, AnimationState::Idle) => 0.0,
-        (SheetKind::Person(_), _) => 0.03,
+        (s, _) if s.on_foot() => 0.03,
         (_, AnimationState::Walk) => 0.02,
         (_, AnimationState::Gallop) => 0.08,
     }

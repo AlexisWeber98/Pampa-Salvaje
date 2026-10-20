@@ -2,6 +2,7 @@
 
 mod camera;
 mod complaints;
+mod errand;
 mod life;
 mod orbit;
 mod player;
@@ -11,7 +12,7 @@ use bevy::prelude::*;
 use pampa_content::{TOWNS_FILE, asset_path};
 use pampa_core::{Terrain, World};
 use pampa_render::{
-    AtmospherePlugin, CharacterVisualPlugin, MinimapPlugin, RailPlugin, SignPlugin,
+    AtmospherePlugin, CharacterVisualPlugin, HudPlugin, MinimapPlugin, RailPlugin, SignPlugin,
     SpeechBubblePlugin, StreamFocus, TerrainPlugin, TownPlugin, TrainPlugin, WorldChunks,
     WorldClock, WorldRail, WorldTerrain, WorldTowns, WorldTrain,
 };
@@ -22,9 +23,13 @@ fn main() {
     // built from every town of `assets/world/towns.ron`.
     let loaded = towns::load_world(&asset_path(TOWNS_FILE));
     let report = towns::TownReport::new(&loaded);
-    let world = World::with_towns(loaded.world, Terrain::default(), &loaded.towns);
-    // The player starts on the road into the first town.
-    let (position, heading) = loaded.towns[0].arrival();
+    let mut world = World::with_towns(loaded.world, Terrain::default(), &loaded.towns);
+    // The errand: Don Hidalgo in the first town's plaza sends the player to
+    // comisario Farach. Both stand in the way like any obstacle.
+    let errand = errand::plan(&loaded.towns, &mut world);
+    // The player gets off the morning train on foot, at the first town's
+    // platform.
+    let (position, heading) = errand::player_start(&loaded.towns[0]);
     let crowds = life::Crowds::for_towns(&loaded.towns);
     // The day begins with the morning train standing at the first town's
     // station; the clock starts there.
@@ -44,9 +49,18 @@ fn main() {
     // The railway line between towns, laid chunk by chunk.
     .insert_resource(WorldRail(loaded.line))
     .insert_resource(player::GameWorld(world))
-    .insert_resource(player::PlayerSpawn { position, heading })
-    .insert_resource(report)
-    .add_plugins((
+    .insert_resource(player::PlayerSpawn {
+        position,
+        heading,
+        travel: pampa_core::Travel::OnFoot,
+    })
+    .insert_resource(report);
+    if let Some((run, cast)) = errand {
+        app.insert_resource(run).insert_resource(cast);
+    } else {
+        warn!("no errand: the world needs a second town with a police station");
+    }
+    app.add_plugins((
         DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Pampa Seca".into(),
@@ -68,6 +82,8 @@ fn main() {
         complaints::ComplaintsPlugin,
         camera::FollowCameraPlugin,
     ))
+    // The errand and the clock and objective in the corner.
+    .add_plugins((errand::ErrandPlugin, HudPlugin))
     .add_systems(Startup, towns::log_town_report)
     .add_systems(Update, quit_on_escape)
     .run();

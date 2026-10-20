@@ -10,8 +10,9 @@
 //! its own gait clock (see [`SheetKind::row`]).
 //!
 //! Sizes: frames are [`FRAME_SIZE`] pixels square, so a horse sheet is
-//! 640 x 720 RGBA8 (1.8 MB) and a person sheet 640 x 400 (1.0 MB); all six
-//! sheets together take about 7.8 MB.
+//! 640 x 720 RGBA8 (1.8 MB) and a person sheet 640 x 400 (1.0 MB); all nine
+//! sheets together (rider, horse, the player on foot, the two errand people
+//! and four townsfolk) take about 10.8 MB.
 
 use pampa_core::AnimationState;
 
@@ -36,14 +37,31 @@ pub enum SheetKind {
     Horse,
     /// Person on foot, in palette `0..PERSON_LOOKS`.
     Person(u8),
+    /// The player on foot: the rider's gaucho, out of the saddle.
+    Gaucho,
+    /// Don Hidalgo, who gives the first errand.
+    Hidalgo,
+    /// Comisario Elías Farach, in uniform.
+    Comisario,
 }
 
 impl SheetKind {
     /// Every sheet, so they can all be built up front.
     pub fn all() -> impl Iterator<Item = Self> {
-        [Self::Rider, Self::Horse]
-            .into_iter()
-            .chain((0..PERSON_LOOKS).map(Self::Person))
+        [
+            Self::Rider,
+            Self::Horse,
+            Self::Gaucho,
+            Self::Hidalgo,
+            Self::Comisario,
+        ]
+        .into_iter()
+        .chain((0..PERSON_LOOKS).map(Self::Person))
+    }
+
+    /// Whether this is somebody on foot (no horse in the sheet).
+    pub fn on_foot(self) -> bool {
+        !matches!(self, Self::Rider | Self::Horse)
     }
 
     /// The person sheet for a logic appearance value.
@@ -53,19 +71,21 @@ impl SheetKind {
 
     /// Side of the square sprite in meters (frames are square).
     pub fn sprite_size(self) -> f32 {
-        match self {
-            Self::Rider | Self::Horse => 2.8,
+        if self.on_foot() {
             // A 1.75 m person fills 70 of the 80 pixels.
-            Self::Person(_) => 2.0,
+            2.0
+        } else {
+            2.8
         }
     }
 
     /// Rows of frames in this sheet: standing, walking and, for horses,
     /// galloping.
     pub fn rows(self) -> usize {
-        match self {
-            Self::Person(_) => 1 + GAIT_FRAMES,
-            Self::Rider | Self::Horse => 1 + 2 * GAIT_FRAMES,
+        if self.on_foot() {
+            1 + GAIT_FRAMES
+        } else {
+            1 + 2 * GAIT_FRAMES
         }
     }
 
@@ -104,6 +124,9 @@ pub fn sheet_pixels(kind: SheetKind) -> Vec<u8> {
                 }
                 SheetKind::Horse => horse(&view, pose, true),
                 SheetKind::Person(look) => person(&view, pose, &PEOPLE[look as usize]),
+                SheetKind::Gaucho => person(&view, pose, &GAUCHO),
+                SheetKind::Hidalgo => person(&view, pose, &HIDALGO),
+                SheetKind::Comisario => person(&view, pose, &COMISARIO),
             };
             let mut frame = Frame::new(FRAME_SIZE);
             frame.paint(&mut parts);
@@ -201,9 +224,10 @@ impl View {
         Self {
             forward: (side, depth),
             right: (depth, -side),
-            ground: match kind {
-                SheetKind::Person(_) => FRAME_SIZE as f32 - 0.8,
-                _ => FRAME_SIZE as f32 - 1.0,
+            ground: if kind.on_foot() {
+                FRAME_SIZE as f32 - 0.8
+            } else {
+                FRAME_SIZE as f32 - 1.0
             },
         }
     }
@@ -534,6 +558,39 @@ const PEOPLE: [Person; PERSON_LOOKS as usize] = [
     },
 ];
 
+/// The player on foot: the mounted gaucho's poncho, trousers and hat.
+const GAUCHO: Person = Person {
+    top: PONCHO,
+    trim: PONCHO_STRIPE,
+    legs: TROUSERS,
+    skirt: false,
+    head: Headwear::Brimmed,
+    headwear: HAT,
+};
+
+/// Don Hidalgo: an old landowner in a dark town suit and a pale hat.
+const HIDALGO: Person = Person {
+    top: [58, 56, 64],
+    trim: [214, 206, 186],
+    legs: [72, 66, 62],
+    skirt: false,
+    head: Headwear::Brimmed,
+    headwear: [176, 164, 136],
+};
+
+/// The police uniform's blue.
+const POLICE_BLUE: Rgb = [40, 56, 104];
+
+/// Comisario Farach: a blue uniform with brass buttons and a kepi.
+const COMISARIO: Person = Person {
+    top: POLICE_BLUE,
+    trim: [200, 164, 72],
+    legs: [36, 42, 66],
+    skirt: false,
+    head: Headwear::Beret,
+    headwear: [30, 36, 60],
+};
+
 /// A person on foot, standing on the frame's bottom edge.
 fn person(v: &View, pose: Pose, p: &Person) -> Vec<Part> {
     let bob = rise(pose, 0.9, 0.9).abs();
@@ -847,6 +904,51 @@ mod tests {
             }
         }
         assert_eq!(SheetKind::person(PERSON_LOOKS + 1), SheetKind::Person(1));
+    }
+
+    /// How many opaque pixels of `kind`'s standing front view (frame 4) are
+    /// close to `color` in any shade.
+    fn shaded(kind: SheetKind, color: Rgb) -> usize {
+        let shades = tones(color);
+        frame(kind, &sheet_pixels(kind), 4, 0)
+            .chunks(4)
+            .filter(|p| p[3] == 255 && shades.contains(&[p[0], p[1], p[2]]))
+            .count()
+    }
+
+    #[test]
+    fn the_gaucho_on_foot_wears_the_riders_outfit() {
+        let gaucho = SheetKind::Gaucho;
+        assert!(gaucho.on_foot());
+        assert_eq!(gaucho.rows(), 1 + GAIT_FRAMES);
+        assert_eq!(gaucho.sprite_size(), SheetKind::Person(0).sprite_size());
+        for color in [PONCHO, TROUSERS, HAT] {
+            assert!(shaded(gaucho, color) > 20, "{color:?}");
+            assert!(shaded(SheetKind::Rider, color) > 20, "{color:?}");
+        }
+        // Nobody in the crowd wears the rider's poncho.
+        for look in 0..PERSON_LOOKS {
+            assert_eq!(shaded(SheetKind::Person(look), PONCHO), 0, "look {look}");
+        }
+    }
+
+    #[test]
+    fn the_errand_people_have_their_own_looks() {
+        let mut sheets = vec![sheet_pixels(SheetKind::Gaucho)];
+        for kind in [SheetKind::Hidalgo, SheetKind::Comisario] {
+            assert!(kind.on_foot());
+            assert!(SheetKind::all().any(|k| k == kind));
+            sheets.push(sheet_pixels(kind));
+        }
+        sheets.extend((0..PERSON_LOOKS).map(|l| sheet_pixels(SheetKind::Person(l))));
+        for (i, a) in sheets.iter().enumerate() {
+            for b in &sheets[i + 1..] {
+                assert_ne!(a, b);
+            }
+        }
+        assert!(!SheetKind::Rider.on_foot() && !SheetKind::Horse.on_foot());
+        // The comisario in police blue.
+        assert!(shaded(SheetKind::Comisario, POLICE_BLUE) > 40);
     }
 
     #[test]

@@ -96,6 +96,9 @@ struct TownDto {
     plaza: PlazaDto,
     #[serde(default)]
     seed: u32,
+    /// Overrides the size tier's police station count (`Some(0)`: none).
+    #[serde(default)]
+    police_stations: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
@@ -157,6 +160,7 @@ impl From<TownDto> for TownConfig {
             }),
             plaza: town.plaza.into(),
             seed: town.seed,
+            police_stations: town.police_stations,
         }
     }
 }
@@ -251,8 +255,8 @@ mod tests {
         });
         for (town, origin, blocks) in [
             (&content.towns[0], Vec2::new(-3050.0, -1950.0), (4, 3)),
-            (&content.towns[1], Vec2::new(-5570.0, -3030.0), (5, 4)),
-            (&content.towns[2], Vec2::new(4110.0, 2530.0), (8, 8)),
+            (&content.towns[1], Vec2::new(-5150.0, -2850.0), (5, 4)),
+            (&content.towns[2], Vec2::new(2917.0, 1783.0), (8, 8)),
         ] {
             assert_eq!(town.origin, origin, "{}", town.name);
             assert_eq!(town.blocks, blocks, "{}", town.name);
@@ -424,6 +428,7 @@ mod tests {
                     }),
                     plaza: PlazaPlacement::Block(1, 2),
                     seed: 11,
+                    police_stations: None,
                 },
                 TownConfig {
                     name: "Carmensa".into(),
@@ -434,6 +439,7 @@ mod tests {
                     railway: None,
                     plaza: PlazaPlacement::Auto,
                     seed: 0,
+                    police_stations: None,
                 },
             ]
         );
@@ -445,6 +451,44 @@ mod tests {
             let (content, _) = parse_towns(&text).unwrap();
             assert_eq!(content.towns.len(), 1, "{plaza}");
         }
+    }
+
+    #[test]
+    fn the_shipped_monte_nievas_has_no_comisaria_and_castex_has_one() {
+        use pampa_core::{BuildingKind, TownLayout};
+        let (content, _) = parse_towns(SHIPPED).unwrap();
+        let police = |name: &str| {
+            let config = content.towns.iter().find(|t| t.name == name).unwrap();
+            let town = TownLayout::generate(config).unwrap();
+            let n = town
+                .buildings
+                .iter()
+                .filter(|b| b.kind == BuildingKind::PoliceStation)
+                .count();
+            (config.police_stations, n)
+        };
+        assert_eq!(police("Monte Nievas"), (Some(0), 0));
+        assert_eq!(police("Eduardo Castex"), (None, 1));
+        assert_eq!(police("General Pico"), (None, 2));
+    }
+
+    #[test]
+    fn the_police_station_count_is_read_and_checked_against_the_town_size() {
+        let text = r#"(towns: [
+            (name: "Sin", blocks: (3, 3), block_size: 40.0, street_width: 10.0,
+             police_stations: Some(0)),
+            (name: "Dos", origin: (2000.0, 0.0), blocks: (3, 3), block_size: 40.0,
+             street_width: 10.0, police_stations: Some(2)),
+        ])"#;
+        let (content, errors) = parse_towns(text).unwrap();
+        assert_eq!(content.towns.len(), 1);
+        assert_eq!(content.towns[0].police_stations, Some(0));
+        assert_eq!(errors.len(), 1);
+        let message = errors[0].to_string();
+        assert!(
+            message.contains("Dos") && message.contains("police_stations 2"),
+            "{message}"
+        );
     }
 
     #[test]

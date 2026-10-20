@@ -1,13 +1,20 @@
-//! The player-controlled rider: keyboard -> `RiderInput` -> core step -> visuals.
+//! The player: keyboard -> `RiderInput` -> core step -> visuals.
+//!
+//! The player starts on foot and may later mount a horse; both move with
+//! the same core model ([`Rider`]), the body and the tuning tell them
+//! apart ([`Rider::travel`]).
 
 use bevy::prelude::*;
-use pampa_core::{Heading, MAX_STEP, Rider, RiderInput, RiderParams, Vec2 as GroundVec2, World};
+use pampa_core::{
+    Heading, MAX_STEP, Rider, RiderInput, RiderParams, Travel, Vec2 as GroundVec2, World,
+};
 use pampa_render::{
     CharacterVisual, MapIcon, SheetKind, StreamFocus, VisualPose, world_from_ground,
 };
 
-/// The logic rider this entity represents. Logic state lives here; the
-/// entity's `Transform` and `VisualPose` are derived from it every frame.
+/// The logic body this entity represents, on foot or on horseback. Logic
+/// state lives here; the entity's `Transform` and `VisualPose` are derived
+/// from it every frame.
 #[derive(Component, Debug)]
 pub struct Player {
     pub rider: Rider,
@@ -18,19 +25,22 @@ pub struct Player {
 #[derive(Resource, Debug, Clone, Default)]
 pub struct GameWorld(pub World);
 
-/// Where and facing which way the player starts.
+/// Where, facing which way and how the player starts.
 #[derive(Resource, Debug, Clone, Copy)]
 pub struct PlayerSpawn {
     pub position: GroundVec2,
     pub heading: Heading,
+    pub travel: Travel,
 }
 
 impl Default for PlayerSpawn {
-    /// The origin, facing north (where the camera initially looks).
+    /// The origin, facing north (where the camera initially looks), on
+    /// horseback. The game itself starts on foot (see `main`).
     fn default() -> Self {
         Self {
             position: GroundVec2::ZERO,
             heading: Heading::from_radians(std::f32::consts::FRAC_PI_2),
+            travel: Travel::Riding,
         }
     }
 }
@@ -38,6 +48,24 @@ impl Default for PlayerSpawn {
 /// Movement tuning for the player's horse.
 #[derive(Resource, Debug, Default)]
 pub struct PlayerTuning(pub RiderParams);
+
+/// Movement tuning for the player on foot.
+#[derive(Resource, Debug)]
+pub struct FootTuning(pub RiderParams);
+
+impl Default for FootTuning {
+    fn default() -> Self {
+        Self(RiderParams::on_foot())
+    }
+}
+
+/// The sprite sheet of a player getting around by `travel`.
+pub fn player_sheet(travel: Travel) -> SheetKind {
+    match travel {
+        Travel::OnFoot => SheetKind::Gaucho,
+        Travel::Riding => SheetKind::Rider,
+    }
+}
 
 /// Systems that advance the player's logic; run cameras after this.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -48,6 +76,7 @@ pub struct PlayerPlugin;
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PlayerTuning>()
+            .init_resource::<FootTuning>()
             .init_resource::<GameWorld>()
             .init_resource::<PlayerSpawn>()
             .init_resource::<StreamFocus>()
@@ -60,11 +89,15 @@ impl Plugin for PlayerPlugin {
 }
 
 fn spawn_player(mut commands: Commands, world: Res<GameWorld>, spawn: Res<PlayerSpawn>) {
-    let rider = Rider::new(spawn.position, spawn.heading, &world.0.terrain);
+    let terrain = &world.0.terrain;
+    let rider = match spawn.travel {
+        Travel::OnFoot => Rider::on_foot(spawn.position, spawn.heading, terrain),
+        Travel::Riding => Rider::new(spawn.position, spawn.heading, terrain),
+    };
     commands.spawn((
         Name::new("Player"),
         MapIcon::Player,
-        CharacterVisual::Billboard(SheetKind::Rider),
+        CharacterVisual::Billboard(player_sheet(spawn.travel)),
         VisualPose {
             heading: rider.heading,
             ..default()
@@ -96,7 +129,7 @@ pub fn read_input(keys: &ButtonInput<KeyCode>) -> RiderInput {
 pub(crate) fn drive_player(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
-    tuning: Res<PlayerTuning>,
+    (tuning, foot): (Res<PlayerTuning>, Res<FootTuning>),
     world: Res<GameWorld>,
     mut players: Query<(&mut Player, &mut Transform, &mut VisualPose)>,
 ) {
@@ -104,11 +137,15 @@ pub(crate) fn drive_player(
     let dt = time.delta_secs().min(MAX_STEP);
     for (mut player, mut transform, mut pose) in &mut players {
         let rider = &mut player.rider;
-        rider.step(input, &tuning.0, &world.0, dt);
+        let params = match rider.travel() {
+            Travel::OnFoot => &foot.0,
+            Travel::Riding => &tuning.0,
+        };
+        rider.step(input, params, &world.0, dt);
         transform.translation = world_from_ground(rider.position, rider.height);
         *pose = VisualPose {
             heading: rider.heading,
-            animation: rider.animation(&tuning.0),
+            animation: rider.animation(params),
             speed: rider.speed.abs(),
         };
     }
@@ -170,6 +207,7 @@ mod tests {
         let spawn = PlayerSpawn {
             position: GroundVec2::new(26.0, -161.0),
             heading: Heading::from_radians(1.0),
+            ..PlayerSpawn::default()
         };
         let mut app = headless_app(Duration::from_millis(16));
         app.insert_resource(spawn);
@@ -227,6 +265,56 @@ mod tests {
         }
         // Riding north moves the arrow up the map.
         assert!(marks.last().unwrap().y < marks[0].y);
+    }
+
+    #[test]
+    fn a_player_spawned_on_foot_walks_and_jogs_at_a_persons_pace() {
+        let mut app = headless_app(Duration::from_millis(50));
+        app.insert_resource(PlayerSpawn {
+            travel: Travel::OnFoot,
+            ..PlayerSpawn::default()
+        });
+        app.update();
+        let rider = player_rider(&mut app);
+        assert_eq!(rider.travel(), Travel::OnFoot);
+        assert_eq!(rider.collider.radius, Rider::PERSON_RADIUS);
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&CharacterVisual, With<Player>>();
+        assert_eq!(
+            *q.single(app.world()).unwrap(),
+            CharacterVisual::Billboard(SheetKind::Gaucho)
+        );
+        let foot = app.world().resource::<FootTuning>().0;
+        assert_eq!(foot, RiderParams::on_foot());
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyW);
+        for _ in 0..80 {
+            app.update();
+        }
+        assert!((player_rider(&mut app).speed - foot.walk_max).abs() < 1e-4);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::ShiftLeft);
+        for _ in 0..80 {
+            app.update();
+        }
+        assert!((player_rider(&mut app).speed - foot.gallop_max).abs() < 1e-4);
+    }
+
+    #[test]
+    fn the_default_spawn_is_on_horseback() {
+        let mut app = headless_app(Duration::from_millis(16));
+        app.update();
+        assert_eq!(player_rider(&mut app).travel(), Travel::Riding);
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&CharacterVisual, With<Player>>();
+        assert_eq!(
+            *q.single(app.world()).unwrap(),
+            CharacterVisual::Billboard(SheetKind::Rider)
+        );
     }
 
     #[test]

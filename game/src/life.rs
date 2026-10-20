@@ -1,5 +1,6 @@
 //! Town life: the game clock, the line train, townsfolk walking the
-//! streets, and the horse tied in front of each general store.
+//! streets, the horse tied in front of each general store, and the people
+//! of the errand standing in their towns.
 //!
 //! Logic lives in `pampa-core`; this module steps it once per frame, before
 //! the player, lets the rider shove walkers aside after the player moved,
@@ -8,7 +9,8 @@
 //! Every town has its own crowd, seeded from the town's seed. Only the towns
 //! near the player ([`ActiveTowns`]) have their people and tied horse
 //! spawned and simulated; without [`ActiveTowns`] (no town streaming) every
-//! crowd is. The clock ticks every frame and the one line train follows
+//! crowd is. The errand's people ([`Cast`]) come and go with their towns
+//! the same way, and a horse led away ([`LedAway`]) is not tied up again. The clock ticks every frame and the one line train follows
 //! it everywhere: departures come from the clock, running is in real
 //! seconds, and its cars are always moving obstacles (eight cars: cheap).
 
@@ -16,7 +18,8 @@ use std::collections::BTreeSet;
 
 use bevy::prelude::*;
 use pampa_core::{
-    BASE_RATE, GameClock, LineTrain, MAX_STEP, RailLine, Timetable, TownLayout, Townsfolk,
+    BASE_RATE, GameClock, LineTrain, MAX_STEP, Npc, RailLine, Standing, Timetable, TownLayout,
+    Townsfolk, Travel,
 };
 use pampa_render::{
     ActiveTowns, CharacterVisual, MapIcon, SheetKind, VisualPose, WorldClock, WorldTowns,
@@ -78,6 +81,30 @@ pub struct Walker {
 #[derive(Component, Debug, Clone, Copy)]
 pub struct TetheredHorse(pub usize);
 
+/// A person of the errand standing in town `town`.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StandingNpc {
+    pub town: usize,
+    pub npc: Npc,
+}
+
+/// The errand's people and where they stand, spawned with their towns.
+#[derive(Resource, Debug, Clone, Default, PartialEq)]
+pub struct Cast(pub Vec<(Npc, Standing)>);
+
+/// Towns whose tied horse was led away this session: it is not tied up
+/// there again.
+#[derive(Resource, Debug, Clone, Default, PartialEq, Eq)]
+pub struct LedAway(pub BTreeSet<usize>);
+
+/// The sprite sheet of an errand person.
+pub fn npc_sheet(npc: Npc) -> SheetKind {
+    match npc {
+        Npc::Hidalgo => SheetKind::Hidalgo,
+        Npc::Farach => SheetKind::Comisario,
+    }
+}
+
 /// Towns whose people and horse are spawned.
 #[derive(Resource, Debug, Clone, Default, PartialEq, Eq)]
 pub struct Populated(pub BTreeSet<usize>);
@@ -94,6 +121,8 @@ impl Plugin for TownLifePlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<Shoved>()
             .init_resource::<Populated>()
+            .init_resource::<Cast>()
+            .init_resource::<LedAway>()
             .configure_sets(Update, SimulateTown.before(DrivePlayer))
             .add_systems(
                 Update,
@@ -125,23 +154,36 @@ type TownInputs<'a> = (
     Option<Res<'a, Crowds>>,
     Option<Res<'a, WorldTowns>>,
     Option<Res<'a, ActiveTowns>>,
+    Res<'a, Cast>,
+    Res<'a, LedAway>,
+);
+
+/// Everyone living in a town: walkers, the tied horse and errand people.
+type Residents<'a> = (
+    Entity,
+    Option<&'a Walker>,
+    Option<&'a TetheredHorse>,
+    Option<&'a StandingNpc>,
 );
 
 /// Spawns the people and tied horse of towns that just became active, and
 /// despawns those of towns left behind.
 fn populate_towns(
     mut commands: Commands,
-    (crowds, towns, active): TownInputs,
+    (crowds, towns, active, cast, led_away): TownInputs,
     world: Res<GameWorld>,
     mut populated: ResMut<Populated>,
-    residents: Query<(Entity, Option<&Walker>, Option<&TetheredHorse>)>,
+    residents: Query<Residents>,
 ) {
     let Some(crowds) = crowds else {
         return;
     };
     let wanted: BTreeSet<usize> = live_towns(&crowds, active.as_deref()).into_iter().collect();
-    for (entity, walker, horse) in &residents {
-        let town = walker.map(|w| w.town).or(horse.map(|h| h.0));
+    for (entity, walker, horse, npc) in &residents {
+        let town = walker
+            .map(|w| w.town)
+            .or(horse.map(|h| h.0))
+            .or(npc.map(|n| n.town));
         if town.is_some_and(|t| !wanted.contains(&t)) {
             commands.entity(entity).despawn();
         }
@@ -152,10 +194,34 @@ fn populate_towns(
             continue;
         }
         spawn_walkers(&mut commands, &crowds.0[town], town, &world);
-        if let Some(layout) = towns.as_ref().and_then(|t| t.0.get(town)) {
+        if let Some(layout) = towns.as_ref().and_then(|t| t.0.get(town))
+            && !led_away.0.contains(&town)
+        {
             spawn_tethered_horse(&mut commands, layout, town, &world);
         }
+        for &(npc, standing) in cast.0.iter().filter(|(_, s)| s.town == town) {
+            spawn_standing_npc(&mut commands, npc, standing, &world);
+        }
     }
+}
+
+/// An errand person standing still where the errand put them.
+fn spawn_standing_npc(commands: &mut Commands, npc: Npc, standing: Standing, world: &GameWorld) {
+    let at = standing.position;
+    let height = world.0.terrain.height(at.x, at.y);
+    commands.spawn((
+        Name::new(format!("{npc:?}")),
+        StandingNpc {
+            town: standing.town,
+            npc,
+        },
+        CharacterVisual::Billboard(npc_sheet(npc)),
+        VisualPose {
+            heading: standing.heading,
+            ..default()
+        },
+        Transform::from_translation(world_from_ground(at, height)),
+    ));
 }
 
 fn spawn_walkers(commands: &mut Commands, crowd: &Townsfolk, town: usize, world: &GameWorld) {
@@ -248,8 +314,10 @@ pub struct Shoved {
     pub speed: f32,
 }
 
-/// The rider barges through: walkers in its way are shoved aside, and
-/// anyone pinned against a wall stops the rider instead.
+/// The player barges through: walkers in the way are shoved aside, and
+/// anyone pinned against a wall stops the player instead. Only a rider's
+/// shoves are reported ([`Shoved`]): people make way for somebody on foot
+/// without complaint.
 pub(crate) fn jostle_crowd(
     crowds: Option<ResMut<Crowds>>,
     active: Option<Res<ActiveTowns>>,
@@ -264,10 +332,12 @@ pub(crate) fn jostle_crowd(
     for (mut player, mut transform) in &mut players {
         let rider = &mut player.rider;
         let mut bodies = Vec::new();
+        // Townsfolk only complain about the horse.
+        let riding = rider.travel() == Travel::Riding;
         for &town in &live {
             let crowd = &mut crowds.0[town];
             let walkers = crowd.make_way(&world.0, rider.body());
-            if !walkers.is_empty() {
+            if riding && !walkers.is_empty() {
                 // The speed of the impact, before a pinned walker stops the rider.
                 shoved.write(Shoved {
                     town,
@@ -603,6 +673,112 @@ mod tests {
         );
     }
 
+    fn cast_of(towns: &[TownLayout]) -> Cast {
+        let errand = pampa_core::Errand::new(towns, 0, 1).unwrap();
+        Cast(
+            [Npc::Hidalgo, Npc::Farach]
+                .map(|npc| (npc, errand.standing(npc)))
+                .to_vec(),
+        )
+    }
+
+    fn standing_npcs(app: &mut App) -> Vec<(StandingNpc, CharacterVisual, Transform)> {
+        let mut q = app
+            .world_mut()
+            .query::<(&StandingNpc, &CharacterVisual, &Transform)>();
+        q.iter(app.world()).map(|(n, v, t)| (*n, *v, *t)).collect()
+    }
+
+    #[test]
+    fn the_errand_people_stand_in_their_towns_and_leave_with_them() {
+        let towns = vec![TownLayout::castex_inspired(), far_town()];
+        let cast = cast_of(&towns);
+        let mut app = app_with(towns.clone(), 2);
+        let mut activation = TownActivation::default();
+        activation.update(&towns, Vec2::ZERO);
+        app.insert_resource(ActiveTowns(activation))
+            .insert_resource(cast.clone());
+        app.update();
+        let here = standing_npcs(&mut app);
+        assert_eq!(here.len(), 1);
+        let (npc, visual, transform) = here[0];
+        assert_eq!(
+            npc,
+            StandingNpc {
+                town: 0,
+                npc: Npc::Hidalgo
+            }
+        );
+        assert_eq!(visual, CharacterVisual::Billboard(SheetKind::Hidalgo));
+        let spot = cast.0[0].1.position;
+        assert_eq!(
+            (transform.translation.x, -transform.translation.z),
+            (spot.x, spot.y)
+        );
+
+        // Over at the far town: Hidalgo is gone, the comisario stands there.
+        app.world_mut()
+            .resource_mut::<ActiveTowns>()
+            .0
+            .update(&towns, Vec2::new(3000.0, -2000.0));
+        app.update();
+        let there = standing_npcs(&mut app);
+        assert_eq!(there.len(), 1);
+        assert_eq!(there[0].0.npc, Npc::Farach);
+        assert_eq!(there[0].1, CharacterVisual::Billboard(SheetKind::Comisario));
+    }
+
+    #[test]
+    fn a_horse_led_away_is_not_tied_up_again() {
+        let towns = vec![TownLayout::castex_inspired(), far_town()];
+        let mut app = app_with(towns.clone(), 2);
+        app.world_mut().resource_mut::<LedAway>().0.insert(0);
+        app.update();
+        let mut q = app.world_mut().query::<&TetheredHorse>();
+        let horses: Vec<usize> = q.iter(app.world()).map(|h| h.0).collect();
+        assert_eq!(horses, vec![1], "only the far town's horse is tied");
+    }
+
+    #[test]
+    fn walking_into_people_on_foot_moves_them_without_complaints() {
+        #[derive(Resource, Default)]
+        struct Shoves(usize);
+        fn count(mut shoved: MessageReader<Shoved>, mut shoves: ResMut<Shoves>) {
+            shoves.0 += shoved.read().count();
+        }
+        let mut app = town_app();
+        let at = app.world().resource::<Crowds>().0[0].people[0].position;
+        app.insert_resource(crate::player::PlayerSpawn {
+            position: at,
+            heading: pampa_core::Heading::from_radians(0.0),
+            travel: pampa_core::Travel::OnFoot,
+        })
+        .init_resource::<Shoves>()
+        .add_systems(PostUpdate, count);
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.press(KeyCode::KeyW);
+            keys.press(KeyCode::ShiftLeft);
+        }
+        for _ in 0..100 {
+            app.update();
+            let me = {
+                let mut q = app.world_mut().query::<&crate::player::Player>();
+                q.single(app.world()).unwrap().rider
+            };
+            let crowd = &app.world().resource::<Crowds>().0[0];
+            for p in &crowd.people {
+                let gap = p.position.distance(me.position);
+                assert!(gap >= p.collider.radius + me.collider.radius - 1e-3);
+            }
+        }
+        assert_eq!(
+            app.world().resource::<Shoves>().0,
+            0,
+            "no bump complaints on foot"
+        );
+    }
+
     #[test]
     fn the_rider_shoves_walkers_aside() {
         let mut app = town_app();
@@ -611,6 +787,7 @@ mod tests {
         app.insert_resource(crate::player::PlayerSpawn {
             position: at,
             heading: pampa_core::Heading::from_radians(0.0),
+            ..default()
         });
         {
             let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();

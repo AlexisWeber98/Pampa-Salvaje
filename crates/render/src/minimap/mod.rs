@@ -1,7 +1,8 @@
 //! Minimap in the top-right corner: the town nearest the player (by
 //! distance to its extent) drawn from `pampa-core` data, north-up, titled
 //! with its name, with live markers for the player, the walkers and the
-//! line train's cars inside the map.
+//! line train's cars inside the map, and the errand's target ([`MapTarget`])
+//! pinned to the edge while it is off the map.
 //!
 //! Each town's layer is rasterized once, the first time it is shown, and
 //! kept per town (one image per town: bounded); a second, transparent image
@@ -43,6 +44,12 @@ pub enum MapIcon {
     Walker,
 }
 
+/// Where the errand sends the player, marked on the map (pinned to the
+/// edge when outside it); `None` hides the marker. The game keeps it up to
+/// date.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
+pub struct MapTarget(pub Option<GroundVec2>);
+
 /// Minimap state: the town shown and its framing, the marker layer and
 /// whether it is enlarged.
 #[derive(Resource, Debug)]
@@ -53,6 +60,9 @@ pub struct Minimap {
     pub enlarged: bool,
     /// Where the player's arrow was drawn last frame, in map pixels.
     pub player_px: Option<Vec2>,
+    /// Where the target was drawn last frame, in map pixels, and whether it
+    /// was on the map (otherwise it is pinned to the edge).
+    pub target_px: Option<(Vec2, bool)>,
     markers: Handle<Image>,
     canvas: Canvas,
     /// Each shown town's layer, by town index.
@@ -154,6 +164,7 @@ fn spawn_minimap(
         frame,
         enlarged: false,
         player_px: None,
+        target_px: None,
         markers,
         canvas,
         bases: HashMap::from([(index, base)]),
@@ -250,6 +261,7 @@ type WorldLayers<'a> = (
 fn update_markers(
     minimap: Option<ResMut<Minimap>>,
     (towns, trains, rail): WorldLayers,
+    target: Option<Res<MapTarget>>,
     icons: Query<(&MapIcon, &Transform, Option<&VisualPose>)>,
     mut bases: Query<&mut ImageNode, With<MinimapBase>>,
     mut images: ResMut<Assets<Image>>,
@@ -282,6 +294,7 @@ fn update_markers(
             .and_then(|t| t.0.as_ref())
             .map(|t| t.placed_cars())
             .unwrap_or_default(),
+        target: target.and_then(|t| t.0),
         ..default()
     };
     for (icon, transform, pose) in &icons {
@@ -296,6 +309,7 @@ fn update_markers(
     }
     let minimap = &mut *minimap;
     minimap.player_px = draw_markers(&mut minimap.canvas, &minimap.frame, &markers);
+    minimap.target_px = markers.target.map(|t| minimap.frame.to_map_clamped(t));
     if let Some(mut image) = images.get_mut(&minimap.markers) {
         image.data = Some(minimap.canvas.pixels.clone());
     }
@@ -429,6 +443,40 @@ mod tests {
         assert_eq!(app.world().resource::<Minimap>().town, 0);
         assert_eq!(base(&mut app), castex_base);
         assert_eq!(app.world().resource::<Assets<Image>>().len(), images);
+    }
+
+    #[test]
+    fn the_errand_target_is_marked_and_pinned_to_the_edge_when_off_the_map() {
+        let mut app = headless_app();
+        app.update();
+        assert_eq!(app.world().resource::<Minimap>().target_px, None);
+        // Another town, far to the west: pinned to the west edge.
+        let far = GroundVec2::new(-3000.0, 0.0);
+        app.insert_resource(MapTarget(Some(far)));
+        app.update();
+        let minimap = app.world().resource::<Minimap>();
+        let expected = minimap.frame.to_map_clamped(far);
+        let (at, on_map) = minimap.target_px.expect("target marked");
+        assert!(!on_map);
+        assert!(at.distance(expected.0) < 1e-3);
+        assert!((at.x - raster::EDGE).abs() < 1e-3, "{at:?}");
+        let data = {
+            let images = app.world().resource::<Assets<Image>>();
+            images.get(&minimap.markers).unwrap().data.clone().unwrap()
+        };
+        let i = (at.y as usize * MAP_PX + at.x as usize) * 4;
+        assert_eq!(data[i..i + 4], palette::TARGET);
+        // Inside the shown town: drawn where it is.
+        let near = app.world().resource::<WorldTowns>().0[0].plaza.center();
+        app.insert_resource(MapTarget(Some(near)));
+        app.update();
+        let minimap = app.world().resource::<Minimap>();
+        let (at, on_map) = minimap.target_px.unwrap();
+        assert!(on_map && at.distance(minimap.frame.to_map(near)) < 1e-3);
+        // Errand done: no marker.
+        app.insert_resource(MapTarget(None));
+        app.update();
+        assert_eq!(app.world().resource::<Minimap>().target_px, None);
     }
 
     #[test]
