@@ -9,8 +9,10 @@ default) streamed in chunks under dust fog, a player who goes on foot or on
 horseback, a follow camera, settlements and a first errand. The towns are
 small railway towns loosely inspired by 1920s–1930s La Pampa towns such as
 Eduardo Castex (not a historical reconstruction), each at its own place in the
-world. The player gets off the morning train on foot at the Monte Nievas
-platform, collides with buildings and cannot leave the world.
+world. The player starts on foot on top of the Monte Nievas platform, beside
+the coaches of the morning train, collides with buildings and cannot leave the
+world. The platform is a raised floor, not a wall: short ramps lead down from
+both ends, and its long sides are steps to walk up or off.
 
 The town is alive: townsfolk wander the streets between intersections, a
 saddled horse stands tied at a hitching rail in front of the general store,
@@ -60,8 +62,8 @@ centered map.
 
 ### The first errand
 
-The player arrives on foot. At the Monte Nievas platform, beside the morning
-train, the objective reads "Buscá a Don Hidalgo en la plaza". Don Hidalgo
+The player arrives on foot. On top of the Monte Nievas platform, beside the
+morning train's coaches, the objective reads "Buscá a Don Hidalgo en la plaza". Don Hidalgo
 stands in the plaza; press `F` within about 3 m to talk. Monte Nievas has no
 comisaría, so he sends the player to report to comisario Elías Farach at the
 Castex comisaría, and lends his horse, the one tied at the general store. His
@@ -165,7 +167,9 @@ The rule: **game logic never knows how things are drawn.**
 - The errand is a `core` state machine (`Errand`: `MeetHidalgo`, `TakeHorse`,
   `ReportToFarach`, `Done`), one enum variant per stage, each transition
   guarded by range and stage so it fires once. `core` also says where people
-  stand (`TownLayout::plaza_spot`, `police_door`, `platform_spot`); the game
+  stand (`TownLayout::plaza_spot`, `police_door`, `platform_spot`), and how
+  high the ground is (`World::ground_height`: the terrain, raised by the
+  platforms' `Floor`s and their ramps); the game
   reads the `F` key and plays the lines; render draws the HUD and the target.
 - Bumps are decided in `core` (`BumpTracker`: speed threshold, gait severity,
   per-walker cooldown; `LinePicker`: seeded, no immediate repeats); the words come
