@@ -103,7 +103,14 @@ cargo test --workspace
 - **T2** done in `c9edb4b` `feat(world): lay out Castex, Monte Nievas and General Pico`. Route: delegated writer.
   - `towns.ron` holds Monte Nievas, Eduardo Castex and General Pico (8x8, seed 13) in the 8000 m world, with no placement warnings. The README documents the geography and the size tiers.
   - Checks: fmt OK, clippy clean, `cargo test --workspace` OK (core 142, render 72, game 43, content 17).
-- The acceptance criterion "General Pico has two plazas and two general stores" predates the tiered rule. Under it, Pico has two plazas, four general stores and two police stations, and the tests assert that.
+- The acceptance criterion now matches the size tiers (`38df1e4`).
+- **PR1 native review:**
+  - Assessment: medium risk, `slice_budget_reached`, 13 files, 1655 lines.
+  - Consent granted. One lens (reliability). Approved, then acknowledged. Lineage `review-d88fa1eab3068f87`.
+  - `.atl/` is excluded locally through `.git/info/exclude`, at the user's choice.
+  - Advisory findings (non-blocking):
+    - `R3-plaza-span-underflow` (town.rs:802-811): `(n - len) / 2` underflows on a grid thinner than the plaza span. This cannot happen today, because `TownConfig::MIN_BLOCKS = 3` rejects every grid under 3×3 and the largest span is 2. It is worth a guard if that minimum ever drops.
+    - `R3-noncentered-big-plaza-untested`: there is no test for big towns with `Block` or `FacingStation` plaza placement.
 
 ## Next step
 
@@ -113,3 +120,4 @@ T3 (PR2): the `RailLine` network on `feat/rail-line`, branched from `feat/town-r
 
 - Trains running the whole line between towns. Trains stay per town for now.
 - A curved transition where the town track meets the diagonal link.
+- Tests for big and very big towns with `Block` and `FacingStation` plaza placement (review finding `R3-noncentered-big-plaza-untested`).
