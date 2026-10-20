@@ -209,24 +209,21 @@ impl TownLayout {
         ))
     }
 
-    /// Where a passenger steps off the train: on the ground just past the
-    /// town end of the platform, beside the track, facing town. `None`
-    /// without a platform.
+    /// Where a passenger steps off the train: on top of the platform, half
+    /// way along it (where the middle of the coaches stops), a step in from
+    /// its track edge, facing town. `None` without a platform.
     pub fn platform_spot(&self) -> Option<(Vec2, Heading)> {
         let platform = self
             .buildings
             .iter()
             .find(|b| b.kind == BuildingKind::Platform)?;
-        // The platform faces the track.
+        // The platform faces the track. The station, and so the coaches
+        // standing at it, are centered on the platform along the track.
         let track = side_normal(platform.front);
-        let along = Vec2::new(track.y.abs(), track.x.abs());
         let p = platform.footprint;
         let half = p.size() * 0.5;
-        let half_along = along.x * half.x + along.y * half.y;
         let half_depth = track.x.abs() * half.x + track.y.abs() * half.y;
-        let at = p.center()
-            + along * (half_along + PLATFORM_SPOT_PAST_END)
-            + track * (half_depth + PLATFORM_SPOT_TOWARD_TRACK);
+        let at = p.center() + track * (half_depth - PLATFORM_SPOT_FROM_EDGE);
         Some((at, heading_of(track * -1.0)))
     }
 
@@ -257,13 +254,10 @@ fn plaza_sign(plaza: Aabb) -> Sign {
 const PLAZA_SPOT_DISTANCE: f32 = 6.0;
 /// How far out from a facade [`TownLayout::police_door`] is, in meters.
 const DOOR_SPOT_DISTANCE: f32 = 2.0;
-/// How far past the platform's end [`TownLayout::platform_spot`] is, in
-/// meters.
-const PLATFORM_SPOT_PAST_END: f32 = 2.5;
-/// How far from the platform's track edge toward the track
-/// [`TownLayout::platform_spot`] is, in meters: the track runs 4 m out, so
-/// this leaves room beside a 3 m wide train.
-const PLATFORM_SPOT_TOWARD_TRACK: f32 = 1.0;
+/// How far in from the platform's track edge [`TownLayout::platform_spot`]
+/// is, in meters: the track runs 4 m out from that edge, so this leaves
+/// 3.5 m to a 3 m wide train, and stays clear of the station canopy's posts.
+const PLATFORM_SPOT_FROM_EDGE: f32 = 1.0;
 
 /// The world axis nearest the direction of `v` (south for zero).
 fn axis_toward(v: Vec2) -> Vec2 {
@@ -646,7 +640,7 @@ mod tests {
     }
 
     #[test]
-    fn the_platform_spot_is_beside_the_track_past_the_platform_facing_town() {
+    fn the_platform_spot_is_on_the_platform_by_the_track_facing_town() {
         let mut checked = 0;
         for t in sample_towns() {
             let Some(platform) = building(&t, BuildingKind::Platform) else {
@@ -656,35 +650,81 @@ mod tests {
             let railway = t.railway.unwrap();
             let (at, heading) = t.platform_spot().unwrap();
             let track = side_normal(platform.front);
-            // Clear of every obstacle by more than a person's radius.
+            // On the platform, clear of every obstacle by more than a
+            // person's radius.
+            assert!(platform.footprint.contains_point(at), "{}", t.name);
             assert!(
                 clearance(&t, at) > crate::Rider::PERSON_RADIUS + 0.5,
                 "{}: {}",
                 t.name,
                 clearance(&t, at)
             );
-            // Beside the track, clear of a train standing on it.
+            // Near its track edge, clear of a train standing on the track.
             let off_track = (railway.start - at).dot(track).abs();
             let car_half = crate::LineTrain::WIDTH / 2.0;
             assert!(
-                off_track > car_half + crate::Rider::PERSON_RADIUS + 0.5 && off_track < 4.5,
+                off_track > car_half + crate::Rider::PERSON_RADIUS + 1.0 && off_track < 5.5,
                 "{}: {off_track}",
                 t.name
             );
-            // Just past one end of the platform along the track.
+            // Half way along it, where the coaches stop.
             let along = Vec2::new(track.y.abs(), track.x.abs());
-            let (lo, hi) = (
-                platform.footprint.min.dot(along),
-                platform.footprint.max.dot(along),
-            );
-            let a = at.dot(along);
-            assert!(a > hi && a < hi + 5.0, "{}: {a} vs {hi}", t.name);
-            assert!(lo < hi);
+            let middle = platform.footprint.center().dot(along);
+            assert!((at.dot(along) - middle).abs() < 1e-3, "{}", t.name);
             // Facing town: away from the track.
             assert_eq!(heading.forward().dot(track).round(), -1.0, "{}", t.name);
             checked += 1;
         }
         assert!(checked > 3);
+    }
+
+    #[test]
+    fn the_game_starts_on_the_platform_beside_the_dwelling_coaches() {
+        use crate::{BASE_RATE, CarKind, Circle, GameClock, LinePhase, LineTrain, Rider};
+        let (towns, line) = crate::rail::tests::shipped();
+        let first = &towns[0];
+        let mut train =
+            LineTrain::new(&line, &towns, crate::Timetable::default()).expect("a line train");
+        // As the game begins: the morning train standing at the first town.
+        let clock = GameClock::at(train.first_stop_at(0).unwrap());
+        train.advance(0.0, clock.elapsed(), BASE_RATE);
+        assert_eq!(train.state().phase, LinePhase::Dwelling);
+        let mut world = crate::World::with_towns(
+            crate::WorldConfig {
+                half_extent: crate::WorldConfig::MAX_HALF_EXTENT,
+                ..Default::default()
+            },
+            crate::Terrain::default(),
+            &towns,
+        );
+        world.moving = train.obstacles();
+        let (at, heading) = first.platform_spot().unwrap();
+        let platform = building(first, BuildingKind::Platform).unwrap();
+        // Standing on the platform's top.
+        let ground = world.terrain.height(at.x, at.y);
+        assert_eq!(world.ground_height(at), ground + platform.height);
+        let person = Rider::on_foot(at, heading, &world);
+        assert_eq!(person.height, ground + platform.height);
+        // Beside the middle of the coaches, just across from them.
+        let coaches: Vec<_> = train
+            .placed_cars()
+            .into_iter()
+            .filter(|c| c.kind == CarKind::Coach)
+            .collect();
+        assert_eq!(coaches.len(), 2);
+        let middle = (coaches[0].center + coaches[1].center) * 0.5;
+        let d = coaches[0].direction;
+        let along = (at - middle).dot(d).abs();
+        let across = (at - middle).dot(Vec2::new(-d.y, d.x)).abs();
+        assert!(along < 1.0, "{along}");
+        let reach = LineTrain::WIDTH / 2.0 + Rider::PERSON_RADIUS + 1.0;
+        assert!(across > reach && across < reach + 3.0, "{across}");
+        // Clear of every car and of everything built: nothing moves them.
+        let c = Circle::new(Rider::PERSON_RADIUS);
+        assert_eq!(world.resolve(c, at, |_| ()), at);
+        for car in &world.moving {
+            assert!(car.push_out(c, at).is_none(), "{car:?}");
+        }
     }
 
     #[test]

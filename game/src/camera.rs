@@ -9,11 +9,11 @@
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
-use pampa_core::{Aabb, Terrain, TownLayout, Travel, Vec2 as GroundVec2};
-use pampa_render::{WorldTerrain, world_from_ground};
+use pampa_core::{Aabb, BuildingKind, Ground, Terrain, TownLayout, Travel, Vec2 as GroundVec2};
+use pampa_render::world_from_ground;
 
 use crate::orbit::{Orbit, OrbitInput, OrbitParams};
-use crate::player::{DrivePlayer, Player};
+use crate::player::{DrivePlayer, GameWorld, Player};
 
 /// How the camera follows the rider.
 #[derive(Component, Debug, Clone, Copy)]
@@ -25,7 +25,7 @@ pub struct FollowCamera {
     pub on_foot_look_height: f32,
     /// Exponential catch-up rate of the look-at point (higher = snappier).
     pub smoothing: f32,
-    /// Minimum clearance above the terrain under the camera.
+    /// Minimum clearance above the ground (or platform) under the camera.
     pub ground_clearance: f32,
     /// Farther than this from the rider, the camera jumps behind it instead
     /// of gliding (first frame, respawns).
@@ -88,11 +88,14 @@ impl CameraOccluders {
         )
     }
 
-    /// Every building of `town`, standing on `terrain`.
+    /// Every building of `town`, standing on `terrain`. The platform is
+    /// left out: it is a floor the player stands on, and the camera's
+    /// ground clearance keeps it above it.
     pub fn from_town(town: &TownLayout, terrain: &Terrain) -> Self {
         Self(
             town.buildings
                 .iter()
+                .filter(|b| b.kind != BuildingKind::Platform)
                 .map(|b| {
                     let c = b.footprint.center();
                     Occluder {
@@ -234,7 +237,7 @@ fn gather_camera_input(
 
 fn follow_player(
     time: Res<Time>,
-    terrain: Res<WorldTerrain>,
+    world: Res<GameWorld>,
     occluders: Res<CameraOccluders>,
     tuning: Res<CameraTuning>,
     input: Res<CameraInput>,
@@ -262,7 +265,7 @@ fn follow_player(
             .0
             .insert((Orbit::behind(rider.heading.radians()), target)),
     };
-    let desired = follow.desired(focus, &orbit, &terrain.0);
+    let desired = follow.desired(focus, &orbit, &world.0);
     // Keep the line of sight to the rider itself clear.
     transform.translation = pull_in(target, desired, &occluders.0);
     transform.look_at(focus, Vec3::Y);
@@ -270,12 +273,14 @@ fn follow_player(
 
 impl FollowCamera {
     /// Unobstructed camera spot on `orbit` around the look-at point
-    /// `focus`, kept above the terrain.
-    pub fn desired(&self, focus: Vec3, orbit: &Orbit, terrain: &Terrain) -> Vec3 {
-        let (ground, height) = orbit.offset();
-        let mut desired = focus + world_from_ground(ground, height);
-        // Keep the camera from sinking into a rise behind the rider.
-        let floor = terrain.height(desired.x, -desired.z) + self.ground_clearance;
+    /// `focus`, kept above the ground (pass the world, so platforms count).
+    pub fn desired(&self, focus: Vec3, orbit: &Orbit, ground: &(impl Ground + ?Sized)) -> Vec3 {
+        let (offset, height) = orbit.offset();
+        let mut desired = focus + world_from_ground(offset, height);
+        // Keep the camera from sinking into a rise or a platform behind
+        // the rider.
+        let below = GroundVec2::new(desired.x, -desired.z);
+        let floor = ground.ground_height(below) + self.ground_clearance;
         desired.y = desired.y.max(floor);
         desired
     }
@@ -306,7 +311,6 @@ mod tests {
                 FRAME,
             )))
             .init_resource::<ButtonInput<KeyCode>>()
-            .insert_resource(WorldTerrain(world.terrain.clone()))
             .insert_resource(GameWorld(world))
             .insert_resource(spawn)
             .insert_resource(occluders)
@@ -370,9 +374,9 @@ mod tests {
         let r = rider(&mut app);
         let follow = FollowCamera::default();
         let focus = world_from_ground(r.position, r.height) + Vec3::Y * follow.look_height;
-        let terrain = app.world().resource::<WorldTerrain>().0.clone();
+        let world = app.world().resource::<GameWorld>().0.clone();
         let behind = Orbit::behind(r.heading.radians());
-        let expected = follow.desired(focus, &behind, &terrain);
+        let expected = follow.desired(focus, &behind, &world);
         let at = camera(&mut app).translation;
         assert!(at.distance(expected) < 1e-4, "{at} vs {expected}");
         assert!(at.z > focus.z, "south of a rider facing north");
@@ -603,8 +607,8 @@ mod tests {
             let cam = camera(&mut app).translation;
             assert_outside(&occluders, cam, &format!("yaw {yaw}"));
             let (orbit, focus) = rig(&mut app);
-            let terrain = app.world().resource::<WorldTerrain>().0.clone();
-            let desired = FollowCamera::default().desired(focus, &orbit, &terrain);
+            let world = app.world().resource::<GameWorld>().0.clone();
+            let desired = FollowCamera::default().desired(focus, &orbit, &world);
             if pull_in(focus, desired, &occluders.0) != desired {
                 pulled += 1;
             }
@@ -636,5 +640,54 @@ mod tests {
             "{heights:?}"
         );
         assert!(follow.on_foot_look_height < follow.look_height);
+    }
+
+    #[test]
+    fn on_the_platform_the_camera_stays_above_it_and_is_not_blocked_by_it() {
+        let town = TownLayout::castex_inspired();
+        let world = World::with_town(Terrain::default(), &town);
+        let occluders = CameraOccluders::from_town(&town, &world.terrain);
+        let platform = town
+            .buildings
+            .iter()
+            .find(|b| b.kind == BuildingKind::Platform)
+            .unwrap();
+        // A floor, not a wall: the camera may look across it.
+        assert!(
+            occluders
+                .0
+                .iter()
+                .all(|o| o.footprint != platform.footprint)
+        );
+        assert_eq!(occluders.0.len(), town.buildings.len() - 1);
+        let (position, heading) = town.platform_spot().unwrap();
+        let top = world.ground_height(position);
+        let spawn = PlayerSpawn {
+            position,
+            heading,
+            travel: pampa_core::Travel::OnFoot,
+        };
+        let mut app = headless_app(world.clone(), spawn, occluders.clone());
+        app.update();
+        // The player stands on the platform's top.
+        assert_eq!(rider(&mut app).height, top);
+        let follow = FollowCamera::default();
+        for step in 0..72 {
+            let yaw = step as f32 * 5f32.to_radians();
+            set_yaw(&mut app, yaw);
+            app.update();
+            let cam = camera(&mut app).translation;
+            assert_outside(&occluders, cam, &format!("yaw {yaw}"));
+            // Never down in the platform or the ground beside it.
+            let floor = world.ground_height(ground(cam));
+            assert!(cam.y > floor + 0.5, "yaw {yaw}: {cam} over {floor}");
+            let (orbit, focus) = rig(&mut app);
+            let desired = follow.desired(focus, &orbit, &world);
+            let under = world.ground_height(ground(desired));
+            assert!(
+                desired.y >= under + follow.ground_clearance - 1e-4,
+                "{desired}"
+            );
+        }
     }
 }

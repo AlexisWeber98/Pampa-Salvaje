@@ -63,7 +63,8 @@ world is used.
 ### Towns
 
 The game builds **every town** in the list, each at its own `origin`. The
-player starts at the first one, on the road into town; the others appear
+player starts at the first one, on its station platform (on the road into
+town when it has no railway); the others appear
 (with their signs and people) as you ride towards them. Roads between
 towns will come later; the railway line already joins them (see "The railway
 line").
@@ -149,8 +150,9 @@ code (`pampa_core::Timetable`), not in this file: it leaves the first town
 at 07:00, lays over at the last one, leaves it at 16:00 and spends the night
 at the first town. It tops out at 65 km/h and stands 25 s at each station
 partway through a run. The day begins with that morning train standing at
-the first town of the `towns` list, where the player gets off on foot (on
-the ground just past the platform's end, beside the train). The train runs
+the first town of the `towns` list, where the player starts on foot on top
+of the platform, half way along it, beside the coaches. The platform is a
+raised floor with a short ramp at each end, not an obstacle. The train runs
 as far as the line is unbroken: a link left out ends its run at the town
 before it, and a line with fewer than two stations has no train.
 

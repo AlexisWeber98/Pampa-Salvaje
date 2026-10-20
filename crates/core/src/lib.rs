@@ -7,7 +7,8 @@
 //!
 //! Logic lives on a 2D ground plane: `x` points east, `y` points north.
 //! Height above the ground plane is a separate scalar sampled from
-//! [`Terrain`]. Angles are radians, counter-clockwise from east, so a
+//! [`World::ground_height`]: the [`Terrain`], raised by station platforms
+//! ([`Floor`]). Angles are radians, counter-clockwise from east, so a
 //! positive turn is a turn to the left.
 
 pub mod activation;
@@ -48,7 +49,7 @@ pub use rail::{LinePath, RailCurve, RailLine, RailLineError, RailLink, RailSpan}
 pub use rider::{MAX_STEP, Rider, RiderInput, RiderParams};
 pub use terrain::{FlatArea, Terrain};
 pub use town::{
-    Building, BuildingKind, HitchingPost, PlazaPlacement, Railway, RailwayConfig, Side,
+    Building, BuildingKind, Floor, HitchingPost, PlazaPlacement, Railway, RailwayConfig, Side,
     TetheredHorse, TownConfig, TownConfigError, TownLayout, TownSize,
 };
 pub use townsfolk::{StreetGraph, Townsfolk, Townsperson};
@@ -56,4 +57,4 @@ pub use train::{
     Car, CarKind, LinePhase, LineTrain, LineTrainState, PlacedCar, Run, Station, Timetable,
 };
 pub use walker::Travel;
-pub use world::{World, WorldBounds};
+pub use world::{Ground, World, WorldBounds};

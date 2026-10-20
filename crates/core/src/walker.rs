@@ -6,7 +6,7 @@
 //! ([`RiderParams::on_foot`]: a 6 km/h walk and an 18 km/h jog) and the body (a
 //! person-sized collider) differ.
 
-use crate::{Circle, Heading, Rider, RiderParams, Terrain, TetheredHorse, Vec2};
+use crate::{Circle, Ground, Heading, Rider, RiderParams, TetheredHorse, Vec2};
 
 /// How the player gets around.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -22,18 +22,19 @@ impl Rider {
     /// Collision radius of a person on foot seen from above, in meters.
     pub const PERSON_RADIUS: f32 = 0.3;
 
-    /// A person standing on foot at `position`, facing `heading`.
-    pub fn on_foot(position: Vec2, heading: Heading, terrain: &Terrain) -> Self {
+    /// A person standing on foot at `position`, facing `heading`, on
+    /// `ground` (pass the [`crate::World`] so platforms count).
+    pub fn on_foot(position: Vec2, heading: Heading, ground: &(impl Ground + ?Sized)) -> Self {
         Self {
             collider: Circle::new(Self::PERSON_RADIUS),
-            ..Self::new(position, heading, terrain)
+            ..Self::new(position, heading, ground)
         }
     }
 
     /// The horseback rider this person becomes on mounting `horse`: in the
     /// saddle where the horse stands, facing the way it faces, at rest.
-    pub fn mount(&self, horse: &TetheredHorse, terrain: &Terrain) -> Self {
-        Self::new(horse.position, horse.heading, terrain)
+    pub fn mount(&self, horse: &TetheredHorse, ground: &(impl Ground + ?Sized)) -> Self {
+        Self::new(horse.position, horse.heading, ground)
     }
 
     /// How this body gets around: a person-sized collider is on foot.
@@ -67,7 +68,7 @@ impl RiderParams {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AnimationState, RiderInput, World};
+    use crate::{AnimationState, Floor, RiderInput, Terrain, World};
 
     const DT: f32 = 1.0 / 60.0;
 
@@ -79,11 +80,7 @@ mod tests {
 
     fn walker() -> (Rider, RiderParams, World) {
         let world = World::default();
-        let r = Rider::on_foot(
-            Vec2::new(5.0, 5.0),
-            Heading::from_radians(0.0),
-            &world.terrain,
-        );
+        let r = Rider::on_foot(Vec2::new(5.0, 5.0), Heading::from_radians(0.0), &world);
         (r, RiderParams::on_foot(), world)
     }
 
@@ -140,13 +137,60 @@ mod tests {
         assert!((r.position.x - face).abs() < 1e-3, "x = {}", r.position.x);
     }
 
+    /// Walks `person` with `input` for `seconds`, returning the ground
+    /// height at every step.
+    fn walk(person: &mut Rider, input: RiderInput, world: &World, seconds: f32) -> Vec<f32> {
+        let p = RiderParams::on_foot();
+        (0..(seconds / DT) as usize)
+            .map(|_| {
+                person.step(input, &p, world, DT);
+                person.height
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_person_walks_off_the_platform_into_town_down_a_ramp_or_its_edge() {
+        let town = crate::TownLayout::castex_inspired();
+        let world = World::with_town(Terrain::default(), &town);
+        let floor = town.floors()[0];
+        let (start, facing) = town.platform_spot().unwrap();
+        let top = world.ground_height(start);
+        let ground = |r: &Rider| world.terrain.height(r.position.x, r.position.y);
+        let forward = RiderInput {
+            throttle: 1.0,
+            ..Default::default()
+        };
+
+        // Along the platform and down the ramp at its end, never stuck.
+        let mut person = Rider::on_foot(start, Heading::from_radians(0.0), &world);
+        person.heading = Heading::from_radians(floor.along.y.atan2(floor.along.x));
+        assert_eq!(person.height, top);
+        let heights = walk(&mut person, forward, &world, 24.0);
+        let travelled = (person.position - start).dot(floor.along);
+        let to_foot = floor.footprint.size().dot(floor.along) / 2.0 + Floor::RAMP_LENGTH;
+        assert!(travelled > to_foot + 2.0, "stuck at {travelled}");
+        assert!(heights.windows(2).all(|w| w[1] <= w[0] + 1e-4));
+        assert_eq!(person.height, ground(&person));
+
+        // Off the town side, past the station building, into the yard.
+        let beside_station = start + floor.along * 20.0;
+        let mut person = Rider::on_foot(beside_station, facing, &world);
+        assert_eq!(person.height, top);
+        walk(&mut person, forward, &world, 10.0);
+        let off = (person.position - beside_station).dot(facing.forward());
+        assert!(off > 12.0, "stuck after {off} m");
+        assert!(!floor.footprint.contains_point(person.position));
+        assert_eq!(person.height, ground(&person));
+    }
+
     #[test]
     fn mounting_puts_the_rider_on_the_horse_facing_its_way() {
         let town = crate::TownLayout::castex_inspired();
         let world = World::with_town(Terrain::default(), &town);
         let horse = town.hitching_post.horse;
         let (person, _, _) = walker();
-        let rider = person.mount(&horse, &world.terrain);
+        let rider = person.mount(&horse, &world);
         assert_eq!(rider.position, horse.position);
         assert_eq!(rider.heading, horse.heading);
         assert_eq!(rider.speed, 0.0);
@@ -164,7 +208,7 @@ mod tests {
         let mut world = World::with_town(Terrain::default(), &town);
         let horse = town.hitching_post.horse;
         let (person, _, _) = walker();
-        let mounted = person.mount(&horse, &world.terrain);
+        let mounted = person.mount(&horse, &world);
         let settle = |world: &World| {
             let mut rider = mounted;
             rider.step(RiderInput::default(), &RiderParams::default(), world, DT);

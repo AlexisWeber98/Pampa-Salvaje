@@ -584,7 +584,7 @@ mod tests {
         };
         // Start right on top of the first person.
         let at = folk.people[0].position;
-        let mut rider = crate::Rider::new(at, Heading::from_radians(0.0), &world.terrain);
+        let mut rider = crate::Rider::new(at, Heading::from_radians(0.0), &world);
         let mut shoved = 0;
         for frame in 0..(120.0 / MAX_STEP) as usize {
             folk.step_around(&world, &[rider.body()], MAX_STEP);
@@ -643,7 +643,7 @@ mod tests {
         let mut folk = Townsfolk::from_graph(graph, 1, 1);
         folk.people[0].position = Vec2::new(0.0, -0.3);
         let north = Heading::from_radians(std::f32::consts::FRAC_PI_2);
-        let mut rider = crate::Rider::new(Vec2::new(0.0, -6.0), north, &world.terrain);
+        let mut rider = crate::Rider::new(Vec2::new(0.0, -6.0), north, &world);
         let params = crate::RiderParams::default();
         let walk = crate::RiderInput {
             throttle: 1.0,

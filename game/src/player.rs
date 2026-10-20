@@ -89,10 +89,11 @@ impl Plugin for PlayerPlugin {
 }
 
 fn spawn_player(mut commands: Commands, world: Res<GameWorld>, spawn: Res<PlayerSpawn>) {
-    let terrain = &world.0.terrain;
+    // On the world's ground, so a spawn on the platform stands on its top.
+    let ground = &world.0;
     let rider = match spawn.travel {
-        Travel::OnFoot => Rider::on_foot(spawn.position, spawn.heading, terrain),
-        Travel::Riding => Rider::new(spawn.position, spawn.heading, terrain),
+        Travel::OnFoot => Rider::on_foot(spawn.position, spawn.heading, ground),
+        Travel::Riding => Rider::new(spawn.position, spawn.heading, ground),
     };
     commands.spawn((
         Name::new("Player"),

@@ -57,7 +57,7 @@ Three chained PRs, as the user requested:
 
 ## Errand story (user, 2026-10-20; supersedes the errand bullets above where they differ)
 
-- The player arrives **on foot** at Monte Nievas by train. The game starts with the player standing on the platform next to the stopped train.
+- The player arrives **on foot** at Monte Nievas by train. The game starts with the player standing on the platform next to the stopped train. **Now literally on it** (pampa-art T1, `feat/platform-start`): the platform is a walkable raised floor with ramps at its ends, and the start is on its top beside the middle of the coaches, facing town.
 - ~~A few seconds later the train leaves and does not come back this session ("the train passes once a day").~~ **Superseded** (user-approved, 2026-10-20) by the line-train timetable: one train runs the line and passes each station twice a day, so it leaves Monte Nievas after its dwell and comes back on its up run in the evening. See `odd/tasks/line-train.md`, "Rules chosen".
 - The player walks to the plaza and meets **Don Hidalgo**, a static NPC.
 - Monte Nievas has no police station, so Hidalgo tells the player to report to **comisario Elías Farach** at the Castex comisaría.
@@ -174,7 +174,7 @@ The user reviews and commits the errand PR (T5/T6 and the no-comisaría override
 - Dismounting (no dismount yet), and leaving the horse somewhere.
 - ~~Monte Nievas still has a COMISARÍA under the size-tier rule.~~ **Fixed:** the per-town `police_stations` override in `towns.ron` (see Progress / Evidence); Monte Nievas ships with `Some(0)`.
 - ~~The intro's one-shot train departure.~~ **Resolved by decision:** the train keeps its twice-a-day timetable (`odd/tasks/line-train.md`); the "does not come back" bullet in the Errand story is superseded.
-- The platform is a solid 0.9 m obstacle, so the player starts on the ground just past its end, not on top of it.
+- ~~The platform is a solid 0.9 m obstacle, so the player starts on the ground just past its end, not on top of it.~~ **Resolved** by pampa-art T1: the platform is a walkable floor and the player starts on top of it.
 
 - PR2 review (lineage `review-292e75db8cb4f043`, approved and acknowledged) left two advisory findings:
   - `R3-line-track-parent-relative-transform`: line track pieces use world coordinates under `ChildOf(chunk)`. This is correct today because chunks spawn with `Transform::default()` (render/terrain.rs:220), but it would break if chunks ever get an offset. Add a `GlobalTransform` test.

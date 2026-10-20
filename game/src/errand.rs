@@ -94,8 +94,9 @@ pub fn plan(towns: &[TownLayout], world: &mut World) -> Option<(ErrandRun, Cast)
     Some((ErrandRun(errand), cast))
 }
 
-/// Where the player starts: on foot beside the train at the first town's
-/// platform, facing town (on the road in when it has no platform).
+/// Where the player starts: on foot on top of the first town's platform,
+/// beside the coaches of the morning train standing there, facing town (on
+/// the road in when it has no platform).
 pub fn player_start(town: &TownLayout) -> (GroundVec2, Heading) {
     town.platform_spot().unwrap_or_else(|| town.arrival())
 }
@@ -196,7 +197,7 @@ fn interact(
                 }
             }
             let rider = &mut player.rider;
-            *rider = rider.mount(&horse, &world.0.terrain);
+            *rider = rider.mount(&horse, &world.0);
             transform.translation = world_from_ground(rider.position, rider.height);
             // A new sprite: drop the gaucho's billboard, draw the rider.
             for (billboard, parent) in &billboards {
@@ -390,8 +391,9 @@ mod tests {
         let (horse_town, horse) = e.horse();
         let farach = e.standing(Npc::Farach).position;
 
-        // On foot on the Monte Nievas platform, beside the dwelling train,
-        // facing town; standing still leaves the player where they are.
+        // On foot on top of the Monte Nievas platform, beside the dwelling
+        // train's coaches, facing town; standing still leaves the player
+        // where they are.
         let (start, facing) = player_start(&app.world().resource::<WorldTowns>().0[0]);
         for _ in 0..10 {
             app.update();
@@ -404,6 +406,10 @@ mod tests {
             p.rider.position
         );
         assert_eq!(p.rider.heading, facing);
+        // Up on the platform's top, not on the ground beside it.
+        let world = app.world().resource::<GameWorld>().0.clone();
+        assert_eq!(p.rider.height, world.ground_height(start));
+        assert!(p.rider.height > world.terrain.height(start.x, start.y) + 0.5);
         assert_eq!(
             objective(&app).as_deref(),
             ErrandStage::MeetHidalgo.objective()

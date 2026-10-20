@@ -1,6 +1,6 @@
 //! Kinematic rider (horse + outlaw) model.
 
-use crate::{AnimationState, Body, Circle, Heading, Terrain, Vec2, World};
+use crate::{AnimationState, Body, Circle, Ground, Heading, Vec2, World};
 
 /// Longest step the game feeds the simulation, in seconds, so a hitch never
 /// teleports anything. [`Rider::step`] stays safe for longer steps anyway.
@@ -55,7 +55,8 @@ pub struct RiderInput {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Rider {
     pub position: Vec2,
-    /// Ground height under the rider, kept in sync with the terrain.
+    /// Ground height under the rider ([`World::ground_height`]: the terrain
+    /// or a platform), kept in sync as it moves.
     pub height: f32,
     pub heading: Heading,
     /// Signed speed along the heading, in m/s.
@@ -88,10 +89,12 @@ impl Rider {
         }
     }
 
-    pub fn new(position: Vec2, heading: Heading, terrain: &Terrain) -> Self {
+    /// A horseback rider at rest at `position`, standing on `ground`
+    /// (pass the [`World`] so platforms count).
+    pub fn new(position: Vec2, heading: Heading, ground: &(impl Ground + ?Sized)) -> Self {
         Self {
             position,
-            height: terrain.height(position.x, position.y),
+            height: ground.ground_height(position),
             heading,
             speed: 0.0,
             collider: Circle::new(Self::COLLIDER_RADIUS),
@@ -117,7 +120,7 @@ impl Rider {
         for _ in 0..n {
             self.substep(input, params, world, sub_dt);
         }
-        self.height = world.terrain.height(self.position.x, self.position.y);
+        self.height = world.ground_height(self.position);
     }
 
     /// One collision sub-step with already sanitized input.
@@ -173,7 +176,7 @@ impl Rider {
         for normal in normals {
             self.block(normal);
         }
-        self.height = world.terrain.height(self.position.x, self.position.y);
+        self.height = world.ground_height(self.position);
     }
 
     pub fn animation(&self, params: &RiderParams) -> AnimationState {
@@ -220,18 +223,14 @@ fn next_speed(speed: f32, throttle: f32, gallop: bool, p: &RiderParams, dt: f32)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Aabb;
+    use crate::{Aabb, Terrain};
     use std::f32::consts::FRAC_PI_4;
 
     const DT: f32 = 1.0 / 60.0;
 
     fn rider() -> (Rider, RiderParams, World) {
         let world = World::default();
-        let r = Rider::new(
-            Vec2::new(3.0, -2.0),
-            Heading::from_radians(0.0),
-            &world.terrain,
-        );
+        let r = Rider::new(Vec2::new(3.0, -2.0), Heading::from_radians(0.0), &world);
         (r, RiderParams::default(), world)
     }
 
@@ -491,7 +490,7 @@ mod tests {
         let mut r = Rider::new(
             trunk - Vec2::new(10.0, 0.0),
             Heading::from_radians(0.0),
-            &world.terrain,
+            world,
         );
         r.speed = params.gallop_max;
         let gallop = RiderInput {
@@ -562,7 +561,7 @@ mod tests {
         let world = World::with_town(Terrain::default(), town);
         let p = RiderParams::default();
         let (start, heading) = town.arrival();
-        let mut r = Rider::new(start, heading, &world.terrain);
+        let mut r = Rider::new(start, heading, &world);
         let mut contacts = 0;
         for frame in 0..(seconds / DT) as usize {
             // Wander: gallop with a slowly changing turn.

@@ -208,7 +208,7 @@ fn populate_towns(
 /// An errand person standing still where the errand put them.
 fn spawn_standing_npc(commands: &mut Commands, npc: Npc, standing: Standing, world: &GameWorld) {
     let at = standing.position;
-    let height = world.0.terrain.height(at.x, at.y);
+    let height = world.0.ground_height(at);
     commands.spawn((
         Name::new(format!("{npc:?}")),
         StandingNpc {
@@ -226,7 +226,7 @@ fn spawn_standing_npc(commands: &mut Commands, npc: Npc, standing: Standing, wor
 
 fn spawn_walkers(commands: &mut Commands, crowd: &Townsfolk, town: usize, world: &GameWorld) {
     for (index, person) in crowd.people.iter().enumerate() {
-        let height = world.0.terrain.height(person.position.x, person.position.y);
+        let height = world.0.ground_height(person.position);
         commands.spawn((
             Name::new(format!("Townsperson {town}.{index}")),
             Walker { town, index },
@@ -249,7 +249,7 @@ fn spawn_tethered_horse(
     world: &GameWorld,
 ) {
     let horse = layout.hitching_post.horse;
-    let height = world.0.terrain.height(horse.position.x, horse.position.y);
+    let height = world.0.ground_height(horse.position);
     commands.spawn((
         Name::new(format!("Tethered horse {town}")),
         TetheredHorse(town),
@@ -369,7 +369,7 @@ fn place_walkers(
         else {
             continue;
         };
-        let height = world.0.terrain.height(person.position.x, person.position.y);
+        let height = world.0.ground_height(person.position);
         transform.translation = world_from_ground(person.position, height);
         *pose = VisualPose {
             heading: person.heading,
@@ -441,13 +441,13 @@ mod tests {
             app.update();
         }
         let crowd = app.world().resource::<Crowds>().0[0].clone();
-        let terrain = app.world().resource::<GameWorld>().0.terrain.clone();
+        let world = app.world().resource::<GameWorld>().0.clone();
         let walkers = walkers(&mut app);
         assert_eq!(walkers.len(), crowd.people.len());
         for (walker, transform, pose) in walkers {
             assert_eq!(walker.town, 0);
             let person = &crowd.people[walker.index];
-            let height = terrain.height(person.position.x, person.position.y);
+            let height = world.ground_height(person.position);
             assert_eq!(
                 transform.translation,
                 world_from_ground(person.position, height)
