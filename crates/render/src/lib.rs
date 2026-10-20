@@ -9,6 +9,7 @@ pub mod character;
 pub mod coords;
 pub mod font;
 pub mod minimap;
+pub mod rail;
 pub mod signs;
 pub mod streaming;
 pub mod terrain;
@@ -22,6 +23,7 @@ pub use character::{
 };
 pub use coords::world_from_ground;
 pub use minimap::{MapIcon, MinimapPlugin};
+pub use rail::{LineTrack, RailPlugin, WorldRail};
 pub use signs::{SignPlugin, Signboard};
 pub use streaming::{StreamingPlan, StreamingSet};
 pub use terrain::{StreamFocus, TerrainChunk, TerrainPlugin, WorldChunks, WorldTerrain};

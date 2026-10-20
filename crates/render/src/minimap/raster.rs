@@ -7,7 +7,9 @@
 //! clamped to the edge or left off.
 
 use bevy::math::Vec2;
-use pampa_core::{BuildingKind, Heading, PlaceKind, PlacedCar, TownLayout, Vec2 as GroundVec2};
+use pampa_core::{
+    BuildingKind, Heading, PlaceKind, PlacedCar, Railway, TownLayout, Vec2 as GroundVec2,
+};
 
 use crate::font::{self, GLYPH_HEIGHT};
 use crate::terrain::hash2;
@@ -149,9 +151,10 @@ pub mod palette {
 /// Pixel scale of place initials on the map.
 pub const LABEL_SCALE: usize = 2;
 
-/// Paints the town once: paper, streets, plaza, railway, buildings colored by
-/// kind and each named place's initial over it.
-pub fn rasterize_town(town: &TownLayout, frame: &MapFrame) -> Canvas {
+/// Paints the town once: paper, streets, plaza, railway, the railway line's
+/// `links` where they cross the frame, buildings colored by kind and each
+/// named place's initial over it.
+pub fn rasterize_town(town: &TownLayout, links: &[Railway], frame: &MapFrame) -> Canvas {
     let size = frame.size_px;
     let mut map = Canvas::new(size);
     // Aged paper, darker toward the edge.
@@ -189,23 +192,20 @@ pub fn rasterize_town(town: &TownLayout, frame: &MapFrame) -> Canvas {
         map.set(m.x as i32, m.y as i32, [96, 110, 60, 255]);
     }
 
-    // Railway: a dark line with sleeper ticks across it.
+    // Railway: a dark line with sleeper ticks across it, then the links of
+    // the railway line, cut to the frame (they run for kilometers).
     if let Some(rail) = town.railway {
-        let (s, e) = (frame.to_map(rail.start), frame.to_map(rail.end));
-        // Half sizes of a line dot and a tick, oriented to the track.
-        let east_west = (e.x - s.x).abs() >= (e.y - s.y).abs();
-        let (line, tick) = if east_west {
-            (Vec2::new(0.5, 1.0), Vec2::new(0.5, 2.0))
-        } else {
-            (Vec2::new(1.0, 0.5), Vec2::new(2.0, 0.5))
-        };
-        let steps = s.distance(e).ceil() as usize;
-        for k in 0..=steps {
-            let p = s.lerp(e, k as f32 / steps.max(1) as f32);
-            map.fill_rect(p - line, p + line, palette::RAIL);
-            if k % 3 == 0 {
-                map.fill_rect(p - tick, p + tick, palette::RAIL);
-            }
+        track_line(&mut map, frame.to_map(rail.start), frame.to_map(rail.end));
+    }
+    let shown = pampa_core::Aabb::from_center_size(
+        frame.center,
+        GroundVec2::new(2.0 * frame.half_extent, 2.0 * frame.half_extent),
+    );
+    for link in links {
+        if let Some((enter, exit)) = shown.segment_overlap(link.start, link.end) {
+            let along = link.end - link.start;
+            let (from, to) = (link.start + along * enter, link.start + along * exit);
+            track_line(&mut map, frame.to_map(from), frame.to_map(to));
         }
     }
 
@@ -233,6 +233,26 @@ pub fn rasterize_town(town: &TownLayout, frame: &MapFrame) -> Canvas {
     label(&mut map, "N", Vec2::new(16.0, 18.0));
     title(&mut map, &town.name);
     map
+}
+
+/// A track from map pixel `s` to `e`: a dark line with sleeper ticks across
+/// it, both oriented to the track's main direction.
+fn track_line(map: &mut Canvas, s: Vec2, e: Vec2) {
+    // Half sizes of a line dot and a tick, oriented to the track.
+    let east_west = (e.x - s.x).abs() >= (e.y - s.y).abs();
+    let (line, tick) = if east_west {
+        (Vec2::new(0.5, 1.0), Vec2::new(0.5, 2.0))
+    } else {
+        (Vec2::new(1.0, 0.5), Vec2::new(2.0, 0.5))
+    };
+    let steps = s.distance(e).ceil() as usize;
+    for k in 0..=steps {
+        let p = s.lerp(e, k as f32 / steps.max(1) as f32);
+        map.fill_rect(p - line, p + line, palette::RAIL);
+        if k % 3 == 0 {
+            map.fill_rect(p - tick, p + tick, palette::RAIL);
+        }
+    }
 }
 
 /// Writes the town's name, in capitals, centered along the top edge; at
@@ -462,7 +482,7 @@ mod tests {
         })
         .unwrap();
         let frame = MapFrame::for_town(&t, 320);
-        let map = rasterize_town(&t, &frame);
+        let map = rasterize_town(&t, &[], &frame);
         let at = |p: GroundVec2| {
             let m = frame.to_map(p);
             map.get(m.x as usize, m.y as usize)
@@ -478,12 +498,50 @@ mod tests {
     }
 
     #[test]
+    fn the_railway_line_is_painted_where_it_crosses_the_frame() {
+        let t = town();
+        let frame = MapFrame::for_town(&t, 320);
+        let tip = t.railway.unwrap().end;
+        // A link leaving the east tip westward, slowly climbing north over
+        // the open ground beyond the town's track, and one far away.
+        let link = Railway {
+            start: tip,
+            end: GroundVec2::new(-600.0, tip.y + 36.0),
+            gauge: 1.676,
+        };
+        let far = Railway {
+            start: GroundVec2::new(3000.0, 3000.0),
+            end: GroundVec2::new(3500.0, 3600.0),
+            gauge: 1.676,
+        };
+        let on_link = |x: f32| {
+            let f = (x - link.start.x) / (link.end.x - link.start.x);
+            link.start + (link.end - link.start) * f
+        };
+        // Both east of the title along the top edge.
+        let (middle, east) = (on_link(100.0), on_link(150.0));
+        assert!(frame.contains(middle) && frame.contains(east));
+        assert!(middle.y > t.extent().max.y + 5.0, "{middle:?}");
+        let at = |map: &Canvas, p: GroundVec2| {
+            let m = frame.to_map(p);
+            map.get(m.x as usize, m.y as usize)
+        };
+        let without = rasterize_town(&t, &[], &frame);
+        assert_ne!(at(&without, middle)[..3], palette::RAIL[..3]);
+        let with = rasterize_town(&t, &[link, far], &frame);
+        assert_eq!(at(&with, middle)[..3], palette::RAIL[..3]);
+        assert_eq!(at(&with, east)[..3], palette::RAIL[..3]);
+        // The far link leaves the map as it was.
+        assert_eq!(rasterize_town(&t, &[far], &frame), without);
+    }
+
+    #[test]
     fn town_layer_shows_streets_plaza_railway_and_place_letters() {
         let t = town();
         let frame = MapFrame::for_town(&t, 320);
-        let map = rasterize_town(&t, &frame);
+        let map = rasterize_town(&t, &[], &frame);
         assert_eq!(map.pixels.len(), 320 * 320 * 4);
-        assert_eq!(map, rasterize_town(&t, &frame), "deterministic");
+        assert_eq!(map, rasterize_town(&t, &[], &frame), "deterministic");
         assert!(map.pixels.chunks(4).all(|p| p[3] == 255), "opaque paper");
 
         let at = |p: GroundVec2| {

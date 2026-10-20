@@ -37,6 +37,12 @@ pub struct StreamFocus(pub GroundVec2);
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TerrainChunk(pub ChunkCoord);
 
+/// Chunk streaming, in `PostUpdate`: builds the chunks near the
+/// [`StreamFocus`] and despawns the far ones. Systems that decorate new
+/// chunks (see `crate::rail`) run after it, when its commands are applied.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ChunkStreaming;
+
 /// The loaded chunks and their entities.
 #[derive(Resource, Debug)]
 pub struct ChunkStreamer {
@@ -102,7 +108,7 @@ impl Plugin for TerrainPlugin {
                 entities: HashMap::new(),
             })
             .add_systems(Startup, (setup_kit, fill_chunks).chain())
-            .add_systems(PostUpdate, stream_chunks);
+            .add_systems(PostUpdate, stream_chunks.in_set(ChunkStreaming));
     }
 }
 

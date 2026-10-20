@@ -17,9 +17,10 @@ use bevy::prelude::*;
 use std::collections::HashMap;
 
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use pampa_core::{Vec2 as GroundVec2, nearest_town};
+use pampa_core::{Railway, Vec2 as GroundVec2, nearest_town};
 
 use crate::character::VisualPose;
+use crate::rail::WorldRail;
 use crate::terrain::StreamFocus;
 use crate::town::WorldTowns;
 use crate::train::WorldTrains;
@@ -99,6 +100,12 @@ fn map_image(pixels: Vec<u8>) -> Image {
     image
 }
 
+/// The railway line's links, as the short straight pieces their curves are
+/// drawn with, painted on every town's layer where they cross its frame.
+fn links(rail: Option<&WorldRail>) -> Vec<Railway> {
+    rail.map(|r| r.0.segments().collect()).unwrap_or_default()
+}
+
 fn rgba(c: [u8; 4]) -> Color {
     Color::srgba_u8(c[0], c[1], c[2], c[3])
 }
@@ -106,7 +113,7 @@ fn rgba(c: [u8; 4]) -> Color {
 fn spawn_minimap(
     mut commands: Commands,
     towns: Option<Res<WorldTowns>>,
-    focus: Option<Res<StreamFocus>>,
+    (focus, rail): (Option<Res<StreamFocus>>, Option<Res<WorldRail>>),
     mut images: ResMut<Assets<Image>>,
 ) {
     let Some(towns) = towns else {
@@ -118,7 +125,8 @@ fn spawn_minimap(
     };
     let town = &towns.0[index];
     let frame = MapFrame::for_town(town, MAP_PX);
-    let base = images.add(map_image(rasterize_town(town, &frame).pixels));
+    let links = links(rail.as_deref());
+    let base = images.add(map_image(rasterize_town(town, &links, &frame).pixels));
     let canvas = Canvas::new(MAP_PX);
     let markers = images.add(map_image(canvas.pixels.clone()));
     let layer = || Node {
@@ -211,7 +219,7 @@ fn ground_of(translation: Vec3) -> GroundVec2 {
 /// Switches the map to town `index`, rasterizing its layer the first time.
 fn show_town(
     minimap: &mut Minimap,
-    towns: &WorldTowns,
+    (towns, links): (&WorldTowns, &[Railway]),
     index: usize,
     images: &mut Assets<Image>,
     bases: &mut Query<&mut ImageNode, With<MinimapBase>>,
@@ -225,16 +233,23 @@ fn show_town(
     let base = minimap
         .bases
         .entry(index)
-        .or_insert_with(|| images.add(map_image(rasterize_town(town, &frame).pixels)))
+        .or_insert_with(|| images.add(map_image(rasterize_town(town, links, &frame).pixels)))
         .clone();
     for mut node in bases {
         node.image = base.clone();
     }
 }
 
+/// What the minimap reads of the world: towns, trains and the railway line.
+type WorldLayers<'a> = (
+    Option<Res<'a, WorldTowns>>,
+    Option<Res<'a, WorldTrains>>,
+    Option<Res<'a, WorldRail>>,
+);
+
 fn update_markers(
     minimap: Option<ResMut<Minimap>>,
-    (towns, trains): (Option<Res<WorldTowns>>, Option<Res<WorldTrains>>),
+    (towns, trains, rail): WorldLayers,
     icons: Query<(&MapIcon, &Transform, Option<&VisualPose>)>,
     mut bases: Query<&mut ImageNode, With<MinimapBase>>,
     mut images: ResMut<Assets<Image>>,
@@ -250,7 +265,14 @@ fn update_markers(
         && let Some(nearest) = nearest_town(&towns.0, at)
         && nearest != minimap.town
     {
-        show_town(&mut minimap, towns, nearest, &mut images, &mut bases);
+        let links = links(rail.as_deref());
+        show_town(
+            &mut minimap,
+            (towns, &links),
+            nearest,
+            &mut images,
+            &mut bases,
+        );
     }
     let train = trains.and_then(|t| t.0.get(minimap.town).cloned().flatten());
     let mut markers = Markers {

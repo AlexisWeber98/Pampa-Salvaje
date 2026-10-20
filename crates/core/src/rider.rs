@@ -33,7 +33,8 @@ impl Default for RiderParams {
             braking: 8.0,
             friction: 3.0,
             walk_max: 2.5,
-            gallop_max: 11.0,
+            // 42 km/h.
+            gallop_max: 42.0 / 3.6,
             reverse_max: 1.2,
         }
     }

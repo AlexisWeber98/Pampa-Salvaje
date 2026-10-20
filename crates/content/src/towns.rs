@@ -7,6 +7,10 @@
 //! [`pampa_core::place_towns`]: invalid towns, towns past the world edge
 //! and towns overlapping an earlier one are reported and skipped, and when
 //! no valid town is left the built-in Eduardo Castex config takes over.
+//!
+//! The optional `line` lists the railway towns in the order the railway
+//! line joins them; the game checks it with [`pampa_core::RailLine::build`]
+//! once the towns are built.
 
 use std::path::Path;
 
@@ -23,6 +27,9 @@ pub const TOWNS_FILE: &str = "world/towns.ron";
 pub struct WorldContent {
     pub world: WorldConfig,
     pub towns: Vec<TownConfig>,
+    /// Town names in railway line order, as written; `None` lets the line
+    /// run through every railway town west to east.
+    pub line: Option<Vec<String>>,
 }
 
 impl WorldContent {
@@ -31,17 +38,21 @@ impl WorldContent {
         Self {
             world: WorldConfig::default(),
             towns: vec![TownConfig::castex()],
+            line: None,
         }
     }
 }
 
-/// The towns file: an optional world section and a list of towns. Unknown
-/// fields are ignored, so newer files still load in older builds.
+/// The towns file: an optional world section, a list of towns and an
+/// optional railway line. Unknown fields are ignored, so newer files still
+/// load in older builds.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 struct TownsFile {
     #[serde(default)]
     world: WorldDto,
     towns: Vec<TownDto>,
+    #[serde(default)]
+    line: Option<Vec<String>>,
 }
 
 /// The `world` section (see [`WorldConfig`]); each field is optional.
@@ -175,7 +186,8 @@ pub fn parse_towns(text: &str) -> Result<(WorldContent, Vec<ContentError>), Cont
         .map(|(_, config)| config)
         .collect();
     errors.extend(rejected.into_iter().map(ContentError::Town));
-    Ok((WorldContent { world, towns }, errors))
+    let line = file.line;
+    Ok((WorldContent { world, towns, line }, errors))
 }
 
 /// Reads and parses the towns file at `path` (see [`parse_towns`]).
@@ -239,8 +251,8 @@ mod tests {
         });
         for (town, origin, blocks) in [
             (&content.towns[0], Vec2::new(-3050.0, -1950.0), (4, 3)),
-            (&content.towns[1], Vec2::new(-6200.0, -3300.0), (5, 4)),
-            (&content.towns[2], Vec2::new(5900.0, 3650.0), (8, 8)),
+            (&content.towns[1], Vec2::new(-5570.0, -3030.0), (5, 4)),
+            (&content.towns[2], Vec2::new(4110.0, 2530.0), (8, 8)),
         ] {
             assert_eq!(town.origin, origin, "{}", town.name);
             assert_eq!(town.blocks, blocks, "{}", town.name);
@@ -254,6 +266,25 @@ mod tests {
         let (placed, errors) = pampa_core::place_towns(&content.world, &content.towns);
         assert!(errors.is_empty(), "{errors:?}");
         assert_eq!(placed.len(), content.towns.len());
+        // The railway line runs Castex, Monte Nievas, General Pico.
+        let line = content.line.as_deref().expect("an explicit line");
+        assert_eq!(line, ["Eduardo Castex", "Monte Nievas", "General Pico"]);
+        let (rail, errors) =
+            pampa_core::RailLine::build(Some(line), &placed, content.world.bounds());
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(rail.links.len(), 2);
+    }
+
+    #[test]
+    fn the_line_is_read_and_optional() {
+        let town = r#"(name: "A", blocks: (3, 3), block_size: 40.0, street_width: 10.0)"#;
+        let (content, _) = parse_towns(&format!("(towns: [{town}])")).unwrap();
+        assert_eq!(content.line, None);
+        let (content, errors) =
+            parse_towns(&format!(r#"(towns: [{town}], line: Some(["A", "B"]))"#)).unwrap();
+        assert!(errors.is_empty(), "{errors:?}");
+        // Names are only read here; the game checks them against the towns.
+        assert_eq!(content.line, Some(vec!["A".to_string(), "B".to_string()]));
     }
 
     #[test]
