@@ -10,23 +10,40 @@ No recompiling.
 ```ron
 (
     world: (
-        half_extent: 4000.0,
+        half_extent: 8000.0,
         chunk_size: 200.0,
     ),
     towns: [
         (
-            name: "Eduardo Castex",
-            origin: (0.0, 0.0),
-            blocks: (4, 5),
+            name: "Monte Nievas",
+            origin: (-3050.0, -1950.0),
+            blocks: (4, 3),
             block_size: 40.0,
             street_width: 10.0,
             railway: Some((side: North, offset: 24.0)),
             plaza: Auto,
             seed: 7,
         ),
+        // ... Eduardo Castex and General Pico follow.
     ],
 )
 ```
+
+### The shipped geography
+
+The file lays out a first stretch of La Pampa: three railway towns at their
+real relative positions, with distances scaled 1:4 to fit the largest world
+(`half_extent: 8000`, a 16 km x 16 km square).
+
+| Town | `origin` | `blocks` | Size |
+|------|----------|----------|------|
+| Monte Nievas | `(-3050, -1950)` | 4 x 3 | small, and the player starts here |
+| Eduardo Castex | `(-6200, -3300)` | 5 x 4 | small |
+| General Pico | `(5900, 3650)` | 8 x 8 | very big (see "Town size") |
+
+From Castex to Monte Nievas is about 12.6 km east and 5.4 km north in the
+real pampa; from Monte Nievas to General Pico, about 35.8 km east and
+22.4 km north. All three have the railway on their north side.
 
 ### The world
 
@@ -66,15 +83,15 @@ overlaps; the towns listed before it win.
 The whole town, plus its 60 m band of leveled ground and its railway, must fit
 inside the world (see above).
 
-### Adding a second town
+### Adding another town
 
 Add another entry to `towns`, with an `origin` far enough from the others.
-For example, a town 3 km east and 2 km south of Eduardo Castex, with the
+For example, a town 3 km east and 2 km south of the world center, with the
 railway on its south side:
 
 ```ron
         (
-            name: "Florencio Varela",
+            name: "Winifreda",
             origin: (3000.0, -2000.0),
             blocks: (3, 4),
             block_size: 36.0,
@@ -107,6 +124,32 @@ neighbor block does not exist (a plaza on the edge), the building takes the
 next free neighbor (store: west, east, south, north; church: north, south,
 east, west; police: east, west, south, north), or the nearest free block
 for a plaza in a corner.
+
+### Town size
+
+A town's size comes from its block count, `n` = columns times rows:
+
+| | Small (`n` up to 36) | Big (37 to 63) | Very big (64 or more) |
+|---|---|---|---|
+| Main plaza | 1 block, placed by `plaza` | 2 blocks merged, centered | 2 x 2 blocks merged, centered |
+| Station plaza | no | yes | yes |
+| General stores | 1 | 2 | `n / 16` |
+| Police stations | 1 | 1 | 2 |
+| People walking | 16 | `0.8 n`, rounded, at least 16 | same |
+
+- A merged plaza includes the streets between its blocks: there is no road
+  through it and walkers go around it. A big town merges two blocks along
+  its longer side (east-west on a square grid). `Auto` and `Center` center
+  the plaza on the grid (ties go west or south); `Block` and
+  `FacingStation` keep the picked block inside it.
+- The station plaza is half a block. With a railway, it takes the half
+  nearest the track of the block, in the row next to the railway, that
+  faces the station; when that block is taken, the nearest free block
+  along that row. The other half of its block keeps houses. Without a
+  railway, it takes half of the free block farthest from the main plaza.
+- One general store faces the station plaza; the others, the church and the
+  police stations face the main plaza. The tied horse stays at the first
+  general store.
 
 ### When something is wrong
 

@@ -105,7 +105,7 @@ pub fn log_town_report(report: Res<TownReport>) {
 mod tests {
     use super::*;
     use pampa_content::{TOWNS_FILE, asset_path};
-    use pampa_core::{Terrain, Townsfolk, Train, TrainSchedule, Vec2, World};
+    use pampa_core::{Terrain, TownSize, Townsfolk, Train, TrainSchedule, Vec2, World};
 
     fn temp_towns(name: &str, text: &str) -> std::path::PathBuf {
         let dir =
@@ -117,11 +117,26 @@ mod tests {
     }
 
     #[test]
-    fn the_shipped_file_builds_castex_first_without_warnings() {
+    fn the_shipped_file_builds_monte_nievas_first_without_warnings() {
         let loaded = load_world(&asset_path(TOWNS_FILE));
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
-        assert_eq!(loaded.world, WorldConfig::default());
-        assert_eq!(loaded.towns[0], TownLayout::castex_inspired());
+        assert_eq!(loaded.world.half_extent, WorldConfig::MAX_HALF_EXTENT);
+        let names: Vec<&str> = loaded.towns.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, ["Monte Nievas", "Eduardo Castex", "General Pico"]);
+        // General Pico is very big: a 2 x 2 plaza, a station plaza, four
+        // general stores, two police stations and 51 people.
+        let pico = &loaded.towns[2];
+        assert_eq!(pico.size, TownSize::VeryBig);
+        assert!(pico.station_plaza.is_some());
+        let count = |kind: PlaceKind| pico.places().iter().filter(|p| p.kind == kind).count();
+        assert_eq!(count(PlaceKind::GeneralStore), 4);
+        assert_eq!(count(PlaceKind::PoliceStation), 2);
+        assert_eq!(count(PlaceKind::Plaza), 2);
+        assert_eq!(pico.townsfolk_count(), 51);
+        for small in &loaded.towns[..2] {
+            assert_eq!(small.size, TownSize::Small, "{}", small.name);
+            assert_eq!(small.station_plaza, None, "{}", small.name);
+        }
     }
 
     #[test]

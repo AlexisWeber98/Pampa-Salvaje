@@ -3,18 +3,19 @@
 // town; the others appear as you ride towards them.
 (
     world: (
-        // 4 km from the center to each edge: an 8 km x 8 km world.
-        half_extent: 4000.0,
+        // 8 km from the center to each edge: a 16 km x 16 km world, the
+        // largest allowed. Room for the railway line at a 1:4 scale.
+        half_extent: 8000.0,
         // Ground is built in 200 m square chunks around the rider.
         chunk_size: 200.0,
     ),
     towns: [
         (
-            // A small railway town inspired by 1920s–1930s Eduardo Castex,
-            // La Pampa. The plaza faces the station across the street.
-            name: "Eduardo Castex",
-            origin: (0.0, 0.0),
-            blocks: (4, 5),
+            // The player starts here, where the first errand begins. About
+            // 12.6 km east and 5.4 km north of Castex, scaled 1:4.
+            name: "Monte Nievas",
+            origin: (-3050.0, -1950.0),
+            blocks: (4, 3),
             block_size: 40.0,
             street_width: 10.0,
             railway: Some((side: North, offset: 24.0)),
@@ -22,24 +23,29 @@
             seed: 7,
         ),
         (
-            name: "Quilmes",
-            origin: (-1500.0, 0.0),
-            blocks: (7, 7),
-            block_size: 40.0,
-            street_width: 10.0,
-            railway: Some((side: North, offset: 24.0)),
-            plaza: Auto,
-            seed: 3,
-        ),
-        (
-            name: "Florencio Varela",
-            origin: (1300.0, 0.0),
-            blocks: (6, 4),
+            // A small railway town inspired by 1920s–1930s Eduardo Castex,
+            // La Pampa. The plaza faces the station across the street.
+            name: "Eduardo Castex",
+            origin: (-6200.0, -3300.0),
+            blocks: (5, 4),
             block_size: 40.0,
             street_width: 10.0,
             railway: Some((side: North, offset: 24.0)),
             plaza: Auto,
             seed: 2,
+        ),
+        (
+            // A very big town (8 x 8 blocks): a 2 x 2 central plaza, a
+            // station plaza, four general stores and two police stations.
+            // About 35.8 km east and 22.4 km north of Monte Nievas, scaled 1:4.
+            name: "General Pico",
+            origin: (5900.0, 3650.0),
+            blocks: (8, 8),
+            block_size: 40.0,
+            street_width: 10.0,
+            railway: Some((side: North, offset: 24.0)),
+            plaza: Auto,
+            seed: 13,
         ),
     ],
 )

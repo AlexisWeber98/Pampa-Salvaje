@@ -207,6 +207,7 @@ pub fn load_towns_or_builtin(path: &Path) -> (WorldContent, Vec<ContentError>) {
 mod tests {
     use super::*;
     use crate::asset_path;
+    use pampa_core::TownSize;
 
     const SHIPPED: &str = include_str!("../../../assets/world/towns.ron");
 
@@ -219,26 +220,46 @@ mod tests {
     }
 
     #[test]
-    fn the_shipped_file_holds_the_castex_config_in_the_default_world() {
+    fn the_shipped_file_holds_the_three_towns_of_the_line_in_the_largest_world() {
         let (content, errors) = parse_towns(SHIPPED).expect("shipped towns.ron is valid");
         assert!(errors.is_empty(), "{errors:?}");
-        assert_eq!(content.world, WorldConfig::default());
+        assert_eq!(
+            content.world,
+            WorldConfig {
+                half_extent: WorldConfig::MAX_HALF_EXTENT,
+                chunk_size: WorldConfig::DEFAULT_CHUNK_SIZE,
+            }
+        );
         assert_eq!(content.world.validated(), Ok(content.world));
-        let castex = content
-            .towns
-            .iter()
-            .find(|t| t.name == "Eduardo Castex")
-            .expect("Castex is shipped");
-        assert_eq!(castex, &TownConfig::castex());
+        let names: Vec<&str> = content.towns.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, ["Monte Nievas", "Eduardo Castex", "General Pico"]);
+        let north = Some(RailwayConfig {
+            side: Side::North,
+            offset: 24.0,
+        });
+        for (town, origin, blocks) in [
+            (&content.towns[0], Vec2::new(-3050.0, -1950.0), (4, 3)),
+            (&content.towns[1], Vec2::new(-6200.0, -3300.0), (5, 4)),
+            (&content.towns[2], Vec2::new(5900.0, 3650.0), (8, 8)),
+        ] {
+            assert_eq!(town.origin, origin, "{}", town.name);
+            assert_eq!(town.blocks, blocks, "{}", town.name);
+            assert_eq!((town.block_size, town.street_width), (40.0, 10.0));
+            assert_eq!(town.railway, north, "{}", town.name);
+            assert_eq!(town.plaza, PlazaPlacement::Auto, "{}", town.name);
+        }
+        // Monte Nievas and Castex are small, General Pico very big.
+        let sizes: Vec<TownSize> = content.towns.iter().map(TownConfig::size).collect();
+        assert_eq!(sizes, [TownSize::Small, TownSize::Small, TownSize::VeryBig]);
         let (placed, errors) = pampa_core::place_towns(&content.world, &content.towns);
         assert!(errors.is_empty(), "{errors:?}");
         assert_eq!(placed.len(), content.towns.len());
     }
 
     #[test]
-    fn the_readme_second_town_example_fits_next_to_the_shipped_towns() {
+    fn the_readme_town_example_fits_next_to_the_shipped_towns() {
         const README: &str = include_str!("../../../assets/world/README.md");
-        let section = &README[README.find("### Adding a second town").expect("section")..];
+        let section = &README[README.find("### Adding another town").expect("section")..];
         let start = section.find("```ron").expect("example") + "```ron".len();
         let example = &section[start..start + section[start..].find("```").unwrap()];
         let shipped = SHIPPED.rfind("],").expect("end of the town list");
@@ -246,7 +267,7 @@ mod tests {
         let (content, errors) = parse_towns(&text).unwrap();
         assert!(errors.is_empty(), "{errors:?}");
         let last = content.towns.last().unwrap();
-        assert_eq!(last.name, "Florencio Varela");
+        assert_eq!(last.name, "Winifreda");
         assert_eq!(last.origin, Vec2::new(3000.0, -2000.0));
     }
 

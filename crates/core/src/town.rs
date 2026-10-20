@@ -144,10 +144,11 @@ impl TownConfig {
     pub const MIN_RAILWAY_OFFSET: f32 = 24.0;
 
     /// Eduardo Castex-inspired town: 4 x 5 blocks of 40 m (4 east-west, 5
-    /// north-south), 10 m streets, railway 24 m north of the grid. With no
-    /// central block, `Auto` puts the plaza in the top row facing the
-    /// station. Matches the first town of `assets/world/towns.ron`, and is
-    /// the fallback when that file cannot be used.
+    /// north-south), 10 m streets, railway 24 m north of the grid, at the
+    /// world center. With no central block, `Auto` puts the plaza in the top
+    /// row facing the station. The built-in fallback when
+    /// `assets/world/towns.ron` cannot be used; the shipped Eduardo Castex
+    /// there is laid out differently (5 x 4 blocks, at its place on the line).
     pub fn castex() -> Self {
         Self {
             name: "Eduardo Castex".to_string(),
