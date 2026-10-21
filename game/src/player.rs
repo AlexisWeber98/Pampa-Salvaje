@@ -9,7 +9,7 @@ use pampa_core::{
     Heading, MAX_STEP, Rider, RiderInput, RiderParams, Travel, Vec2 as GroundVec2, World,
 };
 use pampa_render::{
-    CharacterVisual, MapIcon, SheetKind, StreamFocus, VisualPose, world_from_ground,
+    CharacterVisual, FigureKind, MapIcon, SheetKind, StreamFocus, VisualPose, world_from_ground,
 };
 
 /// The logic body this entity represents, on foot or on horseback. Logic
@@ -59,11 +59,12 @@ impl Default for FootTuning {
     }
 }
 
-/// The sprite sheet of a player getting around by `travel`.
-pub fn player_sheet(travel: Travel) -> SheetKind {
+/// How the player getting around by `travel` is drawn: the city clerk on
+/// foot, or (until horses are 3D too) the rider billboard in the saddle.
+pub fn player_visual(travel: Travel) -> CharacterVisual {
     match travel {
-        Travel::OnFoot => SheetKind::Gaucho,
-        Travel::Riding => SheetKind::Rider,
+        Travel::OnFoot => CharacterVisual::Figure(FigureKind::Protagonist),
+        Travel::Riding => CharacterVisual::Billboard(SheetKind::Rider),
     }
 }
 
@@ -98,7 +99,7 @@ fn spawn_player(mut commands: Commands, world: Res<GameWorld>, spawn: Res<Player
     commands.spawn((
         Name::new("Player"),
         MapIcon::Player,
-        CharacterVisual::Billboard(player_sheet(spawn.travel)),
+        player_visual(spawn.travel),
         VisualPose {
             heading: rider.heading,
             ..default()
@@ -284,7 +285,7 @@ mod tests {
             .query_filtered::<&CharacterVisual, With<Player>>();
         assert_eq!(
             *q.single(app.world()).unwrap(),
-            CharacterVisual::Billboard(SheetKind::Gaucho)
+            CharacterVisual::Figure(FigureKind::Protagonist)
         );
         let foot = app.world().resource::<FootTuning>().0;
         assert_eq!(foot, RiderParams::on_foot());

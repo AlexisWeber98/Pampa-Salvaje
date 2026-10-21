@@ -1,4 +1,5 @@
-//! Logical animation state. Render decides which frames this maps to.
+//! Logical animation state. Render decides how it is drawn: billboard
+//! frames for horses, joint poses ([`crate::pose`]) for people.
 
 /// What the rider is doing, independent of how it is drawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -6,6 +7,7 @@ pub enum AnimationState {
     #[default]
     Idle,
     Walk,
+    /// A gallop on horseback; a jog on foot.
     Gallop,
 }
 
