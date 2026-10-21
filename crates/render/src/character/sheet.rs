@@ -9,10 +9,11 @@
 //! gallop cycle. Render picks the row from the logical animation state and
 //! its own gait clock (see [`SheetKind::row`]).
 //!
-//! Sizes: frames are [`FRAME_SIZE`] pixels square, so a horse sheet is
-//! 640 x 720 RGBA8 (1.8 MB) and a person sheet 640 x 400 (1.0 MB); all nine
-//! sheets together (rider, horse, the player on foot, the two errand people
-//! and four townsfolk) take about 10.8 MB.
+//! Only horses and the mounted rider are still sheets; people on foot are
+//! low-poly 3D figures (see [`figure`](super::figure)).
+//!
+//! Sizes: frames are [`FRAME_SIZE`] pixels square, so a sheet is 640 x 720
+//! RGBA8 (1.8 MB); the two sheets (rider and horse) take about 3.7 MB.
 
 use pampa_core::AnimationState;
 
@@ -25,9 +26,6 @@ pub const FRAME_SIZE: usize = 80;
 /// Frames in one walk or gallop cycle.
 pub const GAIT_FRAMES: usize = 4;
 
-/// How many palettes people on foot come in.
-pub const PERSON_LOOKS: u8 = 4;
-
 /// Which sprite sheet a billboard draws from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SheetKind {
@@ -35,69 +33,32 @@ pub enum SheetKind {
     Rider,
     /// Saddled horse with no rider.
     Horse,
-    /// Person on foot, in palette `0..PERSON_LOOKS`.
-    Person(u8),
-    /// The player on foot: the rider's gaucho, out of the saddle.
-    Gaucho,
-    /// Don Hidalgo, who gives the first errand.
-    Hidalgo,
-    /// Comisario Elías Farach, in uniform.
-    Comisario,
 }
 
 impl SheetKind {
     /// Every sheet, so they can all be built up front.
     pub fn all() -> impl Iterator<Item = Self> {
-        [
-            Self::Rider,
-            Self::Horse,
-            Self::Gaucho,
-            Self::Hidalgo,
-            Self::Comisario,
-        ]
-        .into_iter()
-        .chain((0..PERSON_LOOKS).map(Self::Person))
-    }
-
-    /// Whether this is somebody on foot (no horse in the sheet).
-    pub fn on_foot(self) -> bool {
-        !matches!(self, Self::Rider | Self::Horse)
-    }
-
-    /// The person sheet for a logic appearance value.
-    pub fn person(look: u8) -> Self {
-        Self::Person(look % PERSON_LOOKS)
+        [Self::Rider, Self::Horse].into_iter()
     }
 
     /// Side of the square sprite in meters (frames are square).
     pub fn sprite_size(self) -> f32 {
-        if self.on_foot() {
-            // A 1.75 m person fills 70 of the 80 pixels.
-            2.0
-        } else {
-            2.8
-        }
+        2.8
     }
 
-    /// Rows of frames in this sheet: standing, walking and, for horses,
-    /// galloping.
+    /// Rows of frames in this sheet: standing, walking and galloping.
     pub fn rows(self) -> usize {
-        if self.on_foot() {
-            1 + GAIT_FRAMES
-        } else {
-            1 + 2 * GAIT_FRAMES
-        }
+        1 + 2 * GAIT_FRAMES
     }
 
     /// Sheet row for `animation` at gait frame `frame` (wrapped to the
-    /// cycle). People have no gallop and keep walking.
+    /// cycle).
     pub fn row(self, animation: AnimationState, frame: usize) -> usize {
         let frame = frame % GAIT_FRAMES;
         match animation {
             AnimationState::Idle => 0,
             AnimationState::Walk => 1 + frame,
-            AnimationState::Gallop if self.rows() > 1 + GAIT_FRAMES => 1 + GAIT_FRAMES + frame,
-            AnimationState::Gallop => 1 + frame,
+            AnimationState::Gallop => 1 + GAIT_FRAMES + frame,
         }
     }
 
@@ -115,7 +76,7 @@ pub fn sheet_pixels(kind: SheetKind) -> Vec<u8> {
     for row in 0..kind.rows() {
         let pose = Pose::for_row(row);
         for k in 0..DIRECTIONS {
-            let view = View::new(k, kind);
+            let view = View::new(k);
             let mut parts = match kind {
                 SheetKind::Rider => {
                     let mut parts = horse(&view, pose, false);
@@ -123,10 +84,6 @@ pub fn sheet_pixels(kind: SheetKind) -> Vec<u8> {
                     parts
                 }
                 SheetKind::Horse => horse(&view, pose, true),
-                SheetKind::Person(look) => person(&view, pose, &PEOPLE[look as usize]),
-                SheetKind::Gaucho => person(&view, pose, &GAUCHO),
-                SheetKind::Hidalgo => person(&view, pose, &HIDALGO),
-                SheetKind::Comisario => person(&view, pose, &COMISARIO),
             };
             let mut frame = Frame::new(FRAME_SIZE);
             frame.paint(&mut parts);
@@ -155,8 +112,6 @@ pub(super) const MARKER: Rgb = [200, 40, 30];
 
 /// Height (pixels above the ground) and radius of the mounted gaucho's head.
 pub(super) const RIDER_HEAD: (f32, f32) = (63.5, 4.6);
-/// Height (pixels above the ground) and radius of a walker's head.
-pub(super) const PERSON_HEAD: (f32, f32) = (61.5, 4.9);
 
 /// How much higher (in pixels per pixel of depth) farther points are drawn:
 /// the camera looks slightly down on the characters.
@@ -218,17 +173,13 @@ struct View {
 }
 
 impl View {
-    fn new(k: usize, kind: SheetKind) -> Self {
+    fn new(k: usize) -> Self {
         let theta = k as f32 * std::f32::consts::FRAC_PI_4;
         let (side, depth) = (-theta.sin(), theta.cos());
         Self {
             forward: (side, depth),
             right: (depth, -side),
-            ground: if kind.on_foot() {
-                FRAME_SIZE as f32 - 0.8
-            } else {
-                FRAME_SIZE as f32 - 1.0
-            },
+            ground: FRAME_SIZE as f32 - 1.0,
         }
     }
 
@@ -499,222 +450,6 @@ fn mounted_gaucho(v: &View, pose: Pose) -> Vec<Part> {
     parts
 }
 
-/// Headwear of a person on foot.
-#[derive(Clone, Copy)]
-enum Headwear {
-    /// Wide-brimmed gaucho hat.
-    Brimmed,
-    /// Flat basque beret ("boina").
-    Beret,
-    /// Knotted headscarf.
-    Scarf,
-}
-
-/// Clothes and build of a person on foot.
-struct Person {
-    /// Poncho, jacket or blouse.
-    top: Rgb,
-    trim: Rgb,
-    /// Baggy "bombachas" or a long skirt.
-    legs: Rgb,
-    skirt: bool,
-    head: Headwear,
-    headwear: Rgb,
-}
-
-/// Earthy palettes: gaucho, townsman, woman in a long skirt, farmhand.
-const PEOPLE: [Person; PERSON_LOOKS as usize] = [
-    Person {
-        top: [150, 62, 44],
-        trim: [70, 44, 32],
-        legs: [74, 70, 64],
-        skirt: false,
-        head: Headwear::Brimmed,
-        headwear: [44, 36, 30],
-    },
-    Person {
-        top: [96, 72, 52],
-        trim: [196, 186, 160],
-        legs: [150, 132, 98],
-        skirt: false,
-        head: Headwear::Brimmed,
-        headwear: [168, 142, 96],
-    },
-    Person {
-        top: [132, 92, 76],
-        trim: [204, 192, 168],
-        legs: [92, 66, 56],
-        skirt: true,
-        head: Headwear::Scarf,
-        headwear: [176, 156, 118],
-    },
-    Person {
-        top: [198, 188, 162],
-        trim: [120, 92, 60],
-        legs: [112, 100, 78],
-        skirt: false,
-        head: Headwear::Beret,
-        headwear: [52, 50, 62],
-    },
-];
-
-/// The player on foot: the mounted gaucho's poncho, trousers and hat.
-const GAUCHO: Person = Person {
-    top: PONCHO,
-    trim: PONCHO_STRIPE,
-    legs: TROUSERS,
-    skirt: false,
-    head: Headwear::Brimmed,
-    headwear: HAT,
-};
-
-/// Don Hidalgo: an old landowner in a dark town suit and a pale hat.
-const HIDALGO: Person = Person {
-    top: [58, 56, 64],
-    trim: [214, 206, 186],
-    legs: [72, 66, 62],
-    skirt: false,
-    head: Headwear::Brimmed,
-    headwear: [176, 164, 136],
-};
-
-/// The police uniform's blue.
-const POLICE_BLUE: Rgb = [40, 56, 104];
-
-/// Comisario Farach: a blue uniform with brass buttons and a kepi.
-const COMISARIO: Person = Person {
-    top: POLICE_BLUE,
-    trim: [200, 164, 72],
-    legs: [36, 42, 66],
-    skirt: false,
-    head: Headwear::Beret,
-    headwear: [30, 36, 60],
-};
-
-/// A person on foot, standing on the frame's bottom edge.
-fn person(v: &View, pose: Pose, p: &Person) -> Vec<Part> {
-    let bob = rise(pose, 0.9, 0.9).abs();
-    let mut parts = Vec::new();
-
-    // Legs: boots under baggy trousers gathered at the ankle, or a skirt.
-    for (side, offset) in [(-1.0, 0.0), (1.0, 0.5)] {
-        let (swing, lift) = pose.leg(offset, (0.32, 4.0), (0.32, 4.0));
-        let reach = if p.skirt { 6.0 } else { 30.0 };
-        let foot = l3(swing.sin() * reach, side * 3.4, lift);
-        let boot = v.capsule(
-            l3(foot.fwd - 1.0, foot.right, foot.up + 2.5),
-            l3(foot.fwd + 2.5, foot.right, foot.up + 2.2),
-            2.6,
-            2.4,
-            BOOTS,
-        );
-        if p.skirt {
-            parts.push(boot.nudge(-0.5));
-            continue;
-        }
-        let hip = l3(0.0, side * 3.6, 33.0 + bob);
-        let knee = l3(
-            swing.sin() * 15.0 + lift * 0.3,
-            side * 3.6,
-            17.0 + lift * 0.5,
-        );
-        let ankle = l3(foot.fwd, foot.right, foot.up + 5.0);
-        parts.push(v.capsule(hip, knee, 4.4, 3.8, p.legs));
-        parts.push(v.capsule(knee, ankle, 3.8, 3.0, p.legs));
-        parts.push(boot.nudge(-0.1));
-    }
-    if p.skirt {
-        // The hem sways with the stride.
-        let sway = match pose {
-            Pose::Walk(t) | Pose::Gallop(t) => 1.5 * (std::f32::consts::TAU * t).cos(),
-            Pose::Idle => 0.0,
-        };
-        parts.push(v.capsule(
-            l3(0.0, 0.0, 40.0 + bob),
-            l3(sway, 0.0, 9.0),
-            6.5,
-            10.5,
-            p.legs,
-        ));
-    }
-
-    // Arms swing against the legs; sleeves in the top's color.
-    for (side, offset) in [(-1.0, 0.5), (1.0, 0.0)] {
-        let (swing, _) = pose.leg(offset, (0.35, 0.0), (0.35, 0.0));
-        let shoulder = l3(0.0, side * 7.0, 53.0 + bob);
-        let hand = l3(swing.sin() * 14.0, side * 8.0, 38.0 + bob);
-        parts.push(v.capsule(shoulder, hand, 2.7, 2.2, p.top));
-        parts.push(v.ball(hand, 2.0, SKIN).nudge(-0.1));
-    }
-
-    // Poncho or jacket, widening down, with a trim stripe.
-    let torso = v.capsule(
-        l3(0.0, 0.0, 55.0 + bob),
-        l3(0.0, 0.0, 37.0 + bob),
-        6.8,
-        8.5,
-        p.top,
-    );
-    let stripe_row = v.row_of(42.0 + bob);
-    parts.push(torso);
-    parts.push(Part {
-        color: p.trim,
-        ..torso.rows(stripe_row - 1.2, stripe_row + 1.2).nudge(-0.01)
-    });
-
-    let (up, r) = PERSON_HEAD;
-    let center = l3(0.5, 0.0, up + bob);
-    let hair = match p.head {
-        Headwear::Scarf => p.headwear,
-        _ => HAIR,
-    };
-    for part in head(v, center, r, hair) {
-        parts.push(part.nudge(-10.0));
-    }
-    if !v.away() {
-        let kerchief = v.ball(l3(2.5, 0.0, 56.5 + bob), 2.2, MARKER).flat();
-        parts.push(kerchief.nudge(-11.0));
-    }
-    let top = up + bob;
-    match p.head {
-        Headwear::Brimmed => {
-            parts.push(
-                v.disc(l3(0.5, 0.0, top + 4.0), 9.5, 1.8, p.headwear)
-                    .nudge(-20.0),
-            );
-            parts.push(
-                v.capsule(
-                    l3(0.5, 0.0, top + 7.4),
-                    l3(0.5, 0.0, top + 9.4),
-                    3.8,
-                    3.3,
-                    p.headwear,
-                )
-                .nudge(-20.1),
-            );
-        }
-        Headwear::Beret => {
-            parts.push(
-                v.disc(l3(-0.6, 0.0, top + 3.6), 5.8, 2.6, p.headwear)
-                    .nudge(-20.0),
-            );
-        }
-        Headwear::Scarf => {
-            // Covers the crown above the brow, knotted at the nape.
-            let crown = v.ball(l3(0.2, 0.0, top + 1.2), r + 0.4, p.headwear);
-            parts.push(crown.rows(0.0, v.row_of(top + 1.6)).nudge(-20.0));
-            parts.push(v.capsule(
-                l3(-4.5, 0.0, top - 1.0),
-                l3(-6.0, 0.0, top - 7.0),
-                1.5,
-                1.2,
-                p.headwear,
-            ));
-        }
-    }
-    parts
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::paint::tones;
@@ -744,7 +479,6 @@ mod tests {
         }
         assert_eq!(SheetKind::Rider.rows(), 9);
         assert_eq!(SheetKind::Horse.rows(), 9);
-        assert_eq!(SheetKind::Person(0).rows(), 5);
     }
 
     #[test]
@@ -761,11 +495,6 @@ mod tests {
             [5, 6, 7, 8]
         );
         assert_eq!(rider.row(Gallop, 6), 7, "wraps around the cycle");
-        assert_eq!(
-            SheetKind::Person(1).row(Gallop, 2),
-            3,
-            "people keep walking"
-        );
     }
 
     #[test]
@@ -848,10 +577,7 @@ mod tests {
     fn faces_show_from_the_front_and_never_from_behind() {
         let skin = tones(SKIN);
         for kind in SheetKind::all().filter(|k| *k != SheetKind::Horse) {
-            let (up, r) = match kind {
-                SheetKind::Rider => RIDER_HEAD,
-                _ => PERSON_HEAD,
-            };
+            let (up, r) = RIDER_HEAD;
             // Every row from the top of the frame down to the chin.
             let chin = (FRAME_SIZE as f32 - up + r + 2.0) as usize;
             let pixels = sheet_pixels(kind);
@@ -891,64 +617,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn people_look_different() {
-        let sheets: Vec<_> = (0..PERSON_LOOKS)
-            .map(|look| sheet_pixels(SheetKind::Person(look)))
-            .collect();
-        for (i, a) in sheets.iter().enumerate() {
-            for b in &sheets[i + 1..] {
-                assert_ne!(a, b);
-            }
-        }
-        assert_eq!(SheetKind::person(PERSON_LOOKS + 1), SheetKind::Person(1));
-    }
-
-    /// How many opaque pixels of `kind`'s standing front view (frame 4) are
-    /// close to `color` in any shade.
-    fn shaded(kind: SheetKind, color: Rgb) -> usize {
-        let shades = tones(color);
-        frame(kind, &sheet_pixels(kind), 4, 0)
-            .chunks(4)
-            .filter(|p| p[3] == 255 && shades.contains(&[p[0], p[1], p[2]]))
-            .count()
-    }
-
-    #[test]
-    fn the_gaucho_on_foot_wears_the_riders_outfit() {
-        let gaucho = SheetKind::Gaucho;
-        assert!(gaucho.on_foot());
-        assert_eq!(gaucho.rows(), 1 + GAIT_FRAMES);
-        assert_eq!(gaucho.sprite_size(), SheetKind::Person(0).sprite_size());
-        for color in [PONCHO, TROUSERS, HAT] {
-            assert!(shaded(gaucho, color) > 20, "{color:?}");
-            assert!(shaded(SheetKind::Rider, color) > 20, "{color:?}");
-        }
-        // Nobody in the crowd wears the rider's poncho.
-        for look in 0..PERSON_LOOKS {
-            assert_eq!(shaded(SheetKind::Person(look), PONCHO), 0, "look {look}");
-        }
-    }
-
-    #[test]
-    fn the_errand_people_have_their_own_looks() {
-        let mut sheets = vec![sheet_pixels(SheetKind::Gaucho)];
-        for kind in [SheetKind::Hidalgo, SheetKind::Comisario] {
-            assert!(kind.on_foot());
-            assert!(SheetKind::all().any(|k| k == kind));
-            sheets.push(sheet_pixels(kind));
-        }
-        sheets.extend((0..PERSON_LOOKS).map(|l| sheet_pixels(SheetKind::Person(l))));
-        for (i, a) in sheets.iter().enumerate() {
-            for b in &sheets[i + 1..] {
-                assert_ne!(a, b);
-            }
-        }
-        assert!(!SheetKind::Rider.on_foot() && !SheetKind::Horse.on_foot());
-        // The comisario in police blue.
-        assert!(shaded(SheetKind::Comisario, POLICE_BLUE) > 40);
     }
 
     #[test]

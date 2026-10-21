@@ -22,8 +22,8 @@ use pampa_core::{
     Townsfolk, Travel,
 };
 use pampa_render::{
-    ActiveTowns, CharacterVisual, MapIcon, SheetKind, VisualPose, WorldClock, WorldTowns,
-    WorldTrain, world_from_ground,
+    ActiveTowns, CharacterVisual, FigureKind, MapIcon, SheetKind, VisualPose, WorldClock,
+    WorldTowns, WorldTrain, world_from_ground,
 };
 
 use crate::player::{DrivePlayer, GameWorld, Player, drive_player};
@@ -97,11 +97,11 @@ pub struct Cast(pub Vec<(Npc, Standing)>);
 #[derive(Resource, Debug, Clone, Default, PartialEq, Eq)]
 pub struct LedAway(pub BTreeSet<usize>);
 
-/// The sprite sheet of an errand person.
-pub fn npc_sheet(npc: Npc) -> SheetKind {
+/// The figure of an errand person.
+pub fn npc_figure(npc: Npc) -> FigureKind {
     match npc {
-        Npc::Hidalgo => SheetKind::Hidalgo,
-        Npc::Farach => SheetKind::Comisario,
+        Npc::Hidalgo => FigureKind::Hidalgo,
+        Npc::Farach => FigureKind::Farach,
     }
 }
 
@@ -215,7 +215,7 @@ fn spawn_standing_npc(commands: &mut Commands, npc: Npc, standing: Standing, wor
             town: standing.town,
             npc,
         },
-        CharacterVisual::Billboard(npc_sheet(npc)),
+        CharacterVisual::Figure(npc_figure(npc)),
         VisualPose {
             heading: standing.heading,
             ..default()
@@ -231,7 +231,7 @@ fn spawn_walkers(commands: &mut Commands, crowd: &Townsfolk, town: usize, world:
             Name::new(format!("Townsperson {town}.{index}")),
             Walker { town, index },
             MapIcon::Walker,
-            CharacterVisual::Billboard(SheetKind::person(person.look)),
+            CharacterVisual::Figure(FigureKind::townsfolk(person.look)),
             VisualPose {
                 heading: person.heading,
                 animation: person.animation(),
@@ -444,6 +444,16 @@ mod tests {
         let world = app.world().resource::<GameWorld>().0.clone();
         let walkers = walkers(&mut app);
         assert_eq!(walkers.len(), crowd.people.len());
+        let mut visuals = app
+            .world_mut()
+            .query_filtered::<(&Walker, &CharacterVisual), With<Walker>>();
+        for (walker, visual) in visuals.iter(app.world()) {
+            let look = crowd.people[walker.index].look;
+            assert_eq!(
+                *visual,
+                CharacterVisual::Figure(FigureKind::townsfolk(look))
+            );
+        }
         for (walker, transform, pose) in walkers {
             assert_eq!(walker.town, 0);
             let person = &crowd.people[walker.index];
@@ -709,7 +719,7 @@ mod tests {
                 npc: Npc::Hidalgo
             }
         );
-        assert_eq!(visual, CharacterVisual::Billboard(SheetKind::Hidalgo));
+        assert_eq!(visual, CharacterVisual::Figure(FigureKind::Hidalgo));
         let spot = cast.0[0].1.position;
         assert_eq!(
             (transform.translation.x, -transform.translation.z),
@@ -725,7 +735,7 @@ mod tests {
         let there = standing_npcs(&mut app);
         assert_eq!(there.len(), 1);
         assert_eq!(there[0].0.npc, Npc::Farach);
-        assert_eq!(there[0].1, CharacterVisual::Billboard(SheetKind::Comisario));
+        assert_eq!(there[0].1, CharacterVisual::Figure(FigureKind::Farach));
     }
 
     #[test]

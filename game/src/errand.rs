@@ -15,13 +15,10 @@ use pampa_core::{
     Errand, ErrandEvent, Heading, Interaction, MAX_STEP, Npc, TownLayout, Vec2 as GroundVec2, World,
 };
 use pampa_render::bubble::LIFETIME;
-use pampa_render::character::Billboard;
-use pampa_render::{
-    CharacterVisual, HudObjective, MapTarget, Say, SheetKind, font, world_from_ground,
-};
+use pampa_render::{HudObjective, MapTarget, Say, font, world_from_ground};
 
 use crate::life::{Cast, LedAway, StandingNpc, TetheredHorse};
-use crate::player::{DrivePlayer, GameWorld, Player};
+use crate::player::{DrivePlayer, GameWorld, Player, player_visual};
 
 /// The one context key: talk, or mount. (E orbits the camera, M toggles
 /// the map, Esc quits.)
@@ -156,7 +153,6 @@ fn interact(
     (mut world, mut led_away): MountState,
     mut players: Query<(Entity, &mut Player, &mut Transform)>,
     horses: Query<(Entity, &TetheredHorse)>,
-    billboards: Query<(Entity, &ChildOf), With<Billboard>>,
     mut progress: MessageWriter<ErrandProgress>,
 ) {
     if !keys.is_some_and(|k| k.just_pressed(INTERACT_KEY)) {
@@ -199,16 +195,8 @@ fn interact(
             let rider = &mut player.rider;
             *rider = rider.mount(&horse, &world.0);
             transform.translation = world_from_ground(rider.position, rider.height);
-            // A new sprite: drop the gaucho's billboard, draw the rider.
-            for (billboard, parent) in &billboards {
-                if parent.parent() == me {
-                    commands.entity(billboard).despawn();
-                }
-            }
-            commands
-                .entity(me)
-                .remove::<CharacterVisual>()
-                .insert(CharacterVisual::Billboard(SheetKind::Rider));
+            // A new visual: render drops the figure and draws the rider.
+            commands.entity(me).insert(player_visual(rider.travel()));
         }
     }
 }
@@ -263,7 +251,11 @@ mod tests {
     use crate::player::{PlayerPlugin, PlayerSpawn};
     use bevy::time::TimeUpdateStrategy;
     use pampa_core::{ErrandStage, Terrain, Travel};
-    use pampa_render::{WorldClock, WorldTowns, WorldTrain};
+    use pampa_render::character::{Billboard, FigureBody, FigureJoint, FigurePart};
+    use pampa_render::{
+        CharacterVisual, CharacterVisualPlugin, FigureKind, SheetKind, WorldClock, WorldTowns,
+        WorldTrain,
+    };
     use std::time::Duration;
 
     /// Every line said, by whom.
@@ -335,6 +327,70 @@ mod tests {
         let mut p = q.single_mut(app.world_mut()).unwrap();
         p.rider.position = to;
         p.rider.speed = 0.0;
+    }
+
+    /// Billboards, figure bodies, joints and parts drawn under `who`.
+    fn drawn_under(app: &mut App, who: Entity) -> [usize; 4] {
+        let mut under = Vec::new();
+        let mut stack = vec![who];
+        while let Some(e) = stack.pop() {
+            if let Some(children) = app.world().get::<Children>(e) {
+                stack.extend(children.iter());
+                under.extend(children.iter());
+            }
+        }
+        let world = app.world();
+        let n = |has: &dyn Fn(Entity) -> bool| under.iter().filter(|e| has(**e)).count();
+        [
+            n(&|e| world.get::<Billboard>(e).is_some()),
+            n(&|e| world.get::<FigureBody>(e).is_some()),
+            n(&|e| world.get::<FigureJoint>(e).is_some()),
+            n(&|e| world.get::<FigurePart>(e).is_some()),
+        ]
+    }
+
+    #[test]
+    fn mounting_swaps_the_clerk_figure_for_one_rider_and_nothing_else() {
+        let mut app = shipped_app();
+        app.init_resource::<Assets<Image>>()
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .add_plugins(CharacterVisualPlugin);
+        app.world_mut()
+            .spawn((Camera3d::default(), Transform::default()));
+        app.update();
+        let e = errand(&app);
+        let (me, _) = player(&mut app);
+        assert_eq!(
+            *app.world().get::<CharacterVisual>(me).unwrap(),
+            CharacterVisual::Figure(FigureKind::Protagonist)
+        );
+        let [billboards, bodies, joints, parts] = drawn_under(&mut app, me);
+        assert_eq!((billboards, bodies, joints), (0, 1, 11));
+        assert!(parts >= 18, "{parts}");
+
+        teleport(
+            &mut app,
+            e.standing(Npc::Hidalgo).position + e.standing(Npc::Hidalgo).heading.forward() * 2.0,
+        );
+        press_f(&mut app);
+        teleport(&mut app, beside(&e.horse().1));
+        press_f(&mut app);
+        assert_eq!(player(&mut app).1.rider.travel(), Travel::Riding);
+        assert_eq!(drawn_under(&mut app, me), [1, 0, 0, 0]);
+        let children = app.world().get::<Children>(me).unwrap();
+        assert_eq!(children.len(), 1, "only the rider billboard");
+        let child = children[0];
+        assert_eq!(
+            app.world().get::<Billboard>(child).unwrap().sheet,
+            SheetKind::Rider
+        );
+        // Nothing of the clerk is left anywhere but on the townsfolk.
+        let mut orphans = app
+            .world_mut()
+            .query_filtered::<&ChildOf, With<FigureBody>>();
+        let parents: Vec<Entity> = orphans.iter(app.world()).map(|c| c.parent()).collect();
+        assert!(!parents.contains(&me));
     }
 
     /// Presses the interact key for exactly one frame.

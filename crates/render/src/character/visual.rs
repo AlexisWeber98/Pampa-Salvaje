@@ -1,5 +1,7 @@
-//! Per-entity rider visuals. Logic hands over a [`VisualPose`]; render decides
-//! how it looks.
+//! Per-entity character visuals. Logic hands over a [`VisualPose`]; render
+//! decides how it looks: people are low-poly 3D figures (see
+//! [`figure`](super::figure)), horses and the mounted rider are still
+//! billboards.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::ImageSampler;
@@ -11,17 +13,25 @@ use bevy::transform::TransformSystems;
 use pampa_core::{AnimationState, Heading};
 
 use super::direction::{DIRECTIONS, ViewDirection, ground_yaw};
+use super::figure::{FigureKind, FigureKit, spawn_figure, update_figures};
 use super::sheet::{GAIT_FRAMES, SheetKind, sheet_pixels};
 
-/// How a character is drawn. Swappable per entity without touching logic.
-///
-/// Only billboards exist today; a `Model` variant (low-poly 3D) is planned.
+/// How a character is drawn. Swappable per entity without touching logic:
+/// inserting a new value replaces whatever was drawn before.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 #[require(VisualPose, Transform, Visibility)]
 pub enum CharacterVisual {
-    /// Camera-facing sprite picked from eight directional frames of a sheet.
+    /// Camera-facing sprite picked from eight directional frames of a sheet
+    /// (horses and the mounted rider).
     Billboard(SheetKind),
+    /// A low-poly 3D person on foot.
+    Figure(FigureKind),
 }
+
+/// The child entity a [`CharacterVisual`] draws with (a billboard or a
+/// figure's body). It and everything under it go when the visual changes.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct VisualPart;
 
 /// Logic state the visual needs, copied from `pampa-core` each frame by the game.
 ///
@@ -79,12 +89,13 @@ pub struct CharacterVisualPlugin;
 
 impl Plugin for CharacterVisualPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, load_sprites).add_systems(
-            PostUpdate,
-            (attach_billboards, update_billboards)
-                .chain()
-                .before(TransformSystems::Propagate),
-        );
+        app.add_systems(Startup, (load_sprites, load_figure_kit))
+            .add_systems(
+                PostUpdate,
+                (attach_visuals, (update_billboards, update_figures))
+                    .chain()
+                    .before(TransformSystems::Propagate),
+            );
     }
 }
 
@@ -139,21 +150,40 @@ fn load_sprites(
     commands.insert_resource(BillboardSprites(sheets));
 }
 
-fn attach_billboards(
+fn load_figure_kit(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
+    commands.insert_resource(FigureKit::new(&mut meshes));
+}
+
+/// Draws new and changed visuals, dropping whatever drew the old one.
+fn attach_visuals(
     mut commands: Commands,
     sprites: Res<BillboardSprites>,
-    added: Query<(Entity, &CharacterVisual), Added<CharacterVisual>>,
+    mut kit: ResMut<FigureKit>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    changed: Query<(Entity, &CharacterVisual, Option<&Children>), Changed<CharacterVisual>>,
+    parts: Query<(), With<VisualPart>>,
 ) {
-    for (entity, visual) in &added {
+    for (entity, visual, children) in &changed {
+        for &child in children.into_iter().flatten() {
+            if parts.contains(child) {
+                commands.entity(child).despawn();
+            }
+        }
+        // Per-entity start so a crowd does not step in unison.
+        let phase = (entity.index_u32() as f32 * 0.37).fract();
         match *visual {
+            CharacterVisual::Figure(kind) => {
+                let body =
+                    spawn_figure(&mut commands, &mut kit, &mut materials, entity, kind, phase);
+                commands.entity(body).insert(VisualPart);
+            }
             CharacterVisual::Billboard(sheet) => {
                 let Some(sprites) = sprites.0.get(&sheet) else {
                     continue;
                 };
-                // Per-entity start so a crowd does not step in unison.
-                let phase = (entity.index_u32() as f32 * 0.37).fract();
                 commands.entity(entity).with_child((
                     Name::new("Billboard"),
+                    VisualPart,
                     Billboard {
                         phase,
                         ..Billboard::new(sheet)
@@ -167,27 +197,25 @@ fn attach_billboards(
     }
 }
 
-/// Gait cycles per second for `animation` at ground `speed` (m/s): one
-/// cycle covers a fixed stride, so feet keep pace with the ground.
-pub fn cadence(sheet: SheetKind, animation: AnimationState, speed: f32) -> f32 {
+/// Gait cycles per second of a horse's `animation` at ground `speed`
+/// (m/s): one cycle covers a fixed stride, so hooves keep pace with the
+/// ground.
+pub fn cadence(animation: AnimationState, speed: f32) -> f32 {
     let speed = if speed.is_finite() { speed.abs() } else { 0.0 };
-    match (sheet, animation) {
-        (_, AnimationState::Idle) => 0.0,
-        // Two steps of about 0.65 m each.
-        (s, _) if s.on_foot() => speed.max(0.8) / 1.3,
-        (_, AnimationState::Walk) => speed.max(1.0) / 1.8,
-        (_, AnimationState::Gallop) => speed.max(5.0) / 4.2,
+    match animation {
+        AnimationState::Idle => 0.0,
+        AnimationState::Walk => speed.max(1.0) / 1.8,
+        AnimationState::Gallop => speed.max(5.0) / 4.2,
     }
 }
 
 /// Vertical bob amplitude in meters per logical gait, on top of the rise
 /// already painted into the frames.
-fn bob(sheet: SheetKind, animation: AnimationState) -> f32 {
-    match (sheet, animation) {
-        (_, AnimationState::Idle) => 0.0,
-        (s, _) if s.on_foot() => 0.03,
-        (_, AnimationState::Walk) => 0.02,
-        (_, AnimationState::Gallop) => 0.08,
+fn bob(animation: AnimationState) -> f32 {
+    match animation {
+        AnimationState::Idle => 0.0,
+        AnimationState::Walk => 0.02,
+        AnimationState::Gallop => 0.08,
     }
 }
 
@@ -220,7 +248,7 @@ fn update_billboards(
         let Some(sheet) = sprites.0.get(&billboard.sheet) else {
             continue;
         };
-        let cycles = cadence(billboard.sheet, pose.animation, pose.speed) * time.delta_secs();
+        let cycles = cadence(pose.animation, pose.speed) * time.delta_secs();
         billboard.phase = (billboard.phase + cycles).fract();
         let frame = (billboard.phase * GAIT_FRAMES as f32) as usize;
         let row = billboard.sheet.row(pose.animation, frame);
@@ -240,8 +268,7 @@ fn update_billboards(
 
         // Two bumps per cycle, one per stride.
         let bump = (billboard.phase * std::f32::consts::TAU).sin().abs();
-        transform.translation.y =
-            billboard.sheet.sprite_size() / 2.0 + bob(billboard.sheet, pose.animation) * bump;
+        transform.translation.y = billboard.sheet.sprite_size() / 2.0 + bob(pose.animation) * bump;
     }
 }
 
@@ -400,18 +427,136 @@ mod tests {
 
     #[test]
     fn cadence_scales_with_speed_and_stops_when_idle() {
-        let rider = SheetKind::Rider;
-        assert_eq!(cadence(rider, AnimationState::Idle, 3.0), 0.0);
+        assert_eq!(cadence(AnimationState::Idle, 3.0), 0.0);
+        assert!(cadence(AnimationState::Walk, 2.5) > cadence(AnimationState::Walk, 1.5));
+        assert!(cadence(AnimationState::Gallop, 11.0) > cadence(AnimationState::Walk, 2.5));
         assert!(
-            cadence(rider, AnimationState::Walk, 2.5) > cadence(rider, AnimationState::Walk, 1.5)
-        );
-        assert!(
-            cadence(rider, AnimationState::Gallop, 11.0)
-                > cadence(rider, AnimationState::Walk, 2.5)
-        );
-        assert!(
-            cadence(rider, AnimationState::Walk, f32::NAN) > 0.0,
+            cadence(AnimationState::Walk, f32::NAN) > 0.0,
             "never stalls a gait"
         );
+    }
+
+    /// The whole plugin, headless, with stand-in asset stores and a camera.
+    fn plugin_app() -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+                50,
+            )))
+            .init_resource::<Assets<Image>>()
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .add_plugins(CharacterVisualPlugin);
+        app.world_mut().spawn((
+            Camera3d::default(),
+            Transform::from_xyz(0.0, 4.0, 9.0).looking_at(Vec3::ZERO, Vec3::Y),
+        ));
+        app.update();
+        app
+    }
+
+    fn count<F: bevy::ecs::query::QueryFilter>(app: &mut App) -> usize {
+        app.world_mut()
+            .query_filtered::<(), F>()
+            .iter(app.world())
+            .count()
+    }
+
+    #[test]
+    fn swapping_a_figure_for_the_rider_leaves_no_parts_behind() {
+        use super::super::figure::{FigureBody, FigureJoint, FigurePart};
+        let mut app = plugin_app();
+        let me = app
+            .world_mut()
+            .spawn(CharacterVisual::Figure(FigureKind::Protagonist))
+            .id();
+        app.update();
+        assert_eq!(count::<With<FigureBody>>(&mut app), 1);
+        assert_eq!(count::<With<FigureJoint>>(&mut app), 11);
+        assert!(count::<With<FigurePart>>(&mut app) >= 18);
+
+        // Mount: the new visual replaces the figure the same frame.
+        app.world_mut()
+            .entity_mut(me)
+            .insert(CharacterVisual::Billboard(SheetKind::Rider));
+        app.update();
+        assert_eq!(count::<With<FigureBody>>(&mut app), 0);
+        assert_eq!(count::<With<FigureJoint>>(&mut app), 0);
+        assert_eq!(count::<With<FigurePart>>(&mut app), 0);
+        let mut billboards = app.world_mut().query::<(&Billboard, &ChildOf)>();
+        let all: Vec<_> = billboards.iter(app.world()).collect();
+        assert_eq!(all.len(), 1, "exactly one rider visual");
+        assert_eq!((all[0].0.sheet, all[0].1.parent()), (SheetKind::Rider, me));
+        let children = app.world().get::<Children>(me).unwrap();
+        assert_eq!(children.len(), 1);
+    }
+
+    #[test]
+    fn a_crowd_of_one_look_shares_meshes_and_materials() {
+        let mut app = plugin_app();
+        let one = |app: &mut App| {
+            app.world_mut()
+                .spawn(CharacterVisual::Figure(FigureKind::Townsfolk(2)));
+            app.update();
+            let meshes = app.world().resource::<Assets<Mesh>>().len();
+            let materials = app.world().resource::<Assets<StandardMaterial>>().len();
+            (meshes, materials)
+        };
+        let first = one(&mut app);
+        for _ in 0..19 {
+            one(&mut app);
+        }
+        assert_eq!(one(&mut app), first, "no new meshes or materials");
+        let mut handles = app.world_mut().query::<&Mesh3d>();
+        let distinct: std::collections::HashSet<_> =
+            handles.iter(app.world()).map(|m| m.0.id()).collect();
+        // Twenty people drawn with no more meshes than one person's parts.
+        let one_person: std::collections::HashSet<_> =
+            super::super::figure::figure_parts(FigureKind::Townsfolk(2))
+                .iter()
+                .map(|p| p.shape)
+                .collect();
+        assert_eq!(distinct.len(), one_person.len());
+    }
+
+    #[test]
+    fn a_walking_figure_turns_to_its_heading_and_swings_its_legs() {
+        use super::super::figure::{FigureBody, FigureJoint, Joint};
+        let mut app = plugin_app();
+        let me = app
+            .world_mut()
+            .spawn((
+                CharacterVisual::Figure(FigureKind::Hidalgo),
+                VisualPose {
+                    heading: Heading::from_radians(PI),
+                    animation: AnimationState::Walk,
+                    speed: 1.4,
+                },
+            ))
+            .id();
+        let mut swings = Vec::new();
+        for _ in 0..12 {
+            app.update();
+            let mut joints = app.world_mut().query::<(&FigureJoint, &Transform)>();
+            let mut hip = |j: Joint| {
+                joints
+                    .iter(app.world())
+                    .find(|(f, _)| f.0 == j)
+                    .map(|(_, t)| t.rotation.to_euler(EulerRot::ZYX).0)
+                    .unwrap()
+            };
+            let left = hip(Joint::Hip(super::super::figure::Side::Left));
+            let right = hip(Joint::Hip(super::super::figure::Side::Right));
+            assert!((left + right).abs() < 1e-4, "opposite phase");
+            swings.push(left);
+        }
+        assert!(swings.iter().any(|a| *a > 0.2) && swings.iter().any(|a| *a < -0.2));
+        // Facing west: the body turned half round.
+        let mut bodies = app
+            .world_mut()
+            .query::<(&FigureBody, &Transform, &ChildOf)>();
+        let (_, body, parent) = bodies.single(app.world()).unwrap();
+        assert_eq!(parent.parent(), me);
+        assert!((body.rotation * Vec3::X).distance(Vec3::NEG_X) < 1e-4);
     }
 }
