@@ -318,7 +318,7 @@ fn floor_ramps(b: &mut Builder, floor: &Floor) {
 }
 
 /// Two timber posts with a rail between them, along the rail footprint's
-/// long side. The tethered horse itself is a character billboard.
+/// long side. The tethered horse itself is a 3D character figure.
 fn hitching_rail(b: &mut Builder, rail: &Aabb) {
     let timber = b.palette.timber.clone();
     let size = rail.size();

@@ -1,5 +1,5 @@
 //! Low-poly 3D people, built from rigid faceted parts like the buildings and
-//! the train: flat colours, no textures.
+//! the train: flat colours and per-vertex shades.
 //!
 //! A figure is a body entity (turned to the heading) holding a tree of joint
 //! entities: pelvis, waist, neck, shoulders, elbows, hips and knees. Each
@@ -15,7 +15,8 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use pampa_core::{Heading, JointAngles, pose};
 
-use super::paint::Rgb;
+/// An RGB colour in sRGB bytes.
+pub type Rgb = [u8; 3];
 
 /// How many townsfolk looks there are; logic's `look` picks one.
 pub const TOWNSFOLK_LOOKS: u8 = 5;
@@ -67,14 +68,14 @@ pub enum Side {
 }
 
 impl Side {
-    const BOTH: [Self; 2] = [Self::Left, Self::Right];
+    pub(super) const BOTH: [Self; 2] = [Self::Left, Self::Right];
 
     fn index(self) -> usize {
         self as usize
     }
 
     /// Sign along the body's Z axis.
-    fn z(self) -> f32 {
+    pub(super) fn z(self) -> f32 {
         match self {
             Self::Left => -1.0,
             Self::Right => 1.0,
@@ -134,17 +135,22 @@ impl Joint {
     /// This joint's turn in `angles`, about the body's side axis.
     fn rotation(self, a: &JointAngles) -> Quat {
         // Positive Z turns a hanging limb toward +X (forward).
-        let angle = match self {
-            Self::Pelvis => 0.0,
-            Self::Waist => -a.lean,
+        match self {
+            // A rider's thighs open sideways first, then swing forward; the
+            // knee undoes the opening so the shin hangs straight down.
+            Self::Hip(s) => {
+                Quat::from_rotation_z(a.hip[s.index()]) * Quat::from_rotation_x(-s.z() * a.spread)
+            }
+            Self::Knee(s) => {
+                Quat::from_rotation_x(s.z() * a.spread) * Quat::from_rotation_z(a.knee[s.index()])
+            }
+            Self::Pelvis => Quat::IDENTITY,
+            Self::Waist => Quat::from_rotation_z(-a.lean),
             // The head stays nearly level while the torso leans.
-            Self::Neck => 0.6 * a.lean - a.nod,
-            Self::Shoulder(s) => a.shoulder[s.index()],
-            Self::Elbow(s) => a.elbow[s.index()],
-            Self::Hip(s) => a.hip[s.index()],
-            Self::Knee(s) => a.knee[s.index()],
-        };
-        Quat::from_rotation_z(angle)
+            Self::Neck => Quat::from_rotation_z(0.6 * a.lean - a.nod),
+            Self::Shoulder(s) => Quat::from_rotation_z(a.shoulder[s.index()]),
+            Self::Elbow(s) => Quat::from_rotation_z(a.elbow[s.index()]),
+        }
     }
 }
 
@@ -199,22 +205,22 @@ pub enum Shape {
 /// One ring of a loft: height, half extents along X and Z, X offset and a
 /// shade multiplied into the colour (for cheap darkening at hems and joints).
 #[derive(Debug, Clone, Copy)]
-struct Ring(f32, f32, f32, f32, f32);
+pub(super) struct Ring(pub f32, pub f32, pub f32, pub f32, pub f32);
 
 /// A round ring of radius `r` at `y`.
-const fn round(y: f32, r: f32) -> Ring {
+pub(super) const fn round(y: f32, r: f32) -> Ring {
     Ring(y, r, r, 0.0, 1.0)
 }
 
 /// Sides around limbs, neck, hands and feet.
-const LIMB_SIDES: usize = 14;
+pub(super) const LIMB_SIDES: usize = 14;
 /// Sides around the torso, hips and coats.
-const BODY_SIDES: usize = 16;
+pub(super) const BODY_SIDES: usize = 16;
 
 /// A limb from `top` radius down to `bottom` radius, with rounded ends, darker
 /// toward its lower end. Its muscle swells a little above the middle and
 /// narrows before the lower joint, so knees, calves and elbows read.
-fn limb(top: f32, bottom: f32) -> Vec<Ring> {
+pub(super) fn limb(top: f32, bottom: f32) -> Vec<Ring> {
     let at = |t: f32| bottom + (top - bottom) * t;
     let shaded = |ring: Ring, shade: f32| Ring(ring.0, ring.1, ring.2, 0.0, shade);
     vec![
@@ -450,14 +456,14 @@ fn torso(hem: f32, waist: f32) -> Vec<Ring> {
 /// hem to `depth` (a fraction of the radius), and `scuff`, how unevenly worn
 /// its shading is.
 #[derive(Debug, Clone, Copy)]
-struct Cloth {
-    folds: u32,
-    depth: f32,
-    scuff: f32,
+pub(super) struct Cloth {
+    pub folds: u32,
+    pub depth: f32,
+    pub scuff: f32,
 }
 
 impl Cloth {
-    const PLAIN: Self = Self {
+    pub const PLAIN: Self = Self {
         folds: 0,
         depth: 0.0,
         scuff: 0.0,
@@ -466,12 +472,12 @@ impl Cloth {
 
 /// A closed surface through `rings` (bottom to top), `segments` around, with
 /// smooth normals and per-vertex shades.
-fn loft(rings: &[Ring], segments: usize) -> Mesh {
+pub(super) fn loft(rings: &[Ring], segments: usize) -> Mesh {
     loft_cloth(rings, segments, Cloth::PLAIN)
 }
 
 /// [`loft`] with folds and wear (see [`Cloth`]).
-fn loft_cloth(rings: &[Ring], segments: usize, cloth: Cloth) -> Mesh {
+pub(super) fn loft_cloth(rings: &[Ring], segments: usize, cloth: Cloth) -> Mesh {
     use bevy::asset::RenderAssetUsages;
     use bevy::mesh::{Indices, PrimitiveTopology};
     use std::f32::consts::TAU;
@@ -844,7 +850,7 @@ const FARACH: Look = Look {
 };
 
 /// `color` a shade darker: seams, cuffs, soles and eye sockets.
-fn darker(color: Rgb) -> Rgb {
+pub(super) fn darker(color: Rgb) -> Rgb {
     color.map(|c| (c as f32 * 0.78) as u8)
 }
 
@@ -1080,6 +1086,9 @@ pub struct FigureBody {
     pub kind: FigureKind,
     /// How far through the gait (or breath) cycle, in cycles (`0..1`).
     pub phase: f32,
+    /// The horse body this figure rides, if any: it then sits the horse's
+    /// gait instead of walking its own.
+    pub seat: Option<Entity>,
     /// Joint entities in [`Joint::ALL`] order.
     joints: Vec<Entity>,
 }
@@ -1093,6 +1102,8 @@ pub struct FigureJoint(pub Joint);
 pub struct FigurePart(pub Piece);
 
 /// Spawns `kind`'s body, joints and parts under `parent`; returns the body.
+/// A rider (`seat`: the horse body) sits at its saddle, under `parent`, the
+/// horse's trunk.
 pub(super) fn spawn_figure(
     commands: &mut Commands,
     kit: &mut FigureKit,
@@ -1100,11 +1111,17 @@ pub(super) fn spawn_figure(
     parent: Entity,
     kind: FigureKind,
     phase: f32,
+    seat: Option<Entity>,
 ) -> Entity {
+    let at = if seat.is_some() {
+        super::horse::rider_offset()
+    } else {
+        Vec3::ZERO
+    };
     let body = commands
         .spawn((
             Name::new("Figure"),
-            Transform::default(),
+            Transform::from_translation(at),
             Visibility::default(),
             ChildOf(parent),
         ))
@@ -1138,28 +1155,43 @@ pub(super) fn spawn_figure(
     commands.entity(body).insert(FigureBody {
         kind,
         phase,
+        seat,
         joints,
     });
     body
 }
 
 /// Turns, bobs and poses each figure from its character's pose, its gait
-/// paced by speed.
+/// paced by speed. A rider sits its horse's gait, already turned and carried
+/// by the horse.
 pub(super) fn update_figures(
     time: Res<Time>,
     poses: Query<&super::VisualPose>,
+    horses: Query<&super::horse::HorseBody>,
     mut bodies: Query<(&ChildOf, &mut FigureBody, &mut Transform), Without<FigureJoint>>,
     mut joints: Query<(&FigureJoint, &mut Transform), Without<FigureBody>>,
 ) {
     let dt = time.delta_secs();
     for (child_of, mut body, mut transform) in &mut bodies {
-        let Ok(visual) = poses.get(child_of.parent()) else {
-            continue;
+        let angles = if let Some(horse) = body.seat {
+            let Ok(horse) = horses.get(horse) else {
+                continue;
+            };
+            body.phase = horse.phase;
+            let angles = pose::riding_pose(horse.gait, horse.phase);
+            transform.rotation = Quat::IDENTITY;
+            transform.translation = super::horse::rider_offset() + Vec3::Y * angles.bob;
+            angles
+        } else {
+            let Ok(visual) = poses.get(child_of.parent()) else {
+                continue;
+            };
+            body.phase = pose::advance(body.phase, visual.animation, visual.speed, dt);
+            let angles = pose::pose(visual.animation, body.phase);
+            transform.rotation = body_rotation(visual.heading);
+            transform.translation.y = angles.bob;
+            angles
         };
-        body.phase = pose::advance(body.phase, visual.animation, visual.speed, dt);
-        let angles = pose::pose(visual.animation, body.phase);
-        transform.rotation = body_rotation(visual.heading);
-        transform.translation.y = angles.bob;
         for &entity in &body.joints {
             let Ok((joint, mut transform)) = joints.get_mut(entity) else {
                 continue;

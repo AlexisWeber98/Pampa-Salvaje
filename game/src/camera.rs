@@ -436,8 +436,6 @@ mod tests {
     use crate::player::{GameWorld, PlayerPlugin, PlayerSpawn};
     use bevy::time::TimeUpdateStrategy;
     use pampa_core::{Heading, World};
-    use pampa_render::ViewDirection;
-    use pampa_render::character::ground_yaw;
     use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
     use std::time::Duration;
 
@@ -623,7 +621,7 @@ mod tests {
     }
 
     #[test]
-    fn billboards_face_correctly_at_any_orbit_angle() {
+    fn the_orbit_yaw_turns_the_camera_round_the_rider() {
         let mut app = headless_app(
             World::default(),
             north_at(0.0, 0.0),
@@ -637,9 +635,13 @@ mod tests {
             let yaw = heading.radians() + PI - k as f32 * FRAC_PI_4;
             set_yaw(&mut app, yaw);
             app.update();
+            // The camera looks along the ground bearing `yaw + PI`: the
+            // rider's heading turned by `k` eighths of a turn.
             let forward = camera(&mut app).forward();
-            let camera_yaw = ground_yaw(forward.x, forward.z).unwrap();
-            assert_eq!(ViewDirection::pick(heading, camera_yaw).index(), k);
+            let camera_yaw = (-forward.z).atan2(forward.x);
+            let relative = (heading.radians() - camera_yaw).rem_euclid(std::f32::consts::TAU);
+            let eighths = (relative / FRAC_PI_4).round() as usize % 8;
+            assert_eq!(eighths, k, "{relative}");
         }
     }
 

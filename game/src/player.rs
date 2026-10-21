@@ -9,7 +9,7 @@ use pampa_core::{
     Heading, MAX_STEP, Rider, RiderInput, RiderParams, Travel, Vec2 as GroundVec2, World,
 };
 use pampa_render::{
-    CharacterVisual, FigureKind, MapIcon, SheetKind, StreamFocus, VisualPose, world_from_ground,
+    CharacterVisual, Coat, FigureKind, MapIcon, StreamFocus, VisualPose, world_from_ground,
 };
 
 /// The logic body this entity represents, on foot or on horseback. Logic
@@ -59,12 +59,16 @@ impl Default for FootTuning {
     }
 }
 
-/// How the player getting around by `travel` is drawn: the city clerk on
-/// foot, or (until horses are 3D too) the rider billboard in the saddle.
+/// How the player getting around by `travel` is drawn: the clerk on foot,
+/// or the clerk in the saddle of Don Hidalgo's bayo, the only horse he
+/// rides.
 pub fn player_visual(travel: Travel) -> CharacterVisual {
     match travel {
         Travel::OnFoot => CharacterVisual::Figure(FigureKind::Protagonist),
-        Travel::Riding => CharacterVisual::Billboard(SheetKind::Rider),
+        Travel::Riding => CharacterVisual::Mounted {
+            rider: FigureKind::Protagonist,
+            coat: Coat::HIDALGO,
+        },
     }
 }
 
@@ -315,7 +319,10 @@ mod tests {
             .query_filtered::<&CharacterVisual, With<Player>>();
         assert_eq!(
             *q.single(app.world()).unwrap(),
-            CharacterVisual::Billboard(SheetKind::Rider)
+            CharacterVisual::Mounted {
+                rider: FigureKind::Protagonist,
+                coat: Coat::Bayo,
+            }
         );
     }
 

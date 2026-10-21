@@ -46,7 +46,7 @@ pub use math::Vec2;
 pub use obstacles::StaticObstacles;
 pub use placement::{PlacementError, place_towns};
 pub use places::{Place, PlaceKind, Sign, SignMount};
-pub use pose::JointAngles;
+pub use pose::{HorseAngles, HorseGait, JointAngles, Leg};
 pub use rail::{LinePath, RailCurve, RailLine, RailLineError, RailLink, RailSpan};
 pub use rider::{MAX_STEP, Rider, RiderInput, RiderParams};
 pub use terrain::{FlatArea, Terrain};

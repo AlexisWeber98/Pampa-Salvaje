@@ -1,5 +1,5 @@
-//! Logical animation state. Render decides how it is drawn: billboard
-//! frames for horses, joint poses ([`crate::pose`]) for people.
+//! Logical animation state. Render decides how it is drawn: joint poses
+//! ([`crate::pose`]) for people and horses.
 
 /// What the rider is doing, independent of how it is drawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
