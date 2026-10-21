@@ -137,9 +137,49 @@ faded blue, brown, grey and black wool, with bright colour only in accents
   and a rastra. **Comisario Elías Farach** wears a kepi, a dark blue tunic with
   brass buttons, a leather belt, dark trousers and boots.
 
-Horses and the mounted player are still the older billboard sprites (eight
-view directions, walk and gallop cycles). Until the horses become 3D too, the
-mounted player still shows the old gaucho rider sprite rather than the clerk.
+Horses are 3D low-poly too, at the same fidelity: compact Argentine criollos
+about 1.45 m at the withers (about 5,200 triangles each, plus about 700 for
+the tack), built from lofted parts like the people: barrel, chest, croup and
+withers, a neck with a short mane, a head with muzzle, jowls, ears and
+forelock, a full tail, and legs with forearm or gaskin, knee or hock, cannon,
+fetlock, pastern and hoof.
+
+- **Coats** are painted per vertex from where each vertex sits on the horse,
+  so patterns run across parts: **zaino** (solid dark brown), **tordillo**
+  (grey with lighter dapples), **overo** (bay with large white patches and
+  stockings, some white from every side), **alazán** (chestnut) and **bayo**
+  (sandy dun with black mane, tail and lower legs and a dark dorsal stripe).
+  Don Hidalgo's horse, the one the player rides, is bayo; the horse tied at
+  every other store gets a coat seeded from its town.
+- **Tack** fits 1919 rural Argentina: a recado (a woven sudadera, a leather
+  carona, the two bastos and a sheepskin pellón on top, a rawhide cincha with
+  iron rings), stirrup leathers and iron stirrups, and a rawhide bridle
+  (crownpiece, noseband, cheekpieces, bit rings) with reins. A tied horse
+  wears the same tack, its stirrups hanging and the reins over the pommel.
+- **Gaits** come from `pampa_core::pose`: idle (breathing, one hind hoof
+  resting), the four-beat walk, the trot with diagonal pairs (the slower part
+  of the gallop range, up to 6.5 m/s) and the gallop with a moment of
+  suspension, a rocking body and a swinging neck. Strides are paced by speed,
+  frame-rate independent.
+- **Mounted**, the clerk sits on the pellón with his thighs open round the
+  barrel, his shins hanging to the stirrups and his hands forward at the
+  reins; he rises, rocks and turns with the horse and leans into the gallop.
+
+**Polish, without extra triangles.** Every part has a PBR finish (leather
+slightly glossy, brass buttons and the rastra's silver metallic, wool and
+cloth matte, satin skin, a slight sheen on the horse's coat, dark glossy
+hooves), cached by colour and finish. Ambient occlusion is baked into the
+vertex shades: armpits, the crotch, under the jaw and hat brims, under the
+horse's belly, between its legs and under the saddle's edge. Small textures
+painted in code (64 x 64 each) add faces (eyes, brows, a mouth, mapped onto
+the front of the head only), a cloth weave on bombachas, ponchos and shirts,
+leather grain and felt, and horse faces with eyes, nostrils and an estrella
+(alazán) or a blaze (overo): nine textures, 147 KB in all, against the 3.7 MB
+of sprite sheets they replace. Hats tip with the step, ponchos, shawls and
+skirts sway, standing people glance around now and then, and horses flick
+their ears, swish their tails and nod with the gait. The sun's shadows use
+three cascades over the nearest 100 m, the first ending 8 m out, for crisper
+figure shadows.
 
 Townsfolk talk back: bump into somebody with the horse and they complain in a
 speech bubble above their head ("¡Eh, mirá por dónde andás!" at a walk,
@@ -215,9 +255,10 @@ The rule: **game logic never knows how things are drawn.**
   per-walker cooldown; `LinePicker`: seeded, no immediate repeats); the words come
   from `pampa-content`; render only draws the bubble (`Say` → `SpeechBubble`).
 - The visual representation is a swappable per-entity component in `render`
-  (`CharacterVisual`: `Figure` for low-poly people, `Billboard` for horses and
-  the mounted rider). Inserting a new value swaps what is drawn; the pure gait
-  poses live in `core` (`pampa_core::pose`).
+  (`CharacterVisual`: `Figure` for a person on foot, `Horse` for a saddled
+  horse, `Mounted` for a rider on one). Inserting a new value swaps what is
+  drawn; the pure gait poses and secondary motion live in `core`
+  (`pampa_core::pose`).
 
 Bevy is pinned to an exact version (`=0.20.0`) and only upgraded between milestones.
 
