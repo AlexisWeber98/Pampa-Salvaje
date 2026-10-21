@@ -94,8 +94,11 @@ cars are drawn only within 400 m of the rider. Positions are `f32`, so the world
 
 The camera orbits the player a full 360° with the mouse (or Q/E), zooms with
 the wheel, eases back behind the player after a moment without camera input
-while moving, looks at a lower point on foot than on horseback, and pulls in
-when a building would block its view.
+while moving, and looks at a lower point on foot than on horseback. It pulls
+in at once when a building, the line train's cars or the platform canopy's
+roof would block its view (it may still look under the canopy), and eases
+back out over about a second once the view clears. Thin things such as tree
+trunks and canopy posts do not pull it in.
 
 Characters are procedurally painted billboard sprites (no third-party art):
 rounded, shaded and outlined figures in eight view directions, with a walk

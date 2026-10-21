@@ -2,15 +2,19 @@
 //!
 //! The mouse (or Q/E) swings the camera all the way around the rider, the
 //! wheel zooms, and after a moment without camera input the camera eases
-//! back behind a moving rider. Buildings never come between the camera and
-//! the rider: it pulls in in front of them. The orbit math lives in
-//! [`crate::orbit`].
+//! back behind a moving rider. Buildings, the platform canopy and the line
+//! train's cars never come between the camera and the rider: it pulls in in
+//! front of them at once, and eases back out slowly once the view clears.
+//! The orbit math lives in [`crate::orbit`].
 
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
-use pampa_core::{Aabb, BuildingKind, Ground, Terrain, TownLayout, Travel, Vec2 as GroundVec2};
-use pampa_render::world_from_ground;
+use pampa_core::{
+    Aabb, BuildingKind, Ground, LineTrain, PlacedCar, Terrain, TownLayout, Travel,
+    Vec2 as GroundVec2,
+};
+use pampa_render::{WorldTrain, world_from_ground};
 
 use crate::orbit::{Orbit, OrbitInput, OrbitParams};
 use crate::player::{DrivePlayer, GameWorld, Player};
@@ -49,6 +53,18 @@ impl Default for FollowCamera {
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct CameraRig(pub Option<(Orbit, Vec3)>);
 
+/// How far out along the arm from the rider to its orbit spot the camera
+/// sits, as a fraction of the arm (1 = all the way out): the smoothed
+/// pull-in, see [`ease_reach`].
+#[derive(Component, Debug, Clone, Copy)]
+pub struct CameraReach(pub f32);
+
+impl Default for CameraReach {
+    fn default() -> Self {
+        Self(1.0)
+    }
+}
+
 /// Orbit tuning for the player's camera.
 #[derive(Resource, Debug, Clone, Copy, Default)]
 pub struct CameraTuning(pub OrbitParams);
@@ -56,19 +72,44 @@ pub struct CameraTuning(pub OrbitParams);
 /// Wheel scroll reported in pixels (touchpads) per line of zoom.
 const PIXELS_PER_LINE: f32 = 100.0;
 
-/// A building the camera cannot see or pass through: its footprint as a
-/// column from the ground up to `top` (world height, roof included).
+/// Something the camera cannot see or pass through: its footprint between
+/// the world heights `bottom` and `top`. A building or a train car is a
+/// column standing on the ground; the platform canopy is a slab overhead,
+/// so the camera may still look under it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Occluder {
     pub footprint: Aabb,
+    pub bottom: f32,
     pub top: f32,
 }
 
-/// Everything that blocks the camera's line of sight to the rider.
+impl Occluder {
+    /// A column standing on the ground at height `ground`, up to `top`.
+    pub fn column(footprint: Aabb, ground: f32, top: f32) -> Self {
+        Self {
+            footprint,
+            bottom: ground,
+            top,
+        }
+    }
+
+    /// Whether the world point `p` is inside.
+    #[cfg(test)]
+    pub fn contains(&self, p: Vec3) -> bool {
+        self.footprint.contains_point(GroundVec2::new(p.x, -p.z))
+            && p.y > self.bottom
+            && p.y < self.top
+    }
+}
+
+/// Everything static that blocks the camera's line of sight to the rider
+/// (the line train's cars are added each frame, see [`car_occluders`]).
 ///
 /// Buildings count as columns up to their roofs, so the camera may still
-/// look over a low shed. Tree trunks are left out on purpose: a 0.7 m trunk
-/// sweeping across the view would make the camera jump in and out.
+/// look over a low shed, and the platform canopy as a roof slab. Tree trunks,
+/// canopy posts and other thin things are left out on purpose: a 0.7 m trunk
+/// sweeping across the view would make the camera jump in and out (fading
+/// them instead is left for later).
 #[derive(Resource, Debug, Clone, Default)]
 pub struct CameraOccluders(pub Vec<Occluder>);
 
@@ -76,6 +117,12 @@ pub struct CameraOccluders(pub Vec<Occluder>);
 const ROOF_ALLOWANCE: f32 = 3.0;
 /// How far in front of a blocking wall the camera stops, in meters.
 const WALL_CLEARANCE: f32 = 0.4;
+/// Cars farther than this (plus half their length) from the rider cannot
+/// come between it and the camera, whose arm is at most 25 m long.
+const CAR_REACH: f32 = 30.0;
+/// Time constant of the camera easing back out once the view clears, in
+/// seconds. Pulling in has none: it is instant (see [`ease_reach`]).
+pub const EASE_OUT: f32 = 0.35;
 
 impl CameraOccluders {
     /// Every building of every town, standing on `terrain`.
@@ -88,54 +135,111 @@ impl CameraOccluders {
         )
     }
 
-    /// Every building of `town`, standing on `terrain`. The platform is
-    /// left out: it is a floor the player stands on, and the camera's
-    /// ground clearance keeps it above it.
+    /// Every building of `town`, standing on `terrain`, and the platform
+    /// canopy's roof. The platform is left out: it is a floor the player
+    /// stands on, and the camera's ground clearance keeps it above it.
     pub fn from_town(town: &TownLayout, terrain: &Terrain) -> Self {
-        Self(
-            town.buildings
-                .iter()
-                .filter(|b| b.kind != BuildingKind::Platform)
-                .map(|b| {
-                    let c = b.footprint.center();
-                    Occluder {
-                        footprint: b.footprint,
-                        top: terrain.height(c.x, c.y) + b.height + ROOF_ALLOWANCE,
-                    }
-                })
-                .collect(),
-        )
+        let ground = |p: GroundVec2| terrain.height(p.x, p.y);
+        let buildings = town
+            .buildings
+            .iter()
+            .filter(|b| b.kind != BuildingKind::Platform)
+            .map(|b| {
+                let g = ground(b.footprint.center());
+                Occluder::column(b.footprint, g, g + b.height + ROOF_ALLOWANCE)
+            });
+        // The canopy hangs at its height over the leveled station ground.
+        let canopies = town.canopies().into_iter().map(|c| {
+            let g = ground(c.footprint.center());
+            Occluder {
+                footprint: c.footprint,
+                bottom: g + c.bottom(),
+                top: g + c.top(),
+            }
+        });
+        Self(buildings.chain(canopies).collect())
     }
+}
+
+/// The line train's cars near `near` (the rider) as columns from the ground
+/// to their roofs, a row of short boxes for a car on a slant.
+pub fn car_occluders(cars: &[PlacedCar], terrain: &Terrain, near: GroundVec2) -> Vec<Occluder> {
+    let ground = |p: GroundVec2| terrain.height(p.x, p.y);
+    cars.iter()
+        .filter(|car| car.center.distance(near) <= CAR_REACH + car.length / 2.0)
+        .flat_map(|car| {
+            // The roof over the higher of the car's two ends.
+            let half = car.direction * (car.length / 2.0);
+            let rails = ground(car.center - half).max(ground(car.center + half));
+            let top = rails + LineTrain::RAIL_TOP + car.kind.height();
+            car.boxes()
+                .into_iter()
+                .map(move |b| Occluder::column(b, ground(b.center()), top))
+        })
+        .collect()
+}
+
+/// The next frame's [`CameraReach`]: `allowed` (the clear part of the arm)
+/// at once if the camera is out farther, so it is never inside an occluder,
+/// even while easing; otherwise easing out toward it with the time constant
+/// [`EASE_OUT`]. An exponential approach, so the same time passed in more,
+/// shorter frames ends at the same spot.
+///
+/// There is no ease-in: any easing in would leave the camera behind the wall
+/// it is pulling in front of for a few frames.
+pub fn ease_reach(current: f32, allowed: f32, dt: f32) -> f32 {
+    if allowed <= current {
+        return allowed;
+    }
+    allowed - (allowed - current) * (-dt / EASE_OUT).exp()
 }
 
 /// The camera position on the line from `focus` to `wanted` that keeps the
 /// line of sight clear: `wanted` itself if nothing blocks it, otherwise a
 /// point just in front of the first occluder.
-pub fn pull_in(focus: Vec3, wanted: Vec3, occluders: &[Occluder]) -> Vec3 {
+#[cfg(test)]
+pub fn pull_in<'a>(
+    focus: Vec3,
+    wanted: Vec3,
+    occluders: impl IntoIterator<Item = &'a Occluder>,
+) -> Vec3 {
+    let reach = clear_reach(focus, wanted, occluders);
+    if reach >= 1.0 {
+        wanted
+    } else {
+        focus.lerp(wanted, reach)
+    }
+}
+
+/// How far along the line from `focus` to `wanted` the line of sight stays
+/// clear, as a fraction of it: 1 if nothing blocks it, otherwise just in
+/// front of the first occluder.
+pub fn clear_reach<'a>(
+    focus: Vec3,
+    wanted: Vec3,
+    occluders: impl IntoIterator<Item = &'a Occluder>,
+) -> f32 {
     let (from, to) = (
         GroundVec2::new(focus.x, -focus.z),
         GroundVec2::new(wanted.x, -wanted.z),
     );
-    let height = |t: f32| focus.y + (wanted.y - focus.y) * t;
     let mut first = 1.0_f32;
     for o in occluders {
         let Some((enter, exit)) = o.footprint.segment_overlap(from, to) else {
             continue;
         };
-        // Height is linear along the line, so it is lowest at an end of the
-        // part inside the footprint; above the top there, it is above it all.
-        let hit = if height(enter) < o.top {
-            enter
-        } else if height(exit) < o.top {
-            // Descending into the column over its roof edge.
-            enter + (exit - enter) * (height(enter) - o.top) / (height(enter) - height(exit))
-        } else {
+        // The line is inside the occluder where it is over its footprint
+        // and between its bottom and top heights.
+        let Some((low, high)) = height_band(focus.y, wanted.y, o.bottom, o.top) else {
             continue;
         };
-        first = first.min(hit);
+        let (start, end) = (enter.max(low), exit.min(high));
+        if start <= end {
+            first = first.min(start);
+        }
     }
     if first >= 1.0 {
-        return wanted;
+        return 1.0;
     }
     let length = from.distance(to);
     let back_off = if length > 0.0 {
@@ -143,7 +247,19 @@ pub fn pull_in(focus: Vec3, wanted: Vec3, occluders: &[Occluder]) -> Vec3 {
     } else {
         0.0
     };
-    focus.lerp(wanted, (first - back_off).max(0.0))
+    (first - back_off).max(0.0)
+}
+
+/// Where a line whose height goes linearly from `from` (at 0) to `to` (at 1)
+/// is strictly between `bottom` and `top`, as a parameter range (unbounded
+/// for a level line); `None` if it never is.
+fn height_band(from: f32, to: f32, bottom: f32, top: f32) -> Option<(f32, f32)> {
+    let rise = to - from;
+    if rise == 0.0 {
+        return (from > bottom && from < top).then_some((f32::NEG_INFINITY, f32::INFINITY));
+    }
+    let (a, b) = ((bottom - from) / rise, (top - from) / rise);
+    Some((a.min(b), a.max(b)))
 }
 
 pub struct FollowCameraPlugin;
@@ -171,6 +287,7 @@ fn spawn_camera(mut commands: Commands) {
         Transform::from_xyz(0.0, 4.0, 9.0).looking_at(Vec3::Y, Vec3::Y),
         FollowCamera::default(),
         CameraRig::default(),
+        CameraReach::default(),
     ));
 }
 
@@ -235,17 +352,24 @@ fn gather_camera_input(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn follow_player(
     time: Res<Time>,
     world: Res<GameWorld>,
     occluders: Res<CameraOccluders>,
+    train: Option<Res<WorldTrain>>,
     tuning: Res<CameraTuning>,
     input: Res<CameraInput>,
     player: Single<&Player>,
-    camera: Single<(&mut Transform, &FollowCamera, &mut CameraRig)>,
+    camera: Single<(
+        &mut Transform,
+        &FollowCamera,
+        &mut CameraRig,
+        &mut CameraReach,
+    )>,
 ) {
     let rider = &player.rider;
-    let (mut transform, follow, mut rig) = camera.into_inner();
+    let (mut transform, follow, mut rig, mut reach) = camera.into_inner();
     let feet = world_from_ground(rider.position, rider.height);
     let look_height = match rider.travel() {
         Travel::OnFoot => follow.on_foot_look_height,
@@ -253,21 +377,40 @@ fn follow_player(
     };
     let target = feet + Vec3::Y * look_height;
 
-    let (orbit, focus) = match rig.0.as_mut() {
+    let dt = time.delta_secs();
+    let (orbit, focus, snapped) = match rig.0.as_mut() {
         Some((orbit, focus)) if focus.distance(target) <= follow.snap_distance => {
-            let dt = time.delta_secs();
             orbit.update(input.0, rider.heading.radians(), rider.speed, &tuning.0, dt);
             focus.smooth_nudge(&target, follow.smoothing, dt);
-            (*orbit, *focus)
+            (*orbit, *focus, false)
         }
         // First frame or a respawn far away: jump right behind the rider.
-        _ => *rig
-            .0
-            .insert((Orbit::behind(rider.heading.radians()), target)),
+        _ => {
+            let (orbit, focus) = *rig
+                .0
+                .insert((Orbit::behind(rider.heading.radians()), target));
+            (orbit, focus, true)
+        }
     };
     let desired = follow.desired(focus, &orbit, &world.0);
-    // Keep the line of sight to the rider itself clear.
-    transform.translation = pull_in(target, desired, &occluders.0);
+    // Keep the line of sight to the rider itself clear, of buildings and of
+    // the train's cars near it.
+    let cars = train
+        .as_deref()
+        .and_then(|t| t.0.as_ref())
+        .map(|t| car_occluders(&t.placed_cars(), &world.0.terrain, rider.position))
+        .unwrap_or_default();
+    let allowed = clear_reach(target, desired, occluders.0.iter().chain(&cars));
+    reach.0 = if snapped {
+        allowed
+    } else {
+        ease_reach(reach.0, allowed, dt)
+    };
+    transform.translation = if reach.0 >= 1.0 {
+        desired
+    } else {
+        target.lerp(desired, reach.0)
+    };
     transform.look_at(focus, Vec3::Y);
 }
 
@@ -503,10 +646,11 @@ mod tests {
     #[test]
     fn pulls_in_in_front_of_a_building_behind_the_rider() {
         // A tall wall 4 to 7 m south of a rider facing north.
-        let wall = Occluder {
-            footprint: Aabb::new(GroundVec2::new(-5.0, -7.0), GroundVec2::new(5.0, -4.0)),
-            top: 50.0,
-        };
+        let wall = Occluder::column(
+            Aabb::new(GroundVec2::new(-5.0, -7.0), GroundVec2::new(5.0, -4.0)),
+            -10.0,
+            50.0,
+        );
         let mut app = headless_app(
             World::default(),
             north_at(0.0, 0.0),
@@ -523,22 +667,23 @@ mod tests {
 
     #[test]
     fn looks_over_a_low_building() {
-        let shed = Occluder {
-            footprint: Aabb::new(GroundVec2::new(-5.0, -7.0), GroundVec2::new(5.0, -4.0)),
-            top: -10.0,
-        };
+        let shed = Occluder::column(
+            Aabb::new(GroundVec2::new(-5.0, -7.0), GroundVec2::new(5.0, -4.0)),
+            -20.0,
+            -10.0,
+        );
         let focus = Vec3::new(0.0, 1.6, 0.0);
         let wanted = Vec3::new(0.0, 4.0, 9.0);
         assert_eq!(pull_in(focus, wanted, &[shed]), wanted);
     }
 
-    fn assert_outside(occluders: &CameraOccluders, cam: Vec3, when: &str) {
-        let at = ground(cam);
-        for o in &occluders.0 {
-            assert!(
-                !(o.footprint.contains_point(at) && cam.y < o.top),
-                "{when}: camera {cam} inside {o:?}"
-            );
+    fn assert_outside<'a>(
+        occluders: impl IntoIterator<Item = &'a Occluder>,
+        cam: Vec3,
+        when: &str,
+    ) {
+        for o in occluders {
+            assert!(!o.contains(cam), "{when}: camera {cam} inside {o:?}");
         }
     }
 
@@ -588,7 +733,7 @@ mod tests {
             }
             app.update();
             assert_outside(
-                &occluders,
+                &occluders.0,
                 camera(&mut app).translation,
                 &format!("frame {frame}"),
             );
@@ -605,7 +750,7 @@ mod tests {
             set_yaw(&mut app, yaw);
             app.update();
             let cam = camera(&mut app).translation;
-            assert_outside(&occluders, cam, &format!("yaw {yaw}"));
+            assert_outside(&occluders.0, cam, &format!("yaw {yaw}"));
             let (orbit, focus) = rig(&mut app);
             let world = app.world().resource::<GameWorld>().0.clone();
             let desired = FollowCamera::default().desired(focus, &orbit, &world);
@@ -659,7 +804,10 @@ mod tests {
                 .iter()
                 .all(|o| o.footprint != platform.footprint)
         );
-        assert_eq!(occluders.0.len(), town.buildings.len() - 1);
+        assert_eq!(
+            occluders.0.len(),
+            town.buildings.len() - 1 + town.canopies().len()
+        );
         let (position, heading) = town.platform_spot().unwrap();
         let top = world.ground_height(position);
         let spawn = PlayerSpawn {
@@ -677,7 +825,7 @@ mod tests {
             set_yaw(&mut app, yaw);
             app.update();
             let cam = camera(&mut app).translation;
-            assert_outside(&occluders, cam, &format!("yaw {yaw}"));
+            assert_outside(&occluders.0, cam, &format!("yaw {yaw}"));
             // Never down in the platform or the ground beside it.
             let floor = world.ground_height(ground(cam));
             assert!(cam.y > floor + 0.5, "yaw {yaw}: {cam} over {floor}");
@@ -689,5 +837,216 @@ mod tests {
                 "{desired}"
             );
         }
+    }
+
+    fn flat() -> Terrain {
+        Terrain {
+            amplitude: 0.0,
+            ..Terrain::default()
+        }
+    }
+
+    /// A coach standing on flat ground at `center`, along `direction`.
+    fn coach(center: GroundVec2, direction: GroundVec2) -> PlacedCar {
+        PlacedCar {
+            kind: pampa_core::CarKind::Coach,
+            center,
+            direction: direction * (1.0 / direction.length()),
+            length: 15.0,
+            on_rail: true,
+        }
+    }
+
+    /// Where `p` is relative to `car`: along its length and across it.
+    fn car_frame(car: &PlacedCar, p: GroundVec2) -> (f32, f32) {
+        let d = p - car.center;
+        let across = GroundVec2::new(-car.direction.y, car.direction.x);
+        (d.dot(car.direction), d.dot(across))
+    }
+
+    #[test]
+    fn pulls_in_in_front_of_a_train_car_beside_the_player() {
+        let focus = Vec3::new(0.0, 1.6, 0.0);
+        // A car running east 5 m north of the player, and one on a slant.
+        for direction in [GroundVec2::new(1.0, 0.0), GroundVec2::new(1.0, 0.6)] {
+            let car = coach(GroundVec2::new(0.0, 5.0), direction);
+            let occluders = car_occluders(&[car], &flat(), GroundVec2::ZERO);
+            assert!(!occluders.is_empty(), "{direction:?}");
+            let top = LineTrain::RAIL_TOP + car.kind.height();
+            assert!(occluders.iter().all(|o| (o.top - top).abs() < 1e-4));
+            // The camera wants to be 12 m north, behind the car, at 3 m.
+            let wanted = Vec3::new(0.0, 3.0, -12.0);
+            let at = pull_in(focus, wanted, &occluders);
+            assert_ne!(at, wanted, "{direction:?}: blocked by the car");
+            assert_outside(&occluders, at, &format!("{direction:?}"));
+            // In front of the car, on the player's side, clear of its body.
+            let (along, across) = car_frame(&car, ground(at));
+            assert!(along.abs() < car.length / 2.0, "{direction:?}");
+            assert!(
+                across < -LineTrain::WIDTH / 2.0,
+                "{direction:?}: {across} across the car"
+            );
+        }
+    }
+
+    #[test]
+    fn far_cars_are_left_out() {
+        let car = coach(GroundVec2::new(0.0, 200.0), GroundVec2::new(1.0, 0.0));
+        assert!(car_occluders(&[car], &flat(), GroundVec2::ZERO).is_empty());
+    }
+
+    /// A roof slab from 3.5 to 3.7 m over the 6 m north of the focus.
+    fn roof() -> Occluder {
+        Occluder {
+            footprint: Aabb::new(GroundVec2::new(-10.0, 0.0), GroundVec2::new(10.0, 6.0)),
+            bottom: 3.5,
+            top: 3.7,
+        }
+    }
+
+    #[test]
+    fn looks_under_a_canopy_but_not_through_its_roof() {
+        let focus = Vec3::new(0.0, 1.6, 0.0);
+        // Under the roof and out past it, low: clear.
+        let under = Vec3::new(0.0, 3.0, -9.0);
+        assert_eq!(pull_in(focus, under, &[roof()]), under);
+        // Up through the roof: stops under it.
+        let over = Vec3::new(0.0, 7.0, -9.0);
+        let at = pull_in(focus, over, &[roof()]);
+        assert_ne!(at, over);
+        assert!(at.y < roof().bottom, "{at}");
+        assert!(!roof().contains(at));
+        // From above the roof down to a camera under it, too.
+        let high = Vec3::new(0.0, 6.0, 0.0);
+        let low = Vec3::new(0.0, 1.0, -4.0);
+        let at = pull_in(high, low, &[roof()]);
+        assert!(at.y > roof().top, "{at}");
+    }
+
+    #[test]
+    fn the_platform_canopy_is_a_roof_over_the_platform() {
+        let town = TownLayout::castex_inspired();
+        let terrain = Terrain::default();
+        let occluders = CameraOccluders::from_town(&town, &terrain);
+        let canopy = town.canopies()[0];
+        let c = canopy.footprint.center();
+        let roof = occluders
+            .0
+            .iter()
+            .find(|o| o.footprint == canopy.footprint)
+            .expect("the canopy's roof");
+        let ground = terrain.height(c.x, c.y);
+        assert!((roof.bottom - ground - canopy.bottom()).abs() < 1e-4);
+        assert!((roof.top - ground - canopy.top()).abs() < 1e-4);
+    }
+
+    #[test]
+    fn pulls_in_at_once_and_eases_out_slowly() {
+        // Blocked: straight to the allowed reach, never beyond it.
+        assert_eq!(ease_reach(1.0, 0.3, 0.001), 0.3);
+        assert_eq!(ease_reach(0.5, 0.3, 0.1), 0.3);
+        // Cleared: on the way out, still short of it after one frame.
+        let one = ease_reach(0.3, 1.0, FRAME);
+        assert!(one > 0.3 && one < 0.35, "{one}");
+        let mut r = 0.3;
+        let mut t = 0.0;
+        while r < 0.95 {
+            r = ease_reach(r, 1.0, FRAME);
+            t += FRAME;
+        }
+        assert!(t > 0.5 && t < 1.5, "out in {t} s");
+        // Frame-rate independent.
+        let coarse = ease_reach(0.3, 1.0, 0.1);
+        let fine = (0..10).fold(0.3, |r, _| ease_reach(r, 1.0, 0.01));
+        assert!((coarse - fine).abs() < 1e-5, "{coarse} vs {fine}");
+        // Never past the allowed reach while easing.
+        assert!((0..100).fold(0.3, |r, _| ease_reach(r, 0.8, 0.05)) <= 0.8);
+    }
+
+    #[test]
+    fn eases_back_out_when_the_view_clears() {
+        // A wall behind the rider pulls the camera in; once it is gone, the
+        // camera glides back out over a few frames instead of jumping.
+        let wall = Occluder::column(
+            Aabb::new(GroundVec2::new(-5.0, -7.0), GroundVec2::new(5.0, -4.0)),
+            -10.0,
+            50.0,
+        );
+        let mut app = headless_app(
+            World::default(),
+            north_at(0.0, 0.0),
+            CameraOccluders(vec![wall]),
+        );
+        app.update();
+        app.update();
+        let pulled = ground(camera(&mut app).translation).distance(GroundVec2::ZERO);
+        app.insert_resource(CameraOccluders::default());
+        app.update();
+        let next = ground(camera(&mut app).translation).distance(GroundVec2::ZERO);
+        for _ in 0..200 {
+            app.update();
+        }
+        let out = ground(camera(&mut app).translation).distance(GroundVec2::ZERO);
+        assert!(pulled < 4.0, "{pulled}");
+        assert!(
+            next > pulled && next < out - 1.0,
+            "{pulled} -> {next} -> {out}"
+        );
+    }
+
+    #[test]
+    fn on_the_platform_the_camera_stays_in_front_of_the_dwelling_train() {
+        let loaded =
+            crate::towns::load_world(&pampa_content::asset_path(pampa_content::TOWNS_FILE));
+        let (_, train) = crate::life::start_of_day(&loaded.line, &loaded.towns);
+        let train = train.expect("a line train");
+        let world = World::with_towns(loaded.world, Terrain::default(), &loaded.towns);
+        let occluders = CameraOccluders::from_towns(&loaded.towns, &world.terrain);
+        let (position, heading) = loaded.towns[0].platform_spot().unwrap();
+        let cars = train.placed_cars();
+        // The car beside the player, and the bearing across the track to it.
+        let beside = *cars
+            .iter()
+            .min_by(|a, b| {
+                let d = |c: &PlacedCar| c.center.distance(position);
+                d(a).total_cmp(&d(b))
+            })
+            .unwrap();
+        let (_, across) = car_frame(&beside, position);
+        let normal = GroundVec2::new(-beside.direction.y, beside.direction.x);
+        let to_track = normal * -across.signum();
+        let spawn = PlayerSpawn {
+            position,
+            heading,
+            travel: pampa_core::Travel::OnFoot,
+        };
+        let mut app = headless_app(world.clone(), spawn, occluders.clone());
+        app.insert_resource(WorldTrain(Some(train)));
+        app.update();
+        let yaw = to_track.y.atan2(to_track.x);
+        let mut pulled = 0;
+        for k in -3..=3 {
+            set_yaw(&mut app, yaw + k as f32 * 0.15);
+            app.update();
+            let cam = camera(&mut app).translation;
+            let cars = car_occluders(&cars, &world.terrain, position);
+            assert_outside(&cars, cam, &format!("yaw step {k}"));
+            // On the player's side of the train, with a clear view.
+            let (along, side) = car_frame(&beside, ground(cam));
+            assert!(
+                side * across > 0.0 && side.abs() > LineTrain::WIDTH / 2.0,
+                "step {k}: {along}, {side} vs the player's {across}"
+            );
+            let r = rider(&mut app);
+            let follow = FollowCamera::default();
+            let target =
+                world_from_ground(r.position, r.height) + Vec3::Y * follow.on_foot_look_height;
+            assert_eq!(pull_in(target, cam, &cars), cam, "step {k}");
+            let (orbit, focus) = rig(&mut app);
+            if cam.distance(follow.desired(focus, &orbit, &world)) > 1.0 {
+                pulled += 1;
+            }
+        }
+        assert!(pulled >= 5, "the cars pull the camera in: {pulled}");
     }
 }

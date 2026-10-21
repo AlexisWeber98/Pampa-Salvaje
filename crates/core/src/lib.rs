@@ -49,8 +49,8 @@ pub use rail::{LinePath, RailCurve, RailLine, RailLineError, RailLink, RailSpan}
 pub use rider::{MAX_STEP, Rider, RiderInput, RiderParams};
 pub use terrain::{FlatArea, Terrain};
 pub use town::{
-    Building, BuildingKind, Floor, HitchingPost, PlazaPlacement, Railway, RailwayConfig, Side,
-    TetheredHorse, TownConfig, TownConfigError, TownLayout, TownSize,
+    Building, BuildingKind, Canopy, Floor, HitchingPost, PlazaPlacement, Railway, RailwayConfig,
+    Side, TetheredHorse, TownConfig, TownConfigError, TownLayout, TownSize,
 };
 pub use townsfolk::{StreetGraph, Townsfolk, Townsperson};
 pub use train::{

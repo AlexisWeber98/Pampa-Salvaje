@@ -120,6 +120,37 @@ impl Floor {
     }
 }
 
+/// The platform canopy: a flat roof slab hung from the station's track-side
+/// wall over the platform, on thin posts. Render draws it from this, and the
+/// camera treats it as a roof it cannot see through (a slab, not a column:
+/// the camera may still sit under it).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Canopy {
+    /// The roof's footprint on the ground plane.
+    pub footprint: Aabb,
+    /// Height of the roof slab's middle above the ground under the station.
+    pub height: f32,
+}
+
+impl Canopy {
+    /// How far the roof reaches out from the station wall, in meters.
+    pub const DEPTH: f32 = 5.5;
+    /// Height of the roof above the ground under the station, in meters.
+    pub const HEIGHT: f32 = 3.6;
+    /// Thickness of the roof slab, in meters.
+    pub const THICKNESS: f32 = 0.12;
+
+    /// Height of the slab's underside above the ground under the station.
+    pub fn bottom(&self) -> f32 {
+        self.height - Self::THICKNESS / 2.0
+    }
+
+    /// Height of the slab's top above the ground under the station.
+    pub fn top(&self) -> f32 {
+        self.height + Self::THICKNESS / 2.0
+    }
+}
+
 /// A straight railway line on the ground plane.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Railway {
@@ -603,6 +634,29 @@ impl TownLayout {
                     Side::North | Side::South => Vec2::new(1.0, 0.0),
                     Side::East | Side::West => Vec2::new(0.0, 1.0),
                 },
+            })
+            .collect()
+    }
+
+    /// Roofs over the platform: each station's canopy, reaching
+    /// [`Canopy::DEPTH`] out from its track-side wall (the back, away from
+    /// its street front) along the whole wall.
+    pub fn canopies(&self) -> Vec<Canopy> {
+        self.buildings
+            .iter()
+            .filter(|b| b.kind == BuildingKind::Station)
+            .map(|b| {
+                let (f, d) = (b.footprint, Canopy::DEPTH);
+                let (min, max) = match b.front.opposite() {
+                    Side::North => (Vec2::new(f.min.x, f.max.y), Vec2::new(f.max.x, f.max.y + d)),
+                    Side::South => (Vec2::new(f.min.x, f.min.y - d), Vec2::new(f.max.x, f.min.y)),
+                    Side::East => (Vec2::new(f.max.x, f.min.y), Vec2::new(f.max.x + d, f.max.y)),
+                    Side::West => (Vec2::new(f.min.x - d, f.min.y), Vec2::new(f.min.x, f.max.y)),
+                };
+                Canopy {
+                    footprint: Aabb::new(min, max),
+                    height: Canopy::HEIGHT,
+                }
             })
             .collect()
     }
@@ -2087,6 +2141,52 @@ pub(crate) mod tests {
                 }
                 checked += 1;
             }
+        }
+        assert!(checked > 3);
+    }
+
+    #[test]
+    fn the_station_canopy_hangs_over_the_platform_from_the_track_side_wall() {
+        let mut checked = 0;
+        for t in sample_towns() {
+            let canopies = t.canopies();
+            let Some(station) = find(&t, BuildingKind::Station) else {
+                assert!(canopies.is_empty(), "{}", t.name);
+                continue;
+            };
+            let platform = find(&t, BuildingKind::Platform).expect("a platform");
+            assert_eq!(canopies.len(), 1, "{}", t.name);
+            let canopy = canopies[0];
+            // Flush with the station's back wall, on the track side.
+            let (s, c) = (station.footprint, canopy.footprint);
+            assert!(!s.intersects(&c.expanded(-0.01)), "{}", t.name);
+            assert!(
+                s.intersects(&c.expanded(0.01)),
+                "{}: touches the station",
+                t.name
+            );
+            let back = station.front.opposite();
+            let toward = c.center() - s.center();
+            let out = match back {
+                Side::North => toward.y,
+                Side::South => -toward.y,
+                Side::East => toward.x,
+                Side::West => -toward.x,
+            };
+            assert!(out > 0.0, "{}: on the track side", t.name);
+            // As wide as the station and as deep as the roof render draws.
+            let size = c.size();
+            let (width, depth, wall) = match back {
+                Side::North | Side::South => (size.x, size.y, s.size().x),
+                Side::East | Side::West => (size.y, size.x, s.size().y),
+            };
+            assert!((depth - Canopy::DEPTH).abs() < 1e-4, "{}", t.name);
+            assert!((width - wall).abs() < 1e-4, "{}", t.name);
+            // Over the platform, with headroom above its top.
+            assert!(platform.footprint.contains(&c), "{}", t.name);
+            assert!(canopy.bottom() - platform.height > 2.0, "{}", t.name);
+            assert!(canopy.top() > canopy.bottom());
+            checked += 1;
         }
         assert!(checked > 3);
     }

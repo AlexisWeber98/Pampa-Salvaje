@@ -22,6 +22,21 @@ pub enum CarKind {
     Coach,
 }
 
+impl CarKind {
+    /// Height of the car's highest point (roof, or the locomotive's
+    /// chimney) above the rail tops, in meters, as render draws it.
+    pub fn height(self) -> f32 {
+        match self {
+            // The chimney's flared cap.
+            CarKind::Locomotive => 4.55,
+            CarKind::Coach => 4.16,
+            CarKind::Boxcar => 4.06,
+            // The heaped grain in the open bin.
+            CarKind::Hopper => 3.56,
+        }
+    }
+}
+
 /// One car of the consist, in order from the front.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Car {
@@ -40,6 +55,31 @@ pub struct PlacedCar {
     pub length: f32,
     /// Whether the car is on the drawn railway (the line train always is).
     pub on_rail: bool,
+}
+
+impl PlacedCar {
+    /// The car's footprint as axis-aligned boxes: one box for a car along
+    /// an axis, a row of short boxes for a car on a slant, so the boxes hug
+    /// its sides.
+    pub fn boxes(&self) -> Vec<Aabb> {
+        let d = self.direction;
+        let pieces = if d.x.abs().max(d.y.abs()) > 0.999 {
+            1
+        } else {
+            (self.length / LineTrain::WIDTH).ceil().max(1.0) as usize
+        };
+        let piece = self.length / pieces as f32;
+        let size = Vec2::new(
+            d.x.abs() * piece + d.y.abs() * LineTrain::WIDTH,
+            d.y.abs() * piece + d.x.abs() * LineTrain::WIDTH,
+        );
+        (0..pieces)
+            .map(|i| {
+                let offset = (i as f32 + 0.5) * piece - self.length / 2.0;
+                Aabb::from_center_size(self.center + d * offset, size)
+            })
+            .collect()
+    }
 }
 
 /// Which way a run goes along the line.
@@ -178,6 +218,8 @@ impl LineTrain {
     pub const WIDTH: f32 = 3.0;
     /// Gap between coupled cars, in meters.
     pub const COUPLING: f32 = 1.0;
+    /// Height of the rail tops above the ground: where the cars stand.
+    pub const RAIL_TOP: f32 = 0.5;
 
     /// The train of `line` through `towns`, parked overnight at the first
     /// town at midnight of day 0, facing its morning run. `None` when the
@@ -518,29 +560,15 @@ impl LineTrain {
     /// A car along an axis is one box; a car on a slant is a row of short
     /// boxes along it, so the boxes hug its sides.
     pub fn obstacles(&self) -> Vec<SideObstacle> {
-        let mut out = Vec::new();
-        for car in self.placed_cars() {
-            let d = car.direction;
-            let across = Vec2::new(-d.y, d.x);
-            let pieces = if d.x.abs().max(d.y.abs()) > 0.999 {
-                1
-            } else {
-                (car.length / Self::WIDTH).ceil().max(1.0) as usize
-            };
-            let piece = car.length / pieces as f32;
-            let size = Vec2::new(
-                d.x.abs() * piece + d.y.abs() * Self::WIDTH,
-                d.y.abs() * piece + d.x.abs() * Self::WIDTH,
-            );
-            for i in 0..pieces {
-                let offset = (i as f32 + 0.5) * piece - car.length / 2.0;
-                out.push(SideObstacle {
-                    footprint: Aabb::from_center_size(car.center + d * offset, size),
-                    across,
-                });
-            }
-        }
-        out
+        self.placed_cars()
+            .iter()
+            .flat_map(|car| {
+                let across = Vec2::new(-car.direction.y, car.direction.x);
+                car.boxes()
+                    .into_iter()
+                    .map(move |footprint| SideObstacle { footprint, across })
+            })
+            .collect()
     }
 
     /// Stop timings of a run through `stops` (front progress, run order).
@@ -1084,6 +1112,50 @@ mod line_tests {
                 assert!(r.position.y <= rail_y - clear, "{:?}", r.position);
             }
         }
+    }
+
+    #[test]
+    fn a_car_on_a_slanted_link_is_covered_by_short_boxes_along_it() {
+        let (_, mut train) = shipped();
+        let (_, depart) = train.stop_times(Run::Down, NIEVAS).unwrap();
+        let at = hm(7, 0) + (depart + 200.0) * BASE_RATE;
+        train.advance(0.0, at, BASE_RATE);
+        let car = train.placed_cars()[2];
+        assert!(car.direction.x.abs().max(car.direction.y.abs()) < 0.999);
+        let boxes = car.boxes();
+        assert!(boxes.len() > 1, "{boxes:?}");
+        let across = Vec2::new(-car.direction.y, car.direction.x);
+        for k in 0..=20 {
+            let along = (k as f32 / 20.0 - 0.5) * car.length * 0.98;
+            for off in [-0.5, 0.0, 0.5] {
+                let p = car.center + car.direction * along + across * off;
+                assert!(boxes.iter().any(|b| b.contains_point(p)), "{p:?}");
+            }
+        }
+        // The obstacles are these very boxes.
+        let all: Vec<Aabb> = train
+            .placed_cars()
+            .iter()
+            .flat_map(PlacedCar::boxes)
+            .collect();
+        let obstacles: Vec<Aabb> = train.obstacles().iter().map(|o| o.footprint).collect();
+        assert_eq!(all, obstacles);
+    }
+
+    #[test]
+    fn cars_stand_a_little_over_four_meters_above_the_rails() {
+        for kind in [
+            CarKind::Locomotive,
+            CarKind::Coach,
+            CarKind::Boxcar,
+            CarKind::Hopper,
+        ] {
+            let h = kind.height();
+            assert!(h > 3.4 && h < 5.0, "{kind:?}: {h}");
+        }
+        assert!(CarKind::Locomotive.height() > CarKind::Coach.height());
+        assert!(CarKind::Hopper.height() < CarKind::Boxcar.height());
+        const { assert!(LineTrain::RAIL_TOP > 0.0) };
     }
 
     #[test]
