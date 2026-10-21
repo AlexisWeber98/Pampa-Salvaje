@@ -51,7 +51,13 @@ The line-train boarding PR comes after these three.
 - [x] **T1 (PR-A)** Walkable raised platform, a ground height that includes the platform top, the start spot on the platform, and the camera and townsfolk handling it. Route: delegated writer (trigger: 2+ non-trivial files across core and game). Uncommitted; the user commits.
 - [x] **T1b (PR-A2 `feat/camera-collision`, user-approved 2026-10-20)** Camera collision. The line train's cars become moving camera occluders, and so does the platform canopy roof. Pull-in is smoothed: fast in, slow out. Fading thin occluders (trees, fences) is deferred to PR-C. Route: delegated writer (trigger: 2+ non-trivial files across core, render and game). Uncommitted; the user commits.
 - [x] **T2 (PR-B1)** 3D low-poly people: a part-based mesh builder and rigid-part animation (idle, walk, jog). Covers the city protagonist (on foot and mounted), the townsfolk looks, Don Hidalgo and Farach. The billboard path is retired for people. Route: delegated writer (trigger: 2+ non-trivial files across render, core and game). Uncommitted; the user commits. Known interim: the mounted player still shows the old gaucho rider billboard until T3.
-- [ ] **T3 (PR-B2)** 3D low-poly horses: five coats, the gaits (including the new Trot) and the mounted pose. The billboard path is removed completely.
+- [ ] **T3 (PR-B2)** 3D low-poly horses at the same PS1/PS2-like fidelity as the people. Covers the five coats (zaino, tordillo, overo, alazán, bayo), the gaits (idle, walk, the new Trot, gallop) and the mounted pose with the clerk in the saddle. The billboard path is removed completely.
+- [ ] **T3b (PR-B2 or its own PR if it is too large; user, 2026-10-21)** Visual polish without extra triangles, for **people and horses**:
+  - **PBR materials per material:** leather slightly glossy, brass buttons and rastra coins metallic, wool and cloth matte, skin satin, horse coat with a slight sheen, hooves dark and glossy.
+  - **Baked vertex ambient occlusion:** armpits, crotch, under the hat brim, under the jaw, between the horse's legs, under the saddle.
+  - **Small procedural textures (64–128 px):** faces (eyes, brows, mouth), cloth weave on the bombacha and poncho, leather grain, felt on hats. Horse faces get eyes and nostrils, and the lucero or estrella markings.
+  - **Secondary motion:** the hat brim follows the step, the poncho and skirt sway, idle figures glance around, the horse swishes its tail, flicks its ears and nods its head with the gait.
+  - **Sun shadows:** if the cost is acceptable, raise the sun shadow-map resolution and tune the cascades so figures cast crisper shadows. Report the measured cost.
 - [ ] **T4 (PR-C)** Core: direct road network between neighbouring towns, with level crossings, fence layout with gates, and tree and tuft scatter rules.
 - [ ] **T5 (PR-C)** Render: grass colour variation, tufts, trees, road surface, fences, gates and crossings, streamed by chunk. Minimap: draw the road.
 

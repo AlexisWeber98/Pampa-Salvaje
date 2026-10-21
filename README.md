@@ -10,7 +10,7 @@ horseback, a follow camera, settlements and a first errand. The towns are
 small railway towns loosely inspired by 1910s La Pampa towns such as
 Eduardo Castex (not a historical reconstruction), each at its own place in the
 world. The player starts on foot on top of the Monte Nievas platform, beside
-the coaches of the morning train, collides with buildings and cannot leave the
+the coaches of the morning train from General Pico, collides with buildings and cannot leave the
 world. The platform is a raised floor, not a wall: short ramps lead down from
 both ends, and its long sides are steps to walk up or off.
 
@@ -24,19 +24,22 @@ every two real seconds). The sun follows it, rising in the east, crossing the
 northern sky and setting in the west, warm and low at dawn and dusk and full
 by day; nights are dim and bluish under the moon but stay readable, and the
 dust fog takes the color of the hour without getting any thicker. The game
-begins at about 08:33, with the morning train standing at Monte Nievas. The
+begins in the late morning, at about 10:49, in full daylight, with the
+morning train from General Pico standing at Monte Nievas: the protagonist, a
+former hardware-shop clerk from Pico, has just arrived on it. The
 time of day (`HH:MM`) is shown in the top-left corner, lettered in the game's
 pixel font on a paper panel, with the current objective under it.
 
 One steam train runs the whole railway line on a timetable: a rural mixed
 train of 8 cars (93 m), the locomotive, two passenger coaches and five freight
-cars. It
-leaves Eduardo Castex at 07:00, stops 25 s at Monte Nievas, reaches General
-Pico, lays over, leaves Pico at 16:00, stops at Monte Nievas again and spends
-the night at Castex. It runs at up to 65 km/h, braking to stop with the
+cars. It spends the night at General Pico, leaves Pico at 07:00, stops 25 s at
+Monte Nievas, reaches Eduardo Castex, lays over, leaves Castex at 16:00, stops
+at Monte Nievas again and is back at Pico for the night (a user change on
+2026-10-21; until then it slept at Castex and left it at 07:00). It runs at up to 65 km/h, braking to stop with the
 middle of its two coaches alongside each station, and takes about 10.7 real minutes
-over the 11.0 km of line (Castex 07:00, Monte Nievas 08:27, Pico 12:22; Pico 16:00,
-Monte Nievas 19:43, Castex 21:22, with the clock at its base rate). The clock
+over the 11.0 km of line (Pico 07:00, Monte Nievas 10:42–10:55, Castex 12:22; Castex 16:00, Monte
+Nievas 17:26–17:39, Pico 21:22, with the clock at its base rate). The game
+starts half way through the morning stop at Monte Nievas, at 10:48:59. The clock
 only starts each run: once moving, the train runs in real seconds, and a
 jump of the clock fast-forwards it exactly where it would have been. Its
 cars follow the curves between towns and shove riders off the track; the
