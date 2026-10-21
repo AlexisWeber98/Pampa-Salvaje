@@ -3,14 +3,20 @@
 //! Everything here reads logic state from `pampa-core` and turns it into
 //! pixels. Nothing here feeds back into game rules.
 
+use std::path::PathBuf;
+
+use bevy::prelude::Resource;
+
 pub mod atmosphere;
 pub mod bubble;
 pub mod character;
 pub mod coords;
 pub mod flora;
 pub mod font;
+pub mod ground;
 pub mod hud;
 pub mod minimap;
+pub mod obj;
 pub mod rail;
 pub mod signs;
 pub mod streaming;
@@ -24,7 +30,7 @@ pub use character::{
     CharacterVisual, CharacterVisualPlugin, Coat, FigureKind, TOWNSFOLK_LOOKS, VisualPose,
 };
 pub use coords::world_from_ground;
-pub use flora::{FloraPlugin, GrassTuft, TreePart, WorldFlora};
+pub use flora::{FloraAccent, FloraPlugin, GrassTuft, TreePart, VegetationModels, WorldFlora};
 pub use hud::{HudObjective, HudPlugin};
 pub use minimap::{MapIcon, MapTarget, MinimapPlugin};
 pub use rail::{LineTrack, RailPlugin, WorldRail};
@@ -33,3 +39,9 @@ pub use streaming::{StreamingPlan, StreamingSet};
 pub use terrain::{StreamFocus, TerrainChunk, TerrainPlugin, WorldChunks, WorldTerrain};
 pub use town::{ActiveTowns, StreamTowns, TownPlugin, TownRoot, WindmillRotor, WorldTowns};
 pub use train::{TRAIN_DRAW_RADIUS, TrainCar, TrainPlugin, TrainWheel, WorldTrain};
+
+/// The game's `assets/` folder. Vegetation models and ground textures are
+/// read from it at startup. Without it, or when a file is missing, their
+/// procedural stand-ins are drawn instead.
+#[derive(Resource, Debug, Clone)]
+pub struct AssetRoot(pub PathBuf);

@@ -54,6 +54,8 @@ pub enum Finish {
     Bark,
     /// Leaf clusters: matte, a little softer than bark.
     Leaves,
+    /// Stones on the pampa: rough, a touch less than bark.
+    Rock,
 }
 
 impl Finish {
@@ -75,6 +77,7 @@ impl Finish {
             Self::Eye => (0.15, 0.0, 0.6),
             Self::Bark => (0.96, 0.0, 0.2),
             Self::Leaves => (0.88, 0.0, 0.3),
+            Self::Rock => (0.93, 0.0, 0.25),
         }
     }
 

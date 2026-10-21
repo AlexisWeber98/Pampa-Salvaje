@@ -14,7 +14,8 @@ pub enum Species {
     /// *Prosopis caldenia*: 6–9 m, a dark rough trunk and a broad umbrella
     /// crown.
     Calden,
-    /// *Geoffroea decorticans*: 3–5 m, a greenish trunk and a small crown.
+    /// *Geoffroea decorticans*: 3–5 m. It grows in dense thickets
+    /// (chañarales), so it is drawn and collides as one.
     Chanar,
 }
 
@@ -308,11 +309,12 @@ impl TuftKind {
 }
 
 impl Tree {
-    /// Trunk radius at the ground, in meters.
+    /// Trunk radius at the ground, in meters. A chañar's is its thicket's
+    /// dense stem core, which no rider pushes through.
     pub fn trunk_radius(&self) -> f32 {
         match self.species {
             Species::Calden => 0.035 * self.height,
-            Species::Chanar => 0.03 * self.height,
+            Species::Chanar => 0.09 * self.height,
         }
     }
 
@@ -480,6 +482,13 @@ mod tests {
         );
         assert!(calden.iter().all(|t| (6.0..=9.0).contains(&t.height)));
         assert!(chanar.iter().all(|t| (3.0..=5.0).contains(&t.height)));
+        // A chañar is drawn as a dense thicket: its obstacle is the thicket's
+        // stem core, wider than a single trunk.
+        assert!(
+            chanar
+                .iter()
+                .all(|t| t.trunk_radius() >= 0.08 * t.height && t.trunk_radius() < t.crown_radius())
+        );
         assert!(
             trees
                 .iter()

@@ -1,18 +1,33 @@
-//! Native flora on the streamed chunks: caldén and chañar trees and grass
-//! tufts, placed by [`pampa_core::FloraSite`] and drawn as faceted low-poly
-//! meshes in the buildings' flat-shaded style.
+//! Native flora on the streamed chunks: caldén and chañar and grass tufts,
+//! placed by [`pampa_core::FloraSite`].
 //!
-//! Every mesh and material is built once in a [`FloraKit`] and shared, so
-//! Bevy batches identical draws. A chunk's flora are its children and go
-//! with it when it is dropped.
+//! The plants are low-poly CC0 models from the Ultimate Nature Pack by
+//! Quaternius (see [`load_vegetation`]), recoloured and rescaled in code
+//! for the dry 1919 pampa. When a model is missing, the faceted procedural
+//! stand-ins below are drawn instead, and only then.
+//!
+//! Every mesh and material is built once and shared, so Bevy batches
+//! identical draws. A chunk's flora are its children and go with it when it
+//! is dropped; every model pick, turn and size is seeded by the plant's
+//! placement, so a reloaded chunk looks exactly the same. Distance culling
+//! ([`VisibilityRange`]) keeps the drawn triangles low without any level of
+//! detail swap: a tree is the same model out to the dust fog and fades out
+//! inside it, and tufts stay solid near the rider and thin out smoothly
+//! farther away.
+
+use std::collections::HashMap;
+use std::time::Instant;
 
 use bevy::asset::RenderAssetUsages;
+use bevy::camera::visibility::VisibilityRange;
 use bevy::mesh::{PrimitiveTopology, VertexAttributeValues};
 use bevy::prelude::*;
-use pampa_core::{FloraSite, Species, Tree, TuftKind};
+use pampa_core::{FloraSite, Species, Tree, Tuft, TuftKind, Vec2 as GroundVec2};
 
+use crate::AssetRoot;
 use crate::character::finish::Finish;
 use crate::coords::world_from_ground;
+use crate::obj::{self, MaterialColors, ObjModel};
 use crate::terrain::{ChunkStreaming, TerrainChunk, WorldTerrain};
 
 /// Where the flora grows. Insert it before the plugin runs; without it,
@@ -20,17 +35,26 @@ use crate::terrain::{ChunkStreaming, TerrainChunk, WorldTerrain};
 #[derive(Resource, Debug, Clone)]
 pub struct WorldFlora(pub FloraSite);
 
-/// A drawn tree part (trunk or crown), a child of its chunk.
+/// A drawn tree part (trunk, crown or a model part), a child of its chunk.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TreePart(pub Species);
 
-/// A drawn grass tuft, a child of its chunk.
+/// A drawn grass tuft or weed, a child of its chunk.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GrassTuft(pub TuftKind);
+
+/// A stump or fallen log near a caldén, a child of its chunk.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FloraAccent;
 
 /// Marks a chunk whose flora is grown.
 #[derive(Component)]
 struct FloraGrown;
+
+/// Loading the vegetation models, in `Startup`. Anything that draws them
+/// (the terrain's stones and shrubs) runs after it.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct VegetationLoad;
 
 /// Grows flora on terrain chunks as they are streamed in. Needs the
 /// [`crate::TerrainPlugin`].
@@ -39,7 +63,7 @@ pub struct FloraPlugin;
 impl Plugin for FloraPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<WorldTerrain>()
-            .add_systems(Startup, setup_kit)
+            .add_systems(Startup, (load_vegetation.in_set(VegetationLoad), setup_kit))
             // Right after streaming, like the track: new chunks get their
             // flora the frame they appear, before transforms propagate.
             .add_systems(
@@ -53,9 +77,404 @@ impl Plugin for FloraPlugin {
 
 /// Tufts drawn per chunk, at most.
 pub const TUFTS_DRAWN: usize = 300;
+/// Where trees stop being drawn, in meters from the camera: past the dust
+/// fog ([`crate::atmosphere::FOG_VISIBILITY`]), so they fade out inside it.
+/// A tree is the same model at every distance; there is no far stand-in.
+pub const TREE_FAR: f32 = 200.0;
+/// Width of the trees' dithered fade-out, ending at [`TREE_FAR`].
+const TREE_FADE: f32 = 15.0;
+/// Tufts within this distance of the rider are always drawn solid...
+pub const TUFT_SOLID: f32 = 40.0;
+/// ...wherever the orbit camera stands: at most this far from the rider
+/// (the orbit's longest zoom, `game/src/orbit.rs`).
+pub const CAMERA_REACH: f32 = 25.0;
+/// Beyond that, each tuft starts fading at its own seeded distance, up to
+/// this much farther: the grass thins out smoothly between.
+pub const TUFT_SPREAD: f32 = 50.0;
+/// Width of a tuft's dithered fade-out.
+const TUFT_FADE: f32 = 15.0;
+/// Where stumps and logs stop being drawn, and the width of their fade.
+const ACCENT_FAR: f32 = 120.0;
+const ACCENT_FADE: f32 = 15.0;
+/// Seeded share of caldén variants (out of 16) that are dead snags.
+const DEAD_VARIANTS: u32 = 3;
+/// Share of caldenes with a stump or a fallen log beside them.
+const ACCENT_SHARE: f32 = 0.06;
+/// Share of tufts drawn as weeds, and the part of that share in flower.
+const WEED_SHARE: f32 = 0.06;
+const FLOWER_SHARE: f32 = 0.015;
+/// A chañar thicket is this wide for its height (the bush model is wider).
+const THICKET_WIDTH: f32 = 0.7;
+/// How much wider the caldén's crown is drawn than the model's.
+const CROWN_WIDEN: f32 = 0.25;
+/// Grass tints from grey-green to dry yellow.
+const GRASS_TINTS: usize = 4;
 
-/// Height the tree meshes are built at, per species; each tree is scaled
-/// from it.
+/// Where the vegetation models live, under the [`AssetRoot`].
+pub const MODEL_DIR: &str = "models/vegetation/quaternius-ultimate-nature";
+
+/// One of the shipped vegetation models.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Model {
+    CommonTree(u8),
+    DeadTree(u8),
+    Bush(u8),
+    Grass,
+    TallGrass,
+    ShortGrass,
+    Wheat,
+    Plant(u8),
+    Flowers,
+    Rock(u8),
+    Stump,
+    Log,
+}
+
+/// What a model stands for in the game; it decides the recolouring.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    /// A living caldén.
+    Calden,
+    /// A dead caldén.
+    Snag,
+    /// A chañar or jarilla thicket.
+    Thicket,
+    /// Grass tufts and paja brava.
+    Grass,
+    /// Weeds and wildflowers.
+    Weed,
+    /// Tosca stones.
+    Stone,
+    /// Stumps and fallen trunks.
+    Deadwood,
+}
+
+impl Model {
+    /// Every shipped model.
+    pub fn all() -> Vec<Self> {
+        let mut all = Vec::new();
+        for n in 1..=5 {
+            all.extend([Self::CommonTree(n), Self::DeadTree(n), Self::Plant(n)]);
+        }
+        all.extend([Self::Bush(1), Self::Bush(2)]);
+        all.extend((1..=4).map(Self::Rock));
+        all.extend([
+            Self::Grass,
+            Self::TallGrass,
+            Self::ShortGrass,
+            Self::Wheat,
+            Self::Flowers,
+            Self::Stump,
+            Self::Log,
+        ]);
+        all
+    }
+
+    /// The model's OBJ file name.
+    pub fn file(self) -> String {
+        match self {
+            Self::CommonTree(n) => format!("CommonTree_{n}.obj"),
+            Self::DeadTree(n) => format!("CommonTree_Dead_{n}.obj"),
+            Self::Bush(n) => format!("Bush_{n}.obj"),
+            Self::Grass => "Grass.obj".into(),
+            Self::TallGrass => "Grass_2.obj".into(),
+            Self::ShortGrass => "Grass_Short.obj".into(),
+            Self::Wheat => "Wheat.obj".into(),
+            Self::Plant(n) => format!("Plant_{n}.obj"),
+            Self::Flowers => "Flowers.obj".into(),
+            Self::Rock(n) => format!("Rock_{n}.obj"),
+            Self::Stump => "TreeStump.obj".into(),
+            Self::Log => "WoodLog.obj".into(),
+        }
+    }
+
+    pub fn role(self) -> Role {
+        match self {
+            Self::CommonTree(_) => Role::Calden,
+            Self::DeadTree(_) => Role::Snag,
+            Self::Bush(_) => Role::Thicket,
+            Self::Grass | Self::TallGrass | Self::ShortGrass | Self::Wheat => Role::Grass,
+            Self::Plant(_) | Self::Flowers => Role::Weed,
+            Self::Rock(_) => Role::Stone,
+            Self::Stump | Self::Log => Role::Deadwood,
+        }
+    }
+}
+
+/// Deterministic `[0, 1)` for a ground spot and a salt.
+pub(crate) fn spot_unit(at: GroundVec2, salt: u32) -> f32 {
+    jitter(at.x.to_bits() ^ at.y.to_bits().rotate_left(16), salt)
+}
+
+/// The model drawn for `tree`: caldenes are common trees, a seeded few of
+/// them dead snags; chañares are bush thickets.
+pub fn tree_model(tree: &Tree) -> Model {
+    match tree.species {
+        Species::Calden if tree.variant < DEAD_VARIANTS => {
+            Model::DeadTree((spot_unit(tree.at, 3) * 5.0) as u8 % 5 + 1)
+        }
+        Species::Calden => Model::CommonTree((tree.variant % 5) as u8 + 1),
+        Species::Chanar => Model::Bush((tree.variant % 2) as u8 + 1),
+    }
+}
+
+/// The model drawn for `tuft`: tall paja is wheat-like paja brava or tall
+/// grass, flechilla is grass or short grass, and a seeded few are weeds
+/// and wildflowers.
+pub fn tuft_model(tuft: &Tuft) -> Model {
+    let roll = spot_unit(tuft.at, 7);
+    if roll < FLOWER_SHARE {
+        return Model::Flowers;
+    }
+    if roll < WEED_SHARE {
+        return Model::Plant((spot_unit(tuft.at, 8) * 5.0) as u8 % 5 + 1);
+    }
+    let tall = spot_unit(tuft.at, 9) < 0.5;
+    match (tuft.kind, tall) {
+        (TuftKind::Paja, true) => Model::Wheat,
+        (TuftKind::Paja, false) => Model::TallGrass,
+        (TuftKind::Flechilla, true) => Model::Grass,
+        (TuftKind::Flechilla, false) => Model::ShortGrass,
+    }
+}
+
+/// The 1919 pampa's colour (sRGB) and finish for `role`'s MTL material
+/// `name`, whose own colour was `kd`.
+pub fn recolour(role: Role, name: &str, kd: [f32; 3]) -> ([f32; 3], Finish) {
+    let dead = matches!(role, Role::Snag | Role::Deadwood);
+    match (role, name) {
+        // Weathered grey on dead wood, dark grey-brown bark on the living.
+        (_, "Wood") if dead => ([0.42, 0.38, 0.33], Finish::Bark),
+        (_, "Wood") => ([0.27, 0.22, 0.18], Finish::Bark),
+        (_, "LightWood") => ([0.58, 0.49, 0.37], Finish::Bark),
+        // Tosca: the pale beige limestone crust of the pampa.
+        (_, "Rock") => ([0.74, 0.67, 0.54], Finish::Rock),
+        // A dull olive crown.
+        (Role::Calden, "DarkGreen") => ([0.26, 0.30, 0.17], Finish::Leaves),
+        (Role::Calden, _) => ([0.34, 0.38, 0.21], Finish::Leaves),
+        (Role::Thicket, _) => ([0.42, 0.46, 0.31], Finish::Leaves),
+        // Pale straw; each tuft is tinted on top (see `grass_tint`).
+        (Role::Grass, _) => ([0.86, 0.82, 0.66], Finish::Leaves),
+        (Role::Weed, "Cyan") => ([0.52, 0.50, 0.68], Finish::Leaves),
+        (Role::Weed, "Yellow") => ([0.70, 0.62, 0.34], Finish::Leaves),
+        (Role::Weed, "Pink") => ([0.72, 0.52, 0.56], Finish::Leaves),
+        (Role::Weed, "DarkGreen") => ([0.36, 0.40, 0.25], Finish::Leaves),
+        (Role::Weed, _) => ([0.45, 0.47, 0.30], Finish::Leaves),
+        (Role::Deadwood, "Mushroom_Top") => ([0.55, 0.42, 0.33], Finish::Leaves),
+        (Role::Deadwood, "Mushroom_Bottom") => ([0.78, 0.72, 0.62], Finish::Leaves),
+        (Role::Deadwood, _) => ([0.40, 0.42, 0.26], Finish::Leaves),
+        // Anything else keeps its own colour, faded halfway to grey.
+        _ => {
+            let srgb = Color::linear_rgb(kd[0], kd[1], kd[2]).to_srgba();
+            let rgb = [srgb.red, srgb.green, srgb.blue];
+            let grey = (rgb[0] + rgb[1] + rgb[2]) / 3.0;
+            let finish = if role == Role::Stone {
+                Finish::Rock
+            } else {
+                Finish::Leaves
+            };
+            (rgb.map(|c| 0.5 * (c + grey)), finish)
+        }
+    }
+}
+
+fn smoothstep(lo: f32, hi: f32, x: f32) -> f32 {
+    let t = ((x - lo) / (hi - lo)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// A finish and its positions, normals and colours, while baking.
+type BakedPart = (Finish, Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 4]>);
+
+/// `obj` as one mesh per finish, recoloured for `model`'s role into vertex
+/// colours and scaled to stand on the origin 1 unit tall, so a transform
+/// scale is its height in meters. Caldén crowns are widened. Vertices are
+/// a little darker low down: cheap baked occlusion.
+pub fn bake(model: Model, obj: &ObjModel, colors: &MaterialColors) -> Vec<(Finish, Mesh)> {
+    let ys = obj
+        .groups
+        .iter()
+        .flat_map(|g| g.positions.iter().map(|p| p[1]));
+    let (lo, hi) = ys.fold((f32::MAX, f32::MIN), |(a, b), y| (a.min(y), b.max(y)));
+    let height = (hi - lo).max(1e-3);
+    let role = model.role();
+    let mut parts: Vec<BakedPart> = Vec::new();
+    for group in &obj.groups {
+        let kd = colors.get(&group.material).copied().unwrap_or([0.5; 3]);
+        let (rgb, finish) = recolour(role, &group.material, kd);
+        let color = LinearRgba::from(Color::srgb(rgb[0], rgb[1], rgb[2]));
+        let k = match parts.iter().position(|p| p.0 == finish) {
+            Some(k) => k,
+            None => {
+                parts.push((finish, Vec::new(), Vec::new(), Vec::new()));
+                parts.len() - 1
+            }
+        };
+        let part = &mut parts[k];
+        for (p, n) in group.positions.iter().zip(&group.normals) {
+            let y = (p[1] - lo) / height;
+            let widen = if role == Role::Calden {
+                1.0 + CROWN_WIDEN * smoothstep(0.35, 0.75, y)
+            } else {
+                1.0
+            };
+            part.1
+                .push([p[0] / height * widen, y, p[2] / height * widen]);
+            part.2.push(*n);
+            let shade = 0.72 + 0.28 * y.clamp(0.0, 1.0);
+            part.3.push([
+                color.red * shade,
+                color.green * shade,
+                color.blue * shade,
+                1.0,
+            ]);
+        }
+    }
+    parts
+        .into_iter()
+        .map(|(finish, positions, normals, colors)| {
+            let mesh = Mesh::new(
+                PrimitiveTopology::TriangleList,
+                RenderAssetUsages::RENDER_WORLD,
+            )
+            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+            (finish, mesh)
+        })
+        .collect()
+}
+
+/// The vegetation models, baked once at startup, and the few materials
+/// every one of them shares.
+#[derive(Resource)]
+pub struct VegetationModels {
+    parts: HashMap<Model, Vec<(Finish, Handle<Mesh>)>>,
+    bark: Handle<StandardMaterial>,
+    leaves: Handle<StandardMaterial>,
+    weeds: Handle<StandardMaterial>,
+    rock: Handle<StandardMaterial>,
+    grass: [Handle<StandardMaterial>; GRASS_TINTS],
+}
+
+impl VegetationModels {
+    /// Whether `model` was loaded.
+    pub fn has(&self, model: Model) -> bool {
+        self.parts.contains_key(&model)
+    }
+
+    /// `model`'s meshes and materials, the grass tinted `tint` (see
+    /// [`grass_tint`]); `None` when it was not loaded.
+    pub fn parts(
+        &self,
+        model: Model,
+        tint: usize,
+    ) -> Option<Vec<(Handle<Mesh>, Handle<StandardMaterial>)>> {
+        let parts = self.parts.get(&model)?;
+        Some(
+            parts
+                .iter()
+                .map(|(finish, mesh)| (mesh.clone(), self.material(model, *finish, tint)))
+                .collect(),
+        )
+    }
+
+    fn material(&self, model: Model, finish: Finish, tint: usize) -> Handle<StandardMaterial> {
+        match (model.role(), finish) {
+            (_, Finish::Bark) => self.bark.clone(),
+            (_, Finish::Rock) => self.rock.clone(),
+            (Role::Grass, _) => self.grass[tint.min(GRASS_TINTS - 1)].clone(),
+            (Role::Weed, _) => self.weeds.clone(),
+            _ => self.leaves.clone(),
+        }
+    }
+}
+
+/// Which grass tint a tuft at `at` takes, from grey-green (0) to dry yellow:
+/// the ground's dryness there, jittered per tuft.
+pub fn grass_tint(dryness: f32, at: GroundVec2) -> usize {
+    let k = dryness * (GRASS_TINTS - 1) as f32 + (spot_unit(at, 4) - 0.5) * 1.4;
+    k.round().clamp(0.0, (GRASS_TINTS - 1) as f32) as usize
+}
+
+/// A white material with `finish`: vertex colours carry the paint.
+fn finished(finish: Finish, double_sided: bool) -> StandardMaterial {
+    tinted(finish, double_sided, Color::WHITE)
+}
+
+fn tinted(finish: Finish, double_sided: bool, base_color: Color) -> StandardMaterial {
+    let (perceptual_roughness, metallic, reflectance) = finish.pbr();
+    StandardMaterial {
+        base_color,
+        perceptual_roughness,
+        metallic,
+        reflectance,
+        double_sided,
+        cull_mode: (!double_sided).then_some(bevy::render::render_resource::Face::Back),
+        ..default()
+    }
+}
+
+/// Loads and bakes every vegetation model from the [`AssetRoot`]: the
+/// "Ultimate Nature Pack by Quaternius, CC0 1.0; see
+/// assets/models/vegetation/quaternius-ultimate-nature/CREDITS.md".
+///
+/// It runs once, at startup; chunks only reuse the handles. A missing or
+/// broken file logs a warning and leaves that model out, so the
+/// procedural stand-in is drawn in its place.
+pub fn load_vegetation(
+    mut commands: Commands,
+    root: Option<Res<AssetRoot>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let started = Instant::now();
+    let mut parts = HashMap::new();
+    let mut triangles = 0;
+    if let Some(root) = root {
+        let dir = root.0.join(MODEL_DIR);
+        for model in Model::all() {
+            let path = dir.join(model.file());
+            match obj::load(&path) {
+                Ok((obj, colors)) => {
+                    triangles += obj.triangles();
+                    let baked = bake(model, &obj, &colors)
+                        .into_iter()
+                        .map(|(finish, mesh)| (finish, meshes.add(mesh)))
+                        .collect();
+                    parts.insert(model, baked);
+                }
+                Err(error) => warn!(
+                    "vegetation model {} not loaded ({error}); drawing its stand-in",
+                    path.display()
+                ),
+            }
+        }
+        info!(
+            "vegetation: {} models, {triangles} triangles, loaded in {:.0} ms",
+            parts.len(),
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+    }
+    // Grey-green to dry yellow, multiplied over the pale straw paint.
+    let green = Vec3::new(0.66, 0.72, 0.56);
+    let dry = Vec3::new(1.0, 0.88, 0.58);
+    let grass = std::array::from_fn(|k| {
+        let c = green.lerp(dry, k as f32 / (GRASS_TINTS - 1) as f32);
+        materials.add(tinted(Finish::Leaves, true, Color::srgb(c.x, c.y, c.z)))
+    });
+    commands.insert_resource(VegetationModels {
+        parts,
+        bark: materials.add(finished(Finish::Bark, false)),
+        leaves: materials.add(finished(Finish::Leaves, false)),
+        weeds: materials.add(finished(Finish::Leaves, true)),
+        rock: materials.add(finished(Finish::Rock, false)),
+        grass,
+    });
+}
+
+/// Height the stand-in tree meshes are built at, per species; each tree is
+/// scaled from it.
 fn reference_height(species: Species) -> f32 {
     match species {
         Species::Calden => 7.5,
@@ -63,7 +482,7 @@ fn reference_height(species: Species) -> f32 {
     }
 }
 
-/// Shared tree and tuft meshes and materials.
+/// The procedural stand-in meshes and materials.
 #[derive(Resource)]
 pub struct FloraKit {
     calden_trunk: Handle<Mesh>,
@@ -97,20 +516,6 @@ impl FloraKit {
     }
 }
 
-/// A white material with `finish`: vertex colours carry the paint.
-fn finished(finish: Finish, double_sided: bool) -> StandardMaterial {
-    let (perceptual_roughness, metallic, reflectance) = finish.pbr();
-    StandardMaterial {
-        base_color: Color::WHITE,
-        perceptual_roughness,
-        metallic,
-        reflectance,
-        double_sided,
-        cull_mode: (!double_sided).then_some(bevy::render::render_resource::Face::Back),
-        ..default()
-    }
-}
-
 fn setup_kit(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -129,6 +534,161 @@ fn setup_kit(
     });
 }
 
+/// Drawn solid from the camera out to `far - fade` meters, then dithered
+/// out by `far`. There is no near cut-off and no level-of-detail swap: a
+/// plant never changes shape, it only fades at the far end.
+pub(crate) fn visible_within(far: f32, fade: f32) -> VisibilityRange {
+    VisibilityRange {
+        start_margin: 0.0..0.0,
+        end_margin: far - fade..far,
+        use_aabb: false,
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Plant {
+    Tree(Species),
+    Tuft(TuftKind),
+    Accent,
+}
+
+/// One entity to spawn under a chunk.
+type Part = (
+    Mesh3d,
+    MeshMaterial3d<StandardMaterial>,
+    Transform,
+    VisibilityRange,
+    Plant,
+);
+
+/// What drawing a chunk's flora needs.
+struct Painter<'a> {
+    terrain: &'a pampa_core::Terrain,
+    site: &'a FloraSite,
+    kit: &'a FloraKit,
+    models: Option<&'a VegetationModels>,
+}
+
+impl Painter<'_> {
+    fn tree(&self, tree: &Tree, out: &mut Vec<Part>) {
+        let base = world_from_ground(tree.at, self.terrain.height(tree.at.x, tree.at.y) - 0.1);
+        let turned =
+            Transform::from_translation(base).with_rotation(Quat::from_rotation_y(tree.yaw));
+        let model = tree_model(tree);
+        let plant = Plant::Tree(tree.species);
+        let range = visible_within(TREE_FAR, TREE_FADE);
+        if tree.species == Species::Calden {
+            self.accent(tree, out);
+        }
+        let Some(parts) = self.models.and_then(|m| m.parts(model, 0)) else {
+            // The model is missing: its stand-in, at every distance.
+            let stand_in =
+                turned.with_scale(Vec3::splat(tree.height / reference_height(tree.species)));
+            for (mesh, material) in self.kit.tree(tree.species) {
+                out.push(part(mesh, material, stand_in, range.clone(), plant));
+            }
+            return;
+        };
+        let h = tree.height;
+        let scale = match tree.species {
+            Species::Calden => Vec3::splat(h),
+            Species::Chanar => Vec3::new(h * THICKET_WIDTH, h, h * THICKET_WIDTH),
+        };
+        for (mesh, material) in parts {
+            out.push(part(
+                mesh,
+                material,
+                turned.with_scale(scale),
+                range.clone(),
+                plant,
+            ));
+        }
+    }
+
+    /// A seeded few caldenes get a stump or a fallen log beside them.
+    fn accent(&self, tree: &Tree, out: &mut Vec<Part>) {
+        if spot_unit(tree.at, 11) >= ACCENT_SHARE {
+            return;
+        }
+        let model = if spot_unit(tree.at, 13) < 0.5 {
+            Model::Stump
+        } else {
+            Model::Log
+        };
+        let Some(parts) = self.models.and_then(|m| m.parts(model, 0)) else {
+            return;
+        };
+        let angle = spot_unit(tree.at, 12) * std::f32::consts::TAU;
+        let at = tree.at + GroundVec2::new(angle.cos(), angle.sin()) * (0.6 * tree.crown_radius());
+        let size = 0.5 * (0.85 + 0.3 * spot_unit(tree.at, 14));
+        let transform = Transform::from_translation(world_from_ground(
+            at,
+            self.terrain.height(at.x, at.y) - 0.03,
+        ))
+        .with_rotation(Quat::from_rotation_y(angle * 3.0))
+        .with_scale(Vec3::splat(size));
+        for (mesh, material) in parts {
+            out.push(part(
+                mesh,
+                material,
+                transform,
+                visible_within(ACCENT_FAR, ACCENT_FADE),
+                Plant::Accent,
+            ));
+        }
+    }
+
+    fn tuft(&self, tuft: &Tuft, out: &mut Vec<Part>) {
+        let base = world_from_ground(tuft.at, self.terrain.height(tuft.at.x, tuft.at.y));
+        let transform =
+            Transform::from_translation(base).with_rotation(Quat::from_rotation_y(tuft.yaw));
+        // Solid near the rider; past that each tuft fades at its own
+        // seeded distance, so the grass thins out smoothly.
+        let fade_from = TUFT_SOLID + CAMERA_REACH + TUFT_SPREAD * spot_unit(tuft.at, 5);
+        let range = visible_within(fade_from + TUFT_FADE, TUFT_FADE);
+        let plant = Plant::Tuft(tuft.kind);
+        let model = tuft_model(tuft);
+        let tint = grass_tint(self.site.dryness(tuft.at), tuft.at);
+        match self.models.and_then(|m| m.parts(model, tint)) {
+            Some(parts) => {
+                let size = if model.role() == Role::Weed { 1.1 } else { 1.0 } * tuft.size;
+                for (mesh, material) in parts {
+                    out.push(part(
+                        mesh,
+                        material,
+                        transform.with_scale(Vec3::splat(size)),
+                        range.clone(),
+                        plant,
+                    ));
+                }
+            }
+            None => out.push(part(
+                self.kit.tuft(tuft.kind),
+                self.kit.grass.clone(),
+                transform.with_scale(Vec3::splat(tuft.size)),
+                range,
+                plant,
+            )),
+        }
+    }
+}
+
+fn part(
+    mesh: Handle<Mesh>,
+    material: Handle<StandardMaterial>,
+    transform: Transform,
+    range: VisibilityRange,
+    plant: Plant,
+) -> Part {
+    (
+        Mesh3d(mesh),
+        MeshMaterial3d(material),
+        transform,
+        range,
+        plant,
+    )
+}
+
 /// Grows the flora of every chunk built since the last run. A chunk that
 /// vanishes before the commands apply simply gets none.
 fn grow_flora(
@@ -136,36 +696,26 @@ fn grow_flora(
     flora: Option<Res<WorldFlora>>,
     terrain: Res<WorldTerrain>,
     kit: Option<Res<FloraKit>>,
+    models: Option<Res<VegetationModels>>,
     chunks: Query<(Entity, &TerrainChunk), Without<FloraGrown>>,
 ) {
     let (Some(flora), Some(kit)) = (flora, kit) else {
         return;
     };
+    let painter = Painter {
+        terrain: &terrain.0,
+        site: &flora.0,
+        kit: &kit,
+        models: models.as_deref(),
+    };
     for (chunk, coord) in &chunks {
         let grown = flora.0.chunk(coord.0);
-        let mut parts: Vec<(Mesh3d, MeshMaterial3d<StandardMaterial>, Transform, Plant)> =
-            Vec::with_capacity(grown.trees.len() * 2 + TUFTS_DRAWN);
+        let mut parts: Vec<Part> = Vec::with_capacity(grown.trees.len() * 4 + TUFTS_DRAWN);
         for tree in &grown.trees {
-            let transform = tree_transform(tree, &terrain.0);
-            for (mesh, material) in kit.tree(tree.species) {
-                parts.push((
-                    Mesh3d(mesh),
-                    MeshMaterial3d(material),
-                    transform,
-                    Plant::Tree(tree.species),
-                ));
-            }
+            painter.tree(tree, &mut parts);
         }
         for tuft in grown.tufts.iter().take(TUFTS_DRAWN) {
-            let base = world_from_ground(tuft.at, terrain.0.height(tuft.at.x, tuft.at.y));
-            parts.push((
-                Mesh3d(kit.tuft(tuft.kind)),
-                MeshMaterial3d(kit.grass.clone()),
-                Transform::from_translation(base)
-                    .with_rotation(Quat::from_rotation_y(tuft.yaw))
-                    .with_scale(Vec3::splat(tuft.size)),
-                Plant::Tuft(tuft.kind),
-            ));
+            painter.tuft(tuft, &mut parts);
         }
         let mut grown_chunk = commands.entity(chunk);
         grown_chunk.try_insert(FloraGrown);
@@ -174,31 +724,17 @@ fn grow_flora(
         }
         grown_chunk.queue_silenced(move |mut chunk: EntityWorldMut| {
             chunk.with_children(|children| {
-                for (mesh, material, transform, plant) in parts {
-                    let mut part = children.spawn((mesh, material, transform));
+                for (mesh, material, transform, range, plant) in parts {
+                    let mut part = children.spawn((mesh, material, transform, range));
                     match plant {
                         Plant::Tree(species) => part.insert(TreePart(species)),
                         Plant::Tuft(kind) => part.insert(GrassTuft(kind)),
+                        Plant::Accent => part.insert(FloraAccent),
                     };
                 }
             });
         });
     }
-}
-
-#[derive(Clone, Copy)]
-enum Plant {
-    Tree(Species),
-    Tuft(TuftKind),
-}
-
-/// Where a tree's meshes stand: on the terrain, turned and scaled from the
-/// reference height, sunk a little so the trunk never floats on a slope.
-fn tree_transform(tree: &Tree, terrain: &pampa_core::Terrain) -> Transform {
-    let base = world_from_ground(tree.at, terrain.height(tree.at.x, tree.at.y) - 0.1);
-    Transform::from_translation(base)
-        .with_rotation(Quat::from_rotation_y(tree.yaw))
-        .with_scale(Vec3::splat(tree.height / reference_height(tree.species)))
 }
 
 /// Triangles in a flat-shaded triangle-list mesh.
@@ -470,6 +1006,7 @@ fn tuft_mesh(kind: TuftKind) -> Mesh {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::atmosphere::FOG_VISIBILITY;
     use crate::terrain::{StreamFocus, TerrainPlugin};
     use pampa_core::{ChunkCoord, RailLine, Terrain, Vec2 as GroundVec2, WorldConfig};
 
@@ -482,21 +1019,447 @@ mod tests {
     }
 
     fn app(focus: GroundVec2) -> App {
+        app_with(focus, None, 1, 4)
+    }
+
+    fn assets() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")
+    }
+
+    fn app_with(
+        focus: GroundVec2,
+        root: Option<std::path::PathBuf>,
+        radius: i32,
+        resolution: u32,
+    ) -> App {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<Image>>()
             .insert_resource(StreamFocus(focus))
             .insert_resource(WorldFlora(site()))
             .add_plugins((
                 TerrainPlugin {
-                    radius: 1,
-                    budget: 9,
-                    resolution: 4,
+                    radius,
+                    budget: 64,
+                    resolution,
                 },
                 FloraPlugin,
             ));
+        if let Some(root) = root {
+            app.insert_resource(AssetRoot(root));
+        }
         app
+    }
+
+    /// Distinct asset ids in `ids`.
+    fn distinct<T: PartialEq>(ids: impl Iterator<Item = T>) -> usize {
+        let mut seen: Vec<T> = Vec::new();
+        for id in ids {
+            if !seen.contains(&id) {
+                seen.push(id);
+            }
+        }
+        seen.len()
+    }
+
+    fn grove_trees() -> Vec<Tree> {
+        let flora = site();
+        (-12..12)
+            .flat_map(|x| (-12..12).map(move |y| ChunkCoord::new(x, y)))
+            .flat_map(|c| flora.trees(c))
+            .collect()
+    }
+
+    #[test]
+    fn each_flora_kind_maps_to_its_model_set() {
+        let trees = grove_trees();
+        let calden = trees.iter().filter(|t| t.species == Species::Calden);
+        let (mut dead, mut caldenes) = (0, 0);
+        for tree in calden {
+            caldenes += 1;
+            match tree_model(tree) {
+                Model::DeadTree(n) => {
+                    assert!((1..=5).contains(&n));
+                    dead += 1;
+                }
+                Model::CommonTree(n) => assert!((1..=5).contains(&n)),
+                other => panic!("caldén drawn as {other:?}"),
+            }
+        }
+        for tree in trees.iter().filter(|t| t.species == Species::Chanar) {
+            assert!(matches!(tree_model(tree), Model::Bush(1 | 2)));
+        }
+        // A few dead snags, deterministically by seed: 10–15% of all trees.
+        let share = dead as f32 / trees.len() as f32;
+        println!(
+            "{dead} snags of {caldenes} caldenes, {} trees: {share}",
+            trees.len()
+        );
+        assert!((0.08..=0.17).contains(&share), "{share}");
+        assert_eq!(tree_model(&trees[0]), tree_model(&trees[0]));
+
+        let flora = site();
+        let tufts: Vec<Tuft> = (0..6)
+            .flat_map(|x| flora.chunk(ChunkCoord::new(x, 3)).tufts)
+            .collect();
+        let mut weeds = 0;
+        for tuft in &tufts {
+            let model = tuft_model(tuft);
+            match (tuft.kind, model) {
+                (_, Model::Plant(1..=5) | Model::Flowers) => weeds += 1,
+                (TuftKind::Paja, Model::Wheat | Model::TallGrass) => {}
+                (TuftKind::Flechilla, Model::Grass | Model::ShortGrass) => {}
+                other => panic!("{other:?}"),
+            }
+        }
+        let share = weeds as f32 / tufts.len() as f32;
+        assert!((0.02..=0.12).contains(&share), "weeds {share}");
+        // Every model has a file, and the set covers the 28 shipped files.
+        let all = Model::all();
+        assert_eq!(all.len(), 28);
+        for model in &all {
+            assert!(
+                assets().join(MODEL_DIR).join(model.file()).exists(),
+                "{model:?}"
+            );
+        }
+    }
+
+    fn loaded(model: Model) -> (ObjModel, MaterialColors) {
+        obj::load(&assets().join(MODEL_DIR).join(model.file())).unwrap()
+    }
+
+    fn colours(mesh: &Mesh) -> Vec<[f32; 4]> {
+        match mesh.attribute(Mesh::ATTRIBUTE_COLOR) {
+            Some(VertexAttributeValues::Float32x4(c)) => c.clone(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn points(mesh: &Mesh) -> Vec<[f32; 3]> {
+        match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
+            Some(VertexAttributeValues::Float32x3(p)) => p.clone(),
+            _ => Vec::new(),
+        }
+    }
+
+    #[test]
+    fn recolouring_turns_the_green_leaves_dull_olive_and_stands_models_up() {
+        let (obj, kd) = loaded(Model::CommonTree(1));
+        let baked = bake(Model::CommonTree(1), &obj, &kd);
+        let finishes: Vec<Finish> = baked.iter().map(|(f, _)| *f).collect();
+        assert_eq!(finishes, vec![Finish::Bark, Finish::Leaves]);
+        let source = kd["Green"];
+        let leaves = colours(&baked[1].1);
+        let mean = leaves
+            .iter()
+            .fold([0.0; 3], |a, c| [a[0] + c[0], a[1] + c[1], a[2] + c[2]]);
+        let mean = mean.map(|c| c / leaves.len() as f32);
+        // Source: saturated green. Now: olive, redder and brighter.
+        assert!(
+            mean[0] / mean[1] > source[0] / source[1] + 0.15,
+            "{mean:?} {source:?}"
+        );
+        assert!(
+            mean[2] / mean[1] < source[2] / source[1],
+            "{mean:?} {source:?}"
+        );
+        // One unit tall, standing on the origin; the crown widened.
+        let all: Vec<[f32; 3]> = baked.iter().flat_map(|(_, m)| points(m)).collect();
+        let (lo, hi) = all
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(a, b), p| (a.min(p[1]), b.max(p[1])));
+        assert!(lo.abs() < 1e-5 && (hi - 1.0).abs() < 1e-5, "{lo} {hi}");
+        let raw_height = 2.48;
+        let raw_width = obj
+            .groups
+            .iter()
+            .flat_map(|g| &g.positions)
+            .map(|p| p[0].hypot(p[2]))
+            .fold(0.0, f32::max);
+        let width = all.iter().map(|p| p[0].hypot(p[2])).fold(0.0, f32::max);
+        assert!(width > raw_width / raw_height * 1.1, "{width}");
+        // Its trunk is as thick as the obstacle `flora` plants for it.
+        let trunk = points(&baked[0].1)
+            .into_iter()
+            .filter(|p| (0.06..0.14).contains(&p[1]))
+            .map(|p| p[0].hypot(p[2]))
+            .fold(0.0, f32::max);
+        assert!(
+            (0.025..0.05).contains(&trunk),
+            "trunk radius / height {trunk}"
+        );
+        // Rocks are tosca beige and rough.
+        let (obj, kd) = loaded(Model::Rock(1));
+        let rock = bake(Model::Rock(1), &obj, &kd);
+        assert_eq!(rock[0].0, Finish::Rock);
+        let c = colours(&rock[0].1)[0];
+        assert!(c[0] > c[2] && c[1] > c[2], "beige {c:?}");
+    }
+
+    #[test]
+    fn models_replace_the_stand_ins_and_missing_ones_fall_back() {
+        let focus = grove_chunk();
+        let mut with = app_with(focus, Some(assets()), 1, 4);
+        with.update();
+        let models = with.world().resource::<VegetationModels>();
+        assert!(Model::all().into_iter().all(|m| models.has(m)));
+        let mut q = with.world_mut().query_filtered::<&Mesh3d, With<TreePart>>();
+        let drawn: Vec<AssetId<Mesh>> = q.iter(with.world()).map(|m| m.id()).collect();
+        let kit = with.world().resource::<FloraKit>();
+        let stand_ins = [
+            kit.calden_trunk.id(),
+            kit.calden_crown.id(),
+            kit.chanar_trunk.id(),
+            kit.chanar_crown.id(),
+        ];
+        assert!(
+            drawn.iter().any(|id| !stand_ins.contains(id)),
+            "models drawn"
+        );
+        assert!(
+            !drawn
+                .iter()
+                .any(|id| *id == stand_ins[2] || *id == stand_ins[3]),
+            "chañar stand-ins replaced"
+        );
+        // Shared: a handful of meshes and materials for hundreds of parts.
+        let mut q = with
+            .world_mut()
+            .query::<(&Mesh3d, &MeshMaterial3d<StandardMaterial>)>();
+        let pairs: Vec<_> = q
+            .iter(with.world())
+            .map(|(m, mat)| (m.id(), mat.id()))
+            .collect();
+        assert!(
+            distinct(pairs.iter().map(|p| p.0)) <= 9 + 28 * 2 + 6,
+            "{}",
+            pairs.len()
+        );
+        assert!(distinct(pairs.iter().map(|p| p.1)) <= 16);
+        // Tufts are tinted from grey-green to dry yellow.
+        let mut q = with
+            .world_mut()
+            .query_filtered::<&MeshMaterial3d<StandardMaterial>, With<GrassTuft>>();
+        assert!(distinct(q.iter(with.world()).map(|m| m.id())) >= 3);
+
+        // No asset folder, or a missing file: the stand-ins are drawn.
+        let mut without = app_with(focus, Some(assets().join("nowhere")), 1, 4);
+        without.update();
+        let models = without.world().resource::<VegetationModels>();
+        assert!(!models.has(Model::CommonTree(1)));
+        assert!(models.parts(Model::CommonTree(1), 0).is_none());
+        let trees: usize = WorldConfig::default()
+            .chunks_near(focus, 1)
+            .iter()
+            .map(|&c| site().trees(c).len())
+            .sum();
+        assert_eq!(count::<TreePart>(&mut without), trees * 2);
+    }
+
+    #[test]
+    fn visible_triangles_stay_under_budget_at_the_streaming_radius() {
+        // The densest grove nearby, with the default streaming radius and
+        // ground resolution.
+        let flora = site();
+        let size = WorldConfig::default().chunk_size;
+        let densest = (-12..12)
+            .flat_map(|x| (-12..12).map(move |y| ChunkCoord::new(x, y)))
+            .max_by_key(|&c| flora.trees(c).len())
+            .expect("chunks");
+        let focus = densest.center(size);
+        let mut app = app_with(focus, Some(assets()), 3, 40);
+        app.update();
+        let eye = world_from_ground(focus, 0.0);
+        let mut q = app
+            .world_mut()
+            .query::<(&Mesh3d, &Transform, Option<&VisibilityRange>)>();
+        let meshes = app.world().resource::<Assets<Mesh>>();
+        let (mut visible, mut loaded, mut ground) = (0, 0, 0);
+        for (mesh, transform, range) in q.iter(app.world()) {
+            let tris = meshes.get(&mesh.0).map_or(0, triangles);
+            loaded += tris;
+            // Chunk meshes sit at the origin in world-space vertices.
+            let Some(range) = range else {
+                ground += tris;
+                continue;
+            };
+            let d = transform.translation.with_y(0.0).distance(eye.with_y(0.0));
+            if range.start_margin.start <= d && d < range.end_margin.end {
+                visible += tris;
+            }
+        }
+        let flora_visible = visible;
+        visible += ground;
+        println!(
+            "radius 3 over {} trees: {visible} triangles drawn ({ground} ground, \
+             {flora_visible} plants), {loaded} loaded",
+            flora.trees(densest).len()
+        );
+        assert!(visible < 1_200_000, "{visible}");
+        assert!(visible < loaded, "distance culling works");
+    }
+
+    /// How opaque `range` draws at `d` meters: 0 hidden, 1 solid, dithered
+    /// in between.
+    fn opacity(range: &VisibilityRange, d: f32) -> f32 {
+        let ramp = |r: &std::ops::Range<f32>| {
+            if r.end > r.start {
+                ((d - r.start) / (r.end - r.start)).clamp(0.0, 1.0)
+            } else if d >= r.start {
+                1.0
+            } else {
+                0.0
+            }
+        };
+        ramp(&range.start_margin).min(1.0 - ramp(&range.end_margin))
+    }
+
+    /// A drawn mesh and the distances it is drawn at.
+    type RangedMesh = (AssetId<Mesh>, VisibilityRange);
+
+    /// Every drawn tree part of a grove, with models loaded, grouped by the
+    /// spot it stands on.
+    fn tree_groups(app: &mut App) -> Vec<Vec<RangedMesh>> {
+        let mut q = app
+            .world_mut()
+            .query_filtered::<(&Mesh3d, &Transform, &VisibilityRange), With<TreePart>>();
+        let mut groups: Vec<(Vec3, Vec<RangedMesh>)> = Vec::new();
+        for (mesh, transform, range) in q.iter(app.world()) {
+            let at = transform.translation;
+            let entry = (mesh.id(), range.clone());
+            match groups.iter_mut().find(|(p, _)| p.distance(at) < 1e-3) {
+                Some((_, parts)) => parts.push(entry),
+                None => groups.push((at, vec![entry])),
+            }
+        }
+        groups.into_iter().map(|(_, parts)| parts).collect()
+    }
+
+    #[test]
+    fn a_tree_is_the_same_model_at_every_distance() {
+        let mut app = app_with(grove_chunk(), Some(assets()), 1, 4);
+        app.update();
+        let groups = tree_groups(&mut app);
+        assert!(groups.len() >= 10);
+        for parts in &groups {
+            let drawn = |d: f32| -> Vec<AssetId<Mesh>> {
+                let mut ids: Vec<AssetId<Mesh>> = parts
+                    .iter()
+                    .filter(|(_, r)| opacity(r, d) > 0.0)
+                    .map(|(id, _)| *id)
+                    .collect();
+                ids.sort();
+                ids
+            };
+            let near = drawn(20.0);
+            assert!(!near.is_empty());
+            for d in [69.0, 71.0, 150.0] {
+                assert_eq!(drawn(d), near, "at {d} m");
+            }
+        }
+    }
+
+    #[test]
+    fn visibility_ranges_leave_no_gap_before_the_fog() {
+        let mut app = app_with(grove_chunk(), Some(assets()), 1, 4);
+        app.update();
+        // Trees are solid all the way to the dust fog; their fade-out is
+        // inside it.
+        for parts in tree_groups(&mut app) {
+            for (_, range) in &parts {
+                assert!(
+                    range.end_margin.start >= FOG_VISIBILITY,
+                    "{:?}",
+                    range.end_margin
+                );
+            }
+            for step in 0..(FOG_VISIBILITY as i32 * 2) {
+                let d = step as f32 * 0.5;
+                let solid = parts.iter().map(|(_, r)| opacity(r, d)).fold(0.0, f32::max);
+                assert!(solid >= 1.0, "a tree half drawn at {d} m");
+            }
+        }
+        // Tufts stay solid near the rider, wherever the camera orbits.
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&VisibilityRange, With<GrassTuft>>();
+        for range in q.iter(app.world()) {
+            assert_eq!(range.start_margin, 0.0..0.0);
+            assert!(range.end_margin.start >= TUFT_SOLID + CAMERA_REACH);
+        }
+        // Stones, shrubs, stumps and logs: solid from the rider, a fade at
+        // the far end only.
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&VisibilityRange, (Without<GrassTuft>, Without<TreePart>)>();
+        for range in q.iter(app.world()) {
+            assert_eq!(range.start_margin, 0.0..0.0);
+            assert!(range.end_margin.start >= TUFT_SOLID + CAMERA_REACH);
+        }
+    }
+
+    /// Everything drawn on chunk `coord`: mesh, material and transform bits.
+    fn chunk_scene(app: &mut App, coord: ChunkCoord) -> Vec<(String, [u32; 10])> {
+        let mut chunks = app.world_mut().query::<(Entity, &TerrainChunk)>();
+        let chunk = chunks
+            .iter(app.world())
+            .find(|(_, c)| c.0 == coord)
+            .map(|(e, _)| e)
+            .expect("chunk loaded");
+        let mut q = app.world_mut().query::<(
+            &ChildOf,
+            &Mesh3d,
+            &MeshMaterial3d<StandardMaterial>,
+            &Transform,
+        )>();
+        let mut scene: Vec<(String, [u32; 10])> = q
+            .iter(app.world())
+            .filter(|(parent, ..)| parent.parent() == chunk)
+            .map(|(_, mesh, material, t)| {
+                let (r, s, p) = (t.rotation, t.scale, t.translation);
+                (
+                    format!("{:?} {:?}", mesh.id(), material.id()),
+                    [p.x, p.y, p.z, r.x, r.y, r.z, r.w, s.x, s.y, s.z].map(f32::to_bits),
+                )
+            })
+            .collect();
+        scene.sort();
+        scene
+    }
+
+    #[test]
+    fn a_reloaded_chunk_shows_exactly_the_same_scene() {
+        let focus = grove_chunk();
+        let coord = WorldConfig::default().chunk_of(focus);
+        let mut app = app_with(focus, Some(assets()), 1, 4);
+        app.update();
+        let before = chunk_scene(&mut app, coord);
+        assert!(before.len() > 100);
+        app.world_mut().resource_mut::<StreamFocus>().0 = focus + GroundVec2::new(3000.0, 0.0);
+        app.update();
+        app.world_mut().resource_mut::<StreamFocus>().0 = focus;
+        app.update();
+        assert_eq!(chunk_scene(&mut app, coord), before);
+    }
+
+    #[test]
+    fn stand_ins_are_drawn_only_for_missing_models() {
+        let mut app = app_with(grove_chunk(), Some(assets()), 1, 4);
+        app.update();
+        let kit = app.world().resource::<FloraKit>();
+        let stand_ins = [
+            kit.calden_trunk.id(),
+            kit.calden_crown.id(),
+            kit.chanar_trunk.id(),
+            kit.chanar_crown.id(),
+            kit.paja.id(),
+            kit.flechilla.id(),
+        ];
+        let mut q = app.world_mut().query::<&Mesh3d>();
+        assert!(q.iter(app.world()).all(|m| !stand_ins.contains(&m.id())));
     }
 
     /// The center of a chunk holding a grove.

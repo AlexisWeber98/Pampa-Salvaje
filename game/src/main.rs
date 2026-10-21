@@ -12,9 +12,10 @@ use bevy::prelude::*;
 use pampa_content::{TOWNS_FILE, asset_path};
 use pampa_core::{FloraSite, Terrain, World};
 use pampa_render::{
-    AtmospherePlugin, CharacterVisualPlugin, FloraPlugin, HudPlugin, MinimapPlugin, RailPlugin,
-    SignPlugin, SpeechBubblePlugin, StreamFocus, TerrainPlugin, TownPlugin, TrainPlugin,
-    WorldChunks, WorldClock, WorldFlora, WorldRail, WorldTerrain, WorldTowns, WorldTrain,
+    AssetRoot, AtmospherePlugin, CharacterVisualPlugin, FloraPlugin, HudPlugin, MinimapPlugin,
+    RailPlugin, SignPlugin, SpeechBubblePlugin, StreamFocus, TerrainPlugin, TownPlugin,
+    TrainPlugin, WorldChunks, WorldClock, WorldFlora, WorldRail, WorldTerrain, WorldTowns,
+    WorldTrain,
 };
 
 fn main() {
@@ -46,6 +47,8 @@ fn main() {
     .insert_resource(WorldTerrain(world.terrain.clone()))
     .insert_resource(WorldChunks(world.config))
     .insert_resource(WorldFlora(flora))
+    // The CC0 vegetation models and ground textures (see CREDITS.md).
+    .insert_resource(AssetRoot(asset_path("")))
     .insert_resource(StreamFocus(position))
     .insert_resource(crowds)
     .insert_resource(WorldClock(clock))
