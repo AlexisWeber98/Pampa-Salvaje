@@ -534,8 +534,13 @@ mod tests {
                 },
             ))
             .id();
+        // The starting phase depends on the entity, so sample more than one
+        // whole gait cycle: 24 frames of 50 ms at about 1.08 cycles/s.
+        let frames = 24;
+        let cycles = frames as f32 * 0.05 * pampa_core::pose::cadence(AnimationState::Walk, 1.4);
+        assert!(cycles >= 1.0, "{cycles}");
         let mut swings = Vec::new();
-        for _ in 0..12 {
+        for _ in 0..frames {
             app.update();
             let mut joints = app.world_mut().query::<(&FigureJoint, &Transform)>();
             let mut hip = |j: Joint| {
@@ -550,7 +555,16 @@ mod tests {
             assert!((left + right).abs() < 1e-4, "opposite phase");
             swings.push(left);
         }
-        assert!(swings.iter().any(|a| *a > 0.2) && swings.iter().any(|a| *a < -0.2));
+        // Over a whole cycle each leg reaches close to its full swing both
+        // ways, wherever the cycle started.
+        let full = pampa_core::pose::pose(AnimationState::Walk, 0.25).hip[0];
+        let (high, low) = swings
+            .iter()
+            .fold((f32::MIN, f32::MAX), |(h, l), a| (h.max(*a), l.min(*a)));
+        assert!(
+            high > 0.9 * full && low < -0.9 * full,
+            "{high} {low} of {full}"
+        );
         // Facing west: the body turned half round.
         let mut bodies = app
             .world_mut()

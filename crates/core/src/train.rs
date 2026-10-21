@@ -112,12 +112,16 @@ pub struct Station {
 }
 
 /// Departure times and motion of the line train.
+///
+/// Each terminal has its departure time. The run that leaves earlier in the
+/// day is the morning run ([`Self::morning_run`]); the train spends the
+/// night at the terminal it leaves from.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Timetable {
-    /// When the train leaves the first town (Castex) on its down run.
-    pub depart_first: TimeOfDay,
-    /// When the train leaves the last town (Pico) on its up run.
-    pub depart_last: TimeOfDay,
+    /// When the train leaves the line's first town (Castex) on its down run.
+    pub depart_castex: TimeOfDay,
+    /// When the train leaves the line's last town (Pico) on its up run.
+    pub depart_pico: TimeOfDay,
     /// Real seconds standing at each station partway through a run.
     pub dwell: f32,
     /// Top speed, in m/s.
@@ -129,13 +133,33 @@ pub struct Timetable {
 impl Timetable {
     /// 65 km/h, the line's top speed.
     pub const TOP_SPEED: f32 = 65.0 / 3.6;
+
+    /// When `run` leaves its terminal.
+    pub fn departure(&self, run: Run) -> TimeOfDay {
+        match run {
+            Run::Down => self.depart_castex,
+            Run::Up => self.depart_pico,
+        }
+    }
+
+    /// The run that leaves first each day (the down run on a tie). The
+    /// train spends the night at the terminal it leaves from.
+    pub fn morning_run(&self) -> Run {
+        if self.depart_pico.seconds() < self.depart_castex.seconds() {
+            Run::Up
+        } else {
+            Run::Down
+        }
+    }
 }
 
 impl Default for Timetable {
     fn default() -> Self {
         Self {
-            depart_first: TimeOfDay::hm(7, 0),
-            depart_last: TimeOfDay::hm(16, 0),
+            // Overnight at Pico: the morning run leaves Pico, the
+            // afternoon run leaves Castex (user, 2026-10-21).
+            depart_pico: TimeOfDay::hm(7, 0),
+            depart_castex: TimeOfDay::hm(16, 0),
             dwell: 25.0,
             top_speed: Self::TOP_SPEED,
             acceleration: 0.5,
@@ -162,10 +186,11 @@ pub struct LineTrainState {
 
 /// The one passenger train running the whole line on a timetable.
 ///
-/// It leaves the first town (Castex) at [`Timetable::depart_first`], stops
-/// at every station on the way, lays over at the last town (Pico), leaves
-/// it at [`Timetable::depart_last`] and runs back, spending the night at
-/// the first town. The clock only triggers departures: once running, the
+/// Its morning run ([`Timetable::morning_run`]) leaves the terminal where it
+/// spent the night (Pico, at [`Timetable::depart_pico`], by default), stops
+/// at every station on the way, lays over at the other terminal (Castex),
+/// leaves it at its own departure time ([`Timetable::depart_castex`]) and
+/// runs back for the night. The clock only triggers departures: once running, the
 /// train moves physically in real seconds, whatever the clock's rate.
 ///
 /// Its whole run is a pure function of the real seconds since it departed
@@ -221,8 +246,9 @@ impl LineTrain {
     /// Height of the rail tops above the ground: where the cars stand.
     pub const RAIL_TOP: f32 = 0.5;
 
-    /// The train of `line` through `towns`, parked overnight at the first
-    /// town at midnight of day 0, facing its morning run. `None` when the
+    /// The train of `line` through `towns`, parked overnight at midnight of
+    /// day 0 at the terminal its morning run leaves from (Pico by default),
+    /// facing that run. `None` when the
     /// line serves fewer than two stations or is too short for the train.
     pub fn new(line: &RailLine, towns: &[TownLayout], timetable: Timetable) -> Option<Self> {
         let path = line.full_path(towns);
@@ -273,6 +299,11 @@ impl LineTrain {
             .rev()
             .map(|s| total - (s.mark - stop_offset).clamp(0.0, total - length))
             .collect();
+        // Overnight at the terminal the morning run leaves from.
+        let overnight = match timetable.morning_run() {
+            Run::Down => 0,
+            Run::Up => stations.len() - 1,
+        };
         let mut train = Self {
             path,
             stations,
@@ -288,7 +319,7 @@ impl LineTrain {
                 times: Vec::new(),
             },
             motion: Motion::Parked {
-                station: 0,
+                station: overnight,
                 since: 0.0,
                 turned: true,
             },
@@ -483,12 +514,13 @@ impl LineTrain {
         Some(TimeOfDay::from_seconds(depart + arrive * BASE_RATE))
     }
 
-    /// The time of day half way through the morning (down) run's stop at
-    /// `town`, with the clock at the base rate: start the clock there and
-    /// the train stands at that town's station.
-    pub fn first_stop_at(&self, town: usize) -> Option<TimeOfDay> {
-        let (arrive, depart) = self.stop_times(Run::Down, self.station_of_town(town)?)?;
-        let start = self.timetable.depart_first.seconds();
+    /// The time of day half way through `run`'s stop at `town` (by default
+    /// the morning up run from Pico, or the afternoon down run from Castex),
+    /// with the clock at the base rate: start the clock there and the train
+    /// stands at that town's station.
+    pub fn stop_at(&self, town: usize, run: Run) -> Option<TimeOfDay> {
+        let (arrive, depart) = self.stop_times(run, self.station_of_town(town)?)?;
+        let start = self.scheduled(run).seconds();
         Some(TimeOfDay::from_seconds(
             start + (arrive + depart) / 2.0 * BASE_RATE,
         ))
@@ -636,10 +668,7 @@ impl LineTrain {
 
     /// The scheduled time of day `run` departs.
     fn scheduled(&self, run: Run) -> TimeOfDay {
-        match run {
-            Run::Down => self.timetable.depart_first,
-            Run::Up => self.timetable.depart_last,
-        }
+        self.timetable.departure(run)
     }
 
     /// The first scheduled departure from terminal `station` at or after
@@ -859,19 +888,21 @@ mod line_tests {
     }
 
     #[test]
-    fn the_timetable_runs_castex_pico_and_back_each_day() {
+    fn the_timetable_runs_pico_castex_and_back_each_day() {
         let (_, mut train) = shipped();
-        // Day 0, midnight: overnight at Castex, facing Pico.
+        // Day 0, midnight: overnight at Pico, facing Castex.
         let s = train.state();
         assert_eq!(
             (s.phase, s.station, s.run),
-            (LinePhase::Parked, Some(CASTEX), Run::Down)
+            (LinePhase::Parked, Some(PICO), Run::Up)
         );
-        assert_eq!(train.next_departure_after(0.0), (hm(7, 0), Run::Down));
-        assert_eq!(train.next_departure_after(hm(8, 0)), (hm(16, 0), Run::Up));
+        // The morning run leaves Pico at 07:00, the afternoon run leaves
+        // Castex at 16:00.
+        assert_eq!(train.next_departure_after(0.0), (hm(7, 0), Run::Up));
+        assert_eq!(train.next_departure_after(hm(8, 0)), (hm(16, 0), Run::Down));
         assert_eq!(
             train.next_departure_after(hm(17, 0)),
-            (DAY_SECONDS + hm(7, 0), Run::Down)
+            (DAY_SECONDS + hm(7, 0), Run::Up)
         );
         // Sample the whole day at the base rate, in clock minutes.
         let mut seen: Vec<(LinePhase, Option<usize>)> = Vec::new();
@@ -889,38 +920,64 @@ mod line_tests {
         assert_eq!(
             seen,
             [
-                (Parked, Some(CASTEX)),
-                (Running, None),
-                (Dwelling, Some(NIEVAS)),
-                (Running, None),
                 (Parked, Some(PICO)),
                 (Running, None),
                 (Dwelling, Some(NIEVAS)),
                 (Running, None),
                 (Parked, Some(CASTEX)),
+                (Running, None),
+                (Dwelling, Some(NIEVAS)),
+                (Running, None),
+                (Parked, Some(PICO)),
             ]
         );
         // The next day runs the same.
-        let pico = train.arrival_time_at(Run::Down, PICO).unwrap().seconds();
+        let castex = train.arrival_time_at(Run::Up, CASTEX).unwrap().seconds();
         train.advance(now, hm(7, 0) + 1.0, BASE_RATE);
         assert_eq!(train.state().phase, Running);
-        train.advance(DAY_SECONDS + hm(7, 0) + 1.0, pico - hm(7, 0), BASE_RATE);
-        assert_eq!(train.state().station, Some(PICO));
+        assert_eq!(train.state().run, Run::Up);
+        train.advance(DAY_SECONDS + hm(7, 0) + 1.0, castex - hm(7, 0), BASE_RATE);
+        assert_eq!(train.state().station, Some(CASTEX));
         assert_eq!(train.state().phase, Parked);
+    }
+
+    #[test]
+    fn the_timetable_names_each_departure_by_its_terminal() {
+        let t = Timetable::default();
+        assert_eq!(t.depart_pico, TimeOfDay::hm(7, 0));
+        assert_eq!(t.depart_castex, TimeOfDay::hm(16, 0));
+        assert_eq!(t.departure(Run::Up), t.depart_pico);
+        assert_eq!(t.departure(Run::Down), t.depart_castex);
+        assert_eq!(t.morning_run(), Run::Up);
+        // Swapped times put the night at Castex instead.
+        let swapped = Timetable {
+            depart_castex: TimeOfDay::hm(7, 0),
+            depart_pico: TimeOfDay::hm(16, 0),
+            ..t
+        };
+        assert_eq!(swapped.morning_run(), Run::Down);
+        let (towns, line) = crate::rail::tests::shipped();
+        let train = LineTrain::new(&line, &towns, swapped).unwrap();
+        let s = train.state();
+        assert_eq!(
+            (s.phase, s.station, s.run),
+            (LinePhase::Parked, Some(CASTEX), Run::Down)
+        );
+        assert_eq!(train.next_departure_after(0.0), (hm(7, 0), Run::Down));
     }
 
     #[test]
     fn the_train_turns_around_during_the_layover() {
         let (_, mut train) = shipped();
-        let arrive = train.arrival_time_at(Run::Down, PICO).unwrap().seconds();
+        let arrive = train.arrival_time_at(Run::Up, CASTEX).unwrap().seconds();
         train.advance(0.0, arrive + 60.0, BASE_RATE);
-        assert_eq!(train.state().run, Run::Down, "arrives facing east");
+        assert_eq!(train.state().run, Run::Up, "arrives facing west");
         train.advance(arrive + 60.0, hm(16, 0) - 120.0 - arrive, BASE_RATE);
         let s = train.state();
         assert_eq!(
-            (s.phase, s.run),
-            (LinePhase::Parked, Run::Up),
-            "ready to leave west"
+            (s.phase, s.station, s.run),
+            (LinePhase::Parked, Some(CASTEX), Run::Down),
+            "ready to leave east"
         );
     }
 
@@ -1020,29 +1077,48 @@ mod line_tests {
     #[test]
     fn helpers_tell_when_the_train_reaches_a_station() {
         let (_, mut train) = shipped();
-        let morning = train.first_stop_at(0).unwrap();
-        let (arrive, depart) = train.stop_times(Run::Down, NIEVAS).unwrap();
+        // The morning stop is half way through the up run's dwell, counted
+        // from the 07:00 departure from Pico.
+        let morning = train.stop_at(0, Run::Up).unwrap();
+        let (arrive, depart) = train.stop_times(Run::Up, NIEVAS).unwrap();
         let expected = hm(7, 0) + (arrive + depart) / 2.0 * BASE_RATE;
         assert!((morning.seconds() - expected).abs() < 1e-6);
-        assert_eq!(train.first_stop_at(99), None);
+        assert_eq!(train.stop_at(99, Run::Down), None);
+        assert_eq!(train.stop_at(99, Run::Up), None);
+        let mut there = train.clone();
+        there.advance(0.0, morning.seconds(), BASE_RATE);
+        let s = there.state();
+        assert_eq!(
+            (s.phase, s.station, s.run),
+            (LinePhase::Dwelling, Some(NIEVAS), Run::Up)
+        );
+
+        // The afternoon stop counts from the 16:00 departure from Castex.
+        let afternoon = train.stop_at(0, Run::Down).unwrap();
+        let (down_arrive, down_depart) = train.stop_times(Run::Down, NIEVAS).unwrap();
+        let expected = hm(16, 0) + (down_arrive + down_depart) / 2.0 * BASE_RATE;
+        assert!((afternoon.seconds() - expected).abs() < 1e-6);
 
         // From midnight, waiting at Monte Nievas lands on the morning stop.
         let wait = train.time_until_at(NIEVAS, 0.0).unwrap();
         train.advance(0.0, wait, BASE_RATE);
         let s = train.state();
-        assert_eq!((s.phase, s.station), (LinePhase::Dwelling, Some(NIEVAS)));
+        assert_eq!(
+            (s.phase, s.station, s.run),
+            (LinePhase::Dwelling, Some(NIEVAS), Run::Up)
+        );
         assert_eq!(train.time_until_at(NIEVAS, wait), Some(0.0));
-        // Ride on: the next stop is Pico, the rest of the run away.
+        // Ride on: the next stop is Castex, the rest of the run away.
         let (next, left) = train.next_stop().unwrap();
-        assert_eq!(next, PICO);
-        let total = train.run_duration(Run::Down);
+        assert_eq!(next, CASTEX);
+        let total = train.run_duration(Run::Up);
         assert!((left - (total - arrive)).abs() < 0.1, "{left}");
-        // Waiting at Castex now means the evening arrival.
-        let castex = train.time_until_at(CASTEX, wait).unwrap();
-        let evening = train.arrival_time_at(Run::Up, CASTEX).unwrap().seconds();
-        assert!((wait + castex - evening).abs() < 0.1);
-        train.advance(wait, castex, BASE_RATE);
-        assert_eq!(train.state().station, Some(CASTEX));
+        // Waiting at Pico now means the evening arrival.
+        let pico = train.time_until_at(PICO, wait).unwrap();
+        let evening = train.arrival_time_at(Run::Down, PICO).unwrap().seconds();
+        assert!((wait + pico - evening).abs() < 0.1);
+        train.advance(wait, pico, BASE_RATE);
+        assert_eq!(train.state().station, Some(PICO));
         assert_eq!(train.next_stop(), None, "parked");
     }
 
@@ -1118,7 +1194,7 @@ mod line_tests {
     fn a_car_on_a_slanted_link_is_covered_by_short_boxes_along_it() {
         let (_, mut train) = shipped();
         let (_, depart) = train.stop_times(Run::Down, NIEVAS).unwrap();
-        let at = hm(7, 0) + (depart + 200.0) * BASE_RATE;
+        let at = hm(16, 0) + (depart + 200.0) * BASE_RATE;
         train.advance(0.0, at, BASE_RATE);
         let car = train.placed_cars()[2];
         assert!(car.direction.x.abs().max(car.direction.y.abs()) < 0.999);
@@ -1163,7 +1239,7 @@ mod line_tests {
         let (towns, mut train) = shipped();
         // Out on the long diagonal link to Pico, mid-run.
         let (_, depart) = train.stop_times(Run::Down, NIEVAS).unwrap();
-        let at = hm(7, 0) + (depart + 200.0) * BASE_RATE;
+        let at = hm(16, 0) + (depart + 200.0) * BASE_RATE;
         train.advance(0.0, at, BASE_RATE);
         let car = train.placed_cars()[2];
         assert!(

@@ -16,7 +16,7 @@ Add a game day and one passenger train that runs the whole Pampa line (Castex, M
 
 - **Clock.** One game day lasts 48 real minutes, so the base rate is 30× (1 game minute = 2 real seconds), as in RDR2 and GTA V.
 - **Clock on board.** While the player rides the train, the clock runs at about 12×, so the full Castex to Pico ride (about 11 real minutes) reads as about 2 game hours.
-- **Timetable.** One train runs Castex → Monte Nievas → General Pico, lays over in Pico, and returns Pico → Monte Nievas → Castex, then spends the night in Castex. Each town sees the train twice a day. Default times: depart Castex 07:00, depart Pico 16:00. These are tunable.
+- **Timetable.** ~~One train runs Castex → Monte Nievas → General Pico, lays over in Pico, and returns Pico → Monte Nievas → Castex, then spends the night in Castex. Default times: depart Castex 07:00, depart Pico 16:00.~~ **Inverted (user, 2026-10-21, `feat/evening-arrival`):** the train spends the night in General Pico, runs Pico 07:00 → Monte Nievas → Castex (the morning up run), lays over in Castex, and returns Castex 16:00 → Monte Nievas → Pico (the afternoon down run). Riding cross-country to Castex at night made no sense for the errand. Each town sees the train twice a day. The times are tunable data: `Timetable { depart_pico, depart_castex }` (was `depart_first`/`depart_last`), and the earlier departure is the morning run (`Timetable::morning_run`), whose terminal is where the train sleeps.
 - **Train.** The top speed is 65 km/h (65 / 3.6 m/s), with acceleration and braking at stations and about a 25 s dwell at Monte Nievas. The consist is a rural mixed train: the locomotive, 2 passenger coaches and 5 freight cars (8 cars). Its cars stay moving obstacles.
 - **Train motion.** The train moves physically, in real seconds. The clock only triggers departures. Clock jumps (waiting or skipping) fast-forward the train to match.
 - **Riding (PR4).** Riding is not playable. The camera is free to orbit, and the player can skip the trip: a fade, the clock adds the remaining nominal time, and the player gets off at the next station.
@@ -29,7 +29,7 @@ Add a game day and one passenger train that runs the whole Pampa line (Castex, M
 Three PRs. The user commits and pushes; Claude never commits.
 
 1. **PR3 `feat/line-train`:** the clock, the sun following the clock, and the one line train with its timetable, which replaces the per-town trains.
-2. **PR4 `feat/errand`:** the errand (see `odd/tasks/pampa-line.md`, "Errand story"). The intro becomes getting off the morning train at Monte Nievas, on foot. It also brings the HUD clock and the 2-coach rural consist.
+2. **PR4 `feat/errand`:** the errand (see `odd/tasks/pampa-line.md`, "Errand story"). The intro becomes getting off the morning train at Monte Nievas, on foot (the morning train from Pico since `feat/evening-arrival`). It also brings the HUD clock and the 2-coach rural consist.
 3. **PR5:** boarding, riding with a free camera, skipping the trip, waiting on the platform, the minimap compass, and the terminal-turnaround fix.
 
 **Order change (user-approved, 2026-10-20):** the errand comes before train boarding. Boarding, waiting, skipping, the compass and the terminal-turnaround fix move to the next PR.
@@ -50,7 +50,7 @@ Three PRs. The user commits and pushes; Claude never commits.
 
 ## Acceptance criteria (PR3)
 
-- The train leaves Castex at 07:00, stops at Monte Nievas, reaches Pico, waits, leaves at 16:00 and returns. Tests assert the order and the dwells.
+- The train leaves Castex at 07:00, stops at Monte Nievas, reaches Pico, waits, leaves at 16:00 and returns. Tests assert the order and the dwells. (PR3 history: inverted on `feat/evening-arrival`, user 2026-10-21, to Pico 07:00 → Castex, Castex 16:00 → Pico.)
 - The top speed never exceeds 65 km/h.
 - A clock jump puts the train exactly where continuous simulation would.
 - fmt, clippy and the whole workspace's tests are green.
@@ -76,12 +76,12 @@ cargo test --workspace
   - Its motion is a trapezoid profile: 65 km/h top speed, 0.5 m/s², 25 s dwell at Monte Nievas.
   - `state_at(run, real_s)` is pure. `advance(from, game_s, rate)` drives it: departures come from the clock, running is in real seconds, and a jump uses `BASE_RATE`.
   - It turns around half way through each layover.
-  - Helpers for PR4: `next_departure_after`, `arrival_time_at`, `first_stop_at`, `time_until_at`, `next_stop`.
+  - Helpers for PR4: `next_departure_after`, `arrival_time_at`, `first_stop_at` (since `feat/evening-arrival`: `stop_at(town, run)`, counted from that run's own departure), `time_until_at`, `next_stop`.
 - **Timetable numbers** (real seconds; clock times at the base rate):
   - (At the 1:5 scale of PR3; see the 1:6 rescale below for today's numbers.) Down: Castex 07:00 → Monte Nievas arrives at 195.9 s (08:37) and leaves at 220.9 s → Pico at 743.6 s (13:11).
   - Up: Pico 16:00 → Monte Nievas at 522.7 s (20:21) → Castex at 743.6 s (22:11).
   - Each run lasts about 12.4 real minutes.
-- **Start of day:** the clock starts at `first_stop_at(Monte Nievas)` (08:44:10 at 1:5, 08:33:02 at 1:6). The train is jumped there from its overnight layover at midnight, so it stands at Monte Nievas, where the player starts.
+- **Start of day:** the clock starts at `first_stop_at(Monte Nievas)` (08:44:10 at 1:5, 08:33:02 at 1:6). The train is jumped there from its overnight layover at midnight, so it stands at Monte Nievas, where the player starts. **Changed on `feat/evening-arrival` (user, 2026-10-21):** the game now starts half way through the morning **up** run's Monte Nievas dwell, `stop_at(Monte Nievas, Run::Up)` = 10:48:59 at 1:6 (the morning train from Pico; see `odd/tasks/pampa-line.md`, "Who he is and when he arrives"). The train is jumped there from its overnight layover at Pico.
 - **Game:** `run_clock_and_train` ticks `WorldClock` and advances `WorldTrain`. The 8 cars are always moving obstacles; on a slant, each car is a row of short boxes. The per-town `WorldTrains` is gone.
 - **Render:** one persistent set of car entities, not parented to any town. A car is visible only within 400 m of `StreamFocus`. Yaw is `Quat::from_rotation_y(heading)`, pitched with the ground. There is a new coach mesh. The minimap draws the line train's cars inside the shown town's frame.
 - **Legacy removed (coordinator-approved):** the per-town `Train`, `TrainSchedule`, `TrainPhase` and `TrainState` are gone from core, along with their re-exports and tests. The `game/src/towns.rs` test now asserts that the station lies within its railway's span. A new core test checks that a rider never ends inside a car on a slanted link.
@@ -97,7 +97,12 @@ cargo test --workspace
 - **World rescaled 1:5 → 1:6 (PR4, user-approved 2026-10-20).** Origins: Monte Nievas (-3050, -1950) unchanged, Castex (-5150, -2850), General Pico (2917, 1783). The line path is now 11 008.0 m (was 12 805.5 m). Re-measured timetable (real seconds after departure, clock at 30×):
   - Down: Castex 07:00 → Monte Nievas arrives at 173.6 s (08:26:47), leaves at 198.6 s (08:39:17) → Pico at 644.0 s (12:22:01).
   - Up: Pico 16:00 → Monte Nievas arrives at 445.5 s (19:42:44), leaves at 470.5 s (19:55:14) → Castex at 644.0 s (21:22:01).
-  - Each run lasts about 10.7 real minutes. The day starts at 08:33:02 with the train `Dwelling` at Monte Nievas (station 1), checked by `the_day_starts_with_the_morning_train_at_the_first_town`.
+  - Each run lasts about 10.7 real minutes. The day starts at 08:33:02 with the train `Dwelling` at Monte Nievas (station 1), checked by `the_day_starts_with_the_morning_train_at_the_first_town`. (Superseded on `feat/evening-arrival`: the game starts at 10:48:59 with the morning up train from Pico `Dwelling` at Monte Nievas, checked by `the_game_starts_with_the_morning_train_from_pico_at_the_first_town`.)
+- **Timetable inverted (`feat/evening-arrival`, user, 2026-10-21).** Overnight at Pico. Same leg times as the 1:6 rescale above, re-measured (real seconds after departure, clock at 30×):
+  - Up (morning): Pico 07:00:00 → Monte Nievas arrives at 445.5 s (10:42:44), leaves at 470.5 s (10:55:14) → Castex at 644.0 s (12:22:01).
+  - Down (afternoon): Castex 16:00:00 → Monte Nievas arrives at 173.6 s (17:26:47), leaves at 198.6 s (17:39:17) → Pico at 644.0 s (21:22:01).
+  - Start: 10:48:59 (38 939.3 s), half way through the morning Monte Nievas dwell.
+  - RED: `the_timetable_runs_pico_castex_and_back_each_day` failed with `left: (Parked, Some(0), Down), right: (Parked, Some(2), Up)`; `the_train_turns_around_during_the_layover` failed with `left: (Parked, Some(0), Up)`; `helpers_tell_when_the_train_reaches_a_station` and the two slanted-link tests failed; `the_game_starts_with_the_morning_train_from_pico_at_the_first_town` failed reading 19:48. GREEN after the change. `the_timetable_names_each_departure_by_its_terminal` checks the named fields, `departure(run)`, `morning_run()`, and that swapped times put the night at Castex.
 - **HUD clock (PR4).** The game time `HH:MM` from `WorldClock` is shown top left, in the pixel font on a paper panel, with the errand objective under it.
 
 ## Next step

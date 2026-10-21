@@ -282,7 +282,7 @@ mod tests {
         lines
     }
 
-    /// The shipped world, the morning train dwelling at Monte Nievas, and
+    /// The shipped world, the morning train from Pico dwelling at Monte Nievas, and
     /// the player on foot at the platform. Frames last 50 ms.
     fn shipped_app() -> App {
         let loaded = crate::towns::load_world(&asset_path(pampa_content::TOWNS_FILE));

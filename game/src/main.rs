@@ -27,11 +27,11 @@ fn main() {
     // The errand: Don Hidalgo in the first town's plaza sends the player to
     // comisario Farach. Both stand in the way like any obstacle.
     let errand = errand::plan(&loaded.towns, &mut world);
-    // The player gets off the morning train on foot, at the first town's
+    // The player gets off the morning train from Pico on foot, at the first town's
     // platform.
     let (position, heading) = errand::player_start(&loaded.towns[0]);
     let crowds = life::Crowds::for_towns(&loaded.towns);
-    // The day begins with the morning train standing at the first town's
+    // The game begins in the late morning, with the train from Pico standing at the first town's
     // station; the clock starts there.
     let (clock, train) = life::start_of_day(&loaded.line, &loaded.towns);
     let mut app = App::new();

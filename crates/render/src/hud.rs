@@ -203,7 +203,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .init_resource::<Assets<Image>>()
-            .insert_resource(WorldClock(GameClock::at(TimeOfDay::hm(8, 44))))
+            .insert_resource(WorldClock(GameClock::at(TimeOfDay::hm(10, 49))))
             .add_plugins(HudPlugin);
         app
     }
@@ -218,8 +218,8 @@ mod tests {
 
     #[test]
     fn letters_text_in_ink_at_its_scale() {
-        let one = paint_text("08:44", 1);
-        assert_eq!(one.width, font::text_width("08:44") + 2);
+        let one = paint_text("10:49", 1);
+        assert_eq!(one.width, font::text_width("10:49") + 2);
         assert_eq!(one.height, GLYPH_HEIGHT + 2);
         assert_eq!(one.pixels.len(), one.width * one.height * 4);
         let ink = |t: &TextImage| t.pixels.chunks(4).filter(|p| *p == palette::INK).count();
@@ -230,33 +230,33 @@ mod tests {
                 .all(|p| p[3] == 0 || *p == palette::INK),
             "ink on nothing"
         );
-        let three = paint_text("08:44", 3);
+        let three = paint_text("10:49", 3);
         assert_eq!(three.width, one.width * 3);
         assert_eq!(ink(&three), ink(&one) * 9);
-        assert_ne!(paint_text("08:45", 1), one);
+        assert_ne!(paint_text("10:50", 1), one);
     }
 
     #[test]
     fn shows_the_game_clock_and_follows_it() {
         let mut app = app();
         app.update();
-        assert_eq!(app.world().resource::<Hud>().clock, "08:44");
+        assert_eq!(app.world().resource::<Hud>().clock, "10:49");
         let (first, _) = image_of::<HudClock>(&mut app);
         let images = app.world().resource::<Assets<Image>>();
         let drawn = images.get(&first).unwrap();
         assert_eq!(
             drawn.data.as_deref(),
-            Some(paint_text("08:44", CLOCK_SCALE).pixels.as_slice())
+            Some(paint_text("10:49", CLOCK_SCALE).pixels.as_slice())
         );
-        // A game minute later, the clock is repainted.
-        app.world_mut().resource_mut::<WorldClock>().0 = GameClock::at(TimeOfDay::hm(9, 5));
+        // Later, the clock is repainted.
+        app.world_mut().resource_mut::<WorldClock>().0 = GameClock::at(TimeOfDay::hm(11, 5));
         app.update();
-        assert_eq!(app.world().resource::<Hud>().clock, "09:05");
+        assert_eq!(app.world().resource::<Hud>().clock, "11:05");
         let (second, _) = image_of::<HudClock>(&mut app);
         let images = app.world().resource::<Assets<Image>>();
         assert_eq!(
             images.get(&second).unwrap().data.as_deref(),
-            Some(paint_text("09:05", CLOCK_SCALE).pixels.as_slice())
+            Some(paint_text("11:05", CLOCK_SCALE).pixels.as_slice())
         );
         // Unchanged text is not repainted.
         let count = app.world().resource::<Assets<Image>>().len();

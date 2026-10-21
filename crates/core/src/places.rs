@@ -680,22 +680,35 @@ mod tests {
 
     #[test]
     fn the_game_starts_on_the_platform_beside_the_dwelling_coaches() {
-        use crate::{BASE_RATE, CarKind, Circle, GameClock, LinePhase, LineTrain, Rider};
+        use crate::{BASE_RATE, GameClock, LinePhase, LineTrain, Run};
         let (towns, line) = crate::rail::tests::shipped();
         let first = &towns[0];
-        let mut train =
+        let fresh =
             LineTrain::new(&line, &towns, crate::Timetable::default()).expect("a line train");
-        // As the game begins: the morning train standing at the first town.
-        let clock = GameClock::at(train.first_stop_at(0).unwrap());
-        train.advance(0.0, clock.elapsed(), BASE_RATE);
-        assert_eq!(train.state().phase, LinePhase::Dwelling);
+        // The game begins with the morning (up) train from Pico standing at
+        // the first town; the afternoon (down) train from Castex stops at the
+        // same spot, facing the other way after the turn at Castex.
+        for run in [Run::Up, Run::Down] {
+            let mut train = fresh.clone();
+            let clock = GameClock::at(train.stop_at(0, run).unwrap());
+            train.advance(0.0, clock.elapsed(), BASE_RATE);
+            assert_eq!(train.state().phase, LinePhase::Dwelling);
+            assert_eq!(train.state().run, run);
+            beside_the_coaches(first, &towns, &train);
+        }
+    }
+
+    /// The platform spot is on the platform's top, beside the middle of the
+    /// dwelling train's coaches and clear of everything.
+    fn beside_the_coaches(first: &TownLayout, towns: &[TownLayout], train: &crate::LineTrain) {
+        use crate::{CarKind, Circle, LineTrain, Rider};
         let mut world = crate::World::with_towns(
             crate::WorldConfig {
                 half_extent: crate::WorldConfig::MAX_HALF_EXTENT,
                 ..Default::default()
             },
             crate::Terrain::default(),
-            &towns,
+            towns,
         );
         world.moving = train.obstacles();
         let (at, heading) = first.platform_spot().unwrap();

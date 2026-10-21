@@ -495,7 +495,7 @@ mod tests {
         use pampa_core::{BASE_RATE, Run};
         let (towns, mut train) = crate::train::tests::line_train();
         // Dwelling at Monte Nievas (town 0) on the morning run.
-        let (arrive, _) = train.stop_times(Run::Down, 1).unwrap();
+        let (arrive, _) = train.stop_times(Run::Up, 1).unwrap();
         train.advance(0.0, 7.0 * 3600.0 + (arrive + 5.0) * BASE_RATE, BASE_RATE);
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)

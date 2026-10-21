@@ -146,10 +146,13 @@ One train runs the whole line, from the first town listed to the last and
 back, stopping at every station on the way. It is a rural mixed train of 8
 cars (93 m): the locomotive, two passenger coaches and five freight cars, and
 it stops with the middle of its coaches at each station. Its timetable is in
-code (`pampa_core::Timetable`), not in this file: it leaves the first town
-at 07:00, lays over at the last one, leaves it at 16:00 and spends the night
-at the first town. It tops out at 65 km/h and stands 25 s at each station
-partway through a run. The day begins with that morning train standing at
+code (`pampa_core::Timetable`), not in this file. Since a user change on
+2026-10-21 it spends the night at the last town (General Pico), leaves it at
+07:00, lays over at the first town (Eduardo Castex), leaves it at 16:00 and
+runs back to the last town for the night. (Before, it slept at the first town
+and left it at 07:00.) It tops out at 65 km/h and stands 25 s at each station
+partway through a run. The game begins in the late morning with the morning train,
+from the last town on its up run, standing at
 the first town of the `towns` list, where the player starts on foot on top
 of the platform, half way along it, beside the coaches. The platform is a
 raised floor with a short ramp at each end, not an obstacle. The train runs
