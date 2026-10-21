@@ -2,6 +2,7 @@
 //! the game clock: a warm low sun at dawn and dusk, full light by day, and
 //! a dim, bluish moonlit night that stays readable.
 
+use bevy::light::{CascadeShadowConfig, CascadeShadowConfigBuilder};
 use bevy::prelude::*;
 use pampa_core::GameClock;
 
@@ -150,6 +151,25 @@ fn mix(a: Color, b: Color, t: f32) -> Color {
     )
 }
 
+/// How the sun's shadow cascades cover the view: three cascades over the
+/// nearest [`SHADOW_DISTANCE`] meters, the first ending close to the rider,
+/// so people and horses near the camera cast crisp shadows. The shadow map
+/// keeps Bevy's default 2048 texels: three cascades instead of four use a
+/// quarter less shadow memory, and the near one has more texels per meter.
+pub fn sun_cascades() -> CascadeShadowConfig {
+    CascadeShadowConfigBuilder {
+        num_cascades: 3,
+        first_cascade_far_bound: 8.0,
+        maximum_distance: SHADOW_DISTANCE,
+        ..default()
+    }
+    .build()
+}
+
+/// How far from the camera things cast shadows, in meters (the dust fog
+/// hides most detail past it).
+pub const SHADOW_DISTANCE: f32 = 100.0;
+
 fn spawn_sun(mut commands: Commands) {
     let sky = sky_at(DEFAULT_HOUR);
     commands.spawn((
@@ -161,6 +181,7 @@ fn spawn_sun(mut commands: Commands) {
             shadow_maps_enabled: true,
             ..default()
         },
+        sun_cascades(),
         Transform::from_translation(sky.toward_light * 100.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 }
@@ -329,6 +350,7 @@ mod tests {
             .query_filtered::<(&DirectionalLight, &Transform), With<Sun>>();
         let (light, transform) = q.single(app.world()).unwrap();
         assert_eq!(light.illuminance, noon.illuminance);
+        assert!(light.shadow_maps_enabled);
         assert!(transform.translation.normalize().dot(noon.toward_light) > 0.999);
         assert_eq!(app.world().resource::<ClearColor>().0, noon.haze);
 
@@ -336,5 +358,21 @@ mod tests {
         app.update();
         let ambient = app.world().resource::<GlobalAmbientLight>().brightness;
         assert_eq!(ambient, sky_at(1.0).ambient_brightness);
+    }
+
+    #[test]
+    fn sun_shadows_are_crisp_near_the_rider() {
+        let cascades = sun_cascades();
+        assert_eq!(cascades.bounds.len(), 3);
+        assert!(cascades.bounds[0] <= 8.0 + 1e-3, "{:?}", cascades.bounds);
+        assert!((cascades.bounds[2] - SHADOW_DISTANCE).abs() < 1e-3);
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_plugins(AtmospherePlugin);
+        app.update();
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&CascadeShadowConfig, With<Sun>>();
+        assert_eq!(q.single(app.world()).unwrap().bounds, cascades.bounds);
     }
 }

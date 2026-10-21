@@ -251,9 +251,11 @@ mod tests {
     use crate::player::{PlayerPlugin, PlayerSpawn};
     use bevy::time::TimeUpdateStrategy;
     use pampa_core::{ErrandStage, Terrain, Travel};
-    use pampa_render::character::{Billboard, FigureBody, FigureJoint, FigurePart};
+    use pampa_render::character::{
+        FigureBody, FigureJoint, FigurePart, HorseBody, HorseJointPart, HorsePartMesh,
+    };
     use pampa_render::{
-        CharacterVisual, CharacterVisualPlugin, FigureKind, SheetKind, WorldClock, WorldTowns,
+        CharacterVisual, CharacterVisualPlugin, Coat, FigureKind, WorldClock, WorldTowns,
         WorldTrain,
     };
     use std::time::Duration;
@@ -329,8 +331,9 @@ mod tests {
         p.rider.speed = 0.0;
     }
 
-    /// Billboards, figure bodies, joints and parts drawn under `who`.
-    fn drawn_under(app: &mut App, who: Entity) -> [usize; 4] {
+    /// Horse bodies, figure bodies, figure joints, figure parts, horse joints
+    /// and horse parts drawn under `who`, and meshes that are none of those.
+    fn drawn_under(app: &mut App, who: Entity) -> [usize; 7] {
         let mut under = Vec::new();
         let mut stack = vec![who];
         while let Some(e) = stack.pop() {
@@ -341,16 +344,22 @@ mod tests {
         }
         let world = app.world();
         let n = |has: &dyn Fn(Entity) -> bool| under.iter().filter(|e| has(**e)).count();
+        let part = |e: Entity| {
+            world.get::<FigurePart>(e).is_some() || world.get::<HorsePartMesh>(e).is_some()
+        };
         [
-            n(&|e| world.get::<Billboard>(e).is_some()),
+            n(&|e| world.get::<HorseBody>(e).is_some()),
             n(&|e| world.get::<FigureBody>(e).is_some()),
             n(&|e| world.get::<FigureJoint>(e).is_some()),
             n(&|e| world.get::<FigurePart>(e).is_some()),
+            n(&|e| world.get::<HorseJointPart>(e).is_some()),
+            n(&|e| world.get::<HorsePartMesh>(e).is_some()),
+            n(&|e| world.get::<Mesh3d>(e).is_some() && !part(e)),
         ]
     }
 
     #[test]
-    fn mounting_swaps_the_clerk_figure_for_one_rider_and_nothing_else() {
+    fn mounting_swaps_the_clerk_figure_for_one_horse_and_rider_and_nothing_else() {
         let mut app = shipped_app();
         app.init_resource::<Assets<Image>>()
             .init_resource::<Assets<Mesh>>()
@@ -365,8 +374,8 @@ mod tests {
             *app.world().get::<CharacterVisual>(me).unwrap(),
             CharacterVisual::Figure(FigureKind::Protagonist)
         );
-        let [billboards, bodies, joints, parts] = drawn_under(&mut app, me);
-        assert_eq!((billboards, bodies, joints), (0, 1, 11));
+        let [horses, bodies, joints, parts, _, _, other] = drawn_under(&mut app, me);
+        assert_eq!((horses, bodies, joints, other), (0, 1, 14, 0));
         assert!(parts >= 18, "{parts}");
 
         teleport(
@@ -377,20 +386,37 @@ mod tests {
         teleport(&mut app, beside(&e.horse().1));
         press_f(&mut app);
         assert_eq!(player(&mut app).1.rider.travel(), Travel::Riding);
-        assert_eq!(drawn_under(&mut app, me), [1, 0, 0, 0]);
-        let children = app.world().get::<Children>(me).unwrap();
-        assert_eq!(children.len(), 1, "only the rider billboard");
-        let child = children[0];
-        assert_eq!(
-            app.world().get::<Billboard>(child).unwrap().sheet,
-            SheetKind::Rider
+        // One horse with the clerk in its saddle, and nothing else: no
+        // second clerk on foot, nothing else drawn.
+        let [
+            horses,
+            bodies,
+            joints,
+            parts,
+            horse_joints,
+            horse_parts,
+            other,
+        ] = drawn_under(&mut app, me);
+        assert_eq!((horses, bodies, joints, other), (1, 1, 14, 0));
+        assert!(
+            parts >= 18 && horse_joints == 18 && horse_parts > 60,
+            "{parts} {horse_parts}"
         );
-        // Nothing of the clerk is left anywhere but on the townsfolk.
-        let mut orphans = app
-            .world_mut()
-            .query_filtered::<&ChildOf, With<FigureBody>>();
-        let parents: Vec<Entity> = orphans.iter(app.world()).map(|c| c.parent()).collect();
-        assert!(!parents.contains(&me));
+        let children: Vec<Entity> = app.world().get::<Children>(me).unwrap().to_vec();
+        assert_eq!(children.len(), 1, "only the horse and its rider");
+        let horse = app.world().get::<HorseBody>(children[0]).unwrap();
+        assert_eq!(horse.coat, Coat::Bayo, "Don Hidalgo's bayo");
+        // The clerk's figure rides that horse; the one on foot is gone.
+        let mut riders = app.world_mut().query::<(Entity, &FigureBody)>();
+        let mine: Vec<_> = riders
+            .iter(app.world())
+            .filter(|(_, b)| b.kind == FigureKind::Protagonist)
+            .collect();
+        assert_eq!(mine.len(), 1);
+        assert_eq!(mine[0].1.seat, Some(children[0]));
+        // The tied horse he took is gone from the store too.
+        let mut tied = app.world_mut().query::<&TetheredHorse>();
+        assert!(tied.iter(app.world()).all(|h| h.0 != e.horse().0));
     }
 
     /// Presses the interact key for exactly one frame.
@@ -514,7 +540,13 @@ mod tests {
             (horse.position, horse.heading)
         );
         let visual = *app.world().get::<CharacterVisual>(me).unwrap();
-        assert_eq!(visual, CharacterVisual::Billboard(SheetKind::Rider));
+        assert_eq!(
+            visual,
+            CharacterVisual::Mounted {
+                rider: FigureKind::Protagonist,
+                coat: Coat::Bayo,
+            }
+        );
         assert!(
             !app.world()
                 .resource::<GameWorld>()

@@ -22,8 +22,8 @@ use pampa_core::{
     Townsfolk, Travel,
 };
 use pampa_render::{
-    ActiveTowns, CharacterVisual, FigureKind, MapIcon, SheetKind, VisualPose, WorldClock,
-    WorldTowns, WorldTrain, world_from_ground,
+    ActiveTowns, CharacterVisual, Coat, FigureKind, MapIcon, VisualPose, WorldClock, WorldTowns,
+    WorldTrain, world_from_ground,
 };
 
 use crate::player::{DrivePlayer, GameWorld, Player, drive_player};
@@ -198,7 +198,8 @@ fn populate_towns(
         if let Some(layout) = towns.as_ref().and_then(|t| t.0.get(town))
             && !led_away.0.contains(&town)
         {
-            spawn_tethered_horse(&mut commands, layout, town, &world);
+            let coat = tethered_coat(layout, &cast, town);
+            spawn_tethered_horse(&mut commands, layout, town, coat, &world);
         }
         for &(npc, standing) in cast.0.iter().filter(|(_, s)| s.town == town) {
             spawn_standing_npc(&mut commands, npc, standing, &world);
@@ -243,10 +244,25 @@ fn spawn_walkers(commands: &mut Commands, crowd: &Townsfolk, town: usize, world:
     }
 }
 
+/// The coat of the horse tied at `town`'s store: Don Hidalgo's bayo in his
+/// town (the horse he lends), else one seeded from the town.
+pub fn tethered_coat(layout: &TownLayout, cast: &Cast, town: usize) -> Coat {
+    let hidalgo = cast
+        .0
+        .iter()
+        .any(|(npc, s)| *npc == Npc::Hidalgo && s.town == town);
+    if hidalgo {
+        Coat::HIDALGO
+    } else {
+        Coat::seeded(layout.seed ^ 0x4f52_5345)
+    }
+}
+
 fn spawn_tethered_horse(
     commands: &mut Commands,
     layout: &TownLayout,
     town: usize,
+    coat: Coat,
     world: &GameWorld,
 ) {
     let horse = layout.hitching_post.horse;
@@ -254,7 +270,7 @@ fn spawn_tethered_horse(
     commands.spawn((
         Name::new(format!("Tethered horse {town}")),
         TetheredHorse(town),
-        CharacterVisual::Billboard(SheetKind::Horse),
+        CharacterVisual::Horse(coat),
         VisualPose {
             heading: horse.heading,
             ..default()
@@ -680,7 +696,11 @@ mod tests {
             .world_mut()
             .query_filtered::<(&Transform, &CharacterVisual, &VisualPose), With<TetheredHorse>>();
         let (transform, visual, pose) = query.single(app.world()).unwrap();
-        assert_eq!(*visual, CharacterVisual::Billboard(SheetKind::Horse));
+        // A saddled 3D horse, no rider; with no errand here its coat is the
+        // town's own.
+        let town = &app.world().resource::<WorldTowns>().0[0];
+        let coat = Coat::seeded(town.seed ^ 0x4f52_5345);
+        assert_eq!(*visual, CharacterVisual::Horse(coat));
         assert_eq!(pose.heading, horse.heading);
         assert_eq!(transform.translation.x, horse.position.x);
         assert_eq!(transform.translation.z, -horse.position.y);
@@ -692,6 +712,30 @@ mod tests {
                 .obstacles
                 .contains(&horse.footprint)
         );
+    }
+
+    #[test]
+    fn don_hidalgos_horse_is_the_bayo_and_other_towns_seed_theirs() {
+        let towns = vec![TownLayout::castex_inspired(), TownLayout::castex_inspired()];
+        let cast = cast_of(&towns);
+        let hidalgo = cast
+            .0
+            .iter()
+            .find(|(n, _)| *n == Npc::Hidalgo)
+            .unwrap()
+            .1
+            .town;
+        assert_eq!(tethered_coat(&towns[hidalgo], &cast, hidalgo), Coat::Bayo);
+        let empty = Cast::default();
+        let mut town = TownLayout::castex_inspired();
+        let mut coats = std::collections::HashSet::new();
+        for seed in 0..40 {
+            town.seed = seed;
+            let coat = tethered_coat(&town, &empty, 0);
+            assert_eq!(coat, tethered_coat(&town, &empty, 0), "deterministic");
+            coats.insert(coat);
+        }
+        assert!(coats.len() >= 4, "towns get different horses: {coats:?}");
     }
 
     fn cast_of(towns: &[TownLayout]) -> Cast {

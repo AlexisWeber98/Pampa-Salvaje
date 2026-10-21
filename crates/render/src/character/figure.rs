@@ -1,5 +1,7 @@
 //! Low-poly 3D people, built from rigid faceted parts like the buildings and
-//! the train: flat colours, no textures.
+//! the train: flat colours, per-vertex shades with baked ambient occlusion,
+//! a PBR finish per material and a few small painted textures (see
+//! [`finish`](super::finish)).
 //!
 //! A figure is a body entity (turned to the heading) holding a tree of joint
 //! entities: pelvis, waist, neck, shoulders, elbows, hips and knees. Each
@@ -13,9 +15,12 @@
 
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
-use pampa_core::{Heading, JointAngles, pose};
+use pampa_core::{AnimationState, Heading, JointAngles, pose};
 
-use super::paint::Rgb;
+use super::finish::{Finish, Palette, face_uvs, occlude, ramp};
+
+/// An RGB colour in sRGB bytes.
+pub type Rgb = [u8; 3];
 
 /// How many townsfolk looks there are; logic's `look` picks one.
 pub const TOWNSFOLK_LOOKS: u8 = 5;
@@ -58,6 +63,12 @@ pub enum Joint {
     Elbow(Side),
     Hip(Side),
     Knee(Side),
+    /// Where the hat's brim sits on the head; the hat tips with the step.
+    Brim,
+    /// The shoulders a poncho or shawl hangs from.
+    Drape,
+    /// The waist a skirt hangs from.
+    Hem,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -67,14 +78,14 @@ pub enum Side {
 }
 
 impl Side {
-    const BOTH: [Self; 2] = [Self::Left, Self::Right];
+    pub(super) const BOTH: [Self; 2] = [Self::Left, Self::Right];
 
     fn index(self) -> usize {
         self as usize
     }
 
     /// Sign along the body's Z axis.
-    fn z(self) -> f32 {
+    pub(super) fn z(self) -> f32 {
         match self {
             Self::Left => -1.0,
             Self::Right => 1.0,
@@ -84,7 +95,7 @@ impl Side {
 
 impl Joint {
     /// Every joint, each after its parent.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 14] = [
         Self::Pelvis,
         Self::Waist,
         Self::Neck,
@@ -96,14 +107,18 @@ impl Joint {
         Self::Hip(Side::Right),
         Self::Knee(Side::Left),
         Self::Knee(Side::Right),
+        Self::Brim,
+        Self::Drape,
+        Self::Hem,
     ];
 
     /// The joint this one hangs from (`None`: the body).
     pub fn parent(self) -> Option<Self> {
         match self {
             Self::Pelvis => None,
-            Self::Waist | Self::Hip(_) => Some(Self::Pelvis),
-            Self::Neck | Self::Shoulder(_) => Some(Self::Waist),
+            Self::Waist | Self::Hip(_) | Self::Hem => Some(Self::Pelvis),
+            Self::Neck | Self::Shoulder(_) | Self::Drape => Some(Self::Waist),
+            Self::Brim => Some(Self::Neck),
             Self::Elbow(side) => Some(Self::Shoulder(side)),
             Self::Knee(side) => Some(Self::Hip(side)),
         }
@@ -119,6 +134,9 @@ impl Joint {
             Self::Elbow(_) => Vec3::new(0.0, -0.29, 0.0),
             Self::Hip(s) => Vec3::new(0.0, 0.0, 0.09 * s.z()),
             Self::Knee(_) => Vec3::new(0.0, -0.42, 0.0),
+            Self::Brim => Vec3::new(0.0, 0.25, 0.0),
+            Self::Drape => Vec3::new(0.0, 0.44, 0.0),
+            Self::Hem => Vec3::ZERO,
         }
     }
 
@@ -131,20 +149,32 @@ impl Joint {
         Self::ALL.iter().position(|j| *j == self).unwrap_or(0)
     }
 
-    /// This joint's turn in `angles`, about the body's side axis.
-    fn rotation(self, a: &JointAngles) -> Quat {
+    /// This joint's turn in `angles`, about the body's side axis; the head
+    /// also turns aside by `glance`.
+    fn rotation(self, a: &JointAngles, glance: f32) -> Quat {
         // Positive Z turns a hanging limb toward +X (forward).
-        let angle = match self {
-            Self::Pelvis => 0.0,
-            Self::Waist => -a.lean,
+        match self {
+            // A rider's thighs open sideways first, then swing forward; the
+            // knee undoes the opening so the shin hangs straight down.
+            Self::Hip(s) => {
+                Quat::from_rotation_z(a.hip[s.index()]) * Quat::from_rotation_x(-s.z() * a.spread)
+            }
+            Self::Knee(s) => {
+                Quat::from_rotation_x(s.z() * a.spread) * Quat::from_rotation_z(a.knee[s.index()])
+            }
+            Self::Pelvis => Quat::IDENTITY,
+            Self::Waist => Quat::from_rotation_z(-a.lean),
             // The head stays nearly level while the torso leans.
-            Self::Neck => 0.6 * a.lean - a.nod,
-            Self::Shoulder(s) => a.shoulder[s.index()],
-            Self::Elbow(s) => a.elbow[s.index()],
-            Self::Hip(s) => a.hip[s.index()],
-            Self::Knee(s) => a.knee[s.index()],
-        };
-        Quat::from_rotation_z(angle)
+            Self::Neck => {
+                Quat::from_rotation_y(glance) * Quat::from_rotation_z(0.6 * a.lean - a.nod)
+            }
+            Self::Brim => Quat::from_rotation_z(-a.hat),
+            Self::Drape | Self::Hem => {
+                Quat::from_rotation_z(a.drape) * Quat::from_rotation_x(-a.drape_side)
+            }
+            Self::Shoulder(s) => Quat::from_rotation_z(a.shoulder[s.index()]),
+            Self::Elbow(s) => Quat::from_rotation_z(a.elbow[s.index()]),
+        }
     }
 }
 
@@ -199,22 +229,22 @@ pub enum Shape {
 /// One ring of a loft: height, half extents along X and Z, X offset and a
 /// shade multiplied into the colour (for cheap darkening at hems and joints).
 #[derive(Debug, Clone, Copy)]
-struct Ring(f32, f32, f32, f32, f32);
+pub(super) struct Ring(pub f32, pub f32, pub f32, pub f32, pub f32);
 
 /// A round ring of radius `r` at `y`.
-const fn round(y: f32, r: f32) -> Ring {
+pub(super) const fn round(y: f32, r: f32) -> Ring {
     Ring(y, r, r, 0.0, 1.0)
 }
 
 /// Sides around limbs, neck, hands and feet.
-const LIMB_SIDES: usize = 14;
+pub(super) const LIMB_SIDES: usize = 14;
 /// Sides around the torso, hips and coats.
-const BODY_SIDES: usize = 16;
+pub(super) const BODY_SIDES: usize = 16;
 
 /// A limb from `top` radius down to `bottom` radius, with rounded ends, darker
 /// toward its lower end. Its muscle swells a little above the middle and
 /// narrows before the lower joint, so knees, calves and elbows read.
-fn limb(top: f32, bottom: f32) -> Vec<Ring> {
+pub(super) fn limb(top: f32, bottom: f32) -> Vec<Ring> {
     let at = |t: f32| bottom + (top - bottom) * t;
     let shaded = |ring: Ring, shade: f32| Ring(ring.0, ring.1, ring.2, 0.0, shade);
     vec![
@@ -256,9 +286,35 @@ impl Shape {
         Self::Poncho,
     ];
 
-    /// Builds this unit mesh. Skin and body rounds get smooth normals; brims
-    /// and the poncho keep hard edges.
+    /// Builds this unit mesh with its ambient occlusion baked into the
+    /// vertex shades: armpits, the crotch, under the jaw and under brims.
     pub fn mesh(self) -> Mesh {
+        let mesh = self.build();
+        let under = |n: Vec3, from: f32| ramp(-n.y, from, 0.95);
+        match self {
+            Self::Torso | Self::Coat | Self::Jacket => occlude(mesh, |p, _| {
+                let armpit =
+                    ramp(p.z.abs(), 0.34, 0.48) * (1.0 - ramp((p.y - 0.22).abs(), 0.0, 0.18));
+                1.0 - 0.32 * armpit
+            }),
+            Self::Hips => occlude(mesh, |p, _| {
+                1.0 - 0.35 * ramp(-p.y, 0.2, 0.45) * (1.0 - ramp(p.z.abs(), 0.15, 0.35))
+            }),
+            Self::Thigh | Self::UpperArm => occlude(mesh, |p, _| 1.0 - 0.22 * ramp(p.y, 0.3, 0.5)),
+            Self::Head => occlude(mesh, |p, n| {
+                1.0 - 0.3 * under(n, 0.3) * ramp(-p.y, 0.1, 0.4)
+            }),
+            Self::Lump => occlude(mesh, |_, n| 1.0 - 0.25 * under(n, 0.4)),
+            Self::Disc | Self::Brim | Self::Crown => {
+                occlude(mesh, |_, n| 1.0 - 0.4 * under(n, 0.5))
+            }
+            _ => mesh,
+        }
+    }
+
+    /// Builds the bare unit mesh. Skin and body rounds get smooth normals;
+    /// brims and the poncho keep hard edges.
+    fn build(self) -> Mesh {
         let sphere = Sphere::new(0.5);
         match self {
             // Trousers crease toward the knee.
@@ -362,7 +418,7 @@ impl Shape {
                 8,
             ),
             // Twelve rings give the cheekbones and chin their curve.
-            Self::Head => sphere.mesh().uv(18, 12),
+            Self::Head => face_uvs(sphere.mesh().uv(18, 12)),
             Self::Lump => sphere
                 .mesh()
                 .ico(1)
@@ -450,14 +506,14 @@ fn torso(hem: f32, waist: f32) -> Vec<Ring> {
 /// hem to `depth` (a fraction of the radius), and `scuff`, how unevenly worn
 /// its shading is.
 #[derive(Debug, Clone, Copy)]
-struct Cloth {
-    folds: u32,
-    depth: f32,
-    scuff: f32,
+pub(super) struct Cloth {
+    pub folds: u32,
+    pub depth: f32,
+    pub scuff: f32,
 }
 
 impl Cloth {
-    const PLAIN: Self = Self {
+    pub const PLAIN: Self = Self {
         folds: 0,
         depth: 0.0,
         scuff: 0.0,
@@ -466,20 +522,27 @@ impl Cloth {
 
 /// A closed surface through `rings` (bottom to top), `segments` around, with
 /// smooth normals and per-vertex shades.
-fn loft(rings: &[Ring], segments: usize) -> Mesh {
+pub(super) fn loft(rings: &[Ring], segments: usize) -> Mesh {
     loft_cloth(rings, segments, Cloth::PLAIN)
 }
 
 /// [`loft`] with folds and wear (see [`Cloth`]).
-fn loft_cloth(rings: &[Ring], segments: usize, cloth: Cloth) -> Mesh {
+pub(super) fn loft_cloth(rings: &[Ring], segments: usize, cloth: Cloth) -> Mesh {
     use bevy::asset::RenderAssetUsages;
     use bevy::mesh::{Indices, PrimitiveTopology};
     use std::f32::consts::TAU;
     let n = segments;
-    let mut positions = Vec::with_capacity(rings.len() * n + 2);
-    let mut colors = Vec::with_capacity(rings.len() * n + 2);
+    // Each ring has n + 1 vertices: the first and last are the same point at
+    // the back (-X), so textures wrap with their seam behind; `u` is 0.5 at
+    // the front (+X), `v` runs from the bottom ring (0) to the top (1).
+    let row = n + 1;
+    let mut positions = Vec::with_capacity(rings.len() * row + 2);
+    let mut colors = Vec::with_capacity(rings.len() * row + 2);
+    let mut uvs = Vec::with_capacity(rings.len() * row + 2);
     for (r, &Ring(y, rx, rz, dx, shade)) in rings.iter().enumerate() {
-        for k in 0..n {
+        for kk in 0..row {
+            let k = (kk + n / 2) % n;
+            uvs.push([kk as f32 / n as f32, y + 0.5]);
             let angle = k as f32 / n as f32 * TAU;
             let (s, c) = angle.sin_cos();
             // Folds pull in between their ridges, most at the hem (y = -0.5).
@@ -495,7 +558,7 @@ fn loft_cloth(rings: &[Ring], segments: usize, cloth: Cloth) -> Mesh {
     let mut indices: Vec<u32> = Vec::new();
     for r in 0..rings.len().saturating_sub(1) {
         for k in 0..n {
-            let at = |ring: usize, k: usize| (ring * n + k % n) as u32;
+            let at = |ring: usize, k: usize| (ring * row + k) as u32;
             let (a, b, c, d) = (at(r, k), at(r, k + 1), at(r + 1, k), at(r + 1, k + 1));
             indices.extend([a, c, b, b, c, d]);
         }
@@ -507,9 +570,10 @@ fn loft_cloth(rings: &[Ring], segments: usize, cloth: Cloth) -> Mesh {
         let center = positions.len() as u32;
         positions.push([dx, y, 0.0]);
         colors.push([shade, shade, shade, 1.0]);
+        uvs.push([0.5, y + 0.5]);
         for k in 0..n {
-            let a = (ring * n + k) as u32;
-            let b = (ring * n + (k + 1) % n) as u32;
+            let a = (ring * row + k) as u32;
+            let b = (ring * row + k + 1) as u32;
             indices.extend(if bottom {
                 [center, a, b]
             } else {
@@ -517,14 +581,29 @@ fn loft_cloth(rings: &[Ring], segments: usize, cloth: Cloth) -> Mesh {
             });
         }
     }
-    Mesh::new(
+    let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::default(),
     )
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
     .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
     .with_inserted_indices(Indices::U32(indices))
-    .with_computed_smooth_normals()
+    .with_computed_smooth_normals();
+    // The seam's two copies of each vertex share one normal, so no crease
+    // shows down the back.
+    if let Some(bevy::mesh::VertexAttributeValues::Float32x3(normals)) =
+        mesh.attribute_mut(Mesh::ATTRIBUTE_NORMAL)
+    {
+        for r in 0..rings.len() {
+            let (first, last) = (r * row, r * row + n);
+            let joined =
+                (Vec3::from(normals[first]) + Vec3::from(normals[last])).normalize_or_zero();
+            normals[first] = joined.into();
+            normals[last] = joined.into();
+        }
+    }
+    mesh
 }
 
 /// What a part is; tests and accessories go by it.
@@ -599,6 +678,8 @@ pub struct PartSpec {
     pub color: Rgb,
     pub center: Vec3,
     pub size: Vec3,
+    /// What it is made of.
+    pub finish: Finish,
 }
 
 /// Headwear of a look.
@@ -844,7 +925,7 @@ const FARACH: Look = Look {
 };
 
 /// `color` a shade darker: seams, cuffs, soles and eye sockets.
-fn darker(color: Rgb) -> Rgb {
+pub(super) fn darker(color: Rgb) -> Rgb {
     color.map(|c| (c as f32 * 0.78) as u8)
 }
 
@@ -872,6 +953,7 @@ pub fn figure_parts(kind: FigureKind) -> Vec<PartSpec> {
             color,
             center: Vec3::from(center),
             size: Vec3::from(size),
+            finish: Finish::Cloth,
         });
     };
     use Joint::*;
@@ -1023,7 +1105,43 @@ pub fn figure_parts(kind: FigureKind) -> Vec<PartSpec> {
             add(Headscarf, neck, Shape::Lump, cloth, [-0.11, 0.1, 0.0], [0.08, 0.1, 0.08]);
         }
     }
+    // Hats, ponchos and skirts hang from their own joints so they can sway.
+    for part in &mut parts {
+        part.finish = finish_of(l, part);
+        let joint = match part.piece {
+            Hat | Gacho | Bowler | Boina | Kepi => Some(Brim),
+            Seam if part.joint == Joint::Neck => Some(Brim),
+            Poncho | Shawl => Some(Drape),
+            Skirt => Some(Hem),
+            _ => None,
+        };
+        if let Some(joint) = joint {
+            part.center -= joint.rest();
+            part.joint = joint;
+        }
+    }
     parts
+}
+
+/// What `part` of look `l` is made of.
+fn finish_of(l: &Look, part: &PartSpec) -> Finish {
+    use Piece::*;
+    match part.piece {
+        Head => Finish::Face,
+        Jaw | Nose | Neck | Hand | Thumb | Ear | Brow | Eye => Finish::Skin,
+        Hair | Moustache | Bun => Finish::Hair,
+        Button => Finish::Brass,
+        Buckle => Finish::Silver,
+        Hat | Gacho | Bowler | Kepi | Boina => Finish::Felt,
+        Poncho | Shawl => Finish::Wool,
+        Foot | Sole if part.color == ALPARGATAS || part.color == darker(ALPARGATAS) => {
+            Finish::Cloth
+        }
+        Belt | Foot | Sole => Finish::Leather,
+        LowerLeg if l.tall_boots => Finish::Leather,
+        Torso | UpperArm | Forearm | Lapel | Pocket | Seam | Cuff if l.leather => Finish::Leather,
+        _ => Finish::Cloth,
+    }
 }
 
 /// Height of the top of `kind`'s head or headwear, standing.
@@ -1040,39 +1158,26 @@ pub fn body_rotation(heading: Heading) -> Quat {
     Quat::from_rotation_y(heading.radians())
 }
 
-/// The shared unit meshes and one material per colour.
+/// The shared unit meshes; materials come from the [`Palette`].
 #[derive(Resource, Default)]
 pub struct FigureKit {
     meshes: HashMap<Shape, Handle<Mesh>>,
-    materials: HashMap<Rgb, Handle<StandardMaterial>>,
 }
 
 impl FigureKit {
     pub fn new(meshes: &mut Assets<Mesh>) -> Self {
         Self {
             meshes: Shape::ALL.map(|s| (s, meshes.add(s.mesh()))).into(),
-            materials: HashMap::default(),
         }
     }
-
-    fn material(
-        &mut self,
-        color: Rgb,
-        materials: &mut Assets<StandardMaterial>,
-    ) -> Handle<StandardMaterial> {
-        self.materials
-            .entry(color)
-            .or_insert_with(|| {
-                materials.add(StandardMaterial {
-                    base_color: Color::srgb_u8(color[0], color[1], color[2]),
-                    perceptual_roughness: 0.95,
-                    reflectance: 0.15,
-                    ..default()
-                })
-            })
-            .clone()
-    }
 }
+
+/// The asset stores and palette a figure or horse is drawn with.
+pub(super) type Paints<'a> = (
+    &'a mut Palette,
+    &'a mut Assets<StandardMaterial>,
+    &'a mut Assets<Image>,
+);
 
 /// The turning body of a figure, child of the character entity.
 #[derive(Component, Debug, Clone)]
@@ -1080,6 +1185,14 @@ pub struct FigureBody {
     pub kind: FigureKind,
     /// How far through the gait (or breath) cycle, in cycles (`0..1`).
     pub phase: f32,
+    /// The horse body this figure rides, if any: it then sits the horse's
+    /// gait instead of walking its own.
+    pub seat: Option<Entity>,
+    /// Seconds since it was drawn, and its own seed, for glancing around.
+    pub clock: f32,
+    pub seed: u32,
+    /// How far the head is turned aside now, easing toward the glance.
+    pub glance: f32,
     /// Joint entities in [`Joint::ALL`] order.
     joints: Vec<Entity>,
 }
@@ -1093,18 +1206,26 @@ pub struct FigureJoint(pub Joint);
 pub struct FigurePart(pub Piece);
 
 /// Spawns `kind`'s body, joints and parts under `parent`; returns the body.
+/// A rider (`seat`: the horse body) sits at its saddle, under `parent`, the
+/// horse's trunk.
 pub(super) fn spawn_figure(
     commands: &mut Commands,
     kit: &mut FigureKit,
-    materials: &mut Assets<StandardMaterial>,
+    (palette, materials, images): Paints,
     parent: Entity,
     kind: FigureKind,
     phase: f32,
+    seat: Option<Entity>,
 ) -> Entity {
+    let at = if seat.is_some() {
+        super::horse::rider_offset()
+    } else {
+        Vec3::ZERO
+    };
     let body = commands
         .spawn((
             Name::new("Figure"),
-            Transform::default(),
+            Transform::from_translation(at),
             Visibility::default(),
             ChildOf(parent),
         ))
@@ -1130,7 +1251,7 @@ pub(super) fn spawn_figure(
         commands.spawn((
             FigurePart(part.piece),
             Mesh3d(mesh),
-            MeshMaterial3d(kit.material(part.color, materials)),
+            MeshMaterial3d(palette.material(part.color, part.finish, materials, images)),
             Transform::from_translation(part.center).with_scale(part.size),
             ChildOf(joints[part.joint.index()]),
         ));
@@ -1138,28 +1259,58 @@ pub(super) fn spawn_figure(
     commands.entity(body).insert(FigureBody {
         kind,
         phase,
+        seat,
+        clock: 0.0,
+        seed: parent.index_u32(),
+        glance: 0.0,
         joints,
     });
     body
 }
 
 /// Turns, bobs and poses each figure from its character's pose, its gait
-/// paced by speed.
+/// paced by speed. A rider sits its horse's gait, already turned and carried
+/// by the horse.
 pub(super) fn update_figures(
     time: Res<Time>,
     poses: Query<&super::VisualPose>,
+    horses: Query<&super::horse::HorseBody>,
     mut bodies: Query<(&ChildOf, &mut FigureBody, &mut Transform), Without<FigureJoint>>,
     mut joints: Query<(&FigureJoint, &mut Transform), Without<FigureBody>>,
 ) {
     let dt = time.delta_secs();
     for (child_of, mut body, mut transform) in &mut bodies {
-        let Ok(visual) = poses.get(child_of.parent()) else {
-            continue;
+        body.clock += dt;
+        let mut idle = false;
+        let angles = if let Some(horse) = body.seat {
+            let Ok(horse) = horses.get(horse) else {
+                continue;
+            };
+            body.phase = horse.phase;
+            let angles = pose::riding_pose(horse.gait, horse.phase);
+            transform.rotation = Quat::IDENTITY;
+            transform.translation = super::horse::rider_offset() + Vec3::Y * angles.bob;
+            angles
+        } else {
+            let Ok(visual) = poses.get(child_of.parent()) else {
+                continue;
+            };
+            idle = visual.animation == AnimationState::Idle;
+            body.phase = pose::advance(body.phase, visual.animation, visual.speed, dt);
+            let angles = pose::pose(visual.animation, body.phase);
+            transform.rotation = body_rotation(visual.heading);
+            transform.translation.y = angles.bob;
+            angles
         };
-        body.phase = pose::advance(body.phase, visual.animation, visual.speed, dt);
-        let angles = pose::pose(visual.animation, body.phase);
-        transform.rotation = body_rotation(visual.heading);
-        transform.translation.y = angles.bob;
+        // Standing people glance around now and then; the turn eases in and
+        // out, so starting to walk looks ahead again smoothly.
+        let target = if idle {
+            pose::glance(body.seed, body.clock)
+        } else {
+            0.0
+        };
+        body.glance += (target - body.glance) * (1.0 - (-8.0 * dt).exp());
+        let glance = body.glance;
         for &entity in &body.joints {
             let Ok((joint, mut transform)) = joints.get_mut(entity) else {
                 continue;
@@ -1170,7 +1321,7 @@ pub(super) fn update_figures(
                 0.0
             };
             transform.translation = joint.0.rest() + Vec3::Y * breath;
-            transform.rotation = joint.0.rotation(&angles);
+            transform.rotation = joint.0.rotation(&angles, glance);
         }
     }
 }
@@ -1329,6 +1480,191 @@ mod tests {
             let along = Vec3::new(turned.x, 0.0, turned.z).normalize();
             let want = world_from_ground(heading.forward(), 0.0);
             assert!(along.distance(want) < 1e-4, "{degrees}°: {along} vs {want}");
+        }
+    }
+
+    fn finish_of_piece(kind: FigureKind, piece: Piece) -> Option<Finish> {
+        figure_parts(kind)
+            .iter()
+            .find(|p| p.piece == piece)
+            .map(|p| p.finish)
+    }
+
+    #[test]
+    fn each_part_has_the_finish_of_its_material() {
+        use FigureKind::*;
+        assert_eq!(
+            finish_of_piece(Protagonist, Piece::Torso),
+            Some(Finish::Leather)
+        );
+        assert_eq!(
+            finish_of_piece(Protagonist, Piece::Foot),
+            Some(Finish::Leather)
+        );
+        assert_eq!(
+            finish_of_piece(Protagonist, Piece::Gacho),
+            Some(Finish::Felt)
+        );
+        assert_eq!(
+            finish_of_piece(Protagonist, Piece::Head),
+            Some(Finish::Face)
+        );
+        assert_eq!(
+            finish_of_piece(Protagonist, Piece::Hand),
+            Some(Finish::Skin)
+        );
+        assert_eq!(finish_of_piece(Farach, Piece::Button), Some(Finish::Brass));
+        assert_eq!(finish_of_piece(Farach, Piece::Torso), Some(Finish::Cloth));
+        assert_eq!(
+            finish_of_piece(Hidalgo, Piece::Buckle),
+            Some(Finish::Silver)
+        );
+        assert_eq!(
+            finish_of_piece(Townsfolk(2), Piece::Poncho),
+            Some(Finish::Wool)
+        );
+        assert_eq!(
+            finish_of_piece(Townsfolk(0), Piece::UpperLeg),
+            Some(Finish::Cloth)
+        );
+        assert_eq!(
+            finish_of_piece(Townsfolk(0), Piece::Foot),
+            Some(Finish::Cloth),
+            "alpargatas"
+        );
+        // Every head wears the face texture.
+        for kind in FigureKind::all() {
+            assert_eq!(
+                finish_of_piece(kind, Piece::Head),
+                Some(Finish::Face),
+                "{kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn hats_ponchos_and_skirts_hang_from_joints_that_sway() {
+        let on = |kind, piece| {
+            figure_parts(kind)
+                .iter()
+                .filter(|p| p.piece == piece)
+                .map(|p| p.joint)
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            on(FigureKind::Protagonist, Piece::Gacho)
+                .iter()
+                .all(|j| *j == Joint::Brim)
+        );
+        assert!(
+            on(FigureKind::Farach, Piece::Kepi)
+                .iter()
+                .all(|j| *j == Joint::Brim)
+        );
+        assert_eq!(on(FigureKind::Townsfolk(2), Piece::Poncho), [Joint::Drape]);
+        assert_eq!(on(FigureKind::Townsfolk(3), Piece::Skirt), [Joint::Hem]);
+        // Each new joint hangs off the one its parts used to.
+        assert_eq!(Joint::Brim.parent(), Some(Joint::Neck));
+        assert_eq!(Joint::Drape.parent(), Some(Joint::Waist));
+        assert_eq!(Joint::Hem.parent(), Some(Joint::Pelvis));
+        // Swaying turns them; still they stay put at rest.
+        let walk = pose::pose(AnimationState::Walk, 0.4);
+        assert_ne!(Joint::Brim.rotation(&walk, 0.0), Quat::IDENTITY);
+        assert_ne!(Joint::Drape.rotation(&walk, 0.0), Quat::IDENTITY);
+        assert_eq!(
+            Joint::Hem.rotation(&JointAngles::default(), 0.0),
+            Quat::IDENTITY
+        );
+        // A glance turns the head about the vertical.
+        let turned = Joint::Neck.rotation(&JointAngles::default(), 0.4) * Vec3::X;
+        assert!(turned.z.abs() > 0.3 && turned.y.abs() < 1e-5);
+    }
+
+    /// Vertex positions, normals and shades of `shape`'s unit mesh.
+    fn shaded(shape: Shape) -> Vec<(Vec3, Vec3, f32)> {
+        use bevy::mesh::VertexAttributeValues as V;
+        let mesh = shape.mesh();
+        let p = mesh
+            .attribute(Mesh::ATTRIBUTE_POSITION)
+            .unwrap()
+            .as_float3()
+            .unwrap();
+        let n = mesh
+            .attribute(Mesh::ATTRIBUTE_NORMAL)
+            .unwrap()
+            .as_float3()
+            .unwrap();
+        let Some(V::Float32x4(c)) = mesh.attribute(Mesh::ATTRIBUTE_COLOR) else {
+            panic!("{shape:?} has shades");
+        };
+        p.iter()
+            .zip(n)
+            .zip(c)
+            .map(|((p, n), c)| (Vec3::from(*p), Vec3::from(*n), c[0]))
+            .collect()
+    }
+
+    fn mean(values: impl Iterator<Item = f32>) -> f32 {
+        let (sum, n) = values.fold((0.0, 0), |(s, n), v| (s + v, n + 1));
+        assert!(n > 0, "no samples");
+        sum / n as f32
+    }
+
+    #[test]
+    fn ambient_occlusion_darkens_armpits_crotch_jaw_and_brim_undersides() {
+        let torso = shaded(Shape::Torso);
+        let armpit = mean(
+            torso
+                .iter()
+                .filter(|(p, _, _)| p.z.abs() > 0.44 && (0.15..0.3).contains(&p.y))
+                .map(|v| v.2),
+        );
+        let chest = mean(
+            torso
+                .iter()
+                .filter(|(p, _, _)| p.x > 0.4 && (0.0..0.3).contains(&p.y))
+                .map(|v| v.2),
+        );
+        assert!(armpit < chest * 0.85, "armpit {armpit} vs chest {chest}");
+        let hips = shaded(Shape::Hips);
+        let crotch = mean(hips.iter().filter(|(p, _, _)| p.y < -0.4).map(|v| v.2));
+        let seat = mean(hips.iter().filter(|(p, _, _)| p.y > 0.0).map(|v| v.2));
+        assert!(crotch < seat * 0.85, "{crotch} vs {seat}");
+        let head = shaded(Shape::Head);
+        let jaw = mean(
+            head.iter()
+                .filter(|(p, n, _)| n.y < -0.6 && p.y < -0.3)
+                .map(|v| v.2),
+        );
+        let brow = mean(head.iter().filter(|(p, _, _)| p.y > 0.2).map(|v| v.2));
+        assert!(jaw < brow * 0.85, "{jaw} vs {brow}");
+        let brim = shaded(Shape::Disc);
+        let under = mean(brim.iter().filter(|(_, n, _)| n.y < -0.9).map(|v| v.2));
+        let over = mean(brim.iter().filter(|(_, n, _)| n.y > 0.9).map(|v| v.2));
+        assert!(under < over * 0.7, "{under} vs {over}");
+    }
+
+    #[test]
+    fn lofts_wrap_their_textures_with_the_seam_behind() {
+        use bevy::mesh::VertexAttributeValues as V;
+        let mesh = Shape::Thigh.mesh();
+        let p = mesh
+            .attribute(Mesh::ATTRIBUTE_POSITION)
+            .unwrap()
+            .as_float3()
+            .unwrap();
+        let Some(V::Float32x2(uv)) = mesh.attribute(Mesh::ATTRIBUTE_UV_0) else {
+            panic!("uvs");
+        };
+        for (p, uv) in p.iter().zip(uv) {
+            assert!((0.0..=1.0).contains(&uv[0]) && (0.0..=1.0).contains(&uv[1]));
+            // The front is the middle of the texture; its edges meet behind.
+            if p[0] > 0.1 && p[2].abs() < 1e-4 {
+                assert!((uv[0] - 0.5).abs() < 1e-4, "{uv:?}");
+            }
+            if uv[0] == 0.0 || uv[0] == 1.0 {
+                assert!(p[0] < 0.0 && p[2].abs() < 1e-4, "{p:?}");
+            }
         }
     }
 
