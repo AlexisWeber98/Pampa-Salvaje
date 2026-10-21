@@ -1,8 +1,10 @@
 //! Low-poly ground streamed in square chunks around the rider, each with
-//! scattered props (rocks and dry shrubs) that give the eye something to
-//! measure speed by. The ground is painted per vertex, from grey-green to
-//! dry yellow grass, with plain earth on towns' leveled ground; the native
-//! flora on it is grown by [`crate::flora`].
+//! scattered props (tosca stones and small jarilla shrubs, drawn with the
+//! CC0 vegetation models when they are loaded) that give the eye something
+//! to measure speed by. The ground is painted per vertex, from grey-green to
+//! dry yellow grass, with plain earth on towns' leveled ground, and wears
+//! the CC0 ambientCG soil-and-grass detail textures of [`crate::ground`]
+//! over that paint. The native flora on it is grown by [`crate::flora`].
 //!
 //! Every chunk is sampled from the logic [`Terrain`], the single source of
 //! truth for height, so neighboring chunks meet without seams. Which chunks
@@ -18,7 +20,10 @@ use bevy::prelude::*;
 use pampa_core::flora::grass_dryness;
 use pampa_core::{ChunkCoord, Terrain, Vec2 as GroundVec2, WorldConfig};
 
+use crate::AssetRoot;
 use crate::coords::world_from_ground;
+use crate::flora::{Model, VegetationLoad, VegetationModels, spot_unit, visible_within};
+use crate::ground::{face_tangent, ground_material, ground_uv};
 use crate::streaming::StreamingSet;
 
 /// The logic terrain this world is drawn from. Insert before the plugin runs,
@@ -110,24 +115,28 @@ impl Plugin for TerrainPlugin {
                 set: StreamingSet::new(self.radius, self.budget),
                 entities: HashMap::new(),
             })
-            .add_systems(Startup, (setup_kit, fill_chunks).chain())
+            .add_systems(
+                Startup,
+                (setup_kit, fill_chunks).chain().after(VegetationLoad),
+            )
             .add_systems(PostUpdate, stream_chunks.in_set(ChunkStreaming));
     }
 }
 
 fn setup_kit(
     mut commands: Commands,
+    root: Option<Res<AssetRoot>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: Option<ResMut<Assets<Image>>>,
 ) {
     commands.insert_resource(TerrainKit {
-        // Vertex colors carry the palette; the material stays white and matte.
-        ground: materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            perceptual_roughness: 1.0,
-            reflectance: 0.1,
-            ..default()
-        }),
+        // Vertex colors carry the palette; the material stays white and
+        // matte, with the tiled ground detail on top when it is found.
+        ground: materials.add(ground_material(
+            root.as_deref().map(|r| r.0.as_path()),
+            images.as_deref_mut(),
+        )),
         rock_mesh: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
         shrub_mesh: meshes.add(
             Sphere::new(0.5)
@@ -162,6 +171,7 @@ fn fill_chunks(
     mut commands: Commands,
     (terrain, world, detail, focus): ChunkInputs,
     kit: Res<TerrainKit>,
+    models: Option<Res<VegetationModels>>,
     mut streamer: ResMut<ChunkStreamer>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
@@ -172,7 +182,7 @@ fn fill_chunks(
     for coord in plan.spawn {
         let entity = spawn_chunk(
             &mut commands,
-            &kit,
+            (&kit, models.as_deref()),
             &mut meshes,
             (&terrain.0, &world.0, *detail),
             coord,
@@ -186,6 +196,7 @@ fn stream_chunks(
     mut commands: Commands,
     (terrain, world, detail, focus): ChunkInputs,
     kit: Option<Res<TerrainKit>>,
+    models: Option<Res<VegetationModels>>,
     mut streamer: ResMut<ChunkStreamer>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
@@ -202,7 +213,7 @@ fn stream_chunks(
     for coord in plan.spawn {
         let entity = spawn_chunk(
             &mut commands,
-            &kit,
+            (&kit, models.as_deref()),
             &mut meshes,
             (&terrain.0, &world.0, *detail),
             coord,
@@ -214,7 +225,7 @@ fn stream_chunks(
 /// Spawns chunk `coord`: its ground mesh, and its props as children.
 fn spawn_chunk(
     commands: &mut Commands,
-    kit: &TerrainKit,
+    (kit, models): (&TerrainKit, Option<&VegetationModels>),
     meshes: &mut Assets<Mesh>,
     (terrain, world, detail): (&Terrain, &WorldConfig, ChunkDetail),
     coord: ChunkCoord,
@@ -231,6 +242,11 @@ fn spawn_chunk(
         ))
         .id();
     for prop in chunk_props(terrain, coord, world.chunk_size) {
+        if let Some(models) = models
+            && spawn_model_prop(commands, models, terrain, &prop, chunk)
+        {
+            continue;
+        }
         let (mesh, material, scale) = if prop.rock {
             (
                 &kit.rock_mesh,
@@ -257,6 +273,49 @@ fn spawn_chunk(
     chunk
 }
 
+/// Draws `prop` with a vegetation model: a tosca stone or a small jarilla
+/// shrub. Returns `false` when the model was not loaded, so the stand-in is
+/// drawn instead.
+fn spawn_model_prop(
+    commands: &mut Commands,
+    models: &VegetationModels,
+    terrain: &Terrain,
+    prop: &Prop,
+    chunk: Entity,
+) -> bool {
+    let pick = |n: u8| (spot_unit(prop.at, 21) * n as f32) as u8 % n + 1;
+    let (model, height) = if prop.rock {
+        (Model::Rock(pick(4)), 0.5 * prop.size)
+    } else {
+        (Model::Bush(pick(2)), 0.7 * prop.size)
+    };
+    let Some(parts) = models.parts(model, 0) else {
+        return false;
+    };
+    let base = world_from_ground(
+        prop.at,
+        terrain.height(prop.at.x, prop.at.y) - 0.05 * height,
+    );
+    let transform = Transform::from_translation(base)
+        .with_rotation(Quat::from_rotation_y(prop.yaw))
+        .with_scale(Vec3::splat(height));
+    for (mesh, material) in parts {
+        commands.spawn((
+            Mesh3d(mesh),
+            MeshMaterial3d(material),
+            transform,
+            visible_within(PROP_FAR, PROP_FADE),
+            ChildOf(chunk),
+        ));
+    }
+    true
+}
+
+/// Where model stones and shrubs stop being drawn, in meters, and the
+/// width of their dithered fade-out.
+const PROP_FAR: f32 = 160.0;
+const PROP_FADE: f32 = 15.0;
+
 /// Ground corner `(i, j)` of a chunk split into `resolution` quads per side.
 /// The last corner is the next chunk's first, computed the same way, so
 /// neighbors share their border vertices exactly.
@@ -275,7 +334,9 @@ fn chunk_corner(coord: ChunkCoord, size: f32, resolution: u32, i: u32, j: u32) -
 }
 
 /// Non-indexed triangle list so normals come out flat: the low-poly look.
-/// Vertices are in world space; the chunk entity stays at the origin.
+/// Vertices are in world space; the chunk entity stays at the origin. UVs
+/// are world space too ([`ground_uv`]), with flat per-face tangents for the
+/// ground's normal map.
 fn build_chunk_mesh(terrain: &Terrain, coord: ChunkCoord, size: f32, resolution: u32) -> Mesh {
     let corner = |i: u32, j: u32| {
         let ground = chunk_corner(coord, size, resolution, i, j);
@@ -288,14 +349,20 @@ fn build_chunk_mesh(terrain: &Terrain, coord: ChunkCoord, size: f32, resolution:
     let quads = (resolution * resolution) as usize;
     let mut positions = Vec::with_capacity(quads * 6);
     let mut colors = Vec::with_capacity(quads * 6);
+    let mut uvs = Vec::with_capacity(quads * 6);
+    let mut tangents = Vec::with_capacity(quads * 6);
     for j in 0..resolution {
         for i in 0..resolution {
             let (a, b) = (corner(i, j), corner(i + 1, j));
             let (c, d) = (corner(i + 1, j + 1), corner(i, j + 1));
             // World Z is -north, so (a, b, c) is counter-clockwise seen from above.
             for tri in [[a, b, c], [a, c, d]] {
-                positions.extend(tri.map(|(v, _)| v.to_array()));
+                let points = tri.map(|(v, _)| v);
+                let uv = points.map(ground_uv);
+                positions.extend(points.map(|v| v.to_array()));
                 colors.extend(tri.map(|(_, c)| c));
+                tangents.extend([face_tangent(points, uv); 3]);
+                uvs.extend(uv);
             }
         }
     }
@@ -305,7 +372,9 @@ fn build_chunk_mesh(terrain: &Terrain, coord: ChunkCoord, size: f32, resolution:
         RenderAssetUsages::RENDER_WORLD,
     )
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_TANGENT, tangents);
     mesh.compute_normals();
     mesh
 }
@@ -528,6 +597,80 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn the_ground_material_wears_the_ambientcg_textures_or_falls_back() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let material = |root: std::path::PathBuf| {
+            let mut app = app(GroundVec2::new(30.0, 30.0));
+            app.init_resource::<Assets<Image>>()
+                .insert_resource(crate::AssetRoot(root));
+            app.update();
+            let mut q = app
+                .world_mut()
+                .query::<(&MeshMaterial3d<StandardMaterial>, &TerrainChunk)>();
+            let id = q.iter(app.world()).next().expect("a chunk").0.id();
+            let materials = app.world().resource::<Assets<StandardMaterial>>();
+            let m = materials.get(id).unwrap().clone();
+            let images = app.world().resource::<Assets<Image>>();
+            let sizes: Vec<u32> = [&m.base_color_texture, &m.normal_map_texture]
+                .into_iter()
+                .flatten()
+                .map(|h| images.get(h).unwrap().texture_descriptor.mip_level_count)
+                .collect();
+            (m, sizes)
+        };
+        let (textured, mips) = material(root.clone());
+        assert!(textured.base_color_texture.is_some());
+        assert!(textured.normal_map_texture.is_some());
+        assert!(textured.occlusion_texture.is_some());
+        assert!(textured.metallic_roughness_texture.is_some());
+        assert_eq!(textured.metallic, 0.0);
+        assert!(mips.iter().all(|&m| m == 10), "512 px down to 1: {mips:?}");
+        // Missing files: plain vertex-painted ground, no panic.
+        let (plain, _) = material(root.join("nowhere"));
+        assert!(plain.base_color_texture.is_none() && plain.normal_map_texture.is_none());
+    }
+
+    #[test]
+    fn ground_uvs_tile_in_world_space_and_meet_at_chunk_borders() {
+        use bevy::mesh::VertexAttributeValues as V;
+        let terrain = Terrain::default();
+        let attrs = |c: ChunkCoord| {
+            let mesh = build_chunk_mesh(&terrain, c, 200.0, 8);
+            let Some(V::Float32x3(p)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION).cloned() else {
+                panic!("positions")
+            };
+            let Some(V::Float32x2(uv)) = mesh.attribute(Mesh::ATTRIBUTE_UV_0).cloned() else {
+                panic!("uvs")
+            };
+            let Some(V::Float32x4(t)) = mesh.attribute(Mesh::ATTRIBUTE_TANGENT).cloned() else {
+                panic!("tangents")
+            };
+            assert_eq!(uv.len(), p.len());
+            assert_eq!(t.len(), p.len());
+            p.into_iter().zip(uv).collect::<Vec<_>>()
+        };
+        let mut shared = 0;
+        for (a, b) in [
+            (ChunkCoord::new(0, 0), ChunkCoord::new(1, 0)),
+            (ChunkCoord::new(3, -2), ChunkCoord::new(3, -1)),
+        ] {
+            let (a, b) = (attrs(a), attrs(b));
+            for (p, uv) in &a {
+                // One tile every `TILE` meters of world X and Z.
+                assert!((uv[0] * crate::ground::TILE - p[0]).abs() < 1e-3);
+                assert!((uv[1] * crate::ground::TILE - p[2]).abs() < 1e-3);
+                for (q, w) in &b {
+                    if p == q {
+                        assert_eq!(uv, w, "UV seam at {p:?}");
+                        shared += 1;
+                    }
+                }
+            }
+        }
+        assert!(shared > 20, "{shared}");
+    }
+
     #[test]
     fn ground_colour_is_continuous_across_chunk_borders_and_in_the_palette() {
         let town = TownLayout::castex_inspired();

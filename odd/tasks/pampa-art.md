@@ -70,7 +70,7 @@ The line-train boarding PR comes after these three.
     - shared tuft meshes
     - per-vertex ground colours, continuous across chunk borders
   - Route: delegated writer (trigger: 2+ non-trivial files across core and render). The parent applied the final clippy fix (`as_chunks`) and wrote the docs.
-- [ ] **T4b/T5b (PR-C1b, re-planned by the user 2026-10-22)** The detail pass for trees, grass and ground uses **free third-party models and textures (CC0)** instead of more procedural geometry. Candidate sources: Quaternius or Kenney low-poly nature (trees, grass, rocks), and ambientCG ground textures. Acacia-type models stand in for the caldén (a *Prosopis* with an umbrella crown). Keep `flora`'s scatter, groves, keep-outs, collision and streaming, and only swap the drawn meshes, imported as glTF. Credit every asset where it is used and in a root `CREDITS.md` (author, URL, licence, what changed). This changes the "all procedural" rule for vegetation. The procedural detail pass that was started was stopped and discarded; it is backed up in the session scratchpad as `pr-c1-full-backup.patch`.
+- [x] **T4b/T5b (PR-C1b, re-planned by the user 2026-10-22)** The detail pass for trees, grass and ground uses **free third-party models and textures (CC0)** instead of more procedural geometry. Candidate sources: Quaternius or Kenney low-poly nature (trees, grass, rocks), and ambientCG ground textures. Acacia-type models stand in for the caldén (a *Prosopis* with an umbrella crown). Keep `flora`'s scatter, groves, keep-outs, collision and streaming, and only swap the drawn meshes, imported as glTF. Credit every asset where it is used and in a root `CREDITS.md` (author, URL, licence, what changed). This changes the "all procedural" rule for vegetation. The procedural detail pass that was started was stopped and discarded; it is backed up in the session scratchpad as `pr-c1-full-backup.patch`. Route: delegated writer (trigger: 2+ non-trivial files across render, game and assets). The pack ships OBJ/MTL, not glTF, so our own small OBJ reader replaced the glTF import; Bevy's glTF loader would also have needed new features. Uncommitted; the user commits.
 - [ ] **T4c/T5c (PR-C2)** Core: the direct road network between neighbouring towns, with level crossings, a fence layout with gates. Render: road surface, fences, gates and crossings, streamed by chunk. Minimap: draw the road. Camera: fading for thin occluders.
 
 ## Checks
@@ -142,6 +142,50 @@ cargo build -p game
   - Checks: `cargo fmt --all -- --check` ok; `cargo clippy --workspace --all-targets -- -D warnings` ok; `cargo test --workspace` ok (core 211, game 68, render 107, content 25); `cargo build -p game` ok. Headless snapshots not rendered (no GPU path in the tests).
   - Leftover outside this task's edit surfaces: `crates/render/src/town.rs:321` still says the tethered horse "is a character billboard".
 
+- **T4b/T5b done (uncommitted on `feat/vegetation-assets`, built on `feat/pampa-grassland`, for the user to review and commit).**
+  - Loader: `render::obj` parses `v`, `vn`, `vt`, `f` (triangles, quads and n-gons fan-triangulated; `v`, `v/vt`, `v//vn`, `v/vt/vn`; negative indices; flat face normals when `vn` is missing), `usemtl`, `mtllib`, and the MTL `newmtl`/`Kd`. Errors are values, never panics. No new crate.
+  - Batching: each model is baked into **one mesh per finish** (bark, leaves, rock), with the recoloured `Kd` in vertex colours, normalized to 1 unit tall on the origin. Every model then shares 5 materials, plus 4 grass tints. This keeps the PBR finishes per material (bark 0.96, leaves 0.88, rock 0.93 roughness; new `Finish::Rock`) while Bevy batches every tree of a variant with its two meshes. A single vertex-coloured mesh per model would have lost the per-finish roughness; one mesh per MTL material would have doubled entities for Green/DarkGreen.
+  - Loading: `flora::load_vegetation` in Startup (`VegetationLoad` set; the terrain's chunk fill runs after it), from `AssetRoot` (the game inserts `pampa_content::asset_path("")`). It caches handles in the `VegetationModels` resource. 28 models, 24,024 source triangles, in **27 ms** (dev build). A missing file logs a warning and that model's procedural stand-in is drawn.
+  - Mapping and recolour (`tree_model`, `tuft_model`, `recolour`):
+    - CommonTree_1–5 → caldén: dull olive leaves, dark bark, height 6–9 m, crown widened up to 25%.
+    - CommonTree_Dead_1–5 → snags: caldén variants 0–2 of 16, which is **10.4% of all trees**.
+    - Bush_1–2 → chañar thickets at 70% width, and small jarilla shrubs among the terrain props.
+    - Grass, Grass_2, Grass_Short, Wheat → tufts (paja: Wheat/Grass_2; flechilla: Grass/Grass_Short), pale straw × 4 tints from grey-green to dry yellow, chosen by the ground's dryness plus a seeded jitter.
+    - Plant_1–5 and Flowers → about 6% of the tufts.
+    - Rock_1–4 → the terrain's rock props, in tosca beige.
+    - TreeStump and WoodLog → beside 6% of the caldenes.
+    - Yaw is seeded; scale variation comes from core's seeded height and size ranges, plus ±15% on accents.
+  - Collision: the caldén model's trunk is 0.029–0.041 × height, which matches core's 0.035 × height, so caldenes are unchanged. **Chañar changed**: the bush thicket is about 0.4 × height wide, so `Tree::trunk_radius` for chañar went from 0.03 to 0.09 × height (its stem core). Placement and spacing are unchanged; tufts keep a little more clearance from chañares.
+  - Culling (`VisibilityRange`, solid from the camera, one 15 m dithered fade-out at the far end, no LOD swap): every tree (caldén, snag, chañar) is its own model out to 200 m and fades out over 185–200 m, inside the 180 m dust fog. Stumps and logs go to 120 m, and model stones and shrubs to 160 m. Tufts are solid out to 65 m from the camera (40 m from the rider at the orbit's 25 m longest zoom); past that each starts fading at its own seeded distance, up to 50 m farther, so the grass thins out smoothly.
+  - **Bug fix (tree popping, reported in play: "trees disappear and reappear, or change into a different tree")**:
+    - Cause 1: the caldén model was drawn only to 70 m, then the old procedural stand-in, a different shape, out to 210 m.
+    - Cause 2: `visible_between` faded the model out over 62–70 m but faded the stand-in in over 70–78 m. The two margins did not line up, so neither was solid across 62–78 m, and at 70 m neither was drawn. Orbiting the camera swept trees through that band.
+    - Cause 3: tufts began fading 22 m from the camera, which is next to the rider at long zoom.
+    - Not a cause: placement and every model pick, yaw and scale are seeded by chunk and spot, and chunks stream out to 400 m, past the fog.
+    - Fix: the stand-in is only a fallback for a missing model file. `visible_within(far, fade)` replaces `visible_between`, with no near cut-off. `TREE_DETAIL` and the shared 8 m `FADE` are gone. The new visible-triangle estimate was well under 1.2M, so no simplified far mesh was needed.
+  - Triangles per model: CommonTree 1,352–2,952; Dead 944–2,360; Bush 268–364; Grass ×3 192; Wheat 408; Plant 218–620; Flowers 408; Rock 70–128; Stump 232; Log 464. Estimate at radius 3 over the densest grove (90 trees), after the popping fix: **about 416k drawn** (93k ground on 29 in-world chunks, 324k plants) of 3.56M loaded. Before the fix it was 259k. A full 49-chunk ring adds about 64k ground, so it stays well under the 1.2M budget the test now asserts.
+  - Ground (`render::ground`):
+    - The ambientCG maps are read as 512×512 binary PNM, converted from the JPGs by the parent with ImageMagick. Bevy's `jpeg` feature needs zune-jpeg 0.5, which is not in the offline registry.
+    - A PNM P5/P6 reader handles comments and maxval scaling and returns errors.
+    - Ground109 and Grass004 are blended once on the CPU: soil shows through the dark gaps of the grass. The result is one near-grey, low-contrast colour map (sRGB), a normal map (relief ×0.6), and an AO-in-R, roughness-in-G map used as both the occlusion and the metallic-roughness texture. All are with box-filtered mips and 8× anisotropic repeat sampling.
+    - One `StandardMaterial` tinted by the existing vertex colour, chosen over a custom two-texture material: it needs no shader and keeps one material for every chunk.
+    - World-space UVs on a 6 m tile, with flat per-face tangents.
+    - Blend time: **54 ms** (dev build). Missing files log a warning, and the plain vertex-painted ground is drawn.
+    - Towns keep their plain earth colour. The detail is quiet: mean 0.8–0.97, mean chroma under 0.08.
+  - Tests:
+    - obj: 5 (3 RED against stubs, then GREEN), including all 28 shipped models.
+    - ground: 5 (PNM parse RED against a stub; blend neutrality, mips, tangents).
+    - terrain: 2 (the material wears the 4 textures with 10 mips or falls back; UVs continuous at chunk borders, with tangents). Both RED, then GREEN.
+    - flora: 4 (kind → model set and snag share; recolour away from the source green, trunk thickness and widened crown, tosca rocks; models replace the stand-ins, and missing ones fall back; visible triangles under budget), written alongside the code, so no RED.
+    - flora, popping fix: 4 more. A tree draws the same meshes at 20, 69, 71 and 150 m. Ranges leave no gap before the fog: trees are solid to 180 m, and tufts, stones and accents are solid to 65 m. A reloaded chunk shows the same meshes, materials and transforms, bit for bit. Stand-ins are drawn only for missing models. Three were RED against the old code: the same model at every distance, no gap, and stand-ins only for missing models. The reload test was green from the start; it guards determinism.
+    - core: the chañar obstacle (RED, then GREEN).
+    - Existing flora, terrain, streaming and camera tests are unchanged and green.
+  - Commit split (over the 1,800-line target: +1,959 / −96 in code and README, plus the CREDITS files):
+    - **(a) loader and models**: `crates/render/src/{obj,flora,lib}.rs`, `character/finish.rs`, the stone and shrub part of `terrain.rs`, `crates/core/src/flora.rs`, `game/src/main.rs`.
+    - **(b) ground textures and docs**: `crates/render/src/ground.rs`, the UV, tangent and material part of `terrain.rs` (`git add -p`), the `ground` module line in `lib.rs`, `README.md`, the CREDITS files and this document.
+  - Checks: `cargo fmt --all -- --check` ok; `cargo clippy --workspace --all-targets -- -D warnings` ok; `cargo test --workspace` ok (core 217, game 69, render 127, content 25); `cargo build -p game` ok. A 25 s live run logged no errors. After the popping fix, all four checks pass again, with render at 131 tests.
+  - For the user: delete the ground JPGs once the PNMs are accepted (the game does not read them), and update `CREDITS.md` then.
+
 ## Next step
 
-PR-B2 is merged. The user reviews and commits PR-C1a on `feat/pampa-grassland`. Next is PR-C1b: CC0 vegetation models and ground textures with credits. After that comes PR-C2: the road, fences and camera fading.
+The user reviews and commits PR-C1a on `feat/pampa-grassland` and PR-C1b on `feat/vegetation-assets`. Next is PR-C2: the road, fences and gates, level crossings, Ground102 on the road surface, and camera fading for thin occluders.

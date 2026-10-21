@@ -91,11 +91,14 @@ chunks past 4 are despawned with their rocks, shrubs, grass and trees, so
 memory stays bounded wherever you ride.
 
 The open land between towns is pampa grassland:
-- The ground's colour drifts from dry yellow to grey-green, through vertex colours that are continuous across chunk borders.
-- Grass tufts (paja, flechilla) are scattered densely, sharing one set of meshes.
-- Caldén and chañar trees grow alone or in small groves (isletas).
+- The ground's colour drifts from dry yellow to grey-green, through vertex colours that are continuous across chunk borders. Over that paint lies a tiled soil-and-grass detail texture (normal, roughness and ambient-occlusion maps too), in world-space UVs on a 6 m tile, so it runs on across chunk borders.
+- Grass tufts (paja, flechilla) are scattered densely, tinted from grey-green to dry yellow with the ground, with a few weeds and wildflowers among them. They thin out with distance.
+- Caldén and chañar trees grow alone or in small groves (isletas). About one tree in ten is a dead caldén snag; a few have a stump or a fallen log beside them. Chañares grow as dense thickets.
+- Tosca stones and small jarilla shrubs are scattered on the open ground.
 
-Everything is placed by `pampa_core::flora`, seeded by the chunk, and kept clear of towns' leveled ground, the railway and the world edge. Every tree trunk in the world is a static obstacle: about 113,000 of them, planted once at load in about 0.1 s, so a horse hits a trunk even in a chunk that is not drawn yet. The trees and grass are simple placeholders for now. Free (CC0) models will replace them, with credits for every asset in `CREDITS.md`. The dust fog swallows everything well before the
+The plants and stones are low-poly CC0 models from Quaternius' Ultimate Nature Pack, and the ground textures are CC0 from ambientCG. They are read from `assets/` at startup by our own small OBJ and PNM readers (no extra crates), and they are recoloured and rescaled in code for the dry 1919 pampa. A missing file logs a warning, and a procedural stand-in is drawn instead. There is no level-of-detail swap: each tree is the same model out to 200 m and fades out inside the 180 m dust fog. Tufts stay solid within about 40 m of the rider and thin out smoothly farther away. Every model choice, turn and size is seeded by its placement, so a reloaded chunk looks exactly the same. Every asset is credited, with what was changed, in [CREDITS.md](CREDITS.md).
+
+Everything is placed by `pampa_core::flora`, seeded by the chunk, and kept clear of towns' leveled ground, the railway and the world edge. Every tree trunk in the world is a static obstacle: about 113,000 of them, planted once at load in about 0.1 s, so a horse hits a trunk even in a chunk that is not drawn yet. The dust fog swallows everything well before the
 400 m that is always loaded. Towns stream the same way: a town's buildings,
 signs, people and tied horse appear within 600 m of it and go once you are
 750 m away. Every town's footprints stay in the logic world at all times
@@ -296,6 +299,10 @@ cargo test --workspace
 | Mouse wheel | Zoom in / out (6–25 m) |
 | `M` | Toggle the enlarged minimap |
 | `Esc` | Quit |
+
+## Credits
+
+Third-party assets (CC0 ground textures from ambientCG and CC0 vegetation models from Quaternius' Ultimate Nature Pack) are listed with their author, source, licence and changes in [CREDITS.md](CREDITS.md), and again next to their files.
 
 ## License
 
