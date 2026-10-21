@@ -87,8 +87,15 @@ them talking.
 
 The ground is built in 200 m square chunks around the rider: chunks within 3
 chunks are built (at most one per frame, all of them on the first frame), and
-chunks past 4 are despawned with their rocks and shrubs, so memory stays
-bounded wherever you ride. The dust fog swallows everything well before the
+chunks past 4 are despawned with their rocks, shrubs, grass and trees, so
+memory stays bounded wherever you ride.
+
+The open land between towns is pampa grassland:
+- The ground's colour drifts from dry yellow to grey-green, through vertex colours that are continuous across chunk borders.
+- Grass tufts (paja, flechilla) are scattered densely, sharing one set of meshes.
+- Caldén and chañar trees grow alone or in small groves (isletas).
+
+Everything is placed by `pampa_core::flora`, seeded by the chunk, and kept clear of towns' leveled ground, the railway and the world edge. Every tree trunk in the world is a static obstacle: about 113,000 of them, planted once at load in about 0.1 s, so a horse hits a trunk even in a chunk that is not drawn yet. The trees and grass are simple placeholders for now. Free (CC0) models will replace them, with credits for every asset in `CREDITS.md`. The dust fog swallows everything well before the
 400 m that is always loaded. Towns stream the same way: a town's buildings,
 signs, people and tied horse appear within 600 m of it and go once you are
 750 m away. Every town's footprints stay in the logic world at all times

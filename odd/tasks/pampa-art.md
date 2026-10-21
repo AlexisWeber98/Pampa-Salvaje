@@ -59,8 +59,19 @@ The line-train boarding PR comes after these three.
   - **Secondary motion:** the hat brim follows the step, the poncho and skirt sway, idle figures glance around, the horse swishes its tail, flicks its ears and nods its head with the gait.
   - **Sun shadows:** if the cost is acceptable, raise the sun shadow-map resolution and tune the cascades so figures cast crisper shadows. Report the measured cost.
   - Route: delegated writer (trigger: 2+ non-trivial files across core and render). Uncommitted; the user commits (commit B).
-- [ ] **T4 (PR-C)** Core: direct road network between neighbouring towns, with level crossings, fence layout with gates, and tree and tuft scatter rules.
-- [ ] **T5 (PR-C)** Render: grass colour variation, tufts, trees, road surface, fences, gates and crossings, streamed by chunk. Minimap: draw the road.
+- [x] **T4a/T5a (PR-C1a `feat/pampa-grassland`)**
+  - Core `pampa_core::flora`:
+    - per-chunk deterministic scatter of tufts, caldén and chañar
+    - a low-frequency grove mask
+    - keep-outs for the towns' leveled bands, the rail corridor and the world edge
+    - every trunk as a static obstacle, planted once for the whole world at load (113,279 trees in about 117 ms)
+  - Render `flora.rs`:
+    - simple faceted trees: caldén about 525 triangles, chañar about 300
+    - shared tuft meshes
+    - per-vertex ground colours, continuous across chunk borders
+  - Route: delegated writer (trigger: 2+ non-trivial files across core and render). The parent applied the final clippy fix (`as_chunks`) and wrote the docs.
+- [ ] **T4b/T5b (PR-C1b, re-planned by the user 2026-10-22)** The detail pass for trees, grass and ground uses **free third-party models and textures (CC0)** instead of more procedural geometry. Candidate sources: Quaternius or Kenney low-poly nature (trees, grass, rocks), and ambientCG ground textures. Acacia-type models stand in for the caldén (a *Prosopis* with an umbrella crown). Keep `flora`'s scatter, groves, keep-outs, collision and streaming, and only swap the drawn meshes, imported as glTF. Credit every asset where it is used and in a root `CREDITS.md` (author, URL, licence, what changed). This changes the "all procedural" rule for vegetation. The procedural detail pass that was started was stopped and discarded; it is backed up in the session scratchpad as `pr-c1-full-backup.patch`.
+- [ ] **T4c/T5c (PR-C2)** Core: the direct road network between neighbouring towns, with level crossings, a fence layout with gates. Render: road surface, fences, gates and crossings, streamed by chunk. Minimap: draw the road. Camera: fading for thin occluders.
 
 ## Checks
 
@@ -133,4 +144,4 @@ cargo build -p game
 
 ## Next step
 
-The user reviews and commits T3 (commit A) and T3b (commit B) on `feat/lowpoly-horses`, after `git rm` of the three dead billboard files. Next is PR-C1: grassland and trees (T4/T5 core placement rules, then render).
+PR-B2 is merged. The user reviews and commits PR-C1a on `feat/pampa-grassland`. Next is PR-C1b: CC0 vegetation models and ground textures with credits. After that comes PR-C2: the road, fences and camera fading.

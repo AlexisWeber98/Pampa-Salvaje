@@ -3,7 +3,8 @@
 
 use crate::obstacles::around;
 use crate::{
-    Body, Circle, Floor, SideObstacle, StaticObstacles, Terrain, TownLayout, Vec2, WorldConfig,
+    Body, Circle, Floor, FloraSite, SideObstacle, StaticObstacles, Terrain, TownLayout, Vec2,
+    WorldConfig,
 };
 
 /// Axis-aligned playable area on the ground plane.
@@ -148,6 +149,15 @@ impl World {
             world.floors.extend(town.floors());
         }
         world
+    }
+
+    /// Adds every tree trunk `flora` grows anywhere in the world as a
+    /// static obstacle, so collision holds in chunks that are not drawn.
+    /// Returns how many trees were planted.
+    pub fn plant(&mut self, flora: &FloraSite) -> usize {
+        let trees = flora.all_trees();
+        self.obstacles.extend(trees.iter().map(|t| t.obstacle()));
+        trees.len()
     }
 }
 

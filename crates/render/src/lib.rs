@@ -7,6 +7,7 @@ pub mod atmosphere;
 pub mod bubble;
 pub mod character;
 pub mod coords;
+pub mod flora;
 pub mod font;
 pub mod hud;
 pub mod minimap;
@@ -23,6 +24,7 @@ pub use character::{
     CharacterVisual, CharacterVisualPlugin, Coat, FigureKind, TOWNSFOLK_LOOKS, VisualPose,
 };
 pub use coords::world_from_ground;
+pub use flora::{FloraPlugin, GrassTuft, TreePart, WorldFlora};
 pub use hud::{HudObjective, HudPlugin};
 pub use minimap::{MapIcon, MapTarget, MinimapPlugin};
 pub use rail::{LineTrack, RailPlugin, WorldRail};

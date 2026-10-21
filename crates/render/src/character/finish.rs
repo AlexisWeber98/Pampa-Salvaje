@@ -50,6 +50,10 @@ pub enum Finish {
     Fleece,
     /// Wet eyes.
     Eye,
+    /// Tree bark: the roughest surface.
+    Bark,
+    /// Leaf clusters: matte, a little softer than bark.
+    Leaves,
 }
 
 impl Finish {
@@ -69,6 +73,8 @@ impl Finish {
             Self::Coat | Self::HorseFace(_) => (0.62, 0.0, 0.45),
             Self::Hoof => (0.3, 0.0, 0.5),
             Self::Eye => (0.15, 0.0, 0.6),
+            Self::Bark => (0.96, 0.0, 0.2),
+            Self::Leaves => (0.88, 0.0, 0.3),
         }
     }
 

@@ -1,6 +1,8 @@
 //! Low-poly ground streamed in square chunks around the rider, each with
 //! scattered props (rocks and dry shrubs) that give the eye something to
-//! measure speed by.
+//! measure speed by. The ground is painted per vertex, from grey-green to
+//! dry yellow grass, with plain earth on towns' leveled ground; the native
+//! flora on it is grown by [`crate::flora`].
 //!
 //! Every chunk is sampled from the logic [`Terrain`], the single source of
 //! truth for height, so neighboring chunks meet without seams. Which chunks
@@ -13,6 +15,7 @@ use std::collections::HashMap;
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::PrimitiveTopology;
 use bevy::prelude::*;
+use pampa_core::flora::grass_dryness;
 use pampa_core::{ChunkCoord, Terrain, Vec2 as GroundVec2, WorldConfig};
 
 use crate::coords::world_from_ground;
@@ -276,7 +279,10 @@ fn chunk_corner(coord: ChunkCoord, size: f32, resolution: u32, i: u32, j: u32) -
 fn build_chunk_mesh(terrain: &Terrain, coord: ChunkCoord, size: f32, resolution: u32) -> Mesh {
     let corner = |i: u32, j: u32| {
         let ground = chunk_corner(coord, size, resolution, i, j);
-        world_from_ground(ground, terrain.height(ground.x, ground.y))
+        (
+            world_from_ground(ground, terrain.height(ground.x, ground.y)),
+            ground_color(terrain, ground),
+        )
     };
 
     let quads = (resolution * resolution) as usize;
@@ -288,10 +294,8 @@ fn build_chunk_mesh(terrain: &Terrain, coord: ChunkCoord, size: f32, resolution:
             let (c, d) = (corner(i + 1, j + 1), corner(i, j + 1));
             // World Z is -north, so (a, b, c) is counter-clockwise seen from above.
             for tri in [[a, b, c], [a, c, d]] {
-                let center = (tri[0] + tri[1] + tri[2]) / 3.0;
-                let color = ground_color(terrain, center);
-                positions.extend(tri.map(|v| v.to_array()));
-                colors.extend([color; 3]);
+                positions.extend(tri.map(|(v, _)| v.to_array()));
+                colors.extend(tri.map(|(_, c)| c));
             }
         }
     }
@@ -306,14 +310,48 @@ fn build_chunk_mesh(terrain: &Terrain, coord: ChunkCoord, size: f32, resolution:
     mesh
 }
 
-/// Dry pampa palette: straw grass on the swells, darker earth in the dips,
-/// with per-triangle jitter so the facets read.
-fn ground_color(terrain: &Terrain, p: Vec3) -> [f32; 4] {
-    let dry_grass = Vec3::new(0.64, 0.58, 0.38);
-    let earth = Vec3::new(0.46, 0.38, 0.27);
-    let t = ((p.y / terrain.amplitude) * 0.5 + 0.5).clamp(0.0, 1.0);
-    let jitter = (hash2(p.x, p.z) - 0.5) * 0.08;
-    let rgb = earth.lerp(dry_grass, t) + Vec3::splat(jitter);
+/// Grey-green grass where the pampa is greener (sRGB).
+const GREEN_GRASS: Vec3 = Vec3::new(0.49, 0.54, 0.38);
+/// Dry yellow grass (sRGB).
+const DRY_GRASS: Vec3 = Vec3::new(0.71, 0.63, 0.40);
+/// Trodden earth of a town's leveled ground (sRGB): plain, so streets and
+/// buildings read on it.
+const TOWN_GROUND: Vec3 = Vec3::new(0.60, 0.53, 0.40);
+/// Darkest shade slopes and dips may give the ground.
+const SHADE_MIN: f32 = 0.82;
+
+/// The darkest and brightest linear colour the ground may take.
+#[cfg(test)]
+fn palette_range() -> ([f32; 3], [f32; 3]) {
+    let colors = [GREEN_GRASS, DRY_GRASS, TOWN_GROUND];
+    let lo = colors.iter().fold(Vec3::ONE, |a, c| a.min(*c)) * SHADE_MIN;
+    let hi = colors.iter().fold(Vec3::ZERO, |a, c| a.max(*c));
+    let linear = |v: Vec3| {
+        let c = LinearRgba::from(Color::srgb(v.x, v.y, v.z));
+        [c.red, c.green, c.blue]
+    };
+    (linear(lo), linear(hi))
+}
+
+/// Ground colour at ground point `g`: grey-green to dry yellow by
+/// low-frequency noise ([`grass_dryness`]), plain earth on town ground,
+/// darker on slopes and in dips. A function of the position alone, so
+/// neighbouring chunks agree on their shared vertices.
+fn ground_color(terrain: &Terrain, g: GroundVec2) -> [f32; 4] {
+    let grass = GREEN_GRASS.lerp(DRY_GRASS, grass_dryness(terrain, g));
+    let town = terrain
+        .flat_areas
+        .iter()
+        .map(|a| a.weight(g))
+        .fold(0.0, f32::max);
+    let rgb = grass.lerp(TOWN_GROUND, town);
+    let e = 0.75;
+    let dx = terrain.height(g.x + e, g.y) - terrain.height(g.x - e, g.y);
+    let dy = terrain.height(g.x, g.y + e) - terrain.height(g.x, g.y - e);
+    let slope = dx.hypot(dy) / (2.0 * e);
+    let dip = 0.5 - 0.5 * (terrain.height(g.x, g.y) / terrain.amplitude).clamp(-1.0, 1.0);
+    let shade = (1.0 - 0.6 * slope - 0.05 * dip).clamp(SHADE_MIN, 1.0);
+    let rgb = rgb * shade;
     LinearRgba::from(Color::srgb(rgb.x, rgb.y, rgb.z)).to_f32_array()
 }
 
@@ -489,5 +527,59 @@ mod tests {
                 assert!(loaded.contains(&world.chunk_of(p)), "{focus:?} -> {p:?}");
             }
         }
+    }
+    #[test]
+    fn ground_colour_is_continuous_across_chunk_borders_and_in_the_palette() {
+        let town = TownLayout::castex_inspired();
+        let terrain = Terrain::default();
+        let terrain = terrain.clone().with_flat_area(town.flat_area(&terrain));
+        let colors = |c: ChunkCoord| {
+            let mesh = build_chunk_mesh(&terrain, c, 200.0, 8);
+            let Some(bevy::mesh::VertexAttributeValues::Float32x3(p)) =
+                mesh.attribute(Mesh::ATTRIBUTE_POSITION).cloned()
+            else {
+                panic!("positions")
+            };
+            let Some(bevy::mesh::VertexAttributeValues::Float32x4(c)) =
+                mesh.attribute(Mesh::ATTRIBUTE_COLOR).cloned()
+            else {
+                panic!("colors")
+            };
+            p.into_iter().zip(c).collect::<Vec<([f32; 3], [f32; 4])>>()
+        };
+        let (lo, hi) = palette_range();
+        let mut shared = 0;
+        for (a, b) in [
+            (ChunkCoord::new(0, 0), ChunkCoord::new(1, 0)),
+            (ChunkCoord::new(3, -2), ChunkCoord::new(3, -1)),
+            (ChunkCoord::new(-1, 0), ChunkCoord::new(0, 0)),
+        ] {
+            let (a, b) = (colors(a), colors(b));
+            for (p, c) in &a {
+                for k in 0..3 {
+                    assert!(c[k] >= lo[k] - 1e-4 && c[k] <= hi[k] + 1e-4, "{c:?}");
+                }
+                for (q, d) in &b {
+                    if p == q {
+                        assert_eq!(c, d, "seam at {p:?}");
+                        shared += 1;
+                    }
+                }
+            }
+        }
+        assert!(shared > 50, "{shared}");
+        // The grass varies from dry yellow to grey-green between towns.
+        let open = colors(ChunkCoord::new(6, 6));
+        let greens: Vec<f32> = open.iter().map(|(_, c)| c[1] / c[0]).collect();
+        let (gmin, gmax) = greens
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(a, b), &g| (a.min(g), b.max(g)));
+        let mut spread = gmax - gmin;
+        for c in [ChunkCoord::new(-8, 4), ChunkCoord::new(12, -9)] {
+            for (_, col) in colors(c) {
+                spread = spread.max((col[1] / col[0] - gmin).abs());
+            }
+        }
+        assert!(spread > 0.1, "{spread}");
     }
 }

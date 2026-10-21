@@ -153,6 +153,29 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_world_plants_trees_between_towns_and_none_on_them() {
+        let loaded = load_world(&asset_path(TOWNS_FILE));
+        let mut world = World::with_towns(loaded.world, Terrain::default(), &loaded.towns);
+        let flora = pampa_core::FloraSite::new(world.config, &world.terrain, &loaded.line);
+        let before = world.obstacles.len();
+        let started = std::time::Instant::now();
+        let planted = world.plant(&flora);
+        let took = started.elapsed();
+        println!("planted {planted} trees in {took:?}");
+        assert_eq!(world.obstacles.len(), before + planted);
+        assert!(planted > 5_000, "{planted}");
+        for tree in world.obstacles[before..].iter() {
+            let c = tree.center();
+            for area in &world.terrain.flat_areas {
+                assert_eq!(area.weight(c), 0.0, "{c:?}");
+            }
+        }
+        // Every town keeps its start spot free.
+        let (spawn, _) = loaded.towns[0].arrival();
+        assert!(world.obstacles.iter().all(|o| !o.contains_point(spawn)));
+    }
+
+    #[test]
     fn a_broken_railway_line_warns_naming_the_towns_and_keeps_them() {
         let path = temp_towns(
             "line",
