@@ -7,6 +7,7 @@ use bevy::transform::TransformSystems;
 use pampa_core::{AnimationState, Heading};
 
 use super::figure::{FigureKind, FigureKit, spawn_figure, update_figures};
+use super::finish::Palette;
 use super::horse::{Coat, HorseKit, spawn_horse, update_horses};
 
 /// How a character is drawn. Swappable per entity without touching logic:
@@ -56,20 +57,23 @@ impl Plugin for CharacterVisualPlugin {
 fn load_kits(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
     commands.insert_resource(FigureKit::new(&mut meshes));
     commands.insert_resource(HorseKit::new(&mut meshes));
+    commands.insert_resource(Palette::default());
 }
 
 /// The kits and asset stores [`attach_visuals`] draws with.
 type Kits<'a> = (
     ResMut<'a, FigureKit>,
     ResMut<'a, HorseKit>,
+    ResMut<'a, Palette>,
     ResMut<'a, Assets<Mesh>>,
     ResMut<'a, Assets<StandardMaterial>>,
+    ResMut<'a, Assets<Image>>,
 );
 
 /// Draws new and changed visuals, dropping whatever drew the old one.
 fn attach_visuals(
     mut commands: Commands,
-    (mut people, mut horses, mut meshes, mut materials): Kits,
+    (mut people, mut horses, mut palette, mut meshes, mut materials, mut images): Kits,
     changed: Query<(Entity, &CharacterVisual, Option<&Children>), Changed<CharacterVisual>>,
     parts: Query<(), With<VisualPart>>,
 ) {
@@ -85,7 +89,7 @@ fn attach_visuals(
             CharacterVisual::Figure(kind) => spawn_figure(
                 &mut commands,
                 &mut people,
-                &mut materials,
+                (&mut palette, &mut materials, &mut images),
                 entity,
                 kind,
                 phase,
@@ -94,8 +98,8 @@ fn attach_visuals(
             CharacterVisual::Horse(coat) => {
                 spawn_horse(
                     &mut commands,
-                    &mut horses,
-                    (&mut meshes, &mut materials),
+                    (&mut horses, &mut meshes),
+                    (&mut palette, &mut materials, &mut images),
                     entity,
                     coat,
                     phase,
@@ -106,8 +110,8 @@ fn attach_visuals(
             CharacterVisual::Mounted { rider, coat } => {
                 let (horse, trunk) = spawn_horse(
                     &mut commands,
-                    &mut horses,
-                    (&mut meshes, &mut materials),
+                    (&mut horses, &mut meshes),
+                    (&mut palette, &mut materials, &mut images),
                     entity,
                     coat,
                     phase,
@@ -118,7 +122,7 @@ fn attach_visuals(
                 spawn_figure(
                     &mut commands,
                     &mut people,
-                    &mut materials,
+                    (&mut palette, &mut materials, &mut images),
                     trunk,
                     rider,
                     phase,
@@ -175,7 +179,10 @@ mod tests {
             .id();
         app.update();
         assert_eq!(count::<With<FigureBody>>(&mut app), 1);
-        assert_eq!(count::<With<FigureJoint>>(&mut app), 11);
+        assert_eq!(
+            count::<With<FigureJoint>>(&mut app),
+            super::super::figure::Joint::ALL.len()
+        );
         assert!(count::<With<FigurePart>>(&mut app) >= 18);
         assert_eq!(count::<With<HorseBody>>(&mut app), 0);
 
@@ -193,7 +200,10 @@ mod tests {
             HorseJoint::ALL.len()
         );
         assert_eq!(count::<With<FigureBody>>(&mut app), 1, "one rider");
-        assert_eq!(count::<With<FigureJoint>>(&mut app), 11);
+        assert_eq!(
+            count::<With<FigureJoint>>(&mut app),
+            super::super::figure::Joint::ALL.len()
+        );
         let children = app.world().get::<Children>(me).unwrap();
         assert_eq!(children.len(), 1, "one horse-and-rider visual");
         let horse = children[0];

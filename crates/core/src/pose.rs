@@ -31,6 +31,12 @@ pub struct JointAngles {
     /// How far the thighs open sideways (hip abduction): a rider's legs
     /// round the horse's barrel. `0` when standing or walking.
     pub spread: f32,
+    /// Hat tilt, brim down in front positive: the brim follows the step.
+    pub hat: f32,
+    /// Fore-and-aft swing of a poncho, shawl or skirt, hem forward positive.
+    pub drape: f32,
+    /// Side-to-side sway of the same, hem to the right positive.
+    pub drape_side: f32,
 }
 
 /// Breaths per second while standing.
@@ -55,11 +61,15 @@ pub fn pose(animation: AnimationState, phase: f32) -> JointAngles {
     let phase = wrap(phase);
     let angle = phase * TAU;
     let (swing, arm, fold, elbow, lean, bob) = gait(animation);
+    let (hat, drape, drape_side) = drape(animation, phase);
     if animation == AnimationState::Idle {
         return JointAngles {
             elbow: [elbow; 2],
             breath: 0.012 * angle.sin(),
             nod: 0.02 * angle.sin(),
+            hat,
+            drape,
+            drape_side,
             ..JointAngles::default()
         };
     }
@@ -75,6 +85,9 @@ pub fn pose(animation: AnimationState, phase: f32) -> JointAngles {
         breath: 0.0,
         nod: -0.04 * (2.0 * angle).cos(),
         spread: 0.0,
+        hat,
+        drape,
+        drape_side,
     }
 }
 
@@ -338,6 +351,13 @@ pub fn riding_pose(gait: HorseGait, phase: f32) -> JointAngles {
         HorseGait::Trot => (0.02 * (2.0 * angle).sin(), 0.06, 0.012),
         HorseGait::Gallop => (0.14 * (angle - 0.6).sin(), 0.22, 0.02),
     };
+    // The hat and poncho bounce with the horse as they would with a step.
+    let step = match gait {
+        HorseGait::Idle => AnimationState::Idle,
+        HorseGait::Walk => AnimationState::Walk,
+        HorseGait::Trot | HorseGait::Gallop => AnimationState::Gallop,
+    };
+    let (hat, drape, drape_side) = drape(step, phase);
     let breath = if gait == HorseGait::Idle {
         0.01 * angle.sin()
     } else {
@@ -353,7 +373,105 @@ pub fn riding_pose(gait: HorseGait, phase: f32) -> JointAngles {
         breath,
         nod: 0.05,
         spread: 0.55,
+        hat,
+        drape,
+        drape_side,
     }
+}
+
+/// Secondary motion: how far the hat, a poncho or a skirt swing at `phase`
+/// of a person's `animation` (see [`JointAngles::hat`]). They lag the
+/// step, so they swing after the body.
+pub fn drape(animation: AnimationState, phase: f32) -> (f32, f32, f32) {
+    use std::f32::consts::TAU;
+    let angle = wrap(phase) * TAU;
+    // Brim, fore-and-aft and side amplitudes.
+    let (brim, fore, side) = match animation {
+        AnimationState::Idle => return (0.0, 0.012 * angle.sin(), 0.0),
+        AnimationState::Walk => (0.04, 0.07, 0.04),
+        AnimationState::Gallop => (0.09, 0.15, 0.08),
+    };
+    (
+        brim * (2.0 * angle - 0.6).sin(),
+        fore * (2.0 * angle - 1.0).sin(),
+        side * (angle - 0.8).sin(),
+    )
+}
+
+/// A cheap integer hash for deterministic moments.
+fn mix(mut h: u32) -> u32 {
+    h ^= h >> 16;
+    h = h.wrapping_mul(0x7feb_352d);
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x846c_a68b);
+    h ^ (h >> 16)
+}
+
+/// Where `time` falls in a run of `period`-second cycles of a `seed`, each
+/// holding one event `length` seconds long at a hashed moment: the event's
+/// progress `0..1` while it lasts, and the cycle's hash.
+fn moment(seed: u32, time: f32, period: f32, length: f32) -> Option<(f32, u32)> {
+    if !time.is_finite() || time < 0.0 {
+        return None;
+    }
+    let cycle = (time / period).floor();
+    let h = mix(seed ^ mix(cycle as u32).wrapping_mul(0x9e37_79b9));
+    let start = (h % 1000) as f32 / 1000.0 * (period - length);
+    let s = (time - cycle * period - start) / length;
+    (0.0..1.0).contains(&s).then_some((s, h))
+}
+
+/// Smoothly up from 0 to 1 over the first `edge` of `0..1`, down over the last.
+fn plateau(s: f32, edge: f32) -> f32 {
+    let smooth = |x: f32| {
+        let x = x.clamp(0.0, 1.0);
+        x * x * (3.0 - 2.0 * x)
+    };
+    smooth(s / edge).min(smooth((1.0 - s) / edge))
+}
+
+/// How far an idle person glances aside (radians, left positive) at `time`
+/// seconds: now and then, deterministically per `seed`, a look to one side
+/// that eases in, holds and eases back.
+pub fn glance(seed: u32, time: f32) -> f32 {
+    let period = 6.0 + (mix(seed) % 5) as f32;
+    let Some((s, h)) = moment(seed, time, period, 2.4) else {
+        return 0.0;
+    };
+    let side = if h & 0x10000 == 0 { 1.0 } else { -1.0 };
+    let amount = 0.3 + 0.25 * ((h >> 20) % 100) as f32 / 100.0;
+    side * amount * plateau(s, 0.3)
+}
+
+/// How far each ear (left, right) of a horse is flicked back at `time`
+/// seconds: an occasional quick twitch, deterministic per `seed`.
+pub fn ear_flick(seed: u32, time: f32) -> [f32; 2] {
+    let flick = |salt: u32| {
+        let seed = mix(seed ^ salt);
+        let period = 3.5 + (seed % 3) as f32;
+        moment(seed, time, period, 0.35)
+            .map_or(0.0, |(s, _)| 0.7 * (std::f32::consts::PI * s).sin())
+    };
+    [flick(0x1eaf), flick(0x0e44)]
+}
+
+/// Sideways swish of a horse's tail (radians, to the right positive): a
+/// sway with the stride while moving, and now and then a swish at flies,
+/// deterministic per `seed`.
+pub fn tail_swish(seed: u32, time: f32, gait: HorseGait, phase: f32) -> f32 {
+    use std::f32::consts::{PI, TAU};
+    let period = 4.0 + (mix(seed ^ 0x7a11) % 4) as f32;
+    let at_flies = moment(seed ^ 0x7a11, time, period, 1.2).map_or(0.0, |(s, h)| {
+        let side = if h & 1 == 0 { 1.0 } else { -1.0 };
+        side * 0.5 * (TAU * s).sin() * (PI * s).sin()
+    });
+    let sway = match gait {
+        HorseGait::Idle => return at_flies,
+        HorseGait::Walk => 0.08,
+        HorseGait::Trot => 0.1,
+        HorseGait::Gallop => 0.06,
+    };
+    sway * (wrap(phase) * TAU).sin() + 0.5 * at_flies
 }
 
 /// `phase` wrapped to `0..1`, negative phases included (`-0.25` is `0.75`);
@@ -611,6 +729,84 @@ mod tests {
         let big = horse_advance(0.1, HorseGait::Trot, 5.0, 0.1);
         assert!((small - big).abs() < 1e-5, "{small} vs {big}");
         assert_eq!(horse_advance(0.4, HorseGait::Walk, 2.0, -1.0), 0.4);
+    }
+
+    fn times() -> impl Iterator<Item = f32> {
+        (0..3000).map(|i| i as f32 * 0.02)
+    }
+
+    #[test]
+    fn hats_and_drapes_follow_the_step_within_bounds() {
+        for animation in [Idle, Walk, Gallop] {
+            for t in samples() {
+                let (hat, fore, side) = drape(animation, t);
+                assert!(hat.abs() <= 0.12 && fore.abs() <= 0.2 && side.abs() <= 0.12);
+                let next = drape(animation, t + 1.0);
+                assert!(
+                    (next.1 - fore).abs() < 1e-5 && (next.0 - hat).abs() < 1e-5,
+                    "cyclic"
+                );
+                let p = pose(animation, t);
+                assert_eq!((p.hat, p.drape, p.drape_side), (hat, fore, side));
+            }
+        }
+        let swing = |a| samples().map(|t| drape(a, t).1.abs()).fold(0.0, f32::max);
+        assert!(swing(Walk) > 0.03 && swing(Gallop) > swing(Walk));
+        let brim = |a| samples().map(|t| drape(a, t).0.abs()).fold(0.0, f32::max);
+        assert!(brim(Walk) > 0.02 && brim(Idle) == 0.0);
+        // It lags the step: the skirt is not at its peak when the leg is.
+        assert!(drape(Walk, 0.25).1.abs() < swing(Walk) * 0.95);
+    }
+
+    #[test]
+    fn idle_people_glance_around_now_and_then() {
+        for seed in [0, 7, 1234] {
+            let looks: Vec<f32> = times().map(|t| glance(seed, t)).collect();
+            assert!(looks.iter().all(|g| g.abs() <= 0.6), "bounded");
+            let aside = looks.iter().filter(|g| g.abs() > 0.2).count();
+            let ahead = looks.iter().filter(|g| g.abs() < 0.01).count();
+            assert!(aside > 0, "seed {seed} glances");
+            assert!(ahead > looks.len() / 2, "seed {seed} mostly looks ahead");
+            assert_eq!(looks, times().map(|t| glance(seed, t)).collect::<Vec<_>>());
+            // Smooth: no jumps between 20 ms frames.
+            assert!(looks.windows(2).all(|w| (w[1] - w[0]).abs() < 0.08));
+        }
+        let a: Vec<f32> = times().map(|t| glance(1, t)).collect();
+        let b: Vec<f32> = times().map(|t| glance(2, t)).collect();
+        assert_ne!(a, b, "people glance at their own moments");
+        assert_eq!(glance(3, f32::NAN), 0.0);
+    }
+
+    #[test]
+    fn horses_flick_their_ears_and_swish_their_tails() {
+        for seed in [0, 99] {
+            let ears: Vec<[f32; 2]> = times().map(|t| ear_flick(seed, t)).collect();
+            assert!(ears.iter().flatten().all(|e| (0.0..=0.8).contains(e)));
+            for side in 0..2 {
+                assert!(
+                    ears.iter().any(|e| e[side] > 0.3),
+                    "seed {seed} ear {side} flicks"
+                );
+            }
+            assert!(ears.iter().filter(|e| e[0] == 0.0).count() > ears.len() / 2);
+            let idle: Vec<f32> = times()
+                .map(|t| tail_swish(seed, t, HorseGait::Idle, 0.0))
+                .collect();
+            assert!(idle.iter().all(|s| s.abs() <= 0.6));
+            assert!(idle.iter().any(|s| s.abs() > 0.25), "swishes at flies");
+            assert_eq!(
+                idle,
+                times()
+                    .map(|t| tail_swish(seed, t, HorseGait::Idle, 0.0))
+                    .collect::<Vec<_>>()
+            );
+        }
+        // Moving, the tail sways with the stride.
+        let sway: Vec<f32> = samples()
+            .map(|p| tail_swish(5, 0.0, HorseGait::Trot, p))
+            .collect();
+        assert!(sway.iter().any(|s| *s > 0.05) && sway.iter().any(|s| *s < -0.05));
+        assert_eq!(ear_flick(1, f32::INFINITY), [0.0; 2]);
     }
 
     #[test]

@@ -375,7 +375,7 @@ mod tests {
             CharacterVisual::Figure(FigureKind::Protagonist)
         );
         let [horses, bodies, joints, parts, _, _, other] = drawn_under(&mut app, me);
-        assert_eq!((horses, bodies, joints, other), (0, 1, 11, 0));
+        assert_eq!((horses, bodies, joints, other), (0, 1, 14, 0));
         assert!(parts >= 18, "{parts}");
 
         teleport(
@@ -387,7 +387,7 @@ mod tests {
         press_f(&mut app);
         assert_eq!(player(&mut app).1.rider.travel(), Travel::Riding);
         // One horse with the clerk in its saddle, and nothing else: no
-        // second clerk on foot, no sprite.
+        // second clerk on foot, nothing else drawn.
         let [
             horses,
             bodies,
@@ -397,7 +397,7 @@ mod tests {
             horse_parts,
             other,
         ] = drawn_under(&mut app, me);
-        assert_eq!((horses, bodies, joints, other), (1, 1, 11, 0));
+        assert_eq!((horses, bodies, joints, other), (1, 1, 14, 0));
         assert!(
             parts >= 18 && horse_joints == 18 && horse_parts > 60,
             "{parts} {horse_parts}"

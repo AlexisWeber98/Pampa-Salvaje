@@ -14,11 +14,19 @@
 //! leather carona, the bastos, a sheepskin pellón, a rawhide cincha and iron
 //! stirrups) and a rawhide bridle with reins. A rider ([`spawn_horse`] with
 //! a rider) sits at [`SEAT`].
+//!
+//! Ambient occlusion is baked into the painted vertices (under the belly,
+//! between the legs, under the saddle's edge and the jaw), the head wears a
+//! small painted face texture (eyes, nostrils, a star or blaze), and the
+//! ears flick and the tail swishes on their own (see [`pampa_core::pose`]).
 
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use pampa_core::{HorseAngles, HorseGait, Leg, pose};
 use std::f32::consts::FRAC_PI_2;
+
+use super::figure::Paints;
+use super::finish::{Finish, ramp};
 
 use super::figure::{
     BODY_SIDES, Cloth, Joint, LIMB_SIDES, Rgb, Ring, Side, limb, loft, loft_cloth,
@@ -88,6 +96,14 @@ impl Coat {
             Self::Overo => [142, 84, 48],
             Self::Alazan => [132, 70, 38],
             Self::Bayo => [40, 32, 26],
+        }
+    }
+
+    /// The head, a little lighter on the grey.
+    pub(super) fn head(self) -> Rgb {
+        match self {
+            Self::Tordillo => [150, 150, 146],
+            _ => self.body(),
         }
     }
 
@@ -244,16 +260,17 @@ impl HorseJoint {
         Self::ALL.iter().position(|j| *j == self).unwrap_or(0)
     }
 
-    /// This joint's turn in `a`.
-    fn rotation(self, a: &HorseAngles) -> Quat {
+    /// This joint's turn in `a`, with the ears flicked back by `ears` (left,
+    /// right) and the tail swished aside by `swish`.
+    fn rotation(self, a: &HorseAngles, ears: [f32; 2], swish: f32) -> Quat {
         // Positive Z turns a hanging limb toward +X (forward) and lifts the
         // nose.
         let angle = match self {
             Self::Trunk => -a.pitch,
             Self::Neck => -a.neck,
             Self::Head => -a.head,
-            Self::Ear(_) => 0.0,
-            Self::Tail => -a.tail,
+            Self::Ear(s) => ears[usize::from(s == Side::Right)],
+            Self::Tail => return Quat::from_rotation_x(-swish) * Quat::from_rotation_z(-a.tail),
             Self::Upper(leg) => a.upper[leg.index()],
             Self::Lower(leg) => a.lower[leg.index()],
             Self::Fetlock(leg) => a.fetlock[leg.index()],
@@ -639,6 +656,8 @@ pub enum Paint {
     Hoof,
     /// A fixed colour (eyes, tack).
     Flat(Rgb),
+    /// The coat's face texture (eyes, nostrils, markings) over shades.
+    Face,
 }
 
 /// One part of a horse at rest: a scaled, turned unit [`HorseShape`]
@@ -655,6 +674,24 @@ pub struct HorsePart {
 }
 
 impl HorsePart {
+    /// What it is made of, on a horse of `coat`.
+    pub fn finish(&self, coat: Coat) -> Finish {
+        use HorsePiece::*;
+        match (self.paint, self.piece) {
+            (Paint::Coat, _) => Finish::Coat,
+            (Paint::Mane, _) => Finish::Hair,
+            (Paint::Hoof, _) => Finish::Hoof,
+            (Paint::Face, _) => Finish::HorseFace(coat),
+            (_, Eye) => Finish::Eye,
+            (_, Sudadera) => Finish::Wool,
+            (_, Pellon) => Finish::Fleece,
+            (_, Carona | Basto | StirrupLeather) => Finish::Leather,
+            (_, Cincha | Headstall | Rein) => Finish::Rawhide,
+            (_, CinchaRing | Stirrup | Bit) => Finish::Iron,
+            _ => Finish::Skin,
+        }
+    }
+
     /// From the unit mesh to the standing horse.
     pub fn rest_transform(&self) -> Mat4 {
         Mat4::from_scale_rotation_translation(
@@ -732,7 +769,7 @@ pub fn horse_parts() -> Vec<HorsePart> {
     // The head hangs from the poll, the muzzle forward and down.
     let head = tilt(HEAD_TILT);
     let (down, out) = (down_head(), face());
-    add(Head, J::Head, S::Head, Paint::Coat, down * 0.27, [0.26, 0.58, 0.2], head);
+    add(Head, J::Head, S::Head, Paint::Face, down * 0.27, [0.26, 0.58, 0.2], head);
     add(Muzzle, J::Head, S::Lump, Paint::Coat, down * 0.52 + out * 0.01, [0.15, 0.13, 0.135], head);
     add(Jowl, J::Head, S::Lump, Paint::Coat, down * 0.14 - out * 0.06, [0.17, 0.16, 0.19], head);
     add(Forelock, J::Head, S::Mane, Paint::Mane, v(0.06, 0.01, 0.0), [0.05, 0.13, 0.07], tilt(1.2));
@@ -852,9 +889,36 @@ fn linear(color: Rgb) -> [f32; 3] {
     [c.red, c.green, c.blue]
 }
 
+/// How much ambient light reaches a vertex of `piece` at `p` on the standing
+/// horse, facing `n`: less under the belly, between the legs, just under the
+/// saddle's edge and under the jaw.
+pub fn occlusion(piece: HorsePiece, p: Vec3, n: Vec3) -> f32 {
+    use HorsePiece::*;
+    let mut light = 1.0;
+    if matches!(piece, Barrel | Chest | Croup) {
+        light -= 0.35 * ramp(-n.y, 0.2, 0.9) * (1.0 - ramp(p.y, 0.85, 1.05));
+    }
+    if matches!(
+        piece,
+        Shoulder | Forearm | Thigh | Gaskin | Knee | Hock | Cannon | Fetlock | Pastern
+    ) {
+        let inward = ramp(-n.z * p.z.signum(), 0.2, 0.9);
+        light -= 0.3 * inward * (0.5 + 0.5 * ramp(p.y, 0.3, 0.9));
+    }
+    if matches!(piece, Barrel | Chest) {
+        let along = ramp(p.x, -0.5, -0.4) * (1.0 - ramp(p.x, 0.3, 0.4));
+        let edge = 1.0 - ramp((p.y - 1.16).abs(), 0.0, 0.06);
+        light -= 0.22 * along * edge * ramp(n.z.abs(), 0.3, 0.8);
+    }
+    if matches!(piece, Head | Jowl | Neck) {
+        light -= 0.25 * ramp(-n.y, 0.4, 0.95);
+    }
+    light
+}
+
 /// `part`'s unit mesh with `coat` painted into its vertex colours (times
-/// the shade already there), from where each vertex sits on the standing
-/// horse. Parts not painted with the coat are returned unchanged.
+/// the shade already there) and its ambient occlusion baked in, from where
+/// each vertex sits on the standing horse.
 pub fn painted_mesh(part: &HorsePart, coat: Coat) -> Mesh {
     use bevy::mesh::VertexAttributeValues as V;
     let mut mesh = part.shape.mesh();
@@ -884,8 +948,11 @@ pub fn painted_mesh(part: &HorsePart, coat: Coat) -> Mesh {
                 Paint::Mane => coat.mane(),
                 Paint::Hoof => coat.hoof(),
                 Paint::Flat(c) => c,
+                // The colour is in the face texture.
+                Paint::Face => [255; 3],
             };
-            let [r, g, b] = linear(color);
+            let light = occlusion(part.piece, at, normal);
+            let [r, g, b] = linear(color).map(|c| c * light);
             [shade[0] * r, shade[1] * g, shade[2] * b, 1.0]
         })
         .collect();
@@ -893,14 +960,14 @@ pub fn painted_mesh(part: &HorsePart, coat: Coat) -> Mesh {
     mesh
 }
 
-/// Unit meshes for flat parts, painted meshes per coat (built when a coat is
-/// first drawn) and one material per colour, shared by every horse.
+/// Unit meshes for flat parts and painted meshes per coat (built when a
+/// coat is first drawn), shared by every horse; materials come from the
+/// [`Palette`](super::finish::Palette).
 #[derive(Resource, Default)]
 pub struct HorseKit {
     units: HashMap<HorseShape, Handle<Mesh>>,
     /// By coat and index into [`horse_parts`].
     painted: HashMap<(Coat, usize), Handle<Mesh>>,
-    materials: HashMap<Rgb, Handle<StandardMaterial>>,
 }
 
 impl HorseKit {
@@ -911,24 +978,6 @@ impl HorseKit {
         }
     }
 
-    fn material(
-        &mut self,
-        color: Rgb,
-        materials: &mut Assets<StandardMaterial>,
-    ) -> Handle<StandardMaterial> {
-        self.materials
-            .entry(color)
-            .or_insert_with(|| {
-                materials.add(StandardMaterial {
-                    base_color: Color::srgb_u8(color[0], color[1], color[2]),
-                    perceptual_roughness: 0.85,
-                    reflectance: 0.2,
-                    ..default()
-                })
-            })
-            .clone()
-    }
-
     /// The mesh and material of body part `index` (or of a tack part, with
     /// no index) in `coat`.
     fn draw(
@@ -937,28 +986,24 @@ impl HorseKit {
         index: Option<usize>,
         coat: Coat,
         meshes: &mut Assets<Mesh>,
-        materials: &mut Assets<StandardMaterial>,
+        (palette, materials, images): Paints,
     ) -> Option<(Handle<Mesh>, Handle<StandardMaterial>)> {
-        match (part.paint, index) {
-            (Paint::Coat | Paint::Mane, Some(index)) => {
+        let finish = part.finish(coat);
+        let (mesh, color) = match (part.paint, index) {
+            (Paint::Coat | Paint::Mane | Paint::Face, Some(index)) => {
                 let mesh = self
                     .painted
                     .entry((coat, index))
                     .or_insert_with(|| meshes.add(painted_mesh(part, coat)))
                     .clone();
-                // White: the colour is in the vertices.
-                Some((mesh, self.material([255; 3], materials)))
+                // White: the colour is in the vertices or the face texture.
+                (mesh, [255; 3])
             }
-            (Paint::Hoof, _) => Some((
-                self.units.get(&part.shape)?.clone(),
-                self.material(coat.hoof(), materials),
-            )),
-            (Paint::Flat(color), _) => Some((
-                self.units.get(&part.shape)?.clone(),
-                self.material(color, materials),
-            )),
-            _ => None,
-        }
+            (Paint::Hoof, _) => (self.units.get(&part.shape)?.clone(), coat.hoof()),
+            (Paint::Flat(color), _) => (self.units.get(&part.shape)?.clone(), color),
+            _ => return None,
+        };
+        Some((mesh, palette.material(color, finish, materials, images)))
     }
 }
 
@@ -970,6 +1015,10 @@ pub struct HorseBody {
     pub gait: HorseGait,
     /// How far through the stride (or breath) cycle, in cycles (`0..1`).
     pub phase: f32,
+    /// Seconds since it was drawn, and its own seed, for ear flicks and
+    /// tail swishes.
+    pub clock: f32,
+    pub seed: u32,
     /// Joint entities in [`HorseJoint::ALL`] order.
     joints: Vec<Entity>,
 }
@@ -986,8 +1035,8 @@ pub struct HorsePartMesh(pub HorsePiece);
 /// `mounted`; returns its body and its trunk joint (where a rider sits).
 pub(super) fn spawn_horse(
     commands: &mut Commands,
-    kit: &mut HorseKit,
-    (meshes, materials): (&mut Assets<Mesh>, &mut Assets<StandardMaterial>),
+    (kit, meshes): (&mut HorseKit, &mut Assets<Mesh>),
+    (palette, materials, images): Paints,
     parent: Entity,
     coat: Coat,
     phase: f32,
@@ -1021,7 +1070,8 @@ pub(super) fn spawn_horse(
         .map(|(i, p)| (p, Some(i)));
     let tack = tack_parts(mounted).into_iter().map(|p| (p, None));
     for (part, index) in body_parts.chain(tack) {
-        let Some((mesh, material)) = kit.draw(&part, index, coat, meshes, materials) else {
+        let paints = (&mut *palette, &mut *materials, &mut *images);
+        let Some((mesh, material)) = kit.draw(&part, index, coat, meshes, paints) else {
             continue;
         };
         commands.spawn((
@@ -1039,6 +1089,8 @@ pub(super) fn spawn_horse(
         coat,
         gait: HorseGait::Idle,
         phase,
+        clock: 0.0,
+        seed: parent.index_u32(),
         joints,
     });
     (body, trunk)
@@ -1060,6 +1112,9 @@ pub(super) fn update_horses(
         body.gait = HorseGait::of(visual.animation, visual.speed);
         body.phase = pose::horse_advance(body.phase, body.gait, visual.speed, dt);
         let angles = pose::horse_pose(body.gait, body.phase);
+        body.clock += dt;
+        let ears = pose::ear_flick(body.seed, body.clock);
+        let swish = pose::tail_swish(body.seed, body.clock, body.gait, body.phase);
         transform.rotation = super::figure::body_rotation(visual.heading);
         transform.translation.y = angles.bob;
         for &entity in &body.joints {
@@ -1072,7 +1127,7 @@ pub(super) fn update_horses(
                 0.0
             };
             transform.translation = joint.0.rest() + Vec3::Y * breath;
-            transform.rotation = joint.0.rotation(&angles);
+            transform.rotation = joint.0.rotation(&angles, ears, swish);
         }
     }
 }
@@ -1282,6 +1337,141 @@ mod tests {
             light * 7 > n && dark * 7 > n,
             "{light} light, {dark} dark of {n}"
         );
+    }
+
+    #[test]
+    fn shade_gathers_under_the_belly_between_the_legs_and_under_the_saddle() {
+        let parts = horse_parts();
+        let vertices = |pieces: &[HorsePiece]| -> Vec<(HorsePiece, Vec3, Vec3)> {
+            parts
+                .iter()
+                .filter(|p| pieces.contains(&p.piece))
+                .flat_map(|part| {
+                    let mesh = part.shape.mesh();
+                    let place = part.rest_transform();
+                    let turn =
+                        Mat3::from_quat(part.rotation) * Mat3::from_diagonal(part.size.recip());
+                    let p = mesh
+                        .attribute(Mesh::ATTRIBUTE_POSITION)
+                        .unwrap()
+                        .as_float3()
+                        .unwrap()
+                        .to_vec();
+                    let n = mesh
+                        .attribute(Mesh::ATTRIBUTE_NORMAL)
+                        .unwrap()
+                        .as_float3()
+                        .unwrap()
+                        .to_vec();
+                    let piece = part.piece;
+                    p.into_iter().zip(n).map(move |(p, n)| {
+                        (
+                            piece,
+                            place.transform_point3(Vec3::from(p)),
+                            (turn * Vec3::from(n)).normalize(),
+                        )
+                    })
+                })
+                .collect()
+        };
+        let mean = |v: Vec<f32>| v.iter().sum::<f32>() / v.len().max(1) as f32;
+        let body = vertices(&[HorsePiece::Barrel]);
+        let belly = mean(
+            body.iter()
+                .filter(|(_, _, n)| n.y < -0.7)
+                .map(|(k, p, n)| occlusion(*k, *p, *n))
+                .collect(),
+        );
+        let flank = mean(
+            body.iter()
+                .filter(|(_, p, n)| n.z.abs() > 0.95 && p.x.abs() < 0.5)
+                .map(|(k, p, n)| occlusion(*k, *p, *n))
+                .collect(),
+        );
+        assert!(belly < 0.8 && flank > 0.95, "belly {belly}, flank {flank}");
+        let saddle_edge = mean(
+            body.iter()
+                .filter(|(_, p, n)| {
+                    n.z.abs() > 0.8 && (1.12..1.2).contains(&p.y) && p.x.abs() < 0.2
+                })
+                .map(|(k, p, n)| occlusion(*k, *p, *n))
+                .collect(),
+        );
+        assert!(saddle_edge < flank - 0.1, "under the saddle {saddle_edge}");
+        let legs = vertices(&[HorsePiece::Forearm, HorsePiece::Gaskin]);
+        let side = |inner: bool| {
+            mean(
+                legs.iter()
+                    .filter(|(_, p, n)| (n.z * p.z.signum() < -0.7) == inner && n.z.abs() > 0.7)
+                    .map(|(k, p, n)| occlusion(*k, *p, *n))
+                    .collect(),
+            )
+        };
+        assert!(
+            side(true) < side(false) - 0.15,
+            "inner {} outer {}",
+            side(true),
+            side(false)
+        );
+        // The painted mesh carries it: a uniform zaino is darker underneath.
+        let barrel = parts
+            .iter()
+            .find(|p| p.piece == HorsePiece::Barrel)
+            .unwrap();
+        let mesh = painted_mesh(barrel, Coat::Zaino);
+        let Some(bevy::mesh::VertexAttributeValues::Float32x4(colors)) =
+            mesh.attribute(Mesh::ATTRIBUTE_COLOR)
+        else {
+            panic!("colours");
+        };
+        let normals = mesh
+            .attribute(Mesh::ATTRIBUTE_NORMAL)
+            .unwrap()
+            .as_float3()
+            .unwrap();
+        let red = |below: bool| {
+            mean(
+                colors
+                    .iter()
+                    .zip(normals)
+                    .filter(|(_, n)| (n[1] < -0.7) == below)
+                    .map(|(c, _)| c[0])
+                    .collect(),
+            )
+        };
+        assert!(red(true) < red(false), "the barrel's underside is darker");
+    }
+
+    #[test]
+    fn horse_parts_have_their_finishes() {
+        let coat = Coat::Alazan;
+        let finish = |piece| {
+            horse_parts()
+                .into_iter()
+                .chain(tack_parts(true))
+                .find(|p| p.piece == piece)
+                .map(|p| p.finish(coat))
+                .unwrap()
+        };
+        assert_eq!(finish(HorsePiece::Barrel), Finish::Coat);
+        assert_eq!(
+            finish(HorsePiece::Head),
+            Finish::HorseFace(coat),
+            "a face texture"
+        );
+        assert_eq!(finish(HorsePiece::Tail), Finish::Hair);
+        assert_eq!(finish(HorsePiece::Hoof), Finish::Hoof);
+        assert_eq!(finish(HorsePiece::Carona), Finish::Leather);
+        assert_eq!(finish(HorsePiece::Rein), Finish::Rawhide);
+        assert_eq!(finish(HorsePiece::Stirrup), Finish::Iron);
+        assert_eq!(finish(HorsePiece::Pellon), Finish::Fleece);
+        assert_eq!(finish(HorsePiece::Sudadera), Finish::Wool);
+        // The head's loft wraps the face texture: u 0.5 down the face.
+        let head = horse_parts()
+            .into_iter()
+            .find(|p| p.piece == HorsePiece::Head)
+            .unwrap();
+        assert!(head.shape.mesh().attribute(Mesh::ATTRIBUTE_UV_0).is_some());
     }
 
     #[test]
