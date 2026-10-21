@@ -10,11 +10,11 @@ mod towns;
 
 use bevy::prelude::*;
 use pampa_content::{TOWNS_FILE, asset_path};
-use pampa_core::{Terrain, World};
+use pampa_core::{FloraSite, Terrain, World};
 use pampa_render::{
-    AtmospherePlugin, CharacterVisualPlugin, HudPlugin, MinimapPlugin, RailPlugin, SignPlugin,
-    SpeechBubblePlugin, StreamFocus, TerrainPlugin, TownPlugin, TrainPlugin, WorldChunks,
-    WorldClock, WorldRail, WorldTerrain, WorldTowns, WorldTrain,
+    AtmospherePlugin, CharacterVisualPlugin, FloraPlugin, HudPlugin, MinimapPlugin, RailPlugin,
+    SignPlugin, SpeechBubblePlugin, StreamFocus, TerrainPlugin, TownPlugin, TrainPlugin,
+    WorldChunks, WorldClock, WorldFlora, WorldRail, WorldTerrain, WorldTowns, WorldTrain,
 };
 
 fn main() {
@@ -24,6 +24,10 @@ fn main() {
     let loaded = towns::load_world(&asset_path(TOWNS_FILE));
     let report = towns::TownReport::new(&loaded);
     let mut world = World::with_towns(loaded.world, Terrain::default(), &loaded.towns);
+    // Caldenes, chañares and grass between the towns, off the track. Every
+    // tree trunk of the world is an obstacle from the start, drawn or not.
+    let flora = FloraSite::new(world.config, &world.terrain, &loaded.line);
+    world.plant(&flora);
     // The errand: Don Hidalgo in the first town's plaza sends the player to
     // comisario Farach. Both stand in the way like any obstacle.
     let errand = errand::plan(&loaded.towns, &mut world);
@@ -41,6 +45,7 @@ fn main() {
     ))
     .insert_resource(WorldTerrain(world.terrain.clone()))
     .insert_resource(WorldChunks(world.config))
+    .insert_resource(WorldFlora(flora))
     .insert_resource(StreamFocus(position))
     .insert_resource(crowds)
     .insert_resource(WorldClock(clock))
@@ -69,6 +74,7 @@ fn main() {
             ..default()
         }),
         TerrainPlugin::default(),
+        FloraPlugin,
         TownPlugin,
         RailPlugin,
         SignPlugin,
