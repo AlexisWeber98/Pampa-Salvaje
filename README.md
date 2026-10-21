@@ -1,13 +1,13 @@
 # Pampa Seca
 
-An Argentine rural-outlaw western set on the dry pampa of the 1920s–1940s,
-inspired by Red Dead Redemption. The visual direction pairs a low-poly 3D world
-with HD-2D style billboard sprites for characters.
+An Argentine rural-outlaw western set on the dry pampa in 1919,
+inspired by Red Dead Redemption. The visual direction is a low-poly 3D world
+with PS1/PS2-era low-poly 3D people.
 
 This repository currently holds an open procedural pampa (8 km x 8 km by
 default) streamed in chunks under dust fog, a player who goes on foot or on
 horseback, a follow camera, settlements and a first errand. The towns are
-small railway towns loosely inspired by 1920s–1930s La Pampa towns such as
+small railway towns loosely inspired by 1910s La Pampa towns such as
 Eduardo Castex (not a historical reconstruction), each at its own place in the
 world. The player starts on foot on top of the Monte Nievas platform, beside
 the coaches of the morning train, collides with buildings and cannot leave the
@@ -100,9 +100,43 @@ roof would block its view (it may still look under the canopy), and eases
 back out over about a second once the view clears. Thin things such as tree
 trunks and canopy posts do not pull it in.
 
-Characters are procedurally painted billboard sprites (no third-party art):
-rounded, shaded and outlined figures in eight view directions, with a walk
-cycle and, for horses, a gallop cycle paced by their speed.
+People are PS1/PS2-style low-poly 3D figures generated in code (no
+third-party art), about 4,200–5,000 triangles each, in flat, earthy colours with smooth
+shading on skin and rounded limbs and hard edges only on hat brims and the
+poncho's folds. Each is built from rigid parts on joints (tapered limbs, a
+torso wider at the chest, knees, calves and elbows shaped along the limbs,
+a rounded head with cheekbones, chin, jaw, brow, ears, nose and shadowed eye
+sockets, hands with thumbs, soled shoes and boots, cuffs and seams, creased
+trousers, a wavy gacho brim and deep folds in skirts and ponchos), and animation turns the joints: breathing when idle, a walk with
+counter-swinging arms and a forward-leaning jog, paced by speed. Hems, the
+underside of the chin and the lower ends of limbs are slightly darker.
+
+The story opens in 1919, and every look follows the setting guide
+[`odd/setting-1919.md`](odd/setting-1919.md): a muted palette of dust, ochre,
+faded blue, brown, grey and black wool, with bright colour only in accents
+(a red pañuelo, a faja, brass buttons).
+
+- **The protagonist** is not a gaucho: he is a humble former hardware-shop
+  clerk from General Pico, a small provincial town, starting over in another
+  one. Like most people in this world he is not wealthy. He wears a townsman's
+  working clothes: a plain work shirt, a worn, scuffed brown leather jacket
+  with a turned-down collar, lapels and pockets, faded trousers, plain used
+  boots and a gacho (a soft wide-brimmed felt hat, its brim turned slightly
+  down). No poncho, bombacha or faja: he is from town, not the countryside.
+  Suits, stiff collars, ties and bowlers belong to the few town gentlemen.
+- **Townsfolk** come in five looks: a paisano in boina, bombacha, faja,
+  pañuelo and alpargatas; a peón in a chaleco, soft wide-brimmed hat and worn
+  boots; a Volga German farmhand in a poncho; and two women in ankle-length
+  skirts, high-necked long-sleeved blouses and shawls, one in a headscarf and
+  one with her hair up.
+- **Don Hidalgo** is an old estanciero with a white moustache, a light
+  wide-brimmed hat, a good jacket over a dark waistcoat, bombacha, tall boots
+  and a rastra. **Comisario Elías Farach** wears a kepi, a dark blue tunic with
+  brass buttons, a leather belt, dark trousers and boots.
+
+Horses and the mounted player are still the older billboard sprites (eight
+view directions, walk and gallop cycles). Until the horses become 3D too, the
+mounted player still shows the old gaucho rider sprite rather than the clerk.
 
 Townsfolk talk back: bump into somebody with the horse and they complain in a
 speech bubble above their head ("¡Eh, mirá por dónde andás!" at a walk,
@@ -178,7 +212,9 @@ The rule: **game logic never knows how things are drawn.**
   per-walker cooldown; `LinePicker`: seeded, no immediate repeats); the words come
   from `pampa-content`; render only draws the bubble (`Say` → `SpeechBubble`).
 - The visual representation is a swappable per-entity component in `render`
-  (`CharacterVisual`: a billboard sprite sheet today, a 3D model later).
+  (`CharacterVisual`: `Figure` for low-poly people, `Billboard` for horses and
+  the mounted rider). Inserting a new value swaps what is drawn; the pure gait
+  poses live in `core` (`pampa_core::pose`).
 
 Bevy is pinned to an exact version (`=0.20.0`) and only upgraded between milestones.
 
