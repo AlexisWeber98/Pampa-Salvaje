@@ -52,7 +52,7 @@ pub struct TrainWheel {
 }
 
 /// Height of the rail tops above the ground (see the town's railway).
-const RAIL_TOP: f32 = 0.5;
+const RAIL_TOP: f32 = LineTrain::RAIL_TOP;
 
 #[derive(Clone)]
 struct Kit {
@@ -621,6 +621,43 @@ pub(crate) mod tests {
                 flat.dot(p.direction) > 0.9999,
                 "{flat:?} vs {:?}",
                 p.direction
+            );
+        }
+    }
+
+    #[test]
+    fn each_car_is_drawn_as_tall_as_core_says() {
+        let mut app = app_with_train(3600.0, GroundVec2::ZERO);
+        app.update();
+        let train = app.world().resource::<WorldTrain>().0.clone().unwrap();
+        let mut query = app.world_mut().query::<(&TrainCar, &Children)>();
+        let cars: Vec<(usize, Vec<Entity>)> = query
+            .iter(app.world())
+            .map(|(c, children)| (c.index, children.iter().collect()))
+            .collect();
+        assert_eq!(cars.len(), 8);
+        for (index, children) in cars {
+            // Every part is a unit mesh scaled into place: its top is the
+            // highest corner of the transformed unit cube.
+            let top = children
+                .iter()
+                .map(|&e| *app.world().get::<Transform>(e).unwrap())
+                .flat_map(|t| {
+                    (0..8).map(move |k| {
+                        let corner = Vec3::new(
+                            if k & 1 == 0 { -0.5 } else { 0.5 },
+                            if k & 2 == 0 { -0.5 } else { 0.5 },
+                            if k & 4 == 0 { -0.5 } else { 0.5 },
+                        );
+                        t.transform_point(corner).y
+                    })
+                })
+                .fold(f32::MIN, f32::max);
+            let kind = train.cars()[index].kind;
+            assert!(
+                (top - kind.height()).abs() < 0.02,
+                "{kind:?}: drawn {top}, core {}",
+                kind.height()
             );
         }
     }

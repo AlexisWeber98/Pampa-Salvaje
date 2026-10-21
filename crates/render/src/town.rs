@@ -15,8 +15,8 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::PrimitiveTopology;
 use bevy::prelude::*;
 use pampa_core::{
-    Aabb, Building, BuildingKind, Floor, RailSpan, Side, Terrain, TownActivation, TownLayout,
-    Vec2 as GroundVec2,
+    Aabb, Building, BuildingKind, Canopy, Floor, RailSpan, Side, Terrain, TownActivation,
+    TownLayout, Vec2 as GroundVec2,
 };
 
 use crate::coords::world_from_ground;
@@ -686,7 +686,8 @@ fn spawn_building(b: &mut Builder, building: &Building, n: usize, veranda: f32) 
                 ..f
             };
             back.openings(b, 2.6);
-            back.veranda(b, 5.5, 3.6);
+            // Core's `TownLayout::canopies` gives the same roof to the camera.
+            back.veranda(b, Canopy::DEPTH, Canopy::HEIGHT);
         }
         BuildingKind::Platform => {
             let concrete = b.palette.concrete.clone();
