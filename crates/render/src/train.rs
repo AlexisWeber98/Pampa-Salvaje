@@ -664,8 +664,8 @@ pub(crate) mod tests {
 
     #[test]
     fn cars_far_from_the_focus_are_hidden() {
-        // Overnight at Castex, with the focus at Pico.
-        let mut app = app_with_train(3600.0, GroundVec2::new(2917.0, 1783.0));
+        // Overnight at Pico, with the focus at Castex.
+        let mut app = app_with_train(3600.0, GroundVec2::new(-5150.0, -2850.0));
         app.update();
         app.update();
         let drawn = cars(&mut app);

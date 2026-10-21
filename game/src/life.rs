@@ -18,7 +18,7 @@ use std::collections::BTreeSet;
 
 use bevy::prelude::*;
 use pampa_core::{
-    BASE_RATE, GameClock, LineTrain, MAX_STEP, Npc, RailLine, Standing, Timetable, TownLayout,
+    BASE_RATE, GameClock, LineTrain, MAX_STEP, Npc, RailLine, Run, Standing, Timetable, TownLayout,
     Townsfolk, Travel,
 };
 use pampa_render::{
@@ -28,17 +28,18 @@ use pampa_render::{
 
 use crate::player::{DrivePlayer, GameWorld, Player, drive_player};
 
-/// The clock and the line train as the game begins: the morning train
-/// stands at the first town's station (where the player starts), so the
-/// clock starts half way through that stop, and the train is jumped there
-/// from its overnight layover. Without a train the clock starts at the
-/// morning departure time.
+/// The clock and the line train as the game begins: the protagonist comes
+/// from General Pico, so the morning (up) train from Pico stands at the
+/// first town's station (where the player starts). The clock starts half
+/// way through that stop, in the late morning, and the train is jumped
+/// there from its overnight layover at Pico. Without a train the clock
+/// starts at the morning departure time from Pico.
 pub fn start_of_day(line: &RailLine, towns: &[TownLayout]) -> (GameClock, Option<LineTrain>) {
     let mut train = LineTrain::new(line, towns, Timetable::default());
     let start = train
         .as_ref()
-        .and_then(|t| t.first_stop_at(0))
-        .unwrap_or(Timetable::default().depart_first);
+        .and_then(|t| t.stop_at(0, Run::Up))
+        .unwrap_or(Timetable::default().depart_pico);
     let clock = GameClock::at(start);
     if let Some(train) = &mut train {
         train.advance(0.0, clock.elapsed(), BASE_RATE);
@@ -578,7 +579,7 @@ mod tests {
     }
 
     #[test]
-    fn the_day_starts_with_the_morning_train_at_the_first_town() {
+    fn the_game_starts_with_the_morning_train_from_pico_at_the_first_town() {
         let loaded = shipped();
         assert_eq!(loaded.towns[0].name, "Monte Nievas");
         let (clock, train) = start_of_day(&loaded.line, &loaded.towns);
@@ -586,9 +587,19 @@ mod tests {
         let s = train.state();
         assert_eq!(s.phase, LinePhase::Dwelling);
         assert_eq!(s.station, train.station_of_town(0));
+        // The up run, from Pico after its 07:00 departure, on to Castex.
+        assert_eq!(s.run, Run::Up);
+        let pico = train.stations().len() - 1;
+        assert_eq!(
+            loaded.towns[train.stations()[pico].town].name,
+            "General Pico"
+        );
+        // The locomotive faces Castex: up the line, against its direction.
+        let loco = train.placed_cars()[0];
+        assert!(loco.direction.dot(train.path().direction_at(s.front)) < -0.9);
         assert_eq!(clock.day(), 0);
-        // Mid-morning, after the 07:00 departure from Castex.
-        assert!((7.0..10.0).contains(&clock.hour()), "{}", clock.hh_mm());
+        // Late morning, in full daylight, during the morning dwell.
+        assert!((10.0..12.0).contains(&clock.hour()), "{}", clock.hh_mm());
     }
 
     #[test]

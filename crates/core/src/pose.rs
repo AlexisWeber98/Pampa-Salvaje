@@ -48,11 +48,7 @@ fn gait(animation: AnimationState) -> (f32, f32, f32, f32, f32, f32) {
 /// same on both sides.
 pub fn pose(animation: AnimationState, phase: f32) -> JointAngles {
     use std::f32::consts::TAU;
-    let phase = if phase.is_finite() {
-        phase.fract()
-    } else {
-        0.0
-    };
+    let phase = wrap(phase);
     let angle = phase * TAU;
     let (swing, arm, fold, elbow, lean, bob) = gait(animation);
     if animation == AnimationState::Idle {
@@ -94,8 +90,19 @@ pub fn cadence(animation: AnimationState, speed: f32) -> f32 {
 /// `0..1`.
 pub fn advance(phase: f32, animation: AnimationState, speed: f32, dt: f32) -> f32 {
     let step = cadence(animation, speed) * dt.max(0.0);
-    let next = (phase + step).fract();
-    if next.is_finite() { next } else { 0.0 }
+    wrap(phase + step)
+}
+
+/// `phase` wrapped to `0..1`, negative phases included (`-0.25` is `0.75`);
+/// anything not finite is `0`.
+fn wrap(phase: f32) -> f32 {
+    let wrapped = phase.rem_euclid(1.0);
+    // A tiny negative phase rounds up to exactly 1.0.
+    if wrapped.is_finite() && wrapped < 1.0 {
+        wrapped
+    } else {
+        0.0
+    }
 }
 
 #[cfg(test)]
@@ -180,5 +187,11 @@ mod tests {
         let wrapped = advance(0.9, Gallop, 4.0, 0.5);
         assert!((0.0..1.0).contains(&wrapped));
         assert_eq!(advance(0.4, Walk, 1.5, -1.0), 0.4, "time never runs back");
+        // A negative phase wraps into 0..1 too, to the same point of the cycle.
+        let from_negative = advance(-0.25, Walk, 1.5, 0.0);
+        assert!((from_negative - 0.75).abs() < 1e-6, "{from_negative}");
+        assert!((0.0..1.0).contains(&advance(-3.6, Gallop, 4.0, 0.1)));
+        assert!((0.0..1.0).contains(&advance(-1e-9, Walk, 1.5, 0.0)));
+        assert_eq!(pose(Walk, -0.75), pose(Walk, 0.25));
     }
 }
