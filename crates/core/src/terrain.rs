@@ -386,6 +386,35 @@ mod tests {
     }
 
     #[test]
+    fn the_cut_never_reaches_past_its_reach_at_bends_and_road_ends() {
+        let t = with_shipped_roads();
+        let roads = t.roads.clone().unwrap();
+        let plain = Terrain::default();
+        let reach = RoadNetwork::CUT_REACH;
+        let (mut outside, mut touched) = (0, 0);
+        // Around every corner of every road, and past both ends.
+        for road in &roads.roads {
+            for &corner in road.path.iter().step_by(3).chain(road.path.last()) {
+                for k in 0..48 {
+                    let angle = k as f32 * std::f32::consts::TAU / 48.0;
+                    for r in [reach + 0.05, reach + 0.5, reach + 1.5] {
+                        let p = corner + Vec2::new(angle.cos(), angle.sin()) * r;
+                        if roads.distance(p) <= reach {
+                            continue;
+                        }
+                        outside += 1;
+                        if t.height(p.x, p.y) != plain.height(p.x, p.y) {
+                            touched += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(outside > 1000, "{outside}");
+        assert_eq!(touched, 0, "of {outside}");
+    }
+
+    #[test]
     fn the_road_cut_leaves_the_ground_under_the_track_untouched_at_every_crossing() {
         let (towns, line, roads) = crate::road::tests::shipped_roads();
         let crossings: Vec<Vec2> = roads.crossings().map(|c| c.at).collect();

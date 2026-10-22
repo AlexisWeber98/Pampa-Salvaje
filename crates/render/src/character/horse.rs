@@ -1015,7 +1015,8 @@ pub struct HorseBody {
     pub gait: HorseGait,
     /// How far through the stride (or breath) cycle, in cycles (`0..1`).
     pub phase: f32,
-    /// Seconds since it was drawn, and its own seed, for ear flicks and
+    /// Seconds since it was drawn (wrapped at
+    /// [`pampa_core::MOTION_CLOCK_PERIOD`]), and its own seed, for ear flicks and
     /// tail swishes.
     pub clock: f32,
     pub seed: u32,
@@ -1112,7 +1113,8 @@ pub(super) fn update_horses(
         body.gait = HorseGait::of(visual.animation, visual.speed);
         body.phase = pose::horse_advance(body.phase, body.gait, visual.speed, dt);
         let angles = pose::horse_pose(body.gait, body.phase);
-        body.clock += dt;
+        // Wrapped, seamlessly: a game left running keeps a fine clock.
+        body.clock = pampa_core::tick_clock(body.clock, dt);
         let ears = pose::ear_flick(body.seed, body.clock);
         let swish = pose::tail_swish(body.seed, body.clock, body.gait, body.phase);
         transform.rotation = super::figure::body_rotation(visual.heading);

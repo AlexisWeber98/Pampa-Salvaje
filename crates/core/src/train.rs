@@ -130,9 +130,39 @@ pub struct Timetable {
     pub acceleration: f32,
 }
 
+/// Why a [`Timetable`] cannot be used.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TimetableError {
+    /// Both terminals send the train off at the same time of day, so no
+    /// run is the morning one and the train could keep only one of them.
+    SameDeparture(TimeOfDay),
+}
+
+impl std::fmt::Display for TimetableError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SameDeparture(at) => write!(
+                f,
+                "timetable: the train leaves both terminals at {at}; give each its own time"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for TimetableError {}
+
 impl Timetable {
     /// 65 km/h, the line's top speed.
     pub const TOP_SPEED: f32 = 65.0 / 3.6;
+
+    /// Whether the line train can run on this timetable: each terminal
+    /// needs its own departure time.
+    pub fn check(&self) -> Result<(), TimetableError> {
+        if self.depart_castex == self.depart_pico {
+            return Err(TimetableError::SameDeparture(self.depart_castex));
+        }
+        Ok(())
+    }
 
     /// When `run` leaves its terminal.
     pub fn departure(&self, run: Run) -> TimeOfDay {
@@ -248,9 +278,14 @@ impl LineTrain {
 
     /// The train of `line` through `towns`, parked overnight at midnight of
     /// day 0 at the terminal its morning run leaves from (Pico by default),
-    /// facing that run. `None` when the
-    /// line serves fewer than two stations or is too short for the train.
+    /// facing that run. A `timetable` that fails [`Timetable::check`] is
+    /// replaced by the default one. `None` when the line serves fewer than
+    /// two stations or is too short for the train.
     pub fn new(line: &RailLine, towns: &[TownLayout], timetable: Timetable) -> Option<Self> {
+        let timetable = match timetable.check() {
+            Ok(()) => timetable,
+            Err(_) => Timetable::default(),
+        };
         let path = line.full_path(towns);
         let stations: Vec<Station> = line
             .connected_towns()
@@ -289,16 +324,8 @@ impl LineTrain {
             return None;
         }
         let stop_offset = coaches_middle(&cars).unwrap_or(length / 2.0);
-        let total = path.length();
-        let down: Vec<f32> = stations
-            .iter()
-            .map(|s| (s.mark + stop_offset).clamp(length, total))
-            .collect();
-        let up: Vec<f32> = stations
-            .iter()
-            .rev()
-            .map(|s| total - (s.mark - stop_offset).clamp(0.0, total - length))
-            .collect();
+        let marks: Vec<f32> = stations.iter().map(|s| s.mark).collect();
+        let (down, up) = stop_progress(&marks, path.length(), length, stop_offset);
         // Overnight at the terminal the morning run leaves from.
         let overnight = match timetable.morning_run() {
             Run::Down => 0,
@@ -603,6 +630,21 @@ impl LineTrain {
             .collect()
     }
 
+    /// Stations (indices into [`Self::stations`]) where a stop leaves the
+    /// coaches more than [`MAX_STOP_MISS`] from the station: too near an
+    /// end of the line for the consist to stand there. Empty on a sound
+    /// line; the game warns about any.
+    pub fn misplaced_stops(&self) -> Vec<usize> {
+        let marks: Vec<f32> = self.stations.iter().map(|s| s.mark).collect();
+        let stops = |plan: &RunPlan| plan.stops.iter().map(|&p| p as f32).collect::<Vec<_>>();
+        misplaced_stops(
+            &marks,
+            (&stops(&self.down), &stops(&self.up)),
+            self.path.length(),
+            self.stop_offset,
+        )
+    }
+
     /// Stop timings of a run through `stops` (front progress, run order).
     fn plan(&self, stops: &[f32]) -> RunPlan {
         let (a, v) = self.kinematics();
@@ -737,6 +779,75 @@ fn run_sign(run: Run) -> f32 {
         Run::Down => 1.0,
         Run::Up => -1.0,
     }
+}
+
+/// Farthest the coaches' middle may stand from a station at a stop, in
+/// meters, with the coaches still (nearly) alongside its 60 m platform: at a
+/// terminal they stand about 19 m to one side.
+pub const MAX_STOP_MISS: f32 = 20.0;
+
+/// Where the front stops at each station (`marks`, in line order, on a
+/// path `total` meters long), as progress along each run, for a consist
+/// `length` meters long whose coaches' middle is `offset` behind its front:
+/// the down run's stops in line order, then the up run's in its own order.
+///
+/// The coaches stop alongside each station on the way. At the two
+/// terminals the whole consist stands centered on the station instead
+/// (its coaches a little to one side), so it arrives and leaves on the
+/// same stretch of track and turns around in place during the layover.
+/// Every stop keeps the consist on the path, and a run never stops behind
+/// its previous stop, so a station near a tip only stops the train short.
+fn stop_progress(marks: &[f32], total: f32, length: f32, offset: f32) -> (Vec<f32>, Vec<f32>) {
+    let onward = |stops: Vec<f32>| {
+        let mut farthest = f32::MIN;
+        stops
+            .into_iter()
+            .map(|p| {
+                farthest = farthest.max(p);
+                farthest
+            })
+            .collect::<Vec<f32>>()
+    };
+    let total = total.max(length);
+    let last = marks.len().saturating_sub(1);
+    let ahead = |i: usize| {
+        if i == 0 || i == last {
+            length / 2.0
+        } else {
+            offset
+        }
+    };
+    let down = marks
+        .iter()
+        .enumerate()
+        .map(|(i, &mark)| (mark + ahead(i)).clamp(length, total))
+        .collect();
+    let up = marks
+        .iter()
+        .enumerate()
+        .rev()
+        .map(|(i, &mark)| total - (mark - ahead(i)).clamp(0.0, total - length))
+        .collect();
+    (onward(down), onward(up))
+}
+
+/// Stations whose coaches' middle stands more than [`MAX_STOP_MISS`] from
+/// the station at either run's stop (see [`stop_progress`]).
+fn misplaced_stops(
+    marks: &[f32],
+    (down, up): (&[f32], &[f32]),
+    total: f32,
+    offset: f32,
+) -> Vec<usize> {
+    let n = marks.len();
+    (0..n)
+        .filter(|&i| {
+            let down_coaches = down[i] - offset;
+            let up_coaches = total - up[n - 1 - i] + offset;
+            (down_coaches - marks[i]).abs() > MAX_STOP_MISS
+                || (up_coaches - marks[i]).abs() > MAX_STOP_MISS
+        })
+        .collect()
 }
 
 /// Length of `cars` coupled together, in meters.
@@ -967,6 +1078,90 @@ mod line_tests {
     }
 
     #[test]
+    fn equal_departure_times_are_rejected_and_the_default_is_used() {
+        let same = Timetable {
+            depart_castex: TimeOfDay::hm(9, 0),
+            depart_pico: TimeOfDay::hm(9, 0),
+            ..Timetable::default()
+        };
+        let error = same.check().expect_err("one time for both runs");
+        assert_eq!(error, TimetableError::SameDeparture(TimeOfDay::hm(9, 0)));
+        assert!(error.to_string().contains("09:00"), "{error}");
+        assert_eq!(Timetable::default().check(), Ok(()));
+        let (towns, line) = crate::rail::tests::shipped();
+        let train = LineTrain::new(&line, &towns, same).unwrap();
+        assert_eq!(*train.timetable(), Timetable::default());
+    }
+
+    /// The stretch of path the whole consist covers, as `(low, high)`
+    /// distances along it.
+    fn footprint(train: &LineTrain) -> (f32, f32) {
+        let s = train.state();
+        let l = train.length();
+        match s.run {
+            Run::Down => (s.front - l, s.front),
+            Run::Up => (s.front, s.front + l),
+        }
+    }
+
+    #[test]
+    fn the_train_turns_around_in_place_on_the_same_stretch_of_track() {
+        let (_, mut train) = shipped();
+        let mut now = 0.0;
+        // Through a whole day: every layover keeps one footprint, centered
+        // on its terminal's station.
+        let mut layovers = 0;
+        let mut last: Option<(Option<usize>, (f32, f32))> = None;
+        while now < DAY_SECONDS {
+            train.advance(now, 30.0, BASE_RATE);
+            now += 30.0;
+            let s = train.state();
+            if s.phase != LinePhase::Parked {
+                last = None;
+                continue;
+            }
+            let span = footprint(&train);
+            let mark = train.stations()[s.station.unwrap()].mark;
+            assert!(
+                ((span.0 + span.1) / 2.0 - mark).abs() < 1e-3,
+                "{span:?} vs {mark}"
+            );
+            match last {
+                Some((station, before)) if station == s.station => {
+                    assert!(
+                        (span.0 - before.0).abs() < 1e-3,
+                        "jumped at {now}: {before:?} -> {span:?}"
+                    );
+                }
+                _ => layovers += 1,
+            }
+            last = Some((s.station, span));
+        }
+        assert!(layovers >= 2, "{layovers}");
+    }
+
+    #[test]
+    fn a_station_near_a_line_tip_never_sends_the_train_backwards_and_is_reported() {
+        let (length, offset, total) = (93.0, 27.5, 2000.0);
+        // A terminal 10 m from the path's start, a station 15 m on, then
+        // one well inside, and a terminal 5 m from the far tip.
+        let marks = [10.0, 25.0, 900.0, 1995.0];
+        let (down, up) = stop_progress(&marks, total, length, offset);
+        for stops in [&down, &up] {
+            assert!(stops.windows(2).all(|w| w[1] >= w[0]), "{stops:?}");
+            assert!(
+                stops.iter().all(|&p| (length..=total).contains(&p)),
+                "{stops:?}"
+            );
+        }
+        let missed = misplaced_stops(&marks, (&down, &up), total, offset);
+        assert_eq!(missed, vec![0, 1, 3]);
+        // Shipped, every stop is fine.
+        let (_, train) = shipped();
+        assert_eq!(train.misplaced_stops(), Vec::<usize>::new());
+    }
+
+    #[test]
     fn the_train_turns_around_during_the_layover() {
         let (_, mut train) = shipped();
         let arrive = train.arrival_time_at(Run::Up, CASTEX).unwrap().seconds();
@@ -1006,7 +1201,7 @@ mod line_tests {
     }
 
     #[test]
-    fn stops_put_the_coaches_exactly_at_each_station_projection() {
+    fn stops_put_the_coaches_at_each_station_and_center_the_train_at_terminals() {
         let (towns, train) = shipped();
         for run in [Run::Down, Run::Up] {
             for (index, station) in train.stations().iter().enumerate() {
@@ -1015,8 +1210,18 @@ mod line_tests {
                 assert_eq!(s.station, Some(index));
                 assert_eq!(s.speed, 0.0);
                 let sign = if run == Run::Down { 1.0 } else { -1.0 };
+                let terminal = index == 0 || index + 1 == train.stations().len();
+                // Through stations: the coaches alongside. Terminals: the
+                // whole consist centered, to turn around in place.
+                let ahead = if terminal {
+                    train.length() / 2.0
+                } else {
+                    train.stop_offset()
+                };
+                let middle = s.front - sign * ahead;
+                assert!((middle - station.mark).abs() < 1e-3, "{run:?} {index}");
                 let coaches = s.front - sign * train.stop_offset();
-                assert!((coaches - station.mark).abs() < 1e-3, "{run:?} {index}");
+                assert!((coaches - station.mark).abs() <= MAX_STOP_MISS);
                 // The mark is the station's projection onto its own track.
                 let at = towns[station.town]
                     .buildings

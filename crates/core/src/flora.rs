@@ -141,17 +141,7 @@ impl FloraSite {
         if !self.config.has_chunk(coord) {
             return ChunkFlora::default();
         }
-        let size = self.config.chunk_size;
-        let area = coord.bounds(size);
-        let rail: Vec<(Vec2, Vec2)> = self
-            .rail
-            .iter()
-            .copied()
-            .filter(|&(a, b)| {
-                let reach = area.expanded(Self::TREE_RAIL_MARGIN);
-                reach.segment_overlap(a, b).is_some()
-            })
-            .collect();
+        let rail = self.rail_near(coord);
         let trees = self.chunk_trees(coord, &rail);
         let tufts = self.chunk_tufts(coord, &rail, &trees);
         ChunkFlora { trees, tufts }
@@ -162,15 +152,18 @@ impl FloraSite {
         if !self.config.has_chunk(coord) {
             return Vec::new();
         }
+        self.chunk_trees(coord, &self.rail_near(coord))
+    }
+
+    /// The pieces of track near chunk `coord`.
+    fn rail_near(&self, coord: ChunkCoord) -> Vec<(Vec2, Vec2)> {
         let area = coord.bounds(self.config.chunk_size);
         let reach = area.expanded(Self::TREE_RAIL_MARGIN);
-        let rail: Vec<(Vec2, Vec2)> = self
-            .rail
+        self.rail
             .iter()
             .copied()
             .filter(|&(a, b)| reach.segment_overlap(a, b).is_some())
-            .collect();
-        self.chunk_trees(coord, &rail)
+            .collect()
     }
 
     /// Every tree of the world, chunk by chunk: the same trees
@@ -203,7 +196,34 @@ impl FloraSite {
         dryness_of(self.seed, p)
     }
 
+    /// The trees of chunk `coord`, spaced apart within it and from the
+    /// trees of its neighbours: where a tree stands too close to one of an
+    /// earlier neighbour (the row below, or the chunk to the west), the
+    /// later chunk's tree gives way. Each chunk is still decided on its own
+    /// (the same trees every time, in any order), from the neighbours'
+    /// trees before they gave way to theirs.
     fn chunk_trees(&self, coord: ChunkCoord, rail: &[(Vec2, Vec2)]) -> Vec<Tree> {
+        let size = self.config.chunk_size;
+        let mut trees = self.scattered_trees(coord, rail);
+        for (dx, dy) in [(-1, -1), (0, -1), (1, -1), (-1, 0)] {
+            let earlier = ChunkCoord::new(coord.x + dx, coord.y + dy);
+            let reach = earlier.bounds(size).expanded(Tree::MAX_SPACING);
+            if !self.config.has_chunk(earlier) || !trees.iter().any(|t| reach.contains_point(t.at))
+            {
+                continue;
+            }
+            let theirs = self.scattered_trees(earlier, &self.rail_near(earlier));
+            trees.retain(|t| {
+                theirs
+                    .iter()
+                    .all(|u| u.at.distance(t.at) >= u.spacing().max(t.spacing()))
+            });
+        }
+        trees
+    }
+
+    /// The trees scattered over chunk `coord`, spaced apart within it.
+    fn scattered_trees(&self, coord: ChunkCoord, rail: &[(Vec2, Vec2)]) -> Vec<Tree> {
         let size = self.config.chunk_size;
         let min = coord.min(size);
         let mut rng = Rng::new(coord.seed(self.seed), 0);
@@ -382,10 +402,13 @@ impl Tree {
         Aabb::from_center_size(self.at, Vec2::new(side, side))
     }
 
+    /// The largest [`Self::spacing`] of any species, in meters.
+    const MAX_SPACING: f32 = 5.0;
+
     /// Least distance to another tree's trunk, in meters.
     fn spacing(&self) -> f32 {
         match self.species {
-            Species::Calden => 5.0,
+            Species::Calden => Self::MAX_SPACING,
             Species::Chanar => 3.0,
         }
     }
@@ -506,6 +529,41 @@ mod tests {
         assert!(a.trees.iter().all(|t| bounds.contains_point(t.at)));
         assert!(a.tufts.len() <= FloraSite::TUFT_BUDGET);
         assert!(a.trees.len() <= FloraSite::TREE_BUDGET);
+    }
+
+    #[test]
+    fn trees_keep_their_spacing_across_chunk_borders() {
+        let (_, _, flora) = site();
+        let trees: Vec<(ChunkCoord, Tree)> = between()
+            .into_iter()
+            .flat_map(|c| flora.trees(c).into_iter().map(move |t| (c, t)))
+            .collect();
+        assert!(trees.len() > 200, "{}", trees.len());
+        let mut near_borders = 0;
+        for (i, (ca, a)) in trees.iter().enumerate() {
+            for (cb, b) in &trees[i + 1..] {
+                if ca == cb {
+                    continue;
+                }
+                let gap = a.at.distance(b.at);
+                if gap < 10.0 {
+                    near_borders += 1;
+                }
+                let least = a.spacing().max(b.spacing());
+                assert!(
+                    gap >= least,
+                    "{ca:?} {:?} and {cb:?} {:?}: {gap}",
+                    a.at,
+                    b.at
+                );
+            }
+        }
+        assert!(near_borders > 0, "no pair close across a border to check");
+        // Still deterministic, chunk by chunk.
+        for c in between().into_iter().step_by(7) {
+            assert_eq!(flora.trees(c), flora.trees(c));
+            assert_eq!(flora.trees(c), flora.chunk(c).trees);
+        }
     }
 
     #[test]

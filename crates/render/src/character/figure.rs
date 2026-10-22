@@ -1188,7 +1188,8 @@ pub struct FigureBody {
     /// The horse body this figure rides, if any: it then sits the horse's
     /// gait instead of walking its own.
     pub seat: Option<Entity>,
-    /// Seconds since it was drawn, and its own seed, for glancing around.
+    /// Seconds since it was drawn (wrapped at
+    /// [`pampa_core::MOTION_CLOCK_PERIOD`]), and its own seed, for glancing around.
     pub clock: f32,
     pub seed: u32,
     /// How far the head is turned aside now, easing toward the glance.
@@ -1280,7 +1281,8 @@ pub(super) fn update_figures(
 ) {
     let dt = time.delta_secs();
     for (child_of, mut body, mut transform) in &mut bodies {
-        body.clock += dt;
+        // Wrapped, seamlessly: a game left running keeps a fine clock.
+        body.clock = pampa_core::tick_clock(body.clock, dt);
         let mut idle = false;
         let angles = if let Some(horse) = body.seat {
             let Ok(horse) = horses.get(horse) else {
