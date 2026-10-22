@@ -18,8 +18,8 @@ use std::collections::BTreeSet;
 
 use bevy::prelude::*;
 use pampa_core::{
-    BASE_RATE, GameClock, LineTrain, MAX_STEP, Npc, RailLine, Run, Standing, Timetable, TownLayout,
-    Townsfolk, Travel,
+    GameClock, LineTrain, MAX_STEP, Npc, RailLine, Ride, Run, Standing, Timetable, TownLayout,
+    Townsfolk, Travel, opening,
 };
 use pampa_render::{
     ActiveTowns, CharacterVisual, Coat, FigureKind, MapIcon, VisualPose, WorldClock, WorldTowns,
@@ -27,24 +27,26 @@ use pampa_render::{
 };
 
 use crate::player::{DrivePlayer, GameWorld, Player, drive_player};
+use crate::ride::OnTrain;
 
-/// The clock and the line train as the game begins: the protagonist comes
-/// from General Pico, so the morning (up) train from Pico stands at the
-/// first town's station (where the player starts). The clock starts half
-/// way through that stop, in the late morning, and the train is jumped
-/// there from its overnight layover at Pico. Without a train the clock
+/// The clock, the line train and the player's ride as the game begins
+/// (the opening): the protagonist comes from General Pico, so he rides the
+/// morning (up) train from Pico, a little before it pulls into the first
+/// town's station ([`pampa_core::OPENING_LEAD`] real seconds), and is put
+/// off there. The clock runs at the onboard rate and reaches the
+/// timetabled arrival, in the late morning, as the train stops. Without a
+/// train (or a station in the first town) there is no ride, and the clock
 /// starts at the morning departure time from Pico.
-pub fn start_of_day(line: &RailLine, towns: &[TownLayout]) -> (GameClock, Option<LineTrain>) {
+pub fn start_of_day(
+    line: &RailLine,
+    towns: &[TownLayout],
+) -> (GameClock, Option<LineTrain>, Option<Ride>) {
     let mut train = LineTrain::new(line, towns, Timetable::default());
-    let start = train
-        .as_ref()
-        .and_then(|t| t.stop_at(0, Run::Up))
-        .unwrap_or(Timetable::default().depart_pico);
-    let clock = GameClock::at(start);
-    if let Some(train) = &mut train {
-        train.advance(0.0, clock.elapsed(), BASE_RATE);
+    let start = train.as_mut().and_then(|t| opening(t, 0, Run::Up));
+    match start {
+        Some((clock, ride)) => (clock, train, Some(ride)),
+        None => (GameClock::at(Timetable::default().depart_pico), train, None),
     }
-    (clock, train)
 }
 
 /// Mixed with each town's seed for where its people start and wander.
@@ -356,7 +358,7 @@ pub(crate) fn jostle_crowd(
     crowds: Option<ResMut<Crowds>>,
     active: Option<Res<ActiveTowns>>,
     world: Res<GameWorld>,
-    mut players: Query<(&mut Player, &mut Transform)>,
+    mut players: Query<(&mut Player, &mut Transform), Without<OnTrain>>,
     mut shoved: MessageWriter<Shoved>,
 ) {
     let Some(mut crowds) = crowds else {
@@ -419,7 +421,8 @@ mod tests {
     use crate::player::PlayerPlugin;
     use bevy::time::TimeUpdateStrategy;
     use pampa_core::{
-        LinePhase, Terrain, TimeOfDay, TownActivation, TownConfig, Vec2, World, WorldConfig,
+        BASE_RATE, LinePhase, ONBOARD_MULTIPLIER, OPENING_LEAD, Terrain, TimeOfDay, TownActivation,
+        TownConfig, Vec2, World, WorldConfig,
     };
     use std::time::Duration;
 
@@ -589,7 +592,7 @@ mod tests {
     /// jumped there from midnight.
     fn shipped_app(clock: Option<GameClock>) -> App {
         let loaded = shipped();
-        let (start, mut train) = start_of_day(&loaded.line, &loaded.towns);
+        let (start, mut train, _) = start_of_day(&loaded.line, &loaded.towns);
         let clock = clock.unwrap_or(start);
         if clock != start {
             train = LineTrain::new(&loaded.line, &loaded.towns, Timetable::default());
@@ -612,14 +615,22 @@ mod tests {
     }
 
     #[test]
-    fn the_game_starts_with_the_morning_train_from_pico_at_the_first_town() {
+    fn the_game_starts_aboard_the_morning_train_from_pico_pulling_into_the_first_town() {
         let loaded = shipped();
         assert_eq!(loaded.towns[0].name, "Monte Nievas");
-        let (clock, train) = start_of_day(&loaded.line, &loaded.towns);
+        let (clock, train, ride) = start_of_day(&loaded.line, &loaded.towns);
         let train = train.expect("the shipped line has a train");
         let s = train.state();
-        assert_eq!(s.phase, LinePhase::Dwelling);
-        assert_eq!(s.station, train.station_of_town(0));
+        assert_eq!(s.phase, LinePhase::Running);
+        // Pulling into Monte Nievas, a little under a minute out.
+        let nievas = train.station_of_town(0).unwrap();
+        let (next, left) = train.next_stop().unwrap();
+        assert_eq!(next, nievas);
+        assert!((left - OPENING_LEAD).abs() < 1e-9);
+        // Seated in the first coach, to get off at Monte Nievas.
+        let ride = ride.expect("the opening ride");
+        assert_eq!(ride.alight_at, Some(nievas));
+        assert_eq!(ride.car, 1);
         // The up run, from Pico after its 07:00 departure, on to Castex.
         assert_eq!(s.run, Run::Up);
         let pico = train.stations().len() - 1;
@@ -631,13 +642,21 @@ mod tests {
         let loco = train.placed_cars()[0];
         assert!(loco.direction.dot(train.path().direction_at(s.front)) < -0.9);
         assert_eq!(clock.day(), 0);
-        // Late morning, in full daylight, during the morning dwell.
-        assert!((10.0..12.0).contains(&clock.hour()), "{}", clock.hh_mm());
+        // Late morning, in full daylight, at the onboard rate: 10:32:13,
+        // ten game minutes (50 real seconds at 12×) before the timetabled
+        // arrival at 10:42:13.
+        assert_eq!(clock.multiplier, ONBOARD_MULTIPLIER);
+        assert_eq!(clock.hh_mm(), "10:32");
+        let arrival = train.arrival_time_at(Run::Up, nievas).unwrap();
+        assert_eq!(arrival.to_string(), "10:42");
+        let lead = OPENING_LEAD * ONBOARD_MULTIPLIER * BASE_RATE;
+        assert!((clock.elapsed() + lead - arrival.seconds()).abs() < 1e-6);
     }
 
     #[test]
     fn the_clock_ticks_and_the_train_stays_an_obstacle() {
-        let mut app = shipped_app(None);
+        // During the morning dwell at Monte Nievas, on foot.
+        let mut app = shipped_app(Some(GameClock::at(TimeOfDay::hm(10, 49))));
         app.update();
         let start = app.world().resource::<WorldClock>().0;
         for _ in 0..20 {

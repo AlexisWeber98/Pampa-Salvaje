@@ -1,8 +1,10 @@
 //! The player: keyboard -> `RiderInput` -> core step -> visuals.
 //!
-//! The player starts on foot and may later mount a horse; both move with
-//! the same core model ([`Rider`]), the body and the tuning tell them
-//! apart ([`Rider::travel`]).
+//! The player starts aboard the train ([`StartAboard`]), gets off on foot
+//! and may later mount a horse; on foot and on horseback they move with the
+//! same core model ([`Rider`]), the body and the tuning tell them apart
+//! ([`Rider::travel`]). Aboard the train ([`OnTrain`]) the ride moves them
+//! instead.
 
 use bevy::prelude::*;
 use pampa_core::{
@@ -11,6 +13,8 @@ use pampa_core::{
 use pampa_render::{
     CharacterVisual, Coat, FigureKind, MapIcon, StreamFocus, VisualPose, world_from_ground,
 };
+
+use crate::ride::{OnTrain, StartAboard};
 
 /// The logic body this entity represents, on foot or on horseback. Logic
 /// state lives here; the entity's `Transform` and `VisualPose` are derived
@@ -93,14 +97,19 @@ impl Plugin for PlayerPlugin {
     }
 }
 
-fn spawn_player(mut commands: Commands, world: Res<GameWorld>, spawn: Res<PlayerSpawn>) {
+fn spawn_player(
+    mut commands: Commands,
+    world: Res<GameWorld>,
+    spawn: Res<PlayerSpawn>,
+    aboard: Option<Res<StartAboard>>,
+) {
     // On the world's ground, so a spawn on the platform stands on its top.
     let ground = &world.0;
     let rider = match spawn.travel {
         Travel::OnFoot => Rider::on_foot(spawn.position, spawn.heading, ground),
         Travel::Riding => Rider::new(spawn.position, spawn.heading, ground),
     };
-    commands.spawn((
+    let mut player = commands.spawn((
         Name::new("Player"),
         MapIcon::Player,
         player_visual(spawn.travel),
@@ -111,6 +120,10 @@ fn spawn_player(mut commands: Commands, world: Res<GameWorld>, spawn: Res<Player
         Transform::from_translation(world_from_ground(rider.position, rider.height)),
         Player { rider },
     ));
+    // Seated in a coach (the ride places them), out of sight.
+    if let Some(ride) = aboard.and_then(|a| a.0) {
+        player.insert((OnTrain(ride), Visibility::Hidden));
+    }
 }
 
 /// The world streams (ground chunks, towns) around the player.
@@ -137,7 +150,7 @@ pub(crate) fn drive_player(
     keys: Res<ButtonInput<KeyCode>>,
     (tuning, foot): (Res<PlayerTuning>, Res<FootTuning>),
     world: Res<GameWorld>,
-    mut players: Query<(&mut Player, &mut Transform, &mut VisualPose)>,
+    mut players: Query<(&mut Player, &mut Transform, &mut VisualPose), Without<OnTrain>>,
 ) {
     let input = read_input(&keys);
     let dt = time.delta_secs().min(MAX_STEP);

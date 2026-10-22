@@ -8,6 +8,11 @@
 //! Thin things (trees, fences, signposts) do not move the camera: the line
 //! of sight is handed to render each frame ([`SightLine`]), which fades
 //! whichever of them stand in it.
+//!
+//! Aboard the train ([`OnTrain`]) the camera orbits the seated player's
+//! coach just as freely, from farther out ([`RIDE_DISTANCE`]), and the
+//! train's own cars do not pull it in. Boarding and getting off place it
+//! behind the player afresh.
 //! The orbit math lives in [`crate::orbit`].
 
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
@@ -21,6 +26,11 @@ use pampa_render::{SightLine, WorldTrain, world_from_ground};
 
 use crate::orbit::{Orbit, OrbitInput, OrbitParams};
 use crate::player::{DrivePlayer, GameWorld, Player};
+use crate::ride::OnTrain;
+
+/// Orbit distance the camera takes on boarding, in meters: far enough out
+/// to frame the coach and the country ahead.
+pub const RIDE_DISTANCE: f32 = 16.0;
 
 /// How the camera follows the rider.
 #[derive(Component, Debug, Clone, Copy)]
@@ -364,7 +374,8 @@ fn follow_player(
     tuning: Res<CameraTuning>,
     input: Res<CameraInput>,
     sight: Option<ResMut<SightLine>>,
-    player: Single<&Player>,
+    player: Single<(&Player, Has<OnTrain>)>,
+    mut was_aboard: Local<bool>,
     camera: Single<(
         &mut Transform,
         &FollowCamera,
@@ -372,8 +383,14 @@ fn follow_player(
         &mut CameraReach,
     )>,
 ) {
+    let (player, aboard) = player.into_inner();
     let rider = &player.rider;
     let (mut transform, follow, mut rig, mut reach) = camera.into_inner();
+    // Boarding or getting off: start again behind the player.
+    if aboard != *was_aboard {
+        *was_aboard = aboard;
+        rig.0 = None;
+    }
     let feet = world_from_ground(rider.position, rider.height);
     let look_height = match rider.travel() {
         Travel::OnFoot => follow.on_foot_look_height,
@@ -390,18 +407,21 @@ fn follow_player(
         }
         // First frame or a respawn far away: jump right behind the rider.
         _ => {
-            let (orbit, focus) = *rig
-                .0
-                .insert((Orbit::behind(rider.heading.radians()), target));
+            let mut orbit = Orbit::behind(rider.heading.radians());
+            if aboard {
+                orbit.distance = RIDE_DISTANCE;
+            }
+            let (orbit, focus) = *rig.0.insert((orbit, target));
             (orbit, focus, true)
         }
     };
     let desired = follow.desired(focus, &orbit, &world.0);
     // Keep the line of sight to the rider itself clear, of buildings and of
-    // the train's cars near it.
+    // the train's cars near it (but not the train the player rides).
     let cars = train
         .as_deref()
         .and_then(|t| t.0.as_ref())
+        .filter(|_| !aboard)
         .map(|t| car_occluders(&t.placed_cars(), &world.0.terrain, rider.position))
         .unwrap_or_default();
     let allowed = clear_reach(target, desired, occluders.0.iter().chain(&cars));
@@ -1131,8 +1151,10 @@ mod tests {
     fn on_the_platform_the_camera_stays_in_front_of_the_dwelling_train() {
         let loaded =
             crate::towns::load_world(&pampa_content::asset_path(pampa_content::TOWNS_FILE));
-        let (_, train) = crate::life::start_of_day(&loaded.line, &loaded.towns);
-        let train = train.expect("a line train");
+        // The opening's train, skipped on to its dwell at Monte Nievas.
+        let (clock, train, _) = crate::life::start_of_day(&loaded.line, &loaded.towns);
+        let mut train = train.expect("a line train");
+        train.skip_to_next_stop(clock.elapsed(), clock.rate());
         let world = World::with_towns(loaded.world, Terrain::default(), &loaded.towns);
         let occluders = CameraOccluders::from_towns(&loaded.towns, &world.terrain);
         let (position, heading) = loaded.towns[0].platform_spot().unwrap();

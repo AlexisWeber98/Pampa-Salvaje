@@ -6,14 +6,15 @@ mod errand;
 mod life;
 mod orbit;
 mod player;
+mod ride;
 mod towns;
 
 use bevy::prelude::*;
 use pampa_content::{TOWNS_FILE, asset_path};
 use pampa_core::{FenceLayout, FloraSite, Terrain, World};
 use pampa_render::{
-    AssetRoot, AtmospherePlugin, CharacterVisualPlugin, FencePlugin, FloraPlugin, HudPlugin,
-    MinimapPlugin, RailPlugin, RoadPlugin, SignPlugin, SpeechBubblePlugin, StreamFocus,
+    AssetRoot, AtmospherePlugin, CharacterVisualPlugin, FadePlugin, FencePlugin, FloraPlugin,
+    HudPlugin, MinimapPlugin, RailPlugin, RoadPlugin, SignPlugin, SpeechBubblePlugin, StreamFocus,
     TerrainPlugin, ThinFadePlugin, TownPlugin, TrainPlugin, WorldChunks, WorldClock, WorldFences,
     WorldFlora, WorldRail, WorldTerrain, WorldTowns, WorldTrain,
 };
@@ -38,20 +39,26 @@ fn main() {
     // Caldenes, chañares and grass between the towns, off the track, the
     // roads and the fence lines. Every tree trunk of the world is an
     // obstacle from the start, drawn or not.
-    let flora = FloraSite::new(world.config, &world.terrain, &loaded.line).with_fences(&fences);
+    // Kept off the whole train path too: each town's own track and its
+    // run-outs, not only the links between towns.
+    let flora = FloraSite::new(world.config, &world.terrain, &loaded.line)
+        .with_track(&loaded.line.full_path(&loaded.towns))
+        .with_fences(&fences);
     world.plant(&flora);
     // The errand: Don Hidalgo in the first town's plaza sends the player to
     // comisario Farach in the town the dialogue names. Both stand in the way
     // like any obstacle.
     let (dialogue, dialogue_report) = errand::read_dialogue();
     let errand = errand::plan(&loaded.towns, &mut world, &dialogue.0.police_town);
-    // The player gets off the morning train from Pico on foot, at the first town's
-    // platform.
-    let (position, heading) = errand::player_start(&loaded.towns[0]);
     let crowds = life::Crowds::for_towns(&loaded.towns);
-    // The game begins in the late morning, with the train from Pico standing at the first town's
-    // station; the clock starts there.
-    let (clock, train) = life::start_of_day(&loaded.line, &loaded.towns);
+    // The opening: the player rides the morning train from Pico, seated in
+    // a coach as it pulls into the first town, and gets off there on foot.
+    // Without a train they start on foot on the road into the first town.
+    let (clock, train, ride) = life::start_of_day(&loaded.line, &loaded.towns);
+    let (position, heading) = ride
+        .zip(train.as_ref())
+        .and_then(|(ride, train)| ride.seat(train))
+        .unwrap_or_else(|| loaded.towns[0].arrival());
     let mut app = App::new();
     app.insert_resource(camera::CameraOccluders::from_towns(
         &loaded.towns,
@@ -76,6 +83,7 @@ fn main() {
         heading,
         travel: pampa_core::Travel::OnFoot,
     })
+    .insert_resource(ride::StartAboard(ride))
     .insert_resource(report)
     .insert_resource(dialogue)
     .insert_resource(dialogue_report);
@@ -113,6 +121,9 @@ fn main() {
     .add_plugins((RoadPlugin, FencePlugin, ThinFadePlugin))
     // The errand and the clock and objective in the corner.
     .add_plugins((errand::ErrandPlugin, HudPlugin))
+    // Boarding, riding, skipping and waiting for the train, with a fade to
+    // cover jumps in time.
+    .add_plugins((ride::RidePlugin, FadePlugin))
     .add_systems(Startup, towns::log_town_report)
     .add_systems(Startup, move || {
         info!("fences: {spans} spans as obstacles, laid in {fenced:.1?}");
