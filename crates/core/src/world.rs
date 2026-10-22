@@ -180,9 +180,9 @@ impl World {
     }
 
     /// Adds every house, galpón, tank and prop of `settlements` as a static
-    /// obstacle, and every corral as its rail spans (open at its gate).
-    /// Tree spots and huellas are no obstacle. Returns how many boxes were
-    /// added.
+    /// obstacle, every corral as its rail spans (open at its gate) and
+    /// every tree spot as its trunk. Tracks are no obstacle. Returns how
+    /// many boxes were added.
     pub fn settle(&mut self, settlements: &SettlementLayout) -> usize {
         let before = self.obstacles.len();
         self.obstacles.extend(settlements.obstacles());

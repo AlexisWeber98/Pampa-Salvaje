@@ -7,16 +7,17 @@
 //! round a bare patio (the hub), with a galpón, corrals, a molino with its
 //! tank and trough, haystacks and the spots where its trees will grow.
 //!
-//! Dirt huellas join it to the gate: a trunk from just inside the gate to
+//! Dirt tracks (huellas) join it to the gate: a trunk from just inside the gate to
 //! the hub, and a branch from the hub to the door of every house, galpón
-//! and corral. Huellas are two wheel ruts, not roads: they live outside
+//! and corral. Tracks are two wheel ruts, not roads: they live outside
 //! [`crate::RoadNetwork`], with no fences, signposts or terrain cut, and
 //! cross no fence but at their own gate.
 //!
 //! Everything is axis-aligned, like the survey grid. Houses, galpones,
 //! tanks and props are box obstacles; a corral is its rail spans with one
-//! opening, so a rider can ride in; trees are left to flora and render.
-//! Wild flora keeps off the compounds and the huellas through an indexed
+//! opening, so a rider can ride in; a tree spot blocks with its trunk only,
+//! and render grows the tree on it.
+//! Wild flora keeps off the compounds and the tracks through an indexed
 //! [`KeepOut`].
 
 use std::collections::{HashMap, HashSet};
@@ -30,17 +31,17 @@ use crate::{Aabb, FenceLayout, RailLine, RoadNetwork, Side, Terrain, TownLayout,
 /// What a settlement is, from poorest to richest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SettlementKind {
-    /// A small adobe house, maybe a corral, and a well.
-    Rancho,
-    /// A herdsman's hut out on an estancia's land, with a corral and an
+    /// A rancho: a small adobe house, maybe a corral, and a well.
+    Hut,
+    /// A puesto: a herdsman's hut out on an estancia's land, with a corral and an
     /// aguada (a trough, sometimes a molino).
-    Puesto,
-    /// A farm: a brick or adobe house, a galpón, a molino with its tank and
+    Outpost,
+    /// A chacra: a farm with a brick or adobe house, a galpón, a molino with its tank and
     /// trough, a corral and haystacks.
-    Chacra,
-    /// An estancia's casco with its gallery, the houses of its peones,
+    Farm,
+    /// An estancia: its casco (the homestead) with its gallery, the houses of its peones,
     /// galpones, corrals, the aguada and a grove, spread over hectares.
-    Estancia,
+    Ranch,
 }
 
 /// How a house is built.
@@ -53,7 +54,7 @@ pub enum HouseStyle {
     /// Whitewashed brick with a flat roof behind a parapet.
     BrickParapet,
     /// An estancia's Italianate casco with a gallery along its front.
-    CascoGallery,
+    GalleryHouse,
 }
 
 /// One building or prop of a settlement.
@@ -62,12 +63,12 @@ pub enum StructureKind {
     MainHouse(HouseStyle),
     /// A casa de peones, or the caretaker's house.
     WorkerHouse(HouseStyle),
-    /// A sheet-iron shed for tools, carts and grain.
-    Galpon,
+    /// A galpón: a sheet-iron shed for tools, carts and grain.
+    Barn,
     /// Post-and-rail corral, open on its front side.
     Corral,
-    /// A windpump: its footprint is the tower's base.
-    Molino,
+    /// A molino (windpump): its footprint is the tower's base.
+    Windpump,
     /// The round corrugated "australian" tank the molino fills.
     Tank,
     /// The bebedero the stock drinks from.
@@ -78,11 +79,11 @@ pub enum StructureKind {
     Haystack,
     /// A palenque to tie horses to.
     HitchingPost,
-    /// A two-wheeled ox cart left in the yard.
-    Carreta,
-    /// Where a eucalyptus of the grove grows (not an obstacle here).
+    /// A carreta: a two-wheeled ox cart left in the yard.
+    Cart,
+    /// Where a eucalyptus of the grove grows; only its trunk blocks.
     Eucalyptus,
-    /// Where a poplar of the entrance alameda grows (not an obstacle here).
+    /// Where a poplar of the entrance alameda grows; only its trunk blocks.
     Poplar,
 }
 
@@ -92,9 +93,9 @@ impl StructureKind {
         matches!(self, Self::MainHouse(_) | Self::WorkerHouse(_))
     }
 
-    /// Whether a huella leads to its door.
+    /// Whether a track leads to its door.
     pub fn is_reached(self) -> bool {
-        self.is_house() || matches!(self, Self::Galpon | Self::Corral)
+        self.is_house() || matches!(self, Self::Barn | Self::Corral)
     }
 
     /// A tree spot rather than a structure.
@@ -106,12 +107,12 @@ impl StructureKind {
     /// (`assets/models/third-party/<slot>/`), for the props that have one.
     pub fn slot(self) -> Option<&'static str> {
         Some(match self {
-            Self::Molino => "windpump",
+            Self::Windpump => "windpump",
             Self::Eucalyptus => "eucalyptus",
             Self::Poplar => "poplar",
             Self::Well => "well",
             Self::Trough => "trough",
-            Self::Carreta => "carreta",
+            Self::Cart => "cart",
             Self::Haystack => "haystack",
             Self::HitchingPost => "hitching_post",
             _ => return None,
@@ -134,7 +135,7 @@ pub struct Structure {
 
 impl Structure {
     /// The point [`Settlement::DOOR_REACH`] meters out of the middle of
-    /// its front: where its huella ends.
+    /// its front: where its track ends.
     pub fn door(&self) -> Vec2 {
         let (fp, c) = (self.footprint, self.footprint.center());
         let reach = Settlement::DOOR_REACH;
@@ -146,26 +147,42 @@ impl Structure {
         }
     }
 
+    /// A tree spot's trunk radius at the ground, in meters: a eucalyptus's
+    /// thick pale bole, a poplar's slender one. 0 for anything else.
+    pub fn trunk_radius(&self) -> f32 {
+        match self.kind {
+            StructureKind::Eucalyptus => (0.016 * self.height).clamp(0.2, 0.45),
+            StructureKind::Poplar => (0.012 * self.height).clamp(0.12, 0.25),
+            _ => 0.0,
+        }
+    }
+
     /// Its static obstacles: the footprint; a corral's rail spans with
     /// [`Settlement::CORRAL_GATE`] meters open in the middle of its front;
-    /// none for a tree spot.
+    /// a tree spot's trunk, a square [`Self::trunk_radius`] to either side.
     pub fn obstacles(&self) -> Vec<Aabb> {
         match self.kind {
-            k if k.is_tree() => Vec::new(),
+            k if k.is_tree() => {
+                let side = 2.0 * self.trunk_radius();
+                vec![Aabb::from_center_size(
+                    self.footprint.center(),
+                    Vec2::new(side, side),
+                )]
+            }
             StructureKind::Corral => corral_rails(self.footprint, self.front),
             _ => vec![self.footprint],
         }
     }
 }
 
-/// An inner track: two wheel ruts along `points`,
-/// [`Huella::HALF_WIDTH`] meters to either side.
+/// An inner track (a huella): two wheel ruts along `points`,
+/// [`Track::HALF_WIDTH`] meters to either side.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Huella {
+pub struct Track {
     pub points: Vec<Vec2>,
 }
 
-impl Huella {
+impl Track {
     /// Half the worn width, in meters (2.6 m in all).
     pub const HALF_WIDTH: f32 = 1.3;
 
@@ -181,22 +198,22 @@ pub struct Settlement {
     pub kind: SettlementKind,
     /// The open gate it lies behind (an index into [`FenceLayout::gates`]).
     pub gate: u32,
-    /// The middle of the patio, where the huellas meet.
+    /// The middle of the patio, where the tracks meet.
     pub hub: Vec2,
     /// The bare, trodden yard round the hub.
     pub patio: Aabb,
     pub structures: Vec<Structure>,
     /// The trunk from the gate to the hub first, then one branch from the
     /// hub to each door.
-    pub huellas: Vec<Huella>,
-    /// Everything it covers: footprints, patio and huellas.
+    pub tracks: Vec<Track>,
+    /// Everything it covers: footprints, patio and tracks.
     pub bounds: Aabb,
     /// Seed for render's own variety.
     pub seed: u32,
 }
 
 impl Settlement {
-    /// How far out of a front its huella ends, in meters.
+    /// How far out of a front its track ends, in meters.
     pub const DOOR_REACH: f32 = 3.5;
     /// Width of a corral's opening, in meters.
     pub const CORRAL_GATE: f32 = 4.0;
@@ -207,35 +224,35 @@ impl Settlement {
     pub const ROAD_CLEARANCE: f32 = 25.0;
     /// Least distance from a footprint to the track's centerline, meters.
     pub const RAIL_CLEARANCE: f32 = 40.0;
-    /// Least distance from a footprint or huella to a town's leveled band.
+    /// Least distance from a footprint or track to a town's leveled band.
     pub const TOWN_CLEARANCE: f32 = 60.0;
     /// Least distance from a footprint to its cell's survey lines (the
     /// grid fences), in meters.
     pub const FENCE_CLEARANCE: f32 = 12.0;
-    /// Least distance from a huella's centerline to the survey lines.
-    pub const HUELLA_FENCE_CLEARANCE: f32 = 4.0;
-    /// Least distance from a huella's centerline to a road's, past its
+    /// Least distance from a track's centerline to the survey lines.
+    pub const TRACK_FENCE_CLEARANCE: f32 = 4.0;
+    /// Least distance from a track's centerline to a road's, past its
     /// gate: its ruts stay off the roadside fence.
-    pub const HUELLA_ROAD_CLEARANCE: f32 = FenceLayout::ROADSIDE + Huella::HALF_WIDTH + 1.0;
-    /// How far from its gate a huella's trunk may still be near the road.
+    pub const TRACK_ROAD_CLEARANCE: f32 = FenceLayout::ROADSIDE + Track::HALF_WIDTH + 1.0;
+    /// How far from its gate a track's trunk may still be near the road.
     pub const GATE_APPROACH: f32 = 6.0;
     /// Least clear ground between two footprints, in meters: a rider fits.
     pub const GAP: f32 = 3.0;
-    /// Least distance from a huella's centerline to a footprint, meters.
-    pub const CORRIDOR: f32 = Huella::HALF_WIDTH + 1.0;
+    /// Least distance from a track's centerline to a footprint, meters.
+    pub const CORRIDOR: f32 = Track::HALF_WIDTH + 1.0;
     /// Least distance between two settlements' hubs, in meters.
     pub const MIN_SPACING: f32 = 300.0;
     /// Least ground an estancia's compound spreads over, in square meters.
-    pub const ESTANCIA_AREA: f32 = 20_000.0;
+    pub const RANCH_AREA: f32 = 20_000.0;
 
     /// Every structure of `kind`.
     pub fn of(&self, kind: StructureKind) -> impl Iterator<Item = &Structure> + '_ {
         self.structures.iter().filter(move |s| s.kind == kind)
     }
 
-    /// The trunk huella, from just inside the gate to the hub.
-    pub fn trunk(&self) -> &Huella {
-        &self.huellas[0]
+    /// The trunk track, from just inside the gate to the hub.
+    pub fn trunk(&self) -> &Track {
+        &self.tracks[0]
     }
 }
 
@@ -244,6 +261,9 @@ impl Settlement {
 pub struct SettlementLayout {
     pub settlements: Vec<Settlement>,
     pub(crate) keep_out: Arc<KeepOut>,
+    /// The towns asked for an estancia that got none (see
+    /// [`Self::build_with_ranches`]): the caller warns about them.
+    pub unplaced_ranches: Vec<usize>,
 }
 
 impl SettlementLayout {
@@ -255,6 +275,11 @@ impl SettlementLayout {
     pub const NEAR_TOWN: f32 = 3000.0;
     /// Tries at a hub per gate.
     const HUB_TRIES: usize = 16;
+    /// Tries at a hub per gate for a forced estancia: it needs a big field.
+    pub const RANCH_TRIES: usize = 64;
+    /// How far from a town's leveled band a forced estancia's gate may be,
+    /// in meters: within 3 km, then wider steps when nothing fits.
+    pub const RANCH_REACH: [f32; 4] = [3000.0, 6000.0, 12_000.0, f32::INFINITY];
     /// Distance from the gate to the end of the trunk's first straight
     /// piece, in meters.
     const ENTRY: f32 = 12.0;
@@ -267,6 +292,27 @@ impl SettlementLayout {
         towns: &[TownLayout],
         line: &RailLine,
         fences: &FenceLayout,
+    ) -> Self {
+        Self::build_with_ranches(terrain, towns, line, fences, &[])
+    }
+
+    /// Like [`Self::build`], with one estancia forced near each town of
+    /// `ranch_towns` (indices into `towns`), laid before the seeded mix so
+    /// the other settlements keep their spacing from it.
+    ///
+    /// For each such town the open gates within [`Self::RANCH_REACH`] of its
+    /// leveled band are tried nearest first, each with up to
+    /// [`Self::RANCH_TRIES`] hubs; the first whose field holds a whole
+    /// estancia (its casco, at least two worker houses, a barn, a corral,
+    /// the water point, over [`Settlement::RANCH_AREA`]) wins. When none
+    /// fits, the reach widens step by step; a town that still gets none is
+    /// listed in [`Self::unplaced_ranches`].
+    pub fn build_with_ranches(
+        terrain: &Terrain,
+        towns: &[TownLayout],
+        line: &RailLine,
+        fences: &FenceLayout,
+        ranch_towns: &[usize],
     ) -> Self {
         let rails: Vec<(Vec2, Vec2)> = line
             .segments()
@@ -282,103 +328,78 @@ impl SettlementLayout {
             .iter()
             .map(|t| t.leveled().expanded(Settlement::TOWN_CLEARANCE))
             .collect();
-        let roads = terrain.roads.as_deref();
-        let mut settlements: Vec<Settlement> = Vec::new();
-        let mut used: HashSet<(u32, u32)> = HashSet::new();
+        let site = Site {
+            terrain,
+            fences,
+            rails,
+            bands,
+        };
+        let town_gap = |p: Vec2| {
+            towns
+                .iter()
+                .map(|t| t.leveled().closest_point(p).distance(p))
+                .fold(f32::INFINITY, f32::min)
+        };
+        let mut placed = Placed::default();
+        let mut unplaced_ranches = Vec::new();
+        for &town in ranch_towns {
+            let Some(band) = towns.get(town).map(TownLayout::leveled) else {
+                unplaced_ranches.push(town);
+                continue;
+            };
+            let gap = |p: Vec2| band.closest_point(p).distance(p);
+            let mut open: Vec<(f32, usize)> = fences
+                .gates
+                .iter()
+                .enumerate()
+                .filter(|(_, g)| g.open)
+                .map(|(i, g)| (gap(g.at), i))
+                .collect();
+            open.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+            let mut done = false;
+            let mut tried = 0;
+            for reach in Self::RANCH_REACH {
+                for &(_, index) in open.iter().filter(|(d, _)| *d <= reach).skip(tried) {
+                    tried += 1;
+                    let rng = Rng::new(terrain.seed ^ RANCH_SEED, index as u32);
+                    let forced = Some((SettlementKind::Ranch, Self::RANCH_TRIES));
+                    if site.settle_gate(index, rng, forced, &mut placed, &town_gap) {
+                        done = true;
+                        break;
+                    }
+                }
+                if done {
+                    break;
+                }
+            }
+            if !done {
+                unplaced_ranches.push(town);
+            }
+        }
         for (index, gate) in fences.gates.iter().enumerate() {
             if !gate.open {
                 continue;
             }
-            let mut rng = Rng::new(terrain.seed ^ SETTLEMENT_SEED, index as u32);
-            let into = field_side(roads, gate.at, gate.along);
-            let probe = gate.at + into * 3.0;
-            if fences.is_descampado(probe) {
-                continue;
-            }
-            let Some(cell) = fences.field_of(probe) else {
-                continue;
-            };
-            let key = (cell.min.x.to_bits(), cell.min.y.to_bits());
-            let town_gap = towns
-                .iter()
-                .map(|t| t.leveled().closest_point(gate.at).distance(gate.at))
-                .fold(f32::INFINITY, f32::min);
-            let near_town = town_gap < Self::NEAR_TOWN;
-            let chance = if near_town {
-                Self::SETTLED.0
-            } else {
-                Self::SETTLED.1
-            };
-            if used.contains(&key) || rng.unit() >= chance {
-                continue;
-            }
-            let kind = pick_kind(&mut rng, near_town);
-            let reach = cell.expanded(Settlement::RAIL_CLEARANCE + 1.0);
-            let ground = Ground {
-                roads,
-                rails: rails
-                    .iter()
-                    .copied()
-                    .filter(|&(a, b)| reach.segment_overlap(a, b).is_some())
-                    .collect(),
-                bands: bands
-                    .iter()
-                    .copied()
-                    .filter(|b| b.intersects(&reach))
-                    .collect(),
-                cell,
-            };
-            let start = gate.at + into * 0.5;
-            let entry = gate.at + into * Self::ENTRY;
-            if !ground.track_ok(start, entry, Some(gate.at)) {
-                continue;
-            }
-            let (depth, room) = kind.hub_reach();
-            let half = cell.size().x.min(cell.size().y) / 2.0 - 1.0;
-            let inner = cell.expanded(-room.min(half));
-            for _ in 0..Self::HUB_TRIES {
-                // Somewhere ahead of the gate, kept inside the cell.
-                let ahead = gate.at
-                    + into * rng.range(depth.0, depth.1)
-                    + gate.along * rng.range(-depth.1, depth.1) * 0.5;
-                let hub = inner.closest_point(ahead);
-                let spaced = settlements
-                    .iter()
-                    .all(|s| s.hub.distance(hub) >= Settlement::MIN_SPACING);
-                if (hub - gate.at).dot(into) < depth.0
-                    || hub.distance(gate.at) > depth.1
-                    || !spaced
-                    || !ground.track_ok(entry, hub, None)
-                {
-                    continue;
-                }
-                let mut compound =
-                    Compound::new(&ground, rng, kind, hub, into, [start, entry, hub]);
-                let built = compound.raise();
-                rng = compound.rng;
-                if built {
-                    used.insert(key);
-                    let seed = rng.next();
-                    settlements.push(compound.finish(index as u32, seed));
-                    break;
-                }
-            }
+            let rng = Rng::new(terrain.seed ^ SETTLEMENT_SEED, index as u32);
+            site.settle_gate(index, rng, None, &mut placed, &town_gap);
         }
+        let settlements = placed.settlements;
         let mut keep_out = KeepOut::default();
         for s in &settlements {
             keep_out.push(Shape::Area(s.patio));
             for st in &s.structures {
                 keep_out.push(Shape::Area(st.footprint));
             }
-            for h in &s.huellas {
+            for h in &s.tracks {
                 for (a, b) in h.segments() {
-                    keep_out.push(Shape::Strip(a, b, Huella::HALF_WIDTH));
+                    keep_out.push(Shape::Strip(a, b, Track::HALF_WIDTH));
                 }
             }
         }
         Self {
             settlements,
             keep_out: Arc::new(keep_out),
+            unplaced_ranches,
         }
     }
 
@@ -411,13 +432,13 @@ impl SettlementLayout {
             .filter(move |s| s.bounds.intersects(&area))
     }
 
-    /// The huellas of the settlements [`Self::in_area`] holds.
-    pub fn tracks_in(&self, area: Aabb) -> impl Iterator<Item = &Huella> + '_ {
-        self.in_area(area).flat_map(|s| s.huellas.iter())
+    /// The tracks of the settlements [`Self::in_area`] holds.
+    pub fn tracks_in(&self, area: Aabb) -> impl Iterator<Item = &Track> + '_ {
+        self.in_area(area).flat_map(|s| s.tracks.iter())
     }
 
     /// Whether `p` is more than `margin` meters (at most
-    /// [`KeepOut::MAX_MARGIN`]) from every footprint, patio and huella.
+    /// [`KeepOut::MAX_MARGIN`]) from every footprint, patio and track.
     pub fn is_clear(&self, p: Vec2, margin: f32) -> bool {
         self.keep_out.is_clear(p, margin)
     }
@@ -428,25 +449,138 @@ impl SettlementLayout {
     }
 }
 
+/// What every settlement keeps clear of, world-wide.
+struct Site<'a> {
+    terrain: &'a Terrain,
+    fences: &'a FenceLayout,
+    rails: Vec<(Vec2, Vec2)>,
+    /// Town bands, already grown by [`Settlement::TOWN_CLEARANCE`].
+    bands: Vec<Aabb>,
+}
+
+/// The settlements laid so far and the survey cells they hold.
+#[derive(Default)]
+struct Placed {
+    settlements: Vec<Settlement>,
+    used: HashSet<(u32, u32)>,
+}
+
+impl Site<'_> {
+    /// Tries to settle the field behind gate `index`: by its seeded chance
+    /// and kind, or as `forced` (a kind and its hub tries) whatever the
+    /// chance. Whether a settlement was laid.
+    fn settle_gate(
+        &self,
+        index: usize,
+        mut rng: Rng,
+        forced: Option<(SettlementKind, usize)>,
+        placed: &mut Placed,
+        town_gap: &impl Fn(Vec2) -> f32,
+    ) -> bool {
+        let gate = &self.fences.gates[index];
+        let roads = self.terrain.roads.as_deref();
+        let into = field_side(roads, gate.at, gate.along);
+        let probe = gate.at + into * 3.0;
+        if self.fences.is_descampado(probe) {
+            return false;
+        }
+        let Some(cell) = self.fences.field_of(probe) else {
+            return false;
+        };
+        let key = (cell.min.x.to_bits(), cell.min.y.to_bits());
+        if placed.used.contains(&key) {
+            return false;
+        }
+        let (kind, tries) = match forced {
+            Some(forced) => forced,
+            None => {
+                let near_town = town_gap(gate.at) < SettlementLayout::NEAR_TOWN;
+                let chance = if near_town {
+                    SettlementLayout::SETTLED.0
+                } else {
+                    SettlementLayout::SETTLED.1
+                };
+                if rng.unit() >= chance {
+                    return false;
+                }
+                (pick_kind(&mut rng, near_town), SettlementLayout::HUB_TRIES)
+            }
+        };
+        let reach = cell.expanded(Settlement::RAIL_CLEARANCE + 1.0);
+        let ground = Ground {
+            roads,
+            rails: self
+                .rails
+                .iter()
+                .copied()
+                .filter(|&(a, b)| reach.segment_overlap(a, b).is_some())
+                .collect(),
+            bands: self
+                .bands
+                .iter()
+                .copied()
+                .filter(|b| b.intersects(&reach))
+                .collect(),
+            cell,
+        };
+        let start = gate.at + into * 0.5;
+        let entry = gate.at + into * SettlementLayout::ENTRY;
+        if !ground.track_ok(start, entry, Some(gate.at)) {
+            return false;
+        }
+        let (depth, room) = kind.hub_reach();
+        let half = cell.size().x.min(cell.size().y) / 2.0 - 1.0;
+        let inner = cell.expanded(-room.min(half));
+        for _ in 0..tries {
+            // Somewhere ahead of the gate, kept inside the cell.
+            let ahead = gate.at
+                + into * rng.range(depth.0, depth.1)
+                + gate.along * rng.range(-depth.1, depth.1) * 0.5;
+            let hub = inner.closest_point(ahead);
+            let spaced = placed
+                .settlements
+                .iter()
+                .all(|s| s.hub.distance(hub) >= Settlement::MIN_SPACING);
+            if (hub - gate.at).dot(into) < depth.0
+                || hub.distance(gate.at) > depth.1
+                || !spaced
+                || !ground.track_ok(entry, hub, None)
+            {
+                continue;
+            }
+            let mut compound = Compound::new(&ground, rng, kind, hub, into, [start, entry, hub]);
+            let built = compound.raise();
+            rng = compound.rng;
+            if built {
+                placed.used.insert(key);
+                let seed = rng.next();
+                placed.settlements.push(compound.finish(index as u32, seed));
+                return true;
+            }
+        }
+        false
+    }
+}
+
 impl SettlementKind {
     /// How far into the field (from the gate's road) the hub lies at
     /// least, how far from the gate at most, and the room it keeps from its
     /// cell's edges, in meters.
     fn hub_reach(self) -> ((f32, f32), f32) {
         match self {
-            Self::Rancho => ((35.0, 250.0), 35.0),
-            Self::Puesto => ((50.0, 450.0), 45.0),
-            Self::Chacra => ((60.0, 350.0), 55.0),
-            Self::Estancia => ((140.0, 600.0), 120.0),
+            Self::Hut => ((35.0, 250.0), 35.0),
+            Self::Outpost => ((50.0, 450.0), 45.0),
+            Self::Farm => ((60.0, 350.0), 55.0),
+            Self::Ranch => ((140.0, 600.0), 120.0),
         }
     }
 
     /// Side of the patio, in meters.
     fn patio(self) -> f32 {
         match self {
-            Self::Rancho | Self::Puesto => 10.0,
-            Self::Chacra => 16.0,
-            Self::Estancia => 24.0,
+            Self::Hut | Self::Outpost => 10.0,
+            Self::Farm => 16.0,
+            Self::Ranch => 24.0,
         }
     }
 }
@@ -457,19 +591,9 @@ fn pick_kind(rng: &mut Rng, near_town: bool) -> SettlementKind {
     use SettlementKind::*;
     let roll = rng.unit();
     let odds: [(SettlementKind, f32); 4] = if near_town {
-        [
-            (Chacra, 0.55),
-            (Rancho, 0.3),
-            (Puesto, 0.1),
-            (Estancia, 0.05),
-        ]
+        [(Farm, 0.55), (Hut, 0.3), (Outpost, 0.1), (Ranch, 0.05)]
     } else {
-        [
-            (Rancho, 0.35),
-            (Puesto, 0.35),
-            (Chacra, 0.2),
-            (Estancia, 0.1),
-        ]
+        [(Hut, 0.35), (Outpost, 0.35), (Farm, 0.2), (Ranch, 0.1)]
     };
     let mut sum = 0.0;
     for (kind, share) in odds {
@@ -547,12 +671,12 @@ impl Ground<'_> {
             })
     }
 
-    /// Whether a huella may run straight from `a` to `b`: inside the cell
+    /// Whether a track may run straight from `a` to `b`: inside the cell
     /// off its fences, off the roads but within
     /// [`Settlement::GATE_APPROACH`] of its `gate`, off the rail and the
     /// towns. Sampled every meter.
     fn track_ok(&self, a: Vec2, b: Vec2, gate: Option<Vec2>) -> bool {
-        let inner = self.cell.expanded(-Settlement::HUELLA_FENCE_CLEARANCE);
+        let inner = self.cell.expanded(-Settlement::TRACK_FENCE_CLEARANCE);
         let n = (a.distance(b).ceil() as usize).max(1);
         (0..=n).all(|k| {
             let p = a + (b - a) * (k as f32 / n as f32);
@@ -563,7 +687,7 @@ impl Ground<'_> {
                 inner.contains_point(p)
                     && self
                         .roads
-                        .is_none_or(|r| r.near(p, Settlement::HUELLA_ROAD_CLEARANCE).is_none())
+                        .is_none_or(|r| r.near(p, Settlement::TRACK_ROAD_CLEARANCE).is_none())
             };
             placed
                 && self.bands.iter().all(|band| !band.contains_point(p))
@@ -604,7 +728,7 @@ struct Compound<'a> {
     into: Vec2,
     patio: Aabb,
     structures: Vec<Structure>,
-    huellas: Vec<Huella>,
+    tracks: Vec<Track>,
 }
 
 impl<'a> Compound<'a> {
@@ -628,7 +752,7 @@ impl<'a> Compound<'a> {
             into,
             patio: Aabb::from_center_size(hub, Vec2::new(side, side)),
             structures: Vec::new(),
-            huellas: vec![Huella {
+            tracks: vec![Track {
                 points: trunk.to_vec(),
             }],
         }
@@ -641,14 +765,14 @@ impl<'a> Compound<'a> {
             return false;
         }
         match self.kind {
-            SettlementKind::Rancho => self.rancho(),
-            SettlementKind::Puesto => self.puesto(),
-            SettlementKind::Chacra => self.chacra(),
-            SettlementKind::Estancia => self.estancia(),
+            SettlementKind::Hut => self.hut(),
+            SettlementKind::Outpost => self.outpost(),
+            SettlementKind::Farm => self.farm(),
+            SettlementKind::Ranch => self.ranch(),
         }
     }
 
-    fn rancho(&mut self) -> bool {
+    fn hut(&mut self) -> bool {
         let style = if self.chance(0.65) {
             HouseStyle::AdobeThatch
         } else {
@@ -674,7 +798,7 @@ impl<'a> Compound<'a> {
         true
     }
 
-    fn puesto(&mut self) -> bool {
+    fn outpost(&mut self) -> bool {
         let style = if self.chance(0.5) {
             HouseStyle::AdobeThatch
         } else {
@@ -687,14 +811,14 @@ impl<'a> Compound<'a> {
         if !self.corral((18.0, 24.0), self.round(20.0, 34.0)) {
             return false;
         }
-        let molino = self.chance(0.5);
-        let tank = molino && self.chance(0.5);
-        self.aguada(molino, tank, (14.0, 26.0));
+        let windpump = self.chance(0.5);
+        let tank = windpump && self.chance(0.5);
+        self.water_point(windpump, tank, (14.0, 26.0));
         self.extras(0.7, 0.0, (7.0, 10.0), (10.0, 20.0));
         true
     }
 
-    fn chacra(&mut self) -> bool {
+    fn farm(&mut self) -> bool {
         let style = if self.chance(0.6) {
             HouseStyle::BrickParapet
         } else {
@@ -709,11 +833,11 @@ impl<'a> Compound<'a> {
         if self.place(house, self.ahead(12.0, 20.0, 0.5)).is_none() {
             return false;
         }
-        let galpon = self.part(StructureKind::Galpon, (14.0, 20.0), (8.0, 10.0), 4.5);
-        if self.place(galpon, self.round(24.0, 40.0)).is_none() {
+        let barn = self.part(StructureKind::Barn, (14.0, 20.0), (8.0, 10.0), 4.5);
+        if self.place(barn, self.round(24.0, 40.0)).is_none() {
             return false;
         }
-        if !self.aguada(true, true, (20.0, 36.0)) {
+        if !self.water_point(true, true, (20.0, 36.0)) {
             return false;
         }
         self.corral((18.0, 26.0), self.round(30.0, 50.0));
@@ -743,17 +867,17 @@ impl<'a> Compound<'a> {
         true
     }
 
-    fn estancia(&mut self) -> bool {
-        let casco = self.part(
-            StructureKind::MainHouse(HouseStyle::CascoGallery),
+    fn ranch(&mut self) -> bool {
+        let homestead = self.part(
+            StructureKind::MainHouse(HouseStyle::GalleryHouse),
             (22.0, 30.0),
             (14.0, 18.0),
             4.5,
         );
-        let Some(casco) = self.place(casco, self.ahead(18.0, 26.0, 0.3)) else {
+        let Some(homestead) = self.place(homestead, self.ahead(18.0, 26.0, 0.3)) else {
             return false;
         };
-        let casco = self.structures[casco].footprint;
+        let homestead = self.structures[homestead].footprint;
         // The casas de peones, each in its own sector round the patio.
         let houses = 2 + self.rng.below(3);
         let turn = self.rng.range(0.0, TAU);
@@ -780,16 +904,16 @@ impl<'a> Compound<'a> {
         if built < 2 {
             return false;
         }
-        let mut galpones = 0;
+        let mut barns = 0;
         for _ in 0..1 + self.rng.below(2) {
-            let galpon = self.part(StructureKind::Galpon, (20.0, 30.0), (10.0, 14.0), 5.5);
-            galpones += self.place(galpon, self.round(40.0, 90.0)).is_some() as usize;
+            let barn = self.part(StructureKind::Barn, (20.0, 30.0), (10.0, 14.0), 5.5);
+            barns += self.place(barn, self.round(40.0, 90.0)).is_some() as usize;
         }
         let mut corrals = 0;
         for _ in 0..1 + self.rng.below(3) {
             corrals += self.corral((22.0, 34.0), self.round(60.0, 120.0)) as usize;
         }
-        if galpones == 0 || corrals == 0 || !self.aguada(true, true, (35.0, 70.0)) {
+        if barns == 0 || corrals == 0 || !self.water_point(true, true, (35.0, 70.0)) {
             return false;
         }
         for _ in 0..self.rng.below(4) {
@@ -800,17 +924,17 @@ impl<'a> Compound<'a> {
             let post = self.part(StructureKind::HitchingPost, (3.0, 3.0), (0.3, 0.3), 1.1);
             self.place(post, self.ahead(13.0, 20.0, 1.0));
         }
-        let carreta = self.part(StructureKind::Carreta, (5.0, 5.0), (2.2, 2.2), 2.5);
-        self.place(carreta, self.round(25.0, 50.0));
-        self.alameda();
-        self.grove(casco);
+        let cart = self.part(StructureKind::Cart, (5.0, 5.0), (2.2, 2.2), 2.5);
+        self.place(cart, self.round(25.0, 50.0));
+        self.poplar_row();
+        self.grove(homestead);
         let bounds = self.bounds();
-        bounds.size().x * bounds.size().y >= Settlement::ESTANCIA_AREA
+        bounds.size().x * bounds.size().y >= Settlement::RANCH_AREA
     }
 
     /// Poplars both sides of the trunk's last 90 m, 8 m apart.
-    fn alameda(&mut self) {
-        let entry = self.huellas[0].points[1];
+    fn poplar_row(&mut self) {
+        let entry = self.tracks[0].points[1];
         let length = entry.distance(self.hub);
         let dir = (entry - self.hub) * (1.0 / length.max(1e-6));
         let across = Vec2::new(-dir.y, dir.x);
@@ -826,11 +950,11 @@ impl<'a> Compound<'a> {
     }
 
     /// A monte of eucalyptus beside the casco: a jittered grid 6 m apart.
-    fn grove(&mut self, casco: Aabb) {
+    fn grove(&mut self, homestead: Aabb) {
         let across = Vec2::new(-self.into.y, self.into.x);
         let side = if self.chance(0.5) { 1.0 } else { -1.0 };
         let (rows, cols) = (4 + self.rng.below(3), 5 + self.rng.below(4));
-        let corner = casco.center()
+        let corner = homestead.center()
             + self.into * self.rng.range(20.0, 40.0)
             + across * (side * self.rng.range(15.0, 35.0));
         for r in 0..rows {
@@ -845,9 +969,9 @@ impl<'a> Compound<'a> {
 
     /// A molino (or a well) with its trough, and the tank when `tank`, at
     /// `radius` from the hub. `false` when the molino or well does not fit.
-    fn aguada(&mut self, molino: bool, tank: bool, radius: (f32, f32)) -> bool {
-        let source = if molino {
-            self.part(StructureKind::Molino, (2.4, 2.4), (2.4, 2.4), 10.0)
+    fn water_point(&mut self, windpump: bool, tank: bool, radius: (f32, f32)) -> bool {
+        let source = if windpump {
+            self.part(StructureKind::Windpump, (2.4, 2.4), (2.4, 2.4), 10.0)
         } else {
             self.part(StructureKind::Well, (1.6, 1.6), (1.6, 1.6), 0.9)
         };
@@ -885,14 +1009,14 @@ impl<'a> Compound<'a> {
 
     /// A hitching post by the patio and a carreta in the yard, each by
     /// its chance.
-    fn extras(&mut self, post: f32, carreta: f32, post_at: (f32, f32), carreta_at: (f32, f32)) {
+    fn extras(&mut self, post: f32, cart: f32, post_at: (f32, f32), cart_at: (f32, f32)) {
         if self.chance(post) {
             let part = self.part(StructureKind::HitchingPost, (3.0, 3.0), (0.3, 0.3), 1.1);
             self.place(part, self.round(post_at.0, post_at.1));
         }
-        if self.chance(carreta) {
-            let part = self.part(StructureKind::Carreta, (5.0, 5.0), (2.2, 2.2), 2.5);
-            self.place(part, self.round(carreta_at.0, carreta_at.1));
+        if self.chance(cart) {
+            let part = self.part(StructureKind::Cart, (5.0, 5.0), (2.2, 2.2), 2.5);
+            self.place(part, self.round(cart_at.0, cart_at.1));
         }
     }
 
@@ -945,7 +1069,7 @@ impl<'a> Compound<'a> {
     }
 
     /// Places `part` somewhere in `spot`, facing the hub, with its branch
-    /// huella when it has a door. Returns its index.
+    /// track when it has a door. Returns its index.
     fn place(&mut self, part: Part, spot: Spot) -> Option<usize> {
         for _ in 0..Self::TRIES {
             let angle = spot.bearing + self.rng.range(-spot.spread, spot.spread);
@@ -980,7 +1104,7 @@ impl<'a> Compound<'a> {
             if !self.branch_ok(self.hub, door, structure.footprint) {
                 return None;
             }
-            self.huellas.push(Huella {
+            self.tracks.push(Track {
                 points: vec![self.hub, door],
             });
         }
@@ -989,7 +1113,7 @@ impl<'a> Compound<'a> {
     }
 
     /// Whether `footprint` stands clear of the ground's keep-outs, the
-    /// patio, every other footprint and every huella.
+    /// patio, every other footprint and every track.
     fn fits(&self, footprint: Aabb) -> bool {
         let corridor = footprint.expanded(Settlement::CORRIDOR);
         self.ground.area_ok(footprint)
@@ -999,9 +1123,9 @@ impl<'a> Compound<'a> {
                 .iter()
                 .all(|s| !s.footprint.expanded(Settlement::GAP).intersects(&footprint))
             && self
-                .huellas
+                .tracks
                 .iter()
-                .flat_map(Huella::segments)
+                .flat_map(Track::segments)
                 .all(|(a, b)| corridor.segment_overlap(a, b).is_none())
     }
 
@@ -1033,10 +1157,10 @@ impl<'a> Compound<'a> {
         for s in &self.structures {
             grow(s.footprint);
         }
-        for p in self.huellas.iter().flat_map(|h| h.points.iter()) {
+        for p in self.tracks.iter().flat_map(|h| h.points.iter()) {
             grow(Aabb::from_center_size(
                 *p,
-                Vec2::new(2.0, 2.0) * Huella::HALF_WIDTH,
+                Vec2::new(2.0, 2.0) * Track::HALF_WIDTH,
             ));
         }
         bounds
@@ -1050,7 +1174,7 @@ impl<'a> Compound<'a> {
             patio: self.patio,
             bounds: self.bounds(),
             structures: self.structures,
-            huellas: self.huellas,
+            tracks: self.tracks,
             seed,
         }
     }
@@ -1133,7 +1257,7 @@ impl Shape {
 }
 
 /// The ground wild flora keeps off: every settlement's footprints, patios
-/// and huellas, indexed on a uniform grid so a point's check only looks at
+/// and tracks, indexed on a uniform grid so a point's check only looks at
 /// the shapes near it.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct KeepOut {
@@ -1193,6 +1317,8 @@ fn cell_of(p: Vec2) -> (i32, i32) {
 
 /// Mixed into the terrain seed for the settlements.
 const SETTLEMENT_SEED: u32 = 0x5e77_1e05;
+/// Mixed into the terrain seed for the forced estancias.
+const RANCH_SEED: u32 = 0x7a2c_4e11;
 
 #[cfg(test)]
 mod tests {
@@ -1215,13 +1341,13 @@ mod tests {
         let count = world.settle(&layout);
         let open = fences.gates.iter().filter(|g| g.open).count();
         println!(
-            "settlements: {} behind {open} open gates ({} ranchos, {} puestos, {} chacras, \
-             {} estancias), {count} obstacles; laid in {built:?}",
+            "settlements: {} behind {open} open gates ({} huts, {} outposts, {} farms, \
+             {} ranchs), {count} obstacles; laid in {built:?}",
             layout.settlements.len(),
-            layout.count(SettlementKind::Rancho),
-            layout.count(SettlementKind::Puesto),
-            layout.count(SettlementKind::Chacra),
-            layout.count(SettlementKind::Estancia),
+            layout.count(SettlementKind::Hut),
+            layout.count(SettlementKind::Outpost),
+            layout.count(SettlementKind::Farm),
+            layout.count(SettlementKind::Ranch),
         );
         // A generous bound, like the fences': laying them stays cheap at
         // startup.
@@ -1240,11 +1366,11 @@ mod tests {
         }
     }
 
-    /// Points along every huella of `s`, `step` meters apart.
-    fn huella_points(s: &Settlement, step: f32) -> Vec<Vec2> {
-        s.huellas
+    /// Points along every track of `s`, `step` meters apart.
+    fn track_points(s: &Settlement, step: f32) -> Vec<Vec2> {
+        s.tracks
             .iter()
-            .flat_map(Huella::segments)
+            .flat_map(Track::segments)
             .flat_map(|(a, b)| {
                 let n = (a.distance(b) / step).ceil().max(1.0) as usize;
                 (0..=n).map(move |k| a + (b - a) * (k as f32 / n as f32))
@@ -1282,9 +1408,9 @@ mod tests {
         assert!(total * 2 < open, "{total} of {open}");
         let count = |k| layout.count(k);
         use SettlementKind::*;
-        assert!(count(Estancia) >= 1, "{}", count(Estancia));
-        assert!(count(Estancia) * 3 <= total, "{}", count(Estancia));
-        for k in [Rancho, Puesto, Chacra] {
+        assert!(count(Ranch) >= 1, "{}", count(Ranch));
+        assert!(count(Ranch) * 3 <= total, "{}", count(Ranch));
+        for k in [Hut, Outpost, Farm] {
             assert!(count(k) >= 1, "{k:?}");
         }
         // Another seed lays another countryside.
@@ -1376,24 +1502,24 @@ mod tests {
                     }
                 }
             }
-            // The huellas stay in the field, off the road and the rail, and
+            // The tracks stay in the field, off the road and the rail, and
             // cross no wire: the trunk passes the gate's open leaves.
             let gate = fences.gates[s.gate as usize].at;
-            for p in huella_points(s, 0.5) {
+            for p in track_points(s, 0.5) {
                 assert!(cell.contains_point(p), "{p:?}");
                 assert!(
                     wire.near(Aabb::from_center_size(p, Vec2::new(0.6, 0.6)))
                         .is_empty(),
-                    "a huella crosses a fence at {p:?}"
+                    "a track crosses a fence at {p:?}"
                 );
                 if p.distance(gate) > Settlement::GATE_APPROACH {
                     assert!(
-                        cell.expanded(-Settlement::HUELLA_FENCE_CLEARANCE)
+                        cell.expanded(-Settlement::TRACK_FENCE_CLEARANCE)
                             .contains_point(p)
                     );
                     assert!(
                         roads
-                            .near(p, Settlement::HUELLA_ROAD_CLEARANCE - 0.01)
+                            .near(p, Settlement::TRACK_ROAD_CLEARANCE - 0.01)
                             .is_none(),
                         "{p:?}"
                     );
@@ -1406,7 +1532,7 @@ mod tests {
     }
 
     #[test]
-    fn buildings_overlap_neither_each_other_nor_the_huellas() {
+    fn buildings_overlap_neither_each_other_nor_the_tracks() {
         let (_, _, _, _, layout) = settled();
         for s in &layout.settlements {
             for (i, a) in s.structures.iter().enumerate() {
@@ -1419,13 +1545,13 @@ mod tests {
                         "{a:?} {b:?}"
                     );
                 }
-                for (p, q) in s.huellas.iter().flat_map(Huella::segments) {
+                for (p, q) in s.tracks.iter().flat_map(Track::segments) {
                     assert!(
                         a.footprint
-                            .expanded(Huella::HALF_WIDTH)
+                            .expanded(Track::HALF_WIDTH)
                             .segment_overlap(p, q)
                             .is_none(),
-                        "{a:?} on the huella {p:?}-{q:?}"
+                        "{a:?} on the track {p:?}-{q:?}"
                     );
                 }
             }
@@ -1433,24 +1559,24 @@ mod tests {
     }
 
     #[test]
-    fn huellas_lead_from_the_gate_to_every_door() {
+    fn tracks_lead_from_the_gate_to_every_door() {
         let (_, _, _, _, layout) = settled();
         for s in &layout.settlements {
             // Every branch leaves from the hub, where the trunk ends.
-            for h in &s.huellas[1..] {
+            for h in &s.tracks[1..] {
                 assert_eq!(h.points[0], s.hub);
             }
             for st in s.structures.iter().filter(|st| st.kind.is_reached()) {
                 let door = st.door();
                 assert!(
-                    s.huellas[1..]
+                    s.tracks[1..]
                         .iter()
                         .any(|h| h.points.last().unwrap().distance(door) < 1e-3),
-                    "no huella to {st:?}"
+                    "no track to {st:?}"
                 );
             }
             assert_eq!(
-                s.huellas.len(),
+                s.tracks.len(),
                 1 + s
                     .structures
                     .iter()
@@ -1482,35 +1608,35 @@ mod tests {
                 })
                 .unwrap();
             match s.kind {
-                SettlementKind::Rancho => {
+                SettlementKind::Hut => {
                     assert!(matches!(
                         style,
                         HouseStyle::AdobeThatch | HouseStyle::AdobeIron
                     ));
-                    assert_eq!(n(Galpon) + n(Molino), 0, "{s:?}");
+                    assert_eq!(n(Barn) + n(Windpump), 0, "{s:?}");
                 }
-                SettlementKind::Puesto => {
+                SettlementKind::Outpost => {
                     assert!(n(Corral) == 1 && n(Trough) <= 1, "{s:?}");
-                    assert!(n(Molino) + n(Well) == 1, "{s:?}");
+                    assert!(n(Windpump) + n(Well) == 1, "{s:?}");
                 }
-                SettlementKind::Chacra => {
-                    assert!(style != HouseStyle::CascoGallery);
-                    assert!(n(Galpon) == 1 && n(Molino) == 1, "{s:?}");
+                SettlementKind::Farm => {
+                    assert!(style != HouseStyle::GalleryHouse);
+                    assert!(n(Barn) == 1 && n(Windpump) == 1, "{s:?}");
                 }
-                SettlementKind::Estancia => {
-                    assert_eq!(style, HouseStyle::CascoGallery);
+                SettlementKind::Ranch => {
+                    assert_eq!(style, HouseStyle::GalleryHouse);
                     let workers = s
                         .structures
                         .iter()
                         .filter(|st| matches!(st.kind, WorkerHouse(_)))
                         .count();
                     assert!((2..=4).contains(&workers), "{workers}");
-                    assert!((1..=2).contains(&n(Galpon)));
-                    assert!(n(Corral) >= 1 && n(Molino) == 1);
+                    assert!((1..=2).contains(&n(Barn)));
+                    assert!(n(Corral) >= 1 && n(Windpump) == 1);
                     assert!(n(Eucalyptus) + n(Poplar) >= 10, "{s:?}");
                     let size = s.bounds.size();
                     assert!(
-                        size.x * size.y >= Settlement::ESTANCIA_AREA,
+                        size.x * size.y >= Settlement::RANCH_AREA,
                         "{} m²",
                         size.x * size.y
                     );
@@ -1580,10 +1706,10 @@ mod tests {
                     s.structures
                         .iter()
                         .any(|st| st.footprint.closest_point(p).distance(p) <= margin)
-                        || s.huellas
+                        || s.tracks
                             .iter()
-                            .flat_map(Huella::segments)
-                            .any(|(a, b)| segment_distance(p, a, b) <= Huella::HALF_WIDTH + margin)
+                            .flat_map(Track::segments)
+                            .any(|(a, b)| segment_distance(p, a, b) <= Track::HALF_WIDTH + margin)
                 })
         };
         for t in &trees {
@@ -1598,9 +1724,9 @@ mod tests {
                     tufts += 1;
                 }
             }
-            // On the huellas and in the buildings nothing grows; far off,
+            // On the tracks and in the buildings nothing grows; far off,
             // anything may.
-            for p in huella_points(s, 2.0) {
+            for p in track_points(s, 2.0) {
                 assert!(!layout.is_clear(p, 0.0) && !flora.off_settlements(p, 0.0));
             }
             for st in &s.structures {
@@ -1612,7 +1738,7 @@ mod tests {
         let busiest = layout
             .settlements
             .iter()
-            .flat_map(|s| huella_points(s, 4.0))
+            .flat_map(|s| track_points(s, 4.0))
             .map(|p| layout.keep_out().scanned(p))
             .max()
             .unwrap();
@@ -1646,7 +1772,7 @@ mod tests {
             layout
                 .settlements
                 .iter()
-                .map(|s| s.huellas.len())
+                .map(|s| s.tracks.len())
                 .sum::<usize>()
         );
     }
@@ -1671,15 +1797,133 @@ mod tests {
             corral.door(),
             Vec2::new(10.0, 20.0 + Settlement::DOOR_REACH)
         );
-        assert_eq!(StructureKind::Molino.slot(), Some("windpump"));
+        assert_eq!(StructureKind::Windpump.slot(), Some("windpump"));
         assert!(StructureKind::Eucalyptus.is_tree());
-        assert!(
-            Structure {
-                kind: StructureKind::Poplar,
-                ..corral
+    }
+
+    #[test]
+    fn tree_spots_block_with_their_trunks_only() {
+        let (world, _, _, _, layout) = settled();
+        let trees: Vec<&Structure> = layout
+            .settlements
+            .iter()
+            .flat_map(|s| s.structures.iter())
+            .filter(|s| s.kind.is_tree())
+            .collect();
+        assert!(!trees.is_empty());
+        let collider = crate::Circle::new(crate::Rider::COLLIDER_RADIUS);
+        for tree in trees {
+            let at = tree.footprint.center();
+            let trunk = tree.obstacles();
+            assert_eq!(trunk.len(), 1, "{tree:?}");
+            let r = tree.trunk_radius();
+            assert!((trunk[0].size().x - 2.0 * r).abs() < 1e-3);
+            // A rider walking at the trunk is pushed clear of the trunk box
+            // itself, not just off its middle.
+            let pushed = world.resolve(collider, at, |_| ());
+            let clear = r + crate::Rider::COLLIDER_RADIUS - 1e-3;
+            assert!(
+                (pushed.x - at.x).abs() >= clear || (pushed.y - at.y).abs() >= clear,
+                "{tree:?} pushed to {pushed:?}"
+            );
+            // No trunk stands on a track: the ruts and the alameda between
+            // its poplars stay open to the rider.
+            for s in &layout.settlements {
+                for (a, b) in s.tracks.iter().flat_map(Track::segments) {
+                    assert!(
+                        trunk[0]
+                            .expanded(crate::Rider::COLLIDER_RADIUS)
+                            .segment_overlap(a, b)
+                            .is_none(),
+                        "{tree:?} blocks a track"
+                    );
+                }
             }
-            .obstacles()
-            .is_empty()
+        }
+        // `World::settle` counts the trunks with the other obstacles.
+        assert_eq!(
+            layout.obstacles().count(),
+            layout
+                .settlements
+                .iter()
+                .flat_map(|s| s.structures.iter())
+                .map(|s| s.obstacles().len())
+                .sum::<usize>()
+        );
+        let mut bare = World::with_towns(world.config, crate::Terrain::default(), &[]);
+        let trunks = layout
+            .settlements
+            .iter()
+            .flat_map(|s| s.structures.iter())
+            .filter(|s| s.kind.is_tree())
+            .count();
+        assert!(bare.settle(&layout) >= trunks + layout.settlements.len());
+        // Radii stay in a trunk's range at any height.
+        for (kind, lo, hi) in [
+            (StructureKind::Eucalyptus, 0.2, 0.45),
+            (StructureKind::Poplar, 0.12, 0.25),
+        ] {
+            for height in [1.0, 20.0, 80.0] {
+                let r = Structure {
+                    kind,
+                    height,
+                    ..*layout.settlements[0].structures.first().unwrap()
+                }
+                .trunk_radius();
+                assert!((lo..=hi).contains(&r), "{kind:?} {height}: {r}");
+            }
+        }
+        assert_eq!(
+            Structure {
+                kind: StructureKind::Eucalyptus,
+                height: 25.0,
+                ..*layout.settlements[0].structures.first().unwrap()
+            }
+            .trunk_radius(),
+            0.4
+        );
+    }
+
+    #[test]
+    fn a_town_asked_for_an_estancia_gets_one_nearby_or_is_reported() {
+        let (world, towns, line, fences) = fenced();
+        let plain = SettlementLayout::build(&world.terrain, &towns, &line, &fences);
+        let asked: Vec<usize> = (0..towns.len()).chain([towns.len() + 3]).collect();
+        let layout =
+            SettlementLayout::build_with_ranches(&world.terrain, &towns, &line, &fences, &asked);
+        let again =
+            SettlementLayout::build_with_ranches(&world.terrain, &towns, &line, &fences, &asked);
+        assert_eq!(layout, again);
+        // The missing town is reported, never silently dropped.
+        assert!(layout.unplaced_ranches.contains(&(towns.len() + 3)));
+        for (t, town) in towns.iter().enumerate() {
+            if layout.unplaced_ranches.contains(&t) {
+                continue;
+            }
+            let band = town.leveled();
+            assert!(
+                layout.settlements.iter().any(|s| {
+                    let gate = fences.gates[s.gate as usize].at;
+                    s.kind == SettlementKind::Ranch
+                        && band.closest_point(gate).distance(gate)
+                            <= SettlementLayout::RANCH_REACH[2]
+                }),
+                "{}",
+                town.name
+            );
+        }
+        assert!(layout.count(SettlementKind::Ranch) >= towns.len().min(1));
+        // Every settlement keeps its spacing, the forced ones too.
+        for (i, a) in layout.settlements.iter().enumerate() {
+            for b in &layout.settlements[i + 1..] {
+                assert!(a.hub.distance(b.hub) >= Settlement::MIN_SPACING);
+            }
+        }
+        // Asking for nothing lays the seeded mix as before.
+        assert!(plain.unplaced_ranches.is_empty());
+        assert_eq!(
+            SettlementLayout::build_with_ranches(&world.terrain, &towns, &line, &fences, &[]),
+            plain
         );
     }
 }

@@ -74,7 +74,7 @@ pub struct FloraSite {
     /// The surveyed fence lines: `x` of the north–south ones, `y` of the
     /// east–west ones.
     fences: (Vec<f32>, Vec<f32>),
-    /// The settlements' footprints, patios and huellas.
+    /// The settlements' footprints, patios and tracks.
     settlements: Option<Arc<KeepOut>>,
     seed: u32,
 }
@@ -103,10 +103,10 @@ impl FloraSite {
     /// Least distance from a tree to a town's leveled band, in meters.
     pub const TREE_TOWN_MARGIN: f32 = 6.0;
     /// Least distance from a tree's trunk to a settlement's footprints,
-    /// patio and huellas, in meters: crowns stay off roofs and ruts.
+    /// patio and tracks, in meters: crowns stay off roofs and ruts.
     pub const TREE_SETTLEMENT_MARGIN: f32 = 4.0;
     /// Least distance from a tuft, stone or shrub to a settlement's
-    /// footprints, patio and huellas, in meters.
+    /// footprints, patio and tracks, in meters.
     pub const TUFT_SETTLEMENT_MARGIN: f32 = 0.3;
     /// Tree candidates tried per chunk of [`Self::REFERENCE_CHUNK`] meters.
     const TREE_CANDIDATES: f32 = 220.0;
@@ -158,7 +158,7 @@ impl FloraSite {
     }
 
     /// This flora, also kept off every settlement of `settlements`: its
-    /// footprints, its patio and its huellas.
+    /// footprints, its patio and its tracks.
     pub fn with_settlements(mut self, settlements: &SettlementLayout) -> Self {
         self.settlements = Some(settlements.keep_out.clone());
         self
