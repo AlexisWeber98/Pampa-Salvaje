@@ -51,13 +51,15 @@ pub enum ErrandStage {
 }
 
 impl ErrandStage {
-    /// The one-line objective shown on screen for this stage, in Spanish;
-    /// `None` once done.
-    pub fn objective(self) -> Option<&'static str> {
+    /// The one-line objective shown on screen for this stage, in Spanish,
+    /// for an errand to the comisario of `police_town`; `None` once done.
+    pub fn objective(self, police_town: &str) -> Option<String> {
         match self {
-            Self::MeetHidalgo => Some("Buscá a Don Hidalgo en la plaza"),
-            Self::TakeHorse => Some("Tomá el caballo de Don Hidalgo"),
-            Self::ReportToFarach => Some("Presentate ante el comisario Farach en Castex"),
+            Self::MeetHidalgo => Some("Buscá a Don Hidalgo en la plaza".into()),
+            Self::TakeHorse => Some("Tomá el caballo de Don Hidalgo".into()),
+            Self::ReportToFarach => {
+                Some(format!("Presentate al comisario Farach en {police_town}"))
+            }
             Self::Done => None,
         }
     }
@@ -95,6 +97,8 @@ pub struct Errand {
     farach: Standing,
     /// Town of the horse, and the horse.
     horse: (usize, TetheredHorse),
+    /// Name of the town Farach is in.
+    police_name: String,
 }
 
 impl Errand {
@@ -132,6 +136,7 @@ impl Errand {
                 heading: facing,
             },
             horse: (giver, home.hitching_post.horse),
+            police_name: away.name.clone(),
         })
     }
 
@@ -162,6 +167,16 @@ impl Errand {
 
     pub fn stage(&self) -> ErrandStage {
         self.stage
+    }
+
+    /// Name of the town the errand sends the player to, Farach's.
+    pub fn police_name(&self) -> &str {
+        &self.police_name
+    }
+
+    /// The current stage's objective (see [`ErrandStage::objective`]).
+    pub fn objective(&self) -> Option<String> {
+        self.stage.objective(&self.police_name)
     }
 
     /// Where `npc` stands.
@@ -482,17 +497,36 @@ mod tests {
     #[test]
     fn every_stage_but_the_last_has_a_short_spanish_objective() {
         use ErrandStage::*;
+        let town = "Eduardo Castex";
         for stage in [MeetHidalgo, TakeHorse, ReportToFarach] {
-            let text = stage.objective().expect("an objective");
+            let text = stage.objective(town).expect("an objective");
             assert!(
                 !text.trim().is_empty() && text.chars().count() <= 48,
                 "{text}"
             );
         }
-        assert!(MeetHidalgo.objective().unwrap().contains("Hidalgo"));
-        assert!(TakeHorse.objective().unwrap().contains("caballo"));
-        assert!(ReportToFarach.objective().unwrap().contains("Farach"));
-        assert_eq!(Done.objective(), None);
+        assert!(MeetHidalgo.objective(town).unwrap().contains("Hidalgo"));
+        assert!(TakeHorse.objective(town).unwrap().contains("caballo"));
+        assert!(ReportToFarach.objective(town).unwrap().contains("Farach"));
+        assert_eq!(Done.objective(town), None);
+    }
+
+    #[test]
+    fn the_report_objective_names_the_errands_own_police_town() {
+        let mut towns = towns();
+        towns[1].name = "General Pico".into();
+        let mut e = Errand::new(&towns, 0, 1).unwrap();
+        assert_eq!(e.police_name(), "General Pico");
+        assert!(e.objective().unwrap().contains("Hidalgo"));
+        let hidalgo = e.standing(Npc::Hidalgo).position;
+        e.talk(Npc::Hidalgo, hidalgo);
+        e.mount(e.horse().1.position);
+        let text = e.objective().unwrap();
+        assert!(
+            text.contains("Farach") && text.contains("General Pico"),
+            "{text}"
+        );
+        assert!(!text.contains("Castex"), "{text}");
     }
 
     #[test]

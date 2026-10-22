@@ -203,6 +203,29 @@ impl RoadNetwork {
     /// How far past its ends a piece still levels the ground, in meters:
     /// enough to cover the outside of the road's gentle bends.
     const CUT_OVERLAP: f32 = 2.0;
+    /// Half the width of a level crossing's deck across the track, in
+    /// meters from the track's centerline: the planks and the ballast
+    /// beside them, where the road stands at rail-top level.
+    pub const CROSSING_DECK: f32 = 1.7;
+    /// Length of the packed-earth approach on either side of a level
+    /// crossing, in meters: the road rises from the ground to the deck over
+    /// it, gentler than 1 in 10.
+    pub const CROSSING_RAMP: f32 = 7.0;
+    /// Height of a level crossing's deck above the ground, in meters: the
+    /// planks' top, just under the rail heads.
+    pub const CROSSING_RISE: f32 = crate::LineTrain::RAIL_TOP - 0.02;
+    /// Beside the road, the approach slopes down to the ground between
+    /// this many meters inside and outside the road's edge.
+    pub const CROSSING_SIDE: f32 = 0.8;
+    /// Half the width of the track bed (sleepers and ballast), in meters
+    /// from the track's centerline: a road's cut leaves it untouched, so the
+    /// track, the train and the platforms never dip at a level crossing.
+    pub const RAIL_BED: f32 = 3.0;
+    /// Past [`Self::RAIL_BED`], over this many meters the cut eases back in.
+    const RAIL_BLEND: f32 = 6.0;
+    /// Along the track, the bed is kept within this many meters of a
+    /// crossing, fading out over the next ten (the cut is long gone there).
+    const RAIL_NEAR: f32 = 30.0;
     /// Farthest any query of [`Self::near`] reaches, in meters.
     pub const INDEX_REACH: f32 = 64.0;
     /// Side of one index cell, in meters.
@@ -359,7 +382,8 @@ impl RoadNetwork {
     /// Continuous everywhere: each piece within reach pulls toward its own
     /// level by a weight that fades to 0 at [`Self::CUT_REACH`] across it
     /// and within a couple of meters past its ends, and the levels are
-    /// averaged by weight.
+    /// averaged by weight. The track bed at a level crossing is left alone,
+    /// the cut easing back in beside it (see [`Self::RAIL_BED`]).
     pub fn cut(&self, p: Vec2, base: impl Fn(Vec2) -> f32) -> Option<(f32, f32)> {
         let (mut strongest, mut total, mut weighted) = (0.0_f32, 0.0, 0.0);
         for piece in self.nearby(p) {
@@ -387,7 +411,59 @@ impl RoadNetwork {
             total += w;
             weighted += w * (base(c) - depth);
         }
+        if strongest <= 0.0 {
+            return None;
+        }
+        let strongest = strongest * self.rail_keep(p);
         (strongest > 0.0).then(|| (strongest, weighted / total))
+    }
+
+    /// How much of the cut may apply at `p` beside the railway, in
+    /// `[0, 1]`: 0 on the track bed at a level crossing, easing to 1 past
+    /// it and away from the crossings. Continuous.
+    fn rail_keep(&self, p: Vec2) -> f32 {
+        let reach = Self::RAIL_NEAR + 10.0;
+        self.crossings()
+            .filter_map(|c| {
+                let rel = p - c.at;
+                let along = rel.dot(c.rail).abs();
+                (along < reach).then(|| {
+                    let across = (rel.x * c.rail.y - rel.y * c.rail.x).abs();
+                    1.0 - (1.0
+                        - smoothstep(Self::RAIL_BED, Self::RAIL_BED + Self::RAIL_BLEND, across))
+                        * (1.0 - smoothstep(Self::RAIL_NEAR, reach, along))
+                })
+            })
+            .fold(1.0, f32::min)
+    }
+
+    /// How far a level crossing's approach raises the road at `p` above
+    /// the terrain, in meters: [`Self::CROSSING_RISE`] on the deck across
+    /// the track, easing down to 0 over [`Self::CROSSING_RAMP`] on either
+    /// side along the road (no steeper than about 1 in 10), and sloping
+    /// down to the ground at the road's edges ([`Self::CROSSING_SIDE`]); 0
+    /// away from the crossings. Continuous.
+    ///
+    /// The one profile of the approach: [`crate::World::ground_height`]
+    /// adds it where bodies stand and render lays the road surface on it.
+    /// The terrain itself is not raised, so the track bed stays as it is.
+    pub fn crossing_rise(&self, p: Vec2) -> f32 {
+        let ramp = Self::CROSSING_DECK + Self::CROSSING_RAMP;
+        let (inner, outer) = (
+            Self::HALF_WIDTH - Self::CROSSING_SIDE,
+            Self::HALF_WIDTH + Self::CROSSING_SIDE,
+        );
+        self.crossings()
+            .map(|c| {
+                let rel = p - c.at;
+                // Across the track (along the road), and across the road.
+                let across = (rel.x * c.rail.y - rel.y * c.rail.x).abs();
+                let aside = (rel.x * c.road.y - rel.y * c.road.x).abs();
+                Self::CROSSING_RISE
+                    * (1.0 - smoothstep(Self::CROSSING_DECK, ramp, across))
+                    * (1.0 - smoothstep(inner, outer, aside))
+            })
+            .fold(0.0, f32::max)
     }
 
     /// The parts of every road inside `area` (a terrain chunk), each as

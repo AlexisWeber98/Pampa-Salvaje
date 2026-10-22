@@ -270,7 +270,9 @@ mod tests {
         let mut app = app();
         app.update();
         assert_eq!(image_of::<HudObjectiveLine>(&mut app).1, Display::None);
-        let text = ErrandStage::MeetHidalgo.objective().unwrap().to_string();
+        let text = ErrandStage::MeetHidalgo
+            .objective("Eduardo Castex")
+            .unwrap();
         app.insert_resource(HudObjective(Some(text.clone())));
         app.update();
         assert_eq!(app.world().resource::<Hud>().objective, Some(text.clone()));
@@ -290,8 +292,12 @@ mod tests {
     #[test]
     fn every_objective_and_clock_reading_uses_only_characters_the_font_draws() {
         use ErrandStage::*;
-        for stage in [MeetHidalgo, TakeHorse, ReportToFarach, Done] {
-            if let Some(text) = stage.objective() {
+        let towns = ["Eduardo Castex", "Monte Nievas", "General Pico"];
+        for (stage, town) in [MeetHidalgo, TakeHorse, ReportToFarach, Done]
+            .into_iter()
+            .flat_map(|stage| towns.map(|town| (stage, town)))
+        {
+            if let Some(text) = stage.objective(town) {
                 let bad: Vec<char> = text.chars().filter(|&c| !font::supports(c)).collect();
                 assert!(bad.is_empty(), "{text}: {bad:?}");
             }

@@ -23,4 +23,8 @@
         "Bienvenido a Castex, paisano.",
         "Quédese cerca, que trabajo no falta.",
     ],
+    // The town whose comisaría the errand sends the player to, by its name
+    // in world/towns.ron (the HUD objective names it too). Without it, or
+    // when that town has no police station, the nearest other town with one.
+    police_town: "Eduardo Castex",
 )

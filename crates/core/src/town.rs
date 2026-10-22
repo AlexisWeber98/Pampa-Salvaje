@@ -168,6 +168,28 @@ pub struct TetheredHorse {
     pub footprint: Aabb,
 }
 
+impl TetheredHorse {
+    /// Length of a standing horse's footprint, nose to tail, in meters.
+    pub const LENGTH: f32 = 2.4;
+    /// Width of a standing horse's footprint, in meters.
+    pub const WIDTH: f32 = 1.0;
+
+    /// A horse standing tied at `position`, facing `heading`: its
+    /// footprint is the axis-aligned box around its turned body.
+    pub fn standing(position: Vec2, heading: Heading) -> Self {
+        let along = heading.forward();
+        let half = Vec2::new(
+            along.x.abs() * Self::LENGTH + along.y.abs() * Self::WIDTH,
+            along.y.abs() * Self::LENGTH + along.x.abs() * Self::WIDTH,
+        ) * 0.5;
+        Self {
+            position,
+            heading,
+            footprint: Aabb::new(position - half, position + half),
+        }
+    }
+}
+
 /// A timber hitching rail with a horse tied alongside it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HitchingPost {
@@ -451,6 +473,29 @@ pub struct TownLayout {
 
 /// Trunk radius used for tree collision.
 pub const TREE_TRUNK_RADIUS: f32 = 0.35;
+
+/// Width of the two paths crossing every plaza, in meters.
+pub const PLAZA_PATH_WIDTH: f32 = 3.0;
+/// Side of the square monument plinth where a plaza's paths meet, meters.
+pub const PLAZA_MONUMENT: f32 = 3.0;
+/// Least gap between a plaza tree's trunk and a path or the monument, in
+/// meters: trees stand in the green beds between the paths.
+pub const PLAZA_PATH_CLEARANCE: f32 = 1.5;
+
+/// The two paths crossing `plaza` through its center, edge to edge: the
+/// east–west one, then the north–south one.
+pub fn plaza_paths(plaza: Aabb) -> [Aabb; 2] {
+    let (c, s) = (plaza.center(), plaza.size());
+    [
+        Aabb::from_center_size(c, Vec2::new(s.x, PLAZA_PATH_WIDTH)),
+        Aabb::from_center_size(c, Vec2::new(PLAZA_PATH_WIDTH, s.y)),
+    ]
+}
+
+/// The monument's plinth at the center of `plaza`, where its paths meet.
+pub fn plaza_monument(plaza: Aabb) -> Aabb {
+    Aabb::from_center_size(plaza.center(), Vec2::new(PLAZA_MONUMENT, PLAZA_MONUMENT))
+}
 
 impl TownLayout {
     /// Builds the town `config` describes, or explains why it cannot.
@@ -1498,8 +1543,26 @@ fn hitching_post(store: &Building, veranda: f32) -> HitchingPost {
 }
 
 /// Trees in a ring just inside the plaza edge, leaving the center open:
-/// `steps.0` gaps along the x edges and `steps.1` along the y edges.
+/// `steps.0` gaps along the x edges and `steps.1` along the y edges. Only
+/// the green beds are planted: a ring spot on a path, or within
+/// [`PLAZA_PATH_CLEARANCE`] of one or of the monument, stays empty.
 fn plaza_trees(plaza: Aabb, steps: (usize, usize)) -> Vec<Vec2> {
+    let reach = TREE_TRUNK_RADIUS + PLAZA_PATH_CLEARANCE;
+    let keep_off: Vec<Aabb> = plaza_paths(plaza)
+        .into_iter()
+        .chain([plaza_monument(plaza)])
+        .collect();
+    let mut trees = plaza_ring(plaza, steps);
+    trees.retain(|&t| {
+        keep_off
+            .iter()
+            .all(|a| a.closest_point(t).distance(t) >= reach)
+    });
+    trees
+}
+
+/// Spots in a ring just inside the plaza edge (see [`plaza_trees`]).
+fn plaza_ring(plaza: Aabb, steps: (usize, usize)) -> Vec<Vec2> {
     let inset = 3.0;
     let (lo, hi) = (
         plaza.min + Vec2::new(inset, inset),
@@ -2002,6 +2065,35 @@ pub(crate) mod tests {
             };
             assert!(t.trees.iter().all(|&p| inside(p)), "{}", t.name);
         }
+    }
+
+    #[test]
+    fn plaza_trees_stand_in_the_beds_clear_of_the_paths_and_the_monument() {
+        let mut checked = 0;
+        for t in sample_towns() {
+            for &tree in &t.trees {
+                let plaza = t
+                    .plazas()
+                    .find(|p| p.contains_point(tree))
+                    .expect("every tree is in a plaza");
+                let reach = TREE_TRUNK_RADIUS + PLAZA_PATH_CLEARANCE;
+                for keep_off in plaza_paths(plaza)
+                    .into_iter()
+                    .chain([plaza_monument(plaza)])
+                {
+                    let gap = keep_off.closest_point(tree).distance(tree);
+                    assert!(
+                        gap >= reach - 1e-4,
+                        "{}: tree {tree:?} {gap} m off a path",
+                        t.name
+                    );
+                }
+                checked += 1;
+            }
+            // Still a shady plaza.
+            assert!(t.trees.len() >= 8, "{}", t.name);
+        }
+        assert!(checked > 100, "{checked}");
     }
 
     #[test]
@@ -2589,21 +2681,22 @@ pub(crate) mod tests {
     #[test]
     fn small_towns_keep_their_layout_byte_for_byte() {
         // Fingerprints of the layouts generated before big towns existed.
+        // Every one re-pinned on purpose (PR-F1): plaza trees no longer
+        // stand on the plaza paths, so the ring spots on and beside the
+        // paths are left empty. Nothing else changed. Earlier, Monte Nievas
+        // was re-pinned when it shipped with `police_stations: Some(0)`.
         let pinned = [
-            // Monte Nievas, re-pinned on purpose: it now ships with
-            // `police_stations: Some(0)` (no comisaría), so its police
-            // station block holds houses. Was 0x048e_7ce0_c05b_12e8.
-            0xe05f_3775_61a3_6ee8,
-            0x09b0_b9cc_57c5_1b3c,
-            0x4278_2489_8197_3719,
-            0xabab_ea79_19ae_9dd0,
-            0x594b_cefa_3b43_1e47,
-            0x986f_4444_7ce0_7d14,
-            0xdfa9_5415_3d2e_1ca4,
-            0x7946_81b8_2f5f_cb2a,
-            0x1e04_1118_550d_3b2b,
-            0x0432_1980_720b_191f,
-            0x50e1_a45c_327a_046b,
+            0xfd4d_9a56_ded8_0363,
+            0x58b6_32c5_6e41_8e45,
+            0xa3ea_7a9e_8180_f921,
+            0xfc0c_60aa_37ff_4ba0,
+            0x41cb_c129_7c58_809f,
+            0x92a5_6402_c51d_e514,
+            0x4fdb_c7f1_5915_831c,
+            0xdbe6_7829_1ec8_e37f,
+            0x2c55_4876_3cdb_103b,
+            0x9cd2_1051_b3f7_f245,
+            0x6987_085f_03c9_5016,
         ];
         let configs = small_configs();
         assert_eq!(configs.len(), pinned.len());

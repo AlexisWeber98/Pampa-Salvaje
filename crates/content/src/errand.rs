@@ -24,6 +24,18 @@ pub struct ErrandLines {
     pub not_your_horse: Vec<String>,
     /// Comisario Farach, when the player reports.
     pub farach: Vec<String>,
+    /// The town whose comisario the errand sends the player to, by name
+    /// (the nearest other town with a police station when no such town
+    /// has one). Defaults to [`DEFAULT_POLICE_TOWN`].
+    #[serde(default = "default_police_town")]
+    pub police_town: String,
+}
+
+/// The errand's police town when the file does not name one.
+pub const DEFAULT_POLICE_TOWN: &str = "Eduardo Castex";
+
+fn default_police_town() -> String {
+    DEFAULT_POLICE_TOWN.to_string()
 }
 
 impl ErrandLines {
@@ -56,11 +68,12 @@ impl ErrandLines {
             ]),
             not_your_horse: own(&["Este caballo no es mío."]),
             farach: own(&["¿Lo manda Don Hidalgo?", "Bienvenido a Castex."]),
+            police_town: default_police_town(),
         }
     }
 
-    /// Checks every sequence has lines, and every line is non-blank and at
-    /// most [`crate::MAX_LINE_CHARS`] long.
+    /// Checks every sequence has lines, and every line (and the police
+    /// town's name) is non-blank and at most [`crate::MAX_LINE_CHARS`] long.
     pub fn validate(&self) -> Result<(), ContentError> {
         check_pools(&self.pools())
     }
@@ -72,11 +85,12 @@ impl ErrandLines {
     }
 
     /// Every sequence with the name it has in the file.
-    fn pools(&self) -> [(&'static str, &[String]); 3] {
+    fn pools(&self) -> [(&'static str, &[String]); 4] {
         [
             ("hidalgo", &self.hidalgo),
             ("not_your_horse", &self.not_your_horse),
             ("farach", &self.farach),
+            ("police_town", std::slice::from_ref(&self.police_town)),
         ]
     }
 }
@@ -130,6 +144,24 @@ mod tests {
             assert!(hidalgo.contains(needed), "Hidalgo never says {needed}");
         }
         assert!(lines.farach.join(" ").contains("Hidalgo"));
+        assert_eq!(lines.police_town, "Eduardo Castex");
+    }
+
+    #[test]
+    fn the_police_town_defaults_when_the_file_does_not_name_it() {
+        let lines = ErrandLines::parse(r#"(hidalgo: ["a"], not_your_horse: ["b"], farach: ["c"])"#)
+            .unwrap();
+        assert_eq!(lines.police_town, DEFAULT_POLICE_TOWN);
+        let named = ErrandLines::parse(
+            r#"(hidalgo: ["a"], not_your_horse: ["b"], farach: ["c"], police_town: "General Pico")"#,
+        )
+        .unwrap();
+        assert_eq!(named.police_town, "General Pico");
+        let blank = ErrandLines::parse(
+            r#"(hidalgo: ["a"], not_your_horse: ["b"], farach: ["c"], police_town: " ")"#,
+        )
+        .expect_err("a blank town");
+        assert!(blank.to_string().contains("police_town"), "{blank}");
     }
 
     #[test]
@@ -188,7 +220,8 @@ mod tests {
             ErrandLines::parse(r#"(hidalgo: ["ab#"], not_your_horse: ["a"], farach: ["~b#"])"#)
                 .unwrap();
         assert_eq!(
-            lines.unsupported_chars(|c| c.is_ascii_alphabetic()),
+            // The default police town's name has a space.
+            lines.unsupported_chars(|c| c.is_ascii_alphabetic() || c == ' '),
             ['#', '~']
         );
         assert!(lines.unsupported_chars(|_| true).is_empty());
