@@ -327,6 +327,63 @@ fn label_scaled(map: &mut Canvas, text: &str, center: Vec2, scale: usize) {
     }
 }
 
+/// Radius of the compass rose's ring, in map pixels.
+pub const COMPASS_RADIUS: f32 = 17.0;
+
+/// Where the compass rose stands: the map's bottom-left corner, clear of
+/// the title along the top.
+pub fn compass_center(size_px: usize) -> Vec2 {
+    let inset = COMPASS_RADIUS + 8.0;
+    Vec2::new(inset, size_px as f32 - inset)
+}
+
+/// The compass rose's four letters, N, E, S and O (oeste), each with the
+/// unit direction it points in, in map pixels, taken from `frame` itself:
+/// the map's own way of showing world north (ground `+y`), east, south and
+/// west, so a map that turned would turn its rose with it.
+pub fn compass_marks(frame: &MapFrame) -> [(char, Vec2); 4] {
+    let toward = |d: GroundVec2| {
+        let step = d * frame.half_extent.max(1.0);
+        (frame.to_map(frame.center + step) - frame.to_map(frame.center)).normalize_or_zero()
+    };
+    [
+        ('N', toward(GroundVec2::new(0.0, 1.0))),
+        ('E', toward(GroundVec2::new(1.0, 0.0))),
+        ('S', toward(GroundVec2::new(0.0, -1.0))),
+        ('O', toward(GroundVec2::new(-1.0, 0.0))),
+    ]
+}
+
+/// Draws the compass rose at [`compass_center`]: a paper disc in an ink
+/// ring, a red needle toward north, and the letters of
+/// [`compass_marks`] inside the ring.
+pub fn draw_compass(canvas: &mut Canvas, frame: &MapFrame) {
+    let c = compass_center(canvas.size);
+    let r = COMPASS_RADIUS;
+    let (cx, cy) = (c.x.floor() as i32, c.y.floor() as i32);
+    let reach = r as i32 + 1;
+    for y in cy - reach..=cy + reach {
+        for x in cx - reach..=cx + reach {
+            let d = Vec2::new(x as f32 + 0.5, y as f32 + 0.5).distance(c);
+            if d <= r - 1.0 {
+                canvas.set(x, y, palette::PAPER);
+            } else if d <= r + 0.5 {
+                canvas.set(x, y, palette::INK);
+            }
+        }
+    }
+    let marks = compass_marks(frame);
+    // A short red needle from the middle toward north.
+    let north = marks[0].1;
+    for k in 1..=5 {
+        let p = c + north * k as f32;
+        canvas.set(p.x.floor() as i32, p.y.floor() as i32, palette::PLAYER);
+    }
+    for (letter, d) in marks {
+        label_scaled(canvas, &letter.to_string(), c + d * (r * 0.6), 1);
+    }
+}
+
 /// The map letter of a place: the initial of its sign name.
 pub fn place_initial(kind: PlaceKind) -> char {
     kind.name().chars().next().unwrap_or(' ')
@@ -349,6 +406,7 @@ pub struct Markers {
 /// player's marker position, if any.
 pub fn draw_markers(canvas: &mut Canvas, frame: &MapFrame, markers: &Markers) -> Option<Vec2> {
     canvas.clear();
+    draw_compass(canvas, frame);
     let px = frame.meters_per_px();
     for car in markers
         .cars
@@ -755,6 +813,60 @@ mod tests {
         );
         // Off-map walkers leave the corner alone.
         assert_eq!(canvas.get(199, 0)[3], 0);
+    }
+
+    #[test]
+    fn the_compass_n_points_to_world_north_and_every_letter_is_drawn() {
+        let frame = MapFrame {
+            center: GroundVec2::new(-3050.0, -1950.0),
+            half_extent: 160.0,
+            size_px: 320,
+        };
+        let marks = compass_marks(&frame);
+        let letters: Vec<char> = marks.iter().map(|m| m.0).collect();
+        assert_eq!(letters, ['N', 'E', 'S', 'O']);
+        assert!(letters.iter().all(|&c| font::supports(c)));
+        // N points where ground +y lands on the map: up (map y grows south).
+        let north =
+            frame.to_map(frame.center + GroundVec2::new(0.0, 10.0)) - frame.to_map(frame.center);
+        assert!(close(marks[0].1, north.normalize()), "{:?}", marks[0]);
+        assert!(close(marks[0].1, Vec2::new(0.0, -1.0)));
+        assert!(close(marks[1].1, Vec2::new(1.0, 0.0)), "east is right");
+        assert!(close(marks[2].1, Vec2::new(0.0, 1.0)));
+        assert!(close(marks[3].1, Vec2::new(-1.0, 0.0)), "oeste is left");
+
+        // Drawn into the marker layer, every frame, in its corner.
+        let mut canvas = Canvas::new(320);
+        draw_markers(&mut canvas, &frame, &Markers::default());
+        let c = compass_center(320);
+        assert_eq!(
+            canvas.get(c.x as usize, (c.y - COMPASS_RADIUS) as usize),
+            palette::INK,
+            "the ring"
+        );
+        // Each letter has ink inside the ring on its own side, and the
+        // north needle is red, above the middle.
+        for (_, d) in marks {
+            let at = c + d * (COMPASS_RADIUS * 0.6);
+            let ink = (-3..=3)
+                .flat_map(|dy| (-3..=3).map(move |dx| (dx, dy)))
+                .filter(|(dx, dy)| {
+                    canvas.get((at.x as i32 + dx) as usize, (at.y as i32 + dy) as usize)
+                        == palette::INK
+                })
+                .count();
+            assert!(ink >= 3, "{d:?}: {ink}");
+        }
+        assert_eq!(
+            canvas.get(c.x as usize, (c.y - 3.0) as usize),
+            palette::PLAYER
+        );
+        assert_eq!(
+            canvas.get(c.x as usize, (c.y + 3.0) as usize),
+            palette::PAPER
+        );
+        // Away from the corner the layer stays clear.
+        assert_eq!(canvas.get(160, 160)[3], 0);
     }
 
     fn count(canvas: &Canvas, color: [u8; 4]) -> usize {
