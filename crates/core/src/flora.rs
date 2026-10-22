@@ -9,7 +9,8 @@ use crate::rng::Rng;
 use std::sync::Arc;
 
 use crate::{
-    Aabb, ChunkCoord, FenceLayout, FlatArea, RailLine, RoadNetwork, Terrain, Vec2, WorldConfig,
+    Aabb, ChunkCoord, FenceLayout, FlatArea, LinePath, RailLine, RoadNetwork, Terrain, Vec2,
+    WorldConfig,
 };
 
 /// A native tree of the caldenal.
@@ -122,6 +123,23 @@ impl FloraSite {
             fences: (Vec::new(), Vec::new()),
             seed: terrain.seed ^ FLORA_SEED,
         }
+    }
+
+    /// This flora, also kept off every piece of the train's whole `path`
+    /// ([`crate::RailLine::full_path`]): the links and each town's own
+    /// straight track with its run-outs past the town, which
+    /// [`Self::new`]'s links alone leave out.
+    pub fn with_track(mut self, path: &LinePath) -> Self {
+        self.rail
+            .extend(path.points().windows(2).map(|w| (w[0], w[1])));
+        self
+    }
+
+    /// Whether `p` is at least `margin` from every piece of track this
+    /// flora keeps off (see [`Self::with_track`]): the one keep-out the
+    /// terrain's stones and shrubs share with the trees and tufts.
+    pub fn off_track(&self, p: Vec2, margin: f32) -> bool {
+        rail_distance(&self.rail, p) >= margin
     }
 
     /// This flora, with trees kept off the surveyed lines of `fences`.
@@ -747,6 +765,46 @@ mod tests {
         }
         // It stopped against the trunk rather than passing it.
         assert!(rider.position.x > calden.at.x, "{:?}", rider.position);
+    }
+
+    #[test]
+    fn nothing_grows_on_the_trains_path_anywhere_along_the_line() {
+        let (towns, line, roads) = crate::road::tests::shipped_roads();
+        let config = WorldConfig {
+            half_extent: WorldConfig::MAX_HALF_EXTENT,
+            ..WorldConfig::default()
+        };
+        let mut world = World::with_towns(config, Terrain::default(), &towns);
+        world.lay_roads(roads);
+        let path = line.full_path(&towns);
+        let flora = FloraSite::new(config, &world.terrain, &line).with_track(&path);
+        let gap = |p: Vec2| p.distance(path.at(path.project(p)));
+        // Every chunk the path crosses, sampled every 20 m.
+        let mut chunks: Vec<ChunkCoord> = (0..=(path.length() / 20.0) as usize)
+            .map(|k| config.chunk_of(path.at(k as f32 * 20.0)))
+            .collect();
+        chunks.sort_by_key(|c| (c.x, c.y));
+        chunks.dedup();
+        let (mut trees, mut tufts) = (0, 0);
+        for c in chunks {
+            let f = flora.chunk(c);
+            for t in &f.trees {
+                // The trunk and the crown stay clear of the cars.
+                let g = gap(t.at);
+                assert!(
+                    g >= FloraSite::TREE_RAIL_MARGIN - 1e-3,
+                    "{t:?}: {g} m from the track"
+                );
+                trees += 1;
+            }
+            for t in &f.tufts {
+                assert!(gap(t.at) >= FloraSite::TUFT_RAIL_MARGIN - 1e-3, "{t:?}");
+                tufts += 1;
+            }
+        }
+        assert!(trees > 20 && tufts > 1000, "{trees} {tufts}");
+        // The margin clears a car's half width with room for a crown.
+        const { assert!(FloraSite::TREE_RAIL_MARGIN > crate::LineTrain::WIDTH / 2.0 + 6.0) };
     }
 
     #[test]

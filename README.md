@@ -9,9 +9,9 @@ default) streamed in chunks under dust fog, a player who goes on foot or on
 horseback, a follow camera, settlements and a first errand. The towns are
 small railway towns loosely inspired by 1910s La Pampa towns such as
 Eduardo Castex (not a historical reconstruction), each at its own place in the
-world. The player starts on foot on top of the Monte Nievas platform, beside
-the coaches of the morning train from General Pico, collides with buildings and cannot leave the
-world. The platform is a raised floor, not a wall: short ramps lead down from
+world. The player starts aboard the morning train from General Pico as it pulls
+into Monte Nievas, gets off on foot onto its platform, collides with buildings
+and cannot leave the world. The platform is a raised floor, not a wall: short ramps lead down from
 both ends, and its long sides are steps to walk up or off.
 
 The town is alive: townsfolk wander the streets between intersections, a
@@ -24,15 +24,25 @@ every two real seconds). The sun follows it, rising in the east, crossing the
 northern sky and setting in the west, warm and low at dawn and dusk and full
 by day; nights are dim and bluish under the moon but stay readable, and the
 dust fog takes the color of the hour without getting any thicker. The game
-begins in the late morning, at about 10:49, in full daylight, with the
-morning train from General Pico standing at Monte Nievas: the protagonist, a
-former hardware-shop clerk from Pico, has just arrived on it. The
+begins in the late morning, in full daylight, aboard the morning train from
+General Pico: the protagonist, a former hardware-shop clerk from Pico, rides
+it into Monte Nievas. The
 time of day (`HH:MM`) is shown in the top-left corner, lettered in the game's
-pixel font on a paper panel, with the current objective under it.
+pixel font on a paper panel, with the current objective under it and, while
+riding the train, the next station and its arrival time
+(for example "Próxima: Eduardo Castex, 11:22").
 
 One steam train runs the whole railway line on a timetable: a rural mixed
 train of 8 cars (93 m), the locomotive, two passenger coaches and five freight
-cars. It spends the night at General Pico, leaves Pico at 07:00, stops 25 s at
+cars, drawn in a British-built style of about 1919 at roughly PS2-era detail
+from shared unit meshes and materials (about 2 200 triangles for the engine
+and each coach, 1 100 for a freight car). The engine has a banded boiler, a
+smokebox door, a headlamp, cylinders, side and main rods that turn with the
+drivers, a cowcatcher, a cab with spectacle windows, a coaled tender and a
+few puffs of chimney smoke while moving. The coaches have boarded sides,
+framed windows, a clerestory roof and open end platforms with railings; the
+freight cars are boarded and iron-strapped; every car rides on bogies with
+buffers and couplers. It spends the night at General Pico, leaves Pico at 07:00, stops 25 s at
 Monte Nievas, reaches Eduardo Castex, lays over, leaves Castex at 16:00, stops
 at Monte Nievas again and is back at Pico for the night (a user change on
 2026-10-21; until then it slept at Castex and left it at 07:00). It runs at up to 65 km/h, braking to stop with the
@@ -40,8 +50,7 @@ middle of its two coaches alongside each station on the way. At the two
 terminals the whole train stands centered on the station, so it turns around in
 place during the layover. It takes about 10.7 real minutes
 over the 11.0 km of line (Pico 07:00, Monte Nievas 10:42–10:54, Castex 12:22; Castex 16:00, Monte
-Nievas 17:26–17:38, Pico 21:22, with the clock at its base rate). The game
-starts half way through the morning stop at Monte Nievas, at 10:48:27. The clock
+Nievas 17:26–17:38, Pico 21:22, with the clock at its base rate). The clock
 only starts each run: once moving, the train runs in real seconds, and a
 jump of the clock fast-forwards it exactly where it would have been. Its
 cars follow the curves between towns and shove riders off the track; the
@@ -59,12 +68,70 @@ titled with its name: streets, blocks and buildings by kind, the plaza, the
 railway, each place by its initial, walkers as dots, the train's cars when
 they are in the map, the errand's target as a gold diamond and the player as an
 arrow along its heading. Dirt roads are drawn in a warm brown under the
-railway. It frames the town plus a 30 m margin (not the whole
+railway. A small compass rose in its bottom-left corner marks N, E, S and O
+(oeste); the map is north-up, so the rose stays put and the arrow turns. It frames the town plus a 30 m margin (not the whole
 world) so streets stay legible; out on the pampa the arrow sticks to the map
 edge, and a target in another town is pinned to the edge on its side, so it
 points the way. Each town's layer is rasterized once, the first
 time it is shown; only the markers redraw each frame. `M` toggles an enlarged,
 centered map.
+
+### Riding the train
+
+**The opening.** The game starts at 10:32:13 with the protagonist seated in
+the first coach of the morning train from Pico, 50 real seconds before it
+stops at Monte Nievas. The camera starts behind the coach, framing it and the
+town ahead ("Próxima estación: Monte Nievas"). The train brakes into the
+station at 10:42:13 ("Estación Monte Nievas"), and two real seconds later,
+at 10:42:37, he gets off onto the platform beside the coach door, on foot.
+`Space` skips the approach, as a short trip (see Skipping).
+
+**Boarding.** While the train stands at a station (or lays over at a
+terminal), `F` within about 4 m of a coach door, on foot on the platform,
+boards it. On horseback the clerk only says "Primero bajate del caballo": the
+horse stays where it is, it does not travel by train.
+
+**Aboard.** The player sits in the coach and goes wherever the train goes.
+`V` cycles three views, named on the HUD ("V: vista - ventana"): seated by
+a window inside the coach, the default, on the side that faces the next
+station's platform (so the arrival is seen through the window), with the
+window from 0.8 m to 1.8 m above the floor around the seated eyes at
+1.2 m, looking out with the mouse (or
+`Q`/`E`) up to about 120° either way and 40° up or down, so the pampa
+scrolls past the window and the coach can be looked into; the orbit around
+the coach from 16 m out, which the train's own cars never pull in; and the
+whole train from the side, slowly following it. The coaches are hollow
+second-class coaches of about 1919: wooden walls with glazed window
+openings (the same windows from outside), a planked floor, wooden benches
+facing each other in bays, oil lamps under the ceiling and a door at each
+end. The world keeps streaming around the moving train. The clock slows to 12× while
+riding, so the whole line (about 11 real minutes) reads as about two game
+hours. `F` while the train stands at a station gets off onto its platform
+beside the coach door; `F` while it runs gets off at the next stop. At the
+end of the line the player is put off when the train lays over. Every stop
+is announced in a panel at the top of the screen ("Estación Monte Nievas"),
+and so is the next one as the train pulls out ("Próxima estación: Eduardo
+Castex").
+
+**Skipping.** `Space` aboard skips to the next stop as a short trip: the
+train pulls out of the station for real for 3 seconds ("Próxima estación:
+…"), the screen fades to black, and the train comes in for the last 3
+seconds and brakes to a stop ("Estación …"). The jump happens in the black:
+the clock moves by the ride time at 12×, and the train lands exactly where
+riding on would have brought it. `Space` again during the trip cuts it short.
+The player stays aboard, to get off or ride on, unless the ride ends there.
+
+**Waiting.** On a platform with no train, `F` near its middle fast-forwards
+the clock (at the base rate, behind the same fade) until the next train stands
+there, the next day's if none comes before midnight.
+
+Trees, stones, shrubs and grass tufts stay off the whole train path, including each
+town's own track and its run-outs past the town, not only the links between
+towns.
+
+The rules (who may board, where a passenger gets off, the skip and wait
+jumps, the opening) are pure `core` logic (`pampa_core::ride`), tested
+without the game.
 
 ### The first errand
 
@@ -292,7 +359,10 @@ The rule: **game logic never knows how things are drawn.**
 - Townsfolk, the clock and the train are deterministic `core` simulations
   (`Townsfolk`, one per town; `GameClock`; `LineTrain`, one for the whole
   line, whose run is a pure function of the real seconds since it departed);
-  the game steps them and render only reads them.
+  the game steps them and render only reads them. Riding it is `core` too
+  (`Ride`, `boarding`, `alight_spot`, `skip_ride`, `wait_for_train`,
+  `opening`); the game reads `F` and `Space` and plays the fade
+  (`ScreenFade` in `render`).
 - The errand is a `core` state machine (`Errand`: `MeetHidalgo`, `TakeHorse`,
   `ReportToFarach`, `Done`), one enum variant per stage, each transition
   guarded by range and stage so it fires once. `core` also says where people
@@ -332,7 +402,9 @@ cargo test --workspace
 | `W` / `S` | Walk or ride forward / brake and back up |
 | `A` / `D` | Turn left / right |
 | `Shift` (hold) | Jog on foot, gallop on horseback |
-| `F` | Interact: talk to somebody, or mount a horse, within a few meters |
+| `F` | Interact: talk to somebody, mount or get off a horse, board or get off the train at a coach door, or wait for the train near a platform's middle |
+| `Space` | Aboard the train: skip to the next stop |
+| `V` | Aboard the train: cycle the view (window seat, around the coach, the whole train) |
 | Mouse | Orbit the camera (the cursor is locked while the window has focus) |
 | `Q` / `E` | Orbit the camera left / right |
 | Mouse wheel | Zoom in / out (6–25 m) |

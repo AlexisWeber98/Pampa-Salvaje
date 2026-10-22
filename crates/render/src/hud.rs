@@ -1,10 +1,17 @@
-//! Heads-up display in the top-left corner: the game clock (`HH:MM`) and,
-//! under it, the current objective in one line.
+//! Heads-up display in the top-left corner: the game clock (`HH:MM`),
+//! under it the current objective in one line, and while the player rides
+//! the train the next station and its arrival time.
 //!
-//! Both are lettered in the procedural bitmap [`font`](crate::font), ink on
+//! All are lettered in the procedural bitmap [`font`](crate::font), ink on
 //! the same paper panel as the minimap, and repainted only when their text
 //! changes (the clock once a game minute). The clock comes from
-//! [`WorldClock`]; the game sets the objective through [`HudObjective`].
+//! [`WorldClock`]; the game sets the objective through [`HudObjective`] and
+//! the ride line through [`HudRide`], and a key hint under it through
+//! [`HudHint`] (the riding view, "V: vista - ventana").
+//!
+//! Station announcements ("Estación Monte Nievas", "Próxima estación:
+//! Eduardo Castex") show in a panel of the same style centered along the
+//! top of the screen while [`HudAnnouncement`] has text.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::ImageSampler;
@@ -24,6 +31,34 @@ pub const OBJECTIVE_SCALE: usize = 2;
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct HudObjective(pub Option<String>);
 
+/// The ride line under the objective (next station and arrival time);
+/// `None` hides it.
+#[derive(Resource, Debug, Clone, Default, PartialEq)]
+pub struct HudRide(pub Option<String>);
+
+/// A one-line key hint under the ride line; `None` hides it.
+#[derive(Resource, Debug, Clone, Default, PartialEq)]
+pub struct HudHint(pub Option<String>);
+
+/// The image node lettering the key hint.
+#[derive(Component, Debug)]
+pub struct HudHintLine;
+
+/// The announcement centered at the top of the screen; `None` hides it.
+#[derive(Resource, Debug, Clone, Default, PartialEq)]
+pub struct HudAnnouncement(pub Option<String>);
+
+/// Pixel scale of the announcement's lettering.
+pub const ANNOUNCEMENT_SCALE: usize = 3;
+
+/// The panel framing the announcement.
+#[derive(Component, Debug)]
+pub struct HudAnnouncementPanel;
+
+/// The image node lettering the announcement.
+#[derive(Component, Debug)]
+pub struct HudAnnouncementLine;
+
 /// What the HUD shows right now.
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct Hud {
@@ -31,6 +66,12 @@ pub struct Hud {
     pub clock: String,
     /// The objective as drawn, if any.
     pub objective: Option<String>,
+    /// The ride line as drawn, if any.
+    pub ride: Option<String>,
+    /// The announcement as drawn, if any.
+    pub announcement: Option<String>,
+    /// The key hint as drawn, if any.
+    pub hint: Option<String>,
 }
 
 /// The image node lettering the clock.
@@ -40,6 +81,10 @@ pub struct HudClock;
 /// The image node lettering the objective.
 #[derive(Component, Debug)]
 pub struct HudObjectiveLine;
+
+/// The image node lettering the ride line.
+#[derive(Component, Debug)]
+pub struct HudRideLine;
 
 /// A lettered line: ink on a transparent background.
 #[derive(Debug, Clone, PartialEq)]
@@ -99,8 +144,11 @@ impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Hud>()
             .init_resource::<HudObjective>()
-            .add_systems(Startup, spawn_hud)
-            .add_systems(PostUpdate, update_hud);
+            .init_resource::<HudRide>()
+            .init_resource::<HudAnnouncement>()
+            .init_resource::<HudHint>()
+            .add_systems(Startup, (spawn_hud, spawn_announcement))
+            .add_systems(PostUpdate, (update_hud, update_announcement, update_hint));
     }
 }
 
@@ -141,9 +189,90 @@ fn spawn_hud(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
             ))
             .with_children(|panel| {
                 panel.spawn((HudClock, ImageNode::new(blank.clone()), line_node()));
-                panel.spawn((HudObjectiveLine, ImageNode::new(blank), line_node()));
+                panel.spawn((HudObjectiveLine, ImageNode::new(blank.clone()), line_node()));
+                panel.spawn((HudRideLine, ImageNode::new(blank.clone()), line_node()));
+                panel.spawn((HudHintLine, ImageNode::new(blank), line_node()));
             });
         });
+}
+
+/// Repaints the key hint when its text changed.
+fn update_hint(
+    hint: Res<HudHint>,
+    mut hud: ResMut<Hud>,
+    mut images: ResMut<Assets<Image>>,
+    mut lines: Query<Line, With<HudHintLine>>,
+) {
+    if hint.0 == hud.hint {
+        return;
+    }
+    let text = hint.0.clone().unwrap_or_default();
+    for (mut image, mut node) in &mut lines {
+        letter(&text, OBJECTIVE_SCALE, (&mut image, &mut node), &mut images);
+    }
+    hud.hint = hint.0.clone();
+}
+
+/// The announcement panel, hidden, centered along the top edge.
+fn spawn_announcement(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+    let blank = images.add(paint_text("", 1).image());
+    commands
+        .spawn((
+            Name::new("Announcement"),
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                top: Val::Px(12.0),
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+        ))
+        .with_children(|root| {
+            root.spawn((
+                HudAnnouncementPanel,
+                Node {
+                    display: Display::None,
+                    border: UiRect::all(Val::Px(3.0)),
+                    padding: UiRect::all(Val::Px(8.0)),
+                    ..default()
+                },
+                BorderColor::all(rgba(palette::INK)),
+                BackgroundColor(rgba(palette::PAPER)),
+            ))
+            .with_children(|panel| {
+                panel.spawn((HudAnnouncementLine, ImageNode::new(blank), line_node()));
+            });
+        });
+}
+
+/// Repaints the announcement and shows its panel while it has text.
+fn update_announcement(
+    announcement: Res<HudAnnouncement>,
+    mut hud: ResMut<Hud>,
+    mut images: ResMut<Assets<Image>>,
+    mut lines: Query<Line, (With<HudAnnouncementLine>, Without<HudAnnouncementPanel>)>,
+    mut panels: Query<&mut Node, (With<HudAnnouncementPanel>, Without<HudAnnouncementLine>)>,
+) {
+    if announcement.0 == hud.announcement {
+        return;
+    }
+    let text = announcement.0.clone().unwrap_or_default();
+    for (mut image, mut node) in &mut lines {
+        letter(
+            &text,
+            ANNOUNCEMENT_SCALE,
+            (&mut image, &mut node),
+            &mut images,
+        );
+    }
+    for mut panel in &mut panels {
+        panel.display = if text.is_empty() {
+            Display::None
+        } else {
+            Display::Flex
+        };
+    }
+    hud.announcement = announcement.0.clone();
 }
 
 /// Letters `text` into `node`'s image at `scale` (a fresh image, the old
@@ -169,14 +298,30 @@ fn letter(
 /// One lettered line of the HUD: its image and its layout.
 type Line<'a> = (&'a mut ImageNode, &'a mut Node);
 
-/// Repaints the clock and the objective when their text changed.
+/// The HUD's lettered lines: the clock, the objective and the ride line.
+type Lines<'w, 's> = (
+    Query<
+        'w,
+        's,
+        Line<'static>,
+        (
+            With<HudClock>,
+            Without<HudObjectiveLine>,
+            Without<HudRideLine>,
+        ),
+    >,
+    Query<'w, 's, Line<'static>, (With<HudObjectiveLine>, Without<HudRideLine>)>,
+    Query<'w, 's, Line<'static>, With<HudRideLine>>,
+);
+
+/// Repaints the clock, the objective and the ride line when their text
+/// changed.
 fn update_hud(
     clock: Option<Res<WorldClock>>,
-    objective: Res<HudObjective>,
+    (objective, ride): (Res<HudObjective>, Res<HudRide>),
     mut hud: ResMut<Hud>,
     mut images: ResMut<Assets<Image>>,
-    mut clocks: Query<Line, (With<HudClock>, Without<HudObjectiveLine>)>,
-    mut lines: Query<Line, With<HudObjectiveLine>>,
+    (mut clocks, mut lines, mut rides): Lines,
 ) {
     let time = clock.map(|c| c.0.hh_mm()).unwrap_or_default();
     if time != hud.clock {
@@ -191,6 +336,13 @@ fn update_hud(
             letter(&text, OBJECTIVE_SCALE, (&mut image, &mut node), &mut images);
         }
         hud.objective = objective.0.clone();
+    }
+    if ride.0 != hud.ride {
+        let text = ride.0.clone().unwrap_or_default();
+        for (mut image, mut node) in &mut rides {
+            letter(&text, OBJECTIVE_SCALE, (&mut image, &mut node), &mut images);
+        }
+        hud.ride = ride.0.clone();
     }
 }
 
@@ -305,6 +457,77 @@ mod tests {
         for c in "0123456789:".chars() {
             assert!(font::supports(c), "{c}");
         }
+    }
+
+    #[test]
+    fn shows_the_next_station_and_its_time_only_while_riding() {
+        let mut app = app();
+        app.update();
+        assert_eq!(image_of::<HudRideLine>(&mut app).1, Display::None);
+        let text = "Próxima: Eduardo Castex, 11:15".to_string();
+        assert!(text.chars().all(font::supports));
+        app.insert_resource(HudRide(Some(text.clone())));
+        app.update();
+        assert_eq!(app.world().resource::<Hud>().ride, Some(text.clone()));
+        let (handle, display) = image_of::<HudRideLine>(&mut app);
+        assert_eq!(display, Display::Flex);
+        let images = app.world().resource::<Assets<Image>>();
+        assert_eq!(
+            images.get(&handle).unwrap().data.as_deref(),
+            Some(paint_text(&text, OBJECTIVE_SCALE).pixels.as_slice())
+        );
+        // The objective line is untouched.
+        assert_eq!(image_of::<HudObjectiveLine>(&mut app).1, Display::None);
+        app.insert_resource(HudRide(None));
+        app.update();
+        assert_eq!(image_of::<HudRideLine>(&mut app).1, Display::None);
+    }
+
+    #[test]
+    fn shows_the_station_announcement_in_its_own_panel_while_there_is_one() {
+        let mut app = app();
+        app.update();
+        let panel = |app: &mut App| {
+            let mut q = app
+                .world_mut()
+                .query_filtered::<&Node, With<HudAnnouncementPanel>>();
+            q.single(app.world()).unwrap().display
+        };
+        assert_eq!(panel(&mut app), Display::None);
+        for text in ["Estación Monte Nievas", "Próxima estación: Eduardo Castex"] {
+            assert!(text.chars().all(font::supports), "{text}");
+            app.insert_resource(HudAnnouncement(Some(text.into())));
+            app.update();
+            assert_eq!(panel(&mut app), Display::Flex);
+            let (handle, display) = image_of::<HudAnnouncementLine>(&mut app);
+            assert_eq!(display, Display::Flex);
+            let images = app.world().resource::<Assets<Image>>();
+            assert_eq!(
+                images.get(&handle).unwrap().data.as_deref(),
+                Some(paint_text(text, ANNOUNCEMENT_SCALE).pixels.as_slice())
+            );
+        }
+        app.insert_resource(HudAnnouncement(None));
+        app.update();
+        assert_eq!(panel(&mut app), Display::None);
+    }
+
+    #[test]
+    fn shows_the_key_hint_while_there_is_one() {
+        let mut app = app();
+        app.update();
+        assert_eq!(image_of::<HudHintLine>(&mut app).1, Display::None);
+        for view in ["ventana", "exterior", "tren"] {
+            let text = format!("V: vista - {view}");
+            assert!(text.chars().all(font::supports), "{text}");
+            app.insert_resource(HudHint(Some(text.clone())));
+            app.update();
+            assert_eq!(app.world().resource::<Hud>().hint, Some(text));
+            assert_eq!(image_of::<HudHintLine>(&mut app).1, Display::Flex);
+        }
+        app.insert_resource(HudHint(None));
+        app.update();
+        assert_eq!(image_of::<HudHintLine>(&mut app).1, Display::None);
     }
 
     #[test]

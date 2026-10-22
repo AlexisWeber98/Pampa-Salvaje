@@ -1,5 +1,5 @@
 //! The first errand, played: the player gets off the morning train at the
-//! first town on foot, talks to Don Hidalgo in the plaza, takes his horse
+//! first town on foot (the opening, see [`crate::ride`]), talks to Don Hidalgo in the plaza, takes his horse
 //! from the general store and rides to report to comisario Farach in the
 //! town the dialogue file names (`police_town`).
 //!
@@ -17,8 +17,7 @@
 use bevy::prelude::*;
 use pampa_content::{ERRAND_FILE, ErrandLines, asset_path, load_errand_or_builtin};
 use pampa_core::{
-    Errand, ErrandEvent, Heading, Interaction, MAX_STEP, Npc, Rider, TownLayout, Travel,
-    Vec2 as GroundVec2, World,
+    Errand, ErrandEvent, Interaction, MAX_STEP, Npc, Rider, TownLayout, Travel, World,
 };
 use pampa_render::bubble::LIFETIME;
 use pampa_render::{
@@ -108,13 +107,6 @@ pub fn plan(
             .to_vec(),
     );
     Some((ErrandRun(errand), cast))
-}
-
-/// Where the player starts: on foot on top of the first town's platform,
-/// beside the coaches of the morning train standing there, facing town (on
-/// the road in when it has no platform).
-pub fn player_start(town: &TownLayout) -> (GroundVec2, Heading) {
-    town.platform_spot().unwrap_or_else(|| town.arrival())
 }
 
 pub struct ErrandPlugin;
@@ -384,18 +376,13 @@ fn show_progress(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::life::{Crowds, TownLifePlugin, start_of_day};
-    use crate::player::{PlayerPlugin, PlayerSpawn};
-    use bevy::time::TimeUpdateStrategy;
+    use crate::ride::testing::arrive;
+    use pampa_core::Vec2 as GroundVec2;
     use pampa_core::{ErrandStage, Terrain, Travel};
     use pampa_render::character::{
         FigureBody, FigureJoint, FigurePart, HorseBody, HorseJointPart, HorsePartMesh,
     };
-    use pampa_render::{
-        CharacterVisual, CharacterVisualPlugin, Coat, FigureKind, WorldClock, WorldTowns,
-        WorldTrain,
-    };
-    use std::time::Duration;
+    use pampa_render::{CharacterVisual, CharacterVisualPlugin, Coat, FigureKind, WorldTowns};
 
     /// Every line said, by whom.
     #[derive(Resource, Default)]
@@ -421,37 +408,13 @@ mod tests {
         lines
     }
 
-    /// The shipped world, the morning train from Pico dwelling at Monte Nievas, and
-    /// the player on foot at the platform. Frames last 50 ms.
+    /// The game's opening in the shipped world (aboard the morning train
+    /// from Pico pulling into Monte Nievas), with every line and errand
+    /// event logged. Frames last 50 ms.
     fn shipped_app() -> App {
-        let loaded = crate::towns::load_world(&asset_path(pampa_content::TOWNS_FILE));
-        let mut world = World::with_towns(loaded.world, Terrain::default(), &loaded.towns);
-        let (run, cast) = plan(&loaded.towns, &mut world, &shipped_lines().police_town)
-            .expect("the shipped errand");
-        let (position, heading) = player_start(&loaded.towns[0]);
-        let (clock, train) = start_of_day(&loaded.line, &loaded.towns);
-        let mut app = App::new();
-        app.add_plugins(MinimalPlugins)
-            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
-                50,
-            )))
-            .init_resource::<ButtonInput<KeyCode>>()
-            .insert_resource(Crowds::for_towns(&loaded.towns))
-            .insert_resource(WorldTowns(loaded.towns))
-            .insert_resource(WorldClock(clock))
-            .insert_resource(WorldTrain(train))
-            .insert_resource(GameWorld(world))
-            .insert_resource(PlayerSpawn {
-                position,
-                heading,
-                travel: Travel::OnFoot,
-            })
-            .insert_resource(run)
-            .insert_resource(cast)
-            .insert_resource(ErrandDialogue(shipped_lines()))
-            .init_resource::<Said>()
+        let mut app = crate::ride::testing::shipped_app();
+        app.init_resource::<Said>()
             .init_resource::<Progress>()
-            .add_plugins((PlayerPlugin, TownLifePlugin, ErrandPlugin))
             .add_systems(PostUpdate, log);
         app
     }
@@ -505,7 +468,7 @@ mod tests {
             .add_plugins(CharacterVisualPlugin);
         app.world_mut()
             .spawn((Camera3d::default(), Transform::default()));
-        app.update();
+        arrive(&mut app);
         let e = errand(&app);
         let (me, _) = player(&mut app);
         assert_eq!(
@@ -602,10 +565,11 @@ mod tests {
     }
 
     #[test]
-    fn the_whole_errand_from_the_platform_to_the_comisaria() {
+    fn the_whole_errand_from_the_train_to_the_comisaria() {
         let mut app = shipped_app();
         let lines = shipped_lines();
-        app.update();
+        // Off the morning train at Monte Nievas.
+        arrive(&mut app);
         let e = errand(&app);
         let hidalgo = e.standing(Npc::Hidalgo).position;
         let (horse_town, horse) = e.horse();
@@ -614,7 +578,12 @@ mod tests {
         // On foot on top of the Monte Nievas platform, beside the dwelling
         // train's coaches, facing town; standing still leaves the player
         // where they are.
-        let (start, facing) = player_start(&app.world().resource::<WorldTowns>().0[0]);
+        let (start, facing) = {
+            let (_, p) = player(&mut app);
+            (p.rider.position, p.rider.heading)
+        };
+        let town = app.world().resource::<WorldTowns>().0[0].clone();
+        assert_eq!(facing, town.platform_spot().unwrap().1);
         for _ in 0..10 {
             app.update();
         }
@@ -625,15 +594,19 @@ mod tests {
             "{:?}",
             p.rider.position
         );
-        assert_eq!(p.rider.heading, facing);
         // Up on the platform's top, not on the ground beside it.
         let world = app.world().resource::<GameWorld>().0.clone();
         assert_eq!(p.rider.height, world.ground_height(start));
         assert!(p.rider.height > world.terrain.height(start.x, start.y) + 0.5);
         assert_eq!(objective(&app), e.objective());
+        assert_eq!(
+            objective(&app).as_deref(),
+            Some("Buscá a Don Hidalgo en la plaza")
+        );
         assert_eq!(app.world().resource::<MapTarget>().0, Some(hidalgo));
 
-        // Nothing to do on the platform.
+        // Nothing to do out on the road into town.
+        teleport(&mut app, town.arrival().0);
         press_f(&mut app);
         assert_eq!(errand(&app).stage(), ErrandStage::MeetHidalgo);
         assert!(app.world().resource::<Said>().0.is_empty());
@@ -736,7 +709,7 @@ mod tests {
     #[test]
     fn getting_off_and_back_on_keeps_the_errand_on_track() {
         let mut app = shipped_app();
-        app.update();
+        arrive(&mut app);
         let e = errand(&app);
         let hidalgo = e.standing(Npc::Hidalgo);
         teleport(&mut app, hidalgo.position + hidalgo.heading.forward() * 2.0);
@@ -864,10 +837,6 @@ mod tests {
         assert_eq!(comisarias(&loaded.towns[farach.town]), 1);
         assert_eq!(world.obstacles.len(), before + 2);
         assert_eq!(cast.0, vec![(Npc::Hidalgo, hidalgo), (Npc::Farach, farach)]);
-        // The platform start is clear of everything built.
-        let (start, _) = player_start(&loaded.towns[0]);
-        let c = pampa_core::Circle::new(pampa_core::Rider::PERSON_RADIUS);
-        assert_eq!(world.resolve(c, start, |_| ()), start);
     }
 
     #[test]

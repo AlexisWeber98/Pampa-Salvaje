@@ -592,6 +592,140 @@ impl LineTrain {
         Some((self.station_at(run, k), plan.times[k].0 - elapsed))
     }
 
+    /// Puts the train `elapsed` real seconds into `run` (clamped to the
+    /// run), as if it had left its terminal on time and run since: how the
+    /// game starts with the train already under way. Bad input starts the
+    /// run.
+    pub fn place_on_run(&mut self, run: Run, elapsed: f64) {
+        let elapsed = if elapsed.is_finite() {
+            elapsed.clamp(0.0, self.run_duration(run))
+        } else {
+            0.0
+        };
+        self.motion = Motion::Running { run, elapsed };
+    }
+
+    /// The next station the train arrives at (never one it already stands
+    /// at) and the game seconds until it does, with the clock running from
+    /// game time `now` at `rate` game seconds per real second: the rest of
+    /// a ride, aboard. From a terminal it waits for its departure first.
+    /// `None` on bad input.
+    pub fn next_arrival(&self, now: f64, rate: f64) -> Option<(usize, f64)> {
+        self.arrival_ahead(now, rate)
+            .map(|(station, game, _, _)| (station, game))
+    }
+
+    /// Jumps the train to its next arrival ([`Self::next_arrival`]) and
+    /// returns that station and the game seconds the clock must jump. The
+    /// train lands exactly where following the clock at `rate` would, as
+    /// the pure [`Self::state_at`] of its run at that arrival.
+    pub fn skip_to_next_stop(&mut self, now: f64, rate: f64) -> Option<(usize, f64)> {
+        self.skip_toward_next_stop(now, rate, 0.0)
+    }
+
+    /// Like [`Self::skip_to_next_stop`], but lands `lead` real seconds
+    /// before the arrival (never behind where the train already is), so it
+    /// still runs in and brakes to a stop. Returns the station and the game
+    /// seconds the clock must jump.
+    pub fn skip_toward_next_stop(
+        &mut self,
+        now: f64,
+        rate: f64,
+        lead: f64,
+    ) -> Option<(usize, f64)> {
+        let (station, game, run, arrive) = self.arrival_ahead(now, rate)?;
+        let lead = if lead.is_finite() { lead.max(0.0) } else { 0.0 };
+        // Where the train is on that run now: a laid-over train has not
+        // started it yet.
+        let (elapsed, wait) = match self.motion {
+            Motion::Running { run: on, elapsed } if on == run => (elapsed, 0.0),
+            _ => (0.0, game - arrive * rate),
+        };
+        let land = (arrive - lead).max(elapsed);
+        if land > elapsed || wait > 0.0 {
+            self.motion = Motion::Running { run, elapsed: land };
+        }
+        Some((station, wait + (land - elapsed) * rate))
+    }
+
+    /// Jumps a train standing at a station (dwelling, or laid over at a
+    /// terminal) to the moment it pulls out, and returns the game seconds
+    /// the clock must jump with it at `rate`: the rest of the dwell, or the
+    /// wait for the departure from a terminal. A train already running
+    /// between stations stays as it is (zero). `None` on bad input.
+    pub fn skip_to_departure(&mut self, now: f64, rate: f64) -> Option<f64> {
+        if !(now.is_finite() && rate.is_finite() && rate > 0.0) {
+            return None;
+        }
+        let (terminal, since) = match self.motion {
+            Motion::Running { run, elapsed }
+                if elapsed < self.run_duration(run) - ARRIVAL_EPSILON =>
+            {
+                let plan = self.plan_of(run);
+                let standing = plan.times.iter().find(|&&(arrive, depart)| {
+                    elapsed >= arrive - ARRIVAL_EPSILON && elapsed <= depart
+                });
+                let Some(&(_, depart)) = standing else {
+                    return Some(0.0);
+                };
+                self.motion = Motion::Running {
+                    run,
+                    elapsed: depart.max(elapsed),
+                };
+                return Some((depart - elapsed).max(0.0) * rate);
+            }
+            // Just in at its terminal: laid over from now.
+            Motion::Running { run, .. } => (self.terminal(run), now),
+            Motion::Parked { station, since, .. } => (station, since),
+        };
+        let depart = self.departure_from(terminal, since).max(now);
+        self.motion = Motion::Running {
+            run: self.departing(terminal),
+            elapsed: 0.0,
+        };
+        Some(depart - now)
+    }
+
+    /// The next arrival from game time `now` with the clock at `rate`: the
+    /// station, the game seconds until it, and the run and real seconds
+    /// into it at which it happens.
+    fn arrival_ahead(&self, now: f64, rate: f64) -> Option<(usize, f64, Run, f64)> {
+        if !(now.is_finite() && rate.is_finite() && rate > 0.0) {
+            return None;
+        }
+        // The run that brings the next arrival, how far into it the train
+        // is, and the game seconds before it departs (laid over).
+        let (run, elapsed, wait) = match self.motion {
+            Motion::Running { run, elapsed }
+                if elapsed < self.run_duration(run) - ARRIVAL_EPSILON =>
+            {
+                (run, elapsed, 0.0)
+            }
+            // Just in at its terminal: laid over from now.
+            Motion::Running { run, .. } => {
+                let terminal = self.terminal(run);
+                let depart = self.departure_from(terminal, now);
+                (self.departing(terminal), 0.0, depart - now)
+            }
+            Motion::Parked { station, since, .. } => {
+                let depart = self.departure_from(station, since).max(now);
+                (self.departing(station), 0.0, depart - now)
+            }
+        };
+        let plan = self.plan_of(run);
+        let k = plan
+            .times
+            .iter()
+            .position(|&(arrive, _)| arrive > elapsed + ARRIVAL_EPSILON)?;
+        let arrive = plan.times[k].0;
+        Some((
+            self.station_at(run, k),
+            wait + (arrive - elapsed) * rate,
+            run,
+            arrive,
+        ))
+    }
+
     /// Every car on the ground plane, front first. Each car's ends sit on
     /// the line at their own distance along it, so the consist follows the
     /// curves.
@@ -778,6 +912,58 @@ fn run_sign(run: Run) -> f32 {
     match run {
         Run::Down => 1.0,
         Run::Up => -1.0,
+    }
+}
+
+/// The body of a passenger coach, as its drawing and the seat view share
+/// it, in the car's own frame: heights above the rail tops, distances
+/// across from its centreline and along from its middle, in meters.
+pub struct CoachBody;
+
+impl CoachBody {
+    /// Top of the floor.
+    pub const FLOOR: f32 = 1.3;
+    /// Underside of the ceiling.
+    pub const CEILING: f32 = 3.8;
+    /// Outer face of each side wall from the centreline.
+    pub const HALF_WIDTH: f32 = 1.4;
+    /// Thickness of the walls.
+    pub const WALL: f32 = 0.08;
+    /// Bottom of the window openings: 0.8 m above the floor, low enough
+    /// for a seated passenger to see the ground beside the track.
+    pub const SILL: f32 = 2.1;
+    /// Top of the window openings: 1.8 m above the floor, above the
+    /// horizon from a seat.
+    pub const LINTEL: f32 = 3.1;
+    /// How far in from each end of the car its end walls stand.
+    pub const END_INSET: f32 = 0.35;
+    /// Height of a seated passenger's eyes above the floor.
+    pub const EYE: f32 = 1.2;
+
+    /// The window openings along each side of a coach `length` long: their
+    /// centres from the car's middle, and their width.
+    pub fn windows(length: f32) -> (Vec<f32>, f32) {
+        let count = ((length - 3.0) / 1.6).floor().max(1.0) as usize;
+        let pitch = (length - 3.0) / count as f32;
+        let centres = (0..count)
+            .map(|i| -length / 2.0 + 1.5 + pitch * (i as f32 + 0.5))
+            .collect();
+        (centres, pitch * 0.6)
+    }
+
+    /// Where a passenger sits by a window in a coach `length` long, as
+    /// `(along, across, height)`: at the middle window on the car's right
+    /// (`side` +1) or left (-1), half a meter in from the wall, eyes at
+    /// seated height. They face that window.
+    pub fn window_seat(length: f32, side: f32) -> (f32, f32, f32) {
+        let (centres, _) = Self::windows(length);
+        let along = centres[centres.len() / 2];
+        let side = if side < 0.0 { -1.0 } else { 1.0 };
+        (
+            along,
+            side * (Self::HALF_WIDTH - Self::WALL - 0.5),
+            Self::FLOOR + Self::EYE,
+        )
     }
 }
 
@@ -1277,6 +1463,161 @@ mod line_tests {
         fast.advance(hm(7, 0), 100.0 * BASE_RATE, BASE_RATE);
         slow.advance(hm(7, 0), 100.0 * 12.0, 12.0);
         assert!((fast.state().front - slow.state().front).abs() < 1e-3);
+    }
+
+    /// `train` followed frame by frame (1/60 s) from game time `now` at
+    /// `rate` for `game` game seconds.
+    fn ticked(train: &LineTrain, now: f64, game: f64, rate: f64) -> LineTrain {
+        let mut train = train.clone();
+        let step = rate / 60.0;
+        let mut t = 0.0;
+        while t + step < game {
+            train.advance(now + t, step, rate);
+            t += step;
+        }
+        train.advance(now + t, game - t, rate);
+        train
+    }
+
+    #[test]
+    fn skipping_lands_on_the_next_dwell_exactly_as_riding_on_would() {
+        let (_, start) = shipped();
+        let onboard = 12.0;
+        // Running up from Pico, at Monte Nievas, parked at Castex, and
+        // parked overnight at Pico before the morning run.
+        let cases = [
+            (hm(7, 0) + 100.0 * BASE_RATE, NIEVAS),
+            (hm(10, 50), CASTEX),
+            (hm(13, 0), NIEVAS),
+            (hm(5, 0), NIEVAS),
+        ];
+        for (at, expected) in cases {
+            let mut train = start.clone();
+            train.advance(0.0, at, BASE_RATE);
+            let (station, game) = train.next_arrival(at, onboard).expect("a next stop");
+            assert_eq!(station, expected, "from {at}");
+            let ridden = ticked(&train, at, game, onboard);
+            let mut skipped = train.clone();
+            assert_eq!(
+                skipped.skip_to_next_stop(at, onboard),
+                Some((station, game))
+            );
+            let (a, b) = (ridden.state(), skipped.state());
+            assert_eq!((a.phase, a.station, a.run), (b.phase, b.station, b.run));
+            assert_ne!(b.phase, LinePhase::Running, "from {at}");
+            assert_eq!(b.station, Some(station));
+            assert!((a.front - b.front).abs() < 1e-2, "{a:?} vs {b:?}");
+            // The pure state of the run at the arrival.
+            let (arrive, _) = skipped.stop_times(b.run, station).unwrap();
+            assert_eq!(b, skipped.state_at(b.run, arrive));
+        }
+        // From the overnight layover the wait for the 07:00 departure
+        // counts: game time to the departure, then the ride at 12×.
+        let mut night = start.clone();
+        night.advance(0.0, hm(5, 0), BASE_RATE);
+        let (_, game) = night.next_arrival(hm(5, 0), onboard).unwrap();
+        let (arrive, _) = night.stop_times(Run::Up, NIEVAS).unwrap();
+        assert!(
+            (game - (hm(2, 0) + arrive * onboard)).abs() < 1e-6,
+            "{game}"
+        );
+        assert_eq!(night.next_arrival(hm(5, 0), 0.0), None);
+        assert_eq!(night.next_arrival(f64::NAN, onboard), None);
+    }
+
+    #[test]
+    fn pulling_out_now_and_coming_in_three_seconds_out_land_where_riding_would() {
+        let (_, start) = shipped();
+        let onboard = 12.0;
+        // Dwelling at Monte Nievas on the morning run.
+        let at = hm(10, 45);
+        let mut train = start.clone();
+        train.advance(0.0, at, BASE_RATE);
+        let (arrive, depart) = train.stop_times(Run::Up, NIEVAS).unwrap();
+        let mut left = train.clone();
+        let game = left.skip_to_departure(at, onboard).unwrap();
+        let ridden = ticked(&train, at, game, onboard);
+        assert_eq!(left.state(), left.state_at(Run::Up, depart));
+        assert!((ridden.state().front - left.state().front).abs() < 1e-3);
+        // At the departure: a moment later it is running.
+        let mut moving = left.clone();
+        moving.advance(at + game, 0.05 * onboard, onboard);
+        assert_eq!(moving.state().phase, LinePhase::Running);
+        assert!(moving.state().speed > 0.0);
+        // The rest of the dwell, at 12×.
+        let elapsed = (at - hm(7, 0)) / BASE_RATE;
+        assert!(elapsed > arrive && elapsed < depart);
+        assert!((game - (depart - elapsed) * onboard).abs() < 1e-6);
+        // Already running: nothing to skip.
+        assert_eq!(
+            moving.clone().skip_to_departure(at + game, onboard),
+            Some(0.0)
+        );
+        assert_eq!(left.skip_to_departure(f64::NAN, onboard), None);
+
+        // Then on to 3 s before Castex: running in, and riding the last
+        // 3 s brakes it to a stop there.
+        let now = at + game;
+        let (station, jump) = left.skip_toward_next_stop(now, onboard, 3.0).unwrap();
+        assert_eq!(station, CASTEX);
+        let (castex, _) = left.stop_times(Run::Up, CASTEX).unwrap();
+        assert_eq!(left.state(), left.state_at(Run::Up, castex - 3.0));
+        assert!((jump - (castex - 3.0 - depart) * onboard).abs() < 1e-6);
+        assert_eq!(left.state().phase, LinePhase::Running);
+        let rolled = ticked(&left, now + jump, 3.0 * onboard, onboard);
+        let s = rolled.state();
+        assert_eq!((s.phase, s.station), (LinePhase::Parked, Some(CASTEX)));
+        // Never backwards: less than the lead away, it stays put.
+        let mut close = rolled.clone();
+        close.place_on_run(Run::Down, 1.0);
+        let before = close.state();
+        let (_, none) = close.skip_toward_next_stop(now, onboard, 1e6).unwrap();
+        assert_eq!((none, close.state()), (0.0, before));
+
+        // Laid over at Castex: the wait for the 16:00 departure.
+        let mut parked = start.clone();
+        parked.advance(0.0, hm(13, 0), BASE_RATE);
+        let wait = parked.skip_to_departure(hm(13, 0), onboard).unwrap();
+        assert!((wait - (hm(16, 0) - hm(13, 0))).abs() < 1e-6);
+        assert_eq!(parked.state(), parked.state_at(Run::Down, 0.0));
+    }
+
+    #[test]
+    fn a_seated_passenger_looks_out_through_the_middle_of_the_window() {
+        let floor = CoachBody::FLOOR;
+        // A sill low enough to see the ground by the track, a top high
+        // enough for the sky, and the eyes in between.
+        let sill = CoachBody::SILL - floor;
+        let top = CoachBody::LINTEL - floor;
+        assert!((0.75..=0.85).contains(&sill), "sill {sill}");
+        assert!(top >= 1.7, "top {top}");
+        let (along, across, eye) = CoachBody::window_seat(12.0, 1.0);
+        assert!((eye - floor - 1.2).abs() < 1e-5);
+        let middle = (CoachBody::SILL + CoachBody::LINTEL) / 2.0;
+        assert!(
+            (eye - middle).abs() < 0.2,
+            "eye {eye}, window middle {middle}"
+        );
+        let (windows, open) = CoachBody::windows(12.0);
+        assert!(windows.iter().any(|&x| (along - x).abs() < open / 2.0));
+        // On the side asked for.
+        assert!(across > 0.0);
+        let (_, left, _) = CoachBody::window_seat(12.0, -1.0);
+        assert_eq!(left, -across);
+    }
+
+    #[test]
+    fn a_train_placed_mid_run_stands_where_its_run_says() {
+        let (_, mut train) = shipped();
+        let (arrive, _) = train.stop_times(Run::Up, NIEVAS).unwrap();
+        train.place_on_run(Run::Up, arrive - 50.0);
+        assert_eq!(train.state(), train.state_at(Run::Up, arrive - 50.0));
+        assert_eq!(train.state().phase, LinePhase::Running);
+        let (next, left) = train.next_stop().unwrap();
+        assert_eq!(next, NIEVAS);
+        assert!((left - 50.0).abs() < 1e-9);
+        train.place_on_run(Run::Down, f64::NAN);
+        assert_eq!(train.state(), train.state_at(Run::Down, 0.0));
     }
 
     #[test]

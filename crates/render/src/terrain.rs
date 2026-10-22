@@ -18,11 +18,13 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::PrimitiveTopology;
 use bevy::prelude::*;
 use pampa_core::flora::grass_dryness;
-use pampa_core::{ChunkCoord, RoadNetwork, Terrain, Vec2 as GroundVec2, WorldConfig};
+use pampa_core::{ChunkCoord, FloraSite, RoadNetwork, Terrain, Vec2 as GroundVec2, WorldConfig};
 
 use crate::AssetRoot;
 use crate::coords::world_from_ground;
-use crate::flora::{Model, VegetationLoad, VegetationModels, spot_unit, visible_within};
+use crate::flora::{
+    Model, VegetationLoad, VegetationModels, WorldFlora, spot_unit, visible_within,
+};
 use crate::ground::{face_tangent, ground_material, ground_uv};
 use crate::streaming::StreamingSet;
 
@@ -172,7 +174,7 @@ fn fill_chunks(
     mut commands: Commands,
     (terrain, world, detail, focus): ChunkInputs,
     kit: Res<TerrainKit>,
-    models: Option<Res<VegetationModels>>,
+    (models, flora): (Option<Res<VegetationModels>>, Option<Res<WorldFlora>>),
     mut streamer: ResMut<ChunkStreamer>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
@@ -186,7 +188,7 @@ fn fill_chunks(
             (&kit, models.as_deref()),
             &mut meshes,
             (&terrain.0, &world.0, *detail),
-            coord,
+            (coord, flora.as_deref().map(|f| &f.0)),
         );
         streamer.entities.insert(coord, entity);
     }
@@ -197,7 +199,7 @@ fn stream_chunks(
     mut commands: Commands,
     (terrain, world, detail, focus): ChunkInputs,
     kit: Option<Res<TerrainKit>>,
-    models: Option<Res<VegetationModels>>,
+    (models, flora): (Option<Res<VegetationModels>>, Option<Res<WorldFlora>>),
     mut streamer: ResMut<ChunkStreamer>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
@@ -217,7 +219,7 @@ fn stream_chunks(
             (&kit, models.as_deref()),
             &mut meshes,
             (&terrain.0, &world.0, *detail),
-            coord,
+            (coord, flora.as_deref().map(|f| &f.0)),
         );
         streamer.entities.insert(coord, entity);
     }
@@ -229,7 +231,7 @@ fn spawn_chunk(
     (kit, models): (&TerrainKit, Option<&VegetationModels>),
     meshes: &mut Assets<Mesh>,
     (terrain, world, detail): (&Terrain, &WorldConfig, ChunkDetail),
-    coord: ChunkCoord,
+    (coord, track): (ChunkCoord, Option<&FloraSite>),
 ) -> Entity {
     let mesh = build_chunk_mesh(terrain, coord, world.chunk_size, detail.resolution);
     let chunk = commands
@@ -242,7 +244,7 @@ fn spawn_chunk(
             Visibility::default(),
         ))
         .id();
-    for prop in chunk_props(terrain, coord, world.chunk_size) {
+    for prop in chunk_props(terrain, coord, world.chunk_size, track) {
         if let Some(models) = models
             && spawn_model_prop(commands, models, terrain, &prop, chunk)
         {
@@ -490,12 +492,22 @@ struct Prop {
     yaw: f32,
 }
 
+/// Least distance from a stone or shrub to the track's centerline, in
+/// meters: off the ballast, like a grass tuft.
+const PROP_RAIL_MARGIN: f32 = FloraSite::TUFT_RAIL_MARGIN;
+
 /// Least distance from a stone or shrub to a road's edge, in meters.
 const PROP_ROAD_MARGIN: f32 = 2.0;
 
 /// The props of chunk `coord`, seeded by its coordinate, skipping leveled
-/// ground (settlements are cleared land) and the roads.
-fn chunk_props(terrain: &Terrain, coord: ChunkCoord, size: f32) -> Vec<Prop> {
+/// ground (settlements are cleared land), the roads and, given the flora's
+/// keep-out (`track`), the whole train path with [`PROP_RAIL_MARGIN`].
+fn chunk_props(
+    terrain: &Terrain,
+    coord: ChunkCoord,
+    size: f32,
+    track: Option<&FloraSite>,
+) -> Vec<Prop> {
     let mut state = coord.seed(PROP_SEED) | 1;
     let mut unit = move || {
         // Xorshift32.
@@ -520,7 +532,8 @@ fn chunk_props(terrain: &Terrain, coord: ChunkCoord, size: f32) -> Vec<Prop> {
                 r.near(at, RoadNetwork::HALF_WIDTH + PROP_ROAD_MARGIN)
                     .is_some()
             });
-            (!leveled && !on_road).then_some(prop)
+            let on_track = track.is_some_and(|t| !t.off_track(at, PROP_RAIL_MARGIN));
+            (!leveled && !on_road && !on_track).then_some(prop)
         })
         .collect()
 }
@@ -612,20 +625,60 @@ mod tests {
     fn props_are_seeded_per_chunk_and_skip_leveled_ground() {
         let terrain = Terrain::default();
         let c = ChunkCoord::new(4, -2);
-        let props = chunk_props(&terrain, c, 200.0);
-        assert_eq!(props, chunk_props(&terrain, c, 200.0));
+        let props = chunk_props(&terrain, c, 200.0, None);
+        assert_eq!(props, chunk_props(&terrain, c, 200.0, None));
         assert_eq!(props.len(), 44);
         assert!(props.iter().all(|p| c.bounds(200.0).contains_point(p.at)));
-        assert_ne!(props, chunk_props(&terrain, ChunkCoord::new(5, -2), 200.0));
+        assert_ne!(
+            props,
+            chunk_props(&terrain, ChunkCoord::new(5, -2), 200.0, None)
+        );
 
         let town = TownLayout::castex_inspired();
         let leveled = terrain.clone().with_flat_area(town.flat_area(&terrain));
         let area: FlatArea = leveled.flat_areas[0];
         for c in [ChunkCoord::new(0, 0), ChunkCoord::new(-1, -1)] {
-            let props = chunk_props(&leveled, c, 200.0);
+            let props = chunk_props(&leveled, c, 200.0, None);
             assert!(props.len() < 44);
             assert!(props.iter().all(|p| area.weight(p.at) == 0.0));
         }
+    }
+
+    #[test]
+    fn no_stone_or_shrub_stands_on_the_trains_path() {
+        let (towns, train) = crate::train::tests::line_train();
+        let world = WorldConfig {
+            half_extent: WorldConfig::MAX_HALF_EXTENT,
+            ..WorldConfig::default()
+        };
+        let mut terrain = Terrain::default();
+        for town in &towns {
+            let area = town.flat_area(&terrain);
+            terrain = terrain.with_flat_area(area);
+        }
+        let names: Vec<String> = ["Eduardo Castex", "Monte Nievas", "General Pico"]
+            .map(String::from)
+            .to_vec();
+        let (line, _) = pampa_core::RailLine::build(Some(&names), &towns, world.bounds());
+        let path = train.path();
+        let site = FloraSite::new(world, &terrain, &line).with_track(path);
+        let mut chunks: Vec<ChunkCoord> = (0..=(path.length() / 20.0) as usize)
+            .map(|k| world.chunk_of(path.at(k as f32 * 20.0)))
+            .collect();
+        chunks.sort_by_key(|c| (c.x, c.y));
+        chunks.dedup();
+        let mut props = 0;
+        for c in chunks {
+            for p in chunk_props(&terrain, c, world.chunk_size, Some(&site)) {
+                let gap = p.at.distance(path.at(path.project(p.at)));
+                assert!(
+                    gap >= PROP_RAIL_MARGIN - 1e-3,
+                    "{p:?}: {gap} m from the track"
+                );
+                props += 1;
+            }
+        }
+        assert!(props > 500, "{props}");
     }
 
     #[test]

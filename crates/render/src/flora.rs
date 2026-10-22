@@ -355,6 +355,11 @@ pub const CAMERA_REACH: f32 = 25.0;
 /// Beyond that, each tuft starts fading at its own seeded distance, up to
 /// this much farther: the grass thins out smoothly between.
 pub const TUFT_SPREAD: f32 = 50.0;
+/// Fade starts across [`TUFT_SPREAD`] come in this many steps. Bevy gives
+/// every distinct `VisibilityRange` a GPU slot it never frees, and past
+/// 65,535 slots it culls every unranged mesh (ground, buildings, the train),
+/// so tufts must share a few ranges instead of one each.
+pub const TUFT_FADE_STEPS: f32 = 8.0;
 /// Width of a tuft's dithered fade-out.
 const TUFT_FADE: f32 = 15.0;
 /// Where stumps and logs stop being drawn, and the width of their fade.
@@ -915,9 +920,10 @@ impl Painter<'_> {
         let base = world_from_ground(tuft.at, self.terrain.height(tuft.at.x, tuft.at.y));
         let transform =
             Transform::from_translation(base).with_rotation(Quat::from_rotation_y(tuft.yaw));
-        // Solid near the rider; past that each tuft fades at its own
-        // seeded distance, so the grass thins out smoothly.
-        let fade_from = TUFT_SOLID + CAMERA_REACH + TUFT_SPREAD * spot_unit(tuft.at, 5);
+        // Solid near the rider; past that each tuft fades at one of a few
+        // seeded distances, so the grass thins out in fine steps.
+        let step = (spot_unit(tuft.at, 5) * TUFT_FADE_STEPS).floor() / TUFT_FADE_STEPS;
+        let fade_from = TUFT_SOLID + CAMERA_REACH + TUFT_SPREAD * step;
         let range = visible_within(fade_from + TUFT_FADE, TUFT_FADE);
         let plant = Plant::Tuft(tuft.kind);
         let model = tuft_model(tuft);
@@ -1663,6 +1669,15 @@ mod tests {
             assert_eq!(range.start_margin, 0.0..0.0);
             assert!(range.end_margin.start >= TUFT_SOLID + CAMERA_REACH);
         }
+        // Bevy keeps every distinct range in a GPU slot for the app's whole
+        // life and culls unranged meshes once 65,535 are used: tufts share a
+        // few stepped ranges instead of one each.
+        let distinct: std::collections::HashSet<_> = q.iter(app.world()).cloned().collect();
+        assert!(
+            distinct.len() <= TUFT_FADE_STEPS as usize,
+            "{} distinct tuft ranges",
+            distinct.len()
+        );
         // Stones, shrubs, stumps and logs: solid from the rider, a fade at
         // the far end only.
         let mut q = app

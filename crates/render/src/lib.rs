@@ -11,6 +11,7 @@ pub mod atmosphere;
 pub mod bubble;
 pub mod character;
 pub mod coords;
+pub mod fade;
 pub mod fence;
 pub mod flora;
 pub mod font;
@@ -32,12 +33,13 @@ pub use character::{
     CharacterVisual, CharacterVisualPlugin, Coat, FigureKind, TOWNSFOLK_LOOKS, VisualPose,
 };
 pub use coords::world_from_ground;
+pub use fade::{FadeLayer, FadePlugin, ScreenFade};
 pub use fence::{FencePiece, FencePlugin, GatePart, WorldFences};
 pub use flora::{
     Faded, FloraAccent, FloraPlugin, GrassTuft, SightLine, ThinFadePlugin, ThinOccluder, TreePart,
     VegetationModels, WorldFlora,
 };
-pub use hud::{HudObjective, HudPlugin};
+pub use hud::{HudAnnouncement, HudHint, HudObjective, HudPlugin, HudRide};
 pub use minimap::{MapIcon, MapTarget, MinimapPlugin};
 pub use rail::{LineTrack, RailPlugin, WorldRail};
 pub use road::{CrossingPart, RoadPlugin, RoadSurface, SignpostPart};
@@ -45,7 +47,7 @@ pub use signs::{SignPlugin, Signboard};
 pub use streaming::{StreamingPlan, StreamingSet};
 pub use terrain::{StreamFocus, TerrainChunk, TerrainPlugin, WorldChunks, WorldTerrain};
 pub use town::{ActiveTowns, StreamTowns, TownPlugin, TownRoot, WindmillRotor, WorldTowns};
-pub use train::{TRAIN_DRAW_RADIUS, TrainCar, TrainPlugin, TrainWheel, WorldTrain};
+pub use train::{TRAIN_DRAW_RADIUS, TrainCar, TrainPlugin, TrainWheel, WorldTrain, car_transform};
 
 /// The game's `assets/` folder. Vegetation models and ground textures are
 /// read from it at startup. Without it, or when a file is missing, their

@@ -2,7 +2,9 @@
 //! distance to its extent) drawn from `pampa-core` data, north-up, titled
 //! with its name, with live markers for the player, the walkers and the
 //! line train's cars inside the map, and the errand's target ([`MapTarget`])
-//! pinned to the edge while it is off the map.
+//! pinned to the edge while it is off the map. A compass rose (N, E, S, O)
+//! in the bottom-left corner shows the map's orientation: the map is
+//! north-up, so the rose stays put and the player's arrow shows the heading.
 //!
 //! Each town's layer is rasterized once, the first time it is shown, and
 //! kept per town (one image per town: bounded); a second, transparent image
