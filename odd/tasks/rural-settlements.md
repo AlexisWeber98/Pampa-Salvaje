@@ -70,13 +70,25 @@ Today the fields between the towns are empty grass. The pampa of 1919 was settle
     - Real map (fence fixture, half extent 8000): 15 settlements behind 56 open gates (4 ranchos, 4 puestos, 6 chacras, 1 estancia), 158 obstacles, laid in about 3 ms.
     - RED observed with an empty-layout stub, then GREEN: 10 settlement tests. Core 291, render 168, game 83; fmt and clippy clean.
     - For T3: render props (stones and shrubs) should call `FloraSite::off_settlements`, and `game/src/main.rs` must build the layout and call `world.settle` and `with_settlements`.
-- [ ] **T3 — Procedural buildings** (render):
+- [x] **T3 — Procedural buildings** (render):
   - the rancho (adobe with a thatch or corrugated roof), puesto and chacra (brick with a parapet);
   - the casco with its gallery, and the worker houses;
   - the galpón, the corral, the australian tank and the trough;
   - the huella mesh with ruts.
 
   Use PBR materials, per-chunk streaming and camera occluders.
+  - Progress: route delegated writer (multi-file: new render module plus wiring in core, terrain, flora, camera and main). About 3,700 authored lines, well over the ~400 heuristic: the module needs a mesh builder, materials, 4 house styles, 9 prop kinds and the track decals to be usable at all; split into 3 commits for review (below).
+    - English identifiers (user, 2026-10-22): `Huella`→`Track` (`huella.rs`→`track.rs`), `Rancho/Puesto/Chacra/Estancia`→`Hut/Outpost/Farm/Ranch`, `CascoGallery`→`GalleryHouse`, casco→homestead, `Galpon`→`Barn`, `Molino`→`Windpump`, `Carreta`→`Cart`, aguada→`water_point`, alameda→`poplar_row`. The Spanish words stay as glosses in doc comments.
+    - Wiring: `game/src/main.rs` sets the asset server to the workspace `assets/` (`gltf::asset_plugin`), lays roads → fences → settlements (`world.settle`) → flora `.with_settlements`, logs counts per kind and build time, and inserts `WorldSettlements`. `lay_out` is a function now, with a game test. Terrain stones and shrubs keep 2 m off settlements (`off_settlements`).
+    - `crates/render/src/settlement.rs` + `settlement/{shape,materials,buildings,props,track,tests}.rs`: `SettlementPlugin` lays each settlement on the chunk owning its hub (PostUpdate after `ChunkStreaming`), children despawn with the chunk.
+    - Materials: 13 surfaces, one shared `StandardMaterial` each (9 texture sets + recess, steel, sheet, water), plus 4 tree paints. Textures load through the `AssetServer` with a repeating anisotropic sampler; `finish_textures` repacks `roughness.jpg` into green (blue = full metallic, scaled per surface by `metallic`) and builds CPU mips once, in the frame the image arrives. Without an asset server or files: plain colours.
+    - World-scaled UVs (2–3 m per repeat) and tangents on every face.
+    - Triangles (largest sizes): homestead 2,552, brick house 1,122, adobe huts ~400, barn 202, corral 2,892, windpump 2,214 (tower + wheel), cart 1,196, tank 600, well 408, haystack 240, trough 150, hitching post 36. Two settlements of every kind: ~23.9k triangles in 103 draws.
+    - Ranges: 3 shared `VisibilityRange`s (buildings 400 m, props 220 m, trees = the wild trees' range), tested ≤ 3.
+    - Trees: eucalyptus and poplar from the vegetation models (stand-ins without them), slender, recoloured; core `Structure::obstacles` now gives every tree spot a trunk box (`trunk_radius`, clamped).
+    - Camera: `CameraOccluders::with_settlements` adds every house and barn; corral sides, windpumps (and wheels), wells, carts, hitching posts, haystacks and trees are `ThinOccluder`s. The occluder list grows by ~100 boxes, so no distance filter was needed.
+    - Tests: RED observed for tree trunk obstacles (core) and for stones on settlements (terrain), then GREEN. Render settlement tests (12) were written alongside the code: chunk streaming once/despawn, budgets, ranges, shared materials, tracks drape with ruts, trees slender on their spots, wall openings, UVs, lathe, mips/repack. Core 292, render 181, game 84 pass; fmt and clippy clean.
+    - Deferred: visual check on the Renoir GPU (a manual ride); whether a modified image rebinds already-prepared materials (textures are finished in the frame they load, before the first extract, so it should not matter); mips are box-filtered in gamma space; a settlement's tracks are drawn only while its hub's chunk is loaded; glTF model slots are T4.
 - [ ] **T4 — Procedural props with model slots.** Sketchfab login is blocked for now (user, 2026-10-22), so every object is built procedurally:
   - the windpump, reusing and improving the town windmill;
   - eucalyptus and poplar around the cascos;
@@ -91,8 +103,14 @@ Today the fields between the towns are empty grass. The pampa of 1919 was settle
     - Convert them to glTF for the `windpump` (and maybe `carreta`) slots with our own stdlib-only Python script (`tools/dae2gltf.py`). Run it with `python -I`, with no new downloads.
     - Spin the wheel in code. Note the conversion in its CREDITS.md.
   - T2 review follow-ups, to do here or in T3:
-    - Settlement tree spots (eucalyptus, poplar) have no collision yet. Their trunks must block once render or flora plants them.
+    - Settlement tree spots (eucalyptus, poplar) have no collision yet. Their trunks must block once render or flora plants them. Done in T3.
     - Add direct unit tests of `FenceLayout::field_of` on a survey line, outside the grid, and at the outermost cell.
+  - T3 review follow-ups, to do here:
+    - The core test of `build_with_ranches` doesn't prove that a forced ranch was placed. Assert an in-range town is placed and that the extra ranch comes from the forced pass. The game test already checks both shipped towns.
+    - The forced-ranch test asserts reach ≤ `RANCH_REACH[2]`, but the last step is unbounded. Assert the step that actually succeeded.
+    - Make the exact f32 trunk-radius assert approximate.
+    - Slot names are English now (`cart`, not `carreta`). T4 creates the slot folders with these names, so no asset lookup breaks today. Add a test that every slot name resolves.
+    - The game test checks wild trees only on the hub's chunk. Iterate over every chunk the settlement's bounds cover, as the terrain props test does.
   - T1 review follow-ups, to do here:
     - Add a smoke test that loads every shipped prop glTF to `Ready`.
     - The lantern glass is `alphaMode BLEND` with a JPEG base colour (no alpha), so it renders opaque. Override the material, or check how it looks.
@@ -126,3 +144,5 @@ Today the fields between the towns are empty grass. The pampa of 1919 was settle
 ## Progress
 
 - 2026-10-22: code mapped, free-model survey done, decisions recorded. Branch created.
+- 2026-10-22: T3 done (delegated writer): settlements drawn, solid and seen; English identifiers. Next: T4.
+- 2026-10-22: forced estancias (user): `SettlementLayout::build_with_ranches` lays one estancia near each town named in `game/src/main.rs` `RANCH_TOWNS` (Eduardo Castex, General Pico) before the seeded mix. Open gates are tried nearest first within 3 km of the town's leveled band, 64 hub tries each; the reach widens to 6 km, 12 km, then anywhere; a town still without one is in `unplaced_ranches` and logged as a warning. RED on the shipped world (no estancia within 3 km of Castex), then GREEN. Shipped world now: 5 ranchos, 3 puestos, 6 chacras, 2 estancias (16). Castex's: hub (-4598, -2936), 561 m ESE of the town centre, gate (-4629, -2790) 331 m from its band, track 149 m south. Pico's: hub (2460, 1863), 462 m W of the town centre, gate (2450, 1668) 202 m from its band, track 197 m north. Core 293, render 181, game 85; fmt and clippy clean.

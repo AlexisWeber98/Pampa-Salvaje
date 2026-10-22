@@ -196,6 +196,8 @@ Roads, fences and gates cross that land:
 
 Roads, crossings, signposts, fences and gates stream with the chunks, like the track.
 
+Behind some open gates stand rural settlements (`pampa_core::settlement`, drawn by `pampa_render::settlement`): adobe ranchos under paja or corrugated iron, puestos with their corral and aguada, whitewashed or brick chacras with a galpón and a molino, and estancia cascos with a front gallery, worker houses, corrals, a eucalyptus grove and a poplar row. Dirt huellas (two wheel ruts) lead from the gate to every door. The buildings and props are procedural, with CC0 PBR textures shared one material per surface; every building, prop, corral rail and tree trunk is a static obstacle, and houses and galpones stop the camera.
+
 Everything is placed by `pampa_core::flora`, seeded by the chunk, and kept clear of towns' leveled ground, the railway, the roads, the fence lines and the world edge. Every tree trunk in the world is a static obstacle: about 113,000 of them, planted once at load in about 0.1 s, so a horse hits a trunk even in a chunk that is not drawn yet. The dust fog swallows everything well before the
 400 m that is always loaded. Towns stream the same way: a town's buildings,
 signs, people and tied horse appear within 600 m of it and go once you are
