@@ -13,9 +13,24 @@
 //! openings glazed with clear panes, a planked floor, a ceiling with oil
 //! lamps, end doors, and wooden benches facing each other in bays, laid out
 //! by [`CoachBody`] so the seat view looks out of an actual window.
+//!
+//! The detail is roughly PS2-era and of a British-built Argentine line of
+//! about 1919, from shared unit meshes and a few shared materials (with the
+//! PBR finishes of [`Finish`]): a banded boiler, smokebox door, headlamp,
+//! cylinders, side and main rods that turn with the drivers, a cowcatcher,
+//! a cab with spectacle windows and a coaled tender, and a few smoke puffs
+//! while moving; boarded coach sides with window frames, a clerestory roof
+//! and end platforms with railings; boarded, iron-strapped freight cars; and
+//! bogies, buffers and couplers under every car.
 
+use bevy::asset::RenderAssetUsages;
+use bevy::image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor};
+use bevy::math::Affine2;
 use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use pampa_core::{CarKind, CoachBody, LineTrain, PlacedCar, Terrain};
+
+use crate::character::finish::Finish;
 
 use crate::coords::world_from_ground;
 use crate::terrain::{StreamFocus, WorldTerrain};
@@ -38,7 +53,8 @@ impl Plugin for TrainPlugin {
             .add_systems(Update, spawn_cars)
             .add_systems(
                 PostUpdate,
-                (place_cars, turn_wheels).before(bevy::transform::TransformSystems::Propagate),
+                (place_cars, turn_wheels, puff_smoke)
+                    .before(bevy::transform::TransformSystems::Propagate),
             );
     }
 }
@@ -56,6 +72,29 @@ pub struct TrainWheel {
     pub radius: f32,
 }
 
+/// A side or main rod, swung round by the drivers' cranks: its place at
+/// rest (`base`), the crank's throw, the drivers' radius, its quartering
+/// `phase`, and how long it is (a main rod tilts as it swings; zero for a
+/// side rod, which only translates).
+#[derive(Component, Debug, Clone, Copy)]
+pub struct TrainRod {
+    pub base: Vec3,
+    pub crank: f32,
+    pub radius: f32,
+    pub phase: f32,
+    pub length: f32,
+}
+
+/// One puff of chimney smoke, cycling upward while the train moves:
+/// `phase` in `[0, 1)` from leaving the chimney to fading out.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct SmokePuff {
+    pub phase: f32,
+}
+
+/// Real seconds a smoke puff takes to rise and fade.
+const PUFF_SECONDS: f32 = 1.6;
+
 /// Height of the rail tops above the ground (see the town's railway).
 const RAIL_TOP: f32 = LineTrain::RAIL_TOP;
 
@@ -64,6 +103,12 @@ struct Kit {
     cube: Handle<Mesh>,
     cylinder: Handle<Mesh>,
     hopper: Handle<Mesh>,
+    puff: Handle<Mesh>,
+    smoke: Handle<StandardMaterial>,
+    /// The coach's boarded lower sides.
+    boards: Handle<StandardMaterial>,
+    /// Panelling inside the coaches.
+    panel: Handle<StandardMaterial>,
     black: Handle<StandardMaterial>,
     smokebox: Handle<StandardMaterial>,
     red: Handle<StandardMaterial>,
@@ -85,8 +130,76 @@ struct Kit {
     lamp: Handle<StandardMaterial>,
 }
 
+/// A board texture: vertical boards with dark seams and a faint grain,
+/// a little lighter or darker each, as RGBA8 sRGB pixels `(width, height)`.
+fn paint_boards() -> (u32, u32, Vec<u8>) {
+    let (w, h, boards) = (48u32, 32u32, 6u32);
+    let mut pixels = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let board = x * boards / w;
+            let seam = x % (w / boards) == 0;
+            let tone = [214u32, 236, 222, 246, 206, 230][board as usize];
+            let grain = ((x * 7 + y * 3 + board * 11) % 9) * 3;
+            let v = if seam { 120 } else { tone - grain };
+            pixels.extend([v as u8, v as u8, v as u8, 255]);
+        }
+    }
+    (w, h, pixels)
+}
+
 impl Kit {
-    fn new(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) -> Self {
+    fn new(
+        meshes: &mut Assets<Mesh>,
+        materials: &mut Assets<StandardMaterial>,
+        images: Option<&mut Assets<Image>>,
+    ) -> Self {
+        let boards = images.map(|images| {
+            let (w, h, pixels) = paint_boards();
+            let mut image = Image::new(
+                Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+                TextureDimension::D2,
+                pixels,
+                TextureFormat::Rgba8UnormSrgb,
+                RenderAssetUsages::RENDER_WORLD,
+            );
+            image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+                address_mode_u: ImageAddressMode::Repeat,
+                address_mode_v: ImageAddressMode::Repeat,
+                ..ImageSamplerDescriptor::linear()
+            });
+            images.add(image)
+        });
+        let mut finish = |rgb: [f32; 3], finish: Finish, repeat: Option<f32>| {
+            let (perceptual_roughness, metallic, reflectance) = finish.pbr();
+            materials.add(StandardMaterial {
+                base_color: Color::srgb(rgb[0], rgb[1], rgb[2]),
+                base_color_texture: repeat.and(boards.clone()),
+                uv_transform: Affine2::from_scale(Vec2::splat(repeat.unwrap_or(1.0))),
+                perceptual_roughness,
+                metallic,
+                reflectance,
+                ..default()
+            })
+        };
+        // Varnished wood: smoother than leather, not metal.
+        let wood = Finish::Rawhide;
+        let boards_mat = finish([0.20, 0.30, 0.22], wood, Some(16.0));
+        let boxcar = finish([0.45, 0.24, 0.16], Finish::Bark, Some(12.0));
+        let planks = finish([0.36, 0.27, 0.19], Finish::Bark, Some(10.0));
+        let panel = finish([0.46, 0.30, 0.17], wood, Some(14.0));
+        let black = finish([0.11, 0.10, 0.10], Finish::Iron, None);
+        let brass = finish([0.62, 0.50, 0.26], Finish::Brass, None);
+        let smoke = materials.add(StandardMaterial {
+            base_color: Color::srgba(0.55, 0.53, 0.50, 0.35),
+            alpha_mode: AlphaMode::Blend,
+            perceptual_roughness: 1.0,
+            ..default()
+        });
         let mut paint = |r: f32, g: f32, b: f32, metallic: f32, roughness: f32| {
             materials.add(StandardMaterial {
                 base_color: Color::srgb(r, g, b),
@@ -100,11 +213,15 @@ impl Kit {
             cylinder: meshes.add(Cylinder::new(0.5, 1.0).mesh().resolution(12)),
             // Four-sided funnel: the hopper's discharge chute.
             hopper: meshes.add(Cone::new(0.71, 1.0).mesh().resolution(4)),
-            black: paint(0.11, 0.10, 0.10, 0.6, 0.5),
+            puff: meshes.add(Sphere::new(0.5).mesh().ico(1).expect("a low sphere")),
+            smoke,
+            boards: boards_mat,
+            panel,
+            black,
             smokebox: paint(0.17, 0.16, 0.15, 0.3, 0.8),
             red: paint(0.50, 0.14, 0.09, 0.1, 0.7),
-            brass: paint(0.62, 0.50, 0.26, 0.8, 0.4),
-            boxcar: paint(0.45, 0.24, 0.16, 0.0, 0.9),
+            brass,
+            boxcar,
             roof: paint(0.40, 0.38, 0.36, 0.4, 0.7),
             hopper_body: paint(0.47, 0.42, 0.34, 0.3, 0.8),
             grain: paint(0.66, 0.54, 0.32, 0.0, 1.0),
@@ -113,7 +230,7 @@ impl Kit {
             coach: paint(0.20, 0.30, 0.22, 0.1, 0.8),
             trim: paint(0.80, 0.72, 0.55, 0.0, 0.8),
             wood: paint(0.42, 0.27, 0.15, 0.0, 0.6),
-            planks: paint(0.33, 0.25, 0.18, 0.0, 0.95),
+            planks,
             glass: materials.add(StandardMaterial {
                 base_color: Color::srgba(0.70, 0.78, 0.80, 0.18),
                 perceptual_roughness: 0.1,
@@ -206,7 +323,8 @@ impl CarBuilder<'_, '_> {
         }
     }
 
-    /// Underframe and buffers shared by every car.
+    /// Underframe, buffer beams, a pair of sprung buffers and a coupling
+    /// hook at each end, shared by every car.
     fn frame(&mut self, length: f32, deck: f32) {
         let (black, red) = (self.kit.black.clone(), self.kit.red.clone());
         self.cube(
@@ -215,11 +333,47 @@ impl CarBuilder<'_, '_> {
             Vec3::new(length - 0.6, 0.35, 2.5),
         );
         for end in [-1.0, 1.0] {
+            let beam = end * (length / 2.0 - 0.25);
+            self.cube(&red, Vec3::new(beam, deck, 0.0), Vec3::new(0.3, 0.45, 2.7));
+            for side in [-1.0, 1.0] {
+                let z = side * 0.85;
+                self.lying(
+                    &black,
+                    Vec3::new(end * (length / 2.0 - 0.18), deck, z),
+                    0.07,
+                    0.16,
+                );
+                self.lying(
+                    &black,
+                    Vec3::new(end * (length / 2.0 - 0.05), deck, z),
+                    0.19,
+                    0.08,
+                );
+            }
             self.cube(
-                &red,
-                Vec3::new(end * (length / 2.0 - 0.25), deck, 0.0),
-                Vec3::new(0.3, 0.45, 2.7),
+                &black,
+                Vec3::new(end * (length / 2.0 - 0.07), deck - 0.05, 0.0),
+                Vec3::new(0.14, 0.1, 0.12),
             );
+        }
+    }
+
+    /// Two four-wheeled bogies under a coach or a freight car: side frames,
+    /// a bolster and two axles each.
+    fn bogies(&mut self, length: f32) {
+        let black = self.kit.black.clone();
+        for end in [-1.0, 1.0] {
+            let x = end * (length / 2.0 - 1.9);
+            self.axle(x - 0.6, 0.45);
+            self.axle(x + 0.6, 0.45);
+            for side in [-1.0, 1.0] {
+                self.cube(
+                    &black,
+                    Vec3::new(x, 0.5, side * 1.07),
+                    Vec3::new(2.0, 0.22, 0.08),
+                );
+            }
+            self.cube(&black, Vec3::new(x, 0.78, 0.0), Vec3::new(0.35, 0.18, 2.1));
         }
     }
 
@@ -294,33 +448,185 @@ impl CarBuilder<'_, '_> {
             Vec3::new(tender_x + 0.4, 3.1, 0.0),
             Vec3::new(2.8, 0.35, 2.3),
         );
+        self.cube(
+            &coal,
+            Vec3::new(tender_x + 0.6, 3.33, 0.0),
+            Vec3::new(1.8, 0.2, 1.6),
+        );
+        self.locomotive_detail(length);
+    }
+
+    /// The engine's finer parts: boiler bands, smokebox door, headlamp,
+    /// cylinders with their rods, cowcatcher, cab spectacles, tender
+    /// coping, and the chimney's smoke.
+    fn locomotive_detail(&mut self, length: f32) {
+        let k = self.kit;
+        let (black, brass, window, lamp) = (
+            k.black.clone(),
+            k.brass.clone(),
+            k.window.clone(),
+            k.lamp.clone(),
+        );
+        let front = length / 2.0;
+        for x in [0.2, 1.8, 3.4, 5.0] {
+            self.lying(&brass, Vec3::new(x, 2.3, 0.0), 0.97, 0.07);
+        }
+        // Smokebox door with its dart, and a headlamp on top.
+        self.lying(&black, Vec3::new(front - 0.68, 2.3, 0.0), 0.8, 0.06);
+        self.cube(
+            &brass,
+            Vec3::new(front - 0.64, 2.3, 0.0),
+            Vec3::new(0.05, 0.12, 0.12),
+        );
+        self.cube(
+            &black,
+            Vec3::new(front - 0.55, 3.45, 0.0),
+            Vec3::new(0.35, 0.4, 0.35),
+        );
+        self.cube(
+            &lamp,
+            Vec3::new(front - 0.37, 3.45, 0.0),
+            Vec3::new(0.02, 0.22, 0.22),
+        );
+        // Cylinders, and the rods the drivers swing round.
+        for (i, side) in [-1.0f32, 1.0].into_iter().enumerate() {
+            let z = side * 1.25;
+            self.lying(&black, Vec3::new(5.9, 0.85, z), 0.3, 1.0);
+            // Right-hand cranks lead by a quarter turn.
+            let phase = i as f32 * std::f32::consts::FRAC_PI_2;
+            self.rod(
+                Vec3::new(2.9, 0.75, side * 1.12),
+                Vec3::new(3.6, 0.1, 0.06),
+                phase,
+                0.0,
+            );
+            self.rod(
+                Vec3::new(4.4, 0.8, side * 1.2),
+                Vec3::new(3.0, 0.12, 0.06),
+                phase,
+                3.0,
+            );
+        }
+        // A slatted cowcatcher under the buffer beam.
+        for z in [-1.0, -0.5, 0.0, 0.5, 1.0] {
+            self.part(
+                &k.cube,
+                &black,
+                Transform::from_xyz(front - 0.4, 0.38, z)
+                    .with_rotation(Quat::from_rotation_z(-0.7))
+                    .with_scale(Vec3::new(0.65, 0.06, 0.08)),
+            );
+        }
+        self.cube(
+            &black,
+            Vec3::new(front - 0.25, 0.2, 0.0),
+            Vec3::new(0.06, 0.06, 2.3),
+        );
+        // Spectacle windows in the cab front, over the boiler.
+        for side in [-1.0, 1.0] {
+            self.cube(
+                &window,
+                Vec3::new(-0.09, 3.25, side * 0.85),
+                Vec3::new(0.02, 0.45, 0.5),
+            );
+        }
+        // Coping round the tender's top.
+        let tender_x = -front + 2.2;
+        for side in [-1.0, 1.0] {
+            self.cube(
+                &black,
+                Vec3::new(tender_x, 3.12, side * 1.33),
+                Vec3::new(4.2, 0.16, 0.05),
+            );
+        }
+        // Smoke puffs, under a holder at the car's origin so they never
+        // count as the car's own height.
+        let (mesh, smoke) = (k.puff.clone(), k.smoke.clone());
+        let base = Vec3::new(front - 1.4, 4.55, 0.0);
+        self.car.with_children(|car| {
+            car.spawn((Transform::default(), Visibility::default()))
+                .with_children(|holder| {
+                    for i in 0..4 {
+                        holder.spawn((
+                            Mesh3d(mesh.clone()),
+                            MeshMaterial3d(smoke.clone()),
+                            SmokePuff {
+                                phase: i as f32 / 4.0,
+                            },
+                            Transform::from_translation(base),
+                            Visibility::Hidden,
+                        ));
+                    }
+                });
+        });
+    }
+
+    /// A rod swung round by the drivers' cranks (see [`TrainRod`]).
+    fn rod(&mut self, base: Vec3, size: Vec3, phase: f32, length: f32) {
+        let mesh = self.kit.cube.clone();
+        let material = self.kit.black.clone();
+        self.car.with_child((
+            Mesh3d(mesh),
+            MeshMaterial3d(material),
+            TrainRod {
+                base,
+                crank: 0.3,
+                radius: 0.75,
+                phase,
+                length,
+            },
+            Transform::from_translation(base).with_scale(size),
+        ));
     }
 
     fn coach(&mut self, length: f32) {
         let k = self.kit;
-        let roof = k.roof.clone();
+        let (roof, window, black) = (k.roof.clone(), k.window.clone(), k.black.clone());
         self.frame(length, 1.1);
-        for x in [
-            -length / 2.0 + 1.3,
-            -length / 2.0 + 2.5,
-            length / 2.0 - 2.5,
-            length / 2.0 - 1.3,
-        ] {
-            self.axle(x, 0.45);
-        }
+        self.bogies(length);
         self.coach_shell(length);
         self.coach_inside(length);
-        // A rounded-looking roof over the ceiling.
+        // The roof over the ceiling, with a glazed clerestory along it.
         self.cube(
             &roof,
             Vec3::new(0.0, 3.9, 0.0),
             Vec3::new(length - 0.4, 0.2, 3.0),
         );
         self.cube(
+            &window,
+            Vec3::new(0.0, 4.04, 0.0),
+            Vec3::new(length - 1.6, 0.07, 1.46),
+        );
+        self.cube(
             &roof,
             Vec3::new(0.0, 4.08, 0.0),
-            Vec3::new(length - 1.2, 0.16, 2.2),
+            Vec3::new(length - 1.2, 0.16, 1.4),
         );
+        // Open end platforms: railings either side of the door, and a step.
+        let (floor, half) = (CoachBody::FLOOR, CoachBody::HALF_WIDTH);
+        for end in [-1.0, 1.0] {
+            let x = end * (length / 2.0 - 0.12);
+            for side in [-1.0, 1.0] {
+                let span = half - 0.45;
+                self.cube(
+                    &black,
+                    Vec3::new(x, floor + 1.0, side * (0.45 + span / 2.0)),
+                    Vec3::new(0.04, 0.04, span),
+                );
+                for z in [0.5, half - 0.05] {
+                    self.cube(
+                        &black,
+                        Vec3::new(x, floor + 0.5, side * z),
+                        Vec3::new(0.04, 1.0, 0.04),
+                    );
+                }
+                self.cube(
+                    &black,
+                    Vec3::new(x, 0.75, side * (half - 0.2)),
+                    Vec3::new(0.3, 0.05, 0.4),
+                );
+            }
+        }
     }
 
     /// The coach's hollow body: floor, side walls with glazed window
@@ -360,9 +666,21 @@ impl CarBuilder<'_, '_> {
         edges.push(inner / 2.0);
         for side in [-1.0, 1.0] {
             let z = side * (half - wall / 2.0);
-            for (lo, hi) in [(floor, sill), (lintel, ceiling)] {
+            for (lo, hi, skin) in [(floor, sill, &k.boards), (lintel, ceiling, &body)] {
                 let (y, h) = band(lo, hi);
-                self.cube(&body, Vec3::new(0.0, y, z), Vec3::new(inner, h, wall));
+                self.cube(skin, Vec3::new(0.0, y, z), Vec3::new(inner, h, wall));
+            }
+            // Panelling inside, a sill ledge and a header outside.
+            let (y, h) = band(floor, sill);
+            let inside = side * (half - wall - 0.01);
+            self.cube(
+                &k.panel,
+                Vec3::new(0.0, y, inside),
+                Vec3::new(inner - 0.1, h, 0.02),
+            );
+            let outside = side * (half + 0.02);
+            for (y, h) in [(sill - 0.03, 0.06), (lintel + 0.03, 0.06)] {
+                self.cube(&trim, Vec3::new(0.0, y, outside), Vec3::new(inner, h, 0.04));
             }
             let (y, h) = band(sill, lintel);
             for pier in edges.chunks(2) {
@@ -371,6 +689,10 @@ impl CarBuilder<'_, '_> {
             }
             for &x in &windows {
                 self.cube(&glass, Vec3::new(x, y, z), Vec3::new(open, h, 0.01));
+                // The window's frame posts.
+                for post in [x - open / 2.0 - 0.025, x + open / 2.0 + 0.025] {
+                    self.cube(&trim, Vec3::new(post, y, outside), Vec3::new(0.05, h, 0.04));
+                }
             }
             self.cube(
                 &trim,
@@ -437,18 +759,34 @@ impl CarBuilder<'_, '_> {
         }
     }
 
+    /// Iron strapping on a freight car's sides between heights `lo` and
+    /// `hi`: a chord along the top and bottom and an upright every 1.5 m.
+    fn strapping(&mut self, length: f32, lo: f32, hi: f32) {
+        let black = self.kit.black.clone();
+        let span = length - 0.7;
+        for side in [-1.0, 1.0] {
+            let z = side * 1.42;
+            for y in [lo + 0.05, hi - 0.05] {
+                self.cube(&black, Vec3::new(0.0, y, z), Vec3::new(span, 0.1, 0.03));
+            }
+            let count = (span / 1.5).floor() as usize;
+            for i in 0..=count {
+                let x = -span / 2.0 + span * i as f32 / count.max(1) as f32;
+                self.cube(
+                    &black,
+                    Vec3::new(x, (lo + hi) / 2.0, z),
+                    Vec3::new(0.08, hi - lo, 0.03),
+                );
+            }
+        }
+    }
+
     fn boxcar(&mut self, length: f32) {
         let k = self.kit;
         let (body, roof, window) = (k.boxcar.clone(), k.roof.clone(), k.window.clone());
         self.frame(length, 1.1);
-        for x in [
-            -length / 2.0 + 1.3,
-            -length / 2.0 + 2.5,
-            length / 2.0 - 2.5,
-            length / 2.0 - 1.3,
-        ] {
-            self.axle(x, 0.45);
-        }
+        self.bogies(length);
+        self.strapping(length, 1.3, 3.9);
         self.cube(
             &body,
             Vec3::new(0.0, 2.6, 0.0),
@@ -459,12 +797,17 @@ impl CarBuilder<'_, '_> {
             Vec3::new(0.0, 3.98, 0.0),
             Vec3::new(length - 0.5, 0.16, 3.0),
         );
-        // Sliding doors on both sides.
+        // Sliding doors on both sides, hung from a rail.
         for side in [-1.0, 1.0] {
             self.cube(
                 &window,
-                Vec3::new(0.0, 2.45, side * 1.41),
+                Vec3::new(0.0, 2.45, side * 1.44),
                 Vec3::new(1.8, 2.1, 0.03),
+            );
+            self.cube(
+                &self.kit.black.clone(),
+                Vec3::new(0.0, 3.6, side * 1.46),
+                Vec3::new(3.8, 0.06, 0.04),
             );
         }
     }
@@ -473,14 +816,8 @@ impl CarBuilder<'_, '_> {
         let k = self.kit;
         let (body, grain, black) = (k.hopper_body.clone(), k.grain.clone(), k.black.clone());
         self.frame(length, 1.1);
-        for x in [
-            -length / 2.0 + 1.3,
-            -length / 2.0 + 2.5,
-            length / 2.0 - 2.5,
-            length / 2.0 - 1.3,
-        ] {
-            self.axle(x, 0.45);
-        }
+        self.bogies(length);
+        self.strapping(length, 1.7, 3.5);
         // Open bin with ribs, heaped with grain, over two discharge chutes.
         self.cube(
             &body,
@@ -512,6 +849,13 @@ impl CarBuilder<'_, '_> {
     }
 }
 
+/// The assets the car kit is made in (images only for the board texture).
+type KitAssets<'w> = (
+    ResMut<'w, Assets<Mesh>>,
+    ResMut<'w, Assets<StandardMaterial>>,
+    Option<ResMut<'w, Assets<Image>>>,
+);
+
 /// The shared car kit, made on first use.
 #[derive(Resource)]
 struct CarKit(Kit);
@@ -521,7 +865,7 @@ fn spawn_cars(
     train: Res<WorldTrain>,
     spawned: Query<(), With<TrainCar>>,
     kit: Option<Res<CarKit>>,
-    mut assets: (ResMut<Assets<Mesh>>, ResMut<Assets<StandardMaterial>>),
+    mut assets: KitAssets,
 ) {
     let Some(train) = &train.0 else {
         return;
@@ -532,7 +876,7 @@ fn spawn_cars(
     let kit = match kit {
         Some(kit) => kit.0.clone(),
         None => {
-            let kit = Kit::new(&mut assets.0, &mut assets.1);
+            let kit = Kit::new(&mut assets.0, &mut assets.1, assets.2.as_deref_mut());
             commands.insert_resource(CarKit(kit.clone()));
             kit
         }
@@ -603,11 +947,13 @@ fn place_cars(
     }
 }
 
-/// Rolls the wheels with the train's speed.
+/// Rolls the wheels with the train's speed, and swings the rods round
+/// with the drivers.
 fn turn_wheels(
     time: Res<Time>,
     train: Res<WorldTrain>,
-    mut wheels: Query<(&TrainWheel, &mut Transform)>,
+    mut wheels: Query<(&TrainWheel, &mut Transform), Without<TrainRod>>,
+    mut rods: Query<(&mut TrainRod, &mut Transform), Without<TrainWheel>>,
 ) {
     let Some(train) = &train.0 else {
         return;
@@ -620,6 +966,54 @@ fn turn_wheels(
         // The wheel's axle is its local Y; rolling forward turns it clockwise
         // seen from the car's right side.
         transform.rotate_local_y(-distance / wheel.radius);
+    }
+    for (mut rod, mut transform) in &mut rods {
+        rod.phase = (rod.phase + distance / rod.radius) % std::f32::consts::TAU;
+        *transform = rod_pose(&rod, transform.scale);
+    }
+}
+
+/// Where a rod is at its crank angle: a side rod circles with the crank
+/// pins; a main rod's back end does, its front end slides with the
+/// crosshead, so it moves half as far and tilts.
+pub fn rod_pose(rod: &TrainRod, scale: Vec3) -> Transform {
+    let (sin, cos) = rod.phase.sin_cos();
+    let (along, up) = (cos * rod.crank, sin * rod.crank);
+    let (offset, tilt) = if rod.length > 0.0 {
+        (
+            Vec3::new(along, up / 2.0, 0.0),
+            (up / rod.length).clamp(-1.0, 1.0).asin(),
+        )
+    } else {
+        (Vec3::new(along, up, 0.0), 0.0)
+    };
+    Transform::from_translation(rod.base + offset)
+        .with_rotation(Quat::from_rotation_z(-tilt))
+        .with_scale(scale)
+}
+
+/// Chimney smoke while the train moves: each puff rises, drifts back and
+/// swells from the chimney, then starts again; hidden at a standstill.
+fn puff_smoke(
+    time: Res<Time>,
+    train: Res<WorldTrain>,
+    mut puffs: Query<(&mut SmokePuff, &mut Transform, &mut Visibility)>,
+) {
+    let Some(train) = &train.0 else {
+        return;
+    };
+    let speed = train.state().speed;
+    for (mut puff, mut transform, mut visibility) in &mut puffs {
+        if speed <= 0.0 {
+            visibility.set_if_neq(Visibility::Hidden);
+            continue;
+        }
+        puff.phase = (puff.phase + time.delta_secs() / PUFF_SECONDS).fract();
+        let t = puff.phase;
+        let chimney = Vec3::new(5.6, 4.55, 0.0);
+        transform.translation = chimney + Vec3::new(-t * (1.0 + speed * 0.25), 0.3 + t * 2.0, 0.0);
+        transform.scale = Vec3::splat(0.5 + t * 1.6);
+        visibility.set_if_neq(Visibility::Inherited);
     }
 }
 
@@ -833,9 +1227,9 @@ pub(crate) mod tests {
             CoachBody::HALF_WIDTH - 0.04,
         );
         assert!(
-            parts
-                .iter()
-                .any(|(m, a, b)| *m == kit.coach && below.cmpge(*a).all() && below.cmple(*b).all())
+            parts.iter().any(|(m, a, b)| *m == kit.boards
+                && below.cmpge(*a).all()
+                && below.cmple(*b).all())
         );
         // Benches: a seat and a back at each end of each bay, both sides.
         let wood = parts.iter().filter(|(m, _, _)| *m == kit.wood).count();
@@ -850,6 +1244,96 @@ pub(crate) mod tests {
         );
         assert!(windows.iter().any(|&x| (along - x).abs() < open / 2.0));
         assert!(eye > CoachBody::SILL && eye < CoachBody::LINTEL);
+    }
+
+    /// Triangles drawn for car `index`, over every mesh under it.
+    fn triangles(app: &mut App, index: usize) -> usize {
+        let mut q = app.world_mut().query::<(Entity, &TrainCar)>();
+        let root = q
+            .iter(app.world())
+            .find(|(_, c)| c.index == index)
+            .unwrap()
+            .0;
+        let meshes = app.world().resource::<Assets<Mesh>>();
+        let mut stack = vec![root];
+        let mut total = 0;
+        while let Some(e) = stack.pop() {
+            if let Some(children) = app.world().get::<Children>(e) {
+                stack.extend(children.iter());
+            }
+            if let Some(mesh) = app.world().get::<Mesh3d>(e) {
+                let mesh = meshes.get(&mesh.0).unwrap();
+                total += mesh.indices().map_or(mesh.count_vertices(), |i| i.len()) / 3;
+            }
+        }
+        total
+    }
+
+    #[test]
+    fn every_car_stays_within_a_ps2_era_triangle_budget() {
+        let mut app = app_with_train(3600.0, GroundVec2::ZERO);
+        app.update();
+        let train = app.world().resource::<WorldTrain>().0.clone().unwrap();
+        for (index, car) in train.cars().iter().enumerate() {
+            let tris = triangles(&mut app, index);
+            println!("{:?}: {tris} triangles", car.kind);
+            assert!((300..8000).contains(&tris), "{:?}: {tris}", car.kind);
+        }
+    }
+
+    #[test]
+    fn the_rods_swing_round_with_the_cranks() {
+        let rod = TrainRod {
+            base: Vec3::new(2.9, 0.75, 1.12),
+            crank: 0.3,
+            radius: 0.75,
+            phase: 0.0,
+            length: 0.0,
+        };
+        let at = |phase: f32| rod_pose(&TrainRod { phase, ..rod }, Vec3::ONE).translation;
+        assert!((at(0.0) - rod.base - Vec3::new(0.3, 0.0, 0.0)).length() < 1e-5);
+        assert!(
+            (at(std::f32::consts::FRAC_PI_2) - rod.base - Vec3::new(0.0, 0.3, 0.0)).length() < 1e-5
+        );
+        // A side rod stays level; a main rod tilts with the crank.
+        assert_eq!(
+            rod_pose(&TrainRod { phase: 1.0, ..rod }, Vec3::ONE).rotation,
+            Quat::IDENTITY
+        );
+        let main = TrainRod {
+            length: 3.0,
+            phase: 1.0,
+            ..rod
+        };
+        assert!(
+            rod_pose(&main, Vec3::ONE)
+                .rotation
+                .angle_between(Quat::IDENTITY)
+                > 0.01
+        );
+        // In the app, the rods turn as the train runs.
+        let (_, probe) = line_train();
+        let (_, depart) = probe.stop_times(pampa_core::Run::Up, 1).unwrap();
+        let mut app = app_with_train(7.0 * 3600.0 + (depart + 30.0) * BASE_RATE, GroundVec2::ZERO);
+        app.update();
+        let phases = |app: &mut App| {
+            let mut q = app.world_mut().query::<&TrainRod>();
+            q.iter(app.world()).map(|r| r.phase).collect::<Vec<_>>()
+        };
+        let before = phases(&mut app);
+        assert_eq!(before.len(), 4, "two side rods and two main rods");
+        app.world_mut()
+            .resource_mut::<WorldTrain>()
+            .0
+            .as_mut()
+            .unwrap()
+            .advance(
+                7.0 * 3600.0 + (depart + 30.0) * BASE_RATE,
+                BASE_RATE,
+                BASE_RATE,
+            );
+        app.update();
+        assert_ne!(phases(&mut app), before);
     }
 
     #[test]

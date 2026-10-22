@@ -34,7 +34,15 @@ riding the train, the next station and its arrival time
 
 One steam train runs the whole railway line on a timetable: a rural mixed
 train of 8 cars (93 m), the locomotive, two passenger coaches and five freight
-cars. It spends the night at General Pico, leaves Pico at 07:00, stops 25 s at
+cars, drawn in a British-built style of about 1919 at roughly PS2-era detail
+from shared unit meshes and materials (about 2 200 triangles for the engine
+and each coach, 1 100 for a freight car). The engine has a banded boiler, a
+smokebox door, a headlamp, cylinders, side and main rods that turn with the
+drivers, a cowcatcher, a cab with spectacle windows, a coaled tender and a
+few puffs of chimney smoke while moving. The coaches have boarded sides,
+framed windows, a clerestory roof and open end platforms with railings; the
+freight cars are boarded and iron-strapped; every car rides on bogies with
+buffers and couplers. It spends the night at General Pico, leaves Pico at 07:00, stops 25 s at
 Monte Nievas, reaches Eduardo Castex, lays over, leaves Castex at 16:00, stops
 at Monte Nievas again and is back at Pico for the night (a user change on
 2026-10-21; until then it slept at Castex and left it at 07:00). It runs at up to 65 km/h, braking to stop with the
