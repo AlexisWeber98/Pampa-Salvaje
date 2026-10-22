@@ -27,6 +27,7 @@ pub mod placement;
 pub mod places;
 pub mod pose;
 pub mod rail;
+pub mod ride;
 pub mod rider;
 mod rng;
 pub mod road;
@@ -53,6 +54,11 @@ pub use placement::{PlacementError, place_towns};
 pub use places::{Place, PlaceKind, Sign, SignMount};
 pub use pose::{HorseAngles, HorseGait, JointAngles, Leg, MOTION_CLOCK_PERIOD, tick_clock};
 pub use rail::{LinePath, RailCurve, RailLine, RailLineError, RailLink, RailSpan};
+pub use ride::{
+    APPROACH_LEAD, BOARD_RANGE, Boarding, ONBOARD_MULTIPLIER, OPENING_LEAD, Ride, SEAT_HEIGHT,
+    WAIT_RANGE, alight_spot, boarding, coach_doors, depart_now, next_arrival, opening, skip_ride,
+    skip_to_approach, stands_at, wait_for_train, waiting_station,
+};
 pub use rider::{MAX_STEP, Rider, RiderInput, RiderParams};
 pub use road::{
     LevelCrossing, Road, RoadEnd, RoadError, RoadKind, RoadNetwork, RoadPoint, SignBoard, Signpost,
