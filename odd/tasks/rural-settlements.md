@@ -44,11 +44,17 @@ Today the fields between the towns are empty grass. The pampa of 1919 was settle
 
 - [x] **T0 — glTF pipeline.** Enable `bevy_gltf` (plus the features it needs) and fetch the crates once. Add a small loader path for `assets/models/**.glb`, and a test that loads one shipped glTF.
   - Progress: route delegated writer. Features `bevy_gltf` (pulls `bevy_world_serialization`), `png`, `jpeg`, `reflect_auto_register` (scene spawning copies components by reflection); 21 new crates locked. `crates/render/src/gltf.rs` (`load_scene`, `model_state`, `scene_at`, `asset_plugin`) plus `assets/models/test/triangle.gltf`; render 168, game 83 tests pass, clippy and fmt clean. Pending for T3/T4: `game/src/main.rs` must set `DefaultPlugins.set(gltf::asset_plugin(&root))`, or the asset server reads `game/assets`.
-- [ ] **T1 — CC0 assets.** Download once from ambientCG and Poly Haven:
+- [x] **T1 — CC0 assets.** Download once from ambientCG and Poly Haven:
   - PBR textures for adobe/plaster, brick, corrugated iron, thatch, weathered wood and track dirt;
   - props: barrels, bucket, ladder, lantern and crate.
 
   Use 1k textures for props and up to 2k for buildings. Add credits.
+  - Progress: route inline (parent download).
+    - Licences verified: polyhaven.com/license says all assets are CC0; ambientCG was already verified.
+    - `assets/textures/buildings/` holds 9 sets, each with `color`/`normal_gl`/`roughness`(/`ao`).jpg at 1K: clay_plaster, plaster_003, brick_wall_02, corrugated_iron(_02), brown_planks_05, brown_mud_dry, dry_ground_01, plus our own `thatch/` generated with ImageMagick.
+    - `assets/models/props/polyhaven/` holds 5 glTF props. Barrels are ~33k triangles, so use them sparingly.
+    - Credits are next to the files and in the root CREDITS.md. About 37 MB added.
+    - No Poly Haven or ambientCG thatch exists.
 - [ ] **T2 — Core layout** (`crates/core/src/settlement.rs`):
   - kinds (rancho, puesto, chacra, estancia);
   - compounds with worker houses;
@@ -70,6 +76,10 @@ Today the fields between the towns are empty grass. The pampa of 1919 was settle
   - the well, trough, carreta, haystack and hitching post.
 
   Each object kind has a model slot at `assets/models/third-party/<slot>/model.glb` (or `.gltf`). When the file exists, it replaces the procedural mesh at load time, with a per-slot scale, offset and yaw from RON. When it is missing, the procedural fallback is drawn, so a model downloaded later drops in without code changes. Document the slot names and the credit steps in `assets/models/third-party/README.md`.
+  - T0 review follow-ups, to do here:
+    - Test that a malformed glTF reaches `ModelState::Failed` and keeps the stand-in.
+    - Make the test settle helpers panic with an explicit timeout message.
+    - Reject absolute or `..` slot paths in `load_scene`.
 - [ ] **T5 — Minimap.** Add a field frame mode that shows settlements and huellas when no town is near.
 - [ ] **T6 — Docs.** Update the setting guide entries, README and this document.
 
