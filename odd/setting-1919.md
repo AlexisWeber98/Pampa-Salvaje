@@ -66,7 +66,17 @@ Most characters are **humble**: clerks, peones, farmhands, railway workers and s
 - Brick or adobe houses with flat roofs and parapets, or corrugated-iron roofs.
 - Water tanks, windmills (molinos) and grain sheds near the station.
 - Hitching posts, carts, barrels, sacks of grain, and kerosene lamps.
-- Wire fences (alambrados) and gates (tranqueras) between fields. Caldén and chañar trees.
+- Caldén and chañar trees.
+
+## Roads, fences and gates (user, 2026-10-22)
+
+- **Roads and streets are public.** A rural road is a dirt "calle" running between two wire fences, one on each side. No fence and no gate ever crosses or closes a road.
+- **Wire fences (alambrados)** mark out private land: estancias, tambos, cultivated fields and plots. They line the roads and divide the fields from each other.
+- **Gates (tranqueras)** are the entrances to that private land: from the road into a field, or from one paddock to the next. They are set in the fence line, never across the road.
+- Fences stop at town edges, the railway corridor and level crossings. A level crossing is public road.
+- The public "calle" is a road about 6–7 m wide with at least 5 m from its edge to each fence: wide enough for carts and for future routes.
+- Some gates stand open and others are shut. A gate leads into a rancho, puesto, chacra or estancia, and some fields have an inner track running from the gate to the houses.
+- Not every field is fenced. Now and then a field is open ground (*descampado*) or abandoned, with no wire around it.
 
 ## Rule
 

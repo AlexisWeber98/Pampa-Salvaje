@@ -11,6 +11,7 @@ pub mod atmosphere;
 pub mod bubble;
 pub mod character;
 pub mod coords;
+pub mod fence;
 pub mod flora;
 pub mod font;
 pub mod ground;
@@ -31,6 +32,7 @@ pub use character::{
     CharacterVisual, CharacterVisualPlugin, Coat, FigureKind, TOWNSFOLK_LOOKS, VisualPose,
 };
 pub use coords::world_from_ground;
+pub use fence::{FencePiece, FencePlugin, GatePart, WorldFences};
 pub use flora::{
     Faded, FloraAccent, FloraPlugin, GrassTuft, SightLine, ThinFadePlugin, ThinOccluder, TreePart,
     VegetationModels, WorldFlora,

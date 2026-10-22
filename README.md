@@ -56,7 +56,8 @@ A paper-style minimap in the top-right corner shows the nearest town north-up,
 titled with its name: streets, blocks and buildings by kind, the plaza, the
 railway, each place by its initial, walkers as dots, the train's cars when
 they are in the map, the errand's target as a gold diamond and the player as an
-arrow along its heading. It frames the town plus a 30 m margin (not the whole
+arrow along its heading. Dirt roads are drawn in a warm brown under the
+railway. It frames the town plus a 30 m margin (not the whole
 world) so streets stay legible; out on the pampa the arrow sticks to the map
 edge, and a target in another town is pinned to the edge on its side, so it
 points the way. Each town's layer is rasterized once, the first
@@ -98,7 +99,24 @@ The open land between towns is pampa grassland:
 
 The plants and stones are low-poly CC0 models from Quaternius' Ultimate Nature Pack, and the ground textures are CC0 from ambientCG. They are read from `assets/` at startup by our own small OBJ and PNM readers (no extra crates), and they are recoloured and rescaled in code for the dry 1919 pampa. A missing file logs a warning, and a procedural stand-in is drawn instead. There is no level-of-detail swap: each tree is the same model out to 200 m and fades out inside the 180 m dust fog. Tufts stay solid within about 40 m of the rider and thin out smoothly farther away. Every model choice, turn and size is seeded by its placement, so a reloaded chunk looks exactly the same. Every asset is credited, with what was changed, in [CREDITS.md](CREDITS.md).
 
-Everything is placed by `pampa_core::flora`, seeded by the chunk, and kept clear of towns' leveled ground, the railway and the world edge. Every tree trunk in the world is a static obstacle: about 113,000 of them, planted once at load in about 0.1 s, so a horse hits a trunk even in a chunk that is not drawn yet. The dust fog swallows everything well before the
+Roads, fences and gates cross that land:
+- **Dirt roads** for carts and riders join neighbouring towns (Eduardo Castex–Monte Nievas, 2.1 km; Monte Nievas–General Pico, 6.9 km). Each leaves a town by the street facing the other town and runs on a gently curving, seeded line. It is more direct than the railway, which loses distance on its run-outs and wide curves. A road keeps 40 m clear of the track and crosses it only where its ends lie on opposite sides, and then squarely. In the shipped map, both direct roads stay south of the line.
+- **Level crossings and rural tracks:** every railway town has one street that crosses its track by the station, square, at a level crossing. That is the street through the station yard nearest the station, or the ring street carried just past the grid when the yard fills the town's track side. The crossing has timber planks between and beside the rails, ramps up to them, and a St Andrew's cross on a post on each approach. Past it, a short seeded rural track of 300–800 m runs out toward the chacras and estancias and ends in the open land. A rider can always cross; a train car standing on the crossing still blocks it.
+- **Road surface:** each road is cut a shallow 15 cm into the ground, level across and easing back into the land beside it, so `Terrain::height` stays continuous. It wears Ground 102 compressed dirt from ambientCG, with its edges feathered into the grass, which is worn to earth along it. No tree, tuft, stone or shrub grows on a road or its verges.
+- **Signposts:** a wooden signpost stands at each town's road exit. Its arrow board names the far town and the distance in kilometres, to a tenth, in the pixel font, for example "GENERAL PICO 6,9 KM".
+- **Wire fences (alambrados)** mark out the private land: estancias, tambos, fields and plots. Roads are public, and no fence or gate ever crosses one.
+  - Every road is 6.5 m wide and runs between two fences 8.5 m from its centerline, at least 5 m past its edge on each side: a wide "calle entre alambrados" for carts and, later, routes. The fences follow the road's curves and stop at the towns' leveled ground and by the railway, so there is no fence at a level crossing.
+  - The land away from the roads is surveyed on a north–south grid, with lines a seeded 300–800 m apart. A grid line stops at the roadside fence and joins it at a corner post.
+  - Each field's frontage on a road gets one or two gates (tranqueras, single or double). The grid fences have an opening every 300–500 m: a field gate between paddocks, or a broken stretch with a leaning post, a fallen one and a sagging wire.
+  - About 60% of the field gates stand open. The rest are shut across their opening and block riders like the wire. Broken stretches are always passable.
+  - Every field keeps a way in: an open gate, a broken span or an unfenced side. Each road frontage keeps at least one open gate.
+  - About one paddock in ten is a descampado, an abandoned field with no fence of its own. Its road frontage is unfenced, and only its neighbours' fences border it.
+  - Posts stand at most 10 m apart with five wires, closer round tight bends. Every span and every shut gate is a thin static obstacle, split into short boxes along slanted spans: about 125,000 boxes, laid in about 0.1 s. The roads stay open end to end.
+  - Opening and closing gates is not in the game yet.
+
+Roads, crossings, signposts, fences and gates stream with the chunks, like the track.
+
+Everything is placed by `pampa_core::flora`, seeded by the chunk, and kept clear of towns' leveled ground, the railway, the roads, the fence lines and the world edge. Every tree trunk in the world is a static obstacle: about 113,000 of them, planted once at load in about 0.1 s, so a horse hits a trunk even in a chunk that is not drawn yet. The dust fog swallows everything well before the
 400 m that is always loaded. Towns stream the same way: a town's buildings,
 signs, people and tied horse appear within 600 m of it and go once you are
 750 m away. Every town's footprints stay in the logic world at all times
@@ -110,8 +128,11 @@ the wheel, eases back behind the player after a moment without camera input
 while moving, and looks at a lower point on foot than on horseback. It pulls
 in at once when a building, the line train's cars or the platform canopy's
 roof would block its view (it may still look under the canopy), and eases
-back out over about a second once the view clears. Thin things such as tree
-trunks and canopy posts do not pull it in.
+back out over about a second once the view clears. Thin things do not pull
+it in. A tree, a stretch of fence, a signpost or a crossing sign that stands
+between the camera and the rider fades to see-through instead, and comes back
+once the view clears. Only the things indexed near that line of sight are
+checked, so this stays cheap.
 
 People are PS1/PS2-style low-poly 3D figures generated in code (no
 third-party art), about 4,200–5,000 triangles each, in flat, earthy colours with smooth
@@ -245,8 +266,13 @@ The rule: **game logic never knows how things are drawn.**
 - Collision shapes are owned by logic, never derived from sprite pixels. The town
   layout (`pampa_core::TownLayout`) owns every footprint; render only picks a look
   per building kind.
-- Ground height has one source of truth, `Terrain::height`, which also levels the
-  ground under every town, so streamed chunks always meet without seams.
+- Ground height has one source of truth, `Terrain::height`. It also levels the
+  ground under every town and cuts the roads in, so streamed chunks always meet
+  without seams.
+- Roads, level crossings, signposts (`pampa_core::road`) and fences and gates
+  (`pampa_core::fence`) are laid out in `core`, pure and seeded. `core` owns
+  their obstacles. `render` only draws them and fades thin occluders along the
+  camera's line of sight.
 - Which chunks and towns exist is pure bookkeeping (`StreamingSet` in `render`,
   `TownActivation` in `core`), tested without a GPU.
 - Animation is a logical state (`Idle`, `Walk`, `Gallop`) in `core`, never a frame index.

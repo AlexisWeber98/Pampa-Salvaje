@@ -198,7 +198,8 @@ mod tests {
         );
         world.fence(&fences);
         assert!(!fences.gates.is_empty() && !fences.openings.is_empty());
-        let flora = pampa_core::FloraSite::new(world.config, &world.terrain, &loaded.line);
+        let flora = pampa_core::FloraSite::new(world.config, &world.terrain, &loaded.line)
+            .with_fences(&fences);
         world.plant(&flora);
         let collider = pampa_core::Circle::new(pampa_core::Rider::COLLIDER_RADIUS);
         for (i, town) in loaded.towns.iter().enumerate() {
@@ -223,7 +224,7 @@ mod tests {
                     .any(|r| r.from == i && r.kind == pampa_core::RoadKind::Rural)
             );
         }
-        // Every road is open from end to end.
+        // Every road, fenced on both sides, is open from end to end.
         for road in &roads.roads {
             for w in road.path.windows(2) {
                 for k in 0..4 {

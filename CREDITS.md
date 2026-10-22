@@ -7,7 +7,7 @@ Pampa Seca is mostly built procedurally in code. These are the third-party asset
 | Asset | Author / source | Licence | Where | Changes |
 |---|---|---|---|---|
 | Ground 109 | ambientCG (https://ambientcg.com/view?id=Ground109) | CC0 1.0 | `assets/textures/ground/Ground109/` | Converted to 512×512 PNM; blended with Grass 004 and tinted in the game |
-| Ground 102 | ambientCG (https://ambientcg.com/view?id=Ground102) | CC0 1.0 | `assets/textures/ground/Ground102/` | Converted to 512×512 PNM; not used yet (roads, PR-C2) |
+| Ground 102 | ambientCG (https://ambientcg.com/view?id=Ground102) | CC0 1.0 | `assets/textures/ground/Ground102/` | Converted to 512×512 PNM; the dirt roads' surface, tinted and feathered at the edges in the game |
 | Grass 004 | ambientCG (https://ambientcg.com/view?id=Grass004) | CC0 1.0 | `assets/textures/ground/Grass004/` | Converted to 512×512 PNM; blended with Ground 109 and retinted dry in the game |
 
 All three were converted to 512×512 PPM/PGM for loading. See `assets/textures/ground/CREDITS.md` for details.

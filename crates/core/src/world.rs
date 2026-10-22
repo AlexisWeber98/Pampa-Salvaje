@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::obstacles::around;
 use crate::{
-    Body, Circle, Floor, FloraSite, RoadNetwork, SideObstacle, StaticObstacles,
+    Body, Circle, FenceLayout, Floor, FloraSite, RoadNetwork, SideObstacle, StaticObstacles,
     Terrain, TownLayout, Vec2, WorldConfig,
 };
 
@@ -160,6 +160,16 @@ impl World {
         self.obstacles.extend(roads.obstacles());
         let terrain = std::mem::take(&mut self.terrain);
         self.terrain = terrain.with_roads(Arc::new(roads));
+    }
+
+    /// Adds every span and every shut gate of `fences` as thin static
+    /// obstacles; open gates and broken spans are gaps. Returns how many
+    /// boxes were added.
+    pub fn fence(&mut self, fences: &FenceLayout) -> usize {
+        let spans = fences.obstacles();
+        let count = spans.len();
+        self.obstacles.extend(spans);
+        count
     }
 
     /// Adds every tree trunk `flora` grows anywhere in the world as a

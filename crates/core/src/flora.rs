@@ -9,7 +9,7 @@ use crate::rng::Rng;
 use std::sync::Arc;
 
 use crate::{
-    Aabb, ChunkCoord, FlatArea, RailLine, RoadNetwork, Terrain, Vec2, WorldConfig,
+    Aabb, ChunkCoord, FenceLayout, FlatArea, RailLine, RoadNetwork, Terrain, Vec2, WorldConfig,
 };
 
 /// A native tree of the caldenal.
@@ -70,6 +70,9 @@ pub struct FloraSite {
     flat_areas: Vec<FlatArea>,
     rail: Vec<(Vec2, Vec2)>,
     roads: Option<Arc<RoadNetwork>>,
+    /// The surveyed fence lines: `x` of the north–south ones, `y` of the
+    /// east–west ones.
+    fences: (Vec<f32>, Vec<f32>),
     seed: u32,
 }
 
@@ -89,6 +92,9 @@ impl FloraSite {
     pub const TREE_ROAD_MARGIN: f32 = RoadNetwork::HALF_WIDTH + 6.0;
     /// Least distance from a tuft to a road's centerline, in meters.
     pub const TUFT_ROAD_MARGIN: f32 = RoadNetwork::HALF_WIDTH + 0.5;
+    /// Least distance from a tree's trunk to a surveyed fence line, in
+    /// meters: no fence runs through a trunk.
+    pub const TREE_FENCE_MARGIN: f32 = 1.5;
     /// Least distance from a tree to the world's edge, in meters.
     pub const TREE_EDGE_MARGIN: f32 = 10.0;
     /// Least distance from a tree to a town's leveled band, in meters.
@@ -113,8 +119,15 @@ impl FloraSite {
             flat_areas: terrain.flat_areas.clone(),
             rail: line.segments().map(|s| (s.start, s.end)).collect(),
             roads: terrain.roads.clone(),
+            fences: (Vec::new(), Vec::new()),
             seed: terrain.seed ^ FLORA_SEED,
         }
+    }
+
+    /// This flora, with trees kept off the surveyed lines of `fences`.
+    pub fn with_fences(mut self, fences: &FenceLayout) -> Self {
+        self.fences = fences.surveyed.clone();
+        self
     }
 
     /// The world this flora grows in.
@@ -293,6 +306,21 @@ impl FloraSite {
                 .all(|a| outside(a, p) >= a.falloff + Self::TREE_TOWN_MARGIN)
             && rail_distance(rail, p) >= Self::TREE_RAIL_MARGIN
             && self.off_road(p, Self::TREE_ROAD_MARGIN)
+            && self.off_fences(p)
+    }
+
+    /// Whether `p` is at least [`Self::TREE_FENCE_MARGIN`] from every
+    /// surveyed fence line.
+    fn off_fences(&self, p: Vec2) -> bool {
+        let clear = |lines: &[f32], v: f32| {
+            let i = lines.partition_point(|&l| l < v);
+            [i.checked_sub(1), Some(i)]
+                .into_iter()
+                .flatten()
+                .filter_map(|i| lines.get(i))
+                .all(|l| (l - v).abs() >= Self::TREE_FENCE_MARGIN)
+        };
+        clear(&self.fences.0, p.x) && clear(&self.fences.1, p.y)
     }
 
     /// Whether `p` is at least `margin` meters from every road.
