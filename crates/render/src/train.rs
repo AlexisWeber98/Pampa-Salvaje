@@ -8,9 +8,14 @@
 //! game, and each car is shown only while it is within
 //! [`TRAIN_DRAW_RADIUS`] of the [`StreamFocus`]. Hidden cars cost no draw
 //! calls, and nothing is spawned or despawned as the train comes and goes.
+//!
+//! The passenger coaches are hollow: thin wooden walls with real window
+//! openings glazed with clear panes, a planked floor, a ceiling with oil
+//! lamps, end doors, and wooden benches facing each other in bays, laid out
+//! by [`CoachBody`] so the seat view looks out of an actual window.
 
 use bevy::prelude::*;
-use pampa_core::{CarKind, LineTrain};
+use pampa_core::{CarKind, CoachBody, LineTrain, PlacedCar, Terrain};
 
 use crate::coords::world_from_ground;
 use crate::terrain::{StreamFocus, WorldTerrain};
@@ -72,6 +77,12 @@ struct Kit {
     coach: Handle<StandardMaterial>,
     trim: Handle<StandardMaterial>,
     glass: Handle<StandardMaterial>,
+    /// Varnished wood inside the coaches: panelling and benches.
+    wood: Handle<StandardMaterial>,
+    /// Worn floor planks.
+    planks: Handle<StandardMaterial>,
+    /// An oil lamp's glowing glass.
+    lamp: Handle<StandardMaterial>,
 }
 
 impl Kit {
@@ -101,7 +112,20 @@ impl Kit {
             window: paint(0.13, 0.11, 0.10, 0.0, 0.9),
             coach: paint(0.20, 0.30, 0.22, 0.1, 0.8),
             trim: paint(0.80, 0.72, 0.55, 0.0, 0.8),
-            glass: paint(0.30, 0.34, 0.36, 0.5, 0.3),
+            wood: paint(0.42, 0.27, 0.15, 0.0, 0.6),
+            planks: paint(0.33, 0.25, 0.18, 0.0, 0.95),
+            glass: materials.add(StandardMaterial {
+                base_color: Color::srgba(0.70, 0.78, 0.80, 0.18),
+                perceptual_roughness: 0.1,
+                reflectance: 0.6,
+                alpha_mode: AlphaMode::Blend,
+                ..default()
+            }),
+            lamp: materials.add(StandardMaterial {
+                base_color: Color::srgb(1.0, 0.85, 0.55),
+                emissive: LinearRgba::rgb(3.0, 2.2, 1.0),
+                ..default()
+            }),
         }
     }
 }
@@ -274,13 +298,7 @@ impl CarBuilder<'_, '_> {
 
     fn coach(&mut self, length: f32) {
         let k = self.kit;
-        let (body, trim, roof, glass, black) = (
-            k.coach.clone(),
-            k.trim.clone(),
-            k.roof.clone(),
-            k.glass.clone(),
-            k.black.clone(),
-        );
+        let roof = k.roof.clone();
         self.frame(length, 1.1);
         for x in [
             -length / 2.0 + 1.3,
@@ -290,17 +308,9 @@ impl CarBuilder<'_, '_> {
         ] {
             self.axle(x, 0.45);
         }
-        // Wooden body with a cream belt line and a rounded-looking roof.
-        self.cube(
-            &body,
-            Vec3::new(0.0, 2.55, 0.0),
-            Vec3::new(length - 0.7, 2.5, 2.8),
-        );
-        self.cube(
-            &trim,
-            Vec3::new(0.0, 2.3, 0.0),
-            Vec3::new(length - 0.68, 0.18, 2.84),
-        );
+        self.coach_shell(length);
+        self.coach_inside(length);
+        // A rounded-looking roof over the ceiling.
         self.cube(
             &roof,
             Vec3::new(0.0, 3.9, 0.0),
@@ -311,24 +321,118 @@ impl CarBuilder<'_, '_> {
             Vec3::new(0.0, 4.08, 0.0),
             Vec3::new(length - 1.2, 0.16, 2.2),
         );
-        // A row of windows on each side, and an end door at each end.
-        let windows = ((length - 3.0) / 1.6).floor().max(1.0) as usize;
-        let pitch = (length - 3.0) / windows as f32;
+    }
+
+    /// The coach's hollow body: floor, side walls with glazed window
+    /// openings ([`CoachBody::windows`]) and a cream belt line, end walls
+    /// with a door, and the ceiling.
+    fn coach_shell(&mut self, length: f32) {
+        let k = self.kit;
+        let (body, trim, glass, black, planks) = (
+            k.coach.clone(),
+            k.trim.clone(),
+            k.glass.clone(),
+            k.black.clone(),
+            k.planks.clone(),
+        );
+        let (floor, ceiling, wall) = (CoachBody::FLOOR, CoachBody::CEILING, CoachBody::WALL);
+        let (sill, lintel) = (CoachBody::SILL, CoachBody::LINTEL);
+        let inner = length - 2.0 * CoachBody::END_INSET;
+        let half = CoachBody::HALF_WIDTH;
+        let width = 2.0 * half;
+        let band = |lo: f32, hi: f32| ((lo + hi) / 2.0, hi - lo);
+        self.cube(
+            &planks,
+            Vec3::new(0.0, floor - 0.05, 0.0),
+            Vec3::new(inner, 0.1, width),
+        );
+        self.cube(
+            &body,
+            Vec3::new(0.0, ceiling + 0.04, 0.0),
+            Vec3::new(inner, 0.08, width),
+        );
+        let (windows, open) = CoachBody::windows(length);
+        // Piers between the openings, from one end wall to the other.
+        let mut edges = vec![-inner / 2.0];
+        for &x in &windows {
+            edges.extend([x - open / 2.0, x + open / 2.0]);
+        }
+        edges.push(inner / 2.0);
         for side in [-1.0, 1.0] {
-            for i in 0..windows {
-                let x = -length / 2.0 + 1.5 + pitch * (i as f32 + 0.5);
+            let z = side * (half - wall / 2.0);
+            for (lo, hi) in [(floor, sill), (lintel, ceiling)] {
+                let (y, h) = band(lo, hi);
+                self.cube(&body, Vec3::new(0.0, y, z), Vec3::new(inner, h, wall));
+            }
+            let (y, h) = band(sill, lintel);
+            for pier in edges.chunks(2) {
+                let (x, w) = band(pier[0], pier[1]);
+                self.cube(&body, Vec3::new(x, y, z), Vec3::new(w, h, wall));
+            }
+            for &x in &windows {
+                self.cube(&glass, Vec3::new(x, y, z), Vec3::new(open, h, 0.01));
+            }
+            self.cube(
+                &trim,
+                Vec3::new(0.0, sill - 0.2, side * (half + 0.01)),
+                Vec3::new(inner + 0.02, 0.18, 0.02),
+            );
+        }
+        // End walls, each with a door in the middle.
+        let door = 0.9;
+        for end in [-1.0, 1.0] {
+            let x = end * (inner / 2.0 - wall / 2.0);
+            let w = half - door / 2.0;
+            for side in [-1.0, 1.0] {
+                let (y, h) = band(floor, ceiling);
                 self.cube(
-                    &glass,
-                    Vec3::new(x, 3.0, side * 1.41),
-                    Vec3::new(pitch * 0.6, 0.75, 0.03),
+                    &body,
+                    Vec3::new(x, y, side * (half - w / 2.0)),
+                    Vec3::new(wall, h, w),
                 );
             }
+            let (y, h) = band(floor + 2.0, ceiling);
+            self.cube(&body, Vec3::new(x, y, 0.0), Vec3::new(wall, h, door));
+            let (y, h) = band(floor, floor + 2.0);
+            self.cube(&black, Vec3::new(x, y, 0.0), Vec3::new(wall / 2.0, h, door));
         }
-        for end in [-1.0, 1.0] {
+    }
+
+    /// Inside a second-class coach: wooden benches facing each other in a
+    /// bay at each window, both sides of the aisle, and oil lamps under the
+    /// ceiling.
+    fn coach_inside(&mut self, length: f32) {
+        let k = self.kit;
+        let (wood, lamp) = (k.wood.clone(), k.lamp.clone());
+        let (windows, _) = CoachBody::windows(length);
+        let pitch = (length - 3.0) / windows.len() as f32;
+        let floor = CoachBody::FLOOR;
+        let reach = CoachBody::HALF_WIDTH - CoachBody::WALL;
+        for &x in &windows {
+            for facing in [-1.0, 1.0] {
+                // The bench at this end of the bay faces its middle.
+                let back = x - facing * (pitch / 2.0 - 0.1);
+                let seat = back + facing * 0.25;
+                for side in [-1.0, 1.0] {
+                    let z = side * (reach - 0.5);
+                    self.cube(
+                        &wood,
+                        Vec3::new(seat, floor + 0.45, z),
+                        Vec3::new(0.45, 0.08, 1.0),
+                    );
+                    self.cube(
+                        &wood,
+                        Vec3::new(back, floor + 0.75, z),
+                        Vec3::new(0.08, 0.7, 1.0),
+                    );
+                }
+            }
+        }
+        for x in [-length / 4.0, 0.0, length / 4.0] {
             self.cube(
-                &black,
-                Vec3::new(end * (length / 2.0 - 0.34), 2.4, 0.0),
-                Vec3::new(0.03, 2.0, 0.9),
+                &lamp,
+                Vec3::new(x, CoachBody::CEILING - 0.15, 0.0),
+                Vec3::new(0.18, 0.22, 0.18),
             );
         }
     }
@@ -453,6 +557,19 @@ fn spawn_cars(
     }
 }
 
+/// Where a car stands: on the rails over the ground under its two ends,
+/// local +X along its heading (ground y is Bevy -Z), pitched with the
+/// ground.
+pub fn car_transform(p: &PlacedCar, terrain: &Terrain) -> Transform {
+    let half = p.direction * (p.length / 2.0);
+    let ground = |q: pampa_core::Vec2| terrain.height(q.x, q.y) + RAIL_TOP;
+    let (hb, hf) = (ground(p.center - half), ground(p.center + half));
+    let yaw = p.direction.y.atan2(p.direction.x);
+    let pitch = (hf - hb).atan2(p.length);
+    Transform::from_translation(world_from_ground(p.center, (hb + hf) / 2.0))
+        .with_rotation(Quat::from_rotation_y(yaw) * Quat::from_rotation_z(pitch))
+}
+
 /// Puts every car near the focus where logic says, on the rails over the
 /// ground and turned along the track, and hides the others.
 fn place_cars(
@@ -480,16 +597,9 @@ fn place_cars(
         if !near {
             continue;
         }
-        // Yaw along the car's ground heading (ground y is Bevy -Z), pitched
-        // with the ground under its two ends.
-        let half = p.direction * (p.length / 2.0);
-        let ground = |q: pampa_core::Vec2| terrain.0.height(q.x, q.y) + RAIL_TOP;
-        let (back, front) = (p.center - half, p.center + half);
-        let (hb, hf) = (ground(back), ground(front));
-        let yaw = p.direction.y.atan2(p.direction.x);
-        let pitch = (hf - hb).atan2(p.length);
-        transform.translation = world_from_ground(p.center, (hb + hf) / 2.0);
-        transform.rotation = Quat::from_rotation_y(yaw) * Quat::from_rotation_z(pitch);
+        let placed = car_transform(p, &terrain.0);
+        transform.translation = placed.translation;
+        transform.rotation = placed.rotation;
     }
 }
 
@@ -660,6 +770,86 @@ pub(crate) mod tests {
                 kind.height()
             );
         }
+    }
+
+    /// Every child box of car `index`: material and world-free local box
+    /// (min, max) of its unit mesh scaled into place.
+    fn boxes(app: &mut App, index: usize) -> Vec<(Handle<StandardMaterial>, Vec3, Vec3)> {
+        let mut q = app.world_mut().query::<(&TrainCar, &Children)>();
+        let children: Vec<Entity> = q
+            .iter(app.world())
+            .find(|(c, _)| c.index == index)
+            .map(|(_, ch)| ch.iter().collect())
+            .unwrap();
+        children
+            .into_iter()
+            .filter_map(|e| {
+                let t = *app.world().get::<Transform>(e)?;
+                let m = app
+                    .world()
+                    .get::<MeshMaterial3d<StandardMaterial>>(e)?
+                    .0
+                    .clone();
+                let a = t.transform_point(Vec3::splat(-0.5));
+                let b = t.transform_point(Vec3::splat(0.5));
+                Some((m, a.min(b), a.max(b)))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn coaches_are_hollow_with_open_glazed_windows_and_benches_inside() {
+        let mut app = app_with_train(3600.0, GroundVec2::ZERO);
+        app.update();
+        let train = app.world().resource::<WorldTrain>().0.clone().unwrap();
+        let index = train
+            .cars()
+            .iter()
+            .position(|c| c.kind == CarKind::Coach)
+            .unwrap();
+        let length = train.cars()[index].length;
+        let kit = app.world().resource::<CarKit>().0.clone();
+        let parts = boxes(&mut app, index);
+        let (windows, open) = CoachBody::windows(length);
+        assert!(windows.len() >= 4);
+        let mid_y = (CoachBody::SILL + CoachBody::LINTEL) / 2.0;
+        for &x in &windows {
+            for side in [-1.0f32, 1.0] {
+                let z = side * (CoachBody::HALF_WIDTH - CoachBody::WALL / 2.0);
+                let p = Vec3::new(x, mid_y, z);
+                let inside = |(_, a, b): &&(Handle<StandardMaterial>, Vec3, Vec3)| {
+                    p.cmpge(*a - 1e-4).all() && p.cmple(*b + 1e-4).all()
+                };
+                let hits: Vec<_> = parts.iter().filter(inside).collect();
+                // Only the clear pane fills the opening.
+                assert_eq!(hits.len(), 1, "window at {x}, side {side}");
+                assert_eq!(hits[0].0, kit.glass);
+            }
+        }
+        // Wall beside every window, below the sill.
+        let below = Vec3::new(
+            windows[0],
+            CoachBody::SILL - 0.3,
+            CoachBody::HALF_WIDTH - 0.04,
+        );
+        assert!(
+            parts
+                .iter()
+                .any(|(m, a, b)| *m == kit.coach && below.cmpge(*a).all() && below.cmple(*b).all())
+        );
+        // Benches: a seat and a back at each end of each bay, both sides.
+        let wood = parts.iter().filter(|(m, _, _)| *m == kit.wood).count();
+        assert_eq!(wood, windows.len() * 2 * 2 * 2);
+        // The window seat is clear of every part and beside an opening.
+        let (along, across, eye) = CoachBody::window_seat(length, 1.0);
+        let seat = Vec3::new(along, eye, across);
+        assert!(
+            !parts
+                .iter()
+                .any(|(m, a, b)| *m != kit.glass && seat.cmpge(*a).all() && seat.cmple(*b).all())
+        );
+        assert!(windows.iter().any(|&x| (along - x).abs() < open / 2.0));
+        assert!(eye > CoachBody::SILL && eye < CoachBody::LINTEL);
     }
 
     #[test]

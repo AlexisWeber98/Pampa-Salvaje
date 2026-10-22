@@ -6,7 +6,8 @@
 //! the same paper panel as the minimap, and repainted only when their text
 //! changes (the clock once a game minute). The clock comes from
 //! [`WorldClock`]; the game sets the objective through [`HudObjective`] and
-//! the ride line through [`HudRide`].
+//! the ride line through [`HudRide`], and a key hint under it through
+//! [`HudHint`] (the riding view, "V: vista - ventana").
 //!
 //! Station announcements ("Estación Monte Nievas", "Próxima estación:
 //! Eduardo Castex") show in a panel of the same style centered along the
@@ -35,6 +36,14 @@ pub struct HudObjective(pub Option<String>);
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct HudRide(pub Option<String>);
 
+/// A one-line key hint under the ride line; `None` hides it.
+#[derive(Resource, Debug, Clone, Default, PartialEq)]
+pub struct HudHint(pub Option<String>);
+
+/// The image node lettering the key hint.
+#[derive(Component, Debug)]
+pub struct HudHintLine;
+
 /// The announcement centered at the top of the screen; `None` hides it.
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct HudAnnouncement(pub Option<String>);
@@ -61,6 +70,8 @@ pub struct Hud {
     pub ride: Option<String>,
     /// The announcement as drawn, if any.
     pub announcement: Option<String>,
+    /// The key hint as drawn, if any.
+    pub hint: Option<String>,
 }
 
 /// The image node lettering the clock.
@@ -135,8 +146,9 @@ impl Plugin for HudPlugin {
             .init_resource::<HudObjective>()
             .init_resource::<HudRide>()
             .init_resource::<HudAnnouncement>()
+            .init_resource::<HudHint>()
             .add_systems(Startup, (spawn_hud, spawn_announcement))
-            .add_systems(PostUpdate, (update_hud, update_announcement));
+            .add_systems(PostUpdate, (update_hud, update_announcement, update_hint));
     }
 }
 
@@ -178,9 +190,27 @@ fn spawn_hud(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
             .with_children(|panel| {
                 panel.spawn((HudClock, ImageNode::new(blank.clone()), line_node()));
                 panel.spawn((HudObjectiveLine, ImageNode::new(blank.clone()), line_node()));
-                panel.spawn((HudRideLine, ImageNode::new(blank), line_node()));
+                panel.spawn((HudRideLine, ImageNode::new(blank.clone()), line_node()));
+                panel.spawn((HudHintLine, ImageNode::new(blank), line_node()));
             });
         });
+}
+
+/// Repaints the key hint when its text changed.
+fn update_hint(
+    hint: Res<HudHint>,
+    mut hud: ResMut<Hud>,
+    mut images: ResMut<Assets<Image>>,
+    mut lines: Query<Line, With<HudHintLine>>,
+) {
+    if hint.0 == hud.hint {
+        return;
+    }
+    let text = hint.0.clone().unwrap_or_default();
+    for (mut image, mut node) in &mut lines {
+        letter(&text, OBJECTIVE_SCALE, (&mut image, &mut node), &mut images);
+    }
+    hud.hint = hint.0.clone();
 }
 
 /// The announcement panel, hidden, centered along the top edge.
@@ -480,6 +510,24 @@ mod tests {
         app.insert_resource(HudAnnouncement(None));
         app.update();
         assert_eq!(panel(&mut app), Display::None);
+    }
+
+    #[test]
+    fn shows_the_key_hint_while_there_is_one() {
+        let mut app = app();
+        app.update();
+        assert_eq!(image_of::<HudHintLine>(&mut app).1, Display::None);
+        for view in ["ventana", "exterior", "tren"] {
+            let text = format!("V: vista - {view}");
+            assert!(text.chars().all(font::supports), "{text}");
+            app.insert_resource(HudHint(Some(text.clone())));
+            app.update();
+            assert_eq!(app.world().resource::<Hud>().hint, Some(text));
+            assert_eq!(image_of::<HudHintLine>(&mut app).1, Display::Flex);
+        }
+        app.insert_resource(HudHint(None));
+        app.update();
+        assert_eq!(image_of::<HudHintLine>(&mut app).1, Display::None);
     }
 
     #[test]

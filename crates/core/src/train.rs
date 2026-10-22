@@ -915,6 +915,58 @@ fn run_sign(run: Run) -> f32 {
     }
 }
 
+/// The body of a passenger coach, as its drawing and the seat view share
+/// it, in the car's own frame: heights above the rail tops, distances
+/// across from its centreline and along from its middle, in meters.
+pub struct CoachBody;
+
+impl CoachBody {
+    /// Top of the floor.
+    pub const FLOOR: f32 = 1.3;
+    /// Underside of the ceiling.
+    pub const CEILING: f32 = 3.8;
+    /// Outer face of each side wall from the centreline.
+    pub const HALF_WIDTH: f32 = 1.4;
+    /// Thickness of the walls.
+    pub const WALL: f32 = 0.08;
+    /// Bottom of the window openings: 0.8 m above the floor, low enough
+    /// for a seated passenger to see the ground beside the track.
+    pub const SILL: f32 = 2.1;
+    /// Top of the window openings: 1.8 m above the floor, above the
+    /// horizon from a seat.
+    pub const LINTEL: f32 = 3.1;
+    /// How far in from each end of the car its end walls stand.
+    pub const END_INSET: f32 = 0.35;
+    /// Height of a seated passenger's eyes above the floor.
+    pub const EYE: f32 = 1.2;
+
+    /// The window openings along each side of a coach `length` long: their
+    /// centres from the car's middle, and their width.
+    pub fn windows(length: f32) -> (Vec<f32>, f32) {
+        let count = ((length - 3.0) / 1.6).floor().max(1.0) as usize;
+        let pitch = (length - 3.0) / count as f32;
+        let centres = (0..count)
+            .map(|i| -length / 2.0 + 1.5 + pitch * (i as f32 + 0.5))
+            .collect();
+        (centres, pitch * 0.6)
+    }
+
+    /// Where a passenger sits by a window in a coach `length` long, as
+    /// `(along, across, height)`: at the middle window on the car's right
+    /// (`side` +1) or left (-1), half a meter in from the wall, eyes at
+    /// seated height. They face that window.
+    pub fn window_seat(length: f32, side: f32) -> (f32, f32, f32) {
+        let (centres, _) = Self::windows(length);
+        let along = centres[centres.len() / 2];
+        let side = if side < 0.0 { -1.0 } else { 1.0 };
+        (
+            along,
+            side * (Self::HALF_WIDTH - Self::WALL - 0.5),
+            Self::FLOOR + Self::EYE,
+        )
+    }
+}
+
 /// Farthest the coaches' middle may stand from a station at a stop, in
 /// meters, with the coaches still (nearly) alongside its 60 m platform: at a
 /// terminal they stand about 19 m to one side.
@@ -1528,6 +1580,30 @@ mod line_tests {
         let wait = parked.skip_to_departure(hm(13, 0), onboard).unwrap();
         assert!((wait - (hm(16, 0) - hm(13, 0))).abs() < 1e-6);
         assert_eq!(parked.state(), parked.state_at(Run::Down, 0.0));
+    }
+
+    #[test]
+    fn a_seated_passenger_looks_out_through_the_middle_of_the_window() {
+        let floor = CoachBody::FLOOR;
+        // A sill low enough to see the ground by the track, a top high
+        // enough for the sky, and the eyes in between.
+        let sill = CoachBody::SILL - floor;
+        let top = CoachBody::LINTEL - floor;
+        assert!((0.75..=0.85).contains(&sill), "sill {sill}");
+        assert!(top >= 1.7, "top {top}");
+        let (along, across, eye) = CoachBody::window_seat(12.0, 1.0);
+        assert!((eye - floor - 1.2).abs() < 1e-5);
+        let middle = (CoachBody::SILL + CoachBody::LINTEL) / 2.0;
+        assert!(
+            (eye - middle).abs() < 0.2,
+            "eye {eye}, window middle {middle}"
+        );
+        let (windows, open) = CoachBody::windows(12.0);
+        assert!(windows.iter().any(|&x| (along - x).abs() < open / 2.0));
+        // On the side asked for.
+        assert!(across > 0.0);
+        let (_, left, _) = CoachBody::window_seat(12.0, -1.0);
+        assert_eq!(left, -across);
     }
 
     #[test]

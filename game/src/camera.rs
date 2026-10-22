@@ -9,28 +9,126 @@
 //! of sight is handed to render each frame ([`SightLine`]), which fades
 //! whichever of them stand in it.
 //!
-//! Aboard the train ([`OnTrain`]) the camera orbits the seated player's
-//! coach just as freely, from farther out ([`RIDE_DISTANCE`]), and the
-//! train's own cars do not pull it in. Boarding and getting off place it
-//! behind the player afresh.
+//! Aboard the train ([`OnTrain`]) `V` cycles three views ([`RideView`]):
+//! seated by a window inside the coach (the default), looking out with the
+//! mouse within [`SEAT_YAW_LIMIT`] and [`SEAT_PITCH_LIMIT`]; the orbit
+//! around the coach, from farther out ([`RIDE_DISTANCE`]), which the
+//! train's own cars do not pull in; and the whole train from the side,
+//! slowly following it. The HUD shows the view ([`HudHint`]). Boarding and
+//! getting off place the camera afresh.
 //! The orbit math lives in [`crate::orbit`].
 
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use pampa_core::{
-    Aabb, BuildingKind, Ground, LineTrain, PlacedCar, Terrain, TownLayout, Travel,
+    Aabb, BuildingKind, CoachBody, Ground, LineTrain, PlacedCar, Terrain, TownLayout, Travel,
     Vec2 as GroundVec2,
 };
-use pampa_render::{SightLine, WorldTrain, world_from_ground};
+use pampa_render::{HudHint, SightLine, WorldTrain, car_transform, world_from_ground};
 
 use crate::orbit::{Orbit, OrbitInput, OrbitParams};
 use crate::player::{DrivePlayer, GameWorld, Player};
 use crate::ride::OnTrain;
 
-/// Orbit distance the camera takes on boarding, in meters: far enough out
-/// to frame the coach and the country ahead.
+/// Orbit distance the camera takes around the coach, in meters: far enough
+/// out to frame the coach and the country ahead.
 pub const RIDE_DISTANCE: f32 = 16.0;
+
+/// Cycles the riding views.
+pub const VIEW_KEY: KeyCode = KeyCode::KeyV;
+
+/// Farthest the seated player turns their head from facing the window,
+/// either way, in radians (about 120°): far enough to look into the coach.
+pub const SEAT_YAW_LIMIT: f32 = 2.094;
+/// Farthest the seated player looks up or down, in radians (about 40°).
+pub const SEAT_PITCH_LIMIT: f32 = 0.698;
+
+/// How the camera shows a train ride, cycled with [`VIEW_KEY`].
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RideView {
+    /// Seated by a window inside the coach.
+    #[default]
+    Window,
+    /// Orbiting the coach from outside.
+    Coach,
+    /// The whole train from the side.
+    Train,
+}
+
+impl RideView {
+    /// The next view, wrapping around.
+    pub fn next(self) -> Self {
+        match self {
+            Self::Window => Self::Coach,
+            Self::Coach => Self::Train,
+            Self::Train => Self::Window,
+        }
+    }
+
+    /// The HUD hint for this view.
+    pub fn hint(self) -> String {
+        let name = match self {
+            Self::Window => "ventana",
+            Self::Coach => "exterior",
+            Self::Train => "tren",
+        };
+        format!("V: vista - {name}")
+    }
+}
+
+/// Where the seated player looks, from facing the window: `yaw` turns the
+/// head (positive to the left), `pitch` looks up (positive) or down.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
+pub struct SeatLook {
+    pub yaw: f32,
+    pub pitch: f32,
+}
+
+impl SeatLook {
+    /// Turns the head with this frame's camera input (the mouse, Q/E),
+    /// within the seat's limits.
+    pub fn update(&mut self, input: OrbitInput, params: &OrbitParams, dt: f32) {
+        let finite = |v: f32| if v.is_finite() { v } else { 0.0 };
+        let turn = finite(input.look.0) * params.mouse_sensitivity
+            + finite(input.keys).clamp(-1.0, 1.0) * params.key_rate * finite(dt);
+        self.yaw = (self.yaw - turn).clamp(-SEAT_YAW_LIMIT, SEAT_YAW_LIMIT);
+        self.pitch = (self.pitch - finite(input.look.1) * params.mouse_sensitivity)
+            .clamp(-SEAT_PITCH_LIMIT, SEAT_PITCH_LIMIT);
+    }
+}
+
+/// The camera seated by the window ([`CoachBody::window_seat`]) on `side`
+/// of a coach `length` long standing at `car`, looking out of it turned by
+/// `look`.
+pub fn seat_view(car: &Transform, length: f32, side: f32, look: SeatLook) -> Transform {
+    let (along, across, eye) = CoachBody::window_seat(length, side);
+    let at = car.transform_point(Vec3::new(along, eye, across));
+    // A camera looks down its -Z; the right-hand window is the car's +Z.
+    let facing = if across > 0.0 {
+        std::f32::consts::PI
+    } else {
+        0.0
+    };
+    let turn = Quat::from_rotation_y(facing + look.yaw) * Quat::from_rotation_x(look.pitch);
+    Transform::from_translation(at).with_rotation(car.rotation * turn)
+}
+
+/// The whole train seen from its side: a spot out to the right of the
+/// middle of the consist, high enough to see over it, and the point it
+/// looks at.
+pub fn train_view(cars: &[PlacedCar], terrain: &Terrain) -> Option<(Vec3, Vec3)> {
+    let first = cars.first()?;
+    let last = cars.last()?;
+    let middle = (first.center + last.center) * 0.5;
+    let along = first.center - last.center;
+    let span = along.length().max(1.0);
+    let right = GroundVec2::new(along.y, -along.x) * (1.0 / span);
+    let ground = |p: GroundVec2| terrain.height(p.x, p.y);
+    let spot = middle + right * (span * 0.55 + 15.0);
+    let look = world_from_ground(middle, ground(middle) + 2.5);
+    Some((world_from_ground(spot, ground(spot) + 9.0), look))
+}
 
 /// How the camera follows the rider.
 #[derive(Component, Debug, Clone, Copy)]
@@ -284,9 +382,12 @@ impl Plugin for FollowCameraPlugin {
             .init_resource::<CameraInput>()
             .add_systems(Startup, spawn_camera)
             .add_systems(Update, grab_cursor)
+            .init_resource::<RideView>()
+            .init_resource::<SeatLook>()
+            .init_resource::<HudHint>()
             .add_systems(
                 Update,
-                (gather_camera_input, follow_player)
+                (gather_camera_input, cycle_view, follow_player)
                     .chain()
                     .after(DrivePlayer),
             );
@@ -365,6 +466,31 @@ fn gather_camera_input(
     );
 }
 
+/// `V` aboard cycles the riding views; boarding starts at the window. The
+/// HUD hint names the view while aboard.
+fn cycle_view(
+    keys: Res<ButtonInput<KeyCode>>,
+    aboard: Query<(), (With<Player>, With<OnTrain>)>,
+    mut view: ResMut<RideView>,
+    mut look: ResMut<SeatLook>,
+    mut hint: ResMut<HudHint>,
+    mut was_aboard: Local<bool>,
+) {
+    let on = !aboard.is_empty();
+    if on && !*was_aboard {
+        *view = RideView::Window;
+        *look = SeatLook::default();
+    }
+    *was_aboard = on;
+    if on && keys.just_pressed(VIEW_KEY) {
+        *view = view.next();
+    }
+    hint.set_if_neq(HudHint(on.then(|| view.hint())));
+}
+
+/// What the riding views read.
+type RideCamera<'w> = (Res<'w, RideView>, ResMut<'w, SeatLook>);
+
 #[allow(clippy::too_many_arguments)]
 fn follow_player(
     time: Res<Time>,
@@ -374,8 +500,9 @@ fn follow_player(
     tuning: Res<CameraTuning>,
     input: Res<CameraInput>,
     sight: Option<ResMut<SightLine>>,
-    player: Single<(&Player, Has<OnTrain>)>,
-    mut was_aboard: Local<bool>,
+    player: Single<(&Player, Option<&OnTrain>)>,
+    (view, mut look): RideCamera,
+    mut was: Local<Option<RideView>>,
     camera: Single<(
         &mut Transform,
         &FollowCamera,
@@ -383,13 +510,50 @@ fn follow_player(
         &mut CameraReach,
     )>,
 ) {
-    let (player, aboard) = player.into_inner();
+    let (player, ride) = player.into_inner();
+    let aboard = ride.is_some();
     let rider = &player.rider;
     let (mut transform, follow, mut rig, mut reach) = camera.into_inner();
-    // Boarding or getting off: start again behind the player.
-    if aboard != *was_aboard {
-        *was_aboard = aboard;
+    // Boarding, getting off or a new view: start again behind the player.
+    let now = aboard.then_some(*view);
+    if now != *was {
+        *was = now;
         rig.0 = None;
+    }
+    let dt = time.delta_secs();
+    let train_now = train.as_deref().and_then(|t| t.0.as_ref());
+    if let (Some(ride), Some(train)) = (ride, train_now) {
+        let cars = train.placed_cars();
+        match *view {
+            RideView::Window => {
+                if let Some(car) = cars.get(ride.0.car) {
+                    look.update(input.0, &tuning.0, dt);
+                    let placed = car_transform(car, &world.0.terrain);
+                    *transform = seat_view(&placed, car.length, ride.0.side, *look);
+                    if let Some(mut sight) = sight {
+                        sight.0 = None;
+                    }
+                    return;
+                }
+            }
+            RideView::Train => {
+                if let Some((spot, at)) = train_view(&cars, &world.0.terrain) {
+                    // Slowly following; jumps (a skip) cut straight there.
+                    if rig.0.is_none() || transform.translation.distance(spot) > 150.0 {
+                        transform.translation = spot;
+                        rig.0 = Some((Orbit::behind(0.0), at));
+                    } else {
+                        transform.translation.smooth_nudge(&spot, 1.5, dt);
+                    }
+                    transform.look_at(at, Vec3::Y);
+                    if let Some(mut sight) = sight {
+                        sight.0 = None;
+                    }
+                    return;
+                }
+            }
+            RideView::Coach => {}
+        }
     }
     let feet = world_from_ground(rider.position, rider.height);
     let look_height = match rider.travel() {
@@ -398,7 +562,6 @@ fn follow_player(
     };
     let target = feet + Vec3::Y * look_height;
 
-    let dt = time.delta_secs();
     let (orbit, focus, snapped) = match rig.0.as_mut() {
         Some((orbit, focus)) if focus.distance(target) <= follow.snap_distance => {
             orbit.update(input.0, rider.heading.radians(), rider.speed, &tuning.0, dt);
@@ -1145,6 +1308,162 @@ mod tests {
             next > pulled && next < out - 1.0,
             "{pulled} -> {next} -> {out}"
         );
+    }
+
+    /// The game's opening (aboard, pulling into Monte Nievas) with the
+    /// camera.
+    fn riding_app() -> App {
+        let mut app = crate::ride::testing::shipped_app();
+        app.add_plugins(FollowCameraPlugin);
+        app.update();
+        app
+    }
+
+    /// The camera in the frame of the player's coach, and that coach.
+    fn in_coach(app: &mut App) -> (Transform, PlacedCar) {
+        let train = app.world().resource::<WorldTrain>().0.clone().unwrap();
+        let (_, ride) = crate::ride::testing::passenger(app);
+        let car = train.placed_cars()[ride.expect("aboard").car];
+        let terrain = app.world().resource::<GameWorld>().0.terrain.clone();
+        let placed = car_transform(&car, &terrain);
+        let cam = camera(app);
+        let inverse = placed.compute_affine().inverse();
+        let local = Transform::from_translation(inverse.transform_point3(cam.translation))
+            .with_rotation(placed.rotation.inverse() * cam.rotation);
+        (local, car)
+    }
+
+    #[test]
+    fn aboard_the_camera_sits_by_a_coach_window_and_rides_with_the_train() {
+        let mut app = riding_app();
+        assert_eq!(*app.world().resource::<RideView>(), RideView::Window);
+        let (local, car) = in_coach(&mut app);
+        let p = local.translation;
+        // Inside the coach's body, clear of its walls, floor and ceiling.
+        let inner = CoachBody::HALF_WIDTH - CoachBody::WALL;
+        assert!(p.x.abs() < car.length / 2.0 - CoachBody::END_INSET, "{p}");
+        assert!(p.z.abs() < inner - 0.3, "{p}");
+        assert!(
+            p.y > CoachBody::FLOOR + 0.5 && p.y < CoachBody::CEILING - 0.5,
+            "{p}"
+        );
+        // Beside a window opening, looking out of it.
+        let (windows, open) = CoachBody::windows(car.length);
+        assert!(windows.iter().any(|&x| (p.x - x).abs() < open / 2.0));
+        assert!(p.y > CoachBody::SILL && p.y < CoachBody::LINTEL);
+        let ahead = local.rotation * Vec3::NEG_Z;
+        let side = crate::ride::testing::passenger(&mut app).1.unwrap().side;
+        assert!(
+            ahead.dot(Vec3::Z * side) > 0.99,
+            "faces the window: {ahead}"
+        );
+        assert!(p.z * side > 0.0, "on the platform side");
+        // Rides along: the train moves, the seat stays put in the coach.
+        let before = camera(&mut app).translation;
+        for _ in 0..60 {
+            app.update();
+        }
+        let (again, _) = in_coach(&mut app);
+        assert!(camera(&mut app).translation.distance(before) > 5.0);
+        assert!(again.translation.distance(p) < 1e-2);
+        // The landscape streams around the moving train.
+        let (rider, _) = crate::ride::testing::passenger(&mut app);
+        let focus = app.world().resource::<pampa_render::StreamFocus>().0;
+        let train = app.world().resource::<WorldTrain>().0.clone().unwrap();
+        let (_, ride) = crate::ride::testing::passenger(&mut app);
+        assert_eq!(focus, train.placed_cars()[ride.unwrap().car].center);
+        assert_eq!(focus, rider.position);
+    }
+
+    #[test]
+    fn the_seated_look_stays_within_the_limits() {
+        let params = OrbitParams::default();
+        let mut look = SeatLook::default();
+        for _ in 0..200 {
+            look.update(
+                OrbitInput {
+                    look: (900.0, 900.0),
+                    keys: 1.0,
+                    zoom: 0.0,
+                },
+                &params,
+                0.1,
+            );
+        }
+        assert_eq!((look.yaw, look.pitch), (-SEAT_YAW_LIMIT, -SEAT_PITCH_LIMIT));
+        for _ in 0..200 {
+            look.update(
+                OrbitInput {
+                    look: (-900.0, -900.0),
+                    keys: -1.0,
+                    zoom: 0.0,
+                },
+                &params,
+                0.1,
+            );
+        }
+        assert_eq!((look.yaw, look.pitch), (SEAT_YAW_LIMIT, SEAT_PITCH_LIMIT));
+        // Turned all the way: about 120° from the window, looking 40° up.
+        let view = seat_view(&Transform::IDENTITY, 12.0, 1.0, look);
+        let ahead = view.rotation * Vec3::NEG_Z;
+        let flat = Vec3::new(ahead.x, 0.0, ahead.z).normalize();
+        assert!((flat.dot(Vec3::Z).acos() - SEAT_YAW_LIMIT).abs() < 1e-3);
+        assert!((ahead.y.asin() - SEAT_PITCH_LIMIT).abs() < 1e-3);
+        // Q/E turn the head in the app too, but never past the limit.
+        let mut app = riding_app();
+        keys(&mut app).press(KeyCode::KeyE);
+        for _ in 0..200 {
+            app.update();
+        }
+        let look = *app.world().resource::<SeatLook>();
+        assert_eq!(look.yaw, -SEAT_YAW_LIMIT);
+    }
+
+    #[test]
+    fn v_cycles_the_riding_views_and_wraps() {
+        let mut app = riding_app();
+        let hint = |app: &App| app.world().resource::<HudHint>().0.clone();
+        assert_eq!(hint(&app).as_deref(), Some("V: vista - ventana"));
+        let mut seen = Vec::new();
+        for _ in 0..4 {
+            keys(&mut app).press(VIEW_KEY);
+            app.update();
+            {
+                let mut k = keys(&mut app);
+                k.release(VIEW_KEY);
+                k.clear();
+            }
+            app.update();
+            seen.push(*app.world().resource::<RideView>());
+        }
+        assert_eq!(
+            seen,
+            [
+                RideView::Coach,
+                RideView::Train,
+                RideView::Window,
+                RideView::Coach
+            ]
+        );
+        assert_eq!(hint(&app).as_deref(), Some("V: vista - exterior"));
+        // Outside the coach in the orbit, and off to the side of the whole
+        // train in the train view.
+        let (local, car) = in_coach(&mut app);
+        assert!(
+            local.translation.z.abs() > CoachBody::HALF_WIDTH
+                || local.translation.x.abs() > car.length / 2.0
+        );
+        keys(&mut app).press(VIEW_KEY);
+        app.update();
+        keys(&mut app).release(VIEW_KEY);
+        keys(&mut app).clear();
+        app.update();
+        assert_eq!(hint(&app).as_deref(), Some("V: vista - tren"));
+        let (local, _) = in_coach(&mut app);
+        assert!(local.translation.z > 30.0, "{}", local.translation);
+        // Off the train: no hint.
+        crate::ride::testing::arrive_from_anywhere(&mut app);
+        assert_eq!(hint(&app), None);
     }
 
     #[test]

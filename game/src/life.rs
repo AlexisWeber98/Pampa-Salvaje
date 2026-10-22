@@ -44,7 +44,11 @@ pub fn start_of_day(
     let mut train = LineTrain::new(line, towns, Timetable::default());
     let start = train.as_mut().and_then(|t| opening(t, 0, Run::Up));
     match start {
-        Some((clock, ride)) => (clock, train, Some(ride)),
+        Some((clock, ride)) => {
+            // Seated by the window on the Monte Nievas platform's side.
+            let ride = train.as_ref().map(|t| ride.facing_platform(t, towns));
+            (clock, train, ride)
+        }
         None => (GameClock::at(Timetable::default().depart_pico), train, None),
     }
 }

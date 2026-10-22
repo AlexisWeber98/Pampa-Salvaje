@@ -220,6 +220,7 @@ fn ride_keys(
     match boarding(train, &player.rider, &world.0.floors) {
         Boarding::Board(ride) => {
             keys.clear_just_pressed(INTERACT_KEY);
+            let ride = ride.facing_platform(train, towns);
             commands
                 .entity(me)
                 .insert((OnTrain(ride), Visibility::Hidden));
@@ -642,6 +643,12 @@ pub(crate) mod testing {
         press(app, SKIP_KEY);
         until_off(app, 20.0);
         assert_eq!(passenger(app).1, None, "off the train");
+    }
+
+    /// Skips whatever ride is underway (Space) until the player is off.
+    pub fn arrive_from_anywhere(app: &mut App) {
+        press(app, SKIP_KEY);
+        until_off(app, 20.0);
     }
 
     /// The announcement on screen.

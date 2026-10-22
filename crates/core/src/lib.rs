@@ -71,8 +71,8 @@ pub use town::{
 };
 pub use townsfolk::{StreetGraph, Townsfolk, Townsperson};
 pub use train::{
-    Car, CarKind, LinePhase, LineTrain, LineTrainState, MAX_STOP_MISS, PlacedCar, Run, Station,
-    Timetable, TimetableError,
+    Car, CarKind, CoachBody, LinePhase, LineTrain, LineTrainState, MAX_STOP_MISS, PlacedCar, Run,
+    Station, Timetable, TimetableError,
 };
 pub use walker::Travel;
 pub use world::{Ground, World, WorldBounds};

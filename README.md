@@ -83,9 +83,20 @@ terminal), `F` within about 4 m of a coach door, on foot on the platform,
 boards it. On horseback the clerk only says "Primero bajate del caballo": the
 horse stays where it is, it does not travel by train.
 
-**Aboard.** The player sits out of sight in the coach and goes wherever the
-train goes. The camera orbits the coach as freely as ever, from 16 m out,
-and the train's own cars never pull it in. The clock slows to 12× while
+**Aboard.** The player sits in the coach and goes wherever the train goes.
+`V` cycles three views, named on the HUD ("V: vista - ventana"): seated by
+a window inside the coach, the default, on the side that faces the next
+station's platform (so the arrival is seen through the window), with the
+window from 0.8 m to 1.8 m above the floor around the seated eyes at
+1.2 m, looking out with the mouse (or
+`Q`/`E`) up to about 120° either way and 40° up or down, so the pampa
+scrolls past the window and the coach can be looked into; the orbit around
+the coach from 16 m out, which the train's own cars never pull in; and the
+whole train from the side, slowly following it. The coaches are hollow
+second-class coaches of about 1919: wooden walls with glazed window
+openings (the same windows from outside), a planked floor, wooden benches
+facing each other in bays, oil lamps under the ceiling and a door at each
+end. The world keeps streaming around the moving train. The clock slows to 12× while
 riding, so the whole line (about 11 real minutes) reads as about two game
 hours. `F` while the train stands at a station gets off onto its platform
 beside the coach door; `F` while it runs gets off at the next stop. At the
@@ -385,6 +396,7 @@ cargo test --workspace
 | `Shift` (hold) | Jog on foot, gallop on horseback |
 | `F` | Interact: talk to somebody, mount or get off a horse, board or get off the train at a coach door, or wait for the train near a platform's middle |
 | `Space` | Aboard the train: skip to the next stop |
+| `V` | Aboard the train: cycle the view (window seat, around the coach, the whole train) |
 | Mouse | Orbit the camera (the cursor is locked while the window has focus) |
 | `Q` / `E` | Orbit the camera left / right |
 | Mouse wheel | Zoom in / out (6–25 m) |

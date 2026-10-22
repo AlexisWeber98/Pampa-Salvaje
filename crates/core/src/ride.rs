@@ -50,6 +50,10 @@ pub struct Ride {
     /// The station (index into [`LineTrain::stations`]) where the player is
     /// put off as soon as the train stands there, if any (the opening).
     pub alight_at: Option<usize>,
+    /// Which side of the coach the player sits at the window: `1.0` on the
+    /// car's right (looking the way it runs), `-1.0` on its left. Chosen
+    /// facing the next stop's platform ([`Self::facing_platform`]).
+    pub side: f32,
     /// Whether the train has run since the player boarded: arriving at a
     /// terminal then ends the ride, while boarding a train laid over at one
     /// does not.
@@ -74,8 +78,36 @@ impl Ride {
         Self {
             car,
             alight_at: None,
+            side: 1.0,
             under_way: train.state().phase != LinePhase::Parked,
         }
+    }
+
+    /// This ride seated on the side of the coach that faces the platform
+    /// of the train's next stop (from a station, the one after it), so the
+    /// arrival is seen through the window. Unchanged without one.
+    pub fn facing_platform(self, train: &LineTrain, towns: &[TownLayout]) -> Self {
+        let mut there = train.clone();
+        let Some((station, _)) = there.skip_to_next_stop(0.0, BASE_RATE) else {
+            return self;
+        };
+        let platform = train
+            .stations()
+            .get(station)
+            .and_then(|s| towns.get(s.town))
+            .and_then(|t| t.platform_spot());
+        let (Some((platform, _)), Some(car)) =
+            (platform, there.placed_cars().get(self.car).copied())
+        else {
+            return self;
+        };
+        let right = Vec2::new(car.direction.y, -car.direction.x);
+        let side = if (platform - car.center).dot(right) < 0.0 {
+            -1.0
+        } else {
+            1.0
+        };
+        Self { side, ..self }
     }
 
     /// A ride in coach `car` that ends at `station`: the player is put off
@@ -634,6 +666,47 @@ mod tests {
         assert_eq!(castex.state().phase, LinePhase::Parked);
     }
 
+    /// Whether the seat of `ride` looks toward the platform of the station
+    /// the train stands at.
+    fn faces_the_platform(train: &LineTrain, ride: &Ride, towns: &[TownLayout]) -> bool {
+        let station = train.state().station.unwrap();
+        let (platform, _) = town_of(towns, train, station).platform_spot().unwrap();
+        let car = train.placed_cars()[ride.car];
+        let right = Vec2::new(car.direction.y, -car.direction.x);
+        (platform - car.center).dot(right) * ride.side > 0.0
+    }
+
+    #[test]
+    fn the_seat_faces_the_platform_of_the_next_stop() {
+        let (towns, _, train) = shipped();
+        let car = coaches(&train)[0];
+        let mut sides = Vec::new();
+        // Running in on the morning run, the afternoon run, and to both
+        // terminals: seated on the platform side when it stops.
+        for (from, station) in [
+            (hm(7, 3), NIEVAS),
+            (hm(11, 0), CASTEX),
+            (hm(16, 1), NIEVAS),
+            (hm(17, 50), PICO),
+        ] {
+            let mut moving = at(&train, from);
+            assert_eq!(moving.state().phase, LinePhase::Running, "{from}");
+            let ride = Ride::new(&moving, car).facing_platform(&moving, &towns);
+            moving.skip_to_next_stop(from, BASE_RATE);
+            assert_eq!(moving.state().station, Some(station));
+            assert!(faces_the_platform(&moving, &ride, &towns), "to {station}");
+            sides.push(ride.side);
+        }
+        // Boarded at a dwell: the next stop's platform, not this one's.
+        let (dwelling, _) = standing(&train, 0.0, NIEVAS);
+        let mut ride = Ride::new(&dwelling, car).facing_platform(&dwelling, &towns);
+        let mut on = dwelling.clone();
+        on.skip_to_next_stop(0.0, BASE_RATE);
+        assert!(faces_the_platform(&on, &ride, &towns));
+        assert!(!ride.put_off(&dwelling.state()));
+        assert!(sides.contains(&1.0) || sides.contains(&-1.0));
+    }
+
     #[test]
     fn the_opening_rides_into_the_first_town_and_reaches_it_on_time() {
         let (towns, _, train) = shipped();
@@ -656,6 +729,9 @@ mod tests {
         assert!((clock.time_of_day().seconds() - arrival.seconds()).abs() < 0.01);
         assert!(ride.put_off(&train.state()));
         assert!(towns[nievas].platform_spot().is_some());
+        // Seated facing the Monte Nievas platform as it comes in.
+        let seated = ride.facing_platform(&train, &towns);
+        assert!(faces_the_platform(&train, &seated, &towns));
         assert_eq!(opening(&mut train, 99, Run::Up), None);
     }
 }
