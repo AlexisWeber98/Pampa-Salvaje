@@ -209,20 +209,7 @@ pub fn alight_spot(
     let door = coach_doors(train.placed_cars().get(car)?)
         .into_iter()
         .min_by(|a, b| a.distance(middle).total_cmp(&b.distance(middle)))?;
-    // Slide the platform's middle spot along it to beside that door,
-    // staying off its ramps.
-    let along = floor.along;
-    let (lo, hi) = (
-        floor.footprint.min.dot(along) + PLATFORM_END_MARGIN,
-        floor.footprint.max.dot(along) - PLATFORM_END_MARGIN,
-    );
-    let a = door.dot(along);
-    let a = if lo <= hi {
-        a.clamp(lo, hi)
-    } else {
-        middle.dot(along)
-    };
-    let wanted = middle + along * (a - middle.dot(along));
+    let wanted = beside_door(&floor, middle, door);
     let person = Circle::new(Rider::PERSON_RADIUS);
     let settled = world.resolve(person, wanted, |_| ());
     let spot = if floor.footprint.contains_point(settled) {
@@ -231,6 +218,25 @@ pub fn alight_spot(
         world.resolve(person, middle, |_| ())
     };
     Some((spot, facing))
+}
+
+/// The platform's `middle` spot slid along `floor` to beside `door`,
+/// staying off its ramps, whichever way `floor.along` points.
+fn beside_door(floor: &Floor, middle: Vec2, door: Vec2) -> Vec2 {
+    let along = floor.along;
+    let (min, max) = (floor.footprint.min, floor.footprint.max);
+    let (lo, hi) = [min, max, Vec2::new(min.x, max.y), Vec2::new(max.x, min.y)]
+        .into_iter()
+        .map(|corner| corner.dot(along))
+        .fold((f32::MAX, f32::MIN), |(lo, hi), a| (lo.min(a), hi.max(a)));
+    let (lo, hi) = (lo + PLATFORM_END_MARGIN, hi - PLATFORM_END_MARGIN);
+    let a = door.dot(along);
+    let a = if lo <= hi {
+        a.clamp(lo, hi)
+    } else {
+        middle.dot(along)
+    };
+    middle + along * (a - middle.dot(along))
 }
 
 /// The station whose platform `rider` waits on: on foot within
@@ -522,6 +528,38 @@ mod tests {
     }
 
     #[test]
+    fn the_alighting_spot_slides_beside_the_door_whichever_way_the_platform_runs() {
+        // A 40 m platform along x, then along y, each named both ways.
+        let x = crate::Aabb::new(Vec2::new(-20.0, 4.0), Vec2::new(20.0, 8.0));
+        let y = crate::Aabb::new(Vec2::new(4.0, -20.0), Vec2::new(8.0, 20.0));
+        for (footprint, axis) in [(x, Vec2::new(1.0, 0.0)), (y, Vec2::new(0.0, 1.0))] {
+            let middle = (footprint.min + footprint.max) * 0.5;
+            let across = Vec2::new(axis.y, axis.x);
+            for along in [axis, axis * -1.0] {
+                let floor = Floor {
+                    footprint,
+                    height: 0.9,
+                    along,
+                };
+                // A door 9 m from the middle, beside the platform's edge.
+                let door = middle + axis * 9.0 - across * 3.0;
+                let spot = beside_door(&floor, middle, door);
+                assert!(
+                    spot.distance(middle + axis * 9.0) < 1e-4,
+                    "{along:?}: {spot:?}"
+                );
+                // Past the end, held a margin short of the ramp.
+                let far = beside_door(&floor, middle, middle + axis * 30.0);
+                let end = 20.0 - PLATFORM_END_MARGIN;
+                assert!(
+                    far.distance(middle + axis * end) < 1e-4,
+                    "{along:?}: {far:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn the_ride_ends_at_its_station_or_on_arriving_at_a_terminal() {
         let (_, _, train) = shipped();
         let car = coaches(&train)[0];
@@ -704,7 +742,9 @@ mod tests {
         on.skip_to_next_stop(0.0, BASE_RATE);
         assert!(faces_the_platform(&on, &ride, &towns));
         assert!(!ride.put_off(&dwelling.state()));
-        assert!(sides.contains(&1.0) || sides.contains(&-1.0));
+        // The platforms lie on both sides across these runs, so the seat
+        // really is chosen, not fixed.
+        assert!(sides.contains(&1.0) && sides.contains(&-1.0), "{sides:?}");
     }
 
     #[test]

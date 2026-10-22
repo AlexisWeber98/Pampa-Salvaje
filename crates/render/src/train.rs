@@ -86,14 +86,19 @@ pub struct TrainRod {
 }
 
 /// One puff of chimney smoke, cycling upward while the train moves:
-/// `phase` in `[0, 1)` from leaving the chimney to fading out.
+/// `phase` in `[0, 1)` from leaving the chimney to fading out, and the
+/// chimney's mouth it leaves from, in the car's frame.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct SmokePuff {
     pub phase: f32,
+    pub chimney: Vec3,
 }
 
 /// Real seconds a smoke puff takes to rise and fade.
 const PUFF_SECONDS: f32 = 1.6;
+
+/// Radius of the locomotive's coupled drivers, which the rods turn with.
+const DRIVER_RADIUS: f32 = 0.75;
 
 /// Height of the rail tops above the ground (see the town's railway).
 const RAIL_TOP: f32 = LineTrain::RAIL_TOP;
@@ -389,7 +394,7 @@ impl CarBuilder<'_, '_> {
         self.frame(length, 1.1);
         // Three coupled drivers, a leading truck and the tender's axles.
         for x in [1.2, 2.9, 4.6] {
-            self.axle(x, 0.75);
+            self.axle(x, DRIVER_RADIUS);
         }
         self.axle(front - 1.0, 0.45);
         for x in [-front + 1.2, -front + 3.0] {
@@ -492,8 +497,9 @@ impl CarBuilder<'_, '_> {
         for (i, side) in [-1.0f32, 1.0].into_iter().enumerate() {
             let z = side * 1.25;
             self.lying(&black, Vec3::new(5.9, 0.85, z), 0.3, 1.0);
-            // Right-hand cranks lead by a quarter turn.
-            let phase = i as f32 * std::f32::consts::FRAC_PI_2;
+            // Right-hand (+Z) cranks lead by a quarter turn; the drivers
+            // turn clockwise, toward a lower phase.
+            let phase = (i as f32 * -std::f32::consts::FRAC_PI_2).rem_euclid(std::f32::consts::TAU);
             self.rod(
                 Vec3::new(2.9, 0.75, side * 1.12),
                 Vec3::new(3.6, 0.1, 0.06),
@@ -552,6 +558,7 @@ impl CarBuilder<'_, '_> {
                             MeshMaterial3d(smoke.clone()),
                             SmokePuff {
                                 phase: i as f32 / 4.0,
+                                chimney: base,
                             },
                             Transform::from_translation(base),
                             Visibility::Hidden,
@@ -571,7 +578,7 @@ impl CarBuilder<'_, '_> {
             TrainRod {
                 base,
                 crank: 0.3,
-                radius: 0.75,
+                radius: DRIVER_RADIUS,
                 phase,
                 length,
             },
@@ -968,12 +975,15 @@ fn turn_wheels(
         transform.rotate_local_y(-distance / wheel.radius);
     }
     for (mut rod, mut transform) in &mut rods {
-        rod.phase = (rod.phase + distance / rod.radius) % std::f32::consts::TAU;
+        // Clockwise too: a crank pin at the front ([`rod_pose`]'s phase 0)
+        // goes down as the drivers roll forward.
+        rod.phase = (rod.phase - distance / rod.radius).rem_euclid(std::f32::consts::TAU);
         *transform = rod_pose(&rod, transform.scale);
     }
 }
 
-/// Where a rod is at its crank angle: a side rod circles with the crank
+/// Where a rod is at its crank angle, counted from the front (+X) toward
+/// the top (+Y): a side rod circles with the crank
 /// pins; a main rod's back end does, its front end slides with the
 /// crosshead, so it moves half as far and tilts.
 pub fn rod_pose(rod: &TrainRod, scale: Vec3) -> Transform {
@@ -1010,8 +1020,8 @@ fn puff_smoke(
         }
         puff.phase = (puff.phase + time.delta_secs() / PUFF_SECONDS).fract();
         let t = puff.phase;
-        let chimney = Vec3::new(5.6, 4.55, 0.0);
-        transform.translation = chimney + Vec3::new(-t * (1.0 + speed * 0.25), 0.3 + t * 2.0, 0.0);
+        transform.translation =
+            puff.chimney + Vec3::new(-t * (1.0 + speed * 0.25), 0.3 + t * 2.0, 0.0);
         transform.scale = Vec3::splat(0.5 + t * 1.6);
         visibility.set_if_neq(Visibility::Inherited);
     }
@@ -1020,10 +1030,13 @@ fn puff_smoke(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use bevy::time::TimeUpdateStrategy;
     use pampa_core::{
         BASE_RATE, PlazaPlacement, RailLine, RailwayConfig, Side, Terrain, Timetable, TownConfig,
         TownLayout, Vec2 as GroundVec2, WorldConfig, place_towns,
     };
+    use std::f32::consts::{PI, TAU};
+    use std::time::Duration;
 
     /// Castex, Monte Nievas and Pico as `assets/world/towns.ron` lays them
     /// out, and the line train through them.
@@ -1277,7 +1290,20 @@ pub(crate) mod tests {
         for (index, car) in train.cars().iter().enumerate() {
             let tris = triangles(&mut app, index);
             println!("{:?}: {tris} triangles", car.kind);
-            assert!((300..8000).contains(&tris), "{:?}: {tris}", car.kind);
+            // The counts the line-train notes record, with a quarter's slack
+            // either way.
+            let documented = match car.kind {
+                CarKind::Locomotive => 2156.0,
+                CarKind::Coach => 2348.0,
+                CarKind::Boxcar => 1124.0,
+                CarKind::Hopper => 1100.0,
+            };
+            let range = (documented * 0.75) as usize..=(documented * 1.25) as usize;
+            assert!(
+                range.contains(&tris),
+                "{:?}: {tris} not in {range:?}",
+                car.kind
+            );
         }
     }
 
@@ -1311,29 +1337,117 @@ pub(crate) mod tests {
                 .angle_between(Quat::IDENTITY)
                 > 0.01
         );
-        // In the app, the rods turn as the train runs.
+        // In the app, the rods turn with the drivers as the train runs: by
+        // the distance rolled over the drivers' radius, in their sense.
+        let mut app = running_app();
+        let speed = app
+            .world()
+            .resource::<WorldTrain>()
+            .0
+            .as_ref()
+            .unwrap()
+            .state()
+            .speed;
+        assert!(speed > 1.0, "the train is under way: {speed}");
+        app.update();
+        let rods = |app: &mut App| {
+            let mut q = app.world_mut().query::<&TrainRod>();
+            q.iter(app.world()).copied().collect::<Vec<_>>()
+        };
+        // A driver's crank angle in the car's side plane: where its local
+        // +X (a point on the rim) has turned to about the car's Z axis.
+        let drivers = |app: &mut App| {
+            let mut q = app.world_mut().query::<(&TrainWheel, &Transform)>();
+            q.iter(app.world())
+                .filter(|(w, _)| w.radius == DRIVER_RADIUS)
+                .map(|(_, t)| {
+                    let rim = t.rotation * Vec3::X;
+                    rim.y.atan2(rim.x)
+                })
+                .collect::<Vec<_>>()
+        };
+        let (rods_before, drivers_before) = (rods(&mut app), drivers(&mut app));
+        assert_eq!(rods_before.len(), 4, "two side rods and two main rods");
+        assert_eq!(drivers_before.len(), 6, "three coupled drivers a side");
+        app.update();
+        let turned = speed * app.world().resource::<Time>().delta_secs() / DRIVER_RADIUS;
+        assert!(turned > 0.05, "a measurable turn: {turned}");
+        let wrap = |a: f32| (a + PI).rem_euclid(TAU) - PI;
+        for (before, after) in drivers_before.iter().zip(drivers(&mut app)) {
+            // Rolling toward +X, a driver's front goes down: clockwise.
+            assert!(
+                (wrap(after - before) + turned).abs() < 1e-3,
+                "driver {before} -> {after}, turned {turned}"
+            );
+        }
+        for (before, after) in rods_before.iter().zip(rods(&mut app)) {
+            assert_eq!(before.radius, DRIVER_RADIUS);
+            assert!(
+                (wrap(after.phase - before.phase) + turned).abs() < 1e-3,
+                "rod turned {}, drivers {}",
+                after.phase - before.phase,
+                -turned
+            );
+        }
+    }
+
+    #[test]
+    fn smoke_puffs_from_the_chimney_only_while_the_train_moves() {
+        let puffs = |app: &mut App| {
+            let mut q = app
+                .world_mut()
+                .query::<(&SmokePuff, &Transform, &Visibility)>();
+            q.iter(app.world())
+                .map(|(p, t, v)| (*p, *t, *v))
+                .collect::<Vec<_>>()
+        };
+        // Parked overnight: no smoke.
+        let mut app = app_with_train(3600.0, GroundVec2::ZERO);
+        app.update();
+        app.update();
+        let parked = puffs(&mut app);
+        assert_eq!(parked.len(), 4);
+        assert!(parked.iter().all(|p| p.2 == Visibility::Hidden));
+        // Every puff leaves from the top of the chimney's cap.
+        let chimney = parked[0].0.chimney;
+        assert!(parked.iter().all(|p| p.0.chimney == chimney));
+        assert!(boxes(&mut app, 0).iter().any(|(_, a, b)| {
+            let mid = (*a + *b) / 2.0;
+            (mid.x - chimney.x).abs() < 1e-4
+                && (mid.z - chimney.z).abs() < 1e-4
+                && (b.y - chimney.y).abs() < 1e-4
+        }));
+        // Under way: shown, rising from the chimney, cycling round.
+        let mut app = running_app();
+        app.update();
+        let mut wrapped = false;
+        let mut last = puffs(&mut app);
+        for _ in 0..40 {
+            app.update();
+            let now = puffs(&mut app);
+            for ((before, _, _), (puff, t, v)) in last.iter().zip(&now) {
+                assert_eq!(*v, Visibility::Inherited);
+                assert!((0.0..1.0).contains(&puff.phase));
+                let rise = t.translation.y - puff.chimney.y;
+                assert!((rise - (0.3 + puff.phase * 2.0)).abs() < 1e-4);
+                assert!(t.translation.x <= puff.chimney.x);
+                wrapped |= puff.phase < before.phase;
+            }
+            last = now;
+        }
+        assert!(wrapped, "puffs start again from the chimney");
+    }
+
+    /// The train under way out of Monte Nievas toward Castex, near the
+    /// focus, with each frame a fixed twentieth of a second.
+    fn running_app() -> App {
         let (_, probe) = line_train();
         let (_, depart) = probe.stop_times(pampa_core::Run::Up, 1).unwrap();
         let mut app = app_with_train(7.0 * 3600.0 + (depart + 30.0) * BASE_RATE, GroundVec2::ZERO);
-        app.update();
-        let phases = |app: &mut App| {
-            let mut q = app.world_mut().query::<&TrainRod>();
-            q.iter(app.world()).map(|r| r.phase).collect::<Vec<_>>()
-        };
-        let before = phases(&mut app);
-        assert_eq!(before.len(), 4, "two side rods and two main rods");
-        app.world_mut()
-            .resource_mut::<WorldTrain>()
-            .0
-            .as_mut()
-            .unwrap()
-            .advance(
-                7.0 * 3600.0 + (depart + 30.0) * BASE_RATE,
-                BASE_RATE,
-                BASE_RATE,
-            );
-        app.update();
-        assert_ne!(phases(&mut app), before);
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            50,
+        )));
+        app
     }
 
     #[test]
