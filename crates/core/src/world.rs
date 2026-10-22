@@ -113,14 +113,21 @@ impl World {
     }
 
     /// Height of the surface bodies stand on at `p`: the terrain, raised by
-    /// the highest floor (a platform or its ramp) there. Everything placed
-    /// on the ground (riders, people, horses, the camera floor) uses this.
+    /// the highest floor (a platform or its ramp) there, or by a level
+    /// crossing's approach and deck ([`RoadNetwork::crossing_rise`]).
+    /// Everything placed on the ground (riders, people, horses, the camera
+    /// floor) uses this.
     pub fn ground_height(&self, p: Vec2) -> f32 {
+        let crossing = self
+            .terrain
+            .roads
+            .as_ref()
+            .map_or(0.0, |roads| roads.crossing_rise(p));
         let rise = self
             .floors
             .iter()
             .filter_map(|f| f.rise_at(p))
-            .fold(0.0, f32::max);
+            .fold(crossing, f32::max);
         self.terrain.height(p.x, p.y) + rise
     }
 
@@ -660,6 +667,76 @@ mod tests {
                 "stuck at {:?}",
                 rider.position
             );
+        }
+    }
+
+    /// The deck of a level crossing, above the ground: the planks' top.
+    const DECK: f32 = crate::LineTrain::RAIL_TOP - 0.02;
+
+    #[test]
+    fn the_road_climbs_gently_onto_each_crossing_deck_and_down_again() {
+        let (world, roads) = roaded_world();
+        let raised = |p: Vec2| world.ground_height(p) - world.terrain.height(p.x, p.y);
+        for c in roads.crossings() {
+            let mut last: Option<f32> = None;
+            for k in -60..=60 {
+                let p = c.at + c.road * (k as f32 * 0.25);
+                let h = world.ground_height(p);
+                if let Some(before) = last {
+                    let slope = (h - before).abs() / 0.25;
+                    let land = (world.terrain.height(p.x, p.y)
+                        - world
+                            .terrain
+                            .height(p.x - c.road.x * 0.25, p.y - c.road.y * 0.25))
+                    .abs()
+                        / 0.25;
+                    assert!(slope - land <= 0.105, "{slope} at {p:?}");
+                }
+                last = Some(h);
+            }
+            assert!((raised(c.at) - DECK).abs() < 0.01, "{}", raised(c.at));
+            for s in [-12.0, 12.0] {
+                assert!(raised(c.at + c.road * s).abs() < 1e-4);
+            }
+            // Along the track, past the road's edges, the ground is the
+            // terrain's (and the terrain under the track is untouched).
+            for s in [-9.0, -6.0, 6.0, 9.0] {
+                let p = c.at + c.rail * s;
+                assert_eq!(
+                    world.ground_height(p),
+                    world.terrain.height(p.x, p.y),
+                    "{s}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_rider_rides_up_onto_the_deck_and_over_the_rails() {
+        let (world, roads) = roaded_world();
+        let params = crate::RiderParams::default();
+        for c in roads.crossings() {
+            let start = c.at - c.road * 20.0;
+            let heading = crate::Heading::from_radians(c.road.y.atan2(c.road.x));
+            let mut rider = crate::Rider::new(start, heading, &world);
+            let mut on_deck = None;
+            for _ in 0..60 * 20 {
+                let input = crate::RiderInput {
+                    throttle: 1.0,
+                    ..Default::default()
+                };
+                rider.step(input, &params, &world, 1.0 / 60.0);
+                let ground = world.terrain.height(rider.position.x, rider.position.y);
+                if rider.position.distance(c.at) < 0.5 {
+                    on_deck = Some(rider.height - ground);
+                }
+                if (rider.position - c.at).dot(c.road) > 15.0 {
+                    break;
+                }
+            }
+            let lift = on_deck.expect("rode over the crossing");
+            assert!((lift - DECK).abs() < 0.01, "{lift}");
+            assert!((rider.position - c.at).dot(c.road) > 15.0, "stuck");
         }
     }
 

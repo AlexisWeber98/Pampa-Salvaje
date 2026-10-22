@@ -91,7 +91,9 @@ pub enum RailLineError {
     NoRailway { name: String },
     /// A railway town the line leaves out.
     NotOnLine { name: String },
-    /// The link between `from` and `to` runs across `other`'s leveled ground.
+    /// The link between `from` and `to` runs across `other`'s leveled
+    /// ground (`other` may be `from` or `to` itself, when the link comes back
+    /// across its own town).
     CrossesTown {
         from: String,
         to: String,
@@ -451,7 +453,8 @@ fn west_to_east(towns: &[TownLayout]) -> Vec<usize> {
 
 /// The link from town `from` to town `to`, both with a railway, or why it
 /// breaks the rules: its curved track must stay inside `bounds` and clear
-/// of every other town's leveled ground, ballast included.
+/// of every other town's leveled ground, ballast included. It may only
+/// leave its own two towns' ground, never come back across it.
 fn link(
     towns: &[TownLayout],
     from: usize,
@@ -496,7 +499,21 @@ fn link(
                 .windows(2)
                 .any(|w| ground.segment_overlap(w[0], w[1]).is_some())
     });
-    if let Some((_, other)) = crossed {
+    // Out of the first town, it never comes back; into the last, it only
+    // arrives (read from that end, it never comes back either).
+    let own = |town: &TownLayout| town.leveled().expanded(half);
+    let crossed = crossed.map(|(_, other)| other).or_else(|| {
+        let back_into_a = reenters(own(a), path.windows(2));
+        let back_into_b = reenters(own(b), path.windows(2).rev());
+        if back_into_a {
+            Some(a)
+        } else if back_into_b {
+            Some(b)
+        } else {
+            None
+        }
+    });
+    if let Some(other) = crossed {
         let (from, to) = names();
         return Err(RailLineError::CrossesTown {
             from,
@@ -515,6 +532,21 @@ fn link(
         path,
         curves,
     })
+}
+
+/// Whether a path, read as its `pieces` in order, comes back onto `band`
+/// after it has left it: a link leaving its town's ground and crossing it
+/// again further on.
+fn reenters<'a>(band: Aabb, pieces: impl Iterator<Item = &'a [Vec2]>) -> bool {
+    let mut left = false;
+    for w in pieces {
+        let on = band.segment_overlap(w[0], w[1]).is_some();
+        if left && on {
+            return true;
+        }
+        left |= !on;
+    }
+    false
 }
 
 /// The tip of `rail` nearest `toward`, and its other tip.
@@ -768,6 +800,47 @@ pub(crate) mod tests {
         assert!(errors.is_empty(), "{errors:?}");
         assert_eq!(line_names(&line, &towns), ["Oeste", "Medio", "Este"]);
         assert_eq!(line.links.len(), 2);
+    }
+
+    #[test]
+    fn a_link_that_comes_back_across_its_own_towns_band_is_caught() {
+        let band = Aabb::new(Vec2::new(0.0, 0.0), Vec2::new(100.0, 100.0));
+        let out = [
+            Vec2::new(50.0, 50.0),
+            Vec2::new(150.0, 50.0),
+            Vec2::new(300.0, 50.0),
+        ];
+        // Leaving the band and staying out is fine.
+        assert!(!reenters(band, out.windows(2)));
+        assert!(!reenters(
+            band,
+            [Vec2::new(200.0, 0.0), Vec2::new(300.0, 0.0)].windows(2)
+        ));
+        // Out and back in is not.
+        let back = [
+            Vec2::new(50.0, 50.0),
+            Vec2::new(150.0, 50.0),
+            Vec2::new(150.0, 200.0),
+            Vec2::new(50.0, 200.0),
+            Vec2::new(50.0, 90.0),
+        ];
+        assert!(reenters(band, back.windows(2)));
+        // The shipped line never does.
+        let (towns, line) = shipped();
+        for link in &line.links {
+            for (town, from_end) in [(link.from, false), (link.to, true)] {
+                let band = towns[town]
+                    .leveled()
+                    .expanded(TownLayout::RAIL_CORRIDOR_HALF);
+                let pieces = link.path.windows(2);
+                let again = if from_end {
+                    reenters(band, pieces.rev())
+                } else {
+                    reenters(band, pieces)
+                };
+                assert!(!again, "{}", towns[town].name);
+            }
+        }
     }
 
     #[test]

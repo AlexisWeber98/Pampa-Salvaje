@@ -98,6 +98,18 @@ pub enum RoadError {
     },
     /// The road between `from` and `to` would leave the world.
     OutsideWorld { from: String, to: String },
+    /// The road between `from` and `to` would cross the railway at
+    /// `degrees`, less square than [`RoadNetwork::MIN_CROSSING_ANGLE`].
+    UnsquareCrossing {
+        from: String,
+        to: String,
+        degrees: f32,
+    },
+    /// The road between `from` and `to` would run alongside the track,
+    /// closer than [`RoadNetwork::NEAR_RAIL`], away from its crossings.
+    NearRail { from: String, to: String },
+    /// `town`'s rural track has no clear way across its station yard.
+    NoRuralCrossing { town: String },
 }
 
 impl fmt::Display for RoadError {
@@ -110,6 +122,18 @@ impl fmt::Display for RoadError {
             Self::OutsideWorld { from, to } => write!(
                 f,
                 "roads: the road from `{from}` to `{to}` leaves the world; road left out"
+            ),
+            Self::UnsquareCrossing { from, to, degrees } => write!(
+                f,
+                "roads: the road from `{from}` to `{to}` crosses the railway at {degrees:.0}°; road left out"
+            ),
+            Self::NearRail { from, to } => write!(
+                f,
+                "roads: the road from `{from}` to `{to}` runs too close alongside the railway; road left out"
+            ),
+            Self::NoRuralCrossing { town } => write!(
+                f,
+                "roads: `{town}` has no clear way across its station yard; rural track left out"
             ),
         }
     }
@@ -203,6 +227,29 @@ impl RoadNetwork {
     /// How far past its ends a piece still levels the ground, in meters:
     /// enough to cover the outside of the road's gentle bends.
     const CUT_OVERLAP: f32 = 2.0;
+    /// Half the width of a level crossing's deck across the track, in
+    /// meters from the track's centerline: the planks and the ballast
+    /// beside them, where the road stands at rail-top level.
+    pub const CROSSING_DECK: f32 = 1.7;
+    /// Length of the packed-earth approach on either side of a level
+    /// crossing, in meters: the road rises from the ground to the deck over
+    /// it, gentler than 1 in 10.
+    pub const CROSSING_RAMP: f32 = 7.0;
+    /// Height of a level crossing's deck above the ground, in meters: the
+    /// planks' top, just under the rail heads.
+    pub const CROSSING_RISE: f32 = crate::LineTrain::RAIL_TOP - 0.02;
+    /// Beside the road, the approach slopes down to the ground between
+    /// this many meters inside and outside the road's edge.
+    pub const CROSSING_SIDE: f32 = 0.8;
+    /// Half the width of the track bed (sleepers and ballast), in meters
+    /// from the track's centerline: a road's cut leaves it untouched, so the
+    /// track, the train and the platforms never dip at a level crossing.
+    pub const RAIL_BED: f32 = 3.0;
+    /// Past [`Self::RAIL_BED`], over this many meters the cut eases back in.
+    const RAIL_BLEND: f32 = 6.0;
+    /// Along the track, the bed is kept within this many meters of a
+    /// crossing, fading out over the next ten (the cut is long gone there).
+    const RAIL_NEAR: f32 = 30.0;
     /// Farthest any query of [`Self::near`] reaches, in meters.
     pub const INDEX_REACH: f32 = 64.0;
     /// Side of one index cell, in meters.
@@ -213,6 +260,16 @@ impl RoadNetwork {
     pub const SIGNPOST_OUT: f32 = 14.0;
     /// Side of a post's square footprint (signposts, crossing signs).
     pub const POST: f32 = 0.25;
+    /// Least angle between a road and the track where it crosses, in
+    /// radians (80°): crossings are built square.
+    pub const MIN_CROSSING_ANGLE: f32 = 80.0 * std::f32::consts::PI / 180.0;
+    /// Least distance from a road's centerline to the track's, in meters,
+    /// away from its crossings and its towns (see [`Self::RAIL_CLEARANCE`];
+    /// the bends that keep it there may fall a little short).
+    pub const NEAR_RAIL: f32 = 0.9 * Self::RAIL_CLEARANCE;
+    /// Within this many meters of a crossing, a road may come near the
+    /// track: its square approaches.
+    const CROSSING_APPROACH: f32 = Self::RAIL_CLEARANCE + 90.0;
 
     /// The roads between every two towns next to each other on `line`,
     /// inside `bounds`, and the roads left out, each reported.
@@ -230,16 +287,21 @@ impl RoadNetwork {
                 continue;
             };
             let road = route(a, b, &track, (from, to));
-            match check(&road, towns, bounds) {
+            match check(&road, towns, bounds, &track) {
                 Ok(()) => roads.push(road),
                 Err(error) => errors.push(error),
             }
         }
         for (i, town) in towns.iter().enumerate() {
-            let Some(road) = rural(town, i, &track) else {
-                continue;
+            let road = match rural(town, i, &track) {
+                Some(Ok(road)) => road,
+                Some(Err(error)) => {
+                    errors.push(error);
+                    continue;
+                }
+                None => continue,
             };
-            match check(&road, towns, bounds) {
+            match check(&road, towns, bounds, &track) {
                 Ok(()) => roads.push(road),
                 Err(error) => errors.push(error),
             }
@@ -357,9 +419,11 @@ impl RoadNetwork {
     /// follows the land. `None` away from roads.
     ///
     /// Continuous everywhere: each piece within reach pulls toward its own
-    /// level by a weight that fades to 0 at [`Self::CUT_REACH`] across it
+    /// level by a weight that fades to 0 at [`Self::CUT_REACH`] from it
     /// and within a couple of meters past its ends, and the levels are
-    /// averaged by weight.
+    /// averaged by weight. Nothing farther than [`Self::CUT_REACH`] from
+    /// the road is touched. The track bed at a level crossing is left alone,
+    /// the cut easing back in beside it (see [`Self::RAIL_BED`]).
     pub fn cut(&self, p: Vec2, base: impl Fn(Vec2) -> f32) -> Option<(f32, f32)> {
         let (mut strongest, mut total, mut weighted) = (0.0_f32, 0.0, 0.0);
         for piece in self.nearby(p) {
@@ -373,7 +437,11 @@ impl RoadNetwork {
             let s = (p - piece.a).dot(dir);
             let off = ((p - piece.a).x * dir.y - (p - piece.a).y * dir.x).abs();
             let past = (-s).max(s - length).max(0.0);
-            let w = (1.0 - smoothstep(Self::CUT_FLAT, Self::CUT_REACH, off))
+            // Faded by the true distance to the piece (not just across its
+            // line), so nothing past `CUT_REACH` from the road is touched,
+            // round the ends of the pieces too.
+            let reach = off.hypot(past);
+            let w = (1.0 - smoothstep(Self::CUT_FLAT, Self::CUT_REACH, reach))
                 * (1.0 - smoothstep(0.0, Self::CUT_OVERLAP, past));
             let t = (s / length).clamp(0.0, 1.0);
             let c = piece.a + d * t;
@@ -387,7 +455,59 @@ impl RoadNetwork {
             total += w;
             weighted += w * (base(c) - depth);
         }
+        if strongest <= 0.0 {
+            return None;
+        }
+        let strongest = strongest * self.rail_keep(p);
         (strongest > 0.0).then(|| (strongest, weighted / total))
+    }
+
+    /// How much of the cut may apply at `p` beside the railway, in
+    /// `[0, 1]`: 0 on the track bed at a level crossing, easing to 1 past
+    /// it and away from the crossings. Continuous.
+    fn rail_keep(&self, p: Vec2) -> f32 {
+        let reach = Self::RAIL_NEAR + 10.0;
+        self.crossings()
+            .filter_map(|c| {
+                let rel = p - c.at;
+                let along = rel.dot(c.rail).abs();
+                (along < reach).then(|| {
+                    let across = (rel.x * c.rail.y - rel.y * c.rail.x).abs();
+                    1.0 - (1.0
+                        - smoothstep(Self::RAIL_BED, Self::RAIL_BED + Self::RAIL_BLEND, across))
+                        * (1.0 - smoothstep(Self::RAIL_NEAR, reach, along))
+                })
+            })
+            .fold(1.0, f32::min)
+    }
+
+    /// How far a level crossing's approach raises the road at `p` above
+    /// the terrain, in meters: [`Self::CROSSING_RISE`] on the deck across
+    /// the track, easing down to 0 over [`Self::CROSSING_RAMP`] on either
+    /// side along the road (no steeper than about 1 in 10), and sloping
+    /// down to the ground at the road's edges ([`Self::CROSSING_SIDE`]); 0
+    /// away from the crossings. Continuous.
+    ///
+    /// The one profile of the approach: [`crate::World::ground_height`]
+    /// adds it where bodies stand and render lays the road surface on it.
+    /// The terrain itself is not raised, so the track bed stays as it is.
+    pub fn crossing_rise(&self, p: Vec2) -> f32 {
+        let ramp = Self::CROSSING_DECK + Self::CROSSING_RAMP;
+        let (inner, outer) = (
+            Self::HALF_WIDTH - Self::CROSSING_SIDE,
+            Self::HALF_WIDTH + Self::CROSSING_SIDE,
+        );
+        self.crossings()
+            .map(|c| {
+                let rel = p - c.at;
+                // Across the track (along the road), and across the road.
+                let across = (rel.x * c.rail.y - rel.y * c.rail.x).abs();
+                let aside = (rel.x * c.road.y - rel.y * c.road.x).abs();
+                Self::CROSSING_RISE
+                    * (1.0 - smoothstep(Self::CROSSING_DECK, ramp, across))
+                    * (1.0 - smoothstep(inner, outer, aside))
+            })
+            .fold(0.0, f32::max)
     }
 
     /// The parts of every road inside `area` (a terrain chunk), each as
@@ -599,9 +719,16 @@ fn route(a: &TownLayout, b: &TownLayout, track: &Track, (from, to): (usize, usiz
 /// The rural track out of `town` across its railway: the street through
 /// the grid that runs out square to the track nearest the station, with a
 /// clear way across the station yard, a level crossing, and past the
-/// leveled band a seeded, gently curving dead end of 300–800 m.
-fn rural(town: &TownLayout, index: usize, track: &Track) -> Option<Road> {
+/// leveled band a seeded, gently curving dead end of 300–800 m. `None`
+/// for a town without a railway; an error when there is no clear way
+/// across its yard.
+fn rural(town: &TownLayout, index: usize, track: &Track) -> Option<Result<Road, RoadError>> {
     let rail = town.railway?;
+    let blocked = || {
+        Err(RoadError::NoRuralCrossing {
+            town: town.name.clone(),
+        })
+    };
     let grid = town.grid();
     let along = unit(rail.end - rail.start)?;
     let along = Vec2::new(along.x.abs(), along.y.abs());
@@ -646,12 +773,15 @@ fn rural(town: &TownLayout, index: usize, track: &Track) -> Option<Road> {
         .min_by(|a, b| (a - station).abs().total_cmp(&(b - station).abs()));
     // ...or, where the yard fills the town's whole side, the ring street
     // along the track carried on past the grid's nearer end.
-    let ring = town
+    let Some(ring) = town
         .streets
         .iter()
         .filter(|s| s.size().dot(along) > s.size().dot(axis) && reaches(s))
         .map(|s| s.center().dot(axis))
-        .next()?;
+        .next()
+    else {
+        return Some(blocked());
+    };
     let (lo, hi) = (grid.min.dot(along), grid.max.dot(along));
     let (end, past) = if (station - lo).abs() <= (hi - station).abs() {
         (lo, lo - PAST_GRID)
@@ -665,7 +795,7 @@ fn rural(town: &TownLayout, index: usize, track: &Track) -> Option<Road> {
             path.push(along * end + axis * ring);
             past
         }
-        None => return None,
+        None => return Some(blocked()),
     };
     let start = along * line + axis * edge;
     path.push(start);
@@ -700,14 +830,14 @@ fn rural(town: &TownLayout, index: usize, track: &Track) -> Option<Road> {
             out: unit(path[n - 1] - path[n - 2]).unwrap_or(heading),
         },
     ];
-    Some(Road {
+    Some(Ok(Road {
         kind: RoadKind::Rural,
         from: index,
         to: index,
         path,
         ends,
         crossings,
-    })
+    }))
 }
 
 /// `1` along a positive axis, `-1` along a negative one.
@@ -837,8 +967,16 @@ fn crossings_of(path: &[Vec2], track: &Track) -> Vec<LevelCrossing> {
     found
 }
 
-/// Checks `road` against the other towns and the world's edge.
-fn check(road: &Road, towns: &[TownLayout], bounds: WorldBounds) -> Result<(), RoadError> {
+/// Checks `road` against the other towns, the world's edge and the
+/// `track`: it must cross squarely (the fallbacks of [`between`] and
+/// [`rural`] may not) and keep [`RoadNetwork::NEAR_RAIL`] from the track
+/// away from its crossings and its own towns.
+fn check(
+    road: &Road,
+    towns: &[TownLayout],
+    bounds: WorldBounds,
+    track: &Track,
+) -> Result<(), RoadError> {
     let name = |i: usize| towns[i].name.clone();
     let to = match road.kind {
         RoadKind::Between => name(road.to),
@@ -873,6 +1011,36 @@ fn check(road: &Road, towns: &[TownLayout], bounds: WorldBounds) -> Result<(), R
                 other: town.name.clone(),
             });
         }
+    }
+    if let Some(c) = road
+        .crossings
+        .iter()
+        .find(|c| c.angle() < RoadNetwork::MIN_CROSSING_ANGLE)
+    {
+        return Err(RoadError::UnsquareCrossing {
+            from: name(road.from),
+            to,
+            degrees: c.angle().to_degrees(),
+        });
+    }
+    let own = |p: Vec2| {
+        [road.from, road.to]
+            .iter()
+            .filter_map(|&i| towns.get(i))
+            .any(|t| t.leveled().expanded(RoadNetwork::RUN_OUT).contains_point(p))
+    };
+    let hugs = road.path.iter().any(|&p| {
+        let approach = road
+            .crossings
+            .iter()
+            .any(|c| c.at.distance(p) < RoadNetwork::CROSSING_APPROACH);
+        !approach && !own(p) && track.signed(p).0.abs() < RoadNetwork::NEAR_RAIL
+    });
+    if hugs {
+        return Err(RoadError::NearRail {
+            from: name(road.from),
+            to,
+        });
     }
     Ok(())
 }
@@ -1231,6 +1399,90 @@ pub(crate) mod tests {
                 );
             }
         }
+    }
+
+    /// A short rural road of the first shipped town along `path`, checked.
+    fn checked(path: Vec<Vec2>) -> Result<(), RoadError> {
+        let (towns, line, _) = shipped_roads();
+        let track = track(&towns, &line);
+        let crossings = crossings_of(&path, &track);
+        let road = Road {
+            kind: RoadKind::Rural,
+            from: 0,
+            to: 0,
+            ends: [
+                RoadEnd {
+                    at: path[0],
+                    out: Vec2::new(1.0, 0.0),
+                },
+                RoadEnd {
+                    at: path[path.len() - 1],
+                    out: Vec2::new(1.0, 0.0),
+                },
+            ],
+            path,
+            crossings,
+        };
+        check(&road, &towns, big_world().bounds(), &track)
+    }
+
+    /// A point and the track's unit direction there, well out between
+    /// Monte Nievas and General Pico.
+    fn open_track() -> (Vec2, Vec2) {
+        let (towns, line, _) = shipped_roads();
+        let path = line.full_path(&towns);
+        let d = path.length() * 0.7;
+        (path.at(d), path.direction_at(d))
+    }
+
+    #[test]
+    fn a_road_crossing_the_track_at_a_slant_or_hugging_it_is_left_out() {
+        let (at, dir) = open_track();
+        let slant = Vec2::new(dir.x - dir.y, dir.y + dir.x) * std::f32::consts::FRAC_1_SQRT_2;
+        let error = checked(vec![at - slant * 40.0, at + slant * 40.0]).expect_err("45°");
+        assert!(
+            matches!(error, RoadError::UnsquareCrossing { .. }),
+            "{error:?}"
+        );
+        assert!(error.to_string().contains("45"), "{error}");
+        let left = Vec2::new(-dir.y, dir.x);
+        let along = |s: f32| at + dir * s + left * 12.0;
+        let error = checked(vec![along(-30.0), along(0.0), along(30.0)]).expect_err("hugging");
+        assert!(matches!(error, RoadError::NearRail { .. }), "{error:?}");
+        // Square across, and well clear: fine.
+        assert_eq!(checked(vec![at - left * 60.0, at + left * 60.0]), Ok(()));
+        assert_eq!(
+            checked(vec![along(-30.0) + left * 50.0, along(30.0) + left * 50.0]),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_rural_track_with_no_way_across_the_yard_is_reported() {
+        let (mut towns, line, _) = shipped_roads();
+        // Fill the first town's railway side with one long shed, from the
+        // grid's edge to past the track, along the whole run-out.
+        let rail = towns[0].railway.unwrap();
+        let mut shed = towns[0].buildings[0];
+        shed.footprint = Aabb::new(
+            Vec2::new(rail.start.x.min(rail.end.x), rail.start.y.min(rail.end.y)),
+            Vec2::new(rail.start.x.max(rail.end.x), rail.start.y.max(rail.end.y)),
+        )
+        .expanded(30.0);
+        towns[0].buildings.push(shed);
+        let (roads, errors) = RoadNetwork::build(&towns, &line, big_world().bounds());
+        let name = towns[0].name.clone();
+        assert!(
+            errors.contains(&RoadError::NoRuralCrossing { town: name.clone() }),
+            "{errors:?}"
+        );
+        assert!(errors.iter().any(|e| e.to_string().contains(&name)));
+        assert!(
+            roads
+                .roads
+                .iter()
+                .all(|r| !(r.kind == RoadKind::Rural && r.from == 0))
+        );
     }
 
     #[test]

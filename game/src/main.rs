@@ -41,8 +41,10 @@ fn main() {
     let flora = FloraSite::new(world.config, &world.terrain, &loaded.line).with_fences(&fences);
     world.plant(&flora);
     // The errand: Don Hidalgo in the first town's plaza sends the player to
-    // comisario Farach. Both stand in the way like any obstacle.
-    let errand = errand::plan(&loaded.towns, &mut world);
+    // comisario Farach in the town the dialogue names. Both stand in the way
+    // like any obstacle.
+    let (dialogue, dialogue_report) = errand::read_dialogue();
+    let errand = errand::plan(&loaded.towns, &mut world, &dialogue.0.police_town);
     // The player gets off the morning train from Pico on foot, at the first town's
     // platform.
     let (position, heading) = errand::player_start(&loaded.towns[0]);
@@ -74,7 +76,9 @@ fn main() {
         heading,
         travel: pampa_core::Travel::OnFoot,
     })
-    .insert_resource(report);
+    .insert_resource(report)
+    .insert_resource(dialogue)
+    .insert_resource(dialogue_report);
     if let Some((run, cast)) = errand {
         app.insert_resource(run).insert_resource(cast);
     } else {

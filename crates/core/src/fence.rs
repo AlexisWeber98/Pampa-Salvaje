@@ -675,13 +675,20 @@ impl FenceLayout {
         })
     }
 
-    /// Whether a grid run passes through `p` (on a survey line).
+    /// Whether a grid run passes through `p` (on a survey line), or a
+    /// closed field gate shuts the gap there.
     fn fenced_at(&self, p: Vec2) -> bool {
-        self.runs.iter().filter(|r| !r.roadside).any(|r| {
+        let run = self.runs.iter().filter(|r| !r.roadside).any(|r| {
             let (a, b) = (r.start(), r.end());
             let lo = Vec2::new(a.x.min(b.x) - 0.5, a.y.min(b.y) - 0.5);
             let hi = Vec2::new(a.x.max(b.x) + 0.5, a.y.max(b.y) + 0.5);
             p.x >= lo.x && p.x <= hi.x && p.y >= lo.y && p.y <= hi.y
+        });
+        run || self.openings.iter().any(|o| {
+            let rel = p - o.at;
+            matches!(o.kind, OpeningKind::FieldGate { open: false, .. })
+                && rel.dot(o.along).abs() <= o.width / 2.0 + 0.5
+                && (rel.x * o.along.y - rel.y * o.along.x).abs() <= 0.5
         })
     }
 
@@ -700,12 +707,14 @@ impl FenceLayout {
             for (k, (a, b)) in run.spans().enumerate() {
                 let mid = (a + b) * 0.5;
                 let whole = (a.distance(b) - Self::POST_SPACING).abs() < 1e-2;
-                let inside_edge = on_edge(cell, mid)
-                    && cell
-                        .expanded(-30.0)
-                        .segment_overlap(mid - (b - a), mid + (b - a))
-                        .is_none();
-                if whole && on_edge(cell, a) && on_edge(cell, b) && off_road(mid) && !inside_edge {
+                let corners = [
+                    cell.min,
+                    cell.max,
+                    Vec2::new(cell.min.x, cell.max.y),
+                    Vec2::new(cell.max.x, cell.min.y),
+                ];
+                let off_corners = corners.iter().all(|c| c.distance(mid) >= BREAK_CORNER);
+                if whole && on_edge(cell, a) && on_edge(cell, b) && off_road(mid) && off_corners {
                     let d = mid.distance(middle);
                     if best.is_none_or(|(bd, _, _)| d < bd) {
                         best = Some((d, r, k));
@@ -981,6 +990,10 @@ fn span_boxes((a, b): (Vec2, Vec2)) -> Vec<Aabb> {
         .collect()
 }
 
+/// Least distance from a span broken to open a sealed paddock to the
+/// paddock's corners, in meters.
+const BREAK_CORNER: f32 = 30.0;
+
 /// Most a box of a slanted span reaches across it, in meters.
 const SLANT_BULGE: f32 = 0.3;
 
@@ -1021,13 +1034,117 @@ mod tests {
         let built = started.elapsed();
         let started = std::time::Instant::now();
         let count = world.fence(&fences);
+        let indexed = started.elapsed();
         println!(
-            "fences: {} runs, {} gates, {count} obstacles; laid in {built:?}, indexed in {:?}",
+            "fences: {} runs, {} gates, {count} obstacles; laid in {built:?}, indexed in {indexed:?}",
             fences.runs.len(),
             fences.gates.len(),
-            started.elapsed()
         );
+        // Generous bounds (about 0.1 s each in a dev build): laying and
+        // indexing the fences stay cheap at startup.
+        assert!(built.as_secs_f32() < 10.0, "laid in {built:?}");
+        assert!(indexed.as_secs_f32() < 10.0, "indexed in {indexed:?}");
         (world, towns, line, fences)
+    }
+
+    /// One 400 m paddock fenced all round, its south side broken off around
+    /// `gaps` (as `(x, width)`), each a closed field gate; then the
+    /// reachability pass.
+    fn sealed_paddock(gaps: &[(f32, f32)]) -> FenceLayout {
+        let side = 400.0;
+        let posts = |a: Vec2, b: Vec2| -> Vec<Vec2> {
+            let n = (a.distance(b) / FenceLayout::POST_SPACING).round() as usize;
+            (0..=n)
+                .map(|k| a + (b - a) * (k as f32 / n as f32))
+                .collect()
+        };
+        let run = |posts: Vec<Vec2>| FenceRun {
+            posts,
+            roadside: false,
+        };
+        let mut layout = FenceLayout {
+            surveyed: (vec![0.0, side], vec![0.0, side]),
+            ..FenceLayout::default()
+        };
+        let (c0, c1, c2, c3) = (
+            Vec2::new(0.0, 0.0),
+            Vec2::new(side, 0.0),
+            Vec2::new(side, side),
+            Vec2::new(0.0, side),
+        );
+        layout.runs.push(run(posts(c1, c2)));
+        layout.runs.push(run(posts(c2, c3)));
+        layout.runs.push(run(posts(c3, c0)));
+        // The south side, in pieces between the gates.
+        let mut from = 0.0;
+        for &(x, width) in gaps {
+            layout.runs.push(run(posts(
+                Vec2::new(from, 0.0),
+                Vec2::new(x - width / 2.0, 0.0),
+            )));
+            layout.openings.push(Opening {
+                at: Vec2::new(x, 0.0),
+                along: Vec2::new(1.0, 0.0),
+                width,
+                kind: OpeningKind::FieldGate {
+                    double: width > 6.0,
+                    open: false,
+                },
+                stretch: 0,
+            });
+            from = x + width / 2.0;
+        }
+        layout.runs.push(run(posts(Vec2::new(from, 0.0), c1)));
+        let terrain = Terrain::default();
+        let site = Site {
+            terrain: &terrain,
+            rails: &[],
+            bands: &[],
+            lo: Vec2::new(-10.0, -10.0),
+            hi: Vec2::new(side + 10.0, side + 10.0),
+        };
+        layout.keep_fields_reachable(&site);
+        layout
+    }
+
+    /// The passable openings on the paddock's edge.
+    fn ways_in(layout: &FenceLayout) -> usize {
+        let cell = Aabb::new(Vec2::new(0.0, 0.0), Vec2::new(400.0, 400.0));
+        layout
+            .openings
+            .iter()
+            .filter(|o| !matches!(o.kind, OpeningKind::FieldGate { open: false, .. }))
+            .filter(|o| on_edge(cell, o.at))
+            .count()
+    }
+
+    #[test]
+    fn a_paddock_ringed_only_by_closed_gates_gets_a_way_in() {
+        let layout = sealed_paddock(&[(120.0, 8.0), (300.0, 4.5)]);
+        assert!(ways_in(&layout) >= 1, "{:?}", layout.openings);
+    }
+
+    #[test]
+    fn a_paddock_with_no_opening_at_all_gets_a_broken_span() {
+        let layout = sealed_paddock(&[]);
+        assert_eq!(ways_in(&layout), 1, "{:?}", layout.openings);
+        let broken = layout.openings[0];
+        assert_eq!(broken.kind, OpeningKind::Broken);
+        // A whole span, well away from the corners, and no longer fenced.
+        assert!((broken.width - FenceLayout::POST_SPACING).abs() < 1e-3);
+        let corners = [0.0, 400.0];
+        assert!(
+            corners
+                .iter()
+                .flat_map(|&x| corners.iter().map(move |&y| Vec2::new(x, y)))
+                .all(|c| c.distance(broken.at) >= 30.0)
+        );
+        let spans: Vec<(Vec2, Vec2)> = layout.runs.iter().flat_map(FenceRun::spans).collect();
+        assert!(
+            spans.iter().all(|&(a, b)| (a + b) * 0.5 != broken.at),
+            "the broken span is still strung"
+        );
+        assert_eq!(spans.len(), 4 * 40 - 1);
     }
 
     #[test]

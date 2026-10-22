@@ -21,7 +21,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::PrimitiveTopology;
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
-use pampa_core::{LevelCrossing, RoadNetwork, RoadPoint, Signpost, Terrain, Vec2 as GroundVec2};
+use pampa_core::{ChunkCoord, LevelCrossing, RoadNetwork, RoadPoint, Signpost, Vec2 as GroundVec2};
 
 use crate::AssetRoot;
 use crate::coords::world_from_ground;
@@ -135,7 +135,7 @@ fn lay_roads(
         let area = coord.0.bounds(size);
         let mut pieces: Vec<RoadBundle> = Vec::new();
         let ground = |p: GroundVec2| mesh_height(terrain, p, size, detail.resolution);
-        if let Some(mesh) = surface_mesh(&roads.parts_in(area), &ground) {
+        if let Some(mesh) = surface_mesh(&roads.parts_in(area), &ground, roads) {
             pieces.push((
                 Mesh3d(meshes.add(mesh)),
                 MeshMaterial3d(kit.surface.clone()),
@@ -144,9 +144,9 @@ fn lay_roads(
                 None,
             ));
         }
-        for crossing in roads.crossings().filter(|c| area.contains_point(c.at)) {
+        for crossing in roads.crossings().filter(|c| owns(coord.0, size, c.at)) {
             let signs = crossing.sign_spots();
-            for (white, transform) in crossing_pieces(crossing, terrain) {
+            for (white, transform) in crossing_pieces(crossing, &ground) {
                 // The signs fade out of the camera's way; planks lie flat.
                 let at = GroundVec2::new(transform.translation.x, -transform.translation.z);
                 let fade = signs
@@ -167,11 +167,11 @@ fn lay_roads(
                 ));
             }
         }
-        for post in roads.signposts.iter().filter(|s| area.contains_point(s.at)) {
+        for post in roads.signposts.iter().filter(|s| owns(coord.0, size, s.at)) {
             let fade = ThinOccluder::post(post.at, BOARD_WIDTH, terrain, POST_HEIGHT);
             for (mesh, material, transform) in signpost_pieces(
                 post,
-                terrain,
+                ground(post.at),
                 &kit,
                 (&mut meshes, &mut materials, images.as_deref_mut()),
             ) {
@@ -203,6 +203,13 @@ fn lay_roads(
             });
         });
     }
+}
+
+/// Whether the point `p` (a crossing or a signpost) is drawn by chunk
+/// `coord`: chunks own their west and south borders, not their east and
+/// north ones, so a point on a border is drawn once.
+fn owns(coord: ChunkCoord, size: f32, p: GroundVec2) -> bool {
+    ChunkCoord::containing(p, size) == coord
 }
 
 /// One entity to spawn under a chunk, and its fade shape if it has one.
@@ -239,9 +246,17 @@ const DIRT: [f32; 3] = [0.70, 0.60, 0.46];
 /// One surface mesh for every road `part` of a chunk: a strip along each
 /// part, opaque across the road and feathered to transparent past its
 /// edges, laid on the `ground`. `None` when there is no part.
+///
+/// At a level crossing the strip is the packed-earth approach: it lies on
+/// the same profile riders climb ([`RoadNetwork::crossing_rise`]), rising
+/// on the road's axis to the crossing's deck (about 1 in 10 at most), its
+/// feathered edges sloping down to the ground on either side, so it shows
+/// no wall and no gap under it. Near a crossing the strip is sampled every
+/// [`RAMP_STEP`] meters to follow the rise.
 pub(crate) fn surface_mesh(
     parts: &[Vec<RoadPoint>],
     ground: &impl Fn(GroundVec2) -> f32,
+    roads: &RoadNetwork,
 ) -> Option<Mesh> {
     let half = RoadNetwork::HALF_WIDTH;
     let across = [
@@ -257,13 +272,17 @@ pub(crate) fn surface_mesh(
         let row = |p: &RoadPoint| {
             across.map(|(offset, alpha)| {
                 let g = p.at + p.normal * offset;
+                // On the crossing's approach, the profile bodies stand on
+                // (its feathered edges down on the ground), a centimeter
+                // under the planks.
+                let lift = LIFT.max(roads.crossing_rise(g) - 0.01);
                 (
-                    world_from_ground(g, ground(g) + LIFT),
+                    world_from_ground(g, ground(g) + lift),
                     [tint.red, tint.green, tint.blue, alpha],
                 )
             })
         };
-        let rows: Vec<_> = part.iter().map(row).collect();
+        let rows: Vec<_> = near_crossings(part, roads).iter().map(row).collect();
         for w in rows.windows(2) {
             for k in 0..across.len() - 1 {
                 let (r0, r1, l1, l0) = (w[0][k], w[1][k], w[1][k + 1], w[0][k + 1]);
@@ -294,18 +313,47 @@ pub(crate) fn surface_mesh(
     Some(mesh)
 }
 
+/// Spacing of the strip's samples along a crossing's approach, meters.
+const RAMP_STEP: f32 = 0.5;
+
+/// `part` with extra points every [`RAMP_STEP`] meters wherever the road
+/// rises to a level crossing, so the strip follows the rise smoothly.
+fn near_crossings(part: &[RoadPoint], roads: &RoadNetwork) -> Vec<RoadPoint> {
+    let reach = RoadNetwork::CROSSING_DECK + RoadNetwork::CROSSING_RAMP + 1.0;
+    let mut out = Vec::with_capacity(part.len());
+    for w in part.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        out.push(a);
+        let d = b.at - a.at;
+        let rises = roads.crossings().any(|c| {
+            let t = ((c.at - a.at).dot(d) / d.dot(d).max(1e-9)).clamp(0.0, 1.0);
+            c.at.distance(a.at + d * t) < reach
+        });
+        if !rises {
+            continue;
+        }
+        let steps = (a.at.distance(b.at) / RAMP_STEP).ceil() as usize;
+        for k in 1..steps {
+            let t = k as f32 / steps as f32;
+            out.push(RoadPoint {
+                at: a.at + (b.at - a.at) * t,
+                normal: a.normal,
+                along: a.along + (b.along - a.along) * t,
+            });
+        }
+    }
+    out.extend(part.last().copied());
+    out
+}
+
 /// Top of the rails above the ground, in meters (see `crate::rail`).
 const RAIL_TOP: f32 = 0.5;
 /// Plank width and thickness, in meters.
 const PLANK: Vec2 = Vec2::new(0.24, 0.1);
 /// Plank centers across the track, from its centerline, in meters: five
-/// between the rails (a flangeway gap inside each rail) and three outside
-/// each rail.
-const PLANKS: [f32; 11] = [
-    -1.62, -1.36, -1.1, -0.54, -0.27, 0.0, 0.27, 0.54, 1.1, 1.36, 1.62,
-];
-/// Where the ramps up to the planks start, across the track, in meters.
-const RAMP_FOOT: f32 = 4.2;
+/// between the rails (1.676 m apart, a flangeway gap inside each rail) and
+/// two outside each rail, a strip of about half a meter.
+const PLANKS: [f32; 9] = [-1.24, -1.0, -0.54, -0.27, 0.0, 0.27, 0.54, 1.0, 1.24];
 
 /// A box from world point `from` to `to` (its top edge's middle line),
 /// `width` across and `thickness` deep.
@@ -325,30 +373,26 @@ fn yaw(d: GroundVec2) -> Quat {
     Quat::from_rotation_y(d.y.atan2(d.x))
 }
 
-/// Planks, ramps and the two St Andrew's crosses of `crossing`, each a
-/// unit cube with its transform.
-fn crossing_pieces(crossing: &LevelCrossing, terrain: &Terrain) -> Vec<(Paint, Transform)> {
+/// The planks and the two St Andrew's crosses of `crossing`, each a unit
+/// cube with its transform, standing on `height`: the drawn ground, like
+/// the road surface, so nothing floats over it or sinks into it. The planks
+/// lie flush with the rail heads, between the rails and in a strip of about
+/// half a meter outside each, exactly the road's width along the track. The
+/// road itself rises to them (see [`surface_mesh`]): no timber ramps.
+fn crossing_pieces(
+    crossing: &LevelCrossing,
+    height: &impl Fn(GroundVec2) -> f32,
+) -> Vec<(Paint, Transform)> {
     let rail = crossing.rail;
     let across = GroundVec2::new(-rail.y, rail.x);
-    let height = |p: GroundVec2| terrain.height(p.x, p.y);
     // The planks span the road where it crosses, measured along the track.
-    let span = RoadNetwork::WIDTH / crossing.angle().sin().max(0.3) + 1.0;
+    let span = RoadNetwork::WIDTH / crossing.angle().sin().max(0.3);
     let mut pieces = Vec::new();
     for offset in PLANKS {
         let c = crossing.at + across * offset;
         let (a, b) = (c - rail * (span / 2.0), c + rail * (span / 2.0));
         let top = |p: GroundVec2| world_from_ground(p, height(p) + RAIL_TOP - 0.02);
         if let Some(t) = slab(top(a), top(b), PLANK.x, PLANK.y) {
-            pieces.push((Paint::Timber, t));
-        }
-    }
-    // Ramps of packed earth and timber up to the planks, on both sides.
-    for side in [-1.0, 1.0] {
-        let edge = crossing.at + across * (side * (PLANKS[10] + PLANK.x / 2.0));
-        let foot = crossing.at + across * (side * RAMP_FOOT);
-        let from = world_from_ground(foot, height(foot) + LIFT);
-        let to = world_from_ground(edge, height(edge) + RAIL_TOP - 0.02);
-        if let Some(t) = slab(from, to, span, 0.3) {
             pieces.push((Paint::Timber, t));
         }
     }
@@ -397,11 +441,12 @@ const BOARD_HEIGHT: f32 = 0.34;
 
 type Asset3d = (Handle<Mesh>, Handle<StandardMaterial>, Transform);
 
-/// The post and arrow boards of a signpost: each board points along its
-/// road, out from the post, and reads from both faces.
+/// The post and arrow boards of a signpost, its foot on the drawn
+/// `ground` height: each board points along its road, out from the post,
+/// and reads from both faces.
 fn signpost_pieces(
     post: &Signpost,
-    terrain: &Terrain,
+    ground: f32,
     kit: &RoadKit,
     (meshes, materials, images): (
         &mut Assets<Mesh>,
@@ -409,7 +454,6 @@ fn signpost_pieces(
         Option<&mut Assets<Image>>,
     ),
 ) -> Vec<Asset3d> {
-    let ground = terrain.height(post.at.x, post.at.y);
     let mut pieces = vec![(
         kit.cube.clone(),
         kit.timber.clone(),
@@ -476,7 +520,7 @@ mod tests {
     use crate::font;
     use crate::{StreamFocus, TerrainPlugin};
     use pampa_core::{
-        ChunkCoord, PlazaPlacement, RailLine, RailwayConfig, Side, TownConfig, TownLayout,
+        PlazaPlacement, RailLine, RailwayConfig, Side, Terrain, TownConfig, TownLayout,
         WorldConfig, place_towns,
     };
     use std::sync::Arc;
@@ -579,7 +623,7 @@ mod tests {
                 .iter()
                 .filter(|c| **c == config.chunk_of(crossing.at))
                 .count(),
-            PLANKS.len() + 2 + 2 * 5
+            PLANKS.len() + 2 * 5
         );
         // Ride to a signpost: its chunk gets it, post, plank, tip and faces.
         let post = roads.signposts[0].at;
@@ -618,7 +662,7 @@ mod tests {
         let (a, _) = roads.segments().nth(200).unwrap();
         let area = config.chunk_of(a).bounds(config.chunk_size);
         let ground = |p: GroundVec2| mesh_height(&terrain, p, config.chunk_size, 40);
-        let mesh = surface_mesh(&roads.parts_in(area), &ground).unwrap();
+        let mesh = surface_mesh(&roads.parts_in(area), &ground, &roads).unwrap();
         let Some(bevy::mesh::VertexAttributeValues::Float32x3(points)) =
             mesh.attribute(Mesh::ATTRIBUTE_POSITION)
         else {
@@ -667,6 +711,239 @@ mod tests {
     }
 
     #[test]
+    fn a_crossing_or_signpost_on_a_chunk_border_belongs_to_one_chunk() {
+        let size = WorldConfig::default().chunk_size;
+        for p in [
+            GroundVec2::new(size, size),
+            GroundVec2::new(size, size * 0.5),
+            GroundVec2::new(-size * 0.5, 0.0),
+            GroundVec2::new(-size, -size),
+        ] {
+            let owners = (-2..=2)
+                .flat_map(|x| (-2..=2).map(move |y| ChunkCoord::new(x, y)))
+                .filter(|&c| owns(c, size, p))
+                .count();
+            assert_eq!(owners, 1, "{p:?}");
+        }
+    }
+
+    /// Drives the app until the chunk under `at` has its road pieces.
+    fn laid_at(at: GroundVec2) -> (App, Terrain, f32) {
+        let (config, _, terrain) = world();
+        let mut app = app(at);
+        for _ in 0..4 {
+            app.update();
+        }
+        (app, terrain, config.chunk_size)
+    }
+
+    #[test]
+    fn crossing_parts_and_signposts_stand_on_the_drawn_ground() {
+        let (_, _, terrain) = world();
+        let roads = terrain.roads.clone().unwrap();
+        let crossing = *roads.crossings().next().unwrap();
+        let (mut app, terrain, size) = laid_at(crossing.at);
+        // The test app's chunk meshes have 8 quads a side.
+        let drawn = |p: GroundVec2| mesh_height(&terrain, p, size, 8);
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&Transform, With<CrossingPart>>();
+        let parts: Vec<Transform> = q.iter(app.world()).copied().collect();
+        let planks: Vec<&Transform> = parts.iter().filter(|t| t.scale.z == PLANK.x).collect();
+        assert_eq!(planks.len(), PLANKS.len());
+        for t in planks {
+            // Both ends of the plank's top edge (it is straight; the drawn
+            // ground may bend between them where its triangles meet).
+            let mid = t.translation + t.rotation * Vec3::Y * (t.scale.y / 2.0);
+            for end in [-1.0, 1.0] {
+                let p = mid + t.rotation * Vec3::X * (end * t.scale.x / 2.0);
+                let top = p.y - drawn(GroundVec2::new(p.x, -p.z));
+                assert!((top - (RAIL_TOP - 0.02)).abs() < 1e-3, "{top}");
+            }
+        }
+        // The crosses' posts stand on the drawn ground.
+        let posts: Vec<&Transform> = parts.iter().filter(|t| t.scale.y == 3.0).collect();
+        assert_eq!(posts.len(), 2);
+        for t in posts {
+            let g = GroundVec2::new(t.translation.x, -t.translation.z);
+            assert!((t.translation.y - 1.5 - drawn(g)).abs() < 1e-3);
+        }
+        let post = roads.signposts[0].at;
+        let (mut app, terrain, size) = laid_at(post);
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&Transform, With<SignpostPart>>();
+        let foot = q
+            .iter(app.world())
+            .find(|t| t.scale.y == POST_HEIGHT)
+            .map(|t| t.translation.y - POST_HEIGHT / 2.0)
+            .expect("a signpost");
+        assert!((foot - mesh_height(&terrain, post, size, 8)).abs() < 1e-3);
+    }
+
+    /// Every vertex of the surface mesh of the chunk holding `crossing`,
+    /// with its alpha.
+    fn crossing_surface(crossing: &LevelCrossing, terrain: &Terrain) -> Vec<(Vec3, f32)> {
+        let size = WorldConfig::default().chunk_size;
+        let roads = terrain.roads.as_deref().unwrap();
+        let area = ChunkCoord::containing(crossing.at, size).bounds(size);
+        let ground = |p: GroundVec2| mesh_height(terrain, p, size, 8);
+        let mesh = surface_mesh(&roads.parts_in(area), &ground, roads).unwrap();
+        let Some(bevy::mesh::VertexAttributeValues::Float32x3(points)) =
+            mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+        else {
+            panic!("positions")
+        };
+        let Some(bevy::mesh::VertexAttributeValues::Float32x4(colors)) =
+            mesh.attribute(Mesh::ATTRIBUTE_COLOR)
+        else {
+            panic!("colours")
+        };
+        points
+            .iter()
+            .zip(colors)
+            .map(|(p, c)| (Vec3::from_array(*p), c[3]))
+            .collect()
+    }
+
+    #[test]
+    fn the_road_rises_gently_on_its_own_axis_to_the_crossing_deck() {
+        let (config, _, terrain) = world();
+        let roads = terrain.roads.clone().unwrap();
+        let ground = |p: GroundVec2| mesh_height(&terrain, p, config.chunk_size, 8);
+        for crossing in roads.crossings() {
+            let road = crossing.road;
+            let side = GroundVec2::new(-road.y, road.x);
+            let surface = crossing_surface(crossing, &terrain);
+            let mut raised = 0;
+            for &(v, alpha) in &surface {
+                let g = GroundVec2::new(v.x, -v.z);
+                let rel = g - crossing.at;
+                let lift = v.y - ground(g);
+                // Never above the planks; raised only on the road itself,
+                // centered on its axis.
+                assert!(lift <= RAIL_TOP - 0.02 + 1e-3, "{lift}");
+                if lift > LIFT + 0.01 {
+                    raised += 1;
+                    assert!(
+                        rel.dot(side).abs() <= RoadNetwork::HALF_WIDTH + FEATHER / 2.0 + 1e-3,
+                        "{rel:?}"
+                    );
+                    assert!(alpha > 0.0 || rel.dot(side).abs() < RoadNetwork::HALF_WIDTH);
+                }
+            }
+            assert!(raised > 20, "{raised}");
+            // Along each edge of the opaque road: from the ground to the
+            // deck, no steeper than 1:8, with no gap, right up to the
+            // crossing on both sides.
+            for edge in [-1.0, 1.0] {
+                let mut axis: Vec<(f32, f32)> = surface
+                    .iter()
+                    .filter(|(_, alpha)| *alpha == 1.0)
+                    .map(|&(v, _)| (GroundVec2::new(v.x, -v.z), v.y))
+                    .filter(|&(g, _)| (g - crossing.at).dot(side) * edge > 0.0)
+                    .map(|(g, y)| ((g - crossing.at).dot(road), y - ground(g)))
+                    .filter(|(s, _)| s.abs() < 20.0)
+                    .collect();
+                axis.sort_by(|a, b| a.0.total_cmp(&b.0));
+                assert!(axis.first().unwrap().0 < -15.0 && axis.last().unwrap().0 > 15.0);
+                for w in axis.windows(2) {
+                    assert!(w[1].0 - w[0].0 < 1.5, "a gap in the strip at {w:?}");
+                    if w[1].0 - w[0].0 > 0.05 {
+                        let slope = (w[1].1 - w[0].1).abs() / (w[1].0 - w[0].0);
+                        assert!(slope <= 1.0 / 8.0, "{slope} at {w:?}");
+                    }
+                }
+                let top = axis
+                    .iter()
+                    .filter(|(s, _)| s.abs() < 1.0)
+                    .map(|(_, lift)| *lift)
+                    .fold(f32::MAX, f32::min);
+                assert!(top > RAIL_TOP - 0.06, "{top}");
+                let foot = axis.iter().filter(|(s, _)| s.abs() > 12.0);
+                assert!(
+                    foot.into_iter()
+                        .all(|(_, lift)| (*lift - LIFT).abs() < 1e-3)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_crossing_has_planks_the_road_wide_and_nothing_above_the_rails() {
+        let (_, _, terrain) = world();
+        let roads = terrain.roads.clone().unwrap();
+        let crossing = roads.crossings().next().unwrap();
+        let height = |p: GroundVec2| terrain.height(p.x, p.y);
+        let pieces = crossing_pieces(crossing, &height);
+        let across = GroundVec2::new(-crossing.rail.y, crossing.rail.x);
+        let span = RoadNetwork::WIDTH / crossing.angle().sin();
+        for (_, t) in &pieces {
+            let g = GroundVec2::new(t.translation.x, -t.translation.z);
+            // The crosses on their posts are the only tall parts.
+            if t.scale.y >= 0.17 || t.scale.x >= 1.2 {
+                continue;
+            }
+            let top = t.translation.y + t.scale.y / 2.0 - height(g);
+            assert!(top <= RAIL_TOP + 0.1, "{top}");
+        }
+        let planks: Vec<&Transform> = pieces
+            .iter()
+            .filter(|(p, t)| *p == Paint::Timber && t.scale.z == PLANK.x)
+            .map(|(_, t)| t)
+            .collect();
+        assert_eq!(planks.len(), PLANKS.len());
+        for t in planks {
+            let g = GroundVec2::new(t.translation.x, -t.translation.z);
+            // As long as the road is wide, measured along the track (the
+            // plank follows the ground's gentle slope).
+            assert!((t.scale.x - span).abs() < 0.05, "{}", t.scale.x);
+            let off = (g - crossing.at).dot(across).abs() + PLANK.x / 2.0;
+            assert!(off <= 1.4, "{off}");
+        }
+        // Planks between and just outside the rails (1.676 m apart): a
+        // strip of about half a meter outside each.
+        let outer = PLANKS.iter().fold(0.0_f32, |m, p| m.max(p.abs())) + PLANK.x / 2.0;
+        assert!((0.4..=0.6).contains(&(outer - 1.676 / 2.0)), "{outer}");
+        // Only the planks and the two crosses on posts: no timber ramps.
+        assert_eq!(pieces.len(), PLANKS.len() + 2 * 5);
+    }
+
+    #[test]
+    fn crossing_signs_fade_out_of_the_cameras_way_and_planks_do_not() {
+        let (_, _, terrain) = world();
+        let roads = terrain.roads.clone().unwrap();
+        let crossing = *roads.crossings().next().unwrap();
+        let (mut app, _, _) = laid_at(crossing.at);
+        let mut q = app
+            .world_mut()
+            .query_filtered::<(&Transform, Option<&ThinOccluder>), With<CrossingPart>>();
+        let parts: Vec<(Transform, bool)> = q
+            .iter(app.world())
+            .map(|(t, fade)| (*t, fade.is_some()))
+            .collect();
+        let near = |t: &Transform| {
+            let g = GroundVec2::new(t.translation.x, -t.translation.z);
+            roads
+                .crossings()
+                .any(|c| c.sign_spots().iter().any(|s| s.distance(g) < 1.0))
+        };
+        let (signs, planks): (Vec<_>, Vec<_>) = parts.iter().partition(|(t, _)| near(t));
+        // Each cross: its post and two black and two white arms.
+        assert_eq!(signs.len() % 10, 0);
+        assert!(!signs.is_empty());
+        assert!(
+            signs.iter().all(|(_, fades)| *fades),
+            "every post and arm fades"
+        );
+        assert!(!planks.is_empty());
+        assert!(
+            planks.iter().all(|(_, fades)| !*fades),
+            "planks lie flat, never fade"
+        );
+    }
+
+    #[test]
     fn signpost_boards_read_in_the_font() {
         let (_, _, terrain) = world();
         let roads = terrain.roads.clone().unwrap();
@@ -691,7 +968,7 @@ mod tests {
         let (_, _, terrain) = world();
         let roads = terrain.roads.clone().unwrap();
         let crossing = roads.crossings().next().unwrap();
-        let pieces = crossing_pieces(crossing, &terrain);
+        let pieces = crossing_pieces(crossing, &|p: GroundVec2| terrain.height(p.x, p.y));
         let planks: Vec<&Transform> = pieces
             .iter()
             .filter(|(p, t)| *p == Paint::Timber && t.scale.z == PLANK.x)

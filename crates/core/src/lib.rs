@@ -51,7 +51,7 @@ pub use math::Vec2;
 pub use obstacles::StaticObstacles;
 pub use placement::{PlacementError, place_towns};
 pub use places::{Place, PlaceKind, Sign, SignMount};
-pub use pose::{HorseAngles, HorseGait, JointAngles, Leg};
+pub use pose::{HorseAngles, HorseGait, JointAngles, Leg, MOTION_CLOCK_PERIOD, tick_clock};
 pub use rail::{LinePath, RailCurve, RailLine, RailLineError, RailLink, RailSpan};
 pub use rider::{MAX_STEP, Rider, RiderInput, RiderParams};
 pub use road::{
@@ -59,12 +59,14 @@ pub use road::{
 };
 pub use terrain::{FlatArea, Terrain};
 pub use town::{
-    Building, BuildingKind, Canopy, Floor, HitchingPost, PlazaPlacement, Railway, RailwayConfig,
-    Side, TetheredHorse, TownConfig, TownConfigError, TownLayout, TownSize,
+    Building, BuildingKind, Canopy, Floor, HitchingPost, PLAZA_MONUMENT, PLAZA_PATH_CLEARANCE,
+    PLAZA_PATH_WIDTH, PlazaPlacement, Railway, RailwayConfig, Side, TetheredHorse, TownConfig,
+    TownConfigError, TownLayout, TownSize, plaza_monument, plaza_paths,
 };
 pub use townsfolk::{StreetGraph, Townsfolk, Townsperson};
 pub use train::{
-    Car, CarKind, LinePhase, LineTrain, LineTrainState, PlacedCar, Run, Station, Timetable,
+    Car, CarKind, LinePhase, LineTrain, LineTrainState, MAX_STOP_MISS, PlacedCar, Run, Station,
+    Timetable, TimetableError,
 };
 pub use walker::Travel;
 pub use world::{Ground, World, WorldBounds};

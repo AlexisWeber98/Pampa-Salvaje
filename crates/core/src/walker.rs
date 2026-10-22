@@ -6,7 +6,7 @@
 //! ([`RiderParams::on_foot`]: a 6 km/h walk and an 18 km/h jog) and the body (a
 //! person-sized collider) differ.
 
-use crate::{Circle, Ground, Heading, Rider, RiderParams, TetheredHorse, Vec2};
+use crate::{Circle, Ground, Heading, Rider, RiderParams, TetheredHorse, Vec2, World};
 
 /// How the player gets around.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -35,6 +35,37 @@ impl Rider {
     /// saddle where the horse stands, facing the way it faces, at rest.
     pub fn mount(&self, horse: &TetheredHorse, ground: &(impl Ground + ?Sized)) -> Self {
         Self::new(horse.position, horse.heading, ground)
+    }
+
+    /// Fastest a rider may be going to get off, in m/s: stopped or at a
+    /// slow walk.
+    pub const DISMOUNT_SPEED: f32 = 1.0;
+
+    /// Getting off: the person on foot beside the horse, at rest and facing
+    /// its way, and the horse left tied loosely where it stood. The person
+    /// steps off on the horse's left, or its right when the left is
+    /// blocked. `None` while riding faster than [`Self::DISMOUNT_SPEED`],
+    /// when both flanks are blocked, or when already on foot.
+    pub fn dismount(&self, world: &World) -> Option<(Self, TetheredHorse)> {
+        if self.travel() != Travel::Riding || self.speed.abs() > Self::DISMOUNT_SPEED {
+            return None;
+        }
+        let horse = TetheredHorse::standing(self.position, self.heading);
+        let ahead = self.heading.forward();
+        let left = Vec2::new(-ahead.y, ahead.x);
+        let person = Circle::new(Self::PERSON_RADIUS);
+        [left, left * -1.0].into_iter().find_map(|side| {
+            // Just clear of the horse's footprint on that side.
+            let mut spot = self.position + side * (TetheredHorse::WIDTH / 2.0);
+            while horse.footprint.closest_point(spot).distance(spot) < Self::PERSON_RADIUS + 0.05 {
+                spot += side * 0.1;
+            }
+            let settled = world.resolve(person, spot, |_| ());
+            (settled.distance(spot) < 1e-3).then(|| {
+                let walker = Self::on_foot(spot, self.heading, world);
+                (walker, horse)
+            })
+        })
     }
 
     /// How this body gets around: a person-sized collider is on foot.
@@ -200,6 +231,57 @@ mod tests {
             rider.height,
             world.terrain.height(horse.position.x, horse.position.y)
         );
+    }
+
+    #[test]
+    fn dismounting_leaves_the_horse_tied_loosely_and_the_rider_on_foot_beside_it() {
+        let world = World::default();
+        let heading = Heading::from_radians(0.7);
+        let mut rider = Rider::new(Vec2::new(20.0, -5.0), heading, &world);
+        // Not while riding on.
+        rider.speed = 3.0;
+        assert_eq!(rider.dismount(&world), None);
+        rider.speed = Rider::DISMOUNT_SPEED * 0.5;
+        let (person, horse) = rider.dismount(&world).expect("slow enough");
+        assert_eq!(person.travel(), Travel::OnFoot);
+        assert_eq!(person.speed, 0.0);
+        assert_eq!(person.heading, heading);
+        assert_eq!((horse.position, horse.heading), (rider.position, heading));
+        assert!(horse.footprint.contains_point(horse.position));
+        // Beside the horse, clear of its footprint, close enough to remount.
+        let gap = horse
+            .footprint
+            .closest_point(person.position)
+            .distance(person.position);
+        assert!(gap >= Rider::PERSON_RADIUS, "{gap}");
+        assert!(person.position.distance(horse.position) <= crate::Errand::MOUNT_RANGE);
+        // Tied, the horse blocks; mounting again puts the rider back.
+        let mut world = world;
+        world.obstacles.push(horse.footprint);
+        let mut walker = person;
+        walker.step(RiderInput::default(), &RiderParams::on_foot(), &world, DT);
+        assert!(walker.position.distance(person.position) < 1e-3, "pushed");
+        let again = person.mount(&horse, &world);
+        assert_eq!((again.position, again.heading), (horse.position, heading));
+        assert_eq!(again.travel(), Travel::Riding);
+    }
+
+    #[test]
+    fn a_rider_hemmed_in_on_both_sides_cannot_get_off() {
+        let mut world = World::default();
+        let rider = Rider::new(Vec2::new(0.0, 0.0), Heading::from_radians(0.0), &world);
+        // Walls hugging both flanks.
+        world
+            .obstacles
+            .push(crate::Aabb::new(Vec2::new(-5.0, 1.0), Vec2::new(5.0, 3.0)));
+        world.obstacles.push(crate::Aabb::new(
+            Vec2::new(-5.0, -3.0),
+            Vec2::new(5.0, -1.0),
+        ));
+        assert_eq!(rider.dismount(&world), None);
+        // On foot there is nothing to get off.
+        let person = Rider::on_foot(Vec2::new(30.0, 0.0), Heading::from_radians(0.0), &world);
+        assert_eq!(person.dismount(&world), None);
     }
 
     #[test]

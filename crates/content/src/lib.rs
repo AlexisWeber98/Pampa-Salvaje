@@ -21,7 +21,7 @@ use serde::Deserialize;
 pub mod errand;
 pub mod towns;
 
-pub use errand::{ERRAND_FILE, ErrandLines, load_errand_or_builtin};
+pub use errand::{DEFAULT_POLICE_TOWN, ERRAND_FILE, ErrandLines, load_errand_or_builtin};
 pub use towns::{TOWNS_FILE, WorldContent, load_towns, load_towns_or_builtin, parse_towns};
 
 /// Longest line, in characters, so it fits a speech bubble.

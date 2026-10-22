@@ -229,25 +229,35 @@ impl Plugin for ThinFadePlugin {
     }
 }
 
-fn index_thin(
-    mut index: ResMut<ThinIndex>,
-    added: Query<(Entity, &ThinOccluder), Added<ThinOccluder>>,
-    mut removed: RemovedComponents<ThinOccluder>,
-) {
-    for entity in removed.read() {
-        let Some(cells) = index.of.remove(&entity) else {
-            continue;
+impl ThinIndex {
+    /// Takes `entity` out of the index, if it is in.
+    fn forget(&mut self, entity: Entity) {
+        let Some(cells) = self.of.remove(&entity) else {
+            return;
         };
         for cell in cells {
-            if let Some(list) = index.cells.get_mut(&cell) {
+            if let Some(list) = self.cells.get_mut(&cell) {
                 list.retain(|&e| e != entity);
                 if list.is_empty() {
-                    index.cells.remove(&cell);
+                    self.cells.remove(&cell);
                 }
             }
         }
     }
-    for (entity, occluder) in &added {
+}
+
+/// Keeps the index in step: occluders added, changed (moved or resized:
+/// indexed again where they now reach) and removed.
+fn index_thin(
+    mut index: ResMut<ThinIndex>,
+    changed: Query<(Entity, &ThinOccluder), Changed<ThinOccluder>>,
+    mut removed: RemovedComponents<ThinOccluder>,
+) {
+    for entity in removed.read() {
+        index.forget(entity);
+    }
+    for (entity, occluder) in &changed {
+        index.forget(entity);
         let cells: Vec<(i32, i32)> = fade_cells(occluder.reach()).collect();
         for &cell in &cells {
             index.cells.entry(cell).or_default().push(entity);
@@ -309,16 +319,21 @@ fn fade_thin(
             continue;
         }
         let original = material.0.clone();
-        let see_through = cache
-            .0
-            .entry(original.id())
-            .or_insert_with(|| {
-                let mut copy = materials.get(&original).cloned().unwrap_or_default();
+        let see_through = match cache.0.get(&original.id()) {
+            Some(copy) => copy.clone(),
+            None => {
+                // Not loaded yet: stay solid this frame rather than cache a
+                // see-through copy of a blank material for good.
+                let Some(mut copy) = materials.get(&original).cloned() else {
+                    continue;
+                };
                 copy.alpha_mode = AlphaMode::Blend;
                 copy.base_color.set_alpha(FADED_ALPHA);
-                materials.add(copy)
-            })
-            .clone();
+                let copy = materials.add(copy);
+                cache.0.insert(original.id(), copy.clone());
+                copy
+            }
+        };
         material.0 = see_through;
         commands.entity(entity).insert(Faded(original));
     }
@@ -1869,6 +1884,70 @@ mod tests {
         app.world_mut().resource_mut::<SightLine>().0 = Some((rider, Vec3::new(0.0, 4.0, -12.0)));
         app.update();
         assert!(app.world().resource::<ThinIndex>().of.is_empty());
+    }
+
+    #[test]
+    fn a_moved_occluder_is_found_where_it_now_stands() {
+        let (mut app, tree, solid) = fade_app();
+        app.update();
+        // The tree is moved 100 m east, 5 m north of a rider there.
+        let mut occluder = app.world_mut().get_mut::<ThinOccluder>(tree).unwrap();
+        occluder.a = GroundVec2::new(100.0, 5.0);
+        occluder.b = GroundVec2::new(100.0, 5.0);
+        let rider = Vec3::new(100.0, 1.5, 0.0);
+        // Camera to the north: it is in the way where it now stands.
+        app.world_mut().resource_mut::<SightLine>().0 = Some((rider, Vec3::new(100.0, 4.0, -12.0)));
+        app.update();
+        assert_eq!(
+            app.world().get::<Faded>(tree).map(|f| f.0.clone()),
+            Some(solid)
+        );
+        // Where it stood, nothing is left in the way.
+        let rider = Vec3::new(0.0, 1.5, 0.0);
+        app.world_mut().resource_mut::<SightLine>().0 = Some((rider, Vec3::new(0.0, 4.0, -12.0)));
+        app.update();
+        assert!(app.world().get::<Faded>(tree).is_none());
+        assert_eq!(app.world().resource::<ThinIndex>().of.len(), 1);
+    }
+
+    #[test]
+    fn a_material_not_loaded_yet_is_not_faded_into_a_blank_copy() {
+        let (mut app, tree, _) = fade_app();
+        // The occluder's material is not in the store (yet).
+        let pending: Handle<StandardMaterial> = Handle::default();
+        app.world_mut()
+            .get_mut::<MeshMaterial3d<StandardMaterial>>(tree)
+            .unwrap()
+            .0 = pending.clone();
+        let rider = Vec3::new(0.0, 1.5, 0.0);
+        app.world_mut().resource_mut::<SightLine>().0 = Some((rider, Vec3::new(0.0, 4.0, -12.0)));
+        app.update();
+        assert!(app.world().get::<Faded>(tree).is_none());
+        assert!(app.world().resource::<FadeMaterials>().0.is_empty());
+        // Once loaded, it fades into a see-through copy of itself.
+        let red = StandardMaterial {
+            base_color: Color::srgb(0.8, 0.1, 0.1),
+            ..default()
+        };
+        app.world_mut()
+            .resource_mut::<Assets<StandardMaterial>>()
+            .insert(pending.id(), red)
+            .unwrap();
+        app.update();
+        assert!(app.world().get::<Faded>(tree).is_some());
+        let copy = app
+            .world()
+            .get::<MeshMaterial3d<StandardMaterial>>(tree)
+            .unwrap()
+            .0
+            .clone();
+        let copy = app
+            .world()
+            .resource::<Assets<StandardMaterial>>()
+            .get(&copy)
+            .unwrap();
+        assert!((copy.base_color.to_srgba().red - 0.8).abs() < 1e-3);
+        assert!((copy.base_color.alpha() - FADED_ALPHA).abs() < 1e-6);
     }
 
     #[test]

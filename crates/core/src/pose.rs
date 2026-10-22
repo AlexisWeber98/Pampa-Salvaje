@@ -140,7 +140,9 @@ impl HorseGait {
             AnimationState::Idle => Self::Idle,
             AnimationState::Walk => Self::Walk,
             // Not finite: the slower gait.
-            AnimationState::Gallop if speed.abs() > Self::TROT_MAX => Self::Gallop,
+            AnimationState::Gallop if speed.is_finite() && speed.abs() > Self::TROT_MAX => {
+                Self::Gallop
+            }
             AnimationState::Gallop => Self::Trot,
         }
     }
@@ -407,6 +409,21 @@ fn mix(mut h: u32) -> u32 {
     h ^ (h >> 16)
 }
 
+/// The secondary-motion clock ([`glance`], [`ear_flick`], [`tail_swish`])
+/// wraps after this many seconds (7.7 h): a multiple of every cycle those
+/// use (6–10 s, 3.5–5.5 s and 4–7 s), so each starts a fresh cycle, at rest,
+/// right at the wrap, and an `f32` clock never grows coarse.
+pub const MOTION_CLOCK_PERIOD: f32 = 27_720.0;
+
+/// The secondary-motion `clock` advanced by `dt` seconds, wrapped at
+/// [`MOTION_CLOCK_PERIOD`]. A clock that is not finite restarts at 0; a
+/// step that is not finite (or negative) is ignored.
+pub fn tick_clock(clock: f32, dt: f32) -> f32 {
+    let clock = if clock.is_finite() { clock } else { 0.0 };
+    let dt = if dt.is_finite() { dt.max(0.0) } else { 0.0 };
+    (clock + dt).rem_euclid(MOTION_CLOCK_PERIOD)
+}
+
 /// Where `time` falls in a run of `period`-second cycles of a `seed`, each
 /// holding one event `length` seconds long at a hashed moment: the event's
 /// progress `0..1` while it lasts, and the cycle's hash.
@@ -588,6 +605,29 @@ mod tests {
     }
 
     #[test]
+    fn the_motion_clock_wraps_seamlessly_and_never_loses_precision() {
+        // A clock left running for weeks stays small and keeps ticking.
+        let late = tick_clock(1.0e9, 0.016);
+        assert!((0.0..MOTION_CLOCK_PERIOD).contains(&late), "{late}");
+        assert!((tick_clock(late, 0.25) - late - 0.25).abs() < 1e-2);
+        assert!((tick_clock(MOTION_CLOCK_PERIOD - 0.01, 0.02) - 0.01).abs() < 1e-2);
+        assert_eq!(tick_clock(f32::NAN, 0.1), 0.1);
+        assert_eq!(tick_clock(5.0, f32::INFINITY), 5.0);
+        // Every secondary motion is at rest across the wrap, so it is
+        // seamless whatever the seed.
+        for seed in 0..64 {
+            for t in [MOTION_CLOCK_PERIOD - 0.01, 0.0, 0.01] {
+                assert!(glance(seed, t).abs() < 0.02, "{seed} {t}");
+                assert!(
+                    ear_flick(seed, t).iter().all(|e| e.abs() < 0.1),
+                    "{seed} {t}"
+                );
+                assert!(tail_swish(seed, t, HorseGait::Idle, 0.0).abs() < 0.1);
+            }
+        }
+    }
+
+    #[test]
     fn the_horse_trots_in_the_slow_part_of_its_gallop_range() {
         assert_eq!(HorseGait::of(Idle, 0.0), HorseGait::Idle);
         assert_eq!(HorseGait::of(Walk, 2.0), HorseGait::Walk);
@@ -595,6 +635,9 @@ mod tests {
         assert_eq!(HorseGait::of(Gallop, -4.0), HorseGait::Trot);
         assert_eq!(HorseGait::of(Gallop, 11.0), HorseGait::Gallop);
         assert_eq!(HorseGait::of(Gallop, f32::NAN), HorseGait::Trot);
+        // Any non-finite speed picks the slower gait, infinities too.
+        assert_eq!(HorseGait::of(Gallop, f32::INFINITY), HorseGait::Trot);
+        assert_eq!(HorseGait::of(Gallop, f32::NEG_INFINITY), HorseGait::Trot);
     }
 
     #[test]

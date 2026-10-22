@@ -82,6 +82,16 @@ impl StaticObstacles {
             .collect()
     }
 
+    /// How many indexed footprints a query of `area` looks at before
+    /// keeping the overlapping ones: what [`Self::near`] costs.
+    #[cfg(test)]
+    fn scanned(&self, area: Aabb) -> usize {
+        Self::cells_of(area)
+            .filter_map(|cell| self.cells.get(&cell))
+            .map(Vec::len)
+            .sum()
+    }
+
     /// The grid cells `area` covers.
     fn cells_of(area: Aabb) -> impl Iterator<Item = (i32, i32)> {
         let cell = |v: f32| (v / Self::CELL).floor() as i32;
@@ -150,6 +160,37 @@ mod tests {
                 Aabb::from_center_size(c, s)
             })
             .collect()
+    }
+
+    #[test]
+    fn queries_stay_local_with_a_hundred_thousand_obstacles() {
+        // Fence-like boxes every 4 m over about 1.3 km square.
+        let side = 316;
+        let items: Vec<Aabb> = (0..side * side)
+            .map(|k| {
+                let p = Vec2::new((k % side) as f32 * 4.0, (k / side) as f32 * 4.0);
+                Aabb::from_center_size(p, Vec2::new(1.0, 0.15))
+            })
+            .collect();
+        assert!(items.len() >= 99_856);
+        let started = std::time::Instant::now();
+        let obstacles = StaticObstacles::new(items.clone());
+        assert!(
+            started.elapsed().as_secs_f32() < 5.0,
+            "{:?}",
+            started.elapsed()
+        );
+        let mut rng = Rng::new(20, 0);
+        for _ in 0..200 {
+            let at = Vec2::new(rng.range(0.0, 1264.0), rng.range(0.0, 1264.0));
+            let area = around(at, 2.0);
+            // A rider's query looks at a few cells' worth, not the world.
+            let scanned = obstacles.scanned(area);
+            assert!(scanned <= 200, "{scanned}");
+            let found = obstacles.near(area);
+            let expected: Vec<&Aabb> = items.iter().filter(|o| touches(o, &area)).collect();
+            assert_eq!(found, expected);
+        }
     }
 
     #[test]

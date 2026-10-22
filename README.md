@@ -36,10 +36,12 @@ cars. It spends the night at General Pico, leaves Pico at 07:00, stops 25 s at
 Monte Nievas, reaches Eduardo Castex, lays over, leaves Castex at 16:00, stops
 at Monte Nievas again and is back at Pico for the night (a user change on
 2026-10-21; until then it slept at Castex and left it at 07:00). It runs at up to 65 km/h, braking to stop with the
-middle of its two coaches alongside each station, and takes about 10.7 real minutes
-over the 11.0 km of line (Pico 07:00, Monte Nievas 10:42–10:55, Castex 12:22; Castex 16:00, Monte
-Nievas 17:26–17:39, Pico 21:22, with the clock at its base rate). The game
-starts half way through the morning stop at Monte Nievas, at 10:48:59. The clock
+middle of its two coaches alongside each station on the way. At the two
+terminals the whole train stands centered on the station, so it turns around in
+place during the layover. It takes about 10.7 real minutes
+over the 11.0 km of line (Pico 07:00, Monte Nievas 10:42–10:54, Castex 12:22; Castex 16:00, Monte
+Nievas 17:26–17:38, Pico 21:22, with the clock at its base rate). The game
+starts half way through the morning stop at Monte Nievas, at 10:48:27. The clock
 only starts each run: once moving, the train runs in real seconds, and a
 jump of the clock fast-forwards it exactly where it would have been. Its
 cars follow the curves between towns and shove riders off the track; the
@@ -70,7 +72,11 @@ The player arrives on foot. On top of the Monte Nievas platform, beside the
 morning train's coaches, the objective reads "Buscá a Don Hidalgo en la plaza". Don Hidalgo
 stands in the plaza; press `F` within about 3 m to talk. Monte Nievas has no
 comisaría, so he sends the player to report to comisario Elías Farach at the
-Castex comisaría, and lends his horse, the one tied at the general store. His
+Castex comisaría, and lends his horse, the one tied at the general store.
+Farach's town is not hard-coded: `police_town` in
+`assets/dialogue/errand.ron` names it (Eduardo Castex; without it, or when that
+town has no police station, the nearest other town that has one), and the
+objective line names it too. His
 lines play one after the other in speech bubbles, a few seconds each. The horse
 is not the player's before that talk ("Este caballo no es mío."); after it,
 `F` within about 3 m of the horse mounts it: the tied horse is led away for the
@@ -78,7 +84,14 @@ session and the player rides from where it stood. Farach stands in the street
 in front of the Castex comisaría's door; `F` within about 4 m, mounted or not,
 reports to him and ends the errand. The objective line and the minimap's target
 follow each step (Hidalgo, the horse, then Farach) and disappear once the
-errand is done. There is no dismounting yet.
+errand is done.
+
+Once taken, the horse is the player's. `F` while stopped or at a slow walk (up
+to 1 m/s) gets off: the player stands beside the horse, on its left (its right
+if the left is blocked), and the horse stays there, tied loosely, standing
+still and in the way like any tied horse. `F` within about 3 m of it gets back
+on. Neither moves the errand on: the horse is taken once, and Farach can be
+reported to on foot or mounted.
 
 On foot the player walks at 6 km/h and jogs with `Shift` at 18 km/h, with the same keys, the same collision and a person-sized body.
 People make way for somebody on foot without complaint; only the horse gets
@@ -101,8 +114,8 @@ The plants and stones are low-poly CC0 models from Quaternius' Ultimate Nature P
 
 Roads, fences and gates cross that land:
 - **Dirt roads** for carts and riders join neighbouring towns (Eduardo Castex–Monte Nievas, 2.1 km; Monte Nievas–General Pico, 6.9 km). Each leaves a town by the street facing the other town and runs on a gently curving, seeded line. It is more direct than the railway, which loses distance on its run-outs and wide curves. A road keeps 40 m clear of the track and crosses it only where its ends lie on opposite sides, and then squarely. In the shipped map, both direct roads stay south of the line.
-- **Level crossings and rural tracks:** every railway town has one street that crosses its track by the station, square, at a level crossing. That is the street through the station yard nearest the station, or the ring street carried just past the grid when the yard fills the town's track side. The crossing has timber planks between and beside the rails, ramps up to them, and a St Andrew's cross on a post on each approach. Past it, a short seeded rural track of 300–800 m runs out toward the chacras and estancias and ends in the open land. A rider can always cross; a train car standing on the crossing still blocks it.
-- **Road surface:** each road is cut a shallow 15 cm into the ground, level across and easing back into the land beside it, so `Terrain::height` stays continuous. It wears Ground 102 compressed dirt from ambientCG, with its edges feathered into the grass, which is worn to earth along it. No tree, tuft, stone or shrub grows on a road or its verges.
+- **Level crossings and rural tracks:** every railway town has one street that crosses its track by the station, square, at a level crossing. That is the street through the station yard nearest the station, or the ring street carried just past the grid when the yard fills the town's track side. The crossing has timber planks flush under the rail heads, between the rails and in a strip of about half a meter outside each, exactly the road's width along the track. The dirt road itself rises to them as packed earth over 7 m on each side (about 1 in 10 at the steepest), on its own axis and as wide as the road, its edges sloping down to the grass. Riders, people and the camera climb the same rise; the track bed itself is never lowered or raised by the road. A St Andrew's cross stands on a post on each approach. Past it, a short seeded rural track of 300–800 m runs out toward the chacras and estancias and ends in the open land. A rider can always cross; a train car standing on the crossing still blocks it.
+- **Road surface:** each road is cut a shallow 15 cm into the ground, level across and easing back into the land beside it, so `Terrain::height` stays continuous. Nothing farther than the cut's reach from the road is touched, and the track bed at a level crossing is left as it is. It wears Ground 102 compressed dirt from ambientCG, with its edges feathered into the grass, which is worn to earth along it. No tree, tuft, stone or shrub grows on a road or its verges.
 - **Signposts:** a wooden signpost stands at each town's road exit. Its arrow board names the far town and the distance in kilometres, to a tenth, in the pixel font, for example "GENERAL PICO 6,9 KM".
 - **Wire fences (alambrados)** mark out the private land: estancias, tambos, fields and plots. Roads are public, and no fence or gate ever crosses one.
   - Every road is 6.5 m wide and runs between two fences 8.5 m from its centerline, at least 5 m past its edge on each side: a wide "calle entre alambrados" for carts and, later, routes. The fences follow the road's curves and stop at the towns' leveled ground and by the railway, so there is no fence at a level crossing.

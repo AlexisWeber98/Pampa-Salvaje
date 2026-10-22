@@ -125,6 +125,7 @@ impl Plugin for TownLifePlugin {
             .init_resource::<Cast>()
             .init_resource::<LedAway>()
             .configure_sets(Update, SimulateTown.before(DrivePlayer))
+            .add_systems(Startup, report_train)
             .add_systems(
                 Update,
                 (populate_towns, run_clock_and_train, walk_crowds)
@@ -138,6 +139,22 @@ impl Plugin for TownLifePlugin {
                     .in_set(DrivePlayer)
                     .after(drive_player),
             );
+    }
+}
+
+/// Warns about stations the line train cannot stop alongside (too near a
+/// tip of the line).
+fn report_train(train: Option<Res<WorldTrain>>, towns: Option<Res<WorldTowns>>) {
+    let Some(train) = train.as_ref().and_then(|t| t.0.as_ref()) else {
+        return;
+    };
+    for station in train.misplaced_stops() {
+        let town = train.stations()[station].town;
+        let name = towns
+            .as_ref()
+            .and_then(|t| t.0.get(town))
+            .map_or("?", |t| t.name.as_str());
+        warn!("line train: the coaches cannot stop alongside the station of `{name}`");
     }
 }
 
@@ -727,6 +744,14 @@ mod tests {
             .town;
         assert_eq!(tethered_coat(&towns[hidalgo], &cast, hidalgo), Coat::Bayo);
         let empty = Cast::default();
+        // Even where the town's own seed would give another coat: Don
+        // Hidalgo's town ties up his bayo, not the seeded horse.
+        let mut his = towns[hidalgo].clone();
+        his.seed = (0..)
+            .find(|&seed| Coat::seeded(seed ^ 0x4f52_5345) != Coat::Bayo)
+            .unwrap();
+        assert_ne!(tethered_coat(&his, &empty, hidalgo), Coat::Bayo);
+        assert_eq!(tethered_coat(&his, &cast, hidalgo), Coat::Bayo);
         let mut town = TownLayout::castex_inspired();
         let mut coats = std::collections::HashSet::new();
         for seed in 0..40 {

@@ -384,4 +384,80 @@ mod tests {
         // Far from every road the terrain is unchanged.
         assert_eq!(t.height(7000.0, -7000.0), plain.height(7000.0, -7000.0));
     }
+
+    #[test]
+    fn the_cut_never_reaches_past_its_reach_at_bends_and_road_ends() {
+        let t = with_shipped_roads();
+        let roads = t.roads.clone().unwrap();
+        let plain = Terrain::default();
+        let reach = RoadNetwork::CUT_REACH;
+        let (mut outside, mut touched) = (0, 0);
+        // Around every corner of every road, and past both ends.
+        for road in &roads.roads {
+            for &corner in road.path.iter().step_by(3).chain(road.path.last()) {
+                for k in 0..48 {
+                    let angle = k as f32 * std::f32::consts::TAU / 48.0;
+                    for r in [reach + 0.05, reach + 0.5, reach + 1.5] {
+                        let p = corner + Vec2::new(angle.cos(), angle.sin()) * r;
+                        if roads.distance(p) <= reach {
+                            continue;
+                        }
+                        outside += 1;
+                        if t.height(p.x, p.y) != plain.height(p.x, p.y) {
+                            touched += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(outside > 1000, "{outside}");
+        assert_eq!(touched, 0, "of {outside}");
+    }
+
+    #[test]
+    fn the_road_cut_leaves_the_ground_under_the_track_untouched_at_every_crossing() {
+        let (towns, line, roads) = crate::road::tests::shipped_roads();
+        let crossings: Vec<Vec2> = roads.crossings().map(|c| c.at).collect();
+        assert!(!crossings.is_empty());
+        let t = Terrain::default().with_roads(Arc::new(roads));
+        let plain = Terrain::default();
+        let path = line.full_path(&towns);
+        let mut checked = 0;
+        for w in path.points().windows(2) {
+            let (a, b) = (w[0], w[1]);
+            let length = a.distance(b);
+            let dir = (b - a) * (1.0 / length);
+            let left = Vec2::new(-dir.y, dir.x);
+            let steps = (length / 0.5).ceil() as usize;
+            for k in 0..=steps {
+                let on = a + (b - a) * (k as f32 / steps as f32);
+                if crossings.iter().all(|c| c.distance(on) > 60.0) {
+                    continue;
+                }
+                // The track bed: sleepers and ballast either side.
+                for s in [-2.5, -1.5, -0.5, 0.0, 0.5, 1.5, 2.5] {
+                    let p = on + left * s;
+                    assert_eq!(t.height(p.x, p.y), plain.height(p.x, p.y), "at {p:?}");
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 1000, "{checked}");
+        // The road is still cut just past the track bed and continuous
+        // walking along the road across the track.
+        for c in t.roads.clone().unwrap().crossings() {
+            let mut last = t.height(c.at.x - c.road.x * 30.0, c.at.y - c.road.y * 30.0);
+            for k in 1..=1200 {
+                let p = c.at + c.road * (-30.0 + k as f32 * 0.05);
+                let h = t.height(p.x, p.y);
+                assert!((h - last).abs() < 0.02, "step at {p:?}");
+                last = h;
+            }
+            let p = c.at + c.road * 20.0;
+            assert!(
+                t.height(p.x, p.y) < plain.height(p.x, p.y),
+                "no cut at {p:?}"
+            );
+        }
+    }
 }
