@@ -25,7 +25,11 @@ fn main() {
     let loaded = towns::load_world(&asset_path(TOWNS_FILE));
     let report = towns::TownReport::new(&loaded);
     let mut world = World::with_towns(loaded.world, Terrain::default(), &loaded.towns);
-    // Caldenes, chañares and grass between the towns, off the track. Every
+    // The dirt roads, cut into the ground, with their level crossings and
+    // signposts (thin obstacles).
+    world.lay_roads(loaded.roads.clone());
+    // Caldenes, chañares and grass between the towns, off the track and the
+    // roads. Every
     // tree trunk of the world is an obstacle from the start, drawn or not.
     let flora = FloraSite::new(world.config, &world.terrain, &loaded.line);
     world.plant(&flora);

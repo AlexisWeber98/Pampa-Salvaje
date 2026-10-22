@@ -28,6 +28,7 @@ pub mod pose;
 pub mod rail;
 pub mod rider;
 mod rng;
+pub mod road;
 pub mod terrain;
 pub mod town;
 pub mod townsfolk;
@@ -51,6 +52,9 @@ pub use places::{Place, PlaceKind, Sign, SignMount};
 pub use pose::{HorseAngles, HorseGait, JointAngles, Leg};
 pub use rail::{LinePath, RailCurve, RailLine, RailLineError, RailLink, RailSpan};
 pub use rider::{MAX_STEP, Rider, RiderInput, RiderParams};
+pub use road::{
+    LevelCrossing, Road, RoadEnd, RoadError, RoadKind, RoadNetwork, RoadPoint, SignBoard, Signpost,
+};
 pub use terrain::{FlatArea, Terrain};
 pub use town::{
     Building, BuildingKind, Canopy, Floor, HitchingPost, PlazaPlacement, Railway, RailwayConfig,

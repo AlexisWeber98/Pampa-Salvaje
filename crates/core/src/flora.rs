@@ -6,7 +6,11 @@
 //! list every tree of the world once, at load, for collision.
 
 use crate::rng::Rng;
-use crate::{Aabb, ChunkCoord, FlatArea, RailLine, Terrain, Vec2, WorldConfig};
+use std::sync::Arc;
+
+use crate::{
+    Aabb, ChunkCoord, FlatArea, RailLine, RoadNetwork, Terrain, Vec2, WorldConfig,
+};
 
 /// A native tree of the caldenal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -58,13 +62,14 @@ pub struct ChunkFlora {
     pub tufts: Vec<Tuft>,
 }
 
-/// Where flora may grow: the world, its towns' leveled ground and the
-/// railway line.
+/// Where flora may grow: the world, its towns' leveled ground, the
+/// railway line and the roads.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FloraSite {
     config: WorldConfig,
     flat_areas: Vec<FlatArea>,
     rail: Vec<(Vec2, Vec2)>,
+    roads: Option<Arc<RoadNetwork>>,
     seed: u32,
 }
 
@@ -79,6 +84,11 @@ impl FloraSite {
     /// Least distance from a tuft to the track centerline, in meters: off
     /// the ballast.
     pub const TUFT_RAIL_MARGIN: f32 = 3.5;
+    /// Least distance from a tree's trunk to a road's centerline, in
+    /// meters: the road, a verge and the crown's overhang stay clear.
+    pub const TREE_ROAD_MARGIN: f32 = RoadNetwork::HALF_WIDTH + 6.0;
+    /// Least distance from a tuft to a road's centerline, in meters.
+    pub const TUFT_ROAD_MARGIN: f32 = RoadNetwork::HALF_WIDTH + 0.5;
     /// Least distance from a tree to the world's edge, in meters.
     pub const TREE_EDGE_MARGIN: f32 = 10.0;
     /// Least distance from a tree to a town's leveled band, in meters.
@@ -95,12 +105,14 @@ impl FloraSite {
     const GROVE_TREE: f32 = 0.55;
 
     /// The flora of `config`'s world over `terrain` (already leveled for its
-    /// towns), kept off the `line`'s track.
+    /// towns, with its roads laid), kept off the `line`'s track and the
+    /// roads.
     pub fn new(config: WorldConfig, terrain: &Terrain, line: &RailLine) -> Self {
         Self {
             config,
             flat_areas: terrain.flat_areas.clone(),
             rail: line.segments().map(|s| (s.start, s.end)).collect(),
+            roads: terrain.roads.clone(),
             seed: terrain.seed ^ FLORA_SEED,
         }
     }
@@ -241,6 +253,7 @@ impl FloraSite {
             let open = inside
                 && self.flat_areas.iter().all(|a| a.weight(at) == 0.0)
                 && rail_distance(rail, at) >= Self::TUFT_RAIL_MARGIN
+                && self.off_road(at, Self::TUFT_ROAD_MARGIN)
                 && trees
                     .iter()
                     .all(|t| t.at.distance(at) > t.trunk_radius() + 0.4);
@@ -265,7 +278,7 @@ impl FloraSite {
     }
 
     /// Whether a tree may stand at `p`: inside the world, clear of every
-    /// town's band and of the track.
+    /// town's band, of the track and of the roads.
     fn tree_room(&self, p: Vec2, rail: &[(Vec2, Vec2)]) -> bool {
         let bounds = self.config.bounds();
         let m = Self::TREE_EDGE_MARGIN;
@@ -279,6 +292,14 @@ impl FloraSite {
                 .iter()
                 .all(|a| outside(a, p) >= a.falloff + Self::TREE_TOWN_MARGIN)
             && rail_distance(rail, p) >= Self::TREE_RAIL_MARGIN
+            && self.off_road(p, Self::TREE_ROAD_MARGIN)
+    }
+
+    /// Whether `p` is at least `margin` meters from every road.
+    fn off_road(&self, p: Vec2, margin: f32) -> bool {
+        self.roads
+            .as_ref()
+            .is_none_or(|r| r.near(p, margin).is_none_or(|d| d >= margin))
     }
 
     /// `per_reference` candidates scaled to this world's chunk area.
@@ -629,5 +650,40 @@ mod tests {
         }
         // It stopped against the trunk rather than passing it.
         assert!(rider.position.x > calden.at.x, "{:?}", rider.position);
+    }
+
+    #[test]
+    fn nothing_grows_on_a_road_or_its_verges() {
+        let (towns, line, roads) = crate::road::tests::shipped_roads();
+        let config = WorldConfig {
+            half_extent: WorldConfig::MAX_HALF_EXTENT,
+            ..WorldConfig::default()
+        };
+        let mut world = World::with_towns(config, Terrain::default(), &towns);
+        world.lay_roads(roads);
+        let roads = world.terrain.roads.clone().expect("roads laid");
+        let flora = FloraSite::new(config, &world.terrain, &line);
+        let mut chunks: Vec<ChunkCoord> = roads
+            .segments()
+            .step_by(40)
+            .map(|(a, _)| config.chunk_of(a))
+            .collect();
+        chunks.sort_by_key(|c| (c.x, c.y));
+        chunks.dedup();
+        let (mut trees, mut tufts) = (0, 0);
+        for c in chunks {
+            let f = flora.chunk(c);
+            for t in &f.trees {
+                let gap = roads.distance(t.at);
+                assert!(gap >= FloraSite::TREE_ROAD_MARGIN, "{t:?}: {gap}");
+                trees += 1;
+            }
+            for t in &f.tufts {
+                assert!(roads.distance(t.at) >= FloraSite::TUFT_ROAD_MARGIN, "{t:?}");
+                tufts += 1;
+            }
+            assert_eq!(f.trees, flora.trees(c));
+        }
+        assert!(trees > 20 && tufts > 2000, "{trees} {tufts}");
     }
 }
