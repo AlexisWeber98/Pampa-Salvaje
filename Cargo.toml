@@ -16,6 +16,8 @@ serde = { version = "1.0.229", features = ["derive"] }
 ron = "0.12.2"
 # Lean Bevy: only what the slice needs (3D PBR, windowing, keyboard and mouse input,
 # UI image nodes for the minimap; no default font: lettering is our own bitmap font).
+# glTF scenes for third-party models, with the PNG/JPEG decoders their PBR textures use;
+# spawning a scene copies its components by reflection, so derived types self-register.
 bevy = { version = "=0.20.0", default-features = false, features = [
     "std",
     "multi_threaded",
@@ -37,6 +39,10 @@ bevy = { version = "=0.20.0", default-features = false, features = [
     "bevy_ui_render",
     "tonemapping_luts",
     "zstd_rust",
+    "bevy_gltf",
+    "png",
+    "jpeg",
+    "reflect_auto_register",
 ] }
 
 # Bevy is slow in pure debug builds; optimize dependencies, keep our code debuggable.

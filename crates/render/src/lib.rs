@@ -15,6 +15,7 @@ pub mod fade;
 pub mod fence;
 pub mod flora;
 pub mod font;
+pub mod gltf;
 pub mod ground;
 pub mod hud;
 pub mod minimap;
