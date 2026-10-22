@@ -26,7 +26,19 @@ Make the Pampa line feel alive. Players start standing on the station platform. 
   - Grassland with tufts (paja, flechilla) and colour variation from dry yellow to grey-green.
   - Caldén and chañar trees, scattered and in small groves. Trees are obstacles; they cast shadows.
   - A dirt road: a direct track between neighbouring towns, not only along the rails. It crosses the railway at level crossings where needed, and it is visible and slightly flattened.
-  - Wire fences (alambrados) dividing fields, with gates (tranqueras) where the road crosses them. Fences are obstacles; gates are open.
+  - Wire fences (alambrados) dividing fields, with gates (tranqueras). Fences are obstacles.
+  - **Crossing at the town exit (user, 2026-10-22):** the direct roads between towns stay south of the line, with no crossing (in the shipped map every road exit lies on the same side of it). Each railway town instead gets one street crossing its track right by the station, square to it, at a level crossing (planks and St Andrew's crosses). Past it, a short seeded rural track of 300–800 m curves gently out to the chacras and estancias. The crossing stays passable, and train cars stay obstacles. These tracks use the same road machinery: terrain cut, Ground102 blend, flora keep-out, fences and the minimap.
+  - **Roads are public, fences mark private land (user correction, 2026-10-22):** fences mark out estancias, tambos, fields and plots, and no fence or gate ever crosses a road.
+    - Every road (between towns and the rural tracks) runs between two roadside fences that follow its curve. They end at town bands, at the rail corridor and at level crossings.
+    - Grid lines stop at a roadside fence and join it at a corner post.
+    - Gates are field entrances in the roadside fences, parallel to the road, 1–2 per field frontage.
+  - **Alambrados con huecos (user, 2026-10-22):** fences keep blocking, but every grid stretch has a seeded passable opening every 300–500 m. About half are field gates (single or double) and half are broken spans (leaning posts, sagging wire). Openings never sit on the rail corridor or in a town band.
+  - **Wider calle, closed gates and descampados (user, 2026-10-22):**
+    - The roadside fences stand at least 5 m from the road's edge (traced 8.5 m from the centerline). Signposts and crossing signs stay clear of them.
+    - **Wider roads (user, 2026-10-22):** these roads will become routes, so the surface is 6.5 m wide (was 5.5 m) with at least 5 m of verge to each fence (was 3 m). Everything follows the width: the terrain cut and shoulder, the Ground102 strip, the flora and stone keep-outs, the signpost and crossing-sign spots, the crossing planks, the minimap and the fence joins.
+    - Field gates (on roadsides and in grid openings) are about 60% open and 40% closed, seeded. A closed gate is drawn shut and blocks riders along its line. Broken spans stay open. Roads stay fully open.
+    - Every field keeps at least one passable way in (an open gate, a broken span or an unfenced side). Opening gates with F is a later follow-up.
+    - About 1 paddock in 10, seeded, is a descampado (an abandoned field) with no fence of its own where it does not border another paddock's fence. The road frontage along it is unfenced too.
   - All of this is streamed by chunk, deterministic and seeded, and kept clear of towns' leveled bands, the track and the road.
 
 ## Scope and delivery
@@ -71,7 +83,8 @@ The line-train boarding PR comes after these three.
     - per-vertex ground colours, continuous across chunk borders
   - Route: delegated writer (trigger: 2+ non-trivial files across core and render). The parent applied the final clippy fix (`as_chunks`) and wrote the docs.
 - [x] **T4b/T5b (PR-C1b, re-planned by the user 2026-10-22)** The detail pass for trees, grass and ground uses **free third-party models and textures (CC0)** instead of more procedural geometry. Candidate sources: Quaternius or Kenney low-poly nature (trees, grass, rocks), and ambientCG ground textures. Acacia-type models stand in for the caldén (a *Prosopis* with an umbrella crown). Keep `flora`'s scatter, groves, keep-outs, collision and streaming, and only swap the drawn meshes, imported as glTF. Credit every asset where it is used and in a root `CREDITS.md` (author, URL, licence, what changed). This changes the "all procedural" rule for vegetation. The procedural detail pass that was started was stopped and discarded; it is backed up in the session scratchpad as `pr-c1-full-backup.patch`. Route: delegated writer (trigger: 2+ non-trivial files across render, game and assets). The pack ships OBJ/MTL, not glTF, so our own small OBJ reader replaced the glTF import; Bevy's glTF loader would also have needed new features. Uncommitted; the user commits.
-- [ ] **T4c/T5c (PR-C2)** Core: the direct road network between neighbouring towns, with level crossings, a fence layout with gates. Render: road surface, fences, gates and crossings, streamed by chunk. Minimap: draw the road. Camera: fading for thin occluders.
+- [x] **T4c/T5c (PR-C2 `feat/roads-fences`)** Core: the direct road network between neighbouring towns, with level crossings, a fence layout with gates. Render: road surface, fences, gates and crossings, streamed by chunk. Minimap: draw the road. Camera: fading for thin occluders. Route: delegated writer (trigger: 2+ non-trivial files across core, render and game). Uncommitted; the user commits.
+- [ ] **T6 (PR-C3)** Rural settlements reached by internal tracks from some field gates: ranchos, puestos, chacras and estancia cascos. Their buildings are the adobe rancho with a thatched roof, the casco, the galpón, the corral, and a windmill with its aguada, all per `odd/setting-1919.md`.
 
 ## Checks
 
@@ -186,6 +199,93 @@ cargo build -p game
   - Checks: `cargo fmt --all -- --check` ok; `cargo clippy --workspace --all-targets -- -D warnings` ok; `cargo test --workspace` ok (core 217, game 69, render 127, content 25); `cargo build -p game` ok. A 25 s live run logged no errors. After the popping fix, all four checks pass again, with render at 131 tests.
   - For the user: delete the ground JPGs once the PNMs are accepted (the game does not read them), and update `CREDITS.md` then.
 
+- **T4c/T5c done (uncommitted on `feat/roads-fences` from `main` at 2819db3, for the user to review and commit).**
+  - Roads (`pampa_core::road`):
+    - `RoadNetwork::build` joins each pair of neighbouring towns on the line: Castex–Monte Nievas, 2,106 m, and Monte Nievas–General Pico, 6,866 m, in the seed-1 test towns.
+    - A road leaves each town by the middle street on the side facing the other town (never the railway side) and runs straight out for 80 m.
+    - It then follows the chord with three seeded sine bends (at most 1.2% of the length, 30 m at most). It is pushed away from the track by raised-cosine bends wherever it would come within 40 m, and corner-cut twice (Chaikin).
+    - Where its ends lie on opposite sides of the line, it crosses squarely, with 80 m straight approaches.
+    - Roads that would cross a third town's band or leave the world are dropped and reported.
+    - The network exposes segments, the indexed distance (`near`, a 32 m grid), `length_between`, the crossings (exact segment intersections against `RailLine::full_path`), `parts_in(chunk)` for drawing, and the obstacles.
+  - Rural tracks:
+    - Each railway town's track is crossed by the street through the station yard nearest the station, if its corridor clears every yard building.
+    - Otherwise the ring street is carried 15 m past the grid's nearer end. That happens at Monte Nievas, whose yard fills its north side.
+    - Past the crossing there is a seeded 300–800 m dead end.
+    - Every crossing is at 87–90°.
+  - Terrain: `Terrain::roads` (shared `Arc`) and `Terrain::height`:
+    - The road is cut 0.15 m deep, level across the road and a 1.5 m shoulder, and blends out by 10.75 m from the centerline.
+    - Each piece pulls the ground by a weight across it and up to 2 m past its ends, and the pulls are averaged, so the height stays continuous.
+    - The cut eases in over the first and last 25 m, so the road meets the streets flush.
+  - Flora keeps trees 8.75 m and tufts 3.25 m from road centerlines, and keeps trees 1.5 m off surveyed fence lines. Terrain stones and shrubs keep 2 m off a road's edge.
+  - Signposts:
+    - One per town end of a road, 14 m out, on the right of a rider leaving town. Its board reads `board_text` (name in capitals, km to a tenth with a decimal comma, e.g. "GENERAL PICO 6,9 KM").
+    - Signposts and St Andrew's crosses (6 m from the track) are 0.25 m post obstacles off the road, inside the towns' bands or the rail margin, so clear of the fences.
+  - Render (roads):
+    - `road.rs` draws one feathered surface strip per chunk on the drawn mesh height (`terrain::mesh_height`), 5 cm up, with a vertex alpha fade 1.6 m wide at each edge.
+    - A level crossing gets 11 planks at rail top, two ramps and two crosses on posts.
+    - Signposts use the `signs.rs` boards (`BoardStyle::signpost`, `board_image`) with a pointed tip.
+    - `ground::road_material` puts Ground102 on its own (blended, depth-biased); the terrain's vertex colour wears to earth up to 4 m past the road edge.
+    - The minimap paints the roads (`palette::ROAD`) under the rail, clipped to the frame.
+  - Fences (`pampa_core::fence`):
+    - The road surface is 6.5 m wide. Roadside fences are traced 8.5 m from the road centerline (5.25 m past the edge, so a span cut across a tight bend still leaves 5 m) along both sides of every road. Posts are subdivided round tight bends so no span cuts the curve by more than 5 cm. The fences break off on town bands (+10 m), within 15 m of the track (so at every level crossing), off the world, or near another road.
+    - Survey grid: lines a seeded 300–800 m apart, posts at most 10 m apart, 5 wires. A grid span is dropped on a town band, within 15 m of the track, inside the roadside fences, or between two descampados. A grid line running into a road ends on the roadside fence on its own side, at a corner post.
+    - Every roadside stretch between corners is a field frontage. Each fenced frontage of 40 m or more gets 1–2 seeded gates (single 4.5 m or double 8 m), at least 12 m from its corners, and keeps at least one open.
+    - Every grid stretch gets openings: the first 100–350 m in, then every 300–500 m (nudged on up to 40 m off fence junctions). Each is one or two spans, half field gates and half broken spans.
+    - Gates are 60% open. A closed gate is a line of thin obstacles across its opening.
+    - A reachability pass opens a closed grid gate, or breaks a span on the paddock's edge, wherever a paddock has no way in.
+    - Descampados: a seeded 1 in 10 of the paddocks; 102 of 840 (12%) in the test world.
+    - Obstacles are short AABBs along each span; a slanted span is split so no box bulges more than 0.3 m off it.
+    - Seed-1 test world: 2,552 runs, **69 road-frontage gates** (22 double), 2,331 grid openings (**1,144 field gates, 1,187 broken**). Of the 1,213 field gates in all, **474 are closed** (39%). There are **124,597 obstacle boxes**, laid in about 0.1 s and indexed in about 45–80 ms (dev build).
+  - Fence render (`render::fence`):
+    - Spans are drawn in pieces of up to 5, each piece one posts mesh and one wire mesh (at most 360 triangles a piece).
+    - Gates have two stout posts and one or two framed, braced leaves. Open leaves are swung back 170° along the fence; closed leaves are shut across the opening.
+    - Broken spans have a leaning post, a fallen post and the top wire sagging to the grass.
+  - Camera fading:
+    - Trees (80% of the crown radius), fence pieces, gates, signposts and crossing signs carry `ThinOccluder`.
+    - The camera hands render its line of sight every frame (`SightLine`). `ThinFadePlugin` checks only the occluders in the 16 m index cells along it, and swaps in a cached see-through copy of the material (alpha 0.22) until the view clears.
+    - Buildings, the canopy and train cars still pull the camera in.
+  - Estimates:
+    - A road chunk adds about 1,000–1,500 surface triangles and 1 entity.
+    - A crossing adds 25 entities.
+    - A fenced chunk adds about 12–20 entities and 2–3k triangles.
+    - The loaded ring stays well under the 1.2M-triangle budget.
+  - Tests:
+    - Core road: 7 (route, directness, rural crossings, synthetic crossing found exactly and square, index, signposts, chunk parts).
+    - Terrain: a level, continuous cut.
+    - Flora: nothing on the roads.
+    - World: nothing blocks a rider on any road; a rider rides across each crossing; a car on the crossing blocks.
+    - Fence: 13 tests:
+      - the survey is deterministic
+      - fences stay out of towns, the rail and the roads
+      - the calle is at least 5 m wide on each side (and the road 6–7 m, a core road test), no span crosses a road, signposts stand clear, and a rider rides every road end to end
+      - both sides of every road are fenced except by towns, the rail and descampados
+      - every fenced frontage has 1–2 gates with at least one open
+      - a rider turns off the road through an open gate
+      - a rider is stopped by the wire
+      - long stretches have openings 300–500 m apart
+      - no passable opening is an obstacle, and a rider rides through one of each kind
+      - about 4 in 10 field gates are closed, and a closed gate stops a rider
+      - about 1 paddock in 10 is a descampado, the same every time
+      - every field can be reached from the road (a 1 m flood fill over 3.6 × 3.2 km around Monte Nievas)
+      - trees keep off the fence lines
+    - Render: road 5, fence 6, ground 1, minimap 1, fade 2.
+    - Game: the shipped roads with one crossing by each station and every road open end to end between its fences, and the camera fade-vs-pull pair.
+  - RED observed:
+    - Terrain cut (no level road checked).
+    - Flora keep-out (a tuft on the road).
+    - Minimap (compile: no `ROAD`).
+    - Fences: 3 failing with laying stubbed.
+    - The fade system with fading disabled.
+    - Camera: 2 failing with the sight line not set.
+    - Openings, roadside fences, closed gates and descampados: compile failures against the missing API.
+    - The core road tests and the render gate and broken-span tests were written alongside the code, so no RED for them.
+  - Commit split, as four cumulative patches in the session scratchpad (`c2-split/`), each applying on top of the one before and together reproducing the tree exactly:
+    1. `1-core-roads.patch`: core roads, terrain cut, flora road keep-out, `World::lay_roads`, and the game load and wiring.
+    2. `2-road-drawing.patch`: render road, ground, terrain, signs and minimap.
+    3. `3-fading.patch`: thin occluder fading in render flora, road signs and the camera.
+    4. `4-fences.patch`: core and render fences, flora fence keep-out, the game wiring and all docs.
+  - Checks: `cargo fmt --all -- --check` ok; `cargo clippy --workspace --all-targets -- -D warnings` ok; `cargo test --workspace` ok (core 243, game 72, render 146, content 25); `cargo build -p game` ok.
+
 ## Next step
 
-The user reviews and commits PR-C1a on `feat/pampa-grassland` and PR-C1b on `feat/vegetation-assets`. Next is PR-C2: the road, fences and gates, level crossings, Ground102 on the road surface, and camera fading for thin occluders.
+The user reviews and commits PR-C2 on `feat/roads-fences`. Next is the small-fixes PR, then PR5 (train boarding), then T6 (PR-C3, rural settlements). Opening and closing gates with F is a follow-up.

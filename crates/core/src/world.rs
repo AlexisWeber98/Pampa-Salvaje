@@ -1,10 +1,12 @@
 //! The static world the rider moves through: terrain, raised floors and
 //! playable bounds.
 
+use std::sync::Arc;
+
 use crate::obstacles::around;
 use crate::{
-    Body, Circle, Floor, FloraSite, SideObstacle, StaticObstacles, Terrain, TownLayout, Vec2,
-    WorldConfig,
+    Body, Circle, FenceLayout, Floor, FloraSite, RoadNetwork, SideObstacle, StaticObstacles,
+    Terrain, TownLayout, Vec2, WorldConfig,
 };
 
 /// Axis-aligned playable area on the ground plane.
@@ -149,6 +151,25 @@ impl World {
             world.floors.extend(town.floors());
         }
         world
+    }
+
+    /// Cuts `roads` into the terrain and adds their signposts and level
+    /// crossing signs as obstacles. Lay roads before growing flora, which
+    /// keeps off them.
+    pub fn lay_roads(&mut self, roads: RoadNetwork) {
+        self.obstacles.extend(roads.obstacles());
+        let terrain = std::mem::take(&mut self.terrain);
+        self.terrain = terrain.with_roads(Arc::new(roads));
+    }
+
+    /// Adds every span and every shut gate of `fences` as thin static
+    /// obstacles; open gates and broken spans are gaps. Returns how many
+    /// boxes were added.
+    pub fn fence(&mut self, fences: &FenceLayout) -> usize {
+        let spans = fences.obstacles();
+        let count = spans.len();
+        self.obstacles.extend(spans);
+        count
     }
 
     /// Adds every tree trunk `flora` grows anywhere in the world as a
@@ -554,5 +575,106 @@ mod tests {
         // Against the wall from the north: plain push out.
         let end = world.resolve(c, Vec2::new(0.0, 6.5), |_| ());
         assert!(end.distance(Vec2::new(0.0, 6.9)) < 1e-4, "{end:?}");
+    }
+
+    /// The shipped towns with their roads laid and every tree planted.
+    fn roaded_world() -> (World, crate::RoadNetwork) {
+        let (towns, line, roads) = crate::road::tests::shipped_roads();
+        let config = WorldConfig {
+            half_extent: WorldConfig::MAX_HALF_EXTENT,
+            ..WorldConfig::default()
+        };
+        let mut world = World::with_towns(config, Terrain::default(), &towns);
+        world.lay_roads(roads.clone());
+        let flora = FloraSite::new(config, &world.terrain, &line);
+        world.plant(&flora);
+        (world, roads)
+    }
+
+    #[test]
+    fn nothing_blocks_a_rider_anywhere_on_a_road_or_its_level_crossings() {
+        let (world, roads) = roaded_world();
+        let c = Circle::new(crate::Rider::COLLIDER_RADIUS);
+        for road in &roads.roads {
+            for w in road.path.windows(2) {
+                for k in 0..4 {
+                    let p = w[0] + (w[1] - w[0]) * (k as f32 / 4.0);
+                    assert_eq!(world.resolve(c, p, |_| ()), p, "blocked at {p:?}");
+                }
+            }
+        }
+        // The signs stand beside the crossing, the post beside the road.
+        assert!(world.obstacles.len() > roads.obstacles().len());
+    }
+
+    #[test]
+    fn a_rider_rides_out_of_town_across_the_level_crossing_to_the_rural_track() {
+        let (world, roads) = roaded_world();
+        let params = crate::RiderParams::default();
+        for road in roads
+            .roads
+            .iter()
+            .filter(|r| r.kind == crate::RoadKind::Rural)
+        {
+            let crossing = road.crossings[0];
+            let start = road.path[0];
+            let out = road.ends[0].out;
+            let mut rider = crate::Rider::new(
+                start,
+                crate::Heading::from_radians(out.y.atan2(out.x)),
+                &world,
+            );
+            let mut passed = false;
+            for _ in 0..60 * 120 {
+                // Steer for a point a little ahead along the road.
+                let near = (0..road.path.len())
+                    .min_by(|&a, &b| {
+                        road.path[a]
+                            .distance(rider.position)
+                            .total_cmp(&road.path[b].distance(rider.position))
+                    })
+                    .unwrap();
+                let aim = road.path[(near + 3).min(road.path.len() - 1)] - rider.position;
+                let want = aim.y.atan2(aim.x);
+                let mut turn = want - rider.heading.radians();
+                while turn > std::f32::consts::PI {
+                    turn -= std::f32::consts::TAU;
+                }
+                while turn < -std::f32::consts::PI {
+                    turn += std::f32::consts::TAU;
+                }
+                let input = crate::RiderInput {
+                    throttle: 1.0,
+                    turn: (turn * 3.0).clamp(-1.0, 1.0),
+                    gallop: true,
+                };
+                rider.step(input, &params, &world, 1.0 / 60.0);
+                passed |= (rider.position - crossing.at).dot(crossing.road) > 10.0;
+                if rider.position.distance(road.ends[1].at) < 8.0 {
+                    break;
+                }
+            }
+            assert!(passed, "never crossed at {:?}", crossing.at);
+            assert!(
+                rider.position.distance(road.ends[1].at) < 8.0,
+                "stuck at {:?}",
+                rider.position
+            );
+        }
+    }
+
+    #[test]
+    fn a_train_car_on_the_level_crossing_still_blocks_a_rider() {
+        let (mut world, roads) = roaded_world();
+        let crossing = *roads.crossings().next().expect("a level crossing");
+        let across = Vec2::new(-crossing.rail.y, crossing.rail.x);
+        world.moving.push(SideObstacle {
+            footprint: Aabb::from_center_size(crossing.at, Vec2::new(16.0, 3.0)),
+            across,
+        });
+        let c = Circle::new(crate::Rider::COLLIDER_RADIUS);
+        let end = world.resolve(c, crossing.at, |_| ());
+        assert!(end.distance(crossing.at) > 1.0, "{end:?}");
+        assert!(deepest_overlap(&world, c, end) < 1e-3);
     }
 }

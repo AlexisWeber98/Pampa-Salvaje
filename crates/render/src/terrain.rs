@@ -18,7 +18,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::PrimitiveTopology;
 use bevy::prelude::*;
 use pampa_core::flora::grass_dryness;
-use pampa_core::{ChunkCoord, Terrain, Vec2 as GroundVec2, WorldConfig};
+use pampa_core::{ChunkCoord, RoadNetwork, Terrain, Vec2 as GroundVec2, WorldConfig};
 
 use crate::AssetRoot;
 use crate::coords::world_from_ground;
@@ -88,9 +88,10 @@ impl TerrainPlugin {
     }
 }
 
+/// Quads along each side of a chunk, as the [`TerrainPlugin`] builds them.
 #[derive(Resource, Clone, Copy)]
-struct ChunkDetail {
-    resolution: u32,
+pub(crate) struct ChunkDetail {
+    pub(crate) resolution: u32,
 }
 
 /// Meshes and materials shared by every chunk.
@@ -333,6 +334,35 @@ fn chunk_corner(coord: ChunkCoord, size: f32, resolution: u32, i: u32, j: u32) -
     GroundVec2::new(axis(coord.x, i), axis(coord.y, j))
 }
 
+/// Height of the drawn ground at ground point `p`: the terrain sampled at
+/// the chunk grid's corners, split into the same two triangles per quad as
+/// [`build_chunk_mesh`]. Things laid flat on the ground (the road surface)
+/// follow this, not the finer logic terrain, so the mesh never pokes
+/// through them.
+pub(crate) fn mesh_height(terrain: &Terrain, p: GroundVec2, size: f32, resolution: u32) -> f32 {
+    let coord = ChunkCoord::containing(p, size);
+    let min = coord.min(size);
+    let quad = size / resolution as f32;
+    let fx = ((p.x - min.x) / quad).clamp(0.0, resolution as f32);
+    let fy = ((p.y - min.y) / quad).clamp(0.0, resolution as f32);
+    let (i, j) = (
+        (fx.floor() as u32).min(resolution - 1),
+        (fy.floor() as u32).min(resolution - 1),
+    );
+    let (u, v) = (fx - i as f32, fy - j as f32);
+    let h = |i: u32, j: u32| {
+        let c = chunk_corner(coord, size, resolution, i, j);
+        terrain.height(c.x, c.y)
+    };
+    let (a, c) = (h(i, j), h(i + 1, j + 1));
+    // Triangles (a, b, c) below the diagonal a–c and (a, c, d) above it.
+    if u >= v {
+        a + (h(i + 1, j) - a) * (u - v) + (c - a) * v
+    } else {
+        a + (h(i, j + 1) - a) * (v - u) + (c - a) * u
+    }
+}
+
 /// Non-indexed triangle list so normals come out flat: the low-poly look.
 /// Vertices are in world space; the chunk entity stays at the origin. UVs
 /// are world space too ([`ground_uv`]), with flat per-face tangents for the
@@ -386,13 +416,17 @@ const DRY_GRASS: Vec3 = Vec3::new(0.71, 0.63, 0.40);
 /// Trodden earth of a town's leveled ground (sRGB): plain, so streets and
 /// buildings read on it.
 const TOWN_GROUND: Vec3 = Vec3::new(0.60, 0.53, 0.40);
+/// Worn earth beside a road (sRGB), and how far past the road's edge the
+/// wear reaches, in meters.
+const ROAD_EARTH: Vec3 = Vec3::new(0.60, 0.52, 0.39);
+const ROAD_VERGE: f32 = 4.0;
 /// Darkest shade slopes and dips may give the ground.
 const SHADE_MIN: f32 = 0.82;
 
 /// The darkest and brightest linear colour the ground may take.
 #[cfg(test)]
 fn palette_range() -> ([f32; 3], [f32; 3]) {
-    let colors = [GREEN_GRASS, DRY_GRASS, TOWN_GROUND];
+    let colors = [GREEN_GRASS, DRY_GRASS, TOWN_GROUND, ROAD_EARTH];
     let lo = colors.iter().fold(Vec3::ONE, |a, c| a.min(*c)) * SHADE_MIN;
     let hi = colors.iter().fold(Vec3::ZERO, |a, c| a.max(*c));
     let linear = |v: Vec3| {
@@ -414,6 +448,13 @@ fn ground_color(terrain: &Terrain, g: GroundVec2) -> [f32; 4] {
         .map(|a| a.weight(g))
         .fold(0.0, f32::max);
     let rgb = grass.lerp(TOWN_GROUND, town);
+    // Worn earth along the roads, under their feathered edges.
+    let worn = terrain.roads.as_ref().map_or(0.0, |r| {
+        let reach = RoadNetwork::HALF_WIDTH + ROAD_VERGE;
+        r.near(g, reach)
+            .map_or(0.0, |d| 1.0 - smoothstep(RoadNetwork::HALF_WIDTH, reach, d))
+    });
+    let rgb = rgb.lerp(ROAD_EARTH, 0.6 * worn);
     let e = 0.75;
     let dx = terrain.height(g.x + e, g.y) - terrain.height(g.x - e, g.y);
     let dy = terrain.height(g.x, g.y + e) - terrain.height(g.x, g.y - e);
@@ -422,6 +463,11 @@ fn ground_color(terrain: &Terrain, g: GroundVec2) -> [f32; 4] {
     let shade = (1.0 - 0.6 * slope - 0.05 * dip).clamp(SHADE_MIN, 1.0);
     let rgb = rgb * shade;
     LinearRgba::from(Color::srgb(rgb.x, rgb.y, rgb.z)).to_f32_array()
+}
+
+fn smoothstep(lo: f32, hi: f32, x: f32) -> f32 {
+    let t = ((x - lo) / (hi - lo)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 /// Cheap deterministic hash of a 2D point into `[0, 1)`.
@@ -444,8 +490,11 @@ struct Prop {
     yaw: f32,
 }
 
+/// Least distance from a stone or shrub to a road's edge, in meters.
+const PROP_ROAD_MARGIN: f32 = 2.0;
+
 /// The props of chunk `coord`, seeded by its coordinate, skipping leveled
-/// ground (settlements are cleared land).
+/// ground (settlements are cleared land) and the roads.
 fn chunk_props(terrain: &Terrain, coord: ChunkCoord, size: f32) -> Vec<Prop> {
     let mut state = coord.seed(PROP_SEED) | 1;
     let mut unit = move || {
@@ -467,7 +516,11 @@ fn chunk_props(terrain: &Terrain, coord: ChunkCoord, size: f32) -> Vec<Prop> {
                 yaw: unit() * std::f32::consts::TAU,
             };
             let leveled = terrain.flat_areas.iter().any(|a| a.weight(at) > 0.0);
-            (!leveled).then_some(prop)
+            let on_road = terrain.roads.as_ref().is_some_and(|r| {
+                r.near(at, RoadNetwork::HALF_WIDTH + PROP_ROAD_MARGIN)
+                    .is_some()
+            });
+            (!leveled && !on_road).then_some(prop)
         })
         .collect()
 }

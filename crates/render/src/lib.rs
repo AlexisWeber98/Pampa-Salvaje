@@ -11,6 +11,7 @@ pub mod atmosphere;
 pub mod bubble;
 pub mod character;
 pub mod coords;
+pub mod fence;
 pub mod flora;
 pub mod font;
 pub mod ground;
@@ -18,6 +19,7 @@ pub mod hud;
 pub mod minimap;
 pub mod obj;
 pub mod rail;
+pub mod road;
 pub mod signs;
 pub mod streaming;
 pub mod terrain;
@@ -30,10 +32,15 @@ pub use character::{
     CharacterVisual, CharacterVisualPlugin, Coat, FigureKind, TOWNSFOLK_LOOKS, VisualPose,
 };
 pub use coords::world_from_ground;
-pub use flora::{FloraAccent, FloraPlugin, GrassTuft, TreePart, VegetationModels, WorldFlora};
+pub use fence::{FencePiece, FencePlugin, GatePart, WorldFences};
+pub use flora::{
+    Faded, FloraAccent, FloraPlugin, GrassTuft, SightLine, ThinFadePlugin, ThinOccluder, TreePart,
+    VegetationModels, WorldFlora,
+};
 pub use hud::{HudObjective, HudPlugin};
 pub use minimap::{MapIcon, MapTarget, MinimapPlugin};
 pub use rail::{LineTrack, RailPlugin, WorldRail};
+pub use road::{CrossingPart, RoadPlugin, RoadSurface, SignpostPart};
 pub use signs::{SignPlugin, Signboard};
 pub use streaming::{StreamingPlan, StreamingSet};
 pub use terrain::{StreamFocus, TerrainChunk, TerrainPlugin, WorldChunks, WorldTerrain};

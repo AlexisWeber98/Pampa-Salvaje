@@ -14,6 +14,12 @@
 //! detail swap: a tree is the same model out to the dust fog and fades out
 //! inside it, and tufts stay solid near the rider and thin out smoothly
 //! farther away.
+//!
+//! Thin things (trees here, and fences and signposts elsewhere) carry a
+//! [`ThinOccluder`]: when one comes between the camera and the rider (the
+//! [`SightLine`] the game sets each frame), the [`ThinFadePlugin`] turns it
+//! see-through instead of the camera pulling in, and restores it once the
+//! view clears. Only those indexed near the sight line are looked at.
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -72,6 +78,249 @@ impl Plugin for FloraPlugin {
                     .after(ChunkStreaming)
                     .before(TransformSystems::Propagate),
             );
+    }
+}
+
+/// The segment from the point the camera looks at (the rider) to the
+/// camera, in world space; the game sets it every frame. `None` fades
+/// nothing.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
+pub struct SightLine(pub Option<(Vec3, Vec3)>);
+
+/// Something thin that fades out of the way of the camera instead of
+/// pulling it in: a vertical slab along ground segment `a`–`b` (a point for
+/// a tree or a post), `radius` meters thick on either side, from height
+/// `bottom` to `top`.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct ThinOccluder {
+    pub a: GroundVec2,
+    pub b: GroundVec2,
+    pub radius: f32,
+    pub bottom: f32,
+    pub top: f32,
+}
+
+impl ThinOccluder {
+    /// A post or a tree standing at `at` on `terrain`, `radius` wide and
+    /// `height` tall.
+    pub fn post(at: GroundVec2, radius: f32, terrain: &pampa_core::Terrain, height: f32) -> Self {
+        let ground = terrain.height(at.x, at.y);
+        Self {
+            a: at,
+            b: at,
+            radius,
+            bottom: ground - 0.5,
+            top: ground + height,
+        }
+    }
+
+    /// Whether this stands in the way of the line of sight from `from` to
+    /// `to` (world space).
+    pub fn blocks(&self, from: Vec3, to: Vec3) -> bool {
+        let (p, q) = (
+            GroundVec2::new(from.x, -from.z),
+            GroundVec2::new(to.x, -to.z),
+        );
+        let Some((gap, t)) = closest_approach(p, q, self.a, self.b) else {
+            return false;
+        };
+        let y = from.y + (to.y - from.y) * t;
+        gap < self.radius && y > self.bottom && y < self.top
+    }
+
+    /// Its ground footprint's bounding box, grown by its radius.
+    fn reach(&self) -> (GroundVec2, GroundVec2) {
+        let r = self.radius;
+        (
+            GroundVec2::new(self.a.x.min(self.b.x) - r, self.a.y.min(self.b.y) - r),
+            GroundVec2::new(self.a.x.max(self.b.x) + r, self.a.y.max(self.b.y) + r),
+        )
+    }
+}
+
+/// Least distance between ground segments `p`–`q` (the sight line) and
+/// `a`–`b`, and where along `p`–`q` (`0..=1`) it is reached. `None` for a
+/// sight line without length.
+fn closest_approach(
+    p: GroundVec2,
+    q: GroundVec2,
+    a: GroundVec2,
+    b: GroundVec2,
+) -> Option<(f32, f32)> {
+    let d = q - p;
+    let span = d.dot(d);
+    if span <= 1e-9 {
+        return None;
+    }
+    let on_sight = |x: GroundVec2| ((x - p).dot(d) / span).clamp(0.0, 1.0);
+    let at = |t: f32| p + d * t;
+    // Crossing: distance 0 where they cross.
+    let e = b - a;
+    let denom = d.x * e.y - d.y * e.x;
+    if denom.abs() > 1e-9 {
+        let w = a - p;
+        let t = (w.x * e.y - w.y * e.x) / denom;
+        let u = (w.x * d.y - w.y * d.x) / denom;
+        if (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u) {
+            return Some((0.0, t));
+        }
+    }
+    let on_occluder = |x: GroundVec2| {
+        let span = e.dot(e);
+        if span <= 1e-9 {
+            return a;
+        }
+        a + e * ((x - a).dot(e) / span).clamp(0.0, 1.0)
+    };
+    let candidates = [
+        (a, on_sight(a)),
+        (b, on_sight(b)),
+        (on_occluder(p), 0.0),
+        (on_occluder(q), 1.0),
+    ];
+    candidates
+        .into_iter()
+        .map(|(x, t)| (x.distance(at(t)), t))
+        .min_by(|l, r| l.0.total_cmp(&r.0))
+}
+
+/// Marks a faded thin occluder, keeping its own material to restore.
+#[derive(Component, Debug, Clone)]
+pub struct Faded(pub Handle<StandardMaterial>);
+
+/// How opaque a faded thin occluder is.
+pub const FADED_ALPHA: f32 = 0.22;
+/// Side of a cell of the thin occluders' index, in meters.
+const FADE_CELL: f32 = 16.0;
+
+/// Thin occluders by grid cell, kept in step as they come and go.
+#[derive(Resource, Debug, Default)]
+struct ThinIndex {
+    cells: HashMap<(i32, i32), Vec<Entity>>,
+    of: HashMap<Entity, Vec<(i32, i32)>>,
+}
+
+fn fade_cell(p: GroundVec2) -> (i32, i32) {
+    (
+        (p.x / FADE_CELL).floor() as i32,
+        (p.y / FADE_CELL).floor() as i32,
+    )
+}
+
+fn fade_cells((lo, hi): (GroundVec2, GroundVec2)) -> impl Iterator<Item = (i32, i32)> {
+    let ((x0, y0), (x1, y1)) = (fade_cell(lo), fade_cell(hi));
+    (y0..=y1).flat_map(move |y| (x0..=x1).map(move |x| (x, y)))
+}
+
+/// See-through copies of the materials of faded occluders, made once.
+#[derive(Resource, Debug, Default)]
+struct FadeMaterials(HashMap<AssetId<StandardMaterial>, Handle<StandardMaterial>>);
+
+/// Fades thin occluders that come between the camera and the rider (see
+/// [`SightLine`]) and restores them when the view clears.
+pub struct ThinFadePlugin;
+
+impl Plugin for ThinFadePlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<SightLine>()
+            .init_resource::<ThinIndex>()
+            .init_resource::<FadeMaterials>()
+            .add_systems(PostUpdate, (index_thin, fade_thin).chain());
+    }
+}
+
+fn index_thin(
+    mut index: ResMut<ThinIndex>,
+    added: Query<(Entity, &ThinOccluder), Added<ThinOccluder>>,
+    mut removed: RemovedComponents<ThinOccluder>,
+) {
+    for entity in removed.read() {
+        let Some(cells) = index.of.remove(&entity) else {
+            continue;
+        };
+        for cell in cells {
+            if let Some(list) = index.cells.get_mut(&cell) {
+                list.retain(|&e| e != entity);
+                if list.is_empty() {
+                    index.cells.remove(&cell);
+                }
+            }
+        }
+    }
+    for (entity, occluder) in &added {
+        let cells: Vec<(i32, i32)> = fade_cells(occluder.reach()).collect();
+        for &cell in &cells {
+            index.cells.entry(cell).or_default().push(entity);
+        }
+        index.of.insert(entity, cells);
+    }
+}
+
+fn fade_thin(
+    mut commands: Commands,
+    sight: Res<SightLine>,
+    index: Res<ThinIndex>,
+    mut occluders: Query<(
+        &ThinOccluder,
+        &mut MeshMaterial3d<StandardMaterial>,
+        Option<&Faded>,
+    )>,
+    faded: Query<(Entity, &Faded)>,
+    mut cache: ResMut<FadeMaterials>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let mut blocking: Vec<Entity> = Vec::new();
+    if let Some((from, to)) = sight.0 {
+        let (p, q) = (
+            GroundVec2::new(from.x, -from.z),
+            GroundVec2::new(to.x, -to.z),
+        );
+        let lo = GroundVec2::new(p.x.min(q.x), p.y.min(q.y));
+        let hi = GroundVec2::new(p.x.max(q.x), p.y.max(q.y));
+        // Wide enough for the thickest occluder's radius.
+        let pad = GroundVec2::new(FADE_CELL, FADE_CELL);
+        for cell in fade_cells((lo - pad, hi + pad)) {
+            for &entity in index.cells.get(&cell).into_iter().flatten() {
+                if blocking.contains(&entity) {
+                    continue;
+                }
+                if occluders
+                    .get(entity)
+                    .is_ok_and(|(o, _, _)| o.blocks(from, to))
+                {
+                    blocking.push(entity);
+                }
+            }
+        }
+    }
+    for (entity, original) in &faded {
+        if !blocking.contains(&entity)
+            && let Ok((_, mut material, _)) = occluders.get_mut(entity)
+        {
+            material.0 = original.0.clone();
+            commands.entity(entity).remove::<Faded>();
+        }
+    }
+    for entity in blocking {
+        let Ok((_, mut material, was)) = occluders.get_mut(entity) else {
+            continue;
+        };
+        if was.is_some() {
+            continue;
+        }
+        let original = material.0.clone();
+        let see_through = cache
+            .0
+            .entry(original.id())
+            .or_insert_with(|| {
+                let mut copy = materials.get(&original).cloned().unwrap_or_default();
+                copy.alpha_mode = AlphaMode::Blend;
+                copy.base_color.set_alpha(FADED_ALPHA);
+                materials.add(copy)
+            })
+            .clone();
+        material.0 = see_through;
+        commands.entity(entity).insert(Faded(original));
     }
 }
 
@@ -547,7 +796,7 @@ pub(crate) fn visible_within(far: f32, fade: f32) -> VisibilityRange {
 
 #[derive(Clone, Copy)]
 enum Plant {
-    Tree(Species),
+    Tree(Species, ThinOccluder),
     Tuft(TuftKind),
     Accent,
 }
@@ -575,7 +824,16 @@ impl Painter<'_> {
         let turned =
             Transform::from_translation(base).with_rotation(Quat::from_rotation_y(tree.yaw));
         let model = tree_model(tree);
-        let plant = Plant::Tree(tree.species);
+        // The crown fades when it hides the rider; most of it, not its rim.
+        let ground = self.terrain.height(tree.at.x, tree.at.y);
+        let fade = ThinOccluder {
+            a: tree.at,
+            b: tree.at,
+            radius: 0.8 * tree.crown_radius(),
+            bottom: ground - 0.5,
+            top: ground + tree.height,
+        };
+        let plant = Plant::Tree(tree.species, fade);
         let range = visible_within(TREE_FAR, TREE_FADE);
         if tree.species == Species::Calden {
             self.accent(tree, out);
@@ -727,7 +985,7 @@ fn grow_flora(
                 for (mesh, material, transform, range, plant) in parts {
                     let mut part = children.spawn((mesh, material, transform, range));
                     match plant {
-                        Plant::Tree(species) => part.insert(TreePart(species)),
+                        Plant::Tree(species, fade) => part.insert((TreePart(species), fade)),
                         Plant::Tuft(kind) => part.insert(GrassTuft(kind)),
                         Plant::Accent => part.insert(FloraAccent),
                     };
@@ -1542,6 +1800,108 @@ mod tests {
             }
         }
         assert!(tree_meshes.len() <= 4, "{}", tree_meshes.len());
+    }
+
+    fn fade_app() -> (App, Entity, Handle<StandardMaterial>) {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Assets<StandardMaterial>>()
+            .add_plugins(ThinFadePlugin);
+        let solid = app
+            .world_mut()
+            .resource_mut::<Assets<StandardMaterial>>()
+            .add(StandardMaterial::default());
+        let tree = app
+            .world_mut()
+            .spawn((
+                ThinOccluder {
+                    a: GroundVec2::new(0.0, 5.0),
+                    b: GroundVec2::new(0.0, 5.0),
+                    radius: 2.0,
+                    bottom: -0.5,
+                    top: 8.0,
+                },
+                MeshMaterial3d(solid.clone()),
+            ))
+            .id();
+        (app, tree, solid)
+    }
+
+    #[test]
+    fn a_tree_between_the_camera_and_the_rider_fades_and_comes_back() {
+        let (mut app, tree, solid) = fade_app();
+        let rider = Vec3::new(0.0, 1.5, 0.0);
+        // Camera 12 m south of the rider, the tree 5 m north: clear.
+        app.world_mut().resource_mut::<SightLine>().0 = Some((rider, Vec3::new(0.0, 4.0, 12.0)));
+        app.update();
+        assert!(app.world().get::<Faded>(tree).is_none());
+        // Camera 12 m north: the tree is in the way.
+        app.world_mut().resource_mut::<SightLine>().0 = Some((rider, Vec3::new(0.0, 4.0, -12.0)));
+        app.update();
+        let faded = app
+            .world()
+            .get::<MeshMaterial3d<StandardMaterial>>(tree)
+            .unwrap()
+            .0
+            .clone();
+        assert_ne!(faded, solid);
+        assert_eq!(app.world().get::<Faded>(tree).unwrap().0, solid);
+        let see_through = app
+            .world()
+            .resource::<Assets<StandardMaterial>>()
+            .get(&faded)
+            .unwrap();
+        assert_eq!(see_through.alpha_mode, AlphaMode::Blend);
+        assert!((see_through.base_color.alpha() - FADED_ALPHA).abs() < 1e-6);
+        // Over the top of the crown, the camera sees past it.
+        app.world_mut().resource_mut::<SightLine>().0 = Some((rider, Vec3::new(0.0, 30.0, -12.0)));
+        app.update();
+        assert!(app.world().get::<Faded>(tree).is_none());
+        assert_eq!(
+            app.world()
+                .get::<MeshMaterial3d<StandardMaterial>>(tree)
+                .unwrap()
+                .0,
+            solid
+        );
+        // A despawned occluder leaves the index.
+        app.world_mut().despawn(tree);
+        app.world_mut().resource_mut::<SightLine>().0 = Some((rider, Vec3::new(0.0, 4.0, -12.0)));
+        app.update();
+        assert!(app.world().resource::<ThinIndex>().of.is_empty());
+    }
+
+    #[test]
+    fn only_occluders_across_the_sight_line_block_it() {
+        let fence = ThinOccluder {
+            a: GroundVec2::new(-20.0, 4.0),
+            b: GroundVec2::new(20.0, 4.0),
+            radius: 0.4,
+            bottom: -0.5,
+            top: 1.5,
+        };
+        let rider = Vec3::new(0.0, 1.0, 0.0);
+        // North of the rider, the camera low: the fence is in the way.
+        assert!(fence.blocks(rider, Vec3::new(3.0, 1.2, -10.0)));
+        // High camera: the line passes over the wire.
+        assert!(!fence.blocks(rider, Vec3::new(3.0, 6.0, -10.0)));
+        // Camera south: nothing between.
+        assert!(!fence.blocks(rider, Vec3::new(3.0, 1.2, 10.0)));
+        // Past the fence's end.
+        assert!(!fence.blocks(rider, Vec3::new(60.0, 1.2, -10.0)));
+        let post = ThinOccluder::post(
+            GroundVec2::new(0.0, 6.0),
+            0.5,
+            &pampa_core::Terrain::default(),
+            3.0,
+        );
+        let ground = pampa_core::Terrain::default().height(0.0, 6.0);
+        let eye = Vec3::new(0.0, ground + 1.5, -12.0);
+        assert!(post.blocks(Vec3::new(0.0, ground + 1.5, 0.0), eye));
+        assert!(!post.blocks(
+            Vec3::new(2.0, ground + 1.5, 0.0),
+            Vec3::new(2.0, ground + 1.5, -12.0)
+        ));
     }
 
     #[test]

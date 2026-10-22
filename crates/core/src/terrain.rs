@@ -1,6 +1,8 @@
 //! Procedural heightmap shared by logic (ground snapping) and render (mesh).
 
-use crate::Vec2;
+use std::sync::Arc;
+
+use crate::{RoadNetwork, Vec2};
 
 /// Gently rolling pampa: a few summed sine octaves. Deterministic per seed.
 ///
@@ -16,6 +18,8 @@ pub struct Terrain {
     pub seed: u32,
     /// Ground leveled for settlements, one area per town.
     pub flat_areas: Vec<FlatArea>,
+    /// The roads cut into the ground, shared (cloning the terrain is cheap).
+    pub roads: Option<Arc<RoadNetwork>>,
 }
 
 impl Default for Terrain {
@@ -24,6 +28,7 @@ impl Default for Terrain {
             amplitude: 2.5,
             seed: 1927,
             flat_areas: Vec::new(),
+            roads: None,
         }
     }
 }
@@ -67,13 +72,32 @@ impl Terrain {
         self
     }
 
+    /// This terrain with `roads` cut into it (see [`RoadNetwork::cut`]).
+    pub fn with_roads(mut self, roads: Arc<RoadNetwork>) -> Self {
+        self.roads = Some(roads);
+        self
+    }
+
     /// Ground height at `(x, y)`, including any leveled area.
     ///
     /// Where bands overlap, the leveled heights are averaged by weight and
     /// eased in by the strongest weight, so the ground stays continuous
     /// everywhere (world validation keeps town bands apart, so in practice
-    /// at most one area touches any point).
+    /// at most one area touches any point). Roads are cut into that ground:
+    /// a shallow bed, level across, easing back into the land beside it.
     pub fn height(&self, x: f32, y: f32) -> f32 {
+        let ground = self.leveled_height(x, y);
+        let Some(roads) = &self.roads else {
+            return ground;
+        };
+        match roads.cut(Vec2::new(x, y), |p| self.leveled_height(p.x, p.y)) {
+            Some((strength, bed)) => ground + (bed - ground) * strength,
+            None => ground,
+        }
+    }
+
+    /// Ground height at `(x, y)` with the towns leveled, before roads.
+    fn leveled_height(&self, x: f32, y: f32) -> f32 {
         let natural = self.natural_height(x, y);
         let p = Vec2::new(x, y);
         let (mut strongest, mut total, mut weighted) = (0.0_f32, 0.0, 0.0);
@@ -302,5 +326,62 @@ mod tests {
                 assert!(dx.hypot(dy) < 0.36, "slope too steep at ({x}, {y})");
             }
         }
+    }
+
+    fn with_shipped_roads() -> Terrain {
+        let (_, _, roads) = crate::road::tests::shipped_roads();
+        Terrain::default().with_roads(Arc::new(roads))
+    }
+
+    #[test]
+    fn a_road_is_cut_level_across_and_continuous() {
+        let t = with_shipped_roads();
+        let roads = t.roads.clone().unwrap();
+        let plain = Terrain::default();
+        let (mut flatter, mut checked) = (0, 0);
+        for (a, b) in roads.segments().step_by(23) {
+            let mid = (a + b) * 0.5;
+            let d = b - a;
+            let left = Vec2::new(-d.y, d.x) * (1.0 / d.length());
+            // Mid-road (away from its ends), the bed is a little below the
+            // land at the centerline, and level across the road.
+            let center = t.height(mid.x, mid.y);
+            let depth = plain.height(mid.x, mid.y) - center;
+            let across = |t: &Terrain, s: f32| {
+                let p = mid + left * s;
+                t.height(p.x, p.y)
+            };
+            let spread = |t: &Terrain| {
+                let hs: Vec<f32> = (-4..=4)
+                    .map(|k| across(t, k as f32 * RoadNetwork::HALF_WIDTH / 4.0))
+                    .collect();
+                hs.iter().fold(f32::MIN, |m, h| m.max(*h))
+                    - hs.iter().fold(f32::MAX, |m, h| m.min(*h))
+            };
+            if roads.near(mid, RoadNetwork::CUT_REACH * 3.0).is_some() && depth > 0.0 {
+                assert!(spread(&t) < 0.02, "{mid:?}: {}", spread(&t));
+                assert!(depth <= RoadNetwork::CUT_DEPTH + 0.01, "{depth}");
+                flatter += usize::from(spread(&t) < spread(&plain));
+                checked += 1;
+            }
+            // Continuous: no step walking across the road and its banks.
+            let mut last = across(&t, -15.0);
+            for k in 1..=600 {
+                let h = across(&t, -15.0 + k as f32 * 0.05);
+                assert!((h - last).abs() < 0.02, "step at {mid:?}");
+                last = h;
+            }
+            // Past the banks the land is untouched.
+            for s in [-RoadNetwork::CUT_REACH - 1.0, RoadNetwork::CUT_REACH + 1.0] {
+                let p = mid + left * s;
+                if roads.distance(p) > RoadNetwork::CUT_REACH {
+                    assert_eq!(t.height(p.x, p.y), plain.height(p.x, p.y));
+                }
+            }
+        }
+        assert!(checked > 100, "{checked}");
+        assert!(flatter * 10 > checked * 9, "{flatter} of {checked}");
+        // Far from every road the terrain is unchanged.
+        assert_eq!(t.height(7000.0, -7000.0), plain.height(7000.0, -7000.0));
     }
 }

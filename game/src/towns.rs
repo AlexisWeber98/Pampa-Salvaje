@@ -8,7 +8,7 @@ use std::path::Path;
 
 use bevy::prelude::*;
 use pampa_content::load_towns_or_builtin;
-use pampa_core::{PlaceKind, RailLine, TownLayout, WorldConfig, place_towns};
+use pampa_core::{PlaceKind, RailLine, RoadNetwork, TownLayout, WorldConfig, place_towns};
 use pampa_render::font;
 
 /// The world to build, its towns, and what went wrong reading them.
@@ -20,13 +20,16 @@ pub struct LoadedWorld {
     pub towns: Vec<TownLayout>,
     /// The railway line through the towns, its links checked against them.
     pub line: RailLine,
+    /// The dirt roads between neighbouring towns, and each railway town's
+    /// rural track across its level crossing.
+    pub roads: RoadNetwork,
     /// Problems found, ready to log as warnings.
     pub warnings: Vec<String>,
 }
 
 /// Loads the towns file at `path` and places every valid town in its world,
 /// falling back to the built-in Eduardo Castex when no town can be built,
-/// then runs the railway line through them.
+/// then runs the railway line and the roads through them.
 pub fn load_world(path: &Path) -> LoadedWorld {
     let (content, errors) = load_towns_or_builtin(path);
     let mut warnings: Vec<String> = errors.iter().map(|e| format!("towns: {e}")).collect();
@@ -50,10 +53,13 @@ pub fn load_world(path: &Path) -> LoadedWorld {
     }
     let (line, broken) = RailLine::build(names.as_deref(), &towns, world.bounds());
     warnings.extend(broken.iter().map(|e| format!("towns: {e}")));
+    let (roads, left_out) = RoadNetwork::build(&towns, &line, world.bounds());
+    warnings.extend(left_out.iter().map(|e| format!("towns: {e}")));
     LoadedWorld {
         world,
         towns,
         line,
+        roads,
         warnings,
     }
 }
@@ -176,6 +182,60 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_world_has_its_roads_and_one_level_crossing_by_each_station() {
+        let loaded = load_world(&asset_path(TOWNS_FILE));
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        let roads = &loaded.roads;
+        assert!(roads.length_between(0, 1).is_some());
+        assert!(roads.length_between(0, 2).is_some());
+        let mut world = World::with_towns(loaded.world, Terrain::default(), &loaded.towns);
+        world.lay_roads(roads.clone());
+        let fences = pampa_core::FenceLayout::build(
+            world.config,
+            &world.terrain,
+            &loaded.towns,
+            &loaded.line,
+        );
+        world.fence(&fences);
+        assert!(!fences.gates.is_empty() && !fences.openings.is_empty());
+        let flora = pampa_core::FloraSite::new(world.config, &world.terrain, &loaded.line)
+            .with_fences(&fences);
+        world.plant(&flora);
+        let collider = pampa_core::Circle::new(pampa_core::Rider::COLLIDER_RADIUS);
+        for (i, town) in loaded.towns.iter().enumerate() {
+            let crossings: Vec<_> = roads
+                .roads
+                .iter()
+                .filter(|r| r.from == i)
+                .flat_map(|r| r.crossings.iter())
+                .collect();
+            assert_eq!(crossings.len(), 1, "{}", town.name);
+            let station = town
+                .buildings
+                .iter()
+                .find(|b| b.kind == BuildingKind::Station)
+                .unwrap();
+            assert!(crossings[0].at.distance(station.footprint.center()) < 160.0);
+            // Its rural track runs from the street over the crossing.
+            assert!(
+                roads
+                    .roads
+                    .iter()
+                    .any(|r| r.from == i && r.kind == pampa_core::RoadKind::Rural)
+            );
+        }
+        // Every road, fenced on both sides, is open from end to end.
+        for road in &roads.roads {
+            for w in road.path.windows(2) {
+                for k in 0..4 {
+                    let p = w[0] + (w[1] - w[0]) * (k as f32 / 4.0);
+                    assert_eq!(world.resolve(collider, p, |_| ()), p, "{p:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn a_broken_railway_line_warns_naming_the_towns_and_keeps_them() {
         let path = temp_towns(
             "line",
@@ -191,12 +251,14 @@ mod tests {
         assert_eq!(loaded.towns.len(), 3);
         assert_eq!(loaded.line.towns, [0, 2]);
         assert!(loaded.line.links.is_empty());
-        let [duplicate, unknown, crossing] = &loaded.warnings[..] else {
+        let [duplicate, unknown, crossing, road] = &loaded.warnings[..] else {
             panic!("{:?}", loaded.warnings)
         };
         assert!(duplicate.contains("`Este`"), "{duplicate}");
         assert!(unknown.contains("`Rancul`"), "{unknown}");
         assert!(crossing.contains("`Medio`"), "{crossing}");
+        // The road between them would cross Medio too, and is left out.
+        assert!(road.contains("road") && road.contains("`Medio`"), "{road}");
         let report = TownReport::new(&loaded);
         assert_eq!(report.warnings, loaded.warnings);
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();

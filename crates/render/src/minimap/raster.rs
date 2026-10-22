@@ -142,6 +142,9 @@ pub mod palette {
     pub const SHED: [u8; 4] = [128, 124, 116, 255];
     pub const WATER: [u8; 4] = [92, 124, 140, 255];
     pub const RAIL: [u8; 4] = [62, 50, 42, 255];
+    /// Dirt roads: a warm brown, darker than the streets, lighter than the
+    /// rail.
+    pub const ROAD: [u8; 4] = [168, 124, 76, 255];
     pub const INK: [u8; 4] = [40, 30, 24, 255];
     pub const PLAYER: [u8; 4] = [196, 40, 28, 255];
     pub const WALKER: [u8; 4] = [48, 40, 96, 255];
@@ -156,6 +159,17 @@ pub const LABEL_SCALE: usize = 2;
 /// `links` where they cross the frame, buildings colored by kind and each
 /// named place's initial over it.
 pub fn rasterize_town(town: &TownLayout, links: &[Railway], frame: &MapFrame) -> Canvas {
+    rasterize_town_with_roads(town, links, &[], frame)
+}
+
+/// [`rasterize_town`], with the dirt `roads` (straight pieces of their
+/// centerlines) painted under the railway where they cross the frame.
+pub fn rasterize_town_with_roads(
+    town: &TownLayout,
+    links: &[Railway],
+    roads: &[(GroundVec2, GroundVec2)],
+    frame: &MapFrame,
+) -> Canvas {
     let size = frame.size_px;
     let mut map = Canvas::new(size);
     // Aged paper, darker toward the edge.
@@ -193,15 +207,31 @@ pub fn rasterize_town(town: &TownLayout, links: &[Railway], frame: &MapFrame) ->
         map.set(m.x as i32, m.y as i32, [96, 110, 60, 255]);
     }
 
+    // Roads, cut to the frame, under the railway and the buildings.
+    let shown = pampa_core::Aabb::from_center_size(
+        frame.center,
+        GroundVec2::new(2.0 * frame.half_extent, 2.0 * frame.half_extent),
+    );
+    let half = (pampa_core::RoadNetwork::HALF_WIDTH / frame.meters_per_px()).max(1.0);
+    for &(a, b) in roads {
+        if let Some((enter, exit)) = shown.segment_overlap(a, b) {
+            let (s, e) = (
+                frame.to_map(a + (b - a) * enter),
+                frame.to_map(a + (b - a) * exit),
+            );
+            let steps = s.distance(e).ceil() as usize;
+            for k in 0..=steps {
+                let p = s.lerp(e, k as f32 / steps.max(1) as f32);
+                map.fill_rect(p - Vec2::splat(half), p + Vec2::splat(half), palette::ROAD);
+            }
+        }
+    }
+
     // Railway: a dark line with sleeper ticks across it, then the links of
     // the railway line, cut to the frame (they run for kilometers).
     if let Some(rail) = town.railway {
         track_line(&mut map, frame.to_map(rail.start), frame.to_map(rail.end));
     }
-    let shown = pampa_core::Aabb::from_center_size(
-        frame.center,
-        GroundVec2::new(2.0 * frame.half_extent, 2.0 * frame.half_extent),
-    );
     for link in links {
         if let Some((enter, exit)) = shown.segment_overlap(link.start, link.end) {
             let along = link.end - link.start;
@@ -557,6 +587,40 @@ mod tests {
         assert_eq!(at(&with, east)[..3], palette::RAIL[..3]);
         // The far link leaves the map as it was.
         assert_eq!(rasterize_town(&t, &[far], &frame), without);
+    }
+
+    #[test]
+    fn roads_are_painted_in_dirt_cut_to_the_frame_under_the_rail() {
+        let t = town();
+        let frame = MapFrame::for_town(&t, 320);
+        // A road leaving the grid's south-west corner diagonally, out of
+        // the frame, and one far away.
+        let grid = t.grid();
+        let from = grid.min - GroundVec2::new(5.0, 5.0);
+        let road = (from, from - GroundVec2::new(400.0, 300.0));
+        let far = (
+            GroundVec2::new(5000.0, 5000.0),
+            GroundVec2::new(5200.0, 5000.0),
+        );
+        let without = rasterize_town_with_roads(&t, &[], &[], &frame);
+        assert_eq!(without, rasterize_town(&t, &[], &frame));
+        let with = rasterize_town_with_roads(&t, &[], &[road, far], &frame);
+        let inside = road.0 + (road.1 - road.0) * 0.04;
+        assert!(frame.contains(inside));
+        let m = frame.to_map(inside);
+        assert_eq!(
+            with.get(m.x as usize, m.y as usize)[..3],
+            palette::ROAD[..3]
+        );
+        assert_ne!(palette::ROAD[..3], palette::RAIL[..3]);
+        assert_ne!(palette::ROAD[..3], palette::STREET[..3]);
+        let painted = with
+            .pixels
+            .chunks(4)
+            .filter(|p| p[..3] == palette::ROAD[..3])
+            .count();
+        assert!(painted > 30, "{painted}");
+        assert_eq!(rasterize_town_with_roads(&t, &[], &[far], &frame), without);
     }
 
     #[test]

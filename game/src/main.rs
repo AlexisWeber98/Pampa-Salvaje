@@ -10,12 +10,12 @@ mod towns;
 
 use bevy::prelude::*;
 use pampa_content::{TOWNS_FILE, asset_path};
-use pampa_core::{FloraSite, Terrain, World};
+use pampa_core::{FenceLayout, FloraSite, Terrain, World};
 use pampa_render::{
-    AssetRoot, AtmospherePlugin, CharacterVisualPlugin, FloraPlugin, HudPlugin, MinimapPlugin,
-    RailPlugin, SignPlugin, SpeechBubblePlugin, StreamFocus, TerrainPlugin, TownPlugin,
-    TrainPlugin, WorldChunks, WorldClock, WorldFlora, WorldRail, WorldTerrain, WorldTowns,
-    WorldTrain,
+    AssetRoot, AtmospherePlugin, CharacterVisualPlugin, FencePlugin, FloraPlugin, HudPlugin,
+    MinimapPlugin, RailPlugin, RoadPlugin, SignPlugin, SpeechBubblePlugin, StreamFocus,
+    TerrainPlugin, ThinFadePlugin, TownPlugin, TrainPlugin, WorldChunks, WorldClock, WorldFences,
+    WorldFlora, WorldRail, WorldTerrain, WorldTowns, WorldTrain,
 };
 
 fn main() {
@@ -25,9 +25,20 @@ fn main() {
     let loaded = towns::load_world(&asset_path(TOWNS_FILE));
     let report = towns::TownReport::new(&loaded);
     let mut world = World::with_towns(loaded.world, Terrain::default(), &loaded.towns);
-    // Caldenes, chañares and grass between the towns, off the track. Every
-    // tree trunk of the world is an obstacle from the start, drawn or not.
-    let flora = FloraSite::new(world.config, &world.terrain, &loaded.line);
+    // The dirt roads, cut into the ground, with their level crossings and
+    // signposts (thin obstacles).
+    world.lay_roads(loaded.roads.clone());
+    // Wire fences on the surveyed grid and along both sides of every road,
+    // with gates into the fields; every span and shut gate is a thin
+    // obstacle.
+    let started = std::time::Instant::now();
+    let fences = FenceLayout::build(world.config, &world.terrain, &loaded.towns, &loaded.line);
+    let spans = world.fence(&fences);
+    let fenced = started.elapsed();
+    // Caldenes, chañares and grass between the towns, off the track, the
+    // roads and the fence lines. Every tree trunk of the world is an
+    // obstacle from the start, drawn or not.
+    let flora = FloraSite::new(world.config, &world.terrain, &loaded.line).with_fences(&fences);
     world.plant(&flora);
     // The errand: Don Hidalgo in the first town's plaza sends the player to
     // comisario Farach. Both stand in the way like any obstacle.
@@ -47,6 +58,7 @@ fn main() {
     .insert_resource(WorldTerrain(world.terrain.clone()))
     .insert_resource(WorldChunks(world.config))
     .insert_resource(WorldFlora(flora))
+    .insert_resource(WorldFences(fences))
     // The CC0 vegetation models and ground textures (see CREDITS.md).
     .insert_resource(AssetRoot(asset_path("")))
     .insert_resource(StreamFocus(position))
@@ -91,9 +103,16 @@ fn main() {
         complaints::ComplaintsPlugin,
         camera::FollowCameraPlugin,
     ))
+    // The roads, their level crossings and signposts, and the fences and
+    // gates, chunk by chunk; trees, fences and signs fade out of the
+    // camera's way.
+    .add_plugins((RoadPlugin, FencePlugin, ThinFadePlugin))
     // The errand and the clock and objective in the corner.
     .add_plugins((errand::ErrandPlugin, HudPlugin))
     .add_systems(Startup, towns::log_town_report)
+    .add_systems(Startup, move || {
+        info!("fences: {spans} spans as obstacles, laid in {fenced:.1?}");
+    })
     .add_systems(Update, quit_on_escape)
     .run();
 }
