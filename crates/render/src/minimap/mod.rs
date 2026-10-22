@@ -22,10 +22,10 @@ use pampa_core::{Railway, Vec2 as GroundVec2, nearest_town};
 
 use crate::character::VisualPose;
 use crate::rail::WorldRail;
-use crate::terrain::StreamFocus;
+use crate::terrain::{StreamFocus, WorldTerrain};
 use crate::town::WorldTowns;
 use crate::train::WorldTrain;
-use raster::{Canvas, MapFrame, Markers, draw_markers, palette, rasterize_town};
+use raster::{Canvas, MapFrame, Markers, draw_markers, palette, rasterize_town_with_roads};
 
 /// Side of the map images, in pixels.
 pub const MAP_PX: usize = 320;
@@ -116,14 +116,34 @@ fn links(rail: Option<&WorldRail>) -> Vec<Railway> {
     rail.map(|r| r.0.segments().collect()).unwrap_or_default()
 }
 
+/// The roads' straight pieces, painted on every town's layer where they
+/// cross its frame.
+fn roads(terrain: Option<&WorldTerrain>) -> Vec<(GroundVec2, GroundVec2)> {
+    terrain
+        .and_then(|t| t.0.roads.as_deref())
+        .map(|r| r.segments().collect())
+        .unwrap_or_default()
+}
+
+/// What a town's layer shows beyond the town: the railway line's links and
+/// the roads.
+type Lines = (Vec<Railway>, Vec<(GroundVec2, GroundVec2)>);
+
 fn rgba(c: [u8; 4]) -> Color {
     Color::srgba_u8(c[0], c[1], c[2], c[3])
 }
 
+/// Where the map starts and what it draws beyond the town.
+type MapSources<'a> = (
+    Option<Res<'a, StreamFocus>>,
+    Option<Res<'a, WorldRail>>,
+    Option<Res<'a, WorldTerrain>>,
+);
+
 fn spawn_minimap(
     mut commands: Commands,
     towns: Option<Res<WorldTowns>>,
-    (focus, rail): (Option<Res<StreamFocus>>, Option<Res<WorldRail>>),
+    (focus, rail, terrain): MapSources,
     mut images: ResMut<Assets<Image>>,
 ) {
     let Some(towns) = towns else {
@@ -136,7 +156,10 @@ fn spawn_minimap(
     let town = &towns.0[index];
     let frame = MapFrame::for_town(town, MAP_PX);
     let links = links(rail.as_deref());
-    let base = images.add(map_image(rasterize_town(town, &links, &frame).pixels));
+    let roads = roads(terrain.as_deref());
+    let base = images.add(map_image(
+        rasterize_town_with_roads(town, &links, &roads, &frame).pixels,
+    ));
     let canvas = Canvas::new(MAP_PX);
     let markers = images.add(map_image(canvas.pixels.clone()));
     let layer = || Node {
@@ -230,7 +253,7 @@ fn ground_of(translation: Vec3) -> GroundVec2 {
 /// Switches the map to town `index`, rasterizing its layer the first time.
 fn show_town(
     minimap: &mut Minimap,
-    (towns, links): (&WorldTowns, &[Railway]),
+    (towns, (links, roads)): (&WorldTowns, &Lines),
     index: usize,
     images: &mut Assets<Image>,
     bases: &mut Query<&mut ImageNode, With<MinimapBase>>,
@@ -244,23 +267,29 @@ fn show_town(
     let base = minimap
         .bases
         .entry(index)
-        .or_insert_with(|| images.add(map_image(rasterize_town(town, links, &frame).pixels)))
+        .or_insert_with(|| {
+            images.add(map_image(
+                rasterize_town_with_roads(town, links, roads, &frame).pixels,
+            ))
+        })
         .clone();
     for mut node in bases {
         node.image = base.clone();
     }
 }
 
-/// What the minimap reads of the world: towns, trains and the railway line.
+/// What the minimap reads of the world: towns, trains, the railway line
+/// and the roads (carried by the terrain).
 type WorldLayers<'a> = (
     Option<Res<'a, WorldTowns>>,
     Option<Res<'a, WorldTrain>>,
     Option<Res<'a, WorldRail>>,
+    Option<Res<'a, WorldTerrain>>,
 );
 
 fn update_markers(
     minimap: Option<ResMut<Minimap>>,
-    (towns, trains, rail): WorldLayers,
+    (towns, trains, rail, terrain): WorldLayers,
     target: Option<Res<MapTarget>>,
     icons: Query<(&MapIcon, &Transform, Option<&VisualPose>)>,
     mut bases: Query<&mut ImageNode, With<MinimapBase>>,
@@ -277,10 +306,10 @@ fn update_markers(
         && let Some(nearest) = nearest_town(&towns.0, at)
         && nearest != minimap.town
     {
-        let links = links(rail.as_deref());
+        let lines = (links(rail.as_deref()), roads(terrain.as_deref()));
         show_town(
             &mut minimap,
-            (towns, &links),
+            (towns, &lines),
             nearest,
             &mut images,
             &mut bases,

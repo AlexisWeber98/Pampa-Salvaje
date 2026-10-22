@@ -18,6 +18,7 @@ pub mod hud;
 pub mod minimap;
 pub mod obj;
 pub mod rail;
+pub mod road;
 pub mod signs;
 pub mod streaming;
 pub mod terrain;
@@ -34,6 +35,7 @@ pub use flora::{FloraAccent, FloraPlugin, GrassTuft, TreePart, VegetationModels,
 pub use hud::{HudObjective, HudPlugin};
 pub use minimap::{MapIcon, MapTarget, MinimapPlugin};
 pub use rail::{LineTrack, RailPlugin, WorldRail};
+pub use road::{CrossingPart, RoadPlugin, RoadSurface, SignpostPart};
 pub use signs::{SignPlugin, Signboard};
 pub use streaming::{StreamingPlan, StreamingSet};
 pub use terrain::{StreamFocus, TerrainChunk, TerrainPlugin, WorldChunks, WorldTerrain};

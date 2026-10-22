@@ -12,6 +12,9 @@
 //! still decides the hue. The normal, roughness and ambient-occlusion maps
 //! are blended the same way. UVs are world space ([`ground_uv`]), so the
 //! tiles run on across chunk borders without a seam.
+//!
+//! Roads wear Ground 102 (compressed dirt, ambientCG, CC0 1.0) alone:
+//! [`road_material`], on the road surface drawn by [`crate::road`].
 
 use std::fmt;
 use std::path::Path;
@@ -241,6 +244,49 @@ fn blend(soil: &Maps, grass: &Maps) -> GroundDetail {
     }
 }
 
+/// The dirt of a road on its own: Ground 102's colour, a little greyer and
+/// flatter than the photo so the vertex colour sets the hue, with its
+/// relief, roughness and occlusion.
+fn dirt(maps: &Maps) -> GroundDetail {
+    let n = (maps.size * maps.size) as usize;
+    let mean = maps.mean_luma();
+    let (mut color, mut normal, mut surface) = (
+        Vec::with_capacity(n * 4),
+        Vec::with_capacity(n * 4),
+        Vec::with_capacity(n * 4),
+    );
+    let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    for i in 0..n {
+        let c = Maps::rgb(&maps.color, i) / mean.max(1e-3);
+        let c = Vec3::splat(luma(c)).lerp(c, ROAD_SATURATION);
+        let c = Vec3::splat(BRIGHTNESS) + (c - Vec3::ONE) * ROAD_CONTRAST * BRIGHTNESS;
+        color.extend([byte(c.x), byte(c.y), byte(c.z), 255]);
+        let nv = Maps::rgb(&maps.normal, i) * 2.0 - Vec3::ONE;
+        let nv = Vec3::new(nv.x * RELIEF, nv.y * RELIEF, nv.z.max(0.05)).normalize_or(Vec3::Z);
+        let nv = nv * 0.5 + Vec3::splat(0.5);
+        normal.extend([byte(nv.x), byte(nv.y), byte(nv.z), 255]);
+        let ao = Maps::grey(&maps.occlusion, i);
+        let rough = Maps::grey(&maps.roughness, i);
+        surface.extend([byte(0.6 + 0.4 * ao), byte(rough.max(0.75)), 0, 255]);
+    }
+    GroundDetail {
+        size: maps.size,
+        color,
+        normal,
+        surface,
+    }
+}
+
+/// How much colour and contrast of Ground 102 the road keeps: more than the
+/// grass ground, so wheel ruts and pebbles read.
+const ROAD_SATURATION: f32 = 0.5;
+const ROAD_CONTRAST: f32 = 0.7;
+
+/// Reads Ground 102 (compressed dirt) from `dir`, for the roads.
+pub fn load_road_detail(dir: &Path) -> Result<GroundDetail, PnmError> {
+    Ok(dirt(&Maps::load(dir, "Ground102")?))
+}
+
 /// Reads and blends Ground 109 (soil) and Grass 004 from `dir`.
 pub fn load_detail(dir: &Path) -> Result<GroundDetail, PnmError> {
     let soil = Maps::load(dir, "Ground109")?;
@@ -320,26 +366,56 @@ pub fn ground_material(
     let (Some(root), Some(images)) = (root, images) else {
         return material;
     };
-    let dir = root.join(GROUND_DIR);
     let started = std::time::Instant::now();
-    match load_detail(&dir) {
+    match load_detail(&root.join(GROUND_DIR)) {
         Ok(detail) => {
             info!(
                 "ground textures: {0}×{0} detail blended in {1:.0} ms",
                 detail.size,
                 started.elapsed().as_secs_f64() * 1000.0
             );
-            let size = detail.size;
-            let surface = images.add(image(size, detail.surface, TextureFormat::Rgba8Unorm));
-            material.base_color_texture =
-                Some(images.add(image(size, detail.color, TextureFormat::Rgba8UnormSrgb)));
-            material.normal_map_texture =
-                Some(images.add(image(size, detail.normal, TextureFormat::Rgba8Unorm)));
-            material.metallic_roughness_texture = Some(surface.clone());
-            // Metallic stays 0: the surface map's blue channel is 0 too.
-            material.occlusion_texture = Some(surface);
+            wear(&mut material, detail, images);
         }
         Err(error) => warn!("ground textures not loaded ({error}); drawing plain ground"),
+    }
+    material
+}
+
+/// Puts `detail` on `material`: colour, normal, and the occlusion and
+/// roughness map.
+fn wear(material: &mut StandardMaterial, detail: GroundDetail, images: &mut Assets<Image>) {
+    let size = detail.size;
+    let surface = images.add(image(size, detail.surface, TextureFormat::Rgba8Unorm));
+    material.base_color_texture =
+        Some(images.add(image(size, detail.color, TextureFormat::Rgba8UnormSrgb)));
+    material.normal_map_texture =
+        Some(images.add(image(size, detail.normal, TextureFormat::Rgba8Unorm)));
+    material.metallic_roughness_texture = Some(surface.clone());
+    // Metallic stays 0: the surface map's blue channel is 0 too.
+    material.occlusion_texture = Some(surface);
+}
+
+/// The road surface's material: Ground 102 dirt from ambientCG (CC0 1.0;
+/// see assets/textures/ground/CREDITS.md) when it can be read from `root`,
+/// tinted by the vertex colour, whose alpha feathers the road's edges into
+/// the grass. Blended over the ground, pulled toward the camera a little so
+/// it never fights the terrain under it. Without the textures a warning is
+/// logged and the plain vertex-painted road is drawn.
+pub fn road_material(root: Option<&Path>, images: Option<&mut Assets<Image>>) -> StandardMaterial {
+    let mut material = StandardMaterial {
+        base_color: Color::WHITE,
+        perceptual_roughness: 1.0,
+        reflectance: 0.1,
+        alpha_mode: AlphaMode::Blend,
+        depth_bias: 2.0,
+        ..default()
+    };
+    let (Some(root), Some(images)) = (root, images) else {
+        return material;
+    };
+    match load_road_detail(&root.join(GROUND_DIR)) {
+        Ok(detail) => wear(&mut material, detail, images),
+        Err(error) => warn!("road texture not loaded ({error}); drawing plain dirt"),
     }
     material
 }
@@ -429,6 +505,29 @@ mod tests {
         // Normals point out of the surface; AO never goes black.
         assert!(detail.normal.chunks(4).all(|p| p[2] >= 128));
         assert!(detail.surface.chunks(4).all(|p| p[0] >= 150 && p[2] == 0));
+    }
+
+    #[test]
+    fn the_road_dirt_keeps_more_grain_than_the_grass_ground_and_stays_bright() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets")
+            .join(GROUND_DIR);
+        let dirt = load_road_detail(&dir).unwrap();
+        let ground = load_detail(&dir).unwrap();
+        assert_eq!(dirt.size, 512);
+        let spread = |d: &GroundDetail| {
+            let lumas: Vec<f32> = d.color.chunks(4).map(|p| p[1] as f32 / 255.0).collect();
+            let mean = lumas.iter().sum::<f32>() / lumas.len() as f32;
+            let var = lumas.iter().map(|l| (l - mean).powi(2)).sum::<f32>() / lumas.len() as f32;
+            (mean, var.sqrt())
+        };
+        let (mean, grain) = spread(&dirt);
+        assert!((0.75..0.97).contains(&mean), "{mean}");
+        assert!(grain > spread(&ground).1, "{grain}");
+        assert!(dirt.normal.chunks(4).all(|p| p[2] >= 128));
+        let missing = road_material(Some(Path::new("/nonexistent")), None);
+        assert_eq!(missing.alpha_mode, AlphaMode::Blend);
+        assert!(missing.base_color_texture.is_none());
     }
 
     #[test]

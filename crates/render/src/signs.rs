@@ -60,6 +60,16 @@ pub struct BoardStyle {
 }
 
 impl BoardStyle {
+    /// A road signpost's arrow board: whitewashed timber, black letters.
+    pub fn signpost() -> Self {
+        Self {
+            board: [214, 204, 182],
+            frame: [74, 54, 36],
+            ink: [30, 26, 22],
+            grain: true,
+        }
+    }
+
     /// A period-appropriate look per landmark.
     pub fn for_place(kind: PlaceKind) -> Self {
         match kind {
@@ -100,6 +110,24 @@ impl BoardStyle {
             },
         }
     }
+}
+
+/// The board `paint_board` paints, as a texture with crisp pixel
+/// lettering.
+pub fn board_image(text: &str, layout: BoardLayout, style: BoardStyle, seed: f32) -> Image {
+    let mut image = Image::new(
+        Extent3d {
+            width: layout.width_px as u32,
+            height: layout.height_px as u32,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        paint_board(text, layout, style, seed),
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    image.sampler = ImageSampler::nearest();
+    image
 }
 
 /// Paints `text` on a board of `layout` size: framed, slightly worn and, for
@@ -221,19 +249,7 @@ fn spawn_town_signs(
             let (center, max_height) = mount_height(town, place.kind, sign);
             let layout = layout_board(&place.name, sign.width, max_height);
             let seed = place.kind as u32 as f32 * 3.0 + n as f32;
-            let mut image = Image::new(
-                Extent3d {
-                    width: layout.width_px as u32,
-                    height: layout.height_px as u32,
-                    depth_or_array_layers: 1,
-                },
-                TextureDimension::D2,
-                paint_board(&place.name, layout, style, seed),
-                TextureFormat::Rgba8UnormSrgb,
-                RenderAssetUsages::RENDER_WORLD,
-            );
-            // Crisp pixel lettering.
-            image.sampler = ImageSampler::nearest();
+            let image = board_image(&place.name, layout, style, seed);
             let face = materials.add(StandardMaterial {
                 base_color_texture: Some(images.add(image)),
                 perceptual_roughness: 0.85,
