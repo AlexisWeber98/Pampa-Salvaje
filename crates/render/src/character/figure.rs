@@ -938,11 +938,23 @@ fn look(kind: FigureKind) -> &'static Look {
     }
 }
 
-/// Every part of `kind`, standing. Deterministic.
+/// Every part of `kind`, standing. Deterministic. Hats, ponchos and
+/// skirts hang from their own joints so they can sway ([`hang`]).
+pub fn figure_parts(kind: FigureKind) -> Vec<PartSpec> {
+    let l = look(kind);
+    let mut parts = laid_parts(kind);
+    for part in &mut parts {
+        part.finish = finish_of(l, part);
+    }
+    hang(parts)
+}
+
+/// Every part of `kind`, standing, each on the body joint it is laid out
+/// on.
 ///
 /// Kept as a table, one part per line.
 #[rustfmt::skip]
-pub fn figure_parts(kind: FigureKind) -> Vec<PartSpec> {
+fn laid_parts(kind: FigureKind) -> Vec<PartSpec> {
     let l = look(kind);
     let mut parts = Vec::with_capacity(32);
     let mut add = |piece, joint, shape, color, center: [f32; 3], size: [f32; 3]| {
@@ -1105,9 +1117,15 @@ pub fn figure_parts(kind: FigureKind) -> Vec<PartSpec> {
             add(Headscarf, neck, Shape::Lump, cloth, [-0.11, 0.1, 0.0], [0.08, 0.1, 0.08]);
         }
     }
-    // Hats, ponchos and skirts hang from their own joints so they can sway.
+    parts
+}
+
+/// `parts` with hats, ponchos and skirts moved onto their own joints
+/// (hanging from the joint they were laid on), at the same rest place.
+fn hang(mut parts: Vec<PartSpec>) -> Vec<PartSpec> {
+    use Joint::*;
+    use Piece::*;
     for part in &mut parts {
-        part.finish = finish_of(l, part);
         let joint = match part.piece {
             Hat | Gacho | Bowler | Boina | Kepi => Some(Brim),
             Seam if part.joint == Joint::Neck => Some(Brim),
@@ -1542,6 +1560,35 @@ mod tests {
                 "{kind:?}"
             );
         }
+    }
+
+    #[test]
+    fn re_parented_parts_keep_their_rest_place_and_hang_from_their_old_joint() {
+        let mut moved = 0;
+        for kind in FigureKind::all() {
+            let laid = laid_parts(kind);
+            let hung = figure_parts(kind);
+            assert_eq!(laid.len(), hung.len(), "{kind:?}");
+            for (before, after) in laid.iter().zip(&hung) {
+                assert_eq!(before.piece, after.piece);
+                let at = |p: &PartSpec| p.joint.rest_position() + p.center;
+                assert!(
+                    at(before).distance(at(after)) < 1e-5,
+                    "{kind:?} {:?}",
+                    after.piece
+                );
+                if before.joint != after.joint {
+                    moved += 1;
+                    assert_eq!(
+                        after.joint.parent(),
+                        Some(before.joint),
+                        "{kind:?} {:?}",
+                        after.piece
+                    );
+                }
+            }
+        }
+        assert!(moved > 10, "{moved}");
     }
 
     #[test]

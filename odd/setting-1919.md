@@ -6,7 +6,9 @@ The game opens in **1919**. Every character, building and prop must fit that yea
 
 - The towns (General Pico, Monte Nievas, Eduardo Castex) are young railway towns, founded in the first decade of the 1900s around the stations of the British-owned railways that crossed the pampa.
 - La Pampa was then a **National Territory** (Territorio Nacional de La Pampa Central), not a province. Its police was the territorial police, appointed from Buenos Aires.
-- Life ran on horses, carts (sulkys, chatas) and the train. Cars were rare in small towns. **Do not add cars or trucks.**
+- Life ran on horses, carts (sulkys, chatas) and the train. Cars were rare in small towns. **Do not add cars or trucks**, with one exception (user, 2026-10-22): a single **Ford Model T** in General Pico, owned by the *intendente* (mayor). It is a status symbol and a curiosity in town.
+- Carts are everywhere: *carretas* (big two-wheeled ox carts), *chatas* and sulkys, most of all in the bigger towns.
+- Cattle (vacas) graze the fields, and gauchos ride across the countryside on horseback.
 - Streets were dirt. Light came from kerosene lamps and the station's lamps. There was no electric street lighting in small towns.
 - The general store (almacén de ramos generales) sold everything, and it was often also the bar and post office. The station, the church, the comisaría, the plaza and the store made up the civic core.
 

@@ -1025,6 +1025,55 @@ mod tests {
     }
 
     #[test]
+    fn train_cars_are_looked_at_as_far_as_the_orbit_arm_reaches() {
+        // The arm never reaches past the cars considered, with a little to
+        // spare, and the reach is not wastefully long.
+        let arm = OrbitParams::default().max_distance;
+        assert!(
+            CAR_REACH > arm && CAR_REACH <= arm + 10.0,
+            "{CAR_REACH} vs {arm}"
+        );
+        let car = |d: f32| pampa_core::PlacedCar {
+            kind: pampa_core::CarKind::Coach,
+            center: GroundVec2::new(d, 0.0),
+            direction: GroundVec2::new(0.0, 1.0),
+            length: 12.0,
+            on_rail: true,
+        };
+        let terrain = Terrain::default();
+        // A car whose side is at the end of the longest arm still counts.
+        assert!(!car_occluders(&[car(arm)], &terrain, GroundVec2::ZERO).is_empty());
+        assert!(car_occluders(&[car(CAR_REACH + 7.0)], &terrain, GroundVec2::ZERO).is_empty());
+    }
+
+    #[test]
+    fn the_canopy_roof_stands_on_the_leveled_station_ground() {
+        let town = TownLayout::castex_inspired();
+        let world = World::with_town(Terrain::default(), &town);
+        let occluders = CameraOccluders::from_town(&town, &world.terrain);
+        let canopy = town.canopies()[0];
+        let station = town
+            .buildings
+            .iter()
+            .find(|b| b.kind == BuildingKind::Station)
+            .unwrap()
+            .footprint
+            .center();
+        let roof = occluders
+            .0
+            .iter()
+            .find(|o| o.footprint == canopy.footprint)
+            .unwrap();
+        // Anchored on the station ground, wherever along the canopy it is
+        // measured: the station's leveled ground is flat.
+        let ground = world.terrain.height(station.x, station.y);
+        assert!((roof.bottom - ground - canopy.bottom()).abs() < 1e-4);
+        for corner in [canopy.footprint.min, canopy.footprint.max] {
+            assert!((world.terrain.height(corner.x, corner.y) - ground).abs() < 1e-4);
+        }
+    }
+
+    #[test]
     fn pulls_in_at_once_and_eases_out_slowly() {
         // Blocked: straight to the allowed reach, never beyond it.
         assert_eq!(ease_reach(1.0, 0.3, 0.001), 0.3);

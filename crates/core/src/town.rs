@@ -328,13 +328,16 @@ impl TownSize {
     /// Blocks the main plaza spans `(east-west, north-south)` on a grid of
     /// `blocks`: a big town merges two along its longer side (east-west on
     /// a square grid).
+    /// Never more blocks than the grid has, should a grid ever be narrower
+    /// than [`TownConfig::MIN_BLOCKS`] allows today.
     pub(crate) fn plaza_span(self, blocks: (usize, usize)) -> (usize, usize) {
-        match self {
+        let (w, h) = match self {
             Self::Small => (1, 1),
             Self::Big if blocks.0 >= blocks.1 => (2, 1),
             Self::Big => (1, 2),
             Self::VeryBig => (2, 2),
-        }
+        };
+        (w.min(blocks.0.max(1)), h.min(blocks.1.max(1)))
     }
 
     /// General stores in a town of `blocks`.
@@ -2774,6 +2777,82 @@ pub(crate) mod tests {
             );
             assert!(error.to_string().contains("police_stations 2"), "{error}");
         }
+    }
+
+    /// Whether `plaza` covers block `(i, j)` of town `c`.
+    fn covers(c: &TownConfig, t: &TownLayout, plaza: Aabb, (i, j): (usize, usize)) -> bool {
+        let pitch = c.block_size + c.street_width;
+        let g = t.grid().min;
+        let center = Vec2::new(
+            g.x + pitch * i as f32 + c.block_size / 2.0,
+            g.y + pitch * j as f32 + c.block_size / 2.0,
+        );
+        plaza.contains_point(center)
+    }
+
+    #[test]
+    fn bigger_towns_honor_block_and_facing_station_plazas() {
+        let base = |blocks, plaza| TownConfig {
+            name: "Grande".into(),
+            blocks,
+            plaza,
+            ..TownConfig::castex()
+        };
+        for blocks in [(8, 6), (6, 8), (9, 9)] {
+            for block in [(0, 0), (blocks.0 - 1, 2), (3, blocks.1 - 1)] {
+                let c = base(blocks, PlazaPlacement::Block(block.0, block.1));
+                let t = TownLayout::generate(&c).unwrap();
+                assert!(covers(&c, &t, t.plaza, block), "{blocks:?} {block:?}");
+                let expected = c.size().plaza_span(c.blocks);
+                assert_eq!(plaza_span(&c, &t), expected, "{blocks:?} {block:?}");
+                assert!(t.grid().contains(&t.plaza), "{blocks:?} {block:?}");
+                for b in &t.buildings {
+                    assert!(
+                        !b.footprint.intersects(&t.plaza.expanded(-0.01)),
+                        "{:?}",
+                        b.kind
+                    );
+                }
+            }
+            // Facing the station: on the row next to the railway (north),
+            // as near the middle as whole blocks allow.
+            let c = base(blocks, PlazaPlacement::FacingStation);
+            let t = TownLayout::generate(&c).unwrap();
+            assert!(
+                covers(&c, &t, t.plaza, (blocks.0 / 2, blocks.1 - 1))
+                    || covers(&c, &t, t.plaza, ((blocks.0 - 1) / 2, blocks.1 - 1)),
+                "{blocks:?}: {:?} in {:?}",
+                t.plaza,
+                t.grid()
+            );
+            let off = t.plaza.center().x - t.grid().center().x;
+            let pitch = c.block_size + c.street_width;
+            assert!(off.abs() <= pitch, "{blocks:?}: {off}");
+            assert_eq!(plaza_span(&c, &t), c.size().plaza_span(c.blocks));
+        }
+    }
+
+    #[test]
+    fn the_plaza_span_never_outgrows_a_narrow_grid() {
+        // The narrowest grid allowed, very big all the same.
+        let narrow = (TownConfig::MIN_BLOCKS, 64 / TownConfig::MIN_BLOCKS + 1);
+        let size = TownSize::of(narrow);
+        assert_ne!(size, TownSize::Small);
+        let (w, h) = size.plaza_span(narrow);
+        assert!(w <= narrow.0 && h <= narrow.1);
+        // Should the least grid ever shrink, the span still fits.
+        for blocks in [(1, 64), (64, 1), (1, 40), (2, 70)] {
+            for size in [TownSize::Small, TownSize::Big, TownSize::VeryBig] {
+                let (w, h) = size.plaza_span(blocks);
+                assert!(w <= blocks.0 && h <= blocks.1, "{size:?} {blocks:?}");
+            }
+        }
+        let c = TownConfig {
+            blocks: narrow,
+            ..TownConfig::castex()
+        };
+        let t = TownLayout::generate(&c).unwrap();
+        assert!(t.grid().contains(&t.plaza));
     }
 
     #[test]

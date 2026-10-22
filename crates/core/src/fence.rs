@@ -1034,12 +1034,16 @@ mod tests {
         let built = started.elapsed();
         let started = std::time::Instant::now();
         let count = world.fence(&fences);
+        let indexed = started.elapsed();
         println!(
-            "fences: {} runs, {} gates, {count} obstacles; laid in {built:?}, indexed in {:?}",
+            "fences: {} runs, {} gates, {count} obstacles; laid in {built:?}, indexed in {indexed:?}",
             fences.runs.len(),
             fences.gates.len(),
-            started.elapsed()
         );
+        // Generous bounds (about 0.1 s each in a dev build): laying and
+        // indexing the fences stay cheap at startup.
+        assert!(built.as_secs_f32() < 10.0, "laid in {built:?}");
+        assert!(indexed.as_secs_f32() < 10.0, "indexed in {indexed:?}");
         (world, towns, line, fences)
     }
 

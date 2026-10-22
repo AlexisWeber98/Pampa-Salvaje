@@ -531,6 +531,25 @@ mod tests {
     }
 
     #[test]
+    fn with_images_but_no_texture_files_both_materials_fall_back_to_plain() {
+        // An empty assets folder of its own.
+        let root = std::env::temp_dir().join(format!("pampa-no-textures-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut images = Assets::<Image>::default();
+        let ground = ground_material(Some(&root), Some(&mut images));
+        let road = road_material(Some(&root), Some(&mut images));
+        std::fs::remove_dir(&root).unwrap();
+        for material in [&ground, &road] {
+            assert!(material.base_color_texture.is_none());
+            assert!(material.normal_map_texture.is_none());
+            assert!(material.occlusion_texture.is_none());
+            assert_eq!(material.base_color, Color::WHITE);
+        }
+        assert_eq!(road.alpha_mode, AlphaMode::Blend);
+        assert_eq!(images.len(), 0, "no half-made textures");
+    }
+
+    #[test]
     fn mips_halve_down_to_one_texel() {
         let (data, levels) = with_mips(4, vec![200; 4 * 4 * 4]);
         assert_eq!(levels, 3);

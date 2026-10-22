@@ -910,6 +910,40 @@ mod tests {
     }
 
     #[test]
+    fn crossing_signs_fade_out_of_the_cameras_way_and_planks_do_not() {
+        let (_, _, terrain) = world();
+        let roads = terrain.roads.clone().unwrap();
+        let crossing = *roads.crossings().next().unwrap();
+        let (mut app, _, _) = laid_at(crossing.at);
+        let mut q = app
+            .world_mut()
+            .query_filtered::<(&Transform, Option<&ThinOccluder>), With<CrossingPart>>();
+        let parts: Vec<(Transform, bool)> = q
+            .iter(app.world())
+            .map(|(t, fade)| (*t, fade.is_some()))
+            .collect();
+        let near = |t: &Transform| {
+            let g = GroundVec2::new(t.translation.x, -t.translation.z);
+            roads
+                .crossings()
+                .any(|c| c.sign_spots().iter().any(|s| s.distance(g) < 1.0))
+        };
+        let (signs, planks): (Vec<_>, Vec<_>) = parts.iter().partition(|(t, _)| near(t));
+        // Each cross: its post and two black and two white arms.
+        assert_eq!(signs.len() % 10, 0);
+        assert!(!signs.is_empty());
+        assert!(
+            signs.iter().all(|(_, fades)| *fades),
+            "every post and arm fades"
+        );
+        assert!(!planks.is_empty());
+        assert!(
+            planks.iter().all(|(_, fades)| !*fades),
+            "planks lie flat, never fade"
+        );
+    }
+
+    #[test]
     fn signpost_boards_read_in_the_font() {
         let (_, _, terrain) = world();
         let roads = terrain.roads.clone().unwrap();

@@ -532,6 +532,17 @@ mod tests {
     }
 
     #[test]
+    fn planting_the_whole_world_stays_quick() {
+        let (mut world, _, flora) = site();
+        let started = std::time::Instant::now();
+        let planted = world.plant(&flora);
+        let took = started.elapsed();
+        assert!(planted > 1000, "{planted}");
+        // A generous bound: startup must not stall on the trees.
+        assert!(took.as_secs_f32() < 10.0, "planted in {took:?}");
+    }
+
+    #[test]
     fn trees_keep_their_spacing_across_chunk_borders() {
         let (_, _, flora) = site();
         let trees: Vec<(ChunkCoord, Tree)> = between()

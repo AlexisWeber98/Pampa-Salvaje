@@ -45,6 +45,7 @@ Three PRs. The user commits and pushes; Claude never commits.
 - [x] **T1 (PR3)** core: `GameClock`. It has a day length, a base rate, a rate multiplier for riding, `advance_by` and `advance_until`, and formatting as HH:MM. Render: the sun direction, colour and intensity follow the hour, and nights stay readable. Route: delegated writer (trigger: 2+ non-trivial files across core, game and render).
 - [x] **T2 (PR3)** core: `LineTrain`. It runs the full line path (town tracks plus curved links), with a timetable, a 65 km/h cruise speed, station stops, a terminal layover, extra cars, and a pure `state_at` so time jumps are exact. Game and render: replace the per-town trains with the line train, and stream its cars by proximity. Route: delegated writer (trigger: 2+ non-trivial files across core, game and render).
 - [ ] **T3 (PR5)** boarding, riding, skipping and waiting, and the terminal-turnaround fix.
+  - **Opening (user, 2026-10-22).** The game starts with the protagonist riding the morning train from General Pico as it pulls into Monte Nievas. He is aboard (seated in a coach, with the free ride camera), the train brakes and stops at the platform, and he gets off onto it. The errand begins from there. This replaces the current start, where he stands on the platform beside the already-dwelling train. The opening reuses the PR5 board, ride and alight mechanics, and it can be skipped.
 - [ ] **T4 (PR5)** minimap compass.
 - [x] **T5 (PR4)** the errand, done on `feat/errand` as `odd/tasks/pampa-line.md` T5/T6, uncommitted (the user commits). Route: delegated writer. It also adds the HUD clock and the 2-coach consist.
 
@@ -91,7 +92,12 @@ cargo test --workspace
   - `R3-001` was fixed afterwards. `run_clock_and_train` now caps the frame delta at `MAX_STEP`, as the rider and the old per-town trains did, so a frame hitch cannot jump the train onto a rider.
     - RED: `a_frame_hitch_advances_the_clock_and_train_by_one_capped_step` failed with "advanced 7.5 game s, expected 1.5". Bevy already clamps a frame to 0.25 s.
     - GREEN: game tests 47.
-  - `R3-002` is a follow-up. A station within one consist length (95 m then, 93 m now) of a line end would stop with its coaches off the platform, and stations very close together could give zero-length legs. The shipped line is unaffected. Add a `LinePath` test with a station near a tip.
+  - `R3-002` is **closed by PR-F1, item 11.** A station within one consist length of a line end would stop with its coaches off the platform, and stations very close together could give zero-length legs. PR-F1 fixed both:
+    - stops are clamped and never go backwards;
+    - `LineTrain::misplaced_stops` lists stations whose coaches would stand more than 20 m away, and the game warns about them at startup;
+    - a `LinePath` test covers a station near a tip.
+
+    PR-F1 also made two related changes: terminals now centre the whole consist (turnaround in place, item 10), and equal departure times are rejected (item 9).
 
 - **2-coach rural consist (PR4, `feat/errand`).** The consist is now the locomotive, 2 coaches and 5 freight cars (the third coach became a boxcar): 8 cars and 93 m. The coaches' middle (the stop offset) is 27.5 m from the front, and it still stops at each station's projection (`stops_put_the_coaches_exactly_at_each_station_projection`). Every stop moves by the same offset, so the timetable did not change with the consist (at 1:5 it stayed Monte Nievas at 195.9 s and 547.7 s, Pico at 743.6 s, start 08:44:10). RED: `stations_are_in_line_order_with_the_coaches_alongside` failed with `left: 3, right: 2`.
 - **World rescaled 1:5 → 1:6 (PR4, user-approved 2026-10-20).** Origins: Monte Nievas (-3050, -1950) unchanged, Castex (-5150, -2850), General Pico (2917, 1783). The line path is now 11 008.0 m (was 12 805.5 m). Re-measured timetable (real seconds after departure, clock at 30×):
