@@ -303,6 +303,16 @@ impl FenceLayout {
         Some((index(&self.surveyed.0, p.x)?, index(&self.surveyed.1, p.y)?))
     }
 
+    /// The paddock `p` is in, between survey lines on all sides, as a box.
+    pub fn field_of(&self, p: Vec2) -> Option<Aabb> {
+        let (i, j) = self.cell_of(p)?;
+        let (xs, ys) = &self.surveyed;
+        Some(Aabb::new(
+            Vec2::new(xs[i], ys[j]),
+            Vec2::new(xs[i + 1], ys[j + 1]),
+        ))
+    }
+
     /// Whether `p` is in an unfenced paddock.
     pub fn is_descampado(&self, p: Vec2) -> bool {
         self.cell_of(p)
@@ -1013,7 +1023,7 @@ fn segments_distance(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> f32 {
 const FENCE_SEED: u32 = 0xa1a3_b4ad;
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::{Circle, FloraSite, Heading, Rider, RiderInput, RiderParams, World};
 
@@ -1025,7 +1035,7 @@ mod tests {
     }
 
     /// The shipped towns with roads laid, their fences, and the world.
-    fn fenced() -> (World, Vec<TownLayout>, RailLine, FenceLayout) {
+    pub(crate) fn fenced() -> (World, Vec<TownLayout>, RailLine, FenceLayout) {
         let (towns, line, roads) = crate::road::tests::shipped_roads();
         let mut world = World::with_towns(config(), Terrain::default(), &towns);
         world.lay_roads(roads);
@@ -1587,7 +1597,7 @@ mod tests {
 
     /// Cells of a 1 m raster over `window` a rider can stand in, reached
     /// from `from` through the gaps in `obstacles`.
-    fn reached(world: &World, window: Aabb, from: &[Vec2]) -> (Vec<bool>, usize) {
+    pub(crate) fn reached(world: &World, window: Aabb, from: &[Vec2]) -> (Vec<bool>, usize) {
         let w = window.size().x as usize;
         let h = window.size().y as usize;
         let mut blocked = vec![false; w * h];

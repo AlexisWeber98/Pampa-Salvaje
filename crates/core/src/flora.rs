@@ -9,8 +9,8 @@ use crate::rng::Rng;
 use std::sync::Arc;
 
 use crate::{
-    Aabb, ChunkCoord, FenceLayout, FlatArea, LinePath, RailLine, RoadNetwork, Terrain, Vec2,
-    WorldConfig,
+    Aabb, ChunkCoord, FenceLayout, FlatArea, KeepOut, LinePath, RailLine, RoadNetwork,
+    SettlementLayout, Terrain, Vec2, WorldConfig,
 };
 
 /// A native tree of the caldenal.
@@ -74,6 +74,8 @@ pub struct FloraSite {
     /// The surveyed fence lines: `x` of the north–south ones, `y` of the
     /// east–west ones.
     fences: (Vec<f32>, Vec<f32>),
+    /// The settlements' footprints, patios and huellas.
+    settlements: Option<Arc<KeepOut>>,
     seed: u32,
 }
 
@@ -100,6 +102,12 @@ impl FloraSite {
     pub const TREE_EDGE_MARGIN: f32 = 10.0;
     /// Least distance from a tree to a town's leveled band, in meters.
     pub const TREE_TOWN_MARGIN: f32 = 6.0;
+    /// Least distance from a tree's trunk to a settlement's footprints,
+    /// patio and huellas, in meters: crowns stay off roofs and ruts.
+    pub const TREE_SETTLEMENT_MARGIN: f32 = 4.0;
+    /// Least distance from a tuft, stone or shrub to a settlement's
+    /// footprints, patio and huellas, in meters.
+    pub const TUFT_SETTLEMENT_MARGIN: f32 = 0.3;
     /// Tree candidates tried per chunk of [`Self::REFERENCE_CHUNK`] meters.
     const TREE_CANDIDATES: f32 = 220.0;
     /// Tuft candidates tried per chunk of [`Self::REFERENCE_CHUNK`] meters.
@@ -121,6 +129,7 @@ impl FloraSite {
             rail: line.segments().map(|s| (s.start, s.end)).collect(),
             roads: terrain.roads.clone(),
             fences: (Vec::new(), Vec::new()),
+            settlements: None,
             seed: terrain.seed ^ FLORA_SEED,
         }
     }
@@ -146,6 +155,23 @@ impl FloraSite {
     pub fn with_fences(mut self, fences: &FenceLayout) -> Self {
         self.fences = fences.surveyed.clone();
         self
+    }
+
+    /// This flora, also kept off every settlement of `settlements`: its
+    /// footprints, its patio and its huellas.
+    pub fn with_settlements(mut self, settlements: &SettlementLayout) -> Self {
+        self.settlements = Some(settlements.keep_out.clone());
+        self
+    }
+
+    /// Whether `p` is more than `margin` meters (at most
+    /// [`KeepOut::MAX_MARGIN`]) from every settlement this flora keeps off
+    /// (see [`Self::with_settlements`]): an indexed, cheap check the
+    /// terrain's stones and shrubs share with the trees and tufts.
+    pub fn off_settlements(&self, p: Vec2, margin: f32) -> bool {
+        self.settlements
+            .as_ref()
+            .is_none_or(|k| k.is_clear(p, margin))
     }
 
     /// The world this flora grows in.
@@ -305,6 +331,7 @@ impl FloraSite {
                 && self.flat_areas.iter().all(|a| a.weight(at) == 0.0)
                 && rail_distance(rail, at) >= Self::TUFT_RAIL_MARGIN
                 && self.off_road(at, Self::TUFT_ROAD_MARGIN)
+                && self.off_settlements(at, Self::TUFT_SETTLEMENT_MARGIN)
                 && trees
                     .iter()
                     .all(|t| t.at.distance(at) > t.trunk_radius() + 0.4);
@@ -329,7 +356,8 @@ impl FloraSite {
     }
 
     /// Whether a tree may stand at `p`: inside the world, clear of every
-    /// town's band, of the track and of the roads.
+    /// town's band, of the track, of the roads, of the fence lines and of
+    /// the settlements.
     fn tree_room(&self, p: Vec2, rail: &[(Vec2, Vec2)]) -> bool {
         let bounds = self.config.bounds();
         let m = Self::TREE_EDGE_MARGIN;
@@ -345,6 +373,7 @@ impl FloraSite {
             && rail_distance(rail, p) >= Self::TREE_RAIL_MARGIN
             && self.off_road(p, Self::TREE_ROAD_MARGIN)
             && self.off_fences(p)
+            && self.off_settlements(p, Self::TREE_SETTLEMENT_MARGIN)
     }
 
     /// Whether `p` is at least [`Self::TREE_FENCE_MARGIN`] from every

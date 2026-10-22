@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use crate::obstacles::around;
 use crate::{
-    Body, Circle, FenceLayout, Floor, FloraSite, RoadNetwork, SideObstacle, StaticObstacles,
-    Terrain, TownLayout, Vec2, WorldConfig,
+    Body, Circle, FenceLayout, Floor, FloraSite, RoadNetwork, SettlementLayout, SideObstacle,
+    StaticObstacles, Terrain, TownLayout, Vec2, WorldConfig,
 };
 
 /// Axis-aligned playable area on the ground plane.
@@ -177,6 +177,16 @@ impl World {
         let count = spans.len();
         self.obstacles.extend(spans);
         count
+    }
+
+    /// Adds every house, galpón, tank and prop of `settlements` as a static
+    /// obstacle, and every corral as its rail spans (open at its gate).
+    /// Tree spots and huellas are no obstacle. Returns how many boxes were
+    /// added.
+    pub fn settle(&mut self, settlements: &SettlementLayout) -> usize {
+        let before = self.obstacles.len();
+        self.obstacles.extend(settlements.obstacles());
+        self.obstacles.len() - before
     }
 
     /// Adds every tree trunk `flora` grows anywhere in the world as a

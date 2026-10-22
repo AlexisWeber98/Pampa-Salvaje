@@ -55,7 +55,7 @@ Today the fields between the towns are empty grass. The pampa of 1919 was settle
     - `assets/models/props/polyhaven/` holds 5 glTF props. Barrels are ~33k triangles, so use them sparingly.
     - Credits are next to the files and in the root CREDITS.md. About 37 MB added.
     - No Poly Haven or ambientCG thatch exists.
-- [ ] **T2 — Core layout** (`crates/core/src/settlement.rs`):
+- [x] **T2 — Core layout** (`crates/core/src/settlement.rs`):
   - kinds (rancho, puesto, chacra, estancia);
   - compounds with worker houses;
   - huellas from an open gate, staying clear of roads, fences and cell edges;
@@ -63,6 +63,13 @@ Today the fields between the towns are empty grass. The pampa of 1919 was settle
   - `FenceLayout::field_of`.
 
   Add tests for determinism, clearance and reachability.
+  - Progress: route delegated writer (one new module plus small edits to fence, flora, world and lib).
+    - `SettlementLayout::build(terrain, towns, line, fences)`, seeded per gate. Settlements sit only behind open roadside gates, one per survey cell, with hubs at least 300 m apart. Each is clear of roads (25 m), the whole track (40 m), town bands (60 m) and grid fences (12 m).
+    - Each settlement has typed structures (`StructureKind`, with model `slot()` names), huellas (a trunk from the gate to the hub, then one branch to each door), corrals as rail spans with a 4 m opening, and `World::settle`.
+    - `FloraSite::with_settlements` and `off_settlements` use an indexed `KeepOut` (32 m grid). `FenceLayout::field_of` is added.
+    - Real map (fence fixture, half extent 8000): 15 settlements behind 56 open gates (4 ranchos, 4 puestos, 6 chacras, 1 estancia), 158 obstacles, laid in about 3 ms.
+    - RED observed with an empty-layout stub, then GREEN: 10 settlement tests. Core 291, render 168, game 83; fmt and clippy clean.
+    - For T3: render props (stones and shrubs) should call `FloraSite::off_settlements`, and `game/src/main.rs` must build the layout and call `world.settle` and `with_settlements`.
 - [ ] **T3 — Procedural buildings** (render):
   - the rancho (adobe with a thatch or corrugated roof), puesto and chacra (brick with a parapet);
   - the casco with its gallery, and the worker houses;
@@ -80,6 +87,16 @@ Today the fields between the towns are empty grass. The pampa of 1919 was settle
     - Test that a malformed glTF reaches `ModelState::Failed` and keeps the stand-in.
     - Make the test settle helpers panic with an explicit timeout message.
     - Reject absolute or `..` slot paths in `load_scene`.
+  - 3TD Starter Pack #1 (CC0, Ron Kapaun, OpenGameArt) was downloaded on 2026-10-22 under a second one-time permission, which is now revoked. It brings an Aermotor-style windmill on a lattice tower, an old wagon and barbed-wire fence segments, as COLLADA sources in `assets/models/third-party/3td-starter-pack/source/`.
+    - Convert them to glTF for the `windpump` (and maybe `carreta`) slots with our own stdlib-only Python script (`tools/dae2gltf.py`). Run it with `python -I`, with no new downloads.
+    - Spin the wheel in code. Note the conversion in its CREDITS.md.
+  - T2 review follow-ups, to do here or in T3:
+    - Settlement tree spots (eucalyptus, poplar) have no collision yet. Their trunks must block once render or flora plants them.
+    - Add direct unit tests of `FenceLayout::field_of` on a survey line, outside the grid, and at the outermost cell.
+  - T1 review follow-ups, to do here:
+    - Add a smoke test that loads every shipped prop glTF to `Ready`.
+    - The lantern glass is `alphaMode BLEND` with a JPEG base colour (no alpha), so it renders opaque. Override the material, or check how it looks.
+    - Commit the thatch generation command and seed as `assets/textures/buildings/thatch/generate.sh`.
 - [ ] **T5 — Minimap.** Add a field frame mode that shows settlements and huellas when no town is near.
 - [ ] **T6 — Docs.** Update the setting guide entries, README and this document.
 
