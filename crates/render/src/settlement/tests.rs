@@ -72,6 +72,11 @@ fn every_kind(hub: (f32, f32)) -> Settlement {
         structure(Cart, at(30.0, -40.0), (5.0, 2.2), 2.5, Side::North),
         structure(Eucalyptus, at(-60.0, -10.0), (1.0, 1.0), 26.0, Side::East),
         structure(Poplar, at(-5.0, -60.0), (1.0, 1.0), 18.0, Side::North),
+        // The rest of a short poplar row, 8 m apart, and a second eucalyptus.
+        structure(Poplar, at(-5.0, -68.0), (1.0, 1.0), 16.0, Side::North),
+        structure(Poplar, at(-5.0, -76.0), (1.0, 1.0), 19.0, Side::North),
+        structure(Poplar, at(-5.0, -84.0), (1.0, 1.0), 17.0, Side::North),
+        structure(Eucalyptus, at(-66.0, -14.0), (1.0, 1.0), 22.0, Side::East),
     ];
     let hub = GroundVec2::new(hx, hy);
     let mut tracks = vec![Track {
@@ -331,16 +336,27 @@ fn trees_grow_slender_on_their_spots() {
     let mut app = app(GroundVec2::new(100.0, 100.0));
     app.update();
     app.update();
-    let mut q = app.world_mut().query::<(&SettlementPart, &Transform)>();
-    let trees: Vec<(StructureKind, Vec3, Vec3)> = q
+    let kit = app.world().resource::<SettlementKit>().clone();
+    let bark = [kit.trees[0][0].id(), kit.trees[1][0].id()];
+    let mut q = app.world_mut().query::<(
+        &SettlementPart,
+        &Transform,
+        &MeshMaterial3d<StandardMaterial>,
+    )>();
+    let trees: Vec<(StructureKind, Vec3, Vec3, bool)> = q
         .iter(app.world())
-        .filter(|(p, _)| p.kind.is_tree())
-        .map(|(p, t)| (p.kind, t.translation, t.scale))
+        .filter(|(p, ..)| p.kind.is_tree())
+        .map(|(p, t, m)| (p.kind, t.translation, t.scale, bark.contains(&m.id())))
         .collect();
     assert!(!trees.is_empty());
-    for (kind, at, scale) in trees {
-        // Taller than wide: a poplar much more so.
-        let slender = scale.y / scale.x;
+    for (kind, at, scale, trunk) in trees {
+        // Trunks taller than wide: a poplar's much more so. (Crowns are
+        // built to their shape and scaled evenly; see the crown tests.)
+        let slender = if trunk {
+            scale.y / scale.x
+        } else {
+            f32::INFINITY
+        };
         let least = if kind == StructureKind::Poplar {
             2.5
         } else {
@@ -355,5 +371,62 @@ fn trees_grow_slender_on_their_spots() {
                 s.kind == kind && s.footprint.center().distance(GroundVec2::new(at.x, -at.z)) < 1e-3
             });
         assert!(spot);
+    }
+}
+
+/// The extent of `mesh` along each axis.
+fn extent(mesh: &Mesh) -> Vec3 {
+    let Some(bevy::mesh::VertexAttributeValues::Float32x3(points)) =
+        mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+    else {
+        panic!()
+    };
+    let (lo, hi) = points.iter().fold((Vec3::MAX, Vec3::MIN), |(lo, hi), p| {
+        let p = Vec3::from_array(*p);
+        (lo.min(p), hi.max(p))
+    });
+    hi - lo
+}
+
+#[test]
+fn tree_crowns_are_round_from_every_side_varied_and_shared() {
+    let mut app = app(GroundVec2::new(100.0, 100.0));
+    app.update();
+    app.update();
+    let kit = app.world().resource::<SettlementKit>().clone();
+    let mut q = app.world_mut().query::<(
+        &SettlementPart,
+        &Mesh3d,
+        &MeshMaterial3d<StandardMaterial>,
+        &Transform,
+    )>();
+    let crowns: Vec<(StructureKind, AssetId<Mesh>, Vec3)> = q
+        .iter(app.world())
+        .filter(|(p, _, m, _)| {
+            p.kind.is_tree() && (m.id() == kit.trees[0][1].id() || m.id() == kit.trees[1][1].id())
+        })
+        .map(|(p, mesh, _, t)| (p.kind, mesh.id(), t.scale))
+        .collect();
+    let meshes = app.world().resource::<Assets<Mesh>>();
+    for kind in [StructureKind::Poplar, StructureKind::Eucalyptus] {
+        let of_kind: Vec<_> = crowns.iter().filter(|c| c.0 == kind).collect();
+        assert!(of_kind.len() >= 2, "{kind:?}");
+        for (_, mesh, scale) in &of_kind {
+            let size = extent(meshes.get(*mesh).unwrap()) * *scale;
+            // Real depth along both ground axes: not a slab.
+            let (wide, deep) = (size.x.max(size.z), size.x.min(size.z));
+            assert!(deep >= 0.6 * wide, "{kind:?}: {size:?}");
+            if kind == StructureKind::Poplar {
+                // A Lombardy poplar's crown is a tall column.
+                assert!(size.y >= 3.0 * wide, "{size:?}");
+                assert!(wide >= 1.5, "{size:?}");
+            }
+            let tris = triangles(meshes.get(*mesh).unwrap());
+            assert!((300..=800).contains(&tris), "{kind:?}: {tris}");
+        }
+        // A row is not cloned: several crowns, from a few shared meshes.
+        let distinct: HashSet<AssetId<Mesh>> = of_kind.iter().map(|c| c.1).collect();
+        assert!(distinct.len() >= 2, "{kind:?}: one crown for all");
+        assert!(distinct.len() <= 4, "{kind:?}: {} crowns", distinct.len());
     }
 }

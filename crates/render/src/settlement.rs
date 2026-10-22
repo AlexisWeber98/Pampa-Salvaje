@@ -10,8 +10,10 @@
 //!   sharing one PBR material per surface ([`SettlementMaterials`]);
 //! - the windpump's wheel apart, spinning as a [`WindmillRotor`] (turned by
 //!   the [`crate::TownPlugin`]);
-//! - the eucalyptus grove and the poplar row, grown from the vegetation
-//!   models (or their stand-ins), slender and recoloured per species;
+//! - the eucalyptus grove and the poplar row: the vegetation models'
+//!   trunks (or their stand-ins) under procedural crowns ([`crown`]), a
+//!   Lombardy poplar's column and a eucalyptus's clumps, recoloured per
+//!   species;
 //! - the tracks (huellas) and the trodden yards as decals over the drawn
 //!   ground ([`track`]).
 //!
@@ -22,6 +24,7 @@
 //! range for good (see [`crate::flora::TUFT_FADE_STEPS`]).
 
 pub mod buildings;
+pub mod crown;
 pub mod materials;
 pub mod props;
 pub mod shape;
@@ -100,6 +103,8 @@ struct SettlementKit {
     rotor: Vec<(Surface, Handle<Mesh>)>,
     /// Bark and leaves of the eucalyptus, then of the poplar.
     trees: [[Handle<StandardMaterial>; 2]; 2],
+    /// The seeded crown variants of the eucalyptus, then of the poplar.
+    crowns: [Vec<Handle<Mesh>>; 2],
 }
 
 /// Draws the [`WorldSettlements`] chunk by chunk. Needs the
@@ -152,7 +157,16 @@ fn setup_kit(
             paint(Finish::Leaves, (1.2, 1.6, 0.95)),
         ],
     ];
-    commands.insert_resource(SettlementKit { rotor, trees });
+    let crowns = [crown::CrownKind::Eucalyptus, crown::CrownKind::Poplar].map(|kind| {
+        (0..crown::CROWN_VARIANTS)
+            .map(|v| meshes.add(crown::crown(kind, v)))
+            .collect()
+    });
+    commands.insert_resource(SettlementKit {
+        rotor,
+        trees,
+        crowns,
+    });
 }
 
 /// What one chunk child is.
@@ -364,13 +378,15 @@ impl Painter<'_> {
         }
     }
 
-    /// A planted tree on a tree spot: a vegetation model drawn tall and
-    /// slender, or its stand-in; nothing when neither is there.
+    /// A planted tree on a tree spot: a vegetation model's trunk (or its
+    /// stand-in's) drawn slender, under one of the species' shared
+    /// procedural crowns ([`crown`]), picked by its variant.
     fn tree(&self, structure: &Structure, tag: SettlementPart, out: &mut Vec<Piece>) {
         let at = structure.footprint.center();
         let h = structure.height;
         let poplar = structure.kind == StructureKind::Poplar;
-        // Crown width for its height: the poplar a narrow column.
+        // Trunk width for its height: the poplar's slender, the
+        // eucalyptus's spreading into its crown.
         let width = if poplar { 0.22 } else { 0.5 };
         let paint = &self.kit.trees[poplar as usize];
         let ground = self.terrain.height(at.x, at.y);
@@ -378,10 +394,11 @@ impl Painter<'_> {
             .with_rotation(Quat::from_rotation_y(
                 (structure.variant % 360) as f32 / 57.3,
             ));
+        let crown_radius = if poplar { 0.1 } else { 0.25 } * h;
         let fade = ThinOccluder {
             a: at,
             b: at,
-            radius: 0.8 * width * h / 2.0,
+            radius: 0.8 * crown_radius,
             bottom: ground - 0.5,
             top: ground + h,
         };
@@ -399,20 +416,25 @@ impl Painter<'_> {
         };
         let model = Model::CommonTree((structure.variant % 5) as u8 + 1);
         if let Some(parts) = self.models.and_then(|m| m.finished_parts(model)) {
-            for (finish, mesh) in parts {
+            for (_, mesh) in parts.iter().filter(|(f, _)| *f == Finish::Bark) {
                 push(
                     mesh.clone(),
-                    *finish == Finish::Bark,
+                    true,
                     turned.with_scale(Vec3::new(h * width, h, h * width)),
                 );
             }
         } else if let Some(kit) = self.stand_ins {
             let k = h / reference_height(Species::Calden);
             let scale = Vec3::new(k * width * 1.6, k, k * width * 1.6);
-            for (n, (mesh, _)) in kit.tree(Species::Calden).into_iter().enumerate() {
-                push(mesh, n == 0, turned.with_scale(scale));
-            }
+            let [(trunk, _), _] = kit.tree(Species::Calden);
+            push(trunk, true, turned.with_scale(scale));
+        } else {
+            // No trunk to carry it: no floating crown either.
+            return;
         }
+        let crowns = &self.kit.crowns[poplar as usize];
+        let crown = crowns[(structure.variant / 7) as usize % crowns.len()].clone();
+        push(crown, false, turned.with_scale(Vec3::splat(h)));
     }
 }
 
