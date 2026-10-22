@@ -14,7 +14,8 @@
 //! [`crate::terrain`]). A level crossing gets timber planks between and
 //! beside the rails, ramps up to them, and a St Andrew's cross on a post
 //! on either side; a signpost is a wooden post with an arrow board per
-//! town, painted in the bitmap font.
+//! town, painted in the bitmap font. Signs and signposts are
+//! [`ThinOccluder`]s: they fade when they hide the rider.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::PrimitiveTopology;
@@ -24,6 +25,7 @@ use pampa_core::{LevelCrossing, RoadNetwork, RoadPoint, Signpost, Terrain, Vec2 
 
 use crate::AssetRoot;
 use crate::coords::world_from_ground;
+use crate::flora::ThinOccluder;
 use crate::ground::{face_tangent, ground_uv, road_material};
 use crate::signs::{BoardStyle, board_image, layout_board};
 use crate::terrain::{
@@ -139,10 +141,18 @@ fn lay_roads(
                 MeshMaterial3d(kit.surface.clone()),
                 Transform::default(),
                 Piece::Surface,
+                None,
             ));
         }
         for crossing in roads.crossings().filter(|c| area.contains_point(c.at)) {
+            let signs = crossing.sign_spots();
             for (white, transform) in crossing_pieces(crossing, terrain) {
+                // The signs fade out of the camera's way; planks lie flat.
+                let at = GroundVec2::new(transform.translation.x, -transform.translation.z);
+                let fade = signs
+                    .into_iter()
+                    .find(|s| s.distance(at) < 1.0)
+                    .map(|s| ThinOccluder::post(s, 0.8, terrain, 3.2));
                 let material = match white {
                     Paint::Timber => kit.timber.clone(),
                     Paint::White => kit.white.clone(),
@@ -153,10 +163,12 @@ fn lay_roads(
                     MeshMaterial3d(material),
                     transform,
                     Piece::Crossing,
+                    fade,
                 ));
             }
         }
         for post in roads.signposts.iter().filter(|s| area.contains_point(s.at)) {
+            let fade = ThinOccluder::post(post.at, BOARD_WIDTH, terrain, POST_HEIGHT);
             for (mesh, material, transform) in signpost_pieces(
                 post,
                 terrain,
@@ -168,6 +180,7 @@ fn lay_roads(
                     MeshMaterial3d(material),
                     transform,
                     Piece::Signpost,
+                    Some(fade),
                 ));
             }
         }
@@ -176,8 +189,11 @@ fn lay_roads(
         }
         laid.queue_silenced(move |mut chunk: EntityWorldMut| {
             chunk.with_children(|road| {
-                for (mesh, material, transform, piece) in pieces {
+                for (mesh, material, transform, piece, fade) in pieces {
                     let mut part = road.spawn((mesh, material, transform));
+                    if let Some(fade) = fade {
+                        part.insert(fade);
+                    }
                     match piece {
                         Piece::Surface => part.insert(RoadSurface),
                         Piece::Crossing => part.insert(CrossingPart),
@@ -189,8 +205,14 @@ fn lay_roads(
     }
 }
 
-/// One entity to spawn under a chunk.
-type RoadBundle = (Mesh3d, MeshMaterial3d<StandardMaterial>, Transform, Piece);
+/// One entity to spawn under a chunk, and its fade shape if it has one.
+type RoadBundle = (
+    Mesh3d,
+    MeshMaterial3d<StandardMaterial>,
+    Transform,
+    Piece,
+    Option<ThinOccluder>,
+);
 
 #[derive(Clone, Copy)]
 enum Piece {
@@ -573,6 +595,12 @@ mod tests {
                 .count(),
             1 + 2 + 2
         );
+        let fading = app
+            .world_mut()
+            .query_filtered::<(), (With<SignpostPart>, With<ThinOccluder>)>()
+            .iter(app.world())
+            .count();
+        assert_eq!(fading, count::<SignpostPart>(&mut app));
         // Ride far away: the chunks go with their roads.
         app.insert_resource(StreamFocus(GroundVec2::new(-3500.0, 3500.0)));
         for _ in 0..40 {

@@ -14,8 +14,8 @@ use pampa_core::{FloraSite, Terrain, World};
 use pampa_render::{
     AssetRoot, AtmospherePlugin, CharacterVisualPlugin, FloraPlugin, HudPlugin, MinimapPlugin,
     RailPlugin, RoadPlugin, SignPlugin, SpeechBubblePlugin, StreamFocus, TerrainPlugin,
-    TownPlugin, TrainPlugin, WorldChunks, WorldClock, WorldFlora, WorldRail, WorldTerrain,
-    WorldTowns, WorldTrain,
+    ThinFadePlugin, TownPlugin, TrainPlugin, WorldChunks, WorldClock, WorldFlora, WorldRail,
+    WorldTerrain, WorldTowns, WorldTrain,
 };
 
 fn main() {
@@ -95,8 +95,9 @@ fn main() {
         complaints::ComplaintsPlugin,
         camera::FollowCameraPlugin,
     ))
-    // The roads, their level crossings and signposts, chunk by chunk.
-    .add_plugins(RoadPlugin)
+    // The roads, their level crossings and signposts, chunk by chunk; trees
+    // and signs fade out of the camera's way.
+    .add_plugins((RoadPlugin, ThinFadePlugin))
     // The errand and the clock and objective in the corner.
     .add_plugins((errand::ErrandPlugin, HudPlugin))
     .add_systems(Startup, towns::log_town_report)

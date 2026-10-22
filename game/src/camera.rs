@@ -5,6 +5,9 @@
 //! back behind a moving rider. Buildings, the platform canopy and the line
 //! train's cars never come between the camera and the rider: it pulls in in
 //! front of them at once, and eases back out slowly once the view clears.
+//! Thin things (trees, fences, signposts) do not move the camera: the line
+//! of sight is handed to render each frame ([`SightLine`]), which fades
+//! whichever of them stand in it.
 //! The orbit math lives in [`crate::orbit`].
 
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
@@ -14,7 +17,7 @@ use pampa_core::{
     Aabb, BuildingKind, Ground, LineTrain, PlacedCar, Terrain, TownLayout, Travel,
     Vec2 as GroundVec2,
 };
-use pampa_render::{WorldTrain, world_from_ground};
+use pampa_render::{SightLine, WorldTrain, world_from_ground};
 
 use crate::orbit::{Orbit, OrbitInput, OrbitParams};
 use crate::player::{DrivePlayer, GameWorld, Player};
@@ -108,8 +111,8 @@ impl Occluder {
 /// Buildings count as columns up to their roofs, so the camera may still
 /// look over a low shed, and the platform canopy as a roof slab. Tree trunks,
 /// canopy posts and other thin things are left out on purpose: a 0.7 m trunk
-/// sweeping across the view would make the camera jump in and out (fading
-/// them instead is left for later).
+/// sweeping across the view would make the camera jump in and out. Trees,
+/// fences and signposts are faded instead (see [`SightLine`]).
 #[derive(Resource, Debug, Clone, Default)]
 pub struct CameraOccluders(pub Vec<Occluder>);
 
@@ -360,6 +363,7 @@ fn follow_player(
     train: Option<Res<WorldTrain>>,
     tuning: Res<CameraTuning>,
     input: Res<CameraInput>,
+    sight: Option<ResMut<SightLine>>,
     player: Single<&Player>,
     camera: Single<(
         &mut Transform,
@@ -412,6 +416,10 @@ fn follow_player(
         target.lerp(desired, reach.0)
     };
     transform.look_at(focus, Vec3::Y);
+    // Trees, fences and signs in the way fade instead (render).
+    if let Some(mut sight) = sight {
+        sight.0 = Some((target, transform.translation));
+    }
 }
 
 impl FollowCamera {
@@ -665,6 +673,80 @@ mod tests {
             "inside the wall at {at:?}"
         );
         assert!(at.y > -4.0 && at.y < 0.0, "between wall and rider: {at:?}");
+    }
+
+    /// A caldén 6 m south of a rider at the origin facing north, planted,
+    /// and drawn as one fading part.
+    fn tree_app(walls: CameraOccluders) -> (App, Entity) {
+        let tree = pampa_core::Tree {
+            at: GroundVec2::new(0.0, -6.0),
+            species: pampa_core::Species::Calden,
+            height: 7.0,
+            yaw: 0.0,
+            variant: 0,
+        };
+        let mut world = World::default();
+        world.obstacles.push(tree.obstacle());
+        let mut app = headless_app(world.clone(), north_at(0.0, 0.0), walls);
+        app.init_resource::<Assets<StandardMaterial>>()
+            .add_plugins(pampa_render::ThinFadePlugin);
+        let material = app
+            .world_mut()
+            .resource_mut::<Assets<StandardMaterial>>()
+            .add(StandardMaterial::default());
+        let ground = world.terrain.height(0.0, -6.0);
+        let part = app
+            .world_mut()
+            .spawn((
+                pampa_render::ThinOccluder {
+                    a: tree.at,
+                    b: tree.at,
+                    radius: 0.8 * tree.crown_radius(),
+                    bottom: ground - 0.5,
+                    top: ground + tree.height,
+                },
+                MeshMaterial3d(material),
+            ))
+            .id();
+        (app, part)
+    }
+
+    #[test]
+    fn a_tree_behind_the_rider_fades_instead_of_pulling_the_camera_in() {
+        let (mut app, tree) = tree_app(CameraOccluders::default());
+        for _ in 0..3 {
+            app.update();
+        }
+        let r = rider(&mut app);
+        let follow = FollowCamera::default();
+        let (orbit, focus) = rig(&mut app);
+        let world = app.world().resource::<GameWorld>().0.clone();
+        let full = follow.desired(focus, &orbit, &world);
+        let at = camera(&mut app).translation;
+        assert!(at.distance(full) < 1e-3, "pulled in: {at} vs {full}");
+        // The camera is south of the tree, which stands in the view.
+        assert!(ground(at).y < -6.0, "{at}");
+        assert!(r.position.y > -6.0);
+        assert!(app.world().get::<pampa_render::Faded>(tree).is_some());
+    }
+
+    #[test]
+    fn a_building_still_pulls_the_camera_in_past_a_faded_tree() {
+        let wall = Occluder::column(
+            Aabb::new(GroundVec2::new(-5.0, -11.0), GroundVec2::new(5.0, -8.0)),
+            -10.0,
+            50.0,
+        );
+        let (mut app, tree) = tree_app(CameraOccluders(vec![wall]));
+        for _ in 0..3 {
+            app.update();
+        }
+        let at = ground(camera(&mut app).translation);
+        assert!(at.y > -8.0 && at.y < 0.0, "in front of the wall: {at:?}");
+        assert!(!wall.footprint.contains_point(at));
+        // Between the wall and the rider, the tree is still in the way.
+        assert!(at.y < -6.0, "{at:?}");
+        assert!(app.world().get::<pampa_render::Faded>(tree).is_some());
     }
 
     #[test]

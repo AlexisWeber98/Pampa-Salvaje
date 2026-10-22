@@ -31,7 +31,10 @@ pub use character::{
     CharacterVisual, CharacterVisualPlugin, Coat, FigureKind, TOWNSFOLK_LOOKS, VisualPose,
 };
 pub use coords::world_from_ground;
-pub use flora::{FloraAccent, FloraPlugin, GrassTuft, TreePart, VegetationModels, WorldFlora};
+pub use flora::{
+    Faded, FloraAccent, FloraPlugin, GrassTuft, SightLine, ThinFadePlugin, ThinOccluder, TreePart,
+    VegetationModels, WorldFlora,
+};
 pub use hud::{HudObjective, HudPlugin};
 pub use minimap::{MapIcon, MapTarget, MinimapPlugin};
 pub use rail::{LineTrack, RailPlugin, WorldRail};
