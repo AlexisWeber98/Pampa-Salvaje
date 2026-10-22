@@ -40,6 +40,12 @@ See `assets/models/vegetation/quaternius-ultimate-nature/CREDITS.md` for the ful
 
 See `assets/models/props/polyhaven/CREDITS.md` for details.
 
+| Asset | Author / source | Licence | Where | Changes |
+|---|---|---|---|---|
+| 3TD Starter Pack #1 (windmill, old wagon, barbed-wire fence segments) | Ron Kapaun (3TD), OpenGameArt (https://opengameart.org/content/3td-starter-pack-1) | CC0 1.0 | `assets/models/third-party/3td-starter-pack/` | Only the COLLADA sources and their textures are kept; they are converted to glTF for the model slots |
+
+See `assets/models/third-party/3td-starter-pack/CREDITS.md` for details.
+
 ## Rules
 
 - Every free or open-source asset is credited in this file and next to its files, and the code that loads it says where it comes from in a doc comment. This applies even when the licence does not ask for credit.
