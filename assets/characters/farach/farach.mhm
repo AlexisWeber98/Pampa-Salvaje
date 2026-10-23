@@ -1,0 +1,30 @@
+# Cabo / comisario Elias Farach of the territorial police: an adult man
+# of about 40 (age 0.615), sturdy. Dark tunic and trousers (the striped
+# male_casualsuit03, darkened to navy by tunic.mhmat), black shoes for
+# boots, the black fedora for a kepi. No brass buttons. Substitutions in
+# ../CREDITS.md.
+version v1.1.1
+name farach
+modifier macrodetails/Gender 1.000000
+modifier macrodetails/Age 0.615385
+modifier macrodetails/African 0.000000
+modifier macrodetails/Asian 0.000000
+modifier macrodetails/Caucasian 1.000000
+modifier macrodetails-universal/Muscle 0.650000
+modifier macrodetails-universal/Weight 0.700000
+modifier macrodetails-height/Height 0.500000
+modifier macrodetails-proportions/BodyProportions 0.500000
+skeleton game_engine.mhskel
+skinMaterial skins/middleage_caucasian_male/middleage_caucasian_male.mhmat
+proxy male1591 d7e4934e-daed-4ad5-a055-18c9cba487dc
+eyes Low-Poly 1cc97a30-85a1-42e6-a9f7-b3e753732baa
+material Low-Poly 1cc97a30-85a1-42e6-a9f7-b3e753732baa eyes/materials/brown.mhmat
+eyebrows eyebrow005 9da0aea6-fdf3-4862-baa4-0d122074179a
+hair short04 e09bfd91-f83f-4f9a-ba8c-4635cd1ae0d8
+clothes male_casualsuit03 39864dca-8d5c-4d7c-84ce-c00982e93cb7
+material male_casualsuit03 39864dca-8d5c-4d7c-84ce-c00982e93cb7 tunic.mhmat
+clothes shoes03 ad622a26-da1e-4e3c-9f8e-454edf10d504
+clothes fedora 566dbd52-71d1-4d76-a799-0474a5a384db
+material fedora 566dbd52-71d1-4d76-a799-0474a5a384db clothes/fedora01/materials/black_fedora.mhmat
+clothesHideFaces True
+subdivide False

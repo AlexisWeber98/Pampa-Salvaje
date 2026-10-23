@@ -1,0 +1,10 @@
+# The protagonist's worn jacket: the green jacket warmed to a leathery brown.
+# The garment's own textures from MakeHuman's data folder, multiplied by
+# diffuseColor. tools/mh2gltf.py resolves 'data/' paths in that folder.
+name protagonist_jacket
+diffuseColor 0.78 0.6 0.45
+shininess 0.2
+transparent False
+backfaceCull True
+diffuseTexture data/clothes/male_casualsuit05/male_casualsuit05_diffuse.png
+normalmapTexture data/clothes/male_casualsuit05/male_casualsuit05_normal.png
