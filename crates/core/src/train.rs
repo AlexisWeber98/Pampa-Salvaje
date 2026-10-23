@@ -1180,8 +1180,8 @@ mod line_tests {
         assert_eq!(train.state_at(Run::Up, 0.0).station, Some(PICO));
         let end = train.run_duration(Run::Up);
         assert_eq!(train.state_at(Run::Up, end).station, Some(CASTEX));
-        // About 11 real minutes from end to end.
-        assert!((600.0..800.0).contains(&end), "{end}");
+        // About 9.5 real minutes from end to end at 1:7.
+        assert!((500.0..650.0).contains(&end), "{end}");
     }
 
     #[test]
@@ -1529,11 +1529,11 @@ mod line_tests {
     fn pulling_out_now_and_coming_in_three_seconds_out_land_where_riding_would() {
         let (_, start) = shipped();
         let onboard = 12.0;
-        // Dwelling at Monte Nievas on the morning run.
-        let at = hm(10, 45);
+        // Dwelling at Monte Nievas on the morning run, half way through.
+        let (arrive, depart) = start.stop_times(Run::Up, NIEVAS).unwrap();
+        let at = hm(7, 0) + (arrive + depart) / 2.0 * BASE_RATE;
         let mut train = start.clone();
         train.advance(0.0, at, BASE_RATE);
-        let (arrive, depart) = train.stop_times(Run::Up, NIEVAS).unwrap();
         let mut left = train.clone();
         let game = left.skip_to_departure(at, onboard).unwrap();
         let ridden = ticked(&train, at, game, onboard);

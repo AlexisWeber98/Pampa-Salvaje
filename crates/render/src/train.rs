@@ -1059,12 +1059,22 @@ pub(crate) mod tests {
             seed: 1,
             police_stations: None,
         };
+        // Monte Nievas, and the others at their real offsets from it
+        // (east, north, in meters) scaled 1:7 and rounded to the meter.
+        let nievas = (-2450.0, -1950.0);
+        let at = |east: f32, north: f32| {
+            (
+                (nievas.0 + east / 7.0).round(),
+                (nievas.1 + north / 7.0).round(),
+            )
+        };
+        let (castex, pico) = (at(-12_600.0, -5_400.0), at(35_800.0, 22_400.0));
         let (towns, errors) = place_towns(
             &world,
             &[
-                town("Monte Nievas", -3050.0, -1950.0, (4, 3)),
-                town("Eduardo Castex", -5150.0, -2850.0, (5, 4)),
-                town("General Pico", 2917.0, 1783.0, (8, 8)),
+                town("Monte Nievas", nievas.0, nievas.1, (4, 3)),
+                town("Eduardo Castex", castex.0, castex.1, (5, 4)),
+                town("General Pico", pico.0, pico.1, (8, 8)),
             ],
         );
         assert!(errors.is_empty(), "{errors:?}");
@@ -1453,7 +1463,7 @@ pub(crate) mod tests {
     #[test]
     fn cars_far_from_the_focus_are_hidden() {
         // Overnight at Pico, with the focus at Castex.
-        let mut app = app_with_train(3600.0, GroundVec2::new(-5150.0, -2850.0));
+        let mut app = app_with_train(3600.0, GroundVec2::new(-4250.0, -2721.0));
         app.update();
         app.update();
         let drawn = cars(&mut app);

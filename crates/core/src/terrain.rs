@@ -358,7 +358,13 @@ mod tests {
                 hs.iter().fold(f32::MIN, |m, h| m.max(*h))
                     - hs.iter().fold(f32::MAX, |m, h| m.min(*h))
             };
-            if roads.near(mid, RoadNetwork::CUT_REACH * 3.0).is_some() && depth > 0.0 {
+            // Beside a level crossing the cut eases off the track bed on
+            // purpose (`RoadNetwork::cut`), so the bed is not level there.
+            let by_crossing = roads.crossings().any(|c| c.at.distance(mid) < 40.0);
+            if roads.near(mid, RoadNetwork::CUT_REACH * 3.0).is_some()
+                && depth > 0.0
+                && !by_crossing
+            {
                 assert!(spread(&t) < 0.02, "{mid:?}: {}", spread(&t));
                 assert!(depth <= RoadNetwork::CUT_DEPTH + 0.01, "{depth}");
                 flatter += usize::from(spread(&t) < spread(&plain));

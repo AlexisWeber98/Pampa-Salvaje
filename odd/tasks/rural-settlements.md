@@ -70,6 +70,7 @@ Today the fields between the towns are empty grass. The pampa of 1919 was settle
     - Each settlement has typed structures (`StructureKind`, with model `slot()` names), huellas (a trunk from the gate to the hub, then one branch to each door), corrals as rail spans with a 4 m opening, and `World::settle`.
     - `FloraSite::with_settlements` and `off_settlements` use an indexed `KeepOut` (32 m grid). `FenceLayout::field_of` is added.
     - Real map (fence fixture, half extent 8000): 15 settlements behind 56 open gates (4 ranchos, 4 puestos, 6 chacras, 1 estancia), 158 obstacles, laid in about 3 ms.
+    - Note (2026-10-23): after the 1:7 rescale (`odd/tasks/world-scale-1-7.md`) and the 600 m east shift the shipped world lays 130 226 fence spans and 13 settlements (3 ranchos, 3 puestos, 5 chacras, 2 estancias), 255 obstacles.
     - RED observed with an empty-layout stub, then GREEN: 10 settlement tests. Core 291, render 168, game 83; fmt and clippy clean.
     - For T3: render props (stones and shrubs) should call `FloraSite::off_settlements`, and `game/src/main.rs` must build the layout and call `world.settle` and `with_settlements`.
 - [x] **T3 — Procedural buildings** (render):

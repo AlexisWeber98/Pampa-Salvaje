@@ -714,12 +714,22 @@ pub(crate) mod tests {
             half_extent: WorldConfig::MAX_HALF_EXTENT,
             ..WorldConfig::default()
         };
+        // Monte Nievas, and the others at their real offsets from it
+        // (east, north, in meters) scaled 1:7 and rounded to the meter.
+        let nievas = (-2450.0, -1950.0);
+        let at = |east: f32, north: f32| {
+            (
+                (nievas.0 + east / 7.0).round(),
+                (nievas.1 + north / 7.0).round(),
+            )
+        };
+        let (castex, pico) = (at(-12_600.0, -5_400.0), at(35_800.0, 22_400.0));
         let towns = place(
             world,
             &[
-                config("Monte Nievas", -3050.0, -1950.0, (4, 3), true),
-                config("Eduardo Castex", -5150.0, -2850.0, (5, 4), true),
-                config("General Pico", 2917.0, 1783.0, (8, 8), true),
+                config("Monte Nievas", nievas.0, nievas.1, (4, 3), true),
+                config("Eduardo Castex", castex.0, castex.1, (5, 4), true),
+                config("General Pico", pico.0, pico.1, (8, 8), true),
             ],
         );
         (world, towns)
@@ -999,12 +1009,12 @@ pub(crate) mod tests {
                 .filter(|p| p.start.distance(p.end) <= RailLine::CURVE_STEP + 1e-2)
                 .count();
             assert!(short >= pieces.len() - 1, "{short} of {}", pieces.len());
-            // Bending adds only a little to the straight chord. At 1:6 the
-            // Castex–Monte Nievas link turns 62° and is 6.8% longer than its
-            // chord, so the bound leaves 8%.
+            // Bending adds only a little to the straight chord. At 1:7 the
+            // Castex–Monte Nievas link turns 73° and is 9.2% longer than its
+            // chord, so the bound leaves 10%.
             let chord = link.track.start.distance(link.track.end);
             assert!(
-                link.length() > chord && link.length() < chord * 1.08,
+                link.length() > chord && link.length() < chord * 1.10,
                 "{} {chord}",
                 link.length()
             );
@@ -1014,23 +1024,36 @@ pub(crate) mod tests {
     #[test]
     fn curves_take_the_full_radius_where_the_straights_leave_room() {
         let (_, line) = shipped();
+        let mut full = 0;
         for link in &line.links {
             assert_eq!(link.curves.len(), 2, "{:?}", link.curves);
             let chord = link.track.start.distance(link.track.end);
             for curve in &link.curves {
-                assert!(
-                    (curve.radius - RailLine::CURVE_RADIUS).abs() < 1.0,
-                    "{curve:?}"
-                );
                 let expected = curve.radius * (curve.turn.abs() / 2.0).tan();
                 assert!((curve.tangent - expected).abs() < 1e-2, "{curve:?}");
-                assert!(curve.tangent <= chord / 4.0, "{curve:?}");
+                assert!(curve.tangent <= chord / 4.0 + 1e-2, "{curve:?}");
+                if curve.tangent < chord / 4.0 - 1e-2 {
+                    // Room to spare: the full radius.
+                    assert!(
+                        (curve.radius - RailLine::CURVE_RADIUS).abs() < 1.0,
+                        "{curve:?}"
+                    );
+                    full += 1;
+                } else {
+                    // Capped at a quarter of the chord: tighter, but still a
+                    // wide curve. At 1:7 the short Castex–Monte Nievas link
+                    // turns 73° on curves of about 362 m.
+                    assert!(curve.radius < RailLine::CURVE_RADIUS, "{curve:?}");
+                    assert!(curve.radius > 300.0, "{curve:?}");
+                }
             }
             // Both town tracks run east-west: the link turns back the way
             // it turned.
             let net = link.curves[0].turn + link.curves[1].turn;
             assert!(net.abs() < 1e-3, "{:?}", link.curves);
         }
+        // The long Monte Nievas–General Pico link keeps the full radius.
+        assert_eq!(full, 2, "{:?}", line.links);
     }
 
     #[test]

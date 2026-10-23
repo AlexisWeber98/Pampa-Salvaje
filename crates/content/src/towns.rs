@@ -253,10 +253,19 @@ mod tests {
             side: Side::North,
             offset: 24.0,
         });
+        // Real offsets in meters, scaled 1:7 from Monte Nievas, which keeps
+        // its origin, and rounded to the meter (see the README).
+        let nievas = Vec2::new(-2450.0, -1950.0);
+        let scaled = |east: f32, north: f32| {
+            Vec2::new(
+                (nievas.x + east / 7.0).round(),
+                (nievas.y + north / 7.0).round(),
+            )
+        };
         for (town, origin, blocks) in [
-            (&content.towns[0], Vec2::new(-3050.0, -1950.0), (4, 3)),
-            (&content.towns[1], Vec2::new(-5150.0, -2850.0), (5, 4)),
-            (&content.towns[2], Vec2::new(2917.0, 1783.0), (8, 8)),
+            (&content.towns[0], nievas, (4, 3)),
+            (&content.towns[1], scaled(-12_600.0, -5_400.0), (5, 4)),
+            (&content.towns[2], scaled(35_800.0, 22_400.0), (8, 8)),
         ] {
             assert_eq!(town.origin, origin, "{}", town.name);
             assert_eq!(town.blocks, blocks, "{}", town.name);

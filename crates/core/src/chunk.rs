@@ -131,9 +131,11 @@ impl WorldConfig {
     pub const DEFAULT_HALF_EXTENT: f32 = 4000.0;
     /// 200 m chunks.
     pub const DEFAULT_CHUNK_SIZE: f32 = 200.0;
-    /// Farthest a world may reach from the origin. Positions are `f32`;
-    /// within 8 km they stay precise to about a millimeter.
-    pub const MAX_HALF_EXTENT: f32 = 8000.0;
+    /// Farthest a world may reach from the origin: 8.4 km, room for the
+    /// line at a 1:7 scale plus 5%. Positions are `f32`, which resolve
+    /// about a millimeter anywhere below 16 km (2^14 m), so 8.4 km keeps
+    /// them precise to about a millimeter with room to spare.
+    pub const MAX_HALF_EXTENT: f32 = 8400.0;
     /// Smallest chunk worth streaming on its own.
     pub const MIN_CHUNK_SIZE: f32 = 50.0;
 
@@ -335,6 +337,7 @@ mod tests {
         }
         .validated()
         .unwrap_err();
-        assert!(error.to_string().contains("8000"), "{error}");
+        let max = WorldConfig::MAX_HALF_EXTENT.to_string();
+        assert!(error.to_string().contains(&max), "{error}");
     }
 }
