@@ -19,6 +19,7 @@ pub mod chunk;
 pub mod clock;
 pub mod collision;
 pub mod errand;
+pub mod fauna;
 pub mod fence;
 pub mod flora;
 pub mod heading;
@@ -50,6 +51,9 @@ pub use chunk::{ChunkCoord, WorldConfig, WorldConfigError};
 pub use clock::{BASE_RATE, DAY_REAL_SECONDS, DAY_SECONDS, GameClock, TimeOfDay};
 pub use collision::{Aabb, Body, Circle, SideObstacle};
 pub use errand::{Errand, ErrandEvent, ErrandStage, Interaction, Npc, Standing};
+pub use fauna::{
+    Cow, CowCoat, CowState, Duck, FaunaSite, Flock, FlockState, Hare, HareState, Herd, Raptor,
+};
 pub use fence::{FenceLayout, FenceRun, Frontage, Gate, Opening, OpeningKind};
 pub use flora::{ChunkFlora, FloraSite, Species, Tree, Tuft, TuftKind};
 pub use heading::Heading;
