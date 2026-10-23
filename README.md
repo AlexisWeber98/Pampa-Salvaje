@@ -183,6 +183,21 @@ its ground mesh, and lays out any settlement in it, on a background thread
 and gets them a few frames later, out in the fog, so crossing a chunk border
 never stalls a frame.
 
+East-south-east of General Pico lies **Laguna La Arocena**, a shallow
+freshwater lagoon (`pampa_core::Lagoon`): a squarish, softly rounded shore
+of about 215 x 145 m, a little rough at the edges. Its water is a flat,
+dark olive-brown sheet 0.6 m under the lowest bank, smooth and reflective
+like water, darker in the middle and see-through over the mud near the
+shore, with faint, fine wind ripples from a small normal map painted in code
+and drifted by its UV transform (one draw, no reflection pass). The ground
+is sunk into a basin under it (1.6 m deep in the middle); only a 3 m band of
+wet mud rings the waterline, and the grass, stones and shrubs grow again
+right past it. Totora reeds, 1.5 to 2.5 m tall, stand in patches along the
+water's edge, in one mesh. Riders and walkers wade the shallows but are
+turned back where the water gets deep. Fences, settlements and roads keep
+off it and its bank, trees stay 12 m back from the water, and the minimap
+paints it as water.
+
 The open land between towns is pampa grassland:
 - The ground's colour drifts from dry yellow to grey-green, through vertex colours that are continuous across chunk borders. Over that paint lies a tiled soil-and-grass detail texture (normal, roughness and ambient-occlusion maps too), in world-space UVs on a 6 m tile, so it runs on across chunk borders.
 - Grass tufts (paja, flechilla) are scattered densely, tinted from grey-green to dry yellow with the ground, with a few weeds and wildflowers among them. They thin out with distance.

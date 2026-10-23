@@ -37,7 +37,9 @@ use bevy::prelude::*;
 use std::collections::HashMap;
 
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use pampa_core::{Railway, SettlementLayout, Vec2 as GroundVec2, distance_to_town, nearest_town};
+use pampa_core::{
+    Lagoon, Railway, SettlementLayout, Vec2 as GroundVec2, distance_to_town, nearest_town,
+};
 
 use crate::character::VisualPose;
 use crate::rail::WorldRail;
@@ -202,9 +204,14 @@ fn roads(terrain: Option<&WorldTerrain>) -> Vec<(GroundVec2, GroundVec2)> {
         .unwrap_or_default()
 }
 
-/// What a layer shows beyond the town: the railway line's links and the
-/// roads.
-type Lines = (Vec<Railway>, Vec<(GroundVec2, GroundVec2)>);
+/// The lagoons, carried by the terrain.
+fn lagoons(terrain: Option<&WorldTerrain>) -> Vec<Lagoon> {
+    terrain.map(|t| t.0.lagoons.clone()).unwrap_or_default()
+}
+
+/// What a layer shows beyond the town: the railway line's links, the
+/// roads and the lagoons.
+type Lines = (Vec<Railway>, Vec<(GroundVec2, GroundVec2)>, Vec<Lagoon>);
 
 /// The [`Overlay`] of `lines` and the world's settlements.
 fn overlay<'a>(lines: &'a Lines, settlements: Option<&'a SettlementLayout>) -> Overlay<'a> {
@@ -213,6 +220,7 @@ fn overlay<'a>(lines: &'a Lines, settlements: Option<&'a SettlementLayout>) -> O
         roads: &lines.1,
         settlements: settlements.map_or(&[], |l| &l.settlements),
         wrecks: settlements.map_or(&[], |l| &l.roadside),
+        lagoons: &lines.2,
     }
 }
 
@@ -243,7 +251,11 @@ fn spawn_minimap(
     };
     let town = &towns.0[index];
     let frame = MapFrame::for_town(town, MAP_PX);
-    let lines = (links(rail.as_deref()), roads(terrain.as_deref()));
+    let lines = (
+        links(rail.as_deref()),
+        roads(terrain.as_deref()),
+        lagoons(terrain.as_deref()),
+    );
     let overlay = overlay(&lines, settlements.as_deref().map(|s| &s.0));
     let base = images.add(map_image(
         rasterize_town_over(town, &overlay, &frame).pixels,
@@ -438,7 +450,11 @@ fn update_markers(
             }
         };
         if repaint {
-            let lines = (links(rail.as_deref()), roads(terrain.as_deref()));
+            let lines = (
+                links(rail.as_deref()),
+                roads(terrain.as_deref()),
+                lagoons(terrain.as_deref()),
+            );
             let overlay = overlay(&lines, layout);
             let sources = (&**towns, &overlay);
             match mode {

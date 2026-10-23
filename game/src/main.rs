@@ -16,7 +16,7 @@ use pampa_content::{SLOTS_FILE, TOWNS_FILE, asset_path, load_model_slots};
 use pampa_core::{FenceLayout, FloraSite, SettlementKind, SettlementLayout, World};
 use pampa_render::{
     AssetRoot, AtmospherePlugin, CharacterVisualPlugin, FadePlugin, FencePlugin, FloraPlugin,
-    HudPlugin, MinimapPlugin, RailPlugin, RoadPlugin, SettlementPlugin, SignPlugin,
+    HudPlugin, LagoonPlugin, MinimapPlugin, RailPlugin, RoadPlugin, SettlementPlugin, SignPlugin,
     SpeechBubblePlugin, StreamFocus, TerrainPlugin, ThinFadePlugin, TownPlugin, TrainPlugin,
     WorldChunks, WorldClock, WorldFences, WorldFlora, WorldRail, WorldSettlements, WorldTerrain,
     WorldTowns, WorldTrain,
@@ -266,6 +266,8 @@ fn main() {
     // and the rural settlements, chunk by chunk; trees, fences, signs and
     // thin props fade out of the camera's way.
     .add_plugins((RoadPlugin, FencePlugin, SettlementPlugin, ThinFadePlugin))
+    // The lagoons' water and reeds.
+    .add_plugins(LagoonPlugin)
     // The errand and the clock and objective in the corner.
     .add_plugins((errand::ErrandPlugin, HudPlugin))
     // Boarding, riding, skipping and waiting for the train, with a fade to

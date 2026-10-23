@@ -8,7 +8,7 @@
 
 use bevy::math::Vec2;
 use pampa_core::{
-    Aabb, BuildingKind, Heading, PlaceKind, PlacedCar, Railway, RoadsideWreck, Settlement,
+    Aabb, BuildingKind, Heading, Lagoon, PlaceKind, PlacedCar, Railway, RoadsideWreck, Settlement,
     StructureKind, TownLayout, Track, Vec2 as GroundVec2,
 };
 
@@ -189,6 +189,8 @@ pub struct Overlay<'a> {
     pub roads: &'a [(GroundVec2, GroundVec2)],
     pub settlements: &'a [Settlement],
     pub wrecks: &'a [RoadsideWreck],
+    /// Lagoons, painted as water under everything else.
+    pub lagoons: &'a [Lagoon],
 }
 
 /// Pixel scale of place initials on the map.
@@ -343,6 +345,9 @@ fn paint_town_buildings(map: &mut Canvas, town: &TownLayout, frame: &MapFrame) {
 fn paint_overlay_under(map: &mut Canvas, overlay: &Overlay, frame: &MapFrame) {
     let shown = frame.shown();
     let px = frame.meters_per_px();
+    for lagoon in overlay.lagoons {
+        paint_lagoon(map, lagoon, frame);
+    }
     let half = (pampa_core::RoadNetwork::HALF_WIDTH / px).max(1.0);
     for &(a, b) in overlay.roads {
         ground_line(map, frame, (a, b), half, palette::ROAD);
@@ -356,6 +361,33 @@ fn paint_overlay_under(map: &mut Canvas, overlay: &Overlay, frame: &MapFrame) {
         for track in &settlement.tracks {
             for piece in track.segments() {
                 ground_line(map, frame, piece, half, palette::TRACK);
+            }
+        }
+    }
+}
+
+/// A lagoon's water, pixel by pixel over its box where it crosses the
+/// frame: a pixel is water when its center is.
+fn paint_lagoon(map: &mut Canvas, lagoon: &Lagoon, frame: &MapFrame) {
+    let shown = frame.shown();
+    let water = lagoon.bounds();
+    if !water.intersects(&shown) {
+        return;
+    }
+    let (a, b) = frame.rect(&water);
+    let px = frame.meters_per_px();
+    let size = map.size as i32;
+    let (x0, x1) = ((a.x.floor() as i32).max(0), (b.x.ceil() as i32).min(size));
+    let (y0, y1) = ((a.y.floor() as i32).max(0), (b.y.ceil() as i32).min(size));
+    let corner = GroundVec2::new(
+        frame.center.x - frame.half_extent,
+        frame.center.y + frame.half_extent,
+    );
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let g = corner + GroundVec2::new((x as f32 + 0.5) * px, -(y as f32 + 0.5) * px);
+            if lagoon.is_water(g) {
+                map.set(x, y, palette::WATER);
             }
         }
     }
@@ -1354,5 +1386,44 @@ pub(crate) mod tests {
         };
         assert!(landmark(&with) > 20, "{}", landmark(&with));
         assert_eq!(landmark(&without), 0);
+    }
+
+    #[test]
+    fn the_field_map_paints_a_lagoon_as_water_and_only_inside_its_shore() {
+        let config = pampa_core::LagoonConfig {
+            name: "Laguna".into(),
+            center: GroundVec2::new(300.0, -200.0),
+            size: GroundVec2::new(215.0, 145.0),
+            seed: 5,
+        };
+        let lagoon = Lagoon::new(&config, &pampa_core::Terrain::default());
+        let frame = MapFrame::field(lagoon.center + GroundVec2::new(60.0, 0.0), 256);
+        let lagoons = [lagoon.clone()];
+        let overlay = Overlay {
+            lagoons: &lagoons,
+            ..Overlay::default()
+        };
+        let map = rasterize_field(&[], &overlay, &frame);
+        let pixel = |p: GroundVec2| {
+            let m = frame.to_map(p);
+            map.get(m.x as usize, m.y as usize)
+        };
+        assert_eq!(pixel(lagoon.center), palette::WATER);
+        for p in lagoon.ring(32, -4.0) {
+            assert_eq!(pixel(p), palette::WATER, "{p:?}");
+        }
+        for p in lagoon.ring(32, 6.0) {
+            assert_ne!(pixel(p), palette::WATER, "{p:?}");
+        }
+        // Off the frame it leaves the map as it was.
+        let mut far = lagoon;
+        far.center += GroundVec2::new(3000.0, 0.0);
+        let away = [far];
+        let empty = rasterize_field(&[], &Overlay::default(), &frame);
+        let overlay = Overlay {
+            lagoons: &away,
+            ..Overlay::default()
+        };
+        assert_eq!(rasterize_field(&[], &overlay, &frame), empty);
     }
 }
