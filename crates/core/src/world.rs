@@ -361,7 +361,36 @@ impl World {
         }
         best.map(|(_, spot)| spot)
     }
+
+    /// Nearest spot to `near`, at most `range` meters away, where a body of
+    /// `collider` can stand: clear of every obstacle, inside the bounds and
+    /// on dry ground off the lagoons' wet mud. Searched on rings
+    /// [`SPOT_STEP`] apart, nearest first; `None` if there is none.
+    pub fn clear_spot(&self, collider: Circle, near: Vec2, range: f32) -> Option<Vec2> {
+        let fits = |p: Vec2| {
+            self.bounds.contain(p, collider.radius).position == p
+                && !self.terrain.lagoons.iter().any(|l| l.is_bare(p))
+                && self.overlap(collider, p) == 0.0
+        };
+        if fits(near) {
+            return Some(near);
+        }
+        let rings = (range / SPOT_STEP).floor() as usize;
+        (1..=rings).find_map(|k| {
+            let r = k as f32 * SPOT_STEP;
+            let n = ((std::f32::consts::TAU * r / SPOT_STEP).ceil() as usize).max(8);
+            (0..n)
+                .map(|i| {
+                    let a = std::f32::consts::TAU * i as f32 / n as f32;
+                    near + Vec2::new(a.cos(), a.sin()) * r
+                })
+                .find(|&p| fits(p))
+        })
+    }
 }
+
+/// Spacing of the rings [`World::clear_spot`] searches, in meters.
+const SPOT_STEP: f32 = 1.0;
 
 impl Default for World {
     fn default() -> Self {
@@ -403,6 +432,41 @@ mod tests {
         let c = Circle::new(0.9);
         let end = world.resolve(c, wall.center(), |_| ());
         assert!(deepest_overlap(&world, c, end) < 1e-3, "{end:?}");
+    }
+
+    #[test]
+    fn a_clear_spot_is_the_nearest_free_ground_inside_the_world() {
+        let town = crate::TownLayout::castex_inspired();
+        let world = World::with_town(Terrain::default(), &town);
+        let c = Circle::new(0.9);
+        // Open ground is its own clear spot.
+        let open = world.bounds.min + Vec2::new(50.0, 50.0);
+        assert_eq!(world.clear_spot(c, open, 10.0), Some(open));
+        // Inside a building: the nearest spot out of it, overlapping nothing.
+        let wall = town.buildings[0].footprint;
+        let spot = world.clear_spot(c, wall.center(), 100.0).unwrap();
+        assert_eq!(deepest_overlap(&world, c, spot), 0.0, "{spot:?}");
+        assert_eq!(world.resolve(c, spot, |_| ()), spot);
+        // Out of the corner of the world: pulled back inside.
+        let corner = world.clear_spot(c, world.bounds.max, 5.0).unwrap();
+        assert_eq!(world.bounds.contain(corner, 0.9).position, corner);
+        // Nothing free within reach.
+        assert_eq!(world.clear_spot(c, wall.center(), 0.0), None);
+    }
+
+    #[test]
+    fn a_clear_spot_keeps_out_of_a_lagoon_and_off_its_mud() {
+        let terrain = Terrain::default();
+        let lagoon = crate::Lagoon::new(&crate::lagoon::tests::arocena_config(), &terrain);
+        let world = World::open(terrain.with_lagoon(lagoon.clone()));
+        let spot = world
+            .clear_spot(Circle::new(0.9), lagoon.center, 2000.0)
+            .unwrap();
+        assert!(!lagoon.is_bare(spot), "{spot:?}");
+        assert!(
+            lagoon.offshore(spot) < crate::Lagoon::MUD_BAND + 2.0,
+            "nearest"
+        );
     }
 
     #[test]

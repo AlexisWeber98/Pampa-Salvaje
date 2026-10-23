@@ -293,6 +293,7 @@ fn spawn_tethered_horse(
     commands.spawn((
         Name::new(format!("Tethered horse {town}")),
         TetheredHorse(town),
+        crate::errand::Mountable(horse),
         CharacterVisual::Horse(coat),
         VisualPose {
             heading: horse.heading,

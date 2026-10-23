@@ -64,15 +64,32 @@ impl Default for FootTuning {
 }
 
 /// How the player getting around by `travel` is drawn: the clerk on foot,
-/// or the clerk in the saddle of Don Hidalgo's bayo, the only horse he
+/// or the clerk in the saddle of Don Hidalgo's bayo, the first horse he
 /// rides.
 pub fn player_visual(travel: Travel) -> CharacterVisual {
+    player_visual_on(travel, Coat::HIDALGO)
+}
+
+/// How the player getting around by `travel` is drawn, in the saddle of a
+/// horse of `coat` when riding.
+pub fn player_visual_on(travel: Travel, coat: Coat) -> CharacterVisual {
     match travel {
         Travel::OnFoot => CharacterVisual::Figure(FigureKind::Protagonist),
         Travel::Riding => CharacterVisual::Mounted {
             rider: FigureKind::Protagonist,
-            coat: Coat::HIDALGO,
+            coat,
         },
+    }
+}
+
+/// The coat of the horse the player rides (or last rode): Don Hidalgo's
+/// bayo until riding another one.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RiddenCoat(pub Coat);
+
+impl Default for RiddenCoat {
+    fn default() -> Self {
+        Self(Coat::HIDALGO)
     }
 }
 

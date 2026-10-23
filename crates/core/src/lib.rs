@@ -11,6 +11,7 @@
 //! ([`Floor`]). Angles are radians, counter-clockwise from east, so a
 //! positive turn is a turn to the left.
 
+pub mod abilities;
 pub mod activation;
 pub mod animation;
 pub mod bumps;
@@ -40,6 +41,7 @@ pub mod train;
 pub mod walker;
 pub mod world;
 
+pub use abilities::{Abilities, Ability};
 pub use activation::{ActivationChange, TownActivation, distance_to_town, nearest_town};
 pub use animation::AnimationState;
 pub use bumps::{BumpEvent, BumpSeverity, BumpTracker, LinePicker};
