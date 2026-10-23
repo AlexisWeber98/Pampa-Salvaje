@@ -195,6 +195,22 @@ fn chunks_draw_each_owned_settlement_once_and_drop_it() {
     assert_eq!(count::<TrackSurface>(&mut app), 0);
 }
 
+/// Steps `app` until every background ground and settlement build has
+/// landed (at most 20 updates).
+fn land_all(app: &mut App) {
+    for _ in 0..20 {
+        let pending =
+            count::<crate::terrain::PendingGround>(app) + count::<PendingSettlements>(app);
+        if pending == 0 {
+            return;
+        }
+        crate::terrain::finish_builds(app, crate::terrain::PendingGround::is_finished);
+        crate::terrain::finish_builds(app, PendingSettlements::is_finished);
+        app.update();
+    }
+    panic!("the background builds never landed in 20 updates");
+}
+
 #[test]
 fn a_streamed_chunk_lays_its_settlements_off_the_main_schedule() {
     // What the first frame lays inline, for comparison.
@@ -211,25 +227,31 @@ fn a_streamed_chunk_lays_its_settlements_off_the_main_schedule() {
     app.update();
     // The update that streamed the chunks did not build their settlements.
     assert_eq!(parts(&mut app).len(), 0);
-    for _ in 0..500 {
-        if parts(&mut app).len() >= expected.len() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(2));
-        app.update();
-    }
+    assert!(count::<PendingSettlements>(&mut app) > 0);
+    // They land once built: the same pieces, once each.
+    land_all(&mut app);
     app.update();
-    // They land a few frames later: the same pieces, once each.
     let mut landed = parts(&mut app);
     landed.sort_by_key(|p| (p.settlement, p.structure));
     assert_eq!(landed, expected);
     assert_eq!(count::<TrackSurface>(&mut app), tracks);
-    // A chunk that goes before its settlements land drops them.
+}
+
+#[test]
+fn a_chunk_gone_before_its_settlements_land_drops_them() {
+    let mut app = app(GroundVec2::new(-3500.0, 3500.0));
+    app.update();
+    app.insert_resource(StreamFocus(GroundVec2::new(100.0, 100.0)));
+    app.update();
+    assert!(count::<PendingSettlements>(&mut app) > 0);
+    // Away again the very next frame, before anything lands.
     app.insert_resource(StreamFocus(GroundVec2::new(-3500.0, 3500.0)));
     for _ in 0..10 {
         app.update();
+        assert_eq!(parts(&mut app).len(), 0, "a settlement landed");
     }
-    assert_eq!(parts(&mut app).len(), 0);
+    assert_eq!(count::<PendingSettlements>(&mut app), 0, "a build stayed");
+    assert_eq!(count::<TrackSurface>(&mut app), 0);
 }
 
 #[test]

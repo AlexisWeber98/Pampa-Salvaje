@@ -865,6 +865,13 @@ impl PaintKit {
 #[derive(Component)]
 struct PendingSettlements(Task<Vec<Piece>>);
 
+#[cfg(test)]
+impl PendingSettlements {
+    fn is_finished(&self) -> bool {
+        self.0.is_finished()
+    }
+}
+
 /// Draws the settlements of each newly built chunk as its children. The
 /// chunks of the first fill are laid now, so the first frame shows them; a
 /// chunk streamed in while riding (its ground still building) builds them

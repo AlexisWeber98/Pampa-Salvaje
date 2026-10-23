@@ -260,6 +260,33 @@ fn stream_chunks(
 #[derive(Component)]
 pub(crate) struct PendingGround(Task<Mesh>);
 
+#[cfg(test)]
+impl PendingGround {
+    /// Whether the build is done (it lands on the next update).
+    pub(crate) fn is_finished(&self) -> bool {
+        self.0.is_finished()
+    }
+}
+
+/// Blocks until every background build `done` reports on has finished, so
+/// the next update lands them all: tests step the async pool without
+/// depending on how many frames it takes. Fails after 30 s.
+#[cfg(test)]
+pub(crate) fn finish_builds<T: Component>(app: &mut App, done: fn(&T) -> bool) {
+    let start = std::time::Instant::now();
+    loop {
+        let mut q = app.world_mut().query::<&T>();
+        if q.iter(app.world()).all(done) {
+            return;
+        }
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(30),
+            "the background builds never finished"
+        );
+        std::thread::yield_now();
+    }
+}
+
 /// How a chunk gets its ground mesh.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum GroundBuild {
@@ -694,13 +721,14 @@ mod tests {
         let streamed = ground(&mut app);
         assert_eq!(streamed.len(), 3);
         assert!(streamed.iter().all(|(_, m)| m.is_none()), "{streamed:?}");
-        // It lands a few frames later, the same mesh the main thread would
-        // have built.
-        for _ in 0..500 {
+        // It lands once built, the same mesh the main thread would have
+        // built. (Each update may stream in more chunks: step until all
+        // have landed.)
+        for _ in 0..50 {
             if ground(&mut app).iter().all(|(_, m)| m.is_some()) {
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(2));
+            finish_builds(&mut app, PendingGround::is_finished);
             app.update();
         }
         let terrain = Terrain::default();
@@ -713,6 +741,30 @@ mod tests {
                 Some(expected.attribute(Mesh::ATTRIBUTE_POSITION).cloned())
             );
         }
+    }
+
+    #[test]
+    fn a_chunk_gone_before_its_ground_lands_drops_the_build() {
+        let mut app = app(GroundVec2::ZERO);
+        app.update();
+        app.world_mut().resource_mut::<StreamFocus>().0 = GroundVec2::new(2000.0, 0.0);
+        app.update();
+        let mut q = app
+            .world_mut()
+            .query_filtered::<Entity, With<PendingGround>>();
+        let streamed: Vec<Entity> = q.iter(app.world()).collect();
+        assert_eq!(streamed.len(), 3);
+        // Back before any of it lands: the chunks go, and their builds
+        // with them.
+        app.world_mut().resource_mut::<StreamFocus>().0 = GroundVec2::ZERO;
+        for _ in 0..10 {
+            app.update();
+        }
+        for chunk in streamed {
+            assert!(app.world().get_entity(chunk).is_err(), "{chunk} stayed");
+        }
+        let mut q = app.world_mut().query::<&PendingGround>();
+        assert_eq!(q.iter(app.world()).count(), 0, "a build stayed pending");
     }
 
     #[test]

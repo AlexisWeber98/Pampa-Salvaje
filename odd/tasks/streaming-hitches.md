@@ -135,6 +135,11 @@ Four reports after the first fix. Route: inline, one writer.
 - Checks: RED → GREEN
   `a_streamed_chunk_lays_its_settlements_off_the_main_schedule` (nothing
   the frame the chunk spawns, then the same parts the inline path lays).
+  `a_chunk_gone_before_its_settlements_land_drops_them` and
+  `terrain::tests::a_chunk_gone_before_its_ground_lands_drops_the_build`
+  cover a chunk despawned the frame after it streams in. The async tests
+  wait on the tasks themselves (`finish_builds`, then one update lands
+  them) instead of sleeping for wall-clock time.
 - On this machine no frame of the ride goes over 16.7 ms on the CPU. What
   the iGPU may still show is GPU work the headless harness cannot see:
   uploading new meshes and textures, and first-use pipeline compilation.
@@ -146,12 +151,14 @@ Four reports after the first fix. Route: inline, one writer.
 - Fix: the seat faces the coach's +X (`PlacedCar::direction`, the
   direction of travel); the mouse (or Q/E) turns the head up to 120° either
   way and 40° up or down. The head turns forward again whenever the seat is
-  taken: boarding (the opening too), a skipped ride coming in, and `V` back
-  to the window view. `V` still cycles window → exterior → train.
+  taken: boarding (the opening too), a skipped ride coming in (the trip's
+  jump at black, `Fading` → `Arriving`), and `V` back to the window view.
+  An ordinary arrival keeps the head where the player turned it. `V` still cycles window → exterior → train.
 - Checks: RED → GREEN
   `every_ride_starts_seated_facing_forward_and_the_mouse_looks_round`
   (opening, mouse look and its clamp, `V` back, a normal boarding at Monte
-  Nievas, a skip) and the updated
+  Nievas, a skip), `an_ordinary_arrival_keeps_the_head_where_it_was_turned`
+  and the updated
   `aboard_the_camera_sits_by_a_coach_window_and_rides_with_the_train`.
 
 ## Deferred

@@ -503,8 +503,10 @@ fn cycle_view(
         *view = RideView::Window;
         *look = SeatLook::default();
     }
-    let coming_in = phase == Some(TripPhase::Arriving) && was.1 != phase;
-    if on && coming_in {
+    // Only a skipped ride's jump at black lands in `Arriving`, straight
+    // from `Fading`; an ordinary arrival keeps the head where it is turned.
+    let skipped_in = phase == Some(TripPhase::Arriving) && was.1 == Some(TripPhase::Fading);
+    if on && skipped_in {
         *look = SeatLook::default();
     }
     *was = (on, phase);
@@ -1520,6 +1522,32 @@ mod tests {
         app.update();
         assert!(crate::ride::testing::passenger(&mut app).1.is_some());
         assert!(facing_forward(&mut app) > 0.99, "after the skip");
+    }
+
+    #[test]
+    fn an_ordinary_arrival_keeps_the_head_where_it_was_turned() {
+        // The opening ridden into Monte Nievas without a skip, looking off
+        // to one side the whole way.
+        let mut app = riding_app();
+        mouse_look(&mut app, Vec2::new(-60.0, 10.0));
+        let turned = *app.world().resource::<SeatLook>();
+        assert!(turned.yaw > 0.05, "{turned:?}");
+        let mut frames = 0;
+        while crate::ride::testing::passenger(&mut app).1.is_some() {
+            assert_eq!(
+                *app.world().resource::<SeatLook>(),
+                turned,
+                "frame {frames}"
+            );
+            app.update();
+            frames += 1;
+            assert!(frames < 4000, "never got off");
+        }
+        assert_eq!(
+            app.world().resource::<crate::ride::Trip>().0,
+            None,
+            "an ordinary ride, no skip"
+        );
     }
 
     #[test]
