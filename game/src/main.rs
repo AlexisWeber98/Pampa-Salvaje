@@ -17,13 +17,13 @@ mod towns;
 
 use bevy::prelude::*;
 use pampa_content::{SLOTS_FILE, TOWNS_FILE, asset_path, load_model_slots};
-use pampa_core::{FenceLayout, FloraSite, SettlementKind, SettlementLayout, World};
+use pampa_core::{FenceLayout, FloraSite, SettlementKind, SettlementLayout, StreetLamps, World};
 use pampa_render::{
     AssetRoot, AtmospherePlugin, CharacterVisualPlugin, FadePlugin, FencePlugin, FloraPlugin,
-    HudPlugin, LagoonPlugin, MinimapPlugin, RailPlugin, RoadPlugin, SettlementPlugin, SignPlugin,
-    SpeechBubblePlugin, StreamFocus, TerrainPlugin, ThinFadePlugin, TownPlugin, TrainPlugin,
-    WorldChunks, WorldClock, WorldFences, WorldFlora, WorldRail, WorldSettlements, WorldTerrain,
-    WorldTowns, WorldTrain,
+    HudPlugin, LagoonPlugin, LampPlugin, MinimapPlugin, RailPlugin, RoadPlugin, SettlementPlugin,
+    SignPlugin, SpeechBubblePlugin, StreamFocus, TerrainPlugin, ThinFadePlugin, TownPlugin,
+    TrainPlugin, WorldChunks, WorldClock, WorldFences, WorldFlora, WorldLamps, WorldRail,
+    WorldSettlements, WorldTerrain, WorldTowns, WorldTrain,
 };
 
 /// The fits of the third-party models in the model slots
@@ -76,6 +76,7 @@ struct Laid {
     fences: FenceLayout,
     settlements: SettlementLayout,
     flora: FloraSite,
+    lamps: StreetLamps,
     report: LaidReport,
 }
 
@@ -156,11 +157,17 @@ fn lay_out(loaded: &towns::LoadedWorld) -> Laid {
         .with_fences(&fences)
         .with_settlements(&settlements);
     world.plant(&flora);
+    // Kerosene street lamps round the plazas, at the town exits and street
+    // corners and at the estancias, clear of everything above; each post
+    // is a thin obstacle.
+    let lamps = StreetLamps::place(&loaded.towns, &loaded.roads, &settlements, &world.obstacles);
+    world.obstacles.extend(lamps.obstacles());
     Laid {
         world,
         fences,
         settlements,
         flora,
+        lamps,
         report: LaidReport {
             spans,
             fenced,
@@ -183,8 +190,19 @@ fn main() {
         fences,
         settlements,
         flora,
+        lamps,
         report: laid,
     } = lay_out(&loaded);
+    let lamp_counts: Vec<String> = loaded
+        .towns
+        .iter()
+        .zip(&lamps.towns)
+        .map(|(t, l)| format!("{} {}", t.name, l.len()))
+        .chain(std::iter::once(format!(
+            "estancias {}",
+            lamps.settlements.iter().map(Vec::len).sum::<usize>()
+        )))
+        .collect();
     // The errand: Don Hidalgo in the first town's plaza sends the player to
     // comisario Farach in the town the dialogue names. Both stand in the way
     // like any obstacle.
@@ -217,6 +235,7 @@ fn main() {
     .insert_resource(WorldFlora(flora))
     .insert_resource(WorldFences(fences))
     .insert_resource(WorldSettlements(settlements))
+    .insert_resource(WorldLamps(lamps))
     .insert_resource(root.clone())
     .insert_resource(slots)
     .insert_resource(StreamFocus(position))
@@ -270,6 +289,8 @@ fn main() {
     // and the rural settlements, chunk by chunk; trees, fences, signs and
     // thin props fade out of the camera's way.
     .add_plugins((RoadPlugin, FencePlugin, SettlementPlugin, ThinFadePlugin))
+    // The kerosene street lamps, glowing by night, the nearest lit.
+    .add_plugins(LampPlugin)
     // The lagoons' water and reeds.
     .add_plugins(LagoonPlugin)
     // The errand and the clock and objective in the corner.
@@ -295,6 +316,7 @@ fn main() {
             "settlements: {huts} ranchos, {outposts} puestos, {farms} chacras, \
              {ranches} estancias; {obstacles} obstacles, laid in {settled:.1?}"
         );
+        info!("street lamps: {}", lamp_counts.join(", "));
     })
     .add_systems(Update, quit_on_escape);
     // Ctrl+Shift+F12: the cheat console (see `console`), in debug builds.
@@ -362,6 +384,52 @@ mod tests {
             );
         }
         assert!(!laid.fences.gates.is_empty());
+    }
+
+    #[test]
+    fn every_town_and_estancia_is_lit_by_lamps_standing_clear_and_solid() {
+        let loaded = towns::load_world(&asset_path(TOWNS_FILE));
+        let mut laid = lay_out(&loaded);
+        let lamps = &laid.lamps;
+        for (town, placed) in loaded.towns.iter().zip(&lamps.towns) {
+            println!("{}: {} street lamps", town.name, placed.len());
+            assert!(placed.len() >= 12, "{}: {}", town.name, placed.len());
+        }
+        for (s, placed) in laid.settlements.settlements.iter().zip(&lamps.settlements) {
+            if s.kind == SettlementKind::Ranch {
+                println!("estancia at {:?}: {} lamps", s.hub, placed.len());
+                assert_eq!(placed.len(), 3, "{:?}", s.hub);
+            }
+        }
+        // Every post is solid, and touches nothing else of the world.
+        let posts: Vec<_> = lamps.obstacles().collect();
+        for post in &posts {
+            let others = laid
+                .world
+                .obstacles
+                .near(*post)
+                .into_iter()
+                .filter(|o| *o != post && o.intersects(post))
+                .count();
+            assert_eq!(others, 0, "{post:?}");
+        }
+        // The errand's people and horse, placed after, stand clear of them.
+        let (dialogue, _) = errand::read_dialogue();
+        let before = laid.world.obstacles.len();
+        errand::plan(&loaded.towns, &mut laid.world, &dialogue.0.police_town)
+            .expect("the shipped world has its errand");
+        let added = laid.world.obstacles.len() - before;
+        assert!(added > 0);
+        for post in &posts {
+            let hits = laid
+                .world
+                .obstacles
+                .near(*post)
+                .into_iter()
+                .filter(|o| *o != post && o.intersects(post))
+                .count();
+            assert_eq!(hits, 0, "the errand stands on {post:?}");
+        }
     }
 
     #[test]

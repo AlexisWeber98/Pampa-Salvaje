@@ -27,12 +27,13 @@ use bevy::input::InputSystems;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::prelude::*;
 use pampa_core::{
-    Circle, Rider, SettlementKind, SettlementLayout, TetheredHorse, TownLayout, Travel,
+    Circle, Rider, SettlementKind, SettlementLayout, TetheredHorse, TimeOfDay, TownLayout, Travel,
     Vec2 as GroundVec2, World,
 };
 use pampa_render::hud::{panel_colors, text_image};
 use pampa_render::{
-    CharacterVisual, Coat, StreamFocus, VisualPose, WorldSettlements, WorldTowns, world_from_ground,
+    CharacterVisual, Coat, StreamFocus, VisualPose, WorldClock, WorldSettlements, WorldTowns,
+    world_from_ground,
 };
 
 use crate::abilities::{PlayerAbilities, Unlocked};
@@ -48,12 +49,13 @@ const LOG_LINES: usize = 6;
 const SEARCH: f32 = 300.0;
 
 /// What the console lists for `help`.
-pub const HELP: [&str; 5] = [
+pub const HELP: [&str; 6] = [
     "goto laguna, pico, castex, nievas, metileo",
     "goto estancia, estancia castex, estancia pico",
     "goto X Y: un punto en metros",
     "caballo: un caballo ensillado al lado",
     "unlock all: todas las habilidades",
+    "hora HH o HH:MM: adelanta el reloj",
 ];
 
 /// Whether this frame's keys open (or close) the console: Ctrl+Shift+F12.
@@ -69,6 +71,8 @@ pub enum Command {
     Goto(Destination),
     Horse,
     UnlockAll,
+    /// Moves the clock on to this time of day (today or tomorrow).
+    Time(TimeOfDay),
     Help,
 }
 
@@ -91,6 +95,10 @@ pub fn parse(line: &str) -> Result<Command, String> {
         ["help"] => Ok(Command::Help),
         ["caballo"] => Ok(Command::Horse),
         ["unlock", "all"] => Ok(Command::UnlockAll),
+        ["hora"] => Err("uso: hora HH, o hora HH:MM".into()),
+        ["hora", time] => time_of_day(time)
+            .map(Command::Time)
+            .ok_or_else(|| format!("no es una hora: {time}")),
         ["goto"] => Err("uso: goto LUGAR, o goto X Y".into()),
         ["goto", "estancia"] => Ok(Command::Goto(Destination::Ranch(None))),
         ["goto", "estancia", town] => Ok(Command::Goto(Destination::Ranch(Some(town.to_string())))),
@@ -104,6 +112,13 @@ pub fn parse(line: &str) -> Result<Command, String> {
         [] => Err(String::new()),
         _ => Err(format!("comando desconocido: {}. Probá help", line.trim())),
     }
+}
+
+/// `HH` or `HH:MM` on a 24-hour clock.
+fn time_of_day(word: &str) -> Option<TimeOfDay> {
+    let (h, m) = word.split_once(':').unwrap_or((word, "0"));
+    let (h, m) = (h.parse::<u32>().ok()?, m.parse::<u32>().ok()?);
+    (h < 24 && m < 60).then(|| TimeOfDay::hm(h, m))
 }
 
 /// Whether a word of `name` is `word`, ignoring case.
@@ -328,7 +343,11 @@ fn run_entered(
     mut commands: Commands,
     mut console: ResMut<Console>,
     (towns, settlements, mut world, mut focus): Places,
-    (mut abilities, mut unlocked): (ResMut<PlayerAbilities>, MessageWriter<Unlocked>),
+    (mut abilities, mut unlocked, mut clock): (
+        ResMut<PlayerAbilities>,
+        MessageWriter<Unlocked>,
+        Option<ResMut<WorldClock>>,
+    ),
     mut players: Query<(&mut Player, &mut Transform, Has<OnTrain>)>,
     mut horses: Local<u32>,
 ) {
@@ -356,6 +375,14 @@ fn run_entered(
                 }
                 console.print("todo desbloqueado");
             }
+            Command::Time(_) if aboard => console.print("en el tren no: bajate primero"),
+            Command::Time(time) => match clock.as_mut() {
+                Some(clock) => {
+                    clock.0.advance_until(time);
+                    console.print(format!("son las {}", clock.0.hh_mm()));
+                }
+                None => console.print("no hay reloj"),
+            },
             Command::Goto(_) if aboard => console.print("en el tren no: bajate primero"),
             Command::Goto(destination) => {
                 let towns = towns.as_ref().map_or(&[][..], |t| &t.0[..]);
@@ -487,6 +514,12 @@ mod tests {
         assert_eq!(parse("help"), Ok(Command::Help));
         assert_eq!(parse("  Caballo "), Ok(Command::Horse));
         assert_eq!(parse("unlock all"), Ok(Command::UnlockAll));
+        assert_eq!(parse("hora 21"), Ok(Command::Time(TimeOfDay::hm(21, 0))));
+        assert_eq!(parse("Hora 5:30"), Ok(Command::Time(TimeOfDay::hm(5, 30))));
+        assert!(parse("hora").is_err());
+        assert!(parse("hora 24").unwrap_err().contains("no es una hora"));
+        assert!(parse("hora 21:60").is_err());
+        assert!(parse("hora noche").is_err());
         for place in ["laguna", "pico", "castex", "nievas", "metileo"] {
             assert_eq!(
                 parse(&format!("goto {place}")),
@@ -533,6 +566,10 @@ mod tests {
             ": goto 12 -3.5-".into(),
             "en el tren no: bajate primero".into(),
             "todo desbloqueado".into(),
+            "son las 21:00".into(),
+            "no hay reloj".into(),
+            parse("hora").unwrap_err(),
+            parse("hora x").unwrap_err(),
             "no hay lugar para un caballo".into(),
             "no hay lugar libre ahí".into(),
         ]);
@@ -700,6 +737,21 @@ mod tests {
         enter(&mut app, "goto rosario");
         assert_eq!(rider(&mut app).position, at.position);
         assert!(last_line(&app).contains("rosario"));
+    }
+
+    #[test]
+    fn hora_moves_the_clock_on_to_nightfall() {
+        let mut app = app();
+        let before = app.world().resource::<WorldClock>().0.day();
+        enter(&mut app, "hora 21:30");
+        let clock = app.world().resource::<WorldClock>().0;
+        assert_eq!(clock.time_of_day().hour_minute(), (21, 30));
+        assert_eq!(clock.day(), before, "later the same day");
+        assert_eq!(last_line(&app), "son las 21:30");
+        // An earlier hour is tomorrow's: the clock never runs back.
+        enter(&mut app, "hora 6");
+        let clock = app.world().resource::<WorldClock>().0;
+        assert_eq!((clock.day(), clock.hour() as u32), (before + 1, 6));
     }
 
     #[test]

@@ -1548,7 +1548,7 @@ impl Site<'_> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::fence::tests::{fenced, reached};
     use crate::{ChunkCoord, FloraSite, StaticObstacles, World};
@@ -1565,7 +1565,7 @@ mod tests {
     /// The fence fixture's world with its settlements laid and settled, with
     /// the game's estancias near Castex and Pico (the seeded mix alone may
     /// draw none).
-    fn settled() -> (
+    pub(crate) fn settled() -> (
         World,
         Vec<TownLayout>,
         RailLine,

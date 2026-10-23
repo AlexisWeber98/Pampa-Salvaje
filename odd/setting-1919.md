@@ -10,6 +10,7 @@ The game opens in **1919**. Every character, building and prop must fit that yea
 - Carts are everywhere: *carretas* (big two-wheeled ox carts), *chatas* and sulkys, most of all in the bigger towns.
 - Cattle (vacas) graze the fields, and gauchos ride across the countryside on horseback.
 - Streets were dirt. Light came from kerosene lamps and the station's lamps. There was no electric street lighting in small towns.
+- **Kerosene street lamps (faroles)** (user, 2026-10-23): a cast-iron (or timber) post of about 3–3.5 m with a glass lantern box on top, lit by a lamplighter at dusk. They stand round the plaza, where the roads enter town, at street corners (every corner in a big town like General Pico, some in a small one) and at the estancias by the gallery and the gate. Their light is warm, weak and local.
 - The general store (almacén de ramos generales) sold everything, and it was often also the bar and post office. The station, the church, the comisaría, the plaza and the store made up the civic core.
 
 ## Clothes, by role

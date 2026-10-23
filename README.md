@@ -223,6 +223,27 @@ turned back where the water gets deep. Fences, settlements and roads keep
 off it and its bank, trees stay 12 m back from the water, and the minimap
 paints it as water.
 
+**Kerosene street lamps (faroles)** light the towns, as in 1919, with no
+electric street lighting: a cast-iron post with a glass lantern, about 3.3 m
+tall. How many depends on the town's size (`pampa_core::LampTier`):
+- **Big towns** (General Pico, 105 lamps): one by each path's mouth in both
+  plazas, four more round the main monument, and one at the curb of every
+  street corner.
+- **Small towns** (Monte Nievas 20, Eduardo Castex 23): four in the plaza, one
+  by each path's mouth, and one at every other street corner.
+- **Villages** of at most 3 x 3 blocks (Metileo, 14): two in the plaza, at
+  the mouths of the path toward the station, and corner lamps only round the
+  plaza and by the station.
+
+Every road leaves a town between a pair of lamps. Each estancia has one at either end of
+its gallery and one by its track inside the gate. Placement is deterministic
+and clear of lanes, doors, verandas, plaza paths, the railway, roads, tracks
+and every obstacle (`pampa_core::StreetLamps`); each post is a thin obstacle
+that fades out of the camera's way. The glass glows from dusk to dawn with
+the game clock, fading in and out, and only the 8 lamps nearest the camera
+cast real light (a shared pool of shadowless warm point lights, 12 m reach);
+by day there are no lamp lights at all (`pampa_render::lamps`).
+
 The open land between towns is pampa grassland:
 - The ground's colour drifts from dry yellow to grey-green, through vertex colours that are continuous across chunk borders. Over that paint lies a tiled soil-and-grass detail texture (normal, roughness and ambient-occlusion maps too), in world-space UVs on a 6 m tile, so it runs on across chunk borders.
 - Grass tufts (paja, flechilla) are scattered densely, tinted from grey-green to dry yellow with the ground, with a few weeds and wildflowers among them. They thin out with distance.
@@ -484,6 +505,7 @@ or the same keys close it, and while it is open the game gets no keys at all.
 | `goto X Y` | Go to a point, in game meters |
 | `caballo` | Stand a saddled horse beside the player (rideable once riding is unlocked) |
 | `unlock all` | Unlock every ability |
+| `hora 21` / `hora 21:30` | Move the clock on to that time (later today, or tomorrow if it has passed) |
 | `help` | List the commands |
 
 `goto` puts the player, and the horse when riding, on the nearest clear, dry
