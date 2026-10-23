@@ -2,6 +2,29 @@
 
 Small scripts for preparing assets. They are not part of the game build.
 
+## `textures_to_ktx2.sh`: building textures to KTX2
+
+Converts the building texture sets in `assets/textures/buildings/<set>/` to the GPU-compressed KTX2 files the game loads. It needs `basisu` (Basis Universal 2.x) and ImageMagick 7 (`magick`), and is POSIX `sh`:
+
+```sh
+FORCE=1 sh tools/textures_to_ktx2.sh assets/textures/buildings/*/
+sh tools/textures_to_ktx2.sh --check-orm
+```
+
+From each set's `color.jpg`, `normal_gl.jpg`, `roughness.jpg` and optional `ao.jpg` it writes:
+
+| File | Contents |
+|---|---|
+| `color.ktx2` | sRGB colour |
+| `normal_gl.ktx2` | OpenGL (+Y) normal map, linear, basisu's normal-map mode |
+| `orm.ktx2` | linear; red = ambient occlusion (white without `ao.jpg`), green = roughness, blue = metallic (white; the material's `metallic` scales it) |
+
+All three are UASTC LDR 4x4 with mipmaps baked in and Zstandard supercompression. Bevy transcodes UASTC at load to the GPU's block format (BC7 on desktop GPUs, ASTC or ETC2 elsewhere): 1 byte a texel in video memory instead of RGBA8's 4. No RDO is used: on these sets it saved about 3% of disk for about 1 dB of PSNR.
+
+Without `FORCE=1` it refuses to overwrite existing `.ktx2` files. The JPGs stay the editable sources; re-run it after changing one. `--check-orm` converts a synthetic set with and without `ao.jpg`, unpacks its `orm.ktx2` to BC7 and fails unless each channel holds what it should.
+
+The ground textures are not converted: the game blends the PNM maps into one detail texture on the CPU at startup, and has no encoder to compress the result.
+
 ## `dae2gltf.py`: COLLADA to glTF
 
 Converts a COLLADA (`.dae`) model into a glTF 2.0 model slot (see `assets/models/third-party/README.md`). It uses the Python 3 standard library only. Run it isolated, so nothing next to the input or in the current folder is imported:

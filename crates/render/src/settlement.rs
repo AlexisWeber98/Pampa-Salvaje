@@ -160,16 +160,7 @@ impl Plugin for SettlementPlugin {
                     yard::load_yard_models,
                 ),
             )
-            // Repacks textures the frame they arrive (they are inserted in
-            // `PreUpdate`), before the render world first copies them.
-            .add_systems(
-                Update,
-                (
-                    materials::finish_textures,
-                    slots::swap_in_models,
-                    slots::spin_model_rotors,
-                ),
-            )
+            .add_systems(Update, (slots::swap_in_models, slots::spin_model_rotors))
             .add_observer(slots::dress_scene)
             .add_systems(
                 PostUpdate,

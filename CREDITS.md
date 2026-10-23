@@ -23,7 +23,7 @@ All three were converted to 512×512 PPM/PGM for loading. See `assets/textures/g
 | Brown Mud Dry | Rob Tuytel, Poly Haven (https://polyhaven.com/a/brown_mud_dry) | CC0 1.0 | `assets/textures/buildings/brown_mud_dry/` | 1K maps renamed; huella surface |
 | Dry Ground 01 | Rob Tuytel, Poly Haven (https://polyhaven.com/a/dry_ground_01) | CC0 1.0 | `assets/textures/buildings/dry_ground_01/` | 1K maps renamed; trodden yards |
 
-The `thatch/` set next to them is our own work. See `assets/textures/buildings/CREDITS.md` for details.
+The `thatch/` set next to them is our own work. The game loads every set as KTX2 (UASTC, mips baked) made from those JPGs by `tools/textures_to_ktx2.sh`; the JPG sources are kept unchanged. See `assets/textures/buildings/CREDITS.md` for details.
 
 ## Models
 

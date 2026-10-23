@@ -16,4 +16,6 @@ These are PBR texture sets for the rural settlements: walls, roofs, wood and the
 
 Each folder holds `color.jpg`, `normal_gl.jpg` (OpenGL normal map) and `roughness.jpg`, plus `ao.jpg` where the source has one. The files are the sources' 1K JPG maps, renamed, with no other changes. They were downloaded on 2026-10-22, once, with the project owner's permission.
 
+The game loads `color.ktx2`, `normal_gl.ktx2` and `orm.ktx2` instead: GPU-compressed copies (UASTC, mipmaps baked, ambient occlusion, roughness and metallic packed into one map) converted from those JPGs with `tools/textures_to_ktx2.sh`. The JPG sources are kept unchanged as the editable originals; re-run the script after editing one.
+
 Suggested credit line: "Textures from Poly Haven (polyhaven.com) by Amal Kumar, Dimitrios Savva, Jenelle van Heerden, Sergej Majboroda and Rob Tuytel, and from ambientCG.com, all licensed under CC0 1.0."

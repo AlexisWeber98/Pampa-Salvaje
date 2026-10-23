@@ -2,17 +2,14 @@
 //!
 //! The textured surfaces wear the CC0 sets in
 //! `assets/textures/buildings/<set>/` (ambientCG and Poly Haven, plus our
-//! own thatch; see that folder's CREDITS.md): `color`, `normal_gl`,
-//! `roughness` and, where shipped, `ao`, loaded through the
-//! [`AssetServer`] with a repeating, anisotropic sampler. The normal maps
-//! are OpenGL (+Y), as Bevy reads them.
-//!
-//! Bevy's `metallic_roughness_texture` reads roughness from green and
-//! metallic from blue, while the shipped `roughness.jpg` is greyscale. So
-//! once a texture has loaded, [`finish_textures`] repacks the roughness map
-//! in place (grey into green, full blue, and the material's own `metallic`
-//! scales it per surface) and gives every map its mip chain, built on the
-//! CPU once: JPEGs load with a single level, which shimmers at a distance.
+//! own thatch; see that folder's CREDITS.md). The game loads each set's
+//! GPU-ready KTX2 files through the [`AssetServer`] with a repeating,
+//! anisotropic sampler: `color.ktx2` (sRGB), `normal_gl.ktx2` (OpenGL +Y,
+//! as Bevy reads them) and `orm.ktx2`, occlusion in red, roughness in green
+//! and full metallic in blue (the material's own `metallic` scales it per
+//! surface). `tools/textures_to_ktx2.sh` makes them from the JPEG sources
+//! beside them: UASTC with baked mips, which Bevy transcodes at load to the
+//! GPU's block format (BC7 on desktop), a quarter of RGBA8's memory.
 //!
 //! Without an asset server (headless tests) or when a set's files are
 //! missing, the surface falls back to a plain colour of the same look.
@@ -21,10 +18,10 @@ use std::path::Path;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{
-    ImageAddressMode, ImageFilterMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor,
+    CompressedImageFormatSupport, ImageAddressMode, ImageFilterMode, ImageLoaderSettings,
+    ImageSampler, ImageSamplerDescriptor,
 };
 use bevy::prelude::*;
-use bevy::render::render_resource::TextureFormat;
 
 use crate::AssetRoot;
 
@@ -155,15 +152,6 @@ impl Surface {
     }
 }
 
-/// How a texture map is post-processed once loaded.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Map {
-    /// Colour, normal or occlusion: mips only.
-    Plain,
-    /// The greyscale roughness map: repacked into green, then mips.
-    Roughness,
-}
-
 /// One shared material per [`Surface`].
 #[derive(Resource, Debug, Clone)]
 pub struct SettlementMaterials {
@@ -181,26 +169,35 @@ impl SettlementMaterials {
     }
 }
 
-/// Texture maps still waiting for their one-time post-processing.
-#[derive(Resource, Debug, Default)]
-pub(crate) struct PendingTextures(Vec<(Handle<Image>, Map)>);
-
 /// Builds the shared materials, starting the texture loads when an asset
 /// server and an asset root are there.
+///
+/// The maps are UASTC, which Bevy 0.20 can only transcode to a GPU
+/// compressed format (BC, ASTC or ETC2): on an adapter with none of them
+/// its loader panics instead of falling back. So on such an adapter no map
+/// is loaded and every surface draws its plain colour. Without the
+/// [`CompressedImageFormatSupport`] resource (headless apps) the maps load.
 pub(crate) fn setup_materials(
     mut commands: Commands,
     root: Option<Res<AssetRoot>>,
     server: Option<Res<AssetServer>>,
+    support: Option<Res<CompressedImageFormatSupport>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let mut pending = Vec::new();
+    let compressed = support.is_none_or(|s| !s.0.is_empty());
+    if !compressed {
+        warn!(
+            "the GPU supports no compressed texture format (BC, ASTC or ETC2); \
+             building textures are drawn as plain colour"
+        );
+    }
     let mut textured = 0;
     let built = Surface::ALL
         .iter()
         .map(|&surface| {
             let maps = match (surface.set(), root.as_deref(), server.as_deref()) {
-                (Some(set), Some(root), Some(server)) => {
-                    load_set(server, &root.0, set, &mut pending)
+                (Some(set), Some(root), Some(server)) if compressed => {
+                    load_set(server, &root.0, set)
                 }
                 _ => None,
             };
@@ -215,62 +212,57 @@ pub(crate) fn setup_materials(
         );
     }
     commands.insert_resource(SettlementMaterials { materials: built });
-    commands.insert_resource(PendingTextures(pending));
 }
 
-/// A set's loading maps: colour, normal, roughness and occlusion.
+/// The files of a texture set, under `TEXTURE_DIR/<set>/`: colour (sRGB),
+/// normal and ORM (linear).
+pub const MAPS: [(&str, bool); 3] = [("color", true), ("normal_gl", false), ("orm", false)];
+
+/// The path of map `name` of set `set`, under the [`AssetRoot`].
+pub fn map_path(set: &str, name: &str) -> String {
+    format!("{TEXTURE_DIR}/{set}/{name}.ktx2")
+}
+
+/// A set's loading maps: colour, normal and the packed
+/// occlusion-roughness-metallic map.
 struct Maps {
     color: Handle<Image>,
     normal: Handle<Image>,
-    roughness: Handle<Image>,
-    occlusion: Option<Handle<Image>>,
+    orm: Handle<Image>,
 }
 
-/// Starts loading texture set `set`, or warns and returns `None` when its
-/// colour, normal or roughness file is missing.
-fn load_set(
-    server: &AssetServer,
-    root: &Path,
-    set: &str,
-    pending: &mut Vec<(Handle<Image>, Map)>,
-) -> Option<Maps> {
-    let dir = format!("{TEXTURE_DIR}/{set}");
-    let path = |name: &str| format!("{dir}/{name}.jpg");
-    let missing: Vec<&str> = ["color", "normal_gl", "roughness"]
+/// Starts loading texture set `set`, or warns and returns `None` when one
+/// of its files is missing.
+fn load_set(server: &AssetServer, root: &Path, set: &str) -> Option<Maps> {
+    let missing: Vec<String> = MAPS
         .into_iter()
-        .filter(|name| !root.join(path(name)).is_file())
+        .map(|(name, _)| map_path(set, name))
+        .filter(|path| !root.join(path).is_file())
         .collect();
     if !missing.is_empty() {
-        warn!("building textures {dir} not loaded (missing {missing:?}); drawing plain colour");
+        warn!(
+            "building textures {TEXTURE_DIR}/{set} not loaded (missing {}); \
+             drawing plain colour",
+            missing.join(", ")
+        );
         return None;
     }
-    let mut load = |name: &str, srgb: bool, map: Map| {
-        let handle: Handle<Image> = server
-            .load_builder()
-            .with_settings(move |s: &mut ImageLoaderSettings| {
-                s.is_srgb = srgb;
-                s.sampler = ImageSampler::Descriptor(repeating());
-                // Kept on the CPU until `finish_textures` has repacked it
-                // and built its mips; then it lives on the GPU only.
-                s.asset_usage = RenderAssetUsages::default();
-            })
-            .load(path(name));
-        pending.push((handle.clone(), map));
-        handle
-    };
-    let color = load("color", true, Map::Plain);
-    let normal = load("normal_gl", false, Map::Plain);
-    let roughness = load("roughness", false, Map::Roughness);
-    let occlusion = root
-        .join(path("ao"))
-        .is_file()
-        .then(|| load("ao", false, Map::Plain));
-    Some(Maps {
-        color,
-        normal,
-        roughness,
-        occlusion,
-    })
+    let [color, normal, orm] =
+        MAPS.map(|(name, srgb)| load_map(server, &map_path(set, name), srgb));
+    Some(Maps { color, normal, orm })
+}
+
+/// Loads one KTX2 map with the repeating sampler. Its mips are baked in and
+/// it is used as is, so it lives on the GPU only.
+pub(crate) fn load_map(server: &AssetServer, path: &str, srgb: bool) -> Handle<Image> {
+    server
+        .load_builder()
+        .with_settings(move |s: &mut ImageLoaderSettings| {
+            s.is_srgb = srgb;
+            s.sampler = ImageSampler::Descriptor(repeating());
+            s.asset_usage = RenderAssetUsages::RENDER_WORLD;
+        })
+        .load(path.to_owned())
 }
 
 fn repeating() -> ImageSamplerDescriptor {
@@ -304,104 +296,12 @@ fn material(surface: Surface, maps: Option<Maps>) -> StandardMaterial {
     if let Some(maps) = maps {
         material.base_color_texture = Some(maps.color);
         material.normal_map_texture = Some(maps.normal);
-        material.metallic_roughness_texture = Some(maps.roughness);
-        material.occlusion_texture = maps.occlusion;
+        // One map for both: Bevy reads occlusion from red, roughness from
+        // green and metallic from blue.
+        material.metallic_roughness_texture = Some(maps.orm.clone());
+        material.occlusion_texture = Some(maps.orm);
     }
     material
-}
-
-/// Post-processes every texture map that has just loaded, once: the
-/// roughness map repacked for Bevy, and every map given its mips. Runs
-/// before the render world first copies the image, in the frame it
-/// arrives. Maps that failed to load are dropped (the asset server has
-/// logged why).
-pub(crate) fn finish_textures(
-    mut pending: ResMut<PendingTextures>,
-    server: Option<Res<AssetServer>>,
-    images: Option<ResMut<Assets<Image>>>,
-) {
-    let Some(mut images) = images else {
-        return;
-    };
-    if pending.0.is_empty() {
-        return;
-    }
-    pending.0.retain(|(handle, map)| {
-        if let Some(mut image) = images.get_mut(handle) {
-            finish(&mut image, *map);
-            return false;
-        }
-        !server
-            .as_deref()
-            .is_some_and(|s| s.load_state(handle).is_failed())
-    });
-}
-
-/// Repacks and mips one loaded map in place; leaves anything but plain
-/// RGBA8 (what the JPEG loader makes) as it is.
-fn finish(image: &mut Image, map: Map) {
-    let (w, h) = (image.width(), image.height());
-    let format = image.texture_descriptor.format;
-    let rgba8 = matches!(
-        format,
-        TextureFormat::Rgba8Unorm | TextureFormat::Rgba8UnormSrgb
-    );
-    let Some(data) = image.data.take() else {
-        return;
-    };
-    if !rgba8 || image.texture_descriptor.mip_level_count != 1 || data.len() != (w * h * 4) as usize
-    {
-        image.data = Some(data);
-        return;
-    }
-    let mut data = data;
-    if map == Map::Roughness {
-        repack_roughness(&mut data);
-    }
-    let (data, levels) = with_mips(w, h, data);
-    image.data = Some(data);
-    image.texture_descriptor.mip_level_count = levels;
-    image.asset_usage = RenderAssetUsages::RENDER_WORLD;
-}
-
-/// Greyscale roughness (in red, green and blue) as Bevy's
-/// metallic-roughness map: roughness in green, full metallic in blue (the
-/// material's `metallic` scales it), red and alpha untouched.
-pub(crate) fn repack_roughness(rgba: &mut [u8]) {
-    for px in rgba.as_chunks_mut::<4>().0 {
-        px[1] = px[0];
-        px[2] = 255;
-    }
-}
-
-/// `rgba` (`w`×`h` RGBA8) followed by its box-filtered mip levels down to
-/// 1×1, and how many levels there are.
-pub(crate) fn with_mips(w: u32, h: u32, rgba: Vec<u8>) -> (Vec<u8>, u32) {
-    let mut data = rgba;
-    let (mut w, mut h) = (w as usize, h as usize);
-    let mut start = 0;
-    let mut levels = 1;
-    while w > 1 || h > 1 {
-        let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
-        let mut next = Vec::with_capacity(nw * nh * 4);
-        for y in 0..nh {
-            for x in 0..nw {
-                for c in 0..4 {
-                    let mut sum = 0u32;
-                    for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-                        let (sx, sy) = ((2 * x + dx).min(w - 1), (2 * y + dy).min(h - 1));
-                        sum += data[start + (sy * w + sx) * 4 + c] as u32;
-                    }
-                    next.push(((sum + 2) / 4) as u8);
-                }
-            }
-        }
-        start = data.len();
-        data.extend(next);
-        (w, h) = (nw, nh);
-        levels += 1;
-    }
-    (data, levels)
 }
 
 #[cfg(test)]
@@ -409,19 +309,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn roughness_moves_to_green_with_full_blue() {
-        let mut px = vec![200, 200, 200, 255, 30, 30, 30, 255];
-        repack_roughness(&mut px);
-        assert_eq!(px, [200, 200, 255, 255, 30, 30, 255, 255]);
-    }
-
-    #[test]
-    fn mips_run_down_to_one_texel_and_average() {
-        let (data, levels) = with_mips(4, 2, vec![100; 4 * 2 * 4]);
-        // 4×2, 2×1, 1×1.
-        assert_eq!(levels, 3);
-        assert_eq!(data.len(), (8 + 2 + 1) * 4);
-        assert!(data.iter().all(|&b| b == 100));
+    fn the_orm_map_serves_occlusion_and_metallic_roughness() {
+        let orm = Handle::<Image>::default();
+        let maps = Maps {
+            color: Handle::default(),
+            normal: Handle::default(),
+            orm: orm.clone(),
+        };
+        let material = material(Surface::Brick, Some(maps));
+        assert_eq!(material.metallic_roughness_texture, Some(orm.clone()));
+        assert_eq!(material.occlusion_texture, Some(orm));
     }
 
     #[test]
@@ -431,8 +328,8 @@ mod tests {
             let Some(set) = surface.set() else {
                 continue;
             };
-            for map in ["color", "normal_gl", "roughness"] {
-                let file = root.join(format!("{TEXTURE_DIR}/{set}/{map}.jpg"));
+            for (map, _) in MAPS {
+                let file = root.join(map_path(set, map));
                 assert!(file.is_file(), "{}", file.display());
             }
         }
