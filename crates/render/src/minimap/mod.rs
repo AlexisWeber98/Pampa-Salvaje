@@ -6,11 +6,28 @@
 //! in the bottom-left corner shows the map's orientation: the map is
 //! north-up, so the rose stays put and the player's arrow shows the heading.
 //!
+//! Out in the country the map leaves the town for a field frame: a fixed
+//! scale square ([`raster::FIELD_HALF_EXTENT`]) round the rider, with the
+//! roads, the railway, the settlements (footprints by kind, corral
+//! outlines, huellas, trees) and the roadside wrecks. A town's frame also
+//! shows any settlement reaching into it. The switch, with hysteresis so
+//! the map does not flicker on the boundary ([`next_mode`]):
+//!
+//! - town → field when the rider is more than [`FIELD_ENTER`] meters from
+//!   the nearest town's extent, or within [`SETTLEMENT_ENTER`] meters of a
+//!   settlement's bounds;
+//! - field → town when the rider is within [`TOWN_ENTER`] meters of a
+//!   town's extent and more than [`SETTLEMENT_LEAVE`] meters from every
+//!   settlement.
+//!
 //! Each town's layer is rasterized once, the first time it is shown, and
-//! kept per town (one image per town: bounded); a second, transparent image
-//! of the same size is redrawn every frame with the markers only. Both are
-//! UI image nodes stacked inside a framed panel. `M` toggles between the
-//! corner map and an enlarged, centered one.
+//! kept per town (one image per town: bounded). The field layer is one more
+//! image, repainted in place only when the frame is entered or the rider has
+//! ridden [`FIELD_RECENTER`] meters from its center (well inside its edge),
+//! never per frame. A second, transparent image of the same size is redrawn
+//! every frame with the markers only. Both are UI image nodes stacked inside
+//! a framed panel. `M` toggles between the corner map and an enlarged,
+//! centered one.
 
 pub mod raster;
 
@@ -20,14 +37,17 @@ use bevy::prelude::*;
 use std::collections::HashMap;
 
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use pampa_core::{Railway, Vec2 as GroundVec2, nearest_town};
+use pampa_core::{Railway, SettlementLayout, Vec2 as GroundVec2, distance_to_town, nearest_town};
 
 use crate::character::VisualPose;
 use crate::rail::WorldRail;
+use crate::settlement::WorldSettlements;
 use crate::terrain::{StreamFocus, WorldTerrain};
 use crate::town::WorldTowns;
 use crate::train::WorldTrain;
-use raster::{Canvas, MapFrame, Markers, draw_markers, palette, rasterize_town_with_roads};
+use raster::{
+    Canvas, MapFrame, Markers, Overlay, draw_markers, palette, rasterize_field, rasterize_town_over,
+};
 
 /// Side of the map images, in pixels.
 pub const MAP_PX: usize = 320;
@@ -37,6 +57,50 @@ pub const SMALL_SIZE: Val = Val::Px(220.0);
 pub const LARGE_SIZE: Val = Val::VMin(80.0);
 /// Key that toggles the enlarged map.
 pub const TOGGLE_KEY: KeyCode = KeyCode::KeyM;
+/// Meters from the nearest town's extent past which the map leaves the
+/// town for the field frame.
+pub const FIELD_ENTER: f32 = 150.0;
+/// Meters from a town's extent within which the field frame gives way to
+/// the town's: 60 m of hysteresis under [`FIELD_ENTER`].
+pub const TOWN_ENTER: f32 = 90.0;
+/// Meters from a settlement's bounds within which the map shows the field.
+pub const SETTLEMENT_ENTER: f32 = 20.0;
+/// Meters from every settlement's bounds the rider must be for the map to
+/// go back to a town.
+pub const SETTLEMENT_LEAVE: f32 = 50.0;
+/// Meters the rider may ride from the field frame's center before it is
+/// repainted round them: the arrow stays 240 m inside the edge.
+pub const FIELD_RECENTER: f32 = 80.0;
+
+/// Which frame the map shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MapMode {
+    /// The nearest town's frame ([`Minimap::town`]).
+    Town,
+    /// The field frame round the rider.
+    Field,
+}
+
+/// The frame to show after `current`, for a rider `town` meters from the
+/// nearest town's extent and `settlement` meters from the nearest
+/// settlement's bounds (infinite without any). See the module docs.
+pub fn next_mode(current: MapMode, town: f32, settlement: f32) -> MapMode {
+    match current {
+        MapMode::Town if town > FIELD_ENTER || settlement < SETTLEMENT_ENTER => MapMode::Field,
+        MapMode::Field if town < TOWN_ENTER && settlement > SETTLEMENT_LEAVE => MapMode::Town,
+        mode => mode,
+    }
+}
+
+/// Distance from `p` to the nearest settlement's bounds (0 inside);
+/// infinite without settlements.
+fn settlement_distance(settlements: Option<&SettlementLayout>, p: GroundVec2) -> f32 {
+    settlements
+        .into_iter()
+        .flat_map(|l| l.settlements.iter())
+        .map(|s| s.bounds.closest_point(p).distance(p))
+        .fold(f32::INFINITY, f32::min)
+}
 
 /// What an entity shows as on the minimap. Its ground position comes from
 /// its `Transform`; the player's heading from its [`VisualPose`].
@@ -56,7 +120,10 @@ pub struct MapTarget(pub Option<GroundVec2>);
 /// whether it is enlarged.
 #[derive(Resource, Debug)]
 pub struct Minimap {
-    /// Index of the town shown, in [`WorldTowns`].
+    /// Which frame is shown.
+    pub mode: MapMode,
+    /// Index of the town shown (or last shown, in the field), in
+    /// [`WorldTowns`].
     pub town: usize,
     pub frame: MapFrame,
     pub enlarged: bool,
@@ -69,6 +136,10 @@ pub struct Minimap {
     canvas: Canvas,
     /// Each shown town's layer, by town index.
     bases: HashMap<usize, Handle<Image>>,
+    /// The field layer, repainted in place.
+    field: Option<Handle<Image>>,
+    /// How many times the field layer has been painted.
+    pub field_paints: usize,
 }
 
 /// The image node showing the town layer.
@@ -127,9 +198,19 @@ fn roads(terrain: Option<&WorldTerrain>) -> Vec<(GroundVec2, GroundVec2)> {
         .unwrap_or_default()
 }
 
-/// What a town's layer shows beyond the town: the railway line's links and
-/// the roads.
+/// What a layer shows beyond the town: the railway line's links and the
+/// roads.
 type Lines = (Vec<Railway>, Vec<(GroundVec2, GroundVec2)>);
+
+/// The [`Overlay`] of `lines` and the world's settlements.
+fn overlay<'a>(lines: &'a Lines, settlements: Option<&'a SettlementLayout>) -> Overlay<'a> {
+    Overlay {
+        links: &lines.0,
+        roads: &lines.1,
+        settlements: settlements.map_or(&[], |l| &l.settlements),
+        wrecks: settlements.map_or(&[], |l| &l.roadside),
+    }
+}
 
 fn rgba(c: [u8; 4]) -> Color {
     Color::srgba_u8(c[0], c[1], c[2], c[3])
@@ -140,12 +221,13 @@ type MapSources<'a> = (
     Option<Res<'a, StreamFocus>>,
     Option<Res<'a, WorldRail>>,
     Option<Res<'a, WorldTerrain>>,
+    Option<Res<'a, WorldSettlements>>,
 );
 
 fn spawn_minimap(
     mut commands: Commands,
     towns: Option<Res<WorldTowns>>,
-    (focus, rail, terrain): MapSources,
+    (focus, rail, terrain, settlements): MapSources,
     mut images: ResMut<Assets<Image>>,
 ) {
     let Some(towns) = towns else {
@@ -157,10 +239,10 @@ fn spawn_minimap(
     };
     let town = &towns.0[index];
     let frame = MapFrame::for_town(town, MAP_PX);
-    let links = links(rail.as_deref());
-    let roads = roads(terrain.as_deref());
+    let lines = (links(rail.as_deref()), roads(terrain.as_deref()));
+    let overlay = overlay(&lines, settlements.as_deref().map(|s| &s.0));
     let base = images.add(map_image(
-        rasterize_town_with_roads(town, &links, &roads, &frame).pixels,
+        rasterize_town_over(town, &overlay, &frame).pixels,
     ));
     let canvas = Canvas::new(MAP_PX);
     let markers = images.add(map_image(canvas.pixels.clone()));
@@ -185,6 +267,7 @@ fn spawn_minimap(
             });
         });
     commands.insert_resource(Minimap {
+        mode: MapMode::Town,
         town: index,
         frame,
         enlarged: false,
@@ -193,6 +276,8 @@ fn spawn_minimap(
         markers,
         canvas,
         bases: HashMap::from([(index, base)]),
+        field: None,
+        field_paints: 0,
     });
 }
 
@@ -255,7 +340,7 @@ fn ground_of(translation: Vec3) -> GroundVec2 {
 /// Switches the map to town `index`, rasterizing its layer the first time.
 fn show_town(
     minimap: &mut Minimap,
-    (towns, (links, roads)): (&WorldTowns, &Lines),
+    (towns, overlay): (&WorldTowns, &Overlay),
     index: usize,
     images: &mut Assets<Image>,
     bases: &mut Query<&mut ImageNode, With<MinimapBase>>,
@@ -263,35 +348,60 @@ fn show_town(
     let Some(town) = towns.0.get(index) else {
         return;
     };
+    minimap.mode = MapMode::Town;
     minimap.town = index;
     minimap.frame = MapFrame::for_town(town, MAP_PX);
     let frame = minimap.frame;
     let base = minimap
         .bases
         .entry(index)
-        .or_insert_with(|| {
-            images.add(map_image(
-                rasterize_town_with_roads(town, links, roads, &frame).pixels,
-            ))
-        })
+        .or_insert_with(|| images.add(map_image(rasterize_town_over(town, overlay, &frame).pixels)))
         .clone();
     for mut node in bases {
         node.image = base.clone();
     }
 }
 
-/// What the minimap reads of the world: towns, trains, the railway line
-/// and the roads (carried by the terrain).
+/// Switches the map to the field frame round `at`, repainting the one
+/// field layer in place (adding it the first time).
+fn show_field(
+    minimap: &mut Minimap,
+    (towns, overlay): (&WorldTowns, &Overlay),
+    at: GroundVec2,
+    images: &mut Assets<Image>,
+    bases: &mut Query<&mut ImageNode, With<MinimapBase>>,
+) {
+    minimap.mode = MapMode::Field;
+    minimap.frame = MapFrame::field(at, MAP_PX);
+    minimap.field_paints += 1;
+    let pixels = rasterize_field(&towns.0, overlay, &minimap.frame).pixels;
+    let field = match &minimap.field {
+        Some(handle) => {
+            if let Some(mut image) = images.get_mut(handle) {
+                image.data = Some(pixels);
+            }
+            handle.clone()
+        }
+        None => minimap.field.insert(images.add(map_image(pixels))).clone(),
+    };
+    for mut node in bases {
+        node.image = field.clone();
+    }
+}
+
+/// What the minimap reads of the world: towns, trains, the railway line,
+/// the roads (carried by the terrain) and the settlements.
 type WorldLayers<'a> = (
     Option<Res<'a, WorldTowns>>,
     Option<Res<'a, WorldTrain>>,
     Option<Res<'a, WorldRail>>,
     Option<Res<'a, WorldTerrain>>,
+    Option<Res<'a, WorldSettlements>>,
 );
 
 fn update_markers(
     minimap: Option<ResMut<Minimap>>,
-    (towns, trains, rail, terrain): WorldLayers,
+    (towns, trains, rail, terrain, settlements): WorldLayers,
     target: Option<Res<MapTarget>>,
     icons: Query<(&MapIcon, &Transform, Option<&VisualPose>)>,
     mut bases: Query<&mut ImageNode, With<MinimapBase>>,
@@ -306,16 +416,34 @@ fn update_markers(
         .map(|(_, transform, _)| ground_of(transform.translation));
     if let (Some(towns), Some(at)) = (&towns, player)
         && let Some(nearest) = nearest_town(&towns.0, at)
-        && nearest != minimap.town
     {
-        let lines = (links(rail.as_deref()), roads(terrain.as_deref()));
-        show_town(
-            &mut minimap,
-            (towns, &lines),
-            nearest,
-            &mut images,
-            &mut bases,
+        let layout = settlements.as_deref().map(|s| &s.0);
+        let mode = next_mode(
+            minimap.mode,
+            distance_to_town(&towns.0[nearest], at),
+            settlement_distance(layout, at),
         );
+        // Only a change of frame, or a rider far from the field frame's
+        // center, repaints a layer.
+        let repaint = match mode {
+            MapMode::Town => minimap.mode != MapMode::Town || nearest != minimap.town,
+            MapMode::Field => {
+                minimap.mode != MapMode::Field || minimap.frame.center.distance(at) > FIELD_RECENTER
+            }
+        };
+        if repaint {
+            let lines = (links(rail.as_deref()), roads(terrain.as_deref()));
+            let overlay = overlay(&lines, layout);
+            let sources = (&**towns, &overlay);
+            match mode {
+                MapMode::Town => {
+                    show_town(&mut minimap, sources, nearest, &mut images, &mut bases);
+                }
+                MapMode::Field => {
+                    show_field(&mut minimap, sources, at, &mut images, &mut bases);
+                }
+            }
+        }
     }
     // The line train runs between towns: the markers draw only the cars
     // inside the shown town's frame.
@@ -451,8 +579,8 @@ mod tests {
         };
         let castex_base = base(&mut app);
 
-        // Past the halfway point the far town takes over, with its frame.
-        let near_far = GroundVec2::new(2000.0, -1300.0);
+        // Near the far town, it takes over with its frame.
+        let near_far = far.extent().max + GroundVec2::new(20.0, 20.0);
         app.world_mut()
             .get_mut::<Transform>(player)
             .unwrap()
@@ -556,5 +684,147 @@ mod tests {
             let i = (at.y as usize * MAP_PX + at.x as usize) * 4;
             assert_eq!(data[i + 3], 255, "car marked at {at:?}");
         }
+    }
+
+    #[test]
+    fn next_mode_switches_with_hysteresis() {
+        use MapMode::{Field, Town};
+        let far = f32::INFINITY;
+        // In town until past FIELD_ENTER, in the field until within
+        // TOWN_ENTER: the band between keeps whichever frame is shown.
+        assert_eq!(next_mode(Town, 0.0, far), Town);
+        assert_eq!(next_mode(Town, 120.0, far), Town);
+        assert_eq!(next_mode(Town, FIELD_ENTER + 1.0, far), Field);
+        assert_eq!(next_mode(Field, 120.0, far), Field);
+        assert_eq!(next_mode(Field, TOWN_ENTER - 1.0, far), Town);
+        // Near a settlement it is the field, even close to a town, until
+        // the rider is well clear of it.
+        assert_eq!(next_mode(Town, 40.0, SETTLEMENT_ENTER - 1.0), Field);
+        assert_eq!(next_mode(Field, 40.0, 30.0), Field);
+        assert_eq!(next_mode(Field, 40.0, SETTLEMENT_LEAVE + 1.0), Town);
+    }
+
+    fn move_to(app: &mut App, entity: Entity, p: GroundVec2) {
+        app.world_mut()
+            .get_mut::<Transform>(entity)
+            .unwrap()
+            .translation = crate::world_from_ground(p, 0.0);
+        app.update();
+    }
+
+    fn base_image(app: &mut App) -> Handle<Image> {
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&ImageNode, With<MinimapBase>>();
+        q.single(app.world()).unwrap().image.clone()
+    }
+
+    #[test]
+    fn the_map_switches_to_the_field_away_from_towns_and_back_with_hysteresis() {
+        let mut app = headless_app();
+        let extent = app.world().resource::<WorldTowns>().0[0].extent();
+        let east = |d: f32| GroundVec2::new(extent.max.x + d, extent.center().y);
+        let player = app
+            .world_mut()
+            .spawn((
+                MapIcon::Player,
+                Transform::from_translation(crate::world_from_ground(east(-10.0), 0.0)),
+            ))
+            .id();
+        app.update();
+        let town_frame = app.world().resource::<Minimap>().frame;
+        let town_base = base_image(&mut app);
+        assert_eq!(app.world().resource::<Minimap>().mode, MapMode::Town);
+
+        // Between the thresholds, still the town.
+        move_to(&mut app, player, east(120.0));
+        assert_eq!(app.world().resource::<Minimap>().mode, MapMode::Town);
+        assert_eq!(app.world().resource::<Minimap>().frame, town_frame);
+
+        // Out on the pampa: the field frame round the rider.
+        move_to(&mut app, player, east(200.0));
+        let minimap = app.world().resource::<Minimap>();
+        assert_eq!(minimap.mode, MapMode::Field);
+        assert_eq!(minimap.frame, MapFrame::field(east(200.0), MAP_PX));
+        assert_eq!(minimap.field_paints, 1);
+        let at = minimap.player_px.unwrap();
+        assert!(at.distance(Vec2::splat(MAP_PX as f32 / 2.0)) < 1e-3);
+        assert_ne!(base_image(&mut app), town_base);
+
+        // Back between the thresholds: still the field.
+        move_to(&mut app, player, east(120.0));
+        assert_eq!(app.world().resource::<Minimap>().mode, MapMode::Field);
+
+        // Close in: the town frame as before, its cached layer reused.
+        let images = app.world().resource::<Assets<Image>>().len();
+        move_to(&mut app, player, east(60.0));
+        let minimap = app.world().resource::<Minimap>();
+        assert_eq!(minimap.mode, MapMode::Town);
+        assert_eq!(minimap.frame, town_frame);
+        assert_eq!(base_image(&mut app), town_base);
+        assert_eq!(app.world().resource::<Assets<Image>>().len(), images);
+    }
+
+    #[test]
+    fn the_field_layer_is_repainted_only_when_the_rider_rides_far() {
+        let mut app = headless_app();
+        let extent = app.world().resource::<WorldTowns>().0[0].extent();
+        let start = GroundVec2::new(extent.max.x + 400.0, extent.center().y);
+        let player = app
+            .world_mut()
+            .spawn((
+                MapIcon::Player,
+                Transform::from_translation(crate::world_from_ground(start, 0.0)),
+            ))
+            .id();
+        app.update();
+        let field = base_image(&mut app);
+        let images = app.world().resource::<Assets<Image>>().len();
+        assert_eq!(app.world().resource::<Minimap>().field_paints, 1);
+        // Riding about inside FIELD_RECENTER: no repaint, the arrow moves.
+        for step in 1..=8 {
+            let p = start + GroundVec2::new(9.0 * step as f32, 0.0);
+            move_to(&mut app, player, p);
+            let minimap = app.world().resource::<Minimap>();
+            assert_eq!(minimap.field_paints, 1);
+            assert_eq!(minimap.frame.center, start);
+            let at = minimap.player_px.unwrap();
+            assert!(at.distance(minimap.frame.to_map(p)) < 1e-3);
+        }
+        // Past it: repainted once, round the rider, in the same image.
+        let far = start + GroundVec2::new(FIELD_RECENTER + 5.0, 0.0);
+        move_to(&mut app, player, far);
+        let minimap = app.world().resource::<Minimap>();
+        assert_eq!(minimap.field_paints, 2);
+        assert_eq!(minimap.frame.center, far);
+        assert_eq!(base_image(&mut app), field);
+        assert_eq!(app.world().resource::<Assets<Image>>().len(), images);
+        app.update();
+        assert_eq!(app.world().resource::<Minimap>().field_paints, 2);
+    }
+
+    #[test]
+    fn a_settlement_shows_on_the_field_map_round_the_rider() {
+        let extent = TownLayout::castex_inspired().extent();
+        let hub = GroundVec2::new(extent.max.x + 600.0, extent.center().y);
+        let farm = raster::tests::farm(hub);
+        let house = farm.structures[0].footprint.center();
+        let mut layout = pampa_core::SettlementLayout::default();
+        layout.settlements.push(farm);
+        let mut app = headless_app();
+        app.insert_resource(WorldSettlements(layout));
+        app.world_mut().spawn((
+            MapIcon::Player,
+            Transform::from_translation(crate::world_from_ground(hub, 0.0)),
+        ));
+        app.update();
+        let minimap = app.world().resource::<Minimap>();
+        assert_eq!(minimap.mode, MapMode::Field);
+        let m = minimap.frame.to_map(house);
+        let handle = base_image(&mut app);
+        let images = app.world().resource::<Assets<Image>>();
+        let data = images.get(&handle).unwrap().data.as_ref().unwrap();
+        let i = (m.y as usize * MAP_PX + m.x as usize) * 4;
+        assert_eq!(data[i..i + 4], palette::HOUSE);
     }
 }

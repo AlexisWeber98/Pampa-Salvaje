@@ -70,11 +70,16 @@ they are in the map, the errand's target as a gold diamond and the player as an
 arrow along its heading. Dirt roads are drawn in a warm brown under the
 railway. A small compass rose in its bottom-left corner marks N, E, S and O
 (oeste); the map is north-up, so the rose stays put and the arrow turns. It frames the town plus a 30 m margin (not the whole
-world) so streets stay legible; out on the pampa the arrow sticks to the map
-edge, and a target in another town is pinned to the edge on its side, so it
-points the way. Each town's layer is rasterized once, the first
-time it is shown; only the markers redraw each frame. `M` toggles an enlarged,
-centered map.
+world) so streets stay legible, with any settlement reaching into that frame.
+More than 150 m from the nearest town, or within 20 m of a settlement, it
+switches to a field frame: 640 m round the rider (2 m a pixel) with the roads,
+the railway, settlements (buildings by kind, corral outlines, huellas as thin
+dirt lines, trees as dots) and roadside wrecks. It goes back to the town within
+90 m of it and 50 m clear of every settlement, so it does not flicker. A
+target off the map is pinned to the edge on its side, so it points the way.
+Each town's layer is rasterized once, the first time it is shown; the field
+layer is repainted in place only after the rider rides 80 m from its center;
+only the markers redraw each frame. `M` toggles an enlarged, centered map.
 
 ### Riding the train
 
@@ -195,6 +200,10 @@ Roads, fences and gates cross that land:
   - Opening and closing gates is not in the game yet.
 
 Roads, crossings, signposts, fences and gates stream with the chunks, like the track.
+
+Behind some open gates stand rural settlements (`pampa_core::settlement`, drawn by `pampa_render::settlement`): adobe ranchos under paja or corrugated iron, puestos with their corral and aguada, whitewashed or brick chacras with a galpón and a molino, and estancia cascos with a front gallery, worker houses, corrals, a eucalyptus grove and a poplar row. Dirt huellas (two wheel ruts) lead from the gate to every door. The buildings and props are procedural, with CC0 PBR textures shared one material per surface; every building, prop, corral rail and tree trunk is a static obstacle, and houses and galpones stop the camera. Abandoned wagons rot at some yards and on a few road verges, and Poly Haven barrels, crates, a ladder, a bucket and lanterns sit about the barns and wells.
+
+A structure kind with a model slot (the windpump, the wrecked wagon, the cart, the well and others) draws a glTF model from `assets/models/third-party/<slot>/` when one is there, fitted by `slots.ron`, and its procedural mesh otherwise; see `assets/models/third-party/README.md`. The windpump and the wrecked wagon are 3TD Starter Pack models (CC0) converted from COLLADA with `tools/dae2gltf.py`, a standard-library Python script (see `tools/README.md`).
 
 Everything is placed by `pampa_core::flora`, seeded by the chunk, and kept clear of towns' leveled ground, the railway, the roads, the fence lines and the world edge. Every tree trunk in the world is a static obstacle: about 113,000 of them, planted once at load in about 0.1 s, so a horse hits a trunk even in a chunk that is not drawn yet. The dust fog swallows everything well before the
 400 m that is always loaded. Towns stream the same way: a town's buildings,

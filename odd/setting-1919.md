@@ -69,6 +69,12 @@ Most characters are **humble**: clerks, peones, farmhands, railway workers and s
 - Water tanks, windmills (molinos) and grain sheds near the station.
 - Hitching posts, carts, barrels, sacks of grain, and kerosene lamps.
 - Caldén and chañar trees.
+- Rural settlements behind some open field gates (user, 2026-10-22):
+  - **Rancho**: a small adobe house under thatch (paja) or corrugated iron, a well, maybe a small corral.
+  - **Puesto**: a herdsman's hut with a corral and an aguada (trough, sometimes a molino).
+  - **Chacra**: a whitewashed brick house with a parapet (or adobe under iron), a galpón, a molino with its australian tank and bebedero, a corral and haystacks.
+  - **Estancia**: the Italianate casco with its gallery, 2–4 casas de peones, galpones, corrals, the aguada, a eucalyptus monte and a poplar alameda, spread over several hectares.
+  - Dirt huellas (two ruts) lead from the gate to the houses.
 
 ## Roads, fences and gates (user, 2026-10-22)
 

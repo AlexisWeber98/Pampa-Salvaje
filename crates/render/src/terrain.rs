@@ -499,9 +499,14 @@ const PROP_RAIL_MARGIN: f32 = FloraSite::TUFT_RAIL_MARGIN;
 /// Least distance from a stone or shrub to a road's edge, in meters.
 const PROP_ROAD_MARGIN: f32 = 2.0;
 
+/// Least distance from a stone or shrub to a settlement's footprints,
+/// patios and tracks, in meters.
+const PROP_SETTLEMENT_MARGIN: f32 = 2.0;
+
 /// The props of chunk `coord`, seeded by its coordinate, skipping leveled
-/// ground (settlements are cleared land), the roads and, given the flora's
-/// keep-out (`track`), the whole train path with [`PROP_RAIL_MARGIN`].
+/// ground (towns are cleared land), the roads and, given the flora's
+/// keep-out (`track`), the whole train path with [`PROP_RAIL_MARGIN`] and
+/// the rural settlements with [`PROP_SETTLEMENT_MARGIN`].
 fn chunk_props(
     terrain: &Terrain,
     coord: ChunkCoord,
@@ -533,7 +538,8 @@ fn chunk_props(
                     .is_some()
             });
             let on_track = track.is_some_and(|t| !t.off_track(at, PROP_RAIL_MARGIN));
-            (!leveled && !on_road && !on_track).then_some(prop)
+            let settled = track.is_some_and(|t| !t.off_settlements(at, PROP_SETTLEMENT_MARGIN));
+            (!leveled && !on_road && !on_track && !settled).then_some(prop)
         })
         .collect()
 }
@@ -679,6 +685,51 @@ mod tests {
             }
         }
         assert!(props > 500, "{props}");
+    }
+
+    #[test]
+    fn no_stone_or_shrub_stands_on_a_settlement() {
+        let (towns, _) = crate::train::tests::line_train();
+        let world = WorldConfig {
+            half_extent: WorldConfig::MAX_HALF_EXTENT,
+            ..WorldConfig::default()
+        };
+        let names: Vec<String> = ["Eduardo Castex", "Monte Nievas", "General Pico"]
+            .map(String::from)
+            .to_vec();
+        let (line, _) = pampa_core::RailLine::build(Some(&names), &towns, world.bounds());
+        let (roads, _) = RoadNetwork::build(&towns, &line, world.bounds());
+        let mut terrain = Terrain::default().with_roads(std::sync::Arc::new(roads));
+        for town in &towns {
+            let area = town.flat_area(&terrain);
+            terrain = terrain.with_flat_area(area);
+        }
+        let fences = pampa_core::FenceLayout::build(world, &terrain, &towns, &line);
+        let layout = pampa_core::SettlementLayout::build(&terrain, &towns, &line, &fences);
+        assert!(!layout.settlements.is_empty());
+        let site = FloraSite::new(world, &terrain, &line).with_settlements(&layout);
+        let mut checked = 0;
+        for s in &layout.settlements {
+            let lo = ChunkCoord::containing(s.bounds.min, world.chunk_size);
+            let hi = ChunkCoord::containing(s.bounds.max, world.chunk_size);
+            for y in lo.y..=hi.y {
+                for x in lo.x..=hi.x {
+                    for p in chunk_props(
+                        &terrain,
+                        ChunkCoord::new(x, y),
+                        world.chunk_size,
+                        Some(&site),
+                    ) {
+                        assert!(
+                            layout.is_clear(p.at, PROP_SETTLEMENT_MARGIN - 1e-3),
+                            "{p:?}"
+                        );
+                        checked += 1;
+                    }
+                }
+            }
+        }
+        assert!(checked > 100, "{checked}");
     }
 
     #[test]

@@ -303,6 +303,16 @@ impl FenceLayout {
         Some((index(&self.surveyed.0, p.x)?, index(&self.surveyed.1, p.y)?))
     }
 
+    /// The paddock `p` is in, between survey lines on all sides, as a box.
+    pub fn field_of(&self, p: Vec2) -> Option<Aabb> {
+        let (i, j) = self.cell_of(p)?;
+        let (xs, ys) = &self.surveyed;
+        Some(Aabb::new(
+            Vec2::new(xs[i], ys[j]),
+            Vec2::new(xs[i + 1], ys[j + 1]),
+        ))
+    }
+
     /// Whether `p` is in an unfenced paddock.
     pub fn is_descampado(&self, p: Vec2) -> bool {
         self.cell_of(p)
@@ -1013,7 +1023,7 @@ fn segments_distance(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> f32 {
 const FENCE_SEED: u32 = 0xa1a3_b4ad;
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::{Circle, FloraSite, Heading, Rider, RiderInput, RiderParams, World};
 
@@ -1025,7 +1035,7 @@ mod tests {
     }
 
     /// The shipped towns with roads laid, their fences, and the world.
-    fn fenced() -> (World, Vec<TownLayout>, RailLine, FenceLayout) {
+    pub(crate) fn fenced() -> (World, Vec<TownLayout>, RailLine, FenceLayout) {
         let (towns, line, roads) = crate::road::tests::shipped_roads();
         let mut world = World::with_towns(config(), Terrain::default(), &towns);
         world.lay_roads(roads);
@@ -1116,6 +1126,44 @@ mod tests {
             .filter(|o| !matches!(o.kind, OpeningKind::FieldGate { open: false, .. }))
             .filter(|o| on_edge(cell, o.at))
             .count()
+    }
+
+    #[test]
+    fn field_of_finds_the_paddock_between_its_survey_lines() {
+        let layout = FenceLayout {
+            surveyed: (vec![0.0, 300.0, 800.0], vec![-400.0, 0.0, 500.0]),
+            ..FenceLayout::default()
+        };
+        let cell = |x0, y0, x1, y1| Some(Aabb::new(Vec2::new(x0, y0), Vec2::new(x1, y1)));
+        assert_eq!(
+            layout.field_of(Vec2::new(10.0, -10.0)),
+            cell(0.0, -400.0, 300.0, 0.0)
+        );
+        // On a survey line, the paddock east (north) of it: its west and
+        // south edges are in.
+        assert_eq!(
+            layout.field_of(Vec2::new(300.0, 0.0)),
+            cell(300.0, 0.0, 800.0, 500.0)
+        );
+        assert_eq!(
+            layout.field_of(Vec2::new(0.0, -400.0)),
+            cell(0.0, -400.0, 300.0, 0.0)
+        );
+        // The outermost cell, up to just inside its far lines.
+        assert_eq!(
+            layout.field_of(Vec2::new(799.9, 499.9)),
+            cell(300.0, 0.0, 800.0, 500.0)
+        );
+        // Outside the grid, and on its far edges, there is no paddock.
+        for p in [
+            Vec2::new(-0.1, 10.0),
+            Vec2::new(10.0, 500.0),
+            Vec2::new(800.0, 10.0),
+            Vec2::new(5000.0, 5000.0),
+        ] {
+            assert_eq!(layout.field_of(p), None, "{p:?}");
+        }
+        assert_eq!(FenceLayout::default().field_of(Vec2::new(0.0, 0.0)), None);
     }
 
     #[test]
@@ -1587,7 +1635,7 @@ mod tests {
 
     /// Cells of a 1 m raster over `window` a rider can stand in, reached
     /// from `from` through the gaps in `obstacles`.
-    fn reached(world: &World, window: Aabb, from: &[Vec2]) -> (Vec<bool>, usize) {
+    pub(crate) fn reached(world: &World, window: Aabb, from: &[Vec2]) -> (Vec<bool>, usize) {
         let w = window.size().x as usize;
         let h = window.size().y as usize;
         let mut blocked = vec![false; w * h];

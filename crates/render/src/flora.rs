@@ -346,7 +346,7 @@ pub const TUFTS_DRAWN: usize = 300;
 /// A tree is the same model at every distance; there is no far stand-in.
 pub const TREE_FAR: f32 = 200.0;
 /// Width of the trees' dithered fade-out, ending at [`TREE_FAR`].
-const TREE_FADE: f32 = 15.0;
+pub(crate) const TREE_FADE: f32 = 15.0;
 /// Tufts within this distance of the rider are always drawn solid...
 pub const TUFT_SOLID: f32 = 40.0;
 /// ...wherever the orbit camera stands: at most this far from the rider
@@ -648,6 +648,12 @@ impl VegetationModels {
         )
     }
 
+    /// `model`'s meshes with their finishes, for a caller that paints them
+    /// with its own materials; `None` when it was not loaded.
+    pub(crate) fn finished_parts(&self, model: Model) -> Option<&[(Finish, Handle<Mesh>)]> {
+        self.parts.get(&model).map(Vec::as_slice)
+    }
+
     fn material(&self, model: Model, finish: Finish, tint: usize) -> Handle<StandardMaterial> {
         match (model.role(), finish) {
             (_, Finish::Bark) => self.bark.clone(),
@@ -671,7 +677,7 @@ fn finished(finish: Finish, double_sided: bool) -> StandardMaterial {
     tinted(finish, double_sided, Color::WHITE)
 }
 
-fn tinted(finish: Finish, double_sided: bool, base_color: Color) -> StandardMaterial {
+pub(crate) fn tinted(finish: Finish, double_sided: bool, base_color: Color) -> StandardMaterial {
     let (perceptual_roughness, metallic, reflectance) = finish.pbr();
     StandardMaterial {
         base_color,
@@ -744,7 +750,7 @@ pub fn load_vegetation(
 
 /// Height the stand-in tree meshes are built at, per species; each tree is
 /// scaled from it.
-fn reference_height(species: Species) -> f32 {
+pub(crate) fn reference_height(species: Species) -> f32 {
     match species {
         Species::Calden => 7.5,
         Species::Chanar => 4.0,
@@ -766,7 +772,7 @@ pub struct FloraKit {
 }
 
 impl FloraKit {
-    fn tree(&self, species: Species) -> [(Handle<Mesh>, Handle<StandardMaterial>); 2] {
+    pub(crate) fn tree(&self, species: Species) -> [(Handle<Mesh>, Handle<StandardMaterial>); 2] {
         let (trunk, crown) = match species {
             Species::Calden => (&self.calden_trunk, &self.calden_crown),
             Species::Chanar => (&self.chanar_trunk, &self.chanar_crown),

@@ -31,6 +31,7 @@ pub mod ride;
 pub mod rider;
 mod rng;
 pub mod road;
+pub mod settlement;
 pub mod terrain;
 pub mod town;
 pub mod townsfolk;
@@ -62,6 +63,10 @@ pub use ride::{
 pub use rider::{MAX_STEP, Rider, RiderInput, RiderParams};
 pub use road::{
     LevelCrossing, Road, RoadEnd, RoadError, RoadKind, RoadNetwork, RoadPoint, SignBoard, Signpost,
+};
+pub use settlement::{
+    HouseStyle, KeepOut, RoadsideWreck, Settlement, SettlementKind, SettlementLayout, Structure,
+    StructureKind, Track,
 };
 pub use terrain::{FlatArea, Terrain};
 pub use town::{

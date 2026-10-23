@@ -22,8 +22,8 @@ use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseSc
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use pampa_core::{
-    Aabb, BuildingKind, CoachBody, Ground, LineTrain, PlacedCar, Terrain, TownLayout, Travel,
-    Vec2 as GroundVec2,
+    Aabb, BuildingKind, CoachBody, Ground, LineTrain, PlacedCar, SettlementLayout, StructureKind,
+    Terrain, TownLayout, Travel, Vec2 as GroundVec2,
 };
 use pampa_render::{HudHint, SightLine, WorldTrain, car_transform, world_from_ground};
 
@@ -244,6 +244,25 @@ impl CameraOccluders {
                 .flat_map(|town| Self::from_town(town, terrain).0)
                 .collect(),
         )
+    }
+
+    /// Adds every house and barn of `settlements` as a column up to its
+    /// roof. Tanks, haystacks, corrals and the thin props are left out like
+    /// tree trunks: low or thin, they fade instead (see [`SightLine`]).
+    pub fn with_settlements(mut self, settlements: &SettlementLayout, terrain: &Terrain) -> Self {
+        let ground = |p: GroundVec2| terrain.height(p.x, p.y);
+        self.0.extend(
+            settlements
+                .settlements
+                .iter()
+                .flat_map(|s| s.structures.iter())
+                .filter(|s| s.kind.is_house() || s.kind == StructureKind::Barn)
+                .map(|s| {
+                    let g = ground(s.footprint.center());
+                    Occluder::column(s.footprint, g, g + s.height + ROOF_ALLOWANCE)
+                }),
+        );
+        self
     }
 
     /// Every building of `town`, standing on `terrain`, and the platform

@@ -15,12 +15,14 @@ pub mod fade;
 pub mod fence;
 pub mod flora;
 pub mod font;
+pub mod gltf;
 pub mod ground;
 pub mod hud;
 pub mod minimap;
 pub mod obj;
 pub mod rail;
 pub mod road;
+pub mod settlement;
 pub mod signs;
 pub mod streaming;
 pub mod terrain;
@@ -43,6 +45,10 @@ pub use hud::{HudAnnouncement, HudHint, HudObjective, HudPlugin, HudRide};
 pub use minimap::{MapIcon, MapTarget, MinimapPlugin};
 pub use rail::{LineTrack, RailPlugin, WorldRail};
 pub use road::{CrossingPart, RoadPlugin, RoadSurface, SignpostPart};
+pub use settlement::{
+    ModelRotor, ModelSlots, SettlementMaterials, SettlementPart, SettlementPlugin, SlotFit,
+    SlotRotor, Surface, TrackSurface, WorldSettlements, YardPart, YardProp, YardSurface,
+};
 pub use signs::{SignPlugin, Signboard};
 pub use streaming::{StreamingPlan, StreamingSet};
 pub use terrain::{StreamFocus, TerrainChunk, TerrainPlugin, WorldChunks, WorldTerrain};

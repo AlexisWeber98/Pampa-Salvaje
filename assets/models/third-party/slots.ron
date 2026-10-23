@@ -1,0 +1,24 @@
+// How each third-party model in a model slot sits in its structure's own
+// space: `x` along the front, `y` up from the ground at the middle, `z` out
+// of the front, in meters. See README.md in this folder for the fields.
+(
+    slots: {
+        // 3TD windmill (converted with tools/dae2gltf.py): 13 m tall as
+        // shipped; scaled so its hub stands at the procedural 10 m tower's
+        // height. Its wheel is the `rotor` node, spinning about its -Z.
+        "windpump": (
+            scale: 0.875,
+            offset: (0.0, 0.0, 0.0),
+            yaw: 0.0,
+            rotor: Some((node: "rotor", axis: (0.0, 0.0, -1.0))),
+        ),
+        // 3TD old wagon: its lowest point (a fallen wheel) is 0.92 m up
+        // and its middle 0.58 m off-centre; set on the ground, a little
+        // sunk, and centred on its footprint.
+        "wrecked_wagon": (
+            scale: 1.0,
+            offset: (0.06, -1.06, -0.58),
+            yaw: 0.0,
+        ),
+    },
+)
