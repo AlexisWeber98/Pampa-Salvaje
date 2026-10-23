@@ -385,8 +385,20 @@ mod tests {
         for s in &laid.settlements.settlements {
             assert!(!s.bounds.intersects(&keep), "{:?}", s.bounds);
         }
-        for (a, b) in laid.world.terrain.roads.as_ref().unwrap().segments() {
-            assert!(keep.segment_overlap(a, b).is_none(), "road {a:?}");
+        // Only the public road out to it comes onto its bank.
+        let roads = laid.world.terrain.roads.as_ref().unwrap();
+        for road in roads
+            .roads
+            .iter()
+            .filter(|r| r.kind != pampa_core::RoadKind::Lagoon)
+        {
+            for w in road.path.windows(2) {
+                assert!(
+                    keep.segment_overlap(w[0], w[1]).is_none(),
+                    "road {:?}",
+                    w[0]
+                );
+            }
         }
         let mut tufts = 0;
         let size = laid.world.config.chunk_size;
@@ -423,6 +435,61 @@ mod tests {
             assert!(!lagoon.is_deep(at), "{at:?}");
         }
         assert!(lagoon.is_water(at));
+    }
+
+    #[test]
+    fn a_public_road_leads_from_general_pico_to_the_lagoon_and_rides_clear() {
+        let loaded = towns::load_world(&asset_path(TOWNS_FILE));
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        let laid = lay_out(&loaded);
+        let lagoon = &laid.world.terrain.lagoons[0];
+        let roads = laid.world.terrain.roads.as_ref().unwrap();
+        let to_lagoon: Vec<_> = roads
+            .roads
+            .iter()
+            .filter(|r| r.kind == pampa_core::RoadKind::Lagoon)
+            .collect();
+        assert_eq!(to_lagoon.len(), 1);
+        let road = to_lagoon[0];
+        // From General Pico, out of its east or south side.
+        let pico = &loaded.towns[road.from];
+        assert_eq!(pico.name, "General Pico");
+        let grid = pico.grid();
+        let start = road.path[0];
+        let east = (start.x - grid.max.x).abs() < 1e-2;
+        let south = (start.y - grid.min.y).abs() < 1e-2;
+        assert!(east || south, "{start:?} on {grid:?}");
+        // To the bank: never into the water or onto its mud, and ending by it.
+        let end = road
+            .path
+            .iter()
+            .map(|&p| lagoon.offshore(p))
+            .fold(f32::MAX, f32::min);
+        assert!(end > pampa_core::Lagoon::MUD_BAND && end < 15.0, "{end}");
+        // A rider rides it end to end: no fence, gate, settlement, tree or
+        // signpost stands on it.
+        let collider = pampa_core::Circle::new(pampa_core::Rider::COLLIDER_RADIUS);
+        for w in road.path.windows(2) {
+            for k in 0..4 {
+                let p = w[0] + (w[1] - w[0]) * (k as f32 / 4.0);
+                assert_eq!(laid.world.resolve(collider, p, |_| ()), p, "{p:?}");
+            }
+        }
+        // A fence each side, as along every road, out of town and off the
+        // lagoon's bank.
+        let half = pampa_core::RoadNetwork::HALF_WIDTH;
+        let fenced = laid
+            .fences
+            .obstacles()
+            .iter()
+            .filter(|o| {
+                road.path.windows(2).any(|w| {
+                    let mid = (w[0] + w[1]) * 0.5;
+                    o.closest_point(mid).distance(mid) < half + 8.0
+                })
+            })
+            .count();
+        assert!(fenced > 50, "{fenced} fence spans along the road");
     }
 
     #[test]

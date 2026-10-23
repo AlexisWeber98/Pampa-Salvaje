@@ -263,10 +263,12 @@ pub(crate) mod tests {
             railway: Some(RailwayConfig {
                 side: Side::North,
                 offset: 24.0,
+                through: false,
             }),
             plaza: PlazaPlacement::Auto,
             seed: 1,
             police_stations: None,
+            density: None,
         };
         let (towns, errors) = place_towns(&world, &[town("Oeste", -1500.0), town("Este", 1500.0)]);
         assert!(errors.is_empty(), "{errors:?}");
@@ -569,10 +571,12 @@ pub(crate) mod tests {
             railway: Some(RailwayConfig {
                 side: Side::North,
                 offset: 24.0,
+                through: false,
             }),
             plaza: PlazaPlacement::Auto,
             seed: 1,
             police_stations: None,
+            density: None,
         };
         let (towns, errors) = place_towns(
             &world,

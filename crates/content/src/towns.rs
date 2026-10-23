@@ -128,12 +128,19 @@ struct TownDto {
     /// Overrides the size tier's police station count (`Some(0)`: none).
     #[serde(default)]
     police_stations: Option<usize>,
+    /// Share of the lots built (see [`TownConfig::density`]).
+    #[serde(default)]
+    density: Option<f32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 struct RailwayDto {
     side: SideDto,
     offset: f32,
+    /// The line runs through the middle of the town (see
+    /// [`RailwayConfig::through`]).
+    #[serde(default)]
+    through: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
@@ -186,10 +193,12 @@ impl From<TownDto> for TownConfig {
             railway: town.railway.map(|r| RailwayConfig {
                 side: r.side.into(),
                 offset: r.offset,
+                through: r.through,
             }),
             plaza: town.plaza.into(),
             seed: town.seed,
             police_stations: town.police_stations,
+            density: town.density,
         }
     }
 }
@@ -274,7 +283,7 @@ mod tests {
     }
 
     #[test]
-    fn the_shipped_file_holds_the_three_towns_of_the_line_and_a_lagoon_in_the_largest_world() {
+    fn the_shipped_file_holds_the_four_towns_of_the_line_and_a_lagoon_in_the_largest_world() {
         let (content, errors) = parse_towns(SHIPPED).expect("shipped towns.ron is valid");
         assert!(errors.is_empty(), "{errors:?}");
         assert_eq!(
@@ -286,10 +295,20 @@ mod tests {
         );
         assert_eq!(content.world.validated(), Ok(content.world));
         let names: Vec<&str> = content.towns.iter().map(|t| t.name.as_str()).collect();
-        assert_eq!(names, ["Monte Nievas", "Eduardo Castex", "General Pico"]);
-        let north = Some(RailwayConfig {
+        assert_eq!(
+            names,
+            ["Monte Nievas", "Eduardo Castex", "Metileo", "General Pico"]
+        );
+        let beside = RailwayConfig {
             side: Side::North,
             offset: 24.0,
+            through: false,
+        };
+        let north = Some(beside);
+        // The line runs through the middle of General Pico.
+        let through = Some(RailwayConfig {
+            through: true,
+            ..beside
         });
         // Real offsets in meters, scaled 1:7 from Monte Nievas, which keeps
         // its origin, and rounded to the meter (see the README).
@@ -309,7 +328,7 @@ mod tests {
                 (5, 4),
                 north,
             ),
-            (&content.towns[2], pico, (8, 8), north),
+            (&content.towns[3], pico, (8, 8), through),
         ] {
             assert_eq!(town.origin, origin, "{}", town.name);
             assert_eq!(town.blocks, blocks, "{}", town.name);
@@ -317,19 +336,41 @@ mod tests {
             assert_eq!(town.railway, railway, "{}", town.name);
             assert_eq!(town.plaza, PlazaPlacement::Auto, "{}", town.name);
         }
-        // Monte Nievas and Castex are small, General Pico very big.
+        // Metileo, a halt: at its real place, 16.63 km west and 12.56 km
+        // south of Pico's plaza, scaled 1:7; few houses, no comisaría.
+        let metileo = &content.towns[2];
+        let from_pico = Vec2::new(
+            (pico.x - 16_630.0 / 7.0).round(),
+            (pico.y - 12_560.0 / 7.0).round(),
+        );
+        assert_eq!(metileo.origin, from_pico);
+        assert_eq!((metileo.blocks, metileo.railway), ((3, 3), north));
+        assert_eq!(metileo.police_count(), 0);
+        assert!(metileo.density.is_some_and(|d| d < 0.5));
+        // Monte Nievas, Castex and Metileo are small, General Pico very big.
         let sizes: Vec<TownSize> = content.towns.iter().map(TownConfig::size).collect();
-        assert_eq!(sizes, [TownSize::Small, TownSize::Small, TownSize::VeryBig]);
+        assert_eq!(
+            sizes,
+            [
+                TownSize::Small,
+                TownSize::Small,
+                TownSize::Small,
+                TownSize::VeryBig
+            ]
+        );
         let (placed, errors) = pampa_core::place_towns(&content.world, &content.towns);
         assert!(errors.is_empty(), "{errors:?}");
         assert_eq!(placed.len(), content.towns.len());
-        // The railway line runs Castex, Monte Nievas, General Pico.
+        // The railway line runs Castex, Monte Nievas, Metileo, General Pico.
         let line = content.line.as_deref().expect("an explicit line");
-        assert_eq!(line, ["Eduardo Castex", "Monte Nievas", "General Pico"]);
+        assert_eq!(
+            line,
+            ["Eduardo Castex", "Monte Nievas", "Metileo", "General Pico"]
+        );
         let (rail, errors) =
             pampa_core::RailLine::build(Some(line), &placed, content.world.bounds());
         assert!(errors.is_empty(), "{errors:?}");
-        assert_eq!(rail.links.len(), 2);
+        assert_eq!(rail.links.len(), 3);
         // Laguna La Arocena: real 5.9 km at bearing 119° from Pico, scaled.
         assert_eq!(content.lagoons.len(), 1);
         let arocena = &content.lagoons[0];
@@ -512,10 +553,12 @@ mod tests {
                     railway: Some(RailwayConfig {
                         side: Side::West,
                         offset: 30.0,
+                        through: false,
                     }),
                     plaza: PlazaPlacement::Block(1, 2),
                     seed: 11,
                     police_stations: None,
+                    density: None,
                 },
                 TownConfig {
                     name: "Carmensa".into(),
@@ -527,6 +570,7 @@ mod tests {
                     plaza: PlazaPlacement::Auto,
                     seed: 0,
                     police_stations: None,
+                    density: None,
                 },
             ]
         );

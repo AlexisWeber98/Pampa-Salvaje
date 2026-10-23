@@ -385,13 +385,14 @@ mod tests {
             };
             // Beside a level crossing the cut eases off the track bed on
             // purpose (`RoadNetwork::cut`), so the bed is not level there.
+            // The cut is never deeper than its depth, by a crossing or not.
             let by_crossing = roads.crossings().any(|c| c.at.distance(mid) < 40.0);
-            if roads.near(mid, RoadNetwork::CUT_REACH * 3.0).is_some()
-                && depth > 0.0
-                && !by_crossing
-            {
+            let cut = roads.near(mid, RoadNetwork::CUT_REACH * 3.0).is_some() && depth > 0.0;
+            if cut {
+                assert!(depth <= RoadNetwork::CUT_DEPTH + 0.01, "{mid:?}: {depth}");
+            }
+            if cut && !by_crossing {
                 assert!(spread(&t) < 0.02, "{mid:?}: {}", spread(&t));
-                assert!(depth <= RoadNetwork::CUT_DEPTH + 0.01, "{depth}");
                 flatter += usize::from(spread(&t) < spread(&plain));
                 checked += 1;
             }

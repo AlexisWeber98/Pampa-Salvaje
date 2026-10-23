@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::rng::Rng;
-use crate::{Aabb, RailLine, TownLayout, Vec2, WorldBounds};
+use crate::{Aabb, Lagoon, RailLine, TownLayout, Vec2, WorldBounds};
 
 /// What a road joins.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +27,12 @@ pub enum RoadKind {
     /// A short dead-end track from a town across its railway, by the
     /// station, out to the chacras and estancias (user, 2026-10-22).
     Rural,
+    /// A town street across the railway running through the town
+    /// ([`crate::RailwayConfig::through`]), at its level crossing.
+    Street,
+    /// A public dead-end road from a town out to a lagoon's bank, ending in
+    /// a small turnaround by the water (user, 2026-10-23).
+    Lagoon,
 }
 
 /// One road: between two towns, or a rural track out of one.
@@ -36,7 +42,7 @@ pub struct Road {
     /// Index (into the world's towns) of the town the road leaves.
     pub from: usize,
     /// Index of the town the road reaches (`from` again for a rural
-    /// track, which ends in the open land).
+    /// track, which ends in the open land, and for a street crossing).
     pub to: usize,
     /// The centerline, from the street exit of `from` to that of `to` (or
     /// to the rural track's end).
@@ -267,6 +273,14 @@ impl RoadNetwork {
     /// away from its crossings and its towns (see [`Self::RAIL_CLEARANCE`];
     /// the bends that keep it there may fall a little short).
     pub const NEAR_RAIL: f32 = 0.9 * Self::RAIL_CLEARANCE;
+    /// Farthest a town may lie from a lagoon (from its leveled band to the
+    /// lagoon's middle) for a road to be laid out to it, in meters.
+    pub const LAGOON_REACH: f32 = 2500.0;
+    /// Radius of the turnaround loop at a lagoon road's end, in meters.
+    pub const TURNAROUND: f32 = 6.0;
+    /// How far past the waterline the turnaround's middle lies, in meters:
+    /// the loop's near edge comes to the wet mud and no farther.
+    pub const LANDING: f32 = Lagoon::MUD_BAND + Self::HALF_WIDTH + Self::TURNAROUND + 0.5;
     /// Within this many meters of a crossing, a road may come near the
     /// track: its square approaches.
     const CROSSING_APPROACH: f32 = Self::RAIL_CLEARANCE + 90.0;
@@ -293,6 +307,7 @@ impl RoadNetwork {
             }
         }
         for (i, town) in towns.iter().enumerate() {
+            roads.extend(street_crossings(town, i, &track));
             let road = match rural(town, i, &track) {
                 Some(Ok(road)) => road,
                 Some(Err(error)) => {
@@ -308,6 +323,60 @@ impl RoadNetwork {
         }
         let names: Vec<&str> = towns.iter().map(|t| t.name.as_str()).collect();
         (Self::new(roads, &names), errors)
+    }
+
+    /// This network with a road out to each of `lagoons` from the nearest
+    /// town within [`Self::LAGOON_REACH`] of it ([`lagoon_road`]), each with
+    /// a signpost at its start naming the lagoon, and the lagoon roads left
+    /// out, each reported. The lagoons should come from
+    /// [`crate::place_lagoons`], checked against this network's roads.
+    pub fn with_lagoons(
+        self,
+        towns: &[TownLayout],
+        line: &RailLine,
+        bounds: WorldBounds,
+        lagoons: &[Lagoon],
+    ) -> (Self, Vec<RoadError>) {
+        let track = Track(line.full_path(towns).points().to_vec());
+        let mut roads = self.roads;
+        let mut errors = Vec::new();
+        let mut signs = Vec::new();
+        for lagoon in lagoons {
+            let nearest = towns
+                .iter()
+                .enumerate()
+                .map(|(i, t)| {
+                    let band = t.leveled();
+                    (band.closest_point(lagoon.center).distance(lagoon.center), i)
+                })
+                .filter(|&(d, _)| d <= Self::LAGOON_REACH)
+                .min_by(|a, b| a.0.total_cmp(&b.0));
+            let Some((_, index)) = nearest else {
+                continue;
+            };
+            let road = lagoon_road(&towns[index], index, lagoon, &track);
+            match check(&road, towns, bounds, &track) {
+                Ok(()) => {
+                    signs.push((roads.len(), lagoon.name.clone()));
+                    roads.push(road);
+                }
+                Err(error) => errors.push(error),
+            }
+        }
+        let names: Vec<&str> = towns.iter().map(|t| t.name.as_str()).collect();
+        let mut network = Self::new(roads, &names);
+        for (i, name) in signs {
+            let end = network.roads[i].ends[0];
+            let right = Vec2::new(end.out.y, -end.out.x);
+            network.signposts.push(Signpost {
+                at: end.at + end.out * Self::SIGNPOST_OUT + right * (Self::HALF_WIDTH + 1.8),
+                boards: vec![SignBoard {
+                    text: board_text(&name, network.length(i)),
+                    toward: end.out,
+                }],
+            });
+        }
+        (network, errors)
     }
 
     /// The network of `roads`, indexed, with a signpost at every road end
@@ -645,6 +714,12 @@ fn exit(town: &TownLayout, toward: Vec2) -> RoadEnd {
     let grid = town.grid();
     let center = grid.center();
     let rail_side = town.railway.map(|r| ((r.start + r.end) * 0.5) - center);
+    // A line through the town runs out of both ends of it: a road leaving
+    // there would hug the track.
+    let rail_axis = town
+        .railway
+        .filter(|_| town.rail_band().is_some())
+        .and_then(|r| unit(r.end - r.start));
     let sides = [
         Vec2::new(1.0, 0.0),
         Vec2::new(-1.0, 0.0),
@@ -654,7 +729,10 @@ fn exit(town: &TownLayout, toward: Vec2) -> RoadEnd {
     let want = unit(toward - center).unwrap_or(Vec2::new(1.0, 0.0));
     let out = sides
         .into_iter()
-        .filter(|s| rail_side.is_none_or(|r| r.dot(*s) <= r.length() * 0.5))
+        .filter(|s| match rail_axis {
+            Some(axis) => axis.dot(*s).abs() < 0.5,
+            None => rail_side.is_none_or(|r| r.dot(*s) <= r.length() * 0.5),
+        })
         .max_by(|a, b| a.dot(want).total_cmp(&b.dot(want)))
         .unwrap_or(Vec2::new(1.0, 0.0));
     // Streets running out through that side, ring streets left out.
@@ -723,6 +801,10 @@ fn route(a: &TownLayout, b: &TownLayout, track: &Track, (from, to): (usize, usiz
 /// for a town without a railway; an error when there is no clear way
 /// across its yard.
 fn rural(town: &TownLayout, index: usize, track: &Track) -> Option<Result<Road, RoadError>> {
+    // A town on both sides of its line reaches across it by its streets.
+    if town.rail_band().is_some() {
+        return None;
+    }
     let rail = town.railway?;
     let blocked = || {
         Err(RoadError::NoRuralCrossing {
@@ -838,6 +920,147 @@ fn rural(town: &TownLayout, index: usize, track: &Track) -> Option<Result<Road, 
         ends,
         crossings,
     }))
+}
+
+/// The public road from `town` (index `index`) out to `lagoon`.
+///
+/// It leaves the town by a street through the grid side facing the lagoon,
+/// the one nearest the lagoon across that side that keeps
+/// [`RoadNetwork::RAIL_CLEARANCE`] from the track (a town's line may run out
+/// of that side); runs straight out across the leveled band, then on a
+/// gently curving seeded line, clear of the track, to the lagoon's bank,
+/// and ends there in a turnaround loop of [`RoadNetwork::TURNAROUND`]
+/// meters whose near edge stops at the wet mud ([`RoadNetwork::LANDING`]).
+fn lagoon_road(town: &TownLayout, index: usize, lagoon: &Lagoon, track: &Track) -> Road {
+    let grid = town.grid();
+    let center = grid.center();
+    let rail_side = town
+        .railway
+        .filter(|_| town.rail_band().is_none())
+        .map(|r| ((r.start + r.end) * 0.5) - center);
+    let want = unit(lagoon.center - center).unwrap_or(Vec2::new(1.0, 0.0));
+    let sides = [
+        Vec2::new(1.0, 0.0),
+        Vec2::new(-1.0, 0.0),
+        Vec2::new(0.0, 1.0),
+        Vec2::new(0.0, -1.0),
+    ];
+    let out = sides
+        .into_iter()
+        .filter(|s| rail_side.is_none_or(|r| r.dot(*s) <= r.length() * 0.5))
+        .max_by(|a, b| a.dot(want).total_cmp(&b.dot(want)))
+        .unwrap_or(Vec2::new(1.0, 0.0));
+    let across = Vec2::new(-out.y, out.x);
+    let edge = if out.x + out.y > 0.0 {
+        grid.max.dot(out)
+    } else {
+        grid.min.dot(out)
+    };
+    let (lo, hi) = (
+        grid.min.dot(across).min(grid.max.dot(across)),
+        grid.max.dot(across).max(grid.min.dot(across)),
+    );
+    let goal = lagoon.center.dot(across);
+    let clear_of_rail = |c: f32| {
+        let at = across * c + out * edge;
+        track.signed(at).0.abs() >= RoadNetwork::RAIL_CLEARANCE
+    };
+    let street = town
+        .streets
+        .iter()
+        .filter(|s| {
+            let size = s.size();
+            let long = size.dot(Vec2::new(out.x.abs(), out.y.abs()));
+            let wide = size.dot(Vec2::new(across.x.abs(), across.y.abs()));
+            let reaches = (s.max.dot(out).max(s.min.dot(out)) - edge).abs() < 1e-3;
+            let c = s.center().dot(across);
+            long > wide && reaches && c - wide > lo + 1e-3 && c + wide < hi - 1e-3
+        })
+        .map(|s| s.center().dot(across))
+        .filter(|&c| clear_of_rail(c))
+        .min_by(|a, b| (a - goal).abs().total_cmp(&(b - goal).abs()))
+        .unwrap_or((lo + hi) / 2.0);
+    let start = out * edge + across * street;
+    let p = start + out * RoadNetwork::RUN_OUT;
+    // The turnaround's middle, on the bank on the side facing the town.
+    let toward = unit(p - lagoon.center).unwrap_or(out * -1.0);
+    let angle = toward.y.atan2(toward.x);
+    let reach = lagoon.shore_radius(angle) + RoadNetwork::LANDING;
+    let hub = lagoon.center + toward * reach;
+    let r = RoadNetwork::TURNAROUND;
+    let q = hub + toward * r;
+    let mut rng = Rng::new(town.seed.wrapping_mul(131) ^ ROAD_SEED, 2);
+    let mut path = vec![start];
+    path.extend(between(p, q, track, &mut rng, 3));
+    // Round the loop and back to where it began, counter-clockwise.
+    let steps = 16;
+    for k in 1..=steps {
+        let a = angle + std::f32::consts::TAU * k as f32 / steps as f32;
+        push_unique(&mut path, hub + Vec2::new(a.cos(), a.sin()) * r);
+    }
+    let path = chaikin(path, 2);
+    let crossings = crossings_of(&path, track);
+    let n = path.len();
+    let ends = [
+        RoadEnd {
+            at: path[0],
+            out: unit(path[1] - path[0]).unwrap_or(out),
+        },
+        RoadEnd {
+            at: path[n - 1],
+            out: unit(path[n - 1] - path[n - 2]).unwrap_or(toward * -1.0),
+        },
+    ];
+    Road {
+        kind: RoadKind::Lagoon,
+        from: index,
+        to: index,
+        path,
+        ends,
+        crossings,
+    }
+}
+
+/// Pushes `p` onto `path` unless it is (nearly) the last point already.
+fn push_unique(path: &mut Vec<Vec2>, p: Vec2) {
+    if path.last().is_none_or(|l| l.distance(p) > 1e-3) {
+        path.push(p);
+    }
+}
+
+/// The level crossings of `town`'s streets over a line running through it
+/// ([`TownLayout::crossing_streets`]): one short straight road each, so
+/// the ground rises onto a plank deck and the crossing gets its signs, like
+/// a road's. None for a town beside its line.
+fn street_crossings(town: &TownLayout, index: usize, track: &Track) -> Vec<Road> {
+    let Some(rail) = town.railway else {
+        return Vec::new();
+    };
+    town.crossing_streets()
+        .into_iter()
+        .map(|(a, b)| {
+            let path = vec![a, b];
+            let mut crossings = crossings_of(&path, track);
+            if crossings.is_empty() {
+                crossings = crossings_of(&path, &Track(vec![rail.start, rail.end]));
+            }
+            let out = unit(b - a).unwrap_or(Vec2::new(0.0, 1.0));
+            Road {
+                kind: RoadKind::Street,
+                from: index,
+                to: index,
+                path,
+                ends: [
+                    RoadEnd {
+                        at: a,
+                        out: out * -1.0,
+                    },
+                    RoadEnd { at: b, out },
+                ],
+                crossings,
+            }
+        })
+        .collect()
 }
 
 /// `1` along a positive axis, `-1` along a negative one.
@@ -981,6 +1204,8 @@ fn check(
     let to = match road.kind {
         RoadKind::Between => name(road.to),
         RoadKind::Rural => "the open land".to_string(),
+        RoadKind::Street => name(road.to),
+        RoadKind::Lagoon => "its lagoon".to_string(),
     };
     let margin = RoadNetwork::CUT_REACH;
     let inside = road.path.iter().all(|p| {
@@ -1334,10 +1559,15 @@ pub(crate) mod tests {
             blocks: (4, 4),
             block_size: 40.0,
             street_width: 10.0,
-            railway: Some(RailwayConfig { side, offset: 24.0 }),
+            railway: Some(RailwayConfig {
+                side,
+                offset: 24.0,
+                through: false,
+            }),
             plaza: PlazaPlacement::Auto,
             seed: 3,
             police_stations: None,
+            density: None,
         };
         let world = WorldConfig::default();
         let (towns, errors) = place_towns(
@@ -1598,5 +1828,85 @@ pub(crate) mod tests {
                 "{e:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_public_road_runs_from_the_nearest_town_to_the_lagoon_bank() {
+        let (towns, line, roads) = shipped_roads();
+        let terrain = crate::Terrain::default();
+        let config = crate::lagoon::tests::arocena_config();
+        let (lagoons, errors) = crate::place_lagoons(
+            &big_world(),
+            &terrain,
+            &towns,
+            &line,
+            &roads,
+            std::slice::from_ref(&config),
+        );
+        assert!(errors.is_empty(), "{errors:?}");
+        let lagoon = &lagoons[0];
+        let before = roads.roads.len();
+        let (roads, errors) = roads.with_lagoons(&towns, &line, big_world().bounds(), &lagoons);
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(roads.roads.len(), before + 1);
+        let road = roads.roads.last().unwrap();
+        assert_eq!(road.kind, RoadKind::Lagoon);
+        // From General Pico, the nearest town, out of its grid's edge on
+        // the lagoon's side.
+        let pico = towns.iter().position(|t| t.name == "General Pico").unwrap();
+        assert_eq!((road.from, road.to), (pico, pico));
+        let grid = towns[pico].grid();
+        assert!(on_edge(grid, road.path[0]), "{:?}", road.path[0]);
+        assert!(road.ends[0].out.dot(lagoon.center - grid.center()) > 0.0);
+        // Never across the track, and clear of it away from town.
+        assert!(road.crossings.is_empty());
+        // It ends on the bank: its edge comes to the wet mud and no farther,
+        // and its turnaround lies close by the water.
+        for &p in &road.path {
+            let off = lagoon.offshore(p);
+            assert!(
+                off >= Lagoon::MUD_BAND + RoadNetwork::HALF_WIDTH - 0.5,
+                "{p:?}: {off}"
+            );
+        }
+        let nearest = road
+            .path
+            .iter()
+            .map(|&p| lagoon.offshore(p))
+            .fold(f32::MAX, f32::min);
+        assert!(
+            nearest < Lagoon::MUD_BAND + RoadNetwork::HALF_WIDTH + 2.0,
+            "{nearest}"
+        );
+        // Only its end enters the lagoon's keep-out: the rest of the road
+        // stays clear of the bank and its margin.
+        let keep = lagoon.keep_out();
+        let entered = road
+            .path
+            .iter()
+            .position(|&p| keep.contains_point(p))
+            .unwrap();
+        assert!(
+            road.path[entered..]
+                .iter()
+                .all(|&p| keep.expanded(1.0).contains_point(p))
+        );
+        // A turnaround loop at the end, and a signpost naming the lagoon.
+        let tail = &road.path[entered..];
+        let span = tail.iter().fold(0.0_f32, |m, a| {
+            tail.iter().fold(m, |m, b| m.max(a.distance(*b)))
+        });
+        assert!(span > RoadNetwork::TURNAROUND, "{span}");
+        assert!(roads.signposts.iter().any(|s| {
+            s.boards
+                .iter()
+                .any(|b| b.text.starts_with("LAGUNA LA AROCENA "))
+        }));
+        // Laid the same way every time.
+        let (again, _) =
+            shipped_roads()
+                .2
+                .with_lagoons(&towns, &line, big_world().bounds(), &lagoons);
+        assert_eq!(again, roads);
     }
 }

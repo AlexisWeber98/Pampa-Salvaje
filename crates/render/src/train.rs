@@ -1054,10 +1054,12 @@ pub(crate) mod tests {
             railway: Some(RailwayConfig {
                 side: Side::North,
                 offset: 24.0,
+                through: false,
             }),
             plaza: PlazaPlacement::Auto,
             seed: 1,
             police_stations: None,
+            density: None,
         };
         // Monte Nievas, and the others at their real offsets from it
         // (east, north, in meters) scaled 1:7 and rounded to the meter.

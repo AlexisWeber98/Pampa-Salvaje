@@ -694,10 +694,12 @@ pub(crate) mod tests {
             railway: rail.then_some(RailwayConfig {
                 side: Side::North,
                 offset: 24.0,
+                through: false,
             }),
             plaza: PlazaPlacement::Auto,
             seed: 1,
             police_stations: None,
+            density: None,
         }
     }
 

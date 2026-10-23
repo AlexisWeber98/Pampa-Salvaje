@@ -216,13 +216,32 @@ pub enum PlazaPlacement {
     Block(usize, usize),
 }
 
-/// Which side of the grid the railway runs along, and how far out.
+/// Which side of the grid the railway runs along, and how far out; or, for
+/// a town grown on both sides of its line, which half of the town its
+/// station stands in.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RailwayConfig {
     pub side: Side,
     /// Distance from the grid edge (outer edge of the ring street) to the
-    /// track centerline, in meters.
+    /// track centerline, in meters. For a `through` line, from the edge of
+    /// the station's half of the town.
     pub offset: f32,
+    /// The track runs east-west through the middle of the town, between its
+    /// two middle rows of blocks, instead of along one side: the town grows
+    /// on both sides of the line, like the big railway towns. `side`
+    /// (`North` or `South`) is then the half the station stands in, facing
+    /// it across the street. The streets running north-south cross the
+    /// track at level crossings, except where the station yard stands.
+    pub through: bool,
+}
+
+impl RailwayConfig {
+    /// Least rows of blocks a town with a `through` line needs: two on each
+    /// side of the track.
+    pub const MIN_THROUGH_ROWS: usize = 4;
+    /// For a `through` line, how far the track runs from the edge of the
+    /// half of the town across from the station, in meters.
+    pub const THROUGH_FAR_SIDE: f32 = 16.0;
 }
 
 /// Everything needed to generate a town.
@@ -246,6 +265,9 @@ pub struct TownConfig {
     /// count ([`TownSize`]); `None` keeps the tier's. At most the tier's
     /// count (a town without a comisaría is `Some(0)`).
     pub police_stations: Option<usize>,
+    /// Share of the house and shed lots that are built, from 0 to 1; `None`
+    /// builds them all as usual. A village or a railway halt has few.
+    pub density: Option<f32>,
 }
 
 impl TownConfig {
@@ -274,10 +296,12 @@ impl TownConfig {
             railway: Some(RailwayConfig {
                 side: Side::North,
                 offset: 24.0,
+                through: false,
             }),
             plaza: PlazaPlacement::Auto,
             seed: 7,
             police_stations: None,
+            density: None,
         }
     }
 
@@ -305,8 +329,8 @@ pub enum TownSize {
     /// Up to [`TownSize::BIG_MAX`] blocks: a central plaza of two blocks, a
     /// station plaza, two general stores and one police station.
     Big,
-    /// More blocks: a central plaza of 2 x 2 blocks, a station plaza, one
-    /// general store per 16 blocks and two police stations.
+    /// More blocks: a central plaza of 2 x 2 blocks, a station plaza, two
+    /// general stores and two police stations.
     VeryBig,
 }
 
@@ -340,12 +364,12 @@ impl TownSize {
         (w.min(blocks.0.max(1)), h.min(blocks.1.max(1)))
     }
 
-    /// General stores in a town of `blocks`.
-    fn general_stores(self, blocks: (usize, usize)) -> usize {
+    /// General stores in a town of this size: one per half of a town
+    /// split by its line, or one by each plaza (user, 2026-10-23).
+    fn general_stores(self) -> usize {
         match self {
             Self::Small => 1,
-            Self::Big => 2,
-            Self::VeryBig => blocks.0 * blocks.1 / 16,
+            Self::Big | Self::VeryBig => 2,
         }
     }
 
@@ -397,6 +421,15 @@ pub enum TownConfigError {
     NoStationToFace,
     /// `police_stations` asks for more than the size tier places.
     TooManyPoliceStations { wanted: usize, max: usize },
+    /// `density` outside 0 to 1.
+    BadDensity { density: f32 },
+    /// A `through` railway on the east or west side: it only runs east-west.
+    ThroughNotEastWest { side: Side },
+    /// A `through` railway in a town with too few rows to grow on both
+    /// sides of it ([`RailwayConfig::MIN_THROUGH_ROWS`]).
+    ThroughTooFewRows { rows: usize, min: usize },
+    /// The plaza spans both sides of a `through` railway.
+    PlazaAcrossRailway,
 }
 
 impl fmt::Display for TownConfigError {
@@ -440,6 +473,20 @@ impl fmt::Display for TownConfigError {
                 f,
                 "police_stations {wanted} is more than a town of this size has (max {max})"
             ),
+            Self::BadDensity { density } => {
+                write!(f, "density {density} is outside 0 to 1")
+            }
+            Self::ThroughNotEastWest { side } => write!(
+                f,
+                "a `through` railway runs east-west: its side must be North or South, not {side:?}"
+            ),
+            Self::ThroughTooFewRows { rows, min } => write!(
+                f,
+                "a `through` railway needs at least {min} rows of blocks, the town has {rows}"
+            ),
+            Self::PlazaAcrossRailway => {
+                write!(f, "the plaza spans both sides of the `through` railway")
+            }
         }
     }
 }
@@ -472,6 +519,9 @@ pub struct TownLayout {
     grid: Aabb,
     extent: Aabb,
     arrival: (Vec2, Heading),
+    /// The strip between the two halves of a town grown on both sides of
+    /// its line ([`RailwayConfig::through`]): the track and station yard.
+    band: Option<Aabb>,
 }
 
 /// Trunk radius used for tree collision.
@@ -511,12 +561,7 @@ impl TownLayout {
         let extent = grid.extent(config.railway);
 
         let police = config.police_count();
-        let mut landmarks = central_landmarks(&grid, main, size, config.blocks, police);
-        let station = (size != TownSize::Small)
-            .then(|| station_plaza(&grid, main, &landmarks, config.railway));
-        if let Some(station) = &station {
-            landmarks.push(station_store(&grid, main, station, &landmarks));
-        }
+        let (landmarks, station) = place_landmarks(&grid, main, size, police, config.railway);
         let mut reserved: Vec<(usize, usize)> = landmarks.iter().map(|l| l.block).collect();
         reserved.extend(main.blocks());
         reserved.extend(station.map(|s| s.block));
@@ -534,7 +579,7 @@ impl TownLayout {
                     landmark,
                     windmills.contains(&(i, j)),
                     station.filter(|s| s.block == (i, j)).map(|s| s.area),
-                    config.seed,
+                    config,
                     &mut buildings,
                 );
             }
@@ -554,10 +599,24 @@ impl TownLayout {
                 buildings.push(landmark);
             }
         }
+        let yard_start = buildings.len();
         let railway = config.railway.map(|r| {
-            buildings.extend(station_yard(&grid, r, plaza.center()));
-            railway_line(bounds, r, grid.along_half(r.side))
+            let (half, track) = grid.yard_half(r);
+            let along = grid.along_half(track);
+            // A through line's station stands in the middle of the town;
+            // one beside the town faces the plaza.
+            let wanted = if r.through {
+                0.0
+            } else {
+                (plaza.center() - bounds.center()).dot(axis_along(track))
+            };
+            buildings.extend(station_yard(half, track, r.offset, along, wanted));
+            railway_line(half, track, r.offset, along)
         });
+        let yard: Vec<Aabb> = buildings[yard_start..]
+            .iter()
+            .map(|b| b.footprint)
+            .collect();
 
         let store = buildings
             .iter()
@@ -567,7 +626,7 @@ impl TownLayout {
         let (w, h) = main.span();
         Ok(Self {
             name: config.name.clone(),
-            streets: grid.streets(main),
+            streets: grid.streets(main, &yard),
             plaza,
             station_plaza: station.map(|s| s.area),
             size,
@@ -587,6 +646,7 @@ impl TownLayout {
             grid: bounds,
             extent,
             arrival: arrival(&grid, main, config.railway),
+            band: grid.band(),
         })
     }
 
@@ -634,6 +694,39 @@ impl TownLayout {
         let min = Vec2::new(r.start.x.min(r.end.x), r.start.y.min(r.end.y));
         let max = Vec2::new(r.start.x.max(r.end.x), r.start.y.max(r.end.y));
         Some(Aabb::new(min, max).expanded(Self::RAIL_CORRIDOR_HALF))
+    }
+
+    /// The strip between the two halves of a town grown on both sides of
+    /// its line ([`RailwayConfig::through`]), from one end of the grid to the
+    /// other: the track, the station yard and the level crossings. `None`
+    /// for a town beside its line or without one.
+    pub fn rail_band(&self) -> Option<Aabb> {
+        self.band
+    }
+
+    /// The streets that cross a [`Self::rail_band`] at a level crossing:
+    /// each one's centerline across the band, from the middle of the ring
+    /// street on one side to the middle of the one on the other, south to
+    /// north, west to east.
+    pub fn crossing_streets(&self) -> Vec<(Vec2, Vec2)> {
+        let Some(band) = self.band else {
+            return Vec::new();
+        };
+        let mut out: Vec<(Vec2, Vec2)> = self
+            .streets
+            .iter()
+            .filter(|s| s.size().y > s.size().x)
+            .filter(|s| s.min.y < band.min.y && s.max.y > band.max.y)
+            .map(|s| {
+                let (x, half) = (s.center().x, s.size().x / 2.0);
+                (
+                    Vec2::new(x, band.min.y - half),
+                    Vec2::new(x, band.max.y + half),
+                )
+            })
+            .collect();
+        out.sort_by(|a, b| a.0.x.total_cmp(&b.0.x));
+        out
     }
 
     /// Ground to level under the town, at the natural height of its center.
@@ -736,6 +829,22 @@ struct Grid {
     rows: usize,
     block: f32,
     street: f32,
+    /// A through line between two halves of the town.
+    split: Option<Split>,
+}
+
+/// Where a through line splits the grid in two halves.
+#[derive(Debug, Clone, Copy)]
+struct Split {
+    /// The first row of blocks north of the line.
+    row: usize,
+    /// Width of the band between the two halves' ring streets, in meters.
+    gap: f32,
+}
+
+/// The first row of blocks north of a through line in a town of `rows`.
+fn split_row(rows: usize) -> usize {
+    rows / 2
 }
 
 impl Grid {
@@ -787,6 +896,23 @@ impl Grid {
                 min: TownConfig::MIN_RAILWAY_OFFSET,
             });
         }
+        if let Some(density) = config.density
+            && !(0.0..=1.0).contains(&density)
+        {
+            return Err(TownConfigError::BadDensity { density });
+        }
+        let through = config.railway.filter(|r| r.through);
+        if let Some(r) = through {
+            if matches!(r.side, Side::East | Side::West) {
+                return Err(TownConfigError::ThroughNotEastWest { side: r.side });
+            }
+            if rows < RailwayConfig::MIN_THROUGH_ROWS {
+                return Err(TownConfigError::ThroughTooFewRows {
+                    rows,
+                    min: RailwayConfig::MIN_THROUGH_ROWS,
+                });
+            }
+        }
         // Only the tier's landmark blocks are set aside: fewer police
         // stations fit, more do not.
         let max = config.size().police_stations();
@@ -801,13 +927,19 @@ impl Grid {
             rows,
             block: config.block_size,
             street: config.street_width,
+            split: through.map(|r| Split {
+                row: split_row(rows),
+                gap: r.offset + RailwayConfig::THROUGH_FAR_SIDE,
+            }),
         })
     }
 
-    /// Half the grid's size, ring street included.
+    /// Half the grid's size, ring street included (and, split by a through
+    /// line, both halves' ring streets and the band between them).
     fn half(&self) -> Vec2 {
         let span = |n: usize| n as f32 * self.block + (n + 1) as f32 * self.street;
-        Vec2::new(span(self.cols), span(self.rows)) * 0.5
+        let split = self.split.map_or(0.0, |s| self.street + s.gap);
+        Vec2::new(span(self.cols), span(self.rows) + split) * 0.5
     }
 
     fn bounds(&self) -> Aabb {
@@ -819,9 +951,51 @@ impl Grid {
         self.origin.x - self.half().x + k as f32 * (self.block + self.street)
     }
 
-    /// Lower `y` of east-west street `k` (0 = the south ring street).
+    /// Lower `y` of east-west street `k` (0 = the south ring street). Past
+    /// a through line, `k` from its split row on are the north half's
+    /// streets ([`Self::south_lane`] is the south half's last).
     fn lane_y(&self, k: usize) -> f32 {
-        self.origin.y - self.half().y + k as f32 * (self.block + self.street)
+        let shift = self
+            .split
+            .filter(|s| k >= s.row)
+            .map_or(0.0, |s| self.street + s.gap);
+        self.origin.y - self.half().y + k as f32 * (self.block + self.street) + shift
+    }
+
+    /// Lower `y` of the south half's north ring street, by a through line.
+    fn south_lane(&self) -> Option<f32> {
+        let s = self.split?;
+        Some(self.origin.y - self.half().y + s.row as f32 * (self.block + self.street))
+    }
+
+    /// The band between the two halves of a split grid.
+    fn band(&self) -> Option<Aabb> {
+        let s = self.split?;
+        let b = self.bounds();
+        let lo = self.south_lane()? + self.street;
+        Some(Aabb::new(
+            Vec2::new(b.min.x, lo),
+            Vec2::new(b.max.x, lo + s.gap),
+        ))
+    }
+
+    /// The part of the grid the station yard is laid against, and the side
+    /// of it the track runs along: the whole grid and the railway's side,
+    /// or, for a through line, the half the station stands in and its side
+    /// facing the track.
+    fn yard_half(&self, railway: RailwayConfig) -> (Aabb, Side) {
+        let b = self.bounds();
+        match self.band() {
+            Some(band) if railway.side == Side::North => (
+                Aabb::new(Vec2::new(b.min.x, band.max.y), b.max),
+                Side::South,
+            ),
+            Some(band) => (
+                Aabb::new(b.min, Vec2::new(b.max.x, band.min.y)),
+                Side::North,
+            ),
+            None => (b, railway.side),
+        }
     }
 
     /// Footprint of block `(i, j)`, counted from the south-west corner.
@@ -839,38 +1013,78 @@ impl Grid {
     /// Every north-south street, west to east, then every east-west street,
     /// south to north. A street running between the blocks of a merged
     /// `plaza` stops at its edges: it becomes two pieces, one on either side.
-    fn streets(&self, plaza: PlazaBlocks) -> Vec<Aabb> {
+    /// A north-south street that would run into the station `yard` of a
+    /// through line stops at the band on either side; the others cross it.
+    fn streets(&self, plaza: PlazaBlocks, yard: &[Aabb]) -> Vec<Aabb> {
         let b = self.bounds();
         let area = self.span(plaza);
-        // `lane` from `lo` to `hi` along it, minus `cut` when it has one.
-        let pieces = |lo: f32, hi: f32, cut: Option<(f32, f32)>| match cut {
-            Some((c0, c1)) => vec![(lo, c0), (c1, hi)],
-            None => vec![(lo, hi)],
+        let band = self.band();
+        // `lane` from `lo` to `hi` along it, minus every one of `cuts`.
+        let pieces = |lo: f32, hi: f32, cuts: &[(f32, f32)]| {
+            let mut out = vec![(lo, hi)];
+            for &(c0, c1) in cuts {
+                out = out
+                    .into_iter()
+                    .flat_map(|(a, z)| {
+                        if c1 <= a || c0 >= z {
+                            vec![(a, z)]
+                        } else {
+                            vec![(a, c0), (c1, z)]
+                        }
+                    })
+                    .filter(|(a, z)| z > a)
+                    .collect();
+            }
+            out
         };
         let mut out = Vec::new();
         for k in 0..=self.cols {
             let x = self.lane_x(k);
             let inner = plaza.min.0 < k && k <= plaza.max.0;
-            let cut = inner.then_some((area.min.y, area.max.y));
-            for (y0, y1) in pieces(b.min.y, b.max.y, cut) {
+            let mut cuts: Vec<(f32, f32)> = inner
+                .then_some((area.min.y, area.max.y))
+                .into_iter()
+                .collect();
+            if let Some(band) = band {
+                let lane = Aabb::new(
+                    Vec2::new(x, band.min.y),
+                    Vec2::new(x + self.street, band.max.y),
+                )
+                .expanded(YARD_CLEARANCE);
+                if yard.iter().any(|y| y.intersects(&lane)) {
+                    cuts.push((band.min.y, band.max.y));
+                }
+            }
+            for (y0, y1) in pieces(b.min.y, b.max.y, &cuts) {
                 out.push(Aabb::new(Vec2::new(x, y0), Vec2::new(x + self.street, y1)));
             }
         }
         for k in 0..=self.rows {
+            // A through line's band: the south half's ring street first.
+            if let (Some(split), Some(y)) = (self.split, self.south_lane())
+                && split.row == k
+            {
+                out.push(Aabb::new(
+                    Vec2::new(b.min.x, y),
+                    Vec2::new(b.max.x, y + self.street),
+                ));
+            }
             let y = self.lane_y(k);
             let inner = plaza.min.1 < k && k <= plaza.max.1;
             let cut = inner.then_some((area.min.x, area.max.x));
-            for (x0, x1) in pieces(b.min.x, b.max.x, cut) {
+            let cuts: Vec<(f32, f32)> = cut.into_iter().collect();
+            for (x0, x1) in pieces(b.min.x, b.max.x, &cuts) {
                 out.push(Aabb::new(Vec2::new(x0, y), Vec2::new(x1, y + self.street)));
             }
         }
         out
     }
 
-    /// The grid plus the station yard and railway corridor beside it.
+    /// The grid plus the station yard and railway corridor beside it (a
+    /// through line's lie inside it).
     fn extent(&self, railway: Option<RailwayConfig>) -> Aabb {
         let grid = self.bounds();
-        let Some(r) = railway else {
+        let Some(r) = railway.filter(|r| !r.through) else {
             return grid;
         };
         let along = self.along_half(r.side);
@@ -901,15 +1115,33 @@ fn middle(n: usize) -> usize {
 }
 
 /// The block that holds the plaza.
+///
+/// With a through line ([`RailwayConfig::through`]), facing the station is
+/// the row next to the track in the station's half; and `Auto` takes, in
+/// that half, the block one column west of the middle and two rows back
+/// from the track (the last row if there are fewer), so the main plaza
+/// stands a few blocks from the station, as in the big railway towns.
 fn plaza_block(config: &TownConfig) -> Result<(usize, usize), TownConfigError> {
     let (cols, rows) = config.blocks;
-    let central = cols % 2 == 1 && rows % 2 == 1;
-    let facing = |side: Side| match side {
-        Side::North => (middle(cols), rows - 1),
-        Side::South => (middle(cols), 0),
-        Side::East => (cols - 1, middle(rows)),
-        Side::West => (0, middle(rows)),
+    let through = config.railway.filter(|r| r.through);
+    let central = cols % 2 == 1 && rows % 2 == 1 && through.is_none();
+    let row = split_row(rows);
+    let facing = |side: Side| match (side, through.is_some()) {
+        (Side::North, true) => (middle(cols), row),
+        (_, true) => (middle(cols), row - 1),
+        (Side::North, false) => (middle(cols), rows - 1),
+        (Side::South, false) => (middle(cols), 0),
+        (Side::East, false) => (cols - 1, middle(rows)),
+        (Side::West, false) => (0, middle(rows)),
     };
+    if let (Some(r), PlazaPlacement::Auto) = (through, config.plaza) {
+        let i = middle(cols).saturating_sub(1);
+        let j = match r.side {
+            Side::North => (row + 2).min(rows - 1),
+            _ => (row - 1).saturating_sub(2),
+        };
+        return Ok((i, j));
+    }
     match config.plaza {
         PlazaPlacement::Center if central => Ok((cols / 2, rows / 2)),
         PlazaPlacement::Center => Err(TownConfigError::NoCentralBlock {
@@ -1008,7 +1240,9 @@ impl PlazaBlocks {
 fn main_plaza(config: &TownConfig, size: TownSize) -> Result<PlazaBlocks, TownConfigError> {
     let anchor = plaza_block(config)?;
     let (w, h) = size.plaza_span(config.blocks);
-    let centered = matches!(config.plaza, PlazaPlacement::Auto | PlazaPlacement::Center);
+    let through = config.railway.is_some_and(|r| r.through);
+    let centered =
+        matches!(config.plaza, PlazaPlacement::Auto | PlazaPlacement::Center) && !through;
     let start = |n: usize, len: usize, a: usize| {
         let mid = (n - len) / 2;
         if size == TownSize::Small {
@@ -1023,10 +1257,15 @@ fn main_plaza(config: &TownConfig, size: TownSize) -> Result<PlazaBlocks, TownCo
         start(config.blocks.0, w, anchor.0),
         start(config.blocks.1, h, anchor.1),
     );
-    Ok(PlazaBlocks {
+    let plaza = PlazaBlocks {
         min,
         max: (min.0 + w - 1, min.1 + h - 1),
-    })
+    };
+    let row = split_row(config.blocks.1);
+    if through && plaza.min.1 < row && plaza.max.1 >= row {
+        return Err(TownConfigError::PlazaAcrossRailway);
+    }
+    Ok(plaza)
 }
 
 /// A landmark building facing the plaza from a nearby block.
@@ -1056,39 +1295,143 @@ const LANDMARK_PREFERENCES: [(BuildingKind, [Side; 4]); 3] = [
     ),
 ];
 
-/// Places the landmarks around the main plaza: the general store, church and
-/// police station (unless `police` is zero), in that order, then a bigger
-/// town's extra general stores (all but the one kept for the station plaza)
-/// and the other `police - 1` police stations.
+/// Places the town's landmarks, spread over the town so it has life all
+/// over (user, 2026-10-23), and a bigger town's station plaza. Returns them
+/// as the main general store, the church and the first police station
+/// (unless `police_count` is zero), then the rest: a bigger town's station
+/// store, the other police stations and any extra stores.
 ///
-/// Each takes the first free block next to the plaza in its preference
-/// order and faces the plaza across the street. When every neighbor is
-/// taken (a plaza in a corner), it takes the nearest free block instead
-/// (fewest blocks away, then lowest column, then lowest row) and faces the
-/// plaza along the axis with the larger offset.
-fn central_landmarks(
+/// The church faces the main plaza from the first free neighbouring block
+/// of its preferences (see [`LANDMARK_PREFERENCES`]). A bigger town's station
+/// plaza and its store come next (see [`station_plaza`] and
+/// [`station_store`]). Every other landmark is dispersed ([`disperse`]).
+fn place_landmarks(
     grid: &Grid,
     plaza: PlazaBlocks,
     size: TownSize,
-    blocks: (usize, usize),
     police_count: usize,
-) -> Vec<Landmark> {
+    railway: Option<RailwayConfig>,
+) -> (Vec<Landmark>, Option<StationPlaza>) {
     let [store, church, police] = LANDMARK_PREFERENCES;
-    let station_store = usize::from(size != TownSize::Small);
-    let extra_stores = size.general_stores(blocks) - 1 - station_store;
-    let extra_police = police_count.saturating_sub(1);
-    let order = [store, church]
-        .into_iter()
-        .chain(std::iter::repeat_n(police, police_count.min(1)))
-        .chain(std::iter::repeat_n(store, extra_stores))
-        .chain(std::iter::repeat_n(police, extra_police));
-    let mut placed: Vec<Landmark> = Vec::new();
-    for (kind, preferences) in order {
-        let taken = |b: (usize, usize)| placed.iter().any(|l| l.block == b);
-        let landmark = place_landmark(grid, plaza, kind, &preferences, &taken);
-        placed.push(landmark);
+    let none = |_: (usize, usize)| false;
+    let church = place_landmark(grid, plaza, church.0, &church.1, &none);
+    let mut placed = vec![church];
+    let station = (size != TownSize::Small).then(|| station_plaza(grid, plaza, &placed, railway));
+    let mut rest = Vec::new();
+    if let Some(station) = &station {
+        let s = station_store(grid, plaza, station, &placed);
+        placed.push(s);
+        rest.push(s);
     }
-    placed
+    let reserved: Vec<(usize, usize)> = station.iter().map(|s| s.block).collect();
+    let main_store = disperse(grid, plaza, store.0, &placed, &reserved);
+    placed.push(main_store);
+    let mut first = vec![main_store, church];
+    let extra_stores = size.general_stores() - 1 - usize::from(size != TownSize::Small);
+    let kinds = std::iter::repeat_n(police.0, police_count)
+        .chain(std::iter::repeat_n(store.0, extra_stores));
+    for (k, kind) in kinds.enumerate() {
+        let landmark = disperse(grid, plaza, kind, &placed, &reserved);
+        placed.push(landmark);
+        if k == 0 && kind == BuildingKind::PoliceStation {
+            first.push(landmark);
+        } else {
+            rest.push(landmark);
+        }
+    }
+    first.extend(rest);
+    (first, station)
+}
+
+/// Blocks between two civic buildings, at least: never side by side.
+const CIVIC_SPACING: usize = 2;
+
+/// Least blocks between two landmarks of the same kind in a town of
+/// `cols` x `rows`: about half the town apart.
+fn same_kind_spacing(cols: usize, rows: usize) -> usize {
+    CIVIC_SPACING.max(cols.max(rows) / 2)
+}
+
+/// Blocks apart, the most along either axis.
+fn blocks_apart(a: (usize, usize), b: (usize, usize)) -> usize {
+    a.0.abs_diff(b.0).max(a.1.abs_diff(b.1))
+}
+
+/// A `kind` landmark dispersed over the town: on a block that is not the
+/// plaza, `reserved` (the station plaza's) nor `placed`, at least
+/// [`CIVIC_SPACING`] blocks from every `placed` landmark and
+/// [`same_kind_spacing`] from those of its kind, as near the plaza as that
+/// allows (fewest blocks along either axis, then the lowest column, then
+/// row). In a town split by a through
+/// line, it goes to the half with fewer of its kind (the plaza's on a tie),
+/// so each half has its own. When no block keeps the spacing, it takes the
+/// one farthest from the others. It faces the plaza along the axis with the
+/// larger offset.
+fn disperse(
+    grid: &Grid,
+    plaza: PlazaBlocks,
+    kind: BuildingKind,
+    placed: &[Landmark],
+    reserved: &[(usize, usize)],
+) -> Landmark {
+    let half = |b: (usize, usize)| grid.split.map(|s| b.1 >= s.row);
+    let wanted = grid.split.map(|_| {
+        let count = |north: bool| {
+            placed
+                .iter()
+                .filter(|l| l.kind == kind && half(l.block) == Some(north))
+                .count()
+        };
+        let plaza_north = half(plaza.min) == Some(true);
+        match count(true).cmp(&count(false)) {
+            std::cmp::Ordering::Less => true,
+            std::cmp::Ordering::Greater => false,
+            std::cmp::Ordering::Equal => plaza_north,
+        }
+    });
+    let same = same_kind_spacing(grid.cols, grid.rows);
+    let free: Vec<(usize, usize)> = (0..grid.cols)
+        .flat_map(|i| (0..grid.rows).map(move |j| (i, j)))
+        .filter(|&b| !plaza.contains(b) && !reserved.contains(&b))
+        .filter(|&b| placed.iter().all(|l| l.block != b))
+        .filter(|&b| wanted.is_none() || half(b) == wanted)
+        .collect();
+    // Blocks to the plaza, the most along either axis: a block across a
+    // corner counts as near as one beside it, so the landmarks can still
+    // fan out round a small plaza.
+    let to_plaza = |b: (usize, usize)| {
+        let (di, dj) = plaza.offset(b);
+        di.unsigned_abs().max(dj.unsigned_abs())
+    };
+    let nearest_civic = |b: (usize, usize)| {
+        placed
+            .iter()
+            .map(|l| blocks_apart(l.block, b))
+            .min()
+            .unwrap_or(usize::MAX)
+    };
+    let spaced = |b: (usize, usize)| {
+        placed.iter().all(|l| {
+            let apart = blocks_apart(l.block, b);
+            apart >= CIVIC_SPACING && (l.kind != kind || apart >= same)
+        })
+    };
+    let block = free
+        .iter()
+        .copied()
+        .filter(|&b| spaced(b))
+        .min_by_key(|&b| (to_plaza(b), b.0, b.1))
+        .or_else(|| {
+            free.iter()
+                .copied()
+                .min_by_key(|&b| (std::cmp::Reverse(nearest_civic(b)), to_plaza(b), b.0, b.1))
+        })
+        .expect("a town has a free block for every landmark");
+    Landmark {
+        kind,
+        block,
+        front: PlazaBlocks::facing(plaza.offset(block)),
+    }
 }
 
 /// A `kind` landmark facing `plaza`: the first block next to it, in
@@ -1171,22 +1514,31 @@ fn station_plaza(
     let free = |b: (usize, usize)| !plaza.contains(b) && landmarks.iter().all(|l| l.block != b);
     let on_row = railway.and_then(|r| {
         let (cols, rows) = (grid.cols, grid.rows);
-        let row: Vec<(usize, usize)> = match r.side {
-            Side::North => (0..cols).map(|i| (i, rows - 1)).collect(),
-            Side::South => (0..cols).map(|i| (i, 0)).collect(),
-            Side::East => (0..rows).map(|j| (cols - 1, j)).collect(),
-            Side::West => (0..rows).map(|j| (0, j)).collect(),
+        // A through line's station stands in the middle of the town, in
+        // the row of its half next to the track.
+        let split = grid.split.map(|s| s.row);
+        let (row, toward): (Vec<(usize, usize)>, Side) = match (r.side, split) {
+            (Side::North, Some(s)) => ((0..cols).map(|i| (i, s)).collect(), Side::South),
+            (_, Some(s)) => ((0..cols).map(|i| (i, s - 1)).collect(), Side::North),
+            (Side::North, None) => ((0..cols).map(|i| (i, rows - 1)).collect(), r.side),
+            (Side::South, None) => ((0..cols).map(|i| (i, 0)).collect(), r.side),
+            (Side::East, None) => ((0..rows).map(|j| (cols - 1, j)).collect(), r.side),
+            (Side::West, None) => ((0..rows).map(|j| (0, j)).collect(), r.side),
         };
         // Index along the row of the block facing the station.
         let along = |b: (usize, usize)| match r.side {
             Side::North | Side::South => b.0,
             Side::East | Side::West => b.1,
         };
-        let facing = along(plaza.min);
+        let facing = if split.is_some() {
+            middle(cols)
+        } else {
+            along(plaza.min)
+        };
         row.into_iter()
             .filter(|&b| free(b))
             .min_by_key(|&b| (along(b).abs_diff(facing), along(b)))
-            .map(|b| (b, r.side))
+            .map(|b| (b, toward))
     });
     let (block, toward) = on_row.unwrap_or_else(|| {
         let block = (0..grid.cols)
@@ -1307,9 +1659,10 @@ fn fill_block(
     landmark: Option<&Landmark>,
     windmill: bool,
     plaza: Option<Aabb>,
-    seed: u32,
+    config: &TownConfig,
     out: &mut Vec<Building>,
 ) {
+    let seed = config.seed;
     let b = grid.block(i, j);
     let s = grid.scale();
     if let Some(l) = landmark {
@@ -1327,7 +1680,7 @@ fn fill_block(
         (Some(_), _) => 1.0,
         (None, true) => 0.45,
         (None, false) => 0.75,
-    };
+    } * config.density.unwrap_or(1.0);
     let noise = |lot: usize, salt: u32| lot_noise(i, j, lot, salt ^ seed.wrapping_mul(0x9e37_79b9));
 
     // Lots: (street side, start along the street, lot length). North and south
@@ -1424,16 +1777,14 @@ const PLATFORM_HALF: f32 = 30.0;
 /// whole platform) and faces it across the ring street; grain stores line
 /// the track on one side, the shed and windmill on the other, as far as the
 /// grid reaches.
-fn station_yard(grid: &Grid, railway: RailwayConfig, plaza: Vec2) -> Vec<Building> {
-    let bounds = grid.bounds();
-    let side = railway.side;
-    let r = railway.offset;
-    let half = grid.along_half(side);
-    let along = match side {
-        Side::North | Side::South => Vec2::new(1.0, 0.0),
-        Side::East | Side::West => Vec2::new(0.0, 1.0),
-    };
-    let wanted = (plaza - bounds.center()).dot(along);
+///
+/// `bounds` is the part of the grid the yard is laid against (the whole
+/// grid, or a through line's station half), `side` the side of it the track
+/// runs along `offset` meters out, `half` half its length along the track,
+/// and `wanted` where along the track (from its middle) the station should
+/// stand.
+fn station_yard(bounds: Aabb, side: Side, r: f32, half: f32, wanted: f32) -> Vec<Building> {
+    let along = axis_along(side);
     let c = wanted.clamp(-half + PLATFORM_HALF, half - PLATFORM_HALF);
     let reach = half - 2.0;
     let yard =
@@ -1485,14 +1836,26 @@ fn station_yard(grid: &Grid, railway: RailwayConfig, plaza: Vec2) -> Vec<Buildin
     out
 }
 
-/// The track: parallel to the grid's `side` at `offset`, running
+/// Unit world axis along a track on `side` of a grid.
+fn axis_along(side: Side) -> Vec2 {
+    match side {
+        Side::North | Side::South => Vec2::new(1.0, 0.0),
+        Side::East | Side::West => Vec2::new(0.0, 1.0),
+    }
+}
+
+/// How far a north-south street keeps from the station yard to cross a
+/// through line's band, in meters.
+const YARD_CLEARANCE: f32 = 2.0;
+
+/// The track: parallel to the `grid`'s `side` at `offset`, running
 /// [`TownLayout::RAIL_RUN_OUT`] past either end of the grid.
-fn railway_line(grid: Aabb, r: RailwayConfig, along_half: f32) -> Railway {
+fn railway_line(grid: Aabb, side: Side, offset: f32, along_half: f32) -> Railway {
     // A zero-size box on the track centerline.
-    let line = yard_box(grid, r.side, (0.0, 0.0), (r.offset, r.offset));
+    let line = yard_box(grid, side, (0.0, 0.0), (offset, offset));
     let reach = along_half + TownLayout::RAIL_RUN_OUT;
     let c = grid.center();
-    let (start, end) = match r.side {
+    let (start, end) = match side {
         Side::North | Side::South => (
             Vec2::new(c.x - reach, line.min.y),
             Vec2::new(c.x + reach, line.min.y),
@@ -1588,11 +1951,12 @@ fn plaza_ring(plaza: Aabb, steps: (usize, usize)) -> Vec<Vec2> {
 }
 
 /// The main road in: the north-south street just east of the plaza, entered
-/// from the south (from the north when the railway runs south of town).
+/// from the south (from the north when the railway runs south of town, or
+/// when a through line's station stands in the north half).
 fn arrival(grid: &Grid, plaza: PlazaBlocks, railway: Option<RailwayConfig>) -> (Vec2, Heading) {
     let bounds = grid.bounds();
     let road_x = grid.lane_x(plaza.max.0 + 1) + grid.street / 2.0;
-    if railway.is_some_and(|r| r.side == Side::South) {
+    if railway.is_some_and(|r| (r.side == Side::South) != r.through) {
         (
             Vec2::new(road_x, bounds.max.y + ARRIVAL_DISTANCE),
             Heading::from_radians(-std::f32::consts::FRAC_PI_2),
@@ -1616,7 +1980,13 @@ pub(crate) mod tests {
     /// very big towns.
     pub(crate) fn sample_configs() -> Vec<TownConfig> {
         let base = TownConfig::castex();
-        let rail = |side, offset| Some(RailwayConfig { side, offset });
+        let rail = |side, offset| {
+            Some(RailwayConfig {
+                side,
+                offset,
+                through: false,
+            })
+        };
         vec![
             base.clone(),
             five_by_five(),
@@ -1725,6 +2095,32 @@ pub(crate) mod tests {
                 block_size: 36.0,
                 railway: None,
                 seed: 4,
+                ..base.clone()
+            },
+            // Towns grown on both sides of a line through their middle.
+            TownConfig {
+                name: "Partida".into(),
+                blocks: (8, 8),
+                railway: Some(RailwayConfig {
+                    side: Side::North,
+                    offset: 24.0,
+                    through: true,
+                }),
+                seed: 13,
+                ..base.clone()
+            },
+            TownConfig {
+                name: "Partida sur".into(),
+                blocks: (5, 4),
+                block_size: 34.0,
+                street_width: 9.0,
+                railway: Some(RailwayConfig {
+                    side: Side::South,
+                    offset: 28.0,
+                    through: true,
+                }),
+                seed: 21,
+                density: Some(0.5),
                 ..base
             },
         ]
@@ -1789,7 +2185,7 @@ pub(crate) mod tests {
             let (stores, police) = match c.size() {
                 TownSize::Small => (1, 1),
                 TownSize::Big => (2, 1),
-                TownSize::VeryBig => (c.blocks.0 * c.blocks.1 / 16, 2),
+                TownSize::VeryBig => (2, 2),
             };
             assert_eq!(count(&t, BuildingKind::GeneralStore), stores, "{}", c.name);
             assert_eq!(count(&t, BuildingKind::PoliceStation), police, "{}", c.name);
@@ -1820,11 +2216,25 @@ pub(crate) mod tests {
             // A street between the blocks of a merged plaza is cut in two.
             let (pw, ph) = t.size.plaza_span(c.blocks);
             let cut = (pw - 1) + (ph - 1);
-            assert_eq!(t.streets.len(), cols + 1 + rows + 1 + cut, "{}", c.name);
+            // A line through the town adds a ring street on each side of its
+            // band, and cuts the streets that would run into its yard.
+            let (split, band) = match c.railway.filter(|r| r.through) {
+                Some(r) => (
+                    1 + (cols + 1 - t.crossing_streets().len()),
+                    w + r.offset + RailwayConfig::THROUGH_FAR_SIDE,
+                ),
+                None => (0, 0.0),
+            };
+            assert_eq!(
+                t.streets.len(),
+                cols + 1 + rows + 1 + cut + split,
+                "{}",
+                c.name
+            );
             let size = t.grid().size();
             let expected = Vec2::new(
                 cols as f32 * b + (cols + 1) as f32 * w,
-                rows as f32 * b + (rows + 1) as f32 * w,
+                rows as f32 * b + (rows + 1) as f32 * w + band,
             );
             assert!(size.distance(expected) < 1e-3, "{}: {size:?}", c.name);
             assert!(t.grid().center().distance(c.origin) < 1e-3, "{}", c.name);
@@ -1898,6 +2308,7 @@ pub(crate) mod tests {
         for (c, t) in sample_configs().iter().zip(sample_towns()) {
             let central = c.blocks.0 % 2 == 1 && c.blocks.1 % 2 == 1;
             let facing = match c.plaza {
+                _ if through(c) => false,
                 PlazaPlacement::FacingStation => true,
                 PlazaPlacement::Auto => {
                     !central && c.railway.is_some() && c.size() == TownSize::Small
@@ -1932,7 +2343,8 @@ pub(crate) mod tests {
             c.railway,
             Some(RailwayConfig {
                 side: Side::North,
-                offset: 24.0
+                offset: 24.0,
+                through: false,
             })
         );
         let t = TownLayout::castex_inspired();
@@ -1997,17 +2409,73 @@ pub(crate) mod tests {
                 );
             }
         }
-        // Around a central plaza: store west, police east, church north.
+        // Around a central plaza: the church north of it, facing it; the
+        // store and the police station spread away from it and each other.
         let t = TownLayout::generate(&five_by_five()).unwrap();
-        assert_eq!(
-            find(&t, BuildingKind::GeneralStore).unwrap().front,
-            Side::East
-        );
-        assert_eq!(
-            find(&t, BuildingKind::PoliceStation).unwrap().front,
-            Side::West
-        );
         assert_eq!(find(&t, BuildingKind::Church).unwrap().front, Side::South);
+    }
+
+    /// The civic buildings of `t`: stores, police stations and the church.
+    fn civic(t: &TownLayout) -> Vec<&Building> {
+        t.buildings
+            .iter()
+            .filter(|b| {
+                matches!(
+                    b.kind,
+                    BuildingKind::GeneralStore | BuildingKind::PoliceStation | BuildingKind::Church
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn civic_buildings_are_spread_over_every_town() {
+        // User, 2026-10-23: never side by side, the same kind about half
+        // the town apart, so the whole town has life.
+        let mut configs = small_configs();
+        configs.extend(
+            sample_configs()
+                .into_iter()
+                .filter(|c| c.size() != TownSize::Small),
+        );
+        for c in configs {
+            let t = TownLayout::generate(&c).unwrap();
+            let pitch = c.block_size + c.street_width;
+            let same = (same_kind_spacing(c.blocks.0, c.blocks.1) - 1) as f32 * pitch;
+            let buildings = civic(&t);
+            for (k, a) in buildings.iter().enumerate() {
+                for b in &buildings[k + 1..] {
+                    let d = a.footprint.center() - b.footprint.center();
+                    let apart = d.x.abs().max(d.y.abs());
+                    // Across at least one whole block, not one street.
+                    assert!(apart > pitch, "{}: {a:?} by {b:?}", c.name);
+                    if a.kind == b.kind {
+                        assert!(apart > same, "{}: two {:?} {apart} m apart", c.name, a.kind);
+                    }
+                }
+            }
+        }
+        // The dispersal is no accident of the samples: a small town keeps
+        // its store, comisaría and church apart too.
+        let t = TownLayout::castex_inspired();
+        assert_eq!(civic(&t).len(), 3);
+    }
+
+    #[test]
+    fn a_town_split_by_its_line_has_a_store_and_a_comisaria_on_each_side() {
+        let (_, t) = partida();
+        let y = t.railway.unwrap().start.y;
+        for kind in [BuildingKind::GeneralStore, BuildingKind::PoliceStation] {
+            let sides: Vec<bool> = all(&t, kind)
+                .iter()
+                .map(|b| b.footprint.center().y > y)
+                .collect();
+            assert_eq!(sides.len(), 2, "{kind:?}");
+            assert_ne!(sides[0], sides[1], "{kind:?} both on one side");
+        }
+        // The church faces the plaza, in the station's half.
+        let church = find(&t, BuildingKind::Church).unwrap();
+        assert!(church.footprint.center().y > y);
     }
 
     #[test]
@@ -2106,6 +2574,10 @@ pub(crate) mod tests {
                 assert_eq!(t.railway, None);
                 continue;
             };
+            if config.through {
+                // Through the middle instead: see its own test.
+                continue;
+            }
             let rail = t.railway.expect("a railway");
             let n = normal(config.side);
             let grid = t.grid();
@@ -2348,10 +2820,19 @@ pub(crate) mod tests {
                 "{}: faces into town",
                 c.name
             );
-            if let Some(r) = c.railway {
+            if let Some(r) = c.railway.filter(|r| !r.through) {
                 assert!(
                     inward.dot(normal(r.side)) > -1e-4,
                     "{}: comes from away from the track",
+                    c.name
+                );
+            }
+            // Through a line in the middle, it comes in on the station's
+            // side, from the edge away from the track.
+            if let (Some(r), Some(band)) = (c.railway, t.rail_band()) {
+                assert!(
+                    (spawn - band.center()).dot(normal(r.side)) > 0.0,
+                    "{}",
                     c.name
                 );
             }
@@ -2439,6 +2920,7 @@ pub(crate) mod tests {
                     railway: Some(RailwayConfig {
                         side: Side::North,
                         offset: 10.0,
+                        through: false,
                     }),
                     ..base.clone()
                 },
@@ -2572,8 +3054,15 @@ pub(crate) mod tests {
         })
     }
 
-    /// Small towns: the sample configs of 36 blocks or fewer, plus Monte
-    /// Nievas and the 5 x 4 Castex of `assets/world/towns.ron`.
+    /// Whether `c`'s line runs through the middle of the town: these towns
+    /// keep their own tests, not the ones of a town beside its line.
+    fn through(c: &TownConfig) -> bool {
+        c.railway.is_some_and(|r| r.through)
+    }
+
+    /// Small towns beside their line or without one: the sample configs of
+    /// 36 blocks or fewer, plus Monte Nievas and the 5 x 4 Castex of
+    /// `assets/world/towns.ron`.
     fn small_configs() -> Vec<TownConfig> {
         let shipped = [
             TownConfig {
@@ -2595,7 +3084,7 @@ pub(crate) mod tests {
             .chain(
                 sample_configs()
                     .into_iter()
-                    .filter(|c| c.size() == TownSize::Small),
+                    .filter(|c| c.size() == TownSize::Small && !through(c)),
             )
             .collect()
     }
@@ -2605,7 +3094,7 @@ pub(crate) mod tests {
         sample_configs()
             .into_iter()
             .zip(sample_towns())
-            .filter(|(c, _)| c.size() != TownSize::Small)
+            .filter(|(c, _)| c.size() != TownSize::Small && !through(c))
             .collect()
     }
 
@@ -2684,22 +3173,24 @@ pub(crate) mod tests {
     #[test]
     fn small_towns_keep_their_layout_byte_for_byte() {
         // Fingerprints of the layouts generated before big towns existed.
-        // Every one re-pinned on purpose (PR-F1): plaza trees no longer
-        // stand on the plaza paths, so the ring spots on and beside the
-        // paths are left empty. Nothing else changed. Earlier, Monte Nievas
-        // was re-pinned when it shipped with `police_stations: Some(0)`.
+        // Every one re-pinned on purpose (2026-10-23): the store and the
+        // police station are spread over the town instead of round the
+        // plaza, and a small town's store is a pulpería. Before that
+        // (PR-F1), plaza trees stopped standing on the plaza paths, so the
+        // ring spots on and beside the paths are left empty. Earlier, Monte
+        // Nievas was re-pinned when it shipped with `police_stations: Some(0)`.
         let pinned = [
-            0xfd4d_9a56_ded8_0363,
-            0x58b6_32c5_6e41_8e45,
-            0xa3ea_7a9e_8180_f921,
-            0xfc0c_60aa_37ff_4ba0,
-            0x41cb_c129_7c58_809f,
-            0x92a5_6402_c51d_e514,
-            0x4fdb_c7f1_5915_831c,
-            0xdbe6_7829_1ec8_e37f,
-            0x2c55_4876_3cdb_103b,
-            0x9cd2_1051_b3f7_f245,
-            0x6987_085f_03c9_5016,
+            0x0896_5baa_5d97_dd52,
+            0x8830_2646_f5b1_a89e,
+            0x7020_8528_d79a_7413,
+            0x4b0b_d74d_4bd9_fb1b,
+            0x6db1_bf6d_ee5a_3a42,
+            0x2176_e9ae_6ad8_6181,
+            0xb9a8_a065_e38c_6c75,
+            0x437a_eecf_29d9_5868,
+            0xe218_84d2_dd95_fa39,
+            0xb693_d075_3583_4e7c,
+            0x87ea_b1b8_23bf_86a4,
         ];
         let configs = small_configs();
         assert_eq!(configs.len(), pinned.len());
@@ -2934,7 +3425,7 @@ pub(crate) mod tests {
             let n = c.blocks.0 * c.blocks.1;
             let (stores, police) = match c.size() {
                 TownSize::Big => (2, 1),
-                _ => (n / 16, 2),
+                _ => (2, 2),
             };
             assert_eq!(
                 all(&t, BuildingKind::GeneralStore).len(),
@@ -2957,7 +3448,7 @@ pub(crate) mod tests {
         })
         .unwrap();
         assert_eq!(pico.size, TownSize::VeryBig);
-        assert_eq!(count(&pico, BuildingKind::GeneralStore), 4);
+        assert_eq!(count(&pico, BuildingKind::GeneralStore), 2);
         assert_eq!(pico.townsfolk_count(), 51);
     }
 
@@ -3075,5 +3566,174 @@ pub(crate) mod tests {
         assert!(error.to_string().contains("block_size 20 m"), "{error}");
         let error = TownConfigError::NoCentralBlock { blocks: (4, 5) };
         assert!(error.to_string().contains("4x5"), "{error}");
+    }
+
+    /// The very big sample town grown on both sides of its line.
+    fn partida() -> (TownConfig, TownLayout) {
+        let c = sample_configs()
+            .into_iter()
+            .find(|c| c.name == "Partida")
+            .unwrap();
+        let t = TownLayout::generate(&c).unwrap();
+        (c, t)
+    }
+
+    #[test]
+    fn a_through_line_splits_the_town_with_blocks_and_crossings_on_both_sides() {
+        let (_, t) = partida();
+        let band = t.rail_band().expect("a band");
+        let rail = t.railway.unwrap();
+        assert!(band.min.y < rail.start.y && rail.start.y < band.max.y);
+        assert_eq!(rail.start.y, rail.end.y);
+        // The grid holds the band: its extent is the grid itself.
+        assert_eq!(t.extent(), t.grid());
+        assert!(t.grid().contains(&band));
+        // Ring streets on both sides of the band, along its whole length.
+        for y in [band.min.y, band.max.y] {
+            assert!(
+                t.streets.iter().any(|s| s.size().x >= band.size().x - 1e-3
+                    && (s.max.y - y).abs() < 1e-3
+                    || (s.min.y - y).abs() < 1e-3 && s.size().x >= band.size().x - 1e-3),
+                "no ring street at {y}"
+            );
+        }
+        // Crossing streets run square across the band, clear of the yard;
+        // the rest stop at its edges.
+        let crossings = t.crossing_streets();
+        assert!(crossings.len() >= 3 && crossings.len() < 9, "{crossings:?}");
+        for (a, b) in &crossings {
+            assert_eq!(a.x, b.x);
+            assert!(a.y < band.min.y && b.y > band.max.y);
+        }
+        for s in t.streets.iter().filter(|s| s.size().y > s.size().x) {
+            let inside = s.min.y < band.max.y && s.max.y > band.min.y;
+            let across = s.min.y < band.min.y && s.max.y > band.max.y;
+            assert!(!inside || across, "{s:?} ends in the band");
+        }
+        for b in t.buildings.iter().filter(|b| band.contains(&b.footprint)) {
+            for s in &t.streets {
+                assert!(!s.intersects(&b.footprint), "{s:?} through {b:?}");
+            }
+        }
+        // The station faces its half of town across the ring street, with
+        // the platform between it and the track.
+        let station = t
+            .buildings
+            .iter()
+            .find(|b| b.kind == BuildingKind::Station)
+            .unwrap();
+        assert_eq!(station.front, Side::North);
+        let canopy = t.canopies()[0];
+        assert!(canopy.footprint.max.y <= station.footprint.min.y + 1e-3);
+        // Its 2 x 2 plaza lies whole in the station's half, north-west of the
+        // station, with no street through it; the station plaza is the half
+        // block across the ring street from the station.
+        assert!(t.plaza.min.y > band.max.y);
+        let to_plaza = t.plaza.center() - station.footprint.center();
+        assert!(to_plaza.x < 0.0 && to_plaza.y > 0.0, "{to_plaza:?}");
+        for street in &t.streets {
+            assert!(!street.intersects(&t.plaza), "{street:?}");
+        }
+        let station_plaza = t.station_plaza.expect("a station plaza");
+        let ring = t
+            .streets
+            .iter()
+            .find(|s| s.size().x > s.size().y && (s.min.y - band.max.y).abs() < 1e-3)
+            .unwrap();
+        assert!(
+            (station_plaza.min.y - ring.max.y).abs() < 1e-3,
+            "{station_plaza:?}"
+        );
+        assert!((station_plaza.center().x - station.footprint.center().x).abs() < 50.0);
+    }
+
+    #[test]
+    fn a_through_line_needs_room_and_an_east_west_track() {
+        let (c, _) = partida();
+        let rail = c.railway.unwrap();
+        let east = TownConfig {
+            railway: Some(RailwayConfig {
+                side: Side::East,
+                ..rail
+            }),
+            ..c.clone()
+        };
+        assert_eq!(
+            TownLayout::generate(&east),
+            Err(TownConfigError::ThroughNotEastWest { side: Side::East })
+        );
+        let low = TownConfig {
+            blocks: (6, 3),
+            ..c.clone()
+        };
+        assert!(matches!(
+            TownLayout::generate(&low),
+            Err(TownConfigError::ThroughTooFewRows { rows: 3, min: 4 })
+        ));
+        // A plaza picked across the track is refused; its own half is fine.
+        let across = TownConfig {
+            plaza: PlazaPlacement::Block(2, 3),
+            ..c.clone()
+        };
+        assert_eq!(
+            TownLayout::generate(&across),
+            Err(TownConfigError::PlazaAcrossRailway)
+        );
+        let south = TownConfig {
+            plaza: PlazaPlacement::Block(2, 1),
+            ..c.clone()
+        };
+        assert!(
+            TownLayout::generate(&south).unwrap().plaza.max.y < rail.offset.max(0.0) + c.origin.y
+        );
+        for e in [
+            TownConfigError::ThroughNotEastWest { side: Side::West },
+            TownConfigError::ThroughTooFewRows { rows: 3, min: 4 },
+            TownConfigError::PlazaAcrossRailway,
+            TownConfigError::BadDensity { density: 2.0 },
+        ] {
+            assert!(!e.to_string().is_empty());
+        }
+    }
+
+    #[test]
+    fn density_thins_the_lots_and_must_be_a_share() {
+        let base = TownConfig::castex();
+        let count = |c: &TownConfig| {
+            TownLayout::generate(c)
+                .unwrap()
+                .buildings
+                .iter()
+                .filter(|b| matches!(b.kind, BuildingKind::House | BuildingKind::Shed))
+                .count()
+        };
+        let full = count(&base);
+        let thin = count(&TownConfig {
+            density: Some(0.3),
+            ..base.clone()
+        });
+        assert!(thin * 2 < full, "{thin} of {full}");
+        let houses = |c: &TownConfig| {
+            TownLayout::generate(c)
+                .unwrap()
+                .buildings
+                .iter()
+                .filter(|b| b.kind == BuildingKind::House)
+                .count()
+        };
+        let none = houses(&TownConfig {
+            density: Some(0.0),
+            ..base.clone()
+        });
+        assert_eq!(none, 0);
+        for density in [-0.1, 1.5, f32::NAN] {
+            assert!(matches!(
+                TownLayout::generate(&TownConfig {
+                    density: Some(density),
+                    ..base.clone()
+                }),
+                Err(TownConfigError::BadDensity { .. })
+            ));
+        }
     }
 }

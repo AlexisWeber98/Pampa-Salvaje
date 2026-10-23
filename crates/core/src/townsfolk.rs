@@ -320,9 +320,15 @@ mod tests {
             // Intersections inside a merged plaza are gone.
             let (w, h) = town.size.plaza_span(c.blocks);
             let inside = (w - 1) * (h - 1);
+            // A line through the town adds a row of crossings by its band.
+            let band = if town.rail_band().is_some() {
+                cols + 1
+            } else {
+                0
+            };
             assert_eq!(
                 graph.nodes.len(),
-                (cols + 1) * (rows + 1) - inside,
+                (cols + 1) * (rows + 1) - inside + band,
                 "{}",
                 c.name
             );

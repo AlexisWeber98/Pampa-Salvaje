@@ -1361,6 +1361,7 @@ pub(crate) mod tests {
         let with = town();
         let without = TownLayout::generate(&TownConfig {
             police_stations: Some(0),
+            density: None,
             ..TownConfig::castex()
         })
         .unwrap();
