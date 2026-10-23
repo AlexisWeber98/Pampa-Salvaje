@@ -43,6 +43,8 @@ See `assets/models/props/polyhaven/CREDITS.md` for details.
 | Asset | Author / source | Licence | Where | Changes |
 |---|---|---|---|---|
 | 3TD Starter Pack #1 (windmill, old wagon, barbed-wire fence segments) | Ron Kapaun (3TD), OpenGameArt (https://opengameart.org/content/3td-starter-pack-1) | CC0 1.0 | `assets/models/third-party/3td-starter-pack/` | Only the COLLADA sources and their textures are kept; they are converted to glTF for the model slots |
+| 3TD windmill, converted | Ron Kapaun (3TD), as above | CC0 1.0 | `assets/models/third-party/windpump/` | Converted to glTF with `tools/dae2gltf.py` (Z-up to Y-up, wheel split off as the `rotor` node, normal maps' green flipped from DirectX to OpenGL); the windpump of rural settlements |
+| 3TD old wagon, converted | Ron Kapaun (3TD), as above | CC0 1.0 | `assets/models/third-party/wrecked_wagon/` | Converted the same way (feet to meters); the abandoned wagons in yards and on road verges |
 
 See `assets/models/third-party/3td-starter-pack/CREDITS.md` for details.
 
