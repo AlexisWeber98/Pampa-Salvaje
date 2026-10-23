@@ -68,3 +68,8 @@
 Implemented uncommitted on `feat/dev-console`, for the user's review. The
 console and abilities tests were written together with the code: no RED was
 observed separately.
+
+- 2026-10-23 (`feat/makehuman-characters`): `modelos on|off` (also
+  `personajes nuevos|viejos`) swaps Don Hidalgo, Farach and Bairoletto
+  between the rigid 1919 figures (the default) and the MakeHuman models.
+  Debug builds only.

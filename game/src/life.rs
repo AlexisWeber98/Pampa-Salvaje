@@ -95,9 +95,17 @@ pub struct StandingNpc {
     pub npc: Npc,
 }
 
-/// The errand's people and where they stand, spawned with their towns.
+/// The errand's people and where they stand, spawned with their towns;
+/// then the people who only stand there (Bairoletto beside Farach), as
+/// the figure each is drawn as.
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
-pub struct Cast(pub Vec<(Npc, Standing)>);
+pub struct Cast(pub Vec<(Npc, Standing)>, pub Vec<(FigureKind, Standing)>);
+
+/// Someone standing in town `town` who takes no part in the errand.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Bystander {
+    pub town: usize,
+}
 
 /// Towns whose tied horse was led away this session: it is not tied up
 /// there again.
@@ -188,6 +196,7 @@ type Residents<'a> = (
     Option<&'a Walker>,
     Option<&'a TetheredHorse>,
     Option<&'a StandingNpc>,
+    Option<&'a Bystander>,
 );
 
 /// Spawns the people and tied horse of towns that just became active, and
@@ -203,11 +212,12 @@ fn populate_towns(
         return;
     };
     let wanted: BTreeSet<usize> = live_towns(&crowds, active.as_deref()).into_iter().collect();
-    for (entity, walker, horse, npc) in &residents {
+    for (entity, walker, horse, npc, bystander) in &residents {
         let town = walker
             .map(|w| w.town)
             .or(horse.map(|h| h.0))
-            .or(npc.map(|n| n.town));
+            .or(npc.map(|n| n.town))
+            .or(bystander.map(|b| b.town));
         if town.is_some_and(|t| !wanted.contains(&t)) {
             commands.entity(entity).despawn();
         }
@@ -227,6 +237,9 @@ fn populate_towns(
         for &(npc, standing) in cast.0.iter().filter(|(_, s)| s.town == town) {
             spawn_standing_npc(&mut commands, npc, standing, &world);
         }
+        for &(kind, standing) in cast.1.iter().filter(|(_, s)| s.town == town) {
+            spawn_bystander(&mut commands, kind, standing, &world);
+        }
     }
 }
 
@@ -241,6 +254,29 @@ fn spawn_standing_npc(commands: &mut Commands, npc: Npc, standing: Standing, wor
             npc,
         },
         CharacterVisual::Figure(npc_figure(npc)),
+        VisualPose {
+            heading: standing.heading,
+            ..default()
+        },
+        Transform::from_translation(world_from_ground(at, height)),
+    ));
+}
+
+/// Someone standing still beside the errand's people.
+fn spawn_bystander(
+    commands: &mut Commands,
+    kind: FigureKind,
+    standing: Standing,
+    world: &GameWorld,
+) {
+    let at = standing.position;
+    let height = world.0.ground_height(at);
+    commands.spawn((
+        Name::new(format!("{kind:?}")),
+        Bystander {
+            town: standing.town,
+        },
+        CharacterVisual::Figure(kind),
         VisualPose {
             heading: standing.heading,
             ..default()
@@ -802,6 +838,7 @@ mod tests {
             [Npc::Hidalgo, Npc::Farach]
                 .map(|npc| (npc, errand.standing(npc)))
                 .to_vec(),
+            vec![(FigureKind::Bairoletto, errand.bairoletto())],
         )
     }
 
@@ -849,6 +886,19 @@ mod tests {
         assert_eq!(there.len(), 1);
         assert_eq!(there[0].0.npc, Npc::Farach);
         assert_eq!(there[0].1, CharacterVisual::Figure(FigureKind::Farach));
+        // Bairoletto stands at Farach's side, and only there.
+        let mut q = app
+            .world_mut()
+            .query::<(&Bystander, &CharacterVisual, &Transform)>();
+        let beside: Vec<_> = q.iter(app.world()).map(|(b, v, t)| (*b, *v, *t)).collect();
+        assert_eq!(beside.len(), 1);
+        assert_eq!(beside[0].0, Bystander { town: 1 });
+        assert_eq!(beside[0].1, CharacterVisual::Figure(FigureKind::Bairoletto));
+        let gap = beside[0].2.translation.distance(there[0].2.translation);
+        assert!(
+            (gap - pampa_core::Errand::BAIROLETTO_GAP).abs() < 0.05,
+            "{gap}"
+        );
     }
 
     #[test]

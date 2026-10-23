@@ -111,6 +111,8 @@ impl Errand {
     pub const REPORT_RANGE: f32 = 4.0;
     /// Side of a standing person's square collision footprint, in meters.
     pub const PERSON_FOOTPRINT: f32 = 0.8;
+    /// How far Bairoletto stands to Farach's left, in meters.
+    pub const BAIROLETTO_GAP: f32 = 1.1;
 
     /// The errand from town `giver` (Don Hidalgo in its plaza, his horse at
     /// its general store) to town `police` (Farach at its first police
@@ -187,6 +189,18 @@ impl Errand {
         }
     }
 
+    /// Where Juan Bautista Bairoletto stands: at Farach's left by the
+    /// police station door, facing the same way. He has no part in the
+    /// errand yet.
+    pub fn bairoletto(&self) -> Standing {
+        let forward = self.farach.heading.forward();
+        let left = Vec2::new(-forward.y, forward.x);
+        Standing {
+            position: self.farach.position + left * Self::BAIROLETTO_GAP,
+            ..self.farach
+        }
+    }
+
     /// The horse Don Hidalgo lends, and its town.
     pub fn horse(&self) -> (usize, TetheredHorse) {
         self.horse
@@ -203,9 +217,14 @@ impl Errand {
         }
     }
 
-    /// Collision footprints of the people standing in the errand.
-    pub fn obstacles(&self) -> [Aabb; 2] {
-        [self.hidalgo.footprint(), self.farach.footprint()]
+    /// Collision footprints of the people standing in the errand:
+    /// Hidalgo, Farach and Bairoletto.
+    pub fn obstacles(&self) -> [Aabb; 3] {
+        [
+            self.hidalgo.footprint(),
+            self.farach.footprint(),
+            self.bairoletto().footprint(),
+        ]
     }
 
     /// Talks to `npc` from `at`: only in range, and only at the stage that
@@ -347,17 +366,34 @@ mod tests {
     #[test]
     fn people_standing_in_the_errand_are_clear_of_their_towns() {
         let (towns, e) = errand();
-        for npc in [Npc::Hidalgo, Npc::Farach] {
-            let s = e.standing(npc);
+        let people = [Npc::Hidalgo, Npc::Farach].map(|npc| (format!("{npc:?}"), e.standing(npc)));
+        for (npc, s) in people
+            .into_iter()
+            .chain([("Bairoletto".to_owned(), e.bairoletto())])
+        {
             let footprint = s.footprint();
             for o in towns[s.town].obstacles() {
                 assert!(
                     o.closest_point(s.position).distance(s.position) > 1.0,
-                    "{npc:?} too close to {o:?}"
+                    "{npc} too close to {o:?}"
                 );
                 assert!(!o.contains_point(footprint.center()));
             }
         }
+    }
+
+    #[test]
+    fn bairoletto_stands_beside_farach_without_touching_him() {
+        let (_, e) = errand();
+        let (farach, him) = (e.standing(Npc::Farach), e.bairoletto());
+        assert_eq!((him.town, him.heading), (farach.town, farach.heading));
+        let gap = him.position.distance(farach.position);
+        assert!((gap - Errand::BAIROLETTO_GAP).abs() < 1e-4);
+        assert!(gap > Errand::PERSON_FOOTPRINT);
+        // Beside him, not in front or behind.
+        let along = (him.position - farach.position).dot(farach.heading.forward());
+        assert!(along.abs() < 1e-4);
+        assert!(e.obstacles()[2].contains_point(him.position));
     }
 
     #[test]
