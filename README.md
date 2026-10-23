@@ -505,8 +505,15 @@ or the same keys close it, and while it is open the game gets no keys at all.
 | `goto X Y` | Go to a point, in game meters |
 | `caballo` | Stand a saddled horse beside the player (rideable once riding is unlocked) |
 | `unlock all` | Unlock every ability |
+| `modelos on` / `modelos off` (`personajes nuevos` / `personajes viejos`) | Draw Don Hidalgo, Farach and Bairoletto as the skinned MakeHuman models, or back as the rigid 1919 figures (the default) |
 | `hora 21` / `hora 21:30` | Move the clock on to that time (later today, or tomorrow if it has passed) |
 | `help` | List the commands |
+
+The MakeHuman models (`assets/characters/`, built by `tools/mh2gltf.py`) are
+off by default and in release builds: the CC0 wardrobe is modern (jeans, a
+printed shirt, one trilby for every hat), so the rigid 1919 figures stay until
+period garments are added. Try `goto castex` (Farach with Bairoletto at his
+side) or `goto nievas` (Don Hidalgo), then `modelos on`.
 
 `goto` puts the player, and the horse when riding, on the nearest clear, dry
 ground to the place, and the world streams in around them at once. Aboard the
@@ -514,7 +521,7 @@ train it refuses ("en el tren no: bajate primero"): get off first.
 
 ## Credits
 
-Third-party assets (CC0 ground textures from ambientCG and CC0 vegetation models from Quaternius' Ultimate Nature Pack) are listed with their author, source, licence and changes in [CREDITS.md](CREDITS.md), and again next to their files.
+Third-party assets (CC0 ground textures from ambientCG, CC0 vegetation models from Quaternius' Ultimate Nature Pack, and the CC0 MakeHuman assets of the characters) are listed with their author, source, licence and changes in [CREDITS.md](CREDITS.md), and again next to their files.
 
 ## License
 

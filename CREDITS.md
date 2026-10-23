@@ -48,6 +48,14 @@ See `assets/models/props/polyhaven/CREDITS.md` for details.
 
 See `assets/models/third-party/3td-starter-pack/CREDITS.md` for details.
 
+## Characters
+
+| Asset | Author / source | Licence | Where | Changes |
+|---|---|---|---|---|
+| MakeHuman 1.x assets: base mesh and targets, `male1591` body proxy, `game_engine` skeleton and default weights, skins, eyes, eyebrows, hair, clothes, shoes and fedora | The MakeHuman Team (http://www.makehumancommunity.org/), `LICENSE.ASSETS.md` of MakeHuman 1.x | CC0 1.0 | `assets/characters/` | Each character's `.mhm` converted to a skinned glTF with `tools/mh2gltf.py`: morphed, fitted, faces under the clothes and hair under the hat left out, textures downscaled to PNG, some garments recoloured (`diffuseColor`) |
+
+See `assets/characters/CREDITS.md` for the assets each character uses and what stands in for what.
+
 ## Rules
 
 - Every free or open-source asset is credited in this file and next to its files, and the code that loads it says where it comes from in a doc comment. This applies even when the licence does not ask for credit.

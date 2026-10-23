@@ -15,6 +15,10 @@
 //! - `goto X Y`: a point, in game meters;
 //! - `caballo`: a saddled horse beside the player;
 //! - `unlock all`: every ability ([`PlayerAbilities`]);
+//! - `modelos on` / `modelos off` (or `personajes nuevos` / `personajes
+//!   viejos`): draw Hidalgo, Farach and Bairoletto as the MakeHuman models
+//!   or back as the rigid 1919 figures ([`CharacterModelsShown`]; off by
+//!   default, and release builds never turn it on);
 //! - `help`: the list.
 //!
 //! `goto` puts the player (and the horse, when riding) on the nearest clear
@@ -32,8 +36,8 @@ use pampa_core::{
 };
 use pampa_render::hud::{panel_colors, text_image};
 use pampa_render::{
-    CharacterVisual, Coat, StreamFocus, VisualPose, WorldClock, WorldSettlements, WorldTowns,
-    world_from_ground,
+    CharacterModelsShown, CharacterVisual, Coat, StreamFocus, VisualPose, WorldClock,
+    WorldSettlements, WorldTowns, world_from_ground,
 };
 
 use crate::abilities::{PlayerAbilities, Unlocked};
@@ -49,12 +53,13 @@ const LOG_LINES: usize = 6;
 const SEARCH: f32 = 300.0;
 
 /// What the console lists for `help`.
-pub const HELP: [&str; 6] = [
+pub const HELP: [&str; 7] = [
     "goto laguna, pico, castex, nievas, metileo",
     "goto estancia, estancia castex, estancia pico",
     "goto X Y: un punto en metros",
     "caballo: un caballo ensillado al lado",
     "unlock all: todas las habilidades",
+    "modelos on, off: personajes nuevos o viejos",
     "hora HH o HH:MM: adelanta el reloj",
 ];
 
@@ -71,6 +76,8 @@ pub enum Command {
     Goto(Destination),
     Horse,
     UnlockAll,
+    /// Draw the errand's people as the MakeHuman models (or not).
+    Models(bool),
     /// Moves the clock on to this time of day (today or tomorrow).
     Time(TimeOfDay),
     Help,
@@ -95,6 +102,9 @@ pub fn parse(line: &str) -> Result<Command, String> {
         ["help"] => Ok(Command::Help),
         ["caballo"] => Ok(Command::Horse),
         ["unlock", "all"] => Ok(Command::UnlockAll),
+        ["modelos", "on"] | ["personajes", "nuevos"] => Ok(Command::Models(true)),
+        ["modelos", "off"] | ["personajes", "viejos"] => Ok(Command::Models(false)),
+        ["modelos"] | ["personajes"] => Err("uso: modelos on, modelos off".into()),
         ["hora"] => Err("uso: hora HH, o hora HH:MM".into()),
         ["hora", time] => time_of_day(time)
             .map(Command::Time)
@@ -349,7 +359,7 @@ fn run_entered(
         Option<ResMut<WorldClock>>,
     ),
     mut players: Query<(&mut Player, &mut Transform, Has<OnTrain>)>,
-    mut horses: Local<u32>,
+    (mut horses, mut models): (Local<u32>, Option<ResMut<CharacterModelsShown>>),
 ) {
     for line in std::mem::take(&mut console.entered) {
         console.print(format!(": {line}"));
@@ -369,6 +379,17 @@ fn run_entered(
         let rider = &mut player.rider;
         match command {
             Command::Help => HELP.iter().for_each(|h| console.print(*h)),
+            Command::Models(on) => match models.as_deref_mut() {
+                Some(shown) => {
+                    shown.0 = on;
+                    console.print(if on {
+                        "personajes nuevos: modelos MakeHuman"
+                    } else {
+                        "personajes viejos: figuras 1919"
+                    });
+                }
+                None => console.print("no hay personajes"),
+            },
             Command::UnlockAll => {
                 for ability in pampa_core::Ability::ALL {
                     abilities.unlock(ability, &mut unlocked);
@@ -512,6 +533,11 @@ mod tests {
     #[test]
     fn parses_every_command() {
         assert_eq!(parse("help"), Ok(Command::Help));
+        assert_eq!(parse("modelos on"), Ok(Command::Models(true)));
+        assert_eq!(parse("Personajes  Nuevos"), Ok(Command::Models(true)));
+        assert_eq!(parse("modelos off"), Ok(Command::Models(false)));
+        assert_eq!(parse("personajes viejos"), Ok(Command::Models(false)));
+        assert!(parse("modelos").unwrap_err().contains("uso"));
         assert_eq!(parse("  Caballo "), Ok(Command::Horse));
         assert_eq!(parse("unlock all"), Ok(Command::UnlockAll));
         assert_eq!(parse("hora 21"), Ok(Command::Time(TimeOfDay::hm(21, 0))));
@@ -572,6 +598,10 @@ mod tests {
             parse("hora x").unwrap_err(),
             "no hay lugar para un caballo".into(),
             "no hay lugar libre ahí".into(),
+            parse("modelos").unwrap_err(),
+            "personajes nuevos: modelos MakeHuman".into(),
+            "personajes viejos: figuras 1919".into(),
+            "no hay personajes".into(),
         ]);
         for line in lines {
             let missing: Vec<char> = line
@@ -690,6 +720,28 @@ mod tests {
             .last()
             .unwrap()
             .clone()
+    }
+
+    #[test]
+    fn modelos_turns_the_makehuman_people_on_and_off() {
+        let mut app = app();
+        enter(&mut app, "modelos on");
+        assert_eq!(
+            last_line(&app),
+            "no hay personajes",
+            "nothing to toggle yet"
+        );
+        app.init_resource::<CharacterModelsShown>();
+        assert!(
+            !app.world().resource::<CharacterModelsShown>().0,
+            "off by default"
+        );
+        enter(&mut app, "personajes nuevos");
+        assert!(app.world().resource::<CharacterModelsShown>().0);
+        assert!(last_line(&app).contains("MakeHuman"));
+        enter(&mut app, "modelos off");
+        assert!(!app.world().resource::<CharacterModelsShown>().0);
+        assert!(last_line(&app).contains("1919"));
     }
 
     #[test]

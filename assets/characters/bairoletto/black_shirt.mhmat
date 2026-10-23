@@ -1,0 +1,10 @@
+# Bairoletto's black shirt: the navy shirt darkened to near black.
+# The garment's own textures from MakeHuman's data folder, multiplied by
+# diffuseColor. tools/mh2gltf.py resolves 'data/' paths in that folder.
+name bairoletto_shirt
+diffuseColor 0.15 0.15 0.16
+shininess 0.2
+transparent False
+backfaceCull True
+diffuseTexture data/clothes/male_casualsuit02/male_casualsuit02_diffuse.png
+normalmapTexture data/clothes/male_casualsuit02/male_casualsuit02_normal.png

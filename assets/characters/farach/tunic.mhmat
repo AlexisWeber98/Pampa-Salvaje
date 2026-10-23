@@ -1,0 +1,10 @@
+# Farach's dark tunic: the striped shirt darkened to police navy.
+# The garment's own textures from MakeHuman's data folder, multiplied by
+# diffuseColor. tools/mh2gltf.py resolves 'data/' paths in that folder.
+name farach_tunic
+diffuseColor 0.22 0.24 0.32
+shininess 0.2
+transparent False
+backfaceCull True
+diffuseTexture data/clothes/male_casualsuit03/male_casualsuit03_diffuse.png
+normalmapTexture data/clothes/male_casualsuit03/male_casualsuit03_normal.png

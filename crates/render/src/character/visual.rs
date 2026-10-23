@@ -9,6 +9,10 @@ use pampa_core::{AnimationState, Heading};
 use super::figure::{FigureKind, FigureKit, spawn_figure, update_figures};
 use super::finish::Palette;
 use super::horse::{Coat, HorseKit, spawn_horse, update_horses};
+use super::model::{
+    CharacterModels, CharacterModelsShown, attach_model, breathe, dress_character,
+    load_character_models, swap_in_character_models, toggle_character_models,
+};
 
 /// How a character is drawn. Swappable per entity without touching logic:
 /// inserting a new value replaces whatever was drawn before.
@@ -45,12 +49,19 @@ pub struct CharacterVisualPlugin;
 
 impl Plugin for CharacterVisualPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, load_kits).add_systems(
-            PostUpdate,
-            (attach_visuals, update_horses, update_figures)
-                .chain()
-                .before(TransformSystems::Propagate),
-        );
+        app.init_resource::<CharacterModelsShown>()
+            .add_systems(Startup, (load_kits, load_character_models))
+            .add_systems(
+                Update,
+                (toggle_character_models, swap_in_character_models).chain(),
+            )
+            .add_systems(
+                PostUpdate,
+                (attach_visuals, update_horses, update_figures, breathe)
+                    .chain()
+                    .before(TransformSystems::Propagate),
+            )
+            .add_observer(dress_character);
     }
 }
 
@@ -76,6 +87,7 @@ fn attach_visuals(
     (mut people, mut horses, mut palette, mut meshes, mut materials, mut images): Kits,
     changed: Query<(Entity, &CharacterVisual, Option<&Children>), Changed<CharacterVisual>>,
     parts: Query<(), With<VisualPart>>,
+    (models, shown): (Option<Res<CharacterModels>>, Res<CharacterModelsShown>),
 ) {
     for (entity, visual, children) in &changed {
         for &child in children.into_iter().flatten() {
@@ -86,15 +98,21 @@ fn attach_visuals(
         // Per-entity start so a crowd does not step in unison.
         let phase = (entity.index_u32() as f32 * 0.37).fract();
         let body = match *visual {
-            CharacterVisual::Figure(kind) => spawn_figure(
-                &mut commands,
-                &mut people,
-                (&mut palette, &mut materials, &mut images),
-                entity,
-                kind,
-                phase,
-                None,
-            ),
+            CharacterVisual::Figure(kind) => {
+                let body = spawn_figure(
+                    &mut commands,
+                    &mut people,
+                    (&mut palette, &mut materials, &mut images),
+                    entity,
+                    kind,
+                    phase,
+                    None,
+                );
+                if shown.0 {
+                    attach_model(&mut commands, models.as_deref(), body, kind);
+                }
+                body
+            }
             CharacterVisual::Horse(coat) => {
                 spawn_horse(
                     &mut commands,

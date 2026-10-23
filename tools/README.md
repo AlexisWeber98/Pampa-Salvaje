@@ -68,3 +68,42 @@ python3 -I -B -m unittest discover -s tools -v
 ```
 
 The conversions done so far are listed in `assets/models/third-party/3td-starter-pack/CREDITS.md`.
+
+## `mh2gltf.py`: MakeHuman character to skinned glTF
+
+Converts a MakeHuman character (`.mhm`) into a skinned glTF 2.0 model (see `assets/characters/README.md`). It needs Python 3 with numpy and MakeHuman 1.x's *data* folder: `--data`, else `$MAKEHUMAN_DATA`, else `~/.local/opt/makehuman-1.3.0/makehuman/data`. Only the data is read; none of MakeHuman's code runs and its GUI is never started. Run it isolated:
+
+```sh
+python3 -I tools/mh2gltf.py INPUT.mhm -o OUTPUT_FOLDER [options]
+python3 -I tools/mh2gltf.py --check OUTPUT_FOLDER/model.gltf
+```
+
+It writes `model.gltf`, `model.bin` and `textures/` (PNG). Units are meters, Y is up, the model faces +Z and its lowest point is on y = 0. There is one skinned mesh node with one primitive per proxy, and the skeleton's joint hierarchy. It prints the triangles and bounds of each primitive, the textures it wrote, and anything it had to work around.
+
+| Option | Meaning |
+|---|---|
+| `--data DIR` | MakeHuman's data folder |
+| `--max-texture N` | Largest side of the skin and the garments that cover the body (default 1024) |
+| `--max-small-texture N` | Largest side of the other textures and of the normal maps (default 512) |
+| `--no-normal-maps` | Leave the normal maps out |
+| `--keep-hair-under-hats` | Keep the hair above a hat's brim |
+| `--check FILE` | Only validate a written glTF. It checks what `dae2gltf.py --check` does, and also the skin: every joint is a node, there is one invertible inverse bind matrix per joint, and every vertex has joints in range and non-negative weights that sum to 1 |
+
+What it reproduces from MakeHuman's sources (`apps/humanmodifier.py`, `apps/human.py`, `lib/targets.py`, `shared/proxy.py`, `shared/skeleton.py`, `shared/animation.py`):
+
+- **Morphing.** The base mesh is morphed by every modifier: the `.mhm`'s values and the defaults of the rest. Macro modifiers (gender, age, ethnics, muscle, weight, height, proportions, breast) go through the macro variables' interpolation and each target's factors. The others use their decr/incr targets.
+- **Proxies.** The body proxy (one `proxy` line is required, since the base mesh is too dense for a game) and the eyes, eyebrows, eyelashes, hair and clothes are fitted to the morphed mesh by their reference vertices, weights, offsets and scale matrix.
+- **Face hiding.** With `clothesHideFaces`, the clothes' `deleteVerts` hide what is under them. The outermost layer goes first, by `z_depth`. Hidden faces are not written.
+- **Skeleton.** The skeleton comes from the `skeleton` line (`game_engine.mhskel`). Joints are placed at their reference vertices. Bone orientation is copied from the default skeleton's plane normals. Weights come from `default_weights.mhw`, through the bones' weight references (completed as `autoBuildWeightReferences` does), then through each proxy's reference vertices, or from a proxy's own `.mhw` (the shoes). Each vertex keeps at most 4 influences, normalized.
+- **Materials.** From each `.mhmat` it takes the diffuse texture and `diffuseColor`, the normal map, `transparent` (alpha mask at 0.5), `backfaceCull` (double-sided) and a roughness of `1 - shininess`, clamped to 0.35–0.95.
+
+One step is not MakeHuman's. The hair above a hat's brim (the hat's lowest tenth) is left out, so it does not poke through the crown. `--keep-hair-under-hats` turns this off.
+
+The data is local, but it is read as untrusted input:
+
+- Text and JSON files have size limits, and non-finite numbers are refused.
+- Numpy archives are loaded with `allow_pickle=False`. Every array's type, shape and size is checked, and so is every index.
+- Paths are kept inside the data folder or the `.mhm`'s own folder.
+- PNGs are decoded by the script itself: 8- or 16-bit, not interlaced (an interlaced PNG is refused). It undoes their filters along anti-diagonals with numpy.
+
+Bad input gets a one-line error. Any other exception is a bug and keeps its traceback.

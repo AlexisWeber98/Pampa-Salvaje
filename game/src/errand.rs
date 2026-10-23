@@ -26,7 +26,8 @@ use pampa_core::{
 };
 use pampa_render::bubble::LIFETIME;
 use pampa_render::{
-    CharacterVisual, Coat, HudObjective, MapTarget, Say, VisualPose, font, world_from_ground,
+    CharacterVisual, Coat, FigureKind, HudObjective, MapTarget, Say, VisualPose, font,
+    world_from_ground,
 };
 
 use crate::abilities::{PlayerAbilities, Unlocked, announce_unlocks, unlock_on_mount};
@@ -99,7 +100,7 @@ impl Talk {
 pub struct Conversation(pub Option<Talk>);
 
 /// The errand of a world of `towns`, given the first town: Don Hidalgo in
-/// its plaza, Farach in the town named `police_town` (the dialogue's
+/// its plaza, Farach (with Bairoletto at his side) in the town named `police_town` (the dialogue's
 /// [`ErrandLines::police_town`]; the nearest other town with a police
 /// station when it has none). Their footprints are added to `world` as
 /// obstacles. `None` (no errand) without a second town with a police
@@ -117,6 +118,7 @@ pub fn plan(
         [Npc::Hidalgo, Npc::Farach]
             .map(|npc| (npc, errand.standing(npc)))
             .to_vec(),
+        vec![(FigureKind::Bairoletto, errand.bairoletto())],
     );
     Some((ErrandRun(errand), cast))
 }
@@ -1022,8 +1024,17 @@ mod tests {
         assert_eq!(comisarias(&loaded.towns[hidalgo.town]), 0);
         assert_eq!(loaded.towns[hidalgo.town].police_door(), None);
         assert_eq!(comisarias(&loaded.towns[farach.town]), 1);
-        assert_eq!(world.obstacles.len(), before + 2);
+        // Hidalgo, Farach and Bairoletto at his side, clear of Castex.
+        assert_eq!(world.obstacles.len(), before + 3);
         assert_eq!(cast.0, vec![(Npc::Hidalgo, hidalgo), (Npc::Farach, farach)]);
+        let bairoletto = run.0.bairoletto();
+        assert_eq!(cast.1, vec![(FigureKind::Bairoletto, bairoletto)]);
+        for o in loaded.towns[farach.town].obstacles() {
+            assert!(
+                !o.intersects(&bairoletto.footprint()),
+                "Bairoletto inside {o:?}"
+            );
+        }
     }
 
     #[test]

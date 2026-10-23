@@ -37,6 +37,9 @@ pub enum FigureKind {
     Hidalgo,
     /// Comisario Elías Farach, in uniform.
     Farach,
+    /// Juan Bautista Bairoletto, 25 in 1919: black shirt, white
+    /// neckerchief, a light chambergo; standing at Farach's side.
+    Bairoletto,
 }
 
 impl FigureKind {
@@ -47,9 +50,14 @@ impl FigureKind {
 
     /// Every figure.
     pub fn all() -> impl Iterator<Item = Self> {
-        [Self::Protagonist, Self::Hidalgo, Self::Farach]
-            .into_iter()
-            .chain((0..TOWNSFOLK_LOOKS).map(Self::Townsfolk))
+        [
+            Self::Protagonist,
+            Self::Hidalgo,
+            Self::Farach,
+            Self::Bairoletto,
+        ]
+        .into_iter()
+        .chain((0..TOWNSFOLK_LOOKS).map(Self::Townsfolk))
     }
 }
 
@@ -924,6 +932,27 @@ const FARACH: Look = Look {
     ..PAISANO
 };
 
+/// Bairoletto: a slight young man in a black shirt with a white
+/// neckerchief, dark trousers, boots and a light felt chambergo; light-brown
+/// hair and a short beard (drawn as a moustache).
+const BAIROLETTO: Look = Look {
+    skin: [222, 184, 152],
+    hair: [124, 92, 62],
+    coat: [30, 28, 30],
+    jacket: false,
+    vest: None,
+    shirt: None,
+    legs: [52, 48, 46],
+    bombacha: false,
+    shoes: [40, 32, 26],
+    boots: true,
+    head: Headwear::FeltHat([176, 164, 136]),
+    moustache: Some([124, 92, 62]),
+    neckerchief: Some([236, 234, 226]),
+    faja: None,
+    ..PAISANO
+};
+
 /// `color` a shade darker: seams, cuffs, soles and eye sockets.
 pub(super) fn darker(color: Rgb) -> Rgb {
     color.map(|c| (c as f32 * 0.78) as u8)
@@ -935,6 +964,7 @@ fn look(kind: FigureKind) -> &'static Look {
         FigureKind::Townsfolk(n) => &TOWNSFOLK[(n % TOWNSFOLK_LOOKS) as usize],
         FigureKind::Hidalgo => &HIDALGO,
         FigureKind::Farach => &FARACH,
+        FigureKind::Bairoletto => &BAIROLETTO,
     }
 }
 
