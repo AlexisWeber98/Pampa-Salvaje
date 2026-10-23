@@ -223,7 +223,13 @@ pub fn rasterize_town_over(town: &TownLayout, overlay: &Overlay, frame: &MapFram
     let mut map = paper(frame.size_px);
     paint_town_ground(&mut map, town, frame);
     paint_overlay_under(&mut map, overlay, frame);
-    paint_rails(&mut map, std::slice::from_ref(town), overlay.links, frame);
+    paint_rails(
+        &mut map,
+        std::slice::from_ref(town),
+        overlay.links,
+        frame,
+        true,
+    );
     paint_settlements(&mut map, overlay, frame);
     paint_town_buildings(&mut map, town, frame);
     for place in town.places() {
@@ -252,10 +258,17 @@ pub fn rasterize_field(towns: &[TownLayout], overlay: &Overlay, frame: &MapFrame
     paint_overlay_under(&mut map, overlay, frame);
     for town in &near {
         if let Some(rail) = town.railway {
-            track_line(&mut map, frame.to_map(rail.start), frame.to_map(rail.end));
+            track_line(
+                &mut map,
+                frame.to_map(rail.start),
+                frame.to_map(rail.end),
+                false,
+            );
         }
     }
-    paint_rails(&mut map, &[], overlay.links, frame);
+    // No sleeper ticks out here: at 2 m a pixel, shrunk onto the panel,
+    // they read as a dashed line.
+    paint_rails(&mut map, &[], overlay.links, frame, false);
     paint_settlements(&mut map, overlay, frame);
     for town in &near {
         paint_town_buildings(&mut map, town, frame);
@@ -372,17 +385,23 @@ fn ground_line(
 }
 
 /// Railway: each town's track, then the links of the railway line, cut to
-/// the frame (they run for kilometers).
-fn paint_rails(map: &mut Canvas, towns: &[TownLayout], links: &[Railway], frame: &MapFrame) {
+/// the frame (they run for kilometers); with sleeper ticks when `ties`.
+fn paint_rails(
+    map: &mut Canvas,
+    towns: &[TownLayout],
+    links: &[Railway],
+    frame: &MapFrame,
+    ties: bool,
+) {
     let shown = frame.shown();
     for rail in towns.iter().filter_map(|t| t.railway) {
-        track_line(map, frame.to_map(rail.start), frame.to_map(rail.end));
+        track_line(map, frame.to_map(rail.start), frame.to_map(rail.end), ties);
     }
     for link in links {
         if let Some((enter, exit)) = shown.segment_overlap(link.start, link.end) {
             let along = link.end - link.start;
             let (from, to) = (link.start + along * enter, link.start + along * exit);
-            track_line(map, frame.to_map(from), frame.to_map(to));
+            track_line(map, frame.to_map(from), frame.to_map(to), ties);
         }
     }
 }
@@ -440,9 +459,10 @@ fn outline(map: &mut Canvas, min: Vec2, max: Vec2, color: [u8; 4]) {
     map.fill_rect(Vec2::new(max.x - 1.0, min.y), max, color);
 }
 
-/// A track from map pixel `s` to `e`: a dark line with sleeper ticks across
-/// it, both oriented to the track's main direction.
-fn track_line(map: &mut Canvas, s: Vec2, e: Vec2) {
+/// A track from map pixel `s` to `e`: an unbroken dark line two pixels
+/// wide, with sleeper ticks across it every third pixel when `ties`, both
+/// oriented to the track's main direction.
+fn track_line(map: &mut Canvas, s: Vec2, e: Vec2, ties: bool) {
     // Half sizes of a line dot and a tick, oriented to the track.
     let east_west = (e.x - s.x).abs() >= (e.y - s.y).abs();
     let (line, tick) = if east_west {
@@ -450,11 +470,12 @@ fn track_line(map: &mut Canvas, s: Vec2, e: Vec2) {
     } else {
         (Vec2::new(1.0, 0.5), Vec2::new(2.0, 0.5))
     };
-    let steps = s.distance(e).ceil() as usize;
+    // Half-pixel steps: no column or row is ever skipped.
+    let steps = (s.distance(e) * 2.0).ceil() as usize;
     for k in 0..=steps {
         let p = s.lerp(e, k as f32 / steps.max(1) as f32);
         map.fill_rect(p - line, p + line, palette::RAIL);
-        if k % 3 == 0 {
+        if ties && k % 6 == 0 {
             map.fill_rect(p - tick, p + tick, palette::RAIL);
         }
     }
@@ -1192,6 +1213,62 @@ pub(crate) mod tests {
             .expect("a house in the frame");
         let m = frame.to_map(house.footprint.center());
         assert_eq!(map.get(m.x as usize, m.y as usize), palette::HOUSE);
+    }
+
+    #[test]
+    fn the_field_draws_the_railway_as_one_even_unbroken_line() {
+        let frame = MapFrame::field(GroundVec2::ZERO, 320);
+        for degrees in [0.0_f32, 17.0, 30.0, 45.0, 52.0, 63.0, 90.0, 133.0] {
+            let dir = GroundVec2::new(degrees.to_radians().cos(), degrees.to_radians().sin());
+            let c = GroundVec2::new(0.37, 0.61);
+            let link = Railway {
+                start: c - dir * 250.0,
+                end: c + dir * 250.0,
+                gauge: 1.676,
+            };
+            let overlay = Overlay {
+                links: std::slice::from_ref(&link),
+                ..Overlay::default()
+            };
+            let map = rasterize_field(&[], &overlay, &frame);
+            let (s, e) = (frame.to_map(link.start), frame.to_map(link.end));
+            let rail = |x: i32, y: i32| {
+                x >= 0
+                    && y >= 0
+                    && (x as usize) < map.size
+                    && (y as usize) < map.size
+                    && map.get(x as usize, y as usize) == palette::RAIL
+            };
+            // No gap: every point along the line is on a rail pixel.
+            let steps = (s.distance(e) * 4.0) as usize;
+            for k in steps / 20..steps * 19 / 20 {
+                let p = s.lerp(e, k as f32 / steps as f32);
+                assert!(
+                    rail(p.x.floor() as i32, p.y.floor() as i32),
+                    "{degrees}°: a gap at {p:?}"
+                );
+            }
+            // Even: across its main direction the line is as wide in every
+            // row or column, no tick thickening it into dashes.
+            let east_west = (e.x - s.x).abs() >= (e.y - s.y).abs();
+            let mut widths = std::collections::BTreeSet::new();
+            for k in 1..20 {
+                let p = s.lerp(e, 0.05 + 0.9 * k as f32 / 20.0);
+                let (x, y) = (p.x.floor() as i32, p.y.floor() as i32);
+                let width = (-6..=6)
+                    .filter(|d| {
+                        if east_west {
+                            rail(x, y + d)
+                        } else {
+                            rail(x + d, y)
+                        }
+                    })
+                    .count();
+                widths.insert(width);
+            }
+            let (min, max) = (*widths.first().unwrap(), *widths.last().unwrap());
+            assert!(min >= 2 && max <= 3, "{degrees}°: cross widths {widths:?}");
+        }
     }
 
     fn count(canvas: &Canvas, color: [u8; 4]) -> usize {

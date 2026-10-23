@@ -10,13 +10,19 @@
 //! truth for height, so neighboring chunks meet without seams. Which chunks
 //! exist is decided by a [`StreamingSet`] around [`StreamFocus`]: chunks
 //! within the load radius are built, a bounded number per frame, and chunks
-//! past the radius plus one are despawned with their props.
+//! past the radius plus one are despawned with their props. The chunks
+//! around the start are built at once; a chunk streamed in later spawns at
+//! once with its props, but its ground mesh, the costly part, is built on
+//! the async compute pool and lands a few frames later, out in the fog, so
+//! riding never stalls a frame on it.
 
 use std::collections::HashMap;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::PrimitiveTopology;
 use bevy::prelude::*;
+use bevy::tasks::futures::check_ready;
+use bevy::tasks::{AsyncComputeTaskPool, Task};
 use pampa_core::flora::grass_dryness;
 use pampa_core::{ChunkCoord, FloraSite, RoadNetwork, Terrain, Vec2 as GroundVec2, WorldConfig};
 
@@ -122,7 +128,10 @@ impl Plugin for TerrainPlugin {
                 Startup,
                 (setup_kit, fill_chunks).chain().after(VegetationLoad),
             )
-            .add_systems(PostUpdate, stream_chunks.in_set(ChunkStreaming));
+            .add_systems(
+                PostUpdate,
+                (land_ground, stream_chunks).chain().in_set(ChunkStreaming),
+            );
     }
 }
 
@@ -188,9 +197,25 @@ fn fill_chunks(
             (&kit, models.as_deref()),
             &mut meshes,
             (&terrain.0, &world.0, *detail),
-            (coord, flora.as_deref().map(|f| &f.0)),
+            (coord, flora.as_deref().map(|f| &f.0), GroundBuild::Inline),
         );
         streamer.entities.insert(coord, entity);
+    }
+}
+
+/// Gives every chunk whose ground finished building its mesh.
+fn land_ground(
+    mut commands: Commands,
+    mut pending: Query<(Entity, &mut PendingGround)>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    for (chunk, mut build) in &mut pending {
+        if let Some(mesh) = check_ready(&mut build.0) {
+            commands
+                .entity(chunk)
+                .remove::<PendingGround>()
+                .insert(Mesh3d(meshes.add(mesh)));
+        }
     }
 }
 
@@ -219,31 +244,92 @@ fn stream_chunks(
             (&kit, models.as_deref()),
             &mut meshes,
             (&terrain.0, &world.0, *detail),
-            (coord, flora.as_deref().map(|f| &f.0)),
+            (
+                coord,
+                flora.as_deref().map(|f| &f.0),
+                GroundBuild::Background,
+            ),
         );
         streamer.entities.insert(coord, entity);
     }
 }
 
-/// Spawns chunk `coord`: its ground mesh, and its props as children.
+/// A streamed chunk's ground mesh, being built on the async compute pool.
+/// [`land_ground`] swaps it for the chunk's `Mesh3d` when it is ready; a
+/// chunk despawned first drops it, which cancels the build.
+#[derive(Component)]
+pub(crate) struct PendingGround(Task<Mesh>);
+
+#[cfg(test)]
+impl PendingGround {
+    /// Whether the build is done (it lands on the next update).
+    pub(crate) fn is_finished(&self) -> bool {
+        self.0.is_finished()
+    }
+}
+
+/// Blocks until every background build `done` reports on has finished, so
+/// the next update lands them all: tests step the async pool without
+/// depending on how many frames it takes. Fails after 30 s.
+#[cfg(test)]
+pub(crate) fn finish_builds<T: Component>(app: &mut App, done: fn(&T) -> bool) {
+    let start = std::time::Instant::now();
+    loop {
+        let mut q = app.world_mut().query::<&T>();
+        if q.iter(app.world()).all(done) {
+            return;
+        }
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(30),
+            "the background builds never finished"
+        );
+        std::thread::yield_now();
+    }
+}
+
+/// How a chunk gets its ground mesh.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GroundBuild {
+    /// Built now, on the main thread: the first frame shows the whole view.
+    Inline,
+    /// Built on the async compute pool, so a chunk streamed in while riding
+    /// never stalls a frame. The chunk is at the edge of the load radius,
+    /// inside the dust fog, so its ground landing a few frames later is
+    /// never seen.
+    Background,
+}
+
+/// Spawns chunk `coord`: its ground mesh (or the task building it), and its
+/// props as children.
 fn spawn_chunk(
     commands: &mut Commands,
     (kit, models): (&TerrainKit, Option<&VegetationModels>),
     meshes: &mut Assets<Mesh>,
     (terrain, world, detail): (&Terrain, &WorldConfig, ChunkDetail),
-    (coord, track): (ChunkCoord, Option<&FloraSite>),
+    (coord, track, build): (ChunkCoord, Option<&FloraSite>, GroundBuild),
 ) -> Entity {
-    let mesh = build_chunk_mesh(terrain, coord, world.chunk_size, detail.resolution);
-    let chunk = commands
-        .spawn((
-            Name::new(format!("Terrain chunk {} {}", coord.x, coord.y)),
-            TerrainChunk(coord),
-            Mesh3d(meshes.add(mesh)),
-            MeshMaterial3d(kit.ground.clone()),
-            Transform::default(),
-            Visibility::default(),
-        ))
-        .id();
+    let (size, resolution) = (world.chunk_size, detail.resolution);
+    let mut chunk = commands.spawn((
+        Name::new(format!("Terrain chunk {} {}", coord.x, coord.y)),
+        TerrainChunk(coord),
+        MeshMaterial3d(kit.ground.clone()),
+        Transform::default(),
+        Visibility::default(),
+    ));
+    match build {
+        GroundBuild::Inline => {
+            let mesh = build_chunk_mesh(terrain, coord, size, resolution);
+            chunk.insert(Mesh3d(meshes.add(mesh)));
+        }
+        GroundBuild::Background => {
+            // Cheap: the terrain shares its roads.
+            let terrain = terrain.clone();
+            let task = AsyncComputeTaskPool::get()
+                .spawn(async move { build_chunk_mesh(&terrain, coord, size, resolution) });
+            chunk.insert(PendingGround(task));
+        }
+    }
+    let chunk = chunk.id();
     for prop in chunk_props(terrain, coord, world.chunk_size, track) {
         if let Some(models) = models
             && spawn_model_prop(commands, models, terrain, &prop, chunk)
@@ -370,13 +456,21 @@ pub(crate) fn mesh_height(terrain: &Terrain, p: GroundVec2, size: f32, resolutio
 /// are world space too ([`ground_uv`]), with flat per-face tangents for the
 /// ground's normal map.
 fn build_chunk_mesh(terrain: &Terrain, coord: ChunkCoord, size: f32, resolution: u32) -> Mesh {
-    let corner = |i: u32, j: u32| {
-        let ground = chunk_corner(coord, size, resolution, i, j);
-        (
-            world_from_ground(ground, terrain.height(ground.x, ground.y)),
-            ground_color(terrain, ground),
-        )
-    };
+    // Every corner is shared by up to four quads: sample the terrain (its
+    // height and the six heights of its colour) once per corner, not once
+    // per quad touching it.
+    let side = resolution + 1;
+    let grid: Vec<(Vec3, [f32; 4])> = (0..side)
+        .flat_map(|j| (0..side).map(move |i| (i, j)))
+        .map(|(i, j)| {
+            let ground = chunk_corner(coord, size, resolution, i, j);
+            (
+                world_from_ground(ground, terrain.height(ground.x, ground.y)),
+                ground_color(terrain, ground),
+            )
+        })
+        .collect();
+    let corner = |i: u32, j: u32| grid[(j * side + i) as usize];
 
     let quads = (resolution * resolution) as usize;
     let mut positions = Vec::with_capacity(quads * 6);
@@ -603,6 +697,74 @@ mod tests {
         assert_eq!(chunks(&mut app), expected);
         // Memory stays bounded: the old chunks' props went with them.
         assert!(props(&mut app) <= props_at_start * 3 / 2);
+    }
+
+    #[test]
+    fn a_streamed_chunk_builds_its_ground_off_the_main_schedule() {
+        let mut app = app(GroundVec2::ZERO);
+        app.update();
+        let ground = |app: &mut App| {
+            let mut q = app
+                .world_mut()
+                .query_filtered::<(&TerrainChunk, Option<&Mesh3d>), With<TerrainChunk>>();
+            q.iter(app.world())
+                .map(|(c, m)| (c.0, m.map(|m| m.id())))
+                .collect::<Vec<_>>()
+        };
+        // The first frame shows the whole view: every ground is built.
+        assert!(ground(&mut app).iter().all(|(_, m)| m.is_some()));
+        app.world_mut().resource_mut::<StreamFocus>().0 = GroundVec2::new(2000.0, 0.0);
+        app.update();
+        // The chunks streamed in exist at once (their props and decorations
+        // land the same frame), but the update that spawned them did not
+        // build their ground: it is built on the async compute pool.
+        let streamed = ground(&mut app);
+        assert_eq!(streamed.len(), 3);
+        assert!(streamed.iter().all(|(_, m)| m.is_none()), "{streamed:?}");
+        // It lands once built, the same mesh the main thread would have
+        // built. (Each update may stream in more chunks: step until all
+        // have landed.)
+        for _ in 0..50 {
+            if ground(&mut app).iter().all(|(_, m)| m.is_some()) {
+                break;
+            }
+            finish_builds(&mut app, PendingGround::is_finished);
+            app.update();
+        }
+        let terrain = Terrain::default();
+        for (coord, mesh) in ground(&mut app) {
+            let mesh = mesh.expect("the ground lands");
+            let built = app.world().resource::<Assets<Mesh>>().get(mesh).cloned();
+            let expected = build_chunk_mesh(&terrain, coord, 200.0, 4);
+            assert_eq!(
+                built.map(|m| m.attribute(Mesh::ATTRIBUTE_POSITION).cloned()),
+                Some(expected.attribute(Mesh::ATTRIBUTE_POSITION).cloned())
+            );
+        }
+    }
+
+    #[test]
+    fn a_chunk_gone_before_its_ground_lands_drops_the_build() {
+        let mut app = app(GroundVec2::ZERO);
+        app.update();
+        app.world_mut().resource_mut::<StreamFocus>().0 = GroundVec2::new(2000.0, 0.0);
+        app.update();
+        let mut q = app
+            .world_mut()
+            .query_filtered::<Entity, With<PendingGround>>();
+        let streamed: Vec<Entity> = q.iter(app.world()).collect();
+        assert_eq!(streamed.len(), 3);
+        // Back before any of it lands: the chunks go, and their builds
+        // with them.
+        app.world_mut().resource_mut::<StreamFocus>().0 = GroundVec2::ZERO;
+        for _ in 0..10 {
+            app.update();
+        }
+        for chunk in streamed {
+            assert!(app.world().get_entity(chunk).is_err(), "{chunk} stayed");
+        }
+        let mut q = app.world_mut().query::<&PendingGround>();
+        assert_eq!(q.iter(app.world()).count(), 0, "a build stayed pending");
     }
 
     #[test]

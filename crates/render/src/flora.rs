@@ -616,7 +616,7 @@ pub fn bake(model: Model, obj: &ObjModel, colors: &MaterialColors) -> Vec<(Finis
 
 /// The vegetation models, baked once at startup, and the few materials
 /// every one of them shares.
-#[derive(Resource)]
+#[derive(Resource, Clone)]
 pub struct VegetationModels {
     parts: HashMap<Model, Vec<(Finish, Handle<Mesh>)>>,
     bark: Handle<StandardMaterial>,
@@ -758,7 +758,7 @@ pub(crate) fn reference_height(species: Species) -> f32 {
 }
 
 /// The procedural stand-in meshes and materials.
-#[derive(Resource)]
+#[derive(Resource, Clone)]
 pub struct FloraKit {
     calden_trunk: Handle<Mesh>,
     calden_crown: Handle<Mesh>,

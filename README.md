@@ -71,11 +71,13 @@ arrow along its heading. Dirt roads are drawn in a warm brown under the
 railway. A small compass rose in its bottom-left corner marks N, E, S and O
 (oeste); the map is north-up, so the rose stays put and the arrow turns. It frames the town plus a 30 m margin (not the whole
 world) so streets stay legible, with any settlement reaching into that frame.
-More than 150 m from the nearest town, or within 20 m of a settlement, it
-switches to a field frame: 640 m round the rider (2 m a pixel) with the roads,
-the railway, settlements (buildings by kind, corral outlines, huellas as thin
-dirt lines, trees as dots) and roadside wrecks. It goes back to the town within
-90 m of it and 50 m clear of every settlement, so it does not flicker. A
+More than 20 m from the nearest town (before the rider rides off the town's
+frame), or within 20 m of a settlement, it switches to a field frame: 640 m
+round the rider (2 m a pixel) with the roads, the railway (one unbroken line,
+without the town map's sleeper ticks), settlements
+(buildings by kind, corral outlines, huellas as thin dirt lines, trees as dots)
+and roadside wrecks. It goes back to the town within 5 m of it and 50 m clear
+of every settlement, so it does not flicker. A
 target off the map is pinned to the edge on its side, so it points the way.
 Each town's layer is rasterized once, the first time it is shown; the field
 layer is repainted in place only after the rider rides 80 m from its center;
@@ -101,9 +103,11 @@ horse stays where it is, it does not travel by train.
 a window inside the coach, the default, on the side that faces the next
 station's platform (so the arrival is seen through the window), with the
 window from 0.8 m to 1.8 m above the floor around the seated eyes at
-1.2 m, looking out with the mouse (or
-`Q`/`E`) up to about 120° either way and 40° up or down, so the pampa
-scrolls past the window and the coach can be looked into; the orbit around
+1.2 m, facing forward the way the train runs; the mouse (or `Q`/`E`)
+turns the head up to about 120° either way and 40° up or down, so either
+window, the pampa scrolling past and the platform on arrival are in reach.
+Every time the seat is taken (the opening, boarding, a skipped ride coming
+in, `V` back to this view) the head turns forward again; the orbit around
 the coach from 16 m out, which the train's own cars never pull in; and the
 whole train from the side, slowly following it. The coaches are hollow
 second-class coaches of about 1919: wooden walls with glazed window
@@ -174,7 +178,10 @@ them talking.
 The ground is built in 200 m square chunks around the rider: chunks within 3
 chunks are built (at most one per frame, all of them on the first frame), and
 chunks past 4 are despawned with their rocks, shrubs, grass and trees, so
-memory stays bounded wherever you ride.
+memory stays bounded wherever you ride. A chunk streamed in while riding builds
+its ground mesh, and lays out any settlement in it, on a background thread
+and gets them a few frames later, out in the fog, so crossing a chunk border
+never stalls a frame.
 
 The open land between towns is pampa grassland:
 - The ground's colour drifts from dry yellow to grey-green, through vertex colours that are continuous across chunk borders. Over that paint lies a tiled soil-and-grass detail texture (normal, roughness and ambient-occlusion maps too), in world-space UVs on a 6 m tile, so it runs on across chunk borders.
@@ -203,7 +210,7 @@ Roads, crossings, signposts, fences and gates stream with the chunks, like the t
 
 Behind some open gates stand rural settlements (`pampa_core::settlement`, drawn by `pampa_render::settlement`): adobe ranchos under paja or corrugated iron, puestos with their corral and aguada, whitewashed or brick chacras with a galpón and a molino, and estancia cascos with a front gallery, worker houses, corrals, a eucalyptus grove and a poplar row. Dirt huellas (two wheel ruts) lead from the gate to every door. The buildings and props are procedural, with CC0 PBR textures shared one material per surface; every building, prop, corral rail and tree trunk is a static obstacle, and houses and galpones stop the camera. Abandoned wagons rot at some yards and on a few road verges, and Poly Haven barrels, crates, a ladder, a bucket and lanterns sit about the barns and wells.
 
-A structure kind with a model slot (the windpump, the wrecked wagon, the cart, the well and others) draws a glTF model from `assets/models/third-party/<slot>/` when one is there, fitted by `slots.ron`, and its procedural mesh otherwise; see `assets/models/third-party/README.md`. The windpump and the wrecked wagon are 3TD Starter Pack models (CC0) converted from COLLADA with `tools/dae2gltf.py`, a standard-library Python script with its own tests (`python3 -I -B -m unittest discover -s tools`; see `tools/README.md`). The thatch textures are made by `assets/textures/buildings/thatch/generate.sh`, whose `--check-signs` proves the normal map's OpenGL convention on known ramps.
+A structure kind with a model slot (the windpump, the wrecked wagon, the cart, the well and others) draws a glTF model from `assets/models/third-party/<slot>/` when one is there, fitted by `slots.ron`, and its procedural mesh otherwise; see `assets/models/third-party/README.md`. The windpump and the wrecked wagon are 3TD Starter Pack models (CC0) converted from COLLADA with `tools/dae2gltf.py`, a standard-library Python script with its own tests (`python3 -I -B -m unittest discover -s tools`; see `tools/README.md`). The thatch textures are made by `assets/textures/buildings/thatch/generate.sh`, whose `--check-signs` proves the normal map's OpenGL convention on known ramps. The building textures ship as GPU-compressed KTX2 next to their JPG sources: `tools/textures_to_ktx2.sh` encodes each set to UASTC with baked mipmaps and packs occlusion, roughness and metallic into one `orm` map, and Bevy transcodes them at load to the GPU's block format (BC7 on desktop), a quarter of the video memory RGBA8 took (see `tools/README.md`).
 
 Everything is placed by `pampa_core::flora`, seeded by the chunk, and kept clear of towns' leveled ground, the railway, the roads, the fence lines and the world edge. Every tree trunk in the world is a static obstacle: about 113,000 of them, planted once at load in about 0.1 s, so a horse hits a trunk even in a chunk that is not drawn yet. The dust fog swallows everything well before the
 400 m that is always loaded. Towns stream the same way: a town's buildings,

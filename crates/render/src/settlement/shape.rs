@@ -268,6 +268,39 @@ impl Shape {
             .collect()
     }
 
+    /// The triangles of the mesh of `surface`, for tests.
+    #[cfg(test)]
+    pub fn triangles_of(&self, surface: Surface) -> Vec<[Vec3; 3]> {
+        self.parts
+            .iter()
+            .filter(|(s, _)| *s == surface)
+            .flat_map(|(_, b)| {
+                b.indices
+                    .chunks(3)
+                    .map(|t| [0, 1, 2].map(|k| Vec3::from_array(b.positions[t[k] as usize])))
+            })
+            .collect()
+    }
+
+    /// The vertices of the mesh of `surface` as (position, normal, uv), for
+    /// tests.
+    #[cfg(test)]
+    pub fn vertices(&self, surface: Surface) -> Vec<(Vec3, Vec3, Vec2)> {
+        self.parts
+            .iter()
+            .filter(|(s, _)| *s == surface)
+            .flat_map(|(_, b)| {
+                (0..b.positions.len()).map(|i| {
+                    (
+                        Vec3::from_array(b.positions[i]),
+                        Vec3::from_array(b.normals[i]),
+                        Vec2::from_array(b.uvs[i]),
+                    )
+                })
+            })
+            .collect()
+    }
+
     /// One mesh per surface.
     pub fn into_meshes(self) -> Vec<(Surface, Mesh)> {
         self.parts

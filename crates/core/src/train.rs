@@ -954,7 +954,7 @@ impl CoachBody {
     /// Where a passenger sits by a window in a coach `length` long, as
     /// `(along, across, height)`: at the middle window on the car's right
     /// (`side` +1) or left (-1), half a meter in from the wall, eyes at
-    /// seated height. They face that window.
+    /// seated height, facing forward along the car with that window beside.
     pub fn window_seat(length: f32, side: f32) -> (f32, f32, f32) {
         let (centres, _) = Self::windows(length);
         let along = centres[centres.len() / 2];

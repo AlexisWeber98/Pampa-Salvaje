@@ -18,6 +18,8 @@ ron = "0.12.2"
 # UI image nodes for the minimap; no default font: lettering is our own bitmap font).
 # glTF scenes for third-party models, with the PNG/JPEG decoders their PBR textures use;
 # spawning a scene copies its components by reflection, so derived types self-register.
+# Building textures ship as UASTC KTX2 (zstd-supercompressed, mips baked offline by
+# tools/textures_to_ktx2.sh), transcoded at load to the GPU's block format (BC7 here).
 bevy = { version = "=0.20.0", default-features = false, features = [
     "std",
     "multi_threaded",
@@ -39,6 +41,8 @@ bevy = { version = "=0.20.0", default-features = false, features = [
     "bevy_ui_render",
     "tonemapping_luts",
     "zstd_rust",
+    "ktx2",
+    "basis-universal",
     "bevy_gltf",
     "png",
     "jpeg",

@@ -58,11 +58,15 @@ pub const LARGE_SIZE: Val = Val::VMin(80.0);
 /// Key that toggles the enlarged map.
 pub const TOGGLE_KEY: KeyCode = KeyCode::KeyM;
 /// Meters from the nearest town's extent past which the map leaves the
-/// town for the field frame.
-pub const FIELD_ENTER: f32 = 150.0;
+/// town for the field frame. A town's frame shows its extent plus
+/// [`raster::MARGIN`] all round, so the rider is always on the shown map,
+/// at least 10 m inside its edge, with the rails and roads round them:
+/// never pinned to the edge of a town map that leaves out the track they
+/// stand on.
+pub const FIELD_ENTER: f32 = raster::MARGIN - 10.0;
 /// Meters from a town's extent within which the field frame gives way to
-/// the town's: 60 m of hysteresis under [`FIELD_ENTER`].
-pub const TOWN_ENTER: f32 = 90.0;
+/// the town's: 15 m of hysteresis under [`FIELD_ENTER`].
+pub const TOWN_ENTER: f32 = FIELD_ENTER - 15.0;
 /// Meters from a settlement's bounds within which the map shows the field.
 pub const SETTLEMENT_ENTER: f32 = 20.0;
 /// Meters from every settlement's bounds the rider must be for the map to
@@ -582,7 +586,7 @@ mod tests {
         let castex_base = base(&mut app);
 
         // Near the far town, it takes over with its frame.
-        let near_far = far.extent().max + GroundVec2::new(20.0, 20.0);
+        let near_far = far.extent().max + GroundVec2::new(10.0, 10.0);
         app.world_mut()
             .get_mut::<Transform>(player)
             .unwrap()
@@ -627,10 +631,10 @@ mod tests {
         };
         let probe = TownLayout::generate(&small_config).unwrap().extent();
         let (be, half) = (big.extent(), (probe.max.x - probe.min.x) / 2.0);
-        // 40 m east of the big town's edge: inside TOWN_ENTER of it, and
+        // Just east of the big town's edge: inside TOWN_ENTER of it, and
         // more than FIELD_ENTER from the small town's edge.
-        let rider = GroundVec2::new(be.max.x + 40.0, be.center().y);
-        let small_center = rider + GroundVec2::new(200.0 + half, 0.0);
+        let rider = GroundVec2::new(be.max.x + TOWN_ENTER / 2.0, be.center().y);
+        let small_center = rider + GroundVec2::new(FIELD_ENTER + 20.0 + half, 0.0);
         let small = TownLayout::generate(&TownConfig {
             origin: small_center - probe.center(),
             ..small_config
@@ -742,16 +746,19 @@ mod tests {
         let far = f32::INFINITY;
         // In town until past FIELD_ENTER, in the field until within
         // TOWN_ENTER: the band between keeps whichever frame is shown.
+        let between = (TOWN_ENTER + FIELD_ENTER) / 2.0;
         assert_eq!(next_mode(Town, 0.0, far), Town);
-        assert_eq!(next_mode(Town, 120.0, far), Town);
+        assert_eq!(next_mode(Town, between, far), Town);
         assert_eq!(next_mode(Town, FIELD_ENTER + 1.0, far), Field);
-        assert_eq!(next_mode(Field, 120.0, far), Field);
+        assert_eq!(next_mode(Field, between, far), Field);
         assert_eq!(next_mode(Field, TOWN_ENTER - 1.0, far), Town);
         // Near a settlement it is the field, even close to a town, until
         // the rider is well clear of it.
-        assert_eq!(next_mode(Town, 40.0, SETTLEMENT_ENTER - 1.0), Field);
-        assert_eq!(next_mode(Field, 40.0, 30.0), Field);
-        assert_eq!(next_mode(Field, 40.0, SETTLEMENT_LEAVE + 1.0), Town);
+        assert_eq!(next_mode(Town, 0.0, SETTLEMENT_ENTER - 1.0), Field);
+        assert_eq!(next_mode(Field, 0.0, 30.0), Field);
+        assert_eq!(next_mode(Field, 0.0, SETTLEMENT_LEAVE + 1.0), Town);
+        // A town's map is left before the rider rides off it.
+        const { assert!(TOWN_ENTER > 0.0 && FIELD_ENTER < raster::MARGIN) };
     }
 
     fn move_to(app: &mut App, entity: Entity, p: GroundVec2) {
@@ -787,32 +794,81 @@ mod tests {
         assert_eq!(app.world().resource::<Minimap>().mode, MapMode::Town);
 
         // Between the thresholds, still the town.
-        move_to(&mut app, player, east(120.0));
+        let between = (TOWN_ENTER + FIELD_ENTER) / 2.0;
+        move_to(&mut app, player, east(between));
         assert_eq!(app.world().resource::<Minimap>().mode, MapMode::Town);
         assert_eq!(app.world().resource::<Minimap>().frame, town_frame);
 
-        // Out on the pampa: the field frame round the rider.
-        move_to(&mut app, player, east(200.0));
+        // Past the town's margin: the field frame round the rider.
+        let out = FIELD_ENTER + 5.0;
+        move_to(&mut app, player, east(out));
         let minimap = app.world().resource::<Minimap>();
         assert_eq!(minimap.mode, MapMode::Field);
-        assert_eq!(minimap.frame, MapFrame::field(east(200.0), MAP_PX));
+        assert_eq!(minimap.frame, MapFrame::field(east(out), MAP_PX));
         assert_eq!(minimap.field_paints, 1);
         let at = minimap.player_px.unwrap();
         assert!(at.distance(Vec2::splat(MAP_PX as f32 / 2.0)) < 1e-3);
         assert_ne!(base_image(&mut app), town_base);
 
         // Back between the thresholds: still the field.
-        move_to(&mut app, player, east(120.0));
+        move_to(&mut app, player, east(between));
         assert_eq!(app.world().resource::<Minimap>().mode, MapMode::Field);
 
         // Close in: the town frame as before, its cached layer reused.
         let images = app.world().resource::<Assets<Image>>().len();
-        move_to(&mut app, player, east(60.0));
+        move_to(&mut app, player, east(TOWN_ENTER - 1.0));
         let minimap = app.world().resource::<Minimap>();
         assert_eq!(minimap.mode, MapMode::Town);
         assert_eq!(minimap.frame, town_frame);
         assert_eq!(base_image(&mut app), town_base);
         assert_eq!(app.world().resource::<Assets<Image>>().len(), images);
+    }
+
+    #[test]
+    fn a_rider_on_the_rails_just_outside_a_town_sees_them_under_the_arrow() {
+        let (_, towns, line) = crate::rail::tests::two_towns();
+        // A point on the line, a few tens of meters out of the first town:
+        // past its frame's margin, well short of the old field threshold.
+        let path = line.full_path(&towns);
+        let on_rails = (0..path.length() as usize)
+            .map(|d| path.at(d as f32))
+            .find(|&p| {
+                let d = distance_to_town(&towns[0], p);
+                d > raster::MARGIN + 10.0 && d < 90.0
+            })
+            .expect("the line leaves the first town");
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<Assets<Image>>()
+            .insert_resource(WorldTowns(towns))
+            .insert_resource(WorldRail(line))
+            .add_plugins(MinimapPlugin);
+        app.world_mut().spawn((
+            MapIcon::Player,
+            Transform::from_translation(crate::world_from_ground(on_rails, 0.0)),
+        ));
+        app.update();
+        // The very first paint shows the rider on the map, on the rails.
+        let minimap = app.world().resource::<Minimap>();
+        assert!(
+            minimap.frame.contains(on_rails),
+            "the rider is off the shown {:?} frame",
+            minimap.mode
+        );
+        let at = minimap.frame.to_map(on_rails);
+        let handle = base_image(&mut app);
+        let images = app.world().resource::<Assets<Image>>();
+        let data = images.get(&handle).unwrap().data.as_ref().unwrap();
+        let rail = (-1..=1)
+            .flat_map(|dy| (-1..=1).map(move |dx| (dx, dy)))
+            .filter(|&(dx, dy)| {
+                let (x, y) = (at.x as i32 + dx, at.y as i32 + dy);
+                let i = (y as usize * MAP_PX + x as usize) * 4;
+                data[i..i + 4] == palette::RAIL
+            })
+            .count();
+        assert!(rail > 0, "no rail under the arrow at {at:?}");
     }
 
     #[test]

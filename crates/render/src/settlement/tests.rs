@@ -195,6 +195,65 @@ fn chunks_draw_each_owned_settlement_once_and_drop_it() {
     assert_eq!(count::<TrackSurface>(&mut app), 0);
 }
 
+/// Steps `app` until every background ground and settlement build has
+/// landed (at most 20 updates).
+fn land_all(app: &mut App) {
+    for _ in 0..20 {
+        let pending =
+            count::<crate::terrain::PendingGround>(app) + count::<PendingSettlements>(app);
+        if pending == 0 {
+            return;
+        }
+        crate::terrain::finish_builds(app, crate::terrain::PendingGround::is_finished);
+        crate::terrain::finish_builds(app, PendingSettlements::is_finished);
+        app.update();
+    }
+    panic!("the background builds never landed in 20 updates");
+}
+
+#[test]
+fn a_streamed_chunk_lays_its_settlements_off_the_main_schedule() {
+    // What the first frame lays inline, for comparison.
+    let mut inline = app(GroundVec2::new(100.0, 100.0));
+    inline.update();
+    inline.update();
+    let mut expected = parts(&mut inline);
+    expected.sort_by_key(|p| (p.settlement, p.structure));
+    let tracks = count::<TrackSurface>(&mut inline);
+    // Starting far off, then riding in: the chunks are streamed.
+    let mut app = app(GroundVec2::new(-3500.0, 3500.0));
+    app.update();
+    app.insert_resource(StreamFocus(GroundVec2::new(100.0, 100.0)));
+    app.update();
+    // The update that streamed the chunks did not build their settlements.
+    assert_eq!(parts(&mut app).len(), 0);
+    assert!(count::<PendingSettlements>(&mut app) > 0);
+    // They land once built: the same pieces, once each.
+    land_all(&mut app);
+    app.update();
+    let mut landed = parts(&mut app);
+    landed.sort_by_key(|p| (p.settlement, p.structure));
+    assert_eq!(landed, expected);
+    assert_eq!(count::<TrackSurface>(&mut app), tracks);
+}
+
+#[test]
+fn a_chunk_gone_before_its_settlements_land_drops_them() {
+    let mut app = app(GroundVec2::new(-3500.0, 3500.0));
+    app.update();
+    app.insert_resource(StreamFocus(GroundVec2::new(100.0, 100.0)));
+    app.update();
+    assert!(count::<PendingSettlements>(&mut app) > 0);
+    // Away again the very next frame, before anything lands.
+    app.insert_resource(StreamFocus(GroundVec2::new(-3500.0, 3500.0)));
+    for _ in 0..10 {
+        app.update();
+        assert_eq!(parts(&mut app).len(), 0, "a settlement landed");
+    }
+    assert_eq!(count::<PendingSettlements>(&mut app), 0, "a build stayed");
+    assert_eq!(count::<TrackSurface>(&mut app), 0);
+}
+
 #[test]
 fn settlements_share_a_few_ranges_and_one_material_per_surface() {
     let mut app = app(GroundVec2::new(100.0, 100.0));
@@ -903,4 +962,110 @@ fn a_slot_model_that_fails_after_laying_leaves_its_stand_in_for_good() {
     let kept = app.world().entity(stand_in);
     assert!(!kept.contains::<StandIn>(), "still waiting to be replaced");
     assert_eq!(kept.get::<SettlementPart>(), Some(&part));
+}
+
+/// Loads `paths` (with their sRGB flags) from the shipped assets in a
+/// headless app whose loader, like a desktop GPU's, takes BC formats, and
+/// waits until every one is in; panics on a failed load or after 10 s.
+///
+/// Bevy 0.20 cannot transcode UASTC to plain RGBA8 (it slices the UASTC
+/// levels by the output's block size and panics), so these tests, like the
+/// game, need a GPU format: BC7, ASTC or ETC2.
+fn load_shipped(paths: &[(String, bool)]) -> (App, Vec<Handle<Image>>) {
+    let mut app = App::new();
+    app.add_plugins((
+        MinimalPlugins,
+        crate::gltf::asset_plugin(&crate::gltf::tests::root()),
+    ))
+    .init_asset::<Image>()
+    .register_asset_loader(bevy::image::ImageLoader::new(
+        bevy::image::CompressedImageFormats::BC,
+    ));
+    let server = app.world().resource::<AssetServer>().clone();
+    let handles: Vec<Handle<Image>> = paths
+        .iter()
+        .map(|(path, srgb)| materials::load_map(&server, path, *srgb))
+        .collect();
+    for k in 0..=2000 {
+        app.update();
+        for (handle, (path, _)) in handles.iter().zip(paths) {
+            let state = server.load_state(handle);
+            assert!(!state.is_failed(), "{path}: {state:?}");
+        }
+        if handles.iter().all(|h| server.is_loaded(h)) {
+            break;
+        }
+        assert!(k < 2000, "timed out after 10 s loading the textures");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    (app, handles)
+}
+
+/// How many surfaces get a colour texture when the GPU supports `formats`.
+fn textured_surfaces(formats: bevy::image::CompressedImageFormats) -> usize {
+    let mut app = App::new();
+    app.add_plugins((
+        MinimalPlugins,
+        crate::gltf::asset_plugin(&crate::gltf::tests::root()),
+    ))
+    .init_asset::<Image>()
+    .init_asset::<StandardMaterial>()
+    .register_asset_loader(bevy::image::ImageLoader::new(formats))
+    .insert_resource(crate::gltf::tests::root())
+    .insert_resource(bevy::image::CompressedImageFormatSupport(formats))
+    .add_systems(Startup, materials::setup_materials);
+    app.update();
+    let built = app.world().resource::<materials::SettlementMaterials>();
+    let assets = app.world().resource::<Assets<StandardMaterial>>();
+    Surface::ALL
+        .iter()
+        .filter(|&&s| {
+            assets
+                .get(&built.get(s))
+                .is_some_and(|m| m.base_color_texture.is_some())
+        })
+        .count()
+}
+
+#[test]
+fn a_gpu_without_compressed_formats_draws_plain_colour() {
+    // UASTC needs BC, ASTC or ETC2; without any, Bevy 0.20's loader panics,
+    // so no map may even start loading.
+    assert_eq!(
+        textured_surfaces(bevy::image::CompressedImageFormats::NONE),
+        0
+    );
+    assert!(textured_surfaces(bevy::image::CompressedImageFormats::BC) > 0);
+}
+
+#[test]
+fn every_set_ships_its_three_ktx2_maps_as_bc7_with_baked_mips() {
+    use bevy::render::render_resource::TextureFormat;
+    let paths: Vec<(String, bool)> = Surface::ALL
+        .iter()
+        .filter_map(|s| s.set())
+        .flat_map(|set| materials::MAPS.map(|(name, srgb)| (materials::map_path(set, name), srgb)))
+        .collect();
+    assert_eq!(paths.len(), 9 * 3);
+    let (app, handles) = load_shipped(&paths);
+    let images = app.world().resource::<Assets<Image>>();
+    for (handle, (path, srgb)) in handles.iter().zip(&paths) {
+        let image = images.get(handle).expect("loaded");
+        let format = if *srgb {
+            TextureFormat::Bc7RgbaUnormSrgb
+        } else {
+            TextureFormat::Bc7RgbaUnorm
+        };
+        assert_eq!(image.texture_descriptor.format, format, "{path}");
+        assert_eq!(image.width(), 1024, "{path}");
+        assert_eq!(
+            image.texture_descriptor.mip_level_count, 11,
+            "{path}: mips down to 1×1"
+        );
+        assert!(
+            matches!(image.sampler, bevy::image::ImageSampler::Descriptor(ref d)
+                if d.anisotropy_clamp == 8),
+            "{path}: the repeating anisotropic sampler"
+        );
+    }
 }

@@ -8,7 +8,7 @@
 //!
 //! - The adobe rancho: thick mud-plastered walls under a steep, thick paja
 //!   roof with a deep overhang, or under a single slope of old corrugated
-//!   iron.
+//!   iron falling to the front, its walls built up to meet it.
 //! - The chacra house and the brick worker houses: whitewash or bare brick,
 //!   a flat azotea behind a parapet with a cornice, tall openings with
 //!   wooden doors and shutters.
@@ -295,9 +295,75 @@ fn gable_roof(
     }
 }
 
-/// A single-slope (a un agua) roof, high over the front wall and low over
-/// the back, overhanging `overhang`; the side walls topped with their
-/// triangles in `gable`.
+/// A solid wall top over `xa..xb`, `za..zb`, from `base` up to a sloped
+/// top `ya` high at `za` and `yb` at `zb`, its bottom left open on the wall
+/// it crowns.
+fn wedge(
+    shape: &mut Shape,
+    surface: Surface,
+    (xa, xb): (f32, f32),
+    (za, zb): (f32, f32),
+    base: f32,
+    (ya, yb): (f32, f32),
+) {
+    const EPS: f32 = 1e-3;
+    // The end profile, in (z, y), without its corners of no height.
+    let mut profile = vec![(zb, base), (za, base)];
+    if ya - base > EPS {
+        profile.push((za, ya));
+    }
+    if yb - base > EPS {
+        profile.push((zb, yb));
+    }
+    if profile.len() < 3 {
+        return;
+    }
+    let east: Vec<Vec3> = profile.iter().map(|&(z, y)| Vec3::new(xb, y, z)).collect();
+    let west: Vec<Vec3> = profile
+        .iter()
+        .rev()
+        .map(|&(z, y)| Vec3::new(xa, y, z))
+        .collect();
+    shape.face(surface, &east);
+    shape.face(surface, &west);
+    if yb - base > EPS {
+        shape.face(
+            surface,
+            &[
+                Vec3::new(xa, base, zb),
+                Vec3::new(xb, base, zb),
+                Vec3::new(xb, yb, zb),
+                Vec3::new(xa, yb, zb),
+            ],
+        );
+    }
+    if ya - base > EPS {
+        shape.face(
+            surface,
+            &[
+                Vec3::new(xb, base, za),
+                Vec3::new(xa, base, za),
+                Vec3::new(xa, ya, za),
+                Vec3::new(xb, ya, za),
+            ],
+        );
+    }
+    shape.face(
+        surface,
+        &[
+            Vec3::new(xa, ya, za),
+            Vec3::new(xa, yb, zb),
+            Vec3::new(xb, yb, zb),
+            Vec3::new(xb, ya, za),
+        ],
+    );
+}
+
+/// A single-slope (a un agua) roof of corrugated iron, high over the back
+/// wall and low over the front so its ridges are seen from the patio,
+/// overhanging `overhang` at the eaves and the verges. Every wall is built
+/// up in `gable` to meet the sheet: the sides as solid gables, the back
+/// and front as sloped bands.
 fn lean_to(
     shape: &mut Shape,
     (roof, gable): (Surface, Surface),
@@ -305,23 +371,28 @@ fn lean_to(
     rise: f32,
     overhang: f32,
 ) {
-    let h = walls.height;
+    let (h, t) = (walls.height, walls.thickness);
+    let (x0, x1, z0, z1) = (walls.x0, walls.x1, walls.z0, walls.z1);
     let slope = rise / walls.depth();
-    let xc = (walls.x0 + walls.x1) / 2.0;
-    let low = Vec3::new(xc, h - overhang * slope, walls.z0 - overhang);
-    let high = Vec3::new(xc, h + rise + overhang * slope, walls.z1 + overhang);
+    // The sheet's underside, over the outer faces.
+    let under = |z: f32| h + (z1 - z) * slope;
+    let xc = (x0 + x1) / 2.0;
+    let low = Vec3::new(xc, under(z1 + overhang), z1 + overhang);
+    let high = Vec3::new(xc, under(z0 - overhang), z0 - overhang);
     slab(shape, roof, low, high, walls.width() + 2.0 * overhang, 0.06);
-    for (x, e) in [(walls.x1, 1.0), (walls.x0, -1.0)] {
-        let (f, b, top) = (
-            Vec3::new(x, h, walls.z1),
-            Vec3::new(x, h, walls.z0),
-            Vec3::new(x, h + rise, walls.z1),
+    // The side gables run the whole depth, over the corners.
+    for xs in [(x1 - t, x1), (x0, x0 + t)] {
+        wedge(shape, gable, xs, (z0, z1), h, (under(z0), under(z1)));
+    }
+    for zs in [(z0, z0 + t), (z1 - t, z1)] {
+        wedge(
+            shape,
+            gable,
+            (x0 + t, x1 - t),
+            zs,
+            h,
+            (under(zs.0), under(zs.1)),
         );
-        if e > 0.0 {
-            shape.face(gable, &[f, b, top]);
-        } else {
-            shape.face(gable, &[b, f, top]);
-        }
     }
 }
 
@@ -730,5 +801,135 @@ mod tests {
         assert!(!blocked);
         assert!(shape.surfaces().any(|s| s == Surface::Recess));
         assert!(!shape.surfaces().any(|s| s == Surface::Planks));
+    }
+
+    /// The walls of a chacra's adobe house under a lean-to.
+    fn rancho() -> Walls {
+        Walls {
+            x0: -7.0,
+            x1: 7.0,
+            z0: -3.8,
+            z1: 3.8,
+            thickness: 0.5,
+            height: 3.4,
+            drop: 0.3,
+        }
+    }
+
+    /// The highest point of `surface` straight over `(x, z)`, if any of its
+    /// triangles covers it.
+    fn top_at(shape: &Shape, surface: Surface, x: f32, z: f32) -> Option<f32> {
+        shape
+            .triangles_of(surface)
+            .into_iter()
+            .filter_map(|[a, b, c]| {
+                let (e1, e2, p) = (b - a, c - a, Vec3::new(x, 0.0, z) - a);
+                let det = e1.x * e2.z - e2.x * e1.z;
+                if det.abs() < 1e-6 {
+                    return None;
+                }
+                let u = (p.x * e2.z - e2.x * p.z) / det;
+                let v = (e1.x * p.z - p.x * e1.z) / det;
+                (u >= -1e-4 && v >= -1e-4 && u + v <= 1.0 + 1e-4)
+                    .then_some(a.y + u * e1.y + v * e2.y)
+            })
+            .reduce(f32::max)
+    }
+
+    #[test]
+    fn a_lean_to_rests_on_all_four_walls() {
+        let walls = rancho();
+        let mut shape = Shape::default();
+        lean_to(
+            &mut shape,
+            (Surface::OldIron, Surface::Adobe),
+            &walls,
+            0.7,
+            0.35,
+        );
+        for east in [true, false] {
+            walls.side(east).build(&mut shape, Surface::Adobe, &[], 0);
+        }
+        walls.front().build(&mut shape, Surface::Adobe, &[], 0);
+        walls.back().build(&mut shape, Surface::Adobe, &[], 0);
+        let t = walls.thickness;
+        // Down the middle of each wall's top, the wall meets the roof's
+        // underside: no gap, and nothing through the sheet.
+        let mut columns = Vec::new();
+        for k in 0..=20 {
+            let z = walls.z0 + 0.05 + (walls.depth() - 0.1) * k as f32 / 20.0;
+            columns.push((walls.x1 - t / 2.0, z));
+            columns.push((walls.x0 + t / 2.0, z));
+        }
+        for k in 0..=20 {
+            let x = walls.x0 + 0.05 + (walls.width() - 0.1) * k as f32 / 20.0;
+            columns.push((x, walls.z1 - t / 2.0));
+            columns.push((x, walls.z0 + t / 2.0));
+        }
+        for (x, z) in columns {
+            let wall = top_at(&shape, Surface::Adobe, x, z).expect("a wall here");
+            let under = top_at(&shape, Surface::OldIron, x, z).expect("a roof here") - 0.06;
+            assert!(
+                wall > under - 0.03 && wall < under + 0.01,
+                "at ({x}, {z}) the wall tops out at {wall}, the roof's underside is at {under}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_lean_to_overhangs_its_walls_a_little() {
+        let walls = rancho();
+        let mut shape = Shape::default();
+        lean_to(
+            &mut shape,
+            (Surface::OldIron, Surface::Adobe),
+            &walls,
+            0.7,
+            0.35,
+        );
+        let roof = shape.points(Surface::OldIron);
+        let min = roof.iter().fold(Vec3::MAX, |a, p| a.min(*p));
+        let max = roof.iter().fold(Vec3::MIN, |a, p| a.max(*p));
+        for over in [
+            walls.x0 - min.x,
+            max.x - walls.x1,
+            walls.z0 - min.z,
+            max.z - walls.z1,
+        ] {
+            assert!((0.3..=0.6).contains(&over), "overhang {over}");
+        }
+    }
+
+    #[test]
+    fn the_lean_to_corrugation_runs_down_its_slope() {
+        let walls = rancho();
+        let mut shape = Shape::default();
+        lean_to(
+            &mut shape,
+            (Surface::OldIron, Surface::Adobe),
+            &walls,
+            0.7,
+            0.35,
+        );
+        // The sheet's upper face: its four corners.
+        let top: Vec<_> = shape
+            .vertices(Surface::OldIron)
+            .into_iter()
+            .filter(|(_, n, _)| n.y > 0.5)
+            .collect();
+        assert_eq!(top.len(), 4);
+        let (high, low) = (
+            top.iter().max_by(|a, b| a.0.y.total_cmp(&b.0.y)).unwrap(),
+            top.iter().min_by(|a, b| a.0.y.total_cmp(&b.0.y)).unwrap(),
+        );
+        // The ridges of the texture run along `v`: down the slope `v`
+        // changes and `u` does not, and the sheet repeats several times.
+        let down = low.2 - high.2;
+        assert!(down.y.abs() > 2.0 && down.x.abs() < 0.2, "{down:?}");
+        let along = top.iter().map(|(_, _, uv)| uv.x).fold(f32::MIN, f32::max)
+            - top.iter().map(|(_, _, uv)| uv.x).fold(f32::MAX, f32::min);
+        assert!(along > 2.0, "{along}");
+        // The top faces up and out over the front, where it is seen from.
+        assert!(top.iter().all(|(_, n, _)| n.z > 0.0), "{top:?}");
     }
 }

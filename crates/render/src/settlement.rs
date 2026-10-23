@@ -3,7 +3,9 @@
 //!
 //! `pampa-core` lays them out ([`SettlementLayout`]). When a terrain chunk
 //! is built, every settlement whose hub lies in it is drawn as the chunk's
-//! children, and goes with it:
+//! children, and goes with it. A chunk streamed in while riding builds them
+//! on the async compute pool, like its ground, and they land a few frames
+//! later:
 //!
 //! - every house, barn and prop, built procedurally in its own space (see
 //!   [`buildings`] and [`props`]) as one mesh per [`Surface`] it wears, all
@@ -40,7 +42,12 @@ pub mod track;
 pub mod yard;
 
 use bevy::camera::visibility::VisibilityRange;
+use std::sync::Arc;
+
+use bevy::ecs::system::EntityCommands;
 use bevy::prelude::*;
+use bevy::tasks::futures::check_ready;
+use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bevy::transform::TransformSystems;
 use bevy::world_serialization::{WorldAsset, WorldAssetRoot};
 use pampa_core::settlement::RoadsideWreck;
@@ -61,7 +68,8 @@ use crate::flora::{
 };
 use crate::gltf::{self, ModelState};
 use crate::terrain::{
-    ChunkDetail, ChunkStreaming, TerrainChunk, WorldChunks, WorldTerrain, mesh_height,
+    ChunkDetail, ChunkStreaming, PendingGround, TerrainChunk, WorldChunks, WorldTerrain,
+    mesh_height,
 };
 use crate::town::WindmillRotor;
 use shape::Shape;
@@ -160,20 +168,12 @@ impl Plugin for SettlementPlugin {
                     yard::load_yard_models,
                 ),
             )
-            // Repacks textures the frame they arrive (they are inserted in
-            // `PreUpdate`), before the render world first copies them.
-            .add_systems(
-                Update,
-                (
-                    materials::finish_textures,
-                    slots::swap_in_models,
-                    slots::spin_model_rotors,
-                ),
-            )
+            .add_systems(Update, (slots::swap_in_models, slots::spin_model_rotors))
             .add_observer(slots::dress_scene)
             .add_systems(
                 PostUpdate,
-                lay_settlements
+                (lay_settlements, land_settlements)
+                    .chain()
                     .after(ChunkStreaming)
                     .before(TransformSystems::Propagate),
             );
@@ -252,10 +252,12 @@ enum Tag {
     Prop(YardPart),
 }
 
-/// What a piece draws: a procedural mesh, or a glTF model's scene (spawned
-/// now when `ready`, else once its model has loaded).
+/// What a piece draws: a shared mesh, a procedural mesh just built (added
+/// to the meshes when it is spawned), or a glTF model's scene (spawned now
+/// when `ready`, else once its model has loaded).
 enum Look {
     Mesh(Handle<Mesh>, Handle<StandardMaterial>),
+    Built(Mesh, Handle<StandardMaterial>),
     Scene {
         scene: Handle<WorldAsset>,
         ready: bool,
@@ -388,12 +390,7 @@ impl Painter<'_> {
     }
 
     /// Every piece of settlement `index`.
-    fn settlement(
-        &self,
-        index: u32,
-        settlement: &Settlement,
-        meshes: &mut Assets<Mesh>,
-    ) -> Vec<Piece> {
+    fn settlement(&self, index: u32, settlement: &Settlement) -> Vec<Piece> {
         let mut pieces = Vec::new();
         for (k, structure) in settlement.structures.iter().enumerate() {
             let tag = SettlementPart {
@@ -401,17 +398,17 @@ impl Painter<'_> {
                 structure: k as u32,
                 kind: structure.kind,
             };
-            self.structure(structure, tag, meshes, &mut pieces);
+            self.structure(structure, tag, &mut pieces);
         }
         let tracks: Vec<&Track> = settlement.tracks.iter().collect();
         if let Some(mesh) = track::tracks_mesh(&tracks, &self.ground) {
-            pieces.push(self.decal(meshes.add(mesh), Surface::Mud, Tag::Tracks(index)));
+            pieces.push(self.decal(mesh, Surface::Mud, Tag::Tracks(index)));
         }
         let yards: Vec<Aabb> = std::iter::once(settlement.patio)
             .chain(settlement.of(StructureKind::Corral).map(|c| c.footprint))
             .collect();
         if let Some(mesh) = track::yards_mesh(&yards, &self.ground) {
-            pieces.push(self.decal(meshes.add(mesh), Surface::Yard, Tag::Yards(index)));
+            pieces.push(self.decal(mesh, Surface::Yard, Tag::Yards(index)));
         }
         if let Some(models) = self.yard {
             for spot in yard::yard_props(settlement) {
@@ -447,7 +444,7 @@ impl Painter<'_> {
     }
 
     /// Roadside wreck `index`: lying along the road, a little tilted.
-    fn roadside(&self, index: u32, wreck: &RoadsideWreck, meshes: &mut Assets<Mesh>) -> Vec<Piece> {
+    fn roadside(&self, index: u32, wreck: &RoadsideWreck) -> Vec<Piece> {
         let (wide, deep) = Settlement::WRECK_SIZE;
         let structure = Structure {
             kind: StructureKind::WreckedWagon,
@@ -464,14 +461,14 @@ impl Painter<'_> {
         // Its own `x` along the road.
         let heading = Quat::from_rotation_y(wreck.along.y.atan2(wreck.along.x));
         let mut pieces = Vec::new();
-        self.structure_turned(&structure, tag, Some(heading), meshes, &mut pieces);
+        self.structure_turned(&structure, tag, Some(heading), &mut pieces);
         pieces
     }
 
     /// A world-space decal: no range, like the roads.
-    fn decal(&self, mesh: Handle<Mesh>, surface: Surface, tag: Tag) -> Piece {
+    fn decal(&self, mesh: Mesh, surface: Surface, tag: Tag) -> Piece {
         Piece {
-            look: Look::Mesh(mesh, self.surfaces.get(surface)),
+            look: Look::Built(mesh, self.surfaces.get(surface)),
             transform: Transform::default(),
             range: None,
             fade: None,
@@ -481,14 +478,8 @@ impl Painter<'_> {
         }
     }
 
-    fn structure(
-        &self,
-        structure: &Structure,
-        tag: SettlementPart,
-        meshes: &mut Assets<Mesh>,
-        out: &mut Vec<Piece>,
-    ) {
-        self.structure_turned(structure, tag, None, meshes, out);
+    fn structure(&self, structure: &Structure, tag: SettlementPart, out: &mut Vec<Piece>) {
+        self.structure_turned(structure, tag, None, out);
     }
 
     /// Every piece of `structure`, turned by `heading` instead of toward
@@ -500,7 +491,6 @@ impl Painter<'_> {
         structure: &Structure,
         tag: SettlementPart,
         heading: Option<Quat>,
-        meshes: &mut Assets<Mesh>,
         out: &mut Vec<Piece>,
     ) {
         if structure.kind.is_tree() {
@@ -554,7 +544,7 @@ impl Painter<'_> {
                        rotor: Option<WindmillRotor>| {
             for (surface, mesh) in shape.into_meshes() {
                 out.push(Piece {
-                    look: Look::Mesh(meshes.add(mesh), self.surfaces.get(surface)),
+                    look: Look::Built(mesh, self.surfaces.get(surface)),
                     transform,
                     range: Some(ranges()[range].clone()),
                     fade,
@@ -762,26 +752,48 @@ fn owns(coord: ChunkCoord, size: f32, settlement: &Settlement) -> bool {
     ChunkCoord::containing(settlement.hub, size) == coord
 }
 
-/// Every piece the settlements owned by chunk `coord` draw, and the
-/// roadside wrecks lying in it.
-fn chunk_pieces(
-    painter: &Painter,
-    layout: &SettlementLayout,
-    coord: ChunkCoord,
-    size: f32,
-    meshes: &mut Assets<Mesh>,
-) -> Vec<Piece> {
-    let mut pieces: Vec<Piece> = layout
+/// What chunk `coord` lays: the settlements it owns and the roadside
+/// wrecks lying in it, each with its index in the layout.
+#[derive(Debug, Clone, Default)]
+struct ChunkShare {
+    settlements: Vec<(u32, Settlement)>,
+    wrecks: Vec<(u32, RoadsideWreck)>,
+}
+
+impl ChunkShare {
+    fn of(layout: &SettlementLayout, coord: ChunkCoord, size: f32) -> Self {
+        Self {
+            settlements: layout
+                .settlements
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| owns(coord, size, s))
+                .map(|(k, s)| (k as u32, s.clone()))
+                .collect(),
+            wrecks: layout
+                .roadside
+                .iter()
+                .enumerate()
+                .filter(|(_, w)| ChunkCoord::containing(w.at, size) == coord)
+                .map(|(k, w)| (k as u32, *w))
+                .collect(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.settlements.is_empty() && self.wrecks.is_empty()
+    }
+}
+
+/// Every piece of a chunk's `share`.
+fn chunk_pieces(painter: &Painter, share: &ChunkShare) -> Vec<Piece> {
+    let mut pieces: Vec<Piece> = share
         .settlements
         .iter()
-        .enumerate()
-        .filter(|(_, s)| owns(coord, size, s))
-        .flat_map(|(k, s)| painter.settlement(k as u32, s, meshes))
+        .flat_map(|(k, s)| painter.settlement(*k, s))
         .collect();
-    for (k, wreck) in layout.roadside.iter().enumerate() {
-        if ChunkCoord::containing(wreck.at, size) == coord {
-            pieces.extend(painter.roadside(k as u32, wreck, meshes));
-        }
+    for (k, wreck) in &share.wrecks {
+        pieces.extend(painter.roadside(*k, wreck));
     }
     pieces
 }
@@ -808,85 +820,190 @@ type LayModels<'a> = (
     Option<Res<'a, YardModels>>,
 );
 
-/// Draws the settlements of each newly built chunk as its children. A chunk
-/// that vanishes before the commands apply simply gets none.
+/// Everything a [`Painter`] borrows, owned, so a chunk's settlements can be
+/// built on the async compute pool. Cheap to clone: handles, and a terrain
+/// that shares its roads.
+#[derive(Clone)]
+struct PaintKit {
+    terrain: Terrain,
+    size: f32,
+    resolution: u32,
+    surfaces: SettlementMaterials,
+    kit: SettlementKit,
+    models: Option<VegetationModels>,
+    stand_ins: Option<FloraKit>,
+    server: Option<AssetServer>,
+    slots: Option<SlotModels>,
+    fits: ModelSlots,
+    yard: Option<YardModels>,
+}
+
+impl PaintKit {
+    /// The pieces of a chunk's `share`.
+    fn pieces(&self, share: &ChunkShare) -> Vec<Piece> {
+        let (terrain, size, resolution) = (&self.terrain, self.size, self.resolution);
+        let ground = |p: GroundVec2| mesh_height(terrain, p, size, resolution);
+        let painter = Painter {
+            terrain,
+            ground: &ground,
+            surfaces: &self.surfaces,
+            kit: &self.kit,
+            models: self.models.as_ref(),
+            stand_ins: self.stand_ins.as_ref(),
+            server: self.server.as_ref(),
+            slots: self.slots.as_ref(),
+            fits: &self.fits,
+            yard: self.yard.as_ref(),
+        };
+        chunk_pieces(&painter, share)
+    }
+}
+
+/// A streamed chunk's settlements, being built on the async compute pool.
+/// [`land_settlements`] spawns them when they are ready; a chunk despawned
+/// first drops it, which cancels the build.
+#[derive(Component)]
+struct PendingSettlements(Task<Vec<Piece>>);
+
+#[cfg(test)]
+impl PendingSettlements {
+    fn is_finished(&self) -> bool {
+        self.0.is_finished()
+    }
+}
+
+/// Draws the settlements of each newly built chunk as its children. The
+/// chunks of the first fill are laid now, so the first frame shows them; a
+/// chunk streamed in while riding (its ground still building) builds them
+/// on the async compute pool, so laying an estancia never stalls a frame.
+/// It is at the edge of the load radius, past the buildings' range, so its
+/// settlements landing a few frames later are never seen. A chunk that
+/// vanishes before the commands apply simply gets none.
+#[allow(clippy::too_many_arguments)]
 fn lay_settlements(
     mut commands: Commands,
     (layout, terrain, world, detail): LayInputs,
     (surfaces, kit): (Option<Res<SettlementMaterials>>, Option<Res<SettlementKit>>),
     (models, stand_ins): (Option<Res<VegetationModels>>, Option<Res<FloraKit>>),
     (server, slots, fits, yard): LayModels,
-    chunks: Query<(Entity, &TerrainChunk), Without<SettlementsLaid>>,
+    chunks: Query<(Entity, &TerrainChunk, Has<PendingGround>), Without<SettlementsLaid>>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut paint: Local<Option<Arc<PaintKit>>>,
 ) {
     let (Some(surfaces), Some(kit), Some(detail)) = (surfaces, kit, detail) else {
         return;
     };
     let size = world.0.chunk_size;
-    let terrain = &terrain.0;
-    let ground = |p: GroundVec2| mesh_height(terrain, p, size, detail.resolution);
-    let painter = Painter {
-        terrain,
-        ground: &ground,
-        surfaces: &surfaces,
-        kit: &kit,
-        models: models.as_deref(),
-        stand_ins: stand_ins.as_deref(),
-        server: server.as_deref(),
-        slots: slots.as_deref(),
-        fits: &fits,
-        yard: yard.as_deref(),
-    };
-    for (chunk, coord) in &chunks {
+    // Built afresh each frame there is work: the models load over time.
+    *paint = None;
+    for (chunk, coord, streamed) in &chunks {
         let mut laid = commands.entity(chunk);
         laid.try_insert(SettlementsLaid);
-        let pieces = chunk_pieces(&painter, &layout.0, coord.0, size, &mut meshes);
-        if pieces.is_empty() {
+        let share = ChunkShare::of(&layout.0, coord.0, size);
+        if share.is_empty() {
             continue;
         }
-        laid.queue_silenced(move |mut chunk: EntityWorldMut| {
-            chunk.with_children(|children| {
-                for p in pieces {
-                    let mut part = children.spawn(p.transform);
-                    match p.look {
-                        Look::Mesh(mesh, material) => {
-                            part.insert((Mesh3d(mesh), MeshMaterial3d(material)));
-                        }
-                        Look::Scene {
-                            scene,
-                            ready,
-                            dress,
-                        } => {
-                            part.insert((dress, Visibility::default()));
-                            if ready {
-                                part.insert(WorldAssetRoot(scene));
-                            } else {
-                                part.insert(slots::SlotPending(scene));
-                            }
-                        }
-                    }
-                    if p.stand_in {
-                        part.insert(StandIn);
-                    }
-                    if let Some(range) = p.range {
-                        part.insert(range);
-                    }
-                    if let Some(fade) = p.fade {
-                        part.insert(fade);
-                    }
-                    if let Some(rotor) = p.rotor {
-                        part.insert(rotor);
-                    }
-                    match p.tag {
-                        Tag::Part(tag) => part.insert(tag),
-                        Tag::Tracks(k) => part.insert(TrackSurface(k)),
-                        Tag::Yards(k) => part.insert(YardSurface(k)),
-                        Tag::Prop(prop) => part.insert(prop),
-                    };
-                }
-            });
-        });
+        let paint = paint
+            .get_or_insert_with(|| {
+                Arc::new(PaintKit {
+                    terrain: terrain.0.clone(),
+                    size,
+                    resolution: detail.resolution,
+                    surfaces: surfaces.clone(),
+                    kit: kit.clone(),
+                    models: models.as_deref().cloned(),
+                    stand_ins: stand_ins.as_deref().cloned(),
+                    server: server.as_deref().cloned(),
+                    slots: slots.as_deref().cloned(),
+                    fits: fits.clone(),
+                    yard: yard.as_deref().cloned(),
+                })
+            })
+            .clone();
+        if streamed {
+            let task = AsyncComputeTaskPool::get().spawn(async move { paint.pieces(&share) });
+            laid.try_insert(PendingSettlements(task));
+        } else {
+            let pieces = paint.pieces(&share);
+            spawn_pieces(&mut laid, pieces, &mut meshes);
+        }
     }
+}
+
+/// Spawns every chunk's settlements whose build finished.
+fn land_settlements(
+    mut commands: Commands,
+    mut pending: Query<(Entity, &mut PendingSettlements)>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    for (chunk, mut build) in &mut pending {
+        if let Some(pieces) = check_ready(&mut build.0) {
+            let mut chunk = commands.entity(chunk);
+            chunk.remove::<PendingSettlements>();
+            spawn_pieces(&mut chunk, pieces, &mut meshes);
+        }
+    }
+}
+
+/// Queues `pieces` to spawn as children of `chunk`, adding their freshly
+/// built meshes now.
+fn spawn_pieces(chunk: &mut EntityCommands, pieces: Vec<Piece>, meshes: &mut Assets<Mesh>) {
+    if pieces.is_empty() {
+        return;
+    }
+    let pieces: Vec<Piece> = pieces
+        .into_iter()
+        .map(|p| match p.look {
+            Look::Built(mesh, material) => Piece {
+                look: Look::Mesh(meshes.add(mesh), material),
+                ..p
+            },
+            _ => p,
+        })
+        .collect();
+    chunk.queue_silenced(move |mut chunk: EntityWorldMut| {
+        chunk.with_children(|children| {
+            for p in pieces {
+                let mut part = children.spawn(p.transform);
+                match p.look {
+                    Look::Mesh(mesh, material) => {
+                        part.insert((Mesh3d(mesh), MeshMaterial3d(material)));
+                    }
+                    Look::Built(..) => unreachable!("added above"),
+                    Look::Scene {
+                        scene,
+                        ready,
+                        dress,
+                    } => {
+                        part.insert((dress, Visibility::default()));
+                        if ready {
+                            part.insert(WorldAssetRoot(scene));
+                        } else {
+                            part.insert(slots::SlotPending(scene));
+                        }
+                    }
+                }
+                if p.stand_in {
+                    part.insert(StandIn);
+                }
+                if let Some(range) = p.range {
+                    part.insert(range);
+                }
+                if let Some(fade) = p.fade {
+                    part.insert(fade);
+                }
+                if let Some(rotor) = p.rotor {
+                    part.insert(rotor);
+                }
+                match p.tag {
+                    Tag::Part(tag) => part.insert(tag),
+                    Tag::Tracks(k) => part.insert(TrackSurface(k)),
+                    Tag::Yards(k) => part.insert(YardSurface(k)),
+                    Tag::Prop(prop) => part.insert(prop),
+                };
+            }
+        });
+    });
 }
 
 /// Triangles `structure` draws, wheel and trees aside: what the budget
