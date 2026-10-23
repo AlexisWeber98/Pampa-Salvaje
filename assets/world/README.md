@@ -10,13 +10,13 @@ No recompiling.
 ```ron
 (
     world: (
-        half_extent: 8000.0,
+        half_extent: 8400.0,
         chunk_size: 200.0,
     ),
     towns: [
         (
             name: "Monte Nievas",
-            origin: (-3050.0, -1950.0),
+            origin: (-2450.0, -1950.0),
             blocks: (4, 3),
             block_size: 40.0,
             street_width: 10.0,
@@ -33,27 +33,37 @@ No recompiling.
 ### The shipped geography
 
 The file lays out a first stretch of La Pampa: three railway towns at their
-real relative positions, with distances scaled 1:6 to fit the largest world
-(`half_extent: 8000`, a 16 km x 16 km square).
+real relative positions, with distances scaled 1:7 to fit the largest world
+(`half_extent: 8400`, a 16.8 km x 16.8 km square). Only the distances between
+towns are scaled; each town keeps its real size (blocks, streets, buildings
+and platforms).
 
 | Town | `origin` | `blocks` | Size |
 |------|----------|----------|------|
-| Monte Nievas | `(-3050, -1950)` | 4 x 3 | small, and the player starts here |
-| Eduardo Castex | `(-5150, -2850)` | 5 x 4 | small |
-| General Pico | `(2917, 1783)` | 8 x 8 | very big (see "Town size") |
+| Monte Nievas | `(-2450, -1950)` | 4 x 3 | small, and the player starts here |
+| Eduardo Castex | `(-4250, -2721)` | 5 x 4 | small |
+| General Pico | `(2664, 1250)` | 8 x 8 | very big (see "Town size") |
 
 From Castex to Monte Nievas is about 12.6 km east and 5.4 km north in the
 real pampa; from Monte Nievas to General Pico, about 35.8 km east and
-22.4 km north. At 1:6 that puts Castex 2.1 km west and 0.9 km south of
-Monte Nievas (2.28 km between their centers), and Pico 5.97 km east and
-3.73 km north of it. All three have the railway on their north side, and
+22.4 km north. Monte Nievas is the anchor, at `(-2450, -1950)` (600 m east of
+where it stood at 1:6, to leave room for towns further west), and the others
+are placed from it with the real offsets divided by 7 and rounded to the
+meter:
+
+- Castex: `(-2450 - 12600 / 7, -1950 - 5400 / 7)` = `(-2450 - 1800, -1950 - 771.4)` = `(-4250, -2721)`,
+  1.8 km west and 0.77 km south of Monte Nievas (1.96 km between their centers).
+- Pico: `(-2450 + 35800 / 7, -1950 + 22400 / 7)` = `(-2450 + 5114.3, -1950 + 3200)` = `(2664, 1250)`,
+  5.11 km east and 3.2 km north of it (6.03 km between their centers).
+
+All three have the railway on their north side, and
 Monte Nievas has no police station (`police_stations: Some(0)`).
 
 ### The world
 
 | Field | Meaning | Rules |
 |-------|---------|-------|
-| `half_extent` | Distance from the world center to each edge, in meters. The world is a square of side `2 * half_extent`. | Above 0, at most 8000 (positions stay precise to about a millimeter within 8 km). Optional, `4000.0` by default. |
+| `half_extent` | Distance from the world center to each edge, in meters. The world is a square of side `2 * half_extent`. | Above 0, at most 8400 (positions are `f32`, precise to about a millimeter anywhere below 16 km). Optional, `4000.0` by default. |
 | `chunk_size` | Side of the square chunks the ground is built in around the rider, in meters. | At least 50, at most the world's side. Optional, `200.0` by default. |
 
 The whole `world` section is optional: a file with only `towns: [...]` gets
@@ -151,7 +161,7 @@ code (`pampa_core::Timetable`), not in this file. Since a user change on
 07:00, lays over at the first town (Eduardo Castex), leaves it at 16:00 and
 runs back to the last town for the night. (Before, it slept at the first town
 and left it at 07:00.) It tops out at 65 km/h and stands 25 s at each station
-partway through a run. The game begins in the late morning with the morning train,
+partway through a run. The game begins in the mid-morning with the morning train,
 from the last town on its up run, standing at
 the first town of the `towns` list, where the player starts on foot on top
 of the platform, half way along it, beside the coaches. The platform is a

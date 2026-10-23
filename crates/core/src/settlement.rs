@@ -1551,7 +1551,18 @@ mod tests {
     use crate::fence::tests::{fenced, reached};
     use crate::{ChunkCoord, FloraSite, StaticObstacles, World};
 
-    /// The fence fixture's world with its settlements laid and settled.
+    /// The towns of the fence fixture that get an estancia nearby, as the
+    /// game asks for them: Eduardo Castex and General Pico.
+    fn ranch_towns(towns: &[TownLayout]) -> Vec<usize> {
+        ["Eduardo Castex", "General Pico"]
+            .iter()
+            .filter_map(|name| towns.iter().position(|t| t.name == *name))
+            .collect()
+    }
+
+    /// The fence fixture's world with its settlements laid and settled, with
+    /// the game's estancias near Castex and Pico (the seeded mix alone may
+    /// draw none).
     fn settled() -> (
         World,
         Vec<TownLayout>,
@@ -1561,7 +1572,10 @@ mod tests {
     ) {
         let (mut world, towns, line, fences) = fenced();
         let started = std::time::Instant::now();
-        let layout = SettlementLayout::build(&world.terrain, &towns, &line, &fences);
+        let ranches = ranch_towns(&towns);
+        assert_eq!(ranches.len(), 2);
+        let layout =
+            SettlementLayout::build_with_ranches(&world.terrain, &towns, &line, &fences, &ranches);
         let built = started.elapsed();
         let count = world.settle(&layout);
         let open = fences.gates.iter().filter(|g| g.open).count();
@@ -1624,7 +1638,13 @@ mod tests {
         let (world, towns, line, fences, layout) = settled();
         assert_eq!(
             layout,
-            SettlementLayout::build(&world.terrain, &towns, &line, &fences)
+            SettlementLayout::build_with_ranches(
+                &world.terrain,
+                &towns,
+                &line,
+                &fences,
+                &ranch_towns(&towns)
+            )
         );
         let open = fences.gates.iter().filter(|g| g.open).count();
         let total = layout.settlements.len();
@@ -1647,11 +1667,17 @@ mod tests {
                 .iter()
                 .map(|s| s.gate)
                 .collect::<Vec<_>>(),
-            SettlementLayout::build(&other, &towns, &line, &fences)
-                .settlements
-                .iter()
-                .map(|s| s.gate)
-                .collect::<Vec<_>>()
+            SettlementLayout::build_with_ranches(
+                &other,
+                &towns,
+                &line,
+                &fences,
+                &ranch_towns(&towns)
+            )
+            .settlements
+            .iter()
+            .map(|s| s.gate)
+            .collect::<Vec<_>>()
         );
     }
 

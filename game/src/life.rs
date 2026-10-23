@@ -34,7 +34,7 @@ use crate::ride::OnTrain;
 /// morning (up) train from Pico, a little before it pulls into the first
 /// town's station ([`pampa_core::OPENING_LEAD`] real seconds), and is put
 /// off there. The clock runs at the onboard rate and reaches the
-/// timetabled arrival, in the late morning, as the train stops. Without a
+/// timetabled arrival, in the mid-morning, as the train stops. Without a
 /// train (or a station in the first town) there is no ride, and the clock
 /// starts at the morning departure time from Pico.
 pub fn start_of_day(
@@ -646,21 +646,22 @@ mod tests {
         let loco = train.placed_cars()[0];
         assert!(loco.direction.dot(train.path().direction_at(s.front)) < -0.9);
         assert_eq!(clock.day(), 0);
-        // Late morning, in full daylight, at the onboard rate: 10:32:13,
+        // Mid-morning, in full daylight, at the onboard rate: 10:04:45,
         // ten game minutes (50 real seconds at 12×) before the timetabled
-        // arrival at 10:42:13.
+        // arrival at 10:14:45.
         assert_eq!(clock.multiplier, ONBOARD_MULTIPLIER);
-        assert_eq!(clock.hh_mm(), "10:32");
+        assert_eq!(clock.hh_mm(), "10:04");
         let arrival = train.arrival_time_at(Run::Up, nievas).unwrap();
-        assert_eq!(arrival.to_string(), "10:42");
+        assert_eq!(arrival.to_string(), "10:14");
         let lead = OPENING_LEAD * ONBOARD_MULTIPLIER * BASE_RATE;
         assert!((clock.elapsed() + lead - arrival.seconds()).abs() < 1e-6);
     }
 
     #[test]
     fn the_clock_ticks_and_the_train_stays_an_obstacle() {
-        // During the morning dwell at Monte Nievas, on foot.
-        let mut app = shipped_app(Some(GameClock::at(TimeOfDay::hm(10, 49))));
+        // During the morning dwell at Monte Nievas (10:14:45 to 10:27:15),
+        // on foot.
+        let mut app = shipped_app(Some(GameClock::at(TimeOfDay::hm(10, 20))));
         app.update();
         let start = app.world().resource::<WorldClock>().0;
         for _ in 0..20 {

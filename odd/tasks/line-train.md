@@ -104,6 +104,7 @@ cargo test --workspace
   - Down: Castex 07:00 → Monte Nievas arrives at 173.6 s (08:26:47), leaves at 198.6 s (08:39:17) → Pico at 644.0 s (12:22:01).
   - Up: Pico 16:00 → Monte Nievas arrives at 445.5 s (19:42:44), leaves at 470.5 s (19:55:14) → Castex at 644.0 s (21:22:01).
   - Each run lasts about 10.7 real minutes. The day starts at 08:33:02 with the train `Dwelling` at Monte Nievas (station 1), checked by `the_day_starts_with_the_morning_train_at_the_first_town`. (Superseded on `feat/evening-arrival`: the game starts at 10:48:59 with the morning up train from Pico `Dwelling` at Monte Nievas, checked by `the_game_starts_with_the_morning_train_from_pico_at_the_first_town`.)
+- **Note (2026-10-23): world rescaled 1:6 → 1:7** (`odd/tasks/world-scale-1-7.md`), superseding the 1:6 timings in this log. Line path 9 711.8 m. Up: Pico 07:00 → Monte Nievas 10:14:45–10:27:15 → Castex 11:46:07; down: Castex 16:00 → Monte Nievas 17:17:49–17:30:19 → Pico 20:46:07; each run 572.2 real s. The opening starts at 10:04:45 aboard and puts the player off at 10:15:09.
 - **Timetable inverted (`feat/evening-arrival`, user, 2026-10-21).** Overnight at Pico. Same leg times as the 1:6 rescale above, re-measured (real seconds after departure, clock at 30×):
   - Up (morning): Pico 07:00:00 → Monte Nievas arrives at 445.5 s (10:42:44), leaves at 470.5 s (10:55:14) → Castex at 644.0 s (12:22:01).
   - Down (afternoon): Castex 16:00:00 → Monte Nievas arrives at 173.6 s (17:26:47), leaves at 198.6 s (17:39:17) → Pico at 644.0 s (21:22:01).

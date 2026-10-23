@@ -24,13 +24,13 @@ every two real seconds). The sun follows it, rising in the east, crossing the
 northern sky and setting in the west, warm and low at dawn and dusk and full
 by day; nights are dim and bluish under the moon but stay readable, and the
 dust fog takes the color of the hour without getting any thicker. The game
-begins in the late morning, in full daylight, aboard the morning train from
+begins in the mid-morning, in full daylight, aboard the morning train from
 General Pico: the protagonist, a former hardware-shop clerk from Pico, rides
 it into Monte Nievas. The
 time of day (`HH:MM`) is shown in the top-left corner, lettered in the game's
 pixel font on a paper panel, with the current objective under it and, while
 riding the train, the next station and its arrival time
-(for example "Próxima: Eduardo Castex, 11:22").
+(for example "Próxima: Eduardo Castex, 11:46").
 
 One steam train runs the whole railway line on a timetable: a rural mixed
 train of 8 cars (93 m), the locomotive, two passenger coaches and five freight
@@ -48,9 +48,9 @@ at Monte Nievas again and is back at Pico for the night (a user change on
 2026-10-21; until then it slept at Castex and left it at 07:00). It runs at up to 65 km/h, braking to stop with the
 middle of its two coaches alongside each station on the way. At the two
 terminals the whole train stands centered on the station, so it turns around in
-place during the layover. It takes about 10.7 real minutes
-over the 11.0 km of line (Pico 07:00, Monte Nievas 10:42–10:54, Castex 12:22; Castex 16:00, Monte
-Nievas 17:26–17:38, Pico 21:22, with the clock at its base rate). The clock
+place during the layover. It takes about 9.5 real minutes
+over the 9.7 km of line (Pico 07:00, Monte Nievas 10:15–10:27, Castex 11:46; Castex 16:00, Monte
+Nievas 17:18–17:30, Pico 20:46, with the clock at its base rate). The clock
 only starts each run: once moving, the train runs in real seconds, and a
 jump of the clock fast-forwards it exactly where it would have been. Its
 cars follow the curves between towns and shove riders off the track; the
@@ -85,12 +85,12 @@ only the markers redraw each frame. `M` toggles an enlarged, centered map.
 
 ### Riding the train
 
-**The opening.** The game starts at 10:32:13 with the protagonist seated in
+**The opening.** The game starts at 10:04:45 with the protagonist seated in
 the first coach of the morning train from Pico, 50 real seconds before it
 stops at Monte Nievas. The camera starts behind the coach, framing it and the
 town ahead ("Próxima estación: Monte Nievas"). The train brakes into the
-station at 10:42:13 ("Estación Monte Nievas"), and two real seconds later,
-at 10:42:37, he gets off onto the platform beside the coach door, on foot.
+station at 10:14:45 ("Estación Monte Nievas"), and two real seconds later,
+at 10:15:09, he gets off onto the platform beside the coach door, on foot.
 `Space` skips the approach, as a short trip (see Skipping).
 
 **Boarding.** While the train stands at a station (or lays over at a
@@ -217,7 +217,7 @@ Everything is placed by `pampa_core::flora`, seeded by the chunk, and kept clear
 signs, people and tied horse appear within 600 m of it and go once you are
 750 m away. Every town's footprints stay in the logic world at all times
 (collision looks them up in a uniform grid). The line train always runs; its
-cars are drawn only within 400 m of the rider. Positions are `f32`, so the world is limited to 8 km from its center.
+cars are drawn only within 400 m of the rider. Positions are `f32`, so the world is limited to 8.4 km from its center.
 
 The camera orbits the player a full 360° with the mouse (or Q/E), zooms with
 the wheel, eases back behind the player after a moment without camera input
