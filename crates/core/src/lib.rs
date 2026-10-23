@@ -65,8 +65,8 @@ pub use road::{
     LevelCrossing, Road, RoadEnd, RoadError, RoadKind, RoadNetwork, RoadPoint, SignBoard, Signpost,
 };
 pub use settlement::{
-    HouseStyle, KeepOut, Settlement, SettlementKind, SettlementLayout, Structure, StructureKind,
-    Track,
+    HouseStyle, KeepOut, RoadsideWreck, Settlement, SettlementKind, SettlementLayout, Structure,
+    StructureKind, Track,
 };
 pub use terrain::{FlatArea, Terrain};
 pub use town::{

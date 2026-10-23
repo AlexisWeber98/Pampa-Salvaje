@@ -559,7 +559,8 @@ fn wheel(shape: &mut Shape, hub: Vec3, radius: f32) {
 }
 
 /// The prop `structure` in its own space, for every kind but the houses,
-/// galpones, corrals, trees and the molino's wheel.
+/// galpones, corrals, trees and the molino's wheel. An abandoned wagon
+/// without its model is drawn as a carreta.
 pub(crate) fn prop(structure: &Structure, drop: f32) -> Shape {
     match structure.kind {
         StructureKind::Windpump => windpump(structure, drop),
@@ -568,7 +569,7 @@ pub(crate) fn prop(structure: &Structure, drop: f32) -> Shape {
         StructureKind::Well => well(structure, drop),
         StructureKind::Haystack => haystack(structure, drop),
         StructureKind::HitchingPost => hitching_post(structure, drop),
-        StructureKind::Cart => cart(structure),
+        StructureKind::Cart | StructureKind::WreckedWagon => cart(structure),
         _ => Shape::default(),
     }
 }

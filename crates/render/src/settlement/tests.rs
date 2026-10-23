@@ -70,6 +70,7 @@ fn every_kind(hub: (f32, f32)) -> Settlement {
         structure(Haystack, at(60.0, -40.0), (7.0, 7.0), 4.0, Side::West),
         structure(HitchingPost, at(10.0, 12.0), (3.0, 0.3), 1.1, Side::South),
         structure(Cart, at(30.0, -40.0), (5.0, 2.2), 2.5, Side::North),
+        structure(WreckedWagon, at(70.0, 10.0), (4.8, 3.6), 2.2, Side::West),
         structure(Eucalyptus, at(-60.0, -10.0), (1.0, 1.0), 26.0, Side::East),
         structure(Poplar, at(-5.0, -60.0), (1.0, 1.0), 18.0, Side::North),
         // The rest of a short poplar row, 8 m apart, and a second eucalyptus.
@@ -229,6 +230,7 @@ fn settlements_share_a_few_ranges_and_one_material_per_surface() {
                 | StructureKind::Windpump
                 | StructureKind::Well
                 | StructureKind::Cart
+                | StructureKind::WreckedWagon
                 | StructureKind::HitchingPost
                 | StructureKind::Haystack
                 | StructureKind::Eucalyptus
@@ -349,6 +351,11 @@ fn trees_grow_slender_on_their_spots() {
         .map(|(p, t, m)| (p.kind, t.translation, t.scale, bark.contains(&m.id())))
         .collect();
     assert!(!trees.is_empty());
+    // Every species draws its trunks, not just crowns.
+    for kind in [StructureKind::Poplar, StructureKind::Eucalyptus] {
+        let trunks = trees.iter().filter(|t| t.0 == kind && t.3).count();
+        assert!(trunks >= 1, "no {kind:?} trunk drawn");
+    }
     for (kind, at, scale, trunk) in trees {
         // Trunks taller than wide: a poplar's much more so. (Crowns are
         // built to their shape and scaled evenly; see the crown tests.)
@@ -429,4 +436,471 @@ fn tree_crowns_are_round_from_every_side_varied_and_shared() {
         assert!(distinct.len() >= 2, "{kind:?}: one crown for all");
         assert!(distinct.len() <= 4, "{kind:?}: {} crowns", distinct.len());
     }
+}
+
+#[test]
+fn without_a_trunk_model_or_stand_in_no_crown_floats() {
+    // No flora plugin: neither the vegetation models nor their stand-ins.
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .init_resource::<Assets<Mesh>>()
+        .init_resource::<Assets<StandardMaterial>>()
+        .init_resource::<Assets<Image>>()
+        .insert_resource(WorldChunks(WorldConfig::default()))
+        .insert_resource(WorldSettlements(layout()))
+        .insert_resource(StreamFocus(GroundVec2::new(100.0, 100.0)))
+        .add_plugins((
+            TerrainPlugin {
+                radius: 1,
+                budget: 16,
+                resolution: 4,
+            },
+            SettlementPlugin,
+        ));
+    app.update();
+    app.update();
+    let drawn = parts(&mut app);
+    assert!(drawn.iter().any(|p| p.kind == StructureKind::Barn), "drawn");
+    assert!(
+        drawn.iter().all(|p| !p.kind.is_tree()),
+        "a tree drawn without a trunk"
+    );
+}
+
+#[test]
+fn a_tree_fades_over_its_whole_crown() {
+    let mut app = app(GroundVec2::new(100.0, 100.0));
+    app.update();
+    app.update();
+    let kit = app.world().resource::<SettlementKit>().clone();
+    let leaves = [kit.trees[0][1].id(), kit.trees[1][1].id()];
+    let mut q = app.world_mut().query::<(
+        &SettlementPart,
+        &Mesh3d,
+        &MeshMaterial3d<StandardMaterial>,
+        &Transform,
+        &ThinOccluder,
+    )>();
+    let crowns: Vec<(StructureKind, AssetId<Mesh>, Transform, ThinOccluder)> = q
+        .iter(app.world())
+        .filter(|(p, _, m, ..)| p.kind.is_tree() && leaves.contains(&m.id()))
+        .map(|(p, mesh, _, t, o)| (p.kind, mesh.id(), *t, *o))
+        .collect();
+    let meshes = app.world().resource::<Assets<Mesh>>();
+    for kind in [StructureKind::Poplar, StructureKind::Eucalyptus] {
+        assert!(crowns.iter().any(|c| c.0 == kind), "{kind:?}");
+    }
+    for (kind, mesh, transform, fade) in crowns {
+        let Some(bevy::mesh::VertexAttributeValues::Float32x3(points)) = meshes
+            .get(mesh)
+            .unwrap()
+            .attribute(Mesh::ATTRIBUTE_POSITION)
+        else {
+            panic!()
+        };
+        // The crown's reach from its trunk, as drawn (turned and scaled).
+        let at = transform.translation;
+        let reach = points
+            .iter()
+            .map(|p| {
+                let w = transform.transform_point(Vec3::from_array(*p)) - at;
+                w.with_y(0.0).length()
+            })
+            .fold(0.0, f32::max);
+        assert!(
+            fade.radius >= reach - 1e-3,
+            "{kind:?}: fades within {} m of a crown reaching {reach} m",
+            fade.radius
+        );
+        // The widest crown variant of its species, no wider than that.
+        assert!(
+            fade.radius <= 0.6 * transform.scale.y,
+            "{kind:?}: {}",
+            fade.radius
+        );
+    }
+}
+
+/// An app that loads glTF models from `root`, drawing the two test
+/// settlements with the given slot fits.
+fn model_app(root: &crate::AssetRoot, fits: ModelSlots) -> App {
+    let mut app = crate::gltf::tests::unfinished_app(root);
+    app.insert_resource(root.clone())
+        .insert_resource(fits)
+        .insert_resource(WorldChunks(WorldConfig::default()))
+        .insert_resource(WorldSettlements(layout()))
+        .insert_resource(StreamFocus(GroundVec2::new(100.0, 100.0)))
+        .add_plugins((
+            TerrainPlugin {
+                radius: 1,
+                budget: 16,
+                resolution: 4,
+            },
+            FloraPlugin,
+            SettlementPlugin,
+        ));
+    app.finish();
+    app.cleanup();
+    app
+}
+
+/// Updates `app` until no slot model is waiting or standing in; panics
+/// after 10 s.
+fn settle_models(app: &mut App) {
+    for _ in 0..2000 {
+        app.update();
+        let waiting = count::<slots::SlotPending>(app) + count::<StandIn>(app);
+        let laid = !parts(app).is_empty();
+        if laid && waiting == 0 {
+            // One more frame for the last scenes to spawn and be dressed.
+            app.update();
+            app.update();
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    panic!("timed out after 10 s waiting for the slot models to load");
+}
+
+/// The structure kinds drawn with a procedural mesh, and with a model.
+fn drawn_kinds(app: &mut App) -> (Vec<StructureKind>, Vec<StructureKind>) {
+    let mut q = app
+        .world_mut()
+        .query::<(&SettlementPart, Has<Mesh3d>, Has<SceneDress>)>();
+    let (mut meshes, mut scenes) = (Vec::new(), Vec::new());
+    for (part, mesh, scene) in q.iter(app.world()) {
+        if mesh {
+            meshes.push(part.kind);
+        }
+        if scene {
+            scenes.push(part.kind);
+        }
+    }
+    (meshes, scenes)
+}
+
+/// Every entity under `root`, depth first.
+fn descendants(world: &World, root: Entity) -> Vec<Entity> {
+    let mut found = Vec::new();
+    let mut stack = vec![root];
+    while let Some(e) = stack.pop() {
+        if let Some(children) = world.entity(e).get::<Children>() {
+            for &child in children {
+                found.push(child);
+                stack.push(child);
+            }
+        }
+    }
+    found
+}
+
+/// The world-space meshes spawned under each model scene, with the range
+/// and fade they were dressed with.
+fn dressed_meshes(app: &mut App) -> Vec<(Entity, Option<VisibilityRange>, Option<ThinOccluder>)> {
+    let roots: Vec<Entity> = app
+        .world_mut()
+        .query_filtered::<Entity, With<SceneDress>>()
+        .iter(app.world())
+        .collect();
+    let mut found = Vec::new();
+    let world = app.world_mut();
+    let mut meshes =
+        world.query::<(Has<Mesh3d>, Option<&VisibilityRange>, Option<&ThinOccluder>)>();
+    for root in roots {
+        for e in descendants(world, root) {
+            if let Ok((true, range, fade)) = meshes.get(world, e) {
+                found.push((e, range.cloned(), fade.copied()));
+            }
+        }
+    }
+    found
+}
+
+#[test]
+fn a_slot_model_replaces_the_mesh_and_a_broken_or_missing_one_does_not() {
+    use crate::gltf::tests::Scratch;
+    let scratch = Scratch::new("slot-models");
+    // The well's slot holds the test triangle; the cart's a broken file;
+    // the windpump's nothing at all.
+    scratch.write(
+        "models/third-party/well/model.gltf",
+        include_str!("../../../../assets/models/test/triangle.gltf"),
+    );
+    scratch.write("models/third-party/cart/model.gltf", "{ \"asset\": ");
+    let root = crate::AssetRoot(scratch.0.clone());
+    let fit = SlotFit {
+        scale: 2.0,
+        ..SlotFit::default()
+    };
+    let mut app = model_app(&root, ModelSlots([("well".to_owned(), fit)].into()));
+    settle_models(&mut app);
+    let (meshes, scenes) = drawn_kinds(&mut app);
+    // Two settlements, one well each: drawn by the model, never the mesh.
+    assert_eq!(
+        scenes.iter().filter(|k| **k == StructureKind::Well).count(),
+        2
+    );
+    assert!(
+        !meshes.contains(&StructureKind::Well),
+        "the well's mesh stayed"
+    );
+    // The broken cart and the missing windpump stay procedural.
+    assert!(!scenes.contains(&StructureKind::Cart));
+    assert!(meshes.contains(&StructureKind::Cart) && meshes.contains(&StructureKind::Windpump));
+    assert_eq!(count::<StandIn>(&mut app), 0);
+    // The model's triangle hangs under each well, fitted, dressed with the
+    // props' shared range and the well's fade.
+    let dressed = dressed_meshes(&mut app);
+    assert_eq!(dressed.len(), 2);
+    for (_, range, fade) in &dressed {
+        assert!(range.as_ref() == Some(&ranges()[1]));
+        assert!(fade.is_some());
+    }
+    let mut q = app
+        .world_mut()
+        .query_filtered::<(&SettlementPart, &Transform), With<SceneDress>>();
+    for (part, transform) in q.iter(app.world()) {
+        assert_eq!(part.kind, StructureKind::Well);
+        assert!((transform.scale - Vec3::splat(2.0)).length() < 1e-5);
+    }
+    // Still a few shared ranges in all, models included.
+    let mut q = app
+        .world_mut()
+        .query_filtered::<&VisibilityRange, With<SettlementPart>>();
+    let ours: HashSet<VisibilityRange> = q
+        .iter(app.world())
+        .cloned()
+        .chain(dressed.iter().filter_map(|d| d.1.clone()))
+        .collect();
+    assert!(ours.len() <= 3 && ours.iter().all(|r| ranges().contains(r)));
+}
+
+#[test]
+fn the_shipped_windpump_model_spins_its_rotor_and_replaces_the_mesh() {
+    let root = crate::gltf::tests::root();
+    let fits = ModelSlots(
+        [(
+            "windpump".to_owned(),
+            SlotFit {
+                rotor: Some(SlotRotor {
+                    node: "rotor".to_owned(),
+                    axis: Dir3::NEG_Z,
+                }),
+                ..SlotFit::default()
+            },
+        )]
+        .into(),
+    );
+    let mut app = model_app(&root, fits);
+    settle_models(&mut app);
+    let (meshes, scenes) = drawn_kinds(&mut app);
+    assert_eq!(
+        scenes
+            .iter()
+            .filter(|k| **k == StructureKind::Windpump)
+            .count(),
+        2
+    );
+    assert!(!meshes.contains(&StructureKind::Windpump));
+    // The procedural wheels went with their stand-ins.
+    assert_eq!(count::<WindmillRotor>(&mut app), 0);
+    let mut q = app.world_mut().query::<(&ModelRotor, &Name, &Transform)>();
+    let before: Vec<(Quat, f32)> = q
+        .iter(app.world())
+        .map(|(r, name, t)| {
+            assert_eq!(name.as_str(), "rotor");
+            assert_eq!(r.axis, Dir3::NEG_Z);
+            (t.rotation, r.speed)
+        })
+        .collect();
+    assert_eq!(before.len(), 2, "one spinning rotor per windpump");
+    for _ in 0..5 {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        app.update();
+    }
+    let after: Vec<Quat> = q.iter(app.world()).map(|(_, _, t)| t.rotation).collect();
+    for ((was, speed), now) in before.iter().zip(&after) {
+        assert!(*speed > 1.0);
+        assert!(was.angle_between(*now) > 1e-3, "the rotor did not turn");
+        // About its axis only: the axis stays put.
+        assert!((*was * Vec3::NEG_Z).distance(*now * Vec3::NEG_Z) < 1e-4);
+    }
+}
+
+#[test]
+fn every_slot_name_is_a_model_folder_and_every_folder_a_slot() {
+    use std::collections::BTreeSet;
+    let root = crate::gltf::tests::root();
+    for slot in StructureKind::SLOTS {
+        let path = format!("{}/{slot}/model.glb", slots::SLOT_DIR);
+        assert!(crate::gltf::is_inside(&path), "{slot}");
+    }
+    // Every folder beside the source packs is a known slot.
+    let folders: BTreeSet<String> = std::fs::read_dir(root.0.join(slots::SLOT_DIR))
+        .unwrap()
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|name| name != "3td-starter-pack")
+        .collect();
+    for folder in &folders {
+        assert!(
+            StructureKind::SLOTS.contains(&folder.as_str()),
+            "unknown slot {folder}"
+        );
+        assert!(
+            slots::slot_path(&root, slots::SLOT_DIR, folder).is_some(),
+            "{folder} has no model.glb or model.gltf"
+        );
+    }
+    assert!(folders.contains("windpump") && folders.contains("wrecked_wagon"));
+    // The cart is still procedural: the 3TD wagon is a wreck, not a carreta.
+    assert!(slots::slot_path(&root, slots::SLOT_DIR, "cart").is_none());
+}
+
+#[test]
+fn yard_props_keep_off_tracks_and_structures_and_barrels_stay_rare() {
+    let mut ranch = every_kind((0.0, 0.0));
+    let spots = yard::yard_props(&ranch);
+    assert_eq!(spots, yard::yard_props(&ranch), "the same every time");
+    let has = |p: YardProp| spots.iter().any(|s| s.prop == p);
+    assert!(has(YardProp::Lantern) && has(YardProp::Bucket) && has(YardProp::Barrels));
+    assert!(spots.iter().filter(|s| s.prop == YardProp::Barrels).count() <= 1);
+    for spot in spots.iter().filter(|s| !s.hung) {
+        for (a, b) in ranch.tracks.iter().flat_map(Track::segments) {
+            let ab = b - a;
+            let t = ((spot.at - a).dot(ab) / ab.dot(ab)).clamp(0.0, 1.0);
+            let d = spot.at.distance(a + ab * t);
+            assert!(d > Track::HALF_WIDTH, "{spot:?} on a track");
+        }
+        for s in &ranch.structures {
+            assert!(!s.footprint.contains_point(spot.at), "{spot:?} in {s:?}");
+        }
+    }
+    // Hung lanterns hang by a barn's front wall, above a man's head.
+    for spot in spots.iter().filter(|s| s.hung) {
+        assert_eq!(spot.prop, YardProp::Lantern);
+        assert!(spot.lift > 2.0);
+    }
+    // Only an estancia gets the heavy barrels.
+    ranch.kind = pampa_core::SettlementKind::Farm;
+    assert!(
+        yard::yard_props(&ranch)
+            .iter()
+            .all(|s| s.prop != YardProp::Barrels)
+    );
+}
+
+#[test]
+fn yard_props_spawn_as_scenes_and_the_lantern_glass_is_see_through() {
+    let mut app = model_app(&crate::gltf::tests::root(), ModelSlots::default());
+    settle_models(&mut app);
+    // Wait for every prop's scene to spawn.
+    let spawned = |app: &mut App| {
+        let roots: Vec<Entity> = app
+            .world_mut()
+            .query_filtered::<Entity, With<YardPart>>()
+            .iter(app.world())
+            .collect();
+        !roots.is_empty()
+            && roots
+                .iter()
+                .all(|&r| !descendants(app.world(), r).is_empty())
+    };
+    for k in 0..=2000 {
+        if spawned(&mut app) {
+            app.update();
+            break;
+        }
+        assert!(k < 2000, "timed out after 10 s waiting for the yard props");
+        app.update();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let props: Vec<YardPart> = app
+        .world_mut()
+        .query::<&YardPart>()
+        .iter(app.world())
+        .copied()
+        .collect();
+    let expected: usize = layout()
+        .settlements
+        .iter()
+        .map(|s| yard::yard_props(s).len())
+        .sum();
+    assert_eq!(props.len(), expected);
+    for (_, range, _) in dressed_meshes(&mut app) {
+        assert!(range.is_some_and(|r| ranges().contains(&r)));
+    }
+    // The lantern's panes: blended, and see-through now.
+    let lanterns: Vec<Entity> = app
+        .world_mut()
+        .query::<(Entity, &YardPart)>()
+        .iter(app.world())
+        .filter(|(_, p)| p.prop == YardProp::Lantern)
+        .map(|(e, _)| e)
+        .collect();
+    assert!(!lanterns.is_empty());
+    let world = app.world_mut();
+    let mut looks = world.query::<&MeshMaterial3d<StandardMaterial>>();
+    let mut panes = 0;
+    for lantern in lanterns {
+        for part in descendants(world, lantern) {
+            let Ok(look) = looks.get(world, part) else {
+                continue;
+            };
+            let material = world
+                .resource::<Assets<StandardMaterial>>()
+                .get(&look.0)
+                .unwrap();
+            if material.alpha_mode == AlphaMode::Blend {
+                panes += 1;
+                assert!(material.base_color.alpha() <= slots::GLASS_ALPHA + 1e-6);
+            }
+        }
+    }
+    assert!(panes > 0, "the lantern has its glass");
+}
+
+#[test]
+fn a_slot_model_that_fails_after_laying_leaves_its_stand_in_for_good() {
+    use crate::gltf::tests::{Scratch, app_at};
+    let scratch = Scratch::new("late-failure");
+    scratch.write("models/third-party/cart/model.gltf", "not json");
+    let root = crate::AssetRoot(scratch.0.clone());
+    let mut app = app_at(&root);
+    app.add_systems(Update, slots::swap_in_models);
+    let server = app.world().resource::<AssetServer>().clone();
+    let scene = crate::gltf::load_scene(&server, Some(&root), "models/third-party/cart/model.gltf")
+        .expect("the file exists");
+    // Laid while the model was still loading: a waiting scene and its
+    // stand-in under one chunk.
+    let part = SettlementPart {
+        settlement: 0,
+        structure: 3,
+        kind: StructureKind::Cart,
+    };
+    let chunk = app.world_mut().spawn(Transform::default()).id();
+    let waiting = app
+        .world_mut()
+        .spawn((slots::SlotPending(scene), part, ChildOf(chunk)))
+        .id();
+    let stand_in = app
+        .world_mut()
+        .spawn((StandIn, part, ChildOf(chunk), Transform::default()))
+        .id();
+    for k in 0..=2000 {
+        app.update();
+        if app.world().get_entity(waiting).is_err() {
+            break;
+        }
+        assert!(
+            k < 2000,
+            "timed out after 10 s waiting for the model to fail"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    app.update();
+    let kept = app.world().entity(stand_in);
+    assert!(!kept.contains::<StandIn>(), "still waiting to be replaced");
+    assert_eq!(kept.get::<SettlementPart>(), Some(&part));
 }

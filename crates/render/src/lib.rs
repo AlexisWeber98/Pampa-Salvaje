@@ -46,8 +46,8 @@ pub use minimap::{MapIcon, MapTarget, MinimapPlugin};
 pub use rail::{LineTrack, RailPlugin, WorldRail};
 pub use road::{CrossingPart, RoadPlugin, RoadSurface, SignpostPart};
 pub use settlement::{
-    SettlementMaterials, SettlementPart, SettlementPlugin, Surface, TrackSurface, WorldSettlements,
-    YardSurface,
+    ModelRotor, ModelSlots, SettlementMaterials, SettlementPart, SettlementPlugin, SlotFit,
+    SlotRotor, Surface, TrackSurface, WorldSettlements, YardPart, YardProp, YardSurface,
 };
 pub use signs::{SignPlugin, Signboard};
 pub use streaming::{StreamingPlan, StreamingSet};

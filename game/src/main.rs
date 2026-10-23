@@ -7,10 +7,12 @@ mod life;
 mod orbit;
 mod player;
 mod ride;
+#[cfg(test)]
+mod settlement_tests;
 mod towns;
 
 use bevy::prelude::*;
-use pampa_content::{TOWNS_FILE, asset_path};
+use pampa_content::{SLOTS_FILE, TOWNS_FILE, asset_path, load_model_slots};
 use pampa_core::{FenceLayout, FloraSite, SettlementKind, SettlementLayout, Terrain, World};
 use pampa_render::{
     AssetRoot, AtmospherePlugin, CharacterVisualPlugin, FadePlugin, FencePlugin, FloraPlugin,
@@ -19,6 +21,44 @@ use pampa_render::{
     WorldChunks, WorldClock, WorldFences, WorldFlora, WorldRail, WorldSettlements, WorldTerrain,
     WorldTowns, WorldTrain,
 };
+
+/// The fits of the third-party models in the model slots
+/// (`assets/models/third-party/slots.ron`), for the renderer: yaw in
+/// radians, rotor axes as directions. An invalid file fits nothing (every
+/// model as it comes) and is reported.
+fn model_slots(path: &std::path::Path) -> (pampa_render::ModelSlots, Option<String>) {
+    let file = match load_model_slots(path) {
+        Ok(file) => file,
+        Err(error) => {
+            return (
+                pampa_render::ModelSlots::default(),
+                Some(format!("{}: {error}; model slots unfitted", path.display())),
+            );
+        }
+    };
+    let fits = file
+        .slots
+        .into_iter()
+        .map(|(slot, fit)| {
+            let (x, y, z) = fit.offset;
+            let rotor = fit.rotor.and_then(|r| {
+                let (x, y, z) = r.axis;
+                Some(pampa_render::SlotRotor {
+                    node: r.node,
+                    axis: Dir3::new(Vec3::new(x, y, z)).ok()?,
+                })
+            });
+            let fit = pampa_render::SlotFit {
+                scale: fit.scale,
+                offset: Vec3::new(x, y, z),
+                yaw: fit.yaw.to_radians(),
+                rotor,
+            };
+            (slot, fit)
+        })
+        .collect();
+    (pampa_render::ModelSlots(fits), None)
+}
 
 /// The towns that each get an estancia nearby (user, 2026-10-22), by
 /// name in `assets/world/towns.ron`.
@@ -159,6 +199,10 @@ fn main() {
     // CREDITS.md); the asset server reads glTF models and building textures
     // from the same folder.
     let root = AssetRoot(asset_path(""));
+    let (slots, slots_warning) = model_slots(&asset_path(SLOTS_FILE));
+    if let Some(warning) = slots_warning {
+        warn!("{warning}");
+    }
     app.insert_resource(
         camera::CameraOccluders::from_towns(&loaded.towns, &world.terrain)
             .with_settlements(&settlements, &world.terrain),
@@ -169,6 +213,7 @@ fn main() {
     .insert_resource(WorldFences(fences))
     .insert_resource(WorldSettlements(settlements))
     .insert_resource(root.clone())
+    .insert_resource(slots)
     .insert_resource(StreamFocus(position))
     .insert_resource(crowds)
     .insert_resource(WorldClock(clock))
@@ -270,10 +315,20 @@ mod tests {
         for o in settlements.obstacles() {
             assert!(laid.world.obstacles.contains(&o), "{o:?}");
         }
-        // No wild tree grows on a settlement: the flora keeps off them.
+        // No wild tree grows on a settlement: the flora keeps off them,
+        // over every chunk each one reaches into.
+        let size = laid.world.config.chunk_size;
         for s in &settlements.settlements {
-            for t in laid.flora.trees(laid.world.config.chunk_of(s.hub)) {
-                assert!(settlements.is_clear(t.at, 0.0), "{t:?}");
+            let (lo, hi) = (
+                pampa_core::ChunkCoord::containing(s.bounds.min, size),
+                pampa_core::ChunkCoord::containing(s.bounds.max, size),
+            );
+            for cx in lo.x..=hi.x {
+                for cy in lo.y..=hi.y {
+                    for t in laid.flora.trees(pampa_core::ChunkCoord { x: cx, y: cy }) {
+                        assert!(settlements.is_clear(t.at, 0.0), "{t:?}");
+                    }
+                }
             }
         }
         // Every house and barn stops the camera.

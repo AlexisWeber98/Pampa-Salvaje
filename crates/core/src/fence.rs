@@ -1129,6 +1129,44 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn field_of_finds_the_paddock_between_its_survey_lines() {
+        let layout = FenceLayout {
+            surveyed: (vec![0.0, 300.0, 800.0], vec![-400.0, 0.0, 500.0]),
+            ..FenceLayout::default()
+        };
+        let cell = |x0, y0, x1, y1| Some(Aabb::new(Vec2::new(x0, y0), Vec2::new(x1, y1)));
+        assert_eq!(
+            layout.field_of(Vec2::new(10.0, -10.0)),
+            cell(0.0, -400.0, 300.0, 0.0)
+        );
+        // On a survey line, the paddock east (north) of it: its west and
+        // south edges are in.
+        assert_eq!(
+            layout.field_of(Vec2::new(300.0, 0.0)),
+            cell(300.0, 0.0, 800.0, 500.0)
+        );
+        assert_eq!(
+            layout.field_of(Vec2::new(0.0, -400.0)),
+            cell(0.0, -400.0, 300.0, 0.0)
+        );
+        // The outermost cell, up to just inside its far lines.
+        assert_eq!(
+            layout.field_of(Vec2::new(799.9, 499.9)),
+            cell(300.0, 0.0, 800.0, 500.0)
+        );
+        // Outside the grid, and on its far edges, there is no paddock.
+        for p in [
+            Vec2::new(-0.1, 10.0),
+            Vec2::new(10.0, 500.0),
+            Vec2::new(800.0, 10.0),
+            Vec2::new(5000.0, 5000.0),
+        ] {
+            assert_eq!(layout.field_of(p), None, "{p:?}");
+        }
+        assert_eq!(FenceLayout::default().field_of(Vec2::new(0.0, 0.0)), None);
+    }
+
+    #[test]
     fn a_paddock_ringed_only_by_closed_gates_gets_a_way_in() {
         let layout = sealed_paddock(&[(120.0, 8.0), (300.0, 4.5)]);
         assert!(ways_in(&layout) >= 1, "{:?}", layout.openings);

@@ -19,9 +19,11 @@ use pampa_core::{BumpSeverity, PlacementError, WorldConfigError};
 use serde::Deserialize;
 
 pub mod errand;
+pub mod slots;
 pub mod towns;
 
 pub use errand::{DEFAULT_POLICE_TOWN, ERRAND_FILE, ErrandLines, load_errand_or_builtin};
+pub use slots::{ModelSlots, SLOTS_FILE, SlotFit, SlotRotor, load_model_slots};
 pub use towns::{TOWNS_FILE, WorldContent, load_towns, load_towns_or_builtin, parse_towns};
 
 /// Longest line, in characters, so it fits a speech bubble.
@@ -185,6 +187,9 @@ pub enum ContentError {
     World(WorldConfigError),
     /// No valid town is left: the built-in one is used.
     NoTowns,
+    /// A model slot entry is unusable: its slot is unknown, or a number
+    /// is out of range. No slot tuning is used.
+    Slot { slot: String, reason: &'static str },
 }
 
 impl fmt::Display for ContentError {
@@ -201,6 +206,7 @@ impl fmt::Display for ContentError {
             Self::Town(error) => write!(f, "{error}"),
             Self::World(error) => write!(f, "{error}; using the default world"),
             Self::NoTowns => write!(f, "no towns to build; using the built-in Eduardo Castex"),
+            Self::Slot { slot, reason } => write!(f, "model slot `{slot}`: {reason}"),
         }
     }
 }

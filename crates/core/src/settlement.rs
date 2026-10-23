@@ -81,6 +81,9 @@ pub enum StructureKind {
     HitchingPost,
     /// A carreta: a two-wheeled ox cart left in the yard.
     Cart,
+    /// An abandoned four-wheeled wagon (a broken-down chata) rotting at a
+    /// yard edge or on a road verge: scenery, a small obstacle.
+    WreckedWagon,
     /// Where a eucalyptus of the grove grows; only its trunk blocks.
     Eucalyptus,
     /// Where a poplar of the entrance alameda grows; only its trunk blocks.
@@ -103,6 +106,20 @@ impl StructureKind {
         matches!(self, Self::Eucalyptus | Self::Poplar)
     }
 
+    /// Every model slot name [`Self::slot`] gives: lowercase folder names
+    /// under `assets/models/third-party/`.
+    pub const SLOTS: [&'static str; 9] = [
+        "windpump",
+        "eucalyptus",
+        "poplar",
+        "well",
+        "trough",
+        "cart",
+        "haystack",
+        "hitching_post",
+        "wrecked_wagon",
+    ];
+
     /// The model slot a downloaded glTF replaces the procedural mesh from
     /// (`assets/models/third-party/<slot>/`), for the props that have one.
     pub fn slot(self) -> Option<&'static str> {
@@ -115,6 +132,7 @@ impl StructureKind {
             Self::Cart => "cart",
             Self::Haystack => "haystack",
             Self::HitchingPost => "hitching_post",
+            Self::WreckedWagon => "wrecked_wagon",
             _ => return None,
         })
     }
@@ -244,6 +262,11 @@ impl Settlement {
     pub const MIN_SPACING: f32 = 300.0;
     /// Least ground an estancia's compound spreads over, in square meters.
     pub const RANCH_AREA: f32 = 20_000.0;
+    /// Chance of an abandoned wagon at a chacra, and at an estancia.
+    pub const WRECKS: (f32, f32) = (0.3, 0.5);
+    /// An abandoned wagon's footprint: wide along its front, deep out of
+    /// it, in meters.
+    pub const WRECK_SIZE: (f32, f32) = (4.8, 3.6);
 
     /// Every structure of `kind`.
     pub fn of(&self, kind: StructureKind) -> impl Iterator<Item = &Structure> + '_ {
@@ -264,6 +287,72 @@ pub struct SettlementLayout {
     /// The towns asked for an estancia that got none (see
     /// [`Self::build_with_ranches`]): the caller warns about them.
     pub unplaced_ranches: Vec<usize>,
+    /// Abandoned wagons on road verges, between the road's edge and its
+    /// fence: a handful on the whole map (see [`Self::ROADSIDE_WRECKS`]).
+    pub roadside: Vec<RoadsideWreck>,
+}
+
+/// An abandoned wagon on a road verge, lying along the road.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RoadsideWreck {
+    /// The middle of its footprint.
+    pub at: Vec2,
+    /// Unit direction of the road beside it: its length runs this way.
+    pub along: Vec2,
+    /// Seeded variant (render tilts it with it).
+    pub variant: u32,
+}
+
+impl RoadsideWreck {
+    /// Side of each of the boxes that block along its body, in meters.
+    pub const BLOCK: f32 = 2.0;
+
+    /// The corners of its turned footprint, [`Settlement::WRECK_SIZE`]:
+    /// long along the road, deep across it.
+    pub fn corners(&self) -> [Vec2; 4] {
+        let (wide, deep) = Settlement::WRECK_SIZE;
+        let (a, c) = (self.along * (wide / 2.0), self.across() * (deep / 2.0));
+        [
+            self.at - a - c,
+            self.at + a - c,
+            self.at + a + c,
+            self.at - a + c,
+        ]
+    }
+
+    /// Unit direction across the road (a quarter turn from `along`).
+    pub fn across(&self) -> Vec2 {
+        Vec2::new(-self.along.y, self.along.x)
+    }
+
+    /// The box round its turned footprint (the flora keeps off it).
+    pub fn footprint(&self) -> Aabb {
+        let [a, b, c, d] = self.corners();
+        Aabb::new(
+            Vec2::new(
+                a.x.min(b.x).min(c.x).min(d.x),
+                a.y.min(b.y).min(c.y).min(d.y),
+            ),
+            Vec2::new(
+                a.x.max(b.x).max(c.x).max(d.x),
+                a.y.max(b.y).max(c.y).max(d.y),
+            ),
+        )
+    }
+
+    /// What blocks the rider: three [`Self::BLOCK`] boxes along its body.
+    pub fn obstacles(&self) -> Vec<Aabb> {
+        let reach = Settlement::WRECK_SIZE.0 / 2.0 - Self::BLOCK / 2.0;
+        [-reach, 0.0, reach]
+            .into_iter()
+            .map(|t| {
+                Aabb::from_center_size(
+                    self.at + self.along * t,
+                    Vec2::new(Self::BLOCK, Self::BLOCK),
+                )
+            })
+            .collect()
+    }
 }
 
 impl SettlementLayout {
@@ -283,6 +372,14 @@ impl SettlementLayout {
     /// Distance from the gate to the end of the trunk's first straight
     /// piece, in meters.
     const ENTRY: f32 = 12.0;
+    /// Most abandoned wagons on the road verges, map-wide.
+    pub const ROADSIDE_WRECKS: usize = 5;
+    /// Chance that a roadside fence run gets a wreck.
+    const ROADSIDE_CHANCE: f32 = 0.15;
+    /// Least distance between two roadside wrecks, in meters.
+    const ROADSIDE_SPACING: f32 = 1500.0;
+    /// Gap between a wreck and the road's edge, in meters.
+    const VERGE_GAP: f32 = 0.4;
 
     /// The settlements behind the open gates of `fences`, over `terrain`
     /// (with its roads laid), clear of the towns of `towns` and of `line`'s
@@ -384,7 +481,11 @@ impl SettlementLayout {
             site.settle_gate(index, rng, None, &mut placed, &town_gap);
         }
         let settlements = placed.settlements;
+        let roadside = site.roadside_wrecks(terrain.seed, &settlements);
         let mut keep_out = KeepOut::default();
+        for wreck in &roadside {
+            keep_out.push(Shape::Area(wreck.footprint()));
+        }
         for s in &settlements {
             keep_out.push(Shape::Area(s.patio));
             for st in &s.structures {
@@ -400,6 +501,7 @@ impl SettlementLayout {
             settlements,
             keep_out: Arc::new(keep_out),
             unplaced_ranches,
+            roadside,
         }
     }
 
@@ -408,12 +510,13 @@ impl SettlementLayout {
         self.settlements.iter().filter(|s| s.kind == kind).count()
     }
 
-    /// The static obstacles of every settlement.
+    /// The static obstacles of every settlement and roadside wreck.
     pub fn obstacles(&self) -> impl Iterator<Item = Aabb> + '_ {
         self.settlements
             .iter()
             .flat_map(|s| s.structures.iter())
             .flat_map(Structure::obstacles)
+            .chain(self.roadside.iter().flat_map(RoadsideWreck::obstacles))
     }
 
     /// The settlements whose hub lies in `area` (a terrain chunk; west and
@@ -864,6 +967,9 @@ impl<'a> Compound<'a> {
             let tree = self.tree(StructureKind::Eucalyptus);
             self.place(tree, self.round(16.0, 34.0));
         }
+        if self.chance(Settlement::WRECKS.0) {
+            self.wreck((40.0, 70.0));
+        }
         true
     }
 
@@ -929,7 +1035,24 @@ impl<'a> Compound<'a> {
         self.poplar_row();
         self.grove(homestead);
         let bounds = self.bounds();
-        bounds.size().x * bounds.size().y >= Settlement::RANCH_AREA
+        if bounds.size().x * bounds.size().y < Settlement::RANCH_AREA {
+            return false;
+        }
+        // Drawn only once the estancia stands, so a retried hub draws the
+        // same numbers as before.
+        if self.chance(Settlement::WRECKS.1) {
+            self.wreck((60.0, 110.0));
+        }
+        true
+    }
+
+    /// An abandoned wagon at the yard's edge, `at` meters from the hub:
+    /// placed last, so every door and track is already laid and it keeps
+    /// clear of them like any footprint.
+    fn wreck(&mut self, at: (f32, f32)) {
+        let (wide, deep) = Settlement::WRECK_SIZE;
+        let part = self.part(StructureKind::WreckedWagon, (wide, wide), (deep, deep), 2.2);
+        self.place(part, self.round(at.0, at.1));
     }
 
     /// Poplars both sides of the trunk's last 90 m, 8 m apart.
@@ -1319,6 +1442,108 @@ fn cell_of(p: Vec2) -> (i32, i32) {
 const SETTLEMENT_SEED: u32 = 0x5e77_1e05;
 /// Mixed into the terrain seed for the forced estancias.
 const RANCH_SEED: u32 = 0x7a2c_4e11;
+/// Mixed into the terrain seed for the roadside wrecks.
+const WRECK_SEED: u32 = 0x3c4a_7a5e;
+
+impl Site<'_> {
+    /// A handful of abandoned wagons on road verges, seeded per roadside
+    /// fence run: by its chance, the first span from a seeded one whose
+    /// verge holds a wagon along the road, between the road's edge and the
+    /// fence, clear of gates, openings, signposts and crossings, rails,
+    /// towns, settlements and the other wrecks.
+    fn roadside_wrecks(&self, seed: u32, settlements: &[Settlement]) -> Vec<RoadsideWreck> {
+        let Some(roads) = self.terrain.roads.as_deref() else {
+            return Vec::new();
+        };
+        let road_parts = roads.obstacles();
+        let mut wrecks: Vec<RoadsideWreck> = Vec::new();
+        for (index, run) in self.fences.runs.iter().enumerate() {
+            if wrecks.len() >= SettlementLayout::ROADSIDE_WRECKS {
+                break;
+            }
+            if !run.roadside || run.posts.len() < 4 {
+                continue;
+            }
+            let mut rng = Rng::new(seed ^ WRECK_SEED, index as u32);
+            if rng.unit() >= SettlementLayout::ROADSIDE_CHANCE {
+                continue;
+            }
+            // Spans inside the run (not at its ends, by a crossing or a
+            // gate), from a seeded one on.
+            let spans = run.posts.len() - 3;
+            let first = rng.below(spans);
+            let variant = rng.next() >> 8;
+            let found = (0..spans).find_map(|k| {
+                let k = 1 + (first + k) % spans;
+                let (a, b) = (run.posts[k], run.posts[k + 1]);
+                let wreck = self.on_verge(roads, a, b, variant)?;
+                let fp = wreck.footprint();
+                let clear = self
+                    .fences
+                    .gates
+                    .iter()
+                    .all(|g| g.at.distance(wreck.at) > 25.0)
+                    && self
+                        .fences
+                        .openings
+                        .iter()
+                        .all(|o| o.at.distance(wreck.at) > 25.0)
+                    && road_parts.iter().all(|o| !o.expanded(3.0).intersects(&fp))
+                    && self.rails.iter().all(|&(p, q)| {
+                        segment_distance(wreck.at, p, q) > RoadNetwork::RAIL_CLEARANCE
+                    })
+                    && self.bands.iter().all(|band| !band.intersects(&fp))
+                    && settlements
+                        .iter()
+                        .all(|s| !s.bounds.expanded(30.0).intersects(&fp))
+                    && wrecks
+                        .iter()
+                        .all(|w| w.at.distance(wreck.at) >= SettlementLayout::ROADSIDE_SPACING);
+                clear.then_some(wreck)
+            });
+            wrecks.extend(found);
+        }
+        wrecks
+    }
+
+    /// A wagon along the fence span `a`–`b`, on the road's side of it with
+    /// its near side a little off the road's edge, if the whole of it lies
+    /// in the verge.
+    fn on_verge(
+        &self,
+        roads: &RoadNetwork,
+        a: Vec2,
+        b: Vec2,
+        variant: u32,
+    ) -> Option<RoadsideWreck> {
+        let length = a.distance(b);
+        if length < 1.0 {
+            return None;
+        }
+        let along = (b - a) * (1.0 / length);
+        let mid = (a + b) * 0.5;
+        let across = Vec2::new(-along.y, along.x);
+        let toward = if roads.distance(mid + across) < roads.distance(mid - across) {
+            across
+        } else {
+            across * -1.0
+        };
+        let deep = Settlement::WRECK_SIZE.1;
+        let out = RoadNetwork::HALF_WIDTH + SettlementLayout::VERGE_GAP + deep / 2.0;
+        let wreck = RoadsideWreck {
+            at: mid + toward * (roads.distance(mid) - out),
+            along,
+            variant,
+        };
+        let inside = wreck.corners().iter().all(|&c| {
+            let d = roads.distance(c);
+            let verge = RoadNetwork::HALF_WIDTH + SettlementLayout::VERGE_GAP * 0.5
+                ..=FenceLayout::ROADSIDE - 0.3;
+            verge.contains(&d)
+        });
+        inside.then_some(wreck)
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -1802,6 +2027,43 @@ mod tests {
     }
 
     #[test]
+    fn every_slot_name_is_listed_once_as_a_plain_folder_name() {
+        use StructureKind::*;
+        let kinds = [
+            MainHouse(HouseStyle::AdobeThatch),
+            WorkerHouse(HouseStyle::BrickParapet),
+            Barn,
+            Corral,
+            Windpump,
+            Tank,
+            Trough,
+            Well,
+            Haystack,
+            HitchingPost,
+            Cart,
+            WreckedWagon,
+            Eucalyptus,
+            Poplar,
+        ];
+        let mut slots: Vec<&str> = kinds.iter().filter_map(|k| k.slot()).collect();
+        let mut listed = StructureKind::SLOTS.to_vec();
+        slots.sort_unstable();
+        listed.sort_unstable();
+        assert_eq!(slots, listed, "every kind with a slot is listed, once");
+        for slot in StructureKind::SLOTS {
+            assert!(
+                !slot.is_empty()
+                    && slot
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
+                "{slot}"
+            );
+        }
+        // The buildings and the corral are built procedurally only.
+        assert!(Barn.slot().is_none() && Corral.slot().is_none() && Tank.slot().is_none());
+    }
+
+    #[test]
     fn tree_spots_block_with_their_trunks_only() {
         let (world, _, _, _, layout) = settled();
         let trees: Vec<&Structure> = layout
@@ -1849,6 +2111,7 @@ mod tests {
                 .flat_map(|s| s.structures.iter())
                 .map(|s| s.obstacles().len())
                 .sum::<usize>()
+                + 3 * layout.roadside.len()
         );
         let mut bare = World::with_towns(world.config, crate::Terrain::default(), &[]);
         let trunks = layout
@@ -1873,15 +2136,92 @@ mod tests {
                 assert!((lo..=hi).contains(&r), "{kind:?} {height}: {r}");
             }
         }
-        assert_eq!(
-            Structure {
-                kind: StructureKind::Eucalyptus,
-                height: 25.0,
-                ..*layout.settlements[0].structures.first().unwrap()
+        let r = Structure {
+            kind: StructureKind::Eucalyptus,
+            height: 25.0,
+            ..*layout.settlements[0].structures.first().unwrap()
+        }
+        .trunk_radius();
+        assert!((r - 0.4).abs() < 1e-5, "{r}");
+    }
+
+    #[test]
+    fn abandoned_wagons_are_few_and_stay_off_roads_tracks_and_doors() {
+        let (world, _, _, fences, layout) = settled();
+        let roads = world.terrain.roads.as_deref().expect("roads laid");
+        // In the yards: at most one per settlement, only at chacras and
+        // estancias, clear of every track (so of every door) and patio.
+        let mut yard = 0;
+        for s in &layout.settlements {
+            let wrecks: Vec<&Structure> = s.of(StructureKind::WreckedWagon).collect();
+            assert!(wrecks.len() <= 1, "{s:?}");
+            if !wrecks.is_empty() {
+                assert!(matches!(
+                    s.kind,
+                    SettlementKind::Farm | SettlementKind::Ranch
+                ));
             }
-            .trunk_radius(),
-            0.4
-        );
+            for w in wrecks {
+                yard += 1;
+                assert!(!w.footprint.intersects(&s.patio));
+                for (a, b) in s.tracks.iter().flat_map(Track::segments) {
+                    assert!(
+                        w.footprint
+                            .expanded(Track::HALF_WIDTH)
+                            .segment_overlap(a, b)
+                            .is_none(),
+                        "{w:?} on a track"
+                    );
+                }
+                for other in s.structures.iter().filter(|o| o.kind.is_reached()) {
+                    assert!(!w.footprint.contains_point(other.door()), "{w:?} at a door");
+                }
+            }
+        }
+        // On the verges: a handful, between the road's edge and the fence,
+        // never on the road, a gate or a signpost, far apart.
+        let verge = &layout.roadside;
+        println!("wrecks: {yard} in yards, {} on verges", verge.len());
+        assert!(verge.len() <= SettlementLayout::ROADSIDE_WRECKS);
+        assert!(!verge.is_empty(), "the shipped map has long straight roads");
+        let signposts = roads.obstacles();
+        for w in verge {
+            for c in w.corners().into_iter().chain([w.at]) {
+                let d = roads.distance(c);
+                assert!(d > RoadNetwork::HALF_WIDTH, "{w:?} on the road");
+                assert!(d < FenceLayout::ROADSIDE, "{w:?} past the fence");
+            }
+            let fp = w.footprint();
+            assert!(signposts.iter().all(|o| !o.intersects(&fp)), "{w:?}");
+            assert!(
+                fences
+                    .gates
+                    .iter()
+                    .all(|g| !fp.expanded(10.0).contains_point(g.at))
+            );
+            // Its body blocks the rider, without reaching onto the road.
+            for o in w.obstacles() {
+                assert!(world.obstacles.contains(&o), "{w:?} does not block");
+                for c in [
+                    o.min,
+                    o.max,
+                    Vec2::new(o.min.x, o.max.y),
+                    Vec2::new(o.max.x, o.min.y),
+                ] {
+                    assert!(
+                        roads.distance(c) > RoadNetwork::HALF_WIDTH,
+                        "{o:?} on the road"
+                    );
+                }
+            }
+            assert!(!layout.is_clear(w.at, 0.0), "flora keeps off it");
+            assert!((w.along.length() - 1.0).abs() < 1e-4);
+        }
+        for (i, a) in verge.iter().enumerate() {
+            for b in &verge[i + 1..] {
+                assert!(a.at.distance(b.at) >= SettlementLayout::ROADSIDE_SPACING);
+            }
+        }
     }
 
     #[test]
@@ -1896,19 +2236,33 @@ mod tests {
         assert_eq!(layout, again);
         // The missing town is reported, never silently dropped.
         assert!(layout.unplaced_ranches.contains(&(towns.len() + 3)));
-        for (t, town) in towns.iter().enumerate() {
-            if layout.unplaced_ranches.contains(&t) {
-                continue;
-            }
-            let band = town.leveled();
+        // The forced estancias are laid first, in the order asked: one per
+        // placed town, ahead of the seeded mix.
+        let placed: Vec<usize> = asked
+            .iter()
+            .copied()
+            .filter(|t| !layout.unplaced_ranches.contains(t))
+            .collect();
+        assert!(!placed.is_empty(), "no town in range got its estancia");
+        for (k, &t) in placed.iter().enumerate() {
+            let town = &towns[t];
+            let forced = &layout.settlements[k];
+            assert_eq!(forced.kind, SettlementKind::Ranch, "{}", town.name);
+            // It comes from the forced pass (its own seed), not the mix.
+            assert!(!plain.settlements.contains(forced), "{}", town.name);
+            // Gates are tried nearest first and a step's gates are never
+            // tried again, so the step it was found in is the first whose
+            // reach holds its gate: never the unbounded last one here.
+            let gate = fences.gates[forced.gate as usize].at;
+            let gap = town.leveled().closest_point(gate).distance(gate);
+            let step = SettlementLayout::RANCH_REACH
+                .iter()
+                .position(|&reach| gap <= reach)
+                .expect("the last step reaches anywhere");
+            println!("{}: estancia {gap:.0} m out, step {step}", town.name);
             assert!(
-                layout.settlements.iter().any(|s| {
-                    let gate = fences.gates[s.gate as usize].at;
-                    s.kind == SettlementKind::Ranch
-                        && band.closest_point(gate).distance(gate)
-                            <= SettlementLayout::RANCH_REACH[2]
-                }),
-                "{}",
+                step < SettlementLayout::RANCH_REACH.len() - 1,
+                "{}: {gap} m",
                 town.name
             );
         }
