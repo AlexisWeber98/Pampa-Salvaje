@@ -46,6 +46,32 @@ class ConvertError(Exception):
     """The input cannot be converted safely."""
 
 
+# Internal geometry group keys; the glTF node names are "body" and
+# --rotor-name, which must differ.
+BODY = "__body__"
+ROTOR = "__rotor__"
+IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
+IMAGE_MAGIC = {"image/png": b"\x89PNG\r\n\x1a\n", "image/jpeg": b"\xff\xd8\xff"}
+
+
+def f32(x):
+    """The value a float32 stores for x (accessor bounds must match it)."""
+    return struct.unpack("<f", struct.pack("<f", x))[0]
+
+
+def image_type(path):
+    """The glTF MIME type of a texture file, by extension and content; PNG
+    and JPEG are the only ones glTF 2.0 core allows."""
+    mime = IMAGE_TYPES.get(os.path.splitext(path)[1].lower())
+    if mime is None:
+        raise ConvertError(f"texture {os.path.basename(path)!r} is not a PNG or JPEG")
+    with open(path, "rb") as f:
+        head = f.read(8)
+    if not head.startswith(IMAGE_MAGIC[mime]):
+        raise ConvertError(f"texture {os.path.basename(path)!r} is not a PNG or JPEG by its content")
+    return mime
+
+
 # --- small matrix helpers (row-major 4x4, column vectors) -------------------
 
 
@@ -142,6 +168,14 @@ def read_xml(path):
         raise ConvertError(f"{path} is {size} bytes; the limit is {MAX_INPUT_BYTES}")
     with open(path, "rb") as f:
         data = f.read()
+    # The DTD check below is a byte search, so it only sees ASCII-compatible
+    # text: refuse UTF-16/32 (BOM-detected by the parser, and full of NULs)
+    # and any declared encoding but UTF-8 or ASCII.
+    if b"\x00" in data or data[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        raise ConvertError("the document is not UTF-8; only UTF-8 encoding is accepted")
+    declared = re.match(rb"(?:\xef\xbb\xbf)?<\?xml[^>]*encoding=[\"']([A-Za-z0-9._-]+)", data)
+    if declared and declared.group(1).lower() not in (b"utf-8", b"utf8", b"us-ascii", b"ascii"):
+        raise ConvertError(f"the document declares encoding {declared.group(1).decode()!r}; only UTF-8 is accepted")
     # No DTDs: they carry entities (expansion bombs, external files).
     if b"<!DOCTYPE" in data or b"<!ENTITY" in data:
         raise ConvertError("the document declares a DTD or entities; refusing it")
@@ -193,14 +227,22 @@ def by_id(root):
 
 def image_file(init_from, folder):
     """The texture file an <init_from> names, looked up by base name in the
-    model's own folder (authoring paths are absolute and foreign)."""
+    model's own folder (authoring paths are absolute and foreign). The exact
+    name wins; otherwise a single case-insensitive match is taken (Windows
+    exports), and several are refused as ambiguous."""
     path = urllib.parse.unquote((init_from or "").strip())
     name = re.split(r"[\\/]", path)[-1]
     if not SAFE_NAME.match(name) or name in (".", ".."):
         raise ConvertError(f"unsafe texture name {name!r}")
-    candidates = [n for n in os.listdir(folder) if n.lower() == name.lower()]
+    names = os.listdir(folder)
+    if name in names:
+        candidates = [name]
+    else:
+        candidates = [n for n in names if n.lower() == name.lower()]
     if not candidates:
         return None
+    if len(candidates) > 1:
+        raise ConvertError(f"texture {name!r} is ambiguous: {sorted(candidates)} differ only in case")
     full = os.path.realpath(os.path.join(folder, candidates[0]))
     if os.path.dirname(full) != os.path.realpath(folder) or not os.path.isfile(full):
         return None
@@ -350,7 +392,10 @@ def read_effect(effect, elements, folder):
                     m.color = (c[0], c[1], c[2], c[3] if len(c) > 3 else 1.0)
         shine = shader.find(NS + "shininess/" + NS + "float")
         if shine is not None:
-            # 3ds Max writes its glossiness percentage here.
+            # 3ds Max writes its glossiness percentage here. Roughness is
+            # its complement, clamped: below 0.45 the worn wood and rusty
+            # steel of these models read as wet plastic under the sun, and
+            # above 0.95 they lose every highlight and look like chalk.
             g = min(max(floats(shine.text, 1)[0], 0.0), 100.0)
             m.roughness = min(max(1.0 - g / 100.0, 0.45), 0.95)
     bump = effect.find(".//" + NS + "bump/" + NS + "texture")
@@ -366,7 +411,9 @@ def read_effect(effect, elements, folder):
 
 
 class Geometry:
-    """One mesh's triangles, as (material symbol, [(p, n, t) index triples])."""
+    """One COLLADA mesh: its float sources by id ((values, stride)), its
+    <vertices> inputs by id, and its primitives as (material symbol,
+    element, kind) parts, triangulated on demand by ``triangles``."""
 
     def __init__(self, element, elements):
         mesh = element.find(NS + "mesh")
@@ -435,7 +482,10 @@ class Geometry:
             if kind == "triangles":
                 counts = [3] * int(prim.get("count", "0"))
             else:
-                counts = ints(prim.find(NS + "vcount").text)
+                vcount = prim.find(NS + "vcount")
+                if vcount is None:
+                    raise ConvertError("a <polylist> has no <vcount>")
+                counts = ints(vcount.text)
             polys, at = [], 0
             for n in counts:
                 polys.append(flat[at : at + n * width])
@@ -463,7 +513,8 @@ class Geometry:
             for k in range(1, n - 1):
                 corners.append((refs[0], refs[k], refs[k + 1]))
         # Indices are checked against their sources as they are used.
-        return positions, normals, uvs, corners
+        ids = (pos[1], nrm[1] if nrm else None, uv[1] if uv else None)
+        return positions, normals, uvs, corners, ids
 
 
 def node_matrix(node):
@@ -534,7 +585,9 @@ def convert(args):
         raise ConvertError("bad <unit>")
     base = mul(scaling(args.scale, args.scale, args.scale), axis_root(up, unit))
 
-    # Animated rotations: '<node id>/<sid>' of every animation channel.
+    # Animated targets: '<node id>/<sid>' of every animation channel (its
+    # target minus any '.ANGLE'-style member); the rotor's axis is the
+    # first of its rotations found here.
     animated = set()
     for channel in root.iter(NS + "channel"):
         target = (channel.get("target") or "").split(".")[0]
@@ -556,7 +609,8 @@ def convert(args):
                 materials[mid].name = (m.get("name") or mid)
         return mid
 
-    groups = {"body": {}, args.rotor_name: {}}
+    # Internal keys, independent of the output node names (``write``).
+    groups = {BODY: {}, ROTOR: {}}
     pivot, axis = None, None
     geometries = {}
 
@@ -604,11 +658,11 @@ def convert(args):
         instance = instances[0]
         flip = det3(world) < 0
         nm = normal_matrix(world)
-        group = groups[args.rotor_name if rotor else "body"]
+        group = groups[ROTOR if rotor else BODY]
         for symbol, prim, kind in geometry.parts:
             mid = material(symbol, bindings)
             batch = group.setdefault(mid, Batch())
-            positions, normals, uvs, corners = geometry.triangles(
+            positions, normals, uvs, corners, source_ids = geometry.triangles(
                 prim, kind, sets.get(symbol, 0)
             )
             pv, nvals, tvals = positions[0], normals, uvs
@@ -642,7 +696,9 @@ def convert(args):
                         t = (vals[t_ * stride], 1.0 - vals[t_ * stride + 1])
                     else:
                         t = (0.0, 0.0)
-                    key = (instance, p_, key_n, t_)
+                    # Primitives of one material share a batch but may read
+                    # different sources, so the source ids are in the key.
+                    key = (instance, source_ids, p_, key_n, t_)
                     ids.append(batch.vertex(key, p, n, t))
                 if flip:
                     ids[1], ids[2] = ids[2], ids[1]
@@ -664,7 +720,7 @@ def convert(args):
             axis = normalized(tuple(float(c) for c in args.rotor_axis.split(",")))
         if axis is None:
             raise ConvertError("the rotor has no animated rotation: pass --rotor-axis")
-        for batch in groups[args.rotor_name].values():
+        for batch in groups[ROTOR].values():
             batch.positions = [sub(p, pivot) for p in batch.positions]
     return write(args, groups, materials, pivot, axis)
 
@@ -686,25 +742,39 @@ def cross(a, b):
 
 def copy_texture(path, out_dir, normal, convention):
     """Copies a texture into ``textures/``, flipping a DirectX normal map's
-    green channel. Returns its URI and what was done."""
+    green channel. Returns its URI, MIME type and what was done, naming the
+    convention actually applied to a normal map and whether it was forced."""
+    mime = image_type(path)
     name = os.path.basename(path)
     dest_dir = os.path.join(out_dir, "textures")
     os.makedirs(dest_dir, exist_ok=True)
     dest = os.path.join(dest_dir, name)
-    note = "copied"
-    if normal and name.lower().endswith(".png"):
-        w, h, channels, rows = png_read(path)
-        found, ratio = green_convention(w, h, channels, rows)
-        use = found if convention == "auto" else convention
-        note = f"normal map, {found.upper()} by its curl (GL/DX residual {ratio:.2f})"
-        if use == "dx":
-            for r in rows:
-                for x in range(1, len(r), channels):
-                    r[x] = 255 - r[x]
-            png_write(dest, w, h, channels, rows)
-            return "textures/" + name, note + ", green flipped to GL"
+    uri = "textures/" + name
+    if not normal:
+        shutil.copyfile(path, dest)
+        return uri, mime, "copied"
+    if convention == "gl":
+        # Nothing to flip, so the map is not even decoded.
+        shutil.copyfile(path, dest)
+        return uri, mime, "normal map, applied GL (forced), copied"
+    if mime != "image/png":
+        if convention == "dx":
+            raise ConvertError(f"{name}: only PNG normal maps can be flipped from DX")
+        shutil.copyfile(path, dest)
+        return uri, mime, "normal map, applied GL (assumed: a JPEG is not inspected), copied"
+    w, h, channels, rows = png_read(path)
+    found, ratio = green_convention(w, h, channels, rows)
+    use = found if convention == "auto" else convention
+    how = "detected" if convention == "auto" else f"forced; its curl says {found.upper()}"
+    note = f"normal map, applied {use.upper()} ({how}, GL/DX residual {ratio:.2f})"
+    if use == "dx":
+        for r in rows:
+            for x in range(1, len(r), channels):
+                r[x] = 255 - r[x]
+        png_write(dest, w, h, channels, rows)
+        return uri, mime, note + ", green flipped to GL"
     shutil.copyfile(path, dest)
-    return "textures/" + name, note
+    return uri, mime, note + ", copied"
 
 
 def write(args, groups, materials, pivot, axis):
@@ -744,8 +814,9 @@ def write(args, groups, materials, pivot, axis):
             "type": kind,
         }
         if kind == "VEC3":
-            entry["min"] = [min(v[k] for v in values) for k in range(3)]
-            entry["max"] = [max(v[k] for v in values) for k in range(3)]
+            # Bounds of the stored float32 values, not of the float64 ones.
+            entry["min"] = [f32(min(v[k] for v in values)) for k in range(3)]
+            entry["max"] = [f32(max(v[k] for v in values)) for k in range(3)]
         gltf["accessors"].append(entry)
         return len(gltf["accessors"]) - 1
 
@@ -754,9 +825,8 @@ def write(args, groups, materials, pivot, axis):
     def texture(path, normal):
         key = (path, normal)
         if key not in images:
-            uri, note = copy_texture(path, out_dir, normal, args.normal)
+            uri, mime, note = copy_texture(path, out_dir, normal, args.normal)
             report.append(f"  texture {uri}: {note}")
-            mime = "image/png" if uri.lower().endswith(".png") else "image/jpeg"
             gltf["images"].append({"uri": uri, "mimeType": mime})
             gltf["textures"].append({"sampler": 0, "source": len(gltf["images"]) - 1})
             images[key] = len(gltf["textures"]) - 1
@@ -778,7 +848,9 @@ def write(args, groups, materials, pivot, axis):
         return material_index[mid]
 
     totals = {}
-    for name, group in groups.items():
+    names = {BODY: "body", ROTOR: args.rotor_name}
+    for key, group in groups.items():
+        name = names[key]
         prims, tris = [], 0
         for mid, batch in group.items():
             if not batch.triangles:
@@ -812,7 +884,7 @@ def write(args, groups, materials, pivot, axis):
             continue
         gltf["meshes"].append({"name": name, "primitives": prims})
         node = {"name": name, "mesh": len(gltf["meshes"]) - 1}
-        if name == args.rotor_name and pivot is not None:
+        if key == ROTOR and pivot is not None:
             node["translation"] = [round(c, 6) for c in pivot]
         gltf["nodes"].append(node)
         gltf["scenes"][0]["nodes"].append(len(gltf["nodes"]) - 1)
@@ -832,8 +904,8 @@ def write(args, groups, materials, pivot, axis):
 
     lo = [math.inf] * 3
     hi = [-math.inf] * 3
-    for name, group in groups.items():
-        offset = pivot if name == args.rotor_name and pivot is not None else (0, 0, 0)
+    for key, group in groups.items():
+        offset = pivot if key == ROTOR and pivot is not None else (0, 0, 0)
         for batch in group.values():
             for p in batch.positions:
                 for k in range(3):
@@ -847,7 +919,7 @@ def write(args, groups, materials, pivot, axis):
     if pivot is not None:
         print(f"  rotor node {args.rotor_name!r}: pivot {fmt3(pivot)}, axis {fmt3(axis)}")
         radius = 0.0
-        for batch in groups[args.rotor_name].values():
+        for batch in groups[ROTOR].values():
             for p in batch.positions:
                 along = sum(p[k] * axis[k] for k in range(3))
                 radius = max(radius, math.sqrt(max(sum(c * c for c in p) - along * along, 0.0)))
@@ -866,7 +938,9 @@ def fmt3(v):
 
 def check(path):
     """Validates a glTF file's structure: buffers, views, accessors, indices
-    and images in range. Prints its triangles; exits non-zero on a fault."""
+    and images in range (every index a non-negative integer that exists),
+    images PNG or JPEG by type, extension and content. Prints its
+    triangles; exits non-zero on a fault."""
     folder = os.path.dirname(os.path.realpath(path))
     with open(path, encoding="utf-8") as f:
         g = json.load(f)
@@ -883,6 +957,14 @@ def check(path):
             return None
         return target
 
+    def item(items, i, what):
+        """items[i] when i is a valid index; a fault (and None) otherwise.
+        Python's negative indices would silently wrap, so they are refused."""
+        if not isinstance(i, int) or isinstance(i, bool) or not 0 <= i < len(items):
+            faults.append(f"{what} index {i!r} is missing or out of range")
+            return None
+        return items[i]
+
     blobs = []
     for b in g.get("buffers", []):
         target = local(b.get("uri", ""))
@@ -892,32 +974,58 @@ def check(path):
         blobs.append(data)
     views = g.get("bufferViews", [])
     for k, v in enumerate(views):
-        if v["buffer"] >= len(blobs) or v.get("byteOffset", 0) + v["byteLength"] > len(blobs[v["buffer"]]):
+        data = item(blobs, v.get("buffer"), f"bufferView {k} buffer")
+        if data is not None and v.get("byteOffset", 0) + v.get("byteLength", 0) > len(data):
             faults.append(f"bufferView {k} is out of its buffer")
     sizes = {5120: 1, 5121: 1, 5122: 2, 5123: 2, 5125: 4, 5126: 4}
     widths = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4, "MAT4": 16}
-    for k, a in enumerate(g.get("accessors", [])):
-        v = views[a["bufferView"]] if a.get("bufferView", -1) < len(views) else None
-        need = a.get("byteOffset", 0) + a["count"] * sizes[a["componentType"]] * widths[a["type"]]
-        if v is None or need > v["byteLength"]:
+    accessors = g.get("accessors", [])
+    good = set()
+    for k, a in enumerate(accessors):
+        v = item(views, a.get("bufferView"), f"accessor {k} bufferView")
+        size, width = sizes.get(a.get("componentType")), widths.get(a.get("type"))
+        if size is None or width is None:
+            faults.append(f"accessor {k} has an unknown componentType or type")
+            continue
+        need = a.get("byteOffset", 0) + a.get("count", 0) * size * width
+        if v is not None and need > v.get("byteLength", 0):
             faults.append(f"accessor {k} is out of its view")
+        elif v is not None and isinstance(v.get("buffer"), int) and 0 <= v["buffer"] < len(blobs):
+            good.add(k)
     tris = 0
     for m in g.get("meshes", []):
-        for p in m["primitives"]:
-            count = g["accessors"][p["attributes"]["POSITION"]]["count"]
-            a = g["accessors"][p["indices"]]
+        for p in m.get("primitives", []):
+            position = item(accessors, p.get("attributes", {}).get("POSITION"), "POSITION accessor")
+            ii = p.get("indices")
+            a = item(accessors, ii, "indices accessor")
+            if position is None or a is None or ii not in good:
+                continue
+            fmt = {5121: "B", 5123: "H", 5125: "I"}.get(a["componentType"])
+            if fmt is None:
+                faults.append(f"mesh {m.get('name')} has float indices")
+                continue
             v = views[a["bufferView"]]
-            data = blobs[v["buffer"]]
             start = v.get("byteOffset", 0) + a.get("byteOffset", 0)
-            fmt = {5121: "B", 5123: "H", 5125: "I"}[a["componentType"]]
-            idx = struct.unpack_from("<%d%s" % (a["count"], fmt), data, start)
-            if idx and max(idx) >= count:
+            idx = struct.unpack_from("<%d%s" % (a["count"], fmt), blobs[v["buffer"]], start)
+            if idx and max(idx) >= position.get("count", 0):
                 faults.append(f"mesh {m.get('name')} indexes past its vertices")
             tris += a["count"] // 3
     for image in g.get("images", []):
-        target = local(image.get("uri", ""))
-        if target is not None and not os.path.isfile(target):
-            faults.append(f"image {image.get('uri')} is missing")
+        uri = image.get("uri", "")
+        mime = image.get("mimeType") or IMAGE_TYPES.get(os.path.splitext(uri)[1].lower())
+        if mime not in IMAGE_MAGIC or IMAGE_TYPES.get(os.path.splitext(uri)[1].lower()) != mime:
+            faults.append(f"image {uri} is not a PNG or JPEG by its type or extension")
+            continue
+        target = local(uri)
+        if target is None:
+            continue
+        if not os.path.isfile(target):
+            faults.append(f"image {uri} is missing")
+            continue
+        with open(target, "rb") as f:
+            if not f.read(8).startswith(IMAGE_MAGIC[mime]):
+                kind = "PNG" if mime == "image/png" else "JPEG"
+                faults.append(f"image {uri} is not a {kind} by its content")
     print(f"{path}: {tris} triangles, nodes {[n.get('name') for n in g.get('nodes', [])]}")
     for fault in faults:
         print("  FAULT: " + fault)
@@ -953,8 +1061,13 @@ def main(argv=None):
             parser.error("--scale must be positive")
         if not SAFE_NAME.match(args.name) or "/" in args.name:
             parser.error("--name must be a plain file name")
+        if args.rotor_name == "body" or not SAFE_NAME.match(args.rotor_name):
+            parser.error("--rotor-name must be a plain name other than 'body'")
         return convert(args)
-    except (ConvertError, ValueError, OSError, KeyError, IndexError, TypeError, AttributeError) as e:
+    except (ConvertError, ValueError, OSError) as e:
+        # Refusals, unparsable numbers or JSON (ValueError) and unreadable
+        # files are the input's fault: one line. Anything else is a bug in
+        # this script and keeps its traceback.
         print(f"dae2gltf: {e}", file=sys.stderr)
         return 1
 

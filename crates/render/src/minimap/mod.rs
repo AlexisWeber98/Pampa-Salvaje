@@ -418,6 +418,8 @@ fn update_markers(
         && let Some(nearest) = nearest_town(&towns.0, at)
     {
         let layout = settlements.as_deref().map(|s| &s.0);
+        // `nearest_town` ranks towns by the distance to their extent, the
+        // same measure the mode reads, never by their centres.
         let mode = next_mode(
             minimap.mode,
             distance_to_town(&towns.0[nearest], at),
@@ -602,6 +604,54 @@ mod tests {
         assert_eq!(app.world().resource::<Minimap>().town, 0);
         assert_eq!(base(&mut app), castex_base);
         assert_eq!(app.world().resource::<Assets<Image>>().len(), images);
+    }
+
+    #[test]
+    fn the_mode_follows_the_nearest_town_by_extent_not_by_centre() {
+        // A small town (listed first) whose centre is nearer the rider, and
+        // a big one whose edge is nearer: the big town is the near one.
+        let big = TownLayout::generate(&TownConfig {
+            name: "Grande".into(),
+            blocks: (8, 4),
+            block_size: 60.0,
+            ..TownConfig::castex()
+        })
+        .unwrap();
+        let small_config = TownConfig {
+            name: "Chico".into(),
+            blocks: (3, 3),
+            block_size: 30.0,
+            street_width: 8.0,
+            railway: None,
+            ..TownConfig::castex()
+        };
+        let probe = TownLayout::generate(&small_config).unwrap().extent();
+        let (be, half) = (big.extent(), (probe.max.x - probe.min.x) / 2.0);
+        // 40 m east of the big town's edge: inside TOWN_ENTER of it, and
+        // more than FIELD_ENTER from the small town's edge.
+        let rider = GroundVec2::new(be.max.x + 40.0, be.center().y);
+        let small_center = rider + GroundVec2::new(200.0 + half, 0.0);
+        let small = TownLayout::generate(&TownConfig {
+            origin: small_center - probe.center(),
+            ..small_config
+        })
+        .unwrap();
+        let se = small.extent();
+        assert!(rider.distance(se.center()) < rider.distance(be.center()));
+        assert!(distance_to_town(&big, rider) < TOWN_ENTER);
+        assert!(distance_to_town(&small, rider) > FIELD_ENTER);
+
+        let mut app = headless_app();
+        app.insert_resource(WorldTowns(vec![small, big]));
+        app.world_mut().spawn((
+            MapIcon::Player,
+            Transform::from_translation(crate::world_from_ground(rider, 0.0)),
+        ));
+        app.update();
+        app.update();
+        let minimap = app.world().resource::<Minimap>();
+        assert_eq!(minimap.mode, MapMode::Town);
+        assert_eq!(minimap.town, 1);
     }
 
     #[test]

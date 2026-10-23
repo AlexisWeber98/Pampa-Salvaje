@@ -1,6 +1,8 @@
 # Feature: rural settlements (PR-C3)
 
-Branch: `feat/rural-settlements` (from `main` at e9463a2).
+Branch: `feat/rural-settlements` (from `main` at e9463a2), merged as PR #15; follow-ups (T6) on `chore/settlements-followups`.
+
+Status: **done** (2026-10-23). What is left is listed under T6, *Deferred*.
 
 ## Objective
 
@@ -126,7 +128,7 @@ Today the fields between the towns are empty grass. The pampa of 1919 was settle
       - Its review (4 lenses, approved) asked to prove the normal map's convention. A ramp test showed the T1 red channel was inverted: a surface rising to the right gave R 0.516 instead of below 0.5. The script now uses Sobel:180 for red (R 0.484 on that ramp; green was already right), and the shipped `normal_gl.jpg` was regenerated.
       - It also requires an HDRI ImageMagick, keeps the height map in a `mktemp` file removed by a `trap`, and refuses to overwrite an existing set unless `FORCE=1`.
     - Tests: RED observed for the crown fade radius, for slots disabled (no well scene), and for the late-failure stand-in; the other new tests were written alongside the code. Core 296, render 193, content 28, game 87 pass; fmt and clippy clean.
-    - Deferred: a visual check on the Renoir GPU (wreck tilt and fit, lantern glass, windpump fit and spin direction, the prop placement); `pampa_core` does not re-export `RoadsideWreck` (`crates/core/src/lib.rs` was outside the allowed surfaces); the windpump's per-instance wind yaw (the model faces its structure's front); the minimap does not show wrecks.
+    - Deferred: a visual check on the Renoir GPU (wreck tilt and fit, lantern glass, windpump fit and spin direction, the prop placement); `pampa_core` did not re-export `RoadsideWreck` (`crates/core/src/lib.rs` was outside the allowed surfaces; the parent added it in the same commit); the windpump's per-instance wind yaw (the model faces its structure's front); the minimap does not show wrecks.
 - [x] **T5 — Minimap.** Add a field frame mode that shows settlements and huellas when no town is near.
   - Progress: route delegated writer (multi-file: `minimap/mod.rs`, `minimap/raster.rs`, README, this document). About 600 authored lines, half of them tests.
     - Switching rule (`minimap::next_mode`, with hysteresis): town → field when the rider is more than 150 m (`FIELD_ENTER`) from the nearest town's extent, or within 20 m (`SETTLEMENT_ENTER`) of a settlement's bounds; field → town when within 90 m (`TOWN_ENTER`) of a town's extent and more than 50 m (`SETTLEMENT_LEAVE`) from every settlement.
@@ -135,7 +137,32 @@ Today the fields between the towns are empty grass. The pampa of 1919 was settle
     - Cost: one field image, repainted in place (`image.data`) only when the field is entered or the rider is more than 80 m (`FIELD_RECENTER`) from its centre; town layers stay cached per town; markers, compass and target are unchanged and follow the active frame.
     - Tests: RED observed with the behaviour stubbed (6 failures: mode switching, hysteresis, repaint throttling, settlement pixels in field and town frames, tracks and corral outlines), then GREEN. The follow-the-player test now rides to the far town itself, since its old halfway point is field territory.
     - Deferred: a visual check of the field map in the window.
-- [ ] **T6 — Docs.** Update the setting guide entries, README and this document.
+- [x] **T6 — Docs and PR-C3 follow-ups.** Update the setting guide entries, README and this document, and close the review follow-ups of the merged PR.
+  - Progress: route delegated writer (multi-file: converter and its tests, regenerated models, thatch script, a minimap test, docs). About 700 authored lines, over the ~400 heuristic: the converter's new test suite is about 400 of them and is what the review asked for; split into 4 commits (below).
+    - `tools/dae2gltf.py` review follow-ups:
+      - A stdlib `unittest` suite, `tools/test_dae2gltf.py` (`python3 -I -B -m unittest discover -s tools`), builds tiny COLLADA documents and PNGs in a temporary folder. It covers Z-up→Y-up and `<unit>`, triangles and polylists, the rotor split and pivot, the green convention on a synthetic height field in both conventions, the refusals (DTD/entities, non-UTF-8, out-of-range index, non-PNG/JPEG textures, ambiguous case-only names) and `--check` passing and failing. 23 tests.
+      - Accessor `min`/`max` are the float32-rounded values.
+      - Textures must be PNG or JPEG by extension and content, also under `--check`.
+      - Fixed internal group keys (`__body__`, `__rotor__`), and `--rotor-name body` is refused.
+      - The vertex dedup key holds the source ids.
+      - `--check` refuses negative, missing or non-integer `bufferView`, `buffer` and accessor indices.
+      - `main()` prints one line only for `ConvertError`, `ValueError` (unparsable numbers or JSON) and `OSError`; anything else keeps its traceback.
+      - Texture lookup: exact name first, one case-insensitive match otherwise, several refused as ambiguous.
+      - `--normal gl` copies normal maps without decoding them, and the report names the convention applied to each map: detected, forced or assumed (JPEG).
+      - Non-UTF-8 documents are refused before the DTD byte check.
+      - Doc fixes: the `Geometry` docstring, the animated-targets comment and the roughness clamp.
+    - Both models regenerated with the commands in `3td-starter-pack/CREDITS.md`. Only the accessor `min`/`max` changed (a JSON diff with them removed is equal); `model.bin` and the textures are byte for byte the same, triangles 1,920 (852 + 1,068) and 3,046, and `--check` passes on both.
+    - Thatch `generate.sh`:
+      - a portable `mktemp -d` scratch folder removed by a `trap`;
+      - `command -v magick` before the HDRI probe;
+      - the normal-map step is one function, shared with `--check-signs`. On 64-pixel ramps, rising right gives mean red 0.484 and rising up mean green 0.484, both below 0.5 (OpenGL). The full set still reproduces byte for byte.
+    - Minimap: the review premise did not hold. `pampa_core::nearest_town` already ranks towns by the distance to their extent, the measure `next_mode` reads. A new test pins it, with two towns whose centre order and extent order disagree. It passes as is; with the pick temporarily switched to the nearest centre, it fails (Field instead of Town). So it is a regression guard, not a RED-then-GREEN fix.
+    - Setting guide: `odd/setting-1919.md` already describes ranchos, puestos, chacras, estancias and huellas (since T2). No change was needed.
+  - Deferred:
+    - A visual check on the Renoir GPU: the wreck tilt and fit, the lantern glass, the windpump's fit and spin direction, the prop placement and the field minimap's readability.
+    - The windpump's per-instance wind yaw (the model faces its structure's front).
+    - The setting guide could mention the abandoned wagons.
+    - The Quaternius licence check (below).
 
 ## Acceptance criteria
 
@@ -171,3 +198,4 @@ Today the fields between the towns are empty grass. The pampa of 1919 was settle
   - 4 seeded variants per species, built once and shared; the range, fade and occluder are as before.
   - RED: an app test that crowns have depth on both ground axes, the poplar's is a column, there are 300–800 triangles, and 2–4 distinct shared crowns per species. It failed on the squeezed crown (7.3 × 6.0 × 7.2 m: not columnar), then passed. Render 183, game 85; fmt and clippy clean.
 - 2026-10-22: T4 done (delegated writer): model slots live (the windpump from the 3TD windmill, its wheel spinning), the 3TD wagon as abandoned wrecks in yards and on road verges (user idea), the Poly Haven yard props, `tools/dae2gltf.py`, and the T0–T3 review follow-ups. Next: T5.
+- 2026-10-23: T6 done (delegated writer): the PR-C3 review follow-ups (converter tests and fixes, regenerated models with float32 bounds, thatch sign check, minimap extent test) and the docs. The feature is done; the deferred items are listed under T6.
