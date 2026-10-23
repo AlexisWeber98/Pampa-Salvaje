@@ -12,7 +12,7 @@ These are PBR texture sets for the rural settlements: walls, roofs, wood and the
 | `brown_planks_05/` | Brown Planks 05 | Rob Tuytel, Poly Haven (https://polyhaven.com/a/brown_planks_05) | Weathered boards: galpón walls, doors, corral rails |
 | `brown_mud_dry/` | Brown Mud Dry | Rob Tuytel, Poly Haven (https://polyhaven.com/a/brown_mud_dry) | The worn earth of the huellas (inner tracks) |
 | `dry_ground_01/` | Dry Ground 01 | Rob Tuytel, Poly Haven (https://polyhaven.com/a/dry_ground_01) | Trodden, cracked yards around the houses and corrals |
-| `thatch/` | Thatch | Pampa Seca (own work, generated with ImageMagick from seeded noise) | Thatched (paja) roofs of ranchos. CC0, like the rest of the project's own assets |
+| `thatch/` | Thatch | Pampa Seca (own work, generated with ImageMagick from seeded noise by `thatch/generate.sh`) | Thatched (paja) roofs of ranchos. CC0, like the rest of the project's own assets |
 
 Each folder holds `color.jpg`, `normal_gl.jpg` (OpenGL normal map) and `roughness.jpg`, plus `ao.jpg` where the source has one. The files are the sources' 1K JPG maps, renamed, with no other changes. They were downloaded on 2026-10-22, once, with the project owner's permission.
 
