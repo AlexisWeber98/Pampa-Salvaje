@@ -701,8 +701,13 @@ mod tests {
         assert_eq!(clock(&app).multiplier, ONBOARD_MULTIPLIER);
         assert_eq!(train(&app).state().phase, LinePhase::Running);
         // The HUD tells the next station and when the train gets there.
+        let nievas = train(&app).station_of_town(0).unwrap();
+        let due = train(&app).arrival_time_at(Run::Up, nievas).unwrap();
         let ride_line = app.world().resource::<HudRide>().0.clone();
-        assert_eq!(ride_line.as_deref(), Some("Próxima: Monte Nievas, 10:14"));
+        assert_eq!(
+            ride_line.as_deref(),
+            Some(format!("Próxima: Monte Nievas, {due}").as_str())
+        );
         assert!(ride_line.unwrap().chars().all(pampa_render::font::supports));
         assert_eq!(
             announcement(&app).as_deref(),
@@ -723,8 +728,8 @@ mod tests {
             Some("Monte Nievas")
         );
         assert_eq!(visibility(&mut app), Visibility::Inherited);
-        // In at the timetabled arrival, 10:14:45, and off two real
-        // seconds (24 game seconds) later, at 10:15:09.
+        // In at the timetabled arrival and off two real seconds (24 game
+        // seconds) later.
         let at = clock(&app).time_of_day().seconds();
         let arrival = train(&app)
             .arrival_time_at(Run::Up, s.station.unwrap())
@@ -732,7 +737,6 @@ mod tests {
         let off = arrival.seconds()
             + f64::from(ALIGHT_DELAY) * ONBOARD_MULTIPLIER * pampa_core::BASE_RATE;
         assert!((at - off).abs() < 1.0, "{}", clock(&app).hh_mm());
-        assert_eq!(clock(&app).hh_mm(), "10:15");
         app.update();
         assert_eq!(clock(&app).multiplier, 1.0);
         assert_eq!(app.world().resource::<HudRide>().0, None, "line gone");
@@ -900,9 +904,15 @@ mod tests {
             (s.phase, s.station, s.run),
             (LinePhase::Dwelling, Some(nievas), Run::Down)
         );
-        // The afternoon train from Castex, in at 17:17:49 and read a few
-        // frames later.
-        assert_eq!(clock(&app).hh_mm(), "17:18");
+        // The afternoon train from Castex, in at its timetabled arrival
+        // and read a few frames later.
+        let due = train(&app).arrival_time_at(Run::Down, nievas).unwrap();
+        let late = clock(&app).time_of_day().seconds() - due.seconds();
+        assert!(
+            (0.0..120.0).contains(&late),
+            "{} for {due}",
+            clock(&app).hh_mm()
+        );
         assert_eq!(passenger(&mut app).1, None, "still on the platform");
         // Now F boards it.
         let (middle, _) = app.world().resource::<WorldTowns>().0[0]

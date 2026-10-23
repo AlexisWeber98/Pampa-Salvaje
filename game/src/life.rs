@@ -646,22 +646,30 @@ mod tests {
         let loco = train.placed_cars()[0];
         assert!(loco.direction.dot(train.path().direction_at(s.front)) < -0.9);
         assert_eq!(clock.day(), 0);
-        // Mid-morning, in full daylight, at the onboard rate: 10:04:45,
-        // ten game minutes (50 real seconds at 12×) before the timetabled
-        // arrival at 10:14:45.
+        // Mid-morning, in full daylight, at the onboard rate: ten game
+        // minutes (50 real seconds at 12×) before the timetabled arrival
+        // (10:53:31 since the Metileo stop, 2026-10-23; 10:14:45 before).
         assert_eq!(clock.multiplier, ONBOARD_MULTIPLIER);
-        assert_eq!(clock.hh_mm(), "10:04");
         let arrival = train.arrival_time_at(Run::Up, nievas).unwrap();
-        assert_eq!(arrival.to_string(), "10:14");
+        let (morning, noon) = (TimeOfDay::hm(9, 30), TimeOfDay::hm(11, 30));
+        assert!(
+            (morning.seconds()..noon.seconds()).contains(&arrival.seconds()),
+            "{arrival}"
+        );
         let lead = OPENING_LEAD * ONBOARD_MULTIPLIER * BASE_RATE;
         assert!((clock.elapsed() + lead - arrival.seconds()).abs() < 1e-6);
     }
 
     #[test]
     fn the_clock_ticks_and_the_train_stays_an_obstacle() {
-        // During the morning dwell at Monte Nievas (10:14:45 to 10:27:15),
-        // on foot.
-        let mut app = shipped_app(Some(GameClock::at(TimeOfDay::hm(10, 20))));
+        // Half way through the morning dwell at Monte Nievas, on foot.
+        let loaded = shipped();
+        let timetabled =
+            LineTrain::new(&loaded.line, &loaded.towns, Timetable::default()).expect("a train");
+        let dwell = timetabled
+            .stop_at(0, Run::Up)
+            .expect("a stop at Monte Nievas");
+        let mut app = shipped_app(Some(GameClock::at(dwell)));
         app.update();
         let start = app.world().resource::<WorldClock>().0;
         for _ in 0..20 {

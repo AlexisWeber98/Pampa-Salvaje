@@ -13,10 +13,10 @@ mod towns;
 
 use bevy::prelude::*;
 use pampa_content::{SLOTS_FILE, TOWNS_FILE, asset_path, load_model_slots};
-use pampa_core::{FenceLayout, FloraSite, SettlementKind, SettlementLayout, Terrain, World};
+use pampa_core::{FenceLayout, FloraSite, SettlementKind, SettlementLayout, World};
 use pampa_render::{
     AssetRoot, AtmospherePlugin, CharacterVisualPlugin, FadePlugin, FencePlugin, FloraPlugin,
-    HudPlugin, MinimapPlugin, RailPlugin, RoadPlugin, SettlementPlugin, SignPlugin,
+    HudPlugin, LagoonPlugin, MinimapPlugin, RailPlugin, RoadPlugin, SettlementPlugin, SignPlugin,
     SpeechBubblePlugin, StreamFocus, TerrainPlugin, ThinFadePlugin, TownPlugin, TrainPlugin,
     WorldChunks, WorldClock, WorldFences, WorldFlora, WorldRail, WorldSettlements, WorldTerrain,
     WorldTowns, WorldTrain,
@@ -92,7 +92,8 @@ struct LaidReport {
 /// Builds the world of `loaded`: leveled for its towns, its roads cut in,
 /// fenced, settled behind some open gates and planted around it all.
 fn lay_out(loaded: &towns::LoadedWorld) -> Laid {
-    let mut world = World::with_towns(loaded.world, Terrain::default(), &loaded.towns);
+    // The lagoons are sunk first: the towns level their ground on top.
+    let mut world = World::with_towns(loaded.world, loaded.terrain(), &loaded.towns);
     // The dirt roads, cut into the ground, with their level crossings and
     // signposts (thin obstacles).
     world.lay_roads(loaded.roads.clone());
@@ -265,6 +266,8 @@ fn main() {
     // and the rural settlements, chunk by chunk; trees, fences, signs and
     // thin props fade out of the camera's way.
     .add_plugins((RoadPlugin, FencePlugin, SettlementPlugin, ThinFadePlugin))
+    // The lagoons' water and reeds.
+    .add_plugins(LagoonPlugin)
     // The errand and the clock and objective in the corner.
     .add_plugins((errand::ErrandPlugin, HudPlugin))
     // Boarding, riding, skipping and waiting for the train, with a fade to
@@ -352,6 +355,141 @@ mod tests {
             );
         }
         assert!(!laid.fences.gates.is_empty());
+    }
+
+    #[test]
+    fn laguna_la_arocena_keeps_everything_off_and_the_rider_out_of_deep_water() {
+        let loaded = towns::load_world(&asset_path(TOWNS_FILE));
+        let laid = lay_out(&loaded);
+        let lagoon = laid
+            .world
+            .terrain
+            .lagoons
+            .first()
+            .expect("the shipped lagoon");
+        assert_eq!(lagoon.name, "Laguna La Arocena");
+        let keep = lagoon.keep_out();
+        let world = laid.world.config.bounds();
+        assert!(keep.min.x > world.min.x && keep.max.x < world.max.x);
+        // Its water lies flat in a basin below the land around it.
+        let middle = laid.world.terrain.height(lagoon.center.x, lagoon.center.y);
+        assert!(middle < lagoon.level - 1.0);
+        for p in lagoon.ring(64, 1.0) {
+            assert!(laid.world.terrain.height(p.x, p.y) > lagoon.level, "{p:?}");
+        }
+        // No fence, settlement or road inside its shore, bank and margin;
+        // trees keep back from the water and grass from its mud.
+        for o in laid.fences.obstacles() {
+            assert!(!o.intersects(&keep), "fence {o:?}");
+        }
+        for s in &laid.settlements.settlements {
+            assert!(!s.bounds.intersects(&keep), "{:?}", s.bounds);
+        }
+        // Only the public road out to it comes onto its bank.
+        let roads = laid.world.terrain.roads.as_ref().unwrap();
+        for road in roads
+            .roads
+            .iter()
+            .filter(|r| r.kind != pampa_core::RoadKind::Lagoon)
+        {
+            for w in road.path.windows(2) {
+                assert!(
+                    keep.segment_overlap(w[0], w[1]).is_none(),
+                    "road {:?}",
+                    w[0]
+                );
+            }
+        }
+        let mut tufts = 0;
+        let size = laid.world.config.chunk_size;
+        let (lo, hi) = (
+            pampa_core::ChunkCoord::containing(keep.min, size),
+            pampa_core::ChunkCoord::containing(keep.max, size),
+        );
+        for cx in lo.x..=hi.x {
+            for cy in lo.y..=hi.y {
+                let chunk = laid.flora.chunk(pampa_core::ChunkCoord { x: cx, y: cy });
+                for t in &chunk.trees {
+                    assert!(
+                        lagoon.offshore(t.at) >= pampa_core::FloraSite::TREE_LAGOON_MARGIN,
+                        "{t:?}"
+                    );
+                }
+                // Grass grows down to the narrow wet mud, not on it.
+                for t in &chunk.tufts {
+                    assert!(!lagoon.is_bare(t.at), "{t:?}");
+                    tufts +=
+                        usize::from(lagoon.offshore(t.at) < pampa_core::Lagoon::MUD_BAND + 20.0);
+                }
+            }
+        }
+        assert!(tufts > 100, "{tufts} tufts near the shore");
+        // Riding in from the west, the rider wades in and stops in the
+        // shallows.
+        let collider = pampa_core::Circle::new(pampa_core::Rider::COLLIDER_RADIUS);
+        let mut at = lagoon.center - pampa_core::Vec2::new(lagoon.radii.x + 40.0, 0.0);
+        for _ in 0..400 {
+            at = laid
+                .world
+                .resolve(collider, at + pampa_core::Vec2::new(0.5, 0.0), |_| ());
+            assert!(!lagoon.is_deep(at), "{at:?}");
+        }
+        assert!(lagoon.is_water(at));
+    }
+
+    #[test]
+    fn a_public_road_leads_from_general_pico_to_the_lagoon_and_rides_clear() {
+        let loaded = towns::load_world(&asset_path(TOWNS_FILE));
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        let laid = lay_out(&loaded);
+        let lagoon = &laid.world.terrain.lagoons[0];
+        let roads = laid.world.terrain.roads.as_ref().unwrap();
+        let to_lagoon: Vec<_> = roads
+            .roads
+            .iter()
+            .filter(|r| r.kind == pampa_core::RoadKind::Lagoon)
+            .collect();
+        assert_eq!(to_lagoon.len(), 1);
+        let road = to_lagoon[0];
+        // From General Pico, out of its east or south side.
+        let pico = &loaded.towns[road.from];
+        assert_eq!(pico.name, "General Pico");
+        let grid = pico.grid();
+        let start = road.path[0];
+        let east = (start.x - grid.max.x).abs() < 1e-2;
+        let south = (start.y - grid.min.y).abs() < 1e-2;
+        assert!(east || south, "{start:?} on {grid:?}");
+        // To the bank: never into the water or onto its mud, and ending by it.
+        let end = road
+            .path
+            .iter()
+            .map(|&p| lagoon.offshore(p))
+            .fold(f32::MAX, f32::min);
+        assert!(end > pampa_core::Lagoon::MUD_BAND && end < 15.0, "{end}");
+        // A rider rides it end to end: no fence, gate, settlement, tree or
+        // signpost stands on it.
+        let collider = pampa_core::Circle::new(pampa_core::Rider::COLLIDER_RADIUS);
+        for w in road.path.windows(2) {
+            for k in 0..4 {
+                let p = w[0] + (w[1] - w[0]) * (k as f32 / 4.0);
+                assert_eq!(laid.world.resolve(collider, p, |_| ()), p, "{p:?}");
+            }
+        }
+        // A fence each side, as along every road, out of town and off the
+        // lagoon's bank.
+        let half = pampa_core::RoadNetwork::HALF_WIDTH;
+        let fenced = laid
+            .fences
+            .obstacles()
+            .iter()
+            .filter(|o| {
+                road.path.windows(2).any(|w| {
+                    let mid = (w[0] + w[1]) * 0.5;
+                    o.closest_point(mid).distance(mid) < half + 8.0
+                })
+            })
+            .count();
+        assert!(fenced > 50, "{fenced} fence spans along the road");
     }
 
     #[test]

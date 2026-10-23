@@ -4,7 +4,7 @@
 //! Spanish) content; render decides the lettering, the board and its height
 //! on the facade.
 
-use crate::{Aabb, Building, BuildingKind, Heading, Side, TownLayout, Vec2};
+use crate::{Aabb, Building, BuildingKind, Heading, Side, TownLayout, TownSize, Vec2};
 
 /// Which landmark a place is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -26,8 +26,10 @@ impl PlaceKind {
         PlaceKind::Plaza,
     ];
 
-    /// The diegetic name painted on its sign (uppercase Spanish). The
-    /// station's sign adds the town's name ([`Place::name`]).
+    /// The diegetic name painted on its sign (uppercase Spanish), as in a
+    /// big town: a small town's store is a pulpería instead
+    /// ([`StoreStyle`]). The station's sign adds the town's name
+    /// ([`Place::name`]).
     pub fn name(self) -> &'static str {
         match self {
             PlaceKind::GeneralStore => "ALMACÉN DE RAMOS GENERALES",
@@ -35,6 +37,33 @@ impl PlaceKind {
             PlaceKind::Church => "IGLESIA",
             PlaceKind::Station => "ESTACIÓN",
             PlaceKind::Plaza => "PLAZA",
+        }
+    }
+}
+
+/// What a town's general store is, by the town's size (user, 2026-10-23).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StoreStyle {
+    /// A small town's (pueblo's) store and bar: a pulpería.
+    Pulperia,
+    /// A big town's "almacén de ramos generales".
+    GeneralStore,
+}
+
+impl StoreStyle {
+    /// The store of a town of `size`: a pulpería in a small town.
+    pub fn of(size: TownSize) -> Self {
+        match size {
+            TownSize::Small => Self::Pulperia,
+            TownSize::Big | TownSize::VeryBig => Self::GeneralStore,
+        }
+    }
+
+    /// The diegetic name painted on its sign (uppercase Spanish).
+    pub fn sign(self) -> &'static str {
+        match self {
+            Self::Pulperia => "PULPERÍA",
+            Self::GeneralStore => PlaceKind::GeneralStore.name(),
         }
     }
 }
@@ -164,6 +193,7 @@ impl TownLayout {
         };
         let name = match kind {
             PlaceKind::Station => format!("{} {}", kind.name(), self.name.to_uppercase()),
+            PlaceKind::GeneralStore => StoreStyle::of(self.size).sign().to_string(),
             _ => kind.name().to_string(),
         };
         areas
@@ -376,7 +406,11 @@ mod tests {
             for p in &places {
                 assert!(!p.name.trim().is_empty());
                 assert_eq!(p.name, p.name.to_uppercase(), "{}", p.name);
-                assert!(p.name.starts_with(p.kind.name()), "{}", p.name);
+                let sign = match p.kind {
+                    PlaceKind::GeneralStore => StoreStyle::of(t.size).sign(),
+                    kind => kind.name(),
+                };
+                assert!(p.name.starts_with(sign), "{}", p.name);
                 assert!(!p.signs.is_empty(), "{:?} has a sign", p.kind);
                 assert!(p.signs.iter().all(|s| s.width > 0.5));
             }
@@ -388,10 +422,25 @@ mod tests {
                 );
             }
         }
+        // A small town's store is a pulpería; a big town's, an almacén de
+        // ramos generales.
+        assert_eq!(town().size, crate::TownSize::Small);
         assert_eq!(
             place(&town(), PlaceKind::GeneralStore).unwrap().name,
-            "ALMACÉN DE RAMOS GENERALES"
+            "PULPERÍA"
         );
+        let big = TownLayout::generate(&crate::TownConfig {
+            blocks: (8, 8),
+            ..crate::TownConfig::castex()
+        })
+        .unwrap();
+        for store in big
+            .places()
+            .iter()
+            .filter(|p| p.kind == PlaceKind::GeneralStore)
+        {
+            assert_eq!(store.name, "ALMACÉN DE RAMOS GENERALES");
+        }
         assert_eq!(
             place(&town(), PlaceKind::Station).unwrap().name,
             "ESTACIÓN EDUARDO CASTEX"

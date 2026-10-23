@@ -43,25 +43,31 @@ few puffs of chimney smoke while moving. The coaches have boarded sides,
 framed windows, a clerestory roof and open end platforms with railings; the
 freight cars are boarded and iron-strapped; every car rides on bogies with
 buffers and couplers. It spends the night at General Pico, leaves Pico at 07:00, stops 25 s at
-Monte Nievas, reaches Eduardo Castex, lays over, leaves Castex at 16:00, stops
-at Monte Nievas again and is back at Pico for the night (a user change on
+the Metileo halt and at Monte Nievas, reaches Eduardo Castex, lays over, leaves
+Castex at 16:00, stops at Monte Nievas and Metileo again and is back at Pico
+for the night (a user change on
 2026-10-21; until then it slept at Castex and left it at 07:00). It runs at up to 65 km/h, braking to stop with the
 middle of its two coaches alongside each station on the way. At the two
 terminals the whole train stands centered on the station, so it turns around in
-place during the layover. It takes about 9.5 real minutes
-over the 9.7 km of line (Pico 07:00, Monte Nievas 10:15–10:27, Castex 11:46; Castex 16:00, Monte
-Nievas 17:18–17:30, Pico 20:46, with the clock at its base rate). The clock
+place during the layover. It takes about 11 real minutes
+over the 10.0 km of line (Pico 07:00, Metileo 08:52–09:04, Monte Nievas
+10:54–11:06, Castex 12:25; Castex 16:00, Monte Nievas 17:18–17:30, Metileo
+19:20–19:32, Pico 21:25, with the clock at its base rate; the Metileo stop
+since 2026-10-23). The clock
 only starts each run: once moving, the train runs in real seconds, and a
 jump of the clock fast-forwards it exactly where it would have been. Its
 cars follow the curves between towns and shove riders off the track; the
 rails themselves stay crossable.
 
 Landmarks carry painted signs in period Spanish: the general store
-("ALMACÉN DE RAMOS GENERALES"), the police station ("COMISARÍA"), the church
+("PULPERÍA" in a small town, "ALMACÉN DE RAMOS GENERALES" in General Pico),
+the police station ("COMISARÍA"), the church
 ("IGLESIA"), the station ("ESTACIÓN EDUARDO CASTEX", on its facade and on a
 name board on the platform) and the plaza. `pampa-core` names the places and
 says where each sign stands (`TownLayout::places`); render letters them in a
-procedural bitmap pixel font (no third-party font) on weathered boards.
+procedural bitmap pixel font (no third-party font) on weathered boards. The
+stores and police stations are spread over each town rather than round its
+plaza, and General Pico has a store and a comisaría on each side of its line.
 
 A paper-style minimap in the top-right corner shows the nearest town north-up,
 titled with its name: streets, blocks and buildings by kind, the plaza, the
@@ -85,12 +91,14 @@ only the markers redraw each frame. `M` toggles an enlarged, centered map.
 
 ### Riding the train
 
-**The opening.** The game starts at 10:04:45 with the protagonist seated in
+**The opening.** The game starts at 10:43:40 with the protagonist seated in
 the first coach of the morning train from Pico, 50 real seconds before it
 stops at Monte Nievas. The camera starts behind the coach, framing it and the
 town ahead ("Próxima estación: Monte Nievas"). The train brakes into the
-station at 10:14:45 ("Estación Monte Nievas"), and two real seconds later,
-at 10:15:09, he gets off onto the platform beside the coach door, on foot.
+station at 10:53:40 ("Estación Monte Nievas"), and two real seconds later,
+at 10:54:04, he gets off onto the platform beside the coach door, on foot.
+(The opening follows the timetable: the Metileo stop moved it 39 game
+minutes later on 2026-10-23.)
 `Space` skips the approach, as a short trip (see Skipping).
 
 **Boarding.** While the train stands at a station (or lays over at a
@@ -183,6 +191,29 @@ its ground mesh, and lays out any settlement in it, on a background thread
 and gets them a few frames later, out in the fog, so crossing a chunk border
 never stalls a frame.
 
+General Pico grew on both sides of the Ferrocarril Oeste, which runs
+through the middle of the town (east-west in the game; the real town's grid
+and line are turned 45°): the station, its platform, grain stores and yard
+stand on the line in the centre, the main plaza a few blocks north-west of
+them, and every north-south street clear of the yard crosses the track at a
+level crossing with a plank deck and St Andrew's crosses (`RailwayConfig::through`).
+Between Monte Nievas and Pico, the train stops at the Metileo halt (station
+1906): a store and a handful of houses round a small grid (`density` in the
+towns file). East-south-east of Pico lies **Laguna La Arocena**, a shallow
+freshwater lagoon (`pampa_core::Lagoon`): a squarish, softly rounded shore
+of about 215 x 145 m, a little rough at the edges. Its water is a flat,
+dark olive-brown sheet 0.6 m under the lowest bank, smooth and reflective
+like water, darker in the middle and see-through over the mud near the
+shore, with faint, fine wind ripples from a small normal map painted in code
+and drifted by its UV transform (one draw, no reflection pass). The ground
+is sunk into a basin under it (1.6 m deep in the middle); only a 3 m band of
+wet mud rings the waterline, and the grass, stones and shrubs grow again
+right past it. Totora reeds, 1.5 to 2.5 m tall, stand in patches along the
+water's edge, in one mesh. Riders and walkers wade the shallows but are
+turned back where the water gets deep. Fences, settlements and roads keep
+off it and its bank, trees stay 12 m back from the water, and the minimap
+paints it as water.
+
 The open land between towns is pampa grassland:
 - The ground's colour drifts from dry yellow to grey-green, through vertex colours that are continuous across chunk borders. Over that paint lies a tiled soil-and-grass detail texture (normal, roughness and ambient-occlusion maps too), in world-space UVs on a 6 m tile, so it runs on across chunk borders.
 - Grass tufts (paja, flechilla) are scattered densely, tinted from grey-green to dry yellow with the ground, with a few weeds and wildflowers among them. They thin out with distance.
@@ -192,7 +223,7 @@ The open land between towns is pampa grassland:
 The plants and stones are low-poly CC0 models from Quaternius' Ultimate Nature Pack, and the ground textures are CC0 from ambientCG. They are read from `assets/` at startup by our own small OBJ and PNM readers (no extra crates), and they are recoloured and rescaled in code for the dry 1919 pampa. A missing file logs a warning, and a procedural stand-in is drawn instead. There is no level-of-detail swap: each tree is the same model out to 200 m and fades out inside the 180 m dust fog. Tufts stay solid within about 40 m of the rider and thin out smoothly farther away. Every model choice, turn and size is seeded by its placement, so a reloaded chunk looks exactly the same. Every asset is credited, with what was changed, in [CREDITS.md](CREDITS.md).
 
 Roads, fences and gates cross that land:
-- **Dirt roads** for carts and riders join neighbouring towns (Eduardo Castex–Monte Nievas, 2.1 km; Monte Nievas–General Pico, 6.9 km). Each leaves a town by the street facing the other town and runs on a gently curving, seeded line. It is more direct than the railway, which loses distance on its run-outs and wide curves. A road keeps 40 m clear of the track and crosses it only where its ends lie on opposite sides, and then squarely. In the shipped map, both direct roads stay south of the line.
+- **Dirt roads** for carts and riders join neighbouring towns on the line (Eduardo Castex–Monte Nievas, Monte Nievas–Metileo, Metileo–General Pico). Each leaves a town by the street facing the other town and runs on a gently curving, seeded line. It is more direct than the railway, which loses distance on its run-outs and wide curves. A road keeps 40 m clear of the track and crosses it only where its ends lie on opposite sides, and then squarely. A road never leaves General Pico along its line, which runs out of both ends of the town. A public dead-end road also leaves General Pico by its east side for Laguna La Arocena, with a signpost naming the lagoon at its start; it ends on the lagoon's bank in a small turnaround loop that comes to the wet mud and no farther.
 - **Level crossings and rural tracks:** every railway town has one street that crosses its track by the station, square, at a level crossing. That is the street through the station yard nearest the station, or the ring street carried just past the grid when the yard fills the town's track side. The crossing has timber planks flush under the rail heads, between the rails and in a strip of about half a meter outside each, exactly the road's width along the track. The dirt road itself rises to them as packed earth over 7 m on each side (about 1 in 10 at the steepest), on its own axis and as wide as the road, its edges sloping down to the grass. Riders, people and the camera climb the same rise; the track bed itself is never lowered or raised by the road. A St Andrew's cross stands on a post on each approach. Past it, a short seeded rural track of 300–800 m runs out toward the chacras and estancias and ends in the open land. A rider can always cross; a train car standing on the crossing still blocks it.
 - **Road surface:** each road is cut a shallow 15 cm into the ground, level across and easing back into the land beside it, so `Terrain::height` stays continuous. Nothing farther than the cut's reach from the road is touched, and the track bed at a level crossing is left as it is. It wears Ground 102 compressed dirt from ambientCG, with its edges feathered into the grass, which is worn to earth along it. No tree, tuft, stone or shrub grows on a road or its verges.
 - **Signposts:** a wooden signpost stands at each town's road exit. Its arrow board names the far town and the distance in kilometres, to a tenth, in the pixel font, for example "GENERAL PICO 6,9 KM".

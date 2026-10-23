@@ -8,7 +8,10 @@ use std::path::Path;
 
 use bevy::prelude::*;
 use pampa_content::load_towns_or_builtin;
-use pampa_core::{PlaceKind, RailLine, RoadNetwork, TownLayout, WorldConfig, place_towns};
+use pampa_core::{
+    Lagoon, PlaceKind, RailLine, RoadNetwork, Terrain, TownLayout, WorldConfig, place_lagoons,
+    place_towns,
+};
 use pampa_render::font;
 
 /// The world to build, its towns, and what went wrong reading them.
@@ -23,13 +26,17 @@ pub struct LoadedWorld {
     /// The dirt roads between neighbouring towns, and each railway town's
     /// rural track across its level crossing.
     pub roads: RoadNetwork,
+    /// The lagoons, clear of the towns, the railway and the roads, their
+    /// water set against the default terrain.
+    pub lagoons: Vec<Lagoon>,
     /// Problems found, ready to log as warnings.
     pub warnings: Vec<String>,
 }
 
 /// Loads the towns file at `path` and places every valid town in its world,
 /// falling back to the built-in Eduardo Castex when no town can be built,
-/// then runs the railway line and the roads through them.
+/// then runs the railway line and the roads through them and lays the
+/// lagoons clear of them all.
 pub fn load_world(path: &Path) -> LoadedWorld {
     let (content, errors) = load_towns_or_builtin(path);
     let mut warnings: Vec<String> = errors.iter().map(|e| format!("towns: {e}")).collect();
@@ -55,11 +62,24 @@ pub fn load_world(path: &Path) -> LoadedWorld {
     warnings.extend(broken.iter().map(|e| format!("towns: {e}")));
     let (roads, left_out) = RoadNetwork::build(&towns, &line, world.bounds());
     warnings.extend(left_out.iter().map(|e| format!("towns: {e}")));
+    let (lagoons, left_out) = place_lagoons(
+        &world,
+        &Terrain::default(),
+        &towns,
+        &line,
+        &roads,
+        &content.lagoons,
+    );
+    warnings.extend(left_out.iter().map(|e| format!("towns: {e}")));
+    // A public road out to each lagoon from the nearest town.
+    let (roads, left_out) = roads.with_lagoons(&towns, &line, world.bounds(), &lagoons);
+    warnings.extend(left_out.iter().map(|e| format!("towns: {e}")));
     LoadedWorld {
         world,
         towns,
         line,
         roads,
+        lagoons,
         warnings,
     }
 }
@@ -93,6 +113,16 @@ fn unsupported_glyphs(town: &TownLayout) -> Vec<String> {
 pub struct TownReport {
     pub names: Vec<String>,
     pub warnings: Vec<String>,
+}
+
+impl LoadedWorld {
+    /// The default terrain with every lagoon sunk into it, before the towns
+    /// are leveled.
+    pub fn terrain(&self) -> Terrain {
+        self.lagoons
+            .iter()
+            .fold(Terrain::default(), |t, l| t.with_lagoon(l.clone()))
+    }
 }
 
 impl TownReport {
@@ -137,25 +167,189 @@ mod tests {
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
         assert_eq!(loaded.world.half_extent, WorldConfig::MAX_HALF_EXTENT);
         let names: Vec<&str> = loaded.towns.iter().map(|t| t.name.as_str()).collect();
-        assert_eq!(names, ["Monte Nievas", "Eduardo Castex", "General Pico"]);
-        // General Pico is very big: a 2 x 2 plaza, a station plaza, four
+        assert_eq!(
+            names,
+            ["Monte Nievas", "Eduardo Castex", "Metileo", "General Pico"]
+        );
+        // General Pico is very big: a 2 x 2 plaza, a station plaza, two
         // general stores, two police stations and 51 people.
-        let pico = &loaded.towns[2];
+        let pico = &loaded.towns[3];
         assert_eq!(pico.size, TownSize::VeryBig);
         assert!(pico.station_plaza.is_some());
         let count = |kind: PlaceKind| pico.places().iter().filter(|p| p.kind == kind).count();
-        assert_eq!(count(PlaceKind::GeneralStore), 4);
+        assert_eq!(count(PlaceKind::GeneralStore), 2);
         assert_eq!(count(PlaceKind::PoliceStation), 2);
         assert_eq!(count(PlaceKind::Plaza), 2);
         assert_eq!(pico.townsfolk_count(), 51);
-        for small in &loaded.towns[..2] {
+        for small in &loaded.towns[..3] {
             assert_eq!(small.size, TownSize::Small, "{}", small.name);
             assert_eq!(small.station_plaza, None, "{}", small.name);
         }
-        // One railway line runs Castex, Monte Nievas, General Pico.
-        assert_eq!(loaded.line.towns, [1, 0, 2]);
+        // One railway line runs Castex, Monte Nievas, Metileo, General Pico.
+        assert_eq!(loaded.line.towns, [1, 0, 2, 3]);
         let links: Vec<(usize, usize)> = loaded.line.links.iter().map(|l| (l.from, l.to)).collect();
-        assert_eq!(links, [(1, 0), (0, 2)]);
+        assert_eq!(links, [(1, 0), (0, 2), (2, 3)]);
+        // The small towns' stores are pulperías; Pico's, almacenes de ramos
+        // generales.
+        for town in &loaded.towns {
+            let expected = if town.size == TownSize::Small {
+                "PULPERÍA"
+            } else {
+                "ALMACÉN DE RAMOS GENERALES"
+            };
+            for store in town
+                .places()
+                .iter()
+                .filter(|p| p.kind == PlaceKind::GeneralStore)
+            {
+                assert_eq!(store.name, expected, "{}", town.name);
+            }
+        }
+        // Laguna La Arocena is laid, clear of everything.
+        assert_eq!(loaded.lagoons.len(), 1);
+        assert_eq!(loaded.lagoons[0].name, "Laguna La Arocena");
+    }
+
+    #[test]
+    fn general_pico_grows_on_both_sides_of_the_line_through_its_middle() {
+        let loaded = load_world(&asset_path(TOWNS_FILE));
+        let pico = &loaded.towns[3];
+        let rail = pico.railway.expect("a railway");
+        let band = pico.rail_band().expect("the line runs through Pico");
+        let grid = pico.grid();
+        // The track runs east-west through the town's core, not along its
+        // edge: within a block of the middle row, inside the band.
+        let y = rail.start.y;
+        assert_eq!(rail.end.y, y);
+        assert!(
+            (y - grid.center().y).abs() < 40.0,
+            "{y} vs {:?}",
+            grid.center()
+        );
+        assert!(band.min.y < y && y < band.max.y);
+        assert!(rail.start.x < grid.min.x && rail.end.x > grid.max.x);
+        // Houses on both sides, and nothing built on the track.
+        let houses = |north: bool| {
+            pico.buildings
+                .iter()
+                .filter(|b| b.kind == BuildingKind::House)
+                .filter(|b| (b.footprint.center().y > y) == north)
+                .count()
+        };
+        assert!(
+            houses(true) > 30 && houses(false) > 30,
+            "{} / {}",
+            houses(true),
+            houses(false)
+        );
+        let corridor = pico.rail_corridor().unwrap();
+        for b in &pico.buildings {
+            assert!(!b.footprint.intersects(&corridor), "{b:?} on the track");
+        }
+        // The station and its platform stand in the middle of town on the
+        // north side of the track, the platform along it.
+        let of = |kind| pico.buildings.iter().find(|b| b.kind == kind).unwrap();
+        let (station, platform) = (of(BuildingKind::Station), of(BuildingKind::Platform));
+        assert!(band.contains(&station.footprint) && band.contains(&platform.footprint));
+        assert!(station.footprint.min.y > platform.footprint.max.y - 1e-3);
+        assert!(platform.footprint.min.y > y);
+        assert!((platform.footprint.center().x - grid.center().x).abs() < 1.0);
+        // A store and a comisaría on each side of the line, each serving
+        // its half of the town.
+        for kind in [BuildingKind::GeneralStore, BuildingKind::PoliceStation] {
+            let north: Vec<bool> = pico
+                .buildings
+                .iter()
+                .filter(|b| b.kind == kind)
+                .map(|b| b.footprint.center().y > y)
+                .collect();
+            assert_eq!(north.len(), 2, "{kind:?}");
+            assert_ne!(north[0], north[1], "{kind:?}");
+        }
+        // The main plaza lies north-west of the station, a few blocks off.
+        let to_plaza = pico.plaza.center() - station.footprint.center();
+        assert!(to_plaza.x < -40.0 && to_plaza.y > 60.0, "{to_plaza:?}");
+        assert!(pico.plaza.min.y > band.max.y);
+        // Every north-south street that crosses the track has its level
+        // crossing, on a street road, square to the track; the others stop
+        // short of the station yard.
+        let streets = pico.crossing_streets();
+        assert!(streets.len() >= 3, "{streets:?}");
+        let crossings: Vec<_> = loaded
+            .roads
+            .roads
+            .iter()
+            .filter(|r| r.kind == pampa_core::RoadKind::Street && r.from == 3)
+            .flat_map(|r| r.crossings.iter())
+            .collect();
+        assert_eq!(crossings.len(), streets.len());
+        for (c, (a, _)) in crossings.iter().zip(&streets) {
+            assert!((c.at.x - a.x).abs() < 1e-3 && (c.at.y - y).abs() < 1e-3);
+            assert!(c.angle() > pampa_core::RoadNetwork::MIN_CROSSING_ANGLE);
+        }
+        let yard: Vec<_> = pico
+            .buildings
+            .iter()
+            .filter(|b| band.contains(&b.footprint))
+            .collect();
+        for s in &pico.streets {
+            for b in &yard {
+                assert!(!s.intersects(&b.footprint), "{s:?} into {b:?}");
+            }
+        }
+        // Walkers cross the line at the level crossings.
+        let graph = pampa_core::StreetGraph::from_town(pico);
+        let across = graph.links.iter().enumerate().any(|(n, links)| {
+            links
+                .iter()
+                .any(|&m| (graph.nodes[n].y - y) * (graph.nodes[m].y - y) < 0.0)
+        });
+        assert!(across);
+        // The ground rises onto each crossing's deck and the rider rides
+        // across, from one half of town to the other.
+        let mut world = World::with_towns(loaded.world, Terrain::default(), &loaded.towns);
+        world.lay_roads(loaded.roads.clone());
+        let collider = pampa_core::Circle::new(pampa_core::Rider::COLLIDER_RADIUS);
+        for (a, b) in &streets {
+            let deck = world.ground_height(Vec2::new(a.x, y)) - world.terrain.height(a.x, y);
+            assert!(
+                (deck - pampa_core::RoadNetwork::CROSSING_RISE).abs() < 0.05,
+                "{deck}"
+            );
+            for k in 0..=20 {
+                let p = *a + (*b - *a) * (k as f32 / 20.0);
+                assert_eq!(world.resolve(collider, p, |_| ()), p, "{p:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_train_stops_at_metileo_by_its_platform() {
+        use pampa_core::{LineTrain, Run, Timetable};
+        let loaded = load_world(&asset_path(TOWNS_FILE));
+        let metileo = &loaded.towns[2];
+        assert_eq!(metileo.name, "Metileo");
+        // A halt: a few houses round its store, no comisaría.
+        let count = |kind| metileo.buildings.iter().filter(|b| b.kind == kind).count();
+        assert_eq!(count(BuildingKind::PoliceStation), 0);
+        assert_eq!(count(BuildingKind::GeneralStore), 1);
+        assert!((3..=15).contains(&(count(BuildingKind::House) + count(BuildingKind::Shed))));
+        let train = LineTrain::new(&loaded.line, &loaded.towns, Timetable::default()).unwrap();
+        let station = train.station_of_town(2).expect("Metileo is a station");
+        // Both runs stop there: up from Pico and down to it.
+        for run in [Run::Up, Run::Down] {
+            let (arrive, depart) = train.stop_times(run, station).unwrap();
+            assert!(depart > arrive, "{run:?}");
+            let mid = train.state_at(run, (arrive + depart) / 2.0);
+            assert!(pampa_core::stands_at(&mid, station), "{run:?}");
+        }
+        assert!(train.misplaced_stops().is_empty());
+        // Its platform is reachable on foot from the street.
+        let (spot, _) = metileo.platform_spot().expect("a platform");
+        let world = World::with_towns(loaded.world, Terrain::default(), &loaded.towns);
+        let collider = pampa_core::Circle::new(pampa_core::Rider::COLLIDER_RADIUS);
+        assert_eq!(world.resolve(collider, spot, |_| ()), spot);
+        assert!(world.ground_height(spot) > world.terrain.height(spot.x, spot.y) + 0.5);
     }
 
     #[test]
@@ -203,10 +397,15 @@ mod tests {
         world.plant(&flora);
         let collider = pampa_core::Circle::new(pampa_core::Rider::COLLIDER_RADIUS);
         for (i, town) in loaded.towns.iter().enumerate() {
+            // General Pico, on both sides of its line, crosses it by its
+            // streets instead (see the test above).
+            if town.rail_band().is_some() {
+                continue;
+            }
             let crossings: Vec<_> = roads
                 .roads
                 .iter()
-                .filter(|r| r.from == i)
+                .filter(|r| r.from == i && r.kind != pampa_core::RoadKind::Street)
                 .flat_map(|r| r.crossings.iter())
                 .collect();
             assert_eq!(crossings.len(), 1, "{}", town.name);

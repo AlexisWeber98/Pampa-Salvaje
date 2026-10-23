@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::{RoadNetwork, Vec2};
+use crate::{Lagoon, RoadNetwork, Vec2};
 
 /// Gently rolling pampa: a few summed sine octaves. Deterministic per seed.
 ///
@@ -20,6 +20,8 @@ pub struct Terrain {
     pub flat_areas: Vec<FlatArea>,
     /// The roads cut into the ground, shared (cloning the terrain is cheap).
     pub roads: Option<Arc<RoadNetwork>>,
+    /// Lagoons sunk into the ground, each in its own basin.
+    pub lagoons: Vec<Lagoon>,
 }
 
 impl Default for Terrain {
@@ -29,6 +31,7 @@ impl Default for Terrain {
             seed: 1927,
             flat_areas: Vec::new(),
             roads: None,
+            lagoons: Vec::new(),
         }
     }
 }
@@ -72,6 +75,17 @@ impl Terrain {
         self
     }
 
+    /// This terrain with `lagoon` sunk into it (see [`Lagoon::shape`]).
+    pub fn with_lagoon(mut self, lagoon: Lagoon) -> Self {
+        self.lagoons.push(lagoon);
+        self
+    }
+
+    /// The lagoon whose water covers `p`, if any.
+    pub fn lagoon_at(&self, p: Vec2) -> Option<&Lagoon> {
+        self.lagoons.iter().find(|l| l.is_water(p))
+    }
+
     /// This terrain with `roads` cut into it (see [`RoadNetwork::cut`]).
     pub fn with_roads(mut self, roads: Arc<RoadNetwork>) -> Self {
         self.roads = Some(roads);
@@ -96,10 +110,21 @@ impl Terrain {
         }
     }
 
-    /// Ground height at `(x, y)` with the towns leveled, before roads.
+    /// Ground height at `(x, y)` with the towns leveled and the lagoons
+    /// sunk, before roads.
     fn leveled_height(&self, x: f32, y: f32) -> f32 {
-        let natural = self.natural_height(x, y);
         let p = Vec2::new(x, y);
+        let ground = self.town_height(p);
+        self.lagoons
+            .iter()
+            .filter(|l| l.touches(p))
+            .fold(ground, |h, l| l.shape(p, h))
+    }
+
+    /// Ground height at `p` with the towns leveled.
+    fn town_height(&self, p: Vec2) -> f32 {
+        let (x, y) = (p.x, p.y);
+        let natural = self.natural_height(x, y);
         let (mut strongest, mut total, mut weighted) = (0.0_f32, 0.0, 0.0);
         for area in &self.flat_areas {
             let w = area.weight(p);
@@ -360,13 +385,14 @@ mod tests {
             };
             // Beside a level crossing the cut eases off the track bed on
             // purpose (`RoadNetwork::cut`), so the bed is not level there.
+            // The cut is never deeper than its depth, by a crossing or not.
             let by_crossing = roads.crossings().any(|c| c.at.distance(mid) < 40.0);
-            if roads.near(mid, RoadNetwork::CUT_REACH * 3.0).is_some()
-                && depth > 0.0
-                && !by_crossing
-            {
+            let cut = roads.near(mid, RoadNetwork::CUT_REACH * 3.0).is_some() && depth > 0.0;
+            if cut {
+                assert!(depth <= RoadNetwork::CUT_DEPTH + 0.01, "{mid:?}: {depth}");
+            }
+            if cut && !by_crossing {
                 assert!(spread(&t) < 0.02, "{mid:?}: {}", spread(&t));
-                assert!(depth <= RoadNetwork::CUT_DEPTH + 0.01, "{depth}");
                 flatter += usize::from(spread(&t) < spread(&plain));
                 checked += 1;
             }

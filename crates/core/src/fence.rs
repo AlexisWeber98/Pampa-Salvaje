@@ -247,9 +247,11 @@ impl FenceLayout {
                     .map(|r| (r.start, r.end)),
             )
             .collect();
+        // Towns and lagoons, with their banks.
         let bands: Vec<Aabb> = towns
             .iter()
             .map(|t| t.leveled().expanded(Self::TOWN_MARGIN))
+            .chain(terrain.lagoons.iter().map(|l| l.keep_out()))
             .collect();
         let descampados = (0..xs.len().saturating_sub(1))
             .flat_map(|i| (0..ys.len().saturating_sub(1)).map(move |j| (i, j)))

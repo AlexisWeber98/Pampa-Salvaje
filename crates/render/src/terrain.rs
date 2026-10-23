@@ -516,13 +516,16 @@ const TOWN_GROUND: Vec3 = Vec3::new(0.60, 0.53, 0.40);
 /// wear reaches, in meters.
 const ROAD_EARTH: Vec3 = Vec3::new(0.60, 0.52, 0.39);
 const ROAD_VERGE: f32 = 4.0;
+/// Wet earth of a lagoon's bottom and shore (sRGB): it reaches only
+/// [`pampa_core::Lagoon::MUD_BAND`] up the bank, then the grass resumes.
+const LAGOON_MUD: Vec3 = Vec3::new(0.36, 0.33, 0.25);
 /// Darkest shade slopes and dips may give the ground.
 const SHADE_MIN: f32 = 0.82;
 
 /// The darkest and brightest linear colour the ground may take.
 #[cfg(test)]
 fn palette_range() -> ([f32; 3], [f32; 3]) {
-    let colors = [GREEN_GRASS, DRY_GRASS, TOWN_GROUND, ROAD_EARTH];
+    let colors = [GREEN_GRASS, DRY_GRASS, TOWN_GROUND, ROAD_EARTH, LAGOON_MUD];
     let lo = colors.iter().fold(Vec3::ONE, |a, c| a.min(*c)) * SHADE_MIN;
     let hi = colors.iter().fold(Vec3::ZERO, |a, c| a.max(*c));
     let linear = |v: Vec3| {
@@ -551,6 +554,7 @@ fn ground_color(terrain: &Terrain, g: GroundVec2) -> [f32; 4] {
             .map_or(0.0, |d| 1.0 - smoothstep(RoadNetwork::HALF_WIDTH, reach, d))
     });
     let rgb = rgb.lerp(ROAD_EARTH, 0.6 * worn);
+    let rgb = rgb.lerp(LAGOON_MUD, lagoon_wetness(terrain, g));
     let e = 0.75;
     let dx = terrain.height(g.x + e, g.y) - terrain.height(g.x - e, g.y);
     let dy = terrain.height(g.x, g.y + e) - terrain.height(g.x, g.y - e);
@@ -559,6 +563,17 @@ fn ground_color(terrain: &Terrain, g: GroundVec2) -> [f32; 4] {
     let shade = (1.0 - 0.6 * slope - 0.05 * dip).clamp(SHADE_MIN, 1.0);
     let rgb = rgb * shade;
     LinearRgba::from(Color::srgb(rgb.x, rgb.y, rgb.z)).to_f32_array()
+}
+
+/// How wet the ground at `g` is, from 0 (dry grass) to 1 (mud): wet under
+/// a lagoon's water, drying over its narrow mud band up the bank.
+pub(crate) fn lagoon_wetness(terrain: &Terrain, g: GroundVec2) -> f32 {
+    terrain
+        .lagoons
+        .iter()
+        .filter(|l| l.touches(g))
+        .map(|l| 1.0 - smoothstep(0.0, pampa_core::Lagoon::MUD_BAND, l.offshore(g)))
+        .fold(0.0, f32::max)
 }
 
 fn smoothstep(lo: f32, hi: f32, x: f32) -> f32 {
@@ -598,7 +613,7 @@ const PROP_ROAD_MARGIN: f32 = 2.0;
 const PROP_SETTLEMENT_MARGIN: f32 = 2.0;
 
 /// The props of chunk `coord`, seeded by its coordinate, skipping leveled
-/// ground (towns are cleared land), the roads and, given the flora's
+/// ground (towns are cleared land), the lagoons and their wet mud, the roads and, given the flora's
 /// keep-out (`track`), the whole train path with [`PROP_RAIL_MARGIN`] and
 /// the rural settlements with [`PROP_SETTLEMENT_MARGIN`].
 fn chunk_props(
@@ -626,7 +641,8 @@ fn chunk_props(
                 size: 0.4 + unit() * 1.2,
                 yaw: unit() * std::f32::consts::TAU,
             };
-            let leveled = terrain.flat_areas.iter().any(|a| a.weight(at) > 0.0);
+            let leveled = terrain.flat_areas.iter().any(|a| a.weight(at) > 0.0)
+                || terrain.lagoons.iter().any(|l| l.is_bare(at));
             let on_road = terrain.roads.as_ref().is_some_and(|r| {
                 r.near(at, RoadNetwork::HALF_WIDTH + PROP_ROAD_MARGIN)
                     .is_some()
@@ -1043,5 +1059,39 @@ mod tests {
             }
         }
         assert!(spread > 0.1, "{spread}");
+    }
+
+    #[test]
+    fn only_a_narrow_band_of_mud_rings_a_lagoon() {
+        let config = pampa_core::LagoonConfig {
+            name: "Laguna".into(),
+            center: GroundVec2::new(3401.0, 841.0),
+            size: GroundVec2::new(215.0, 145.0),
+            seed: 5,
+        };
+        let lagoon = pampa_core::Lagoon::new(&config, &Terrain::default());
+        let terrain = Terrain::default().with_lagoon(lagoon.clone());
+        for p in lagoon.ring(64, -1.0) {
+            assert_eq!(lagoon_wetness(&terrain, p), 1.0);
+        }
+        for p in lagoon.ring(64, pampa_core::Lagoon::MUD_BAND + 0.1) {
+            assert_eq!(lagoon_wetness(&terrain, p), 0.0, "{p:?}");
+        }
+        // Past the mud, stones and shrubs come back.
+        let keep = lagoon.keep_out();
+        let (lo, hi) = (
+            ChunkCoord::containing(keep.min, 200.0),
+            ChunkCoord::containing(keep.max, 200.0),
+        );
+        let mut near = 0;
+        for cx in lo.x..=hi.x {
+            for cy in lo.y..=hi.y {
+                for prop in chunk_props(&terrain, ChunkCoord { x: cx, y: cy }, 200.0, None) {
+                    assert!(!lagoon.is_bare(prop.at));
+                    near += usize::from(lagoon.offshore(prop.at) < 30.0);
+                }
+            }
+        }
+        assert!(near > 3, "{near}");
     }
 }

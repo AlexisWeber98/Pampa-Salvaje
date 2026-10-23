@@ -284,6 +284,10 @@ impl World {
             for obstacle in nearby {
                 apply(collider.push_out(center, obstacle), &mut center);
             }
+            // Deep water turns bodies back to the shallows.
+            for lagoon in &self.terrain.lagoons {
+                apply(lagoon.push_out(center), &mut center);
+            }
             if with_moving {
                 for obstacle in &self.moving {
                     apply(obstacle.push_out(collider, center), &mut center);
@@ -305,6 +309,12 @@ impl World {
             .chain(self.moving.iter().map(|m| &m.footprint));
         footprints
             .filter_map(|o| collider.push_out(center, o))
+            .chain(
+                self.terrain
+                    .lagoons
+                    .iter()
+                    .filter_map(|l| l.push_out(center)),
+            )
             .map(Vec2::length)
             .fold(0.0, f32::max)
     }
@@ -447,6 +457,34 @@ mod tests {
             checked += 1;
         }
         assert!(checked > 3);
+    }
+
+    #[test]
+    fn a_rider_wades_the_shallows_of_a_lagoon_but_never_its_deep_water() {
+        let config = crate::lagoon::tests::arocena_config();
+        let lagoon = crate::Lagoon::new(&config, &Terrain::default());
+        let world = World::new(
+            WorldConfig::default(),
+            Terrain::default().with_lagoon(lagoon.clone()),
+        );
+        let collider = Circle::new(crate::Rider::COLLIDER_RADIUS);
+        // Riding straight at the middle from every side: each step is
+        // resolved, and the rider ends in the shallows, never deeper.
+        for k in 0..16 {
+            let angle = k as f32 * std::f32::consts::TAU / 16.0;
+            let dir = Vec2::new(angle.cos(), angle.sin());
+            let mut at = lagoon.center + dir * (lagoon.shore_radius(angle) + 20.0);
+            let mut pushed = false;
+            for _ in 0..200 {
+                at = world.resolve(collider, at + dir * -0.5, |_| pushed = true);
+                assert!(!lagoon.is_deep(at), "{at:?}");
+            }
+            assert!(pushed && lagoon.is_water(at), "{at:?}");
+            assert!(world.ground_height(at) < lagoon.level);
+        }
+        // Dry land is left alone.
+        let dry = lagoon.center + Vec2::new(lagoon.radii.x * 2.0, 0.0);
+        assert_eq!(world.resolve(collider, dry, |_| ()), dry);
     }
 
     #[test]

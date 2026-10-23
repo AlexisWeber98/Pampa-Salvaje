@@ -37,15 +37,38 @@
             seed: 2,
         ),
         (
-            // A very big town (8 x 8 blocks): a 2 x 2 central plaza, a
-            // station plaza, four general stores and two police stations.
-            // About 35.8 km east and 22.4 km north of Monte Nievas, scaled 1:7.
+            // A railway halt between Monte Nievas and General Pico (station
+            // 1906): a few houses round a store. At its real place,
+            // -35.774, -63.941: 16.63 km west and 12.56 km south of Pico's
+            // plaza, scaled 1:7.
+            name: "Metileo",
+            origin: (288.0, -544.0),
+            blocks: (3, 3),
+            block_size: 30.0,
+            street_width: 8.0,
+            railway: Some((side: North, offset: 24.0)),
+            plaza: Auto,
+            seed: 19,
+            police_stations: Some(0),
+            // Only about a third of the lots are built: a village, not a town.
+            density: Some(0.3),
+        ),
+        (
+            // A very big town (8 x 8 blocks): a 2 x 2 plaza, a station
+            // plaza, and a general store and a police station on each side
+            // of the line. About
+            // 35.8 km east and 22.4 km north of Monte Nievas, scaled 1:7.
+            // The Ferrocarril Oeste runs through the middle of town, as in
+            // the real Pico, which grew on both sides of it; the station
+            // stands in the north half, the plaza a few blocks north-west of
+            // it. (The real grid is turned 45°, along the line; here it is
+            // square to the map, the line along its east-west axis.)
             name: "General Pico",
             origin: (2664.0, 1250.0),
             blocks: (8, 8),
             block_size: 40.0,
             street_width: 10.0,
-            railway: Some((side: North, offset: 24.0)),
+            railway: Some((side: North, offset: 24.0, through: true)),
             plaza: Auto,
             seed: 13,
         ),
@@ -53,5 +76,17 @@
     // The railway line, in order: links that bend on wide curves join each
     // town's track to the next one's. Every town with a railway must be
     // listed.
-    line: Some(["Eduardo Castex", "Monte Nievas", "General Pico"]),
+    line: Some(["Eduardo Castex", "Monte Nievas", "Metileo", "General Pico"]),
+    // Shallow freshwater lagoons, sunk into the pampa with a reed belt.
+    lagoons: [
+        (
+            // Real 5.9 km at bearing 119° from General Pico (5.16 km east,
+            // 2.86 km south), scaled 1:7. About 150 ha in reality: its
+            // shape is kept, at 215 x 145 m.
+            name: "Laguna La Arocena",
+            center: (3401.0, 841.0),
+            size: (215.0, 145.0),
+            seed: 5,
+        ),
+    ],
 )

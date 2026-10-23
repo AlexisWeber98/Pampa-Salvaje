@@ -421,9 +421,11 @@ impl SettlementLayout {
                     .map(|w| (w[0], w[1])),
             )
             .collect();
+        // Towns and lagoons with their banks.
         let bands: Vec<Aabb> = towns
             .iter()
             .map(|t| t.leveled().expanded(Settlement::TOWN_CLEARANCE))
+            .chain(terrain.lagoons.iter().map(|l| l.keep_out()))
             .collect();
         let site = Site {
             terrain,
@@ -1646,6 +1648,13 @@ mod tests {
                 &ranch_towns(&towns)
             )
         );
+        // The plain build, without forced estancias, is seeded too.
+        let plain = SettlementLayout::build(&world.terrain, &towns, &line, &fences);
+        assert_eq!(
+            plain,
+            SettlementLayout::build(&world.terrain, &towns, &line, &fences)
+        );
+        assert!(!plain.settlements.is_empty());
         let open = fences.gates.iter().filter(|g| g.open).count();
         let total = layout.settlements.len();
         // Only some open gates lead to a settlement, and estancias are few.

@@ -537,10 +537,12 @@ mod tests {
             railway: Some(RailwayConfig {
                 side: Side::North,
                 offset: 24.0,
+                through: false,
             }),
             plaza: PlazaPlacement::Auto,
             seed,
             police_stations: None,
+            density: None,
         };
         let (towns, errors) = place_towns(
             &config,

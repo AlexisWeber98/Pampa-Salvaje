@@ -9,7 +9,7 @@ use crate::rng::Rng;
 use std::sync::Arc;
 
 use crate::{
-    Aabb, ChunkCoord, FenceLayout, FlatArea, KeepOut, LinePath, RailLine, RoadNetwork,
+    Aabb, ChunkCoord, FenceLayout, FlatArea, KeepOut, Lagoon, LinePath, RailLine, RoadNetwork,
     SettlementLayout, Terrain, Vec2, WorldConfig,
 };
 
@@ -69,6 +69,8 @@ pub struct ChunkFlora {
 pub struct FloraSite {
     config: WorldConfig,
     flat_areas: Vec<FlatArea>,
+    /// The lagoons: grass stops at their wet mud, trees a little farther.
+    lagoons: Vec<Lagoon>,
     rail: Vec<(Vec2, Vec2)>,
     roads: Option<Arc<RoadNetwork>>,
     /// The surveyed fence lines: `x` of the north–south ones, `y` of the
@@ -100,6 +102,8 @@ impl FloraSite {
     pub const TREE_FENCE_MARGIN: f32 = 1.5;
     /// Least distance from a tree to the world's edge, in meters.
     pub const TREE_EDGE_MARGIN: f32 = 10.0;
+    /// Least distance from a tree to a lagoon's waterline, in meters.
+    pub const TREE_LAGOON_MARGIN: f32 = 12.0;
     /// Least distance from a tree to a town's leveled band, in meters.
     pub const TREE_TOWN_MARGIN: f32 = 6.0;
     /// Least distance from a tree's trunk to a settlement's footprints,
@@ -126,6 +130,7 @@ impl FloraSite {
         Self {
             config,
             flat_areas: terrain.flat_areas.clone(),
+            lagoons: terrain.lagoons.clone(),
             rail: line.segments().map(|s| (s.start, s.end)).collect(),
             roads: terrain.roads.clone(),
             fences: (Vec::new(), Vec::new()),
@@ -149,6 +154,21 @@ impl FloraSite {
     /// terrain's stones and shrubs share with the trees and tufts.
     pub fn off_track(&self, p: Vec2, margin: f32) -> bool {
         rail_distance(&self.rail, p) >= margin
+    }
+
+    /// Whether a tuft, stone or shrub may grow at `p`: clear of every
+    /// lagoon's water and the narrow wet mud along it
+    /// ([`Lagoon::MUD_BAND`]). The reeds are drawn on their own.
+    pub fn off_lagoons(&self, p: Vec2) -> bool {
+        self.lagoons.iter().all(|l| !l.is_bare(p))
+    }
+
+    /// Whether a tree may stand at `p`: [`Self::TREE_LAGOON_MARGIN`] past
+    /// every lagoon's waterline.
+    fn tree_off_lagoons(&self, p: Vec2) -> bool {
+        self.lagoons
+            .iter()
+            .all(|l| l.offshore(p) >= Self::TREE_LAGOON_MARGIN)
     }
 
     /// This flora, with trees kept off the surveyed lines of `fences`.
@@ -329,6 +349,7 @@ impl FloraSite {
                 && bounds.max.y - at.y >= 0.5;
             let open = inside
                 && self.flat_areas.iter().all(|a| a.weight(at) == 0.0)
+                && self.off_lagoons(at)
                 && rail_distance(rail, at) >= Self::TUFT_RAIL_MARGIN
                 && self.off_road(at, Self::TUFT_ROAD_MARGIN)
                 && self.off_settlements(at, Self::TUFT_SETTLEMENT_MARGIN)
@@ -370,6 +391,7 @@ impl FloraSite {
                 .flat_areas
                 .iter()
                 .all(|a| outside(a, p) >= a.falloff + Self::TREE_TOWN_MARGIN)
+            && self.tree_off_lagoons(p)
             && rail_distance(rail, p) >= Self::TREE_RAIL_MARGIN
             && self.off_road(p, Self::TREE_ROAD_MARGIN)
             && self.off_fences(p)
@@ -869,5 +891,39 @@ mod tests {
             assert_eq!(f.trees, flora.trees(c));
         }
         assert!(trees > 20 && tufts > 2000, "{trees} {tufts}");
+    }
+
+    #[test]
+    fn grass_grows_to_the_lagoons_wet_mud_and_trees_keep_back() {
+        let config = crate::lagoon::tests::arocena_config();
+        let lagoon = Lagoon::new(&config, &Terrain::default());
+        let terrain = Terrain::default().with_lagoon(lagoon.clone());
+        let world = WorldConfig::default();
+        let (line, _) = RailLine::build(None, &[], world.bounds());
+        let flora = FloraSite::new(world, &terrain, &line);
+        let keep = lagoon.keep_out();
+        let (lo, hi) = (
+            ChunkCoord::containing(keep.min, world.chunk_size),
+            ChunkCoord::containing(keep.max, world.chunk_size),
+        );
+        let mut near = 0;
+        for cx in lo.x..=hi.x {
+            for cy in lo.y..=hi.y {
+                let chunk = flora.chunk(ChunkCoord { x: cx, y: cy });
+                for t in &chunk.tufts {
+                    assert!(!lagoon.is_bare(t.at), "{t:?} on the mud");
+                    let off = lagoon.offshore(t.at);
+                    near += usize::from(off < Lagoon::MUD_BAND + 20.0);
+                }
+                for t in &chunk.trees {
+                    assert!(
+                        lagoon.offshore(t.at) >= FloraSite::TREE_LAGOON_MARGIN,
+                        "{t:?}"
+                    );
+                }
+            }
+        }
+        // The bank is grassed right down to the mud.
+        assert!(near > 100, "{near}");
     }
 }

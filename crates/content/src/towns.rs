@@ -14,7 +14,9 @@
 
 use std::path::Path;
 
-use pampa_core::{PlazaPlacement, RailwayConfig, Side, TownConfig, Vec2, WorldConfig};
+use pampa_core::{
+    LagoonConfig, PlazaPlacement, RailwayConfig, Side, TownConfig, Vec2, WorldConfig,
+};
 use serde::Deserialize;
 
 use crate::ContentError;
@@ -30,6 +32,9 @@ pub struct WorldContent {
     /// Town names in railway line order, as written; `None` lets the line
     /// run through every railway town west to east.
     pub line: Option<Vec<String>>,
+    /// Lagoons, as written; the game checks them against the towns, the
+    /// railway and the roads ([`pampa_core::place_lagoons`]).
+    pub lagoons: Vec<LagoonConfig>,
 }
 
 impl WorldContent {
@@ -39,6 +44,7 @@ impl WorldContent {
             world: WorldConfig::default(),
             towns: vec![TownConfig::castex()],
             line: None,
+            lagoons: Vec::new(),
         }
     }
 }
@@ -53,6 +59,29 @@ struct TownsFile {
     towns: Vec<TownDto>,
     #[serde(default)]
     line: Option<Vec<String>>,
+    #[serde(default)]
+    lagoons: Vec<LagoonDto>,
+}
+
+/// One lagoon as written in the file (see [`LagoonConfig`]).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct LagoonDto {
+    name: String,
+    center: (f32, f32),
+    size: (f32, f32),
+    #[serde(default)]
+    seed: u32,
+}
+
+impl From<LagoonDto> for LagoonConfig {
+    fn from(lagoon: LagoonDto) -> Self {
+        LagoonConfig {
+            name: lagoon.name,
+            center: Vec2::new(lagoon.center.0, lagoon.center.1),
+            size: Vec2::new(lagoon.size.0, lagoon.size.1),
+            seed: lagoon.seed,
+        }
+    }
 }
 
 /// The `world` section (see [`WorldConfig`]); each field is optional.
@@ -99,12 +128,19 @@ struct TownDto {
     /// Overrides the size tier's police station count (`Some(0)`: none).
     #[serde(default)]
     police_stations: Option<usize>,
+    /// Share of the lots built (see [`TownConfig::density`]).
+    #[serde(default)]
+    density: Option<f32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 struct RailwayDto {
     side: SideDto,
     offset: f32,
+    /// The line runs through the middle of the town (see
+    /// [`RailwayConfig::through`]).
+    #[serde(default)]
+    through: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
@@ -157,10 +193,12 @@ impl From<TownDto> for TownConfig {
             railway: town.railway.map(|r| RailwayConfig {
                 side: r.side.into(),
                 offset: r.offset,
+                through: r.through,
             }),
             plaza: town.plaza.into(),
             seed: town.seed,
             police_stations: town.police_stations,
+            density: town.density,
         }
     }
 }
@@ -191,7 +229,16 @@ pub fn parse_towns(text: &str) -> Result<(WorldContent, Vec<ContentError>), Cont
         .collect();
     errors.extend(rejected.into_iter().map(ContentError::Town));
     let line = file.line;
-    Ok((WorldContent { world, towns, line }, errors))
+    let lagoons = file.lagoons.into_iter().map(LagoonConfig::from).collect();
+    Ok((
+        WorldContent {
+            world,
+            towns,
+            line,
+            lagoons,
+        },
+        errors,
+    ))
 }
 
 /// Reads and parses the towns file at `path` (see [`parse_towns`]).
@@ -236,7 +283,7 @@ mod tests {
     }
 
     #[test]
-    fn the_shipped_file_holds_the_three_towns_of_the_line_in_the_largest_world() {
+    fn the_shipped_file_holds_the_four_towns_of_the_line_and_a_lagoon_in_the_largest_world() {
         let (content, errors) = parse_towns(SHIPPED).expect("shipped towns.ron is valid");
         assert!(errors.is_empty(), "{errors:?}");
         assert_eq!(
@@ -248,10 +295,20 @@ mod tests {
         );
         assert_eq!(content.world.validated(), Ok(content.world));
         let names: Vec<&str> = content.towns.iter().map(|t| t.name.as_str()).collect();
-        assert_eq!(names, ["Monte Nievas", "Eduardo Castex", "General Pico"]);
-        let north = Some(RailwayConfig {
+        assert_eq!(
+            names,
+            ["Monte Nievas", "Eduardo Castex", "Metileo", "General Pico"]
+        );
+        let beside = RailwayConfig {
             side: Side::North,
             offset: 24.0,
+            through: false,
+        };
+        let north = Some(beside);
+        // The line runs through the middle of General Pico.
+        let through = Some(RailwayConfig {
+            through: true,
+            ..beside
         });
         // Real offsets in meters, scaled 1:7 from Monte Nievas, which keeps
         // its origin, and rounded to the meter (see the README).
@@ -262,30 +319,92 @@ mod tests {
                 (nievas.y + north / 7.0).round(),
             )
         };
-        for (town, origin, blocks) in [
-            (&content.towns[0], nievas, (4, 3)),
-            (&content.towns[1], scaled(-12_600.0, -5_400.0), (5, 4)),
-            (&content.towns[2], scaled(35_800.0, 22_400.0), (8, 8)),
+        let pico = scaled(35_800.0, 22_400.0);
+        for (town, origin, blocks, railway) in [
+            (&content.towns[0], nievas, (4, 3), north),
+            (
+                &content.towns[1],
+                scaled(-12_600.0, -5_400.0),
+                (5, 4),
+                north,
+            ),
+            (&content.towns[3], pico, (8, 8), through),
         ] {
             assert_eq!(town.origin, origin, "{}", town.name);
             assert_eq!(town.blocks, blocks, "{}", town.name);
             assert_eq!((town.block_size, town.street_width), (40.0, 10.0));
-            assert_eq!(town.railway, north, "{}", town.name);
+            assert_eq!(town.railway, railway, "{}", town.name);
             assert_eq!(town.plaza, PlazaPlacement::Auto, "{}", town.name);
         }
-        // Monte Nievas and Castex are small, General Pico very big.
+        // Metileo, a halt: at its real place, 16.63 km west and 12.56 km
+        // south of Pico's plaza, scaled 1:7; few houses, no comisaría.
+        let metileo = &content.towns[2];
+        let from_pico = Vec2::new(
+            (pico.x - 16_630.0 / 7.0).round(),
+            (pico.y - 12_560.0 / 7.0).round(),
+        );
+        assert_eq!(metileo.origin, from_pico);
+        assert_eq!((metileo.blocks, metileo.railway), ((3, 3), north));
+        assert_eq!(metileo.police_count(), 0);
+        assert!(metileo.density.is_some_and(|d| d < 0.5));
+        // Monte Nievas, Castex and Metileo are small, General Pico very big.
         let sizes: Vec<TownSize> = content.towns.iter().map(TownConfig::size).collect();
-        assert_eq!(sizes, [TownSize::Small, TownSize::Small, TownSize::VeryBig]);
+        assert_eq!(
+            sizes,
+            [
+                TownSize::Small,
+                TownSize::Small,
+                TownSize::Small,
+                TownSize::VeryBig
+            ]
+        );
         let (placed, errors) = pampa_core::place_towns(&content.world, &content.towns);
         assert!(errors.is_empty(), "{errors:?}");
         assert_eq!(placed.len(), content.towns.len());
-        // The railway line runs Castex, Monte Nievas, General Pico.
+        // The railway line runs Castex, Monte Nievas, Metileo, General Pico.
         let line = content.line.as_deref().expect("an explicit line");
-        assert_eq!(line, ["Eduardo Castex", "Monte Nievas", "General Pico"]);
+        assert_eq!(
+            line,
+            ["Eduardo Castex", "Monte Nievas", "Metileo", "General Pico"]
+        );
         let (rail, errors) =
             pampa_core::RailLine::build(Some(line), &placed, content.world.bounds());
         assert!(errors.is_empty(), "{errors:?}");
-        assert_eq!(rail.links.len(), 2);
+        assert_eq!(rail.links.len(), 3);
+        // Laguna La Arocena: real 5.9 km at bearing 119° from Pico, scaled.
+        assert_eq!(content.lagoons.len(), 1);
+        let arocena = &content.lagoons[0];
+        assert_eq!(arocena.name, "Laguna La Arocena");
+        let bearing = 119.0_f32.to_radians();
+        let real = Vec2::new(5_900.0 * bearing.sin(), 5_900.0 * bearing.cos());
+        let expected = Vec2::new(pico.x + real.x / 7.0, pico.y + real.y / 7.0);
+        assert!(
+            arocena.center.distance(expected) < 2.0,
+            "{:?}",
+            arocena.center
+        );
+        assert_eq!(arocena.size, Vec2::new(215.0, 145.0));
+    }
+
+    #[test]
+    fn lagoons_are_read_and_optional() {
+        let town = r#"(name: "A", blocks: (3, 3), block_size: 40.0, street_width: 10.0)"#;
+        let (content, _) = parse_towns(&format!("(towns: [{town}])")).unwrap();
+        assert!(content.lagoons.is_empty());
+        let (content, errors) = parse_towns(&format!(
+            r#"(towns: [{town}], lagoons: [(name: "L", center: (100.0, -50.0), size: (80.0, 60.0))])"#
+        ))
+        .unwrap();
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(
+            content.lagoons,
+            [LagoonConfig {
+                name: "L".into(),
+                center: Vec2::new(100.0, -50.0),
+                size: Vec2::new(80.0, 60.0),
+                seed: 0,
+            }]
+        );
     }
 
     #[test]
@@ -306,7 +425,7 @@ mod tests {
         let section = &README[README.find("### Adding another town").expect("section")..];
         let start = section.find("```ron").expect("example") + "```ron".len();
         let example = &section[start..start + section[start..].find("```").unwrap()];
-        let shipped = SHIPPED.rfind("],").expect("end of the town list");
+        let shipped = SHIPPED.find("\n    ],").expect("end of the town list") + 1;
         let text = format!("{}{example}{}", &SHIPPED[..shipped], &SHIPPED[shipped..]);
         let (content, errors) = parse_towns(&text).unwrap();
         assert!(errors.is_empty(), "{errors:?}");
@@ -434,10 +553,12 @@ mod tests {
                     railway: Some(RailwayConfig {
                         side: Side::West,
                         offset: 30.0,
+                        through: false,
                     }),
                     plaza: PlazaPlacement::Block(1, 2),
                     seed: 11,
                     police_stations: None,
+                    density: None,
                 },
                 TownConfig {
                     name: "Carmensa".into(),
@@ -449,6 +570,7 @@ mod tests {
                     plaza: PlazaPlacement::Auto,
                     seed: 0,
                     police_stations: None,
+                    density: None,
                 },
             ]
         );
