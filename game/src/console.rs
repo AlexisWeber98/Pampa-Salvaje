@@ -14,6 +14,7 @@
 //!   `estancia castex` / `estancia pico` (the one nearest that town);
 //! - `goto X Y`: a point, in game meters;
 //! - `caballo`: a saddled horse beside the player;
+//! - `fauna`: how many animals of each kind live round the player;
 //! - `unlock all`: every ability ([`PlayerAbilities`]);
 //! - `modelos on` / `modelos off` (or `personajes nuevos` / `personajes
 //!   viejos`): draw Hidalgo, Farach and Bairoletto as the MakeHuman models
@@ -53,11 +54,12 @@ const LOG_LINES: usize = 6;
 const SEARCH: f32 = 300.0;
 
 /// What the console lists for `help`.
-pub const HELP: [&str; 7] = [
+pub const HELP: [&str; 8] = [
     "goto laguna, pico, castex, nievas, metileo",
     "goto estancia, estancia castex, estancia pico",
     "goto X Y: un punto en metros",
     "caballo: un caballo ensillado al lado",
+    "fauna: los animales cerca",
     "unlock all: todas las habilidades",
     "modelos on, off: personajes nuevos o viejos",
     "hora HH o HH:MM: adelanta el reloj",
@@ -75,6 +77,8 @@ pub fn is_toggle(keys: &ButtonInput<KeyCode>) -> bool {
 pub enum Command {
     Goto(Destination),
     Horse,
+    /// Counts the animals round the player.
+    Fauna,
     UnlockAll,
     /// Draw the errand's people as the MakeHuman models (or not).
     Models(bool),
@@ -101,6 +105,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
     match words.as_slice() {
         ["help"] => Ok(Command::Help),
         ["caballo"] => Ok(Command::Horse),
+        ["fauna"] => Ok(Command::Fauna),
         ["unlock", "all"] => Ok(Command::UnlockAll),
         ["modelos", "on"] | ["personajes", "nuevos"] => Ok(Command::Models(true)),
         ["modelos", "off"] | ["personajes", "viejos"] => Ok(Command::Models(false)),
@@ -360,7 +365,14 @@ fn run_entered(
     ),
     mut players: Query<(&mut Player, &mut Transform, Has<OnTrain>)>,
     (mut horses, mut models): (Local<u32>, Option<ResMut<CharacterModelsShown>>),
+    fauna: Option<Res<crate::fauna::Fauna>>,
 ) {
+    // Only touched with lines to run: a change every frame would reletter
+    // the panel every frame, despawning its lines before the UI lays them
+    // out, so it would show empty.
+    if console.entered.is_empty() {
+        return;
+    }
     for line in std::mem::take(&mut console.entered) {
         console.print(format!(": {line}"));
         let command = match parse(&line) {
@@ -379,6 +391,13 @@ fn run_entered(
         let rider = &mut player.rider;
         match command {
             Command::Help => HELP.iter().for_each(|h| console.print(*h)),
+            Command::Fauna => match fauna.as_deref().map(crate::fauna::Fauna::counts) {
+                Some([cows, horses, hares, teros, raptors, ducks]) => console.print(format!(
+                    "vacas {cows}, caballos {horses}, liebres {hares}, teros {teros}, \
+                     chimangos {raptors}, patos {ducks}"
+                )),
+                None => console.print("no hay fauna"),
+            },
             Command::Models(on) => match models.as_deref_mut() {
                 Some(shown) => {
                     shown.0 = on;
@@ -539,6 +558,7 @@ mod tests {
         assert_eq!(parse("personajes viejos"), Ok(Command::Models(false)));
         assert!(parse("modelos").unwrap_err().contains("uso"));
         assert_eq!(parse("  Caballo "), Ok(Command::Horse));
+        assert_eq!(parse("fauna"), Ok(Command::Fauna));
         assert_eq!(parse("unlock all"), Ok(Command::UnlockAll));
         assert_eq!(parse("hora 21"), Ok(Command::Time(TimeOfDay::hm(21, 0))));
         assert_eq!(parse("Hora 5:30"), Ok(Command::Time(TimeOfDay::hm(5, 30))));
@@ -878,6 +898,95 @@ mod tests {
             repeat: false,
             window: Entity::PLACEHOLDER,
         });
+    }
+
+    /// The lines the panel shows, top to bottom, as (width, height) of
+    /// their lettering images, and whether the panel is shown.
+    fn panel_lines(app: &mut App) -> (bool, Vec<(u32, u32)>) {
+        let mut panels = app
+            .world_mut()
+            .query_filtered::<(&Node, Option<&Children>), With<ConsolePanel>>();
+        let (node, children) = panels.single(app.world()).unwrap();
+        let shown = node.display != Display::None;
+        let children: Vec<Entity> = children.into_iter().flatten().copied().collect();
+        let images = app.world().resource::<Assets<Image>>();
+        let lines = children
+            .iter()
+            .filter_map(|&c| app.world().get::<ImageNode>(c))
+            .filter_map(|i| images.get(&i.image))
+            .inspect(|i| {
+                let inked = i
+                    .data
+                    .as_ref()
+                    .is_some_and(|d| d.chunks(4).any(|p| p[3] > 0));
+                assert!(inked, "a line with no lettering");
+            })
+            .map(|i| (i.width(), i.height()))
+            .collect();
+        (shown, lines)
+    }
+
+    #[test]
+    fn the_open_panel_letters_the_prompt_and_what_help_prints() {
+        let mut app = app();
+        app.init_resource::<Assets<Image>>();
+        app.update();
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.press(KeyCode::ControlLeft);
+            keys.press(KeyCode::ShiftLeft);
+            keys.press(KeyCode::F12);
+        }
+        app.update();
+        app.update();
+        let (shown, lines) = panel_lines(&mut app);
+        assert!(shown, "the panel opens");
+        // The prompt alone, ": -", lettered.
+        let prompt = text_image(": -", SCALE);
+        assert_eq!(lines, vec![(prompt.width(), prompt.height())]);
+        for (code, text) in [
+            (KeyCode::KeyH, "h"),
+            (KeyCode::KeyE, "e"),
+            (KeyCode::KeyL, "l"),
+            (KeyCode::KeyP, "p"),
+        ] {
+            key(&mut app, code, Some(text));
+        }
+        app.update();
+        let typed = text_image(": help-", SCALE);
+        assert_eq!(
+            panel_lines(&mut app).1,
+            vec![(typed.width(), typed.height())]
+        );
+        key(&mut app, KeyCode::Enter, Some("\r"));
+        app.update();
+        app.update();
+        let (_, lines) = panel_lines(&mut app);
+        // The last LOG_LINES lines of the log, then the empty prompt.
+        let log = app.world().resource::<Console>().log.clone();
+        assert_eq!(log.len(), LOG_LINES);
+        assert_eq!(log.last().map(String::as_str), HELP.last().copied());
+        let expected: Vec<(u32, u32)> = log
+            .iter()
+            .map(String::as_str)
+            .chain([": -"])
+            .map(|l| text_image(l, SCALE))
+            .map(|i| (i.width(), i.height()))
+            .collect();
+        assert_eq!(lines, expected);
+        assert!(lines.iter().all(|&(w, h)| w > 2 * SCALE as u32 && h > 0));
+        // Idle, the lines stay put: relettered every frame, they would be
+        // despawned before the UI ever laid them out, and never show.
+        let children = |app: &mut App| -> Vec<Entity> {
+            let mut q = app
+                .world_mut()
+                .query_filtered::<&Children, With<ConsolePanel>>();
+            q.single(app.world()).unwrap().to_vec()
+        };
+        let before = children(&mut app);
+        app.update();
+        app.update();
+        assert_eq!(children(&mut app), before, "relettered while idle");
     }
 
     #[test]

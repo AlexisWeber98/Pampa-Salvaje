@@ -426,7 +426,7 @@ impl Saddle<'_, '_, '_> {
             self.commands.entity(e).remove::<LeftHorse>();
         }
         self.commands.entity(entity).despawn();
-        if let CharacterVisual::Horse(coat) = visual {
+        if let CharacterVisual::Horse(coat) | CharacterVisual::Bare(coat) = visual {
             *self.coat = *coat;
         }
         self.ride(me, rider, transform, &horse);
