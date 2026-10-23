@@ -19,6 +19,7 @@ pub mod gltf;
 pub mod ground;
 pub mod hud;
 pub mod lagoon;
+pub mod lamps;
 pub mod minimap;
 pub mod obj;
 pub mod rail;
@@ -45,6 +46,7 @@ pub use flora::{
 };
 pub use hud::{HudAnnouncement, HudHint, HudObjective, HudPlugin, HudRide};
 pub use lagoon::{LagoonPlugin, LagoonReeds, LagoonWater};
+pub use lamps::{LampGlass, LampLight, LampPlugin, LampPost, WorldLamps};
 pub use minimap::{MapIcon, MapTarget, MinimapPlugin};
 pub use rail::{LineTrack, RailPlugin, WorldRail};
 pub use road::{CrossingPart, RoadPlugin, RoadSurface, SignpostPart};

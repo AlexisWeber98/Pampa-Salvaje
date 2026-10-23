@@ -73,3 +73,7 @@ observed separately.
   `personajes nuevos|viejos`) swaps Don Hidalgo, Farach and Bairoletto
   between the rigid 1919 figures (the default) and the MakeHuman models.
   Debug builds only.
+- Ctrl+Shift+F12 now also closes the console (modifiers tracked from KeyboardInput events across reset_all); test `the_same_keys_close_it_pressed_one_frame_after_another`.
+- `hora HH[:MM]` (added with the street lamps, 2026-10-23) moves the clock on
+  to that time, to see the towns at night; refused aboard the train; test
+  `hora_moves_the_clock_on_to_nightfall`.

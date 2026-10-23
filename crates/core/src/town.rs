@@ -670,6 +670,11 @@ impl TownLayout {
         self.size.townsfolk(self.blocks)
     }
 
+    /// Blocks `(east_west, north_south)`, from its config.
+    pub fn blocks(&self) -> (usize, usize) {
+        self.blocks
+    }
+
     /// Bounding box of the street grid, ring street included.
     pub fn grid(&self) -> Aabb {
         self.grid
