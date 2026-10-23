@@ -71,11 +71,13 @@ arrow along its heading. Dirt roads are drawn in a warm brown under the
 railway. A small compass rose in its bottom-left corner marks N, E, S and O
 (oeste); the map is north-up, so the rose stays put and the arrow turns. It frames the town plus a 30 m margin (not the whole
 world) so streets stay legible, with any settlement reaching into that frame.
-More than 150 m from the nearest town, or within 20 m of a settlement, it
-switches to a field frame: 640 m round the rider (2 m a pixel) with the roads,
-the railway, settlements (buildings by kind, corral outlines, huellas as thin
-dirt lines, trees as dots) and roadside wrecks. It goes back to the town within
-90 m of it and 50 m clear of every settlement, so it does not flicker. A
+More than 20 m from the nearest town (before the rider rides off the town's
+frame), or within 20 m of a settlement, it switches to a field frame: 640 m
+round the rider (2 m a pixel) with the roads, the railway (one unbroken line,
+without the town map's sleeper ticks), settlements
+(buildings by kind, corral outlines, huellas as thin dirt lines, trees as dots)
+and roadside wrecks. It goes back to the town within 5 m of it and 50 m clear
+of every settlement, so it does not flicker. A
 target off the map is pinned to the edge on its side, so it points the way.
 Each town's layer is rasterized once, the first time it is shown; the field
 layer is repainted in place only after the rider rides 80 m from its center;
@@ -101,9 +103,11 @@ horse stays where it is, it does not travel by train.
 a window inside the coach, the default, on the side that faces the next
 station's platform (so the arrival is seen through the window), with the
 window from 0.8 m to 1.8 m above the floor around the seated eyes at
-1.2 m, looking out with the mouse (or
-`Q`/`E`) up to about 120° either way and 40° up or down, so the pampa
-scrolls past the window and the coach can be looked into; the orbit around
+1.2 m, facing forward the way the train runs; the mouse (or `Q`/`E`)
+turns the head up to about 120° either way and 40° up or down, so either
+window, the pampa scrolling past and the platform on arrival are in reach.
+Every time the seat is taken (the opening, boarding, a skipped ride coming
+in, `V` back to this view) the head turns forward again; the orbit around
 the coach from 16 m out, which the train's own cars never pull in; and the
 whole train from the side, slowly following it. The coaches are hollow
 second-class coaches of about 1919: wooden walls with glazed window
@@ -174,7 +178,10 @@ them talking.
 The ground is built in 200 m square chunks around the rider: chunks within 3
 chunks are built (at most one per frame, all of them on the first frame), and
 chunks past 4 are despawned with their rocks, shrubs, grass and trees, so
-memory stays bounded wherever you ride.
+memory stays bounded wherever you ride. A chunk streamed in while riding builds
+its ground mesh, and lays out any settlement in it, on a background thread
+and gets them a few frames later, out in the fog, so crossing a chunk border
+never stalls a frame.
 
 The open land between towns is pampa grassland:
 - The ground's colour drifts from dry yellow to grey-green, through vertex colours that are continuous across chunk borders. Over that paint lies a tiled soil-and-grass detail texture (normal, roughness and ambient-occlusion maps too), in world-space UVs on a 6 m tile, so it runs on across chunk borders.

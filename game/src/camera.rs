@@ -10,12 +10,15 @@
 //! whichever of them stand in it.
 //!
 //! Aboard the train ([`OnTrain`]) `V` cycles three views ([`RideView`]):
-//! seated by a window inside the coach (the default), looking out with the
+//! seated by a window inside the coach (the default), facing forward the
+//! way the train runs and looking round (out of either window) with the
 //! mouse within [`SEAT_YAW_LIMIT`] and [`SEAT_PITCH_LIMIT`]; the orbit
 //! around the coach, from farther out ([`RIDE_DISTANCE`]), which the
 //! train's own cars do not pull in; and the whole train from the side,
 //! slowly following it. The HUD shows the view ([`HudHint`]). Boarding and
-//! getting off place the camera afresh.
+//! getting off place the camera afresh; every time the seat is taken (the
+//! opening, boarding, a skipped ride coming in, `V` back to the window) the
+//! head turns forward again.
 //! The orbit math lives in [`crate::orbit`].
 
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
@@ -29,7 +32,7 @@ use pampa_render::{HudHint, SightLine, WorldTrain, car_transform, world_from_gro
 
 use crate::orbit::{Orbit, OrbitInput, OrbitParams};
 use crate::player::{DrivePlayer, GameWorld, Player};
-use crate::ride::OnTrain;
+use crate::ride::{OnTrain, Trip, TripPhase};
 
 /// Orbit distance the camera takes around the coach, in meters: far enough
 /// out to frame the coach and the country ahead.
@@ -38,8 +41,8 @@ pub const RIDE_DISTANCE: f32 = 16.0;
 /// Cycles the riding views.
 pub const VIEW_KEY: KeyCode = KeyCode::KeyV;
 
-/// Farthest the seated player turns their head from facing the window,
-/// either way, in radians (about 120°): far enough to look into the coach.
+/// Farthest the seated player turns their head from facing forward, either
+/// way, in radians (about 120°): past both windows, and the platform's.
 pub const SEAT_YAW_LIMIT: f32 = 2.094;
 /// Farthest the seated player looks up or down, in radians (about 40°).
 pub const SEAT_PITCH_LIMIT: f32 = 0.698;
@@ -77,8 +80,9 @@ impl RideView {
     }
 }
 
-/// Where the seated player looks, from facing the window: `yaw` turns the
-/// head (positive to the left), `pitch` looks up (positive) or down.
+/// Where the seated player looks, from facing forward along the coach:
+/// `yaw` turns the head (positive to the left), `pitch` looks up (positive)
+/// or down.
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
 pub struct SeatLook {
     pub yaw: f32,
@@ -99,17 +103,13 @@ impl SeatLook {
 }
 
 /// The camera seated by the window ([`CoachBody::window_seat`]) on `side`
-/// of a coach `length` long standing at `car`, looking out of it turned by
-/// `look`.
+/// of a coach `length` long standing at `car`, facing forward (the car's
+/// +X, its direction of travel) turned by `look`.
 pub fn seat_view(car: &Transform, length: f32, side: f32, look: SeatLook) -> Transform {
     let (along, across, eye) = CoachBody::window_seat(length, side);
     let at = car.transform_point(Vec3::new(along, eye, across));
-    // A camera looks down its -Z; the right-hand window is the car's +Z.
-    let facing = if across > 0.0 {
-        std::f32::consts::PI
-    } else {
-        0.0
-    };
+    // A camera looks down its -Z: a quarter turn right faces the car's +X.
+    let facing = -std::f32::consts::FRAC_PI_2;
     let turn = Quat::from_rotation_y(facing + look.yaw) * Quat::from_rotation_x(look.pitch);
     Transform::from_translation(at).with_rotation(car.rotation * turn)
 }
@@ -486,23 +486,33 @@ fn gather_camera_input(
 }
 
 /// `V` aboard cycles the riding views; boarding starts at the window. The
-/// HUD hint names the view while aboard.
+/// seated head turns forward whenever the seat is taken: on boarding, when
+/// a skipped ride comes in, and on `V` back to the window. The HUD hint
+/// names the view while aboard.
 fn cycle_view(
     keys: Res<ButtonInput<KeyCode>>,
     aboard: Query<(), (With<Player>, With<OnTrain>)>,
-    mut view: ResMut<RideView>,
-    mut look: ResMut<SeatLook>,
+    trip: Option<Res<Trip>>,
+    (mut view, mut look): (ResMut<RideView>, ResMut<SeatLook>),
     mut hint: ResMut<HudHint>,
-    mut was_aboard: Local<bool>,
+    mut was: Local<(bool, Option<TripPhase>)>,
 ) {
     let on = !aboard.is_empty();
-    if on && !*was_aboard {
+    let phase = trip.and_then(|t| t.0);
+    if on && !was.0 {
         *view = RideView::Window;
         *look = SeatLook::default();
     }
-    *was_aboard = on;
+    let coming_in = phase == Some(TripPhase::Arriving) && was.1 != phase;
+    if on && coming_in {
+        *look = SeatLook::default();
+    }
+    *was = (on, phase);
     if on && keys.just_pressed(VIEW_KEY) {
         *view = view.next();
+        if *view == RideView::Window {
+            *look = SeatLook::default();
+        }
     }
     hint.set_if_neq(HudHint(on.then(|| view.hint())));
 }
@@ -1370,12 +1380,10 @@ mod tests {
         let (windows, open) = CoachBody::windows(car.length);
         assert!(windows.iter().any(|&x| (p.x - x).abs() < open / 2.0));
         assert!(p.y > CoachBody::SILL && p.y < CoachBody::LINTEL);
+        // Seated facing forward, the way the train runs, the window beside.
         let ahead = local.rotation * Vec3::NEG_Z;
+        assert!(ahead.dot(Vec3::X) > 0.99, "faces forward: {ahead}");
         let side = crate::ride::testing::passenger(&mut app).1.unwrap().side;
-        assert!(
-            ahead.dot(Vec3::Z * side) > 0.99,
-            "faces the window: {ahead}"
-        );
         assert!(p.z * side > 0.0, "on the platform side");
         // Rides along: the train moves, the seat stays put in the coach.
         let before = camera(&mut app).translation;
@@ -1422,11 +1430,12 @@ mod tests {
             );
         }
         assert_eq!((look.yaw, look.pitch), (SEAT_YAW_LIMIT, SEAT_PITCH_LIMIT));
-        // Turned all the way: about 120° from the window, looking 40° up.
+        // Turned all the way: about 120° from facing forward (the coach's
+        // +X), past either window, looking 40° up.
         let view = seat_view(&Transform::IDENTITY, 12.0, 1.0, look);
         let ahead = view.rotation * Vec3::NEG_Z;
         let flat = Vec3::new(ahead.x, 0.0, ahead.z).normalize();
-        assert!((flat.dot(Vec3::Z).acos() - SEAT_YAW_LIMIT).abs() < 1e-3);
+        assert!((flat.dot(Vec3::X).acos() - SEAT_YAW_LIMIT).abs() < 1e-3);
         assert!((ahead.y.asin() - SEAT_PITCH_LIMIT).abs() < 1e-3);
         // Q/E turn the head in the app too, but never past the limit.
         let mut app = riding_app();
@@ -1436,6 +1445,81 @@ mod tests {
         }
         let look = *app.world().resource::<SeatLook>();
         assert_eq!(look.yaw, -SEAT_YAW_LIMIT);
+    }
+
+    /// How squarely the seated camera faces forward along its coach.
+    fn facing_forward(app: &mut App) -> f32 {
+        let (local, _) = in_coach(app);
+        (local.rotation * Vec3::NEG_Z).dot(Vec3::X)
+    }
+
+    /// Turns the seated head with the mouse, as a focused window with the
+    /// cursor grabbed passes it on.
+    fn mouse_look(app: &mut App, delta: Vec2) {
+        let world = app.world_mut();
+        let mut windows = world.query_filtered::<(), With<PrimaryWindow>>();
+        if windows.iter(world).next().is_none() {
+            world.spawn((Window::default(), CursorOptions::default(), PrimaryWindow));
+        }
+        app.insert_resource(AccumulatedMouseMotion { delta });
+        app.update();
+        app.update();
+        app.insert_resource(AccumulatedMouseMotion::default());
+        app.update();
+    }
+
+    fn tap(app: &mut App, key: KeyCode) {
+        keys(app).press(key);
+        app.update();
+        let mut k = keys(app);
+        k.release(key);
+        k.clear();
+        app.update();
+    }
+
+    #[test]
+    fn every_ride_starts_seated_facing_forward_and_the_mouse_looks_round() {
+        // The opening.
+        let mut app = riding_app();
+        assert!(facing_forward(&mut app) > 0.99, "the opening");
+        // The mouse turns the head, and no further than the seat allows.
+        mouse_look(&mut app, Vec2::new(40.0, 0.0));
+        let look = *app.world().resource::<SeatLook>();
+        assert!(look.yaw < -0.05, "turned right: {look:?}");
+        assert!(facing_forward(&mut app) < 0.999);
+        mouse_look(&mut app, Vec2::new(1.0e5, -1.0e5));
+        let look = *app.world().resource::<SeatLook>();
+        assert_eq!((look.yaw, look.pitch), (-SEAT_YAW_LIMIT, SEAT_PITCH_LIMIT));
+        // Round the views with V and back to the window: forward again.
+        for _ in 0..3 {
+            tap(&mut app, VIEW_KEY);
+        }
+        assert_eq!(*app.world().resource::<RideView>(), RideView::Window);
+        assert!(facing_forward(&mut app) > 0.99, "back at the window");
+        // Off at Monte Nievas with the head turned, then aboard again.
+        mouse_look(&mut app, Vec2::new(-60.0, 0.0));
+        crate::ride::testing::arrive(&mut app);
+        crate::ride::testing::press(&mut app, crate::errand::INTERACT_KEY);
+        app.update();
+        assert!(
+            crate::ride::testing::passenger(&mut app).1.is_some(),
+            "boarded"
+        );
+        assert!(facing_forward(&mut app) > 0.99, "a normal boarding");
+        // A skipped ride comes in facing forward too.
+        mouse_look(&mut app, Vec2::new(-60.0, 0.0));
+        crate::ride::testing::press(&mut app, crate::ride::SKIP_KEY);
+        for _ in 0..2000 {
+            app.update();
+            if app.world().resource::<crate::ride::Trip>().0
+                == Some(crate::ride::TripPhase::Arriving)
+            {
+                break;
+            }
+        }
+        app.update();
+        assert!(crate::ride::testing::passenger(&mut app).1.is_some());
+        assert!(facing_forward(&mut app) > 0.99, "after the skip");
     }
 
     #[test]

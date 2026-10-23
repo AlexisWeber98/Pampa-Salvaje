@@ -196,6 +196,43 @@ fn chunks_draw_each_owned_settlement_once_and_drop_it() {
 }
 
 #[test]
+fn a_streamed_chunk_lays_its_settlements_off_the_main_schedule() {
+    // What the first frame lays inline, for comparison.
+    let mut inline = app(GroundVec2::new(100.0, 100.0));
+    inline.update();
+    inline.update();
+    let mut expected = parts(&mut inline);
+    expected.sort_by_key(|p| (p.settlement, p.structure));
+    let tracks = count::<TrackSurface>(&mut inline);
+    // Starting far off, then riding in: the chunks are streamed.
+    let mut app = app(GroundVec2::new(-3500.0, 3500.0));
+    app.update();
+    app.insert_resource(StreamFocus(GroundVec2::new(100.0, 100.0)));
+    app.update();
+    // The update that streamed the chunks did not build their settlements.
+    assert_eq!(parts(&mut app).len(), 0);
+    for _ in 0..500 {
+        if parts(&mut app).len() >= expected.len() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        app.update();
+    }
+    app.update();
+    // They land a few frames later: the same pieces, once each.
+    let mut landed = parts(&mut app);
+    landed.sort_by_key(|p| (p.settlement, p.structure));
+    assert_eq!(landed, expected);
+    assert_eq!(count::<TrackSurface>(&mut app), tracks);
+    // A chunk that goes before its settlements land drops them.
+    app.insert_resource(StreamFocus(GroundVec2::new(-3500.0, 3500.0)));
+    for _ in 0..10 {
+        app.update();
+    }
+    assert_eq!(parts(&mut app).len(), 0);
+}
+
+#[test]
 fn settlements_share_a_few_ranges_and_one_material_per_surface() {
     let mut app = app(GroundVec2::new(100.0, 100.0));
     app.update();

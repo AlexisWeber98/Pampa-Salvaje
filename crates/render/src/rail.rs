@@ -242,7 +242,7 @@ fn lay_track(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::{StreamFocus, TerrainPlugin, TownPlugin, WorldTowns};
     use pampa_core::{
@@ -251,7 +251,8 @@ mod tests {
     };
 
     /// Two railway towns 3 km apart on one east-west row, and their line.
-    fn two_towns() -> (WorldConfig, Vec<TownLayout>, RailLine) {
+    /// Two towns 3 km apart on one railway link.
+    pub(crate) fn two_towns() -> (WorldConfig, Vec<TownLayout>, RailLine) {
         let world = WorldConfig::default();
         let town = |name: &str, x: f32| TownConfig {
             name: name.into(),
