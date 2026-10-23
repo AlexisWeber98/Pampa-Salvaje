@@ -363,13 +363,13 @@ fn follow_train(
 
 /// Writes station announcements on the HUD.
 #[derive(bevy::ecs::system::SystemParam)]
-struct Announcer<'w> {
+pub(crate) struct Announcer<'w> {
     hud: ResMut<'w, HudAnnouncement>,
     timer: ResMut<'w, AnnounceTimer>,
 }
 
 impl Announcer<'_> {
-    fn show(&mut self, text: String) {
+    pub(crate) fn show(&mut self, text: String) {
         self.hud.0 = Some(text);
         self.timer.0 = ANNOUNCE_SECONDS;
     }

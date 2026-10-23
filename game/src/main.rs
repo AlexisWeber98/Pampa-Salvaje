@@ -1,7 +1,11 @@
 //! Pampa Seca: wires player input, `pampa-core` logic and `pampa-render` drawing.
 
+mod abilities;
 mod camera;
 mod complaints;
+// The cheat console: debug builds only, never in `--release`.
+#[cfg(debug_assertions)]
+mod console;
 mod errand;
 mod life;
 mod orbit;
@@ -292,8 +296,11 @@ fn main() {
              {ranches} estancias; {obstacles} obstacles, laid in {settled:.1?}"
         );
     })
-    .add_systems(Update, quit_on_escape)
-    .run();
+    .add_systems(Update, quit_on_escape);
+    // Ctrl+Shift+F12: the cheat console (see `console`), in debug builds.
+    #[cfg(debug_assertions)]
+    app.add_plugins(console::ConsolePlugin);
+    app.run();
 }
 
 fn quit_on_escape(keys: Res<ButtonInput<KeyCode>>, mut exit: MessageWriter<AppExit>) {

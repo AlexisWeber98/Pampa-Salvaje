@@ -177,6 +177,15 @@ still and in the way like any tied horse. `F` within about 3 m of it gets back
 on. Neither moves the errand on: the horse is taken once, and Farach can be
 reported to on foot or mounted.
 
+Taking Don Hidalgo's horse for the first time also teaches the protagonist to
+ride: "Ahora podés montar cualquier caballo" shows at the top of the screen,
+and from then on `F` within about 3 m of any standing horse (one tied in
+another town, or a free one) gets on it. A town's tied horse is then led away
+for the session, and the horse ridden before stays where it was left. Before
+that, only Don Hidalgo's horse lets him on. Riding is the first of the
+player's abilities (`pampa_core::Abilities`); the lasso, weapons and cars are
+kept for later.
+
 On foot the player walks at 6 km/h and jogs with `Shift` at 18 km/h, with the same keys, the same collision and a person-sized body.
 People make way for somebody on foot without complaint; only the horse gets
 them talking.
@@ -459,6 +468,27 @@ cargo test --workspace
 | Mouse wheel | Zoom in / out (6–25 m) |
 | `M` | Toggle the enlarged minimap |
 | `Esc` | Quit |
+
+### Dev console (debug builds only)
+
+`Ctrl`+`Shift`+`F12` opens a small cheat console at the bottom left in debug
+builds (`cargo run -p game`). It is compiled out of `--release` builds: the
+module is declared under `cfg(debug_assertions)`. `Enter` runs the line, `Esc`
+or the same keys close it, and while it is open the game gets no keys at all.
+
+| Command | Effect |
+|---------|--------|
+| `goto laguna` / `pico` / `castex` / `nievas` / `metileo` | Go to Laguna La Arocena's landing or a town's main road in; any word of a town's or lagoon's name works |
+| `goto estancia` | Go to the patio of the nearest estancia |
+| `goto estancia castex` / `goto estancia pico` | Go to the estancia nearest that town |
+| `goto X Y` | Go to a point, in game meters |
+| `caballo` | Stand a saddled horse beside the player (rideable once riding is unlocked) |
+| `unlock all` | Unlock every ability |
+| `help` | List the commands |
+
+`goto` puts the player, and the horse when riding, on the nearest clear, dry
+ground to the place, and the world streams in around them at once. Aboard the
+train it refuses ("en el tren no: bajate primero"): get off first.
 
 ## Credits
 

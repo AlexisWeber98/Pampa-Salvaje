@@ -156,6 +156,21 @@ fn rgba(c: [u8; 4]) -> Color {
     Color::srgba_u8(c[0], c[1], c[2], c[3])
 }
 
+/// The colors of a HUD panel, for other panels in the same style: an ink
+/// border on paper.
+pub fn panel_colors() -> (BorderColor, BackgroundColor) {
+    (
+        BorderColor::all(rgba(palette::INK)),
+        BackgroundColor(rgba(palette::PAPER)),
+    )
+}
+
+/// `text` lettered in ink at pixel `scale` as an image for a UI node, like
+/// the HUD's own lines.
+pub fn text_image(text: &str, scale: usize) -> Image {
+    paint_text(text, scale).image()
+}
+
 /// A hidden line, shown once it has text.
 fn line_node() -> Node {
     Node {
