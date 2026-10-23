@@ -70,11 +70,16 @@ they are in the map, the errand's target as a gold diamond and the player as an
 arrow along its heading. Dirt roads are drawn in a warm brown under the
 railway. A small compass rose in its bottom-left corner marks N, E, S and O
 (oeste); the map is north-up, so the rose stays put and the arrow turns. It frames the town plus a 30 m margin (not the whole
-world) so streets stay legible; out on the pampa the arrow sticks to the map
-edge, and a target in another town is pinned to the edge on its side, so it
-points the way. Each town's layer is rasterized once, the first
-time it is shown; only the markers redraw each frame. `M` toggles an enlarged,
-centered map.
+world) so streets stay legible, with any settlement reaching into that frame.
+More than 150 m from the nearest town, or within 20 m of a settlement, it
+switches to a field frame: 640 m round the rider (2 m a pixel) with the roads,
+the railway, settlements (buildings by kind, corral outlines, huellas as thin
+dirt lines, trees as dots) and roadside wrecks. It goes back to the town within
+90 m of it and 50 m clear of every settlement, so it does not flicker. A
+target off the map is pinned to the edge on its side, so it points the way.
+Each town's layer is rasterized once, the first time it is shown; the field
+layer is repainted in place only after the rider rides 80 m from its center;
+only the markers redraw each frame. `M` toggles an enlarged, centered map.
 
 ### Riding the train
 

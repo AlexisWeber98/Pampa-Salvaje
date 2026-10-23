@@ -8,7 +8,8 @@
 
 use bevy::math::Vec2;
 use pampa_core::{
-    BuildingKind, Heading, PlaceKind, PlacedCar, Railway, TownLayout, Vec2 as GroundVec2,
+    Aabb, BuildingKind, Heading, PlaceKind, PlacedCar, Railway, RoadsideWreck, Settlement,
+    StructureKind, TownLayout, Track, Vec2 as GroundVec2,
 };
 
 use crate::font::{self, GLYPH_HEIGHT};
@@ -16,6 +17,10 @@ use crate::terrain::hash2;
 
 /// Meters of open ground shown around the town's extent.
 pub const MARGIN: f32 = 30.0;
+/// Half the side of the field frame, in meters: 640 m across, 2 m a pixel
+/// on the 320-pixel map, about the scale of a big town's frame, so an
+/// estancia's compound reads at a glance.
+pub const FIELD_HALF_EXTENT: f32 = 320.0;
 /// Inset, in pixels, that clamped markers keep from the map edge.
 pub const EDGE: f32 = 6.0;
 
@@ -38,6 +43,21 @@ impl MapFrame {
             half_extent: size.x.max(size.y) / 2.0 + MARGIN,
             size_px,
         }
+    }
+
+    /// The field frame: [`FIELD_HALF_EXTENT`] around `center` (the rider).
+    pub fn field(center: GroundVec2, size_px: usize) -> Self {
+        Self {
+            center,
+            half_extent: FIELD_HALF_EXTENT,
+            size_px,
+        }
+    }
+
+    /// The ground square it shows.
+    pub fn shown(&self) -> Aabb {
+        let side = 2.0 * self.half_extent;
+        Aabb::from_center_size(self.center, GroundVec2::new(side, side))
     }
 
     pub fn meters_per_px(&self) -> f32 {
@@ -150,6 +170,25 @@ pub mod palette {
     pub const WALKER: [u8; 4] = [48, 40, 96, 255];
     pub const TRAIN: [u8; 4] = [28, 26, 26, 255];
     pub const TARGET: [u8; 4] = [232, 176, 32, 255];
+    /// Trees: one dark green dot each.
+    pub const TREE: [u8; 4] = [96, 110, 60, 255];
+    /// A settlement's huellas: a pale dirt line, lighter than the roads.
+    pub const TRACK: [u8; 4] = [186, 152, 104, 255];
+    /// Corral rails: a dark wood outline.
+    pub const CORRAL: [u8; 4] = [104, 78, 50, 255];
+    /// Haystacks.
+    pub const HAY: [u8; 4] = [194, 172, 92, 255];
+}
+
+/// What a layer shows beyond its town: the railway line's links, the
+/// roads' straight pieces, and the settlements and roadside wrecks, each
+/// painted where it crosses the frame.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Overlay<'a> {
+    pub links: &'a [Railway],
+    pub roads: &'a [(GroundVec2, GroundVec2)],
+    pub settlements: &'a [Settlement],
+    pub wrecks: &'a [RoadsideWreck],
 }
 
 /// Pixel scale of place initials on the map.
@@ -170,9 +209,64 @@ pub fn rasterize_town_with_roads(
     roads: &[(GroundVec2, GroundVec2)],
     frame: &MapFrame,
 ) -> Canvas {
-    let size = frame.size_px;
+    let overlay = Overlay {
+        links,
+        roads,
+        ..Overlay::default()
+    };
+    rasterize_town_over(town, &overlay, frame)
+}
+
+/// [`rasterize_town_with_roads`], with everything of `overlay` that
+/// crosses the frame: settlements just outside the town show on its map.
+pub fn rasterize_town_over(town: &TownLayout, overlay: &Overlay, frame: &MapFrame) -> Canvas {
+    let mut map = paper(frame.size_px);
+    paint_town_ground(&mut map, town, frame);
+    paint_overlay_under(&mut map, overlay, frame);
+    paint_rails(&mut map, std::slice::from_ref(town), overlay.links, frame);
+    paint_settlements(&mut map, overlay, frame);
+    paint_town_buildings(&mut map, town, frame);
+    for place in town.places() {
+        let text = place_initial(place.kind).to_string();
+        label(&mut map, &text, frame.to_map(place.center()));
+    }
+    // North marker in the north-west corner, the town's name along the top.
+    label(&mut map, "N", Vec2::new(16.0, 18.0));
+    title(&mut map, &town.name);
+    map
+}
+
+/// The field layer: open country round the rider, with the roads, the
+/// railway, the settlements and any of `towns` reaching into the frame
+/// (streets and buildings, without labels or a title).
+pub fn rasterize_field(towns: &[TownLayout], overlay: &Overlay, frame: &MapFrame) -> Canvas {
+    let mut map = paper(frame.size_px);
+    let shown = frame.shown();
+    let near: Vec<&TownLayout> = towns
+        .iter()
+        .filter(|t| t.extent().intersects(&shown))
+        .collect();
+    for town in &near {
+        paint_town_ground(&mut map, town, frame);
+    }
+    paint_overlay_under(&mut map, overlay, frame);
+    for town in &near {
+        if let Some(rail) = town.railway {
+            track_line(&mut map, frame.to_map(rail.start), frame.to_map(rail.end));
+        }
+    }
+    paint_rails(&mut map, &[], overlay.links, frame);
+    paint_settlements(&mut map, overlay, frame);
+    for town in &near {
+        paint_town_buildings(&mut map, town, frame);
+    }
+    label(&mut map, "N", Vec2::new(16.0, 18.0));
+    map
+}
+
+/// Aged paper, darker toward the edge.
+fn paper(size: usize) -> Canvas {
     let mut map = Canvas::new(size);
-    // Aged paper, darker toward the edge.
     let border = 5;
     for y in 0..size {
         for x in 0..size {
@@ -193,7 +287,11 @@ pub fn rasterize_town_with_roads(
             map.set(x as i32, y as i32, c);
         }
     }
+    map
+}
 
+/// A town's streets, plazas and trees.
+fn paint_town_ground(map: &mut Canvas, town: &TownLayout, frame: &MapFrame) {
     for street in &town.streets {
         let (a, b) = frame.rect(street);
         map.fill_rect(a, b, palette::STREET);
@@ -204,42 +302,12 @@ pub fn rasterize_town_with_roads(
     }
     for &tree in &town.trees {
         let m = frame.to_map(tree);
-        map.set(m.x as i32, m.y as i32, [96, 110, 60, 255]);
+        map.set(m.x as i32, m.y as i32, palette::TREE);
     }
+}
 
-    // Roads, cut to the frame, under the railway and the buildings.
-    let shown = pampa_core::Aabb::from_center_size(
-        frame.center,
-        GroundVec2::new(2.0 * frame.half_extent, 2.0 * frame.half_extent),
-    );
-    let half = (pampa_core::RoadNetwork::HALF_WIDTH / frame.meters_per_px()).max(1.0);
-    for &(a, b) in roads {
-        if let Some((enter, exit)) = shown.segment_overlap(a, b) {
-            let (s, e) = (
-                frame.to_map(a + (b - a) * enter),
-                frame.to_map(a + (b - a) * exit),
-            );
-            let steps = s.distance(e).ceil() as usize;
-            for k in 0..=steps {
-                let p = s.lerp(e, k as f32 / steps.max(1) as f32);
-                map.fill_rect(p - Vec2::splat(half), p + Vec2::splat(half), palette::ROAD);
-            }
-        }
-    }
-
-    // Railway: a dark line with sleeper ticks across it, then the links of
-    // the railway line, cut to the frame (they run for kilometers).
-    if let Some(rail) = town.railway {
-        track_line(&mut map, frame.to_map(rail.start), frame.to_map(rail.end));
-    }
-    for link in links {
-        if let Some((enter, exit)) = shown.segment_overlap(link.start, link.end) {
-            let along = link.end - link.start;
-            let (from, to) = (link.start + along * enter, link.start + along * exit);
-            track_line(&mut map, frame.to_map(from), frame.to_map(to));
-        }
-    }
-
+/// A town's buildings, colored by kind.
+fn paint_town_buildings(map: &mut Canvas, town: &TownLayout, frame: &MapFrame) {
     for building in &town.buildings {
         let color = match building.kind {
             BuildingKind::House => palette::HOUSE,
@@ -255,15 +323,121 @@ pub fn rasterize_town_with_roads(
         let (a, b) = frame.rect(&building.footprint);
         map.fill_rect(a, b, color);
     }
+}
 
-    for place in town.places() {
-        let text = place_initial(place.kind).to_string();
-        label(&mut map, &text, frame.to_map(place.center()));
+/// The roads, then the settlements' huellas, cut to the frame: under the
+/// railway and every building.
+fn paint_overlay_under(map: &mut Canvas, overlay: &Overlay, frame: &MapFrame) {
+    let shown = frame.shown();
+    let px = frame.meters_per_px();
+    let half = (pampa_core::RoadNetwork::HALF_WIDTH / px).max(1.0);
+    for &(a, b) in overlay.roads {
+        ground_line(map, frame, (a, b), half, palette::ROAD);
     }
-    // North marker in the north-west corner, the town's name along the top.
-    label(&mut map, "N", Vec2::new(16.0, 18.0));
-    title(&mut map, &town.name);
-    map
+    // Thin: a pixel wide on the field frame, at most two on a town's.
+    let half = (Track::HALF_WIDTH / px).clamp(0.5, 1.0);
+    for settlement in overlay.settlements {
+        if !settlement.bounds.intersects(&shown) {
+            continue;
+        }
+        for track in &settlement.tracks {
+            for piece in track.segments() {
+                ground_line(map, frame, piece, half, palette::TRACK);
+            }
+        }
+    }
+}
+
+/// A straight ground line from `a` to `b`, cut to the frame, `half` map
+/// pixels to either side.
+fn ground_line(
+    map: &mut Canvas,
+    frame: &MapFrame,
+    (a, b): (GroundVec2, GroundVec2),
+    half: f32,
+    color: [u8; 4],
+) {
+    let Some((enter, exit)) = frame.shown().segment_overlap(a, b) else {
+        return;
+    };
+    let (s, e) = (
+        frame.to_map(a + (b - a) * enter),
+        frame.to_map(a + (b - a) * exit),
+    );
+    let steps = s.distance(e).ceil() as usize;
+    for k in 0..=steps {
+        let p = s.lerp(e, k as f32 / steps.max(1) as f32);
+        map.fill_rect(p - Vec2::splat(half), p + Vec2::splat(half), color);
+    }
+}
+
+/// Railway: each town's track, then the links of the railway line, cut to
+/// the frame (they run for kilometers).
+fn paint_rails(map: &mut Canvas, towns: &[TownLayout], links: &[Railway], frame: &MapFrame) {
+    let shown = frame.shown();
+    for rail in towns.iter().filter_map(|t| t.railway) {
+        track_line(map, frame.to_map(rail.start), frame.to_map(rail.end));
+    }
+    for link in links {
+        if let Some((enter, exit)) = shown.segment_overlap(link.start, link.end) {
+            let along = link.end - link.start;
+            let (from, to) = (link.start + along * enter, link.start + along * exit);
+            track_line(map, frame.to_map(from), frame.to_map(to));
+        }
+    }
+}
+
+/// The map color of a settlement structure filled over its footprint;
+/// `None` for corrals (drawn as an outline) and trees (a dot).
+pub fn structure_color(kind: StructureKind) -> Option<[u8; 4]> {
+    Some(match kind {
+        StructureKind::MainHouse(_) | StructureKind::WorkerHouse(_) => palette::HOUSE,
+        StructureKind::Barn
+        | StructureKind::Cart
+        | StructureKind::WreckedWagon
+        | StructureKind::HitchingPost => palette::SHED,
+        StructureKind::Tank | StructureKind::Trough | StructureKind::Well => palette::WATER,
+        StructureKind::Windpump => palette::INK,
+        StructureKind::Haystack => palette::HAY,
+        StructureKind::Corral | StructureKind::Eucalyptus | StructureKind::Poplar => return None,
+    })
+}
+
+/// The settlements reaching into the frame: footprints by kind, corrals
+/// as rail outlines, trees as dots; then the roadside wrecks.
+fn paint_settlements(map: &mut Canvas, overlay: &Overlay, frame: &MapFrame) {
+    let shown = frame.shown();
+    for settlement in overlay.settlements {
+        if !settlement.bounds.intersects(&shown) {
+            continue;
+        }
+        for s in &settlement.structures {
+            let (a, b) = frame.rect(&s.footprint);
+            match structure_color(s.kind) {
+                Some(color) => map.fill_rect(a, b, color),
+                None if s.kind == StructureKind::Corral => outline(map, a, b, palette::CORRAL),
+                None => {
+                    let m = frame.to_map(s.footprint.center());
+                    map.set(m.x as i32, m.y as i32, palette::TREE);
+                }
+            }
+        }
+    }
+    for wreck in overlay.wrecks {
+        let footprint = wreck.footprint();
+        if footprint.intersects(&shown) {
+            let (a, b) = frame.rect(&footprint);
+            map.fill_rect(a, b, palette::SHED);
+        }
+    }
+}
+
+/// A one-pixel outline of the map rectangle `[min, max)`.
+fn outline(map: &mut Canvas, min: Vec2, max: Vec2, color: [u8; 4]) {
+    map.fill_rect(min, Vec2::new(max.x, min.y + 1.0), color);
+    map.fill_rect(Vec2::new(min.x, max.y - 1.0), max, color);
+    map.fill_rect(min, Vec2::new(min.x + 1.0, max.y), color);
+    map.fill_rect(Vec2::new(max.x - 1.0, min.y), max, color);
 }
 
 /// A track from map pixel `s` to `e`: a dark line with sleeper ticks across
@@ -492,7 +666,7 @@ fn arrow(canvas: &mut Canvas, at: Vec2, heading: Heading) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use pampa_core::CarKind;
 
@@ -867,6 +1041,157 @@ mod tests {
         );
         // Away from the corner the layer stays clear.
         assert_eq!(canvas.get(160, 160)[3], 0);
+    }
+
+    /// A small farm round `hub`: a house to the north, a galpón to the
+    /// east, a tank to the west, a corral to the south, a eucalyptus to the
+    /// north-west, and a huella coming in from the west.
+    pub(crate) fn farm(hub: GroundVec2) -> Settlement {
+        use pampa_core::{HouseStyle, SettlementKind, Side, Structure};
+        let at = |dx: f32, dy: f32, size: (f32, f32), kind| Structure {
+            kind,
+            footprint: Aabb::from_center_size(
+                hub + GroundVec2::new(dx, dy),
+                GroundVec2::new(size.0, size.1),
+            ),
+            height: 3.0,
+            front: Side::South,
+            variant: 0,
+        };
+        let reach = GroundVec2::new(130.0, 130.0);
+        Settlement {
+            kind: SettlementKind::Farm,
+            gate: 0,
+            hub,
+            patio: Aabb::from_center_size(hub, GroundVec2::new(20.0, 20.0)),
+            structures: vec![
+                at(
+                    0.0,
+                    30.0,
+                    (12.0, 8.0),
+                    StructureKind::MainHouse(HouseStyle::AdobeIron),
+                ),
+                at(40.0, 0.0, (14.0, 10.0), StructureKind::Barn),
+                at(-30.0, 0.0, (6.0, 6.0), StructureKind::Tank),
+                at(0.0, -40.0, (24.0, 20.0), StructureKind::Corral),
+                at(-40.0, 40.0, (1.0, 1.0), StructureKind::Eucalyptus),
+            ],
+            tracks: vec![Track {
+                points: vec![
+                    hub + GroundVec2::new(-120.0, -10.0),
+                    hub + GroundVec2::new(-60.0, -10.0),
+                    hub,
+                ],
+            }],
+            bounds: Aabb::new(hub - reach, hub + reach),
+            seed: 1,
+        }
+    }
+
+    #[test]
+    fn the_field_paints_settlements_by_kind_with_huellas_and_corral_outlines() {
+        let hub = GroundVec2::new(-4600.0, -2900.0);
+        let frame = MapFrame::field(hub + GroundVec2::new(20.0, 10.0), 320);
+        assert_eq!(frame.meters_per_px(), 2.0);
+        let settlements = [farm(hub)];
+        let wrecks = [RoadsideWreck {
+            at: hub + GroundVec2::new(150.0, 100.0),
+            along: GroundVec2::new(1.0, 0.0),
+            variant: 0,
+        }];
+        let overlay = Overlay {
+            settlements: &settlements,
+            wrecks: &wrecks,
+            ..Overlay::default()
+        };
+        let empty = rasterize_field(&[], &Overlay::default(), &frame);
+        let map = rasterize_field(&[], &overlay, &frame);
+        let at = |p: GroundVec2| {
+            let m = frame.to_map(p);
+            map.get(m.x as usize, m.y as usize)
+        };
+        let s = &settlements[0];
+        let of = |kind: StructureKind| s.structures.iter().find(|x| x.kind == kind).unwrap();
+        let house = of(StructureKind::MainHouse(pampa_core::HouseStyle::AdobeIron));
+        assert_eq!(at(house.footprint.center()), palette::HOUSE);
+        assert_eq!(
+            at(of(StructureKind::Barn).footprint.center()),
+            palette::SHED
+        );
+        assert_eq!(
+            at(of(StructureKind::Tank).footprint.center()),
+            palette::WATER
+        );
+        assert_eq!(
+            at(of(StructureKind::Eucalyptus).footprint.center()),
+            palette::TREE
+        );
+        assert_eq!(at(wrecks[0].at), palette::SHED, "roadside wreck");
+        // The huella, a pale dirt line, thin: a pixel to either side of it
+        // is paper.
+        let on_track = hub + GroundVec2::new(-90.0, -10.0);
+        assert_eq!(at(on_track), palette::TRACK);
+        assert_ne!(at(on_track + GroundVec2::new(0.0, 4.0)), palette::TRACK);
+        // The corral: its rails outlined, its pen left open ground.
+        let corral = of(StructureKind::Corral).footprint;
+        let (a, b) = frame.rect(&corral);
+        let (x0, y0) = ((a.x - 0.5).ceil() as usize, (a.y - 0.5).ceil() as usize);
+        assert_eq!(map.get(x0 + 4, y0), palette::CORRAL);
+        assert_eq!(map.get(x0, y0 + 4), palette::CORRAL);
+        let middle = ((a + b) / 2.0).as_uvec2();
+        assert_ne!(
+            map.get(middle.x as usize, middle.y as usize),
+            palette::CORRAL
+        );
+        // A settlement off the frame leaves the map as it was.
+        let far = [farm(hub + GroundVec2::new(5000.0, 0.0))];
+        let away = Overlay {
+            settlements: &far,
+            ..Overlay::default()
+        };
+        assert_eq!(rasterize_field(&[], &away, &frame), empty);
+    }
+
+    #[test]
+    fn a_town_map_shows_a_settlement_inside_its_frame_and_is_unchanged_without() {
+        let t = town();
+        let frame = MapFrame::for_town(&t, 320);
+        let plain = rasterize_town_with_roads(&t, &[], &[], &frame);
+        assert_eq!(
+            rasterize_town_over(&t, &Overlay::default(), &frame),
+            plain,
+            "the town frame is as before"
+        );
+        // A farm whose house stands in the frame's south-east corner, off
+        // the town's extent.
+        let h = frame.half_extent - 12.0;
+        let house = frame.center + GroundVec2::new(h, -h);
+        assert!(!t.extent().contains_point(house));
+        let settlements = [farm(house - GroundVec2::new(0.0, 30.0))];
+        let overlay = Overlay {
+            settlements: &settlements,
+            ..Overlay::default()
+        };
+        let with = rasterize_town_over(&t, &overlay, &frame);
+        let m = frame.to_map(house);
+        assert_eq!(with.get(m.x as usize, m.y as usize), palette::HOUSE);
+        assert_ne!(plain.get(m.x as usize, m.y as usize), palette::HOUSE);
+    }
+
+    #[test]
+    fn the_field_frame_shows_a_town_reaching_into_it() {
+        let t = town();
+        let edge = t.extent().max;
+        let frame = MapFrame::field(edge + GroundVec2::new(200.0, 0.0), 320);
+        let map = rasterize_field(std::slice::from_ref(&t), &Overlay::default(), &frame);
+        let house = t
+            .buildings
+            .iter()
+            .filter(|b| b.kind == BuildingKind::House)
+            .find(|b| frame.shown().contains(&b.footprint))
+            .expect("a house in the frame");
+        let m = frame.to_map(house.footprint.center());
+        assert_eq!(map.get(m.x as usize, m.y as usize), palette::HOUSE);
     }
 
     fn count(canvas: &Canvas, color: [u8; 4]) -> usize {

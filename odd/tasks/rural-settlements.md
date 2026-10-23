@@ -127,7 +127,14 @@ Today the fields between the towns are empty grass. The pampa of 1919 was settle
       - It also requires an HDRI ImageMagick, keeps the height map in a `mktemp` file removed by a `trap`, and refuses to overwrite an existing set unless `FORCE=1`.
     - Tests: RED observed for the crown fade radius, for slots disabled (no well scene), and for the late-failure stand-in; the other new tests were written alongside the code. Core 296, render 193, content 28, game 87 pass; fmt and clippy clean.
     - Deferred: a visual check on the Renoir GPU (wreck tilt and fit, lantern glass, windpump fit and spin direction, the prop placement); `pampa_core` does not re-export `RoadsideWreck` (`crates/core/src/lib.rs` was outside the allowed surfaces); the windpump's per-instance wind yaw (the model faces its structure's front); the minimap does not show wrecks.
-- [ ] **T5 — Minimap.** Add a field frame mode that shows settlements and huellas when no town is near.
+- [x] **T5 — Minimap.** Add a field frame mode that shows settlements and huellas when no town is near.
+  - Progress: route delegated writer (multi-file: `minimap/mod.rs`, `minimap/raster.rs`, README, this document). About 600 authored lines, half of them tests.
+    - Switching rule (`minimap::next_mode`, with hysteresis): town → field when the rider is more than 150 m (`FIELD_ENTER`) from the nearest town's extent, or within 20 m (`SETTLEMENT_ENTER`) of a settlement's bounds; field → town when within 90 m (`TOWN_ENTER`) of a town's extent and more than 50 m (`SETTLEMENT_LEAVE`) from every settlement.
+    - Field frame: `MapFrame::field`, 320 m half extent (640 m across, 2 m a pixel on the 320-pixel map), centred on the rider. It paints the roads, the town railways and line links, settlements (footprints by `StructureKind` in the town palette plus `HAY`, corrals as `CORRAL` outlines, huellas as one-pixel `TRACK` lines, trees as `TREE` dots), roadside wrecks, and any town reaching into the frame (no title).
+    - A town's frame also paints the settlements and wrecks reaching into it (`rasterize_town_over`); without any, its layer is byte for byte as before (tested).
+    - Cost: one field image, repainted in place (`image.data`) only when the field is entered or the rider is more than 80 m (`FIELD_RECENTER`) from its centre; town layers stay cached per town; markers, compass and target are unchanged and follow the active frame.
+    - Tests: RED observed with the behaviour stubbed (6 failures: mode switching, hysteresis, repaint throttling, settlement pixels in field and town frames, tracks and corral outlines), then GREEN. The follow-the-player test now rides to the far town itself, since its old halfway point is field territory.
+    - Deferred: a visual check of the field map in the window.
 - [ ] **T6 — Docs.** Update the setting guide entries, README and this document.
 
 ## Acceptance criteria
