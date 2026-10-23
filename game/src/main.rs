@@ -13,7 +13,7 @@ mod towns;
 
 use bevy::prelude::*;
 use pampa_content::{SLOTS_FILE, TOWNS_FILE, asset_path, load_model_slots};
-use pampa_core::{FenceLayout, FloraSite, SettlementKind, SettlementLayout, Terrain, World};
+use pampa_core::{FenceLayout, FloraSite, SettlementKind, SettlementLayout, World};
 use pampa_render::{
     AssetRoot, AtmospherePlugin, CharacterVisualPlugin, FadePlugin, FencePlugin, FloraPlugin,
     HudPlugin, MinimapPlugin, RailPlugin, RoadPlugin, SettlementPlugin, SignPlugin,
@@ -92,7 +92,8 @@ struct LaidReport {
 /// Builds the world of `loaded`: leveled for its towns, its roads cut in,
 /// fenced, settled behind some open gates and planted around it all.
 fn lay_out(loaded: &towns::LoadedWorld) -> Laid {
-    let mut world = World::with_towns(loaded.world, Terrain::default(), &loaded.towns);
+    // The lagoons are sunk first: the towns level their ground on top.
+    let mut world = World::with_towns(loaded.world, loaded.terrain(), &loaded.towns);
     // The dirt roads, cut into the ground, with their level crossings and
     // signposts (thin obstacles).
     world.lay_roads(loaded.roads.clone());
@@ -352,6 +353,74 @@ mod tests {
             );
         }
         assert!(!laid.fences.gates.is_empty());
+    }
+
+    #[test]
+    fn laguna_la_arocena_keeps_everything_off_and_the_rider_out_of_deep_water() {
+        let loaded = towns::load_world(&asset_path(TOWNS_FILE));
+        let laid = lay_out(&loaded);
+        let lagoon = laid
+            .world
+            .terrain
+            .lagoons
+            .first()
+            .expect("the shipped lagoon");
+        assert_eq!(lagoon.name, "Laguna La Arocena");
+        let keep = lagoon.keep_out();
+        let world = laid.world.config.bounds();
+        assert!(keep.min.x > world.min.x && keep.max.x < world.max.x);
+        // Its water lies flat in a basin below the land around it.
+        let middle = laid.world.terrain.height(lagoon.center.x, lagoon.center.y);
+        assert!(middle < lagoon.level - 1.0);
+        for p in lagoon.ring(64, 1.0) {
+            assert!(laid.world.terrain.height(p.x, p.y) > lagoon.level, "{p:?}");
+        }
+        // No fence, settlement or road inside its shore, bank and margin;
+        // trees keep back from the water and grass from its mud.
+        for o in laid.fences.obstacles() {
+            assert!(!o.intersects(&keep), "fence {o:?}");
+        }
+        for s in &laid.settlements.settlements {
+            assert!(!s.bounds.intersects(&keep), "{:?}", s.bounds);
+        }
+        for (a, b) in laid.world.terrain.roads.as_ref().unwrap().segments() {
+            assert!(keep.segment_overlap(a, b).is_none(), "road {a:?}");
+        }
+        let mut tufts = 0;
+        let size = laid.world.config.chunk_size;
+        let (lo, hi) = (
+            pampa_core::ChunkCoord::containing(keep.min, size),
+            pampa_core::ChunkCoord::containing(keep.max, size),
+        );
+        for cx in lo.x..=hi.x {
+            for cy in lo.y..=hi.y {
+                let chunk = laid.flora.chunk(pampa_core::ChunkCoord { x: cx, y: cy });
+                for t in &chunk.trees {
+                    assert!(
+                        lagoon.offshore(t.at) >= pampa_core::FloraSite::TREE_LAGOON_MARGIN,
+                        "{t:?}"
+                    );
+                }
+                // Grass grows down to the narrow wet mud, not on it.
+                for t in &chunk.tufts {
+                    assert!(!lagoon.is_bare(t.at), "{t:?}");
+                    tufts +=
+                        usize::from(lagoon.offshore(t.at) < pampa_core::Lagoon::MUD_BAND + 20.0);
+                }
+            }
+        }
+        assert!(tufts > 100, "{tufts} tufts near the shore");
+        // Riding in from the west, the rider wades in and stops in the
+        // shallows.
+        let collider = pampa_core::Circle::new(pampa_core::Rider::COLLIDER_RADIUS);
+        let mut at = lagoon.center - pampa_core::Vec2::new(lagoon.radii.x + 40.0, 0.0);
+        for _ in 0..400 {
+            at = laid
+                .world
+                .resolve(collider, at + pampa_core::Vec2::new(0.5, 0.0), |_| ());
+            assert!(!lagoon.is_deep(at), "{at:?}");
+        }
+        assert!(lagoon.is_water(at));
     }
 
     #[test]

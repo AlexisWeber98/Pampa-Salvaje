@@ -54,4 +54,16 @@
     // town's track to the next one's. Every town with a railway must be
     // listed.
     line: Some(["Eduardo Castex", "Monte Nievas", "General Pico"]),
+    // Shallow freshwater lagoons, sunk into the pampa with a reed belt.
+    lagoons: [
+        (
+            // Real 5.9 km at bearing 119° from General Pico (5.16 km east,
+            // 2.86 km south), scaled 1:7. About 150 ha in reality: its
+            // shape is kept, at 215 x 145 m.
+            name: "Laguna La Arocena",
+            center: (3401.0, 841.0),
+            size: (215.0, 145.0),
+            seed: 5,
+        ),
+    ],
 )

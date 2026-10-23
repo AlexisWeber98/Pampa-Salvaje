@@ -27,6 +27,14 @@ No recompiling.
         // ... Eduardo Castex and General Pico follow.
     ],
     line: Some(["Eduardo Castex", "Monte Nievas", "General Pico"]),
+    lagoons: [
+        (
+            name: "Laguna La Arocena",
+            center: (3401.0, 841.0),
+            size: (215.0, 145.0),
+            seed: 5,
+        ),
+    ],
 )
 ```
 
@@ -168,6 +176,32 @@ of the platform, half way along it, beside the coaches. The platform is a
 raised floor with a short ramp at each end, not an obstacle. The train runs
 as far as the line is unbroken: a link left out ends its run at the town
 before it, and a line with fewer than two stations has no train.
+
+### Lagoons
+
+`lagoons` lists the shallow freshwater lagoons of the plains:
+
+| Field | Meaning | Rules |
+|-------|---------|-------|
+| `name` | Its name, for warnings. | |
+| `center` | Middle of the water, `(east, north)` in meters. | |
+| `size` | Size of the rounded rectangle its shore follows, `(east-west, north-south)` in meters. | Each between 40 and 1500. |
+| `seed` | Varies the shore. | Optional, `0` by default. |
+
+The shore is a rounded rectangle (a superellipse, squarish with soft
+corners), roughened by up to 5%. The water stands 0.6 m below the lowest
+ground of its 30 m bank, and the bottom shelves down to 1.6 m. People and
+horses wade the first 5 m of water and are turned back where it gets
+deeper. Fences and settlements keep 15 m past the bank; trees stay 12 m
+from the water, and grass, stones and shrubs grow right down to the 3 m of
+wet mud along the waterline. A lagoon whose bank (plus that margin) touches a town's leveled
+band, the railway or a road, or leaves the world, is left out with a
+warning. The whole list is optional.
+
+The shipped Laguna La Arocena is real 5.9 km at bearing 119° from General
+Pico (5.16 km east, 2.86 km south), scaled 1:7: `(2664 + 5160 / 7, 1250 -
+2860 / 7)` = `(3401, 841)`. It covers about 150 ha in reality; the game keeps
+its proportions at 215 x 145 m.
 
 ### Plaza placement
 

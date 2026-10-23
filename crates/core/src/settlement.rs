@@ -421,9 +421,11 @@ impl SettlementLayout {
                     .map(|w| (w[0], w[1])),
             )
             .collect();
+        // Towns and lagoons with their banks.
         let bands: Vec<Aabb> = towns
             .iter()
             .map(|t| t.leveled().expanded(Settlement::TOWN_CLEARANCE))
+            .chain(terrain.lagoons.iter().map(|l| l.keep_out()))
             .collect();
         let site = Site {
             terrain,

@@ -8,7 +8,10 @@ use std::path::Path;
 
 use bevy::prelude::*;
 use pampa_content::load_towns_or_builtin;
-use pampa_core::{PlaceKind, RailLine, RoadNetwork, TownLayout, WorldConfig, place_towns};
+use pampa_core::{
+    Lagoon, PlaceKind, RailLine, RoadNetwork, Terrain, TownLayout, WorldConfig, place_lagoons,
+    place_towns,
+};
 use pampa_render::font;
 
 /// The world to build, its towns, and what went wrong reading them.
@@ -23,13 +26,17 @@ pub struct LoadedWorld {
     /// The dirt roads between neighbouring towns, and each railway town's
     /// rural track across its level crossing.
     pub roads: RoadNetwork,
+    /// The lagoons, clear of the towns, the railway and the roads, their
+    /// water set against the default terrain.
+    pub lagoons: Vec<Lagoon>,
     /// Problems found, ready to log as warnings.
     pub warnings: Vec<String>,
 }
 
 /// Loads the towns file at `path` and places every valid town in its world,
 /// falling back to the built-in Eduardo Castex when no town can be built,
-/// then runs the railway line and the roads through them.
+/// then runs the railway line and the roads through them and lays the
+/// lagoons clear of them all.
 pub fn load_world(path: &Path) -> LoadedWorld {
     let (content, errors) = load_towns_or_builtin(path);
     let mut warnings: Vec<String> = errors.iter().map(|e| format!("towns: {e}")).collect();
@@ -55,11 +62,21 @@ pub fn load_world(path: &Path) -> LoadedWorld {
     warnings.extend(broken.iter().map(|e| format!("towns: {e}")));
     let (roads, left_out) = RoadNetwork::build(&towns, &line, world.bounds());
     warnings.extend(left_out.iter().map(|e| format!("towns: {e}")));
+    let (lagoons, left_out) = place_lagoons(
+        &world,
+        &Terrain::default(),
+        &towns,
+        &line,
+        &roads,
+        &content.lagoons,
+    );
+    warnings.extend(left_out.iter().map(|e| format!("towns: {e}")));
     LoadedWorld {
         world,
         towns,
         line,
         roads,
+        lagoons,
         warnings,
     }
 }
@@ -93,6 +110,16 @@ fn unsupported_glyphs(town: &TownLayout) -> Vec<String> {
 pub struct TownReport {
     pub names: Vec<String>,
     pub warnings: Vec<String>,
+}
+
+impl LoadedWorld {
+    /// The default terrain with every lagoon sunk into it, before the towns
+    /// are leveled.
+    pub fn terrain(&self) -> Terrain {
+        self.lagoons
+            .iter()
+            .fold(Terrain::default(), |t, l| t.with_lagoon(l.clone()))
+    }
 }
 
 impl TownReport {
@@ -156,6 +183,9 @@ mod tests {
         assert_eq!(loaded.line.towns, [1, 0, 2]);
         let links: Vec<(usize, usize)> = loaded.line.links.iter().map(|l| (l.from, l.to)).collect();
         assert_eq!(links, [(1, 0), (0, 2)]);
+        // Laguna La Arocena is laid, clear of everything.
+        assert_eq!(loaded.lagoons.len(), 1);
+        assert_eq!(loaded.lagoons[0].name, "Laguna La Arocena");
     }
 
     #[test]
