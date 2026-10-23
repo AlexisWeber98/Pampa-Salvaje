@@ -23,6 +23,8 @@ Both were converted with our own standard-library script `tools/dae2gltf.py` (se
 
 What the conversion changes: Z-up becomes Y-up, the wagon's feet become meters, every node transform is baked into the vertices, and each diffuse map becomes the base colour. The `_NRM` maps are DirectX-convention (green down; found by the script's curl test on each map), so their green channel is flipped to the OpenGL convention glTF uses. The `_SPEC` maps are not used: glTF has no Blinn specular, and the roughness comes from each material's shininess instead.
 
+Regenerated on 2026-10-23 with the same commands after the script's review fixes: only the accessor `min`/`max` bounds changed (now the stored float32 values); the buffers, textures and triangle counts are byte for byte the same, and `--check` passes on both.
+
 Downloaded on 2026-10-22, once, with the project owner's permission.
 
 Suggested credit line: "Windmill, wagon and fence models from 3TD Starter Pack #1 by Ron Kapaun (3TD), opengameart.org, CC0 1.0."

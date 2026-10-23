@@ -11,14 +11,66 @@
 # It refuses to overwrite an existing set unless FORCE=1 is set, so run it
 # into a scratch folder and compare before replacing the shipped files.
 #
+# `--check-signs` instead runs the normal-map step on two known ramps and
+# fails unless a surface rising to the right has red below 50% and one
+# rising up the image has green below 50% (OpenGL convention).
+#
 # Usage: [FORCE=1] sh generate.sh OUTPUT_FOLDER
+#        sh generate.sh --check-signs
 set -eu
 
-out="${1:?usage: [FORCE=1] sh generate.sh OUTPUT_FOLDER}"
+usage="usage: [FORCE=1] sh generate.sh OUTPUT_FOLDER | sh generate.sh --check-signs"
+out="${1:?$usage}"
+if ! command -v magick >/dev/null 2>&1; then
+    echo "generate.sh: needs ImageMagick 7 (\`magick\`) on PATH" >&2
+    exit 1
+fi
 case "$(magick -version | head -n 1)" in
     *HDRI*) ;;
     *) echo "generate.sh: needs an HDRI build of ImageMagick 7" >&2; exit 1 ;;
 esac
+# A private scratch folder (portable: no GNU-only `mktemp --suffix`).
+scratch="$(mktemp -d)"
+trap 'rm -rf "$scratch"' EXIT
+
+# Normal map, OpenGL convention (+X right, +Y up the image): red is the
+# Sobel:180 slope and green the Sobel:90 slope, so a surface rising to the
+# right tilts its normal left (red below 50%) and one rising up the image
+# tilts it down (green below 50%); `--check-signs` proves both on ramps.
+# `multiply 0.5` sets the bump strength and `add 50%` re-centres zero slope
+# on mid-grey.
+normal_map() { # HEIGHT OUTPUT [extra output options...]
+    src="$1" dest="$2"
+    shift 2
+    magick "$src" -virtual-pixel tile -define convolve:scale='!' \
+        \( -clone 0 -morphology Convolve Sobel:180 -evaluate multiply 0.5 -evaluate add 50% \) \
+        \( -clone 0 -morphology Convolve Sobel:90 -evaluate multiply 0.5 -evaluate add 50% \) \
+        \( -clone 0 -evaluate set 100% \) \
+        -delete 0 -combine "$@" "$dest"
+}
+
+if [ "$out" = "--check-signs" ]; then
+    # Steep ramps from 0 to 1 (1/63 a pixel, so the slope is clear of
+    # rounding): left to right, and bottom to top. The centre crop
+    # keeps the tile wrap at the edges out of the means.
+    magick -size 64x64 gradient:black-white -rotate -90 "$scratch/right.miff"
+    magick -size 64x64 gradient:black-white -flip "$scratch/up.miff"
+    normal_map "$scratch/right.miff" "$scratch/right_n.miff"
+    normal_map "$scratch/up.miff" "$scratch/up_n.miff"
+    centre='-gravity center -crop 48x48+0+0 +repage'
+    # shellcheck disable=SC2086 # $centre is deliberately split.
+    red="$(magick "$scratch/right_n.miff" $centre -format '%[fx:mean.r]' info:)"
+    # shellcheck disable=SC2086
+    green="$(magick "$scratch/up_n.miff" $centre -format '%[fx:mean.g]' info:)"
+    echo "rising right: mean red $red (want < 0.5); rising up: mean green $green (want < 0.5)"
+    if awk -v r="$red" -v g="$green" 'BEGIN { exit !(r < 0.5 && g < 0.5) }'; then
+        echo "generate.sh: normal-map signs OK (OpenGL)"
+        exit 0
+    fi
+    echo "generate.sh: normal-map signs WRONG" >&2
+    exit 1
+fi
+
 if [ "${FORCE:-0}" != 1 ]; then
     for f in color.jpg normal_gl.jpg roughness.jpg; do
         if [ -e "$out/$f" ]; then
@@ -28,8 +80,7 @@ if [ "${FORCE:-0}" != 1 ]; then
     done
 fi
 mkdir -p "$out"
-height="$(mktemp --suffix=.png)"
-trap 'rm -f "$height"' EXIT
+height="$scratch/height.png"
 
 # Height: random noise streaked vertically into straw (motion blur
 # wrapping round the tile), multiplied by a blotchy layer for darker,
@@ -48,14 +99,4 @@ magick "$height" -colorspace sRGB -type TrueColor +level 30%,100% \
 # Roughness: dry straw is rough, a little less on the bright tops.
 magick "$height" -negate +level 55%,95% -quality 90 "$out/roughness.jpg"
 
-# Normal map, OpenGL convention (+X right, +Y up the image): red is the
-# Sobel:180 slope and green the Sobel:90 slope, so a surface rising to the
-# right tilts its normal left (red below 50%) and one rising up the image
-# tilts it down (green below 50%); both were checked on known ramps.
-# `multiply 0.5` sets the bump strength and `add 50%` re-centres zero slope
-# on mid-grey.
-magick "$height" -virtual-pixel tile -define convolve:scale='!' \
-    \( -clone 0 -morphology Convolve Sobel:180 -evaluate multiply 0.5 -evaluate add 50% \) \
-    \( -clone 0 -morphology Convolve Sobel:90 -evaluate multiply 0.5 -evaluate add 50% \) \
-    \( -clone 0 -evaluate set 100% \) \
-    -delete 0 -combine -quality 90 "$out/normal_gl.jpg"
+normal_map "$height" "$out/normal_gl.jpg" -quality 90

@@ -17,12 +17,12 @@ It writes `model.gltf`, `model.bin` and a `textures/` folder into the output fol
 |---|---|
 | `--rotor NODE` | Keep the geometry under this COLLADA node (name or id) apart, as a `rotor` node with its origin at the node's pivot. Its spin axis comes from the node's animated rotation; put it in `slots.ron`. |
 | `--rotor-axis X,Y,Z` | The spin axis (glTF space) when the rotor is not animated. |
-| `--rotor-name NAME` | The rotor's glTF node name (default `rotor`). |
+| `--rotor-name NAME` | The rotor's glTF node name (default `rotor`; `body` is refused, it names the static node). |
 | `--scale S` | An extra uniform scale. |
 | `--metallic M` | Metallic factor of every material (default 0). |
-| `--normal auto\|gl\|dx` | Green convention of the normal maps. `auto` (the default) decides per map: a real height field's normals are curl-free for one sign of green only. DirectX maps get their green flipped, since glTF wants OpenGL. |
+| `--normal auto\|gl\|dx` | Green convention of the normal maps. `auto` (the default) decides per map: a real height field's normals are curl-free for one sign of green only. DirectX maps get their green flipped, since glTF wants OpenGL. `gl` copies the maps without decoding them; `dx` flips every map (PNG only). The report names the convention applied to each map and whether it was detected, forced or assumed (a JPEG normal map is not inspected and is taken as GL). |
 | `--single-sided` | Cull back faces (materials are double-sided by default: game models often have single planes). |
-| `--check FILE` | Only validate a written glTF: buffers, views, accessors, indices and images in range, every URI inside the model's folder. |
+| `--check FILE` | Only validate a written glTF: buffers, views, accessors, indices and images in range (a negative or missing index is a fault), every URI inside the model's folder, and every image a PNG or JPEG by type, extension and content. |
 
 What it reads:
 
@@ -32,6 +32,16 @@ What it reads:
 - `<up_axis>` and `<unit meter>`, to Y-up meters;
 - per material: the diffuse texture or colour, the normal map (a `<bump>` texture, else a `<diffuse>_NRM.png` beside it), and a roughness from the shininess. Specular maps are ignored.
 
-The input is treated as untrusted. A file over 64 MB, a document with a DTD or entities, a non-finite number, an out-of-range index, or an oversized array is refused. Texture paths are reduced to their base name and looked up only in the model's own folder. Nothing is evaluated.
+The input is treated as untrusted. A file over 64 MB, a document with a DTD or entities, a non-finite number, an out-of-range index, or an oversized array is refused. The DTD refusal is a byte search for `<!DOCTYPE` and `<!ENTITY`, so a document that is not UTF-8 (a UTF-16 or UTF-32 file, or any other declared encoding) is refused first: those bytes could hide from the search. Texture paths are reduced to their base name and looked up only in the model's own folder: the exact name first, else one case-insensitive match (several are refused as ambiguous). Textures must be PNG or JPEG, the only formats core glTF allows. Nothing is evaluated. Invalid input gets a one-line error; any other exception is a bug in the script and keeps its traceback.
+
+Accessor `min`/`max` bounds are the float32 values actually stored, so validators see them match the buffer exactly.
+
+### Tests
+
+A standard-library `unittest` suite builds tiny COLLADA documents and PNGs in a temporary folder and covers the axis and unit conversion, triangles and polylists, the rotor split, the normal-map convention, the refusals and `--check`:
+
+```sh
+python3 -I -B -m unittest discover -s tools -v
+```
 
 The conversions done so far are listed in `assets/models/third-party/3td-starter-pack/CREDITS.md`.
