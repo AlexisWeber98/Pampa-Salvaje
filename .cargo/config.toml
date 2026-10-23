@@ -1,0 +1,6 @@
+# Faster linking on Linux: clang drives LLVM's lld, which links the big
+# Bevy binaries several times faster than the default system linker.
+# Needs `clang` and `lld` installed (Arch: `pacman -S clang lld`).
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
