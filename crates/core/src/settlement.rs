@@ -414,12 +414,12 @@ impl SettlementLayout {
         let rails: Vec<(Vec2, Vec2)> = line
             .segments()
             .map(|s| (s.start, s.end))
-            .chain(
-                line.full_path(towns)
-                    .points()
+            .chain(line.track_paths(towns).iter().flat_map(|path| {
+                path.points()
                     .windows(2)
-                    .map(|w| (w[0], w[1])),
-            )
+                    .map(|w| (w[0], w[1]))
+                    .collect::<Vec<_>>()
+            }))
             .collect();
         // Towns and lagoons with their banks.
         let bands: Vec<Aabb> = towns

@@ -24,9 +24,10 @@ No recompiling.
             plaza: Auto,
             seed: 7,
         ),
-        // ... Eduardo Castex, Metileo and General Pico follow.
+        // ... Eduardo Castex, Metileo, General Pico and Caleufú follow.
     ],
     line: Some(["Eduardo Castex", "Monte Nievas", "Metileo", "General Pico"]),
+    branches: [["Metileo", "Caleufú"]],
     lagoons: [
         (
             name: "Laguna La Arocena",
@@ -40,7 +41,7 @@ No recompiling.
 
 ### The shipped geography
 
-The file lays out a first stretch of La Pampa: three railway towns at their
+The file lays out a first stretch of La Pampa: five railway towns at their
 real relative positions, with distances scaled 1:7 to fit the largest world
 (`half_extent: 8400`, a 16.8 km x 16.8 km square). Only the distances between
 towns are scaled; each town keeps its real size (blocks, streets, buildings
@@ -52,6 +53,7 @@ and platforms).
 | Eduardo Castex | `(-4250, -2721)` | 5 x 4 | small |
 | Metileo | `(288, -544)` | 3 x 3 | a railway halt: a third of its lots built, no police station |
 | General Pico | `(2664, 1250)` | 8 x 8 | very big (see "Town size"); the line runs through its middle |
+| Caleufú | `(-7626, 2100)` | 4 x 4 | small, about two thirds built (`density: Some(0.6)`); the end of the branch from Metileo |
 
 From Castex to Monte Nievas is about 12.6 km east and 5.4 km north in the
 real pampa; from Monte Nievas to General Pico, about 35.8 km east and
@@ -70,8 +72,13 @@ meter:
   through its station).
 - Pico: `(-2450 + 35800 / 7, -1950 + 22400 / 7)` = `(-2450 + 5114.3, -1950 + 3200)` = `(2664, 1250)`,
   5.11 km east and 3.2 km north of it (6.03 km between their centers).
+- Caleufú (founded 29 October 1911 on the Metileo–Arizona branch, not the
+  main line) lies about 41 km north-west of Castex, so it is placed from
+  Castex: `(-4250 - 3376, -2721 + 4821)` = `(-7626, 2100)`, 5.89 km away
+  at 1:7 and 774 m inside the world's west edge; its track's west run-out
+  ends 269 m inside it.
 
-Monte Nievas, Castex and Metileo have the railway on their north side;
+Monte Nievas, Castex, Metileo and Caleufú have the railway on their north side;
 General Pico grew on both sides of it, so its line runs through the middle
 of the town (`through: true`). The real Pico's grid is turned 45° and its
 line runs along it, parallel to the odd-numbered streets; the game keeps
@@ -143,7 +150,8 @@ Leave room for each railway's 400 m run-out: towns lined up along their
 tracks need more space between them than towns side by side across them. If
 two towns are too close, the warning names both.
 
-A town with a railway must also be added to `line` (see below), for example
+A town with a railway must also be added to `line` or to a branch (see
+below), for example
 after General Pico: `line: Some(["Eduardo Castex", "Monte Nievas", "Metileo",
 "General Pico", "Winifreda"])`.
 
@@ -188,6 +196,28 @@ of the platform, half way along it, beside the coaches. The platform is a
 raised floor with a short ramp at each end, not an obstacle. The train runs
 as far as the line is unbroken: a link left out ends its run at the town
 before it, and a line with fewer than two stations has no train.
+
+### Branches
+
+`branches` lists the spurs off the line. Each is a list of town names: a
+town on `line` (the junction), then the towns the branch runs out to, in
+order. The first link leaves the junction's track at its end nearest the
+next town, which may be the very end the line leaves by: the two tracks
+part there, each on its own wide curve, like a turnout. The shipped file
+has one, the Metileo–Arizona branch from Metileo's west end to Caleufú.
+
+| Field | Meaning | Rules |
+|-------|---------|-------|
+| `branches` | `[["Metileo", "Caleufú"]]`: a junction town on the line, then the branch's towns. | Optional, empty by default. |
+
+- The junction must be on the line, and every other name a town with a
+  railway that is on neither the line nor another branch. A branch without
+  a valid junction or with no town past it is left out, with a warning.
+- Its links follow the line's rules (no other town's band, inside the world).
+- Each town on a branch gets a road to its nearest town (Caleufú's goes to
+  Eduardo Castex), with level crossings wherever it meets a track.
+
+No train runs on a branch yet: the line train keeps to the line.
 
 ### A line through the town
 

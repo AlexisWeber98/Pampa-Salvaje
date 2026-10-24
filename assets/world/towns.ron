@@ -72,11 +72,32 @@
             plaza: Auto,
             seed: 13,
         ),
+        (
+            // A young railway town (founded 29 October 1911) on the
+            // Metileo–Arizona branch, 41 km north-west of Castex: 3.38 km
+            // west and 4.82 km north of it at 1:7, 774 m inside the world's
+            // west edge. A plaza, a comisaría, a pulpería and houses on
+            // about two thirds of its lots; the branch ends at its station.
+            name: "Caleufú",
+            origin: (-7626.0, 2100.0),
+            blocks: (4, 4),
+            block_size: 40.0,
+            street_width: 10.0,
+            railway: Some((side: North, offset: 24.0)),
+            plaza: Auto,
+            seed: 23,
+            density: Some(0.6),
+        ),
     ],
     // The railway line, in order: links that bend on wide curves join each
     // town's track to the next one's. Every town with a railway must be
     // listed.
     line: Some(["Eduardo Castex", "Monte Nievas", "Metileo", "General Pico"]),
+    // Branches off the line: a junction town on it, then the towns the
+    // branch runs out to. The Metileo–Arizona branch leaves Metileo's
+    // west end, where the line to Monte Nievas does, and curves away
+    // north-west to Caleufú.
+    branches: [["Metileo", "Caleufú"]],
     // Shallow freshwater lagoons, sunk into the pampa with a reed belt.
     lagoons: [
         (

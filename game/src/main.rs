@@ -158,8 +158,15 @@ fn lay_out(loaded: &towns::LoadedWorld) -> Laid {
     // world is an obstacle from the start, drawn or not.
     // Kept off the whole train path too: each town's own track and its
     // run-outs, not only the links between towns.
-    let flora = FloraSite::new(world.config, &world.terrain, &loaded.line)
-        .with_track(&loaded.line.full_path(&loaded.towns))
+    // The branches' towns and run-outs too.
+    let flora = loaded
+        .line
+        .track_paths(&loaded.towns)
+        .iter()
+        .fold(
+            FloraSite::new(world.config, &world.terrain, &loaded.line),
+            |flora, path| flora.with_track(path),
+        )
         .with_fences(&fences)
         .with_settlements(&settlements);
     world.plant(&flora);
