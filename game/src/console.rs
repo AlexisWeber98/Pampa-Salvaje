@@ -9,17 +9,18 @@
 //! the rider, quits or orbits the camera.
 //!
 //! Commands ([`parse`]):
-//! - `goto LUGAR`: laguna, pico, castex, nievas, metileo (any word of a
-//!   town's or lagoon's name), `estancia` (the nearest one) or
-//!   `estancia castex` / `estancia pico` (the one nearest that town);
+//! - `goto PLACE`: pico, castex, nievas, metileo, caleufu, arocena (any
+//!   word of a town's or lagoon's name, accents optional), `lake` (the nearest lagoon), `ranch` (the
+//!   nearest estancia) or
+//!   `ranch castex` / `ranch pico` (the one nearest that town);
 //! - `goto X Y`: a point, in game meters;
-//! - `caballo`: a saddled horse beside the player;
+//! - `horse`: a saddled horse beside the player;
 //! - `fauna`: how many animals of each kind live round the player;
 //! - `unlock all`: every ability ([`PlayerAbilities`]);
-//! - `modelos on` / `modelos off` (or `personajes nuevos` / `personajes
-//!   viejos`): draw Hidalgo, Farach and Bairoletto as the MakeHuman models
-//!   or back as the rigid 1919 figures ([`CharacterModelsShown`]; off by
-//!   default, and release builds never turn it on);
+//! - `models on` / `models off`: draw Hidalgo, Farach and Bairoletto as the MakeHuman models
+//!   (the default) or back as the old rigid figures
+//!   ([`CharacterModelsShown`]; only this console turns them off);
+//! - `time HH` / `time HH:MM`: move the clock on to that time;
 //! - `help`: the list.
 //!
 //! `goto` puts the player (and the horse, when riding) on the nearest clear
@@ -55,14 +56,14 @@ const SEARCH: f32 = 300.0;
 
 /// What the console lists for `help`.
 pub const HELP: [&str; 8] = [
-    "goto laguna, pico, castex, nievas, metileo",
-    "goto estancia, estancia castex, estancia pico",
-    "goto X Y: un punto en metros",
-    "caballo: un caballo ensillado al lado",
-    "fauna: los animales cerca",
-    "unlock all: todas las habilidades",
-    "modelos on, off: personajes nuevos o viejos",
-    "hora HH o HH:MM: adelanta el reloj",
+    "goto lake, pico, castex, nievas, metileo, caleufu",
+    "goto ranch, ranch castex, ranch pico",
+    "goto X Y: a point in meters",
+    "horse: a saddled horse alongside",
+    "fauna: the animals nearby",
+    "unlock all: every ability",
+    "models on, off: MakeHuman or old figures",
+    "time HH or HH:MM: move the clock on",
 ];
 
 /// Whether this frame's keys open (or close) the console: Ctrl+Shift+F12.
@@ -92,6 +93,8 @@ pub enum Command {
 pub enum Destination {
     /// A town or a lagoon, by a word of its name.
     Named(String),
+    /// The lagoon nearest the player.
+    Lake,
     /// The estancia nearest the player, or the town named.
     Ranch(Option<String>),
     /// A point, in game meters.
@@ -104,28 +107,29 @@ pub fn parse(line: &str) -> Result<Command, String> {
     let words: Vec<&str> = lower.split_whitespace().collect();
     match words.as_slice() {
         ["help"] => Ok(Command::Help),
-        ["caballo"] => Ok(Command::Horse),
+        ["horse"] => Ok(Command::Horse),
         ["fauna"] => Ok(Command::Fauna),
         ["unlock", "all"] => Ok(Command::UnlockAll),
-        ["modelos", "on"] | ["personajes", "nuevos"] => Ok(Command::Models(true)),
-        ["modelos", "off"] | ["personajes", "viejos"] => Ok(Command::Models(false)),
-        ["modelos"] | ["personajes"] => Err("uso: modelos on, modelos off".into()),
-        ["hora"] => Err("uso: hora HH, o hora HH:MM".into()),
-        ["hora", time] => time_of_day(time)
+        ["models", "on"] => Ok(Command::Models(true)),
+        ["models", "off"] => Ok(Command::Models(false)),
+        ["models"] => Err("usage: models on, models off".into()),
+        ["time"] => Err("usage: time HH, or time HH:MM".into()),
+        ["time", time] => time_of_day(time)
             .map(Command::Time)
-            .ok_or_else(|| format!("no es una hora: {time}")),
-        ["goto"] => Err("uso: goto LUGAR, o goto X Y".into()),
-        ["goto", "estancia"] => Ok(Command::Goto(Destination::Ranch(None))),
-        ["goto", "estancia", town] => Ok(Command::Goto(Destination::Ranch(Some(town.to_string())))),
+            .ok_or_else(|| format!("not a time: {time}")),
+        ["goto"] => Err("usage: goto PLACE, or goto X Y".into()),
+        ["goto", "lake"] => Ok(Command::Goto(Destination::Lake)),
+        ["goto", "ranch"] => Ok(Command::Goto(Destination::Ranch(None))),
+        ["goto", "ranch", town] => Ok(Command::Goto(Destination::Ranch(Some(town.to_string())))),
         ["goto", place] => Ok(Command::Goto(Destination::Named(place.to_string()))),
         ["goto", x, y] => match (x.parse::<f32>(), y.parse::<f32>()) {
             (Ok(x), Ok(y)) if x.is_finite() && y.is_finite() => {
                 Ok(Command::Goto(Destination::Point(GroundVec2::new(x, y))))
             }
-            _ => Err(format!("no es un punto: {x} {y}")),
+            _ => Err(format!("not a point: {x} {y}")),
         },
         [] => Err(String::new()),
-        _ => Err(format!("comando desconocido: {}. Probá help", line.trim())),
+        _ => Err(format!("unknown command: {}. Try help", line.trim())),
     }
 }
 
@@ -136,9 +140,27 @@ fn time_of_day(word: &str) -> Option<TimeOfDay> {
     (h < 24 && m < 60).then(|| TimeOfDay::hm(h, m))
 }
 
-/// Whether a word of `name` is `word`, ignoring case.
+/// Whether a word of `name` is `word`, ignoring case and accents
+/// (`caleufu` names Caleufú).
 fn named(name: &str, word: &str) -> bool {
-    name.to_lowercase().split_whitespace().any(|w| w == word)
+    let word = plain(word);
+    plain(name).split_whitespace().any(|w| w == word)
+}
+
+/// `text` in lower case with its Spanish accents and tilde dropped.
+fn plain(text: &str) -> String {
+    text.to_lowercase()
+        .chars()
+        .map(|c| match c {
+            'á' => 'a',
+            'é' => 'e',
+            'í' => 'i',
+            'ó' => 'o',
+            'ú' | 'ü' => 'u',
+            'ñ' => 'n',
+            c => c,
+        })
+        .collect()
 }
 
 /// The town with a word of its name `word`.
@@ -166,27 +188,34 @@ fn aim(
         ranches()
             .min_by(|a, b| to(a.hub).total_cmp(&to(b.hub)))
             .map(|s| s.hub)
-            .ok_or_else(|| "no hay estancias".to_string())
+            .ok_or_else(|| "no ranches".to_string())
     };
     match destination {
         Destination::Point(p) => Ok(*p),
         Destination::Ranch(None) => nearest_ranch(&|p| p.distance(from)),
         Destination::Ranch(Some(word)) => {
             let band = town(towns, word)
-                .ok_or_else(|| format!("no hay pueblo {word}"))?
+                .ok_or_else(|| format!("no town {word}"))?
                 .leveled();
             nearest_ranch(&|p| band.closest_point(p).distance(p))
         }
-        Destination::Named(word) => {
-            if let Some(t) = town(towns, word) {
-                return Ok(t.arrival().0);
-            }
-            let lagoon = world
-                .terrain
-                .lagoons
-                .iter()
-                .find(|l| named(&l.name, word))
-                .ok_or_else(|| format!("no conozco {word}"))?;
+        Destination::Lake | Destination::Named(_) => {
+            let lagoons = &world.terrain.lagoons;
+            let lagoon = match destination {
+                Destination::Named(word) => {
+                    if let Some(t) = town(towns, word) {
+                        return Ok(t.arrival().0);
+                    }
+                    lagoons
+                        .iter()
+                        .find(|l| named(&l.name, word))
+                        .ok_or_else(|| format!("unknown place: {word}"))?
+                }
+                _ => lagoons
+                    .iter()
+                    .min_by(|a, b| a.center.distance(from).total_cmp(&b.center.distance(from)))
+                    .ok_or_else(|| "no lakes".to_string())?,
+            };
             let by_shore = |a: &&GroundVec2, b: &&GroundVec2| {
                 lagoon.offshore(**a).total_cmp(&lagoon.offshore(**b))
             };
@@ -223,7 +252,7 @@ pub fn resolve(
     let inside = world.bounds.contain(target, collider.radius).position;
     world
         .clear_spot(collider, inside, SEARCH)
-        .ok_or_else(|| "no hay lugar libre ahí".to_string())
+        .ok_or_else(|| "no clear ground there".to_string())
 }
 
 /// The console: open or not, the line being typed, what it printed.
@@ -385,7 +414,7 @@ fn run_entered(
             }
         };
         let Ok((mut player, mut transform, aboard)) = players.single_mut() else {
-            console.print("no hay jugador");
+            console.print("no player");
             continue;
         };
         let rider = &mut player.rider;
@@ -393,37 +422,37 @@ fn run_entered(
             Command::Help => HELP.iter().for_each(|h| console.print(*h)),
             Command::Fauna => match fauna.as_deref().map(crate::fauna::Fauna::counts) {
                 Some([cows, horses, hares, teros, raptors, ducks]) => console.print(format!(
-                    "vacas {cows}, caballos {horses}, liebres {hares}, teros {teros}, \
-                     chimangos {raptors}, patos {ducks}"
+                    "cows {cows}, horses {horses}, hares {hares}, teros {teros}, \
+                     raptors {raptors}, ducks {ducks}"
                 )),
-                None => console.print("no hay fauna"),
+                None => console.print("no fauna"),
             },
             Command::Models(on) => match models.as_deref_mut() {
                 Some(shown) => {
                     shown.0 = on;
                     console.print(if on {
-                        "personajes nuevos: modelos MakeHuman"
+                        "models on: MakeHuman people"
                     } else {
-                        "personajes viejos: figuras 1919"
+                        "models off: rigid 1919 figures"
                     });
                 }
-                None => console.print("no hay personajes"),
+                None => console.print("no people to draw"),
             },
             Command::UnlockAll => {
                 for ability in pampa_core::Ability::ALL {
                     abilities.unlock(ability, &mut unlocked);
                 }
-                console.print("todo desbloqueado");
+                console.print("everything unlocked");
             }
-            Command::Time(_) if aboard => console.print("en el tren no: bajate primero"),
+            Command::Time(_) if aboard => console.print("not on the train: get off first"),
             Command::Time(time) => match clock.as_mut() {
                 Some(clock) => {
                     clock.0.advance_until(time);
-                    console.print(format!("son las {}", clock.0.hh_mm()));
+                    console.print(format!("it is {}", clock.0.hh_mm()));
                 }
-                None => console.print("no hay reloj"),
+                None => console.print("no clock"),
             },
-            Command::Goto(_) if aboard => console.print("en el tren no: bajate primero"),
+            Command::Goto(_) if aboard => console.print("not on the train: get off first"),
             Command::Goto(destination) => {
                 let towns = towns.as_ref().map_or(&[][..], |t| &t.0[..]);
                 let layout = settlements.as_ref().map(|s| &s.0);
@@ -431,12 +460,12 @@ fn run_entered(
                     Ok(to) => {
                         teleport(rider, &mut transform, to, &world.0);
                         focus.0 = to;
-                        console.print(format!("en {:.0} {:.0}", to.x, to.y));
+                        console.print(format!("at {:.0} {:.0}", to.x, to.y));
                     }
                     Err(error) => console.print(error),
                 }
             }
-            Command::Horse if aboard => console.print("en el tren no: bajate primero"),
+            Command::Horse if aboard => console.print("not on the train: get off first"),
             Command::Horse => match horse_beside(rider, &world.0) {
                 Some(horse) => {
                     *horses += 1;
@@ -452,9 +481,9 @@ fn run_entered(
                         },
                         Transform::from_translation(world_from_ground(horse.position, height)),
                     ));
-                    console.print("un caballo al lado");
+                    console.print("a horse alongside");
                 }
-                None => console.print("no hay lugar para un caballo"),
+                None => console.print("no room for a horse"),
             },
         }
     }
@@ -552,32 +581,32 @@ mod tests {
     #[test]
     fn parses_every_command() {
         assert_eq!(parse("help"), Ok(Command::Help));
-        assert_eq!(parse("modelos on"), Ok(Command::Models(true)));
-        assert_eq!(parse("Personajes  Nuevos"), Ok(Command::Models(true)));
-        assert_eq!(parse("modelos off"), Ok(Command::Models(false)));
-        assert_eq!(parse("personajes viejos"), Ok(Command::Models(false)));
-        assert!(parse("modelos").unwrap_err().contains("uso"));
-        assert_eq!(parse("  Caballo "), Ok(Command::Horse));
+        assert_eq!(parse("models on"), Ok(Command::Models(true)));
+        assert_eq!(parse("Models  ON"), Ok(Command::Models(true)));
+        assert_eq!(parse("models off"), Ok(Command::Models(false)));
+        assert!(parse("models").unwrap_err().contains("usage"));
+        assert_eq!(parse("  Horse "), Ok(Command::Horse));
         assert_eq!(parse("fauna"), Ok(Command::Fauna));
         assert_eq!(parse("unlock all"), Ok(Command::UnlockAll));
-        assert_eq!(parse("hora 21"), Ok(Command::Time(TimeOfDay::hm(21, 0))));
-        assert_eq!(parse("Hora 5:30"), Ok(Command::Time(TimeOfDay::hm(5, 30))));
-        assert!(parse("hora").is_err());
-        assert!(parse("hora 24").unwrap_err().contains("no es una hora"));
-        assert!(parse("hora 21:60").is_err());
-        assert!(parse("hora noche").is_err());
-        for place in ["laguna", "pico", "castex", "nievas", "metileo"] {
+        assert_eq!(parse("time 21"), Ok(Command::Time(TimeOfDay::hm(21, 0))));
+        assert_eq!(parse("Time 5:30"), Ok(Command::Time(TimeOfDay::hm(5, 30))));
+        assert!(parse("time").is_err());
+        assert!(parse("time 24").unwrap_err().contains("not a time"));
+        assert!(parse("time 21:60").is_err());
+        assert!(parse("time night").is_err());
+        assert_eq!(parse("goto Lake"), Ok(Command::Goto(Destination::Lake)));
+        for place in ["arocena", "pico", "castex", "nievas", "metileo", "caleufu"] {
             assert_eq!(
                 parse(&format!("goto {place}")),
                 Ok(Command::Goto(Destination::Named(place.into())))
             );
         }
         assert_eq!(
-            parse("goto estancia"),
+            parse("goto ranch"),
             Ok(Command::Goto(Destination::Ranch(None)))
         );
         assert_eq!(
-            parse("goto Estancia Castex"),
+            parse("goto Ranch Castex"),
             Ok(Command::Goto(Destination::Ranch(Some("castex".into()))))
         );
         assert_eq!(
@@ -590,38 +619,34 @@ mod tests {
 
     #[test]
     fn bad_lines_say_what_is_wrong() {
-        assert!(parse("goto").unwrap_err().contains("uso"));
-        assert!(
-            parse("goto 1 norte")
-                .unwrap_err()
-                .contains("no es un punto")
-        );
+        assert!(parse("goto").unwrap_err().contains("usage"));
+        assert!(parse("goto 1 north").unwrap_err().contains("not a point"));
         assert!(parse("goto 1 inf").is_err());
-        assert!(parse("volar").unwrap_err().contains("desconocido"));
-        assert!(parse("unlock").unwrap_err().contains("desconocido"));
-        assert!(parse("goto a b c").unwrap_err().contains("desconocido"));
+        assert!(parse("fly").unwrap_err().contains("unknown"));
+        assert!(parse("unlock").unwrap_err().contains("unknown"));
+        assert!(parse("goto a b c").unwrap_err().contains("unknown"));
         assert_eq!(parse("   "), Err(String::new()));
     }
 
     #[test]
     fn everything_the_console_prints_is_in_the_font() {
         let lines = HELP.iter().map(|s| s.to_string()).chain([
-            parse("volar").unwrap_err(),
+            parse("fly").unwrap_err(),
             parse("goto").unwrap_err(),
             parse("goto 1 x").unwrap_err(),
             ": goto 12 -3.5-".into(),
-            "en el tren no: bajate primero".into(),
-            "todo desbloqueado".into(),
-            "son las 21:00".into(),
-            "no hay reloj".into(),
-            parse("hora").unwrap_err(),
-            parse("hora x").unwrap_err(),
-            "no hay lugar para un caballo".into(),
-            "no hay lugar libre ahí".into(),
-            parse("modelos").unwrap_err(),
-            "personajes nuevos: modelos MakeHuman".into(),
-            "personajes viejos: figuras 1919".into(),
-            "no hay personajes".into(),
+            "not on the train: get off first".into(),
+            "everything unlocked".into(),
+            "it is 21:00".into(),
+            "no clock".into(),
+            parse("time").unwrap_err(),
+            parse("time x").unwrap_err(),
+            "no room for a horse".into(),
+            "no clear ground there".into(),
+            parse("models").unwrap_err(),
+            "models on: MakeHuman people".into(),
+            "models off: rigid 1919 figures".into(),
+            "no people to draw".into(),
         ]);
         for line in lines {
             let missing: Vec<char> = line
@@ -647,20 +672,24 @@ mod tests {
         let from = loaded.towns[0].arrival().0;
         // Each line, how far its spot lies from where it names, and the most.
         type Distance<'a> = Box<dyn Fn(GroundVec2) -> f32 + 'a>;
-        let cases: [(&str, Distance, f32); 8] = [
-            ("goto laguna", Box::new(|p| lagoon.offshore(p)), 40.0),
+        let cases: [(&str, Distance, f32); 11] = [
+            ("goto lake", Box::new(|p| lagoon.offshore(p)), 40.0),
+            ("goto arocena", Box::new(|p| lagoon.offshore(p)), 40.0),
             ("goto pico", Box::new(near_town("General Pico")), 400.0),
             ("goto castex", Box::new(near_town("Eduardo Castex")), 400.0),
             ("goto nievas", Box::new(near_town("Monte Nievas")), 400.0),
             ("goto metileo", Box::new(near_town("Metileo")), 400.0),
-            ("goto estancia", Box::new(|p| p.distance(from)), 8000.0),
+            // Accents are optional: "caleufu" names Caleufú.
+            ("goto caleufu", Box::new(near_town("Caleufú")), 400.0),
+            ("goto caleufú", Box::new(near_town("Caleufú")), 400.0),
+            ("goto ranch", Box::new(|p| p.distance(from)), 8000.0),
             (
-                "goto estancia castex",
+                "goto ranch castex",
                 Box::new(near_town("Eduardo Castex")),
                 3500.0,
             ),
             (
-                "goto estancia pico",
+                "goto ranch pico",
                 Box::new(near_town("General Pico")),
                 3500.0,
             ),
@@ -743,25 +772,25 @@ mod tests {
     }
 
     #[test]
-    fn modelos_turns_the_makehuman_people_on_and_off() {
+    fn models_turns_the_makehuman_people_on_and_off() {
         let mut app = app();
-        enter(&mut app, "modelos on");
+        enter(&mut app, "models on");
         assert_eq!(
             last_line(&app),
-            "no hay personajes",
+            "no people to draw",
             "nothing to toggle yet"
         );
         app.init_resource::<CharacterModelsShown>();
         assert!(
-            !app.world().resource::<CharacterModelsShown>().0,
-            "off by default"
+            app.world().resource::<CharacterModelsShown>().0,
+            "on by default"
         );
-        enter(&mut app, "personajes nuevos");
-        assert!(app.world().resource::<CharacterModelsShown>().0);
-        assert!(last_line(&app).contains("MakeHuman"));
-        enter(&mut app, "modelos off");
+        enter(&mut app, "models off");
         assert!(!app.world().resource::<CharacterModelsShown>().0);
         assert!(last_line(&app).contains("1919"));
+        enter(&mut app, "models on");
+        assert!(app.world().resource::<CharacterModelsShown>().0);
+        assert!(last_line(&app).contains("MakeHuman"));
     }
 
     #[test]
@@ -812,16 +841,16 @@ mod tests {
     }
 
     #[test]
-    fn hora_moves_the_clock_on_to_nightfall() {
+    fn time_moves_the_clock_on_to_nightfall() {
         let mut app = app();
         let before = app.world().resource::<WorldClock>().0.day();
-        enter(&mut app, "hora 21:30");
+        enter(&mut app, "time 21:30");
         let clock = app.world().resource::<WorldClock>().0;
         assert_eq!(clock.time_of_day().hour_minute(), (21, 30));
         assert_eq!(clock.day(), before, "later the same day");
-        assert_eq!(last_line(&app), "son las 21:30");
+        assert_eq!(last_line(&app), "it is 21:30");
         // An earlier hour is tomorrow's: the clock never runs back.
-        enter(&mut app, "hora 6");
+        enter(&mut app, "time 6");
         let clock = app.world().resource::<WorldClock>().0;
         assert_eq!((clock.day(), clock.hour() as u32), (before + 1, 6));
     }
@@ -833,18 +862,18 @@ mod tests {
         app.update();
         let before = rider(&mut app).position;
         enter(&mut app, "goto castex");
-        assert!(last_line(&app).contains("tren"));
+        assert!(last_line(&app).contains("train"));
         let mut q = app.world_mut().query_filtered::<(), With<OnTrain>>();
         assert_eq!(q.iter(app.world()).count(), 1, "still aboard");
         assert!(rider(&mut app).position.distance(before) < 20.0);
     }
 
     #[test]
-    fn caballo_stands_a_horse_beside_the_player_mountable_once_riding_is_unlocked() {
+    fn horse_stands_a_horse_beside_the_player_mountable_once_riding_is_unlocked() {
         let mut app = app();
         // Out on the open pampa.
         enter(&mut app, "goto 100 -200");
-        enter(&mut app, "caballo");
+        enter(&mut app, "horse");
         let me = rider(&mut app);
         let mut q = app.world_mut().query::<(&Mountable, &CharacterVisual)>();
         let horses: Vec<_> = q.iter(app.world()).map(|(m, v)| (m.0, *v)).collect();

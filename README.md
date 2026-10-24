@@ -509,25 +509,29 @@ or the same keys close it, and while it is open the game gets no keys at all.
 
 | Command | Effect |
 |---------|--------|
-| `goto laguna` / `pico` / `castex` / `nievas` / `metileo` | Go to Laguna La Arocena's landing or a town's main road in; any word of a town's or lagoon's name works |
-| `goto estancia` | Go to the patio of the nearest estancia |
-| `goto estancia castex` / `goto estancia pico` | Go to the estancia nearest that town |
+| `goto lake` | Go to the landing of the nearest lagoon (Laguna La Arocena) |
+| `goto pico` / `castex` / `nievas` / `metileo` / `caleufu` / `arocena` | Go to a town's main road in, or a lagoon's landing; any word of a town's or lagoon's name works, accents optional |
+| `goto ranch` | Go to the patio of the nearest estancia |
+| `goto ranch castex` / `goto ranch pico` | Go to the estancia nearest that town |
 | `goto X Y` | Go to a point, in game meters |
-| `caballo` | Stand a saddled horse beside the player (rideable once riding is unlocked) |
+| `horse` | Stand a saddled horse beside the player (rideable once riding is unlocked) |
 | `unlock all` | Unlock every ability |
-| `modelos on` / `modelos off` (`personajes nuevos` / `personajes viejos`) | Draw Don Hidalgo, Farach and Bairoletto as the skinned MakeHuman models, or back as the rigid 1919 figures (the default) |
-| `hora 21` / `hora 21:30` | Move the clock on to that time (later today, or tomorrow if it has passed) |
+| `models on` / `models off` | Draw Don Hidalgo, Farach and Bairoletto as the skinned MakeHuman models (the default), or back as the old rigid figures |
+| `time 21` / `time 21:30` | Move the clock on to that time (later today, or tomorrow if it has passed) |
 | `help` | List the commands |
 
-The MakeHuman models (`assets/characters/`, built by `tools/mh2gltf.py`) are
-off by default and in release builds: the CC0 wardrobe is modern (jeans, a
-printed shirt, one trilby for every hat), so the rigid 1919 figures stay until
-period garments are added. Try `goto castex` (Farach with Bairoletto at his
-side) or `goto nievas` (Don Hidalgo), then `modelos on`.
+The MakeHuman models (`assets/characters/`, built by `tools/mh2gltf.py`) wear
+a 1919 wardrobe, mostly cut from the body by the converter: shirts and
+waistcoats, bombachas, knee boots, a police guerrera with brass buttons, a
+three-piece suit, felt hats, a kepi, neckerchiefs, a poncho, the faja and the
+rastra. They are
+the default, in release builds too; `models off` brings back the old rigid
+figures in a debug build. Try `goto castex` (Farach with Bairoletto at his
+side) or `goto nievas` (Don Hidalgo).
 
 `goto` puts the player, and the horse when riding, on the nearest clear, dry
 ground to the place, and the world streams in around them at once. Aboard the
-train it refuses ("en el tren no: bajate primero"): get off first.
+train it refuses ("not on the train: get off first"): get off first.
 
 ## Credits
 
