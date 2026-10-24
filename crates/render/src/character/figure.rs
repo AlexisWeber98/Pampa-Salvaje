@@ -88,7 +88,7 @@ pub enum Side {
 impl Side {
     pub(super) const BOTH: [Self; 2] = [Self::Left, Self::Right];
 
-    fn index(self) -> usize {
+    pub(super) fn index(self) -> usize {
         self as usize
     }
 
@@ -159,7 +159,7 @@ impl Joint {
 
     /// This joint's turn in `angles`, about the body's side axis; the head
     /// also turns aside by `glance`.
-    fn rotation(self, a: &JointAngles, glance: f32) -> Quat {
+    pub(super) fn rotation(self, a: &JointAngles, glance: f32) -> Quat {
         // Positive Z turns a hanging limb toward +X (forward).
         match self {
             // A rider's thighs open sideways first, then swing forward; the
@@ -1242,6 +1242,12 @@ pub struct FigureBody {
     pub seed: u32,
     /// How far the head is turned aside now, easing toward the glance.
     pub glance: f32,
+    /// The joint angles it was posed with this frame; a character model
+    /// on it is posed by the same (see [`rig`](super::rig)).
+    pub angles: JointAngles,
+    /// How still it is, easing from walking (`0`) to standing (`1`); a
+    /// rider is never still.
+    pub stillness: f32,
     /// Joint entities in [`Joint::ALL`] order.
     joints: Vec<Entity>,
 }
@@ -1312,6 +1318,8 @@ pub(super) fn spawn_figure(
         clock: 0.0,
         seed: parent.index_u32(),
         glance: 0.0,
+        angles: JointAngles::default(),
+        stillness: 1.0,
         joints,
     });
     body
@@ -1329,6 +1337,8 @@ pub(super) fn update_figures(
 ) {
     let dt = time.delta_secs();
     for (child_of, mut body, mut transform) in &mut bodies {
+        // Its first frame: no easing in from how it was drawn.
+        let first = body.clock == 0.0;
         // Wrapped, seamlessly: a game left running keeps a fine clock.
         body.clock = pampa_core::tick_clock(body.clock, dt);
         let mut idle = false;
@@ -1360,6 +1370,12 @@ pub(super) fn update_figures(
             0.0
         };
         body.glance += (target - body.glance) * (1.0 - (-8.0 * dt).exp());
+        body.angles = angles;
+        let still = if idle { 1.0 } else { 0.0 };
+        body.stillness += (still - body.stillness) * (1.0 - (-3.0 * dt).exp());
+        if first {
+            body.stillness = still;
+        }
         let glance = body.glance;
         for &entity in &body.joints {
             let Ok((joint, mut transform)) = joints.get_mut(entity) else {

@@ -21,42 +21,40 @@
 //!   ([`ModelPending`]);
 //! - once it is ready its scene spawns, turned to face the body's front
 //!   (+X; the glTF faces +Z), its meshes get the props' shared range, its
-//!   chest breathes ([`Breath`]) and the rigid parts are hidden (the arms
+//!   skeleton is found ([`Rig`]) and the rigid parts are hidden (the arms
 //!   already hang at the sides: the converter lowers them out of
 //!   MakeHuman's A-pose into the rest pose it writes);
 //! - if it fails to load, the rigid figure stays for good.
 //!
-//! The body keeps turning and bobbing as before, carrying the model. There
-//! is no animation yet: riders and walkers keep their rigid figures.
+//! The body keeps turning and bobbing as before, carrying the model, and
+//! the bone driver ([`rig`](super::rig)) poses its skeleton by the figure's
+//! joint angles: it walks, jogs, breathes and glances like the figure.
+//! Riders keep their rigid figures for now.
 
 use std::collections::HashMap;
-use std::f32::consts::{FRAC_PI_2, TAU};
+use std::f32::consts::FRAC_PI_2;
 
 use bevy::camera::visibility::VisibilityRange;
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldAssetRoot, WorldInstanceReady};
 
 use super::figure::{FigureBody, FigureJoint, FigureKind};
+use super::rig::{Bone, Rig, curled, rest_frame};
 use crate::AssetRoot;
 use crate::gltf::{self, ModelState};
 
 /// Where the character models live, under the [`AssetRoot`].
 pub const CHARACTER_DIR: &str = "characters";
 
-/// The joint that breathes, and how far it rocks (radians) over one breath
-/// of [`BREATH_PERIOD`] seconds.
-pub const BREATH_JOINT: &str = "spine_02";
-pub const BREATH_ANGLE: f32 = 0.012;
-pub const BREATH_PERIOD: f32 = 4.2;
-
-/// The model folder of a figure kind, if it has one. The protagonist's
-/// model is generated but not used until it walks and rides.
+/// The model folder of a figure kind, if it has one. Only figures on foot
+/// wear it: a rider keeps the rigid figure.
 pub fn model_name(kind: FigureKind) -> Option<&'static str> {
     match kind {
+        FigureKind::Protagonist => Some("protagonist"),
         FigureKind::Hidalgo => Some("hidalgo"),
         FigureKind::Farach => Some("farach"),
         FigureKind::Bairoletto => Some("bairoletto"),
-        FigureKind::Protagonist | FigureKind::Townsfolk(_) => None,
+        FigureKind::Townsfolk(_) => None,
     }
 }
 
@@ -109,14 +107,6 @@ pub struct CharacterModel;
 /// A character model still loading: its scene spawns here once ready.
 #[derive(Component, Debug, Clone)]
 pub struct ModelPending(pub Handle<WorldAsset>);
-
-/// A joint rocking about its own X axis around its rest rotation.
-#[derive(Component, Debug, Clone, Copy)]
-pub struct Breath {
-    pub rest: Quat,
-    /// Seconds since it started breathing.
-    pub clock: f32,
-}
 
 /// The model's root transform under the body: the glTF faces +Z, the
 /// body's front is +X.
@@ -211,8 +201,9 @@ pub fn model_range() -> VisibilityRange {
 }
 
 /// Dresses a character model the moment its scene spawns: the shared
-/// range on its meshes, the chest breathing, and its figure's rigid parts
-/// hidden.
+/// range on its meshes, its skeleton found for the bone driver, its fingers
+/// curled, and its figure's rigid parts hidden.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn dress_character(
     ready: On<WorldInstanceReady>,
     mut commands: Commands,
@@ -221,41 +212,40 @@ pub(super) fn dress_character(
     parts: Query<(Option<&Name>, Has<Mesh3d>)>,
     rigid: Query<(), With<FigureJoint>>,
     transforms: Query<&Transform>,
+    parents: Query<&ChildOf>,
 ) {
     let root = ready.entity;
     let Ok(body) = models.get(root) else {
         return;
     };
     let range = model_range();
+    let mut rig = Rig::default();
     for entity in children.iter_descendants(root) {
         let Ok((name, mesh)) = parts.get(entity) else {
             continue;
         };
         if mesh {
             commands.entity(entity).try_insert(range.clone());
+            rig.probe.get_or_insert(entity);
         }
-        if name.map(Name::as_str) == Some(BREATH_JOINT)
-            && let Ok(t) = transforms.get(entity)
-        {
-            commands.entity(entity).try_insert(Breath {
-                rest: t.rotation,
-                clock: (entity.index_u32() as f32 * 0.61).fract() * BREATH_PERIOD,
-            });
+        let (Some(name), Ok(t)) = (name, transforms.get(entity)) else {
+            continue;
+        };
+        if let Some(bone) = Bone::named(name.as_str()) {
+            let frame = rest_frame(entity, root, &parents, &transforms);
+            rig.bind(bone, entity, t, frame);
+        } else if let Some(curl) = curled(name.as_str(), t.rotation) {
+            commands.entity(entity).try_insert(t.with_rotation(curl));
         }
     }
+    if !rig.is_complete() {
+        warn!("character model without the whole game_engine skeleton: some bones stay still");
+    }
+    commands.entity(root).try_insert(rig);
     for &child in children.get(body.parent()).into_iter().flatten() {
         if rigid.contains(child) {
             commands.entity(child).try_insert(Visibility::Hidden);
         }
-    }
-}
-
-/// Rocks every breathing joint.
-pub(super) fn breathe(time: Res<Time>, mut joints: Query<(&mut Breath, &mut Transform)>) {
-    for (mut breath, mut transform) in &mut joints {
-        breath.clock = (breath.clock + time.delta_secs()) % BREATH_PERIOD;
-        let angle = BREATH_ANGLE * (breath.clock / BREATH_PERIOD * TAU).sin();
-        transform.rotation = breath.rest * Quat::from_rotation_x(angle);
     }
 }
 
@@ -273,10 +263,10 @@ mod tests {
     const FLOOR: usize = 3_000;
 
     #[test]
-    fn only_the_errand_people_have_models_and_each_is_shipped() {
-        assert_eq!(model_name(FigureKind::Protagonist), None);
+    fn the_protagonist_and_the_errand_people_have_models_and_each_is_shipped() {
         assert_eq!(model_name(FigureKind::Townsfolk(1)), None);
         for kind in [
+            FigureKind::Protagonist,
             FigureKind::Hidalgo,
             FigureKind::Farach,
             FigureKind::Bairoletto,
@@ -285,8 +275,6 @@ mod tests {
             assert!(gltf::is_inside(&path));
             assert!(root().0.join(&path).is_file(), "{path}");
         }
-        // Generated, waiting for its animation.
-        assert!(root().0.join(model_path("protagonist")).is_file());
     }
 
     #[test]
@@ -411,34 +399,36 @@ mod tests {
     }
 
     #[test]
-    fn the_model_turns_to_the_bodys_front() {
-        let front = model_transform().rotation * Vec3::Z;
-        assert!(front.distance(Vec3::X) < 1e-5, "{front}");
+    fn the_protagonist_wears_his_model_on_foot_but_not_in_the_saddle() {
+        use crate::character::{CharacterVisual, Coat};
+        let (mut app, _) = toggle_app();
+        let mut models = app.world_mut().resource_mut::<CharacterModels>();
+        models.0.insert(FigureKind::Protagonist, Handle::default());
+        let me = app
+            .world_mut()
+            .spawn(CharacterVisual::Figure(FigureKind::Protagonist))
+            .id();
+        app.update();
+        assert_eq!(model_count(&mut app), 2, "Farach and the clerk on foot");
+        app.world_mut()
+            .entity_mut(me)
+            .insert(CharacterVisual::Mounted {
+                rider: FigureKind::Protagonist,
+                coat: Coat::HIDALGO,
+            });
+        app.update();
+        assert_eq!(model_count(&mut app), 1, "the rider stays rigid");
+        // Even when the models are turned off and on again.
+        app.insert_resource(CharacterModelsShown(false));
+        app.update();
+        app.insert_resource(CharacterModelsShown(true));
+        app.update();
+        assert_eq!(model_count(&mut app), 1);
     }
 
     #[test]
-    fn a_breath_rocks_around_the_rest_and_back() {
-        let mut app = App::new();
-        app.add_plugins(MinimalPlugins)
-            .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
-                std::time::Duration::from_secs_f32(BREATH_PERIOD / 4.0),
-            ))
-            .add_systems(Update, breathe);
-        let rest = Quat::from_rotation_y(0.3);
-        let joint = app
-            .world_mut()
-            .spawn((Breath { rest, clock: 0.0 }, Transform::from_rotation(rest)))
-            .id();
-        let mut angles = Vec::new();
-        for _ in 0..6 {
-            app.update();
-            let t = app.world().get::<Transform>(joint).unwrap();
-            angles.push(t.rotation.angle_between(rest));
-        }
-        assert!(
-            angles.iter().all(|a| *a <= BREATH_ANGLE + 1e-4),
-            "{angles:?}"
-        );
-        assert!(angles.iter().any(|a| *a > BREATH_ANGLE * 0.9), "{angles:?}");
+    fn the_model_turns_to_the_bodys_front() {
+        let front = model_transform().rotation * Vec3::Z;
+        assert!(front.distance(Vec3::X) < 1e-5, "{front}");
     }
 }
