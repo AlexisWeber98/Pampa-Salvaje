@@ -42,8 +42,8 @@ chunks around the player under hard caps, without hurting the Renoir iGPU.
   of 6–20 head. Coats: Hereford (red, white face), Aberdeen Angus (black),
   overo (white with black patches), mostly one breed per herd.
 - **Behaviour**: cows graze (head down), stand, walk slowly to a spot near
-  the herd and lie down now and then; a rider closer than `Herd::SHY` walks
-  them off, a lying cow gets up when one comes within `Herd::ROUSE`. They
+  the herd; a rider closer than `Herd::SHY` walks them off. (They no
+  longer lie down: see `odd/tasks/animated-fauna.md`.) They
   keep apart, are pushed out of static obstacles (trees) and clamped to the
   pasture. They are soft bodies the rider is blocked by.
 - **Horses**: 1–3 untacked horses stand in the corrals of chacras and
@@ -89,18 +89,20 @@ chunks around the player under hard caps, without hurting the Renoir iGPU.
   lines stay put while idle.
 - **Cow looks.** The barrel and neck are now smooth capsules (`Shape::Barrel`).
   The chest is deeper and the legs shorter (0.78 m). There is a dewlap and
-  an udder (a new `Udder` paint, 12 in all). A lying cow rests its belly on
-  the ground: the forelegs are tucked under the chest and the hind legs
-  folded forward along the belly. Triangles: Hereford 824, Angus 724,
+  an udder (a new `Udder` paint, 12 in all). A lying cow rested its belly
+  on the ground (the lying state was removed later, with these rigid
+  cows, in `odd/tasks/animated-fauna.md`). Triangles: Hereford 824, Angus 724,
   overo 904, within the budget of 1,000.
 
 ## Follow-ups
 
-- Skeletal (skinned) versions of the animals when bevy_animation is
-  available.
+- Skeletal (skinned) versions of the animals: done for the cattle and
+  the corral horses in `odd/tasks/animated-fauna.md` (the rigid cows and
+  the untacked `CharacterVisual::Bare` horse are gone).
 - Horses grazing loose in the paddocks round the homesteads (they stand in
   the corrals only).
-- Calves, a bull per herd, teros landing on fence posts, flamencos.
+- Calves, teros landing on fence posts, flamencos (the bull per herd is
+  done in `odd/tasks/animated-fauna.md`).
 
 ## Progress
 

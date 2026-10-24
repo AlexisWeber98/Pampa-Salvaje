@@ -79,7 +79,7 @@ impl Coat {
         }
     }
 
-    fn mane(self) -> Rgb {
+    pub(crate) fn mane(self) -> Rgb {
         match self {
             Self::Zaino | Self::Bayo => [34, 28, 24],
             Self::Tordillo => [206, 202, 194],
@@ -89,7 +89,7 @@ impl Coat {
     }
 
     /// The lower legs, darker on most coats.
-    fn points(self) -> Rgb {
+    pub(crate) fn points(self) -> Rgb {
         match self {
             Self::Zaino => [44, 32, 26],
             Self::Tordillo => [92, 92, 90],
@@ -100,14 +100,14 @@ impl Coat {
     }
 
     /// The head, a little lighter on the grey.
-    pub(super) fn head(self) -> Rgb {
+    pub(crate) fn head(self) -> Rgb {
         match self {
             Self::Tordillo => [150, 150, 146],
             _ => self.body(),
         }
     }
 
-    pub(super) fn hoof(self) -> Rgb {
+    pub(crate) fn hoof(self) -> Rgb {
         match self {
             Self::Tordillo | Self::Overo => [78, 68, 58],
             _ => [38, 32, 28],
@@ -1033,8 +1033,8 @@ pub struct HorseJointPart(pub HorseJoint);
 pub struct HorsePartMesh(pub HorsePiece);
 
 /// Spawns a horse in `coat` under `parent`: saddled, and tacked for a rider
-/// when `Some(true)`; bare (no tack at all) when `tack` is `None`. Returns
-/// its body and its trunk joint (where a rider sits).
+/// when `mounted`. Returns its body and its trunk joint (where a rider
+/// sits).
 pub(super) fn spawn_horse(
     commands: &mut Commands,
     (kit, meshes): (&mut HorseKit, &mut Assets<Mesh>),
@@ -1042,7 +1042,7 @@ pub(super) fn spawn_horse(
     parent: Entity,
     coat: Coat,
     phase: f32,
-    tack: Option<bool>,
+    mounted: bool,
 ) -> (Entity, Entity) {
     let body = commands
         .spawn((
@@ -1070,11 +1070,7 @@ pub(super) fn spawn_horse(
         .into_iter()
         .enumerate()
         .map(|(i, p)| (p, Some(i)));
-    let tack = tack
-        .map(tack_parts)
-        .into_iter()
-        .flatten()
-        .map(|p| (p, None));
+    let tack = tack_parts(mounted).into_iter().map(|p| (p, None));
     for (part, index) in body_parts.chain(tack) {
         let paints = (&mut *palette, &mut *materials, &mut *images);
         let Some((mesh, material)) = kit.draw(&part, index, coat, meshes, paints) else {

@@ -13,8 +13,11 @@
 //!   word of a town's or lagoon's name, accents optional), `lake` (the nearest lagoon), `ranch` (the
 //!   nearest estancia) or
 //!   `ranch castex` / `ranch pico` (the one nearest that town);
+//! - `goto herd`: the pasture of the nearest herd;
 //! - `goto X Y`: a point, in game meters;
 //! - `horse`: a saddled horse beside the player;
+//! - `turbo on` / `turbo off`: the player's horse gallops at up to
+//!   [`TURBO_KMH`] (and gets there fast), or back to its normal gallop;
 //! - `fauna`: how many animals of each kind live round the player;
 //! - `unlock all`: every ability ([`PlayerAbilities`]);
 //! - `models on` / `models off`: draw Hidalgo, Farach and Bairoletto as the MakeHuman models
@@ -33,8 +36,8 @@ use bevy::input::InputSystems;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::prelude::*;
 use pampa_core::{
-    Circle, Rider, SettlementKind, SettlementLayout, TetheredHorse, TimeOfDay, TownLayout, Travel,
-    Vec2 as GroundVec2, World,
+    Circle, FaunaSite, Rider, RiderParams, SettlementKind, SettlementLayout, TetheredHorse,
+    TimeOfDay, TownLayout, Travel, Vec2 as GroundVec2, World,
 };
 use pampa_render::hud::{panel_colors, text_image};
 use pampa_render::{
@@ -44,26 +47,31 @@ use pampa_render::{
 
 use crate::abilities::{PlayerAbilities, Unlocked};
 use crate::errand::Mountable;
-use crate::player::{DrivePlayer, GameWorld, Player};
+use crate::player::{DrivePlayer, GameWorld, Player, PlayerTuning};
 use crate::ride::OnTrain;
 
 /// Pixel scale of the console's lettering (the HUD objective's).
 const SCALE: usize = 2;
 /// Most output lines kept on screen.
 const LOG_LINES: usize = 6;
+/// Top gallop of the player's horse with `turbo on`, in km/h.
+pub const TURBO_KMH: f32 = 70.0;
+/// How fast the horse gets there with `turbo on`, in m/s².
+const TURBO_ACCELERATION: f32 = 10.0;
 /// Farthest from a place the clear ground may be, in meters.
 const SEARCH: f32 = 300.0;
 
 /// What the console lists for `help`.
-pub const HELP: [&str; 8] = [
+pub const HELP: [&str; 9] = [
     "goto lake, pico, castex, nievas, metileo, caleufu",
-    "goto ranch, ranch castex, ranch pico",
+    "goto ranch, ranch castex, ranch pico, herd",
     "goto X Y: a point in meters",
     "horse: a saddled horse alongside",
     "fauna: the animals nearby",
     "unlock all: every ability",
     "models on, off: MakeHuman or old figures",
     "time HH or HH:MM: move the clock on",
+    "turbo on, off: gallop at 70 kmh",
 ];
 
 /// Whether this frame's keys open (or close) the console: Ctrl+Shift+F12.
@@ -85,6 +93,8 @@ pub enum Command {
     Models(bool),
     /// Moves the clock on to this time of day (today or tomorrow).
     Time(TimeOfDay),
+    /// Lets the player's horse gallop at [`TURBO_KMH`] (or back to normal).
+    Turbo(bool),
     Help,
 }
 
@@ -95,6 +105,8 @@ pub enum Destination {
     Named(String),
     /// The lagoon nearest the player.
     Lake,
+    /// The pasture of the herd nearest the player.
+    Herd,
     /// The estancia nearest the player, or the town named.
     Ranch(Option<String>),
     /// A point, in game meters.
@@ -113,12 +125,16 @@ pub fn parse(line: &str) -> Result<Command, String> {
         ["models", "on"] => Ok(Command::Models(true)),
         ["models", "off"] => Ok(Command::Models(false)),
         ["models"] => Err("usage: models on, models off".into()),
+        ["turbo", "on"] => Ok(Command::Turbo(true)),
+        ["turbo", "off"] => Ok(Command::Turbo(false)),
+        ["turbo"] => Err("usage: turbo on, turbo off".into()),
         ["time"] => Err("usage: time HH, or time HH:MM".into()),
         ["time", time] => time_of_day(time)
             .map(Command::Time)
             .ok_or_else(|| format!("not a time: {time}")),
         ["goto"] => Err("usage: goto PLACE, or goto X Y".into()),
         ["goto", "lake"] => Ok(Command::Goto(Destination::Lake)),
+        ["goto", "herd"] => Ok(Command::Goto(Destination::Herd)),
         ["goto", "ranch"] => Ok(Command::Goto(Destination::Ranch(None))),
         ["goto", "ranch", town] => Ok(Command::Goto(Destination::Ranch(Some(town.to_string())))),
         ["goto", place] => Ok(Command::Goto(Destination::Named(place.to_string()))),
@@ -192,6 +208,9 @@ fn aim(
     };
     match destination {
         Destination::Point(p) => Ok(*p),
+        // The herds live in the fauna, not here: `run_entered` turns this
+        // into the pasture's point first.
+        Destination::Herd => Err("no herds".to_string()),
         Destination::Ranch(None) => nearest_ranch(&|p| p.distance(from)),
         Destination::Ranch(Some(word)) => {
             let band = town(towns, word)
@@ -236,6 +255,27 @@ fn aim(
             }))
         }
     }
+}
+
+/// The player's horse tuning with `turbo` on or off.
+fn turbo(on: bool) -> RiderParams {
+    let normal = RiderParams::default();
+    if !on {
+        return normal;
+    }
+    RiderParams {
+        gallop_max: TURBO_KMH / 3.6,
+        acceleration: TURBO_ACCELERATION,
+        ..normal
+    }
+}
+
+/// The middle of the pasture of the herd nearest `from`.
+fn nearest_herd(site: &FaunaSite, from: GroundVec2) -> Option<GroundVec2> {
+    site.herds()
+        .iter()
+        .map(|h| h.pasture.center())
+        .min_by(|a, b| a.distance(from).total_cmp(&b.distance(from)))
 }
 
 /// Where `goto destination` puts the player: the nearest clear, dry ground
@@ -393,8 +433,15 @@ fn run_entered(
         Option<ResMut<WorldClock>>,
     ),
     mut players: Query<(&mut Player, &mut Transform, Has<OnTrain>)>,
-    (mut horses, mut models): (Local<u32>, Option<ResMut<CharacterModelsShown>>),
-    fauna: Option<Res<crate::fauna::Fauna>>,
+    (mut horses, mut models, mut tuning): (
+        Local<u32>,
+        Option<ResMut<CharacterModelsShown>>,
+        Option<ResMut<PlayerTuning>>,
+    ),
+    (fauna, site): (
+        Option<Res<crate::fauna::Fauna>>,
+        Option<Res<crate::fauna::WorldFauna>>,
+    ),
 ) {
     // Only touched with lines to run: a change every frame would reletter
     // the panel every frame, despawning its lines before the UI lays them
@@ -438,6 +485,17 @@ fn run_entered(
                 }
                 None => console.print("no people to draw"),
             },
+            Command::Turbo(on) => match tuning.as_deref_mut() {
+                Some(tuning) => {
+                    tuning.0 = turbo(on);
+                    console.print(if on {
+                        format!("turbo on: gallop up to {TURBO_KMH:.0} kmh")
+                    } else {
+                        "turbo off: normal gallop".to_string()
+                    });
+                }
+                None => console.print("no horse tuning"),
+            },
             Command::UnlockAll => {
                 for ability in pampa_core::Ability::ALL {
                     abilities.unlock(ability, &mut unlocked);
@@ -454,6 +512,19 @@ fn run_entered(
             },
             Command::Goto(_) if aboard => console.print("not on the train: get off first"),
             Command::Goto(destination) => {
+                let destination = match destination {
+                    Destination::Herd => match site
+                        .as_deref()
+                        .and_then(|s| nearest_herd(&s.0, rider.position))
+                    {
+                        Some(pasture) => Destination::Point(pasture),
+                        None => {
+                            console.print("no herds");
+                            continue;
+                        }
+                    },
+                    other => other,
+                };
                 let towns = towns.as_ref().map_or(&[][..], |t| &t.0[..]);
                 let layout = settlements.as_ref().map(|s| &s.0);
                 match resolve(&destination, towns, &world.0, layout, rider.position) {
@@ -595,6 +666,12 @@ mod tests {
         assert!(parse("time 21:60").is_err());
         assert!(parse("time night").is_err());
         assert_eq!(parse("goto Lake"), Ok(Command::Goto(Destination::Lake)));
+        assert_eq!(parse("goto herd"), Ok(Command::Goto(Destination::Herd)));
+        assert_eq!(parse("Turbo ON"), Ok(Command::Turbo(true)));
+        assert_eq!(parse("turbo off"), Ok(Command::Turbo(false)));
+        assert!(parse("turbo").unwrap_err().contains("usage"));
+        assert!((turbo(true).gallop_max * 3.6 - TURBO_KMH).abs() < 1e-3);
+        assert_eq!(turbo(false), RiderParams::default());
         for place in ["arocena", "pico", "castex", "nievas", "metileo", "caleufu"] {
             assert_eq!(
                 parse(&format!("goto {place}")),
@@ -641,6 +718,10 @@ mod tests {
             "no clock".into(),
             parse("time").unwrap_err(),
             parse("time x").unwrap_err(),
+            parse("turbo").unwrap_err(),
+            "turbo on: gallop up to 70 kmh".into(),
+            "turbo off: normal gallop".into(),
+            "no horse tuning".into(),
             "no room for a horse".into(),
             "no clear ground there".into(),
             parse("models").unwrap_err(),
