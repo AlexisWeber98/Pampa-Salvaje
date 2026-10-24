@@ -152,19 +152,37 @@ fn mix(a: Color, b: Color, t: f32) -> Color {
 }
 
 /// How the sun's shadow cascades cover the view: three cascades over the
-/// nearest [`SHADOW_DISTANCE`] meters, the first ending close to the rider,
-/// so people and horses near the camera cast crisp shadows. The shadow map
-/// keeps Bevy's default 2048 texels: three cascades instead of four use a
-/// quarter less shadow memory, and the near one has more texels per meter.
+/// nearest [`SHADOW_DISTANCE`] meters (about 12, 35 and 100 m), the first
+/// ending at [`FIRST_CASCADE`]. With the first at 8 m, the rider at the
+/// orbit camera's default 9.5 m fell into the second cascade, about 8 to
+/// 28 m deep and so about a third as sharp; at 12 m the rider, the horse
+/// and their shadow on the ground beside them are in the sharp one. Things
+/// closer than 8 m lose a little sharpness, but the camera seldom looks at
+/// them. Neighbouring cascades blend over [`CASCADE_OVERLAP`] rather than
+/// Bevy's 0.2, which leaves each cascade a little more of its map.
+///
+/// The shadow map keeps Bevy's default 2048 texels per cascade (about
+/// 48 MB of depth for three). 4096 would sharpen it further but cost four
+/// times the memory and the shadow-pass fill rate, which the Renoir iGPU's
+/// shared memory cannot spare. Depth and normal biases stay at Bevy's
+/// defaults (0.02 and 1.8 texels); the normal bias scales with the texel
+/// size, so it follows the cascade change by itself.
 pub fn sun_cascades() -> CascadeShadowConfig {
     CascadeShadowConfigBuilder {
         num_cascades: 3,
-        first_cascade_far_bound: 8.0,
+        first_cascade_far_bound: FIRST_CASCADE,
         maximum_distance: SHADOW_DISTANCE,
+        overlap_proportion: CASCADE_OVERLAP,
         ..default()
     }
     .build()
 }
+
+/// Far bound of the nearest shadow cascade, in meters.
+pub const FIRST_CASCADE: f32 = 12.0;
+
+/// How much of each cascade overlaps the one before, to blend the seam.
+pub const CASCADE_OVERLAP: f32 = 0.15;
 
 /// How far from the camera things cast shadows, in meters (the dust fog
 /// hides most detail past it).
@@ -364,8 +382,21 @@ mod tests {
     fn sun_shadows_are_crisp_near_the_rider() {
         let cascades = sun_cascades();
         assert_eq!(cascades.bounds.len(), 3);
-        assert!(cascades.bounds[0] <= 8.0 + 1e-3, "{:?}", cascades.bounds);
+        // The first cascade reaches past the rider at the orbit camera's
+        // default 9.5 m, with room for their shadow on a low sun.
+        assert!(
+            (10.0..=12.0).contains(&cascades.bounds[0]),
+            "{:?}",
+            cascades.bounds
+        );
+        assert_eq!(cascades.bounds[0], FIRST_CASCADE);
         assert!((cascades.bounds[2] - SHADOW_DISTANCE).abs() < 1e-3);
+        assert!(cascades.bounds[1] > cascades.bounds[0] && cascades.bounds[1] < cascades.bounds[2]);
+        assert_eq!(cascades.overlap_proportion, CASCADE_OVERLAP);
+        assert!(
+            CASCADE_OVERLAP < CascadeShadowConfigBuilder::default().overlap_proportion,
+            "tighter than Bevy's default overlap"
+        );
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .add_plugins(AtmospherePlugin);

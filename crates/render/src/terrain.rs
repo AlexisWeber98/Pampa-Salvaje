@@ -1,4 +1,4 @@
-//! Low-poly ground streamed in square chunks around the rider, each with
+//! Smooth-shaded ground streamed in square chunks around the rider, each with
 //! scattered props (tosca stones and small jarilla shrubs, drawn with the
 //! CC0 vegetation models when they are loaded) that give the eye something
 //! to measure speed by. The ground is painted per vertex, from grey-green to
@@ -7,7 +7,10 @@
 //! over that paint. The native flora on it is grown by [`crate::flora`].
 //!
 //! Every chunk is sampled from the logic [`Terrain`], the single source of
-//! truth for height, so neighboring chunks meet without seams. Which chunks
+//! truth for height, so neighboring chunks meet without seams, in height and
+//! in shading: each corner's normal comes from the height field's slope (see
+//! [`build_chunk_mesh`]), so the ground reads as rolling land, not facets.
+//! Which chunks
 //! exist is decided by a [`StreamingSet`] around [`StreamFocus`]: chunks
 //! within the load radius are built, a bounded number per frame, and chunks
 //! past the radius plus one are despawned with their props. The chunks
@@ -19,7 +22,7 @@
 use std::collections::HashMap;
 
 use bevy::asset::RenderAssetUsages;
-use bevy::mesh::PrimitiveTopology;
+use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
@@ -31,7 +34,7 @@ use crate::coords::world_from_ground;
 use crate::flora::{
     Model, VegetationLoad, VegetationModels, WorldFlora, spot_unit, visible_within,
 };
-use crate::ground::{face_tangent, ground_material, ground_uv};
+use crate::ground::{ground_material, ground_uv};
 use crate::streaming::StreamingSet;
 
 /// The logic terrain this world is drawn from. Insert before the plugin runs,
@@ -451,58 +454,93 @@ pub(crate) fn mesh_height(terrain: &Terrain, p: GroundVec2, size: f32, resolutio
     }
 }
 
-/// Non-indexed triangle list so normals come out flat: the low-poly look.
-/// Vertices are in world space; the chunk entity stays at the origin. UVs
-/// are world space too ([`ground_uv`]), with flat per-face tangents for the
-/// ground's normal map.
+/// The smooth normal and the normal-map tangent (bitangent sign in `w`) of
+/// the ground where it rises `dx` meters per meter east and `dy` per meter
+/// north. The tangent follows the world-space U of [`ground_uv`], as
+/// [`crate::ground::face_tangent`] does for a flat face on the same slope.
+pub(crate) fn slope_frame(dx: f32, dy: f32) -> ([f32; 3], [f32; 4]) {
+    // World X is east and world Z is south: along them the ground rises by
+    // `dx` and by `-dy`.
+    let (along_u, along_v) = (Vec3::new(1.0, dx, 0.0), Vec3::new(0.0, -dy, 1.0));
+    let normal = along_v.cross(along_u).normalize_or(Vec3::Y);
+    let tangent = along_u.normalize();
+    let w = if normal.cross(tangent).dot(along_v) < 0.0 {
+        -1.0
+    } else {
+        1.0
+    };
+    (normal.to_array(), [tangent.x, tangent.y, tangent.z, w])
+}
+
+/// An indexed grid of `(resolution + 1)²` corners, two triangles per quad
+/// (the split [`mesh_height`] follows). Vertices are in world space; the
+/// chunk entity stays at the origin. UVs are world space too
+/// ([`ground_uv`]), and the paint is sampled per corner.
+///
+/// Normals are smooth: each corner's comes from the height field's slope
+/// over one quad either way (central differences of [`Terrain::height`]),
+/// with the matching tangent for the ground's normal map. The slope is
+/// sampled on a lattice numbered across the whole world, not per chunk, so
+/// the corners two chunks share get exactly the same normal and the ground
+/// shades without seams.
 fn build_chunk_mesh(terrain: &Terrain, coord: ChunkCoord, size: f32, resolution: u32) -> Mesh {
-    // Every corner is shared by up to four quads: sample the terrain (its
-    // height and the six heights of its colour) once per corner, not once
-    // per quad touching it.
     let side = resolution + 1;
-    let grid: Vec<(Vec3, [f32; 4])> = (0..side)
-        .flat_map(|j| (0..side).map(move |i| (i, j)))
+    let quad = size / resolution as f32;
+    // Heights on the world lattice from one quad before this chunk to one
+    // past it: lattice point `n` along an axis is at `n * quad` meters.
+    let (lattice, origin) = (side + 2, |c: i32| c * resolution as i32 - 1);
+    let (ox, oy) = (origin(coord.x), origin(coord.y));
+    let heights: Vec<f32> = (0..lattice)
+        .flat_map(|j| (0..lattice).map(move |i| (i, j)))
         .map(|(i, j)| {
-            let ground = chunk_corner(coord, size, resolution, i, j);
-            (
-                world_from_ground(ground, terrain.height(ground.x, ground.y)),
-                ground_color(terrain, ground),
-            )
+            let at = |o: i32, k: u32| (o + k as i32) as f32 * quad;
+            terrain.height(at(ox, i), at(oy, j))
         })
         .collect();
-    let corner = |i: u32, j: u32| grid[(j * side + i) as usize];
+    // Corner `(i, j)` is lattice point `(i + 1, j + 1)`.
+    let lat = |i: u32, j: u32| heights[(j * lattice + i) as usize];
 
-    let quads = (resolution * resolution) as usize;
-    let mut positions = Vec::with_capacity(quads * 6);
-    let mut colors = Vec::with_capacity(quads * 6);
-    let mut uvs = Vec::with_capacity(quads * 6);
-    let mut tangents = Vec::with_capacity(quads * 6);
+    let corners = (side * side) as usize;
+    let mut positions = Vec::with_capacity(corners);
+    let mut colors = Vec::with_capacity(corners);
+    let mut uvs = Vec::with_capacity(corners);
+    let mut normals = Vec::with_capacity(corners);
+    let mut tangents = Vec::with_capacity(corners);
+    for j in 0..side {
+        for i in 0..side {
+            let ground = chunk_corner(coord, size, resolution, i, j);
+            let p = world_from_ground(ground, terrain.height(ground.x, ground.y));
+            let dx = (lat(i + 2, j + 1) - lat(i, j + 1)) / (2.0 * quad);
+            let dy = (lat(i + 1, j + 2) - lat(i + 1, j)) / (2.0 * quad);
+            let (normal, tangent) = slope_frame(dx, dy);
+            positions.push(p.to_array());
+            colors.push(ground_color(terrain, ground));
+            uvs.push(ground_uv(p));
+            normals.push(normal);
+            tangents.push(tangent);
+        }
+    }
+    let at = |i: u32, j: u32| j * side + i;
+    let mut indices = Vec::with_capacity((resolution * resolution * 6) as usize);
     for j in 0..resolution {
         for i in 0..resolution {
-            let (a, b) = (corner(i, j), corner(i + 1, j));
-            let (c, d) = (corner(i + 1, j + 1), corner(i, j + 1));
+            let (a, b) = (at(i, j), at(i + 1, j));
+            let (c, d) = (at(i + 1, j + 1), at(i, j + 1));
             // World Z is -north, so (a, b, c) is counter-clockwise seen from above.
-            for tri in [[a, b, c], [a, c, d]] {
-                let points = tri.map(|(v, _)| v);
-                let uv = points.map(ground_uv);
-                positions.extend(points.map(|v| v.to_array()));
-                colors.extend(tri.map(|(_, c)| c));
-                tangents.extend([face_tangent(points, uv); 3]);
-                uvs.extend(uv);
-            }
+            indices.extend([a, b, c, a, c, d]);
         }
     }
 
-    let mut mesh = Mesh::new(
+    Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::RENDER_WORLD,
     )
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
     .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
     .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
-    .with_inserted_attribute(Mesh::ATTRIBUTE_TANGENT, tangents);
-    mesh.compute_normals();
-    mesh
+    .with_inserted_attribute(Mesh::ATTRIBUTE_TANGENT, tangents)
+    .with_inserted_indices(Indices::U32(indices))
 }
 
 /// Grey-green grass where the pampa is greener (sRGB).
@@ -657,6 +695,7 @@ fn chunk_props(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ground::face_tangent;
     use pampa_core::{FlatArea, TownLayout};
 
     fn app(focus: GroundVec2) -> App {
@@ -802,7 +841,8 @@ mod tests {
             }
         }
         let mesh = build_chunk_mesh(&terrain, ChunkCoord::new(2, -1), size, 4);
-        assert_eq!(mesh.count_vertices(), 4 * 4 * 6);
+        assert_eq!(mesh.count_vertices(), 5 * 5);
+        assert_eq!(mesh.indices().map(|i| i.len()), Some(4 * 4 * 6));
     }
 
     #[test]
@@ -1003,7 +1043,108 @@ mod tests {
                 }
             }
         }
-        assert!(shared > 20, "{shared}");
+        // An 8-quad border shares its 9 corners, once each now the grid is
+        // indexed.
+        assert_eq!(shared, 2 * 9);
+    }
+
+    /// A mesh's positions, normals and tangents.
+    type Vectors = (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 4]>);
+
+    fn vectors(mesh: &Mesh) -> Vectors {
+        use bevy::mesh::VertexAttributeValues as V;
+        let Some(V::Float32x3(p)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION).cloned() else {
+            panic!("positions")
+        };
+        let Some(V::Float32x3(n)) = mesh.attribute(Mesh::ATTRIBUTE_NORMAL).cloned() else {
+            panic!("normals")
+        };
+        let Some(V::Float32x4(t)) = mesh.attribute(Mesh::ATTRIBUTE_TANGENT).cloned() else {
+            panic!("tangents")
+        };
+        (p, n, t)
+    }
+
+    #[test]
+    fn ground_normals_are_smooth_and_meet_exactly_across_chunk_borders() {
+        let terrain = Terrain::default();
+        let mut shared = 0;
+        for (a, b) in [
+            (ChunkCoord::new(0, 0), ChunkCoord::new(1, 0)),
+            (ChunkCoord::new(3, -2), ChunkCoord::new(3, -1)),
+            (ChunkCoord::new(-4, 7), ChunkCoord::new(-3, 8)),
+        ] {
+            // Every vertex at one position carries one normal and tangent,
+            // within a chunk and across the border.
+            let mut at: HashMap<[u32; 3], ([f32; 3], [f32; 4])> = HashMap::new();
+            for coord in [a, b] {
+                let (p, n, t) = vectors(&build_chunk_mesh(&terrain, coord, 200.0, 8));
+                for ((p, n), t) in p.into_iter().zip(n).zip(t) {
+                    match at.get(&p.map(f32::to_bits)) {
+                        Some(&(m, u)) => {
+                            assert_eq!((m, u), (n, t), "seam at {p:?}");
+                            shared += 1;
+                        }
+                        None => {
+                            at.insert(p.map(f32::to_bits), (n, t));
+                        }
+                    }
+                }
+            }
+        }
+        // Two 8-quad borders and one diagonal corner.
+        assert_eq!(shared, 9 + 9 + 1);
+    }
+
+    #[test]
+    fn ground_normals_follow_the_slope_of_the_height_field() {
+        // A plane rising half a meter east and a quarter north per meter.
+        let (n, t) = slope_frame(0.5, 0.25);
+        let (n, tv) = (Vec3::from_array(n), Vec3::new(t[0], t[1], t[2]));
+        let east = world_from_ground(GroundVec2::new(1.0, 0.0), 0.5);
+        let north = world_from_ground(GroundVec2::new(0.0, 1.0), 0.25);
+        assert!((n.length() - 1.0).abs() < 1e-6 && n.y > 0.0, "{n:?}");
+        assert!(
+            n.dot(east).abs() < 1e-6 && n.dot(north).abs() < 1e-6,
+            "{n:?}"
+        );
+        // The tangent is the one a face on that plane gets, sign and all.
+        let face = [Vec3::ZERO, east, east + north];
+        let flat = face_tangent(face, face.map(ground_uv));
+        assert!(
+            (tv - Vec3::new(flat[0], flat[1], flat[2])).length() < 1e-5,
+            "{t:?} {flat:?}"
+        );
+        assert_eq!(t[3], flat[3]);
+        // Level ground faces straight up.
+        assert_eq!(slope_frame(0.0, 0.0).0, [0.0, 1.0, 0.0]);
+
+        // On the real terrain, each vertex's normal is the height field's
+        // slope over one quad either way.
+        let terrain = Terrain::default();
+        let (size, res) = (200.0, 8);
+        let q = size / res as f32;
+        let (p, n, _) = vectors(&build_chunk_mesh(
+            &terrain,
+            ChunkCoord::new(2, -1),
+            size,
+            res,
+        ));
+        let mut tilted = 0;
+        for (p, n) in p.into_iter().zip(n) {
+            let (x, y) = (p[0], -p[2]);
+            let h = |x: f32, y: f32| terrain.height(x, y);
+            let dx = (h(x + q, y) - h(x - q, y)) / (2.0 * q);
+            let dy = (h(x, y + q) - h(x, y - q)) / (2.0 * q);
+            let expected = Vec3::from_array(slope_frame(dx, dy).0);
+            let got = Vec3::from_array(n);
+            assert!(
+                got.dot(expected) > 0.99999,
+                "{p:?}: {got:?} vs {expected:?}"
+            );
+            tilted += usize::from(got.y < 0.99999);
+        }
+        assert!(tilted > 10, "the test terrain should not be flat: {tilted}");
     }
 
     #[test]
@@ -1045,7 +1186,7 @@ mod tests {
                 }
             }
         }
-        assert!(shared > 50, "{shared}");
+        assert_eq!(shared, 3 * 9, "every border corner is shared once");
         // The grass varies from dry yellow to grey-green between towns.
         let open = colors(ChunkCoord::new(6, 6));
         let greens: Vec<f32> = open.iter().map(|(_, c)| c[1] / c[0]).collect();

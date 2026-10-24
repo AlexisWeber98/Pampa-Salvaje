@@ -3,7 +3,8 @@
 //!
 //! The plants are low-poly CC0 models from the Ultimate Nature Pack by
 //! Quaternius (see [`load_vegetation`]), recoloured and rescaled in code
-//! for the dry 1919 pampa. When a model is missing, the faceted procedural
+//! for the dry 1919 pampa, with their faceted normals smoothed when baked
+//! (see [`smoothing`]). When a model is missing, the faceted procedural
 //! stand-ins below are drawn instead, and only then.
 //!
 //! Every mesh and material is built once and shared, so Bevy batches
@@ -34,6 +35,7 @@ use crate::AssetRoot;
 use crate::character::finish::Finish;
 use crate::coords::world_from_ground;
 use crate::obj::{self, MaterialColors, ObjModel};
+use crate::smooth::smooth_normals;
 use crate::terrain::{ChunkStreaming, TerrainChunk, WorldTerrain};
 
 /// Where the flora grows. Insert it before the plugin runs; without it,
@@ -552,13 +554,30 @@ fn smoothstep(lo: f32, hi: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
+/// How `role`'s models are smoothed when baked: the largest bend between
+/// facets that still blends, in degrees, and how far the normals lean
+/// toward straight up (0 none, 1 all the way). Crowns, bushes and weeds
+/// blend almost every facet; bark and dead wood keep their broken edges a
+/// little; tosca stones keep their hard ones. Grass blades are thin cards:
+/// leaning their normals up lights a tuft like the ground under it rather
+/// than darkening its shaded side.
+pub fn smoothing(role: Role) -> (f32, f32) {
+    match role {
+        Role::Calden | Role::Thicket | Role::Weed => (60.0, 0.0),
+        Role::Snag | Role::Deadwood => (50.0, 0.0),
+        Role::Grass => (80.0, 0.5),
+        Role::Stone => (40.0, 0.0),
+    }
+}
+
 /// A finish and its positions, normals and colours, while baking.
 type BakedPart = (Finish, Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 4]>);
 
 /// `obj` as one mesh per finish, recoloured for `model`'s role into vertex
 /// colours and scaled to stand on the origin 1 unit tall, so a transform
 /// scale is its height in meters. Caldén crowns are widened. Vertices are
-/// a little darker low down: cheap baked occlusion.
+/// a little darker low down: cheap baked occlusion. The pack ships one
+/// normal per face; they are smoothed here, once, per [`smoothing`].
 pub fn bake(model: Model, obj: &ObjModel, colors: &MaterialColors) -> Vec<(Finish, Mesh)> {
     let ys = obj
         .groups
@@ -567,6 +586,24 @@ pub fn bake(model: Model, obj: &ObjModel, colors: &MaterialColors) -> Vec<(Finis
     let (lo, hi) = ys.fold((f32::MAX, f32::MIN), |(a, b), y| (a.min(y), b.max(y)));
     let height = (hi - lo).max(1e-3);
     let role = model.role();
+    // Stood up and widened first, so the smooth normals fit the final shape.
+    let stand = |p: &[f32; 3]| {
+        let y = (p[1] - lo) / height;
+        let widen = if role == Role::Calden {
+            1.0 + CROWN_WIDEN * smoothstep(0.35, 0.75, y)
+        } else {
+            1.0
+        };
+        [p[0] / height * widen, y, p[2] / height * widen]
+    };
+    let stood: Vec<[f32; 3]> = obj
+        .groups
+        .iter()
+        .flat_map(|g| g.positions.iter().map(stand))
+        .collect();
+    let (angle, lift) = smoothing(role);
+    let mut smooth = smooth_normals(&stood, angle).into_iter();
+    let mut stood = stood.into_iter();
     let mut parts: Vec<BakedPart> = Vec::new();
     for group in &obj.groups {
         let kd = colors.get(&group.material).copied().unwrap_or([0.5; 3]);
@@ -580,16 +617,18 @@ pub fn bake(model: Model, obj: &ObjModel, colors: &MaterialColors) -> Vec<(Finis
             }
         };
         let part = &mut parts[k];
-        for (p, n) in group.positions.iter().zip(&group.normals) {
-            let y = (p[1] - lo) / height;
-            let widen = if role == Role::Calden {
-                1.0 + CROWN_WIDEN * smoothstep(0.35, 0.75, y)
-            } else {
-                1.0
+        for n in &group.normals {
+            let (Some(p), Some(s)) = (stood.next(), smooth.next()) else {
+                break;
             };
-            part.1
-                .push([p[0] / height * widen, y, p[2] / height * widen]);
-            part.2.push(*n);
+            let y = p[1];
+            part.1.push(p);
+            // A face wound against the file's own normal (a handful in the
+            // pack) keeps the file's normal rather than shading inside out.
+            let (file, s) = (Vec3::from_array(*n), Vec3::from_array(s));
+            let s = if s.dot(file) < 0.0 { file } else { s };
+            part.2
+                .push(s.lerp(Vec3::Y, lift).normalize_or(Vec3::Y).to_array());
             let shade = 0.72 + 0.28 * y.clamp(0.0, 1.0);
             part.3.push([
                 color.red * shade,
@@ -1482,6 +1521,93 @@ mod tests {
         assert_eq!(rock[0].0, Finish::Rock);
         let c = colours(&rock[0].1)[0];
         assert!(c[0] > c[2] && c[1] > c[2], "beige {c:?}");
+    }
+
+    fn normals(mesh: &Mesh) -> Vec<[f32; 3]> {
+        match mesh.attribute(Mesh::ATTRIBUTE_NORMAL) {
+            Some(VertexAttributeValues::Float32x3(n)) => n.clone(),
+            _ => panic!("normals"),
+        }
+    }
+
+    /// Vertices of a mesh grouped by position (welded points), by normal.
+    fn welded(mesh: &Mesh) -> Vec<Vec<Vec3>> {
+        let mut at: HashMap<[u32; 3], Vec<Vec3>> = HashMap::new();
+        for (p, n) in points(mesh).into_iter().zip(normals(mesh)) {
+            at.entry(p.map(f32::to_bits))
+                .or_default()
+                .push(Vec3::from_array(n));
+        }
+        at.into_values().filter(|ns| ns.len() > 1).collect()
+    }
+
+    /// The share of a mesh's welded points whose vertices all carry one
+    /// normal: about 0 for flat shading, 1 for smooth without creases.
+    fn smooth_share(mesh: &Mesh) -> f32 {
+        let shared = welded(mesh);
+        let smooth = shared
+            .iter()
+            .filter(|ns| ns.iter().all(|n| n.dot(ns[0]) > 0.9999))
+            .count();
+        smooth as f32 / shared.len().max(1) as f32
+    }
+
+    /// Of the vertex pairs at one point whose normals are within 30 degrees
+    /// (neighbouring facets on one side of a surface), the share that carry
+    /// the same normal. Faceted meshes score about 0. Unlike
+    /// [`smooth_share`], the two faces of a card (a grass blade) welded
+    /// back to back do not count against it.
+    fn blend_share(mesh: &Mesh) -> f32 {
+        let (mut near, mut same) = (0, 0);
+        for ns in welded(mesh) {
+            for (k, a) in ns.iter().enumerate() {
+                for b in &ns[k + 1..] {
+                    if a.dot(*b) > 30f32.to_radians().cos() {
+                        near += 1;
+                        same += usize::from(a.dot(*b) > 0.9999);
+                    }
+                }
+            }
+        }
+        same as f32 / near.max(1) as f32
+    }
+
+    #[test]
+    fn baked_vegetation_has_smooth_normals_with_creases_kept() {
+        let bake_of = |model| {
+            let (obj, kd) = loaded(model);
+            bake(model, &obj, &kd)
+        };
+        // Crowns, bushes and grass blend across their facets.
+        for model in [
+            Model::CommonTree(1),
+            Model::Bush(1),
+            Model::Grass,
+            Model::Plant(3),
+        ] {
+            for (finish, mesh) in bake_of(model) {
+                let share = blend_share(&mesh);
+                assert!(share > 0.9, "{model:?} {finish:?}: {share}");
+                let n = normals(&mesh);
+                assert_eq!(n.len(), mesh.count_vertices(), "{model:?}");
+                assert_eq!(colours(&mesh).len(), n.len());
+                for x in n {
+                    assert!((Vec3::from_array(x).length() - 1.0).abs() < 1e-4);
+                }
+            }
+        }
+        // Tosca stones keep some hard edges.
+        let rock = &bake_of(Model::Rock(1))[0].1;
+        let share = smooth_share(rock);
+        assert!(share < 0.95, "rock creases: {share}");
+        // Grass blades lean their normals up, so a tuft lights like the
+        // ground under it instead of going dark on its shaded side.
+        let grass = &bake_of(Model::Grass)[0].1;
+        let up = normals(grass).iter().map(|n| n[1]).sum::<f32>() / grass.count_vertices() as f32;
+        assert!(up > 0.5, "grass normals lean up: {up}");
+        // Baking is deterministic.
+        let again = &bake_of(Model::Grass)[0].1;
+        assert_eq!(normals(grass), normals(again));
     }
 
     #[test]
