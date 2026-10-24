@@ -10,9 +10,10 @@ use super::figure::{FigureKind, FigureKit, spawn_figure, update_figures};
 use super::finish::Palette;
 use super::horse::{Coat, HorseKit, spawn_horse, update_horses};
 use super::model::{
-    CharacterModels, CharacterModelsShown, attach_model, breathe, dress_character,
-    load_character_models, swap_in_character_models, toggle_character_models,
+    CharacterModels, CharacterModelsShown, attach_model, dress_character, load_character_models,
+    swap_in_character_models, toggle_character_models,
 };
+use super::rig::drive_rigs;
 
 /// How a character is drawn. Swappable per entity without touching logic:
 /// inserting a new value replaces whatever was drawn before.
@@ -59,7 +60,7 @@ impl Plugin for CharacterVisualPlugin {
             )
             .add_systems(
                 PostUpdate,
-                (attach_visuals, update_horses, update_figures, breathe)
+                (attach_visuals, update_horses, update_figures, drive_rigs)
                     .chain()
                     .before(TransformSystems::Propagate),
             )
@@ -400,7 +401,7 @@ mod tests {
             };
             let left = hip(Joint::Hip(super::super::figure::Side::Left));
             let right = hip(Joint::Hip(super::super::figure::Side::Right));
-            assert!((left + right).abs() < 1e-4, "opposite phase");
+            assert!(left * right <= 1e-6, "opposite phase");
             swings.push(left);
         }
         // Over a whole cycle each leg reaches close to its full swing both

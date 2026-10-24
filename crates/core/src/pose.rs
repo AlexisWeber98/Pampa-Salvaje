@@ -47,15 +47,16 @@ fn gait(animation: AnimationState) -> (f32, f32, f32, f32, f32, f32) {
     match animation {
         AnimationState::Idle => (0.0, 0.0, 0.0, 0.08, 0.0, 0.0),
         AnimationState::Walk => (0.42, 0.38, 0.55, 0.15, 0.03, 0.025),
-        AnimationState::Gallop => (0.7, 0.75, 1.1, 1.25, 0.2, 0.06),
+        AnimationState::Gallop => (0.5, 0.75, 1.1, 1.25, 0.2, 0.06),
     }
 }
 
 /// The pose of `animation` at `phase` (cycles, wrapped to `0..1`).
 ///
 /// Legs swing in opposite phase, each arm against the leg on its side, and
-/// the body rises twice per cycle, once per step. Idle only breathes, the
-/// same on both sides.
+/// the body rises twice per cycle, once per step. A walking leg sweeps its
+/// foot back at an even pace while on the ground ([`foot_sweep`]); a jogging
+/// one swings evenly. Idle only breathes, the same on both sides.
 pub fn pose(animation: AnimationState, phase: f32) -> JointAngles {
     use std::f32::consts::TAU;
     let phase = wrap(phase);
@@ -74,8 +75,12 @@ pub fn pose(animation: AnimationState, phase: f32) -> JointAngles {
         };
     }
     let (s, c) = angle.sin_cos();
+    let hip = |phase: f32| match animation {
+        AnimationState::Walk => (foot_sweep(phase) * swing.sin()).asin(),
+        _ => swing * (phase * TAU).sin(),
+    };
     JointAngles {
-        hip: [swing * s, -swing * s],
+        hip: [hip(phase), hip(phase + 0.5)],
         // A leg folds while it swings forward (its hip angle rising).
         knee: [-fold * c.max(0.0), -fold * (-c).max(0.0)],
         shoulder: [-arm * s, arm * s],
@@ -91,16 +96,33 @@ pub fn pose(animation: AnimationState, phase: f32) -> JointAngles {
     }
 }
 
+/// Where a walking leg's foot is, front `1` to back `-1`, at `phase` of
+/// its cycle (the left leg's; the right one is half a cycle on). From the
+/// front at `0.25` it sweeps back at an even pace for half a cycle, so a
+/// foot on the ground keeps still on it, then eases forward again.
+pub fn foot_sweep(phase: f32) -> f32 {
+    let p = wrap(phase - 0.25);
+    if p < 0.5 {
+        1.0 - 4.0 * p
+    } else {
+        let t = 2.0 * p - 1.0;
+        -1.0 + 2.0 * t * t * (3.0 - 2.0 * t)
+    }
+}
+
 /// Gait cycles per second at ground `speed` (m/s): a cycle is two steps, so
 /// feet keep pace with the ground. Standing breathes at a fixed rate.
 pub fn cadence(animation: AnimationState, speed: f32) -> f32 {
     let speed = if speed.is_finite() { speed.abs() } else { 0.0 };
     match animation {
         AnimationState::Idle => BREATHS_PER_SECOND,
-        // Two steps of about 0.65 m.
-        AnimationState::Walk => speed.max(0.8) / 1.3,
-        // Two longer, bounding steps of about 1 m.
-        AnimationState::Gallop => speed.max(2.0) / 2.0,
+        // Two steps of about 0.7 m: the foot on the ground sweeps back as
+        // far as the body goes in a step.
+        AnimationState::Walk => speed.max(0.8) / 1.4,
+        // Two bounding steps of about 1.35 m, with a moment in the air:
+        // the foot meets the ground in mid-swing, sweeping back as fast as
+        // the body goes.
+        AnimationState::Gallop => speed.max(2.0) / 2.7,
     }
 }
 
@@ -535,7 +557,11 @@ mod tests {
         let mut forward = [false; 2];
         for t in samples() {
             let p = pose(Walk, t);
-            assert!((p.hip[0] + p.hip[1]).abs() < 1e-6, "t {t}: {p:?}");
+            assert!(
+                (p.hip[1] - pose(Walk, t + 0.5).hip[0]).abs() < 1e-6,
+                "t {t}: {p:?}"
+            );
+            assert!(p.hip[0] * p.hip[1] <= 0.0, "t {t}: {p:?}");
             assert!(p.hip[0] * p.shoulder[0] <= 0.0, "left arm against left leg");
             assert!(
                 p.hip[1] * p.shoulder[1] <= 0.0,
@@ -559,10 +585,51 @@ mod tests {
                 .map(|t| pose(a, t).hip[0].abs())
                 .fold(0.0, f32::max)
         };
-        assert!(peak(Gallop) > peak(Walk) + 0.1);
+        assert!(peak(Gallop) > peak(Walk) + 0.05);
         assert!(pose(Gallop, 0.1).lean > pose(Walk, 0.1).lean);
         let bob = |a| samples().map(|t| pose(a, t).bob).fold(0.0, f32::max);
         assert!(bob(Gallop) > bob(Walk));
+    }
+
+    #[test]
+    fn a_walking_foot_sweeps_back_evenly_while_its_leg_is_straight() {
+        // Half a cycle with the knee straight, the foot (at `sin(hip)` of
+        // the leg's length forward) moves back the same each moment.
+        let at = |t: f32| pose(Walk, t).hip[0].sin();
+        let mut straight = 0;
+        for k in 0..200 {
+            let t = k as f32 / 200.0;
+            if [t - 0.01, t, t + 0.01]
+                .iter()
+                .any(|&t| pose(Walk, t).knee[0] < 0.0)
+            {
+                continue;
+            }
+            straight += 1;
+            let (a, b, c) = (at(t - 0.01), at(t), at(t + 0.01));
+            assert!(b < a && ((a - b) - (b - c)).abs() < 1e-4, "t {t}");
+        }
+        assert!(straight > 80, "{straight}");
+    }
+
+    #[test]
+    fn a_foot_on_the_ground_keeps_pace_with_it() {
+        // A person's leg, hip to ankle, about.
+        const LEG: f32 = 0.85;
+        for speed in [1.2, 6.0 / 3.6] {
+            // Walking, a straight leg carries the body through a whole step:
+            // its foot sweeps from one end of the swing to the other.
+            let swing = pose(Walk, 0.25).hip[0];
+            let sweep = 2.0 * LEG * swing.sin();
+            let step = speed / cadence(Walk, speed) / 2.0;
+            assert!((sweep / step - 1.0).abs() < 0.06, "{sweep} {step}");
+        }
+        for speed in [3.0, 18.0 / 3.6] {
+            // Jogging, the foot lands in mid-swing, sweeping back fastest.
+            let swing = pose(Gallop, 0.25).hip[0];
+            let foot = swing * LEG * std::f32::consts::TAU * cadence(Gallop, speed);
+            assert!((foot / speed - 1.0).abs() < 0.06, "{foot} {speed}");
+        }
     }
 
     #[test]

@@ -523,7 +523,7 @@ or the same keys close it, and while it is open the game gets no keys at all.
 | `horse` | Stand a saddled horse beside the player (rideable once riding is unlocked) |
 | `turbo on` / `turbo off` | Let the player's horse gallop at up to 70 km/h, to get round the map fast, or back to normal |
 | `unlock all` | Unlock every ability |
-| `models on` / `models off` | Draw Don Hidalgo, Farach and Bairoletto as the skinned MakeHuman models (the default), or back as the old rigid figures |
+| `models on` / `models off` | Draw the protagonist on foot, Don Hidalgo, Farach and Bairoletto as the skinned MakeHuman models (the default), or back as the old rigid figures |
 | `time 21` / `time 21:30` | Move the clock on to that time (later today, or tomorrow if it has passed) |
 | `help` | List the commands |
 
@@ -531,7 +531,8 @@ The MakeHuman models (`assets/characters/`, built by `tools/mh2gltf.py`) wear
 a 1919 wardrobe, mostly cut from the body by the converter: shirts and
 waistcoats, bombachas, knee boots, a police guerrera with brass buttons, a
 three-piece suit, felt hats, a kepi, neckerchiefs, a poncho, the faja and the
-rastra. They are
+rastra. They walk, jog and stand by the rigid figures' poses, loosened into
+a relaxed stance (the weight on one leg, a slow sway). They are
 the default, in release builds too; `models off` brings back the old rigid
 figures in a debug build. Try `goto castex` (Farach with Bairoletto at his
 side) or `goto nievas` (Don Hidalgo).

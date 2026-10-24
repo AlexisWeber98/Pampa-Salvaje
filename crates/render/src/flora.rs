@@ -34,7 +34,7 @@ use pampa_core::{FloraSite, Species, Tree, Tuft, TuftKind, Vec2 as GroundVec2};
 use crate::AssetRoot;
 use crate::character::finish::Finish;
 use crate::coords::world_from_ground;
-use crate::obj::{self, MaterialColors, ObjModel};
+use crate::obj::{self, MaterialColors, ObjGroup, ObjModel};
 use crate::smooth::smooth_normals;
 use crate::terrain::{ChunkStreaming, TerrainChunk, WorldTerrain};
 
@@ -577,12 +577,29 @@ type BakedPart = (Finish, Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 4]>);
 /// colours and scaled to stand on the origin 1 unit tall, so a transform
 /// scale is its height in meters. Caldén crowns are widened. Vertices are
 /// a little darker low down: cheap baked occlusion. The pack ships one
-/// normal per face; they are smoothed here, once, per [`smoothing`].
+/// normal per face; they are smoothed here, once, per [`smoothing`]. A
+/// group that is not whole triangles with a normal per position is skipped
+/// with a warning.
 pub fn bake(model: Model, obj: &ObjModel, colors: &MaterialColors) -> Vec<(Finish, Mesh)> {
-    let ys = obj
+    // A group must be whole triangles with one normal per position; a
+    // malformed one is left out rather than shifting every later group.
+    let groups: Vec<&ObjGroup> = obj
         .groups
         .iter()
-        .flat_map(|g| g.positions.iter().map(|p| p[1]));
+        .filter(|g| {
+            let whole = g.positions.len() == g.normals.len() && g.positions.len() % 3 == 0;
+            if !whole {
+                warn!(
+                    "vegetation {model:?}: group `{}` skipped, {} positions for {} normals",
+                    g.material,
+                    g.positions.len(),
+                    g.normals.len()
+                );
+            }
+            whole
+        })
+        .collect();
+    let ys = groups.iter().flat_map(|g| g.positions.iter().map(|p| p[1]));
     let (lo, hi) = ys.fold((f32::MAX, f32::MIN), |(a, b), y| (a.min(y), b.max(y)));
     let height = (hi - lo).max(1e-3);
     let role = model.role();
@@ -596,16 +613,19 @@ pub fn bake(model: Model, obj: &ObjModel, colors: &MaterialColors) -> Vec<(Finis
         };
         [p[0] / height * widen, y, p[2] / height * widen]
     };
-    let stood: Vec<[f32; 3]> = obj
-        .groups
+    let stood: Vec<[f32; 3]> = groups
         .iter()
         .flat_map(|g| g.positions.iter().map(stand))
         .collect();
     let (angle, lift) = smoothing(role);
-    let mut smooth = smooth_normals(&stood, angle).into_iter();
-    let mut stood = stood.into_iter();
+    let smooth = smooth_normals(&stood, angle);
     let mut parts: Vec<BakedPart> = Vec::new();
-    for group in &obj.groups {
+    // Each group's own slice of the positions and smooth normals.
+    let mut start = 0;
+    for group in groups {
+        let end = start + group.positions.len();
+        let (stood, smooth) = (&stood[start..end], &smooth[start..end]);
+        start = end;
         let kd = colors.get(&group.material).copied().unwrap_or([0.5; 3]);
         let (rgb, finish) = recolour(role, &group.material, kd);
         let color = LinearRgba::from(Color::srgb(rgb[0], rgb[1], rgb[2]));
@@ -617,10 +637,7 @@ pub fn bake(model: Model, obj: &ObjModel, colors: &MaterialColors) -> Vec<(Finis
             }
         };
         let part = &mut parts[k];
-        for n in &group.normals {
-            let (Some(p), Some(s)) = (stood.next(), smooth.next()) else {
-                break;
-            };
+        for ((&p, &s), n) in stood.iter().zip(smooth).zip(&group.normals) {
             let y = p[1];
             part.1.push(p);
             // A face wound against the file's own normal (a handful in the
@@ -1521,6 +1538,37 @@ mod tests {
         assert_eq!(rock[0].0, Finish::Rock);
         let c = colours(&rock[0].1)[0];
         assert!(c[0] > c[2] && c[1] > c[2], "beige {c:?}");
+    }
+
+    #[test]
+    fn a_malformed_group_is_skipped_and_the_others_keep_their_own_vertices() {
+        let group = |positions: &[[f32; 3]], normals: usize| ObjGroup {
+            material: "Rock".into(),
+            positions: positions.to_vec(),
+            normals: vec![[0.0, 0.0, 1.0]; normals],
+            uvs: None,
+        };
+        // Two good triangles one unit tall, standing on the origin already.
+        let a = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+        let b = [[3.0, 0.0, 0.0], [4.0, 0.0, 0.0], [3.0, 1.0, 0.0]];
+        let obj = ObjModel {
+            mtllib: None,
+            groups: vec![
+                // Four positions for three normals: it would shift every
+                // later group by one vertex.
+                group(&[[9.0, 0.5, 0.0]; 4], 3),
+                group(&a, 3),
+                // Not whole triangles.
+                group(&[[9.0, 0.5, 0.0]; 2], 2),
+                group(&b, 3),
+            ],
+        };
+        let baked = bake(Model::Rock(1), &obj, &MaterialColors::new());
+        let all: Vec<[f32; 3]> = baked.iter().flat_map(|(_, m)| points(m)).collect();
+        assert_eq!(all, [a, b].concat());
+        for (_, mesh) in &baked {
+            assert_eq!(normals(mesh).len(), points(mesh).len());
+        }
     }
 
     fn normals(mesh: &Mesh) -> Vec<[f32; 3]> {

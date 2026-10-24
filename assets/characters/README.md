@@ -2,7 +2,7 @@
 
 Skinned MakeHuman people. Each folder holds a character's source `.mhm` (MakeHuman's model file, written by hand), any recoloured materials (`.mhmat`), and the glTF built from them: `model.gltf`, `model.bin` and `textures/`. Credits and substitutions are in [CREDITS.md](CREDITS.md).
 
-The game loads `hidalgo`, `farach` and `bairoletto` (`crates/render/src/character/model.rs`) and draws them by default; the debug console's `models off` brings back the old rigid figures. The protagonist's model is built but not used yet: the player keeps the rigid figure until walking and riding are animated.
+The game loads `protagonist`, `hidalgo`, `farach` and `bairoletto` (`crates/render/src/character/model.rs`) and draws them by default; the debug console's `models off` brings back the old rigid figures. The protagonist wears his model on foot; in the saddle he keeps the rigid figure until riding is animated. A bone driver (`crates/render/src/character/rig.rs`) poses the `game_engine` skeleton by the rigid figure's joint angles, with a relaxed posture on top: the weight on one leg, the arms loose, a slow sway, and a foot always planted. It finds the bones by name, so a rebuilt model must keep the `game_engine` skeleton's bone names.
 
 ## Rebuilding a model
 
