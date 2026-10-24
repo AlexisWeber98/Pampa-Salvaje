@@ -148,3 +148,24 @@ The data is local, but it is read as untrusted input:
 - PNGs are decoded by the script itself: 8- or 16-bit, not interlaced (an interlaced PNG is refused). It undoes their filters along anti-diagonals with numpy.
 
 Bad input gets a one-line error. Any other exception is a bug and keeps its traceback.
+
+## `glbtrim.py`: trimming animated GLBs
+
+Keeps only the named animation clips of a self-contained GLB and drops the accessors, buffer views and binary data nothing else uses. Nodes, meshes, skins and materials keep their indices, so the scene is unchanged. It uses the Python 3 standard library only, treats the input as untrusted data (bounded sizes, every index checked, no external URIs) and writes the same bytes for the same input. Run it isolated:
+
+```sh
+for pair in "cow_a cow" "bull bull" "horse_a horse"; do
+  set -- $pair
+  python3 -I tools/glbtrim.py ~/Downloads/quaternius/$1.glb \
+    assets/models/fauna/quaternius/$2.glb \
+    --keep Idle Idle_2 Idle_Headlow Eating Walk Gallop
+done
+```
+
+The clips are written in the `--keep` order, which the game relies on (`pampa_render::fauna::Clip`). It prints the size before and after, the triangles, the joints and the clips kept.
+
+It also recomputes smooth vertex normals, because the exports are flat-shaded and the bodies read faceted. This is on by default; `--smooth-angle DEGREES` sets the angle (60 by default) and `--smooth-angle 0` keeps the file's normals.
+
+- For the normals only, vertices are welded by exact position and equal `JOINTS_0`/`WEIGHTS_0`, so nothing is smoothed across different skinning. The weld spans all primitives of a mesh, so no seam shows where two materials meet.
+- Around each welded point, faces that share an edge bending less than the angle form one smooth group, like auto smooth. Each vertex gets its group's face normals, weighted by corner angle, so hoof rims and ear and horn tips stay sharp.
+- Only the NORMAL bytes change: the vertex count, positions, UVs, colours and file size stay the same.
