@@ -39,8 +39,6 @@ pub enum CowState {
     Stand,
     /// Walking slowly somewhere.
     Walk,
-    /// Lying down, legs folded.
-    Lie,
 }
 
 /// One head of cattle.
@@ -52,6 +50,8 @@ pub struct Cow {
     /// Ground speed, in m/s.
     pub speed: f32,
     pub coat: CowCoat,
+    /// The herd's bull (toro): drawn bigger.
+    pub bull: bool,
     target: Vec2,
     /// Seconds left in this state.
     timer: f32,
@@ -76,12 +76,12 @@ impl Herd {
     pub const SHY_WALK: f32 = 1.3;
     /// A rider closer than this walks a standing cow off, meters.
     pub const SHY: f32 = 7.0;
-    /// A rider closer than this gets a lying cow up, meters.
-    pub const ROUSE: f32 = 4.0;
     /// Fastest turn, radians per second.
     pub const TURN: f32 = 0.9;
     /// Farthest a cow wanders from the herd's middle, meters.
     pub const SPREAD: f32 = 22.0;
+    /// Fewest head in a herd that runs a bull with it.
+    pub const BULL_HERD: usize = 10;
 
     /// A herd of `count` head bunched in `pasture`, seeded.
     pub fn new(id: u32, pasture: Aabb, count: usize, seed: u32) -> Self {
@@ -92,7 +92,7 @@ impl Herd {
             rng.range(inner.min.x, inner.max.x),
             rng.range(inner.min.y, inner.max.y),
         );
-        let cows = (0..count)
+        let mut cows: Vec<Cow> = (0..count)
             .map(|k| {
                 let mut rng = Rng::new(seed ^ 0xc0e5, k as u32);
                 let at = inner.closest_point(
@@ -104,19 +104,26 @@ impl Herd {
                 } else {
                     breed
                 };
-                let state = [CowState::Graze, CowState::Stand, CowState::Lie][rng.below(3)];
+                let state = [CowState::Graze, CowState::Stand][rng.below(2)];
                 Cow {
                     position: at,
                     heading: Heading::from_radians(rng.unit() * TAU),
                     state,
                     speed: 0.0,
                     coat,
+                    bull: false,
                     target: at,
                     timer: rng.range(1.0, 20.0),
                     rng,
                 }
             })
             .collect();
+        // A herd big enough runs one bull of its breed.
+        if count >= Self::BULL_HERD {
+            let bull = &mut cows[rng.below(count)];
+            bull.bull = true;
+            bull.coat = breed;
+        }
         Self { id, pasture, cows }
     }
 
@@ -135,7 +142,7 @@ impl Herd {
     }
 
     /// Advances the herd `dt` seconds: each cow grazes, walks, stands or
-    /// lies down; a rider at `threat` walks cows off and gets lying ones up.
+    /// stands; a rider at `threat` walks cows off.
     /// Cows keep apart, out of `obstacles` and inside the pasture.
     pub fn step(&mut self, dt: f32, threat: Option<Vec2>, obstacles: &StaticObstacles) {
         let center = self.center();
@@ -207,12 +214,7 @@ impl Cow {
         if let Some(rider) = threat {
             let away = self.position - rider;
             let d = away.length();
-            let near = if self.state == CowState::Lie {
-                Herd::ROUSE
-            } else {
-                Herd::SHY
-            };
-            if d < near {
+            if d < Herd::SHY {
                 let dir = away * (1.0 / d.max(1e-3));
                 self.state = CowState::Walk;
                 self.target = inner.closest_point(self.position + dir * 10.0);
@@ -241,10 +243,9 @@ impl Cow {
     fn choose(&mut self, center: Vec2, inner: Aabb) {
         let r = &mut self.rng;
         let (state, timer) = match r.unit() {
-            u if u < 0.5 => (CowState::Graze, r.range(8.0, 20.0)),
-            u if u < 0.78 => (CowState::Walk, r.range(15.0, 30.0)),
-            u if u < 0.92 => (CowState::Stand, r.range(3.0, 8.0)),
-            _ => (CowState::Lie, r.range(30.0, 70.0)),
+            u if u < 0.58 => (CowState::Graze, r.range(8.0, 20.0)),
+            u if u < 0.86 => (CowState::Walk, r.range(15.0, 30.0)),
+            _ => (CowState::Stand, r.range(3.0, 8.0)),
         };
         if state == CowState::Walk {
             let s = Herd::SPREAD;
@@ -297,7 +298,7 @@ mod tests {
                 states.insert(c.state);
             }
         }
-        assert_eq!(states.len(), 4, "graze, stand, walk and lie: {states:?}");
+        assert_eq!(states.len(), 3, "graze, stand and walk: {states:?}");
         for (i, a) in h.cows.iter().enumerate() {
             for b in &h.cows[i + 1..] {
                 assert!(a.position.distance(b.position) > Herd::RADIUS, "overlap");
@@ -306,16 +307,16 @@ mod tests {
     }
 
     #[test]
-    fn a_rider_walks_cows_off_and_gets_lying_ones_up() {
+    fn a_rider_walks_cows_off() {
         let mut h = herd();
         for cow in &mut h.cows {
-            cow.state = CowState::Lie;
+            cow.state = CowState::Graze;
             cow.timer = 1000.0;
         }
         let at = h.cows[0].position + Vec2::new(2.0, 0.0);
         let far = h.cows[0].position + Vec2::new(500.0, 0.0);
         run(&mut h, 0.5, Some(far));
-        assert_eq!(h.cows[0].state, CowState::Lie, "a far rider leaves it be");
+        assert_eq!(h.cows[0].state, CowState::Graze, "a far rider leaves it be");
         run(&mut h, 0.5, Some(at));
         assert_eq!(h.cows[0].state, CowState::Walk);
         run(&mut h, 5.0, Some(at));
@@ -357,5 +358,31 @@ mod tests {
         h.step(0.1, None, &trees);
         let c = h.cows[0].position;
         assert!(tree.closest_point(c).distance(c) >= Herd::RADIUS - 1e-3);
+    }
+
+    #[test]
+    fn a_herd_big_enough_has_one_bull_of_its_breed() {
+        let pasture = Aabb::new(Vec2::new(100.0, 100.0), Vec2::new(200.0, 180.0));
+        let small = Herd::new(3, pasture, Herd::BULL_HERD - 1, 5);
+        assert!(
+            small.cows.iter().all(|c| !c.bull),
+            "too few head for a bull"
+        );
+        let mut bulls = std::collections::HashSet::new();
+        for seed in 0..40 {
+            let h = Herd::new(seed, pasture, Herd::BULL_HERD + seed as usize % 8, seed * 7);
+            let again = Herd::new(seed, pasture, h.cows.len(), seed * 7);
+            assert_eq!(h, again, "deterministic");
+            let bull: Vec<usize> = (0..h.cows.len()).filter(|&k| h.cows[k].bull).collect();
+            assert_eq!(bull.len(), 1, "one bull per herd");
+            bulls.insert(bull[0]);
+            let breed = h.cows.iter().filter(|c| !c.bull).map(|c| c.coat);
+            let most = CowCoat::ALL
+                .into_iter()
+                .max_by_key(|&coat| breed.clone().filter(|&c| c == coat).count())
+                .unwrap();
+            assert_eq!(h.cows[bull[0]].coat, most, "the herd's breed");
+        }
+        assert!(bulls.len() > 3, "not always the same head: {bulls:?}");
     }
 }

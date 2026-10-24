@@ -40,7 +40,7 @@ pub use character::{
 };
 pub use coords::world_from_ground;
 pub use fade::{FadeLayer, FadePlugin, ScreenFade};
-pub use fauna::{ANIMATE_FAR, Animal, AnimalPose, FaunaKit, FaunaPlugin, Gait};
+pub use fauna::{ANIMATE_FAR, Animal, AnimalPose, AnimalSeed, FaunaKit, FaunaPlugin, Gait};
 pub use fence::{FencePiece, FencePlugin, GatePart, WorldFences};
 pub use flora::{
     Faded, FloraAccent, FloraPlugin, GrassTuft, SightLine, ThinFadePlugin, ThinOccluder, TreePart,

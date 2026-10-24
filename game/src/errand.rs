@@ -26,7 +26,7 @@ use pampa_core::{
 };
 use pampa_render::bubble::LIFETIME;
 use pampa_render::{
-    CharacterVisual, Coat, FigureKind, HudObjective, MapTarget, Say, VisualPose, font,
+    Animal, CharacterVisual, Coat, FigureKind, HudObjective, MapTarget, Say, VisualPose, font,
     world_from_ground,
 };
 
@@ -219,10 +219,20 @@ type MountState<'w> = (
 type StandingHorse = (
     Entity,
     &'static Mountable,
-    &'static CharacterVisual,
+    Option<&'static CharacterVisual>,
+    Option<&'static Animal>,
     Option<&'static TetheredHorse>,
     Has<LeftHorse>,
 );
+
+/// The coat of a standing horse: a saddled one's visual, or a corral
+/// horse's (drawn as fauna).
+fn standing_coat(visual: Option<&CharacterVisual>, animal: Option<&Animal>) -> Option<Coat> {
+    match (visual, animal) {
+        (Some(CharacterVisual::Horse(coat)), _) | (_, Some(Animal::Horse(coat))) => Some(*coat),
+        _ => None,
+    }
+}
 
 /// The horses [`interact`] may change: those tied in the towns, the one
 /// the player left tied loosely, and every standing horse.
@@ -396,7 +406,8 @@ impl Saddle<'_, '_, '_> {
             Item = (
                 Entity,
                 &'h Mountable,
-                &'h CharacterVisual,
+                Option<&'h CharacterVisual>,
+                Option<&'h Animal>,
                 Option<&'h TetheredHorse>,
                 bool,
             ),
@@ -407,13 +418,21 @@ impl Saddle<'_, '_, '_> {
         }
         let at = rider.position;
         let nearest = horses
-            .map(|(e, m, visual, tied, left)| (e, m.0, visual, tied.map(|t| t.0), left))
+            .map(|(e, m, visual, animal, tied, left)| {
+                (
+                    e,
+                    m.0,
+                    standing_coat(visual, animal),
+                    tied.map(|t| t.0),
+                    left,
+                )
+            })
             .filter(|(_, h, ..)| at.distance(h.position) <= Errand::MOUNT_RANGE)
             .min_by(|a, b| {
                 at.distance(a.1.position)
                     .total_cmp(&at.distance(b.1.position))
             });
-        let Some((entity, horse, visual, town, _)) = nearest else {
+        let Some((entity, horse, coat, town, _)) = nearest else {
             return;
         };
         self.world.obstacles.remove(&horse.footprint);
@@ -426,8 +445,8 @@ impl Saddle<'_, '_, '_> {
             self.commands.entity(e).remove::<LeftHorse>();
         }
         self.commands.entity(entity).despawn();
-        if let CharacterVisual::Horse(coat) | CharacterVisual::Bare(coat) = visual {
-            *self.coat = *coat;
+        if let Some(coat) = coat {
+            *self.coat = coat;
         }
         self.ride(me, rider, transform, &horse);
     }
@@ -1054,5 +1073,38 @@ mod tests {
         for taken in [KeyCode::KeyE, KeyCode::KeyQ, KeyCode::KeyM, KeyCode::Escape] {
             assert_ne!(INTERACT_KEY, taken);
         }
+    }
+
+    #[test]
+    fn a_corral_horse_drawn_as_fauna_lets_the_player_on_in_its_coat() {
+        use pampa_core::{Abilities, GameClock, Heading, TimeOfDay};
+        use pampa_render::{Animal, AnimalPose};
+        let mut app =
+            crate::ride::testing::shipped_app_at(Some(GameClock::at(TimeOfDay::hm(12, 0))));
+        app.update();
+        // Out on the open pampa, clear of the platform.
+        teleport(&mut app, GroundVec2::new(100.0, -200.0));
+        app.update();
+        let at = player(&mut app).1.rider.position + GroundVec2::new(0.0, 2.0);
+        let horse = pampa_core::TetheredHorse::standing(at, Heading::default());
+        let corral = app
+            .world_mut()
+            .spawn((
+                Mountable(horse),
+                Animal::Horse(Coat::Tordillo),
+                AnimalPose::default(),
+            ))
+            .id();
+        // Not his to ride yet.
+        press_f(&mut app);
+        assert_eq!(player(&mut app).1.rider.travel(), Travel::OnFoot);
+        app.world_mut().resource_mut::<PlayerAbilities>().0 = Abilities::all();
+        press_f(&mut app);
+        assert_eq!(player(&mut app).1.rider.travel(), Travel::Riding);
+        assert_eq!(app.world().resource::<RiddenCoat>().0, Coat::Tordillo);
+        assert!(
+            app.world().get_entity(corral).is_err(),
+            "taken from the corral"
+        );
     }
 }

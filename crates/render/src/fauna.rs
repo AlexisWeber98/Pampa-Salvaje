@@ -1,28 +1,48 @@
-//! The pampa's animals, drawn like the horses: rigid low-poly parts hung
-//! off a few joints, so animation only turns joints (legs swing, heads go
-//! down to graze or bob, tails swish, wings flap).
+//! The pampa's animals.
 //!
 //! The game simulates them (see `pampa_core::fauna`) and hands each entity
-//! an [`Animal`] (what it is) and an [`AnimalPose`] (where it faces and what
-//! it does); its `Transform` carries translation only, on the ground, the
-//! water or up in the air. Render draws everything from one [`FaunaKit`]:
-//! four shared unit meshes, scaled per part, and one shared material per
-//! [`Paint`]. Animals farther than [`ANIMATE_FAR`] from the camera keep
-//! their last pose (only the body turns). Every mesh is drawn within the
-//! settlements' shared ranges (ground animals the props', soaring birds the
-//! buildings'): no new `VisibilityRange`.
+//! an [`Animal`] (what it is), an [`AnimalPose`] (where it faces and what
+//! it does) and, optionally, an [`AnimalSeed`] (its stable identity); its
+//! `Transform` carries translation only, on the ground, the water or up in
+//! the air.
+//!
+//! - Cattle (cows and bulls) and the corral horses are skinned, animated
+//!   glTF models whose clips follow the fauna state (see [`livestock`]).
+//! - The small wild animals are drawn like the procedural horses: rigid
+//!   low-poly parts hung off a few joints, so animation only turns joints
+//!   (legs swing, heads go down to peck or bob, tails swish, wings flap),
+//!   from one [`FaunaKit`] of four shared unit meshes, scaled per part, and
+//!   one shared material per [`Paint`]. Past [`ANIMATE_FAR`] from the
+//!   camera they keep their last pose (only the body turns).
+//!
+//! Every mesh is drawn within the settlements' shared ranges (ground
+//! animals the props', soaring birds the buildings'): no new
+//! `VisibilityRange`.
 
+pub mod livestock;
+
+pub use livestock::{
+    Clip, FREEZE_FAR, LivestockModel, LivestockModels, LivestockRig, RESUME_NEAR, Species,
+};
+
+use bevy::app::AnimationSystems;
 use bevy::camera::visibility::VisibilityRange;
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 use pampa_core::{CowCoat, Heading};
 use std::f32::consts::{FRAC_PI_2, TAU};
 
+use crate::character::Coat;
+
 /// What an animal is.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[require(AnimalPose, Transform, Visibility)]
 pub enum Animal {
     Cow(CowCoat),
+    /// A herd's bull, in its breed's coat.
+    Bull(CowCoat),
+    /// A loose horse standing in a corral.
+    Horse(Coat),
     Hare,
     /// A tero (southern lapwing).
     Tero,
@@ -30,6 +50,20 @@ pub enum Animal {
     Raptor,
     Duck,
 }
+
+impl Animal {
+    /// Whether it is drawn from an animated model (see [`livestock`])
+    /// rather than rigid parts.
+    pub fn is_livestock(self) -> bool {
+        Species::of(self).is_some()
+    }
+}
+
+/// An animal's stable identity, from its seeded place in the world: picks
+/// its idle and desyncs its clips from its neighbours'. Without it the
+/// entity's index stands in.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AnimalSeed(pub u32);
 
 /// What an animal is doing, as drawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -41,7 +75,6 @@ pub enum Gait {
     Walk,
     /// Bolting or hopping fast.
     Run,
-    Lie,
     /// Flapping.
     Fly,
     /// Soaring on still wings.
@@ -60,11 +93,6 @@ pub struct AnimalPose {
     pub bank: f32,
 }
 
-/// Height of a cow's hip and shoulder joints: its legs' length.
-const COW_HIP: f32 = 0.78;
-/// How far a lying cow's body sinks: its belly rests on the ground.
-pub const COW_LIE_DROP: f32 = 0.5;
-
 /// Past this distance from the camera an animal's joints stop moving.
 pub const ANIMATE_FAR: f32 = 80.0;
 
@@ -72,9 +100,8 @@ pub const ANIMATE_FAR: f32 = 80.0;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Joint {
     Head,
-    /// Legs, front left, front right, hind left, hind right (a hare's
-    /// front and hind pairs are `Leg(0)` and `Leg(2)`; a bird's two `Leg(0)`
-    /// and `Leg(1)`).
+    /// Legs: a hare's front and hind pairs are `Leg(0)` and `Leg(2)`; a
+    /// bird's two `Leg(0)` and `Leg(1)`.
     Leg(u8),
     Tail,
     /// Left (`0`, -Z) and right (`1`, +Z).
@@ -85,27 +112,17 @@ pub enum Joint {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Shape {
     Ball,
-    /// A smooth capsule lying along X: a cow's barrel and neck.
-    Barrel,
     Block,
     Rod,
     Cone,
 }
 
 impl Shape {
-    pub const ALL: [Self; 5] = [Self::Ball, Self::Barrel, Self::Block, Self::Rod, Self::Cone];
+    pub const ALL: [Self; 4] = [Self::Ball, Self::Block, Self::Rod, Self::Cone];
 
     pub fn mesh(self) -> Mesh {
         match self {
             Self::Ball => Sphere::new(0.5).mesh().uv(8, 6),
-            // Unit length along X (caps included) and unit diameter.
-            Self::Barrel => Capsule3d::new(0.5, 1.0)
-                .mesh()
-                .latitudes(6)
-                .longitudes(12)
-                .build()
-                .rotated_by(Quat::from_rotation_z(FRAC_PI_2))
-                .scaled_by(Vec3::new(0.5, 1.0, 1.0)),
             Self::Block => Cuboid::from_length(1.0).mesh().build(),
             Self::Rod => Cylinder::new(0.5, 1.0).mesh().resolution(6).build(),
             Self::Cone => Cone::new(0.5, 1.0).mesh().resolution(6).build(),
@@ -116,7 +133,6 @@ impl Shape {
 /// A shared material.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Paint {
-    CowRed,
     White,
     Black,
     Horn,
@@ -127,12 +143,10 @@ pub enum Paint {
     DuckBrown,
     DuckGreen,
     Bill,
-    Udder,
 }
 
 impl Paint {
-    pub const ALL: [Self; 12] = [
-        Self::CowRed,
+    pub const ALL: [Self; 10] = [
         Self::White,
         Self::Black,
         Self::Horn,
@@ -143,12 +157,10 @@ impl Paint {
         Self::DuckBrown,
         Self::DuckGreen,
         Self::Bill,
-        Self::Udder,
     ];
 
     fn color(self) -> Color {
         let [r, g, b] = match self {
-            Self::CowRed => [0.38, 0.14, 0.07],
             Self::White => [0.82, 0.8, 0.74],
             Self::Black => [0.05, 0.045, 0.04],
             Self::Horn => [0.72, 0.66, 0.52],
@@ -159,7 +171,6 @@ impl Paint {
             Self::DuckBrown => [0.36, 0.28, 0.18],
             Self::DuckGreen => [0.08, 0.2, 0.12],
             Self::Bill => [0.55, 0.45, 0.12],
-            Self::Udder => [0.72, 0.52, 0.48],
         };
         Color::srgb(r, g, b)
     }
@@ -219,14 +230,8 @@ impl Animal {
     pub fn joints(self) -> Vec<(Joint, Vec3)> {
         let v = Vec3::new;
         match self {
-            Self::Cow(_) => vec![
-                (Joint::Head, v(1.05, 1.12, 0.0)),
-                (Joint::Leg(0), v(0.55, COW_HIP, -0.19)),
-                (Joint::Leg(1), v(0.55, COW_HIP, 0.19)),
-                (Joint::Leg(2), v(-0.6, COW_HIP, -0.19)),
-                (Joint::Leg(3), v(-0.6, COW_HIP, 0.19)),
-                (Joint::Tail, v(-0.9, 1.25, 0.0)),
-            ],
+            // Drawn from a model (see `livestock`).
+            Self::Cow(_) | Self::Bull(_) | Self::Horse(_) => Vec::new(),
             Self::Hare => vec![
                 (Joint::Head, v(0.18, 0.27, 0.0)),
                 (Joint::Leg(0), v(0.12, 0.14, 0.0)),
@@ -267,74 +272,7 @@ impl Animal {
         use Paint as P;
         use Shape as S;
         match self {
-            Self::Cow(coat) => {
-                let (hide, face, legs) = match coat {
-                    CowCoat::Hereford => (P::CowRed, P::White, P::CowRed),
-                    CowCoat::Angus => (P::Black, P::Black, P::Black),
-                    CowCoat::Overo => (P::White, P::Black, P::White),
-                };
-                // A round barrel, deep at the chest, and the neck rising
-                // forward out of it, with the dewlap under it.
-                add(None, S::Barrel, hide, [-0.02, 0.98, 0.0], [1.8, 0.76, 0.72]);
-                add(None, S::Barrel, hide, [0.78, 1.04, 0.0], [0.62, 0.5, 0.42]);
-                add(None, S::Ball, hide, [0.82, 0.8, 0.0], [0.34, 0.3, 0.14]);
-                add(
-                    None,
-                    S::Block,
-                    P::Udder,
-                    [-0.42, 0.58, 0.0],
-                    [0.24, 0.14, 0.22],
-                );
-                match coat {
-                    // The white belly and brisket.
-                    CowCoat::Hereford => {
-                        add(None, S::Ball, P::White, [0.15, 0.68, 0.0], [1.2, 0.26, 0.6])
-                    }
-                    // A black patch on each flank.
-                    CowCoat::Overo => {
-                        for z in [-0.22, 0.22] {
-                            add(None, S::Ball, P::Black, [-0.1, 1.02, z], [0.8, 0.52, 0.34]);
-                        }
-                    }
-                    CowCoat::Angus => {}
-                }
-                let head = Some(Joint::Head);
-                add(head, S::Ball, face, [0.16, -0.1, 0.0], [0.46, 0.32, 0.28]);
-                add(head, S::Block, face, [0.37, -0.2, 0.0], [0.16, 0.18, 0.22]);
-                for z in [-0.17, 0.17] {
-                    add(head, S::Block, face, [0.08, 0.0, z], [0.07, 0.08, 0.16]);
-                    // Angus are polled.
-                    if coat != CowCoat::Angus {
-                        add(
-                            head,
-                            S::Cone,
-                            P::Horn,
-                            [0.12, 0.08, z * 0.8],
-                            [0.06, 0.18, 0.06],
-                        );
-                    }
-                }
-                for k in 0..4 {
-                    let leg = Some(Joint::Leg(k));
-                    add(leg, S::Rod, legs, [0.0, -0.37, 0.0], [0.15, 0.74, 0.15]);
-                    add(
-                        leg,
-                        S::Block,
-                        P::Black,
-                        [0.0, -COW_HIP + 0.03, 0.0],
-                        [0.17, 0.06, 0.17],
-                    );
-                }
-                let tail = Some(Joint::Tail);
-                add(tail, S::Rod, hide, [-0.03, -0.35, 0.0], [0.05, 0.7, 0.05]);
-                add(
-                    tail,
-                    S::Ball,
-                    P::Black,
-                    [-0.04, -0.72, 0.0],
-                    [0.1, 0.16, 0.1],
-                );
-            }
+            Self::Cow(_) | Self::Bull(_) | Self::Horse(_) => {}
             Self::Hare => {
                 add(
                     None,
@@ -505,12 +443,21 @@ pub struct FaunaPlugin;
 
 impl Plugin for FaunaPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, load_kit).add_systems(
-            PostUpdate,
-            (attach_animals, animate_animals)
-                .chain()
-                .before(TransformSystems::Propagate),
-        );
+        app.add_systems(Startup, (load_kit, livestock::load_livestock))
+            .add_systems(
+                PostUpdate,
+                (
+                    attach_animals,
+                    livestock::attach_livestock,
+                    livestock::swap_in_livestock,
+                    animate_animals,
+                    livestock::drive_livestock,
+                )
+                    .chain()
+                    .before(AnimationSystems)
+                    .before(TransformSystems::Propagate),
+            )
+            .add_observer(livestock::dress_livestock);
     }
 }
 
@@ -530,6 +477,9 @@ fn attach_animals(
 ) {
     let Some(kit) = kit else { return };
     for (entity, &animal) in &added {
+        if animal.is_livestock() {
+            continue;
+        }
         let range = animal.range();
         let body = commands
             .spawn((Transform::default(), Visibility::default(), ChildOf(entity)))
@@ -575,7 +525,6 @@ fn attach_animals(
 /// How many stride cycles a meter is, by animal.
 fn strides_per_meter(animal: Animal) -> f32 {
     match animal {
-        Animal::Cow(_) => 0.6,
         Animal::Hare => 0.6,
         _ => 2.0,
     }
@@ -595,10 +544,8 @@ fn animate_animals(
         let Ok((&animal, pose, at)) = animals.get(child_of.parent()) else {
             continue;
         };
-        let lying = pose.gait == Gait::Lie;
         transform.rotation =
             Quat::from_rotation_y(pose.heading.radians()) * Quat::from_rotation_x(-pose.bank);
-        transform.translation.y = if lying { -COW_LIE_DROP } else { 0.0 };
         if eye.is_some_and(|e| e.distance(at.translation()) > ANIMATE_FAR) {
             continue;
         }
@@ -645,26 +592,16 @@ pub fn joint_pose(
             (pitch(angle), Vec3::ZERO)
         }
         Joint::Leg(k) => {
-            if gait == Gait::Lie {
-                // Lying on the brisket: the forelegs tucked back under the
-                // chest, the hind legs folded forward along the belly's side.
-                let side = if k % 2 == 0 { -1.0 } else { 1.0 };
-                return if k < 2 {
-                    (pitch(-1.5), Vec3::new(0.0, -0.12, 0.08 * side))
-                } else {
-                    (pitch(1.5), Vec3::new(0.0, -0.15, 0.2 * side))
-                };
-            }
             if matches!(gait, Gait::Fly | Gait::Glide) {
                 return (pitch(1.3), Vec3::ZERO);
             }
             if !moving {
                 return (Quat::IDENTITY, Vec3::ZERO);
             }
-            // Walk: diagonal pairs; a hare's bound: pairs together.
+            // A bird's legs in turn; a hare's bound: pairs together.
             let offset = match (animal, k) {
                 (Animal::Hare, k) => (k / 2) as f32 * std::f32::consts::PI,
-                (_, 0 | 3) => 0.0,
+                (_, 0) => 0.0,
                 _ => std::f32::consts::PI,
             };
             let swing = if gait == Gait::Run { 0.7 } else { 0.35 };
@@ -691,14 +628,18 @@ pub fn joint_pose(
 mod tests {
     use super::*;
 
-    const SPECIES: [Animal; 7] = [
+    /// The species drawn from rigid parts.
+    const RIGID: [Animal; 4] = [Animal::Hare, Animal::Tero, Animal::Raptor, Animal::Duck];
+
+    /// The species drawn from models.
+    const LIVESTOCK: [Animal; 7] = [
         Animal::Cow(CowCoat::Hereford),
         Animal::Cow(CowCoat::Angus),
         Animal::Cow(CowCoat::Overo),
-        Animal::Hare,
-        Animal::Tero,
-        Animal::Raptor,
-        Animal::Duck,
+        Animal::Bull(CowCoat::Hereford),
+        Animal::Horse(Coat::Zaino),
+        Animal::Horse(Coat::Overo),
+        Animal::Horse(Coat::Bayo),
     ];
 
     fn triangles(animal: Animal) -> usize {
@@ -710,13 +651,12 @@ mod tests {
     }
 
     #[test]
-    fn every_species_fits_its_triangle_and_part_budget() {
-        for animal in SPECIES {
+    fn every_rigid_species_fits_its_triangle_and_part_budget() {
+        for animal in RIGID {
             let (tris, parts) = (triangles(animal), animal.parts().len());
             let budget = match animal {
-                Animal::Cow(_) => 1000,
-                Animal::Hare | Animal::Tero | Animal::Raptor => 500,
                 Animal::Duck => 300,
+                _ => 500,
             };
             println!("{animal:?}: {tris} triangles, {parts} parts");
             assert!(tris <= budget, "{animal:?}: {tris} > {budget}");
@@ -726,6 +666,11 @@ mod tests {
                 assert!(joint.is_none_or(|j| animal.joints().iter().any(|(k, _)| *k == j)));
             }
         }
+        for animal in LIVESTOCK {
+            assert!(animal.is_livestock());
+            assert!(animal.parts().is_empty() && animal.joints().is_empty());
+        }
+        assert!(RIGID.iter().all(|a| !a.is_livestock()));
     }
 
     fn app() -> App {
@@ -741,7 +686,7 @@ mod tests {
     #[test]
     fn animals_share_a_few_meshes_materials_and_the_settlements_ranges() {
         let mut app = app();
-        for (k, animal) in SPECIES.into_iter().enumerate() {
+        for (k, animal) in RIGID.into_iter().chain(LIVESTOCK).enumerate() {
             for n in 0..3 {
                 app.world_mut().spawn((
                     animal,
@@ -754,7 +699,7 @@ mod tests {
             .world_mut()
             .query::<(&Mesh3d, &MeshMaterial3d<StandardMaterial>, &VisibilityRange)>();
         let drawn: Vec<_> = q.iter(app.world()).collect();
-        let expected: usize = SPECIES.iter().map(|a| 3 * a.parts().len()).sum();
+        let expected: usize = RIGID.iter().map(|a| 3 * a.parts().len()).sum();
         assert_eq!(drawn.len(), expected);
         let meshes: std::collections::HashSet<_> = drawn.iter().map(|d| d.0.0.id()).collect();
         let materials: std::collections::HashSet<_> = drawn.iter().map(|d| d.1.0.id()).collect();
@@ -769,37 +714,22 @@ mod tests {
             }
         }
         assert_eq!(ranges.len(), 2, "props' and buildings'");
+        // Each cow, bull and horse waits for its model (none loads here).
+        let mut models = app.world_mut().query::<(&LivestockModel, &ChildOf)>();
+        assert_eq!(models.iter(app.world()).count(), 3 * LIVESTOCK.len());
     }
 
     #[test]
-    fn cows_graze_head_down_lie_with_legs_folded_and_birds_flap() {
-        let cow = Animal::Cow(CowCoat::Angus);
+    fn birds_peck_and_flap_and_hares_bound() {
         let angle = |q: Quat| q.to_euler(EulerRot::ZYX).0;
-        let (head, _) = joint_pose(cow, Gait::Graze, Joint::Head, 0.0, 0.0);
-        assert!(angle(head) < -0.8);
-        // Lying: the belly on the ground, the legs folded under and beside
-        // it, never splayed out past the body.
-        let joints = cow.joints();
-        for k in 0..4 {
-            let (turn, offset) = joint_pose(cow, Gait::Lie, Joint::Leg(k), 0.0, 0.0);
-            let hip = joints.iter().find(|j| j.0 == Joint::Leg(k)).unwrap().1;
-            let hip = hip + offset - Vec3::Y * COW_LIE_DROP;
-            let hoof = hip + turn * Vec3::new(0.0, -COW_HIP, 0.0);
-            for p in [hip, hoof] {
-                assert!(
-                    p.x.abs() < 0.95 && p.z.abs() < 0.45,
-                    "leg {k} sticks out: {p}"
-                );
-                assert!((0.0..0.4).contains(&p.y), "leg {k} off the ground: {p}");
-            }
-        }
-        let barrel = cow.parts()[0];
-        assert_eq!(barrel.shape, Shape::Barrel);
-        let belly = barrel.at.y - barrel.size.y / 2.0 - COW_LIE_DROP;
-        assert!((-0.05..0.15).contains(&belly), "belly at {belly}");
-        let a = joint_pose(cow, Gait::Walk, Joint::Leg(0), 1.0, 0.0).0;
-        let b = joint_pose(cow, Gait::Walk, Joint::Leg(1), 1.0, 0.0).0;
-        assert!(angle(a) * angle(b) < 0.0, "legs swing in turn");
+        let (head, _) = joint_pose(Animal::Tero, Gait::Graze, Joint::Head, 0.0, 0.9);
+        assert!(angle(head) < -0.5, "pecking");
+        let a = joint_pose(Animal::Tero, Gait::Walk, Joint::Leg(0), 1.0, 0.0).0;
+        let b = joint_pose(Animal::Tero, Gait::Walk, Joint::Leg(1), 1.0, 0.0).0;
+        assert!(angle(a) * angle(b) < 0.0, "legs step in turn");
+        let fore = joint_pose(Animal::Hare, Gait::Run, Joint::Leg(0), 1.0, 0.0).0;
+        let hind = joint_pose(Animal::Hare, Gait::Run, Joint::Leg(2), 1.0, 0.0).0;
+        assert!(angle(fore) * angle(hind) < 0.0, "a bound");
         let up = joint_pose(Animal::Tero, Gait::Fly, Joint::Wing(1), FRAC_PI_2, 0.0).0;
         let down = joint_pose(Animal::Tero, Gait::Fly, Joint::Wing(1), -FRAC_PI_2, 0.0).0;
         assert!(up.angle_between(down) > 1.5, "wings beat");

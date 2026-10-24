@@ -22,9 +22,9 @@ pub enum CharacterVisual {
     /// A low-poly 3D person on foot.
     Figure(FigureKind),
     /// A saddled horse with nobody on it, like the one tied at a store.
+    /// (The untacked horses loose in the corrals are fauna: see
+    /// [`Animal::Horse`](crate::fauna::Animal::Horse).)
     Horse(Coat),
-    /// A horse with no tack at all, loose in a corral.
-    Bare(Coat),
     /// A person riding a saddled horse; the pose is the horse's.
     Mounted { rider: FigureKind, coat: Coat },
 }
@@ -115,8 +115,7 @@ fn attach_visuals(
                 }
                 body
             }
-            CharacterVisual::Horse(coat) | CharacterVisual::Bare(coat) => {
-                let tack = matches!(visual, CharacterVisual::Horse(_)).then_some(false);
+            CharacterVisual::Horse(coat) => {
                 spawn_horse(
                     &mut commands,
                     (&mut horses, &mut meshes),
@@ -124,7 +123,7 @@ fn attach_visuals(
                     entity,
                     coat,
                     phase,
-                    tack,
+                    false,
                 )
                 .0
             }
@@ -136,7 +135,7 @@ fn attach_visuals(
                     entity,
                     coat,
                     phase,
-                    Some(true),
+                    true,
                 );
                 // The rider sits on the trunk, so it rises, rocks and turns
                 // with the horse.

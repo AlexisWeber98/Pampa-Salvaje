@@ -18,9 +18,7 @@ use pampa_core::{
     ChunkCoord, CowState, Duck, FaunaSite, Flock, Hare, HareState, Herd, MAX_STEP, Raptor,
     TetheredHorse, Vec2 as GroundVec2,
 };
-use pampa_render::{
-    Animal, AnimalPose, CharacterVisual, Coat, Gait, VisualPose, world_from_ground,
-};
+use pampa_render::{Animal, AnimalPose, AnimalSeed, Coat, Gait, world_from_ground};
 
 use crate::errand::Mountable;
 use crate::player::{DrivePlayer, GameWorld, Player, drive_player};
@@ -295,7 +293,12 @@ fn select(
 /// Spawns the entities drawing a chunk's `share`; its corral horses
 /// stand as obstacles.
 fn spawn_share(commands: &mut Commands, share: Share, world: &mut GameWorld) -> ChunkFauna {
-    let mut spawn = |animal: Animal| commands.spawn((Name::new("Animal"), animal)).id();
+    // Only the livestock models read the seed (their idles and offsets).
+    let mut spawn = |animal: Animal, seed: u32| {
+        commands
+            .spawn((Name::new("Animal"), animal, AnimalSeed(seed)))
+            .id()
+    };
     let mut chunk = ChunkFauna {
         picks: share.picks,
         ..default()
@@ -304,36 +307,45 @@ fn spawn_share(commands: &mut Commands, share: Share, world: &mut GameWorld) -> 
         let entities = herd
             .cows
             .iter()
-            .map(|c| spawn(Animal::Cow(c.coat)))
+            .enumerate()
+            .map(|(k, c)| {
+                let animal = if c.bull {
+                    Animal::Bull(c.coat)
+                } else {
+                    Animal::Cow(c.coat)
+                };
+                spawn(animal, herd.id.wrapping_mul(64) ^ k as u32)
+            })
             .collect();
         chunk.herds.push((herd, entities));
     }
     for hare in share.hares {
-        chunk.hares.push((hare, spawn(Animal::Hare)));
+        chunk.hares.push((hare, spawn(Animal::Hare, 0)));
     }
     for flock in share.flocks {
-        let birds = flock.birds().map(|_| spawn(Animal::Tero)).collect();
+        let birds = flock.birds().map(|_| spawn(Animal::Tero, 0)).collect();
         chunk.flocks.push((flock, birds));
     }
     for raptor in share.raptors {
-        chunk.raptors.push((raptor, spawn(Animal::Raptor)));
+        chunk.raptors.push((raptor, spawn(Animal::Raptor, 0)));
     }
     for duck in share.ducks {
-        chunk.ducks.push((duck, spawn(Animal::Duck)));
+        chunk.ducks.push((duck, spawn(Animal::Duck, 0)));
     }
     for horse in share.horses {
         world.0.obstacles.push(horse.footprint);
-        let coat = Coat::seeded(horse.footprint.min.x.to_bits() ^ horse.footprint.min.y.to_bits());
+        let key = horse.footprint.min.x.to_bits() ^ horse.footprint.min.y.to_bits();
         let height = world.0.ground_height(horse.position);
         let entity = commands
             .spawn((
                 Name::new("Corral horse"),
                 Mountable(horse),
-                CharacterVisual::Bare(coat),
-                VisualPose {
+                Animal::Horse(Coat::seeded(key)),
+                AnimalPose {
                     heading: horse.heading,
                     ..default()
                 },
+                AnimalSeed(key),
                 Transform::from_translation(world_from_ground(horse.position, height)),
             ))
             .id();
@@ -409,7 +421,6 @@ fn place_fauna(
                     CowState::Graze => Gait::Graze,
                     CowState::Stand => Gait::Stand,
                     CowState::Walk => Gait::Walk,
-                    CowState::Lie => Gait::Lie,
                 };
                 let pose = AnimalPose {
                     heading: cow.heading,
@@ -554,10 +565,12 @@ mod tests {
             let drawn = app.world_mut().query::<&Animal>().iter(app.world()).count();
             let horses = app
                 .world_mut()
-                .query_filtered::<(), With<Mountable>>()
+                .query_filtered::<&Animal, With<Mountable>>()
                 .iter(app.world())
+                .filter(|a| matches!(a, Animal::Horse(_)))
                 .count();
-            assert_eq!(drawn + horses, counts.iter().sum::<usize>());
+            assert_eq!(drawn, counts.iter().sum::<usize>());
+            assert_eq!(horses, counts[1], "corral horses are fauna");
             match name {
                 "herds" => assert!(counts[0] > 0),
                 "lagoon" => assert!(counts[5] > 0, "ducks on the lagoon"),
