@@ -23,6 +23,8 @@ pub enum CharacterVisual {
     Figure(FigureKind),
     /// A saddled horse with nobody on it, like the one tied at a store.
     Horse(Coat),
+    /// A horse with no tack at all, loose in a corral.
+    Bare(Coat),
     /// A person riding a saddled horse; the pose is the horse's.
     Mounted { rider: FigureKind, coat: Coat },
 }
@@ -113,7 +115,8 @@ fn attach_visuals(
                 }
                 body
             }
-            CharacterVisual::Horse(coat) => {
+            CharacterVisual::Horse(coat) | CharacterVisual::Bare(coat) => {
+                let tack = matches!(visual, CharacterVisual::Horse(_)).then_some(false);
                 spawn_horse(
                     &mut commands,
                     (&mut horses, &mut meshes),
@@ -121,7 +124,7 @@ fn attach_visuals(
                     entity,
                     coat,
                     phase,
-                    false,
+                    tack,
                 )
                 .0
             }
@@ -133,7 +136,7 @@ fn attach_visuals(
                     entity,
                     coat,
                     phase,
-                    true,
+                    Some(true),
                 );
                 // The rider sits on the trunk, so it rises, rocks and turns
                 // with the horse.

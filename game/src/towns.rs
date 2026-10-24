@@ -42,12 +42,14 @@ pub fn load_world(path: &Path) -> LoadedWorld {
     let mut warnings: Vec<String> = errors.iter().map(|e| format!("towns: {e}")).collect();
     let mut world = content.world;
     let mut names = content.line;
+    let mut branches = content.branches;
     // Content already placed these towns once; this only builds them.
     let (mut towns, rejected) = place_towns(&world, &content.towns);
     warnings.extend(rejected.iter().map(|e| format!("towns: {e}")));
     if towns.is_empty() {
         // The file's line names towns that are gone.
         names = None;
+        branches.clear();
         warnings.push(
             "towns: no town fits the world; using the built-in Eduardo Castex in the default world"
                 .to_string(),
@@ -58,7 +60,8 @@ pub fn load_world(path: &Path) -> LoadedWorld {
     for town in &towns {
         warnings.extend(unsupported_glyphs(town));
     }
-    let (line, broken) = RailLine::build(names.as_deref(), &towns, world.bounds());
+    let (line, broken) =
+        RailLine::build_with_branches(names.as_deref(), &branches, &towns, world.bounds());
     warnings.extend(broken.iter().map(|e| format!("towns: {e}")));
     let (roads, left_out) = RoadNetwork::build(&towns, &line, world.bounds());
     warnings.extend(left_out.iter().map(|e| format!("towns: {e}")));
@@ -169,7 +172,13 @@ mod tests {
         let names: Vec<&str> = loaded.towns.iter().map(|t| t.name.as_str()).collect();
         assert_eq!(
             names,
-            ["Monte Nievas", "Eduardo Castex", "Metileo", "General Pico"]
+            [
+                "Monte Nievas",
+                "Eduardo Castex",
+                "Metileo",
+                "General Pico",
+                "Caleufú"
+            ]
         );
         // General Pico is very big: a 2 x 2 plaza, a station plaza, two
         // general stores, two police stations and 51 people.
@@ -181,14 +190,17 @@ mod tests {
         assert_eq!(count(PlaceKind::PoliceStation), 2);
         assert_eq!(count(PlaceKind::Plaza), 2);
         assert_eq!(pico.townsfolk_count(), 51);
-        for small in &loaded.towns[..3] {
+        for small in loaded.towns.iter().filter(|t| t.name != "General Pico") {
             assert_eq!(small.size, TownSize::Small, "{}", small.name);
             assert_eq!(small.station_plaza, None, "{}", small.name);
         }
-        // One railway line runs Castex, Monte Nievas, Metileo, General Pico.
+        // One railway line runs Castex, Monte Nievas, Metileo, General Pico,
+        // and a branch leaves it at Metileo for Caleufú.
         assert_eq!(loaded.line.towns, [1, 0, 2, 3]);
         let links: Vec<(usize, usize)> = loaded.line.links.iter().map(|l| (l.from, l.to)).collect();
-        assert_eq!(links, [(1, 0), (0, 2), (2, 3)]);
+        assert_eq!(links, [(1, 0), (0, 2), (2, 3), (2, 4)]);
+        assert_eq!(loaded.line.branches.len(), 1);
+        assert_eq!(loaded.line.branches[0].towns, [2, 4]);
         // The small towns' stores are pulperías; Pico's, almacenes de ramos
         // generales.
         for town in &loaded.towns {
@@ -402,10 +414,13 @@ mod tests {
             if town.rail_band().is_some() {
                 continue;
             }
+            // Its rural track crosses its own line by the station (the
+            // road out of Castex to Caleufú crosses the line's run-out too;
+            // see the Caleufú tests).
             let crossings: Vec<_> = roads
                 .roads
                 .iter()
-                .filter(|r| r.from == i && r.kind != pampa_core::RoadKind::Street)
+                .filter(|r| r.from == i && r.kind == pampa_core::RoadKind::Rural)
                 .flat_map(|r| r.crossings.iter())
                 .collect();
             assert_eq!(crossings.len(), 1, "{}", town.name);
@@ -577,5 +592,227 @@ mod tests {
             loaded.warnings
         );
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    /// Caleufú, the shipped world's fifth town, and its branch.
+    mod caleufu {
+        use super::*;
+        use pampa_core::{RoadKind, RoadNetwork};
+
+        const CASTEX: usize = 1;
+        const METILEO: usize = 2;
+        const CALEUFU: usize = 4;
+
+        fn loaded() -> LoadedWorld {
+            let loaded = load_world(&asset_path(TOWNS_FILE));
+            assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+            assert_eq!(loaded.towns[CALEUFU].name, "Caleufú");
+            loaded
+        }
+
+        /// Where segments `p`–`q` and `a`–`b` cross, if they do.
+        fn crossing(p: Vec2, q: Vec2, a: Vec2, b: Vec2) -> Option<Vec2> {
+            let (r, s) = (q - p, b - a);
+            let denom = r.x * s.y - r.y * s.x;
+            if denom.abs() < 1e-9 {
+                return None;
+            }
+            let d = a - p;
+            let t = (d.x * s.y - d.y * s.x) / denom;
+            let u = (d.x * r.y - d.y * r.x) / denom;
+            ((0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)).then(|| p + r * t)
+        }
+
+        #[test]
+        fn caleufu_is_a_small_railway_town_with_its_pulperia_and_comisaria() {
+            let loaded = loaded();
+            let town = &loaded.towns[CALEUFU];
+            assert_eq!(town.size, TownSize::Small);
+            let places = town.places();
+            let named = |kind: PlaceKind| -> Vec<&str> {
+                places
+                    .iter()
+                    .filter(|p| p.kind == kind)
+                    .map(|p| p.name.as_str())
+                    .collect()
+            };
+            assert_eq!(named(PlaceKind::GeneralStore), ["PULPERÍA"]);
+            assert_eq!(named(PlaceKind::PoliceStation).len(), 1);
+            assert_eq!(named(PlaceKind::Plaza).len(), 1);
+            assert_eq!(named(PlaceKind::Station), ["ESTACIÓN CALEUFÚ"]);
+            let houses = town
+                .buildings
+                .iter()
+                .filter(|b| b.kind == BuildingKind::House)
+                .count();
+            assert!(houses >= 8, "{houses}");
+            // The pulpería and the comisaría stand blocks apart.
+            let at = |kind: PlaceKind| places.iter().find(|p| p.kind == kind).unwrap().center();
+            let apart = at(PlaceKind::GeneralStore) - at(PlaceKind::PoliceStation);
+            let pitch = 40.0 + 10.0;
+            assert!(apart.x.abs().max(apart.y.abs()) >= 1.9 * pitch, "{apart:?}");
+        }
+
+        #[test]
+        fn caleufu_lies_inside_the_world_clear_of_towns_lagoons_roads_and_settlements() {
+            let loaded = loaded();
+            let town = &loaded.towns[CALEUFU];
+            let band = town.leveled();
+            let bounds = loaded.world.bounds();
+            // Inside the west edge, its track's run-outs too.
+            let inner = band.expanded(100.0);
+            assert!(inner.min.x > bounds.min.x && inner.max.x < bounds.max.x);
+            assert!(inner.min.y > bounds.min.y && inner.max.y < bounds.max.y);
+            let rail = town.railway.expect("a railway");
+            assert!(rail.start.x - TownLayout::RAIL_CORRIDOR_HALF > bounds.min.x + 200.0);
+            for (i, other) in loaded.towns.iter().enumerate() {
+                if i != CALEUFU {
+                    let near = other.leveled().intersects(&band.expanded(500.0));
+                    assert!(!near, "{}", other.name);
+                }
+            }
+            for lagoon in &loaded.lagoons {
+                assert!(!lagoon.keep_out().intersects(&band.expanded(500.0)));
+            }
+            // Only its own roads reach its ground.
+            let reach = band.expanded(100.0);
+            for road in &loaded.roads.roads {
+                if road.from != CALEUFU && road.to != CALEUFU {
+                    let on = road.path.iter().any(|p| reach.contains_point(*p));
+                    assert!(!on, "{:?} {}->{}", road.kind, road.from, road.to);
+                }
+            }
+            let laid = crate::lay_out(&loaded);
+            for settlement in &laid.settlements.settlements {
+                assert!(
+                    !settlement.bounds.intersects(&band),
+                    "{:?}",
+                    settlement.kind
+                );
+            }
+        }
+
+        #[test]
+        fn the_branch_joins_the_line_at_metileo_and_runs_unbroken_to_caleufus_station() {
+            let loaded = loaded();
+            let line = &loaded.line;
+            let metileo = loaded.towns[METILEO].railway.unwrap();
+            let caleufu = loaded.towns[CALEUFU].railway.unwrap();
+            let branch = line
+                .links
+                .iter()
+                .find(|l| (l.from, l.to) == (METILEO, CALEUFU))
+                .expect("the branch link");
+            // The junction: Metileo's west tip, where the line from Monte
+            // Nievas arrives.
+            let from_nievas = line.links.iter().find(|l| l.to == METILEO).unwrap();
+            assert_eq!(branch.track.start, metileo.start);
+            assert_eq!(from_nievas.track.end, metileo.start);
+            assert_eq!(branch.track.end, caleufu.end);
+            // One unbroken path, bending gently, through Metileo's station
+            // and out to Caleufú's far tip.
+            let paths = line.branch_paths(&loaded.towns);
+            let points = paths[0].points();
+            assert_eq!(points.first(), Some(&metileo.end));
+            assert_eq!(points.last(), Some(&caleufu.start));
+            let expected = metileo.start.distance(metileo.end)
+                + branch.length()
+                + caleufu.start.distance(caleufu.end);
+            assert!((paths[0].length() - expected).abs() < 0.5);
+            let sharpest = points
+                .windows(3)
+                .map(|w| {
+                    let a = (w[1] - w[0]) * (1.0 / w[0].distance(w[1]));
+                    let b = (w[2] - w[1]) * (1.0 / w[1].distance(w[2]));
+                    (a.x * b.y - a.y * b.x).atan2(a.dot(b)).abs()
+                })
+                .fold(0.0, f32::max);
+            let max = pampa_core::RailLine::MAX_TURN + 1e-4;
+            assert!(sharpest <= max, "{}", sharpest.to_degrees());
+            let radius = pampa_core::RailLine::CURVE_RADIUS - 0.1;
+            assert!(branch.curves.iter().all(|c| c.radius >= radius));
+            // Past the junction the branch parts from the line for good.
+            let main = line.full_path(&loaded.towns);
+            for p in &branch.path {
+                if p.distance(metileo.start) > 400.0 {
+                    let gap = main.at(main.project(*p)).distance(*p);
+                    assert!(gap > 50.0, "{p:?} {gap}");
+                }
+            }
+            // Caleufú's platform stands by the branch.
+            let (spot, _) = loaded.towns[CALEUFU].platform_spot().expect("a platform");
+            let on = paths[0].at(paths[0].project(spot));
+            assert!(on.distance(spot) < 12.0, "{}", on.distance(spot));
+            // The line train still runs the line alone.
+            let train =
+                pampa_core::LineTrain::new(line, &loaded.towns, pampa_core::Timetable::default())
+                    .unwrap();
+            assert_eq!(train.station_of_town(CALEUFU), None);
+            assert_eq!(train.stations().len(), 4);
+            assert!(train.misplaced_stops().is_empty());
+        }
+
+        #[test]
+        fn a_road_joins_caleufu_to_castex_and_every_road_on_the_branch_crosses_it_level() {
+            let loaded = loaded();
+            let roads = &loaded.roads;
+            // Its nearest town is Eduardo Castex, about 5.9 km away.
+            let road = roads
+                .roads
+                .iter()
+                .find(|r| r.kind == RoadKind::Between && (r.from, r.to) == (CASTEX, CALEUFU))
+                .expect("Castex to Caleufú");
+            let length = roads.length_between(CASTEX, CALEUFU).unwrap();
+            assert!((5_000.0..7_000.0).contains(&length), "{length}");
+            // It crosses Castex's run-out squarely, west of the town.
+            assert_eq!(road.crossings.len(), 1);
+            let crossing_at = road.crossings[0];
+            assert!(crossing_at.angle() > RoadNetwork::MIN_CROSSING_ANGLE);
+            assert!(crossing_at.at.x < loaded.towns[CASTEX].grid().min.x);
+            // Signposts at either end name the other town.
+            let boards: Vec<&str> = roads
+                .signposts
+                .iter()
+                .flat_map(|s| &s.boards)
+                .map(|b| b.text.as_str())
+                .collect();
+            assert!(
+                boards.iter().any(|b| b.starts_with("CALEUFÚ ")),
+                "{boards:?}"
+            );
+            let castex = boards.iter().filter(|b| b.starts_with("EDUARDO CASTEX "));
+            assert!(castex.count() >= 2, "{boards:?}");
+            // Caleufú's rural track crosses the branch by the station.
+            let rural = roads
+                .roads
+                .iter()
+                .find(|r| r.kind == RoadKind::Rural && r.from == CALEUFU)
+                .expect("Caleufú's rural track");
+            assert_eq!(rural.crossings.len(), 1);
+            // Wherever a road meets the branch, it has a level crossing.
+            let branch = &loaded.line.branch_paths(&loaded.towns)[0];
+            let mut met = 0;
+            for road in &roads.roads {
+                for w in road.path.windows(2) {
+                    for r in branch.points().windows(2) {
+                        let Some(at) = crossing(w[0], w[1], r[0], r[1]) else {
+                            continue;
+                        };
+                        met += 1;
+                        let level = road.crossings.iter().any(|c| c.at.distance(at) < 1e-2);
+                        assert!(level, "{:?} meets the branch at {at:?}", road.kind);
+                    }
+                }
+            }
+            assert!(met >= 1);
+        }
+
+        #[test]
+        fn caleufu_and_its_branch_are_laid_the_same_every_time() {
+            let (a, b) = (loaded(), loaded());
+            assert_eq!(a.towns[CALEUFU], b.towns[CALEUFU]);
+            assert_eq!(a.line, b.line);
+            assert_eq!(a.roads, b.roads);
+        }
     }
 }

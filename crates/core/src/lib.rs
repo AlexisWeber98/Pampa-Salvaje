@@ -19,6 +19,7 @@ pub mod chunk;
 pub mod clock;
 pub mod collision;
 pub mod errand;
+pub mod fauna;
 pub mod fence;
 pub mod flora;
 pub mod heading;
@@ -50,6 +51,9 @@ pub use chunk::{ChunkCoord, WorldConfig, WorldConfigError};
 pub use clock::{BASE_RATE, DAY_REAL_SECONDS, DAY_SECONDS, GameClock, TimeOfDay};
 pub use collision::{Aabb, Body, Circle, SideObstacle};
 pub use errand::{Errand, ErrandEvent, ErrandStage, Interaction, Npc, Standing};
+pub use fauna::{
+    Cow, CowCoat, CowState, Duck, FaunaSite, Flock, FlockState, Hare, HareState, Herd, Raptor,
+};
 pub use fence::{FenceLayout, FenceRun, Frontage, Gate, Opening, OpeningKind};
 pub use flora::{ChunkFlora, FloraSite, Species, Tree, Tuft, TuftKind};
 pub use heading::Heading;
@@ -60,7 +64,7 @@ pub use obstacles::StaticObstacles;
 pub use placement::{PlacementError, place_towns};
 pub use places::{Place, PlaceKind, Sign, SignMount, StoreStyle};
 pub use pose::{HorseAngles, HorseGait, JointAngles, Leg, MOTION_CLOCK_PERIOD, tick_clock};
-pub use rail::{LinePath, RailCurve, RailLine, RailLineError, RailLink, RailSpan};
+pub use rail::{LinePath, RailBranch, RailCurve, RailLine, RailLineError, RailLink, RailSpan};
 pub use ride::{
     APPROACH_LEAD, BOARD_RANGE, Boarding, ONBOARD_MULTIPLIER, OPENING_LEAD, Ride, SEAT_HEIGHT,
     WAIT_RANGE, alight_spot, boarding, coach_doors, depart_now, next_arrival, opening, skip_ride,

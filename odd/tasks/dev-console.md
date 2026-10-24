@@ -77,3 +77,4 @@ observed separately.
 - `hora HH[:MM]` (added with the street lamps, 2026-10-23) moves the clock on
   to that time, to see the towns at night; refused aboard the train; test
   `hora_moves_the_clock_on_to_nightfall`.
+- 2026-10-24 (`feat/period-wardrobe`): the console speaks English (user decision), except place names: `horse`, `models on|off`, `time HH[:MM]`, `goto ranch [TOWN]`, and English replies. The Spanish aliases are gone.

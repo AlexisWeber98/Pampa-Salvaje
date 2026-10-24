@@ -7,6 +7,7 @@ mod complaints;
 #[cfg(debug_assertions)]
 mod console;
 mod errand;
+mod fauna;
 mod life;
 mod orbit;
 mod player;
@@ -17,7 +18,9 @@ mod towns;
 
 use bevy::prelude::*;
 use pampa_content::{SLOTS_FILE, TOWNS_FILE, asset_path, load_model_slots};
-use pampa_core::{FenceLayout, FloraSite, SettlementKind, SettlementLayout, StreetLamps, World};
+use pampa_core::{
+    FaunaSite, FenceLayout, FloraSite, SettlementKind, SettlementLayout, StreetLamps, World,
+};
 use pampa_render::{
     AssetRoot, AtmospherePlugin, CharacterVisualPlugin, FadePlugin, FencePlugin, FloraPlugin,
     HudPlugin, LagoonPlugin, LampPlugin, MinimapPlugin, RailPlugin, RoadPlugin, SettlementPlugin,
@@ -77,6 +80,7 @@ struct Laid {
     settlements: SettlementLayout,
     flora: FloraSite,
     lamps: StreetLamps,
+    fauna: FaunaSite,
     report: LaidReport,
 }
 
@@ -89,6 +93,8 @@ struct LaidReport {
     kinds: [usize; 4],
     obstacles: usize,
     settled: std::time::Duration,
+    /// Herds, head of cattle, corral horses, and how long seeding took.
+    fauna: (usize, usize, usize, std::time::Duration),
     /// Towns of [`RANCH_TOWNS`] missing from the world or left without
     /// their estancia, ready to log as warnings.
     warnings: Vec<String>,
@@ -152,8 +158,15 @@ fn lay_out(loaded: &towns::LoadedWorld) -> Laid {
     // world is an obstacle from the start, drawn or not.
     // Kept off the whole train path too: each town's own track and its
     // run-outs, not only the links between towns.
-    let flora = FloraSite::new(world.config, &world.terrain, &loaded.line)
-        .with_track(&loaded.line.full_path(&loaded.towns))
+    // The branches' towns and run-outs too.
+    let flora = loaded
+        .line
+        .track_paths(&loaded.towns)
+        .iter()
+        .fold(
+            FloraSite::new(world.config, &world.terrain, &loaded.line),
+            |flora, path| flora.with_track(path),
+        )
         .with_fences(&fences)
         .with_settlements(&settlements);
     world.plant(&flora);
@@ -162,18 +175,38 @@ fn lay_out(loaded: &towns::LoadedWorld) -> Laid {
     // is a thin obstacle.
     let lamps = StreetLamps::place(&loaded.towns, &loaded.roads, &settlements, &world.obstacles);
     world.obstacles.extend(lamps.obstacles());
+    // Cattle in some fenced fields, horses in the corrals, and the wild
+    // animals seeded per chunk and lagoon, off everything above.
+    let started = std::time::Instant::now();
+    let path = loaded.line.full_path(&loaded.towns);
+    let fauna = FaunaSite::new(
+        world.config,
+        &world.terrain,
+        &fences,
+        &settlements,
+        path.points(),
+    );
+    let herds = fauna.herds();
+    let fauna_counts = (
+        herds.len(),
+        herds.iter().map(|h| h.cows.len()).sum(),
+        fauna.all_horses().count(),
+        started.elapsed(),
+    );
     Laid {
         world,
         fences,
         settlements,
         flora,
         lamps,
+        fauna,
         report: LaidReport {
             spans,
             fenced,
             kinds,
             obstacles,
             settled,
+            fauna: fauna_counts,
             warnings,
         },
     }
@@ -191,6 +224,7 @@ fn main() {
         settlements,
         flora,
         lamps,
+        fauna,
         report: laid,
     } = lay_out(&loaded);
     let lamp_counts: Vec<String> = loaded
@@ -236,6 +270,7 @@ fn main() {
     .insert_resource(WorldFences(fences))
     .insert_resource(WorldSettlements(settlements))
     .insert_resource(WorldLamps(lamps))
+    .insert_resource(fauna::WorldFauna(fauna))
     .insert_resource(root.clone())
     .insert_resource(slots)
     .insert_resource(StreamFocus(position))
@@ -291,6 +326,8 @@ fn main() {
     .add_plugins((RoadPlugin, FencePlugin, SettlementPlugin, ThinFadePlugin))
     // The kerosene street lamps, glowing by night, the nearest lit.
     .add_plugins(LampPlugin)
+    // Cattle, corral horses, hares and birds round the player.
+    .add_plugins((pampa_render::FaunaPlugin, fauna::FaunaPlugin))
     // The lagoons' water and reeds.
     .add_plugins(LagoonPlugin)
     // The errand and the clock and objective in the corner.
@@ -306,6 +343,7 @@ fn main() {
             kinds: [huts, outposts, farms, ranches],
             obstacles,
             settled,
+            fauna: (herds, head, horses, seeded),
             ref warnings,
         } = laid;
         info!("fences: {spans} spans as obstacles, laid in {fenced:.1?}");
@@ -317,6 +355,7 @@ fn main() {
              {ranches} estancias; {obstacles} obstacles, laid in {settled:.1?}"
         );
         info!("street lamps: {}", lamp_counts.join(", "));
+        info!("fauna: {herds} herds ({head} head), {horses} corral horses; seeded in {seeded:.1?}");
     })
     .add_systems(Update, quit_on_escape);
     // Ctrl+Shift+F12: the cheat console (see `console`), in debug builds.

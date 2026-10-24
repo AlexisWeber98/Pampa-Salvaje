@@ -1,0 +1,10 @@
+# Bairoletto's moustache: the black moustache's strands as grey (see
+# greyscaleTexture in tools/README.md), tinted to his light-brown hair.
+name bairoletto_moustache
+diffuseColor 0.36 0.27 0.18
+specularColor 0.01 0.01 0.01
+shininess 0.05
+transparent True
+backfaceCull False
+greyscaleTexture True
+diffuseTexture data/clothes/grinsegold_moustache/Moustache_black_diff.png

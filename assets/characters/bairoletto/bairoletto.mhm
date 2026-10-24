@@ -1,9 +1,15 @@
 # Juan Bautista Bairoletto in 1919, age 25 (age 0.5): son of Italian
-# immigrants, slight build, medium height, white skin with stubble (the
-# young_caucasian_male2 skin), light-brown hair, blue-green eyes. Black
-# shirt (male_casualsuit02 darkened by black_shirt.mhmat), a light felt
-# fedora for the chambergo. No neckerchief or beard asset exists: added
-# procedurally later. Substitutions in ../CREDITS.md.
+# immigrants, slight and wiry, a little under middle height, white skin
+# with stubble (the young_caucasian_male2 skin), light-brown hair, blue-
+# green eyes and a moustache. A plain dark shirt and a waistcoat (cut from
+# the body by the converter), a dark bombacha (the harem pants, decimated,
+# dyed by bombacha.mhmat) over riding boots, a white neckerchief knotted
+# at the front, and a chambergo: a soft felt hat with a wide brim and a
+# pinched crown.
+#
+# Lines MakeHuman does not know (it warns and skips them) are read by
+# tools/mh2gltf.py: decimate and piece (see ../README.md). Credits in
+# ../CREDITS.md.
 version v1.1.1
 name bairoletto
 modifier macrodetails/Gender 1.000000
@@ -11,9 +17,9 @@ modifier macrodetails/Age 0.500000
 modifier macrodetails/African 0.000000
 modifier macrodetails/Asian 0.000000
 modifier macrodetails/Caucasian 1.000000
-modifier macrodetails-universal/Muscle 0.450000
-modifier macrodetails-universal/Weight 0.350000
-modifier macrodetails-height/Height 0.500000
+modifier macrodetails-universal/Muscle 0.400000
+modifier macrodetails-universal/Weight 0.200000
+modifier macrodetails-height/Height 0.420000
 modifier macrodetails-proportions/BodyProportions 0.500000
 skeleton game_engine.mhskel
 skinMaterial skins/young_caucasian_male/young_caucasian_male2.mhmat
@@ -22,9 +28,16 @@ eyes Low-Poly 1cc97a30-85a1-42e6-a9f7-b3e753732baa
 material Low-Poly 1cc97a30-85a1-42e6-a9f7-b3e753732baa eyes/materials/bluegreen.mhmat
 eyebrows eyebrow002 a4e73c2f-3a12-47c8-b706-31a68cac6907
 hair short02 c104cd4a-1edc-43f9-8b94-f63345a44638
-clothes male_casualsuit02 eca0f141-c21a-4d32-9fed-66fde6559940
-material male_casualsuit02 eca0f141-c21a-4d32-9fed-66fde6559940 black_shirt.mhmat
-clothes shoes04 0d753f2e-55f9-4d60-9a78-261f42b494fc
-clothes fedora 566dbd52-71d1-4d76-a799-0474a5a384db
+clothes toigo_harem_pants 0a9bdba7-cd5b-4270-8a9b-f7d6ef2abaac
+material toigo_harem_pants 0a9bdba7-cd5b-4270-8a9b-f7d6ef2abaac bombacha.mhmat
+clothes punkduck_riding_boots 7b175dc0-bdf5-4f89-80a7-1e86201217fb
+clothes grinsegold_moustache 8dbdff2d-495f-4dd6-8f27-5898ae4a3ad9
+material grinsegold_moustache 8dbdff2d-495f-4dd6-8f27-5898ae4a3ad9 moustache.mhmat
 clothesHideFaces True
 subdivide False
+decimate toigo_harem_pants 0a9bdba7-cd5b-4270-8a9b-f7d6ef2abaac 3000
+decimate punkduck_riding_boots 7b175dc0-bdf5-4f89-80a7-1e86201217fb 1600
+piece shirt color=0.17,0.17,0.19 top=6.1 bottom=2.9
+piece waistcoat color=0.27,0.24,0.21 vneck=5.1
+piece hat color=0.42,0.37,0.30 crown=0.05 fit=0.9 taper=0.95 round=1 pinch=0.35 dent=0.02 brim=0.85 droop=0.14 back=0.08 sides=-0.03 thick=0.06 curl=0.06
+piece neckerchief color=0.90,0.89,0.84 drop=0.8 knot=0.17

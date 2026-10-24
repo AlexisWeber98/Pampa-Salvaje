@@ -12,6 +12,7 @@ pub mod bubble;
 pub mod character;
 pub mod coords;
 pub mod fade;
+pub mod fauna;
 pub mod fence;
 pub mod flora;
 pub mod font;
@@ -39,6 +40,7 @@ pub use character::{
 };
 pub use coords::world_from_ground;
 pub use fade::{FadeLayer, FadePlugin, ScreenFade};
+pub use fauna::{ANIMATE_FAR, Animal, AnimalPose, FaunaKit, FaunaPlugin, Gait};
 pub use fence::{FencePiece, FencePlugin, GatePart, WorldFences};
 pub use flora::{
     Faded, FloraAccent, FloraPlugin, GrassTuft, SightLine, ThinFadePlugin, ThinOccluder, TreePart,

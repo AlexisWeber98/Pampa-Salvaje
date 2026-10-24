@@ -1,0 +1,8 @@
+# Bairoletto's dark bombacha: the harem pants' cut in plain charcoal cloth
+# (their printed texture left out).
+name bairoletto_bombacha
+diffuseColor 0.16 0.15 0.15
+specularColor 0.01 0.01 0.01
+shininess 0.02
+transparent False
+backfaceCull False

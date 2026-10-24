@@ -1032,8 +1032,9 @@ pub struct HorseJointPart(pub HorseJoint);
 #[derive(Component, Debug, Clone, Copy)]
 pub struct HorsePartMesh(pub HorsePiece);
 
-/// Spawns a saddled horse in `coat` under `parent`, tacked for a rider when
-/// `mounted`; returns its body and its trunk joint (where a rider sits).
+/// Spawns a horse in `coat` under `parent`: saddled, and tacked for a rider
+/// when `Some(true)`; bare (no tack at all) when `tack` is `None`. Returns
+/// its body and its trunk joint (where a rider sits).
 pub(super) fn spawn_horse(
     commands: &mut Commands,
     (kit, meshes): (&mut HorseKit, &mut Assets<Mesh>),
@@ -1041,7 +1042,7 @@ pub(super) fn spawn_horse(
     parent: Entity,
     coat: Coat,
     phase: f32,
-    mounted: bool,
+    tack: Option<bool>,
 ) -> (Entity, Entity) {
     let body = commands
         .spawn((
@@ -1069,7 +1070,11 @@ pub(super) fn spawn_horse(
         .into_iter()
         .enumerate()
         .map(|(i, p)| (p, Some(i)));
-    let tack = tack_parts(mounted).into_iter().map(|p| (p, None));
+    let tack = tack
+        .map(tack_parts)
+        .into_iter()
+        .flatten()
+        .map(|p| (p, None));
     for (part, index) in body_parts.chain(tack) {
         let paints = (&mut *palette, &mut *materials, &mut *images);
         let Some((mesh, material)) = kit.draw(&part, index, coat, meshes, paints) else {

@@ -1,31 +1,45 @@
-# Don Hidalgo, the estanciero: about 60 (age 0.769). The middle-aged skin,
-# whose face reads lighter than the old one under the sun. His good jacket
-# over a shirt (male_casualsuit05 as shipped: a green field jacket; no
-# waistcoat), its jeans for riding trousers, brown leather shoes for tall
-# boots, the grey felt fedora for the wide-brimmed hat. No moustache or
-# white-hair asset exists: added procedurally later. Substitutions in
-# ../CREDITS.md.
+# Don Hidalgo, the estanciero: about 65 (age 0.8), heavier, with white
+# hair (hair.mhmat), grey eyebrows and a white moustache. The middle-aged
+# skin: the old one reads too dark under the sun. A dark three-piece suit
+# (an open, hip-length jacket with lapels and squared shoulders, a
+# waistcoat with a gold watch chain and trousers tucked into brown boots)
+# over a white shirt with a stiff high band collar with small wing tips
+# and no tie, and a felt hat with the widest flat brim and a tall crown
+# creased down the middle. The garments are cut from the body by the
+# converter.
+#
+# Lines MakeHuman does not know (it warns and skips them) are read by
+# tools/mh2gltf.py: piece (see ../README.md). Credits in ../CREDITS.md.
 version v1.1.1
 name hidalgo
 modifier macrodetails/Gender 1.000000
-modifier macrodetails/Age 0.769231
+modifier macrodetails/Age 0.800000
 modifier macrodetails/African 0.000000
 modifier macrodetails/Asian 0.000000
 modifier macrodetails/Caucasian 1.000000
-modifier macrodetails-universal/Muscle 0.400000
-modifier macrodetails-universal/Weight 0.600000
-modifier macrodetails-height/Height 0.500000
-modifier macrodetails-proportions/BodyProportions 0.500000
+modifier macrodetails-universal/Muscle 0.300000
+modifier macrodetails-universal/Weight 0.700000
+modifier macrodetails-height/Height 0.460000
+modifier macrodetails-proportions/BodyProportions 0.400000
 skeleton game_engine.mhskel
 skinMaterial skins/middleage_caucasian_male/middleage_caucasian_male.mhmat
 proxy male1591 d7e4934e-daed-4ad5-a055-18c9cba487dc
 eyes Low-Poly 1cc97a30-85a1-42e6-a9f7-b3e753732baa
 material Low-Poly 1cc97a30-85a1-42e6-a9f7-b3e753732baa eyes/materials/grey.mhmat
 eyebrows eyebrow003 4089e4e3-b842-40f4-91a4-0686118f7535
+material eyebrow003 4089e4e3-b842-40f4-91a4-0686118f7535 eyebrows.mhmat
 hair short04 e09bfd91-f83f-4f9a-ba8c-4635cd1ae0d8
-clothes male_casualsuit05 02e8aa01-466f-4eb4-a375-e209cb4a77d8
-clothes shoes04 0d753f2e-55f9-4d60-9a78-261f42b494fc
-clothes fedora 566dbd52-71d1-4d76-a799-0474a5a384db
-material fedora 566dbd52-71d1-4d76-a799-0474a5a384db clothes/fedora01/materials/grey_fedora.mhmat
+material short04 e09bfd91-f83f-4f9a-ba8c-4635cd1ae0d8 hair.mhmat
+clothes grinsegold_moustache 8dbdff2d-495f-4dd6-8f27-5898ae4a3ad9
+material grinsegold_moustache 8dbdff2d-495f-4dd6-8f27-5898ae4a3ad9 moustache.mhmat
 clothesHideFaces True
 subdivide False
+piece shirt color=0.92,0.91,0.88 top=6.0
+piece waistcoat color=0.10,0.09,0.09 vneck=5.5
+piece trousers color=0.17,0.15,0.14
+piece boots color=0.22,0.13,0.07
+piece jacket color=0.21,0.19,0.17 vneck=2.5 vwidth=1.0 skirt=2.9 open=1 pad=0.07
+piece lapels color=0.12,0.11,0.10
+piece collar height=0.35
+piece chain height=1.3 reach=0.4 sag=0.12
+piece hat color=0.30,0.28,0.25 crown=0.1 fit=0.74 taper=0.94 round=0.3 dent=0.07 brim=0.9 droop=0.02 thick=0.08 curl=0.03

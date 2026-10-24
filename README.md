@@ -208,7 +208,15 @@ them, and every north-south street clear of the yard crosses the track at a
 level crossing with a plank deck and St Andrew's crosses (`RailwayConfig::through`).
 Between Monte Nievas and Pico, the train stops at the Metileo halt (station
 1906): a store and a handful of houses round a small grid (`density` in the
-towns file). East-south-east of Pico lies **Laguna La Arocena**, a shallow
+towns file). At Metileo's west end a branch leaves the line, as the real
+Metileo–Arizona branch did, and curves away north-west on 500 m curves to
+**Caleufú** (founded 1911), 7.5 km of track ending at its station near the
+world's west edge (`RailBranch`, `branches` in the towns file). Caleufú is a
+small railway town of 4 x 4 blocks, about two thirds built, with its plaza
+and church, a comisaría and a pulpería standing blocks apart, and its own
+level crossing and rural track by the station. Track, curves, crossings and
+the minimap treat the branch like the line; no train runs on it yet (the
+line train keeps to the main line). East-south-east of Pico lies **Laguna La Arocena**, a shallow
 freshwater lagoon (`pampa_core::Lagoon`): a squarish, softly rounded shore
 of about 215 x 145 m, a little rough at the edges. Its water is a flat,
 dark olive-brown sheet 0.6 m under the lowest bank, smooth and reflective
@@ -253,7 +261,7 @@ The open land between towns is pampa grassland:
 The plants and stones are low-poly CC0 models from Quaternius' Ultimate Nature Pack, and the ground textures are CC0 from ambientCG. They are read from `assets/` at startup by our own small OBJ and PNM readers (no extra crates), and they are recoloured and rescaled in code for the dry 1919 pampa. A missing file logs a warning, and a procedural stand-in is drawn instead. There is no level-of-detail swap: each tree is the same model out to 200 m and fades out inside the 180 m dust fog. Tufts stay solid within about 40 m of the rider and thin out smoothly farther away. Every model choice, turn and size is seeded by its placement, so a reloaded chunk looks exactly the same. Every asset is credited, with what was changed, in [CREDITS.md](CREDITS.md).
 
 Roads, fences and gates cross that land:
-- **Dirt roads** for carts and riders join neighbouring towns on the line (Eduardo Castex–Monte Nievas, Monte Nievas–Metileo, Metileo–General Pico). Each leaves a town by the street facing the other town and runs on a gently curving, seeded line. It is more direct than the railway, which loses distance on its run-outs and wide curves. A road keeps 40 m clear of the track and crosses it only where its ends lie on opposite sides, and then squarely. A road never leaves General Pico along its line, which runs out of both ends of the town. A public dead-end road also leaves General Pico by its east side for Laguna La Arocena, with a signpost naming the lagoon at its start; it ends on the lagoon's bank in a small turnaround loop that comes to the wet mud and no farther.
+- **Dirt roads** for carts and riders join neighbouring towns on the line (Eduardo Castex–Monte Nievas, Monte Nievas–Metileo, Metileo–General Pico), and each town on a branch to its nearest town (Caleufú–Eduardo Castex, 5.8 km, crossing the line's run-out west of Castex). Each leaves a town by the street facing the other town and runs on a gently curving, seeded line. It is more direct than the railway, which loses distance on its run-outs and wide curves. A road keeps 40 m clear of the track and crosses it only where its ends lie on opposite sides, and then squarely. A road never leaves General Pico along its line, which runs out of both ends of the town. A public dead-end road also leaves General Pico by its east side for Laguna La Arocena, with a signpost naming the lagoon at its start; it ends on the lagoon's bank in a small turnaround loop that comes to the wet mud and no farther.
 - **Level crossings and rural tracks:** every railway town has one street that crosses its track by the station, square, at a level crossing. That is the street through the station yard nearest the station, or the ring street carried just past the grid when the yard fills the town's track side. The crossing has timber planks flush under the rail heads, between the rails and in a strip of about half a meter outside each, exactly the road's width along the track. The dirt road itself rises to them as packed earth over 7 m on each side (about 1 in 10 at the steepest), on its own axis and as wide as the road, its edges sloping down to the grass. Riders, people and the camera climb the same rise; the track bed itself is never lowered or raised by the road. A St Andrew's cross stands on a post on each approach. Past it, a short seeded rural track of 300–800 m runs out toward the chacras and estancias and ends in the open land. A rider can always cross; a train car standing on the crossing still blocks it.
 - **Road surface:** each road is cut a shallow 15 cm into the ground, level across and easing back into the land beside it, so `Terrain::height` stays continuous. Nothing farther than the cut's reach from the road is touched, and the track bed at a level crossing is left as it is. It wears Ground 102 compressed dirt from ambientCG, with its edges feathered into the grass, which is worn to earth along it. No tree, tuft, stone or shrub grows on a road or its verges.
 - **Signposts:** a wooden signpost stands at each town's road exit. Its arrow board names the far town and the distance in kilometres, to a tenth, in the pixel font, for example "GENERAL PICO 6,9 KM".
@@ -270,6 +278,8 @@ Roads, fences and gates cross that land:
 Roads, crossings, signposts, fences and gates stream with the chunks, like the track.
 
 Behind some open gates stand rural settlements (`pampa_core::settlement`, drawn by `pampa_render::settlement`): adobe ranchos under paja or corrugated iron, puestos with their corral and aguada, whitewashed or brick chacras with a galpón and a molino, and estancia cascos with a front gallery, worker houses, corrals, a eucalyptus grove and a poplar row. Dirt huellas (two wheel ruts) lead from the gate to every door. The buildings and props are procedural, with CC0 PBR textures shared one material per surface; every building, prop, corral rail and tree trunk is a static obstacle, and houses and galpones stop the camera. Abandoned wagons rot at some yards and on a few road verges, and Poly Haven barrels, crates, a ladder, a bucket and lanterns sit about the barns and wells.
+
+**Fauna** (first pass, `pampa_core::fauna`, drawn by `pampa_render::fauna`, streamed by the game's `fauna` module). Herds of Hereford, Aberdeen Angus and overo cattle graze inside some fenced fields. Each herd keeps to a pasture that is clear of roads, towns, lagoons, the railway and settlements. Cows walk slowly, graze head down and now and then lie down. They walk off when a rider comes close, and they block the rider like soft bodies. Untacked criollo horses stand in the corrals of the chacras and estancias. Once riding is unlocked, any of them can be mounted. Hares sit and hop in the open grass and bolt from a rider. Teros take off on a low arc and land farther on. Chimangos circle overhead, and ducks paddle on Laguna La Arocena. Each animal is a few rigid low-poly parts that share 4 meshes and 11 materials, and only animals near the camera are animated. Animals are loaded only in the chunks within two of the player's chunk, nearest first, under hard caps per species (`pampa_core::fauna::caps`). In debug builds the console's `fauna` command counts what is nearby. Skeletal versions are a follow-up.
 
 A structure kind with a model slot (the windpump, the wrecked wagon, the cart, the well and others) draws a glTF model from `assets/models/third-party/<slot>/` when one is there, fitted by `slots.ron`, and its procedural mesh otherwise; see `assets/models/third-party/README.md`. The windpump and the wrecked wagon are 3TD Starter Pack models (CC0) converted from COLLADA with `tools/dae2gltf.py`, a standard-library Python script with its own tests (`python3 -I -B -m unittest discover -s tools`; see `tools/README.md`). The thatch textures are made by `assets/textures/buildings/thatch/generate.sh`, whose `--check-signs` proves the normal map's OpenGL convention on known ramps. The building textures ship as GPU-compressed KTX2 next to their JPG sources: `tools/textures_to_ktx2.sh` encodes each set to UASTC with baked mipmaps and packs occlusion, roughness and metallic into one `orm` map, and Bevy transcodes them at load to the GPU's block format (BC7 on desktop), a quarter of the video memory RGBA8 took (see `tools/README.md`).
 
@@ -499,25 +509,29 @@ or the same keys close it, and while it is open the game gets no keys at all.
 
 | Command | Effect |
 |---------|--------|
-| `goto laguna` / `pico` / `castex` / `nievas` / `metileo` | Go to Laguna La Arocena's landing or a town's main road in; any word of a town's or lagoon's name works |
-| `goto estancia` | Go to the patio of the nearest estancia |
-| `goto estancia castex` / `goto estancia pico` | Go to the estancia nearest that town |
+| `goto lake` | Go to the landing of the nearest lagoon (Laguna La Arocena) |
+| `goto pico` / `castex` / `nievas` / `metileo` / `caleufu` / `arocena` | Go to a town's main road in, or a lagoon's landing; any word of a town's or lagoon's name works, accents optional |
+| `goto ranch` | Go to the patio of the nearest estancia |
+| `goto ranch castex` / `goto ranch pico` | Go to the estancia nearest that town |
 | `goto X Y` | Go to a point, in game meters |
-| `caballo` | Stand a saddled horse beside the player (rideable once riding is unlocked) |
+| `horse` | Stand a saddled horse beside the player (rideable once riding is unlocked) |
 | `unlock all` | Unlock every ability |
-| `modelos on` / `modelos off` (`personajes nuevos` / `personajes viejos`) | Draw Don Hidalgo, Farach and Bairoletto as the skinned MakeHuman models, or back as the rigid 1919 figures (the default) |
-| `hora 21` / `hora 21:30` | Move the clock on to that time (later today, or tomorrow if it has passed) |
+| `models on` / `models off` | Draw Don Hidalgo, Farach and Bairoletto as the skinned MakeHuman models (the default), or back as the old rigid figures |
+| `time 21` / `time 21:30` | Move the clock on to that time (later today, or tomorrow if it has passed) |
 | `help` | List the commands |
 
-The MakeHuman models (`assets/characters/`, built by `tools/mh2gltf.py`) are
-off by default and in release builds: the CC0 wardrobe is modern (jeans, a
-printed shirt, one trilby for every hat), so the rigid 1919 figures stay until
-period garments are added. Try `goto castex` (Farach with Bairoletto at his
-side) or `goto nievas` (Don Hidalgo), then `modelos on`.
+The MakeHuman models (`assets/characters/`, built by `tools/mh2gltf.py`) wear
+a 1919 wardrobe, mostly cut from the body by the converter: shirts and
+waistcoats, bombachas, knee boots, a police guerrera with brass buttons, a
+three-piece suit, felt hats, a kepi, neckerchiefs, a poncho, the faja and the
+rastra. They are
+the default, in release builds too; `models off` brings back the old rigid
+figures in a debug build. Try `goto castex` (Farach with Bairoletto at his
+side) or `goto nievas` (Don Hidalgo).
 
 `goto` puts the player, and the horse when riding, on the nearest clear, dry
 ground to the place, and the world streams in around them at once. Aboard the
-train it refuses ("en el tren no: bajate primero"): get off first.
+train it refuses ("not on the train: get off first"): get off first.
 
 ## Credits
 

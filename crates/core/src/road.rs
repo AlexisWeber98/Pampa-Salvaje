@@ -1,6 +1,7 @@
 //! Dirt roads between neighbouring towns, for carts and riders.
 //!
-//! A road joins two towns next to each other on the railway line. It leaves
+//! A road joins two towns next to each other on the railway line, or a
+//! town on a branch of it to the town nearest it (see [`road_pairs`]). It leaves
 //! each town by the main street exit facing the other town, runs straight
 //! out across the town's leveled band, and then follows a gently curving,
 //! seeded line that is more direct than the railway: it skips the track's
@@ -168,19 +169,40 @@ pub struct RoadNetwork {
     cells: HashMap<(i32, i32), Vec<u32>>,
 }
 
-/// The railway centerline as one oriented polyline, so "which side" is the
-/// same question all along it.
-struct Track(Vec<Vec2>);
+/// The railway centerlines as oriented polylines, so "which side" is the
+/// same question all along each: the line's whole path, then each branch's
+/// path, running outward from its junction ([`RailLine::track_paths`]).
+/// Oriented so, a branch's outer side is the line's: the land between a
+/// branch and the line it leaves is on the same side of both.
+struct Track(Vec<Vec<Vec2>>);
 
 impl Track {
-    /// Distance from `p` to the track, signed positive left of the line's
-    /// direction, and the unit normal pointing left there.
+    /// Every track path of `line` through `towns`.
+    fn of(line: &RailLine, towns: &[TownLayout]) -> Self {
+        Self(
+            line.track_paths(towns)
+                .iter()
+                .map(|p| p.points().to_vec())
+                .filter(|p| p.len() >= 2)
+                .collect(),
+        )
+    }
+
+    /// One straight track, start to end.
+    fn straight(start: Vec2, end: Vec2) -> Self {
+        Self(vec![vec![start, end]])
+    }
+
+    /// Every straight piece of every path.
+    fn pieces(&self) -> impl Iterator<Item = &[Vec2]> + '_ {
+        self.0.iter().flat_map(|p| p.windows(2))
+    }
+
+    /// Distance from `p` to the nearest track, signed positive left of that
+    /// track's direction, and the unit normal pointing left there.
     fn signed(&self, p: Vec2) -> (f32, Vec2) {
-        if self.0.len() < 2 {
-            return (f32::INFINITY, Vec2::new(0.0, 1.0));
-        }
         let mut best = (f32::INFINITY, 0.0, Vec2::new(0.0, 1.0));
-        for w in self.0.windows(2) {
+        for w in self.pieces() {
             let (a, b) = (w[0], w[1]);
             let d = segment_distance(p, a, b);
             if d < best.0 {
@@ -190,14 +212,16 @@ impl Track {
                 best = (d, side, left);
             }
         }
+        if best.0.is_infinite() {
+            return (f32::INFINITY, Vec2::new(0.0, 1.0));
+        }
         (best.0 * best.1, best.2)
     }
 
-    /// The first point where the segment `p`–`q` crosses the track, from
+    /// The first point where the segment `p`–`q` crosses a track, from
     /// `p`, with the track's unit direction there.
     fn first_crossing(&self, p: Vec2, q: Vec2) -> Option<(Vec2, Vec2)> {
-        self.0
-            .windows(2)
+        self.pieces()
             .filter_map(|w| {
                 let (t, _) = intersect(p, q, w[0], w[1])?;
                 Some((t, p + (q - p) * t, unit(w[1] - w[0])?))
@@ -285,18 +309,19 @@ impl RoadNetwork {
     /// track: its square approaches.
     const CROSSING_APPROACH: f32 = Self::RAIL_CLEARANCE + 90.0;
 
-    /// The roads between every two towns next to each other on `line`,
-    /// inside `bounds`, and the roads left out, each reported.
+    /// The roads between every two towns next to each other on `line`, and
+    /// from each branch town to its nearest town, inside `bounds`, and the
+    /// roads left out, each reported. They cross the line and its branches
+    /// alike, at level crossings.
     pub fn build(
         towns: &[TownLayout],
         line: &RailLine,
         bounds: WorldBounds,
     ) -> (Self, Vec<RoadError>) {
-        let track = Track(line.full_path(towns).points().to_vec());
+        let track = Track::of(line, towns);
         let mut roads = Vec::new();
         let mut errors = Vec::new();
-        for pair in line.towns.windows(2) {
-            let (from, to) = (pair[0], pair[1]);
+        for (from, to) in road_pairs(towns, line) {
             let (Some(a), Some(b)) = (towns.get(from), towns.get(to)) else {
                 continue;
             };
@@ -337,7 +362,7 @@ impl RoadNetwork {
         bounds: WorldBounds,
         lagoons: &[Lagoon],
     ) -> (Self, Vec<RoadError>) {
-        let track = Track(line.full_path(towns).points().to_vec());
+        let track = Track::of(line, towns);
         let mut roads = self.roads;
         let mut errors = Vec::new();
         let mut signs = Vec::new();
@@ -707,6 +732,35 @@ pub fn board_text(name: &str, meters: f32) -> String {
     format!("{} {},{} KM", name.to_uppercase(), tenths / 10, tenths % 10)
 }
 
+/// The towns the roads between towns join, as `(from, to)`: every two
+/// towns next to each other on the line, then each branch town (past its
+/// junction) and the town nearest it by the middle of its grid, whichever
+/// it is; a branch runs out where no line road goes, and its nearest town
+/// is often off the branch (Caleufú's is Castex, not Metileo). A pair
+/// joined already is not joined twice.
+fn road_pairs(towns: &[TownLayout], line: &RailLine) -> Vec<(usize, usize)> {
+    let mut pairs: Vec<(usize, usize)> = line.towns.windows(2).map(|w| (w[0], w[1])).collect();
+    let center = |i: usize| towns[i].grid().center();
+    for branch in &line.branches {
+        for &town in branch.towns.iter().skip(1).filter(|&&i| i < towns.len()) {
+            let nearest = (0..towns.len()).filter(|&i| i != town).min_by(|&a, &b| {
+                let d = |i: usize| center(i).distance(center(town));
+                d(a).total_cmp(&d(b))
+            });
+            let Some(other) = nearest else {
+                continue;
+            };
+            let joined = pairs
+                .iter()
+                .any(|&(a, b)| (a, b) == (town, other) || (b, a) == (town, other));
+            if !joined {
+                pairs.push((other, town));
+            }
+        }
+    }
+    pairs
+}
+
 /// The exit of `town`'s street grid facing `toward`: the side whose outward
 /// direction points most at it (never the railway's side, which the yard
 /// fills), and on that side the street through the grid nearest its middle.
@@ -899,7 +953,7 @@ fn rural(town: &TownLayout, index: usize, track: &Track) -> Option<Result<Road, 
     let path = chaikin(path, 2);
     let mut crossings = crossings_of(&path, track);
     if crossings.is_empty() {
-        crossings = crossings_of(&path, &Track(vec![rail.start, rail.end]));
+        crossings = crossings_of(&path, &Track::straight(rail.start, rail.end));
     }
     let n = path.len();
     let ends = [
@@ -1042,7 +1096,7 @@ fn street_crossings(town: &TownLayout, index: usize, track: &Track) -> Vec<Road>
             let path = vec![a, b];
             let mut crossings = crossings_of(&path, track);
             if crossings.is_empty() {
-                crossings = crossings_of(&path, &Track(vec![rail.start, rail.end]));
+                crossings = crossings_of(&path, &Track::straight(rail.start, rail.end));
             }
             let out = unit(b - a).unwrap_or(Vec2::new(0.0, 1.0));
             Road {
@@ -1166,8 +1220,7 @@ fn crossings_of(path: &[Vec2], track: &Track) -> Vec<LevelCrossing> {
     let mut along = 0.0;
     for w in path.windows(2) {
         let mut here: Vec<(f32, LevelCrossing)> = track
-            .0
-            .windows(2)
+            .pieces()
             .filter_map(|r| {
                 let (t, _) = intersect(w[0], w[1], r[0], r[1])?;
                 Some((
@@ -1385,7 +1438,7 @@ pub(crate) mod tests {
     }
 
     fn track(towns: &[TownLayout], line: &RailLine) -> Track {
-        Track(line.full_path(towns).points().to_vec())
+        Track::of(line, towns)
     }
 
     fn between(roads: &RoadNetwork) -> Vec<(usize, &Road)> {
@@ -1594,7 +1647,7 @@ pub(crate) mod tests {
         // Every crossing lies on both centerlines, and they cross nowhere else.
         let mut brute = 0;
         for w in road.path.windows(2) {
-            for r in track.0.windows(2) {
+            for r in track.pieces() {
                 brute += usize::from(intersect(w[0], w[1], r[0], r[1]).is_some());
             }
         }
@@ -1604,10 +1657,7 @@ pub(crate) mod tests {
                 .path
                 .windows(2)
                 .map(|w| segment_distance(c.at, w[0], w[1]));
-            let on_rail = track
-                .0
-                .windows(2)
-                .map(|w| segment_distance(c.at, w[0], w[1]));
+            let on_rail = track.pieces().map(|w| segment_distance(c.at, w[0], w[1]));
             assert!(on_road.fold(f32::INFINITY, f32::min) < 1e-3);
             assert!(on_rail.fold(f32::INFINITY, f32::min) < 1e-3);
             assert!(c.angle() > 70f32.to_radians(), "{}", c.angle().to_degrees());
@@ -1908,5 +1958,60 @@ pub(crate) mod tests {
                 .2
                 .with_lagoons(&towns, &line, big_world().bounds(), &lagoons);
         assert_eq!(again, roads);
+    }
+
+    #[test]
+    fn a_branch_town_gets_a_road_to_its_nearest_town_and_crossings_on_the_branch() {
+        let (towns, list, branches) = crate::rail::tests::branched();
+        let bounds = WorldConfig::default().bounds();
+        let (line, errors) = RailLine::build_with_branches(Some(&list), &branches, &towns, bounds);
+        assert!(errors.is_empty(), "{errors:?}");
+        // Norte, on the branch from Medio, lies nearest Oeste.
+        assert_eq!(road_pairs(&towns, &line), [(0, 1), (1, 2), (0, 3)]);
+        let (roads, errors) = RoadNetwork::build(&towns, &line, bounds);
+        assert!(errors.is_empty(), "{errors:?}");
+        let road = roads
+            .roads
+            .iter()
+            .find(|r| r.kind == RoadKind::Between && (r.from, r.to) == (0, 3))
+            .expect("a road from Oeste to Norte");
+        // It crosses Oeste's run-out squarely on its way north.
+        assert_eq!(road.crossings.len(), 1, "{:?}", road.crossings);
+        assert!(road.crossings[0].angle() > RoadNetwork::MIN_CROSSING_ANGLE);
+        // Each end has its signpost naming the other town.
+        let named = |name: &str| {
+            roads
+                .signposts
+                .iter()
+                .flat_map(|s| &s.boards)
+                .any(|b| b.text.starts_with(name))
+        };
+        assert!(named("NORTE") && named("OESTE"));
+        // Norte's rural track crosses the branch at a level crossing, and no
+        // road meets the branch anywhere without one.
+        let branch = &line.branch_paths(&towns)[0];
+        let rural = roads
+            .roads
+            .iter()
+            .find(|r| r.kind == RoadKind::Rural && r.from == 3)
+            .expect("Norte's rural track");
+        assert_eq!(rural.crossings.len(), 1);
+        for road in &roads.roads {
+            let mut brute = Vec::new();
+            for w in road.path.windows(2) {
+                for r in branch.points().windows(2) {
+                    if let Some((t, _)) = intersect(w[0], w[1], r[0], r[1]) {
+                        brute.push(w[0] + (w[1] - w[0]) * t);
+                    }
+                }
+            }
+            for at in brute {
+                assert!(
+                    road.crossings.iter().any(|c| c.at.distance(at) < 1e-2),
+                    "{:?} meets the branch at {at:?}",
+                    road.kind
+                );
+            }
+        }
     }
 }

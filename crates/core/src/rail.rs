@@ -12,9 +12,15 @@
 //! The curves live wholly on the link, so a town's own straight track is
 //! never cut short, and the line keeps one heading through every tip.
 //!
-//! The line is a world rule: every railway town must be on it, and no link
-//! may cross another town or leave the world. Bad data never crashes; the
-//! offending towns or links are left out and reported.
+//! A branch ([`RailBranch`]) leaves the line at a junction town and runs
+//! out to towns only it serves: its first link starts at the junction's
+//! tip nearest the branch, the same tip the line may already leave by, so
+//! the two tracks part there on their own curves (Metileo to Caleufú, as
+//! the real Metileo–Arizona branch of 1911).
+//!
+//! The line is a world rule: every railway town must be on it or on a
+//! branch, and no link may cross another town or leave the world. Bad data
+//! never crashes; the offending towns or links are left out and reported.
 
 use std::fmt;
 
@@ -75,9 +81,23 @@ impl RailLink {
 pub struct RailLine {
     /// Indices (into the world's towns) of the towns on the line, in order.
     pub towns: Vec<usize>,
-    /// The links between consecutive towns, in line order. A link that
-    /// breaks a rule is left out, so the line may have gaps.
+    /// The links between consecutive towns, in line order, then each
+    /// branch's links in branch order. A link that breaks a rule is left
+    /// out, so the line may have gaps.
     pub links: Vec<RailLink>,
+    /// The branches off the line, in the order they were listed.
+    pub branches: Vec<RailBranch>,
+}
+
+/// A branch of the railway: track from a town on the line (the junction)
+/// out through towns no other track reaches. Its links live in
+/// [`RailLine::links`] with the line's, so everything that lays or draws
+/// track treats it alike; only the line train keeps to the line.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct RailBranch {
+    /// Indices (into the world's towns) of the branch's towns, in order,
+    /// the junction first.
+    pub towns: Vec<usize>,
 }
 
 /// Why a town or a link was left out of the railway line.
@@ -101,6 +121,9 @@ pub enum RailLineError {
     },
     /// The link between `from` and `to` leaves the world.
     OutsideWorld { from: String, to: String },
+    /// A branch whose first town (`name`) is not on the line, or that
+    /// names no town past it.
+    BadJunction { name: String },
 }
 
 impl fmt::Display for RailLineError {
@@ -128,6 +151,10 @@ impl fmt::Display for RailLineError {
             Self::OutsideWorld { from, to } => write!(
                 f,
                 "the link from `{from}` to `{to}` leaves the world; link left out"
+            ),
+            Self::BadJunction { name } => write!(
+                f,
+                "the branch from `{name}` must start at a town on the line and reach a town past it; branch left out"
             ),
         }
     }
@@ -158,22 +185,77 @@ impl RailLine {
         towns: &[TownLayout],
         bounds: WorldBounds,
     ) -> (Self, Vec<RailLineError>) {
+        Self::build_with_branches(names, &[], towns, bounds)
+    }
+
+    /// [`Self::build`], with the `branches` off the line: each lists a
+    /// town on the line (the junction) and then, in order, the towns the
+    /// branch runs out to. Branch towns follow the line's naming rules
+    /// (never a town already on the line or another branch); a branch
+    /// whose junction is not on the line, or that keeps no town past it,
+    /// is left out and reported.
+    pub fn build_with_branches(
+        names: Option<&[String]>,
+        branches: &[Vec<String>],
+        towns: &[TownLayout],
+        bounds: WorldBounds,
+    ) -> (Self, Vec<RailLineError>) {
         let mut errors = Vec::new();
         let order = match names {
             Some(names) => listed(names, towns, &mut errors),
             None => west_to_east(towns),
         };
+        let mut kept: Vec<RailBranch> = Vec::new();
+        for list in branches {
+            let junction = list
+                .first()
+                .and_then(|name| towns.iter().position(|t| &t.name == name))
+                .filter(|i| order.contains(i));
+            let taken: Vec<usize> = order
+                .iter()
+                .chain(kept.iter().flat_map(|b| &b.towns))
+                .copied()
+                .collect();
+            let past = listed(list.get(1..).unwrap_or_default(), towns, &mut errors);
+            let mut past = past;
+            past.retain(|i| {
+                let free = !taken.contains(i);
+                if !free {
+                    errors.push(RailLineError::DuplicateTown {
+                        name: towns[*i].name.clone(),
+                    });
+                }
+                free
+            });
+            match junction {
+                Some(junction) if !past.is_empty() => {
+                    let mut branch = vec![junction];
+                    branch.extend(past);
+                    kept.push(RailBranch { towns: branch });
+                }
+                _ => errors.push(RailLineError::BadJunction {
+                    name: list.first().cloned().unwrap_or_default(),
+                }),
+            }
+        }
         errors.extend(
             towns
                 .iter()
                 .enumerate()
-                .filter(|(i, t)| t.railway.is_some() && !order.contains(i))
+                .filter(|(i, t)| {
+                    t.railway.is_some()
+                        && !order.contains(i)
+                        && !kept.iter().any(|b| b.towns.contains(i))
+                })
                 .map(|(_, t)| RailLineError::NotOnLine {
                     name: t.name.clone(),
                 }),
         );
         let mut links = Vec::new();
-        for pair in order.windows(2) {
+        let pairs = order
+            .windows(2)
+            .chain(kept.iter().flat_map(|b| b.towns.windows(2)));
+        for pair in pairs {
             match link(towns, pair[0], pair[1], bounds) {
                 Ok(link) => links.push(link),
                 Err(error) => errors.push(error),
@@ -183,6 +265,7 @@ impl RailLine {
             Self {
                 towns: order,
                 links,
+                branches: kept,
             },
             errors,
         )
@@ -231,7 +314,51 @@ impl RailLine {
     /// links is just its first town's track, and a line without towns is
     /// empty.
     pub fn full_path(&self, towns: &[TownLayout]) -> LinePath {
-        let served = self.connected_towns();
+        self.path_through(&self.connected_towns(), towns)
+    }
+
+    /// The towns [`Self::full_path`] runs through, in line order: the first
+    /// town and every town reached from it without a gap.
+    pub fn connected_towns(&self) -> Vec<usize> {
+        self.connected(&self.towns)
+    }
+
+    /// Each branch as one path, like [`Self::full_path`]: from the
+    /// junction's far tip, through its station and out along the branch
+    /// to the last connected town's far tip, so it runs outward from the
+    /// line. A branch whose first link is missing is just the junction's
+    /// track.
+    pub fn branch_paths(&self, towns: &[TownLayout]) -> Vec<LinePath> {
+        self.branches
+            .iter()
+            .map(|b| self.path_through(&self.connected(&b.towns), towns))
+            .collect()
+    }
+
+    /// Every path of track a train could run: [`Self::full_path`] first,
+    /// then [`Self::branch_paths`]. Each town's own track and its run-outs
+    /// are on one of them.
+    pub fn track_paths(&self, towns: &[TownLayout]) -> Vec<LinePath> {
+        let mut paths = vec![self.full_path(towns)];
+        paths.extend(self.branch_paths(towns));
+        paths
+    }
+
+    /// The towns of `order` reached from its first without a gap.
+    fn connected(&self, order: &[usize]) -> Vec<usize> {
+        let mut served: Vec<usize> = order.iter().take(1).copied().collect();
+        for pair in order.windows(2) {
+            if self.link(pair[0], pair[1]).is_none() {
+                break;
+            }
+            served.push(pair[1]);
+        }
+        served
+    }
+
+    /// The path through `served` (towns joined by links, in order): the
+    /// first town's far tip, every link, the last town's far tip.
+    fn path_through(&self, served: &[usize], towns: &[TownLayout]) -> LinePath {
         let Some(rail) = served.first().and_then(|&i| towns.get(i)?.railway) else {
             return LinePath::default();
         };
@@ -250,19 +377,6 @@ impl RailLine {
             points.push(far_tip(rail, arrived));
         }
         LinePath::new(points)
-    }
-
-    /// The towns [`Self::full_path`] runs through, in line order: the first
-    /// town and every town reached from it without a gap.
-    pub fn connected_towns(&self) -> Vec<usize> {
-        let mut served: Vec<usize> = self.towns.iter().take(1).copied().collect();
-        for pair in self.towns.windows(2) {
-            if self.link(pair[0], pair[1]).is_none() {
-                break;
-            }
-            served.push(pair[1]);
-        }
-        served
     }
 
     /// The link from town `from` to town `to`, if the line has it.
@@ -1225,5 +1339,117 @@ pub(crate) mod tests {
         let oeste = towns[0].railway.unwrap();
         assert_eq!(line.full_path(&towns).points(), [oeste.start, oeste.end]);
         assert_eq!(RailLine::default().full_path(&towns).length(), 0.0);
+    }
+
+    /// The row of three towns and Norte north-west of Medio, for a branch
+    /// off the line at Medio.
+    pub(crate) fn branched() -> (Vec<TownLayout>, Vec<String>, Vec<Vec<String>>) {
+        let towns = place(
+            WorldConfig::default(),
+            &[
+                config("Oeste", -2000.0, 0.0, (4, 4), true),
+                config("Medio", 0.0, 0.0, (4, 4), true),
+                config("Este", 2000.0, 0.0, (4, 4), true),
+                config("Norte", -2200.0, 1800.0, (4, 4), true),
+            ],
+        );
+        (
+            towns,
+            names(&["Oeste", "Medio", "Este"]),
+            vec![names(&["Medio", "Norte"])],
+        )
+    }
+
+    #[test]
+    fn a_branch_leaves_the_line_at_its_junction_tip_and_runs_out_to_its_town() {
+        let (towns, list, branches) = branched();
+        let bounds = WorldConfig::default().bounds();
+        let (line, errors) = RailLine::build_with_branches(Some(&list), &branches, &towns, bounds);
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(line.towns, [0, 1, 2]);
+        assert_eq!(line.branches, [RailBranch { towns: vec![1, 3] }]);
+        let pairs: Vec<(usize, usize)> = line.links.iter().map(|l| (l.from, l.to)).collect();
+        assert_eq!(pairs, [(0, 1), (1, 2), (1, 3)]);
+        // The branch starts at Medio's west tip, where the line arrives from
+        // Oeste, and reaches Norte's tip nearest Medio.
+        let (into_medio, branch) = (&line.links[0], &line.links[2]);
+        let (medio, norte) = (towns[1].railway.unwrap(), towns[3].railway.unwrap());
+        assert_eq!(branch.track.start, medio.start);
+        assert_eq!(into_medio.track.end, medio.start);
+        assert_eq!(branch.track.end, norte.end);
+        // Without the branch, Norte is a railway town off the line.
+        let (_, errors) = RailLine::build(Some(&list), &towns, bounds);
+        assert_eq!(
+            errors,
+            [RailLineError::NotOnLine {
+                name: "Norte".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn the_branch_path_runs_outward_unbroken_and_the_train_keeps_to_the_line() {
+        let (towns, list, branches) = branched();
+        let bounds = WorldConfig::default().bounds();
+        let (line, _) = RailLine::build_with_branches(Some(&list), &branches, &towns, bounds);
+        let (plain, _) = RailLine::build(Some(&list), &towns, bounds);
+        // The line train's path is the line's alone.
+        assert_eq!(line.full_path(&towns), plain.full_path(&towns));
+        assert_eq!(line.connected_towns(), [0, 1, 2]);
+        let paths = line.branch_paths(&towns);
+        assert_eq!(paths.len(), 1);
+        let points = paths[0].points();
+        // From Medio's far (east) tip, through its station and the junction,
+        // out to Norte's far (west) tip, never bending more than the line.
+        let (medio, norte) = (towns[1].railway.unwrap(), towns[3].railway.unwrap());
+        assert_eq!(points.first(), Some(&medio.end));
+        assert!(points.contains(&medio.start));
+        assert_eq!(points.last(), Some(&norte.start));
+        assert!(sharpest_bend(points) <= RailLine::MAX_TURN + 1e-4);
+        let expected = medio.start.distance(medio.end)
+            + line.links[2].length()
+            + norte.start.distance(norte.end);
+        assert!((paths[0].length() - expected).abs() < 0.1);
+        assert_eq!(line.track_paths(&towns).len(), 2);
+        assert_eq!(line.track_paths(&towns)[1], paths[0]);
+        // Laid the same way every time.
+        let (again, _) = RailLine::build_with_branches(Some(&list), &branches, &towns, bounds);
+        assert_eq!(again, line);
+    }
+
+    #[test]
+    fn bad_branches_warn_and_are_left_out() {
+        let (towns, list, _) = branched();
+        let bounds = WorldConfig::default().bounds();
+        let build = |branches: &[&[&str]]| {
+            let branches: Vec<Vec<String>> = branches.iter().map(|b| names(b)).collect();
+            RailLine::build_with_branches(Some(&list), &branches, &towns, bounds)
+        };
+        let bad = |name: &str| RailLineError::BadJunction { name: name.into() };
+        let off = RailLineError::NotOnLine {
+            name: "Norte".into(),
+        };
+        // The junction must be on the line.
+        let (line, errors) = build(&[&["Norte", "Este"]]);
+        assert!(line.branches.is_empty() && line.links.len() == 2);
+        assert!(errors.contains(&bad("Norte")), "{errors:?}");
+        // A branch needs a town past its junction, one not on the line.
+        let (_, errors) = build(&[&["Medio"]]);
+        assert_eq!(errors, [bad("Medio"), off.clone()]);
+        let (_, errors) = build(&[&["Medio", "Este"]]);
+        let duplicate = RailLineError::DuplicateTown {
+            name: "Este".into(),
+        };
+        assert_eq!(errors, [duplicate, bad("Medio"), off.clone()]);
+        let (_, errors) = build(&[&["Medio", "Nada"]]);
+        let unknown = RailLineError::UnknownTown {
+            name: "Nada".into(),
+        };
+        assert_eq!(errors, [unknown, bad("Medio"), off]);
+        assert!(bad("Medio").to_string().contains("branch left out"));
+        // A town is on one branch only.
+        let (line, errors) = build(&[&["Medio", "Norte"], &["Oeste", "Norte"]]);
+        assert_eq!(line.branches.len(), 1);
+        assert_eq!(errors.len(), 2, "{errors:?}");
     }
 }

@@ -9,7 +9,9 @@
 //! no valid town is left the built-in Eduardo Castex config takes over.
 //!
 //! The optional `line` lists the railway towns in the order the railway
-//! line joins them; the game checks it with [`pampa_core::RailLine::build`]
+//! line joins them, and the optional `branches` the spurs off it, each a
+//! junction town on the line and then the towns the branch runs out to;
+//! the game checks both with [`pampa_core::RailLine::build_with_branches`]
 //! once the towns are built.
 
 use std::path::Path;
@@ -32,6 +34,9 @@ pub struct WorldContent {
     /// Town names in railway line order, as written; `None` lets the line
     /// run through every railway town west to east.
     pub line: Option<Vec<String>>,
+    /// Branches off the line, as written: each a junction town on the line,
+    /// then the towns the branch runs out to, in order.
+    pub branches: Vec<Vec<String>>,
     /// Lagoons, as written; the game checks them against the towns, the
     /// railway and the roads ([`pampa_core::place_lagoons`]).
     pub lagoons: Vec<LagoonConfig>,
@@ -44,6 +49,7 @@ impl WorldContent {
             world: WorldConfig::default(),
             towns: vec![TownConfig::castex()],
             line: None,
+            branches: Vec::new(),
             lagoons: Vec::new(),
         }
     }
@@ -59,6 +65,8 @@ struct TownsFile {
     towns: Vec<TownDto>,
     #[serde(default)]
     line: Option<Vec<String>>,
+    #[serde(default)]
+    branches: Vec<Vec<String>>,
     #[serde(default)]
     lagoons: Vec<LagoonDto>,
 }
@@ -229,12 +237,14 @@ pub fn parse_towns(text: &str) -> Result<(WorldContent, Vec<ContentError>), Cont
         .collect();
     errors.extend(rejected.into_iter().map(ContentError::Town));
     let line = file.line;
+    let branches = file.branches;
     let lagoons = file.lagoons.into_iter().map(LagoonConfig::from).collect();
     Ok((
         WorldContent {
             world,
             towns,
             line,
+            branches,
             lagoons,
         },
         errors,
@@ -283,7 +293,7 @@ mod tests {
     }
 
     #[test]
-    fn the_shipped_file_holds_the_four_towns_of_the_line_and_a_lagoon_in_the_largest_world() {
+    fn the_shipped_file_holds_the_line_its_branch_and_a_lagoon_in_the_largest_world() {
         let (content, errors) = parse_towns(SHIPPED).expect("shipped towns.ron is valid");
         assert!(errors.is_empty(), "{errors:?}");
         assert_eq!(
@@ -297,7 +307,13 @@ mod tests {
         let names: Vec<&str> = content.towns.iter().map(|t| t.name.as_str()).collect();
         assert_eq!(
             names,
-            ["Monte Nievas", "Eduardo Castex", "Metileo", "General Pico"]
+            [
+                "Monte Nievas",
+                "Eduardo Castex",
+                "Metileo",
+                "General Pico",
+                "Caleufú"
+            ]
         );
         let beside = RailwayConfig {
             side: Side::North,
@@ -347,7 +363,21 @@ mod tests {
         assert_eq!((metileo.blocks, metileo.railway), ((3, 3), north));
         assert_eq!(metileo.police_count(), 0);
         assert!(metileo.density.is_some_and(|d| d < 0.5));
-        // Monte Nievas, Castex and Metileo are small, General Pico very big.
+        // Caleufú, on the Metileo–Arizona branch: 41 km north-west of
+        // Castex (3.38 km west and 4.82 km north at 1:7), 774 m inside the
+        // world's west edge; a small town, two thirds built.
+        let caleufu = &content.towns[4];
+        let castex = content.towns[1].origin;
+        assert_eq!(caleufu.origin, Vec2::new(-7626.0, 2100.0));
+        let off = caleufu.origin - castex;
+        assert!(off.x < 0.0 && off.y > 0.0, "{off:?}");
+        assert!((off.length() * 7.0 - 41_000.0).abs() < 1_000.0, "{off:?}");
+        assert_eq!(caleufu.origin.x + WorldConfig::MAX_HALF_EXTENT, 774.0);
+        assert_eq!((caleufu.blocks, caleufu.railway), ((4, 4), north));
+        assert_eq!(caleufu.police_count(), 1);
+        assert!(caleufu.density.is_some_and(|d| d > 0.5 && d < 1.0));
+        // Monte Nievas, Castex, Metileo and Caleufú are small, General Pico
+        // very big.
         let sizes: Vec<TownSize> = content.towns.iter().map(TownConfig::size).collect();
         assert_eq!(
             sizes,
@@ -355,7 +385,8 @@ mod tests {
                 TownSize::Small,
                 TownSize::Small,
                 TownSize::Small,
-                TownSize::VeryBig
+                TownSize::VeryBig,
+                TownSize::Small
             ]
         );
         let (placed, errors) = pampa_core::place_towns(&content.world, &content.towns);
@@ -367,10 +398,17 @@ mod tests {
             line,
             ["Eduardo Castex", "Monte Nievas", "Metileo", "General Pico"]
         );
-        let (rail, errors) =
-            pampa_core::RailLine::build(Some(line), &placed, content.world.bounds());
+        // One branch leaves it at Metileo for Caleufú.
+        assert_eq!(content.branches, [["Metileo", "Caleufú"]]);
+        let (rail, errors) = pampa_core::RailLine::build_with_branches(
+            Some(line),
+            &content.branches,
+            &placed,
+            content.world.bounds(),
+        );
         assert!(errors.is_empty(), "{errors:?}");
-        assert_eq!(rail.links.len(), 3);
+        assert_eq!(rail.links.len(), 4);
+        assert_eq!(rail.branches.len(), 1);
         // Laguna La Arocena: real 5.9 km at bearing 119° from Pico, scaled.
         assert_eq!(content.lagoons.len(), 1);
         let arocena = &content.lagoons[0];
@@ -417,6 +455,19 @@ mod tests {
         assert!(errors.is_empty(), "{errors:?}");
         // Names are only read here; the game checks them against the towns.
         assert_eq!(content.line, Some(vec!["A".to_string(), "B".to_string()]));
+    }
+
+    #[test]
+    fn branches_are_read_and_optional() {
+        let town = r#"(name: "A", blocks: (3, 3), block_size: 40.0, street_width: 10.0)"#;
+        let (content, _) = parse_towns(&format!("(towns: [{town}])")).unwrap();
+        assert!(content.branches.is_empty());
+        let (content, errors) = parse_towns(&format!(
+            r#"(towns: [{town}], branches: [["A", "B", "C"]])"#
+        ))
+        .unwrap();
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(content.branches, [["A", "B", "C"]]);
     }
 
     #[test]

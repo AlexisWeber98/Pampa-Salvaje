@@ -1,10 +1,15 @@
 //! MakeHuman characters: skinned glTF people that replace a figure's rigid
 //! parts (see `assets/characters/README.md` and `tools/mh2gltf.py`).
 //!
-//! The rigid figures stay the default: the CC0 wardrobe is modern (jeans,
-//! a printed shirt, one trilby for every hat), so the models are only
-//! drawn while [`CharacterModelsShown`] is on, from the debug console's
-//! `modelos on` (`personajes nuevos`). Release builds never turn it on.
+//! The models are built offline from MakeHuman's CC0 data and a few
+//! community assets (CC0, and CC-BY by their authors; credited in
+//! `assets/characters/CREDITS.md` and the root `CREDITS.md`). Their 1919
+//! wardrobe is mostly made by the converter: shirts, waistcoats, a police
+//! guerrera, a three-piece suit, bombachas and knee boots cut from the
+//! body and skinned like it, and the hats, kepi, neckerchiefs, faja and
+//! rastra, poncho, strap, watch chain and brass buttons. They are drawn by default
+//! ([`CharacterModelsShown`]); the debug console's `models off`
+//! brings back the rigid figures.
 //!
 //! A [`FigureKind`] with a model ([`model_name`]) looks for
 //! `assets/characters/<name>/model.gltf` at startup ([`CharacterModels`]).
@@ -16,8 +21,9 @@
 //!   ([`ModelPending`]);
 //! - once it is ready its scene spawns, turned to face the body's front
 //!   (+X; the glTF faces +Z), its meshes get the props' shared range, its
-//!   arms are lowered out of MakeHuman's rest A-pose, its chest breathes
-//!   ([`Breath`]) and the rigid parts are hidden;
+//!   chest breathes ([`Breath`]) and the rigid parts are hidden (the arms
+//!   already hang at the sides: the converter lowers them out of
+//!   MakeHuman's A-pose into the rest pose it writes);
 //! - if it fails to load, the rigid figure stays for good.
 //!
 //! The body keeps turning and bobbing as before, carrying the model. There
@@ -42,11 +48,6 @@ pub const CHARACTER_DIR: &str = "characters";
 pub const BREATH_JOINT: &str = "spine_02";
 pub const BREATH_ANGLE: f32 = 0.012;
 pub const BREATH_PERIOD: f32 = 4.2;
-
-/// The upper arm joints lowered out of the rest pose, and the direction (in
-/// the model's space, x to the arm's own side) each arm then hangs along.
-pub const ARM_JOINTS: [&str; 2] = ["upperarm_l", "upperarm_r"];
-pub const ARM_HANG: Vec3 = Vec3::new(0.22, -1.0, 0.06);
 
 /// The model folder of a figure kind, if it has one. The protagonist's
 /// model is generated but not used until it walks and rides.
@@ -91,9 +92,15 @@ pub(super) fn load_character_models(
 }
 
 /// Whether the character models are drawn instead of the rigid figures
-/// (off by default). Turning it on or off redraws the figures standing.
-#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// (on by default). Turning it on or off redraws the figures standing.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CharacterModelsShown(pub bool);
+
+impl Default for CharacterModelsShown {
+    fn default() -> Self {
+        Self(true)
+    }
+}
 
 /// A character model's root, child of its figure's body.
 #[derive(Component, Debug, Clone, Copy)]
@@ -204,23 +211,22 @@ pub fn model_range() -> VisibilityRange {
 }
 
 /// Dresses a character model the moment its scene spawns: the shared
-/// range on its meshes, the arms lowered, the chest breathing, and its
-/// figure's rigid parts hidden.
+/// range on its meshes, the chest breathing, and its figure's rigid parts
+/// hidden.
 pub(super) fn dress_character(
     ready: On<WorldInstanceReady>,
     mut commands: Commands,
     models: Query<&ChildOf, With<CharacterModel>>,
-    (children, parents): (Query<&Children>, Query<&ChildOf>),
+    children: Query<&Children>,
     parts: Query<(Option<&Name>, Has<Mesh3d>)>,
     rigid: Query<(), With<FigureJoint>>,
-    mut transforms: Query<&mut Transform>,
+    transforms: Query<&Transform>,
 ) {
     let root = ready.entity;
     let Ok(body) = models.get(root) else {
         return;
     };
     let range = model_range();
-    let mut arms = Vec::new();
     for entity in children.iter_descendants(root) {
         let Ok((name, mesh)) = parts.get(entity) else {
             continue;
@@ -228,77 +234,19 @@ pub(super) fn dress_character(
         if mesh {
             commands.entity(entity).try_insert(range.clone());
         }
-        match name.map(Name::as_str) {
-            Some(BREATH_JOINT) => {
-                if let Ok(t) = transforms.get(entity) {
-                    commands.entity(entity).try_insert(Breath {
-                        rest: t.rotation,
-                        clock: (entity.index_u32() as f32 * 0.61).fract() * BREATH_PERIOD,
-                    });
-                }
-            }
-            Some(n) if ARM_JOINTS.contains(&n) => arms.push(entity),
-            _ => {}
+        if name.map(Name::as_str) == Some(BREATH_JOINT)
+            && let Ok(t) = transforms.get(entity)
+        {
+            commands.entity(entity).try_insert(Breath {
+                rest: t.rotation,
+                clock: (entity.index_u32() as f32 * 0.61).fract() * BREATH_PERIOD,
+            });
         }
-    }
-    for arm in arms {
-        lower_arm(arm, root, &children, &parents, &mut transforms);
     }
     for &child in children.get(body.parent()).into_iter().flatten() {
         if rigid.contains(child) {
             commands.entity(child).try_insert(Visibility::Hidden);
         }
-    }
-}
-
-/// `entity`'s transform in the space of its ancestor `root` (excluded).
-fn in_model(
-    entity: Entity,
-    root: Entity,
-    parents: &Query<&ChildOf>,
-    transforms: &Query<&mut Transform>,
-) -> Transform {
-    let mut chain = Transform::IDENTITY;
-    let mut at = entity;
-    while at != root {
-        let Ok(local) = transforms.get(at) else {
-            break;
-        };
-        chain = *local * chain;
-        match parents.get(at) {
-            Ok(parent) => at = parent.parent(),
-            Err(_) => break,
-        }
-    }
-    chain
-}
-
-/// Turns an upper arm (and the arm below it) from MakeHuman's rest A-pose
-/// to hang along [`ARM_HANG`] on its own side.
-fn lower_arm(
-    arm: Entity,
-    root: Entity,
-    children: &Query<&Children>,
-    parents: &Query<&ChildOf>,
-    transforms: &mut Query<&mut Transform>,
-) {
-    let Some(&elbow) = children.get(arm).ok().and_then(|c| c.first()) else {
-        return;
-    };
-    let Ok(parent) = parents.get(arm).map(ChildOf::parent) else {
-        return;
-    };
-    let shoulder = in_model(arm, root, parents, transforms).translation;
-    let along = in_model(elbow, root, parents, transforms).translation - shoulder;
-    let Some(along) = along.try_normalize() else {
-        return;
-    };
-    let side = if along.x < 0.0 { -1.0 } else { 1.0 };
-    let hang = Vec3::new(ARM_HANG.x * side, ARM_HANG.y, ARM_HANG.z).normalize();
-    let turn = Quat::from_rotation_arc(along, hang);
-    let above = in_model(parent, root, parents, transforms).rotation;
-    if let Ok(mut local) = transforms.get_mut(arm) {
-        local.rotation = (above.inverse() * turn * above * local.rotation).normalize();
     }
 }
 
@@ -320,6 +268,9 @@ mod tests {
 
     /// The triangle budget of one character model.
     const BUDGET: usize = 15_000;
+    /// Fewer triangles than this means a model lost its body or clothes
+    /// (the lightest, with its garments cut from the body, has about 4,900).
+    const FLOOR: usize = 3_000;
 
     #[test]
     fn only_the_errand_people_have_models_and_each_is_shipped() {
@@ -390,7 +341,7 @@ mod tests {
                 }
             }
             assert!(
-                (6_000..=BUDGET).contains(&triangles),
+                (FLOOR..=BUDGET).contains(&triangles),
                 "{name}: {triangles} triangles"
             );
         }
@@ -428,26 +379,13 @@ mod tests {
     }
 
     #[test]
-    fn the_rigid_figures_stay_unless_the_models_are_shown() {
+    fn the_models_are_shown_by_default_and_off_restores_the_figures() {
         let (mut app, _) = toggle_app();
-        assert!(!app.world().resource::<CharacterModelsShown>().0);
-        assert_eq!(model_count(&mut app), 0);
-
-        // On: Farach, already standing, gets his model; the townsperson
-        // has none.
-        app.insert_resource(CharacterModelsShown(true));
-        app.update();
+        assert!(app.world().resource::<CharacterModelsShown>().0);
+        // Farach, standing, has his model; the townsperson has none.
         assert_eq!(model_count(&mut app), 1);
         app.update();
         assert_eq!(model_count(&mut app), 1, "attached once");
-
-        // A figure drawn while they are shown gets one too.
-        app.world_mut()
-            .spawn(crate::character::CharacterVisual::Figure(
-                FigureKind::Farach,
-            ));
-        app.update();
-        assert_eq!(model_count(&mut app), 2);
 
         // Off: the models go and the rigid parts show.
         app.insert_resource(CharacterModelsShown(false));
@@ -457,6 +395,19 @@ mod tests {
             .world_mut()
             .query_filtered::<&Visibility, With<FigureJoint>>();
         assert!(joints.iter(app.world()).all(|v| *v != Visibility::Hidden));
+
+        // A figure drawn while they are off stays rigid.
+        app.world_mut()
+            .spawn(crate::character::CharacterVisual::Figure(
+                FigureKind::Farach,
+            ));
+        app.update();
+        assert_eq!(model_count(&mut app), 0);
+
+        // On again: both standing Farachs get theirs.
+        app.insert_resource(CharacterModelsShown(true));
+        app.update();
+        assert_eq!(model_count(&mut app), 2);
     }
 
     #[test]
