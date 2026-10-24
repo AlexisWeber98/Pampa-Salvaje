@@ -591,6 +591,7 @@ mod tests {
             seed: 19,
             police_stations: Some(0),
             density: Some(0.3),
+            townsfolk: None,
         })
         .expect("the shipped Metileo is valid")
     }

@@ -1060,6 +1060,7 @@ pub(crate) mod tests {
             seed: 1,
             police_stations: None,
             density: None,
+            townsfolk: None,
         };
         // Monte Nievas, and the others at their real offsets from it
         // (east, north, in meters) scaled 1:7 and rounded to the meter.
