@@ -199,7 +199,10 @@ chunks past 4 are despawned with their rocks, shrubs, grass and trees, so
 memory stays bounded wherever you ride. A chunk streamed in while riding builds
 its ground mesh, and lays out any settlement in it, on a background thread
 and gets them a few frames later, out in the fog, so crossing a chunk border
-never stalls a frame.
+never stalls a frame. The ground is smooth-shaded: each corner of a chunk's
+grid takes its normal from the slope of the terrain's height field, sampled
+on one world-wide lattice, so the ground rolls without facets and chunk
+borders shade without seams.
 
 General Pico grew on both sides of the Ferrocarril Oeste, which runs
 through the middle of the town (east-west in the game; the real town's grid
@@ -259,7 +262,7 @@ The open land between towns is pampa grassland:
 - Caldén and chañar trees grow alone or in small groves (isletas). About one tree in ten is a dead caldén snag; a few have a stump or a fallen log beside them. Chañares grow as dense thickets.
 - Tosca stones and small jarilla shrubs are scattered on the open ground.
 
-The plants and stones are low-poly CC0 models from Quaternius' Ultimate Nature Pack, and the ground textures are CC0 from ambientCG. They are read from `assets/` at startup by our own small OBJ and PNM readers (no extra crates), and they are recoloured and rescaled in code for the dry 1919 pampa. A missing file logs a warning, and a procedural stand-in is drawn instead. There is no level-of-detail swap: each tree is the same model out to 200 m and fades out inside the 180 m dust fog. Tufts stay solid within about 40 m of the rider and thin out smoothly farther away. Every model choice, turn and size is seeded by its placement, so a reloaded chunk looks exactly the same. Every asset is credited, with what was changed, in [CREDITS.md](CREDITS.md).
+The plants and stones are low-poly CC0 models from Quaternius' Ultimate Nature Pack, and the ground textures are CC0 from ambientCG. They are read from `assets/` at startup by our own small OBJ and PNM readers (no extra crates), and they are recoloured and rescaled in code for the dry 1919 pampa. The pack's faceted normals are smoothed once when a model is baked (`pampa_render::smooth`, the same auto-smooth as `tools/glbtrim.py`): crowns, bushes and weeds blend facets up to 60° apart, dead wood 50°, while tosca stones keep the edges sharper than 40°. Grass blends up to 80° and leans its normals up, so a tuft lights like the ground under it. A missing file logs a warning, and a procedural stand-in is drawn instead. There is no level-of-detail swap: each tree is the same model out to 200 m and fades out inside the 180 m dust fog. Tufts stay solid within about 40 m of the rider and thin out smoothly farther away. Every model choice, turn and size is seeded by its placement, so a reloaded chunk looks exactly the same. Every asset is credited, with what was changed, in [CREDITS.md](CREDITS.md).
 
 Roads, fences and gates cross that land:
 - **Dirt roads** for carts and riders join neighbouring towns on the line (Eduardo Castex–Monte Nievas, Monte Nievas–Metileo, Metileo–General Pico), and each town on a branch to its nearest town (Caleufú–Eduardo Castex, 5.8 km, crossing the line's run-out west of Castex). Each leaves a town by the street facing the other town and runs on a gently curving, seeded line. It is more direct than the railway, which loses distance on its run-outs and wide curves. A road keeps 40 m clear of the track and crosses it only where its ends lie on opposite sides, and then squarely. A road never leaves General Pico along its line, which runs out of both ends of the town. A public dead-end road also leaves General Pico by its east side for Laguna La Arocena, with a signpost naming the lagoon at its start; it ends on the lagoon's bank in a small turnaround loop that comes to the wet mud and no farther.
@@ -377,8 +380,9 @@ leather grain and felt, and horse faces with eyes, nostrils and an estrella
 of sprite sheets they replace. Hats tip with the step, ponchos, shawls and
 skirts sway, standing people glance around now and then, and horses flick
 their ears, swish their tails and nod with the gait. The sun's shadows use
-three cascades over the nearest 100 m, the first ending 8 m out, for crisper
-figure shadows.
+three cascades over the nearest 100 m, the first ending 12 m out, just past
+the rider at the default camera distance, for crisper figure shadows on the
+2048-texel map.
 
 Townsfolk talk back: bump into somebody with the horse and they complain in a
 speech bubble above their head ("¡Eh, mirá por dónde andás!" at a walk,

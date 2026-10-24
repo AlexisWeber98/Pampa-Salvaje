@@ -193,7 +193,7 @@ const SATURATION: f32 = 0.3;
 const CONTRAST: f32 = 0.45;
 /// Mean brightness of the detail colour (sRGB).
 const BRIGHTNESS: f32 = 0.9;
-/// How much of the maps' relief is kept: the faceted ground stays readable.
+/// How much of the maps' relief is kept: the ground's own slopes stay readable.
 const RELIEF: f32 = 0.6;
 
 /// Blends soil and grass: grass where its blades are bright, soil showing

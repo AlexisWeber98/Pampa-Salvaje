@@ -27,6 +27,7 @@ pub mod rail;
 pub mod road;
 pub mod settlement;
 pub mod signs;
+pub mod smooth;
 pub mod streaming;
 pub mod terrain;
 pub mod town;
