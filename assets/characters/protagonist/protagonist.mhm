@@ -1,8 +1,14 @@
-# The protagonist: a humble ex hardware-shop clerk from General Pico,
-# about 30 (age 0.538 = 30 years), medium build. Work shirt and worn jacket
-# (male_casualsuit05, recoloured by jacket.mhmat), worn trousers (its
-# jeans), leather shoes for boots, the soft cocked fedora for a gacho.
-# Convert with tools/mh2gltf.py; substitutions in ../CREDITS.md.
+# The protagonist: a young paisano, an ex hardware-shop clerk from General
+# Pico of about 30 (age 0.538 = 30 years), medium build. A cream shirt
+# with a small collar under a dark waistcoat, a baggy bombacha tucked into
+# calf-high boots, the faja and rastra, a red neckerchief, a dark red
+# poncho with cream bands folded over the left shoulder, its ends at the
+# hip, and a gacho: a low flat crown, the brim a little down at the front.
+# The garments are cut from the body by the converter.
+#
+# Lines MakeHuman does not know (it warns and skips them) are read by
+# tools/mh2gltf.py: piece adds a garment cut from the body or a generated
+# piece (see ../README.md). Credits in ../CREDITS.md.
 version v1.1.1
 name protagonist
 modifier macrodetails/Gender 1.000000
@@ -10,7 +16,7 @@ modifier macrodetails/Age 0.538462
 modifier macrodetails/African 0.000000
 modifier macrodetails/Asian 0.000000
 modifier macrodetails/Caucasian 1.000000
-modifier macrodetails-universal/Muscle 0.500000
+modifier macrodetails-universal/Muscle 0.550000
 modifier macrodetails-universal/Weight 0.500000
 modifier macrodetails-height/Height 0.500000
 modifier macrodetails-proportions/BodyProportions 0.500000
@@ -21,9 +27,14 @@ eyes Low-Poly 1cc97a30-85a1-42e6-a9f7-b3e753732baa
 material Low-Poly 1cc97a30-85a1-42e6-a9f7-b3e753732baa eyes/materials/brownlight.mhmat
 eyebrows eyebrow001 9c81ec3a-faa5-4c94-9cdb-992300ba3084
 hair short04 e09bfd91-f83f-4f9a-ba8c-4635cd1ae0d8
-clothes male_casualsuit05 02e8aa01-466f-4eb4-a375-e209cb4a77d8
-material male_casualsuit05 02e8aa01-466f-4eb4-a375-e209cb4a77d8 jacket.mhmat
-clothes shoes01 6e0c552e-e207-44df-8f70-c9bfdeddd8c6
-clothes fedora_cocked 4cd07df0-831a-401f-86de-77a7d5e28142
 clothesHideFaces True
 subdivide False
+piece shirt color=0.86,0.82,0.72 top=6.1
+piece waistcoat color=0.13,0.12,0.11 vneck=5.1
+piece bombacha color=0.40,0.36,0.30 bottom=1.55
+piece boots color=0.20,0.12,0.07 top=1.75
+piece poncho
+piece hat color=0.27,0.21,0.15 crown=0.05 fit=0.78 taper=0.95 brim=0.75 droop=0.18 back=-0.02 thick=0.08 curl=0.02
+piece neckerchief color=0.55,0.17,0.13 drop=0.8
+piece sash color=0.16,0.15,0.19 width=1.1
+piece rastra

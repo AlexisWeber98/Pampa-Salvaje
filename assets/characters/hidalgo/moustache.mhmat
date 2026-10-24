@@ -1,0 +1,10 @@
+# Don Hidalgo's white moustache: the black moustache's strands as grey
+# (see greyscaleTexture in tools/README.md), tinted off-white.
+name hidalgo_moustache
+diffuseColor 0.88 0.87 0.84
+specularColor 0.01 0.01 0.01
+shininess 0.05
+transparent True
+backfaceCull False
+greyscaleTexture True
+diffuseTexture data/clothes/grinsegold_moustache/Moustache_black_diff.png

@@ -1,0 +1,9 @@
+# Farach's dark moustache: the black moustache as shipped, its strands cut
+# out by their alpha.
+name farach_moustache
+diffuseColor 0.6 0.55 0.5
+specularColor 0.01 0.01 0.01
+shininess 0.05
+transparent True
+backfaceCull False
+diffuseTexture data/clothes/grinsegold_moustache/Moustache_black_diff.png

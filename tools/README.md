@@ -61,7 +61,7 @@ Accessor `min`/`max` bounds are the float32 values actually stored, so validator
 
 ### Tests
 
-A standard-library `unittest` suite builds tiny COLLADA documents and PNGs in a temporary folder and covers the axis and unit conversion, triangles and polylists, the rotor split, the normal-map convention, the refusals and `--check`:
+A standard-library `unittest` suite builds tiny COLLADA documents and PNGs in a temporary folder and covers the axis and unit conversion, triangles and polylists, the rotor split, the normal-map convention, the refusals and `--check`. `test_mh2gltf.py` does the same for `mh2gltf.py` (`.obj` and `.mhclo` reading, data folders, materials, decimation, the garments cut from the body, hats and the other generated pieces, cloth textures, the arm pose) and converts Farach when MakeHuman's data is installed:
 
 ```sh
 python3 -I -B -m unittest discover -s tools -v
@@ -71,7 +71,7 @@ The conversions done so far are listed in `assets/models/third-party/3td-starter
 
 ## `mh2gltf.py`: MakeHuman character to skinned glTF
 
-Converts a MakeHuman character (`.mhm`) into a skinned glTF 2.0 model (see `assets/characters/README.md`). It needs Python 3 with numpy and MakeHuman 1.x's *data* folder: `--data`, else `$MAKEHUMAN_DATA`, else `~/.local/opt/makehuman-1.3.0/makehuman/data`. Only the data is read; none of MakeHuman's code runs and its GUI is never started. Run it isolated:
+Converts a MakeHuman character (`.mhm`) into a skinned glTF 2.0 model (see `assets/characters/README.md`). It needs Python 3 with numpy and MakeHuman 1.x's *data* folder: `--data`, else `$MAKEHUMAN_DATA`, else `~/.local/opt/makehuman-1.3.0/makehuman/data`. Assets are also looked up in MakeHuman's user data folder, where downloaded asset packs go, and there first, as MakeHuman does: `--user-data`, else `$MAKEHUMAN_USER_DATA`, else `~/Documents/makehuman/v1py3/data`, when it exists (`--no-user-data` skips it). Only the data is read; none of MakeHuman's code runs and its GUI is never started. Run it isolated:
 
 ```sh
 python3 -I tools/mh2gltf.py INPUT.mhm -o OUTPUT_FOLDER [options]
@@ -83,6 +83,8 @@ It writes `model.gltf`, `model.bin` and `textures/` (PNG). Units are meters, Y i
 | Option | Meaning |
 |---|---|
 | `--data DIR` | MakeHuman's data folder |
+| `--user-data DIR` | MakeHuman's user data folder, searched first |
+| `--no-user-data` | Search the data folder only |
 | `--max-texture N` | Largest side of the skin and the garments that cover the body (default 1024) |
 | `--max-small-texture N` | Largest side of the other textures and of the normal maps (default 512) |
 | `--no-normal-maps` | Leave the normal maps out |
@@ -92,12 +94,51 @@ It writes `model.gltf`, `model.bin` and `textures/` (PNG). Units are meters, Y i
 What it reproduces from MakeHuman's sources (`apps/humanmodifier.py`, `apps/human.py`, `lib/targets.py`, `shared/proxy.py`, `shared/skeleton.py`, `shared/animation.py`):
 
 - **Morphing.** The base mesh is morphed by every modifier: the `.mhm`'s values and the defaults of the rest. Macro modifiers (gender, age, ethnics, muscle, weight, height, proportions, breast) go through the macro variables' interpolation and each target's factors. The others use their decr/incr targets.
-- **Proxies.** The body proxy (one `proxy` line is required, since the base mesh is too dense for a game) and the eyes, eyebrows, eyelashes, hair and clothes are fitted to the morphed mesh by their reference vertices, weights, offsets and scale matrix.
+- **Proxies.** The body proxy (one `proxy` line is required, since the base mesh is too dense for a game) and the eyes, eyebrows, eyelashes, hair and clothes are fitted to the morphed mesh by their reference vertices, weights, offsets and scale matrix. A proxy is read from MakeHuman's compiled `.mhpxy` or, for an asset MakeHuman has not loaded yet, from its `.mhclo` text; its mesh from the compiled `.npz` or else its `.obj` (a triangle repeats its first corner, as in MakeHuman; larger polygons are fanned). Shear fitting is not supported.
 - **Face hiding.** With `clothesHideFaces`, the clothes' `deleteVerts` hide what is under them. The outermost layer goes first, by `z_depth`. Hidden faces are not written.
 - **Skeleton.** The skeleton comes from the `skeleton` line (`game_engine.mhskel`). Joints are placed at their reference vertices. Bone orientation is copied from the default skeleton's plane normals. Weights come from `default_weights.mhw`, through the bones' weight references (completed as `autoBuildWeightReferences` does), then through each proxy's reference vertices, or from a proxy's own `.mhw` (the shoes). Each vertex keeps at most 4 influences, normalized.
-- **Materials.** From each `.mhmat` it takes the diffuse texture and `diffuseColor`, the normal map, `transparent` (alpha mask at 0.5), `backfaceCull` (double-sided) and a roughness of `1 - shininess`, clamped to 0.35–0.95.
+- **Materials.** From each `.mhmat` it takes the diffuse texture and `diffuseColor`, the normal map, `transparent` (alpha mask at 0.5), `backfaceCull` (double-sided), and a roughness from MakeHuman's Phong `shininess` weighted by the strength of its `specularColor`: `1 - shininess * min(1, 4 * specular)`, clamped to 0.35–0.95. Cloth and felt have a faint specular (the fedora's 0.04), so they read matte instead of like polished metal. An explicit `roughness` or `metallic` line wins. Colours (`diffuseColor`, and the `.mhm`'s `piece` colours) are display (sRGB) colours, as MakeHuman shows them; they are written to glTF's `baseColorFactor`, which is linear, through the sRGB-to-linear curve, or a dark suit would render as light grey.
 
-One step is not MakeHuman's. The hair above a hat's brim (the hat's lowest tenth) is left out, so it does not poke through the crown. `--keep-hair-under-hats` turns this off.
+What is not MakeHuman's, each set by a line of the `.mhm` or `.mhmat` that MakeHuman skips (see `assets/characters/README.md`):
+
+- **Hair under hats.** The hair above a generated hat's or kepi's band is left out, so it does not poke through the crown. `--keep-hair-under-hats` turns this off.
+- **Decimation.** `decimate` simplifies a dense garment after it is fitted and skinned, by quadric edge collapse (Garland and Heckbert). A vertex merges into a neighbour and keeps that neighbour's position and UV, so no UV is interpolated. Vertices on an open edge or a UV seam never move, which keeps the outline and the texture's seams exactly (and is what stops a garment above its target). A collapse that would turn a triangle over or pinch the surface is refused. The surviving vertex takes both vertices' weights, cut to the strongest 4 and renormalized. Cheapest first, ties by index: the output is deterministic.
+- **Arms at the sides.** MakeHuman's rest pose holds the arms out in an A. The converter lowers them: each upper arm turns about its shoulder to hang down and a little out (`ARM_HANG`), each forearm about its elbow to follow it, a little forward. The bones below follow and every vertex moves by its weights; that pose is the rest pose written, so the game needs no correction.
+- **Greyscale textures.** `greyscaleTexture True` in an `.mhmat` turns the diffuse texture grey, stretched so its brighter texels are white, before `diffuseColor` tints it: dark hair can be made white.
+- **Garments cut from the body.** `piece <garment> key=value ...` makes a garment from the posed body proxy itself, so it reads 1919 instead of like a modern pack garment and bends exactly with the body:
+  - *Regions.* Each skin vertex gets a limb from its strongest joint (the trunk, neck and legs; an arm; the head, never dressed) and a place on it: on the trunk and legs a *station*, its height on a scale through the joints (0 at the soles, 1 the ankles, 2 the knees, 3 the hips, 4 the waist at `spine_02`, 5 the shoulders, 6 the neck, 7 the head), and on an arm a *reach* (0 at the shoulder, 1 at the elbow, 2 at the wrist). So the cuts follow each character's own proportions.
+  - *Shell.* A garment covers the skin faces whose three vertices fall in its range. It copies them, pushed out along the smooth normals by an offset that runs along the station or reach (`GARMENT_CUTS`: a shirt close, a waistcoat over it, a coat outermost; trousers close below the knee; a bombacha wide from the calf to the hip; boots snug with a flared top and a sole). Each vertex keeps its skin vertex's weights and UV (the UVs tiled for the cloth texture).
+  - *Rims.* Wherever a garment ends (a hem, a cuff, a collar, an armhole), a rim goes from its edge down to just above the skin, so the end is never see-through.
+  - *Layers.* Where garments overlap, each face goes to the one that sits furthest out, and the others leave it out (the shirt under the waistcoat, the trousers tucked into the boots). The skin's faces under any garment are left out too.
+  - *Skirts.* A coat with `skirt` gets a tube from its waist to that station's height, round the dressed hips and legs, flared at the hem and open at the front by `open` sectors; it goes with the pelvis, its lower part partly with the thighs.
+
+  Their settings, all optional: `color`; `top` and `bottom` (stations); `cuff` (a reach; 0, no sleeves); `loose` (a factor on the offsets); `vneck` and `vwidth` (a V opening at the front: its point's station and its half width at the neck); `skirt`, `open` and `flare` (the coat's skirt); `pad` (squared, padded shoulders); `sole` (boots: the sole's thickness):
+
+  | Garment | Texture | Defaults |
+  |---|---|---|
+  | `shirt` (sleeves to the wrist, a small collar) | `cotton` | `top` 6.15, `bottom` 3.2, `cuff` 2.08 |
+  | `waistcoat` (no sleeves, a V) | `wool` | `top` 6.0, `bottom` 3.6, `vneck` 5.0 |
+  | `jacket` (sleeves, a V, a skirt); with `vneck=0` and a high `top`, a closed guerrera with a stiff high collar | `wool` | `top` 6.1, `bottom` 3.9, `cuff` 2.07, `vneck` 4.7, `skirt` 2.8, `open` 1 |
+  | `trousers` | `wool` | `top` 4.3, `bottom` 1.2 |
+  | `bombacha` | `cotton` | `top` 4.3, `bottom` 1.8 |
+  | `boots` | `leather` | `top` 2.0, `sole` 0.1 |
+
+- **Cloth textures.** The garments, the faja and the poncho carry small (64 px) tiling textures made in code, the same every run: `cotton` (a fine plain weave), `wool` (a twill), `stripe` (the twill with stripes), `leather` (soft mottling), all grey for the colour to tint, and `poncho` (dark red with cream woven bands).
+- **Generated pieces.** `piece <kind> key=value ...` adds a small mesh fitted to the dressed body and rigidly skinned (weight 1) to one joint. Each piece is fitted to an outline of the points around it (for each of 20 directions round a vertical axis, the farthest point at that height, plus a margin) or laid on the frontmost surface found along z. Lengths are in MakeHuman's decimeters, colours are `r,g,b`:
+
+  | Kind | Joint | Settings (defaults) |
+  |---|---|---|
+  | `hat`: a felt crown with a flat top, a brim with a thickness and a curled edge, and a ribbon (gacho, chambergo, wide brim) | `head` | `color`, `band` (the ribbon's colour); `crown` 0.25 (top above the head's top); `taper` 0.97 (top width / band width); `brim` 0.75; `droop`, `back` and `sides` 0.05, 0, 0 (how far the brim's front, back and side edges drop; negative raises them); `dent` 0 (a crease down the top, front to back); `pinch` 0 (narrows the crown's front); `round` 0 (softens the top's edge, up to 1); `thick` 0.07; `curl` 0.04 (the edge turned up); `tilt` 0.15 (band lower at the back); `fit` 1.05 (band below the head's top). The band (a hat's or a kepi's) hugs the skull's skin outline, not the hair's |
+  | `kepi`: a cloth crown with a flat top a little wider than its band, sloping down to the front; a leather band, a stiff visor and a chin strap with two buttons | `head` | `color`, `visor` (the leather's colour), `button`, `crown` 0.02, `taper` 1.06, `slope` 0.3, `width` 0.6 (visor), `droop` 0.3, `tilt` 0, `fit` 0.62 |
+  | `neckerchief` (pañuelo): a band round the neck, a point on the chest, a knot to one side with two short ends | `neck_01` | `color`, `drop` 0.9, `knot` 0.11 |
+  | `collar`: a stiff band collar with small wing tips | `neck_01` | `color`, `height` 0.28, `wings` 0.12 |
+  | `sash` (faja): a striped band round the waist | `pelvis` | `color`, `width` 1.1, `height` 0 |
+  | `rastra`: a leather belt over the sash, a plate and coins at the front (`coins=0`: a plain belt with a buckle) | `pelvis` | `color`, `coin` (the coins' colour; metallic), `coins` 8, `height` 0 |
+  | `buttons`: brass buttons down the front | `spine_02` | `color` (metallic), `count` 6, `spread` 0 (column spacing; above 0, two columns) |
+  | `chain`: a watch chain across the waistcoat | `spine_02` | `color` (metallic), `height` 0.5 (from `spine_01` to `spine_02`), `reach` 0.55, `sag` 0.18 |
+  | `lapels`: a coat's lapels either side of its opening | `spine_03` | `color`, `point` 0.3 (from `spine_02` to the neck), `open` 0.6, `width` 0.4 |
+  | `strap`: a leather strap from one shoulder across the chest and back to the other hip | `spine_03` | `color`, `side` -1 (1 the left shoulder), `width` 0.5 |
+  | `poncho`: a poncho folded long over one shoulder, its ends hanging below the hip | `spine_03` | `color` (tints the woven texture), `side` 1, `width` 1.8, `thick` 0.16, `hang` 1.4 |
 
 The data is local, but it is read as untrusted input:
 

@@ -1,42 +1,25 @@
 # Character credits
 
-Every asset here comes from MakeHuman 1.x's data folder by the MakeHuman Team (http://www.makehumancommunity.org/). They are CC0 1.0, as stated in MakeHuman's `LICENSE.ASSETS.md`. The `.mhm` and `.mhmat` files are our own. Each `model.gltf` (with its `model.bin` and `textures/`) is built from them by `tools/mh2gltf.py`: the base mesh is morphed by the `.mhm`'s modifiers, every proxy is fitted to it, faces under the clothes and hair above a hat's brim are left out, the mesh is skinned to the `game_engine` skeleton with the default weights, and the textures are downscaled to PNG (1024 px for the skin and outfit, 512 px for the rest).
+The `.mhm` and `.mhmat` files are our own. Each `model.gltf` (with its `model.bin` and `textures/`) is built from them by `tools/mh2gltf.py`: the base mesh is morphed by the `.mhm`'s modifiers, every proxy is fitted to it, faces under the clothes and hair above a hat's band are left out, heavy pack garments are decimated, the mesh is skinned to the `game_engine` skeleton with the default weights, the arms are lowered into the rest pose, and the textures are downscaled to PNG (1024 px for the skin and outfit, 512 px for the rest).
 
-Shared by all four:
+Most of the clothes are made by the converter from the `.mhm`'s `piece` lines, not taken from third-party assets: the shirts, waistcoats, Farach's guerrera, Don Hidalgo's suit, the trousers, the protagonist's bombacha and the knee boots are cut from the body proxy (`male1591`) and keep its skin weights; the hats, the kepi, the neckerchiefs, the faja, the rastra, the poncho, the strap, the lapels, the collar, the watch chain and the brass buttons are generated meshes. Their small cloth and leather textures (`cotton.png`, `wool.png`, `stripe.png`, `leather.png`, `poncho.png`) are made in code too.
 
-| Asset | Licence |
-|---|---|
-| Base mesh `3dobjs/base` and the targets in `targets.npz` | CC0 1.0 |
-| Body proxy `proxymeshes/male1591` (1,591 vertices; 3,140 triangles before faces are hidden) | CC0 1.0 |
-| Skeleton `rigs/game_engine.mhskel` (53 joints), bone orientation and weights from `rigs/default.mhskel` and `rigs/default_weights.mhw` | CC0 1.0 |
-| Eyes `eyes/low-poly` | CC0 1.0 |
+## Sources
+
+| Asset | Author | Licence | Source |
+|---|---|---|---|
+| Base mesh `3dobjs/base` and the targets in `targets.npz`; body proxy `proxymeshes/male1591` (3,140 triangles before faces are hidden); skeleton `rigs/game_engine.mhskel` (53 joints), bone orientation and weights from `rigs/default.mhskel` and `rigs/default_weights.mhw`; eyes `eyes/low-poly`; skins, eyebrows and hair | The MakeHuman Team | CC0 1.0 (MakeHuman's `LICENSE.ASSETS.md`) | MakeHuman 1.x's data folder, http://www.makehumancommunity.org/ |
+| `toigo_harem_pants` | MargaretToigo | CC0 1.0 | asset pack `pants01`, https://static.makehumancommunity.org/assets/assetpacks/pants01.html |
+| `punkduck_riding_boots` | punkduck | CC-BY (attribution; the pack states no version) | asset pack `shoes03`, https://static.makehumancommunity.org/assets/assetpacks/shoes03.html |
+| `grinsegold_moustache` | grinsegold | CC-BY (attribution; the pack states no version; its `.mhclo` header carries MakeClothes' default AGPL3 line, but the pack lists it as CC-BY) | asset pack `bodyparts06`, https://static.makehumancommunity.org/assets/assetpacks/bodyparts06.html |
 
 ## Per character
 
-| Character | Skin | Eyes | Eyebrows | Hair | Clothes | Hat |
-|---|---|---|---|---|---|---|
-| `protagonist` | `young_caucasian_male` | `brownlight` | `eyebrow001` | `short04` | `male_casualsuit05`, recoloured brown (`jacket.mhmat`); `shoes01` | `fedora_cocked` |
-| `bairoletto` | `young_caucasian_male2` (stubble) | `bluegreen` | `eyebrow002` | `short02` (light brown) | `male_casualsuit02`, darkened to near black (`black_shirt.mhmat`); `shoes04` | `fedora` |
-| `farach` | `middleage_caucasian_male` | `brown` | `eyebrow005` | `short04` | `male_casualsuit03`, darkened to navy (`tunic.mhmat`); `shoes03` | `fedora` with `black_fedora.mhmat` |
-| `hidalgo` | `middleage_caucasian_male` | `grey` | `eyebrow003` | `short04` | `male_casualsuit05` as shipped; `shoes04` | `fedora` with `grey_fedora.mhmat` |
+| Character | Skin | Eyes, eyebrows, hair | Pack clothes | Made by the converter |
+|---|---|---|---|---|
+| `protagonist` | `young_caucasian_male` | `brownlight`, `eyebrow001`, `short04` | none | cream shirt, dark waistcoat, baggy bombacha, calf-high brown boots; gacho (low crown, brim dipping at the front), red neckerchief, dark faja, rastra with coins, dark red poncho with cream bands folded over the left shoulder |
+| `bairoletto` | `young_caucasian_male2` (stubble) | `bluegreen`, `eyebrow002`, `short02` (light brown) | `toigo_harem_pants` as the bombacha, charcoal (`bombacha.mhmat`), decimated; `punkduck_riding_boots`, decimated; `grinsegold_moustache`, light brown (`moustache.mhmat`) | dark shirt, brown waistcoat; chambergo (round pinched crown, wide soft brim), white neckerchief knotted at the front |
+| `farach` | `middleage_caucasian_male` | `brown`, `eyebrow005`, `short04` | `grinsegold_moustache` as shipped (`moustache.mhmat`) | dark navy guerrera with a stiff high collar and a skirt, navy trousers tucked into black knee boots; kepi with a black band, visor and chin strap; black belt with a brass buckle, shoulder strap, two columns of brass buttons |
+| `hidalgo` | `middleage_caucasian_male` | `grey`, `eyebrow003` grey (`eyebrows.mhmat`), `short04` white (`hair.mhmat`) | `grinsegold_moustache`, white (`moustache.mhmat`) | white shirt, black waistcoat with a gold watch chain, dark open jacket with lapels and padded shoulders, trousers tucked into brown boots, stiff band collar with wing tips; felt hat with the widest flat brim and a tall creased crown |
 
-## Substitutions
-
-MakeHuman's CC0 wardrobe is modern casual wear, so each 1919 garment stands in as the closest available piece. These models are therefore off by default in the game: the console's `modelos on` shows them.
-
-| Character | Wanted (1919) | Used instead |
-|---|---|---|
-| all | bombacha or period trousers | the suits' jeans (darkened for Bairoletto and Farach) |
-| all | boots | leather or black shoes (`shoes01`, `shoes03`, `shoes04`) |
-| protagonist | work shirt and worn leather jacket | `male_casualsuit05`'s shirt and field jacket, tinted leathery brown |
-| protagonist | soft felt gacho | `fedora_cocked` |
-| bairoletto | black shirt | `male_casualsuit02`'s long-sleeved shirt, darkened (its print still shows faintly) |
-| bairoletto | white neckerchief, short beard, centre parting | none (no asset); the stubble skin stands in for the beard |
-| bairoletto | chambergo | `fedora` |
-| farach | kepi | the black `fedora` |
-| farach | dark tunic with brass buttons | `male_casualsuit03`'s striped shirt, darkened to navy; no brass |
-| hidalgo | good jacket and waistcoat | `male_casualsuit05` (field jacket over a shirt); no waistcoat |
-| hidalgo | white moustache and white hair | none (no facial-hair asset; hair textures can only be darkened); mostly under the hat |
-| hidalgo | wide-brimmed felt hat, tall boots | grey `fedora`, `shoes04` |
-
-The eyelashes were left out: 368 triangles each that cannot be seen at the game's distance. Period garments and accessories are planned as procedural pieces bound to the skeleton (see `odd/tasks/makehuman-characters.md`).
+The eyelashes are left out: 368 triangles each that cannot be seen at the game's distance.

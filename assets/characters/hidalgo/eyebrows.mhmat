@@ -1,0 +1,9 @@
+# Don Hidalgo's grey eyebrows: eyebrow003 as grey, tinted.
+name hidalgo_eyebrows
+diffuseColor 0.75 0.74 0.72
+specularColor 0 0 0
+shininess 0.5
+transparent True
+backfaceCull False
+greyscaleTexture True
+diffuseTexture data/eyebrows/eyebrow003/eyebrow003.png
