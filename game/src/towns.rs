@@ -181,7 +181,8 @@ mod tests {
             ]
         );
         // General Pico is very big: a 2 x 2 plaza, a station plaza, two
-        // general stores, two police stations and 51 people.
+        // general stores, two police stations and the 31 people its town
+        // file sets (its size alone would get 51).
         let pico = &loaded.towns[3];
         assert_eq!(pico.size, TownSize::VeryBig);
         assert!(pico.station_plaza.is_some());
@@ -189,10 +190,11 @@ mod tests {
         assert_eq!(count(PlaceKind::GeneralStore), 2);
         assert_eq!(count(PlaceKind::PoliceStation), 2);
         assert_eq!(count(PlaceKind::Plaza), 2);
-        assert_eq!(pico.townsfolk_count(), 51);
+        assert_eq!(pico.townsfolk_count(), 31);
         for small in loaded.towns.iter().filter(|t| t.name != "General Pico") {
             assert_eq!(small.size, TownSize::Small, "{}", small.name);
             assert_eq!(small.station_plaza, None, "{}", small.name);
+            assert_eq!(small.townsfolk_count(), 10, "{}", small.name);
         }
         // One railway line runs Castex, Monte Nievas, Metileo, General Pico,
         // and a branch leaves it at Metileo for Caleufú.

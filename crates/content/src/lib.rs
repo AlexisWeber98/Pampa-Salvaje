@@ -187,6 +187,13 @@ pub enum ContentError {
     World(WorldConfigError),
     /// No valid town is left: the built-in one is used.
     NoTowns,
+    /// A town asks for more than [`pampa_core::TownConfig::MAX_TOWNSFOLK`]
+    /// people: its size tier's crowd is used instead.
+    Townsfolk {
+        town: String,
+        wanted: usize,
+        max: usize,
+    },
     /// A model slot entry is unusable: its slot is unknown, or a number
     /// is out of range. No slot tuning is used.
     Slot { slot: String, reason: &'static str },
@@ -206,6 +213,11 @@ impl fmt::Display for ContentError {
             Self::Town(error) => write!(f, "{error}"),
             Self::World(error) => write!(f, "{error}; using the default world"),
             Self::NoTowns => write!(f, "no towns to build; using the built-in Eduardo Castex"),
+            Self::Townsfolk { town, wanted, max } => write!(
+                f,
+                "town `{town}`: townsfolk {wanted} is more than a town holds (max {max}); \
+                 using its size's crowd"
+            ),
             Self::Slot { slot, reason } => write!(f, "model slot `{slot}`: {reason}"),
         }
     }

@@ -7,6 +7,8 @@
 //! [`pampa_core::place_towns`]: invalid towns, towns past the world edge
 //! and towns overlapping an earlier one are reported and skipped, and when
 //! no valid town is left the built-in Eduardo Castex config takes over.
+//! A town asking for too many `townsfolk` is kept with its size tier's
+//! crowd instead, and reported.
 //!
 //! The optional `line` lists the railway towns in the order the railway
 //! line joins them, and the optional `branches` the spurs off it, each a
@@ -139,6 +141,9 @@ struct TownDto {
     /// Share of the lots built (see [`TownConfig::density`]).
     #[serde(default)]
     density: Option<f32>,
+    /// People walking the town (see [`TownConfig::townsfolk`]).
+    #[serde(default)]
+    townsfolk: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
@@ -207,6 +212,7 @@ impl From<TownDto> for TownConfig {
             seed: town.seed,
             police_stations: town.police_stations,
             density: town.density,
+            townsfolk: town.townsfolk,
         }
     }
 }
@@ -226,7 +232,21 @@ pub fn parse_towns(text: &str) -> Result<(WorldContent, Vec<ContentError>), Cont
         errors.push(ContentError::World(error));
         WorldConfig::default()
     });
-    let configs: Vec<TownConfig> = file.towns.into_iter().map(TownConfig::from).collect();
+    let mut configs: Vec<TownConfig> = file.towns.into_iter().map(TownConfig::from).collect();
+    // Too big a crowd is not worth losing the town over: drop it for the
+    // size tier's.
+    for config in &mut configs {
+        if let Some(wanted) = config.townsfolk
+            && wanted > TownConfig::MAX_TOWNSFOLK
+        {
+            errors.push(ContentError::Townsfolk {
+                town: config.name.clone(),
+                wanted,
+                max: TownConfig::MAX_TOWNSFOLK,
+            });
+            config.townsfolk = None;
+        }
+    }
     let (_, rejected) = pampa_core::place_towns(&world, &configs);
     let left_out: Vec<usize> = rejected.iter().map(|e| e.index()).collect();
     let towns = configs
@@ -610,6 +630,7 @@ mod tests {
                     seed: 11,
                     police_stations: None,
                     density: None,
+                    townsfolk: None,
                 },
                 TownConfig {
                     name: "Carmensa".into(),
@@ -622,6 +643,7 @@ mod tests {
                     seed: 0,
                     police_stations: None,
                     density: None,
+                    townsfolk: None,
                 },
             ]
         );
@@ -669,6 +691,65 @@ mod tests {
         let message = errors[0].to_string();
         assert!(
             message.contains("Dos") && message.contains("police_stations 2"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn the_shipped_towns_walk_six_tenths_of_their_old_crowds() {
+        let (content, _) = parse_towns(SHIPPED).unwrap();
+        let crowds: Vec<(&str, Option<usize>, usize)> = content
+            .towns
+            .iter()
+            .map(|t| (t.name.as_str(), t.townsfolk, t.townsfolk_count()))
+            .collect();
+        // Before: 16 in each small town, 51 in General Pico.
+        assert_eq!(
+            crowds,
+            [
+                ("Monte Nievas", Some(10), 10),
+                ("Eduardo Castex", Some(10), 10),
+                ("Metileo", Some(10), 10),
+                ("General Pico", Some(31), 31),
+                ("Caleufú", Some(10), 10),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_townsfolk_count_is_read_and_too_many_fall_back_to_the_formula() {
+        let text = r#"(towns: [
+            (name: "Sola", blocks: (3, 3), block_size: 40.0, street_width: 10.0),
+            (name: "Poca", origin: (2000.0, 0.0), blocks: (3, 3), block_size: 40.0,
+             street_width: 10.0, townsfolk: Some(7)),
+            (name: "Vacía", origin: (0.0, 2000.0), blocks: (3, 3), block_size: 40.0,
+             street_width: 10.0, townsfolk: Some(0)),
+            (name: "Llena", origin: (-2000.0, 0.0), blocks: (3, 3), block_size: 40.0,
+             street_width: 10.0, townsfolk: Some(500)),
+        ])"#;
+        let (content, errors) = parse_towns(text).unwrap();
+        let crowds: Vec<(Option<usize>, usize)> = content
+            .towns
+            .iter()
+            .map(|t| (t.townsfolk, t.townsfolk_count()))
+            .collect();
+        // Missing keeps the size formula; too many is dropped for it.
+        let small = pampa_core::townsfolk::TOWNSFOLK_COUNT;
+        assert_eq!(
+            crowds,
+            [(None, small), (Some(7), 7), (Some(0), 0), (None, small)]
+        );
+        assert!(
+            matches!(
+                &errors[..],
+                [ContentError::Townsfolk { town, wanted: 500, max }]
+                    if town == "Llena" && *max == TownConfig::MAX_TOWNSFOLK
+            ),
+            "{errors:?}"
+        );
+        let message = errors[0].to_string();
+        assert!(
+            message.contains("Llena") && message.contains("townsfolk 500"),
             "{message}"
         );
     }

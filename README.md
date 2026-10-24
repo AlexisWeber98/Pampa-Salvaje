@@ -14,7 +14,8 @@ into Monte Nievas, gets off on foot onto its platform, collides with buildings
 and cannot leave the world. The platform is a raised floor, not a wall: short ramps lead down from
 both ends, and its long sides are steps to walk up or off.
 
-The town is alive: townsfolk wander the streets between intersections, a
+The town is alive: townsfolk wander the streets between intersections (how
+many walks each town is set by `townsfolk` in `assets/world/towns.ron`), a
 saddled horse stands tied at a hitching rail in front of the general store,
 and the player barges through the crowd, shoving walkers aside, while walkers
 step around the player.

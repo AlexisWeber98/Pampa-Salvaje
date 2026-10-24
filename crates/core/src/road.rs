@@ -1621,6 +1621,7 @@ pub(crate) mod tests {
             seed: 3,
             police_stations: None,
             density: None,
+            townsfolk: None,
         };
         let world = WorldConfig::default();
         let (towns, errors) = place_towns(

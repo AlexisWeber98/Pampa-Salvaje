@@ -123,6 +123,7 @@ overlaps; the towns listed before it win.
 | `plaza` | Which block is the plaza (see below). | Optional, `Auto` by default. |
 | `seed` | Varies which lots have houses or sheds. | Optional, `0` by default. |
 | `police_stations` | How many police stations ("COMISARÍA") the town has, instead of its size tier's count (see the size tiers below). `Some(0)` leaves the town without one; its block gets houses instead. Monte Nievas ships with `Some(0)`: the errand sends the player to Castex. | Optional, `None` (the tier's count) by default. At most the tier's count: 1 for a small or big town, 2 for a very big one. More is rejected. |
+| `townsfolk` | How many people walk the town's streets, instead of its size tier's crowd (see the size tiers below). `Some(0)` leaves the streets empty. Every shipped town sets about six tenths of its tier's crowd, to spare the frame budget: 10 in each small town (instead of 16), 31 in General Pico (instead of 51). | Optional, `None` (the tier's crowd) by default. At most 200: more is ignored with a warning, and the tier's crowd is used. |
 
 The whole town, plus its 60 m band of leveled ground and its railway, must fit
 inside the world (see above).
@@ -317,7 +318,7 @@ A town's size comes from its block count, `n` = columns times rows:
 | Station plaza | no | yes | yes |
 | General stores | 1 | 2 | 2 |
 | Police stations | 1 | 1 | 2 |
-| People walking | 16 | `0.8 n`, rounded, at least 16 | same |
+| People walking (unless `townsfolk` sets it) | 16 | `0.8 n`, rounded, at least 16 | same |
 
 - A merged plaza includes the streets between its blocks: there is no road
   through it and walkers go around it. A big town merges two blocks along
@@ -335,12 +336,16 @@ A town's size comes from its block count, `n` = columns times rows:
 - `police_stations` can lower the tier's police station count (down to
   none), never raise it. A town without the field keeps the tier's count
   and is laid out exactly as before.
+- `townsfolk` replaces the tier's crowd, up or down. A town without the
+  field keeps the tier's crowd.
 
 ### When something is wrong
 
 If the file is missing or cannot be read, or a town breaks a rule above, the
 game still starts: it logs a warning naming the town and the problem, skips
 that town, and uses the built-in Eduardo Castex when no valid town is left.
+A `townsfolk` above 200 does not skip the town: it is logged and the tier's
+crowd walks there instead.
 Run `cargo test -p pampa-content` to check the shipped file before playing.
 
 Fields the game does not know yet are ignored, so they can be added ahead of

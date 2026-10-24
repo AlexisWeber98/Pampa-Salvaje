@@ -543,6 +543,7 @@ mod tests {
             seed,
             police_stations: None,
             density: None,
+            townsfolk: None,
         };
         let (towns, errors) = place_towns(
             &config,

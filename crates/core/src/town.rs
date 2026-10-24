@@ -268,6 +268,10 @@ pub struct TownConfig {
     /// Share of the house and shed lots that are built, from 0 to 1; `None`
     /// builds them all as usual. A village or a railway halt has few.
     pub density: Option<f32>,
+    /// How many people walk the town, overriding its size tier's crowd
+    /// ([`TownSize`]); `None` keeps the tier's. At most
+    /// [`TownConfig::MAX_TOWNSFOLK`] (an empty halt is `Some(0)`).
+    pub townsfolk: Option<usize>,
 }
 
 impl TownConfig {
@@ -279,6 +283,8 @@ impl TownConfig {
     pub const MIN_STREET_WIDTH: f32 = 8.0;
     /// Closest the track may run to the grid: the station yard needs it.
     pub const MIN_RAILWAY_OFFSET: f32 = 24.0;
+    /// Most people a town may ask for in `townsfolk`.
+    pub const MAX_TOWNSFOLK: usize = 200;
 
     /// Eduardo Castex-inspired town: 4 x 5 blocks of 40 m (4 east-west, 5
     /// north-south), 10 m streets, railway 24 m north of the grid, at the
@@ -302,6 +308,7 @@ impl TownConfig {
             seed: 7,
             police_stations: None,
             density: None,
+            townsfolk: None,
         }
     }
 
@@ -315,6 +322,13 @@ impl TownConfig {
     pub fn police_count(&self) -> usize {
         self.police_stations
             .unwrap_or_else(|| self.size().police_stations())
+    }
+
+    /// How many people walk the town: the override, or its size tier's
+    /// crowd.
+    pub fn townsfolk_count(&self) -> usize {
+        self.townsfolk
+            .unwrap_or_else(|| self.size().townsfolk(self.blocks))
     }
 }
 
@@ -423,6 +437,8 @@ pub enum TownConfigError {
     TooManyPoliceStations { wanted: usize, max: usize },
     /// `density` outside 0 to 1.
     BadDensity { density: f32 },
+    /// `townsfolk` asks for more than [`TownConfig::MAX_TOWNSFOLK`].
+    TooManyTownsfolk { wanted: usize, max: usize },
     /// A `through` railway on the east or west side: it only runs east-west.
     ThroughNotEastWest { side: Side },
     /// A `through` railway in a town with too few rows to grow on both
@@ -476,6 +492,12 @@ impl fmt::Display for TownConfigError {
             Self::BadDensity { density } => {
                 write!(f, "density {density} is outside 0 to 1")
             }
+            Self::TooManyTownsfolk { wanted, max } => {
+                write!(
+                    f,
+                    "townsfolk {wanted} is more than a town holds (max {max})"
+                )
+            }
             Self::ThroughNotEastWest { side } => write!(
                 f,
                 "a `through` railway runs east-west: its side must be North or South, not {side:?}"
@@ -515,6 +537,8 @@ pub struct TownLayout {
     pub hitching_post: HitchingPost,
     /// The config's seed, also used for the town's crowd.
     pub seed: u32,
+    /// People walking the streets ([`TownConfig::townsfolk_count`]).
+    townsfolk: usize,
     blocks: (usize, usize),
     grid: Aabb,
     extent: Aabb,
@@ -642,6 +666,7 @@ impl TownLayout {
             buildings,
             hitching_post,
             seed: config.seed,
+            townsfolk: config.townsfolk_count(),
             blocks: config.blocks,
             grid: bounds,
             extent,
@@ -664,10 +689,11 @@ impl TownLayout {
         std::iter::once(self.plaza).chain(self.station_plaza)
     }
 
-    /// How many people walk the town's streets: 16 in a small town, four
-    /// for every five blocks (at least 16) in bigger ones.
+    /// How many people walk the town's streets: its config's `townsfolk`,
+    /// or else 16 in a small town and four for every five blocks (at least
+    /// 16) in bigger ones.
     pub fn townsfolk_count(&self) -> usize {
-        self.size.townsfolk(self.blocks)
+        self.townsfolk
     }
 
     /// Blocks `(east_west, north_south)`, from its config.
@@ -925,6 +951,14 @@ impl Grid {
             && wanted > max
         {
             return Err(TownConfigError::TooManyPoliceStations { wanted, max });
+        }
+        if let Some(wanted) = config.townsfolk
+            && wanted > TownConfig::MAX_TOWNSFOLK
+        {
+            return Err(TownConfigError::TooManyTownsfolk {
+                wanted,
+                max: TownConfig::MAX_TOWNSFOLK,
+            });
         }
         Ok(Self {
             origin: config.origin,
@@ -3455,6 +3489,44 @@ pub(crate) mod tests {
         assert_eq!(pico.size, TownSize::VeryBig);
         assert_eq!(count(&pico, BuildingKind::GeneralStore), 2);
         assert_eq!(pico.townsfolk_count(), 51);
+    }
+
+    #[test]
+    fn a_townsfolk_override_wins_over_the_size_formula() {
+        for (blocks, formula) in [((4, 5), 16), ((8, 8), 51)] {
+            let base = TownConfig {
+                blocks,
+                ..TownConfig::castex()
+            };
+            assert_eq!(base.townsfolk, None);
+            assert_eq!(base.townsfolk_count(), formula);
+            for wanted in [0, 10, TownConfig::MAX_TOWNSFOLK] {
+                let c = TownConfig {
+                    townsfolk: Some(wanted),
+                    ..base.clone()
+                };
+                assert_eq!(c.townsfolk_count(), wanted);
+                assert_eq!(TownLayout::generate(&c).unwrap().townsfolk_count(), wanted);
+            }
+        }
+    }
+
+    #[test]
+    fn too_many_townsfolk_are_rejected() {
+        let wanted = TownConfig::MAX_TOWNSFOLK + 1;
+        let error = TownLayout::generate(&TownConfig {
+            townsfolk: Some(wanted),
+            ..TownConfig::castex()
+        })
+        .unwrap_err();
+        assert_eq!(
+            error,
+            TownConfigError::TooManyTownsfolk {
+                wanted,
+                max: TownConfig::MAX_TOWNSFOLK
+            }
+        );
+        assert!(error.to_string().contains("townsfolk 201"), "{error}");
     }
 
     #[test]

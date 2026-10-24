@@ -23,6 +23,8 @@
             seed: 7,
             // No comisaría here: Don Hidalgo sends the player to Castex.
             police_stations: Some(0),
+            // Six tenths of a small town's 16, to spare the frame budget.
+            townsfolk: Some(10),
         ),
         (
             // A small railway town inspired by 1920s–1930s Eduardo Castex,
@@ -35,6 +37,7 @@
             railway: Some((side: North, offset: 24.0)),
             plaza: Auto,
             seed: 2,
+            townsfolk: Some(10),
         ),
         (
             // A railway halt between Monte Nievas and General Pico (station
@@ -52,6 +55,7 @@
             police_stations: Some(0),
             // Only about a third of the lots are built: a village, not a town.
             density: Some(0.3),
+            townsfolk: Some(10),
         ),
         (
             // A very big town (8 x 8 blocks): a 2 x 2 plaza, a station
@@ -71,6 +75,8 @@
             railway: Some((side: North, offset: 24.0, through: true)),
             plaza: Auto,
             seed: 13,
+            // Six tenths of the 51 its 64 blocks would get.
+            townsfolk: Some(31),
         ),
         (
             // A young railway town (founded 29 October 1911) on the
@@ -87,6 +93,7 @@
             plaza: Auto,
             seed: 23,
             density: Some(0.6),
+            townsfolk: Some(10),
         ),
     ],
     // The railway line, in order: links that bend on wide curves join each

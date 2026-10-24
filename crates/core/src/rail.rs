@@ -814,6 +814,7 @@ pub(crate) mod tests {
             seed: 1,
             police_stations: None,
             density: None,
+            townsfolk: None,
         }
     }
 
