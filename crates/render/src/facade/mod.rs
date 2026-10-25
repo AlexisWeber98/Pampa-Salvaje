@@ -1,14 +1,18 @@
 //! The facade kit shared by the rural settlements and the towns: a mesh
 //! builder with world-scaled UVs ([`shape`]), the shared textured PBR
-//! materials ([`materials`]), and walls with their openings and the
-//! roofs over them ([`walls`]).
+//! materials ([`materials`]), walls with their openings and the roofs over
+//! them ([`walls`]), and the Italianate dressing of a 1919 pampa front
+//! ([`italianate`]): plinths, chamfered pilasters, moulded cornices,
+//! parapets with balustrades and pedestals, framed openings and galerías.
 //!
 //! Everything is built in a structure's own space, `x` along its front,
 //! `z` out of it and `y` up from the ground at its middle, into a [`Shape`]
 //! that ends up as one mesh per [`Surface`] it wears.
 
+pub mod italianate;
 pub mod materials;
 pub mod shape;
+pub(crate) mod town_buildings;
 pub mod walls;
 
 pub use materials::{FacadeMaterials, Surface};
