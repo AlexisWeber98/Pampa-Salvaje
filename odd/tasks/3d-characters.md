@@ -298,6 +298,291 @@ Tests removed with PR 1's driver: every `rig::tests::*` of the sabotage log
 below (posture, gait, foot IK, finger curl, breath) except the freeze test,
 which was rewritten on stand-in rigs.
 
+## Tasks (PR 3: townsfolk), branch feat/townsfolk-models from main 0386485
+
+Replace the procedural townsfolk with MakeHuman models. The cap is at most
+**11,000 triangles** per townsperson (user, 2026-10-25). After this PR no
+procedural person is drawn by default.
+
+Route: one delegated writer. The work spans 2+ non-trivial files: the
+converter, the retarget tool, the render runtime, core pace, assets and
+docs. Mid-task the user added `crates/core/src/walker.rs` to the allowed
+surfaces, only for the player's walk speed.
+
+- [x] P1 Converter pieces for the women (`tools/mh2gltf.py`):
+  - `skirt` (pollera), a generated bell with a weighted skin;
+  - `apron` over it;
+  - `shawl`, cut from the body, with generated ends crossed over the chest;
+  - `headscarf`, cut from the head, with a knot and a point down the nape;
+  - `hair` worn up and a `bun`.
+
+  Plus `boina` and `alpargatas` for the paisano, and a `collar` with no wing
+  tips. CPU-skinned clearance through walk, idle and idle_talk (Rust,
+  real assets).
+- [x] P2 Five outfits in `assets/characters/townsfolk_{paisano,peon,volga,headscarf,bun}`:
+  `.mhm` and `.mhmat` sources, converted. Measured triangles:
+
+  | Outfit | Triangles |
+  |---|---|
+  | paisano | 6,312 |
+  | peón | 4,958 |
+  | Volga German | 9,004 |
+  | headscarf woman | 4,746 |
+  | bun woman | 4,644 |
+
+  The four existing men reconvert byte for byte with the new converter.
+- [x] P3 Runtime (`crates/render/src/character/townsfolk.rs`, new):
+  - the model comes from the look's outfit;
+  - per-garment tints come from shared, cached copies (`TintCache`);
+  - the clips go through the shared graph;
+  - freeze and range are as for the other models;
+  - the skirt-wearers' arms are held 0.14 rad out.
+
+  `models off` keeps the rigid figures (see Decisions).
+- [x] P4 Headless CPU measurement of a full plaza (release); numbers under
+  Decisions.
+- [x] P5 PR 2 review follow-ups: the frame-bounded respawn test, the
+  hidden-rider stirrup test and the front-leg fold-axis test.
+- [x] P6 Tests with sabotages (log below), previews, credits, docs (this
+  file, `README.md`, `CREDITS.md`, `assets/characters/{README,CREDITS}.md`,
+  `tools/README.md`, module docs).
+- [x] W1 (user playtest, 2026-10-25: everyone "walks as if stalking") The
+  walk is stood up in the retarget tool (`UPRIGHT`). Townsfolk pace is now
+  1.25–1.5 m/s. The player walks at 1.6 m/s (user's choice). Strides are
+  scaled per model by leg length. The skirt was re-fitted to the longer
+  stride.
+- [x] W2 (user playtest of W1: "the knee seems to dislocate") Two causes:
+  the hips switched standing leg, and the knees locked straight and then
+  flicked. Fixed with a blended, loop-smoothed hip rise, a 4° minimum knee
+  bend and smoothed swinging knees. Measured at 60 fps through the runtime.
+
+## Decisions (PR 3, 2026-10-25)
+
+- **The skirt** (`make_long_skirt`):
+  - Shape: 32 sides × 10 rows, from a waistband at station 3.9 to an
+    ankle hem at 1.15. It never narrows below the hips, rounds into a
+    bell, flares 1.2 dm at the hem, has 8 soft folds and a turned-in hem.
+  - Skin: the waistband takes the body's pelvis/spine_01 weights. Lower
+    rows take up to `follow` 0.8 of the thighs' turn, growing toward the
+    hem and split left/right by side. The back of the hem also takes up to
+    `kick` 0.9 of the shins' turn.
+  - The leg skin under it is left out from station 1.6 up.
+  - Tried first: 0.6 follow and no kick. The trailing heel came 13 cm out
+    of the back hem. Then, with the longer upright stride, the forward
+    knee came 8 cm out of the front: hence 0.8 follow and the wider hem.
+- **The women's hands.** The clips were made on a man. The women's wider
+  hips, with the skirt over them, swallowed the idle hands by up to 4.4 cm.
+  - Chosen fix: a runtime per-model fit, like the pelvis fit. A model
+    wearing a material named `skirt` gets its upper arms turned out by
+    `SKIRT_ARMS_OUT` = 0.14 rad about the body's front, on top of the clip
+    (`arm_out`).
+  - Measured (`the_women_keep_their_legs_in_their_skirts_and_their_hands_out_of_them`,
+    real assets, the game's own poses): legs ≥ 1.25 cm inside, hands
+    ≥ 1.8 cm outside, in idle, walk and talking.
+- **Shawl and headscarf.**
+  - The shawl is a body shell: shoulders above station 5, the upper arms
+    to reach 0.85, and a point down the back. So it bends exactly with the
+    body. Its ends are generated bands crossed over the chest, laid point
+    by point on the frontmost surface (smoothed, never into it). They are
+    skinned from the trunk and clavicles.
+  - The headscarf is a head shell round an open face oval. Its knot is
+    rigid on the head; its point is skinned from the head, neck and
+    spine_03.
+  - The bun woman's hair is a head shell plus a generated bun.
+  - The headscarf woman has no hair proxy.
+- **Women's boots** reach mid-calf (station 1.9), so no bare calf shows
+  when the hem kicks.
+- **Outfits.** Each look keeps its 1919 look:
+  - paisano: young, medium build;
+  - peón: lean criollo, about 40, moustache;
+  - Volga German: about 50, heavy, light-brown CC0 beard decimated to
+    3,408 triangles;
+  - headscarf woman: about 45, sturdy, with an apron;
+  - bun woman: about 23, slim.
+
+  Bombachas reach the ankle inside the boots or alpargatas: the
+  `male1591` shin has one long face that otherwise showed bare skin.
+- **Tints.** A look's low part (`look % 5`) picks the outfit, so
+  `FigureKind::townsfolk` now keeps the whole look. For each garment, a
+  hash of `look / 5` picks one of 4 sRGB colours, the first the model's
+  own. Copies are cached by (material, colour) in `TintCache`, so the
+  count is bounded by garments × colours. A 22-person crowd test checks
+  that dressed-alike people share the very same copies.
+- **Models load once.** `CharacterModels` is keyed by model folder.
+- **`models off`: kept.** Retiring the rigid figures would need
+  `game/src/console.rs`, which is outside the surface. They are also the
+  fallback when a model fails to load, and the carrier body stays either
+  way. The bench shows the 1,100 hidden rigid parts of a plaza cost
+  0.01–0.06 ms a frame.
+- **Clips.**
+  - `retarget.py --talker` adds models whose chests only the talking
+    hands must clear. The townsfolk never fold their arms.
+  - idle_talk's reach went from 3 to 6 cm: the shawl-covered busts. The
+    folded arms are unchanged at 12 cm.
+  - Then the upright walk (below).
+  - `humanoid.glb` changes in `idle_talk` and `walk` only; the nodes and
+    the other clips are unchanged. It rebuilds byte for byte.
+- **The upright walk (W1).**
+  - Measured on the protagonist, the pack's `Walk_Loop`: stance knee 25°
+    on average (36° at most), torso lean 7–9°, shoulders 6 cm back of
+    rest, elbows 32–41°. The game played it at 1.52×.
+  - `Walk_Formal_Loop` keeps the hands behind the hips the whole cycle,
+    so it was not used.
+  - `Retargeter.upright`, deterministic, does all of this:
+    - stride ×1.15;
+    - knees eased by 19° (never below 30% of the bend, nor `KNEE_MIN` 4°);
+    - the hips' rise blended from both legs' asks, by which ankle is lower
+      (`STAND_BLEND` 1.2 cm), then smoothed round the loop over ±2 keys
+      (`RISE_SMOOTH`);
+    - no leg pulled straighter than its own eased bend: its foot lifts a
+      touch instead;
+    - each swinging knee's bend smoothed round the loop (1-2-1, twice,
+      fading in as the foot lifts: `SWING_SMOOTH`, `CONTACT_LIFT`);
+    - torso turned back at spine_01 to a mean lean of 2°;
+    - clavicles at rest;
+    - upper arms hanging as at rest, swinging −10° to +14° in phase with
+      the source;
+    - elbows 10–25°;
+    - head back to its rest pitch.
+  - Result: stance knee 11° on average (19.3° at most), never under 4°;
+    a knee changes by at most 16° a key (the source's 13°); lean
+    1.7–4.1°; hands −0.5 to +30 cm ahead of the hip line (mean +13 cm). The
+    natural speed is 1.271 m/s, measured on the target.
+- **The knee "dislocation" (W2), measured on the walk the user played:**
+  - the trailing knee locked at 0.0° for 4 keys, then flicked 27° in one
+    key;
+  - at the stance hand-off the knee jumped by 14° and the pelvis stepped
+    2.6 cm, as the hips switched standing leg;
+  - no knee ever bent backwards: every bend had the same sign;
+  - the shin stayed within 2.1° of the thigh's plane, as in the source;
+  - key 0 equals the last key, and the runtime rate is constant at a
+    given speed.
+
+  After the fix, through the runtime at 60 fps
+  (`rig::walking_knees_bend_smoothly_never_lock_or_twist_round_the_loop`):
+
+  | Who | Speed | Least bend | Most change per frame | Shin off plane | Pelvis per frame |
+  |---|---|---|---|---|---|
+  | protagonist | 1.6 m/s | 4.0° | 9.8° | 2.1° | 8.6 mm |
+  | peón | 1.4 m/s | 4.0° | 9.3° | 2.1° | 7.5 mm |
+  | headscarf woman | 1.4 m/s | 4.0° | 10.8° | 2.1° | 7.5 mm |
+- **Pace.**
+  - Townsfolk walk at 1.25–1.5 m/s (`WALK_MAX` 1.5), playing the walk at
+    0.98–1.18×.
+  - The player walks at 1.6 m/s (user), so 1.26× for the protagonist.
+    Playback is speed over natural speed, so his feet stay planted; no
+    extra stride stretch was needed. The foot-slide test is green.
+  - Each model's playback is divided by its legs over the protagonist's
+    (`model_stride`): shorter people take shorter, quicker steps without
+    sliding.
+- **P4, plaza bench** (`rig::tests::plaza_bench`, ignored; release, Ryzen 5
+  4600G, headless). 31 townsfolk (looks 0–30) and the protagonist, two in
+  three walking, none frozen:
+  - the 32 people add 0.63–0.65 ms a frame to the update (0.84–0.85 ms
+    against 0.20–0.21 ms without them): clip weighing, Bevy's animation,
+    the fits, the carriers and the transforms;
+  - the 1,100 hidden rigid parts cost −0.01 to 0.05 ms of that (noise);
+  - skinning preparation is 0.28 ms a frame for 20,405 joint matrices;
+  - 190,178 triangles are drawn.
+  - Skinning preparation means each skinned mesh's joint matrices, as the
+    render extraction computes them (385 skinned meshes, about 12 a
+    person).
+  - Freezing past 120 m and out of view (unchanged) and the shared range
+    need no tuning at this cost.
+
+## Sabotage log, PR 3
+
+Each sabotage replaced one snippet. The test was run, then the file was
+restored and checked with `cmp` by a script (`sab/` in the session
+scratchpad). Asset-level sabotages rebuilt an asset, then restored it from
+a saved copy, checked with `cmp` or `diff -r`. Every one failed:
+
+| Test | Sabotage → result |
+|---|---|
+| py `test_a_long_skirt_hangs_as_a_bell…` | narrows below the hips → survived (uniform stand-in legs), strengthened with narrow legs, then failed; no flare → fails |
+| py `test_the_skirt_follows_the_thighs…` | thighs not split by side → fails; no shin share → fails |
+| py `test_an_apron_covers_the_skirts_front…` | apron in the skirt's surface → fails |
+| py `test_a_shawl_covers_the_shoulders…` | no point down the back → fails |
+| py `test_the_shawls_ends_cross…` | ends at one depth → fails; laid into the chest → fails |
+| py `test_a_headscarf_frames_the_face…` | face covered → fails |
+| py `test_a_headscarf_is_knotted…` | point on the throat → fails |
+| py `test_a_boina_covers_the_crown…` | no lean → fails |
+| py `test_a_bun_sits_behind_the_head…` | bun on the face → fails |
+| py `test_alpargatas_are_canvas_shoes…` | leather → fails |
+| py `TownswomanConversion` | skirt follow 0 → fails |
+| py `test_a_talker_is_cleared_for_the_talk_only` | talkers checked for folded arms → fails |
+| py `test_the_packs_crouched_walk_is_stood_up` | knees not eased; lean 8°; clavicles kept; arms swing back; pack elbows; head not levelled → each fails; stride ×1.0 → survived (compared against the sabotaged constant), fixed to 1.15, then failed |
+| py `Shipped.test_the_walk_is_an_easy_upright_street_walk` | GLB rebuilt without `UPRIGHT` → fails |
+| py `Shipped.test_folded_arms_and_talking_hands…` (changed) | GLB rebuilt without `--talker` → fails |
+| py `test_rebuilding_gives_the_shipped_file_byte_for_byte` (changed) | `TALK = ()` → fails |
+| `townsfolk::each_look_wears_its_own_outfit…` | `look % 4` → fails |
+| `townsfolk::every_tinted_garment_is_a_material…` | garment `aprons` → fails (first run: stale snippet after fmt; tables now `rustfmt::skip`) |
+| `townsfolk::a_look_picks_each_garments_colour…` | 2 colours → fails |
+| `townsfolk::the_cache_makes_one_copy…` | keyed by material only → fails |
+| `townsfolk::an_arm_turned_out…` | about Z → fails |
+| `townsfolk::a_level_ray_meets…` | ray hits outside the triangle → fails |
+| `model::every_person_has_a_model…` | townsfolk without models → fails |
+| `model::every_character_model_loads…within the triangle budget` (changed) | Volga beard not decimated (16,028) → fails |
+| `rig::the_women_keep_their_legs_in_their_skirts…` | arms not held out → fails; the old skirt (follow 0.6, flare 1.0) reconverted → fails (leg 7.9 cm out) |
+| `rig::townsfolk_wear_their_outfits_in_tinted_cloth…` | no tint → fails; one copy per person → fails |
+| `clips::the_walk_steps_at_an_easy_pace…` | the pack's speed → fails |
+| `clips::a_person_with_shorter_legs…` | stride not scaled → fails |
+| `gait::a_folded_front_leg_stays_in_the_bodys_sagittal_plane` | fold about the raw Z axis, not the body's side in the parent's frame → fails |
+| `rider::a_respawned_rider_keeps_the_stirrups…` (frame-bounded) | `Added<Seated>` → fails |
+| `rider::a_stirrup_stays_put_while_its_rider_is_hidden…` | carried while hidden → fails |
+| `figure::every_look_builds…` (changed) | `townsfolk()` drops the look's high part → fails |
+| py `check_knees` (both walk tests) | knees pulled straight → fails; no rise smoothing → fails; no swing smoothing → fails; the hips switched by the standing leg instead of blended → survived (the loop smoothing alone removes the step: the blend is kept as a second guard, see W2) |
+| `rig::walking_knees_bend_smoothly…` | the walk played twice as fast → fails |
+| core `townsfolk::people_walk_at_an_easy_street_pace` | the old 1.1–1.6 → fails |
+| core `walker::walks_at_1_6_m_s_and_jogs_at_18_kmh` (renamed) | 6 km/h → fails |
+
+RED before code: none observed. The tests were written with the code, so
+they carry sabotage evidence instead.
+
+## Verification (2026-10-25, PR 3)
+
+- `python3 -I -B -m unittest discover -s tools`: 127 passed (packs present;
+  humanoid.glb rebuilds byte for byte)
+- `python3 -I tools/mh2gltf.py --check` on the nine models: ok (exit 0)
+- `cargo test -p pampa-core`: 345 passed
+- `cargo test -p pampa-content`: 32 passed
+- `cargo test -p pampa-render`: 309 passed, 2 ignored (the horse preview
+  dump and the plaza bench)
+- `cargo test -p game`: 118 passed
+- `cargo build -p game`: ok
+- `cargo fmt --all -- --check`: ok
+- `cargo clippy --workspace --all-targets -- -D warnings`: ok
+
+Previews: offline, CPU-skinned in Python from the shipped clips with the
+game's pelvis fit and arm-out, flat-shaded. They are in the session
+scratchpad `prev3/`:
+- `standing_{front,side,q34}.png` and `walking_{front,side,q34}.png` (the
+  five outfits);
+- `skirt_{headscarf,bun}_{side,q34}.png` (six phases of the walk);
+- `crowd_q34.png` and `crowd_front.png` (31 tinted townsfolk and the
+  protagonist);
+- `walk_{old,new}_{side,front}.png` (the protagonist, the peón and the
+  headscarf woman, the pack's walk against the stood-up one);
+- `knees_{old,new}_{protagonist,peon}_{side,front}.png` (knee close-ups
+  over a cycle, the first upright walk against the smoothed one).
+
+Nothing was checked in game by the writer.
+
+## Next step (PR 3)
+
+- The user commits (split and commands in the writer's report). The native
+  review runs per commit, under the user's RDD switch.
+- In game:
+  - the plaza in General Pico (31 people): outfits, colours and the
+    women's skirts while walking;
+  - the walk of everyone, the player at 1.6 m/s included;
+  - `models off` and back.
+- Possible follow-ups:
+  - farm clips for the townsfolk;
+  - women's own idles;
+  - a mounted townsperson would now ride with their model, untested in
+    game.
+
 ## Tasks (PR 2: the ridden horse), branch feat/character-clips after c008f59
 
 Route: one delegated writer (2+ non-trivial files: render horse, tack, gait,
@@ -896,6 +1181,8 @@ Nothing was checked in game yet.
 - 2026-10-25: PR 2 (H1–H6) implemented on `feat/character-clips`, with the
   user's playtest fixes (P4–P8), uncommitted: the user commits. Native
   review pending, under the user's RDD switch.
+- 2026-10-25: PR 3 (P1–P6, W1–W2) implemented on `feat/townsfolk-models`,
+  uncommitted: the user commits.
 
 ## Verification (2026-10-24, option B)
 

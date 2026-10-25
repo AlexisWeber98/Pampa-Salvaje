@@ -187,7 +187,7 @@ that, only Don Hidalgo's horse lets him on. Riding is the first of the
 player's abilities (`pampa_core::Abilities`); the lasso, weapons and cars are
 kept for later.
 
-On foot the player walks at 6 km/h and jogs with `Shift` at 18 km/h, with the same keys, the same collision and a person-sized body.
+On foot the player walks at 1.6 m/s (about 5.8 km/h) and jogs with `Shift` at 18 km/h, with the same keys, the same collision and a person-sized body.
 People make way for somebody on foot without complaint; only the horse gets
 them talking.
 
@@ -329,11 +329,14 @@ faded blue, brown, grey and black wool, with bright colour only in accents
   boots and a gacho (a soft wide-brimmed felt hat, its brim turned slightly
   down). No poncho, bombacha or faja: he is from town, not the countryside.
   Suits, stiff collars, ties and bowlers belong to the few town gentlemen.
-- **Townsfolk** come in five looks: a paisano in boina, bombacha, faja,
-  pañuelo and alpargatas; a peón in a chaleco, soft wide-brimmed hat and worn
-  boots; a Volga German farmhand in a poncho; and two women in ankle-length
-  skirts, high-necked long-sleeved blouses and shawls, one in a headscarf and
-  one with her hair up.
+- **Townsfolk** come in five looks, each a MakeHuman model of its own age
+  and build: a young paisano in boina, bombacha, faja, pañuelo and
+  alpargatas; a lean criollo peón with a moustache, in a chaleco, soft
+  wide-brimmed hat and worn boots; a big, bearded Volga German farmhand in a
+  poncho; and two women in ankle-length skirts, high-necked long-sleeved
+  blouses, crossed shawls and high laced boots, an older countrywoman in a
+  headscarf and an apron and a young townswoman with her hair in a bun. Each
+  person's clothes come in their own colours, from a muted 1919 palette.
 - **Don Hidalgo** is an old estanciero with a white moustache, a light
   wide-brimmed hat, a good jacket over a dark waistcoat, bombacha, tall boots
   and a rastra. **Comisario Elías Farach** wears a kepi, a dark blue tunic with
@@ -533,17 +536,22 @@ or the same keys close it, and while it is open the game gets no keys at all.
 | `horse` | Stand a saddled horse beside the player (rideable once riding is unlocked) |
 | `turbo on` / `turbo off` | Let the player's horse gallop at up to 70 km/h, to get round the map fast, or back to normal |
 | `unlock all` | Unlock every ability |
-| `models on` / `models off` | Draw the protagonist on foot, Don Hidalgo, Farach and Bairoletto as the skinned MakeHuman models (the default), or back as the old rigid figures |
+| `models on` / `models off` | Draw the people on foot (the protagonist, Don Hidalgo, Farach, Bairoletto and the townsfolk) as the skinned MakeHuman models (the default), or back as the old rigid figures |
 | `time 21` / `time 21:30` | Move the clock on to that time (later today, or tomorrow if it has passed) |
 | `help` | List the commands |
 
 The MakeHuman models (`assets/characters/`, built by `tools/mh2gltf.py`) wear
 a 1919 wardrobe, mostly cut from the body by the converter: shirts and
 waistcoats, bombachas, knee boots, a police guerrera with brass buttons, a
-three-piece suit, felt hats, a kepi, neckerchiefs, a poncho, the faja and the
-rastra. They move with Quaternius' CC0 animation clips, retargeted to their
-skeleton by `tools/retarget.py`: they stand, walk, jog and run, the clips paced
-to the ground speed so the feet do not slide. Farach waits with his arms
+three-piece suit, felt hats, a kepi, a boina, neckerchiefs, a poncho, the faja
+and the rastra, and for the women blouses, long bell skirts, aprons, crossed
+shawls, a headscarf and hair worn up in a bun. They move with Quaternius' CC0
+animation clips, retargeted to their skeleton by `tools/retarget.py`: they
+stand, walk, jog and run, the clips paced to the ground speed (and to each
+person's legs) so the feet do not slide. The pack's crouched game walk is
+stood up into an easy upright street walk. The townsfolk's tinted clothes
+are shared material copies, and the women's arms hang a little out over
+their skirts. Farach waits with his arms
 folded, and whoever is speaking talks with their hands. In the saddle the
 protagonist plays the seated `drive` clip on the horse's back. They are
 the default, in release builds too; `models off` brings back the old rigid
