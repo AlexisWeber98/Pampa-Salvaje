@@ -580,7 +580,7 @@ mod tests {
             name: "Metileo".into(),
             origin: Vec2::ZERO,
             blocks: (3, 3),
-            block_size: 30.0,
+            block_size: 40.0,
             street_width: 8.0,
             railway: Some(crate::RailwayConfig {
                 side: crate::Side::North,

@@ -366,6 +366,99 @@ mod tests {
         assert!(world.ground_height(spot) > world.terrain.height(spot.x, spot.y) + 0.5);
     }
 
+    /// The narrowest front that takes a three-bay town house: three 2.8 m
+    /// bays between walls set 0.1 m in from the lot (`pampa_render`'s
+    /// facade kit).
+    const THREE_BAYS: f32 = 3.0 * 2.8 + 2.0 * 0.1;
+
+    /// Width of `b` along its front, in meters.
+    fn frontage(b: &pampa_core::Building) -> f32 {
+        let s = b.footprint.size();
+        match b.front {
+            pampa_core::Side::North | pampa_core::Side::South => s.x,
+            pampa_core::Side::East | pampa_core::Side::West => s.y,
+        }
+    }
+
+    #[test]
+    fn metileo_has_lots_wide_enough_for_three_bay_houses_and_a_windowed_church() {
+        // Metileo's blocks are 40 m, as in the other towns. Its 30 m blocks
+        // (until 2026-10-25) left 6–7.5 m house lots, two bays each, and a
+        // 9 m church front with no room for a window beside its tower.
+        let loaded = load_world(&asset_path(TOWNS_FILE));
+        let metileo = &loaded.towns[2];
+        assert_eq!(metileo.name, "Metileo");
+        let of = |kind| metileo.buildings.iter().filter(move |b| b.kind == kind);
+        let houses: Vec<f32> = of(BuildingKind::House).map(frontage).collect();
+        // No house narrower than the narrowest in the other towns (8 m),
+        // and most wide enough for three 2.8 m bays between their walls.
+        assert!(houses.iter().all(|&w| w >= 8.0), "{houses:?}");
+        let three = houses.iter().filter(|&&w| w >= THREE_BAYS).count();
+        assert!(2 * three >= houses.len(), "{houses:?}");
+        // The church front fits its 4 m tower and an arched window, 2.4 m
+        // of wall or more, on either side: 12 m, as in every other town.
+        let church = of(BuildingKind::Church).map(frontage).collect::<Vec<_>>();
+        assert_eq!(church.len(), 1);
+        assert!(church[0] >= 4.0 + 2.0 * 2.5 + 2.0, "{church:?}");
+    }
+
+    #[test]
+    fn metileo_on_40_m_blocks_keeps_clear_of_its_neighbours_roads_and_settlements() {
+        let loaded = load_world(&asset_path(TOWNS_FILE));
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        const METILEO: usize = 2;
+        let metileo = &loaded.towns[METILEO];
+        // Still centered on its origin, now 152 m across: three 40 m blocks
+        // and four 8 m streets.
+        let grid = metileo.grid();
+        assert_eq!(grid.center(), Vec2::new(288.0, -544.0));
+        assert_eq!(grid.size(), Vec2::new(152.0, 152.0));
+        // Nothing built on another: buildings, streets and the plaza.
+        let built = &metileo.buildings;
+        for (i, a) in built.iter().enumerate() {
+            for b in &built[i + 1..] {
+                assert!(!a.footprint.intersects(&b.footprint), "{a:?} on {b:?}");
+            }
+            assert!(
+                !a.footprint.intersects(&metileo.plaza),
+                "{a:?} in the plaza"
+            );
+            for s in &metileo.streets {
+                assert!(!a.footprint.intersects(s), "{a:?} in {s:?}");
+            }
+        }
+        // Clear of the other towns, the lagoon, other towns' roads and every
+        // settlement.
+        let band = metileo.leveled();
+        for (i, other) in loaded.towns.iter().enumerate() {
+            if i != METILEO {
+                assert!(
+                    !other.leveled().intersects(&band.expanded(500.0)),
+                    "{}",
+                    other.name
+                );
+            }
+        }
+        for lagoon in &loaded.lagoons {
+            assert!(!lagoon.keep_out().intersects(&band.expanded(500.0)));
+        }
+        let reach = band.expanded(100.0);
+        for road in &loaded.roads.roads {
+            if road.from != METILEO && road.to != METILEO {
+                let on = road.path.iter().any(|p| reach.contains_point(*p));
+                assert!(!on, "{:?} {}->{}", road.kind, road.from, road.to);
+            }
+        }
+        let laid = crate::lay_out(&loaded);
+        for settlement in &laid.settlements.settlements {
+            assert!(
+                !settlement.bounds.intersects(&band),
+                "{:?}",
+                settlement.kind
+            );
+        }
+    }
+
     #[test]
     fn the_shipped_world_plants_trees_between_towns_and_none_on_them() {
         let loaded = load_world(&asset_path(TOWNS_FILE));

@@ -908,6 +908,27 @@ class TownsfolkPieces(unittest.TestCase):
             mh2gltf.make_long_skirt(figure, {}, few, skin.rig)
         self.assertIn("body points", str(e.exception))
 
+    def test_a_skirt_counts_the_points_at_its_capped_reach_before_refusing(self):
+        # Half the waistband row's points lie 16.25 below it: past the last
+        # doubled reach (16), inside the figure's height (16.5), the cap.
+        # Counted there, they are enough to hang the skirt round.
+        skin = Units.Skin()
+        figure = mh2gltf.Figure(skin.rig, skin.rest, skin)
+        tall = float(figure.heights[-1] - figure.heights[0])
+        y = figure.height(3.9)
+        low = y - 16.25
+        self.assertTrue(16.0 < y - low <= tall)
+        sx, cz = mh2gltf.angles(4)
+        ring = lambda h: np.stack([sx, np.full(4, h), cz], axis=1)  # noqa: E731
+        sparse = np.vstack([ring(y), ring(low)])
+        self.assertEqual(len(sparse), mh2gltf.SKIRT_MIN_POINTS)
+        piece, _ = mh2gltf.make_long_skirt(figure, {}, sparse, skin.rig)
+        self.assertEqual(piece.rings, (mh2gltf.SKIRT_RINGS, mh2gltf.SKIRT_SEGMENTS))
+        # One point fewer is refused, at the cap, not past it.
+        with self.assertRaises(mh2gltf.ConvertError) as e:
+            mh2gltf.make_long_skirt(figure, {}, sparse[:-1], skin.rig)
+        self.assertIn("body points", str(e.exception))
+
     def test_an_apron_needs_the_skirts_own_ring_layout(self):
         f, out, _ = self.dressed(("skirt", {}))
         skirt = out["skirt"]

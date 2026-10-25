@@ -1123,8 +1123,10 @@ class UprightWalk(unittest.TestCase):
                 self.assertTrue(all(math.isfinite(c) for c in q))
 
     def test_the_target_side_speed_is_a_planted_foots_slide(self):
-        # A foot on the ground moving back 0.03 m a key at 30 keys a second:
-        # 0.9 m/s; with no two keys on the ground, an error.
+        # The speed is how fast a planted foot slides back (toward -z). A
+        # foot on the ground carried forward 0.03 m a key (+z) at 30 keys a
+        # second slides back at -0.9 m/s; with no two keys on the ground,
+        # an error.
         out = self.rt.upright(walk_keys(self.rt))
         self.assertGreater(self.rt.target_ground_speed(out), 0.0)
         rest = self.rt.t_rest_p[self.tk.find("pelvis")]

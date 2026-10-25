@@ -1142,6 +1142,36 @@ pub(crate) mod tests {
         slides[slides.len() / 2]
     }
 
+    /// Starts `app`'s horses' clips again from their seeded points, on
+    /// clips already blended in: how long their files took to load (and so
+    /// how many frames they played while [`saddled_every`] waited) no
+    /// longer decides where in its loop a measure starts.
+    fn from_the_seeded_start(app: &mut App) {
+        let world = app.world_mut();
+        let nodes = world
+            .resource::<LivestockModels>()
+            .get(Species::Horse)
+            .expect("the horse's model")
+            .nodes
+            .clone();
+        let rigs: Vec<(Entity, u32, [f32; 6])> = world
+            .query::<(&ChildOf, &HorseRig)>()
+            .iter(world)
+            .map(|(child_of, rig)| {
+                let body = world.get::<HorseBody>(child_of.parent()).unwrap();
+                (rig.player, body.seed, rig.durations)
+            })
+            .collect();
+        assert!(!rigs.is_empty());
+        for (player, seed, durations) in rigs {
+            let mut player = world.get_mut::<AnimationPlayer>(player).unwrap();
+            for clip in Clip::ALL {
+                let active = player.animation_mut(nodes[clip.index()]).unwrap();
+                active.seek_to(start_offset(seed, clip) * durations[clip.index()]);
+            }
+        }
+    }
+
     #[test]
     fn the_long_gallop_keeps_its_hooves_still_up_to_its_fastest_unhurried_pace() {
         let rider = CharacterVisual::Mounted {
@@ -1150,6 +1180,7 @@ pub(crate) mod tests {
         };
         for speed in [8.0, 12.2, 19.4] {
             let (mut app, me) = saddled_every(rider, speed, 10);
+            from_the_seeded_start(&mut app);
             for _ in 0..100 {
                 app.update();
             }

@@ -685,7 +685,8 @@ mod tests {
         assert_eq!(clock.day(), 0);
         // Mid-morning, in full daylight, at the onboard rate: ten game
         // minutes (50 real seconds at 12×) before the timetabled arrival
-        // (10:53:31 since the Metileo stop, 2026-10-23; 10:14:45 before).
+        // (10:53:59 since Metileo's 40 m blocks, 2026-10-25; 10:53:40 since
+        // the Metileo stop, 2026-10-23; 10:14:45 before).
         assert_eq!(clock.multiplier, ONBOARD_MULTIPLIER);
         let arrival = train.arrival_time_at(Run::Up, nievas).unwrap();
         let (morning, noon) = (TimeOfDay::hm(9, 30), TimeOfDay::hm(11, 30));

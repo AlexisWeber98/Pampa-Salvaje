@@ -2800,12 +2800,13 @@ def make_long_skirt(figure, settings, points, rig, n=SKIRT_SEGMENTS):
     tall = float(figure.heights[-1] - figure.heights[0])  # no row looks further than the figure
     for t in SKIRT_ROWS:
         y = y_top + t * (y_hem - y_top)
-        # The proxy's shins have few rings: look wider until it finds some.
-        reach = 0.25
+        # The proxy's shins have few rings: look wider until it finds some,
+        # out to the figure's height at most, counting there too.
+        reach = min(0.25, tall)
         while np.count_nonzero(np.abs(points[:, 1] - y) <= reach) < SKIRT_MIN_POINTS:
-            reach *= 2
-            if reach > tall:
+            if reach >= tall:
                 raise ConvertError(f"skirt: fewer than {SKIRT_MIN_POINTS} body points to hang it round")
+            reach = min(reach * 2, tall)
         r = outline(points, center, y - reach, y + reach, 0.06, n)
         if previous is not None and y < hip:
             r = np.maximum(r, previous)  # below the hips it hangs, never narrows
