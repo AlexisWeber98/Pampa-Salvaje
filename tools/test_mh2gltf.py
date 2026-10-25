@@ -433,6 +433,46 @@ class Units(unittest.TestCase):
         with self.assertRaises(mh2gltf.ConvertError):
             mh2gltf.made("hat", piece.material, coords, tris, "no_such_joint", self.rig())
 
+    def test_a_piece_over_several_bones_takes_the_skin_of_the_body_under_it(self):
+        # A stand-in trunk: a column of points from the pelvis (y 0, all
+        # pelvis) to the chest (y 10, all spine_03), blending between, and
+        # an arm out to the side (all upperarm_l).
+        class Rig:
+            order = ["Root", "pelvis", "spine_03", "upperarm_l"]
+
+        class Trunk:
+            rig = Rig()
+
+        ys = np.linspace(0.0, 10.0, 41)
+        chest = np.clip(ys / 10.0, 0.0, 1.0)
+        trunk = np.stack([np.zeros_like(ys), ys, np.zeros_like(ys)], axis=1)
+        arm = np.stack([np.linspace(1.0, 4.0, 10), np.full(10, 9.0), np.zeros(10)], axis=1)
+        body = Trunk()
+        body.points = np.vstack([trunk, arm])
+        body.weights = np.zeros((len(body.points), 4))
+        body.weights[:41, 1], body.weights[:41, 2] = 1 - chest, chest
+        body.weights[41:, 3] = 1.0
+        # A strip from the hip up to the shoulder, just in front.
+        coords = np.stack([np.full(11, 0.0), np.linspace(0.0, 10.0, 11), np.full(11, 0.3)], axis=1)
+        tris = [(k, k + 1, k + 2) for k in range(9)]
+        piece = mh2gltf.made("poncho", mh2gltf.plain("poncho", [1, 1, 1]), coords, tris, "spine_03", body.rig)
+        piece = mh2gltf.inherit(piece, body, ("pelvis", "spine_03"))
+        w = piece.weights
+        np.testing.assert_allclose(w.sum(axis=1), 1.0, atol=1e-9)
+        # More than one joint, blending along it as the body under it does.
+        self.assertTrue(np.all((w[:, 1:3] > 0).sum(axis=1) >= 1))
+        self.assertGreater(((w[:, 1:3] > 0.05).sum(axis=1) == 2).sum(), 5)
+        np.testing.assert_allclose(w[:, 2], np.clip(coords[:, 1] / 10.0, 0, 1), atol=0.08)
+        self.assertGreater(w[0, 1], 0.9)
+        self.assertGreater(w[-1, 2], 0.9)
+        # Never the arm, though the shoulder end is near it.
+        np.testing.assert_array_equal(w[:, 3], 0.0)
+        np.testing.assert_array_equal(w[:, 0], 0.0)
+        # Joints the body has no points on leave the piece as it was.
+        rigid = mh2gltf.made("poncho", piece.material, coords, tris, "spine_03", body.rig)
+        self.assertIs(mh2gltf.inherit(rigid, body, ("Root",)), rigid)
+        np.testing.assert_array_equal(rigid.weights[:, 2], 1.0)
+
     def test_the_other_pieces_fit_round_their_joint(self):
         head = self.Head()
         (crown, ctris), (leather, ltris), (buttons, btris), _ = mh2gltf.make_kepi(head, {}, mh2gltf.SEGMENTS)
@@ -825,10 +865,19 @@ class Conversion(unittest.TestCase):
     def materials(self):
         return {self.g["materials"][p["material"]]["name"]: p for p in self.prims()}
 
-    def test_the_generated_pieces_are_rigid_on_one_joint(self):
+    def test_the_pieces_on_one_bone_are_rigid_and_the_others_follow_the_body(self):
         names = [self.g["nodes"][j]["name"] for j in self.g["skins"][0]["joints"]]
-        expect = {"kepi_cloth": "head", "kepi_leather": "head", "kepi_buttons": "head", "brass_buttons": "spine_02", "strap_leather": "spine_03"}
         prims = self.materials()
+        # The buttons down the chest and the strap from the shoulder to the
+        # hip follow the trunk's joints under them, more than one.
+        for material, joints in (("brass_buttons", mh2gltf.SKIN_FROM["buttons"]), ("strap_leather", mh2gltf.SKIN_FROM["strap"])):
+            p = prims[material]
+            j = read_accessor(self.g, self.blob, p["attributes"]["JOINTS_0"])
+            w = read_accessor(self.g, self.blob, p["attributes"]["WEIGHTS_0"])
+            used = {names[i] for i in np.unique(j[w > 0])}
+            self.assertGreater(len(used), 1, material)
+            self.assertTrue(used <= set(joints), (material, used))
+        expect = {"kepi_cloth": "head", "kepi_leather": "head", "kepi_buttons": "head"}
         for material, joint in expect.items():
             p = prims[material]
             j = read_accessor(self.g, self.blob, p["attributes"]["JOINTS_0"])

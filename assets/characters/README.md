@@ -2,7 +2,33 @@
 
 Skinned MakeHuman people. Each folder holds a character's source `.mhm` (MakeHuman's model file, written by hand), any recoloured materials (`.mhmat`), and the glTF built from them: `model.gltf`, `model.bin` and `textures/`. Credits and substitutions are in [CREDITS.md](CREDITS.md).
 
-The game loads `protagonist`, `hidalgo`, `farach` and `bairoletto` (`crates/render/src/character/model.rs`) and draws them by default; the debug console's `models off` brings back the old rigid figures. The protagonist wears his model on foot; in the saddle he keeps the rigid figure until riding is animated. A bone driver (`crates/render/src/character/rig.rs`) poses the `game_engine` skeleton by the rigid figure's joint angles, with a relaxed posture on top: the weight on one leg, the arms loose, a slow sway, and a foot always planted. It finds the bones by name, so a rebuilt model must keep the `game_engine` skeleton's bone names.
+The game loads `protagonist`, `hidalgo`, `farach` and `bairoletto` (`crates/render/src/character/model.rs`) and draws them by default; the debug console's `models off` brings back the old rigid figures. The protagonist wears his model on foot; in the saddle he keeps the rigid figure until riding is animated.
+
+They move with animation clips, all in one shared file, `animations/humanoid.glb`: Quaternius' CC0 Universal Animation Library 1 and 2, retargeted to the `game_engine` skeleton by `tools/retarget.py`. The clip driver (`crates/render/src/character/rig.rs`, with `clips.rs`) works like this:
+
+- the idle fades into the walk, the jog and the sprint by ground speed;
+- each walking clip is paced to the ground speed, so the feet keep still on the ground;
+- Farach waits with folded arms, and whoever is speaking talks with their hands;
+- each person starts their clips at their own point;
+- the head glances around on top of the clip.
+
+The clips find the bones by their name path from `Root` (`Root/pelvis/spine_01/...`), so a rebuilt model must keep the `game_engine` skeleton's bone names and hierarchy. The clips were made on the protagonist. Another model has its hips' moves scaled to its own legs when it plays them.
+
+## Rebuilding the clips
+
+You need the two packs (see [CREDITS.md](CREDITS.md); they are not in the repository). Run, from the repository root:
+
+```sh
+python3 -I tools/retarget.py \
+  --ual1 "PATH/Animation Library[Standard]/Godot/AnimationLibrary_Godot_Standard.glb" \
+  --ual2 "PATH/Universal Animation Library 2 [Standard]/Unreal-Godot/UAL2_Standard.glb" \
+  --target assets/characters/protagonist/model.gltf \
+  --model assets/characters/protagonist/model.gltf --model assets/characters/hidalgo/model.gltf \
+  --model assets/characters/farach/model.gltf --model assets/characters/bairoletto/model.gltf \
+  -o assets/characters/animations/humanoid.glb
+```
+
+The output is deterministic. It prints each clip with its length and, for the walks and runs, the ground speed and stride it measured. The game's `Clip::ground_speed` (`crates/render/src/character/clips.rs`) must match them; a test checks it. The `--model` lines give the men whose chests the folded arms and talking hands must clear. The standing clips are also calmed out of the packs' boxer's stance (see `tools/README.md`). Rebuild the clips after rebuilding any model.
 
 ## Rebuilding a model
 

@@ -23,3 +23,14 @@ Most of the clothes are made by the converter from the `.mhm`'s `piece` lines, n
 | `hidalgo` | `middleage_caucasian_male` | `grey`, `eyebrow003` grey (`eyebrows.mhmat`), `short04` white (`hair.mhmat`) | `grinsegold_moustache`, white (`moustache.mhmat`) | white shirt, black waistcoat with a gold watch chain, dark open jacket with lapels and padded shoulders, trousers tucked into brown boots, stiff band collar with wing tips; felt hat with the widest flat brim and a tall creased crown |
 
 The eyelashes are left out: 368 triangles each that cannot be seen at the game's distance.
+
+## Animations
+
+`animations/humanoid.glb` holds every character's clips. It is made by `tools/retarget.py` (see `tools/README.md`) from two CC0 packs by Quaternius, downloaded on 2026-10-24. Neither pack is in the repository. Get them from https://quaternius.com/packs/universalanimationlibrary.html (also published on OpenGameArt), unzip them, and keep the `License.txt` next to each.
+
+| Pack | File used | Licence | Clips kept (game name ← pack name) |
+|---|---|---|---|
+| Universal Animation Library (Standard) | `Godot/AnimationLibrary_Godot_Standard.glb` (Rigify `DEF-*` bones) | CC0 1.0 | `idle` ← Idle_Loop, `idle_talk` ← Idle_Talking_Loop, `walk` ← Walk_Loop, `walk_formal` ← Walk_Formal_Loop, `jog` ← Jog_Fwd_Loop, `sprint` ← Sprint_Loop, `sit_idle` ← Sitting_Idle_Loop, `drive` ← Driving_Loop, `interact` ← Interact |
+| Universal Animation Library 2 (Standard) | `Unreal-Godot/UAL2_Standard.glb` (Unreal bone names) | CC0 1.0 | `idle_fold_arms` ← Idle_FoldArms_Loop, `yes` ← Yes, `no` ← Idle_No_Loop, `harvest` ← Farm_Harvest, `plant` ← Farm_PlantSeed, `water` ← Farm_Watering, `chop` ← TreeChopping_Loop, `walk_carry` ← Walk_Carry_Loop |
+
+What was changed: the clips were retargeted from the packs' mannequin to the protagonist's `game_engine` skeleton. The T-pose rest is aligned to the arms-down rest, and the hips' moves are scaled to his legs (1.043 times the mannequin's). Looping clips are held in place, and the hips are raised wherever a foot would go through the ground. The standing clips are calmed from the packs' wide, crouched stance: feet drawn in, knees straightened, arms lowered. The folded arms (12 cm) and the talking hands (3 cm) are brought forward to clear the four men's chests. The packs' other 72 clips and their mannequin mesh are left out.
