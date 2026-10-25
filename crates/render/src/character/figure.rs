@@ -31,7 +31,9 @@ pub enum FigureKind {
     /// The player on foot: a hardware-shop clerk from General Pico in his
     /// city clothes.
     Protagonist,
-    /// A townsperson, in look `0..TOWNSFOLK_LOOKS`.
+    /// A townsperson of a logic `look`: `look % TOWNSFOLK_LOOKS` picks the
+    /// outfit, the rest the colours they wear (see
+    /// [`townsfolk`](super::townsfolk)).
     Townsfolk(u8),
     /// Don Hidalgo, the old estanciero who gives the first errand.
     Hidalgo,
@@ -43,9 +45,9 @@ pub enum FigureKind {
 }
 
 impl FigureKind {
-    /// The townsfolk look for a logic appearance value.
+    /// A townsperson of a logic appearance value.
     pub fn townsfolk(look: u8) -> Self {
-        Self::Townsfolk(look % TOWNSFOLK_LOOKS)
+        Self::Townsfolk(look)
     }
 
     /// Every figure.
@@ -1376,7 +1378,13 @@ mod tests {
                 .fold(f32::MAX, f32::min);
             assert!(sole.abs() < 1e-4, "{kind:?}: sole at {sole}");
         }
-        assert_eq!(FigureKind::townsfolk(7), FigureKind::Townsfolk(2));
+        // The look's low part picks the clothes: 7 is drawn as 2 (`models
+        // off`); the rest is kept for the model's colours.
+        assert_eq!(FigureKind::townsfolk(7), FigureKind::Townsfolk(7));
+        assert_eq!(
+            figure_parts(FigureKind::townsfolk(7)),
+            figure_parts(FigureKind::Townsfolk(2))
+        );
         let looks: Vec<_> = (0..TOWNSFOLK_LOOKS)
             .map(|n| figure_parts(FigureKind::Townsfolk(n)))
             .collect();

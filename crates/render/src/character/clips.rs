@@ -325,6 +325,20 @@ mod tests {
     }
 
     #[test]
+    fn a_person_with_shorter_legs_plays_the_strides_faster_by_their_length() {
+        use crate::character::rig::model_stride;
+        let reference = Reference {
+            pelvis: Vec3::ZERO,
+            leg: 0.8,
+        };
+        let pelvis = |leg: f32| Some((Entity::PLACEHOLDER, Vec3::ZERO, leg));
+        assert_eq!(model_stride(pelvis(0.8), Some(reference)), 1.0);
+        assert!((model_stride(pelvis(0.72), Some(reference)) - 0.9).abs() < 1e-6);
+        assert_eq!(model_stride(None, Some(reference)), 1.0);
+        assert_eq!(model_stride(pelvis(0.72), None), 1.0);
+    }
+
+    #[test]
     fn each_person_has_their_own_idle() {
         assert_eq!(idle_for(FigureKind::Farach, false), Clip::IdleFoldArms);
         assert_eq!(idle_for(FigureKind::Hidalgo, false), Clip::Idle);

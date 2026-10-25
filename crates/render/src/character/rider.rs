@@ -845,7 +845,7 @@ pub(super) fn spawn_riders(
         });
         let model = body
             .rider
-            .and_then(|kind| Some((kind, characters.as_ref()?.0.get(&kind)?.clone())));
+            .and_then(|kind| Some((kind, characters.as_ref()?.of(kind)?.clone())));
         if let Some((kind, scene)) = model {
             commands.spawn((
                 Name::new("Rider model"),

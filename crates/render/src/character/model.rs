@@ -7,14 +7,18 @@
 //! wardrobe is mostly made by the converter: shirts, waistcoats, a police
 //! guerrera, a three-piece suit, bombachas and knee boots cut from the
 //! body and skinned like it, and the hats, kepi, neckerchiefs, faja and
-//! rastra, poncho, strap, watch chain and brass buttons. They are drawn by default
+//! rastra, poncho, strap, watch chain and brass buttons; and for the
+//! townsfolk ([`townsfolk`](super::townsfolk)) a boina and alpargatas, and
+//! the women's blouses, long skirts, aprons, crossed shawls, a headscarf and
+//! hair worn up. They are drawn by default
 //! ([`CharacterModelsShown`]); the debug console's `models off`
 //! brings back the rigid figures of the people on foot. Riders are always
 //! models: the rigid rider is gone with the procedural horse (see
 //! [`rider`](super::rider)).
 //!
-//! A [`FigureKind`] with a model ([`model_name`]) looks for
-//! `assets/characters/<name>/model.gltf` at startup ([`CharacterModels`]).
+//! A [`FigureKind`]'s model ([`model_name`]; a townsperson's by their
+//! look) is `assets/characters/<name>/model.gltf`, loaded once at startup
+//! ([`CharacterModels`]).
 //! With the models shown, a figure of that kind on foot still spawns its
 //! rigid body, joints and parts, and also a [`CharacterModel`] under its
 //! body:
@@ -48,21 +52,23 @@ use super::figure::{FigureBody, FigureJoint, FigureKind};
 use super::horse::rest_affine;
 use super::rider::{RiderMotion, Riding, Seated};
 use super::rig::{Rig, bind_targets, rest_frame};
+use super::townsfolk::{TintCache, Worn, dress_townsperson, outfit};
 use crate::AssetRoot;
 use crate::gltf::{self, ModelState};
 
 /// Where the character models live, under the [`AssetRoot`].
 pub const CHARACTER_DIR: &str = "characters";
 
-/// The model folder of a figure kind, if it has one: on foot (unless the
-/// models are off) and in the saddle.
+/// The model folder of a figure kind: on foot (unless the models are off)
+/// and in the saddle. A townsperson's is their look's outfit
+/// ([`townsfolk`](super::townsfolk)).
 pub fn model_name(kind: FigureKind) -> Option<&'static str> {
     match kind {
         FigureKind::Protagonist => Some("protagonist"),
         FigureKind::Hidalgo => Some("hidalgo"),
         FigureKind::Farach => Some("farach"),
         FigureKind::Bairoletto => Some("bairoletto"),
-        FigureKind::Townsfolk(_) => None,
+        FigureKind::Townsfolk(look) => Some(outfit(look)),
     }
 }
 
@@ -71,9 +77,17 @@ pub fn model_path(name: &str) -> String {
     format!("{CHARACTER_DIR}/{name}/model.gltf")
 }
 
-/// The character models found at startup, loading or loaded.
+/// The character models found at startup, loading or loaded, by model
+/// folder: each is loaded once, whoever wears it.
 #[derive(Resource, Debug, Clone, Default)]
-pub struct CharacterModels(pub HashMap<FigureKind, Handle<WorldAsset>>);
+pub struct CharacterModels(pub HashMap<&'static str, Handle<WorldAsset>>);
+
+impl CharacterModels {
+    /// The model `kind` is drawn with, if there is one.
+    pub fn of(&self, kind: FigureKind) -> Option<&Handle<WorldAsset>> {
+        self.0.get(model_name(kind)?)
+    }
+}
 
 /// Starts loading every character model there is. Without an asset server
 /// or root (tests, a bare app) none is loaded and every figure stays rigid.
@@ -88,9 +102,12 @@ pub(super) fn load_character_models(
             let Some(name) = model_name(kind) else {
                 continue;
             };
+            if models.0.contains_key(name) {
+                continue;
+            }
             if let Some(scene) = gltf::load_scene(&server, Some(&root), &model_path(name)) {
                 info!("character model `{name}`");
-                models.0.insert(kind, scene);
+                models.0.insert(name, scene);
             }
         }
     }
@@ -129,7 +146,7 @@ pub(super) fn attach_model(
     body: Entity,
     kind: FigureKind,
 ) {
-    let Some(scene) = models.and_then(|m| m.0.get(&kind)) else {
+    let Some(scene) = models.and_then(|m| m.of(kind)) else {
         return;
     };
     commands.spawn((
@@ -206,7 +223,8 @@ pub fn model_range() -> VisibilityRange {
 }
 
 /// Dresses a character model the moment its scene spawns: the shared
-/// range on its meshes, its `Root` made the clips' player with every bone
+/// range on its meshes, a townsperson's clothes tinted (and, in a long
+/// skirt, the arms to hold out found), its `Root` made the clips' player with every bone
 /// a target ([`bind_targets`]), its rig found for the clip driver, and its
 /// figure's rigid parts hidden. A rider's bones are found for the seat
 /// ([`Seated`]) instead of the pelvis fit and the glance.
@@ -215,10 +233,14 @@ pub(super) fn dress_character(
     ready: On<WorldInstanceReady>,
     mut commands: Commands,
     clips: Option<Res<CharacterClips>>,
-    models: Query<(&ChildOf, Has<Riding>), With<CharacterModel>>,
+    models: Query<(&ChildOf, Option<&Riding>), With<CharacterModel>>,
     children: Query<&Children>,
     names: Query<&Name>,
-    meshes: Query<(), With<Mesh3d>>,
+    (meshes, worn, figures): (Query<(), With<Mesh3d>>, Query<Worn>, Query<&FigureBody>),
+    (cache, materials): (
+        Option<ResMut<TintCache>>,
+        Option<ResMut<Assets<StandardMaterial>>>,
+    ),
     rigid: Query<(), With<FigureJoint>>,
     transforms: Query<&Transform>,
     parents: Query<&ChildOf>,
@@ -227,6 +249,10 @@ pub(super) fn dress_character(
     let Ok((body, riding)) = models.get(root) else {
         return;
     };
+    let kind = riding
+        .map(|r| r.kind)
+        .or_else(|| figures.get(body.parent()).ok().map(|f| f.kind));
+    let riding = riding.is_some();
     let range = model_range();
     let named = |name: &str| {
         children
@@ -240,6 +266,19 @@ pub(super) fn dress_character(
             probes.push(entity);
         }
     }
+    // A townsperson's clothes in their own colours; a long skirt holds the
+    // arms out a little.
+    let skirt = match (kind, cache, materials) {
+        (Some(kind), Some(mut cache), Some(mut materials)) => dress_townsperson(
+            &mut commands,
+            (&mut cache, &mut materials),
+            kind,
+            probes
+                .iter()
+                .filter_map(|&e| worn.get(e).ok().map(|w| (e, w))),
+        ),
+        _ => false,
+    };
     if let Some(skeleton) = named("Root") {
         bind_targets(&mut commands, skeleton, &names, &children);
         if let Some(clips) = clips.as_deref() {
@@ -276,6 +315,11 @@ pub(super) fn dress_character(
         for (k, name) in ["neck_01", "head"].into_iter().enumerate() {
             rig.look[k] = named(name).map(|e| (e, rest_frame(e, root, &parents, &transforms)));
         }
+        if skirt {
+            for (k, name) in ["upperarm_l", "upperarm_r"].into_iter().enumerate() {
+                rig.arms[k] = named(name).map(|e| (e, rest_frame(e, root, &parents, &transforms)));
+            }
+        }
         if rig.pelvis.is_none() || rig.look.iter().any(Option::is_none) {
             warn!("character model without the whole game_engine skeleton: it may not move right");
         }
@@ -299,19 +343,21 @@ mod tests {
 
     /// The triangle budget of one character model.
     const BUDGET: usize = 15_000;
+    /// The cap of one townsperson's model (user, 2026-10-25): 31 of them
+    /// may stand in a plaza.
+    const TOWNSFOLK_BUDGET: usize = 11_000;
     /// Fewer triangles than this means a model lost its body or clothes
     /// (the lightest, with its garments cut from the body, has about 4,900).
     const FLOOR: usize = 3_000;
 
     #[test]
-    fn the_protagonist_and_the_errand_people_have_models_and_each_is_shipped() {
-        assert_eq!(model_name(FigureKind::Townsfolk(1)), None);
-        for kind in [
-            FigureKind::Protagonist,
-            FigureKind::Hidalgo,
-            FigureKind::Farach,
-            FigureKind::Bairoletto,
-        ] {
+    fn every_person_has_a_model_and_each_is_shipped() {
+        assert_eq!(
+            model_name(FigureKind::Townsfolk(6)),
+            model_name(FigureKind::Townsfolk(1)),
+            "a look's outfit"
+        );
+        for kind in FigureKind::all() {
             let path = model_path(model_name(kind).unwrap());
             assert!(gltf::is_inside(&path));
             assert!(root().0.join(&path).is_file(), "{path}");
@@ -325,7 +371,11 @@ mod tests {
         app.finish();
         app.cleanup();
         let server = app.world().resource::<AssetServer>().clone();
-        for name in ["hidalgo", "farach", "bairoletto", "protagonist"] {
+        let townsfolk = crate::character::townsfolk::OUTFITS;
+        for name in ["hidalgo", "farach", "bairoletto", "protagonist"]
+            .into_iter()
+            .chain(townsfolk)
+        {
             let path = model_path(name);
             let scene = gltf::load_scene(&server, Some(&root()), &path).expect(&path);
             assert_eq!(settle(&mut app, &scene), ModelState::Ready, "{path}");
@@ -369,8 +419,14 @@ mod tests {
                     };
                 }
             }
+            let budget = if townsfolk.contains(&name) {
+                TOWNSFOLK_BUDGET
+            } else {
+                BUDGET
+            };
+            println!("{name}: {triangles} triangles");
             assert!(
-                (FLOOR..=BUDGET).contains(&triangles),
+                (FLOOR..=budget).contains(&triangles),
                 "{name}: {triangles} triangles"
             );
         }
@@ -388,7 +444,7 @@ mod tests {
             .add_plugins(CharacterVisualPlugin);
         app.update();
         let mut models = CharacterModels::default();
-        models.0.insert(FigureKind::Farach, Handle::default());
+        models.0.insert("farach", Handle::default());
         app.insert_resource(models);
         let farach = app
             .world_mut()
@@ -444,7 +500,7 @@ mod tests {
         use crate::character::{CharacterVisual, Coat};
         let (mut app, _) = toggle_app();
         let mut models = app.world_mut().resource_mut::<CharacterModels>();
-        models.0.insert(FigureKind::Protagonist, Handle::default());
+        models.0.insert("protagonist", Handle::default());
         let me = app
             .world_mut()
             .spawn(CharacterVisual::Figure(FigureKind::Protagonist))
