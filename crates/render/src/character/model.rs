@@ -9,8 +9,9 @@
 //! body and skinned like it, and the hats, kepi, neckerchiefs, faja and
 //! rastra, poncho, strap, watch chain and brass buttons. They are drawn by default
 //! ([`CharacterModelsShown`]); the debug console's `models off`
-//! brings back the rigid figures of the people on foot. The rigid rider
-//! is gone with the procedural horse.
+//! brings back the rigid figures of the people on foot. Riders are always
+//! models: the rigid rider is gone with the procedural horse (see
+//! [`rider`](super::rider)).
 //!
 //! A [`FigureKind`] with a model ([`model_name`]) looks for
 //! `assets/characters/<name>/model.gltf` at startup ([`CharacterModels`]).
@@ -30,6 +31,10 @@
 //! and the clip driver ([`rig`](super::rig)) plays the shared animation
 //! clips ([`clips`](super::clips)) on it: it stands, walks, jogs and talks
 //! with them, and glances around like the figure.
+//!
+//! A rider's model has no figure: the saddled horse spawns it on its
+//! `Torso` bone once its own scene has spawned ([`Riding`]), and it is
+//! dressed the same, with its bones found for the seat ([`Seated`]).
 
 use std::collections::HashMap;
 use std::f32::consts::FRAC_PI_2;
@@ -40,6 +45,8 @@ use bevy::world_serialization::{WorldAsset, WorldAssetRoot, WorldInstanceReady};
 
 use super::clips::CharacterClips;
 use super::figure::{FigureBody, FigureJoint, FigureKind};
+use super::horse::rest_affine;
+use super::rider::{RiderMotion, Riding, Seated};
 use super::rig::{Rig, bind_targets, rest_frame};
 use crate::AssetRoot;
 use crate::gltf::{self, ModelState};
@@ -48,7 +55,7 @@ use crate::gltf::{self, ModelState};
 pub const CHARACTER_DIR: &str = "characters";
 
 /// The model folder of a figure kind, if it has one: on foot (unless the
-/// models are off).
+/// models are off) and in the saddle.
 pub fn model_name(kind: FigureKind) -> Option<&'static str> {
     match kind {
         FigureKind::Protagonist => Some("protagonist"),
@@ -201,13 +208,14 @@ pub fn model_range() -> VisibilityRange {
 /// Dresses a character model the moment its scene spawns: the shared
 /// range on its meshes, its `Root` made the clips' player with every bone
 /// a target ([`bind_targets`]), its rig found for the clip driver, and its
-/// figure's rigid parts hidden.
+/// figure's rigid parts hidden. A rider's bones are found for the seat
+/// ([`Seated`]) instead of the pelvis fit and the glance.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn dress_character(
     ready: On<WorldInstanceReady>,
     mut commands: Commands,
     clips: Option<Res<CharacterClips>>,
-    models: Query<&ChildOf, With<CharacterModel>>,
+    models: Query<(&ChildOf, Has<Riding>), With<CharacterModel>>,
     children: Query<&Children>,
     names: Query<&Name>,
     meshes: Query<(), With<Mesh3d>>,
@@ -216,7 +224,7 @@ pub(super) fn dress_character(
     parents: Query<&ChildOf>,
 ) {
     let root = ready.entity;
-    let Ok(body) = models.get(root) else {
+    let Ok((body, riding)) = models.get(root) else {
         return;
     };
     let range = model_range();
@@ -241,6 +249,23 @@ pub(super) fn dress_character(
         }
         let mut rig = Rig::new(skeleton);
         rig.probes = probes;
+        if riding {
+            let rest = |e: Entity| rest_affine(e, root, &parents, &transforms);
+            match Seated::find(root, named, rest) {
+                Some(seated) => {
+                    // Hidden until posed in the saddle (again, if its scene
+                    // was spawned again): it spawns standing at rest.
+                    commands.entity(root).try_insert((
+                        seated,
+                        RiderMotion::default(),
+                        Visibility::Hidden,
+                    ));
+                }
+                None => warn!("rider model without the whole game_engine skeleton"),
+            }
+            commands.entity(root).try_insert(rig);
+            return;
+        }
         let at = |name: &str| named(name).and_then(|e| transforms.get(e).ok().map(|t| (e, t)));
         if let (Some((pelvis, rest)), Some((_, knee)), Some((_, ankle))) =
             (at("pelvis"), at("calf_l"), at("foot_l"))
@@ -433,7 +458,8 @@ mod tests {
                 coat: Coat::HIDALGO,
             });
         app.update();
-        // His figure and its model go; nothing is drawn on the horse.
+        // His figure and its model go; his rider's model waits for the
+        // horse's scene (none in this app).
         assert_eq!(
             model_count(&mut app),
             1,

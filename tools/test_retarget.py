@@ -773,5 +773,94 @@ class Command(unittest.TestCase):
         self.assertEqual(err.getvalue().count("\n"), 1)
 
 
+
+class FollowUps(unittest.TestCase):
+    """The review's follow-ups: every key checked for the chests, both
+    measures kept, one-line errors from ``--model``, an atomic write and one
+    leg length."""
+
+    def test_every_key_is_checked_for_the_chests_not_only_the_sampled_ones(self):
+        # Twelve keys; only key 3 (between the samples) needs the arms 1 cm
+        # forward to clear.
+        rt = R.Retargeter.__new__(R.Retargeter)
+        rt.target, rt.root = None, 0
+        rt.t_rest_r, rt.t_rest_p = {0: (0.0, 0.0, 0.0, 1.0)}, {0: (0.0, 0.0, 0.0)}
+        rt.reach_out = lambda local, place, ahead: {"ahead": ahead}
+
+        class Chest:
+            def clear(self, target, poses):
+                return all(p != (0.0, 0.0, 3.0) or local["ahead"] >= 0.01 - 1e-9 for local, p in poses)
+
+        keys = [(k / 10, {}, (0.0, 0.0, float(k))) for k in range(12)]
+        moved, ahead = rt.cleared(keys, Chest())
+        self.assertAlmostEqual(ahead, 0.01)
+        self.assertTrue(all(local["ahead"] == ahead for _, local, _ in moved))
+
+    def test_a_cleared_walk_keeps_its_reach_and_its_speeds(self):
+        class Clear:
+            def clear(self, target, poses):
+                return True
+
+        rt = R.Retargeter(source(PelvisAndLoops().loop(1.0, 0.0)), target(leg_scale=1.25))
+        _, measures = rt.clip("Loop", True, True, clearance=Clear())
+        self.assertEqual(sorted(measures), ["ground_speed", "reach", "stride"])
+        self.assertEqual(measures["reach"], 0.0)
+        self.assertAlmostEqual(measures["ground_speed"], 1.25, places=3)
+
+    def test_a_bad_model_is_a_one_line_error(self):
+        import tempfile
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, data in (("text.gltf", b"\xff\xfe not utf-8"), ("json.gltf", b"{ not json\n at all")):
+                path = os.path.join(tmp, name)
+                with open(path, "wb") as f:
+                    f.write(data)
+                with self.assertRaises(R.RetargetError) as e:
+                    R.Clearance([path])
+                self.assertIn(path, str(e.exception))
+                self.assertNotIn("\n", str(e.exception))
+            # A model whose data will not take its shape (an index list not
+            # of whole triangles, say).
+            with mock.patch.object(R.Clearance, "_read", side_effect=ValueError("cannot reshape\nsize 7")):
+                with self.assertRaises(R.RetargetError) as e:
+                    R.Clearance(["model.gltf"])
+            self.assertEqual(str(e.exception), "model.gltf: ValueError: cannot reshape")
+        # Without numpy.
+        with mock.patch.dict("sys.modules", {"numpy": None}):
+            with self.assertRaises(R.RetargetError) as e:
+                R.Clearance([PROTAGONIST])
+            self.assertIn("numpy", str(e.exception))
+
+    def test_the_output_is_written_whole_or_not_at_all(self):
+        import tempfile
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "humanoid.glb")
+            R.write_atomically(out, b"first")
+            with open(out, "rb") as f:
+                self.assertEqual(f.read(), b"first")
+            # Interrupted before it is in place: the old file stays whole,
+            # and nothing else is left beside it.
+            with mock.patch.object(R.os, "replace", side_effect=OSError("disk full")):
+                with self.assertRaises(OSError):
+                    R.write_atomically(out, b"second, longer")
+            with open(out, "rb") as f:
+                self.assertEqual(f.read(), b"first")
+            self.assertEqual(os.listdir(tmp), ["humanoid.glb"])
+            R.write_atomically(out, b"second")
+            with open(out, "rb") as f:
+                self.assertEqual(f.read(), b"second")
+            self.assertEqual(os.listdir(tmp), ["humanoid.glb"])
+
+    def test_the_leg_is_the_thigh_and_the_shin(self):
+        tk = target(leg_scale=1.5)
+        thigh = R.length(tk.rest_t[tk.find("calf_l")])
+        shin = R.length(tk.rest_t[tk.find("foot_l")])
+        self.assertAlmostEqual(R.leg_length(tk, "calf_l", "foot_l"), thigh + shin)
+        self.assertGreater(thigh, 0.0)
+        self.assertGreater(shin, 0.0)
+
 if __name__ == "__main__":
     unittest.main()

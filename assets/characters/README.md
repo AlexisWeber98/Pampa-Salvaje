@@ -2,7 +2,7 @@
 
 Skinned MakeHuman people. Each folder holds a character's source `.mhm` (MakeHuman's model file, written by hand), any recoloured materials (`.mhmat`), and the glTF built from them: `model.gltf`, `model.bin` and `textures/`. Credits and substitutions are in [CREDITS.md](CREDITS.md).
 
-The game loads `protagonist`, `hidalgo`, `farach` and `bairoletto` (`crates/render/src/character/model.rs`) and draws them by default; the debug console's `models off` brings back the old rigid figures. The protagonist wears his model on foot; in the saddle he keeps the rigid figure until riding is animated.
+The game loads `protagonist`, `hidalgo`, `farach` and `bairoletto` (`crates/render/src/character/model.rs`) and draws them by default; the debug console's `models off` brings back the old rigid figures. The protagonist wears his model on foot and in the saddle: there he sits on the horse's `Torso` bone and plays the seated `drive` clip, his legs bent to the stirrups and his hand to the reins by a small IK, with springs for the give in his seat, spine, head and hands (`crates/render/src/character/rider.rs`). `models off` only applies to people on foot. The protagonist's poncho is kept off his left upper arm by the converter (`clear_arms` in `tools/mh2gltf.py`), so it rides on the shoulder when the arm moves.
 
 They move with animation clips, all in one shared file, `animations/humanoid.glb`: Quaternius' CC0 Universal Animation Library 1 and 2, retargeted to the `game_engine` skeleton by `tools/retarget.py`. The clip driver (`crates/render/src/character/rig.rs`, with `clips.rs`) works like this:
 
@@ -10,7 +10,8 @@ They move with animation clips, all in one shared file, `animations/humanoid.glb
 - each walking clip is paced to the ground speed, so the feet keep still on the ground;
 - Farach waits with folded arms, and whoever is speaking talks with their hands;
 - each person starts their clips at their own point;
-- the head glances around on top of the clip.
+- the head glances around on top of the clip;
+- a rider plays only the seated clip: a clip at no weight still sets the bones only it animates.
 
 The clips find the bones by their name path from `Root` (`Root/pelvis/spine_01/...`), so a rebuilt model must keep the `game_engine` skeleton's bone names and hierarchy. The clips were made on the protagonist. Another model has its hips' moves scaled to its own legs when it plays them.
 

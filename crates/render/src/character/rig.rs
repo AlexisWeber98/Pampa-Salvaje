@@ -20,6 +20,9 @@
 //!   neck and head turn by the figure's glance, half each, on top of the
 //!   clip ([`glance_turn`]).
 //!
+//! A rider (see [`rider`](super::rider)) plays only the seated clip
+//! ([`SEATED`]): a clip at no weight still sets the bones only it animates.
+//!
 //! A model out of view (none of its meshes drawn) or farther than
 //! [`FREEZE_FAR`](crate::fauna::FREEZE_FAR) from the camera loses its graph,
 //! as the livestock do: its bones keep their last pose. The protagonist,
@@ -34,14 +37,16 @@ use super::clips::{
 };
 use super::figure::{FigureBody, FigureKind};
 use super::model::model_transform;
+use super::rider::Riding;
 use super::visual::VisualPose;
 use crate::fauna::livestock::{any_in_view, frozen, view_eye};
 
 /// How fast the clips' weights ease toward their targets, per second.
 pub const BLEND_RATE: f32 = 6.0;
 
-/// The clips a model may play: the idles and the strides. Each starts once
-/// the clips have loaded and keeps running; only its weight changes.
+/// The clips a model on foot may play: the idles and the strides. Each
+/// starts once the clips have loaded and keeps running; only its weight
+/// changes.
 pub const PLAYED: [Clip; 6] = [
     Clip::Idle,
     Clip::IdleTalk,
@@ -50,6 +55,16 @@ pub const PLAYED: [Clip; 6] = [
     Clip::Jog,
     Clip::Sprint,
 ];
+
+/// The clip a rider sits its horse with (see [`rider`](super::rider)),
+/// the only one it plays: a clip at no weight still sets the bones only it
+/// animates.
+pub const SEATED: Clip = Clip::Drive;
+
+/// The clips a model plays: a rider's, or those of a person on foot.
+pub fn played(riding: bool) -> &'static [Clip] {
+    if riding { &[SEATED] } else { &PLAYED }
+}
 
 /// Marks a person whose lines are on screen: standing, they talk with
 /// their hands (see [`idle_for`]). The game puts it on the speaker.
@@ -124,6 +139,13 @@ pub(super) fn bind_targets(
     commands.entity(root).try_insert(AnimationPlayer::default());
 }
 
+/// The weight each clip should have for a rider: only [`SEATED`].
+pub fn seated_targets() -> [f32; Clip::COUNT] {
+    let mut out = [0.0; Clip::COUNT];
+    out[SEATED.index()] = 1.0;
+    out
+}
+
 /// The weight each clip should have, in [`Clip::ALL`] order: a person of
 /// `kind` moving at `speed` (m/s), maybe `talking`.
 pub fn targets(kind: FigureKind, talking: bool, speed: f32) -> [f32; Clip::COUNT] {
@@ -173,7 +195,26 @@ type ModelRig = (
     &'static mut Rig,
     &'static GlobalTransform,
     &'static mut Transform,
+    Option<&'static Riding>,
 );
+
+/// Who a model is and what it plays: on foot, its figure's kind and seed,
+/// and its weights by speed and speech; in the saddle, its rider's, seated.
+fn who(
+    riding: Option<&Riding>,
+    figure: Option<(&FigureBody, f32, bool)>,
+) -> Option<(FigureKind, u32, f32, [f32; Clip::COUNT])> {
+    match (riding, figure) {
+        (Some(r), _) => Some((r.kind, r.seed, 0.0, seated_targets())),
+        (None, Some((body, speed, talking))) => Some((
+            body.kind,
+            body.seed,
+            speed,
+            targets(body.kind, talking, speed),
+        )),
+        (None, None) => None,
+    }
+}
 
 /// Weighs and paces each model's clips (see the module notes), and freezes
 /// a model out of view or far off, except the protagonist's.
@@ -192,17 +233,28 @@ pub(super) fn drive_rigs(
 ) {
     let dt = time.delta_secs();
     let eye = view_eye(cameras);
-    for (child_of, mut rig, at, mut transform) in &mut rigs {
-        let Ok((body, carried, person)) = bodies.get(child_of.parent()) else {
+    for (child_of, mut rig, at, mut transform, riding) in &mut rigs {
+        let figure = bodies
+            .get(child_of.parent())
+            .ok()
+            .map(|(body, carried, person)| {
+                // The clips bob the pelvis: undo the carrier's bob.
+                transform.set_if_neq(
+                    model_transform().with_translation(Vec3::Y * -carried.translation.y),
+                );
+                let (speed, talking) = people
+                    .get(person.parent())
+                    .map_or((0.0, false), |(pose, talking)| (moving(pose), talking));
+                (body, speed, talking)
+            });
+        let Some((kind, seed, speed, goal)) = who(riding, figure) else {
             continue;
         };
-        // The clips bob the pelvis: undo the carrier's bob.
-        transform.set_if_neq(model_transform().with_translation(Vec3::Y * -carried.translation.y));
         let distance = eye.map_or(0.0, |e| e.distance(at.translation()));
         // Visibility is only known with a camera drawing.
         let in_view =
             eye.is_none() || any_in_view(&rig.probes, |p| seen.get(p).is_ok_and(|v| v.get()));
-        let freeze = body.kind != FigureKind::Protagonist && frozen(rig.frozen, distance, in_view);
+        let freeze = kind != FigureKind::Protagonist && frozen(rig.frozen, distance, in_view);
         let Some(clips) = clips.as_deref() else {
             rig.frozen = freeze;
             continue;
@@ -222,15 +274,11 @@ pub(super) fn drive_rigs(
         let Ok(mut player) = players.get_mut(rig.player) else {
             continue;
         };
-        let (speed, talking) = people
-            .get(person.parent())
-            .map_or((0.0, false), |(pose, talking)| (moving(pose), talking));
-        let goal = targets(body.kind, talking, speed);
         if !rig.started {
             let Some(loaded) = loaded.as_deref() else {
                 continue;
             };
-            let durations: Option<Vec<f32>> = PLAYED
+            let durations: Option<Vec<f32>> = played(riding.is_some())
                 .iter()
                 .map(|c| {
                     loaded
@@ -241,8 +289,8 @@ pub(super) fn drive_rigs(
             let Some(durations) = durations else {
                 continue;
             };
-            let offset = phase_offset(body.seed);
-            for (clip, duration) in PLAYED.into_iter().zip(durations) {
+            let offset = phase_offset(seed);
+            for (&clip, duration) in played(riding.is_some()).iter().zip(durations) {
                 player
                     .play(clips.node(clip))
                     .repeat()
@@ -252,7 +300,7 @@ pub(super) fn drive_rigs(
             rig.started = true;
         }
         ease(&mut rig.weights, &goal, dt);
-        for clip in PLAYED {
+        for &clip in played(riding.is_some()) {
             if let Some(active) = player.animation_mut(clips.node(clip)) {
                 active
                     .set_weight(rig.weights[clip.index()])
@@ -782,5 +830,109 @@ mod tests {
         // The body's left is -Z.
         assert!(left.z > right.z, "{left} {right}");
         assert!(left.y > 1.1 && right.y > 1.1, "{left} {right}");
+    }
+
+    #[test]
+    fn whoever_is_marked_talking_talks_with_their_hands_and_stops_when_unmarked() {
+        let (mut app, rigs) = playing(&[FigureKind::Hidalgo], AnimationState::Idle, 0.0);
+        let rig = rigs[0].1;
+        let person = app
+            .world_mut()
+            .query_filtered::<Entity, With<CharacterVisual>>()
+            .single(app.world())
+            .unwrap();
+        let weight =
+            |app: &App, clip: Clip| app.world().get::<Rig>(rig).unwrap().weights[clip.index()];
+        assert!(weight(&app, Clip::Idle) > 0.99 && weight(&app, Clip::IdleTalk) < 0.01);
+        // The game marks the speaker on its character entity.
+        app.world_mut().entity_mut(person).insert(Talking);
+        for _ in 0..30 {
+            app.update();
+        }
+        assert!(
+            weight(&app, Clip::IdleTalk) > 0.99,
+            "{}",
+            weight(&app, Clip::IdleTalk)
+        );
+        assert!(weight(&app, Clip::Idle) < 0.01);
+        app.world_mut().entity_mut(person).remove::<Talking>();
+        for _ in 0..30 {
+            app.update();
+        }
+        assert!(weight(&app, Clip::Idle) > 0.99 && weight(&app, Clip::IdleTalk) < 0.01);
+    }
+
+    #[test]
+    fn the_glance_turns_the_head_within_bounds_and_never_adds_up() {
+        let (mut app, rigs) = playing(&[FigureKind::Hidalgo], AnimationState::Idle, 0.0);
+        let rig = rigs[0].1;
+        let body = app.world().get::<ChildOf>(rig).unwrap().parent();
+        let (head, chest) = (
+            bone(app.world(), rig, "head"),
+            bone(app.world(), rig, "spine_03"),
+        );
+        // The head's turn about the body's up, from the chest's.
+        let yaw = |app: &App| {
+            let world = app.world();
+            let turn = |e: Entity| {
+                world
+                    .get::<GlobalTransform>(e)
+                    .unwrap()
+                    .to_scale_rotation_translation()
+                    .1
+            };
+            let to_body = turn(body).inverse();
+            let ahead = |q: Quat| {
+                let f = to_body * q * Vec3::Z;
+                f.z.atan2(f.x)
+            };
+            let d = ahead(turn(head)) - ahead(turn(chest));
+            (d + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
+        };
+        let mut aside = 0.0f32;
+        let mut ahead = Vec::new();
+        // A minute: several glances each way.
+        for _ in 0..1200 {
+            app.update();
+            let glance = app.world().get::<FigureBody>(body).unwrap().glance;
+            let y = yaw(&app);
+            aside = aside.max((y - ahead.first().copied().unwrap_or(y)).abs());
+            if glance.abs() < 0.005 {
+                ahead.push(y);
+            }
+        }
+        assert!(ahead.len() > 100, "{}", ahead.len());
+        // Looking ahead it is where it was each time: nothing builds up.
+        let (lo, hi) = ahead
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(l, h), y| (l.min(*y), h.max(*y)));
+        assert!(hi - lo < 0.1, "looking ahead from {lo} to {hi}");
+        // A glance turns it, never past the glance's reach (0.55 rad).
+        assert!(aside > 0.15 && aside < 0.65, "{aside}");
+    }
+
+    #[test]
+    fn the_poncho_stays_over_the_shoulder_and_arm_on_foot() {
+        for (animation, speed) in [
+            (AnimationState::Idle, 0.0),
+            (AnimationState::Walk, 6.0 / 3.6),
+            (AnimationState::Gallop, 5.0),
+        ] {
+            let (mut app, rigs) = playing(&[FigureKind::Protagonist], animation, speed);
+            let model = rigs[0].1;
+            let mut deepest = 0.0f32;
+            for _ in 0..30 {
+                app.update();
+                deepest = deepest.max(crate::character::rider::tests::poncho_in_arms(
+                    app.world_mut(),
+                    model,
+                ));
+            }
+            println!("{animation:?}: the poncho {deepest:.3} m into an arm");
+            assert!(
+                deepest < 0.005,
+                "{animation:?}: the poncho {deepest} m into an arm"
+            );
+        }
     }
 }

@@ -1,7 +1,7 @@
 //! Per-entity character visuals. Logic hands over a [`VisualPose`]; render
 //! decides how it looks: people on foot (see [`figure`](super::figure) and
-//! [`model`](super::model)) and saddled horses (see
-//! [`horse`](super::horse)); a rider's model on the horse comes later.
+//! [`model`](super::model)), saddled horses (see [`horse`](super::horse))
+//! and a rider in the saddle (see [`rider`](super::rider)).
 
 use bevy::app::AnimationSystems;
 use bevy::camera::visibility::VisibilitySystems;
@@ -17,6 +17,7 @@ use super::model::{
     CharacterModels, CharacterModelsShown, attach_model, dress_character, load_character_models,
     swap_in_character_models, toggle_character_models,
 };
+use super::rider::{pose_riders, seat_riders, spawn_riders};
 use super::rig::{drive_rigs, fit_rigs};
 use super::tack::{dress_tack, stretch_straps};
 
@@ -31,13 +32,14 @@ pub enum CharacterVisual {
     /// (The untacked horses loose in the corrals are fauna: see
     /// [`Animal::Horse`](crate::fauna::Animal::Horse).)
     Horse(Coat),
-    /// A person riding a saddled horse; the pose is the horse's. The
-    /// rider is not drawn yet.
+    /// A person riding a saddled horse; the pose is the horse's. Only a
+    /// rider with a model ([`model_name`](super::model::model_name)) is
+    /// drawn on it.
     Mounted { rider: FigureKind, coat: Coat },
 }
 
 /// The child entity a [`CharacterVisual`] draws with (a figure's or a
-/// horse's body). It and everything under it go
+/// horse's body, and a rider on the horse). It and everything under it go
 /// when the visual changes.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct VisualPart;
@@ -70,6 +72,8 @@ impl Plugin for CharacterVisualPlugin {
                     toggle_character_models,
                     swap_in_character_models,
                     swap_in_horses,
+                    spawn_riders,
+                    seat_riders,
                     read_reference,
                 )
                     .chain(),
@@ -83,7 +87,7 @@ impl Plugin for CharacterVisualPlugin {
             )
             .add_systems(
                 PostUpdate,
-                (fit_rigs, fit_horses)
+                (fit_rigs, fit_horses, pose_riders)
                     .chain()
                     .after(AnimationSystems)
                     .before(TransformSystems::Propagate),
@@ -145,6 +149,7 @@ fn attach_visuals(
                 body
             }
             CharacterVisual::Horse(coat) => spawn_horse(&mut commands, entity, coat, None),
+            // The rider is seated once the horse's scene spawns.
             CharacterVisual::Mounted { rider, coat } => {
                 spawn_horse(&mut commands, entity, coat, Some(rider))
             }

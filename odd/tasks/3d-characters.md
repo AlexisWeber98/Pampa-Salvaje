@@ -297,6 +297,371 @@ Tests removed with PR 1's driver: every `rig::tests::*` of the sabotage log
 below (posture, gait, foot IK, finger curl, breath) except the freeze test,
 which was rewritten on stand-in rigs.
 
+## Tasks (PR 2: the ridden horse), branch feat/character-clips after c008f59
+
+Route: one delegated writer (2+ non-trivial files: render horse, tack, gait,
+rider, rig, model, visual, livestock; core pose; game tests; the retarget
+tool; docs). `crates/core/src/lib.rs` was added to the allowed surfaces by the
+user, only to drop the re-exports of the deleted horse pose code.
+
+- [x] H1 Saddled horses are the Quaternius model (`character/horse.rs`),
+  driven from `VisualPose` and `HorseGait`:
+  - `CharacterVisual::Horse` and `::Mounted` spawn a `HorseBody` (turned to
+    the heading) holding a `HorseModel` that waits for the scene
+    (`HorsePending`), dressed by `dress_horse` with the corral horses' coat
+    code (`livestock::dress_meshes`, extracted);
+  - gaits: the idle, then the walk paced to the ground speed (stretched to
+    4.8 m/s), then the gallop; tied horses change idle (Idle, Idle_2,
+    Idle_Headlow), ridden ones stand still; the player's horse never freezes.
+  - Proof: `horse::tests::{the_idle_fades_into_the_stride_and_the_gallop_takes_over_outright,
+    the_walk_and_the_gallop_play_at_the_ground_speed_over_their_own,
+    a_ridden_horse_stands_still_and_a_tied_one_changes_idle,
+    the_long_gallop_keeps_its_hooves_still_up_to_its_fastest_unhurried_pace,
+    slowing_down_from_a_gallop_or_a_walk_never_folds_a_leg_or_sinks_a_hoof}`,
+    the coat tests, `visual::tests::a_saddled_horse_turns_to_its_heading_and_takes_its_gait_from_the_speed`.
+- [x] H2 Tack (`character/tack.rs`): sudadera, carona, two bastos, pellón,
+  cincha, crownpiece, noseband, cheekpieces and bit rings fitted to the
+  horse's own rest skin and skinned to its joints; reins (three stretches a
+  side: bit, jowl, neck, then the rider's left hand or the pommel) and
+  stirrup leathers stretched each frame; stirrups hanging from `Torso` or on
+  the rider's feet.
+  - Proof: the `tack::tests` (stand-in tube horse),
+    `horse::tests::{a_ridden_horse_wears_its_tack_and_carries_its_rider_on_its_back,
+    the_tack_and_the_rider_clear_the_horse_through_every_gait,
+    a_tied_horse_keeps_its_tack_and_reins_clear_through_every_idle}` (CPU
+    skinning through the clips).
+- [x] H3 The rider (`character/rider.rs`): the protagonist's model on the
+  `Torso` bone, playing `drive` (only), with two-bone IK legs to the stirrups
+  and arms to the reins, and spring-damped secondary motion (added after the
+  user's playtest, below).
+  - Proof: `rider::tests::*`,
+    `horse::tests::{at_the_gallop_the_rider_rides_the_half_seat_over_a_flexing_horse,
+    walking_the_rider_sits_deep_and_upright}`,
+    `rig::tests` (riders play only the seated clip).
+- [x] H4 Mount, dismount and tied horses; the procedural horse
+  (`HorseJoint`, `HorseShape`, `HorseKit`, painted parts, `spawn_horse` and
+  `update_horses`), the rigid rider (`FigureBody.seat`, `rider_offset`, the
+  rider branch of `update_figures`), the horse face texture and finishes,
+  and pampa-core's horse and riding pose maths (`horse_pose`, `HorseAngles`,
+  `Leg`, `leg_offsets`, `duty`, `in_stance`, `horse_cadence`,
+  `horse_advance`, `riding_pose`, `ear_flick`, `tail_swish`,
+  `JointAngles.spread`) are deleted. `HorseGait` stays.
+  - Fallback: nothing is drawn until the horse's scene has loaded (it loads
+    at startup, long before anyone mounts); no rigid stand-in.
+  - `models off` now only swaps the people on foot back to rigid figures.
+  - Proof: `horse::tests::getting_off_leaves_nothing_of_the_horse_and_getting_on_again_seats_the_rider`,
+    `visual::tests::mounting_swaps_the_figure_for_one_saddled_horse_and_back`,
+    `model::tests::the_toggle_puts_models_on_people_on_foot_and_leaves_riders_to_their_horse`,
+    game `errand::mounting_swaps_the_clerk_figure_for_one_horse_and_rider_and_nothing_else`.
+- [x] H5 Review follow-ups:
+  - Talking: `rig::tests::whoever_is_marked_talking_talks_with_their_hands_and_stops_when_unmarked`;
+  - every key checked for chest clearance (a reach is tried on every fifth
+    key first, `CLEAR_EVERY`, then on all); the shipped GLB rebuilds byte
+    for byte;
+  - `--model` errors are one-line `RetargetError`s (no numpy, JSON, UTF-8,
+    shape);
+  - the measures dict is updated;
+  - the docstring names numpy for `--model`;
+  - the output is written atomically (`write_atomically`);
+  - `leg_length(skeleton, calf, foot)` has no unused parameter and is the
+    one leg measure (the clearance used two inline copies);
+  - `rig::tests::the_glance_turns_the_head_within_bounds_and_never_adds_up`.
+  - Proof: py `FollowUps.*` (5 tests).
+- [x] H6 Tests with sabotages (log below), previews, docs (this file,
+  `README.md`, `assets/characters/README.md`, `tools/README.md`, module docs).
+
+## Playtest of the work in progress (user, 2026-10-25)
+
+"The horse looks beautiful, the tack too, and the walk is spectacular." Three
+problems, then two more:
+
+- [x] P4 The gallop read frantic (the clip's 2.3 m stride at about 3x).
+- [x] P5 Slowing down folded the legs (gallop to walk, and walk to idle).
+- [x] P6 The rider was "harder than Maradona at an electronic party".
+- [x] P7 The galloping body moved "all in one piece".
+- [x] P8 Second playtest: "the gallop is beautiful", the rider "still a bit
+  stiff" (the wrist motion liked): the gallop seat reworked to the
+  half-seat (riding references: two-point / galloping position; the
+  gaucho's one hand on the reins).
+- [x] P9 Third playtest: one hand on the reins confirmed. The poncho folded
+  over the left shoulder went through the shoulder and upper arm (on foot
+  too: 4 cm deep in the idle); the free right arm was rigid.
+
+## Decisions (PR 2, 2026-10-25)
+
+- **Measured speeds.** Hoof (toe) slide while planted, pooled over the four
+  hooves: the walk clip 1.25 m/s (the corral horses' `HORSE_WALK_SPEED`; the
+  hind hooves slide back at about 1.4, the fore at 0.85), the gallop clip
+  3.94 m/s by the same pooled mean (4.46 by the median toe slide the tests
+  use). The stretched gallop shows 7.3 m/s (`GALLOP_SPEED`, checked by
+  `the_long_gallop_…`).
+- **Gaits.** The idle fades into the stride over 0.05–0.6 m/s. The walk and
+  the gallop change outright with hysteresis (gallop above 4.8 m/s, back to
+  the walk below 4.2), never held half and half; the weights ease at 12/s and
+  the incoming clip is seeked in step (the left hind striking:
+  `WALK_FROM_GALLOP`). Walk rate up to 3.9x (4.8 m/s); gallop rate 0.5–2.0x.
+  Slide: none to speak of up to 14.6 m/s (12.2 m/s: about 0.1 m/s at 1.67x);
+  the 19.4 m/s turbo slides about 4.6 m/s (accepted, dev only).
+- **Why the legs folded (P5).** Bevy weighs a bone's property only among the
+  clips that animate it, and the horse's clips animate different sets (the
+  back's translation and rotation, the hooves' IK targets, the ears, the
+  tail's root): a fading clip kept those at full strength. `gait::PARTIAL`
+  lists the 24 such properties (checked against the GLB); each is eased to
+  its rest by the weight of the clips that do not animate it. The same
+  effect made a rider's zero-weight `drive` clip disturb walkers, so riders
+  play only `drive` and walkers never play it.
+- **The long gallop (P4, P7).** Each upper leg bone's swing about its mean
+  over the gallop loop (`GALLOP_MEANS`, measured on the GLB) is stretched
+  1.4x, as far as its leg's end stays above the ground. Phase-locked to the
+  loop: the croup pitches ±7° (lowest as the hind legs gather, at 0.57 of the
+  loop), the back bones bend against it so the withers pitch the other way,
+  the neck pumps, the head undoes half, the hips roll and yaw a little and
+  the tail lags a fifth of a loop. `Torso` and `Tail1` (no clip moves them)
+  are put back at rest first each frame.
+- **Hooves.** The model's hooves hang from IK targets, not from the legs.
+  Each frame they are put on their leg's end (blends weigh legs and targets
+  apart), never below where they would stand; a leg a blend reaches below
+  the ground is folded at the knee or hock just enough.
+- **Seat.** The rider hangs from `Torso` (it follows the saddle area like
+  `Back`; `Back` is the croup). The pelvis is held 0.13 m above the
+  pellón's top at x = -0.02 (the lowest point of the back). IK targets in the
+  rider's space: ankles ±0.32 m out, 0.69 m down, 0.1 m ahead; knees bend
+  forward and out; rein hand at (0.05, 0.18, 0.32), on the pommel (0.06,
+  -0.02, 0.22) after 3 s still; right hand on the thigh.
+- **Rider motion (P6, P8).** Critically damped springs (exact, frame-rate
+  independent). The seat's height and the saddle's pitch and roll are
+  smoothed (4 rad/s); the spine counters 95% of the pitch and 60% of the
+  roll beyond that (nearly at once: a lag at the gallop's 17 rad/s put the
+  torso out of step). Walking the rider sits deep and upright (the seat on
+  the pellón within 5 mm, the shoulders within 8° of over the hips), the
+  back rounding 1.2 rad a meter of rise. Galloping it rides the half-seat
+  (`HALF_SEAT`, eased in by a spring): the seat hovers 6 cm over its
+  smoothed path, which takes the saddle's bounce out (the gap runs 1.7–10
+  cm, never below 0), 10 cm forward over the knees; the stirrups are taken
+  up a hand (`GALLOP_ANKLES`; the leathers follow the feet) so the knees
+  bend about 105° (97–114°) and flex each stride; the heels sink, more as
+  the seat comes down; the lean is 0.5 rad on top of the clip's 5° lean
+  back, 70% from the hips (a flat back), about 20° from the vertical; the
+  head keeps the pitch it had sitting down (85% at once, 15% late), so it
+  pitches 0.04 rad against the saddle's 0.08 and rises 0.077 m against the
+  saddle's 0.11. The rein hand rides over the withers (`GALLOP_HAND`) and
+  follows 85% of the bit (35% walking): the hand-to-bit distance stays
+  within 2 cm, the elbow opening (85–127°) as the head goes forward. The
+  right hand rests by the thigh, swinging a little. Braking leans back.
+  Idle: after 3 s the rein hand settles on the pommel, the weight shifts
+  (±0.035 rad, 7–9 s) and the head glances. The rider's head stays at least
+  0.8 m from the horse's head and neck.
+- **The free arm (P9).** Spring-driven (7 rad/s, so it lags off the
+  torso): its hand rests on the thigh as if holding a rebenque
+  (`THIGH_HAND`, the elbow bent about 50° walking), sways with the horse's
+  roll and pitch walking, swings and lifts with the gallop's rise and pitch
+  (up to `FREE_REACH`, 12 cm; the elbow flexing 108° ± 10°), comes forward
+  toward the pommel braking, and standing still now and then goes up to the
+  hat's brim (a seeded, eased moment every 15–25 s). Both shoulders shrug
+  late with the saddle's motion (`SHRUG`). The rein hand sits a little to
+  the left of the pommel with its elbow carried out, clear of the poncho.
+  Measured: at the gallop the free elbow moves 19° and the hand 7 cm, at the
+  walk 9° and 1 cm; the hand stays at least 20 cm off the horse and the
+  saddle.
+- **The poncho (P9).** `tools/mh2gltf.py` `clear_arms`: out from the
+  shoulder joint (no more than 7 cm in from it), every poncho vertex within
+  2.5 cm of the dressed upper arm (a capsule to just past the elbow) is
+  pushed straight out to it and takes up to 90% of the upper arm's weight,
+  fading over 15 cm, so the poncho rides on the deltoid. The chest is left
+  as it was, so the clips' chest clearance and `humanoid.glb` are
+  unchanged (rebuilt byte for byte). The protagonist was reconverted
+  (`model.bin` and `model.gltf` changed; `--check` passes). The CPU-skinned
+  check (`cpu::poncho_in_arms`) finds no poncho point inside an upper arm
+  (beyond the armpit) on foot (idle, walk, jog) or riding (idle, walk,
+  gallop); without the fix it is 4 cm.
+- **Tack fitting.** Each layer is a grid of rays from an axis inside the body
+  (the barrel's along X at 1.14 m; the head's from behind the poll to the
+  muzzle); the inner face stands off the first hit, the vertices take the
+  hit triangle's blended weights, and the tack's own inverse bind poses are
+  the joints' body-frame rests inverted, so its vertices are in the body
+  frame. Offsets (sudadera 16 mm … pellón 97 mm on top) and lengths were set
+  by CPU-skinned clearance through the clips: the saddle's back edge was
+  pulled forward off the hips (the stretched gallop moves them), the
+  crownpiece stops at the cheeks (below, the head runs into the neck), and
+  the reins run bit → jowl → neck so no stretch cuts the head or neck in any
+  gait or idle. Tied horses do not crop the ground: the reins over the
+  pommel would cut the neck.
+- **Respawned scenes.** In parallel test runs the horse's scene was
+  sometimes spawned again (Bevy re-adds the asset and sends
+  `AssetEvent::Modified`): `dress_tack` despawns the carrier's old
+  `HorsePiece`s first, so a horse is always dressed once; the rider is
+  spawned hidden and shown only once `pose_riders` has posed him, so a
+  respawned seat never shows a T-pose for a frame. The real-asset fixtures
+  wait for the rig to keep one player for 10 frames with no `WorldAsset`
+  event, and the tests resolve bones by name every frame.
+- **Split-friendly modules.** The horse (`horse.rs`, `gait.rs`), its tack
+  (`tack.rs`: `dress_tack` observer, `Tack`) and the rider (`rider.rs`:
+  `spawn_riders` on `Changed<Tack>`, `seat_riders`, `pose_riders`) each own
+  their systems and real-asset tests, so the work can be committed as the
+  horse, then the tack, then the rider. The clearance metric counts only
+  points within 10 cm of the nearest triangle (beyond that the sign of the
+  nearest triangle is meaningless, e.g. the hat's brim over the mane).
+
+## Sabotage log, PR 2
+
+Each test below was failed on purpose by the sabotage listed (one source
+snippet replaced, the test run, the file restored byte for byte; a script
+checked each restore, and `git diff --stat` was checked after each batch).
+
+| Test | Sabotage → result |
+|---|---|
+| `a_ray_from_inside_meets_the_skin…` | barycentric weights rotated → fails |
+| `a_shell_lies_its_offset_off_the_body…` | shell twice as thick → fails |
+| `the_saddle_layers_nest…` | pellón offset under the carona → fails |
+| `the_fittings_are_found_on_the_body…` | hanging stirrup against the barrel → fails |
+| `a_strap_runs_from_one_end…` | strap centred on one end → fails |
+| `two_bones_reach_the_target…` | end short of the target → fails |
+| `the_upper_bone_keeps_its_twist…` | upper bone by the shortest arc only → fails |
+| `a_placement_composes_like_the_transforms…` | child offset not turned → fails |
+| `the_rider_faces_the_horses_front…` | rider faces backward → fails |
+| `a_spring_eases_without_overshoot…` | first-order lag, not the spring → survived; strengthened (the exact critically damped curve and a gentle start), then failed |
+| `a_property_the_fading_clips…` | blend toward the clip, not rest → fails |
+| `the_partial_table_is_the_files…` | a wrong mask → fails |
+| `a_stretched_swing_reaches_further…` | stretch adds instead of scaling → fails |
+| `the_croup_and_the_withers_pitch…` | withers pitch with the croup → fails |
+| `every_coat_looks_different…` | bayo the alazán's colour → fails |
+| `the_bayo_has_black_points…` | no dorsal stripe → fails |
+| `the_overo_shows_white_patches…` | no white blobs → fails |
+| `the_tordillo_is_dappled…` | no dapples → fails |
+| `coats_are_seeded_deterministically…` | only two coats → fails |
+| `the_idle_fades_into_the_stride…` | no hysteresis → fails |
+| `the_walk_and_the_gallop_play_at_the_ground…` | gallop capped at the walk's 3.9 → fails |
+| `a_ridden_horse_stands_still…` | any rider never freezes → fails |
+| `a_ridden_horse_wears_its_tack…` (since split) | stirrups on the shins → fails |
+| `the_tack_and_the_rider_clear…` (since split) | sudadera sunk 1 cm → fails |
+| `a_tied_horse_keeps_its_tack_and_reins…` | reins on the neck's skin → fails |
+| `the_long_gallop_keeps_its_hooves…` | the clip's own speed → fails |
+| `slowing_down_from_a_gallop…` | blend left to Bevy → fails |
+| `at_the_gallop_the_back_bends…` (since replaced) | seat gives nothing back → survived; a seat-gives assertion was added, then failed; the test was later replaced by the half-seat test |
+| `at_the_gallop_the_back_bends…` | no articulation → fails |
+| `getting_off_leaves_nothing…` | reins never rewired → fails |
+| `mounting_swaps_the_figure_for_one_saddled…` | rider dropped → fails |
+| `a_saddled_horse_turns_to_its_heading…` | never turns → fails |
+| `the_toggle_puts_models_on_people…` | a model on the mounted figure too → fails |
+| `materials_differ_by_kind…` | skin rougher than cloth → fails |
+| `a_planted_foot_slides_back…` | rate always 1 → fails |
+| `whoever_is_marked_talking…` | talking ignored → fails |
+| `the_glance_turns_the_head…` | glance quadrupled → fails |
+| game `mounting_swaps_the_clerk_figure…` | rider dropped (game) → fails |
+| core `the_motion_clock_wraps…` | period not a multiple of the glance cycles → fails |
+| py `every_key_is_checked…` | sampled keys only → fails |
+| py `a_cleared_walk_keeps_its_reach…` | measures replaced → fails |
+| py `a_bad_model_is_a_one_line_error…` | raw exceptions → fails |
+| py `the_output_is_written_whole…` | written in place → fails |
+| py `the_leg_is_the_thigh_and_the_shin…` | thigh only → fails |
+| `at_the_gallop_the_back_bends…` (since replaced) | spine never counters → survived; superseded by the half-seat test's head-pitch check |
+| `at_the_gallop_the_rider_rides_the_half_seat…` | seat rides the saddle's bounce → fails |
+| `at_the_gallop_the_rider_rides_the_half_seat…` | seat slams 5 cm into the saddle → fails |
+| `at_the_gallop_the_rider_rides_the_half_seat…` | seat over the neck → fails |
+| `at_the_gallop_the_rider_rides_the_half_seat…` | long stirrups in the half-seat → fails |
+| `at_the_gallop_the_rider_rides_the_half_seat…` | head not levelled → fails |
+| `at_the_gallop_the_rider_rides_the_half_seat…` | hand does not follow the mouth → fails |
+| `at_the_gallop_the_rider_rides_the_half_seat…` | no lean in the half-seat → fails |
+| `at_the_gallop_the_rider_rides_the_half_seat…` | no articulation → fails |
+| `walking_the_rider_sits_deep…` | seat floats walking → fails |
+| `walking_the_rider_sits_deep…` | leaning far forward walking → survived at 12°; the bound tightened to 8°, then failed |
+| `the_free_arm_swings_with_the_gallop…` | free hand held still → fails |
+| `the_free_arm_swings_with_the_gallop…` | no sway walking → fails |
+| `the_free_arm_swings_with_the_gallop…` | free hand down in the saddle → fails |
+| py mh2gltf `test_the_poncho_is_kept_off_the_upper_arm_and_rides_on_it` | no push off the arm → fails; no arm share → fails; chest pushed too → survived (the chest strip lay out of reach), moved to the armpit, then failed |
+| `the_riders_poncho_stays_over_his_shoulder_and_arm`, `rig::the_poncho_stays_over_the_shoulder_and_arm_on_foot` | the protagonist reconverted without `clear_arms` → both fail (4 cm); the converter and the model restored and checked with `cmp` |
+
+Re-run after the tests moved into `tack.rs` and `rider.rs` (renamed,
+split, and the respawn-safe fixtures), plan 8, every one failed:
+
+| Test | Sabotage → result |
+|---|---|
+| `tack::a_saddled_horse_wears_its_tack_on_its_own_joints` | one bit ring only → fails |
+| `tack::the_tack_clears_the_horse_through_every_gait` | sudadera sunk on top → fails |
+| `tack::a_tied_horse_keeps_its_tack_and_reins_clear…` | reins on the neck's skin → fails |
+| `rider::a_rider_sits_on_the_horses_torso…` | stirrups on the shins → fails; `spawn_riders` never spawns → fails |
+| `rider::the_rider_clears_the_horse_through_every_gait` | stirrups 12 cm out, against the barrel → fails |
+| `rider::at_the_gallop_the_rider_rides_the_half_seat` | bounce, slam, over the neck, long stirrups, head not levelled, hand not following, no lean → each fails |
+| `horse::the_galloping_horse_bends_its_back_through_the_stride` | no articulation (`CROUP` 0) → fails |
+| `rider::walking_the_rider_sits_deep_and_upright` | seat floats 3 cm; leaning far forward → each fails |
+| `rider::the_free_arm_swings_with_the_gallop…` | hand held still; no walk sway; hand down in the saddle → each fails |
+| `rider::getting_off_leaves_nothing…` | reins never rewired → fails |
+| `rider::the_riders_poncho_stays…`, `rig::the_poncho_stays…on_foot` | protagonist reconverted without `clear_arms` (a scratch copy of the converter) → both fail; the model restored from a saved copy, `cmp` identical; the unpatched converter reproduces it byte for byte |
+
+RED before code: none observed; the tests were written with the code, so
+they carry sabotage evidence instead.
+
+Tests removed with the procedural horse and rider: `horse::tests::{a_criollo_stands_about_one_forty_five_at_the_withers_on_its_hooves,
+a_horse_has_ps1_to_ps2_era_detail, shade_gathers_under_the_belly_between_the_legs_and_under_the_saddle,
+horse_parts_have_their_finishes, the_rider_sits_on_the_pellon_with_feet_in_the_stirrups}`,
+`visual::tests::{the_rider_moves_with_the_horses_gait, a_tied_horse_stands_saddled_and_breathes}`,
+`finish::tests::horse_faces_have_eyes_nostrils_and_fitting_markings`, and
+core `pose::tests::{the_walk_has_four_evenly_spaced_beats, the_trot_moves_diagonal_pairs_together,
+the_gallop_has_a_suspension_and_reaches_further, legs_fold_while_in_the_air_and_never_bend_the_wrong_way,
+a_standing_horse_breathes_and_rests_one_hind_leg, the_horse_cadence_follows_speed_whatever_the_frame_rate,
+horses_flick_their_ears_and_swish_their_tails, a_rider_sits_astride_with_hands_at_the_reins}`.
+The coat tests were rewritten on stand-in surface points (the procedural
+horse they sampled is gone); `rig::…a_planted_foot…` samples 120 frames
+instead of 60 (its 60 depended on the seeded phase).
+
+## Verification (2026-10-25, PR 2)
+
+- `python3 -I -B -m unittest discover -s tools`: 112 passed (real packs present; `humanoid.glb` rebuilds byte for byte)
+- `python3 -I tools/mh2gltf.py --check assets/characters/protagonist/model.gltf`: ok
+- `cargo test -p pampa-core`: 344 passed (8 horse/rider pose tests removed with their code)
+- `cargo test -p pampa-content`: 32 passed
+- `cargo test -p pampa-render`: 292 passed, 1 ignored (the preview dump), six runs in a row
+- `cargo test -p game`: 118 passed
+- `cargo build -p game`: ok
+- `cargo fmt --all -- --check`: ok
+- `cargo clippy --workspace --all-targets -- -D warnings`: ok
+
+Split into three commits (user, 2026-10-25), each state assembled in the
+scratchpad from `git archive HEAD` and checked with a scratch
+`CARGO_TARGET_DIR` (never the repo's `target/`; one target reused in turn,
+every `.rs` touched first so each state rebuilt): fmt, `cargo build -p
+game`, `cargo test --workspace --no-fail-fast`, clippy `-D warnings` and
+the tools tests all pass.
+
+| Commit | Content | Changed lines | Tests (core, content, render, game; py) |
+|---|---|---|---|
+| 1 | the horse model, gaits, the gallop, the core cleanup (no tack, no rider drawn) | 4,135 (+2,037 −2,098) | 344, 32, 269, 118; 106 |
+| 2 | the tack | 1,658 | 344, 32, 277, 118; 106 |
+| 3 | the rider, the free arm, the poncho fix, the H5 tools follow-ups, the docs | about 2,450 | 344, 32, 292, 118; 112 |
+
+Commit 1 is over the ~3,500 guide because of `horse.rs`'s rewrite (2,237,
+half deletions) and the core's deletions (496). With the core cleanup moved
+to commit 2 (also checked) it is 3,637 and commit 2 is 2,156. The third
+state equals the working tree. Steps 1 and 2 carry small variants of
+`horse.rs`, `mod.rs`, `visual.rs`, `model.rs`, `tack.rs` and `rig.rs`
+(docs and wiring without the later modules; `rig.rs` there is the base
+with the planted-foot test's 120 frames).
+
+Previews (CPU-skinned in Rust by the ignored test
+`horse::tests::preview_saddled_horses`, rasterized offline) are in the
+session scratchpad `prev/`: `gallop_side.png` (a 16-frame loop),
+`gallop_q34.png`, `seat_side.png` (the half-seat over a stride and the
+walk seat), `seat_q34.png`, `slowdown_side.png` (12.2 m/s braking at 8 m/s² to a
+stand), `walkstop_side.png`, `walk_side.png`, `rider.png`,
+`rider_front34.png`, `arms_front34.png` and `arms_side.png` (the torso and
+arms at idle, settled, walking and galloping, the poncho on the left
+shoulder), and the first pass `idle.png`, `zoom.png`. Nothing was
+checked in game by the writer.
+
+## Next step (PR 2)
+
+- The user commits the three commits (patches and commands in the
+  writer's report), then the native review per commit.
+- In game: ride Don Hidalgo's bayo (walk, the trot band at 4–5 m/s, the
+  gallop, braking), look at the tack from the side and the front, the reins
+  in the left hand, the rider's give at the gallop, dismount and remount, and
+  a tied horse in another town. Watch the gallop's legs at the hand-off and
+  the hooves at the stretched reach.
+- Possible follow-ups: textures on the preview's rider (the renderer only);
+  no terrain IK for the hooves; townsfolk riders have no model, so a mounted
+  townsperson would ride an empty saddle.
+- Then PR 3, townsfolk (T7, T8).
+
 ## Tasks (PR 1)
 
 - [x] T1 Bone driver: `crates/render/src/character/rig.rs`.
@@ -466,6 +831,9 @@ Nothing was checked in game yet.
   continues on `feat/character-clips`, from origin/main. The review's three
   findings (probe, camera, synthetic tests) are folded into C2/C3.
 - 2026-10-24: option B (C1–C3) implemented, uncommitted: the user commits.
+- 2026-10-25: PR 2 (H1–H6) implemented on `feat/character-clips`, with the
+  user's playtest fixes (P4–P8), uncommitted: the user commits. Native
+  review pending, under the user's RDD switch.
 
 ## Verification (2026-10-24, option B)
 

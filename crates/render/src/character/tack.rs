@@ -22,7 +22,7 @@
 //!   between two points on different bones, stretched after the transforms
 //!   are worked out each frame ([`stretch_straps`]).
 //! - **Stirrups**: on a horse without a rider they hang from the saddle; a
-//!   seated rider's feet will carry them.
+//!   seated rider's feet carry them (see [`rider`](super::rider)).
 //!
 //! The shells and rings are built once, from the first horse dressed, and
 //! shared by every horse ([`TackKit`]); each horse only spawns entities.

@@ -1710,6 +1710,64 @@ def inherit(piece, body, joints):
     return piece
 
 
+# How the poncho clears the arm it lies over: how far outside the upper
+# arm's surface it is kept (decimeters), and how much of the upper arm's
+# turn it takes where it lies on it, fading out over how far from it.
+ARM_CLEARANCE = 0.25
+ARM_SHARE = 0.9
+ARM_REACH = 1.5
+
+
+def clear_arms(piece, body, sides=("l", "r")):
+    """``piece`` kept off the upper arms and over the shoulders: every
+    vertex within ``ARM_CLEARANCE`` of an upper arm's surface (a capsule
+    from the shoulder joint to just past the elbow, as thick as the dressed
+    arm round its middle) is pushed straight out to it, and the vertices near it take
+    up to ``ARM_SHARE`` of the upper arm's weight, fading over
+    ``ARM_REACH``, so the folded poncho rides on the deltoid as the arm
+    swings under it instead of going through it. Only what lies out from
+    the shoulder joint moves (the chest is left as it was). Pieces near no
+    arm are unchanged."""
+    order = list(body.rig.order)
+    coords, weights = piece.coords.copy(), piece.weights.copy()
+    for side in sides:
+        upper, lower = f"upperarm_{side}", f"lowerarm_{side}"
+        if upper not in order or lower not in order:
+            continue
+        a, b = body.at(upper), body.at(lower)
+        along = b - a
+        arm = body.select({upper})
+        if not len(arm) or not along.any():
+            continue
+
+        def place(p):
+            t = (p - a) @ along / (along @ along)
+            near = a + np.clip(t, 0.0, 1.0)[:, None] * along
+            return t, near, np.linalg.norm(p - near, axis=1)
+
+        t, _, d = place(arm)
+        middle = (t > 0.3) & (t < 0.7)
+        if not middle.any():
+            continue
+        radius = float(np.median(d[middle]))
+        t, near, d = place(coords)
+        # Past the elbow a little too (the poncho's end hangs by it), and
+        # only out from the shoulder joint (within 7 cm of it):
+        # the chest in front stays as it is.
+        outer = np.abs(coords[:, 0]) >= abs(a[0]) - 0.7
+        on = (t >= 0.0) & (t <= 1.2) & outer
+        push = on & (d < radius + ARM_CLEARANCE) & (d > 1e-9)
+        coords[push] = near[push] + (coords[push] - near[push]) * ((radius + ARM_CLEARANCE) / d[push])[:, None]
+        d = np.where(push, radius + ARM_CLEARANCE, d)
+        share = ARM_SHARE * np.clip(1.0 - (d - radius - ARM_CLEARANCE) / ARM_REACH, 0.0, 1.0)
+        share = np.where((t >= -0.2) & (t <= 1.3) & outer, share, 0.0)
+        k = order.index(upper)
+        weights *= (1.0 - share)[:, None]
+        weights[:, k] += share
+    piece.coords, piece.weights = coords, weights
+    return piece
+
+
 def plain(name, color, roughness=0.9, metallic=0.0, double_sided=True, pattern=None):
     m = Material(name)
     m.color = list(color) + [1.0]
@@ -2184,7 +2242,7 @@ def generate(character, body, rig):
         elif kind == "poncho":
             coords, tris, texco = make_poncho(body, settings, n)
             out.append(made("poncho", plain("poncho", color, 0.92, pattern="poncho"), coords, tris, "spine_03", rig, texco))
-            out[-1] = inherit(out[-1], body, SKIN_FROM["poncho"])
+            out[-1] = clear_arms(inherit(out[-1], body, SKIN_FROM["poncho"]), body)
         elif kind == "lapels":
             coords, tris = make_lapels(body, settings, n)
             out.append(made("lapels", plain("lapels", color, 0.6), coords, tris, "spine_03", rig))

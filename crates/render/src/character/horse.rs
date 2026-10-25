@@ -10,7 +10,9 @@
 //! its meshes the coat and the props' shared range, as the corral horses'
 //! do, and finds the bones the gaits drive ([`gait`](super::gait)). The
 //! same scene event puts the tack on ([`tack`](super::tack): the skinned
-//! recado and bridle, the stirrups and the straps).
+//! recado and bridle, the stirrups and the straps), and once the tack is on
+//! a rider with a model sits on its `Torso` bone ([`rider`](super::rider)),
+//! so he rises, pitches and turns with the horse's own clip.
 //!
 //! [`drive_horses`] plays the clips: the idle, then the walk paced to the
 //! ground speed up to about 4.5 m/s (there is no trot clip), then the

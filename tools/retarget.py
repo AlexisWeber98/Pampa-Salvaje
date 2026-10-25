@@ -2,7 +2,9 @@
 """Retarget Quaternius' Universal Animation Library clips to MakeHuman's
 ``game_engine`` skeleton, into one shared animation GLB.
 
-Standard library only; run it isolated: ``python3 -I tools/retarget.py``.
+Standard library only, but for the optional ``--model`` chest check, which
+uses numpy (as ``tools/mh2gltf.py`` does); run it isolated:
+``python3 -I tools/retarget.py``.
 The inputs are treated as untrusted data: they are parsed (with
 ``glbtrim``'s bounded GLB reader), never executed, and every index, name
 and number is checked. See tools/README.md.
@@ -128,6 +130,8 @@ ARM_OUT = 10.0
 # by the least multiple of ``REACH_STEP`` (meters) that clears every model
 # given with ``--model`` (see ``Clearance`` and ``Retargeter.reach_out``).
 CLEAR = ("idle_fold_arms", "idle_talk")
+# Every this many keys a reach is tried on first (see Retargeter.cleared).
+CLEAR_EVERY = 5
 CLEARANCE = 0.015
 REACH_STEP = 0.005
 REACH_MAX = 0.2
@@ -405,8 +409,9 @@ class Skeleton:
         return rot, pos
 
 
-def leg_length(skeleton, thigh, calf, foot):
-    """Hip to ankle along the bones, meters."""
+def leg_length(skeleton, calf, foot):
+    """Hip to ankle, meters: the rest offsets of the knee (`calf`, the
+    thigh's length) and of the ankle (`foot`, the shin's)."""
     return length(skeleton.rest_t[skeleton.find(calf)]) + length(skeleton.rest_t[skeleton.find(foot)])
 
 
@@ -509,8 +514,8 @@ class Retargeter:
         self.s_rest_r, self.s_rest_p = sk.world()
         self.t_rest_r, self.t_rest_p = tk.world()
         self.reference = self._reference()
-        self.ratio = leg_length(tk, "thigh_l", "calf_l", "foot_l") / leg_length(
-            sk, source.map["thigh_l"], source.map["calf_l"], source.map["foot_l"]
+        self.ratio = leg_length(tk, "calf_l", "foot_l") / leg_length(
+            sk, source.map["calf_l"], source.map["foot_l"]
         )
 
     def _under_root(self, k):
@@ -727,16 +732,21 @@ class Retargeter:
     def cleared(self, keys, clearance):
         """`keys` with the arms brought forward by the least distance that
         keeps the forearms and hands of every `clearance` model in front of
-        its chest, and that distance."""
+        its chest at every key, and that distance. Each distance is first
+        tried on every ``CLEAR_EVERY``-th key, which rules most out
+        cheaply, then on them all."""
         tk = self.target
         root = self.t_rest_r[self.root]
         places = [add(qrot(root, p), self.t_rest_p[self.root]) for _, _, p in keys]
-        sample = range(0, len(keys), 5)
         steps = int(round(REACH_MAX / REACH_STEP))
+
+        def clear(ahead, sample):
+            poses = [(self.reach_out(keys[k][1], places[k], ahead), keys[k][2]) for k in sample]
+            return clearance.clear(tk, poses)
+
         for step in range(steps + 1):
             ahead = step * REACH_STEP
-            poses = [(self.reach_out(keys[k][1], places[k], ahead), keys[k][2]) for k in sample]
-            if clearance.clear(tk, poses):
+            if clear(ahead, range(0, len(keys), CLEAR_EVERY)) and clear(ahead, range(len(keys))):
                 break
         else:
             raise RetargetError(f"no reach up to {REACH_MAX} m keeps the arms out of the chest")
@@ -773,10 +783,10 @@ class Retargeter:
             measures["reach"] = round(ahead, 4)
         if locomotion:
             speed = ground_speed(self.source, times, posed, drift)
-            measures = {
-                "ground_speed": round(speed * self.ratio, 4),
-                "stride": round(speed * self.ratio * span, 4),
-            }
+            measures.update(
+                ground_speed=round(speed * self.ratio, 4),
+                stride=round(speed * self.ratio * span, 4),
+            )
         return keys, measures
 
 
@@ -798,10 +808,19 @@ class Clearance:
     every index checked."""
 
     def __init__(self, paths):
-        import numpy as np
-
+        try:
+            import numpy as np
+        except ImportError as e:
+            raise RetargetError(f"--model needs numpy: {e}") from None
         self.np = np
-        self.models = [self._read(path) for path in paths]
+        self.models = []
+        for path in paths:
+            try:
+                self.models.append(self._read(path))
+            except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as e:
+                # One line, like every other bad input (a malformed file's
+                # JSON or text, or an accessor that is not whole vectors).
+                raise RetargetError(f"{path}: {type(e).__name__}: {e}".splitlines()[0]) from None
 
     def _read(self, path):
         np = self.np
@@ -854,7 +873,7 @@ class Clearance:
         firm = weights.max(axis=1) >= ARM_FIRM
         arm = np.array([n.startswith(ARM_BONES) for n in strongest]) & firm
         torso = np.array([n in TORSO_BONES for n in strongest])
-        leg = length(skeleton.rest_t[skeleton.find("calf_l")]) + length(skeleton.rest_t[skeleton.find("foot_l")])
+        leg = leg_length(skeleton, "calf_l", "foot_l")
         return {
             "name": os.path.basename(os.path.dirname(path)) or path,
             "skeleton": skeleton,
@@ -933,7 +952,7 @@ class Clearance:
         """Whether every model's forearms and hands clear its chest in each
         of `poses` (local rotations by `target` node, pelvis local place)."""
         k = target.find("pelvis")
-        reference = (target.rest_t[k], length(target.rest_t[target.find("calf_l")]) + length(target.rest_t[target.find("foot_l")]))
+        reference = (target.rest_t[k], leg_length(target, "calf_l", "foot_l"))
         for local, pelvis in poses:
             named = {target.names[i]: q for i, q in local.items()}
             for model in self.models:
@@ -1063,7 +1082,7 @@ def build(sources, target, clips=CLIPS, clearance=None):
         "bufferViews": views,
         "accessors": accessors,
         "extras": {
-            "leg_length": round(leg_length(tk, "thigh_l", "calf_l", "foot_l"), 6),
+            "leg_length": round(leg_length(tk, "calf_l", "foot_l"), 6),
         },
     }
     return doc, bytes(blob), summary
@@ -1075,6 +1094,25 @@ def read_file(path, limit):
     if len(data) > limit:
         raise RetargetError(f"{path}: over {limit} bytes")
     return data
+
+
+def write_atomically(path, data):
+    """Writes `data` to `path` all at once: into a new file beside it, then
+    renamed over it, so a failed or interrupted run never leaves half a
+    file (the old one stays as it was)."""
+    temporary = f"{path}.{os.getpid()}.tmp"
+    try:
+        with open(temporary, "xb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.remove(temporary)
+        except OSError:
+            pass
+        raise
 
 
 def main(argv=None):
@@ -1102,15 +1140,18 @@ def main(argv=None):
         print(f"retarget: {e}", file=sys.stderr)
         return 1
     data = glbtrim.write_glb(doc, blob)
-    with open(args.output, "wb") as f:
-        f.write(data)
+    try:
+        write_atomically(args.output, data)
+    except OSError as e:
+        print(f"retarget: {e}", file=sys.stderr)
+        return 1
     print(f"{args.output}: {len(data)} bytes, {len(summary)} clips")
     for game, kind, name, duration, count, measures in summary:
         extra = ""
         if "ground_speed" in measures:
             extra = f"  {measures['ground_speed']:.3f} m/s, stride {measures['stride']:.3f} m"
         if "reach" in measures:
-            extra = f"  arms {100 * measures['reach']:.1f} cm forward to clear the chests"
+            extra += f"  arms {100 * measures['reach']:.1f} cm forward to clear the chests"
         print(f"  {game:<15} {kind} {name:<20} {duration:6.3f} s {count:4d} keys{extra}")
     return 0
 
