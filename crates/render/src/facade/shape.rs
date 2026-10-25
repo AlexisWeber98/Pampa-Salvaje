@@ -1,4 +1,5 @@
-//! A small mesh builder for the procedural settlement buildings and props.
+//! A small mesh builder for the procedural settlement and town buildings
+//! and props.
 //!
 //! Every piece is added to the buffer of its [`Surface`], so a structure
 //! ends up as one mesh per surface it wears. Faces carry flat normals,
