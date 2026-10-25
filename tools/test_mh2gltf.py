@@ -828,6 +828,259 @@ class Units(unittest.TestCase):
         self.assertIn("do not sum to 1", out.getvalue())
 
 
+class TownsfolkPieces(unittest.TestCase):
+    """The townsfolk's pieces (the women's skirt, apron, shawl, headscarf
+    and hair worn up; the boina and alpargatas) on the stand-in bodies."""
+
+    def dressed(self, *pieces):
+        skin = Units.Skin()
+        figure = mh2gltf.Figure(skin.rig, skin.rest, skin)
+
+        class Character:
+            pass
+
+        c = Character()
+        c.pieces = list(pieces)
+        out, hide = mh2gltf.dress(c, figure, skin.rig)
+        return figure, {pc.label: pc for pc in out}, hide
+
+    @staticmethod
+    def rows(pc):
+        """The skirt's rings, top down: the waistband's top, its rows, then
+        the hem turned in."""
+        n = mh2gltf.SKIRT_SEGMENTS
+        return pc.coords.reshape(-1, n, 3)
+
+    def test_a_long_skirt_hangs_as_a_bell_from_the_waist_to_the_ankles(self):
+        f, out, hide = self.dressed(("skirt", {}))
+        skirt = out["skirt"]
+        rows = self.rows(skirt)
+        self.assertEqual(len(rows), len(mh2gltf.SKIRT_ROWS) + 2)
+        # From just above the waist (station 3.9) down to the ankles' 1.15.
+        self.assertAlmostEqual(rows[1][:, 1].max(), f.height(3.9))
+        self.assertAlmostEqual(rows[-2][:, 1].min(), f.height(1.15))
+        radius = np.hypot(rows[:, :, 0], rows[:, :, 2])
+        # Never in the body (a cylinder of radius 1), never narrower going
+        # down, and its hem out by the flare.
+        self.assertGreater(radius[:-1].min(), 1.0 + 0.05)
+        means = radius[1:-1].mean(axis=1)
+        self.assertTrue(np.all(np.diff(means) >= -1e-9), means)
+        self.assertGreater(means[-1] - means[0], 0.8 * 0.9)
+        # The hem turns in, a little up.
+        self.assertTrue(np.all(radius[-1] < radius[-2]) and np.all(rows[-1][:, 1] > rows[-2][:, 1]))
+        # Soft folds round the hem, none at the waist.
+        self.assertGreater(np.ptp(radius[-2]), 0.04)
+        self.assertLess(np.ptp(radius[1]), 1e-9)
+        # The legs and hips under it are left out, from station 1.6 up to
+        # its waistband; nothing else.
+        self.assertTrue(hide)
+        for t in hide:
+            self.assertTrue(np.all(f.station[list(t)] >= 1.6 - 1e-9) and np.all(f.station[list(t)] <= 3.9 + 1e-9))
+        # Legs narrower below the hips (the stand-in's knees and shins
+        # half as wide): the skirt still never narrows going down.
+        skin = Units.Skin()
+        low = skin.coords[:, 1] < 9.0
+        skin.coords[low, 0] *= 0.5
+        skin.coords[low, 2] *= 0.5
+        thin = mh2gltf.Figure(skin.rig, skin.rest, skin)
+
+        class Character:
+            pieces = [("skirt", {})]
+
+        rows = self.rows(mh2gltf.dress(Character(), thin, skin.rig)[0][0])
+        means = np.hypot(rows[1:-1, :, 0], rows[1:-1, :, 2]).mean(axis=1)
+        self.assertTrue(np.all(np.diff(means) >= -1e-9), means)
+        a = self.dressed(("skirt", {"flare": [0.5]}))[1]["skirt"]
+        b = self.dressed(("skirt", {"flare": [0.5]}))[1]["skirt"]
+        np.testing.assert_array_equal(a.coords, b.coords)
+        self.assertEqual(a.triangles, b.triangles)
+        with self.assertRaises(mh2gltf.ConvertError):
+            self.dressed(("skirt", {"hem": [4.0]}))
+
+    def test_the_skirt_follows_the_thighs_more_toward_the_hem_and_the_shins_at_the_back(self):
+        _, out, _ = self.dressed(("skirt", {}))
+        skirt = out["skirt"]
+        order = Units.Skin.ORDER
+        w = skirt.weights.reshape(-1, mh2gltf.SKIRT_SEGMENTS, len(order))
+        np.testing.assert_allclose(skirt.weights.sum(axis=1), 1.0, atol=1e-9)
+        thigh = w[..., order.index("thigh_l")] + w[..., order.index("thigh_r")]
+        calf = w[..., order.index("calf_l")] + w[..., order.index("calf_r")]
+        # The waistband goes with the trunk alone; lower down the thighs'
+        # share grows to the hem.
+        self.assertTrue(np.all(thigh[:2] < 1e-9) and np.all(calf[:2] < 1e-9))
+        front = 0  # angle 0 is the front
+        column = thigh[1:-1, front]
+        self.assertTrue(np.all(np.diff(column) >= -1e-9), column)
+        self.assertAlmostEqual(column[-1], 0.8, places=6)
+        # The front's middle takes the two thighs alike; to the left, the
+        # left thigh more.
+        hem = w[-2]
+        self.assertAlmostEqual(hem[front, order.index("thigh_l")], hem[front, order.index("thigh_r")])
+        left = mh2gltf.SKIRT_SEGMENTS // 4  # angle 90 degrees: +x, the left
+        self.assertGreater(hem[left, order.index("thigh_l")], 2 * hem[left, order.index("thigh_r")])
+        # The back of the hem takes the shins' turn too, the front none.
+        back = mh2gltf.SKIRT_SEGMENTS // 2
+        self.assertGreater(calf[-2, back], 0.3)
+        self.assertLess(calf[-2, front], 1e-9)
+        stiff = self.dressed(("skirt", {"follow": [0.0], "kick": [0.0]}))[1]["skirt"]
+        np.testing.assert_array_equal(stiff.weights[:, order.index("thigh_l")], 0.0)
+        np.testing.assert_array_equal(stiff.weights[:, order.index("calf_l")], 0.0)
+
+    def test_an_apron_covers_the_skirts_front_just_outside_it(self):
+        f, out, _ = self.dressed(("skirt", {}), ("apron", {"hem": [2.0], "width": [0.8]}))
+        skirt, apron = out["skirt"], out["apron"]
+        self.assertGreater(apron.coords[:, 2].min(), 0.0, "on the front only")
+        self.assertAlmostEqual(apron.coords[:, 1].min(), f.height(2.0))
+        self.assertAlmostEqual(apron.coords[:, 1].max(), skirt.coords[:, 1].max())
+        # Just outside the skirt where it lies, skinned as the skirt is.
+        rows = self.rows(skirt)
+        for p, w in zip(apron.coords, apron.weights):
+            ring = rows[np.argmin(np.abs(rows[:-1, 0, 1] - p[1]))]
+            nearest = ring[np.argmin(np.linalg.norm(ring[:, [0, 2]] - p[[0, 2]], axis=1))]
+            if abs(nearest[1] - p[1]) < 1e-9:
+                self.assertGreater(np.hypot(p[0], p[2]), np.hypot(nearest[0], nearest[2]) + 0.03)
+        np.testing.assert_allclose(apron.weights.sum(axis=1), 1.0, atol=1e-9)
+        self.assertGreater(apron.weights[:, Units.Skin.ORDER.index("thigh_l")].max(), 0.1)
+        with self.assertRaises(mh2gltf.ConvertError):
+            self.dressed(("apron", {}))
+
+    def test_a_shawl_covers_the_shoulders_and_a_point_down_the_back_over_the_blouse(self):
+        f, out, _ = self.dressed(("shirt", {}), ("shawl", {}))
+        shawl, shirt = out["shawl"], out["shirt"]
+        src = shawl.source
+        station, nz, x = f.station[src], f.normals[src, 2], f.coords[src, 0]
+        trunk = f.limb[src] == mh2gltf.BODY
+        # Round the shoulders all round; down the back to its point, at the
+        # middle only; never on the front's chest below the shoulders.
+        self.assertTrue(np.all(station[trunk & (nz >= 0.0)] >= 5.0 - 1e-9))
+        low = trunk & (station < 4.8)
+        self.assertTrue(low.any() and np.all(nz[low] < 1e-6))
+        # Narrowing to its point: no wider than the line from the point
+        # (station 3.9, the middle) to the shoulders' width (x 1.5) at 4.8.
+        self.assertTrue(np.all(np.abs(x[low]) <= (station[low] - 3.9) / 0.9 * 1.5 + 1e-9))
+        self.assertLess(station[trunk].min(), 4.1)
+        # The outer layer: the blouse leaves the faces it covers.
+        faces = {name: {tuple(sorted(pc.source[v] for v, _ in t)) for t in pc.triangles} for name, pc in out.items()}
+        self.assertFalse(faces["shawl"] & faces["shirt"])
+        self.assertTrue(faces["shirt"])
+
+    def test_the_shawls_ends_cross_over_the_chest_one_over_the_other(self):
+        head = Units.Head()
+        (a, atris), (b, btris) = mh2gltf.make_shawl_ends(head, {})
+        for coords, side in ((a, 1), (b, -1)):
+            middle = coords.reshape(7, 10, 3)[3]  # along the band's middle
+            top, bottom = middle[0], middle[-1]
+            self.assertGreater(top[1], bottom[1])
+            self.assertGreater(side * top[0], 0.0)  # from its own shoulder
+            self.assertLess(side * bottom[0], 0.0)  # down to the other side
+            # On the chest: in front of the trunk's surface.
+            for p in coords:
+                z = head.surface(p[0], p[1], None)
+                if z is not None:
+                    self.assertGreater(p[2], z + 0.05 - 1e-9)
+        # Where they cross, the second lies over the first: it stands
+        # further off the chest.
+        def off(c):
+            return np.median([p[2] - head.surface(p[0], p[1], None) for p in c if head.surface(p[0], p[1], None) is not None])
+
+        self.assertGreater(off(b), off(a) + 0.02)
+        self.assertTrue(atris and btris)
+
+    @staticmethod
+    def head_figure():
+        """A stand-in for head_cut(): a sphere of radius 1 round y = 16 (the
+        head) on a neck, the top of a cylinder of radius 0.5 (stations
+        6.5 to 7)."""
+        rng = np.random.default_rng(2)
+        p = rng.normal(size=(4000, 3))
+        p /= np.linalg.norm(p, axis=1, keepdims=True)
+        a, y = rng.uniform(0, 2 * np.pi, 600), rng.uniform(14.0, 15.0, 600)
+        neck = np.stack([0.5 * np.sin(a), y, 0.5 * np.cos(a)], axis=1)
+
+        class F:
+            pass
+
+        f = F()
+        f.coords = np.vstack([p + [0.0, 16.0, 0.0], neck])
+        f.normals = np.vstack([p, np.stack([np.sin(a), np.zeros_like(a), np.cos(a)], axis=1)])
+        f.limb = np.array([mh2gltf.HEAD] * 4000 + [mh2gltf.BODY] * 600)
+        f.station = np.concatenate([np.full(4000, 7.0), 6.5 + (y - 14.0) / 2])
+        return f
+
+    def test_a_headscarf_frames_the_face_and_hair_worn_up_leaves_the_face_and_ears(self):
+        f = self.head_figure()
+
+        def g(kind, **over):
+            return lambda key: over[key] if key in over else mh2gltf.setting({}, kind, key)
+
+        covered, offset = mh2gltf.head_cut(f, "headscarf", g("headscarf"))
+        head = f.limb == mh2gltf.HEAD
+        y, nz, x = f.coords[:, 1], f.normals[:, 2], f.coords[:, 0]
+        top, chin, _, height = mh2gltf.head_measures(f)
+        brow = top - 0.3 * height
+        face = head & (nz > 0.5) & (np.abs(x) < 0.25) & (np.abs(y - (brow + chin) / 2) < 0.3 * (brow - chin) / 2)
+        self.assertFalse(covered[face].any(), "the face is bare")
+        self.assertTrue(covered[head & (nz < -0.3)].all(), "the back of the head is covered")
+        self.assertTrue(covered[head & (y > 16.9)].all(), "the top")
+        self.assertTrue(covered[head & (np.abs(x) > 0.9)].all(), "the ears")
+        self.assertTrue(covered[(f.limb == mh2gltf.BODY) & (f.station > 6.6)].all(), "round the top of the neck")
+        self.assertTrue(np.all(offset[covered] >= 0.12 - 1e-9) and np.all(offset[~covered] == 0.0))
+        self.assertGreater(offset[covered & (y > 16.95)].min(), offset[covered & (y < 15.5)].max())  # fuller at the crown
+        hair, _ = mh2gltf.head_cut(f, "hair", g("hair"))
+        self.assertFalse(hair[face].any())
+        self.assertFalse(hair[head & (np.abs(x) > 0.9) & (np.abs(y - 15.7) < 0.1)].any(), "the ears show")
+        self.assertTrue(hair[head & (nz < -0.5) & (y > 16.0)].all(), "the back of the head")
+        self.assertFalse(hair[f.limb == mh2gltf.BODY].any())
+
+    def test_a_headscarf_is_knotted_under_the_chin_with_its_point_down_the_neck(self):
+        f, out, _ = self.dressed(("headscarf", {}))
+        knot, point = out["headscarf knot"], out["headscarf point"]
+        order = Units.Skin.ORDER
+        np.testing.assert_array_equal(knot.weights[:, order.index("head")], 1.0)
+        top, chin, middle, height = mh2gltf.head_measures(f)
+        self.assertLess(knot.coords[:, 1].max(), chin + 0.1)
+        np.testing.assert_allclose(point.weights.sum(axis=1), 1.0, atol=1e-9)
+        allowed = [order.index(j) for j in mh2gltf.SCARF_POINT_FROM if j in order]
+        self.assertAlmostEqual(float(point.weights[:, allowed].sum()), len(point.coords))
+        self.assertTrue(np.all(point.coords[:, 2] < 0.0), "down the back")
+        self.assertLess(point.coords[:, 1].min(), chin - 0.5)
+
+    def test_a_boina_covers_the_crown_flat_and_wide_pulled_down_to_one_side(self):
+        head = Units.Head()
+        coords, tris, band = mh2gltf.make_boina(head, {}, mh2gltf.SEGMENTS)
+        self.assertGreater(coords[:, 1].max(), 17.0 + 0.1)  # over the head's top
+        self.assertLess(band, 17.0 - 0.5)
+        n = mh2gltf.SEGMENTS
+        band_r = np.hypot(coords[:n, 0], coords[:n, 2]).mean()
+        rim = coords[2 * n : 3 * n]
+        self.assertGreater(np.hypot(rim[:, 0] - rim[:, 0].mean(), rim[:, 2]).mean(), 1.2 * band_r)
+        self.assertGreater(rim[:, 0].mean(), coords[:n, 0].mean() + 0.1)  # leaning to the left (+x)
+        left, right = rim[np.argmax(rim[:, 0])], rim[np.argmin(rim[:, 0])]
+        self.assertLess(left[1], right[1])  # its rim lower on that side
+        self.assertTrue(all(0 <= v < len(coords) for t in tris for v in t))
+
+    def test_a_bun_sits_behind_the_head_between_the_nape_and_the_crown(self):
+        head = Units.Head()
+        coords, tris = mh2gltf.make_bun(head, {"size": [0.8], "high": [0.5]}, mh2gltf.SEGMENTS)
+        self.assertLess(coords[:, 2].max(), -0.5)  # at the back
+        self.assertGreater(coords[:, 2].min(), -1.0 - 0.8)
+        mid = coords[:, 1].mean()
+        self.assertTrue(15.0 < mid < 17.0)
+        self.assertAlmostEqual(np.ptp(coords[:, 0]), 0.8, places=6)
+        self.assertTrue(tris)
+
+    def test_alpargatas_are_canvas_shoes_with_a_rope_sole(self):
+        f, out, _ = self.dressed(("alpargatas", {}))
+        shoes = out["alpargatas"]
+        self.assertEqual(shoes.material.pattern, "cotton")
+        self.assertLessEqual(f.station[shoes.source].max(), 1.1 + 1e-9)
+        self.assertGreater(f.station[shoes.source].max(), 0.9)
+        # Under a bombacha gathered at the ankle, the shoes take the feet.
+        _, out, _ = self.dressed(("bombacha", {"bottom": [0.98]}), ("alpargatas", {}))
+        self.assertLess(out["bombacha"].coords[:, 1].min(), 1.5)
+        self.assertTrue(out["alpargatas"].triangles)
+
+
 def read_accessor(g, blob, i):
     a = g["accessors"][i]
     v = g["bufferViews"][a["bufferView"]]
@@ -982,3 +1235,53 @@ class Conversion(unittest.TestCase):
         # 3,140 of the whole body proxy.
         skin = self.prims()[0]
         self.assertLess(self.g["accessors"][skin["indices"]]["count"] // 3, 2200)
+
+
+@unittest.skipUnless(HAVE_DATA, f"MakeHuman data not found at {DATA}")
+class TownswomanConversion(unittest.TestCase):
+    """Converts the shipped townswoman in a headscarf with the installed
+    MakeHuman data: the women's pieces on a real female body."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        mhm = os.path.join(CHARACTERS, "townsfolk_headscarf", "townsfolk_headscarf.mhm")
+        log = io.StringIO()
+        with redirect_stdout(log), redirect_stderr(log):
+            code = mh2gltf.main([mhm, "-o", cls.tmp.name, "--data", DATA, "--max-texture", "64", "--max-small-texture", "32", "--no-normal-maps"])
+        if code != 0:
+            raise AssertionError(log.getvalue())
+        with open(os.path.join(cls.tmp.name, "model.gltf"), encoding="utf-8") as f:
+            cls.g = json.load(f)
+        with open(os.path.join(cls.tmp.name, "model.bin"), "rb") as f:
+            cls.blob = f.read()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_it_passes_its_check_within_the_townsfolk_budget(self):
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(mh2gltf.check(os.path.join(self.tmp.name, "model.gltf")), 0)
+        prims = self.g["meshes"][0]["primitives"]
+        triangles = sum(self.g["accessors"][p["indices"]]["count"] // 3 for p in prims)
+        self.assertLessEqual(triangles, 11_000)
+        names = {self.g["materials"][p["material"]]["name"] for p in prims}
+        self.assertTrue({"shirt", "skirt", "apron", "shawl", "headscarf", "boots"} <= names, names)
+
+    def test_the_skirt_goes_with_the_hips_at_the_waist_and_the_legs_below(self):
+        joints = [self.g["nodes"][j]["name"] for j in self.g["skins"][0]["joints"]]
+        prim = next(p for p in self.g["meshes"][0]["primitives"] if self.g["materials"][p["material"]]["name"] == "skirt")
+        pos = read_accessor(self.g, self.blob, prim["attributes"]["POSITION"])
+        jnt = read_accessor(self.g, self.blob, prim["attributes"]["JOINTS_0"])
+        wgt = read_accessor(self.g, self.blob, prim["attributes"]["WEIGHTS_0"])
+
+        def share(rows, prefix):
+            on = np.array([[joints[j].startswith(prefix) for j in row] for row in jnt[rows]])
+            return (wgt[rows] * on).sum(axis=1)
+
+        top, hem = pos[:, 1] > pos[:, 1].max() - 0.02, pos[:, 1] < pos[:, 1].min() + 0.02
+        self.assertLess(share(top, "thigh_").max(), 1e-6)
+        self.assertGreater(share(hem, "thigh_").mean(), 0.2)
+        back = hem & (pos[:, 2] < np.median(pos[:, 2]))
+        self.assertGreater(share(back, "calf_").max(), 0.3)

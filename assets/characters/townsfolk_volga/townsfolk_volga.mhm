@@ -1,0 +1,41 @@
+# A townsperson, look 2 (the Volga German), 1919: a farmhand of the
+# "alemanes del Volga" who settled the pampa, about 50 (age 0.7), big and
+# heavy-set, fair, with a full light-brown beard. A dun shirt, a dark
+# waistcoat, wool trousers tucked into boots, a round-crowned felt hat
+# and a brown woven poncho folded over his left shoulder against the
+# cold. The game tints the shirt, waistcoat, trousers, hat and poncho per
+# person.
+#
+# Lines MakeHuman does not know (it warns and skips them) are read by
+# tools/mh2gltf.py: decimate and piece (see ../README.md). Credits in
+# ../CREDITS.md.
+version v1.1.1
+name townsfolk_volga
+modifier macrodetails/Gender 1.000000
+modifier macrodetails/Age 0.700000
+modifier macrodetails/African 0.000000
+modifier macrodetails/Asian 0.000000
+modifier macrodetails/Caucasian 1.000000
+modifier macrodetails-universal/Muscle 0.600000
+modifier macrodetails-universal/Weight 0.700000
+modifier macrodetails-height/Height 0.600000
+modifier macrodetails-proportions/BodyProportions 0.500000
+skeleton game_engine.mhskel
+skinMaterial skins/middleage_caucasian_male/middleage_caucasian_male.mhmat
+proxy male1591 d7e4934e-daed-4ad5-a055-18c9cba487dc
+eyes Low-Poly 1cc97a30-85a1-42e6-a9f7-b3e753732baa
+material Low-Poly 1cc97a30-85a1-42e6-a9f7-b3e753732baa eyes/materials/lightblue.mhmat
+eyebrows eyebrow003 4089e4e3-b842-40f4-91a4-0686118f7535
+hair short04 e09bfd91-f83f-4f9a-ba8c-4635cd1ae0d8
+material short04 e09bfd91-f83f-4f9a-ba8c-4635cd1ae0d8 hair.mhmat
+clothes culturalibre_faun_beard 834742f2-c4e7-4196-a7fc-a70bbdcec449
+material culturalibre_faun_beard 834742f2-c4e7-4196-a7fc-a70bbdcec449 beard.mhmat
+clothesHideFaces True
+subdivide False
+decimate culturalibre_faun_beard 834742f2-c4e7-4196-a7fc-a70bbdcec449 900
+piece shirt color=0.62,0.58,0.48 top=6.1
+piece waistcoat color=0.15,0.14,0.13 vneck=5.2
+piece trousers color=0.26,0.24,0.21
+piece boots color=0.12,0.09,0.07 top=1.9
+piece poncho color=0.62,0.52,0.42 side=1
+piece hat color=0.24,0.21,0.18 crown=0.2 fit=0.85 taper=0.9 round=0.9 brim=0.6 droop=0.06 back=0.04 thick=0.06 curl=0.03

@@ -1489,12 +1489,23 @@ PIECES = {
     "trousers": {**GARMENT_SETTINGS, "color": [0.20, 0.18, 0.16], "top": [4.3], "bottom": [1.2]},
     "bombacha": {**GARMENT_SETTINGS, "color": [0.40, 0.36, 0.30], "top": [4.3], "bottom": [1.8]},
     "boots": {**GARMENT_SETTINGS, "color": [0.07, 0.06, 0.05], "top": [2.0], "bottom": [-1.0], "sole": [0.1]},
+    "alpargatas": {**GARMENT_SETTINGS, "color": [0.74, 0.70, 0.60], "top": [1.1], "bottom": [-1.0], "sole": [0.15]},
+    # A shawl (see shawl_cut()): over the shoulders and the upper arms (to
+    # ``cuff``), to a point down the back (``point``), its two ends
+    # ``width`` wide crossed over the chest (make_shawl_ends).
+    "shawl": {**GARMENT_SETTINGS, "color": [0.32, 0.22, 0.18], "top": [6.05], "bottom": [3.0], "cuff": [0.85],
+              "point": [3.9], "width": [1.9]},
+    # A headscarf (panuelo de cabeza) framing the face, or hair worn up:
+    # cut from the head's skin (see head_cut()).
+    "headscarf": {**GARMENT_SETTINGS, "color": [0.70, 0.62, 0.45], "loose": [0.12], "crown": [0.08],
+                  "brow": [0.3], "face": [0.5], "knot": [0.12], "drop": [1.1]},
+    "hair": {**GARMENT_SETTINGS, "color": [0.16, 0.11, 0.08], "loose": [0.05], "crown": [0.05], "brow": [0.2]},
     # A coat's lapels, laid on the front either side of its opening: from
     # their point (point: from spine_02 at 0 to the neck at 1) up to the
     # collar, ``open`` apart at the top, ``width`` wide.
     "lapels": {"color": [0.15, 0.14, 0.13], "point": [0.3], "open": [0.6], "width": [0.4]},
     # A stiff band collar round the neck, ``height`` tall, with small wing
-    # tips folded down at the front.
+    # tips folded down at the front (none with ``wings=0``: a blouse's).
     "collar": {"color": [0.93, 0.92, 0.89], "height": [0.28], "wings": [0.12]},
     # A leather strap from one shoulder (side 1 the left, -1 the right)
     # across the chest and the back to the other hip, ``width`` wide.
@@ -1503,6 +1514,24 @@ PIECES = {
     # ``width`` wide and ``thick`` deep, its ends hanging ``hang`` below the
     # hip; woven dark red with cream bands (the colour tints it).
     "poncho": {"color": [1.0, 1.0, 1.0], "side": [1], "width": [1.8], "thick": [0.16], "hang": [1.4]},
+    # A boina (beret): a soft flat crown ``width`` times as wide as its
+    # band, its top ``height`` above the head's, pulled down to one side
+    # (``lean``, its rim dropping ``droop`` there), with a short stalk
+    # (txistor) on top.
+    "boina": {"color": [0.12, 0.13, 0.17], "width": [1.3], "height": [0.18], "lean": [0.25], "droop": [0.25],
+              "tilt": [0.1], "fit": [0.95]},
+    # Hair worn up in a bun (rodete) at the back of the head, ``size``
+    # across, ``high`` up from the nape (0) to the crown (1).
+    "bun": {"color": [0.16, 0.11, 0.08], "size": [0.85], "high": [0.5]},
+    # A woman's ankle-length skirt (pollera), a bell from the waist (see
+    # make_long_skirt): its waistband's and its hem's stations, the hem's
+    # extra width, the folds' depth, the most of a thigh's turn it takes,
+    # and the station from which the skin under it is left out.
+    "skirt": {"color": [0.28, 0.22, 0.18], "top": [3.9], "hem": [1.15], "flare": [1.2], "folds": [0.08],
+              "follow": [0.8], "kick": [0.9], "hide": [1.6]},
+    # An apron over the skirt's front: down to station ``hem``, over
+    # ``width`` of the front half.
+    "apron": {"color": [0.80, 0.77, 0.70], "hem": [1.7], "width": [0.8]},
 }
 SEGMENTS = 20  # around a band, a crown or a brim
 ARM_JOINTS = re.compile(r"^(upperarm|lowerarm|hand|thumb|index|middle|ring|pinky)_")
@@ -1677,6 +1706,7 @@ SKIN_FROM = {
     "chain": TRUNK,
     "strap": TRUNK + ("clavicle_l", "clavicle_r"),
     "poncho": TRUNK + ("clavicle_l", "clavicle_r"),
+    "shawl": TRUNK + ("clavicle_l", "clavicle_r"),
     "lapels": TRUNK + ("clavicle_l", "clavicle_r", "neck_01"),
 }
 SKIN_NEAREST = 8
@@ -2114,6 +2144,48 @@ def make_strap(body, settings, n):
     return coords, tris
 
 
+def make_shawl_ends(body, settings, steps=10, across=7):
+    """A shawl's two ends: each a band ``width`` wide from under the shawl
+    at one shoulder down across the chest to the other side of the waist,
+    where it is tucked in; the right one laid over the left. Each point is
+    laid on what is frontmost there, the bumps along the band smoothed.
+    Returns (coords, triangles) for each."""
+    width = setting(settings, "shawl", "width")
+    low, high = body.at("spine_01")[1], body.at("spine_02")[1]
+    waist = low + 0.75 * (high - low)
+    x0 = body.at("spine_02")[0]
+    wide = abs(body.at("upperarm_l")[0] - x0)
+    shoulder = body.at("upperarm_l")[1] + 0.3
+    trunk = {nm for nm in body.rig.order if not ARM_JOINTS.match(nm) and nm != "head"}
+    out = []
+    for k, side in enumerate((1, -1)):
+        a = np.array([x0 + side * 0.5 * wide, shoulder])
+        b = np.array([x0 - side * 0.45 * wide, waist])
+        along = normalize(np.append(b - a, 0.0))[:2]
+        normal = np.array([-along[1], along[0]])
+        grid = np.zeros((across, steps, 3))
+        for i, u in enumerate(np.linspace(-0.5, 0.5, across) * width):
+            for j, t in enumerate(np.linspace(0.0, 1.0, steps)):
+                x, y = a + t * (b - a) + normal * u
+                z = body.surface(x, y, trunk)
+                grid[i, j] = [x, y, np.nan if z is None else z]
+        z = grid[:, :, 2]
+        if np.isnan(z).all():
+            raise ConvertError("shawl: no chest to cross its ends on")
+        # Off the chest's side, as far forward as the nearest point on it.
+        seen = np.argwhere(~np.isnan(z))
+        for i, j in np.argwhere(np.isnan(z)):
+            near = seen[np.argmin(np.abs(seen[:, 0] - i) + 2 * np.abs(seen[:, 1] - j))]
+            z[i, j] = z[near[0], near[1]]
+        padded = np.pad(z, ((0, 0), (1, 1)), mode="edge")
+        smooth = (padded[:, :-2] + 2 * z + padded[:, 2:]) / 4  # along the band, never into the chest
+        grid[:, :, 2] = np.maximum(smooth, z) + 0.08 + 0.04 * k
+        coords = grid.reshape(-1, 3)
+        tris = strip([list(range(i * steps, (i + 1) * steps)) for i in range(across)], closed=False)
+        out.append((coords, facing(coords, tris, lambda p: np.array([0.0, 0.0, 1.0]))))
+    return out
+
+
 def make_poncho(body, settings, n, sides=8):
     """A poncho folded long and laid along diagonal(): a flat oval section
     ``width`` across and ``thick`` deep, its two ends hanging ``hang``
@@ -2196,7 +2268,7 @@ def make_collar(body, settings, n):
     sx, cz = angles(n)
     wing = setting(settings, k, "wings")
     parts = [(coords, tris)]
-    for side in (1, -1):
+    for side in (1, -1) if wing > 0 else ():
         i = int(np.argmin(np.abs(sx - side * 0.3) + (cz < 0)))
         top = rows[1][i]
         tip = top + np.array([side * wing, -wing * 1.2, wing * 0.4])
@@ -2206,6 +2278,61 @@ def make_collar(body, settings, n):
     return joined(parts)
 
 
+def make_boina(body, settings, n):
+    """A boina: a soft crown from the band out to a wide, flat top that
+    overhangs it, pulled down to the left (``lean``), and a short stalk in
+    the middle. Returns (coords, triangles) and the band's lowest
+    height."""
+    k = "boina"
+    y, r, center, head_top = hat_band(body, settings, k)
+    width, height = setting(settings, k, "width"), setting(settings, k, "height")
+    lean, droop = setting(settings, k, "lean"), setting(settings, k, "droop")
+    sx, _ = angles(n)
+    rows = []
+    for frac, scale in ((0.0, 1.0), (0.35, 0.5 * (1 + width)), (0.65, width), (0.9, width * 0.8), (1.0, width * 0.45)):
+        row = ring(center, r * scale, y + frac * (head_top + height - y), n)
+        row[:, 0] += lean * frac
+        row[:, 1] -= droop * frac * np.clip(sx, 0, 1) * (frac < 1.0)
+        rows.append(row)
+    top_y = rows[-1][:, 1].mean()
+    middle = np.array([center[0] + lean, top_y + 0.03, center[2]])
+    stalk = np.array([middle + [0.0, 0.12, 0.0]])
+    coords = np.vstack(rows + [middle[None], stalk])
+    ids = [list(range(i * n, (i + 1) * n)) for i in range(len(rows))]
+    tris = facing(coords, strip(ids), radial(center, 0.5))
+    tris += facing(coords, fan(len(rows) * n, ids[-1]), lambda p: np.array([0.0, 1.0, 0.0]))
+    # The stalk: a thin spike from three points round the middle.
+    base = [ids[-1][0], ids[-1][n // 3], ids[-1][2 * n // 3]]
+    tip = len(coords) - 1
+    tris += facing(coords, [(base[0], base[1], tip), (base[1], base[2], tip), (base[2], base[0], tip)], radial(center, 1.0))
+    return coords, tris, y.min()
+
+
+def make_bun(body, settings, n, sides=10, levels=5):
+    """A bun at the back of the head: a squashed ball ``size`` across, set
+    just behind the hair at ``high`` between the nape and the crown."""
+    k = "bun"
+    head, top, center = head_frame(body)
+    size, high = setting(settings, k, "size"), setting(settings, k, "high")
+    nape = head[:, 1].min()
+    y = nape + high * (top - nape)
+    band = head[np.abs(head[:, 1] - y) < 0.25]
+    back = band[:, 2].min() if len(band) else head[:, 2].min()
+    at = np.array([center[0], y, back - 0.3 * size])
+    radii = np.array([size / 2, size * 0.42, size * 0.38])
+    a = np.arange(sides) * (2 * math.pi / sides)
+    rows = []
+    for lat in np.linspace(-math.pi / 2, math.pi / 2, levels + 2)[1:-1]:
+        # Round the bun's axis, which points out of the back of the head (-z).
+        rows.append(at + np.stack([np.cos(lat) * np.cos(a) * radii[0], np.cos(lat) * np.sin(a) * radii[1],
+                                   np.full(sides, -np.sin(lat) * radii[2])], axis=1))
+    poles = np.array([at + [0.0, 0.0, radii[2]], at - [0.0, 0.0, radii[2]]])
+    coords = np.vstack(rows + [poles])
+    ids = [list(range(i * sides, (i + 1) * sides)) for i in range(len(rows))]
+    tris = strip(ids) + fan(len(rows) * sides, ids[0][::-1]) + fan(len(rows) * sides + 1, ids[-1])
+    return coords, facing(coords, tris, lambda p: p - at)
+
+
 def generate(character, body, rig):
     """The .mhm's generated pieces, in their order, and the lowest hat band
     (None without a hat). The garments are cut by dress()."""
@@ -2213,7 +2340,12 @@ def generate(character, body, rig):
     sash = None
     n = SEGMENTS
     for kind, settings in character.pieces:
-        if kind in GARMENT_CUTS:
+        if kind == "shawl":
+            for coords, tris in make_shawl_ends(body, settings):
+                piece = made("shawl end", plain("shawl", setting(settings, kind, "color"), ROUGHNESS["wool"], pattern="wool"),
+                             coords, tris, "spine_03", rig, coords[:, [0, 1]] * 0.6)
+                out.append(inherit(piece, body, SKIN_FROM["shawl"]))
+        if kind in GARMENT_CUTS or kind in DRESSED:
             continue
         color = setting(settings, kind, "color")
         low = None
@@ -2226,6 +2358,12 @@ def generate(character, body, rig):
             out.append(made("kepi", plain("kepi_cloth", color, 0.9), coords, tris, "head", rig))
             out.append(made("kepi leather", plain("kepi_leather", setting(settings, kind, "visor"), 0.45), leather, ltris, "head", rig))
             out.append(made("kepi buttons", plain("kepi_buttons", setting(settings, kind, "button"), 0.35, 1.0), buttons, btris, "head", rig))
+        elif kind == "boina":
+            coords, tris, low = make_boina(body, settings, n)
+            out.append(made("boina", plain("boina", color, 0.95), coords, tris, "head", rig))
+        elif kind == "bun":
+            coords, tris = make_bun(body, settings, n)
+            out.append(made("bun", plain("bun", color, 0.7), coords, tris, "head", rig))
         elif kind == "neckerchief":
             coords, tris = make_neckerchief(body, settings, n)
             out.append(made("neckerchief", plain("neckerchief", color, 0.9), coords, tris, "neck_01", rig))
@@ -2295,8 +2433,18 @@ GARMENT_CUTS = {
                             (3.8, 0.22), (4.4, 0.07)), None),
     # Snug from the sole up (flared at the top, see cut()).
     "boots": ("leather", ((-1.0, 0.06), (1.0, 0.07), (2.0, 0.075)), None),
+    # Canvas shoes with a rope sole, snug to the ankle.
+    "alpargatas": ("cotton", ((-1.0, 0.04), (1.0, 0.045), (1.3, 0.04)), None),
+    # A woollen shawl over the shoulders, outside the blouse (its shape in
+    # shawl_cut()).
+    "shawl": ("wool", ((3.5, 0.16), (5.0, 0.17), (6.0, 0.15), (6.4, 0.12)), ((-1.0, 0.17), (1.0, 0.15))),
+    # Cut from the head (see head_cut(); their offsets are set there).
+    "headscarf": ("cotton", ((0.0, 0.0),), None),
+    "hair": (None, ((0.0, 0.0),), None),
 }
-ROUGHNESS = {"cotton": 0.85, "wool": 0.92, "stripe": 0.92, "leather": 0.55}
+# The pieces dress() makes besides GARMENT_CUTS' shells.
+DRESSED = ("skirt", "apron")
+ROUGHNESS = {"cotton": 0.85, "wool": 0.92, "stripe": 0.92, "leather": 0.55, None: 0.7}
 
 
 class Figure:
@@ -2360,7 +2508,11 @@ def cut(figure, kind, settings):
     f = figure
     g = lambda key: setting(settings, kind, key)  # noqa: E731
     _, body_profile, arm_profile = GARMENT_CUTS[kind]
+    if kind in HEAD_CUTS:
+        return head_cut(f, kind, g)
     body = (f.limb == BODY) & (f.station >= g("bottom")) & (f.station <= g("top"))
+    if kind == "shawl":
+        body &= shawl_cut(f, g)
     if g("vneck") > 0:
         # The V at the front, widening from its point up to the neck.
         span = max(6.0 - g("vneck"), 0.1)
@@ -2371,8 +2523,9 @@ def cut(figure, kind, settings):
         arm = (f.limb == ARM) & (f.reach <= g("cuff"))
         offset = np.where(arm, np.interp(f.reach, *zip(*arm_profile)), offset)
         body |= arm
-    if kind == "boots":
+    if kind in ("boots", "alpargatas"):
         offset = offset + g("sole") * (f.normals[:, 1] < -0.5)  # the soles
+    if kind == "boots":
         offset = offset + 0.075 * np.clip((f.station - (g("top") - 0.15)) / 0.15, 0, 1)  # the flared top
     if g("pad") > 0:
         # Padded shoulders: the tops of the shoulders stand out, squared.
@@ -2381,6 +2534,63 @@ def cut(figure, kind, settings):
             | ((f.limb == ARM) & (f.reach < 0.25)))
         offset = offset + g("pad") * (top & body)
     return body, offset * g("loose")
+
+
+def shawl_cut(f, g):
+    """Where a shawl (chal) lies on the trunk: round the shoulders above
+    station 5.0, and down the back to a point at ``point`` in the middle.
+    Its two ends, crossed over the chest, are generated (make_shawl_ends)."""
+    x0 = f.joint("spine_02")[0]
+    x = f.coords[:, 0] - x0
+    wide = abs(f.joint("upperarm_l")[0] - x0)
+    shoulders = f.station >= 5.0
+    back = (f.normals[:, 2] < 0.0) & (f.station >= g("point") + np.abs(x) / wide * (4.8 - g("point")))
+    return shoulders | back
+
+
+# The pieces cut from the head's skin, and what of it they leave bare.
+HEAD_CUTS = ("headscarf", "hair")
+
+
+def head_measures(f):
+    """The head's top, its chin's height, its middle (x, z) and its height,
+    from the head's skin."""
+    on = f.limb == HEAD
+    p = f.coords[on]
+    top = p[:, 1].max()
+    chin = p[f.normals[on][:, 2] > 0.3][:, 1].min()
+    middle = (p.min(axis=0) + p.max(axis=0)) / 2
+    return top, chin, middle, top - chin
+
+
+def head_cut(f, kind, g):
+    """A piece cut from the head's skin (and the back of the neck): a
+    headscarf framing the face (an oval ``face`` wide, from the chin to
+    ``brow``, as a share of the head's height down from its top), or hair
+    worn up, from a hairline ``brow`` down at the front to the nape at the
+    back, above the ears at the sides. Returns the vertices covered and
+    their offsets (``loose`` out, more at the crown by ``crown``)."""
+    top, chin, middle, height = head_measures(f)
+    y, nz = f.coords[:, 1], f.normals[:, 2]
+    x = f.coords[:, 0] - middle[0]
+    head = f.limb == HEAD
+    brow = top - g("brow") * height
+    if kind == "headscarf":
+        # The face's oval, open from the chin to the brow.
+        mid = (brow + chin) / 2
+        half = (brow - chin) / 2
+        face = (nz > 0.0) & ((x / g("face")) ** 2 + ((y - mid) / half) ** 2 < 1.0)
+        # Round the top of the neck too: tied under the chin.
+        neck = (f.limb == BODY) & (f.station > 6.5)
+        covered = (head & ~face) | neck
+    else:
+        # Down to the hairline at the front, to the ears at the sides and
+        # to the nape at the back.
+        line = np.interp(nz, [-1.0, -0.3, 0.3, 1.0], [chin + 0.3 * height, chin + 0.45 * height, chin + 0.62 * height, brow])
+        covered = head & (y >= line)
+    lift = np.clip((y - (top - 0.4 * height)) / (0.4 * height), 0.0, 1.0)
+    offset = np.where(covered, g("loose") + g("crown") * lift, 0.0)
+    return covered, offset
 
 
 def shell(figure, label, kind, material, selected, kept, offset):
@@ -2444,8 +2654,6 @@ def dress(character, figure, rig):
     for kind, settings in character.pieces:
         if kind in GARMENT_CUTS:
             cuts.append((kind, settings, GARMENT_CUTS[kind][0]) + cut(figure, kind, settings))
-    if not cuts:
-        return [], set()
     faces = figure.faces
     owner = np.full(len(faces), -1)
     best = np.full(len(faces), -np.inf)
@@ -2468,7 +2676,25 @@ def dress(character, figure, rig):
         if kind in GARMENT_CUTS and setting(settings, kind, "skirt") > 0:
             material = next(pc.material for pc in out if pc.kind == kind)
             out.append(make_skirt(figure, kind, settings, points, material, rig))
-    hide = {tuple(sorted(faces[fi].tolist())) for fi in np.flatnonzero(owner >= 0)}
+    hidden = owner >= 0
+    long_skirt = None
+    for kind, settings in character.pieces:
+        if kind == "skirt":
+            if long_skirt is not None:
+                raise ConvertError("skirt: one long skirt only")
+            long_skirt, under = make_long_skirt(figure, settings, points, rig)
+            out.append(long_skirt)
+            hidden |= under
+    for kind, settings in character.pieces:
+        if kind == "headscarf" and setting(settings, kind, "knot") > 0:
+            material = next(pc.material for pc in out if pc.kind == kind)
+            out.append(make_scarf_knot(figure, settings, material, rig))
+            out.append(make_scarf_point(figure, settings, material, rig))
+        if kind == "apron":
+            if long_skirt is None:
+                raise ConvertError("apron: it is tied over a skirt (a 'piece skirt' line)")
+            out.append(make_apron(figure, settings, long_skirt))
+    hide = {tuple(sorted(faces[fi].tolist())) for fi in np.flatnonzero(hidden)}
     return out, hide
 
 
@@ -2507,6 +2733,208 @@ def make_skirt(figure, kind, settings, points, material, rig, n=SEGMENTS):
     texco = np.array([[2.0 * k / n, 0.5 * i] for i in range(len(rows)) for k in keep])
     pc = Piece(f"{kind} skirt", kind, material, coords, [tuple((v, v) for v in t) for t in tris], w, texco)
     return pc
+
+
+# The long skirt (pollera): how many directions round it, how many soft
+# folds it hangs in, and the rows from its waistband to its hem (0 at the
+# waist, 1 at the hem).
+SKIRT_SEGMENTS = 32
+SKIRT_FOLDS = 8
+SKIRT_ROWS = (0.0, 0.06, 0.14, 0.25, 0.38, 0.52, 0.66, 0.8, 0.92, 1.0)
+SKIRT_TRUNK = ("pelvis", "spine_01")
+
+
+def nearest_weights(coords, figure, joints, limbs=(BODY,)):
+    """Each of ``coords``' skin weights as the body proxy's under it
+    (``inherit``, from its trunk and legs, or ``limbs``)."""
+    on = np.isin(figure.limb, limbs)
+    body = Piece("", "", None, coords, [], np.zeros((len(coords), len(figure.rig.order))), None)
+    under = type("Under", (), {})()
+    under.rig, under.points, under.weights = figure.rig, figure.coords[on], figure.weights[on]
+    w = inherit(body, under, joints).weights
+    # No body point on those joints: rigid on the first of them there is.
+    bare = w.sum(axis=1) < 1e-9
+    if bare.any():
+        first = next((j for j in joints if j in figure.rig.order), None)
+        if first is None:
+            raise ConvertError(f"the skeleton has none of {', '.join(joints)}")
+        w[bare, figure.rig.order.index(first)] = 1.0
+    return w
+
+
+def make_long_skirt(figure, settings, points, rig, n=SKIRT_SEGMENTS):
+    """An ankle-length skirt (pollera) gathered at the waist: a tube from
+    its waistband (station ``top``) down to its hem (``hem``), round the
+    dressed hips and legs together, hanging as a bell: below the hips it
+    never narrows, and it widens by ``flare`` at the hem, in ``SKIRT_FOLDS``
+    soft folds ``folds`` deep. Its hem turns in, so it reads as cloth with a
+    thickness.
+
+    The skin: the waistband goes with the trunk under it (``SKIRT_TRUNK``);
+    lower down, each vertex takes up to ``follow`` of the thighs' turn, the
+    share growing toward the hem and split between the two thighs by how
+    far to each side of the middle it hangs (the front's middle takes half
+    of each). A stride swings the skirt with the legs, short of them, so it
+    neither tears between the legs nor lets a knee through.
+
+    Returns the piece and the skin faces under it, which are left out: the
+    trunk and legs from station ``hide`` up to its waistband."""
+    k = "skirt"
+    g = lambda key: setting(settings, k, key)  # noqa: E731
+    top, hem = g("top"), g("hem")
+    if not hem < top:
+        raise ConvertError("skirt: its hem is above its waist")
+    y_top, y_hem = figure.height(top), figure.height(hem)
+    center = axis(points, y_top - 0.3, y_top + 0.3)
+    sx, cz = angles(n)
+    theta = np.arange(n) * (2 * math.pi / n)
+    rows, previous = [], None
+    hip = figure.height(3.0)
+    for t in SKIRT_ROWS:
+        y = y_top + t * (y_hem - y_top)
+        # The proxy's shins have few rings: look wider until it finds some.
+        reach = 0.25
+        while np.count_nonzero(np.abs(points[:, 1] - y) <= reach) < 8:
+            reach *= 2
+        r = outline(points, center, y - reach, y + reach, 0.06, n)
+        if previous is not None and y < hip:
+            r = np.maximum(r, previous)  # below the hips it hangs, never narrows
+        previous = r
+        # Rounder toward the hem: the cloth falls in a bell, not round the legs.
+        round_ = np.maximum(r, (1 - 0.6 * t) * r + 0.6 * t * r.max())
+        bell = g("flare") * t**1.6
+        fold = g("folds") * t * (1 + np.cos(SKIRT_FOLDS * theta)) / 2
+        rows.append(ring(center, round_ + bell + fold, y, n))
+    # The waistband's top, and the hem turned in.
+    band = ring(center, outline(points, center, y_top - 0.1, y_top + 0.3, 0.06, n), y_top + 0.25, n)
+    inner = rows[-1].copy()
+    inner[:, [0, 2]] = center[[0, 2]] + (inner[:, [0, 2]] - center[[0, 2]]) * 0.93
+    inner[:, 1] += 0.08
+    rows = [band] + rows + [inner]
+    coords = np.vstack(rows)
+    ids = [list(range(i * n, (i + 1) * n)) for i in range(len(rows))]
+    tris = facing(coords, strip(ids[:-1]), radial(center))
+    tris += facing(coords, strip(ids[-2:]), lambda p: np.array([0.0, -1.0, 0.0]))
+    # The skin: the trunk's at the waist, then the thighs' share.
+    w = nearest_weights(coords, figure, SKIRT_TRUNK)
+    depth = np.clip((y_top - coords[:, 1]) / (y_top - y_hem), 0.0, 1.0)
+    share = g("follow") * np.clip((depth - 0.05) / 0.5, 0.0, 1.0) ** 2 * (3 - 2 * np.clip((depth - 0.05) / 0.5, 0.0, 1.0))
+    left, right = figure.joint("thigh_l"), figure.joint("thigh_r")
+    half = max(abs(left[0] - right[0]) / 2, 0.1) * 1.5
+    to_left = np.clip(0.5 + (coords[:, 0] - center[0]) / (2 * half), 0.0, 1.0)
+    w *= (1 - share)[:, None]
+    w[:, rig.order.index("thigh_l")] += share * to_left
+    w[:, rig.order.index("thigh_r")] += share * (1 - to_left)
+    # The back of the hem also takes some of the shins' turn: a heel coming
+    # up behind lifts it instead of going through it.
+    out = coords[:, [0, 2]] - center[[0, 2]]
+    back = np.clip(-out[:, 1] / np.maximum(np.linalg.norm(out, axis=1), 1e-9), 0.0, 1.0)
+    kick = g("kick") * back * np.clip((depth - 0.35) / 0.65, 0.0, 1.0)
+    w *= (1 - kick)[:, None]
+    w[:, rig.order.index("calf_l")] += kick * to_left
+    w[:, rig.order.index("calf_r")] += kick * (1 - to_left)
+    texco = np.array([[2.0 * j / n, 1.5 * i / (len(rows) - 1)] for i in range(len(rows)) for j in range(n)])
+    material = plain(k, g("color"), ROUGHNESS["wool"], pattern="wool")
+    pc = Piece("skirt", k, material, coords, [tuple((v, v) for v in t) for t in tris], w, texco)
+    under = (figure.limb[figure.faces] == BODY).all(axis=1) & (figure.station[figure.faces] >= g("hide")).all(axis=1) & (
+        figure.station[figure.faces] <= top).all(axis=1)
+    return pc, under
+
+
+def make_scarf_knot(figure, settings, material, rig):
+    """The headscarf's knot under the chin, ``knot`` across, and its two
+    short ends hanging from it; on the head."""
+    top, chin, middle, height = head_measures(figure)
+    head = figure.coords[figure.limb == HEAD]
+    jaw = head[np.abs(head[:, 1] - chin) < 0.2]
+    size = setting(settings, "headscarf", "knot")
+    at = np.array([middle[0], chin - 0.6 * size, jaw[:, 2].max() - 0.15])
+    knot = at + np.array([[size, 0, 0], [-size, 0, 0], [0, size * 0.7, 0], [0, -size * 0.7, 0], [0, 0, size * 0.8], [0, 0, -size * 0.6]])
+    ktris = facing(knot, [(0, 2, 4), (2, 1, 4), (1, 3, 4), (3, 0, 4), (2, 0, 5), (1, 2, 5), (3, 1, 5), (0, 3, 5)], lambda p: p - at)
+    parts = [(knot, ktris)]
+    for side in (1, -1):
+        e = at + np.array([[side * 0.3 * size, -0.4 * size, size * 0.7], [side * 0.9 * size, -0.3 * size, size * 0.5],
+                           [side * 1.2 * size, -2.4 * size, size * 0.9]])
+        parts.append((e, facing(e, [(0, 1, 2)], lambda p: np.array([0.0, 0.0, 1.0]))))
+    coords, tris = joined(parts)
+    return made("headscarf knot", material, coords, tris, "head", rig)
+
+
+SCARF_POINT_FROM = ("head", "neck_01", "spine_03")
+
+
+def make_scarf_point(figure, settings, material, rig):
+    """The headscarf's folded point hanging down the back of the neck onto
+    the shoulders, ``drop`` long, skinned like the body under it (the
+    head, the neck and the chest's top)."""
+    top, chin, middle, height = head_measures(figure)
+    drop = setting(settings, "headscarf", "drop")
+    loose = setting(settings, "headscarf", "loose")
+    neck = figure.coords[(figure.limb != ARM) & (figure.normals[:, 2] < -0.2)]
+
+    def back(x, y):
+        near = neck[(np.abs(neck[:, 0] - x) < 0.3) & (np.abs(neck[:, 1] - y) < 0.3)]
+        return (near[:, 2].min() if len(near) else neck[:, 2].min()) - loose - 0.03
+
+    y0 = chin + 0.15 * height
+    rows = []
+    for t, half in ((0.0, 0.75), (0.5, 0.45), (1.0, 0.0)):
+        y = y0 - t * drop
+        xs = [middle[0] - half, middle[0], middle[0] + half] if half else [middle[0]]
+        rows.append([[x, y, back(x, y)] for x in xs])
+    coords = np.array([p for row in rows for p in row])
+    tris = [(0, 1, 4), (0, 4, 3), (1, 2, 4), (2, 5, 4), (3, 4, 6), (4, 5, 6)]
+    tris = facing(coords, tris, lambda p: np.array([0.0, 0.0, -1.0]))
+    piece = Piece("headscarf point", "piece", material, coords, [tuple((v, v) for v in t) for t in tris],
+                  np.zeros((len(coords), len(rig.order))), coords[:, [0, 1]] * 0.6)
+    piece.weights = nearest_weights(coords, figure, SCARF_POINT_FROM, limbs=(BODY, HEAD))
+    return piece
+
+
+def make_apron(figure, settings, skirt):
+    """An apron (delantal) tied over the long skirt: the skirt's front
+    (``width``: the share of its front half it covers) from the waist down
+    to station ``hem``, laid just outside it and skinned like it, with its
+    own hem turned in."""
+    k = "apron"
+    g = lambda key: setting(settings, k, key)  # noqa: E731
+    n = SKIRT_SEGMENTS
+    rows = len(SKIRT_ROWS) + 1  # the waistband and the skirt's rows, not its turned-in hem
+    y_hem = figure.height(g("hem"))
+    sx, cz = angles(n)
+    front = [j for j in range(n) if cz[j] > 1 - g("width") * 1.0 and cz[j] > 0]
+    front = sorted(front, key=lambda j: sx[j])
+    if len(front) < 2:
+        raise ConvertError("apron: too narrow")
+    coords = skirt.coords[: rows * n]
+    center = np.array([coords[:, 0].mean(), 0.0, coords[:, 2].mean()])
+    keep = [i for i in range(rows) if coords[i * n, 1] >= y_hem - 1e-9]
+    if len(keep) < 2:
+        raise ConvertError("apron: its hem is above the waist")
+    # Cut to the hem: the last row kept slid down to it along the next one.
+    picked, weights = [], []
+    for i in keep:
+        picked.append(coords[[i * n + j for j in front]])
+        weights.append(skirt.weights[[i * n + j for j in front]])
+    last = keep[-1]
+    if last + 1 < rows and coords[last * n, 1] > y_hem:
+        a, b = coords[[last * n + j for j in front]], coords[[(last + 1) * n + j for j in front]]
+        f = (a[:, 1] - y_hem) / np.maximum(a[:, 1] - b[:, 1], 1e-9)
+        picked.append(a + (b - a) * f[:, None])
+        wa, wb = skirt.weights[[last * n + j for j in front]], skirt.weights[[(last + 1) * n + j for j in front]]
+        weights.append(wa + (wb - wa) * f[:, None])
+    out = []
+    for p in picked:
+        d = p - center
+        d[:, 1] = 0.0
+        out.append(p + d / np.maximum(np.linalg.norm(d, axis=1, keepdims=True), 1e-9) * 0.05)
+    m = len(front)
+    coords = np.vstack(out)
+    ids = [list(range(i * m, (i + 1) * m)) for i in range(len(out))]
+    tris = facing(coords, strip(ids, closed=False), radial(center))
+    texco = np.array([[1.0 * j / m, 1.0 * i / len(out)] for i in range(len(out)) for j in range(m)])
+    material = plain(k, g("color"), ROUGHNESS["cotton"], pattern="cotton")
+    return Piece("apron", k, material, coords, [tuple((v, v) for v in t) for t in tris], np.vstack(weights), texco)
 
 
 def cloth(name, size=64):

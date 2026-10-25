@@ -1,0 +1,36 @@
+# A townsperson, look 3 (a countrywoman in a headscarf), 1919: about 45
+# (age 0.65), short and sturdy. A long-sleeved, high-necked blouse of
+# faded blue, an ankle-length brown wool skirt (pollera) with a cotton
+# apron over it, a dark woollen shawl round the shoulders with its ends
+# crossed over the chest, high laced boots, and a dark headscarf (panuelo de
+# cabeza) framing the face, knotted under the chin, its point down the
+# back of the neck; no hair shows. The game tints the blouse, skirt,
+# apron, shawl and headscarf per person.
+#
+# Lines MakeHuman does not know (it warns and skips them) are read by
+# tools/mh2gltf.py: piece (see ../README.md). Credits in ../CREDITS.md.
+version v1.1.1
+name townsfolk_headscarf
+modifier macrodetails/Gender 0.000000
+modifier macrodetails/Age 0.650000
+modifier macrodetails/African 0.000000
+modifier macrodetails/Asian 0.000000
+modifier macrodetails/Caucasian 1.000000
+modifier macrodetails-universal/Muscle 0.450000
+modifier macrodetails-universal/Weight 0.650000
+modifier macrodetails-height/Height 0.350000
+modifier macrodetails-proportions/BodyProportions 0.500000
+skeleton game_engine.mhskel
+skinMaterial skins/middleage_caucasian_female/middleage_caucasian_female.mhmat
+proxy female1605 e7cb8171-845e-42b0-a109-e6e8c8a61f9d
+eyes Low-Poly 1cc97a30-85a1-42e6-a9f7-b3e753732baa
+material Low-Poly 1cc97a30-85a1-42e6-a9f7-b3e753732baa eyes/materials/brown.mhmat
+eyebrows eyebrow012 1c16325c-7831-4166-831a-05c5b609c219
+clothesHideFaces True
+subdivide False
+piece shirt color=0.42,0.48,0.54 top=6.3 bottom=3.6
+piece skirt color=0.27,0.19,0.14
+piece apron color=0.78,0.75,0.68 hem=1.75 width=0.75
+piece shawl color=0.20,0.17,0.15
+piece boots color=0.16,0.12,0.10 top=1.9
+piece headscarf color=0.13,0.12,0.13

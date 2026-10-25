@@ -1,0 +1,9 @@
+# The peon's black moustache: the moustache as shipped, its strands cut
+# out by their alpha.
+name townsfolk_peon_moustache
+diffuseColor 0.55 0.5 0.45
+specularColor 0.01 0.01 0.01
+shininess 0.05
+transparent True
+backfaceCull False
+diffuseTexture data/clothes/grinsegold_moustache/Moustache_black_diff.png

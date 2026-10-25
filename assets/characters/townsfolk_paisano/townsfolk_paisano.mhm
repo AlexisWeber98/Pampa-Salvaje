@@ -1,0 +1,35 @@
+# A townsperson, look 0 (the paisano), 1919: a young Basque-born worker,
+# about 30 (age 0.54), of medium build. A collarless off-white shirt, a
+# dark bombacha, a red faja, a red neckerchief, a dark blue boina pulled
+# down to one side, and alpargatas (canvas shoes on a rope sole). The game
+# tints the shirt, bombacha, faja, neckerchief and boina per person (see
+# crates/render/src/character/townsfolk.rs).
+#
+# Lines MakeHuman does not know (it warns and skips them) are read by
+# tools/mh2gltf.py: piece (see ../README.md). Credits in ../CREDITS.md.
+version v1.1.1
+name townsfolk_paisano
+modifier macrodetails/Gender 1.000000
+modifier macrodetails/Age 0.540000
+modifier macrodetails/African 0.000000
+modifier macrodetails/Asian 0.000000
+modifier macrodetails/Caucasian 1.000000
+modifier macrodetails-universal/Muscle 0.600000
+modifier macrodetails-universal/Weight 0.450000
+modifier macrodetails-height/Height 0.470000
+modifier macrodetails-proportions/BodyProportions 0.500000
+skeleton game_engine.mhskel
+skinMaterial skins/young_caucasian_male/young_caucasian_male.mhmat
+proxy male1591 d7e4934e-daed-4ad5-a055-18c9cba487dc
+eyes Low-Poly 1cc97a30-85a1-42e6-a9f7-b3e753732baa
+material Low-Poly 1cc97a30-85a1-42e6-a9f7-b3e753732baa eyes/materials/brown.mhmat
+eyebrows eyebrow004 eb028b6d-3ff8-40c7-a2ea-4d9aa808b38d
+hair short02 c104cd4a-1edc-43f9-8b94-f63345a44638
+clothesHideFaces True
+subdivide False
+piece shirt color=0.84,0.81,0.73 top=6.0
+piece bombacha color=0.20,0.20,0.22 bottom=0.98
+piece alpargatas color=0.72,0.68,0.58
+piece sash color=0.50,0.13,0.11 width=1.0
+piece neckerchief color=0.62,0.16,0.12 drop=0.7
+piece boina color=0.13,0.15,0.22 fit=0.6 height=0.12 width=1.4 lean=0.3 droop=0.3
