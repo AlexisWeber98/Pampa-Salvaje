@@ -224,6 +224,26 @@ pub fn frozen(was: bool, distance: f32, in_view: bool) -> bool {
     !in_view || distance > if was { RESUME_NEAR } else { FREEZE_FAR }
 }
 
+/// Where the world is seen from: the active 3D camera drawn last (the
+/// highest order), the lowest entity among equals; `None` without one.
+/// The same camera whatever order a query lists them in.
+pub fn view_eye<'a>(
+    cameras: impl IntoIterator<Item = (Entity, &'a GlobalTransform, &'a Camera)>,
+) -> Option<Vec3> {
+    cameras
+        .into_iter()
+        .filter(|(_, _, camera)| camera.is_active)
+        .max_by_key(|(entity, _, camera)| (camera.order, std::cmp::Reverse(*entity)))
+        .map(|(_, at, _)| at.translation())
+}
+
+/// Whether a model is in view: any of its meshes (`probes`) is, by
+/// `visible`; a small piece culled (a hat, a button) does not hide the rest.
+/// With no mesh to ask, it is.
+pub fn any_in_view(probes: &[Entity], visible: impl Fn(Entity) -> bool) -> bool {
+    probes.is_empty() || probes.iter().any(|&p| visible(p))
+}
+
 /// The model's transform under its animal: turned from facing +Z to the
 /// `heading` (+X is the body's front) and scaled to life size.
 pub fn model_transform(species: Species, heading: Heading) -> Transform {
@@ -363,8 +383,8 @@ pub struct LivestockPending(pub Handle<WorldAsset>);
 pub struct LivestockRig {
     /// The entity with its `AnimationPlayer`.
     pub player: Entity,
-    /// A mesh of it, whose visibility says whether it is in view.
-    pub probe: Option<Entity>,
+    /// Its drawn meshes: it is in view while any of them is.
+    pub probes: Vec<Entity>,
     pub clip: Option<Clip>,
     pub frozen: bool,
 }
@@ -487,7 +507,7 @@ pub(super) fn dress_livestock(
     };
     let range = crate::settlement::ranges()[1].clone();
     let mut player = None;
-    let mut probe = None;
+    let mut probes = Vec::new();
     for entity in children.iter_descendants(root) {
         let Ok((mesh, material, name, has_player)) = parts.get(entity) else {
             continue;
@@ -503,7 +523,7 @@ pub(super) fn dress_livestock(
             part.try_insert(Visibility::Hidden);
             continue;
         }
-        probe.get_or_insert(entity);
+        probes.push(entity);
         if let Some(material) = material {
             let tinted = cache
                 .materials
@@ -548,7 +568,7 @@ pub(super) fn dress_livestock(
         ));
         commands.entity(root).try_insert(LivestockRig {
             player,
-            probe,
+            probes,
             clip: None,
             frozen: false,
         });
@@ -597,14 +617,14 @@ pub(super) fn drive_livestock(
     time: Res<Time>,
     models: Option<Res<LivestockModels>>,
     clips: Option<Res<Assets<AnimationClip>>>,
-    cameras: Query<&GlobalTransform, With<Camera3d>>,
+    cameras: Query<(Entity, &GlobalTransform, &Camera), With<Camera3d>>,
     animals: Query<(&Animal, &AnimalPose, Option<&AnimalSeed>)>,
     mut rigs: Query<ModelRig>,
     mut players: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
     seen: Query<&ViewVisibility>,
 ) {
     let clock = time.elapsed_secs();
-    let eye = cameras.iter().next().map(GlobalTransform::translation);
+    let eye = view_eye(cameras);
     for (child_of, model, mut transform, at, rig) in &mut rigs {
         let Ok((&animal, pose, seed)) = animals.get(child_of.parent()) else {
             continue;
@@ -618,7 +638,8 @@ pub(super) fn drive_livestock(
         };
         let distance = eye.map_or(0.0, |e| e.distance(at.translation()));
         // Visibility is only known with a camera drawing.
-        let in_view = eye.is_none() || rig.probe.is_none_or(|p| seen.get(p).is_ok_and(|v| v.get()));
+        let in_view =
+            eye.is_none() || any_in_view(&rig.probes, |p| seen.get(p).is_ok_and(|v| v.get()));
         let freeze = frozen(rig.frozen, distance, in_view);
         if freeze != rig.frozen {
             rig.frozen = freeze;
@@ -733,6 +754,48 @@ mod tests {
         let distinct: std::collections::HashSet<u32> =
             offsets.iter().map(|o| (o * 1000.0) as u32).collect();
         assert!(distinct.len() >= 15, "{offsets:?}");
+    }
+
+    #[test]
+    fn the_view_is_the_active_camera_drawn_last_whatever_the_query_order() {
+        let mut world = World::new();
+        let [a, b, c] = [(); 3].map(|_| world.spawn_empty().id());
+        let at = |x: f32| GlobalTransform::from_translation(Vec3::X * x);
+        let (near, far, off) = (at(1.0), at(500.0), at(9.0));
+        let main = Camera {
+            order: 1,
+            ..default()
+        };
+        let other = Camera::default();
+        let inactive = Camera {
+            order: 5,
+            is_active: false,
+            ..default()
+        };
+        // The highest active order wins, listed first or last.
+        let cams = [(a, &far, &other), (b, &near, &main), (c, &off, &inactive)];
+        assert_eq!(view_eye(cams), Some(Vec3::X));
+        let mut reversed = cams;
+        reversed.reverse();
+        assert_eq!(view_eye(reversed), Some(Vec3::X));
+        // Equal orders: the lowest entity, in either listing.
+        let ties = [(b, &far, &other), (a, &near, &other)];
+        let lowest = if a < b { Vec3::X } else { Vec3::X * 500.0 };
+        assert_eq!(view_eye(ties), Some(lowest));
+        let mut reversed = ties;
+        reversed.reverse();
+        assert_eq!(view_eye(reversed), Some(lowest));
+        assert_eq!(view_eye([(c, &off, &inactive)]), None);
+    }
+
+    #[test]
+    fn a_model_is_in_view_while_any_of_its_meshes_is() {
+        let mut world = World::new();
+        let [hat, body] = [(); 2].map(|_| world.spawn_empty().id());
+        // The hat culled, the body drawn: in view.
+        assert!(any_in_view(&[hat, body], |e| e == body));
+        assert!(!any_in_view(&[hat, body], |_| false));
+        assert!(any_in_view(&[], |_| false), "nothing to ask");
     }
 
     #[test]

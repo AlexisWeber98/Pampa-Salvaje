@@ -26,8 +26,8 @@ use pampa_core::{
 };
 use pampa_render::bubble::LIFETIME;
 use pampa_render::{
-    Animal, CharacterVisual, Coat, FigureKind, HudObjective, MapTarget, Say, VisualPose, font,
-    world_from_ground,
+    Animal, CharacterVisual, Coat, FigureKind, HudObjective, MapTarget, Say, Talking, VisualPose,
+    font, world_from_ground,
 };
 
 use crate::abilities::{PlayerAbilities, Unlocked, announce_unlocks, unlock_on_mount};
@@ -146,6 +146,7 @@ impl Plugin for ErrandPlugin {
                 (
                     interact,
                     converse,
+                    mark_speakers,
                     show_progress,
                     unlock_on_mount,
                     announce_unlocks,
@@ -483,6 +484,31 @@ fn converse(
     }
 }
 
+/// Puts [`Talking`] on whoever's lines are on screen and takes it off
+/// everyone else: standing, they talk with their hands.
+fn mark_speakers(
+    mut commands: Commands,
+    conversation: Res<Conversation>,
+    players: Query<Entity, With<Player>>,
+    npcs: Query<(Entity, &StandingNpc)>,
+    talking: Query<Entity, With<Talking>>,
+) {
+    let speaker = conversation.0.as_ref().and_then(|talk| match talk.speaker {
+        Speaker::Player => players.iter().next(),
+        Speaker::Npc(npc) => npcs.iter().find(|(_, n)| n.npc == npc).map(|(e, _)| e),
+    });
+    for entity in &talking {
+        if Some(entity) != speaker {
+            commands.entity(entity).remove::<Talking>();
+        }
+    }
+    if let Some(speaker) = speaker
+        && !talking.contains(speaker)
+    {
+        commands.entity(speaker).insert(Talking);
+    }
+}
+
 /// Keeps the HUD objective and the minimap target on the current stage.
 fn show_progress(
     errand: Option<Res<ErrandRun>>,
@@ -683,6 +709,30 @@ mod tests {
             app.update();
         }
         assert_eq!(app.world().resource::<Conversation>().0, None);
+    }
+
+    #[test]
+    fn whoever_speaks_talks_with_their_hands_until_their_lines_end() {
+        let mut app = shipped_app();
+        let lines = shipped_lines();
+        arrive(&mut app);
+        let e = errand(&app);
+        let talking = |app: &mut App| {
+            let mut q = app.world_mut().query_filtered::<Entity, With<Talking>>();
+            q.iter(app.world()).collect::<Vec<_>>()
+        };
+        assert_eq!(talking(&mut app), vec![]);
+        teleport(
+            &mut app,
+            e.standing(Npc::Hidalgo).position + e.standing(Npc::Hidalgo).heading.forward() * 2.0,
+        );
+        press_f(&mut app);
+        app.update();
+        let don = npc_entity(&mut app, Npc::Hidalgo);
+        assert_eq!(talking(&mut app), vec![don]);
+        wait_for_lines(&mut app, lines.hidalgo.len());
+        app.update();
+        assert_eq!(talking(&mut app), vec![]);
     }
 
     #[test]

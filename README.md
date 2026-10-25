@@ -531,8 +531,10 @@ The MakeHuman models (`assets/characters/`, built by `tools/mh2gltf.py`) wear
 a 1919 wardrobe, mostly cut from the body by the converter: shirts and
 waistcoats, bombachas, knee boots, a police guerrera with brass buttons, a
 three-piece suit, felt hats, a kepi, neckerchiefs, a poncho, the faja and the
-rastra. They walk, jog and stand by the rigid figures' poses, loosened into
-a relaxed stance (the weight on one leg, a slow sway). They are
+rastra. They move with Quaternius' CC0 animation clips, retargeted to their
+skeleton by `tools/retarget.py`: they stand, walk, jog and run, the clips paced
+to the ground speed so the feet do not slide. Farach waits with his arms
+folded, and whoever is speaking talks with their hands. They are
 the default, in release builds too; `models off` brings back the old rigid
 figures in a debug build. Try `goto castex` (Farach with Bairoletto at his
 side) or `goto nievas` (Don Hidalgo).
@@ -543,7 +545,7 @@ train it refuses ("not on the train: get off first"): get off first.
 
 ## Credits
 
-Third-party assets (CC0 ground textures from ambientCG, CC0 vegetation models from Quaternius' Ultimate Nature Pack, and the CC0 MakeHuman assets of the characters) are listed with their author, source, licence and changes in [CREDITS.md](CREDITS.md), and again next to their files.
+Third-party assets (CC0 ground textures from ambientCG, CC0 vegetation models from Quaternius' Ultimate Nature Pack, the CC0 MakeHuman assets of the characters, and their CC0 animation clips from Quaternius' Universal Animation Library) are listed with their author, source, licence and changes in [CREDITS.md](CREDITS.md), and again next to their files.
 
 ## License
 

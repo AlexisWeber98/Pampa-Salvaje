@@ -2,10 +2,12 @@
 //! decides how it looks: low-poly 3D people (see [`figure`](super::figure))
 //! and horses (see [`horse`](super::horse)), and a rider in the saddle.
 
+use bevy::app::AnimationSystems;
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 use pampa_core::{AnimationState, Heading};
 
+use super::clips::{load_character_clips, read_reference};
 use super::figure::{FigureKind, FigureKit, spawn_figure, update_figures};
 use super::finish::Palette;
 use super::horse::{Coat, HorseKit, spawn_horse, update_horses};
@@ -13,7 +15,7 @@ use super::model::{
     CharacterModels, CharacterModelsShown, attach_model, dress_character, load_character_models,
     swap_in_character_models, toggle_character_models,
 };
-use super::rig::drive_rigs;
+use super::rig::{drive_rigs, fit_rigs};
 
 /// How a character is drawn. Swappable per entity without touching logic:
 /// inserting a new value replaces whatever was drawn before.
@@ -53,15 +55,30 @@ pub struct CharacterVisualPlugin;
 impl Plugin for CharacterVisualPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CharacterModelsShown>()
-            .add_systems(Startup, (load_kits, load_character_models))
+            .add_systems(
+                Startup,
+                (load_kits, load_character_models, load_character_clips),
+            )
             .add_systems(
                 Update,
-                (toggle_character_models, swap_in_character_models).chain(),
+                (
+                    toggle_character_models,
+                    swap_in_character_models,
+                    read_reference,
+                )
+                    .chain(),
             )
             .add_systems(
                 PostUpdate,
                 (attach_visuals, update_horses, update_figures, drive_rigs)
                     .chain()
+                    .before(AnimationSystems)
+                    .before(TransformSystems::Propagate),
+            )
+            .add_systems(
+                PostUpdate,
+                fit_rigs
+                    .after(AnimationSystems)
                     .before(TransformSystems::Propagate),
             )
             .add_observer(dress_character);
