@@ -3,7 +3,7 @@
 //! On foot the player moves with the same kinematic model as the rider
 //! ([`Rider`]): the same input (W/S throttle, A/D turn, Shift to go
 //! faster), the same collision and the same world. Only the tuning
-//! ([`RiderParams::on_foot`]: a 6 km/h walk and an 18 km/h jog) and the body (a
+//! ([`RiderParams::on_foot`]: a 1.6 m/s walk and an 18 km/h jog) and the body (a
 //! person-sized collider) differ.
 
 use crate::{Circle, Ground, Heading, Rider, RiderParams, TetheredHorse, Vec2, World};
@@ -79,16 +79,18 @@ impl Rider {
 }
 
 impl RiderParams {
-    /// Walking pace 6 km/h, jogging (Shift) 18 km/h; a person
-    /// turns and stops quicker than a horse.
+    /// Walking pace 1.6 m/s (5.8 km/h: a brisk 1919 street walk, a little
+    /// faster than the townsfolk's 1.25 to 1.5), jogging (Shift) 18 km/h;
+    /// a person turns and stops quicker than a horse.
     pub fn on_foot() -> Self {
         Self {
             turn_rate: 2.6,
             acceleration: 3.0,
             braking: 8.0,
             friction: 6.0,
-            // 6 km/h.
-            walk_max: 6.0 / 3.6,
+            // 1.6 m/s (user, 2026-10-25; it was 6 km/h, which played the
+            // walk clip hurried).
+            walk_max: 1.6,
             // 18 km/h, jogging with Shift.
             gallop_max: 18.0 / 3.6,
             reverse_max: 1.0,
@@ -127,9 +129,9 @@ mod tests {
     }
 
     #[test]
-    fn walks_at_6_kmh_and_jogs_at_18_kmh() {
+    fn walks_at_1_6_m_s_and_jogs_at_18_kmh() {
         let p = RiderParams::on_foot();
-        let (walk_speed, jog_speed) = (6.0 / 3.6, 18.0 / 3.6);
+        let (walk_speed, jog_speed) = (1.6, 18.0 / 3.6);
         assert!((p.walk_max - walk_speed).abs() < 1e-6, "{}", p.walk_max);
         assert!((p.gallop_max - jog_speed).abs() < 1e-6, "{}", p.gallop_max);
         let (mut r, p, world) = walker();
