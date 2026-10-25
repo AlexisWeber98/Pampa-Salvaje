@@ -639,21 +639,24 @@ mod tests {
         assert!(stretch(swung, mean, 1.0).angle_between(swung) < 1e-4);
     }
 
-    #[test]
-    fn a_folded_hind_leg_stays_in_the_bodys_sagittal_plane() {
+    /// Raises the ground 12 cm under `legs` of a standing saddled horse, so
+    /// [`lift_legs`] must fold them, and checks each folds at its lower
+    /// joint (the knee or the hock) about the body's side axis: its end
+    /// comes up, the joint stays, and the end keeps its side offset.
+    fn folds_in_the_sagittal_plane(legs: [usize; 2]) {
         use crate::character::horse::tests::saddled;
         use crate::character::{CharacterVisual, Coat};
         use bevy::ecs::system::RunSystemOnce;
         let (mut app, _) = saddled(CharacterVisual::Horse(Coat::Bayo), 0.0);
         let world = app.world_mut();
         let mut bones = world.query::<&HorseBones>().single(world).unwrap().clone();
-        // Body-frame places of each hind leg's hock and hoof end.
+        // Body-frame places of each leg's lower joint and end.
         let at = |world: &mut World, bones: &HorseBones, leg: usize| {
             let bones = bones.clone();
             world
                 .run_system_once(move |transforms: Query<&mut Transform>| {
                     let chain = Bone::chain(leg);
-                    let hock = chain
+                    let joint = chain
                         .iter()
                         .position(|b| *b == Bone::LowerLeg(leg))
                         .unwrap();
@@ -661,14 +664,13 @@ mod tests {
                         let p = placed(&bones, c, &transforms);
                         bones.armature.transform_point3(Vec3::from(p.translation))
                     };
-                    (body(&chain[..=hock]), body(&chain))
+                    (body(&chain[..=joint]), body(&chain))
                 })
                 .unwrap()
         };
-        let before = [at(world, &bones, 2), at(world, &bones, 3)];
-        // Ground raised 12 cm under the hind legs: they must fold.
-        for leg in 2..4 {
-            bones.standing[leg] = before[leg - 2].1.y + PLANTED + 0.12;
+        let before = legs.map(|leg| at(world, &bones, leg));
+        for (k, &leg) in legs.iter().enumerate() {
+            bones.standing[leg] = before[k].1.y + PLANTED + 0.12;
         }
         let folding = bones.clone();
         world
@@ -676,21 +678,34 @@ mod tests {
                 lift_legs(&folding, &mut transforms)
             })
             .unwrap();
-        for leg in 2..4 {
-            let (hock, end) = before[leg - 2];
-            let (hock2, end2) = at(world, &bones, leg);
+        for (k, &leg) in legs.iter().enumerate() {
+            let (joint, end) = before[k];
+            let (joint2, end2) = at(world, &bones, leg);
             assert!(end2.y > end.y + 0.03, "leg {leg} folded: {end} -> {end2}");
             assert!(
-                hock2.distance(hock) < 1e-4,
-                "the hock stays: {hock} {hock2}"
+                joint2.distance(joint) < 1e-4,
+                "leg {leg}'s joint stays: {joint} {joint2}"
             );
-            // A fold about the side axis keeps the hoof's side offset
+            // A fold about the side axis keeps the end's side offset
             // exactly (about the bone's own axis instead it drifts ~1 mm).
             assert!(
                 (end2.z - end.z).abs() < 2e-4,
                 "leg {leg} twisted sideways: {end} -> {end2}"
             );
         }
+    }
+
+    #[test]
+    fn a_folded_hind_leg_stays_in_the_bodys_sagittal_plane() {
+        folds_in_the_sagittal_plane([2, 3]);
+    }
+
+    #[test]
+    fn a_folded_front_leg_stays_in_the_bodys_sagittal_plane() {
+        // The front legs fold at the knee: their chain ends in a single
+        // `End`, so the lower bone's parent sits elsewhere in it than a
+        // hind leg's.
+        folds_in_the_sagittal_plane([0, 1]);
     }
 
     #[test]

@@ -1072,6 +1072,65 @@ pub(crate) mod tests {
         assert_eq!(Spring::at(2.0).step(2.0, 6.0, 0.1), 2.0, "at rest stays");
     }
 
+    #[test]
+    fn a_stirrup_stays_put_while_its_rider_is_hidden_and_goes_back_on_the_foot_once_shown() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        let torso = world
+            .spawn((
+                Transform::default(),
+                GlobalTransform::from_xyz(0.0, 1.2, 0.0),
+            ))
+            .id();
+        let foot = world.spawn(GlobalTransform::from_xyz(0.3, 0.5, 0.1)).id();
+        let rider = world.spawn(Visibility::Hidden).id();
+        let hanging = Transform::from_xyz(0.25, -0.6, 0.0);
+        let on = OnFoot {
+            rider,
+            foot,
+            at: Transform::from_xyz(0.0, -0.05, 0.02),
+        };
+        let stirrup = world
+            .spawn((
+                on,
+                hanging,
+                GlobalTransform::from_xyz(0.25, 0.6, 0.0),
+                ChildOf(torso),
+            ))
+            .id();
+        let place = |world: &World| {
+            (
+                *world.get::<Transform>(stirrup).unwrap(),
+                world.get::<GlobalTransform>(stirrup).unwrap().translation(),
+            )
+        };
+        // Hidden (its scene just spawned, not posed yet): left where it hung,
+        // not put on a foot standing at rest.
+        world.run_system_once(carry_stirrups).unwrap();
+        assert_eq!(place(&world), (hanging, Vec3::new(0.25, 0.6, 0.0)));
+        // Shown: on the foot, its local place under the torso to match.
+        world.entity_mut(rider).insert(Visibility::Inherited);
+        world.run_system_once(carry_stirrups).unwrap();
+        let (local, global) = place(&world);
+        assert!(
+            global.distance(Vec3::new(0.3, 0.45, 0.12)) < 1e-5,
+            "{global}"
+        );
+        assert!(
+            (local.translation - Vec3::new(0.3, -0.75, 0.12)).length() < 1e-5,
+            "{local:?}"
+        );
+        // And it follows the foot.
+        *world.get_mut::<GlobalTransform>(foot).unwrap() = GlobalTransform::from_xyz(0.2, 0.7, 0.0);
+        world.run_system_once(carry_stirrups).unwrap();
+        assert!(place(&world).1.distance(Vec3::new(0.2, 0.65, 0.02)) < 1e-5);
+        // Hidden again: it keeps its last place.
+        world.entity_mut(rider).insert(Visibility::Hidden);
+        *world.get_mut::<GlobalTransform>(foot).unwrap() = GlobalTransform::from_xyz(9.0, 9.0, 9.0);
+        world.run_system_once(carry_stirrups).unwrap();
+        assert!(place(&world).1.distance(Vec3::new(0.2, 0.65, 0.02)) < 1e-5);
+    }
+
     // --- with the shipped horse and rider ------------------------------------
 
     use crate::character::cpu;
@@ -1230,6 +1289,10 @@ pub(crate) mod tests {
         }
     }
 
+    /// The frames a rider's scene, already loaded, may take to spawn again
+    /// and be seated and shown.
+    const RESPAWN_FRAMES: usize = 3;
+
     #[test]
     fn a_respawned_rider_keeps_the_stirrups_on_its_new_feet_and_the_reins_in_its_new_hand() {
         use bevy::world_serialization::WorldAssetRoot;
@@ -1253,19 +1316,21 @@ pub(crate) mod tests {
             .get_mut::<WorldAssetRoot>(rider)
             .unwrap()
             .set_changed();
+        // The scene is loaded already: it spawns again, is dressed and
+        // posed within a few frames, with no waiting on the asset server.
         let mut new = None;
-        for _ in 0..3000 {
+        for frame in 0..RESPAWN_FRAMES {
             app.update();
             let world = app.world();
             let seated = world.get::<Seated>(rider).unwrap();
             let posed = world.get::<Visibility>(rider) == Some(&Visibility::Inherited);
             if seated.bones[0] != old.bones[0] && posed {
-                new = Some(seated.clone());
+                new = Some((frame, seated.clone()));
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        let new = new.expect("the rider's scene spawned again");
+        let (frame, new) = new.expect("the rider's scene spawned again and was posed");
+        println!("respawned and seated after {} frames", frame + 1);
         let bone = |b: Bone| new.bones[Bone::ALL.iter().position(|x| *x == b).unwrap()];
         // Over a few frames of the walk: the stirrups ride the new feet,
         // the reins end in the new hand.
