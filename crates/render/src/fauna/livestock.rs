@@ -57,6 +57,15 @@ pub const GALLOP_SPEED: f32 = 2.5;
 /// Fade between two clips.
 const BLEND: Duration = Duration::from_millis(300);
 
+/// The ground speed the horse's `Walk` clip shows at life size, m/s: the
+/// mean backward slide of every hoof while it is within 1.5 cm of its
+/// lowest, over the whole loop (1.17 s). The clip is uneven: the hind hooves
+/// slide back at about 1.4 m/s, the fore at about 0.85.
+pub const HORSE_WALK_SPEED: f32 = 1.25;
+/// The same for its `Gallop` clip (0.58 s, about 2.3 m a stride): the hind
+/// hooves at about 4.4 m/s, the fore at 2.6 to 4.1.
+pub const HORSE_GALLOP_SPEED: f32 = 3.94;
+
 /// The animals drawn from a model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Species {
@@ -114,18 +123,18 @@ impl Species {
     }
 
     /// The ground speed its `Walk` clip shows, m/s.
-    fn walk_speed(self) -> f32 {
+    pub fn walk_speed(self) -> f32 {
         match self {
             Self::Cow | Self::Bull => 1.0,
-            Self::Horse => 1.5,
+            Self::Horse => HORSE_WALK_SPEED,
         }
     }
 
     /// The ground speed its `Gallop` clip shows, m/s.
-    fn gallop_speed(self) -> f32 {
+    pub fn gallop_speed(self) -> f32 {
         match self {
             Self::Cow | Self::Bull => 6.0,
-            Self::Horse => 9.0,
+            Self::Horse => HORSE_GALLOP_SPEED,
         }
     }
 
@@ -168,13 +177,13 @@ impl Clip {
         }
     }
 
-    fn index(self) -> usize {
+    pub fn index(self) -> usize {
         self as usize
     }
 }
 
 /// A seeded mix of `seed` and `salt`, for deterministic variety.
-fn mix(seed: u32, salt: u32) -> u32 {
+pub(crate) fn mix(seed: u32, salt: u32) -> u32 {
     let mut h = seed.wrapping_mul(0x9e37_79b9) ^ salt.wrapping_mul(0x85eb_ca6b);
     h ^= h >> 15;
     h = h.wrapping_mul(0x2c1b_3c6d);
@@ -182,7 +191,7 @@ fn mix(seed: u32, salt: u32) -> u32 {
 }
 
 /// Seconds a corral horse keeps one idle before the next.
-const HORSE_IDLE: f32 = 14.0;
+pub(crate) const HORSE_IDLE: f32 = 14.0;
 
 /// The clip `animal` plays for `pose`. Standing animals pick one of the
 /// idles by their `seed`; corral horses, which never move, change idle
@@ -224,6 +233,26 @@ pub fn frozen(was: bool, distance: f32, in_view: bool) -> bool {
     !in_view || distance > if was { RESUME_NEAR } else { FREEZE_FAR }
 }
 
+/// Where the world is seen from: the active 3D camera drawn last (the
+/// highest order), the lowest entity among equals; `None` without one.
+/// The same camera whatever order a query lists them in.
+pub fn view_eye<'a>(
+    cameras: impl IntoIterator<Item = (Entity, &'a GlobalTransform, &'a Camera)>,
+) -> Option<Vec3> {
+    cameras
+        .into_iter()
+        .filter(|(_, _, camera)| camera.is_active)
+        .max_by_key(|(entity, _, camera)| (camera.order, std::cmp::Reverse(*entity)))
+        .map(|(_, at, _)| at.translation())
+}
+
+/// Whether a model is in view: any of its meshes (`probes`) is, by
+/// `visible`; a small piece culled (a hat, a button) does not hide the rest.
+/// With no mesh to ask, it is.
+pub fn any_in_view(probes: &[Entity], visible: impl Fn(Entity) -> bool) -> bool {
+    probes.is_empty() || probes.iter().any(|&p| visible(p))
+}
+
 /// The model's transform under its animal: turned from facing +Z to the
 /// `heading` (+X is the body's front) and scaled to life size.
 pub fn model_transform(species: Species, heading: Heading) -> Transform {
@@ -260,8 +289,8 @@ pub enum Paint {
 /// Cattle: `Main` is the hide and `Main_Light` the face and the lower legs.
 /// A Hereford is red with a white face and socks; an Angus all black and
 /// polled; an overo white with black patches, its face and legs black.
-/// Horses: `Main` is the body (vertex colours, from the criollo coats of
-/// the procedural horse), `Hair` the mane and tail, `Main_Dark` and
+/// Horses: `Main` is the body (vertex colours, from the criollo coats,
+/// [`Coat`](crate::character::Coat)), `Hair` the mane and tail, `Main_Dark` and
 /// `Main_Light` bits of the head.
 pub fn paint(animal: Animal, material: &str) -> Paint {
     let rgb = |c: [u8; 3]| Paint::Flat(Color::srgb_u8(c[0], c[1], c[2]));
@@ -315,6 +344,10 @@ pub fn coat_color_at(animal: Animal, p: Vec3, normal: Vec3) -> [f32; 4] {
 /// One loaded species: its scene, clips and shared graph.
 #[derive(Debug, Clone)]
 pub struct SpeciesModel {
+    /// The whole file, held so it is loaded once: with only labelled parts
+    /// of it held, a part asked for later loads the file again, and the
+    /// scene spawned from the first load is spawned again.
+    pub file: Handle<bevy::gltf::Gltf>,
     pub scene: Handle<WorldAsset>,
     pub clips: Vec<Handle<AnimationClip>>,
     pub graph: Handle<AnimationGraph>,
@@ -363,8 +396,8 @@ pub struct LivestockPending(pub Handle<WorldAsset>);
 pub struct LivestockRig {
     /// The entity with its `AnimationPlayer`.
     pub player: Entity,
-    /// A mesh of it, whose visibility says whether it is in view.
-    pub probe: Option<Entity>,
+    /// Its drawn meshes: it is in view while any of them is.
+    pub probes: Vec<Entity>,
     pub clip: Option<Clip>,
     pub frozen: bool,
 }
@@ -389,12 +422,14 @@ pub(super) fn load_livestock(
         let Some(scene) = gltf::load_scene(&server, Some(&root), &path) else {
             continue;
         };
+        let file = server.load(path.clone());
         let clips: Vec<Handle<AnimationClip>> = Clip::ALL
             .iter()
             .map(|c| server.load(GltfAssetLabel::Animation(c.index()).from_asset(path.clone())))
             .collect();
         let (graph, nodes) = AnimationGraph::from_clips(clips.iter().cloned());
         models.0[species.index()] = Some(SpeciesModel {
+            file,
             scene,
             clips,
             graph: graphs.add(graph),
@@ -459,7 +494,7 @@ type Stores<'w> = (
 
 /// Dresses a model the moment its scene spawns: the shared range on its
 /// meshes, its coat, and the species' graph on its player.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(clippy::too_many_arguments)]
 pub(super) fn dress_livestock(
     ready: On<WorldInstanceReady>,
     mut commands: Commands,
@@ -468,12 +503,7 @@ pub(super) fn dress_livestock(
     roots: Query<(&ChildOf, &LivestockModel)>,
     animals: Query<&Animal>,
     children: Query<&Children>,
-    parts: Query<(
-        Option<&Mesh3d>,
-        Option<&MeshMaterial3d<StandardMaterial>>,
-        Option<&GltfMaterialName>,
-        Has<AnimationPlayer>,
-    )>,
+    parts: Query<ModelPart>,
 ) {
     let root = ready.entity;
     let Ok((parent, model)) = roots.get(root) else {
@@ -485,9 +515,58 @@ pub(super) fn dress_livestock(
     ) else {
         return;
     };
+    let (player, probes) = dress_meshes(
+        &mut commands,
+        (&mut cache, &mut materials, &mut meshes),
+        root,
+        (animal, model.species),
+        &children,
+        &parts,
+    );
+    if let Some(player) = player {
+        commands.entity(player).try_insert((
+            AnimationGraphHandle(species.graph.clone()),
+            AnimationTransitions::new(),
+        ));
+        commands.entity(root).try_insert(LivestockRig {
+            player,
+            probes,
+            clip: None,
+            frozen: false,
+        });
+    }
+}
+
+/// What [`dress_meshes`] reads of a model's nodes: its mesh, material and
+/// material name, and whether it is the animation player.
+pub(crate) type ModelPart = (
+    Option<&'static Mesh3d>,
+    Option<&'static MeshMaterial3d<StandardMaterial>>,
+    Option<&'static GltfMaterialName>,
+    Has<AnimationPlayer>,
+);
+
+/// Dresses the meshes of the model spawned under `root` as `animal` (of
+/// `species`): the props' shared range, the coat's tinted materials and
+/// vertex-coloured body (copies made once per coat, in `cache`), and hidden
+/// parts hidden. Returns the entity with its animation player and the
+/// meshes drawn (its in-view probes). The saddled horses' models are dressed
+/// the same (see [`horse`](crate::character::horse)).
+pub(crate) fn dress_meshes(
+    commands: &mut Commands,
+    (cache, materials, meshes): (
+        &mut CoatCache,
+        &mut Assets<StandardMaterial>,
+        &mut Assets<Mesh>,
+    ),
+    root: Entity,
+    (animal, species): (Animal, Species),
+    children: &Query<&Children>,
+    parts: &Query<ModelPart>,
+) -> (Option<Entity>, Vec<Entity>) {
     let range = crate::settlement::ranges()[1].clone();
     let mut player = None;
-    let mut probe = None;
+    let mut probes = Vec::new();
     for entity in children.iter_descendants(root) {
         let Ok((mesh, material, name, has_player)) = parts.get(entity) else {
             continue;
@@ -503,7 +582,7 @@ pub(super) fn dress_livestock(
             part.try_insert(Visibility::Hidden);
             continue;
         }
-        probe.get_or_insert(entity);
+        probes.push(entity);
         if let Some(material) = material {
             let tinted = cache
                 .materials
@@ -529,7 +608,7 @@ pub(super) fn dress_livestock(
                 Some(h) => Some(h.clone()),
                 None => meshes
                     .get(&mesh.0)
-                    .map(|m| coat_mesh(m, animal, model.species))
+                    .map(|m| coat_mesh(m, animal, species))
                     .map(|m| {
                         let h = meshes.add(m);
                         cache.meshes.insert(key, h.clone());
@@ -541,18 +620,7 @@ pub(super) fn dress_livestock(
             }
         }
     }
-    if let Some(player) = player {
-        commands.entity(player).try_insert((
-            AnimationGraphHandle(species.graph.clone()),
-            AnimationTransitions::new(),
-        ));
-        commands.entity(root).try_insert(LivestockRig {
-            player,
-            probe,
-            clip: None,
-            frozen: false,
-        });
-    }
+    (player, probes)
 }
 
 /// `mesh` with each vertex coloured for `animal`'s coat.
@@ -597,14 +665,14 @@ pub(super) fn drive_livestock(
     time: Res<Time>,
     models: Option<Res<LivestockModels>>,
     clips: Option<Res<Assets<AnimationClip>>>,
-    cameras: Query<&GlobalTransform, With<Camera3d>>,
+    cameras: Query<(Entity, &GlobalTransform, &Camera), With<Camera3d>>,
     animals: Query<(&Animal, &AnimalPose, Option<&AnimalSeed>)>,
     mut rigs: Query<ModelRig>,
     mut players: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
     seen: Query<&ViewVisibility>,
 ) {
     let clock = time.elapsed_secs();
-    let eye = cameras.iter().next().map(GlobalTransform::translation);
+    let eye = view_eye(cameras);
     for (child_of, model, mut transform, at, rig) in &mut rigs {
         let Ok((&animal, pose, seed)) = animals.get(child_of.parent()) else {
             continue;
@@ -618,7 +686,8 @@ pub(super) fn drive_livestock(
         };
         let distance = eye.map_or(0.0, |e| e.distance(at.translation()));
         // Visibility is only known with a camera drawing.
-        let in_view = eye.is_none() || rig.probe.is_none_or(|p| seen.get(p).is_ok_and(|v| v.get()));
+        let in_view =
+            eye.is_none() || any_in_view(&rig.probes, |p| seen.get(p).is_ok_and(|v| v.get()));
         let freeze = frozen(rig.frozen, distance, in_view);
         if freeze != rig.frozen {
             rig.frozen = freeze;
@@ -736,6 +805,48 @@ mod tests {
     }
 
     #[test]
+    fn the_view_is_the_active_camera_drawn_last_whatever_the_query_order() {
+        let mut world = World::new();
+        let [a, b, c] = [(); 3].map(|_| world.spawn_empty().id());
+        let at = |x: f32| GlobalTransform::from_translation(Vec3::X * x);
+        let (near, far, off) = (at(1.0), at(500.0), at(9.0));
+        let main = Camera {
+            order: 1,
+            ..default()
+        };
+        let other = Camera::default();
+        let inactive = Camera {
+            order: 5,
+            is_active: false,
+            ..default()
+        };
+        // The highest active order wins, listed first or last.
+        let cams = [(a, &far, &other), (b, &near, &main), (c, &off, &inactive)];
+        assert_eq!(view_eye(cams), Some(Vec3::X));
+        let mut reversed = cams;
+        reversed.reverse();
+        assert_eq!(view_eye(reversed), Some(Vec3::X));
+        // Equal orders: the lowest entity, in either listing.
+        let ties = [(b, &far, &other), (a, &near, &other)];
+        let lowest = if a < b { Vec3::X } else { Vec3::X * 500.0 };
+        assert_eq!(view_eye(ties), Some(lowest));
+        let mut reversed = ties;
+        reversed.reverse();
+        assert_eq!(view_eye(reversed), Some(lowest));
+        assert_eq!(view_eye([(c, &off, &inactive)]), None);
+    }
+
+    #[test]
+    fn a_model_is_in_view_while_any_of_its_meshes_is() {
+        let mut world = World::new();
+        let [hat, body] = [(); 2].map(|_| world.spawn_empty().id());
+        // The hat culled, the body drawn: in view.
+        assert!(any_in_view(&[hat, body], |e| e == body));
+        assert!(!any_in_view(&[hat, body], |_| false));
+        assert!(any_in_view(&[], |_| false), "nothing to ask");
+    }
+
+    #[test]
     fn animation_freezes_far_off_or_out_of_view() {
         assert!(!frozen(false, 50.0, true));
         assert!(frozen(false, 50.0, false), "culled");
@@ -828,8 +939,8 @@ mod tests {
         }
         let share = black as f32 / all as f32;
         assert!((0.2..0.55).contains(&share), "{share}");
-        // Horses take the criollo coats: the body in vertex colours like
-        // the procedural horse's, the mane its colour.
+        // Horses take the criollo coats: the body in vertex colours, the
+        // mane its colour.
         for coat in Coat::ALL {
             assert_eq!(tint(Animal::Horse(coat), "Main"), Paint::Vertex);
             let m = coat.mane();

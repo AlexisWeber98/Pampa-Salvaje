@@ -339,47 +339,57 @@ faded blue, brown, grey and black wool, with bright colour only in accents
   and a rastra. **Comisario Elías Farach** wears a kepi, a dark blue tunic with
   brass buttons, a leather belt, dark trousers and boots.
 
-Horses are 3D low-poly too, at the same fidelity: compact Argentine criollos
-about 1.45 m at the withers (about 5,200 triangles each, plus about 700 for
-the tack), built from lofted parts like the people: barrel, chest, croup and
-withers, a neck with a short mane, a head with muzzle, jowls, ears and
-forelock, a full tail, and legs with forearm or gaskin, knee or hock, cannon,
-fetlock, pastern and hoof.
+Saddled horses are Quaternius' animated CC0 horse, the corral horses' model,
+about 1.5 m at the withers, in a 1919 recado and bridle, tied up or ridden
+(`pampa_render::character::{horse, tack, gait, rider}`):
 
 - **Coats** are painted per vertex from where each vertex sits on the horse,
-  so patterns run across parts: **zaino** (solid dark brown), **tordillo**
+  so patterns run across the body: **zaino** (solid dark brown), **tordillo**
   (grey with lighter dapples), **overo** (bay with large white patches and
   stockings, some white from every side), **alazán** (chestnut) and **bayo**
   (sandy dun with black mane, tail and lower legs and a dark dorsal stripe).
   Don Hidalgo's horse, the one the player rides, is bayo; the horse tied at
   every other store gets a coat seeded from its town.
 - **Tack** fits 1919 rural Argentina: a recado (a woven sudadera, a leather
-  carona, the two bastos and a sheepskin pellón on top, a rawhide cincha with
-  iron rings), stirrup leathers and iron stirrups, and a rawhide bridle
-  (crownpiece, noseband, cheekpieces, bit rings) with reins. A tied horse
-  wears the same tack, its stirrups hanging and the reins over the pommel.
-- **Gaits** come from `pampa_core::pose`: idle (breathing, one hind hoof
-  resting), the four-beat walk, the trot with diagonal pairs (the slower part
-  of the gallop range, up to 6.5 m/s) and the gallop with a moment of
-  suspension, a rocking body and a swinging neck. Strides are paced by speed,
-  frame-rate independent.
-- **Mounted**, the clerk sits on the pellón with his thighs open round the
-  barrel, his shins hanging to the stirrups and his hands forward at the
-  reins; he rises, rocks and turns with the horse and leans into the gallop.
+  carona, the two bastos and a sheepskin pellón on top, a rawhide cincha),
+  stirrup leathers and iron stirrups, and a rawhide bridle (crownpiece,
+  noseband, cheekpieces, bit rings) with reins. Each layer is wrapped round
+  the horse's own skin at rest and skinned to its bones with the weights of
+  the skin under it, so it bends with the barrel through every clip and
+  never cuts into it. A tied horse's stirrups hang and its reins rest on the
+  pommel; a rider's feet carry the stirrups and the reins run along the neck
+  to the rider's left hand.
+- **Gaits:** the clips' idle, then the walk paced to the ground speed and
+  stretched up to about 4.5 m/s (there is no trot clip), then the gallop.
+  The walk and the gallop change outright, the new one started in step with
+  the old (a fast fade, never half and half); a clip fading out never leaves
+  a bone it alone moves behind, and the hooves stay on the legs and above the
+  ground. The gallop's stride is stretched to a real gallop's (its hooves keep
+  still on the ground up to about 14.6 m/s), and the body flexes with it:
+  the croup drops as the hind legs reach under and rises at the push-off, the
+  withers pitch the other way, the neck pumps and the tail follows. A tied
+  horse changes idle now and then; one out of view or far off keeps its last
+  pose, but never the player's.
+- **Mounted**, the clerk's MakeHuman model sits on the horse's back bone, so
+  he rises, pitches and turns with the horse, playing the seated `drive` clip:
+  his legs bent round the barrel to the stirrups and his left hand at the
+  reins by a small IK. On top, critically damped springs: his seat gives back
+  some of the gallop's bounce, his spine counters the saddle's pitch and roll
+  late, his head stays steadier than the saddle, he leans forward with speed
+  and back braking, his rein hand gives with the horse's mouth and his right
+  hand rests on his thigh. Standing still a few seconds, his hand settles on
+  the pommel, his weight shifts and he glances around.
 
 **Polish, without extra triangles.** Every part has a PBR finish (leather
 slightly glossy, brass buttons and the rastra's silver metallic, wool and
-cloth matte, satin skin, a slight sheen on the horse's coat, dark glossy
-hooves), cached by colour and finish. Ambient occlusion is baked into the
-vertex shades: armpits, the crotch, under the jaw and hat brims, under the
-horse's belly, between its legs and under the saddle's edge. Small textures
+cloth matte, satin skin), cached by colour and finish. Ambient occlusion is
+baked into the vertex shades: armpits, the crotch, under the jaw and hat
+brims. Small textures
 painted in code (64 x 64 each) add faces (eyes, brows, a mouth, mapped onto
 the front of the head only), a cloth weave on bombachas, ponchos and shirts,
-leather grain and felt, and horse faces with eyes, nostrils and an estrella
-(alazán) or a blaze (overo): nine textures, 147 KB in all, against the 3.7 MB
-of sprite sheets they replace. Hats tip with the step, ponchos, shawls and
-skirts sway, standing people glance around now and then, and horses flick
-their ears, swish their tails and nod with the gait. The sun's shadows use
+leather grain and felt: four textures, 64 KB in all, against the 3.7 MB of
+sprite sheets they replace. Hats tip with the step, ponchos, shawls and
+skirts sway, and standing people glance around now and then. The sun's shadows use
 three cascades over the nearest 100 m, the first ending 12 m out, just past
 the rider at the default camera distance, for crisper figure shadows on the
 2048-texel map.
@@ -468,8 +478,8 @@ The rule: **game logic never knows how things are drawn.**
 - The visual representation is a swappable per-entity component in `render`
   (`CharacterVisual`: `Figure` for a person on foot, `Horse` for a saddled
   horse, `Mounted` for a rider on one). Inserting a new value swaps what is
-  drawn; the pure gait poses and secondary motion live in `core`
-  (`pampa_core::pose`).
+  drawn; the townsfolk's pure gait poses and secondary motion, and the
+  horse's gait, live in `core` (`pampa_core::pose`).
 
 Bevy is pinned to an exact version (`=0.20.0`) and only upgraded between milestones.
 
@@ -531,10 +541,14 @@ The MakeHuman models (`assets/characters/`, built by `tools/mh2gltf.py`) wear
 a 1919 wardrobe, mostly cut from the body by the converter: shirts and
 waistcoats, bombachas, knee boots, a police guerrera with brass buttons, a
 three-piece suit, felt hats, a kepi, neckerchiefs, a poncho, the faja and the
-rastra. They walk, jog and stand by the rigid figures' poses, loosened into
-a relaxed stance (the weight on one leg, a slow sway). They are
+rastra. They move with Quaternius' CC0 animation clips, retargeted to their
+skeleton by `tools/retarget.py`: they stand, walk, jog and run, the clips paced
+to the ground speed so the feet do not slide. Farach waits with his arms
+folded, and whoever is speaking talks with their hands. In the saddle the
+protagonist plays the seated `drive` clip on the horse's back. They are
 the default, in release builds too; `models off` brings back the old rigid
-figures in a debug build. Try `goto castex` (Farach with Bairoletto at his
+figures of the people on foot in a debug build (riders and saddled horses
+have no rigid figures any more). Try `goto castex` (Farach with Bairoletto at his
 side) or `goto nievas` (Don Hidalgo).
 
 `goto` puts the player, and the horse when riding, on the nearest clear, dry
@@ -543,7 +557,7 @@ train it refuses ("not on the train: get off first"): get off first.
 
 ## Credits
 
-Third-party assets (CC0 ground textures from ambientCG, CC0 vegetation models from Quaternius' Ultimate Nature Pack, and the CC0 MakeHuman assets of the characters) are listed with their author, source, licence and changes in [CREDITS.md](CREDITS.md), and again next to their files.
+Third-party assets (CC0 ground textures from ambientCG, CC0 vegetation models from Quaternius' Ultimate Nature Pack, the CC0 MakeHuman assets of the characters, and their CC0 animation clips from Quaternius' Universal Animation Library) are listed with their author, source, licence and changes in [CREDITS.md](CREDITS.md), and again next to their files.
 
 ## License
 

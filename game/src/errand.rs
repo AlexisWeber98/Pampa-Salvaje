@@ -26,8 +26,8 @@ use pampa_core::{
 };
 use pampa_render::bubble::LIFETIME;
 use pampa_render::{
-    Animal, CharacterVisual, Coat, FigureKind, HudObjective, MapTarget, Say, VisualPose, font,
-    world_from_ground,
+    Animal, CharacterVisual, Coat, FigureKind, HudObjective, MapTarget, Say, Talking, VisualPose,
+    font, world_from_ground,
 };
 
 use crate::abilities::{PlayerAbilities, Unlocked, announce_unlocks, unlock_on_mount};
@@ -146,6 +146,7 @@ impl Plugin for ErrandPlugin {
                 (
                     interact,
                     converse,
+                    mark_speakers,
                     show_progress,
                     unlock_on_mount,
                     announce_unlocks,
@@ -483,6 +484,31 @@ fn converse(
     }
 }
 
+/// Puts [`Talking`] on whoever's lines are on screen and takes it off
+/// everyone else: standing, they talk with their hands.
+fn mark_speakers(
+    mut commands: Commands,
+    conversation: Res<Conversation>,
+    players: Query<Entity, With<Player>>,
+    npcs: Query<(Entity, &StandingNpc)>,
+    talking: Query<Entity, With<Talking>>,
+) {
+    let speaker = conversation.0.as_ref().and_then(|talk| match talk.speaker {
+        Speaker::Player => players.iter().next(),
+        Speaker::Npc(npc) => npcs.iter().find(|(_, n)| n.npc == npc).map(|(e, _)| e),
+    });
+    for entity in &talking {
+        if Some(entity) != speaker {
+            commands.entity(entity).remove::<Talking>();
+        }
+    }
+    if let Some(speaker) = speaker
+        && !talking.contains(speaker)
+    {
+        commands.entity(speaker).insert(Talking);
+    }
+}
+
 /// Keeps the HUD objective and the minimap target on the current stage.
 fn show_progress(
     errand: Option<Res<ErrandRun>>,
@@ -500,9 +526,7 @@ mod tests {
     use crate::ride::testing::arrive;
     use pampa_core::Vec2 as GroundVec2;
     use pampa_core::{ErrandStage, Terrain, Travel};
-    use pampa_render::character::{
-        FigureBody, FigureJoint, FigurePart, HorseBody, HorseJointPart, HorsePartMesh,
-    };
+    use pampa_render::character::{FigureBody, FigureJoint, FigurePart, HorseBody, HorseModel};
     use pampa_render::{CharacterVisual, CharacterVisualPlugin, Coat, FigureKind, WorldTowns};
 
     /// Every line said, by whom.
@@ -553,9 +577,9 @@ mod tests {
         p.rider.speed = 0.0;
     }
 
-    /// Horse bodies, figure bodies, figure joints, figure parts, horse joints
-    /// and horse parts drawn under `who`, and meshes that are none of those.
-    fn drawn_under(app: &mut App, who: Entity) -> [usize; 7] {
+    /// Horse bodies, figure bodies, figure joints, figure parts and horse
+    /// models drawn under `who`, and meshes that are no figure part.
+    fn drawn_under(app: &mut App, who: Entity) -> [usize; 6] {
         let mut under = Vec::new();
         let mut stack = vec![who];
         while let Some(e) = stack.pop() {
@@ -566,17 +590,13 @@ mod tests {
         }
         let world = app.world();
         let n = |has: &dyn Fn(Entity) -> bool| under.iter().filter(|e| has(**e)).count();
-        let part = |e: Entity| {
-            world.get::<FigurePart>(e).is_some() || world.get::<HorsePartMesh>(e).is_some()
-        };
         [
             n(&|e| world.get::<HorseBody>(e).is_some()),
             n(&|e| world.get::<FigureBody>(e).is_some()),
             n(&|e| world.get::<FigureJoint>(e).is_some()),
             n(&|e| world.get::<FigurePart>(e).is_some()),
-            n(&|e| world.get::<HorseJointPart>(e).is_some()),
-            n(&|e| world.get::<HorsePartMesh>(e).is_some()),
-            n(&|e| world.get::<Mesh3d>(e).is_some() && !part(e)),
+            n(&|e| world.get::<HorseModel>(e).is_some()),
+            n(&|e| world.get::<Mesh3d>(e).is_some() && world.get::<FigurePart>(e).is_none()),
         ]
     }
 
@@ -596,7 +616,7 @@ mod tests {
             *app.world().get::<CharacterVisual>(me).unwrap(),
             CharacterVisual::Figure(FigureKind::Protagonist)
         );
-        let [horses, bodies, joints, parts, _, _, other] = drawn_under(&mut app, me);
+        let [horses, bodies, joints, parts, _, other] = drawn_under(&mut app, me);
         assert_eq!((horses, bodies, joints, other), (0, 1, 14, 0));
         assert!(parts >= 18, "{parts}");
 
@@ -609,33 +629,29 @@ mod tests {
         press_f(&mut app);
         assert_eq!(player(&mut app).1.rider.travel(), Travel::Riding);
         // One horse with the clerk in its saddle, and nothing else: no
-        // second clerk on foot, nothing else drawn.
-        let [
-            horses,
-            bodies,
-            joints,
-            parts,
-            horse_joints,
-            horse_parts,
-            other,
-        ] = drawn_under(&mut app, me);
-        assert_eq!((horses, bodies, joints, other), (1, 1, 14, 0));
-        assert!(
-            parts >= 18 && horse_joints == 18 && horse_parts > 60,
-            "{parts} {horse_parts}"
+        // clerk on foot left, nothing rigid. (This app loads no models: the
+        // horse and its rider wait for theirs, drawing nothing.)
+        let [horses, bodies, joints, parts, models, other] = drawn_under(&mut app, me);
+        assert_eq!(
+            (horses, bodies, joints, parts, models, other),
+            (1, 0, 0, 0, 1, 0)
         );
         let children: Vec<Entity> = app.world().get::<Children>(me).unwrap().to_vec();
         assert_eq!(children.len(), 1, "only the horse and its rider");
         let horse = app.world().get::<HorseBody>(children[0]).unwrap();
         assert_eq!(horse.coat, Coat::Bayo, "Don Hidalgo's bayo");
-        // The clerk's figure rides that horse; the one on foot is gone.
-        let mut riders = app.world_mut().query::<(Entity, &FigureBody)>();
-        let mine: Vec<_> = riders
-            .iter(app.world())
-            .filter(|(_, b)| b.kind == FigureKind::Protagonist)
-            .collect();
-        assert_eq!(mine.len(), 1);
-        assert_eq!(mine[0].1.seat, Some(children[0]));
+        assert_eq!(
+            horse.rider,
+            Some(FigureKind::Protagonist),
+            "the clerk rides it"
+        );
+        let mut figures = app.world_mut().query::<&FigureBody>();
+        assert!(
+            figures
+                .iter(app.world())
+                .all(|b| b.kind != FigureKind::Protagonist),
+            "no clerk on foot"
+        );
         // The tied horse he took is gone from the store too.
         let mut tied = app.world_mut().query::<&TetheredHorse>();
         assert!(tied.iter(app.world()).all(|h| h.0 != e.horse().0));
@@ -683,6 +699,30 @@ mod tests {
             app.update();
         }
         assert_eq!(app.world().resource::<Conversation>().0, None);
+    }
+
+    #[test]
+    fn whoever_speaks_talks_with_their_hands_until_their_lines_end() {
+        let mut app = shipped_app();
+        let lines = shipped_lines();
+        arrive(&mut app);
+        let e = errand(&app);
+        let talking = |app: &mut App| {
+            let mut q = app.world_mut().query_filtered::<Entity, With<Talking>>();
+            q.iter(app.world()).collect::<Vec<_>>()
+        };
+        assert_eq!(talking(&mut app), vec![]);
+        teleport(
+            &mut app,
+            e.standing(Npc::Hidalgo).position + e.standing(Npc::Hidalgo).heading.forward() * 2.0,
+        );
+        press_f(&mut app);
+        app.update();
+        let don = npc_entity(&mut app, Npc::Hidalgo);
+        assert_eq!(talking(&mut app), vec![don]);
+        wait_for_lines(&mut app, lines.hidalgo.len());
+        app.update();
+        assert_eq!(talking(&mut app), vec![]);
     }
 
     #[test]

@@ -39,10 +39,14 @@ What it adds, from lines MakeHuman skips (see tools/README.md): quadric
 decimation of dense garments (``decimate``), greyscale textures
 (``greyscaleTexture``), the arms lowered into the rest pose, garments cut
 from the body proxy and skinned like it (shirt, waistcoat, jacket,
-trousers, bombacha, boots), and generated pieces each rigidly skinned to
-one joint (hats, kepi, neckerchief, faja, rastra, buttons, watch chain,
-strap, poncho, lapels, collar), all from ``piece`` lines, with small cloth
-textures made in code.
+trousers, bombacha, boots), and generated pieces (hats, kepi,
+neckerchief, faja, rastra, buttons, watch chain, strap, poncho, lapels,
+collar), all from ``piece`` lines, with small cloth textures made in code.
+The pieces on one bone (the hats on the head, the neckerchief and collar
+on the neck) are rigidly skinned to it; those that lie over several (the
+poncho and strap from the shoulder to the hip, the faja and rastra round
+the waist, the buttons, chain and lapels down the chest) take their skin
+from the dressed body under them (``inherit``).
 
 What it writes, into the output folder: ``model.gltf``, ``model.bin`` and
 ``textures/`` (PNG, downscaled to ``--max-texture``). Units are meters, Y
@@ -1506,7 +1510,7 @@ ARM_JOINTS = re.compile(r"^(upperarm|lowerarm|hand|thumb|index|middle|ring|pinky
 
 class Body:
     """What the generated pieces are fitted to: the visible vertices of
-    every piece, their strongest joint and their piece's kind, and the
+    every piece, their weights, strongest joint and piece's kind, and the
     joints' rest matrices."""
 
     def __init__(self, rig, rest, pieces):
@@ -1514,12 +1518,13 @@ class Body:
         used, faces = [], []
         for pc in pieces:
             v = np.unique([v for t in pc.triangles for v, _ in t])
-            used.append((pc.coords[v], pc.weights[v].argmax(axis=1), pc.kind))
+            used.append((pc.coords[v], pc.weights[v].argmax(axis=1), pc.kind, pc.weights[v]))
             t = np.array([[v for v, _ in tri] for tri in pc.triangles], np.int64).reshape(-1, 3)
             faces.append((pc.coords[t], pc.weights[t[:, 0]].argmax(axis=1), pc.kind))
         self.points = np.concatenate([u[0] for u in used])
         self.joint = np.concatenate([u[1] for u in used])
         self.kind = np.concatenate([[u[2]] * len(u[0]) for u in used])
+        self.weights = np.concatenate([u[3] for u in used])
         # Every triangle (corners), its first corner's strongest joint and kind.
         self.faces = np.concatenate([f[0] for f in faces])
         self.face_joint = np.concatenate([f[1] for f in faces])
@@ -1660,6 +1665,107 @@ def made(label, material, coords, tris, joint, rig, texco=None):
     if texco is None:
         return Piece(label, "piece", material, np.asarray(coords, float), [tuple((v, 0) for v in t) for t in tris], w, np.zeros((1, 2)))
     return Piece(label, "piece", material, np.asarray(coords, float), [tuple((v, v) for v in t) for t in tris], w, np.asarray(texco, float))
+
+
+# The generated pieces that lie over several bones, and the joints each may
+# follow; the rest are rigid on their one bone.
+TRUNK = ("pelvis", "spine_01", "spine_02", "spine_03")
+SKIN_FROM = {
+    "sash": ("pelvis", "spine_01"),
+    "rastra": ("pelvis", "spine_01"),
+    "buttons": TRUNK,
+    "chain": TRUNK,
+    "strap": TRUNK + ("clavicle_l", "clavicle_r"),
+    "poncho": TRUNK + ("clavicle_l", "clavicle_r"),
+    "lapels": TRUNK + ("clavicle_l", "clavicle_r", "neck_01"),
+}
+SKIN_NEAREST = 8
+
+
+def inherit(piece, body, joints):
+    """``piece`` skinned like the dressed body under it, the way MakeHuman's
+    garments take the body's skin: each vertex gets the inverse-distance
+    mean of the weights of its ``SKIN_NEAREST`` nearest body points, of
+    those that ``joints`` carry most of, kept to ``joints``. So the poncho
+    turns with the clavicle at the shoulder and with the pelvis at the
+    hip, and blends between them along the way. Unchanged when no body
+    point is on those joints."""
+    idx = [body.rig.order.index(j) for j in joints if j in body.rig.order]
+    w = body.weights[:, idx]
+    share = w.sum(axis=1)
+    on = share > 0.5
+    if not idx or not on.any():
+        return piece
+    points, w = body.points[on], w[on] / share[on, None]
+    k = min(SKIN_NEAREST, len(points))
+    mixed = np.zeros((len(piece.coords), len(idx)))
+    for start in range(0, len(piece.coords), 256):
+        p = piece.coords[start : start + 256]
+        d = np.linalg.norm(p[:, None, :] - points[None, :, :], axis=2)
+        near = np.argsort(d, axis=1, kind="stable")[:, :k]
+        inv = 1.0 / (np.take_along_axis(d, near, axis=1) + 0.01)
+        mixed[start : start + len(p)] = (inv[..., None] * w[near]).sum(axis=1) / inv.sum(axis=1)[:, None]
+    piece.weights = np.zeros((len(piece.coords), len(body.rig.order)))
+    piece.weights[:, idx] = mixed
+    return piece
+
+
+# How the poncho clears the arm it lies over: how far outside the upper
+# arm's surface it is kept (decimeters), and how much of the upper arm's
+# turn it takes where it lies on it, fading out over how far from it.
+ARM_CLEARANCE = 0.25
+ARM_SHARE = 0.9
+ARM_REACH = 1.5
+
+
+def clear_arms(piece, body, sides=("l", "r")):
+    """``piece`` kept off the upper arms and over the shoulders: every
+    vertex within ``ARM_CLEARANCE`` of an upper arm's surface (a capsule
+    from the shoulder joint to just past the elbow, as thick as the dressed
+    arm round its middle) is pushed straight out to it, and the vertices near it take
+    up to ``ARM_SHARE`` of the upper arm's weight, fading over
+    ``ARM_REACH``, so the folded poncho rides on the deltoid as the arm
+    swings under it instead of going through it. Only what lies out from
+    the shoulder joint moves (the chest is left as it was). Pieces near no
+    arm are unchanged."""
+    order = list(body.rig.order)
+    coords, weights = piece.coords.copy(), piece.weights.copy()
+    for side in sides:
+        upper, lower = f"upperarm_{side}", f"lowerarm_{side}"
+        if upper not in order or lower not in order:
+            continue
+        a, b = body.at(upper), body.at(lower)
+        along = b - a
+        arm = body.select({upper})
+        if not len(arm) or not along.any():
+            continue
+
+        def place(p):
+            t = (p - a) @ along / (along @ along)
+            near = a + np.clip(t, 0.0, 1.0)[:, None] * along
+            return t, near, np.linalg.norm(p - near, axis=1)
+
+        t, _, d = place(arm)
+        middle = (t > 0.3) & (t < 0.7)
+        if not middle.any():
+            continue
+        radius = float(np.median(d[middle]))
+        t, near, d = place(coords)
+        # Past the elbow a little too (the poncho's end hangs by it), and
+        # only out from the shoulder joint (within 7 cm of it):
+        # the chest in front stays as it is.
+        outer = np.abs(coords[:, 0]) >= abs(a[0]) - 0.7
+        on = (t >= 0.0) & (t <= 1.2) & outer
+        push = on & (d < radius + ARM_CLEARANCE) & (d > 1e-9)
+        coords[push] = near[push] + (coords[push] - near[push]) * ((radius + ARM_CLEARANCE) / d[push])[:, None]
+        d = np.where(push, radius + ARM_CLEARANCE, d)
+        share = ARM_SHARE * np.clip(1.0 - (d - radius - ARM_CLEARANCE) / ARM_REACH, 0.0, 1.0)
+        share = np.where((t >= -0.2) & (t <= 1.3) & outer, share, 0.0)
+        k = order.index(upper)
+        weights *= (1.0 - share)[:, None]
+        weights[:, k] += share
+    piece.coords, piece.weights = coords, weights
+    return piece
 
 
 def plain(name, color, roughness=0.9, metallic=0.0, double_sided=True, pattern=None):
@@ -2101,8 +2207,8 @@ def make_collar(body, settings, n):
 
 
 def generate(character, body, rig):
-    """The .mhm's generated rigid pieces, in their order, and the lowest
-    hat band (None without a hat). The garments are cut by dress()."""
+    """The .mhm's generated pieces, in their order, and the lowest hat band
+    (None without a hat). The garments are cut by dress()."""
     out, band = [], None
     sash = None
     n = SEGMENTS
@@ -2127,28 +2233,35 @@ def generate(character, body, rig):
             coords, tris, texco = make_sash(body, settings, n)
             sash = coords
             out.append(made("sash", plain("sash", color, 0.92, pattern="stripe"), coords, tris, "pelvis", rig, texco))
+            out[-1] = inherit(out[-1], body, SKIN_FROM["sash"])
         elif kind == "rastra":
             (coords, tris), (coins, ctris) = make_rastra(body, settings, n, sash)
             out.append(made("rastra", plain("rastra_leather", color, 0.6), coords, tris, "pelvis", rig))
             out.append(made("rastra coins", plain("rastra_coins", setting(settings, kind, "coin"), 0.35, 1.0), coins, ctris, "pelvis", rig))
+            out[-2:] = [inherit(pc, body, SKIN_FROM["rastra"]) for pc in out[-2:]]
         elif kind == "poncho":
             coords, tris, texco = make_poncho(body, settings, n)
             out.append(made("poncho", plain("poncho", color, 0.92, pattern="poncho"), coords, tris, "spine_03", rig, texco))
+            out[-1] = clear_arms(inherit(out[-1], body, SKIN_FROM["poncho"]), body)
         elif kind == "lapels":
             coords, tris = make_lapels(body, settings, n)
             out.append(made("lapels", plain("lapels", color, 0.6), coords, tris, "spine_03", rig))
+            out[-1] = inherit(out[-1], body, SKIN_FROM["lapels"])
         elif kind == "collar":
             coords, tris = make_collar(body, settings, n)
             out.append(made("collar", plain("collar", color, 0.8), coords, tris, "neck_01", rig))
         elif kind == "strap":
             coords, tris = make_strap(body, settings, n)
             out.append(made("strap", plain("strap_leather", color, 0.55), coords, tris, "spine_03", rig))
+            out[-1] = inherit(out[-1], body, SKIN_FROM["strap"])
         elif kind == "chain":
             coords, tris = make_chain(body, settings, n)
             out.append(made("watch chain", plain("watch_chain", color, 0.35, 1.0), coords, tris, "spine_02", rig))
+            out[-1] = inherit(out[-1], body, SKIN_FROM["chain"])
         else:
             coords, tris = make_buttons(body, settings, n)
             out.append(made("buttons", plain("brass_buttons", color, 0.35, 1.0), coords, tris, "spine_02", rig))
+            out[-1] = inherit(out[-1], body, SKIN_FROM["buttons"])
         if low is not None:
             band = low if band is None else min(band, low)
     return out, band

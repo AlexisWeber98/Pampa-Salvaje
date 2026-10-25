@@ -37,7 +37,7 @@ pub use atmosphere::{AtmospherePlugin, DUST_COLOR, Sky, Sun, WorldClock, sky_at}
 pub use bubble::{Say, SpeechBubble, SpeechBubblePlugin};
 pub use character::{
     CharacterModelsShown, CharacterVisual, CharacterVisualPlugin, Coat, FigureKind,
-    TOWNSFOLK_LOOKS, VisualPose,
+    TOWNSFOLK_LOOKS, Talking, VisualPose,
 };
 pub use coords::world_from_ground;
 pub use fade::{FadeLayer, FadePlugin, ScreenFade};

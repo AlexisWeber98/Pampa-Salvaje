@@ -433,6 +433,97 @@ class Units(unittest.TestCase):
         with self.assertRaises(mh2gltf.ConvertError):
             mh2gltf.made("hat", piece.material, coords, tris, "no_such_joint", self.rig())
 
+    def test_a_piece_over_several_bones_takes_the_skin_of_the_body_under_it(self):
+        # A stand-in trunk: a column of points from the pelvis (y 0, all
+        # pelvis) to the chest (y 10, all spine_03), blending between, and
+        # an arm out to the side (all upperarm_l).
+        class Rig:
+            order = ["Root", "pelvis", "spine_03", "upperarm_l"]
+
+        class Trunk:
+            rig = Rig()
+
+        ys = np.linspace(0.0, 10.0, 41)
+        chest = np.clip(ys / 10.0, 0.0, 1.0)
+        trunk = np.stack([np.zeros_like(ys), ys, np.zeros_like(ys)], axis=1)
+        arm = np.stack([np.linspace(1.0, 4.0, 10), np.full(10, 9.0), np.zeros(10)], axis=1)
+        body = Trunk()
+        body.points = np.vstack([trunk, arm])
+        body.weights = np.zeros((len(body.points), 4))
+        body.weights[:41, 1], body.weights[:41, 2] = 1 - chest, chest
+        body.weights[41:, 3] = 1.0
+        # A strip from the hip up to the shoulder, just in front.
+        coords = np.stack([np.full(11, 0.0), np.linspace(0.0, 10.0, 11), np.full(11, 0.3)], axis=1)
+        tris = [(k, k + 1, k + 2) for k in range(9)]
+        piece = mh2gltf.made("poncho", mh2gltf.plain("poncho", [1, 1, 1]), coords, tris, "spine_03", body.rig)
+        piece = mh2gltf.inherit(piece, body, ("pelvis", "spine_03"))
+        w = piece.weights
+        np.testing.assert_allclose(w.sum(axis=1), 1.0, atol=1e-9)
+        # More than one joint, blending along it as the body under it does.
+        self.assertTrue(np.all((w[:, 1:3] > 0).sum(axis=1) >= 1))
+        self.assertGreater(((w[:, 1:3] > 0.05).sum(axis=1) == 2).sum(), 5)
+        np.testing.assert_allclose(w[:, 2], np.clip(coords[:, 1] / 10.0, 0, 1), atol=0.08)
+        self.assertGreater(w[0, 1], 0.9)
+        self.assertGreater(w[-1, 2], 0.9)
+        # Never the arm, though the shoulder end is near it.
+        np.testing.assert_array_equal(w[:, 3], 0.0)
+        np.testing.assert_array_equal(w[:, 0], 0.0)
+        # Joints the body has no points on leave the piece as it was.
+        rigid = mh2gltf.made("poncho", piece.material, coords, tris, "spine_03", body.rig)
+        self.assertIs(mh2gltf.inherit(rigid, body, ("Root",)), rigid)
+        np.testing.assert_array_equal(rigid.weights[:, 2], 1.0)
+
+    def test_the_poncho_is_kept_off_the_upper_arm_and_rides_on_it(self):
+        # A stand-in left arm (decimeters): its bone from the shoulder at
+        # (2, 10, 0) down to the elbow at (2, 7.5, 0), its surface a tube
+        # 0.5 round it, on upperarm_l.
+        class Rig:
+            order = ["Root", "spine_03", "upperarm_l", "lowerarm_l"]
+
+        class Arm:
+            rig = Rig()
+
+            def at(self, name):
+                return {"upperarm_l": np.array([2.0, 10.0, 0.0]), "lowerarm_l": np.array([2.0, 7.5, 0.0])}[name]
+
+            def select(self, names):
+                a = np.linspace(0.0, 2 * np.pi, 12, endpoint=False)
+                ys = np.linspace(7.5, 10.0, 11)
+                ring = np.stack([2.0 + 0.5 * np.cos(a), np.zeros_like(a), 0.5 * np.sin(a)], axis=1)
+                return np.vstack([ring + [0.0, y, 0.0] for y in ys]) if names == {"upperarm_l"} else np.zeros((0, 3))
+
+        body = Arm()
+        # A strip hanging down through the arm, 0.1 off its bone, and the
+        # same strip on the chest by the armpit (in from the shoulder by
+        # more than 0.7, though within the clearance of the arm's surface).
+        ys = np.linspace(7.0, 10.5, 15)
+        through = np.stack([np.full(15, 2.1), ys, np.zeros(15)], axis=1)
+        chest = np.stack([np.full(15, 1.28), ys, np.zeros(15)], axis=1)
+        coords = np.vstack([through, chest])
+        tris = [(k, k + 1, k + 15) for k in range(14)]
+        piece = mh2gltf.made("poncho", mh2gltf.plain("poncho", [1, 1, 1]), coords, tris, "spine_03", body.rig)
+        before = piece.coords.copy()
+        piece = mh2gltf.clear_arms(piece, body, sides=("l",))
+        p, w = piece.coords, piece.weights
+        np.testing.assert_allclose(w.sum(axis=1), 1.0, atol=1e-9)
+        # Along the upper arm (and just past the elbow) it lies outside it,
+        # the clearance off its surface, and takes most of its turn.
+        along = (before[:15, 1] <= 10.0) & (before[:15, 1] >= 7.5 - 0.5)
+        bone = np.stack([np.full(15, 2.0), np.clip(p[:15, 1], 7.5, 10.0), np.zeros(15)], axis=1)
+        off = np.linalg.norm(p[:15] - bone, axis=1)
+        np.testing.assert_allclose(off[along], 0.5 + mh2gltf.ARM_CLEARANCE, atol=1e-6)
+        np.testing.assert_allclose(w[:15][along, 2], mh2gltf.ARM_SHARE, atol=1e-6)
+        np.testing.assert_allclose(w[:15][along, 1], 1 - mh2gltf.ARM_SHARE, atol=1e-6)
+        # Along the bone it is pushed straight out: the height is kept.
+        beside = (before[:15, 1] <= 10.0) & (before[:15, 1] >= 7.5)
+        np.testing.assert_allclose(p[:15][beside, 1], before[:15][beside, 1])
+        # Well past the elbow and above the shoulder, it stays.
+        far = (before[:15, 1] < 7.5 - 0.6) | (before[:15, 1] > 10.0 + 0.5)
+        np.testing.assert_array_equal(p[:15][far], before[:15][far])
+        # The chest is left as it was, on its own joint.
+        np.testing.assert_array_equal(p[15:], before[15:])
+        np.testing.assert_array_equal(w[15:, 1], 1.0)
+
     def test_the_other_pieces_fit_round_their_joint(self):
         head = self.Head()
         (crown, ctris), (leather, ltris), (buttons, btris), _ = mh2gltf.make_kepi(head, {}, mh2gltf.SEGMENTS)
@@ -825,10 +916,19 @@ class Conversion(unittest.TestCase):
     def materials(self):
         return {self.g["materials"][p["material"]]["name"]: p for p in self.prims()}
 
-    def test_the_generated_pieces_are_rigid_on_one_joint(self):
+    def test_the_pieces_on_one_bone_are_rigid_and_the_others_follow_the_body(self):
         names = [self.g["nodes"][j]["name"] for j in self.g["skins"][0]["joints"]]
-        expect = {"kepi_cloth": "head", "kepi_leather": "head", "kepi_buttons": "head", "brass_buttons": "spine_02", "strap_leather": "spine_03"}
         prims = self.materials()
+        # The buttons down the chest and the strap from the shoulder to the
+        # hip follow the trunk's joints under them, more than one.
+        for material, joints in (("brass_buttons", mh2gltf.SKIN_FROM["buttons"]), ("strap_leather", mh2gltf.SKIN_FROM["strap"])):
+            p = prims[material]
+            j = read_accessor(self.g, self.blob, p["attributes"]["JOINTS_0"])
+            w = read_accessor(self.g, self.blob, p["attributes"]["WEIGHTS_0"])
+            used = {names[i] for i in np.unique(j[w > 0])}
+            self.assertGreater(len(used), 1, material)
+            self.assertTrue(used <= set(joints), (material, used))
+        expect = {"kepi_cloth": "head", "kepi_leather": "head", "kepi_buttons": "head"}
         for material, joint in expect.items():
             p = prims[material]
             j = read_accessor(self.g, self.blob, p["attributes"]["JOINTS_0"])

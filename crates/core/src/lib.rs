@@ -63,7 +63,7 @@ pub use math::Vec2;
 pub use obstacles::StaticObstacles;
 pub use placement::{PlacementError, place_towns};
 pub use places::{Place, PlaceKind, Sign, SignMount, StoreStyle};
-pub use pose::{HorseAngles, HorseGait, JointAngles, Leg, MOTION_CLOCK_PERIOD, tick_clock};
+pub use pose::{HorseGait, JointAngles, MOTION_CLOCK_PERIOD, tick_clock};
 pub use rail::{LinePath, RailBranch, RailCurve, RailLine, RailLineError, RailLink, RailSpan};
 pub use ride::{
     APPROACH_LEAD, BOARD_RANGE, Boarding, ONBOARD_MULTIPLIER, OPENING_LEAD, Ride, SEAT_HEIGHT,

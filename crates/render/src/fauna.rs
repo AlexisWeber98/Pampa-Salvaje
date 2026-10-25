@@ -8,7 +8,7 @@
 //!
 //! - Cattle (cows and bulls) and the corral horses are skinned, animated
 //!   glTF models whose clips follow the fauna state (see [`livestock`]).
-//! - The small wild animals are drawn like the procedural horses: rigid
+//! - The small wild animals are drawn like the townsfolk figures: rigid
 //!   low-poly parts hung off a few joints, so animation only turns joints
 //!   (legs swing, heads go down to peck or bob, tails swish, wings flap),
 //!   from one [`FaunaKit`] of four shared unit meshes, scaled per part, and

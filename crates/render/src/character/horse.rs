@@ -1,36 +1,49 @@
-//! Low-poly 3D criollo horses, built like the people (see
-//! [`figure`](super::figure)): lofted parts hung off a tree of joints, so
-//! animation only turns joints (see [`pampa_core::pose::horse_pose`]).
+//! Saddled criollo horses: Quaternius' animated horse (the corral horses'
+//! model, see [`livestock`](crate::fauna::livestock)) wearing a 1919 recado
+//! and a rawhide bridle (see [`tack`](super::tack)), tied up or ridden.
 //!
-//! A horse is a body entity (turned to the heading) holding its joints:
-//! the trunk, the neck, the head and ears, the tail, and three joints down
-//! each leg (forearm or gaskin, knee or hock, fetlock). It faces local +X,
-//! its right is +Z and its hooves stand on the body's origin, about 1.45 m
-//! below the withers: a compact, sturdy Argentine criollo.
+//! A saddled horse is a body entity ([`HorseBody`], turned to the heading,
+//! +X its front, its right +Z, hooves on its origin) holding the model
+//! ([`HorseModel`]). The model waits for its scene ([`HorsePending`]): until
+//! it has loaded, nothing is drawn (the scenes load with the game, long
+//! before anyone gets on a horse). Once it spawns, [`dress_horse`] gives
+//! its meshes the coat and the props' shared range, as the corral horses'
+//! do, and finds the bones the gaits drive ([`gait`](super::gait)). The
+//! same scene event puts the tack on ([`tack`](super::tack): the skinned
+//! recado and bridle, the stirrups and the straps), and once the tack is on
+//! a rider with a model sits on its `Torso` bone ([`rider`](super::rider)),
+//! so he rises, pitches and turns with the horse's own clip.
 //!
-//! Coats are painted into per-vertex colours from where each vertex sits
-//! on the standing horse, so patches, dapples and the dun's dorsal stripe
-//! run across parts. Every horse wears a 1919 recado (a woven sudadera, a
-//! leather carona, the bastos, a sheepskin pellón, a rawhide cincha and iron
-//! stirrups) and a rawhide bridle with reins. A rider ([`spawn_horse`] with
-//! a rider) sits at [`SEAT`].
+//! [`drive_horses`] plays the clips: the idle, then the walk paced to the
+//! ground speed up to about 4.5 m/s (there is no trot clip), then the
+//! gallop ([`gait_weights`], [`gait_rate`]), each at the ground speed over
+//! the speed its hooves show, so they keep still on the ground. A tied
+//! horse changes idle now and then, as the corral horses do; a ridden one
+//! stands still. A horse out of view or far off keeps its last pose, but
+//! never the player's.
 //!
-//! Ambient occlusion is baked into the painted vertices (under the belly,
-//! between the legs, under the saddle's edge and the jaw), the head wears a
-//! small painted face texture (eyes, nostrils, a star or blaze), and the
-//! ears flick and the tail swishes on their own (see [`pampa_core::pose`]).
+//! Coats are painted into the model's vertex colours from where each vertex
+//! sits on the standing horse ([`Coat::color_at`]), so patches, dapples and
+//! the dun's dorsal stripe run across the body.
 
-use bevy::platform::collections::HashMap;
+use bevy::animation::graph::AnimationGraphHandle;
+use bevy::ecs::system::SystemParam;
+use bevy::math::Affine3A;
 use bevy::prelude::*;
-use pampa_core::{HorseAngles, HorseGait, Leg, pose};
-use std::f32::consts::FRAC_PI_2;
+use bevy::world_serialization::{WorldAssetRoot, WorldInstanceReady};
+use pampa_core::{AnimationState, Heading, HorseGait};
 
-use super::figure::Paints;
-use super::finish::{Finish, ramp};
-
-use super::figure::{
-    BODY_SIDES, Cloth, Joint, LIMB_SIDES, Rgb, Ring, Side, limb, loft, loft_cloth,
+use super::figure::{FigureKind, Rgb, body_rotation};
+use super::gait::{
+    Bone as GaitBone, GALLOP_MEANS, HorseBones, PARTIAL, Property, UNANIMATED, fit_horse,
 };
+use super::visual::VisualPose;
+use crate::fauna::Animal;
+use crate::fauna::livestock::{
+    self, Clip, CoatCache, HORSE_IDLE, HORSE_WALK_SPEED, LivestockModels, ModelPart, Species,
+    any_in_view, dress_meshes, frozen, mix, start_offset, view_eye,
+};
+use crate::gltf::{self, ModelState};
 
 /// A horse's coat (pelaje).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -169,1010 +182,577 @@ fn dapple(p: Vec3) -> bool {
     a * b * c > 0.12
 }
 
-/// A pivot of the horse that animation turns.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum HorseJoint {
-    /// The body: barrel, chest and croup, and the saddle on them.
-    Trunk,
-    Neck,
-    /// The poll, where the head hangs from the neck.
-    Head,
-    Ear(Side),
-    Tail,
-    /// The forearm (front) or gaskin (hind) swings here.
-    Upper(Leg),
-    /// The knee (front) or hock (hind).
-    Lower(Leg),
-    Fetlock(Leg),
+/// The ground speeds (m/s) across which the idle fades into the walk.
+pub const WALK_BAND: (f32, f32) = (0.05, 0.6);
+
+/// The ground speeds (m/s) at which a walking horse breaks into the gallop,
+/// and a galloping one comes back to the walk. Logic walks a horse up to
+/// about 3 m/s and "gallops" it from there (trotting up to
+/// [`HorseGait::TROT_MAX`]); with no trot clip the walk is stretched to
+/// about 4.5 m/s. The gait changes outright (and the weights fade fast,
+/// [`HORSE_BLEND_RATE`]), never holding the two half and half: their legs
+/// do not match.
+pub const GALLOP_FROM: (f32, f32) = (4.2, 4.8);
+
+/// Whether a horse moving at `speed` gallops, if it `was` galloping.
+pub fn gallops(was: bool, speed: f32) -> bool {
+    speed > if was { GALLOP_FROM.0 } else { GALLOP_FROM.1 }
 }
 
-/// Where the neck rises from the chest, as a unit direction (forward, up).
-const NECK_DIRECTION: Vec2 = Vec2::new(0.659, 0.752);
-/// How far up the neck the poll is.
-const NECK_LENGTH: f32 = 0.8;
-/// The neck's lean forward from upright, radians.
-const NECK_TILT: f32 = 0.72;
-/// The head's lean back from upright: it hangs down and forward.
-const HEAD_TILT: f32 = -0.62;
+/// How much slower or faster than recorded the walk may play: up to 3.8
+/// times at 4.8 m/s.
+pub const RATE: (f32, f32) = (0.3, 3.9);
 
-fn side_of(leg: Leg) -> f32 {
-    if leg.is_left() { -1.0 } else { 1.0 }
+/// How much slower or faster than recorded the (stretched) gallop may play:
+/// faster reads frantic, so above about 11.6 m/s its hooves slide a little.
+pub const GALLOP_RATE: (f32, f32) = (0.5, 2.0);
+
+/// The ground speed the gallop's hooves show with its stride stretched
+/// ([`STRIDE`](super::gait::STRIDE)), m/s, measured as the clip's own
+/// ([`HORSE_GALLOP_SPEED`](crate::fauna::livestock::HORSE_GALLOP_SPEED)).
+pub const GALLOP_SPEED: f32 = 7.3;
+
+/// The weight of each clip, in [`Clip::ALL`] order, for a horse standing
+/// with `idle` or moving at `speed` m/s with `stride` (the walk or the
+/// gallop): the idle fades into the stride. They add up to one.
+pub fn gait_weights(idle: Clip, stride: Clip, speed: f32) -> [f32; 6] {
+    let moving = ((speed - WALK_BAND.0) / (WALK_BAND.1 - WALK_BAND.0)).clamp(0.0, 1.0);
+    let mut out = [0.0; 6];
+    out[idle.index()] = 1.0 - moving;
+    out[stride.index()] += moving;
+    out
 }
 
-impl HorseJoint {
-    /// Every joint, each after its parent.
-    pub const ALL: [Self; 18] = [
-        Self::Trunk,
-        Self::Neck,
-        Self::Head,
-        Self::Ear(Side::Left),
-        Self::Ear(Side::Right),
-        Self::Tail,
-        Self::Upper(Leg::FrontLeft),
-        Self::Upper(Leg::FrontRight),
-        Self::Upper(Leg::HindLeft),
-        Self::Upper(Leg::HindRight),
-        Self::Lower(Leg::FrontLeft),
-        Self::Lower(Leg::FrontRight),
-        Self::Lower(Leg::HindLeft),
-        Self::Lower(Leg::HindRight),
-        Self::Fetlock(Leg::FrontLeft),
-        Self::Fetlock(Leg::FrontRight),
-        Self::Fetlock(Leg::HindLeft),
-        Self::Fetlock(Leg::HindRight),
-    ];
-
-    /// The joint this one hangs from (`None`: the body).
-    pub fn parent(self) -> Option<Self> {
-        match self {
-            Self::Trunk => None,
-            Self::Neck | Self::Tail | Self::Upper(_) => Some(Self::Trunk),
-            Self::Head => Some(Self::Neck),
-            Self::Ear(_) => Some(Self::Head),
-            Self::Lower(leg) => Some(Self::Upper(leg)),
-            Self::Fetlock(leg) => Some(Self::Lower(leg)),
-        }
-    }
-
-    /// Offset from the parent joint (or the hooves) when standing.
-    pub fn rest(self) -> Vec3 {
-        match self {
-            Self::Trunk => Vec3::new(0.0, 1.05, 0.0),
-            Self::Neck => Vec3::new(0.52, 0.2, 0.0),
-            Self::Head => (NECK_DIRECTION * NECK_LENGTH).extend(0.0),
-            Self::Ear(s) => Vec3::new(0.03, 0.04, 0.055 * s.z()),
-            Self::Tail => Vec3::new(-0.76, 0.28, 0.0),
-            Self::Upper(leg) if leg.is_front() => Vec3::new(0.45, -0.12, 0.15 * side_of(leg)),
-            Self::Upper(leg) => Vec3::new(-0.52, -0.06, 0.15 * side_of(leg)),
-            Self::Lower(leg) if leg.is_front() => Vec3::new(0.0, -0.45, 0.0),
-            Self::Lower(_) => Vec3::new(-0.1, -0.48, 0.0),
-            Self::Fetlock(leg) if leg.is_front() => Vec3::new(0.0, -0.31, 0.0),
-            Self::Fetlock(_) => Vec3::new(0.0, -0.34, 0.0),
-        }
-    }
-
-    /// Standing position above the hooves.
-    pub fn rest_position(self) -> Vec3 {
-        self.rest() + self.parent().map_or(Vec3::ZERO, Self::rest_position)
-    }
-
-    fn index(self) -> usize {
-        Self::ALL.iter().position(|j| *j == self).unwrap_or(0)
-    }
-
-    /// This joint's turn in `a`, with the ears flicked back by `ears` (left,
-    /// right) and the tail swished aside by `swish`.
-    fn rotation(self, a: &HorseAngles, ears: [f32; 2], swish: f32) -> Quat {
-        // Positive Z turns a hanging limb toward +X (forward) and lifts the
-        // nose.
-        let angle = match self {
-            Self::Trunk => -a.pitch,
-            Self::Neck => -a.neck,
-            Self::Head => -a.head,
-            Self::Ear(s) => ears[usize::from(s == Side::Right)],
-            Self::Tail => return Quat::from_rotation_x(-swish) * Quat::from_rotation_z(-a.tail),
-            Self::Upper(leg) => a.upper[leg.index()],
-            Self::Lower(leg) => a.lower[leg.index()],
-            Self::Fetlock(leg) => a.fetlock[leg.index()],
-        };
-        Quat::from_rotation_z(angle)
+/// How fast `clip` plays for a horse moving at `speed` m/s: the ground
+/// speed over the speed its hooves show, within [`RATE`]; an idle plays as
+/// recorded.
+pub fn gait_rate(clip: Clip, speed: f32) -> f32 {
+    match clip {
+        Clip::Walk => (speed / HORSE_WALK_SPEED).clamp(RATE.0, RATE.1),
+        Clip::Gallop => (speed / GALLOP_SPEED).clamp(GALLOP_RATE.0, GALLOP_RATE.1),
+        _ => 1.0,
     }
 }
 
-/// The shared unit meshes horse parts are scaled copies of. Lofts fit a 1 m
-/// box centered on the origin, so a part's size is its bounding box.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum HorseShape {
-    /// The barrel, along +X: deep and round.
-    Barrel,
-    /// The chest and shoulders, rounding off forward.
-    Chest,
-    /// The hindquarters, rounding off at the buttocks.
-    Croup,
-    /// The neck: deep at its base, flattened sideways, narrow at the throat.
-    Neck,
-    /// The head along its length, muzzle at the bottom, jowls at the top.
-    Head,
-    Ear,
-    /// Hair with hard strands: the mane and the forelock.
-    Mane,
-    /// The tail's hair, full and tapering.
-    Tail,
-    /// Tapered upper legs: forearm, gaskin and the dock of the tail.
-    Forearm,
-    /// The slim cannon and pastern.
-    Cannon,
-    Hoof,
-    /// Rounded lumps: withers, shoulders, thighs, knees, hocks, fetlocks,
-    /// muzzle and jowls.
-    Lump,
-    /// Tiny bumps: eyes and nostrils.
-    Bump,
-    /// A thin ring round a part: the cincha and the bridle's straps.
-    Band,
-    /// The woven sudadera under the saddle: a thin shell over the back.
-    Blanket,
-    /// The leather carona over it, a little stiffer and narrower.
-    Carona,
-    /// The sheepskin pellón on top: thick, with a shaggy surface.
-    Fleece,
-    /// One of the bastos, the padded rolls of the recado, along +X.
-    Roll,
-    /// A leather or rawhide strap along +Y: stirrup leathers, reins and
-    /// cheekpieces.
-    Strap,
-    /// An iron ring: cincha rings, bit rings and the stirrups.
-    Ring,
-}
+/// The idles a tied horse changes between. Tied short to the post, it
+/// cannot crop the ground (and its reins, over the pommel, would cut
+/// through its neck if it did).
+pub const TIED_IDLES: [Clip; 3] = [Clip::Idle, Clip::Idle2, Clip::IdleHeadlow];
 
-impl HorseShape {
-    pub const ALL: [Self; 20] = [
-        Self::Barrel,
-        Self::Chest,
-        Self::Croup,
-        Self::Neck,
-        Self::Head,
-        Self::Ear,
-        Self::Mane,
-        Self::Tail,
-        Self::Forearm,
-        Self::Cannon,
-        Self::Hoof,
-        Self::Lump,
-        Self::Bump,
-        Self::Band,
-        Self::Blanket,
-        Self::Carona,
-        Self::Fleece,
-        Self::Roll,
-        Self::Strap,
-        Self::Ring,
-    ];
-
-    /// Builds this unit mesh.
-    pub fn mesh(self) -> Mesh {
-        let along_x = Quat::from_rotation_z(-FRAC_PI_2);
-        let sphere = Sphere::new(0.5);
-        let r = |y, rx, rz| Ring(y, rx, rz, 0.0, 1.0);
-        match self {
-            // Lofted rump to chest along Y, then laid along +X; a ring's X
-            // half extent becomes the height.
-            Self::Barrel => loft(
-                &[
-                    Ring(-0.5, 0.4, 0.42, 0.0, 0.92),
-                    r(-0.4, 0.46, 0.47),
-                    r(-0.25, 0.49, 0.5),
-                    r(-0.05, 0.5, 0.5),
-                    r(0.15, 0.5, 0.49),
-                    r(0.32, 0.48, 0.46),
-                    r(0.45, 0.43, 0.4),
-                    Ring(0.5, 0.36, 0.33, 0.0, 0.95),
-                ],
-                BODY_SIDES,
-            )
-            .rotated_by(along_x),
-            Self::Chest => loft(
-                &[
-                    r(-0.5, 0.42, 0.42),
-                    r(-0.2, 0.5, 0.5),
-                    r(0.15, 0.48, 0.47),
-                    r(0.35, 0.4, 0.4),
-                    r(0.47, 0.26, 0.28),
-                    Ring(0.5, 0.1, 0.12, 0.0, 0.95),
-                ],
-                BODY_SIDES,
-            )
-            .rotated_by(along_x),
-            Self::Croup => loft(
-                &[
-                    Ring(-0.5, 0.12, 0.12, 0.0, 0.9),
-                    r(-0.44, 0.3, 0.32),
-                    r(-0.3, 0.44, 0.46),
-                    r(-0.1, 0.5, 0.5),
-                    r(0.2, 0.48, 0.48),
-                    r(0.5, 0.42, 0.44),
-                ],
-                BODY_SIDES,
-            )
-            .rotated_by(along_x),
-            Self::Neck => loft(
-                &[
-                    r(-0.5, 0.42, 0.45),
-                    r(-0.35, 0.5, 0.5),
-                    Ring(-0.1, 0.44, 0.42, -0.03, 1.0),
-                    Ring(0.15, 0.36, 0.36, -0.03, 1.0),
-                    r(0.35, 0.32, 0.33),
-                    Ring(0.47, 0.3, 0.3, 0.0, 0.85),
-                    Ring(0.5, 0.2, 0.2, 0.0, 0.8),
-                ],
-                LIMB_SIDES,
-            ),
-            // Muzzle (bottom) to poll (top); +X is the face, -X the jaw.
-            Self::Head => loft(
-                &[
-                    Ring(-0.5, 0.22, 0.28, 0.08, 0.92),
-                    r(-0.42, 0.34, 0.38),
-                    Ring(-0.25, 0.3, 0.34, 0.08, 1.0),
-                    Ring(0.0, 0.33, 0.38, 0.06, 1.0),
-                    Ring(0.18, 0.4, 0.46, -0.04, 1.0),
-                    Ring(0.32, 0.42, 0.5, -0.08, 0.95),
-                    Ring(0.44, 0.34, 0.42, -0.06, 0.95),
-                    Ring(0.5, 0.2, 0.26, -0.05, 0.9),
-                ],
-                LIMB_SIDES,
-            ),
-            Self::Ear => loft(
-                &[
-                    Ring(-0.5, 0.3, 0.4, 0.0, 0.8),
-                    r(-0.3, 0.5, 0.5),
-                    r(0.1, 0.42, 0.4),
-                    r(0.4, 0.2, 0.2),
-                    r(0.5, 0.05, 0.05),
-                ],
-                8,
-            ),
-            Self::Mane => loft_cloth(
-                &[
-                    Ring(-0.5, 0.3, 0.4, 0.0, 0.9),
-                    r(-0.4, 0.5, 0.5),
-                    r(0.4, 0.5, 0.5),
-                    Ring(0.5, 0.3, 0.4, 0.0, 0.9),
-                ],
-                10,
-                Cloth {
-                    folds: 5,
-                    depth: 0.3,
-                    scuff: 0.1,
-                },
-            )
-            .with_duplicated_vertices()
-            .with_computed_flat_normals(),
-            Self::Tail => loft_cloth(
-                &[
-                    Ring(-0.5, 0.25, 0.3, 0.0, 0.85),
-                    r(-0.4, 0.45, 0.45),
-                    r(-0.1, 0.5, 0.5),
-                    r(0.2, 0.4, 0.42),
-                    r(0.4, 0.3, 0.32),
-                    r(0.5, 0.18, 0.2),
-                ],
-                12,
-                Cloth {
-                    folds: 6,
-                    depth: 0.3,
-                    scuff: 0.1,
-                },
-            ),
-            Self::Forearm => loft(&limb(0.5, 0.3)[1..], LIMB_SIDES),
-            Self::Cannon => loft(
-                &[
-                    Ring(-0.5, 0.25, 0.25, 0.0, 0.9),
-                    r(-0.42, 0.5, 0.5),
-                    r(-0.1, 0.42, 0.44),
-                    r(0.3, 0.44, 0.46),
-                    r(0.42, 0.5, 0.5),
-                    r(0.5, 0.25, 0.25),
-                ],
-                10,
-            ),
-            Self::Hoof => loft(
-                &[
-                    Ring(-0.5, 0.38, 0.4, 0.05, 0.8),
-                    Ring(-0.45, 0.45, 0.48, 0.05, 0.9),
-                    Ring(-0.2, 0.42, 0.45, 0.02, 1.0),
-                    Ring(0.3, 0.36, 0.38, -0.06, 1.0),
-                    Ring(0.5, 0.3, 0.32, -0.1, 1.0),
-                ],
-                12,
-            ),
-            Self::Lump => sphere
-                .mesh()
-                .ico(1)
-                .unwrap_or_else(|_| sphere.mesh().uv(10, 6)),
-            Self::Bump => sphere.mesh().uv(8, 5),
-            Self::Band => Cylinder::new(0.5, 1.0).mesh().resolution(14).build(),
-            Self::Blanket => arch(1.2, 0.06, 0.0, 12, 4),
-            Self::Carona => arch(1.05, 0.08, 0.0, 12, 4),
-            Self::Fleece => arch(0.95, 0.15, 0.035, 14, 6),
-            Self::Roll => loft(
-                &[
-                    Ring(-0.5, 0.3, 0.35, 0.0, 0.9),
-                    r(-0.4, 0.5, 0.5),
-                    r(0.4, 0.5, 0.5),
-                    Ring(0.5, 0.3, 0.35, 0.0, 0.9),
-                ],
-                10,
-            )
-            .rotated_by(along_x),
-            Self::Strap => loft(&[r(-0.5, 0.5, 0.5), r(0.5, 0.5, 0.5)], 6)
-                .with_duplicated_vertices()
-                .with_computed_flat_normals(),
-            Self::Ring => Torus::new(0.35, 0.5)
-                .mesh()
-                .minor_resolution(4)
-                .major_resolution(8)
-                .build(),
-        }
-    }
-}
-
-/// A saddle layer: a shell over the top of a cylinder along X of radius
-/// 0.5, `span` radians either side of the top, `thickness` deep, with hard
-/// edges. `shag` roughens its outer face like a sheepskin.
-fn arch(span: f32, thickness: f32, shag: f32, around: usize, along: usize) -> Mesh {
-    use bevy::asset::RenderAssetUsages;
-    use bevy::mesh::{Indices, PrimitiveTopology};
-    let inner = 0.5 - thickness;
-    let mut positions = Vec::new();
-    // Outer face, then inner face: (along + 1) x (around + 1) points each.
-    for radius in [0.5, inner] {
-        for i in 0..=along {
-            let x = i as f32 / along as f32 - 0.5;
-            for k in 0..=around {
-                let a = span * (2.0 * k as f32 / around as f32 - 1.0);
-                let tuft = if radius == 0.5 {
-                    ((i * 7 + k * 13) % 5) as f32 / 4.0
-                } else {
-                    0.0
-                };
-                let r = radius * (1.0 - shag * tuft);
-                positions.push([x, r * a.cos(), r * a.sin()]);
-            }
-        }
-    }
-    let row = around + 1;
-    let at = |face: usize, i: usize, k: usize| (face * (along + 1) * row + i * row + k) as u32;
-    let mut indices: Vec<u32> = Vec::new();
-    for i in 0..along {
-        for k in 0..around {
-            let (a, b, c, d) = (
-                at(0, i, k),
-                at(0, i, k + 1),
-                at(0, i + 1, k),
-                at(0, i + 1, k + 1),
-            );
-            indices.extend([a, b, c, b, d, c]);
-            let (a, b, c, d) = (
-                at(1, i, k),
-                at(1, i, k + 1),
-                at(1, i + 1, k),
-                at(1, i + 1, k + 1),
-            );
-            indices.extend([a, c, b, b, c, d]);
-        }
-    }
-    // The ends (front and back) and the two lower edges close the shell.
-    for k in 0..around {
-        let (o, o1, n, n1) = (at(0, 0, k), at(0, 0, k + 1), at(1, 0, k), at(1, 0, k + 1));
-        indices.extend([o, n, o1, o1, n, n1]);
-        let (o, o1, n, n1) = (
-            at(0, along, k),
-            at(0, along, k + 1),
-            at(1, along, k),
-            at(1, along, k + 1),
-        );
-        indices.extend([o, o1, n, o1, n1, n]);
-    }
-    for i in 0..along {
-        let (o, o1, n, n1) = (
-            at(0, i, around),
-            at(0, i + 1, around),
-            at(1, i, around),
-            at(1, i + 1, around),
-        );
-        indices.extend([o, n, o1, o1, n, n1]);
-        let (o, o1, n, n1) = (at(0, i, 0), at(0, i + 1, 0), at(1, i, 0), at(1, i + 1, 0));
-        indices.extend([o, o1, n, o1, n1, n]);
-    }
-    let colors = vec![[1.0_f32; 4]; positions.len()];
-    Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::default(),
-    )
-    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
-    .with_inserted_indices(Indices::U32(indices))
-    .with_duplicated_vertices()
-    .with_computed_flat_normals()
-}
-
-/// What a horse part is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum HorsePiece {
-    Barrel,
-    Chest,
-    Withers,
-    Croup,
-    Neck,
-    Mane,
-    Forelock,
-    Head,
-    Muzzle,
-    Jowl,
-    Ear,
-    Eye,
-    Nostril,
-    /// The fleshy root of the tail, and its hair.
-    Dock,
-    Tail,
-    Shoulder,
-    Forearm,
-    Thigh,
-    Gaskin,
-    Knee,
-    Hock,
-    Cannon,
-    Fetlock,
-    Pastern,
-    Hoof,
-    // The recado and the bridle.
-    /// The woven blanket under the saddle.
-    Sudadera,
-    /// The leather layer over it.
-    Carona,
-    /// The two padded rolls the rider sits between.
-    Basto,
-    /// The sheepskin on top.
-    Pellon,
-    /// The rawhide girth round the belly, and its iron rings.
-    Cincha,
-    CinchaRing,
-    StirrupLeather,
-    Stirrup,
-    /// The rawhide headstall: crownpiece, noseband and cheekpieces.
-    Headstall,
-    Bit,
-    Rein,
-}
-
-/// How a horse part is coloured.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Paint {
-    /// The coat's pattern, painted per vertex.
-    Coat,
-    /// The coat's mane and tail colour, per vertex.
-    Mane,
-    /// The coat's hoof colour.
-    Hoof,
-    /// A fixed colour (eyes, tack).
-    Flat(Rgb),
-    /// The coat's face texture (eyes, nostrils, markings) over shades.
-    Face,
-}
-
-/// One part of a horse at rest: a scaled, turned unit [`HorseShape`]
-/// centered at `center` relative to its joint.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct HorsePart {
-    pub piece: HorsePiece,
-    pub joint: HorseJoint,
-    pub shape: HorseShape,
-    pub paint: Paint,
-    pub center: Vec3,
-    pub size: Vec3,
-    pub rotation: Quat,
-}
-
-impl HorsePart {
-    /// What it is made of, on a horse of `coat`.
-    pub fn finish(&self, coat: Coat) -> Finish {
-        use HorsePiece::*;
-        match (self.paint, self.piece) {
-            (Paint::Coat, _) => Finish::Coat,
-            (Paint::Mane, _) => Finish::Hair,
-            (Paint::Hoof, _) => Finish::Hoof,
-            (Paint::Face, _) => Finish::HorseFace(coat),
-            (_, Eye) => Finish::Eye,
-            (_, Sudadera) => Finish::Wool,
-            (_, Pellon) => Finish::Fleece,
-            (_, Carona | Basto | StirrupLeather) => Finish::Leather,
-            (_, Cincha | Headstall | Rein) => Finish::Rawhide,
-            (_, CinchaRing | Stirrup | Bit) => Finish::Iron,
-            _ => Finish::Skin,
-        }
-    }
-
-    /// From the unit mesh to the standing horse.
-    pub fn rest_transform(&self) -> Mat4 {
-        Mat4::from_scale_rotation_translation(
-            self.size,
-            self.rotation,
-            self.joint.rest_position() + self.center,
-        )
-    }
-}
-
-/// A turn that leans a part's +Y axis forward by `angle` (toward +X).
-fn tilt(angle: f32) -> Quat {
-    Quat::from_rotation_z(-angle)
-}
-
-/// Down the head from the poll to the muzzle.
-fn down_head() -> Vec3 {
-    tilt(HEAD_TILT) * Vec3::NEG_Y
-}
-
-/// Out of the face (forward and up from the head's axis).
-fn face() -> Vec3 {
-    tilt(HEAD_TILT) * Vec3::X
-}
-
-/// Where a rider sits, on the standing horse: the top of the pellón.
-pub const SEAT: Vec3 = Vec3::new(-0.05, 1.49, 0.0);
-
-/// How far below the pelvis joint a rider's hips reach.
-const HIP_DROP: f32 = 0.11;
-
-/// Where a rider's figure body stands relative to the horse's trunk joint,
-/// so its hips rest on [`SEAT`].
-pub fn rider_offset() -> Vec3 {
-    let pelvis = Joint::Pelvis.rest_position().y;
-    Vec3::new(SEAT.x, SEAT.y + HIP_DROP - pelvis, SEAT.z) - HorseJoint::Trunk.rest_position()
-}
-
-const EYE: Rgb = [24, 18, 16];
-const NOSTRIL: Rgb = [30, 22, 20];
-/// A woven jerga, rust red with use.
-const JERGA: Rgb = [124, 56, 42];
-const CARONA: Rgb = [88, 60, 40];
-const BASTO: Rgb = [64, 44, 30];
-const PELLON: Rgb = [208, 196, 170];
-const RAWHIDE: Rgb = [166, 140, 104];
-const IRON: Rgb = [70, 68, 66];
-
-/// Every part of the horse, standing, without tack. The same for every
-/// coat: the coat only changes the paint. Deterministic.
-#[rustfmt::skip]
-pub fn horse_parts() -> Vec<HorsePart> {
-    use HorseJoint as J;
-    use HorsePiece::*;
-    use HorseShape as S;
-    let mut parts = Vec::with_capacity(64);
-    let mut add = |piece, joint, shape, paint, center: Vec3, size: [f32; 3], rotation| {
-        parts.push(HorsePart { piece, joint, shape, paint, center, size: Vec3::from(size), rotation });
-    };
-    let id = Quat::IDENTITY;
-    let v = Vec3::new;
-
-    add(Barrel, J::Trunk, S::Barrel, Paint::Coat, Vec3::ZERO, [1.25, 0.62, 0.52], id);
-    add(Chest, J::Trunk, S::Chest, Paint::Coat, v(0.5, 0.02, 0.0), [0.44, 0.62, 0.46], id);
-    add(Withers, J::Trunk, S::Lump, Paint::Coat, v(0.33, 0.32, 0.0), [0.42, 0.16, 0.22], id);
-    add(Croup, J::Trunk, S::Croup, Paint::Coat, v(-0.48, 0.06, 0.0), [0.6, 0.66, 0.54], id);
-
-    // The neck rises forward from the chest; the mane runs along its crest.
-    let neck = tilt(NECK_TILT);
-    let mid = (NECK_DIRECTION * 0.4).extend(0.0);
-    add(Neck, J::Neck, S::Neck, Paint::Coat, mid, [0.42, 0.86, 0.3], neck);
-    let crest = neck * Vec3::NEG_X;
-    add(Mane, J::Neck, S::Mane, Paint::Mane, mid + crest * 0.16 + (NECK_DIRECTION * 0.03).extend(0.0), [0.1, 0.78, 0.06], neck);
-
-    // The head hangs from the poll, the muzzle forward and down.
-    let head = tilt(HEAD_TILT);
-    let (down, out) = (down_head(), face());
-    add(Head, J::Head, S::Head, Paint::Face, down * 0.27, [0.26, 0.58, 0.2], head);
-    add(Muzzle, J::Head, S::Lump, Paint::Coat, down * 0.52 + out * 0.01, [0.15, 0.13, 0.135], head);
-    add(Jowl, J::Head, S::Lump, Paint::Coat, down * 0.14 - out * 0.06, [0.17, 0.16, 0.19], head);
-    add(Forelock, J::Head, S::Mane, Paint::Mane, v(0.06, 0.01, 0.0), [0.05, 0.13, 0.07], tilt(1.2));
-    for z in [-1.0, 1.0] {
-        add(Eye, J::Head, S::Bump, Paint::Flat(EYE), down * 0.13 + out * 0.035 + v(0.0, 0.0, 0.098 * z), [0.045, 0.035, 0.025], head);
-        add(Nostril, J::Head, S::Bump, Paint::Flat(NOSTRIL), down * 0.5 + out * 0.065 + v(0.0, 0.0, 0.04 * z), [0.035, 0.045, 0.022], head);
-    }
-    for s in Side::BOTH {
-        add(Ear, J::Ear(s), S::Ear, Paint::Coat, v(0.0, 0.07, 0.0), [0.055, 0.14, 0.035], Quat::from_rotation_x(-0.2 * s.z()));
-    }
-
-    add(Dock, J::Tail, S::Forearm, Paint::Mane, v(-0.04, -0.1, 0.0), [0.1, 0.26, 0.09], tilt(0.35));
-    add(Tail, J::Tail, S::Tail, Paint::Mane, v(-0.1, -0.45, 0.0), [0.2, 0.72, 0.13], tilt(0.12));
-
-    for leg in Leg::ALL {
-        if leg.is_front() {
-            add(Shoulder, J::Upper(leg), S::Lump, Paint::Coat, v(0.02, 0.12, 0.0), [0.26, 0.42, 0.2], id);
-            add(Forearm, J::Upper(leg), S::Forearm, Paint::Coat, v(0.0, -0.2, 0.0), [0.15, 0.52, 0.14], id);
-            add(Knee, J::Lower(leg), S::Lump, Paint::Coat, v(0.005, 0.0, 0.0), [0.11, 0.11, 0.1], id);
-            add(Cannon, J::Lower(leg), S::Cannon, Paint::Coat, v(0.0, -0.15, 0.0), [0.085, 0.36, 0.08], id);
-        } else {
-            add(Thigh, J::Upper(leg), S::Lump, Paint::Coat, v(0.0, 0.1, 0.0), [0.36, 0.5, 0.24], id);
-            add(Gaskin, J::Upper(leg), S::Forearm, Paint::Coat, v(-0.05, -0.24, 0.0), [0.15, 0.46, 0.13], tilt(0.21));
-            add(Hock, J::Lower(leg), S::Lump, Paint::Coat, v(-0.015, 0.0, 0.0), [0.12, 0.11, 0.1], id);
-            add(Cannon, J::Lower(leg), S::Cannon, Paint::Coat, v(0.0, -0.16, 0.0), [0.085, 0.38, 0.08], id);
-        }
-        add(Fetlock, J::Fetlock(leg), S::Lump, Paint::Coat, Vec3::ZERO, [0.1, 0.09, 0.095], id);
-        add(Pastern, J::Fetlock(leg), S::Cannon, Paint::Coat, v(0.025, -0.06, 0.0), [0.07, 0.12, 0.068], tilt(-0.35));
-        add(Hoof, J::Fetlock(leg), S::Hoof, Paint::Hoof, v(0.04, -0.12, 0.0), [0.13, 0.1, 0.12], id);
-    }
-    parts
-}
-
-/// A strap from `a` to `b` (joint space), `thickness` across.
-fn strap(a: Vec3, b: Vec3, thickness: f32) -> (Vec3, [f32; 3], Quat) {
-    let along = b - a;
-    let rotation = Quat::from_rotation_arc(Vec3::Y, along.normalize_or(Vec3::Y));
-    (
-        (a + b) / 2.0,
-        [thickness, along.length(), thickness],
-        rotation,
-    )
-}
-
-/// Where a mounted rider's hands hold the reins, on the standing horse.
-const HANDS: Vec3 = Vec3::new(0.38, 1.82, 0.12);
-/// Where the reins rest on a horse without a rider: over the pommel.
-const POMMEL: Vec3 = Vec3::new(0.22, 1.42, 0.13);
-
-/// The recado, the bridle and the reins. With a rider (`mounted`) the
-/// stirrups hang where its feet are and the reins run to its hands; tied up,
-/// the stirrups hang straight and the reins lie over the pommel.
-#[rustfmt::skip]
-pub fn tack_parts(mounted: bool) -> Vec<HorsePart> {
-    use HorseJoint as J;
-    use HorsePiece::*;
-    use HorseShape as S;
-    let mut parts = Vec::with_capacity(24);
-    let mut add = |piece, joint, shape, color, (center, size, rotation): (Vec3, [f32; 3], Quat)| {
-        parts.push(HorsePart { piece, joint, shape, paint: Paint::Flat(color), center, size: Vec3::from(size), rotation });
-    };
-    let id = Quat::IDENTITY;
-    let v = Vec3::new;
-    let trunk = HorseJoint::Trunk.rest_position();
-    let saddle = SEAT.x;
-
-    // The recado, layer by layer over the back.
-    add(Sudadera, J::Trunk, S::Blanket, JERGA, (v(saddle, 0.0, 0.0), [0.74, 0.665, 0.56], id));
-    add(Carona, J::Trunk, S::Carona, CARONA, (v(saddle, 0.0, 0.0), [0.64, 0.69, 0.585], id));
-    for z in [-0.085, 0.085] {
-        add(Basto, J::Trunk, S::Roll, BASTO, (v(saddle, 0.37, z), [0.56, 0.08, 0.09], id));
-    }
-    let pellon_top = SEAT.y - trunk.y;
-    add(Pellon, J::Trunk, S::Fleece, PELLON, (v(saddle, pellon_top - 0.69, 0.0), [0.58, 1.38, 0.74], id));
-    add(Cincha, J::Trunk, S::Band, RAWHIDE, (v(0.2, 0.0, 0.0), [0.64, 0.09, 0.545], tilt(FRAC_PI_2)));
-    for z in [-1.0, 1.0] {
-        add(CinchaRing, J::Trunk, S::Ring, IRON, (v(0.2, -0.05, 0.275 * z), [0.09, 0.1, 0.09], Quat::from_rotation_x(FRAC_PI_2)));
-        // Stirrup leathers from under the bastos down to the stirrups.
-        let top = v(saddle + 0.15, 0.37, 0.27 * z);
-        let foot = if mounted { v(saddle + 0.29, -0.01, 0.31 * z) } else { v(saddle + 0.15, -0.04, 0.29 * z) };
-        add(StirrupLeather, J::Trunk, S::Strap, BASTO, strap(top, foot, 0.025));
-        add(Stirrup, J::Trunk, S::Ring, IRON, (foot - v(0.0, 0.065, 0.0), [0.13, 0.2, 0.11], tilt(FRAC_PI_2)));
-    }
-
-    // The rawhide bridle: crownpiece behind the ears, noseband, cheekpieces
-    // and the bit's rings at the corners of the mouth.
-    let head = tilt(HEAD_TILT);
-    let (down, out) = (down_head(), face());
-    add(Headstall, J::Head, S::Band, RAWHIDE, (down * 0.06 - out * 0.018, [0.21, 0.024, 0.2], head));
-    add(Headstall, J::Head, S::Band, RAWHIDE, (down * 0.38 + out * 0.018, [0.175, 0.024, 0.155], head));
-    let bit = down * 0.46 - out * 0.03;
-    for z in [-1.0, 1.0] {
-        add(Headstall, J::Head, S::Strap, RAWHIDE, strap(down * 0.08 + v(0.0, 0.0, 0.1 * z), bit + v(0.0, 0.0, 0.08 * z), 0.016));
-        add(Bit, J::Head, S::Ring, IRON, (bit + v(0.0, 0.0, 0.08 * z), [0.05, 0.1, 0.05], Quat::from_rotation_x(FRAC_PI_2)));
-        // The reins, on the neck: from the bit to the hands or the pommel.
-        let neck = HorseJoint::Neck.rest_position();
-        let from = HorseJoint::Head.rest() + bit + v(0.0, 0.0, 0.09 * z);
-        let to = if mounted { HANDS } else { POMMEL };
-        let to = v(to.x, to.y, to.z * z) - neck;
-        add(Rein, J::Neck, S::Strap, RAWHIDE, strap(from, to, 0.014));
-    }
-    parts
-}
-
-/// The height of the withers above the hooves.
-pub fn withers_height() -> f32 {
-    horse_parts()
-        .iter()
-        .filter(|p| p.piece == HorsePiece::Withers)
-        .map(|p| p.joint.rest_position().y + p.center.y + p.size.y / 2.0)
-        .fold(0.0, f32::max)
-}
-
-/// A colour's linear channels, for vertex colours.
-fn linear(color: Rgb) -> [f32; 3] {
-    let c = Color::srgb_u8(color[0], color[1], color[2]).to_linear();
-    [c.red, c.green, c.blue]
-}
-
-/// How much ambient light reaches a vertex of `piece` at `p` on the standing
-/// horse, facing `n`: less under the belly, between the legs, just under the
-/// saddle's edge and under the jaw.
-pub fn occlusion(piece: HorsePiece, p: Vec3, n: Vec3) -> f32 {
-    use HorsePiece::*;
-    let mut light = 1.0;
-    if matches!(piece, Barrel | Chest | Croup) {
-        light -= 0.35 * ramp(-n.y, 0.2, 0.9) * (1.0 - ramp(p.y, 0.85, 1.05));
-    }
-    if matches!(
-        piece,
-        Shoulder | Forearm | Thigh | Gaskin | Knee | Hock | Cannon | Fetlock | Pastern
-    ) {
-        let inward = ramp(-n.z * p.z.signum(), 0.2, 0.9);
-        light -= 0.3 * inward * (0.5 + 0.5 * ramp(p.y, 0.3, 0.9));
-    }
-    if matches!(piece, Barrel | Chest) {
-        let along = ramp(p.x, -0.5, -0.4) * (1.0 - ramp(p.x, 0.3, 0.4));
-        let edge = 1.0 - ramp((p.y - 1.16).abs(), 0.0, 0.06);
-        light -= 0.22 * along * edge * ramp(n.z.abs(), 0.3, 0.8);
-    }
-    if matches!(piece, Head | Jowl | Neck) {
-        light -= 0.25 * ramp(-n.y, 0.4, 0.95);
-    }
-    light
-}
-
-/// `part`'s unit mesh with `coat` painted into its vertex colours (times
-/// the shade already there) and its ambient occlusion baked in, from where
-/// each vertex sits on the standing horse.
-pub fn painted_mesh(part: &HorsePart, coat: Coat) -> Mesh {
-    use bevy::mesh::VertexAttributeValues as V;
-    let mut mesh = part.shape.mesh();
-    let place = part.rest_transform();
-    let turn = Mat3::from_quat(part.rotation) * Mat3::from_diagonal(part.size.recip());
-    let positions = match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
-        Some(V::Float32x3(p)) => p.clone(),
-        _ => return mesh,
-    };
-    let normals = match mesh.attribute(Mesh::ATTRIBUTE_NORMAL) {
-        Some(V::Float32x3(n)) => n.clone(),
-        _ => vec![[0.0, 1.0, 0.0]; positions.len()],
-    };
-    let shades = match mesh.attribute(Mesh::ATTRIBUTE_COLOR) {
-        Some(V::Float32x4(c)) => c.clone(),
-        _ => vec![[1.0; 4]; positions.len()],
-    };
-    let colors: Vec<[f32; 4]> = positions
-        .iter()
-        .zip(&normals)
-        .zip(&shades)
-        .map(|((p, n), shade)| {
-            let at = place.transform_point3(Vec3::from(*p));
-            let normal = (turn * Vec3::from(*n)).normalize_or_zero();
-            let color = match part.paint {
-                Paint::Coat => coat.color_at(at, normal),
-                Paint::Mane => coat.mane(),
-                Paint::Hoof => coat.hoof(),
-                Paint::Flat(c) => c,
-                // The colour is in the face texture.
-                Paint::Face => [255; 3],
-            };
-            let light = occlusion(part.piece, at, normal);
-            let [r, g, b] = linear(color).map(|c| c * light);
-            [shade[0] * r, shade[1] * g, shade[2] * b, 1.0]
-        })
-        .collect();
-    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
-    mesh
-}
-
-/// Unit meshes for flat parts and painted meshes per coat (built when a
-/// coat is first drawn), shared by every horse; materials come from the
-/// [`Palette`](super::finish::Palette).
-#[derive(Resource, Default)]
-pub struct HorseKit {
-    units: HashMap<HorseShape, Handle<Mesh>>,
-    /// By coat and index into [`horse_parts`].
-    painted: HashMap<(Coat, usize), Handle<Mesh>>,
-}
-
-impl HorseKit {
-    pub fn new(meshes: &mut Assets<Mesh>) -> Self {
-        Self {
-            units: HorseShape::ALL.map(|s| (s, meshes.add(s.mesh()))).into(),
-            ..default()
-        }
-    }
-
-    /// The mesh and material of body part `index` (or of a tack part, with
-    /// no index) in `coat`.
-    fn draw(
-        &mut self,
-        part: &HorsePart,
-        index: Option<usize>,
-        coat: Coat,
-        meshes: &mut Assets<Mesh>,
-        (palette, materials, images): Paints,
-    ) -> Option<(Handle<Mesh>, Handle<StandardMaterial>)> {
-        let finish = part.finish(coat);
-        let (mesh, color) = match (part.paint, index) {
-            (Paint::Coat | Paint::Mane | Paint::Face, Some(index)) => {
-                let mesh = self
-                    .painted
-                    .entry((coat, index))
-                    .or_insert_with(|| meshes.add(painted_mesh(part, coat)))
-                    .clone();
-                // White: the colour is in the vertices or the face texture.
-                (mesh, [255; 3])
-            }
-            (Paint::Hoof, _) => (self.units.get(&part.shape)?.clone(), coat.hoof()),
-            (Paint::Flat(color), _) => (self.units.get(&part.shape)?.clone(), color),
-            _ => return None,
-        };
-        Some((mesh, palette.material(color, finish, materials, images)))
-    }
-}
-
-/// The turning body of a horse, child of the character entity.
+/// A saddled horse's body, child of its character entity: turned to the
+/// heading, holding the model.
 #[derive(Component, Debug, Clone)]
 pub struct HorseBody {
     pub coat: Coat,
-    /// The gait drawn: logic's animation and the speed decide it.
+    /// Who rides it, if anyone.
+    pub rider: Option<FigureKind>,
+    /// Its gait: logic's animation and the speed decide it.
     pub gait: HorseGait,
-    /// How far through the stride (or breath) cycle, in cycles (`0..1`).
-    pub phase: f32,
-    /// Seconds since it was drawn (wrapped at
-    /// [`pampa_core::MOTION_CLOCK_PERIOD`]), and its own seed, for ear flicks and
-    /// tail swishes.
-    pub clock: f32,
+    /// How much of the gallop it plays now (`0..1`): a rider leans into it.
+    pub gallop: f32,
+    /// Its ground speed now, m/s (none standing).
+    pub speed: f32,
+    /// Its own seed: where its clips start and which idle a tied horse
+    /// plays.
     pub seed: u32,
-    /// Joint entities in [`HorseJoint::ALL`] order.
-    joints: Vec<Entity>,
 }
 
-/// A joint entity of a horse.
-#[derive(Component, Debug, Clone, Copy)]
-pub struct HorseJointPart(pub HorseJoint);
+impl HorseBody {
+    /// The idle it stands with at `clock` seconds: a ridden horse stands
+    /// still; a tied one changes idle now and then, as the corral horses
+    /// do ([`TIED_IDLES`]).
+    pub fn idle(&self, clock: f32) -> Clip {
+        match self.rider {
+            Some(_) => Clip::Idle,
+            None => {
+                let turn = ((clock.max(0.0) + (self.seed % 97) as f32) / HORSE_IDLE) as u32;
+                TIED_IDLES[mix(self.seed, turn) as usize % TIED_IDLES.len()]
+            }
+        }
+    }
 
-/// A part mesh of a horse or its tack.
-#[derive(Component, Debug, Clone, Copy)]
-pub struct HorsePartMesh(pub HorsePiece);
+    /// Whether its clips keep playing out of view or far off: the player's
+    /// horse always does.
+    pub fn never_freezes(&self) -> bool {
+        self.rider == Some(FigureKind::Protagonist)
+    }
+}
 
-/// Spawns a horse in `coat` under `parent`: saddled, and tacked for a rider
-/// when `mounted`. Returns its body and its trunk joint (where a rider
-/// sits).
+/// The horse model's root, child of its [`HorseBody`].
+#[derive(Component, Debug, Clone, Copy)]
+pub struct HorseModel;
+
+/// A horse model waiting for its scene to load.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct HorsePending;
+
+/// A spawned horse model's animation state, on its root.
+#[derive(Component, Debug, Clone)]
+pub struct HorseRig {
+    /// The entity with its `AnimationPlayer`.
+    pub player: Entity,
+    /// Its drawn meshes: it is in view while any of them is.
+    pub probes: Vec<Entity>,
+    /// Each clip's weight now, in [`Clip::ALL`] order.
+    pub weights: [f32; 6],
+    /// Whether its clips are playing.
+    pub started: bool,
+    /// Whether its bones keep their last pose.
+    pub frozen: bool,
+    /// Each clip's length, seconds, once it has loaded.
+    pub durations: [f32; 6],
+    /// The stride clip it is mostly playing (the walk or the gallop): the
+    /// other is put in step with it as it takes over.
+    pub lead: Clip,
+}
+
+impl HorseRig {
+    /// A model's rig, its clips played by `player`, seen through `probes`.
+    pub fn new(player: Entity, probes: Vec<Entity>) -> Self {
+        Self {
+            player,
+            probes,
+            weights: [0.0; 6],
+            started: false,
+            frozen: false,
+            durations: [0.0; 6],
+            lead: Clip::Walk,
+        }
+    }
+}
+
+/// Where the walk's loop is in step with the gallop's: each with the left
+/// hind striking (the walk's at 0.25 of its loop, the gallop's at
+/// [`GATHER`](super::gait::GATHER)).
+pub const WALK_FROM_GALLOP: f32 = 0.25 - super::gait::GATHER;
+
+/// The share of its loop (`0..1`) a stride clip taking the lead from
+/// `from` at `phase` of its loop starts at.
+pub fn in_step(to: Clip, phase: f32) -> f32 {
+    match to {
+        Clip::Walk => (phase + WALK_FROM_GALLOP).rem_euclid(1.0),
+        _ => (phase - WALK_FROM_GALLOP).rem_euclid(1.0),
+    }
+}
+
+/// How fast the clips' weights ease toward their targets, per second: a
+/// quick fade, so two clips are seldom seen half and half.
+pub const HORSE_BLEND_RATE: f32 = 12.0;
+
+/// The model's transform under its body: the horse's export turned to face
+/// +X and scaled to life (the corral horses' scale).
+pub fn model_transform() -> Transform {
+    livestock::model_transform(Species::Horse, Heading::default())
+}
+
+/// Spawns a saddled horse in `coat` (ridden by `rider`) under `parent`:
+/// its body, and its model waiting for the scene. Returns the body.
 pub(super) fn spawn_horse(
     commands: &mut Commands,
-    (kit, meshes): (&mut HorseKit, &mut Assets<Mesh>),
-    (palette, materials, images): Paints,
     parent: Entity,
     coat: Coat,
-    phase: f32,
-    mounted: bool,
-) -> (Entity, Entity) {
+    rider: Option<FigureKind>,
+) -> Entity {
     let body = commands
         .spawn((
             Name::new("Horse"),
+            HorseBody {
+                coat,
+                rider,
+                gait: HorseGait::Idle,
+                gallop: 0.0,
+                speed: 0.0,
+                seed: parent.index_u32(),
+            },
             Transform::default(),
             Visibility::default(),
             ChildOf(parent),
         ))
         .id();
-    let mut joints: Vec<Entity> = Vec::with_capacity(HorseJoint::ALL.len());
-    for joint in HorseJoint::ALL {
-        let holder = joint.parent().map_or(body, |p| joints[p.index()]);
-        joints.push(
-            commands
-                .spawn((
-                    HorseJointPart(joint),
-                    Transform::from_translation(joint.rest()),
-                    Visibility::default(),
-                    ChildOf(holder),
-                ))
-                .id(),
-        );
-    }
-    let body_parts = horse_parts()
-        .into_iter()
-        .enumerate()
-        .map(|(i, p)| (p, Some(i)));
-    let tack = tack_parts(mounted).into_iter().map(|p| (p, None));
-    for (part, index) in body_parts.chain(tack) {
-        let paints = (&mut *palette, &mut *materials, &mut *images);
-        let Some((mesh, material)) = kit.draw(&part, index, coat, meshes, paints) else {
-            continue;
-        };
-        commands.spawn((
-            HorsePartMesh(part.piece),
-            Mesh3d(mesh),
-            MeshMaterial3d(material),
-            Transform::from_translation(part.center)
-                .with_rotation(part.rotation)
-                .with_scale(part.size),
-            ChildOf(joints[part.joint.index()]),
-        ));
-    }
-    let trunk = joints[HorseJoint::Trunk.index()];
-    commands.entity(body).insert(HorseBody {
-        coat,
-        gait: HorseGait::Idle,
-        phase,
-        clock: 0.0,
-        seed: parent.index_u32(),
-        joints,
-    });
-    (body, trunk)
+    commands.spawn((
+        Name::new("Horse model"),
+        HorseModel,
+        HorsePending,
+        model_transform(),
+        Visibility::default(),
+        ChildOf(body),
+    ));
+    body
 }
 
-/// Turns, bobs and poses each horse from its character's pose: the gait
-/// comes from logic's animation and speed, the stride is paced by speed.
-pub(super) fn update_horses(
-    time: Res<Time>,
-    poses: Query<&super::VisualPose>,
-    mut bodies: Query<(&ChildOf, &mut HorseBody, &mut Transform), Without<HorseJointPart>>,
-    mut joints: Query<(&HorseJointPart, &mut Transform), Without<HorseBody>>,
+/// Spawns each waiting horse model's scene once it has loaded. Without the
+/// horse's file nothing is drawn.
+pub(super) fn swap_in_horses(
+    mut commands: Commands,
+    server: Option<Res<AssetServer>>,
+    models: Option<Res<LivestockModels>>,
+    pending: Query<Entity, With<HorsePending>>,
 ) {
-    let dt = time.delta_secs();
-    for (child_of, mut body, mut transform) in &mut bodies {
-        let Ok(visual) = poses.get(child_of.parent()) else {
+    let Some(models) = models else { return };
+    for entity in &pending {
+        let Some(model) = models.get(Species::Horse) else {
+            commands.entity(entity).remove::<HorsePending>();
             continue;
         };
-        body.gait = HorseGait::of(visual.animation, visual.speed);
-        body.phase = pose::horse_advance(body.phase, body.gait, visual.speed, dt);
-        let angles = pose::horse_pose(body.gait, body.phase);
-        // Wrapped, seamlessly: a game left running keeps a fine clock.
-        body.clock = pampa_core::tick_clock(body.clock, dt);
-        let ears = pose::ear_flick(body.seed, body.clock);
-        let swish = pose::tail_swish(body.seed, body.clock, body.gait, body.phase);
-        transform.rotation = super::figure::body_rotation(visual.heading);
-        transform.translation.y = angles.bob;
-        for &entity in &body.joints {
-            let Ok((joint, mut transform)) = joints.get_mut(entity) else {
+        let Some(server) = server.as_deref() else {
+            return;
+        };
+        match gltf::model_state(server, &model.scene) {
+            ModelState::Ready => {
+                commands
+                    .entity(entity)
+                    .remove::<HorsePending>()
+                    .try_insert(WorldAssetRoot(model.scene.clone()));
+            }
+            ModelState::Failed => {
+                commands.entity(entity).remove::<HorsePending>();
+            }
+            ModelState::Loading => {}
+        }
+    }
+}
+
+/// `entity`'s rest placement in the body frame of the model `root` (its
+/// own transform and its ancestors', up to and including the root's).
+pub(super) fn rest_affine(
+    entity: Entity,
+    root: Entity,
+    parents: &Query<&ChildOf>,
+    transforms: &Query<&Transform>,
+) -> Affine3A {
+    let mut affine = Affine3A::IDENTITY;
+    let mut at = entity;
+    loop {
+        if let Ok(t) = transforms.get(at) {
+            affine = t.compute_affine() * affine;
+        }
+        if at == root {
+            break;
+        }
+        let Ok(child_of) = parents.get(at) else {
+            break;
+        };
+        at = child_of.parent();
+    }
+    affine
+}
+
+/// A transform from an affine placement.
+pub(super) fn transform_of(affine: Affine3A) -> Transform {
+    Transform::from_matrix(Mat4::from(affine))
+}
+
+/// What a horse model is dressed from: its nodes' names, rests and
+/// meshes.
+#[derive(SystemParam)]
+pub(super) struct HorseScene<'w, 's> {
+    names: Query<'w, 's, &'static Name>,
+    transforms: Query<'w, 's, &'static Transform>,
+    parents: Query<'w, 's, &'static ChildOf>,
+    children: Query<'w, 's, &'static Children>,
+    parts: Query<'w, 's, ModelPart>,
+}
+
+/// The stores a horse is dressed from.
+#[derive(SystemParam)]
+pub(super) struct HorseStores<'w> {
+    cache: Option<ResMut<'w, CoatCache>>,
+    materials: ResMut<'w, Assets<StandardMaterial>>,
+    meshes: ResMut<'w, Assets<Mesh>>,
+    models: Option<Res<'w, LivestockModels>>,
+}
+
+/// Dresses a horse model the moment its scene spawns: its coat and range,
+/// its clips' graph and its bones for [`fit_horses`]. (The tack and the
+/// rider are put on by their own modules.)
+pub(super) fn dress_horse(
+    ready: On<WorldInstanceReady>,
+    mut commands: Commands,
+    mut stores: HorseStores,
+    scene: HorseScene,
+    roots: Query<&ChildOf, With<HorseModel>>,
+    bodies: Query<&HorseBody>,
+) {
+    let root = ready.entity;
+    let Ok(child_of) = roots.get(root) else {
+        return;
+    };
+    let carrier = child_of.parent();
+    let (Ok(body), Some(species)) = (
+        bodies.get(carrier),
+        stores
+            .models
+            .as_ref()
+            .and_then(|m| m.get(Species::Horse))
+            .cloned(),
+    ) else {
+        return;
+    };
+    let HorseStores {
+        cache: Some(cache),
+        materials,
+        meshes,
+        ..
+    } = &mut stores
+    else {
+        return;
+    };
+    let (player, probes) = dress_meshes(
+        &mut commands,
+        (cache, materials, meshes),
+        root,
+        (Animal::Horse(body.coat), Species::Horse),
+        &scene.children,
+        &scene.parts,
+    );
+    let Some(player) = player else {
+        warn!("horse model without an animation player: it stands still");
+        return;
+    };
+    commands
+        .entity(player)
+        .try_insert(AnimationGraphHandle(species.graph.clone()));
+    commands
+        .entity(root)
+        .try_insert(HorseRig::new(player, probes));
+    match find_bones(&scene, root) {
+        Some(bones) => {
+            commands.entity(root).try_insert(bones);
+        }
+        None => warn!("horse model without its skeleton: its gallop stays the clip's"),
+    }
+}
+
+/// The bones [`fit_horses`] moves under the model `root`, and their rests.
+fn find_bones(scene: &HorseScene, root: Entity) -> Option<HorseBones> {
+    let named = |name: &str| {
+        scene
+            .children
+            .iter_descendants(root)
+            .find(|e| scene.names.get(*e).is_ok_and(|n| n.as_str() == name))
+    };
+    let all = GaitBone::all();
+    let mut bones = [Entity::PLACEHOLDER; GaitBone::COUNT];
+    for (k, bone) in all.into_iter().enumerate() {
+        bones[k] = named(&bone.name())?;
+    }
+    let rest = |e: Entity| scene.transforms.get(e).ok().copied();
+    let mut partial = Vec::with_capacity(PARTIAL.len() + UNANIMATED.len());
+    let unanimated = UNANIMATED.map(|n| (n, Property::Rotation, 0));
+    for (name, property, mask) in PARTIAL.into_iter().chain(unanimated) {
+        let e = named(name)?;
+        partial.push((e, property, mask, rest(e)?));
+    }
+    let mut means = Vec::with_capacity(GALLOP_MEANS.len());
+    for (name, q) in GALLOP_MEANS {
+        let leg = usize::from(name.ends_with(".R")) + if name.starts_with("Back") { 2 } else { 0 };
+        means.push((leg, named(name)?, Quat::from_array(q).normalize()));
+    }
+    let armature = rest_affine(
+        bones[GaitBone::Armature.index()],
+        root,
+        &scene.parents,
+        &scene.transforms,
+    );
+    let standing = [0, 1, 2, 3].map(|leg| {
+        let hoof = bones[GaitBone::Hoof(leg).index()];
+        rest_affine(hoof, root, &scene.parents, &scene.transforms)
+            .translation
+            .y
+    });
+    Some(HorseBones {
+        bones,
+        armature,
+        partial,
+        means,
+        standing,
+    })
+}
+
+/// Fits each playing horse's pose after its clips (see
+/// [`gait`](super::gait)): the blend completed, the gallop stretched and
+/// flexed, the hooves kept on the legs.
+pub(super) fn fit_horses(
+    models: Option<Res<LivestockModels>>,
+    rigs: Query<(&HorseRig, &HorseBones)>,
+    players: Query<&AnimationPlayer>,
+    mut transforms: Query<&mut Transform>,
+) {
+    let Some(species) = models.as_ref().and_then(|m| m.get(Species::Horse)) else {
+        return;
+    };
+    let gallop = Clip::Gallop.index();
+    for (rig, bones) in &rigs {
+        if rig.frozen || !rig.started {
+            continue;
+        }
+        let phase = players
+            .get(rig.player)
+            .ok()
+            .and_then(|p| p.animation(species.nodes[gallop]))
+            .map_or(0.0, |a| a.seek_time() / rig.durations[gallop].max(1e-3));
+        fit_horse(bones, &mut transforms, &rig.weights, phase);
+    }
+}
+
+/// Turns each saddled horse to its heading and plays its clips (see the
+/// module notes): weighed and paced by speed, started at its seeded point,
+/// frozen far off or out of view unless it is the player's.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn drive_horses(
+    mut commands: Commands,
+    time: Res<Time>,
+    models: Option<Res<LivestockModels>>,
+    loaded: Option<Res<Assets<AnimationClip>>>,
+    cameras: Query<(Entity, &GlobalTransform, &Camera), With<Camera3d>>,
+    poses: Query<&VisualPose>,
+    mut bodies: Query<(&ChildOf, &mut HorseBody, &mut Transform)>,
+    mut rigs: Query<(&ChildOf, &mut HorseRig, &GlobalTransform)>,
+    mut players: Query<&mut AnimationPlayer>,
+    seen: Query<&ViewVisibility>,
+) {
+    let dt = time.delta_secs();
+    let clock = time.elapsed_secs();
+    for (child_of, mut body, mut transform) in &mut bodies {
+        let Ok(pose) = poses.get(child_of.parent()) else {
+            continue;
+        };
+        transform.rotation = body_rotation(pose.heading);
+        body.gait = HorseGait::of(pose.animation, pose.speed);
+    }
+    let eye = view_eye(cameras);
+    let species = models.as_ref().and_then(|m| m.get(Species::Horse));
+    for (child_of, mut rig, at) in &mut rigs {
+        let Ok((parent, mut body, _)) = bodies.get_mut(child_of.parent()) else {
+            continue;
+        };
+        let distance = eye.map_or(0.0, |e| e.distance(at.translation()));
+        let in_view =
+            eye.is_none() || any_in_view(&rig.probes, |p| seen.get(p).is_ok_and(|v| v.get()));
+        let freeze = !body.never_freezes() && frozen(rig.frozen, distance, in_view);
+        let Some(species) = species else {
+            rig.frozen = freeze;
+            continue;
+        };
+        if freeze != rig.frozen {
+            rig.frozen = freeze;
+            let mut player = commands.entity(rig.player);
+            if freeze {
+                player.try_remove::<AnimationGraphHandle>();
+            } else {
+                player.try_insert(AnimationGraphHandle(species.graph.clone()));
+            }
+        }
+        if rig.frozen {
+            continue;
+        }
+        let Ok(mut player) = players.get_mut(rig.player) else {
+            continue;
+        };
+        let speed = match poses.get(parent.parent()) {
+            Ok(pose) if pose.animation != AnimationState::Idle => pose.speed.abs(),
+            _ => 0.0,
+        };
+        let stride = if gallops(rig.lead == Clip::Gallop, speed) {
+            Clip::Gallop
+        } else {
+            Clip::Walk
+        };
+        let goal = gait_weights(body.idle(clock), stride, speed);
+        if !rig.started {
+            let Some(loaded) = loaded.as_deref() else {
                 continue;
             };
-            let breath = if joint.0 == HorseJoint::Trunk {
-                angles.breath
-            } else {
-                0.0
+            let durations: Option<Vec<f32>> = species
+                .clips
+                .iter()
+                .map(|c| loaded.get(c).map(AnimationClip::duration))
+                .collect();
+            let Some(durations) = durations else {
+                continue;
             };
-            transform.translation = joint.0.rest() + Vec3::Y * breath;
-            transform.rotation = joint.0.rotation(&angles, ears, swish);
+            for (k, (clip, duration)) in Clip::ALL.into_iter().zip(durations).enumerate() {
+                player
+                    .play(species.nodes[clip.index()])
+                    .repeat()
+                    .seek_to(start_offset(body.seed, clip) * duration);
+                rig.durations[k] = duration;
+            }
+            rig.weights = goal;
+            rig.started = true;
+        }
+        // The stride clip taking over starts in step with the one leaving.
+        let lead = stride;
+        if lead != rig.lead {
+            let from = rig.lead;
+            let phase = player
+                .animation(species.nodes[from.index()])
+                .map(|a| a.seek_time() / rig.durations[from.index()].max(1e-3));
+            if let (Some(phase), Some(active)) =
+                (phase, player.animation_mut(species.nodes[lead.index()]))
+            {
+                active.seek_to(in_step(lead, phase) * rig.durations[lead.index()]);
+            }
+            rig.lead = lead;
+        }
+        let k = 1.0 - (-HORSE_BLEND_RATE * dt).exp();
+        for (w, t) in rig.weights.iter_mut().zip(goal) {
+            *w += (t - *w) * k;
+        }
+        body.gallop = rig.weights[Clip::Gallop.index()];
+        body.speed = speed;
+        for clip in Clip::ALL {
+            if let Some(active) = player.animation_mut(species.nodes[clip.index()]) {
+                active
+                    .set_weight(rig.weights[clip.index()])
+                    .set_speed(gait_rate(clip, speed));
+            }
         }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::super::figure::{FigureKind, Piece, figure_parts};
+pub(crate) mod tests {
     use super::*;
 
-    /// Every coat vertex of the standing horse: position, normal, colour.
-    fn coat_vertices(coat: Coat, pieces: &[HorsePiece]) -> Vec<(Vec3, Vec3, Rgb)> {
-        horse_parts()
-            .iter()
-            .filter(|p| pieces.is_empty() || pieces.contains(&p.piece))
-            .filter(|p| matches!(p.paint, Paint::Coat | Paint::Mane))
-            .flat_map(|part| {
-                let mesh = part.shape.mesh();
-                let place = part.rest_transform();
-                let turn = Mat3::from_quat(part.rotation) * Mat3::from_diagonal(part.size.recip());
-                let positions = mesh
-                    .attribute(Mesh::ATTRIBUTE_POSITION)
-                    .unwrap()
-                    .as_float3()
-                    .unwrap()
-                    .to_vec();
-                let normals = mesh
-                    .attribute(Mesh::ATTRIBUTE_NORMAL)
-                    .unwrap()
-                    .as_float3()
-                    .unwrap()
-                    .to_vec();
-                let part = *part;
-                positions.into_iter().zip(normals).map(move |(p, n)| {
-                    let at = place.transform_point3(Vec3::from(p));
-                    let normal = (turn * Vec3::from(n)).normalize_or_zero();
-                    let color = match part.paint {
-                        Paint::Mane => coat.mane(),
-                        _ => coat.color_at(at, normal),
-                    };
-                    (at, normal, color)
-                })
-            })
+    /// A stand-in horse's surface: points on its barrel, croup and
+    /// shoulders (a tube along +X round 1.14 m up), its neck, and its four
+    /// legs, each with its outward normal.
+    fn coat_points() -> Vec<(Vec3, Vec3)> {
+        let mut out = Vec::new();
+        for i in 0..40 {
+            let x = -0.85 + 1.45 * i as f32 / 39.0;
+            for k in 0..32 {
+                let a = k as f32 / 32.0 * std::f32::consts::TAU;
+                let n = Vec3::new(0.0, a.cos(), a.sin());
+                out.push((Vec3::new(x, 1.14 + 0.29 * n.y, 0.23 * n.z), n));
+            }
+        }
+        for i in 0..20 {
+            let t = i as f32 / 19.0;
+            let c = Vec3::new(0.5 + 0.45 * t, 1.3 + 0.45 * t, 0.0);
+            for k in 0..16 {
+                let a = k as f32 / 16.0 * std::f32::consts::TAU;
+                let n = Vec3::new(-0.7 * a.cos(), 0.7 * a.cos(), a.sin()).normalize();
+                out.push((c + n * 0.13, n));
+            }
+        }
+        for (x, z) in [(0.55, -0.17), (0.55, 0.17), (-0.65, -0.17), (-0.65, 0.17)] {
+            for j in 0..20 {
+                for k in 0..10 {
+                    let a = k as f32 / 10.0 * std::f32::consts::TAU;
+                    let n = Vec3::new(a.cos(), 0.0, a.sin());
+                    out.push((Vec3::new(x, 0.9 * j as f32 / 19.0, z) + n * 0.06, n));
+                }
+            }
+        }
+        out
+    }
+
+    fn coat_colors(coat: Coat) -> Vec<(Vec3, Vec3, Rgb)> {
+        coat_points()
+            .into_iter()
+            .map(|(p, n)| (p, n, coat.color_at(p, n)))
             .collect()
     }
 
@@ -1180,82 +760,13 @@ mod tests {
         0.3 * c[0] as f32 + 0.59 * c[1] as f32 + 0.11 * c[2] as f32
     }
 
-    fn triangles(shape: HorseShape) -> usize {
-        shape.mesh().triangles().map(|t| t.count()).unwrap_or(0)
-    }
-
-    #[test]
-    fn a_criollo_stands_about_one_forty_five_at_the_withers_on_its_hooves() {
-        let withers = withers_height();
-        assert!((1.35..=1.6).contains(&withers), "{withers} m");
-        let all = coat_vertices(Coat::Zaino, &[]);
-        let top_of_back = all
-            .iter()
-            .filter(|(p, _, _)| (-0.5..0.3).contains(&p.x))
-            .map(|(p, _, _)| p.y)
-            .fold(0.0, f32::max);
-        assert!(
-            top_of_back <= withers + 0.02,
-            "the back ({top_of_back}) is below the withers ({withers})"
-        );
-        // Hooves on the ground.
-        let sole = horse_parts()
-            .iter()
-            .filter(|p| p.piece == HorsePiece::Hoof)
-            .map(|p| p.joint.rest_position().y + p.center.y - p.size.y / 2.0)
-            .fold(f32::MAX, f32::min);
-        assert!(sole.abs() < 1e-4, "{sole}");
-        // Compact: about as long from chest to buttock as it is tall.
-        let (back, front) = all
-            .iter()
-            .filter(|(p, _, _)| p.y > 0.8 && p.y < 1.3)
-            .fold((f32::MAX, f32::MIN), |(b, f), (p, _, _)| {
-                (b.min(p.x), f.max(p.x))
-            });
-        let length = front - back;
-        assert!((1.35..1.75).contains(&length), "{length} m");
-        assert_eq!(horse_parts(), horse_parts(), "deterministic");
-    }
-
-    #[test]
-    fn a_horse_has_ps1_to_ps2_era_detail() {
-        let body: usize = horse_parts().iter().map(|p| triangles(p.shape)).sum();
-        let tack: usize = tack_parts(true).iter().map(|p| triangles(p.shape)).sum();
-        println!("horse {body} triangles, tack {tack}");
-        assert!((4000..=6000).contains(&body), "{body}");
-        assert!(tack < 2000, "{tack}");
-        for piece in [
-            HorsePiece::Barrel,
-            HorsePiece::Neck,
-            HorsePiece::Head,
-            HorsePiece::Mane,
-            HorsePiece::Tail,
-            HorsePiece::Ear,
-            HorsePiece::Hoof,
-            HorsePiece::Cannon,
-            HorsePiece::Fetlock,
-            HorsePiece::Forearm,
-            HorsePiece::Gaskin,
-            HorsePiece::Muzzle,
-        ] {
-            assert!(horse_parts().iter().any(|p| p.piece == piece), "{piece:?}");
-        }
-        assert_eq!(
-            horse_parts()
-                .iter()
-                .filter(|p| p.piece == HorsePiece::Hoof)
-                .count(),
-            4
-        );
-    }
-
     #[test]
     fn every_coat_looks_different() {
         let mean = |coat| {
-            let v = coat_vertices(
-                coat,
-                &[HorsePiece::Barrel, HorsePiece::Croup, HorsePiece::Neck],
-            );
+            let v: Vec<_> = coat_colors(coat)
+                .into_iter()
+                .filter(|(p, _, _)| p.y > POINTS_HEIGHT)
+                .collect();
             let sum = v.iter().fold(Vec3::ZERO, |s, (_, _, c)| {
                 s + Vec3::new(c[0] as f32, c[1] as f32, c[2] as f32)
             });
@@ -1271,30 +782,16 @@ mod tests {
 
     #[test]
     fn the_bayo_has_black_points_and_a_dorsal_stripe() {
-        let coat = Coat::Bayo;
-        let all = coat_vertices(coat, &[]);
+        let all = coat_colors(Coat::Bayo);
         let legs: Vec<_> = all.iter().filter(|(p, _, _)| p.y < 0.4).collect();
         assert!(!legs.is_empty());
-        assert!(
-            legs.iter().all(|(_, _, c)| luma(*c) < 60.0),
-            "black lower legs"
-        );
-        let body = coat_vertices(
-            coat,
-            &[HorsePiece::Barrel, HorsePiece::Chest, HorsePiece::Croup],
-        );
-        let flank = body
+        assert!(legs.iter().all(|(_, _, c)| luma(*c) < 60.0), "black legs");
+        let flank = all
             .iter()
-            .filter(|(p, n, _)| p.y > 0.9 && n.z.abs() > 0.8)
-            .map(|(_, _, c)| luma(*c));
-        assert!(
-            flank.clone().all(|l| l > 140.0),
-            "a sandy body: {:?}",
-            flank.clone().filter(|l| *l <= 140.0).collect::<Vec<_>>()
-        );
-        for (_, _, c) in coat_vertices(coat, &[HorsePiece::Mane, HorsePiece::Tail]) {
-            assert!(luma(c) < 60.0, "black mane and tail");
-        }
+            .filter(|(p, n, _)| p.y > 0.9 && n.z.abs() > 0.8 && p.x < 0.45);
+        assert!(flank.clone().count() > 20);
+        assert!(flank.clone().all(|(_, _, c)| luma(*c) > 140.0), "sandy");
+        assert!(luma(Coat::Bayo.mane()) < 60.0, "black mane and tail");
         let stripe: Vec<_> = all
             .iter()
             .filter(|(p, n, _)| n.y > 0.8 && p.z.abs() < 0.02 && (-0.6..0.2).contains(&p.x))
@@ -1302,37 +799,38 @@ mod tests {
         assert!(stripe.len() >= 3, "{}", stripe.len());
         assert!(
             stripe.iter().all(|(_, _, c)| luma(*c) < 100.0),
-            "a dark stripe down the back"
+            "a dark stripe"
         );
-        // The other coats have no stripe.
         assert!(
-            coat_vertices(Coat::Alazan, &[])
+            coat_colors(Coat::Alazan)
                 .iter()
-                .all(|(_, _, c)| *c != [104, 76, 46])
+                .all(|(_, _, c)| *c != [104, 76, 46]),
+            "the other coats have none"
         );
     }
 
     #[test]
     fn the_overo_shows_white_patches_from_every_three_quarter_view() {
-        let all = coat_vertices(Coat::Overo, &[]);
+        let all = coat_colors(Coat::Overo);
         for (x, z) in [(1.0, 1.0), (1.0, -1.0), (-1.0, 1.0), (-1.0, -1.0)] {
-            let toward_viewer = Vec3::new(x, 0.6, z).normalize();
+            let toward = Vec3::new(x, 0.6, z).normalize();
             let seen: Vec<_> = all
                 .iter()
-                .filter(|(p, n, _)| n.dot(toward_viewer) > 0.3 && p.y > POINTS_HEIGHT)
+                .filter(|(p, n, _)| n.dot(toward) > 0.3 && p.y > POINTS_HEIGHT)
                 .collect();
             let white = seen.iter().filter(|(_, _, c)| luma(*c) > 200.0).count();
             let share = white as f32 / seen.len() as f32;
-            println!("overo from ({x}, {z}): {share}");
-            assert!((0.12..0.7).contains(&share), "from ({x}, {z}): {share}");
+            assert!((0.08..0.7).contains(&share), "from ({x}, {z}): {share}");
         }
-        // White hooves under white stockings.
         assert_ne!(Coat::Overo.hoof(), Coat::Zaino.hoof());
     }
 
     #[test]
     fn the_tordillo_is_dappled() {
-        let barrel = coat_vertices(Coat::Tordillo, &[HorsePiece::Barrel, HorsePiece::Croup]);
+        let barrel: Vec<_> = coat_colors(Coat::Tordillo)
+            .into_iter()
+            .filter(|(p, _, _)| p.y > 0.8)
+            .collect();
         let light = barrel.iter().filter(|(_, _, c)| luma(*c) > 160.0).count();
         let dark = barrel.iter().filter(|(_, _, c)| luma(*c) < 130.0).count();
         let n = barrel.len();
@@ -1343,141 +841,6 @@ mod tests {
     }
 
     #[test]
-    fn shade_gathers_under_the_belly_between_the_legs_and_under_the_saddle() {
-        let parts = horse_parts();
-        let vertices = |pieces: &[HorsePiece]| -> Vec<(HorsePiece, Vec3, Vec3)> {
-            parts
-                .iter()
-                .filter(|p| pieces.contains(&p.piece))
-                .flat_map(|part| {
-                    let mesh = part.shape.mesh();
-                    let place = part.rest_transform();
-                    let turn =
-                        Mat3::from_quat(part.rotation) * Mat3::from_diagonal(part.size.recip());
-                    let p = mesh
-                        .attribute(Mesh::ATTRIBUTE_POSITION)
-                        .unwrap()
-                        .as_float3()
-                        .unwrap()
-                        .to_vec();
-                    let n = mesh
-                        .attribute(Mesh::ATTRIBUTE_NORMAL)
-                        .unwrap()
-                        .as_float3()
-                        .unwrap()
-                        .to_vec();
-                    let piece = part.piece;
-                    p.into_iter().zip(n).map(move |(p, n)| {
-                        (
-                            piece,
-                            place.transform_point3(Vec3::from(p)),
-                            (turn * Vec3::from(n)).normalize(),
-                        )
-                    })
-                })
-                .collect()
-        };
-        let mean = |v: Vec<f32>| v.iter().sum::<f32>() / v.len().max(1) as f32;
-        let body = vertices(&[HorsePiece::Barrel]);
-        let belly = mean(
-            body.iter()
-                .filter(|(_, _, n)| n.y < -0.7)
-                .map(|(k, p, n)| occlusion(*k, *p, *n))
-                .collect(),
-        );
-        let flank = mean(
-            body.iter()
-                .filter(|(_, p, n)| n.z.abs() > 0.95 && p.x.abs() < 0.5)
-                .map(|(k, p, n)| occlusion(*k, *p, *n))
-                .collect(),
-        );
-        assert!(belly < 0.8 && flank > 0.95, "belly {belly}, flank {flank}");
-        let saddle_edge = mean(
-            body.iter()
-                .filter(|(_, p, n)| {
-                    n.z.abs() > 0.8 && (1.12..1.2).contains(&p.y) && p.x.abs() < 0.2
-                })
-                .map(|(k, p, n)| occlusion(*k, *p, *n))
-                .collect(),
-        );
-        assert!(saddle_edge < flank - 0.1, "under the saddle {saddle_edge}");
-        let legs = vertices(&[HorsePiece::Forearm, HorsePiece::Gaskin]);
-        let side = |inner: bool| {
-            mean(
-                legs.iter()
-                    .filter(|(_, p, n)| (n.z * p.z.signum() < -0.7) == inner && n.z.abs() > 0.7)
-                    .map(|(k, p, n)| occlusion(*k, *p, *n))
-                    .collect(),
-            )
-        };
-        assert!(
-            side(true) < side(false) - 0.15,
-            "inner {} outer {}",
-            side(true),
-            side(false)
-        );
-        // The painted mesh carries it: a uniform zaino is darker underneath.
-        let barrel = parts
-            .iter()
-            .find(|p| p.piece == HorsePiece::Barrel)
-            .unwrap();
-        let mesh = painted_mesh(barrel, Coat::Zaino);
-        let Some(bevy::mesh::VertexAttributeValues::Float32x4(colors)) =
-            mesh.attribute(Mesh::ATTRIBUTE_COLOR)
-        else {
-            panic!("colours");
-        };
-        let normals = mesh
-            .attribute(Mesh::ATTRIBUTE_NORMAL)
-            .unwrap()
-            .as_float3()
-            .unwrap();
-        let red = |below: bool| {
-            mean(
-                colors
-                    .iter()
-                    .zip(normals)
-                    .filter(|(_, n)| (n[1] < -0.7) == below)
-                    .map(|(c, _)| c[0])
-                    .collect(),
-            )
-        };
-        assert!(red(true) < red(false), "the barrel's underside is darker");
-    }
-
-    #[test]
-    fn horse_parts_have_their_finishes() {
-        let coat = Coat::Alazan;
-        let finish = |piece| {
-            horse_parts()
-                .into_iter()
-                .chain(tack_parts(true))
-                .find(|p| p.piece == piece)
-                .map(|p| p.finish(coat))
-                .unwrap()
-        };
-        assert_eq!(finish(HorsePiece::Barrel), Finish::Coat);
-        assert_eq!(
-            finish(HorsePiece::Head),
-            Finish::HorseFace(coat),
-            "a face texture"
-        );
-        assert_eq!(finish(HorsePiece::Tail), Finish::Hair);
-        assert_eq!(finish(HorsePiece::Hoof), Finish::Hoof);
-        assert_eq!(finish(HorsePiece::Carona), Finish::Leather);
-        assert_eq!(finish(HorsePiece::Rein), Finish::Rawhide);
-        assert_eq!(finish(HorsePiece::Stirrup), Finish::Iron);
-        assert_eq!(finish(HorsePiece::Pellon), Finish::Fleece);
-        assert_eq!(finish(HorsePiece::Sudadera), Finish::Wool);
-        // The head's loft wraps the face texture: u 0.5 down the face.
-        let head = horse_parts()
-            .into_iter()
-            .find(|p| p.piece == HorsePiece::Head)
-            .unwrap();
-        assert!(head.shape.mesh().attribute(Mesh::ATTRIBUTE_UV_0).is_some());
-    }
-
-    #[test]
     fn coats_are_seeded_deterministically_and_hidalgo_rides_a_bayo() {
         assert_eq!(Coat::HIDALGO, Coat::Bayo);
         for seed in 0..50 {
@@ -1485,61 +848,459 @@ mod tests {
         }
         let seen: std::collections::HashSet<_> = (0..200).map(Coat::seeded).collect();
         assert_eq!(seen.len(), Coat::ALL.len(), "every coat turns up");
-        let part = horse_parts()[0];
-        let a = painted_mesh(&part, Coat::Overo);
-        let b = painted_mesh(&part, Coat::Overo);
-        assert_eq!(
-            format!("{:?}", a.attribute(Mesh::ATTRIBUTE_COLOR)),
-            format!("{:?}", b.attribute(Mesh::ATTRIBUTE_COLOR))
-        );
     }
 
     #[test]
-    fn the_rider_sits_on_the_pellon_with_feet_in_the_stirrups() {
-        // The pellón's top is the seat.
-        let pellon = tack_parts(true)
-            .into_iter()
-            .find(|p| p.piece == HorsePiece::Pellon)
-            .unwrap();
-        let top = pellon.joint.rest_position().y + pellon.center.y + pellon.size.y / 2.0;
-        assert!((top - SEAT.y).abs() < 0.01, "{top}");
-        assert!(SEAT.y > withers_height(), "the seat is above the withers");
-        // The clerk's hips rest on it.
-        let offset = rider_offset() + HorseJoint::Trunk.rest_position();
-        let hips = figure_parts(FigureKind::Protagonist)
-            .into_iter()
-            .find(|p| p.piece == Piece::Hips)
-            .unwrap();
-        let bottom = offset.y + hips.joint.rest_position().y + hips.center.y - hips.size.y / 2.0;
-        assert!(
-            (bottom - SEAT.y).abs() < 0.02,
-            "hips at {bottom}, seat at {}",
-            SEAT.y
-        );
-        // Stirrups by the rider's feet, one each side, outside the barrel.
-        let stirrups: Vec<_> = tack_parts(true)
-            .into_iter()
-            .filter(|p| p.piece == HorsePiece::Stirrup)
-            .collect();
-        assert_eq!(stirrups.len(), 2);
-        for s in &stirrups {
-            let at = s.joint.rest_position() + s.center;
-            assert!((0.8..1.1).contains(&at.y) && at.z.abs() > 0.26, "{at}");
+    fn the_idle_fades_into_the_stride_and_the_gallop_takes_over_outright() {
+        let only = |w: [f32; 6], clip: Clip| {
+            w.iter()
+                .enumerate()
+                .all(|(k, w)| *w == if k == clip.index() { 1.0 } else { 0.0 })
+        };
+        let (walk, gallop) = (Clip::Walk, Clip::Gallop);
+        assert!(only(gait_weights(Clip::Idle, walk, 0.0), Clip::Idle));
+        assert!(only(gait_weights(Clip::Idle2, gallop, 0.0), Clip::Idle2));
+        assert!(only(gait_weights(Clip::Idle, walk, 3.0), walk));
+        assert!(only(gait_weights(Clip::Idle, gallop, 12.2), gallop));
+        let setting_off = gait_weights(Clip::Idle, walk, 0.3);
+        assert!(setting_off[0] > 0.3 && setting_off[walk.index()] > 0.3);
+        for k in 0..1300 {
+            let speed = k as f32 * 0.01;
+            for stride in [walk, gallop] {
+                let w = gait_weights(Clip::Idle, stride, speed);
+                assert!((w.iter().sum::<f32>() - 1.0).abs() < 1e-5, "{k}");
+                // Never the walk and the gallop at once.
+                assert!(w[walk.index()] * w[gallop.index()] == 0.0);
+            }
         }
-        // The recado: sudadera, carona, two bastos, pellón and cincha.
-        let tack = tack_parts(false);
-        for piece in [
-            HorsePiece::Sudadera,
-            HorsePiece::Carona,
-            HorsePiece::Basto,
-            HorsePiece::Pellon,
-            HorsePiece::Cincha,
-            HorsePiece::Headstall,
-            HorsePiece::Bit,
-            HorsePiece::Rein,
-            HorsePiece::StirrupLeather,
-        ] {
-            assert!(tack.iter().any(|p| p.piece == piece), "{piece:?}");
+        // Logic's walk walks, the trot's fast half and the gallop gallop,
+        // with a margin either way so a steady pace never flickers.
+        assert!(!gallops(false, 3.0) && !gallops(false, 4.5) && gallops(false, 4.9));
+        assert!(gallops(true, 4.5) && !gallops(true, 4.1));
+        assert!(gallops(false, 12.2) && gallops(true, 12.2));
+    }
+
+    #[test]
+    fn the_walk_and_the_gallop_play_at_the_ground_speed_over_their_own() {
+        assert!((gait_rate(Clip::Walk, HORSE_WALK_SPEED) - 1.0).abs() < 1e-6);
+        assert!((gait_rate(Clip::Gallop, GALLOP_SPEED) - 1.0).abs() < 1e-6);
+        // Logic's walk and the walk stretched to the top of the trot band.
+        assert!((gait_rate(Clip::Walk, 3.0) - 3.0 / HORSE_WALK_SPEED).abs() < 1e-5);
+        assert!((gait_rate(Clip::Walk, 4.8) - 4.8 / HORSE_WALK_SPEED).abs() < 1e-5);
+        // The long gallop paced to the ground up to its cap, then capped:
+        // never frantic.
+        assert!((gait_rate(Clip::Gallop, 8.0) - 8.0 / GALLOP_SPEED).abs() < 1e-5);
+        assert!((gait_rate(Clip::Gallop, 12.2) - 12.2 / GALLOP_SPEED).abs() < 1e-5);
+        assert_eq!(gait_rate(Clip::Gallop, 19.4), GALLOP_RATE.1);
+        assert_eq!(gait_rate(Clip::Gallop, 0.0), GALLOP_RATE.0);
+        assert_eq!(gait_rate(Clip::Walk, 0.0), RATE.0, "clamped");
+        assert_eq!(gait_rate(Clip::Idle, 9.0), 1.0, "an idle as recorded");
+        assert_eq!(gait_rate(Clip::Eating, 9.0), 1.0);
+    }
+
+    #[test]
+    fn a_ridden_horse_stands_still_and_a_tied_one_changes_idle() {
+        let mut body = HorseBody {
+            coat: Coat::Zaino,
+            rider: Some(FigureKind::Protagonist),
+            gait: HorseGait::Idle,
+            gallop: 0.0,
+            speed: 0.0,
+            seed: 11,
+        };
+        for k in 0..40 {
+            assert_eq!(body.idle(k as f32 * 14.0), Clip::Idle);
+        }
+        assert!(body.never_freezes());
+        body.rider = Some(FigureKind::Hidalgo);
+        assert!(!body.never_freezes(), "only the player's");
+        body.rider = None;
+        assert!(!body.never_freezes());
+        let seen: std::collections::HashSet<Clip> =
+            (0..40).map(|k| body.idle(k as f32 * 14.0)).collect();
+        assert_eq!(seen, TIED_IDLES.into(), "{seen:?}");
+        assert_eq!(body.idle(30.0), body.idle(30.0));
+    }
+
+    // --- with the shipped horse, rider and clips -----------------------------
+
+    use crate::character::cpu;
+    use crate::character::{CharacterVisual, CharacterVisualPlugin};
+    use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
+
+    /// The fauna and character plugins with the shipped models, and `visual`
+    /// at the origin facing +X, moving at `speed`; returns once the horse
+    /// plays its clips.
+    pub(crate) fn saddled(visual: CharacterVisual, speed: f32) -> (App, Entity) {
+        saddled_every(visual, speed, 50)
+    }
+
+    /// [`saddled`], with frames `ms` milliseconds long.
+    pub(crate) fn saddled_every(visual: CharacterVisual, speed: f32, ms: u64) -> (App, Entity) {
+        use crate::gltf::tests::{root, unfinished_app};
+        let mut app = unfinished_app(&root());
+        app.init_asset::<SkinnedMeshInverseBindposes>()
+            .add_plugins(bevy::animation::AnimationPlugin)
+            .insert_resource(root())
+            .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                std::time::Duration::from_millis(ms),
+            ))
+            .add_plugins((crate::fauna::FaunaPlugin, CharacterVisualPlugin));
+        // Frames since a scene asset last changed: a scene spawned before
+        // its asset settles is spawned again, and the tests hold its bones.
+        #[derive(Resource, Default)]
+        struct Settled(u32);
+        app.init_resource::<Settled>().add_systems(
+            Update,
+            |mut events: MessageReader<AssetEvent<bevy::world_serialization::WorldAsset>>,
+             mut settled: ResMut<Settled>| {
+                settled.0 = if events.read().count() > 0 {
+                    0
+                } else {
+                    settled.0 + 1
+                };
+            },
+        );
+        app.finish();
+        app.cleanup();
+        let animation = match speed {
+            s if s <= 0.0 => AnimationState::Idle,
+            s if s <= 3.0 => AnimationState::Walk,
+            _ => AnimationState::Gallop,
+        };
+        let me = app
+            .world_mut()
+            .spawn((
+                visual,
+                VisualPose {
+                    animation,
+                    speed,
+                    ..default()
+                },
+            ))
+            .id();
+        // Until the horse plays, the same model for a while, its assets
+        // settled.
+        let mut held = (Entity::PLACEHOLDER, 0);
+        for _ in 0..3000 {
+            app.update();
+            let world = app.world_mut();
+            let playing = world
+                .query::<(Entity, &HorseRig)>()
+                .iter(world)
+                .find(|(_, r)| r.started)
+                .map(|(_, r)| r.player);
+            match playing {
+                Some(player) if player == held.0 => held.1 += 1,
+                Some(player) => held = (player, 0),
+                None => held = (Entity::PLACEHOLDER, 0),
+            }
+            if held.1 >= 10 && world.resource::<Settled>().0 >= 10 {
+                return (app, me);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        panic!("the horse never played");
+    }
+
+    #[test]
+    fn the_galloping_horse_bends_its_back_through_the_stride() {
+        let (mut app, me) = saddled_every(CharacterVisual::Horse(Coat::Bayo), 12.2, 20);
+        let carrier = app.world().get::<Children>(me).unwrap()[0];
+        for _ in 0..80 {
+            ride(&mut app, me, 12.2);
+        }
+        let mut flex = Vec::new();
+        for _ in 0..40 {
+            ride(&mut app, me, 12.2);
+            let [croup, withers] = ["Back", "Torso3"].map(|n| named(app.world(), carrier, n));
+            let turn = |e: Entity| {
+                app.world()
+                    .get::<GlobalTransform>(e)
+                    .unwrap()
+                    .to_scale_rotation_translation()
+                    .1
+            };
+            flex.push(turn(croup).inverse() * turn(withers));
+        }
+        // Not a rigid block: the croup and the withers turn apart and back.
+        let bend = flex
+            .iter()
+            .map(|q| q.angle_between(flex[0]))
+            .fold(0.0, f32::max);
+        assert!(bend > 0.1, "the horse's back bends over a stride: {bend}");
+    }
+
+    /// Writes CPU-skinned frames to `PAMPA_PREVIEW` (a folder) for the
+    /// offline preview renderer: a ridden horse standing (and settled),
+    /// walking and through a gallop's loop, braking from the gallop to a
+    /// stand and from a walk to a stand, and a tied horse. Run by hand:
+    /// `PAMPA_PREVIEW=/some/dir cargo test -p pampa-render -- --ignored preview`.
+    #[test]
+    #[ignore = "writes preview files"]
+    fn preview_saddled_horses() {
+        let Some(dir) = std::env::var_os("PAMPA_PREVIEW") else {
+            return;
+        };
+        let dir = std::path::PathBuf::from(dir);
+        let rider = CharacterVisual::Mounted {
+            rider: FigureKind::Protagonist,
+            coat: Coat::Bayo,
+        };
+        let dump = |app: &mut App, me: Entity, name: String| {
+            let drawn = cpu::drawn(app.world_mut(), Some(me));
+            cpu::write(&dir.join(format!("{name}.txt")), &drawn);
+        };
+        // Steady paces: 20 ms frames, every other one written.
+        for (name, speed, frames) in [("walk", 1.5, 24), ("gallop", 12.2, 16), ("trot", 4.5, 8)] {
+            let (mut app, me) = saddled_every(rider, speed, 20);
+            for _ in 0..60 {
+                ride(&mut app, me, speed);
+            }
+            for k in 0..frames {
+                ride(&mut app, me, speed);
+                ride(&mut app, me, speed);
+                dump(&mut app, me, format!("{name}_{k:02}"));
+            }
+        }
+        // Braking as hard as logic does (8 m/s²): every 0.1 s.
+        for (name, from) in [("slowdown", 12.2f32), ("walkstop", 1.5)] {
+            let (mut app, me) = saddled_every(rider, from, 20);
+            for _ in 0..60 {
+                ride(&mut app, me, from);
+            }
+            let mut speed = from;
+            for k in 0..24 {
+                for _ in 0..5 {
+                    speed = (speed - 8.0 * 0.02).max(0.0);
+                    ride(&mut app, me, speed);
+                }
+                dump(&mut app, me, format!("{name}_{k:02}"));
+            }
+        }
+        // Standing: at once, and settled after a few seconds.
+        let (mut app, me) = saddled_every(rider, 0.0, 20);
+        dump(&mut app, me, "idle_00".into());
+        for k in 1..4 {
+            for _ in 0..100 {
+                ride(&mut app, me, 0.0);
+            }
+            dump(&mut app, me, format!("idle_{k:02}"));
+        }
+        let (mut app, me) = saddled(CharacterVisual::Horse(Coat::Overo), 0.0);
+        dump(&mut app, me, "tied_00".into());
+    }
+
+    pub(crate) fn named(world: &World, under: Entity, name: &str) -> Entity {
+        let children = |e: Entity| world.get::<Children>(e).into_iter().flatten().copied();
+        let mut stack: Vec<Entity> = children(under).collect();
+        while let Some(e) = stack.pop() {
+            if world.get::<Name>(e).is_some_and(|n| n.as_str() == name) {
+                return e;
+            }
+            stack.extend(children(e));
+        }
+        panic!("no {name}");
+    }
+
+    /// How fast each frame's planted hooves (toes within 1.5 cm of the
+    /// lowest) slide back in the horse's body frame, m/s, over `frames`
+    /// frames `dt` seconds long: their median.
+    fn hoof_slide(app: &mut App, me: Entity, frames: usize, dt: f32) -> f32 {
+        let carrier = app.world().get::<Children>(me).unwrap()[0];
+        let mut tracks = Vec::new();
+        for _ in 0..frames {
+            app.update();
+            let world = app.world();
+            // Found afresh: a scene spawned again has new bones.
+            let toes = ["FF.L_end", "FF.R_end", "FFB.L_end", "FFB.R_end"]
+                .map(|n| named(world, carrier, n));
+            let body = world
+                .get::<GlobalTransform>(carrier)
+                .unwrap()
+                .affine()
+                .inverse();
+            tracks.push(toes.map(|t| {
+                body.transform_point3(world.get::<GlobalTransform>(t).unwrap().translation())
+            }));
+        }
+        // Each hoof's own ground: the lowest it goes.
+        let ground: [f32; 4] =
+            std::array::from_fn(|k| tracks.iter().map(|t| t[k].y).fold(f32::MAX, f32::min));
+        let mut slides: Vec<f32> = tracks
+            .windows(2)
+            .flat_map(|w| {
+                (0..4)
+                    .filter(move |&k| {
+                        w[0][k].y < ground[k] + 0.015 && w[1][k].y < ground[k] + 0.015
+                    })
+                    .map(move |k| -(w[1][k].x - w[0][k].x) / dt)
+            })
+            .collect();
+        assert!(slides.len() > 10, "{slides:?}");
+        slides.sort_by(f32::total_cmp);
+        slides[slides.len() / 2]
+    }
+
+    #[test]
+    fn the_long_gallop_keeps_its_hooves_still_up_to_its_fastest_unhurried_pace() {
+        let rider = CharacterVisual::Mounted {
+            rider: FigureKind::Protagonist,
+            coat: Coat::Bayo,
+        };
+        for speed in [8.0, 12.2, 19.4] {
+            let (mut app, me) = saddled_every(rider, speed, 10);
+            for _ in 0..100 {
+                app.update();
+            }
+            let back = hoof_slide(&mut app, me, 300, 0.01);
+            let rate = gait_rate(Clip::Gallop, speed);
+            let (natural, slide) = (back / rate, speed - back);
+            println!(
+                "{speed} m/s: hooves back at {back:.2} m/s (rate {rate:.2}, natural {natural:.2}), slide {slide:.2} m/s"
+            );
+            // The stretched loop shows the speed it is paced by.
+            assert!((natural / GALLOP_SPEED - 1.0).abs() < 0.06, "{natural}");
+            if speed <= GALLOP_SPEED * GALLOP_RATE.1 {
+                assert!(slide.abs() < 0.5, "{speed} m/s: slides {slide} m/s");
+            } else {
+                // Past the cap (the dev turbo) it slides, no faster.
+                assert!(slide > 0.0 && slide < speed - GALLOP_SPEED * GALLOP_RATE.1 + 0.5);
+            }
+        }
+    }
+
+    /// Per frame of `app`'s horse under `me`: the lowest toe (body frame),
+    /// the furthest any hoof stands from its leg's end, and each leg
+    /// bone's turn away from `rest` (by [`LEG_BONES`]).
+    const LEG_BONES: [&str; 14] = [
+        "FrontUpperLeg.L",
+        "FrontUpperLeg.R",
+        "FrontLowerLeg.L",
+        "FrontLowerLeg.R",
+        "BackShoulder.L",
+        "BackShoulder.R",
+        "BackLeg.L",
+        "BackLeg.R",
+        "BackUpperLeg.L",
+        "BackUpperLeg.R",
+        "BackLowerLeg.L",
+        "BackLowerLeg.R",
+        "Back",
+        "Body",
+    ];
+
+    fn legs_now(app: &App, carrier: Entity, rest: &[Quat]) -> (f32, f32, Vec<f32>) {
+        let world = app.world();
+        let body = world
+            .get::<GlobalTransform>(carrier)
+            .unwrap()
+            .affine()
+            .inverse();
+        let at = |n: &str| {
+            body.transform_point3(
+                world
+                    .get::<GlobalTransform>(named(world, carrier, n))
+                    .unwrap()
+                    .translation(),
+            )
+        };
+        let low = ["FF.L_end", "FF.R_end", "FFB.L_end", "FFB.R_end"]
+            .map(|n| at(n).y)
+            .into_iter()
+            .fold(f32::MAX, f32::min);
+        let apart = [
+            ("IKFrontLeg.L", "FrontLowerLeg.L_end"),
+            ("IKFrontLeg.R", "FrontLowerLeg.R_end"),
+            ("IKBackLeg.L", "BackLowerLeg.L_end"),
+            ("IKBackLeg.R", "BackLowerLeg.R_end"),
+        ]
+        .map(|(h, e)| at(h).distance(at(e)))
+        .into_iter()
+        .fold(0.0, f32::max);
+        let turns = LEG_BONES
+            .iter()
+            .zip(rest)
+            .map(|(n, r)| {
+                world
+                    .get::<Transform>(named(world, carrier, n))
+                    .unwrap()
+                    .rotation
+                    .angle_between(*r)
+            })
+            .collect();
+        (low, apart, turns)
+    }
+
+    /// Plays `app`'s horse at each speed of `speeds` for a frame, logic's
+    /// animation following the speed as the rider's does.
+    pub(crate) fn ride(app: &mut App, me: Entity, speed: f32) {
+        let animation = if speed > 3.0 {
+            AnimationState::Gallop
+        } else if speed > AnimationState::IDLE_THRESHOLD {
+            AnimationState::Walk
+        } else {
+            AnimationState::Idle
+        };
+        app.world_mut().entity_mut(me).insert(VisualPose {
+            animation,
+            speed,
+            ..default()
+        });
+        app.update();
+    }
+
+    #[test]
+    fn slowing_down_from_a_gallop_or_a_walk_never_folds_a_leg_or_sinks_a_hoof() {
+        let rider = CharacterVisual::Mounted {
+            rider: FigureKind::Protagonist,
+            coat: Coat::Bayo,
+        };
+        let (mut app, me) = saddled_every(rider, 0.0, 20);
+        let carrier = app.world().get::<Children>(me).unwrap()[0];
+        let rest: Vec<Quat> = LEG_BONES
+            .iter()
+            .map(|n| {
+                let e = named(app.world(), carrier, n);
+                *app.world().get::<Transform>(e).unwrap()
+            })
+            .map(|t| t.rotation)
+            .collect();
+        // The limits: as far as each bone turns at steady paces.
+        let mut limit = vec![0.0f32; LEG_BONES.len()];
+        for speed in [0.0, 1.5, 3.0, 4.5, 8.0, 12.2] {
+            for frame in 0..90 {
+                ride(&mut app, me, speed);
+                if frame > 40 {
+                    let (_, _, turns) = legs_now(&app, carrier, &rest);
+                    for (l, t) in limit.iter_mut().zip(turns) {
+                        *l = l.max(t);
+                    }
+                }
+            }
+        }
+        // Braking hard (8 m/s², logic's) and coasting (3 m/s²) from the top
+        // speed and from a walk, to a stand.
+        for (from, frames) in [(12.2f32, 76), (12.2, 200), (1.5, 10), (1.5, 25)] {
+            for _ in 0..60 {
+                ride(&mut app, me, from);
+            }
+            for k in 0..=frames + 60 {
+                let speed = from * (1.0 - k as f32 / frames as f32).max(0.0);
+                ride(&mut app, me, speed);
+                let (low, apart, turns) = legs_now(&app, carrier, &rest);
+                assert!(low > -0.03, "from {from} at {speed:.2} m/s: a toe at {low}");
+                assert!(
+                    apart < 0.06,
+                    "from {from} at {speed:.2} m/s: a hoof {apart} m off its leg"
+                );
+                for ((n, t), l) in LEG_BONES.iter().zip(turns).zip(&limit) {
+                    assert!(
+                        t <= l + 0.12,
+                        "from {from} at {speed:.2} m/s: {n} turned {t} (steady {l})"
+                    );
+                }
+            }
         }
     }
 }

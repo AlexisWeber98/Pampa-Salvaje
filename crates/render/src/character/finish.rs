@@ -14,7 +14,6 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use super::figure::Rgb;
-use super::horse::Coat;
 
 /// What a surface is made of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -40,16 +39,8 @@ pub enum Finish {
     Silver,
     /// Stirrups, bit and rings.
     Iron,
-    /// A horse's coat, with a slight sheen.
-    Coat,
-    /// A horse's head in its coat, with eyes, nostrils and any marking.
-    HorseFace(Coat),
-    /// Dark, glossy hooves.
-    Hoof,
     /// The pellón's sheepskin.
     Fleece,
-    /// Wet eyes.
-    Eye,
     /// Tree bark: the roughest surface.
     Bark,
     /// Leaf clusters: matte, a little softer than bark.
@@ -72,9 +63,6 @@ impl Finish {
             Self::Brass => (0.32, 0.92, 0.5),
             Self::Silver => (0.25, 0.95, 0.5),
             Self::Iron => (0.45, 0.85, 0.5),
-            Self::Coat | Self::HorseFace(_) => (0.62, 0.0, 0.45),
-            Self::Hoof => (0.3, 0.0, 0.5),
-            Self::Eye => (0.15, 0.0, 0.6),
             Self::Bark => (0.96, 0.0, 0.2),
             Self::Leaves => (0.88, 0.0, 0.3),
             Self::Rock => (0.93, 0.0, 0.25),
@@ -90,7 +78,6 @@ impl Finish {
             Self::Felt | Self::Fleece => Some((Texture::Felt, 2.0)),
             Self::Leather | Self::Rawhide => Some((Texture::Grain, 3.0)),
             Self::Face => Some((Texture::Face, 1.0)),
-            Self::HorseFace(coat) => Some((Texture::HorseFace(coat), 1.0)),
             _ => None,
         }
     }
@@ -107,17 +94,12 @@ pub enum Texture {
     Grain,
     /// Soft felt.
     Felt,
-    /// A horse's head in its coat, wrapped round the head's loft: eyes,
-    /// nostrils, and a star (alazán) or blaze (overo).
-    HorseFace(Coat),
 }
 
 impl Texture {
     /// Every texture.
     pub fn all() -> impl Iterator<Item = Self> {
-        [Self::Face, Self::Weave, Self::Grain, Self::Felt]
-            .into_iter()
-            .chain(Coat::ALL.map(Self::HorseFace))
+        [Self::Face, Self::Weave, Self::Grain, Self::Felt].into_iter()
     }
 
     /// Width, height and RGBA8 sRGB pixels.
@@ -160,7 +142,6 @@ impl Texture {
             }
             Self::Felt => grey(0.92 + 0.08 * noise),
             Self::Face => face_texel(u, v),
-            Self::HorseFace(coat) => horse_face_texel(coat, u, v),
         }
     }
 }
@@ -191,41 +172,6 @@ fn face_texel(u: f32, v: f32) -> Rgb {
         return [150, 88, 80];
     }
     [255; 3]
-}
-
-/// A horse's head round its loft: `u` 0.5 is the face, 0 and 1 the jaw;
-/// `v` runs from the muzzle (0) to the poll (1).
-fn horse_face_texel(coat: Coat, u: f32, v: f32) -> Rgb {
-    const WHITE: Rgb = [234, 230, 222];
-    for side in [-1.0, 1.0] {
-        if within(u, v, (0.5 + 0.177 * side, 0.776), (0.03, 0.045)) {
-            return if within(u, v, (0.5 + 0.17 * side, 0.79), (0.008, 0.012)) {
-                [200, 196, 190]
-            } else {
-                [26, 18, 14]
-            };
-        }
-        if within(u, v, (0.5 + 0.108 * side, 0.14), (0.022, 0.05)) {
-            return [26, 20, 18];
-        }
-    }
-    let marked = match coat {
-        // Estrella: a star on the forehead.
-        Coat::Alazan => within(u, v, (0.5, 0.82), (0.035, 0.05)),
-        // Lucero corrido: a blaze down the face.
-        Coat::Overo => (u - 0.5).abs() < 0.03 + 0.02 * v && (0.12..0.88).contains(&v),
-        _ => false,
-    };
-    if marked {
-        return WHITE;
-    }
-    // The muzzle darkens toward the lips.
-    let muzzle = if v < 0.18 {
-        0.72 + 0.28 * v / 0.18
-    } else {
-        1.0
-    };
-    coat.head().map(|c| (c as f32 * muzzle) as u8)
 }
 
 /// Every material and texture characters are drawn with.
@@ -282,7 +228,7 @@ impl Palette {
                     RenderAssetUsages::RENDER_WORLD,
                 );
                 let wrap = match texture {
-                    Texture::Face | Texture::HorseFace(_) => ImageAddressMode::ClampToEdge,
+                    Texture::Face => ImageAddressMode::ClampToEdge,
                     _ => ImageAddressMode::Repeat,
                 };
                 image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
@@ -375,22 +321,11 @@ mod tests {
         for metal in [Finish::Brass, Finish::Silver, Finish::Iron] {
             assert!(metal.pbr().1 > 0.5, "{metal:?} is metallic");
         }
-        for matte in [
-            Finish::Cloth,
-            Finish::Wool,
-            Finish::Felt,
-            Finish::Skin,
-            Finish::Coat,
-        ] {
+        for matte in [Finish::Cloth, Finish::Wool, Finish::Felt, Finish::Skin] {
             assert_eq!(matte.pbr().1, 0.0, "{matte:?}");
         }
         let (skin, ..) = Finish::Skin.pbr();
-        let (coat, ..) = Finish::Coat.pbr();
-        let (hoof, ..) = Finish::Hoof.pbr();
-        assert!(
-            skin < cloth && coat < wool && hoof < coat,
-            "satin skin, sheen, glossy hooves"
-        );
+        assert!(skin < cloth, "satin skin");
 
         // The palette makes one material per colour and finish.
         let mut palette = Palette::default();
@@ -444,23 +379,6 @@ mod tests {
             } else {
                 assert!((0.24..=0.76).contains(&uv[0]), "{uv:?}");
             }
-        }
-    }
-
-    #[test]
-    fn horse_faces_have_eyes_nostrils_and_fitting_markings() {
-        let white = |coat: Coat| {
-            let (_, _, p) = Texture::HorseFace(coat).paint();
-            p.chunks(4).filter(|c| c[0] > 225 && c[1] > 225).count()
-        };
-        assert!(white(Coat::Alazan) > 10, "estrella");
-        assert!(white(Coat::Overo) > white(Coat::Alazan), "a blaze");
-        assert_eq!(white(Coat::Zaino), 0, "the zaino has no white");
-        assert_eq!(white(Coat::Bayo), 0);
-        for coat in Coat::ALL {
-            let (_, _, p) = Texture::HorseFace(coat).paint();
-            let eyes = p.chunks(4).filter(|c| c[0] < 30 && c[1] < 25).count();
-            assert!(eyes > 20, "{coat:?}: eyes and nostrils");
         }
     }
 
