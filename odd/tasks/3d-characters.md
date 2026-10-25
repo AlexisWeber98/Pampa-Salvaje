@@ -22,7 +22,8 @@ source swappable.
    - T4 the recado and bridle on the horse's bones;
    - T5 the rider seated on the `Back` bone;
    - T6 mount, dismount and tied horses.
-3. **PR 3, townsfolk**:
+3. **PR 3, townsfolk** (user, 2026-10-25: triangle cap per townsperson
+   **11,000**, raised from the planned ~8,000):
    - T7 five MakeHuman outfits, with converter pieces for the skirt, shawl
      and headscarf;
    - T8 performance: at most about 8k triangles, freezing beyond 120 m, the
@@ -317,7 +318,9 @@ user, only to drop the re-exports of the deleted horse pose code.
     the_walk_and_the_gallop_play_at_the_ground_speed_over_their_own,
     a_ridden_horse_stands_still_and_a_tied_one_changes_idle,
     the_long_gallop_keeps_its_hooves_still_up_to_its_fastest_unhurried_pace,
-    slowing_down_from_a_gallop_or_a_walk_never_folds_a_leg_or_sinks_a_hoof}`,
+    slowing_down_from_a_gallop_or_a_walk_never_folds_a_leg_or_sinks_a_hoof,
+    the_galloping_horse_bends_its_back_through_the_stride}`,
+    `gait::tests::a_folded_hind_leg_stays_in_the_bodys_sagittal_plane`,
     the coat tests, `visual::tests::a_saddled_horse_turns_to_its_heading_and_takes_its_gait_from_the_speed`.
 - [x] H2 Tack (`character/tack.rs`): sudadera, carona, two bastos, pellón,
   cincha, crownpiece, noseband, cheekpieces and bit rings fitted to the
@@ -325,19 +328,27 @@ user, only to drop the re-exports of the deleted horse pose code.
   side: bit, jowl, neck, then the rider's left hand or the pommel) and
   stirrup leathers stretched each frame; stirrups hanging from `Torso` or on
   the rider's feet.
-  - Proof: the `tack::tests` (stand-in tube horse),
-    `horse::tests::{a_ridden_horse_wears_its_tack_and_carries_its_rider_on_its_back,
-    the_tack_and_the_rider_clear_the_horse_through_every_gait,
-    a_tied_horse_keeps_its_tack_and_reins_clear_through_every_idle}` (CPU
-    skinning through the clips).
+  - Proof: the `tack::tests` on the stand-in tube horse, and on the
+    shipped horse (CPU skinning through the clips)
+    `tack::tests::{a_saddled_horse_wears_its_tack_on_its_own_joints,
+    the_tack_clears_the_horse_through_every_gait,
+    a_tied_horse_keeps_its_tack_and_reins_clear_through_every_idle,
+    a_scene_spawned_again_is_checked_before_the_old_tack_comes_off,
+    a_strap_with_an_end_gone_is_hidden_until_it_has_both_again}`.
 - [x] H3 The rider (`character/rider.rs`): the protagonist's model on the
   `Torso` bone, playing `drive` (only), with two-bone IK legs to the stirrups
   and arms to the reins, and spring-damped secondary motion (added after the
   user's playtest, below).
-  - Proof: `rider::tests::*`,
-    `horse::tests::{at_the_gallop_the_rider_rides_the_half_seat_over_a_flexing_horse,
-    walking_the_rider_sits_deep_and_upright}`,
-    `rig::tests` (riders play only the seated clip).
+  - Proof: `rider::tests::*`, among them
+    `{a_rider_sits_on_the_horses_torso_with_the_reins_and_the_stirrups,
+    a_respawned_rider_keeps_the_stirrups_on_its_new_feet_and_the_reins_in_its_new_hand,
+    the_rider_clears_the_horse_through_every_gait,
+    at_the_gallop_the_rider_rides_the_half_seat,
+    walking_the_rider_sits_deep_and_upright,
+    the_free_arm_swings_with_the_gallop_less_at_the_walk_and_keeps_off_the_horse,
+    the_riders_poncho_stays_over_his_shoulder_and_arm}`. The seated clip
+    only (`rig::SEATED`) has no test of its own in `rig::tests`; every
+    real-asset rider test plays it.
 - [x] H4 Mount, dismount and tied horses; the procedural horse
   (`HorseJoint`, `HorseShape`, `HorseKit`, painted parts, `spawn_horse` and
   `update_horses`), the rigid rider (`FigureBody.seat`, `rider_offset`, the
@@ -349,7 +360,7 @@ user, only to drop the re-exports of the deleted horse pose code.
   - Fallback: nothing is drawn until the horse's scene has loaded (it loads
     at startup, long before anyone mounts); no rigid stand-in.
   - `models off` now only swaps the people on foot back to rigid figures.
-  - Proof: `horse::tests::getting_off_leaves_nothing_of_the_horse_and_getting_on_again_seats_the_rider`,
+  - Proof: `rider::tests::getting_off_leaves_nothing_of_the_horse_and_getting_on_again_seats_the_rider`,
     `visual::tests::mounting_swaps_the_figure_for_one_saddled_horse_and_back`,
     `model::tests::the_toggle_puts_models_on_people_on_foot_and_leaves_riders_to_their_horse`,
     game `errand::mounting_swaps_the_clerk_figure_for_one_horse_and_rider_and_nothing_else`.
@@ -471,7 +482,8 @@ problems, then two more:
   as it was, so the clips' chest clearance and `humanoid.glb` are
   unchanged (rebuilt byte for byte). The protagonist was reconverted
   (`model.bin` and `model.gltf` changed; `--check` passes). The CPU-skinned
-  check (`cpu::poncho_in_arms`) finds no poncho point inside an upper arm
+  check (`rider::tests::poncho_in_arms`, used by the rider and the on-foot
+  `rig` tests) finds no poncho point inside an upper arm
   (beyond the armpit) on foot (idle, walk, jog) or riding (idle, walk,
   gallop); without the fix it is 4 cm.
 - **Tack fitting.** Each layer is a grid of rays from an axis inside the body
@@ -647,6 +659,56 @@ stand), `walkstop_side.png`, `walk_side.png`, `rider.png`,
 arms at idle, settled, walking and galloping, the poncho on the left
 shoulder), and the first pass `idle.png`, `zoom.png`. Nothing was
 checked in game by the writer.
+
+## Review follow-ups (PR 2, after 5a39575, 890c51f and 2932c93)
+
+The native review approved all three commits with warnings. Fixed in one
+follow-up, uncommitted (route: inline, by the PR 2 writer):
+
+- [x] R1 `gait::lift_legs` folded the hind legs about a skewed axis: the
+  parent chain dropped the last two entries, which for a hind leg (its
+  chain ends in a doubled `End`) still held the lower bone. The fold axis is
+  now worked out in the lower bone's parent frame, for every leg.
+- [x] R2 A respawned rider scene broke the tack. The stirrups were parented
+  to the rider's foot bones and went with them, and the reins kept pointing
+  at the old hand. Now the stirrups stay under the horse's `Torso`, and
+  `rider::carry_stirrups` places them on the feet each frame (`OnFoot`).
+  `seat_riders` runs on `Changed<Seated>`, so a re-dressed rider re-wires
+  the reins and the stirrups.
+- [x] R3 `dress_tack` checks the new scene (the `Main` skin, `Torso`,
+  `Neck2`, `Head`) first. It then takes off the old tack, stirrups
+  included. When the scene is not whole, it removes `Tack` instead of
+  leaving it pointing at despawned entities. `stretch_straps` hides a strap
+  with a missing end and shows it again once both ends are back. The straps
+  and stirrups are now ordered before `VisibilityPropagate`.
+- [x] R4 The rider's tuning literals are named, documented constants:
+  - the springs: `SADDLE_EASE`, `BRAKING_EASE`, `REST_EASE`,
+    `HALF_SEAT_EASE`, `LEAN_EASE`, `COUNTER_EASE` (fast on purpose),
+    `BIT_EASE`, `HEAD_EASE`, `SHRUG_EASE`, `FREE_EASE`;
+  - the motion thresholds: `BRAKING`, `STANDING`, `WALK_TOP`, `SHIFT`,
+    `GIVE_MAX`, `FLEX_MAX`;
+  - the free hand: `FREE_SWING`, `FREE_WALK`, `FREE_BRAKE`;
+  - the hat-brim touch: `HAT_SALT`, `HAT_PACE`, `GLANCE_MAX`.
+
+  Three are coupled to other systems: `BRAKING` and `WALK_TOP` to
+  `pampa_core::RiderParams`, and `GLANCE_MAX` to `pose::glance`. Behaviour
+  is unchanged: the existing tests pass as they were.
+- [x] R5 The H2–H4 proof lists now name the actual test paths.
+
+Sabotages (plan 9, each restored byte for byte; every one failed):
+
+| Test | Sabotage → result |
+|---|---|
+| `gait::a_folded_hind_leg_stays_in_the_bodys_sagittal_plane` | the old slice → the hoof drifts 0.7–1.2 mm sideways, fails (the fixed fold keeps it within 1e-7 m) |
+| `rider::a_respawned_rider_keeps_the_stirrups_on_its_new_feet_and_the_reins_in_its_new_hand` | `Added<Seated>` only → fails |
+| `rider::a_rider_sits_on_the_horses_torso…` (changed) | stirrups never carried → fails |
+| `tack::a_scene_spawned_again_is_checked_before_the_old_tack_comes_off` | `Tack` kept on a failed dress → fails; old stirrups left on → fails |
+| `tack::a_strap_with_an_end_gone_is_hidden_until_it_has_both_again` | never hidden → fails; never shown again → fails |
+
+Verification:
+- tools: 112 OK;
+- core 344, content 32, render 296 (1 ignored; four runs), game 118;
+- build, fmt and clippy are clean.
 
 ## Next step (PR 2)
 

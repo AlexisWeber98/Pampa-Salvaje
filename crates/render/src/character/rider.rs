@@ -43,7 +43,8 @@
 //! (0.47 m across at the seat, the belly at 0.86 m) and the protagonist's
 //! legs (0.865 m hip to ankle). Once the rider is seated
 //! ([`seat_riders`]), the reins run to its hands and the stirrups go on
-//! its feet.
+//! its feet ([`carry_stirrups`]: they stay under the horse's torso, so a
+//! respawned rider scene leaves the tack whole).
 
 use std::f32::consts::FRAC_PI_2;
 
@@ -116,6 +117,79 @@ pub const SHRUG: f32 = 0.6;
 
 /// How long a horse stands still before its rider's hands settle, s.
 pub const STILL: f32 = 3.0;
+
+// How fast each of the rider's springs ([`Spring::step`]) follows, rad/s:
+// the higher, the sooner it catches up (it closes most of a step in about
+// 4 / ω seconds).
+
+/// The saddle's smoothed path, whose remainder (its bounce) the rider
+/// gives with.
+pub const SADDLE_EASE: f32 = 4.0;
+/// The braking lean coming in and going.
+pub const BRAKING_EASE: f32 = 6.0;
+/// The hands settling on the pommel standing still: slow.
+pub const REST_EASE: f32 = 2.5;
+/// The half-seat coming in with the gallop, late.
+pub const HALF_SEAT_EASE: f32 = 3.0;
+/// The lean of the upper body.
+pub const LEAN_EASE: f32 = 4.0;
+/// The spine countering the saddle's pitch and roll. Fast on purpose: the
+/// counter only has to lag the saddle by a frame or two to keep the upper
+/// body steadier than the hips; a slow one would counter the last stride
+/// and rock the rider instead.
+pub const COUNTER_EASE: f32 = 40.0;
+/// The bit's smoothed path, whose remainder the rein hand gives with.
+pub const BIT_EASE: f32 = 3.0;
+/// The head's late part of the levelling.
+pub const HEAD_EASE: f32 = 8.0;
+/// The shoulders' shrug.
+pub const SHRUG_EASE: f32 = 8.0;
+/// The free hand: a loose arm lagging off the torso.
+pub const FREE_EASE: f32 = 7.0;
+
+/// The deceleration that is full braking, m/s²: the leaning back is the
+/// horse's deceleration over it. Coupled to the logic: it must match
+/// `pampa_core::RiderParams::braking` (the player's braking).
+pub const BRAKING: f32 = 8.0;
+
+/// Below this ground speed a horse stands still, m/s.
+pub const STANDING: f32 = 0.05;
+
+/// The speed that is a full walk, m/s, for the walking seat and the free
+/// arm's sway. Coupled to the logic: `pampa_core::RiderParams::walk_max`.
+pub const WALK_TOP: f32 = 3.0;
+
+/// The weight shift standing still: its period, in seconds, is the first
+/// plus the rider's seed modulo the second (7–9 s), and its amplitude, in
+/// radians, the third.
+pub const SHIFT: (f32, u32, f32) = (7.0, 3, 0.035);
+
+/// How far the rein hand gives with the bit at most, meters.
+pub const GIVE_MAX: f32 = 0.12;
+
+/// How far the back rounds or hollows at most, radians.
+pub const FLEX_MAX: f32 = 0.12;
+
+/// How the free hand swings with the saddle's motion beyond its smoothed
+/// path: each row (the hand's x, y, z) weighs the saddle's rise, pitch and
+/// roll, meters a meter or a radian.
+pub const FREE_SWING: [[f32; 3]; 3] = [[0.15, 0.0, -0.8], [-1.6, 0.3, 0.0], [0.8, 1.2, 0.0]];
+
+/// How much more the free arm swings walking than galloping (it swings
+/// with less motion walking), and how far toward the pommel it comes
+/// braking (a share of the way).
+pub const FREE_WALK: f32 = 2.0;
+pub const FREE_BRAKE: f32 = 0.45;
+
+/// The hat-brim touch: its seed salt (so it does not glance with the head)
+/// and its clock rate (much rarer than a glance).
+pub const HAT_SALT: u32 = 0x5eed;
+pub const HAT_PACE: f32 = 0.4;
+
+/// The widest glance `pampa_core::pose::glance` gives, radians
+/// (0.3 + 0.25): a glance this wide is the whole way to the hat's brim.
+/// Coupled to that function.
+pub const GLANCE_MAX: f32 = 0.55;
 
 /// Which way the knees bend, left then right: forward and out round the
 /// barrel.
@@ -540,7 +614,7 @@ pub(super) fn pose_riders(
         // What the saddle does beyond its smoothed path.
         let mut off = [0.0; 3];
         for k in 0..3 {
-            let smooth = m.saddle[k].step(now[k], 4.0, dt);
+            let smooth = m.saddle[k].step(now[k], SADDLE_EASE, dt);
             off[k] = now[k] - smooth;
         }
         let [rise, pitch, roll] = off;
@@ -551,27 +625,31 @@ pub(super) fn pose_riders(
             0.0
         };
         m.speed = horse.speed;
-        let braking = m.braking.step((-accel / 8.0).clamp(0.0, 1.0), 6.0, dt);
-        m.still = if horse.speed < 0.05 {
+        let braking = m
+            .braking
+            .step((-accel / BRAKING).clamp(0.0, 1.0), BRAKING_EASE, dt);
+        m.still = if horse.speed < STANDING {
             m.still + dt
         } else {
             0.0
         };
         let settled = f32::from(m.still > STILL);
-        let rest = m.rest.step(settled, 2.5, dt).clamp(0.0, 1.0);
+        let rest = m.rest.step(settled, REST_EASE, dt).clamp(0.0, 1.0);
         let gallop = horse.gallop.clamp(0.0, 1.0);
         // The half-seat comes in with the gallop, late.
-        let half = m.half.step(gallop, 3.0, dt).clamp(0.0, 1.0);
-        let walking = (horse.speed / 3.0).min(1.0) * (1.0 - gallop);
-        let lean = m
-            .lean
-            .step(LEAN.0 * half + LEAN.1 * walking - LEAN.2 * braking, 4.0, dt);
-        let counter_pitch = m.counter[0].step(COUNTER.0 * pitch, 40.0, dt);
-        let counter_roll = m.counter[1].step(COUNTER.1 * roll, 40.0, dt);
+        let half = m.half.step(gallop, HALF_SEAT_EASE, dt).clamp(0.0, 1.0);
+        let walking = (horse.speed / WALK_TOP).min(1.0) * (1.0 - gallop);
+        let lean = m.lean.step(
+            LEAN.0 * half + LEAN.1 * walking - LEAN.2 * braking,
+            LEAN_EASE,
+            dt,
+        );
+        let counter_pitch = m.counter[0].step(COUNTER.0 * pitch, COUNTER_EASE, dt);
+        let counter_roll = m.counter[1].step(COUNTER.1 * roll, COUNTER_EASE, dt);
         let give = Vec3::new(
-            bit.x - m.bit[0].step(bit.x, 3.0, dt),
-            bit.y - m.bit[1].step(bit.y, 3.0, dt),
-            bit.z - m.bit[2].step(bit.z, 3.0, dt),
+            bit.x - m.bit[0].step(bit.x, BIT_EASE, dt),
+            bit.y - m.bit[1].step(bit.y, BIT_EASE, dt),
+            bit.z - m.bit[2].step(bit.z, BIT_EASE, dt),
         );
         let get = |t: &Bones, b: Bone| t.get(seated.bone(b)).copied().ok();
         let root = Place::IDENTITY.then(&root);
@@ -580,9 +658,10 @@ pub(super) fn pose_riders(
         // saddle's bounce: the legs take it. Never below the seat.
         let hover = (HALF_SEAT.y - rise).clamp(0.0, HALF_SEAT.y * 2.0);
         let seat = Vec3::new(0.0, half * hover, half * HALF_SEAT.z);
-        let period = 7.0 + (riding.seed % 3) as f32;
-        let shift =
-            Quat::from_rotation_z(0.035 * rest * (std::f32::consts::TAU * m.clock / period).sin());
+        let period = SHIFT.0 + (riding.seed % SHIFT.1) as f32;
+        let shift = Quat::from_rotation_z(
+            SHIFT.2 * rest * (std::f32::consts::TAU * m.clock / period).sin(),
+        );
         // A flat back: the lean is mostly at the hips.
         let tip = Quat::from_rotation_x(HIP_SHARE * lean) * shift;
         if let Ok(mut pelvis) = transforms.get_mut(seated.bone(Bone::Pelvis)) {
@@ -612,7 +691,7 @@ pub(super) fn pose_riders(
             continue;
         };
         let spine1 = pelvis.then(&spine1);
-        let flex = (FLEX * rise * (1.0 - half)).clamp(-0.12, 0.12);
+        let flex = (FLEX * rise * (1.0 - half)).clamp(-FLEX_MAX, FLEX_MAX);
         turn_bone(
             &mut transforms,
             spine1,
@@ -640,7 +719,7 @@ pub(super) fn pose_riders(
         }
         let off_level = nodding - m.head0;
         // Most of it at once, the rest a touch late: steady, not locked.
-        let level = 0.85 * off_level + 0.15 * m.head.step(off_level, 8.0, dt);
+        let level = 0.85 * off_level + 0.15 * m.head.step(off_level, HEAD_EASE, dt);
         let glance = 0.5 * rest * pampa_core::pose::glance(riding.seed, m.clock);
         let nod = |share: f32| {
             Quat::from_rotation_y(glance) * into_rider(Quat::from_rotation_z(share * level), frame)
@@ -673,7 +752,7 @@ pub(super) fn pose_riders(
         // the elbows open as the head goes forward and down); the free hand
         // rests by the thigh, going with the seat.
         let follow = FOLLOW.0 + (FOLLOW.1 - FOLLOW.0) * half;
-        let give = give.clamp_length_max(0.12) * follow * (1.0 - rest);
+        let give = give.clamp_length_max(GIVE_MAX) * follow * (1.0 - rest);
         let reins = REINS_HAND.lerp(GALLOP_HAND, half).lerp(POMMEL_HAND, rest);
         let free = free_hand(
             &mut m,
@@ -684,7 +763,7 @@ pub(super) fn pose_riders(
         let hands = [reins + give, seat + free];
         // The shoulders go with the torso, late: up as the saddle drops
         // away, forward as it pitches down.
-        let shrug = m.shrug.step(SHRUG * (pitch - 2.0 * rise), 8.0, dt);
+        let shrug = m.shrug.step(SHRUG * (pitch - 2.0 * rise), SHRUG_EASE, dt);
         for s in 0..2 {
             let side = if s == 0 { 1.0 } else { -1.0 };
             turn_bone(
@@ -716,18 +795,20 @@ pub fn free_hand(
     (walking, gallop, braking, rest): (f32, f32, f32, f32),
     dt: f32,
 ) -> Vec3 {
+    let [x, y, z] = FREE_SWING;
     let stride = Vec3::new(
-        0.15 * rise - 0.8 * roll,
-        -1.6 * rise + 0.3 * pitch,
-        1.2 * pitch + 0.8 * rise,
+        x[0] * rise + x[2] * roll,
+        y[0] * rise + y[1] * pitch,
+        z[1] * pitch + z[0] * rise,
     );
-    let swing = stride * (2.0 * walking + gallop);
-    let brake = (POMMEL_HAND - THIGH_HAND) * 0.45 * braking;
-    let brim = (pampa_core::pose::glance(m.seed ^ 0x5eed, m.clock * 0.4).abs() / 0.55).min(1.0);
+    let swing = stride * (FREE_WALK * walking + gallop);
+    let brake = (POMMEL_HAND - THIGH_HAND) * FREE_BRAKE * braking;
+    let brim = (pampa_core::pose::glance(m.seed ^ HAT_SALT, m.clock * HAT_PACE).abs() / GLANCE_MAX)
+        .min(1.0);
     let hat = (HAT_HAND - THIGH_HAND) * brim * rest;
     let target = THIGH_HAND + (swing + brake).clamp_length_max(FREE_REACH) + hat;
     // Lagging off the torso: a loose arm, never stiff, never flailing.
-    let at = [0, 1, 2].map(|k| m.free[k].step(target[k], 7.0, dt));
+    let at = [0, 1, 2].map(|k| m.free[k].step(target[k], FREE_EASE, dt));
     Vec3::from_array(at)
 }
 
@@ -784,15 +865,30 @@ pub(super) fn spawn_riders(
     }
 }
 
-/// Once a rider is seated, its horse's reins run to its left hand and its
-/// stirrups go on its feet.
+/// A stirrup a seated rider's foot carries. It stays under the horse's
+/// torso, with the rest of the tack, since the rider's scene (and its foot
+/// bones) may be spawned again; [`carry_stirrups`] puts it on the foot
+/// each frame.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct OnFoot {
+    /// The rider's model root: while it is hidden (not yet posed) the
+    /// stirrup stays where it was.
+    pub rider: Entity,
+    pub foot: Entity,
+    /// Its placement on the foot bone ([`Seated::stirrups`]).
+    pub at: Transform,
+}
+
+/// Once a rider is seated, and again whenever its bones are found anew
+/// (its scene spawned again), its horse's reins run to its left hand and
+/// its stirrups go on its feet.
 pub(super) fn seat_riders(
     mut commands: Commands,
-    seated: Query<(&Riding, &Seated), Added<Seated>>,
+    seated: Query<(Entity, &Riding, &Seated), Changed<Seated>>,
     tacks: Query<&Tack>,
     mut straps: Query<&mut Strap>,
 ) {
-    for (riding, seated) in &seated {
+    for (rider, riding, seated) in &seated {
         let Ok(tack) = tacks.get(riding.horse) else {
             continue;
         };
@@ -802,10 +898,32 @@ pub(super) fn seat_riders(
                 let apart = Vec3::X * (if s == 0 { -0.012 } else { 0.012 });
                 rein.ends[1] = (seated.bone(Bone::Hand(0)), PALM + apart);
             }
-            commands
-                .entity(tack.stirrups[s])
-                .try_insert((ChildOf(seated.bone(Bone::Foot(s))), seated.stirrups[s]));
+            commands.entity(tack.stirrups[s]).try_insert(OnFoot {
+                rider,
+                foot: seated.bone(Bone::Foot(s)),
+                at: seated.stirrups[s],
+            });
         }
+    }
+}
+
+/// Puts each carried stirrup on its rider's foot, once the transforms are
+/// worked out (before the straps are stretched to it).
+pub(super) fn carry_stirrups(
+    mut stirrups: Query<(&OnFoot, &ChildOf, &mut Transform, &mut GlobalTransform)>,
+    places: Query<&GlobalTransform, Without<OnFoot>>,
+    shown: Query<&Visibility>,
+) {
+    for (on, child_of, mut transform, mut global) in &mut stirrups {
+        if shown.get(on.rider).is_ok_and(|v| *v == Visibility::Hidden) {
+            continue;
+        }
+        let (Ok(foot), Ok(parent)) = (places.get(on.foot), places.get(child_of.parent())) else {
+            continue;
+        };
+        let placed = foot.affine() * on.at.compute_affine();
+        *global = GlobalTransform::from(placed);
+        *transform = transform_of(parent.affine().inverse() * placed);
     }
 }
 
@@ -1091,13 +1209,82 @@ pub(crate) mod tests {
                 rein.ends[1].0,
                 seated.bones[Bone::ALL.iter().position(|b| *b == Bone::Hand(0)).unwrap()]
             );
-            let foot = world.get::<ChildOf>(tack.stirrups[s]).unwrap().parent();
+            // Carried by the foot, kept under the horse's torso.
+            let on = world.get::<OnFoot>(tack.stirrups[s]).unwrap();
             assert_eq!(
-                world.get::<Name>(foot).unwrap().as_str(),
+                world.get::<Name>(on.foot).unwrap().as_str(),
                 ["foot_l", "foot_r"][s]
             );
+            assert_eq!((on.rider, on.at), (rider, seated.stirrups[s]));
+            let hung = world.get::<ChildOf>(tack.stirrups[s]).unwrap().parent();
+            assert_eq!(hung, tack.torso);
+            let (stirrup, foot) = (
+                world.get::<GlobalTransform>(tack.stirrups[s]).unwrap(),
+                world.get::<GlobalTransform>(on.foot).unwrap(),
+            );
+            let want = foot.affine() * on.at.compute_affine();
+            assert!(
+                stirrup.translation().distance(Vec3::from(want.translation)) < 1e-4,
+                "on the foot"
+            );
         }
-        let _ = rider;
+    }
+
+    #[test]
+    fn a_respawned_rider_keeps_the_stirrups_on_its_new_feet_and_the_reins_in_its_new_hand() {
+        use bevy::world_serialization::WorldAssetRoot;
+        let (mut app, me) = seated(
+            CharacterVisual::Mounted {
+                rider: FigureKind::Protagonist,
+                coat: Coat::Bayo,
+            },
+            1.5,
+        );
+        let world = app.world_mut();
+        let carrier = world.get::<Children>(me).unwrap()[0];
+        let tack = *world.get::<Tack>(carrier).unwrap();
+        let (rider, old) = world
+            .query_filtered::<(Entity, &Seated), With<Riding>>()
+            .single(world)
+            .map(|(e, s)| (e, s.clone()))
+            .unwrap();
+        // Its scene spawned again: new bones.
+        world
+            .get_mut::<WorldAssetRoot>(rider)
+            .unwrap()
+            .set_changed();
+        let mut new = None;
+        for _ in 0..3000 {
+            app.update();
+            let world = app.world();
+            let seated = world.get::<Seated>(rider).unwrap();
+            let posed = world.get::<Visibility>(rider) == Some(&Visibility::Inherited);
+            if seated.bones[0] != old.bones[0] && posed {
+                new = Some(seated.clone());
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let new = new.expect("the rider's scene spawned again");
+        let bone = |b: Bone| new.bones[Bone::ALL.iter().position(|x| *x == b).unwrap()];
+        // Over a few frames of the walk: the stirrups ride the new feet,
+        // the reins end in the new hand.
+        for _ in 0..10 {
+            app.update();
+            let world = app.world();
+            for s in 0..2 {
+                let on = world
+                    .get::<OnFoot>(tack.stirrups[s])
+                    .expect("the stirrup is kept");
+                assert_eq!(on.foot, bone(Bone::Foot(s)));
+                let foot = world.get::<GlobalTransform>(on.foot).unwrap();
+                let at = world.get::<GlobalTransform>(tack.stirrups[s]).unwrap();
+                let want = foot.affine() * on.at.compute_affine();
+                assert!(at.translation().distance(Vec3::from(want.translation)) < 1e-4);
+                let rein = world.get::<Strap>(tack.reins[s]).unwrap();
+                assert_eq!(rein.ends[1].0, bone(Bone::Hand(0)));
+            }
+        }
     }
 
     #[test]

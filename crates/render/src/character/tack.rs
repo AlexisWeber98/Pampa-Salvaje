@@ -944,16 +944,18 @@ fn build_tack(
 }
 
 /// Puts the tack on a horse model the moment its scene spawns (see the
-/// module notes). The kit is built from the first horse dressed; a scene
-/// spawned again (its asset reloaded) has the old tack taken off first
-/// (the stirrups and any rider went with its bones).
+/// module notes). The kit is built from the first horse dressed. A scene
+/// spawned again (its asset reloaded) has the old tack taken off once the
+/// new scene has been checked (any rider went with the old bones); if it is
+/// not whole, the horse is left without a [`Tack`], never one pointing at
+/// despawned entities.
 pub(super) fn dress_tack(
     ready: On<WorldInstanceReady>,
     mut commands: Commands,
     mut stores: TackStores,
     scene: TackScene,
     roots: Query<&ChildOf, With<HorseModel>>,
-    pieces: Query<(), With<HorsePiece>>,
+    (pieces, worn): (Query<(), With<HorsePiece>>, Query<&Tack>),
     mut tack: Local<Option<HorseTack>>,
 ) {
     let root = ready.entity;
@@ -961,18 +963,35 @@ pub(super) fn dress_tack(
         return;
     };
     let carrier = child_of.parent();
+    // The skin of the body, its joints and their bind poses, and the bones
+    // the straps hang from: all checked before anything is taken off.
+    let skin = scene.children.iter_descendants(root).find_map(|e| {
+        let (skin, _, name) = scene.skins.get(e).ok()?;
+        name.is_some_and(|n| n.0 == "Main").then(|| skin.clone())
+    });
+    let bone = |b: HorseBone| {
+        scene
+            .children
+            .iter_descendants(root)
+            .find(|e| scene.names.get(*e).is_ok_and(|n| n.as_str() == b.name()))
+    };
+    let bones = (
+        bone(HorseBone::Torso),
+        bone(HorseBone::Neck2),
+        bone(HorseBone::Head),
+    );
     for &child in scene.children.get(carrier).into_iter().flatten() {
         if pieces.contains(child) {
             commands.entity(child).try_despawn();
         }
     }
-    // The skin of the body, its joints and their bind poses.
-    let skin = scene.children.iter_descendants(root).find_map(|e| {
-        let (skin, _, name) = scene.skins.get(e).ok()?;
-        name.is_some_and(|n| n.0 == "Main").then(|| skin.clone())
-    });
-    let Some(skin) = skin else {
-        warn!("horse model without its body's skin: no tack");
+    // The stirrups hang from the old torso, if it is still there.
+    for stirrup in worn.get(carrier).map(|t| t.stirrups).into_iter().flatten() {
+        commands.entity(stirrup).try_despawn();
+    }
+    let (Some(skin), (Some(torso), Some(neck), Some(head))) = (skin, bones) else {
+        warn!("horse model without its body's skin or its torso, neck and head: no tack");
+        commands.entity(carrier).try_remove::<Tack>();
         return;
     };
     if tack.is_none() {
@@ -986,19 +1005,7 @@ pub(super) fn dress_tack(
     }
     let Some(tack) = tack.as_ref() else {
         warn!("the horse's tack could not be fitted");
-        return;
-    };
-    let bone = |b: HorseBone| {
-        scene
-            .children
-            .iter_descendants(root)
-            .find(|e| scene.names.get(*e).is_ok_and(|n| n.as_str() == b.name()))
-    };
-    let (Some(torso), Some(neck), Some(head)) = (
-        bone(HorseBone::Torso),
-        bone(HorseBone::Neck2),
-        bone(HorseBone::Head),
-    ) else {
+        commands.entity(carrier).try_remove::<Tack>();
         return;
     };
     put_on_tack(
@@ -1063,6 +1070,7 @@ fn put_on_tack(
                     Mesh3d(kit.strap.clone()),
                     MeshMaterial3d(material.clone()),
                     Transform::default(),
+                    Visibility::default(),
                     range.clone(),
                     ChildOf(carrier),
                 ))
@@ -1134,18 +1142,28 @@ pub fn strap_between(a: Vec3, b: Vec3, width: f32) -> GlobalTransform {
 }
 
 /// Stretches every strap between its two ends, once the transforms are
-/// worked out: it is drawn this frame where its ends are this frame.
+/// worked out: it is drawn this frame where its ends are this frame. A
+/// strap whose end is gone (its bone despawned) is hidden until both
+/// ends are found again.
 pub(super) fn stretch_straps(
-    mut straps: Query<(&Strap, &ChildOf, &mut Transform, &mut GlobalTransform)>,
+    mut straps: Query<(
+        &Strap,
+        &ChildOf,
+        &mut Transform,
+        &mut GlobalTransform,
+        &mut Visibility,
+    )>,
     places: Query<&GlobalTransform, Without<Strap>>,
 ) {
-    for (strap, child_of, mut transform, mut global) in &mut straps {
+    for (strap, child_of, mut transform, mut global, mut shown) in &mut straps {
         let [(a, at_a), (b, at_b)] = strap.ends;
         let (Ok(a), Ok(b), Ok(parent)) =
             (places.get(a), places.get(b), places.get(child_of.parent()))
         else {
+            shown.set_if_neq(Visibility::Hidden);
             continue;
         };
+        shown.set_if_neq(Visibility::Inherited);
         let placed = strap_between(
             a.transform_point(at_a),
             b.transform_point(at_b),
@@ -1561,6 +1579,106 @@ pub(crate) mod tests {
                 assert_eq!(skin.joints, main, "{piece:?}");
             }
         }
+    }
+
+    /// Every entity `app`'s horse under `me` has a [`Tack`] for exists; the
+    /// tack, if any.
+    fn whole_tack(app: &mut App, me: Entity) -> Option<Tack> {
+        let world = app.world();
+        let carrier = world.get::<Children>(me).unwrap()[0];
+        let tack = *world.get::<Tack>(carrier)?;
+        for e in [tack.reins, tack.stirrups, [tack.torso, tack.head]].concat() {
+            assert!(world.get_entity(e).is_ok(), "{e:?} is gone");
+        }
+        Some(tack)
+    }
+
+    #[test]
+    fn a_scene_spawned_again_is_checked_before_the_old_tack_comes_off() {
+        use bevy::world_serialization::WorldInstance;
+        let (mut app, me) = saddled(CharacterVisual::Horse(Coat::Bayo), 0.0);
+        let count = |app: &mut App, piece: HorsePiece| {
+            let world = app.world_mut();
+            world
+                .query::<&HorsePiece>()
+                .iter(world)
+                .filter(|p| **p == piece)
+                .count()
+        };
+        let world = app.world_mut();
+        let carrier = world.get::<Children>(me).unwrap()[0];
+        let root = world.get::<Children>(carrier).unwrap()[0];
+        assert!(world.get::<HorseModel>(root).is_some());
+        let ready = |world: &mut World| WorldInstanceReady {
+            entity: root,
+            instance_id: **world.get::<WorldInstance>(root).unwrap(),
+        };
+        // Whole: dressed again, once.
+        let event = ready(world);
+        world.trigger(event);
+        app.update();
+        assert!(whole_tack(&mut app, me).is_some());
+        assert_eq!(count(&mut app, HorsePiece::Stirrup), 2);
+        assert_eq!(count(&mut app, HorsePiece::Rein), 6);
+        // Without its torso bone: no tack, and none half there.
+        let world = app.world_mut();
+        let torso = world
+            .query::<(Entity, &Name)>()
+            .iter(world)
+            .find(|(e, n)| n.as_str() == "Torso" && world.get::<ChildOf>(*e).is_some())
+            .map(|(e, _)| e)
+            .unwrap();
+        world.entity_mut(torso).insert(Name::new("Torso.lost"));
+        let event = ready(world);
+        world.trigger(event);
+        app.update();
+        assert!(whole_tack(&mut app, me).is_none());
+        for piece in [HorsePiece::Pellon, HorsePiece::Rein, HorsePiece::Stirrup] {
+            assert_eq!(count(&mut app, piece), 0, "{piece:?}");
+        }
+    }
+
+    #[test]
+    fn a_strap_with_an_end_gone_is_hidden_until_it_has_both_again() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        let at = |x: f32| GlobalTransform::from_xyz(x, 1.0, 0.0);
+        let parent = world.spawn(at(0.0)).id();
+        let (a, b, c) = (
+            world.spawn(at(1.0)).id(),
+            world.spawn(at(2.0)).id(),
+            world.spawn(at(3.0)).id(),
+        );
+        let strap = world
+            .spawn((
+                Strap {
+                    ends: [(a, Vec3::ZERO), (b, Vec3::ZERO)],
+                    width: 0.02,
+                },
+                Transform::default(),
+                GlobalTransform::default(),
+                Visibility::default(),
+                ChildOf(parent),
+            ))
+            .id();
+        let stretch = |world: &mut World| {
+            world.run_system_once(stretch_straps).unwrap();
+            (
+                *world.get::<Visibility>(strap).unwrap(),
+                world.get::<GlobalTransform>(strap).unwrap().translation(),
+            )
+        };
+        assert_eq!(
+            stretch(&mut world),
+            (Visibility::Inherited, Vec3::new(1.5, 1.0, 0.0))
+        );
+        world.despawn(b);
+        assert_eq!(stretch(&mut world).0, Visibility::Hidden);
+        world.get_mut::<Strap>(strap).unwrap().ends[1].0 = c;
+        assert_eq!(
+            stretch(&mut world),
+            (Visibility::Inherited, Vec3::new(2.0, 1.0, 0.0))
+        );
     }
 
     #[test]

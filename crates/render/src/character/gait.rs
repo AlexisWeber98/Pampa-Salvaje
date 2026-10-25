@@ -393,8 +393,12 @@ fn lift_legs(bones: &HorseBones, transforms: &mut Query<&mut Transform>) {
         let Ok(start) = transforms.get(lower).map(|t| t.rotation) else {
             continue;
         };
-        // The fold about the body's side axis, in the lower bone's space.
-        let parent = turn(&placed(bones, &chain[..chain.len() - 2], transforms));
+        // The fold about the body's side axis, in the lower bone's parent's
+        // space (its rotation is applied there): the chain down to it.
+        let Some(at) = chain.iter().position(|b| *b == Bone::LowerLeg(leg)) else {
+            continue;
+        };
+        let parent = turn(&placed(bones, &chain[..at], transforms));
         let side = parent.inverse() * turn(&bones.armature).inverse() * Vec3::Z;
         let mut best = (low, start);
         for step in 1..=12 {
@@ -633,6 +637,60 @@ mod tests {
         );
         assert!(stretch(mean, mean, 1.5).angle_between(mean) < 1e-4);
         assert!(stretch(swung, mean, 1.0).angle_between(swung) < 1e-4);
+    }
+
+    #[test]
+    fn a_folded_hind_leg_stays_in_the_bodys_sagittal_plane() {
+        use crate::character::horse::tests::saddled;
+        use crate::character::{CharacterVisual, Coat};
+        use bevy::ecs::system::RunSystemOnce;
+        let (mut app, _) = saddled(CharacterVisual::Horse(Coat::Bayo), 0.0);
+        let world = app.world_mut();
+        let mut bones = world.query::<&HorseBones>().single(world).unwrap().clone();
+        // Body-frame places of each hind leg's hock and hoof end.
+        let at = |world: &mut World, bones: &HorseBones, leg: usize| {
+            let bones = bones.clone();
+            world
+                .run_system_once(move |transforms: Query<&mut Transform>| {
+                    let chain = Bone::chain(leg);
+                    let hock = chain
+                        .iter()
+                        .position(|b| *b == Bone::LowerLeg(leg))
+                        .unwrap();
+                    let body = |c: &[Bone]| {
+                        let p = placed(&bones, c, &transforms);
+                        bones.armature.transform_point3(Vec3::from(p.translation))
+                    };
+                    (body(&chain[..=hock]), body(&chain))
+                })
+                .unwrap()
+        };
+        let before = [at(world, &bones, 2), at(world, &bones, 3)];
+        // Ground raised 12 cm under the hind legs: they must fold.
+        for leg in 2..4 {
+            bones.standing[leg] = before[leg - 2].1.y + PLANTED + 0.12;
+        }
+        let folding = bones.clone();
+        world
+            .run_system_once(move |mut transforms: Query<&mut Transform>| {
+                lift_legs(&folding, &mut transforms)
+            })
+            .unwrap();
+        for leg in 2..4 {
+            let (hock, end) = before[leg - 2];
+            let (hock2, end2) = at(world, &bones, leg);
+            assert!(end2.y > end.y + 0.03, "leg {leg} folded: {end} -> {end2}");
+            assert!(
+                hock2.distance(hock) < 1e-4,
+                "the hock stays: {hock} {hock2}"
+            );
+            // A fold about the side axis keeps the hoof's side offset
+            // exactly (about the bone's own axis instead it drifts ~1 mm).
+            assert!(
+                (end2.z - end.z).abs() < 2e-4,
+                "leg {leg} twisted sideways: {end} -> {end2}"
+            );
+        }
     }
 
     #[test]

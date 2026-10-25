@@ -17,7 +17,7 @@ use super::model::{
     CharacterModels, CharacterModelsShown, attach_model, dress_character, load_character_models,
     swap_in_character_models, toggle_character_models,
 };
-use super::rider::{pose_riders, seat_riders, spawn_riders};
+use super::rider::{carry_stirrups, pose_riders, seat_riders, spawn_riders};
 use super::rig::{drive_rigs, fit_rigs};
 use super::tack::{dress_tack, stretch_straps};
 
@@ -94,9 +94,10 @@ impl Plugin for CharacterVisualPlugin {
             )
             .add_systems(
                 PostUpdate,
-                stretch_straps
+                (carry_stirrups, stretch_straps)
+                    .chain()
                     .after(TransformSystems::Propagate)
-                    .before(VisibilitySystems::CheckVisibility),
+                    .before(VisibilitySystems::VisibilityPropagate),
             )
             .add_observer(dress_character)
             .add_observer(dress_horse)
