@@ -1,6 +1,7 @@
 //! Per-entity character visuals. Logic hands over a [`VisualPose`]; render
-//! decides how it looks: low-poly 3D people (see [`figure`](super::figure))
-//! and horses (see [`horse`](super::horse)), and a rider in the saddle.
+//! decides how it looks: people on foot (see [`figure`](super::figure) and
+//! [`model`](super::model)) and saddled horses (see
+//! [`horse`](super::horse)); a rider's model on the horse comes later.
 
 use bevy::app::AnimationSystems;
 use bevy::prelude::*;
@@ -10,7 +11,7 @@ use pampa_core::{AnimationState, Heading};
 use super::clips::{load_character_clips, read_reference};
 use super::figure::{FigureKind, FigureKit, spawn_figure, update_figures};
 use super::finish::Palette;
-use super::horse::{Coat, HorseKit, spawn_horse, update_horses};
+use super::horse::{Coat, dress_horse, drive_horses, fit_horses, spawn_horse, swap_in_horses};
 use super::model::{
     CharacterModels, CharacterModelsShown, attach_model, dress_character, load_character_models,
     swap_in_character_models, toggle_character_models,
@@ -28,12 +29,14 @@ pub enum CharacterVisual {
     /// (The untacked horses loose in the corrals are fauna: see
     /// [`Animal::Horse`](crate::fauna::Animal::Horse).)
     Horse(Coat),
-    /// A person riding a saddled horse; the pose is the horse's.
+    /// A person riding a saddled horse; the pose is the horse's. The
+    /// rider is not drawn yet.
     Mounted { rider: FigureKind, coat: Coat },
 }
 
 /// The child entity a [`CharacterVisual`] draws with (a figure's or a
-/// horse's body). It and everything under it go when the visual changes.
+/// horse's body). It and everything under it go
+/// when the visual changes.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct VisualPart;
 
@@ -64,39 +67,39 @@ impl Plugin for CharacterVisualPlugin {
                 (
                     toggle_character_models,
                     swap_in_character_models,
+                    swap_in_horses,
                     read_reference,
                 )
                     .chain(),
             )
             .add_systems(
                 PostUpdate,
-                (attach_visuals, update_horses, update_figures, drive_rigs)
+                (attach_visuals, update_figures, drive_rigs, drive_horses)
                     .chain()
                     .before(AnimationSystems)
                     .before(TransformSystems::Propagate),
             )
             .add_systems(
                 PostUpdate,
-                fit_rigs
+                (fit_rigs, fit_horses)
+                    .chain()
                     .after(AnimationSystems)
                     .before(TransformSystems::Propagate),
             )
-            .add_observer(dress_character);
+            .add_observer(dress_character)
+            .add_observer(dress_horse);
     }
 }
 
 fn load_kits(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
     commands.insert_resource(FigureKit::new(&mut meshes));
-    commands.insert_resource(HorseKit::new(&mut meshes));
     commands.insert_resource(Palette::default());
 }
 
-/// The kits and asset stores [`attach_visuals`] draws with.
+/// The kit and asset stores [`attach_visuals`] draws with.
 type Kits<'a> = (
     ResMut<'a, FigureKit>,
-    ResMut<'a, HorseKit>,
     ResMut<'a, Palette>,
-    ResMut<'a, Assets<Mesh>>,
     ResMut<'a, Assets<StandardMaterial>>,
     ResMut<'a, Assets<Image>>,
 );
@@ -104,7 +107,7 @@ type Kits<'a> = (
 /// Draws new and changed visuals, dropping whatever drew the old one.
 fn attach_visuals(
     mut commands: Commands,
-    (mut people, mut horses, mut palette, mut meshes, mut materials, mut images): Kits,
+    (mut people, mut palette, mut materials, mut images): Kits,
     changed: Query<(Entity, &CharacterVisual, Option<&Children>), Changed<CharacterVisual>>,
     parts: Query<(), With<VisualPart>>,
     (models, shown): (Option<Res<CharacterModels>>, Res<CharacterModelsShown>),
@@ -126,47 +129,15 @@ fn attach_visuals(
                     entity,
                     kind,
                     phase,
-                    None,
                 );
                 if shown.0 {
                     attach_model(&mut commands, models.as_deref(), body, kind);
                 }
                 body
             }
-            CharacterVisual::Horse(coat) => {
-                spawn_horse(
-                    &mut commands,
-                    (&mut horses, &mut meshes),
-                    (&mut palette, &mut materials, &mut images),
-                    entity,
-                    coat,
-                    phase,
-                    false,
-                )
-                .0
-            }
+            CharacterVisual::Horse(coat) => spawn_horse(&mut commands, entity, coat, None),
             CharacterVisual::Mounted { rider, coat } => {
-                let (horse, trunk) = spawn_horse(
-                    &mut commands,
-                    (&mut horses, &mut meshes),
-                    (&mut palette, &mut materials, &mut images),
-                    entity,
-                    coat,
-                    phase,
-                    true,
-                );
-                // The rider sits on the trunk, so it rises, rocks and turns
-                // with the horse.
-                spawn_figure(
-                    &mut commands,
-                    &mut people,
-                    (&mut palette, &mut materials, &mut images),
-                    trunk,
-                    rider,
-                    phase,
-                    Some(horse),
-                );
-                horse
+                spawn_horse(&mut commands, entity, coat, Some(rider))
             }
         };
         commands.entity(body).insert(VisualPart);
@@ -207,9 +178,9 @@ mod tests {
     }
 
     #[test]
-    fn mounting_swaps_the_figure_for_one_horse_and_rider_and_back() {
+    fn mounting_swaps_the_figure_for_one_saddled_horse_and_back() {
         use super::super::figure::{FigureBody, FigureJoint, FigurePart};
-        use super::super::horse::{HorseBody, HorseJoint, HorseJointPart, HorsePartMesh};
+        use super::super::horse::{HorseBody, HorseModel, HorsePending};
         let mut app = plugin_app();
         let me = app
             .world_mut()
@@ -224,7 +195,8 @@ mod tests {
         assert!(count::<With<FigurePart>>(&mut app) >= 18);
         assert_eq!(count::<With<HorseBody>>(&mut app), 0);
 
-        // Mount: the new visual replaces the figure the same frame.
+        // Mount: the new visual replaces the figure the same frame, with a
+        // horse body waiting for its model and nothing rigid.
         app.world_mut()
             .entity_mut(me)
             .insert(CharacterVisual::Mounted {
@@ -232,35 +204,20 @@ mod tests {
                 coat: Coat::HIDALGO,
             });
         app.update();
-        assert_eq!(count::<With<HorseBody>>(&mut app), 1);
-        assert_eq!(
-            count::<With<HorseJointPart>>(&mut app),
-            HorseJoint::ALL.len()
-        );
-        assert_eq!(count::<With<FigureBody>>(&mut app), 1, "one rider");
-        assert_eq!(
-            count::<With<FigureJoint>>(&mut app),
-            super::super::figure::Joint::ALL.len()
-        );
         let children = app.world().get::<Children>(me).unwrap();
         assert_eq!(children.len(), 1, "one horse-and-rider visual");
         let horse = children[0];
-        assert_eq!(
-            app.world().get::<HorseBody>(horse).unwrap().coat,
-            Coat::Bayo
-        );
-        // The rider hangs off the horse's trunk.
-        let mut riders = app.world_mut().query::<(&FigureBody, &ChildOf)>();
-        let (rider, seat) = riders.single(app.world()).unwrap();
-        assert_eq!(rider.seat, Some(horse));
-        assert_eq!(
-            app.world().get::<HorseJointPart>(seat.parent()).unwrap().0,
-            HorseJoint::Trunk
-        );
-        // Every mesh drawn is a figure or horse part: nothing else is left.
-        let meshes = count::<With<Mesh3d>>(&mut app);
-        let parts = count::<With<FigurePart>>(&mut app) + count::<With<HorsePartMesh>>(&mut app);
-        assert_eq!(meshes, parts);
+        let body = app.world().get::<HorseBody>(horse).unwrap();
+        assert_eq!(body.coat, Coat::Bayo);
+        assert_eq!(body.rider, Some(FigureKind::Protagonist));
+        assert!(body.never_freezes(), "the player's horse");
+        let model = app.world().get::<Children>(horse).unwrap()[0];
+        assert!(app.world().get::<HorseModel>(model).is_some());
+        // No horse file in this app: it waits, drawing nothing.
+        assert!(app.world().get::<HorsePending>(model).is_some());
+        assert_eq!(count::<With<FigureBody>>(&mut app), 0, "no rigid rider");
+        assert_eq!(count::<With<FigureJoint>>(&mut app), 0);
+        assert_eq!(count::<With<Mesh3d>>(&mut app), 0);
 
         // Dismount: back to the figure, nothing of the horse left.
         app.world_mut()
@@ -268,93 +225,51 @@ mod tests {
             .insert(CharacterVisual::Figure(FigureKind::Protagonist));
         app.update();
         assert_eq!(count::<With<HorseBody>>(&mut app), 0);
-        assert_eq!(count::<With<HorseJointPart>>(&mut app), 0);
-        assert_eq!(count::<With<HorsePartMesh>>(&mut app), 0);
+        assert_eq!(count::<With<HorseModel>>(&mut app), 0);
         assert_eq!(count::<With<FigureBody>>(&mut app), 1);
         assert_eq!(app.world().get::<Children>(me).unwrap().len(), 1);
     }
 
     #[test]
-    fn the_rider_moves_with_the_horses_gait() {
-        use super::super::figure::{FigureBody, FigureJoint, Joint, Side};
-        use super::super::horse::{HorseBody, HorseJoint, HorseJointPart};
+    fn a_saddled_horse_turns_to_its_heading_and_takes_its_gait_from_the_speed() {
+        use super::super::horse::HorseBody;
         use pampa_core::HorseGait;
         let mut app = plugin_app();
-        app.world_mut().spawn((
-            CharacterVisual::Mounted {
-                rider: FigureKind::Protagonist,
-                coat: Coat::Bayo,
-            },
-            VisualPose {
-                heading: Heading::from_radians(PI),
-                animation: AnimationState::Gallop,
-                speed: 11.0,
-            },
-        ));
-        let mut trunk = Vec::new();
-        let mut legs = Vec::new();
-        for _ in 0..30 {
-            app.update();
-            let mut bodies = app.world_mut().query::<(&HorseBody, &Transform)>();
-            let (horse, body) = bodies.single(app.world()).unwrap();
-            let (gait, body) = (horse.gait, *body);
-            assert_eq!(gait, HorseGait::Gallop);
-            assert!(
-                (body.rotation * Vec3::X).distance(Vec3::NEG_X) < 1e-4,
-                "turned west"
-            );
-            let mut joints = app.world_mut().query::<(&HorseJointPart, &Transform)>();
-            let mut joint = |j: HorseJoint| {
-                joints
-                    .iter(app.world())
-                    .find(|(p, _)| p.0 == j)
-                    .map(|(_, t)| *t)
-                    .unwrap()
-            };
-            trunk.push(
-                body.translation.y + joint(HorseJoint::Trunk).rotation.to_euler(EulerRot::ZYX).0,
-            );
-            legs.push(joint(HorseJoint::Upper(pampa_core::Leg::FrontLeft)).rotation);
-            // The rider sits astride: thighs forward, never turned by the
-            // heading again.
-            let mut riders = app.world_mut().query::<(&FigureBody, &Transform)>();
-            let (_, rider) = riders.single(app.world()).unwrap();
-            assert_eq!(rider.rotation, Quat::IDENTITY);
-            let mut fj = app.world_mut().query::<(&FigureJoint, &Transform)>();
-            let hip = fj
-                .iter(app.world())
-                .find(|(j, _)| j.0 == Joint::Hip(Side::Left))
-                .map(|(_, t)| t.rotation)
-                .unwrap();
-            assert!((hip * Vec3::NEG_Y).x > 0.5, "the thigh points forward");
-        }
-        let spread = |v: &[f32]| {
-            v.iter().fold(f32::MIN, |a, b| a.max(*b)) - v.iter().fold(f32::MAX, |a, b| a.min(*b))
-        };
-        assert!(spread(&trunk) > 0.05, "the body rises and rocks: {trunk:?}");
-        assert!(legs.windows(2).any(|w| w[0] != w[1]), "the legs move");
-    }
-
-    #[test]
-    fn a_tied_horse_stands_saddled_and_breathes() {
-        use super::super::figure::FigureBody;
-        use super::super::horse::{HorseBody, HorsePartMesh, HorsePiece};
-        let mut app = plugin_app();
-        app.world_mut()
-            .spawn(CharacterVisual::Horse(Coat::Tordillo));
+        let horse = app
+            .world_mut()
+            .spawn((
+                CharacterVisual::Horse(Coat::Tordillo),
+                VisualPose {
+                    heading: Heading::from_radians(PI),
+                    animation: AnimationState::Gallop,
+                    speed: 11.0,
+                },
+            ))
+            .id();
         app.update();
-        assert_eq!(count::<With<HorseBody>>(&mut app), 1);
-        assert_eq!(count::<With<FigureBody>>(&mut app), 0, "nobody on it");
-        let mut pieces = app.world_mut().query::<&HorsePartMesh>();
-        let all: Vec<_> = pieces.iter(app.world()).map(|p| p.0).collect();
-        for piece in [
-            HorsePiece::Pellon,
-            HorsePiece::Stirrup,
-            HorsePiece::Rein,
-            HorsePiece::Hoof,
-        ] {
-            assert!(all.contains(&piece), "{piece:?}");
-        }
+        let body = |app: &mut App| {
+            let mut bodies = app.world_mut().query::<(&HorseBody, &Transform)>();
+            let (b, t) = bodies.single(app.world()).unwrap();
+            (b.clone(), *t)
+        };
+        let (b, t) = body(&mut app);
+        assert_eq!(b.gait, HorseGait::Gallop);
+        assert_eq!(b.rider, None);
+        assert!(!b.never_freezes(), "a tied horse may freeze");
+        assert!(
+            (t.rotation * Vec3::X).distance(Vec3::NEG_X) < 1e-4,
+            "turned west"
+        );
+        app.world_mut().entity_mut(horse).insert(VisualPose {
+            heading: Heading::from_radians(PI / 2.0),
+            animation: AnimationState::Gallop,
+            speed: 5.0,
+        });
+        app.update();
+        let (b, t) = body(&mut app);
+        assert_eq!(b.gait, HorseGait::Trot);
+        let front = Quat::from_rotation_y(PI / 2.0) * Vec3::X;
+        assert!((t.rotation * Vec3::X).distance(front) < 1e-4);
     }
 
     #[test]

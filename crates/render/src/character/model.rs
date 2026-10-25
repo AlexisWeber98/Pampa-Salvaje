@@ -9,7 +9,8 @@
 //! body and skinned like it, and the hats, kepi, neckerchiefs, faja and
 //! rastra, poncho, strap, watch chain and brass buttons. They are drawn by default
 //! ([`CharacterModelsShown`]); the debug console's `models off`
-//! brings back the rigid figures.
+//! brings back the rigid figures of the people on foot. The rigid rider
+//! is gone with the procedural horse.
 //!
 //! A [`FigureKind`] with a model ([`model_name`]) looks for
 //! `assets/characters/<name>/model.gltf` at startup ([`CharacterModels`]).
@@ -28,8 +29,7 @@
 //! The body keeps turning to the heading as before, carrying the model,
 //! and the clip driver ([`rig`](super::rig)) plays the shared animation
 //! clips ([`clips`](super::clips)) on it: it stands, walks, jogs and talks
-//! with them, and glances around like the figure. Riders keep their rigid
-//! figures for now.
+//! with them, and glances around like the figure.
 
 use std::collections::HashMap;
 use std::f32::consts::FRAC_PI_2;
@@ -47,8 +47,8 @@ use crate::gltf::{self, ModelState};
 /// Where the character models live, under the [`AssetRoot`].
 pub const CHARACTER_DIR: &str = "characters";
 
-/// The model folder of a figure kind, if it has one. Only figures on foot
-/// wear it: a rider keeps the rigid figure.
+/// The model folder of a figure kind, if it has one: on foot (unless the
+/// models are off).
 pub fn model_name(kind: FigureKind) -> Option<&'static str> {
     match kind {
         FigureKind::Protagonist => Some("protagonist"),
@@ -150,9 +150,6 @@ pub(super) fn toggle_character_models(
         return;
     }
     for (body, figure, children) in &bodies {
-        if figure.seat.is_some() {
-            continue;
-        }
         let children = children.into_iter().flatten().copied();
         let has_model = children.clone().any(|c| attached.contains(c));
         if shown.0 && !has_model {
@@ -418,7 +415,7 @@ mod tests {
     }
 
     #[test]
-    fn the_protagonist_wears_his_model_on_foot_but_not_in_the_saddle() {
+    fn the_toggle_puts_models_on_people_on_foot_and_leaves_riders_to_their_horse() {
         use crate::character::{CharacterVisual, Coat};
         let (mut app, _) = toggle_app();
         let mut models = app.world_mut().resource_mut::<CharacterModels>();
@@ -436,7 +433,12 @@ mod tests {
                 coat: Coat::HIDALGO,
             });
         app.update();
-        assert_eq!(model_count(&mut app), 1, "the rider stays rigid");
+        // His figure and its model go; nothing is drawn on the horse.
+        assert_eq!(
+            model_count(&mut app),
+            1,
+            "no model on a figure in the saddle"
+        );
         // Even when the models are turned off and on again.
         app.insert_resource(CharacterModelsShown(false));
         app.update();

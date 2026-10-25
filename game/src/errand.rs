@@ -526,9 +526,7 @@ mod tests {
     use crate::ride::testing::arrive;
     use pampa_core::Vec2 as GroundVec2;
     use pampa_core::{ErrandStage, Terrain, Travel};
-    use pampa_render::character::{
-        FigureBody, FigureJoint, FigurePart, HorseBody, HorseJointPart, HorsePartMesh,
-    };
+    use pampa_render::character::{FigureBody, FigureJoint, FigurePart, HorseBody, HorseModel};
     use pampa_render::{CharacterVisual, CharacterVisualPlugin, Coat, FigureKind, WorldTowns};
 
     /// Every line said, by whom.
@@ -579,9 +577,9 @@ mod tests {
         p.rider.speed = 0.0;
     }
 
-    /// Horse bodies, figure bodies, figure joints, figure parts, horse joints
-    /// and horse parts drawn under `who`, and meshes that are none of those.
-    fn drawn_under(app: &mut App, who: Entity) -> [usize; 7] {
+    /// Horse bodies, figure bodies, figure joints, figure parts and horse
+    /// models drawn under `who`, and meshes that are no figure part.
+    fn drawn_under(app: &mut App, who: Entity) -> [usize; 6] {
         let mut under = Vec::new();
         let mut stack = vec![who];
         while let Some(e) = stack.pop() {
@@ -592,17 +590,13 @@ mod tests {
         }
         let world = app.world();
         let n = |has: &dyn Fn(Entity) -> bool| under.iter().filter(|e| has(**e)).count();
-        let part = |e: Entity| {
-            world.get::<FigurePart>(e).is_some() || world.get::<HorsePartMesh>(e).is_some()
-        };
         [
             n(&|e| world.get::<HorseBody>(e).is_some()),
             n(&|e| world.get::<FigureBody>(e).is_some()),
             n(&|e| world.get::<FigureJoint>(e).is_some()),
             n(&|e| world.get::<FigurePart>(e).is_some()),
-            n(&|e| world.get::<HorseJointPart>(e).is_some()),
-            n(&|e| world.get::<HorsePartMesh>(e).is_some()),
-            n(&|e| world.get::<Mesh3d>(e).is_some() && !part(e)),
+            n(&|e| world.get::<HorseModel>(e).is_some()),
+            n(&|e| world.get::<Mesh3d>(e).is_some() && world.get::<FigurePart>(e).is_none()),
         ]
     }
 
@@ -622,7 +616,7 @@ mod tests {
             *app.world().get::<CharacterVisual>(me).unwrap(),
             CharacterVisual::Figure(FigureKind::Protagonist)
         );
-        let [horses, bodies, joints, parts, _, _, other] = drawn_under(&mut app, me);
+        let [horses, bodies, joints, parts, _, other] = drawn_under(&mut app, me);
         assert_eq!((horses, bodies, joints, other), (0, 1, 14, 0));
         assert!(parts >= 18, "{parts}");
 
@@ -635,33 +629,29 @@ mod tests {
         press_f(&mut app);
         assert_eq!(player(&mut app).1.rider.travel(), Travel::Riding);
         // One horse with the clerk in its saddle, and nothing else: no
-        // second clerk on foot, nothing else drawn.
-        let [
-            horses,
-            bodies,
-            joints,
-            parts,
-            horse_joints,
-            horse_parts,
-            other,
-        ] = drawn_under(&mut app, me);
-        assert_eq!((horses, bodies, joints, other), (1, 1, 14, 0));
-        assert!(
-            parts >= 18 && horse_joints == 18 && horse_parts > 60,
-            "{parts} {horse_parts}"
+        // clerk on foot left, nothing rigid. (This app loads no models: the
+        // horse and its rider wait for theirs, drawing nothing.)
+        let [horses, bodies, joints, parts, models, other] = drawn_under(&mut app, me);
+        assert_eq!(
+            (horses, bodies, joints, parts, models, other),
+            (1, 0, 0, 0, 1, 0)
         );
         let children: Vec<Entity> = app.world().get::<Children>(me).unwrap().to_vec();
         assert_eq!(children.len(), 1, "only the horse and its rider");
         let horse = app.world().get::<HorseBody>(children[0]).unwrap();
         assert_eq!(horse.coat, Coat::Bayo, "Don Hidalgo's bayo");
-        // The clerk's figure rides that horse; the one on foot is gone.
-        let mut riders = app.world_mut().query::<(Entity, &FigureBody)>();
-        let mine: Vec<_> = riders
-            .iter(app.world())
-            .filter(|(_, b)| b.kind == FigureKind::Protagonist)
-            .collect();
-        assert_eq!(mine.len(), 1);
-        assert_eq!(mine[0].1.seat, Some(children[0]));
+        assert_eq!(
+            horse.rider,
+            Some(FigureKind::Protagonist),
+            "the clerk rides it"
+        );
+        let mut figures = app.world_mut().query::<&FigureBody>();
+        assert!(
+            figures
+                .iter(app.world())
+                .all(|b| b.kind != FigureKind::Protagonist),
+            "no clerk on foot"
+        );
         // The tied horse he took is gone from the store too.
         let mut tied = app.world_mut().query::<&TetheredHorse>();
         assert!(tied.iter(app.world()).all(|h| h.0 != e.horse().0));

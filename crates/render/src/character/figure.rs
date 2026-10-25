@@ -162,14 +162,8 @@ impl Joint {
     pub(super) fn rotation(self, a: &JointAngles, glance: f32) -> Quat {
         // Positive Z turns a hanging limb toward +X (forward).
         match self {
-            // A rider's thighs open sideways first, then swing forward; the
-            // knee undoes the opening so the shin hangs straight down.
-            Self::Hip(s) => {
-                Quat::from_rotation_z(a.hip[s.index()]) * Quat::from_rotation_x(-s.z() * a.spread)
-            }
-            Self::Knee(s) => {
-                Quat::from_rotation_x(s.z() * a.spread) * Quat::from_rotation_z(a.knee[s.index()])
-            }
+            Self::Hip(s) => Quat::from_rotation_z(a.hip[s.index()]),
+            Self::Knee(s) => Quat::from_rotation_z(a.knee[s.index()]),
             Self::Pelvis => Quat::IDENTITY,
             Self::Waist => Quat::from_rotation_z(-a.lean),
             // The head stays nearly level while the torso leans.
@@ -1220,7 +1214,7 @@ impl FigureKit {
     }
 }
 
-/// The asset stores and palette a figure or horse is drawn with.
+/// The asset stores and palette a figure is drawn with.
 pub(super) type Paints<'a> = (
     &'a mut Palette,
     &'a mut Assets<StandardMaterial>,
@@ -1233,9 +1227,6 @@ pub struct FigureBody {
     pub kind: FigureKind,
     /// How far through the gait (or breath) cycle, in cycles (`0..1`).
     pub phase: f32,
-    /// The horse body this figure rides, if any: it then sits the horse's
-    /// gait instead of walking its own.
-    pub seat: Option<Entity>,
     /// Seconds since it was drawn (wrapped at
     /// [`pampa_core::MOTION_CLOCK_PERIOD`]), and its own seed, for glancing around.
     pub clock: f32,
@@ -1257,8 +1248,6 @@ pub struct FigureJoint(pub Joint);
 pub struct FigurePart(pub Piece);
 
 /// Spawns `kind`'s body, joints and parts under `parent`; returns the body.
-/// A rider (`seat`: the horse body) sits at its saddle, under `parent`, the
-/// horse's trunk.
 pub(super) fn spawn_figure(
     commands: &mut Commands,
     kit: &mut FigureKit,
@@ -1266,17 +1255,11 @@ pub(super) fn spawn_figure(
     parent: Entity,
     kind: FigureKind,
     phase: f32,
-    seat: Option<Entity>,
 ) -> Entity {
-    let at = if seat.is_some() {
-        super::horse::rider_offset()
-    } else {
-        Vec3::ZERO
-    };
     let body = commands
         .spawn((
             Name::new("Figure"),
-            Transform::from_translation(at),
+            Transform::default(),
             Visibility::default(),
             ChildOf(parent),
         ))
@@ -1310,7 +1293,6 @@ pub(super) fn spawn_figure(
     commands.entity(body).insert(FigureBody {
         kind,
         phase,
-        seat,
         clock: 0.0,
         seed: parent.index_u32(),
         glance: 0.0,
@@ -1320,12 +1302,10 @@ pub(super) fn spawn_figure(
 }
 
 /// Turns, bobs and poses each figure from its character's pose, its gait
-/// paced by speed. A rider sits its horse's gait, already turned and carried
-/// by the horse.
+/// paced by speed.
 pub(super) fn update_figures(
     time: Res<Time>,
     poses: Query<&super::VisualPose>,
-    horses: Query<&super::horse::HorseBody>,
     mut bodies: Query<(&ChildOf, &mut FigureBody, &mut Transform), Without<FigureJoint>>,
     mut joints: Query<(&FigureJoint, &mut Transform), Without<FigureBody>>,
 ) {
@@ -1333,27 +1313,14 @@ pub(super) fn update_figures(
     for (child_of, mut body, mut transform) in &mut bodies {
         // Wrapped, seamlessly: a game left running keeps a fine clock.
         body.clock = pampa_core::tick_clock(body.clock, dt);
-        let mut idle = false;
-        let angles = if let Some(horse) = body.seat {
-            let Ok(horse) = horses.get(horse) else {
-                continue;
-            };
-            body.phase = horse.phase;
-            let angles = pose::riding_pose(horse.gait, horse.phase);
-            transform.rotation = Quat::IDENTITY;
-            transform.translation = super::horse::rider_offset() + Vec3::Y * angles.bob;
-            angles
-        } else {
-            let Ok(visual) = poses.get(child_of.parent()) else {
-                continue;
-            };
-            idle = visual.animation == AnimationState::Idle;
-            body.phase = pose::advance(body.phase, visual.animation, visual.speed, dt);
-            let angles = pose::pose(visual.animation, body.phase);
-            transform.rotation = body_rotation(visual.heading);
-            transform.translation.y = angles.bob;
-            angles
+        let Ok(visual) = poses.get(child_of.parent()) else {
+            continue;
         };
+        let idle = visual.animation == AnimationState::Idle;
+        body.phase = pose::advance(body.phase, visual.animation, visual.speed, dt);
+        let angles = pose::pose(visual.animation, body.phase);
+        transform.rotation = body_rotation(visual.heading);
+        transform.translation.y = angles.bob;
         // Standing people glance around now and then; the turn eases in and
         // out, so starting to walk looks ahead again smoothly.
         let target = if idle {
