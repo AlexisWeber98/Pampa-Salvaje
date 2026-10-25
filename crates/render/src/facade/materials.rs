@@ -1,4 +1,5 @@
-//! The settlements' PBR materials: one shared material per surface.
+//! The settlements' and towns' PBR materials: one shared material per
+//! surface.
 //!
 //! The textured surfaces wear the CC0 sets in
 //! `assets/textures/buildings/<set>/` (ambientCG and Poly Haven, plus our
@@ -10,6 +11,10 @@
 //! surface). `tools/textures_to_ktx2.sh` makes them from the JPEG sources
 //! beside them: UASTC with baked mips, which Bevy transcodes at load to the
 //! GPU's block format (BC7 on desktop), a quarter of RGBA8's memory.
+//!
+//! A few surfaces wear the same set under another tint (the towns' lime
+//! washes and grey stucco over `plaster_003`); the asset server loads such
+//! a set's maps once.
 //!
 //! Without an asset server (headless tests) or when a set's files are
 //! missing, the surface falls back to a plain colour of the same look.
@@ -28,7 +33,8 @@ use crate::AssetRoot;
 /// Where the building texture sets live, under the [`AssetRoot`].
 pub const TEXTURE_DIR: &str = "textures/buildings";
 
-/// What a piece of a settlement is made of. Each is one shared material.
+/// What a piece of a settlement or a town building is made of. Each is
+/// one shared material.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Surface {
     /// Adobe walls: mud plaster (`clay_plaster`).
@@ -57,11 +63,17 @@ pub enum Surface {
     Sheet,
     /// Still water in a tank, trough or well.
     Water,
+    /// A warm ochre lime wash over plaster (`plaster_003`, tinted): town
+    /// fronts.
+    Lime,
+    /// Grey stucco (`plaster_003`, tinted): plinths, sills and the
+    /// mouldings of brick fronts.
+    Stucco,
 }
 
 impl Surface {
     /// Every surface, in order.
-    pub const ALL: [Surface; 13] = [
+    pub const ALL: [Surface; 15] = [
         Surface::Adobe,
         Surface::Whitewash,
         Surface::Brick,
@@ -75,13 +87,15 @@ impl Surface {
         Surface::Steel,
         Surface::Sheet,
         Surface::Water,
+        Surface::Lime,
+        Surface::Stucco,
     ];
 
     /// The texture set it wears, if any.
     pub fn set(self) -> Option<&'static str> {
         Some(match self {
             Self::Adobe => "clay_plaster",
-            Self::Whitewash => "plaster_003",
+            Self::Whitewash | Self::Lime | Self::Stucco => "plaster_003",
             Self::Brick => "brick_wall_02",
             Self::OldIron => "corrugated_iron_02",
             Self::Galvanised => "corrugated_iron",
@@ -98,7 +112,7 @@ impl Surface {
         match self {
             Self::Brick | Self::Planks | Self::Thatch => 2.0,
             Self::OldIron | Self::Galvanised => 2.0,
-            Self::Adobe | Self::Whitewash | Self::Mud => 2.5,
+            Self::Adobe | Self::Whitewash | Self::Lime | Self::Stucco | Self::Mud => 2.5,
             Self::Yard => 3.0,
             Self::Recess | Self::Steel | Self::Sheet | Self::Water => 1.0,
         }
@@ -112,6 +126,8 @@ impl Surface {
             return match self {
                 Self::Whitewash => Color::srgb(0.97, 0.95, 0.90),
                 Self::Galvanised => Color::srgb(0.92, 0.93, 0.94),
+                Self::Lime => Color::srgb(0.96, 0.84, 0.64),
+                Self::Stucco => Color::srgb(0.70, 0.68, 0.64),
                 _ => Color::WHITE,
             };
         }
@@ -129,6 +145,8 @@ impl Surface {
             Self::Steel => (0.24, 0.24, 0.25),
             Self::Sheet => (0.70, 0.71, 0.71),
             Self::Water => (0.10, 0.13, 0.13),
+            Self::Lime => (0.86, 0.75, 0.56),
+            Self::Stucco => (0.62, 0.60, 0.57),
         };
         Color::srgb(r, g, b)
     }
@@ -154,11 +172,11 @@ impl Surface {
 
 /// One shared material per [`Surface`].
 #[derive(Resource, Debug, Clone)]
-pub struct SettlementMaterials {
+pub struct FacadeMaterials {
     materials: Vec<(Surface, Handle<StandardMaterial>)>,
 }
 
-impl SettlementMaterials {
+impl FacadeMaterials {
     /// The material of `surface`.
     pub fn get(&self, surface: Surface) -> Handle<StandardMaterial> {
         self.materials
@@ -207,11 +225,11 @@ pub(crate) fn setup_materials(
         .collect();
     if root.is_some() && server.is_some() {
         info!(
-            "settlement materials: {} surfaces, {textured} textured",
+            "facade materials: {} surfaces, {textured} textured",
             Surface::ALL.len()
         );
     }
-    commands.insert_resource(SettlementMaterials { materials: built });
+    commands.insert_resource(FacadeMaterials { materials: built });
 }
 
 /// The files of a texture set, under `TEXTURE_DIR/<set>/`: colour (sRGB),

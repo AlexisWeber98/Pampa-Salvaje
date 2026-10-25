@@ -1,4 +1,5 @@
-//! A small mesh builder for the procedural settlement buildings and props.
+//! A small mesh builder for the procedural settlement and town buildings
+//! and props.
 //!
 //! Every piece is added to the buffer of its [`Surface`], so a structure
 //! ends up as one mesh per surface it wears. Faces carry flat normals,
@@ -136,6 +137,75 @@ impl Shape {
             Transform::from_translation((min + max) / 2.0).with_scale(max - min),
             false,
         );
+    }
+
+    /// An axis-aligned box from `min` to `max` without its underside, its
+    /// four vertical edges bevelled `chamfer` wide: an octagonal prism.
+    pub fn chamfered(&mut self, surface: Surface, min: Vec3, max: Vec3, chamfer: f32) {
+        let c = chamfer
+            .min((max.x - min.x) / 3.0)
+            .min((max.z - min.z) / 3.0);
+        if c <= 1e-4 {
+            self.block(surface, min, max);
+            return;
+        }
+        // The section's corners, counter-clockwise seen from above.
+        let ring = [
+            (max.x - c, max.z),
+            (max.x, max.z - c),
+            (max.x, min.z + c),
+            (max.x - c, min.z),
+            (min.x + c, min.z),
+            (min.x, min.z + c),
+            (min.x, max.z - c),
+            (min.x + c, max.z),
+        ];
+        for k in 0..ring.len() {
+            let (a, b) = (ring[k], ring[(k + 1) % ring.len()]);
+            self.face(
+                surface,
+                &[
+                    Vec3::new(a.0, min.y, a.1),
+                    Vec3::new(b.0, min.y, b.1),
+                    Vec3::new(b.0, max.y, b.1),
+                    Vec3::new(a.0, max.y, a.1),
+                ],
+            );
+        }
+        // The top, as a fan of quads round its middle.
+        let top = |(x, z): (f32, f32)| Vec3::new(x, max.y, z);
+        for k in (0..ring.len()).step_by(2) {
+            let n = ring.len();
+            self.face(
+                surface,
+                &[
+                    top(ring[k]),
+                    top(ring[(k + 1) % n]),
+                    top(ring[(k + 2) % n]),
+                    Vec3::new((min.x + max.x) / 2.0, max.y, (min.z + max.z) / 2.0),
+                ],
+            );
+        }
+    }
+
+    /// Adds every piece of `other`, moved by the rigid `transform`.
+    pub fn merge(&mut self, other: Shape, transform: Transform) {
+        let m = transform.to_matrix();
+        for (surface, part) in other.parts {
+            let b = self.buffers(surface);
+            let base = b.positions.len() as u32;
+            for k in 0..part.positions.len() {
+                let p = m.transform_point3(Vec3::from_array(part.positions[k]));
+                let n = transform.rotation * Vec3::from_array(part.normals[k]);
+                let [tx, ty, tz, w] = part.tangents[k];
+                let t = transform.rotation * Vec3::new(tx, ty, tz);
+                b.positions.push(p.to_array());
+                b.normals.push(n.to_array());
+                b.uvs.push(part.uvs[k]);
+                b.tangents.push([t.x, t.y, t.z, w]);
+            }
+            b.indices.extend(part.indices.iter().map(|i| base + i));
+        }
     }
 
     /// A square-section beam `thickness` thick from `from` to `to`, its
@@ -301,6 +371,21 @@ impl Shape {
             .collect()
     }
 
+    /// The indices of the mesh of `surface`, into [`Self::vertices`], for
+    /// tests and previews.
+    #[cfg(test)]
+    pub fn indices(&self, surface: Surface) -> Vec<u32> {
+        let mut base = 0;
+        let mut out = Vec::new();
+        for (s, b) in &self.parts {
+            if *s == surface {
+                out.extend(b.indices.iter().map(|i| base + i));
+                base += b.positions.len() as u32;
+            }
+        }
+        out
+    }
+
     /// One mesh per surface.
     pub fn into_meshes(self) -> Vec<(Surface, Mesh)> {
         self.parts
@@ -324,6 +409,8 @@ impl Shape {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
 
     #[test]
@@ -372,5 +459,60 @@ mod tests {
             let out = Vec3::new(p[0], 0.0, p[2]).normalize();
             assert!(Vec3::from_array(*n).dot(out) > 0.99);
         }
+    }
+
+    #[test]
+    fn a_chamfered_block_bevels_its_vertical_edges_and_faces_out() {
+        let mut shape = Shape::default();
+        let (min, max) = (Vec3::new(-0.25, 0.0, -0.1), Vec3::new(0.25, 3.0, 0.1));
+        shape.chamfered(Surface::Whitewash, min, max, 0.04);
+        let vertices = shape.vertices(Surface::Whitewash);
+        // Eight sides and a top, no underside.
+        assert_eq!(shape.triangles(), 8 * 2 + 4 * 2);
+        assert!(vertices.iter().all(|(_, n, _)| n.y > -0.5));
+        // Four bevels at 45 degrees between the faces.
+        let bevels: HashSet<[i32; 3]> = vertices
+            .iter()
+            .filter(|(_, n, _)| n.y.abs() < 0.1 && n.x.abs() > 0.5 && n.z.abs() > 0.5)
+            .map(|(_, n, _)| (*n * 10.0).round().as_ivec3().to_array())
+            .collect();
+        assert_eq!(bevels.len(), 4, "{bevels:?}");
+        // Every face looks away from the middle, and stays in the box.
+        let mid = (min + max) / 2.0;
+        for [a, b, c] in shape.triangles_of(Surface::Whitewash) {
+            let n = (b - a).cross(c - a);
+            assert!(n.dot((a + b + c) / 3.0 - mid) > 0.0);
+            for p in [a, b, c] {
+                assert!(p.cmpge(min - 1e-5).all() && p.cmple(max + 1e-5).all());
+            }
+        }
+    }
+
+    #[test]
+    fn a_merged_shape_moves_rigidly_into_its_place() {
+        let mut part = Shape::default();
+        part.block(Surface::Brick, Vec3::ZERO, Vec3::new(2.0, 1.0, 0.5));
+        part.block(Surface::Planks, Vec3::ZERO, Vec3::ONE);
+        let before = part.vertices(Surface::Brick);
+        let turn = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        let place = Transform::from_xyz(5.0, 1.0, -3.0).with_rotation(turn);
+        let mut shape = Shape::default();
+        shape.block(Surface::Brick, Vec3::splat(10.0), Vec3::splat(11.0));
+        shape.merge(part.clone(), place);
+        assert_eq!(shape.triangles(), 10 + part.triangles());
+        let after = shape.vertices(Surface::Brick);
+        // Brick's own block first, then the merged one, moved and turned.
+        for ((p0, n0, uv0), (p1, n1, uv1)) in before.iter().zip(&after[before.len()..]) {
+            assert!(place.transform_point(*p0).distance(*p1) < 1e-5);
+            assert!((turn * *n0).distance(*n1) < 1e-5);
+            assert_eq!(uv0, uv1);
+        }
+        // Its indices point at its own vertices.
+        let indices = shape.indices(Surface::Brick);
+        assert!(
+            indices[indices.len() / 2..]
+                .iter()
+                .all(|&i| i as usize >= before.len())
+        );
     }
 }

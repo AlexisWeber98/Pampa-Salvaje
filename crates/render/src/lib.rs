@@ -11,6 +11,7 @@ pub mod atmosphere;
 pub mod bubble;
 pub mod character;
 pub mod coords;
+pub mod facade;
 pub mod fade;
 pub mod fauna;
 pub mod fence;
@@ -40,6 +41,7 @@ pub use character::{
     TOWNSFOLK_LOOKS, Talking, VisualPose,
 };
 pub use coords::world_from_ground;
+pub use facade::{FacadeMaterials, Surface};
 pub use fade::{FadeLayer, FadePlugin, ScreenFade};
 pub use fauna::{ANIMATE_FAR, Animal, AnimalPose, AnimalSeed, FaunaKit, FaunaPlugin, Gait};
 pub use fence::{FencePiece, FencePlugin, GatePart, WorldFences};
@@ -54,8 +56,8 @@ pub use minimap::{MapIcon, MapTarget, MinimapPlugin};
 pub use rail::{LineTrack, RailPlugin, WorldRail};
 pub use road::{CrossingPart, RoadPlugin, RoadSurface, SignpostPart};
 pub use settlement::{
-    ModelRotor, ModelSlots, SettlementMaterials, SettlementPart, SettlementPlugin, SlotFit,
-    SlotRotor, Surface, TrackSurface, WorldSettlements, YardPart, YardProp, YardSurface,
+    ModelRotor, ModelSlots, SettlementPart, SettlementPlugin, SlotFit, SlotRotor, TrackSurface,
+    WorldSettlements, YardPart, YardProp, YardSurface,
 };
 pub use signs::{SignPlugin, Signboard};
 pub use streaming::{StreamingPlan, StreamingSet};

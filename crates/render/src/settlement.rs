@@ -9,7 +9,8 @@
 //!
 //! - every house, barn and prop, built procedurally in its own space (see
 //!   [`buildings`] and [`props`]) as one mesh per [`Surface`] it wears, all
-//!   sharing one PBR material per surface ([`SettlementMaterials`]);
+//!   sharing one PBR material per surface ([`FacadeMaterials`]), built
+//!   with the facade kit shared with the towns ([`crate::facade`]);
 //! - the windpump's wheel apart, spinning as a [`WindmillRotor`] (turned by
 //!   the [`crate::TownPlugin`]);
 //! - the eucalyptus grove and the poplar row: the vegetation models'
@@ -34,12 +35,14 @@
 
 pub mod buildings;
 pub mod crown;
-pub mod materials;
 pub mod props;
-pub mod shape;
 pub mod slots;
 pub mod track;
 pub mod yard;
+
+/// The shared facade kit's mesh builder and materials, which the
+/// settlements were first built with.
+pub use crate::facade::{materials, shape};
 
 use bevy::camera::visibility::VisibilityRange;
 use std::sync::Arc;
@@ -56,7 +59,7 @@ use pampa_core::{
     Terrain, Track, Vec2 as GroundVec2,
 };
 
-pub use materials::{SettlementMaterials, Surface};
+pub use materials::{FacadeMaterials, Surface};
 pub use slots::{ModelRotor, ModelSlots, SlotFit, SlotFolder, SlotModels, SlotRotor, StandIn};
 pub use yard::{YardModels, YardProp};
 
@@ -154,6 +157,7 @@ pub struct SettlementPlugin;
 
 impl Plugin for SettlementPlugin {
     fn build(&self, app: &mut App) {
+        crate::facade::ensure_plugin(app);
         app.init_resource::<WorldSettlements>()
             .init_resource::<WorldTerrain>()
             .init_resource::<WorldChunks>()
@@ -161,12 +165,7 @@ impl Plugin for SettlementPlugin {
             .init_resource::<SlotFolder>()
             .add_systems(
                 Startup,
-                (
-                    materials::setup_materials,
-                    setup_kit,
-                    slots::load_slot_models,
-                    yard::load_yard_models,
-                ),
+                (setup_kit, slots::load_slot_models, yard::load_yard_models),
             )
             .add_systems(Update, (slots::swap_in_models, slots::spin_model_rotors))
             .add_observer(slots::dress_scene)
@@ -294,7 +293,7 @@ struct Painter<'a> {
     /// The drawn ground's height (the chunk mesh's, not the finer logic
     /// terrain's), so nothing floats or sinks.
     ground: &'a dyn Fn(GroundVec2) -> f32,
-    surfaces: &'a SettlementMaterials,
+    surfaces: &'a FacadeMaterials,
     kit: &'a SettlementKit,
     models: Option<&'a VegetationModels>,
     stand_ins: Option<&'a FloraKit>,
@@ -828,7 +827,7 @@ struct PaintKit {
     terrain: Terrain,
     size: f32,
     resolution: u32,
-    surfaces: SettlementMaterials,
+    surfaces: FacadeMaterials,
     kit: SettlementKit,
     models: Option<VegetationModels>,
     stand_ins: Option<FloraKit>,
@@ -883,7 +882,7 @@ impl PendingSettlements {
 fn lay_settlements(
     mut commands: Commands,
     (layout, terrain, world, detail): LayInputs,
-    (surfaces, kit): (Option<Res<SettlementMaterials>>, Option<Res<SettlementKit>>),
+    (surfaces, kit): (Option<Res<FacadeMaterials>>, Option<Res<SettlementKit>>),
     (models, stand_ins): (Option<Res<VegetationModels>>, Option<Res<FloraKit>>),
     (server, slots, fits, yard): LayModels,
     chunks: Query<(Entity, &TerrainChunk, Has<PendingGround>), Without<SettlementsLaid>>,

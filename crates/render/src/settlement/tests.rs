@@ -1015,7 +1015,7 @@ fn textured_surfaces(formats: bevy::image::CompressedImageFormats) -> usize {
     .insert_resource(bevy::image::CompressedImageFormatSupport(formats))
     .add_systems(Startup, materials::setup_materials);
     app.update();
-    let built = app.world().resource::<materials::SettlementMaterials>();
+    let built = app.world().resource::<materials::FacadeMaterials>();
     let assets = app.world().resource::<Assets<StandardMaterial>>();
     Surface::ALL
         .iter()
@@ -1041,9 +1041,11 @@ fn a_gpu_without_compressed_formats_draws_plain_colour() {
 #[test]
 fn every_set_ships_its_three_ktx2_maps_as_bc7_with_baked_mips() {
     use bevy::render::render_resource::TextureFormat;
-    let paths: Vec<(String, bool)> = Surface::ALL
-        .iter()
-        .filter_map(|s| s.set())
+    // A set worn under several tints is loaded once.
+    let sets: std::collections::BTreeSet<&str> =
+        Surface::ALL.iter().filter_map(|s| s.set()).collect();
+    let paths: Vec<(String, bool)> = sets
+        .into_iter()
         .flat_map(|set| materials::MAPS.map(|(name, srgb)| (materials::map_path(set, name), srgb)))
         .collect();
     assert_eq!(paths.len(), 9 * 3);
