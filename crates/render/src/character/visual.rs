@@ -20,6 +20,7 @@ use super::model::{
 use super::rider::{carry_stirrups, pose_riders, seat_riders, spawn_riders};
 use super::rig::{drive_rigs, fit_rigs};
 use super::tack::{dress_tack, stretch_straps};
+use super::townsfolk::TintCache;
 
 /// How a character is drawn. Swappable per entity without touching logic:
 /// inserting a new value replaces whatever was drawn before.
@@ -62,6 +63,7 @@ pub struct CharacterVisualPlugin;
 impl Plugin for CharacterVisualPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CharacterModelsShown>()
+            .init_resource::<TintCache>()
             .add_systems(
                 Startup,
                 (load_kits, load_character_models, load_character_clips),

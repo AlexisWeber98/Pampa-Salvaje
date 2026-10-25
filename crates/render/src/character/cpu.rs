@@ -15,6 +15,8 @@ pub struct Drawn {
     pub triangles: Vec<[u32; 3]>,
     /// Linear RGB per vertex: the material's colour times the mesh's.
     pub colors: Vec<[f32; 3]>,
+    /// Each vertex's strongest joint (none for a mesh not skinned).
+    pub strongest: Vec<Option<Entity>>,
 }
 
 /// Every visible mesh under `root` (or in the world), skinned or placed.
@@ -78,6 +80,7 @@ pub fn drawn(world: &mut World, root: Option<Entity>) -> Vec<Drawn> {
                 .map(|(j, b)| Some(world.get::<GlobalTransform>(*j)?.to_matrix() * *b))
                 .collect()
         });
+        let mut strongest = vec![None; p.len()];
         let positions: Vec<Vec3> = match (
             joints,
             mesh.attribute(Mesh::ATTRIBUTE_JOINT_INDEX),
@@ -87,16 +90,23 @@ pub fn drawn(world: &mut World, root: Option<Entity>) -> Vec<Drawn> {
                 Some(joints),
                 Some(VertexAttributeValues::Uint16x4(ji)),
                 Some(VertexAttributeValues::Float32x4(jw)),
-            ) => p
-                .iter()
-                .zip(ji)
-                .zip(jw)
-                .map(|((p, j), w)| {
-                    (0..4)
-                        .map(|k| w[k] * joints[j[k] as usize].transform_point3(Vec3::from(*p)))
-                        .sum()
-                })
-                .collect(),
+            ) => {
+                if let Some(skin) = skin {
+                    for ((s, j), w) in strongest.iter_mut().zip(ji).zip(jw) {
+                        let k = (0..4).max_by(|a, b| w[*a].total_cmp(&w[*b])).unwrap_or(0);
+                        *s = skin.joints.get(j[k] as usize).copied();
+                    }
+                }
+                p.iter()
+                    .zip(ji)
+                    .zip(jw)
+                    .map(|((p, j), w)| {
+                        (0..4)
+                            .map(|k| w[k] * joints[j[k] as usize].transform_point3(Vec3::from(*p)))
+                            .sum()
+                    })
+                    .collect()
+            }
             _ => p
                 .iter()
                 .map(|p| at.transform_point(Vec3::from(*p)))
@@ -130,6 +140,7 @@ pub fn drawn(world: &mut World, root: Option<Entity>) -> Vec<Drawn> {
             positions,
             triangles,
             colors,
+            strongest,
         });
     }
     out.sort_by_key(|d| d.entity);

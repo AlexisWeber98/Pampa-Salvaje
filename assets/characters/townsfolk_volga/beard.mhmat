@@ -1,0 +1,10 @@
+# The Volga German's full beard, light brown like his hair: the faun
+# beard's own texture turned grey and tinted.
+name townsfolk_volga_beard
+diffuseColor 0.50 0.38 0.25
+specularColor 0.02 0.02 0.02
+shininess 0.1
+transparent True
+backfaceCull False
+greyscaleTexture True
+diffuseTexture data/clothes/culturalibre_faun_beard/brown.png

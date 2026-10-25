@@ -58,6 +58,8 @@ same inputs give the same bytes.
 """
 
 import argparse
+import collections
+import copy
 import json
 import math
 import os
@@ -122,6 +124,34 @@ KNEE_KEEP = 0.35
 ARM_OUT = 10.0
 
 
+# The walks stood up from the pack's crouched game walk into an easy 1919
+# street walk (see ``Retargeter.upright``): the stride lengthened this many
+# times (so the game plays it slower: its 1.10 m/s becomes 1.26), the knees
+# straightened by this many degrees but never below this share of their
+# bend, the torso's mean lean from the vertical (degrees; the pack leans
+# 7 to 9), the upper arms' swing from back to forward of hanging and the
+# elbows' bend from least to most (degrees; the pack holds the shoulders
+# 6 cm back and the elbows bent 32 to 41).
+UPRIGHT = ("walk",)
+STRIDE = 1.15
+KNEE_EASE = 19.0
+KNEE_KEEP_WALK = 0.3
+# The least a walking knee bends, degrees: a knee pulled straight locks and
+# snaps back, which reads as a dislocation. How the hips' rise is shared by
+# the legs (meters of ankle height for most of the weight to shift to the
+# lower foot), and how many keys either side it is smoothed over.
+KNEE_MIN = 4.0
+STAND_BLEND = 0.012
+RISE_SMOOTH = 2
+# How often a swinging knee's bend is smoothed round the loop, and how far
+# (meters) its ankle lifts before it counts as swinging.
+SWING_SMOOTH = 2
+CONTACT_LIFT = 0.02
+LEAN = 2.0
+ARM_SWING = (-10.0, 14.0)
+ELBOW = (10.0, 25.0)
+
+
 # The clips that bring the hands to the chest, and how far in front of
 # every character's chest (and clothes) their forearms and hands must stay,
 # meters. The source mannequin's chest is slimmer than the MakeHuman men's
@@ -130,6 +160,9 @@ ARM_OUT = 10.0
 # by the least multiple of ``REACH_STEP`` (meters) that clears every model
 # given with ``--model`` (see ``Clearance`` and ``Retargeter.reach_out``).
 CLEAR = ("idle_fold_arms", "idle_talk")
+# What the townsfolk play of them (given with ``--talker``): they never fold
+# their arms, so those need not clear their chests.
+TALK = ("idle_talk",)
 # Every this many keys a reach is tried on first (see Retargeter.cleared).
 CLEAR_EVERY = 5
 CLEARANCE = 0.015
@@ -407,6 +440,47 @@ class Skeleton:
                 rot[k] = qnorm(qmul(rot[p], local_r[k]))
                 pos[k] = add(pos[p], qrot(rot[p], local_t[k]))
         return rot, pos
+
+
+def angle_between(a, b):
+    """The angle between vectors a and b, radians."""
+    c = sum(x * y for x, y in zip(unit(a), unit(b)))
+    return math.acos(max(-1.0, min(1.0, c)))
+
+
+def remap(value, values, into):
+    """`value` moved from the span of `values` onto the span `into` (low,
+    high), linearly; the middle of `into` when `values` do not vary."""
+    lo, hi = min(values), max(values)
+    if hi - lo < 1e-9:
+        return (into[0] + into[1]) / 2.0
+    return into[0] + (value - lo) / (hi - lo) * (into[1] - into[0])
+
+
+# What the walk's stride step knows of one leg at one key (see
+# ``Retargeter._legs``): its hip, knee and ankle, the ankle's stretched
+# goal, the thigh and shin lengths, the hips' rise that would give it its
+# eased bend (None: out of reach at any rise) and the reach of that bend.
+Leg = collections.namedtuple("Leg", "hip knee ankle goal thigh shin rise reach")
+
+
+def fill_round(values):
+    """`values` (a loop: the last is followed by the first) with each None
+    replaced by the linear blend of the nearest known values before and
+    after it, round the loop; RetargetError when none is known."""
+    known = [k for k, v in enumerate(values) if v is not None]
+    if not known:
+        raise RetargetError("no key of the walk has a leg that reaches its foot")
+    n = len(values)
+    out = list(values)
+    for k, v in enumerate(values):
+        if v is not None:
+            continue
+        before = max((j for j in known if j < k), default=known[-1] - n)
+        after = min((j for j in known if j > k), default=known[0] + n)
+        t = (k - before) / (after - before)
+        out[k] = values[before % n] * (1 - t) + values[after % n] * t
+    return out
 
 
 def leg_length(skeleton, calf, foot):
@@ -753,11 +827,13 @@ class Retargeter:
         moved = [(t, self.reach_out(local, place, ahead), p) for (t, local, p), place in zip(keys, places)]
         return moved, ahead
 
-    def clip(self, name, loop, locomotion, calm=(), clearance=None):
+    def clip(self, name, loop, locomotion, calm=(), clearance=None, upright=False):
         """One clip retargeted: key times, per-key local rotations by node,
         per-key pelvis local translations, and its measures. With a
         `clearance` (a ``Clearance``), the arms come forward until they
-        clear its models' chests."""
+        clear its models' chests; `upright`, a walk is stood up and its
+        stride lengthened (see ``upright``), and its speed measured on the
+        result."""
         times, rots, trans = self.source.frames(name)
         sk = self.source.skeleton
         posed = [sk.world(r, t) for r, t in zip(rots, trans)]
@@ -768,26 +844,284 @@ class Retargeter:
         if loop:
             first, last = posed[0][1][pelvis_s], posed[-1][1][pelvis_s]
             drift = (last[0] - first[0], 0.0, last[2] - first[2])
-        keys = []
+        raw = []
         for t, (s_rot, s_pos) in zip(times, posed):
             back = scale(drift, (t - start) / span)
             s_pos = [sub(p, back) for p in s_pos]
             local, place = self.pose(s_rot, s_pos)
             if calm:
                 local, place = self.calm(local, place, calm)
+            raw.append((t - start, local, place))
+        if upright:
+            raw = self.upright(raw)
+        keys = []
+        for t, local, place in raw:
             place = add(place, (0.0, self.below_ground(local, place), 0.0))
-            keys.append((t - start, local, self.pelvis_local(place)))
+            keys.append((t, local, place))
         measures = {}
+        if locomotion:
+            if upright:
+                speed = self.target_ground_speed(keys) + drift[2] * self.ratio / span
+            else:
+                speed = ground_speed(self.source, times, posed, drift) * self.ratio
+            measures.update(ground_speed=round(speed, 4), stride=round(speed * span, 4))
+        keys = [(t, local, self.pelvis_local(place)) for t, local, place in keys]
         if clearance is not None:
             keys, ahead = self.cleared(keys, clearance)
             measures["reach"] = round(ahead, 4)
-        if locomotion:
-            speed = ground_speed(self.source, times, posed, drift)
-            measures.update(
-                ground_speed=round(speed * self.ratio, 4),
-                stride=round(speed * self.ratio * span, 4),
-            )
-        return keys, measures
+        return keys, {k: measures[k] for k in ("reach", "ground_speed", "stride") if k in measures}
+
+    def target_ground_speed(self, keys):
+        """How fast a planted foot of the *target* slides back, m/s at the
+        target's own scale, posed by `keys` (time, local rotations, pelvis
+        world place) that are already held in place: ``ground_speed``'s
+        median measure, on the target's own ankles and balls, with no
+        ratio to apply and no drift to take out (the caller adds the loop's
+        drift speed, scaled to the target). Used for a clip changed on the
+        target (``UPRIGHT``), whose feet no longer move as the source's."""
+        tk = self.target
+        points = [tk.find(f"{bone}_{s}") for bone in ("foot", "ball") for s in ("l", "r")]
+        posed = [self.posed_world(local, place)[1] for _, local, place in keys]
+        lowest = {p: min(pos[p][1] for pos in posed) for p in points}
+        slides = []
+        for k in range(len(keys) - 1):
+            dt = keys[k + 1][0] - keys[k][0]
+            for p in points:
+                if max(posed[k][p][1], posed[k + 1][p][1]) > lowest[p] + CONTACT:
+                    continue
+                slides.append(-(posed[k + 1][p][2] - posed[k][p][2]) / dt)
+        if not slides:
+            raise RetargetError("no foot on the ground to measure the ground speed")
+        slides.sort()
+        middle = len(slides) // 2
+        return slides[middle] if len(slides) % 2 else (slides[middle - 1] + slides[middle]) / 2.0
+
+    def upright(self, keys):
+        """A walk (``UPRIGHT``) stood up from the pack's crouched, hurried
+        game walk into an easy 1919 street walk, key by key (`keys`: time,
+        local rotations, pelvis world place):
+
+        - the stride lengthened ``STRIDE`` times: each ankle's place ahead
+          of or behind its hip is stretched, at the same height, so the clip
+          covers more ground per step and plays slower in the game;
+        - the knees straightened by ``KNEE_EASE`` (never below
+          ``KNEE_KEEP_WALK`` of their bend, nor ``KNEE_MIN`` degrees), the
+          hips rising as the legs ask, blended by which stands and smoothed
+          round the loop (``_strides``): the standing leg nearly straight,
+          the swinging one still folding;
+        - the torso stood up to a mean lean of ``LEAN`` degrees, turned
+          back about its base (``spine_01``), its sway through the stride
+          kept;
+        - the shoulders down and relaxed: the clavicles at rest;
+        - the upper arms hanging from the shoulders as at rest, swinging
+          about it between ``ARM_SWING`` degrees back and forward, in step
+          with the pack's swing; the elbows bent between ``ELBOW``
+          degrees, most on the forward swing;
+        - the head level: turned back to its rest pitch."""
+        tk = self.target
+        f = tk.find
+        out = self._strides(keys)
+        # The torso's lean and the arms' swing, over the whole cycle.
+        leans, swings, bends = [], {"l": [], "r": []}, {"l": [], "r": []}
+        for _, local, place in out:
+            _, pos = self.posed_world(local, place)
+            v = sub(pos[f("neck_01")], pos[f("pelvis")])
+            leans.append(math.atan2(v[2], v[1]))
+            for s in "lr":
+                u = sub(pos[f(f"lowerarm_{s}")], pos[f(f"upperarm_{s}")])
+                swings[s].append(math.atan2(u[2], -u[1]))
+                bends[s].append(angle_between(u, sub(pos[f(f"hand_{s}")], pos[f(f"lowerarm_{s}")])))
+        back = sum(leans) / len(leans) - math.radians(LEAN)
+        result = []
+        for k, (t, local, place) in enumerate(out):
+            local = self._stand_up(local, place, back)
+            for s in "lr":
+                swing = remap(swings[s][k], swings[s], [math.radians(a) for a in ARM_SWING])
+                bend = remap(bends[s][k], bends[s], [math.radians(a) for a in ELBOW])
+                local = self._swing_arm(local, place, s, swing, bend)
+            local = self._level_head(local, place)
+            result.append((t, local, place))
+        return result
+
+    def _legs(self, local, place):
+        """What the stride step needs of one key: each side's hip, knee and
+        ankle, the ankle's goal (stretched ``STRIDE`` times ahead of or
+        behind its hip), the thigh and shin lengths, and the hips' rise
+        that would give that leg its eased bend (None when it cannot reach
+        its goal at any rise)."""
+        tk = self.target
+        f = tk.find
+        rot, pos = self.posed_world(local, place)
+        legs = {}
+        for s in "lr":
+            hip, knee, ankle = pos[f(f"thigh_{s}")], pos[f(f"calf_{s}")], pos[f(f"foot_{s}")]
+            goal = (ankle[0], ankle[1], hip[2] + STRIDE * (ankle[2] - hip[2]))
+            a, b = length(tk.rest_t[f(f"calf_{s}")]), length(tk.rest_t[f(f"foot_{s}")])
+            bend = angle_between(sub(knee, hip), sub(ankle, knee))
+            eased = max(bend - math.radians(KNEE_EASE), KNEE_KEEP_WALK * bend, math.radians(KNEE_MIN))
+            reach = math.sqrt(a * a + b * b + 2 * a * b * math.cos(eased))
+            across = (goal[0] - hip[0]) ** 2 + (goal[2] - hip[2]) ** 2
+            rise = goal[1] + math.sqrt(reach * reach - across) - hip[1] if reach * reach > across else None
+            legs[s] = Leg(hip, knee, ankle, goal, a, b, rise, reach)
+        return rot, legs
+
+    def _strides(self, keys):
+        """`keys` (a loop) with the stride lengthened and the knees eased
+        (see ``upright``). The hips' rise is a blend of what each leg asks,
+        weighed by how much nearer the ground its ankle is (``STAND_BLEND``),
+        never a switch from one leg to the other; then smoothed round the
+        loop (``RISE_SMOOTH`` keys either side, the last key the first
+        again), so the hips never step. A leg that cannot reach its goal at
+        that height reaches as far as its eased bend lets it (at least
+        ``KNEE_MIN``), its foot lifting a little: no knee is pulled
+        straighter than its own eased bend, so none locks or snaps."""
+        solved = [self._legs(local, place) for _, local, place in keys]
+        rises = []
+        for _, legs in solved:
+            w = {
+                s: 1.0 / (1.0 + math.exp((legs[s].ankle[1] - legs[o].ankle[1]) / STAND_BLEND))
+                for s, o in (("l", "r"), ("r", "l"))
+            }
+            known = [s for s in "lr" if legs[s].rise is not None]
+            if not known:
+                rises.append(None)
+                continue
+            total = sum(w[s] for s in known)
+            rises.append(sum(w[s] * legs[s].rise for s in known) / total)
+        n = len(rises) - 1 if len(rises) > 2 else len(rises)
+        ring = fill_round(rises[:n])
+        smooth = [
+            sum(ring[(k + j) % n] for j in range(-RISE_SMOOTH, RISE_SMOOTH + 1)) / (2 * RISE_SMOOTH + 1)
+            for k in range(n)
+        ]
+        smooth += [smooth[0]] * (len(rises) - n)
+        out = []
+        for (t, local, place), (rot, legs), rise in zip(keys, solved, smooth):
+            out.append((t,) + self._solve_legs(dict(local), place, rot, legs, rise))
+        return self._smooth_swings(out)
+
+    def _smooth_swings(self, keys):
+        """`keys` (a loop) with each knee's bend smoothed round the loop
+        (a 1-2-1 average, ``SWING_SMOOTH`` times) while its foot is off the
+        ground (its ankle over ``CONTACT_LIFT`` above its lowest): the
+        swinging shin folds and unfolds at an even pace, never in a flick.
+        A foot on the ground keeps its place."""
+        tk = self.target
+        f = tk.find
+        n = len(keys) - 1 if len(keys) > 2 else len(keys)
+        posed = [self.posed_world(local, place) for _, local, place in keys]
+        out = [(t, dict(local), place) for t, local, place in keys]
+        for s in "lr":
+            thigh, calf = f(f"thigh_{s}"), f(f"calf_{s}")
+            ankle = f(f"foot_{s}")
+            bend = [angle_between(sub(pos[calf], pos[thigh]), sub(pos[ankle], pos[calf])) for _, pos in posed[:n]]
+            low = min(pos[ankle][1] for _, pos in posed[:n])
+            smooth = list(bend)
+            for _ in range(SWING_SMOOTH):
+                smooth = [(smooth[(k - 1) % n] + 2 * smooth[k] + smooth[(k + 1) % n]) / 4 for k in range(n)]
+            for k in range(n):
+                rot, pos = posed[k]
+                lift = pos[ankle][1] - low
+                if lift <= CONTACT_LIFT:
+                    continue
+                # Fade in over the next 2 cm, so the foot leaves the ground
+                # as the clip lifts it.
+                w = min(1.0, (lift - CONTACT_LIFT) / 0.02)
+                turn = w * (smooth[k] - bend[k])
+                hinge = cross(sub(pos[calf], pos[thigh]), sub(pos[ankle], pos[calf]))
+                if length(hinge) < 1e-9:
+                    continue  # a straight knee: no hinge to turn about
+                hinge = unit(hinge)
+                calf_w = qnorm(qmul(qaxis_angle(hinge, turn), rot[calf]))
+                local = out[k][1]
+                local[calf] = qnorm(qmul(qinv(rot[thigh]), calf_w))
+        if len(keys) > n:
+            out[-1] = (out[-1][0], dict(out[0][1]), out[-1][2])
+        return out
+
+    def _solve_legs(self, local, place, rot, legs, rise):
+        tk = self.target
+        f = tk.find
+        place = add(place, (0.0, rise, 0.0))
+        pelvis_rot = rot[f("pelvis")]
+        for s in "lr":
+            hip, knee, ankle, goal, a, b, _, reach = legs[s]  # a Leg
+            h = add(hip, (0.0, rise, 0.0))
+            u = unit(sub(goal, h))
+            # Never straighter than its eased bend: hips set higher than
+            # this leg asked lift its foot instead of locking its knee.
+            d = min(max(length(sub(goal, h)), abs(a - b) + 1e-9), reach)
+            end = add(h, scale(u, d))
+            cos_hip = (a * a + d * d - b * b) / (2 * a * d)
+            # The knee bends the way it did, square to the hip-to-ankle line.
+            pole = sub(knee, hip)
+            pole = sub(pole, scale(u, sum(x * y for x, y in zip(pole, u))))
+            if length(pole) < 1e-6:
+                ahead = (0.0, 0.0, 1.0)
+                pole = sub(ahead, scale(u, sum(x * y for x, y in zip(ahead, u))))
+            pole = unit(pole)
+            kn = add(h, scale(add(scale(u, cos_hip), scale(pole, math.sqrt(max(0.0, 1 - cos_hip**2)))), a))
+            thigh, calf, foot = f(f"thigh_{s}"), f(f"calf_{s}"), f(f"foot_{s}")
+            thigh_w = qnorm(qmul(qarc(unit(sub(knee, hip)), unit(sub(kn, h))), rot[thigh]))
+            calf_w = qnorm(qmul(qarc(unit(sub(ankle, knee)), unit(sub(end, kn))), rot[calf]))
+            local[thigh] = qnorm(qmul(qinv(pelvis_rot), thigh_w))
+            local[calf] = qnorm(qmul(qinv(thigh_w), calf_w))
+            local[foot] = qnorm(qmul(qinv(calf_w), rot[foot]))
+        return local, place
+
+    def _stand_up(self, local, place, back):
+        """`local` with the torso turned back by `back` radians about the
+        body's side axis at its base, and the clavicles at rest."""
+        tk = self.target
+        f = tk.find
+        rot, _ = self.posed_world(local, place)
+        local = dict(local)
+        base = f("spine_01")
+        turned = qnorm(qmul(qaxis_angle((1.0, 0.0, 0.0), -back), rot[base]))
+        local[base] = qnorm(qmul(qinv(rot[tk.parent[base]]), turned))
+        for s in "lr":
+            local[f(f"clavicle_{s}")] = tk.rest_r[f(f"clavicle_{s}")]
+        return local
+
+    def _swing_arm(self, local, place, s, swing, bend):
+        """`local` with side `s`'s upper arm hanging as at rest, swung
+        `swing` radians forward about the body's side axis, and its elbow
+        bent `bend` radians forward; the hand keeps its turn on the
+        forearm."""
+        tk = self.target
+        f = tk.find
+        upper, lower = f(f"upperarm_{s}"), f(f"lowerarm_{s}")
+        rest_r, rest_p = self.t_rest_r, self.t_rest_p
+        hang = unit(sub(rest_p[lower], rest_p[upper]))
+        want = qrot(qaxis_angle((1.0, 0.0, 0.0), -swing), hang)
+        rot, pos = self.posed_world(local, place)
+        have = unit(sub(pos[lower], pos[upper]))
+        upper_w = qnorm(qmul(qarc(have, want), rot[upper]))
+        local = dict(local)
+        local[upper] = qnorm(qmul(qinv(rot[tk.parent[upper]]), upper_w))
+        rot, pos = self.posed_world(local, place)
+        forward = sub((0.0, 0.0, 1.0), scale(want, want[2]))
+        forward = unit(forward) if length(forward) > 1e-6 else (0.0, 0.0, 1.0)
+        fore_want = add(scale(want, math.cos(bend)), scale(forward, math.sin(bend)))
+        hand = f(f"hand_{s}")
+        fore_have = unit(sub(pos[hand], pos[lower]))
+        lower_w = qnorm(qmul(qarc(fore_have, unit(fore_want)), rot[lower]))
+        local[lower] = qnorm(qmul(qinv(rot[upper]), lower_w))
+        return local
+
+    def _level_head(self, local, place):
+        """`local` with the head turned back to its rest pitch (about the
+        body's side axis), keeping its turn aside."""
+        tk = self.target
+        head = tk.find("head")
+        rot, _ = self.posed_world(local, place)
+        up = qrot(rot[head], (0.0, 1.0, 0.0))
+        rest = qrot(self.t_rest_r[head], (0.0, 1.0, 0.0))
+        pitch = math.atan2(up[2], up[1]) - math.atan2(rest[2], rest[1])
+        turned = qnorm(qmul(qaxis_angle((1.0, 0.0, 0.0), -pitch), rot[head]))
+        local = dict(local)
+        local[head] = qnorm(qmul(qinv(rot[tk.parent[head]]), turned))
+        return local
 
 
 CONTACT = 0.01
@@ -807,16 +1141,17 @@ class Clearance:
     needs it. The models are our own converter's output, still read with
     every index checked."""
 
-    def __init__(self, paths):
+    def __init__(self, paths, talkers=()):
         try:
             import numpy as np
         except ImportError as e:
             raise RetargetError(f"--model needs numpy: {e}") from None
         self.np = np
         self.models = []
-        for path in paths:
+        for path, clips in [(p, CLEAR) for p in paths] + [(p, TALK) for p in talkers]:
             try:
                 self.models.append(self._read(path))
+                self.models[-1]["clips"] = clips
             except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as e:
                 # One line, like every other bad input (a malformed file's
                 # JSON or text, or an accessor that is not whole vectors).
@@ -886,6 +1221,13 @@ class Clearance:
             "torso": triangles[torso[triangles].all(axis=1)],
             "leg": leg,
         }
+
+    def for_clip(self, game):
+        """These models, only those that play the clip ``game``; None when
+        no model does."""
+        out = copy.copy(self)
+        out.models = [m for m in self.models if game in m["clips"]]
+        return out if out.models else None
 
     def skinned(self, model, reference, local, pelvis):
         """`model`'s vertices posed by `local` (game_engine bone name ->
@@ -962,7 +1304,10 @@ class Clearance:
 
 
 def ground_speed(source, times, posed, drift):
-    """The ground speed (m/s, source scale) a loop shows: how fast a point
+    """The ground speed (m/s, at the *source*'s scale: the caller multiplies
+    it by the leg ratio) a loop shows, measured on the source's own posed
+    keys, which still carry the loop's `drift` (taken out of each slide,
+    then added back as its speed): how fast a point
     of a foot on the ground slides back once the drift is taken out, plus
     the drift. The points are each ankle and each ball of the foot; one is
     on the ground while it is within ``CONTACT`` of its lowest height in the
@@ -1047,8 +1392,8 @@ def build(sources, target, clips=CLIPS, clearance=None):
     pelvis = tk.find("pelvis")
     for game, kind, name, loop, locomotion in clips:
         rt = retargeters[kind]
-        clear = clearance if game in CLEAR else None
-        keys, measures = rt.clip(name, loop, locomotion, CALM.get(game, ()), clear)
+        clear = clearance.for_clip(game) if clearance is not None and game in CLEAR else None
+        keys, measures = rt.clip(name, loop, locomotion, CALM.get(game, ()), clear, upright=game in UPRIGHT)
         times = put([(t,) for t, _, _ in keys], "SCALAR", minmax=True)
         samplers, channels = [], []
         for k in sorted(rt.bones, key=lambda b: out_index[b]):
@@ -1068,6 +1413,8 @@ def build(sources, target, clips=CLIPS, clearance=None):
         extras = {"source": f"{kind} {name}", "loop": loop}
         if game in CALM:
             extras["calmed"] = list(CALM[game])
+        if game in UPRIGHT:
+            extras["upright"] = True
         extras.update(measures)
         animations.append({"name": game, "channels": channels, "samplers": samplers, "extras": extras})
         summary.append((game, kind, name, keys[-1][0], len(keys), measures))
@@ -1127,6 +1474,12 @@ def main(argv=None):
         default=[],
         help="a character's model.gltf whose chest the arms must clear (repeat for each)",
     )
+    parser.add_argument(
+        "--talker",
+        action="append",
+        default=[],
+        help="a model.gltf whose chest only the talking hands must clear (repeat for each)",
+    )
     args = parser.parse_args(argv)
     try:
         sources = {
@@ -1134,7 +1487,7 @@ def main(argv=None):
             "ual2": Source(read_file(args.ual2, glbtrim.MAX_INPUT_BYTES), "ual2"),
         }
         target = read_target(read_file(args.target, MAX_TARGET_BYTES))
-        clearance = Clearance(sorted(args.model)) if args.model else None
+        clearance = Clearance(sorted(args.model), sorted(args.talker)) if args.model or args.talker else None
         doc, blob, summary = build(sources, target, clearance=clearance)
     except (RetargetError, glbtrim.TrimError, OSError) as e:
         print(f"retarget: {e}", file=sys.stderr)

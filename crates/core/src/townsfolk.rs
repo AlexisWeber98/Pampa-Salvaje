@@ -97,8 +97,10 @@ pub struct Townsperson {
 impl Townsperson {
     /// Collision radius of a person seen from above, in meters.
     pub const COLLIDER_RADIUS: f32 = 0.3;
-    /// Fastest walking pace, in m/s.
-    pub const WALK_MAX: f32 = 1.6;
+    /// Fastest walking pace, in m/s: an easy street walk is 1.25 to 1.5
+    /// (the animation's walk, stood up for 1919, steps naturally at about
+    /// 1.27 m/s).
+    pub const WALK_MAX: f32 = 1.5;
 
     /// What the person is doing, independent of how it is drawn.
     pub fn animation(&self) -> AnimationState {
@@ -201,7 +203,7 @@ const MAX_LANE: f32 = 0.9;
 /// Range of the pause at each intersection, in seconds.
 const PAUSE: (f32, f32) = (0.5, 4.0);
 /// Range of walking paces, in m/s.
-const PACE: (f32, f32) = (1.1, Townsperson::WALK_MAX);
+const PACE: (f32, f32) = (1.25, Townsperson::WALK_MAX);
 /// Seconds of almost no progress before a person gives up and turns back.
 const GIVE_UP: f32 = 2.0;
 
@@ -398,6 +400,20 @@ mod tests {
             assert!(town.streets.iter().any(|s| s.contains_point(p.position)));
             assert_eq!(world.resolve(p.collider, p.position, |_| ()), p.position);
         }
+    }
+
+    #[test]
+    fn people_walk_at_an_easy_street_pace() {
+        // 1.25 to 1.5 m/s, each their own: a 1919 street, nobody hurrying.
+        let (town, _) = town();
+        let folk = Townsfolk::new(&town, 200, 3);
+        let paces: Vec<f32> = folk.people.iter().map(|p| p.walk_speed).collect();
+        assert!(paces.iter().all(|v| (1.25..=1.5).contains(v)), "{paces:?}");
+        let (lo, hi) = paces
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(l, h), v| (l.min(*v), h.max(*v)));
+        assert!(lo < 1.3 && hi > 1.45, "varied: {lo} to {hi}");
+        assert_eq!(Townsperson::WALK_MAX, 1.5);
     }
 
     #[test]

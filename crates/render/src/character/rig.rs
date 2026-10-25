@@ -10,7 +10,8 @@
 //!   clips. Standing, a person plays their idle ([`idle_for`]); moving,
 //!   the idle fades into the walk, the jog and the sprint by ground speed
 //!   ([`locomotion`]), each walking clip paced to that speed
-//!   ([`playback_rate`]) so the feet keep still on the ground. The weights
+//!   ([`playback_rate`]), over the model's legs against the clips'
+//!   ([`model_stride`]), so the feet keep still on the ground. The weights
 //!   ease toward their targets, and every clip starts at the person's own
 //!   seeded point ([`phase_offset`]). The model also undoes the carrier's
 //!   stride bob: the clips bob the pelvis themselves.
@@ -18,7 +19,8 @@
 //!   made on the protagonist, so the pelvis's moves are scaled by this
 //!   model's legs and set about its own rest ([`fit_pelvis`]); then the
 //!   neck and head turn by the figure's glance, half each, on top of the
-//!   clip ([`glance_turn`]).
+//!   clip ([`glance_turn`]); a model in a long skirt has its upper arms
+//!   turned out a little ([`arm_out`]).
 //!
 //! A rider (see [`rider`](super::rider)) plays only the seated clip
 //! ([`SEATED`]): a clip at no weight still sets the bones only it animates.
@@ -38,6 +40,7 @@ use super::clips::{
 use super::figure::{FigureBody, FigureKind};
 use super::model::model_transform;
 use super::rider::Riding;
+use super::townsfolk::{SKIRT_ARMS_OUT, arm_out};
 use super::visual::VisualPose;
 use crate::fauna::livestock::{any_in_view, frozen, view_eye};
 
@@ -84,6 +87,10 @@ pub struct Rig {
     /// The neck and the head, each with its parent's rest orientation in
     /// the body frame.
     pub look: [Option<(Entity, Quat)>; 2],
+    /// A model in a long skirt: its left and right upper arms, each with
+    /// its parent's rest orientation in the body frame, turned out by
+    /// [`SKIRT_ARMS_OUT`] on top of the clips.
+    pub arms: [Option<(Entity, Quat)>; 2],
     /// Every mesh of the model: it is in view while any of them is drawn.
     pub probes: Vec<Entity>,
     /// Whether the bones keep their last pose (see [`frozen`]).
@@ -101,6 +108,7 @@ impl Rig {
             player,
             pelvis: None,
             look: [None; 2],
+            arms: [None; 2],
             probes: Vec::new(),
             frozen: false,
             weights: [0.0; Clip::COUNT],
@@ -171,6 +179,16 @@ pub fn ease(weights: &mut [f32; Clip::COUNT], targets: &[f32; Clip::COUNT], dt: 
 /// this model's `leg` over the reference's, about this model's `rest`.
 pub fn fit_pelvis(clip: Vec3, reference: Reference, rest: Vec3, leg: f32) -> Vec3 {
     rest + (clip - reference.pelvis) * (leg / reference.leg)
+}
+
+/// How long a model's steps are against the clips' own (their
+/// reference skeleton's): its legs' length over the reference's, 1 when
+/// either is unknown.
+pub fn model_stride(pelvis: Option<(Entity, Vec3, f32)>, reference: Option<Reference>) -> f32 {
+    match (pelvis, reference) {
+        (Some((_, _, leg)), Some(r)) if leg > 0.0 && r.leg > 0.0 => leg / r.leg,
+        _ => 1.0,
+    }
 }
 
 /// The local rotation `local` of a neck or head bone, turned by `turn`
@@ -300,11 +318,15 @@ pub(super) fn drive_rigs(
             rig.started = true;
         }
         ease(&mut rig.weights, &goal, dt);
+        // The clips step as the protagonist's legs do: a person with
+        // shorter legs takes shorter steps, so plays them faster to keep
+        // the feet still on the ground.
+        let stride = model_stride(rig.pelvis, clips.reference);
         for &clip in played(riding.is_some()) {
             if let Some(active) = player.animation_mut(clips.node(clip)) {
                 active
                     .set_weight(rig.weights[clip.index()])
-                    .set_speed(playback_rate(clip, speed));
+                    .set_speed(playback_rate(clip, speed / stride));
             }
         }
     }
@@ -334,6 +356,16 @@ pub(super) fn fit_rigs(
         for (entity, frame) in rig.look.into_iter().flatten() {
             if let Ok(mut t) = transforms.get_mut(entity) {
                 t.rotation = glance_turn(t.rotation, frame, body.glance / 2.0);
+            }
+        }
+        for ((entity, frame), out) in rig
+            .arms
+            .into_iter()
+            .zip([1.0, -1.0])
+            .filter_map(|(a, o)| Some((a?, o)))
+        {
+            if let Ok(mut t) = transforms.get_mut(entity) {
+                t.rotation = arm_out(t.rotation, frame, out * SKIRT_ARMS_OUT);
             }
         }
     }
@@ -390,7 +422,7 @@ mod tests {
             Clip::Idle
         ));
         assert!(only(
-            targets(FigureKind::Protagonist, false, 6.0 / 3.6),
+            targets(FigureKind::Protagonist, false, 1.6),
             Clip::Walk
         ));
         assert!(only(
@@ -776,10 +808,7 @@ mod tests {
     fn a_planted_foot_slides_back_at_the_ground_speed_walking_and_jogging() {
         // In place, the planted foot moves back under the body as fast as
         // the body goes forward: on the ground it keeps still.
-        for (animation, speed) in [
-            (AnimationState::Walk, 6.0 / 3.6),
-            (AnimationState::Gallop, 5.0),
-        ] {
+        for (animation, speed) in [(AnimationState::Walk, 1.6), (AnimationState::Gallop, 5.0)] {
             let (mut app, rigs) = playing(&[FigureKind::Protagonist], animation, speed);
             balls(&mut app, rigs[0].1, 30);
             let frames = balls(&mut app, rigs[0].1, 120);
@@ -912,10 +941,343 @@ mod tests {
     }
 
     #[test]
+    fn walking_knees_bend_smoothly_never_lock_or_twist_round_the_loop() {
+        // The protagonist at his 1.6 m/s, a peón and a woman at a
+        // townsperson's 1.4, at 60 frames a second for three cycles and
+        // more, through the loop's wrap.
+        for (kind, speed) in [
+            (FigureKind::Protagonist, 1.6),
+            (FigureKind::townsfolk(1), 1.4),
+            (FigureKind::townsfolk(3), 1.4),
+        ] {
+            let (mut app, rigs) = playing(&[kind], AnimationState::Walk, speed);
+            app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                std::time::Duration::from_secs_f64(1.0 / 60.0),
+            ));
+            let rig = rigs[0].1;
+            let body = app.world().get::<ChildOf>(rig).unwrap().parent();
+            let legs = ["l", "r"].map(|s| {
+                [
+                    format!("thigh_{s}"),
+                    format!("calf_{s}"),
+                    format!("foot_{s}"),
+                ]
+                .map(|n| bone(app.world(), rig, &n))
+            });
+            let pelvis = bone(app.world(), rig, "pelvis");
+            for _ in 0..30 {
+                app.update();
+            }
+            let (mut least, mut jump, mut twist, mut step) = (f32::MAX, 0.0f32, 0.0f32, 0.0f32);
+            let mut last: Option<([f32; 2], f32)> = None;
+            for _ in 0..240 {
+                app.update();
+                let world = app.world();
+                let forward = world.get::<GlobalTransform>(body).unwrap().rotation() * Vec3::X;
+                let mut bends = [0.0; 2];
+                for (k, [hip, knee, ankle]) in legs.iter().enumerate() {
+                    let (h, n, a) = (at(world, *hip), at(world, *knee), at(world, *ankle));
+                    let (thigh, shin) = ((n - h).normalize(), (a - n).normalize());
+                    bends[k] = thigh.angle_between(shin).to_degrees();
+                    // Bent back, never forward: the shin turns from the
+                    // thigh away from the body's front.
+                    let ahead = thigh.cross(shin).dot(thigh.cross(forward));
+                    if ahead > 0.0 && bends[k] > 1.0 {
+                        bends[k] = -bends[k];
+                    }
+                    let plane = thigh.cross(forward).normalize();
+                    twist = twist.max(shin.dot(plane).clamp(-1.0, 1.0).asin().to_degrees().abs());
+                }
+                least = least.min(bends[0]).min(bends[1]);
+                let y = at(world, pelvis).y;
+                if let Some((was, height)) = last {
+                    jump = jump
+                        .max((bends[0] - was[0]).abs())
+                        .max((bends[1] - was[1]).abs());
+                    step = step.max((y - height).abs());
+                }
+                last = Some((bends, y));
+            }
+            println!(
+                "{kind:?} at {speed} m/s: knees bend {least:.1} deg at least, change {jump:.1} deg a frame at most, \
+                 shins {twist:.1} deg off the hinge plane, the pelvis moves {:.1} mm a frame at most",
+                step * 1000.0
+            );
+            assert!(
+                least >= 3.0,
+                "{kind:?}: a knee locks or bends back ({least})"
+            );
+            assert!(
+                jump < 12.0,
+                "{kind:?}: a knee snaps {jump} degrees in a frame"
+            );
+            assert!(
+                twist < 6.0,
+                "{kind:?}: a shin twists {twist} degrees off its hinge"
+            );
+            assert!(step < 0.012, "{kind:?}: the hips step {step} m in a frame");
+        }
+    }
+
+    #[test]
+    fn the_women_keep_their_legs_in_their_skirts_and_their_hands_out_of_them() {
+        use crate::character::townsfolk::tests::skirt_pokes;
+        // The countrywoman in a headscarf and the young townswoman in a bun.
+        let women = [FigureKind::townsfolk(3), FigureKind::townsfolk(4)];
+        for (animation, speed, talking) in [
+            (AnimationState::Idle, 0.0, false),
+            (AnimationState::Walk, 1.6, false),
+            (AnimationState::Idle, 0.0, true),
+        ] {
+            let (mut app, rigs) = playing(&women, animation, speed);
+            for &(_, rig) in &rigs {
+                let arms = app.world().get::<Rig>(rig).unwrap().arms;
+                assert!(arms.iter().all(Option::is_some), "her arms are held out");
+            }
+            if talking {
+                let people: Vec<Entity> = app
+                    .world_mut()
+                    .query_filtered::<Entity, With<CharacterVisual>>()
+                    .iter(app.world())
+                    .collect();
+                for person in people {
+                    app.world_mut().entity_mut(person).insert(Talking);
+                }
+            }
+            // Into the clip (the talk eases in), then two seconds of it.
+            for _ in 0..30 {
+                app.update();
+            }
+            let (mut legs, mut arms) = (-1.0f32, -1.0f32);
+            for _ in 0..40 {
+                app.update();
+                for &(kind, rig) in &rigs {
+                    let (l, a) = skirt_pokes(app.world_mut(), rig).expect("a skirt");
+                    assert!(l > -1.0, "{kind:?}: no leg met the skirt");
+                    legs = legs.max(l);
+                    arms = arms.max(a);
+                }
+            }
+            println!("{animation:?} talking {talking}: legs {legs:.4} m out, arms {arms:.4} m in");
+            assert!(
+                legs <= 0.0,
+                "{animation:?}: a leg {legs} m through the skirt"
+            );
+            assert!(arms <= 0.0, "{animation:?}: a hand {arms} m into the skirt");
+        }
+    }
+
+    #[test]
+    fn townsfolk_wear_their_outfits_in_tinted_cloth_shared_by_whoever_wears_the_same() {
+        use crate::character::townsfolk::{TintCache, tint};
+        use bevy::gltf::GltfMaterialName;
+        // Every outfit four times over, and two people dressed alike.
+        let mut looks: Vec<u8> = (0..20).collect();
+        looks.extend([3, 3 + 5 * 9]);
+        let crowd: Vec<FigureKind> = looks.iter().map(|&l| FigureKind::townsfolk(l)).collect();
+        let (mut app, rigs) = playing(&crowd, AnimationState::Idle, 0.0);
+        app.update();
+        let world = app.world_mut();
+        // Each person's look and their clothes: (material name, material).
+        type Cloth = Vec<(String, AssetId<StandardMaterial>)>;
+        let mut worn: Vec<(u8, Cloth)> = Vec::new();
+        for &(kind, rig) in &rigs {
+            let FigureKind::Townsfolk(look) = kind else {
+                panic!("{kind:?}");
+            };
+            let mut cloth = Vec::new();
+            let mut stack = vec![rig];
+            while let Some(e) = stack.pop() {
+                if let (Some(m), Some(name)) = (
+                    world.get::<MeshMaterial3d<StandardMaterial>>(e),
+                    world.get::<GltfMaterialName>(e),
+                ) {
+                    let colour = world
+                        .resource::<Assets<StandardMaterial>>()
+                        .get(&m.0)
+                        .unwrap()
+                        .base_color;
+                    if let Some(rgb) = tint(look, &name.0) {
+                        assert_eq!(
+                            colour,
+                            Color::srgb_u8(rgb[0], rgb[1], rgb[2]),
+                            "{look} {}",
+                            name.0
+                        );
+                    }
+                    cloth.push((name.0.clone(), m.0.id()));
+                }
+                stack.extend(world.get::<Children>(e).into_iter().flatten().copied());
+            }
+            cloth.sort();
+            worn.push((look, cloth));
+        }
+        // The same look, the same materials (the very same copies).
+        let alike: Vec<&Vec<_>> = worn
+            .iter()
+            .filter(|(l, _)| *l == 3)
+            .map(|(_, c)| c)
+            .collect();
+        assert_eq!(alike.len(), 2);
+        assert_eq!(alike[0], alike[1]);
+        // Each tinted copy is worn, and shared: fewer copies than tinted
+        // pieces of clothing in the crowd.
+        let copies = world.resource::<TintCache>().len();
+        let mut handles = std::collections::HashSet::new();
+        let mut pieces = 0;
+        for (look, cloth) in &worn {
+            for (name, id) in cloth {
+                if tint(*look, name).is_some() {
+                    handles.insert(*id);
+                    pieces += 1;
+                }
+            }
+        }
+        assert!(copies > 5, "{copies}");
+        assert_eq!(handles.len(), copies);
+        assert!(
+            copies < pieces,
+            "{copies} copies for {pieces} tinted pieces"
+        );
+        assert!(worn.iter().all(|(_, c)| c.len() >= 5));
+    }
+
+    /// P4: the CPU cost of a full plaza, headless: the 31 townsfolk General
+    /// Pico has, each in their look's model, and the protagonist, all within
+    /// the freeze range and in view (nothing frozen), two in three walking.
+    /// Prints, per frame, the whole update with them against the same app
+    /// without them (the clips' weighing, Bevy's animation, the pelvis fit
+    /// and glance, the carriers' posing and the transforms), the skinning's
+    /// preparation (each skinned mesh's joint matrices, as the renderer's
+    /// extraction computes them), and the triangles drawn. Run it in
+    /// release: `cargo test -p pampa-render --release --lib plaza -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "a measurement, not a check"]
+    fn plaza_bench() {
+        use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
+        use std::time::Instant;
+        const FRAMES: usize = 600;
+        let people: Vec<FigureKind> = std::iter::once(FigureKind::Protagonist)
+            .chain((0..31).map(FigureKind::townsfolk))
+            .collect();
+        let (mut app, rigs) = playing(&people, AnimationState::Walk, 1.6);
+        // Two in three walk, the rest stand; spread over the plaza.
+        let persons: Vec<Entity> = app
+            .world_mut()
+            .query_filtered::<Entity, With<CharacterVisual>>()
+            .iter(app.world())
+            .collect();
+        for (k, &person) in persons.iter().enumerate() {
+            let mut e = app.world_mut().entity_mut(person);
+            e.get_mut::<Transform>().unwrap().translation =
+                Vec3::new((k % 8) as f32 * 6.0, 0.0, (k / 8) as f32 * 6.0);
+            if k % 3 == 2 {
+                e.insert(crate::character::VisualPose::default());
+            }
+        }
+        for _ in 0..60 {
+            app.update();
+        }
+        let time = |app: &mut App, frames: usize| {
+            let start = Instant::now();
+            for _ in 0..frames {
+                app.update();
+            }
+            start.elapsed().as_secs_f64() * 1e3 / frames as f64
+        };
+        let with = time(&mut app, FRAMES);
+        // The figures' rigid parts, hidden under the models, kept for
+        // `models off`: what they cost (their transforms, worked out every
+        // frame under the moving body).
+        let parts: Vec<Entity> = app
+            .world_mut()
+            .query_filtered::<Entity, With<crate::character::FigurePart>>()
+            .iter(app.world())
+            .collect();
+        let hidden = parts.len();
+        for part in parts {
+            app.world_mut().entity_mut(part).despawn();
+        }
+        let bare = time(&mut app, FRAMES);
+        // The skinning's preparation: every joint's matrix, every frame.
+        let world = app.world_mut();
+        let mut skins = world.query::<&SkinnedMesh>();
+        let skins: Vec<SkinnedMesh> = skins.iter(world).cloned().collect();
+        let binds = world.resource::<Assets<SkinnedMeshInverseBindposes>>();
+        let binds: Vec<Vec<Mat4>> = skins
+            .iter()
+            .map(|s| {
+                binds
+                    .get(&s.inverse_bindposes)
+                    .map_or(Vec::new(), |b| b.to_vec())
+            })
+            .collect();
+        let start = Instant::now();
+        let mut joints = 0usize;
+        let mut sink = Mat4::ZERO;
+        for _ in 0..FRAMES {
+            for (skin, ibm) in skins.iter().zip(&binds) {
+                for (j, b) in skin.joints.iter().zip(ibm.iter()) {
+                    if let Some(g) = world.get::<GlobalTransform>(*j) {
+                        sink += g.to_matrix() * *b;
+                        joints += 1;
+                    }
+                }
+            }
+        }
+        let prep = start.elapsed().as_secs_f64() * 1e3 / FRAMES as f64;
+        std::hint::black_box(sink);
+        // Triangles drawn: every mesh under every model.
+        let mut triangles = 0usize;
+        let mut q = world.query::<(&Mesh3d, &ChildOf)>();
+        let drawn: Vec<(Mesh3d, Entity)> = q
+            .iter(world)
+            .map(|(m, c)| (m.clone(), c.parent()))
+            .collect();
+        let meshes = world.resource::<Assets<Mesh>>();
+        let models: std::collections::HashSet<Entity> = rigs.iter().map(|r| r.1).collect();
+        for (mesh, parent) in &drawn {
+            let mut at = *parent;
+            let mut under = false;
+            for _ in 0..64 {
+                if models.contains(&at) {
+                    under = true;
+                    break;
+                }
+                match world.get::<ChildOf>(at) {
+                    Some(c) => at = c.parent(),
+                    None => break,
+                }
+            }
+            if under && let Some(m) = meshes.get(&mesh.0) {
+                triangles += m.indices().map_or(0, |i| i.len() / 3);
+            }
+        }
+        // The same app without anyone.
+        for person in persons {
+            app.world_mut().entity_mut(person).despawn();
+        }
+        for _ in 0..30 {
+            app.update();
+        }
+        let without = time(&mut app, FRAMES);
+        println!(
+            "plaza ({} people, {} walking): update {with:.3} ms/frame, {without:.3} without them: {:.3} ms for them, \
+             of which {:.3} ms for the {hidden} hidden rigid parts; skinning prep {prep:.3} ms/frame \
+             ({} joints); {triangles} triangles drawn",
+            people.len(),
+            people.len() - people.len() / 3,
+            with - without,
+            with - bare,
+            joints / FRAMES,
+        );
+    }
+
+    #[test]
     fn the_poncho_stays_over_the_shoulder_and_arm_on_foot() {
         for (animation, speed) in [
             (AnimationState::Idle, 0.0),
-            (AnimationState::Walk, 6.0 / 3.6),
+            (AnimationState::Walk, 1.6),
             (AnimationState::Gallop, 5.0),
         ] {
             let (mut app, rigs) = playing(&[FigureKind::Protagonist], animation, speed);

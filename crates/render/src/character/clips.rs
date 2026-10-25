@@ -114,7 +114,7 @@ impl Clip {
     /// `None` for a clip that does not travel.
     pub fn ground_speed(self) -> Option<f32> {
         match self {
-            Self::Walk => Some(1.0965),
+            Self::Walk => Some(1.2709),
             Self::WalkFormal => Some(1.0964),
             Self::Jog => Some(6.1488),
             Self::Sprint => Some(9.2842),
@@ -126,7 +126,7 @@ impl Clip {
 
 /// The ground speeds (m/s) between which one locomotion clip fades into the
 /// next: standing to walking, walking to jogging, jogging to sprinting. The
-/// player walks at 1.67 m/s and jogs at 5; townsfolk walk at 1.1 to 1.6.
+/// player walks at 1.6 m/s and jogs at 5; townsfolk walk at 1.25 to 1.5.
 pub const WALK_BAND: (f32, f32) = (0.05, 0.6);
 pub const JOG_BAND: (f32, f32) = (2.4, 3.4);
 pub const SPRINT_BAND: (f32, f32) = (6.5, 8.0);
@@ -270,8 +270,8 @@ mod tests {
     #[test]
     fn the_weights_fade_from_idle_to_walk_to_jog_to_sprint_and_add_up_to_one() {
         assert_eq!(locomotion(0.0), [1.0, 0.0, 0.0, 0.0]);
-        // The game's walk (6 km/h) and jog (18 km/h) are pure.
-        assert_eq!(locomotion(6.0 / 3.6), [0.0, 1.0, 0.0, 0.0]);
+        // The game's walk (1.6 m/s) and jog (18 km/h) are pure.
+        assert_eq!(locomotion(1.6), [0.0, 1.0, 0.0, 0.0]);
         assert_eq!(locomotion(5.0), [0.0, 0.0, 1.0, 0.0]);
         assert_eq!(locomotion(9.0), [0.0, 0.0, 0.0, 1.0]);
         let mid = locomotion((JOG_BAND.0 + JOG_BAND.1) / 2.0);
@@ -294,7 +294,7 @@ mod tests {
     fn a_walking_clip_plays_at_the_ground_speed_over_its_own() {
         let walk = Clip::Walk.ground_speed().unwrap();
         assert!((playback_rate(Clip::Walk, walk) - 1.0).abs() < 1e-6);
-        assert!((playback_rate(Clip::Walk, 6.0 / 3.6) - 6.0 / 3.6 / walk).abs() < 1e-5);
+        assert!((playback_rate(Clip::Walk, 1.6) - 1.6 / walk).abs() < 1e-5);
         assert!((playback_rate(Clip::Jog, 5.0) - 5.0 / 6.1488).abs() < 1e-5);
         assert_eq!(playback_rate(Clip::Walk, 0.0), RATE.0, "clamped");
         assert_eq!(playback_rate(Clip::Walk, 40.0), RATE.1, "clamped");
@@ -303,6 +303,39 @@ mod tests {
             1.0,
             "an idle plays as recorded"
         );
+    }
+
+    #[test]
+    fn the_walk_steps_at_an_easy_pace_never_hurried() {
+        use pampa_core::Townsperson;
+        // The stood-up walk steps naturally at about 1.27 m/s: the
+        // townsfolk's paces (1.25 to 1.5) play it at 1.0 to 1.2 times, so
+        // it never reads as a hurried scurry; the pack's walk, at 1.10 m/s,
+        // played up to 1.45 times.
+        let walk = Clip::Walk.ground_speed().unwrap();
+        assert!((1.2..1.35).contains(&walk), "{walk}");
+        for pace in [1.25, Townsperson::WALK_MAX] {
+            let rate = playback_rate(Clip::Walk, pace);
+            assert!((0.95..=1.2).contains(&rate), "{pace} m/s: {rate}");
+        }
+        // The player's 1.6 m/s is a brisk walk: a little faster, 1.26
+        // times (the feet still keep still: the rate is the speed's).
+        assert_eq!(pampa_core::RiderParams::on_foot().walk_max, 1.6);
+        assert!(playback_rate(Clip::Walk, 1.6) <= 1.27);
+    }
+
+    #[test]
+    fn a_person_with_shorter_legs_plays_the_strides_faster_by_their_length() {
+        use crate::character::rig::model_stride;
+        let reference = Reference {
+            pelvis: Vec3::ZERO,
+            leg: 0.8,
+        };
+        let pelvis = |leg: f32| Some((Entity::PLACEHOLDER, Vec3::ZERO, leg));
+        assert_eq!(model_stride(pelvis(0.8), Some(reference)), 1.0);
+        assert!((model_stride(pelvis(0.72), Some(reference)) - 0.9).abs() < 1e-6);
+        assert_eq!(model_stride(None, Some(reference)), 1.0);
+        assert_eq!(model_stride(pelvis(0.72), None), 1.0);
     }
 
     #[test]

@@ -1,0 +1,10 @@
+# The Volga German's light-brown hair: the short hair turned grey (see
+# greyscaleTexture in tools/README.md) and tinted.
+name townsfolk_volga_hair
+diffuseColor 0.50 0.38 0.25
+specularColor 0.02 0.02 0.02
+shininess 0.1
+transparent True
+backfaceCull False
+greyscaleTexture True
+diffuseTexture data/hair/short04/short04_diffuse.png

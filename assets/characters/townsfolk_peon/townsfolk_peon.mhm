@@ -1,0 +1,38 @@
+# A townsperson, look 1 (the peon), 1919: a criollo farm worker of about
+# 40 (age 0.62), lean and weathered, a little short, with a black
+# moustache. A collarless shirt the colour of dust, a worn brown chaleco
+# (waistcoat), a dun bombacha over worn boots, a dark faja, a white
+# neckerchief and a soft felt hat with a wide, drooping brim. The game
+# tints the shirt, chaleco, bombacha, faja and hat per person.
+#
+# Lines MakeHuman does not know (it warns and skips them) are read by
+# tools/mh2gltf.py: piece (see ../README.md). Credits in ../CREDITS.md.
+version v1.1.1
+name townsfolk_peon
+modifier macrodetails/Gender 1.000000
+modifier macrodetails/Age 0.620000
+modifier macrodetails/African 0.050000
+modifier macrodetails/Asian 0.250000
+modifier macrodetails/Caucasian 0.700000
+modifier macrodetails-universal/Muscle 0.550000
+modifier macrodetails-universal/Weight 0.300000
+modifier macrodetails-height/Height 0.400000
+modifier macrodetails-proportions/BodyProportions 0.450000
+skeleton game_engine.mhskel
+skinMaterial skins/middleage_caucasian_male/middleage_caucasian_male.mhmat
+proxy male1591 d7e4934e-daed-4ad5-a055-18c9cba487dc
+eyes Low-Poly 1cc97a30-85a1-42e6-a9f7-b3e753732baa
+material Low-Poly 1cc97a30-85a1-42e6-a9f7-b3e753732baa eyes/materials/brown.mhmat
+eyebrows eyebrow006 bb953a1a-db43-44db-a0ad-ed8a5d6000c9
+hair short04 e09bfd91-f83f-4f9a-ba8c-4635cd1ae0d8
+clothes grinsegold_moustache 8dbdff2d-495f-4dd6-8f27-5898ae4a3ad9
+material grinsegold_moustache 8dbdff2d-495f-4dd6-8f27-5898ae4a3ad9 moustache.mhmat
+clothesHideFaces True
+subdivide False
+piece shirt color=0.66,0.61,0.51 top=6.05
+piece waistcoat color=0.33,0.25,0.18 vneck=5.0
+piece bombacha color=0.38,0.34,0.27 bottom=0.98
+piece boots color=0.20,0.15,0.11 top=1.75
+piece sash color=0.22,0.17,0.13 width=0.9
+piece neckerchief color=0.88,0.86,0.80 drop=0.6
+piece hat color=0.36,0.30,0.23 crown=0.15 fit=0.8 taper=0.92 round=0.6 dent=0.04 brim=0.8 droop=0.2 back=0.1 sides=0.08 thick=0.05 curl=0.0
