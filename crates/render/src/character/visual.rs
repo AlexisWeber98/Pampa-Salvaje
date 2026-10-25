@@ -4,6 +4,7 @@
 //! [`horse`](super::horse)); a rider's model on the horse comes later.
 
 use bevy::app::AnimationSystems;
+use bevy::camera::visibility::VisibilitySystems;
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 use pampa_core::{AnimationState, Heading};
@@ -17,6 +18,7 @@ use super::model::{
     swap_in_character_models, toggle_character_models,
 };
 use super::rig::{drive_rigs, fit_rigs};
+use super::tack::{dress_tack, stretch_straps};
 
 /// How a character is drawn. Swappable per entity without touching logic:
 /// inserting a new value replaces whatever was drawn before.
@@ -86,8 +88,15 @@ impl Plugin for CharacterVisualPlugin {
                     .after(AnimationSystems)
                     .before(TransformSystems::Propagate),
             )
+            .add_systems(
+                PostUpdate,
+                stretch_straps
+                    .after(TransformSystems::Propagate)
+                    .before(VisibilitySystems::CheckVisibility),
+            )
             .add_observer(dress_character)
-            .add_observer(dress_horse);
+            .add_observer(dress_horse)
+            .add_observer(dress_tack);
     }
 }
 

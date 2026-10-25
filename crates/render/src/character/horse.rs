@@ -1,5 +1,6 @@
 //! Saddled criollo horses: Quaternius' animated horse (the corral horses'
-//! model, see [`livestock`](crate::fauna::livestock)), tied up or ridden.
+//! model, see [`livestock`](crate::fauna::livestock)) wearing a 1919 recado
+//! and a rawhide bridle (see [`tack`](super::tack)), tied up or ridden.
 //!
 //! A saddled horse is a body entity ([`HorseBody`], turned to the heading,
 //! +X its front, its right +Z, hooves on its origin) holding the model
@@ -7,7 +8,9 @@
 //! it has loaded, nothing is drawn (the scenes load with the game, long
 //! before anyone gets on a horse). Once it spawns, [`dress_horse`] gives
 //! its meshes the coat and the props' shared range, as the corral horses'
-//! do, and finds the bones the gaits drive ([`gait`](super::gait)).
+//! do, and finds the bones the gaits drive ([`gait`](super::gait)). The
+//! same scene event puts the tack on ([`tack`](super::tack): the skinned
+//! recado and bridle, the stirrups and the straps).
 //!
 //! [`drive_horses`] plays the clips: the idle, then the walk paced to the
 //! ground speed up to about 4.5 m/s (there is no trot clip), then the
@@ -430,6 +433,11 @@ pub(super) fn rest_affine(
         at = child_of.parent();
     }
     affine
+}
+
+/// A transform from an affine placement.
+pub(super) fn transform_of(affine: Affine3A) -> Transform {
+    Transform::from_matrix(Mat4::from(affine))
 }
 
 /// What a horse model is dressed from: its nodes' names, rests and
