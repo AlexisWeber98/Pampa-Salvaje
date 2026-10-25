@@ -583,6 +583,82 @@ Nothing was checked in game by the writer.
   - a mounted townsperson would now ride with their model, untested in
     game.
 
+## Review follow-ups (PR 3, after 270edc2..e328312)
+
+The native review approved all ten commits, with warnings. One follow-up
+is fixed here, uncommitted (route: inline, by the PR 3 writer):
+
+- [x] F1 `make_long_skirt`'s search for body points round a row doubled
+  forever with fewer than 8 points. It now stops at the figure's height
+  and raises `ConvertError` (`SKIRT_MIN_POINTS`).
+- [x] F2 A walk key where neither leg could reach its goal recorded a rise
+  of 0, which sank the hips. Such a key now takes the linear blend of the
+  nearest reachable keys round the loop (`fill_round`), or raises
+  `RetargetError` when no key reaches.
+  - Also found and fixed: `_smooth_swings` normalized a straight knee's
+    zero hinge before its guard, so it raised instead of skipping.
+- [x] F3 The upright walk's synthetic tests (`UprightWalk`, 7 tests, no
+  packs needed) run on a two-armed synthetic target:
+  - determinism and the loop wrap;
+  - knee ≥ `KNEE_MIN`;
+  - lean near `LEAN`, under 5°;
+  - arm swing −10° to +14°, elbows 10°–25°, head level;
+  - a key neither leg can reach, and none at all;
+  - straight legs (no pole) and straight lifted legs (no hinge);
+  - the target-side speed, and its error with no foot planted.
+
+  The `tools/README.md` claim was updated to match.
+- [x] F4 Townsfolk coverage:
+  - `TownsfolkSources` checks every outfit's pieces, the 11k cap, and the
+    tinted garment names, read from `townsfolk.rs`, against the models'
+    materials;
+  - `TownsfolkSources.test_hair_worn_up…` sends a `hair` piece (no
+    texture) through `dress` and `shell`;
+  - `BunConversion` converts the bun woman and finds the shipped
+    `model.bin` byte for byte. The other three outfits take 8–17 s each to
+    convert, so the cheap check covers them.
+- [x] F5 `FigureKind::townsfolk` keeps the full look. Audit of every
+  consumer:
+  - `model_name` and the tints reduce it (`% 5`);
+  - `CharacterModels` is keyed by folder;
+  - `figure::look`, `FigureKit` (by shape) and `Palette` (by colour and
+    finish) never key by kind;
+  - `FigureKind::all()` lists looks 0–4 only;
+  - `Riding` carries the kind and uses `CharacterModels::of`;
+  - no `HashMap` is keyed by `FigureKind`.
+
+  Guard test: `model::every_look_finds_its_outfits_one_model_whatever_its_colours`.
+- [x] F6 Code quality, with no change in behaviour (`humanoid.glb`
+  rebuilds byte for byte):
+  - `Retargeter.ground_speed` is renamed `target_ground_speed`, and both
+    speed functions document their scale (ratio) and drift handling;
+  - `_legs` returns a `Leg` namedtuple;
+  - the skirt's ring layout (`SKIRT_RINGS`, `SKIRT_OUTER_RINGS`) is named,
+    carried on the piece and checked by the apron.
+
+Sabotages (restored and checked with cmp; every one failed):
+
+| Test | Sabotage → result |
+|---|---|
+| `TownsfolkPieces.test_a_skirt_with_too_few_body_points…` | search unbounded → hangs, killed at 60 s (fails) |
+| `TownsfolkPieces.test_an_apron_needs_the_skirts_own_ring_layout` | apron ignores the layout → fails |
+| `TownsfolkSources.test_hair_worn_up…`, `BunConversion` | hair given a cloth texture → both fail |
+| `TownsfolkSources.test_every_outfit…` | tint `aprons` → fails; bun woman without her bun → fails |
+| `UprightWalk.test_a_key_neither_leg_can_reach…` | no error when no key reaches → fails; an unreachable key at 0 → survived (the loop smoothing hid it), strengthened with the raw rise, then failed |
+| `UprightWalk.test_holes_round_a_loop…` | holes filled with 0 → fails |
+| `UprightWalk.test_it_is_the_same_every_time…` | random jitter → fails |
+| `UprightWalk.test_no_knee_straightens…` | knees pulled straight → fails; lean 8° → fails |
+| `UprightWalk.test_the_arms_hang_and_swing…` | arms swing behind → survived (compared against the sabotaged constant), fixed to literals, then failed; head not levelled → fails |
+| `UprightWalk.test_straight_legs…` | no pole fallback → fails; no hinge guard → survived (unreachable through `upright`), strengthened with lifted straight legs (which found the guard-order bug), then failed |
+| `UprightWalk.test_the_target_side_speed…` | slide sign flipped → fails; no error without a planted foot → fails |
+| `model::every_look_finds_its_outfits_one_model…` | models keyed by the full look → fails |
+
+Verification:
+- tools: 139 OK;
+- `--check`: ok on all nine models;
+- core 345, content 32, render 310 (2 ignored), game 118;
+- build, fmt and clippy are clean.
+
 ## Tasks (PR 2: the ridden horse), branch feat/character-clips after c008f59
 
 Route: one delegated writer (2+ non-trivial files: render horse, tack, gait,

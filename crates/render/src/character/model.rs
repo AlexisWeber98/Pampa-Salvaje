@@ -351,6 +351,39 @@ mod tests {
     const FLOOR: usize = 3_000;
 
     #[test]
+    fn every_look_finds_its_outfits_one_model_whatever_its_colours() {
+        // The models are loaded once per folder: a townsperson of any look
+        // (0 to 255, its high part only their colours) finds the one of
+        // their outfit, never a model per look.
+        use crate::character::townsfolk::OUTFITS;
+        let mut models = CharacterModels::default();
+        for kind in FigureKind::all() {
+            let name = model_name(kind).unwrap();
+            models.0.entry(name).or_insert_with(|| {
+                Handle::Uuid(
+                    bevy::asset::uuid::Uuid::from_u128(stand_in_id(name)),
+                    std::marker::PhantomData,
+                )
+            });
+        }
+        assert_eq!(models.0.len(), 4 + OUTFITS.len(), "each folder once");
+        for look in 0..=255u8 {
+            let mine = models.of(FigureKind::townsfolk(look)).expect("a model");
+            assert_eq!(
+                Some(mine),
+                models.0.get(OUTFITS[(look % 5) as usize]),
+                "{look}"
+            );
+        }
+    }
+
+    /// A distinct number per model folder, for stand-in handles.
+    fn stand_in_id(name: &str) -> u128 {
+        name.bytes()
+            .fold(7u128, |h, b| h.wrapping_mul(31).wrapping_add(b as u128))
+    }
+
+    #[test]
     fn every_person_has_a_model_and_each_is_shipped() {
         assert_eq!(
             model_name(FigureKind::Townsfolk(6)),

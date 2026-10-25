@@ -616,7 +616,7 @@ class Units(unittest.TestCase):
         AT = {"pelvis": 10.0, "spine_02": 11.5, "neck_01": 15.6, "head": 16.5, "thigh": 9.8, "calf": 5.5, "foot": 1.0}
         ARM = {"upperarm": 14.5, "lowerarm": 12.0, "hand": 9.5}
 
-        def __init__(self, sectors=16):
+        def __init__(self, sectors=16, heights=None):
             class Rig:
                 order = self.ORDER
             self.rig = Rig()
@@ -630,7 +630,7 @@ class Units(unittest.TestCase):
                 else:
                     m[:3, 3] = [0.5 * side, self.AT.get(base, 0.0), 0.0]
                 self.rest[name] = m
-            heights = np.arange(0.0, 17.01, 0.5)
+            heights = np.arange(0.0, 17.01, 0.5) if heights is None else heights
             a = np.arange(sectors) * 2 * np.pi / sectors
             coords = np.array([[np.sin(t), y, np.cos(t)] for y in heights for t in a])
             tris = []
@@ -896,6 +896,27 @@ class TownsfolkPieces(unittest.TestCase):
         self.assertEqual(a.triangles, b.triangles)
         with self.assertRaises(mh2gltf.ConvertError):
             self.dressed(("skirt", {"hem": [4.0]}))
+
+    def test_a_skirt_with_too_few_body_points_round_it_is_refused(self):
+        # Fewer points than a row needs, wherever it looks: an error, not a
+        # search that never ends (its reach doubling to infinity).
+        skin = Units.Skin()
+        figure = mh2gltf.Figure(skin.rig, skin.rest, skin)
+        y = figure.height(3.9)  # at the waistband, so its axis is found
+        few = np.array([[0.0, y, 1.0], [1.0, y, 0.0], [0.0, y, -1.0]])
+        with self.assertRaises(mh2gltf.ConvertError) as e:
+            mh2gltf.make_long_skirt(figure, {}, few, skin.rig)
+        self.assertIn("body points", str(e.exception))
+
+    def test_an_apron_needs_the_skirts_own_ring_layout(self):
+        f, out, _ = self.dressed(("skirt", {}))
+        skirt = out["skirt"]
+        self.assertEqual(skirt.rings, (mh2gltf.SKIRT_RINGS, mh2gltf.SKIRT_SEGMENTS))
+        self.assertEqual(len(skirt.coords), mh2gltf.SKIRT_RINGS * mh2gltf.SKIRT_SEGMENTS)
+        # A skirt of another layout (a ring short) is refused, not misread.
+        skirt.coords = skirt.coords[: -mh2gltf.SKIRT_SEGMENTS]
+        with self.assertRaises(mh2gltf.ConvertError):
+            mh2gltf.make_apron(f, {}, skirt)
 
     def test_the_skirt_follows_the_thighs_more_toward_the_hem_and_the_shins_at_the_back(self):
         _, out, _ = self.dressed(("skirt", {}))
@@ -1285,3 +1306,94 @@ class TownswomanConversion(unittest.TestCase):
         self.assertGreater(share(hem, "thigh_").mean(), 0.2)
         back = hem & (pos[:, 2] < np.median(pos[:, 2]))
         self.assertGreater(share(back, "calf_").max(), 0.3)
+
+
+TOWNSFOLK = ("paisano", "peon", "volga", "headscarf", "bun")
+# What each outfit is made of (its .mhm's piece lines).
+TOWNSFOLK_PIECES = {
+    "paisano": {"shirt", "bombacha", "alpargatas", "sash", "neckerchief", "boina"},
+    "peon": {"shirt", "waistcoat", "bombacha", "boots", "sash", "neckerchief", "hat"},
+    "volga": {"shirt", "waistcoat", "trousers", "boots", "poncho", "hat"},
+    "headscarf": {"shirt", "skirt", "apron", "shawl", "boots", "headscarf"},
+    "bun": {"shirt", "collar", "skirt", "shawl", "boots", "hair", "bun"},
+}
+
+
+def tinted_garments():
+    """The garments the game tints, per outfit, read from its table in
+    crates/render/src/character/townsfolk.rs (the names must be the
+    models' material names)."""
+    import re
+    path = os.path.join(HERE, "..", "crates", "render", "src", "character", "townsfolk.rs")
+    with open(path, encoding="utf-8") as f:
+        src = f.read()
+    out = {}
+    for name, const in zip(TOWNSFOLK, ("PAISANO", "PEON", "VOLGA", "HEADSCARF", "BUN")):
+        block = src[src.index(f"const {const}: &[Garment] = &["):]
+        out[name] = re.findall(r'\("(\w+)", \[', block[: block.index("];")])
+    return out
+
+
+class TownsfolkSources(unittest.TestCase):
+    """The five townsfolk outfits as shipped: their sources parse with the
+    pieces they are meant to wear, and their models keep the 11,000
+    triangle cap and the materials the game tints. No MakeHuman data
+    needed."""
+
+    def test_every_outfit_wears_its_pieces_within_the_cap_and_its_tinted_cloth(self):
+        tints = tinted_garments()
+        for name in TOWNSFOLK:
+            folder = os.path.join(CHARACTERS, f"townsfolk_{name}")
+            c = mh2gltf.read_mhm(os.path.join(folder, f"townsfolk_{name}.mhm"))
+            self.assertEqual({kind for kind, _ in c.pieces}, TOWNSFOLK_PIECES[name], name)
+            self.assertEqual(c.ignored, [], name)
+            with open(os.path.join(folder, "model.gltf"), encoding="utf-8") as f:
+                g = json.load(f)
+            prims = g["meshes"][0]["primitives"]
+            triangles = sum(g["accessors"][p["indices"]]["count"] // 3 for p in prims)
+            self.assertLessEqual(triangles, 11_000, name)
+            self.assertGreater(triangles, 3_000, name)
+            materials = {g["materials"][p["material"]]["name"] for p in prims}
+            self.assertTrue(set(tints[name]) <= materials, f"{name}: {set(tints[name]) - materials}")
+            # The women wear long skirts, the men none.
+            self.assertEqual("skirt" in materials, name in ("headscarf", "bun"), name)
+
+    def test_hair_worn_up_is_a_plain_colour_shell_over_the_head(self):
+        # The stand-in's head ringed every 0.1 up to 18, so a hairline cuts it.
+        skin = Units.Skin(heights=np.concatenate([np.arange(0.0, 16.5, 0.5), np.arange(16.5, 18.01, 0.1)]))
+        figure = mh2gltf.Figure(skin.rig, skin.rest, skin)
+
+        class Character:
+            pieces = [("hair", {"color": [0.14, 0.10, 0.07]})]
+
+        out, hide = mh2gltf.dress(Character(), figure, skin.rig)
+        self.assertEqual(len(out), 1)
+        hair = out[0]
+        self.assertEqual(hair.material.pattern, None, "no cloth texture")
+        self.assertEqual(hair.material.roughness, mh2gltf.ROUGHNESS[None])
+        self.assertTrue(np.all(figure.limb[hair.source] == mh2gltf.HEAD))
+        self.assertTrue(hair.triangles and hide)
+
+
+@unittest.skipUnless(HAVE_DATA, f"MakeHuman data not found at {DATA}")
+class BunConversion(unittest.TestCase):
+    """Converts the young townswoman (hair worn up and a bun, a band collar
+    with no wings, a skirt without an apron) and finds the shipped model's
+    geometry and skin byte for byte. The other outfits take 8 to 17
+    seconds each to convert; the headscarf woman is converted by
+    TownswomanConversion."""
+
+    def test_the_shipped_model_is_rebuilt_byte_for_byte(self):
+        with tempfile.TemporaryDirectory() as out:
+            mhm = os.path.join(CHARACTERS, "townsfolk_bun", "townsfolk_bun.mhm")
+            log = io.StringIO()
+            with redirect_stdout(log), redirect_stderr(log):
+                code = mh2gltf.main([mhm, "-o", out, "--data", DATA, "--max-texture", "64", "--max-small-texture", "32", "--no-normal-maps"])
+            self.assertEqual(code, 0, log.getvalue())
+            with open(os.path.join(out, "model.bin"), "rb") as f, open(os.path.join(CHARACTERS, "townsfolk_bun", "model.bin"), "rb") as g:
+                self.assertEqual(f.read(), g.read())
+            with open(os.path.join(out, "model.gltf"), encoding="utf-8") as f:
+                doc = json.load(f)
+            hair = [m for m in doc["materials"] if m["name"] == "hair"]
+            self.assertEqual(len(hair), 1)
+            self.assertNotIn("baseColorTexture", hair[0]["pbrMetallicRoughness"])

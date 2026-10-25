@@ -928,6 +928,214 @@ class Command(unittest.TestCase):
 
 
 
+def two_armed_target():
+    """The synthetic target with both arms (the walk swings each)."""
+    right = [
+        ("clavicle_r", "spine_03", (-0.02, 1.45, 0), (-1, 0, 0)),
+        ("upperarm_r", "clavicle_r", (-0.18, 1.45, 0), (0, -1, 0)),
+        ("lowerarm_r", "upperarm_r", (-0.18, 1.17, 0), (0, -1, 0)),
+        ("hand_r", "lowerarm_r", (-0.18, 0.91, 0), (0, -1, 0)),
+    ]
+    bones = TORSO + arm(False) + right + legs()
+    nodes = nodes_of(bones, lambda g: g, ("Root", (0.5, 0.5, 0.5, 0.5)), 1.1, (0.0, 0.03, 0.01))
+    data = json.dumps({"asset": {"version": "2.0"}, "nodes": nodes, "scenes": [{"nodes": [0]}]})
+    return R.read_target(data.encode())
+
+
+def stand_in(tk):
+    """A Retargeter on the target alone: what the walk's upright pass and
+    the target-side speed read."""
+    rt = R.Retargeter.__new__(R.Retargeter)
+    rt.target, rt.root = tk, tk.find("Root")
+    rt.t_rest_r, rt.t_rest_p = tk.world()
+    return rt
+
+
+def walk_keys(rt, count=24, swing=0.4, lean=0.15, bend=0.35, reach=None):
+    """A synthetic crouched walk loop on the target: `count` keys and the
+    first again; the thighs swinging `swing` radians either way in
+    opposition, the knees bent at least `bend`, folding more as the leg
+    swings through, the torso leaning `lean` forward and the arms swinging
+    against the legs; `reach` (key -> radians) sets a key's thighs that
+    far ahead and behind, straight.
+    Each key is (time, local rotations by node, pelvis world place)."""
+    tk = rt.target
+    f = tk.find
+    rest_rot, rest_pos = tk.world()
+    keys = []
+    for k in range(count + 1):
+        phase = 2 * math.pi * (k % count) / count
+        turn = {}
+        for s, sign in (("l", 1.0), ("r", -1.0)):
+            thigh = -swing * sign * math.sin(phase)
+            if reach and k % count in reach:
+                thigh = -reach[k % count] * sign  # one leg out ahead, one behind
+            knee = bend + 0.6 * max(0.0, sign * math.cos(phase))
+            if reach and k % count in reach:
+                knee = 0.0
+            turn[f"thigh_{s}"] = R.qaxis_angle((1, 0, 0), thigh)
+            for b in (f"calf_{s}", f"foot_{s}", f"ball_{s}"):
+                turn[b] = R.qaxis_angle((1, 0, 0), thigh + knee)
+        upper = R.qaxis_angle((1, 0, 0), lean)
+        for b in ("spine_01", "spine_02", "spine_03", "neck_01", "head", "clavicle_l", "clavicle_r"):
+            turn[b] = upper
+        for s, sign in (("l", 1.0), ("r", -1.0)):
+            arm_turn = R.qmul(upper, R.qaxis_angle((1, 0, 0), 0.3 * sign * math.sin(phase)))
+            for b in (f"upperarm_{s}", f"lowerarm_{s}", f"hand_{s}"):
+                turn[b] = arm_turn
+        world = {}
+        local = {}
+        for i in tk.order:
+            name = tk.names[i]
+            if i == rt.root or not rt._under_root(i):
+                continue
+            world[i] = R.qnorm(R.qmul(turn.get(name, (0.0, 0.0, 0.0, 1.0)), rest_rot[i]))
+            parent = tk.parent[i]
+            parent_world = world.get(parent, rest_rot[parent])
+            local[i] = R.qnorm(R.qmul(R.qinv(parent_world), world[i]))
+        place = rest_pos[f("pelvis")]
+        keys.append((k / 30.0, local, place))
+    return keys
+
+
+class UprightWalk(unittest.TestCase):
+    """The walk's upright pass (``Retargeter.upright``) and the target-side
+    speed, on synthetic rigs: no packs needed."""
+
+    def setUp(self):
+        self.tk = two_armed_target()
+        self.rt = stand_in(self.tk)
+
+    def tracked(self, keys):
+        named = [({self.tk.names[k]: q for k, q in local.items()}, R.sub(place, (0, 0, 0))) for _, local, place in keys]
+        return named
+
+    def bends(self, keys):
+        f = self.tk.find
+        out = []
+        for _, local, place in keys:
+            _, pos = self.rt.posed_world(local, place)
+            for s in "lr":
+                out.append(math.degrees(R.angle_between(
+                    R.sub(pos[f(f"calf_{s}")], pos[f(f"thigh_{s}")]), R.sub(pos[f(f"foot_{s}")], pos[f(f"calf_{s}")]))))
+        return out
+
+    def leans(self, keys):
+        f = self.tk.find
+        out = []
+        for _, local, place in keys:
+            _, pos = self.rt.posed_world(local, place)
+            v = R.sub(pos[f("neck_01")], pos[f("pelvis")])
+            out.append(math.degrees(math.atan2(v[2], v[1])))
+        return out
+
+    def test_it_is_the_same_every_time_and_loops(self):
+        a = self.rt.upright(walk_keys(self.rt))
+        b = self.rt.upright(walk_keys(self.rt))
+        self.assertEqual(a, b)
+        # The last key is the first again: no step at the wrap.
+        for k, q in a[0][1].items():
+            self.assertLess(R.qangle(q, a[-1][1][k]), 1e-6, self.tk.names[k])
+        self.assertLess(R.length(R.sub(a[0][2], a[-1][2])), 1e-9)
+
+    def test_no_knee_straightens_past_its_least_bend_and_the_torso_stands_up(self):
+        keys = walk_keys(self.rt, bend=0.05, lean=0.2)
+        self.assertGreater(min(self.leans(keys)), 8.0)
+        out = self.rt.upright(keys)
+        self.assertGreater(min(self.bends(out)), R.KNEE_MIN - 1e-6)
+        leans = self.leans(out)
+        # Turned back about spine_01 by the mean lean's excess: the line
+        # from the pelvis (below the turn) to the neck ends near LEAN.
+        self.assertAlmostEqual(sum(leans[:-1]) / len(leans[:-1]), R.LEAN, delta=1.5)
+        self.assertLess(max(leans), 5.0)
+
+    def test_the_arms_hang_and_swing_and_the_head_comes_level(self):
+        out = self.rt.upright(walk_keys(self.rt))
+        f = self.tk.find
+        rest_rot, _ = self.tk.world()
+
+        def pitch(q):
+            up = R.qrot(q, (0.0, 1.0, 0.0))
+            return math.degrees(math.atan2(up[2], up[1]))
+
+        swings, elbows = [], []
+        for _, local, place in out:
+            rot, pos = self.rt.posed_world(local, place)
+            self.assertAlmostEqual(pitch(rot[f("head")]), pitch(rest_rot[f("head")]), delta=0.5)
+            for s in "lr":
+                u = R.sub(pos[f(f"lowerarm_{s}")], pos[f(f"upperarm_{s}")])
+                swings.append(math.degrees(math.atan2(u[2], -u[1])))
+                elbows.append(math.degrees(R.angle_between(u, R.sub(pos[f(f"hand_{s}")], pos[f(f"lowerarm_{s}")]))))
+        rest = R.sub(self.rt.t_rest_p[f("lowerarm_l")], self.rt.t_rest_p[f("upperarm_l")])
+        hang = math.degrees(math.atan2(rest[2], -rest[1]))
+        # From 10 degrees back to 14 forward of hanging; elbows 10 to 25.
+        self.assertAlmostEqual(min(swings), hang - 10.0, delta=1.5)
+        self.assertAlmostEqual(max(swings), hang + 14.0, delta=1.5)
+        self.assertGreater(min(elbows), 9.5)
+        self.assertLess(max(elbows), 25.5)
+
+    def test_a_key_neither_leg_can_reach_takes_the_hips_from_its_neighbours(self):
+        # Key 6's legs swing out level, too far to reach at any height: its
+        # hips are the blend of the keys either side, never sunk to rest.
+        keys = walk_keys(self.rt, reach={6: 1.55})
+        legs = self.rt._legs(keys[6][1], keys[6][2])[1]
+        self.assertTrue(all(legs[s].rise is None for s in "lr"))
+        out = self.rt._strides(keys)
+        heights = [place[1] for _, _, place in out]
+        middle = (heights[5] + heights[7]) / 2
+        self.assertAlmostEqual(heights[6], middle, delta=0.01)
+        self.assertGreater(min(heights[5:8]), self.rt.t_rest_p[self.tk.find("pelvis")][1])
+        # Before the loop's smoothing too: the key's own rise is its
+        # neighbours' blend, not the rest's 0.
+        smooth = R.RISE_SMOOTH
+        self.addCleanup(setattr, R, "RISE_SMOOTH", smooth)
+        R.RISE_SMOOTH = 0
+        raw = [place[1] for _, _, place in self.rt._strides(keys)]
+        self.assertAlmostEqual(raw[6], (raw[5] + raw[7]) / 2, delta=0.005)
+        # No key reaches: an error, not a walk sunk to the ground.
+        none = walk_keys(self.rt, reach={k: 1.55 for k in range(24)})
+        with self.assertRaises(R.RetargetError):
+            self.rt._strides(none)
+
+    def test_holes_round_a_loop_are_filled_from_both_sides(self):
+        self.assertEqual(R.fill_round([1.0, None, 3.0, None]), [1.0, 2.0, 3.0, 2.0])
+        self.assertEqual(R.fill_round([None, 4.0, None, None]), [4.0, 4.0, 4.0, 4.0])
+        with self.assertRaises(R.RetargetError):
+            R.fill_round([None, None])
+
+    def test_straight_legs_and_arms_are_solved_without_a_pole_or_a_hinge(self):
+        # Legs straight under the hips (no knee bend: no pole to bend it
+        # by), and a swing that keeps them straight (no hinge to smooth
+        # about): still a finite walk, every knee at its least bend.
+        keys = walk_keys(self.rt, swing=0.0, bend=0.0)
+        out = self.rt.upright(keys)
+        for _, local, place in out:
+            for q in local.values():
+                self.assertTrue(all(math.isfinite(c) for c in q))
+            self.assertTrue(all(math.isfinite(c) for c in place))
+        self.assertGreater(min(self.bends(out)), R.KNEE_MIN - 1e-6)
+        # Straight legs lifted off the ground (the hips raised on every
+        # other key): a swinging knee with no bend has no hinge to turn
+        # about, and is left as it is.
+        lifted = [(t, local, R.add(place, (0.0, 0.1 * (k % 2), 0.0))) for k, (t, local, place) in enumerate(keys)]
+        for _, local, place in self.rt._smooth_swings(lifted):
+            for q in local.values():
+                self.assertTrue(all(math.isfinite(c) for c in q))
+
+    def test_the_target_side_speed_is_a_planted_foots_slide(self):
+        # A foot on the ground moving back 0.03 m a key at 30 keys a second:
+        # 0.9 m/s; with no two keys on the ground, an error.
+        out = self.rt.upright(walk_keys(self.rt))
+        self.assertGreater(self.rt.target_ground_speed(out), 0.0)
+        rest = self.rt.t_rest_p[self.tk.find("pelvis")]
+        still = {k: q for k, q in walk_keys(self.rt, swing=0.0)[0][1].items()}
+        sliding = [(k / 30.0, still, (rest[0], rest[1], rest[2] + 0.03 * k)) for k in range(8)]
+        self.assertAlmostEqual(self.rt.target_ground_speed(sliding), -0.9, places=6)
+        hopping = [(k / 30.0, still, (rest[0], rest[1] + 0.5 * (k % 2), rest[2])) for k in range(8)]
+        with self.assertRaises(R.RetargetError):
+            self.rt.target_ground_speed(hopping)
+
+
 class FollowUps(unittest.TestCase):
     """The review's follow-ups: every key checked for the chests, both
     measures kept, one-line errors from ``--model``, an atomic write and one

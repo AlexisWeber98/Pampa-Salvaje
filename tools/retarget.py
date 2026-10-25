@@ -58,6 +58,7 @@ same inputs give the same bytes.
 """
 
 import argparse
+import collections
 import copy
 import json
 import math
@@ -456,6 +457,32 @@ def remap(value, values, into):
     return into[0] + (value - lo) / (hi - lo) * (into[1] - into[0])
 
 
+# What the walk's stride step knows of one leg at one key (see
+# ``Retargeter._legs``): its hip, knee and ankle, the ankle's stretched
+# goal, the thigh and shin lengths, the hips' rise that would give it its
+# eased bend (None: out of reach at any rise) and the reach of that bend.
+Leg = collections.namedtuple("Leg", "hip knee ankle goal thigh shin rise reach")
+
+
+def fill_round(values):
+    """`values` (a loop: the last is followed by the first) with each None
+    replaced by the linear blend of the nearest known values before and
+    after it, round the loop; RetargetError when none is known."""
+    known = [k for k, v in enumerate(values) if v is not None]
+    if not known:
+        raise RetargetError("no key of the walk has a leg that reaches its foot")
+    n = len(values)
+    out = list(values)
+    for k, v in enumerate(values):
+        if v is not None:
+            continue
+        before = max((j for j in known if j < k), default=known[-1] - n)
+        after = min((j for j in known if j > k), default=known[0] + n)
+        t = (k - before) / (after - before)
+        out[k] = values[before % n] * (1 - t) + values[after % n] * t
+    return out
+
+
 def leg_length(skeleton, calf, foot):
     """Hip to ankle, meters: the rest offsets of the knee (`calf`, the
     thigh's length) and of the ankle (`foot`, the shin's)."""
@@ -834,7 +861,7 @@ class Retargeter:
         measures = {}
         if locomotion:
             if upright:
-                speed = self.ground_speed(keys) + drift[2] * self.ratio / span
+                speed = self.target_ground_speed(keys) + drift[2] * self.ratio / span
             else:
                 speed = ground_speed(self.source, times, posed, drift) * self.ratio
             measures.update(ground_speed=round(speed, 4), stride=round(speed * span, 4))
@@ -844,10 +871,14 @@ class Retargeter:
             measures["reach"] = round(ahead, 4)
         return keys, {k: measures[k] for k in ("reach", "ground_speed", "stride") if k in measures}
 
-    def ground_speed(self, keys):
-        """How fast a planted foot of the target, posed by `keys` (time,
-        local rotations, pelvis world place; held in place) slides back:
-        ``ground_speed``'s measure, on the target's own ankles and balls."""
+    def target_ground_speed(self, keys):
+        """How fast a planted foot of the *target* slides back, m/s at the
+        target's own scale, posed by `keys` (time, local rotations, pelvis
+        world place) that are already held in place: ``ground_speed``'s
+        median measure, on the target's own ankles and balls, with no
+        ratio to apply and no drift to take out (the caller adds the loop's
+        drift speed, scaled to the target). Used for a clip changed on the
+        target (``UPRIGHT``), whose feet no longer move as the source's."""
         tk = self.target
         points = [tk.find(f"{bone}_{s}") for bone in ("foot", "ball") for s in ("l", "r")]
         posed = [self.posed_world(local, place)[1] for _, local, place in keys]
@@ -931,7 +962,7 @@ class Retargeter:
             reach = math.sqrt(a * a + b * b + 2 * a * b * math.cos(eased))
             across = (goal[0] - hip[0]) ** 2 + (goal[2] - hip[2]) ** 2
             rise = goal[1] + math.sqrt(reach * reach - across) - hip[1] if reach * reach > across else None
-            legs[s] = (hip, knee, ankle, goal, a, b, rise, reach)
+            legs[s] = Leg(hip, knee, ankle, goal, a, b, rise, reach)
         return rot, legs
 
     def _strides(self, keys):
@@ -947,16 +978,18 @@ class Retargeter:
         solved = [self._legs(local, place) for _, local, place in keys]
         rises = []
         for _, legs in solved:
-            w = {s: 1.0 / (1.0 + math.exp((legs[s][2][1] - legs[o][2][1]) / STAND_BLEND)) for s, o in (("l", "r"), ("r", "l"))}
-            asked = {s: legs[s][6] for s in "lr"}
-            known = [s for s in "lr" if asked[s] is not None]
+            w = {
+                s: 1.0 / (1.0 + math.exp((legs[s].ankle[1] - legs[o].ankle[1]) / STAND_BLEND))
+                for s, o in (("l", "r"), ("r", "l"))
+            }
+            known = [s for s in "lr" if legs[s].rise is not None]
             if not known:
-                rises.append(0.0)
+                rises.append(None)
                 continue
             total = sum(w[s] for s in known)
-            rises.append(sum(w[s] * asked[s] for s in known) / total)
+            rises.append(sum(w[s] * legs[s].rise for s in known) / total)
         n = len(rises) - 1 if len(rises) > 2 else len(rises)
-        ring = rises[:n]
+        ring = fill_round(rises[:n])
         smooth = [
             sum(ring[(k + j) % n] for j in range(-RISE_SMOOTH, RISE_SMOOTH + 1)) / (2 * RISE_SMOOTH + 1)
             for k in range(n)
@@ -995,9 +1028,10 @@ class Retargeter:
                 # as the clip lifts it.
                 w = min(1.0, (lift - CONTACT_LIFT) / 0.02)
                 turn = w * (smooth[k] - bend[k])
-                hinge = unit(cross(sub(pos[calf], pos[thigh]), sub(pos[ankle], pos[calf])))
+                hinge = cross(sub(pos[calf], pos[thigh]), sub(pos[ankle], pos[calf]))
                 if length(hinge) < 1e-9:
-                    continue
+                    continue  # a straight knee: no hinge to turn about
+                hinge = unit(hinge)
                 calf_w = qnorm(qmul(qaxis_angle(hinge, turn), rot[calf]))
                 local = out[k][1]
                 local[calf] = qnorm(qmul(qinv(rot[thigh]), calf_w))
@@ -1011,7 +1045,7 @@ class Retargeter:
         place = add(place, (0.0, rise, 0.0))
         pelvis_rot = rot[f("pelvis")]
         for s in "lr":
-            hip, knee, ankle, goal, a, b, _, reach = legs[s]
+            hip, knee, ankle, goal, a, b, _, reach = legs[s]  # a Leg
             h = add(hip, (0.0, rise, 0.0))
             u = unit(sub(goal, h))
             # Never straighter than its eased bend: hips set higher than
@@ -1270,7 +1304,10 @@ class Clearance:
 
 
 def ground_speed(source, times, posed, drift):
-    """The ground speed (m/s, source scale) a loop shows: how fast a point
+    """The ground speed (m/s, at the *source*'s scale: the caller multiplies
+    it by the leg ratio) a loop shows, measured on the source's own posed
+    keys, which still carry the loop's `drift` (taken out of each slide,
+    then added back as its speed): how fast a point
     of a foot on the ground slides back once the drift is taken out, plus
     the drift. The points are each ankle and each ball of the foot; one is
     on the ground while it is within ``CONTACT`` of its lowest height in the

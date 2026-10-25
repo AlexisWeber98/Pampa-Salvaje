@@ -2742,6 +2742,13 @@ SKIRT_SEGMENTS = 32
 SKIRT_FOLDS = 8
 SKIRT_ROWS = (0.0, 0.06, 0.14, 0.25, 0.38, 0.52, 0.66, 0.8, 0.92, 1.0)
 SKIRT_TRUNK = ("pelvis", "spine_01")
+# The skirt's vertex layout, which the apron reads: rings of
+# SKIRT_SEGMENTS vertices each, top down; the waistband's top and the
+# SKIRT_ROWS (its outside, SKIRT_OUTER_RINGS), then the hem turned in.
+SKIRT_OUTER_RINGS = len(SKIRT_ROWS) + 1
+SKIRT_RINGS = SKIRT_OUTER_RINGS + 1
+# The dressed body points a row of the skirt needs round its height.
+SKIRT_MIN_POINTS = 8
 
 
 def nearest_weights(coords, figure, joints, limbs=(BODY,)):
@@ -2790,12 +2797,15 @@ def make_long_skirt(figure, settings, points, rig, n=SKIRT_SEGMENTS):
     theta = np.arange(n) * (2 * math.pi / n)
     rows, previous = [], None
     hip = figure.height(3.0)
+    tall = float(figure.heights[-1] - figure.heights[0])  # no row looks further than the figure
     for t in SKIRT_ROWS:
         y = y_top + t * (y_hem - y_top)
         # The proxy's shins have few rings: look wider until it finds some.
         reach = 0.25
-        while np.count_nonzero(np.abs(points[:, 1] - y) <= reach) < 8:
+        while np.count_nonzero(np.abs(points[:, 1] - y) <= reach) < SKIRT_MIN_POINTS:
             reach *= 2
+            if reach > tall:
+                raise ConvertError(f"skirt: fewer than {SKIRT_MIN_POINTS} body points to hang it round")
         r = outline(points, center, y - reach, y + reach, 0.06, n)
         if previous is not None and y < hip:
             r = np.maximum(r, previous)  # below the hips it hangs, never narrows
@@ -2811,6 +2821,8 @@ def make_long_skirt(figure, settings, points, rig, n=SKIRT_SEGMENTS):
     inner[:, [0, 2]] = center[[0, 2]] + (inner[:, [0, 2]] - center[[0, 2]]) * 0.93
     inner[:, 1] += 0.08
     rows = [band] + rows + [inner]
+    if len(rows) != SKIRT_RINGS:
+        raise ConvertError("skirt: its rings are not the layout the apron reads")
     coords = np.vstack(rows)
     ids = [list(range(i * n, (i + 1) * n)) for i in range(len(rows))]
     tris = facing(coords, strip(ids[:-1]), radial(center))
@@ -2836,6 +2848,7 @@ def make_long_skirt(figure, settings, points, rig, n=SKIRT_SEGMENTS):
     texco = np.array([[2.0 * j / n, 1.5 * i / (len(rows) - 1)] for i in range(len(rows)) for j in range(n)])
     material = plain(k, g("color"), ROUGHNESS["wool"], pattern="wool")
     pc = Piece("skirt", k, material, coords, [tuple((v, v) for v in t) for t in tris], w, texco)
+    pc.rings = (SKIRT_RINGS, n)
     under = (figure.limb[figure.faces] == BODY).all(axis=1) & (figure.station[figure.faces] >= g("hide")).all(axis=1) & (
         figure.station[figure.faces] <= top).all(axis=1)
     return pc, under
@@ -2898,8 +2911,10 @@ def make_apron(figure, settings, skirt):
     own hem turned in."""
     k = "apron"
     g = lambda key: setting(settings, k, key)  # noqa: E731
-    n = SKIRT_SEGMENTS
-    rows = len(SKIRT_ROWS) + 1  # the waistband and the skirt's rows, not its turned-in hem
+    rings, n = getattr(skirt, "rings", (None, None))
+    if rings != SKIRT_RINGS or n is None or len(skirt.coords) != rings * n:
+        raise ConvertError("apron: the skirt is not laid out in the rings it reads")
+    rows = SKIRT_OUTER_RINGS  # the waistband and the skirt's rows, not its turned-in hem
     y_hem = figure.height(g("hem"))
     sx, cz = angles(n)
     front = [j for j in range(n) if cz[j] > 1 - g("width") * 1.0 and cz[j] > 0]
