@@ -338,6 +338,32 @@ mod tests {
     }
 
     #[test]
+    fn general_picos_sidewalks_keep_off_the_railway_band_and_the_platform() {
+        let loaded = load_world(&asset_path(TOWNS_FILE));
+        let pico = &loaded.towns[3];
+        assert_eq!(
+            pampa_core::town::Paving::of(pico.blocks()),
+            pampa_core::town::Paving::Everywhere
+        );
+        let band = pico.rail_band().expect("the line runs through Pico");
+        let corridor = pico.rail_corridor().unwrap();
+        let floors = pico.floors();
+        assert!(!floors.is_empty(), "Pico's platform");
+        let walks = pico.sidewalks();
+        assert!(walks.len() > 200, "{} strips", walks.len());
+        for walk in walks {
+            let a = walk.area;
+            assert!(!a.intersects(&band), "{a:?} on the railway band {band:?}");
+            assert!(!a.intersects(&corridor), "{a:?} on the track");
+            for floor in &floors {
+                for area in floor.ramps().into_iter().chain([floor.footprint]) {
+                    assert!(!a.intersects(&area), "{a:?} on the platform {area:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn the_train_stops_at_metileo_by_its_platform() {
         use pampa_core::{LineTrain, Run, Timetable};
         let loaded = load_world(&asset_path(TOWNS_FILE));

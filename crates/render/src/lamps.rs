@@ -21,6 +21,7 @@ use bevy::transform::TransformSystems;
 use pampa_core::{ChunkCoord, StreetLamp, StreetLamps, Terrain, Vec2 as GroundVec2};
 
 use crate::atmosphere::{WorldClock, sky_at};
+use crate::character::viewer::world_layers;
 use crate::coords::world_from_ground;
 use crate::flora::ThinOccluder;
 use crate::settlement::shape::Shape;
@@ -55,8 +56,9 @@ pub struct LampLight;
 pub const LAMP_LIGHTS: usize = 8;
 /// How far a lamp's light reaches, in meters.
 pub const LAMP_LIGHT_RANGE: f32 = 12.0;
-/// A lit lamp's light at full glow, in lumens.
-pub const LAMP_LUMENS: f32 = 30_000.0;
+/// A lit lamp's light at full glow, in lumens (raised from 30,000 after a
+/// night playtest found the streets too dim).
+pub const LAMP_LUMENS: f32 = 75_000.0;
 /// The warm, yellow-orange light of a kerosene flame.
 pub const KEROSENE: Color = Color::srgb(1.0, 0.72, 0.40);
 /// The glass's emissive at full glow (linear): bright enough to read far
@@ -188,7 +190,10 @@ fn setup_kit(
             ..default()
         }),
     });
-    // The light pool, hidden until the lamps glow.
+    // The light pool, hidden until the lamps glow. On every layer the
+    // player's own model is drawn on, as the sun is: a light's layers pick
+    // the cameras it shines for and the meshes in its shadow maps, so the
+    // player stays in them however a camera hides his head or body.
     for _ in 0..LAMP_LIGHTS {
         commands.spawn((
             Name::new("Lamp light"),
@@ -202,6 +207,7 @@ fn setup_kit(
                 contact_shadows_enabled: false,
                 ..default()
             },
+            world_layers(),
             Transform::default(),
             Visibility::Hidden,
         ));
@@ -409,6 +415,8 @@ fn light_nearest(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::character::viewer::{OWN_BODY_LAYER, OWN_HEAD_LAYER};
+    use bevy::camera::visibility::RenderLayers;
     use pampa_core::{
         Aabb, GameClock, HouseStyle, LampSite, RoadNetwork, Settlement, SettlementKind,
         SettlementLayout, Side, Structure, StructureKind, TimeOfDay, TownLayout, Track,
@@ -501,10 +509,20 @@ mod tests {
         for l in &lights {
             assert!(want.contains(l), "{l} lit, not among the nearest");
         }
-        let mut q = app.world_mut().query::<&PointLight>();
-        for light in q.iter(app.world()) {
+        let mut q = app
+            .world_mut()
+            .query::<(&PointLight, Option<&RenderLayers>)>();
+        for (light, layers) in q.iter(app.world()) {
             assert!(!light.shadow_maps_enabled && !light.contact_shadows_enabled);
             assert_eq!(light.range, LAMP_LIGHT_RANGE);
+            // Every layer the player's model is drawn on, the world's too.
+            let layers = layers.cloned().unwrap_or_default();
+            for layer in [0, OWN_HEAD_LAYER, OWN_BODY_LAYER] {
+                assert!(
+                    layers.intersects(&RenderLayers::layer(layer)),
+                    "a lamp light off layer {layer}"
+                );
+            }
         }
         assert!(glass_glow(&app).red > 1.0);
 
