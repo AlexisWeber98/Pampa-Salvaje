@@ -63,10 +63,15 @@ rails themselves stay crossable.
 Landmarks carry painted signs in period Spanish: the general store
 ("PULPERÍA" in a small town, "ALMACÉN DE RAMOS GENERALES" in General Pico),
 the police station ("COMISARÍA"), the church
-("IGLESIA"), the station ("ESTACIÓN EDUARDO CASTEX", on its facade and on a
-name board on the platform) and the plaza. `pampa-core` names the places and
+("IGLESIA"), the station ("ESTACIÓN EDUARDO CASTEX", on its facade and on two
+name boards at the track edge, one near each end of the platform, past the
+coaches, facing the train windows) and the plaza. `pampa-core` names the places and
 says where each sign stands (`TownLayout::places`); render letters them in a
-procedural bitmap pixel font (no third-party font) on weathered boards. The
+procedural bitmap pixel font (no third-party font) on weathered boards.
+The station is an FCO-style brick building with stucco pilasters, hooded
+openings and a pedimented central pavilion on both its street and track
+fronts, and a canopy over the platform on cast-iron columns standing on it,
+with a fascia and a cut timber valance. The
 stores and police stations are spread over each town rather than round its
 plaza, and General Pico has a store and a comisaría on each side of its line.
 

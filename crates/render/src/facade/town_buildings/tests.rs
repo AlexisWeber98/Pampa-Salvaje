@@ -218,6 +218,153 @@ fn the_station_canopy_is_the_roof_core_gives_the_camera() {
     );
 }
 
+/// The station of the yard, at its core size.
+fn station_shape() -> Shape {
+    building(&lot(BuildingKind::Station, (24.0, 9.0, 5.0), 0)).unwrap()
+}
+
+/// The points of `surface` on the track side of the station (`z < -d / 2`).
+fn track_side(shape: &Shape, surface: Surface) -> Vec<Vec3> {
+    shape
+        .points(surface)
+        .into_iter()
+        .filter(|p| p.z < -4.5 - 1e-3)
+        .collect()
+}
+
+/// The x of every canopy column's foot, from the platform up.
+fn column_xs(iron: &[Vec3]) -> Vec<f32> {
+    let mut xs: Vec<f32> = iron
+        .iter()
+        .filter(|p| (p.y - PLATFORM_TOP).abs() < 1e-3)
+        .map(|p| p.x)
+        .collect();
+    xs.sort_by(f32::total_cmp);
+    // Several points per foot: keep one per column.
+    xs.dedup_by(|a, b| (*a - *b).abs() < 0.5);
+    xs
+}
+
+#[test]
+fn the_platform_top_is_the_height_core_gives_its_platform() {
+    let town = pampa_core::TownLayout::castex_inspired();
+    let mut platforms = 0;
+    for platform in town
+        .buildings
+        .iter()
+        .filter(|b| b.kind == BuildingKind::Platform)
+    {
+        assert_eq!(platform.height, PLATFORM_TOP, "{}", town.name);
+        platforms += 1;
+    }
+    assert!(platforms > 0);
+}
+
+/// How deep core lays a station's platform, from the station's back wall
+/// to the track edge (its short side; it runs long along the track).
+fn platform_depth() -> f32 {
+    let town = pampa_core::TownLayout::castex_inspired();
+    let platform = town
+        .buildings
+        .iter()
+        .find(|b| b.kind == BuildingKind::Platform)
+        .unwrap();
+    let size = platform.footprint.size();
+    size.x.min(size.y)
+}
+
+#[test]
+fn the_canopy_columns_stand_on_the_platform_not_in_it() {
+    let (w, d) = (24.0, 9.0);
+    let shape = station_shape();
+    let iron = track_side(&shape, Surface::Steel);
+    // Nothing of the canopy's ironwork reaches below the platform's top,
+    // and every column's foot rests on it.
+    let lowest = iron.iter().fold(f32::MAX, |a, p| a.min(p.y));
+    assert!(
+        (lowest - PLATFORM_TOP).abs() < 1e-3,
+        "lowest iron at {lowest}"
+    );
+    let feet = column_xs(&iron);
+    assert!(feet.len() >= 6, "{} columns", feet.len());
+    // Evenly spaced, three to four meters apart, within the station's width.
+    let gaps: Vec<f32> = feet.windows(2).map(|p| p[1] - p[0]).collect();
+    for gap in &gaps {
+        assert!((3.0..=4.0).contains(gap), "gap {gap}");
+        assert!((gap - gaps[0]).abs() < 0.2, "uneven {gaps:?}");
+    }
+    assert!(feet[0] > -w / 2.0 && feet[feet.len() - 1] < w / 2.0);
+    // On the platform: it runs out from the station's back wall as deep as
+    // core lays it, and the column rows stand well within it.
+    let depth = platform_depth();
+    for p in iron.iter().filter(|p| (p.y - PLATFORM_TOP).abs() < 1e-3) {
+        assert!(p.z > -d / 2.0 - depth + 0.5 && p.z < -d / 2.0, "{p}");
+    }
+}
+
+#[test]
+fn the_canopy_wears_a_fascia_a_timber_valance_and_iron_brackets() {
+    let shape = station_shape();
+    let bottom = Canopy::HEIGHT - Canopy::THICKNESS / 2.0;
+    let z0 = -4.5 - Canopy::DEPTH;
+    let timber = track_side(&shape, Surface::Planks);
+    // A fascia on the track edge, and a valance hanging below the slab,
+    // still well over a person's head on the platform.
+    let hanging: Vec<&Vec3> = timber.iter().filter(|p| p.y < bottom - 0.2).collect();
+    assert!(hanging.len() > 100, "{} valance points", hanging.len());
+    assert!(
+        hanging.iter().all(|p| p.z < z0 + 0.2),
+        "valance on the edge"
+    );
+    let low = hanging.iter().fold(f32::MAX, |a, p| a.min(p.y));
+    assert!(low > PLATFORM_TOP + 2.0, "valance at {low}");
+    assert!(
+        timber
+            .iter()
+            .any(|p| (p.y - (bottom + Canopy::THICKNESS)).abs() < 1e-3)
+    );
+    // Brackets: iron under the slab, beside each column along the roof's
+    // edge and back toward the station wall (a column is 0.2 m across).
+    let iron = track_side(&shape, Surface::Steel);
+    let columns = column_xs(&iron);
+    let zc = z0 + 0.4;
+    let under = |p: &&Vec3| p.y > bottom - 0.8 && p.y < bottom;
+    let beside = iron
+        .iter()
+        .filter(under)
+        .filter(|p| columns.iter().all(|x| (p.x - x).abs() > 0.3))
+        .count();
+    let toward_wall = iron.iter().filter(under).filter(|p| p.z > zc + 0.3).count();
+    assert!(beside > 100, "{beside} side bracket points");
+    assert!(toward_wall > 50, "{toward_wall} wall bracket points");
+}
+
+#[test]
+fn the_station_has_a_pedimented_pavilion_on_both_fronts() {
+    let (d, h) = (9.0, 5.0);
+    let shape = station_shape();
+    let above = |sign: f32| {
+        shape
+            .points(Surface::Stucco)
+            .into_iter()
+            .filter(|p| p.y > h + 1.2 && p.z * sign > 0.0)
+            .collect::<Vec<_>>()
+    };
+    for sign in [1.0, -1.0] {
+        let pediment = above(sign);
+        assert!(pediment.len() > 8, "no pediment at {sign}");
+        // Over the middle, narrower than the whole front, in the footprint.
+        let (lo, hi) = pediment
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(a, b), p| (a.min(p.x), b.max(p.x)));
+        assert!(lo > -8.0 && hi < 8.0 && hi - lo > 6.0, "{lo}..{hi}");
+        // The apex stands well over the eaves, over the middle.
+        let apex = pediment.iter().fold(f32::MIN, |a, p| a.max(p.y));
+        assert!(apex > h + 2.2, "apex {apex}");
+        assert!(pediment.iter().all(|p| p.z.abs() <= d / 2.0 + 1e-3));
+    }
+}
+
 #[test]
 fn town_buildings_keep_to_their_triangle_budgets() {
     for lot in street() {
@@ -236,6 +383,11 @@ fn town_buildings_keep_to_their_triangle_budgets() {
             lot.outskirts
         );
     }
+    // The station and its canopy (eight turned columns, a valance of
+    // lozenges, two dressed fronts): a landmark, built once per town, so
+    // dearer than a store; 7.2k at the time of writing.
+    let tris = station_shape().triangles();
+    assert!((3000..=8000).contains(&tris), "station: {tris} triangles");
 }
 
 #[test]

@@ -3801,18 +3801,21 @@ pub(crate) mod tests {
         // (PR-F1), plaza trees stopped standing on the plaza paths, so the
         // ring spots on and beside the paths are left empty. Earlier, Monte
         // Nievas was re-pinned when it shipped with `police_stations: Some(0)`.
+        // The towns with a platform were re-pinned again (2026-10-26): the
+        // station has two name boards on it instead of one (`places()` is
+        // part of the fingerprint); the two towns without a train are unchanged.
         let pinned = [
-            0x0896_5baa_5d97_dd52,
-            0x8830_2646_f5b1_a89e,
-            0x7020_8528_d79a_7413,
-            0x4b0b_d74d_4bd9_fb1b,
-            0x6db1_bf6d_ee5a_3a42,
-            0x2176_e9ae_6ad8_6181,
-            0xb9a8_a065_e38c_6c75,
-            0x437a_eecf_29d9_5868,
+            0x3a84_c831_6490_af0d,
+            0x8a98_2799_0151_645b,
+            0x869e_89e3_9fb3_487c,
+            0xe464_b73a_795f_9d9a,
+            0xc07f_709c_31fe_e251,
+            0xcebf_74f2_9fca_01ce,
+            0xf030_5ff7_f85b_64ac,
+            0x620d_2489_dca3_323f,
             0xe218_84d2_dd95_fa39,
             0xb693_d075_3583_4e7c,
-            0x87ea_b1b8_23bf_86a4,
+            0x311f_3cee_9d48_d8a1,
         ];
         let configs = small_configs();
         assert_eq!(configs.len(), pinned.len());

@@ -180,7 +180,7 @@ impl TownLayout {
                 .map(|station| {
                     let mut signs = vec![facade_sign(station.footprint, station.front, 14.0)];
                     if let Some(platform) = building(BuildingKind::Platform) {
-                        signs.push(platform_board(platform, station));
+                        signs.extend(platform_boards(platform, station));
                     }
                     (station.footprint, signs)
                 })
@@ -328,27 +328,35 @@ fn facade_sign(footprint: Aabb, front: Side, width: f32) -> Sign {
     }
 }
 
-/// The station name board on posts at the track edge of the platform, past
-/// the west (or south) end of the station canopy, reading toward the passing
-/// trains. The station faces the town, so the track is behind it.
-fn platform_board(platform: &Building, station: &Building) -> Sign {
-    let width = 7.0;
+/// Width of each station name board on the platform, in meters: a long
+/// period board, but short enough to stand clear of the platform's ends.
+const PLATFORM_BOARD_WIDTH: f32 = 5.0;
+/// Gap from a platform's end to the board nearest it, in meters.
+const PLATFORM_BOARD_MARGIN: f32 = 1.5;
+/// How far in from the platform's track edge a board stands, in meters.
+const PLATFORM_BOARD_FROM_EDGE: f32 = 0.8;
+
+/// The two station name boards on posts at the track edge of the platform,
+/// one near each end, reading toward the trains so a passenger looking out
+/// of a coach window sees the name. The ends lie past the stretch the
+/// coaches stand along, so a passenger never steps off into one. The
+/// station faces the town, so the track is behind it.
+fn platform_boards(platform: &Building, station: &Building) -> [Sign; 2] {
     let track = station.front.opposite();
     let n = side_normal(track);
     let along = Vec2::new(n.y.abs(), n.x.abs());
-    let (p, s) = (platform.footprint, station.footprint);
-    // Where the board stands along the track, and how far toward it.
-    let at = s.min.dot(along) - 2.5 - width / 2.0;
-    let depth = p.size().dot(Vec2::new(n.x.abs(), n.y.abs()));
-    let toward = p.center().dot(n) + depth / 2.0 - 0.8;
-    let base = p.center();
-    Sign {
-        anchor: base + along * (at - base.dot(along)) + n * (toward - base.dot(n)),
+    let p = platform.footprint;
+    let half_length = p.size().dot(along) / 2.0;
+    let half_depth = p.size().dot(Vec2::new(n.x.abs(), n.y.abs())) / 2.0;
+    let reach = half_length - PLATFORM_BOARD_MARGIN - PLATFORM_BOARD_WIDTH / 2.0;
+    let edge = p.center() + n * (half_depth - PLATFORM_BOARD_FROM_EDGE);
+    [-1.0, 1.0].map(|end| Sign {
+        anchor: edge + along * (end * reach),
         facing: track,
         mount: SignMount::Posts,
         elevation: platform.height,
-        width,
-    }
+        width: PLATFORM_BOARD_WIDTH,
+    })
 }
 
 /// Outward unit normal of a footprint side.
@@ -528,8 +536,16 @@ mod tests {
         }
     }
 
+    /// Half the stretch of platform the line train's coaches stand along,
+    /// in meters: the train stops with its coaches centered on the middle
+    /// of the platform (see `platform_spot`).
+    fn coaches_half() -> f32 {
+        let (first, last) = crate::train::coaches_span(&crate::train::line_consist()).unwrap();
+        (last - first) / 2.0
+    }
+
     #[test]
-    fn the_station_also_has_a_name_board_on_the_platform_facing_the_track() {
+    fn the_station_has_a_name_board_at_each_end_of_the_platform_facing_the_track() {
         for t in sample_towns() {
             let (Some(platform), Some(station_building), Some(railway)) = (
                 building(&t, BuildingKind::Platform),
@@ -539,34 +555,74 @@ mod tests {
                 continue;
             };
             let station = place(&t, PlaceKind::Station).unwrap();
-            assert_eq!(station.signs.len(), 2);
-            let board = station.signs[1];
-            assert_eq!(board.mount, SignMount::Posts);
+            assert_eq!(station.signs.len(), 3, "{}: facade + two boards", t.name);
             let track = station_building.front.opposite();
-            assert_eq!(board.facing, track, "{}", t.name);
-            assert!(
-                platform.footprint.contains_point(board.anchor),
-                "{}",
-                t.name
-            );
-            assert_eq!(board.elevation, platform.height);
             let n = side_normal(track);
-            assert!(board.anchor.dot(n) < railway.start.dot(n), "{}", t.name);
-            assert_eq!(board.footprint(), None, "raised on the platform");
-            // Clear of the station's own canopy over the platform.
             let along = Vec2::new(n.y.abs(), n.x.abs());
-            let (a, half) = (board.anchor.dot(along), board.width / 2.0);
-            let (lo, hi) = (
-                station_building.footprint.min.dot(along),
-                station_building.footprint.max.dot(along),
-            );
-            assert!(a - half > hi || a + half < lo, "{}", t.name);
-            // Within the platform along the track.
+            let middle = platform.footprint.center().dot(along);
             let (plo, phi) = (
                 platform.footprint.min.dot(along),
                 platform.footprint.max.dot(along),
             );
-            assert!(a - half >= plo && a + half <= phi, "{}", t.name);
+            let mut ends = Vec::new();
+            for board in &station.signs[1..] {
+                assert_eq!(board.mount, SignMount::Posts);
+                assert_eq!(board.facing, track, "{}", t.name);
+                assert!(
+                    platform.footprint.contains_point(board.anchor),
+                    "{}",
+                    t.name
+                );
+                assert_eq!(board.elevation, platform.height);
+                // At the track edge of the platform, on the near side of
+                // the rails.
+                assert!(board.anchor.dot(n) < railway.start.dot(n), "{}", t.name);
+                let edge = platform.footprint.center().dot(n)
+                    + platform
+                        .footprint
+                        .size()
+                        .dot(Vec2::new(n.x.abs(), n.y.abs()))
+                        / 2.0;
+                assert!(edge - board.anchor.dot(n) < 1.0, "{}: by the edge", t.name);
+                assert_eq!(board.footprint(), None, "raised on the platform");
+                // A period board: long, but not the whole platform.
+                assert!((4.0..=6.0).contains(&board.width), "{}", t.name);
+                // Within the platform along the track, with a margin.
+                let (a, half) = (board.anchor.dot(along), board.width / 2.0);
+                assert!(a - half >= plo + 1.0 && a + half <= phi - 1.0, "{}", t.name);
+                // Clear of the stretch the coaches stand along, which holds
+                // every alighting spot and every coach door.
+                assert!(
+                    (a - middle).abs() - half >= coaches_half() + 1.0,
+                    "{}",
+                    t.name
+                );
+                ends.push((a - middle).signum());
+            }
+            ends.sort_by(f32::total_cmp);
+            assert_eq!(ends, [-1.0, 1.0], "{}: one at each end", t.name);
+        }
+    }
+
+    #[test]
+    fn no_alighting_spot_meets_a_name_board() {
+        for t in sample_towns() {
+            let Some((spot, _)) = t.platform_spot() else {
+                continue;
+            };
+            let platform = building(&t, BuildingKind::Platform).unwrap();
+            let track = side_normal(platform.front);
+            let along = Vec2::new(track.y.abs(), track.x.abs());
+            let station = place(&t, PlaceKind::Station).unwrap();
+            // A passenger steps off beside any coach door, anywhere in the
+            // coaches' stretch, a step in from the track edge.
+            for board in &station.signs[1..] {
+                let reach = board.width / 2.0 + crate::Rider::PERSON_RADIUS;
+                let a = board.anchor.dot(along);
+                let lo = spot.dot(along) - coaches_half();
+                let hi = spot.dot(along) + coaches_half();
+                assert!(a + reach < lo || a - reach > hi, "{}: {board:?}", t.name);
+            }
         }
     }
 
