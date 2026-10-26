@@ -4,6 +4,8 @@
 //! them ([`walls`]), and the Italianate dressing of a 1919 pampa front
 //! ([`italianate`]): plinths, chamfered pilasters, moulded cornices,
 //! parapets with balustrades and pedestals, framed openings and galerías.
+//! [`plaza`] dresses a town's plaza with the same pieces: curbed paths,
+//! the monument, benches and the railing.
 //!
 //! Everything is built in a structure's own space, `x` along its front,
 //! `z` out of it and `y` up from the ground at its middle, into a [`Shape`]
@@ -11,6 +13,7 @@
 
 pub mod italianate;
 pub mod materials;
+pub(crate) mod plaza;
 pub mod shape;
 pub(crate) mod town_buildings;
 pub mod walls;

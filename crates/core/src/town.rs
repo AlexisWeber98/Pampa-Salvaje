@@ -689,6 +689,211 @@ pub fn plaza_monument(plaza: Aabb) -> Aabb {
     Aabb::from_center_size(plaza.center(), Vec2::new(PLAZA_MONUMENT, PLAZA_MONUMENT))
 }
 
+/// Side of the paved square where a plaza's paths cross, meters: a path's
+/// width all round the monument's plinth, so people and riders walk round
+/// the monument.
+pub const PLAZA_CROSSING: f32 = PLAZA_MONUMENT + 2.0 * PLAZA_PATH_WIDTH;
+
+/// The paved square round the monument of `plaza`, where its paths cross.
+pub fn plaza_crossing(plaza: Aabb) -> Aabb {
+    Aabb::from_center_size(plaza.center(), Vec2::new(PLAZA_CROSSING, PLAZA_CROSSING))
+}
+
+/// A slatted plaza bench (banco de plaza) on cast-iron ends, in a green
+/// bed beside a path, facing it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Bench {
+    /// The middle of its footprint.
+    pub at: Vec2,
+    /// Where someone sitting on it looks: toward the path.
+    pub facing: Side,
+}
+
+impl Bench {
+    /// Length of a bench along its path, meters.
+    pub const LENGTH: f32 = 1.8;
+    /// Depth from the front of its seat to the back of its feet, meters.
+    pub const DEPTH: f32 = 0.6;
+    /// Gap between the path's edge and the front of the bench, meters:
+    /// room for the path's curb and the sitter's feet.
+    pub const PATH_GAP: f32 = 0.3;
+    /// Least gap between two benches along a path, meters.
+    pub const SPACING: f32 = 1.0;
+
+    /// Its static obstacle: the whole bench.
+    pub fn footprint(&self) -> Aabb {
+        let size = match self.facing {
+            Side::North | Side::South => Vec2::new(Self::LENGTH, Self::DEPTH),
+            Side::East | Side::West => Vec2::new(Self::DEPTH, Self::LENGTH),
+        };
+        Aabb::from_center_size(self.at, size)
+    }
+}
+
+/// What stands in one plaza besides its trees, by its town's [`Paving`]
+/// (phase 3 of the town facades): the monument on its plinth, the paved
+/// crossing round it, benches beside the paths and, in a city only, a low
+/// iron railing round the edge, open at each path's mouth. The
+/// monument, the benches and the railing are static obstacles; the paths
+/// and the crossing stay clear, so the streets, the townsfolk's graph and
+/// every lamp keep where they were.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlazaFurniture {
+    /// The plaza.
+    pub area: Aabb,
+    /// Its town's paving, which also sets how grand the plaza is.
+    pub paving: Paving,
+    /// The monument's collider: its lowest step, inside [`plaza_monument`].
+    pub monument: Aabb,
+    /// The paved square round the monument ([`plaza_crossing`]).
+    pub crossing: Aabb,
+    pub benches: Vec<Bench>,
+    /// The railing's pieces along the edge, each a thin box.
+    pub railing: Vec<Aabb>,
+}
+
+impl PlazaFurniture {
+    /// How far in from the plaza's edge the railing starts, meters.
+    pub const RAILING_INSET: f32 = 0.05;
+    /// Depth of the railing, its piers included, meters: it stays out of
+    /// the half meter round the lamps at the path mouths, a meter in from
+    /// the edge.
+    pub const RAILING_DEPTH: f32 = 0.3;
+    /// How far to either side of a path's middle the railing opens: the
+    /// path and its curbs.
+    pub const MOUTH_HALF: f32 = PLAZA_PATH_WIDTH / 2.0 + 0.15;
+    /// Least gap from the crossing to the first bench along a path, meters.
+    pub const CROSSING_GAP: f32 = 0.5;
+    /// Least gap from the plaza's edge to the last bench along a path,
+    /// meters: past the lamps at the path mouths.
+    pub const EDGE_GAP: f32 = 2.6;
+
+    /// Side of the monument's lowest step: smaller in a village.
+    pub fn monument_side(paving: Paving) -> f32 {
+        match paving {
+            Paving::None => 2.4,
+            Paving::Plaza | Paving::Everywhere => PLAZA_MONUMENT,
+        }
+    }
+
+    /// How the benches are spread (user, 2026-10-26: small plazas stay
+    /// sparse): the paths out of the crossing that get any (east, north,
+    /// west, south), how many each, and whether on both sides of the path
+    /// or only on its left, one per quadrant like a pinwheel. A city has
+    /// three on each side of every path (one in its station plaza), a town
+    /// one by each path, a village one by the east and one by the west
+    /// path.
+    pub fn bench_plan(paving: Paving, main: bool) -> (&'static [usize], usize, bool) {
+        match paving {
+            Paving::Everywhere => (&[0, 1, 2, 3], if main { 3 } else { 1 }, true),
+            Paving::Plaza => (&[0, 1, 2, 3], 1, false),
+            Paving::None => (&[0, 2], 1, false),
+        }
+    }
+
+    /// How many benches a plaza gets when they all fit ([`Self::bench_plan`]).
+    pub fn bench_count(paving: Paving, main: bool) -> usize {
+        let (arms, per, both) = Self::bench_plan(paving, main);
+        arms.len() * per * if both { 2 } else { 1 }
+    }
+
+    /// The furniture of `area`, the town's main plaza when `main`, in a
+    /// town paved as `paving`. A bench that would stand on anything of
+    /// `keep_off` (tree trunks, signs) is left out.
+    pub fn of(area: Aabb, paving: Paving, main: bool, keep_off: &[Aabb]) -> Self {
+        let c = area.center();
+        let side = Self::monument_side(paving);
+        Self {
+            area,
+            paving,
+            monument: Aabb::from_center_size(c, Vec2::new(side, side)),
+            crossing: plaza_crossing(area),
+            benches: benches(area, Self::bench_plan(paving, main), keep_off),
+            // Only a city fences its plaza (user, 2026-10-26).
+            railing: match paving {
+                Paving::None | Paving::Plaza => Vec::new(),
+                Paving::Everywhere => railing(area),
+            },
+        }
+    }
+
+    /// Its static obstacles: the monument, the benches and the railing.
+    pub fn obstacles(&self) -> impl Iterator<Item = Aabb> + '_ {
+        std::iter::once(self.monument)
+            .chain(self.benches.iter().map(Bench::footprint))
+            .chain(self.railing.iter().copied())
+    }
+}
+
+/// The benches of `area` as `plan` spreads them ([`PlazaFurniture::bench_plan`]),
+/// each path's spread evenly between the crossing and the lamps at its
+/// mouth, clear of `keep_off`.
+fn benches(area: Aabb, plan: (&[usize], usize, bool), keep_off: &[Aabb]) -> Vec<Bench> {
+    let (arms, per_side, both) = plan;
+    let (c, half) = (area.center(), area.size() * 0.5);
+    let lateral = PLAZA_PATH_WIDTH / 2.0 + Bench::PATH_GAP + Bench::DEPTH / 2.0;
+    let start = PLAZA_CROSSING / 2.0 + PlazaFurniture::CROSSING_GAP + Bench::LENGTH / 2.0;
+    let mut out = Vec::new();
+    let paths = [
+        (Side::East, Side::North),
+        (Side::North, Side::West),
+        (Side::West, Side::South),
+        (Side::South, Side::East),
+    ];
+    for (n, across) in arms.iter().map(|&k| paths[k]) {
+        let (n, left) = (
+            crate::places::side_normal(n),
+            crate::places::side_normal(across),
+        );
+        let reach = n.x.abs() * half.x + n.y.abs() * half.y;
+        let end = reach - PlazaFurniture::EDGE_GAP - Bench::LENGTH / 2.0;
+        if end < start {
+            continue;
+        }
+        let pitch = Bench::LENGTH + Bench::SPACING;
+        let fit = ((end - start) / pitch) as usize + 1;
+        let count = per_side.min(fit);
+        for k in 0..count {
+            let t = if count == 1 {
+                (start + end) / 2.0
+            } else {
+                start + (end - start) * k as f32 / (count - 1) as f32
+            };
+            for s in if both { &[1.0, -1.0][..] } else { &[1.0][..] } {
+                let s = *s;
+                let at = c + n * t + left * (s * lateral);
+                let facing = if s > 0.0 { across.opposite() } else { across };
+                let bench = Bench { at, facing };
+                let room = bench.footprint().expanded(0.1);
+                if keep_off.iter().all(|o| !o.intersects(&room)) {
+                    out.push(bench);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The railing round `area`: along each edge, just inside it, open at the
+/// path's mouth. The north and south runs reach the corners; the east and
+/// west ones run between them.
+fn railing(area: Aabb) -> Vec<Aabb> {
+    let (i, d) = (PlazaFurniture::RAILING_INSET, PlazaFurniture::RAILING_DEPTH);
+    let (min, max, c) = (area.min, area.max, area.center());
+    let m = PlazaFurniture::MOUTH_HALF;
+    let mut out = Vec::new();
+    for (lo, hi) in [(min.y + i, min.y + i + d), (max.y - i - d, max.y - i)] {
+        out.push(Aabb::new(Vec2::new(min.x + i, lo), Vec2::new(c.x - m, hi)));
+        out.push(Aabb::new(Vec2::new(c.x + m, lo), Vec2::new(max.x - i, hi)));
+    }
+    let (y0, y1) = (min.y + i + d, max.y - i - d);
+    for (lo, hi) in [(min.x + i, min.x + i + d), (max.x - i - d, max.x - i)] {
+        out.push(Aabb::new(Vec2::new(lo, y0), Vec2::new(hi, c.y - m)));
+        out.push(Aabb::new(Vec2::new(lo, c.y + m), Vec2::new(hi, y1)));
+    }
+    out
+}
+
 impl TownLayout {
     /// Builds the town `config` describes, or explains why it cannot.
     pub fn generate(config: &TownConfig) -> Result<Self, TownConfigError> {
@@ -811,6 +1016,24 @@ impl TownLayout {
         std::iter::once(self.plaza).chain(self.station_plaza)
     }
 
+    /// What stands in each of [`Self::plazas`], in the same order: its
+    /// monument, crossing, benches and railing ([`PlazaFurniture`]), clear
+    /// of its trees and signs.
+    pub fn plaza_furniture(&self) -> Vec<PlazaFurniture> {
+        let trunk = Vec2::new(2.0 * TREE_TRUNK_RADIUS, 2.0 * TREE_TRUNK_RADIUS);
+        let keep_off: Vec<Aabb> = self
+            .trees
+            .iter()
+            .map(|&p| Aabb::from_center_size(p, trunk))
+            .chain(self.sign_obstacles())
+            .collect();
+        let paving = Paving::of(self.blocks);
+        self.plazas()
+            .enumerate()
+            .map(|(k, p)| PlazaFurniture::of(p, paving, k == 0, &keep_off))
+            .collect()
+    }
+
     /// How many people walk the town's streets: its config's `townsfolk`,
     /// or else 16 in a small town and four for every five blocks (at least
     /// 16) in bigger ones.
@@ -896,8 +1119,9 @@ impl TownLayout {
 
     /// Static collision footprints: every building's [`Building::collider`]
     /// but the platform's (a floor people walk on, see [`Self::floors`]),
-    /// every tree trunk, the hitching rail with its horse, and free-standing
-    /// signs.
+    /// every tree trunk, the hitching rail with its horse, free-standing
+    /// signs, and each plaza's monument, benches and railing
+    /// ([`PlazaFurniture::obstacles`]).
     pub fn obstacles(&self) -> Vec<Aabb> {
         let trunk = Vec2::new(2.0 * TREE_TRUNK_RADIUS, 2.0 * TREE_TRUNK_RADIUS);
         self.buildings
@@ -907,6 +1131,12 @@ impl TownLayout {
             .chain(self.trees.iter().map(|&p| Aabb::from_center_size(p, trunk)))
             .chain([self.hitching_post.rail, self.hitching_post.horse.footprint])
             .chain(self.sign_obstacles())
+            .chain(
+                self.plaza_furniture()
+                    .iter()
+                    .flat_map(PlazaFurniture::obstacles)
+                    .collect::<Vec<_>>(),
+            )
             .collect()
     }
 
@@ -2826,14 +3056,128 @@ pub(crate) mod tests {
                 .buildings
                 .iter()
                 .filter(|b| b.kind != BuildingKind::Platform);
+            let furniture: Vec<Aabb> = t
+                .plaza_furniture()
+                .iter()
+                .flat_map(PlazaFurniture::obstacles)
+                .collect();
             assert_eq!(
                 obstacles.len(),
-                solid.clone().count() + t.trees.len() + 2 + t.sign_obstacles().len()
+                solid.clone().count()
+                    + t.trees.len()
+                    + 2
+                    + t.sign_obstacles().len()
+                    + furniture.len()
             );
+            assert!(furniture.iter().all(|f| obstacles.contains(f)));
             assert!(obstacles.contains(&t.hitching_post.rail));
             assert!(obstacles.contains(&t.hitching_post.horse.footprint));
             for b in solid {
                 assert!(obstacles.contains(&b.collider()));
+            }
+        }
+    }
+
+    #[test]
+    fn plaza_furniture_follows_the_town_size() {
+        let mut seen = std::collections::HashSet::new();
+        for t in sample_towns() {
+            let paving = Paving::of(t.blocks());
+            let all = t.plaza_furniture();
+            assert_eq!(all.len(), t.plazas().count(), "{}", t.name);
+            for (k, (f, area)) in all.iter().zip(t.plazas()).enumerate() {
+                seen.insert(paving);
+                assert_eq!((f.area, f.paving), (area, paving));
+                // The monument stands on the plinth core always kept for
+                // it, smaller in a village.
+                assert!(plaza_monument(area).contains(&f.monument));
+                assert_eq!(f.monument.center(), area.center());
+                let side = if paving == Paving::None { 2.4 } else { 3.0 };
+                assert!((f.monument.size().x - side).abs() < 1e-4, "{}", t.name);
+                assert_eq!(f.crossing, plaza_crossing(area));
+                // A railing in the city only, open at the four mouths.
+                let railed = paving == Paving::Everywhere;
+                assert_eq!(f.railing.len(), if railed { 8 } else { 0 }, "{}", t.name);
+                // Benches by the tier: 24 round a city's main plaza, 4 in
+                // a town's, 2 in a village's.
+                let want = PlazaFurniture::bench_count(paving, k == 0);
+                let main_want = match paving {
+                    Paving::Everywhere => 24,
+                    Paving::Plaza => 4,
+                    Paving::None => 2,
+                };
+                assert!(!f.benches.is_empty(), "{}", t.name);
+                assert!(f.benches.len() <= want, "{}", t.name);
+                if k == 0 {
+                    assert_eq!(f.benches.len(), main_want, "{}", t.name);
+                }
+                // A sparse plaza puts one bench to a quadrant at most.
+                if paving != Paving::Everywhere {
+                    let c = area.center();
+                    let quadrants: std::collections::HashSet<(bool, bool)> = f
+                        .benches
+                        .iter()
+                        .map(|b| (b.at.x > c.x, b.at.y > c.y))
+                        .collect();
+                    assert_eq!(quadrants.len(), f.benches.len(), "{}", t.name);
+                }
+            }
+        }
+        assert_eq!(seen.len(), 3, "the samples cover every tier: {seen:?}");
+    }
+
+    #[test]
+    fn plaza_furniture_keeps_off_the_paths_streets_trees_and_signs() {
+        for t in sample_towns() {
+            let mut clear: Vec<Aabb> = t.streets.clone();
+            clear.extend(t.sidewalks().iter().map(|s| s.area));
+            clear.extend(t.sign_obstacles());
+            let trunk = Vec2::new(2.0 * TREE_TRUNK_RADIUS, 2.0 * TREE_TRUNK_RADIUS);
+            clear.extend(t.trees.iter().map(|&p| Aabb::from_center_size(p, trunk)));
+            for f in t.plaza_furniture() {
+                let mut paths = plaza_paths(f.area).to_vec();
+                for o in f
+                    .benches
+                    .iter()
+                    .map(Bench::footprint)
+                    .chain(f.railing.clone())
+                {
+                    assert!(f.area.contains(&o), "{}: {o:?} outside", t.name);
+                    assert!(!o.intersects(&f.crossing), "{}: {o:?}", t.name);
+                    for c in paths.iter().chain(&clear) {
+                        assert!(!o.intersects(c), "{}: {o:?} on {c:?}", t.name);
+                    }
+                }
+                // A bench faces its path, its front just off the path.
+                for b in &f.benches {
+                    let front = b.at + crate::places::side_normal(b.facing) * (Bench::DEPTH / 2.0);
+                    let gap = paths
+                        .iter()
+                        .map(|p| p.closest_point(front).distance(front))
+                        .fold(f32::MAX, f32::min);
+                    assert!((gap - Bench::PATH_GAP).abs() < 1e-3, "{}: {b:?}", t.name);
+                }
+                // The paths stay open from edge to edge: the railing only
+                // runs beside them.
+                paths.push(f.crossing);
+                for r in &f.railing {
+                    let mouth = Aabb::from_center_size(
+                        f.area.center(),
+                        Vec2::new(2.0, 2.0) * PlazaFurniture::MOUTH_HALF,
+                    );
+                    let across_x = Aabb::new(
+                        Vec2::new(f.area.min.x, mouth.min.y),
+                        Vec2::new(f.area.max.x, mouth.max.y),
+                    );
+                    let across_y = Aabb::new(
+                        Vec2::new(mouth.min.x, f.area.min.y),
+                        Vec2::new(mouth.max.x, f.area.max.y),
+                    );
+                    assert!(
+                        !r.intersects(&across_x) && !r.intersects(&across_y),
+                        "{r:?}"
+                    );
+                }
             }
         }
     }
@@ -3686,8 +4030,14 @@ pub(crate) mod tests {
                     assert!(!t.plaza.contains_point(mid), "{}: across the plaza", c.name);
                 }
             }
-            // Nothing stands in it but its trees and its sign.
-            let sign: Vec<Aabb> = t.sign_obstacles();
+            // Nothing stands in it but its trees, its sign and its
+            // furniture.
+            let mut sign: Vec<Aabb> = t.sign_obstacles();
+            sign.extend(
+                t.plaza_furniture()
+                    .iter()
+                    .flat_map(PlazaFurniture::obstacles),
+            );
             for o in t.obstacles() {
                 let tree = t.trees.iter().any(|&p| o.contains_point(p));
                 if !tree && !sign.contains(&o) {

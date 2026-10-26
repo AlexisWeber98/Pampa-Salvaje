@@ -89,6 +89,9 @@ pub enum Surface {
     Band,
     /// Brick paving (`brick_pavement`): the sidewalks (veredas).
     Paving,
+    /// Compacted earth (`dry_ground_01`, opaque, unlike [`Surface::Yard`]):
+    /// the paths of a small town's or a village's plaza.
+    Earth,
 }
 
 /// The muted colours a 1919 town front is painted in
@@ -163,7 +166,7 @@ pub fn lift(scan: [f32; 3], target: [f32; 3]) -> [f32; 3] {
 
 impl Surface {
     /// Every surface, in order.
-    pub const ALL: [Surface; 24] = [
+    pub const ALL: [Surface; 25] = [
         Surface::Adobe,
         Surface::Whitewash,
         Surface::Brick,
@@ -188,6 +191,7 @@ impl Surface {
         Surface::PatchedBrick,
         Surface::Band,
         Surface::Paving,
+        Surface::Earth,
     ];
 
     /// The texture set it wears, if any.
@@ -201,7 +205,7 @@ impl Surface {
             Self::Planks => "brown_planks_05",
             Self::Thatch => "thatch",
             Self::Mud => "brown_mud_dry",
-            Self::Yard => "dry_ground_01",
+            Self::Yard | Self::Earth => "dry_ground_01",
             Self::Painted(_) => "painted_plaster_wall",
             Self::WashedBrick => "whitewashed_brick",
             Self::PatchedBrick => "red_brick_plaster_patch_02",
@@ -228,7 +232,7 @@ impl Surface {
             Self::Adobe | Self::Whitewash | Self::Lime | Self::Stucco | Self::Mud => 2.5,
             Self::Painted(_) => 2.5,
             Self::Band => return Vec2::new(4.0, 1.0),
-            Self::Yard => 3.0,
+            Self::Yard | Self::Earth => 3.0,
             Self::Recess | Self::Steel | Self::Sheet | Self::Water => 1.0,
         };
         Vec2::splat(tile)
@@ -249,6 +253,8 @@ impl Surface {
             Self::PatchedBrick => lifted(PATCHED_BRICK_SCAN, [0.58, 0.45, 0.35]),
             Self::Band => lifted(BAND_SCAN, [0.64, 0.58, 0.50]),
             Self::Paving => lifted(PAVING_SCAN, [0.48, 0.36, 0.30]),
+            // Trodden a little paler and dustier than a yard.
+            Self::Earth => Look::Tint([0.96, 0.90, 0.80]),
             _ => Look::Tint([1.0, 1.0, 1.0]),
         }
     }
@@ -282,6 +288,7 @@ impl Surface {
             Self::Thatch => (0.66, 0.56, 0.36),
             Self::Mud => (0.50, 0.40, 0.29),
             Self::Yard => (0.60, 0.52, 0.40),
+            Self::Earth => (0.62, 0.54, 0.43),
             Self::Recess => (0.05, 0.045, 0.04),
             Self::Steel => (0.24, 0.24, 0.25),
             Self::Sheet => (0.70, 0.71, 0.71),
