@@ -602,3 +602,308 @@ note), with about 720 in the new `facade/plaza.rs` and its tests.
 - `cargo build -p game`
 - `cargo fmt --all -- --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
+
+## Phase 4: better trees (branch feat/plaza-trees, from main 5bfbe2b)
+
+Replace the plaza trees (a 16-sided cylinder under a squashed icosphere,
+flat colours, `crates/render/src/town.rs:601-627`) with procedural trees:
+tapered bark trunks and limbs carrying alpha-tested leaf cards, in four
+species of 1919 pampa plazas: paraíso, olmo, eucalipto, aromo.
+
+Assets: ambientCG CC0, 1K-JPG, downloaded by the user on 2026-10-26 into
+`assets/textures/trees/<Id>/` (47 MB raw, the zips' extras included).
+
+| Species | Leaves | Bark |
+|---|---|---|
+| olmo | LeafSet001 | Bark001 |
+| eucalipto | LeafSet003 | Bark009 |
+| aromo | LeafSet019 (tint silver-green) | Bark002 |
+| paraíso | atlas composed from LeafSet013 leaflets (no compound leaf exists) | Bark014 |
+
+Constraints: shared `ranges()[2]` only (no new VisibilityRange); Renoir iGPU
+budget, about 0.5–1k triangles per tree, one bark and one leaf material per
+species, shared meshes (a few seeded variants per species); no core layout
+change (species chosen in render from the town seed); every test with its
+sabotage; credits in a folder CREDITS.md and the root CREDITS.md.
+
+### Tasks (phase 4)
+
+- [x] T1 Textures: keep only Color, NormalGL, Roughness, Opacity (and AO)
+  per set; RGBA leaf `color.ktx2` (Opacity in alpha) through
+  `tools/textures_to_ktx2.sh`; the paraíso pinnate atlas built from
+  LeafSet013 by a reproducible tool; credits.
+- [x] T2 Leaf and bark materials: `AlphaMode::Mask` (or AlphaToCoverage if
+  MSAA is on), double-sided, clamp-to-edge atlas sampler; plain-colour
+  fallback without assets.
+- [x] T3 Tree builder: seeded tapered trunk and limbs with bark UVs, leaf
+  cards clustered at branch tips with normals bent outward; per-species
+  shape (paraíso round umbrella, olmo tall vase, eucalipto tall and open,
+  aromo low and feathery); smoothed normals; triangle budget test.
+- [x] T4 Plazas: species per plaza from the town seed, the station plaza
+  may differ; trunks stay the obstacles core already places; ThinOccluder
+  like settlement trees; preview render.
+- [x] T5 Tests with sabotages, docs, full checks.
+
+Route: one delegated writer in the main checkout (trigger: 2+ non-trivial
+files across tools, render and assets). Uncommitted; the user commits.
+
+### Checks
+
+- `cargo test -p pampa-core`, `-p pampa-render`, `-p game`
+- `python3 -I -B -m unittest discover -s tools` (if a tool changes)
+- `cargo build -p game`, `cargo fmt --all -- --check`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+
+### Phase 4 decisions
+
+- **Every species gets a composed atlas**, not only the paraíso. The
+  LeafSet sheets hold single leaves (LeafSet019: three loose sprays), so a
+  card mapped to a whole sheet showed a grid of six oversized leaves.
+  `tools/leaf_atlas.py` cuts each leaf out by its opacity
+  (`-connected-components`) and lays them along drawn stems into four
+  sprigs a 1024² atlas, one to a quarter, the base 32 texels over the
+  quarter's bottom edge (`SPRIG_BASE`) and a 16-texel empty margin:
+  paraíso leaflets in opposite pairs on a rachis (pinnate), olmo leaves
+  alternating on a twig, eucalipto leaves hanging close to a twig, the
+  aromo's sprays stood upright. Leaves are rotated, so the normal map's
+  x/y are rotated with them (`-color-matrix`). Seeded and reproducible
+  (re-run byte-identical, sha256 checked on the paraíso atlas).
+- **Files follow the buildings' convention**: each source folder keeps its
+  renamed 1K JPGs (`color`, `normal_gl`, `roughness`, plus `ao` on the
+  barks, `opacity` on the leaf sets); the bark folders and the four
+  `*_leaves/` atlases ship `color/normal_gl/orm.ktx2`. The LeafSet folders
+  are tool inputs only (no KTX2). The zip extras (.blend, .mtlx, .tres,
+  .usdc, previews, Displacement, NormalDX) are gone: the writer's `rm` was
+  denied by permissions, and they were removed outside it. One unused file
+  remains: `LeafSet003/LeafSet003_1K-JPG_AmbientOcclusion.jpg`.
+- **Alpha path**: `textures_to_ktx2.sh` packs `opacity.jpg` into the colour's
+  alpha (RGBA PNG, then UASTC `-srgb`); a set without it encodes exactly as
+  before (building `brick_pavement` and `beige_wall_002` re-encoded
+  byte-identical, sha256). `--check-alpha` proves the opacity lands in
+  alpha after a BC7 transcode.
+- **`AlphaMode::Mask(0.5)`, not AlphaToCoverage.** MSAA is Bevy's default
+  (Sample4, the game sets no `Msaa`), but Mask is the safe choice for the
+  shadow and prepass and for the `ThinOccluder` fade copy (which switches
+  to `Blend`). The leaf material has `cull_mode: None` and
+  `double_sided: false` on purpose: Bevy's double-sided flag flips a back
+  face's normal, which would turn the outward-bent normals into the crown.
+- **Shape**: a tapered 8-sided trunk (the eucalipto's goes on up as a
+  leader), 4–7 limbs of 6 sides in two segments, 2–4 three-sided twigs per
+  limb; cards spread along the limbs' outer halves and the twigs (by
+  length, biased to the ends), each card two quads bent down by its sag.
+  Bark UVs wrap a whole number of times round each tube (no seam). Normals
+  are analytic (radial on tubes, bent out of the crown on cards), so
+  `crate::smooth` was not needed.
+- **Species per plaza** (`tree::plaza_species`, from the town seed): the
+  station plaza always gets another species. Shipped preview towns:
+  General Pico eucalipto (station: olmo), Eduardo Castex olmo, Metileo
+  eucalipto.
+- **Sharing**: 4 species x 3 variants, built once at startup into
+  `TreeKit` (24 meshes, 8 materials for the whole game). Each plaza tree is
+  2 entities (bark, leaves), as before, on `ranges()[2]`, with a
+  `ThinOccluder` of its crown's reach and height, yaw and scale
+  (0.92–1.08) seeded by its spot. The trunk stays inside core's 0.35 m
+  collider at the largest scale (tested).
+
+### Phase 4 perf
+
+| Species | Bark | Leaves | Total | Height x crown width (mean, m) |
+|---|---|---|---|---|
+| paraíso | 242 | 480 | 722 | 6.5 x 9.6 |
+| olmo | 272 | 560 | 832 | 11.8 x 10.6 |
+| eucalipto | 316–358 | 600 | 916–958 | 15.4 x 9.3 |
+| aromo | 242–284 | 520 | 762–804 | 4.6 x 7.8 |
+
+(Crown width is the farthest card corner, so it overstates the mass.)
+Per town: General Pico 36 trees (72 entities, ~32k triangles, 4
+materials), Castex 12 (24 entities, ~10k, 2 materials), Metileo 12 (~11k,
+2 materials). The old trees were about 150 triangles each. Textures: 8
+sets x 3 maps at 1K UASTC, 16 MB on disk, loaded at startup (BC7 about
+1.4 MB a map with mips). No GPU capture was taken.
+
+### Phase 4 sabotage log (each broken, seen failing, restored; sha256 checked equal)
+
+| Sabotage | Test seen failing |
+|---|---|
+| `--check-alpha`: opacity never packed | `textures_to_ktx2.sh --check-alpha` (alpha 40, expected 64) |
+| leaf components of any area | `test_leaf_atlas.Layout.test_only_the_big_white_objects_are_leaves` |
+| normal x/y rotated the wrong way (R row) | `test_leaf_atlas.Layout.test_a_turned_normal_map_turns_its_vectors_with_it` (first cut stayed green: case added, up turned right) |
+| sprigs not fitted to their quarter | `test_leaf_atlas.Layout.test_every_sprig_keeps_inside_its_quarter_and_is_reproducible` |
+| leaves turned counter-clockwise | `test_leaf_atlas.Atlas.test_a_leaf_turned_clockwise_lands_there_with_its_normals_turned` |
+| black ground under the leaves | `test_leaf_atlas.Atlas.test_the_atlas_holds_four_sprigs_with_empty_margins` |
+| `+virtual-pixel` reset dropped (a real bug of the first cut: cut-outs came out as opaque boxes) | `test_leaf_atlas.Atlas.test_each_leaf_is_cut_out_along_its_outline` (added after this sabotage stayed green) |
+| olmo 300 cards | `tree::mesh::every_tree_keeps_to_the_triangle_budget` |
+| seed ignored | `tree::mesh::a_variant_is_its_seed_and_the_seeds_differ` |
+| eucalipto trunk 0.36 m | `tree::mesh::the_trunk_stands_within_its_collider` |
+| plaza scale up to 1.3 | `tree::mesh::the_trunk_stands_within_its_collider` |
+| olmo limbs lean 55–70° | `tree::mesh::each_species_keeps_its_shape` |
+| eucalipto cards reach up (`hang` 0) | `tree::mesh::each_species_keeps_its_shape` |
+| leaf normals into the crown | `tree::mesh::leaf_normals_lean_out_of_the_crown` |
+| cards upside down in the atlas | `tree::mesh::each_card_shows_one_sprig_hung_by_its_base` |
+| bark wraps not whole | `tree::mesh::bark_repeats_whole_times_round_and_tangents_follow_it` |
+| leaves `Blend` | `tree::materials::leaves_are_alpha_tested_cards_seen_from_both_sides` |
+| leaves `double_sided` | `tree::materials::leaves_are_alpha_tested_cards_seen_from_both_sides` |
+| atlas sampler repeats | `tree::materials::the_atlas_clamps_and_the_bark_repeats` |
+| aromo atlas misnamed | `tree::materials::every_species_names_shipped_bark_and_leaf_sets` |
+| untextured leaves tinted, not plain | `tree::materials::missing_sets_draw_plain_colour` |
+| station plaza same species | `tree::plaza_species_follow_the_seed_and_the_two_plazas_differ` |
+| one variant built | `tree::the_kit_builds_each_variant_once` |
+| trees on the props' range | `town::plaza_trees_share_the_kit_and_fade_out_of_the_way` |
+| trees without `ThinOccluder` | `town::plaza_trees_share_the_kit_and_fade_out_of_the_way` |
+| every tree variant 0 | `town::plaza_trees_share_the_kit_and_fade_out_of_the_way` |
+| every tree counted in the main plaza | `town::a_town_with_a_station_plaza_plants_another_species_there` |
+
+RED/GREEN: the shape and collider tests were first seen failing on real
+tuning (crowns 11–14 m wide, olmo wider than tall, a trunk foot test off
+by the lean) and went green by changing the forms, not the tests (the
+foot test was loosened to 2 cm for the lean).
+
+### Phase 4 previews
+
+`preview_tree_species` (ignored, `town.rs`) dumps the four species x three
+variants in a row; `preview_town_sidewalks` now dumps the real trees. Both
+rendered with a scratch copy of the software rasterizer extended for
+alpha-tested leaves (`render4.py`, session scratchpad, no PBR/shadows):
+`trees/species_row.png`, `trees/paraiso_close.png`,
+`trees/castex_eye.png`, `trees/castex_overview.png`, `trees/pico_eye.png`
+under the session scratchpad.
+
+### Phase 4 verification (2026-10-26)
+
+- `cargo test -p pampa-core`: 352 passed.
+- `cargo test -p pampa-render`: 354 passed, 5 ignored (the previews).
+- `cargo test -p game`: 136 passed.
+- `python3 -I -B -m unittest discover -s tools`: 146 passed.
+- `cargo build -p game`: ok.
+- `cargo fmt --all -- --check`: clean.
+- `cargo clippy --workspace --all-targets -- -D warnings`: clean.
+- `tools/textures_to_ktx2.sh --check-alpha` and `--check-orm`: pass.
+
+### Phase 4 follow-ups and next step
+
+- Not seen in the game yet: check the leaves' tints and the paraíso's
+  density. The Mask cutoff at a distance was seen (crowns thinned at
+  100–150 m) and is fixed by the tree crowns follow-up below.
+- `tools/README.md`: `leaf_atlas.py` section and the `--check-alpha` path
+  added by the parent (done).
+- Delete `LeafSet003/LeafSet003_1K-JPG_AmbientOcclusion.jpg` (unused).
+- Next: run the game, then the native review of the work-unit commit.
+
+### Tree crowns follow-up (branch fix/tree-crowns, from 2c9a773)
+
+The native review of 2c9a773 approved with findings, and the user saw
+distant crowns (100–150 m) thinning in the game. Route: one delegated
+writer in the main checkout (trigger: tools, assets and render files).
+Uncommitted; the user commits.
+
+- [x] C1 Crowns thinning with distance (R4-001, R3-mask-cutoff-mips):
+  coverage-preserving mips for the leaf atlases.
+- [x] C2 Plaza fallback (R2-tree-plaza-fallback, R3-plaza-fallback): a
+  tree outside every plaza goes to the nearest one, with a warning. A
+  sweep test checks that every tree stands in exactly one plaza.
+- [x] C3 Suggestions: `TREE_SCALE_MIN` and `TREE_SINK` named
+  (R2-tree-scale-magic, R2-tree-sink-constant); `Form::height` documented
+  as the layout height, not the built one (R2-form-height-misleading);
+  `leaf_atlas.py` points at `SPRIG_BASE` in `tree/mesh.rs`
+  (R2-atlas-doc-pointer).
+
+#### Decisions
+
+- **Measured first.** Shipped atlases unpacked to BC7 (what the GPU
+  holds), share of texels with alpha ≥ 0.5 per level: paraíso 0.081 at
+  L0, 0.050 at L5 (32²), 0.012 at L6, 0 at L7. Olmo 0.143 → 0.094 at L7,
+  aromo 0.134 → 0.047 at L7, and every species was 0 from L8 (4²) down. A
+  card about 1 m wide over a 512-texel quarter, at 125 m, 1080p, 60° fov,
+  is about 67 texels a pixel: mip 6–7, where the paraíso had lost most of
+  its leaves.
+- **Not AlphaToCoverage.** MSAA is on: the game has one camera
+  (`game/src/camera.rs:457`, `Camera3d::default()`, `Msaa::Sample4`), no
+  `Msaa` override, no HDR or post-processing, no prepass components. A2C
+  would not fix the thinning, though. Bevy 0.20 sharpens A2C alpha as
+  `(a - cutoff) / fwidth(a) + 0.5` round a fixed 0.5
+  (`bevy_pbr-0.20.0/src/render/pbr_fragment.wesl:212-226`,
+  `pbr_material.rs:1189-1203`), so a low mip's smooth alpha under 0.5
+  still draws nothing. Its shadow and prepass cut at 0.05, not at its
+  cutoff (`pbr_prepass_functions.wesl:17-31`, `render/light.rs:2585-2591`,
+  `prepass/mod.rs:1138-1142`), so shadows would come from the leaves'
+  fringes. Without MSAA it falls back to a mask
+  (`material.rs:697-700`).
+- **Coverage-preserving mips** (after Castaño, "Computing alpha mipmaps",
+  2010). `leaf_atlas.py --mips` averages each level from the plain level
+  above (colour in linear light, alpha as is). It then remaps the
+  level's alpha so that it draws the share of texels the top level
+  draws: the threshold whose count is nearest the wanted one lands on
+  128, and every texel keeps 8 steps (`GUARD`) clear of it. Without the
+  guard, UASTC→BC7 moved enough texels across the cutoff to miss by up to
+  35% at 8² (seen in a sabotage). It writes the chain as a mipmapped
+  32-bit RGBA DDS. basisu 2.10 encodes a DDS's levels as given (tried
+  first with distinct colours per level; read back per level after the
+  BC7 unpack), so the leaf colour encodes without `-mipmap`.
+  `LEAF_CUTOFF` and the tool's `CUTOFF = 128` are tied by a test.
+- **Result** (BC7, per level L0 … L8): paraíso 0.081 0.081 0.081 0.081
+  0.081 0.081 0.082 0.078 0.063; olmo 0.143 … 0.145 0.141 0.125;
+  eucalipto 0.146 … 0.145 0.141 0.125; aromo 0.134 … 0.129 0.141 0.125.
+  Every level of 8² and up is within 4% of L0. Only the four leaf
+  `color.ktx2` changed. Their `normal_gl`/`orm`, every bark and building
+  set (brick_pavement and Bark014 re-encoded in the scratchpad) stay
+  byte-identical, and re-encoding the atlases is reproducible (sha256).
+  File sizes are 2–4% smaller.
+- **Plaza assignment**: `plaza_of` returns the plaza that holds the tree,
+  or else the nearest one by distance to its box, with a `warn!`. No
+  shipped-towns test: `pampa-render` cannot read
+  `assets/world/towns.ron` (that needs `pampa-content`, only the game
+  depends on it). The render test sweeps the shapes the shipped towns take
+  instead (3–8 blocks a side, with no railway, a railway, or a through
+  line, seeds 1, 2, 13, 19, more than 50 towns) and asserts each tree lies
+  in exactly one plaza's Aabb and is filed under it.
+
+#### Tree crowns follow-up sabotage log (each broken, seen failing, restored; sha256 checked equal)
+
+| Sabotage | Test seen failing |
+|---|---|
+| shipped atlases as at 2c9a773 (plain basisu mips; RED before the fix) | `test_leaf_atlas.ShippedAtlases.test_distant_crowns_keep_the_coverage_of_the_near_ones` (paraíso 32²: 0.050 vs 0.081) |
+| colour encoded with plain `-mipmap` again (atlases re-encoded, then restored identical) | `test_leaf_atlas.ShippedAtlases.test_distant_crowns_keep_the_coverage_of_the_near_ones` |
+| `GUARD = 0` (atlases re-encoded, then restored identical) | `test_leaf_atlas.ShippedAtlases.test_distant_crowns_keep_the_coverage_of_the_near_ones` (paraíso 8²: 0.109) |
+| mips not remapped | `test_leaf_atlas.Mips.test_the_mips_keep_the_cutoff_coverage_of_the_top_level` |
+| threshold texels remapped under the cutoff | `test_leaf_atlas.Mips.test_rescaled_alpha_draws_the_wanted_share_and_keeps_its_order` |
+| alpha 128 not drawn (`>` for `>=`) | `test_leaf_atlas.Mips.test_a_texel_is_drawn_from_half_alpha_up` |
+| colour averaged in sRGB bytes | `test_leaf_atlas.Mips.test_colour_mips_average_in_linear_light` |
+| DDS mip count 1 | `test_leaf_atlas.Mips.test_the_dds_holds_every_level_as_rgba` |
+| `LEAF_CUTOFF` 0.6 | `tree::materials::the_atlas_mips_keep_coverage_for_this_cutoff` |
+| old fallback, plaza 0 (RED before the fix) | `town::a_tree_outside_every_plaza_goes_to_the_nearest` ("just outside") |
+| farthest plaza instead of nearest | `town::a_tree_outside_every_plaza_goes_to_the_nearest` |
+| every tree filed among plaza 0 only | `town::every_tree_stands_in_exactly_one_plaza_and_is_filed_under_it` |
+| scale spread doubled under `TREE_SCALE_MIN` | `town::plaza_trees_share_the_kit_and_fade_out_of_the_way` |
+
+#### Verification (2026-10-26)
+
+- `cargo test -p pampa-render`: 357 passed, 5 ignored.
+- `cargo test -p game`: 136 passed.
+- `python3 -I -B -m unittest discover -s tools`: 152 passed.
+- `cargo build -p game`: ok.
+- `cargo fmt --all -- --check`: clean.
+- `cargo clippy --workspace --all-targets -- -D warnings`: clean.
+- `tools/textures_to_ktx2.sh --check-alpha` and `--check-orm`: pass.
+
+#### Follow-ups and next step
+
+- In the game: crowns at 100–250 m should keep their density, and the
+  shadows under far trees too (shadows use the same cutoff and mips).
+  Very close up nothing changes (level 0 is untouched).
+- A shipped-towns plaza test belongs in `game/src/towns.rs` if wanted
+  (it would need `plaza_tree_sites` public from `pampa-render`).
+- Next: the user plays it and commits. The native review takes the work
+  unit commit.
+
+#### Native review of the crowns follow-up (2026-10-26)
+
+Lineage review-0c871c7925dfd036, high risk, 4 lenses: approved and
+acknowledged. The one WARNING (R4-python3-not-preflighted) was fixed after
+it: `textures_to_ktx2.sh` adds `python3` to its tool preflight when an
+argument is `--check-alpha` or a set with `opacity.jpg`, so a machine
+without it fails before any output is written. Checked by running
+`--check-alpha` with a PATH lacking python3: it stops with
+"needs `python3` on PATH"; with python3, `--check-alpha` passes. The
+SUGGESTIONs (encode/encode_levels duplication, help docstring slice, the
+empty-plaza fallback, a hard-coded height note, the shipped-atlas test
+skipping without basisu) are left as follow-ups.

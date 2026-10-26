@@ -33,6 +33,7 @@ pub mod streaming;
 pub mod terrain;
 pub mod town;
 pub mod train;
+pub mod tree;
 
 pub use atmosphere::{AtmospherePlugin, CloseShadows, DUST_COLOR, Sky, Sun, WorldClock, sky_at};
 pub use bubble::{Say, SpeechBubble, SpeechBubblePlugin};
@@ -64,6 +65,7 @@ pub use streaming::{StreamingPlan, StreamingSet};
 pub use terrain::{StreamFocus, TerrainChunk, TerrainPlugin, WorldChunks, WorldTerrain};
 pub use town::{ActiveTowns, StreamTowns, TownPlugin, TownRoot, WindmillRotor, WorldTowns};
 pub use train::{TRAIN_DRAW_RADIUS, TrainCar, TrainPlugin, TrainWheel, WorldTrain, car_transform};
+pub use tree::{Species, TreeKit, TreePlugin};
 
 /// The game's `assets/` folder. Vegetation models and ground textures are
 /// read from it at startup. Without it, or when a file is missing, their

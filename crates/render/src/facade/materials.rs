@@ -426,17 +426,28 @@ fn load_set(server: &AssetServer, root: &Path, set: &str) -> Option<Maps> {
 /// Loads one KTX2 map with the repeating sampler. Its mips are baked in and
 /// it is used as is, so it lives on the GPU only.
 pub(crate) fn load_map(server: &AssetServer, path: &str, srgb: bool) -> Handle<Image> {
+    load_map_with(server, path, srgb, repeating())
+}
+
+/// Loads one KTX2 map like [`load_map`], with `sampler`.
+pub(crate) fn load_map_with(
+    server: &AssetServer,
+    path: &str,
+    srgb: bool,
+    sampler: ImageSamplerDescriptor,
+) -> Handle<Image> {
     server
         .load_builder()
         .with_settings(move |s: &mut ImageLoaderSettings| {
             s.is_srgb = srgb;
-            s.sampler = ImageSampler::Descriptor(repeating());
+            s.sampler = ImageSampler::Descriptor(sampler.clone());
             s.asset_usage = RenderAssetUsages::RENDER_WORLD;
         })
         .load(path.to_owned())
 }
 
-fn repeating() -> ImageSamplerDescriptor {
+/// The repeating, anisotropic sampler of tiled surfaces.
+pub(crate) fn repeating() -> ImageSamplerDescriptor {
     ImageSamplerDescriptor {
         address_mode_u: ImageAddressMode::Repeat,
         address_mode_v: ImageAddressMode::Repeat,
