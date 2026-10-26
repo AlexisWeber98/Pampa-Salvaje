@@ -30,6 +30,19 @@ All three were converted to 512×512 PPM/PGM for loading. See `assets/textures/g
 
 The `thatch/` set next to them is our own work. The game loads every set as KTX2 (UASTC, mips baked) made from those JPGs by `tools/textures_to_ktx2.sh`; the JPG sources are kept unchanged. See `assets/textures/buildings/CREDITS.md` for details.
 
+| Asset | Author / source | Licence | Where | Changes |
+|---|---|---|---|---|
+| Bark 014 | ambientCG (https://ambientcg.com/view?id=Bark014) | CC0 1.0 | `assets/textures/trees/Bark014/` | 1K maps renamed; paraíso bark |
+| Bark 001 | ambientCG (https://ambientcg.com/view?id=Bark001) | CC0 1.0 | `assets/textures/trees/Bark001/` | 1K maps renamed; olmo bark |
+| Bark 009 | ambientCG (https://ambientcg.com/view?id=Bark009) | CC0 1.0 | `assets/textures/trees/Bark009/` | 1K maps renamed; eucalipto bark |
+| Bark 002 | ambientCG (https://ambientcg.com/view?id=Bark002) | CC0 1.0 | `assets/textures/trees/Bark002/` | 1K maps renamed; aromo bark |
+| Leaf Set 013 | ambientCG (https://ambientcg.com/view?id=LeafSet013) | CC0 1.0 | `assets/textures/trees/LeafSet013/`, `paraiso_leaves/` | 1K maps renamed; leaflets laid into the paraíso's pinnate leaves by `tools/leaf_atlas.py` (a derived atlas) |
+| Leaf Set 001 | ambientCG (https://ambientcg.com/view?id=LeafSet001) | CC0 1.0 | `assets/textures/trees/LeafSet001/`, `olmo_leaves/` | 1K maps renamed; leaves laid along twigs into the olmo atlas by `tools/leaf_atlas.py` |
+| Leaf Set 003 | ambientCG (https://ambientcg.com/view?id=LeafSet003) | CC0 1.0 | `assets/textures/trees/LeafSet003/`, `eucalipto_leaves/` | 1K maps renamed; leaves hung along twigs into the eucalipto atlas by `tools/leaf_atlas.py` |
+| Leaf Set 019 | ambientCG (https://ambientcg.com/view?id=LeafSet019) | CC0 1.0 | `assets/textures/trees/LeafSet019/`, `aromo_leaves/` | 1K maps renamed; sprays stood upright into the aromo atlas by `tools/leaf_atlas.py`; tinted silver-green in the game |
+
+The plaza trees' bark and leaf sets were downloaded by the project owner on 2026-10-26. The game loads the barks and the composed leaf atlases as KTX2 made by `tools/textures_to_ktx2.sh` (the leaves' opacity in the colour's alpha). See `assets/textures/trees/CREDITS.md` for details.
+
 ## Models
 
 | Asset | Author / source | Licence | Where | Changes |

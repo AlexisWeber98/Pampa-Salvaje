@@ -1,7 +1,8 @@
 //! Procedural low-poly town drawn from a `pampa-core` [`TownLayout`]:
 //! dirt streets with brick sidewalks where core paves them
 //! ([`TownLayout::sidewalks`]), a tree-lined plaza (its paths, monument, benches and
-//! railing from [`crate::facade::plaza`]), the 1919 Italianate buildings of the
+//! railing from [`crate::facade::plaza`], its paraísos, olmos, eucaliptos or
+//! aromos from [`crate::tree`]), the 1919 Italianate buildings of the
 //! facade kit ([`crate::facade::town_buildings`]), a railway with its
 //! station, grain sheds, and windmills over round water tanks.
 //!
@@ -41,9 +42,11 @@ use crate::coords::world_from_ground;
 use crate::facade::shape::Shape;
 use crate::facade::town_buildings::{self, Lot};
 use crate::facade::{FacadeMaterials, Surface};
+use crate::flora::ThinOccluder;
 use crate::rail::{TrackKit, track_pieces};
 use crate::settlement::{props, ranges};
 use crate::terrain::{StreamFocus, WorldTerrain, hash2};
+use crate::tree::{TreeKit, VARIANTS, plaza_species};
 
 /// Every town of the world, in the order the game placed them; a town's
 /// index here is its id everywhere in render. Without it nothing is drawn.
@@ -71,6 +74,7 @@ pub struct TownPlugin;
 impl Plugin for TownPlugin {
     fn build(&self, app: &mut App) {
         crate::facade::ensure_plugin(app);
+        crate::tree::ensure_plugin(app);
         app.init_resource::<WorldTowns>()
             .init_resource::<ActiveTowns>()
             .init_resource::<StreamFocus>()
@@ -116,21 +120,17 @@ pub struct TownSidewalk;
 #[derive(Resource)]
 struct Shapes {
     cube: Handle<Mesh>,
-    cylinder: Handle<Mesh>,
-    canopy: Handle<Mesh>,
     /// The windmill's wheel, one mesh per surface (the settlements' molino
     /// wheel).
     rotor: Vec<(Surface, Handle<Mesh>)>,
 }
 
-/// Earthy palette of the streets, plaza, trees, railway and platform.
+/// Earthy palette of the streets, plaza, railway and platform.
 #[derive(Resource)]
 struct Palette {
     timber: Handle<StandardMaterial>,
     street: Handle<StandardMaterial>,
     plaza: Handle<StandardMaterial>,
-    canopy: Handle<StandardMaterial>,
-    trunk: Handle<StandardMaterial>,
     concrete: Handle<StandardMaterial>,
     steel: Handle<StandardMaterial>,
     ballast: Handle<StandardMaterial>,
@@ -149,8 +149,6 @@ impl Palette {
         let timber = matte(0.34, 0.25, 0.18);
         let street = matte(0.58, 0.47, 0.34);
         let plaza = matte(0.47, 0.46, 0.29);
-        let canopy = matte(0.27, 0.32, 0.17);
-        let trunk = matte(0.33, 0.26, 0.19);
         let concrete = matte(0.62, 0.59, 0.54);
         let ballast = matte(0.48, 0.45, 0.41);
         let steel = materials.add(StandardMaterial {
@@ -163,8 +161,6 @@ impl Palette {
             timber,
             street,
             plaza,
-            canopy,
-            trunk,
             concrete,
             steel,
             ballast,
@@ -188,6 +184,7 @@ struct Builder<'c, 'w, 's, 'a> {
     commands: &'c mut Commands<'w, 's>,
     shapes: &'a Shapes,
     palette: &'a Palette,
+    trees: &'a TreeKit,
     terrain: &'a Terrain,
     root: Entity,
     range: Option<VisibilityRange>,
@@ -235,26 +232,17 @@ fn setup_kit(
         .into_iter()
         .map(|(surface, mesh)| (surface, meshes.add(mesh)))
         .collect();
-    commands.insert_resource(Shapes {
-        cube,
-        cylinder: meshes.add(Cylinder::new(0.5, 1.0).mesh().resolution(16)),
-        canopy: meshes.add(
-            Sphere::new(0.5)
-                .mesh()
-                .ico(1)
-                .expect("valid ico subdivision"),
-        ),
-        rotor,
-    });
+    commands.insert_resource(Shapes { cube, rotor });
     commands.insert_resource(palette);
 }
 
-/// Shared town meshes and materials, once [`setup_kit`] and the facade
-/// kit ran.
+/// Shared town meshes and materials, once [`setup_kit`], the facade kit
+/// and the tree kit ran.
 type TownKit<'a> = (
     Option<Res<'a, Shapes>>,
     Option<Res<'a, Palette>>,
     Option<Res<'a, FacadeMaterials>>,
+    Option<Res<'a, TreeKit>>,
 );
 
 /// A town's buildings, being built on the async compute pool;
@@ -271,12 +259,14 @@ fn stream_towns(
     mut commands: Commands,
     (towns, terrain, focus): (Res<WorldTowns>, Res<WorldTerrain>, Res<StreamFocus>),
     mut active: ResMut<ActiveTowns>,
-    (shapes, palette, surfaces): TownKit,
+    (shapes, palette, surfaces, trees): TownKit,
     roots: Query<(Entity, &TownRoot)>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut first_fill_laid: Local<bool>,
 ) {
-    let (Some(shapes), Some(palette), Some(surfaces)) = (shapes, palette, surfaces) else {
+    let (Some(shapes), Some(palette), Some(surfaces), Some(trees)) =
+        (shapes, palette, surfaces, trees)
+    else {
         return;
     };
     let change = active.0.update(&towns.0, focus.0);
@@ -299,6 +289,7 @@ fn stream_towns(
             commands: &mut commands,
             shapes: &shapes,
             palette: &palette,
+            trees: &trees,
             terrain: &terrain.0,
             root,
             range: None,
@@ -598,32 +589,79 @@ fn plaza(b: &mut Builder, p: Aabb) {
     flat_patch(b, &lawn, &p, crate::facade::plaza::LAWN_TOP);
 }
 
-/// Every plaza tree: a trunk and a round crown.
+/// Every plaza tree: a variant of its plaza's species ([`plaza_species`])
+/// from the shared [`TreeKit`], its bark and its leaves, turned and scaled
+/// a little per tree. Each fades out of the way of the camera like a
+/// settlement's tree ([`ThinOccluder`]).
 fn plaza_trees(b: &mut Builder, town: &TownLayout) {
-    b.range = Some(ranges()[2].clone());
-    for (n, &tree) in town.trees.iter().enumerate() {
-        let y = b.ground(tree);
-        let jitter = hash2(tree.x, tree.y);
-        let trunk_h = 2.6 + jitter;
-        let crown = 3.6 + 1.4 * hash2(tree.y, n as f32);
-        let (trunk, canopy) = (b.palette.trunk.clone(), b.palette.canopy.clone());
-        let cylinder = b.shapes.cylinder.clone();
-        b.spawn(
-            &cylinder,
-            &trunk,
-            Transform::from_translation(world_from_ground(tree, y + trunk_h / 2.0))
-                .with_scale(Vec3::new(0.5, trunk_h, 0.5)),
+    for (plaza, tree) in plaza_tree_sites(town) {
+        let kit = b.trees.species(plaza_species(town.seed, plaza));
+        let (bark, leaves) = (kit.bark.clone(), kit.leaves.clone());
+        let ground = b.ground(tree.at);
+        let variant = &kit.variants[tree.variant];
+        let transform = Transform::from_translation(world_from_ground(tree.at, ground - 0.05))
+            .with_rotation(Quat::from_rotation_y(tree.yaw))
+            .with_scale(Vec3::splat(tree.scale));
+        let fade = ThinOccluder::post(
+            tree.at,
+            variant.crown_radius * tree.scale,
+            b.terrain,
+            variant.height * tree.scale,
         );
-        let sphere = b.shapes.canopy.clone();
-        b.spawn(
-            &sphere,
-            &canopy,
-            Transform::from_translation(world_from_ground(tree, y + trunk_h + crown * 0.3))
-                .with_rotation(Quat::from_rotation_y(jitter * 6.0))
-                .with_scale(Vec3::new(crown, crown * 0.8, crown)),
-        );
+        for (mesh, material) in [(&variant.bark, &bark), (&variant.leaves, &leaves)] {
+            b.commands.spawn((
+                Mesh3d(mesh.clone()),
+                MeshMaterial3d(material.clone()),
+                transform,
+                ranges()[2].clone(),
+                fade,
+                TownTree,
+                ChildOf(b.root),
+            ));
+        }
     }
-    b.range = None;
+}
+
+/// One of a town's drawn plaza trees (its bark or its leaves).
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TownTree;
+
+/// Where and how one plaza tree stands.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct TreeSite {
+    at: GroundVec2,
+    variant: usize,
+    yaw: f32,
+    /// Uniform scale, at most [`TREE_SCALE_MAX`].
+    scale: f32,
+}
+
+/// The largest a plaza tree is drawn over its variant: its trunk stays
+/// within core's [`pampa_core::town::TREE_TRUNK_RADIUS`].
+pub(crate) const TREE_SCALE_MAX: f32 = 1.08;
+
+/// Each of `town`'s trees with the index of the plaza it stands in
+/// ([`TownLayout::plazas`]), its variant, yaw and scale, seeded by its
+/// spot.
+fn plaza_tree_sites(town: &TownLayout) -> Vec<(usize, TreeSite)> {
+    let plazas: Vec<Aabb> = town.plazas().collect();
+    town.trees
+        .iter()
+        .map(|&at| {
+            let plaza = plazas
+                .iter()
+                .position(|p| p.contains_point(at))
+                .unwrap_or(0);
+            let (a, b) = (hash2(at.x, at.y), hash2(at.y + 7.0, at.x));
+            let site = TreeSite {
+                at,
+                variant: (a * VARIANTS as f32) as usize % VARIANTS,
+                yaw: b * std::f32::consts::TAU,
+                scale: TREE_SCALE_MAX - 0.16 * hash2(at.x + 3.0, at.y - 5.0),
+            };
+            (plaza, site)
+        })
+        .collect()
 }
 
 /// Ballast bed, sleepers and two rails following the ground, drawn with
@@ -1040,6 +1078,82 @@ mod tests {
     }
 
     #[test]
+    fn plaza_trees_share_the_kit_and_fade_out_of_the_way() {
+        let mut app = app();
+        app.update();
+        let town = app.world().resource::<WorldTowns>().0[0].clone();
+        let kit = app.world().resource::<crate::tree::TreeKit>().clone();
+        let species = plaza_species(town.seed, 0);
+        let own = kit.species(species);
+        let meshes: HashSet<AssetId<Mesh>> = own
+            .variants
+            .iter()
+            .flat_map(|v| [v.bark.id(), v.leaves.id()])
+            .collect();
+        let mut q = app.world_mut().query_filtered::<(
+            &Mesh3d,
+            &MeshMaterial3d<StandardMaterial>,
+            &VisibilityRange,
+            &ThinOccluder,
+            &Transform,
+        ), With<TownTree>>();
+        let mut drawn = 0;
+        let mut used = HashSet::new();
+        for (mesh, material, range, fade, at) in q.iter(app.world()) {
+            drawn += 1;
+            // Castex has one plaza: its species' shared meshes and
+            // materials, as far as the trees reach.
+            assert!(meshes.contains(&mesh.id()));
+            assert!([own.bark.id(), own.leaves.id()].contains(&material.id()));
+            assert!(range == &ranges()[2]);
+            used.insert(mesh.id());
+            // Round the trunk, as tall as the tree.
+            let foot = Vec2::new(at.translation.x, -at.translation.z);
+            assert_eq!((fade.a, fade.b), (foot, foot));
+            assert!(
+                fade.radius > 1.0 && fade.top - fade.bottom > 3.0,
+                "{fade:?}"
+            );
+            assert!(at.scale.x <= TREE_SCALE_MAX && at.scale.x >= TREE_SCALE_MAX - 0.16);
+        }
+        // A bark and a leaf mesh per tree, the variants shared.
+        assert_eq!(drawn, 2 * town.trees.len());
+        assert!(town.trees.len() > 2 * VARIANTS);
+        assert_eq!(
+            used.len(),
+            2 * VARIANTS,
+            "every variant drawn, none rebuilt"
+        );
+    }
+
+    #[test]
+    fn a_town_with_a_station_plaza_plants_another_species_there() {
+        // General Pico as the preview lays it: a city with a station plaza.
+        let town = TownLayout::generate(&pampa_core::TownConfig {
+            name: "General Pico".into(),
+            origin: Vec2::ZERO,
+            blocks: (8, 8),
+            block_size: 40.0,
+            railway: Some(pampa_core::RailwayConfig {
+                side: pampa_core::Side::North,
+                offset: 24.0,
+                through: true,
+            }),
+            seed: 13,
+            ..TownConfig::castex()
+        })
+        .unwrap();
+        let sites = plaza_tree_sites(&town);
+        let plazas: HashSet<usize> = sites.iter().map(|(p, _)| *p).collect();
+        assert_eq!(plazas, HashSet::from([0, 1]), "trees in both plazas");
+        for (plaza, site) in &sites {
+            let area = town.plazas().nth(*plaza).unwrap();
+            assert!(area.contains_point(site.at));
+        }
+        assert_ne!(plaza_species(town.seed, 0), plaza_species(town.seed, 1));
+    }
+
+    #[test]
     fn towns_draw_within_the_shared_ranges_only() {
         let mut app = app();
         app.update();
@@ -1155,29 +1269,18 @@ mod tests {
                 put(&mut text, &shapes.ground, at);
                 put(&mut text, &shapes.furniture, at);
             }
-            // Trees as the game draws them today: a trunk and a crown.
-            for (n, &tree) in town.trees.iter().enumerate() {
-                let jitter = hash2(tree.x, tree.y);
-                let (trunk, crown) = (2.6 + jitter, 3.6 + 1.4 * hash2(tree.y, n as f32));
-                let mut shape = Shape::default();
-                let foot = world_from_ground(tree, terrain.height(tree.x, tree.y));
-                shape.lathe(
-                    Surface::Planks,
-                    Transform::from_translation(foot),
-                    &[(0.25, 0.0), (0.25, trunk)],
-                    6,
-                );
-                shape.lathe(
-                    Surface::Sheet,
-                    Transform::from_translation(foot + Vec3::Y * (trunk + crown * 0.3))
-                        .with_scale(Vec3::new(crown, crown * 0.8, crown) * 0.5),
-                    &[(0.0, -1.0), (0.7, -0.7), (1.0, 0.0), (0.7, 0.7), (0.0, 1.0)],
-                    8,
-                );
-                let _ = writeln!(text, "m Trunk");
-                put_part(&mut text, &shape, Surface::Planks, Transform::IDENTITY);
-                let _ = writeln!(text, "m Canopy");
-                put_part(&mut text, &shape, Surface::Sheet, Transform::IDENTITY);
+            // Trees as the game draws them: a variant of the plaza's
+            // species, turned and scaled.
+            for (plaza, site) in plaza_tree_sites(&town) {
+                let species = plaza_species(town.seed, plaza);
+                let tree = crate::tree::mesh::tree(species, site.variant as u32);
+                let at = Transform::from_translation(world_from_ground(
+                    site.at,
+                    terrain.height(site.at.x, site.at.y) - 0.05,
+                ))
+                .with_rotation(Quat::from_rotation_y(site.yaw))
+                .with_scale(Vec3::splat(site.scale));
+                put_tree(&mut text, species, &tree, at, floor);
             }
             for (origin, shape) in sidewalk_shapes(town.sidewalks(), &terrain) {
                 put(&mut text, &shape, Transform::from_translation(origin));
@@ -1200,6 +1303,57 @@ mod tests {
                 town.grid()
             );
         }
+    }
+
+    /// Writes `tree` placed `at` to a preview `text`: its bark as
+    /// `m Bark(<species>)`, its leaves as `m Leaves(<species>)`, `floor`
+    /// lifted off the heights.
+    fn put_tree(
+        text: &mut String,
+        species: crate::tree::Species,
+        tree: &crate::tree::mesh::TreeMesh,
+        at: Transform,
+        floor: f32,
+    ) {
+        use std::fmt::Write as _;
+        for (part, b) in [("Bark", &tree.bark), ("Leaves", &tree.leaves)] {
+            let _ = writeln!(text, "m {part}({species:?})");
+            for ((p, n), uv) in b.positions.iter().zip(&b.normals).zip(&b.uvs) {
+                let (p, n) = (at.transform_point(*p) - Vec3::Y * floor, at.rotation * *n);
+                let _ = writeln!(
+                    text,
+                    "v {:.3} {:.3} {:.3} {:.3} {:.3} {:.3} {:.4} {:.4}",
+                    p.x, p.y, p.z, n.x, n.y, n.z, uv[0], uv[1]
+                );
+            }
+            for t in b.indices.chunks(3) {
+                let _ = writeln!(text, "f {} {} {}", t[0], t[1], t[2]);
+            }
+        }
+    }
+
+    /// Writes every variant of the four species in a row, 14 m apart
+    /// (paraíso, olmo, eucalipto, aromo from west to east, the variants
+    /// north to south), to `PAMPA_PREVIEW/trees.txt` for the offline
+    /// renderer. Run with
+    /// `PAMPA_PREVIEW=/some/dir cargo test -p pampa-render -- --ignored preview_tree_species`.
+    #[test]
+    #[ignore = "writes preview files"]
+    fn preview_tree_species() {
+        let Some(dir) = std::env::var_os("PAMPA_PREVIEW") else {
+            return;
+        };
+        let mut text = String::new();
+        for (i, &species) in crate::tree::Species::ALL.iter().enumerate() {
+            for v in 0..VARIANTS {
+                let tree = crate::tree::mesh::tree(species, v as u32);
+                let at = Transform::from_xyz(i as f32 * 14.0, 0.0, v as f32 * 14.0);
+                put_tree(&mut text, species, &tree, at, 0.0);
+            }
+        }
+        let path = std::path::PathBuf::from(dir).join("trees.txt");
+        std::fs::write(&path, text).expect("preview written");
+        println!("wrote {}", path.display());
     }
 
     #[test]

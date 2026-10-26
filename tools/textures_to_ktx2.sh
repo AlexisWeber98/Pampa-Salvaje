@@ -1,12 +1,14 @@
 #!/bin/sh
-# Converts building texture sets to GPU-compressed KTX2 for the game.
+# Converts building and tree texture sets to GPU-compressed KTX2 for the
+# game.
 #
 # Each SET_FOLDER holds the editable sources `color.jpg`, `normal_gl.jpg`,
-# `roughness.jpg` and, optionally, `ao.jpg` (greyscale maps may be stored as
-# grey or as RGB with equal channels: the red channel is read). Next to them
-# it writes what the game loads:
+# `roughness.jpg` and, optionally, `ao.jpg` and `opacity.jpg` (greyscale maps
+# may be stored as grey or as RGB with equal channels: the red channel is
+# read). Next to them it writes what the game loads:
 #
-#   color.ktx2      sRGB colour
+#   color.ktx2      sRGB colour; with opacity.jpg (leaf cards), RGBA with
+#                   the opacity in alpha, for alpha-tested materials
 #   normal_gl.ktx2  linear OpenGL (+Y) normal map, in basisu's normal-map mode
 #   orm.ktx2        linear, packed for Bevy: R = ambient occlusion (white
 #                   without ao.jpg), G = roughness, B = metallic (white: the
@@ -26,14 +28,18 @@
 # lands in red, roughness in green and white in blue, with and without
 # ao.jpg.
 #
+# `--check-alpha` converts a synthetic 8x8 set with opacity.jpg, unpacks its
+# color.ktx2 to BC7 and fails unless the opacity lands in alpha and the
+# colour stays in RGB.
+#
 # Needs basisu (Basis Universal 2.x) and ImageMagick 7 (`magick`).
 #
 # Usage: [FORCE=1] sh tools/textures_to_ktx2.sh SET_FOLDER...
-#        sh tools/textures_to_ktx2.sh --check-orm
+#        sh tools/textures_to_ktx2.sh --check-orm | --check-alpha
 #   e.g. sh tools/textures_to_ktx2.sh assets/textures/buildings/*/
 set -eu
 
-usage="usage: [FORCE=1] sh textures_to_ktx2.sh SET_FOLDER... | sh textures_to_ktx2.sh --check-orm"
+usage="usage: [FORCE=1] sh textures_to_ktx2.sh SET_FOLDER... | sh textures_to_ktx2.sh --check-orm | --check-alpha"
 [ $# -gt 0 ] || { echo "$usage" >&2; exit 1; }
 for tool in basisu magick; do
     if ! command -v "$tool" >/dev/null 2>&1; then
@@ -64,6 +70,22 @@ pack_orm() { # SET OUTPUT
         -set colorspace sRGB -combine -depth 8 "PNG24:$dest"
 }
 
+# Encodes the colour of set SET into KTX2 file OUTPUT: color.jpg as is, or,
+# with opacity.jpg, an RGBA PNG of the two (the opacity's red channel in
+# alpha) first. A set without opacity.jpg encodes exactly as before the
+# alpha path existed.
+encode_color() { # SET OUTPUT
+    set_dir="$1" dest="$2"
+    if [ -f "$set_dir/opacity.jpg" ]; then
+        magick "$set_dir/color.jpg" \
+            \( "$set_dir/opacity.jpg" -channel R -separate +channel \) \
+            -alpha off -compose CopyOpacity -composite "PNG32:$scratch/rgba.png"
+        encode "$scratch/rgba.png" "$dest" -srgb
+    else
+        encode "$set_dir/color.jpg" "$dest" -srgb
+    fi
+}
+
 # UASTC KTX2 with mips: encode SOURCE into OUTPUT with extra basisu options.
 encode() { # SOURCE OUTPUT [basisu options...]
     src="$1" dest="$2"
@@ -72,27 +94,43 @@ encode() { # SOURCE OUTPUT [basisu options...]
         -file "$src" -output_file "$dest" >/dev/null
 }
 
-if [ "$1" = "--check-orm" ]; then
-    # Prints the BC7-transcoded red,green,blue (0-255) of KTX2 file FILE.
-    bc7_rgb() { # FILE
-        mkdir "$scratch/unpacked"
-        # basisu unpacks into the current folder; 6 is BC7.
-        (cd "$scratch/unpacked" && basisu -unpack -no_ktx -format_only 6 \
-            -file "$1" >/dev/null)
-        magick "$scratch"/unpacked/*_rgb_BC7_*level_0_*.png -format \
-            '%[fx:round(255*p{4,4}.r)],%[fx:round(255*p{4,4}.g)],%[fx:round(255*p{4,4}.b)]' info:
-        rm -rf "$scratch/unpacked"
+# Prints the BC7-transcoded red,green,blue,alpha (0-255) of KTX2 file FILE
+# (what Bevy transcodes UASTC to on desktop GPUs).
+bc7_rgba() { # FILE
+    mkdir "$scratch/unpacked"
+    # basisu unpacks into the current folder; 6 is BC7.
+    (cd "$scratch/unpacked" && basisu -unpack -no_ktx -format_only 6 \
+        -file "$1" >/dev/null)
+    magick "$scratch"/unpacked/*_rgba_BC7_*level_0_*.png -format \
+        '%[fx:round(255*p{4,4}.r)],%[fx:round(255*p{4,4}.g)],%[fx:round(255*p{4,4}.b)],%[fx:round(255*p{4,4}.a)]' info:
+    rm -rf "$scratch/unpacked"
+}
+
+# Fails with message WHAT unless comma-separated GOT is within two steps
+# (JPEG and block rounding) of EXPECTED, channel by channel.
+near() { # WHAT GOT EXPECTED
+    echo "$2 $3" | awk '{ n = split($2, e, ","); split($1, g, ",");
+        for (i = 1; i <= n; i++) if (g[i] - e[i] > 2 || e[i] - g[i] > 2) exit 1 }' || {
+        echo "textures_to_ktx2.sh: $1 came out as $2, expected $3" >&2
+        exit 1
     }
+}
+
+if [ "$1" = "--check-alpha" ]; then
+    mkdir "$scratch/leaf"
+    magick -size 8x8 xc:'rgb(40,120,30)' "$scratch/leaf/color.jpg"
+    magick -size 8x8 xc:'gray(25%)' "$scratch/leaf/opacity.jpg"
+    encode_color "$scratch/leaf" "$scratch/color.ktx2"
+    near "colour and opacity" "$(bc7_rgba "$scratch/color.ktx2")" "40,120,30,64"
+    echo "Colour map: colour in RGB, opacity in alpha"
+    exit 0
+fi
+
+if [ "$1" = "--check-orm" ]; then
     expect() { # SET EXPECTED_RGB
         pack_orm "$1" "$scratch/orm.png"
         encode "$scratch/orm.png" "$scratch/orm.ktx2" -linear
-        got="$(bc7_rgb "$scratch/orm.ktx2")"
-        # JPEG and block rounding: allow two steps either way.
-        echo "$got $2" | awk '{ split($1, g, ","); split($2, e, ",");
-            for (i = 1; i <= 3; i++) if (g[i] - e[i] > 2 || e[i] - g[i] > 2) exit 1 }' || {
-            echo "textures_to_ktx2.sh: ORM came out as $got, expected $2" >&2
-            exit 1
-        }
+        near ORM "$(bc7_rgba "$scratch/orm.ktx2")" "$2"
     }
     mkdir "$scratch/with" "$scratch/without"
     for set_dir in "$scratch/with" "$scratch/without"; do
@@ -121,7 +159,7 @@ for set_dir in "$@"; do
             fi
         done
     fi
-    encode "$set_dir/color.jpg" "$scratch/color.ktx2" -srgb
+    encode_color "$set_dir" "$scratch/color.ktx2"
     encode "$set_dir/normal_gl.jpg" "$scratch/normal_gl.ktx2" -normal_map
     pack_orm "$set_dir" "$scratch/orm.png"
     encode "$scratch/orm.png" "$scratch/orm.ktx2" -linear
