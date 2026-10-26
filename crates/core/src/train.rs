@@ -304,21 +304,7 @@ impl LineTrain {
                 })
             })
             .collect();
-        // A rural mixed train: two passenger coaches behind the locomotive,
-        // then freight.
-        let cars: Vec<Car> = [
-            (CarKind::Locomotive, 14.0),
-            (CarKind::Coach, 12.0),
-            (CarKind::Coach, 12.0),
-            (CarKind::Boxcar, 10.0),
-            (CarKind::Boxcar, 10.0),
-            (CarKind::Hopper, 9.0),
-            (CarKind::Hopper, 9.0),
-            (CarKind::Boxcar, 10.0),
-        ]
-        .into_iter()
-        .map(|(kind, length)| Car { kind, length })
-        .collect();
+        let cars = line_consist();
         let length = consist_length(&cars);
         if stations.len() < 2 || path.length() < length + 1.0 {
             return None;
@@ -1042,8 +1028,27 @@ fn consist_length(cars: &[Car]) -> f32 {
     total + LineTrain::COUPLING * cars.len().saturating_sub(1) as f32
 }
 
-/// Distance from the front of the consist to the middle of its coaches.
-fn coaches_middle(cars: &[Car]) -> Option<f32> {
+/// The line train's consist, from the front: a rural mixed train, two
+/// passenger coaches behind the locomotive, then freight.
+pub(crate) fn line_consist() -> Vec<Car> {
+    [
+        (CarKind::Locomotive, 14.0),
+        (CarKind::Coach, 12.0),
+        (CarKind::Coach, 12.0),
+        (CarKind::Boxcar, 10.0),
+        (CarKind::Boxcar, 10.0),
+        (CarKind::Hopper, 9.0),
+        (CarKind::Hopper, 9.0),
+        (CarKind::Boxcar, 10.0),
+    ]
+    .into_iter()
+    .map(|(kind, length)| Car { kind, length })
+    .collect()
+}
+
+/// Distances from the front of the consist to the front of its first coach
+/// and the back of its last one. `None` without coaches.
+pub(crate) fn coaches_span(cars: &[Car]) -> Option<(f32, f32)> {
     let mut at = 0.0;
     let (mut first, mut last) = (None, None);
     for car in cars {
@@ -1053,7 +1058,13 @@ fn coaches_middle(cars: &[Car]) -> Option<f32> {
         }
         at += car.length + LineTrain::COUPLING;
     }
-    Some((first? + last?) / 2.0)
+    Some((first?, last?))
+}
+
+/// Distance from the front of the consist to the middle of its coaches.
+fn coaches_middle(cars: &[Car]) -> Option<f32> {
+    let (first, last) = coaches_span(cars)?;
+    Some((first + last) / 2.0)
 }
 
 /// Real seconds to run `d` meters from a stop to a stop, accelerating and

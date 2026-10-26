@@ -907,3 +907,165 @@ without it fails before any output is written. Checked by running
 SUGGESTIONs (encode/encode_levels duplication, help docstring slice, the
 empty-plaza fallback, a hard-coded height note, the shipped-atlas test
 skipping without basisu) are left as follow-ups.
+
+## Phase 5: the station (branch feat/fco-station, from main 3d11577)
+
+Replace the light station of phase 1 with an FCO-style brick station whose
+platform canopy stands on cast-iron columns, and fix the station name
+boards: one board at each end of the platform, at the track edge, reading
+toward the train windows, so a passenger no longer steps off into a sign.
+
+User decisions (2026-10-26):
+- The canopy keeps core's contract (`Canopy` DEPTH 5.5, HEIGHT 3.6, the
+  station's length): in 1919 the canopy rarely covered the whole platform.
+  No change to `TownLayout::canopies()`, the camera or the lamps.
+- Station name boards stand at both ends of the platform, at its track
+  edge, facing the track, for passengers looking out of the windows.
+
+Constraints: the station footprint (24 x 9 x 5), the platform (60 x 7 x
+0.9) and `station_yard()` stay; `ranges()[0]` only; the town building
+triangle budget; no new downloads (cast iron uses an existing surface);
+every new or changed test with its sabotage; the user commits.
+
+### Tasks (phase 5)
+
+- [x] S1 Reproduce the sign problem: find where the passenger actually
+  alights in the game and show (RED test) that it meets a sign footprint
+  or board, or record that it does not and why it looks so in the game.
+- [x] S2 Name boards: `platform_board` in `crates/core/src/places.rs`
+  becomes two boards on posts, one near each end of the platform, at the
+  track edge, facing the track; the alighting spot and the coaches'
+  doors stay clear of them; render draws both.
+- [x] S3 Station building: FCO brick with stucco dressings, a stronger
+  composition (central pavilion or end bays, cornice, hooded openings),
+  plinth and roof within the footprint; the street-front sign still fits.
+- [x] S4 Canopy: a dressed roof inside core's slab box (fascia, a cut
+  timber valance, rafters or brackets), cast-iron columns with base,
+  fluted or plain shaft, capital and brackets, landing on the platform.
+- [x] S5 Tests with sabotages, previews, docs (README, module docs, this
+  file), full checks.
+
+Route: one delegated writer in the main checkout (trigger: 2+ non-trivial
+files across core places and render facade). Uncommitted; the user commits.
+
+### Checks
+
+- `cargo test -p pampa-core`, `-p pampa-render`, `-p game`
+- `cargo build -p game`, `cargo fmt --all -- --check`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+
+### Progress (phase 5, 2026-10-26, uncommitted)
+
+S1 finding (no overlap in the shipped layout). A passenger alights in
+`alight_spot` (`crates/core/src/ride.rs`): beside the coach door nearest the
+platform's middle, slid along the platform, 1 m in from the track edge
+(`platform_spot`). The two coaches (12 m each, 1 m coupling) stand within
++-12.5 m of the platform's middle, so every door and alighting spot is
+within +-12.5 m. The old `platform_board` stood 14.5 to 21.5 m from the
+middle, beyond the coaches, so it never met an alighting spot; a board on a
+raised platform has no collider either (`Sign::footprint` is `None` above
+ground). What the player likely saw: one board past one end of the platform,
+next to the locomotive or the freight cars, never in front of the coach
+windows, and read end-on from the doors. So there was no RED collision test:
+`no_alighting_spot_meets_a_name_board` passed on the old code and now pins
+the property for the new boards.
+
+S2. `platform_board` became `platform_boards` (`crates/core/src/places.rs`):
+two 5 m boards on posts, 1.5 m in from each platform end, 0.8 m in from the
+track edge, facing the track. They lie 23.5 to 28.5 m from the middle, past
+the coaches' stretch; the station's `Place` has three signs (facade, west,
+east). Render draws every sign of a place, so it needed no change.
+
+S3. `station` (`crates/render/src/facade/town_buildings.rs`): the street face
+is built once (`station_face`: wall and openings, hooded surrounds, plinth,
+pilasters between the bays with wider ones at the pavilion's edges, and over
+the cornice a brick attic between stucco ends under a pediment) and merged
+twice, the second turned half way round for the track side. The pavilion is
+the middle three of seven bays and stays inside the footprint (the dressing
+stands 0.02 to 0.1 m proud of the wall, like every front). The facade board
+(3.0 to 4.6 m high, 14 m wide) hangs under the attic and over the door
+hoods, so it still fits.
+
+S4. `canopy`: core's slab box is kept (checked by the old contract test);
+over its edge a Planks fascia (0.22 m below the slab), under it a row of 53
+lozenges as the cut valance (lowest point 2.17 m over the platform), Planks
+rafters across the underside at every column, eight cast-iron columns
+(`column`: plinth, moulded foot, tapering shaft, necking ring, flared
+capital; Steel lathe) 3.3 m apart, standing on the platform top
+(`PLATFORM_TOP` 0.9, pinned to core's platform height by a test; before they
+ran from -0.3 m, buried in the concrete), and Steel brackets to the rafters
+and back toward the station wall.
+
+Decisions:
+- Boards 5 m wide, in the 4 to 6 m of period boards, and at the very ends
+  because the coaches' stretch (+-12.5 m) must stay clear; the user's wish
+  (boards readable from the windows) is met for passengers who look along
+  the platform, not from the windows facing the middle.
+- The pavilion is relief, not a projection: the footprint is the collider.
+- Station triangle budget: 3000..=8000 (new assertion in
+  `town_buildings_keep_to_their_triangle_budgets`; the station was not
+  budgeted before); it now has about 7.2k triangles with its canopy. If that
+  is too much, fewer valance lozenges or 8-sided columns are the cheap cuts.
+
+#### Phase 5 sabotage log (each broken, seen failing, restored; sha256 of
+the file equal before and after)
+
+| Test | Sabotage | Result |
+| --- | --- | --- |
+| `the_station_has_a_name_board_at_each_end...` | margin 1.5 -> 12.0 | fails |
+| same | both boards on the same end (`[-1.0, -1.0]`) | fails |
+| `no_alighting_spot_meets_a_name_board` (and the one above) | margin 1.5 -> 20.0 | both fail |
+| `the_canopy_columns_stand_on_the_platform_not_in_it` | columns from `-DROP` | fails |
+| same | 3 columns instead of 8 | fails |
+| `the_platform_top_is_the_height_core_gives_its_platform` | `PLATFORM_TOP` 0.5 | fails |
+| `the_canopy_wears_a_fascia_a_timber_valance_and_iron_brackets` | no valance (count 0) | fails |
+| same | no side brackets | fails (first version survived: tightened) |
+| same | no bracket toward the wall | fails |
+| `the_station_has_a_pedimented_pavilion_on_both_fronts` | pediment rise 0 | fails (first version survived: apex check added) |
+| same | no track-side face | fails |
+| `town_buildings_keep_to_their_triangle_budgets` | 9x the valance lozenges | fails (with the footprint test) |
+
+#### Previews
+
+`PAMPA_PREVIEW=<dir> cargo test -p pampa-render -- --ignored preview_town`
+ran and wrote the text meshes (`street_c.txt` holds the station); they were
+not viewed here: eyeball the station with the viewer before committing.
+
+#### Verification (phase 5)
+
+| Command | Result |
+| --- | --- |
+| `cargo test -p pampa-core` | 353 passed |
+| `cargo test -p pampa-render` | 368 passed, 5 ignored |
+| `cargo test -p game` | 140 passed |
+| `cargo build -p game` | ok |
+| `cargo fmt --all -- --check` | ok |
+| `cargo clippy --workspace --all-targets -- -D warnings` | ok |
+
+One test outside the plan changed: `small_towns_keep_their_layout_byte_for_byte`
+(`crates/core/src/town.rs`) fingerprints `places()`, so the nine towns with a
+platform were re-pinned (two boards instead of one); the two towns without a
+train kept their fingerprint, which shows nothing else moved. It needs no
+sabotage: it is a pin, and it failed on the intended change.
+
+Next step: the user eyeballs the station and the two boards in game and
+commits; then decide about trimming the station's triangles if needed.
+
+#### Native review of phase 5 and its follow-ups (2026-10-26)
+
+Lineage review-e963500ddf5f7a40, medium risk, one reliability lens:
+approved and acknowledged. The user played it and liked it. Both findings
+were fixed afterwards:
+- R3-coaches-half-hardcoded (WARNING): the board tests now take the
+  coaches' stretch from the line train's consist. `train.rs` gains
+  `line_consist()` (used by `LineTrain::new`) and `coaches_span()`
+  (used by `coaches_middle`). Sabotage: coaches of 24 m make both board
+  tests fail; 20 m coaches still clear the boards, as they should.
+- R3-platform-depth-hardcoded (SUGGESTION): the column test reads the
+  platform depth from core's layout (`platform_depth()`). Sabotage: a
+  depth 6 m short fails it. Both restored with equal sha256.
+
+Checks after the fix: fmt ok, clippy ok, core 353, render 368 (5
+ignored), game 140 passed.
+- Next: the user commits; then phase 6 (streets: textured dirt and
+  palenques).

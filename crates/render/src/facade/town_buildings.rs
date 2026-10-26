@@ -15,8 +15,11 @@
 //!   a pediment, and its flagpole.
 //! - The church: a pedimented front and a bell tower with a belfry of round
 //!   arches under a zinc spire.
-//! - The station (until its own pass): brick with stucco dressings under a
-//!   galvanised roof, and the platform canopy core gives the camera.
+//! - The station: an FCO-style brick front with stucco pilasters, hooded
+//!   openings and a pedimented central pavilion on both its street and
+//!   track sides, under a galvanised roof, and the platform canopy core
+//!   gives the camera, dressed with a fascia and a timber valance on
+//!   cast-iron columns that stand on the platform.
 //! - Sheds and grain stores: corrugated-iron galpones; the water tank and
 //!   the windmill are the settlements' molino and australian tank.
 //!
@@ -24,7 +27,7 @@
 //! dressing stays inside the footprint core collides with and the facade
 //! signs hang just outside of.
 
-use std::f32::consts::FRAC_PI_2;
+use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 
 use bevy::prelude::*;
 use pampa_core::{Building, BuildingKind, Canopy, Side, StoreStyle, Structure, StructureKind};
@@ -42,6 +45,11 @@ use crate::settlement::props;
 
 /// How far walls run under the ground at a building's middle, meters.
 pub const DROP: f32 = 0.3;
+
+/// Height of the station platform's top above the ground under the
+/// station, meters: core's platform (`station_yard`), which the canopy's
+/// columns stand on.
+pub const PLATFORM_TOP: f32 = 0.9;
 
 /// What a town building's look depends on beyond its core [`Building`].
 #[derive(Debug, Clone, Copy)]
@@ -83,7 +91,6 @@ impl Lot {
 
 /// The yaw that turns a building's own `+Z` toward its `front`.
 pub fn yaw(front: Side) -> Quat {
-    use std::f32::consts::PI;
     Quat::from_rotation_y(match front {
         Side::South => 0.0,
         Side::North => PI,
@@ -751,8 +758,11 @@ fn bell_tower(shape: &mut Shape, nave: &Walls, size: f32, over: f32, _v: u32) {
     );
 }
 
-/// The station: brick with stucco dressings, a galvanised gable roof, and
-/// the platform canopy on the track side exactly where core puts it.
+/// The station: an FCO-style brick front with stucco dressings (a plinth,
+/// pilasters between its bays, hooded openings, a cornice) and a central
+/// pavilion under a pediment, the same on the street and the track side,
+/// under a galvanised gable roof; and the platform canopy on the track side
+/// exactly where core puts it, on cast-iron columns.
 fn station(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
     let walls = masonry((w, d, h), 0.45);
     let bays = ((walls.width() / 3.0) as usize).clamp(3, 9) | 1;
@@ -773,17 +783,11 @@ fn station(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
         hoods: true,
         transom: true,
     };
-    let len = walls.width();
-    let front = walls.front();
-    let openings = spread(len, f.bays, &f.doors, f.door, f.window);
-    front.build(shape, f.wall, &openings, u32::MAX);
-    dress(shape, &front, &openings, &f);
-    plinth(shape, f.plinth, &front, &openings, 0.6, 0.05);
-    // The track side mirrors the town side.
-    let back = walls.back();
-    back.build(shape, f.wall, &openings, u32::MAX);
-    dress(shape, &back, &openings, &f);
-    plinth(shape, f.plinth, &back, &openings, 0.6, 0.05);
+    // The track side mirrors the town side: one face, turned half way round.
+    let mut face = Shape::default();
+    station_face(&mut face, &walls, &f);
+    shape.merge(face.clone(), Transform::IDENTITY);
+    shape.merge(face, Transform::from_rotation(Quat::from_rotation_y(PI)));
     for east in [true, false] {
         let side = walls.side(east);
         let windows = spread(side.length, 2, &[], (0.0, 0.0), f.window);
@@ -806,7 +810,75 @@ fn station(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
     );
     chimney(shape, Vec3::new(walls.x0 + 2.0, h, 0.0), h + 2.4);
     chimney(shape, Vec3::new(walls.x1 - 2.0, h, 0.0), h + 2.4);
-    // Core's `TownLayout::canopies` gives the camera this same roof.
+    canopy(shape, (w, d));
+}
+
+/// The street front of the station on `walls`, seen from `+Z`: the wall with
+/// its openings, plinth, pilasters, and the pavilion over its middle bays.
+fn station_face(shape: &mut Shape, walls: &Walls, f: &Front) {
+    let (h, len) = (walls.height, walls.width());
+    let front = walls.front();
+    let openings = spread(len, f.bays, &f.doors, f.door, f.window);
+    front.build(shape, f.wall, &openings, u32::MAX);
+    dress(shape, &front, &openings, f);
+    plinth(shape, f.plinth, &front, &openings, 0.6, 0.05);
+    // The middle three bays make the pavilion: its edges carry wider
+    // pilasters than the ones between the other bays.
+    let middle = f.bays / 2;
+    let (first, last) = (middle.saturating_sub(1), (middle + 2).min(f.bays));
+    let capital = h - 0.55;
+    for k in 1..f.bays {
+        let edge = k == first || k == last;
+        let width = if edge { 0.7 } else { 0.42 };
+        let at = len * k as f32 / f.bays as f32;
+        pilaster(
+            shape,
+            f.trim,
+            &front,
+            at,
+            width,
+            0.08,
+            (-DROP, 0.75, capital),
+        );
+    }
+    // Over the cornice the pavilion rises into an attic of brick between
+    // stucco ends, a cap, and a pediment.
+    let x0 = walls.x0 + len * first as f32 / f.bays as f32;
+    let x1 = walls.x0 + len * last as f32 / f.bays as f32;
+    let z = walls.z1;
+    let (base, attic) = (h + 0.04, h + 0.95);
+    shape.block(
+        f.wall,
+        Vec3::new(x0 + 0.15, base, z - 0.5),
+        Vec3::new(x1 - 0.15, attic, z),
+    );
+    for (a, b) in [(x0, x0 + 0.15), (x1 - 0.15, x1)] {
+        shape.block(
+            f.trim,
+            Vec3::new(a, base, z - 0.5),
+            Vec3::new(b, attic, z + 0.04),
+        );
+    }
+    shape.block(
+        f.trim,
+        Vec3::new(x0 - 0.08, attic, z - 0.5),
+        Vec3::new(x1 + 0.08, attic + 0.13, z + 0.09),
+    );
+    pediment(
+        shape,
+        f.trim,
+        (x0 - 0.08, x1 + 0.08),
+        z - 0.02,
+        attic + 0.13,
+        1.3,
+        0.45,
+    );
+}
+
+/// The platform canopy: core's slab (`Canopy`) with a fascia, a cut timber
+/// valance and rafters, held up by cast-iron columns standing on the
+/// platform with iron brackets to the roof.
+fn canopy(shape: &mut Shape, (w, d): (f32, f32)) {
     let (bottom, top) = (
         Canopy::HEIGHT - Canopy::THICKNESS / 2.0,
         Canopy::HEIGHT + Canopy::THICKNESS / 2.0,
@@ -818,21 +890,85 @@ fn station(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
             .with_scale(Vec3::new(w, top - bottom, z1 - z0)),
         true,
     );
-    let n = ((w / 4.0) as usize).max(1);
-    for k in 0..=n {
-        let x = -w / 2.0 + 0.3 + (w - 0.6) * k as f32 / n as f32;
-        shape.lathe(
-            Surface::Steel,
-            Transform::from_xyz(x, 0.0, z0 + 0.3),
-            &[
-                (0.1, -DROP),
-                (0.07, 0.4),
-                (0.06, bottom - 0.3),
-                (0.11, bottom),
-            ],
-            8,
+    // The fascia board over the slab's edge (a hair in from it, so the two
+    // never share a face) and the valance below it: a row of lozenges.
+    let edge = z0 + 0.01;
+    let fascia = 0.22;
+    shape.block(
+        Surface::Planks,
+        Vec3::new(-w / 2.0, bottom - fascia, edge),
+        Vec3::new(w / 2.0, top, edge + 0.07),
+    );
+    let lozenge = 0.18;
+    let count = (w / 0.45) as usize;
+    for k in 0..count {
+        let x = -w / 2.0 + (k as f32 + 0.5) * w / count as f32;
+        shape.cuboid(
+            Surface::Planks,
+            Transform::from_xyz(x, bottom - fascia - lozenge * 0.7, edge + 0.04)
+                .with_rotation(Quat::from_rotation_z(FRAC_PI_4))
+                .with_scale(Vec3::new(lozenge, lozenge, 0.04)),
+            true,
         );
     }
+    // Columns every three to four meters, the outer two just inside the
+    // slab's ends, a little in from its edge; a rafter over each across the
+    // underside; scrolled brackets from each to the rafters and the wall.
+    let n = ((w - 0.9) / 3.5).ceil().max(1.0) as usize;
+    let zc = z0 + 0.4;
+    for k in 0..=n {
+        let x = -w / 2.0 + 0.45 + (w - 0.9) * k as f32 / n as f32;
+        shape.lathe(
+            Surface::Steel,
+            Transform::from_xyz(x, PLATFORM_TOP, zc),
+            &column(bottom - PLATFORM_TOP),
+            10,
+        );
+        shape.block(
+            Surface::Planks,
+            Vec3::new(x - 0.06, bottom - 0.14, z0 + 0.08),
+            Vec3::new(x + 0.06, bottom, z1),
+        );
+        let neck = Vec3::new(x, bottom - 0.75, zc);
+        for side in [-1.0, 1.0] {
+            let to = Vec3::new(x + side * 0.9, bottom - 0.14, zc);
+            if to.x.abs() < w / 2.0 - 0.05 {
+                shape.beam(Surface::Steel, neck, to, 0.05);
+            }
+        }
+        shape.beam(
+            Surface::Steel,
+            neck,
+            Vec3::new(x, bottom - 0.14, zc + 0.9),
+            0.05,
+        );
+    }
+}
+
+/// The profile of a cast-iron column `height` tall (radius, height), from
+/// its base: a plinth, a moulded foot, a tapering shaft, a necking ring and
+/// a flared capital under the roof.
+fn column(height: f32) -> Vec<(f32, f32)> {
+    let top = height;
+    vec![
+        (0.19, 0.0),
+        (0.19, 0.12),
+        (0.19, 0.12),
+        (0.14, 0.16),
+        (0.14, 0.16),
+        (0.12, 0.24),
+        (0.08, 0.34),
+        (0.075, 0.5),
+        (0.062, top - 0.62),
+        (0.09, top - 0.58),
+        (0.09, top - 0.52),
+        (0.065, top - 0.48),
+        (0.065, top - 0.44),
+        (0.11, top - 0.34),
+        (0.16, top - 0.2),
+        (0.2, top - 0.1),
+        (0.2, top),
+    ]
 }
 
 #[cfg(test)]
