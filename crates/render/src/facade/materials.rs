@@ -13,8 +13,15 @@
 //! GPU's block format (BC7 on desktop), a quarter of RGBA8's memory.
 //!
 //! A few surfaces wear the same set under another tint (the towns' lime
-//! washes and grey stucco over `plaster_003`); the asset server loads such
-//! a set's maps once.
+//! washes and grey stucco over `plaster_003`, the five [`Paint`]s over
+//! `painted_plaster_wall`); the asset server loads such a set's maps once.
+//!
+//! The 2026-10-25 Poly Haven sets (painted plaster, whitewashed brick,
+//! plaster patched over red brick, a beige band and brick paving) are
+//! scanned darker than the 1919 surface they stand for. Their material
+//! colour lifts each scan's mean albedo ([`Look::Lifted`]) to a muted
+//! target, so a mean texel lands on the paint's colour while the scan keeps
+//! its stains and joints.
 //!
 //! Without an asset server (headless tests) or when a set's files are
 //! missing, the surface falls back to a plain colour of the same look.
@@ -67,13 +74,77 @@ pub enum Surface {
     /// fronts.
     Lime,
     /// Grey stucco (`plaster_003`, tinted): plinths, sills and the
-    /// mouldings of brick fronts.
+    /// mouldings of brick fronts; the sidewalks' curbs.
     Stucco,
+    /// Smooth plaster painted in one of the muted 1919 [`Paint`]s
+    /// (`painted_plaster_wall`): town fronts.
+    Painted(Paint),
+    /// Brick under a worn lime wash (`whitewashed_brick`).
+    WashedBrick,
+    /// Old red brick with the plaster flaking off it in patches
+    /// (`red_brick_plaster_patch_02`): poorer or older fronts.
+    PatchedBrick,
+    /// A beige rendered band (`beige_wall_002`, a 4:1 strip): the plinths
+    /// of painted fronts.
+    Band,
+    /// Brick paving (`brick_pavement`): the sidewalks (veredas).
+    Paving,
 }
+
+/// The muted colours a 1919 town front is painted in
+/// (`odd/setting-1919.md`: earthy, dusty, never bright).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Paint {
+    LimeWhite,
+    Ochre,
+    PaleRose,
+    GreyBlue,
+    Terracotta,
+}
+
+impl Paint {
+    /// Every paint, in order.
+    pub const ALL: [Paint; 5] = [
+        Paint::LimeWhite,
+        Paint::Ochre,
+        Paint::PaleRose,
+        Paint::GreyBlue,
+        Paint::Terracotta,
+    ];
+
+    /// Its mean colour on the wall (sRGB).
+    pub fn albedo(self) -> [f32; 3] {
+        match self {
+            Self::LimeWhite => [0.86, 0.84, 0.79],
+            Self::Ochre => [0.80, 0.67, 0.46],
+            Self::PaleRose => [0.80, 0.67, 0.62],
+            Self::GreyBlue => [0.67, 0.72, 0.74],
+            Self::Terracotta => [0.74, 0.53, 0.41],
+        }
+    }
+}
+
+/// How a surface's material colour is chosen.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Look {
+    /// Multiplies the scan: sRGB, at most white.
+    Tint([f32; 3]),
+    /// Lifts the scan, whose mean albedo is `scan` (linear, measured
+    /// from its `color.jpg`), so that its mean becomes `target` (sRGB).
+    Lifted { scan: [f32; 3], target: [f32; 3] },
+}
+
+/// Mean linear albedo of each new scan's `color.jpg`, measured with
+/// `magick color.jpg -colorspace RGB -format '%[fx:mean.r] %[fx:mean.g] %[fx:mean.b]' info:`.
+const PAINTED_PLASTER_SCAN: [f32; 3] = [0.407, 0.366, 0.351];
+const WASHED_BRICK_SCAN: [f32; 3] = [0.385, 0.326, 0.269];
+const PATCHED_BRICK_SCAN: [f32; 3] = [0.243, 0.131, 0.066];
+const BAND_SCAN: [f32; 3] = [0.227, 0.158, 0.092];
+const PAVING_SCAN: [f32; 3] = [0.079, 0.044, 0.033];
 
 impl Surface {
     /// Every surface, in order.
-    pub const ALL: [Surface; 15] = [
+    pub const ALL: [Surface; 24] = [
         Surface::Adobe,
         Surface::Whitewash,
         Surface::Brick,
@@ -89,6 +160,15 @@ impl Surface {
         Surface::Water,
         Surface::Lime,
         Surface::Stucco,
+        Surface::Painted(Paint::LimeWhite),
+        Surface::Painted(Paint::Ochre),
+        Surface::Painted(Paint::PaleRose),
+        Surface::Painted(Paint::GreyBlue),
+        Surface::Painted(Paint::Terracotta),
+        Surface::WashedBrick,
+        Surface::PatchedBrick,
+        Surface::Band,
+        Surface::Paving,
     ];
 
     /// The texture set it wears, if any.
@@ -103,33 +183,75 @@ impl Surface {
             Self::Thatch => "thatch",
             Self::Mud => "brown_mud_dry",
             Self::Yard => "dry_ground_01",
+            Self::Painted(_) => "painted_plaster_wall",
+            Self::WashedBrick => "whitewashed_brick",
+            Self::PatchedBrick => "red_brick_plaster_patch_02",
+            Self::Band => "beige_wall_002",
+            Self::Paving => "brick_pavement",
             Self::Recess | Self::Steel | Self::Sheet | Self::Water => return None,
         })
     }
 
-    /// Meters per texture repeat: the world size one texture covers.
+    /// Meters per texture repeat along `u`: the world width one texture
+    /// covers.
     pub fn tile(self) -> f32 {
-        match self {
-            Self::Brick | Self::Planks | Self::Thatch => 2.0,
-            Self::OldIron | Self::Galvanised => 2.0,
+        self.tiles().x
+    }
+
+    /// Meters per texture repeat along `u` and `v`. Only the beige band's
+    /// 1024x256 strip covers four times its height in width.
+    pub fn tiles(self) -> Vec2 {
+        let tile = match self {
+            Self::Brick | Self::Planks | Self::Thatch | Self::WashedBrick => 2.0,
+            Self::OldIron | Self::Galvanised | Self::Paving => 2.0,
+            // Its bricks are bigger in the scan: courses of about 7 cm.
+            Self::PatchedBrick => 1.4,
             Self::Adobe | Self::Whitewash | Self::Lime | Self::Stucco | Self::Mud => 2.5,
+            Self::Painted(_) => 2.5,
+            Self::Band => return Vec2::new(4.0, 1.0),
             Self::Yard => 3.0,
             Self::Recess | Self::Steel | Self::Sheet | Self::Water => 1.0,
+        };
+        Vec2::splat(tile)
+    }
+
+    /// The colour its material gives the scan.
+    pub fn look(self) -> Look {
+        let lifted = |scan, target| Look::Lifted { scan, target };
+        match self {
+            // A touch of the 1919 dust over the clean scans.
+            Self::Whitewash => Look::Tint([0.97, 0.95, 0.90]),
+            Self::Galvanised => Look::Tint([0.92, 0.93, 0.94]),
+            Self::Lime => Look::Tint([0.96, 0.84, 0.64]),
+            Self::Stucco => Look::Tint([0.70, 0.68, 0.64]),
+            Self::Painted(paint) => lifted(PAINTED_PLASTER_SCAN, paint.albedo()),
+            Self::WashedBrick => lifted(WASHED_BRICK_SCAN, [0.80, 0.78, 0.73]),
+            // Dusted: a little paler and browner than the clean scan.
+            Self::PatchedBrick => lifted(PATCHED_BRICK_SCAN, [0.58, 0.45, 0.35]),
+            Self::Band => lifted(BAND_SCAN, [0.64, 0.58, 0.50]),
+            Self::Paving => lifted(PAVING_SCAN, [0.48, 0.36, 0.30]),
+            _ => Look::Tint([1.0, 1.0, 1.0]),
         }
     }
 
     /// Its plain colour (sRGB): the whole look without textures, and the
     /// tint over them.
     fn color(self, textured: bool) -> Color {
-        if textured {
-            // A touch of the 1919 dust over the clean scans.
-            return match self {
-                Self::Whitewash => Color::srgb(0.97, 0.95, 0.90),
-                Self::Galvanised => Color::srgb(0.92, 0.93, 0.94),
-                Self::Lime => Color::srgb(0.96, 0.84, 0.64),
-                Self::Stucco => Color::srgb(0.70, 0.68, 0.64),
-                _ => Color::WHITE,
-            };
+        match (self.look(), textured) {
+            (Look::Tint([r, g, b]), true) => return Color::srgb(r, g, b),
+            (Look::Lifted { scan, target }, true) => {
+                let t = Color::srgb(target[0], target[1], target[2]).to_linear();
+                // Past 1 where the scan is darker than the paint: only its
+                // few brightest texels end up a little over white.
+                return Color::linear_rgb(t.red / scan[0], t.green / scan[1], t.blue / scan[2]);
+            }
+            (
+                Look::Lifted {
+                    target: [r, g, b], ..
+                },
+                false,
+            ) => return Color::srgb(r, g, b),
+            (Look::Tint(_), false) => {}
         }
         let (r, g, b) = match self {
             Self::Adobe => (0.62, 0.50, 0.38),
@@ -147,6 +269,11 @@ impl Surface {
             Self::Water => (0.10, 0.13, 0.13),
             Self::Lime => (0.86, 0.75, 0.56),
             Self::Stucco => (0.62, 0.60, 0.57),
+            Self::Painted(_)
+            | Self::WashedBrick
+            | Self::PatchedBrick
+            | Self::Band
+            | Self::Paving => unreachable!("a lifted look has its own plain colour"),
         };
         Color::srgb(r, g, b)
     }
@@ -337,6 +464,56 @@ mod tests {
         let material = material(Surface::Brick, Some(maps));
         assert_eq!(material.metallic_roughness_texture, Some(orm.clone()));
         assert_eq!(material.occlusion_texture, Some(orm));
+    }
+
+    #[test]
+    fn the_new_scans_are_lifted_to_muted_1919_colours() {
+        let mut lifted = 0;
+        for surface in Surface::ALL {
+            let Look::Lifted { scan, target } = surface.look() else {
+                continue;
+            };
+            lifted += 1;
+            // A mean texel of the scan lands on the target colour.
+            let tint = surface.color(true).to_linear();
+            let want = Color::srgb(target[0], target[1], target[2]).to_linear();
+            for (t, (s, w)) in [tint.red, tint.green, tint.blue]
+                .into_iter()
+                .zip(scan.into_iter().zip([want.red, want.green, want.blue]))
+            {
+                assert!((t * s - w).abs() < 1e-3, "{surface:?}: {t} x {s} vs {w}");
+            }
+            // Untextured, it is that colour.
+            assert_eq!(
+                surface.color(false),
+                Color::srgb(target[0], target[1], target[2])
+            );
+            // Muted: dusty, never bright or saturated, never glaring white.
+            let (max, min) = (
+                target.iter().copied().fold(0.0, f32::max),
+                target.iter().copied().fold(1.0, f32::min),
+            );
+            assert!((0.4..=0.87).contains(&max), "{surface:?}: {target:?}");
+            assert!(
+                (max - min) / max <= 0.45,
+                "{surface:?}: {target:?} too saturated"
+            );
+        }
+        assert_eq!(
+            lifted, 9,
+            "five paints, two bricks, the band and the paving"
+        );
+    }
+
+    #[test]
+    fn the_band_strip_keeps_its_texels_square() {
+        // beige_wall_002 is 1024 x 256: one repeat four times wider than tall.
+        let band = Surface::Band.tiles();
+        assert!((band.x - 4.0 * band.y).abs() < 1e-6, "{band}");
+        for surface in Surface::ALL.into_iter().filter(|&s| s != Surface::Band) {
+            let t = surface.tiles();
+            assert_eq!(t.x, t.y, "{surface:?}");
+        }
     }
 
     #[test]

@@ -62,6 +62,119 @@ pub struct Building {
     pub front: Side,
 }
 
+impl Building {
+    /// How far a galpón's (shed's or grain store's) roof reaches past its
+    /// walls, in meters: its eaves and verges end on the footprint, and its
+    /// walls stand this far in from it (render's `facade::walls::barn`).
+    pub const BARN_EAVES: f32 = 0.45;
+
+    /// What people and horses bump into: the footprint, or a galpón's
+    /// walls, [`Self::BARN_EAVES`] in from it (only its roof reaches out).
+    pub fn collider(&self) -> Aabb {
+        match self.kind {
+            BuildingKind::Shed | BuildingKind::GrainStore => {
+                self.footprint.expanded(-Self::BARN_EAVES)
+            }
+            _ => self.footprint,
+        }
+    }
+}
+
+/// Which of a town's streets get a brick sidewalk (vereda), by its blocks
+/// (user, 2026-10-25). The rest stay dirt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Paving {
+    /// A village of at most [`Paving::VILLAGE_MAX`] blocks (Metileo):
+    /// dirt everywhere.
+    None,
+    /// A small town (Castex, Monte Nievas, Caleufú): only the plaza's own
+    /// edge, a ring round it (user, 2026-10-25).
+    Plaza,
+    /// A big town (General Pico, [`TownSize::Big`] or bigger): along every
+    /// block front and round every plaza.
+    Everywhere,
+}
+
+impl Paving {
+    /// Most blocks of a village with no paving at all (3 x 3).
+    pub const VILLAGE_MAX: usize = 9;
+
+    /// The paving of a town of `blocks` (columns, rows).
+    pub fn of(blocks: (usize, usize)) -> Self {
+        match TownSize::of(blocks) {
+            _ if blocks.0 * blocks.1 <= Self::VILLAGE_MAX => Self::None,
+            TownSize::Small => Self::Plaza,
+            TownSize::Big | TownSize::VeryBig => Self::Everywhere,
+        }
+    }
+}
+
+/// One straight strip of brick sidewalk, lying on the street along a block
+/// or plaza edge. It is drawn on the ground like the streets and the plaza
+/// paths, a few centimeters proud: people walk over it at the ground's
+/// height, so it changes nothing in how anyone moves.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Sidewalk {
+    pub area: Aabb,
+    /// Its edges on the roadway, each with a curb.
+    pub curbs: Vec<Side>,
+}
+
+impl Sidewalk {
+    /// Width of a sidewalk, curb included, in meters.
+    pub const WIDTH: f32 = 1.8;
+
+    /// The strips of a sidewalk all round `area`: the north and south ones
+    /// reach round the corners, curbed at their ends; the east and west
+    /// ones run between them.
+    fn ring(area: Aabb) -> [Sidewalk; 4] {
+        let w = Self::WIDTH;
+        let (min, max) = (area.min, area.max);
+        let ends = |side| vec![side, Side::East, Side::West];
+        [
+            Sidewalk {
+                area: Aabb::new(Vec2::new(min.x - w, min.y - w), Vec2::new(max.x + w, min.y)),
+                curbs: ends(Side::South),
+            },
+            Sidewalk {
+                area: Aabb::new(Vec2::new(min.x - w, max.y), Vec2::new(max.x + w, max.y + w)),
+                curbs: ends(Side::North),
+            },
+            Sidewalk {
+                area: Aabb::new(Vec2::new(min.x - w, min.y), Vec2::new(min.x, max.y)),
+                curbs: vec![Side::West],
+            },
+            Sidewalk {
+                area: Aabb::new(Vec2::new(max.x, min.y), Vec2::new(max.x + w, max.y)),
+                curbs: vec![Side::East],
+            },
+        ]
+    }
+}
+
+/// The sidewalks of a town paved as `paving`, on `grid` round its main
+/// `plaza` (the blocks it takes).
+fn sidewalks(grid: &Grid, plaza: PlazaBlocks, paving: Paving) -> Vec<Sidewalk> {
+    let area = grid.span(plaza);
+    let blocks = (0..grid.rows).flat_map(|j| (0..grid.cols).map(move |i| (i, j)));
+    match paving {
+        Paving::None => Vec::new(),
+        Paving::Everywhere => blocks
+            .filter(|&b| !plaza.contains(b))
+            .map(|(i, j)| grid.block(i, j))
+            .chain([area])
+            .flat_map(Sidewalk::ring)
+            .collect(),
+        Paving::Plaza => Sidewalk::ring(area).into(),
+    }
+}
+
+/// Whether `a` and `b` share an area, not just an edge or a corner.
+#[cfg(test)]
+fn overlap(a: &Aabb, b: &Aabb) -> bool {
+    a.min.x.max(b.min.x) < a.max.x.min(b.max.x) && a.min.y.max(b.min.y) < a.max.y.min(b.max.y)
+}
+
 /// A raised floor people walk on: the station platform. Its top is part of
 /// the ground height ([`crate::World::ground_height`]), not an obstacle.
 ///
@@ -546,6 +659,8 @@ pub struct TownLayout {
     /// The strip between the two halves of a town grown on both sides of
     /// its line ([`RailwayConfig::through`]): the track and station yard.
     band: Option<Aabb>,
+    /// Its brick sidewalks ([`Paving`]).
+    sidewalks: Vec<Sidewalk>,
 }
 
 /// Trunk radius used for tree collision.
@@ -672,6 +787,7 @@ impl TownLayout {
             extent,
             arrival: arrival(&grid, main, config.railway),
             band: grid.band(),
+            sidewalks: sidewalks(&grid, main, Paving::of(config.blocks)),
         })
     }
 
@@ -682,6 +798,12 @@ impl TownLayout {
     /// any real town.
     pub fn castex_inspired() -> Self {
         Self::generate(&TownConfig::castex()).expect("the built-in Castex config is valid")
+    }
+
+    /// Its brick sidewalks: along every block front in a big town, round
+    /// the plaza in a small one, none in a village ([`Paving`]).
+    pub fn sidewalks(&self) -> &[Sidewalk] {
+        &self.sidewalks
     }
 
     /// Every plaza: the main one, then the station plaza of a bigger town.
@@ -772,15 +894,16 @@ impl TownLayout {
         }
     }
 
-    /// Static collision footprints: every building but the platform (a
-    /// floor people walk on, see [`Self::floors`]), every tree trunk, the
-    /// hitching rail with its horse, and free-standing signs.
+    /// Static collision footprints: every building's [`Building::collider`]
+    /// but the platform's (a floor people walk on, see [`Self::floors`]),
+    /// every tree trunk, the hitching rail with its horse, and free-standing
+    /// signs.
     pub fn obstacles(&self) -> Vec<Aabb> {
         let trunk = Vec2::new(2.0 * TREE_TRUNK_RADIUS, 2.0 * TREE_TRUNK_RADIUS);
         self.buildings
             .iter()
             .filter(|b| b.kind != BuildingKind::Platform)
-            .map(|b| b.footprint)
+            .map(Building::collider)
             .chain(self.trees.iter().map(|&p| Aabb::from_center_size(p, trunk)))
             .chain([self.hitching_post.rail, self.hitching_post.horse.footprint])
             .chain(self.sign_obstacles())
@@ -2710,9 +2833,125 @@ pub(crate) mod tests {
             assert!(obstacles.contains(&t.hitching_post.rail));
             assert!(obstacles.contains(&t.hitching_post.horse.footprint));
             for b in solid {
-                assert!(obstacles.contains(&b.footprint));
+                assert!(obstacles.contains(&b.collider()));
             }
         }
+    }
+
+    #[test]
+    fn a_galpon_collides_at_its_walls_not_at_its_eaves() {
+        let mut galpones = 0;
+        for t in sample_towns() {
+            let obstacles = t.obstacles();
+            for b in t
+                .buildings
+                .iter()
+                .filter(|b| b.kind != BuildingKind::Platform)
+            {
+                let barn = matches!(b.kind, BuildingKind::Shed | BuildingKind::GrainStore);
+                let inset = if barn { Building::BARN_EAVES } else { 0.0 };
+                let want = b.footprint.expanded(-inset);
+                assert_eq!(b.collider(), want, "{}: {:?}", t.name, b.kind);
+                assert!(obstacles.contains(&want), "{}: {:?}", t.name, b.kind);
+                galpones += usize::from(barn);
+            }
+        }
+        assert!(galpones > 10, "{galpones} galpones");
+    }
+
+    /// Whether `p` lies on one of `t`'s streets.
+    fn on_street(t: &TownLayout, p: Vec2) -> bool {
+        t.streets.iter().any(|s| s.contains_point(p))
+    }
+
+    #[test]
+    fn paving_follows_the_town_size() {
+        assert_eq!(Paving::of((3, 3)), Paving::None);
+        assert_eq!(Paving::of((4, 3)), Paving::Plaza);
+        assert_eq!(Paving::of((5, 4)), Paving::Plaza);
+        assert_eq!(Paving::of((6, 6)), Paving::Plaza);
+        assert_eq!(Paving::of((7, 6)), Paving::Everywhere);
+        assert_eq!(Paving::of((8, 8)), Paving::Everywhere);
+    }
+
+    #[test]
+    fn sidewalks_lie_on_the_streets_clear_of_buildings_and_plazas() {
+        let pico = TownLayout::generate(&TownConfig {
+            name: "Pico".into(),
+            blocks: (8, 8),
+            ..TownConfig::castex()
+        })
+        .unwrap();
+        let mut paved = 0;
+        for t in sample_towns().into_iter().chain([pico]) {
+            for walk in t.sidewalks() {
+                let a = walk.area;
+                assert!(
+                    (a.size().x.min(a.size().y) - Sidewalk::WIDTH).abs() < 1e-3,
+                    "{}: {a:?}",
+                    t.name
+                );
+                // Corners (just inside) and middle on a street.
+                let inner = a.expanded(-0.01);
+                for p in [
+                    inner.min,
+                    inner.max,
+                    Vec2::new(inner.min.x, inner.max.y),
+                    a.center(),
+                ] {
+                    assert!(
+                        on_street(&t, p),
+                        "{}: {a:?} off the street at {p:?}",
+                        t.name
+                    );
+                }
+                for b in &t.buildings {
+                    assert!(
+                        !overlap(&a, &b.footprint),
+                        "{}: {a:?} on {:?}",
+                        t.name,
+                        b.kind
+                    );
+                }
+                for plaza in t.plazas() {
+                    assert!(!overlap(&a, &plaza), "{}: {a:?} in a plaza", t.name);
+                }
+                assert!(!walk.curbs.is_empty());
+                paved += 1;
+            }
+        }
+        assert!(paved > 200, "{paved} strips");
+    }
+
+    #[test]
+    fn a_big_town_paves_every_block_a_small_one_its_plaza_edge_a_village_nothing() {
+        let towns = sample_towns();
+        // Pico: a ring round every block but the plaza's, and the plaza's.
+        let pico = TownLayout::generate(&TownConfig {
+            name: "Pico".into(),
+            blocks: (8, 8),
+            ..TownConfig::castex()
+        })
+        .unwrap();
+        assert_eq!(pico.sidewalks().len(), 4 * (64 - 4 + 1));
+        // Castex: only the plaza's own edge, the four strips of its ring,
+        // each against the plaza.
+        let castex = &towns[0];
+        assert_eq!(Paving::of(castex.blocks()), Paving::Plaza);
+        let walks = castex.sidewalks();
+        assert_eq!(walks.len(), 4, "{walks:?}");
+        let ring = castex.plaza.expanded(Sidewalk::WIDTH);
+        for walk in walks {
+            assert!(
+                ring.contains(&walk.area),
+                "{:?} off the plaza's edge",
+                walk.area
+            );
+            assert!(!overlap(&walk.area, &castex.plaza));
+        }
+        // A 3 x 3 village: dirt only.
+        let village = towns.iter().find(|t| t.blocks() == (3, 3)).unwrap();
+        assert!(village.sidewalks().is_empty());
     }
 
     #[test]

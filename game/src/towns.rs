@@ -395,11 +395,12 @@ mod tests {
         assert!(houses.iter().all(|&w| w >= 8.0), "{houses:?}");
         let three = houses.iter().filter(|&&w| w >= THREE_BAYS).count();
         assert!(2 * three >= houses.len(), "{houses:?}");
-        // The church front fits its 4 m tower and an arched window, 2.4 m
-        // of wall or more, on either side: 12 m, as in every other town.
+        // The church front is 12 m, as in every other town: beside its 4 m
+        // tower that leaves 3.9 m of nave wall on either side (inside its
+        // 0.1 m insets), past the 2.4 m an arched window needs.
         let church = of(BuildingKind::Church).map(frontage).collect::<Vec<_>>();
         assert_eq!(church.len(), 1);
-        assert!(church[0] >= 4.0 + 2.0 * 2.5 + 2.0, "{church:?}");
+        assert!(church[0] >= 12.0 - 1e-3, "{church:?}");
     }
 
     #[test]

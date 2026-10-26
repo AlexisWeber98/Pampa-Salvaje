@@ -3,7 +3,7 @@
 //!
 //! Every piece is added to the buffer of its [`Surface`], so a structure
 //! ends up as one mesh per surface it wears. Faces carry flat normals,
-//! UVs scaled to the world (one texture repeat every [`Surface::tile`]
+//! UVs scaled to the world (one texture repeat every [`Surface::tiles`]
 //! meters, whatever the size of the piece) and tangents for the normal
 //! maps.
 
@@ -74,13 +74,13 @@ const CUBE: [[[f32; 3]; 4]; 6] = [
 /// The planar UV of `p` on a face with normal `n`: walls and slopes run
 /// their `u` level and their `v` up the face; floors and roofs flat on the
 /// ground take the ground plane's.
-fn planar_uv(p: Vec3, n: Vec3, tile: f32) -> [f32; 2] {
+fn planar_uv(p: Vec3, n: Vec3, tile: Vec2) -> [f32; 2] {
     if n.y.abs() > 0.9 {
-        return [p.x / tile, p.z / tile];
+        return [p.x / tile.x, p.z / tile.y];
     }
     let u = Vec3::Y.cross(n).normalize_or(Vec3::X);
     let v = n.cross(u);
-    [p.dot(u) / tile, -p.dot(v) / tile]
+    [p.dot(u) / tile.x, -p.dot(v) / tile.y]
 }
 
 impl Shape {
@@ -102,7 +102,7 @@ impl Shape {
         let n = (corners[1] - corners[0])
             .cross(corners[2] - corners[0])
             .normalize_or(Vec3::Y);
-        let tile = surface.tile();
+        let tile = surface.tiles();
         let uv: Vec<[f32; 2]> = corners.iter().map(|&p| planar_uv(p, n, tile)).collect();
         let tangent = face_tangent([corners[0], corners[1], corners[2]], [uv[0], uv[1], uv[2]]);
         let b = self.buffers(surface);
@@ -240,7 +240,7 @@ impl Shape {
     ) {
         let m = transform.to_matrix();
         let normal_m = m.inverse().transpose();
-        let tile = surface.tile();
+        let tile = surface.tiles();
         let b = self.buffers(surface);
         let base = b.positions.len() as u32;
         let ring = segments + 1;
@@ -292,7 +292,7 @@ impl Shape {
                 let w = if n.cross(t).dot(-up) < 0.0 { -1.0 } else { 1.0 };
                 b.positions.push(p.to_array());
                 b.normals.push(n.to_array());
-                b.uvs.push([angle * mean_r / tile, -along[k] / tile]);
+                b.uvs.push([angle * mean_r / tile.x, -along[k] / tile.y]);
                 b.tangents.push([t.x, t.y, t.z, w]);
             }
         }

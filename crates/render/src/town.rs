@@ -1,5 +1,6 @@
 //! Procedural low-poly town drawn from a `pampa-core` [`TownLayout`]:
-//! dirt streets, a tree-lined plaza, the 1919 Italianate buildings of the
+//! dirt streets with brick sidewalks where core paves them
+//! ([`TownLayout::sidewalks`]), a tree-lined plaza, the 1919 Italianate buildings of the
 //! facade kit ([`crate::facade::town_buildings`]), a railway with its
 //! station, grain sheds, and windmills over round water tanks.
 //!
@@ -16,19 +17,26 @@
 //! first frame shows it; a town streamed in later builds its buildings on
 //! the async compute pool and they land a few frames after its root, still
 //! far past [`crate::settlement::BUILDING_FAR`] (the activation margin is wider). Buildings,
-//! small props and trees are drawn within the settlements' shared
+//! sidewalks, small props and trees are drawn within the settlements' shared
 //! [`ranges`]: no new [`VisibilityRange`].
+//!
+//! A sidewalk is a strip of brick paving [`SIDEWALK_TOP`] over the ground
+//! with a stucco curb [`CURB_TOP`] over it on the roadway side: drawn on the
+//! ground like the streets and the plaza paths, which core walks people over
+//! at the ground's own height.
 
 use bevy::camera::visibility::VisibilityRange;
 use bevy::prelude::*;
 use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
+use pampa_core::town::Sidewalk;
 use pampa_core::{
-    Aabb, Building, BuildingKind, Floor, RailSpan, StoreStyle, Terrain, TownActivation, TownLayout,
-    Vec2 as GroundVec2,
+    Aabb, Building, BuildingKind, Floor, RailSpan, Side, StoreStyle, Terrain, TownActivation,
+    TownLayout, Vec2 as GroundVec2,
 };
 
 use crate::coords::world_from_ground;
+use crate::facade::shape::Shape;
 use crate::facade::town_buildings::{self, Lot};
 use crate::facade::{FacadeMaterials, Surface};
 use crate::rail::{TrackKit, track_pieces};
@@ -91,6 +99,10 @@ fn spin_rotors(time: Res<Time>, mut rotors: Query<(&WindmillRotor, &mut Transfor
 /// [`TownLayout::buildings`]).
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TownBuilding(pub usize);
+
+/// One piece of a town's sidewalks: a block's or the plaza's ring.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TownSidewalk;
 
 /// Shared meshes, scaled per instance.
 #[derive(Resource)]
@@ -290,6 +302,14 @@ fn stream_towns(
             range: None,
         };
         build_town(&mut b, town);
+        spawn_sidewalks(
+            &mut commands,
+            root,
+            town,
+            &terrain.0,
+            &surfaces,
+            &mut meshes,
+        );
         let lots = lots(town, &terrain.0);
         if *first_fill_laid {
             let task = AsyncComputeTaskPool::get().spawn(async move { build_lots(&lots) });
@@ -340,6 +360,146 @@ fn build_town(b: &mut Builder, town: &TownLayout) {
     b.range = Some(ranges()[1].clone());
     hitching_rail(b, &town.hitching_post.rail);
     b.range = None;
+}
+
+/// Height of a sidewalk's brick paving over the ground, meters: just over
+/// the street's 0.03 and under the plaza paths' 0.07.
+pub const SIDEWALK_TOP: f32 = 0.06;
+/// Height of its curb over the ground, meters: 3 cm over the paving.
+pub const CURB_TOP: f32 = 0.09;
+/// Width of a curb, meters.
+const CURB_WIDTH: f32 = 0.15;
+/// How far sidewalks reach under the ground, meters.
+const SIDEWALK_FOOT: f32 = -0.05;
+
+/// Spawns the sidewalks of `town` under `root`: one entity per group of
+/// touching strips and surface (paving, curb), within the buildings'
+/// shared range.
+fn spawn_sidewalks(
+    commands: &mut Commands,
+    root: Entity,
+    town: &TownLayout,
+    terrain: &Terrain,
+    surfaces: &FacadeMaterials,
+    meshes: &mut Assets<Mesh>,
+) {
+    let range = ranges()[0].clone();
+    for (origin, shape) in sidewalk_shapes(town.sidewalks(), terrain) {
+        for (surface, mesh) in shape.into_meshes() {
+            commands.spawn((
+                Mesh3d(meshes.add(mesh)),
+                MeshMaterial3d(surfaces.get(surface)),
+                Transform::from_translation(origin),
+                range.clone(),
+                TownSidewalk,
+                ChildOf(root),
+            ));
+        }
+    }
+}
+
+/// The groups of touching `walks` (a ring's four strips), each built around its first strip's middle on the ground: where
+/// it stands in the world, and its shape there.
+fn sidewalk_shapes(walks: &[Sidewalk], terrain: &Terrain) -> Vec<(Vec3, Shape)> {
+    let mut groups: Vec<(Vec<Aabb>, Vec3, Shape)> = Vec::new();
+    for walk in walks {
+        let touches = |areas: &Vec<Aabb>| {
+            areas
+                .iter()
+                .any(|a| a.expanded(0.01).intersects(&walk.area))
+        };
+        let mut touching = (0..groups.len()).filter(|&k| touches(&groups[k].0));
+        let k = match touching.next() {
+            Some(k) => {
+                // A strip joining two groups (a ring's east strip, between
+                // its north and south ones) merges them.
+                let rest: Vec<usize> = touching.collect();
+                for j in rest.into_iter().rev() {
+                    let (areas, origin, shape) = groups.remove(j);
+                    let into = &mut groups[k];
+                    into.0.extend(areas);
+                    into.2
+                        .merge(shape, Transform::from_translation(origin - into.1));
+                }
+                k
+            }
+            None => {
+                let c = walk.area.center();
+                let origin = world_from_ground(c, terrain.height(c.x, c.y));
+                groups.push((Vec::new(), origin, Shape::default()));
+                groups.len() - 1
+            }
+        };
+        let (areas, origin, shape) = &mut groups[k];
+        areas.push(walk.area);
+        let c = walk.area.center();
+        let ground = terrain.height(c.x, c.y) - origin.y;
+        sidewalk(shape, walk, *origin, ground);
+    }
+    groups
+        .into_iter()
+        .map(|(_, origin, shape)| (origin, shape))
+        .collect()
+}
+
+/// The box between ground corners `a` and `b`, from `low` to `high` over
+/// `ground`, in the space of a group standing at `origin`.
+fn ground_box(
+    shape: &mut Shape,
+    surface: Surface,
+    (a, b): (GroundVec2, GroundVec2),
+    origin: Vec3,
+    (ground, low, high): (f32, f32, f32),
+) {
+    let (p, q) = (
+        world_from_ground(a, 0.0) - origin,
+        world_from_ground(b, 0.0) - origin,
+    );
+    shape.block(
+        surface,
+        p.min(q).with_y(ground + low),
+        p.max(q).with_y(ground + high),
+    );
+}
+
+/// One strip: brick paving, and a curb along each of its curbed edges
+/// (the first one whole, the others stopping short of it).
+fn sidewalk(shape: &mut Shape, walk: &Sidewalk, origin: Vec3, ground: f32) {
+    let w = CURB_WIDTH;
+    let a = walk.area;
+    // The paving stops at the curbs.
+    let (mut lo, mut hi) = (a.min, a.max);
+    for side in &walk.curbs {
+        match side {
+            Side::South => lo.y += w,
+            Side::North => hi.y -= w,
+            Side::West => lo.x += w,
+            Side::East => hi.x -= w,
+        }
+    }
+    let paving = (ground, SIDEWALK_FOOT, SIDEWALK_TOP);
+    ground_box(shape, Surface::Paving, (lo, hi), origin, paving);
+    let first = walk.curbs.first().copied();
+    for (k, &side) in walk.curbs.iter().enumerate() {
+        let (mut lo, mut hi) = (a.min, a.max);
+        match side {
+            Side::South => hi.y = lo.y + w,
+            Side::North => lo.y = hi.y - w,
+            Side::West => hi.x = lo.x + w,
+            Side::East => lo.x = hi.x - w,
+        }
+        if k > 0 {
+            match first {
+                Some(Side::South) => lo.y = lo.y.max(a.min.y + w),
+                Some(Side::North) => hi.y = hi.y.min(a.max.y - w),
+                Some(Side::West) => lo.x = lo.x.max(a.min.x + w),
+                Some(Side::East) => hi.x = hi.x.min(a.max.x - w),
+                None => {}
+            }
+        }
+        let curb = (ground, SIDEWALK_FOOT, CURB_TOP);
+        ground_box(shape, Surface::Stucco, (lo, hi), origin, curb);
+    }
 }
 
 /// Thickness of a ramp slab, in meters.
@@ -816,5 +976,191 @@ mod tests {
             count::<(With<TownBuilding>, With<Mesh3d>)>(&mut app)
         );
         assert!(seen.contains(&ranges()[0]));
+    }
+
+    /// Writes three towns as shipped (General Pico, Eduardo Castex,
+    /// Metileo) to `PAMPA_PREVIEW` (a folder) for the offline renderer, in
+    /// the format of `facade::town_buildings::tests::preview_town_street`:
+    /// buildings, streets, plazas, paths and sidewalks on flat ground. Run
+    /// with `PAMPA_PREVIEW=/some/dir cargo test -p pampa-render -- --ignored preview_town`.
+    #[test]
+    #[ignore = "writes preview files"]
+    fn preview_town_sidewalks() {
+        use std::fmt::Write as _;
+        let Some(dir) = std::env::var_os("PAMPA_PREVIEW") else {
+            return;
+        };
+        let dir = std::path::PathBuf::from(dir);
+        let config = |name: &str, blocks, street_width, seed, through| pampa_core::TownConfig {
+            name: name.into(),
+            origin: Vec2::ZERO,
+            blocks,
+            block_size: 40.0,
+            street_width,
+            railway: Some(pampa_core::RailwayConfig {
+                side: pampa_core::Side::North,
+                offset: 24.0,
+                through,
+            }),
+            plaza: pampa_core::PlazaPlacement::Auto,
+            seed,
+            police_stations: None,
+            density: None,
+            townsfolk: None,
+        };
+        let towns = [
+            ("pico", config("General Pico", (8, 8), 10.0, 13, true)),
+            ("castex", config("Eduardo Castex", (5, 4), 10.0, 2, false)),
+            (
+                "metileo",
+                pampa_core::TownConfig {
+                    density: Some(0.3),
+                    ..config("Metileo", (3, 3), 8.0, 19, false)
+                },
+            ),
+        ];
+        for (name, config) in towns {
+            let town = TownLayout::generate(&config).unwrap();
+            let terrain = WorldTerrain::default().0;
+            let terrain = terrain.clone().with_flat_area(town.flat_area(&terrain));
+            let floor = terrain.height(0.0, 0.0);
+            let mut text = String::new();
+            let put = |text: &mut String, shape: &Shape, at: Transform| {
+                for surface in shape.surfaces().collect::<Vec<_>>() {
+                    let _ = writeln!(text, "m {surface:?}");
+                    for (p, n, uv) in shape.vertices(surface) {
+                        let p = at.transform_point(p) - Vec3::Y * floor;
+                        let n = at.rotation * n;
+                        let _ = writeln!(
+                            text,
+                            "v {:.3} {:.3} {:.3} {:.3} {:.3} {:.3} {:.4} {:.4}",
+                            p.x, p.y, p.z, n.x, n.y, n.z, uv.x, uv.y
+                        );
+                    }
+                    for t in shape.indices(surface).chunks(3) {
+                        let _ = writeln!(text, "f {} {} {}", t[0], t[1], t[2]);
+                    }
+                }
+            };
+            // Ground patches as named flat quads.
+            let patch = |text: &mut String, name: &str, a: &Aabb, lift: f32| {
+                let (p, q) = (
+                    world_from_ground(a.min, lift),
+                    world_from_ground(a.max, lift),
+                );
+                let _ = writeln!(text, "m {name}");
+                for (x, z) in [(p.x, p.z), (q.x, p.z), (q.x, q.z), (p.x, q.z)] {
+                    let _ = writeln!(text, "v {x:.3} {lift:.3} {z:.3} 0 1 0 0 0");
+                }
+                let _ = writeln!(text, "f 0 2 1\nf 0 3 2");
+            };
+            for street in &town.streets {
+                patch(&mut text, "Street", street, 0.03);
+            }
+            for plaza in town.plazas() {
+                patch(&mut text, "Plaza", &plaza, 0.05);
+                for path in pampa_core::plaza_paths(plaza) {
+                    patch(&mut text, "Path", &path, 0.07);
+                }
+            }
+            for (origin, shape) in sidewalk_shapes(town.sidewalks(), &terrain) {
+                put(&mut text, &shape, Transform::from_translation(origin));
+            }
+            for job in lots(&town, &terrain) {
+                let Some(shape) = town_buildings::building(&job.lot) else {
+                    continue;
+                };
+                let at = Transform::from_translation(job.base)
+                    .with_rotation(town_buildings::yaw(job.lot.building.front));
+                put(&mut text, &shape, at);
+            }
+            std::fs::write(dir.join(format!("town_{name}.txt")), text).expect("preview written");
+            // Where the plaza is, for framing the camera.
+            let c = town.plaza.center();
+            println!(
+                "{name}: plaza at x {} z {}, grid {:?}",
+                c.x,
+                -c.y,
+                town.grid()
+            );
+        }
+    }
+
+    #[test]
+    fn a_small_town_paves_round_its_plaza_with_the_shared_paving_and_curb() {
+        let mut app = app();
+        app.update();
+        let facade = app.world().resource::<FacadeMaterials>().clone();
+        let shared = [
+            facade.get(Surface::Paving).id(),
+            facade.get(Surface::Stucco).id(),
+        ];
+        let mut q = app.world_mut().query_filtered::<
+            (&MeshMaterial3d<StandardMaterial>, &VisibilityRange),
+            With<TownSidewalk>,
+        >();
+        let walks: Vec<_> = q.iter(app.world()).collect();
+        // Castex is small: only the plaza's ring, its paving and its curb.
+        assert_eq!(walks.len(), 2, "sidewalk meshes");
+        for (material, range) in walks {
+            assert!(shared.contains(&material.id()));
+            assert!(range == &ranges()[0], "a range of its own");
+        }
+    }
+
+    /// Every sidewalk point of `town`, over the ground under it.
+    fn sidewalk_heights(town: &TownLayout, terrain: &Terrain) -> Vec<(Surface, f32)> {
+        sidewalk_shapes(town.sidewalks(), terrain)
+            .into_iter()
+            .flat_map(|(origin, shape)| {
+                shape
+                    .surfaces()
+                    .flat_map(|s| {
+                        shape.points(s).into_iter().map(move |p| {
+                            let p = p + origin;
+                            (s, p.y - terrain.height(p.x, -p.z))
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn sidewalks_stand_a_few_centimeters_proud_like_the_plaza_paths() {
+        // People walk at the ground's own height over the streets (0.03 m),
+        // the paths (0.07 m) and so the sidewalks: their paving and curb
+        // stay within those few centimeters.
+        let pico = TownLayout::generate(&pampa_core::TownConfig {
+            name: "Pico".into(),
+            blocks: (8, 8),
+            ..TownConfig::castex()
+        })
+        .unwrap();
+        // The game levels the ground under a town.
+        let terrain = WorldTerrain::default().0;
+        let terrain = terrain.clone().with_flat_area(pico.flat_area(&terrain));
+        let heights = sidewalk_heights(&pico, &terrain);
+        let top = |surface| {
+            heights
+                .iter()
+                .filter(|(s, _)| *s == surface)
+                .fold(f32::MIN, |m, (_, y)| m.max(*y))
+        };
+        assert!((top(Surface::Paving) - SIDEWALK_TOP).abs() < 1e-3);
+        assert!((top(Surface::Stucco) - CURB_TOP).abs() < 1e-3);
+        const { assert!(CURB_TOP <= 0.1, "a curb people step over unawares") };
+        for (surface, y) in heights {
+            assert!(
+                (SIDEWALK_FOOT - 1e-3..=CURB_TOP + 1e-3).contains(&y),
+                "{surface:?} at {y}"
+            );
+        }
+        // A ring per block but the plaza's four, and the plaza's own: one
+        // shape each.
+        assert_eq!(
+            sidewalk_shapes(pico.sidewalks(), &terrain).len(),
+            64 - 4 + 1
+        );
     }
 }

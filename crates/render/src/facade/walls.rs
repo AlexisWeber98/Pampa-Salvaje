@@ -478,10 +478,16 @@ pub(crate) fn chimney(shape: &mut Shape, at: Vec3, top: f32) {
     );
 }
 
+/// A galpón's eaves and verges: how far its roof overhangs its walls.
+const BARN_OVERHANG: f32 = 0.4;
+/// The thickness of a galpón's roof sheet.
+const BARN_SHEET: f32 = 0.05;
+
 /// How far a galpón's roof reaches out past its walls ([`barn`]): its
-/// 0.4 m eaves and verges, with the slab's thickness tilted out. A galpón
-/// that must keep inside a footprint stands this far in from it.
-pub(crate) const BARN_REACH: f32 = 0.45;
+/// eaves and verges, plus at most its sheet's thickness tilted out. A
+/// galpón that must keep inside a footprint stands this far in from it:
+/// core's [`pampa_core::Building::BARN_EAVES`], where its collider is.
+pub(crate) const BARN_REACH: f32 = BARN_OVERHANG + BARN_SHEET;
 
 /// The galpón: `walls` of corrugated iron on timber, a gable roof along its
 /// width (`X`) in `roof`, and `doors` pairs of big plank doors spread along
@@ -557,7 +563,7 @@ pub(crate) fn barn(
         );
     }
     let rise = d / 2.0 * 0.35;
-    gable_roof(shape, (roof, roof), &box_, rise, 0.4, 0.06);
+    gable_roof(shape, (roof, roof), &box_, rise, BARN_OVERHANG, BARN_SHEET);
 }
 
 #[cfg(test)]
