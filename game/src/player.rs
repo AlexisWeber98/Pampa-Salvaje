@@ -11,7 +11,8 @@ use pampa_core::{
     Heading, MAX_STEP, Rider, RiderInput, RiderParams, Travel, Vec2 as GroundVec2, World,
 };
 use pampa_render::{
-    CharacterVisual, Coat, FigureKind, MapIcon, StreamFocus, VisualPose, world_from_ground,
+    CharacterVisual, Coat, FigureKind, MapIcon, StreamFocus, ViewerBody, VisualPose,
+    world_from_ground,
 };
 
 use crate::ride::{OnTrain, StartAboard};
@@ -129,6 +130,8 @@ fn spawn_player(
     let mut player = commands.spawn((
         Name::new("Player"),
         MapIcon::Player,
+        // The first-person camera sits in this body's head.
+        ViewerBody,
         player_visual(spawn.travel),
         VisualPose {
             heading: rider.heading,

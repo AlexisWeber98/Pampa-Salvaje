@@ -24,6 +24,8 @@
 //!   (the default) or back as the old rigid figures
 //!   ([`CharacterModelsShown`]; only this console turns them off);
 //! - `time HH` / `time HH:MM`: move the clock on to that time;
+//! - `view fp` / `view tp`: look from the player's eyes or from the orbit
+//!   ([`ViewMode`]), like `V` off the train;
 //! - `help`: the list.
 //!
 //! `goto` puts the player (and the horse, when riding) on the nearest clear
@@ -47,6 +49,7 @@ use pampa_render::{
 
 use crate::abilities::{PlayerAbilities, Unlocked};
 use crate::errand::Mountable;
+use crate::first_person::ViewMode;
 use crate::player::{DrivePlayer, GameWorld, Player, PlayerTuning};
 use crate::ride::OnTrain;
 
@@ -62,7 +65,7 @@ const TURBO_ACCELERATION: f32 = 10.0;
 const SEARCH: f32 = 300.0;
 
 /// What the console lists for `help`.
-pub const HELP: [&str; 9] = [
+pub const HELP: [&str; 10] = [
     "goto lake, pico, castex, nievas, metileo, caleufu",
     "goto ranch, ranch castex, ranch pico, herd",
     "goto X Y: a point in meters",
@@ -72,6 +75,7 @@ pub const HELP: [&str; 9] = [
     "models on, off: MakeHuman or old figures",
     "time HH or HH:MM: move the clock on",
     "turbo on, off: gallop at 70 kmh",
+    "view fp, tp: first or third person",
 ];
 
 /// Whether this frame's keys open (or close) the console: Ctrl+Shift+F12.
@@ -95,6 +99,8 @@ pub enum Command {
     Time(TimeOfDay),
     /// Lets the player's horse gallop at [`TURBO_KMH`] (or back to normal).
     Turbo(bool),
+    /// Looks from the player's eyes (`true`) or from the orbit.
+    View(bool),
     Help,
 }
 
@@ -128,6 +134,9 @@ pub fn parse(line: &str) -> Result<Command, String> {
         ["turbo", "on"] => Ok(Command::Turbo(true)),
         ["turbo", "off"] => Ok(Command::Turbo(false)),
         ["turbo"] => Err("usage: turbo on, turbo off".into()),
+        ["view", "fp"] => Ok(Command::View(true)),
+        ["view", "tp"] => Ok(Command::View(false)),
+        ["view", ..] => Err("usage: view fp, view tp".into()),
         ["time"] => Err("usage: time HH, or time HH:MM".into()),
         ["time", time] => time_of_day(time)
             .map(Command::Time)
@@ -422,6 +431,13 @@ type Places<'w> = (
     ResMut<'w, StreamFocus>,
 );
 
+/// What a command reads of the fauna, and the view it may switch.
+type Watched<'w> = (
+    Option<Res<'w, crate::fauna::Fauna>>,
+    Option<Res<'w, crate::fauna::WorldFauna>>,
+    Option<ResMut<'w, ViewMode>>,
+);
+
 /// Runs the lines entered, printing what each did.
 fn run_entered(
     mut commands: Commands,
@@ -438,10 +454,7 @@ fn run_entered(
         Option<ResMut<CharacterModelsShown>>,
         Option<ResMut<PlayerTuning>>,
     ),
-    (fauna, site): (
-        Option<Res<crate::fauna::Fauna>>,
-        Option<Res<crate::fauna::WorldFauna>>,
-    ),
+    (fauna, site, mut view): Watched,
 ) {
     // Only touched with lines to run: a change every frame would reletter
     // the panel every frame, despawning its lines before the UI lays them
@@ -495,6 +508,21 @@ fn run_entered(
                     });
                 }
                 None => console.print("no horse tuning"),
+            },
+            Command::View(first) => match view.as_deref_mut() {
+                Some(view) => {
+                    *view = if first {
+                        ViewMode::FirstPerson
+                    } else {
+                        ViewMode::ThirdPerson
+                    };
+                    console.print(match (first, aboard) {
+                        (true, false) => "view fp: from the eyes",
+                        (true, true) => "view fp: from the eyes once off the train",
+                        (false, _) => "view tp: the orbit",
+                    });
+                }
+                None => console.print("no camera"),
             },
             Command::UnlockAll => {
                 for ability in pampa_core::Ability::ALL {
@@ -670,6 +698,10 @@ mod tests {
         assert_eq!(parse("Turbo ON"), Ok(Command::Turbo(true)));
         assert_eq!(parse("turbo off"), Ok(Command::Turbo(false)));
         assert!(parse("turbo").unwrap_err().contains("usage"));
+        assert_eq!(parse("View FP"), Ok(Command::View(true)));
+        assert_eq!(parse("view tp"), Ok(Command::View(false)));
+        assert!(parse("view").unwrap_err().contains("usage"));
+        assert!(parse("view side").unwrap_err().contains("usage"));
         assert!((turbo(true).gallop_max * 3.6 - TURBO_KMH).abs() < 1e-3);
         assert_eq!(turbo(false), RiderParams::default());
         for place in ["arocena", "pico", "castex", "nievas", "metileo", "caleufu"] {
@@ -728,6 +760,11 @@ mod tests {
             "models on: MakeHuman people".into(),
             "models off: rigid 1919 figures".into(),
             "no people to draw".into(),
+            parse("view").unwrap_err(),
+            "view fp: from the eyes".into(),
+            "view fp: from the eyes once off the train".into(),
+            "view tp: the orbit".into(),
+            "no camera".into(),
         ]);
         for line in lines {
             let missing: Vec<char> = line
@@ -850,6 +887,20 @@ mod tests {
             .last()
             .unwrap()
             .clone()
+    }
+
+    #[test]
+    fn view_switches_between_the_eyes_and_the_orbit() {
+        let mut app = app();
+        enter(&mut app, "view fp");
+        assert_eq!(last_line(&app), "no camera");
+        app.init_resource::<ViewMode>();
+        enter(&mut app, "view fp");
+        assert_eq!(*app.world().resource::<ViewMode>(), ViewMode::FirstPerson);
+        assert_eq!(last_line(&app), "view fp: from the eyes");
+        enter(&mut app, "view tp");
+        assert_eq!(*app.world().resource::<ViewMode>(), ViewMode::ThirdPerson);
+        assert_eq!(last_line(&app), "view tp: the orbit");
     }
 
     #[test]
