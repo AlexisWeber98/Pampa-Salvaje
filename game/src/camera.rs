@@ -20,16 +20,31 @@
 //! opening, boarding, a skipped ride coming in, `V` back to the window) the
 //! head turns forward again.
 //! The orbit math lives in [`crate::orbit`].
+//!
+//! Off the train `V` toggles the first-person view from the player's eyes
+//! instead ([`crate::first_person`]): this module keeps placing the orbit
+//! camera underneath (without orbiting it, and with no line of sight to
+//! fade), and the first person moves the camera from there to the eyes.
 
+use bevy::camera::visibility::VisibilitySystems;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
+use bevy::light::SimulationLightSystems;
 use bevy::prelude::*;
+use bevy::transform::TransformSystems;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use pampa_core::{
     Aabb, BuildingKind, CoachBody, Ground, LineTrain, PlacedCar, SettlementLayout, StructureKind,
     Terrain, TownLayout, Travel, Vec2 as GroundVec2,
 };
-use pampa_render::{HudHint, SightLine, WorldTrain, car_transform, world_from_ground};
+use pampa_render::character::viewer::world_layers;
+use pampa_render::{
+    CloseShadows, HudHint, SightLine, WorldTrain, car_transform, world_from_ground,
+};
 
+use crate::first_person::{
+    BodyTooClose, EyeFollow, FirstPersonLook, ViewBlend, ViewMode, place_first_person, toggle_view,
+    turn_to_view,
+};
 use crate::orbit::{Orbit, OrbitInput, OrbitParams};
 use crate::player::{DrivePlayer, GameWorld, Player};
 use crate::ride::{OnTrain, Trip, TripPhase};
@@ -38,7 +53,7 @@ use crate::ride::{OnTrain, Trip, TripPhase};
 /// out to frame the coach and the country ahead.
 pub const RIDE_DISTANCE: f32 = 16.0;
 
-/// Cycles the riding views.
+/// Cycles the riding views aboard; toggles the first person off the train.
 pub const VIEW_KEY: KeyCode = KeyCode::KeyV;
 
 /// Farthest the seated player turns their head from facing forward, either
@@ -404,11 +419,31 @@ impl Plugin for FollowCameraPlugin {
             .init_resource::<RideView>()
             .init_resource::<SeatLook>()
             .init_resource::<HudHint>()
+            .init_resource::<ViewMode>()
+            .init_resource::<FirstPersonLook>()
+            .init_resource::<ViewBlend>()
+            .init_resource::<EyeFollow>()
+            .init_resource::<BodyTooClose>()
+            .init_resource::<CloseShadows>()
             .add_systems(
                 Update,
-                (gather_camera_input, cycle_view, follow_player)
+                (
+                    gather_camera_input,
+                    cycle_view,
+                    toggle_view,
+                    turn_to_view,
+                    follow_player,
+                )
                     .chain()
                     .after(DrivePlayer),
+            )
+            .add_systems(
+                PostUpdate,
+                place_first_person
+                    .after(TransformSystems::Propagate)
+                    .before(VisibilitySystems::UpdateFrusta)
+                    .before(SimulationLightSystems::AssignLightsToClusters)
+                    .before(SimulationLightSystems::UpdateDirectionalLightCascades),
             );
     }
 }
@@ -421,6 +456,8 @@ fn spawn_camera(mut commands: Commands) {
         FollowCamera::default(),
         CameraRig::default(),
         CameraReach::default(),
+        // The player's own head too, until the first person drops it.
+        world_layers(),
     ));
 }
 
@@ -520,7 +557,7 @@ fn cycle_view(
 }
 
 /// What the riding views read.
-type RideCamera<'w> = (Res<'w, RideView>, ResMut<'w, SeatLook>);
+type RideCamera<'w> = (Res<'w, RideView>, ResMut<'w, SeatLook>, Res<'w, ViewMode>);
 
 #[allow(clippy::too_many_arguments)]
 fn follow_player(
@@ -532,7 +569,7 @@ fn follow_player(
     input: Res<CameraInput>,
     sight: Option<ResMut<SightLine>>,
     player: Single<(&Player, Option<&OnTrain>)>,
-    (view, mut look): RideCamera,
+    (view, mut look, mode): RideCamera,
     mut was: Local<Option<RideView>>,
     camera: Single<(
         &mut Transform,
@@ -592,10 +629,17 @@ fn follow_player(
         Travel::Riding => follow.look_height,
     };
     let target = feet + Vec3::Y * look_height;
+    // From the eyes, the camera input turns the head, not the orbit.
+    let first = *mode == ViewMode::FirstPerson;
+    let input = if first {
+        OrbitInput::default()
+    } else {
+        input.0
+    };
 
     let (orbit, focus, snapped) = match rig.0.as_mut() {
         Some((orbit, focus)) if focus.distance(target) <= follow.snap_distance => {
-            orbit.update(input.0, rider.heading.radians(), rider.speed, &tuning.0, dt);
+            orbit.update(input, rider.heading.radians(), rider.speed, &tuning.0, dt);
             focus.smooth_nudge(&target, follow.smoothing, dt);
             (*orbit, *focus, false)
         }
@@ -630,9 +674,10 @@ fn follow_player(
         target.lerp(desired, reach.0)
     };
     transform.look_at(focus, Vec3::Y);
-    // Trees, fences and signs in the way fade instead (render).
+    // Trees, fences and signs in the way fade instead (render); nothing
+    // stands between the eyes and the player.
     if let Some(mut sight) = sight {
-        sight.0 = Some((target, transform.translation));
+        sight.0 = (!first).then_some((target, transform.translation));
     }
 }
 

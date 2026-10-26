@@ -308,6 +308,27 @@ between the camera and the rider fades to see-through instead, and comes back
 once the view clears. Only the things indexed near that line of sight are
 checked, so this stays cheap.
 
+Off the train, `V` toggles a first-person view from the player's eyes, to
+see the details up close, and back; the camera glides between the two in a
+quarter of a second, and the choice holds for the session. The eyes follow
+the head bone of the protagonist's model, on foot and in the saddle, with
+the bob of the walk and the gallop damped and the view kept level. The
+mouse (or `Q`/`E`) looks round, up to 80° up or down; on foot the body
+turns to the view while walking, and in the saddle the head turns up to
+120° either way from the horse's heading while the horse steers as always.
+The player's own head is not drawn from the eyes: his face and skull are
+cut out of his skin by their skin weights when the model loads, the cut
+running round the neck inside the collar, and they go with the hat, hair
+and eyes onto a render layer that camera leaves out, while the sun still
+casts the whole shadow. The eyes never fall more than 3 cm behind the head,
+even at the gallop. The arms, the hands, the collar, the reins and the
+horse's neck and ears stay in view. When a wall pulls the orbit camera in
+to within 0.6 m of the player's head, it stops drawing his model (the
+shadow stays) until it is back past 0.8 m. The eyes see from 5 cm (the near plane), with a 75° vertical field
+of view, and the sun's first shadow cascade shortens from 12 m to 6 m.
+Aboard, `V` keeps cycling the ride views, whose window seat is the
+passenger's own view; a first-person choice comes back on getting off.
+
 People are PS1/PS2-style low-poly 3D figures generated in code (no
 third-party art), about 4,200–5,000 triangles each, in flat, earthy colours with smooth
 shading on skin and rounded limbs and hard edges only on hat brims and the
@@ -514,10 +535,10 @@ cargo test --workspace
 | `Shift` (hold) | Jog on foot, gallop on horseback |
 | `F` | Interact: talk to somebody, mount or get off a horse, board or get off the train at a coach door, or wait for the train near a platform's middle |
 | `Space` | Aboard the train: skip to the next stop |
-| `V` | Aboard the train: cycle the view (window seat, around the coach, the whole train) |
-| Mouse | Orbit the camera (the cursor is locked while the window has focus) |
-| `Q` / `E` | Orbit the camera left / right |
-| Mouse wheel | Zoom in / out (6–25 m) |
+| `V` | Off the train: toggle the first-person view from the player's eyes. Aboard the train: cycle the view (window seat, around the coach, the whole train) |
+| Mouse | Orbit the camera, or look round in first person (the cursor is locked while the window has focus) |
+| `Q` / `E` | Orbit the camera left / right, or turn the head in first person |
+| Mouse wheel | Zoom in / out (6–25 m; not in first person) |
 | `M` | Toggle the enlarged minimap |
 | `Esc` | Quit |
 
@@ -541,6 +562,7 @@ or the same keys close it, and while it is open the game gets no keys at all.
 | `unlock all` | Unlock every ability |
 | `models on` / `models off` | Draw the people on foot (the protagonist, Don Hidalgo, Farach, Bairoletto and the townsfolk) as the skinned MakeHuman models (the default), or back as the old rigid figures |
 | `time 21` / `time 21:30` | Move the clock on to that time (later today, or tomorrow if it has passed) |
+| `view fp` / `view tp` | Look from the player's eyes, or from the orbit camera (like `V` off the train) |
 | `help` | List the commands |
 
 The MakeHuman models (`assets/characters/`, built by `tools/mh2gltf.py`) wear

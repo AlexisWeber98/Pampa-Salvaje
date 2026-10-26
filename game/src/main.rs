@@ -8,6 +8,7 @@ mod complaints;
 mod console;
 mod errand;
 mod fauna;
+mod first_person;
 mod life;
 mod orbit;
 mod player;

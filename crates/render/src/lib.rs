@@ -34,11 +34,11 @@ pub mod terrain;
 pub mod town;
 pub mod train;
 
-pub use atmosphere::{AtmospherePlugin, DUST_COLOR, Sky, Sun, WorldClock, sky_at};
+pub use atmosphere::{AtmospherePlugin, CloseShadows, DUST_COLOR, Sky, Sun, WorldClock, sky_at};
 pub use bubble::{Say, SpeechBubble, SpeechBubblePlugin};
 pub use character::{
-    CharacterModelsShown, CharacterVisual, CharacterVisualPlugin, Coat, FigureKind,
-    TOWNSFOLK_LOOKS, Talking, VisualPose,
+    CharacterModelsShown, CharacterVisual, CharacterVisualPlugin, Coat, EYE_IN_HEAD, FigureKind,
+    OWN_HEAD_LAYER, TOWNSFOLK_LOOKS, Talking, ViewerBody, ViewerHead, VisualPose,
 };
 pub use coords::world_from_ground;
 pub use facade::{FacadeMaterials, Surface};

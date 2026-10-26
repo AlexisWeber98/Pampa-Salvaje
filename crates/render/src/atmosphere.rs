@@ -1,7 +1,12 @@
 //! Sky color, sun, ambient light and dust fog for the dry pampa, following
 //! the game clock: a warm low sun at dawn and dusk, full light by day, and
 //! a dim, bluish moonlit night that stays readable.
+//!
+//! The sun's shadow cascades suit the orbit camera; a first-person camera
+//! asks for a shorter first cascade with [`CloseShadows`]. The dust fog
+//! is measured from whichever camera draws, so it needs no change there.
 
+use crate::character::viewer::world_layers;
 use bevy::light::{CascadeShadowConfig, CascadeShadowConfigBuilder};
 use bevy::prelude::*;
 use pampa_core::GameClock;
@@ -14,6 +19,12 @@ const NIGHT_HAZE: Color = Color::srgb(0.16, 0.18, 0.25);
 /// The game clock. Logic state: the game runs it, render only reads it.
 #[derive(Resource, Debug, Clone, Copy, Default)]
 pub struct WorldClock(pub GameClock);
+
+/// Whether the camera looks from the player's eyes (`true`), so the sun's
+/// first shadow cascade covers [`FIRST_PERSON_CASCADE`] instead of
+/// [`FIRST_CASCADE`]: what is sharp then is what is close to the eyes.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CloseShadows(pub bool);
 
 /// Marks the directional light standing in for the sun (and the moon).
 #[derive(Component, Debug, Clone, Copy)]
@@ -36,8 +47,12 @@ impl Plugin for AtmospherePlugin {
                 brightness: sky.ambient_brightness,
                 ..default()
             })
+            .init_resource::<CloseShadows>()
             .add_systems(Startup, spawn_sun)
-            .add_systems(PostUpdate, (add_dust_fog, follow_the_clock).chain());
+            .add_systems(
+                PostUpdate,
+                (add_dust_fog, follow_the_clock, fit_cascades).chain(),
+            );
     }
 }
 
@@ -168,9 +183,21 @@ fn mix(a: Color, b: Color, t: f32) -> Color {
 /// defaults (0.02 and 1.8 texels); the normal bias scales with the texel
 /// size, so it follows the cascade change by itself.
 pub fn sun_cascades() -> CascadeShadowConfig {
+    cascades_from(FIRST_CASCADE)
+}
+
+/// The sun's cascades for a first-person camera: the same three over the
+/// same [`SHADOW_DISTANCE`], the first ending at [`FIRST_PERSON_CASCADE`],
+/// so the hands, the reins, the horse's neck and the ground a step ahead
+/// get its texels rather than the orbit camera's 12 m.
+pub fn first_person_cascades() -> CascadeShadowConfig {
+    cascades_from(FIRST_PERSON_CASCADE)
+}
+
+fn cascades_from(first: f32) -> CascadeShadowConfig {
     CascadeShadowConfigBuilder {
         num_cascades: 3,
-        first_cascade_far_bound: FIRST_CASCADE,
+        first_cascade_far_bound: first,
         maximum_distance: SHADOW_DISTANCE,
         overlap_proportion: CASCADE_OVERLAP,
         ..default()
@@ -180,6 +207,10 @@ pub fn sun_cascades() -> CascadeShadowConfig {
 
 /// Far bound of the nearest shadow cascade, in meters.
 pub const FIRST_CASCADE: f32 = 12.0;
+
+/// Far bound of the nearest shadow cascade seen from the player's eyes, in
+/// meters.
+pub const FIRST_PERSON_CASCADE: f32 = 6.0;
 
 /// How much of each cascade overlaps the one before, to blend the seam.
 pub const CASCADE_OVERLAP: f32 = 0.15;
@@ -200,6 +231,9 @@ fn spawn_sun(mut commands: Commands) {
             ..default()
         },
         sun_cascades(),
+        // Both layers: the player's own hat casts its shadow even while a
+        // first-person camera does not draw it.
+        world_layers(),
         Transform::from_translation(sky.toward_light * 100.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 }
@@ -228,6 +262,21 @@ fn follow_the_clock(
     clear.0 = sky.haze;
     for mut fog in &mut fogs {
         *fog = haze_fog(&sky);
+    }
+}
+
+/// Gives the sun the cascades [`CloseShadows`] asks for, when it changes.
+fn fit_cascades(close: Res<CloseShadows>, mut sun: Query<&mut CascadeShadowConfig, With<Sun>>) {
+    if !close.is_changed() {
+        return;
+    }
+    let cascades = if close.0 {
+        first_person_cascades()
+    } else {
+        sun_cascades()
+    };
+    for mut config in &mut sun {
+        *config = cascades.clone();
     }
 }
 
@@ -405,5 +454,40 @@ mod tests {
             .world_mut()
             .query_filtered::<&CascadeShadowConfig, With<Sun>>();
         assert_eq!(q.single(app.world()).unwrap().bounds, cascades.bounds);
+    }
+
+    #[test]
+    fn first_person_shortens_the_first_cascade_and_back() {
+        let close = first_person_cascades();
+        assert_eq!(close.bounds[0], FIRST_PERSON_CASCADE);
+        const { assert!(FIRST_PERSON_CASCADE < FIRST_CASCADE) };
+        assert!((close.bounds[2] - SHADOW_DISTANCE).abs() < 1e-3);
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_plugins(AtmospherePlugin);
+        app.update();
+        let first = |app: &mut App| {
+            let mut q = app
+                .world_mut()
+                .query_filtered::<&CascadeShadowConfig, With<Sun>>();
+            q.single(app.world()).unwrap().bounds[0]
+        };
+        assert_eq!(first(&mut app), FIRST_CASCADE);
+        app.insert_resource(CloseShadows(true));
+        app.update();
+        assert_eq!(first(&mut app), FIRST_PERSON_CASCADE);
+        app.insert_resource(CloseShadows(false));
+        app.update();
+        assert_eq!(first(&mut app), FIRST_CASCADE);
+        // The sun lights the player's own head too, for its shadow.
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&bevy::camera::visibility::RenderLayers, With<Sun>>();
+        let layers = q.single(app.world()).unwrap();
+        use crate::character::viewer::{OWN_BODY_LAYER, OWN_HEAD_LAYER};
+        use bevy::camera::visibility::RenderLayers;
+        for own in [OWN_HEAD_LAYER, OWN_BODY_LAYER] {
+            assert!(layers.intersects(&RenderLayers::layer(own)), "layer {own}");
+        }
     }
 }

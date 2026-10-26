@@ -21,6 +21,7 @@ use super::rider::{carry_stirrups, pose_riders, seat_riders, spawn_riders};
 use super::rig::{drive_rigs, fit_rigs};
 use super::tack::{dress_tack, stretch_straps};
 use super::townsfolk::TintCache;
+use super::viewer::mark_viewer_head;
 
 /// How a character is drawn. Swappable per entity without touching logic:
 /// inserting a new value replaces whatever was drawn before.
@@ -103,7 +104,8 @@ impl Plugin for CharacterVisualPlugin {
             )
             .add_observer(dress_character)
             .add_observer(dress_horse)
-            .add_observer(dress_tack);
+            .add_observer(dress_tack)
+            .add_observer(mark_viewer_head);
     }
 }
 

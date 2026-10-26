@@ -6,7 +6,8 @@
 //! off` (and a model that fails to load). Saddled
 //! horses are Quaternius' animated horse in a recado and bridle ([`horse`],
 //! [`tack`]), with a model rider on top ([`rider`]). Each entity's visual
-//! is swappable (on foot, mounted, a horse tied up).
+//! is swappable (on foot, mounted, a horse tied up). The player's own
+//! head is marked for the first-person camera ([`viewer`]).
 
 pub mod clips;
 #[cfg(test)]
@@ -20,6 +21,7 @@ pub mod rider;
 pub mod rig;
 pub mod tack;
 pub mod townsfolk;
+pub mod viewer;
 pub mod visual;
 
 pub use clips::CharacterClips;
@@ -30,4 +32,5 @@ pub use rider::{RiderMotion, Riding, Saddle, Seated};
 pub use rig::{Rig, Talking};
 pub use tack::{HorsePiece, Strap, Tack};
 pub use townsfolk::TintCache;
+pub use viewer::{EYE_IN_HEAD, OWN_HEAD_LAYER, ViewerBody, ViewerHead};
 pub use visual::{CharacterVisual, CharacterVisualPlugin, VisualPart, VisualPose};
