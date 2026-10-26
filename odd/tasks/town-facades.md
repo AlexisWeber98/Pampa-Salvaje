@@ -1069,3 +1069,206 @@ Checks after the fix: fmt ok, clippy ok, core 353, render 368 (5
 ignored), game 140 passed.
 - Next: the user commits; then phase 6 (streets: textured dirt and
   palenques).
+
+## Phase 6: streets and palenques (branch feat/town-streets, from main a337328)
+
+User decision (2026-10-26): palenques stand at the general store, the
+pulpería, the comisaría, the church and the station. Option C holds in
+cities (Big tier, e.g. General Pico), where some extra posts get a tied
+horse. Option B holds in towns and villages, which get the extra posts but
+no extra horses. No downloads: streets reuse `dry_ground_01` and
+`brown_mud_dry`, and the posts reuse `brown_planks_05` (all KTX2 already).
+
+Starting point (explorer, 2026-10-26):
+- Streets are untextured 0.1 m cubes, top at +0.03 m, flat colour
+  `Palette.street` (`render/src/town.rs:150`, `flat_patch :565`, loop
+  `:339-342`), on `ranges()[0]`. The street Aabbs overlap at crossings.
+- There is one `HitchingPost` per town, at the first general store
+  (`core/src/town.rs:306-314`, `hitching_post :2275`). Its rail and horse
+  are obstacles (`:1122-1132`). Errands use `hitching_post.horse`
+  (`game errand.rs:140, :358`). Render draws plain timber cubes
+  (`render town.rs:536`) on `ranges()[1]`.
+
+### Tasks (phase 6)
+
+- [x] S1 Textured dirt carriageway. One `Surface::Earth` mesh per town
+  (`dry_ground_01`), every street strip a slab with world-space planar UVs,
+  so the overlaps at the crossings show no seam. It keeps the 0.03 m top
+  (`STREET_TOP`), `ranges()[0]` and the walking floor; the flat-colour
+  street cubes and `Palette.street` are gone. `render/src/town.rs`
+  (`street_shape`, `spawn_streets`, marker `TownStreet`).
+- [x] S2 Cart tracks (rewritten by the user, 2026-10-26: no ruts along the
+  town streets, whose traffic was people on foot and personal horses; keep
+  tracks only at the entrances carts use). Mud (`brown_mud_dry`) tracks, two
+  ruts a 1.4 m gauge apart, 0.25 m wide, 6 mm over the dirt level
+  (`RUT_LIFT`), in the same mesh pair as the streets:
+  - (a) Estancia entrances: nothing new. Settlements already draw a trunk
+    huella from just inside each gate to the hub, and a branch to every
+    door (`settlement::track`, `Settlement::tracks`); core's
+    `every_settlement_lies_behind_an_open_gate...` and
+    `tracks_lead_from_the_gate_to_every_door` pin them, and render's
+    `tracks_drape_over_the_drawn_ground_with_two_ruts` their look. The gate
+    and the trunk are real geometry, so nothing was invented.
+  - (b) Goods buildings in towns: `goods_tracks` runs a track from the door
+    of each goods building of the station yard straight out along its
+    front, to the street if one is within 12 m (stopping 0.25 m short of
+    it), else an 8 m loading apron. A goods building is a `Shed` or
+    `GrainStore` that stands outside the grid or in a through line's band
+    (`is_goods_yard`): the 25 m yard shed and the grain stores, not the
+    small sheds among the houses, nor the station, houses, stores or
+    plazas. The tracks stop short (0.3 m) of buildings, trees, the rail
+    corridor, platforms and ramps, canopies, plazas, sidewalks, signs and
+    palenques. No bevel or alpha feather: they are hard-edged slabs.
+- [x] S3 Core palenques (`crates/core/src/town.rs`). New `Palenque { building,
+  rail, horse: Option<TetheredHorse> }` and `TownLayout::palenques`; the
+  store's `HitchingPost` and its errand horse are untouched (its builder now
+  shares `tied_post` with the new posts, and the fingerprint pins held).
+  Rails and horses are obstacles (`obstacles()`).
+- [x] S4 Palenques drawn with the facade kit (`render/src/facade/palenque.rs`,
+  `spawn_palenques`, marker `TownPalenque`): two chamfered posts and a
+  round 8-sided bar in `Surface::Planks` (`brown_planks_05`, already
+  there: no new surface), one mesh per town on `ranges()[1]`, the store's
+  rail upgraded too. Tied horses of the extra posts are game entities
+  (`PalenqueHorse` in `game/src/life.rs`) drawn as the store horse is
+  (`CharacterVisual::Horse`, seeded coat), but not `Mountable`: only the
+  store's horse is the errand's to lend.
+- [x] S5 Tests with sabotages (below), the preview, docs (this file, the
+  README, the module docs).
+
+- [ ] S6a Wider sidewalks (user, 2026-10-26: real veredas were wider than
+  1.8 m). `Sidewalk::WIDTH` goes from 1.8 m to 2.5 m and `street_width`
+  stays 10 m, so the carriageway goes from 6.4 to 5 m. Re-check the
+  palenques and their horses, the galería and veranda depth, the plaza
+  paths and the layout fingerprints.
+- [ ] S6b More town trees, as in the humid pampa (user, 2026-10-26). Reuse
+  the phase 4 species.
+  - Tree pits (cazuelas) sit about 0.4 m from the curb, with crowns clear
+    of cornices, signs, galerías, lamps and palenques.
+  - General Pico: sidewalk rows every 8–10 m, groves inside the plaza
+    between the paths, and scattered trees in yards and by the station,
+    church and comisaría.
+  - Towns and villages (option B): sparse trees on the dirt in front of
+    houses and in yards, with no continuous rows.
+
+### Decisions (phase 6)
+
+- Pulpería: a small town's store is the pulpería (`StoreStyle`), and it is
+  the first (only) `GeneralStore`, which already holds the store post. So
+  the extra palenques go before the other general stores (a Big town has a
+  second almacén), each comisaría, the church and the station.
+- City = `TownSize::Big` or `VeryBig` (the `Paving::Everywhere` towns;
+  General Pico has 64 blocks, so it is `VeryBig`). Towns and villages
+  (`Small`) get no horse at all.
+- Horse share: half the posts (`Palenque::horses_for`), at most
+  `Palenque::MAX_HORSES` = 3, the lowest seeded rolls among the posts that
+  have room for a horse. A city looks for a spot with room for a horse
+  first and falls back to a rail alone where the street is too narrow (a
+  8 m city street); a town's posts only ever need the rail's room.
+- Placement: a rail is 2.8 m x 0.2 m, `max(veranda + 0.2, 2.0)` m out of the
+  facade (past the 1.8 m sidewalk), centred 3.5 m or more beside the door
+  (the seeded side first, then further out, then the other side). It must
+  lie inside one street strip and off its middle lane (1.25 m), 0.5 m from
+  every building, tree, sign, post, plaza furniture and earlier palenque,
+  and off sidewalks, plazas, platform and ramps, canopies, the rail
+  corridor, every door's keep-out (lamps' 3.6 m x 4 m) and every street
+  crossing (+1 m, where the corner lamps stand). The station's post stands
+  on the yard in front of it instead of a street, and may stand in a
+  through line's band. A landmark with no room gets none.
+- Streets: no ruts on them (user). Crossings and the street graph
+  untouched; the walking floor too.
+- Overlapping street strips are coplanar with identical UVs, so they do
+  not show; no slab is clipped.
+- The old wheel-rut design (two ruts per lane on every street) was built and
+  tested first and then removed on the user's decision above.
+
+### Perf (phase 6, dev profile, triangles from the tests)
+
+| Town | Street mesh | Palenques | Tracks |
+| --- | --- | --- | --- |
+| village 3 x 3 | 88 tris (8 strips) | 384 (4 rails) | 4 ruts |
+| town 5 x 4 | 122 (11) | 384 (4) | 6 |
+| city 8 x 8 | 212 (20) | 576 (6) | 6 |
+| city 8 x 8, through line | 262 (25) | 576 (6) | 6 |
+
+Per town: two street meshes (Earth, Mud) and one palenque mesh; a city adds
+at most three animated horse figures.
+
+### Sabotage log (phase 6; each broken, seen failing, restored; sha256 equal)
+
+Tests were written with the code; the RED run before the code is the new
+core tests (`every_landmark...`, `only_cities_tie_horses...`, `the_seed_picks...`,
+`a_palenque_tethers...` failed against an empty `place_palenques`). The
+render tests did not exist before the types they use, so their RED is a
+compile failure plus the sabotages below.
+
+| Test | Sabotage | Result |
+| --- | --- | --- |
+| `every_landmark_but_the_first_store_has_a_palenque_before_it` | no church | fails (and the clear test: fewer than 40 posts) |
+| `only_cities_tie_horses_to_their_palenques_and_only_a_few` | small towns also look for horse room | fails |
+| `a_city_ties_half_its_palenques_to_a_horse_up_to_a_cap` | cap removed | fails (no sample town has 8 posts, so the cap needs this pure test) |
+| `the_seed_picks_which_palenques_tie_a_horse` | rolls ignore the seed | fails |
+| `a_palenque_tethers_its_horse_alongside_without_touching_the_rail` | horse faces across the street | fails |
+| `rails_and_horses_of_the_palenques_are_obstacles` | chain dropped from `obstacles()` | fails |
+| `palenques_stand_clear_of_everything_else` | lane check off | fails |
+| same | crossing zones off | fails |
+| same | door zones off and doors at 0 m | fails (alone, door zones off survives: the 3.5 m offset already clears) |
+| same | sidewalks off and rails at 0.5 m | fails (alone survives for the same reason) |
+| same | plazas off | survives (this test); another test fails |
+| `a_palenque_spot_needs_a_street_room_to_pass_and_free_ground` | clearance 0.5 -> 0 | fails |
+| same | keep-out areas ignored | fails (and the clear test) |
+| same | street containment dropped | fails (and the clear test) |
+| same | lane check dropped | fails (and the clear test) |
+| `lamps::palenques_cost_a_town_no_lamp` | crossing zones off plus palenques at the curb (door side 20 m, 0.8 m out, no sidewalks) | fails; the simpler sabotages survive: the real geometry never reaches a lamp, the test guards it |
+| `every_settlement_lies_behind_an_open_gate_on_its_field_side` (existing, for the estancia entrance) | trunk starts 9 m inside the gate | fails |
+| `street_strips_share_world_space_uvs_so_crossings_show_no_seam` | strips built in their own space and merged | fails |
+| `a_town_draws_its_streets_as_one_earth_mesh_and_one_track_mesh` | tracks as Earth | fails (and two more) |
+| same | street entities without their range | fails |
+| `the_dirt_covers_every_street_at_the_old_height` | `STREET_TOP` 0.05 | fails (first version used the constant and survived: now the literal 0.03) |
+| `cart_tracks_lie_a_few_millimeters_over_the_dirt_level` | `RUT_LIFT` 2 mm | fails |
+| same | every street also gets a rut | fails |
+| `only_the_railways_goods_yard_has_cart_tracks_in_town` | all sheds count as goods | fails |
+| same | the station counts as goods | fails (first version survived: its goods list is now independent of `is_goods_yard`) |
+| same | grain stores do not count | fails (and the clearance test) |
+| same | track runs 2 m into the street | fails |
+| same | gauge 1.4 -> 1.0 | fails (first version used the constant: now 0.7) |
+| `goods_tracks_run_to_the_street_or_a_short_apron_and_keep_clear` | rail corridor ignored | fails |
+| same | obstacles ignored | survives: nothing stands in a track's way in the sample towns (kept as a guard) |
+| `facade::palenque::tests::a_palenque_is_two_chamfered_posts_and_a_round_bar_in_boards` | no chamfer | fails |
+| same | 3-sided bar | fails |
+| same | bar 0.5 m short | fails (and the town test) |
+| same | posts in brick | fails (and the town test) |
+| `every_rail_of_a_town_gets_a_palenque_along_its_footprint` | no turn for rails along y | fails |
+| same | store's rail not drawn | fails |
+| same | posts 20 cm taller | fails |
+| `a_town_draws_all_its_rails_as_one_timber_mesh_in_the_small_props_range` | `ranges()[0]` | fails |
+| game `a_city_ties_horses_at_its_palenques_and_a_small_town_none` | extra horses not spawned | fails |
+| same | palenque horses also `Mountable` | fails |
+| same | despawn ignores them | fails |
+| same | every post gets a horse | fails |
+
+### Previews (phase 6)
+
+`preview_town_sidewalks` now writes the dirt streets with the cart tracks
+and the palenques (`PAMPA_PREVIEW=<dir> cargo test -p pampa-render --
+--ignored preview_town`). It ran (`m Mud` and the timber are in
+`town_pico.txt`), but the meshes were not viewed here: eyeball the streets,
+the tracks and the palenques in game before committing.
+
+### Verification (phase 6)
+
+| Command | Result |
+| --- | --- |
+| `cargo test -p pampa-core` | 362 passed |
+| `cargo test -p pampa-render` | 377 passed, 5 ignored |
+| `cargo test -p game` | 141 passed |
+| `cargo build -p game` | ok |
+| `cargo fmt --all -- --check` | ok |
+| `cargo clippy --workspace --all-targets -- -D warnings` | ok |
+
+Layout fingerprints held (`small_towns_keep_their_layout_byte_for_byte`
+unchanged: the new `palenques` field is not in the hash). One count
+changed on purpose: `obstacles_cover_buildings_and_trees` now adds the
+palenques' rails and horses.
+
+Nothing committed (the user owns commits). Next step: the user eyeballs
+the streets, goods-yard tracks and palenques in game, then commits.

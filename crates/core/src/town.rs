@@ -8,6 +8,8 @@
 
 use std::fmt;
 
+use crate::lamps::StreetLamps;
+use crate::rng::Rng;
 use crate::{Aabb, FlatArea, Heading, Terrain, Vec2};
 
 /// What a building is, so render can pick its look and logic its role.
@@ -311,6 +313,48 @@ pub struct HitchingPost {
     /// Depth of the store's veranda, in meters: the rail stands just past
     /// it, so narrow streets get a shallower veranda.
     pub veranda: f32,
+}
+
+/// A hitching rail (palenque) in front of a landmark besides the general
+/// store's own [`HitchingPost`]: the other general stores, the comisarías,
+/// the church and the station. A city ties a horse to a few of them
+/// ([`Palenque::MAX_HORSES`]); a town or village leaves them empty.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Palenque {
+    /// The building it stands before: an index into [`TownLayout::buildings`].
+    pub building: usize,
+    pub rail: Aabb,
+    /// The horse tied alongside it, if any.
+    pub horse: Option<TetheredHorse>,
+}
+
+impl Palenque {
+    /// Most horses a city ties at its palenques, so its animated figures
+    /// stay few.
+    pub const MAX_HORSES: usize = 3;
+    /// Length of the rail along the street, in meters.
+    pub const LENGTH: f32 = 2.8;
+    /// Width of the rail across the street, in meters.
+    pub const WIDTH: f32 = 0.2;
+    /// Gap kept between a palenque (and its horse's spot) and any building,
+    /// tree, sign, post or other obstacle, in meters.
+    pub const CLEARANCE: f32 = 0.5;
+    /// Gap kept round a street crossing, where the corner lamps stand.
+    pub const CROSSING_MARGIN: f32 = 1.0;
+    /// How far from the street's middle line a palenque stays: the lane the
+    /// walkers use.
+    pub const LANE: f32 = 1.25;
+
+    /// How many of `posts` palenques tie a horse in a city: half of them, at
+    /// most [`Self::MAX_HORSES`].
+    pub fn horses_for(posts: usize) -> usize {
+        (posts / 2).min(Self::MAX_HORSES)
+    }
+
+    /// Its static obstacles: the rail, and the horse when there is one.
+    pub fn obstacles(&self) -> impl Iterator<Item = Aabb> + '_ {
+        std::iter::once(self.rail).chain(self.horse.map(|h| h.footprint))
+    }
 }
 
 /// Where the plaza goes in the grid.
@@ -648,6 +692,9 @@ pub struct TownLayout {
     pub buildings: Vec<Building>,
     /// Hitching rail in front of the (first) general store.
     pub hitching_post: HitchingPost,
+    /// The other hitching rails: before the remaining general stores, the
+    /// comisarías, the church and the station ([`Palenque`]).
+    pub palenques: Vec<Palenque>,
     /// The config's seed, also used for the town's crowd.
     pub seed: u32,
     /// People walking the streets ([`TownConfig::townsfolk_count`]).
@@ -968,7 +1015,7 @@ impl TownLayout {
             .expect("every town has a general store");
         let hitching_post = hitching_post(store, veranda_depth(grid.street));
         let (w, h) = main.span();
-        Ok(Self {
+        let mut town = Self {
             name: config.name.clone(),
             streets: grid.streets(main, &yard),
             plaza,
@@ -985,6 +1032,7 @@ impl TownLayout {
             railway,
             buildings,
             hitching_post,
+            palenques: Vec::new(),
             seed: config.seed,
             townsfolk: config.townsfolk_count(),
             blocks: config.blocks,
@@ -993,7 +1041,9 @@ impl TownLayout {
             arrival: arrival(&grid, main, config.railway),
             band: grid.band(),
             sidewalks: sidewalks(&grid, main, Paving::of(config.blocks)),
-        })
+        };
+        town.palenques = town.place_palenques();
+        Ok(town)
     }
 
     /// A small pampa railway town inspired by 1920s–1930s settlements of La
@@ -1119,8 +1169,8 @@ impl TownLayout {
 
     /// Static collision footprints: every building's [`Building::collider`]
     /// but the platform's (a floor people walk on, see [`Self::floors`]),
-    /// every tree trunk, the hitching rail with its horse, free-standing
-    /// signs, and each plaza's monument, benches and railing
+    /// every tree trunk, the hitching rail with its horse, the palenques with
+    /// their horses, free-standing signs, and each plaza's monument, benches and railing
     /// ([`PlazaFurniture::obstacles`]).
     pub fn obstacles(&self) -> Vec<Aabb> {
         let trunk = Vec2::new(2.0 * TREE_TRUNK_RADIUS, 2.0 * TREE_TRUNK_RADIUS);
@@ -1130,6 +1180,7 @@ impl TownLayout {
             .map(Building::collider)
             .chain(self.trees.iter().map(|&p| Aabb::from_center_size(p, trunk)))
             .chain([self.hitching_post.rail, self.hitching_post.horse.footprint])
+            .chain(self.palenques.iter().flat_map(Palenque::obstacles))
             .chain(self.sign_obstacles())
             .chain(
                 self.plaza_furniture()
@@ -2273,32 +2324,232 @@ fn veranda_depth(street: f32) -> f32 {
 /// A rail on the street side of `store`, past its `veranda`, with a horse
 /// tied alongside it facing along the street.
 fn hitching_post(store: &Building, veranda: f32) -> HitchingPost {
+    let (rail, horse) = tied_post(store, veranda + 0.2, 0.0, 2.8);
+    HitchingPost {
+        rail,
+        horse,
+        veranda,
+    }
+}
+
+/// A rail of `length` along the street `rail_offset` out of `building`'s
+/// facade and `lateral` meters off its middle (positive turns left of the
+/// outward normal), with a horse tied alongside facing along the street.
+fn tied_post(
+    building: &Building,
+    rail_offset: f32,
+    lateral: f32,
+    length: f32,
+) -> (Aabb, TetheredHorse) {
     // Outward facade normal and the direction along the street.
-    let normal = crate::places::side_normal(store.front);
+    let normal = crate::places::side_normal(building.front);
     let along = Vec2::new(normal.y.abs(), normal.x.abs());
-    let half = store.footprint.size() * 0.5;
-    let face =
-        store.footprint.center() + normal * (normal.x.abs() * half.x + normal.y.abs() * half.y);
+    let half = building.footprint.size() * 0.5;
+    let face = building.footprint.center()
+        + normal * (normal.x.abs() * half.x + normal.y.abs() * half.y)
+        + Vec2::new(-normal.y, normal.x) * lateral;
     // Axis-aligned box of `length` along the street and `width` across it.
     let boxed = |center: Vec2, length: f32, width: f32| {
         let size = along * length + normal * width;
         Aabb::from_center_size(center, Vec2::new(size.x.abs(), size.y.abs()))
     };
     // Just past the veranda.
-    let rail_offset = veranda + 0.2;
     let (rail_width, horse_width, horse_length) = (0.2, 1.0, 2.4);
-    let rail = boxed(face + normal * rail_offset, 2.8, rail_width);
+    let rail = boxed(face + normal * rail_offset, length, rail_width);
     let horse_center = face + normal * (rail_offset + rail_width / 2.0 + 0.1 + horse_width / 2.0);
-    HitchingPost {
+    (
         rail,
-        horse: TetheredHorse {
+        TetheredHorse {
             position: horse_center,
             heading: Heading::from_radians(along.y.atan2(along.x)),
             footprint: boxed(horse_center, horse_length, horse_width),
         },
-        veranda,
+    )
+}
+
+impl TownLayout {
+    /// The palenques of the town: one before each general store but the
+    /// first (whose post is [`Self::hitching_post`]), police station, church
+    /// and station that has room for one, in building order. A city ties a
+    /// horse to a seeded half of them, at most [`Palenque::MAX_HORSES`].
+    fn place_palenques(&self) -> Vec<Palenque> {
+        let first_store = self
+            .buildings
+            .iter()
+            .position(|b| b.kind == BuildingKind::GeneralStore);
+        // Ground a palenque keeps off, with the gap each one needs.
+        let trunk = Vec2::new(2.0 * TREE_TRUNK_RADIUS, 2.0 * TREE_TRUNK_RADIUS);
+        let mut solid: Vec<Aabb> = self
+            .buildings
+            .iter()
+            .filter(|b| b.kind != BuildingKind::Platform)
+            .map(Building::collider)
+            .chain(self.trees.iter().map(|&p| Aabb::from_center_size(p, trunk)))
+            .chain([self.hitching_post.rail, self.hitching_post.horse.footprint])
+            .chain(self.sign_obstacles())
+            .chain(
+                self.plaza_furniture()
+                    .iter()
+                    .flat_map(PlazaFurniture::obstacles)
+                    .collect::<Vec<_>>(),
+            )
+            .collect();
+        let mut open: Vec<Aabb> = self.sidewalks.iter().map(|s| s.area).collect();
+        open.extend(self.plazas());
+        for floor in self.floors() {
+            open.push(floor.footprint);
+            open.extend(floor.ramps());
+        }
+        open.extend(self.canopies().iter().map(|c| c.footprint));
+        open.extend(self.rail_corridor());
+        // The corner lamps stand in the street crossings.
+        let (north_south, east_west): (Vec<&Aabb>, Vec<&Aabb>) =
+            self.streets.iter().partition(|s| s.size().y > s.size().x);
+        for x in &north_south {
+            for y in &east_west {
+                if x.intersects(y) {
+                    let crossing =
+                        Aabb::new(Vec2::new(x.min.x, y.min.y), Vec2::new(x.max.x, y.max.y));
+                    open.push(crossing.expanded(Palenque::CROSSING_MARGIN));
+                }
+            }
+        }
+        // The ground in front of every door, as the lamps keep it clear.
+        for b in self
+            .buildings
+            .iter()
+            .filter(|b| b.kind != BuildingKind::Platform)
+        {
+            let n = crate::places::side_normal(b.front);
+            let side = Vec2::new(-n.y, n.x);
+            let half = b.footprint.size() * 0.5;
+            let facade = b.footprint.center() + n * (n.x.abs() * half.x + n.y.abs() * half.y);
+            let (a, z) = (
+                facade + side * StreetLamps::DOOR_HALF_WIDTH,
+                facade + n * StreetLamps::DOOR_REACH - side * StreetLamps::DOOR_HALF_WIDTH,
+            );
+            open.push(Aabb::new(
+                Vec2::new(a.x.min(z.x), a.y.min(z.y)),
+                Vec2::new(a.x.max(z.x), a.y.max(z.y)),
+            ));
+        }
+        // Past the sidewalk, and past the store's veranda if the street is wide.
+        let offset = (self.hitching_post.veranda + 0.2).max(Sidewalk::WIDTH + 0.2);
+        let mut posts: Vec<Palenque> = Vec::new();
+        for (k, b) in self.buildings.iter().enumerate() {
+            let wanted = matches!(
+                b.kind,
+                BuildingKind::GeneralStore
+                    | BuildingKind::PoliceStation
+                    | BuildingKind::Church
+                    | BuildingKind::Station
+            );
+            if !wanted || Some(k) == first_store {
+                continue;
+            }
+            // Beside the door, on the seeded side first, then further out.
+            let first = if Rng::new(self.seed ^ 0x9a1e, k as u32).below(2) == 0 {
+                1.0
+            } else {
+                -1.0
+            };
+            let laterals: Vec<f32> = (0..4)
+                .flat_map(|step| {
+                    let d = DOOR_SIDE + 1.5 * step as f32;
+                    [first * d, -first * d]
+                })
+                .collect();
+            // A city looks for room for a horse first; a rail alone is
+            // enough anywhere else, or when the street is too narrow.
+            let passes: &[bool] = if self.size == TownSize::Small {
+                &[false]
+            } else {
+                &[true, false]
+            };
+            'found: for &with_horse in passes {
+                for &lateral in &laterals {
+                    let (rail, horse) = tied_post(b, offset, lateral, Palenque::LENGTH);
+                    let spot = if with_horse {
+                        Aabb::new(
+                            Vec2::new(
+                                rail.min.x.min(horse.footprint.min.x),
+                                rail.min.y.min(horse.footprint.min.y),
+                            ),
+                            Vec2::new(
+                                rail.max.x.max(horse.footprint.max.x),
+                                rail.max.y.max(horse.footprint.max.y),
+                            ),
+                        )
+                    } else {
+                        rail
+                    };
+                    if self.palenque_fits(b.kind, &spot, &solid, &open) {
+                        solid.push(spot);
+                        posts.push(Palenque {
+                            building: k,
+                            rail,
+                            horse: with_horse.then_some(horse),
+                        });
+                        break 'found;
+                    }
+                }
+            }
+        }
+        // A city ties a horse to a seeded half of its posts (the ones with
+        // the lowest rolls that have room for one).
+        let mut order: Vec<usize> = (0..posts.len())
+            .filter(|&k| posts[k].horse.is_some())
+            .collect();
+        order.sort_by_key(|&k| Rng::new(self.seed ^ 0x7e11, k as u32).next());
+        order.truncate(Palenque::horses_for(posts.len()));
+        for (k, post) in posts.iter_mut().enumerate() {
+            if !order.contains(&k) {
+                post.horse = None;
+            }
+        }
+        posts
+    }
+
+    /// Whether a palenque of a `kind` of building, filling `spot`, fits: on
+    /// one street and off its middle lane (the station's, on the yard in
+    /// front of it), `Palenque::CLEARANCE` from every `solid` obstacle and
+    /// clear of every `open` area.
+    fn palenque_fits(
+        &self,
+        kind: BuildingKind,
+        spot: &Aabb,
+        solid: &[Aabb],
+        open: &[Aabb],
+    ) -> bool {
+        let on_ground = if kind == BuildingKind::Station {
+            self.extent.contains(spot)
+        } else {
+            self.streets.iter().any(|street| {
+                let across = if street.size().x > street.size().y {
+                    Vec2::new(0.0, 1.0)
+                } else {
+                    Vec2::new(1.0, 0.0)
+                };
+                let middle = street.center().dot(across);
+                let (lo, hi) = (spot.min.dot(across) - middle, spot.max.dot(across) - middle);
+                street.contains(spot) && lo * hi > 0.0 && lo.abs().min(hi.abs()) >= Palenque::LANE
+            })
+        };
+        // The station stands in a through line's band; nothing else does.
+        let off_band =
+            kind == BuildingKind::Station || self.band.is_none_or(|b| !b.intersects(spot));
+        on_ground
+            && off_band
+            && solid
+                .iter()
+                .all(|o| !o.intersects(&spot.expanded(Palenque::CLEARANCE)))
+            && open.iter().all(|o| !o.intersects(spot))
     }
 }
+
+/// How far from the middle of a facade the nearest palenque's middle stands:
+/// past the door's keep-out and half the rail, in meters.
+const DOOR_SIDE: f32 = StreetLamps::DOOR_HALF_WIDTH + 0.3 + Palenque::LENGTH / 2.0;
 
 /// Trees in a ring just inside the plaza edge, leaving the center open:
 /// `steps.0` gaps along the x edges and `steps.1` along the y edges. Only
@@ -3061,11 +3312,13 @@ pub(crate) mod tests {
                 .iter()
                 .flat_map(PlazaFurniture::obstacles)
                 .collect();
+            let palenques: usize = t.palenques.iter().map(|p| p.obstacles().count()).sum();
             assert_eq!(
                 obstacles.len(),
                 solid.clone().count()
                     + t.trees.len()
                     + 2
+                    + palenques
                     + t.sign_obstacles().len()
                     + furniture.len()
             );
@@ -4404,5 +4657,310 @@ pub(crate) mod tests {
                 Err(TownConfigError::BadDensity { .. })
             ));
         }
+    }
+
+    /// The buildings that get a palenque besides the store's post.
+    fn wants_palenque(t: &TownLayout, k: usize) -> bool {
+        let first_store = t
+            .buildings
+            .iter()
+            .position(|b| b.kind == BuildingKind::GeneralStore);
+        matches!(
+            t.buildings[k].kind,
+            BuildingKind::GeneralStore
+                | BuildingKind::PoliceStation
+                | BuildingKind::Church
+                | BuildingKind::Station
+        ) && Some(k) != first_store
+    }
+
+    /// Every shipped-like town, with the through-line ones.
+    fn towns_with_names() -> Vec<(String, TownLayout)> {
+        sample_towns()
+            .into_iter()
+            .map(|t| (t.name.clone(), t))
+            .collect()
+    }
+
+    #[test]
+    fn every_landmark_but_the_first_store_has_a_palenque_before_it() {
+        for (name, t) in towns_with_names() {
+            let mut wanted = 0;
+            for k in (0..t.buildings.len()).filter(|&k| wants_palenque(&t, k)) {
+                wanted += 1;
+                let b = &t.buildings[k];
+                let p = t
+                    .palenques
+                    .iter()
+                    .find(|p| p.building == k)
+                    .unwrap_or_else(|| panic!("{name}: no palenque before {:?}", b.kind));
+                // In front of the facade, on the street side, along the street.
+                let n = normal(b.front);
+                let ahead = (p.rail.center() - b.footprint.center()).dot(n);
+                let half = b.footprint.size() * 0.5;
+                assert!(ahead > n.x.abs() * half.x + n.y.abs() * half.y, "{name}");
+                let size = p.rail.size();
+                let long = if n.x.abs() > 0.5 { size.y } else { size.x };
+                assert!((long - Palenque::LENGTH).abs() < 1e-4, "{name}");
+            }
+            assert_eq!(t.palenques.len(), wanted, "{name}: one per landmark");
+            // Never one before the store that already has its post.
+            assert!(t.palenques.iter().all(|p| wants_palenque(&t, p.building)));
+        }
+    }
+
+    #[test]
+    fn only_cities_tie_horses_to_their_palenques_and_only_a_few() {
+        let mut cities = 0;
+        for (name, t) in towns_with_names() {
+            let horses = t.palenques.iter().filter(|p| p.horse.is_some()).count();
+            if t.size == TownSize::Small {
+                assert_eq!(horses, 0, "{name}: a town's palenques stay empty");
+            } else {
+                cities += 1;
+                let posts = t.palenques.len();
+                let share = Palenque::horses_for(posts);
+                assert!(horses <= share, "{name}");
+                // Where the streets are wide enough to leave a horse room.
+                let narrowest = t
+                    .streets
+                    .iter()
+                    .map(|s| s.size().x.min(s.size().y))
+                    .fold(f32::INFINITY, f32::min);
+                if narrowest >= 10.0 {
+                    assert_eq!(horses, share, "{name}");
+                }
+                assert!(horses >= 1, "{name}");
+            }
+        }
+        assert!(cities >= 2);
+    }
+
+    #[test]
+    fn a_city_ties_half_its_palenques_to_a_horse_up_to_a_cap() {
+        let tied: Vec<usize> = [0, 1, 2, 3, 4, 5, 6, 7, 8, 20]
+            .into_iter()
+            .map(Palenque::horses_for)
+            .collect();
+        assert_eq!(tied, [0, 0, 1, 1, 2, 2, 3, 3, 3, 3]);
+        assert_eq!(Palenque::MAX_HORSES, 3);
+    }
+
+    #[test]
+    fn the_seed_picks_which_palenques_tie_a_horse() {
+        let pico = |seed| {
+            TownLayout::generate(&TownConfig {
+                name: "Pico".into(),
+                blocks: (8, 8),
+                seed,
+                ..TownConfig::castex()
+            })
+            .unwrap()
+        };
+        let tied = |t: &TownLayout| -> Vec<bool> {
+            t.palenques.iter().map(|p| p.horse.is_some()).collect()
+        };
+        assert_eq!(tied(&pico(5)), tied(&pico(5)));
+        assert!(
+            (0..8).any(|seed| tied(&pico(seed)) != tied(&pico(seed + 1))),
+            "eight neighboring seeds all tie the same posts"
+        );
+        for seed in 0..8 {
+            let t = pico(seed);
+            let count = t.palenques.iter().filter(|p| p.horse.is_some()).count();
+            assert!((1..=Palenque::MAX_HORSES).contains(&count), "seed {seed}");
+        }
+    }
+
+    #[test]
+    fn a_palenque_tethers_its_horse_alongside_without_touching_the_rail() {
+        let mut seen = 0;
+        for (name, t) in towns_with_names() {
+            for p in t.palenques.iter().filter(|p| p.horse.is_some()) {
+                let horse = p.horse.unwrap();
+                let n = normal(t.buildings[p.building].front);
+                assert!(!horse.footprint.intersects(&p.rail), "{name}");
+                assert_eq!(horse.position, horse.footprint.center(), "{name}");
+                // Along the street, on the street side of the rail.
+                assert!(horse.heading.forward().dot(n).abs() < 1e-5, "{name}");
+                assert!((horse.footprint.center() - p.rail.center()).dot(n) > 0.0);
+                seen += 1;
+            }
+        }
+        assert!(seen > 0);
+    }
+
+    #[test]
+    fn rails_and_horses_of_the_palenques_are_obstacles() {
+        assert!(
+            towns_with_names()
+                .iter()
+                .any(|(_, t)| !t.palenques.is_empty())
+        );
+        for (name, t) in towns_with_names() {
+            let obstacles = t.obstacles();
+            let horses = t.palenques.iter().filter(|p| p.horse.is_some()).count();
+            let furniture: usize = t
+                .plaza_furniture()
+                .iter()
+                .map(|f| f.obstacles().count())
+                .sum();
+            assert_eq!(
+                obstacles.len(),
+                t.buildings
+                    .iter()
+                    .filter(|b| b.kind != BuildingKind::Platform)
+                    .count()
+                    + t.trees.len()
+                    + 2
+                    + t.palenques.len()
+                    + horses
+                    + t.sign_obstacles().len()
+                    + furniture,
+                "{name}"
+            );
+            for p in &t.palenques {
+                assert!(p.obstacles().all(|o| obstacles.contains(&o)), "{name}");
+            }
+        }
+    }
+
+    #[test]
+    fn palenques_stand_clear_of_everything_else() {
+        let placed: usize = towns_with_names()
+            .iter()
+            .map(|(_, t)| t.palenques.len())
+            .sum();
+        assert!(placed > 40, "{placed} palenques in the sample towns");
+        for (name, t) in towns_with_names() {
+            let walks: Vec<Aabb> = t.sidewalks().iter().map(|s| s.area).collect();
+            let obstacles = t.obstacles();
+            for (i, p) in t.palenques.iter().enumerate() {
+                let spots: Vec<Aabb> = p.obstacles().collect();
+                // On a street, off the walkers' lane down its middle (the
+                // station's, on the yard in front of it).
+                if t.buildings[p.building].kind == BuildingKind::Station {
+                    assert!(spots.iter().all(|o| t.extent().contains(o)), "{name}");
+                } else {
+                    let street = t
+                        .streets
+                        .iter()
+                        .find(|s| spots.iter().all(|o| s.contains(o)))
+                        .unwrap_or_else(|| panic!("{name}: palenque {i} leaves the street"));
+                    let across = if street.size().x > street.size().y {
+                        Vec2::new(0.0, 1.0)
+                    } else {
+                        Vec2::new(1.0, 0.0)
+                    };
+                    let middle = street.center().dot(across);
+                    for o in &spots {
+                        let (lo, hi) = (o.min.dot(across) - middle, o.max.dot(across) - middle);
+                        assert!(
+                            lo * hi > 0.0 && lo.abs().min(hi.abs()) >= Palenque::LANE,
+                            "{name}: palenque {i} in the walkers' lane"
+                        );
+                    }
+                }
+                for o in &spots {
+                    // Off the sidewalks.
+                    assert!(walks.iter().all(|w| !overlap(w, o)), "{name}: {i}");
+                    // And off every other obstacle, with room to walk round.
+                    let reach = o.expanded(Palenque::CLEARANCE - 0.01);
+                    for other in &obstacles {
+                        if spots.contains(other) {
+                            continue;
+                        }
+                        assert!(!overlap(&reach, other), "{name}: palenque {i} by {other:?}");
+                    }
+                }
+                // Clear of the doors, the plazas, the line and the street crossings.
+                for (k, other) in t.buildings.iter().enumerate() {
+                    if other.kind == BuildingKind::Platform {
+                        continue;
+                    }
+                    let m = normal(other.front);
+                    let h = other.footprint.size() * 0.5;
+                    let facade = other.footprint.center() + m * (m.x.abs() * h.x + m.y.abs() * h.y);
+                    let side = Vec2::new(-m.y, m.x);
+                    let (a, z) = (facade + side * 1.8, facade + m * 4.0 - side * 1.8);
+                    let door = Aabb::new(
+                        Vec2::new(a.x.min(z.x), a.y.min(z.y)),
+                        Vec2::new(a.x.max(z.x), a.y.max(z.y)),
+                    );
+                    assert!(spots.iter().all(|o| !overlap(o, &door)), "{name}: {k} {i}");
+                }
+                for z in t.plazas().chain(t.floors().iter().map(|f| f.footprint)) {
+                    assert!(spots.iter().all(|o| !overlap(o, &z)), "{name}: {i}");
+                }
+                // The station itself stands in a through line's band.
+                let band = t
+                    .rail_band()
+                    .filter(|_| t.buildings[p.building].kind != BuildingKind::Station);
+                for z in t.rail_corridor().into_iter().chain(band) {
+                    assert!(spots.iter().all(|o| !overlap(o, &z)), "{name}: {i}");
+                }
+                for (x, y) in t
+                    .streets
+                    .iter()
+                    .filter(|s| s.size().y > s.size().x)
+                    .flat_map(|x| {
+                        t.streets
+                            .iter()
+                            .filter(|s| s.size().x > s.size().y)
+                            .map(move |y| (x, y))
+                    })
+                    .filter(|(x, y)| overlap(x, y))
+                {
+                    let crossing =
+                        Aabb::new(Vec2::new(x.min.x, y.min.y), Vec2::new(x.max.x, y.max.y))
+                            .expanded(Palenque::CROSSING_MARGIN - 0.01);
+                    assert!(spots.iter().all(|o| !overlap(o, &crossing)), "{name}: {i}");
+                }
+            }
+            // And apart from each other.
+            for (i, a) in t.palenques.iter().enumerate() {
+                for b in &t.palenques[i + 1..] {
+                    assert!(
+                        a.obstacles()
+                            .all(|x| b.obstacles().all(|y| !overlap(&x, &y)))
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_palenque_spot_needs_a_street_room_to_pass_and_free_ground() {
+        let t = TownLayout::castex_inspired();
+        let post = t
+            .palenques
+            .iter()
+            .find(|p| t.buildings[p.building].kind == BuildingKind::Church)
+            .unwrap();
+        let spot = post.rail;
+        let kind = BuildingKind::Church;
+        let beside = |gap: f32| {
+            let size = spot.size();
+            let shift = Vec2::new(size.x + gap, 0.0);
+            Aabb::new(spot.min + shift, spot.max + shift)
+        };
+        assert!(t.palenque_fits(kind, &spot, &[], &[]));
+        // Another obstacle within the clearance blocks it, just past it does not.
+        let near = beside(Palenque::CLEARANCE - 0.1);
+        let far = beside(Palenque::CLEARANCE + 0.1);
+        assert!(!t.palenque_fits(kind, &spot, &[near], &[]));
+        assert!(t.palenque_fits(kind, &spot, &[far], &[]));
+        // A keep-out area blocks it only when it overlaps.
+        assert!(!t.palenque_fits(kind, &spot, &[], &[spot.expanded(-0.01)]));
+        assert!(t.palenque_fits(kind, &spot, &[], &[beside(0.0)]));
+        // Off every street, or in the lane down the middle, it does not fit.
+        let off = Aabb::new(
+            spot.min + Vec2::new(0.0, 15.0),
+            spot.max + Vec2::new(0.0, 15.0),
+        );
+        assert!(!t.palenque_fits(kind, &off, &[], &[]));
+        let street = t.streets.iter().find(|s| s.contains(&spot)).unwrap();
+        let lane = Aabb::from_center_size(street.center(), spot.size());
+        assert!(!t.palenque_fits(kind, &lane, &[], &[]));
     }
 }

@@ -13,6 +13,7 @@
 
 pub mod italianate;
 pub mod materials;
+pub(crate) mod palenque;
 pub(crate) mod plaza;
 pub mod shape;
 pub(crate) mod town_buildings;

@@ -88,6 +88,15 @@ pub struct Walker {
 #[derive(Component, Debug, Clone, Copy)]
 pub struct TetheredHorse(pub usize);
 
+/// A horse tied at one of town `town`'s palenques (a city's, besides the
+/// store's [`TetheredHorse`]): it only stands there. `index` is the
+/// palenque's place in [`TownLayout::palenques`].
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PalenqueHorse {
+    pub town: usize,
+    pub index: usize,
+}
+
 /// A person of the errand standing in town `town`.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StandingNpc {
@@ -195,6 +204,7 @@ type Residents<'a> = (
     Entity,
     Option<&'a Walker>,
     Option<&'a TetheredHorse>,
+    Option<&'a PalenqueHorse>,
     Option<&'a StandingNpc>,
     Option<&'a Bystander>,
 );
@@ -212,10 +222,11 @@ fn populate_towns(
         return;
     };
     let wanted: BTreeSet<usize> = live_towns(&crowds, active.as_deref()).into_iter().collect();
-    for (entity, walker, horse, npc, bystander) in &residents {
+    for (entity, walker, horse, palenque, npc, bystander) in &residents {
         let town = walker
             .map(|w| w.town)
             .or(horse.map(|h| h.0))
+            .or(palenque.map(|p| p.town))
             .or(npc.map(|n| n.town))
             .or(bystander.map(|b| b.town));
         if town.is_some_and(|t| !wanted.contains(&t)) {
@@ -233,6 +244,7 @@ fn populate_towns(
         {
             let coat = tethered_coat(layout, &cast, town);
             spawn_tethered_horse(&mut commands, layout, town, coat, &world);
+            spawn_palenque_horses(&mut commands, layout, town, &world);
         }
         for &(npc, standing) in cast.0.iter().filter(|(_, s)| s.town == town) {
             spawn_standing_npc(&mut commands, npc, standing, &world);
@@ -338,6 +350,32 @@ fn spawn_tethered_horse(
         },
         Transform::from_translation(world_from_ground(horse.position, height)),
     ));
+}
+
+/// The horses tied at `layout`'s palenques (a city's), each its own seeded
+/// coat; scenery, not the errand's to lend.
+fn spawn_palenque_horses(
+    commands: &mut Commands,
+    layout: &TownLayout,
+    town: usize,
+    world: &GameWorld,
+) {
+    for (index, post) in layout.palenques.iter().enumerate() {
+        let Some(horse) = post.horse else {
+            continue;
+        };
+        let height = world.0.ground_height(horse.position);
+        commands.spawn((
+            Name::new(format!("Palenque horse {town}.{index}")),
+            PalenqueHorse { town, index },
+            CharacterVisual::Horse(Coat::seeded(layout.seed ^ 0x7a1e ^ index as u32)),
+            VisualPose {
+                heading: horse.heading,
+                ..default()
+            },
+            Transform::from_translation(world_from_ground(horse.position, height)),
+        ));
+    }
 }
 
 /// Ticks the game clock, lets the line train follow it and hands the
@@ -772,6 +810,58 @@ mod tests {
             app.world().resource::<GameWorld>().0.moving,
             train(&app).obstacles()
         );
+    }
+
+    #[test]
+    fn a_city_ties_horses_at_its_palenques_and_a_small_town_none() {
+        let city = TownLayout::generate(&pampa_core::TownConfig {
+            name: "Ciudad".into(),
+            blocks: (8, 8),
+            ..pampa_core::TownConfig::castex()
+        })
+        .unwrap();
+        let tied: Vec<_> = city
+            .palenques
+            .iter()
+            .enumerate()
+            .filter_map(|(k, p)| p.horse.map(|h| (k, h)))
+            .collect();
+        assert!(!tied.is_empty());
+        let mut app = app_with(vec![city.clone()], 3);
+        app.update();
+        let mut query = app
+            .world_mut()
+            .query::<(&PalenqueHorse, &Transform, &VisualPose, &CharacterVisual)>();
+        let mut found: Vec<_> = query
+            .iter(app.world())
+            .map(|(h, t, p, v)| (*h, *t, *p, *v))
+            .collect();
+        found.sort_by_key(|(h, ..)| h.index);
+        assert_eq!(found.len(), tied.len());
+        for ((k, horse), (marker, transform, pose, visual)) in tied.iter().zip(found) {
+            assert_eq!(marker, PalenqueHorse { town: 0, index: *k });
+            assert_eq!(transform.translation.x, horse.position.x);
+            assert_eq!(transform.translation.z, -horse.position.y);
+            assert_eq!(pose.heading, horse.heading);
+            assert!(matches!(visual, CharacterVisual::Horse(_)));
+        }
+        // The store's horse is still the only one the errand can lend.
+        let mut store = app.world_mut().query::<&TetheredHorse>();
+        assert_eq!(store.iter(app.world()).count(), 1);
+        let mut mountable = app.world_mut().query::<&crate::errand::Mountable>();
+        assert_eq!(mountable.iter(app.world()).count(), 1);
+        // They leave with their town, like the store's horse.
+        let mut activation = TownActivation::default();
+        activation.update(&[city], Vec2::new(1.0e6, 1.0e6));
+        app.insert_resource(ActiveTowns(activation));
+        app.update();
+        let mut left = app.world_mut().query::<&PalenqueHorse>();
+        assert_eq!(left.iter(app.world()).count(), 0);
+        // A small town's palenques stay empty.
+        let mut small = town_app();
+        small.update();
+        let mut none = small.world_mut().query::<&PalenqueHorse>();
+        assert_eq!(none.iter(small.world()).count(), 0);
     }
 
     #[test]

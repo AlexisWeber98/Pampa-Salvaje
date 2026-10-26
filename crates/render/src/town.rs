@@ -1,6 +1,8 @@
 //! Procedural low-poly town drawn from a `pampa-core` [`TownLayout`]:
-//! dirt streets with brick sidewalks where core paves them
-//! ([`TownLayout::sidewalks`]), a tree-lined plaza (its paths, monument, benches and
+//! dirt streets (one earth mesh with world-space UVs, plus the goods
+//! yard's cart tracks) with brick sidewalks where core paves them
+//! ([`TownLayout::sidewalks`]), the hitching rails of the store and the
+//! palenques ([`crate::facade::palenque`]), a tree-lined plaza (its paths, monument, benches and
 //! railing from [`crate::facade::plaza`], its paraísos, olmos, eucaliptos or
 //! aromos from [`crate::tree`]), the 1919 Italianate buildings of the
 //! facade kit ([`crate::facade::town_buildings`]), a railway with its
@@ -23,6 +25,12 @@
 //! sidewalks, small props and trees are drawn within the settlements' shared
 //! [`ranges`]: no new [`VisibilityRange`].
 //!
+//! The streets wear no wheel ruts: people walk and ride them. Cart tracks
+//! are drawn only where carts go: from the street to the door of each goods
+//! building of the station yard ([`goods_tracks`]; the estancias' huellas
+//! are the settlements'). Streets and palenques are one mesh per surface
+//! and town, within the buildings' and the props' ranges.
+//!
 //! A sidewalk is a strip of brick paving [`SIDEWALK_TOP`] over the ground
 //! with a stucco curb [`CURB_TOP`] over it on the roadway side: drawn on the
 //! ground like the streets and the plaza paths, which core walks people over
@@ -39,6 +47,7 @@ use pampa_core::{
 };
 
 use crate::coords::world_from_ground;
+use crate::facade::palenque;
 use crate::facade::shape::Shape;
 use crate::facade::town_buildings::{self, Lot};
 use crate::facade::{FacadeMaterials, Surface};
@@ -116,6 +125,16 @@ pub struct TownPlaza(pub usize);
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TownSidewalk;
 
+/// A town's dirt carriageway: its streets' earth, or the wheel ruts worn
+/// into it (one mesh per surface).
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TownStreet;
+
+/// A town's palenques, the store's hitching rail among them: one mesh in
+/// timber for all of them.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TownPalenque;
+
 /// Shared meshes, scaled per instance.
 #[derive(Resource)]
 struct Shapes {
@@ -129,7 +148,6 @@ struct Shapes {
 #[derive(Resource)]
 struct Palette {
     timber: Handle<StandardMaterial>,
-    street: Handle<StandardMaterial>,
     plaza: Handle<StandardMaterial>,
     concrete: Handle<StandardMaterial>,
     steel: Handle<StandardMaterial>,
@@ -147,7 +165,6 @@ impl Palette {
             })
         };
         let timber = matte(0.34, 0.25, 0.18);
-        let street = matte(0.58, 0.47, 0.34);
         let plaza = matte(0.47, 0.46, 0.29);
         let concrete = matte(0.62, 0.59, 0.54);
         let ballast = matte(0.48, 0.45, 0.41);
@@ -159,7 +176,6 @@ impl Palette {
         });
         Self {
             timber,
-            street,
             plaza,
             concrete,
             steel,
@@ -295,6 +311,22 @@ fn stream_towns(
             range: None,
         };
         build_town(&mut b, town);
+        spawn_streets(
+            &mut commands,
+            root,
+            town,
+            &terrain.0,
+            &surfaces,
+            &mut meshes,
+        );
+        spawn_palenques(
+            &mut commands,
+            root,
+            town,
+            &terrain.0,
+            &surfaces,
+            &mut meshes,
+        );
         spawn_sidewalks(
             &mut commands,
             root,
@@ -336,10 +368,6 @@ fn land_buildings(
 
 /// Every mesh of `town` but its buildings, under the builder's root.
 fn build_town(b: &mut Builder, town: &TownLayout) {
-    for street in &town.streets {
-        let mat = b.palette.street.clone();
-        flat_patch(b, &mat, street, 0.03);
-    }
     plazas(b, town);
     railway(b, town);
     b.range = Some(ranges()[0].clone());
@@ -351,9 +379,238 @@ fn build_town(b: &mut Builder, town: &TownLayout) {
     for floor in town.floors() {
         floor_ramps(b, &floor);
     }
-    b.range = Some(ranges()[1].clone());
-    hitching_rail(b, &town.hitching_post.rail);
     b.range = None;
+}
+
+/// Height of the dirt carriageway over the ground, meters: under the
+/// sidewalks' [`SIDEWALK_TOP`]. Core walks people over it at the ground's
+/// own height.
+pub const STREET_TOP: f32 = 0.03;
+/// How far the carriageway reaches under the ground, meters.
+const STREET_FOOT: f32 = -0.05;
+/// Height of the cart tracks over the dirt level, meters: a few
+/// millimeters, so they never fight it.
+pub const RUT_LIFT: f32 = 0.006;
+/// Width of one wheel rut, meters.
+const RUT_WIDTH: f32 = 0.25;
+/// Distance between the two ruts of a cart's track, meters.
+const RUT_GAUGE: f32 = 1.4;
+/// Shortest stretch of rut worth drawing, meters.
+const RUT_MIN: f32 = 1.0;
+/// Where a goods track starts out of the facade, meters.
+const RUT_START: f32 = 0.3;
+/// Gap a goods track keeps from anything in its way, meters.
+const RUT_GAP: f32 = 0.3;
+/// How far from a goods building's door to look for the street its cart
+/// track runs to, meters.
+const GOODS_REACH: f32 = 12.0;
+/// Length of the track out of a goods building with no street in reach:
+/// the loading apron, meters.
+const GOODS_APPROACH: f32 = 8.0;
+
+/// Spawns the carriageway of `town` under `root`: one mesh of earth and
+/// one of the goods yard's cart tracks, in the buildings' shared range,
+/// with world-space UVs so the strips meet at the crossings without a seam.
+fn spawn_streets(
+    commands: &mut Commands,
+    root: Entity,
+    town: &TownLayout,
+    terrain: &Terrain,
+    surfaces: &FacadeMaterials,
+    meshes: &mut Assets<Mesh>,
+) {
+    let range = ranges()[0].clone();
+    let (origin, shape) = street_shape(town, terrain);
+    for (surface, mesh) in shape.into_meshes() {
+        commands.spawn((
+            Mesh3d(meshes.add(mesh)),
+            MeshMaterial3d(surfaces.get(surface)),
+            Transform::from_translation(origin),
+            range.clone(),
+            TownStreet,
+            ChildOf(root),
+        ));
+    }
+}
+
+/// The streets of `town` as one shape built around `origin`, the middle of
+/// its grid on the ground: every strip a slab of [`Surface::Earth`] topped
+/// at [`STREET_TOP`], and the [`goods_tracks`] in [`Surface::Mud`]. The
+/// streets themselves wear no ruts: people walk and ride them.
+fn street_shape(town: &TownLayout, terrain: &Terrain) -> (Vec3, Shape) {
+    let middle = town.grid().center();
+    let origin = world_from_ground(middle, terrain.height(middle.x, middle.y));
+    let mut shape = Shape::default();
+    for street in &town.streets {
+        let c = street.center();
+        let ground = terrain.height(c.x, c.y) - origin.y;
+        let earth = (ground, STREET_FOOT, STREET_TOP);
+        ground_box(
+            &mut shape,
+            Surface::Earth,
+            (street.min, street.max),
+            origin,
+            earth,
+        );
+    }
+    for rut in goods_tracks(town) {
+        let c = rut.center();
+        let top = terrain.height(c.x, c.y) - origin.y + STREET_TOP + RUT_LIFT;
+        let (p, q) = (
+            world_from_ground(rut.min, 0.0) - origin,
+            world_from_ground(rut.max, 0.0) - origin,
+        );
+        let (lo, hi) = (p.min(q), p.max(q));
+        // Seen from above, counter-clockwise.
+        shape.face(
+            Surface::Mud,
+            &[
+                Vec3::new(lo.x, top, lo.z),
+                Vec3::new(lo.x, top, hi.z),
+                Vec3::new(hi.x, top, hi.z),
+                Vec3::new(hi.x, top, lo.z),
+            ],
+        );
+    }
+    (origin, shape)
+}
+
+/// The unit ground vector pointing out of `side`.
+fn side_vector(side: Side) -> GroundVec2 {
+    match side {
+        Side::North => GroundVec2::new(0.0, 1.0),
+        Side::South => GroundVec2::new(0.0, -1.0),
+        Side::East => GroundVec2::new(1.0, 0.0),
+        Side::West => GroundVec2::new(-1.0, 0.0),
+    }
+}
+
+/// Whether `b` is one of the railway's goods buildings: a shed or grain
+/// store of the station yard, beside the line outside the grid or in a
+/// through line's band, not one of the sheds among the houses.
+fn is_goods_yard(town: &TownLayout, b: &Building) -> bool {
+    matches!(b.kind, BuildingKind::Shed | BuildingKind::GrainStore)
+        && (town
+            .rail_band()
+            .is_some_and(|band| band.contains(&b.footprint))
+            || !town.grid().contains(&b.footprint))
+}
+
+/// The cart tracks of `town`, on the ground: from the door of each goods
+/// building ([`is_goods_yard`]) straight out along its front, two wheel
+/// ruts a [`RUT_GAUGE`] apart, to the street if one lies within
+/// [`GOODS_REACH`] and else [`GOODS_APPROACH`] out. They stop short of
+/// whatever stands in the way (buildings, trees, the line, platforms,
+/// plazas, sidewalks, signs and palenques).
+fn goods_tracks(town: &TownLayout) -> Vec<Aabb> {
+    let mut keep_off: Vec<Aabb> = town.obstacles();
+    for floor in town.floors() {
+        keep_off.push(floor.footprint);
+        keep_off.extend(floor.ramps());
+    }
+    keep_off.extend(town.canopies().iter().map(|c| c.footprint));
+    keep_off.extend(town.rail_corridor());
+    keep_off.extend(town.plazas());
+    keep_off.extend(town.sidewalks().iter().map(|w| w.area));
+    let mut out = Vec::new();
+    for b in town.buildings.iter().filter(|b| is_goods_yard(town, b)) {
+        let n = side_vector(b.front);
+        let across = GroundVec2::new(-n.y, n.x);
+        let half = b.footprint.size() * 0.5;
+        let door = b.footprint.center() + n * (n.x.abs() * half.x + n.y.abs() * half.y);
+        // The first quarter meter inside a street ends the track short of it.
+        let to_street = (0..=(GOODS_REACH * 4.0) as usize)
+            .map(|k| k as f32 * 0.25)
+            .find(|d| town.streets.iter().any(|s| s.contains_point(door + n * *d)))
+            .map(|d| d - 0.25);
+        let length = to_street.unwrap_or(GOODS_APPROACH);
+        let own = b.collider();
+        for wheel in [-1.0, 1.0] {
+            let lane = across * (wheel * RUT_GAUGE / 2.0);
+            // Where along the front each thing in the way cuts the rut.
+            let mut pieces = vec![(RUT_START, length)];
+            for o in keep_off.iter().filter(|o| **o != own) {
+                let at = |p: GroundVec2| ((p - door - lane).dot(n), (p - door - lane).dot(across));
+                let (a, z) = (at(o.min), at(o.max));
+                let (d_lo, d_hi) = (a.0.min(z.0) - RUT_GAP, a.0.max(z.0) + RUT_GAP);
+                let (c_lo, c_hi) = (a.1.min(z.1), a.1.max(z.1));
+                if c_hi <= -RUT_WIDTH / 2.0 || c_lo >= RUT_WIDTH / 2.0 {
+                    continue;
+                }
+                pieces = pieces
+                    .into_iter()
+                    .flat_map(|(from, to)| {
+                        if d_hi <= from || d_lo >= to {
+                            vec![(from, to)]
+                        } else {
+                            vec![(from, d_lo), (d_hi, to)]
+                        }
+                    })
+                    .collect();
+            }
+            for (from, to) in pieces.into_iter().filter(|(f, t)| t - f >= RUT_MIN) {
+                let (p, q) = (door + lane + n * from, door + lane + n * to);
+                let reach = GroundVec2::new(across.x.abs(), across.y.abs()) * (RUT_WIDTH / 2.0);
+                out.push(Aabb::new(
+                    GroundVec2::new(p.x.min(q.x), p.y.min(q.y)) - reach,
+                    GroundVec2::new(p.x.max(q.x), p.y.max(q.y)) + reach,
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// Spawns the palenques of `town` under `root`: one mesh in timber, within
+/// the small props' range.
+fn spawn_palenques(
+    commands: &mut Commands,
+    root: Entity,
+    town: &TownLayout,
+    terrain: &Terrain,
+    surfaces: &FacadeMaterials,
+    meshes: &mut Assets<Mesh>,
+) {
+    let range = ranges()[1].clone();
+    let (origin, shape) = palenque_shape(town, terrain);
+    for (surface, mesh) in shape.into_meshes() {
+        commands.spawn((
+            Mesh3d(meshes.add(mesh)),
+            MeshMaterial3d(surfaces.get(surface)),
+            Transform::from_translation(origin),
+            range.clone(),
+            TownPalenque,
+            ChildOf(root),
+        ));
+    }
+}
+
+/// The rails of `town` as one shape built around `origin`, the middle of
+/// its grid on the ground: the general store's hitching rail and every
+/// palenque, each along its footprint's long side.
+fn palenque_shape(town: &TownLayout, terrain: &Terrain) -> (Vec3, Shape) {
+    let middle = town.grid().center();
+    let origin = world_from_ground(middle, terrain.height(middle.x, middle.y));
+    let mut shape = Shape::default();
+    let rails =
+        std::iter::once(town.hitching_post.rail).chain(town.palenques.iter().map(|p| p.rail));
+    for rail in rails {
+        let size = rail.size();
+        let along_x = size.x >= size.y;
+        let c = rail.center();
+        let at = world_from_ground(c, terrain.height(c.x, c.y)) - origin;
+        // A rail along the ground's y runs along the world's z.
+        let turn = if along_x {
+            0.0
+        } else {
+            std::f32::consts::FRAC_PI_2
+        };
+        shape.merge(
+            palenque::palenque(size.x.max(size.y)),
+            Transform::from_translation(at).with_rotation(Quat::from_rotation_y(turn)),
+        );
+    }
+    (origin, shape)
 }
 
 /// Height of a sidewalk's brick paving over the ground, meters: just over
@@ -529,36 +786,6 @@ fn floor_ramps(b: &mut Builder, floor: &Floor) {
                 .with_scale(Vec3::new(top3.distance(foot3), RAMP_THICKNESS, width)),
         );
     }
-}
-
-/// Two timber posts with a rail between them, along the rail footprint's
-/// long side. The tethered horse itself is a 3D character figure.
-fn hitching_rail(b: &mut Builder, rail: &Aabb) {
-    let timber = b.palette.timber.clone();
-    let size = rail.size();
-    let along_x = size.x >= size.y;
-    let length = size.x.max(size.y);
-    let c = rail.center();
-    let y = b.ground(c);
-    for end in [-0.5, 0.5] {
-        let offset = end * (length - 0.2);
-        let p = if along_x {
-            GroundVec2::new(c.x + offset, c.y)
-        } else {
-            GroundVec2::new(c.x, c.y + offset)
-        };
-        b.cube(
-            &timber,
-            world_from_ground(p, y + 0.55),
-            Vec3::new(0.16, 1.1, 0.16),
-        );
-    }
-    let bar = if along_x {
-        Vec3::new(length, 0.1, 0.1)
-    } else {
-        Vec3::new(0.1, 0.1, length)
-    };
-    b.cube(&timber, world_from_ground(c, y + 1.0), bar);
 }
 
 /// A thin slab lying on (leveled) ground over `area`.
@@ -1254,8 +1481,9 @@ mod tests {
     /// Writes three towns as shipped (General Pico, Eduardo Castex,
     /// Metileo) to `PAMPA_PREVIEW` (a folder) for the offline renderer, in
     /// the format of `facade::town_buildings::tests::preview_town_street`:
-    /// buildings, streets, sidewalks, and the plazas (lawn, paths,
-    /// monument, benches, railing and trees) on flat ground. Run
+    /// buildings, the dirt streets with the goods yard's cart tracks, the
+    /// palenques, sidewalks, and the plazas (lawn, paths, monument, benches,
+    /// railing and trees) on flat ground. Run
     /// with `PAMPA_PREVIEW=/some/dir cargo test -p pampa-render -- --ignored preview_town`.
     #[test]
     #[ignore = "writes preview files"]
@@ -1331,9 +1559,12 @@ mod tests {
                 }
                 let _ = writeln!(text, "f 0 2 1\nf 0 3 2");
             };
-            for street in &town.streets {
-                patch(&mut text, "Street", street, 0.03);
-            }
+            // The dirt streets with the goods yard's cart tracks, and the
+            // palenques, as the game builds them.
+            let (origin, streets) = street_shape(&town, &terrain);
+            put(&mut text, &streets, Transform::from_translation(origin));
+            let (origin, rails) = palenque_shape(&town, &terrain);
+            put(&mut text, &rails, Transform::from_translation(origin));
             for plaza in town.plazas() {
                 patch(&mut text, "Plaza", &plaza, crate::facade::plaza::LAWN_TOP);
             }
@@ -1506,5 +1737,436 @@ mod tests {
             sidewalk_shapes(pico.sidewalks(), &terrain).len(),
             64 - 4 + 1
         );
+    }
+
+    /// A village, a small town, a city, and a city grown on both sides of its
+    /// line, with the ground leveled under each as the game does.
+    fn towns_to_draw() -> Vec<(TownLayout, Terrain)> {
+        let line = |through| {
+            Some(pampa_core::RailwayConfig {
+                side: Side::North,
+                offset: 24.0,
+                through,
+            })
+        };
+        [
+            ((3, 3), false),
+            ((5, 4), false),
+            ((8, 8), false),
+            ((8, 8), true),
+        ]
+        .into_iter()
+        .map(|(blocks, through)| {
+            let town = TownLayout::generate(&pampa_core::TownConfig {
+                name: "Pueblo".into(),
+                blocks,
+                railway: line(through),
+                ..TownConfig::castex()
+            })
+            .unwrap();
+            let terrain = WorldTerrain::default().0;
+            let terrain = terrain.clone().with_flat_area(town.flat_area(&terrain));
+            (town, terrain)
+        })
+        .collect()
+    }
+
+    /// Every vertex of `shape`'s `surface`, as `(world position, normal, uv)`
+    /// for a shape standing at `origin`.
+    fn world_vertices(
+        origin: Vec3,
+        shape: &Shape,
+        surface: Surface,
+    ) -> Vec<(Vec3, Vec3, bevy::math::Vec2)> {
+        shape
+            .vertices(surface)
+            .into_iter()
+            .map(|(p, n, uv)| (p + origin, n, uv))
+            .collect()
+    }
+
+    /// The ground point under a world position.
+    fn ground_of(p: Vec3) -> GroundVec2 {
+        GroundVec2::new(p.x, -p.z)
+    }
+
+    #[test]
+    fn a_town_draws_its_streets_as_one_earth_mesh_and_one_track_mesh() {
+        let mut app = app();
+        app.update();
+        let facade = app.world().resource::<FacadeMaterials>().clone();
+        let mut q = app.world_mut().query_filtered::<(
+            &Mesh3d,
+            &MeshMaterial3d<StandardMaterial>,
+            &VisibilityRange,
+            &ChildOf,
+        ), With<TownStreet>>();
+        let streets: Vec<_> = q.iter(app.world()).collect();
+        let roots = streets
+            .iter()
+            .map(|(.., root)| root.parent())
+            .collect::<HashSet<_>>()
+            .len();
+        assert_eq!(streets.len(), 2 * roots, "one mesh per surface and town");
+        let meshes = app.world().resource::<Assets<Mesh>>();
+        for surface in [Surface::Earth, Surface::Mud] {
+            let wearing: Vec<_> = streets
+                .iter()
+                .filter(|(_, m, ..)| m.id() == facade.get(surface).id())
+                .collect();
+            assert_eq!(wearing.len(), roots, "{surface:?} once per town");
+            for (mesh, _, range, _) in wearing {
+                assert!(**range == ranges()[0], "a range of its own");
+                let mesh = meshes.get(&mesh.0).unwrap();
+                assert!(mesh.attribute(Mesh::ATTRIBUTE_UV_0).is_some());
+                assert!(mesh.attribute(Mesh::ATTRIBUTE_TANGENT).is_some());
+            }
+        }
+        // No flat-colored street cubes any more: every street piece is textured.
+        assert_eq!(
+            streets
+                .iter()
+                .map(|(_, m, ..)| m.id())
+                .collect::<HashSet<_>>()
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn street_strips_share_world_space_uvs_so_crossings_show_no_seam() {
+        let tile = Surface::Earth.tile();
+        for (town, terrain) in towns_to_draw() {
+            let (origin, shape) = street_shape(&town, &terrain);
+            let mut seen: std::collections::HashMap<(i32, i32), bevy::math::Vec2> =
+                Default::default();
+            let mut shared = 0;
+            for (p, n, uv) in world_vertices(origin, &shape, Surface::Earth) {
+                // The tops lie flat on the ground: the planar UV of the world.
+                if n.y < 0.9 {
+                    continue;
+                }
+                let want = bevy::math::Vec2::new((p.x - origin.x) / tile, (p.z - origin.z) / tile);
+                assert!(uv.distance(want) < 1e-3, "{}: uv {uv:?} at {p}", town.name);
+                // Whichever strip drew a point, it got the same UV.
+                let key = ((p.x * 100.0).round() as i32, (p.z * 100.0).round() as i32);
+                if let Some(other) = seen.insert(key, uv) {
+                    assert!(other.distance(uv) < 1e-3, "{}: a seam at {p}", town.name);
+                    shared += 1;
+                }
+            }
+            assert!(
+                shared > 0,
+                "{}: the strips overlap at the crossings",
+                town.name
+            );
+        }
+    }
+
+    #[test]
+    fn the_dirt_covers_every_street_at_the_old_height() {
+        for (town, terrain) in towns_to_draw() {
+            let (origin, shape) = street_shape(&town, &terrain);
+            let tops: Vec<(Vec3, Vec3, bevy::math::Vec2)> =
+                world_vertices(origin, &shape, Surface::Earth)
+                    .into_iter()
+                    .filter(|(_, n, _)| n.y > 0.9)
+                    .collect();
+            for (p, _, _) in &tops {
+                let g = ground_of(*p);
+                assert!(
+                    ((p.y - terrain.height(g.x, g.y)) - 0.03).abs() < 1e-3,
+                    "{}: top at {p}",
+                    town.name
+                );
+            }
+            // Every strip's four corners are corners of the dirt.
+            for street in &town.streets {
+                for corner in [
+                    street.min,
+                    street.max,
+                    GroundVec2::new(street.min.x, street.max.y),
+                    GroundVec2::new(street.max.x, street.min.y),
+                ] {
+                    assert!(
+                        tops.iter()
+                            .any(|(p, _, _)| ground_of(*p).distance(corner) < 1e-3),
+                        "{}: {street:?} is not covered",
+                        town.name
+                    );
+                }
+            }
+        }
+    }
+
+    /// The goods buildings of `town`, told apart from the sheds among the
+    /// houses by what the station yard builds: grain stores and its long
+    /// 25 m shed.
+    fn goods(town: &TownLayout) -> Vec<&Building> {
+        town.buildings
+            .iter()
+            .filter(|b| {
+                b.kind == BuildingKind::GrainStore
+                    || (b.kind == BuildingKind::Shed
+                        && b.footprint.size().x.max(b.footprint.size().y) >= 20.0)
+            })
+            .collect()
+    }
+
+    /// The building (of any kind) a `track` piece starts out of: the one
+    /// whose footprint lies nearest it.
+    fn owner<'t>(town: &'t TownLayout, track: &Aabb) -> &'t Building {
+        let gap = |b: &Building| {
+            let p = b.footprint.closest_point(track.center());
+            let q = track.closest_point(p);
+            p.distance(q)
+        };
+        town.buildings
+            .iter()
+            .min_by(|a, b| gap(a).total_cmp(&gap(b)))
+            .unwrap()
+    }
+
+    #[test]
+    fn only_the_railways_goods_yard_has_cart_tracks_in_town() {
+        let mut yards = 0;
+        for (town, _) in towns_to_draw() {
+            let tracks = goods_tracks(&town);
+            assert!(
+                !tracks.is_empty(),
+                "{}: the goods yard has tracks",
+                town.name
+            );
+            for track in &tracks {
+                let b = owner(&town, track);
+                assert!(
+                    goods(&town).contains(&b),
+                    "{}: a track out of a {:?}",
+                    town.name,
+                    b.kind
+                );
+            }
+            // The sheds among the houses, the station, houses, stores and
+            // the plazas have none.
+            for b in town.buildings.iter().filter(|b| !goods(&town).contains(b)) {
+                assert!(
+                    tracks.iter().all(|t| b
+                        .footprint
+                        .closest_point(t.center())
+                        .distance(t.center())
+                        > 1.0),
+                    "{}: a track at a {:?}",
+                    town.name,
+                    b.kind
+                );
+            }
+            // Every grain store and the yard's shed lead out a track.
+            for b in town
+                .buildings
+                .iter()
+                .filter(|b| b.kind == BuildingKind::GrainStore)
+            {
+                assert!(
+                    tracks.iter().any(|t| b
+                        .footprint
+                        .closest_point(t.center())
+                        .distance(t.center())
+                        < 14.0),
+                    "{}: a grain store without a track",
+                    town.name
+                );
+            }
+            let sheds = goods(&town)
+                .iter()
+                .filter(|b| b.kind == BuildingKind::Shed)
+                .count();
+            assert_eq!(sheds, 1, "{}: one goods shed in the yard", town.name);
+            // Every goods building leads out two ruts a gauge apart.
+            for b in goods(&town) {
+                let n = side_vector(b.front);
+                let across = GroundVec2::new(-n.y, n.x);
+                let half = b.footprint.size() * 0.5;
+                let door = b.footprint.center() + n * (n.x.abs() * half.x + n.y.abs() * half.y);
+                let mine: Vec<f32> = tracks
+                    .iter()
+                    .filter(|t| t.center().distance(door) < GOODS_REACH + 1.0)
+                    .map(|t| (t.center() - door).dot(across))
+                    .collect();
+                assert!(!mine.is_empty(), "{}: {:?} has no track", town.name, b.kind);
+                for lane in [-1.0, 1.0] {
+                    let want = lane * 0.7;
+                    assert!(
+                        mine.iter().any(|o| (o - want).abs() < 1e-3),
+                        "{}",
+                        town.name
+                    );
+                }
+                yards += 1;
+            }
+            for street in &town.streets {
+                // The plain streets are dirt, no more: no rut lies on one.
+                assert!(
+                    tracks.iter().all(|t| !t.intersects(street)),
+                    "{}",
+                    town.name
+                );
+            }
+        }
+        assert!(yards >= 8);
+    }
+
+    #[test]
+    fn goods_tracks_run_to_the_street_or_a_short_apron_and_keep_clear() {
+        let mut to_street = 0;
+        let mut aprons = 0;
+        for (town, _) in towns_to_draw() {
+            let obstacles = town.obstacles();
+            for track in goods_tracks(&town) {
+                // Short, along the front, off everything.
+                let size = track.size();
+                assert!(
+                    size.x.max(size.y) <= GOODS_REACH + RUT_WIDTH,
+                    "{}",
+                    town.name
+                );
+                assert!(size.x.min(size.y) <= RUT_WIDTH + 1e-4, "{}", town.name);
+                for o in obstacles
+                    .iter()
+                    .filter(|o| !goods(&town).iter().any(|b| b.collider() == **o))
+                {
+                    assert!(!o.intersects(&track), "{}: a track on {o:?}", town.name);
+                }
+                for w in town.sidewalks() {
+                    assert!(!w.area.intersects(&track), "{}", town.name);
+                }
+                if let Some(corridor) = town.rail_corridor() {
+                    assert!(
+                        !corridor.intersects(&track),
+                        "{}: a track on the line",
+                        town.name
+                    );
+                }
+                // Ends at a street when one is near its end, else is an apron.
+                let touches = town
+                    .streets
+                    .iter()
+                    .any(|s| s.expanded(RUT_GAP).intersects(&track));
+                if touches {
+                    to_street += 1;
+                } else {
+                    aprons += 1;
+                }
+            }
+        }
+        assert!(to_street > 0, "a goods building by a street");
+        assert!(aprons > 0, "a goods building with an apron");
+    }
+
+    #[test]
+    fn cart_tracks_lie_a_few_millimeters_over_the_dirt_level() {
+        for (town, terrain) in towns_to_draw() {
+            let (origin, shape) = street_shape(&town, &terrain);
+            let verts = world_vertices(origin, &shape, Surface::Mud);
+            assert!(!verts.is_empty(), "{}", town.name);
+            for (p, n, _) in &verts {
+                assert!(n.y > 0.99, "{}: a rut that leans", town.name);
+                let g = ground_of(*p);
+                let over = p.y - terrain.height(g.x, g.y);
+                // 5 mm or more over the street's dirt (no fight with it),
+                // and under the sidewalks' paving.
+                assert!(over >= 0.03 + 0.005, "{}: {over} m", town.name);
+                assert!(over < SIDEWALK_TOP, "{}: {over} m", town.name);
+                // And never over a street's dirt: the streets wear no ruts.
+                for street in &town.streets {
+                    assert!(
+                        !street.expanded(-0.01).contains_point(g),
+                        "{}: a rut at {g:?} on a street",
+                        town.name
+                    );
+                }
+            }
+            // No two ruts overlap.
+            let tracks = goods_tracks(&town);
+            for (i, a) in tracks.iter().enumerate() {
+                assert!(
+                    tracks[i + 1..].iter().all(|b| !a.intersects(b)),
+                    "{}",
+                    town.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_town_draws_all_its_rails_as_one_timber_mesh_in_the_small_props_range() {
+        let mut app = app();
+        app.update();
+        let facade = app.world().resource::<FacadeMaterials>().clone();
+        let mut q = app.world_mut().query_filtered::<(
+            &MeshMaterial3d<StandardMaterial>,
+            &VisibilityRange,
+            &ChildOf,
+        ), With<TownPalenque>>();
+        let rails: Vec<_> = q.iter(app.world()).collect();
+        let roots = rails
+            .iter()
+            .map(|(.., root)| root.parent())
+            .collect::<HashSet<_>>()
+            .len();
+        assert_eq!(rails.len(), roots, "one mesh per town");
+        assert!(roots >= 1);
+        for (material, range, _) in rails {
+            assert_eq!(material.id(), facade.get(Surface::Planks).id());
+            assert!(*range == ranges()[1], "the small props' range");
+        }
+    }
+
+    #[test]
+    fn every_rail_of_a_town_gets_a_palenque_along_its_footprint() {
+        for (town, terrain) in towns_to_draw() {
+            let (origin, shape) = palenque_shape(&town, &terrain);
+            let rails: Vec<Aabb> = std::iter::once(town.hitching_post.rail)
+                .chain(town.palenques.iter().map(|p| p.rail))
+                .collect();
+            assert!(
+                rails.len() > 1,
+                "{}: palenques besides the store's",
+                town.name
+            );
+            let verts: Vec<Vec3> = world_vertices(origin, &shape, Surface::Planks)
+                .into_iter()
+                .map(|(p, _, _)| p)
+                .collect();
+            let mut claimed = 0;
+            for rail in &rails {
+                let mine: Vec<&Vec3> = verts
+                    .iter()
+                    .filter(|p| rail.expanded(0.2).contains_point(ground_of(**p)))
+                    .collect();
+                assert!(!mine.is_empty(), "{}: nothing at {rail:?}", town.name);
+                claimed += mine.len();
+                // End to end along the rail's long side, a post wide across.
+                let (lo, hi) = mine.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| {
+                    let g = ground_of(**p);
+                    let t = if rail.size().x >= rail.size().y {
+                        g.x
+                    } else {
+                        g.y
+                    };
+                    (lo.min(t), hi.max(t))
+                });
+                let long = rail.size().x.max(rail.size().y);
+                assert!((hi - lo - long).abs() < 1e-2, "{}: {}", town.name, hi - lo);
+                // The posts stand on the ground there and the bar rides at its height.
+                let c = rail.center();
+                let ground = terrain.height(c.x, c.y);
+                let top = mine.iter().fold(f32::MIN, |m, p| m.max(p.y)) - ground;
+                assert!((top - 1.15).abs() < 1e-3, "{}", town.name);
+                assert!(mine.iter().any(|p| ((p.y - ground) - 1.0).abs() < 0.06));
+            }
+            // Nothing else is drawn, and it stays light.
+            assert_eq!(claimed, verts.len(), "{}: stray timber", town.name);
+            assert!(shape.triangles() < 120 * rails.len(), "{}", town.name);
+        }
     }
 }

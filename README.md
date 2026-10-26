@@ -16,8 +16,9 @@ both ends, and its long sides are steps to walk up or off.
 
 The town is alive: townsfolk wander the streets between intersections (how
 many walks each town is set by `townsfolk` in `assets/world/towns.ron`), a
-saddled horse stands tied at a hitching rail in front of the general store,
-and the player barges through the crowd, shoving walkers aside, while walkers
+saddled horse stands tied at a hitching rail in front of the general store
+(and a city ties a few more at the palenques of its comisaría, church and
+station), and the player barges through the crowd, shoving walkers aside, while walkers
 step around the player.
 
 The day has a clock: one game day lasts 48 real minutes (30×, one game minute
@@ -291,6 +292,10 @@ Behind some open gates stand rural settlements (`pampa_core::settlement`, drawn 
 
 The towns' buildings are built with the same kit (`pampa_render::facade`: the mesh builder, the shared textured materials, walls, roofs and the Italianate dressing) as 1919 Italianate pampa fronts. Houses are whitewashed, lime-washed, painted in a muted 1919 colour (lime white, ochre, pale rose, grey-blue or light terracotta) over a beige plinth, bare brick, brick under a worn wash, or now and then old brick losing its plaster, with chamfered corner piers, pilasters between the bays, a moulded cornice and a parapet (solid or balustraded, some with urns or a small pediment) hiding a flat azotea or a corrugated roof; on the outskirts most are plainer adobe or whitewashed cottages under iron. The general store has a tall parapet behind its sign and a galería (veranda) over the sidewalk on cast-iron posts, a small town's pulpería one on timber posts; the comisaría has barred windows, a balustrade and its flagpole; the church a pedimented nave and a bell tower with a belfry of round arches under a zinc spire. Sheds and grain stores are corrugated-iron galpones, which collide at their walls (and stop the camera there) while their eaves reach their lots' edges, and the windmills and water tanks are the settlements' molino and australian tank. Brick sidewalks (veredas) with a stucco curb follow the town's size (`pampa_core::town::Paving`): along every block front in General Pico, only along the plaza's own edge in the small towns (Eduardo Castex, Monte Nievas, Caleufú), and none in a village of 3 x 3 blocks or fewer (Metileo), whose streets stay dirt. They lie a few centimeters proud on the street, like the plaza paths, and change nothing in how anyone walks. Every masonry front keeps inside its core footprint, so colliders and facade signs stay true. Each building is one mesh per surface; a town streamed in builds them on a background thread, and they are drawn within the settlements' shared visibility ranges.
 
+The streets are dirt: one mesh of compacted earth per town (`Surface::Earth`, `dry_ground_01`) with world-space UVs, so the strips meet at the crossings without a seam, topped 3 cm over the ground as before. The streets wear no wheel ruts, since people walk and ride them. Cart tracks (two ruts of `brown_mud_dry`, a few millimeters over the dirt) mark only the entrances carts use: the estancias' huellas from their gate, and a short track from the street to the door of each of the station yard's goods buildings (the 25 m shed and the grain stores), never at the station, the houses, the stores or the plazas.
+
+Besides the general store's hitching post, `pampa_core::town::Palenque` puts a hitching rail in front of each other general store, comisaría, church and station, beside the door and clear of signs, lamps, plaza furniture, the platform and the line; each rail, and each horse, is an obstacle. In a city (a Big town or bigger, General Pico) a seeded half of them, at most three, have a horse tied (a game entity, `PalenqueHorse`); the posts of towns and villages stay empty. `pampa_render::facade::palenque` builds them (chamfered posts and a round bar in weathered boards, one mesh per town, drawn within the props' range).
+
 Each plaza is laid out by core (`pampa_core::town::PlazaFurniture`) and dressed by its town's size, like the sidewalks (`pampa_render::facade::plaza`):
 - **General Pico**: brick paths with stucco curbs and an iron railing over a stucco plinth between piers.
 - **Small towns** (Eduardo Castex, Monte Nievas, Caleufú): earth paths with brick curbs and no railing.
@@ -464,7 +469,7 @@ Towns are generated from editable configs in
 in blocks, block and street widths, the railway's side and distance, plaza
 placement and a lot seed. `pampa-core` turns a `TownConfig` into a layout
 (`TownLayout::generate`), checking it and explaining what is wrong; buildings,
-signs, the street graph, the hitching post, the station stop and the arrival
+signs, the street graph, the hitching posts, the station stop and the arrival
 point all follow the generated grid. Eduardo Castex is 4 x 5 blocks of 40 m
 with 10 m streets, and since it has no central block its plaza faces the
 station across the street, as in many pampa railway towns. The game builds

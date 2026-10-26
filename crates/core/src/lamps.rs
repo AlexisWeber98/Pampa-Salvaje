@@ -748,6 +748,21 @@ mod tests {
     }
 
     #[test]
+    fn palenques_cost_a_town_no_lamp() {
+        // The lamps keep off every obstacle: a palenque on a lamp's spot
+        // would drop it. The same town without its palenques lights the same.
+        let (towns, roads, lamps) = shipped();
+        let mut with_posts = 0;
+        for (k, (town, lit)) in towns.iter().zip(&lamps).enumerate() {
+            let mut bare = town.clone();
+            bare.palenques.clear();
+            with_posts += usize::from(!town.palenques.is_empty());
+            assert_eq!(&town_lamps(&bare, k, &roads), lit, "{}", town.name);
+        }
+        assert!(with_posts > 0, "the shipped towns have palenques");
+    }
+
+    #[test]
     fn placement_is_deterministic() {
         let (_, _, a) = shipped();
         let (_, _, b) = shipped();
