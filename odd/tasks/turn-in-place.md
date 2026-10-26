@@ -63,3 +63,9 @@ and core). Uncommitted; the user commits.
 - The horse test now requires the rate to be above `RATE.0 + 0.05`. Sabotage: with the radius back at 0.2 m, it failed, then I restored 0.3 m.
 - Clippy is clean, and `cargo test --workspace` passes (138, 32, 352, 346 + 4 ignored).
 - Mouse look stays as it is: it turns the view and the head, never the steps. The user said so on 2026-10-26.
+
+## Review follow-up (R3-001)
+
+- The review of `main..24653d2` warned that the pose's `turn` came from the raw input (`input.turn * turn_rate`). The rider clamps that input and can skip a frame, so the two could disagree. `drive_player` now takes it from the heading the rider actually turned: `yaw_rate(before, after, dt)`, the short way round across the 0 rad wrap, and none without time.
+- RED: `the_poses_turn_is_the_heading_actually_turned` (a zero-length frame) failed on the input-based turn.
+- Sabotage (each failed, then restored): putting the input-based turn back; dropping the wrap in `yaw_rate` (`a_turn_across_east_is_the_short_way_round`).
