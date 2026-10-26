@@ -153,6 +153,7 @@ pub fn log_town_report(report: Res<TownReport>) {
 mod tests {
     use super::*;
     use pampa_content::{TOWNS_FILE, asset_path};
+    use pampa_core::town::Walk;
     use pampa_core::{BuildingKind, Terrain, TownSize, Townsfolk, Vec2, World};
 
     fn temp_towns(name: &str, text: &str) -> std::path::PathBuf {
@@ -430,16 +431,68 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_streets_are_two_meters_wider_and_picos_three_and_every_town_paves_by_its_tier() {
+        let loaded = load_world(&asset_path(TOWNS_FILE));
+        let widths: Vec<(String, f32)> = [
+            ("Monte Nievas", 12.0),
+            ("Eduardo Castex", 12.0),
+            ("Metileo", 12.0),
+            ("General Pico", 13.0),
+            ("Caleufú", 12.0),
+        ]
+        .iter()
+        .map(|&(name, w)| (name.to_string(), w))
+        .collect();
+        assert_eq!(loaded.towns.len(), widths.len());
+        for (town, (name, width)) in loaded.towns.iter().zip(&widths) {
+            assert_eq!(&town.name, name);
+            // The ring street round the grid is as wide as the streets.
+            let first = town
+                .streets
+                .iter()
+                .map(|s| s.size().x.min(s.size().y))
+                .fold(f32::INFINITY, f32::min);
+            assert!((first - width).abs() < 1e-3, "{name}: streets {first} m");
+            // Every town has sidewalks (3.5 m a side), village included, and
+            // they leave the carriageway 5 m, Pico 6 m.
+            assert!(!town.sidewalks().is_empty(), "{name}");
+            let carriageway = width - 7.0;
+            let wanted = if name == "General Pico" { 6.0 } else { 5.0 };
+            assert!(
+                (carriageway - wanted).abs() < 1e-3,
+                "{name}: {carriageway} m"
+            );
+            // Brick: all of Pico's, the plaza's ring of a town (4 strips), none
+            // of a village's; every strip has its curbs.
+            let brick = town
+                .sidewalks()
+                .iter()
+                .filter(|w| w.walk == Walk::Brick)
+                .count();
+            let expected = match name.as_str() {
+                "General Pico" => town.sidewalks().len(),
+                "Metileo" => 0,
+                _ => 4,
+            };
+            assert_eq!(brick, expected, "{name}");
+            assert!(
+                town.sidewalks().iter().all(|w| !w.curbs.is_empty()),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
     fn metileo_on_40_m_blocks_keeps_clear_of_its_neighbours_roads_and_settlements() {
         let loaded = load_world(&asset_path(TOWNS_FILE));
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
         const METILEO: usize = 2;
         let metileo = &loaded.towns[METILEO];
-        // Still centered on its origin, now 152 m across: three 40 m blocks
-        // and four 8 m streets.
+        // Still centered on its origin, now 168 m across: three 40 m blocks
+        // and four 12 m streets.
         let grid = metileo.grid();
         assert_eq!(grid.center(), Vec2::new(288.0, -544.0));
-        assert_eq!(grid.size(), Vec2::new(152.0, 152.0));
+        assert_eq!(grid.size(), Vec2::new(168.0, 168.0));
         // Nothing built on another: buildings, streets and the plaza.
         let built = &metileo.buildings;
         for (i, a) in built.iter().enumerate() {
@@ -605,7 +658,7 @@ mod tests {
         let path = temp_towns(
             "small",
             r#"(towns: [(name: "General Alvear", blocks: (3, 4), block_size: 34.0,
-                street_width: 9.0, railway: Some((side: South, offset: 26.0)), seed: 3)])"#,
+                street_width: 11.0, railway: Some((side: South, offset: 26.0)), seed: 3)])"#,
         );
         let loaded = load_world(&path);
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
@@ -646,7 +699,7 @@ mod tests {
                  railway: Some((side: North, offset: 24.0)), seed: 7),
                 (name: "Florencio Varela", blocks: (3, 3), block_size: 40.0, street_width: 10.0),
                 (name: "Lejos", origin: (3000.0, -2000.0), blocks: (3, 4), block_size: 36.0,
-                 street_width: 9.0, railway: Some((side: South, offset: 26.0)), seed: 11),
+                 street_width: 11.0, railway: Some((side: South, offset: 26.0)), seed: 11),
             ])"#,
         );
         let loaded = load_world(&path);

@@ -641,7 +641,7 @@ mod tests {
             name: "Chico".into(),
             blocks: (3, 3),
             block_size: 30.0,
-            street_width: 8.0,
+            street_width: 12.0,
             railway: None,
             ..TownConfig::castex()
         };

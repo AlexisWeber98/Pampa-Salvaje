@@ -172,6 +172,77 @@ pub(crate) fn yards_mesh(yards: &[Aabb], ground: &impl Fn(GroundVec2) -> f32) ->
     })
 }
 
+/// Width of an earth walk's feathered rim, in meters.
+const WALK_FEATHER: f32 = 2.0;
+/// Sample spacing over an earth walk, in meters.
+const WALK_STEP: f32 = 1.0;
+/// The most opaque an earth walk gets along its middle.
+pub(crate) const WALK_OPACITY: f32 = 0.9;
+
+/// One mesh (world space) for the beaten-earth walks of a town: each group
+/// of strips (a block's ring) the trodden dirt of [`Surface::Yard`], opaque
+/// along the middle of each strip and feathered over [`WALK_FEATHER`] meters
+/// at its edges into the ground beside it, a few centimeters over the
+/// `ground`. Within a group the alpha is the larger of the strips', so a
+/// corner shows no seam.
+pub(crate) fn walks_mesh(
+    groups: &[Vec<Aabb>],
+    ground: &impl Fn(GroundVec2) -> f32,
+) -> Option<Mesh> {
+    let tile = Surface::Yard.tile();
+    let mut decal = Decal::default();
+    for walks in groups.iter().filter(|g| !g.is_empty()) {
+        let (mut lo, mut hi) = (walks[0].min, walks[0].max);
+        for walk in walks {
+            lo = GroundVec2::new(lo.x.min(walk.min.x), lo.y.min(walk.min.y));
+            hi = GroundVec2::new(hi.x.max(walk.max.x), hi.y.max(walk.max.y));
+        }
+        let pad = GroundVec2::new(1.0, 1.0);
+        let (lo, hi) = (lo - pad, hi + pad);
+        let alpha = |p: GroundVec2| {
+            walks
+                .iter()
+                .map(|walk| {
+                    let inner = walk.expanded(-WALK_FEATHER / 2.0);
+                    let gap = |lo: f32, hi: f32, v: f32| (lo - v).max(v - hi).max(0.0);
+                    let out =
+                        gap(inner.min.x, inner.max.x, p.x).max(gap(inner.min.y, inner.max.y, p.y));
+                    (1.0 - out / WALK_FEATHER).clamp(0.0, 1.0) * WALK_OPACITY
+                })
+                .fold(0.0, f32::max)
+        };
+        let samples = |lo: f32, hi: f32| {
+            let n = (((hi - lo) / WALK_STEP).ceil() as usize).max(1);
+            (0..=n)
+                .map(|k| lo + (hi - lo) * k as f32 / n as f32)
+                .collect::<Vec<f32>>()
+        };
+        let (xs, ys) = (samples(lo.x, hi.x), samples(lo.y, hi.y));
+        let at = |x: f32, y: f32| {
+            let g = GroundVec2::new(x, y);
+            (world_from_ground(g, ground(g) + LIFT), alpha(g))
+        };
+        for j in 0..ys.len() - 1 {
+            for i in 0..xs.len() - 1 {
+                let corners = [
+                    at(xs[i], ys[j]),
+                    at(xs[i + 1], ys[j]),
+                    at(xs[i + 1], ys[j + 1]),
+                    at(xs[i], ys[j + 1]),
+                ];
+                if corners.iter().all(|c| c.1 <= 0.0) {
+                    continue;
+                }
+                decal.quad(corners, tile);
+            }
+        }
+    }
+    decal.into_mesh().map(|mut mesh| {
+        orient_up(&mut mesh);
+        mesh
+    })
+}
+
 /// Samples from `lo` to `hi` at most [`STEP`] apart, both ends included.
 fn grid(lo: f32, hi: f32) -> Vec<f32> {
     let n = (((hi - lo) / STEP).ceil() as usize).max(1);

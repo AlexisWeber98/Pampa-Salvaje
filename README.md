@@ -21,6 +21,22 @@ saddled horse stands tied at a hitching rail in front of the general store
 station), and the player barges through the crowd, shoving walkers aside, while walkers
 step around the player.
 
+The streets are shaded as in the humid pampa. A town's streets are 12 m wide
+(General Pico's 13 m, the village Metileo's too) with 3.5 m sidewalks
+leaving a 5 m carriageway (Pico's 6 m). All have curbs: brick in a city and
+round a town's plaza, and a beaten-earth walk, feathered into the grass,
+along every other block of a town and everywhere in a village. A city lines its sidewalks with trees in cazuelas
+(a small earth square rimmed in curb stucco, about 0.4 m in from the curb),
+one every 17 to 21 m, standing nearly straight under a low, full crown and
+kept off doors, corners, lamps, galerías, palenques and signs. General Pico's
+plaza has groves between its paths as well as its ring of edge trees; the
+sample very big towns have over a third fewer plaza trees than the first
+planting (the groves thinned, the rings kept). A town or village has sparse trees on the earth walk in front of some
+houses, never a row, and every settlement has yard trees behind its houses,
+30% more than first planted, with shrubs and flower beds by the walls
+(low-poly, shared meshes). The rural estancias, chacras and puestos plant a
+third more yard trees and have shrubs and flower beds by their houses too.
+
 The day has a clock: one game day lasts 48 real minutes (30×, one game minute
 every two real seconds). The sun follows it, rising in the east, crossing the
 northern sky and setting in the west, warm and low at dawn and dusk and full

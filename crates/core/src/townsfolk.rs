@@ -199,7 +199,7 @@ impl Townsfolk {
 
 /// Largest offset from a street centerline, in meters: keeps people clear of
 /// the hitching rail and anything else at the street's edge.
-const MAX_LANE: f32 = 0.9;
+const MAX_LANE: f32 = 0.7;
 /// Range of the pause at each intersection, in seconds.
 const PAUSE: (f32, f32) = (0.5, 4.0);
 /// Range of walking paces, in m/s.
@@ -684,5 +684,13 @@ mod tests {
         );
         assert!(rider.position.y < person.y, "the rider stops short");
         assert!(rider.speed.abs() < 1e-3, "and stops pushing");
+    }
+
+    #[test]
+    fn walkers_keep_inside_the_lane_the_palenques_leave_free() {
+        // 2.5 m sidewalks leave an 8 m street a 3 m carriageway: its walkers'
+        // reach stays within 1 m of the middle, where rails and horses begin.
+        const { assert!(MAX_LANE + Townsperson::COLLIDER_RADIUS <= 1.0 + 1e-4) };
+        const { assert!(MAX_LANE + Townsperson::COLLIDER_RADIUS <= crate::town::Palenque::LANE + 1e-4) };
     }
 }

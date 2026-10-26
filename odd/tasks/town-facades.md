@@ -1135,20 +1135,77 @@ Starting point (explorer, 2026-10-26):
 - [x] S5 Tests with sabotages (below), the preview, docs (this file, the
   README, the module docs).
 
-- [ ] S6a Wider sidewalks (user, 2026-10-26: real veredas were wider than
-  1.8 m). `Sidewalk::WIDTH` goes from 1.8 m to 2.5 m and `street_width`
-  stays 10 m, so the carriageway goes from 6.4 to 5 m. Re-check the
-  palenques and their horses, the galería and veranda depth, the plaza
-  paths and the layout fingerprints.
-- [ ] S6b More town trees, as in the humid pampa (user, 2026-10-26). Reuse
-  the phase 4 species.
-  - Tree pits (cazuelas) sit about 0.4 m from the curb, with crowns clear
-    of cornices, signs, galerías, lamps and palenques.
-  - General Pico: sidewalk rows every 8–10 m, groves inside the plaza
-    between the paths, and scattered trees in yards and by the station,
-    church and comisaría.
-  - Towns and villages (option B): sparse trees on the dirt in front of
-    houses and in yards, with no continuous rows.
+- [x] S6a Wider sidewalks (user, 2026-10-26: real veredas were wider than
+  1.8 m). `Sidewalk::WIDTH` went 1.8 -> 2.5 m (the street stayed 10 m, a 5 m
+  carriageway); S6c below made it 3.5 m. Re-checked: palenques and horses,
+  the galería and veranda depth, plaza paths, goods tracks (their sidewalk
+  clipping is dynamic), the townsfolk lanes and the street graph.
+- [x] R3-001 (non-blocking SUGGESTION of the approved native review of
+  ab23ba6, lineage review-9127fbfe06f3419f, one reliability lens): a goods
+  door already inside a street matched at distance 0 and the track length was
+  -0.25 m, dropped by the 1 m filter by accident. `goods_track_length`
+  (`render/src/town.rs`) now decides it in one place: `None` for a door on or
+  within 1.3 m of a street (the street is its apron, and the streets wear no
+  ruts), a track short of the street otherwise, the 8 m apron when none is in
+  reach. Unit case `a_goods_door_on_or_next_to_a_street_gets_no_track...`.
+- [x] S6b More town trees, as in the humid pampa (user, 2026-10-26, changed
+  by his playtests the same day; the numbers below are the final ones). Core
+  data and obstacles (`ShadeTree`, `TownLayout::shade_trees`,
+  `TownLayout::obstacles`):
+  - Cities (Big and VeryBig): sidewalk trees in cazuelas (0.8 m earth square
+    in a 10 cm stucco rim at curb height, its edge 0.4 m in from the curb),
+    one every 17 to 21 m (seeded), a row sharing a street species
+    (paraíso, olmo or eucalipto: the trimmed variants of
+    `render/src/tree/mesh.rs`, `street_tree`); groves between the plaza paths
+    (10 m grid, 2.5 m jitter, clear of paths, monument, crossing, benches and
+    railing); yard trees (one to three a block, a fourth at seven in ten) and
+    trees beside every church, comisaría and (but a through line's) station.
+  - Towns and villages: front trees on the dirt (65 in 100 houses roll,
+    thinned: 13 m apart, never more than two others within 30 m: no rows),
+    and yard trees (eight in ten blocks).
+  - Clearances: off doors (the lamps' 1.8 m x 4 m, and 2.4 m wider for a
+    street tree), crossings (3.5 m), store galerías (3 m deep, 2.5 m past the
+    store's sides), palenques and horses, signs, plaza paths, sidewalks of
+    plazas, the line and platforms; 4 m between trunks; yard crowns 3.6 m
+    from any building.
+  - Playtest changes (user): Pico's sidewalk trees halved (S6b), then 10%
+    fewer again (S6c); front trees 50% more; the pit crowns lower and fuller
+    (the lowest leaf about 2 to 3 m, the trunk nearly straight: 5 degree lean
+    toward the street, cap 2.3 m wide); Pico's plaza 20% fewer trees, then
+    36 in 100 fewer in all (S6d).
+- [x] S6b+ Yard vegetation +30% in every settlement (user, 2026-10-26).
+  - Towns: yard trees 99 -> 150 (towns) and 648 -> 863 (cities) in the sample
+    towns, and new shrubs and flower beds (`YardPlant`, behind the houses).
+  - Rural: `Compound::plant_more` adds 35% eucalyptus spots on a random stream
+    of its own (the layout does not move): 93 -> 124 trees in the sample
+    layout; shrubs and flower beds by the houses are drawn from the settlement
+    alone (`yard::yard_plants`, like the yard props).
+  - No shrubs or flowers existed: the procedural ones are new (`tree/plants.rs`,
+    lumpy leaf masses and a soil mound with ten octahedral blossoms, vertex
+    colours, one shared material).
+- [x] S6c Wider streets and sidewalks (user, 2026-10-26). `Sidewalk::WIDTH`
+  3.5 m. `towns.ron`: every town and village +2 m (10 -> 12, Metileo 8 ->
+  10, Caleufú 12), General Pico +3 m (10 -> 13): the carriageway stays 5 m
+  (Pico 6 m; the village has no sidewalks and keeps its whole 10 m).
+  `MIN_STREET_WIDTH` 8 -> 10 m and the `castex()` default 10 -> 12 m followed.
+
+- [x] S6d (user, 2026-10-26, after playing S6).
+  - General Pico's plaza gets another 20% fewer trees: 36 in 100 fewer than
+    the first planting in all, from the groves by seeded rolls, the rings
+    kept (the three very big samples: 90 -> 58, 75 -> 48, 90 -> 58 plaza
+    trees; before S6d 72, 60, 72).
+  - Sidewalks by tier, all 3.5 m with curbs (user; first misread as "no
+    curbs", corrected twice): Pico brick everywhere (unchanged); a town
+    (Castex, Monte Nievas, Caleufú) brick round its plaza, beaten earth
+    blending into the grass on every other block; a village (Metileo) beaten
+    earth everywhere, plaza included. `Walk::{Brick, Earth}` on `Sidewalk`;
+    an earth walk draws the same stucco curb and, for its floor, one
+    feathered `Surface::Yard` decal per block ring (`walks_mesh`, 3 to 5 cm
+    over the ground, 0.9 opaque along the middle, 2 m feather), existing
+    textures only. Metileo's streets 10 -> 12 m (a 5 m carriageway; it
+    keeps `MIN_STREET_WIDTH` 10, `road.rs` and `rail.rs` test configs
+    use it). Front trees stand on the earth walk, 2.2 m off the facade and
+    more than a meter in from the curb, no cazuelas.
 
 ### Decisions (phase 6)
 
@@ -1181,6 +1238,26 @@ Starting point (explorer, 2026-10-26):
 - The old wheel-rut design (two ruts per lane on every street) was built and
   tested first and then removed on the user's decision above.
 
+- S6c knock-ons (checked): palenque rails stand 3.7 m out of the facade, past
+  the 3.5 m walk, so with the carriageway unchanged a tied horse needs a 12 m
+  street (10 m with the 2.5 m walks of S6a): the sample 10 and 11 m
+  cities tie none, Pico (13 m) ties its share. The station's rail keeps
+  `Palenque::YARD_OUT` = 2.7 m (it stands on the yard, with no walk to
+  clear). The veranda is at most the walk wide (`clamp(1.2, 3.5)`), so the
+  galería stays over the sidewalk; the store's own rail keeps its old place at
+  the curb. Walkers: lane 0.7 m (reach 1.0 m), palenque lane 1.0 m, as
+  after S6a. Station and railway alignment, block positions inside each
+  town's footprint, rail and road clearances and the townsfolk graph are
+  unchanged in kind (all the game's shipped-world tests pass).
+- One real knock-on, a near miss: with Pico 27 m wider, the survey fences
+  (their layout reacts to every town's footprint) put one post 5 cm into
+  Laguna La Arocena's keep-out zone. Not a collision with Pico, so no stop:
+  the lagoon's middle moved 3 m east (3401 -> 3404, a 21 m real-world shift
+  at 1:7) in `towns.ron`. Say if you would rather move something else.
+- Pit trees: a 3.5 m walk puts the pit trunk 2.7 m from the facade (it was
+  1.7), so the lean went 14 -> 5 degrees and the crown cap 1.9 -> 2.3 m; the
+  crown's lowest leaf is about 2 to 3 m.
+
 ### Perf (phase 6, dev profile, triangles from the tests)
 
 | Town | Street mesh | Palenques | Tracks |
@@ -1192,6 +1269,35 @@ Starting point (explorer, 2026-10-26):
 
 Per town: two street meshes (Earth, Mud) and one palenque mesh; a city adds
 at most three animated horse figures.
+
+Trees and plants (S6b, S6c; dev profile; triangles of the built meshes,
+two entities a tree, one a plant, all from the shared kit, in the trees'
+and props' ranges; a plaza ring tree is about 800 tris, a pit tree about 820,
+a yard tree about 800, a shrub or a flower bed 320):
+
+| Town | Ring | Groves | Pits | Front | Yard | Tree tris (without the ring) | Tree entities (ring included) | Shrubs / beds (tris, entities) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| village 3 x 3, 12 m streets | 12 | 0 | 0 | 6 | 5 | 9.3k | 46 | 9 / 4 (4.2k, 13) |
+| town 5 x 4 | 12 | 0 | 0 | 22 | 15 | 30.4k | 98 | 36 / 22 (18.6k, 58) |
+| city 8 x 8 | 36 | 31 | 381 | 0 | 167 | 473k | 1230 | 142 / 76 (69.8k, 218) |
+| city 8 x 8, through line | 36 | 31 | 374 | 0 | 166 | 467k | 1214 | 142 / 78 (70.4k, 220) |
+| General Pico (13 m, through) | 36 | 39 | 387 | 0 | 153 | 473k | 1230 | 134 / 57 (61.1k, 191) |
+
+Pico before the playtests (S6b first cut, 10 m streets) had about 850 pit
+trees and 54 groves: it drew about 1.7x the pit entities and 15% more plaza
+trees. The very big sample towns lose 36 in 100 of their plaza trees (rings
+kept, groves cut: 90 -> 58, 75 -> 48, 90 -> 58; General Pico's 39 groves of
+the table above were before the last cut).
+
+Settlements in the shipped world (35% more eucalyptus spots, shrubs and
+beds drawn by the houses, 320 tris and one entity each):
+
+| Kind | Settlements | Trees (total) | Shrubs | Flower beds |
+| --- | --- | --- | --- | --- |
+| Hut | 5 | 0 | 6 | 2 |
+| Outpost | 3 | 0 | 6 | 2 |
+| Farm (chacra) | 15 | 42 | 33 | 14 |
+| Ranch (estancia) | 3 | 194 | 13 | 9 |
 
 ### Sabotage log (phase 6; each broken, seen failing, restored; sha256 equal)
 
@@ -1245,6 +1351,54 @@ compile failure plus the sabotages below.
 | same | palenque horses also `Mountable` | fails |
 | same | despawn ignores them | fails |
 | same | every post gets a horse | fails |
+| `sidewalks_are_three_and_a_half_meters_and_the_galeria_stays_over_them` | `WIDTH` 2.5 (S6a: 1.8) | fails |
+| same | veranda clamp 3.0 instead of the walk | fails |
+| `a_tied_horse_needs_a_twelve_meter_street_and_the_rails_still_fit_on_narrow_ones` | `Palenque::LANE` 1.25 | fails |
+| same | rails not past the walk (offset 1.5) | fails |
+| `townsfolk::walkers_keep_inside_the_lane_the_palenques_leave_free` | `MAX_LANE` 0.9 | fails (a compile-time assertion) |
+| `a_goods_door_on_or_next_to_a_street_gets_no_track_and_others_stop_short` (R3-001) | guard removed (`Some(length)`) | fails |
+| same | stop 0 m short of the street | fails |
+| same | minimum stretch 0 | fails |
+| same | apron 6 m | fails |
+| `only_cities_get_street_trees_and_groves_and_only_towns_front_trees` | every town a city | fails |
+| `street_trees_stand_in_their_pits_forty_centimeters_from_the_curb` | pit 0.2 m from the curb (S6b), crown cap 1.9 (S6c) | fails |
+| `a_street_row_keeps_seventeen_to_twenty_one_meters_between_its_trees` | spacing 4 m (S6b), 16-20 m (S6c) | fails |
+| `the_sample_cities_got_a_tenth_fewer_street_trees_and_the_towns_half_as_many_front_ones_again` | spacing 8-10 m / 16-20 m; front roll 25 in 100 | fails |
+| `shade_trees_keep_a_crown_off_every_building` | yard reach `YARD_CROWN - 1.5` | fails |
+| `shade_trees_stand_clear_of_doors_galerias_crossings_palenques_and_each_other` | crossing 0 m; door margin 0; galería depth 0; galería side 0; trunks 2 m apart; clearance 0.2 m; obstacles ignored | each fails |
+| same | street-tree door margin 0 (`PIT_DOOR`) | survives: the shared door margin already keeps them off the door itself |
+| `groves_stand_between_the_plaza_paths_and_yard_trees_beside_the_landmarks` | path reach 0; groves 100 m apart; no landmark trees | each fails |
+| same | grove inset 14 m | survives: the interior still holds more than the test needs |
+| `front_trees_are_few_and_far_apart_on_the_dirt_beside_the_lane` | apart 2 m; roll 95 in 100; no run rule (second clause) | each fails |
+| same | no run rule (first clause alone) | survives: the second clause covers it |
+| `shade_trees_are_seeded_and_the_seed_moves_them` | every stream ignores the seed | fails (first version compared two layouts and survived) |
+| `lamps::shade_trees_cost_a_town_no_lamp` | crossing zone off; all zones off; zones and obstacles off | survive: the trees never reach a lamp's spot, the test guards it |
+| `a_very_big_town_has_over_a_third_fewer_plaza_trees_taken_from_the_groves` | no thinning; thinning the big towns too; a third; thinning the rings; the old fifth (20 in 100); half | each fails |
+| `yards_have_thirty_percent_more_trees_and_shrubs_and_flower_beds_besides` | no fourth city tree; town roll 60; no shrubs | each fails |
+| `yard_plants_stay_behind_the_houses_off_everything_else` | obstacles ignored; gap 0; door zones ignored; plants 0.2 m apart | each fails |
+| same | streets ignored | survives: no plant reaches a street in the samples |
+| `settlements_plant_thirty_percent_more_trees_clear_of_everything` | share 0; share 0.9; extra trees on the hub | each fails |
+| render `trimmed_street_variants_have_a_trunk_bare_to_about_three_meters_and_a_full_crown` | fork 0.7 (high crown); fork 0.2; half the cards; wide limbs | each fails |
+| same | narrow limbs for the olmo alone | survives: the leaf cards set the radius |
+| render `trimmed_street_trees_keep_their_crown_over_1_9_m_and_off_the_facades` | crown narrowing off; lean toward the facade; lean 0 (S6b 8 degrees), 14 degrees (S6c); height scale 0.6; yard trees not fitted | each fails |
+| render `street_trees_are_trimmed_species_in_rows_and_yards_take_any` | aromo among the street species; pit species by spot not row | each fails |
+| render `street_and_yard_species_follow_the_seed_and_the_spot` | row key ignored; yard species fixed | each fails |
+| render `a_town_draws_its_shade_trees_from_the_shared_kit_two_entities_each` | trimmed variants unused; range [0] | each fails |
+| render `a_cazuela_is_a_curb_high_rim_round_earth_on_the_walk` | rim at paving height; earth lift 5 cm; no soil; pits in a small town | each fails |
+| render `shrubs_are_a_meter...`, `flower_beds_are_low...` | bigger shrub masses; five blossoms | each fails |
+| render `a_town_draws_its_yard_plants_one_entity_each_from_the_shared_kit` | range [2]; one variant only | each fails |
+| render settlement `a_yard_plant_that_would_land_on...` | clearance dropped; track, patio, structures, bounds each ignored | each fails (the first version, with nothing in the way in the sample ranch, survived all of them) |
+| render settlement `yard_plants_stand_by_the_houses...` | no flower beds; shrubs 9 m off the wall | each fails |
+| render settlement `settlements_draw_their_yard_plants_from_the_shared_kit` | no plants drawn | fails |
+| game `the_shipped_streets_are_two_meters_wider_and_picos_three...` | Pico 12 m; Castex 10 m | each fails |
+| `invalid_configs_are_rejected_with_the_right_error` | `MIN_STREET_WIDTH` 8 | fails |
+| `a_city_paves_every_block_in_brick_a_town_its_plaza_and_a_village_nothing_but_earth` (S6d) | cities earth; towns brick everywhere; village plaza brick; town plaza earth | each fails |
+| `front_trees_are_few_and_far_apart_on_the_dirt_beside_the_lane` | front trees 3 m out of the facade (at the curb) | fails |
+| render `the_three_tiers_pave_as_the_rule_says` | paving on earth walks; no curbs on earth walks | each fails |
+| render `a_town_paves_its_plaza_in_brick_and_every_other_block_in_earth_with_curbs` | decal in brick material | fails |
+| render `an_earth_walk_is_flush_opaque_along_its_middle_and_feathered_at_its_edges` | opacity 0.5; feather 0.2 m; decal lift 9 cm | each fails |
+| same | the floor ignoring the south curb | survives: the test measures against the same floor |
+| game `the_shipped_streets_are_two_meters_wider_and_picos_three_and_every_town_paves_by_its_tier` | Metileo 10 m | fails |
 
 ### Previews (phase 6)
 
@@ -1258,17 +1412,35 @@ the tracks and the palenques in game before committing.
 
 | Command | Result |
 | --- | --- |
-| `cargo test -p pampa-core` | 362 passed |
-| `cargo test -p pampa-render` | 377 passed, 5 ignored |
-| `cargo test -p game` | 141 passed |
+| `cargo test -p pampa-core` | 379 passed |
+| `cargo test -p pampa-render` | 392 passed, 5 ignored |
+| `cargo test -p game` | 142 passed |
 | `cargo build -p game` | ok |
 | `cargo fmt --all -- --check` | ok |
 | `cargo clippy --workspace --all-targets -- -D warnings` | ok |
 
-Layout fingerprints held (`small_towns_keep_their_layout_byte_for_byte`
-unchanged: the new `palenques` field is not in the hash). One count
-changed on purpose: `obstacles_cover_buildings_and_trees` now adds the
-palenques' rails and horses.
+(`character::rider::tests::getting_off_leaves_nothing_of_the_horse...` failed
+once in a parallel run and passed alone and on the rerun: unrelated to the
+trees, it reads a horse's pose.)
 
-Nothing committed (the user owns commits). Next step: the user eyeballs
-the streets, goods-yard tracks and palenques in game, then commits.
+S6d: two more fingerprints re-pinned (Tres, Este: their 10 and 11 m sample
+streets are 12 m now, every town having sidewalks).
+
+Layout fingerprints (`small_towns_keep_their_layout_byte_for_byte`):
+S6a/S6b re-pinned three (Cinco por cinco, Seis por cuatro, Oeste: the veranda
+stays over the 2.5 m walk, so on a street wider than 10.4 m it is 2.5 m deep,
+not 3); S6c re-pinned all eleven (Monte Nievas, both Eduardo Castex, Cinco
+por cinco, Tres, Seis por cuatro, Este, Oeste, Sin tren, Sin tren par,
+Frente): the 3.5 m walks and every sample street 2 m wider moved every grid.
+The shade trees and plants are not part of the fingerprint. Counts changed on
+purpose: `obstacles_cover_buildings_and_trees` adds the shade trees.
+The native review of ab23ba6 (S1-S5) was approved (lineage
+review-9127fbfe06f3419f, one reliability lens): its one SUGGESTION, R3-001,
+is fixed here.
+
+Files outside the allowed surfaces that had to change: `crates/render/src/minimap/mod.rs`
+(one test config, street 8 m -> 10 m, because `MIN_STREET_WIDTH` is 10 now).
+
+Nothing committed (the user owns commits). Next step: the user eyeballs the
+trees (pit crowns, front trees, groves, yards), the shrubs and flower beds
+and the wider streets in game, then commits.

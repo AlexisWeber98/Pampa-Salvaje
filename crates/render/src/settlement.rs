@@ -20,7 +20,9 @@
 //! - the tracks (huellas) and the trodden yards as decals over the drawn
 //!   ground ([`track`]);
 //! - the abandoned wagons, in some yards and on a few road verges;
-//! - the Poly Haven yard props about the barns and wells ([`yard`]).
+//! - the Poly Haven yard props about the barns and wells ([`yard`]);
+//! - yard shrubs and flower beds by the houses ([`yard::yard_plants`]),
+//!   shared meshes of the tree kit ([`crate::tree::plants`]).
 //!
 //! A structure kind with a model slot draws a third-party glTF model
 //! instead of its procedural mesh when `assets/models/third-party/<slot>/`
@@ -54,6 +56,7 @@ use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bevy::transform::TransformSystems;
 use bevy::world_serialization::{WorldAsset, WorldAssetRoot};
 use pampa_core::settlement::RoadsideWreck;
+use pampa_core::town::PlantKind;
 use pampa_core::{
     Aabb, ChunkCoord, Settlement, SettlementLayout, Side, Species, Structure, StructureKind,
     Terrain, Track, Vec2 as GroundVec2,
@@ -106,6 +109,10 @@ pub struct YardPart {
     pub prop: YardProp,
 }
 
+/// A yard shrub or flower bed, child of its chunk: its settlement.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct YardPlantPart(pub u32);
+
 /// A settlement's tracks, one decal mesh, child of its chunk.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TrackSurface(pub u32);
@@ -147,6 +154,8 @@ struct SettlementKit {
     /// How far the widest crown variant of each species reaches out from
     /// its trunk, per meter of tree height: the fade shape's radius.
     crown_reach: [f32; 2],
+    /// The yard shrubs and flower beds, the towns' ([`crate::tree`]).
+    plants: crate::tree::plants::PlantKit,
 }
 
 /// Draws the [`WorldSettlements`] chunk by chunk. Needs the
@@ -158,6 +167,7 @@ pub struct SettlementPlugin;
 impl Plugin for SettlementPlugin {
     fn build(&self, app: &mut App) {
         crate::facade::ensure_plugin(app);
+        crate::tree::ensure_plugin(app);
         app.init_resource::<WorldSettlements>()
             .init_resource::<WorldTerrain>()
             .init_resource::<WorldChunks>()
@@ -165,7 +175,11 @@ impl Plugin for SettlementPlugin {
             .init_resource::<SlotFolder>()
             .add_systems(
                 Startup,
-                (setup_kit, slots::load_slot_models, yard::load_yard_models),
+                (
+                    setup_kit.after(crate::tree::setup_trees),
+                    slots::load_slot_models,
+                    yard::load_yard_models,
+                ),
             )
             .add_systems(Update, (slots::swap_in_models, slots::spin_model_rotors))
             .add_observer(slots::dress_scene)
@@ -183,7 +197,11 @@ fn setup_kit(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    tree_kit: Option<Res<crate::tree::TreeKit>>,
 ) {
+    let Some(tree_kit) = tree_kit else {
+        return;
+    };
     let rotor = props::rotor()
         .into_meshes()
         .into_iter()
@@ -226,6 +244,7 @@ fn setup_kit(
         trees,
         crowns: [eucalyptus, poplar],
         crown_reach,
+        plants: tree_kit.plants.clone(),
     });
 }
 
@@ -249,6 +268,7 @@ enum Tag {
     Tracks(u32),
     Yards(u32),
     Prop(YardPart),
+    Plant(u32),
 }
 
 /// What a piece draws: a shared mesh, a procedural mesh just built (added
@@ -408,6 +428,27 @@ impl Painter<'_> {
             .collect();
         if let Some(mesh) = track::yards_mesh(&yards, &self.ground) {
             pieces.push(self.decal(mesh, Surface::Yard, Tag::Yards(index)));
+        }
+        for spot in yard::yard_plants(settlement) {
+            let plants = &self.kit.plants;
+            let meshes = match spot.kind {
+                PlantKind::Shrub => &plants.shrubs,
+                PlantKind::Flowers => &plants.flowers,
+            };
+            let pick = (spot.at.x.abs() * 7.0 + spot.at.y.abs() * 13.0) as usize % meshes.len();
+            pieces.push(Piece {
+                look: Look::Mesh(meshes[pick].clone(), plants.material.clone()),
+                transform: Transform::from_translation(world_from_ground(
+                    spot.at,
+                    (self.ground)(spot.at),
+                ))
+                .with_rotation(spot.turn),
+                range: Some(ranges()[1].clone()),
+                fade: None,
+                rotor: None,
+                tag: Tag::Plant(index),
+                stand_in: false,
+            });
         }
         if let Some(models) = self.yard {
             for spot in yard::yard_props(settlement) {
@@ -999,6 +1040,7 @@ fn spawn_pieces(chunk: &mut EntityCommands, pieces: Vec<Piece>, meshes: &mut Ass
                     Tag::Tracks(k) => part.insert(TrackSurface(k)),
                     Tag::Yards(k) => part.insert(YardSurface(k)),
                     Tag::Prop(prop) => part.insert(prop),
+                    Tag::Plant(k) => part.insert(YardPlantPart(k)),
                 };
             }
         });

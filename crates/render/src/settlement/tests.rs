@@ -1071,3 +1071,125 @@ fn every_set_ships_its_three_ktx2_maps_as_bc7_with_baked_mips() {
         );
     }
 }
+
+#[test]
+fn yard_plants_stand_by_the_houses_off_tracks_structures_and_the_patio() {
+    let ranch = every_kind((100.0, 100.0));
+    let spots = yard::yard_plants(&ranch);
+    assert_eq!(spots, yard::yard_plants(&ranch), "the same every time");
+    // Four houses: shrubs at every one, a second at the main houses,
+    // and flower beds at some.
+    let shrubs = spots.iter().filter(|s| s.kind == PlantKind::Shrub).count();
+    let beds = spots
+        .iter()
+        .filter(|s| s.kind == PlantKind::Flowers)
+        .count();
+    assert!((4..=8).contains(&shrubs), "{shrubs} shrubs");
+    assert!((1..=4).contains(&beds), "{beds} flower beds");
+    for spot in &spots {
+        let reach = spot.kind.radius();
+        // Not on a track (2.6 m wide), a structure, the 24 m patio, and inside.
+        for (a, b) in ranch.tracks.iter().flat_map(Track::segments) {
+            let ab = b - a;
+            let t = ((spot.at - a).dot(ab) / ab.dot(ab)).clamp(0.0, 1.0);
+            assert!(
+                spot.at.distance(a + ab * t) > 1.3 + reach,
+                "{spot:?} on a huella"
+            );
+        }
+        assert!(
+            ranch
+                .structures
+                .iter()
+                .all(|s| !s.footprint.expanded(reach).contains_point(spot.at)),
+            "{spot:?} on a structure"
+        );
+        assert!(
+            !ranch.patio.contains_point(spot.at),
+            "{spot:?} on the patio"
+        );
+        assert!(ranch.bounds.contains_point(spot.at));
+        // Near a house: within 4 m of one's wall.
+        let by_house = ranch
+            .structures
+            .iter()
+            .filter(|s| s.kind.is_house())
+            .any(|s| s.footprint.closest_point(spot.at).distance(spot.at) < 4.0);
+        assert!(by_house, "{spot:?} far from every house");
+    }
+}
+
+#[test]
+fn settlements_draw_their_yard_plants_from_the_shared_kit() {
+    let mut app = app(GroundVec2::new(100.0, 100.0));
+    for _ in 0..3 {
+        app.update();
+    }
+    land_all(&mut app);
+    let want: usize = layout()
+        .settlements
+        .iter()
+        .map(|s| yard::yard_plants(s).len())
+        .sum();
+    assert!(want > 8, "{want}");
+    let kit = app
+        .world()
+        .resource::<crate::tree::TreeKit>()
+        .plants
+        .clone();
+    let mut q = app
+        .world_mut()
+        .query::<(&Mesh3d, &MeshMaterial3d<StandardMaterial>, &YardPlantPart)>();
+    let mut drawn = 0;
+    for (mesh, material, _) in q.iter(app.world()) {
+        drawn += 1;
+        assert!(
+            kit.shrubs
+                .iter()
+                .chain(&kit.flowers)
+                .any(|h| h.id() == mesh.id())
+        );
+        assert_eq!(material.id(), kit.material.id());
+    }
+    // Only the chunk in focus is laid; both settlements when focus is near.
+    assert!(drawn > 0 && drawn <= want, "{drawn} of {want}");
+}
+
+#[test]
+fn a_yard_plant_that_would_land_on_a_track_a_structure_the_patio_or_outside_is_left_out() {
+    let ranch = every_kind((100.0, 100.0));
+    let spots = yard::yard_plants(&ranch);
+    let spot = spots[0].at;
+    let left_out =
+        |settlement: &Settlement| !yard::yard_plants(settlement).iter().any(|s| s.at == spot);
+    assert!(!left_out(&ranch));
+    // A huella through it.
+    let mut track = ranch.clone();
+    track.tracks.push(Track {
+        points: vec![
+            spot - GroundVec2::new(5.0, 0.0),
+            spot + GroundVec2::new(5.0, 0.0),
+        ],
+    });
+    assert!(left_out(&track), "a plant on a track");
+    // A prop standing on it.
+    let mut built = ranch.clone();
+    built.structures.push(structure(
+        StructureKind::Cart,
+        (spot.x, spot.y),
+        (2.0, 2.0),
+        1.0,
+        Side::North,
+    ));
+    assert!(left_out(&built), "a plant under a structure");
+    // The patio grown over it, and the settlement shrunk away from it.
+    let mut patio = ranch.clone();
+    patio.patio = Aabb::from_center_size(spot, GroundVec2::new(8.0, 8.0));
+    assert!(left_out(&patio), "a plant on the patio");
+    let mut outside = ranch.clone();
+    outside.bounds = Aabb::from_center_size(
+        spot + GroundVec2::new(500.0, 0.0),
+        GroundVec2::new(10.0, 10.0),
+    );
+    assert!(left_out(&outside), "a plant outside the settlement");
+}

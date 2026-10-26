@@ -5,6 +5,16 @@
 //! into footprints. Render decides walls, roofs and colors per
 //! [`BuildingKind`]; logic only needs footprints for collision and the
 //! leveled ground.
+//!
+//! Sidewalks are [`Sidewalk::WIDTH`] (3.5 m) strips along the block fronts
+//! of a city and round the plaza of a town, inside the streets, so a street
+//! of `street_width` leaves a carriageway of `street_width - 7` where both
+//! its sides are paved (at least [`TownConfig::MIN_STREET_WIDTH`] - 7 m).
+//! Trees are core data and obstacles: the plazas' rings
+//! ([`TownLayout::trees`]) and the [`ShadeTree`]s (sidewalk trees in their
+//! cazuelas, groves between the plaza paths, front trees on the dirt, yard
+//! and landmark trees), with the [`YardPlant`]s (shrubs and flower beds) of
+//! the yards as scenery.
 
 use std::fmt;
 
@@ -111,8 +121,17 @@ impl Paving {
     }
 }
 
-/// One straight strip of brick sidewalk, lying on the street along a block
-/// or plaza edge. It is drawn on the ground like the streets and the plaza
+/// What a sidewalk is made of: brick in a city, and round a town's plaza;
+/// a beaten-earth walk that blends into the grass elsewhere, with its curbs
+/// all the same (user, 2026-10-26).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Walk {
+    Brick,
+    Earth,
+}
+
+/// One straight strip of sidewalk (brick or beaten earth, [`Walk`]), lying
+/// on the street along a block or plaza edge. It is drawn on the ground like the streets and the plaza
 /// paths, a few centimeters proud: people walk over it at the ground's
 /// height, so it changes nothing in how anyone moves.
 #[derive(Debug, Clone, PartialEq)]
@@ -120,16 +139,17 @@ pub struct Sidewalk {
     pub area: Aabb,
     /// Its edges on the roadway, each with a curb.
     pub curbs: Vec<Side>,
+    pub walk: Walk,
 }
 
 impl Sidewalk {
     /// Width of a sidewalk, curb included, in meters.
-    pub const WIDTH: f32 = 1.8;
+    pub const WIDTH: f32 = 3.5;
 
     /// The strips of a sidewalk all round `area`: the north and south ones
     /// reach round the corners, curbed at their ends; the east and west
     /// ones run between them.
-    fn ring(area: Aabb) -> [Sidewalk; 4] {
+    fn ring(area: Aabb, walk: Walk) -> [Sidewalk; 4] {
         let w = Self::WIDTH;
         let (min, max) = (area.min, area.max);
         let ends = |side| vec![side, Side::East, Side::West];
@@ -137,38 +157,48 @@ impl Sidewalk {
             Sidewalk {
                 area: Aabb::new(Vec2::new(min.x - w, min.y - w), Vec2::new(max.x + w, min.y)),
                 curbs: ends(Side::South),
+                walk,
             },
             Sidewalk {
                 area: Aabb::new(Vec2::new(min.x - w, max.y), Vec2::new(max.x + w, max.y + w)),
                 curbs: ends(Side::North),
+                walk,
             },
             Sidewalk {
                 area: Aabb::new(Vec2::new(min.x - w, min.y), Vec2::new(min.x, max.y)),
                 curbs: vec![Side::West],
+                walk,
             },
             Sidewalk {
                 area: Aabb::new(Vec2::new(max.x, min.y), Vec2::new(max.x + w, max.y)),
                 curbs: vec![Side::East],
+                walk,
             },
         ]
     }
 }
 
 /// The sidewalks of a town paved as `paving`, on `grid` round its main
-/// `plaza` (the blocks it takes).
+/// `plaza` (the blocks it takes): a city's are all brick; a town's plaza
+/// ring is brick and its other blocks have a walk of beaten earth; a
+/// village's are all beaten earth. Every one has its curbs.
 fn sidewalks(grid: &Grid, plaza: PlazaBlocks, paving: Paving) -> Vec<Sidewalk> {
     let area = grid.span(plaza);
     let blocks = (0..grid.rows).flat_map(|j| (0..grid.cols).map(move |i| (i, j)));
-    match paving {
-        Paving::None => Vec::new(),
-        Paving::Everywhere => blocks
-            .filter(|&b| !plaza.contains(b))
-            .map(|(i, j)| grid.block(i, j))
-            .chain([area])
-            .flat_map(Sidewalk::ring)
-            .collect(),
-        Paving::Plaza => Sidewalk::ring(area).into(),
-    }
+    let walk = match paving {
+        Paving::Everywhere => Walk::Brick,
+        Paving::Plaza | Paving::None => Walk::Earth,
+    };
+    // A village is too small for brick, even round its plaza.
+    let plaza_walk = match paving {
+        Paving::None => Walk::Earth,
+        Paving::Plaza | Paving::Everywhere => Walk::Brick,
+    };
+    blocks
+        .filter(|&b| !plaza.contains(b))
+        .flat_map(|(i, j)| Sidewalk::ring(grid.block(i, j), walk))
+        .chain(Sidewalk::ring(area, plaza_walk))
+        .collect()
 }
 
 /// Whether `a` and `b` share an area, not just an edge or a corner.
@@ -343,7 +373,10 @@ impl Palenque {
     pub const CROSSING_MARGIN: f32 = 1.0;
     /// How far from the street's middle line a palenque stays: the lane the
     /// walkers use.
-    pub const LANE: f32 = 1.25;
+    pub const LANE: f32 = 1.0;
+    /// How far out of its facade the station's palenque stands on the yard,
+    /// meters.
+    pub const YARD_OUT: f32 = 2.7;
 
     /// How many of `posts` palenques tie a horse in a city: half of them, at
     /// most [`Self::MAX_HORSES`].
@@ -354,6 +387,128 @@ impl Palenque {
     /// Its static obstacles: the rail, and the horse when there is one.
     pub fn obstacles(&self) -> impl Iterator<Item = Aabb> + '_ {
         std::iter::once(self.rail).chain(self.horse.map(|h| h.footprint))
+    }
+}
+
+/// Where a [`ShadeTree`] stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ShadeKind {
+    /// A street tree on a city's sidewalk, in its cazuela (a small earth
+    /// square rimmed in the paving), with a trimmed crown.
+    Pit,
+    /// A tree on the dirt in front of a house of a town or village, with a
+    /// trimmed crown.
+    Front,
+    /// A tree in a city's plaza, in the green between its paths.
+    Grove,
+    /// A tree in a yard or beside a landmark, with a free crown.
+    Yard,
+}
+
+/// A tree outside the ring of [`TownLayout::trees`]: the street trees, the
+/// plaza groves and the yard trees. Its trunk is an obstacle like a plaza
+/// tree's ([`TownLayout::obstacles`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShadeTree {
+    /// The middle of the trunk.
+    pub at: Vec2,
+    pub kind: ShadeKind,
+    /// The widest its crown may reach from the trunk, in meters: render
+    /// narrows the tree to fit it, and core keeps every building that far
+    /// (and a margin) from the trunk.
+    pub crown: f32,
+    /// The unit ground vector the trunk and crown lean along, toward the
+    /// street a trimmed tree stands beside; zero for the others.
+    pub toward: Vec2,
+    /// The sidewalk strip of a [`ShadeKind::Pit`] tree: a row shares a species.
+    pub row: u32,
+}
+
+impl ShadeTree {
+    /// Side of a cazuela, rim included, in meters.
+    pub const PIT_SIDE: f32 = 0.8;
+    /// Gap between a cazuela and the curb, in meters.
+    pub const PIT_FROM_CURB: f32 = 0.4;
+    /// Crown of a pit tree: a 2.5 m sidewalk leaves its trunk 1.7 m off the
+    /// facade, so the crown stays narrow (trimmed) and leans over the street.
+    pub const PIT_CROWN: f32 = 2.3;
+    /// How far a front tree stands from the facade, in meters.
+    pub const FRONT_OUT: f32 = 2.2;
+    /// Crown of a tree on the dirt in front of a house.
+    pub const FRONT_CROWN: f32 = 1.9;
+    /// Least gap between two trees on the dirt in front of houses, meters.
+    pub const FRONT_APART: f32 = 13.0;
+    /// A town has no rows of front trees: within this reach of any one
+    /// stand at most two others, meters.
+    pub const FRONT_RUN: f32 = 30.0;
+    /// Crown of a yard tree.
+    pub const YARD_CROWN: f32 = 3.0;
+    /// Gap kept between a yard crown and any building, meters.
+    pub const BUILDING_GAP: f32 = 0.6;
+    /// Gap between a street tree and the next one along its sidewalk, meters
+    /// (min, max).
+    pub const SPACING: (f32, f32) = (17.0, 21.2);
+    /// Least gap between two trunks, whatever they are, in meters.
+    pub const APART: f32 = 4.0;
+    /// How far a trimmed tree leans toward the street, in degrees.
+    pub const LEAN: f32 = 5.0;
+    /// Crown of a plaza grove tree: the species' own, uncapped.
+    pub const GROVE_CROWN: f32 = 6.0;
+    /// How far a grove stays in from its plaza's edge, meters.
+    const GROVE_INSET: f32 = 4.0;
+    /// Gap between the spots a grove is laid out on, meters.
+    const GROVE_STEP: f32 = 10.0;
+    /// How far each grove spot strays, meters.
+    const GROVE_JITTER: f32 = 2.5;
+    /// How far from a block's edge a yard tree stands at least, meters.
+    const YARD_INSET: f32 = 3.0;
+    /// How far past a landmark's walls its trees may stand, meters.
+    const LANDMARK_REACH: f32 = 7.0;
+
+    /// The ground a trunk at `at` takes.
+    fn trunk(at: Vec2) -> Aabb {
+        let side = 2.0 * TREE_TRUNK_RADIUS;
+        Aabb::from_center_size(at, Vec2::new(side, side))
+    }
+
+    /// The tree's trunk as the obstacle people and horses bump into.
+    pub fn obstacle(&self) -> Aabb {
+        Self::trunk(self.at)
+    }
+}
+
+/// What a [`YardPlant`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PlantKind {
+    /// A low shrub against a wall.
+    Shrub,
+    /// A small flower bed.
+    Flowers,
+}
+
+impl PlantKind {
+    /// Half the side of the ground it takes, in meters.
+    pub fn radius(self) -> f32 {
+        match self {
+            Self::Shrub => 0.6,
+            Self::Flowers => 0.7,
+        }
+    }
+}
+
+/// A shrub or a flower bed in a house's yard: scenery with no obstacle,
+/// kept off the streets, doors, other buildings and trunks.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct YardPlant {
+    pub at: Vec2,
+    pub kind: PlantKind,
+}
+
+impl YardPlant {
+    /// The ground it covers.
+    pub fn area(&self) -> Aabb {
+        let side = 2.0 * self.kind.radius();
+        Aabb::from_center_size(self.at, Vec2::new(side, side))
     }
 }
 
@@ -436,15 +591,17 @@ impl TownConfig {
     pub const MIN_BLOCKS: usize = 3;
     /// Smallest block that still fits the landmarks and lots, in meters.
     pub const MIN_BLOCK_SIZE: f32 = 30.0;
-    /// Narrowest street that leaves room for a tied horse and passers-by.
-    pub const MIN_STREET_WIDTH: f32 = 8.0;
+    /// Narrowest street that leaves a 3 m carriageway between two 3.5 m
+    /// sidewalks, room for passers-by (the shipped towns are 12 m or wider,
+    /// a 5 m carriageway; a tied horse needs 12 m).
+    pub const MIN_STREET_WIDTH: f32 = 10.0;
     /// Closest the track may run to the grid: the station yard needs it.
     pub const MIN_RAILWAY_OFFSET: f32 = 24.0;
     /// Most people a town may ask for in `townsfolk`.
     pub const MAX_TOWNSFOLK: usize = 200;
 
     /// Eduardo Castex-inspired town: 4 x 5 blocks of 40 m (4 east-west, 5
-    /// north-south), 10 m streets, railway 24 m north of the grid, at the
+    /// north-south), 12 m streets, railway 24 m north of the grid, at the
     /// world center. With no central block, `Auto` puts the plaza in the top
     /// row facing the station. The built-in fallback when
     /// `assets/world/towns.ron` cannot be used; the shipped Eduardo Castex
@@ -455,7 +612,7 @@ impl TownConfig {
             origin: Vec2::ZERO,
             blocks: (4, 5),
             block_size: 40.0,
-            street_width: 10.0,
+            street_width: 12.0,
             railway: Some(RailwayConfig {
                 side: Side::North,
                 offset: 24.0,
@@ -686,8 +843,14 @@ pub struct TownLayout {
     pub station_plaza: Option<Aabb>,
     /// The town's size tier.
     pub size: TownSize,
-    /// Trunk positions of every plaza's trees.
+    /// Trunk positions of every plaza's ring trees.
     pub trees: Vec<Vec2>,
+    /// The other trees: sidewalk and dirt street trees, plaza groves, yard
+    /// and landmark trees ([`ShadeTree`]).
+    pub shade_trees: Vec<ShadeTree>,
+    /// The shrubs and flower beds of the yards behind the houses
+    /// ([`YardPlant`]).
+    pub yard_plants: Vec<YardPlant>,
     pub railway: Option<Railway>,
     pub buildings: Vec<Building>,
     /// Hitching rail in front of the (first) general store.
@@ -1029,6 +1192,8 @@ impl TownLayout {
                         .flat_map(|s| plaza_trees(s.area, s.tree_steps)),
                 )
                 .collect(),
+            shade_trees: Vec::new(),
+            yard_plants: Vec::new(),
             railway,
             buildings,
             hitching_post,
@@ -1043,6 +1208,8 @@ impl TownLayout {
             sidewalks: sidewalks(&grid, main, Paving::of(config.blocks)),
         };
         town.palenques = town.place_palenques();
+        town.shade_trees = town.place_shade_trees(&grid, main);
+        town.yard_plants = town.place_yard_plants();
         Ok(town)
     }
 
@@ -1169,8 +1336,9 @@ impl TownLayout {
 
     /// Static collision footprints: every building's [`Building::collider`]
     /// but the platform's (a floor people walk on, see [`Self::floors`]),
-    /// every tree trunk, the hitching rail with its horse, the palenques with
-    /// their horses, free-standing signs, and each plaza's monument, benches and railing
+    /// every tree trunk (the plaza rings' and the [`ShadeTree`]s'), the
+    /// hitching rail with its horse, the palenques with their horses,
+    /// free-standing signs, and each plaza's monument, benches and railing
     /// ([`PlazaFurniture::obstacles`]).
     pub fn obstacles(&self) -> Vec<Aabb> {
         let trunk = Vec2::new(2.0 * TREE_TRUNK_RADIUS, 2.0 * TREE_TRUNK_RADIUS);
@@ -1179,6 +1347,7 @@ impl TownLayout {
             .filter(|b| b.kind != BuildingKind::Platform)
             .map(Building::collider)
             .chain(self.trees.iter().map(|&p| Aabb::from_center_size(p, trunk)))
+            .chain(self.shade_trees.iter().map(ShadeTree::obstacle))
             .chain([self.hitching_post.rail, self.hitching_post.horse.footprint])
             .chain(self.palenques.iter().flat_map(Palenque::obstacles))
             .chain(self.sign_obstacles())
@@ -2318,7 +2487,7 @@ fn railway_line(grid: Aabb, side: Side, offset: f32, along_half: f32) -> Railway
 /// Depth of the general store's veranda: 3 m on wide streets, shallower on
 /// narrow ones so the tied horse stays clear of the walkers down the middle.
 fn veranda_depth(street: f32) -> f32 {
-    (street / 2.0 - 2.7).clamp(1.2, 3.0)
+    (street / 2.0 - 2.7).clamp(1.2, Sidewalk::WIDTH)
 }
 
 /// A rail on the street side of `store`, past its `veranda`, with a horse
@@ -2403,36 +2572,9 @@ impl TownLayout {
         open.extend(self.canopies().iter().map(|c| c.footprint));
         open.extend(self.rail_corridor());
         // The corner lamps stand in the street crossings.
-        let (north_south, east_west): (Vec<&Aabb>, Vec<&Aabb>) =
-            self.streets.iter().partition(|s| s.size().y > s.size().x);
-        for x in &north_south {
-            for y in &east_west {
-                if x.intersects(y) {
-                    let crossing =
-                        Aabb::new(Vec2::new(x.min.x, y.min.y), Vec2::new(x.max.x, y.max.y));
-                    open.push(crossing.expanded(Palenque::CROSSING_MARGIN));
-                }
-            }
-        }
+        open.extend(self.crossings(Palenque::CROSSING_MARGIN));
         // The ground in front of every door, as the lamps keep it clear.
-        for b in self
-            .buildings
-            .iter()
-            .filter(|b| b.kind != BuildingKind::Platform)
-        {
-            let n = crate::places::side_normal(b.front);
-            let side = Vec2::new(-n.y, n.x);
-            let half = b.footprint.size() * 0.5;
-            let facade = b.footprint.center() + n * (n.x.abs() * half.x + n.y.abs() * half.y);
-            let (a, z) = (
-                facade + side * StreetLamps::DOOR_HALF_WIDTH,
-                facade + n * StreetLamps::DOOR_REACH - side * StreetLamps::DOOR_HALF_WIDTH,
-            );
-            open.push(Aabb::new(
-                Vec2::new(a.x.min(z.x), a.y.min(z.y)),
-                Vec2::new(a.x.max(z.x), a.y.max(z.y)),
-            ));
-        }
+        open.extend(self.door_zones(0.0));
         // Past the sidewalk, and past the store's veranda if the street is wide.
         let offset = (self.hitching_post.veranda + 0.2).max(Sidewalk::WIDTH + 0.2);
         let mut posts: Vec<Palenque> = Vec::new();
@@ -2468,7 +2610,13 @@ impl TownLayout {
             };
             'found: for &with_horse in passes {
                 for &lateral in &laterals {
-                    let (rail, horse) = tied_post(b, offset, lateral, Palenque::LENGTH);
+                    // The station's post stands on its yard, with no sidewalk to clear.
+                    let out = if b.kind == BuildingKind::Station {
+                        Palenque::YARD_OUT
+                    } else {
+                        offset
+                    };
+                    let (rail, horse) = tied_post(b, out, lateral, Palenque::LENGTH);
                     let spot = if with_horse {
                         Aabb::new(
                             Vec2::new(
@@ -2524,16 +2672,7 @@ impl TownLayout {
         let on_ground = if kind == BuildingKind::Station {
             self.extent.contains(spot)
         } else {
-            self.streets.iter().any(|street| {
-                let across = if street.size().x > street.size().y {
-                    Vec2::new(0.0, 1.0)
-                } else {
-                    Vec2::new(1.0, 0.0)
-                };
-                let middle = street.center().dot(across);
-                let (lo, hi) = (spot.min.dot(across) - middle, spot.max.dot(across) - middle);
-                street.contains(spot) && lo * hi > 0.0 && lo.abs().min(hi.abs()) >= Palenque::LANE
-            })
+            self.on_street_off_lane(spot, Palenque::LANE)
         };
         // The station stands in a through line's band; nothing else does.
         let off_band =
@@ -2544,6 +2683,503 @@ impl TownLayout {
                 .iter()
                 .all(|o| !o.intersects(&spot.expanded(Palenque::CLEARANCE)))
             && open.iter().all(|o| !o.intersects(spot))
+    }
+}
+
+impl TownLayout {
+    /// Whether `spot` lies inside one street strip and at least `lane` meters
+    /// off its middle line, on one side of it.
+    fn on_street_off_lane(&self, spot: &Aabb, lane: f32) -> bool {
+        self.streets.iter().any(|street| {
+            let across = if street.size().x > street.size().y {
+                Vec2::new(0.0, 1.0)
+            } else {
+                Vec2::new(1.0, 0.0)
+            };
+            let middle = street.center().dot(across);
+            let (lo, hi) = (spot.min.dot(across) - middle, spot.max.dot(across) - middle);
+            street.contains(spot) && lo * hi > 0.0 && lo.abs().min(hi.abs()) >= lane
+        })
+    }
+
+    /// The street crossings, where a north-south street meets an east-west
+    /// one, each grown by `margin` meters.
+    fn crossings(&self, margin: f32) -> Vec<Aabb> {
+        let (north_south, east_west): (Vec<&Aabb>, Vec<&Aabb>) =
+            self.streets.iter().partition(|s| s.size().y > s.size().x);
+        let mut out = Vec::new();
+        for x in &north_south {
+            for y in &east_west {
+                if x.intersects(y) {
+                    let crossing =
+                        Aabb::new(Vec2::new(x.min.x, y.min.y), Vec2::new(x.max.x, y.max.y));
+                    out.push(crossing.expanded(margin));
+                }
+            }
+        }
+        out
+    }
+
+    /// The ground in front of every door (but the platform's), as the lamps
+    /// keep it clear, each strip `extra` meters wider on both sides.
+    fn door_zones(&self, extra: f32) -> Vec<Aabb> {
+        let reach = StreetLamps::DOOR_HALF_WIDTH + extra;
+        self.buildings
+            .iter()
+            .filter(|b| b.kind != BuildingKind::Platform)
+            .map(|b| {
+                let n = crate::places::side_normal(b.front);
+                let side = Vec2::new(-n.y, n.x);
+                let half = b.footprint.size() * 0.5;
+                let facade = b.footprint.center() + n * (n.x.abs() * half.x + n.y.abs() * half.y);
+                let (a, z) = (
+                    facade + side * reach,
+                    facade + n * StreetLamps::DOOR_REACH - side * reach,
+                );
+                Aabb::new(
+                    Vec2::new(a.x.min(z.x), a.y.min(z.y)),
+                    Vec2::new(a.x.max(z.x), a.y.max(z.y)),
+                )
+            })
+            .collect()
+    }
+}
+
+/// What the trees of [`TownLayout::place_shade_trees`] keep off, and where
+/// they stand so far.
+struct ShadeGround {
+    /// Obstacles a trunk keeps [`ShadeGround::CLEARANCE`] from.
+    solid: Vec<Aabb>,
+    /// Ground no trunk stands on: crossings, doors, galerías, the line.
+    zones: Vec<Aabb>,
+    /// The ground in front of every door, wider: no street tree stands on it.
+    pit_doors: Vec<Aabb>,
+    /// The ring round every plaza and its sidewalk: no trunk but a grove's.
+    plazas: Vec<Aabb>,
+    /// Every building footprint (the platform's excluded).
+    buildings: Vec<Aabb>,
+    /// Every trunk placed so far, the plaza rings' included.
+    taken: Vec<Vec2>,
+}
+
+impl ShadeGround {
+    /// Gap between a trunk and any obstacle, in meters.
+    const CLEARANCE: f32 = 1.0;
+    /// Gap kept from a crossing, where the corner lamps stand, meters.
+    const CROSSING: f32 = 3.5;
+    /// Extra width kept beside a door, meters.
+    const DOOR: f32 = 1.8;
+    /// Extra width kept beside a door by a street tree, whose crown is
+    /// wider, meters.
+    const PIT_DOOR: f32 = 2.4;
+    /// Depth of a store's galería zone, meters: the walk and its veranda.
+    const GALLERY: f32 = 3.0;
+    /// Extra width kept beside a store's galería, meters.
+    const GALLERY_SIDE: f32 = 2.5;
+    /// Gap kept between a yard plant and any obstacle, meters.
+    const PLANT_GAP: f32 = 0.4;
+
+    fn new(town: &TownLayout) -> Self {
+        let mut zones = town.crossings(Self::CROSSING);
+        zones.extend(town.door_zones(Self::DOOR));
+        for b in town
+            .buildings
+            .iter()
+            .filter(|b| b.kind == BuildingKind::GeneralStore)
+        {
+            let n = crate::places::side_normal(b.front);
+            let side = Vec2::new(-n.y, n.x);
+            let half = b.footprint.size() * 0.5;
+            let facade = b.footprint.center() + n * (n.x.abs() * half.x + n.y.abs() * half.y);
+            let wide = side.x.abs() * half.x + side.y.abs() * half.y + Self::GALLERY_SIDE;
+            let (a, z) = (
+                facade + side * wide,
+                facade + n * Self::GALLERY - side * wide,
+            );
+            zones.push(Aabb::new(
+                Vec2::new(a.x.min(z.x), a.y.min(z.y)),
+                Vec2::new(a.x.max(z.x), a.y.max(z.y)),
+            ));
+        }
+        for floor in town.floors() {
+            zones.push(floor.footprint.expanded(Self::CLEARANCE));
+            zones.extend(floor.ramps().map(|r| r.expanded(Self::CLEARANCE)));
+        }
+        zones.extend(
+            town.canopies()
+                .iter()
+                .map(|c| c.footprint.expanded(Self::CLEARANCE)),
+        );
+        zones.extend(town.rail_corridor().map(|c| c.expanded(Self::CLEARANCE)));
+        zones.extend(town.rail_band().map(|b| b.expanded(Self::CLEARANCE)));
+        Self {
+            solid: town.obstacles(),
+            zones,
+            pit_doors: town.door_zones(Self::PIT_DOOR),
+            plazas: town
+                .plazas()
+                .map(|p| p.expanded(Sidewalk::WIDTH + 0.3))
+                .collect(),
+            buildings: town
+                .buildings
+                .iter()
+                .filter(|b| b.kind != BuildingKind::Platform)
+                .map(|b| b.footprint)
+                .collect(),
+            taken: town.trees.clone(),
+        }
+    }
+
+    /// Whether a trunk can stand at `p`: clear of the obstacles and the
+    /// zones (and the plazas unless `in_plaza`), and [`ShadeTree::APART`]
+    /// from every other trunk.
+    fn fits(&self, p: Vec2, in_plaza: bool) -> bool {
+        let trunk = ShadeTree::trunk(p);
+        let spot = trunk.expanded(Self::CLEARANCE);
+        self.solid.iter().all(|o| !o.intersects(&spot))
+            && self.zones.iter().all(|z| !z.intersects(&trunk))
+            && (in_plaza || self.plazas.iter().all(|z| !z.intersects(&trunk)))
+            && self.taken.iter().all(|t| t.distance(p) >= ShadeTree::APART)
+    }
+
+    /// The distance from `p` to the nearest building.
+    fn building_gap(&self, p: Vec2) -> f32 {
+        self.buildings
+            .iter()
+            .map(|b| b.closest_point(p).distance(p))
+            .fold(f32::INFINITY, f32::min)
+    }
+
+    fn plant(&mut self, out: &mut Vec<ShadeTree>, tree: ShadeTree) {
+        self.taken.push(tree.at);
+        self.solid.push(tree.obstacle());
+        out.push(tree);
+    }
+}
+
+impl TownLayout {
+    /// The trees outside the plaza rings, deterministic from the town's seed:
+    ///
+    /// - a city's sidewalk trees in their cazuelas, a trimmed crown every 8
+    ///   to 10 m, 0.4 m in from the curb, off the doors, galerías, crossings,
+    ///   palenques and signs ([`ShadeKind::Pit`]);
+    /// - groves between the paths of a city's plazas ([`ShadeKind::Grove`]);
+    /// - a city's yard trees and the ones by its church, comisarías and
+    ///   station, and a town's sparse ones behind its houses
+    ///   ([`ShadeKind::Yard`], never within a crown's reach of a building);
+    /// - a town's sparse trees on the dirt in front of some houses
+    ///   ([`ShadeKind::Front`]).
+    ///
+    /// Every trunk keeps [`ShadeTree::APART`] from the others.
+    fn place_shade_trees(&self, grid: &Grid, main: PlazaBlocks) -> Vec<ShadeTree> {
+        let city = self.size != TownSize::Small;
+        let mut ground = ShadeGround::new(self);
+        let mut out: Vec<ShadeTree> = Vec::new();
+        let trunk = ShadeTree::trunk;
+
+        // Sidewalk trees, along each strip's curb.
+        if city {
+            let inset = ShadeTree::PIT_FROM_CURB + ShadeTree::PIT_SIDE / 2.0;
+            for (row, walk) in self.sidewalks.iter().enumerate() {
+                let Some(&curb) = walk.curbs.first() else {
+                    continue;
+                };
+                let out_of = crate::places::side_normal(curb);
+                let a = walk.area;
+                let level = out_of.x.abs() < 0.5;
+                let (lo, hi) = if level {
+                    (a.min.x, a.max.x)
+                } else {
+                    (a.min.y, a.max.y)
+                };
+                let edge = match curb {
+                    Side::North => a.max.y,
+                    Side::South => a.min.y,
+                    Side::East => a.max.x,
+                    Side::West => a.min.x,
+                };
+                let at = |t: f32| {
+                    if level {
+                        Vec2::new(t, edge - out_of.y * inset)
+                    } else {
+                        Vec2::new(edge - out_of.x * inset, t)
+                    }
+                };
+                let mut rng = Rng::new(self.seed ^ 0x57ee, row as u32);
+                let (near, far) = ShadeTree::SPACING;
+                let mut t = lo + rng.range(0.0, far);
+                let mut last = f32::NEG_INFINITY;
+                while t < hi {
+                    // The seeded spot, or one a little further or nearer (never
+                    // nearer than the least spacing to the last tree).
+                    let found = [0.0, 1.5, -1.5, 3.0, -3.0]
+                        .iter()
+                        .map(|d| t + d)
+                        .find(|&t| {
+                            (lo..=hi).contains(&t)
+                                && t - last >= near
+                                && ground.fits(at(t), false)
+                                && ground
+                                    .pit_doors
+                                    .iter()
+                                    .all(|d| !d.intersects(&ShadeTree::trunk(at(t))))
+                        });
+                    if let Some(found) = found {
+                        t = found;
+                        last = t;
+                        let tree = ShadeTree {
+                            at: at(t),
+                            kind: ShadeKind::Pit,
+                            crown: ShadeTree::PIT_CROWN,
+                            toward: out_of,
+                            row: row as u32,
+                        };
+                        ground.plant(&mut out, tree);
+                    }
+                    t += rng.range(near, far);
+                }
+            }
+        }
+
+        // Groves in the green between a city's plaza paths.
+        if city {
+            let reach = TREE_TRUNK_RADIUS + PLAZA_PATH_CLEARANCE + 0.5;
+            for (k, plaza) in self.plazas().enumerate() {
+                let keep_off: Vec<Aabb> = plaza_paths(plaza)
+                    .into_iter()
+                    .chain([plaza_monument(plaza), plaza_crossing(plaza)])
+                    .collect();
+                let bed = plaza.expanded(-ShadeTree::GROVE_INSET);
+                let mut rng = Rng::new(self.seed ^ 0x6a0e, k as u32);
+                let cols = (bed.size().x / ShadeTree::GROVE_STEP).floor() as usize + 1;
+                let rows = (bed.size().y / ShadeTree::GROVE_STEP).floor() as usize + 1;
+                for j in 0..rows {
+                    for i in 0..cols {
+                        let jitter = Vec2::new(
+                            rng.range(-ShadeTree::GROVE_JITTER, ShadeTree::GROVE_JITTER),
+                            rng.range(-ShadeTree::GROVE_JITTER, ShadeTree::GROVE_JITTER),
+                        );
+                        let p = bed.min
+                            + Vec2::new(i as f32, j as f32) * ShadeTree::GROVE_STEP
+                            + jitter;
+                        let clear = keep_off
+                            .iter()
+                            .all(|a| a.closest_point(p).distance(p) >= reach);
+                        if bed.contains_point(p) && clear && ground.fits(p, true) {
+                            let tree = ShadeTree {
+                                at: p,
+                                kind: ShadeKind::Grove,
+                                crown: ShadeTree::GROVE_CROWN,
+                                toward: Vec2::ZERO,
+                                row: 0,
+                            };
+                            ground.plant(&mut out, tree);
+                        }
+                    }
+                }
+            }
+        }
+
+        // A yard tree at the first of a few seeded spots in `area` that is
+        // a crown's reach from every building and off the streets.
+        let yard = |ground: &mut ShadeGround,
+                    out: &mut Vec<ShadeTree>,
+                    area: Aabb,
+                    stream: u32,
+                    tries: u32| {
+            let mut rng = Rng::new(self.seed ^ 0x7a2d, stream);
+            for _ in 0..tries {
+                let p = Vec2::new(
+                    rng.range(area.min.x, area.max.x),
+                    rng.range(area.min.y, area.max.y),
+                );
+                let off_streets = self
+                    .streets
+                    .iter()
+                    .all(|s| !s.intersects(&trunk(p).expanded(0.5)));
+                let reach = ShadeTree::YARD_CROWN + ShadeTree::BUILDING_GAP;
+                if off_streets && ground.building_gap(p) >= reach && ground.fits(p, false) {
+                    let tree = ShadeTree {
+                        at: p,
+                        kind: ShadeKind::Yard,
+                        crown: ShadeTree::YARD_CROWN,
+                        toward: Vec2::ZERO,
+                        row: 0,
+                    };
+                    ground.plant(out, tree);
+                    return;
+                }
+            }
+        };
+
+        // By the church, the comisarías and the station of a city.
+        if city {
+            for (k, b) in self.buildings.iter().enumerate() {
+                let trees = match b.kind {
+                    BuildingKind::Church | BuildingKind::Station => 2,
+                    BuildingKind::PoliceStation => 1,
+                    _ => continue,
+                };
+                let around = b.footprint.expanded(ShadeTree::LANDMARK_REACH);
+                for n in 0..trees {
+                    yard(&mut ground, &mut out, around, 0x1000 + 4 * k as u32 + n, 24);
+                }
+            }
+        }
+
+        // Behind the houses: every block's yard, a city's with a few trees,
+        // a town's sparse.
+        for (i, j) in (0..grid.rows).flat_map(|j| (0..grid.cols).map(move |i| (i, j))) {
+            let block = grid.block(i, j);
+            if main.contains((i, j)) || self.plazas().any(|p| p.intersects(&block)) {
+                continue;
+            }
+            let stream = (j * grid.cols + i) as u32;
+            let mut rng = Rng::new(self.seed ^ 0x3d1a, stream);
+            // 30% more than the first planting: a city's blocks get up to
+            // three trees and a fourth in seven of ten, a town's eight in ten one.
+            let wanted = if city {
+                1 + rng.below(3) + usize::from(rng.below(100) < 70)
+            } else {
+                usize::from(rng.below(100) < 80)
+            };
+            let area = block.expanded(-ShadeTree::YARD_INSET);
+            for n in 0..wanted {
+                yard(
+                    &mut ground,
+                    &mut out,
+                    area,
+                    0x4000 + 4 * stream + n as u32,
+                    8,
+                );
+            }
+        }
+
+        // On the dirt in front of some houses of a town.
+        if !city {
+            for (k, b) in self
+                .buildings
+                .iter()
+                .enumerate()
+                .filter(|(_, b)| b.kind == BuildingKind::House)
+            {
+                let mut rng = Rng::new(self.seed ^ 0xf20e, k as u32);
+                if rng.below(100) >= 55 {
+                    continue;
+                }
+                let n = crate::places::side_normal(b.front);
+                let side = Vec2::new(-n.y, n.x);
+                let half = b.footprint.size() * 0.5;
+                let facade = b.footprint.center() + n * (n.x.abs() * half.x + n.y.abs() * half.y);
+                let wide = side.x.abs() * half.x + side.y.abs() * half.y;
+                let first = if rng.below(2) == 0 { 1.0 } else { -1.0 };
+                let lateral = rng.range(2.6, wide + 1.5);
+                let spot = [first, -first].iter().find_map(|d| {
+                    let p = facade + n * ShadeTree::FRONT_OUT + side * (d * lateral);
+                    let lane = Palenque::LANE + TREE_TRUNK_RADIUS;
+                    let on_dirt = self.on_street_off_lane(&trunk(p), lane);
+                    // Never a row: with this one, no tree has more than two
+                    // others within FRONT_RUN.
+                    let fronts = || out.iter().filter(|t| t.kind == ShadeKind::Front);
+                    let within = |t: &ShadeTree, q: Vec2| t.at.distance(q) < ShadeTree::FRONT_RUN;
+                    let sparse = fronts().all(|t| t.at.distance(p) >= ShadeTree::FRONT_APART)
+                        && fronts().filter(|t| within(t, p)).count() < 2
+                        && fronts()
+                            .filter(|t| within(t, p))
+                            .all(|t| fronts().filter(|u| within(u, t.at)).count() <= 2);
+                    (on_dirt && sparse && ground.fits(p, false)).then_some(p)
+                });
+                if let Some(p) = spot {
+                    let tree = ShadeTree {
+                        at: p,
+                        kind: ShadeKind::Front,
+                        crown: ShadeTree::FRONT_CROWN,
+                        toward: n,
+                        row: 0,
+                    };
+                    ground.plant(&mut out, tree);
+                }
+            }
+        }
+        // General Pico's plaza was too leafy (user, 2026-10-26, twice): a very
+        // big town loses a fifth of its plaza trees and then a fifth again of
+        // what was left (36 in 100 in all), taken from the groves by seeded
+        // rolls so the rings along the edges stay.
+        if self.size == TownSize::VeryBig {
+            let groves: Vec<usize> = (0..out.len())
+                .filter(|&k| out[k].kind == ShadeKind::Grove)
+                .collect();
+            let cut = (self.trees.len() + groves.len()) * 36 / 100;
+            let mut order = groves;
+            order.sort_by_key(|&k| Rng::new(self.seed ^ 0x71a5, k as u32).next());
+            let gone: Vec<usize> = order.into_iter().take(cut).collect();
+            let mut k = 0;
+            out.retain(|_| {
+                k += 1;
+                !gone.contains(&(k - 1))
+            });
+        }
+        out
+    }
+}
+
+impl TownLayout {
+    /// The shrubs and flower beds of the yards: behind every house (a shed
+    /// has none), against its back and side walls, seeded. Each stands clear
+    /// of every obstacle (the trunks too), the door zones and galerías, the
+    /// streets and plazas, and every other plant.
+    fn place_yard_plants(&self) -> Vec<YardPlant> {
+        let ground = ShadeGround::new(self);
+        let mut out: Vec<YardPlant> = Vec::new();
+        for (k, b) in self
+            .buildings
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| b.kind == BuildingKind::House)
+        {
+            let n = crate::places::side_normal(b.front);
+            let side = Vec2::new(-n.y, n.x);
+            let half = b.footprint.size() * 0.5;
+            let deep = n.x.abs() * half.x + n.y.abs() * half.y;
+            let wide = side.x.abs() * half.x + side.y.abs() * half.y;
+            let mut rng = Rng::new(self.seed ^ 0x91a7, k as u32);
+            let mut wanted = Vec::new();
+            if rng.below(100) < 40 {
+                wanted.push(PlantKind::Shrub);
+            }
+            if rng.below(100) < 15 {
+                wanted.push(PlantKind::Shrub);
+            }
+            if rng.below(100) < 25 {
+                wanted.push(PlantKind::Flowers);
+            }
+            for kind in wanted {
+                for _ in 0..8 {
+                    // Behind the house, or beside it toward the back.
+                    let along = rng.range(-wide, wide);
+                    let out_of = rng.range(1.0, 2.6);
+                    let p = b.footprint.center() - n * (deep + out_of) + side * along;
+                    let plant = YardPlant { at: p, kind };
+                    let spot = plant.area();
+                    let free = ground
+                        .solid
+                        .iter()
+                        .all(|o| !o.intersects(&spot.expanded(ShadeGround::PLANT_GAP)))
+                        && ground.zones.iter().all(|z| !z.intersects(&spot))
+                        && ground.plazas.iter().all(|z| !z.intersects(&spot))
+                        && self
+                            .streets
+                            .iter()
+                            .all(|s| !s.intersects(&spot.expanded(0.5)))
+                        && out.iter().all(|q| q.at.distance(p) >= 1.6);
+                    if free {
+                        out.push(plant);
+                        break;
+                    }
+                }
+            }
+        }
+        out
     }
 }
 
@@ -2637,7 +3273,7 @@ pub(crate) mod tests {
                 name: "Tres".into(),
                 blocks: (3, 3),
                 block_size: 32.0,
-                street_width: 8.0,
+                street_width: 12.0,
                 seed: 1,
                 ..base.clone()
             },
@@ -2646,7 +3282,7 @@ pub(crate) mod tests {
                 origin: Vec2::new(-20.0, 15.0),
                 blocks: (6, 4),
                 block_size: 50.0,
-                street_width: 14.0,
+                street_width: 16.0,
                 railway: rail(Side::South, 30.0),
                 seed: 99,
                 ..base.clone()
@@ -2655,7 +3291,7 @@ pub(crate) mod tests {
                 name: "Este".into(),
                 blocks: (4, 4),
                 block_size: 36.0,
-                street_width: 9.0,
+                street_width: 12.0,
                 railway: rail(Side::East, 26.0),
                 ..base.clone()
             },
@@ -2663,7 +3299,7 @@ pub(crate) mod tests {
                 name: "Oeste".into(),
                 blocks: (3, 5),
                 block_size: 45.0,
-                street_width: 11.0,
+                street_width: 13.0,
                 railway: rail(Side::West, 24.0),
                 plaza: PlazaPlacement::Block(0, 0),
                 ..base.clone()
@@ -2685,7 +3321,7 @@ pub(crate) mod tests {
                 name: "Frente".into(),
                 blocks: (5, 5),
                 block_size: 38.0,
-                street_width: 10.0,
+                street_width: 12.0,
                 plaza: PlazaPlacement::FacingStation,
                 ..base.clone()
             },
@@ -2695,7 +3331,7 @@ pub(crate) mod tests {
                 name: "Siete".into(),
                 blocks: (7, 7),
                 block_size: 36.0,
-                street_width: 9.0,
+                street_width: 12.0,
                 railway: rail(Side::East, 26.0),
                 seed: 5,
                 ..base.clone()
@@ -2704,7 +3340,7 @@ pub(crate) mod tests {
                 name: "Larga".into(),
                 blocks: (10, 4),
                 block_size: 34.0,
-                street_width: 8.0,
+                street_width: 12.0,
                 railway: rail(Side::South, 24.0),
                 seed: 21,
                 ..base.clone()
@@ -2713,7 +3349,7 @@ pub(crate) mod tests {
                 name: "Alta".into(),
                 blocks: (4, 10),
                 block_size: 36.0,
-                street_width: 9.0,
+                street_width: 12.0,
                 railway: rail(Side::West, 24.0),
                 seed: 8,
                 ..base.clone()
@@ -2756,7 +3392,7 @@ pub(crate) mod tests {
                 name: "Partida sur".into(),
                 blocks: (5, 4),
                 block_size: 34.0,
-                street_width: 9.0,
+                street_width: 12.0,
                 railway: Some(RailwayConfig {
                     side: Side::South,
                     offset: 28.0,
@@ -2774,7 +3410,7 @@ pub(crate) mod tests {
         TownConfig {
             name: "Cinco por cinco".into(),
             blocks: (5, 5),
-            street_width: 12.0,
+            street_width: 14.0,
             ..TownConfig::castex()
         }
     }
@@ -2979,7 +3615,7 @@ pub(crate) mod tests {
         assert_eq!(c.name, "Eduardo Castex");
         assert_eq!(
             (c.blocks, c.block_size, c.street_width),
-            ((4, 5), 40.0, 10.0)
+            ((4, 5), 40.0, 12.0)
         );
         assert_eq!(c.plaza, PlazaPlacement::Auto);
         assert_eq!(
@@ -3317,10 +3953,16 @@ pub(crate) mod tests {
                 obstacles.len(),
                 solid.clone().count()
                     + t.trees.len()
+                    + t.shade_trees.len()
                     + 2
                     + palenques
                     + t.sign_obstacles().len()
                     + furniture.len()
+            );
+            assert!(
+                t.shade_trees
+                    .iter()
+                    .all(|s| obstacles.contains(&s.obstacle()))
             );
             assert!(furniture.iter().all(|f| obstacles.contains(f)));
             assert!(obstacles.contains(&t.hitching_post.rail));
@@ -3521,9 +4163,19 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_big_town_paves_every_block_a_small_one_its_plaza_edge_a_village_nothing() {
+    fn a_city_paves_every_block_in_brick_a_town_its_plaza_and_a_village_nothing_but_earth() {
         let towns = sample_towns();
-        // Pico: a ring round every block but the plaza's, and the plaza's.
+        let count =
+            |t: &TownLayout, walk: Walk| t.sidewalks().iter().filter(|w| w.walk == walk).count();
+        // Every strip of every town has its curbs.
+        for t in &towns {
+            assert!(
+                t.sidewalks().iter().all(|w| !w.curbs.is_empty()),
+                "{}",
+                t.name
+            );
+        }
+        // Pico: a ring round every block but the plaza's, and the plaza's, all brick.
         let pico = TownLayout::generate(&TownConfig {
             name: "Pico".into(),
             blocks: (8, 8),
@@ -3531,14 +4183,18 @@ pub(crate) mod tests {
         })
         .unwrap();
         assert_eq!(pico.sidewalks().len(), 4 * (64 - 4 + 1));
-        // Castex: only the plaza's own edge, the four strips of its ring,
-        // each against the plaza.
+        assert_eq!(count(&pico, Walk::Brick), 244);
+        // Castex (20 blocks): brick round the plaza's one block, four strips,
+        // each against the plaza; earth round the other 19 blocks.
         let castex = &towns[0];
         assert_eq!(Paving::of(castex.blocks()), Paving::Plaza);
-        let walks = castex.sidewalks();
-        assert_eq!(walks.len(), 4, "{walks:?}");
+        assert_eq!(castex.sidewalks().len(), 80);
+        assert_eq!(
+            (count(castex, Walk::Brick), count(castex, Walk::Earth)),
+            (4, 76)
+        );
         let ring = castex.plaza.expanded(Sidewalk::WIDTH);
-        for walk in walks {
+        for walk in castex.sidewalks().iter().filter(|w| w.walk == Walk::Brick) {
             assert!(
                 ring.contains(&walk.area),
                 "{:?} off the plaza's edge",
@@ -3546,9 +4202,12 @@ pub(crate) mod tests {
             );
             assert!(!overlap(&walk.area, &castex.plaza));
         }
-        // A 3 x 3 village: dirt only.
+        // A 3 x 3 village: nine rings less the plaza's block plus the plaza's,
+        // all beaten earth.
         let village = towns.iter().find(|t| t.blocks() == (3, 3)).unwrap();
-        assert!(village.sidewalks().is_empty());
+        assert_eq!(Paving::of(village.blocks()), Paving::None);
+        assert_eq!(village.sidewalks().len(), 36);
+        assert_eq!(count(village, Walk::Earth), 36);
     }
 
     #[test]
@@ -3653,11 +4312,11 @@ pub(crate) mod tests {
             let horse_half = horse.footprint.size().dot(Vec2::new(n.x.abs(), n.y.abs())) / 2.0;
             let gap = horse.footprint.center().dot(n) - horse_half - face;
             assert!(
-                (post.veranda..post.veranda + 3.0).contains(&gap),
+                (post.veranda..post.veranda + 3.5).contains(&gap),
                 "{}: gap {gap}",
                 c.name
             );
-            assert!((1.0..=3.0).contains(&post.veranda));
+            assert!((1.0..=3.5).contains(&post.veranda));
             let off = (horse.footprint.center() - store.footprint.center()).dot(along);
             assert!(off.abs() < 1e-4);
             assert_eq!(horse.position, horse.footprint.center());
@@ -3787,7 +4446,7 @@ pub(crate) mod tests {
                 },
                 TownConfigError::StreetTooNarrow {
                     street_width: 6.0,
-                    min: 8.0,
+                    min: 10.0,
                 },
             ),
             (
@@ -4057,18 +4716,27 @@ pub(crate) mod tests {
         // The towns with a platform were re-pinned again (2026-10-26): the
         // station has two name boards on it instead of one (`places()` is
         // part of the fingerprint); the two towns without a train are unchanged.
+        // Three were re-pinned for the 2.5 m sidewalks (2026-10-26): the
+        // store's veranda stays over the walk, so on a street wider than
+        // 10.4 m it is 2.5 m deep, not 3 (Cinco por cinco, Seis por cuatro,
+        // Oeste). The new shade trees are not part of the fingerprint.
+        // All eleven were re-pinned for S6c (2026-10-26): the sidewalks are
+        // 3.5 m and every sample street is 2 m wider, so every grid, and the
+        // store's veranda, moved. Two more were re-pinned for S6d (Tres and
+        // Este: their 10 and 11 m sample streets are 12 m now, because every
+        // town has sidewalks).
         let pinned = [
-            0x3a84_c831_6490_af0d,
-            0x8a98_2799_0151_645b,
-            0x869e_89e3_9fb3_487c,
-            0xe464_b73a_795f_9d9a,
-            0xc07f_709c_31fe_e251,
-            0xcebf_74f2_9fca_01ce,
-            0xf030_5ff7_f85b_64ac,
-            0x620d_2489_dca3_323f,
-            0xe218_84d2_dd95_fa39,
-            0xb693_d075_3583_4e7c,
-            0x311f_3cee_9d48_d8a1,
+            0x4921_b047_bac0_a2cc,
+            0xad96_8705_04c3_e5fa,
+            0x6da4_3687_07d6_4291,
+            0xd259_766e_74e6_03cd,
+            0x2b63_a8a2_cfcf_8128,
+            0x5441_bece_fd3f_6c25,
+            0x2bb8_6799_3872_22a4,
+            0x4937_2b1b_396a_9791,
+            0x2a00_7462_898d_b811,
+            0xca25_ea1d_f2d9_60f1,
+            0x0030_462e_b039_7b3c,
         ];
         let configs = small_configs();
         assert_eq!(configs.len(), pinned.len());
@@ -4295,7 +4963,8 @@ pub(crate) mod tests {
                     .flat_map(PlazaFurniture::obstacles),
             );
             for o in t.obstacles() {
-                let tree = t.trees.iter().any(|&p| o.contains_point(p));
+                let tree = t.trees.iter().any(|&p| o.contains_point(p))
+                    || t.shade_trees.iter().any(|s| o.contains_point(s.at));
                 if !tree && !sign.contains(&o) {
                     assert!(!o.intersects(&t.plaza), "{}: {o:?} in the plaza", c.name);
                 }
@@ -4727,7 +5396,7 @@ pub(crate) mod tests {
                     .iter()
                     .map(|s| s.size().x.min(s.size().y))
                     .fold(f32::INFINITY, f32::min);
-                if narrowest >= 10.0 {
+                if narrowest >= 12.0 {
                     assert_eq!(horses, share, "{name}");
                 }
                 assert!(horses >= 1, "{name}");
@@ -4812,6 +5481,7 @@ pub(crate) mod tests {
                     .filter(|b| b.kind != BuildingKind::Platform)
                     .count()
                     + t.trees.len()
+                    + t.shade_trees.len()
                     + 2
                     + t.palenques.len()
                     + horses
@@ -4962,5 +5632,582 @@ pub(crate) mod tests {
         let street = t.streets.iter().find(|s| s.contains(&spot)).unwrap();
         let lane = Aabb::from_center_size(street.center(), spot.size());
         assert!(!t.palenque_fits(kind, &lane, &[], &[]));
+    }
+
+    fn pico_with_streets(street_width: f32) -> TownLayout {
+        TownLayout::generate(&TownConfig {
+            name: "Pico".into(),
+            blocks: (8, 8),
+            street_width,
+            ..TownConfig::castex()
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn sidewalks_are_three_and_a_half_meters_and_the_galeria_stays_over_them() {
+        assert!((Sidewalk::WIDTH - 3.5).abs() < 1e-6);
+        // The store's galería is as deep as the street allows, never past the walk.
+        for (street, veranda) in [
+            (10.0, 2.3),
+            (11.0, 2.8),
+            (12.0, 3.3),
+            (14.0, 3.5),
+            (16.0, 3.5),
+        ] {
+            let t = pico_with_streets(street);
+            assert!(
+                (t.hitching_post.veranda - veranda).abs() < 1e-4,
+                "{street} m street: veranda {}",
+                t.hitching_post.veranda
+            );
+            for walk in t.sidewalks() {
+                let a = walk.area.size();
+                assert!((a.x.min(a.y) - 3.5).abs() < 1e-3, "{street} m street");
+            }
+        }
+    }
+
+    #[test]
+    fn a_tied_horse_needs_a_twelve_meter_street_and_the_rails_still_fit_on_narrow_ones() {
+        for street in [10.0, 11.0, 12.0, 14.0] {
+            let t = pico_with_streets(street);
+            assert!(
+                t.palenques.len() >= 4,
+                "{street} m: {} posts",
+                t.palenques.len()
+            );
+            // The station's post stands on its yard, not on a street.
+            let on_streets: Vec<&Palenque> = t
+                .palenques
+                .iter()
+                .filter(|p| t.buildings[p.building].kind != BuildingKind::Station)
+                .collect();
+            let horses: Vec<_> = on_streets.iter().filter_map(|p| p.horse).collect();
+            if street < 12.0 {
+                assert!(
+                    horses.is_empty(),
+                    "{street} m street has no room for a horse"
+                );
+            } else {
+                assert!(!horses.is_empty(), "{street} m street should tie a horse");
+            }
+            // Past the 3.5 m walk, with the lane down the middle (1 m each way) free.
+            for p in on_streets {
+                let street_strip = t
+                    .streets
+                    .iter()
+                    .find(|s| s.contains(&p.rail))
+                    .unwrap_or_else(|| panic!("{street} m: rail off the street"));
+                let across = if street_strip.size().x > street_strip.size().y {
+                    Vec2::new(0.0, 1.0)
+                } else {
+                    Vec2::new(1.0, 0.0)
+                };
+                let middle = street_strip.center().dot(across);
+                for o in p.obstacles() {
+                    let near = (o.min.dot(across) - middle)
+                        .abs()
+                        .min((o.max.dot(across) - middle).abs());
+                    assert!(near >= 1.0 - 1e-4, "{street} m: {near} m from the middle");
+                    assert!(
+                        t.sidewalks().iter().all(|w| !overlap(&w.area, &o)),
+                        "{street} m: on the walk"
+                    );
+                }
+            }
+        }
+    }
+
+    fn trees_of(t: &TownLayout, kind: ShadeKind) -> Vec<ShadeTree> {
+        t.shade_trees
+            .iter()
+            .copied()
+            .filter(|s| s.kind == kind)
+            .collect()
+    }
+
+    #[test]
+    fn only_cities_get_street_trees_and_groves_and_only_towns_front_trees() {
+        let (mut cities, mut towns) = (0, 0);
+        for (name, t) in towns_with_names() {
+            let (pits, groves) = (trees_of(&t, ShadeKind::Pit), trees_of(&t, ShadeKind::Grove));
+            let fronts = trees_of(&t, ShadeKind::Front);
+            if t.size == TownSize::Small {
+                towns += 1;
+                assert!(pits.is_empty() && groves.is_empty(), "{name}");
+                assert!(!fronts.is_empty(), "{name}: no tree in front of any house");
+            } else {
+                cities += 1;
+                assert!(fronts.is_empty(), "{name}");
+                assert!(pits.len() > 100 && groves.len() >= 4, "{name}");
+            }
+            // Yards everywhere, but only a few in a village.
+            assert!(!trees_of(&t, ShadeKind::Yard).is_empty(), "{name}");
+        }
+        assert!(cities >= 4 && towns >= 6);
+    }
+
+    #[test]
+    fn shade_trees_are_seeded_and_the_seed_moves_them() {
+        let pico = |seed| {
+            TownLayout::generate(&TownConfig {
+                name: "Pico".into(),
+                blocks: (8, 8),
+                seed,
+                ..TownConfig::castex()
+            })
+            .unwrap()
+        };
+        assert_eq!(pico(7).shade_trees, pico(7).shade_trees);
+        // The same sidewalks, a different seed: each row's first tree starts
+        // elsewhere along it.
+        let first = |t: &TownLayout, row: u32| {
+            t.shade_trees
+                .iter()
+                .find(|s| s.kind == ShadeKind::Pit && s.row == row)
+                .map(|s| s.at.x + s.at.y)
+        };
+        let (a, b) = (pico(3), pico(4));
+        assert_eq!(a.sidewalks(), b.sidewalks());
+        let rows = a.sidewalks().len() as u32;
+        let moved = (0..rows)
+            .filter(|&r| match (first(&a, r), first(&b, r)) {
+                (Some(x), Some(y)) => (x - y).abs() > 0.5,
+                _ => false,
+            })
+            .count();
+        assert!(moved * 2 > rows as usize, "{moved} of {rows} rows moved");
+    }
+
+    #[test]
+    fn street_trees_stand_in_their_pits_forty_centimeters_from_the_curb() {
+        for (name, t) in towns_with_names()
+            .into_iter()
+            .filter(|(_, t)| t.size != TownSize::Small)
+        {
+            for tree in trees_of(&t, ShadeKind::Pit) {
+                let walk = &t.sidewalks()[tree.row as usize];
+                let curb = walk.curbs[0];
+                let n = normal(curb);
+                // The strip's outer (curb) edge along its normal.
+                let edge = match curb {
+                    Side::North => walk.area.max.y,
+                    Side::South => walk.area.min.y,
+                    Side::East => walk.area.max.x,
+                    Side::West => walk.area.min.x,
+                };
+                let on_edge = if n.x.abs() > 0.5 {
+                    Vec2::new(edge, tree.at.y)
+                } else {
+                    Vec2::new(tree.at.x, edge)
+                };
+                let gap = on_edge.distance(tree.at);
+                // A 0.8 m cazuela, its edge 0.4 m in from the curb.
+                assert!((gap - 0.8).abs() < 1e-3, "{name}: pit center {gap} m in");
+                assert!(walk.area.contains_point(tree.at), "{name}");
+                assert_eq!(tree.toward, n, "{name}: leans over the street");
+                assert!((tree.crown - 2.3).abs() < 1e-6);
+            }
+        }
+    }
+
+    #[test]
+    fn a_street_row_keeps_seventeen_to_twenty_one_meters_between_its_trees() {
+        let mut gaps = Vec::new();
+        for (name, t) in towns_with_names()
+            .into_iter()
+            .filter(|(_, t)| t.size != TownSize::Small)
+        {
+            for row in 0..t.sidewalks().len() {
+                let mut at: Vec<Vec2> = trees_of(&t, ShadeKind::Pit)
+                    .into_iter()
+                    .filter(|s| s.row as usize == row)
+                    .map(|s| s.at)
+                    .collect();
+                at.sort_by(|a, b| (a.x + a.y).total_cmp(&(b.x + b.y)));
+                for pair in at.windows(2) {
+                    let gap = pair[0].distance(pair[1]);
+                    assert!(gap >= 17.0 - 1e-3, "{name}: row {row}, {gap} m apart");
+                    gaps.push(gap);
+                }
+            }
+        }
+        assert!(gaps.len() > 250, "{} gaps", gaps.len());
+        // Most of them are the planned 17 to 21 m; the rest skip a door or a lamp.
+        let planned = gaps.iter().filter(|&&g| g < 28.0).count();
+        assert!(planned * 10 > gaps.len() * 8, "{planned} of {}", gaps.len());
+    }
+
+    #[test]
+    fn the_sample_cities_got_a_tenth_fewer_street_trees_and_the_towns_half_as_many_front_ones_again()
+     {
+        // Counts before the user's second playtest (2026-10-26), on the
+        // 2026-10-26 street widths: 2247 street trees in the cities of these
+        // samples; before the first playtest, 119 front trees in the towns
+        // (on the old widths).
+        let (mut pits, mut fronts) = (0, 0);
+        for (_, t) in towns_with_names() {
+            pits += trees_of(&t, ShadeKind::Pit).len();
+            fronts += trees_of(&t, ShadeKind::Front).len();
+        }
+        assert!(
+            (2247 * 85 / 100..=2247 * 95 / 100).contains(&pits),
+            "{pits} street trees"
+        );
+        assert!(
+            (119 * 3 / 2..=119 * 19 / 10).contains(&fronts),
+            "{fronts} front trees"
+        );
+    }
+
+    /// Distance from `p` to the nearest of `boxes`.
+    fn gap_to(boxes: impl IntoIterator<Item = Aabb>, p: Vec2) -> f32 {
+        boxes
+            .into_iter()
+            .map(|b| b.closest_point(p).distance(p))
+            .fold(f32::INFINITY, f32::min)
+    }
+
+    #[test]
+    fn shade_trees_keep_a_crown_off_every_building() {
+        let mut checked = 0;
+        for (name, t) in towns_with_names() {
+            let walls: Vec<Aabb> = t
+                .buildings
+                .iter()
+                .filter(|b| b.kind != BuildingKind::Platform)
+                .map(|b| b.footprint)
+                .collect();
+            for tree in &t.shade_trees {
+                let gap = gap_to(walls.iter().copied(), tree.at);
+                // Literal gaps: a pit tree stands 2.7 m off its facade (3.5 m
+                // walk less the pit), a front one 2.2 m, a yard one 3.6 m.
+                let least = match tree.kind {
+                    ShadeKind::Pit => 2.65,
+                    ShadeKind::Front => 2.15,
+                    ShadeKind::Yard => 3.5,
+                    ShadeKind::Grove => 4.0,
+                };
+                assert!(gap >= least, "{name}: {:?} {gap} m off a wall", tree.kind);
+                checked += 1;
+            }
+        }
+        assert!(checked > 1000, "{checked}");
+    }
+
+    #[test]
+    fn shade_trees_stand_clear_of_doors_galerias_crossings_palenques_and_each_other() {
+        for (name, t) in towns_with_names() {
+            let trunks: Vec<Vec2> = t
+                .trees
+                .iter()
+                .copied()
+                .chain(t.shade_trees.iter().map(|s| s.at))
+                .collect();
+            for (k, tree) in t.shade_trees.iter().enumerate() {
+                for (j, other) in trunks.iter().enumerate() {
+                    if j != t.trees.len() + k {
+                        assert!(
+                            tree.at.distance(*other) >= 3.99,
+                            "{name}: trunks {k} and {j}"
+                        );
+                    }
+                }
+                // Past the corner lamps' crossings.
+                for (x, y) in t
+                    .streets
+                    .iter()
+                    .filter(|s| s.size().y > s.size().x)
+                    .flat_map(|x| {
+                        t.streets
+                            .iter()
+                            .filter(|y| y.size().x > y.size().y)
+                            .map(move |y| (x, y))
+                    })
+                    .filter(|(x, y)| x.intersects(y))
+                {
+                    let crossing =
+                        Aabb::new(Vec2::new(x.min.x, y.min.y), Vec2::new(x.max.x, y.max.y));
+                    assert!(
+                        crossing.closest_point(tree.at).distance(tree.at) >= 1.9
+                            || !on_street(&t, tree.at),
+                        "{name}: tree {k} at a crossing"
+                    );
+                }
+                for b in t
+                    .buildings
+                    .iter()
+                    .filter(|b| b.kind != BuildingKind::Platform)
+                {
+                    let m = normal(b.front);
+                    let h = b.footprint.size() * 0.5;
+                    let facade = b.footprint.center() + m * (m.x.abs() * h.x + m.y.abs() * h.y);
+                    let side = Vec2::new(-m.y, m.x);
+                    let (a, z) = (facade + side * 2.5, facade + m * 4.0 - side * 2.5);
+                    let door = Aabb::new(
+                        Vec2::new(a.x.min(z.x), a.y.min(z.y)),
+                        Vec2::new(a.x.max(z.x), a.y.max(z.y)),
+                    );
+                    assert!(!door.contains_point(tree.at), "{name}: tree {k} at a door");
+                    if b.kind == BuildingKind::GeneralStore {
+                        let wide = h.dot(Vec2::new(side.x.abs(), side.y.abs())) + 1.4;
+                        let (a, z) = (facade + side * wide, facade + m * 3.0 - side * wide);
+                        let gallery = Aabb::new(
+                            Vec2::new(a.x.min(z.x), a.y.min(z.y)),
+                            Vec2::new(a.x.max(z.x), a.y.max(z.y)),
+                        );
+                        assert!(
+                            !gallery.contains_point(tree.at),
+                            "{name}: tree {k} at a galería"
+                        );
+                    }
+                }
+                // Off every palenque, its horse, the store's post and every sign.
+                let posts = t
+                    .palenques
+                    .iter()
+                    .flat_map(Palenque::obstacles)
+                    .chain([t.hitching_post.rail, t.hitching_post.horse.footprint])
+                    .chain(t.sign_obstacles());
+                assert!(gap_to(posts, tree.at) >= 1.3, "{name}: tree {k} by a post");
+            }
+        }
+    }
+
+    #[test]
+    fn groves_stand_between_the_plaza_paths_and_yard_trees_beside_the_landmarks() {
+        let mut groves = 0;
+        for (name, t) in towns_with_names()
+            .into_iter()
+            .filter(|(_, t)| t.size != TownSize::Small)
+        {
+            for tree in trees_of(&t, ShadeKind::Grove) {
+                let plaza = t
+                    .plazas()
+                    .find(|p| p.contains_point(tree.at))
+                    .unwrap_or_else(|| panic!("{name}: a grove tree off the plazas"));
+                for keep_off in plaza_paths(plaza)
+                    .into_iter()
+                    .chain([plaza_monument(plaza)])
+                {
+                    assert!(
+                        keep_off.closest_point(tree.at).distance(tree.at) >= 1.8,
+                        "{name}: a grove tree on a path"
+                    );
+                }
+                // In the middle of the green, not only along its edge.
+                groves += usize::from(plaza.expanded(-10.0).contains_point(tree.at));
+            }
+            // A tree within 8 m of each church, comisaría and station (a
+            // through line's station stands in its yard band, with no room).
+            let yards = trees_of(&t, ShadeKind::Yard);
+            for b in t.buildings.iter().filter(|b| {
+                matches!(b.kind, BuildingKind::Church | BuildingKind::PoliceStation)
+                    || (b.kind == BuildingKind::Station && t.rail_band().is_none())
+            }) {
+                let near = yards
+                    .iter()
+                    .any(|y| b.footprint.closest_point(y.at).distance(y.at) <= 8.0);
+                assert!(near, "{name}: no tree by the {:?}", b.kind);
+            }
+        }
+        assert!(
+            groves > 20,
+            "{groves} grove trees 10 m or more in from a plaza's edge"
+        );
+    }
+
+    #[test]
+    fn front_trees_are_few_and_far_apart_on_the_dirt_beside_the_lane() {
+        let mut seen = 0;
+        for (name, t) in towns_with_names()
+            .into_iter()
+            .filter(|(_, t)| t.size == TownSize::Small)
+        {
+            let fronts = trees_of(&t, ShadeKind::Front);
+            let houses = t
+                .buildings
+                .iter()
+                .filter(|b| b.kind == BuildingKind::House)
+                .count();
+            // Sparse: no more than one house in two, never two within 13 m,
+            // never more than two others within 30 m: no continuous row.
+            assert!(
+                fronts.len() * 2 <= houses,
+                "{name}: {} of {houses}",
+                fronts.len()
+            );
+            for (k, a) in fronts.iter().enumerate() {
+                let run = fronts.iter().filter(|b| a.at.distance(b.at) < 30.0).count() - 1;
+                assert!(run <= 2, "{name}: a row of {} trees", run + 1);
+                for b in &fronts[k + 1..] {
+                    assert!(a.at.distance(b.at) >= 12.9, "{name}: trees too close");
+                }
+                // On a street, off its walkers' lane, on a beaten-earth walk (no
+                // cazuela) and at least a meter in from its curb.
+                assert!(on_street(&t, a.at), "{name}");
+                let on: Vec<&Sidewalk> = t
+                    .sidewalks()
+                    .iter()
+                    .filter(|w| w.area.contains_point(a.at))
+                    .collect();
+                assert!(!on.is_empty(), "{name}: a front tree off the walks");
+                assert!(on.iter().all(|w| w.walk == Walk::Earth), "{name}: on brick");
+                // In from the curb along the strip it stands on (a tree by a
+                // corner also lies on the cross strip, whose curb is near).
+                let curb = on
+                    .iter()
+                    .map(|w| match w.curbs[0] {
+                        Side::North => w.area.max.y - a.at.y,
+                        Side::South => a.at.y - w.area.min.y,
+                        Side::East => w.area.max.x - a.at.x,
+                        Side::West => a.at.x - w.area.min.x,
+                    })
+                    .fold(f32::MIN, f32::max);
+                assert!(curb >= 1.0, "{name}: {curb} m from the curb");
+                assert!(a.crown <= 1.9 + 1e-6 && a.toward.length() > 0.99, "{name}");
+                seen += 1;
+            }
+        }
+        assert!(seen > 50, "{seen}");
+    }
+
+    #[test]
+    fn yards_have_thirty_percent_more_trees_and_shrubs_and_flower_beds_besides() {
+        // Yard trees before the playtest (2026-10-26): 99 in the sample
+        // towns, 648 in the sample cities.
+        let (mut small, mut city) = (0, 0);
+        let (mut shrubs, mut flowers) = (0, 0);
+        for (_, t) in towns_with_names() {
+            let yards = trees_of(&t, ShadeKind::Yard).len();
+            if t.size == TownSize::Small {
+                small += yards;
+            } else {
+                city += yards;
+            }
+            shrubs += t
+                .yard_plants
+                .iter()
+                .filter(|p| p.kind == PlantKind::Shrub)
+                .count();
+            flowers += t
+                .yard_plants
+                .iter()
+                .filter(|p| p.kind == PlantKind::Flowers)
+                .count();
+        }
+        assert!(
+            (129..=160).contains(&small),
+            "{small} yard trees in the towns"
+        );
+        assert!(
+            (843..=1040).contains(&city),
+            "{city} yard trees in the cities"
+        );
+        // Plants on top: at least a third as many as the trees.
+        assert!(
+            shrubs * 3 > (small + city) && flowers * 3 > (small + city) / 2,
+            "{shrubs} {flowers}"
+        );
+    }
+
+    #[test]
+    fn yard_plants_stay_behind_the_houses_off_everything_else() {
+        let mut checked = 0;
+        for (name, t) in towns_with_names() {
+            let walls: Vec<Aabb> = t
+                .buildings
+                .iter()
+                .filter(|b| b.kind != BuildingKind::Platform)
+                .map(|b| b.footprint)
+                .collect();
+            let obstacles = t.obstacles();
+            for (k, plant) in t.yard_plants.iter().enumerate() {
+                let spot = plant.area();
+                // A shrub is 1.2 m across, a flower bed 1.4 m.
+                let side = spot.size().x;
+                assert!(
+                    (side - 1.2).abs() < 1e-3 || (side - 1.4).abs() < 1e-3,
+                    "{name}"
+                );
+                assert!(
+                    walls.iter().all(|w| !overlap(w, &spot)),
+                    "{name}: plant {k} in a building"
+                );
+                assert!(
+                    obstacles.iter().all(|o| !overlap(o, &spot.expanded(0.3))),
+                    "{name}: plant {k} by an obstacle"
+                );
+                assert!(
+                    t.streets.iter().all(|s| !overlap(s, &spot)),
+                    "{name}: plant {k} on a street"
+                );
+                assert!(t.plazas().all(|p| !overlap(&p, &spot)), "{name}");
+                assert!(
+                    t.sidewalks().iter().all(|w| !overlap(&w.area, &spot)),
+                    "{name}"
+                );
+                // Off the ground in front of every door (1.8 m each side, 4 m out).
+                for b in t
+                    .buildings
+                    .iter()
+                    .filter(|b| b.kind != BuildingKind::Platform)
+                {
+                    let m = normal(b.front);
+                    let h = b.footprint.size() * 0.5;
+                    let facade = b.footprint.center() + m * (m.x.abs() * h.x + m.y.abs() * h.y);
+                    let across = Vec2::new(-m.y, m.x);
+                    let (a, z) = (facade + across * 1.8, facade + m * 4.0 - across * 1.8);
+                    let door = Aabb::new(
+                        Vec2::new(a.x.min(z.x), a.y.min(z.y)),
+                        Vec2::new(a.x.max(z.x), a.y.max(z.y)),
+                    );
+                    assert!(!overlap(&door, &spot), "{name}: plant {k} at a door");
+                }
+                for other in &t.yard_plants[k + 1..] {
+                    assert!(
+                        plant.at.distance(other.at) >= 1.59,
+                        "{name}: plants too close"
+                    );
+                }
+                checked += 1;
+            }
+        }
+        assert!(checked > 1000, "{checked}");
+    }
+
+    #[test]
+    fn a_very_big_town_has_over_a_third_fewer_plaza_trees_taken_from_the_groves() {
+        // Before the thinning (user, 2026-10-26) the very big samples had
+        // 90, 75 and 90 plaza trees (the rings' 36 and 54, 39 and 54 groves);
+        // a fifth fewer after the first playtest (72, 60, 72), 36 in 100
+        // fewer after the second (58, 48, 58), all of it from the groves.
+        let very_big: Vec<(String, TownLayout)> = towns_with_names()
+            .into_iter()
+            .filter(|(_, t)| t.size == TownSize::VeryBig)
+            .collect();
+        assert_eq!(very_big.len(), 3);
+        for ((name, t), total) in very_big.iter().zip([58, 48, 58]) {
+            let groves = trees_of(t, ShadeKind::Grove).len();
+            assert_eq!(t.trees.len(), 36, "{name}: the rings stay whole");
+            assert_eq!(t.trees.len() + groves, total, "{name}");
+            // Still groves in the middle, not just at the edge.
+            let plaza = t.plaza.expanded(-12.0);
+            let inside = trees_of(t, ShadeKind::Grove)
+                .iter()
+                .filter(|g| plaza.contains_point(g.at))
+                .count();
+            assert!(inside >= 4, "{name}: {inside} grove trees in the middle");
+        }
+        // The big towns' plazas are as they were.
+        let big: Vec<(String, TownLayout)> = towns_with_names()
+            .into_iter()
+            .filter(|(_, t)| t.size == TownSize::Big)
+            .collect();
+        assert_eq!(big.len(), 4);
+        for ((name, t), groves) in big.iter().zip([9, 7, 11, 17]) {
+            assert_eq!(trees_of(t, ShadeKind::Grove).len(), groves, "{name}");
+        }
     }
 }

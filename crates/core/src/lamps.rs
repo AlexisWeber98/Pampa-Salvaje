@@ -581,7 +581,7 @@ mod tests {
             origin: Vec2::ZERO,
             blocks: (3, 3),
             block_size: 40.0,
-            street_width: 8.0,
+            street_width: 12.0,
             railway: Some(crate::RailwayConfig {
                 side: crate::Side::North,
                 offset: 24.0,
@@ -760,6 +760,28 @@ mod tests {
             assert_eq!(&town_lamps(&bare, k, &roads), lit, "{}", town.name);
         }
         assert!(with_posts > 0, "the shipped towns have palenques");
+    }
+
+    #[test]
+    fn shade_trees_cost_a_town_no_lamp() {
+        // Trees keep off the lamps' spots (the crossings, the plaza edge, the
+        // doors): the same town without its trees lights the same.
+        let (towns, roads, lamps) = shipped();
+        let mut with_trees = 0;
+        for (k, (town, lit)) in towns.iter().zip(&lamps).enumerate() {
+            let mut bare = town.clone();
+            bare.shade_trees.clear();
+            with_trees += town.shade_trees.len();
+            assert_eq!(&town_lamps(&bare, k, &roads), lit, "{}", town.name);
+            // And a post and a trunk keep a hand's breadth apart.
+            for lamp in lit {
+                for tree in &town.shade_trees {
+                    let gap = lamp.at.distance(tree.at);
+                    assert!(gap >= 1.0, "{}: a tree {gap} m from {lamp:?}", town.name);
+                }
+            }
+        }
+        assert!(with_trees > 100, "the shipped towns have shade trees");
     }
 
     #[test]

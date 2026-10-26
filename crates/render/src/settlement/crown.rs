@@ -40,7 +40,7 @@ pub enum CrownKind {
 const LEAVES: [[f32; 3]; 2] = [[0.34, 0.38, 0.21], [0.26, 0.30, 0.17]];
 
 /// Deterministic `[0, 1)` for a seed and an index.
-fn unit(seed: u32, i: u32) -> f32 {
+pub(crate) fn unit(seed: u32, i: u32) -> f32 {
     let mut x = seed
         .wrapping_mul(0x9e37_79b9)
         .wrapping_add(i.wrapping_mul(0x85eb_ca6b))
@@ -55,7 +55,7 @@ fn unit(seed: u32, i: u32) -> f32 {
 
 /// A once-subdivided icosahedron on the unit sphere: 42 points, 80
 /// counter-clockwise triangles.
-fn icosphere() -> (Vec<Vec3>, Vec<[u32; 3]>) {
+pub(crate) fn icosphere() -> (Vec<Vec3>, Vec<[u32; 3]>) {
     let t = (1.0 + 5.0_f32.sqrt()) / 2.0;
     let mut points: Vec<Vec3> = [
         (-1.0, t, 0.0),

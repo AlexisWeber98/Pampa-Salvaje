@@ -67,6 +67,32 @@ pub(crate) struct Form {
 }
 
 impl Species {
+    /// Its shape trimmed for a street: a trunk bare to about 3 m, then a
+    /// fuller crown held close to the trunk (limbs part about 3.3 m up and
+    /// lean little), with the species' own bark, leaves and bearing.
+    pub(crate) fn street_form(self) -> Form {
+        let form = self.form();
+        let (tilt, reach) = match self {
+            Self::Paraiso => ((24.0, 34.0), 0.15),
+            Self::Olmo => ((12.0, 20.0), 0.13),
+            _ => ((10.0, 16.0), 0.12),
+        };
+        Form {
+            height: (8.5, 10.0),
+            fork: 0.4,
+            tilt,
+            reach,
+            rise: 0.1,
+            twigs: 3,
+            leader: false,
+            cards: form.cards,
+            card: form.card * 0.9,
+            hang: form.hang.min(0.4),
+            scatter: 0.2,
+            ..form
+        }
+    }
+
     /// Its shape: the paraíso's round umbrella, the olmo's tall vase, the
     /// eucalipto's tall open crown of hanging leaves, the aromo's low
     /// feathery one.
@@ -74,7 +100,7 @@ impl Species {
         match self {
             Self::Paraiso => Form {
                 height: (7.5, 8.5),
-                fork: 0.42,
+                fork: 0.45,
                 trunk_radius: 0.2,
                 limbs: (5, 6),
                 tilt: (55.0, 70.0),
@@ -109,7 +135,7 @@ impl Species {
             },
             Self::Eucalipto => Form {
                 height: (14.0, 17.0),
-                fork: 0.42,
+                fork: 0.45,
                 trunk_radius: 0.3,
                 limbs: (6, 7),
                 tilt: (30.0, 50.0),
@@ -238,6 +264,8 @@ pub(crate) struct TreeMesh {
     pub height: f32,
     /// How far its leaves reach from the trunk's axis, meters.
     pub crown_radius: f32,
+    /// How low its lowest leaf hangs over the ground, meters.
+    pub crown_base: f32,
 }
 
 /// A small seeded generator (SplitMix64): the same seed, the same tree.
@@ -323,8 +351,16 @@ struct Leafy {
 
 /// Builds variant `seed` of `species`.
 pub(crate) fn tree(species: Species, seed: u32) -> TreeMesh {
-    let form = species.form();
-    let mut rng = Rng::new(species, seed);
+    grow(species.form(), Rng::new(species, seed))
+}
+
+/// Builds variant `seed` of `species` trimmed for a street ([`Species::street_form`]).
+pub(crate) fn street_tree(species: Species, seed: u32) -> TreeMesh {
+    grow(species.street_form(), Rng::new(species, seed ^ 0x57ee))
+}
+
+/// Grows a tree of `form`, drawing its randomness from `rng`.
+fn grow(form: Form, mut rng: Rng) -> TreeMesh {
     let height = rng.range(form.height);
     let mut bark = Buffers::default();
     let mut leafy = Vec::new();
@@ -426,11 +462,17 @@ pub(crate) fn tree(species: Species, seed: u32) -> TreeMesh {
         .iter()
         .map(|p| Vec2::new(p.x, p.z).length())
         .fold(0.0, f32::max);
+    let crown_base = leaves
+        .positions
+        .iter()
+        .map(|p| p.y)
+        .fold(f32::INFINITY, f32::min);
     TreeMesh {
         bark,
         leaves,
         height,
         crown_radius,
+        crown_base,
     }
 }
 

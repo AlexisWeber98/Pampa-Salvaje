@@ -5,7 +5,9 @@
 //! Behind such a gate, inside its survey cell and clear of the roads, the
 //! railway, the towns and the fences, stands a seeded compound: the houses
 //! round a bare patio (the hub), with a galpón, corrals, a molino with its
-//! tank and trough, haystacks and the spots where its trees will grow.
+//! tank and trough, haystacks and the spots where its trees will grow (a
+//! compound plants a third more of them than its kind lays out, on a random
+//! stream of its own: [`Settlement::MORE_TREES`]).
 //!
 //! Dirt tracks (huellas) join it to the gate: a trunk from just inside the gate to
 //! the hub, and a branch from the hub to the door of every house, galpón
@@ -260,6 +262,8 @@ impl Settlement {
     pub const CORRIDOR: f32 = Track::HALF_WIDTH + 1.0;
     /// Least distance between two settlements' hubs, in meters.
     pub const MIN_SPACING: f32 = 300.0;
+    /// X
+    pub const MORE_TREES: f32 = 0.35;
     /// Least ground an estancia's compound spreads over, in square meters.
     pub const RANCH_AREA: f32 = 20_000.0;
     /// Chance of an abandoned wagon at a chacra, and at an estancia.
@@ -654,7 +658,10 @@ impl Site<'_> {
                 continue;
             }
             let mut compound = Compound::new(&ground, rng, kind, hub, into, [start, entry, hub]);
-            let built = compound.raise();
+            let built = compound.raise() && {
+                compound.plant_more();
+                true
+            };
             rng = compound.rng;
             if built {
                 placed.used.insert(key);
@@ -1143,6 +1150,20 @@ impl<'a> Compound<'a> {
             let part = self.part(StructureKind::Cart, (5.0, 5.0), (2.2, 2.2), 2.5);
             self.place(part, self.round(cart_at.0, cart_at.1));
         }
+    }
+
+    /// Plants 30% more eucalyptus than the compound already has, on a
+    /// stream of its own so the rest of the layout does not move.
+    fn plant_more(&mut self) {
+        let trees = self.structures.iter().filter(|s| s.kind.is_tree()).count();
+        let mut own = Rng::new(0x70a1_a2c3 ^ self.hub.x.to_bits() ^ self.hub.y.to_bits(), 1);
+        let extra = (Settlement::MORE_TREES * trees as f32 + own.unit()) as usize;
+        std::mem::swap(&mut self.rng, &mut own);
+        for _ in 0..extra {
+            let tree = self.tree(StructureKind::Eucalyptus);
+            self.place(tree, self.round(16.0, 34.0));
+        }
+        std::mem::swap(&mut self.rng, &mut own);
     }
 
     fn tree(&mut self, kind: StructureKind) -> Part {
@@ -2314,5 +2335,39 @@ pub(crate) mod tests {
             SettlementLayout::build_with_ranches(&world.terrain, &towns, &line, &fences, &[]),
             plain
         );
+    }
+
+    #[test]
+    fn settlements_plant_thirty_percent_more_trees_clear_of_everything() {
+        // 93 tree spots in the 17 sample settlements before the extra ones
+        // (2026-10-26); a third more where they fit, never past 135.
+        let (_, _, _, _, layout) = settled();
+        let trees: Vec<&Structure> = layout
+            .settlements
+            .iter()
+            .flat_map(|s| s.structures.iter())
+            .filter(|s| s.kind.is_tree())
+            .collect();
+        assert!((121..=135).contains(&trees.len()), "{} trees", trees.len());
+        for s in &layout.settlements {
+            for (k, tree) in s
+                .structures
+                .iter()
+                .enumerate()
+                .filter(|(_, t)| t.kind.is_tree())
+            {
+                let at = tree.footprint.center();
+                assert!(!s.patio.contains_point(at), "{s:?}");
+                for (j, other) in s.structures.iter().enumerate().filter(|(j, _)| *j != k) {
+                    assert!(
+                        !other.footprint.expanded(2.9).intersects(&tree.footprint),
+                        "{k} by {j}"
+                    );
+                }
+                for (a, b) in s.tracks.iter().flat_map(Track::segments) {
+                    assert!(segment_distance(at, a, b) >= 2.2, "a tree on a huella");
+                }
+            }
+        }
     }
 }

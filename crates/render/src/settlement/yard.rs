@@ -14,6 +14,7 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy::world_serialization::WorldAsset;
+use pampa_core::town::PlantKind;
 use pampa_core::{Settlement, SettlementKind, Structure, StructureKind, Track, Vec2 as GroundVec2};
 
 use super::buildings::local_size;
@@ -187,6 +188,80 @@ fn clear(settlement: &Settlement, spot: &YardSpot) -> bool {
     off_tracks
         && off_others
         && !settlement.patio.contains_point(spot.at)
+        && settlement.bounds.contains_point(spot.at)
+}
+
+/// A yard shrub or flower bed by a house: what, where, and its turn.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlantSpot {
+    pub kind: PlantKind,
+    pub at: GroundVec2,
+    pub turn: Quat,
+}
+
+/// Every yard plant of `settlement` (30% more yard vegetation, with the
+/// extra trees core plants): a shrub by a house's back and side walls and a
+/// flower bed by its side, a main house getting more than a peón's. Like the
+/// props they are decided from the settlement alone. One that would land on
+/// a track, on a structure or the patio, or outside the settlement is left
+/// out. They are scenery: no obstacles.
+pub fn yard_plants(settlement: &Settlement) -> Vec<PlantSpot> {
+    let mut spots = Vec::new();
+    for structure in settlement.structures.iter().filter(|s| s.kind.is_house()) {
+        let size = local_size(structure);
+        let (hx, hz) = (size.x / 2.0, size.y / 2.0);
+        let v = structure.variant;
+        let main = matches!(structure.kind, StructureKind::MainHouse(_));
+        let side = if v % 2 == 0 { 1.0 } else { -1.0 };
+        let mut push = |kind: PlantKind, local: Vec3| {
+            let (at, _) = on(structure, local);
+            let turn =
+                Quat::from_rotation_y((v.wrapping_add(local.x.to_bits()) % 360) as f32 / 57.3);
+            spots.push(PlantSpot { kind, at, turn });
+        };
+        if main || v % 3 != 0 {
+            push(
+                PlantKind::Shrub,
+                Vec3::new(side * (hx + 0.9), 0.0, -hz / 3.0),
+            );
+        }
+        if main {
+            push(
+                PlantKind::Shrub,
+                Vec3::new(-side * hx * 0.5, 0.0, -hz - 0.9),
+            );
+        }
+        if v % 10 < if main { 7 } else { 3 } {
+            push(
+                PlantKind::Flowers,
+                Vec3::new(-side * (hx + 1.1), 0.0, hz * 0.5),
+            );
+        }
+    }
+    spots.retain(|spot| plant_clear(settlement, spot));
+    spots
+}
+
+/// Whether `spot` keeps off every track, structure and the patio, and
+/// stands inside the settlement.
+fn plant_clear(settlement: &Settlement, spot: &PlantSpot) -> bool {
+    let reach = spot.kind.radius();
+    let off_tracks = settlement
+        .tracks
+        .iter()
+        .flat_map(Track::segments)
+        .all(|(a, b)| {
+            let ab = b - a;
+            let t = ((spot.at - a).dot(ab) / ab.dot(ab).max(1e-6)).clamp(0.0, 1.0);
+            spot.at.distance(a + ab * t) > Track::HALF_WIDTH + reach
+        });
+    let off_structures = settlement
+        .structures
+        .iter()
+        .all(|s| !s.footprint.expanded(reach).contains_point(spot.at));
+    off_tracks
+        && off_structures
+        && !settlement.patio.expanded(reach).contains_point(spot.at)
         && settlement.bounds.contains_point(spot.at)
 }
 

@@ -17,7 +17,7 @@
             origin: (-2450.0, -1950.0),
             blocks: (4, 3),
             block_size: 40.0,
-            street_width: 10.0,
+            street_width: 12.0,
             railway: Some((side: North, offset: 24.0)),
             plaza: Auto,
             seed: 7,
@@ -33,7 +33,7 @@
             origin: (-4250.0, -2721.0),
             blocks: (5, 4),
             block_size: 40.0,
-            street_width: 10.0,
+            street_width: 12.0,
             railway: Some((side: North, offset: 24.0)),
             plaza: Auto,
             seed: 2,
@@ -48,7 +48,7 @@
             origin: (288.0, -544.0),
             blocks: (3, 3),
             block_size: 40.0,
-            street_width: 8.0,
+            street_width: 12.0,
             railway: Some((side: North, offset: 24.0)),
             plaza: Auto,
             seed: 19,
@@ -71,7 +71,7 @@
             origin: (2664.0, 1250.0),
             blocks: (8, 8),
             block_size: 40.0,
-            street_width: 10.0,
+            street_width: 13.0,
             railway: Some((side: North, offset: 24.0, through: true)),
             plaza: Auto,
             seed: 13,
@@ -88,7 +88,7 @@
             origin: (-7626.0, 2100.0),
             blocks: (4, 4),
             block_size: 40.0,
-            street_width: 10.0,
+            street_width: 12.0,
             railway: Some((side: North, offset: 24.0)),
             plaza: Auto,
             seed: 23,
@@ -110,9 +110,11 @@
         (
             // Real 5.9 km at bearing 119° from General Pico (5.16 km east,
             // 2.86 km south), scaled 1:7. About 150 ha in reality: its
-            // shape is kept, at 215 x 145 m.
+            // shape is kept, at 215 x 145 m. Its middle is 3 m east of that
+            // place, so the survey fences keep off its bank beside the wider
+            // streets of Pico (S6c).
             name: "Laguna La Arocena",
-            center: (3401.0, 841.0),
+            center: (3404.0, 841.0),
             size: (215.0, 145.0),
             seed: 5,
         ),
