@@ -5,7 +5,10 @@ Standard library only: ``python3 -I -B -m unittest discover -s tools``.
 """
 
 import os
+import random
+import re
 import shutil
+import struct
 import subprocess
 import tempfile
 import unittest
@@ -27,6 +30,57 @@ def sheet_leaves(kind):
 
 def has_magick():
     return shutil.which("magick") is not None
+
+
+def has_basisu():
+    return shutil.which("basisu") is not None
+
+
+TREES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "textures", "trees")
+
+
+def strokes(side, seed):
+    """A `side` x `side` RGBA image of short, mostly opaque strokes one or
+    two texels wide on a clear ground, leaf-green: thin like the paraíso's
+    leaflets, which plain mips thin out."""
+    rng = random.Random(seed)
+    alpha = bytearray(side * side)
+    for _ in range(side // 2):
+        x, y = rng.randrange(side), rng.randrange(side)
+        dx, dy = rng.choice(((1, 0), (0, 1), (1, 1)))
+        width = rng.choice((1, 2))
+        for k in range(rng.randrange(4, side // 3)):
+            for w in range(width):
+                px, py = (x + k * dx + w * dy) % side, (y + k * dy + w * dx) % side
+                alpha[py * side + px] = rng.randrange(160, 256)
+    return bytes(v for a in alpha for v in (60, 110, 40, a))
+
+
+def bc7_levels(ktx2):
+    """The levels of `ktx2` transcoded to BC7, as the game's desktop GPU
+    holds them: (width, height, RGBA bytes) from the largest down."""
+    with tempfile.TemporaryDirectory() as scratch:
+        subprocess.run(
+            ["basisu", "-unpack", "-no_ktx", "-format_only", "6", "-file", os.path.abspath(ktx2)],
+            cwd=scratch, check=True, capture_output=True,
+        )
+        files = {}
+        for name in os.listdir(scratch):
+            found = re.search(r"_rgba_BC7_.*level_(\d+)_", name)
+            if found:
+                files[int(found.group(1))] = os.path.join(scratch, name)
+        levels = []
+        for level in sorted(files):
+            path = files[level]
+            size = subprocess.run(
+                ["magick", "identify", "-format", "%w %h", path],
+                check=True, capture_output=True, text=True,
+            ).stdout.split()
+            data = subprocess.run(
+                ["magick", path, "-depth", "8", "RGBA:-"], check=True, capture_output=True,
+            ).stdout
+            levels.append((int(size[0]), int(size[1]), data))
+        return levels
 
 
 def pixel(path, x, y):
@@ -91,6 +145,71 @@ class Layout(unittest.TestCase):
                 self.assertEqual({s.at for s in stamps}, bases)
             else:
                 self.assertEqual({a for a, _, _, _ in stems[:: len(stems) // 4]}, bases)
+
+
+class Mips(unittest.TestCase):
+    def test_a_texel_is_drawn_from_half_alpha_up(self):
+        # The game's LEAF_CUTOFF, 0.5: 128 of 255 is drawn, 127 is not.
+        self.assertEqual(L.coverage(bytes([60, 0, 0, 127, 60, 0, 0, 128])), 0.5)
+        self.assertEqual(L.coverage(bytes([0, 0, 0, 255] * 3 + [0, 0, 0, 0])), 0.75)
+
+    def test_rescaled_alpha_draws_the_wanted_share_and_keeps_its_order(self):
+        rgba = bytes(v for a in range(0, 256, 4) for v in (9, 8, 7, a))
+        for share in (0.0, 0.1, 0.25, 0.5, 0.9):
+            out = L.keep_coverage(rgba, share)
+            self.assertAlmostEqual(L.coverage(out), share, delta=1 / 64, msg=share)
+            # Colour untouched, alpha still rising.
+            self.assertEqual(out[0::4], rgba[0::4])
+            self.assertEqual(list(out[3::4]), sorted(out[3::4]))
+
+    def test_the_mips_keep_the_cutoff_coverage_of_the_top_level(self):
+        side = 128
+        levels = L.mip_chain(side, side, strokes(side, 5))
+        self.assertEqual([w for w, _, _ in levels], [128, 64, 32, 16, 8, 4, 2, 1])
+        top = L.coverage(levels[0][2])
+        self.assertGreater(top, 0.1)
+        for w, h, data in levels:
+            self.assertEqual(len(data), w * h * 4)
+            if w >= 8:
+                self.assertAlmostEqual(L.coverage(data), top, delta=0.02, msg=w)
+
+    def test_colour_mips_average_in_linear_light(self):
+        # Black and white texels average to sRGB 188 (linear 0.5), not 128.
+        rgba = bytes([0, 0, 0, 255, 255, 255, 255, 255] * 2)
+        (_, _, top), (w, h, mip) = L.mip_chain(2, 2, rgba)
+        self.assertEqual(top, rgba)
+        self.assertEqual((w, h), (1, 1))
+        self.assertEqual(list(mip), [188, 188, 188, 255])
+
+    def test_the_dds_holds_every_level_as_rgba(self):
+        levels = L.mip_chain(4, 4, bytes(range(64)))
+        with tempfile.TemporaryDirectory() as scratch:
+            path = os.path.join(scratch, "x.dds")
+            L.write_dds(path, levels)
+            with open(path, "rb") as f:
+                data = f.read()
+        self.assertEqual(data[:4], b"DDS ")
+        size, _, height, width, pitch, _, count = struct.unpack("<7I", data[4:32])
+        self.assertEqual((size, height, width, pitch, count), (124, 4, 4, 16, 3))
+        masks = struct.unpack("<4I", data[92:108])
+        self.assertEqual(masks, (0xFF, 0xFF00, 0xFF0000, 0xFF000000))
+        self.assertEqual(data[128:], b"".join(d for _, _, d in levels))
+
+
+@unittest.skipUnless(has_magick() and has_basisu(), "needs ImageMagick 7 and basisu")
+class ShippedAtlases(unittest.TestCase):
+    def test_distant_crowns_keep_the_coverage_of_the_near_ones(self):
+        # As the GPU samples them (BC7), every level of 8 x 8 texels and up
+        # draws the share of texels the top level draws, within a tenth:
+        # far crowns neither thin out nor fill in.
+        for species in ("paraiso", "olmo", "eucalipto", "aromo"):
+            levels = bc7_levels(os.path.join(TREES, f"{species}_leaves", "color.ktx2"))
+            self.assertEqual(levels[0][0], L.SIZE, species)
+            top = L.coverage(levels[0][2])
+            for w, _, data in levels:
+                if w >= 8:
+                    got = L.coverage(data)
+                    self.assertAlmostEqual(got, top, delta=0.1 * top, msg=(species, w, got, top))
 
 
 @unittest.skipUnless(has_magick(), "needs ImageMagick 7")

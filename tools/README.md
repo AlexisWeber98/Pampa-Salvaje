@@ -20,7 +20,7 @@ From each set's `color.jpg`, `normal_gl.jpg`, `roughness.jpg` and optional `ao.j
 | `normal_gl.ktx2` | OpenGL (+Y) normal map, linear, basisu's normal-map mode |
 | `orm.ktx2` | linear; red = ambient occlusion (white without `ao.jpg`), green = roughness, blue = metallic (white; the material's `metallic` scales it) |
 
-All three are UASTC LDR 4x4 with mipmaps baked in and Zstandard supercompression. Bevy transcodes UASTC at load to the GPU's block format (BC7 on desktop GPUs, ASTC or ETC2 elsewhere): 1 byte a texel in video memory instead of RGBA8's 4. No RDO is used: on these sets it saved about 3% of disk for about 1 dB of PSNR.
+All three are UASTC LDR 4x4 with mipmaps baked in and Zstandard supercompression. A leaf atlas's colour gets its mips from `leaf_atlas.py --mips` (below), so the script also needs `python3` for sets with `opacity.jpg`; every other set encodes exactly as before. Bevy transcodes UASTC at load to the GPU's block format (BC7 on desktop GPUs, ASTC or ETC2 elsewhere): 1 byte a texel in video memory instead of RGBA8's 4. No RDO is used: on these sets it saved about 3% of disk for about 1 dB of PSNR.
 
 Without `FORCE=1` it refuses to overwrite existing `.ktx2` files. The JPGs stay the editable sources; re-run it after changing one. `--check-orm` converts a synthetic set with and without `ao.jpg`, unpacks its `orm.ktx2` to BC7 and fails unless each channel holds what it should. `--check-alpha` does the same for a set with `opacity.jpg` and fails unless the opacity lands in `color.ktx2`'s alpha.
 
@@ -42,7 +42,9 @@ FORCE=1 sh tools/textures_to_ktx2.sh assets/textures/trees/*_leaves/
 | `eucalipto_leaves` | LeafSet003 | long leaves hanging close to a twig |
 | `aromo_leaves` | LeafSet019 | the sprays, stood upright |
 
-Each atlas folder gets `color.jpg`, `opacity.jpg`, `normal_gl.jpg` and `roughness.jpg`; `textures_to_ktx2.sh` packs the opacity into the colour's alpha. The normal map's x and y are rotated with each leaf. The layout is seeded, so the output is reproducible with the same ImageMagick. Tests: `python3 -I -B -m unittest discover -s tools -p test_leaf_atlas.py`.
+Each atlas folder gets `color.jpg`, `opacity.jpg`, `normal_gl.jpg` and `roughness.jpg`; `textures_to_ktx2.sh` packs the opacity into the colour's alpha. The normal map's x and y are rotated with each leaf. The layout is seeded, so the output is reproducible with the same ImageMagick.
+
+`python3 -I tools/leaf_atlas.py --mips RGBA.png OUT.dds` (run by `textures_to_ktx2.sh`) writes an RGBA image's mip chain as a mipmapped RGBA DDS, which basisu encodes level by level. Plain mips average a thin leaf's alpha with the clear ground round it, under the game's 0.5 alpha-test cutoff, so distant crowns thinned out. Each level's alpha is remapped instead so that it draws the share of texels the full-size atlas draws (after Castaño's coverage-preserving mips), kept 8 steps clear of the cutoff for the block compression. A test unpacks the shipped atlases to BC7 and checks every level of 8 x 8 texels and up. Tests: `python3 -I -B -m unittest discover -s tools -p test_leaf_atlas.py`.
 
 ## `dae2gltf.py`: COLLADA to glTF
 

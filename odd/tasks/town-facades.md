@@ -781,11 +781,129 @@ under the session scratchpad.
 
 ### Phase 4 follow-ups and next step
 
-- Not seen in the game yet: check the leaves' tints, the Mask cutoff at a
-  distance (UASTC mips shrink alpha coverage; a lower cutoff or
-  AlphaToCoverage may be needed), and the paraíso's density.
+- Not seen in the game yet: check the leaves' tints and the paraíso's
+  density. The Mask cutoff at a distance was seen (crowns thinned at
+  100–150 m) and is fixed by the tree crowns follow-up below.
 - `tools/README.md`: `leaf_atlas.py` section and the `--check-alpha` path
   added by the parent (done).
 - Delete `LeafSet003/LeafSet003_1K-JPG_AmbientOcclusion.jpg` (unused).
 - Next: run the game, then the native review of the work-unit commit.
 
+### Tree crowns follow-up (branch fix/tree-crowns, from 2c9a773)
+
+The native review of 2c9a773 approved with findings, and the user saw
+distant crowns (100–150 m) thinning in the game. Route: one delegated
+writer in the main checkout (trigger: tools, assets and render files).
+Uncommitted; the user commits.
+
+- [x] C1 Crowns thinning with distance (R4-001, R3-mask-cutoff-mips):
+  coverage-preserving mips for the leaf atlases.
+- [x] C2 Plaza fallback (R2-tree-plaza-fallback, R3-plaza-fallback): a
+  tree outside every plaza goes to the nearest one, with a warning. A
+  sweep test checks that every tree stands in exactly one plaza.
+- [x] C3 Suggestions: `TREE_SCALE_MIN` and `TREE_SINK` named
+  (R2-tree-scale-magic, R2-tree-sink-constant); `Form::height` documented
+  as the layout height, not the built one (R2-form-height-misleading);
+  `leaf_atlas.py` points at `SPRIG_BASE` in `tree/mesh.rs`
+  (R2-atlas-doc-pointer).
+
+#### Decisions
+
+- **Measured first.** Shipped atlases unpacked to BC7 (what the GPU
+  holds), share of texels with alpha ≥ 0.5 per level: paraíso 0.081 at
+  L0, 0.050 at L5 (32²), 0.012 at L6, 0 at L7. Olmo 0.143 → 0.094 at L7,
+  aromo 0.134 → 0.047 at L7, and every species was 0 from L8 (4²) down. A
+  card about 1 m wide over a 512-texel quarter, at 125 m, 1080p, 60° fov,
+  is about 67 texels a pixel: mip 6–7, where the paraíso had lost most of
+  its leaves.
+- **Not AlphaToCoverage.** MSAA is on: the game has one camera
+  (`game/src/camera.rs:457`, `Camera3d::default()`, `Msaa::Sample4`), no
+  `Msaa` override, no HDR or post-processing, no prepass components. A2C
+  would not fix the thinning, though. Bevy 0.20 sharpens A2C alpha as
+  `(a - cutoff) / fwidth(a) + 0.5` round a fixed 0.5
+  (`bevy_pbr-0.20.0/src/render/pbr_fragment.wesl:212-226`,
+  `pbr_material.rs:1189-1203`), so a low mip's smooth alpha under 0.5
+  still draws nothing. Its shadow and prepass cut at 0.05, not at its
+  cutoff (`pbr_prepass_functions.wesl:17-31`, `render/light.rs:2585-2591`,
+  `prepass/mod.rs:1138-1142`), so shadows would come from the leaves'
+  fringes. Without MSAA it falls back to a mask
+  (`material.rs:697-700`).
+- **Coverage-preserving mips** (after Castaño, "Computing alpha mipmaps",
+  2010). `leaf_atlas.py --mips` averages each level from the plain level
+  above (colour in linear light, alpha as is). It then remaps the
+  level's alpha so that it draws the share of texels the top level
+  draws: the threshold whose count is nearest the wanted one lands on
+  128, and every texel keeps 8 steps (`GUARD`) clear of it. Without the
+  guard, UASTC→BC7 moved enough texels across the cutoff to miss by up to
+  35% at 8² (seen in a sabotage). It writes the chain as a mipmapped
+  32-bit RGBA DDS. basisu 2.10 encodes a DDS's levels as given (tried
+  first with distinct colours per level; read back per level after the
+  BC7 unpack), so the leaf colour encodes without `-mipmap`.
+  `LEAF_CUTOFF` and the tool's `CUTOFF = 128` are tied by a test.
+- **Result** (BC7, per level L0 … L8): paraíso 0.081 0.081 0.081 0.081
+  0.081 0.081 0.082 0.078 0.063; olmo 0.143 … 0.145 0.141 0.125;
+  eucalipto 0.146 … 0.145 0.141 0.125; aromo 0.134 … 0.129 0.141 0.125.
+  Every level of 8² and up is within 4% of L0. Only the four leaf
+  `color.ktx2` changed. Their `normal_gl`/`orm`, every bark and building
+  set (brick_pavement and Bark014 re-encoded in the scratchpad) stay
+  byte-identical, and re-encoding the atlases is reproducible (sha256).
+  File sizes are 2–4% smaller.
+- **Plaza assignment**: `plaza_of` returns the plaza that holds the tree,
+  or else the nearest one by distance to its box, with a `warn!`. No
+  shipped-towns test: `pampa-render` cannot read
+  `assets/world/towns.ron` (that needs `pampa-content`, only the game
+  depends on it). The render test sweeps the shapes the shipped towns take
+  instead (3–8 blocks a side, with no railway, a railway, or a through
+  line, seeds 1, 2, 13, 19, more than 50 towns) and asserts each tree lies
+  in exactly one plaza's Aabb and is filed under it.
+
+#### Tree crowns follow-up sabotage log (each broken, seen failing, restored; sha256 checked equal)
+
+| Sabotage | Test seen failing |
+|---|---|
+| shipped atlases as at 2c9a773 (plain basisu mips; RED before the fix) | `test_leaf_atlas.ShippedAtlases.test_distant_crowns_keep_the_coverage_of_the_near_ones` (paraíso 32²: 0.050 vs 0.081) |
+| colour encoded with plain `-mipmap` again (atlases re-encoded, then restored identical) | `test_leaf_atlas.ShippedAtlases.test_distant_crowns_keep_the_coverage_of_the_near_ones` |
+| `GUARD = 0` (atlases re-encoded, then restored identical) | `test_leaf_atlas.ShippedAtlases.test_distant_crowns_keep_the_coverage_of_the_near_ones` (paraíso 8²: 0.109) |
+| mips not remapped | `test_leaf_atlas.Mips.test_the_mips_keep_the_cutoff_coverage_of_the_top_level` |
+| threshold texels remapped under the cutoff | `test_leaf_atlas.Mips.test_rescaled_alpha_draws_the_wanted_share_and_keeps_its_order` |
+| alpha 128 not drawn (`>` for `>=`) | `test_leaf_atlas.Mips.test_a_texel_is_drawn_from_half_alpha_up` |
+| colour averaged in sRGB bytes | `test_leaf_atlas.Mips.test_colour_mips_average_in_linear_light` |
+| DDS mip count 1 | `test_leaf_atlas.Mips.test_the_dds_holds_every_level_as_rgba` |
+| `LEAF_CUTOFF` 0.6 | `tree::materials::the_atlas_mips_keep_coverage_for_this_cutoff` |
+| old fallback, plaza 0 (RED before the fix) | `town::a_tree_outside_every_plaza_goes_to_the_nearest` ("just outside") |
+| farthest plaza instead of nearest | `town::a_tree_outside_every_plaza_goes_to_the_nearest` |
+| every tree filed among plaza 0 only | `town::every_tree_stands_in_exactly_one_plaza_and_is_filed_under_it` |
+| scale spread doubled under `TREE_SCALE_MIN` | `town::plaza_trees_share_the_kit_and_fade_out_of_the_way` |
+
+#### Verification (2026-10-26)
+
+- `cargo test -p pampa-render`: 357 passed, 5 ignored.
+- `cargo test -p game`: 136 passed.
+- `python3 -I -B -m unittest discover -s tools`: 152 passed.
+- `cargo build -p game`: ok.
+- `cargo fmt --all -- --check`: clean.
+- `cargo clippy --workspace --all-targets -- -D warnings`: clean.
+- `tools/textures_to_ktx2.sh --check-alpha` and `--check-orm`: pass.
+
+#### Follow-ups and next step
+
+- In the game: crowns at 100–250 m should keep their density, and the
+  shadows under far trees too (shadows use the same cutoff and mips).
+  Very close up nothing changes (level 0 is untouched).
+- A shipped-towns plaza test belongs in `game/src/towns.rs` if wanted
+  (it would need `plaza_tree_sites` public from `pampa-render`).
+- Next: the user plays it and commits. The native review takes the work
+  unit commit.
+
+#### Native review of the crowns follow-up (2026-10-26)
+
+Lineage review-0c871c7925dfd036, high risk, 4 lenses: approved and
+acknowledged. The one WARNING (R4-python3-not-preflighted) was fixed after
+it: `textures_to_ktx2.sh` adds `python3` to its tool preflight when an
+argument is `--check-alpha` or a set with `opacity.jpg`, so a machine
+without it fails before any output is written. Checked by running
+`--check-alpha` with a PATH lacking python3: it stops with
+"needs `python3` on PATH"; with python3, `--check-alpha` passes. The
+SUGGESTIONs (encode/encode_levels duplication, help docstring slice, the
+empty-plaza fallback, a hard-coded height note, the shipped-atlas test
+skipping without basisu) are left as follow-ups.

@@ -14,8 +14,9 @@ atlas:
     aromo      LeafSet019's sprays, stood upright
 
 Every sprig grows from the middle of its quarter, 2 * MARGIN texels over
-its bottom edge (BASE), toward the top; the game's cards hang on that point (see
-`crates/render/src/tree.rs`). Nothing crosses into the next quarter's
+its bottom edge (BASE), toward the top; the game's cards hang on that point
+(`SPRIG_BASE` in `crates/render/src/tree/mesh.rs`, to change with BASE).
+Nothing crosses into the next quarter's
 MARGIN, so the mips do not bleed between sprigs.
 
 Each set folder holds the renamed sources `color.jpg`, `opacity.jpg`,
@@ -29,7 +30,15 @@ colour, so the mips do not darken the cut edges.
 The layout is seeded and the output is reproducible with the same
 ImageMagick. Needs ImageMagick 7 (`magick`); standard library only.
 
+`--mips` instead writes an RGBA image's mip chain to a DDS file for
+`tools/textures_to_ktx2.sh`, each level's alpha remapped so that it draws
+the share of texels over the game's cutoff that the top level draws
+(Castaño's coverage-preserving mips): plain mips average a thin leaf's
+alpha with the clear ground round it, under the cutoff, and distant
+crowns thin out.
+
 Usage: python3 -I tools/leaf_atlas.py TREES_DIR [SPECIES...]
+       python3 -I tools/leaf_atlas.py --mips RGBA.png OUT.dds
    e.g. python3 -I tools/leaf_atlas.py assets/textures/trees
 """
 
@@ -37,6 +46,7 @@ import math
 import os
 import random
 import re
+import struct
 import subprocess
 import sys
 import tempfile
@@ -263,6 +273,125 @@ def layout(kind, cut, seed):
     return stamps, stems
 
 
+# The alpha (of 255) a leaf texel needs to be drawn: the game's
+# LEAF_CUTOFF, 0.5 (`crates/render/src/tree/materials.rs`).
+CUTOFF = 128
+
+# How far a mip's remapped alpha keeps from CUTOFF, either side: UASTC and
+# its BC7 transcode move alpha a few steps, which must not carry a texel
+# across the cutoff.
+GUARD = 8
+
+# sRGB byte to linear light.
+_LINEAR = [v / 255 / 12.92 if v <= 10 else ((v / 255 + 0.055) / 1.055) ** 2.4 for v in range(256)]
+
+
+def _srgb(linear):
+    """Linear light to the nearest sRGB byte."""
+    v = 12.92 * linear if linear <= 0.0031308 else 1.055 * linear ** (1 / 2.4) - 0.055
+    return min(255, max(0, round(255 * v)))
+
+
+def coverage(rgba):
+    """The share of the RGBA texels in `rgba` that the game draws."""
+    alpha = rgba[3::4]
+    return sum(1 for a in alpha if a >= CUTOFF) / len(alpha)
+
+
+def keep_coverage(rgba, share):
+    """`rgba` with its alpha remapped so that the share of drawn texels
+    comes as near `share` as its alpha values allow, colour and alpha order
+    kept, alpha kept GUARD away from the cutoff (after Castaño, "Computing
+    alpha mipmaps", 2010, which scales)."""
+    alpha = rgba[3::4]
+    want = round(share * len(alpha))
+    counts = [0] * 257
+    for a in alpha:
+        counts[a] += 1
+    # The threshold to draw from (256: nothing), the nearest to `want` in
+    # texels drawn; on a tie the higher one.
+    best, best_drawn, drawn = 256, 0, 0
+    for t in range(255, 0, -1):
+        drawn += counts[t]
+        if abs(drawn - want) < abs(best_drawn - want):
+            best, best_drawn = t, drawn
+
+    low, high = CUTOFF - GUARD, CUTOFF + GUARD
+
+    def remap(a):
+        # Under the threshold to under `low`, the rest to `high`..255:
+        # opaque stays opaque, and no texel sits within GUARD of the cutoff.
+        if a < best:
+            return a * low // best
+        if best == 255:
+            return 255
+        return high + (a - best) * (255 - high) // (255 - best)
+
+    out = bytearray(rgba)
+    out[3::4] = bytes(remap(a) for a in alpha)
+    return bytes(out)
+
+
+def _halve(w, h, rgba):
+    """The next mip of a `w` x `h` RGBA image: each 2 x 2 texels averaged,
+    colour in linear light, alpha as is."""
+    w2, h2 = max(1, w // 2), max(1, h // 2)
+    out = bytearray(w2 * h2 * 4)
+    lin = _LINEAR
+    for y in range(h2):
+        rows = (min(2 * y, h - 1) * w * 4, min(2 * y + 1, h - 1) * w * 4)
+        for x in range(w2):
+            cols = (min(2 * x, w - 1) * 4, min(2 * x + 1, w - 1) * 4)
+            texels = [r + c for r in rows for c in cols]
+            o = (y * w2 + x) * 4
+            for ch in range(3):
+                out[o + ch] = _srgb(sum(lin[rgba[t + ch]] for t in texels) / 4)
+            out[o + 3] = (sum(rgba[t + 3] for t in texels) + 2) // 4
+    return w2, h2, bytes(out)
+
+
+def mip_chain(w, h, rgba):
+    """Every mip level of a `w` x `h` RGBA image down to 1 x 1, as
+    (width, height, RGBA bytes), the top level as given. Each level is
+    averaged from the plain level above it, then its alpha is remapped to
+    draw the top level's share of texels (`keep_coverage`): plain
+    averaging would sink a thin leaf's alpha under the cutoff, and the
+    crowns would thin out with distance."""
+    share = coverage(rgba)
+    levels = [(w, h, rgba)]
+    plain = (w, h, rgba)
+    while plain[0] > 1 or plain[1] > 1:
+        plain = _halve(*plain)
+        levels.append((plain[0], plain[1], keep_coverage(plain[2], share)))
+    return levels
+
+
+def write_dds(path, levels):
+    """Writes `levels` (from `mip_chain`) as an uncompressed 32-bit RGBA
+    DDS with its mip chain: basisu encodes those levels as they are."""
+    w, h, _ = levels[0]
+    # DDSD_CAPS | HEIGHT | WIDTH | PITCH | PIXELFORMAT | MIPMAPCOUNT.
+    header = struct.pack("<4s7I44x", b"DDS ", 124, 0x2100F, h, w, w * 4, 0, len(levels))
+    # DDPF_RGB | DDPF_ALPHAPIXELS, 32 bits, R G B A in byte order.
+    pixel = struct.pack("<8I", 32, 0x41, 0, 32, 0xFF, 0xFF00, 0xFF0000, 0xFF000000)
+    # DDSCAPS_COMPLEX | TEXTURE | MIPMAP.
+    caps = struct.pack("<4I4x", 0x401008, 0, 0, 0)
+    with open(path, "wb") as f:
+        f.write(header + pixel + caps)
+        for _, _, data in levels:
+            f.write(data)
+
+
+def mips(src, dest):
+    """Writes the RGBA image `src` with its coverage-keeping mips to DDS
+    file `dest` (for `tools/textures_to_ktx2.sh`)."""
+    w, h = (int(v) for v in magick("identify", "-format", "%w %h", src, capture=True).split())
+    rgba = subprocess.run(
+        ["magick", src, "-depth", "8", "RGBA:-"], check=True, capture_output=True
+    ).stdout
+    write_dds(dest, mip_chain(w, h, rgba))
+
+
 def magick(*args, capture=False):
     run = subprocess.run(["magick", *map(str, args)], check=True, capture_output=True, text=True)
     return run.stdout if capture else None
@@ -363,8 +492,14 @@ def build(src, out, kind, seed):
 
 def main(argv):
     if not argv or argv[0] in ("-h", "--help"):
-        print(__doc__.strip().splitlines()[-2], file=sys.stderr)
+        print("\n".join(__doc__.strip().splitlines()[-3:-1]), file=sys.stderr)
         return 1
+    if argv[0] == "--mips":
+        if len(argv) != 3:
+            print("leaf_atlas.py: --mips RGBA.png OUT.dds", file=sys.stderr)
+            return 1
+        mips(argv[1], argv[2])
+        return 0
     trees, species = argv[0], argv[1:] or list(RECIPES)
     for name in species:
         if name not in RECIPES:

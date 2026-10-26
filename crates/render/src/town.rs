@@ -599,7 +599,7 @@ fn plaza_trees(b: &mut Builder, town: &TownLayout) {
         let (bark, leaves) = (kit.bark.clone(), kit.leaves.clone());
         let ground = b.ground(tree.at);
         let variant = &kit.variants[tree.variant];
-        let transform = Transform::from_translation(world_from_ground(tree.at, ground - 0.05))
+        let transform = Transform::from_translation(world_from_ground(tree.at, ground - TREE_SINK))
             .with_rotation(Quat::from_rotation_y(tree.yaw))
             .with_scale(Vec3::splat(tree.scale));
         let fade = ThinOccluder::post(
@@ -632,7 +632,7 @@ struct TreeSite {
     at: GroundVec2,
     variant: usize,
     yaw: f32,
-    /// Uniform scale, at most [`TREE_SCALE_MAX`].
+    /// Uniform scale, from [`TREE_SCALE_MIN`] to [`TREE_SCALE_MAX`].
     scale: f32,
 }
 
@@ -640,28 +640,53 @@ struct TreeSite {
 /// within core's [`pampa_core::town::TREE_TRUNK_RADIUS`].
 pub(crate) const TREE_SCALE_MAX: f32 = 1.08;
 
+/// The smallest a plaza tree is drawn over its variant: each tree's scale
+/// lies between this and [`TREE_SCALE_MAX`], seeded by its spot.
+const TREE_SCALE_MIN: f32 = 0.92;
+
+/// How far a plaza tree's foot sits under the ground at its spot, meters:
+/// the trunk's flat bottom stays buried where the lawn slopes a little.
+const TREE_SINK: f32 = 0.05;
+
 /// Each of `town`'s trees with the index of the plaza it stands in
-/// ([`TownLayout::plazas`]), its variant, yaw and scale, seeded by its
-/// spot.
+/// ([`TownLayout::plazas`], [`plaza_of`]), its variant, yaw and scale,
+/// seeded by its spot.
 fn plaza_tree_sites(town: &TownLayout) -> Vec<(usize, TreeSite)> {
     let plazas: Vec<Aabb> = town.plazas().collect();
     town.trees
         .iter()
         .map(|&at| {
-            let plaza = plazas
-                .iter()
-                .position(|p| p.contains_point(at))
-                .unwrap_or(0);
+            let plaza = plaza_of(&plazas, at);
             let (a, b) = (hash2(at.x, at.y), hash2(at.y + 7.0, at.x));
             let site = TreeSite {
                 at,
                 variant: (a * VARIANTS as f32) as usize % VARIANTS,
                 yaw: b * std::f32::consts::TAU,
-                scale: TREE_SCALE_MAX - 0.16 * hash2(at.x + 3.0, at.y - 5.0),
+                scale: TREE_SCALE_MAX
+                    - (TREE_SCALE_MAX - TREE_SCALE_MIN) * hash2(at.x + 3.0, at.y - 5.0),
             };
             (plaza, site)
         })
         .collect()
+}
+
+/// The index of the plaza of `plazas` that tree `at` stands in. Core plants
+/// every tree inside a plaza; one outside them all (after a layout change)
+/// is filed under the nearest, with a warning, rather than quietly under
+/// the main plaza.
+fn plaza_of(plazas: &[Aabb], at: GroundVec2) -> usize {
+    if let Some(inside) = plazas.iter().position(|p| p.contains_point(at)) {
+        return inside;
+    }
+    let away = |p: &Aabb| p.closest_point(at).distance(at);
+    let nearest = (0..plazas.len())
+        .min_by(|&a, &b| away(&plazas[a]).total_cmp(&away(&plazas[b])))
+        .unwrap_or(0);
+    warn!(
+        "plaza tree at ({:.1}, {:.1}) stands in no plaza; drawn as plaza {nearest}'s",
+        at.x, at.y
+    );
+    nearest
 }
 
 /// Ballast bed, sleepers and two rails following the ground, drawn with
@@ -1114,7 +1139,7 @@ mod tests {
                 fade.radius > 1.0 && fade.top - fade.bottom > 3.0,
                 "{fade:?}"
             );
-            assert!(at.scale.x <= TREE_SCALE_MAX && at.scale.x >= TREE_SCALE_MAX - 0.16);
+            assert!(at.scale.x <= TREE_SCALE_MAX && at.scale.x >= TREE_SCALE_MIN);
         }
         // A bark and a leaf mesh per tree, the variants shared.
         assert_eq!(drawn, 2 * town.trees.len());
@@ -1151,6 +1176,55 @@ mod tests {
             assert!(area.contains_point(site.at));
         }
         assert_ne!(plaza_species(town.seed, 0), plaza_species(town.seed, 1));
+    }
+
+    #[test]
+    fn every_tree_stands_in_exactly_one_plaza_and_is_filed_under_it() {
+        // Every town shape the shipped towns take (3 to 8 blocks a side,
+        // with and without a railway, a through line making a station
+        // plaza) over a few seeds: core plants each tree in one plaza, so
+        // a layout change that moves one out fails here, not quietly.
+        let mut towns = 0;
+        for blocks in [(3, 3), (4, 3), (4, 4), (4, 5), (5, 4), (8, 8)] {
+            for seed in [1, 2, 13, 19] {
+                for railway in [None, Some(false), Some(true)] {
+                    let config = TownConfig {
+                        blocks,
+                        seed,
+                        railway: railway.map(|through| pampa_core::RailwayConfig {
+                            side: pampa_core::Side::North,
+                            offset: 24.0,
+                            through,
+                        }),
+                        ..TownConfig::castex()
+                    };
+                    let Ok(town) = TownLayout::generate(&config) else {
+                        continue;
+                    };
+                    towns += 1;
+                    let plazas: Vec<Aabb> = town.plazas().collect();
+                    for (plaza, site) in plaza_tree_sites(&town) {
+                        let holding: Vec<usize> = (0..plazas.len())
+                            .filter(|&i| plazas[i].contains_point(site.at))
+                            .collect();
+                        assert_eq!(holding, [plaza], "{blocks:?} seed {seed} {:?}", site.at);
+                    }
+                }
+            }
+        }
+        assert!(towns > 50, "{towns} towns generated");
+    }
+
+    #[test]
+    fn a_tree_outside_every_plaza_goes_to_the_nearest() {
+        let plazas = [
+            Aabb::new(Vec2::new(0.0, 0.0), Vec2::new(40.0, 40.0)),
+            Aabb::new(Vec2::new(100.0, 0.0), Vec2::new(140.0, 40.0)),
+        ];
+        assert_eq!(plaza_of(&plazas, Vec2::new(20.0, 20.0)), 0);
+        assert_eq!(plaza_of(&plazas, Vec2::new(120.0, 40.0)), 1, "on the edge");
+        assert_eq!(plaza_of(&plazas, Vec2::new(141.0, 20.0)), 1, "just outside");
+        assert_eq!(plaza_of(&plazas, Vec2::new(60.0, -5.0)), 0);
     }
 
     #[test]
@@ -1276,7 +1350,7 @@ mod tests {
                 let tree = crate::tree::mesh::tree(species, site.variant as u32);
                 let at = Transform::from_translation(world_from_ground(
                     site.at,
-                    terrain.height(site.at.x, site.at.y) - 0.05,
+                    terrain.height(site.at.x, site.at.y) - TREE_SINK,
                 ))
                 .with_rotation(Quat::from_rotation_y(site.yaw))
                 .with_scale(Vec3::splat(site.scale));

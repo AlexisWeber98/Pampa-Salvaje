@@ -7,6 +7,12 @@
 //! (`tools/leaf_atlas.py`) carries its opacity in the colour's alpha and is
 //! sampled clamped to its edges. Leaves are alpha-tested
 //! ([`AlphaMode::Mask`]): no sorting, and their cut-outs cast shadows.
+//! The atlas's mips are made so that each level draws the share of texels
+//! over [`LEAF_CUTOFF`] that the full-size atlas draws (`leaf_atlas.py
+//! --mips`): plain mips average a thin leaf with the clear ground round
+//! it, under the cutoff, and distant crowns thinned out. Bevy's
+//! [`AlphaMode::AlphaToCoverage`] would not help: it sharpens alpha round
+//! the same fixed 0.5, and cuts its shadows and prepass at 0.05.
 //! They are drawn from both sides without Bevy's double-sided normal flip,
 //! so a card's back keeps the normal leaning out of the crown that its
 //! front has (see [`super::mesh`]).
@@ -27,7 +33,8 @@ use crate::facade::materials::{MAPS, load_map_with, repeating};
 /// Where the tree texture sets live, under the [`AssetRoot`].
 pub const TREE_TEXTURE_DIR: &str = "textures/trees";
 
-/// The alpha a leaf texel needs to be drawn.
+/// The alpha a leaf texel needs to be drawn: `leaf_atlas.py`'s `CUTOFF`
+/// (128 of 255) keeps the atlas mips' coverage for it.
 pub const LEAF_CUTOFF: f32 = 0.5;
 
 /// The path of map `name` of tree set `set`, under the [`AssetRoot`].
@@ -250,6 +257,21 @@ mod tests {
                 assert_eq!(bark.occlusion_texture.is_some(), textured);
             }
         }
+    }
+
+    #[test]
+    fn the_atlas_mips_keep_coverage_for_this_cutoff() {
+        // The lowest byte alpha drawn is the one `leaf_atlas.py` keeps
+        // each mip's share of texels over.
+        let tool = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/leaf_atlas.py");
+        let text = std::fs::read_to_string(tool).unwrap();
+        let cutoff: u32 = text
+            .lines()
+            .find_map(|l| l.strip_prefix("CUTOFF = "))
+            .expect("leaf_atlas.py sets CUTOFF")
+            .parse()
+            .unwrap();
+        assert_eq!(cutoff, (LEAF_CUTOFF * 255.0).ceil() as u32);
     }
 
     #[test]

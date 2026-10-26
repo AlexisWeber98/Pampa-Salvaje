@@ -24,10 +24,15 @@ use crate::ground::face_tangent;
 /// (`leaf_atlas.py`'s `BASE`: 32 of 512 texels).
 pub const SPRIG_BASE: f32 = 32.0 / 512.0;
 
-/// The shape of a species, for a tree of [`Form::height`].
+/// The shape of a species: its trunk, limbs and leaf cards, laid out from
+/// [`Form::height`].
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Form {
-    /// Height the limbs are laid out for, meters (min, max).
+    /// Height the limbs are laid out for, meters (min, max): a scale for
+    /// the fork, the limbs' length and the leader, not the built tree's
+    /// height. That is measured from the geometry into
+    /// [`TreeMesh::height`] and comes out lower where the limbs lean out
+    /// (the aromo's is about 4.6 m against a layout height of 6.5–7.5).
     pub height: (f32, f32),
     /// Where the limbs part from the trunk, a fraction of the height.
     pub fork: f32,

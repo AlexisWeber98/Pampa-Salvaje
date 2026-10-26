@@ -15,7 +15,9 @@
 #                   material's own `metallic` scales it per surface)
 #
 # All three are UASTC LDR 4x4 with their mip chain baked in (sRGB-correct
-# filtering for colour, linear for the rest) and Zstandard supercompression
+# filtering for colour, linear for the rest; a leaf colour's mips come from
+# `leaf_atlas.py --mips`, which keeps the alpha test's coverage at every
+# level) and Zstandard supercompression
 # (basisu's default for UASTC in KTX2). Bevy transcodes UASTC at load to the
 # GPU's block format: BC7 on desktop GPUs, 1 byte a texel instead of RGBA8's
 # 4. No RDO: it saved ~3% of disk on these sets for ~1 dB of PSNR.
@@ -32,7 +34,8 @@
 # color.ktx2 to BC7 and fails unless the opacity lands in alpha and the
 # colour stays in RGB.
 #
-# Needs basisu (Basis Universal 2.x) and ImageMagick 7 (`magick`).
+# Needs basisu (Basis Universal 2.x) and ImageMagick 7 (`magick`), and
+# python3 for sets with opacity.jpg.
 #
 # Usage: [FORCE=1] sh tools/textures_to_ktx2.sh SET_FOLDER...
 #        sh tools/textures_to_ktx2.sh --check-orm | --check-alpha
@@ -41,12 +44,23 @@ set -eu
 
 usage="usage: [FORCE=1] sh textures_to_ktx2.sh SET_FOLDER... | sh textures_to_ktx2.sh --check-orm | --check-alpha"
 [ $# -gt 0 ] || { echo "$usage" >&2; exit 1; }
-for tool in basisu magick; do
+needs="basisu magick"
+# Leaf sets (an opacity.jpg) make their mips with python3: check it before
+# any output is written.
+for arg in "$@"; do
+    if [ "$arg" = --check-alpha ] || [ -f "$arg/opacity.jpg" ]; then
+        needs="$needs python3"
+        break
+    fi
+done
+for tool in $needs; do
     if ! command -v "$tool" >/dev/null 2>&1; then
         echo "textures_to_ktx2.sh: needs \`$tool\` on PATH" >&2
         exit 1
     fi
 done
+# This script's folder, for leaf_atlas.py.
+tools="$(cd "$(dirname "$0")" && pwd)"
 # A private scratch folder (portable: no GNU-only `mktemp --suffix`).
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
@@ -72,15 +86,17 @@ pack_orm() { # SET OUTPUT
 
 # Encodes the colour of set SET into KTX2 file OUTPUT: color.jpg as is, or,
 # with opacity.jpg, an RGBA PNG of the two (the opacity's red channel in
-# alpha) first. A set without opacity.jpg encodes exactly as before the
-# alpha path existed.
+# alpha) first, whose mips `leaf_atlas.py --mips` makes so that distant
+# cards keep the share of texels the alpha test draws. A set without
+# opacity.jpg encodes exactly as before the alpha path existed.
 encode_color() { # SET OUTPUT
     set_dir="$1" dest="$2"
     if [ -f "$set_dir/opacity.jpg" ]; then
         magick "$set_dir/color.jpg" \
             \( "$set_dir/opacity.jpg" -channel R -separate +channel \) \
             -alpha off -compose CopyOpacity -composite "PNG32:$scratch/rgba.png"
-        encode "$scratch/rgba.png" "$dest" -srgb
+        python3 -I "$tools/leaf_atlas.py" --mips "$scratch/rgba.png" "$scratch/rgba.dds"
+        encode_levels "$scratch/rgba.dds" "$dest" -srgb
     else
         encode "$set_dir/color.jpg" "$dest" -srgb
     fi
@@ -91,6 +107,15 @@ encode() { # SOURCE OUTPUT [basisu options...]
     src="$1" dest="$2"
     shift 2
     basisu -ktx2 -uastc -uastc_level 2 -mipmap -quiet "$@" \
+        -file "$src" -output_file "$dest" >/dev/null
+}
+
+# UASTC KTX2 of a DDS SOURCE that carries its own mips: basisu encodes its
+# levels as they are, generating none.
+encode_levels() { # SOURCE OUTPUT [basisu options...]
+    src="$1" dest="$2"
+    shift 2
+    basisu -ktx2 -uastc -uastc_level 2 -quiet "$@" \
         -file "$src" -output_file "$dest" >/dev/null
 }
 
