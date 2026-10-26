@@ -47,7 +47,7 @@ with real light only near the camera, without hurting the Renoir iGPU.
   hour at dusk and dawn. One shared glass material, updated only when the glow
   changes.
 - **Light**: a pool of `LAMP_LIGHTS` = 8 point lights, warm kerosene colour,
-  30,000 lm at full glow, 12 m range, shadow maps and contact shadows off,
+  75,000 lm at full glow (30,000 until the 2026-10-26 playtest), 12 m range, shadow maps and contact shadows off,
   moved each frame to the lamps nearest the 3D camera (the stream focus
   without one); hidden by day. Intensity is a first guess, to tune in game.
 - **Minimap**: skipped.

@@ -257,6 +257,23 @@ pub fn lens(blend: ViewBlend) -> PerspectiveProjection {
     }
 }
 
+/// Gives `projection` the field of view and near plane of `wanted`, in
+/// place: its aspect ratio (kept by Bevy to the viewport's) and far plane
+/// stay as they are. Touches it only when they change, so the projection is
+/// not marked changed every frame.
+pub fn set_lens(projection: &mut Mut<Projection>, wanted: PerspectiveProjection) {
+    match &**projection {
+        Projection::Perspective(p) if p.fov == wanted.fov && p.near == wanted.near => {}
+        Projection::Perspective(_) => {
+            if let Projection::Perspective(p) = &mut **projection {
+                p.fov = wanted.fov;
+                p.near = wanted.near;
+            }
+        }
+        _ => **projection = Projection::Perspective(wanted),
+    }
+}
+
 /// `V` off the train toggles the view. Into the eyes, the head turns to
 /// where the orbit camera looked; back out, the orbit swings behind where
 /// the eyes looked.
@@ -324,6 +341,12 @@ type FirstPersonState<'w> = (
     ResMut<'w, BodyTooClose>,
 );
 
+/// The marked head bones and the parents to tell the player's own.
+type Heads<'w, 's> = (
+    Query<'w, 's, (Entity, &'static GlobalTransform), (With<ViewerHead>, Without<FollowCamera>)>,
+    Query<'w, 's, &'static ChildOf>,
+);
+
 /// Moves the camera (after transform propagation, so the head bone has
 /// this frame's pose) from where the orbit put it toward the eyes, and
 /// sets the lens, the layers and the shadows for the view. Aboard, the
@@ -335,8 +358,8 @@ pub(crate) fn place_first_person(
     time: Res<Time>,
     (mode, look): (Res<ViewMode>, Res<FirstPersonLook>),
     (mut blend, mut eye, mut shadows, mut too_close): FirstPersonState,
-    player: Single<(&Player, &Transform, Has<OnTrain>), Without<FollowCamera>>,
-    heads: Query<&GlobalTransform, (With<ViewerHead>, Without<FollowCamera>)>,
+    player: Single<(Entity, &Player, &Transform, Has<OnTrain>), Without<FollowCamera>>,
+    (heads, parents): Heads,
     camera: Single<
         (
             &mut Transform,
@@ -348,7 +371,7 @@ pub(crate) fn place_first_person(
     >,
     mut was_aboard: Local<bool>,
 ) {
-    let (player, feet, aboard) = player.into_inner();
+    let (me, player, feet, aboard) = player.into_inner();
     let (mut transform, mut global, mut projection, mut layers) = camera.into_inner();
     let dt = time.delta_secs();
     let first = *mode == ViewMode::FirstPerson && !aboard;
@@ -361,21 +384,19 @@ pub(crate) fn place_first_person(
         blend.step(first, dt);
     }
     *was_aboard = aboard;
-    let wanted = lens(*blend);
-    if !matches!(&*projection, Projection::Perspective(p) if p.fov == wanted.fov && p.near == wanted.near)
-    {
-        *projection = Projection::Perspective(wanted);
-    }
+    set_lens(&mut projection, lens(*blend));
     let rider = &player.rider;
     let anchor = feet.translation;
     let (height, rate) = match rider.travel() {
         Travel::OnFoot => (FOOT_EYE_HEIGHT, FOOT_EYE_RATE),
         Travel::Riding => (RIDING_EYE_HEIGHT, RIDING_EYE_RATE),
     };
+    // The player's own head: render keeps one per body (the model dressed
+    // last), and any other model's is ignored.
     let raw = heads
         .iter()
-        .next()
-        .map_or(anchor + Vec3::Y * height, |head| {
+        .find(|(head, _)| parents.iter_ancestors(*head).any(|a| a == me))
+        .map_or(anchor + Vec3::Y * height, |(_, head)| {
             head.transform_point(EYE_IN_HEAD)
         });
     let close = blend.close();
@@ -540,6 +561,44 @@ mod tests {
     }
 
     #[test]
+    fn the_glide_keeps_the_viewports_aspect_ratio_and_the_far_plane() {
+        let mut app = app(Travel::OnFoot);
+        // As Bevy sets them from the window and as a camera may set them.
+        let (aspect, far) = (2.25, 1234.0);
+        {
+            let world = app.world_mut();
+            let mut q = world.query_filtered::<&mut Projection, With<FollowCamera>>();
+            let mut projection = q.single_mut(world).unwrap();
+            let Projection::Perspective(p) = &mut *projection else {
+                panic!("a perspective camera")
+            };
+            p.aspect_ratio = aspect;
+            p.far = far;
+        }
+        let kept = |app: &mut App, when: &str| {
+            let lens = camera(app).2;
+            assert_eq!((lens.aspect_ratio, lens.far), (aspect, far), "{when}");
+        };
+        tap(&mut app, VIEW_KEY);
+        frames(&mut app, 5);
+        kept(&mut app, "gliding in");
+        frames(&mut app, 20);
+        let lens = camera(&mut app).2;
+        assert_eq!(lens.near, NEAR);
+        assert!((lens.fov - FOV).abs() < 1e-5);
+        kept(&mut app, "at the eyes");
+        tap(&mut app, VIEW_KEY);
+        frames(&mut app, 5);
+        kept(&mut app, "gliding out");
+        frames(&mut app, 20);
+        assert_eq!(
+            fov_near(&camera(&mut app).2),
+            fov_near(&PerspectiveProjection::default())
+        );
+        kept(&mut app, "back on the orbit");
+    }
+
+    #[test]
     fn the_eyes_follow_the_head_bone() {
         let mut app = app(Travel::Riding);
         tap(&mut app, VIEW_KEY);
@@ -549,7 +608,7 @@ mod tests {
             Transform::from_translation(feet(&mut app) + Vec3::new(0.2, 2.3, -0.1))
                 .with_rotation(Quat::from_rotation_x(-0.3) * Quat::from_rotation_y(0.4)),
         );
-        let bone = app.world_mut().spawn((ViewerHead, head)).id();
+        let bone = put_head(&mut app, head);
         frames(&mut app, 60);
         let eye = head.transform_point(EYE_IN_HEAD);
         let at = camera(&mut app).0;
@@ -566,7 +625,7 @@ mod tests {
             head.compute_transform()
                 .with_translation(head.translation() + Vec3::Y * 0.02),
         );
-        app.world_mut().entity_mut(bone).insert(nudge);
+        assert_eq!(put_head(&mut app, nudge), bone);
         app.update();
         let moved = camera(&mut app).0.translation.y - at.translation.y;
         assert!(moved > 0.0 && moved < 0.01, "eased: {moved}");
@@ -576,7 +635,7 @@ mod tests {
             head.compute_transform()
                 .with_translation(head.translation() + Vec3::Y * 0.12),
         );
-        app.world_mut().entity_mut(bone).insert(jolt);
+        assert_eq!(put_head(&mut app, jolt), bone);
         app.update();
         let moved = camera(&mut app).0.translation.y - at.translation.y;
         assert!(
@@ -825,22 +884,54 @@ mod tests {
         assert_eq!(after - before, 0, "allocations in 600 frames");
     }
 
-    /// Puts the player's head so its eye point is at `eye`, upright.
-    fn head_at(app: &mut App, eye: Vec3) {
-        let head = GlobalTransform::from_translation(eye - EYE_IN_HEAD);
+    /// Puts the player's head bone at `head` in the world, under the
+    /// player as his model's bone is (spawning it the first time); returns
+    /// the bone. These apps propagate no transforms: the bone's world
+    /// transform is set as propagation would leave it.
+    fn put_head(app: &mut App, head: GlobalTransform) -> Entity {
         let world = app.world_mut();
-        let found = world
-            .query_filtered::<Entity, With<ViewerHead>>()
+        let me = {
+            let mut q = world.query_filtered::<Entity, With<Player>>();
+            q.single(world).unwrap()
+        };
+        let mut bones = world.query_filtered::<(Entity, &ChildOf), With<ViewerHead>>();
+        let found = bones
             .iter(world)
-            .next();
+            .find(|(_, parent)| parent.parent() == me)
+            .map(|(bone, _)| bone);
         match found {
             Some(bone) => {
                 world.entity_mut(bone).insert(head);
+                bone
             }
-            None => {
-                world.spawn((ViewerHead, head));
-            }
+            None => world.spawn((ViewerHead, head, ChildOf(me))).id(),
         }
+    }
+
+    /// Puts the player's head so its eye point is at `eye`, upright.
+    fn head_at(app: &mut App, eye: Vec3) {
+        put_head(app, GlobalTransform::from_translation(eye - EYE_IN_HEAD));
+    }
+
+    #[test]
+    fn the_eyes_sit_in_the_players_own_head_not_anothers() {
+        let mut app = app(Travel::OnFoot);
+        tap(&mut app, VIEW_KEY);
+        frames(&mut app, 20);
+        // Another model's head bone, marked but not the player's (a model
+        // being swapped out, or a stray), there first.
+        let stray = feet(&mut app) + Vec3::new(4.0, 1.6, 0.0);
+        let other = app.world_mut().spawn_empty().id();
+        app.world_mut().spawn((
+            ViewerHead,
+            GlobalTransform::from_translation(stray - EYE_IN_HEAD),
+            ChildOf(other),
+        ));
+        let eye = feet(&mut app) + Vec3::new(0.0, 1.6, 0.05);
+        head_at(&mut app, eye);
+        frames(&mut app, 60);
+        let at = camera(&mut app).0.translation;
+        assert!(at.distance(eye) < 1e-3, "{at} vs {eye}, stray at {stray}");
     }
 
     #[test]

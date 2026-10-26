@@ -142,6 +142,25 @@ const PATCHED_BRICK_SCAN: [f32; 3] = [0.243, 0.131, 0.066];
 const BAND_SCAN: [f32; 3] = [0.227, 0.158, 0.092];
 const PAVING_SCAN: [f32; 3] = [0.079, 0.044, 0.033];
 
+/// The most a [`Look::Lifted`] material may multiply its scan by, in any
+/// channel. The shipped lifts reach 2.48 (the dark brick paving) and push
+/// no texel of their scans past white (a test reads the scans), so the
+/// bound only holds back a darker scan added later: past it, the rest of
+/// the lift is folded into the target, which comes out a darker shade of
+/// itself instead of the scan's bright texels burning out.
+pub const MAX_LIFT: f32 = 2.5;
+
+/// The linear gain per channel that lifts a scan of mean linear albedo
+/// `scan` to the sRGB `target`, scaled down as one, hue kept, so that no
+/// channel passes [`MAX_LIFT`].
+pub fn lift(scan: [f32; 3], target: [f32; 3]) -> [f32; 3] {
+    let t = Color::srgb(target[0], target[1], target[2]).to_linear();
+    let gain = [t.red / scan[0], t.green / scan[1], t.blue / scan[2]];
+    let steepest = gain.into_iter().fold(0.0, f32::max);
+    let fold = (MAX_LIFT / steepest).min(1.0);
+    gain.map(|g| g * fold)
+}
+
 impl Surface {
     /// Every surface, in order.
     pub const ALL: [Surface; 24] = [
@@ -240,10 +259,10 @@ impl Surface {
         match (self.look(), textured) {
             (Look::Tint([r, g, b]), true) => return Color::srgb(r, g, b),
             (Look::Lifted { scan, target }, true) => {
-                let t = Color::srgb(target[0], target[1], target[2]).to_linear();
-                // Past 1 where the scan is darker than the paint: only its
-                // few brightest texels end up a little over white.
-                return Color::linear_rgb(t.red / scan[0], t.green / scan[1], t.blue / scan[2]);
+                // Past 1 where the scan is darker than the paint, but never
+                // past MAX_LIFT.
+                let [r, g, b] = lift(scan, target);
+                return Color::linear_rgb(r, g, b);
             }
             (
                 Look::Lifted {
@@ -503,6 +522,82 @@ mod tests {
             lifted, 9,
             "five paints, two bricks, the band and the paving"
         );
+    }
+
+    #[test]
+    fn no_lift_passes_the_bound_and_a_steeper_one_folds_into_its_target() {
+        for surface in Surface::ALL {
+            let Look::Lifted { .. } = surface.look() else {
+                continue;
+            };
+            let tint = surface.color(true).to_linear();
+            for g in [tint.red, tint.green, tint.blue] {
+                assert!(g <= MAX_LIFT + 1e-6, "{surface:?}: {g}");
+            }
+        }
+        // A scan far too dark for its paint: the lift stops at the bound,
+        // the same in every channel's proportion, so the mean texel lands
+        // on a darker shade of the target.
+        let (scan, target) = ([0.05, 0.04, 0.03], [0.80, 0.70, 0.60]);
+        let gain = lift(scan, target);
+        let steepest = gain.into_iter().fold(0.0, f32::max);
+        assert!((steepest - MAX_LIFT).abs() < 1e-5, "{gain:?}");
+        let t = Color::srgb(target[0], target[1], target[2]).to_linear();
+        let full = [t.red / scan[0], t.green / scan[1], t.blue / scan[2]];
+        let k = gain[0] / full[0];
+        assert!(k < 1.0);
+        for (g, f) in gain.into_iter().zip(full) {
+            assert!((g / f - k).abs() < 1e-5, "hue kept: {gain:?} vs {full:?}");
+        }
+        // Under the bound, the lift is the whole ratio.
+        assert_eq!(lift([0.4, 0.4, 0.4], [0.5, 0.5, 0.5])[0], {
+            let t = Color::srgb(0.5, 0.5, 0.5).to_linear();
+            t.red / 0.4
+        });
+    }
+
+    /// The fraction of `set`'s scan (its `color.jpg`) whose texels any
+    /// channel of `gain` pushes past white.
+    fn clipped(set: &str, gain: [f32; 3]) -> f32 {
+        use bevy::image::{CompressedImageFormats, ImageType};
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let file = root.join(TEXTURE_DIR).join(set).join("color.jpg");
+        let bytes = std::fs::read(&file).unwrap();
+        let image = Image::from_buffer(
+            &bytes,
+            ImageType::Extension("jpg"),
+            CompressedImageFormats::NONE,
+            true,
+            ImageSampler::Default,
+            RenderAssetUsages::default(),
+        )
+        .unwrap();
+        let data = image.data.as_ref().unwrap();
+        let texels = (image.width() * image.height()) as usize;
+        assert_eq!(data.len(), texels * 4, "{set}: RGBA8");
+        let linear: Vec<f32> = (0..=255u8)
+            .map(|v| Srgba::gamma_function(f32::from(v) / 255.0))
+            .collect();
+        let over = data
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|px| (0..3).any(|c| linear[usize::from(px[c])] * gain[c] > 1.0))
+            .count();
+        over as f32 / texels as f32
+    }
+
+    #[test]
+    fn the_lifted_scans_hardly_clip() {
+        for surface in Surface::ALL {
+            let (Look::Lifted { .. }, Some(set)) = (surface.look(), surface.set()) else {
+                continue;
+            };
+            let tint = surface.color(true).to_linear();
+            let share = clipped(set, [tint.red, tint.green, tint.blue]);
+            println!("{surface:?}: {:.4}% of the scan past white", share * 100.0);
+            assert!(share <= 0.001, "{surface:?}: {share}");
+        }
     }
 
     #[test]

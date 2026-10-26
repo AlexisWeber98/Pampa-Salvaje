@@ -23,8 +23,9 @@
 //! camera drops [`OWN_HEAD_LAYER`] ([`first_person_layers`]), so no piece
 //! of the face or skull can pass in front of it, however the head moves.
 //! An orbit camera pulled in right against the player drops both
-//! ([`close_layers`]), so his clothes never fill the screen. The sun shines on both
-//! layers, so the whole body still casts its shadow. The arms, the hands,
+//! ([`close_layers`]), so his clothes never fill the screen. Every light
+//! (the sun and the street lamps) is on both layers too, so the whole body
+//! stays in its shadow maps and casts the sun's shadow. The arms, the hands,
 //! the collar, the reins and the horse's neck and ears stay in view.
 
 use std::collections::HashMap;
@@ -104,12 +105,30 @@ pub fn is_head_piece(material: &str) -> bool {
         .any(|p| lower.starts_with(p))
 }
 
-/// Whether the model mesh of `material` is the skin (MakeHuman names it
-/// after the skin, like `old_caucasian_male_detailed`): the one mesh the
-/// head is cut out of. The clothes keep their collars whole.
+/// The ages a MakeHuman skin material is named after.
+const SKIN_AGES: [&str; 3] = ["young", "middleage", "old"];
+
+/// The ethnic skins MakeHuman names its skin materials after, with the
+/// `cauasian` misspelling its middle-aged skins ship with (our
+/// `middleage_cauasian_male` models).
+const SKIN_KINDS: [&str; 4] = ["caucasian", "cauasian", "african", "asian"];
+
+/// Whether the model mesh of `material` is the skin: the one mesh the head
+/// is cut out of. MakeHuman names it after the skin, exactly
+/// `<age>_<kind>_<male|female>`, maybe with `_detailed` (like
+/// `old_caucasian_male_detailed`; see [`SKIN_AGES`] and [`SKIN_KINDS`]). The
+/// clothes keep their collars whole, whatever they are called.
 pub fn is_skin(material: &str) -> bool {
-    let lower = material.to_ascii_lowercase();
-    lower.contains("male") || lower.contains("skin")
+    let mut parts = material.split('_');
+    let (Some(age), Some(kind), Some(sex)) = (parts.next(), parts.next(), parts.next()) else {
+        return false;
+    };
+    let detail = parts.next();
+    parts.next().is_none()
+        && matches!(detail, None | Some("detailed"))
+        && SKIN_AGES.contains(&age)
+        && SKIN_KINDS.contains(&kind)
+        && matches!(sex, "male" | "female")
 }
 
 /// How much of a vertex goes with the head: its weights on the head's
@@ -218,14 +237,15 @@ pub(super) fn mark_viewer_head(
     viewers: Query<(), With<ViewerBody>>,
     children: Query<&Children>,
     names: Query<&Name>,
+    marked: Query<Entity, With<ViewerHead>>,
     model_meshes: Query<ModelMesh>,
     mut meshes: Option<ResMut<Assets<Mesh>>>,
     mut cuts: Local<Cuts>,
 ) {
     let root = rigged.entity;
-    if !parents.iter_ancestors(root).any(|e| viewers.contains(e)) {
+    let Some(viewer) = parents.iter_ancestors(root).find(|e| viewers.contains(*e)) else {
         return;
-    }
+    };
     let named = |name: &str| {
         children
             .iter_descendants(root)
@@ -234,6 +254,13 @@ pub(super) fn mark_viewer_head(
     let (head, neck) = (named("head"), named("neck_01"));
     if let Some(head) = head {
         commands.entity(head).try_insert(ViewerHead);
+        // One head per body: the model dressed last. Another one still
+        // under it (an old model while it is swapped out) is unmarked.
+        for old in &marked {
+            if old != head && parents.iter_ancestors(old).any(|a| a == viewer) {
+                commands.entity(old).try_remove::<ViewerHead>();
+            }
+        }
     }
     // Each joint's share in the head: the head and anything under it
     // wholly, the neck in part.
@@ -398,6 +425,104 @@ mod tests {
             "shirt",
         ] {
             assert!(!is_head_piece(kept), "{kept}");
+        }
+    }
+
+    #[test]
+    fn a_model_swapped_in_takes_the_head_mark_from_the_old_one() {
+        let mut app = app();
+        let player = app.world_mut().spawn(ViewerBody).id();
+        let (old, ..) = dress(&mut app, player);
+        // The new model dressed while the old one is still there.
+        let horse = app.world_mut().spawn(ChildOf(player)).id();
+        let (new, ..) = dress(&mut app, horse);
+        let world = app.world();
+        assert!(
+            world.get::<ViewerHead>(new).is_some(),
+            "the new model's head"
+        );
+        assert!(world.get::<ViewerHead>(old).is_none(), "one head per body");
+        // The old model dressed again takes it back: the last one dressed.
+        let old_model = world.get::<ChildOf>(old).unwrap().parent();
+        let rig = world.get::<Rig>(old_model).unwrap().clone();
+        app.world_mut().entity_mut(old_model).insert(rig);
+        app.update();
+        let world = app.world();
+        assert!(world.get::<ViewerHead>(old).is_some());
+        assert!(world.get::<ViewerHead>(new).is_none());
+        // Another body's head is not touched.
+        let other = app.world_mut().spawn(ViewerBody).id();
+        let (theirs, ..) = dress(&mut app, other);
+        let world = app.world();
+        assert!(world.get::<ViewerHead>(theirs).is_some());
+        assert!(world.get::<ViewerHead>(old).is_some());
+    }
+
+    /// The material names of a shipped character model, from its glTF.
+    fn material_names(gltf: &str) -> Vec<String> {
+        let start = gltf.find("\"materials\"").expect("a materials list");
+        let open = start + gltf[start..].find('[').unwrap();
+        let mut depth = 0;
+        let mut end = open;
+        for (k, c) in gltf[open..].char_indices() {
+            match c {
+                '[' | '{' => depth += 1,
+                ']' | '}' => depth -= 1,
+                _ => {}
+            }
+            if depth == 0 {
+                end = open + k;
+                break;
+            }
+        }
+        gltf[open..end]
+            .split("\"name\"")
+            .skip(1)
+            .map(|rest| {
+                let rest = &rest[rest.find('"').unwrap() + 1..];
+                rest[..rest.find('"').unwrap()].to_string()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_skin_is_the_one_makehuman_skin_material_of_each_shipped_model() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/characters");
+        let mut models = 0;
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let file = entry.unwrap().path().join("model.gltf");
+            let Ok(gltf) = std::fs::read_to_string(&file) else {
+                continue;
+            };
+            let names = material_names(&gltf);
+            assert!(names.len() > 5, "{}: {names:?}", file.display());
+            let skins: Vec<&String> = names.iter().filter(|n| is_skin(n)).collect();
+            assert_eq!(skins.len(), 1, "{}: {names:?}", file.display());
+            models += 1;
+        }
+        assert!(models >= 9, "{models} models");
+        for skin in [
+            "old_caucasian_male_detailed",
+            "middleage_cauasian_male",
+            "young_caucasian_female",
+            "middleage_caucasian_female",
+        ] {
+            assert!(is_skin(skin), "{skin}");
+        }
+        // Only the exact name: a garment named after a sex or the skin is
+        // not the skin.
+        for kept in [
+            "male_shirt",
+            "female_shawl",
+            "skin",
+            "skin_overlay",
+            "old_caucasian_male_detailed_hat",
+            "old_caucasian_male_rough",
+            "caucasian_male",
+            "townsfolk_peon_moustache",
+            "shirt",
+        ] {
+            assert!(!is_skin(kept), "{kept}");
         }
     }
 
