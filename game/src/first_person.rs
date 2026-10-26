@@ -7,8 +7,10 @@
 //!   Its offset from the player's feet is smoothed ([`EyeFollow`]), which
 //!   takes the jitter off the walk and the gallop, but never lets the eyes
 //!   fall more than [`MAX_LAG`] behind the head; the view's turn comes from
-//!   the look alone, never from the head, so it stays level. Until the model
-//!   is in (or without one) the eyes stand at a fixed height.
+//!   the look alone, never from the head. On foot it stays level; in the
+//!   saddle it takes [`RIDING_SWAY`] of the head's pitch and roll, so the
+//!   walk and the gallop rock it a little. Until the model is in (or without
+//!   one) the eyes stand at a fixed height.
 //! - **Look.** The mouse (or Q/E) turns the head ([`FirstPersonLook`]),
 //!   up and down within [`PITCH_LIMIT`]. On foot the body turns to follow
 //!   the view while walking; in the saddle the horse steers as before and
@@ -63,8 +65,12 @@ pub const NEAR: f32 = 0.05;
 pub const FOV: f32 = 75.0 * PI / 180.0;
 /// Exponential rate of the eyes catching up with the head on foot.
 pub const FOOT_EYE_RATE: f32 = 14.0;
-/// The same in the saddle: slower, so the gallop sways the view less.
-pub const RIDING_EYE_RATE: f32 = 8.0;
+/// The same in the saddle. It was 8 (the gallop barely moved the view);
+/// a playtest asked for more of the ride in it.
+pub const RIDING_EYE_RATE: f32 = 14.0;
+/// Share of the rider's head pitch and roll the view takes in the saddle,
+/// so the walk and the gallop rock it a little. On foot the view stays level.
+pub const RIDING_SWAY: f32 = 0.4;
 /// Farther than this from where they were, the eyes jump (meters).
 pub const EYE_SNAP: f32 = 1.5;
 /// Farthest the eased eyes may fall behind the head's eye point, in meters.
@@ -393,12 +399,13 @@ pub(crate) fn place_first_person(
     };
     // The player's own head: render keeps one per body (the model dressed
     // last), and any other model's is ignored.
-    let raw = heads
+    let own = heads
         .iter()
         .find(|(head, _)| parents.iter_ancestors(*head).any(|a| a == me))
-        .map_or(anchor + Vec3::Y * height, |(_, head)| {
-            head.transform_point(EYE_IN_HEAD)
-        });
+        .map(|(_, head)| head);
+    let raw = own.map_or(anchor + Vec3::Y * height, |head| {
+        head.transform_point(EYE_IN_HEAD)
+    });
     let close = blend.close();
     if aboard {
         too_close.set_if_neq(BodyTooClose(false));
@@ -419,20 +426,85 @@ pub(crate) fn place_first_person(
         return;
     }
     let at = eye.follow(anchor, raw, rate, dt);
-    let placed = blend_transform(
-        &transform,
-        at,
-        look.rotation(rider.heading.radians()),
-        blend.weight(),
-    );
+    let mut facing = look.rotation(rider.heading.radians());
+    if rider.travel() == Travel::Riding
+        && let Some(head) = own
+    {
+        facing = ride_sway(facing, head.rotation(), RIDING_SWAY);
+    }
+    let placed = blend_transform(&transform, at, facing, blend.weight());
     *transform = placed;
     *global = GlobalTransform::from(placed);
+}
+
+/// `facing` rocked by `share` of the head's pitch and roll. The head bone
+/// faces +Z with +Y up, as the model does. Both angles are measured in the
+/// head's own level frame, so a look turned away from the head takes its
+/// nod as pitch only, never as roll.
+fn ride_sway(facing: Quat, head: Quat, share: f32) -> Quat {
+    let forward = head * Vec3::Z;
+    let up = head * Vec3::Y;
+    let pitch = forward.y.clamp(-1.0, 1.0).asin();
+    let level = Vec3::new(forward.x, 0.0, forward.z).normalize_or_zero();
+    // A +Z-facing model's right hand is on its -X side.
+    let right = level.cross(Vec3::Y);
+    let roll = up.dot(right).clamp(-1.0, 1.0).asin();
+    facing * Quat::from_rotation_x(pitch * share) * Quat::from_rotation_z(-roll * share)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::camera::FollowCameraPlugin;
+
+    #[test]
+    fn in_the_saddle_the_view_takes_a_share_of_the_heads_pitch_and_roll() {
+        // The view looks 0.7 rad round; a head facing the same way faces
+        // +Z where the camera faces -Z, hence the half turn.
+        let facing = Quat::from_rotation_y(0.7);
+        let head_facing = |yaw: f32| Quat::from_rotation_y(0.7 + PI + yaw);
+        // The view's pitch and its up's lean to its right, against `facing`.
+        let rocked = |head: Quat| {
+            let view = facing.inverse() * ride_sway(facing, head, RIDING_SWAY);
+            ((view * Vec3::NEG_Z).y.asin(), (view * Vec3::Y).x)
+        };
+        // A level head leaves the view as it is.
+        let level = ride_sway(facing, head_facing(0.0), RIDING_SWAY);
+        assert!(level.angle_between(facing) < 1e-5);
+        // A head nodding down 0.2 rad tips the view down by the share.
+        let (pitch, lean) = rocked(head_facing(0.0) * Quat::from_rotation_x(0.2));
+        assert!((pitch + 0.2 * RIDING_SWAY).abs() < 0.01, "pitch {pitch}");
+        assert!(lean.abs() < 1e-3, "lean {lean}");
+        // A head tilted to its right (its up toward its -X) rolls the view
+        // to the right, by the share.
+        let (pitch, lean) = rocked(head_facing(0.0) * Quat::from_rotation_z(0.2));
+        assert!(
+            (lean - (0.2 * RIDING_SWAY).sin()).abs() < 0.01,
+            "lean {lean}"
+        );
+        assert!(pitch.abs() < 1e-3, "pitch {pitch}");
+        // With the look turned 0.5 rad off the head, the nod is still pitch
+        // only: none of it leaks into roll.
+        let (pitch, lean) = rocked(head_facing(0.5) * Quat::from_rotation_x(0.2));
+        assert!((pitch + 0.2 * RIDING_SWAY).abs() < 0.01, "pitch {pitch}");
+        assert!(lean.abs() < 1e-3, "lean {lean}");
+    }
+
+    #[test]
+    fn on_foot_the_heads_tilt_leaves_the_view_level() {
+        let mut app = app(Travel::OnFoot);
+        tap(&mut app, VIEW_KEY);
+        frames(&mut app, 20);
+        let head = GlobalTransform::from(
+            Transform::from_translation(feet(&mut app) + Vec3::Y * 1.6)
+                .with_rotation(Quat::from_rotation_x(-0.3) * Quat::from_rotation_z(0.2)),
+        );
+        put_head(&mut app, head);
+        frames(&mut app, 60);
+        let at = camera(&mut app).0;
+        assert!(at.forward().y.abs() < 1e-4, "forward {}", at.forward());
+        assert!(at.right().y.abs() < 1e-4, "right {}", at.right());
+    }
     use crate::player::{GameWorld, PlayerPlugin, PlayerSpawn};
     use bevy::input::mouse::AccumulatedMouseMotion;
     use bevy::time::TimeUpdateStrategy;
@@ -617,8 +689,13 @@ mod tests {
             "{} vs {eye}",
             at.translation
         );
-        // The head's tilt does not tip the view: it stays level.
-        assert!(at.forward().y.abs() < 1e-4);
+        // In the saddle the view takes RIDING_SWAY of the head's pitch.
+        let head_pitch = (head.rotation() * Vec3::Z).y.asin();
+        let view_pitch = at.forward().y.asin();
+        assert!(
+            (view_pitch - head_pitch * RIDING_SWAY).abs() < 1e-3,
+            "view {view_pitch} vs head {head_pitch}"
+        );
         // A small jolt of the head is eased, a big one followed to within
         // MAX_LAG at once.
         let nudge = GlobalTransform::from(

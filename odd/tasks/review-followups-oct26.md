@@ -138,3 +138,40 @@ model's is (`put_head`). Their assertions are unchanged.
 - `cargo test -p pampa-core`, `-p pampa-content`, `-p pampa-render`, `-p game`
 - `cargo build -p game`, `cargo fmt --all -- --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
+
+## Riding view sway (playtest, 2026-10-26)
+
+The user played first person: on foot and running the view follows the
+head well, but in the saddle it barely moves at the walk, and a little more
+at the gallop would help.
+
+- `RIDING_EYE_RATE` 8 → 14 (as on foot); `MAX_LAG` still bounds the lag.
+- New `RIDING_SWAY` = 0.4: in the saddle only, the view takes 40% of the
+  head bone's pitch and roll (`ride_sway`). On foot it stays level.
+- `the_eyes_follow_the_head_bone` now expects the view's pitch to be 40% of
+  the head's instead of level (deliberate change). New tests:
+  `in_the_saddle_the_view_takes_a_share_of_the_heads_pitch_and_roll`,
+  `on_foot_the_heads_tilt_leaves_the_view_level`.
+
+| Sabotage | Test seen failing |
+|---|---|
+| placement passes share 0 | `the_eyes_follow_the_head_bone` |
+| roll dropped from `ride_sway` | `in_the_saddle_…pitch_and_roll` |
+| pitch dropped from `ride_sway` | both of the above |
+| sway applied on foot too | `on_foot_the_heads_tilt_leaves_the_view_level` |
+
+Checks: `cargo test -p game first_person` 13 passed; fmt clean;
+`cargo clippy --workspace --all-targets -- -D warnings` clean.
+
+Native review (lineage review-9f92111de47e48ee, medium, 1 lens): approved
+and acknowledged. Follow-ups fixed after it, uncommitted:
+
+- R3-001 (WARNING): roll was measured against the camera's right, so with
+  the look turned off the head a nod leaked into roll. `ride_sway` now
+  measures pitch and roll in the head's own level frame.
+- R3-002 (SUGGESTION): the unit test now uses a yawed facing, a head facing
+  the same way, and a look turned 0.5 rad off the head.
+
+| Sabotage | Test seen failing |
+|---|---|
+| roll against the camera's right again | `in_the_saddle_…pitch_and_roll` (turned-look case) |
