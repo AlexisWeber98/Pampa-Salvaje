@@ -17,7 +17,8 @@
 //! [`drive_horses`] plays the clips: the idle, then the walk paced to the
 //! ground speed up to about 4.5 m/s (there is no trot clip), then the
 //! gallop ([`gait_weights`], [`gait_rate`]), each at the ground speed over
-//! the speed its hooves show, so they keep still on the ground. A tied
+//! the speed its hooves show, so they keep still on the ground; backing
+//! up, the stride plays backward at the same pace. A tied
 //! horse changes idle now and then, as the corral horses do; a ridden one
 //! stands still. A horse out of view or far off keeps its last pose, but
 //! never the player's.
@@ -224,12 +225,14 @@ pub fn gait_weights(idle: Clip, stride: Clip, speed: f32) -> [f32; 6] {
 }
 
 /// How fast `clip` plays for a horse moving at `speed` m/s: the ground
-/// speed over the speed its hooves show, within [`RATE`]; an idle plays as
-/// recorded.
+/// speed over the speed its hooves show, within [`RATE`], negative backing
+/// up; an idle plays as recorded.
 pub fn gait_rate(clip: Clip, speed: f32) -> f32 {
+    let back = if speed < 0.0 { -1.0 } else { 1.0 };
+    let speed = speed.abs();
     match clip {
-        Clip::Walk => (speed / HORSE_WALK_SPEED).clamp(RATE.0, RATE.1),
-        Clip::Gallop => (speed / GALLOP_SPEED).clamp(GALLOP_RATE.0, GALLOP_RATE.1),
+        Clip::Walk => back * (speed / HORSE_WALK_SPEED).clamp(RATE.0, RATE.1),
+        Clip::Gallop => back * (speed / GALLOP_SPEED).clamp(GALLOP_RATE.0, GALLOP_RATE.1),
         _ => 1.0,
     }
 }
@@ -649,10 +652,13 @@ pub(super) fn drive_horses(
         let Ok(mut player) = players.get_mut(rig.player) else {
             continue;
         };
-        let speed = match poses.get(parent.parent()) {
-            Ok(pose) if pose.animation != AnimationState::Idle => pose.speed.abs(),
+        // Negative backing up: the stride plays backward, chosen and
+        // weighed by its size.
+        let velocity = match poses.get(parent.parent()) {
+            Ok(pose) if pose.animation != AnimationState::Idle => pose.speed,
             _ => 0.0,
         };
+        let speed = velocity.abs();
         let stride = if gallops(rig.lead == Clip::Gallop, speed) {
             Clip::Gallop
         } else {
@@ -705,7 +711,7 @@ pub(super) fn drive_horses(
             if let Some(active) = player.animation_mut(species.nodes[clip.index()]) {
                 active
                     .set_weight(rig.weights[clip.index()])
-                    .set_speed(gait_rate(clip, speed));
+                    .set_speed(gait_rate(clip, velocity));
             }
         }
     }
@@ -896,6 +902,19 @@ pub(crate) mod tests {
         assert_eq!(gait_rate(Clip::Walk, 0.0), RATE.0, "clamped");
         assert_eq!(gait_rate(Clip::Idle, 9.0), 1.0, "an idle as recorded");
         assert_eq!(gait_rate(Clip::Eating, 9.0), 1.0);
+    }
+
+    #[test]
+    fn backing_up_plays_the_walk_and_the_gallop_backward_and_the_idles_forward() {
+        for clip in [Clip::Walk, Clip::Gallop] {
+            for speed in [0.5, 1.5, 4.8, 12.2, 19.4] {
+                let ahead = gait_rate(clip, speed);
+                assert_eq!(gait_rate(clip, -speed), -ahead, "{clip:?} at {speed}");
+            }
+            assert!(gait_rate(clip, -0.0) > 0.0, "a stop is no reverse");
+        }
+        assert_eq!(gait_rate(Clip::Idle, -1.5), 1.0);
+        assert_eq!(gait_rate(Clip::Eating, -1.5), 1.0);
     }
 
     #[test]
@@ -1199,6 +1218,30 @@ pub(crate) mod tests {
                 assert!(slide > 0.0 && slide < speed - GALLOP_SPEED * GALLOP_RATE.1 + 0.5);
             }
         }
+    }
+
+    #[test]
+    fn a_backing_horse_steps_back_its_hooves_sliding_forward_as_fast_as_ahead() {
+        let rider = CharacterVisual::Mounted {
+            rider: FigureKind::Protagonist,
+            coat: Coat::Bayo,
+        };
+        let speed = 1.5;
+        let (mut app, me) = saddled_every(rider, speed, 10);
+        from_the_seeded_start(&mut app);
+        let ahead = hoof_slide(&mut app, me, 300, 0.01);
+        app.world_mut().entity_mut(me).insert(VisualPose {
+            animation: AnimationState::Walk,
+            speed: -speed,
+            ..default()
+        });
+        let back = hoof_slide(&mut app, me, 300, 0.01);
+        println!("{speed} m/s: hooves back at {ahead:.2} m/s ahead, {back:.2} m/s backing");
+        assert!(ahead > 0.5, "{ahead}");
+        assert!(
+            (back / -ahead - 1.0).abs() < 0.2,
+            "backing: {back} m/s, ahead {ahead} m/s"
+        );
     }
 
     /// Per frame of `app`'s horse under `me`: the lowest toe (body frame),

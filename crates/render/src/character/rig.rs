@@ -10,8 +10,9 @@
 //!   clips. Standing, a person plays their idle ([`idle_for`]); moving,
 //!   the idle fades into the walk, the jog and the sprint by ground speed
 //!   ([`locomotion`]), each walking clip paced to that speed
-//!   ([`playback_rate`]), over the model's legs against the clips'
-//!   ([`model_stride`]), so the feet keep still on the ground. The weights
+//!   ([`stride_rate`]), over the model's legs against the clips'
+//!   ([`model_stride`]), so the feet keep still on the ground; backing
+//!   up, the walking clips play backward at the same pace. The weights
 //!   ease toward their targets, and every clip starts at the person's own
 //!   seeded point ([`phase_offset`]). The model also undoes the carrier's
 //!   stride bob: the clips bob the pelvis themselves.
@@ -198,12 +199,25 @@ pub fn glance_turn(local: Quat, frame: Quat, turn: f32) -> Quat {
     (frame.inverse() * Quat::from_rotation_y(turn) * frame * local).normalize()
 }
 
-/// The ground speed a person moves at: none while standing.
+/// How fast `clip` plays for a person moving at `speed` m/s: paced by
+/// the speed's size ([`playback_rate`]), and backward when backing up if
+/// the clip travels. An idle always plays forward.
+pub fn stride_rate(clip: Clip, speed: f32) -> f32 {
+    let rate = playback_rate(clip, speed.abs());
+    if speed < 0.0 && clip.ground_speed().is_some() {
+        -rate
+    } else {
+        rate
+    }
+}
+
+/// The ground speed a person moves at, negative backing up: none while
+/// standing.
 fn moving(pose: &VisualPose) -> f32 {
     if pose.animation == AnimationState::Idle {
         0.0
     } else {
-        pose.speed.max(0.0)
+        pose.speed
     }
 }
 
@@ -228,7 +242,7 @@ fn who(
             body.kind,
             body.seed,
             speed,
-            targets(body.kind, talking, speed),
+            targets(body.kind, talking, speed.abs()),
         )),
         (None, None) => None,
     }
@@ -326,7 +340,7 @@ pub(super) fn drive_rigs(
             if let Some(active) = player.animation_mut(clips.node(clip)) {
                 active
                     .set_weight(rig.weights[clip.index()])
-                    .set_speed(playback_rate(clip, speed / stride));
+                    .set_speed(stride_rate(clip, speed / stride));
             }
         }
     }
@@ -449,6 +463,22 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn backing_up_plays_the_strides_backward_at_the_forward_pace_and_the_idles_forward() {
+        for clip in STRIDES {
+            for speed in [0.5, 1.6, 5.0, 9.0] {
+                let ahead = stride_rate(clip, speed);
+                assert!(ahead > 0.0);
+                assert_eq!(stride_rate(clip, -speed), -ahead, "{clip:?} at {speed}");
+            }
+        }
+        for clip in [Clip::Idle, Clip::IdleTalk, Clip::IdleFoldArms, SEATED] {
+            assert_eq!(stride_rate(clip, -1.6), 1.0, "{clip:?}");
+        }
+        assert!(stride_rate(Clip::Walk, 0.0) > 0.0);
+        assert!(stride_rate(Clip::Walk, -0.0) > 0.0, "a stop is no reverse");
     }
 
     #[test]
@@ -818,6 +848,18 @@ mod tests {
                 "{animation:?}: {slid} m/s at {speed}"
             );
         }
+    }
+
+    #[test]
+    fn backing_up_plays_the_strides_backward_and_the_planted_foot_slides_forward() {
+        // Backing, the planted foot moves forward under the body as fast
+        // as the body goes back: no moonwalk.
+        let speed = -1.6;
+        let (mut app, rigs) = playing(&[FigureKind::Protagonist], AnimationState::Walk, speed);
+        balls(&mut app, rigs[0].1, 30);
+        let frames = balls(&mut app, rigs[0].1, 120);
+        let slid = slide(&frames);
+        assert!((slid / speed - 1.0).abs() < 0.12, "{slid} m/s at {speed}");
     }
 
     #[test]

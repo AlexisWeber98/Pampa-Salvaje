@@ -54,7 +54,8 @@ pub struct VisualPart;
 pub struct VisualPose {
     pub heading: Heading,
     pub animation: AnimationState,
-    /// Ground speed in m/s; render paces the gait with it.
+    /// Ground speed in m/s, negative backing up; render paces the gait
+    /// with its size and plays the stride backward by its sign.
     pub speed: f32,
 }
 

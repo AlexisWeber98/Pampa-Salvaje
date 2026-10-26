@@ -185,7 +185,7 @@ pub(crate) fn drive_player(
         *pose = VisualPose {
             heading: rider.heading,
             animation: rider.animation(params),
-            speed: rider.speed.abs(),
+            speed: rider.speed,
         };
     }
 }
@@ -277,6 +277,25 @@ mod tests {
         );
         // The world streams around the rider.
         assert_eq!(app.world().resource::<StreamFocus>().0, rider.position);
+    }
+
+    #[test]
+    fn backing_up_keeps_the_poses_speed_negative() {
+        let mut app = headless_app(Duration::from_millis(16));
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyS);
+        for _ in 0..30 {
+            app.update();
+        }
+        let rider = player_rider(&mut app);
+        assert!(rider.speed < 0.0, "{}", rider.speed);
+        let mut query = app
+            .world_mut()
+            .query_filtered::<&VisualPose, With<Player>>();
+        let pose = query.single(app.world()).unwrap();
+        // Render plays the stride backward by this sign.
+        assert_eq!(pose.speed, rider.speed);
     }
 
     #[test]
