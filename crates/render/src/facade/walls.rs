@@ -478,6 +478,11 @@ pub(crate) fn chimney(shape: &mut Shape, at: Vec3, top: f32) {
     );
 }
 
+/// How far a galpón's roof reaches out past its walls ([`barn`]): its
+/// 0.4 m eaves and verges, with the slab's thickness tilted out. A galpón
+/// that must keep inside a footprint stands this far in from it.
+pub(crate) const BARN_REACH: f32 = 0.45;
+
 /// The galpón: `walls` of corrugated iron on timber, a gable roof along its
 /// width (`X`) in `roof`, and `doors` pairs of big plank doors spread along
 /// its front; `w`, `d`, `h` its width, depth and wall height.

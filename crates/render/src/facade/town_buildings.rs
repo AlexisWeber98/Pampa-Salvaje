@@ -34,7 +34,7 @@ use super::italianate::{
 use super::materials::Surface;
 use super::shape::Shape;
 use super::walls::{
-    Opening, Wall, Walls, barn, chimney, flat_roof, gable_roof, lean_to, spread, wedge,
+    BARN_REACH, Opening, Wall, Walls, barn, chimney, flat_roof, gable_roof, lean_to, spread, wedge,
 };
 use crate::settlement::props;
 
@@ -114,14 +114,10 @@ pub fn building(lot: &Lot) -> Option<Shape> {
             } else {
                 1
             };
-            barn(
-                &mut shape,
-                (iron, Surface::OldIron),
-                (w, d, h),
-                DROP,
-                v,
-                doors,
-            );
+            // Its walls stand in from the lot so the eaves end on it,
+            // where the collider is.
+            let inside = (w - 2.0 * BARN_REACH, d - 2.0 * BARN_REACH, h);
+            barn(&mut shape, (iron, Surface::OldIron), inside, DROP, v, doors);
         }
         BuildingKind::WaterTank => {
             shape = props::tank(&lot.structure(StructureKind::Tank), DROP);
@@ -765,12 +761,15 @@ fn station(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
     }
     corner_piers(shape, f.trim, &walls, 0.55, PROUD, (-DROP, h - 0.55));
     cornice(shape, f.trim, &walls);
+    // The eaves end just inside the footprint, over the cornice (the
+    // slab's thickness tilts out a few centimeters past its overhang): the
+    // collider, and the name boards hung just outside it, stay true.
     gable_roof(
         shape,
         (Surface::Galvanised, Surface::Brick),
         &walls,
         2.2,
-        0.5,
+        0.05,
         0.08,
     );
     chimney(shape, Vec3::new(walls.x0 + 2.0, h, 0.0), h + 2.4);

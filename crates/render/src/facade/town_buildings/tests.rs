@@ -55,12 +55,30 @@ fn street() -> Vec<Lot> {
     lots
 }
 
+/// The station yard's buildings and the town's sheds, at their core
+/// sizes: the station, a few iron sheds and the two grain stores.
+fn yard() -> Vec<Lot> {
+    let mut lots = vec![lot(BuildingKind::Station, (24.0, 9.0, 5.0), 0)];
+    for v in 0..4 {
+        lots.push(lot(BuildingKind::Shed, (25.0, 10.0, 4.5), v));
+        lots.push(Lot {
+            outskirts: true,
+            ..lot(BuildingKind::Shed, (8.5 + v as f32, 9.0, 4.0), v)
+        });
+    }
+    for (length, v) in [(40.0, 0), (35.0, 1)] {
+        lots.push(lot(BuildingKind::GrainStore, (length, 12.0, 6.0), v));
+    }
+    lots
+}
+
 #[test]
 fn masonry_fronts_stay_inside_their_footprints() {
     // Colliders are the footprints and the facade signs hang just outside
-    // them: no pilaster, cornice, sill or shutter may reach out there. Only
-    // a store's galería reaches over the sidewalk.
-    for lot in street() {
+    // them: no pilaster, cornice, sill, shutter or eave may reach out
+    // there. Only a store's galería reaches over the sidewalk, and the
+    // station's platform canopy over the platform (core's canopy).
+    for lot in street().into_iter().chain(yard()) {
         let shape = building(&lot).expect("a building");
         let size = lot.size();
         let (half_w, half_d) = (size.x / 2.0 + 1e-3, size.y / 2.0 + 1e-3);
@@ -72,6 +90,15 @@ fn masonry_fronts_stay_inside_their_footprints() {
                 assert!(p.y < h - 0.5, "{surface:?} at {p} over the sidewalk");
                 assert!(p.z < half_d + lot.veranda + 0.1, "{surface:?} at {p}");
                 assert!(p.x.abs() < half_w + 0.2, "{surface:?} at {p}");
+                continue;
+            }
+            if lot.building.kind == BuildingKind::Station && p.z < -half_d {
+                // The canopy and its posts: on the track side, under the
+                // canopy's top, the station's length.
+                let top = Canopy::HEIGHT + Canopy::THICKNESS / 2.0 + 1e-3;
+                assert!(p.y <= top, "{surface:?} at {p} over the platform");
+                assert!(p.z >= -half_d - Canopy::DEPTH, "{surface:?} at {p}");
+                assert!(p.x.abs() <= half_w, "{surface:?} at {p}");
                 continue;
             }
             assert!(

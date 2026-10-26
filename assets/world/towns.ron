@@ -47,7 +47,7 @@
             name: "Metileo",
             origin: (288.0, -544.0),
             blocks: (3, 3),
-            block_size: 30.0,
+            block_size: 40.0,
             street_width: 8.0,
             railway: Some((side: North, offset: 24.0)),
             plaza: Auto,

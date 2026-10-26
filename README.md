@@ -53,8 +53,8 @@ terminals the whole train stands centered on the station, so it turns around in
 place during the layover. It takes about 11 real minutes
 over the 10.0 km of line (Pico 07:00, Metileo 08:52–09:04, Monte Nievas
 10:54–11:06, Castex 12:25; Castex 16:00, Monte Nievas 17:18–17:30, Metileo
-19:20–19:32, Pico 21:25, with the clock at its base rate; the Metileo stop
-since 2026-10-23). The clock
+19:20–19:33, Pico 21:25, with the clock at its base rate; the Metileo stop
+since 2026-10-23, its 40 m blocks since 2026-10-25). The clock
 only starts each run: once moving, the train runs in real seconds, and a
 jump of the clock fast-forwards it exactly where it would have been. Its
 cars follow the curves between towns and shove riders off the track; the
@@ -92,14 +92,15 @@ only the markers redraw each frame. `M` toggles an enlarged, centered map.
 
 ### Riding the train
 
-**The opening.** The game starts at 10:43:40 with the protagonist seated in
+**The opening.** The game starts at 10:43:59 with the protagonist seated in
 the first coach of the morning train from Pico, 50 real seconds before it
 stops at Monte Nievas. The camera starts behind the coach, framing it and the
 town ahead ("Próxima estación: Monte Nievas"). The train brakes into the
-station at 10:53:40 ("Estación Monte Nievas"), and two real seconds later,
-at 10:54:04, he gets off onto the platform beside the coach door, on foot.
+station at 10:53:59 ("Estación Monte Nievas"), and two real seconds later,
+at 10:54:23, he gets off onto the platform beside the coach door, on foot.
 (The opening follows the timetable: the Metileo stop moved it 39 game
-minutes later on 2026-10-23.)
+minutes later on 2026-10-23, and Metileo's wider blocks, a longer
+track through it, 19 game seconds more on 2026-10-25.)
 `Space` skips the approach, as a short trip (see Skipping).
 
 **Boarding.** While the train stands at a station (or lays over at a
@@ -241,7 +242,7 @@ tall. How many depends on the town's size (`pampa_core::LampTier`):
 - **Big towns** (General Pico, 105 lamps): one by each path's mouth in both
   plazas, four more round the main monument, and one at the curb of every
   street corner.
-- **Small towns** (Monte Nievas 20, Eduardo Castex 23): four in the plaza, one
+- **Small towns** (Monte Nievas 20, Eduardo Castex 25, Caleufú 21): four in the plaza, one
   by each path's mouth, and one at every other street corner.
 - **Villages** of at most 3 x 3 blocks (Metileo, 14): two in the plaza, at
   the mouths of the path toward the station, and corner lamps only round the

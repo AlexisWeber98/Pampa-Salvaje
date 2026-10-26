@@ -373,7 +373,8 @@ mod tests {
             assert_eq!(town.plaza, PlazaPlacement::Auto, "{}", town.name);
         }
         // Metileo, a halt: at its real place, 16.63 km west and 12.56 km
-        // south of Pico's plaza, scaled 1:7; few houses, no comisaría.
+        // south of Pico's plaza, scaled 1:7; few houses, no comisaría. Its
+        // blocks are 40 m like the other towns', its streets a narrow 8 m.
         let metileo = &content.towns[2];
         let from_pico = Vec2::new(
             (pico.x - 16_630.0 / 7.0).round(),
@@ -381,6 +382,7 @@ mod tests {
         );
         assert_eq!(metileo.origin, from_pico);
         assert_eq!((metileo.blocks, metileo.railway), ((3, 3), north));
+        assert_eq!((metileo.block_size, metileo.street_width), (40.0, 8.0));
         assert_eq!(metileo.police_count(), 0);
         assert!(metileo.density.is_some_and(|d| d < 0.5));
         // Caleufú, on the Metileo–Arizona branch: 41 km north-west of
