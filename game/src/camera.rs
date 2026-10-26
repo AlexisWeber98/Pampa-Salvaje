@@ -265,8 +265,8 @@ impl CameraOccluders {
         self
     }
 
-    /// Every building of `town`, standing on `terrain`, and the platform
-    /// canopy's roof. The platform is left out: it is a floor the player
+    /// Every building of `town` as a column over its collider, standing on
+    /// `terrain`, and the platform canopy's roof. The platform is left out: it is a floor the player
     /// stands on, and the camera's ground clearance keeps it above it.
     pub fn from_town(town: &TownLayout, terrain: &Terrain) -> Self {
         let ground = |p: GroundVec2| terrain.height(p.x, p.y);
@@ -275,8 +275,11 @@ impl CameraOccluders {
             .iter()
             .filter(|b| b.kind != BuildingKind::Platform)
             .map(|b| {
-                let g = ground(b.footprint.center());
-                Occluder::column(b.footprint, g, g + b.height + ROOF_ALLOWANCE)
+                // Its collider: a galpón's walls, not its eaves, which the
+                // player may stand under.
+                let c = b.collider();
+                let g = ground(c.center());
+                Occluder::column(c, g, g + b.height + ROOF_ALLOWANCE)
             });
         // The canopy hangs at its height over the leveled station ground.
         let canopies = town.canopies().into_iter().map(|c| {
@@ -1057,6 +1060,75 @@ mod tests {
             }
         }
         assert!(pulled > 0, "some angles look through the store");
+    }
+
+    #[test]
+    fn walking_into_a_galpon_keeps_the_camera_off_the_player() {
+        // A galpón collides at its walls, under its eaves (core's
+        // `Building::collider`): walking up to its wall puts the player
+        // inside its footprint, where the camera must not fold onto him.
+        let town = TownLayout::castex_inspired();
+        let world = World::with_town(Terrain::default(), &town);
+        let occluders = CameraOccluders::from_town(&town, &world.terrain);
+        let shed = town
+            .buildings
+            .iter()
+            .find(|b| {
+                matches!(
+                    b.kind,
+                    pampa_core::BuildingKind::Shed | pampa_core::BuildingKind::GrainStore
+                )
+            })
+            .copied()
+            .expect("Castex has a galpón");
+        // Out on its street side, walking straight at its front wall.
+        let (f, c) = (shed.footprint, shed.footprint.center());
+        let (position, heading) = match shed.front {
+            pampa_core::Side::South => (GroundVec2::new(c.x, f.min.y - 4.0), FRAC_PI_2),
+            pampa_core::Side::North => (GroundVec2::new(c.x, f.max.y + 4.0), -FRAC_PI_2),
+            pampa_core::Side::West => (GroundVec2::new(f.min.x - 4.0, c.y), 0.0),
+            pampa_core::Side::East => (GroundVec2::new(f.max.x + 4.0, c.y), PI),
+        };
+        let spawn = PlayerSpawn {
+            position,
+            heading: Heading::from_radians(heading),
+            travel: pampa_core::Travel::OnFoot,
+        };
+        let colliders = world_colliders(&town);
+        let mut app = headless_app(world, spawn, occluders.clone());
+        keys(&mut app).press(KeyCode::KeyW);
+        for frame in 0..400 {
+            app.update();
+            let cam = camera(&mut app).translation;
+            let (_, head) = rig(&mut app);
+            assert!(
+                cam.distance(head) >= 1.2,
+                "frame {frame}: camera {cam} on the player's head {head}"
+            );
+            assert_outside(&occluders.0, cam, &format!("frame {frame}"));
+            for c in &colliders {
+                assert!(
+                    !c.contains_point(ground(cam)),
+                    "frame {frame}: camera in {c:?}"
+                );
+            }
+        }
+        // It got there: against the wall, under the eaves.
+        let r = rider(&mut app);
+        assert!(
+            f.contains_point(r.position),
+            "{:?} outside {f:?}",
+            r.position
+        );
+    }
+
+    /// Every building's collider in `town`.
+    fn world_colliders(town: &TownLayout) -> Vec<Aabb> {
+        town.buildings
+            .iter()
+            .filter(|b| b.kind != pampa_core::BuildingKind::Platform)
+            .map(|b| b.collider())
+            .collect()
     }
 
     #[test]

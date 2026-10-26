@@ -109,10 +109,12 @@ Route: one delegated writer.
 
 ## Open
 
-- `crates/core/src/lamps.rs:577-583`: the `metileo()` fixture says "as
-  `assets/world/towns.ron` ships it" but keeps `block_size: 30.0`; outside
-  this writer's edit surface. Its test passes either way; the shipped-world
-  lamp test already sees 40 m (Metileo still 14 lamps).
-- README lamp counts: Eduardo Castex shows 25 lamps in
-  `every_town_and_estancia_is_lit_by_lamps_standing_clear_and_solid`, the
-  README says 23 (pre-existing, not from this change).
+None. The first two items were closed before phase 2 of the town facades,
+the third in it (checked 2026-10-25):
+
+- `crates/core/src/lamps.rs`: the `metileo()` fixture now uses
+  `block_size: 40.0`, as `assets/world/towns.ron` ships it.
+- README lamp counts now read Eduardo Castex 25 and Caleufú 21, matching
+  `every_town_and_estancia_is_lit_by_lamps_standing_clear_and_solid`.
+- The church-front assertion in `game/src/towns.rs` now checks the 12 m its
+  comment states (it checked 11 m).

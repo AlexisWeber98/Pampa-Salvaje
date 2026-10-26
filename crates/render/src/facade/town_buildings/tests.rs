@@ -129,6 +129,43 @@ fn front_covers(shape: &Shape, front: f32, (x, y): (f32, f32), reach: f32) -> bo
 }
 
 #[test]
+fn a_galpon_wall_stands_where_core_collides() {
+    // Core collides at a galpón's walls, not at its lot: the iron walls
+    // must stand on that collider, and the roof reach no farther than the
+    // lot.
+    assert!((BARN_REACH - pampa_core::Building::BARN_EAVES).abs() < 1e-6);
+    let mut checked = 0;
+    for lot in yard() {
+        if !matches!(
+            lot.building.kind,
+            BuildingKind::Shed | BuildingKind::GrainStore
+        ) {
+            continue;
+        }
+        let shape = building(&lot).unwrap();
+        let collider = lot.building.collider().size() * 0.5;
+        let walls: Vec<Vec3> = [Surface::OldIron, Surface::Galvanised]
+            .into_iter()
+            .flat_map(|s| shape.points(s))
+            // Their feet, under the ground: no roof comes down there.
+            .filter(|p| p.y < 0.0)
+            .collect();
+        let reach = walls
+            .iter()
+            .fold(Vec2::ZERO, |m, p| m.max(Vec2::new(p.x.abs(), p.z.abs())));
+        // Facing south: the building's `x` is the ground's, `z` across.
+        let want = Vec2::new(collider.x, collider.y);
+        assert!(
+            (reach - want).abs().max_element() < 0.05,
+            "{:?}: walls reach {reach}, collider {want}",
+            lot.building.kind
+        );
+        checked += 1;
+    }
+    assert!(checked >= 6);
+}
+
+#[test]
 fn a_store_parapet_stands_solid_behind_its_sign() {
     // `signs` hangs the store's board 0.2–2.0 m over its wall height,
     // nearly the front's width: the parapet must stand whole behind it.
@@ -207,13 +244,45 @@ fn town_houses_vary_their_wash_roof_and_dressing() {
         .into_iter()
         .filter(|l| l.building.kind == BuildingKind::House && !l.outskirts)
         .collect();
-    // Each wash appears on some front.
-    let walls: std::collections::BTreeSet<Surface> = lots
+    // Each wash, paint and brick appears on some front, painted ones over
+    // the beige band.
+    // Every low nibble (the finish), the other bits mixed.
+    let seeded: Vec<Lot> = (0..64u32)
+        .map(|v| v & 0xf | (v.wrapping_mul(0x9e37_79b9) & !0xf))
+        .map(|v| lot(BuildingKind::House, (10.0, 9.5, 3.8), v))
+        .collect();
+    let worn: std::collections::BTreeSet<Surface> = seeded
         .iter()
         .flat_map(|l| building(l).unwrap().surfaces().collect::<Vec<_>>())
-        .filter(|s| [Surface::Whitewash, Surface::Lime, Surface::Brick].contains(s))
         .collect();
-    assert_eq!(walls.len(), 3, "{walls:?}");
+    let finishes = [
+        Surface::Whitewash,
+        Surface::Lime,
+        Surface::Brick,
+        Surface::WashedBrick,
+        Surface::PatchedBrick,
+        Surface::Band,
+    ]
+    .into_iter()
+    .chain(Paint::ALL.map(Surface::Painted));
+    for finish in finishes {
+        assert!(worn.contains(&finish), "no front wears {finish:?}");
+    }
+    // A young town: plaster flaking off the brick is the rarest front.
+    let fronts: Vec<Surface> = seeded.iter().map(|l| house_finish(l.variant).0).collect();
+    let patched = fronts
+        .iter()
+        .filter(|&&s| s == Surface::PatchedBrick)
+        .count();
+    let painted = fronts
+        .iter()
+        .filter(|s| matches!(s, Surface::Painted(_)))
+        .count();
+    assert!(8 * patched <= fronts.len(), "{patched} of {}", fronts.len());
+    assert!(
+        painted > patched && 2 * painted < fronts.len(),
+        "{painted} painted"
+    );
     let iron = lots
         .iter()
         .filter(|l| {
@@ -254,7 +323,13 @@ fn preview_town_street() {
         store: StoreStyle::Pulperia,
         ..lot(BuildingKind::GeneralStore, (14.0, 14.0, 5.0), 2)
     };
-    let streets: [(&str, Vec<Lot>); 3] = [
+    // One house of each new finish: the five paints, whitewashed brick
+    // and plaster flaking off brick (the finish is `variant % 16`).
+    let finishes: Vec<Lot> = [6u32, 7, 9, 10, 11, 12, 14]
+        .into_iter()
+        .map(|nibble| lot(BuildingKind::House, (9.5, 9.5, 4.0), 0x0000_0080 | nibble))
+        .collect();
+    let streets: [(&str, Vec<Lot>); 4] = [
         (
             "street_a",
             vec![
@@ -290,6 +365,7 @@ fn preview_town_street() {
                 lot(BuildingKind::GrainStore, (40.0, 12.0, 6.0), 2),
             ],
         ),
+        ("street_d", finishes),
     ];
     for (name, lots) in streets {
         let mut text = String::new();

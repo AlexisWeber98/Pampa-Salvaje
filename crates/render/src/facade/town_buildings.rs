@@ -1,8 +1,10 @@
 //! The town's buildings on the facade kit: the 1919 Italianate fronts of a
 //! young pampa railway town (`odd/setting-1919.md`).
 //!
-//! - Houses: one-storey whitewashed, lime-washed or bare-brick fronts on a
-//!   plinth, with chamfered corner piers and pilasters, a moulded cornice
+//! - Houses: one-storey fronts on a plinth, whitewashed, lime-washed,
+//!   painted in a muted 1919 colour (lime white, ochre, pale rose,
+//!   grey-blue, light terracotta) over a beige band, bare brick, brick
+//!   under a worn wash, or, now and then, brick with its plaster flaking, with chamfered corner piers and pilasters, a moulded cornice
 //!   and a parapet (solid or balustraded, some with urns or a small
 //!   pediment) hiding a flat azotea or a corrugated roof; on the outskirts
 //!   most are plainer adobe or whitewash ranchos under corrugated iron.
@@ -31,7 +33,7 @@ use super::italianate::{
     CHAMFER, Crown, PROUD, Posts, arch, corner_piers, cornice, door_leaves, gallery, grille,
     parapet, pediment, pilaster, plinth, spire, surround, urn,
 };
-use super::materials::Surface;
+use super::materials::{Paint, Surface};
 use super::shape::Shape;
 use super::walls::{
     BARN_REACH, Opening, Wall, Walls, barn, chimney, flat_roof, gable_roof, lean_to, spread, wedge,
@@ -114,8 +116,8 @@ pub fn building(lot: &Lot) -> Option<Shape> {
             } else {
                 1
             };
-            // Its walls stand in from the lot so the eaves end on it,
-            // where the collider is.
+            // Its walls stand in from the lot so the eaves end on it; core
+            // collides at the walls (`Building::collider`).
             let inside = (w - 2.0 * BARN_REACH, d - 2.0 * BARN_REACH, h);
             barn(&mut shape, (iron, Surface::OldIron), inside, DROP, v, doors);
         }
@@ -312,18 +314,7 @@ fn house(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32, outskirts: bool)
     if outskirts && v % 20 < 13 {
         return cottage(shape, (w, d, h), v);
     }
-    let wall = [
-        Surface::Whitewash,
-        Surface::Lime,
-        Surface::Brick,
-        Surface::Whitewash,
-        Surface::Lime,
-    ][(v % 5) as usize];
-    let trim = if wall == Surface::Brick && v & 0x20 != 0 {
-        Surface::Stucco
-    } else {
-        Surface::Whitewash
-    };
+    let (wall, trim, plinth) = house_finish(v);
     let walls = masonry((w, d, h), 0.4);
     let bays = ((walls.width() / 2.8) as usize).clamp(2, 5);
     // The zaguán door at one end, windows down the rest.
@@ -332,7 +323,7 @@ fn house(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32, outskirts: bool)
     let f = Front {
         wall,
         trim,
-        plinth: Surface::Stucco,
+        plinth,
         bays,
         doors: vec![door],
         door: (1.1, head),
@@ -357,6 +348,36 @@ fn house(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32, outskirts: bool)
     italianate(shape, &walls, &f, v);
 }
 
+/// A town house's wall, mouldings and plinth, from the low bits of its
+/// variant (`v % 16`, so the other bits stay free for the dressing): of 16
+/// houses, 6 are painted (2 ochre, one each of the other paints), 3
+/// lime-washed, 2 whitewashed, 2 bare brick, 2 brick under a worn wash and
+/// 1 with its plaster flaking off the brick, the town being young.
+pub(crate) fn house_finish(v: u32) -> (Surface, Surface, Surface) {
+    let wall = match v % 16 {
+        0 | 1 => Surface::Whitewash,
+        2 | 3 | 15 => Surface::Lime,
+        4 | 5 => Surface::Brick,
+        6 => Surface::Painted(Paint::LimeWhite),
+        7 | 8 => Surface::Painted(Paint::Ochre),
+        9 => Surface::Painted(Paint::PaleRose),
+        10 => Surface::Painted(Paint::GreyBlue),
+        11 => Surface::Painted(Paint::Terracotta),
+        12 | 13 => Surface::WashedBrick,
+        _ => Surface::PatchedBrick,
+    };
+    let stucco_trim = v & 0x20 != 0;
+    match wall {
+        // White mouldings on a coloured front, grey ones on a white one.
+        Surface::Painted(Paint::LimeWhite) => (wall, Surface::Stucco, Surface::Band),
+        Surface::Painted(_) => (wall, Surface::Whitewash, Surface::Band),
+        Surface::Brick if stucco_trim => (wall, Surface::Stucco, Surface::Stucco),
+        Surface::WashedBrick if stucco_trim => (wall, Surface::Whitewash, Surface::Band),
+        Surface::PatchedBrick => (wall, Surface::Stucco, Surface::Stucco),
+        _ => (wall, Surface::Whitewash, Surface::Stucco),
+    }
+}
+
 /// An outskirts rancho: thick adobe or whitewashed walls set in under a
 /// corrugated roof, a door and a window or two, and a chimney.
 fn cottage(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
@@ -370,10 +391,11 @@ fn cottage(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
         height: (h - 0.6).max(2.8),
         drop: DROP,
     };
-    let wall = if v & 1 == 0 {
-        Surface::Adobe
-    } else {
-        Surface::Whitewash
+    // Adobe or whitewash; one whitewashed rancho in four is of brick.
+    let wall = match (v & 1, (v >> 4) % 4) {
+        (0, _) => Surface::Adobe,
+        (_, 0) => Surface::WashedBrick,
+        _ => Surface::Whitewash,
     };
     let len = walls.width();
     let rooms = if len > 8.0 { 3 } else { 2 };
@@ -421,17 +443,27 @@ fn store(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32, style: StoreStyl
     // Doors in the middle and every other bay, shop windows between.
     let doors: Vec<usize> = (0..bays).filter(|k| k % 2 == (bays / 2) % 2).collect();
     let general = style == StoreStyle::GeneralStore;
-    let wall = match (general, v % 3) {
+    // An almacén is brick, lime-washed or painted ochre or grey-blue; a
+    // pulpería whitewashed, lime-washed or old brick losing its plaster.
+    let wall = match (general, v % 6) {
         (true, 0) => Surface::Lime,
-        (true, _) => Surface::Brick,
-        (false, 0) => Surface::Lime,
+        (true, 1 | 2) => Surface::Brick,
+        (true, 3) => Surface::WashedBrick,
+        (true, 4) => Surface::Painted(Paint::Ochre),
+        (true, _) => Surface::Painted(Paint::GreyBlue),
+        (false, 0 | 1) => Surface::Lime,
+        (false, 2) => Surface::PatchedBrick,
         (false, _) => Surface::Whitewash,
+    };
+    let plinth = match wall {
+        Surface::Painted(_) | Surface::WashedBrick => Surface::Band,
+        _ => Surface::Stucco,
     };
     let f = Front {
         wall,
         // Whitewashed mouldings and parapet over the brick or the wash.
         trim: Surface::Whitewash,
-        plinth: Surface::Stucco,
+        plinth,
         bays,
         doors,
         door: (1.3, (h - 1.3).min(3.4)),
