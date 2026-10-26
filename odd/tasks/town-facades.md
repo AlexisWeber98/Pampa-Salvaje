@@ -424,6 +424,178 @@ Diff: about 1.3k changed lines, not counting the KTX2 and JPG binaries.
   renderer has no PBR, so the scans' few brightest texels (lifted past
   white) are worth a look up close.
 
+## Phase 3: the plaza (branch feat/plaza, from origin/main 71017f6)
+
+Goal (user's roadmap: finish the towns): turn the plaza from a lawn, a
+cross of 3 m paths, a concrete box and sphere trees into a 1919 pampa
+plaza. Trees stay as they are; phase 4 replaces them.
+
+- [x] P3.1 Core layout, `pampa_core::town::PlazaFurniture`, from
+  `TownLayout::plaza_furniture()` per plaza, tiered by `Paving`:
+  - the monument's collider (lowest step), inside the old 3x3 `plaza_monument`;
+  - `plaza_crossing`: a paved 9 m square round the monument;
+  - `Bench`es beside the paths, facing them;
+  - railing pieces (the city only, user 2026-10-26).
+
+  `obstacles()` now includes the monument, the benches and the railing.
+- [x] P3.2 Render `facade/plaza.rs`: curbed paths and the crossing, the
+  monument, benches and railing. Built in the async `build_lots` task
+  (`Part::Plaza`, `TownPlaza(index)`). The old path patches and the
+  monument boxes are gone; the lawn patch stays.
+- [x] P3.3 `Surface::Earth`: opaque `dry_ground_01`, for earth paths.
+  `Yard` and `Mud` blend by vertex alpha, so they would sort as
+  transparent.
+- [x] P3.4 Tests with sabotages, previews, README, module docs, this
+  section.
+
+Route: one delegated writer in an isolated worktree on `feat/plaza`
+(trigger: 2+ non-trivial files). Uncommitted; the user commits.
+
+### Phase 3 decisions
+
+- **Tiers follow the sidewalk rule** (`Paving`):
+
+  | Tier | Paths | Curbs | Monument | Benches | Railing |
+  |---|---|---|---|---|---|
+  | `Everywhere` (General Pico) | brick `Paving` | `Stucco` | 3 steps, about 8.8 m, urns on the cornice | 3 on each side of each path, 24 (1 a side, 8, in the station plaza) | iron over a 0.35 m stucco plinth between chamfered piers, 1.05 m |
+  | `Plaza` (Castex, Monte Nievas, Caleufú) | `Earth` | `Brick` | 2 steps, about 6.4 m | 1 by each path, on its left: one to a quadrant, 4 | none |
+  | `None` (Metileo) | `Earth` | none | 1 step, about 4.5 m | 1 by the east and 1 by the west path, 2 | none |
+
+  User review (2026-10-26): sparse plazas and earth paths are right for
+  1919 pampa towns. The first cut gave the towns a plain iron railing and
+  2 benches a path side (16), and the village 1 a side (8). They were
+  dropped to the above: only the city fences its plaza, and the small
+  plazas stay sparse (`PlazaFurniture::bench_plan`).
+
+  Curbs are 0.15 m wide, on the lawn side, 0.10 m tall (3 cm over the
+  0.07 m path). The paths keep their 3 m width.
+- **Monument** (in the manner of the Pirámide de Mayo):
+  - chamfered stucco steps;
+  - a whitewashed pedestal on a moulded stucco base, with a dark plaque
+    on each face (towns and the city);
+  - a two-part stucco cornice, then a die;
+  - a tapering whitewashed obelisk with a pyramidion;
+  - an iron ball finial.
+
+  The lowest step is 2.4 m in a village and 3 m elsewhere. It never
+  outgrows core's 3x3 plinth, so the four lamps round Pico's monument (at
+  ±2.2 m, with a 0.5 m clearance) stay.
+- **The monument collides now** (it did not before). It filled the 3 m
+  crossing of the paths, so core adds the paved crossing: 3 m all round
+  it, where people and riders walk round it. The plaza spot (Don
+  Hidalgo, 6 m out) stays on the path, past the crossing.
+- **Benches are colliders** (cheap: static boxes in `obstacles()`). Each
+  is 1.8 x 0.6 m, 0.3 m off the path's edge (past the curb), facing the
+  path:
+  - spread evenly between 0.5 m past the crossing and 2.6 m before the
+    edge, clear of the mouth lamps' reach;
+  - trees stand at least 3.35 m from a path's middle, so they never meet
+    a bench;
+  - a bench on a tree trunk or a sign would be dropped (none is in the
+    shipped or sample towns).
+- **Railing collider**: 0.05–0.35 m in from the plaza's edge. The mouth
+  lamps stand 1 m in, and their 0.5 m clearance starts 0.38 m in, so the
+  railing never drops a lamp. It opens 1.65 m to either side of each
+  path's middle (the path and its curbs). Its piers and posts stand
+  inside the collider. Corners are closed; nobody enters but by a path.
+- **Unchanged**: lamp sites and counts, the plaza sign, the townsfolk
+  graph (streets only), streets, sidewalks and the paths' layout. No new
+  `VisibilityRange`:
+  - paths, curbs, crossing and monument use `ranges()[0]` (BUILDING_FAR);
+  - benches and railing use `ranges()[1]` (PROP_FAR);
+  - trees stay on `ranges()[2]`.
+
+  The lawn patch keeps no range, as before.
+- **Meshes**: each plaza is two merged `Shape`s (ground + monument,
+  furniture), one mesh per surface each, on the shared `FacadeMaterials`.
+  Castex's plaza is 7 entities (5 ground surfaces, then planks and iron for
+  its 4 benches). Bench orientation is a yaw
+  (`from_rotation_y`), so a half turn never flips a bench.
+- **Camera**: the monument is not a camera occluder (only buildings are).
+  At 0.9–3 m wide it rarely hides the player; revisit if it does.
+
+### Phase 3 perf
+
+Triangle budget: under 30k a plaza (tested), monument under 1.5k, bench
+under 250.
+
+| Plaza | Ground (paths, curbs, monument) | Furniture (benches, railing) |
+|---|---|---|
+| General Pico main (90 m, city) | 864 | 20,960 |
+
+Most of Pico's furniture triangles are its 0.25 m pickets round a 360 m
+edge. Earth reuses `dry_ground_01`, so no new texture memory is used.
+Draws: one new material (`Earth`). The rest share the existing ones.
+This is an estimate from the source; no GPU capture was taken.
+
+### Phase 3 sabotage log (each broken, seen failing, restored; sha256 checked equal)
+
+| Sabotage | Test seen failing |
+|---|---|
+| village monument 3.0 m | `town::plaza_furniture_follows_the_town_size` |
+| benches 0.3 m inside the path's edge | `town::plaza_furniture_keeps_off_the_paths_streets_trees_and_signs` |
+| railing laid round the plaza grown 1 m | `town::plaza_furniture_keeps_off_the_paths_streets_trees_and_signs` |
+| `RAILING_DEPTH` 0.5 | `lamps::plaza_furniture_keeps_every_plaza_lamp_and_the_paths_walkable` (General Pico loses a mouth lamp; rerun after the review, Monte Nievas has no railing now) |
+| `MOUTH_HALF` 0.6 (mouths closed) | `lamps::plaza_furniture_keeps_every_plaza_lamp_and_the_paths_walkable` (the rider's mouth blocked) |
+| benches on the paths' middle | `lamps::plaza_furniture_keeps_every_plaza_lamp_and_the_paths_walkable` (the plaza spot unreachable) |
+| the monument left out of `obstacles()` | `town::obstacles_cover_buildings_and_trees` (changed) |
+| a box inside the plaza among the obstacles | `town::no_street_runs_through_a_merged_plaza` (changed: furniture allowed) |
+| town paths in brick `Paving` | `plaza::each_tier_dresses_its_paths_as_the_sidewalk_rule_does` |
+| Pico's lowest step 3.4 m | `plaza::the_monument_grows_with_the_town_and_stays_on_its_plinth` |
+| benches turned a half turn | `plaza::a_bench_keeps_within_its_footprint_and_faces_its_path` |
+| benches turned about `x` (flipped) | `plaza::a_bench_keeps_within_its_footprint_and_faces_its_path`, `plaza::the_railing_stands_within_its_colliders_open_at_the_mouths` |
+| piers 0.4 m wide | `plaza::the_railing_stands_within_its_colliders_open_at_the_mouths` |
+| pickets every 5 cm (77k triangles) | `plaza::a_plaza_keeps_to_its_triangle_budget` |
+| furniture on the trees' range | `town::each_plaza_is_one_mesh_per_surface_and_range_with_the_shared_materials` |
+| `Earth` names a missing set | `materials::every_textured_surface_names_a_shipped_set` |
+| after the review: towns railed again | `town::plaza_furniture_follows_the_town_size`, `plaza::each_tier_dresses_its_paths_as_the_sidewalk_rule_does` |
+| after the review: town benches on both sides (8) | `town::plaza_furniture_follows_the_town_size` |
+| after the review: village benches by all four paths | `town::plaza_furniture_follows_the_town_size` |
+| after the review: town benches by two paths twice (two to a quadrant) | `town::plaza_furniture_follows_the_town_size` (one to a quadrant) |
+
+Not a defect: `Quat::from_rotation_arc(Z, -Z)` (the first cut) turns
+about `y` in glam, so that sabotage stayed green. The yaw-only rotation
+was kept for clarity.
+
+### Phase 3 previews
+
+`preview_town_sidewalks` (ignored, `town.rs`) now dumps each plaza's
+meshes and trees. It is rendered with the session scratchpad's
+`render3.py`, a numpy software rasterizer with textures (no PBR, no
+shadows):
+- `pico_overview.png`, `pico_eye.png`, `pico_mouth.png` (railing, piers
+  and brick paths at a mouth);
+- `castex_overview.png`, `castex_eye.png`;
+- `metileo_overview.png`, `metileo_eye.png`.
+
+Castex and Metileo were re-rendered after the review (no railing, fewer
+benches).
+
+### Phase 3 verification (2026-10-26)
+
+- `cargo test -p pampa-core`: 352 passed.
+- `cargo test -p pampa-content`: 32 passed.
+- `cargo test -p pampa-render`: 335 passed, 4 ignored (the previews).
+- `cargo test -p game`: 131 passed.
+- `cargo build -p game`: ok.
+- `cargo fmt --all -- --check`: clean.
+- `cargo clippy --workspace --all-targets -- -D warnings`: clean.
+
+Diff: about 1.6k changed lines (1,559 insertions, 70 deletions before this
+note), with about 720 in the new `facade/plaza.rs` and its tests.
+
+### Phase 3 follow-ups and next step
+
+- The plaza area is big in Pico (90 m): three benches per path side
+  leave about 18 m between benches. More, or benches round the crossing,
+  if it feels empty in game.
+- `dry_ground_01` reads as cracked mud up close. A packed-earth or tosca
+  set would suit the paths better (it needs a download).
+- The plaques are plain dark iron (`Steel`). A bronze material would need
+  a new surface.
+- Next: phase 4, better trees (LeafSet cards, paraíso, olmo, eucalipto,
+  aromo).
+
 ## Checks
 
 - `cargo test -p pampa-core`, `-p pampa-content`, `-p pampa-render`, `-p game`

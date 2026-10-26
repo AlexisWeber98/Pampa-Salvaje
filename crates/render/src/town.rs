@@ -1,6 +1,7 @@
 //! Procedural low-poly town drawn from a `pampa-core` [`TownLayout`]:
 //! dirt streets with brick sidewalks where core paves them
-//! ([`TownLayout::sidewalks`]), a tree-lined plaza, the 1919 Italianate buildings of the
+//! ([`TownLayout::sidewalks`]), a tree-lined plaza (its paths, monument, benches and
+//! railing from [`crate::facade::plaza`]), the 1919 Italianate buildings of the
 //! facade kit ([`crate::facade::town_buildings`]), a railway with its
 //! station, grain sheds, and windmills over round water tanks.
 //!
@@ -16,7 +17,8 @@
 //! [`FacadeMaterials`]. The first town filled is built at once, so the
 //! first frame shows it; a town streamed in later builds its buildings on
 //! the async compute pool and they land a few frames after its root, still
-//! far past [`crate::settlement::BUILDING_FAR`] (the activation margin is wider). Buildings,
+//! far past [`crate::settlement::BUILDING_FAR`] (the activation margin is wider). The
+//! plazas' paths, monuments, benches and railings are built the same way. Buildings,
 //! sidewalks, small props and trees are drawn within the settlements' shared
 //! [`ranges`]: no new [`VisibilityRange`].
 //!
@@ -29,7 +31,7 @@ use bevy::camera::visibility::VisibilityRange;
 use bevy::prelude::*;
 use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
-use pampa_core::town::Sidewalk;
+use pampa_core::town::{PlazaFurniture, Sidewalk};
 use pampa_core::{
     Aabb, Building, BuildingKind, Floor, RailSpan, Side, StoreStyle, Terrain, TownActivation,
     TownLayout, Vec2 as GroundVec2,
@@ -100,6 +102,12 @@ fn spin_rotors(time: Res<Time>, mut rotors: Query<(&WindmillRotor, &mut Transfor
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TownBuilding(pub usize);
 
+/// One drawn piece of plaza `.0` of its town (an index into
+/// [`TownLayout::plazas`]): its paths and monument, or its benches and
+/// railing.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TownPlaza(pub usize);
+
 /// One piece of a town's sidewalks: a block's or the plaza's ring.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TownSidewalk;
@@ -118,11 +126,9 @@ struct Shapes {
 /// Earthy palette of the streets, plaza, trees, railway and platform.
 #[derive(Resource)]
 struct Palette {
-    whitewash: Handle<StandardMaterial>,
     timber: Handle<StandardMaterial>,
     street: Handle<StandardMaterial>,
     plaza: Handle<StandardMaterial>,
-    path: Handle<StandardMaterial>,
     canopy: Handle<StandardMaterial>,
     trunk: Handle<StandardMaterial>,
     concrete: Handle<StandardMaterial>,
@@ -140,11 +146,9 @@ impl Palette {
                 ..default()
             })
         };
-        let whitewash = matte(0.86, 0.82, 0.73);
         let timber = matte(0.34, 0.25, 0.18);
         let street = matte(0.58, 0.47, 0.34);
         let plaza = matte(0.47, 0.46, 0.29);
-        let path = matte(0.66, 0.58, 0.45);
         let canopy = matte(0.27, 0.32, 0.17);
         let trunk = matte(0.33, 0.26, 0.19);
         let concrete = matte(0.62, 0.59, 0.54);
@@ -156,11 +160,9 @@ impl Palette {
             ..default()
         });
         Self {
-            whitewash,
             timber,
             street,
             plaza,
-            path,
             canopy,
             trunk,
             concrete,
@@ -311,11 +313,12 @@ fn stream_towns(
             &mut meshes,
         );
         let lots = lots(town, &terrain.0);
+        let plazas = plaza_jobs(town, &terrain.0);
         if *first_fill_laid {
-            let task = AsyncComputeTaskPool::get().spawn(async move { build_lots(&lots) });
+            let task = AsyncComputeTaskPool::get().spawn(async move { build_lots(&lots, &plazas) });
             commands.entity(root).insert(PendingBuildings(task));
         } else {
-            let built = build_lots(&lots);
+            let built = build_lots(&lots, &plazas);
             spawn_built(&mut commands, root, built, &shapes, &surfaces, &mut meshes);
         }
     }
@@ -588,30 +591,11 @@ fn plazas(b: &mut Builder, town: &TownLayout) {
     plaza_trees(b, town);
 }
 
-/// One plaza: lawn, a cross of paths and a monument where they meet.
+/// One plaza's lawn. Its paths, monument, benches and railing are built
+/// with the buildings ([`plaza_jobs`], [`crate::facade::plaza`]).
 fn plaza(b: &mut Builder, p: Aabb) {
-    let (plaza, path) = (b.palette.plaza.clone(), b.palette.path.clone());
-    flat_patch(b, &plaza, &p, 0.05);
-    // A cross of paths meeting at a small monument.
-    let c = p.center();
-    let s = p.size();
-    for size in [GroundVec2::new(s.x, 3.0), GroundVec2::new(3.0, s.y)] {
-        flat_patch(b, &path, &Aabb::from_center_size(c, size), 0.07);
-    }
-    let y = b.ground(c);
-    let (concrete, whitewash) = (b.palette.concrete.clone(), b.palette.whitewash.clone());
-    b.range = Some(ranges()[1].clone());
-    b.cube(
-        &concrete,
-        world_from_ground(c, y + 0.4),
-        Vec3::new(3.0, 0.8, 3.0),
-    );
-    b.cube(
-        &whitewash,
-        world_from_ground(c, y + 2.2),
-        Vec3::new(0.9, 2.8, 0.9),
-    );
-    b.range = None;
+    let lawn = b.palette.plaza.clone();
+    flat_patch(b, &lawn, &p, crate::facade::plaza::LAWN_TOP);
 }
 
 /// Every plaza tree: a trunk and a round crown.
@@ -726,18 +710,68 @@ fn variant(index: usize, footprint: &Aabb) -> u32 {
     v ^ (v >> 16)
 }
 
-/// One built building: its meshes in its own space, where it stands, the
-/// index of its shared range, and a windmill's wheel.
-struct Built {
+/// What a built piece of a town is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Part {
+    /// Building `.0` of [`TownLayout::buildings`].
+    Building(usize),
+    /// Plaza `.0` of [`TownLayout::plazas`].
+    Plaza(usize),
+}
+
+/// One plaza of the town to build: what core puts in it, and its middle
+/// on the ground in the world.
+#[derive(Debug, Clone)]
+struct PlazaJob {
     index: usize,
+    furniture: PlazaFurniture,
+    base: Vec3,
+}
+
+/// Every plaza of `town`, placed on `terrain`.
+fn plaza_jobs(town: &TownLayout, terrain: &Terrain) -> Vec<PlazaJob> {
+    town.plaza_furniture()
+        .into_iter()
+        .enumerate()
+        .map(|(index, furniture)| {
+            let c = furniture.area.center();
+            PlazaJob {
+                index,
+                base: world_from_ground(c, terrain.height(c.x, c.y)),
+                furniture,
+            }
+        })
+        .collect()
+}
+
+/// One built piece (a building or a plaza's share of one range): its
+/// meshes in its own space, where it stands, the index of its shared
+/// range, and a windmill's wheel.
+struct Built {
+    part: Part,
     transform: Transform,
     meshes: Vec<(Surface, Mesh)>,
     range: usize,
     rotor: Option<(Transform, WindmillRotor)>,
 }
 
-/// Builds every job's meshes.
-fn build_lots(jobs: &[Job]) -> Vec<Built> {
+/// Builds every job's meshes, then every plaza's: its paths, curbs and
+/// monument within the buildings' range, its benches and railing within
+/// the props'.
+fn build_lots(jobs: &[Job], plazas: &[PlazaJob]) -> Vec<Built> {
+    let plazas = plazas.iter().flat_map(|job| {
+        let shapes = crate::facade::plaza::plaza(&job.furniture);
+        let transform = Transform::from_translation(job.base);
+        [(shapes.ground, 0), (shapes.furniture, 1)]
+            .into_iter()
+            .map(move |(shape, range)| Built {
+                part: Part::Plaza(job.index),
+                transform,
+                meshes: shape.into_meshes(),
+                range,
+                rotor: None,
+            })
+    });
     jobs.iter()
         .filter_map(|job| {
             let shape = town_buildings::building(&job.lot)?;
@@ -759,13 +793,14 @@ fn build_lots(jobs: &[Job]) -> Vec<Built> {
                 _ => 0,
             };
             Some(Built {
-                index: job.index,
+                part: Part::Building(job.index),
                 transform,
                 meshes: shape.into_meshes(),
                 range,
                 rotor,
             })
         })
+        .chain(plazas)
         .collect()
 }
 
@@ -782,23 +817,29 @@ fn spawn_built(
     for b in built {
         let range = &ranges[b.range];
         for (surface, mesh) in b.meshes {
-            commands.spawn((
+            let mut e = commands.spawn((
                 Mesh3d(meshes.add(mesh)),
                 MeshMaterial3d(surfaces.get(surface)),
                 b.transform,
                 range.clone(),
-                TownBuilding(b.index),
                 ChildOf(root),
             ));
+            match b.part {
+                Part::Building(index) => e.insert(TownBuilding(index)),
+                Part::Plaza(index) => e.insert(TownPlaza(index)),
+            };
         }
-        if let Some((transform, rotor)) = b.rotor {
+        let (Some((transform, rotor)), Part::Building(index)) = (b.rotor, b.part) else {
+            continue;
+        };
+        {
             let wheel = commands
                 .spawn((
                     Name::new("Windmill wheel"),
                     rotor,
                     transform,
                     Visibility::default(),
-                    TownBuilding(b.index),
+                    TownBuilding(index),
                     ChildOf(root),
                 ))
                 .id();
@@ -808,7 +849,7 @@ fn spawn_built(
                     MeshMaterial3d(surfaces.get(*surface)),
                     Transform::IDENTITY,
                     range.clone(),
-                    TownBuilding(b.index),
+                    TownBuilding(index),
                     ChildOf(wheel),
                 ));
             }
@@ -955,6 +996,50 @@ mod tests {
     }
 
     #[test]
+    fn each_plaza_is_one_mesh_per_surface_and_range_with_the_shared_materials() {
+        let mut app = app();
+        app.update();
+        let facade = app.world().resource::<FacadeMaterials>().clone();
+        let id = |s: Surface| facade.get(s).id();
+        let mut q = app.world_mut().query::<(
+            &TownPlaza,
+            &MeshMaterial3d<StandardMaterial>,
+            &VisibilityRange,
+        )>();
+        let ranges = ranges();
+        let mut seen = HashSet::new();
+        let (mut ground, mut furniture) = (HashSet::new(), HashSet::new());
+        for (plaza, material, range) in q.iter(app.world()) {
+            let r = ranges
+                .iter()
+                .position(|x| x == range)
+                .expect("a shared range");
+            assert!(
+                seen.insert((plaza.0, r, material.id())),
+                "one mesh per surface"
+            );
+            match r {
+                0 => ground.insert(material.id()),
+                1 => furniture.insert(material.id()),
+                _ => panic!("plazas draw within the buildings' and props' ranges"),
+            };
+        }
+        // Castex is a small town: earth paths with brick curbs and a
+        // stucco and whitewash monument as far as the buildings; iron and
+        // timber benches and an iron railing as far as the props.
+        let want = [
+            Surface::Earth,
+            Surface::Brick,
+            Surface::Stucco,
+            Surface::Whitewash,
+        ];
+        assert!(want.iter().all(|&s| ground.contains(&id(s))), "{ground:?}");
+        assert!(!ground.contains(&id(Surface::Paving)));
+        let want = [Surface::Planks, Surface::Steel];
+        assert_eq!(furniture, want.iter().map(|&s| id(s)).collect());
+    }
+
+    #[test]
     fn towns_draw_within_the_shared_ranges_only() {
         let mut app = app();
         app.update();
@@ -981,7 +1066,8 @@ mod tests {
     /// Writes three towns as shipped (General Pico, Eduardo Castex,
     /// Metileo) to `PAMPA_PREVIEW` (a folder) for the offline renderer, in
     /// the format of `facade::town_buildings::tests::preview_town_street`:
-    /// buildings, streets, plazas, paths and sidewalks on flat ground. Run
+    /// buildings, streets, sidewalks, and the plazas (lawn, paths,
+    /// monument, benches, railing and trees) on flat ground. Run
     /// with `PAMPA_PREVIEW=/some/dir cargo test -p pampa-render -- --ignored preview_town`.
     #[test]
     #[ignore = "writes preview files"]
@@ -1025,21 +1111,24 @@ mod tests {
             let terrain = terrain.clone().with_flat_area(town.flat_area(&terrain));
             let floor = terrain.height(0.0, 0.0);
             let mut text = String::new();
+            let put_part = |text: &mut String, shape: &Shape, surface: Surface, at: Transform| {
+                for (p, n, uv) in shape.vertices(surface) {
+                    let p = at.transform_point(p) - Vec3::Y * floor;
+                    let n = at.rotation * n;
+                    let _ = writeln!(
+                        text,
+                        "v {:.3} {:.3} {:.3} {:.3} {:.3} {:.3} {:.4} {:.4}",
+                        p.x, p.y, p.z, n.x, n.y, n.z, uv.x, uv.y
+                    );
+                }
+                for t in shape.indices(surface).chunks(3) {
+                    let _ = writeln!(text, "f {} {} {}", t[0], t[1], t[2]);
+                }
+            };
             let put = |text: &mut String, shape: &Shape, at: Transform| {
                 for surface in shape.surfaces().collect::<Vec<_>>() {
                     let _ = writeln!(text, "m {surface:?}");
-                    for (p, n, uv) in shape.vertices(surface) {
-                        let p = at.transform_point(p) - Vec3::Y * floor;
-                        let n = at.rotation * n;
-                        let _ = writeln!(
-                            text,
-                            "v {:.3} {:.3} {:.3} {:.3} {:.3} {:.3} {:.4} {:.4}",
-                            p.x, p.y, p.z, n.x, n.y, n.z, uv.x, uv.y
-                        );
-                    }
-                    for t in shape.indices(surface).chunks(3) {
-                        let _ = writeln!(text, "f {} {} {}", t[0], t[1], t[2]);
-                    }
+                    put_part(text, shape, surface, at);
                 }
             };
             // Ground patches as named flat quads.
@@ -1058,10 +1147,37 @@ mod tests {
                 patch(&mut text, "Street", street, 0.03);
             }
             for plaza in town.plazas() {
-                patch(&mut text, "Plaza", &plaza, 0.05);
-                for path in pampa_core::plaza_paths(plaza) {
-                    patch(&mut text, "Path", &path, 0.07);
-                }
+                patch(&mut text, "Plaza", &plaza, crate::facade::plaza::LAWN_TOP);
+            }
+            for job in plaza_jobs(&town, &terrain) {
+                let shapes = crate::facade::plaza::plaza(&job.furniture);
+                let at = Transform::from_translation(job.base);
+                put(&mut text, &shapes.ground, at);
+                put(&mut text, &shapes.furniture, at);
+            }
+            // Trees as the game draws them today: a trunk and a crown.
+            for (n, &tree) in town.trees.iter().enumerate() {
+                let jitter = hash2(tree.x, tree.y);
+                let (trunk, crown) = (2.6 + jitter, 3.6 + 1.4 * hash2(tree.y, n as f32));
+                let mut shape = Shape::default();
+                let foot = world_from_ground(tree, terrain.height(tree.x, tree.y));
+                shape.lathe(
+                    Surface::Planks,
+                    Transform::from_translation(foot),
+                    &[(0.25, 0.0), (0.25, trunk)],
+                    6,
+                );
+                shape.lathe(
+                    Surface::Sheet,
+                    Transform::from_translation(foot + Vec3::Y * (trunk + crown * 0.3))
+                        .with_scale(Vec3::new(crown, crown * 0.8, crown) * 0.5),
+                    &[(0.0, -1.0), (0.7, -0.7), (1.0, 0.0), (0.7, 0.7), (0.0, 1.0)],
+                    8,
+                );
+                let _ = writeln!(text, "m Trunk");
+                put_part(&mut text, &shape, Surface::Planks, Transform::IDENTITY);
+                let _ = writeln!(text, "m Canopy");
+                put_part(&mut text, &shape, Surface::Sheet, Transform::IDENTITY);
             }
             for (origin, shape) in sidewalk_shapes(town.sidewalks(), &terrain) {
                 put(&mut text, &shape, Transform::from_translation(origin));

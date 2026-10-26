@@ -791,6 +791,126 @@ mod tests {
         );
     }
 
+    /// The cells of a `step` grid over `area` someone of `radius` reaches
+    /// on foot from `from`, kept off `blocked`.
+    fn reachable(area: Aabb, blocked: &[Aabb], radius: f32, from: Vec2) -> Vec<Vec2> {
+        let step = 0.25;
+        let (w, h) = (
+            (area.size().x / step) as usize + 1,
+            (area.size().y / step) as usize + 1,
+        );
+        let at = |i: usize, j: usize| area.min + Vec2::new(i as f32, j as f32) * step;
+        let free = |p: Vec2| {
+            blocked
+                .iter()
+                .all(|o| o.closest_point(p).distance(p) > radius)
+        };
+        let mut seen = vec![false; w * h];
+        let start = (
+            ((from.x - area.min.x) / step).round() as usize,
+            ((from.y - area.min.y) / step).round() as usize,
+        );
+        assert!(free(at(start.0, start.1)), "{from:?} is blocked");
+        let mut todo = vec![start];
+        seen[start.1 * w + start.0] = true;
+        let mut out = Vec::new();
+        while let Some((i, j)) = todo.pop() {
+            out.push(at(i, j));
+            for (di, dj) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                let (ni, nj) = (i as i64 + di, j as i64 + dj);
+                if ni < 0 || nj < 0 || ni >= w as i64 || nj >= h as i64 {
+                    continue;
+                }
+                let (ni, nj) = (ni as usize, nj as usize);
+                if !seen[nj * w + ni] && free(at(ni, nj)) {
+                    seen[nj * w + ni] = true;
+                    todo.push((ni, nj));
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn plaza_furniture_keeps_every_plaza_lamp_and_the_paths_walkable() {
+        // The shipped towns with all their lamps, and the sample towns
+        // (a village among them) with their plaza lamps.
+        let (shipped, _, lamps) = shipped();
+        let samples = crate::town::tests::sample_towns();
+        let plaza_only = samples.iter().map(|t| {
+            let mut keep = keep_outs(t);
+            keep.extend(t.obstacles());
+            let mut lighter = Lamplighter {
+                keep,
+                roads: None,
+                tracks: &[],
+                lamps: Vec::new(),
+            };
+            plaza_lamps(t, &mut lighter);
+            lighter.lamps
+        });
+        let towns: Vec<(&TownLayout, Vec<StreetLamp>)> = shipped
+            .iter()
+            .zip(lamps)
+            .chain(samples.iter().zip(plaza_only))
+            .collect();
+        let mut tiers = std::collections::HashSet::new();
+        for (town, lamps) in &towns {
+            tiers.insert(LampTier::of(town));
+            // Every plaza lamp still stands where it stood before the
+            // furniture: by each mouth, and round a city's monument.
+            let plaza = of(lamps, LampSite::Plaza);
+            let main = plaza
+                .iter()
+                .filter(|l| town.plaza.contains_point(l.at))
+                .count();
+            let want = match LampTier::of(town) {
+                LampTier::VerySmall => 2,
+                LampTier::Small => 4,
+                LampTier::Big => 8,
+            };
+            assert_eq!(main, want, "{}", town.name);
+            // And clear of every obstacle, the furniture's included.
+            let obstacles = town.obstacles();
+            for l in &plaza {
+                let reach = l.obstacle().expanded(StreetLamps::CLEARANCE);
+                assert!(obstacles.iter().all(|o| !o.intersects(&reach)), "{l:?}");
+            }
+            let mut blocked = obstacles;
+            blocked.extend(lamps.iter().map(StreetLamp::obstacle));
+            for (k, f) in town.plaza_furniture().into_iter().enumerate() {
+                let (c, half) = (f.area.center(), f.area.size() * 0.5);
+                // A walker and a rider, from one path's mouth just outside
+                // the plaza, reach the other three and walk round the
+                // monument; the walker reaches the plaza's meeting spot.
+                let mouths: Vec<Vec2> = SIDES
+                    .iter()
+                    .map(|&n| c + n * (n.x.abs() * half.x + n.y.abs() * half.y + 0.5))
+                    .collect();
+                let around: Vec<Vec2> = SIDES
+                    .iter()
+                    .map(|&n| c + n * (PLAZA_MONUMENT / 2.0 + 1.5))
+                    .collect();
+                for radius in [crate::Rider::PERSON_RADIUS, crate::Rider::COLLIDER_RADIUS] {
+                    let cells = reachable(f.area.expanded(1.0), &blocked, radius, mouths[0]);
+                    let near = |p: &Vec2| cells.iter().any(|q| q.distance(*p) < 0.3);
+                    for p in mouths.iter().chain(&around) {
+                        assert!(
+                            near(p),
+                            "{} plaza {k}: {p:?} out of reach at {radius}",
+                            town.name
+                        );
+                    }
+                    if k == 0 && radius < 0.5 {
+                        let (spot, _) = town.plaza_spot();
+                        assert!(near(&spot), "{}: the plaza spot", town.name);
+                    }
+                }
+            }
+        }
+        assert_eq!(tiers.len(), 3, "{tiers:?}");
+    }
+
     #[test]
     fn placing_keeps_off_the_world_and_counts_every_lamp() {
         let (towns, _, roads) = shipped_roads();
