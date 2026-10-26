@@ -186,6 +186,7 @@ pub(crate) fn drive_player(
             heading: rider.heading,
             animation: rider.animation(params),
             speed: rider.speed,
+            turn: input.turn * params.turn_rate,
         };
     }
 }
@@ -277,6 +278,32 @@ mod tests {
         );
         // The world streams around the rider.
         assert_eq!(app.world().resource::<StreamFocus>().0, rider.position);
+    }
+
+    #[test]
+    fn turning_in_place_puts_the_yaw_rate_on_the_pose() {
+        let mut app = headless_app(Duration::from_millis(16));
+        for (key, sign) in [(KeyCode::KeyA, 1.0), (KeyCode::KeyD, -1.0)] {
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(key);
+            for _ in 0..5 {
+                app.update();
+            }
+            let rate = app.world().resource::<PlayerTuning>().0.turn_rate;
+            let mut query = app
+                .world_mut()
+                .query_filtered::<&VisualPose, With<Player>>();
+            let pose = *query.single(app.world()).unwrap();
+            assert_eq!(pose.speed, 0.0);
+            assert!((pose.turn - sign * rate).abs() < 1e-6, "{}", pose.turn);
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .release(key);
+            app.update();
+            let pose = *query.single(app.world()).unwrap();
+            assert_eq!(pose.turn, 0.0, "no key, no turn");
+        }
     }
 
     #[test]

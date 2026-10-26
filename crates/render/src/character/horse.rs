@@ -18,7 +18,8 @@
 //! ground speed up to about 4.5 m/s (there is no trot clip), then the
 //! gallop ([`gait_weights`], [`gait_rate`]), each at the ground speed over
 //! the speed its hooves show, so they keep still on the ground; backing
-//! up, the stride plays backward at the same pace. A tied
+//! up, the stride plays backward at the same pace; turning on the spot,
+//! it walks in place at the small pace of [`stepping_speed`]. A tied
 //! horse changes idle now and then, as the corral horses do; a ridden one
 //! stands still. A horse out of view or far off keeps its last pose, but
 //! never the player's.
@@ -34,6 +35,7 @@ use bevy::prelude::*;
 use bevy::world_serialization::{WorldAssetRoot, WorldInstanceReady};
 use pampa_core::{AnimationState, Heading, HorseGait};
 
+use super::clips::stepping_speed;
 use super::figure::{FigureKind, Rgb, body_rotation};
 use super::gait::{
     Bone as GaitBone, GALLOP_MEANS, HorseBones, PARTIAL, Property, UNANIMATED, fit_horse,
@@ -182,6 +184,11 @@ fn dapple(p: Vec3) -> bool {
     let c = (p.z * 19.0 + p.y * 7.0).sin();
     a * b * c > 0.12
 }
+
+/// How far (m) a horse's hooves stand from the centre of a turn on the
+/// spot: wider than a person's, so its steps keep a walking rate (at the
+/// game's 1.8 rad/s turn rate, 0.54 m/s).
+pub const HORSE_TURN_STEP_RADIUS: f32 = 0.3;
 
 /// The ground speeds (m/s) across which the idle fades into the walk.
 pub const WALK_BAND: (f32, f32) = (0.05, 0.6);
@@ -654,8 +661,12 @@ pub(super) fn drive_horses(
         };
         // Negative backing up: the stride plays backward, chosen and
         // weighed by its size.
+        // Turning on the spot takes small steps ([`stepping_speed`]).
         let velocity = match poses.get(parent.parent()) {
-            Ok(pose) if pose.animation != AnimationState::Idle => pose.speed,
+            Ok(pose) if pose.animation != AnimationState::Idle => {
+                stepping_speed(pose.speed, pose.turn, HORSE_TURN_STEP_RADIUS)
+            }
+            Ok(pose) => stepping_speed(0.0, pose.turn, HORSE_TURN_STEP_RADIUS),
             _ => 0.0,
         };
         let speed = velocity.abs();
@@ -1218,6 +1229,57 @@ pub(crate) mod tests {
                 assert!(slide > 0.0 && slide < speed - GALLOP_SPEED * GALLOP_RATE.1 + 0.5);
             }
         }
+    }
+
+    #[test]
+    fn a_horse_turning_in_place_takes_short_slow_steps_and_stops_when_the_turn_does() {
+        let rider = CharacterVisual::Mounted {
+            rider: FigureKind::Protagonist,
+            coat: Coat::Bayo,
+        };
+        let (mut app, me) = saddled_every(rider, 0.0, 50);
+        let walk = |app: &mut App| {
+            let world = app.world_mut();
+            let (rig, speed) = {
+                let mut q = world.query::<&HorseRig>();
+                let rig = q.iter(world).find(|r| r.started).unwrap();
+                (rig.weights[Clip::Walk.index()], rig.player)
+            };
+            let species = world
+                .resource::<LivestockModels>()
+                .get(Species::Horse)
+                .unwrap()
+                .nodes[Clip::Walk.index()];
+            let rate = world
+                .get::<AnimationPlayer>(speed)
+                .unwrap()
+                .animation(species)
+                .unwrap()
+                .speed();
+            (rig, rate)
+        };
+        for _ in 0..20 {
+            app.update();
+        }
+        assert!(walk(&mut app).0 < 1e-3, "standing still stays idle");
+        app.world_mut().entity_mut(me).insert(VisualPose {
+            animation: AnimationState::Idle,
+            speed: 0.0,
+            turn: 1.8,
+            ..default()
+        });
+        for _ in 0..20 {
+            app.update();
+        }
+        let (weight, rate) = walk(&mut app);
+        assert!(weight > 0.2 && weight < 0.95, "{weight}");
+        // Above the walk's slowest rate, so the steps do not drag.
+        assert!(rate > RATE.0 + 0.05 && rate <= 0.5, "{rate}");
+        app.world_mut().entity_mut(me).insert(VisualPose::default());
+        for _ in 0..40 {
+            app.update();
+        }
+        assert!(walk(&mut app).0 < 1e-2, "back to idle");
     }
 
     #[test]

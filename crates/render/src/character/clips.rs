@@ -154,6 +154,29 @@ pub fn playback_rate(clip: Clip, speed: f32) -> f32 {
         .map_or(1.0, |natural| (speed / natural).clamp(RATE.0, RATE.1))
 }
 
+/// How far (m) the feet are taken to stand from the centre of a turn on the
+/// spot: kept small so the steps stay short (at the game's 1.8 rad/s turn
+/// rate, 0.36 m/s: a slow, half-weight walk).
+pub const TURN_STEP_RADIUS: f32 = 0.2;
+
+/// The ground speed (m/s) the stride clips are weighed and paced by for a
+/// body moving at `speed` while turning at `turn` rad/s, its feet `radius`
+/// m from the turn's centre ([`TURN_STEP_RADIUS`] for a person).
+///
+/// Turning on the spot steps in place at the pace the feet would travel
+/// on a small arc ([`TURN_STEP_RADIUS`] from the turn's centre); a body
+/// already moving faster than that, or backing, keeps its own speed.
+pub fn stepping_speed(speed: f32, turn: f32, radius: f32) -> f32 {
+    let pace = turn.abs() * radius;
+    if speed.abs() >= pace {
+        speed
+    } else if speed < 0.0 {
+        -pace
+    } else {
+        pace
+    }
+}
+
 /// What a person of `kind` plays standing: Farach waits with his arms
 /// folded, the others stand easy; anyone talks with their hands while
 /// `talking` (their lines are on screen).
@@ -266,6 +289,28 @@ pub(super) fn read_reference(
 mod tests {
     use super::*;
     use crate::gltf::tests::{root, unfinished_app};
+
+    #[test]
+    fn turning_in_place_steps_slowly_and_never_changes_a_real_pace() {
+        // Standing and not turning: still.
+        assert_eq!(stepping_speed(0.0, 0.0, TURN_STEP_RADIUS), 0.0);
+        // Turning at the game's rate: a small pace, inside the walk's
+        // fade-in, whichever way it turns.
+        let pace = stepping_speed(0.0, 1.8, TURN_STEP_RADIUS);
+        assert!(pace > WALK_BAND.0 && pace < WALK_BAND.1, "{pace}");
+        assert_eq!(stepping_speed(0.0, -1.8, TURN_STEP_RADIUS), pace);
+        assert!(
+            pace < stepping_speed(0.0, 3.6, TURN_STEP_RADIUS),
+            "faster turn, faster steps"
+        );
+        // Moving faster than that, or backing, is untouched.
+        assert_eq!(stepping_speed(1.6, 1.8, TURN_STEP_RADIUS), 1.6);
+        assert_eq!(stepping_speed(-1.5, 1.8, TURN_STEP_RADIUS), -1.5);
+        assert_eq!(stepping_speed(9.0, 1.8, TURN_STEP_RADIUS), 9.0);
+        // A slower creep still steps at least the turn's pace, forward or back.
+        assert_eq!(stepping_speed(0.1, 1.8, TURN_STEP_RADIUS), pace);
+        assert_eq!(stepping_speed(-0.1, 1.8, TURN_STEP_RADIUS), -pace);
+    }
 
     #[test]
     fn the_weights_fade_from_idle_to_walk_to_jog_to_sprint_and_add_up_to_one() {

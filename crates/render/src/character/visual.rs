@@ -57,6 +57,9 @@ pub struct VisualPose {
     /// Ground speed in m/s, negative backing up; render paces the gait
     /// with its size and plays the stride backward by its sign.
     pub speed: f32,
+    /// Yaw rate in rad/s (turning input times the turn rate), 0 when not
+    /// turning; standing still, render steps in place by its size.
+    pub turn: f32,
 }
 
 /// Draws entities carrying a [`CharacterVisual`].
@@ -263,6 +266,7 @@ mod tests {
                     heading: Heading::from_radians(PI),
                     animation: AnimationState::Gallop,
                     speed: 11.0,
+                    turn: 0.0,
                 },
             ))
             .id();
@@ -284,6 +288,7 @@ mod tests {
             heading: Heading::from_radians(PI / 2.0),
             animation: AnimationState::Gallop,
             speed: 5.0,
+            turn: 0.0,
         });
         app.update();
         let (b, t) = body(&mut app);
@@ -332,6 +337,7 @@ mod tests {
                     heading: Heading::from_radians(PI),
                     animation: AnimationState::Walk,
                     speed: 1.4,
+                    turn: 0.0,
                 },
             ))
             .id();

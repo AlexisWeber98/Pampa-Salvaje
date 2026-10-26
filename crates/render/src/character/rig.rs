@@ -12,7 +12,8 @@
 //!   ([`locomotion`]), each walking clip paced to that speed
 //!   ([`stride_rate`]), over the model's legs against the clips'
 //!   ([`model_stride`]), so the feet keep still on the ground; backing
-//!   up, the walking clips play backward at the same pace. The weights
+//!   up, the walking clips play backward at the same pace; turning on the
+//!   spot, the walk plays at the small pace of [`stepping_speed`]. The weights
 //!   ease toward their targets, and every clip starts at the person's own
 //!   seeded point ([`phase_offset`]). The model also undoes the carrier's
 //!   stride bob: the clips bob the pelvis themselves.
@@ -36,7 +37,8 @@ use bevy::prelude::*;
 use pampa_core::AnimationState;
 
 use super::clips::{
-    CharacterClips, Clip, Reference, STRIDES, idle_for, locomotion, phase_offset, playback_rate,
+    CharacterClips, Clip, Reference, STRIDES, TURN_STEP_RADIUS, idle_for, locomotion, phase_offset,
+    playback_rate, stepping_speed,
 };
 use super::figure::{FigureBody, FigureKind};
 use super::model::model_transform;
@@ -211,14 +213,16 @@ pub fn stride_rate(clip: Clip, speed: f32) -> f32 {
     }
 }
 
-/// The ground speed a person moves at, negative backing up: none while
-/// standing.
+/// The ground speed a person steps at, negative backing up: none while
+/// standing, but the small pace of a turn on the spot
+/// ([`stepping_speed`]).
 fn moving(pose: &VisualPose) -> f32 {
-    if pose.animation == AnimationState::Idle {
+    let speed = if pose.animation == AnimationState::Idle {
         0.0
     } else {
         pose.speed
-    }
+    };
+    stepping_speed(speed, pose.turn, TURN_STEP_RADIUS)
 }
 
 /// What [`drive_rigs`] reads of a model.
@@ -901,6 +905,58 @@ mod tests {
         // The body's left is -Z.
         assert!(left.z > right.z, "{left} {right}");
         assert!(left.y > 1.1 && right.y > 1.1, "{left} {right}");
+    }
+
+    #[test]
+    fn turning_in_place_takes_slow_steps_and_stopping_the_turn_goes_back_to_idle() {
+        use crate::character::VisualPose;
+        let (mut app, rigs) = playing(&[FigureKind::Protagonist], AnimationState::Idle, 0.0);
+        let rig = rigs[0].1;
+        let person = app
+            .world_mut()
+            .query_filtered::<Entity, With<CharacterVisual>>()
+            .single(app.world())
+            .unwrap();
+        let state = |app: &mut App| {
+            let world = app.world_mut();
+            let weight = world.get::<Rig>(rig).unwrap().weights[Clip::Walk.index()];
+            let mut players = world.query::<&AnimationPlayer>();
+            let player = world.get::<Rig>(rig).unwrap().player;
+            let clips = world.resource::<CharacterClips>().node(Clip::Walk);
+            let rate = players
+                .get(world, player)
+                .unwrap()
+                .animation(clips)
+                .unwrap()
+                .speed();
+            (weight, rate)
+        };
+        // Standing, not turning: idle, the walk at no weight.
+        for _ in 0..10 {
+            app.update();
+        }
+        assert!(state(&mut app).0 < 1e-3);
+        // Standing, turning (logic still says Idle at no speed).
+        app.world_mut().entity_mut(person).insert(VisualPose {
+            animation: AnimationState::Idle,
+            speed: 0.0,
+            turn: 1.8,
+            ..default()
+        });
+        for _ in 0..30 {
+            app.update();
+        }
+        let (weight, rate) = state(&mut app);
+        assert!(weight > 0.2 && weight < 0.95, "{weight}");
+        assert!(rate > 0.0 && rate <= 0.6, "{rate}");
+        // Released: back to the idle.
+        app.world_mut()
+            .entity_mut(person)
+            .insert(VisualPose::default());
+        for _ in 0..60 {
+            app.update();
+        }
+        assert!(state(&mut app).0 < 1e-2);
     }
 
     #[test]
