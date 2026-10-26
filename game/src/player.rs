@@ -180,14 +180,26 @@ pub(crate) fn drive_player(
             Travel::OnFoot => &foot.0,
             Travel::Riding => &tuning.0,
         };
+        let before = rider.heading;
         rider.step(input, params, &world.0, dt);
         transform.translation = world_from_ground(rider.position, rider.height);
         *pose = VisualPose {
             heading: rider.heading,
             animation: rider.animation(params),
-            speed: rider.speed.abs(),
+            speed: rider.speed,
+            turn: yaw_rate(before, rider.heading, dt),
         };
     }
+}
+
+/// The yaw rate (rad/s, positive to the left) that turned `before` into
+/// `after` over `dt` seconds, the short way round; none without time.
+fn yaw_rate(before: Heading, after: Heading, dt: f32) -> f32 {
+    if dt <= 0.0 {
+        return 0.0;
+    }
+    let turned = after.radians() - before.radians();
+    turned.sin().atan2(turned.cos()) / dt
 }
 
 #[cfg(test)]
@@ -277,6 +289,77 @@ mod tests {
         );
         // The world streams around the rider.
         assert_eq!(app.world().resource::<StreamFocus>().0, rider.position);
+    }
+
+    #[test]
+    fn turning_in_place_puts_the_yaw_rate_on_the_pose() {
+        let mut app = headless_app(Duration::from_millis(16));
+        for (key, sign) in [(KeyCode::KeyA, 1.0), (KeyCode::KeyD, -1.0)] {
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(key);
+            for _ in 0..5 {
+                app.update();
+            }
+            let rate = app.world().resource::<PlayerTuning>().0.turn_rate;
+            let mut query = app
+                .world_mut()
+                .query_filtered::<&VisualPose, With<Player>>();
+            let pose = *query.single(app.world()).unwrap();
+            assert_eq!(pose.speed, 0.0);
+            assert!((pose.turn - sign * rate).abs() < 1e-6, "{}", pose.turn);
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .release(key);
+            app.update();
+            let pose = *query.single(app.world()).unwrap();
+            assert_eq!(pose.turn, 0.0, "no key, no turn");
+        }
+    }
+
+    #[test]
+    fn the_poses_turn_is_the_heading_actually_turned() {
+        // A frame with no time turns nothing, so the pose takes no steps.
+        let mut app = headless_app(Duration::ZERO);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyA);
+        for _ in 0..3 {
+            app.update();
+        }
+        let mut query = app
+            .world_mut()
+            .query_filtered::<&VisualPose, With<Player>>();
+        assert_eq!(query.single(app.world()).unwrap().turn, 0.0);
+    }
+
+    #[test]
+    fn a_turn_across_east_is_the_short_way_round() {
+        // Headings wrap at 0 (east): 2π - 0.01 to 0.01 is 0.02 to the left.
+        let before = Heading::from_radians(-0.01);
+        let after = Heading::from_radians(0.01);
+        assert!((yaw_rate(before, after, 0.1) - 0.2).abs() < 1e-4);
+        assert!((yaw_rate(after, before, 0.1) + 0.2).abs() < 1e-4);
+        assert_eq!(yaw_rate(before, after, 0.0), 0.0);
+    }
+
+    #[test]
+    fn backing_up_keeps_the_poses_speed_negative() {
+        let mut app = headless_app(Duration::from_millis(16));
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyS);
+        for _ in 0..30 {
+            app.update();
+        }
+        let rider = player_rider(&mut app);
+        assert!(rider.speed < 0.0, "{}", rider.speed);
+        let mut query = app
+            .world_mut()
+            .query_filtered::<&VisualPose, With<Player>>();
+        let pose = query.single(app.world()).unwrap();
+        // Render plays the stride backward by this sign.
+        assert_eq!(pose.speed, rider.speed);
     }
 
     #[test]

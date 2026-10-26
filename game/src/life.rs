@@ -297,6 +297,7 @@ fn spawn_walkers(commands: &mut Commands, crowd: &Townsfolk, town: usize, world:
                 heading: person.heading,
                 animation: person.animation(),
                 speed: person.speed,
+                turn: 0.0,
             },
             Transform::from_translation(world_from_ground(person.position, height)),
         ));
@@ -452,6 +453,7 @@ fn place_walkers(
             heading: person.heading,
             animation: person.animation(),
             speed: person.speed,
+            turn: 0.0,
         };
     }
 }

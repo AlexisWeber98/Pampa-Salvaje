@@ -17,7 +17,9 @@
 //! [`drive_horses`] plays the clips: the idle, then the walk paced to the
 //! ground speed up to about 4.5 m/s (there is no trot clip), then the
 //! gallop ([`gait_weights`], [`gait_rate`]), each at the ground speed over
-//! the speed its hooves show, so they keep still on the ground. A tied
+//! the speed its hooves show, so they keep still on the ground; backing
+//! up, the stride plays backward at the same pace; turning on the spot,
+//! it walks in place at the small pace of [`stepping_speed`]. A tied
 //! horse changes idle now and then, as the corral horses do; a ridden one
 //! stands still. A horse out of view or far off keeps its last pose, but
 //! never the player's.
@@ -33,6 +35,7 @@ use bevy::prelude::*;
 use bevy::world_serialization::{WorldAssetRoot, WorldInstanceReady};
 use pampa_core::{AnimationState, Heading, HorseGait};
 
+use super::clips::stepping_speed;
 use super::figure::{FigureKind, Rgb, body_rotation};
 use super::gait::{
     Bone as GaitBone, GALLOP_MEANS, HorseBones, PARTIAL, Property, UNANIMATED, fit_horse,
@@ -182,6 +185,11 @@ fn dapple(p: Vec3) -> bool {
     a * b * c > 0.12
 }
 
+/// How far (m) a horse's hooves stand from the centre of a turn on the
+/// spot: wider than a person's, so its steps keep a walking rate (at the
+/// game's 1.8 rad/s turn rate, 0.54 m/s).
+pub const HORSE_TURN_STEP_RADIUS: f32 = 0.3;
+
 /// The ground speeds (m/s) across which the idle fades into the walk.
 pub const WALK_BAND: (f32, f32) = (0.05, 0.6);
 
@@ -224,12 +232,14 @@ pub fn gait_weights(idle: Clip, stride: Clip, speed: f32) -> [f32; 6] {
 }
 
 /// How fast `clip` plays for a horse moving at `speed` m/s: the ground
-/// speed over the speed its hooves show, within [`RATE`]; an idle plays as
-/// recorded.
+/// speed over the speed its hooves show, within [`RATE`], negative backing
+/// up; an idle plays as recorded.
 pub fn gait_rate(clip: Clip, speed: f32) -> f32 {
+    let back = if speed < 0.0 { -1.0 } else { 1.0 };
+    let speed = speed.abs();
     match clip {
-        Clip::Walk => (speed / HORSE_WALK_SPEED).clamp(RATE.0, RATE.1),
-        Clip::Gallop => (speed / GALLOP_SPEED).clamp(GALLOP_RATE.0, GALLOP_RATE.1),
+        Clip::Walk => back * (speed / HORSE_WALK_SPEED).clamp(RATE.0, RATE.1),
+        Clip::Gallop => back * (speed / GALLOP_SPEED).clamp(GALLOP_RATE.0, GALLOP_RATE.1),
         _ => 1.0,
     }
 }
@@ -649,10 +659,17 @@ pub(super) fn drive_horses(
         let Ok(mut player) = players.get_mut(rig.player) else {
             continue;
         };
-        let speed = match poses.get(parent.parent()) {
-            Ok(pose) if pose.animation != AnimationState::Idle => pose.speed.abs(),
+        // Negative backing up: the stride plays backward, chosen and
+        // weighed by its size.
+        // Turning on the spot takes small steps ([`stepping_speed`]).
+        let velocity = match poses.get(parent.parent()) {
+            Ok(pose) if pose.animation != AnimationState::Idle => {
+                stepping_speed(pose.speed, pose.turn, HORSE_TURN_STEP_RADIUS)
+            }
+            Ok(pose) => stepping_speed(0.0, pose.turn, HORSE_TURN_STEP_RADIUS),
             _ => 0.0,
         };
+        let speed = velocity.abs();
         let stride = if gallops(rig.lead == Clip::Gallop, speed) {
             Clip::Gallop
         } else {
@@ -705,7 +722,7 @@ pub(super) fn drive_horses(
             if let Some(active) = player.animation_mut(species.nodes[clip.index()]) {
                 active
                     .set_weight(rig.weights[clip.index()])
-                    .set_speed(gait_rate(clip, speed));
+                    .set_speed(gait_rate(clip, velocity));
             }
         }
     }
@@ -896,6 +913,19 @@ pub(crate) mod tests {
         assert_eq!(gait_rate(Clip::Walk, 0.0), RATE.0, "clamped");
         assert_eq!(gait_rate(Clip::Idle, 9.0), 1.0, "an idle as recorded");
         assert_eq!(gait_rate(Clip::Eating, 9.0), 1.0);
+    }
+
+    #[test]
+    fn backing_up_plays_the_walk_and_the_gallop_backward_and_the_idles_forward() {
+        for clip in [Clip::Walk, Clip::Gallop] {
+            for speed in [0.5, 1.5, 4.8, 12.2, 19.4] {
+                let ahead = gait_rate(clip, speed);
+                assert_eq!(gait_rate(clip, -speed), -ahead, "{clip:?} at {speed}");
+            }
+            assert!(gait_rate(clip, -0.0) > 0.0, "a stop is no reverse");
+        }
+        assert_eq!(gait_rate(Clip::Idle, -1.5), 1.0);
+        assert_eq!(gait_rate(Clip::Eating, -1.5), 1.0);
     }
 
     #[test]
@@ -1199,6 +1229,81 @@ pub(crate) mod tests {
                 assert!(slide > 0.0 && slide < speed - GALLOP_SPEED * GALLOP_RATE.1 + 0.5);
             }
         }
+    }
+
+    #[test]
+    fn a_horse_turning_in_place_takes_short_slow_steps_and_stops_when_the_turn_does() {
+        let rider = CharacterVisual::Mounted {
+            rider: FigureKind::Protagonist,
+            coat: Coat::Bayo,
+        };
+        let (mut app, me) = saddled_every(rider, 0.0, 50);
+        let walk = |app: &mut App| {
+            let world = app.world_mut();
+            let (rig, speed) = {
+                let mut q = world.query::<&HorseRig>();
+                let rig = q.iter(world).find(|r| r.started).unwrap();
+                (rig.weights[Clip::Walk.index()], rig.player)
+            };
+            let species = world
+                .resource::<LivestockModels>()
+                .get(Species::Horse)
+                .unwrap()
+                .nodes[Clip::Walk.index()];
+            let rate = world
+                .get::<AnimationPlayer>(speed)
+                .unwrap()
+                .animation(species)
+                .unwrap()
+                .speed();
+            (rig, rate)
+        };
+        for _ in 0..20 {
+            app.update();
+        }
+        assert!(walk(&mut app).0 < 1e-3, "standing still stays idle");
+        app.world_mut().entity_mut(me).insert(VisualPose {
+            animation: AnimationState::Idle,
+            speed: 0.0,
+            turn: 1.8,
+            ..default()
+        });
+        for _ in 0..20 {
+            app.update();
+        }
+        let (weight, rate) = walk(&mut app);
+        assert!(weight > 0.2 && weight < 0.95, "{weight}");
+        // Above the walk's slowest rate, so the steps do not drag.
+        assert!(rate > RATE.0 + 0.05 && rate <= 0.5, "{rate}");
+        app.world_mut().entity_mut(me).insert(VisualPose::default());
+        for _ in 0..40 {
+            app.update();
+        }
+        assert!(walk(&mut app).0 < 1e-2, "back to idle");
+    }
+
+    #[test]
+    fn a_backing_horse_steps_back_its_hooves_sliding_forward_as_fast_as_ahead() {
+        let rider = CharacterVisual::Mounted {
+            rider: FigureKind::Protagonist,
+            coat: Coat::Bayo,
+        };
+        let speed = 1.5;
+        let (mut app, me) = saddled_every(rider, speed, 10);
+        from_the_seeded_start(&mut app);
+        let ahead = hoof_slide(&mut app, me, 300, 0.01);
+        app.world_mut().entity_mut(me).insert(VisualPose {
+            animation: AnimationState::Walk,
+            speed: -speed,
+            ..default()
+        });
+        let back = hoof_slide(&mut app, me, 300, 0.01);
+        println!("{speed} m/s: hooves back at {ahead:.2} m/s ahead, {back:.2} m/s backing");
+        assert!(ahead > 0.5, "{ahead}");
+        assert!(
+            (back / -ahead - 1.0).abs() < 0.2,
+            "backing: {back} m/s, ahead {ahead} m/s"
+        );
     }
 
     /// Per frame of `app`'s horse under `me`: the lowest toe (body frame),
