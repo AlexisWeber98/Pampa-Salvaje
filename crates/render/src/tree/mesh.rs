@@ -64,6 +64,16 @@ pub(crate) struct Form {
     pub scatter: f32,
     /// Meters per bark repeat, round the tube and along it.
     pub bark_tile: Vec2,
+    /// How far the trunk leans, a fraction of the height (a low fork leans
+    /// less, see [`grow`]).
+    pub lean: f32,
+    /// How much a prevailing wind shapes the crown: 0 is even all round;
+    /// 1 has the lee limbs well longer and flatter than the windward ones,
+    /// the trunk leaning with them.
+    pub wind: f32,
+    /// Share of the leaf cards hung in dense clumps at the branch tips
+    /// instead of scattered along the branches.
+    pub clump: f32,
 }
 
 impl Species {
@@ -114,6 +124,9 @@ impl Species {
                 sag: 0.12,
                 scatter: 0.3,
                 bark_tile: Vec2::new(1.0, 1.0),
+                lean: 0.04,
+                wind: 0.0,
+                clump: 0.0,
             },
             Self::Olmo => Form {
                 height: (11.0, 13.0),
@@ -132,6 +145,9 @@ impl Species {
                 scatter: 0.3,
                 // Bark001 is twice as tall as it is wide.
                 bark_tile: Vec2::new(0.8, 1.6),
+                lean: 0.04,
+                wind: 0.0,
+                clump: 0.0,
             },
             Self::Eucalipto => Form {
                 height: (14.0, 17.0),
@@ -149,6 +165,9 @@ impl Species {
                 sag: 0.1,
                 scatter: 0.3,
                 bark_tile: Vec2::new(1.2, 1.2),
+                lean: 0.04,
+                wind: 0.0,
+                clump: 0.0,
             },
             Self::Aromo => Form {
                 height: (6.5, 7.5),
@@ -166,10 +185,243 @@ impl Species {
                 sag: 0.2,
                 scatter: 0.3,
                 bark_tile: Vec2::new(0.8, 0.8),
+                lean: 0.04,
+                wind: 0.0,
+                clump: 0.0,
+            },
+            // The caldén: a short thick trunk forking low into near
+            // horizontal limbs, a broad flat umbrella wider than it is
+            // tall, of small fine leaves, hung in dense clumps. Its trunk
+            // stays within what `pampa_core::Tree::trunk_radius` plants
+            // (0.035 of the height). This is the classic form; see
+            // [`Self::variant_form`] for the rest.
+            Self::Calden => Form {
+                height: (6.0, 7.0),
+                fork: 0.25,
+                trunk_radius: 0.14,
+                limbs: (6, 7),
+                tilt: (45.0, 60.0),
+                reach: 0.42,
+                rise: 0.1,
+                twigs: 4,
+                leader: false,
+                cards: 170,
+                card: 1.3,
+                hang: 0.2,
+                sag: 0.2,
+                scatter: 0.3,
+                // Coarse, so the furrows survive the mipmaps at a distance.
+                bark_tile: Vec2::new(1.2, 1.8),
+                lean: 0.04,
+                wind: 0.0,
+                clump: 0.6,
+            },
+            // The chañar: several slim stems fanning from one low stool,
+            // twiggy, with an irregular crown of small leaves in clumps.
+            Self::Chanar => Form {
+                height: (3.4, 4.2),
+                fork: 0.08,
+                trunk_radius: 0.09,
+                limbs: (5, 7),
+                tilt: (15.0, 32.0),
+                reach: 0.75,
+                rise: 0.12,
+                twigs: 5,
+                leader: false,
+                cards: 110,
+                card: 0.6,
+                hang: 0.2,
+                sag: 0.2,
+                scatter: 0.5,
+                bark_tile: Vec2::new(0.8, 1.6),
+                lean: 0.04,
+                wind: 0.0,
+                clump: 0.5,
             },
         }
     }
+
+    /// Its shape for variant `seed`. The caldén has [`crate::tree::CALDEN_LIVE`]
+    /// live forms (a classic umbrella, a low multi-stem, a leaning tree, a
+    /// lopsided wind-shaped crown, a tall narrow one, a broad flat one, a
+    /// dense round one, a high fork and a windswept leaning one), then three
+    /// snags (sparse, dead, and a broken stub); the chañar has
+    /// [`crate::tree::CHANAR_VARIANTS`] forms. Every other species has its
+    /// [`Self::form`] for every seed.
+    pub(crate) fn variant_form(self, seed: u32) -> Form {
+        let form = self.form();
+        let v = seed as usize;
+        match self {
+            Self::Calden => match v {
+                // Classic: single trunk, an even umbrella.
+                0 => form,
+                // Low-forked multi-stem: many stout limbs from near the ground.
+                1 => Form {
+                    fork: 0.12,
+                    limbs: (7, 8),
+                    tilt: (22.0, 42.0),
+                    reach: 0.5,
+                    rise: 0.15,
+                    cards: 180,
+                    clump: 0.7,
+                    ..form
+                },
+                // Leaning: the whole tree tilts, the crown hangs to one side.
+                2 => Form {
+                    fork: 0.3,
+                    lean: 0.17,
+                    tilt: (40.0, 58.0),
+                    reach: 0.4,
+                    ..form
+                },
+                // Lopsided: wind-shaped, long low limbs to the lee side.
+                3 => Form {
+                    fork: 0.22,
+                    tilt: (55.0, 72.0),
+                    reach: 0.46,
+                    wind: 0.9,
+                    lean: 0.09,
+                    ..form
+                },
+                // Tall and narrow: a high fork under steep limbs.
+                4 => Form {
+                    height: (7.5, 8.5),
+                    fork: 0.42,
+                    limbs: (5, 6),
+                    tilt: (14.0, 28.0),
+                    reach: 0.28,
+                    rise: 0.2,
+                    cards: 160,
+                    card: 1.2,
+                    ..form
+                },
+                // Broad and flat: long near-horizontal limbs, a low crown.
+                5 => Form {
+                    height: (4.8, 5.6),
+                    fork: 0.4,
+                    limbs: (7, 8),
+                    tilt: (68.0, 80.0),
+                    reach: 0.62,
+                    rise: 0.12,
+                    cards: 190,
+                    card: 1.4,
+                    clump: 0.6,
+                    ..form
+                },
+                // Dense and round: a compact crown packed with leaves.
+                6 => Form {
+                    fork: 0.4,
+                    limbs: (7, 8),
+                    tilt: (32.0, 48.0),
+                    reach: 0.34,
+                    twigs: 3,
+                    cards: 190,
+                    card: 1.5,
+                    scatter: 0.25,
+                    clump: 0.85,
+                    ..form
+                },
+                // High fork: few thick limbs far up a tall trunk.
+                7 => Form {
+                    height: (6.8, 7.6),
+                    fork: 0.46,
+                    limbs: (3, 4),
+                    tilt: (35.0, 50.0),
+                    reach: 0.5,
+                    twigs: 5,
+                    cards: 170,
+                    ..form
+                },
+                // Windswept: leaning hard, the crown streaming downwind.
+                8 => Form {
+                    fork: 0.36,
+                    tilt: (50.0, 70.0),
+                    reach: 0.5,
+                    rise: 0.05,
+                    wind: 0.8,
+                    lean: 0.14,
+                    ..form
+                },
+                // Sparse: a thinned crown.
+                9 => Form {
+                    limbs: (5, 6),
+                    cards: 60,
+                    clump: 0.3,
+                    ..form
+                },
+                // Dead: bare, twisted limbs reaching up, a last few leaves.
+                10 => Form {
+                    limbs: (4, 5),
+                    tilt: (35.0, 60.0),
+                    reach: 0.7,
+                    rise: 0.3,
+                    twigs: 5,
+                    cards: 16,
+                    clump: 0.0,
+                    ..form
+                },
+                // A broken stub: the top gone, short limbs, a trace of leaves.
+                _ => Form {
+                    height: (3.8, 4.6),
+                    trunk_radius: 0.12,
+                    fork: 0.35,
+                    limbs: (3, 4),
+                    tilt: (30.0, 50.0),
+                    reach: 0.4,
+                    rise: 0.25,
+                    twigs: 4,
+                    cards: 12,
+                    clump: 0.0,
+                    ..form
+                },
+            },
+            Self::Chanar => match v {
+                // The classic fan of stems.
+                0 => form,
+                // Tall and slender.
+                1 => Form {
+                    height: (4.2, 4.8),
+                    tilt: (8.0, 18.0),
+                    reach: 0.55,
+                    ..form
+                },
+                // Low and spreading.
+                2 => Form {
+                    height: (2.8, 3.2),
+                    tilt: (35.0, 55.0),
+                    reach: 0.95,
+                    ..form
+                },
+                // Leaning.
+                3 => Form {
+                    lean: 0.12,
+                    fork: 0.22,
+                    ..form
+                },
+                // A dense thicket.
+                4 => Form {
+                    limbs: (7, 8),
+                    cards: 150,
+                    card: 0.65,
+                    clump: 0.8,
+                    scatter: 0.35,
+                    ..form
+                },
+                // Wind-shaped.
+                _ => Form {
+                    wind: 0.8,
+                    lean: 0.1,
+                    tilt: (25.0, 45.0),
+                    ..form
+                },
+            },
+            _ => form,
+        }
+    }
 }
+
+/// Dense clumps of leaves a crown hangs ([`Form::clump`]).
+const CLUMPS: usize = 9;
 
 /// Sides of the trunk, of a limb and of a twig.
 const TRUNK_SIDES: u32 = 8;
@@ -351,7 +603,7 @@ struct Leafy {
 
 /// Builds variant `seed` of `species`.
 pub(crate) fn tree(species: Species, seed: u32) -> TreeMesh {
-    grow(species.form(), Rng::new(species, seed))
+    grow(species.variant_form(seed), Rng::new(species, seed))
 }
 
 /// Builds variant `seed` of `species` trimmed for a street ([`Species::street_form`]).
@@ -365,7 +617,16 @@ fn grow(form: Form, mut rng: Rng) -> TreeMesh {
     let mut bark = Buffers::default();
     let mut leafy = Vec::new();
     let r0 = form.trunk_radius;
-    let lean = heading(rng.range((0.0, std::f32::consts::TAU))) * 0.04 * height;
+    // A low fork leans less: the trunk is short, and a lean of 4% of the
+    // height would tilt it far over (every town tree forks above 0.2).
+    let lean_angle = rng.range((0.0, std::f32::consts::TAU));
+    // A windswept tree leans, and its limbs stream, the same way.
+    let wind_angle = if form.wind > 0.0 {
+        rng.range((0.0, std::f32::consts::TAU))
+    } else {
+        lean_angle
+    };
+    let lean = heading(wind_angle) * form.lean * height * (form.fork * 5.0).min(1.0);
     let fork = form.fork * height;
     // The trunk, flared a little at the foot, leaning a little.
     let top = if form.leader { 0.92 * height } else { fork };
@@ -404,8 +665,11 @@ fn grow(form: Form, mut rng: Rng) -> TreeMesh {
         let around =
             turn0 + std::f32::consts::TAU * (i as f32 + rng.range((-0.2, 0.2))) / limbs as f32;
         let out = heading(around);
-        let tilt = rng.range(form.tilt).to_radians();
-        let length = form.reach * height * rng.range((0.85, 1.1));
+        // Downwind (1) the limbs run long and low, upwind (-1) short and
+        // steep.
+        let lee = (around - wind_angle).cos() * form.wind;
+        let tilt = (rng.range(form.tilt) + 12.0 * lee).to_radians();
+        let length = form.reach * height * rng.range((0.85, 1.1)) * (1.0 + 0.55 * lee);
         // Limbs part round the fork; a leader's climb its upper half.
         let h = if form.leader {
             fork + (top - fork) * 0.8 * (i as f32 + rng.unit()) / limbs as f32
@@ -485,19 +749,46 @@ fn cards(form: &Form, leafy: &[Leafy], rng: &mut Rng) -> Buffers {
     let centre = Vec3::new(0.0, ends.y * 0.9, 0.0);
     let total: f32 = leafy.iter().map(|l| l.from.distance(l.to)).sum();
     let side = form.card;
-    for _ in 0..form.cards {
-        // A stretch by its length, then a spot on it, mostly toward its end.
+    // A stretch by its length.
+    let pick_stretch = |rng: &mut Rng| {
         let mut pick = rng.unit() * total;
-        let stretch = leafy
+        leafy
             .iter()
             .find(|l| {
                 pick -= l.from.distance(l.to);
                 pick <= 0.0
             })
-            .unwrap_or(&leafy[leafy.len() - 1]);
-        let t = 0.2 + 0.8 * rng.unit().sqrt();
-        let at = stretch.from.lerp(stretch.to, t);
-        let dir = (stretch.to - stretch.from).normalize_or(Vec3::Y);
+            .unwrap_or(&leafy[leafy.len() - 1])
+    };
+    // Where the dense clumps hang: toward the ends of the stretches.
+    let clumps: Vec<Vec3> = if form.clump > 0.0 {
+        (0..CLUMPS)
+            .map(|_| {
+                let l = pick_stretch(rng);
+                l.from.lerp(l.to, 0.6 + 0.4 * rng.unit())
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    for _ in 0..form.cards {
+        let (at, dir) = if !clumps.is_empty() && rng.unit() < form.clump {
+            // A clump's card: within a card's reach of its centre, so the
+            // leaves overlap into one mass.
+            let c = clumps[(rng.unit() * CLUMPS as f32) as usize % CLUMPS];
+            (
+                c + rng.ball() * side * 1.3,
+                (c - centre).normalize_or(Vec3::Y),
+            )
+        } else {
+            // A spot on a stretch, mostly toward its end.
+            let stretch = pick_stretch(rng);
+            let t = 0.2 + 0.8 * rng.unit().sqrt();
+            (
+                stretch.from.lerp(stretch.to, t),
+                (stretch.to - stretch.from).normalize_or(Vec3::Y),
+            )
+        };
         let outward = (at - centre).normalize_or(dir);
         {
             // Which way the sprig grows from its base: out along the
@@ -697,6 +988,373 @@ mod tests {
             // first with a whole number of repeats between.
             let u_max = b.uvs.iter().map(|uv| uv[0]).fold(0.0, f32::max);
             assert_eq!(u_max, u_max.round(), "{species:?} {v}");
+        }
+    }
+
+    fn field() -> Vec<(Species, u32, TreeMesh)> {
+        Species::FIELD
+            .iter()
+            .flat_map(|&s| (0..s.variants() as u32).map(move |v| (s, v, tree(s, v))))
+            .collect()
+    }
+
+    fn live(species: Species, v: u32) -> bool {
+        species != Species::Calden || (v as usize) < crate::tree::CALDEN_LIVE
+    }
+
+    /// What tells a form's silhouette apart: its height, its crown's width,
+    /// how far the crown's middle sits off the trunk, how low it hangs
+    /// (a fraction of the height), how much leaf it carries and how far
+    /// the bark spreads in the lower half, a fraction of the height
+    /// (stems fanning from the ground against a single trunk).
+    fn outline(t: &TreeMesh) -> [f32; 6] {
+        let p = &t.leaves.positions;
+        let middle = p.iter().map(|p| Vec2::new(p.x, p.z)).sum::<Vec2>() / p.len() as f32;
+        let spread = t
+            .bark
+            .positions
+            .iter()
+            .filter(|p| (0.15..0.5).contains(&(p.y / t.height)))
+            .map(|p| Vec2::new(p.x, p.z).distance(middle))
+            .fold(0.0, f32::max);
+        [
+            t.height,
+            2.0 * t.crown_radius,
+            middle.length(),
+            t.crown_base / t.height,
+            t.leaves.triangles() as f32,
+            spread / t.height,
+        ]
+    }
+
+    #[test]
+    fn field_trees_keep_to_the_town_trees_triangle_budget() {
+        for (species, v, t) in field() {
+            let (bark, leaves) = (t.bark.triangles(), t.leaves.triangles());
+            println!("{species:?} {v}: {bark} bark + {leaves} leaves");
+            assert!(bark + leaves <= 1200, "{species:?} {v}: {bark} + {leaves}");
+            if live(species, v) {
+                assert!(bark + leaves >= 650, "{species:?} {v}: {bark} + {leaves}");
+            }
+            assert!(bark >= 100 && leaves >= 16, "{species:?} {v}");
+            for b in [&t.bark, &t.leaves] {
+                let n = b.positions.len();
+                assert_eq!(b.normals.len(), n);
+                assert_eq!(b.uvs.len(), n);
+                assert!(b.indices.iter().all(|&i| (i as usize) < n));
+            }
+        }
+    }
+
+    #[test]
+    fn field_variants_are_seeded_and_all_differ() {
+        assert_eq!(Species::Calden.variants(), 12);
+        assert_eq!(Species::Chanar.variants(), 6);
+        for species in Species::FIELD {
+            let n = species.variants() as u32;
+            for v in 0..n {
+                assert_eq!(tree(species, v), tree(species, v));
+                for w in v + 1..n {
+                    assert_ne!(tree(species, v).bark, tree(species, w).bark);
+                    assert_ne!(tree(species, v).leaves, tree(species, w).leaves);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_forms_of_a_field_species_differ_in_outline_pairwise() {
+        for species in Species::FIELD {
+            let forms: Vec<(u32, [f32; 6])> = (0..species.variants() as u32)
+                .filter(|&v| live(species, v))
+                .map(|v| (v, outline(&tree(species, v))))
+                .collect();
+            for (v, o) in &forms {
+                println!("{species:?} {v}: {o:.2?}");
+            }
+            // At least 8 live caldén forms and 5 chañar ones.
+            assert!(forms.len() >= if species == Species::Calden { 8 } else { 5 });
+            for (i, (a, oa)) in forms.iter().enumerate() {
+                for (b, ob) in &forms[i + 1..] {
+                    // Clearly apart in some trait: over a fifth of it
+                    // (the lean over a tenth of the height).
+                    let apart = (0..6).any(|k| {
+                        // The lean and the bark's spread, a tenth of the
+                        // height or less; the rest, a fifth of the larger.
+                        let scale = match k {
+                            2 => 0.1 * oa[0],
+                            3 | 5 => 0.04,
+                            _ => 0.2 * oa[k].max(ob[k]),
+                        };
+                        (oa[k] - ob[k]).abs() > scale
+                    });
+                    assert!(apart, "{species:?} forms {a} and {b}: {oa:?} {ob:?}");
+                }
+            }
+        }
+        // Some are leaning or lopsided (the crown's middle well off the
+        // trunk), some tall and narrow, some broad and flat.
+        let calden: Vec<[f32; 6]> = (0..crate::tree::CALDEN_LIVE as u32)
+            .map(|v| outline(&tree(Species::Calden, v)))
+            .collect();
+        let ratio = |o: &[f32; 6]| o[1] / o[0];
+        assert!(calden.iter().filter(|o| o[2] > 0.1 * o[0]).count() >= 3);
+        assert!(calden.iter().any(|o| ratio(o) < 1.0), "a tall narrow form");
+        assert!(calden.iter().any(|o| ratio(o) > 2.2), "a broad flat form");
+        // The wind-shaped forms (3 and 8) stand lopsided, well off their
+        // trunks; the classic umbrella sits over its own.
+        for v in [3, 8] {
+            assert!(
+                calden[v][2] > 0.25 * calden[v][0],
+                "form {v}: {:?}",
+                calden[v]
+            );
+        }
+        assert!(calden[0][2] < 0.15 * calden[0][0], "{:?}", calden[0]);
+        // No live crown dips into the ground.
+        assert!(calden.iter().all(|o| o[3] > -0.06), "{calden:?}");
+        // The snags are low on leaves, and a stub stands short.
+        let stub = tree(Species::Calden, 11);
+        let live_height = calden.iter().map(|o| o[0]).fold(f32::MAX, f32::min);
+        assert!(stub.height < live_height);
+    }
+
+    #[test]
+    fn field_trunks_stand_within_the_collision_core_plants_for_them() {
+        use pampa_core::flora::Age;
+        use pampa_core::{Species as Core, Tree, Vec2 as Ground};
+        for (species, v, t) in field() {
+            let core = if species == Species::Calden {
+                Core::Calden
+            } else {
+                Core::Chanar
+            };
+            for age in Age::ALL {
+                // Only a mature caldén is ever a snag.
+                if !live(species, v) && age != Age::Mature {
+                    continue;
+                }
+                let (lo, hi) = age.height_range(core);
+                // The widest the age is planted.
+                let width = if age == Age::Old { 1.4 } else { 1.18 };
+                for h in [lo, 0.5 * (lo + hi), hi] {
+                    let planted = Tree {
+                        at: Ground::ZERO,
+                        species: core,
+                        age,
+                        height: h,
+                        width,
+                        yaw: 0.0,
+                        variant: 0,
+                    };
+                    let scale = h / t.height;
+                    // Every bark vertex in the first fifth of a meter above
+                    // the ground (a sapling's limbs part half a meter up).
+                    for p in t.bark.positions.iter().filter(|p| p.y * scale < 0.2) {
+                        let r = Vec2::new(p.x, p.z).length() * scale * width;
+                        assert!(
+                            r <= planted.trunk_radius(),
+                            "{species:?} {v} {age:?} at {h} m: {r} over {}",
+                            planted.trunk_radius()
+                        );
+                    }
+                }
+            }
+            let foot = t.bark.positions.iter().map(|p| p.y).fold(1.0, f32::min);
+            // A leaning trunk tilts its first ring a little under the ground.
+            assert!(foot.abs() < 0.06, "{species:?} {v}: {foot}");
+        }
+    }
+
+    #[test]
+    fn the_calden_is_a_broad_low_forking_crown_and_the_chanar_a_small_stand_of_stems() {
+        let mean = |s: Species, f: fn(&TreeMesh) -> f32| {
+            let n = (0..s.variants() as u32).filter(|&v| live(s, v));
+            let all: Vec<f32> = n.map(|v| f(&tree(s, v))).collect();
+            all.iter().sum::<f32>() / all.len() as f32
+        };
+        let calden = Species::Calden;
+        // Wider than tall on the whole, and its leaves hang from low branches.
+        let (h, w) = (
+            mean(calden, |t| t.height),
+            mean(calden, |t| 2.0 * t.crown_radius),
+        );
+        println!("caldén {h:.1} x {w:.1}");
+        assert!(w > 1.15 * h, "{w} wide, {h} tall");
+        assert!(mean(calden, |t| t.crown_base / t.height) < 0.45);
+        // Small leaves, no coarser than the aromo's feathery ones, and
+        // smaller still on the chañar.
+        for s in Species::FIELD {
+            assert!(s.form().card <= Species::Aromo.form().card, "{s:?}");
+        }
+        assert!(Species::Chanar.form().card < 0.6 * Species::Calden.form().card);
+        let leaves = |s| mean(s, |t| t.leaves.triangles() as f32);
+        assert!(leaves(Species::Chanar) < 0.8 * leaves(calden));
+        // The chañar is a small tree of several stems: they fan out
+        // low, well past the width of the stool they rise from.
+        for v in 0..Species::Chanar.variants() as u32 {
+            let t = tree(Species::Chanar, v);
+            let spread = |lo: f32, hi: f32| {
+                t.bark
+                    .positions
+                    .iter()
+                    .filter(|p| p.y >= lo * t.height && p.y < hi * t.height)
+                    .map(|p| Vec2::new(p.x, p.z).length())
+                    .fold(0.0, f32::max)
+            };
+            assert!(spread(0.35, 0.6) > 2.0 * spread(0.0, 0.05).max(0.05), "{v}");
+            // Several stems already stand apart a third of the way up:
+            // bark well off the axis, round at least three of eight sectors.
+            let mut sectors = [false; 8];
+            for p in t.bark.positions.iter() {
+                let off = Vec2::new(p.x, p.z);
+                if (0.25 * t.height..0.55 * t.height).contains(&p.y)
+                    && off.length() > 0.04 * t.height
+                {
+                    let turn = off.y.atan2(off.x) / std::f32::consts::TAU;
+                    sectors[((turn + 1.0).fract() * 8.0) as usize % 8] = true;
+                }
+            }
+            let stems = sectors.iter().filter(|&&s| s).count();
+            assert!(stems >= 3, "{v}: bark on {stems} sectors");
+        }
+        // The last caldén variants are dead or sparse: few leaves.
+        let full = leaves(calden);
+        for v in crate::tree::CALDEN_LIVE as u32..calden.variants() as u32 {
+            let t = tree(calden, v);
+            assert!((t.leaves.triangles() as f32) < 0.35 * full, "{v}");
+            assert!(t.leaves.triangles() >= 16, "{v}");
+        }
+    }
+
+    #[test]
+    fn field_leaf_normals_lean_out_and_bark_tiles_whole() {
+        for (species, v, t) in field() {
+            let p = &t.leaves.positions;
+            let centre = p.iter().sum::<Vec3>() / p.len() as f32;
+            let out = p
+                .iter()
+                .zip(&t.leaves.normals)
+                .filter(|(p, n)| n.dot(**p - centre) > 0.0)
+                .count();
+            assert!(
+                out * 10 >= p.len() * 8,
+                "{species:?} {v}: {out} of {}",
+                p.len()
+            );
+            let u_max = t.bark.uvs.iter().map(|uv| uv[0]).fold(0.0, f32::max);
+            assert_eq!(u_max, u_max.round(), "{species:?} {v}");
+        }
+    }
+
+    #[test]
+    fn field_bark_repeats_coarsely_so_its_furrows_survive_the_mipmaps() {
+        // The first field forms tiled the bark every 0.5 x 0.9 m (the
+        // caldén) and 0.5 x 0.8 m (the chañar): too fine to read from a
+        // distance. A repeat now spans over a meter round and about
+        // 1.5 m along, and the town trees keep theirs.
+        for species in Species::FIELD {
+            for v in 0..species.variants() as u32 {
+                let tile = species.variant_form(v).bark_tile;
+                assert!(tile.x >= 0.8 && tile.y >= 1.5, "{species:?} {v}: {tile}");
+            }
+        }
+        assert_eq!(Species::Paraiso.form().bark_tile, Vec2::ONE);
+        assert_eq!(Species::Olmo.form().bark_tile, Vec2::new(0.8, 1.6));
+        // The whole repeat wraps once round a caldén's trunk, and a
+        // trunk's bark stretches over less than a repeat and a half along.
+        let t = tree(Species::Calden, 0);
+        let foot: Vec<[f32; 2]> = t
+            .bark
+            .positions
+            .iter()
+            .zip(&t.bark.uvs)
+            .filter(|(p, _)| p.y < 0.01)
+            .map(|(_, uv)| *uv)
+            .collect();
+        assert!(!foot.is_empty());
+        assert_eq!(foot.iter().map(|uv| uv[0]).fold(0.0, f32::max), 1.0);
+        let along = t.bark.uvs.iter().map(|uv| uv[1]).fold(0.0, f32::max);
+        assert!(along < 2.5, "{along}");
+    }
+
+    /// Share of the crown's area (seen from the side, over cells within
+    /// reach of a card) that a leaf covers.
+    fn crown_cover(t: &TreeMesh) -> f32 {
+        let cell = 0.12;
+        let tris: Vec<[Vec2; 3]> = t
+            .leaves
+            .indices
+            .chunks(3)
+            .map(|i| {
+                [i[0], i[1], i[2]].map(|i| {
+                    let p = t.leaves.positions[i as usize];
+                    Vec2::new(p.x, p.y)
+                })
+            })
+            .collect();
+        let inside = |q: Vec2, [a, b, c]: [Vec2; 3]| {
+            let side = |u: Vec2, v: Vec2| (v - u).perp_dot(q - u);
+            let (d1, d2, d3) = (side(a, b), side(b, c), side(c, a));
+            !((d1 < 0.0 || d2 < 0.0 || d3 < 0.0) && (d1 > 0.0 || d2 > 0.0 || d3 > 0.0))
+        };
+        let centres: Vec<Vec2> = tris.iter().map(|t| (t[0] + t[1] + t[2]) / 3.0).collect();
+        let (mut zone, mut covered) = (0, 0);
+        let (lo, hi) = (
+            tris.iter().flatten().fold(Vec2::MAX, |m, p| m.min(*p)),
+            tris.iter().flatten().fold(Vec2::MIN, |m, p| m.max(*p)),
+        );
+        let mut y = lo.y;
+        while y < hi.y {
+            let mut x = lo.x;
+            while x < hi.x {
+                let q = Vec2::new(x, y);
+                // The zone: near the leaves, not out in the sky.
+                if centres.iter().any(|c| c.distance(q) < 0.9) {
+                    zone += 1;
+                    covered += usize::from(tris.iter().any(|t| inside(q, *t)));
+                }
+                x += cell;
+            }
+            y += cell;
+        }
+        covered as f32 / zone as f32
+    }
+
+    #[test]
+    fn live_crowns_are_denser_than_the_first_field_crowns_with_fewer_holes() {
+        // The first F1 caldén: 150 cards of 0.9 m scattered along the
+        // branches.
+        let old = Form {
+            cards: 150,
+            card: 0.9,
+            hang: 0.25,
+            scatter: 0.35,
+            clump: 0.0,
+            ..Species::Calden.form()
+        };
+        let old = (0..4u32)
+            .map(|v| crown_cover(&grow(old, Rng::new(Species::Calden, v))))
+            .sum::<f32>()
+            / 4.0;
+        let new: Vec<f32> = (0..crate::tree::CALDEN_LIVE as u32)
+            .map(|v| crown_cover(&tree(Species::Calden, v)))
+            .collect();
+        let mean = new.iter().sum::<f32>() / new.len() as f32;
+        println!("crown cover: old {old:.2}, new {mean:.2} {new:.2?}");
+        assert!(mean > old + 0.08, "{mean} against {old}");
+        assert!(new.iter().all(|&c| c > old), "{new:?}");
+        // Most of a live crown is leaf.
+        assert!(new.iter().filter(|&&c| c > 0.6).count() >= 5, "{new:?}");
+    }
+
+    #[test]
+    fn the_towns_trees_keep_the_neutral_form_fields() {
+        for species in Species::ALL {
+            let f = species.form();
+            assert_eq!((f.lean, f.wind, f.clump), (0.04, 0.0, 0.0), "{species:?}");
+            // Every variant of a town species is its one form.
+            assert_eq!(species.variant_form(2).height, f.height);
         }
     }
 }

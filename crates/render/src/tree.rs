@@ -1,11 +1,14 @@
 //! The towns' trees: procedural paraísos, olmos, eucaliptos and aromos,
-//! the trees of 1919 pampa plazas, streets and yards.
+//! the trees of 1919 pampa plazas, streets and yards, and the open
+//! country's caldén and chañar ([`Species::FIELD`]).
 //!
-//! Each [`Species`] has [`VARIANTS`] seeded trees ([`mesh`]): tapered bark
-//! trunks and limbs carrying alpha-tested leaf cards ([`materials`]). They
-//! are built once at startup into the shared [`TreeKit`], two meshes a
-//! variant and two materials a species, so a town's trees cost no new mesh
-//! or material: each plaza tree is a variant's bark and leaves, turned and
+//! Each [`Species`] has [`VARIANTS`] seeded trees (the field species
+//! [`CALDEN_VARIANTS`] and [`CHANAR_VARIANTS`] distinct forms, so the fields
+//! do not repeat) ([`mesh`]): tapered bark trunks and limbs carrying
+//! alpha-tested leaf cards ([`materials`]). They are built once at startup
+//! into the shared [`TreeKit`], two meshes a variant and two materials a
+//! species (the field species a few tints of each, [`FIELD_TINTS`]), so a
+//! town's trees cost no new mesh or material: each plaza tree is a variant's bark and leaves, turned and
 //! scaled. Core places the trunks ([`pampa_core::TownLayout::trees`]); the
 //! species of each plaza is picked here from the town's seed
 //! ([`plaza_species`]), so the layout does not change. A street tree is a
@@ -25,7 +28,22 @@ use crate::AssetRoot;
 /// Seeded variants built per species.
 pub const VARIANTS: usize = 3;
 
-/// A plaza tree's species.
+/// Distinct forms built of the caldén: [`CALDEN_LIVE`] live ones, then
+/// three snags.
+pub const CALDEN_VARIANTS: usize = 12;
+
+/// Distinct forms built of the chañar.
+pub const CHANAR_VARIANTS: usize = 6;
+
+/// How many of the caldén's variants are live trees; the rest are dead or
+/// sparse snags ([`mesh::tree`]).
+pub const CALDEN_LIVE: usize = 9;
+
+/// Leaf and bark tints a field species has (shared materials, so trees of
+/// every tint still batch by variant and tint).
+pub const FIELD_TINTS: usize = 3;
+
+/// A tree's species: the towns' four and the fields' two.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Species {
     /// Paraíso (_Melia azedarach_): a round umbrella crown of pinnate
@@ -37,11 +55,46 @@ pub enum Species {
     Eucalipto,
     /// Aromo: low and feathery.
     Aromo,
+    /// Caldén (_Neltuma caldenia_), the open country's tree: a short thick
+    /// trunk forking low under a broad flat umbrella of small grey-green
+    /// leaves; its last variants are bare or sparse.
+    Calden,
+    /// Chañar (_Geoffroea decorticans_): small, multi-stemmed and twiggy,
+    /// a sparse irregular crown.
+    Chanar,
 }
 
 impl Species {
-    /// Every species, in order.
+    /// The towns' species, in order: what plazas, streets and yards plant.
     pub const ALL: [Species; 4] = [Self::Paraiso, Self::Olmo, Self::Eucalipto, Self::Aromo];
+    /// The fields' species, in order.
+    pub const FIELD: [Species; 2] = [Self::Calden, Self::Chanar];
+    /// Every species the [`TreeKit`] builds, in `Species as usize` order.
+    pub const EVERY: [Species; 6] = [
+        Self::Paraiso,
+        Self::Olmo,
+        Self::Eucalipto,
+        Self::Aromo,
+        Self::Calden,
+        Self::Chanar,
+    ];
+
+    /// How many seeded variants the kit holds of it.
+    pub const fn variants(self) -> usize {
+        match self {
+            Self::Calden => CALDEN_VARIANTS,
+            Self::Chanar => CHANAR_VARIANTS,
+            _ => VARIANTS,
+        }
+    }
+
+    /// How many leaf tints, and bark tints, the kit holds of it.
+    pub const fn tints(self) -> usize {
+        match self {
+            Self::Calden | Self::Chanar => FIELD_TINTS,
+            _ => 1,
+        }
+    }
 }
 
 /// Hashes `seed` and `salt` into a well-mixed number.
@@ -96,15 +149,20 @@ pub struct TreeVariant {
     pub crown_base: f32,
 }
 
-/// One species' variants and its two materials.
+/// One species' variants and its materials.
 #[derive(Debug, Clone)]
 pub struct SpeciesKit {
     pub variants: Vec<TreeVariant>,
     /// The variants trimmed for a street (a raised, narrow crown): only the
     /// [`STREET_SPECIES`] have them.
     pub pruned: Vec<TreeVariant>,
+    /// The first bark and leaf materials: the town species' only ones.
     pub bark: Handle<StandardMaterial>,
     pub leaves: Handle<StandardMaterial>,
+    /// Every bark and leaf tint ([`Species::tints`]), the first of each
+    /// being [`Self::bark`] and [`Self::leaves`].
+    pub bark_tints: Vec<Handle<StandardMaterial>>,
+    pub leaf_tints: Vec<Handle<StandardMaterial>>,
 }
 
 /// The shared tree meshes and materials, and the yard plants', built at
@@ -152,10 +210,10 @@ pub(crate) fn setup_trees(
         support.as_deref(),
         &mut materials,
     );
-    let kits = Species::ALL
+    let kits = Species::EVERY
         .iter()
         .zip(paint)
-        .map(|(&species, [bark, leaves])| {
+        .map(|(&species, paint)| {
             let mut variant = |tree: mesh::TreeMesh| TreeVariant {
                 height: tree.height,
                 crown_radius: tree.crown_radius,
@@ -163,7 +221,7 @@ pub(crate) fn setup_trees(
                 bark: meshes.add(tree.bark.into_mesh()),
                 leaves: meshes.add(tree.leaves.into_mesh()),
             };
-            let variants = (0..VARIANTS as u32)
+            let variants = (0..species.variants() as u32)
                 .map(|v| variant(mesh::tree(species, v)))
                 .collect();
             let pruned = if STREET_SPECIES.contains(&species) {
@@ -176,8 +234,10 @@ pub(crate) fn setup_trees(
             SpeciesKit {
                 variants,
                 pruned,
-                bark,
-                leaves,
+                bark: paint.bark[0].clone(),
+                leaves: paint.leaves[0].clone(),
+                bark_tints: paint.bark,
+                leaf_tints: paint.leaves,
             }
         })
         .collect();
@@ -221,27 +281,28 @@ mod tests {
         let kit = app.world().resource::<TreeKit>().clone();
         let mut meshes = HashSet::new();
         let mut materials = HashSet::new();
-        for species in Species::ALL {
+        for species in Species::EVERY {
             let k = kit.species(species);
-            assert_eq!(k.variants.len(), VARIANTS);
+            assert_eq!(k.variants.len(), species.variants());
             for v in k.variants.iter().chain(&k.pruned) {
                 meshes.insert(v.bark.id());
                 meshes.insert(v.leaves.id());
                 assert!(v.height > 3.0 && v.crown_radius > 1.0, "{species:?}");
             }
-            materials.insert(k.bark.id());
-            materials.insert(k.leaves.id());
+            materials.extend(k.bark_tints.iter().chain(&k.leaf_tints).map(|m| m.id()));
         }
         // Every species' variants, the trimmed ones of the street species and
         // the plants'.
         let built = 2 * VARIANTS * (Species::ALL.len() + STREET_SPECIES.len())
+            + 2 * (CALDEN_VARIANTS + CHANAR_VARIANTS)
             + 2 * plants::VARIANTS as usize;
         let plant_meshes = (kit.plants.shrubs.iter().chain(&kit.plants.flowers)).map(|h| h.id());
         meshes.extend(plant_meshes);
         assert_eq!(meshes.len(), built);
-        // The trees' two materials a species, and the plants' one.
+        // The trees' bark and leaf materials, a tint each, and the plants' one.
         materials.insert(kit.plants.material.id());
-        assert_eq!(materials.len(), 2 * Species::ALL.len() + 1);
+        let tints: usize = Species::EVERY.iter().map(|s| 2 * s.tints()).sum();
+        assert_eq!(materials.len(), tints + 1);
         assert_eq!(app.world().resource::<Assets<Mesh>>().len(), built);
     }
 

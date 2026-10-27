@@ -43,13 +43,23 @@ pub fn tree_map_path(set: &str, name: &str) -> String {
 }
 
 impl Species {
-    /// Its bark set.
+    /// Its bark set, by name under [`TREE_TEXTURE_DIR`]. A species with
+    /// its own set only needs the set's KTX2 files added there and its one
+    /// line here changed. Every species wears a set of its own, so the
+    /// tints only shade the real texture. The Poly Haven sets
+    /// (`bark_willow`, `bark_platanus`, `bark_bluegum`) are lower-case; the
+    /// ambientCG ones are `BarkNNN`.
     pub fn bark_set(self) -> &'static str {
         match self {
             Self::Paraiso => "Bark014",
             Self::Olmo => "Bark001",
-            Self::Eucalipto => "Bark009",
+            // Mottled smooth grey-beige bark, as photographed.
+            Self::Eucalipto => "bark_bluegum",
             Self::Aromo => "Bark002",
+            // Dark, deeply furrowed willow bark, shaded grey-brown.
+            Self::Calden => "bark_willow",
+            // Peeling plane-tree strips, shaded greenish ochre.
+            Self::Chanar => "bark_platanus",
         }
     }
 
@@ -60,17 +70,36 @@ impl Species {
             Self::Olmo => "olmo_leaves",
             Self::Eucalipto => "eucalipto_leaves",
             Self::Aromo => "aromo_leaves",
+            // Fine feathery sprays, the aromo's atlas, in a dull grey-green.
+            Self::Calden => "aromo_leaves",
+            // Small simple leaves along a twig, the olmo's atlas, yellower.
+            Self::Chanar => "olmo_leaves",
         }
     }
 
-    /// The leaves' tint over the atlas (sRGB): the paraíso's yellow scan
-    /// deepened, the eucalipto greyed, the aromo silvered.
-    fn leaf_tint(self) -> Color {
+    /// The leaves' tint `tint` over the atlas (sRGB). Tint 0 is the
+    /// species' own, the paraíso's yellow scan deepened, the eucalipto
+    /// greyed, the aromo silvered; the field species have two more
+    /// ([`Species::tints`]), a fresher and a bluer-grey (the chañar's a
+    /// yellower one).
+    fn leaf_tint(self, tint: usize) -> Color {
+        match (self, tint) {
+            (Self::Calden, 1) => Color::srgb(0.76, 0.82, 0.58),
+            (Self::Calden, 2) => Color::srgb(0.56, 0.66, 0.58),
+            (Self::Chanar, 1) => Color::srgb(0.68, 0.84, 0.52),
+            (Self::Chanar, 2) => Color::srgb(0.92, 0.9, 0.58),
+            _ => self.leaf_tint_base(),
+        }
+    }
+
+    fn leaf_tint_base(self) -> Color {
         match self {
             Self::Paraiso => Color::srgb(0.78, 0.9, 0.7),
             Self::Olmo => Color::srgb(0.95, 1.0, 0.92),
             Self::Eucalipto => Color::srgb(0.86, 0.95, 0.95),
             Self::Aromo => Color::srgb(0.84, 0.94, 0.9),
+            Self::Calden => Color::srgb(0.66, 0.74, 0.62),
+            Self::Chanar => Color::srgb(0.8, 0.88, 0.6),
         }
     }
 
@@ -81,6 +110,8 @@ impl Species {
             Self::Olmo => Color::srgb(0.27, 0.34, 0.17),
             Self::Eucalipto => Color::srgb(0.36, 0.42, 0.33),
             Self::Aromo => Color::srgb(0.30, 0.38, 0.27),
+            Self::Calden => Color::srgb(0.28, 0.33, 0.22),
+            Self::Chanar => Color::srgb(0.38, 0.44, 0.24),
         }
     }
 
@@ -91,11 +122,30 @@ impl Species {
             Self::Olmo => Color::srgb(0.33, 0.29, 0.24),
             Self::Eucalipto => Color::srgb(0.55, 0.50, 0.43),
             Self::Aromo => Color::srgb(0.28, 0.22, 0.17),
+            Self::Calden => Color::srgb(0.17, 0.14, 0.11),
+            Self::Chanar => Color::srgb(0.48, 0.44, 0.27),
+        }
+    }
+
+    /// The bark's tint `tint` over its maps (sRGB): the caldén's a dull
+    /// grey-brown over its already dark set (its other two darker and
+    /// paler), the chañar's strips turned greenish ochre (its other two
+    /// greyer and paler).
+    pub(crate) fn bark_tint(self, tint: usize) -> Color {
+        match (self, tint) {
+            (Self::Calden, 1) => Color::srgb(0.7, 0.68, 0.66),
+            (Self::Calden, 2) => Color::srgb(1.0, 0.96, 0.9),
+            (Self::Chanar, 1) => Color::srgb(0.78, 0.82, 0.6),
+            (Self::Chanar, 2) => Color::srgb(1.0, 0.98, 0.78),
+            (Self::Calden, _) => Color::srgb(0.84, 0.82, 0.8),
+            (Self::Chanar, _) => Color::srgb(0.9, 0.95, 0.68),
+            _ => Color::WHITE,
         }
     }
 }
 
 /// A set's loading maps: colour, normal and ORM.
+#[derive(Clone)]
 pub(crate) struct Maps {
     pub color: Handle<Image>,
     pub normal: Handle<Image>,
@@ -139,7 +189,13 @@ fn load_set(
     Some(Maps { color, normal, orm })
 }
 
-/// The bark and leaf materials of every species, in [`Species::ALL`]
+/// A species' bark and leaf materials, a tint each ([`Species::tints`]).
+pub(crate) struct Paint {
+    pub bark: Vec<Handle<StandardMaterial>>,
+    pub leaves: Vec<Handle<StandardMaterial>>,
+}
+
+/// The bark and leaf materials of every species, in [`Species::EVERY`]
 /// order, loading their maps when an asset server, an asset root and a
 /// compressed texture format are there.
 pub(crate) fn tree_materials(
@@ -147,18 +203,27 @@ pub(crate) fn tree_materials(
     server: Option<&AssetServer>,
     support: Option<&CompressedImageFormatSupport>,
     materials: &mut Assets<StandardMaterial>,
-) -> Vec<[Handle<StandardMaterial>; 2]> {
+) -> Vec<Paint> {
     let compressed = support.is_none_or(|s| !s.0.is_empty());
     let load = |set: &str, sampler| match (root, server) {
         (Some(root), Some(server)) if compressed => load_set(server, &root.0, set, sampler),
         _ => None,
     };
-    Species::ALL
+    Species::EVERY
         .iter()
         .map(|&s| {
-            let bark = bark_material(s, load(s.bark_set(), repeating()));
-            let leaves = leaf_material(s, load(s.leaf_set(), clamped()));
-            [materials.add(bark), materials.add(leaves)]
+            let (bark_maps, leaf_maps) = (
+                load(s.bark_set(), repeating()),
+                load(s.leaf_set(), clamped()),
+            );
+            Paint {
+                bark: (0..s.tints())
+                    .map(|t| materials.add(bark_material(s, t, bark_maps.clone())))
+                    .collect(),
+                leaves: (0..s.tints())
+                    .map(|t| materials.add(leaf_material(s, t, leaf_maps.clone())))
+                    .collect(),
+            }
         })
         .collect()
 }
@@ -171,11 +236,11 @@ fn wear(material: &mut StandardMaterial, maps: Maps) {
     material.occlusion_texture = Some(maps.orm);
 }
 
-/// The bark of `species`.
-pub(crate) fn bark_material(species: Species, maps: Option<Maps>) -> StandardMaterial {
+/// The bark of `species`, in tint `tint`.
+pub(crate) fn bark_material(species: Species, tint: usize, maps: Option<Maps>) -> StandardMaterial {
     let mut material = StandardMaterial {
         base_color: if maps.is_some() {
-            Color::WHITE
+            species.bark_tint(tint)
         } else {
             species.bark_plain()
         },
@@ -190,11 +255,12 @@ pub(crate) fn bark_material(species: Species, maps: Option<Maps>) -> StandardMat
     material
 }
 
-/// The leaf cards of `species`: alpha-tested, drawn from both sides.
-pub(crate) fn leaf_material(species: Species, maps: Option<Maps>) -> StandardMaterial {
+/// The leaf cards of `species` in tint `tint`: alpha-tested, drawn from
+/// both sides.
+pub(crate) fn leaf_material(species: Species, tint: usize, maps: Option<Maps>) -> StandardMaterial {
     let mut material = StandardMaterial {
         base_color: if maps.is_some() {
-            species.leaf_tint()
+            species.leaf_tint(tint)
         } else {
             species.leaf_plain()
         },
@@ -231,7 +297,7 @@ mod tests {
     #[test]
     fn every_species_names_shipped_bark_and_leaf_sets() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
-        for species in Species::ALL {
+        for species in Species::EVERY {
             for set in [species.bark_set(), species.leaf_set()] {
                 for (map, _) in MAPS {
                     let file = root.join(tree_map_path(set, map));
@@ -243,20 +309,47 @@ mod tests {
 
     #[test]
     fn leaves_are_alpha_tested_cards_seen_from_both_sides() {
-        for species in Species::ALL {
+        for species in Species::EVERY {
             for textured in [true, false] {
-                let m = leaf_material(species, textured.then(maps));
+                let m = leaf_material(species, 0, textured.then(maps));
                 assert_eq!(m.alpha_mode, AlphaMode::Mask(LEAF_CUTOFF), "{species:?}");
                 assert_eq!(m.cull_mode, None);
                 assert!(!m.double_sided, "no normal flip on the back");
                 assert_eq!(m.base_color_texture.is_some(), textured);
                 assert_eq!(m.normal_map_texture.is_some(), textured);
-                let bark = bark_material(species, textured.then(maps));
+                let bark = bark_material(species, 0, textured.then(maps));
                 assert_eq!(bark.alpha_mode, AlphaMode::Opaque);
                 assert!(bark.cull_mode.is_some(), "bark culls its insides");
                 assert_eq!(bark.occlusion_texture.is_some(), textured);
             }
         }
+    }
+
+    #[test]
+    fn the_calden_wears_dark_furrowed_bark_and_the_chanar_greenish_ochre_strips() {
+        let (calden, chanar) = (Species::Calden, Species::Chanar);
+        // Each has a set of its own: the caldén's is the dark willow bark,
+        // shaded grey-brown; the chañar's the peeling plane bark, tinted
+        // green-ochre.
+        assert_eq!(calden.bark_set(), "bark_willow");
+        assert_eq!(chanar.bark_set(), "bark_platanus");
+        let c = calden.bark_tint(0).to_srgba();
+        let ch = chanar.bark_tint(0).to_srgba();
+        assert!(c.red.max(c.green).max(c.blue) < 0.9, "{c:?}");
+        assert!(c.red - c.blue < 0.1, "dull, not coloured: {c:?}");
+        assert!(ch.green > ch.blue + 0.2 && ch.red > ch.blue + 0.2, "{ch:?}");
+        // The other species' bark is left as photographed.
+        assert_eq!(Species::Olmo.bark_tint(0), Color::WHITE);
+        // The textured bark carries the tint; plain bark its own colour.
+        let textured = bark_material(chanar, 0, Some(maps()));
+        assert_eq!(textured.base_color, chanar.bark_tint(0));
+        // Fine, dull leaves: the caldén's grey-green sits darker than the
+        // aromo's silver.
+        let (cl, al) = (
+            calden.leaf_tint(0).to_srgba(),
+            Species::Aromo.leaf_tint(0).to_srgba(),
+        );
+        assert!(cl.red < al.red && cl.green < al.green);
     }
 
     #[test]
@@ -289,12 +382,80 @@ mod tests {
         let mut materials = Assets::<StandardMaterial>::default();
         // No asset server: nothing loads, every species still has both.
         let built = tree_materials(None, None, None, &mut materials);
-        assert_eq!(built.len(), Species::ALL.len());
-        for (species, [bark, leaves]) in Species::ALL.iter().zip(&built) {
-            let (bark, leaves) = (materials.get(bark).unwrap(), materials.get(leaves).unwrap());
+        assert_eq!(built.len(), Species::EVERY.len());
+        for (species, paint) in Species::EVERY.iter().zip(&built) {
+            let (bark, leaves) = (
+                materials.get(&paint.bark[0]).unwrap(),
+                materials.get(&paint.leaves[0]).unwrap(),
+            );
             assert!(bark.base_color_texture.is_none() && leaves.base_color_texture.is_none());
             assert_eq!(leaves.base_color, species.leaf_plain());
             assert_eq!(bark.base_color, species.bark_plain());
+        }
+    }
+
+    #[test]
+    fn no_two_species_wear_the_same_bark() {
+        // Every species has a bark set of its own, so the tints only shade
+        // the real texture and never fake a different bark.
+        let sets: Vec<&str> = Species::EVERY.iter().map(|s| s.bark_set()).collect();
+        for (i, a) in sets.iter().enumerate() {
+            for b in &sets[i + 1..] {
+                assert_ne!(a, b, "two species share a bark set");
+            }
+        }
+    }
+
+    #[test]
+    fn the_field_species_have_tints_that_differ_and_share_their_maps() {
+        for species in Species::EVERY {
+            let want = if Species::FIELD.contains(&species) {
+                super::super::FIELD_TINTS
+            } else {
+                1
+            };
+            assert_eq!(species.tints(), want, "{species:?}");
+        }
+        for species in Species::FIELD {
+            let (bark, leaf): (Vec<_>, Vec<_>) = (0..species.tints())
+                .map(|t| (species.bark_tint(t), species.leaf_tint(t)))
+                .unzip();
+            // Three distinct tints of each, none far from the species' own.
+            for tints in [&bark, &leaf] {
+                for (i, a) in tints.iter().enumerate() {
+                    for b in &tints[i + 1..] {
+                        assert_ne!(a, b, "{species:?}");
+                    }
+                    let (a, own) = (a.to_srgba(), tints[0].to_srgba());
+                    let drift = (a.red - own.red).abs()
+                        + (a.green - own.green).abs()
+                        + (a.blue - own.blue).abs();
+                    assert!(drift < 0.5, "{species:?}: {drift}");
+                }
+            }
+            // Each tint is its own material over the same maps.
+            let (a, b) = (
+                bark_material(species, 0, Some(maps())),
+                bark_material(species, 1, Some(maps())),
+            );
+            assert_ne!(a.base_color, b.base_color);
+            assert_eq!(a.base_color_texture, b.base_color_texture);
+            let (a, b) = (
+                leaf_material(species, 0, Some(maps())),
+                leaf_material(species, 2, Some(maps())),
+            );
+            assert_ne!(a.base_color, b.base_color);
+            assert_eq!(a.alpha_mode, b.alpha_mode);
+        }
+        // The first tint is the town kit's own, and the towns' trees have
+        // one only.
+        assert_eq!(Species::Calden.bark_tint(0), Color::srgb(0.84, 0.82, 0.8));
+        assert_eq!(Species::Olmo.leaf_tint(0), Species::Olmo.leaf_tint(3));
+        let mut materials = Assets::<StandardMaterial>::default();
+        let built = tree_materials(None, None, None, &mut materials);
+        for (species, paint) in Species::EVERY.iter().zip(&built) {
+            assert_eq!(paint.bark.len(), species.tints());
+            assert_eq!(paint.leaves.len(), species.tints());
         }
     }
 }

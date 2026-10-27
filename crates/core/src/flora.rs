@@ -24,16 +24,34 @@ pub enum Species {
     Chanar,
 }
 
+/// How far along its life a tree is: it decides the size and the girth.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Age {
+    /// A seedling's first years: a slim stem and a small crown.
+    Sapling,
+    /// A young tree, still growing.
+    Young,
+    /// A full-grown tree: most of the stand.
+    Mature,
+    /// A rare old giant: tall, thick-trunked and broad-crowned.
+    Old,
+}
+
 /// One tree on the ground plane.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Tree {
     pub at: Vec2,
     pub species: Species,
+    pub age: Age,
     /// Height to the top of the crown, in meters.
     pub height: f32,
+    /// How wide the crown and trunk stand against the height's scale
+    /// (1 is as modelled): a broad tree or a narrow one.
+    pub width: f32,
     /// Turn about the vertical, in radians.
     pub yaw: f32,
-    /// Seeded shape variant (render picks a mesh with it).
+    /// Seeded look: 32 random bits (render picks the form, the leaf and
+    /// bark tint and whether a caldén is a snag from its bytes).
     pub variant: u32,
 }
 
@@ -113,15 +131,25 @@ impl FloraSite {
     /// footprints, patio and tracks, in meters.
     pub const TUFT_SETTLEMENT_MARGIN: f32 = 0.3;
     /// Tree candidates tried per chunk of [`Self::REFERENCE_CHUNK`] meters.
-    const TREE_CANDIDATES: f32 = 220.0;
+    const TREE_CANDIDATES: f32 = 320.0;
     /// Tuft candidates tried per chunk of [`Self::REFERENCE_CHUNK`] meters.
     const TUFT_CANDIDATES: f32 = 600.0;
     /// The chunk side the candidate counts are tuned for, in meters.
     const REFERENCE_CHUNK: f32 = 200.0;
     /// Chance that a candidate on open pampa becomes a lone tree.
-    const LONE_TREE: f32 = 0.006;
+    const LONE_TREE: f32 = 0.003;
     /// Extra chance inside a grove (scaled by the mask).
-    const GROVE_TREE: f32 = 0.55;
+    const GROVE_TREE: f32 = 1.0;
+    /// The part of a grove's chance that holds between its clumps: its
+    /// trees gather in clumps with clearings between them.
+    const CLUMP_FLOOR: f32 = 0.02;
+    /// How near another tree makes a candidate likelier, in meters, and by
+    /// how much.
+    const COMPANY_REACH: f32 = 15.0;
+    const COMPANY_BOOST: f32 = 6.0;
+    /// Cumulative share of the trees that are saplings, young, and mature
+    /// (the rest are old giants).
+    const AGE_SHARES: [f32; 3] = [0.10, 0.30, 0.975];
 
     /// The flora of `config`'s world over `terrain` (already leveled for its
     /// towns, with its roads laid), kept off the `line`'s track and the
@@ -254,6 +282,15 @@ impl FloraSite {
         smoothstep(0.56, 0.84, n)
     }
 
+    /// How strongly trees gather at `p`, in `[0, 1]`: noise over a few
+    /// tens of meters, so a grove breaks into clumps with clearings.
+    pub fn clump(&self, p: Vec2) -> f32 {
+        let n = (value_noise(self.seed ^ 0xc1a7, p, 44.0)
+            + 0.5 * value_noise(self.seed ^ 0x9d, p, 20.0))
+            / 1.5;
+        smoothstep(0.5, 0.6, n)
+    }
+
     /// How dry the grass is at `p`, in `[0, 1]`: 0 is grey-green, 1 dry
     /// yellow. Low-frequency and continuous.
     pub fn dryness(&self, p: Vec2) -> f32 {
@@ -295,28 +332,53 @@ impl FloraSite {
         let mut trees: Vec<Tree> = Vec::new();
         for _ in 0..candidates {
             let at = min + Vec2::new(rng.unit() * size, rng.unit() * size);
-            let (pick, species_roll, height_roll, yaw) =
+            let (pick, species_roll, age_roll, height_roll) =
                 (rng.unit(), rng.unit(), rng.unit(), rng.unit());
-            let variant = rng.next() >> 28;
+            let (yaw, width_roll) = (rng.unit(), rng.unit());
+            let variant = rng.next();
             if trees.len() >= Self::TREE_BUDGET {
                 break;
             }
             let grove = self.grove(at);
-            if pick >= Self::LONE_TREE + Self::GROVE_TREE * grove {
+            let gather = Self::CLUMP_FLOOR + (1.0 - Self::CLUMP_FLOOR) * self.clump(at);
+            // Trees seed their neighbours: a candidate beside a tree is
+            // likelier, one far from every tree rarer, so the stand gathers
+            // in clumps with gaps between.
+            let company = trees
+                .iter()
+                .any(|t| t.at.distance(at) < Self::COMPANY_REACH);
+            let seeding = if company { Self::COMPANY_BOOST } else { 1.0 };
+            let chance = Self::LONE_TREE + Self::GROVE_TREE * grove * gather;
+            if pick >= chance * seeding {
                 continue;
             }
-            // Caldenes rule the groves; chañares fill their edges and the
-            // open ground.
-            let species = if species_roll < 0.35 + 0.35 * grove {
+            // Caldenes rule the groves' cores; chañares fill their edges and
+            // the open ground.
+            let edge = 4.0 * grove * (1.0 - grove);
+            let calden = (0.3 + 0.45 * grove - 0.2 * edge).clamp(0.1, 0.9);
+            let species = if species_roll < calden {
                 Species::Calden
             } else {
                 Species::Chanar
             };
-            let (lo, hi) = species.height_range();
+            let age = match Self::AGE_SHARES.iter().position(|&c| age_roll < c) {
+                Some(0) => Age::Sapling,
+                Some(1) => Age::Young,
+                Some(_) => Age::Mature,
+                None => Age::Old,
+            };
+            let (lo, hi) = age.height_range(species);
+            // An old giant stands broad; the rest a little narrow or wide.
+            let width = match age {
+                Age::Old => 1.15 + 0.25 * width_roll,
+                _ => 0.82 + 0.36 * width_roll,
+            };
             let tree = Tree {
                 at,
                 species,
+                age,
                 height: lo + (hi - lo) * height_roll,
+                width,
                 yaw: yaw * std::f32::consts::TAU,
                 variant,
             };
@@ -426,13 +488,42 @@ impl FloraSite {
     }
 }
 
-impl Species {
-    /// Lowest and highest tree, in meters.
-    pub fn height_range(self) -> (f32, f32) {
+impl Age {
+    /// Every age, youngest first.
+    pub const ALL: [Age; 4] = [Self::Sapling, Self::Young, Self::Mature, Self::Old];
+
+    /// How much thicker than its height says the trunk of a caldén grows:
+    /// a sapling's stem and a mature trunk are stouter by a tenth or so, an
+    /// old giant's by four tenths.
+    pub fn girth(self) -> f32 {
         match self {
-            Self::Calden => (6.0, 9.0),
-            Self::Chanar => (3.0, 5.0),
+            Self::Sapling => 1.3,
+            Self::Young | Self::Mature => 1.1,
+            Self::Old => 1.4,
         }
+    }
+
+    /// Lowest and highest height of a `species` of this age, in meters.
+    pub fn height_range(self, species: Species) -> (f32, f32) {
+        match (species, self) {
+            (Species::Calden, Self::Sapling) => (2.0, 3.5),
+            (Species::Calden, Self::Young) => (3.5, 6.0),
+            (Species::Calden, Self::Mature) => (6.0, 9.0),
+            (Species::Calden, Self::Old) => (10.0, 12.0),
+            (Species::Chanar, Self::Sapling) => (1.5, 2.8),
+            (Species::Chanar, Self::Young) => (2.8, 3.8),
+            (Species::Chanar, Self::Mature) => (3.8, 5.0),
+            (Species::Chanar, Self::Old) => (5.0, 6.5),
+        }
+    }
+}
+
+impl Species {
+    /// Lowest and highest tree of any age, in meters.
+    pub fn height_range(self) -> (f32, f32) {
+        let (lo, _) = Age::Sapling.height_range(self);
+        let (_, hi) = Age::Old.height_range(self);
+        (lo, hi)
     }
 }
 
@@ -451,17 +542,18 @@ impl Tree {
     /// dense stem core, which no rider pushes through.
     pub fn trunk_radius(&self) -> f32 {
         match self.species {
-            Species::Calden => 0.035 * self.height,
+            Species::Calden => 0.035 * self.age.girth() * self.height,
             Species::Chanar => 0.09 * self.height,
         }
     }
 
     /// Radius of the crown seen from above, in meters.
     pub fn crown_radius(&self) -> f32 {
-        match self.species {
-            Species::Calden => 0.55 * self.height,
-            Species::Chanar => 0.35 * self.height,
-        }
+        let base = match self.species {
+            Species::Calden => 0.55,
+            Species::Chanar => 0.35,
+        };
+        base * self.width * self.height
     }
 
     /// The trunk's footprint, a square as wide as the trunk: a static
@@ -471,14 +563,15 @@ impl Tree {
         Aabb::from_center_size(self.at, Vec2::new(side, side))
     }
 
-    /// The largest [`Self::spacing`] of any species, in meters.
-    const MAX_SPACING: f32 = 5.0;
+    /// The largest [`Self::spacing`] of any tree, in meters.
+    const MAX_SPACING: f32 = 8.0;
 
-    /// Least distance to another tree's trunk, in meters.
+    /// Least distance to another tree's trunk, in meters: a bigger tree
+    /// takes more room, a sapling can stand in the shade of an old one.
     fn spacing(&self) -> f32 {
         match self.species {
-            Species::Calden => Self::MAX_SPACING,
-            Species::Chanar => 3.0,
+            Species::Calden => 1.6 + 0.3 * self.height,
+            Species::Chanar => 1.4 + 0.25 * self.height,
         }
     }
 }
@@ -646,29 +739,43 @@ mod tests {
         }
     }
 
+    /// Every tree of a broad block between the towns and of a grove-rich
+    /// block to the south-west.
+    fn sample(flora: &FloraSite) -> Vec<Tree> {
+        between()
+            .into_iter()
+            .chain((-19..1).flat_map(|x| (3..19).map(move |y| ChunkCoord::new(x, y))))
+            .flat_map(|c| flora.trees(c))
+            .collect()
+    }
+
     #[test]
     fn trees_have_their_species_sizes() {
         let (_, _, flora) = site();
-        let trees: Vec<Tree> = between()
-            .into_iter()
-            .flat_map(|c| flora.chunk(c).trees)
-            .collect();
-        let calden: Vec<&Tree> = trees
-            .iter()
-            .filter(|t| t.species == Species::Calden)
-            .collect();
-        let chanar: Vec<&Tree> = trees
-            .iter()
-            .filter(|t| t.species == Species::Chanar)
-            .collect();
+        let trees = sample(&flora);
+        let of = |s: Species| trees.iter().filter(|t| t.species == s).collect::<Vec<_>>();
+        let (calden, chanar) = (of(Species::Calden), of(Species::Chanar));
         assert!(
             calden.len() > 20 && chanar.len() > 20,
             "{} {}",
             calden.len(),
             chanar.len()
         );
-        assert!(calden.iter().all(|t| (6.0..=9.0).contains(&t.height)));
-        assert!(chanar.iter().all(|t| (3.0..=5.0).contains(&t.height)));
+        for t in &trees {
+            // Each tree's height belongs to its age class.
+            let (lo, hi) = t.age.height_range(t.species);
+            assert!((lo..=hi).contains(&t.height), "{t:?}");
+            let (lo, hi) = t.species.height_range();
+            assert!((lo..=hi).contains(&t.height), "{t:?}");
+        }
+        // The mature trees keep the documented sizes.
+        let mature = |ts: &[&Tree], lo: f32, hi: f32| {
+            ts.iter()
+                .filter(|t| t.age == Age::Mature)
+                .all(|t| (lo..=hi).contains(&t.height))
+        };
+        assert!(mature(&calden, 6.0, 9.0));
+        assert!(mature(&chanar, 3.8, 5.0));
         // A chañar is drawn as a dense thicket: its obstacle is the thicket's
         // stem core, wider than a single trunk.
         assert!(
@@ -679,8 +786,164 @@ mod tests {
         assert!(
             trees
                 .iter()
-                .all(|t| t.trunk_radius() > 0.08 && t.trunk_radius() < 0.5)
+                .all(|t| t.trunk_radius() > 0.05 && t.trunk_radius() < 0.7)
         );
+    }
+
+    #[test]
+    fn trees_come_in_age_classes_and_their_collision_grows_with_them() {
+        let (_, _, flora) = site();
+        let trees = sample(&flora);
+        for species in [Species::Calden, Species::Chanar] {
+            let own: Vec<&Tree> = trees.iter().filter(|t| t.species == species).collect();
+            let share =
+                |age: Age| own.iter().filter(|t| t.age == age).count() as f32 / own.len() as f32;
+            println!(
+                "{species:?}: {:.3} sapling {:.3} young {:.3} mature {:.3} old",
+                share(Age::Sapling),
+                share(Age::Young),
+                share(Age::Mature),
+                share(Age::Old)
+            );
+            assert!((0.06..=0.16).contains(&share(Age::Sapling)), "{species:?}");
+            assert!((0.14..=0.28).contains(&share(Age::Young)), "{species:?}");
+            assert!((0.55..=0.80).contains(&share(Age::Mature)), "{species:?}");
+            // Old giants are rare, but there are some.
+            assert!((0.01..=0.05).contains(&share(Age::Old)), "{species:?}");
+            // A bigger class stands taller, is wider-trunked and takes more
+            // room, on average and without overlap of the extremes.
+            let mean = |age: Age, f: fn(&Tree) -> f32| {
+                let v: Vec<f32> = own.iter().filter(|t| t.age == age).map(|t| f(t)).collect();
+                v.iter().sum::<f32>() / v.len() as f32
+            };
+            for pair in Age::ALL.windows(2) {
+                for f in [
+                    (|t| t.height) as fn(&Tree) -> f32,
+                    |t| t.trunk_radius(),
+                    |t| t.spacing(),
+                ] {
+                    assert!(mean(pair[0], f) < mean(pair[1], f), "{species:?} {pair:?}");
+                }
+            }
+        }
+        // A caldén giant is 10-12 m with a trunk thicker than any mature
+        // tree's and a crown wider than any mature tree's.
+        let calden = |age: Age| {
+            trees
+                .iter()
+                .filter(move |t| t.species == Species::Calden && t.age == age)
+        };
+        let max = |age: Age, f: fn(&Tree) -> f32| calden(age).map(f).fold(0.0, f32::max);
+        let min = |age: Age, f: fn(&Tree) -> f32| calden(age).map(f).fold(f32::MAX, f32::min);
+        assert!(min(Age::Old, |t| t.height) >= 10.0);
+        assert!(max(Age::Old, |t| t.height) <= 12.0);
+        assert!(
+            min(Age::Old, |t| t.trunk_radius()) > 1.15 * max(Age::Mature, |t| t.trunk_radius())
+        );
+        assert!(min(Age::Old, |t| t.crown_radius()) > max(Age::Mature, |t| t.crown_radius()));
+        assert!(max(Age::Sapling, |t| t.height) <= 3.5);
+        // Each tree's width is its own, modest, and the giants stand broad.
+        for t in &trees {
+            assert!((0.8..=1.4).contains(&t.width), "{t:?}");
+        }
+        let widths: std::collections::HashSet<u32> =
+            trees.iter().map(|t| t.width.to_bits()).collect();
+        assert!(widths.len() > trees.len() / 2, "{}", widths.len());
+        // Every tree still has its own yaw and seed.
+        let looks: std::collections::HashSet<u32> = trees.iter().map(|t| t.variant).collect();
+        assert!(looks.len() > trees.len() * 9 / 10);
+    }
+
+    /// Distance from each tree whose grove mask is over `grove` to its
+    /// nearest neighbour.
+    fn grove_neighbour_gaps(flora: &FloraSite, trees: &[Tree], grove: f32) -> Vec<f32> {
+        trees
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| flora.grove(a.at) > grove)
+            .map(|(i, a)| {
+                trees
+                    .iter()
+                    .enumerate()
+                    .filter(|&(j, _)| j != i)
+                    .map(|(_, b)| b.at.distance(a.at))
+                    .fold(f32::INFINITY, f32::min)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn groves_are_clumps_with_gaps_not_an_even_stand() {
+        let (_, _, flora) = site();
+        let trees = sample(&flora);
+        let gaps = grove_neighbour_gaps(&flora, &trees, 0.6);
+        let n = gaps.len() as f32;
+        assert!(n > 1000.0, "{n}");
+        let mean = gaps.iter().sum::<f32>() / n;
+        let sd = (gaps.iter().map(|d| (d - mean).powi(2)).sum::<f32>() / n).sqrt();
+        let close = gaps.iter().filter(|&&d| d < 6.0).count() as f32 / n;
+        println!(
+            "grove gaps: mean {mean:.1} m, cv {:.2}, {close:.2} close",
+            sd / mean
+        );
+        // Counts in 24 m quadrats over the groves: a random scatter has a
+        // variance equal to its mean (an index of 1), an even one far less.
+        let mut counts = Vec::new();
+        for qx in -158..8 {
+            for qy in 25..158 {
+                let (x, y) = (qx as f32 * 24.0, qy as f32 * 24.0);
+                if flora.grove(Vec2::new(x + 12.0, y + 12.0)) > 0.6 {
+                    let n = trees
+                        .iter()
+                        .filter(|t| {
+                            (x..x + 24.0).contains(&t.at.x) && (y..y + 24.0).contains(&t.at.y)
+                        })
+                        .count();
+                    counts.push(n as f32);
+                }
+            }
+        }
+        let q = counts.len() as f32;
+        let qmean = counts.iter().sum::<f32>() / q;
+        let qvar = counts.iter().map(|c| (c - qmean).powi(2)).sum::<f32>() / q;
+        println!(
+            "quadrats: {q} of mean {qmean:.2}, dispersion {:.2}",
+            qvar / qmean
+        );
+        assert!(q > 100.0, "{q}");
+        // The even groves had 0.97; clumps with gaps are well over it.
+        assert!(qvar / qmean > 1.6, "dispersion {}", qvar / qmean);
+        // The nearest-neighbour spread (cv) of an even stand sits under a
+        // random one's 0.52 (the even groves had 0.43).
+        assert!(sd / mean > 0.5, "cv {}", sd / mean);
+        // Many trees stand close.
+        assert!(close > 0.3, "{close}");
+    }
+
+    #[test]
+    fn chanares_are_a_bigger_share_where_the_groves_thin_out() {
+        let (_, _, flora) = site();
+        let trees = sample(&flora);
+        let edge: Vec<&Tree> = trees
+            .iter()
+            .filter(|t| (0.15..0.85).contains(&flora.grove(t.at)))
+            .collect();
+        let core: Vec<&Tree> = trees.iter().filter(|t| flora.grove(t.at) >= 0.85).collect();
+        let share = |ts: &[&Tree]| {
+            ts.iter().filter(|t| t.species == Species::Chanar).count() as f32 / ts.len() as f32
+        };
+        println!(
+            "chañar share: edge {:.2} of {}, core {:.2} of {}",
+            share(&edge),
+            edge.len(),
+            share(&core),
+            core.len()
+        );
+        assert!(edge.len() > 500 && core.len() > 500);
+        // Old: about 0.48 at the edges. Chañares fill the edges, and the
+        // caldenes keep the cores.
+        assert!(share(&edge) > 0.6, "{}", share(&edge));
+        assert!(share(&edge) > share(&core) + 0.2);
     }
 
     #[test]

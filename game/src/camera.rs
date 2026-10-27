@@ -957,6 +957,8 @@ mod tests {
             height: 7.0,
             yaw: 0.0,
             variant: 0,
+            age: pampa_core::flora::Age::Mature,
+            width: 1.0,
         };
         let mut world = World::default();
         world.obstacles.push(tree.obstacle());
