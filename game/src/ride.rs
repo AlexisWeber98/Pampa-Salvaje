@@ -20,7 +20,7 @@
 use bevy::prelude::*;
 use pampa_core::{
     Boarding, GameClock, LinePhase, LineTrain, ONBOARD_MULTIPLIER, Ride, Rider, SEAT_HEIGHT,
-    TownLayout, WaitingPlace, alight_spot, boarding, depart_now, follow_jump, next_arrival,
+    TownLayout, WaitingPlace, alight_spot, boarding_at, depart_now, follow_jump, next_arrival,
     skip_ride, skip_to_approach, stands_at, wait_for_train, waiting_place,
 };
 use pampa_render::{
@@ -240,7 +240,7 @@ pub(crate) fn ride_keys(
     if !keys.just_pressed(INTERACT_KEY) {
         return;
     }
-    match boarding(&trains.0, &player.rider, &world.0.floors) {
+    match boarding_at(&trains.0, towns, &player.rider, &world.0.floors) {
         Boarding::Board(ride) => {
             keys.clear_just_pressed(INTERACT_KEY);
             let train = &trains.0[ride.train];
