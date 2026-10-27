@@ -29,6 +29,9 @@ All three were converted to 512×512 PPM/PGM for loading. See `assets/textures/g
 | Beige Wall 002 | Dimitrios Savva, Rico Cilliers, Poly Haven (https://polyhaven.com/a/beige_wall_002) | CC0 1.0 | `assets/textures/buildings/beige_wall_002/` | 1K maps renamed; the beige rendered plinths of painted town fronts (a 1024x256 strip, tiled 4 m by 1 m) |
 | Brick Floor 003 | Dimitrios Savva, Rob Tuytel, Poly Haven (https://polyhaven.com/a/brick_floor_003) | CC0 1.0 | `assets/textures/buildings/brick_floor_003/` | 1K maps renamed; the flat brick sidewalks (veredas) of General Pico and round small towns' plazas |
 | Dirt | Charlotte Baglioni, Poly Haven (https://polyhaven.com/a/dirt) | CC0 1.0 | `assets/textures/buildings/dirt_path/` | 1K maps renamed; the beaten-earth plaza paths and earth sidewalks of small towns and villages |
+| Gravel Road | Amal Kumar, Poly Haven (https://polyhaven.com/a/gravel_road) | CC0 1.0 | `assets/textures/buildings/gravel_road/` | 1K maps renamed; the railway ballast, lifted to a grey gravel in the game |
+| Rough Wood | Rob Tuytel, Poly Haven (https://polyhaven.com/a/rough_wood) | CC0 1.0 | `assets/textures/buildings/rough_wood/` | 1K maps renamed; the railway sleepers |
+| Rust Coarse 01 | Dimitrios Savva, Rico Cilliers, Poly Haven (https://polyhaven.com/a/rust_coarse_01) | CC0 1.0 | `assets/textures/buildings/rust_coarse_01/` | 1K maps renamed; the rails (smoother, more metallic on the head)|
 
 The `thatch/` set next to them is our own work. The game loads every set as KTX2 (UASTC, mips baked) made from those JPGs by `tools/textures_to_ktx2.sh`; the JPG sources are kept unchanged. See `assets/textures/buildings/CREDITS.md` for details.
 

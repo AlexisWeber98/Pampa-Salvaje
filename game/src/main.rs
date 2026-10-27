@@ -3,6 +3,7 @@
 mod abilities;
 mod camera;
 mod complaints;
+mod shots;
 // The cheat console: debug builds only, never in `--release`.
 #[cfg(debug_assertions)]
 mod console;
@@ -364,6 +365,10 @@ fn main() {
     // Ctrl+Shift+F12: the cheat console (see `console`), in debug builds.
     #[cfg(debug_assertions)]
     app.add_plugins(console::ConsolePlugin);
+    // PAMPA_SHOTS=<file>: a dev screenshot tour (see `shots`).
+    if let Some(tour) = shots::ShotsPlugin::from_env() {
+        app.add_plugins(tour);
+    }
     app.run();
 }
 

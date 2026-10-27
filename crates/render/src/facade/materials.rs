@@ -23,6 +23,14 @@
 //! target, so a mean texel lands on the paint's colour while the scan keeps
 //! its stains and joints.
 //!
+//! The railway's permanent way wears three more Poly Haven CC0 sets
+//! (`gravel_road` by Amal Kumar, `rough_wood` by Rob Tuytel and
+//! `rust_coarse_01` by Dimitrios Savva and Rico Cilliers; their folders'
+//! CREDITS.md and the root CREDITS.md credit them): the ballast, the
+//! sleepers and the rails (see [`crate::rail`]). The ballast's scan is
+//! lifted to a grey gravel; the rail head wears the rail's scan with a
+//! smoother, more metallic finish, the running band.
+//!
 //! Without an asset server (headless tests) or when a set's files are
 //! missing, the surface falls back to a plain colour of the same look.
 
@@ -95,6 +103,18 @@ pub enum Surface {
     /// Old weathered bronze with a greenish patina (`bronze`): the plaques
     /// of the plaza monuments.
     Bronze,
+    /// Track ballast (`gravel_road`, Poly Haven, Amal Kumar), lifted to a
+    /// grey gravel: the bed the track lies on.
+    Ballast,
+    /// Weathered sleepers (`rough_wood`, Poly Haven, Rob Tuytel): the grain
+    /// runs along each sleeper's length.
+    Sleeper,
+    /// The foot and web of the rails (`rust_coarse_01`, Poly Haven, Dimitrios
+    /// Savva and Rico Cilliers): rusty steel.
+    RailSteel,
+    /// The running band of the rails (`rust_coarse_01` again): the same
+    /// scan, smoother and more metallic where the wheels polish it.
+    RailHead,
 }
 
 /// The muted colours a 1919 town front is painted in
@@ -148,6 +168,7 @@ const PATCHED_BRICK_SCAN: [f32; 3] = [0.243, 0.131, 0.066];
 const BAND_SCAN: [f32; 3] = [0.227, 0.158, 0.092];
 const PAVING_SCAN: [f32; 3] = [0.115, 0.081, 0.058];
 const DIRT_PATH_SCAN: [f32; 3] = [0.126, 0.086, 0.049];
+const GRAVEL_SCAN: [f32; 3] = [0.193, 0.099, 0.051];
 
 /// The most a [`Look::Lifted`] material may multiply its scan by, in any
 /// channel. The shipped lifts stay under it and push
@@ -170,7 +191,7 @@ pub fn lift(scan: [f32; 3], target: [f32; 3]) -> [f32; 3] {
 
 impl Surface {
     /// Every surface, in order.
-    pub const ALL: [Surface; 26] = [
+    pub const ALL: [Surface; 30] = [
         Surface::Adobe,
         Surface::Whitewash,
         Surface::Brick,
@@ -197,6 +218,10 @@ impl Surface {
         Surface::Paving,
         Surface::Earth,
         Surface::Bronze,
+        Surface::Ballast,
+        Surface::Sleeper,
+        Surface::RailSteel,
+        Surface::RailHead,
     ];
 
     /// The texture set it wears, if any.
@@ -218,6 +243,9 @@ impl Surface {
             Self::Band => "beige_wall_002",
             Self::Paving => "brick_floor_003",
             Self::Bronze => "bronze",
+            Self::Ballast => "gravel_road",
+            Self::Sleeper => "rough_wood",
+            Self::RailSteel | Self::RailHead => "rust_coarse_01",
             Self::Recess | Self::Steel | Self::Sheet | Self::Water => return None,
         })
     }
@@ -241,6 +269,11 @@ impl Surface {
             Self::Band => return Vec2::new(4.0, 1.0),
             Self::Yard => 3.0,
             Self::Earth => 2.0,
+            // A gravel tile covers about 2 m; the scan's timber about
+            // 0.5 m, a sleeper's width twice over; its steel about 2.2 m.
+            Self::Ballast => 2.0,
+            Self::Sleeper => 0.5,
+            Self::RailSteel | Self::RailHead => 2.2,
             // A plaque is under a metre wide: the scan repeats about twice over it.
             Self::Bronze => 0.5,
             Self::Recess | Self::Steel | Self::Sheet | Self::Water => 1.0,
@@ -267,6 +300,12 @@ impl Surface {
             Self::Paving => lifted(PAVING_SCAN, [0.48, 0.36, 0.30]),
             // Trodden a little paler and dustier than a yard.
             Self::Earth => lifted(DIRT_PATH_SCAN, [0.50, 0.43, 0.33]),
+            // The scan's brown packed earth, greyed to a dusty gravel.
+            Self::Ballast => lifted(GRAVEL_SCAN, [0.48, 0.43, 0.37]),
+            // Creosote-dark and weathered, darker than the grey scan.
+            Self::Sleeper => Look::Tint([0.62, 0.52, 0.44]),
+            // The scans' rust is saturated: a little cooled toward steel.
+            Self::RailSteel | Self::RailHead => Look::Tint([0.85, 0.92, 1.0]),
             _ => Look::Tint([1.0, 1.0, 1.0]),
         }
     }
@@ -307,12 +346,16 @@ impl Surface {
             Self::Lime => (0.86, 0.75, 0.56),
             Self::Stucco => (0.62, 0.60, 0.57),
             Self::Bronze => (0.45, 0.34, 0.22),
+            Self::Sleeper => (0.30, 0.22, 0.16),
+            Self::RailSteel => (0.33, 0.22, 0.16),
+            Self::RailHead => (0.45, 0.40, 0.36),
             Self::Painted(_)
             | Self::WashedBrick
             | Self::PatchedBrick
             | Self::Band
             | Self::Paving
-            | Self::Earth => unreachable!("a lifted look has its own plain colour"),
+            | Self::Earth
+            | Self::Ballast => unreachable!("a lifted look has its own plain colour"),
         };
         Color::srgb(r, g, b)
     }
@@ -326,6 +369,12 @@ impl Surface {
             Self::Steel => (0.6, 0.6, 0.5),
             // A real metal; the map's roughness scales the 1.0.
             Self::Bronze => (1.0, 1.0, 0.5),
+            // Rusted steel; the head's wheels have polished it.
+            // Low reflectance: ballast and timber stay matte against a low sun.
+            Self::Ballast => (1.0, 0.0, 0.1),
+            Self::Sleeper => (1.0, 0.0, 0.15),
+            Self::RailSteel => (1.0, 0.7, 0.4),
+            Self::RailHead => (0.55, 0.9, 0.5),
             Self::Water => (0.08, 0.0, 0.5),
             Self::Recess => (1.0, 0.0, 0.1),
             _ => (1.0, 0.0, 0.3),
@@ -552,8 +601,8 @@ mod tests {
             );
         }
         assert_eq!(
-            lifted, 10,
-            "five paints, two bricks, the band, the paving and the earth"
+            lifted, 11,
+            "five paints, two bricks, the band, the paving, the earth and the ballast"
         );
     }
 
@@ -631,6 +680,30 @@ mod tests {
             println!("{surface:?}: {:.4}% of the scan past white", share * 100.0);
             assert!(share <= 0.001, "{surface:?}: {share}");
         }
+    }
+
+    #[test]
+    fn the_track_surfaces_wear_their_sets_and_fall_back_to_colour() {
+        for (surface, set, tile) in [
+            (Surface::Ballast, "gravel_road", 2.0),
+            (Surface::Sleeper, "rough_wood", 0.5),
+            (Surface::RailSteel, "rust_coarse_01", 2.2),
+            (Surface::RailHead, "rust_coarse_01", 2.2),
+        ] {
+            assert_eq!(surface.set(), Some(set));
+            assert_eq!(surface.tiles(), Vec2::splat(tile));
+            // Without an asset server: a plain colour, never white.
+            let plain = surface.color(false).to_srgba();
+            assert!(
+                plain.red < 0.7 && plain.blue < 0.7,
+                "{surface:?}: {plain:?}"
+            );
+            let m = material(surface, None);
+            assert!(m.base_color_texture.is_none());
+        }
+        // The head is the smoother, more metallic of the rail's two.
+        let (body, head) = (Surface::RailSteel.pbr(), Surface::RailHead.pbr());
+        assert!(head.0 < body.0 && head.1 > body.1);
     }
 
     #[test]

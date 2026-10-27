@@ -657,6 +657,28 @@ mod tests {
     }
 
     #[test]
+    fn no_two_level_crossings_of_the_shipped_world_share_a_stretch_of_road() {
+        // Each crossing is signed on both sides (two St Andrew's crosses,
+        // 6 m out): crossings of one road closer than 20 m would crowd four
+        // signs round one crossing (render `signs_posted` folds those into
+        // two). The shipped world has none: the closest are 53 m apart.
+        let loaded = load_world(&asset_path(TOWNS_FILE));
+        let all: Vec<_> = loaded.roads.crossings().copied().collect();
+        assert!(all.len() >= 10, "{}", all.len());
+        for (i, c) in all.iter().enumerate() {
+            for o in &all[i + 1..] {
+                let same_road = c.road.dot(o.road).abs() > 0.9;
+                assert!(
+                    !same_road || c.at.distance(o.at) > 40.0,
+                    "{:?} {:?}",
+                    c.at,
+                    o.at
+                );
+            }
+        }
+    }
+
+    #[test]
     fn the_shipped_world_has_its_roads_and_one_level_crossing_by_each_station() {
         let loaded = load_world(&asset_path(TOWNS_FILE));
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);

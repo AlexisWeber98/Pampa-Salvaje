@@ -50,6 +50,29 @@ user's permission; see the asset rules in `CREDITS.md`).
   by default); `schedule_fits()`; `branch_consist()` (loco, coach, boxcar).
   `arrival_time_at` / `stop_at` still use the earliest departure of a run.
   The shuttle stops on Metileo's one station track until T2.
+- **T4 track look (done; user: "hermosas las vías")**: new `crates/render/src/railbed.rs`
+  sweeps continuous meshes along each track path (the town's straight track under its
+  `TownRoot`, links and bays per terrain chunk in `lay_track`): 4 meshes per chunk (ballast,
+  sleepers, rail body, rail head). Ballast: trapezoid, top 2.8 m flat at 0.30 m over the
+  centre's ground, shoulders to 3.8 m at the ground (5 cm under it, following the terrain),
+  rings every 2 m and at every path joint (curves are 2-degree pieces), UVs in metres (tile
+  2 m). Sleepers: 2.7 x 0.25 x 0.12 m, top at 0.36, every 0.65 m of the whole track (the old
+  1.2 m looked sparse beside the 1.676 m gauge; broad gauge lays 0.6-0.7 m), grain along the
+  length, tile 0.5 m. Rails: 10-point flat-bottom profile 0.14 m tall (foot, web, head), the
+  head a separate mesh/material (`RailHead`: smoother, more metallic); top exactly 0.50 =
+  `LineTrain::RAIL_TOP`, so the train needs no change; rail tile 2.2 m. Surfaces `Ballast`
+  (scan lifted to a grey gravel), `Sleeper`, `RailSteel`, `RailHead`; credits in the root
+  CREDITS.md and each set folder (authors verified on the Poly Haven API). Merge at turnouts
+  and the junction: tracks have a precedence (towns' own, links in line order, bays); a later
+  track follows the earlier one's height within 4.5 m (smooth blend from 1.5 m), lies 4 mm
+  under it while within 3 m (no z-fight, one surface), and its sleepers are cut short where an
+  earlier track's timbers lie (kept 5 cm clear of their ends), so rails always rest on timber
+  and no two sleepers cross. Cost about 36k triangles/km (ballast 3k, sleepers 15k, rails 18k).
+  Crossings: planks stay 2 cm under the rail top (flush); each crossing has two signs; in the
+  shipped world no two crossings of a road are within 53 m, so the "four" the user saw came
+  from the old twin crossings (station track and bay), now gone; `signs_posted` folds twin
+  crossings (within 20 m) into two signs anyway. Also: `game/src/shots.rs`, a dev-only
+  screenshot tour (`PAMPA_SHOTS=<file>`, `PAMPA_SHOTS_DIR`).
 - **T1 tests (all in `line_tests`)**: `a_shuttle_on_the_branch_stops_at_both_ends_and_runs_both_ways`,
   `the_shuttle_meets_the_line_train_at_the_junction_both_ways`,
   `the_shuttle_still_meets_the_line_train_when_the_line_timetable_shifts`,
@@ -370,7 +393,7 @@ user's permission; see the asset rules in `CREDITS.md`).
   with a walked path from each platform's west ramp to the road. The
   standing shuttle must keep clear of that crossing too. Route: delegated
   writer.
-- [ ] T4 Track look: profiled rails, textured sleepers and ballast
+- [x] T4 Track look: profiled rails, textured sleepers and ballast
   (`gravel_road`, `rough_wood`, `rust_coarse_01`, downloaded), laid as
   continuous meshes that follow curves, turnouts and the terrain. Today the
   stretched-cube ballast breaks into tilted, overlapping slabs on the
@@ -410,6 +433,37 @@ user's permission; see the asset rules in `CREDITS.md`).
   bays (core and game tests), stop ignored or wrong, `SHUTTLE_MARGIN` back
   to 5 min, no bay stop (tail on the buffer), buffer stop without its beam
   or in every chunk, buffer stops not laid.
+
+## T4 tests
+
+- New in `railbed`: `the_ballast_follows_a_curved_path_and_the_bumpy_ground`,
+  `every_triangle_faces_the_way_its_normal_says_and_none_is_degenerate`,
+  `the_ballast_textures_scale_with_meters_not_with_the_piece`,
+  `sleepers_lie_every_65_cm_square_to_the_track`,
+  `sleepers_of_neighboring_chunks_add_up_to_the_whole_track`,
+  `the_rails_top_stands_at_the_trains_rail_height_a_gauge_apart`,
+  `a_turnout_lays_no_two_sleepers_across_each_other`,
+  `the_branchs_rails_stay_on_timber_all_along_the_turnout`,
+  `a_track_under_another_lies_a_few_millimeters_below_it`,
+  `a_kilometer_of_track_stays_inside_its_triangle_budget`,
+  `the_net_lays_links_and_bays_but_not_the_towns_own_track`; materials
+  `the_track_surfaces_wear_their_sets_and_fall_back_to_colour`; road
+  `a_road_over_two_tracks_side_by_side_is_signed_once_on_each_side`,
+  `every_crossing_of_the_shipped_kind_of_world_has_exactly_two_signs`,
+  `the_planks_lie_flush_with_the_new_rail_tops`; game
+  `no_two_level_crossings_of_the_shipped_world_share_a_stretch_of_road` and the two
+  `shots` parsing tests.
+- Updated on purpose: render `rail` `chunks_on_the_line_get_track_and_others_none` (4 meshes a
+  chunk instead of >100 cubes), `the_chunk_with_the_bay_gets_its_track_and_buffer_stop`
+  (bay meshes + platform timbers); removed `pieces_of_neighboring_stretches...`,
+  `sleepers_cross_the_track_square...`, `sleepers_keep_one_spacing...` (replaced by the
+  railbed tests); render `settlement` `every_set_ships_its_three_ktx2_maps...` (19 sets);
+  materials lifted count 10 -> 11.
+- No RED run (written after the code). Sabotage (break, see it fail, restore): ballast sink,
+  quad winding, UV tile, sleeper spacing and length, chunk-border sleeper duplicates, rail top,
+  rail gauge, timber clearance, stub minimum, under-offset, sampling step, town tracks laid by
+  the net, sleeper tile, twin-crossing signs, plank height, crossing spacing in the game test.
+  The first chunk-border sabotage (+0.4 m) did not fail; +0.7 m did.
 
 ## Checks
 

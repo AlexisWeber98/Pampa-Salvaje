@@ -25,6 +25,7 @@ pub mod lamps;
 pub mod minimap;
 pub mod obj;
 pub mod rail;
+mod railbed;
 pub mod road;
 pub mod settlement;
 pub mod signs;

@@ -54,8 +54,8 @@ use pampa_core::town::{
     PlantKind, PlazaFurniture, ShadeKind, ShadeTree, Sidewalk, Walk, YardPlant,
 };
 use pampa_core::{
-    Aabb, Building, BuildingKind, Floor, RailSpan, Side, StoreStyle, Terrain, TownActivation,
-    TownLayout, Vec2 as GroundVec2,
+    Aabb, Building, BuildingKind, Floor, Side, StoreStyle, Terrain, TownActivation, TownLayout,
+    Vec2 as GroundVec2,
 };
 
 use crate::coords::world_from_ground;
@@ -64,7 +64,8 @@ use crate::facade::shape::Shape;
 use crate::facade::town_buildings::{self, Lot};
 use crate::facade::{FacadeMaterials, Surface};
 use crate::flora::ThinOccluder;
-use crate::rail::{TrackKit, track_pieces};
+use crate::rail::TrackKit;
+use crate::railbed::{Parts, Track};
 use crate::settlement::{props, ranges};
 use crate::terrain::{StreamFocus, WorldTerrain, hash2};
 use crate::tree::{TreeKit, TreeVariant, VARIANTS, plaza_species, street_species, yard_species};
@@ -166,14 +167,12 @@ struct Shapes {
     rotor: Vec<(Surface, Handle<Mesh>)>,
 }
 
-/// Earthy palette of the streets, plaza, railway and platform.
+/// Earthy palette of the streets, plaza, buffer stops and platform.
 #[derive(Resource)]
 struct Palette {
     timber: Handle<StandardMaterial>,
     plaza: Handle<StandardMaterial>,
     concrete: Handle<StandardMaterial>,
-    steel: Handle<StandardMaterial>,
-    ballast: Handle<StandardMaterial>,
 }
 
 impl Palette {
@@ -189,19 +188,10 @@ impl Palette {
         let timber = matte(0.34, 0.25, 0.18);
         let plaza = matte(0.47, 0.46, 0.29);
         let concrete = matte(0.62, 0.59, 0.54);
-        let ballast = matte(0.48, 0.45, 0.41);
-        let steel = materials.add(StandardMaterial {
-            base_color: Color::srgb(0.36, 0.34, 0.33),
-            metallic: 0.8,
-            perceptual_roughness: 0.55,
-            ..default()
-        });
         Self {
             timber,
             plaza,
             concrete,
-            steel,
-            ballast,
         }
     }
 
@@ -210,9 +200,7 @@ impl Palette {
         TrackKit {
             cube,
             concrete: self.concrete.clone(),
-            ballast: self.ballast.clone(),
             timber: self.timber.clone(),
-            steel: self.steel.clone(),
         }
     }
 }
@@ -334,6 +322,14 @@ fn stream_towns(
             range: None,
         };
         build_town(&mut b, town);
+        spawn_track(
+            &mut commands,
+            root,
+            town,
+            &terrain.0,
+            &surfaces,
+            &mut meshes,
+        );
         spawn_streets(
             &mut commands,
             root,
@@ -400,7 +396,6 @@ fn land_buildings(
 /// Every mesh of `town` but its buildings, under the builder's root.
 fn build_town(b: &mut Builder, town: &TownLayout) {
     plazas(b, town);
-    railway(b, town);
     b.range = Some(ranges()[0].clone());
     for building in &town.buildings {
         if building.kind == BuildingKind::Platform {
@@ -1218,15 +1213,30 @@ fn plaza_of(plazas: &[Aabb], at: GroundVec2) -> usize {
     nearest
 }
 
-/// Ballast bed, sleepers and two rails following the ground, drawn with
-/// the pieces the railway line between towns uses too.
-fn railway(b: &mut Builder, town: &TownLayout) {
+/// Spawns the station track of `town` under `root`: the ballast bed,
+/// sleepers and rails the railway line between towns is laid with too (see
+/// [`crate::railbed`]), one mesh each, with no range: the track runs out
+/// of the town to the line.
+fn spawn_track(
+    commands: &mut Commands,
+    root: Entity,
+    town: &TownLayout,
+    terrain: &Terrain,
+    surfaces: &FacadeMaterials,
+    meshes: &mut Assets<Mesh>,
+) {
     let Some(rail) = town.railway else {
         return;
     };
-    let kit = b.palette.track_kit(b.shapes.cube.clone());
-    for (part, transform) in track_pieces(RailSpan::whole(rail), b.terrain) {
-        b.spawn(&kit.cube, kit.material(part), transform);
+    let mut parts = Parts::default();
+    parts.add(&Track::straight(rail), &[], None, terrain);
+    for (surface, mesh) in parts.into_meshes() {
+        commands.spawn((
+            Mesh3d(meshes.add(mesh)),
+            MeshMaterial3d(surfaces.get(surface)),
+            Transform::default(),
+            ChildOf(root),
+        ));
     }
 }
 

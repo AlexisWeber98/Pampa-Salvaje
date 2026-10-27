@@ -146,7 +146,8 @@ fn lay_roads(
         }
         for crossing in roads.crossings().filter(|c| owns(coord.0, size, c.at)) {
             let signs = crossing.sign_spots();
-            for (white, transform) in crossing_pieces(crossing, &ground) {
+            let posted = signs_posted(crossing, roads.crossings());
+            for (white, transform) in crossing_pieces(crossing, &ground, posted) {
                 // The signs fade out of the camera's way; planks lie flat.
                 let at = GroundVec2::new(transform.translation.x, -transform.translation.z);
                 let fade = signs
@@ -346,8 +347,8 @@ fn near_crossings(part: &[RoadPoint], roads: &RoadNetwork) -> Vec<RoadPoint> {
     out
 }
 
-/// Top of the rails above the ground, in meters (see `crate::rail`).
-const RAIL_TOP: f32 = 0.5;
+/// Top of the rails above the ground, in meters (see `crate::railbed`).
+use crate::railbed::RAIL_TOP;
 /// Plank width and thickness, in meters.
 const PLANK: Vec2 = Vec2::new(0.24, 0.1);
 /// Plank centers across the track, from its centerline, in meters: five
@@ -373,6 +374,37 @@ fn yaw(d: GroundVec2) -> Quat {
     Quat::from_rotation_y(d.y.atan2(d.x))
 }
 
+/// How far apart two crossings of one road may be (meters) for the road to
+/// count as crossing one stretch of track, with one pair of signs.
+const SHARED_SIGNS: f32 = 20.0;
+
+/// Which of `crossing`'s two signs (the one on the approach from behind the
+/// road's direction, then the one ahead) stand: a road that crosses two
+/// tracks side by side (a station's track and its bay) is signed once on
+/// each side of both, not at every track, so a crossing that has another
+/// of the same road further out on a side leaves that side's sign to it.
+fn signs_posted<'a>(
+    crossing: &LevelCrossing,
+    all: impl Iterator<Item = &'a LevelCrossing>,
+) -> [bool; 2] {
+    let mut posted = [true; 2];
+    for other in all {
+        let apart = other.at - crossing.at;
+        let same_road = other.road.dot(crossing.road).abs() > 0.9;
+        if !same_road || apart.length() > SHARED_SIGNS || apart.length() < 1e-3 {
+            continue;
+        }
+        let ahead = apart.dot(crossing.road);
+        if ahead < -0.5 {
+            posted[0] = false;
+        }
+        if ahead > 0.5 {
+            posted[1] = false;
+        }
+    }
+    posted
+}
+
 /// The planks and the two St Andrew's crosses of `crossing`, each a unit
 /// cube with its transform, standing on `height`: the drawn ground, like
 /// the road surface, so nothing floats over it or sinks into it. The planks
@@ -382,6 +414,7 @@ fn yaw(d: GroundVec2) -> Quat {
 fn crossing_pieces(
     crossing: &LevelCrossing,
     height: &impl Fn(GroundVec2) -> f32,
+    posted: [bool; 2],
 ) -> Vec<(Paint, Transform)> {
     let rail = crossing.rail;
     let across = GroundVec2::new(-rail.y, rail.x);
@@ -396,11 +429,15 @@ fn crossing_pieces(
             pieces.push((Paint::Timber, t));
         }
     }
-    for (spot, facing) in crossing
+    for ((spot, facing), posted) in crossing
         .sign_spots()
         .into_iter()
         .zip([crossing.road * -1.0, crossing.road])
+        .zip(posted)
     {
+        if !posted {
+            continue;
+        }
         pieces.extend(cross_sign(spot, facing, height(spot)));
     }
     pieces
@@ -878,7 +915,7 @@ mod tests {
         let roads = terrain.roads.clone().unwrap();
         let crossing = roads.crossings().next().unwrap();
         let height = |p: GroundVec2| terrain.height(p.x, p.y);
-        let pieces = crossing_pieces(crossing, &height);
+        let pieces = crossing_pieces(crossing, &height, [true; 2]);
         let across = GroundVec2::new(-crossing.rail.y, crossing.rail.x);
         let span = RoadNetwork::WIDTH / crossing.angle().sin();
         for (_, t) in &pieces {
@@ -971,7 +1008,11 @@ mod tests {
         let (_, _, terrain) = world();
         let roads = terrain.roads.clone().unwrap();
         let crossing = roads.crossings().next().unwrap();
-        let pieces = crossing_pieces(crossing, &|p: GroundVec2| terrain.height(p.x, p.y));
+        let pieces = crossing_pieces(
+            crossing,
+            &|p: GroundVec2| terrain.height(p.x, p.y),
+            [true; 2],
+        );
         let planks: Vec<&Transform> = pieces
             .iter()
             .filter(|(p, t)| *p == Paint::Timber && t.scale.z == PLANK.x)
@@ -987,5 +1028,73 @@ mod tests {
         }
         let whites = pieces.iter().filter(|(p, _)| *p == Paint::White).count();
         assert_eq!(whites, 4);
+    }
+
+    /// A crossing of a road heading east over a track heading north, `x`
+    /// meters along the road.
+    fn crossing_at(x: f32) -> LevelCrossing {
+        LevelCrossing {
+            at: GroundVec2::new(x, 0.0),
+            road: GroundVec2::new(1.0, 0.0),
+            rail: GroundVec2::new(0.0, 1.0),
+            along: x,
+        }
+    }
+
+    #[test]
+    fn a_road_over_two_tracks_side_by_side_is_signed_once_on_each_side() {
+        // A station's track and its bay, 4.5 m apart: four signs became two.
+        let (a, b) = (crossing_at(100.0), crossing_at(104.5));
+        let both = [a, b];
+        let posted: Vec<[bool; 2]> = both.iter().map(|c| signs_posted(c, both.iter())).collect();
+        // The first keeps the sign before it, the second the one after it.
+        assert_eq!(posted, [[true, false], [false, true]]);
+        // A lone crossing keeps both; a crossing of another road, far off
+        // or square to this one, does not take its signs.
+        assert_eq!(signs_posted(&a, [a].iter()), [true, true]);
+        let far = crossing_at(160.0);
+        assert_eq!(signs_posted(&a, [a, far].iter()), [true, true]);
+        let other = LevelCrossing {
+            road: GroundVec2::new(0.0, 1.0),
+            rail: GroundVec2::new(1.0, 0.0),
+            ..crossing_at(104.5)
+        };
+        assert_eq!(signs_posted(&a, [a, other].iter()), [true, true]);
+    }
+
+    #[test]
+    fn every_crossing_of_the_shipped_kind_of_world_has_exactly_two_signs() {
+        let (_, _, terrain) = world();
+        let roads = terrain.roads.clone().unwrap();
+        let signs = |c: &LevelCrossing| {
+            let height = |p: GroundVec2| terrain.height(p.x, p.y);
+            crossing_pieces(c, &height, signs_posted(c, roads.crossings()))
+                .into_iter()
+                .filter(|(p, t)| *p == Paint::Timber && t.scale.y > 2.0)
+                .count()
+        };
+        for c in roads.crossings() {
+            // The crossings of this stretch of road, side by side.
+            let group = roads
+                .crossings()
+                .filter(|o| o.road.dot(c.road).abs() > 0.9 && o.at.distance(c.at) <= SHARED_SIGNS);
+            assert_eq!(group.map(signs).sum::<usize>(), 2, "{:?}", c.at);
+        }
+    }
+
+    #[test]
+    fn the_planks_lie_flush_with_the_new_rail_tops() {
+        let (_, _, terrain) = world();
+        let roads = terrain.roads.clone().unwrap();
+        let crossing = roads.crossings().next().unwrap();
+        let height = |p: GroundVec2| terrain.height(p.x, p.y);
+        for (paint, t) in crossing_pieces(crossing, &height, [false; 2]) {
+            assert_eq!(paint, Paint::Timber);
+            let g = GroundVec2::new(t.translation.x, -t.translation.z);
+            // The rails' heads are 0.50 over the ground; the planks 2 cm
+            // under them, between and beside the rails.
+            let top = t.translation.y + t.scale.y / 2.0 - height(g);
+            assert!((top - 0.50).abs() < 0.05, "{top}");
+        }
     }
 }
