@@ -18,38 +18,47 @@ use std::collections::BTreeSet;
 
 use bevy::prelude::*;
 use pampa_core::{
-    GameClock, LineTrain, MAX_STEP, Npc, RailLine, Ride, Run, Standing, Timetable, TownLayout,
-    Townsfolk, Travel, opening,
+    BASE_RATE, GameClock, LineTrain, MAX_STEP, Npc, RailLine, Ride, Run, Standing, Timetable,
+    TownLayout, Townsfolk, Travel, opening,
 };
 use pampa_render::{
     ActiveTowns, CharacterVisual, Coat, FigureKind, MapIcon, VisualPose, WorldClock, WorldTowns,
-    WorldTrain, world_from_ground,
+    WorldTrains, world_from_ground,
 };
 
 use crate::player::{DrivePlayer, GameWorld, Player, drive_player};
 use crate::ride::OnTrain;
 
-/// The clock, the line train and the player's ride as the game begins
+/// The clock, the trains and the player's ride as the game begins
 /// (the opening): the protagonist comes from General Pico, so he rides the
 /// morning (up) train from Pico, a little before it pulls into the first
 /// town's station ([`pampa_core::OPENING_LEAD`] real seconds), and is put
 /// off there. The clock runs at the onboard rate and reaches the
 /// timetabled arrival, in the mid-morning, as the train stops. Without a
 /// train (or a station in the first town) there is no ride, and the clock
-/// starts at the morning departure time from Pico.
+/// starts at the morning departure time from Pico. The trains are the
+/// line train and the branch shuttle ([`LineTrain::all_of`]); the shuttle
+/// is brought to the opening's time from midnight, like the clock would.
 pub fn start_of_day(
     line: &RailLine,
     towns: &[TownLayout],
-) -> (GameClock, Option<LineTrain>, Option<Ride>) {
-    let mut train = LineTrain::new(line, towns, Timetable::default());
-    let start = train.as_mut().and_then(|t| opening(t, 0, Run::Up));
+) -> (GameClock, Vec<LineTrain>, Option<Ride>) {
+    let mut trains = LineTrain::all_of(line, towns, Timetable::default());
+    let start = trains.first_mut().and_then(|t| opening(t, 0, Run::Up));
     match start {
         Some((clock, ride)) => {
             // Seated by the window on the Monte Nievas platform's side.
-            let ride = train.as_ref().map(|t| ride.facing_platform(t, towns));
-            (clock, train, ride)
+            let ride = ride.facing_platform(&trains[0], towns, &line.floors());
+            for shuttle in trains.iter_mut().skip(1) {
+                shuttle.advance(0.0, clock.elapsed(), BASE_RATE);
+            }
+            (clock, trains, Some(ride))
         }
-        None => (GameClock::at(Timetable::default().depart_pico), train, None),
+        None => (
+            GameClock::at(Timetable::default().departure(Run::Up)),
+            trains,
+            None,
+        ),
     }
 }
 
@@ -167,17 +176,20 @@ impl Plugin for TownLifePlugin {
 
 /// Warns about stations the line train cannot stop alongside (too near a
 /// tip of the line).
-fn report_train(train: Option<Res<WorldTrain>>, towns: Option<Res<WorldTowns>>) {
-    let Some(train) = train.as_ref().and_then(|t| t.0.as_ref()) else {
+fn report_train(trains: Option<Res<WorldTrains>>, towns: Option<Res<WorldTowns>>) {
+    let Some(trains) = trains else {
         return;
     };
-    for station in train.misplaced_stops() {
-        let town = train.stations()[station].town;
-        let name = towns
-            .as_ref()
-            .and_then(|t| t.0.get(town))
-            .map_or("?", |t| t.name.as_str());
-        warn!("line train: the coaches cannot stop alongside the station of `{name}`");
+    for (index, train) in trains.0.iter().enumerate() {
+        let which = if index == 0 { "line train" } else { "shuttle" };
+        for station in train.misplaced_stops() {
+            let town = train.stations()[station].town;
+            let name = towns
+                .as_ref()
+                .and_then(|t| t.0.get(town))
+                .map_or("?", |t| t.name.as_str());
+            warn!("{which}: the coaches cannot stop alongside the station of `{name}`");
+        }
     }
 }
 
@@ -378,12 +390,12 @@ fn spawn_palenque_horses(
     }
 }
 
-/// Ticks the game clock, lets the line train follow it and hands the
-/// train's cars to the logic world as moving obstacles.
+/// Ticks the game clock, lets every train follow it and hands their cars
+/// to the logic world as moving obstacles.
 fn run_clock_and_train(
     time: Res<Time>,
     clock: Option<ResMut<WorldClock>>,
-    train: Option<ResMut<WorldTrain>>,
+    trains: Option<ResMut<WorldTrains>>,
     mut world: ResMut<GameWorld>,
 ) {
     let Some(mut clock) = clock else {
@@ -393,13 +405,14 @@ fn run_clock_and_train(
     // Capped like the rider's step, so a frame hitch cannot jump the train
     // tens of meters onto a rider that was clear the frame before.
     let game = clock.0.tick(time.delta_secs().min(MAX_STEP));
-    let mut train = train;
-    let Some(train) = train.as_mut().and_then(|t| t.0.as_mut()) else {
+    let Some(mut trains) = trains else {
         world.0.moving.clear();
         return;
     };
-    train.advance(before, game, clock.0.rate());
-    world.0.moving = train.obstacles();
+    for train in &mut trains.0 {
+        train.advance(before, game, clock.0.rate());
+    }
+    world.0.moving = trains.obstacles();
 }
 
 /// Steps the live crowds, walking around the rider where it stood last
@@ -531,7 +544,7 @@ mod tests {
             .init_resource::<ButtonInput<KeyCode>>()
             .insert_resource(Crowds(crowds))
             .insert_resource(WorldClock::default())
-            .insert_resource(WorldTrain(None))
+            .insert_resource(WorldTrains::default())
             .insert_resource(WorldTowns(towns))
             .insert_resource(GameWorld(world))
             .add_plugins((PlayerPlugin, TownLifePlugin));
@@ -673,34 +686,38 @@ mod tests {
     /// jumped there from midnight.
     fn shipped_app(clock: Option<GameClock>) -> App {
         let loaded = shipped();
-        let (start, mut train, _) = start_of_day(&loaded.line, &loaded.towns);
+        let (start, mut trains, _) = start_of_day(&loaded.line, &loaded.towns);
         let clock = clock.unwrap_or(start);
         if clock != start {
-            train = LineTrain::new(&loaded.line, &loaded.towns, Timetable::default());
-            if let Some(train) = &mut train {
+            trains = LineTrain::all_of(&loaded.line, &loaded.towns, Timetable::default());
+            for train in &mut trains {
                 train.advance(0.0, clock.elapsed(), BASE_RATE);
             }
         }
         let mut app = app_with(loaded.towns, 1);
         app.insert_resource(WorldClock(clock))
-            .insert_resource(WorldTrain(train));
+            .insert_resource(WorldTrains(trains));
         app
     }
 
     fn train(app: &App) -> LineTrain {
         app.world()
-            .resource::<WorldTrain>()
-            .0
-            .clone()
+            .resource::<WorldTrains>()
+            .line()
             .expect("a train")
+            .clone()
     }
 
     #[test]
     fn the_game_starts_aboard_the_morning_train_from_pico_pulling_into_the_first_town() {
         let loaded = shipped();
         assert_eq!(loaded.towns[0].name, "Monte Nievas");
-        let (clock, train, ride) = start_of_day(&loaded.line, &loaded.towns);
-        let train = train.expect("the shipped line has a train");
+        let (clock, trains, ride) = start_of_day(&loaded.line, &loaded.towns);
+        assert_eq!(trains.len(), 2, "the line train and the shuttle");
+        let train = trains
+            .into_iter()
+            .next()
+            .expect("the shipped line has a train");
         let s = train.state();
         assert_eq!(s.phase, LinePhase::Running);
         // Pulling into Monte Nievas, a little under a minute out.
@@ -765,7 +782,7 @@ mod tests {
         assert!(!train.obstacles().is_empty());
         assert_eq!(
             app.world().resource::<GameWorld>().0.moving,
-            train.obstacles()
+            app.world().resource::<WorldTrains>().obstacles()
         );
     }
 
@@ -808,8 +825,37 @@ mod tests {
         assert!(s.speed > 0.0);
         assert_eq!(
             app.world().resource::<GameWorld>().0.moving,
-            train(&app).obstacles()
+            app.world().resource::<WorldTrains>().obstacles()
         );
+    }
+
+    fn shuttle(app: &App) -> LineTrain {
+        app.world().resource::<WorldTrains>().0[1].clone()
+    }
+
+    #[test]
+    fn the_clock_advances_every_train_and_all_their_cars_are_obstacles() {
+        // A minute before the shuttle's first departure from Caleufu: the
+        // line train is somewhere else, parked or running.
+        let probe = shuttle(&shipped_app(None));
+        let leaves = probe.timetable().departure(Run::Up).seconds();
+        let mut app = shipped_app(Some(GameClock::at(TimeOfDay::from_seconds(leaves - 60.0))));
+        app.update();
+        assert_eq!(shuttle(&app).state().phase, LinePhase::Parked);
+        // Four real seconds: two game minutes, past the departure.
+        for _ in 0..80 {
+            app.update();
+        }
+        let s = shuttle(&app).state();
+        assert_eq!(s.phase, LinePhase::Running, "the shuttle pulled out");
+        assert!(s.speed > 0.0);
+        let trains = app.world().resource::<WorldTrains>();
+        let moving = &app.world().resource::<GameWorld>().0.moving;
+        let (line, shuttle) = (train(&app).obstacles(), shuttle(&app).obstacles());
+        assert_eq!(shuttle.len(), 3, "loco, coach and boxcar");
+        assert_eq!(moving.len(), line.len() + shuttle.len());
+        assert!(line.iter().chain(&shuttle).all(|o| moving.contains(o)));
+        assert_eq!(*moving, trains.obstacles());
     }
 
     #[test]

@@ -209,6 +209,7 @@ impl Palette {
     fn track_kit(&self, cube: Handle<Mesh>) -> TrackKit {
         TrackKit {
             cube,
+            concrete: self.concrete.clone(),
             ballast: self.ballast.clone(),
             timber: self.timber.clone(),
             steel: self.steel.clone(),

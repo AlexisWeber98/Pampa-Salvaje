@@ -38,7 +38,7 @@ use pampa_core::{
 };
 use pampa_render::character::viewer::world_layers;
 use pampa_render::{
-    CloseShadows, HudHint, SightLine, WorldTrain, car_transform, world_from_ground,
+    CloseShadows, HudHint, SightLine, WorldTrains, car_transform, world_from_ground,
 };
 
 use crate::first_person::{
@@ -309,7 +309,7 @@ impl CameraOccluders {
     }
 }
 
-/// The line train's cars near `near` (the rider) as columns from the ground
+/// The trains' cars near `near` (the rider) as columns from the ground
 /// to their roofs, a row of short boxes for a car on a slant.
 pub fn car_occluders(cars: &[PlacedCar], terrain: &Terrain, near: GroundVec2) -> Vec<Occluder> {
     let ground = |p: GroundVec2| terrain.height(p.x, p.y);
@@ -567,7 +567,7 @@ fn follow_player(
     time: Res<Time>,
     world: Res<GameWorld>,
     occluders: Res<CameraOccluders>,
-    train: Option<Res<WorldTrain>>,
+    trains: Option<Res<WorldTrains>>,
     tuning: Res<CameraTuning>,
     input: Res<CameraInput>,
     sight: Option<ResMut<SightLine>>,
@@ -592,8 +592,9 @@ fn follow_player(
         rig.0 = None;
     }
     let dt = time.delta_secs();
-    let train_now = train.as_deref().and_then(|t| t.0.as_ref());
-    if let (Some(ride), Some(train)) = (ride, train_now) {
+    // The train the player rides.
+    let ridden = ride.and_then(|ride| trains.as_deref()?.0.get(ride.0.train));
+    if let (Some(ride), Some(train)) = (ride, ridden) {
         let cars = train.placed_cars();
         match *view {
             RideView::Window => {
@@ -658,12 +659,14 @@ fn follow_player(
     };
     let desired = follow.desired(focus, &orbit, &world.0);
     // Keep the line of sight to the rider itself clear, of buildings and of
-    // the train's cars near it (but not the train the player rides).
-    let cars = train
+    // the cars of every train near it (but not the train the player rides).
+    let cars = trains
         .as_deref()
-        .and_then(|t| t.0.as_ref())
         .filter(|_| !aboard)
-        .map(|t| car_occluders(&t.placed_cars(), &world.0.terrain, rider.position))
+        .map(|t| {
+            let cars: Vec<_> = t.0.iter().flat_map(LineTrain::placed_cars).collect();
+            car_occluders(&cars, &world.0.terrain, rider.position)
+        })
         .unwrap_or_default();
     let allowed = clear_reach(target, desired, occluders.0.iter().chain(&cars));
     reach.0 = if snapped {
@@ -1469,7 +1472,7 @@ mod tests {
 
     /// The camera in the frame of the player's coach, and that coach.
     fn in_coach(app: &mut App) -> (Transform, PlacedCar) {
-        let train = app.world().resource::<WorldTrain>().0.clone().unwrap();
+        let train = app.world().resource::<WorldTrains>().0[0].clone();
         let (_, ride) = crate::ride::testing::passenger(app);
         let car = train.placed_cars()[ride.expect("aboard").car];
         let terrain = app.world().resource::<GameWorld>().0.terrain.clone();
@@ -1515,7 +1518,7 @@ mod tests {
         // The landscape streams around the moving train.
         let (rider, _) = crate::ride::testing::passenger(&mut app);
         let focus = app.world().resource::<pampa_render::StreamFocus>().0;
-        let train = app.world().resource::<WorldTrain>().0.clone().unwrap();
+        let train = app.world().resource::<WorldTrains>().0[0].clone();
         let (_, ride) = crate::ride::testing::passenger(&mut app);
         assert_eq!(focus, train.placed_cars()[ride.unwrap().car].center);
         assert_eq!(focus, rider.position);
@@ -1719,8 +1722,8 @@ mod tests {
         let loaded =
             crate::towns::load_world(&pampa_content::asset_path(pampa_content::TOWNS_FILE));
         // The opening's train, skipped on to its dwell at Monte Nievas.
-        let (clock, train, _) = crate::life::start_of_day(&loaded.line, &loaded.towns);
-        let mut train = train.expect("a line train");
+        let (clock, trains, _) = crate::life::start_of_day(&loaded.line, &loaded.towns);
+        let mut train = trains.into_iter().next().expect("a line train");
         train.skip_to_next_stop(clock.elapsed(), clock.rate());
         let world = World::with_towns(loaded.world, Terrain::default(), &loaded.towns);
         let occluders = CameraOccluders::from_towns(&loaded.towns, &world.terrain);
@@ -1743,7 +1746,7 @@ mod tests {
             travel: pampa_core::Travel::OnFoot,
         };
         let mut app = headless_app(world.clone(), spawn, occluders.clone());
-        app.insert_resource(WorldTrain(Some(train)));
+        app.insert_resource(WorldTrains(vec![train]));
         app.update();
         let yaw = to_track.y.atan2(to_track.x);
         let mut pulled = 0;

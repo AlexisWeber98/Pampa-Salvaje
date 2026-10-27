@@ -46,7 +46,7 @@ use crate::rail::WorldRail;
 use crate::settlement::WorldSettlements;
 use crate::terrain::{StreamFocus, WorldTerrain};
 use crate::town::WorldTowns;
-use crate::train::WorldTrain;
+use crate::train::WorldTrains;
 use raster::{
     Canvas, MapFrame, Markers, Overlay, draw_markers, palette, rasterize_field, rasterize_town_over,
 };
@@ -409,7 +409,7 @@ fn show_field(
 /// the roads (carried by the terrain) and the settlements.
 type WorldLayers<'a> = (
     Option<Res<'a, WorldTowns>>,
-    Option<Res<'a, WorldTrain>>,
+    Option<Res<'a, WorldTrains>>,
     Option<Res<'a, WorldRail>>,
     Option<Res<'a, WorldTerrain>>,
     Option<Res<'a, WorldSettlements>>,
@@ -472,8 +472,7 @@ fn update_markers(
     let mut markers = Markers {
         cars: trains
             .as_ref()
-            .and_then(|t| t.0.as_ref())
-            .map(|t| t.placed_cars())
+            .map(|t| t.0.iter().flat_map(|t| t.placed_cars()).collect())
             .unwrap_or_default(),
         target: target.and_then(|t| t.0),
         ..default()
@@ -731,7 +730,7 @@ mod tests {
             .init_resource::<ButtonInput<KeyCode>>()
             .init_resource::<Assets<Image>>()
             .insert_resource(WorldTowns(towns.clone()))
-            .insert_resource(WorldTrain(Some(train.clone())))
+            .insert_resource(WorldTrains(vec![train.clone()]))
             .add_plugins(MinimapPlugin);
         let player = towns[0].grid().min;
         app.world_mut().spawn((
@@ -753,6 +752,55 @@ mod tests {
             let at = minimap.frame.to_map(car.center);
             let i = (at.y as usize * MAP_PX + at.x as usize) * 4;
             assert_eq!(data[i + 3], 255, "car marked at {at:?}");
+        }
+    }
+
+    #[test]
+    fn marks_the_cars_of_every_train_in_the_shown_town() {
+        use pampa_core::{BASE_RATE, Run};
+        let (towns, line) = crate::train::tests::line_train();
+        // A shuttle leaving Pico at 08:00, an hour behind the line train:
+        // dwelling at Monte Nievas when the line train is long gone.
+        let shuttle = crate::train::tests::shuttle(&line, &towns, 22, 8);
+        let mut shuttle = shuttle;
+        let (arrive, _) = shuttle.stop_times(Run::Up, 1).unwrap();
+        shuttle.advance(0.0, 8.0 * 3600.0 + (arrive + 5.0) * BASE_RATE, BASE_RATE);
+        let mut line = line;
+        line.advance(0.0, 8.0 * 3600.0 + 1800.0, BASE_RATE);
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<Assets<Image>>()
+            .insert_resource(WorldTowns(towns.clone()))
+            .insert_resource(WorldTrains(vec![line.clone(), shuttle.clone()]))
+            .add_plugins(MinimapPlugin);
+        let player = towns[0].grid().min;
+        app.world_mut().spawn((
+            MapIcon::Player,
+            Transform::from_translation(crate::world_from_ground(player, 0.0)),
+        ));
+        app.update();
+        let minimap = app.world().resource::<Minimap>();
+        assert_eq!(minimap.town, 0);
+        let images = app.world().resource::<Assets<Image>>();
+        let data = images.get(&minimap.markers).unwrap().data.as_ref().unwrap();
+        let shown: Vec<_> = shuttle
+            .placed_cars()
+            .into_iter()
+            .filter(|c| minimap.frame.contains(c.center))
+            .collect();
+        assert!(!shown.is_empty(), "the shuttle is in the town");
+        assert!(
+            !line
+                .placed_cars()
+                .iter()
+                .any(|c| minimap.frame.contains(c.center)),
+            "the line train is elsewhere"
+        );
+        for car in shown {
+            let at = minimap.frame.to_map(car.center);
+            let i = (at.y as usize * MAP_PX + at.x as usize) * 4;
+            assert_eq!(data[i + 3], 255, "shuttle car marked at {at:?}");
         }
     }
 

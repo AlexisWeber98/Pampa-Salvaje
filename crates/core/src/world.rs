@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use crate::obstacles::around;
 use crate::{
-    Body, Circle, FenceLayout, Floor, FloraSite, RoadNetwork, SettlementLayout, SideObstacle,
-    StaticObstacles, Terrain, TownLayout, Vec2, WorldConfig,
+    Body, Circle, FenceLayout, Floor, FloraSite, RailLine, RoadNetwork, SettlementLayout,
+    SideObstacle, StaticObstacles, Terrain, TownLayout, Vec2, WorldConfig,
 };
 
 /// Axis-aligned playable area on the ground plane.
@@ -77,6 +77,10 @@ pub struct World {
     /// Raised floors people walk on (station platforms), part of
     /// [`Self::ground_height`].
     pub floors: Vec<Floor>,
+    /// Raised foot crossings over the track (boarded decks, see
+    /// [`crate::RailBay::walkway`]): part of [`Self::ground_height`] but
+    /// not a platform, so nobody boards a train from one.
+    pub walkways: Vec<Floor>,
 }
 
 /// Something that knows how high the ground is where bodies stand.
@@ -109,12 +113,14 @@ impl World {
             obstacles: StaticObstacles::default(),
             moving: Vec::new(),
             floors: Vec::new(),
+            walkways: Vec::new(),
         }
     }
 
     /// Height of the surface bodies stand on at `p`: the terrain, raised by
-    /// the highest floor (a platform or its ramp) there, or by a level
-    /// crossing's approach and deck ([`RoadNetwork::crossing_rise`]).
+    /// the highest floor (a platform or its ramp) or foot crossing there,
+    /// or by a level crossing's approach and deck
+    /// ([`RoadNetwork::crossing_rise`]).
     /// Everything placed on the ground (riders, people, horses, the camera
     /// floor) uses this.
     pub fn ground_height(&self, p: Vec2) -> f32 {
@@ -126,6 +132,7 @@ impl World {
         let rise = self
             .floors
             .iter()
+            .chain(&self.walkways)
             .filter_map(|f| f.rise_at(p))
             .fold(crossing, f32::max);
         self.terrain.height(p.x, p.y) + rise
@@ -158,6 +165,13 @@ impl World {
             world.floors.extend(town.floors());
         }
         world
+    }
+
+    /// Adds the bays' platforms as floors and their foot crossings as
+    /// walkways ([`RailLine::floors`], [`RailLine::walkways`]).
+    pub fn lay_rail(&mut self, line: &RailLine) {
+        self.floors.extend(line.floors());
+        self.walkways.extend(line.walkways());
     }
 
     /// Cuts `roads` into the terrain and adds their signposts and level
@@ -467,6 +481,41 @@ mod tests {
             lagoon.offshore(spot) < crate::Lagoon::MUD_BAND + 2.0,
             "nearest"
         );
+    }
+
+    #[test]
+    fn a_foot_crossing_raises_the_ground_to_rail_level_and_is_no_platform() {
+        let (towns, line) = crate::train::line_tests::branched_line();
+        let mut world = World::with_towns(WorldConfig::default(), Terrain::default(), &towns);
+        let platforms = world.floors.len();
+        world.lay_rail(&line);
+        // The bay's platform is a floor, its crossing a walkway only.
+        assert_eq!(world.floors.len(), platforms + 1);
+        assert_eq!(world.walkways, line.walkways());
+        let walk = line.bays[0].walkway;
+        let terrain = |p: Vec2| world.terrain.height(p.x, p.y);
+        let rise = |p: Vec2| world.ground_height(p) - terrain(p);
+        // The deck is at rail level across the tracks.
+        let f = walk.footprint;
+        let across = walk.across();
+        let along = walk.along;
+        let at = |a: f32, c: f32| along * a + across * c;
+        let (a0, a1) = (f.min.dot(along), f.max.dot(along));
+        let (c0, c1) = (f.min.dot(across), f.max.dot(across));
+        let mid = (c0 + c1) / 2.0;
+        let deck = at((a0 + a1) / 2.0, mid);
+        assert!(
+            (rise(deck) - crate::RoadNetwork::CROSSING_RISE).abs() < 1e-5,
+            "{}",
+            rise(deck)
+        );
+        // Ramps lead down along the walk, steadily, to the ground.
+        let before = at(a0 - Floor::RAMP_LENGTH / 2.0, mid);
+        let foot = at(a0 - Floor::RAMP_LENGTH, mid);
+        assert!((rise(before) - crate::RoadNetwork::CROSSING_RISE / 2.0).abs() < 1e-5);
+        assert!(rise(foot).abs() < 1e-5);
+        // Beside the deck, across the walk, nothing is raised.
+        assert_eq!(rise(at((a0 + a1) / 2.0, c1 + 0.5)), 0.0);
     }
 
     #[test]

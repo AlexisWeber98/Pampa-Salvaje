@@ -109,19 +109,25 @@ pub struct Station {
     pub town: usize,
     /// Distance along the line path to the station's projection onto it.
     pub mark: f32,
+    /// Whether the train stands on a bay track here (see
+    /// [`LineTrain::on_path_stopping`]) instead of beside the platform.
+    pub bay: bool,
 }
 
-/// Departure times and motion of the line train.
+/// Departure times and motion of a train.
 ///
-/// Each terminal has its departure time. The run that leaves earlier in the
-/// day is the morning run ([`Self::morning_run`]); the train spends the
-/// night at the terminal it leaves from.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Each terminal has its departure times, one or more per day. The earliest
+/// departure of the day belongs to the morning run ([`Self::morning_run`]);
+/// the train spends the night at the terminal it leaves from. A train that
+/// is in at a terminal leaves at that terminal's next departure.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Timetable {
-    /// When the train leaves the line's first town (Castex) on its down run.
-    pub depart_castex: TimeOfDay,
-    /// When the train leaves the line's last town (Pico) on its up run.
-    pub depart_pico: TimeOfDay,
+    /// When the train leaves the path's first station on a down run (for
+    /// the line, Castex).
+    pub down: Vec<TimeOfDay>,
+    /// When the train leaves the path's last station on an up run (for the
+    /// line, Pico).
+    pub up: Vec<TimeOfDay>,
     /// Real seconds standing at each station partway through a run.
     pub dwell: f32,
     /// Top speed, in m/s.
@@ -133,9 +139,12 @@ pub struct Timetable {
 /// Why a [`Timetable`] cannot be used.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TimetableError {
-    /// Both terminals send the train off at the same time of day, so no
-    /// run is the morning one and the train could keep only one of them.
+    /// Two departures, from either terminal, are at the same time of day,
+    /// so the train could keep only one of them.
     SameDeparture(TimeOfDay),
+    /// A terminal has no departure at all, so the train could never leave
+    /// it.
+    NoDeparture(Run),
 }
 
 impl std::fmt::Display for TimetableError {
@@ -143,7 +152,11 @@ impl std::fmt::Display for TimetableError {
         match self {
             Self::SameDeparture(at) => write!(
                 f,
-                "timetable: the train leaves both terminals at {at}; give each its own time"
+                "timetable: two departures are at {at}; give each its own time"
+            ),
+            Self::NoDeparture(run) => write!(
+                f,
+                "timetable: no departure for the {run:?} run; give each terminal at least one"
             ),
         }
     }
@@ -155,27 +168,45 @@ impl Timetable {
     /// 65 km/h, the line's top speed.
     pub const TOP_SPEED: f32 = 65.0 / 3.6;
 
-    /// Whether the line train can run on this timetable: each terminal
-    /// needs its own departure time.
+    /// Whether a train can run on this timetable: each terminal needs a
+    /// departure, and no two departures share a time of day.
     pub fn check(&self) -> Result<(), TimetableError> {
-        if self.depart_castex == self.depart_pico {
-            return Err(TimetableError::SameDeparture(self.depart_castex));
+        for run in [Run::Down, Run::Up] {
+            if self.departures(run).is_empty() {
+                return Err(TimetableError::NoDeparture(run));
+            }
+        }
+        let all: Vec<TimeOfDay> = self.down.iter().chain(&self.up).copied().collect();
+        for (i, at) in all.iter().enumerate() {
+            if all[..i].contains(at) {
+                return Err(TimetableError::SameDeparture(*at));
+            }
         }
         Ok(())
     }
 
-    /// When `run` leaves its terminal.
-    pub fn departure(&self, run: Run) -> TimeOfDay {
+    /// Every time of day `run` leaves its terminal, as listed.
+    pub fn departures(&self, run: Run) -> &[TimeOfDay] {
         match run {
-            Run::Down => self.depart_castex,
-            Run::Up => self.depart_pico,
+            Run::Down => &self.down,
+            Run::Up => &self.up,
         }
+    }
+
+    /// The earliest time of day `run` leaves its terminal (midnight when it
+    /// never does).
+    pub fn departure(&self, run: Run) -> TimeOfDay {
+        self.departures(run)
+            .iter()
+            .copied()
+            .min_by(|a, b| a.seconds().total_cmp(&b.seconds()))
+            .unwrap_or_default()
     }
 
     /// The run that leaves first each day (the down run on a tie). The
     /// train spends the night at the terminal it leaves from.
     pub fn morning_run(&self) -> Run {
-        if self.depart_pico.seconds() < self.depart_castex.seconds() {
+        if self.departure(Run::Up).seconds() < self.departure(Run::Down).seconds() {
             Run::Up
         } else {
             Run::Down
@@ -188,8 +219,8 @@ impl Default for Timetable {
         Self {
             // Overnight at Pico: the morning run leaves Pico, the
             // afternoon run leaves Castex (user, 2026-10-21).
-            depart_pico: TimeOfDay::hm(7, 0),
-            depart_castex: TimeOfDay::hm(16, 0),
+            up: vec![TimeOfDay::hm(7, 0)],
+            down: vec![TimeOfDay::hm(16, 0)],
             dwell: 25.0,
             top_speed: Self::TOP_SPEED,
             acceleration: 0.5,
@@ -286,25 +317,68 @@ impl LineTrain {
             Ok(()) => timetable,
             Err(_) => Timetable::default(),
         };
-        let path = line.full_path(towns);
-        let stations: Vec<Station> = line
-            .connected_towns()
-            .into_iter()
+        Self::on_path(
+            line.full_path(towns),
+            &line.connected_towns(),
+            towns,
+            line_consist(),
+            timetable,
+        )
+    }
+
+    /// A train of `cars` on any `path`, serving `served` (indices into
+    /// `towns`, in the order the path reaches them) on `timetable`, parked
+    /// overnight at the terminal its morning run leaves from, facing that
+    /// run. A town without a railway has no station. `None` when fewer than
+    /// two stations remain, the path is too short for the consist, or the
+    /// `timetable` fails [`Timetable::check`].
+    pub fn on_path(
+        path: LinePath,
+        served: &[usize],
+        towns: &[TownLayout],
+        cars: Vec<Car>,
+        timetable: Timetable,
+    ) -> Option<Self> {
+        Self::on_path_stopping(path, served, &[], towns, cars, timetable)
+    }
+
+    /// [`Self::on_path`], with `stops` naming where the train stands at a
+    /// town instead of beside its station building: pairs of a town index
+    /// and a ground point, whose nearest point on the path is the stop
+    /// (the middle of the consist at a terminal). A bay track gives the
+    /// shuttle's stop at the junction so.
+    pub fn on_path_stopping(
+        path: LinePath,
+        served: &[usize],
+        stops: &[(usize, Vec2)],
+        towns: &[TownLayout],
+        cars: Vec<Car>,
+        timetable: Timetable,
+    ) -> Option<Self> {
+        timetable.check().ok()?;
+        let stations: Vec<Station> = served
+            .iter()
+            .copied()
             .filter_map(|town| {
                 let layout = towns.get(town)?;
                 let rail = layout.railway?;
-                let at = layout
-                    .buildings
-                    .iter()
-                    .find(|b| b.kind == BuildingKind::Station)
-                    .map_or((rail.start + rail.end) * 0.5, |b| b.footprint.center());
+                let bay = stops.iter().find(|(t, _)| *t == town).map(|&(_, at)| at);
+                let at = bay
+                    .or_else(|| {
+                        layout
+                            .buildings
+                            .iter()
+                            .find(|b| b.kind == BuildingKind::Station)
+                            .map(|b| b.footprint.center())
+                    })
+                    .unwrap_or((rail.start + rail.end) * 0.5);
                 Some(Station {
                     town,
                     mark: path.project(at),
+                    bay: bay.is_some(),
                 })
             })
             .collect();
-        let cars = line_consist();
         let length = consist_length(&cars);
         if stations.len() < 2 || path.length() < length + 1.0 {
             return None;
@@ -340,6 +414,92 @@ impl LineTrain {
         train.down = train.plan(&down);
         train.up = train.plan(&up);
         Some(train)
+    }
+
+    /// The shuttle on the branch `path` (as [`RailLine::shuttle_paths`]
+    /// gives it), serving `served` (the junction town first, then the
+    /// branch's) and standing at `stops` (see [`Self::on_path_stopping`];
+    /// the junction bay's [`crate::RailBay::stop`]), that meets `line` at
+    /// the junction: its timetable comes
+    /// from [`shuttle_timetable`]. `None` when the branch cannot hold the
+    /// shuttle, `line` does not stop at the junction, or the derived
+    /// timetable does not fit ([`Self::schedule_fits`]).
+    pub fn branch_shuttle(
+        line: &LineTrain,
+        path: LinePath,
+        served: &[usize],
+        stops: &[(usize, Vec2)],
+        towns: &[TownLayout],
+    ) -> Option<Self> {
+        let junction = *served.first()?;
+        // Run times do not depend on the departures, so a placeholder
+        // timetable on the same motion gives the run from the far terminal
+        // to the junction.
+        let motion = line.timetable();
+        let placeholder = Timetable {
+            down: vec![TimeOfDay::hm(12, 0)],
+            up: vec![TimeOfDay::hm(13, 0)],
+            ..motion.clone()
+        };
+        let probe = Self::on_path_stopping(
+            path.clone(),
+            served,
+            stops,
+            towns,
+            branch_consist(),
+            placeholder,
+        )?;
+        let timetable = shuttle_timetable(line, junction, probe.run_duration(Run::Up))?;
+        let shuttle =
+            Self::on_path_stopping(path, served, stops, towns, branch_consist(), timetable)?;
+        shuttle.schedule_fits().then_some(shuttle)
+    }
+
+    /// Every train of `line` through `towns`: the line train on `timetable`
+    /// first (none when the line cannot hold one), then the shuttle of each
+    /// branch that has a bay, meeting the line train at the junction
+    /// ([`Self::branch_shuttle`]). A branch with no bay, or whose shuttle
+    /// does not fit, has no shuttle.
+    pub fn all_of(line: &RailLine, towns: &[TownLayout], timetable: Timetable) -> Vec<Self> {
+        let Some(train) = Self::new(line, towns, timetable) else {
+            return Vec::new();
+        };
+        let paths = line.shuttle_paths(towns);
+        let shuttles: Vec<Self> = line
+            .branches
+            .iter()
+            .zip(paths)
+            .enumerate()
+            .filter_map(|(index, (branch, path))| {
+                let bay = line.bay_of(index)?;
+                Self::branch_shuttle(&train, path, &branch.towns, &[(bay.town, bay.stop)], towns)
+            })
+            .collect();
+        std::iter::once(train).chain(shuttles).collect()
+    }
+
+    /// Whether every run is over before the next departure, whichever end
+    /// it leaves from: departures, taken over a day, alternate between the
+    /// terminals and each leaves after the previous run has arrived.
+    pub fn schedule_fits(&self) -> bool {
+        let mut events: Vec<(f64, Run)> = [Run::Down, Run::Up]
+            .into_iter()
+            .flat_map(|run| {
+                self.timetable
+                    .departures(run)
+                    .iter()
+                    .map(move |at| (at.seconds(), run))
+            })
+            .collect();
+        events.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let n = events.len();
+        (0..n).all(|i| {
+            let (at, run) = events[i];
+            let (next, other) = events[(i + 1) % n];
+            let gap = (next - at).rem_euclid(DAY_SECONDS);
+            let gap = if gap == 0.0 { DAY_SECONDS } else { gap };
+            other == run.back() && gap >= self.run_duration(run) * BASE_RATE
+        })
     }
 
     /// The line the train runs, Castex to Pico.
@@ -519,24 +679,67 @@ impl LineTrain {
         }
     }
 
-    /// When `run` reaches `station` by the timetable, with the clock at the
-    /// base rate the whole way.
+    /// When the earliest departure of `run` reaches `station` by the
+    /// timetable, with the clock at the base rate the whole way. See
+    /// [`Self::arrivals_at`] for a train with several departures.
     pub fn arrival_time_at(&self, run: Run, station: usize) -> Option<TimeOfDay> {
-        let (arrive, _) = self.stop_times(run, station)?;
-        let depart = self.scheduled(run).seconds();
-        Some(TimeOfDay::from_seconds(depart + arrive * BASE_RATE))
+        self.arrivals_at(run, station).into_iter().next()
     }
 
-    /// The time of day half way through `run`'s stop at `town` (by default
-    /// the morning up run from Pico, or the afternoon down run from Castex),
-    /// with the clock at the base rate: start the clock there and the train
-    /// stands at that town's station.
+    /// When each departure of `run` (earliest first) reaches `station` by
+    /// the timetable, with the clock at the base rate the whole way. Empty
+    /// when the run does not stop there.
+    pub fn arrivals_at(&self, run: Run, station: usize) -> Vec<TimeOfDay> {
+        let Some((arrive, _)) = self.stop_times(run, station) else {
+            return Vec::new();
+        };
+        self.departures_sorted(run)
+            .into_iter()
+            .map(|depart| TimeOfDay::from_seconds(depart + arrive * BASE_RATE))
+            .collect()
+    }
+
+    /// The time of day half way through the earliest departure of `run`'s
+    /// stop at `town` (by default the morning up run from Pico, or the
+    /// afternoon down run from Castex), with the clock at the base rate:
+    /// start the clock there and the train stands at that town's station.
+    /// See [`Self::stops_at`] for a train with several departures.
     pub fn stop_at(&self, town: usize, run: Run) -> Option<TimeOfDay> {
-        let (arrive, depart) = self.stop_times(run, self.station_of_town(town)?)?;
-        let start = self.scheduled(run).seconds();
-        Some(TimeOfDay::from_seconds(
-            start + (arrive + depart) / 2.0 * BASE_RATE,
-        ))
+        self.stops_at(town, run).into_iter().next()
+    }
+
+    /// [`Self::stop_at`] for every departure of `run`, earliest first.
+    pub fn stops_at(&self, town: usize, run: Run) -> Vec<TimeOfDay> {
+        let Some(station) = self.station_of_town(town) else {
+            return Vec::new();
+        };
+        let Some((arrive, depart)) = self.stop_times(run, station) else {
+            return Vec::new();
+        };
+        self.departures_sorted(run)
+            .into_iter()
+            .map(|start| TimeOfDay::from_seconds(start + (arrive + depart) / 2.0 * BASE_RATE))
+            .collect()
+    }
+
+    /// The seconds of day of each departure of `run`, earliest first.
+    fn departures_sorted(&self, run: Run) -> Vec<f64> {
+        let mut all: Vec<f64> = self
+            .timetable
+            .departures(run)
+            .iter()
+            .map(|at| at.seconds())
+            .collect();
+        all.sort_by(f64::total_cmp);
+        all
+    }
+
+    /// Whether the train stands on a bay track at the station it is at.
+    pub fn stands_in_bay(&self) -> bool {
+        self.state()
+            .station
+            .and_then(|s| self.stations.get(s))
+            .is_some_and(|s| s.bay)
     }
 
     /// Game seconds, at the base rate, from game time `now` until the train
@@ -828,17 +1031,17 @@ impl LineTrain {
         }
     }
 
-    /// The scheduled time of day `run` departs.
-    fn scheduled(&self, run: Run) -> TimeOfDay {
-        self.timetable.departure(run)
-    }
-
     /// The first scheduled departure from terminal `station` at or after
     /// game time `since`.
     fn departure_from(&self, station: usize, since: f64) -> f64 {
-        let time = self.scheduled(self.departing(station)).seconds();
-        let days = ((since - time) / DAY_SECONDS).ceil();
-        time + days * DAY_SECONDS
+        self.timetable
+            .departures(self.departing(station))
+            .iter()
+            .map(|at| {
+                let time = at.seconds();
+                time + ((since - time) / DAY_SECONDS).ceil() * DAY_SECONDS
+            })
+            .fold(f64::INFINITY, f64::min)
     }
 
     /// The state with the front `progress` meters into `run`.
@@ -1023,7 +1226,7 @@ fn misplaced_stops(
 }
 
 /// Length of `cars` coupled together, in meters.
-fn consist_length(cars: &[Car]) -> f32 {
+pub(crate) fn consist_length(cars: &[Car]) -> f32 {
     let total: f32 = cars.iter().map(|c| c.length).sum();
     total + LineTrain::COUPLING * cars.len().saturating_sub(1) as f32
 }
@@ -1039,6 +1242,63 @@ pub(crate) fn line_consist() -> Vec<Car> {
         (CarKind::Boxcar, 10.0),
         (CarKind::Hopper, 9.0),
         (CarKind::Hopper, 9.0),
+        (CarKind::Boxcar, 10.0),
+    ]
+    .into_iter()
+    .map(|(kind, length)| Car { kind, length })
+    .collect()
+}
+
+/// Game seconds the shuttle is in at the junction before `line` arrives
+/// there, and stays after it leaves. Long enough for the whole line train
+/// (93 m, pulling out at 0.5 m/s²) to clear the bay's turnout before the
+/// shuttle follows it onto the shared run-out: 5 minutes left the two
+/// trains within a car's width of each other there.
+pub const SHUTTLE_MARGIN: f64 = 10.0 * 60.0;
+
+/// The shuttle's timetable, derived from `line`'s stops at `junction`
+/// (a town index): for each time `line` stops there, on either run, the
+/// shuttle leaves its far terminal (the branch's last station, where it
+/// spends the night) so that it is in at the junction [`SHUTTLE_MARGIN`]
+/// before `line` arrives, and leaves the junction [`SHUTTLE_MARGIN`] after
+/// `line` leaves. `to_junction` is the real seconds the shuttle's up run
+/// takes; it moves like `line` (dwell, top speed, acceleration). Times
+/// follow the base clock rate. `None` when `line` does not stop at the
+/// junction.
+pub fn shuttle_timetable(line: &LineTrain, junction: usize, to_junction: f64) -> Option<Timetable> {
+    let station = line.station_of_town(junction)?;
+    let mut stops: Vec<(f64, f64)> = Vec::new();
+    for run in [Run::Down, Run::Up] {
+        let (arrive, leave) = line.stop_times(run, station)?;
+        for at in line.timetable().departures(run) {
+            let from = at.seconds();
+            stops.push((from + arrive * BASE_RATE, from + leave * BASE_RATE));
+        }
+    }
+    stops.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let up = stops
+        .iter()
+        .map(|&(arrive, _)| {
+            TimeOfDay::from_seconds(arrive - SHUTTLE_MARGIN - to_junction * BASE_RATE)
+        })
+        .collect();
+    let down = stops
+        .iter()
+        .map(|&(_, leave)| TimeOfDay::from_seconds(leave + SHUTTLE_MARGIN))
+        .collect();
+    Some(Timetable {
+        down,
+        up,
+        ..line.timetable().clone()
+    })
+}
+
+/// The branch shuttle's consist, from the front: a locomotive, one
+/// passenger coach and a boxcar.
+pub(crate) fn branch_consist() -> Vec<Car> {
+    [
+        (CarKind::Locomotive, 14.0),
+        (CarKind::Coach, 12.0),
         (CarKind::Boxcar, 10.0),
     ]
     .into_iter()
@@ -1097,7 +1357,7 @@ fn leg_at(d: f64, v: f64, a: f64, tau: f64) -> (f64, f64) {
 }
 
 #[cfg(test)]
-mod line_tests {
+pub(crate) mod line_tests {
     use super::*;
     use crate::{MAX_STEP, Rider, RiderInput, RiderParams, Terrain, World};
 
@@ -1252,15 +1512,15 @@ mod line_tests {
     #[test]
     fn the_timetable_names_each_departure_by_its_terminal() {
         let t = Timetable::default();
-        assert_eq!(t.depart_pico, TimeOfDay::hm(7, 0));
-        assert_eq!(t.depart_castex, TimeOfDay::hm(16, 0));
-        assert_eq!(t.departure(Run::Up), t.depart_pico);
-        assert_eq!(t.departure(Run::Down), t.depart_castex);
+        assert_eq!(t.up, [TimeOfDay::hm(7, 0)]);
+        assert_eq!(t.down, [TimeOfDay::hm(16, 0)]);
+        assert_eq!(t.departure(Run::Up), t.up[0]);
+        assert_eq!(t.departure(Run::Down), t.down[0]);
         assert_eq!(t.morning_run(), Run::Up);
         // Swapped times put the night at Castex instead.
         let swapped = Timetable {
-            depart_castex: TimeOfDay::hm(7, 0),
-            depart_pico: TimeOfDay::hm(16, 0),
+            down: vec![TimeOfDay::hm(7, 0)],
+            up: vec![TimeOfDay::hm(16, 0)],
             ..t
         };
         assert_eq!(swapped.morning_run(), Run::Down);
@@ -1277,8 +1537,8 @@ mod line_tests {
     #[test]
     fn equal_departure_times_are_rejected_and_the_default_is_used() {
         let same = Timetable {
-            depart_castex: TimeOfDay::hm(9, 0),
-            depart_pico: TimeOfDay::hm(9, 0),
+            down: vec![TimeOfDay::hm(9, 0)],
+            up: vec![TimeOfDay::hm(9, 0)],
             ..Timetable::default()
         };
         let error = same.check().expect_err("one time for both runs");
@@ -1834,5 +2094,339 @@ mod line_tests {
                 );
             }
         }
+    }
+
+    pub(crate) const MEDIO: usize = 1;
+    pub(crate) const NORTE: usize = 3;
+
+    /// Oeste, Medio, Este and Norte, and their line with the branch to
+    /// Norte off Medio.
+    pub(crate) fn branched_line() -> (Vec<TownLayout>, RailLine) {
+        let (towns, list, branches) = crate::rail::tests::branched();
+        let bounds = crate::WorldConfig::default().bounds();
+        let (line, errors) = RailLine::build_with_branches(Some(&list), &branches, &towns, bounds);
+        assert!(errors.is_empty(), "{errors:?}");
+        (towns, line)
+    }
+
+    /// The line train over Oeste, Medio and Este with a branch to Norte
+    /// off Medio, and the shuttle on that branch.
+    pub(crate) fn branched_trains(
+        line_timetable: Timetable,
+    ) -> (Vec<TownLayout>, LineTrain, LineTrain) {
+        let (towns, line) = branched_line();
+        let train = LineTrain::new(&line, &towns, line_timetable).expect("a line train");
+        let path = line.shuttle_paths(&towns).remove(0);
+        // It stands in Medio's bay track, not on the line train's.
+        let bay = line.bay_of(0).expect("a bay at Medio");
+        let stops = [(MEDIO, bay.stop)];
+        let shuttle = LineTrain::branch_shuttle(&train, path, &[MEDIO, NORTE], &stops, &towns)
+            .expect("a shuttle on the branch");
+        (towns, train, shuttle)
+    }
+
+    /// `train` jumped from midnight of day 0 to game time `at`.
+    fn jumped(train: &LineTrain, at: f64) -> LineTrain {
+        let mut train = train.clone();
+        train.advance(0.0, at, BASE_RATE);
+        train
+    }
+
+    /// Checks that `shuttle` is standing at Medio's station from
+    /// `SHUTTLE_MARGIN` before each stop of `line` there until
+    /// `SHUTTLE_MARGIN` after it, and away from it just after.
+    fn assert_meets_line(line: &LineTrain, shuttle: &LineTrain) {
+        let station = line.station_of_town(MEDIO).expect("the line serves Medio");
+        let eps = 1.0;
+        let mut meetings = 0;
+        for run in [Run::Down, Run::Up] {
+            let (arrive, leave) = line.stop_times(run, station).unwrap();
+            for at in line.timetable().departures(run) {
+                let (arrive, leave) = (
+                    at.seconds() + arrive * BASE_RATE,
+                    at.seconds() + leave * BASE_RATE,
+                );
+                let standing = |t: f64| jumped(shuttle, t).state().station == Some(0);
+                assert!(standing(arrive - SHUTTLE_MARGIN + eps), "in before {run:?}");
+                assert!(standing(arrive), "in when {run:?} arrives");
+                assert!(standing(leave), "in when {run:?} leaves");
+                assert!(
+                    standing(leave + SHUTTLE_MARGIN - eps),
+                    "stays after {run:?}"
+                );
+                assert!(
+                    !standing(leave + SHUTTLE_MARGIN + 5.0),
+                    "gone after {run:?}"
+                );
+                meetings += 1;
+            }
+        }
+        assert_eq!(meetings, 2);
+    }
+
+    #[test]
+    fn a_shuttle_on_the_branch_stops_at_both_ends_and_runs_both_ways() {
+        let (towns, _, shuttle) = branched_trains(Timetable::default());
+        let towns_served: Vec<usize> = shuttle.stations().iter().map(|s| s.town).collect();
+        assert_eq!(towns_served, [MEDIO, NORTE]);
+        assert_eq!(shuttle.cars().len(), branch_consist().len());
+        assert!(shuttle.length() < 50.0);
+        // Both runs go the full length between the two stations.
+        for run in [Run::Down, Run::Up] {
+            assert!(shuttle.run_duration(run) > 60.0, "{run:?}");
+            let start = shuttle.state_at(run, 0.0);
+            let end = shuttle.state_at(run, shuttle.run_duration(run));
+            let (from, to) = match run {
+                Run::Down => (0, 1),
+                Run::Up => (1, 0),
+            };
+            assert_eq!((start.station, end.station), (Some(from), Some(to)));
+            assert_eq!(end.phase, LinePhase::Parked);
+            assert!(end.speed.abs() < 1e-3);
+        }
+        // It runs on the branch: Medio's station and Norte's are its marks.
+        let marks: Vec<f32> = shuttle.stations().iter().map(|s| s.mark).collect();
+        assert!(marks[0] < marks[1]);
+        let station_of = |town: usize| {
+            towns[town]
+                .buildings
+                .iter()
+                .find(|b| b.kind == BuildingKind::Station)
+                .map(|b| b.footprint.center())
+                .unwrap()
+        };
+        let reached =
+            |k: usize, town: usize| shuttle.path().at(marks[k]).distance(station_of(town));
+        assert!(reached(0, MEDIO) < 60.0 && reached(1, NORTE) < 60.0);
+        // The night is at Norte, facing the morning run out of it.
+        let s = shuttle.state();
+        assert_eq!(
+            (s.phase, s.station, s.run),
+            (LinePhase::Parked, Some(1), Run::Up)
+        );
+        // Pure: building it again gives the same train.
+        let (_, _, again) = branched_trains(Timetable::default());
+        assert_eq!(again, shuttle);
+        assert_eq!(
+            again.state_at(Run::Up, 90.0),
+            shuttle.state_at(Run::Up, 90.0)
+        );
+    }
+
+    #[test]
+    fn the_shuttle_stands_in_medios_bay_beside_the_line_trains_track() {
+        let (towns, _, shuttle) = branched_trains(Timetable::default());
+        let track = towns[MEDIO].railway.unwrap();
+        let timetable = shuttle.timetable();
+        // In at the end of the morning up run, out on the first down run.
+        let (arrive, leave) = (
+            timetable.up[0].seconds() + shuttle.run_duration(Run::Up) * BASE_RATE,
+            timetable.down[0].seconds(),
+        );
+        // In the bay for the whole stop: the consist's middle at the
+        // bay's stop mark, every car 4.5 m north of the station track.
+        for t in [arrive + 1.0, (arrive + leave) / 2.0, leave - 1.0] {
+            let at = jumped(&shuttle, t);
+            assert_eq!(at.state().station, Some(0));
+            for car in at.placed_cars() {
+                assert!((car.center.y - track.start.y - 4.5).abs() < 0.05, "{car:?}");
+            }
+            let middle = (at.placed_cars()[1].center, at.placed_cars()[2].center);
+            let stop = shuttle.path().at(shuttle.stations()[0].mark);
+            assert!(stop.distance((middle.0 + middle.1) * 0.5) < 20.0);
+        }
+    }
+
+    #[test]
+    fn the_shuttle_meets_the_line_train_at_the_junction_both_ways() {
+        let (_, line, shuttle) = branched_trains(Timetable::default());
+        assert!(shuttle.schedule_fits());
+        assert_meets_line(&line, &shuttle);
+        // Morning and afternoon: two departures from each end, the night at
+        // the far terminal.
+        assert_eq!(shuttle.timetable().up.len(), 2);
+        assert_eq!(shuttle.timetable().down.len(), 2);
+        assert_eq!(shuttle.timetable().morning_run(), Run::Up);
+    }
+
+    #[test]
+    fn the_shuttle_still_meets_the_line_train_when_the_line_timetable_shifts() {
+        let (_, default_line, default_shuttle) = branched_trains(Timetable::default());
+        let shifted = Timetable {
+            up: vec![TimeOfDay::hm(8, 40)],
+            down: vec![TimeOfDay::hm(17, 15)],
+            ..Timetable::default()
+        };
+        let (_, line, shuttle) = branched_trains(shifted);
+        assert_meets_line(&line, &shuttle);
+        assert_ne!(shuttle.timetable(), default_shuttle.timetable());
+        assert_ne!(line.timetable(), default_line.timetable());
+    }
+
+    #[test]
+    fn no_shuttle_is_derived_for_a_town_the_line_does_not_stop_at() {
+        let (_, line, shuttle) = branched_trains(Timetable::default());
+        assert_eq!(shuttle_timetable(&line, NORTE, 100.0), None);
+        // At the line's own terminal there is a stop to meet.
+        assert!(shuttle_timetable(&line, 0, 100.0).is_some());
+        assert!(shuttle.schedule_fits());
+    }
+
+    #[test]
+    fn arrival_times_cover_every_departure_of_a_train_with_several() {
+        let (_, _, shuttle) = branched_trains(Timetable::default());
+        let norte = shuttle.station_of_town(NORTE).unwrap();
+        let medio = shuttle.station_of_town(MEDIO).unwrap();
+        for (run, station, town) in [(Run::Down, norte, NORTE), (Run::Up, medio, MEDIO)] {
+            let arrivals = shuttle.arrivals_at(run, station);
+            let stops = shuttle.stops_at(town, run);
+            let departures = shuttle.timetable().departures(run).len();
+            assert!(departures >= 2, "two round trips");
+            assert_eq!((arrivals.len(), stops.len()), (departures, departures));
+            // In order, and the train stands there at each one.
+            assert!(arrivals.windows(2).all(|w| w[0].seconds() < w[1].seconds()));
+            for (arrival, stop) in arrivals.iter().zip(&stops) {
+                let standing = |at: TimeOfDay| {
+                    let s = jumped(&shuttle, at.seconds()).state();
+                    (s.station == Some(station)).then_some(s.phase)
+                };
+                assert!(standing(*stop).is_some(), "{run:?} stands at {stop}");
+                // Just after the arrival it is in; the stop is no earlier.
+                assert!(stop.seconds() >= arrival.seconds());
+                let arrived = TimeOfDay::from_seconds(arrival.seconds() + 1.0);
+                assert!(standing(arrived).is_some(), "{run:?} in at {arrival}");
+            }
+            // The one-time helpers are the earliest of them.
+            assert_eq!(shuttle.arrival_time_at(run, station), Some(arrivals[0]));
+            assert_eq!(shuttle.stop_at(town, run), Some(stops[0]));
+        }
+        // A run that does not stop there has no times.
+        assert!(shuttle.arrivals_at(Run::Down, 9).is_empty());
+        assert!(shuttle.stops_at(99, Run::Down).is_empty());
+    }
+
+    #[test]
+    fn a_train_with_two_round_trips_is_where_the_timetable_puts_it() {
+        let (_, _, shuttle) = branched_trains(Timetable::default());
+        let up = shuttle.timetable().up.clone();
+        let down = shuttle.timetable().down.clone();
+        let (morning, afternoon) = (up[0].seconds(), up[1].seconds());
+        assert!(morning < afternoon);
+        let (night, running, between) = (morning - 60.0, morning + 30.0, afternoon - 60.0);
+        // Before the first departure: laid over at Norte.
+        let s = jumped(&shuttle, night).state();
+        assert_eq!((s.phase, s.station), (LinePhase::Parked, Some(1)));
+        // Just after it: on the up run.
+        let s = jumped(&shuttle, running).state();
+        assert_eq!((s.phase, s.run), (LinePhase::Running, Run::Up));
+        // Between the round trips: back at Norte after the down run.
+        let s = jumped(&shuttle, between).state();
+        assert_eq!((s.phase, s.station), (LinePhase::Parked, Some(1)));
+        assert!(down[0].seconds() > morning && down[0].seconds() < afternoon);
+        // Just after the afternoon departure: on its up run, not the
+        // morning's.
+        let s = jumped(&shuttle, afternoon + 30.0).state();
+        assert_eq!((s.phase, s.run), (LinePhase::Running, Run::Up));
+        // The next departure from either end follows the lists.
+        assert_eq!(
+            shuttle.next_departure_after(morning + 1.0),
+            (
+                down[0].seconds().min(afternoon),
+                if down[0].seconds() < afternoon {
+                    Run::Down
+                } else {
+                    Run::Up
+                }
+            )
+        );
+        // After the afternoon down run it waits overnight for the morning.
+        let late = down[1].seconds() + shuttle.run_duration(Run::Down) * BASE_RATE + 60.0;
+        let s = jumped(&shuttle, late).state();
+        assert_eq!((s.phase, s.station), (LinePhase::Parked, Some(1)));
+        assert_eq!(
+            shuttle.next_departure_after(late),
+            (morning + DAY_SECONDS, Run::Up)
+        );
+    }
+
+    #[test]
+    fn a_timetable_needs_a_departure_from_each_end_and_none_at_the_same_time() {
+        let default = Timetable::default();
+        let none = Timetable {
+            up: Vec::new(),
+            ..default.clone()
+        };
+        assert_eq!(none.check(), Err(TimetableError::NoDeparture(Run::Up)));
+        assert!(
+            none.check().unwrap_err().to_string().contains("Up"),
+            "names the run"
+        );
+        let twice = Timetable {
+            up: vec![TimeOfDay::hm(7, 0), TimeOfDay::hm(7, 0)],
+            ..default.clone()
+        };
+        assert_eq!(
+            twice.check(),
+            Err(TimetableError::SameDeparture(TimeOfDay::hm(7, 0)))
+        );
+        let across = Timetable {
+            down: vec![TimeOfDay::hm(9, 0), TimeOfDay::hm(7, 0)],
+            ..default.clone()
+        };
+        assert_eq!(
+            across.check(),
+            Err(TimetableError::SameDeparture(TimeOfDay::hm(7, 0)))
+        );
+        // The earliest listed time counts, whatever the order.
+        let listed = Timetable {
+            down: vec![TimeOfDay::hm(18, 0), TimeOfDay::hm(10, 0)],
+            ..default
+        };
+        assert_eq!(listed.check(), Ok(()));
+        assert_eq!(listed.departure(Run::Down), TimeOfDay::hm(10, 0));
+        assert_eq!(listed.morning_run(), Run::Up);
+    }
+
+    #[test]
+    fn a_schedule_that_leaves_before_the_run_is_over_does_not_fit() {
+        let (towns, line, shuttle) = branched_trains(Timetable::default());
+        let (served, path) = (&[MEDIO, NORTE], shuttle.path().clone());
+        // Down leaves a minute before up: no run takes a minute.
+        let tight = Timetable {
+            down: vec![TimeOfDay::hm(12, 0)],
+            up: vec![TimeOfDay::hm(12, 1)],
+            ..line.timetable().clone()
+        };
+        let train = LineTrain::on_path(path.clone(), served, &towns, branch_consist(), tight)
+            .expect("a train, if not a sound schedule");
+        assert!(!train.schedule_fits());
+        // Two up departures in a row, with no down run between.
+        let doubled = Timetable {
+            down: vec![TimeOfDay::hm(12, 0)],
+            up: vec![TimeOfDay::hm(6, 0), TimeOfDay::hm(9, 0)],
+            ..line.timetable().clone()
+        };
+        let train = LineTrain::on_path(path, served, &towns, branch_consist(), doubled).unwrap();
+        assert!(!train.schedule_fits());
+        // The line's own schedule, as shipped, fits.
+        assert!(line.schedule_fits());
+    }
+
+    #[test]
+    fn on_path_refuses_a_bad_timetable_where_new_replaces_it() {
+        let (towns, line, shuttle) = branched_trains(Timetable::default());
+        let bad = Timetable {
+            up: Vec::new(),
+            ..Timetable::default()
+        };
+        let on = LineTrain::on_path(
+            shuttle.path().clone(),
+            &[MEDIO, NORTE],
+            &towns,
+            branch_consist(),
+            bad,
+        );
+        assert!(on.is_none());
+        assert_eq!(line.timetable(), &Timetable::default());
     }
 }

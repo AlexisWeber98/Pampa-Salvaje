@@ -28,17 +28,32 @@ use bevy::image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::math::Affine2;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use pampa_core::{CarKind, CoachBody, LineTrain, PlacedCar, Terrain};
+use pampa_core::{CarKind, CoachBody, LineTrain, PlacedCar, SideObstacle, Terrain};
 
 use crate::character::finish::Finish;
 
 use crate::coords::world_from_ground;
 use crate::terrain::{StreamFocus, WorldTerrain};
 
-/// The line train, if the world has a line. Logic state: the game
-/// advances it, render only reads it.
+/// Every train of the world: the line train first, then the branch
+/// shuttle when the line has a branch with a bay. A `Vec` rather than one
+/// train, so a world with no line is simply empty; the index into it is a
+/// train's identity ([`TrainCar::train`], the game's `Ride`). Logic state:
+/// the game advances them, render only reads them.
 #[derive(Resource, Debug, Clone, Default)]
-pub struct WorldTrain(pub Option<LineTrain>);
+pub struct WorldTrains(pub Vec<LineTrain>);
+
+impl WorldTrains {
+    /// The line train, the first of them.
+    pub fn line(&self) -> Option<&LineTrain> {
+        self.0.first()
+    }
+
+    /// Every car of every train, as the logic world's moving obstacles.
+    pub fn obstacles(&self) -> Vec<SideObstacle> {
+        self.0.iter().flat_map(LineTrain::obstacles).collect()
+    }
+}
 
 /// Cars farther than this from the [`StreamFocus`] are hidden, in meters:
 /// the terrain's guaranteed reach, well past the fog.
@@ -49,7 +64,7 @@ pub struct TrainPlugin;
 
 impl Plugin for TrainPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<WorldTrain>()
+        app.init_resource::<WorldTrains>()
             .add_systems(Update, spawn_cars)
             .add_systems(
                 PostUpdate,
@@ -62,6 +77,8 @@ impl Plugin for TrainPlugin {
 /// Root of one drawn car: local +X points the way the train travels.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct TrainCar {
+    /// Index of the train in [`WorldTrains`].
+    pub train: usize,
     /// Index into the consist, front first.
     pub index: usize,
 }
@@ -69,6 +86,8 @@ pub struct TrainCar {
 /// A wheel turning about its local Y axis (the axle), with its radius.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct TrainWheel {
+    /// Index of the train in [`WorldTrains`].
+    pub train: usize,
     pub radius: f32,
 }
 
@@ -78,6 +97,8 @@ pub struct TrainWheel {
 /// side rod, which only translates).
 #[derive(Component, Debug, Clone, Copy)]
 pub struct TrainRod {
+    /// Index of the train in [`WorldTrains`].
+    pub train: usize,
     pub base: Vec3,
     pub crank: f32,
     pub radius: f32,
@@ -90,6 +111,8 @@ pub struct TrainRod {
 /// chimney's mouth it leaves from, in the car's frame.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct SmokePuff {
+    /// Index of the train in [`WorldTrains`].
+    pub train: usize,
     pub phase: f32,
     pub chimney: Vec3,
 }
@@ -256,6 +279,8 @@ impl Kit {
 /// at the car's middle, +X forward, +Z to the car's right).
 struct CarBuilder<'a, 'c> {
     car: EntityCommands<'c>,
+    /// Index of the car's train in [`WorldTrains`].
+    train: usize,
     kit: &'a Kit,
 }
 
@@ -320,7 +345,10 @@ impl CarBuilder<'_, '_> {
             self.car.with_child((
                 Mesh3d(mesh.clone()),
                 MeshMaterial3d(material.clone()),
-                TrainWheel { radius },
+                TrainWheel {
+                    train: self.train,
+                    radius,
+                },
                 Transform::from_xyz(x, radius, side * 0.95)
                     .with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2))
                     .with_scale(Vec3::new(2.0 * radius, 0.18, 2.0 * radius)),
@@ -549,6 +577,7 @@ impl CarBuilder<'_, '_> {
         // count as the car's own height.
         let (mesh, smoke) = (k.puff.clone(), k.smoke.clone());
         let base = Vec3::new(front - 1.4, 4.55, 0.0);
+        let train = self.train;
         self.car.with_children(|car| {
             car.spawn((Transform::default(), Visibility::default()))
                 .with_children(|holder| {
@@ -557,6 +586,7 @@ impl CarBuilder<'_, '_> {
                             Mesh3d(mesh.clone()),
                             MeshMaterial3d(smoke.clone()),
                             SmokePuff {
+                                train,
                                 phase: i as f32 / 4.0,
                                 chimney: base,
                             },
@@ -576,6 +606,7 @@ impl CarBuilder<'_, '_> {
             Mesh3d(mesh),
             MeshMaterial3d(material),
             TrainRod {
+                train: self.train,
                 base,
                 crank: 0.3,
                 radius: DRIVER_RADIUS,
@@ -869,15 +900,12 @@ struct CarKit(Kit);
 
 fn spawn_cars(
     mut commands: Commands,
-    train: Res<WorldTrain>,
+    trains: Res<WorldTrains>,
     spawned: Query<(), With<TrainCar>>,
     kit: Option<Res<CarKit>>,
     mut assets: KitAssets,
 ) {
-    let Some(train) = &train.0 else {
-        return;
-    };
-    if !spawned.is_empty() {
+    if trains.0.is_empty() || !spawned.is_empty() {
         return;
     }
     let kit = match kit {
@@ -888,22 +916,28 @@ fn spawn_cars(
             kit
         }
     };
-    for (index, car) in train.cars().iter().enumerate() {
-        let entity = commands.spawn((
-            Name::new(format!("Train car {index}")),
-            TrainCar { index },
-            Transform::default(),
-            Visibility::Hidden,
-        ));
-        let mut b = CarBuilder {
-            car: entity,
-            kit: &kit,
-        };
-        match car.kind {
-            CarKind::Locomotive => b.locomotive(car.length),
-            CarKind::Coach => b.coach(car.length),
-            CarKind::Boxcar => b.boxcar(car.length),
-            CarKind::Hopper => b.hopper(car.length),
+    for (train_index, train) in trains.0.iter().enumerate() {
+        for (index, car) in train.cars().iter().enumerate() {
+            let entity = commands.spawn((
+                Name::new(format!("Train {train_index} car {index}")),
+                TrainCar {
+                    train: train_index,
+                    index,
+                },
+                Transform::default(),
+                Visibility::Hidden,
+            ));
+            let mut b = CarBuilder {
+                car: entity,
+                train: train_index,
+                kit: &kit,
+            };
+            match car.kind {
+                CarKind::Locomotive => b.locomotive(car.length),
+                CarKind::Coach => b.coach(car.length),
+                CarKind::Boxcar => b.boxcar(car.length),
+                CarKind::Hopper => b.hopper(car.length),
+            }
         }
     }
 }
@@ -924,17 +958,14 @@ pub fn car_transform(p: &PlacedCar, terrain: &Terrain) -> Transform {
 /// Puts every car near the focus where logic says, on the rails over the
 /// ground and turned along the track, and hides the others.
 fn place_cars(
-    train: Res<WorldTrain>,
+    trains: Res<WorldTrains>,
     terrain: Res<WorldTerrain>,
     focus: Option<Res<StreamFocus>>,
     mut cars: Query<(&TrainCar, &mut Transform, &mut Visibility)>,
 ) {
-    let Some(train) = &train.0 else {
-        return;
-    };
-    let placed = train.placed_cars();
+    let placed: Vec<_> = trains.0.iter().map(LineTrain::placed_cars).collect();
     for (car, mut transform, mut visibility) in &mut cars {
-        let Some(p) = placed.get(car.index) else {
+        let Some(p) = placed.get(car.train).and_then(|cars| cars.get(car.index)) else {
             continue;
         };
         let near = focus
@@ -958,23 +989,30 @@ fn place_cars(
 /// with the drivers.
 fn turn_wheels(
     time: Res<Time>,
-    train: Res<WorldTrain>,
+    trains: Res<WorldTrains>,
     mut wheels: Query<(&TrainWheel, &mut Transform), Without<TrainRod>>,
     mut rods: Query<(&mut TrainRod, &mut Transform), Without<TrainWheel>>,
 ) {
-    let Some(train) = &train.0 else {
-        return;
-    };
-    let distance = train.state().speed * time.delta_secs();
-    if distance == 0.0 {
-        return;
-    }
+    // How far each train rolled this frame.
+    let rolled: Vec<f32> = trains
+        .0
+        .iter()
+        .map(|t| t.state().speed * time.delta_secs())
+        .collect();
     for (wheel, mut transform) in &mut wheels {
+        let distance = rolled.get(wheel.train).copied().unwrap_or(0.0);
+        if distance == 0.0 {
+            continue;
+        }
         // The wheel's axle is its local Y; rolling forward turns it clockwise
         // seen from the car's right side.
         transform.rotate_local_y(-distance / wheel.radius);
     }
     for (mut rod, mut transform) in &mut rods {
+        let distance = rolled.get(rod.train).copied().unwrap_or(0.0);
+        if distance == 0.0 {
+            continue;
+        }
         // Clockwise too: a crank pin at the front ([`rod_pose`]'s phase 0)
         // goes down as the drivers roll forward.
         rod.phase = (rod.phase - distance / rod.radius).rem_euclid(std::f32::consts::TAU);
@@ -1006,14 +1044,14 @@ pub fn rod_pose(rod: &TrainRod, scale: Vec3) -> Transform {
 /// swells from the chimney, then starts again; hidden at a standstill.
 fn puff_smoke(
     time: Res<Time>,
-    train: Res<WorldTrain>,
+    trains: Res<WorldTrains>,
     mut puffs: Query<(&mut SmokePuff, &mut Transform, &mut Visibility)>,
 ) {
-    let Some(train) = &train.0 else {
-        return;
-    };
-    let speed = train.state().speed;
     for (mut puff, mut transform, mut visibility) in &mut puffs {
+        let Some(train) = trains.0.get(puff.train) else {
+            continue;
+        };
+        let speed = train.state().speed;
         if speed <= 0.0 {
             visibility.set_if_neq(Visibility::Hidden);
             continue;
@@ -1098,9 +1136,61 @@ pub(crate) mod tests {
             .init_resource::<Assets<StandardMaterial>>()
             .insert_resource(WorldTerrain(Terrain::default()))
             .insert_resource(StreamFocus(focus))
-            .insert_resource(WorldTrain(Some(train)))
+            .insert_resource(WorldTrains(vec![train]))
             .add_plugins(TrainPlugin);
         app
+    }
+
+    /// A second, shorter train (a shuttle's loco, coach and boxcar) over the
+    /// same line, leaving `down` and `up` (hours of the day), so it keeps to
+    /// its own timetable apart from the line train.
+    pub(crate) fn shuttle(line: &LineTrain, towns: &[TownLayout], down: u32, up: u32) -> LineTrain {
+        let cars = [
+            (CarKind::Locomotive, 14.0),
+            (CarKind::Coach, 12.0),
+            (CarKind::Boxcar, 10.0),
+        ]
+        .map(|(kind, length)| pampa_core::Car { kind, length })
+        .to_vec();
+        let served: Vec<usize> = line.stations().iter().map(|s| s.town).collect();
+        let timetable = Timetable {
+            down: vec![pampa_core::TimeOfDay::hm(down, 0)],
+            up: vec![pampa_core::TimeOfDay::hm(up, 0)],
+            ..Timetable::default()
+        };
+        LineTrain::on_path(line.path().clone(), &served, towns, cars, timetable)
+            .expect("a shuttle on the line")
+    }
+
+    /// An app with the line train and the shuttle (leaving Castex at
+    /// 22:00, Pico at 23:00, so parked at Castex all day) at `game_seconds`.
+    fn app_with_two_trains(game_seconds: f64, focus: GroundVec2) -> App {
+        let (towns, mut line) = line_train();
+        let mut shuttle = shuttle(&line, &towns, 22, 23);
+        line.advance(0.0, game_seconds, BASE_RATE);
+        shuttle.advance(0.0, game_seconds, BASE_RATE);
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .insert_resource(WorldTerrain(Terrain::default()))
+            .insert_resource(StreamFocus(focus))
+            .insert_resource(WorldTrains(vec![line, shuttle]))
+            .add_plugins(TrainPlugin);
+        app
+    }
+
+    /// Every car entity's (train, car) pair with its transform and visibility.
+    fn all_cars(app: &mut App) -> Vec<(usize, usize, Transform, Visibility)> {
+        let mut query = app
+            .world_mut()
+            .query::<(&TrainCar, &Transform, &Visibility)>();
+        let mut out: Vec<_> = query
+            .iter(app.world())
+            .map(|(c, t, v)| (c.train, c.index, *t, *v))
+            .collect();
+        out.sort_by_key(|c| (c.0, c.1));
+        out
     }
 
     fn cars(app: &mut App) -> Vec<(usize, Transform, Visibility)> {
@@ -1122,12 +1212,8 @@ pub(crate) mod tests {
         let (_, depart) = probe.stop_times(pampa_core::Run::Down, 1).unwrap();
         let at = 7.0 * 3600.0 + (depart + 120.0) * BASE_RATE;
         let mut app = app_with_train(at, GroundVec2::ZERO);
-        let placed = app
-            .world()
-            .resource::<WorldTrain>()
-            .0
+        let placed = app.world().resource::<WorldTrains>().0[0]
             .clone()
-            .unwrap()
             .placed_cars();
         app.insert_resource(StreamFocus(placed[0].center));
         app.update();
@@ -1159,7 +1245,7 @@ pub(crate) mod tests {
     fn each_car_is_drawn_as_tall_as_core_says() {
         let mut app = app_with_train(3600.0, GroundVec2::ZERO);
         app.update();
-        let train = app.world().resource::<WorldTrain>().0.clone().unwrap();
+        let train = app.world().resource::<WorldTrains>().0[0].clone();
         let mut query = app.world_mut().query::<(&TrainCar, &Children)>();
         let cars: Vec<(usize, Vec<Entity>)> = query
             .iter(app.world())
@@ -1221,7 +1307,7 @@ pub(crate) mod tests {
     fn coaches_are_hollow_with_open_glazed_windows_and_benches_inside() {
         let mut app = app_with_train(3600.0, GroundVec2::ZERO);
         app.update();
-        let train = app.world().resource::<WorldTrain>().0.clone().unwrap();
+        let train = app.world().resource::<WorldTrains>().0[0].clone();
         let index = train
             .cars()
             .iter()
@@ -1299,7 +1385,7 @@ pub(crate) mod tests {
     fn every_car_stays_within_a_ps2_era_triangle_budget() {
         let mut app = app_with_train(3600.0, GroundVec2::ZERO);
         app.update();
-        let train = app.world().resource::<WorldTrain>().0.clone().unwrap();
+        let train = app.world().resource::<WorldTrains>().0[0].clone();
         for (index, car) in train.cars().iter().enumerate() {
             let tris = triangles(&mut app, index);
             println!("{:?}: {tris} triangles", car.kind);
@@ -1323,6 +1409,7 @@ pub(crate) mod tests {
     #[test]
     fn the_rods_swing_round_with_the_cranks() {
         let rod = TrainRod {
+            train: 0,
             base: Vec3::new(2.9, 0.75, 1.12),
             crank: 0.3,
             radius: 0.75,
@@ -1355,9 +1442,8 @@ pub(crate) mod tests {
         let mut app = running_app();
         let speed = app
             .world()
-            .resource::<WorldTrain>()
-            .0
-            .as_ref()
+            .resource::<WorldTrains>()
+            .line()
             .unwrap()
             .state()
             .speed;
@@ -1482,5 +1568,132 @@ pub(crate) mod tests {
             .add_plugins(TrainPlugin);
         empty.update();
         assert!(cars(&mut empty).is_empty());
+    }
+
+    #[test]
+    fn every_train_gets_its_own_cars() {
+        let mut app = app_with_two_trains(3600.0, GroundVec2::ZERO);
+        app.update();
+        let drawn = all_cars(&mut app);
+        let of = |train: usize| drawn.iter().filter(|c| c.0 == train).count();
+        assert_eq!((of(0), of(1)), (8, 3), "the line train and the shuttle");
+        assert_eq!(drawn.len(), 11);
+        // The shuttle's cars are its own consist, locomotive first.
+        let trains = app.world().resource::<WorldTrains>().clone();
+        assert_eq!(trains.0[1].cars().len(), 3);
+        let mut roots = app.world_mut().query::<(Entity, &TrainCar)>();
+        let loco = roots
+            .iter(app.world())
+            .find(|(_, c)| (c.train, c.index) == (1, 0))
+            .unwrap()
+            .0;
+        let wheels = app.world().get::<Children>(loco).unwrap();
+        assert!(
+            wheels
+                .iter()
+                .any(|e| app.world().get::<TrainRod>(e).is_some_and(|r| r.train == 1)),
+            "the shuttle's locomotive has its rods"
+        );
+        // Parts of the second train carry its index.
+        let mut parts = app.world_mut().query::<&TrainWheel>();
+        let mut mine = |t: usize| parts.iter(app.world()).filter(|w| w.train == t).count();
+        let (line, shuttle) = (mine(0), mine(1));
+        assert!(shuttle > 0 && shuttle < line, "{shuttle} wheels of {line}");
+    }
+
+    #[test]
+    fn each_car_follows_its_own_train() {
+        // Overnight: the line train at Pico, the shuttle at Castex; the
+        // focus at Castex, so only the shuttle's cars are near.
+        let mut app = app_with_two_trains(3600.0, GroundVec2::ZERO);
+        let castex = app.world().resource::<WorldTrains>().0[1].placed_cars()[1].center;
+        app.insert_resource(StreamFocus(castex));
+        app.update();
+        app.update();
+        let trains = app.world().resource::<WorldTrains>().clone();
+        let drawn = all_cars(&mut app);
+        for (train, index, t, visibility) in &drawn {
+            let p = trains.0[*train].placed_cars()[*index];
+            if *train == 1 {
+                assert_eq!(*visibility, Visibility::Inherited, "shuttle car {index}");
+                let at = t.translation;
+                assert!((at.x - p.center.x).abs() < 1e-3 && (at.z + p.center.y).abs() < 1e-3);
+            } else {
+                assert_eq!(*visibility, Visibility::Hidden, "line car {index} far away");
+            }
+        }
+        // And the other way round: at Pico only the line train is near.
+        let pico = trains.0[0].placed_cars()[0].center;
+        app.insert_resource(StreamFocus(pico));
+        app.update();
+        for (train, index, _, visibility) in all_cars(&mut app) {
+            let near = train == 0;
+            assert_eq!(
+                visibility == Visibility::Inherited,
+                near,
+                "train {train} car {index}"
+            );
+        }
+    }
+
+    #[test]
+    fn each_train_rolls_its_own_wheels_and_smokes_for_itself() {
+        // The line train runs out of Monte Nievas; the shuttle, leaving at
+        // 22:00, is parked at Castex.
+        let (_, probe) = line_train();
+        let (_, depart) = probe.stop_times(pampa_core::Run::Up, 1).unwrap();
+        let at = 7.0 * 3600.0 + (depart + 30.0) * BASE_RATE;
+        let mut app = app_with_two_trains(at, GroundVec2::ZERO);
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            50,
+        )));
+        let speeds: Vec<f32> = app
+            .world()
+            .resource::<WorldTrains>()
+            .0
+            .iter()
+            .map(|t| t.state().speed)
+            .collect();
+        assert!(speeds[0] > 1.0 && speeds[1] == 0.0, "{speeds:?}");
+        app.update();
+        let spin = |app: &mut App| {
+            let mut q = app.world_mut().query::<(&TrainWheel, &Transform)>();
+            q.iter(app.world())
+                .map(|(w, t)| (w.train, t.rotation))
+                .collect::<Vec<_>>()
+        };
+        let before = spin(&mut app);
+        let puffs = |app: &mut App, train: usize| {
+            let mut q = app.world_mut().query::<(&SmokePuff, &Visibility)>();
+            q.iter(app.world())
+                .filter(|(p, _)| p.train == train)
+                .map(|(_, v)| *v)
+                .collect::<Vec<_>>()
+        };
+        app.update();
+        let after = spin(&mut app);
+        for ((train, a), (_, b)) in before.iter().zip(&after) {
+            assert_eq!(a != b, *train == 0, "train {train}'s wheels");
+        }
+        assert!(after.iter().any(|w| w.0 == 1), "the shuttle has wheels");
+        // The rods swing with their own train's drivers only.
+        let phases = |app: &mut App| {
+            let mut q = app.world_mut().query::<&TrainRod>();
+            q.iter(app.world())
+                .map(|r| (r.train, r.phase))
+                .collect::<Vec<_>>()
+        };
+        let rods = phases(&mut app);
+        app.update();
+        let swung = phases(&mut app);
+        assert!(rods.iter().any(|r| r.0 == 1), "the shuttle has rods");
+        for ((train, a), (_, b)) in rods.iter().zip(&swung) {
+            assert_eq!(a != b, *train == 0, "train {train}'s rods");
+        }
+        // Smoke: the line train's puffs show, the parked shuttle's do not.
+        let (line, shuttle) = (puffs(&mut app, 0), puffs(&mut app, 1));
+        assert_eq!((line.len(), shuttle.len()), (4, 4));
+        assert!(line.iter().all(|v| *v == Visibility::Inherited));
+        assert!(shuttle.iter().all(|v| *v == Visibility::Hidden));
     }
 }

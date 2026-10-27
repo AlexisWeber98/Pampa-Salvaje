@@ -19,6 +19,7 @@
 use std::fmt;
 
 use crate::lamps::StreetLamps;
+use crate::places::PLATFORM_SPOT_FROM_EDGE;
 use crate::rng::Rng;
 use crate::{Aabb, FlatArea, Heading, Terrain, Vec2};
 
@@ -224,6 +225,8 @@ pub struct Floor {
 }
 
 impl Floor {
+    /// Height of a station platform's top above the ground, in meters.
+    pub const PLATFORM_HEIGHT: f32 = 0.9;
     /// Length of the ramp past each end, in meters (a gentle 1:3 slope for
     /// a 0.9 m platform).
     pub const RAMP_LENGTH: f32 = 3.0;
@@ -250,6 +253,24 @@ impl Floor {
         let a = p.dot(self.along);
         let past = (lo - a).max(a - hi).max(0.0);
         (past <= Self::RAMP_LENGTH).then(|| self.height * (1.0 - past / Self::RAMP_LENGTH))
+    }
+
+    /// Where a passenger steps off a train standing at the floor's side
+    /// nearest `train`: half way along, a step in from that long edge (as
+    /// [`TownLayout::platform_spot`]), and the heading away from the edge.
+    pub fn spot_beside(&self, train: Vec2) -> (Vec2, Heading) {
+        let across = self.across();
+        let (lo, hi) = self.span(across);
+        let c = train.dot(across);
+        let (edge, inward) = if (c - lo).abs() < (hi - c).abs() {
+            (lo, 1.0)
+        } else {
+            (hi, -1.0)
+        };
+        let at = across * (edge + inward * PLATFORM_SPOT_FROM_EDGE)
+            + self.along * self.footprint.center().dot(self.along);
+        let out = across * inward;
+        (at, Heading::from_radians(out.y.atan2(out.x)))
     }
 
     /// The two ramps' footprints, low end first along [`Self::along`].
@@ -2413,7 +2434,7 @@ fn station_yard(bounds: Aabb, side: Side, r: f32, half: f32, wanted: f32) -> Vec
         building(
             BuildingKind::Platform,
             yard(-PLATFORM_HALF, PLATFORM_HALF, r - 11.0, r - 4.0),
-            0.9,
+            Floor::PLATFORM_HEIGHT,
             to_track,
         ),
     ];

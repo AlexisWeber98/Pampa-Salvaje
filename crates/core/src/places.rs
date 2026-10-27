@@ -287,7 +287,7 @@ const DOOR_SPOT_DISTANCE: f32 = 2.0;
 /// How far in from the platform's track edge [`TownLayout::platform_spot`]
 /// is, in meters: the track runs 4 m out from that edge, so this leaves
 /// 3.5 m to a 3 m wide train, and stays clear of the station canopy's posts.
-const PLATFORM_SPOT_FROM_EDGE: f32 = 1.0;
+pub(crate) const PLATFORM_SPOT_FROM_EDGE: f32 = 1.0;
 
 /// The world axis nearest the direction of `v` (south for zero).
 fn axis_toward(v: Vec2) -> Vec2 {

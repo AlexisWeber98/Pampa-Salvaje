@@ -64,7 +64,7 @@ pub use signs::{SignPlugin, Signboard};
 pub use streaming::{StreamingPlan, StreamingSet};
 pub use terrain::{StreamFocus, TerrainChunk, TerrainPlugin, WorldChunks, WorldTerrain};
 pub use town::{ActiveTowns, StreamTowns, TownPlugin, TownRoot, WindmillRotor, WorldTowns};
-pub use train::{TRAIN_DRAW_RADIUS, TrainCar, TrainPlugin, TrainWheel, WorldTrain, car_transform};
+pub use train::{TRAIN_DRAW_RADIUS, TrainCar, TrainPlugin, TrainWheel, WorldTrains, car_transform};
 pub use tree::{Species, TreeKit, TreePlugin};
 
 /// The game's `assets/` folder. Vegetation models and ground textures are
