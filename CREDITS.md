@@ -16,6 +16,7 @@ All three were converted to 512×512 PPM/PGM for loading. See `assets/textures/g
 |---|---|---|---|---|
 | Clay Plaster | Amal Kumar, Poly Haven (https://polyhaven.com/a/clay_plaster) | CC0 1.0 | `assets/textures/buildings/clay_plaster/` | 1K maps renamed; adobe walls |
 | Plaster 003 | ambientCG (https://ambientcg.com/view?id=Plaster003) | CC0 1.0 | `assets/textures/buildings/plaster_003/` | 1K maps renamed; whitewashed walls, and the towns' lime washes and stucco |
+| Metal 017 | ambientCG (https://ambientcg.com/view?id=Metal017) | CC0 1.0 | `assets/textures/buildings/bronze/` | 1K maps renamed; the bronze plaques of the plaza monuments |
 | Brick Wall 02 | Dimitrios Savva, Poly Haven (https://polyhaven.com/a/brick_wall_02) | CC0 1.0 | `assets/textures/buildings/brick_wall_02/` | 1K maps renamed |
 | Corrugated Iron 02 | Jenelle van Heerden, Sergej Majboroda, Poly Haven (https://polyhaven.com/a/corrugated_iron_02) | CC0 1.0 | `assets/textures/buildings/corrugated_iron_02/` | 1K maps renamed |
 | Corrugated Iron | Dimitrios Savva, Jenelle van Heerden, Poly Haven (https://polyhaven.com/a/corrugated_iron) | CC0 1.0 | `assets/textures/buildings/corrugated_iron/` | 1K maps renamed |
@@ -26,7 +27,8 @@ All three were converted to 512×512 PPM/PGM for loading. See `assets/textures/g
 | Whitewashed Brick | Charlotte Baglioni, Poly Haven (https://polyhaven.com/a/whitewashed_brick) | CC0 1.0 | `assets/textures/buildings/whitewashed_brick/` | 1K maps renamed; town houses, stores and outskirts ranchos of brick under a worn lime wash |
 | Red Brick Plaster Patch 02 | Rob Tuytel, Poly Haven (https://polyhaven.com/a/red_brick_plaster_patch_02) | CC0 1.0 | `assets/textures/buildings/red_brick_plaster_patch_02/` | 1K maps renamed; older town fronts and pulperías with their plaster flaking off the brick |
 | Beige Wall 002 | Dimitrios Savva, Rico Cilliers, Poly Haven (https://polyhaven.com/a/beige_wall_002) | CC0 1.0 | `assets/textures/buildings/beige_wall_002/` | 1K maps renamed; the beige rendered plinths of painted town fronts (a 1024x256 strip, tiled 4 m by 1 m) |
-| Brick Pavement | Charlotte Baglioni, Poly Haven (https://polyhaven.com/a/brick_pavement) | CC0 1.0 | `assets/textures/buildings/brick_pavement/` | 1K maps renamed; the brick sidewalks (veredas) of General Pico and round small towns' plazas |
+| Brick Floor 003 | Dimitrios Savva, Rob Tuytel, Poly Haven (https://polyhaven.com/a/brick_floor_003) | CC0 1.0 | `assets/textures/buildings/brick_floor_003/` | 1K maps renamed; the flat brick sidewalks (veredas) of General Pico and round small towns' plazas |
+| Dirt | Charlotte Baglioni, Poly Haven (https://polyhaven.com/a/dirt) | CC0 1.0 | `assets/textures/buildings/dirt_path/` | 1K maps renamed; the beaten-earth plaza paths and earth sidewalks of small towns and villages |
 
 The `thatch/` set next to them is our own work. The game loads every set as KTX2 (UASTC, mips baked) made from those JPGs by `tools/textures_to_ktx2.sh`; the JPG sources are kept unchanged. See `assets/textures/buildings/CREDITS.md` for details.
 
