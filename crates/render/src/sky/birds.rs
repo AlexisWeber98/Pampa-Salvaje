@@ -9,7 +9,8 @@
 //! about without simulating any, and every one flies at least
 //! [`MIN_ABOVE_CAMERA`] meters over the camera, never near the player's face.
 //! A bird shows or hides only while it is beyond [`HIDE_RANGE`], where the
-//! dust fog has swallowed it, so none pops in view.
+//! dust fog has swallowed it, so none pops in view; one still in view when its
+//! gate closes is hidden after [`GATE_GRACE`] seconds, so none flies all night.
 
 use super::main_camera;
 use crate::atmosphere::{SUNRISE, SUNSET, WorldClock};
@@ -27,6 +28,9 @@ pub const MIN_ABOVE_CAMERA: f32 = 30.0;
 /// Beyond this many meters the fog hides a bird: the only distance at which
 /// it may appear or vanish.
 pub const HIDE_RANGE: f32 = 200.0;
+/// How long a bird still in view may keep flying after its gate has closed,
+/// in seconds; then it is hidden even in sight.
+pub const GATE_GRACE: f32 = 45.0;
 /// Wing-flap frames in a cycle; the mesh after them is the glide.
 pub const FLAP_FRAMES: usize = 6;
 /// The way every flock bound for roost flies (toward the south-east), as
@@ -195,7 +199,9 @@ pub fn bird_pose(spec: &BirdSpec, seconds: f32, camera: Vec3) -> (Vec3, Vec3, f3
             // of a counter-clockwise bird.
             let lean = -0.35 * spec.rate.signum();
             (
-                wrap_around(spec.anchor, centre) + ring,
+                // Wrap the bird, not its circle: a wrapped centre would
+                // carry it across in view, closer than HIDE_RANGE.
+                wrap_around(spec.anchor + ring, centre),
                 tangent.normalize_or(Vec2::X),
                 lean,
             )
@@ -231,9 +237,15 @@ pub fn frame_at(spec: &BirdSpec, seconds: f32) -> usize {
     ((turns * FLAP_FRAMES as f32) as usize).min(FLAP_FRAMES - 1)
 }
 
-/// Whether a bird shows next: the gate decides only while the fog hides it.
-pub fn next_visible(shown: bool, gate: bool, distance: f32) -> bool {
-    if distance > HIDE_RANGE { gate } else { shown }
+/// Whether a bird shows next: the gate decides while the fog hides it, and
+/// in view only once it has been closed for [`GATE_GRACE`] seconds.
+pub fn next_visible(shown: bool, gate: bool, distance: f32, closed_for: f32) -> bool {
+    if distance > HIDE_RANGE {
+        gate
+    } else {
+        // A bird circling in range would otherwise fly all night.
+        shown && (gate || closed_for < GATE_GRACE)
+    }
 }
 
 /// A bird silhouette, 1.1 m across at rest, nose toward -Z, its wings
@@ -283,6 +295,8 @@ pub struct Bird {
     /// Whether the gate has been applied once, so the first frame needs no
     /// distance.
     settled: bool,
+    /// Seconds the gate has been closed for, zero while it is open.
+    closed_for: f32,
 }
 
 /// Spawns the birds and flies them.
@@ -321,6 +335,7 @@ fn spawn_birds(
             Bird {
                 index,
                 settled: false,
+                closed_for: 0.0,
             },
             Mesh3d(frames[frame_at(&spec, 0.0)].clone()),
             MeshMaterial3d(material.clone()),
@@ -346,15 +361,17 @@ fn fly_birds(
     let camera = main_camera(&cameras);
     let hour = clock.map_or(crate::atmosphere::DEFAULT_HOUR, |c| c.0.hour());
     let seconds = time.elapsed_secs();
+    let dt = time.delta_secs();
     let specs = bird_specs();
     for (mut bird, mut transform, mut visibility, mut mesh) in &mut birds {
         let spec = &specs[bird.index];
         let (position, heading, bank) = bird_pose(spec, seconds, camera);
         let distance = position.distance(camera);
         let gate = gate_open(spec.group, hour);
+        bird.closed_for = if gate { 0.0 } else { bird.closed_for + dt };
         let shown = *visibility == Visibility::Inherited;
         let show = if bird.settled {
-            next_visible(shown, gate, distance)
+            next_visible(shown, gate, distance, bird.closed_for)
         } else {
             bird.settled = true;
             gate
@@ -450,10 +467,12 @@ mod tests {
         let specs = bird_specs();
         let soarer = specs.iter().find(|s| s.group == Group::Soarer).unwrap();
         let camera = Vec3::ZERO;
-        let centre = wrap_around(soarer.anchor, Vec2::ZERO);
         for k in 0..50 {
             let (p, _, _) = bird_pose(soarer, k as f32 * 3.0, camera);
-            let r = Vec2::new(p.x, p.z).distance(centre);
+            // The bird is wrapped, so compare modulo the torus.
+            let d = Vec2::new(p.x, p.z) - soarer.anchor;
+            let d = d - TORUS * (d / TORUS).round();
+            let r = d.length();
             assert!((r - soarer.radius).abs() < 0.01, "{r}");
         }
         let flock = specs.iter().find(|s| s.group == Group::Crosser).unwrap();
@@ -489,11 +508,82 @@ mod tests {
 
     #[test]
     fn a_bird_changes_visibility_only_out_of_sight() {
-        assert!(next_visible(true, false, 100.0), "stays while in view");
-        assert!(!next_visible(false, true, 100.0), "does not pop in");
-        assert!(next_visible(true, true, 100.0));
-        assert!(!next_visible(true, false, 250.0), "gone once fogged out");
-        assert!(next_visible(false, true, 250.0));
+        assert!(next_visible(true, false, 100.0, 0.0), "stays while in view");
+        assert!(!next_visible(false, true, 100.0, 0.0), "does not pop in");
+        assert!(next_visible(true, true, 100.0, 0.0));
+        assert!(
+            !next_visible(true, false, 250.0, 0.0),
+            "gone once fogged out"
+        );
+        assert!(next_visible(false, true, 250.0, 0.0));
+    }
+
+    #[test]
+    fn no_bird_in_view_jumps_when_the_camera_crosses_a_wrap_boundary() {
+        let specs = bird_specs();
+        let seconds = 123.0;
+        let mut worst = 0.0_f32;
+        // Walk the camera 500 m along x, then along z, in half-meter steps.
+        for axis in [Vec3::X, Vec3::Z] {
+            for spec in &specs {
+                let at = |k: usize| Vec3::new(37.0, 2.0, -11.0) + axis * (k as f32 * 0.5);
+                for k in 0..1000 {
+                    let (cam_a, cam_b) = (at(k), at(k + 1));
+                    let (a, _, _) = bird_pose(spec, seconds, cam_a);
+                    let (b, _, _) = bird_pose(spec, seconds, cam_b);
+                    if a.distance(cam_a) < HIDE_RANGE || b.distance(cam_b) < HIDE_RANGE {
+                        worst = worst.max(a.distance(b));
+                    }
+                }
+            }
+        }
+        assert!(worst < 2.0, "a bird in view jumped {worst} m");
+    }
+
+    #[test]
+    fn a_bird_still_in_range_is_hidden_once_the_gate_has_been_closed_a_while() {
+        assert!(next_visible(true, false, 100.0, 0.0), "grace period");
+        assert!(next_visible(true, false, 100.0, GATE_GRACE - 1.0));
+        assert!(!next_visible(true, false, 100.0, GATE_GRACE), "then gone");
+        assert!(next_visible(true, true, 100.0, GATE_GRACE * 2.0));
+        assert!(!next_visible(false, true, 100.0, 0.0), "still no pop-in");
+    }
+
+    #[test]
+    fn a_soarer_circling_a_still_camera_does_not_fly_through_the_night() {
+        use bevy::time::TimeUpdateStrategy;
+        let mut app = app_at(13);
+        app.add_plugins(TransformPlugin);
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(
+            std::time::Duration::from_secs(10),
+        ));
+        let soarer = bird_specs()[0];
+        // The camera right under the soarer's circle: always within range.
+        app.world_mut().spawn((
+            Camera3d::default(),
+            Transform::from_xyz(soarer.anchor.x, 0.0, soarer.anchor.y),
+        ));
+        for _ in 0..3 {
+            app.update();
+        }
+        let mut q = app.world_mut().query::<(&Bird, &Visibility)>();
+        let visible = |app: &App, q: &mut QueryState<(&Bird, &Visibility)>| {
+            q.iter(app.world())
+                .find(|(b, _)| b.index == 0)
+                .map(|(_, v)| *v == Visibility::Inherited)
+                .unwrap()
+        };
+        assert!(visible(&app, &mut q), "out by day");
+        app.world_mut().resource_mut::<WorldClock>().0 = GameClock::at(TimeOfDay::hm(22, 0));
+        app.update();
+        assert!(visible(&app, &mut q), "the grace period");
+        for _ in 0..(GATE_GRACE as usize / 10 + 2) {
+            app.update();
+        }
+        assert!(
+            !visible(&app, &mut q),
+            "gone by the end of the grace period"
+        );
     }
 
     #[test]
