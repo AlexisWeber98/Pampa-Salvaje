@@ -16,6 +16,7 @@ const LOCO_TRIANGLES: usize = 14844;
 const COACH_TRIANGLES: usize = 14328;
 const BOXCAR_TRIANGLES: usize = 6588;
 const HOPPER_TRIANGLES: usize = 6432;
+const TANK_TRIANGLES: usize = 12048;
 
 /// Castex, Monte Nievas and Pico as `assets/world/towns.ron` lays them
 /// out, and the line train through them.
@@ -82,12 +83,12 @@ fn app_with_train(game_seconds: f64, focus: GroundVec2) -> App {
     app
 }
 
-/// A second, shorter train (a shuttle's loco, coach and boxcar) over the
+/// A second, shorter train (a shuttle's tank engine, coach and boxcar) over the
 /// same line, leaving `down` and `up` (hours of the day), so it keeps to
 /// its own timetable apart from the line train.
 pub(crate) fn shuttle(line: &LineTrain, towns: &[TownLayout], down: u32, up: u32) -> LineTrain {
     let cars = [
-        (CarKind::Locomotive, 14.0),
+        (CarKind::TankEngine, 12.0),
         (CarKind::Coach, 12.0),
         (CarKind::Boxcar, 10.0),
     ]
@@ -322,6 +323,106 @@ fn each_car_is_drawn_as_tall_as_core_says() {
             car.kind.height()
         );
     }
+}
+
+/// An app whose train 0 is the branch shuttle (tank engine, coach, boxcar).
+fn app_with_shuttle() -> App {
+    let (towns, line) = line_train();
+    let mut shuttle = shuttle(&line, &towns, 22, 23);
+    shuttle.advance(0.0, 3600.0, BASE_RATE);
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .init_resource::<Assets<Mesh>>()
+        .init_resource::<Assets<StandardMaterial>>()
+        .insert_resource(WorldTerrain(Terrain::default()))
+        .insert_resource(StreamFocus(GroundVec2::ZERO))
+        .insert_resource(WorldTrains(vec![shuttle]))
+        .add_plugins(TrainPlugin);
+    app.update();
+    app
+}
+
+#[test]
+fn the_tank_engine_is_a_2_6_2_with_its_own_tanks_and_bunker_and_no_tender() {
+    let mut app = app_with_shuttle();
+    let (index, length) = first(&app, CarKind::TankEngine);
+    assert_eq!(index, 0, "it hauls the shuttle");
+    // Two leading, six coupled and two trailing wheels, and the four rods.
+    let root = {
+        let mut q = app.world_mut().query::<(Entity, &TrainCar)>();
+        q.iter(app.world())
+            .find(|(_, c)| c.index == index)
+            .unwrap()
+            .0
+    };
+    let kids: Vec<Entity> = app.world().get::<Children>(root).unwrap().iter().collect();
+    let wheels: Vec<f32> = kids
+        .iter()
+        .filter_map(|&e| app.world().get::<TrainWheel>(e).map(|w| w.radius))
+        .collect();
+    assert_eq!(wheels.iter().filter(|&&r| r == DRIVER_RADIUS).count(), 6);
+    assert_eq!(wheels.len(), 10, "2-6-2: {wheels:?}");
+    let rods = kids
+        .iter()
+        .filter(|&&e| app.world().get::<TrainRod>(e).is_some())
+        .count();
+    assert_eq!(rods, 4);
+    // As high as core says, and no longer than its length over the buffers
+    // (the tender engine's wheels, tender and all, take 14 m).
+    let parts = drawn(&mut app, index);
+    let points = || parts.iter().flat_map(|d| d.points.iter());
+    let top = points().map(|p| p.y).fold(f32::MIN, f32::max);
+    let kind = CarKind::TankEngine;
+    assert!((top - kind.height()).abs() < 0.02, "{top}");
+    let (low, high) = points().fold((f32::MAX, f32::MIN), |(l, h), p| (l.min(p.x), h.max(p.x)));
+    assert!(
+        low > -length / 2.0 - 0.3 && high < length / 2.0 + 0.3,
+        "{low} {high}"
+    );
+    assert!(
+        low < -length / 2.0 + 0.7 && high > length / 2.0 - 0.7,
+        "{low} {high}"
+    );
+    // Black plate, brass fittings, tread plate, and coal in the bunker;
+    // the tanks ride beside the boiler, over the drivers' tops.
+    for mat in [
+        Mat::BLACK,
+        Mat::BRASS,
+        Mat::TREAD,
+        Mat::Coal,
+        Mat::BUFFER_RED,
+    ] {
+        let m = material(&app, mat);
+        assert!(parts.iter().any(|d| d.material == m), "{mat:?}");
+    }
+    let black = material(&app, Mat::BLACK);
+    let tank_sides = parts
+        .iter()
+        .filter(|d| d.material == black)
+        .flat_map(|d| d.points.iter())
+        .filter(|p| p.z.abs() > 1.25 && p.y > 1.8 && p.y < 3.0 && p.x > -0.5 && p.x < 3.3)
+        .count();
+    assert!(tank_sides > 20, "side tanks: {tank_sides}");
+    // The coal sits behind the cab, at the rear.
+    let coal = material(&app, Mat::Coal);
+    let (coal_x, n) = parts
+        .iter()
+        .filter(|d| d.material == coal)
+        .flat_map(|d| d.points.iter())
+        .fold((0.0, 0), |(s, n), p| (s + p.x, n + 1));
+    assert!(
+        n > 0 && coal_x / (n as f32) < -3.0,
+        "bunker coal at {}",
+        coal_x / n as f32
+    );
+    // The triangle budget, a quarter's slack either way.
+    let tris = triangles(&mut app, index);
+    println!("TankEngine: {tris} triangles");
+    let documented = TANK_TRIANGLES as f32;
+    assert!(
+        (documented * 0.75) as usize <= tris && tris <= (documented * 1.25) as usize,
+        "{tris}"
+    );
 }
 
 #[test]
@@ -623,6 +724,7 @@ fn every_car_stays_within_its_triangle_budget() {
         // boards. A quarter's slack either way.
         let documented = match car.kind {
             CarKind::Locomotive => LOCO_TRIANGLES,
+            CarKind::TankEngine => TANK_TRIANGLES,
             CarKind::Coach => COACH_TRIANGLES,
             CarKind::Boxcar => BOXCAR_TRIANGLES,
             CarKind::Hopper => HOPPER_TRIANGLES,

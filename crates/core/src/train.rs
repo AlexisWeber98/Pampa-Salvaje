@@ -15,6 +15,9 @@ use crate::{
 pub enum CarKind {
     /// Steam locomotive with its tender.
     Locomotive,
+    /// Small steam tank engine (a 2-6-2T): side tanks and a coal bunker on
+    /// the engine itself, no tender. Hauls the branch shuttle.
+    TankEngine,
     Boxcar,
     /// Open grain hopper.
     Hopper,
@@ -29,6 +32,8 @@ impl CarKind {
         match self {
             // The chimney's flared cap.
             CarKind::Locomotive => 4.55,
+            // The shorter chimney of a branch engine.
+            CarKind::TankEngine => 4.2,
             CarKind::Coach => 4.16,
             CarKind::Boxcar => 4.06,
             // The heaped grain in the open bin.
@@ -1293,11 +1298,13 @@ pub fn shuttle_timetable(line: &LineTrain, junction: usize, to_junction: f64) ->
     })
 }
 
-/// The branch shuttle's consist, from the front: a locomotive, one
+/// The branch shuttle's consist, from the front: a tank engine, one
 /// passenger coach and a boxcar.
 pub(crate) fn branch_consist() -> Vec<Car> {
     [
-        (CarKind::Locomotive, 14.0),
+        // 12 m over the buffers: the coach then stands a meter off the middle
+        // of the terminal, so a door is within boarding reach of the stop spot.
+        (CarKind::TankEngine, 12.0),
         (CarKind::Coach, 12.0),
         (CarKind::Boxcar, 10.0),
     ]
@@ -2039,6 +2046,7 @@ pub(crate) mod line_tests {
     fn cars_stand_a_little_over_four_meters_above_the_rails() {
         for kind in [
             CarKind::Locomotive,
+            CarKind::TankEngine,
             CarKind::Coach,
             CarKind::Boxcar,
             CarKind::Hopper,
@@ -2047,6 +2055,7 @@ pub(crate) mod line_tests {
             assert!(h > 3.4 && h < 5.0, "{kind:?}: {h}");
         }
         assert!(CarKind::Locomotive.height() > CarKind::Coach.height());
+        assert!(CarKind::TankEngine.height() < CarKind::Locomotive.height());
         assert!(CarKind::Hopper.height() < CarKind::Boxcar.height());
         const { assert!(LineTrain::RAIL_TOP > 0.0) };
     }
@@ -2162,6 +2171,21 @@ pub(crate) mod line_tests {
             }
         }
         assert_eq!(meetings, 2);
+    }
+
+    #[test]
+    fn the_shuttle_is_hauled_by_a_tank_engine_and_the_line_train_by_a_tender_engine() {
+        let (_, line, shuttle) = branched_trains(Timetable::default());
+        assert_eq!(shuttle.cars()[0].kind, CarKind::TankEngine);
+        assert_eq!(line.cars()[0].kind, CarKind::Locomotive);
+        assert!(
+            shuttle
+                .cars()
+                .iter()
+                .skip(1)
+                .all(|c| c.kind != CarKind::TankEngine),
+            "one engine only"
+        );
     }
 
     #[test]
