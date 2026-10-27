@@ -320,7 +320,15 @@ pub fn car_occluders(cars: &[PlacedCar], terrain: &Terrain, near: GroundVec2) ->
             let half = car.direction * (car.length / 2.0);
             let rails = ground(car.center - half).max(ground(car.center + half));
             let top = rails + LineTrain::RAIL_TOP + car.kind.height();
-            car.boxes()
+            // Each car also covers half of the coupling gap at both ends, so
+            // the sight line cannot slip between two cars and leave the
+            // camera standing in the gap.
+            let bridged = PlacedCar {
+                length: car.length + LineTrain::COUPLING,
+                ..*car
+            };
+            bridged
+                .boxes()
                 .into_iter()
                 .map(move |b| Occluder::column(b, ground(b.center()), top))
         })
@@ -1758,13 +1766,8 @@ mod tests {
             assert_outside(&cars, cam, &format!("yaw step {k}"));
             // On the player's side of the train, with a clear view.
             let (along, side) = car_frame(&beside, ground(cam));
-            // The player stands 2.65 m from the track (T5b: the platform edge
-            // is 1.65 m out), 1.15 m off the cars: the ray can slip through a
-            // coupling gap, so past the end of the car beside the player the
-            // camera may stand nearer the track's middle (never beyond it).
             assert!(
-                side * across > 0.0
-                    && (side.abs() > LineTrain::WIDTH / 2.0 || along.abs() > beside.length / 2.0),
+                side * across > 0.0 && side.abs() > LineTrain::WIDTH / 2.0,
                 "step {k}: {along}, {side} vs the player's {across}"
             );
             let r = rider(&mut app);
