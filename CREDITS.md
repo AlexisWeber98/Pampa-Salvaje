@@ -45,6 +45,12 @@ The `thatch/` set next to them is our own work. The game loads every set as KTX2
 
 The plaza trees' bark and leaf sets were downloaded by the project owner on 2026-10-26. The game loads the barks and the composed leaf atlases as KTX2 made by `tools/textures_to_ktx2.sh` (the leaves' opacity in the colour's alpha). See `assets/textures/trees/CREDITS.md` for details.
 
+| Asset | Author / source | Licence | Where | Changes |
+|---|---|---|---|---|
+| Stars + Milky Way (8k) | Solar System Scope (solarsystemscope.com), https://www.solarsystemscope.com/textures/ | CC BY 4.0 (attribution required) | `assets/textures/sky/stars_milky_way/` | The 8192x4096 JPG kept as the source; baked to UASTC KTX2 with mips for the game; brightened and turned with the hour in the sky shader |
+
+The star map was downloaded by the project owner on 2026-10-27. Attribution: "Stars + Milky Way" texture by Solar System Scope (solarsystemscope.com), licensed under Creative Commons Attribution 4.0 International. See `assets/textures/sky/CREDITS.md` for details.
+
 ## Models
 
 | Asset | Author / source | Licence | Where | Changes |
