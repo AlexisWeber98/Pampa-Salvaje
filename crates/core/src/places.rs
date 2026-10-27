@@ -285,8 +285,9 @@ const PLAZA_SPOT_DISTANCE: f32 = 6.0;
 /// How far out from a facade [`TownLayout::police_door`] is, in meters.
 const DOOR_SPOT_DISTANCE: f32 = 2.0;
 /// How far in from the platform's track edge [`TownLayout::platform_spot`]
-/// is, in meters: the track runs 4 m out from that edge, so this leaves
-/// 3.5 m to a 3 m wide train, and stays clear of the station canopy's posts.
+/// is, in meters: the track runs [`Floor::PLATFORM_EDGE`] (1.65 m) out from
+/// that edge, so the spot is 2.65 m from the track, 1.15 m off a 3 m wide
+/// train, and stays clear of the station canopy's posts.
 pub(crate) const PLATFORM_SPOT_FROM_EDGE: f32 = 1.0;
 
 /// The world axis nearest the direction of `v` (south for zero).
@@ -895,11 +896,13 @@ mod tests {
                 t.name,
                 clearance(&t, at)
             );
-            // Near its track edge, clear of a train standing on the track.
+            // A step in from its track edge (1.65 m from the track), clear
+            // of a train standing on the track.
             let off_track = (railway.start - at).dot(track).abs();
             let car_half = crate::LineTrain::WIDTH / 2.0;
+            assert!((off_track - 2.65).abs() < 0.01, "{}: {off_track}", t.name);
             assert!(
-                off_track > car_half + crate::Rider::PERSON_RADIUS + 1.0 && off_track < 5.5,
+                off_track > car_half + crate::Rider::PERSON_RADIUS,
                 "{}: {off_track}",
                 t.name
             );
@@ -966,8 +969,10 @@ mod tests {
         let along = (at - middle).dot(d).abs();
         let across = (at - middle).dot(Vec2::new(-d.y, d.x)).abs();
         assert!(along < 1.0, "{along}");
-        let reach = LineTrain::WIDTH / 2.0 + Rider::PERSON_RADIUS + 1.0;
-        assert!(across > reach && across < reach + 3.0, "{across}");
+        // 2.65 m from the track's middle: the platform edge 1.65 m out and
+        // a step in.
+        assert!((across - 2.65).abs() < 0.01, "{across}");
+        assert!(across > LineTrain::WIDTH / 2.0 + Rider::PERSON_RADIUS);
         // Clear of every car and of everything built: nothing moves them.
         let c = Circle::new(Rider::PERSON_RADIUS);
         assert_eq!(world.resolve(c, at, |_| ()), at);

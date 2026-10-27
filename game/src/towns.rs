@@ -260,9 +260,14 @@ mod tests {
             houses(false)
         );
         let corridor = pico.rail_corridor().unwrap();
-        for b in &pico.buildings {
+        for b in pico
+            .buildings
+            .iter()
+            .filter(|b| b.kind != BuildingKind::Platform)
+        {
             assert!(!b.footprint.intersects(&corridor), "{b:?} on the track");
         }
+        // (The platform's edge is 1.65 m from the track, inside the corridor.)
         // The station and its platform stand in the middle of town on the
         // north side of the track, the platform along it.
         let of = |kind| pico.buildings.iter().find(|b| b.kind == kind).unwrap();
@@ -1325,7 +1330,18 @@ mod tests {
             let station = loaded.towns[METILEO].floors()[0];
             for (walk, floor) in bay.walks.iter().zip([station, bay.platform]) {
                 assert!((walk.size().y - 2.0).abs() < 1e-3, "{walk:?}");
-                assert!((walk.center().y - floor.footprint.center().y).abs() < 1e-3);
+                // 3.5 m in from the platform's far edge (11 m from its track).
+                let far = if floor == station {
+                    -436.0 - 11.0
+                } else {
+                    -436.0 + 4.5 + 11.0
+                };
+                let line = if floor == station {
+                    far + 3.5
+                } else {
+                    far - 3.5
+                };
+                assert!((walk.center().y - line).abs() < 1e-3, "{walk:?}");
                 assert!((walk.max.x - (floor.footprint.min.x - 3.0)).abs() < 1e-3);
             }
             for walk in &bay.walks {
@@ -1407,7 +1423,7 @@ mod tests {
             assert_eq!(station.footprint.max.x, 318.0);
             assert!((bay.platform.footprint.min.x - 258.0).abs() < 1e-3);
             assert!((bay.platform.footprint.max.x - 318.0).abs() < 1e-3);
-            assert!((bay.platform.footprint.min.y - (-436.0 + 4.5 + 4.0)).abs() < 1e-3);
+            assert!((bay.platform.footprint.min.y - (-436.0 + 4.5 + 1.65)).abs() < 1e-3);
             assert!(station.footprint.max.y < -436.0);
             assert_eq!(bay.buffer().x.round(), 318.0);
             assert!((bay.stop.x - 288.0).abs() < 1e-3);
@@ -1492,6 +1508,111 @@ mod tests {
             assert!(checked >= 2, "{checked} moments with both trains in");
             // Neither standing train comes within 25 m of the crossing.
             assert!(nearest > 25.0, "{nearest}");
+        }
+
+        #[test]
+        fn every_station_of_the_shipped_world_boards_and_alights_from_its_platform_beside_the_cars()
+        {
+            use pampa_core::{Boarding, Rider, alight_spot, boarding, coach_doors};
+            let loaded = loaded();
+            let (line, shuttle) = trains(&loaded);
+            let mut world = crate::lay_out(&loaded).world;
+            let bay = loaded.line.bay_of(0).unwrap().platform;
+            let mut checked = std::collections::BTreeSet::new();
+            for (t, train) in [&line, &shuttle].into_iter().enumerate() {
+                for town in 0..loaded.towns.len() {
+                    for run in [Run::Up, Run::Down] {
+                        for at in train.stops_at(town, run) {
+                            // 30 s into the stop: standing (dwelling, or laid over
+                            // at a terminal, where the line train's engine is at
+                            // the platform's end, not its middle).
+                            let train = jumped(train, at.seconds() + 30.0);
+                            let phase = train.state().phase;
+                            if phase == pampa_core::LinePhase::Running {
+                                continue;
+                            }
+                            let station = train.stations()[train.state().station.unwrap()];
+                            world.moving = train.obstacles();
+                            let floor = if station.bay {
+                                bay
+                            } else {
+                                loaded.towns[town].floors()[0]
+                            };
+                            // The coach nearest the middle of the platform.
+                            let middle = floor.footprint.center();
+                            let cars = train.placed_cars();
+                            let coach = (0..cars.len())
+                                .filter(|&i| cars[i].kind == CarKind::Coach)
+                                .min_by(|&a, &b| {
+                                    let d = |i: usize| cars[i].center.distance(middle);
+                                    d(a).total_cmp(&d(b))
+                                })
+                                .unwrap();
+                            let placed = cars[coach];
+                            let (spot, _) = if station.bay {
+                                bay.spot_beside(placed.center)
+                            } else {
+                                loaded.towns[town].platform_spot().unwrap()
+                            };
+                            // Beside the coach's nearest door, a step along the
+                            // platform from the middle spot: boards at once.
+                            let door = coach_doors(&placed)
+                                .into_iter()
+                                .min_by(|a, b| a.distance(spot).total_cmp(&b.distance(spot)))
+                                .unwrap();
+                            let by_door = spot
+                                + floor.along * (door.dot(floor.along) - spot.dot(floor.along));
+                            let one = [train.clone()];
+                            let on_foot = |at: Vec2| {
+                                Rider::on_foot(at, pampa_core::Heading::from_radians(0.0), &world)
+                            };
+                            let name = &loaded.towns[town].name;
+                            assert!(
+                                floor.footprint.contains_point(by_door),
+                                "{name}: {by_door:?}"
+                            );
+                            assert!(
+                                matches!(
+                                    boarding(&one, &on_foot(by_door), &world.floors),
+                                    Boarding::Board(_)
+                                ),
+                                "{name} train {t}: no boarding at {by_door:?}, door {door:?}"
+                            );
+                            // From the middle spot too, wherever the train stands
+                            // at it (dwelling, and the shuttle's whole layover).
+                            if phase == pampa_core::LinePhase::Dwelling || t == 1 {
+                                assert!(
+                                    matches!(
+                                        boarding(&one, &on_foot(spot), &world.floors),
+                                        Boarding::Board(_)
+                                    ),
+                                    "{name} train {t}: no boarding at the spot {spot:?}"
+                                );
+                            }
+                            // Alighting puts the rider on the platform, off the cars.
+                            let (down, _) = alight_spot(&train, coach, &loaded.towns, &world)
+                                .unwrap_or_else(|| panic!("{} alights", loaded.towns[town].name));
+                            assert!(
+                                world
+                                    .floors
+                                    .iter()
+                                    .any(|f| f.footprint.contains_point(down))
+                            );
+                            let off = down.distance(world.resolve(
+                                pampa_core::Circle::new(Rider::PERSON_RADIUS),
+                                down,
+                                |_| (),
+                            ));
+                            assert!(off < 1e-3, "{} alights in a car", loaded.towns[town].name);
+                            checked.insert((t, town));
+                        }
+                    }
+                }
+            }
+            assert_eq!(
+                checked.into_iter().collect::<Vec<_>>(),
+                [(0, 0), (0, 1), (0, 2), (0, 3), (1, 2), (1, 4)]
+            );
         }
 
         /// The station track's two points around the crossing, for a

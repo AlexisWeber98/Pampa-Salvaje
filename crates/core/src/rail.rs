@@ -165,10 +165,12 @@ impl RailBay {
     /// that crosses it by the platform (a sharp turnout, as a yard's).
     pub const TURNOUT_RADIUS: f32 = 150.0;
     /// Distance from the bay's centerline to its platform's track edge, in
-    /// meters: as at a station (3 m wide cars leave 2.5 m).
-    pub const PLATFORM_EDGE: f32 = 4.0;
-    /// Width of the bay platform across the track, in meters.
-    pub const PLATFORM_DEPTH: f32 = 7.0;
+    /// meters: as at a station ([`Floor::PLATFORM_EDGE`]).
+    pub const PLATFORM_EDGE: f32 = Floor::PLATFORM_EDGE;
+    /// Width of the bay platform across the track, in meters: its far edge
+    /// stands 11 m from the track, as the station platform's does, so the
+    /// platform grew toward the track when its edge came in.
+    pub const PLATFORM_DEPTH: f32 = 11.0 - Self::PLATFORM_EDGE;
     /// Width of the walks from the platforms to the road, in meters.
     pub const WALK_WIDTH: f32 = 2.0;
     /// How far from the road's centerline a walk ends, in meters: inside
@@ -970,7 +972,7 @@ fn walks(bay: &RailBay, town: &TownLayout, roads: &RoadNetwork) -> Option<Vec<Aa
             off.abs() < 0.5 && rel.dot(out) > RailBay::WALK_INTO_ROAD
         })
         .min_by(|a, b| (a.at - join).dot(out).total_cmp(&(b.at - join).dot(out)))?;
-    let reach = |floor: Floor| {
+    let reach = |floor: Floor, track: Vec2| {
         let (along, across) = (floor.along, floor.across());
         // The platform's end toward the tip, and a ramp past it.
         let sign = along.dot(out).signum();
@@ -979,7 +981,19 @@ fn walks(bay: &RailBay, town: &TownLayout, roads: &RoadNetwork) -> Option<Vec<Aa
             floor.footprint.max.dot(along),
         );
         let start = (if sign > 0.0 { hi } else { lo }) + sign * Floor::RAMP_LENGTH;
-        let line = floor.footprint.center().dot(across);
+        // The walk runs 3.5 m in from the platform's far edge (where the
+        // middle of a 7 m platform was, before the platforms grew toward
+        // the track), so it keeps clear of what stands by the crossing.
+        let (low, high) = (
+            floor.footprint.min.dot(across),
+            floor.footprint.max.dot(across),
+        );
+        let from_track = track.dot(across);
+        let line = if (high - from_track).abs() > (low - from_track).abs() {
+            high - Floor::WALK_LINE_IN
+        } else {
+            low + Floor::WALK_LINE_IN
+        };
         let at = |a: f32| along * a + across * line;
         let steps = (RailBay::WALK_REACH / 0.25) as usize;
         let end = (0..=steps)
@@ -1000,7 +1014,10 @@ fn walks(bay: &RailBay, town: &TownLayout, roads: &RoadNetwork) -> Option<Vec<Aa
         // The road at the end of the walk is by the crossing.
         (at(end).distance(crossing.at) < RailBay::WALK_NEAR_CROSSING).then(|| Aabb::new(min, max))
     };
-    Some(vec![reach(station)?, reach(bay.platform)?])
+    Some(vec![
+        reach(station, join)?,
+        reach(bay.platform, bay.buffer())?,
+    ])
 }
 
 /// Whether a path, read as its `pieces` in order, comes back onto `band`
@@ -1912,7 +1929,7 @@ pub(crate) mod tests {
         let across = across * across.dot(buffer - track.start).signum();
         let platform = bay.platform;
         let station = towns[1].floors()[0];
-        // The station platform's build: height, depth, its edge 4 m from
+        // The station platform's build: height, depth, its edge 1.65 m from
         // the track, on the bay's far side from the station track.
         assert_eq!(platform.height, station.height);
         let (lo, hi) = (platform.footprint.min, platform.footprint.max);
@@ -1923,13 +1940,14 @@ pub(crate) mod tests {
             .map(off)
             .fold((f32::MAX, f32::MIN), |(n, f), d| (n.min(d), f.max(d)));
         assert!(
-            (near - 4.0).abs() < 1e-3 && (far - 11.0).abs() < 1e-3,
+            (near - 1.65).abs() < 1e-3 && (far - 11.0).abs() < 1e-3,
             "{near} {far}"
         );
         let depth = |f: &Floor| f.footprint.size().x.min(f.footprint.size().y);
-        assert_eq!(depth(&platform), depth(&station));
-        // The cars' side (1.5 m from the centerline) leaves 2.5 m to it.
-        assert!(near - LineTrain::WIDTH / 2.0 >= 2.5 - 1e-3);
+        assert!((depth(&platform) - depth(&station)).abs() < 1e-3);
+        assert!((depth(&platform) - 9.35).abs() < 1e-3);
+        // The cars' side (1.5 m from the centerline) leaves 0.15 m to it.
+        assert!((near - LineTrain::WIDTH / 2.0 - 0.15).abs() < 1e-3);
         // Along the track it runs from the buffer stop past the front of
         // the standing consist, whole of it beside the platform.
         let consist = consist_length(&branch_consist());

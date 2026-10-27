@@ -932,3 +932,28 @@ fn each_train_rolls_its_own_wheels_and_smokes_for_itself() {
     assert!(line.iter().all(|v| *v == Visibility::Inherited));
     assert!(shuttle.iter().all(|v| *v == Visibility::Hidden));
 }
+
+#[test]
+fn nothing_of_a_car_at_platform_height_reaches_the_platform_edge() {
+    // A platform's top stands 0.9 m over the ground, so 0.4 m over the
+    // rail tops (the car frame's zero); its edge is 1.65 m from the
+    // track's middle. Every fitting at or under that height (steps,
+    // buffers, cylinders, plates, splashers, wheels) must clear it by 5 cm.
+    const PLATFORM_TOP_IN_CAR_FRAME: f32 = 0.4;
+    const CLEAR_HALF_WIDTH: f32 = 1.60;
+    let mut app = app_with_cars();
+    let train = app.world().resource::<WorldTrains>().0[0].clone();
+    for (index, car) in train.cars().iter().enumerate() {
+        let widest = drawn(&mut app, index)
+            .iter()
+            .flat_map(|d| d.points.iter())
+            .filter(|p| p.y <= PLATFORM_TOP_IN_CAR_FRAME)
+            .map(|p| p.z.abs())
+            .fold(0.0, f32::max);
+        assert!(
+            widest <= CLEAR_HALF_WIDTH,
+            "{:?} (car {index}) reaches {widest} m at platform height",
+            car.kind
+        );
+    }
+}

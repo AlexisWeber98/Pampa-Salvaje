@@ -403,6 +403,10 @@ user's permission; see the asset rules in `CREDITS.md`).
 - [x] T5 Train look: procedural, rounded and textured (the glTF option was
   dropped, user 2026-10-27); the ridden coach furnished inside and out.
   Route: delegated writer.
+- [x] T5b Platforms beside the track (user playtest 2026-10-27: "los
+  andenes estan muy lejos de las vias"): every platform's track edge is
+  1.65 m from the track's middle (was 4 m), stations and the Metileo bay.
+  Route: delegated writer.
 - [ ] T6 Docs: this file, `odd/tasks/caleufu.md`, README files, doc
   comments. Last step before the native review.
 
@@ -461,6 +465,76 @@ user's permission; see the asset rules in `CREDITS.md`).
   facets 40, black tint, lamp material, wheel height, tender axles, wheel gauge, box and lathe
   UVs, crease angle, stadium length, prism UV. Updated on purpose: settlement
   `every_set_ships_its_three_ktx2_maps...` (20 sets).
+
+## T5b platforms beside the track
+
+- Decisions: `Floor::PLATFORM_EDGE` = 1.65 m (core `town.rs`; the cars'
+  side is 1.5 m out, so 0.15 m is left, like a broad-gauge platform);
+  `RailBay::PLATFORM_EDGE` is the same constant. Measured on the T5
+  train (render test): nothing at or under platform height (0.4 m over
+  the rail tops) reaches past 1.09 m (wheels and gear; the locomotive
+  0.93 m), and nothing up to 1.5 m of height past 1.5 m (cab steps, coach
+  end steps, buffers and cylinders are above platform height and inside
+  1.5 m), so 1.65 clears everything by 56 cm at platform height and 15 cm
+  at the body; no larger edge was needed.
+- What moved: the station platform now spans 11 m to 1.65 m from the track
+  (9.35 m deep, was 7); the bay platform 1.65 m to 11 m from the bay
+  (`PLATFORM_DEPTH` = 11 - edge; the far edges did not move). The station
+  building, canopy (its edge stays 5.5 m from the track, its columns 5.1
+  m), boards, signs, lamps, palenques and every other building stayed.
+  `PLATFORM_SPOT_FROM_EDGE` stays 1.0, so the spot is 2.65 m from the
+  track (1.15 m off the car's side). The bay walks run 3.5 m in from the
+  platform's far edge (`Floor::WALK_LINE_IN`, where a 7 m platform's
+  middle was): the old middle line went through a crossing sign post once
+  the platform's middle moved. `BOARD_RANGE` stays 5: the nearest door of a
+  12 m coach is up to about 4.9 m along the platform from the middle
+  spot, so the shorter lateral gap (1.15 m, was 2.5 m) barely changes the
+  distance; shrinking the range would need the spot nearer the doors.
+  Pre-existing: the line train's layover at a terminal (Castex, Monte
+  Nievas) has its engine at the platform, 7.1 m along from the middle
+  spot, so F from the spot does not board there (as before); a step along
+  the platform does.
+- Tests, new: core `town`: `every_platforms_track_edge_is_1_65_m_from_the_track_and_its_far_edge_11_m`,
+  `the_canopy_edge_and_its_posts_stay_5_5_m_from_the_track_clear_of_a_train`;
+  render `train`: `nothing_of_a_car_at_platform_height_reaches_the_platform_edge`;
+  game `towns::caleufu`: `every_station_of_the_shipped_world_boards_and_alights_from_its_platform_beside_the_cars`
+  (the line train at four towns, the shuttle at Metileo's bay and
+  Caleufu: boards beside its nearest door, from the middle spot where it
+  stands there, alights on a platform off the cars).
+- Tests, changed on purpose: core `places` `the_platform_spot_is_on_the_platform_...`
+  and `the_game_starts_on_the_platform_beside_the_dwelling_coaches` (spot 2.65 m
+  from the track, was "clear by 1 m"); core `rail`
+  `the_bay_has_a_station_built_platform_...` (edge 1.65, depth 9.35, 0.15 m
+  to the cars); core `ride` `nothing_is_boarded_from_the_ground_...` (the
+  ground spot is between the tracks, the bay platform now covers the
+  old spot); core `town` `railway_runs_past_the_town_edge_by_the_station`
+  (corridor = a train's 3 m, the platform stands beside it) and
+  `small_towns_keep_their_layout_byte_for_byte` (nine towns re-pinned);
+  game `towns`: `general_pico_grows_on_both_sides_...` (platform not in the
+  corridor check), `the_station_and_bay_platforms_face_each_other_...` (bay edge
+  1.65), the bay-walk tests (walk line 3.5 m in from the far edge), and
+  `camera::on_the_platform_the_camera_stays_in_front_of_the_dwelling_train`:
+  before, the camera had to be on the player's side of the track with
+  |side| > 1.5 from the beside car; now it must be on the player's side
+  and either clear of the car's width or past the car's end. The player
+  stands 2.65 m from the track (1.15 m from the car's side wall to the
+  player's spot, platform edge 0.15 m from the car); the ray to the far
+  desired camera grazes the car's end and the camera stops 0.5 m past
+  it, in the coupling gap (side 1.2-1.9 m, never past the middle). Still
+  caught: with the line of sight check disabled the test fails (camera 5.6
+  m on the far side, through the train).
+- Proven by sabotage: edge 4.0 (five core tests fail, game spot tests),
+  edge 1.4 (corridor test), canopy depth 4.5, spot 1.5 m from the edge, wheels
+  at 1.7 m, walk line 2.5 m, `BOARD_RANGE` 1, the ride helper pointing
+  at the bay platform, camera line of sight off. The cylinders, steps and
+  footboards are above platform height, so no sabotage of them fails the
+  render test: measured instead (all within 1.5 m up to 1.5 m of height).
+- Shots (game tour, 09:00 Metileo both platforms and trains, 11:00 Monte
+  Nievas, 13:45 Caleufu): the platform edge runs a hand's breadth from the
+  cars, wheels and gear are under it, nothing intersects, columns of the
+  canopy stand well clear of the train. The session's rule is to delete the
+  PNGs after reading; `rm` was denied, so the nine files are still in the
+  scratchpad (the coordinator lists the paths).
 
 ## T2 tests
 

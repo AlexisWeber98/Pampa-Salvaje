@@ -1005,18 +1005,18 @@ mod tests {
             .collect()
     }
 
-    /// A spot 1 m beyond the door of the shuttle's coach farthest from the
-    /// line train's track: the ground north of the bay, off any platform.
+    /// A spot 1 m beyond the door of the shuttle's coach nearest the line
+    /// train's track: the ground between the two tracks, off any platform.
     fn beside_the_bay(line: &LineTrain, shuttle: &LineTrain) -> Vec2 {
         let car = coaches(shuttle)[0];
         let placed = shuttle.placed_cars()[car];
         let off_track = |d: &Vec2| d.distance(line.path().at(line.path().project(*d)));
         let door = coach_doors(&placed)
             .into_iter()
-            .max_by(|a, b| off_track(a).total_cmp(&off_track(b)))
+            .min_by(|a, b| off_track(a).total_cmp(&off_track(b)))
             .unwrap();
         let from_track = door - line.path().at(line.path().project(door));
-        door + from_track * (1.0 / from_track.length())
+        door - from_track * (1.0 / from_track.length())
     }
 
     /// A spot on the bay platform beside the shuttle's coach door nearest
@@ -1092,7 +1092,7 @@ mod tests {
                 .any(|f| f.footprint.contains_point(off.position))
         );
         assert_eq!(boarding(&trains, &off, &world.floors), Boarding::Nothing);
-        // Nor beside the shuttle in its bay, on the ground north of it.
+        // Nor beside the shuttle in its bay, on the ground between the tracks.
         let ground = on_foot(beside_the_bay(&trains[0], &trains[1]), &world);
         assert!(
             !world
