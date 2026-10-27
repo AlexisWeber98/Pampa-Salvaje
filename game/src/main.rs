@@ -15,6 +15,7 @@ mod player;
 mod ride;
 #[cfg(test)]
 mod settlement_tests;
+mod timetable;
 mod towns;
 
 use bevy::prelude::*;
@@ -333,7 +334,7 @@ fn main() {
     // The lagoons' water and reeds.
     .add_plugins(LagoonPlugin)
     // The errand and the clock and objective in the corner.
-    .add_plugins((errand::ErrandPlugin, HudPlugin))
+    .add_plugins((errand::ErrandPlugin, timetable::TimetablePlugin, HudPlugin))
     // Boarding, riding, skipping and waiting for the train, with a fade to
     // cover jumps in time.
     .add_plugins((ride::RidePlugin, FadePlugin))

@@ -765,24 +765,7 @@ fn bell_tower(shape: &mut Shape, nave: &Walls, size: f32, over: f32, _v: u32) {
 /// exactly where core puts it, on cast-iron columns.
 fn station(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
     let walls = masonry((w, d, h), 0.45);
-    let bays = ((walls.width() / 3.0) as usize).clamp(3, 9) | 1;
-    let f = Front {
-        wall: Surface::Brick,
-        trim: Surface::Stucco,
-        plinth: Surface::Stucco,
-        bays,
-        doors: (0..bays).filter(|k| k % 2 == 1).collect(),
-        door: (1.3, 2.8),
-        window: (1.1, 0.9, 2.8),
-        parapet: 0.0,
-        crown: Crown::Solid,
-        crest: false,
-        urns: false,
-        roof: Roof::Flat,
-        grilles: false,
-        hoods: true,
-        transom: true,
-    };
+    let f = station_front(&walls);
     // The track side mirrors the town side: one face, turned half way round.
     let mut face = Shape::default();
     station_face(&mut face, &walls, &f);
@@ -811,6 +794,44 @@ fn station(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
     chimney(shape, Vec3::new(walls.x0 + 2.0, h, 0.0), h + 2.4);
     chimney(shape, Vec3::new(walls.x1 - 2.0, h, 0.0), h + 2.4);
     canopy(shape, (w, d));
+}
+
+/// The openings and trim of a station's long walls.
+fn station_front(walls: &Walls) -> Front {
+    let bays = pampa_core::station_bays(walls.width());
+    Front {
+        wall: Surface::Brick,
+        trim: Surface::Stucco,
+        plinth: Surface::Stucco,
+        bays,
+        doors: (0..bays).filter(|k| k % 2 == 1).collect(),
+        door: (1.3, 2.8),
+        window: (1.1, 0.9, 2.8),
+        parapet: 0.0,
+        crown: Crown::Solid,
+        crest: false,
+        urns: false,
+        roof: Roof::Flat,
+        grilles: false,
+        hoods: true,
+        transom: true,
+    }
+}
+
+/// The doors and windows along a long wall of the station of a footprint
+/// `w` by `d` (the same on both faces, mirrored), as `(first jamb, second
+/// jamb)` in meters from the wall's middle.
+#[cfg(test)]
+pub(crate) fn station_openings((w, d, h): (f32, f32, f32)) -> Vec<(f32, f32)> {
+    let walls = masonry((w, d, h), 0.45);
+    let f = station_front(&walls);
+    spread(walls.width(), f.bays, &f.doors, f.door, f.window)
+        .iter()
+        .map(|o| {
+            let (a, b) = o.span();
+            (a - walls.width() / 2.0, b - walls.width() / 2.0)
+        })
+        .collect()
 }
 
 /// The street front of the station on `walls`, seen from `+Z`: the wall with

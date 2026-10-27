@@ -60,7 +60,7 @@ pub use settlement::{
     ModelRotor, ModelSlots, SettlementPart, SettlementPlugin, SlotFit, SlotRotor, TrackSurface,
     WorldSettlements, YardPart, YardProp, YardSurface,
 };
-pub use signs::{SignPlugin, Signboard};
+pub use signs::{SignPlugin, Signboard, TIMETABLE_BOARD_TEXT, TimetableBoard};
 pub use streaming::{StreamingPlan, StreamingSet};
 pub use terrain::{StreamFocus, TerrainChunk, TerrainPlugin, WorldChunks, WorldTerrain};
 pub use town::{ActiveTowns, StreamTowns, TownPlugin, TownRoot, WindmillRotor, WorldTowns};

@@ -164,7 +164,7 @@ fn ridden_jump<R>(
 /// The keys: F boards, gets off or waits; Space skips the ride (or
 /// shortens a skip underway). A key used here is cleared, so the errand
 /// does not also act on it.
-fn ride_keys(
+pub(crate) fn ride_keys(
     mut commands: Commands,
     keys: Option<ResMut<ButtonInput<KeyCode>>>,
     (mut trains, towns, mut world): Line,
@@ -622,7 +622,13 @@ pub(crate) mod testing {
             .insert_resource(run)
             .insert_resource(cast)
             .insert_resource(ErrandDialogue(shipped_lines()))
-            .add_plugins((PlayerPlugin, TownLifePlugin, ErrandPlugin, RidePlugin));
+            .add_plugins((
+                PlayerPlugin,
+                TownLifePlugin,
+                ErrandPlugin,
+                RidePlugin,
+                crate::timetable::TimetablePlugin,
+            ));
         app
     }
 

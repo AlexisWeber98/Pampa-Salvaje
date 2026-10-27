@@ -328,6 +328,70 @@ fn facade_sign(footprint: Aabb, front: Side, width: f32) -> Sign {
     }
 }
 
+/// How far the station's walls stand in from its footprint, in meters
+/// (render's `PROUD`): the walls are this much shorter at each end.
+pub const STATION_WALL_INSET: f32 = 0.1;
+
+/// Bays (openings, doors at the odd ones) in a station wall `length`
+/// meters long: one per 3 m, 3 to 9, always odd so a door is in the middle.
+pub fn station_bays(length: f32) -> usize {
+    ((length / 3.0) as usize).clamp(3, 9) | 1
+}
+
+/// Width of the timetable board on the station wall, in meters.
+pub const TIMETABLE_BOARD_WIDTH: f32 = 1.4;
+/// Height of the middle of the timetable board above the platform floor,
+/// in meters: beside the doors and windows, at eye level.
+pub const TIMETABLE_BOARD_HEIGHT: f32 = 1.7;
+
+impl TownLayout {
+    /// The station's three timetable boards, each a facade [`Sign`] hung on
+    /// a pier between openings, where no door or window is: first the one
+    /// on the track-side wall, facing the platform (the station faces the
+    /// town, so the track is behind it), then the two on the street front,
+    /// one on each side of the entrance bay, facing the street. Empty
+    /// without a station.
+    pub fn timetable_boards(&self) -> Vec<Sign> {
+        let Some(station) = self
+            .buildings
+            .iter()
+            .find(|b| b.kind == BuildingKind::Station)
+        else {
+            return Vec::new();
+        };
+        // The platform floor the track-side board stands on.
+        let platform = self
+            .buildings
+            .iter()
+            .find(|b| b.kind == BuildingKind::Platform)
+            .map_or(0.0, |p| p.height);
+        let footprint = station.footprint;
+        let board = |facing: Side, side: f32, elevation: f32| {
+            let normal = side_normal(facing);
+            let along = Vec2::new(normal.y.abs(), normal.x.abs());
+            let length = footprint.size().dot(along) - 2.0 * STATION_WALL_INSET;
+            // The edge between the middle bay and its neighbour: the
+            // openings are centered in their bays, so it is clear of every
+            // one.
+            let pier = length / (2.0 * station_bays(length) as f32);
+            let half = footprint.size() * 0.5;
+            let reach = normal.x.abs() * half.x + normal.y.abs() * half.y + FACADE_GAP;
+            Sign {
+                anchor: footprint.center() + normal * reach + along * (side * pier),
+                facing,
+                mount: SignMount::Facade,
+                elevation,
+                width: TIMETABLE_BOARD_WIDTH,
+            }
+        };
+        vec![
+            board(station.front.opposite(), 1.0, platform),
+            board(station.front, -1.0, 0.0),
+            board(station.front, 1.0, 0.0),
+        ]
+    }
+}
+
 /// Width of each station name board on the platform, in meters: a long
 /// period board, but short enough to stand clear of the platform's ends.
 const PLATFORM_BOARD_WIDTH: f32 = 5.0;
@@ -602,6 +666,73 @@ mod tests {
             ends.sort_by(f32::total_cmp);
             assert_eq!(ends, [-1.0, 1.0], "{}: one at each end", t.name);
         }
+    }
+
+    #[test]
+    fn every_station_has_three_timetable_boards_one_on_each_wall_side_of_the_entrance() {
+        let mut stations = 0;
+        for t in sample_towns() {
+            let boards = t.timetable_boards();
+            let Some(station) = building(&t, BuildingKind::Station) else {
+                assert!(boards.is_empty(), "{}", t.name);
+                continue;
+            };
+            stations += 1;
+            assert_eq!(boards.len(), 3, "{}", t.name);
+            let platform = building(&t, BuildingKind::Platform).unwrap();
+            // The track side first, then the street front's two.
+            let wanted = [
+                (station.front.opposite(), platform.height),
+                (station.front, 0.0),
+                (station.front, 0.0),
+            ];
+            let mut street = Vec::new();
+            for (board, (facing, elevation)) in boards.iter().zip(wanted) {
+                assert_eq!(board.facing, facing, "{}", t.name);
+                assert_eq!(board.mount, SignMount::Facade);
+                assert_eq!(board.elevation, elevation, "{}", t.name);
+                assert!(board.width < 2.0);
+                let n = side_normal(board.facing);
+                let wall = station.footprint.center().dot(n)
+                    + station
+                        .footprint
+                        .size()
+                        .dot(Vec2::new(n.x.abs(), n.y.abs()))
+                        / 2.0;
+                let gap = board.anchor.dot(n) - wall;
+                assert!((gap - 0.1).abs() < 1e-4, "{}: gap {gap}", t.name);
+                // Within the wall's length, a pier's width from its middle.
+                let along = Vec2::new(n.y.abs(), n.x.abs());
+                let offset = (board.anchor - station.footprint.center()).dot(along);
+                assert!(offset.abs() > 0.5, "{}: on the middle bay", t.name);
+                assert!(
+                    offset.abs() + board.width / 2.0 < station.footprint.size().dot(along) / 2.0,
+                    "{}",
+                    t.name
+                );
+                if board.facing == station.front {
+                    street.push(offset);
+                }
+            }
+            // The street boards flank the entrance: equally far to either
+            // side of the middle.
+            assert_eq!(street.len(), 2);
+            assert!(
+                (street[0] + street[1]).abs() < 1e-4,
+                "{}: {street:?}",
+                t.name
+            );
+            assert!(street[0] * street[1] < 0.0, "{}", t.name);
+        }
+        assert!(stations > 0);
+    }
+
+    #[test]
+    fn station_bays_are_odd_between_three_and_nine() {
+        assert_eq!(station_bays(1.0), 3);
+        assert_eq!(station_bays(23.8), 7);
+        assert_eq!(station_bays(24.0), 9);
+        assert_eq!(station_bays(100.0), 9);
     }
 
     #[test]
