@@ -262,7 +262,8 @@ impl Settlement {
     pub const CORRIDOR: f32 = Track::HALF_WIDTH + 1.0;
     /// Least distance between two settlements' hubs, in meters.
     pub const MIN_SPACING: f32 = 300.0;
-    /// X
+    /// Extra eucalyptus a compound plants, as a share of the trees its kind
+    /// lays out (the count rounds at random).
     pub const MORE_TREES: f32 = 0.35;
     /// Least ground an estancia's compound spreads over, in square meters.
     pub const RANCH_AREA: f32 = 20_000.0;

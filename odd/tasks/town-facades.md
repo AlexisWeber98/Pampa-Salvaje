@@ -1444,3 +1444,31 @@ Files outside the allowed surfaces that had to change: `crates/render/src/minima
 Nothing committed (the user owns commits). Next step: the user eyeballs the
 trees (pit crowns, front trees, groves, yards), the shrubs and flower beds
 and the wider streets in game, then commits.
+
+### Delivery (phase 6)
+
+f2b6911 (S6a-d) was too large for one review (`lens_context_budget_exceeded`),
+so it was re-cut into four commits whose final tree equals f2b6911's
+(`4cf984f`). Each was reviewed committed-only on its own base, reliability
+lens, approved and acknowledged:
+
+| Commit | Base | Lines | Lineage |
+| --- | --- | --- | --- |
+| ab23ba6 S1-S5 | a337328 | | review-9127fbfe06f3419f |
+| e756059 wider streets, 3.5 m sidewalks, R3-001 | ab23ba6 | 404 | review-c684c0229e89b50c |
+| 99ad15b shade trees and yard plants in core | e756059 | 1093 | review-5cef342e1f493a9d |
+| 924baeb draw trees, shrubs and flower beds | 99ad15b | 1262 | review-2286eabf2dc83be5 |
+| cea419a tiered sidewalks, Pico plaza thinning | 924baeb | 709 | review-037548da0887f821 |
+
+Informational follow-ups from those reviews (none blocking):
+
+- `game/src/towns.rs:455` the carriageway check derives the carriageway
+  from the expected width, so it cannot fail on its own.
+- `crates/core/src/settlement.rs:265` `MORE_TREES` had a placeholder doc
+  (fixed in a docs commit); its 0.35 reads against the "30%" in comments.
+- `crates/render/src/town.rs:1090` `shade_transform` normalizes a cross
+  product with no guard: a tree leaning straight up would give NaN.
+- `crates/render/src/settlement.rs:202` `setup_kit` now returns silently
+  without a `TreeKit`.
+- `crates/core/src/town.rs:188` no test pins the village (`Paving::None`)
+  earth sidewalk rings.
