@@ -9,7 +9,9 @@ use bevy::asset::RenderAssetUsages;
 use bevy::image::ImageSampler;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use pampa_core::{BuildingKind, PlaceKind, Side, Sign, SignMount, TownLayout};
+use pampa_core::{
+    BuildingKind, PlaceKind, Side, Sign, SignMount, TIMETABLE_BOARD_HEIGHT, TownLayout,
+};
 
 use crate::coords::world_from_ground;
 use crate::font::{self, GLYPH_HEIGHT};
@@ -203,6 +205,13 @@ impl Plugin for SignPlugin {
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Signboard(pub PlaceKind);
 
+/// Marks the timetable board hung on a station's platform wall.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TimetableBoard;
+
+/// The lettering of the timetable board.
+pub const TIMETABLE_BOARD_TEXT: &str = "HORARIOS";
+
 /// Asset stores a sign needs.
 type SignAssets<'a> = (
     ResMut<'a, Assets<Image>>,
@@ -221,6 +230,13 @@ fn spawn_signs(
             continue;
         };
         spawn_town_signs(
+            &mut commands,
+            root,
+            town,
+            &terrain.0,
+            (&mut images, &mut meshes, &mut materials),
+        );
+        spawn_timetable_boards(
             &mut commands,
             root,
             town,
@@ -326,6 +342,66 @@ fn spawn_town_signs(
                     }
                 });
         }
+    }
+}
+
+/// The timetable boards of `town`'s station, if it has one, as children of
+/// `root`: small period boards in the station's sign style, on the walls
+/// between the openings (see [`TownLayout::timetable_boards`]).
+fn spawn_timetable_boards(
+    commands: &mut Commands,
+    root: Entity,
+    town: &TownLayout,
+    terrain: &pampa_core::Terrain,
+    (images, meshes, materials): (
+        &mut Assets<Image>,
+        &mut Assets<Mesh>,
+        &mut Assets<StandardMaterial>,
+    ),
+) {
+    let style = BoardStyle::for_place(PlaceKind::Station);
+    for (n, sign) in town.timetable_boards().into_iter().enumerate() {
+        let layout = layout_board(TIMETABLE_BOARD_TEXT, sign.width, 0.8);
+        let image = board_image(TIMETABLE_BOARD_TEXT, layout, style, 7.0 + n as f32);
+        let face = materials.add(StandardMaterial {
+            base_color_texture: Some(images.add(image)),
+            perceptual_roughness: 0.85,
+            reflectance: 0.2,
+            ..default()
+        });
+        let [r, g, b] = style.frame;
+        let backing = materials.add(StandardMaterial {
+            base_color: Color::srgb_u8(r, g, b),
+            perceptual_roughness: 0.95,
+            ..default()
+        });
+        let front = facing_dir(sign.facing);
+        let turn = Quat::from_rotation_y(front.x.atan2(front.z));
+        let base = terrain.height(sign.anchor.x, sign.anchor.y) + sign.elevation;
+        let c = world_from_ground(sign.anchor, base + TIMETABLE_BOARD_HEIGHT);
+        let (w, h) = (layout.width_m, layout.height_m);
+        commands
+            .spawn((
+                Name::new(format!("Timetable board {}", town.name)),
+                TimetableBoard,
+                Transform::default(),
+                Visibility::default(),
+                ChildOf(root),
+            ))
+            .with_children(|parent| {
+                parent.spawn((
+                    Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
+                    MeshMaterial3d(backing),
+                    Transform::from_translation(c - front * 0.05)
+                        .with_rotation(turn)
+                        .with_scale(Vec3::new(w + 0.1, h + 0.1, 0.08)),
+                ));
+                parent.spawn((
+                    Mesh3d(meshes.add(Rectangle::new(w, h))),
+                    MeshMaterial3d(face),
+                    Transform::from_translation(c).with_rotation(turn),
+                ));
+            });
     }
 }
 
@@ -520,7 +596,8 @@ mod tests {
             // Backing and face; post boards add a back face and two posts.
             assert!(*parts == 2 || *parts == 5, "{kind:?} has {parts} parts");
         }
-        assert_eq!(app.world().resource::<Assets<Image>>().len(), signs);
+        // Three more images: the station's timetable boards.
+        assert_eq!(app.world().resource::<Assets<Image>>().len(), signs + 3);
 
         // Every face quad (+Z normal) points the way its sign faces.
         let mut faces = app
@@ -545,6 +622,87 @@ mod tests {
                     "{:?} faces {:?}",
                     place.kind,
                     sign.facing
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_station_gets_three_boards_each_clear_of_doors_and_windows() {
+        let towns = vec![TownLayout::castex_inspired()];
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Assets<Image>>()
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .insert_resource(WorldTerrain(pampa_core::Terrain::default()))
+            .insert_resource(WorldTowns(towns.clone()))
+            .add_plugins((crate::TownPlugin, SignPlugin));
+        app.update();
+
+        let mut boards = app
+            .world_mut()
+            .query_filtered::<&Children, With<TimetableBoard>>();
+        assert_eq!(boards.iter(app.world()).count(), 3 * towns.len());
+        let mut faces = app
+            .world_mut()
+            .query_filtered::<(&Transform, &MeshMaterial3d<StandardMaterial>), Without<Signboard>>(
+            );
+        for town in &towns {
+            let station = town
+                .buildings
+                .iter()
+                .find(|b| b.kind == BuildingKind::Station)
+                .unwrap();
+            let signs = town.timetable_boards();
+            assert_eq!(signs.len(), 3);
+            // One facing the platform, two facing the street.
+            let facing: Vec<Side> = signs.iter().map(|s| s.facing).collect();
+            assert_eq!(
+                facing,
+                [station.front.opposite(), station.front, station.front]
+            );
+            for sign in signs {
+                // Beside every door and window: none of them reaches the
+                // board.
+                let n = pampa_core::places::side_normal(sign.facing);
+                let along = pampa_core::Vec2::new(n.y.abs(), n.x.abs());
+                let x = (sign.anchor - station.footprint.center()).dot(along);
+                let size = station.footprint.size();
+                let openings = crate::facade::town_buildings::station_openings((
+                    size.dot(along),
+                    size.dot(pampa_core::Vec2::new(n.x.abs(), n.y.abs())),
+                    station.height,
+                ));
+                assert!(openings.len() >= 3);
+                // The openings are laid out the same from either end.
+                for (a, b) in openings {
+                    for x in [x, -x] {
+                        let (lo, hi) = (x - sign.width / 2.0, x + sign.width / 2.0);
+                        assert!(
+                            hi < a - 0.2 || lo > b + 0.2,
+                            "board {lo}..{hi} meets {a}..{b}"
+                        );
+                    }
+                }
+                // Its face quad points the way the board faces, 1.7 m over
+                // the floor it stands on (0.9 m for the platform's).
+                let dir = facing_dir(sign.facing);
+                let ground = pampa_core::Terrain::default().height(sign.anchor.x, sign.anchor.y);
+                let floor = if sign.facing == station.front {
+                    0.0
+                } else {
+                    0.9
+                };
+                let hung = world_from_ground(sign.anchor, ground + floor + 1.7);
+                let found = faces
+                    .iter(app.world())
+                    .filter(|(t, _)| (t.rotation * Vec3::Z).distance(dir) < 1e-4)
+                    .any(|(t, _)| t.translation.distance(hung) < 1e-3);
+                assert!(
+                    found,
+                    "a board hangs 1.7 m over its floor at {:?}",
+                    sign.anchor
                 );
             }
         }

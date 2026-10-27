@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use crate::obstacles::around;
 use crate::{
-    Body, Circle, FenceLayout, Floor, FloraSite, RoadNetwork, SettlementLayout, SideObstacle,
-    StaticObstacles, Terrain, TownLayout, Vec2, WorldConfig,
+    Body, Circle, FenceLayout, Floor, FloraSite, RailLine, RoadNetwork, SettlementLayout,
+    SideObstacle, StaticObstacles, Terrain, TownLayout, Vec2, WorldConfig,
 };
 
 /// Axis-aligned playable area on the ground plane.
@@ -114,7 +114,8 @@ impl World {
 
     /// Height of the surface bodies stand on at `p`: the terrain, raised by
     /// the highest floor (a platform or its ramp) there, or by a level
-    /// crossing's approach and deck ([`RoadNetwork::crossing_rise`]).
+    /// crossing's approach and deck
+    /// ([`RoadNetwork::crossing_rise`]).
     /// Everything placed on the ground (riders, people, horses, the camera
     /// floor) uses this.
     pub fn ground_height(&self, p: Vec2) -> f32 {
@@ -158,6 +159,11 @@ impl World {
             world.floors.extend(town.floors());
         }
         world
+    }
+
+    /// Adds the bays' platforms as floors ([`RailLine::floors`]).
+    pub fn lay_rail(&mut self, line: &RailLine) {
+        self.floors.extend(line.floors());
     }
 
     /// Cuts `roads` into the terrain and adds their signposts and level
@@ -467,6 +473,22 @@ mod tests {
             lagoon.offshore(spot) < crate::Lagoon::MUD_BAND + 2.0,
             "nearest"
         );
+    }
+
+    #[test]
+    fn laying_the_rail_adds_the_bay_platform_as_a_floor_to_walk_and_board_from() {
+        let (towns, line) = crate::train::line_tests::branched_line();
+        let mut world = World::with_towns(WorldConfig::default(), Terrain::default(), &towns);
+        let platforms = world.floors.len();
+        world.lay_rail(&line);
+        assert_eq!(world.floors.len(), platforms + 1);
+        let bay = line.bays[0].platform;
+        assert!(world.floors.contains(&bay));
+        // The ground on it is its top, 0.9 m up, and level beside it.
+        let on = bay.footprint.center();
+        let rise = |p: Vec2| world.ground_height(p) - world.terrain.height(p.x, p.y);
+        assert!((rise(on) - 0.9).abs() < 1e-5, "{}", rise(on));
+        assert_eq!(rise(on + Vec2::new(0.0, 20.0)), 0.0);
     }
 
     #[test]

@@ -62,7 +62,7 @@ use pampa_core::{
     Terrain, Track, Vec2 as GroundVec2,
 };
 
-pub use materials::{FacadeMaterials, Surface};
+pub use materials::{FacadeMaterials, Livery, Surface};
 pub use slots::{ModelRotor, ModelSlots, SlotFit, SlotFolder, SlotModels, SlotRotor, StandIn};
 pub use yard::{YardModels, YardProp};
 

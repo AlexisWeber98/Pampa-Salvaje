@@ -19,6 +19,7 @@
 use std::fmt;
 
 use crate::lamps::StreetLamps;
+use crate::places::PLATFORM_SPOT_FROM_EDGE;
 use crate::rng::Rng;
 use crate::{Aabb, FlatArea, Heading, Terrain, Vec2};
 
@@ -224,6 +225,14 @@ pub struct Floor {
 }
 
 impl Floor {
+    /// Height of a station platform's top above the ground, in meters.
+    pub const PLATFORM_HEIGHT: f32 = 0.9;
+    /// Distance from a track's centerline to the track edge of its
+    /// platform, in meters: the cars' side is 1.5 m out, so a hand's
+    /// breadth of 0.15 m is left, as at a broad-gauge platform.
+    pub const PLATFORM_EDGE: f32 = 1.65;
+    /// How far in from a platform's far edge a walk to it runs, in meters.
+    pub(crate) const WALK_LINE_IN: f32 = 3.5;
     /// Length of the ramp past each end, in meters (a gentle 1:3 slope for
     /// a 0.9 m platform).
     pub const RAMP_LENGTH: f32 = 3.0;
@@ -250,6 +259,24 @@ impl Floor {
         let a = p.dot(self.along);
         let past = (lo - a).max(a - hi).max(0.0);
         (past <= Self::RAMP_LENGTH).then(|| self.height * (1.0 - past / Self::RAMP_LENGTH))
+    }
+
+    /// Where a passenger steps off a train standing at the floor's side
+    /// nearest `train`: half way along, a step in from that long edge (as
+    /// [`TownLayout::platform_spot`]), and the heading away from the edge.
+    pub fn spot_beside(&self, train: Vec2) -> (Vec2, Heading) {
+        let across = self.across();
+        let (lo, hi) = self.span(across);
+        let c = train.dot(across);
+        let (edge, inward) = if (c - lo).abs() < (hi - c).abs() {
+            (lo, 1.0)
+        } else {
+            (hi, -1.0)
+        };
+        let at = across * (edge + inward * PLATFORM_SPOT_FROM_EDGE)
+            + self.along * self.footprint.center().dot(self.along);
+        let out = across * inward;
+        (at, Heading::from_radians(out.y.atan2(out.x)))
     }
 
     /// The two ramps' footprints, low end first along [`Self::along`].
@@ -2412,8 +2439,13 @@ fn station_yard(bounds: Aabb, side: Side, r: f32, half: f32, wanted: f32) -> Vec
         ),
         building(
             BuildingKind::Platform,
-            yard(-PLATFORM_HALF, PLATFORM_HALF, r - 11.0, r - 4.0),
-            0.9,
+            yard(
+                -PLATFORM_HALF,
+                PLATFORM_HALF,
+                r - 11.0,
+                r - Floor::PLATFORM_EDGE,
+            ),
+            Floor::PLATFORM_HEIGHT,
             to_track,
         ),
     ];
@@ -3900,9 +3932,10 @@ pub(crate) mod tests {
                     .dot(Vec2::new(n.x.abs(), n.y.abs()));
             assert!(near > edge, "{}", c.name);
             assert!(rail.start.dot(n) - far < 15.0, "{}", c.name);
+            // The width of a train: the platform's edge stands just outside.
             let corridor = Aabb::from_center_size(
                 rail.start,
-                Vec2::new(n.x.abs(), n.y.abs()) * 4.0 + along * 2000.0,
+                Vec2::new(n.x.abs(), n.y.abs()) * 3.0 + along * 2000.0,
             );
             for b in &t.buildings {
                 assert!(
@@ -4305,6 +4338,55 @@ pub(crate) mod tests {
             assert!(platform.footprint.contains(&c), "{}", t.name);
             assert!(canopy.bottom() - platform.height > 2.0, "{}", t.name);
             assert!(canopy.top() > canopy.bottom());
+            checked += 1;
+        }
+        assert!(checked > 3);
+    }
+
+    /// Distance from the railway's centerline to the near and far sides
+    /// of `area`, across the track (the towns' tracks run along an axis).
+    fn across_the_track(t: &TownLayout, area: Aabb) -> (f32, f32) {
+        let rail = t.railway.unwrap();
+        let span = rail.end - rail.start;
+        let dir = span * (1.0 / span.length());
+        let normal = Vec2::new(-dir.y, dir.x);
+        let (lo, hi) = (area.min, area.max);
+        [lo, hi, Vec2::new(lo.x, hi.y), Vec2::new(hi.x, lo.y)]
+            .iter()
+            .map(|c| (*c - rail.start).dot(normal).abs())
+            .fold((f32::MAX, f32::MIN), |(n, f), d| (n.min(d), f.max(d)))
+    }
+
+    #[test]
+    fn every_platforms_track_edge_is_1_65_m_from_the_track_and_its_far_edge_11_m() {
+        let mut checked = 0;
+        for t in sample_towns() {
+            let Some(platform) = find(&t, BuildingKind::Platform) else {
+                continue;
+            };
+            let (near, far) = across_the_track(&t, platform.footprint);
+            assert!((near - 1.65).abs() < 1e-3, "{}: {near}", t.name);
+            assert!((far - 11.0).abs() < 1e-3, "{}: {far}", t.name);
+            assert_eq!(Floor::PLATFORM_EDGE, 1.65);
+            checked += 1;
+        }
+        assert!(checked > 3);
+    }
+
+    #[test]
+    fn the_canopy_edge_and_its_posts_stay_5_5_m_from_the_track_clear_of_a_train() {
+        let mut checked = 0;
+        for t in sample_towns() {
+            let Some(canopy) = t.canopies().first().copied() else {
+                continue;
+            };
+            let (near, far) = across_the_track(&t, canopy.footprint);
+            // The roof ends where it did, 5.5 m from the track (its columns
+            // stand 0.4 m in from the edge, 5.1 m out): a train's side is
+            // 1.5 m out, so neither reaches over the cars.
+            assert!((near - 5.5).abs() < 1e-3, "{}: {near}", t.name);
+            assert!(far > near);
+            assert!(near > crate::LineTrain::WIDTH / 2.0 + 3.0, "{}", t.name);
             checked += 1;
         }
         assert!(checked > 3);
@@ -4742,19 +4824,21 @@ pub(crate) mod tests {
         // 3.5 m and every sample street is 2 m wider, so every grid, and the
         // store's veranda, moved. Two more were re-pinned for S6d (Tres and
         // Este: their 10 and 11 m sample streets are 12 m now, because every
-        // town has sidewalks).
+        // town has sidewalks). Nine were re-pinned for T5b (2026-10-27): every
+        // platform grew 2.35 m toward the track (edge 1.65 m from it, was
+        // 4 m); the two towns without a train are unchanged.
         let pinned = [
-            0x4921_b047_bac0_a2cc,
-            0xad96_8705_04c3_e5fa,
-            0x6da4_3687_07d6_4291,
-            0xd259_766e_74e6_03cd,
-            0x2b63_a8a2_cfcf_8128,
-            0x5441_bece_fd3f_6c25,
-            0x2bb8_6799_3872_22a4,
-            0x4937_2b1b_396a_9791,
+            0x4f1e_6a49_2be4_82de,
+            0x740a_932e_20b5_4950,
+            0x7e52_940f_8dff_5e79,
+            0xda4e_9af6_878e_3cf1,
+            0x7a05_aeb9_d800_9a6e,
+            0xd776_e920_251c_ce3d,
+            0xa4c9_d99b_867c_fefe,
+            0x33cc_abb9_b720_f13d,
             0x2a00_7462_898d_b811,
             0xca25_ea1d_f2d9_60f1,
-            0x0030_462e_b039_7b3c,
+            0x8df6_2300_5168_f874,
         ];
         let configs = small_configs();
         assert_eq!(configs.len(), pinned.len());

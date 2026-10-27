@@ -191,7 +191,13 @@ pub struct Overlay<'a> {
     pub wrecks: &'a [RoadsideWreck],
     /// Lagoons, painted as water under everything else.
     pub lagoons: &'a [Lagoon],
+    /// Platforms that belong to no town's buildings (the bays'), painted
+    /// like the towns' platforms.
+    pub platforms: &'a [Aabb],
 }
+
+/// The color of a platform.
+const PLATFORM: [u8; 4] = [184, 174, 152, 255];
 
 /// Pixel scale of place initials on the map.
 pub const LABEL_SCALE: usize = 2;
@@ -234,6 +240,7 @@ pub fn rasterize_town_over(town: &TownLayout, overlay: &Overlay, frame: &MapFram
     );
     paint_settlements(&mut map, overlay, frame);
     paint_town_buildings(&mut map, town, frame);
+    paint_platforms(&mut map, overlay, frame);
     for place in town.places() {
         let text = place_initial(place.kind).to_string();
         label(&mut map, &text, frame.to_map(place.center()));
@@ -275,6 +282,7 @@ pub fn rasterize_field(towns: &[TownLayout], overlay: &Overlay, frame: &MapFrame
     for town in &near {
         paint_town_buildings(&mut map, town, frame);
     }
+    paint_platforms(&mut map, overlay, frame);
     label(&mut map, "N", Vec2::new(16.0, 18.0));
     map
 }
@@ -330,13 +338,21 @@ fn paint_town_buildings(map: &mut Canvas, town: &TownLayout, frame: &MapFrame) {
             | BuildingKind::PoliceStation
             | BuildingKind::Church
             | BuildingKind::Station => palette::LANDMARK,
-            BuildingKind::Platform => [184, 174, 152, 255],
+            BuildingKind::Platform => PLATFORM,
             BuildingKind::Shed | BuildingKind::GrainStore => palette::SHED,
             BuildingKind::WaterTank => palette::WATER,
             BuildingKind::Windmill => palette::INK,
         };
         let (a, b) = frame.rect(&building.footprint);
         map.fill_rect(a, b, color);
+    }
+}
+
+/// The overlay's own platforms (the bays'), where they cross the frame.
+fn paint_platforms(map: &mut Canvas, overlay: &Overlay, frame: &MapFrame) {
+    for platform in overlay.platforms {
+        let (a, b) = frame.rect(platform);
+        map.fill_rect(a, b, PLATFORM);
     }
 }
 
@@ -1426,5 +1442,33 @@ pub(crate) mod tests {
             ..Overlay::default()
         };
         assert_eq!(rasterize_field(&[], &overlay, &frame), empty);
+    }
+
+    #[test]
+    fn a_bay_platform_is_painted_like_a_towns_where_it_crosses_the_frame() {
+        let frame = MapFrame::field(GroundVec2::new(0.0, 0.0), 256);
+        let platform =
+            Aabb::from_center_size(GroundVec2::new(10.0, 10.0), GroundVec2::new(30.0, 8.0));
+        let platforms = [platform];
+        let overlay = Overlay {
+            platforms: &platforms,
+            ..Overlay::default()
+        };
+        let map = rasterize_field(&[], &overlay, &frame);
+        let m = frame.to_map(platform.center());
+        assert_eq!(map.get(m.x as usize, m.y as usize), [184, 174, 152, 255]);
+        // Off the frame it leaves the map as it was.
+        let far = [Aabb::from_center_size(
+            GroundVec2::new(9000.0, 0.0),
+            GroundVec2::new(30.0, 8.0),
+        )];
+        let away = Overlay {
+            platforms: &far,
+            ..Overlay::default()
+        };
+        assert_eq!(
+            rasterize_field(&[], &away, &frame),
+            rasterize_field(&[], &Overlay::default(), &frame)
+        );
     }
 }

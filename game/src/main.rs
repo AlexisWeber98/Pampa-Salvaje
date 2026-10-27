@@ -3,6 +3,7 @@
 mod abilities;
 mod camera;
 mod complaints;
+mod shots;
 // The cheat console: debug builds only, never in `--release`.
 #[cfg(debug_assertions)]
 mod console;
@@ -15,6 +16,7 @@ mod player;
 mod ride;
 #[cfg(test)]
 mod settlement_tests;
+mod timetable;
 mod towns;
 
 use bevy::prelude::*;
@@ -27,7 +29,7 @@ use pampa_render::{
     HudPlugin, LagoonPlugin, LampPlugin, MinimapPlugin, RailPlugin, RoadPlugin, SettlementPlugin,
     SignPlugin, SpeechBubblePlugin, StreamFocus, TerrainPlugin, ThinFadePlugin, TownPlugin,
     TrainPlugin, WorldChunks, WorldClock, WorldFences, WorldFlora, WorldLamps, WorldRail,
-    WorldSettlements, WorldTerrain, WorldTowns, WorldTrain,
+    WorldSettlements, WorldTerrain, WorldTowns, WorldTrains,
 };
 
 /// The fits of the third-party models in the model slots
@@ -109,6 +111,8 @@ fn lay_out(loaded: &towns::LoadedWorld) -> Laid {
     // The dirt roads, cut into the ground, with their level crossings and
     // signposts (thin obstacles).
     world.lay_roads(loaded.roads.clone());
+    // The bays' platforms and foot crossings.
+    world.lay_rail(&loaded.line);
     // Wire fences on the surveyed grid and along both sides of every road,
     // with gates into the fields; every span and shut gate is a thin
     // obstacle.
@@ -247,10 +251,9 @@ fn main() {
     // The opening: the player rides the morning train from Pico, seated in
     // a coach as it pulls into the first town, and gets off there on foot.
     // Without a train they start on foot on the road into the first town.
-    let (clock, train, ride) = life::start_of_day(&loaded.line, &loaded.towns);
+    let (clock, trains, ride) = life::start_of_day(&loaded.line, &loaded.towns);
     let (position, heading) = ride
-        .zip(train.as_ref())
-        .and_then(|(ride, train)| ride.seat(train))
+        .and_then(|ride| ride.seat(trains.get(ride.train)?))
         .unwrap_or_else(|| loaded.towns[0].arrival());
     let mut app = App::new();
     // The CC0 vegetation models, ground and building textures (see
@@ -277,7 +280,7 @@ fn main() {
     .insert_resource(StreamFocus(position))
     .insert_resource(crowds)
     .insert_resource(WorldClock(clock))
-    .insert_resource(WorldTrain(train))
+    .insert_resource(WorldTrains(trains))
     .insert_resource(WorldTowns(loaded.towns))
     // The railway line between towns, laid chunk by chunk.
     .insert_resource(WorldRail(loaded.line))
@@ -334,7 +337,7 @@ fn main() {
     // The lagoons' water and reeds.
     .add_plugins(LagoonPlugin)
     // The errand and the clock and objective in the corner.
-    .add_plugins((errand::ErrandPlugin, HudPlugin))
+    .add_plugins((errand::ErrandPlugin, timetable::TimetablePlugin, HudPlugin))
     // Boarding, riding, skipping and waiting for the train, with a fade to
     // cover jumps in time.
     .add_plugins((ride::RidePlugin, FadePlugin))
@@ -364,6 +367,10 @@ fn main() {
     // Ctrl+Shift+F12: the cheat console (see `console`), in debug builds.
     #[cfg(debug_assertions)]
     app.add_plugins(console::ConsolePlugin);
+    // PAMPA_SHOTS=<file>: a dev screenshot tour (see `shots`).
+    if let Some(tour) = shots::ShotsPlugin::from_env() {
+        app.add_plugins(tour);
+    }
     app.run();
 }
 

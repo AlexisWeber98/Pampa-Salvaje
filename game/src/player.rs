@@ -147,7 +147,7 @@ fn spawn_player(
 }
 
 /// The world streams (ground chunks, towns) around the player.
-fn follow_player(players: Query<&Player>, mut focus: ResMut<StreamFocus>) {
+pub(crate) fn follow_player(players: Query<&Player>, mut focus: ResMut<StreamFocus>) {
     if let Some(player) = players.iter().next() {
         focus.0 = player.rider.position;
     }

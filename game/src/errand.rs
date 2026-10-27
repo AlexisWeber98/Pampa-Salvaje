@@ -247,7 +247,7 @@ type Horses<'w, 's> = (
 /// Hidalgo's horse; with nothing else to do, gets off the horse or back on,
 /// or (once riding is unlocked) onto any other horse in reach.
 #[allow(clippy::too_many_arguments)]
-fn interact(
+pub(crate) fn interact(
     mut commands: Commands,
     keys: Option<Res<ButtonInput<KeyCode>>>,
     errand: Option<ResMut<ErrandRun>>,

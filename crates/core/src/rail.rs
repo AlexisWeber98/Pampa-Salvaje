@@ -18,13 +18,18 @@
 //! the two tracks part there on their own curves (Metileo to Caleufú, as
 //! the real Metileo–Arizona branch of 1911).
 //!
+//! A branch's junction town also gets a bay ([`RailBay`]): a dead-end track
+//! beside the station track, opposite the station platform, so the
+//! branch's shuttle never stands on the line train's rails.
+//!
 //! The line is a world rule: every railway town must be on it or on a
 //! branch, and no link may cross another town or leave the world. Bad data
 //! never crashes; the offending towns or links are left out and reported.
 
 use std::fmt;
 
-use crate::{Aabb, Railway, TownLayout, Vec2, WorldBounds};
+use crate::train::{branch_consist, consist_length};
+use crate::{Aabb, BuildingKind, Floor, Railway, RoadNetwork, TownLayout, Vec2, WorldBounds};
 
 /// A stretch of track between two towns of the line.
 #[derive(Debug, Clone, PartialEq)]
@@ -87,6 +92,9 @@ pub struct RailLine {
     pub links: Vec<RailLink>,
     /// The branches off the line, in the order they were listed.
     pub branches: Vec<RailBranch>,
+    /// The bay track at each branch's junction town, in branch order (a
+    /// branch whose junction has no room for one has none).
+    pub bays: Vec<RailBay>,
 }
 
 /// A branch of the railway: track from a town on the line (the junction)
@@ -98,6 +106,93 @@ pub struct RailBranch {
     /// Indices (into the world's towns) of the branch's towns, in order,
     /// the junction first.
     pub towns: Vec<usize>,
+}
+
+/// A dead-end bay track at a branch's junction town, beside the station
+/// track on the side away from the town and joined to it by a turnout, so
+/// the branch's shuttle stands there while the line train keeps the
+/// station track.
+///
+/// Its [`Self::link`] is one more piece of track (`from` and `to` are the
+/// junction), so everything that lays, draws or keeps off the line's
+/// track sees the bay with no change. The path runs from the buffer stop,
+/// level with the station platform's far end from the junction tip,
+/// straight along the bay past the platform, then out through the turnout
+/// (two arcs of [`RailBay::TURNOUT_RADIUS`]) onto the station track's
+/// straight run-out toward the junction tip, where the branch goes on.
+/// The shuttle stands opposite the station platform, at the bay's own
+/// platform ([`Self::platform`]); people cross the tracks between the
+/// platforms at the road's level crossing, on [`Self::walks`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct RailBay {
+    /// Index (into the world's branches) of the branch the bay serves.
+    pub branch: usize,
+    /// Index (into the world's towns) of the junction town.
+    pub town: usize,
+    /// The bay and its turnout, from the buffer stop to the point where it
+    /// joins the station track.
+    pub link: RailLink,
+    /// Where the middle of the shuttle's consist stands, stopped in the
+    /// bay opposite the middle of the station platform.
+    pub stop: Vec2,
+    /// The bay's platform, on its far side from the station track, along
+    /// the standing shuttle and opposite the station platform: built and
+    /// as high as a station platform.
+    pub platform: Floor,
+    /// The beaten-earth walks from each platform's end toward the junction
+    /// tip to the road that crosses the station track there, so people
+    /// change platforms over its level crossing: the station platform's
+    /// walk, then the bay platform's. Empty until
+    /// [`RailLine::lay_walks`] has seen the roads.
+    pub walks: Vec<Aabb>,
+}
+
+impl RailBay {
+    /// Distance from the station track's centerline to the bay's, in
+    /// meters (3 m wide cars and a 1.5 m gap between them).
+    pub const SPACING: f32 = 4.5;
+    /// Free track between the buffer stop and the tail of a standing
+    /// shuttle, in meters.
+    pub const BUFFER_GAP: f32 = 2.0;
+    /// Straight track past the front of a standing shuttle before the
+    /// turnout begins, in meters.
+    pub const FRONT_CLEAR: f32 = 10.0;
+    /// Run-out left between the end of the turnout and the junction tip,
+    /// in meters.
+    const RUN_OUT_LEFT: f32 = 100.0;
+    /// Radius of the bay's turnout arcs, in meters: tighter than the
+    /// line's, so the bay rejoins the station track short of the road
+    /// that crosses it by the platform (a sharp turnout, as a yard's).
+    pub const TURNOUT_RADIUS: f32 = 150.0;
+    /// Distance from the bay's centerline to its platform's track edge, in
+    /// meters: as at a station ([`Floor::PLATFORM_EDGE`]).
+    pub const PLATFORM_EDGE: f32 = Floor::PLATFORM_EDGE;
+    /// Width of the bay platform across the track, in meters: its far edge
+    /// stands 11 m from the track, as the station platform's does, so the
+    /// platform grew toward the track when its edge came in.
+    pub const PLATFORM_DEPTH: f32 = 11.0 - Self::PLATFORM_EDGE;
+    /// Width of the walks from the platforms to the road, in meters.
+    pub const WALK_WIDTH: f32 = 2.0;
+    /// How far from the road's centerline a walk ends, in meters: inside
+    /// the roadway's edge, so the two meet.
+    const WALK_INTO_ROAD: f32 = 2.5;
+    /// Farthest a walk reaches from its platform in search of the road,
+    /// in meters.
+    const WALK_REACH: f32 = 150.0;
+    /// How near the station track's level crossing a walk meets the road,
+    /// in meters.
+    const WALK_NEAR_CROSSING: f32 = 25.0;
+
+    /// The dead end of the track.
+    pub fn buffer(&self) -> Vec2 {
+        self.link.path[0]
+    }
+
+    /// Unit direction of the bay at its buffer stop, pointing out of the
+    /// bay (the way the shuttle leaves).
+    pub fn heading(&self) -> Vec2 {
+        unit(self.link.path[1] - self.link.path[0]).unwrap_or(Vec2::new(1.0, 0.0))
+    }
 }
 
 /// Why a town or a link was left out of the railway line.
@@ -261,19 +356,37 @@ impl RailLine {
                 Err(error) => errors.push(error),
             }
         }
+        let mut bays: Vec<RailBay> = Vec::new();
+        for (index, branch) in kept.iter().enumerate() {
+            let first = links
+                .iter()
+                .find(|l| l.from == branch.towns[0] && l.to == branch.towns[1]);
+            let beside = bays.iter().filter(|b| b.town == branch.towns[0]).count();
+            if let Some(bay) = first.and_then(|f| bay(towns, index, f, beside)) {
+                bays.push(bay);
+            }
+        }
         (
             Self {
                 towns: order,
                 links,
                 branches: kept,
+                bays,
             },
             errors,
         )
     }
 
-    /// The straight pieces of every link's track, in line order.
+    /// The straight pieces of every link's track, in line order, then
+    /// those of each bay.
     pub fn segments(&self) -> impl Iterator<Item = Railway> + '_ {
-        self.links.iter().flat_map(RailLink::segments)
+        self.tracks().flat_map(RailLink::segments)
+    }
+
+    /// Every piece of track between towns and in junction bays: the links,
+    /// then the bays.
+    fn tracks(&self) -> impl Iterator<Item = &RailLink> + '_ {
+        self.links.iter().chain(self.bays.iter().map(|b| &b.link))
     }
 
     /// The parts of the links inside `area` (a terrain chunk, a map frame),
@@ -281,7 +394,7 @@ impl RailLine {
     /// are skipped.
     pub fn segments_in(&self, area: Aabb) -> Vec<RailSpan> {
         let mut spans = Vec::new();
-        for link in &self.links {
+        for link in self.tracks() {
             let total = link.length();
             let mut from = 0.0;
             for track in link.segments() {
@@ -336,12 +449,69 @@ impl RailLine {
     }
 
     /// Every path of track a train could run: [`Self::full_path`] first,
-    /// then [`Self::branch_paths`]. Each town's own track and its run-outs
-    /// are on one of them.
+    /// then [`Self::branch_paths`], then each bay from its buffer stop to
+    /// where it joins the station track. Each town's own track and its
+    /// run-outs are on one of them.
     pub fn track_paths(&self, towns: &[TownLayout]) -> Vec<LinePath> {
         let mut paths = vec![self.full_path(towns)];
         paths.extend(self.branch_paths(towns));
+        paths.extend(self.bays.iter().map(|b| LinePath::new(b.link.path.clone())));
         paths
+    }
+
+    /// Each branch as the path its shuttle runs, like [`Self::branch_paths`]
+    /// but out of the junction's bay: from the bay's buffer stop, through
+    /// the turnout, along the station track's run-out and the branch to the
+    /// last connected town's far tip. A branch without a bay runs its
+    /// [`Self::branch_paths`] path.
+    pub fn shuttle_paths(&self, towns: &[TownLayout]) -> Vec<LinePath> {
+        self.branch_paths(towns)
+            .into_iter()
+            .enumerate()
+            .map(|(index, path)| {
+                let Some(bay) = self.bay_of(index) else {
+                    return path;
+                };
+                // The bay joins the straight run-out: carry on from there.
+                let joined = *bay.link.path.last().expect("a bay has a path");
+                let at = path.project(joined) + CLIP_EPSILON;
+                let mut points = bay.link.path.clone();
+                points.extend(
+                    path.points()
+                        .iter()
+                        .zip(&path.arcs)
+                        .filter(|&(_, &arc)| arc > at)
+                        .map(|(&p, _)| p),
+                );
+                LinePath::new(points)
+            })
+            .collect()
+    }
+
+    /// The bays' platforms, as floors people walk on and board from.
+    pub fn floors(&self) -> Vec<Floor> {
+        self.bays.iter().map(|b| b.platform).collect()
+    }
+
+    /// Lays each bay's [`RailBay::walks`]: from the end of the station
+    /// platform and of the bay platform toward the junction tip, straight
+    /// along the platform's middle to the road that crosses the station
+    /// track there. People change trains over that level crossing: it lies
+    /// past the turnout, beyond where any train stands, so it is always
+    /// open. A bay with no such road, or one whose platforms do not reach
+    /// it, gets no walks.
+    pub fn lay_walks(&mut self, towns: &[TownLayout], roads: &RoadNetwork) {
+        for bay in &mut self.bays {
+            bay.walks = towns
+                .get(bay.town)
+                .and_then(|town| walks(bay, town, roads))
+                .unwrap_or_default();
+        }
+    }
+
+    /// The bay of branch `branch` (index into [`Self::branches`]).
+    pub fn bay_of(&self, branch: usize) -> Option<&RailBay> {
+        self.bays.iter().find(|b| b.branch == branch)
     }
 
     /// The towns of `order` reached from its first without a gap.
@@ -648,6 +818,208 @@ fn link(
     })
 }
 
+/// The bay for `branch` at its junction, beside the station track of the
+/// town the branch's `first` link leaves, `beside` other bays already there
+/// (each gets the next track out). The bay lies on the side of the track
+/// away from the town, opposite the station platform: its buffer stop level
+/// with the platform's end away from the junction tip, the shuttle standing
+/// at the platform's middle, and its turnout on the run-out past the
+/// platform's other end. `None`
+/// for a town without a railway or one grown on both sides of its line,
+/// and when the run-out is too short to hold the bay and its turnout.
+fn bay(towns: &[TownLayout], branch: usize, first: &RailLink, beside: usize) -> Option<RailBay> {
+    let town = towns.get(first.from)?;
+    let rail = town.railway?;
+    if town.rail_band().is_some() {
+        return None;
+    }
+    let tip = first.track.start;
+    let back = far_tip(rail, tip);
+    let out = unit(tip - back)?;
+    // The side of the track away from the town.
+    let left = Vec2::new(-out.y, out.x);
+    let side = if (town.grid().center() - back).dot(left) > 0.0 {
+        left * -1.0
+    } else {
+        left
+    };
+    // Along the track from its far tip, and out from it.
+    let at = |x: f32, y: f32| back + out * x + side * y;
+    // The station platform's extent along the track, from its far tip.
+    let platform = town
+        .buildings
+        .iter()
+        .filter(|b| b.kind == BuildingKind::Platform)
+        .flat_map(|b| {
+            let f = b.footprint;
+            [
+                f.min,
+                f.max,
+                Vec2::new(f.min.x, f.max.y),
+                Vec2::new(f.max.x, f.min.y),
+            ]
+        })
+        .map(|c| (c - back).dot(out))
+        .fold(None, |span: Option<(f32, f32)>, x| {
+            Some(span.map_or((x, x), |(lo, hi)| (lo.min(x), hi.max(x))))
+        })
+        .unwrap_or_else(|| {
+            let middle = back.distance(tip) / 2.0;
+            (middle, middle)
+        });
+
+    let consist = consist_length(&branch_consist());
+    let gap = RailBay::SPACING * (beside + 1) as f32;
+    let radius = RailBay::TURNOUT_RADIUS;
+    // Two arcs of `radius` bring the bay down onto the track.
+    let angle = (1.0 - gap / (2.0 * radius)).clamp(-1.0, 1.0).acos();
+    let buffer = platform.0;
+    let held = RailBay::BUFFER_GAP + consist;
+    // The turnout starts at the platform's other end, past the shuttle's
+    // front (a platform too short for it is outrun).
+    let turnout = platform.1.max(buffer + held + RailBay::FRONT_CLEAR);
+    let stop = ((platform.0 + platform.1) / 2.0).max(buffer + held - consist / 2.0);
+    if turnout + 2.0 * radius * angle.sin() + RailBay::RUN_OUT_LEFT > back.distance(tip) {
+        return None;
+    }
+    let pieces = (angle / RailLine::MAX_TURN)
+        .max(radius * angle / RailLine::CURVE_STEP)
+        .ceil()
+        .max(1.0) as usize;
+    let mut path = vec![at(buffer, gap), at(turnout, gap)];
+    // First arc: leaves the straight bay toward the track.
+    let (sin, cos) = (angle.sin(), angle.cos());
+    for k in 1..=pieces {
+        let phi = angle * k as f32 / pieces as f32;
+        path.push(at(
+            turnout + radius * phi.sin(),
+            gap - radius * (1.0 - phi.cos()),
+        ));
+    }
+    // Second arc: back to the track's heading.
+    let (mid_x, mid_y) = (turnout + radius * sin, gap - radius * (1.0 - cos));
+    for k in 1..=pieces {
+        let psi = angle * k as f32 / pieces as f32;
+        let heading = angle - psi;
+        path.push(at(
+            mid_x + radius * (sin - heading.sin()),
+            mid_y - radius * (heading.cos() - cos),
+        ));
+    }
+    // The first arc turns toward the track, the second back.
+    let toward = turn(out, side * -1.0).signum();
+    let tangent = radius * (angle / 2.0).tan();
+    let curve = |sign: f32| RailCurve {
+        radius,
+        tangent,
+        turn: sign * toward * angle,
+    };
+    let end = *path.last()?;
+    // Axis-aligned boxes from frame corners (the towns' tracks run along
+    // an axis): `x` along the track, `y` out from it.
+    let area = |x: (f32, f32), y: (f32, f32)| {
+        let (p, q) = (at(x.0, y.0), at(x.1, y.1));
+        Aabb::new(
+            Vec2::new(p.x.min(q.x), p.y.min(q.y)),
+            Vec2::new(p.x.max(q.x), p.y.max(q.y)),
+        )
+    };
+    let axis = |v: Vec2| {
+        if v.x.abs() > v.y.abs() {
+            Vec2::new(1.0, 0.0)
+        } else {
+            Vec2::new(0.0, 1.0)
+        }
+    };
+    let edge = gap + RailBay::PLATFORM_EDGE;
+    Some(RailBay {
+        branch,
+        town: first.from,
+        link: RailLink {
+            from: first.from,
+            to: first.from,
+            track: Railway {
+                start: path[0],
+                end,
+                gauge: rail.gauge,
+            },
+            path,
+            curves: vec![curve(1.0), curve(-1.0)],
+        },
+        stop: at(stop, gap),
+        platform: Floor {
+            footprint: area((buffer, turnout), (edge, edge + RailBay::PLATFORM_DEPTH)),
+            height: Floor::PLATFORM_HEIGHT,
+            along: axis(out),
+        },
+        walks: Vec::new(),
+    })
+}
+
+/// The walks of `bay` (see [`RailLine::lay_walks`]): the station
+/// platform's, then the bay platform's. `None` without a level crossing of
+/// the station track past the turnout, or when a walk finds no road.
+fn walks(bay: &RailBay, town: &TownLayout, roads: &RoadNetwork) -> Option<Vec<Aabb>> {
+    let station = *town.floors().first()?;
+    let out = bay.heading();
+    let join = *bay.link.path.last()?;
+    // Past the bay's join, out along the station track, on it.
+    let crossing = roads
+        .crossings()
+        .filter(|c| {
+            let rel = c.at - join;
+            let off = rel.x * out.y - rel.y * out.x;
+            off.abs() < 0.5 && rel.dot(out) > RailBay::WALK_INTO_ROAD
+        })
+        .min_by(|a, b| (a.at - join).dot(out).total_cmp(&(b.at - join).dot(out)))?;
+    let reach = |floor: Floor, track: Vec2| {
+        let (along, across) = (floor.along, floor.across());
+        // The platform's end toward the tip, and a ramp past it.
+        let sign = along.dot(out).signum();
+        let (lo, hi) = (
+            floor.footprint.min.dot(along),
+            floor.footprint.max.dot(along),
+        );
+        let start = (if sign > 0.0 { hi } else { lo }) + sign * Floor::RAMP_LENGTH;
+        // The walk runs 3.5 m in from the platform's far edge (where the
+        // middle of a 7 m platform was, before the platforms grew toward
+        // the track), so it keeps clear of what stands by the crossing.
+        let (low, high) = (
+            floor.footprint.min.dot(across),
+            floor.footprint.max.dot(across),
+        );
+        let from_track = track.dot(across);
+        let line = if (high - from_track).abs() > (low - from_track).abs() {
+            high - Floor::WALK_LINE_IN
+        } else {
+            low + Floor::WALK_LINE_IN
+        };
+        let at = |a: f32| along * a + across * line;
+        let steps = (RailBay::WALK_REACH / 0.25) as usize;
+        let end = (0..=steps)
+            .map(|k| start + sign * 0.25 * k as f32)
+            .find(|&a| {
+                roads
+                    .near(at(a), RailBay::WALK_INTO_ROAD)
+                    .is_some_and(|d| d <= RailBay::WALK_INTO_ROAD)
+            })?;
+        let (p, q) = (at(start), at(end));
+        let half = across * (RailBay::WALK_WIDTH / 2.0);
+        let corners = [p - half, p + half, q - half, q + half];
+        let (mut min, mut max) = (corners[0], corners[0]);
+        for c in corners {
+            min = Vec2::new(min.x.min(c.x), min.y.min(c.y));
+            max = Vec2::new(max.x.max(c.x), max.y.max(c.y));
+        }
+        // The road at the end of the walk is by the crossing.
+        (at(end).distance(crossing.at) < RailBay::WALK_NEAR_CROSSING).then(|| Aabb::new(min, max))
+    };
+    Some(vec![
+        reach(station, join)?,
+        reach(bay.platform, bay.buffer())?,
+    ])
+}
+
 /// Whether a path, read as its `pieces` in order, comes back onto `band`
 /// after it has left it: a link leaving its town's ground and crossing it
 /// again further on.
@@ -796,7 +1168,9 @@ fn unit(v: Vec2) -> Option<Vec2> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::{PlazaPlacement, RailwayConfig, Side, TownConfig, WorldConfig, place_towns};
+    use crate::{
+        LineTrain, PlazaPlacement, RailwayConfig, Side, TownConfig, WorldConfig, place_towns,
+    };
 
     fn config(name: &str, x: f32, y: f32, blocks: (usize, usize), rail: bool) -> TownConfig {
         TownConfig {
@@ -1411,8 +1785,11 @@ pub(crate) mod tests {
             + line.links[2].length()
             + norte.start.distance(norte.end);
         assert!((paths[0].length() - expected).abs() < 0.1);
-        assert_eq!(line.track_paths(&towns).len(), 2);
-        assert_eq!(line.track_paths(&towns)[1], paths[0]);
+        // The line, the branch, then the junction's bay.
+        let tracks = line.track_paths(&towns);
+        assert_eq!(tracks.len(), 3);
+        assert_eq!(tracks[1], paths[0]);
+        assert_eq!(tracks[2].points(), line.bays[0].link.path);
         // Laid the same way every time.
         let (again, _) = RailLine::build_with_branches(Some(&list), &branches, &towns, bounds);
         assert_eq!(again, line);
@@ -1452,5 +1829,257 @@ pub(crate) mod tests {
         let (line, errors) = build(&[&["Medio", "Norte"], &["Oeste", "Norte"]]);
         assert_eq!(line.branches.len(), 1);
         assert_eq!(errors.len(), 2, "{errors:?}");
+    }
+
+    /// The branched world's one bay, with the junction's station track.
+    fn bayed() -> (Vec<TownLayout>, RailLine, Railway) {
+        let (towns, list, branches) = branched();
+        let bounds = WorldConfig::default().bounds();
+        let (line, errors) = RailLine::build_with_branches(Some(&list), &branches, &towns, bounds);
+        assert!(errors.is_empty(), "{errors:?}");
+        let track = towns[1].railway.unwrap();
+        (towns, line, track)
+    }
+
+    /// Distance from `p` to the segment `a`-`b`.
+    fn gap(p: Vec2, a: Vec2, b: Vec2) -> f32 {
+        let d = b - a;
+        let t = ((p - a).dot(d) / d.dot(d)).clamp(0.0, 1.0);
+        p.distance(a + d * t)
+    }
+
+    #[test]
+    fn a_junction_town_gets_a_bay_beside_its_station_track_at_the_junction_end() {
+        let (towns, line, track) = bayed();
+        // One bay, for the one branch, at its junction (Medio).
+        assert_eq!(line.bays.len(), 1);
+        let bay = line.bay_of(0).expect("a bay");
+        assert_eq!((bay.branch, bay.town), (0, 1));
+        assert_eq!((bay.link.from, bay.link.to), (1, 1));
+        assert_eq!(line.bay_of(1), None);
+        let medio = &towns[1];
+        // Beside the track on the side away from the town, 4.5 m out.
+        let (buffer, heading) = (bay.buffer(), bay.heading());
+        // Broad-gauge track spacing: 4.5 m, a cars' width and a half.
+        assert_eq!(RailBay::SPACING, 4.5);
+        assert!((gap(buffer, track.start, track.end) - 4.5).abs() < 1e-3);
+        assert!(buffer.y > track.start.y, "away from the town (north)");
+        assert!(medio.grid().center().y < track.start.y);
+        // It leaves toward the junction tip (west), the dead end to the east.
+        let tip = line.links[2].track.start;
+        assert_eq!(tip, track.start);
+        assert!(
+            (heading - Vec2::new(-1.0, 0.0)).length() < 1e-3,
+            "{heading:?}"
+        );
+        assert!(buffer.x > tip.x && buffer.x < track.end.x);
+        // The buffer stop stands level with the station platform's east end
+        // (far from the junction tip), so the bay runs along the platform.
+        let platform = medio
+            .buildings
+            .iter()
+            .find(|b| b.kind == BuildingKind::Platform)
+            .unwrap();
+        assert!((buffer.x - platform.footprint.max.x).abs() < 1e-3);
+        // Room for the shuttle: the consist, the gap at the buffer and the
+        // clear track before the turnout.
+        let straight = bay
+            .link
+            .path
+            .iter()
+            .take_while(|p| (p.y - buffer.y).abs() < 1e-3)
+            .last()
+            .unwrap();
+        let length = buffer.distance(*straight);
+        let consist = consist_length(&branch_consist());
+        assert!(consist > 30.0 && consist < 50.0, "{consist}");
+        assert!(
+            length >= consist + 10.0,
+            "{length} m for a {consist} m consist"
+        );
+        // The consist's middle stands in the bay opposite the middle of the
+        // station platform, its tail clear of the buffer.
+        assert!((bay.stop.y - buffer.y).abs() < 1e-3);
+        assert!((bay.stop.x - platform.footprint.center().x).abs() < 1e-3);
+        assert!(buffer.x - bay.stop.x - consist / 2.0 >= RailBay::BUFFER_GAP);
+        // Clear of every building and of the platform, by the cars' width.
+        let wide = 3.0 / 2.0 + 0.5;
+        for b in &medio.buildings {
+            let keep = b.footprint.expanded(wide);
+            for w in bay.link.path.windows(2) {
+                assert!(keep.segment_overlap(w[0], w[1]).is_none(), "{:?}", b.kind);
+            }
+        }
+        // A town no branch leaves from gets none, nor does a line without
+        // branches.
+        assert!(line.bays.iter().all(|b| b.town == 1));
+        let (_, list, _) = branched();
+        let (plain, _) = RailLine::build(Some(&list), &towns, WorldConfig::default().bounds());
+        assert!(plain.bays.is_empty());
+        assert_eq!(plain.track_paths(&towns).len(), 1);
+    }
+
+    #[test]
+    fn the_bay_has_a_station_built_platform_along_the_standing_shuttle() {
+        let (towns, line, track) = bayed();
+        let bay = line.bay_of(0).unwrap();
+        let (buffer, out) = (bay.buffer(), bay.heading());
+        // Across the tracks, away from the station track.
+        let across = Vec2::new(-out.y, out.x);
+        let across = across * across.dot(buffer - track.start).signum();
+        let platform = bay.platform;
+        let station = towns[1].floors()[0];
+        // The station platform's build: height, depth, its edge 1.65 m from
+        // the track, on the bay's far side from the station track.
+        assert_eq!(platform.height, station.height);
+        let (lo, hi) = (platform.footprint.min, platform.footprint.max);
+        let corners = [lo, hi, Vec2::new(lo.x, hi.y), Vec2::new(hi.x, lo.y)];
+        let off = |c: &Vec2| (*c - buffer).dot(across);
+        let (near, far) = corners
+            .iter()
+            .map(off)
+            .fold((f32::MAX, f32::MIN), |(n, f), d| (n.min(d), f.max(d)));
+        assert!(
+            (near - 1.65).abs() < 1e-3 && (far - 11.0).abs() < 1e-3,
+            "{near} {far}"
+        );
+        let depth = |f: &Floor| f.footprint.size().x.min(f.footprint.size().y);
+        assert!((depth(&platform) - depth(&station)).abs() < 1e-3);
+        assert!((depth(&platform) - 9.35).abs() < 1e-3);
+        // The cars' side (1.5 m from the centerline) leaves 0.15 m to it.
+        assert!((near - LineTrain::WIDTH / 2.0 - 0.15).abs() < 1e-3);
+        // Along the track it runs from the buffer stop past the front of
+        // the standing consist, whole of it beside the platform.
+        let consist = consist_length(&branch_consist());
+        let along = |c: Vec2| (c - buffer).dot(out);
+        let (a, b) = corners
+            .iter()
+            .map(|c| along(*c))
+            .fold((f32::MAX, f32::MIN), |(l, h), d| (l.min(d), h.max(d)));
+        assert!(a.abs() < 1e-3);
+        assert!(b >= RailBay::BUFFER_GAP + consist);
+        assert_eq!(platform.along.dot(out).abs(), 1.0);
+        // Beside the straight bay: before the turnout bends it away.
+        assert!(b <= bay.link.path[1].distance(buffer) + 1e-3);
+    }
+
+    #[test]
+    fn the_bay_platform_stands_opposite_the_station_platform_with_the_shuttle_between() {
+        let (towns, line, track) = bayed();
+        let bay = line.bay_of(0).unwrap();
+        let station = towns[1].floors()[0];
+        let platform = bay.platform;
+        // The same stretch of the track, end to end, 60 m of it.
+        assert_eq!(platform.footprint.min.x, station.footprint.min.x);
+        assert_eq!(platform.footprint.max.x, station.footprint.max.x);
+        assert_eq!(platform.footprint.size().x, 60.0);
+        // On the other side of the station track from the station platform.
+        assert!(station.footprint.max.y < track.start.y);
+        assert!(platform.footprint.min.y > track.start.y);
+        // The standing shuttle's coaches lie wholly opposite it, nose and
+        // tail within the platform's length, at its middle.
+        let consist = consist_length(&branch_consist());
+        let (stop, half) = (bay.stop.x, consist / 2.0);
+        assert!(stop - half >= platform.footprint.min.x, "{stop}");
+        assert!(stop + half <= platform.footprint.max.x, "{stop}");
+        assert!((stop - station.footprint.center().x).abs() < 1e-3);
+        // The turnout begins where the platform ends, so the bay runs
+        // straight the whole length of the platform.
+        let straight = bay.link.path[1];
+        assert!((straight.x - platform.footprint.min.x).abs() < 1e-3);
+        // The line's floors are the bays' platforms.
+        assert_eq!(line.floors(), [platform]);
+    }
+
+    #[test]
+    fn the_bay_joins_the_station_track_by_a_smooth_turnout_within_the_run_out() {
+        let (towns, line, track) = bayed();
+        let bay = line.bay_of(0).unwrap();
+        let path = &bay.link.path;
+        assert!(sharpest_bend(path) <= RailLine::MAX_TURN + 1e-4);
+        // Two arcs of the bay's 150 m radius, bending opposite ways, no net
+        // turn.
+        let curves = &bay.link.curves;
+        assert_eq!(curves.len(), 2);
+        assert!(curves.iter().all(|c| (c.radius - 150.0).abs() < 1e-3));
+        assert!((curves[0].turn + curves[1].turn).abs() < 1e-5);
+        // It ends on the station track, heading along it, short of the tip.
+        let join = *path.last().unwrap();
+        assert!((join.y - track.start.y).abs() < 1e-2, "{join:?}");
+        assert!(join.x > track.start.x + 90.0, "within the run-out");
+        let last = path[path.len() - 1] - path[path.len() - 2];
+        assert!(last.y.abs() / last.length() < 0.02, "{last:?}");
+        // The turnout lies past the platform, never over the yard.
+        let medio = &towns[1];
+        let grid = medio.grid();
+        for p in path {
+            assert!(p.y > grid.max.y, "{p:?}");
+        }
+        // The link measures like any other.
+        assert_eq!(bay.link.track.start, bay.buffer());
+        assert_eq!(bay.link.track.end, join);
+        let length: f32 = path.windows(2).map(|w| w[0].distance(w[1])).sum();
+        assert!((bay.link.length() - length).abs() < 1e-3);
+    }
+
+    #[test]
+    fn the_shuttle_path_runs_unbroken_from_the_buffer_stop_to_the_branch_end() {
+        let (towns, line, track) = bayed();
+        let bay = line.bay_of(0).unwrap();
+        let paths = line.shuttle_paths(&towns);
+        assert_eq!(paths.len(), 1);
+        let points = paths[0].points();
+        let norte = towns[3].railway.unwrap();
+        assert_eq!(points.first(), Some(&bay.buffer()));
+        assert_eq!(points.last(), Some(&norte.start));
+        assert!(sharpest_bend(points) <= RailLine::MAX_TURN + 1e-4);
+        // Out of the bay it takes the branch path's own track: the station
+        // track's run-out west of the turnout, then the branch link.
+        let join = *bay.link.path.last().unwrap();
+        let on_branch = line.branch_paths(&towns).remove(0);
+        let rest = on_branch.length() - on_branch.project(join);
+        assert!((paths[0].length() - (bay.link.length() + rest)).abs() < 0.1);
+        assert!(points.contains(&track.start));
+        let at = paths[0].project(join);
+        // Until the last stretch of the turnout it keeps off the station
+        // track, so no train on it shares the line train's rails.
+        for k in 0..=200 {
+            let d = at * k as f32 / 200.0;
+            if d < at - 20.0 {
+                let off = gap(paths[0].at(d), track.start, track.end);
+                assert!(off > 0.3, "{d} {off}");
+            }
+        }
+        // Laid the same way every time; a branch without a bay keeps its path.
+        let (again, _) = RailLine::build_with_branches(
+            Some(&names(&["Oeste", "Medio", "Este"])),
+            &[names(&["Medio", "Norte"])],
+            &towns,
+            WorldConfig::default().bounds(),
+        );
+        assert_eq!(again.shuttle_paths(&towns), paths);
+        let mut bare = line.clone();
+        bare.bays.clear();
+        assert_eq!(bare.shuttle_paths(&towns), bare.branch_paths(&towns));
+    }
+
+    #[test]
+    fn the_bay_is_track_everything_that_keeps_off_track_sees() {
+        let (towns, line, _) = bayed();
+        let bay = line.bay_of(0).unwrap();
+        // The pieces of the bay are among the line's pieces.
+        let pieces: Vec<Railway> = line.segments().collect();
+        for w in bay.link.path.windows(2) {
+            assert!(pieces.iter().any(|r| (r.start, r.end) == (w[0], w[1])));
+        }
+        // And are cut to the area around it like any link's.
+        let area = Aabb::from_center_size(bay.stop, Vec2::new(40.0, 40.0));
+        let spans = line.segments_in(area);
+        assert!(spans.iter().any(|s| s.total == bay.link.length()));
+        // Roads see it as a track path of its own.
+        assert_eq!(
+            line.track_paths(&towns).last().unwrap().points(),
+            bay.link.path
+        );
     }
 }

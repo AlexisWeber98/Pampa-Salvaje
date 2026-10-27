@@ -25,6 +25,7 @@ pub mod lamps;
 pub mod minimap;
 pub mod obj;
 pub mod rail;
+mod railbed;
 pub mod road;
 pub mod settlement;
 pub mod signs;
@@ -43,7 +44,7 @@ pub use character::{
     OWN_HEAD_LAYER, TOWNSFOLK_LOOKS, Talking, ViewerBody, ViewerHead, VisualPose,
 };
 pub use coords::world_from_ground;
-pub use facade::{FacadeMaterials, Surface};
+pub use facade::{FacadeMaterials, Livery, Surface};
 pub use fade::{FadeLayer, FadePlugin, ScreenFade};
 pub use fauna::{ANIMATE_FAR, Animal, AnimalPose, AnimalSeed, FaunaKit, FaunaPlugin, Gait};
 pub use fence::{FencePiece, FencePlugin, GatePart, WorldFences};
@@ -61,12 +62,13 @@ pub use settlement::{
     ModelRotor, ModelSlots, SettlementPart, SettlementPlugin, SlotFit, SlotRotor, TrackSurface,
     WorldSettlements, YardPart, YardProp, YardSurface,
 };
-pub use signs::{SignPlugin, Signboard};
+
+pub use signs::{SignPlugin, Signboard, TIMETABLE_BOARD_TEXT, TimetableBoard};
 pub use sky::SkyPlugin;
 pub use streaming::{StreamingPlan, StreamingSet};
 pub use terrain::{StreamFocus, TerrainChunk, TerrainPlugin, WorldChunks, WorldTerrain};
 pub use town::{ActiveTowns, StreamTowns, TownPlugin, TownRoot, WindmillRotor, WorldTowns};
-pub use train::{TRAIN_DRAW_RADIUS, TrainCar, TrainPlugin, TrainWheel, WorldTrain, car_transform};
+pub use train::{TRAIN_DRAW_RADIUS, TrainCar, TrainPlugin, TrainWheel, WorldTrains, car_transform};
 pub use tree::{Species, TreeKit, TreePlugin};
 
 /// The game's `assets/` folder. Vegetation models and ground textures are

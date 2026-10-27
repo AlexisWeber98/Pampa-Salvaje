@@ -19,12 +19,12 @@
 
 use bevy::prelude::*;
 use pampa_core::{
-    Boarding, LinePhase, LineTrain, ONBOARD_MULTIPLIER, Ride, Rider, SEAT_HEIGHT, TownLayout,
-    alight_spot, boarding, depart_now, next_arrival, skip_ride, skip_to_approach, stands_at,
-    wait_for_train, waiting_station,
+    Boarding, GameClock, LinePhase, LineTrain, ONBOARD_MULTIPLIER, Ride, Rider, SEAT_HEIGHT,
+    TownLayout, WaitingPlace, alight_spot, boarding, depart_now, follow_jump, next_arrival,
+    skip_ride, skip_to_approach, stands_at, wait_for_train, waiting_place,
 };
 use pampa_render::{
-    HudAnnouncement, HudRide, Say, ScreenFade, WorldClock, WorldTowns, WorldTrain,
+    HudAnnouncement, HudRide, Say, ScreenFade, WorldClock, WorldRail, WorldTowns, WorldTrains,
     world_from_ground,
 };
 
@@ -37,7 +37,7 @@ pub const SKIP_KEY: KeyCode = KeyCode::Space;
 /// What the player says trying to board on horseback.
 pub const DISMOUNT_FIRST: &str = "Primero bajate del caballo";
 
-/// The player is riding the line train, seated (and hidden) in a coach.
+/// The player is riding a train, seated (and hidden) in a coach.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct OnTrain(pub Ride);
 
@@ -60,8 +60,9 @@ pub const ALIGHT_DELAY: f32 = 2.0;
 pub enum Jump {
     /// Skip the ride to just before the next stop.
     Approach,
-    /// Wait on the platform of this station for the next train.
-    Wait(usize),
+    /// Wait on this platform (a town's station platform or its bay
+    /// platform) for the next train that stops at it.
+    Wait(WaitingPlace),
 }
 
 /// Where a skipped ride (Space aboard) is.
@@ -124,7 +125,7 @@ impl Plugin for RidePlugin {
 
 /// What the ride systems read of the world.
 type Line<'w> = (
-    Option<ResMut<'w, WorldTrain>>,
+    Option<ResMut<'w, WorldTrains>>,
     Option<Res<'w, WorldTowns>>,
     ResMut<'w, GameWorld>,
 );
@@ -145,16 +146,32 @@ type RideState<'w> = (
     Option<ResMut<'w, WorldClock>>,
 );
 
+/// Makes `jump` (a clock jump of the ridden train: [`depart_now`],
+/// [`skip_ride`], [`skip_to_approach`]) and brings every other train along
+/// with the clock.
+fn ridden_jump<R>(
+    trains: &mut [LineTrain],
+    ridden: usize,
+    clock: &mut GameClock,
+    jump: impl FnOnce(&mut LineTrain, &mut GameClock) -> Option<R>,
+) -> Option<R> {
+    let from = clock.elapsed();
+    let done = jump(trains.get_mut(ridden)?, clock);
+    follow_jump(trains, ridden, from, clock.elapsed() - from, clock.rate());
+    done
+}
+
 /// The keys: F boards, gets off or waits; Space skips the ride (or
 /// shortens a skip underway). A key used here is cleared, so the errand
 /// does not also act on it.
-fn ride_keys(
+pub(crate) fn ride_keys(
     mut commands: Commands,
     keys: Option<ResMut<ButtonInput<KeyCode>>>,
-    (mut train, towns, mut world): Line,
+    (mut trains, towns, mut world): Line,
     (mut fade, mut pending, mut trip, mut clock): RideState,
     mut players: Query<Passenger>,
     (mut say, mut announcer): (MessageWriter<Say>, Announcer),
+    rail: Option<Res<WorldRail>>,
 ) {
     let Some(mut keys) = keys else {
         return;
@@ -162,7 +179,7 @@ fn ride_keys(
     let Ok((me, mut player, mut transform, aboard)) = players.single_mut() else {
         return;
     };
-    let Some(train) = train.as_mut().and_then(|t| t.0.as_mut()) else {
+    let Some(trains) = trains.as_mut() else {
         return;
     };
     let towns = towns.as_ref().map_or(&[][..], |t| &t.0[..]);
@@ -172,6 +189,10 @@ fn ride_keys(
         return;
     }
     if let Some(mut on_train) = aboard {
+        let ridden = on_train.0.train;
+        if ridden >= trains.0.len() {
+            return;
+        }
         if keys.clear_just_pressed(SKIP_KEY)
             && let Some(clock) = clock.as_mut()
         {
@@ -179,22 +200,24 @@ fn ride_keys(
                 None => {
                     // Pull out now (the rest of the dwell is invisible: the
                     // train stands still), then ride for a moment.
-                    depart_now(train, &mut clock.0);
-                    world.0.moving = train.obstacles();
+                    ridden_jump(&mut trains.0, ridden, &mut clock.0, depart_now);
+                    world.0.moving = trains.obstacles();
                     trip.0 = Some(TripPhase::Leaving(LEAVING_SECONDS));
+                    let train = &trains.0[ridden];
                     if train.state().phase == LinePhase::Running {
                         announcer.next_station(train, towns, &clock.0);
                     }
                 }
                 Some(TripPhase::Leaving(_)) => trip.0 = Some(TripPhase::Leaving(0.0)),
                 Some(TripPhase::Arriving) => {
-                    skip_ride(train, &mut clock.0);
-                    world.0.moving = train.obstacles();
+                    ridden_jump(&mut trains.0, ridden, &mut clock.0, skip_ride);
+                    world.0.moving = trains.obstacles();
                 }
                 Some(TripPhase::Fading) => {}
             }
         }
         if keys.clear_just_pressed(INTERACT_KEY) {
+            let train = &trains.0[ridden];
             let state = train.state();
             let ride = on_train.0;
             let standing = trip.0.is_none() && state.phase != LinePhase::Running;
@@ -217,10 +240,11 @@ fn ride_keys(
     if !keys.just_pressed(INTERACT_KEY) {
         return;
     }
-    match boarding(train, &player.rider, &world.0.floors) {
+    match boarding(&trains.0, &player.rider, &world.0.floors) {
         Boarding::Board(ride) => {
             keys.clear_just_pressed(INTERACT_KEY);
-            let ride = ride.facing_platform(train, towns);
+            let train = &trains.0[ride.train];
+            let ride = ride.facing_platform(train, towns, &world.0.floors);
             commands
                 .entity(me)
                 .insert((OnTrain(ride), Visibility::Hidden));
@@ -234,11 +258,12 @@ fn ride_keys(
             });
         }
         Boarding::Nothing => {
-            if let Some(station) = waiting_station(train, towns, &player.rider)
+            let bays = rail.as_ref().map_or(&[][..], |r| &r.0.bays[..]);
+            if let Some(place) = waiting_place(&trains.0, towns, bays, &player.rider)
                 && fade.start()
             {
                 keys.clear_just_pressed(INTERACT_KEY);
-                pending.0 = Some(Jump::Wait(station));
+                pending.0 = Some(Jump::Wait(place));
             }
         }
     }
@@ -251,13 +276,13 @@ fn run_trip(
     mut trip: ResMut<Trip>,
     mut fade: ResMut<ScreenFade>,
     mut pending: ResMut<PendingJump>,
-    train: Option<Res<WorldTrain>>,
-    aboard: Query<(), (With<Player>, With<OnTrain>)>,
+    trains: Option<Res<WorldTrains>>,
+    aboard: Query<&OnTrain, With<Player>>,
 ) {
-    if aboard.is_empty() {
+    let Ok(ride) = aboard.single() else {
         trip.0 = None;
         return;
-    }
+    };
     match trip.0 {
         Some(TripPhase::Leaving(left)) => {
             let left = left - time.delta_secs();
@@ -269,7 +294,10 @@ fn run_trip(
             }
         }
         Some(TripPhase::Arriving) => {
-            let state = train.as_ref().and_then(|t| t.0.as_ref()).map(|t| t.state());
+            let state = trains
+                .as_ref()
+                .and_then(|t| t.0.get(ride.0.train))
+                .map(|t| t.state());
             if state.is_some_and(|s| s.phase != LinePhase::Running) {
                 trip.0 = None;
             }
@@ -287,29 +315,28 @@ fn jump_at_black(
     mut pending: ResMut<PendingJump>,
     mut trip: ResMut<Trip>,
     clock: Option<ResMut<WorldClock>>,
-    (train, _, mut world): Line,
+    (trains, _, mut world): Line,
+    aboard: Query<&OnTrain, With<Player>>,
 ) {
     if !fade.tick(time.delta_secs()) {
         return;
     }
     let jump = pending.0.take();
-    let (Some(mut clock), Some(mut train)) = (clock, train) else {
-        return;
-    };
-    let Some(train) = train.0.as_mut() else {
+    let (Some(mut clock), Some(mut trains)) = (clock, trains) else {
         return;
     };
     match jump {
         Some(Jump::Approach) => {
-            skip_to_approach(train, &mut clock.0);
+            let ridden = aboard.single().map_or(0, |ride| ride.0.train);
+            ridden_jump(&mut trains.0, ridden, &mut clock.0, skip_to_approach);
             trip.0 = Some(TripPhase::Arriving);
         }
-        Some(Jump::Wait(station)) => {
-            wait_for_train(train, &mut clock.0, station);
+        Some(Jump::Wait(place)) => {
+            wait_for_train(&mut trains.0, &mut clock.0, place);
         }
         None => {}
     }
-    world.0.moving = train.obstacles();
+    world.0.moving = trains.obstacles();
 }
 
 /// Keeps a seated player in their coach and the clock at the onboard rate,
@@ -319,13 +346,17 @@ fn follow_train(
     mut commands: Commands,
     time: Res<Time>,
     (clock, mut put_off_in): (Option<ResMut<WorldClock>>, ResMut<PutOffIn>),
-    (train, towns, world): Line,
+    (trains, towns, world): Line,
     mut players: Query<Passenger>,
 ) {
     let Ok((me, mut player, mut transform, aboard)) = players.single_mut() else {
         return;
     };
-    let train = train.as_ref().and_then(|t| t.0.as_ref());
+    let train = aboard.as_ref().and_then(|on_train| {
+        trains
+            .as_ref()
+            .and_then(|trains| trains.0.get(on_train.0.train))
+    });
     let multiplier = match (aboard, train) {
         (Some(mut on_train), Some(train)) => {
             let towns = towns.as_ref().map_or(&[][..], |t| &t.0[..]);
@@ -401,8 +432,8 @@ fn town_name<'a>(train: &LineTrain, towns: &'a [TownLayout], station: usize) -> 
 fn announce(
     time: Res<Time>,
     clock: Option<Res<WorldClock>>,
-    (train, towns, _): Line,
-    aboard: Query<(), (With<Player>, With<OnTrain>)>,
+    (trains, towns, _): Line,
+    aboard: Query<&OnTrain, With<Player>>,
     mut announcer: Announcer,
     mut last: Local<Option<(bool, Option<usize>)>>,
 ) {
@@ -412,7 +443,9 @@ fn announce(
             announcer.hud.0 = None;
         }
     }
-    let (Some(train), Some(clock)) = (train.as_ref().and_then(|t| t.0.as_ref()), clock) else {
+    // The ridden train, else the line train.
+    let ridden = aboard.single().map_or(0, |ride| ride.0.train);
+    let (Some(train), Some(clock)) = (trains.as_ref().and_then(|t| t.0.get(ridden)), clock) else {
         return;
     };
     let towns = towns.as_ref().map_or(&[][..], |t| &t.0[..]);
@@ -420,7 +453,7 @@ fn announce(
     let standing = (s.phase != LinePhase::Running)
         .then_some(s.station)
         .flatten();
-    let now = (!aboard.is_empty(), standing);
+    let now = (aboard.single().is_ok(), standing);
     let before = last.replace(now);
     if !now.0 {
         return;
@@ -445,13 +478,14 @@ fn announce(
 /// 11:22`.
 fn show_ride(
     clock: Option<Res<WorldClock>>,
-    (train, towns, _): Line,
-    players: Query<Has<OnTrain>, With<Player>>,
+    (trains, towns, _): Line,
+    players: Query<&OnTrain, With<Player>>,
     mut hud: ResMut<HudRide>,
 ) {
-    let aboard = players.iter().any(|on| on);
+    let ride = players.single().ok();
+    let aboard = ride.is_some();
     let text = (|| {
-        let train = train.as_ref()?.0.as_ref()?;
+        let train = trains.as_ref()?.0.get(ride.map_or(0, |r| r.0.train))?;
         let (station, at) = next_arrival(train, &clock.as_ref()?.0)?;
         let town = towns.as_ref()?.0.get(train.stations()[station].town)?;
         Some(format!("Próxima: {}, {at}", town.name))
@@ -545,20 +579,21 @@ pub(crate) mod testing {
     pub fn shipped_app_at(clock: Option<GameClock>) -> App {
         let loaded = crate::towns::load_world(&asset_path(pampa_content::TOWNS_FILE));
         let mut world = World::with_towns(loaded.world, Terrain::default(), &loaded.towns);
+        world.lay_rail(&loaded.line);
         let (run, cast) = plan(&loaded.towns, &mut world, &shipped_lines().police_town)
             .expect("the shipped errand");
-        let (start, mut train, mut ride) = start_of_day(&loaded.line, &loaded.towns);
+        let (start, mut trains, mut ride) = start_of_day(&loaded.line, &loaded.towns);
         let mut spawn = (loaded.towns[0].arrival(), Travel::OnFoot);
         let clock = match clock {
             None => {
-                let seat = ride.and_then(|r| r.seat(train.as_ref()?)).unwrap();
+                let seat = ride.and_then(|r| r.seat(&trains[r.train])).unwrap();
                 spawn.0 = seat;
                 start
             }
             Some(clock) => {
                 ride = None;
-                train = LineTrain::new(&loaded.line, &loaded.towns, Timetable::default());
-                if let Some(train) = &mut train {
+                trains = LineTrain::all_of(&loaded.line, &loaded.towns, Timetable::default());
+                for train in &mut trains {
                     train.advance(0.0, clock.elapsed(), BASE_RATE);
                 }
                 spawn.0 = loaded.towns[0].platform_spot().unwrap();
@@ -575,7 +610,8 @@ pub(crate) mod testing {
             .insert_resource(Crowds::for_towns(&loaded.towns))
             .insert_resource(WorldTowns(loaded.towns))
             .insert_resource(WorldClock(clock))
-            .insert_resource(WorldTrain(train))
+            .insert_resource(WorldTrains(trains))
+            .insert_resource(WorldRail(loaded.line))
             .insert_resource(GameWorld(world))
             .insert_resource(PlayerSpawn {
                 position,
@@ -586,7 +622,13 @@ pub(crate) mod testing {
             .insert_resource(run)
             .insert_resource(cast)
             .insert_resource(ErrandDialogue(shipped_lines()))
-            .add_plugins((PlayerPlugin, TownLifePlugin, ErrandPlugin, RidePlugin));
+            .add_plugins((
+                PlayerPlugin,
+                TownLifePlugin,
+                ErrandPlugin,
+                RidePlugin,
+                crate::timetable::TimetablePlugin,
+            ));
         app
     }
 
@@ -666,7 +708,7 @@ mod tests {
     use pampa_render::{HudObjective, HudRide, MapTarget};
 
     fn train(app: &App) -> LineTrain {
-        app.world().resource::<WorldTrain>().0.clone().unwrap()
+        app.world().resource::<WorldTrains>().0[0].clone()
     }
 
     fn clock(app: &App) -> GameClock {
@@ -922,5 +964,180 @@ mod tests {
         q.single_mut(app.world_mut()).unwrap().rider.position = middle;
         press(&mut app, INTERACT_KEY);
         assert!(passenger(&mut app).1.is_some());
+    }
+
+    const METILEO: usize = 2;
+    const CALEUFU: usize = 4;
+
+    /// Puts the player on foot at `at` on the shipped world.
+    fn stand_at(app: &mut App, at: pampa_core::Vec2) {
+        let world = app.world().resource::<GameWorld>().0.clone();
+        let mut q = app.world_mut().query::<&mut Player>();
+        q.single_mut(app.world_mut()).unwrap().rider =
+            Rider::on_foot(at, pampa_core::Heading::from_radians(0.0), &world);
+    }
+
+    fn shuttle(app: &App) -> LineTrain {
+        app.world().resource::<WorldTrains>().0[1].clone()
+    }
+
+    #[test]
+    fn waiting_at_caleufu_boards_the_shuttle_and_it_rides_to_metileo() {
+        // 13:00: the shuttle is somewhere on its day, not at Caleufu.
+        let mut app = shipped_app_at(Some(GameClock::at(TimeOfDay::hm(13, 0))));
+        app.update();
+        let towns = app.world().resource::<WorldTowns>().0.clone();
+        let (middle, _) = towns[CALEUFU].platform_spot().unwrap();
+        stand_at(&mut app, middle);
+        let at_caleufu = shuttle(&app).station_of_town(CALEUFU).unwrap();
+        assert!(!stands_at(&shuttle(&app).state(), at_caleufu));
+        press(&mut app, INTERACT_KEY);
+        assert!(app.world().resource::<ScreenFade>().active());
+        settle(&mut app);
+        assert!(stands_at(&shuttle(&app).state(), at_caleufu), "it came in");
+        // F boards it from the middle of the platform, where the wait
+        // left the player: the shuttle, not the line train.
+        press(&mut app, INTERACT_KEY);
+        let (_, ride) = passenger(&mut app);
+        assert_eq!(ride.expect("aboard").train, 1);
+        // The ridden train is the one the ride follows: on to Metileo.
+        // Space pulls the ridden train out: the clock jumps to the
+        // shuttle's next departure from Caleufu, whatever the line train
+        // does.
+        let now = clock(&app).elapsed();
+        press(&mut app, SKIP_KEY);
+        let day = 24.0 * 3600.0;
+        let departs = shuttle(&app)
+            .timetable()
+            .departures(Run::Up)
+            .iter()
+            .map(|t| t.seconds() + ((now - t.seconds()) / day).ceil() * day)
+            .fold(f64::INFINITY, f64::min);
+        assert!(
+            (clock(&app).elapsed() - departs).abs() < 30.0,
+            "{} for {departs}",
+            clock(&app).hh_mm()
+        );
+        until_off(&mut app, 20.0);
+        let (rider, ride) = passenger(&mut app);
+        assert_eq!(ride, None, "put off");
+        let at_metileo = shuttle(&app).station_of_town(METILEO).unwrap();
+        assert!(stands_at(&shuttle(&app).state(), at_metileo));
+        assert!(
+            rider
+                .position
+                .distance(towns[METILEO].platform_spot().unwrap().0)
+                < 120.0
+        );
+        assert_eq!(announcement(&app).as_deref(), Some("Estación Metileo"));
+    }
+
+    /// A spot on the bay platform of the shipped world beside the standing
+    /// shuttle's coach door.
+    fn on_the_bay_platform(app: &App) -> pampa_core::Vec2 {
+        let world = &app.world().resource::<GameWorld>().0;
+        let placed = shuttle(app).placed_cars();
+        let coach = placed
+            .iter()
+            .find(|c| c.kind == pampa_core::CarKind::Coach)
+            .unwrap();
+        let bay = app.world().resource::<WorldRail>().0.bays[0].platform;
+        assert!(world.floors.contains(&bay));
+        let (spot, _) = bay.spot_beside(coach.center);
+        let door = pampa_core::coach_doors(coach)
+            .into_iter()
+            .min_by(|a, b| a.distance(spot).total_cmp(&b.distance(spot)))
+            .unwrap();
+        spot + bay.along * (door.dot(bay.along) - spot.dot(bay.along))
+    }
+
+    #[test]
+    fn the_shuttle_in_metileos_bay_is_boarded_from_its_platform_not_from_the_ground() {
+        // The shuttle stands in the bay at Metileo.
+        let probe = shipped_app_at(Some(GameClock::at(TimeOfDay::hm(1, 0))));
+        let stops = shuttle(&probe).stops_at(METILEO, Run::Up);
+        let mut app = shipped_app_at(Some(GameClock::at(stops[0])));
+        app.update();
+        let shuttle = shuttle(&app);
+        assert!(shuttle.stands_in_bay());
+        let coach = shuttle
+            .cars()
+            .iter()
+            .position(|c| c.kind == pampa_core::CarKind::Coach)
+            .unwrap();
+        // From the ground beside the door, off the platform: nothing.
+        let placed = shuttle.placed_cars()[coach];
+        let platform = on_the_bay_platform(&app);
+        let door = pampa_core::coach_doors(&placed)
+            .into_iter()
+            .min_by(|a, b| a.distance(platform).total_cmp(&b.distance(platform)))
+            .unwrap();
+        let across = pampa_core::Vec2::new(-placed.direction.y, placed.direction.x);
+        let side = across * (platform - placed.center).dot(across).signum();
+        // The ground just beyond the door on the side away from the
+        // platform (the line train's track side), the bay's own side.
+        stand_at(&mut app, door - side * 1.0);
+        press(&mut app, INTERACT_KEY);
+        assert_eq!(passenger(&mut app).1, None, "not boarded from the ground");
+        assert!(!app.world().resource::<ScreenFade>().active());
+        // From the bay platform, level with the door: it is boarded.
+        stand_at(&mut app, platform);
+        press(&mut app, INTERACT_KEY);
+        let ride = passenger(&mut app).1.expect("boarded from the platform");
+        assert_eq!((ride.train, ride.car), (1, coach));
+    }
+
+    #[test]
+    fn each_of_metileos_platforms_waits_for_its_own_train() {
+        let loaded =
+            crate::towns::load_world(&pampa_content::asset_path(pampa_content::TOWNS_FILE));
+        let trains = LineTrain::all_of(
+            &loaded.line,
+            &loaded.towns,
+            pampa_core::Timetable::default(),
+        );
+        let at = |k: u32| -> Vec<LineTrain> {
+            trains
+                .iter()
+                .map(|t| {
+                    let mut t = t.clone();
+                    t.advance(0.0, f64::from(k) * 300.0, pampa_core::BASE_RATE);
+                    t
+                })
+                .collect()
+        };
+        let metileo = |t: &LineTrain| {
+            t.stations()
+                .iter()
+                .position(|s| s.town == METILEO && !s.bay)
+                .or_else(|| t.stations().iter().position(|s| s.town == METILEO))
+                .unwrap()
+        };
+        // A time of day with neither train standing at Metileo.
+        let quiet = (0..24 * 12)
+            .find(|&k| at(k).iter().all(|t| !stands_at(&t.state(), metileo(t))))
+            .expect("a quiet moment at Metileo");
+        let clock = GameClock::at(TimeOfDay::from_seconds(f64::from(quiet) * 300.0));
+        let town = &loaded.towns[METILEO];
+        let bay_spot = loaded.line.bays[0].platform.footprint.center();
+        // From the station platform: the line train comes in; from the bay
+        // platform: the shuttle, in its bay.
+        for (spot, train) in [(town.platform_spot().unwrap().0, 0), (bay_spot, 1)] {
+            let mut app = shipped_app_at(Some(clock));
+            app.update();
+            stand_at(&mut app, spot);
+            press(&mut app, INTERACT_KEY);
+            assert!(
+                app.world().resource::<ScreenFade>().active(),
+                "train {train}"
+            );
+            settle(&mut app);
+            let trains = app.world().resource::<WorldTrains>().0.clone();
+            let stands = |i: usize| stands_at(&trains[i].state(), metileo(&trains[i]));
+            assert!(stands(train), "train {train} came in");
+            if train == 1 {
+                assert!(trains[1].stands_in_bay());
+            }
+        }
     }
 }

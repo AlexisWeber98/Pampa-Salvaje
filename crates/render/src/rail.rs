@@ -1,5 +1,7 @@
-//! Railway track: the pieces every track is drawn with, and the railway
-//! line between towns, streamed with the terrain chunks.
+//! Railway track: the railway line between towns, streamed with the
+//! terrain chunks, and the pieces around it (buffer stops, bay platforms).
+//! The ballast, sleepers and rails themselves are built along each track's
+//! path by [`crate::railbed`].
 //!
 //! A town draws its own straight track under its [`crate::TownRoot`]. The
 //! links of the [`RailLine`] between towns run for kilometers across open
@@ -10,10 +12,13 @@
 
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
-use pampa_core::{RailLine, RailSpan, Terrain, Vec2 as GroundVec2};
+use pampa_core::{Aabb, Floor, RailBay, RailLine, Terrain, Vec2 as GroundVec2};
 
 use crate::coords::world_from_ground;
+use crate::facade::{FacadeMaterials, Surface};
+use crate::railbed::TrackNet;
 use crate::terrain::{ChunkStreaming, TerrainChunk, WorldChunks, WorldTerrain};
+use crate::town::WorldTowns;
 
 /// The railway line between the towns. Insert before the plugin runs;
 /// without it no track is laid between towns.
@@ -30,119 +35,38 @@ pub struct LineTrack;
 #[derive(Component, Debug, Clone, Copy)]
 struct TrackLaid;
 
-/// Mesh and materials shared by every track, in town and between towns.
-/// The town kit inserts it (see `crate::town`).
+/// The beaten-earth walks from a bay's platform to the road, child of the
+/// terrain chunk their middles lie in: one decal mesh per chunk.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BayWalk;
+
+/// Mesh and materials shared by the track's timber and concrete pieces, in
+/// town and between towns (the ballast, sleepers and rails are meshes of
+/// their own: see [`crate::railbed`]). The town kit inserts it (see
+/// `crate::town`).
 #[derive(Resource, Debug, Clone)]
 pub(crate) struct TrackKit {
     pub cube: Handle<Mesh>,
-    pub ballast: Handle<StandardMaterial>,
     pub timber: Handle<StandardMaterial>,
-    pub steel: Handle<StandardMaterial>,
+    pub concrete: Handle<StandardMaterial>,
 }
 
 impl TrackKit {
     pub(crate) fn material(&self, part: TrackPart) -> &Handle<StandardMaterial> {
         match part {
-            TrackPart::Ballast => &self.ballast,
-            TrackPart::Rail => &self.steel,
-            TrackPart::Sleeper => &self.timber,
+            TrackPart::Timber => &self.timber,
+            TrackPart::Concrete => &self.concrete,
         }
     }
 }
 
-/// What a track piece is made of.
+/// What a piece of the track kit's cube is made of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TrackPart {
-    Ballast,
-    Rail,
-    Sleeper,
-}
-
-/// Length of one ballast and rail piece, in meters.
-const PIECE: f32 = 6.0;
-/// Distance between sleepers, in meters.
-const SLEEPER_SPACING: f32 = 1.2;
-
-/// Ballast bed, two rails and sleepers of the part of a track `span`
-/// covers, following the ground: each piece of the unit cube, with its
-/// transform.
-///
-/// Distances are measured along the whole track the span belongs to (a
-/// town's straight track, or a curved link drawn as many straight pieces),
-/// so sleepers sit where they would on the whole track: stretches drawn
-/// apart, chunk by chunk or piece by piece, keep one even spacing.
-pub(crate) fn track_pieces(span: RailSpan, terrain: &Terrain) -> Vec<(TrackPart, Transform)> {
-    let track = span.track;
-    let length = track.start.distance(track.end);
-    let mut pieces = Vec::new();
-    if length <= 0.0 {
-        return pieces;
-    }
-    // Ballast and rails are cut along this straight piece.
-    let enter = (span.enter - span.from).max(0.0);
-    let exit = (span.exit - span.from).min(length);
-    let along = (track.end - track.start) * (1.0 / length);
-    // Left of the heading: `along` turned a quarter counter-clockwise.
-    let across = GroundVec2::new(-along.y, along.x);
-    let at = |s: f32, offset: f32| track.start + along * s + across * offset;
-
-    let first = (enter / PIECE).floor() as usize;
-    let last = (exit / PIECE).ceil() as usize;
-    for k in first..last {
-        let s0 = (k as f32 * PIECE).max(enter);
-        let s1 = ((k + 1) as f32 * PIECE).min(exit);
-        if s1 <= s0 {
-            continue;
-        }
-        let ballast = stretched(
-            terrain,
-            at(s0, 0.0),
-            at(s1, 0.0),
-            -0.05,
-            Vec2::new(3.4, 0.4),
-        );
-        pieces.extend(ballast.map(|t| (TrackPart::Ballast, t)));
-        for side in [-0.5, 0.5] {
-            let offset = side * track.gauge;
-            let rail = stretched(
-                terrain,
-                at(s0, offset),
-                at(s1, offset),
-                0.36,
-                Vec2::new(0.09, 0.14),
-            );
-            pieces.extend(rail.map(|t| (TrackPart::Rail, t)));
-        }
-    }
-
-    // Sleepers lie every `SLEEPER_SPACING` along the whole track, half a
-    // spacing in from its start, and stop half a spacing short of its end.
-    let sleepers = (span.total / SLEEPER_SPACING) as usize;
-    let first = ((span.enter - SLEEPER_SPACING / 2.0) / SLEEPER_SPACING)
-        .ceil()
-        .max(0.0) as usize;
-    // A sleeper's long side is the cube's local Z. Ground north is Bevy -Z
-    // (see `world_from_ground`), so a track heading `θ` counter-clockwise
-    // from east runs along world (cos θ, 0, -sin θ), and turning local Z
-    // about +Y by the same `θ` gives (sin θ, 0, cos θ): square to the track.
-    // (Turning by `-θ` instead only looks right on east-west and
-    // north-south track.)
-    let yaw = along.y.atan2(along.x);
-    for k in first..sleepers {
-        let s = k as f32 * SLEEPER_SPACING + SLEEPER_SPACING / 2.0;
-        if s >= span.exit {
-            break;
-        }
-        let p = at(s - span.from, 0.0);
-        let y = terrain.height(p.x, p.y) + 0.3;
-        pieces.push((
-            TrackPart::Sleeper,
-            Transform::from_translation(world_from_ground(p, y))
-                .with_rotation(Quat::from_rotation_y(yaw))
-                .with_scale(Vec3::new(0.25, 0.12, track.gauge + 0.9)),
-        ));
-    }
-    pieces
+    /// The buffer stop's beams.
+    Timber,
+    /// A bay platform, as the stations' (see `crate::town`).
+    Concrete,
 }
 
 /// A beam from ground point `from` to `to`, raised `lift` above the ground,
@@ -168,6 +92,109 @@ pub(crate) fn stretched(
     )
 }
 
+/// The timber of the buffer stop at the dead end of `bay`: a beam across
+/// the rails, just above their tops, on two struts raked back along the
+/// track. Each is a unit cube's transform, for the track kit's timber.
+pub(crate) fn buffer_stop(bay: &RailBay, terrain: &Terrain) -> Vec<Transform> {
+    let (end, back) = (bay.buffer(), bay.heading());
+    let across = GroundVec2::new(-back.y, back.x);
+    let half = bay.link.track.gauge / 2.0 + 0.5;
+    let beam = end + back * 0.15;
+    let beam_ends = (beam - across * half, beam + across * half);
+    let strut = |side: f32| {
+        let at = across * side;
+        (end - back * 0.9 + at, beam + at)
+    };
+    let (left, right) = (strut(-half + 0.15), strut(half - 0.15));
+    [
+        stretched(terrain, beam_ends.0, beam_ends.1, 0.4, Vec2::new(0.35, 0.6)),
+        stretched(terrain, left.0, left.1, 0.0, Vec2::new(0.3, 0.7)),
+        stretched(terrain, right.0, right.1, 0.0, Vec2::new(0.3, 0.7)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+/// Thickness of a platform's ramp slab, in meters.
+const RAMP_THICKNESS: f32 = 0.2;
+/// A slab sloping from the edge of `floor`'s top down to the ground at
+/// each end, along the ramps people are walked over ([`Floor::rise_at`]),
+/// each a unit cube's transform.
+fn floor_ramps(floor: &Floor, terrain: &Terrain) -> Vec<Transform> {
+    let f = floor.footprint;
+    let mid = floor.across() * f.center().dot(floor.across());
+    let width = f.size().dot(floor.across());
+    let ground = |p: GroundVec2| terrain.height(p.x, p.y);
+    [
+        (f.min.dot(floor.along), -1.0),
+        (f.max.dot(floor.along), 1.0),
+    ]
+    .into_iter()
+    .map(|(end, out)| {
+        let top = mid + floor.along * end;
+        let foot = top + floor.along * (out * Floor::RAMP_LENGTH);
+        let (top3, foot3) = (
+            world_from_ground(top, ground(top) + floor.height),
+            world_from_ground(foot, ground(foot)),
+        );
+        let slope = (foot3 - top3).normalize();
+        let side = slope.cross(Vec3::Y).normalize();
+        let up = side.cross(slope);
+        let rotation = Quat::from_mat3(&Mat3::from_cols(slope, up, side));
+        Transform::from_translation((top3 + foot3) * 0.5 - up * (RAMP_THICKNESS / 2.0))
+            .with_rotation(rotation)
+            .with_scale(Vec3::new(top3.distance(foot3), RAMP_THICKNESS, width))
+    })
+    .collect()
+}
+
+/// The bay platform of `bay`: a concrete slab with its two ramps, drawn
+/// as the stations' platforms are (`crate::town`).
+pub(crate) fn bay_platform(bay: &RailBay, terrain: &Terrain) -> Vec<(TrackPart, Transform)> {
+    let floor = &bay.platform;
+    let (c, size, h) = (
+        floor.footprint.center(),
+        floor.footprint.size(),
+        floor.height,
+    );
+    let y = terrain.height(c.x, c.y);
+    let top = Transform::from_translation(world_from_ground(c, y + (h - 0.2) / 2.0))
+        .with_scale(Vec3::new(size.x, h + 0.2, size.y));
+    std::iter::once(top)
+        .chain(floor_ramps(floor, terrain))
+        .map(|t| (TrackPart::Concrete, t))
+        .collect()
+}
+
+/// The platforms of `line`'s bays whose middle stands inside `area`.
+fn bay_works_in(line: &RailLine, area: Aabb, terrain: &Terrain) -> Vec<(TrackPart, Transform)> {
+    line.bays
+        .iter()
+        .filter(|bay| area.contains_point(bay.platform.footprint.center()))
+        .flat_map(|bay| bay_platform(bay, terrain))
+        .collect()
+}
+
+/// The walks of `line`'s bays whose middle stands inside `area`.
+fn bay_walks_in(line: &RailLine, area: Aabb) -> Vec<Aabb> {
+    line.bays
+        .iter()
+        .flat_map(|bay| &bay.walks)
+        .filter(|walk| area.contains_point(walk.center()))
+        .copied()
+        .collect()
+}
+
+/// The buffer stops of `line`'s bays that stand inside `area`.
+fn buffer_stops_in(line: &RailLine, area: Aabb, terrain: &Terrain) -> Vec<Transform> {
+    line.bays
+        .iter()
+        .filter(|bay| area.contains_point(bay.buffer()))
+        .flat_map(|bay| buffer_stop(bay, terrain))
+        .collect()
+}
+
 /// Lays the railway line's track on terrain chunks as they are built.
 /// Needs the [`crate::TownPlugin`] for the shared track kit.
 pub struct RailPlugin;
@@ -175,6 +202,7 @@ pub struct RailPlugin;
 impl Plugin for RailPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<WorldRail>()
+            .init_resource::<WorldTowns>()
             .init_resource::<WorldTerrain>()
             .init_resource::<WorldChunks>()
             // Right after chunk streaming, in the same schedule: the chunks
@@ -202,20 +230,31 @@ impl Plugin for RailPlugin {
 /// chunk exists.
 fn lay_track(
     mut commands: Commands,
-    (rail, terrain, world): (Res<WorldRail>, Res<WorldTerrain>, Res<WorldChunks>),
-    kit: Option<Res<TrackKit>>,
+    (rail, terrain, world, towns): (
+        Res<WorldRail>,
+        Res<WorldTerrain>,
+        Res<WorldChunks>,
+        Res<WorldTowns>,
+    ),
+    (kit, surfaces): (Option<Res<TrackKit>>, Option<Res<FacadeMaterials>>),
+    mut meshes: ResMut<Assets<Mesh>>,
     chunks: Query<(Entity, &TerrainChunk), Without<TrackLaid>>,
 ) {
-    let Some(kit) = kit else {
+    let (Some(kit), Some(surfaces)) = (kit, surfaces) else {
         return;
     };
+    if chunks.is_empty() {
+        return;
+    }
+    // Every track that may lie near another, in the order they take
+    // precedence: the beds are cut from it chunk by chunk.
+    let net = TrackNet::new(&towns.0, &rail.0);
     for (chunk, coord) in &chunks {
         let area = coord.0.bounds(world.0.chunk_size);
-        let pieces: Vec<_> = rail
-            .0
-            .segments_in(area)
+        let timbers: Vec<_> = buffer_stops_in(&rail.0, area, &terrain.0)
             .into_iter()
-            .flat_map(|span| track_pieces(span, &terrain.0))
+            .map(|transform| (TrackPart::Timber, transform))
+            .chain(bay_works_in(&rail.0, area, &terrain.0))
             .map(|(part, transform)| {
                 (
                     LineTrack,
@@ -225,16 +264,51 @@ fn lay_track(
                 )
             })
             .collect();
+        // The bed, rails and sleepers of the track inside the chunk: one
+        // mesh each.
+        let track: Vec<_> = net
+            .lay_in(area, &terrain.0)
+            .into_meshes()
+            .into_iter()
+            .map(|(surface, mesh)| {
+                (
+                    LineTrack,
+                    Mesh3d(meshes.add(mesh)),
+                    MeshMaterial3d(surfaces.get(surface)),
+                    Transform::default(),
+                )
+            })
+            .collect();
+        // The earth the platforms' walks are trodden in.
+        let ground = |p: GroundVec2| terrain.0.height(p.x, p.y);
+        let walks: Vec<Vec<Aabb>> = bay_walks_in(&rail.0, area)
+            .into_iter()
+            .map(|walk| vec![walk])
+            .collect();
+        let walk = crate::settlement::track::walks_mesh(&walks, &ground).map(|mesh| {
+            (
+                BayWalk,
+                Mesh3d(meshes.add(mesh)),
+                MeshMaterial3d(surfaces.get(Surface::Yard)),
+                Transform::default(),
+            )
+        });
         let mut laid = commands.entity(chunk);
         laid.try_insert(TrackLaid);
-        if pieces.is_empty() {
+        if timbers.is_empty() && track.is_empty() && walk.is_none() {
             continue;
         }
         // Silenced: a chunk that is gone by now simply gets no track.
         laid.queue_silenced(move |mut chunk: EntityWorldMut| {
-            chunk.with_children(|track| {
-                for piece in pieces {
-                    track.spawn(piece);
+            chunk.with_children(|children| {
+                for piece in timbers {
+                    children.spawn(piece);
+                }
+                for piece in track {
+                    children.spawn(piece);
+                }
+                if let Some(walk) = walk {
+                    children.spawn(walk);
                 }
             });
         });
@@ -244,10 +318,10 @@ fn lay_track(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::{StreamFocus, TerrainPlugin, TownPlugin, WorldTowns};
+    use crate::{StreamFocus, TerrainPlugin, TownPlugin};
     use pampa_core::{
-        ChunkCoord, PlazaPlacement, Railway, RailwayConfig, Side, TownConfig, TownLayout,
-        WorldConfig, place_towns,
+        ChunkCoord, PlazaPlacement, RailwayConfig, Side, TownConfig, TownLayout, WorldConfig,
+        place_towns,
     };
 
     /// Two railway towns 3 km apart on one east-west row, and their line.
@@ -337,7 +411,9 @@ pub(crate) mod tests {
         let on_line = |c: ChunkCoord| !line.segments_in(c.bounds(world.chunk_size)).is_empty();
         for &(coord, pieces) in &by_chunk {
             if on_line(coord) {
-                assert!(pieces > 100, "{coord:?}: {pieces} pieces");
+                // A mesh each for the bed, the sleepers, the rails and
+                // their heads.
+                assert_eq!(pieces, 4, "{coord:?}: {pieces} pieces");
             } else {
                 assert_eq!(pieces, 0, "{coord:?}");
             }
@@ -472,96 +548,9 @@ pub(crate) mod tests {
         assert_eq!(orphans(&mut app), 0);
     }
 
-    #[test]
-    fn pieces_of_neighboring_stretches_add_up_to_the_whole_track() {
-        let terrain = Terrain::default();
-        let track = Railway {
-            start: GroundVec2::new(-100.0, -40.0),
-            end: GroundVec2::new(150.0, 60.0),
-            gauge: 1.676,
-        };
-        let length = track.start.distance(track.end);
-        let whole = track_pieces(RailSpan::whole(track), &terrain);
-        let cut = 97.3;
-        let part = |enter: f32, exit: f32| RailSpan {
-            enter,
-            exit,
-            ..RailSpan::whole(track)
-        };
-        let mut halves = track_pieces(part(0.0, cut), &terrain);
-        halves.extend(track_pieces(part(cut, length), &terrain));
-        let sleepers =
-            |v: &[(TrackPart, Transform)]| v.iter().filter(|p| p.0 == TrackPart::Sleeper).count();
-        assert_eq!(sleepers(&whole), sleepers(&halves));
-        assert_eq!(sleepers(&whole), (length / SLEEPER_SPACING) as usize);
-        // The halves add one ballast piece (and its two rails) at the cut.
-        assert_eq!(halves.len(), whole.len() + 3);
-    }
-
-    /// A 60 m track at `degrees` counter-clockwise from east on the ground.
-    fn track_at(degrees: f32) -> Railway {
-        let (sin, cos) = degrees.to_radians().sin_cos();
-        let start = GroundVec2::new(20.0, -10.0);
-        Railway {
-            start,
-            end: start + GroundVec2::new(cos, sin) * 60.0,
-            gauge: 1.676,
-        }
-    }
-
-    #[test]
-    fn sleepers_cross_the_track_square_and_centered_between_the_rails() {
-        let terrain = Terrain::default();
-        for degrees in [0.0, 30.0, 45.0, 90.0, 135.0, 210.0, 300.0] {
-            let track = track_at(degrees);
-            let pieces = track_pieces(RailSpan::whole(track), &terrain);
-            let dir = world_from_ground(track.end - track.start, 0.0).normalize();
-            let rails: Vec<Transform> = pieces
-                .iter()
-                .filter(|p| p.0 == TrackPart::Rail)
-                .map(|p| p.1)
-                .collect();
-            let sleepers = pieces.iter().filter(|p| p.0 == TrackPart::Sleeper);
-            let mut seen = 0;
-            for (_, sleeper) in sleepers {
-                seen += 1;
-                // The sleeper's long side is its local Z.
-                let long = sleeper.rotation * Vec3::Z;
-                assert!(
-                    long.dot(dir).abs() < 1e-3,
-                    "{degrees}°: sleeper {long:?} not square to track {dir:?}"
-                );
-                // The rails through this sleeper sit at equal distances on
-                // either side of its center, along its long side.
-                let c = sleeper.translation;
-                let mut offsets: Vec<f32> = rails
-                    .iter()
-                    .filter(|r| {
-                        let along = (c - r.translation).dot(dir).abs();
-                        along <= r.scale.x / 2.0
-                    })
-                    .map(|r| {
-                        // Distance from the rail's axis to the sleeper center,
-                        // measured along the sleeper.
-                        let to_rail = r.translation - c;
-                        let flat = to_rail - dir * to_rail.dot(dir);
-                        flat.dot(long)
-                    })
-                    .collect();
-                offsets.sort_by(f32::total_cmp);
-                assert_eq!(offsets.len(), 2, "{degrees}°: {offsets:?}");
-                let half = track.gauge / 2.0;
-                assert!((offsets[0] + half).abs() < 1e-2, "{degrees}°: {offsets:?}");
-                assert!((offsets[1] - half).abs() < 1e-2, "{degrees}°: {offsets:?}");
-                assert!(sleeper.scale.z > track.gauge, "sleeper spans both rails");
-            }
-            assert!(seen > 40, "{degrees}°: {seen} sleepers");
-        }
-    }
-
-    #[test]
-    fn sleepers_keep_one_spacing_around_a_curved_link_and_across_chunks() {
-        // Two towns offset north-east, so the link curves twice.
+    /// Three towns on one row with a branch off the middle one, and the
+    /// line with its bay track at the junction.
+    fn bayed_line() -> (WorldConfig, Vec<TownLayout>, RailLine) {
         let world = WorldConfig::default();
         let town = |name: &str, x: f32, y: f32| TownConfig {
             name: name.into(),
@@ -580,65 +569,238 @@ pub(crate) mod tests {
             density: None,
             townsfolk: None,
         };
-        let (towns, errors) = place_towns(
-            &world,
-            &[town("Oeste", -1500.0, -800.0), town("Este", 1500.0, 800.0)],
-        );
+        let configs = [
+            town("Oeste", -2000.0, 0.0),
+            town("Medio", 0.0, 0.0),
+            town("Este", 2000.0, 0.0),
+            town("Norte", -2200.0, 1800.0),
+        ];
+        let (towns, errors) = place_towns(&world, &configs);
         assert!(errors.is_empty(), "{errors:?}");
-        let (line, errors) = RailLine::build(None, &towns, world.bounds());
+        let list = ["Oeste", "Medio", "Este"].map(String::from);
+        let branches = [["Medio", "Norte"].map(String::from).to_vec()];
+        let (line, errors) =
+            RailLine::build_with_branches(Some(&list), &branches, &towns, world.bounds());
         assert!(errors.is_empty(), "{errors:?}");
-        assert_eq!(line.links[0].curves.len(), 2);
+        assert_eq!(line.bays.len(), 1);
+        (world, towns, line)
+    }
+
+    #[test]
+    fn a_buffer_stop_closes_the_dead_end_of_the_bay_across_both_rails() {
+        let (_, _, line) = bayed_line();
+        let bay = &line.bays[0];
         let terrain = Terrain::default();
-        // Lay the line chunk by chunk, as the terrain streams it in.
-        let size = world.chunk_size;
-        let link = line.links[0].track;
-        let (lo, hi) = (
-            GroundVec2::new(link.start.x.min(link.end.x), link.start.y.min(link.end.y)),
-            GroundVec2::new(link.start.x.max(link.end.x), link.start.y.max(link.end.y)),
-        );
-        let cell = |v: f32| (v / size).floor() as i32;
-        let mut sleepers: Vec<Vec3> = Vec::new();
-        for y in cell(lo.y) - 2..=cell(hi.y) + 2 {
-            for x in cell(lo.x) - 2..=cell(hi.x) + 2 {
-                let area = ChunkCoord { x, y }.bounds(size);
-                for span in line.segments_in(area) {
-                    sleepers.extend(
-                        track_pieces(span, &terrain)
-                            .into_iter()
-                            .filter(|p| p.0 == TrackPart::Sleeper)
-                            .map(|p| p.1.translation),
-                    );
-                }
-            }
+        let pieces = buffer_stop(bay, &terrain);
+        // A beam and two struts, all at the buffer.
+        assert_eq!(pieces.len(), 3);
+        let flat = |t: &Transform| GroundVec2::new(t.translation.x, -t.translation.z);
+        for piece in &pieces {
+            assert!(flat(piece).distance(bay.buffer()) < 1.5, "{piece:?}");
         }
-        let total = line.links[0].length();
-        assert_eq!(sleepers.len(), (total / SLEEPER_SPACING) as usize);
-        // Walk them in order along the link: each is one spacing from the
-        // last (measured on the ground, the curve's chords barely shorten it).
-        let flat = |v: Vec3| GroundVec2::new(v.x, -v.z);
-        let mut left = sleepers.clone();
-        let mut at = flat(
-            left.remove(
-                left.iter()
-                    .enumerate()
-                    .min_by(|a, b| {
-                        let d = |v: &Vec3| flat(*v).distance(link.start);
-                        d(a.1).total_cmp(&d(b.1))
-                    })
-                    .map(|(i, _)| i)
-                    .expect("sleepers"),
-            ),
+        // The beam reaches past both rails and stands above their tops.
+        let beam = &pieces[0];
+        assert!(
+            beam.scale.x > bay.link.track.gauge + 0.9,
+            "{:?}",
+            beam.scale
         );
-        assert!((at.distance(link.start) - SLEEPER_SPACING / 2.0).abs() < 1e-2);
-        while !left.is_empty() {
-            let (i, d) = left
-                .iter()
-                .enumerate()
-                .map(|(i, v)| (i, flat(*v).distance(at)))
-                .min_by(|a, b| a.1.total_cmp(&b.1))
-                .expect("sleepers");
-            assert!((d - SLEEPER_SPACING).abs() < 1e-2, "gap of {d} m at {at:?}");
-            at = flat(left.remove(i));
+        let ground = terrain.height(bay.buffer().x, bay.buffer().y);
+        assert!(beam.translation.y > ground + 0.5, "{beam:?}");
+        // It is closed at the end only: nothing stands further into the bay.
+        let inside = bay.buffer() + bay.heading() * 2.0;
+        assert!(pieces.iter().all(|p| flat(p).distance(inside) > 0.9));
+        // Only the chunk holding the dead end gets it.
+        let area = |at: GroundVec2| Aabb::from_center_size(at, GroundVec2::new(200.0, 200.0));
+        assert_eq!(
+            buffer_stops_in(&line, area(bay.buffer()), &terrain).len(),
+            3
+        );
+        let away = bay.buffer() + GroundVec2::new(0.0, 1000.0);
+        assert!(buffer_stops_in(&line, area(away), &terrain).is_empty());
+    }
+
+    #[test]
+    fn the_chunk_with_the_bay_gets_its_track_and_buffer_stop() {
+        let (world, towns, line) = bayed_line();
+        let bay = line.bays[0].clone();
+        let coord = ChunkCoord {
+            x: (bay.stop.x / world.chunk_size).floor() as i32,
+            y: (bay.stop.y / world.chunk_size).floor() as i32,
+        };
+        let laid = |line: &RailLine| {
+            let mut app = App::new();
+            app.add_plugins(MinimalPlugins)
+                .init_resource::<Assets<Mesh>>()
+                .init_resource::<Assets<StandardMaterial>>()
+                .insert_resource(WorldChunks(world))
+                .insert_resource(StreamFocus(bay.stop))
+                .insert_resource(WorldTowns(towns.clone()))
+                .insert_resource(WorldRail(line.clone()))
+                .add_plugins((
+                    TerrainPlugin {
+                        radius: 1,
+                        budget: 1,
+                        resolution: 2,
+                    },
+                    TownPlugin,
+                    RailPlugin,
+                ));
+            app.update();
+            app.update();
+            track_by_chunk(&mut app)
+                .into_iter()
+                .find(|&(c, _)| c == coord)
+                .map(|(_, n)| n)
+                .expect("the chunk is built")
+        };
+        let mut bare = line.clone();
+        bare.bays.clear();
+        // The bay adds its bed, sleepers and rails to the chunk (a mesh
+        // each, where the chunk had them already: none then), and the
+        // platform's three timbers where its middle stands.
+        let terrain = Terrain::default();
+        let area = coord.bounds(world.chunk_size);
+        let meshes = |line: &RailLine| {
+            TrackNet::new(&towns, line)
+                .lay_in(area, &terrain)
+                .into_meshes()
+                .len()
+        };
+        let bay_meshes = meshes(&line) - meshes(&bare);
+        assert_eq!(meshes(&line), 4);
+        // The shuttle stands in this chunk; the buffer stop is in the next.
+        assert!(area.contains_point(bay.stop));
+        assert!(!area.contains_point(bay.buffer()));
+        // And the platform, whose middle stands in it.
+        let works = bay_works_in(&line, area, &terrain).len();
+        assert_eq!(works, 3);
+        assert_eq!(laid(&line) - laid(&bare), bay_meshes + works);
+    }
+
+    /// Terrain leveled around `bay`, as the town's ground is.
+    fn level_at(bay: &RailBay) -> Terrain {
+        Terrain::default().with_flat_area(pampa_core::FlatArea {
+            center: bay.stop,
+            half_extents: GroundVec2::new(100.0, 60.0),
+            falloff: 10.0,
+            height: 3.0,
+        })
+    }
+
+    #[test]
+    fn the_bay_platform_is_a_concrete_slab_at_station_height_with_a_ramp_at_each_end() {
+        let (_, _, line) = bayed_line();
+        let bay = &line.bays[0];
+        let terrain = level_at(bay);
+        let pieces = bay_platform(bay, &terrain);
+        assert_eq!(pieces.len(), 3);
+        assert!(pieces.iter().all(|(part, _)| *part == TrackPart::Concrete));
+        let f = bay.platform.footprint;
+        // The slab: the platform's footprint, its top at the floor height
+        // core walks people on.
+        let slab = &pieces[0].1;
+        let (size, c) = (f.size(), f.center());
+        assert!((slab.scale.x - size.x).abs() < 1e-3 && (slab.scale.z - size.y).abs() < 1e-3);
+        let ground = terrain.height(c.x, c.y);
+        let top = slab.translation.y + slab.scale.y / 2.0 - ground;
+        assert!((top - bay.platform.height).abs() < 1e-3, "{top}");
+        assert!((slab.translation.x - c.x).abs() < 1e-3 && (slab.translation.z + c.y).abs() < 1e-3);
+        // Each ramp starts at the platform's edge at its top and ends on
+        // the ground a ramp's length out (a slab's middle is halfway).
+        let along = bay.platform.along;
+        for (ramp, out) in pieces[1..].iter().map(|p| &p.1).zip([-1.0_f32, 1.0]) {
+            let mid = GroundVec2::new(ramp.translation.x, -ramp.translation.z);
+            let end = if out < 0.0 { f.min } else { f.max }.dot(along);
+            let reach = (mid.dot(along) - end) * out;
+            assert!((reach - Floor::RAMP_LENGTH / 2.0).abs() < 0.2, "{reach}");
+            // Halfway down: below the top, above the ground.
+            let halfway = ramp.translation.y - ground;
+            assert!(halfway > 0.0 && halfway < bay.platform.height, "{halfway}");
         }
+    }
+
+    #[test]
+    fn a_chunk_gets_the_bay_platform_only_where_its_middle_stands() {
+        let (_, _, line) = bayed_line();
+        let bay = &line.bays[0];
+        let terrain = Terrain::default();
+        let at = |p: GroundVec2| Aabb::from_center_size(p, GroundVec2::new(10.0, 10.0));
+        let all = bay_platform(bay, &terrain).len();
+        assert_eq!(all, 3);
+        assert_eq!(
+            bay_works_in(&line, at(bay.platform.footprint.center()), &terrain).len(),
+            all
+        );
+        let away = bay.platform.footprint.center() + GroundVec2::new(0.0, 2000.0);
+        assert!(bay_works_in(&line, at(away), &terrain).is_empty());
+    }
+
+    #[test]
+    fn a_chunk_gets_a_bay_walk_where_its_middle_stands_and_none_elsewhere() {
+        let (_, _, mut line) = bayed_line();
+        let strip = |x: f32, y: f32| {
+            Aabb::new(
+                GroundVec2::new(x, y - 1.0),
+                GroundVec2::new(x + 40.0, y + 1.0),
+            )
+        };
+        line.bays[0].walks = vec![strip(100.0, 0.0), strip(100.0, 500.0)];
+        let around = |p: GroundVec2| Aabb::from_center_size(p, GroundVec2::new(30.0, 30.0));
+        // Each strip is in the area its middle stands in, the other not.
+        assert_eq!(
+            bay_walks_in(&line, around(GroundVec2::new(120.0, 0.0))),
+            [strip(100.0, 0.0)]
+        );
+        assert_eq!(
+            bay_walks_in(&line, around(GroundVec2::new(120.0, 500.0))),
+            [strip(100.0, 500.0)]
+        );
+        assert!(bay_walks_in(&line, around(GroundVec2::new(120.0, 250.0))).is_empty());
+    }
+
+    #[test]
+    fn the_chunk_with_the_bay_walks_gets_them_as_earth_the_same_frame() {
+        let (world, towns, mut line) = bayed_line();
+        let bay = line.bays[0].clone();
+        let at = bay.platform.footprint.center() - GroundVec2::new(70.0, 0.0);
+        line.bays[0].walks = vec![Aabb::from_center_size(at, GroundVec2::new(20.0, 2.0))];
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .insert_resource(WorldChunks(world))
+            .insert_resource(StreamFocus(at))
+            .insert_resource(WorldTowns(towns))
+            .insert_resource(WorldRail(line))
+            .add_plugins((
+                TerrainPlugin {
+                    radius: 1,
+                    budget: 1,
+                    resolution: 2,
+                },
+                TownPlugin,
+                RailPlugin,
+            ));
+        for _ in 0..3 {
+            app.update();
+        }
+        let walks = app
+            .world_mut()
+            .query_filtered::<&Mesh3d, With<BayWalk>>()
+            .iter(app.world())
+            .count();
+        assert_eq!(walks, 1);
+        // It hangs off a terrain chunk, and goes with it.
+        let kids = app
+            .world_mut()
+            .query_filtered::<&ChildOf, With<BayWalk>>()
+            .iter(app.world())
+            .map(|c| c.parent())
+            .collect::<Vec<_>>();
+        assert!(
+            kids.iter()
+                .all(|&k| app.world().get::<TerrainChunk>(k).is_some())
+        );
     }
 }

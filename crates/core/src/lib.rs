@@ -14,6 +14,7 @@
 pub mod abilities;
 pub mod activation;
 pub mod animation;
+pub mod board;
 pub mod bumps;
 pub mod chunk;
 pub mod clock;
@@ -46,6 +47,7 @@ pub mod world;
 pub use abilities::{Abilities, Ability};
 pub use activation::{ActivationChange, TownActivation, distance_to_town, nearest_town};
 pub use animation::AnimationState;
+pub use board::{BoardRow, Bound, Service, station_board};
 pub use bumps::{BumpEvent, BumpSeverity, BumpTracker, LinePicker};
 pub use chunk::{ChunkCoord, WorldConfig, WorldConfigError};
 pub use clock::{BASE_RATE, DAY_REAL_SECONDS, DAY_SECONDS, GameClock, TimeOfDay};
@@ -62,13 +64,18 @@ pub use lamps::{LampSite, LampTier, StreetLamp, StreetLamps};
 pub use math::Vec2;
 pub use obstacles::StaticObstacles;
 pub use placement::{PlacementError, place_towns};
-pub use places::{Place, PlaceKind, Sign, SignMount, StoreStyle};
+pub use places::{
+    Place, PlaceKind, STATION_WALL_INSET, Sign, SignMount, StoreStyle, TIMETABLE_BOARD_HEIGHT,
+    TIMETABLE_BOARD_WIDTH, station_bays,
+};
 pub use pose::{HorseGait, JointAngles, MOTION_CLOCK_PERIOD, tick_clock};
-pub use rail::{LinePath, RailBranch, RailCurve, RailLine, RailLineError, RailLink, RailSpan};
+pub use rail::{
+    LinePath, RailBay, RailBranch, RailCurve, RailLine, RailLineError, RailLink, RailSpan,
+};
 pub use ride::{
     APPROACH_LEAD, BOARD_RANGE, Boarding, ONBOARD_MULTIPLIER, OPENING_LEAD, Ride, SEAT_HEIGHT,
-    WAIT_RANGE, alight_spot, boarding, coach_doors, depart_now, next_arrival, opening, skip_ride,
-    skip_to_approach, stands_at, wait_for_train, waiting_station,
+    WAIT_RANGE, WaitingPlace, alight_spot, boarding, coach_doors, depart_now, follow_jump,
+    next_arrival, opening, skip_ride, skip_to_approach, stands_at, wait_for_train, waiting_place,
 };
 pub use rider::{MAX_STEP, Rider, RiderInput, RiderParams};
 pub use road::{
@@ -87,7 +94,7 @@ pub use town::{
 pub use townsfolk::{StreetGraph, Townsfolk, Townsperson};
 pub use train::{
     Car, CarKind, CoachBody, LinePhase, LineTrain, LineTrainState, MAX_STOP_MISS, PlacedCar, Run,
-    Station, Timetable, TimetableError,
+    SHUTTLE_MARGIN, Station, Timetable, TimetableError, shuttle_timetable,
 };
 pub use walker::Travel;
 pub use world::{Ground, World, WorldBounds};
