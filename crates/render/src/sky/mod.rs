@@ -476,4 +476,57 @@ mod tests {
         assert!(lum(noon) > 0.5);
         assert!(lum(night) < 0.06, "{night:?}");
     }
+
+    /// The bytes the GPU reads for binding 0, as floats.
+    fn uniform_floats(params: &SkyParams) -> Vec<f32> {
+        use bevy::render::render_resource::encase::UniformBuffer;
+        let mut buffer = UniformBuffer::new(Vec::<u8>::new());
+        buffer.write(params).unwrap();
+        buffer
+            .as_ref()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| f32::from_le_bytes(*b))
+            .collect()
+    }
+
+    #[test]
+    fn the_material_uniform_holds_the_clocks_sky_in_the_shaders_layout() {
+        // The shader declares the same thirteen vec4s, in this order.
+        let shader = include_str!("sky.wesl");
+        let fields = [
+            "sun",
+            "moon",
+            "moon_light",
+            "zenith",
+            "horizon",
+            "sun_color",
+            "cloud_lit",
+            "cloud_shade",
+            "drift",
+            "star_x",
+            "star_y",
+            "star_z",
+            "center",
+        ];
+        let at = |f: &str| shader.find(&format!("{f}: vec4")).unwrap_or(usize::MAX);
+        assert!(fields.windows(2).all(|w| at(w[0]) < at(w[1])), "{fields:?}");
+        let (days, seconds, camera) = (3.0_f64 + 1.0 / 24.0, 12.5, Vec3::new(7.0, 3.0, -9.0));
+        let sky = sky_with_moon(1.0, astro::moon_age(days));
+        let material = SkyMaterial {
+            params: sky_params(&sky, days, seconds, camera),
+            star_map: None,
+        };
+        let floats = uniform_floats(&material.params);
+        assert_eq!(floats.len(), fields.len() * 4);
+        let row = |k: usize| Vec4::from_slice(&floats[k * 4..k * 4 + 4]);
+        assert_eq!(row(0).truncate(), sky.sun_dir, "sun");
+        assert_eq!(row(1).truncate(), sky.moon_dir, "moon");
+        assert_eq!(row(3).w, 1.0, "full stars at one in the morning");
+        assert_eq!(row(7).w, seconds, "the clock the clouds animate by");
+        assert_eq!(row(12), camera.extend(0.0), "centre");
+        assert_eq!(row(9), astro::galactic_frame(days)[0]);
+        assert_eq!(row(2).truncate().length().round(), 1.0, "unit moon light");
+    }
 }

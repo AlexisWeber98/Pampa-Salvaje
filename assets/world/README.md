@@ -117,7 +117,7 @@ overlaps; the towns listed before it win.
 | `origin` | Center of the street grid, in meters: `(east, north)` from the world center. | Optional, `(0.0, 0.0)` by default. |
 | `blocks` | Blocks `(east-west, north-south)`: columns and rows of the grid. | At least 3 each way. |
 | `block_size` | Side of one square block, in meters. | At least 30. Buildings and lots grow with the block. |
-| `street_width` | Width of every street, ring street included, in meters. | At least 8. Narrow streets get a shallower store veranda. |
+| `street_width` | Width of every street, ring street included, in meters. | At least 10. Narrow streets get a shallower store veranda. |
 | `railway` | `Some((side: North, offset: 24.0))`: the side of the grid the track runs along (`North`, `South`, `East`, `West`) and its distance from the grid edge, in meters. `None` for a town without a railway (no station, and the line train never stops there). Add `through: true` for a town grown on both sides of its line (see "A line through the town"). | Optional, `None` by default. Offset at least 24 (room for the station yard). |
 | `density` | `Some(0.3)`: the share of house and shed lots that are built, from 0 to 1, for a village or a halt. | Optional, `None` (every lot as usual) by default. |
 | `plaza` | Which block is the plaza (see below). | Optional, `Auto` by default. |
@@ -140,7 +140,7 @@ railway on its south side:
             origin: (3000.0, -2000.0),
             blocks: (3, 4),
             block_size: 36.0,
-            street_width: 9.0,
+            street_width: 11.0,
             railway: Some((side: South, offset: 26.0)),
             plaza: Auto,
             seed: 11,

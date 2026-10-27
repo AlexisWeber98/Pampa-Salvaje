@@ -74,8 +74,9 @@ pub use rail::{
 };
 pub use ride::{
     APPROACH_LEAD, BOARD_RANGE, Boarding, ONBOARD_MULTIPLIER, OPENING_LEAD, Ride, SEAT_HEIGHT,
-    WAIT_RANGE, WaitingPlace, alight_spot, boarding, coach_doors, depart_now, follow_jump,
-    next_arrival, opening, skip_ride, skip_to_approach, stands_at, wait_for_train, waiting_place,
+    WAIT_RANGE, WaitingPlace, alight_spot, boarding, boarding_at, coach_doors, depart_now,
+    follow_jump, next_arrival, opening, skip_ride, skip_to_approach, stands_at, wait_for_train,
+    waiting_place,
 };
 pub use rider::{MAX_STEP, Rider, RiderInput, RiderParams};
 pub use road::{

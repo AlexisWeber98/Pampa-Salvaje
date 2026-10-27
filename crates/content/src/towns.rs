@@ -356,25 +356,26 @@ mod tests {
             )
         };
         let pico = scaled(35_800.0, 22_400.0);
-        for (town, origin, blocks, railway) in [
-            (&content.towns[0], nievas, (4, 3), north),
+        for (town, origin, blocks, railway, street_width) in [
+            (&content.towns[0], nievas, (4, 3), north, 12.0),
             (
                 &content.towns[1],
                 scaled(-12_600.0, -5_400.0),
                 (5, 4),
                 north,
+                12.0,
             ),
-            (&content.towns[3], pico, (8, 8), through),
+            (&content.towns[3], pico, (8, 8), through, 13.0),
         ] {
             assert_eq!(town.origin, origin, "{}", town.name);
             assert_eq!(town.blocks, blocks, "{}", town.name);
-            assert_eq!((town.block_size, town.street_width), (40.0, 10.0));
+            assert_eq!((town.block_size, town.street_width), (40.0, street_width));
             assert_eq!(town.railway, railway, "{}", town.name);
             assert_eq!(town.plaza, PlazaPlacement::Auto, "{}", town.name);
         }
         // Metileo, a halt: at its real place, 16.63 km west and 12.56 km
         // south of Pico's plaza, scaled 1:7; few houses, no comisaría. Its
-        // blocks are 40 m like the other towns', its streets a narrow 8 m.
+        // blocks are 40 m like the other towns', its streets the 12 m of the small towns.
         let metileo = &content.towns[2];
         let from_pico = Vec2::new(
             (pico.x - 16_630.0 / 7.0).round(),
@@ -382,7 +383,7 @@ mod tests {
         );
         assert_eq!(metileo.origin, from_pico);
         assert_eq!((metileo.blocks, metileo.railway), ((3, 3), north));
-        assert_eq!((metileo.block_size, metileo.street_width), (40.0, 8.0));
+        assert_eq!((metileo.block_size, metileo.street_width), (40.0, 12.0));
         assert_eq!(metileo.police_count(), 0);
         assert!(metileo.density.is_some_and(|d| d < 0.5));
         // Caleufú, on the Metileo–Arizona branch: 41 km north-west of
@@ -437,7 +438,9 @@ mod tests {
         assert_eq!(arocena.name, "Laguna La Arocena");
         let bearing = 119.0_f32.to_radians();
         let real = Vec2::new(5_900.0 * bearing.sin(), 5_900.0 * bearing.cos());
-        let expected = Vec2::new(pico.x + real.x / 7.0, pico.y + real.y / 7.0);
+        // Its middle sits 3 m east of the real place, so the survey fences
+        // keep off its bank beside Pico's wider streets (see towns.ron).
+        let expected = Vec2::new(pico.x + real.x / 7.0 + 3.0, pico.y + real.y / 7.0);
         assert!(
             arocena.center.distance(expected) < 2.0,
             "{:?}",
@@ -596,7 +599,7 @@ mod tests {
                         origin: (1500.0, -2000.0),
                         blocks: (3, 4),
                         block_size: 36.0,
-                        street_width: 9.0,
+                        street_width: 11.0,
                         railway: Some((side: West, offset: 30.0)),
                         plaza: Block(1, 2),
                         seed: 11,
@@ -606,7 +609,7 @@ mod tests {
                         name: "Carmensa",
                         blocks: (3, 3),
                         block_size: 32.0,
-                        street_width: 8.0,
+                        street_width: 10.0,
                     ),
                 ],
                 roads: [],
@@ -622,7 +625,7 @@ mod tests {
                     origin: Vec2::new(1500.0, -2000.0),
                     blocks: (3, 4),
                     block_size: 36.0,
-                    street_width: 9.0,
+                    street_width: 11.0,
                     railway: Some(RailwayConfig {
                         side: Side::West,
                         offset: 30.0,
@@ -639,7 +642,7 @@ mod tests {
                     origin: Vec2::ZERO,
                     blocks: (3, 3),
                     block_size: 32.0,
-                    street_width: 8.0,
+                    street_width: 10.0,
                     railway: None,
                     plaza: PlazaPlacement::Auto,
                     seed: 0,

@@ -656,12 +656,12 @@ impl CarBuilder<'_, '_> {
 
 /// A flat rod bar `length` long and `width` wide, 5 cm thick, in the XY
 /// plane (thickness along Z), its ends round.
-fn rod_bar(length: f32, width: f32) -> Shape {
+pub(super) fn rod_bar(length: f32, width: f32) -> Shape {
     Shape::along_z(&stadium(length, width, 5), -0.025, 0.025, false, true)
 }
 
 /// A pin boss on a rod: a short round boss at `x` along it.
-fn boss(x: f32, r: f32) -> Shape {
+pub(super) fn boss(x: f32, r: f32) -> Shape {
     Shape::lathe(&[(-0.04, 0.0), (-0.04, r), (0.07, r), (0.07, 0.0)], 10).transformed(
         Transform::from_xyz(x, 0.0, 0.0).with_rotation(Quat::from_rotation_y(-FRAC_PI_2)),
     )

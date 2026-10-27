@@ -39,6 +39,7 @@ mod freight;
 mod kit;
 mod loco;
 pub mod shape;
+mod tank;
 mod wheels;
 
 #[cfg(test)]
@@ -196,6 +197,7 @@ fn spawn_cars(
             let mut b = CarBuilder::new(entity, train_index, &kit, &mut assets.0);
             match car.kind {
                 CarKind::Locomotive => b.locomotive(car.length),
+                CarKind::TankEngine => b.tank_engine(car.length),
                 CarKind::Coach => b.coach(car.length),
                 CarKind::Boxcar => b.boxcar(car.length),
                 CarKind::Hopper => b.hopper(car.length),

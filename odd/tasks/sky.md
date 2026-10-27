@@ -71,3 +71,12 @@ following the game clock.
 `cargo test -p pampa-render`, `cargo test -p game`, `cargo build -p game`,
 `cargo clippy --workspace --all-targets -- -D warnings`,
 `cargo fmt --all -- --check`.
+
+## Review follow-ups (done on `feat/todo-followups`)
+
+- Soarers wrap their own position, not their circle centre, so none jumps in
+  view.
+- A bird still in range when its gate closes is hidden after `GATE_GRACE`
+  (45 s), so none flies all night.
+- A test checks the material's uniform bytes against the clock and the
+  shader's field order (no headless render test).

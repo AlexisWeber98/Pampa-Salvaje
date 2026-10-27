@@ -26,6 +26,10 @@ pub const BOARD_RANGE: f32 = 5.0;
 /// person may stand to wait for the train there, in meters.
 pub const WAIT_RANGE: f32 = 8.0;
 
+/// Farthest from a platform's stop spot a person may stand and still count
+/// as standing at it, for [`boarding_at`], in meters.
+pub const STOP_SPOT_RADIUS: f32 = 1.5;
+
 /// Height of a seated passenger's feet above the rail tops, in meters.
 pub const SEAT_HEIGHT: f32 = 1.0;
 
@@ -205,21 +209,57 @@ fn nearest_coach_door(train: &LineTrain, rider: &Rider, floors: &[Floor]) -> Opt
 /// coach whose door is within [`BOARD_RANGE`] while its train stands at a
 /// station and the rider is on foot on a platform (one of `floors`: a
 /// station's or a bay's). Of several trains in reach, the one with the
-/// nearest door wins.
+/// nearest door wins. See [`boarding_at`] for the longer reach at a stop
+/// spot.
 pub fn boarding(trains: &[LineTrain], rider: &Rider, floors: &[Floor]) -> Boarding {
+    boarding_at(trains, &[], rider, floors)
+}
+
+/// [`boarding`], but a rider waiting at a station platform's stop spot
+/// ([`TownLayout::platform_spot`], within [`STOP_SPOT_RADIUS`]) reaches the
+/// nearest door of the train standing there up to [`WAIT_RANGE`] away. At
+/// the line's terminals the consist stands centered on the station, so its
+/// coaches' nearest door is about 7 m from the spot, on one side or the
+/// other as the layover turns it round. Every other case keeps
+/// [`BOARD_RANGE`].
+pub fn boarding_at(
+    trains: &[LineTrain],
+    towns: &[TownLayout],
+    rider: &Rider,
+    floors: &[Floor],
+) -> Boarding {
     let nearest = trains
         .iter()
         .enumerate()
         .filter_map(|(t, train)| {
             nearest_coach_door(train, rider, floors).map(|(c, gap)| (t, c, gap))
         })
+        .filter(|&(t, _, gap)| gap <= reach(&trains[t], towns, rider))
         .min_by(|a, b| a.2.total_cmp(&b.2));
     match nearest {
-        Some((t, car, gap)) if gap <= BOARD_RANGE => match rider.travel() {
+        Some((t, car, _)) => match rider.travel() {
             Travel::OnFoot => Boarding::Board(Ride::new(&trains[t], car).on_train(t)),
             Travel::Riding => Boarding::DismountFirst,
         },
-        _ => Boarding::Nothing,
+        None => Boarding::Nothing,
+    }
+}
+
+/// How far from a coach door `rider` may board `train`: [`WAIT_RANGE`] at
+/// the stop spot of the station platform the train stands at, otherwise
+/// [`BOARD_RANGE`].
+fn reach(train: &LineTrain, towns: &[TownLayout], rider: &Rider) -> f32 {
+    let state = train.state();
+    let at_stop_spot = state
+        .station
+        .and_then(|s| train.stations().get(s))
+        .filter(|station| !station.bay && state.phase != LinePhase::Running)
+        .and_then(|station| towns.get(station.town)?.platform_spot())
+        .is_some_and(|(spot, _)| spot.distance(rider.position) <= STOP_SPOT_RADIUS);
+    if at_stop_spot {
+        WAIT_RANGE
+    } else {
+        BOARD_RANGE
     }
 }
 
@@ -569,6 +609,69 @@ mod tests {
             ),
             Boarding::Board(_)
         ));
+    }
+
+    #[test]
+    fn the_line_train_is_boarded_from_each_terminals_middle_spot_all_layover() {
+        let (towns, world, train) = shipped();
+        let last = train.stations().len() - 1;
+        let mut boarded = 0;
+        for (station, run) in [(CASTEX, Run::Up), (last, Run::Down)] {
+            let (middle, _) = town_of(&towns, &train, station).platform_spot().unwrap();
+            let rider = on_foot(middle, &world);
+            let (arrive, depart) = train.stop_times(run, station).unwrap();
+            let first = train.arrival_time_at(run, station).unwrap().seconds();
+            for k in 0..=20 {
+                let now = first + (depart - arrive) * f64::from(k) / 20.0;
+                let now_train = at(&train, now);
+                if !stands_at(&now_train.state(), station) {
+                    continue;
+                }
+                assert!(
+                    matches!(
+                        boarding_at(
+                            std::slice::from_ref(&now_train),
+                            &towns,
+                            &rider,
+                            &world.floors
+                        ),
+                        Boarding::Board(_)
+                    ),
+                    "no boarding from the middle spot at station {station}, {now}"
+                );
+                boarded += 1;
+            }
+        }
+        assert!(boarded >= 20, "{boarded}");
+    }
+
+    #[test]
+    fn away_from_the_stop_spot_the_terminal_door_stays_beyond_board_range() {
+        let (towns, world, train) = shipped();
+        let (train, _) = standing(&train, 0.0, CASTEX);
+        let (middle, _) = town_of(&towns, &train, CASTEX).platform_spot().unwrap();
+        let along = train.placed_cars()[coaches(&train)[0]].direction;
+        // 2 m along the platform toward the nearest door: past the stop
+        // spot's radius, yet still 5 to 8 m from the door, so only
+        // BOARD_RANGE applies.
+        let (rider, gap) = [-2.0, 2.0]
+            .map(|step| on_foot(middle + along * step, &world))
+            .map(|r| {
+                let gap = nearest_coach_door(&train, &r, &world.floors).unwrap().1;
+                (r, gap)
+            })
+            .into_iter()
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .unwrap();
+        assert!(gap > BOARD_RANGE && gap <= WAIT_RANGE, "{gap}");
+        assert_eq!(
+            boarding_at(std::slice::from_ref(&train), &towns, &rider, &world.floors),
+            Boarding::Nothing
+        );
+        // And exactly at the spot the longer reach applies.
+        let rider = on_foot(middle, &world);
+        let gap = nearest_coach_door(&train, &rider, &world.floors).unwrap().1;
+        assert!(gap > BOARD_RANGE && gap <= WAIT_RANGE, "{gap}");
     }
 
     #[test]
