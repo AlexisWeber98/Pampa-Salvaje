@@ -433,19 +433,18 @@ mod tests {
     #[test]
     fn the_shipped_streets_are_two_meters_wider_and_picos_three_and_every_town_paves_by_its_tier() {
         let loaded = load_world(&asset_path(TOWNS_FILE));
-        let widths: Vec<(String, f32)> = [
-            ("Monte Nievas", 12.0),
-            ("Eduardo Castex", 12.0),
-            ("Metileo", 12.0),
-            ("General Pico", 13.0),
-            ("Caleufú", 12.0),
-        ]
-        .iter()
-        .map(|&(name, w)| (name.to_string(), w))
-        .collect();
-        assert_eq!(loaded.towns.len(), widths.len());
-        for (town, (name, width)) in loaded.towns.iter().zip(&widths) {
-            assert_eq!(&town.name, name);
+        // (name, street width, carriageway left between the sidewalks), all
+        // literal: the carriageway is not derived from the width here.
+        let wanted: [(&str, f32, f32); 5] = [
+            ("Monte Nievas", 12.0, 5.0),
+            ("Eduardo Castex", 12.0, 5.0),
+            ("Metileo", 12.0, 5.0),
+            ("General Pico", 13.0, 6.0),
+            ("Caleufú", 12.0, 5.0),
+        ];
+        assert_eq!(loaded.towns.len(), wanted.len());
+        for (town, &(name, width, carriageway)) in loaded.towns.iter().zip(&wanted) {
+            assert_eq!(town.name, name);
             // The ring street round the grid is as wide as the streets.
             let first = town
                 .streets
@@ -456,12 +455,8 @@ mod tests {
             // Every town has sidewalks (3.5 m a side), village included, and
             // they leave the carriageway 5 m, Pico 6 m.
             assert!(!town.sidewalks().is_empty(), "{name}");
-            let carriageway = width - 7.0;
-            let wanted = if name == "General Pico" { 6.0 } else { 5.0 };
-            assert!(
-                (carriageway - wanted).abs() < 1e-3,
-                "{name}: {carriageway} m"
-            );
+            assert_eq!(pampa_core::town::Sidewalk::WIDTH, 3.5);
+            assert_sidewalks_line_every_cross_section(town, carriageway);
             // Brick: all of Pico's, the plaza's ring of a town (4 strips), none
             // of a village's; every strip has its curbs.
             let brick = town
@@ -469,7 +464,7 @@ mod tests {
                 .iter()
                 .filter(|w| w.walk == Walk::Brick)
                 .count();
-            let expected = match name.as_str() {
+            let expected = match name {
                 "General Pico" => town.sidewalks().len(),
                 "Metileo" => 0,
                 _ => 4,
@@ -479,6 +474,103 @@ mod tests {
                 town.sidewalks().iter().all(|w| !w.curbs.is_empty()),
                 "{name}"
             );
+        }
+    }
+
+    /// Checks every cross-section along the middle half of each of the town's
+    /// streets (at its ends a crossing street's sidewalk may run right across
+    /// it, and an intersection has no frontage), one street edge at a time. A
+    /// sidewalk belongs on an edge exactly where the land beyond it is a block
+    /// or plaza: inside the grid, not on another street and not in the rail
+    /// band (where the track and the station yard lie; the ring street's outer
+    /// edge faces the pampa). Where one belongs it must be `Sidewalk::WIDTH`
+    /// deep from the edge; where none does, nothing may cover that edge;
+    /// nothing covers the middle of the street; and where both belong
+    /// `carriageway` is what is left.
+    fn assert_sidewalks_line_every_cross_section(
+        town: &pampa_core::town::TownLayout,
+        carriageway: f32,
+    ) {
+        const SAMPLES: usize = 16;
+        const EPS: f32 = 1e-3;
+        let width = pampa_core::town::Sidewalk::WIDTH;
+        let name = &town.name;
+        let axis = |v: Vec2, x: bool| if x { v.x } else { v.y };
+        let band = town.rail_band();
+        let block_land = |p: Vec2| {
+            town.grid().contains_point(p)
+                && !band.is_some_and(|b| b.contains_point(p))
+                && !town.streets.iter().any(|s| s.contains_point(p))
+        };
+        for street in &town.streets {
+            let size = street.size();
+            // Whether the street runs along x; across it is the other axis.
+            let x = size.x >= size.y;
+            let (lo, hi) = (axis(street.min, !x), axis(street.max, !x));
+            for k in 0..SAMPLES {
+                let t = 0.25 + 0.5 * (k as f32 + 0.5) / SAMPLES as f32;
+                let at = axis(street.min, x) + t * axis(size, x);
+                let point = |across: f32| {
+                    if x {
+                        Vec2::new(at, across)
+                    } else {
+                        Vec2::new(across, at)
+                    }
+                };
+                // An intersection has no frontage: the crossing street's
+                // sidewalks run round its corners.
+                let middle = point((lo + hi) / 2.0);
+                if town
+                    .streets
+                    .iter()
+                    .any(|o| o != street && o.contains_point(middle))
+                {
+                    continue;
+                }
+                let mut covered: Vec<(f32, f32)> = town
+                    .sidewalks()
+                    .iter()
+                    .map(|w| w.area)
+                    .filter(|a| axis(a.min, x) < at && at < axis(a.max, x))
+                    .map(|a| (axis(a.min, !x).max(lo), axis(a.max, !x).min(hi)))
+                    .filter(|(a, z)| a < z)
+                    .collect();
+                covered.sort_by(|a, b| a.0.total_cmp(&b.0));
+                // The runs the sidewalks leave touching each edge, and what
+                // they cover in all.
+                let (mut low, mut high, mut total) = (0.0f32, 0.0f32, 0.0f32);
+                let mut edge = lo;
+                for &(a, z) in &covered {
+                    if a <= lo + EPS {
+                        low = low.max(z - lo);
+                    }
+                    if z >= hi - EPS {
+                        high = high.max(hi - a);
+                    }
+                    total += (z - a.max(edge)).max(0.0);
+                    edge = edge.max(z);
+                }
+                let (low_belongs, high_belongs) =
+                    (block_land(point(lo - 0.25)), block_land(point(hi + 0.25)));
+                let here = format!("{name}: street {street:?} across {at}");
+                let depth = |belongs: bool| if belongs { width } else { 0.0 };
+                assert!(
+                    (low - depth(low_belongs)).abs() < EPS,
+                    "{here}: low {low} m"
+                );
+                assert!(
+                    (high - depth(high_belongs)).abs() < EPS,
+                    "{here}: high {high} m"
+                );
+                assert!(
+                    (total - low - high).abs() < EPS,
+                    "{here}: a sidewalk off the edges, {total} m covered"
+                );
+                if low_belongs && high_belongs {
+                    let left = hi - lo - total;
+                    assert!((left - carriageway).abs() < EPS, "{here}: {left} m");
+                }
+            }
         }
     }
 
