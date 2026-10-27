@@ -41,8 +41,15 @@ The day has a clock: one game day lasts 48 real minutes (30×, one game minute
 every two real seconds). The sun follows it, rising in the east, crossing the
 northern sky and setting in the west, warm and low at dawn and dusk and full
 by day; nights are dim and bluish under the moon but stay readable, and the
-dust fog takes the color of the hour without getting any thicker. The game
-begins in the mid-morning, in full daylight, aboard the morning train from
+dust fog takes the color of the hour without getting any thicker. The sky
+(`crates/render/src/sky/`, one dome and one shader) goes from deep blue to
+dusty haze at the horizon, burns orange, pink and violet at dusk and dawn
+and turns indigo in the blue hour. It has a visible sun with its halo, a moon
+that goes through its phases (a 29.5-day cycle that follows the game
+days), a real star map (Milky Way, Magellanic Clouds, the Southern Cross)
+wheeling over the south, drifting cumulus and high cirrus that glow at sunset, and birds:
+chimangos soaring by day, flocks of palomas and teros crossing, and flocks
+flying low to roost at dusk, none at night. The game begins in the mid-morning, in full daylight, aboard the morning train from
 General Pico: the protagonist, a former hardware-shop clerk from Pico, rides
 it into Monte Nievas. The
 time of day (`HH:MM`) is shown in the top-left corner, lettered in the game's

@@ -29,6 +29,7 @@ mod railbed;
 pub mod road;
 pub mod settlement;
 pub mod signs;
+pub mod sky;
 pub mod smooth;
 pub mod streaming;
 pub mod terrain;
@@ -62,6 +63,7 @@ pub use settlement::{
     WorldSettlements, YardPart, YardProp, YardSurface,
 };
 pub use signs::{SignPlugin, Signboard, TIMETABLE_BOARD_TEXT, TimetableBoard};
+pub use sky::SkyPlugin;
 pub use streaming::{StreamingPlan, StreamingSet};
 pub use terrain::{StreamFocus, TerrainChunk, TerrainPlugin, WorldChunks, WorldTerrain};
 pub use town::{ActiveTowns, StreamTowns, TownPlugin, TownRoot, WindmillRotor, WorldTowns};

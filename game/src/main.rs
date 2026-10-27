@@ -330,6 +330,8 @@ fn main() {
     .add_plugins((RoadPlugin, FencePlugin, SettlementPlugin, ThinFadePlugin))
     // The kerosene street lamps, glowing by night, the nearest lit.
     .add_plugins(LampPlugin)
+    // The sky dome (sun, moon, stars, clouds) and the birds flying in it.
+    .add_plugins(pampa_render::SkyPlugin)
     // Cattle, corral horses, hares and birds round the player.
     .add_plugins((pampa_render::FaunaPlugin, fauna::FaunaPlugin))
     // The lagoons' water and reeds.
