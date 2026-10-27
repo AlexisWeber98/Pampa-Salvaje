@@ -4211,6 +4211,24 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_village_has_no_brick_even_round_its_plaza() {
+        let towns = sample_towns();
+        let village = towns.iter().find(|t| t.blocks() == (3, 3)).unwrap();
+        assert_eq!(Paving::of(village.blocks()), Paving::None);
+        assert!(village.sidewalks().iter().all(|w| w.walk == Walk::Earth));
+        // The plaza's ring is four strips against the plaza, beaten earth like
+        // the rest, never brick.
+        let ring = village.plaza.expanded(Sidewalk::WIDTH);
+        let round_plaza = village
+            .sidewalks()
+            .iter()
+            .filter(|w| ring.contains(&w.area) && !overlap(&w.area, &village.plaza))
+            .filter(|w| overlap(&w.area.expanded(0.01), &village.plaza))
+            .count();
+        assert_eq!(round_plaza, 4);
+    }
+
+    #[test]
     fn the_platform_is_a_floor_with_clear_ramps_not_an_obstacle() {
         let mut checked = 0;
         for t in sample_towns() {

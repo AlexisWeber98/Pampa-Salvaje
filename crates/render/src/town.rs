@@ -1120,7 +1120,8 @@ fn shade_look(seed: u32, plazas: &[Aabb], tree: &ShadeTree) -> ShadeLook {
 /// Where and how a variant of `crown_radius` stands for `tree` over `ground`. A trimmed tree
 /// keeps its height (a little taller, so its crown stays over 3.5 m), is
 /// never wider than its crown, and leans [`ShadeTree::LEAN`] degrees toward
-/// the street; any other is scaled evenly to fit its crown's room.
+/// the street; any other is scaled evenly to fit its crown's room. A tree
+/// with no street direction (zero, or straight up) stands upright.
 fn shade_transform(
     tree: &ShadeTree,
     look: &ShadeLook,
@@ -1138,10 +1139,12 @@ fn shade_transform(
     }
     let wide = size.min(fit);
     let toward = Vec3::new(tree.toward.x, 0.0, -tree.toward.y);
-    let lean = Quat::from_axis_angle(
-        Vec3::Y.cross(toward).normalize(),
-        ShadeTree::LEAN.to_radians(),
-    );
+    let lean = Vec3::Y
+        .cross(toward)
+        .try_normalize()
+        .map_or(Quat::IDENTITY, |axis| {
+            Quat::from_axis_angle(axis, ShadeTree::LEAN.to_radians())
+        });
     Transform::from_translation(at)
         .with_rotation(lean * yaw)
         .with_scale(Vec3::new(wide, 1.0 + 0.08 * look.jitter, wide))
@@ -1614,13 +1617,14 @@ mod tests {
             };
         }
         // Castex is a small town: earth paths with brick curbs and a
-        // stucco and whitewash monument as far as the buildings; iron and
+        // stucco and whitewash monument with bronze plaques as far as the buildings; iron and
         // timber benches and an iron railing as far as the props.
         let want = [
             Surface::Earth,
             Surface::Brick,
             Surface::Stucco,
             Surface::Whitewash,
+            Surface::Bronze,
         ];
         assert!(want.iter().all(|&s| ground.contains(&id(s))), "{ground:?}");
         assert!(!ground.contains(&id(Surface::Paving)));
@@ -2602,6 +2606,36 @@ mod tests {
         // Shrubs and beds both: more than one mesh in use.
         let used: HashSet<AssetId<Mesh>> = q.iter(app.world()).map(|(m, _, _)| m.id()).collect();
         assert!(used.len() >= 3, "{} meshes", used.len());
+    }
+
+    #[test]
+    fn a_tree_with_no_street_direction_or_no_crown_still_gets_a_finite_transform() {
+        let look = ShadeLook {
+            species: Species::Olmo,
+            trimmed: true,
+            variant: 0,
+            yaw: 0.7,
+            jitter: 0.5,
+        };
+        let tree = ShadeTree {
+            at: Vec2::new(3.0, 4.0),
+            kind: ShadeKind::Pit,
+            crown: 2.3,
+            toward: Vec2::ZERO,
+            row: 0,
+        };
+        for crown_radius in [0.0, 2.0] {
+            let at = shade_transform(&tree, &look, crown_radius, 0.0);
+            assert!(at.translation.is_finite() && at.scale.is_finite());
+            assert!(at.rotation.is_finite(), "{crown_radius}: {:?}", at.rotation);
+            // No direction to lean toward: it stands upright.
+            assert!((at.rotation * Vec3::Y).angle_between(Vec3::Y) < 1e-3);
+        }
+        let plain = ShadeLook {
+            trimmed: false,
+            ..look
+        };
+        assert!(shade_transform(&tree, &plain, 0.0, 0.0).scale.is_finite());
     }
 
     #[test]

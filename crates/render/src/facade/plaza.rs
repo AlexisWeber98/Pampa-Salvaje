@@ -281,7 +281,7 @@ pub(crate) fn monument(shape: &mut Shape, paving: Paving, foot: f32) {
             let turn = Quat::from_rotation_y(k as f32 * std::f32::consts::FRAC_PI_2);
             let at = turn * Vec3::new(0.0, y + height * 0.55, side / 2.0 + 0.01);
             shape.cuboid(
-                Surface::Steel,
+                Surface::Bronze,
                 Transform::from_translation(at)
                     .with_rotation(turn)
                     .with_scale(Vec3::new(pw, ph, 0.03)),

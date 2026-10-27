@@ -199,7 +199,10 @@ fn setup_kit(
     mut materials: ResMut<Assets<StandardMaterial>>,
     tree_kit: Option<Res<crate::tree::TreeKit>>,
 ) {
+    // Ordered after `setup_trees` by the plugin, so a missing kit means the
+    // tree plugin is not there: say so rather than draw no settlements.
     let Some(tree_kit) = tree_kit else {
+        warn!("tree kit missing; settlement kit not built, settlements will not be drawn");
         return;
     };
     let rotor = props::rotor()
