@@ -171,7 +171,8 @@ pub struct RoadNetwork {
 
 /// The railway centerlines as oriented polylines, so "which side" is the
 /// same question all along each: the line's whole path, then each branch's
-/// path, running outward from its junction ([`RailLine::track_paths`]).
+/// path, running outward from its junction, then each bay's, turned to the
+/// line's heading ([`RailLine::track_paths`]).
 /// Oriented so, a branch's outer side is the line's: the land between a
 /// branch and the line it leaves is on the same side of both.
 struct Track(Vec<Vec<Vec2>>);
@@ -183,6 +184,14 @@ impl Track {
             line.track_paths(towns)
                 .iter()
                 .map(|p| p.points().to_vec())
+                // A bay runs from its dead end out to the track, against the
+                // line's heading there: turned round, its left is the line's.
+                .map(|mut p| {
+                    if line.bays.iter().any(|b| b.link.path == p) {
+                        p.reverse();
+                    }
+                    p
+                })
                 .filter(|p| p.len() >= 2)
                 .collect(),
         )

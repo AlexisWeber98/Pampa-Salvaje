@@ -1110,12 +1110,6 @@ mod tests {
             Boarding::Board(_)
         ));
         assert_eq!(boarding(&gone, &rider, &world.floors), Boarding::Nothing);
-        // The foot crossing is no platform: not from its deck either.
-        let deck = world.walkways[0].footprint.center();
-        assert_eq!(
-            boarding(&trains, &on_foot(deck, &world), &world.floors),
-            Boarding::Nothing
-        );
     }
 
     #[test]

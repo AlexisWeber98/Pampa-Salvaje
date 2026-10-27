@@ -60,7 +60,7 @@ pub fn load_world(path: &Path) -> LoadedWorld {
     for town in &towns {
         warnings.extend(unsupported_glyphs(town));
     }
-    let (line, broken) =
+    let (mut line, broken) =
         RailLine::build_with_branches(names.as_deref(), &branches, &towns, world.bounds());
     warnings.extend(broken.iter().map(|e| format!("towns: {e}")));
     let (roads, left_out) = RoadNetwork::build(&towns, &line, world.bounds());
@@ -77,6 +77,8 @@ pub fn load_world(path: &Path) -> LoadedWorld {
     // A public road out to each lagoon from the nearest town.
     let (roads, left_out) = roads.with_lagoons(&towns, &line, world.bounds(), &lagoons);
     warnings.extend(left_out.iter().map(|e| format!("towns: {e}")));
+    // The walks from the bays' platforms to the road crossing by the station.
+    line.lay_walks(&towns, &roads);
     LoadedWorld {
         world,
         towns,
@@ -681,18 +683,17 @@ mod tests {
             if town.rail_band().is_some() {
                 continue;
             }
-            // Its rural track crosses its own line by the station, and the
-            // bay track beside it where the town has one (Metileo's; the
-            // road out of Castex to Caleufú crosses the line's run-out too;
-            // see the Caleufú tests).
+            // Its rural track crosses its own line by the station, once: the
+            // bay beside it (Metileo's) rejoins the line east of the road
+            // (the road out of Castex to Caleufú crosses the line's run-out
+            // too; see the Caleufú tests).
             let crossings: Vec<_> = roads
                 .roads
                 .iter()
                 .filter(|r| r.from == i && r.kind == pampa_core::RoadKind::Rural)
                 .flat_map(|r| r.crossings.iter())
                 .collect();
-            let tracks = 1 + loaded.line.bays.iter().filter(|b| b.town == i).count();
-            assert_eq!(crossings.len(), tracks, "{}", town.name);
+            assert_eq!(crossings.len(), 1, "{}", town.name);
             let station = town
                 .buildings
                 .iter()
@@ -1108,7 +1109,7 @@ mod tests {
             let bay = loaded.line.bay_of(0).expect("Metileo's bay");
             assert_eq!((bay.town, bay.branch), (METILEO, 0));
             // North of the station track (away from the town), 4.5 m out,
-            // its dead end at the platform's west end, running west.
+            // its dead end at the platform's east end, running west.
             assert!(bay.buffer().y > track.start.y);
             assert!((bay.buffer().y - track.start.y - 4.5).abs() < 1e-3);
             assert!(bay.buffer().x < track.end.x && bay.buffer().x > track.start.x);
@@ -1142,9 +1143,8 @@ mod tests {
                     assert!(!settlement.bounds.intersects(&reach));
                 }
             }
-            // Metileo's rural track crosses the bay by the station, with a
-            // level crossing for it like the station track's; no other road
-            // meets it.
+            // No road meets the bay: Metileo's rural track crosses the
+            // station track alone, west of where the bay joins it.
             let mut met = 0;
             for road in &loaded.roads.roads {
                 for r in road.path.windows(2) {
@@ -1159,7 +1159,7 @@ mod tests {
                     }
                 }
             }
-            assert_eq!(met, 1);
+            assert_eq!(met, 0);
             // The flora keeps off it as it keeps off any track: a spot 8 m
             // north of the bay is 12.5 m from the station track, so only
             // the bay itself rules it out.
@@ -1232,24 +1232,40 @@ mod tests {
             assert!(at_caleufu > 100, "{at_caleufu}");
         }
 
-        /// Footprints of the platform and the foot crossing with their ramps.
-        fn works(bay: &pampa_core::RailBay) -> Vec<Aabb> {
-            [bay.platform, bay.walkway]
+        /// Footprints of the platform with its ramps.
+        fn platform_works(bay: &pampa_core::RailBay) -> Vec<Aabb> {
+            let f = bay.platform;
+            f.ramps().into_iter().chain([f.footprint]).collect()
+        }
+
+        /// Metileo's rural road and the level crossing it makes with the
+        /// station track.
+        fn metileos_road(loaded: &LoadedWorld) -> (&pampa_core::Road, pampa_core::LevelCrossing) {
+            let road = loaded
+                .roads
+                .roads
                 .iter()
-                .flat_map(|f| f.ramps().into_iter().chain([f.footprint]))
-                .collect()
+                .find(|r| r.kind == RoadKind::Rural && r.from == METILEO)
+                .expect("Metileo's rural road");
+            let track_y = loaded.towns[METILEO].railway.unwrap().start.y;
+            let crossing = road
+                .crossings
+                .iter()
+                .copied()
+                .find(|c| (c.at.y - track_y).abs() < 1e-2)
+                .expect("a crossing of the station track");
+            (road, crossing)
         }
 
         #[test]
-        fn the_bay_platform_and_foot_crossing_keep_clear_of_everything_built_planted_or_driven() {
+        fn the_bay_platform_and_walks_keep_clear_of_everything_built_planted_or_driven() {
             let loaded = loaded();
             let bay = loaded.line.bay_of(0).unwrap();
             let laid = crate::lay_out(&loaded);
-            // The built world walks and boards on them.
+            // The built world walks and boards on the platform.
             assert!(laid.world.floors.contains(&bay.platform));
-            assert!(laid.world.walkways.contains(&bay.walkway));
-            let road = |r: &pampa_core::Road| r.kind == RoadKind::Rural && r.from == METILEO;
-            for area in works(bay) {
+            let (road, crossing) = metileos_road(&loaded);
+            for area in platform_works(bay) {
                 let keep = area.expanded(1.0);
                 // No building, sign, fence span, tree trunk or prop.
                 assert!(
@@ -1261,15 +1277,11 @@ mod tests {
                     "{area:?}"
                 );
                 // No road, nor the level crossing's signs and planks.
-                for r in loaded.roads.roads.iter().filter(|r| road(r)) {
-                    for w in r.path.windows(2) {
-                        let reach = keep.expanded(RoadNetwork::HALF_WIDTH);
-                        assert!(reach.segment_overlap(w[0], w[1]).is_none(), "{area:?}");
-                    }
-                    for c in &r.crossings {
-                        assert!(c.at.distance(area.center()) > 15.0, "{:?}", c.at);
-                    }
+                for w in road.path.windows(2) {
+                    let reach = keep.expanded(RoadNetwork::HALF_WIDTH);
+                    assert!(reach.segment_overlap(w[0], w[1]).is_none(), "{area:?}");
                 }
+                assert!(crossing.at.distance(area.center()) > 15.0);
                 // No flora where the platform stands: tufts would poke
                 // through it, trees would grow in it.
                 let chunk = laid.world.config.chunk_of(area.center());
@@ -1281,6 +1293,45 @@ mod tests {
                         .iter()
                         .all(|t| !keep.expanded(2.0).contains_point(t.at))
                 );
+            }
+            // The walks, for their part, keep half a meter off whatever
+            // is built, planted or driven, and off the lagoons and the
+            // settlements; they end on the road.
+            assert_eq!(bay.walks.len(), 2);
+            // Each is 2 m wide along its platform's middle, from the foot of
+            // the platform's west ramp.
+            let station = loaded.towns[METILEO].floors()[0];
+            for (walk, floor) in bay.walks.iter().zip([station, bay.platform]) {
+                assert!((walk.size().y - 2.0).abs() < 1e-3, "{walk:?}");
+                assert!((walk.center().y - floor.footprint.center().y).abs() < 1e-3);
+                assert!((walk.max.x - (floor.footprint.min.x - 3.0)).abs() < 1e-3);
+            }
+            for walk in &bay.walks {
+                let keep = walk.expanded(0.5);
+                assert!(
+                    laid.world
+                        .obstacles
+                        .near(keep)
+                        .iter()
+                        .all(|o| !o.intersects(&keep)),
+                    "{walk:?}"
+                );
+                for lagoon in &loaded.lagoons {
+                    assert!(!lagoon.keep_out().intersects(walk));
+                }
+                for settlement in &laid.settlements.settlements {
+                    assert!(!settlement.bounds.intersects(walk));
+                }
+                let chunk = laid.world.config.chunk_of(walk.center());
+                let flora = laid.flora.chunk(chunk);
+                assert!(flora.tufts.iter().all(|t| !keep.contains_point(t.at)));
+                assert!(flora.trees.iter().all(|t| !keep.contains_point(t.at)));
+                let ends = [
+                    Vec2::new(walk.min.x, walk.center().y),
+                    Vec2::new(walk.max.x, walk.center().y),
+                ];
+                let by_road = ends.iter().filter(|p| road_distance(&loaded, **p) < 3.0);
+                assert_eq!(by_road.count(), 1, "{walk:?}");
             }
             // The ground under the platform is level to within the 0.2 m the
             // slab reaches below it, so it sits flat.
@@ -1302,45 +1353,95 @@ mod tests {
             assert!(hi - lo < 0.2, "{heights:?}");
         }
 
+        /// Distance from `p` to the nearest road.
+        fn road_distance(loaded: &LoadedWorld, p: Vec2) -> f32 {
+            loaded.roads.distance(p)
+        }
+
         #[test]
-        fn a_walker_crosses_from_the_station_platform_to_the_bay_platform_with_both_trains_in() {
+        fn the_roads_and_their_level_crossings_by_metileo_are_where_they_were() {
+            // The bay moved opposite the platform; the road keeps its one
+            // crossing of the station track (about x 189.7) and has none of
+            // the bay, which now joins the run-out east of it.
+            let loaded = loaded();
+            let (road, crossing) = metileos_road(&loaded);
+            assert!((crossing.at.x - 189.75).abs() < 0.1, "{:?}", crossing.at);
+            assert!((crossing.at.y + 436.0).abs() < 1e-2);
+            assert_eq!(road.crossings.len(), 1);
+            let bay = loaded.line.bay_of(0).unwrap();
+            let join = *bay.link.path.last().unwrap();
+            assert!(join.x > crossing.at.x + 10.0, "{join:?}");
+            assert_eq!(road.path[3], Vec2::new(189.93747, -440.12494));
+        }
+
+        #[test]
+        fn the_station_and_bay_platforms_face_each_other_across_the_tracks() {
+            let loaded = loaded();
+            let bay = loaded.line.bay_of(0).unwrap();
+            let station = loaded.towns[METILEO].floors()[0];
+            // The station platform is x 258..318 south of the track; the
+            // bay platform is the same stretch, north of the bay.
+            assert_eq!(station.footprint.min.x, 258.0);
+            assert_eq!(station.footprint.max.x, 318.0);
+            assert!((bay.platform.footprint.min.x - 258.0).abs() < 1e-3);
+            assert!((bay.platform.footprint.max.x - 318.0).abs() < 1e-3);
+            assert!((bay.platform.footprint.min.y - (-436.0 + 4.5 + 4.0)).abs() < 1e-3);
+            assert!(station.footprint.max.y < -436.0);
+            assert_eq!(bay.buffer().x.round(), 318.0);
+            assert!((bay.stop.x - 288.0).abs() < 1e-3);
+        }
+
+        #[test]
+        fn a_walker_goes_from_the_station_platform_to_the_bay_platform_over_the_road_crossing() {
             let loaded = loaded();
             let (line, shuttle) = trains(&loaded);
             let bay = loaded.line.bay_of(0).unwrap();
-            let station = loaded.towns[METILEO].floors()[0];
+            let (road, level) = metileos_road(&loaded);
             let (start, _) = loaded.towns[METILEO].platform_spot().unwrap();
-            let mut world = World::with_towns(loaded.world, Terrain::default(), &loaded.towns);
-            world.lay_rail(&loaded.line);
+            let mut world = crate::lay_out(&loaded).world;
             let collider = pampa_core::Circle::new(pampa_core::Rider::COLLIDER_RADIUS);
-            // The foot crossing's line of walk, across the tracks.
-            let (walk, edge) = (bay.walkway, bay.platform.footprint);
-            let line_x = walk.footprint.center().x;
-            // A moment with both trains standing at Metileo, each run.
+            let (w0, w1) = (bay.walks[0], bay.walks[1]);
+            // West along the station platform's walk to the road, along the
+            // road over the level crossing, east along the bay platform's
+            // walk, up its ramp.
+            let end0 = Vec2::new(w0.min.x, w0.center().y);
+            let end1 = Vec2::new(w1.min.x, w1.center().y);
+            let near = |p: Vec2| {
+                road.path
+                    .iter()
+                    .enumerate()
+                    .min_by(|a, b| a.1.distance(p).total_cmp(&b.1.distance(p)))
+                    .map(|(i, _)| i)
+                    .unwrap()
+            };
+            let (a, b) = (near(end0), near(end1));
+            assert!(a < b, "the road runs north past the crossing");
+            let mut route = vec![start, Vec2::new(start.x, end0.y), end0];
+            route.extend(road.path[a..=b].iter().copied());
+            route.extend([end1, Vec2::new(bay.platform.footprint.center().x, end1.y)]);
+            // The crossing is on the way.
+            assert!(route.windows(2).any(|w| {
+                crossing(
+                    w[0],
+                    w[1],
+                    crossing_rail(&loaded).0,
+                    crossing_rail(&loaded).1,
+                )
+                .is_some()
+            }));
             let mut checked = 0;
+            let mut nearest = f32::MAX;
             for run in [Run::Up, Run::Down] {
                 for at in line.stops_at(METILEO, run) {
                     let (l, s) = (
                         jumped(&line, at.seconds() + 30.0),
                         jumped(&shuttle, at.seconds() + 30.0),
                     );
-                    let both = l.state().station == Some(2) && s.state().station == Some(0);
-                    if !both {
+                    if !(l.state().station == Some(2) && s.state().station == Some(0)) {
                         continue;
                     }
                     world.moving = l.obstacles().into_iter().chain(s.obstacles()).collect();
-                    // Along the station platform's edge to its west end,
-                    // west beside the track to the crossing, over it to
-                    // the bay platform, a step onto it.
-                    let y_walk = start.y;
-                    let route = [
-                        start,
-                        Vec2::new(station.footprint.min.x - 1.0, y_walk),
-                        Vec2::new(line_x, y_walk),
-                        Vec2::new(line_x, edge.min.y + 1.0),
-                        Vec2::new(line_x + 4.0, edge.min.y + 2.0),
-                    ];
                     let mut last = world.ground_height(start);
-                    let mut peak = 0.0_f32;
                     for w in route.windows(2) {
                         let steps = (w[0].distance(w[1]) / 0.25).ceil() as usize;
                         for k in 0..=steps {
@@ -1349,39 +1450,45 @@ mod tests {
                             let h = world.ground_height(p);
                             assert!((h - last).abs() < 0.5, "a {} m step at {p:?}", h - last);
                             last = h;
-                            peak = peak.max(h - world.terrain.height(p.x, p.y));
                         }
                     }
-                    // Ends on the bay platform, at its height; the crossing
-                    // was walked at rail level.
+                    // Ends on the bay platform, at its height.
                     let end = *route.last().unwrap();
                     assert!(bay.platform.footprint.contains_point(end), "{end:?}");
                     let rise = world.ground_height(end) - world.terrain.height(end.x, end.y);
                     assert!((rise - Floor::PLATFORM_HEIGHT).abs() < 1e-3, "{rise}");
-                    let over_track =
-                        Vec2::new(line_x, loaded.towns[METILEO].railway.unwrap().start.y);
-                    let deck = world.ground_height(over_track)
-                        - world.terrain.height(over_track.x, over_track.y);
-                    assert!((deck - RoadNetwork::CROSSING_RISE).abs() < 1e-3, "{deck}");
+                    // And back, the other way, as open.
+                    for p in route.iter().rev() {
+                        assert_eq!(world.resolve(collider, *p, |_| ()), *p, "{p:?}");
+                    }
+                    for car in world.moving.iter().map(|o| o.footprint) {
+                        nearest = nearest.min(car.closest_point(level.at).distance(level.at));
+                    }
                     checked += 1;
                 }
             }
             assert!(checked >= 2, "{checked} moments with both trains in");
+            // Neither standing train comes within 25 m of the crossing.
+            assert!(nearest > 25.0, "{nearest}");
+        }
+
+        /// The station track's two points around the crossing, for a
+        /// segment test.
+        fn crossing_rail(loaded: &LoadedWorld) -> (Vec2, Vec2) {
+            let y = loaded.towns[METILEO].railway.unwrap().start.y;
+            (Vec2::new(0.0, y), Vec2::new(500.0, y))
         }
 
         #[test]
-        fn the_walker_is_stopped_on_the_track_where_a_standing_train_is_but_not_on_the_crossing() {
-            // Where the foot crossing is not: across the line train's own
-            // length at the station platform's west end, a standing line
-            // train bars the way over the track.
+        fn a_standing_train_bars_the_track_by_the_platform_but_never_the_crossing_or_the_walks() {
             let loaded = loaded();
             let (line, shuttle) = trains(&loaded);
             let bay = loaded.line.bay_of(0).unwrap();
+            let (_, crossing) = metileos_road(&loaded);
             let mut world = World::with_towns(loaded.world, Terrain::default(), &loaded.towns);
             world.lay_rail(&loaded.line);
             let collider = pampa_core::Circle::new(pampa_core::Rider::COLLIDER_RADIUS);
             let track_y = loaded.towns[METILEO].railway.unwrap().start.y;
-            let line_x = bay.walkway.footprint.center().x;
             let mut barred = 0;
             for run in [Run::Up, Run::Down] {
                 for at in line.stops_at(METILEO, run) {
@@ -1392,8 +1499,17 @@ mod tests {
                     let s = jumped(&shuttle, at.seconds() + 30.0);
                     world.moving = l.obstacles().into_iter().chain(s.obstacles()).collect();
                     // Open on the crossing, whatever stands.
-                    let on = Vec2::new(line_x, track_y);
+                    let on = Vec2::new(crossing.at.x, track_y);
                     assert_eq!(world.resolve(collider, on, |_| ()), on);
+                    // Open along both walks.
+                    for walk in &bay.walks {
+                        let mut x = walk.min.x;
+                        while x <= walk.max.x {
+                            let p = Vec2::new(x, walk.center().y);
+                            assert_eq!(world.resolve(collider, p, |_| ()), p, "{p:?}");
+                            x += 0.5;
+                        }
+                    }
                     // A standing line train bars the track at the platform.
                     let (platform, _) = loaded.towns[METILEO].platform_spot().unwrap();
                     let at_platform = Vec2::new(platform.x, track_y);
@@ -1403,6 +1519,100 @@ mod tests {
                 }
             }
             assert!(barred >= 2, "{barred}");
+        }
+
+        #[test]
+        fn no_standing_train_covers_the_crossing_or_the_walks_and_the_trains_keep_apart() {
+            let loaded = loaded();
+            let (line, shuttle) = trains(&loaded);
+            let bay = loaded.line.bay_of(0).unwrap();
+            let (_, crossing) = metileos_road(&loaded);
+            // The crossing's deck and approaches, and each walk's strip.
+            let deck = Aabb::from_center_size(
+                crossing.at,
+                Vec2::new(2.0 * (RoadNetwork::HALF_WIDTH + 1.0), 2.0 * 10.0),
+            );
+            let mut keep = vec![deck];
+            keep.extend(bay.walks.iter().copied());
+            let (mut standing, mut tightest, mut nearest) = (0, f32::MAX, f32::MAX);
+            // The moments the shuttle runs the turnout (the line train runs, or
+            // is out of the way), and how near the two cars come then.
+            let (mut on_turnout, mut turnout_gap) = (0, f32::MAX);
+            let join = bay.link.path.last().unwrap().x;
+            // One game day: every 2 s from before the line train comes in
+            // to after the shuttle has left, around each of the stops.
+            let mut times = Vec::new();
+            for run in [Run::Up, Run::Down] {
+                for at in line.stops_at(METILEO, run) {
+                    let from = at.seconds() - 1800.0;
+                    times.extend((0..1800).map(|k| from + 2.0 * f64::from(k)));
+                }
+            }
+            for t in times {
+                let (l, s) = (jumped(&line, t), jumped(&shuttle, t));
+                let (lc, sc) = (l.obstacles(), s.obstacles());
+                for a in &lc {
+                    for b in &sc {
+                        let gap = |x: (f32, f32), y: (f32, f32)| (x.0 - y.1).max(y.0 - x.1);
+                        let (f, g) = (a.footprint, b.footprint);
+                        let clear = gap((f.min.x, f.max.x), (g.min.x, g.max.x))
+                            .max(gap((f.min.y, f.max.y), (g.min.y, g.max.y)));
+                        tightest = tightest.min(clear);
+                        let turning = s.state().phase == pampa_core::LinePhase::Running
+                            && b.footprint.min.x < bay.platform.footprint.min.x
+                            && b.footprint.max.x > join;
+                        if turning {
+                            turnout_gap = turnout_gap.min(clear);
+                        }
+                    }
+                }
+                if s.state().phase == pampa_core::LinePhase::Running
+                    && sc.iter().any(|c| {
+                        c.footprint.min.x < bay.platform.footprint.min.x && c.footprint.max.x > join
+                    })
+                {
+                    on_turnout += 1;
+                    // Not with the line train standing in the station: the
+                    // timetable's margin keeps the shuttle off the turnout
+                    // then.
+                    assert!(!pampa_core::stands_at(&l.state(), 2), "t = {t}");
+                }
+                for (train, cars) in [(&l, &lc), (&s, &sc)] {
+                    let state = train.state();
+                    let here = state.station.is_some_and(|k| {
+                        let town = train.stations().get(k).map(|st| st.town);
+                        town == Some(METILEO) && pampa_core::stands_at(&state, k)
+                    });
+                    if !here {
+                        continue;
+                    }
+                    standing += 1;
+                    for car in cars {
+                        for k in &keep {
+                            assert!(
+                                !car.footprint.intersects(k),
+                                "t = {t}: {:?} on {k:?}",
+                                car.footprint
+                            );
+                        }
+                        nearest = nearest.min(
+                            car.footprint
+                                .closest_point(crossing.at)
+                                .distance(crossing.at),
+                        );
+                    }
+                }
+            }
+            assert!(standing > 1000, "{standing}");
+            // The shuttle runs the turnout with the line train in, and the
+            // trains never come closer than the 0.4 m the all-day test keeps.
+            assert!(on_turnout > 50, "{on_turnout} samples on the turnout");
+            assert!(turnout_gap > 0.4, "{turnout_gap}");
+            assert!(tightest > 0.4, "{tightest}");
+            assert!(nearest > 25.0, "{nearest}");
+            eprintln!(
+                "T3d: tightest {tightest} m, on turnout {on_turnout} samples, gap there {turnout_gap} m, nearest standing car {nearest} m"
+            );
         }
 
         #[test]

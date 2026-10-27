@@ -195,6 +195,13 @@ fn links(rail: Option<&WorldRail>) -> Vec<Railway> {
     rail.map(|r| r.0.segments().collect()).unwrap_or_default()
 }
 
+/// The bays' platforms, painted on every town's layer where they cross its
+/// frame.
+fn bay_platforms(rail: Option<&WorldRail>) -> Vec<pampa_core::Aabb> {
+    rail.map(|r| r.0.bays.iter().map(|b| b.platform.footprint).collect())
+        .unwrap_or_default()
+}
+
 /// The roads' straight pieces, painted on every town's layer where they
 /// cross its frame.
 fn roads(terrain: Option<&WorldTerrain>) -> Vec<(GroundVec2, GroundVec2)> {
@@ -211,7 +218,12 @@ fn lagoons(terrain: Option<&WorldTerrain>) -> Vec<Lagoon> {
 
 /// What a layer shows beyond the town: the railway line's links, the
 /// roads and the lagoons.
-type Lines = (Vec<Railway>, Vec<(GroundVec2, GroundVec2)>, Vec<Lagoon>);
+type Lines = (
+    Vec<Railway>,
+    Vec<(GroundVec2, GroundVec2)>,
+    Vec<Lagoon>,
+    Vec<pampa_core::Aabb>,
+);
 
 /// The [`Overlay`] of `lines` and the world's settlements.
 fn overlay<'a>(lines: &'a Lines, settlements: Option<&'a SettlementLayout>) -> Overlay<'a> {
@@ -221,6 +233,7 @@ fn overlay<'a>(lines: &'a Lines, settlements: Option<&'a SettlementLayout>) -> O
         settlements: settlements.map_or(&[], |l| &l.settlements),
         wrecks: settlements.map_or(&[], |l| &l.roadside),
         lagoons: &lines.2,
+        platforms: &lines.3,
     }
 }
 
@@ -255,6 +268,7 @@ fn spawn_minimap(
         links(rail.as_deref()),
         roads(terrain.as_deref()),
         lagoons(terrain.as_deref()),
+        bay_platforms(rail.as_deref()),
     );
     let overlay = overlay(&lines, settlements.as_deref().map(|s| &s.0));
     let base = images.add(map_image(
@@ -454,6 +468,7 @@ fn update_markers(
                 links(rail.as_deref()),
                 roads(terrain.as_deref()),
                 lagoons(terrain.as_deref()),
+                bay_platforms(rail.as_deref()),
             );
             let overlay = overlay(&lines, layout);
             let sources = (&**towns, &overlay);

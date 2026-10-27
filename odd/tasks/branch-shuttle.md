@@ -137,7 +137,9 @@ user's permission; see the asset rules in `CREDITS.md`).
   `moving` expectations (all trains), render/game fixtures
   (`WorldTrains`).
 
-- **T3b bay platform and foot crossing (core `rail.rs`, `ride.rs`,
+- **T3b bay platform and foot crossing (superseded by T3d: the foot
+  crossing, `walkways` and the platform's place are gone; boarding and
+  waiting rules stay) (core `rail.rs`, `ride.rs`,
   `world.rs`, render `rail.rs`, game `ride.rs`, `main.rs`)**: `RailBay`
   now has `platform: Floor` and `walkway: Floor`. Platform at Metileo:
   x 208..258 (buffer stop to the end of the straight), y -427.5..-420.5,
@@ -209,6 +211,71 @@ user's permission; see the asset rules in `CREDITS.md`).
   `only_a_train_in_a_bay_is_boarded_from_off_the_platform`,
   `waiting_at_medio_takes_whichever_train_comes_first`,
   `the_shuttle_in_metileos_bay_is_boarded_from_beside_it` (the waiver is gone).
+- **T3d platforms face each other (core `rail.rs`, `road.rs`, `world.rs`,
+  render `rail.rs`, `minimap`, game `towns.rs`)**: the bay's buffer stop is
+  now at the station platform's east end (x 318), the straight runs the
+  platform's whole length west to x 258 (60 m), and the shuttle stops at
+  the platform's middle (`stop` x 288; coaches 269..307, 11 m clear of the
+  buffer). The bay platform is the station platform's x span (258..318),
+  y -427.5..-420.5, opposite it across the two tracks. The turnout is two
+  arcs of `RailBay::TURNOUT_RADIUS` 150 m (was the line's 500 m): at 500 m
+  it would have run past the road (x 189.7) and crossed it as a second,
+  nearly coincident crossing; at 150 m it is 52 m long and rejoins the
+  run-out at x 206.3, 16.6 m east of the road, so the road keeps its ONE
+  crossing (x 189.75, y -436, road path unchanged; the second crossing of
+  the bay is gone). Foot crossing removed: `RailBay.walkway`,
+  `WALKWAY_*`, `RailLine::walkways()`, `World.walkways`, its render
+  pieces. People cross at the road's level crossing. `RailBay.walks:
+  Vec<Aabb>` (empty until `RailLine::lay_walks(&towns, &roads)`, called by
+  game `load_world` after the final roads) holds two 2 m strips of beaten
+  earth: the station platform's, from the foot of its west ramp (x 255,
+  y -443.5) west to the road (2.5 m inside its centerline, x about 192);
+  the bay platform's, from its west ramp foot (x 255, y -424) west to the
+  road. Route: platform, walk, along the road over the crossing, walk,
+  platform, about 140 m. Render draws them as one `BayWalk` decal per
+  chunk (`walks_mesh`, `Surface::Yard`, the towns' beaten-earth walks).
+  Distances from the road crossing to the standing cars: line train's
+  tail 32.75 m (x 222.5), shuttle's front 79 m (x 269); no standing train
+  covers the crossing deck (+-10 m along the road) or either walk, tested
+  over a game day. Minimap: `Overlay.platforms` paints the bay platform.
+  `road.rs` `Track::of` turns the bay's path round (it runs against the
+  line's heading), else roads read the bay's sides flipped and the rural
+  road was left out for a 20 degree crossing. Townsfolk never walk to a
+  station (no platform or station use in `townsfolk.rs`/`walker.rs`), so
+  no routing was built; only the player walks the route. `SHUTTLE_MARGIN`
+  stays 10 min: sampled every 2 s around every Metileo stop, the shuttle
+  runs the turnout (812 samples) only when the line train is 81.8 m or
+  more away, never with it standing; at 5 min the all-day test fails.
+  Tightest gap of the standing pair: 1.5 m (side by side).
+- **T3d tests**: core `rail`: `the_bay_platform_stands_opposite_the_station_platform_with_the_shuttle_between`
+  (new; replaces `a_boarded_foot_crossing_joins_...`), changed
+  `a_junction_town_gets_a_bay_...` (buffer at the platform's east end,
+  stop at its middle) and `the_bay_joins_the_station_track_by_a_smooth_turnout_...`
+  (150 m radius); core `world`: `laying_the_rail_adds_the_bay_platform_as_a_floor_...`
+  (replaces `a_foot_crossing_raises_...`); render `rail`: `a_chunk_gets_the_bay_platform_only_where_its_middle_stands`,
+  `a_chunk_gets_a_bay_walk_where_its_middle_stands_and_none_elsewhere`,
+  `the_chunk_with_the_bay_walks_gets_them_as_earth_the_same_frame`, changed
+  `the_chunk_with_the_bay_gets_its_track_and_buffer_stop` (stop's chunk,
+  platform only); removed `the_foot_crossing_is_boarded_across_...`,
+  `a_chunk_gets_the_bay_platform_and_crossing_only_...`; minimap
+  `a_bay_platform_is_painted_like_a_towns_where_it_crosses_the_frame`; game
+  `towns::caleufu`: `the_station_and_bay_platforms_face_each_other_across_the_tracks`,
+  `the_roads_and_their_level_crossings_by_metileo_are_where_they_were`,
+  `the_bay_platform_and_walks_keep_clear_of_everything_built_planted_or_driven`,
+  `a_walker_goes_from_the_station_platform_to_the_bay_platform_over_the_road_crossing`,
+  `a_standing_train_bars_the_track_by_the_platform_but_never_the_crossing_or_the_walks`,
+  `no_standing_train_covers_the_crossing_or_the_walks_and_the_trains_keep_apart`;
+  removed the three foot-crossing tests of T3b. Updated on purpose: game
+  `metileo_has_a_bay_...` (buffer at the east end, no road meets the bay),
+  `the_shipped_world_has_its_roads_and_one_level_crossing_by_each_station`
+  (one crossing at Metileo again). No RED run (the geometry was moved
+  first). Proven by sabotage: buffer at the far end, stop off the middle,
+  radius 500 m, no bay reversal in `Track::of`, `lay_walks` not called,
+  walk width 3 m, walk from the platform end (not its ramp foot), walk
+  stopping short of the road, station walk on the track line, shuttle stop
+  70 m west, `SHUTTLE_MARGIN` 0 and 5 min, `lay_rail` without floors;
+  render: walk area filter off, walk not spawned, platform filter off;
+  minimap platform not painted.
 - **T3c timetable boards (core `board.rs`, `places.rs`, render `signs.rs`,
   `facade/town_buildings.rs`, game `timetable.rs`)**: core
   `station_board(trains, towns, town) -> Vec<BoardRow>` reads every stop
@@ -292,7 +359,7 @@ user's permission; see the asset rules in `CREDITS.md`).
   game `errand.rs:39`). User request, 2026-10-27: also one board either
   side of the street-side entrance (three per station). Route: delegated
   writer.
-- [ ] T3d The Caleufú platform faces the Castex platform (user playtest,
+- [x] T3d The Caleufú platform faces the Castex platform (user playtest,
   2026-10-27). The bay runs alongside the station platform on the north
   side, with its buffer stop past the platform's east end and its turnout
   west of the line train's tail; the bay platform stands opposite the
