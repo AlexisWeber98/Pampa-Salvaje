@@ -7,6 +7,7 @@
 //! is measured from whichever camera draws, so it needs no change there.
 
 use crate::character::viewer::world_layers;
+use crate::sky::astro;
 use bevy::light::{CascadeShadowConfig, CascadeShadowConfigBuilder};
 use bevy::prelude::*;
 use pampa_core::GameClock;
@@ -15,6 +16,16 @@ use pampa_core::GameClock;
 pub const DUST_COLOR: Color = Color::srgb(0.82, 0.70, 0.52);
 /// Haze color on a moonlit night.
 const NIGHT_HAZE: Color = Color::srgb(0.16, 0.18, 0.25);
+/// Haze color at the horizon when the sun is on it: dust lit orange-pink.
+const TWILIGHT_HAZE: Color = Color::srgb(0.88, 0.50, 0.36);
+/// Zenith color by day: deep blue.
+const DAY_ZENITH: Color = Color::srgb(0.05, 0.40, 0.78);
+/// Zenith color with the sun low: a paler, violet-tinged blue.
+const LOW_SUN_ZENITH: Color = Color::srgb(0.16, 0.40, 0.72);
+/// Zenith color in the blue hour after sunset and before dawn.
+const BLUE_HOUR_ZENITH: Color = Color::srgb(0.06, 0.10, 0.27);
+/// Zenith color at night.
+const NIGHT_ZENITH: Color = Color::srgb(0.012, 0.022, 0.07);
 
 /// The game clock. Logic state: the game runs it, render only reads it.
 #[derive(Resource, Debug, Clone, Copy, Default)]
@@ -82,6 +93,20 @@ pub struct Sky {
     pub elevation: f32,
     /// `0` at night, `1` in daylight.
     pub daylight: f32,
+    /// Unit direction toward the sun itself, which sinks below the horizon
+    /// at night while `toward_light` swaps to the moon.
+    pub sun_dir: Vec3,
+    /// Unit direction toward the moon's disc.
+    pub moon_dir: Vec3,
+    /// The moon's age in days.
+    pub moon_age: f32,
+    /// Color overhead; the horizon is `haze`.
+    pub zenith: Color,
+    /// How much the sun's glow stains the sky: `0` by day and at night, `1`
+    /// with the sun on the horizon.
+    pub twilight: f32,
+    /// How much of the star field shows: `0` by day, `1` once the sky is dark.
+    pub star_fade: f32,
 }
 
 /// The sky at `hour` (hours since midnight, wrapped into a day).
@@ -91,6 +116,12 @@ pub struct Sky {
 /// it is well below the horizon, the light swaps to a fixed, bluish moon
 /// high in the north-east; the swap happens while both are at zero.
 pub fn sky_at(hour: f32) -> Sky {
+    sky_with_moon(hour, astro::FIRST_MOON_AGE)
+}
+
+/// [`sky_at`] with the moon at `moon_age` days: the night light follows the
+/// moon (see [`astro::moonlight_dir`]).
+pub fn sky_with_moon(hour: f32, moon_age: f32) -> Sky {
     let hour = hour.rem_euclid(24.0);
     let day = (hour - SUNRISE) / (SUNSET - SUNRISE);
     // Past sunset the sun keeps sinking on the same arc, then comes back up
@@ -108,12 +139,14 @@ pub fn sky_at(hour: f32) -> Sky {
     let low = 1.0 - smoothstep(0.05, 0.6, elevation);
     let night = 1.0 - smoothstep(-0.2, -0.04, elevation);
 
+    let sun_dir = Vec3::new(
+        azimuth.cos() * elevation.cos(),
+        elevation.sin(),
+        -azimuth.sin() * elevation.cos(),
+    );
+    let moon_dir = astro::moon_dir(hour, moon_age);
     let (toward_light, light_color, illuminance) = if elevation > -0.04 {
-        let ground = Vec3::new(
-            azimuth.cos() * elevation.cos(),
-            elevation.sin(),
-            -azimuth.sin() * elevation.cos(),
-        );
+        let ground = sun_dir;
         let warm = mix(
             Color::srgb(1.0, 0.95, 0.86),
             Color::srgb(1.0, 0.58, 0.32),
@@ -122,8 +155,7 @@ pub fn sky_at(hour: f32) -> Sky {
         let lux = SUN_LUX * smoothstep(-0.04, 0.5, elevation);
         (ground, warm, lux)
     } else {
-        // Moon high in the north-east.
-        let moon = Vec3::new(0.35, 0.8, -0.5).normalize();
+        let moon = astro::moonlight_dir(moon_dir);
         (moon, Color::srgb(0.62, 0.70, 0.95), MOON_LUX * night)
     };
     let ambient_color = mix(
@@ -135,11 +167,19 @@ pub fn sky_at(hour: f32) -> Sky {
         ),
         daylight,
     );
+    // The sun's glow stains the sky most with the sun on the horizon, and
+    // lingers a little after it sets.
+    let twilight = (-((elevation + 0.02) / 0.15).powi(2)).exp();
     let haze = mix(
         NIGHT_HAZE,
-        mix(DUST_COLOR, Color::srgb(0.86, 0.60, 0.42), low * 0.6),
+        mix(DUST_COLOR, Color::srgb(0.86, 0.60, 0.42), low * 0.3),
         daylight,
     );
+    let haze = mix(haze, TWILIGHT_HAZE, twilight * 0.6);
+    let blue_hour = (-((elevation + 0.15) / 0.08).powi(2)).exp();
+    let dark = mix(NIGHT_ZENITH, BLUE_HOUR_ZENITH, blue_hour);
+    let lit = mix(LOW_SUN_ZENITH, DAY_ZENITH, smoothstep(0.0, 0.5, elevation));
+    let zenith = mix(dark, lit, daylight);
     Sky {
         toward_light: toward_light.normalize_or(Vec3::Y),
         light_color,
@@ -149,7 +189,20 @@ pub fn sky_at(hour: f32) -> Sky {
         haze,
         elevation,
         daylight,
+        sun_dir,
+        moon_dir,
+        moon_age,
+        zenith,
+        twilight,
+        star_fade: star_fade_at(elevation),
     }
+}
+
+/// How much of the star map shows with the sun at `elevation` radians: none
+/// by day, fading in from the sun's setting to the end of nautical twilight
+/// (about 18 degrees under the horizon) and full once the sky is dark.
+pub fn star_fade_at(elevation: f32) -> f32 {
+    1.0 - smoothstep(-0.32, -0.06, elevation)
 }
 
 fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
@@ -250,7 +303,7 @@ fn follow_the_clock(
     let Some(clock) = clock else {
         return;
     };
-    let sky = sky_at(clock.0.hour());
+    let sky = sky_with_moon(clock.0.hour(), astro::moon_age(clock_days(&clock.0)));
     for (mut light, mut transform) in &mut sun {
         light.color = sky.light_color;
         light.illuminance = sky.illuminance;
@@ -263,6 +316,11 @@ fn follow_the_clock(
     for mut fog in &mut fogs {
         *fog = haze_fog(&sky);
     }
+}
+
+/// Game days elapsed since day 0 began, fractions included.
+pub fn clock_days(clock: &GameClock) -> f64 {
+    clock.elapsed() / pampa_core::DAY_SECONDS
 }
 
 /// Gives the sun the cascades [`CloseShadows`] asks for, when it changes.
