@@ -27,12 +27,12 @@ user's permission; see the asset rules in `CREDITS.md`).
 
 ## Decisions
 
-- **Train model**: a downloaded glTF (user choice, 2026-10-27), CC0 or
-  CC-BY only, credited in the root `CREDITS.md` and next to its files. It
-  must keep what the procedural train does: spinning wheels, moving side
-  rods, the chimney smoke anchor, and the hollow coach the player rides in
-  (core `CoachBody`, `WIDTH` 3.0, `RAIL_TOP` 0.5). Candidates are being
-  researched; the choice goes to the user before any download.
+- **Train model (procedural, user decision 2026-10-27; the downloaded glTF
+  option was dropped)**: rebuild the train in code with rounded shapes and
+  PBR textures, a British-built 1919 Ferrocarril Oeste train. It keeps
+  what the old one did: spinning wheels, moving side and main rods, the
+  smoke at the chimney top, and the hollow coach the player rides in
+  (core `CoachBody`, `WIDTH` 3.0, `RAIL_TOP` 0.5). See the T5 note.
 - **Order**: shuttle first (T1–T3), then the track look (T4), then the
   train model (T5), then docs (T6).
 - **Commits**: the user makes every commit (memory `user-owns-commits`);
@@ -400,12 +400,67 @@ user's permission; see the asset rules in `CREDITS.md`).
   turnout and where the branch parts from the line (user playtest,
   2026-10-27). Two crossing signs per foot crossing, one each side, not
   four. Route: delegated writer.
-- [ ] T5 Train model: glTF locomotive (and coaches if a fitting model
-  exists), downloaded by the user, converted, credited, wired to the
-  wheel, rod and smoke animation, and fitted to the ridden coach. Route:
-  delegated writer.
+- [x] T5 Train look: procedural, rounded and textured (the glTF option was
+  dropped, user 2026-10-27); the ridden coach furnished inside and out.
+  Route: delegated writer.
 - [ ] T6 Docs: this file, `odd/tasks/caleufu.md`, README files, doc
   comments. Last step before the native review.
+
+## T5 train look
+
+- **Code** (render `train.rs` plus `train/`): `shape.rs` (lathe turnings, profile prisms, boxes;
+  smooth or creased normals; UVs in meters), `kit.rs` (materials, wheel meshes), `builder.rs`
+  (a car's shapes merged into one mesh per material, underframe, bogies, buffers), `wheels.rs`,
+  `loco.rs`, `coach.rs`, `freight.rs`, `tests.rs`. Only wheels (tyre and centre), the four rods
+  and the smoke puffs are entities of their own; a coach's inside is a separate set of meshes
+  marked `CoachInterior`.
+- **Materials**: `Surface::Livery(Livery)` in `facade/materials.rs`, tints of the towns' scans:
+  `Tread` (the new `metal_plate`, a diamond tread plate: running plates, footplates, steps,
+  platforms; user-downloaded 2026-10-27, converted with `tools/textures_to_ktx2.sh`, credited),
+  `Black` and `BufferRed` (rust_coarse_01), `Maroon`, `Varnish` and `Oxide` (brown_planks_05).
+  Brass is `Bronze`, boxcar roofs `OldIron`, hopper steel `RailSteel`, tyres `RailHead`; plain
+  finishes (glass, lamp glass, coal, leather, cream lining, runner, canvas) are the train's own.
+- **Shapes**: locomotive and tender (one 14 m car) a British 2-6-0 (leading wheel, three 0.85 m
+  spoked drivers with counterweights under splashers, six-wheel tender): lathe boiler with brass
+  bands, dished smokebox door, tapered chimney with a brass cap (top 4.55 m, the smoke's mouth),
+  brass steam dome, sand dome, safety valves, cab with arched roof and spectacle glasses,
+  cylinders, valve chests and guides, handrails, lamps, coal heap, buffer beams with sprung
+  buffers; the shuttle draws the same engine (a tank engine needs a new `CarKind`; left out).
+  Coach (maroon, cream lining, arched roof with clerestory to 4.16 m, glazed windows in varnished
+  frames, end doors, gates, steps) furnished inside: varnished panelling with beading, planked
+  floor and runner, lined ceiling with ribs, upholstered benches with backs and aisle-end panels,
+  brass luggage racks with cords over the windows, oil lamps, framed route maps, lined end doors.
+  Boxcar: oxide upright boards in an iron frame, plank sliding door on a rail, curved old-iron
+  roof, ladders, handbrake. Hopper: steel bin on two funnels, rim, stiffeners, wheat heap.
+  Wheels: spoked (loco, tender) or dished plate (bogies) with flanged tyres, 0.86 m from the middle.
+- **Triangles per car** (before, after): locomotive 2156 to 14844, coach 2348 to 14328, boxcar
+  1124 to 6588, hopper 1100 to 6432. The budget grew about sevenfold on purpose: lathe turnings
+  and spoked wheels (20 wheels on the engine) are what rounds the silhouette, and the coach's
+  inside is furnished. The line train draws about 80k triangles, only within 400 m of the player.
+- **Dev screenshot tour** (`game/src/shots.rs`): a shot with a time now runs the trains along
+  with the clock jump (they stood where the opening left them, the T4 mis-framing), the clock
+  goes forward only, and each jump logs where every train's front and last car stand.
+- **Tests** (render `train::tests`, `train::shape`, `facade::materials`): kept as they were:
+  `cars_near_the_focus_follow_logic_along_the_curves`, `cars_far_from_the_focus_are_hidden`,
+  `the_rods_swing_round_with_the_cranks`, `every_train_gets_its_own_cars`,
+  `each_car_follows_its_own_train`, `each_train_rolls_its_own_wheels_and_smokes_for_itself`,
+  the `line_train()`, `shuttle()` and `app_with_*` fixtures (the minimap and terrain tests use
+  them); ported to meshes: `each_car_is_drawn_as_tall_as_core_says`,
+  `coaches_are_hollow_with_glazed_windows_and_benches_inside` (was `..._open_glazed_...`),
+  `every_car_stays_within_its_triangle_budget` (was `..._a_ps2_era_triangle_budget`),
+  `smoke_puffs_from_the_chimney_only_while_the_train_moves` (the cap's top at the anchor);
+  new: `the_ridden_coachs_inside_keeps_within_the_coach_body`,
+  `wheels_stand_on_the_rails_a_gauge_apart`, `materials_go_where_the_period_train_wears_them`,
+  `textures_tile_in_meters_whatever_the_part`; `shape`: `a_box_is_twelve_triangles_...`,
+  `across_grain_swaps_the_texture_axes`, `a_lathe_is_round_smooth_and_closed_at_a_zero_radius`,
+  `a_gentle_bend_is_smooth_and_a_sharp_one_is_creased`, `a_prism_along_x_...`,
+  `a_stadium_bar_is_as_long_and_wide_as_asked`; materials
+  `the_train_liveries_tint_their_scans_to_black_red_maroon_brown_and_oxide`. The old `paint_boards`
+  texture and its box-based coach checks are gone. No RED run (written after the shapes).
+  Proven by sabotage: chimney top, window glass, rack out of bounds, boards across, spoked
+  facets 40, black tint, lamp material, wheel height, tender axles, wheel gauge, box and lathe
+  UVs, crease angle, stadium length, prism UV. Updated on purpose: settlement
+  `every_set_ships_its_three_ktx2_maps...` (20 sets).
 
 ## T2 tests
 
@@ -483,4 +538,4 @@ user's permission; see the asset rules in `CREDITS.md`).
 
 ## Next step
 
-T2, delegated writer.
+T6, docs (README mentions of the train's PS2-era detail are stale).

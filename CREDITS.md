@@ -32,6 +32,7 @@ All three were converted to 512×512 PPM/PGM for loading. See `assets/textures/g
 | Gravel Road | Amal Kumar, Poly Haven (https://polyhaven.com/a/gravel_road) | CC0 1.0 | `assets/textures/buildings/gravel_road/` | 1K maps renamed; the railway ballast, lifted to a grey gravel in the game |
 | Rough Wood | Rob Tuytel, Poly Haven (https://polyhaven.com/a/rough_wood) | CC0 1.0 | `assets/textures/buildings/rough_wood/` | 1K maps renamed; the railway sleepers |
 | Rust Coarse 01 | Dimitrios Savva, Rico Cilliers, Poly Haven (https://polyhaven.com/a/rust_coarse_01) | CC0 1.0 | `assets/textures/buildings/rust_coarse_01/` | 1K maps renamed; the rails (smoother, more metallic on the head)|
+| Metal Plate | Rob Tuytel, Poly Haven (https://polyhaven.com/a/metal_plate) | CC0 1.0 | `assets/textures/buildings/metal_plate/` | 1K maps renamed; the train's tread plate (running plates, footplates, steps); the rust scan and the planks of the train wear black, red, maroon and varnish tints in the game |
 
 The `thatch/` set next to them is our own work. The game loads every set as KTX2 (UASTC, mips baked) made from those JPGs by `tools/textures_to_ktx2.sh`; the JPG sources are kept unchanged. See `assets/textures/buildings/CREDITS.md` for details.
 

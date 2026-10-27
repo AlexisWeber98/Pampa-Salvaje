@@ -31,6 +31,9 @@
 //! lifted to a grey gravel; the rail head wears the rail's scan with a
 //! smoother, more metallic finish, the running band.
 //!
+//! The rolling stock wears two of those sets and a fourth, `metal_plate`
+//! (a diamond tread plate by Rob Tuytel, Poly Haven, CC0): see [`Livery`].
+//!
 //! Without an asset server (headless tests) or when a set's files are
 //! missing, the surface falls back to a plain colour of the same look.
 
@@ -115,6 +118,41 @@ pub enum Surface {
     /// The running band of the rails (`rust_coarse_01` again): the same
     /// scan, smoother and more metallic where the wheels polish it.
     RailHead,
+    /// The rolling stock's steel and boards, one scan under several paints
+    /// (see [`Livery`]).
+    Livery(Livery),
+}
+
+/// What the train is painted with. Each is a scan under a tint: the tread
+/// plate as it is, black enamel and dark red over the rust (`rust_coarse_01`),
+/// maroon, varnish and oxide red over the grey planks (`brown_planks_05`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Livery {
+    /// Tread plate (`metal_plate`, Poly Haven, Rob Tuytel): running plates,
+    /// footplates, steps and platforms.
+    Tread,
+    /// Worn black enamel: the locomotive, tender and underframes.
+    Black,
+    /// Dark red: the buffer beams.
+    BufferRed,
+    /// The coaches' maroon, boarded.
+    Maroon,
+    /// Varnished brown wood: the coaches' panelling and ceilings.
+    Varnish,
+    /// Oxide red, the freight cars' boards.
+    Oxide,
+}
+
+impl Livery {
+    /// Every livery, in order.
+    pub const ALL: [Livery; 6] = [
+        Livery::Tread,
+        Livery::Black,
+        Livery::BufferRed,
+        Livery::Maroon,
+        Livery::Varnish,
+        Livery::Oxide,
+    ];
 }
 
 /// The muted colours a 1919 town front is painted in
@@ -191,7 +229,7 @@ pub fn lift(scan: [f32; 3], target: [f32; 3]) -> [f32; 3] {
 
 impl Surface {
     /// Every surface, in order.
-    pub const ALL: [Surface; 30] = [
+    pub const ALL: [Surface; 36] = [
         Surface::Adobe,
         Surface::Whitewash,
         Surface::Brick,
@@ -222,6 +260,12 @@ impl Surface {
         Surface::Sleeper,
         Surface::RailSteel,
         Surface::RailHead,
+        Surface::Livery(Livery::Tread),
+        Surface::Livery(Livery::Black),
+        Surface::Livery(Livery::BufferRed),
+        Surface::Livery(Livery::Maroon),
+        Surface::Livery(Livery::Varnish),
+        Surface::Livery(Livery::Oxide),
     ];
 
     /// The texture set it wears, if any.
@@ -246,6 +290,9 @@ impl Surface {
             Self::Ballast => "gravel_road",
             Self::Sleeper => "rough_wood",
             Self::RailSteel | Self::RailHead => "rust_coarse_01",
+            Self::Livery(Livery::Tread) => "metal_plate",
+            Self::Livery(Livery::Black | Livery::BufferRed) => "rust_coarse_01",
+            Self::Livery(Livery::Maroon | Livery::Varnish | Livery::Oxide) => "brown_planks_05",
             Self::Recess | Self::Steel | Self::Sheet | Self::Water => return None,
         })
     }
@@ -274,6 +321,9 @@ impl Surface {
             Self::Ballast => 2.0,
             Self::Sleeper => 0.5,
             Self::RailSteel | Self::RailHead => 2.2,
+            Self::Livery(Livery::Black | Livery::BufferRed) => 2.2,
+            Self::Livery(Livery::Tread) => 0.5,
+            Self::Livery(_) => 2.0,
             // A plaque is under a metre wide: the scan repeats about twice over it.
             Self::Bronze => 0.5,
             Self::Recess | Self::Steel | Self::Sheet | Self::Water => 1.0,
@@ -306,6 +356,15 @@ impl Surface {
             Self::Sleeper => Look::Tint([0.62, 0.52, 0.44]),
             // The scans' rust is saturated: a little cooled toward steel.
             Self::RailSteel | Self::RailHead => Look::Tint([0.85, 0.92, 1.0]),
+            // The rust scan is orange and the planks grey: these tints bring
+            // a mean texel to a worn black, a dark red, a maroon, a
+            // varnished brown and an oxide red, the grain and stains kept.
+            Self::Livery(Livery::Tread) => Look::Tint([1.0, 1.0, 1.0]),
+            Self::Livery(Livery::Black) => Look::Tint([0.43, 0.71, 1.0]),
+            Self::Livery(Livery::BufferRed) => Look::Tint([1.0, 0.37, 0.54]),
+            Self::Livery(Livery::Maroon) => Look::Tint([0.61, 0.20, 0.21]),
+            Self::Livery(Livery::Varnish) => Look::Tint([0.68, 0.43, 0.28]),
+            Self::Livery(Livery::Oxide) => Look::Tint([0.75, 0.37, 0.29]),
             _ => Look::Tint([1.0, 1.0, 1.0]),
         }
     }
@@ -349,6 +408,12 @@ impl Surface {
             Self::Sleeper => (0.30, 0.22, 0.16),
             Self::RailSteel => (0.33, 0.22, 0.16),
             Self::RailHead => (0.45, 0.40, 0.36),
+            Self::Livery(Livery::Tread) => (0.20, 0.22, 0.18),
+            Self::Livery(Livery::Black) => (0.07, 0.07, 0.075),
+            Self::Livery(Livery::BufferRed) => (0.40, 0.06, 0.05),
+            Self::Livery(Livery::Maroon) => (0.36, 0.10, 0.09),
+            Self::Livery(Livery::Varnish) => (0.40, 0.24, 0.13),
+            Self::Livery(Livery::Oxide) => (0.45, 0.20, 0.14),
             Self::Painted(_)
             | Self::WashedBrick
             | Self::PatchedBrick
@@ -375,6 +440,14 @@ impl Surface {
             Self::Sleeper => (1.0, 0.0, 0.15),
             Self::RailSteel => (1.0, 0.7, 0.4),
             Self::RailHead => (0.55, 0.9, 0.5),
+            // Painted steel: enamel is glossy over a metal's grain; the
+            // varnish and the oxide paint sit on wood.
+            Self::Livery(Livery::Tread) => (0.8, 0.5, 0.4),
+            Self::Livery(Livery::Black) => (0.75, 0.4, 0.5),
+            Self::Livery(Livery::BufferRed) => (0.75, 0.3, 0.45),
+            Self::Livery(Livery::Maroon) => (0.8, 0.0, 0.45),
+            Self::Livery(Livery::Varnish) => (0.7, 0.0, 0.5),
+            Self::Livery(Livery::Oxide) => (1.0, 0.0, 0.3),
             Self::Water => (0.08, 0.0, 0.5),
             Self::Recess => (1.0, 0.0, 0.1),
             _ => (1.0, 0.0, 0.3),
@@ -401,6 +474,16 @@ impl FacadeMaterials {
             .find(|(s, _)| *s == surface)
             .map(|(_, m)| m.clone())
             .expect("every surface has a material")
+    }
+
+    /// Plain-colour materials for an app with no asset server (headless
+    /// tests): every surface in its untextured colour.
+    pub(crate) fn plain(materials: &mut Assets<StandardMaterial>) -> Self {
+        let materials = Surface::ALL
+            .iter()
+            .map(|&surface| (surface, materials.add(material(surface, None))))
+            .collect();
+        Self { materials }
     }
 }
 
@@ -704,6 +787,55 @@ mod tests {
         // The head is the smoother, more metallic of the rail's two.
         let (body, head) = (Surface::RailSteel.pbr(), Surface::RailHead.pbr());
         assert!(head.0 < body.0 && head.1 > body.1);
+    }
+
+    #[test]
+    fn the_train_liveries_tint_their_scans_to_black_red_maroon_brown_and_oxide() {
+        for (livery, set, tile) in [
+            (Livery::Tread, "metal_plate", 0.5),
+            (Livery::Black, "rust_coarse_01", 2.2),
+            (Livery::BufferRed, "rust_coarse_01", 2.2),
+            (Livery::Maroon, "brown_planks_05", 2.0),
+            (Livery::Varnish, "brown_planks_05", 2.0),
+            (Livery::Oxide, "brown_planks_05", 2.0),
+        ] {
+            let surface = Surface::Livery(livery);
+            assert_eq!(surface.set(), Some(set), "{livery:?}");
+            assert_eq!(surface.tiles(), Vec2::splat(tile), "{livery:?}");
+            assert!(Surface::ALL.contains(&surface));
+            // A tint only darkens its scan.
+            let Look::Tint(tint) = surface.look() else {
+                panic!("{livery:?} is a tint");
+            };
+            assert!(tint.iter().all(|c| (0.0..=1.0).contains(c)));
+        }
+        // What a mean texel comes to (linear): the scans' measured means
+        // times the tint land near the paint's own colour (sRGB).
+        let mean = |scan: [f32; 3], livery: Livery| {
+            let Look::Tint(t) = Surface::Livery(livery).look() else {
+                unreachable!()
+            };
+            let t = Color::srgb(t[0], t[1], t[2]).to_linear();
+            let m = [scan[0] * t.red, scan[1] * t.green, scan[2] * t.blue];
+            Color::linear_rgb(m[0], m[1], m[2]).to_srgba()
+        };
+        let rust = [0.129, 0.0436, 0.0152];
+        let planks = [0.328, 0.303, 0.253];
+        let black = mean(rust, Livery::Black);
+        assert!(
+            black.red.max(black.green).max(black.blue) < 0.22,
+            "{black:?}"
+        );
+        let maroon = mean(planks, Livery::Maroon);
+        assert!(
+            maroon.red > 2.0 * maroon.green && maroon.red < 0.5,
+            "{maroon:?}"
+        );
+        let oxide = mean(planks, Livery::Oxide);
+        assert!(oxide.red > 0.35 && oxide.green < 0.3, "{oxide:?}");
+        // Painted wood has no metal; the enamel over steel has some.
+        assert_eq!(Surface::Livery(Livery::Maroon).pbr().1, 0.0);
+        assert!(Surface::Livery(Livery::Black).pbr().1 > 0.2);
     }
 
     #[test]

@@ -9,8 +9,11 @@
 //!
 //! `x`/`y` are ground coordinates (east, north); the heights are meters
 //! over the ground under that point. A time of day sets the clock for the
-//! shot (the sky and the sun follow it); without one the clock runs as it
-//! does. For each shot the camera is held at the eye looking at the target
+//! shot (the sky and the sun follow it, and every train runs along with
+//! the jump, so a train stands where the timetable puts it; the clock only
+//! goes forward, to the next time it reads that, and the shots of a tour
+//! with times are best listed in increasing order); without one the clock
+//! runs as it does. For each shot the camera is held at the eye looking at the target
 //! (the follow camera is overridden) and the world streams around it; once
 //! the chunks stop arriving and every texture is loaded, a few more frames
 //! settle and `<name>.png` is saved in `PAMPA_SHOTS_DIR` (default
@@ -22,8 +25,10 @@ use bevy::asset::LoadState;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::transform::TransformSystems;
-use pampa_core::{GameClock, TimeOfDay, Vec2 as GroundVec2};
-use pampa_render::{StreamFocus, TerrainChunk, WorldClock, WorldTerrain, world_from_ground};
+use pampa_core::{BASE_RATE, TimeOfDay, Vec2 as GroundVec2};
+use pampa_render::{
+    StreamFocus, TerrainChunk, WorldClock, WorldTerrain, WorldTrains, world_from_ground,
+};
 
 use crate::camera::FollowCamera;
 
@@ -102,6 +107,7 @@ impl ShotsPlugin {
             stable: 0,
             waited: 0,
             requested: false,
+            jumped: None,
         })
     }
 }
@@ -119,6 +125,8 @@ pub struct Tour {
     stable: u32,
     waited: u32,
     requested: bool,
+    /// The shot whose time the clock has been taken to.
+    jumped: Option<usize>,
 }
 
 impl Plugin for Tour {
@@ -133,6 +141,7 @@ impl Plugin for Tour {
             stable: 0,
             waited: 0,
             requested: false,
+            jumped: None,
         })
         .add_systems(
             Update,
@@ -144,16 +153,40 @@ impl Plugin for Tour {
 
 /// Streams the world around the current shot's eye and sets its time.
 fn aim_focus(
-    tour: Res<Tour>,
+    mut tour: ResMut<Tour>,
     mut focus: ResMut<StreamFocus>,
     mut clock: Option<ResMut<WorldClock>>,
+    mut trains: Option<ResMut<WorldTrains>>,
 ) {
     let Some(shot) = tour.shots.get(tour.index) else {
         return;
     };
     focus.0 = shot.eye.0;
-    if let (Some(time), Some(clock)) = (shot.time, clock.as_deref_mut()) {
-        clock.0 = GameClock::at(time);
+    let (time, index, shot_name) = (shot.time, tour.index, shot.name.clone());
+    if let (Some(time), Some(clock)) = (time, clock.as_deref_mut())
+        && tour.jumped != Some(index)
+    {
+        tour.jumped = Some(index);
+        // The trains run the jump like a skipped wait.
+        let from = clock.0.elapsed();
+        let skipped = clock.0.advance_until(time);
+        for (i, train) in trains.iter_mut().flat_map(|t| t.0.iter_mut()).enumerate() {
+            train.advance(from, skipped, BASE_RATE);
+            // Where each train's locomotive and last car stand, to aim at.
+            let cars = train.placed_cars();
+            if let (Some(first), Some(last)) = (cars.first(), cars.last()) {
+                info!(
+                    "shot {shot_name}: train {i} from ({:.0}, {:.0}) to ({:.0}, {:.0}), \
+                     heading ({:.1}, {:.1})",
+                    first.center.x,
+                    first.center.y,
+                    last.center.x,
+                    last.center.y,
+                    first.direction.x,
+                    first.direction.y
+                );
+            }
+        }
     }
 }
 

@@ -19,7 +19,7 @@ pub mod shape;
 pub(crate) mod town_buildings;
 pub mod walls;
 
-pub use materials::{FacadeMaterials, Surface};
+pub use materials::{FacadeMaterials, Livery, Surface};
 
 use bevy::prelude::*;
 

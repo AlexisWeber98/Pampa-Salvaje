@@ -43,7 +43,7 @@ pub use character::{
     OWN_HEAD_LAYER, TOWNSFOLK_LOOKS, Talking, ViewerBody, ViewerHead, VisualPose,
 };
 pub use coords::world_from_ground;
-pub use facade::{FacadeMaterials, Surface};
+pub use facade::{FacadeMaterials, Livery, Surface};
 pub use fade::{FadeLayer, FadePlugin, ScreenFade};
 pub use fauna::{ANIMATE_FAR, Animal, AnimalPose, AnimalSeed, FaunaKit, FaunaPlugin, Gait};
 pub use fence::{FencePiece, FencePlugin, GatePart, WorldFences};
