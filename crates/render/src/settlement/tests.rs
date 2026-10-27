@@ -1048,7 +1048,7 @@ fn every_set_ships_its_three_ktx2_maps_as_bc7_with_baked_mips() {
         .into_iter()
         .flat_map(|set| materials::MAPS.map(|(name, srgb)| (materials::map_path(set, name), srgb)))
         .collect();
-    assert_eq!(paths.len(), 14 * 3);
+    assert_eq!(paths.len(), 16 * 3);
     let (app, handles) = load_shipped(&paths);
     let images = app.world().resource::<Assets<Image>>();
     for (handle, (path, srgb)) in handles.iter().zip(&paths) {

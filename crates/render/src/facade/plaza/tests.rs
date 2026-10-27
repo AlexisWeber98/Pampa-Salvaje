@@ -116,6 +116,24 @@ fn the_monument_grows_with_the_town_and_stays_on_its_plinth() {
 }
 
 #[test]
+fn the_monument_plaques_are_bronze_on_every_face() {
+    for paving in TIERS {
+        let mut shape = Shape::default();
+        monument(&mut shape, paving, PATH_TOP);
+        let surfaces: HashSet<Surface> = shape.surfaces().collect();
+        // The bare plaza's monument has no plaques.
+        if paving == Paving::None {
+            assert!(!surfaces.contains(&Surface::Bronze));
+            continue;
+        }
+        let at = shape.points(Surface::Bronze);
+        let face = |f: fn(&Vec3) -> bool| at.iter().any(f);
+        assert!(face(|p| p.x > 0.5) && face(|p| p.x < -0.5), "{paving:?}");
+        assert!(face(|p| p.z > 0.5) && face(|p| p.z < -0.5), "{paving:?}");
+    }
+}
+
+#[test]
 fn a_bench_keeps_within_its_footprint_and_faces_its_path() {
     let mut shape = Shape::default();
     bench(&mut shape);

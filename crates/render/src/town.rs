@@ -1617,13 +1617,14 @@ mod tests {
             };
         }
         // Castex is a small town: earth paths with brick curbs and a
-        // stucco and whitewash monument as far as the buildings; iron and
+        // stucco and whitewash monument with bronze plaques as far as the buildings; iron and
         // timber benches and an iron railing as far as the props.
         let want = [
             Surface::Earth,
             Surface::Brick,
             Surface::Stucco,
             Surface::Whitewash,
+            Surface::Bronze,
         ];
         assert!(want.iter().all(|&s| ground.contains(&id(s))), "{ground:?}");
         assert!(!ground.contains(&id(Surface::Paving)));

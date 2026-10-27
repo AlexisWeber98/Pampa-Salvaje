@@ -87,11 +87,14 @@ pub enum Surface {
     /// A beige rendered band (`beige_wall_002`, a 4:1 strip): the plinths
     /// of painted fronts.
     Band,
-    /// Brick paving (`brick_pavement`): the sidewalks (veredas).
+    /// Flat brick paving (`brick_floor_003`): the sidewalks (veredas).
     Paving,
-    /// Compacted earth (`dry_ground_01`, opaque, unlike [`Surface::Yard`]):
-    /// the paths of a small town's or a village's plaza.
+    /// Beaten earth (`dirt_path`, opaque, unlike [`Surface::Yard`]): the
+    /// paths of a small town's or a village's plaza, and the earth sidewalks.
     Earth,
+    /// Old weathered bronze with a greenish patina (`bronze`): the plaques
+    /// of the plaza monuments.
+    Bronze,
 }
 
 /// The muted colours a 1919 town front is painted in
@@ -143,10 +146,11 @@ const PAINTED_PLASTER_SCAN: [f32; 3] = [0.407, 0.366, 0.351];
 const WASHED_BRICK_SCAN: [f32; 3] = [0.385, 0.326, 0.269];
 const PATCHED_BRICK_SCAN: [f32; 3] = [0.243, 0.131, 0.066];
 const BAND_SCAN: [f32; 3] = [0.227, 0.158, 0.092];
-const PAVING_SCAN: [f32; 3] = [0.079, 0.044, 0.033];
+const PAVING_SCAN: [f32; 3] = [0.115, 0.081, 0.058];
+const DIRT_PATH_SCAN: [f32; 3] = [0.126, 0.086, 0.049];
 
 /// The most a [`Look::Lifted`] material may multiply its scan by, in any
-/// channel. The shipped lifts reach 2.48 (the dark brick paving) and push
+/// channel. The shipped lifts stay under it and push
 /// no texel of their scans past white (a test reads the scans), so the
 /// bound only holds back a darker scan added later: past it, the rest of
 /// the lift is folded into the target, which comes out a darker shade of
@@ -166,7 +170,7 @@ pub fn lift(scan: [f32; 3], target: [f32; 3]) -> [f32; 3] {
 
 impl Surface {
     /// Every surface, in order.
-    pub const ALL: [Surface; 25] = [
+    pub const ALL: [Surface; 26] = [
         Surface::Adobe,
         Surface::Whitewash,
         Surface::Brick,
@@ -192,6 +196,7 @@ impl Surface {
         Surface::Band,
         Surface::Paving,
         Surface::Earth,
+        Surface::Bronze,
     ];
 
     /// The texture set it wears, if any.
@@ -205,12 +210,14 @@ impl Surface {
             Self::Planks => "brown_planks_05",
             Self::Thatch => "thatch",
             Self::Mud => "brown_mud_dry",
-            Self::Yard | Self::Earth => "dry_ground_01",
+            Self::Yard => "dry_ground_01",
+            Self::Earth => "dirt_path",
             Self::Painted(_) => "painted_plaster_wall",
             Self::WashedBrick => "whitewashed_brick",
             Self::PatchedBrick => "red_brick_plaster_patch_02",
             Self::Band => "beige_wall_002",
-            Self::Paving => "brick_pavement",
+            Self::Paving => "brick_floor_003",
+            Self::Bronze => "bronze",
             Self::Recess | Self::Steel | Self::Sheet | Self::Water => return None,
         })
     }
@@ -232,7 +239,10 @@ impl Surface {
             Self::Adobe | Self::Whitewash | Self::Lime | Self::Stucco | Self::Mud => 2.5,
             Self::Painted(_) => 2.5,
             Self::Band => return Vec2::new(4.0, 1.0),
-            Self::Yard | Self::Earth => 3.0,
+            Self::Yard => 3.0,
+            Self::Earth => 2.0,
+            // A plaque is under a metre wide: the scan repeats about twice over it.
+            Self::Bronze => 0.5,
             Self::Recess | Self::Steel | Self::Sheet | Self::Water => 1.0,
         };
         Vec2::splat(tile)
@@ -247,6 +257,8 @@ impl Surface {
             Self::Galvanised => Look::Tint([0.92, 0.93, 0.94]),
             Self::Lime => Look::Tint([0.96, 0.84, 0.64]),
             Self::Stucco => Look::Tint([0.70, 0.68, 0.64]),
+            // Dusted a little darker than the clean scan.
+            Self::Bronze => Look::Tint([0.88, 0.85, 0.80]),
             Self::Painted(paint) => lifted(PAINTED_PLASTER_SCAN, paint.albedo()),
             Self::WashedBrick => lifted(WASHED_BRICK_SCAN, [0.80, 0.78, 0.73]),
             // Dusted: a little paler and browner than the clean scan.
@@ -254,7 +266,7 @@ impl Surface {
             Self::Band => lifted(BAND_SCAN, [0.64, 0.58, 0.50]),
             Self::Paving => lifted(PAVING_SCAN, [0.48, 0.36, 0.30]),
             // Trodden a little paler and dustier than a yard.
-            Self::Earth => Look::Tint([0.96, 0.90, 0.80]),
+            Self::Earth => lifted(DIRT_PATH_SCAN, [0.50, 0.43, 0.33]),
             _ => Look::Tint([1.0, 1.0, 1.0]),
         }
     }
@@ -288,18 +300,19 @@ impl Surface {
             Self::Thatch => (0.66, 0.56, 0.36),
             Self::Mud => (0.50, 0.40, 0.29),
             Self::Yard => (0.60, 0.52, 0.40),
-            Self::Earth => (0.62, 0.54, 0.43),
             Self::Recess => (0.05, 0.045, 0.04),
             Self::Steel => (0.24, 0.24, 0.25),
             Self::Sheet => (0.70, 0.71, 0.71),
             Self::Water => (0.10, 0.13, 0.13),
             Self::Lime => (0.86, 0.75, 0.56),
             Self::Stucco => (0.62, 0.60, 0.57),
+            Self::Bronze => (0.45, 0.34, 0.22),
             Self::Painted(_)
             | Self::WashedBrick
             | Self::PatchedBrick
             | Self::Band
-            | Self::Paving => unreachable!("a lifted look has its own plain colour"),
+            | Self::Paving
+            | Self::Earth => unreachable!("a lifted look has its own plain colour"),
         };
         Color::srgb(r, g, b)
     }
@@ -311,6 +324,8 @@ impl Surface {
             Self::OldIron => (1.0, 0.35, 0.4),
             Self::Sheet => (0.45, 0.8, 0.5),
             Self::Steel => (0.6, 0.6, 0.5),
+            // A real metal; the map's roughness scales the 1.0.
+            Self::Bronze => (1.0, 1.0, 0.5),
             Self::Water => (0.08, 0.0, 0.5),
             Self::Recess => (1.0, 0.0, 0.1),
             _ => (1.0, 0.0, 0.3),
@@ -537,8 +552,8 @@ mod tests {
             );
         }
         assert_eq!(
-            lifted, 9,
-            "five paints, two bricks, the band and the paving"
+            lifted, 10,
+            "five paints, two bricks, the band, the paving and the earth"
         );
     }
 
