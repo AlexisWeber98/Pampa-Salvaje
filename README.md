@@ -59,9 +59,9 @@ riding the train, the next station and its arrival time
 
 One steam train runs the whole railway line on a timetable: a rural mixed
 train of 8 cars (93 m), the locomotive, two passenger coaches and five freight
-cars, drawn in a British-built style of about 1919 at roughly PS2-era detail
-from shared unit meshes and materials (about 2 200 triangles for the engine
-and each coach, 1 100 for a freight car). The engine has a banded boiler, a
+cars, drawn in a British-built style of about 1919, built procedurally from
+rounded shapes (lathed boilers, swept roofs) with PBR textures, from shared
+unit meshes and materials. The engine, a 2-6-0 with a tender, has a banded boiler, a
 smokebox door, a headlamp, cylinders, side and main rods that turn with the
 drivers, a cowcatcher, a cab with spectacle windows, a coaled tender and a
 few puffs of chimney smoke while moving. The coaches have boarded sides,
@@ -134,7 +134,9 @@ track through it, 19 game seconds more on 2026-10-25.)
 
 **Boarding.** While the train stands at a station (or lays over at a
 terminal), `F` within about 4 m of a coach door, on foot on the platform,
-boards it. On horseback the clerk only says "Primero bajate del caballo": the
+boards it. At a terminal's stop spot, the middle of the platform, `F` reaches
+the nearest door up to 8 m away for the whole layover. Each station has
+timetable boards; `F` beside one reads the day's trains. On horseback the clerk only says "Primero bajate del caballo": the
 horse stays where it is, it does not travel by train.
 
 **Aboard.** The player sits in the coach and goes wherever the train goes.
@@ -249,8 +251,10 @@ world's west edge (`RailBranch`, `branches` in the towns file). Caleufú is a
 small railway town of 4 x 4 blocks, about two thirds built, with its plaza
 and church, a comisaría and a pulpería standing blocks apart, and its own
 level crossing and rural track by the station. Track, curves, crossings and
-the minimap treat the branch like the line; no train runs on it yet (the
-line train keeps to the main line). East-south-east of Pico lies **Laguna La Arocena**, a shallow
+the minimap treat the branch like the line. A **branch shuttle**, a 2-6-2T
+tank engine with a coach, runs between Caleufú and a bay track at Metileo and
+meets the line train there both ways, so the change is made at Metileo. The
+line train keeps to the main line. East-south-east of Pico lies **Laguna La Arocena**, a shallow
 freshwater lagoon (`pampa_core::Lagoon`): a squarish, softly rounded shore
 of about 215 x 145 m, a little rough at the edges. Its water is a flat,
 dark olive-brown sheet 0.6 m under the lowest bank, smooth and reflective

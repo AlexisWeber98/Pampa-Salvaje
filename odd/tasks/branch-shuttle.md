@@ -407,8 +407,8 @@ user's permission; see the asset rules in `CREDITS.md`).
   andenes estan muy lejos de las vias"): every platform's track edge is
   1.65 m from the track's middle (was 4 m), stations and the Metileo bay.
   Route: delegated writer.
-- [ ] T6 Docs: this file, `odd/tasks/caleufu.md`, README files, doc
-  comments. Last step before the native review.
+- [x] T6 Docs: this file, `odd/tasks/caleufu.md`, README files, doc
+  comments. Done in `odd/tasks/todo-followups.md` T6.
 
 ## T5 train look
 
@@ -612,4 +612,5 @@ user's permission; see the asset rules in `CREDITS.md`).
 
 ## Next step
 
-T6, docs (README mentions of the train's PS2-era detail are stale).
+Done. The branch was merged to `main` as PR #45. The shuttle is now
+hauled by a 2-6-2T tank engine (see `odd/tasks/todo-followups.md`).

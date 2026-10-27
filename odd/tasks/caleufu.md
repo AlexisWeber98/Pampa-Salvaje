@@ -67,8 +67,10 @@ docs.
 - [x] T5 Tests (core, content, game) and deliberate updates of existing
   expectations.
 - [x] T6 Docs: this file, README.md, assets/world/README.md.
-- [ ] Next: a branch shuttle (see Decisions), with a bay track at Metileo
-  and a timetable meeting the line train both ways.
+- [x] Next: a branch shuttle (see Decisions), with a bay track at Metileo
+  and a timetable meeting the line train both ways. Done in
+  `odd/tasks/branch-shuttle.md` (PR #45); it is now hauled by a 2-6-2T tank
+  engine.
 
 ## Tests
 
@@ -111,6 +113,7 @@ the minimap, Caleufú's buildings and signs.
 
 ## Next step
 
-The branch shuttle: generalise the single `WorldTrain` into a list of
+Done: the branch shuttle exists (see `odd/tasks/branch-shuttle.md`, merged as
+PR #45) and is hauled by a 2-6-2T tank engine. What the step was: generalise the single `WorldTrain` into a list of
 trains (render, ride, camera, life, minimap), add a bay track at Metileo,
 and a timetable meeting the up and down line trains there.
