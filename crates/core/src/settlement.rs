@@ -7,7 +7,8 @@
 //! round a bare patio (the hub), with a galpón, corrals, a molino with its
 //! tank and trough, haystacks and the spots where its trees will grow (a
 //! compound plants a third more of them than its kind lays out, on a random
-//! stream of its own: [`Settlement::MORE_TREES`]).
+//! stream of its own: [`Settlement::MORE_TREES`]; then each kind keeps its
+//! share, [`Settlement::tree_keep`]).
 //!
 //! Dirt tracks (huellas) join it to the gate: a trunk from just inside the gate to
 //! the hub, and a branch from the hub to the door of every house, galpón
@@ -242,6 +243,12 @@ impl Settlement {
     /// Least distance from a footprint to a road's centerline, in meters:
     /// well behind the roadside fence.
     pub const ROAD_CLEARANCE: f32 = 25.0;
+    /// Least distance from a barn to a road, in meters: well past the
+    /// common clearance, so a visitor reaches the casco first and the
+    /// galpones stay off the roadside. The road index sees 64 m
+    /// ([`RoadNetwork::INDEX_REACH`]) and `off_roads_by` adds 2.5 m, so this
+    /// is as far as it can be checked.
+    pub const BARN_ROAD_CLEARANCE: f32 = 60.0;
     /// Least distance from a footprint to the track's centerline, meters.
     pub const RAIL_CLEARANCE: f32 = 40.0;
     /// Least distance from a footprint or track to a town's leveled band.
@@ -265,6 +272,25 @@ impl Settlement {
     /// Extra eucalyptus a compound plants, as a share of the trees its kind
     /// lays out (the count rounds at random).
     pub const MORE_TREES: f32 = 0.35;
+    /// The share of its trees a compound of `kind` keeps (user,
+    /// 2026-10-27: 30% fewer, then "chacras y estancias sacale del total
+    /// que tiene ahora, un 30%", then puestos and ranchos too: "se desmonta
+    /// para huerto, animales, plantaciones"): ranchos, puestos and chacras
+    /// 0.7, estancias 0.49 (0.7 x 0.7).
+    pub fn tree_keep(kind: SettlementKind) -> f32 {
+        match kind {
+            SettlementKind::Hut | SettlementKind::Outpost | SettlementKind::Farm => 0.7,
+            SettlementKind::Ranch => 0.49,
+        }
+    }
+    /// Meters between the pairs of an estancia's alameda, planted as a
+    /// windbreak (4 to 6 m).
+    pub const POPLAR_SPACING: f32 = 6.0;
+    /// How far each row of the alameda stands from the trunk's centerline.
+    pub const POPLAR_OFFSET: f32 = 5.0;
+    /// How far past the trunk's first point (half a meter inside the gate)
+    /// the alameda's last pair stands: about 4 m inside the tranquera.
+    pub const POPLAR_GATE_INSET: f32 = 3.5;
     /// Least ground an estancia's compound spreads over, in square meters.
     pub const RANCH_AREA: f32 = 20_000.0;
     /// Chance of an abandoned wagon at a chacra, and at an estancia.
@@ -747,26 +773,35 @@ struct Ground<'a> {
 impl Ground<'_> {
     /// Whether a footprint may stand on `area`.
     fn area_ok(&self, area: Aabb) -> bool {
-        self.cell
-            .expanded(-Settlement::FENCE_CLEARANCE)
-            .contains(&area)
+        self.area_ok_by(area, Settlement::FENCE_CLEARANCE, true)
+    }
+
+    /// [`Self::area_ok`] with its own `fence` clearance, and the roads' only
+    /// when `roads`: the alameda runs up to the gate, on the road's verge.
+    fn area_ok_by(&self, area: Aabb, fence: f32, roads: bool) -> bool {
+        self.cell.expanded(-fence).contains(&area)
             && self.bands.iter().all(|b| !b.intersects(&area))
             && self.rails.iter().all(|&(a, b)| {
                 area.expanded(Settlement::RAIL_CLEARANCE)
                     .segment_overlap(a, b)
                     .is_none()
             })
-            && self.off_roads(area)
+            && (!roads || self.off_roads(area))
     }
 
     /// Whether `area` is [`Settlement::ROAD_CLEARANCE`] from every road:
     /// samples along its edges at most 5 m apart, each held 2.5 m farther
     /// off, and its middle.
     fn off_roads(&self, area: Aabb) -> bool {
+        self.off_roads_by(area, Settlement::ROAD_CLEARANCE)
+    }
+
+    /// [`Self::off_roads`] for any `clearance`.
+    fn off_roads_by(&self, area: Aabb, clearance: f32) -> bool {
         let Some(roads) = self.roads else {
             return true;
         };
-        let reach = Settlement::ROAD_CLEARANCE + 2.5;
+        let reach = clearance + 2.5;
         let size = area.size();
         let (nx, ny) = (
             (size.x / 5.0).ceil().max(1.0) as usize,
@@ -943,11 +978,11 @@ impl<'a> Compound<'a> {
             (7.0, 9.0),
             3.4,
         );
-        if self.place(house, self.ahead(12.0, 20.0, 0.5)).is_none() {
+        let Some(casco) = self.place(house, self.ahead(12.0, 20.0, 0.5)) else {
             return false;
-        }
+        };
         let barn = self.part(StructureKind::Barn, (14.0, 20.0), (8.0, 10.0), 4.5);
-        if self.place(barn, self.round(24.0, 40.0)).is_none() {
+        if self.place_behind(barn, casco, (22.0, 40.0)).is_none() {
             return false;
         }
         if !self.water_point(true, true, (20.0, 36.0)) {
@@ -990,10 +1025,13 @@ impl<'a> Compound<'a> {
             (14.0, 18.0),
             4.5,
         );
-        let Some(homestead) = self.place(homestead, self.ahead(18.0, 26.0, 0.3)) else {
+        let Some(casco) = self.place(homestead, self.ahead(18.0, 26.0, 0.3)) else {
             return false;
         };
-        let homestead = self.structures[homestead].footprint;
+        let homestead = self.structures[casco].footprint;
+        // First, so the casas de peones and their tracks keep clear of the
+        // alameda instead of taking its place.
+        self.poplar_row();
         // The casas de peones, each in its own sector round the patio.
         let houses = 2 + self.rng.below(3);
         let turn = self.rng.range(0.0, TAU);
@@ -1023,11 +1061,13 @@ impl<'a> Compound<'a> {
         let mut barns = 0;
         for _ in 0..1 + self.rng.below(2) {
             let barn = self.part(StructureKind::Barn, (20.0, 30.0), (10.0, 14.0), 5.5);
-            barns += self.place(barn, self.round(40.0, 90.0)).is_some() as usize;
+            barns += self.place_behind(barn, casco, (40.0, 80.0)).is_some() as usize;
         }
+        // The corrals go with the galpones, behind the casco.
         let mut corrals = 0;
         for _ in 0..1 + self.rng.below(3) {
-            corrals += self.corral((22.0, 34.0), self.round(60.0, 120.0)) as usize;
+            let behind = self.behind(casco, (45.0, 100.0), 1.0);
+            corrals += self.corral((22.0, 34.0), behind) as usize;
         }
         if barns == 0 || corrals == 0 || !self.water_point(true, true, (35.0, 70.0)) {
             return false;
@@ -1042,7 +1082,6 @@ impl<'a> Compound<'a> {
         }
         let cart = self.part(StructureKind::Cart, (5.0, 5.0), (2.2, 2.2), 2.5);
         self.place(cart, self.round(25.0, 50.0));
-        self.poplar_row();
         self.grove(homestead);
         let bounds = self.bounds();
         if bounds.size().x * bounds.size().y < Settlement::RANCH_AREA {
@@ -1065,20 +1104,44 @@ impl<'a> Compound<'a> {
         self.place(part, self.round(at.0, at.1));
     }
 
-    /// Poplars both sides of the trunk's last 90 m, 8 m apart.
+    /// The alameda: poplars in pairs facing each other across the trunk,
+    /// [`Settlement::POPLAR_SPACING`] apart, from about 4 m inside the gate
+    /// back to 20 m from the hub, whatever the lane's length. The rows
+    /// follow the drawn trunk (gate, bend, hub), each pair across its own
+    /// leg. [`Self::thin_trees`] leaves them alone: it keeps every other
+    /// tree in planting order, which would fell one side or stagger the
+    /// pairs.
     fn poplar_row(&mut self) {
-        let entry = self.tracks[0].points[1];
-        let length = entry.distance(self.hub);
-        let dir = (entry - self.hub) * (1.0 / length.max(1e-6));
-        let across = Vec2::new(-dir.y, dir.x);
-        let mut along = 20.0;
-        while along < length.min(90.0) {
-            for side in [-5.0, 5.0] {
-                let at = self.hub + dir * along + across * side;
+        let [gate, bend, hub] = [
+            self.tracks[0].points[0],
+            self.tracks[0].points[1],
+            self.tracks[0].points[2],
+        ];
+        let last = bend.distance(hub);
+        let total = last + gate.distance(bend);
+        let mut along = total - Settlement::POPLAR_GATE_INSET;
+        while along >= 20.0 {
+            let (from, to, back) = if along <= last {
+                (hub, bend, along)
+            } else {
+                (bend, gate, along - last)
+            };
+            let dir = (to - from) * (1.0 / from.distance(to).max(1e-6));
+            let across = Vec2::new(-dir.y, dir.x);
+            let before = self.structures.len();
+            let mut planted = 0;
+            for side in [-Settlement::POPLAR_OFFSET, Settlement::POPLAR_OFFSET] {
+                let at = from + dir * back + across * side;
                 let tree = self.tree(StructureKind::Poplar);
-                self.place_at(tree, at);
+                planted += self.place_at_by(tree, at, true).is_some() as usize;
             }
-            along += 8.0;
+            // At the bend the inside tree can land on the other leg's
+            // track: skip the pair rather than leave one tree alone.
+            if planted == 1 {
+                self.structures.truncate(before + 1);
+                self.structures.pop();
+            }
+            along -= Settlement::POPLAR_SPACING;
         }
     }
 
@@ -1165,6 +1228,30 @@ impl<'a> Compound<'a> {
             self.place(tree, self.round(16.0, 34.0));
         }
         std::mem::swap(&mut self.rng, &mut own);
+        self.thin_trees(own.unit());
+    }
+
+    /// A compound keeps [`Settlement::tree_keep`] of its trees: a tree stays when its share of the running
+    /// total crosses a whole number, so the ones that go are spread evenly through the order they were planted in (a grid's rows, an
+    /// alameda's pairs) and nothing else moves. `start` in [0, 1) offsets
+    /// the total.
+    fn thin_trees(&mut self, start: f32) {
+        let keep = Settlement::tree_keep(self.kind);
+        if keep >= 1.0 {
+            return;
+        }
+        let mut seen = 0.0_f32;
+        self.structures.retain(|s| {
+            if !s.kind.is_tree() || s.kind == StructureKind::Poplar {
+                return true;
+            }
+            // The epsilon keeps a share that lands on a whole number from
+            // rounding down.
+            let at = |n: f32| (start + n * keep + 1e-4).floor();
+            let stays = at(seen + 1.0) > at(seen);
+            seen += 1.0;
+            stays
+        });
     }
 
     fn tree(&mut self, kind: StructureKind) -> Part {
@@ -1215,6 +1302,68 @@ impl<'a> Compound<'a> {
         }
     }
 
+    /// The unit direction of the last approach, from the trunk's bend to
+    /// the hub: the way a visitor rides toward the casco.
+    fn lane(&self) -> Vec2 {
+        let entry = self.tracks[0].points[1];
+        (self.hub - entry) * (1.0 / self.hub.distance(entry).max(1e-6))
+    }
+
+    /// A spot `radius` meters (least, most) from the casco `casco`, on the
+    /// far side of it along [`Self::lane`], within `spread` radians.
+    fn behind(&self, casco: usize, radius: (f32, f32), spread: f32) -> Spot {
+        let lane = self.lane();
+        Spot {
+            around: self.structures[casco].footprint.center(),
+            radius,
+            bearing: lane.y.atan2(lane.x),
+            spread,
+        }
+    }
+
+    /// Places a barn behind the casco `casco`: its near edge past the
+    /// casco's far edge along the lane, and at least
+    /// [`Settlement::BARN_ROAD_CLEARANCE`] from every road. A try that
+    /// breaks either rule is taken back, its track too.
+    fn place_behind(&mut self, part: Part, casco: usize, radius: (f32, f32)) -> Option<usize> {
+        let lane = self.lane();
+        let center = self.structures[casco].footprint.center();
+        let corners = |fp: Aabb| {
+            [
+                fp.min,
+                fp.max,
+                Vec2::new(fp.min.x, fp.max.y),
+                Vec2::new(fp.max.x, fp.min.y),
+            ]
+            .map(|c| (c - center).dot(lane))
+        };
+        let casco_end = corners(self.structures[casco].footprint)
+            .into_iter()
+            .fold(f32::MIN, f32::max);
+        for _ in 0..Self::TRIES {
+            let spot = self.behind(casco, radius, 0.7);
+            let angle = spot.bearing + self.rng.range(-spot.spread, spot.spread);
+            let r = self.rng.range(radius.0, radius.1);
+            let at = center + Vec2::new(angle.cos(), angle.sin()) * r;
+            let (structures, tracks) = (self.structures.len(), self.tracks.len());
+            let Some(index) = self.place_at(part, at) else {
+                continue;
+            };
+            let fp = self.structures[index].footprint;
+            let near = corners(fp).into_iter().fold(f32::MAX, f32::min);
+            if near >= casco_end
+                && self
+                    .ground
+                    .off_roads_by(fp, Settlement::BARN_ROAD_CLEARANCE)
+            {
+                return Some(index);
+            }
+            self.structures.truncate(structures);
+            self.tracks.truncate(tracks);
+        }
+        None
+    }
+
     /// Places `part` somewhere in `spot`, facing the hub, with its branch
     /// track when it has a door. Returns its index.
     fn place(&mut self, part: Part, spot: Spot) -> Option<usize> {
@@ -1231,6 +1380,12 @@ impl<'a> Compound<'a> {
 
     /// Places `part` centered on `at`, if it fits there.
     fn place_at(&mut self, part: Part, at: Vec2) -> Option<usize> {
+        self.place_at_by(part, at, false)
+    }
+
+    /// [`Self::place_at`]; `lane` trees of the alameda may stand 2 m from
+    /// the cell's fences and on the road's verge.
+    fn place_at_by(&mut self, part: Part, at: Vec2, lane: bool) -> Option<usize> {
         let front = facing(self.hub - at);
         let size = match front {
             Side::North | Side::South => part.size,
@@ -1243,7 +1398,7 @@ impl<'a> Compound<'a> {
             front,
             variant: self.rng.next() >> 8,
         };
-        if !self.fits(structure.footprint) {
+        if !self.fits_by(structure.footprint, lane) {
             return None;
         }
         if part.kind.is_reached() {
@@ -1261,9 +1416,15 @@ impl<'a> Compound<'a> {
 
     /// Whether `footprint` stands clear of the ground's keep-outs, the
     /// patio, every other footprint and every track.
-    fn fits(&self, footprint: Aabb) -> bool {
+    /// The alameda's trees (`lane`) get the looser ground.
+    fn fits_by(&self, footprint: Aabb, lane: bool) -> bool {
         let corridor = footprint.expanded(Settlement::CORRIDOR);
-        self.ground.area_ok(footprint)
+        let ground = if lane {
+            self.ground.area_ok_by(footprint, 2.0, false)
+        } else {
+            self.ground.area_ok(footprint)
+        };
+        ground
             && !self.patio.intersects(&footprint)
             && self
                 .structures
@@ -1762,8 +1923,16 @@ pub(crate) mod tests {
                 .collect();
             for st in &s.structures {
                 let fp = st.footprint;
+                // The alameda reaches the gate: it keeps 2 m off the fences
+                // and may stand on the road's verge.
+                let lane = st.kind == StructureKind::Poplar;
                 assert!(
-                    cell.expanded(-Settlement::FENCE_CLEARANCE).contains(&fp),
+                    cell.expanded(if lane {
+                        -2.0
+                    } else {
+                        -Settlement::FENCE_CLEARANCE
+                    })
+                    .contains(&fp),
                     "{st:?}"
                 );
                 assert!(wire.near(fp.expanded(1.0)).is_empty(), "{st:?}");
@@ -1776,7 +1945,7 @@ pub(crate) mod tests {
                 }
                 for p in edge_points(fp) {
                     assert!(
-                        roads.near(p, Settlement::ROAD_CLEARANCE - 0.01).is_none(),
+                        lane || roads.near(p, Settlement::ROAD_CLEARANCE - 0.01).is_none(),
                         "{st:?} at {p:?}"
                     );
                     for &(a, b) in &near_rails {
@@ -2339,9 +2508,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn settlements_plant_thirty_percent_more_trees_clear_of_everything() {
-        // 93 tree spots in the 17 sample settlements before the extra ones
-        // (2026-10-26); a third more where they fit, never past 135.
+    fn settlements_plant_their_trees_clear_of_everything() {
         let (_, _, _, _, layout) = settled();
         let trees: Vec<&Structure> = layout
             .settlements
@@ -2349,7 +2516,7 @@ pub(crate) mod tests {
             .flat_map(|s| s.structures.iter())
             .filter(|s| s.kind.is_tree())
             .collect();
-        assert!((121..=135).contains(&trees.len()), "{} trees", trees.len());
+        assert!(!trees.is_empty());
         for s in &layout.settlements {
             for (k, tree) in s
                 .structures
@@ -2370,5 +2537,222 @@ pub(crate) mod tests {
                 }
             }
         }
+    }
+
+    /// Trees standing in the settlements of `kind` in the sample world,
+    /// the alameda's poplars apart: they are never thinned.
+    fn trees_of(layout: &SettlementLayout, kind: SettlementKind) -> usize {
+        layout
+            .settlements
+            .iter()
+            .filter(|s| s.kind == kind)
+            .flat_map(|s| s.structures.iter())
+            .filter(|s| s.kind.is_tree() && s.kind != StructureKind::Poplar)
+            .count()
+    }
+
+    #[test]
+    fn estancias_keep_half_and_chacras_seven_tenths_of_their_trees() {
+        // Trees in the sample world before the thinning (re-counted
+        // 2026-10-28, after the barns moved behind the casco and the alameda grew): the chacras
+        // 21, the estancias 113, their poplars apart. The chacras' range is
+        // wide because 21 trees round coarsely. No puesto or rancho of the sample
+        // plants any (`a_compound_keeps_..._by_kind` covers those).
+        let (_, _, _, _, layout) = settled();
+        let farms = trees_of(&layout, SettlementKind::Farm) as f32 / 21.0;
+        let ranches = trees_of(&layout, SettlementKind::Ranch) as f32 / 113.0;
+        assert!((0.66..=0.80).contains(&farms), "chacras {farms}");
+        assert!((0.45..=0.53).contains(&ranches), "estancias {ranches}");
+    }
+
+    #[test]
+    fn a_compound_keeps_its_kinds_share_of_its_trees_spread_evenly() {
+        let ground = Ground {
+            roads: None,
+            rails: Vec::new(),
+            bands: Vec::new(),
+            cell: Aabb::from_center_size(Vec2::ZERO, Vec2::new(2000.0, 2000.0)),
+        };
+        for (kind, kept, gap) in [
+            (SettlementKind::Hut, 14, 2),
+            (SettlementKind::Outpost, 14, 2),
+            (SettlementKind::Farm, 14, 2),
+            (SettlementKind::Ranch, 10, 3),
+        ] {
+            for start in [0.0, 0.3, 0.99] {
+                let hub = Vec2::new(0.0, -300.0);
+                let mut c = Compound::new(
+                    &ground,
+                    Rng::new(7, 9),
+                    kind,
+                    hub,
+                    Vec2::new(0.0, 1.0),
+                    [hub, hub, hub],
+                );
+                let spots: Vec<Vec2> = (0..20)
+                    .map(|k| Vec2::new(k as f32 * 12.0 - 120.0, 0.0))
+                    .collect();
+                for &at in &spots {
+                    let tree = c.tree(StructureKind::Eucalyptus);
+                    assert!(c.place_at(tree, at).is_some());
+                }
+                c.thin_trees(start);
+                let left: Vec<usize> = spots
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, at)| c.structures.iter().any(|s| s.footprint.center() == **at))
+                    .map(|(k, _)| k)
+                    .collect();
+                // 20 trees at 0.49 keep 9 or 10 by the offset.
+                let ok = left.len() == kept || (kept == 10 && left.len() == 9);
+                assert!(ok, "{kind:?} {start}: {}", left.len());
+                // Evenly: the ones that go are never in a run.
+                for w in left.windows(2) {
+                    assert!(w[1] - w[0] <= gap, "{kind:?} {left:?}");
+                }
+            }
+        }
+    }
+    /// The unit direction of an estancia's last approach, from its trunk's
+    /// bend toward the hub, and the casco.
+    fn approach(s: &Settlement) -> (Vec2, Vec2, &Structure) {
+        let entry = s.tracks[0].points[1];
+        let lane = (s.hub - entry) * (1.0 / s.hub.distance(entry));
+        let casco = s
+            .structures
+            .iter()
+            .find(|st| matches!(st.kind, StructureKind::MainHouse(_)))
+            .unwrap();
+        (entry, lane, casco)
+    }
+
+    /// Where `p` stands against the trunk of `s`: meters along it from the
+    /// hub, and meters to its left (positive) or right.
+    fn along_the_trunk(s: &Settlement, p: Vec2) -> (f32, f32) {
+        let [gate, bend, hub] = [s.tracks[0].points[0], s.tracks[0].points[1], s.hub];
+        let mut best = (f32::MAX, 0.0, 0.0);
+        let mut start = 0.0;
+        for (a, b) in [(hub, bend), (bend, gate)] {
+            let len = a.distance(b);
+            let dir = (b - a) * (1.0 / len);
+            let d = p - a;
+            let along = d.dot(dir).clamp(0.0, len);
+            let across = dir.x * d.y - dir.y * d.x;
+            let off = (d - dir * along).length();
+            if off < best.0 {
+                best = (off, start + along, across);
+            }
+            start += len;
+        }
+        (best.1, best.2)
+    }
+
+    #[test]
+    fn the_alameda_lines_both_sides_of_the_lane_up_to_the_gate() {
+        let (_, _, _, _, layout) = settled();
+        let ranches: Vec<_> = layout
+            .settlements
+            .iter()
+            .filter(|s| s.kind == SettlementKind::Ranch)
+            .collect();
+        assert!(!ranches.is_empty());
+        for s in ranches {
+            let (mut lefts, mut rights) = (Vec::new(), Vec::new());
+            let mut nearest_gate = f32::MAX;
+            for p in s.of(StructureKind::Poplar) {
+                let at = p.footprint.center();
+                let (along, across) = along_the_trunk(s, at);
+                if across.abs() > Settlement::POPLAR_OFFSET + 1.0 {
+                    continue; // the monte, not the row
+                }
+                nearest_gate = nearest_gate.min(at.distance(s.tracks[0].points[0]));
+                if across > 0.0 {
+                    lefts.push(along);
+                } else {
+                    rights.push(along);
+                }
+            }
+            // The last pair stands inside the tranquera, not at its post.
+            assert!(
+                nearest_gate <= 8.0,
+                "the alameda stops {nearest_gate} m from the gate at {:?}",
+                s.hub
+            );
+            for side in [&mut lefts, &mut rights] {
+                side.sort_by(f32::total_cmp);
+                assert!(side.len() >= 4, "{} poplars at {:?}", side.len(), s.hub);
+                // Dense: a windbreak, with at most one skipped pair (the bend).
+                let gaps = side.windows(2).map(|w| w[1] - w[0]);
+                let skipped = gaps
+                    .clone()
+                    .filter(|g| *g > Settlement::POPLAR_SPACING + 1.0)
+                    .count();
+                assert!(
+                    skipped <= 1
+                        && gaps.fold(0.0, f32::max) <= 2.0 * Settlement::POPLAR_SPACING + 1.0,
+                    "gaps in the alameda at {:?}",
+                    s.hub
+                );
+            }
+            // An alameda: every tree faces a partner across the lane.
+            for (mine, other) in [(&lefts, &rights), (&rights, &lefts)] {
+                for a in mine {
+                    assert!(
+                        other.iter().any(|b| (a - b).abs() <= 1.0),
+                        "a poplar {a} m along the lane has no partner across it at {:?}",
+                        s.hub
+                    );
+                }
+            }
+            assert_eq!(lefts.len(), rights.len());
+        }
+    }
+
+    #[test]
+    fn barns_stand_behind_the_casco_and_far_from_the_main_road() {
+        let (world, _, _, _, layout) = settled();
+        let roads = world.terrain.roads.as_deref().unwrap();
+        let mut barns = 0;
+        for s in &layout.settlements {
+            for barn in s.of(StructureKind::Barn) {
+                barns += 1;
+                let (entry, lane, casco) = approach(s);
+                let far = |fp: Aabb| {
+                    [
+                        fp.min,
+                        fp.max,
+                        Vec2::new(fp.min.x, fp.max.y),
+                        Vec2::new(fp.max.x, fp.min.y),
+                    ]
+                    .map(|c| (c - casco.footprint.center()).dot(lane))
+                };
+                let nearest = far(barn.footprint).into_iter().fold(f32::MAX, f32::min);
+                let casco_end = far(casco.footprint).into_iter().fold(f32::MIN, f32::max);
+                assert!(
+                    nearest >= casco_end,
+                    "{:?} is not behind {casco:?}",
+                    barn.footprint
+                );
+                assert!(
+                    barn.footprint.center().distance(entry)
+                        > casco.footprint.center().distance(entry)
+                );
+                let fp = barn.footprint;
+                for p in [
+                    fp.center(),
+                    fp.min,
+                    fp.max,
+                    Vec2::new(fp.min.x, fp.max.y),
+                    Vec2::new(fp.max.x, fp.min.y),
+                ] {
+                    assert!(
+                        roads.near(p, Settlement::BARN_ROAD_CLEARANCE).is_none(),
+                        "a barn within {} m of a road at {p:?}",
+                        Settlement::BARN_ROAD_CLEARANCE
+                    );
+                }
+            }
+        }
+        assert!(barns >= 2, "{barns}");
     }
 }

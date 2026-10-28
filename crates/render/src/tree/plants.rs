@@ -1,19 +1,18 @@
 //! Yard shrubs and flower beds: little low-poly plants for the yards of the
 //! towns and the settlements.
 //!
-//! A shrub is a few lumpy leaf masses (once-subdivided icospheres, as the
-//! settlements' crowns are), a flower bed a mound of earth with a green
+//! A shrub is a few lumpy leaf masses (once-subdivided icospheres), a flower bed a mound of earth with a green
 //! tuft and about ten octahedral blossoms. Each is one mesh with vertex
 //! colours and flat shading, so one white material paints them all.
 //! [`VARIANTS`] seeded shapes of each are built once into the shared
 //! [`PlantKit`], and every plant is a variant turned about the vertical.
 //! They are scenery: no obstacles.
 
+use std::collections::HashMap;
+
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::PrimitiveTopology;
 use bevy::prelude::*;
-
-use crate::settlement::crown::{icosphere, unit};
 
 /// Seeded shapes built of each plant.
 pub const VARIANTS: u32 = 3;
@@ -30,6 +29,79 @@ const BLOSSOMS: [[f32; 3]; 5] = [
 const GREENS: [[f32; 3]; 2] = [[0.22, 0.34, 0.14], [0.30, 0.40, 0.18]];
 /// The flower bed's earth.
 const SOIL: [f32; 3] = [0.28, 0.19, 0.12];
+
+/// Deterministic `[0, 1)` for a seed and an index.
+fn unit(seed: u32, i: u32) -> f32 {
+    let mut x = seed
+        .wrapping_mul(0x9e37_79b9)
+        .wrapping_add(i.wrapping_mul(0x85eb_ca6b))
+        ^ 0x27d4_eb2f;
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x2c1b_3c6d);
+    x ^= x >> 12;
+    x = x.wrapping_mul(0x297a_2d39);
+    x ^= x >> 15;
+    (x >> 8) as f32 / (1u32 << 24) as f32
+}
+
+/// A once-subdivided icosahedron on the unit sphere: 42 points, 80
+/// counter-clockwise triangles.
+fn icosphere() -> (Vec<Vec3>, Vec<[u32; 3]>) {
+    let t = (1.0 + 5.0_f32.sqrt()) / 2.0;
+    let mut points: Vec<Vec3> = [
+        (-1.0, t, 0.0),
+        (1.0, t, 0.0),
+        (-1.0, -t, 0.0),
+        (1.0, -t, 0.0),
+        (0.0, -1.0, t),
+        (0.0, 1.0, t),
+        (0.0, -1.0, -t),
+        (0.0, 1.0, -t),
+        (t, 0.0, -1.0),
+        (t, 0.0, 1.0),
+        (-t, 0.0, -1.0),
+        (-t, 0.0, 1.0),
+    ]
+    .map(|(x, y, z)| Vec3::new(x, y, z).normalize())
+    .to_vec();
+    let faces: [[u32; 3]; 20] = [
+        [0, 11, 5],
+        [0, 5, 1],
+        [0, 1, 7],
+        [0, 7, 10],
+        [0, 10, 11],
+        [1, 5, 9],
+        [5, 11, 4],
+        [11, 10, 2],
+        [10, 7, 6],
+        [7, 1, 8],
+        [3, 9, 4],
+        [3, 4, 2],
+        [3, 2, 6],
+        [3, 6, 8],
+        [3, 8, 9],
+        [4, 9, 5],
+        [2, 4, 11],
+        [6, 2, 10],
+        [8, 6, 7],
+        [9, 8, 1],
+    ];
+    let mut middles: HashMap<(u32, u32), u32> = HashMap::new();
+    let mut middle = |a: u32, b: u32, points: &mut Vec<Vec3>| {
+        *middles.entry((a.min(b), a.max(b))).or_insert_with(|| {
+            points.push(((points[a as usize] + points[b as usize]) / 2.0).normalize());
+            points.len() as u32 - 1
+        })
+    };
+    let mut split = Vec::with_capacity(80);
+    for [a, b, c] in faces {
+        let ab = middle(a, b, &mut points);
+        let bc = middle(b, c, &mut points);
+        let ca = middle(c, a, &mut points);
+        split.extend([[a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]]);
+    }
+    (points, split)
+}
 
 /// One lump of a plant: an ellipsoid (or an octahedron) of `radii` at
 /// `center`, lumpy by `seed`.

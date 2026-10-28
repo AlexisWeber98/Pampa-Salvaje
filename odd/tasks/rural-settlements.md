@@ -186,7 +186,7 @@ Today the fields between the towns are empty grass. The pampa of 1919 was settle
 
 ## Pending, outside this feature
 
-- Verify the licence actually shipped with the Quaternius vegetation pack. quaternius.com now shows the "Quaternius Asset License v1.0", which forbids redistribution, while the old itch.io page said CC0.
+- Resolved (2026-10-27): the shipped `assets/models/vegetation/quaternius-ultimate-nature/License.txt` reads CC0 1.0. A CC0 dedication cannot be revoked for copies already received, so the newer "Quaternius Asset License v1.0" on quaternius.com does not apply to this 2026-10-22 download.
 
 ## Progress
 

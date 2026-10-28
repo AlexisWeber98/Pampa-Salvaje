@@ -12,6 +12,7 @@ mod fauna;
 mod first_person;
 mod life;
 mod orbit;
+mod plant_collision;
 mod player;
 mod ride;
 #[cfg(test)]
@@ -159,8 +160,8 @@ fn lay_out(loaded: &towns::LoadedWorld) -> Laid {
     ]
     .map(|k| settlements.count(k));
     // Caldenes, chañares and grass between the towns, off the track, the
-    // roads, the fence lines and the settlements. Every tree trunk of the
-    // world is an obstacle from the start, drawn or not.
+    // roads, the fence lines and the settlements. Tree trunks are
+    // obstacles only in the chunks round the player (see `plant_collision`).
     // Kept off the whole train path too: each town's own track and its
     // run-outs, not only the links between towns.
     // The branches' towns and run-outs too.
@@ -174,7 +175,6 @@ fn lay_out(loaded: &towns::LoadedWorld) -> Laid {
         )
         .with_fences(&fences)
         .with_settlements(&settlements);
-    world.plant(&flora);
     // Kerosene street lamps round the plazas, at the town exits and street
     // corners and at the estancias, clear of everything above; each post
     // is a thin obstacle.
@@ -330,6 +330,10 @@ fn main() {
     .add_plugins((RoadPlugin, FencePlugin, SettlementPlugin, ThinFadePlugin))
     // The kerosene street lamps, glowing by night, the nearest lit.
     .add_plugins(LampPlugin)
+    // Trees collide in the chunks round the player.
+    .add_plugins(plant_collision::PlantCollisionPlugin)
+    // The ground's material: the standard one plus the monte's leaf litter.
+    .add_plugins(pampa_render::ground::GroundMaterialPlugin)
     // The sky dome (sun, moon, stars, clouds) and the birds flying in it.
     .add_plugins(pampa_render::SkyPlugin)
     // Cattle, corral horses, hares and birds round the player.
@@ -592,11 +596,26 @@ mod tests {
         assert!(end > pampa_core::Lagoon::MUD_BAND && end < 15.0, "{end}");
         // A rider rides it end to end: no fence, gate, settlement, tree or
         // signpost stands on it.
+        // The trees are planted as a rider nears them (see
+        // `plant_collision`): plant the chunks the road crosses and the full
+        // ring (3x3, diagonals included) the game loads around the rider.
         let collider = pampa_core::Circle::new(pampa_core::Rider::COLLIDER_RADIUS);
+        let mut planted = laid.world.clone();
+        for p in &road.path {
+            let here = planted.config.chunk_of(*p);
+            let r = plant_collision::LOAD_RADIUS;
+            for dy in -r..=r {
+                for dx in -r..=r {
+                    let c = pampa_core::ChunkCoord::new(here.x + dx, here.y + dy);
+                    planted.plant_chunk(&laid.flora, c);
+                }
+            }
+        }
+        assert!(planted.obstacles.streamed_len() > 0);
         for w in road.path.windows(2) {
             for k in 0..4 {
                 let p = w[0] + (w[1] - w[0]) * (k as f32 / 4.0);
-                assert_eq!(laid.world.resolve(collider, p, |_| ()), p, "{p:?}");
+                assert_eq!(planted.resolve(collider, p, |_| ()), p, "{p:?}");
             }
         }
         // A fence each side, as along every road, out of town and off the

@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use crate::obstacles::around;
 use crate::{
-    Body, Circle, FenceLayout, Floor, FloraSite, RailLine, RoadNetwork, SettlementLayout,
-    SideObstacle, StaticObstacles, Terrain, TownLayout, Vec2, WorldConfig,
+    Body, ChunkCoord, Circle, FenceLayout, Floor, FloraSite, RailLine, RoadNetwork,
+    SettlementLayout, SideObstacle, StaticObstacles, Terrain, TownLayout, Vec2, WorldConfig,
 };
 
 /// Axis-aligned playable area on the ground plane.
@@ -197,11 +197,30 @@ impl World {
 
     /// Adds every tree trunk `flora` grows anywhere in the world as a
     /// static obstacle, so collision holds in chunks that are not drawn.
-    /// Returns how many trees were planted.
+    /// Returns how many trees were planted. Shrubs and grass are not
+    /// obstacles: a rider rides through them.
     pub fn plant(&mut self, flora: &FloraSite) -> usize {
         let trees = flora.all_trees();
         self.obstacles.extend(trees.iter().map(|t| t.obstacle()));
         trees.len()
+    }
+
+    /// Streams the trunks of chunk `coord`'s trees in as obstacles,
+    /// replacing any it held, so the chunk collides without the whole map
+    /// being planted. The same trees every time. Returns how many were
+    /// planted. See [`Self::unplant_chunk`].
+    pub fn plant_chunk(&mut self, flora: &FloraSite, coord: ChunkCoord) -> usize {
+        let trees = flora.trees(coord);
+        let count = trees.len();
+        self.obstacles
+            .set_chunk(coord, trees.iter().map(|t| t.obstacle()).collect());
+        count
+    }
+
+    /// Drops what [`Self::plant_chunk`] planted in `coord`. Returns whether
+    /// the chunk was planted.
+    pub fn unplant_chunk(&mut self, coord: ChunkCoord) -> bool {
+        self.obstacles.clear_chunk(coord)
     }
 }
 

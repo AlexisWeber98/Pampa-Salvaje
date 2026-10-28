@@ -5,9 +5,11 @@
 //! back behind a moving rider. Buildings, the platform canopy and the line
 //! train's cars never come between the camera and the rider: it pulls in in
 //! front of them at once, and eases back out slowly once the view clears.
-//! Thin things (trees, fences, signposts) do not move the camera: the line
-//! of sight is handed to render each frame ([`SightLine`]), which fades
-//! whichever of them stand in it.
+//! Tree trunks pull it in too, but softly ([`trunk_reach`]): the camera
+//! eases round a trunk rather than snapping at it, and it looks through the
+//! leaves of a crown. Other thin things (fences, signposts, lamps) do not
+//! move the camera: the line of sight is handed to render each frame
+//! ([`SightLine`]), which fades whichever of them stand in it.
 //!
 //! Aboard the train ([`OnTrain`]) `V` cycles three views ([`RideView`]):
 //! seated by a window inside the coach (the default), facing forward the
@@ -33,12 +35,13 @@ use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use pampa_core::{
-    Aabb, BuildingKind, CoachBody, Ground, LineTrain, PlacedCar, SettlementLayout, StructureKind,
-    Terrain, TownLayout, Travel, Vec2 as GroundVec2,
+    Aabb, BuildingKind, ChunkCoord, CoachBody, FloraSite, Ground, LineTrain, PlacedCar,
+    SettlementLayout, StructureKind, Terrain, TownLayout, Travel, Vec2 as GroundVec2, World,
 };
 use pampa_render::character::viewer::world_layers;
 use pampa_render::{
-    CloseShadows, HudHint, SightLine, WorldTrains, car_transform, world_from_ground,
+    CloseShadows, HudHint, SightLine, WorldFlora, WorldSettlements, WorldTowns, WorldTrains,
+    car_transform, world_from_ground,
 };
 
 use crate::first_person::{
@@ -232,10 +235,12 @@ impl Occluder {
 /// (the line train's cars are added each frame, see [`car_occluders`]).
 ///
 /// Buildings count as columns up to their roofs, so the camera may still
-/// look over a low shed, and the platform canopy as a roof slab. Tree trunks,
-/// canopy posts and other thin things are left out on purpose: a 0.7 m trunk
-/// sweeping across the view would make the camera jump in and out. Trees,
-/// fences and signposts are faded instead (see [`SightLine`]).
+/// look over a low shed, and the platform canopy as a roof slab. Canopy posts
+/// and other thin things are left out on purpose: a post sweeping across the
+/// view would make the camera jump in and out. Fences and signposts are
+/// faded instead (see [`SightLine`]). Tree trunks are not columns here
+/// either: they come and go with the chunks and pull the camera in softly
+/// (see [`trunk_reach`]).
 #[derive(Resource, Debug, Clone, Default)]
 pub struct CameraOccluders(pub Vec<Occluder>);
 
@@ -262,8 +267,8 @@ impl CameraOccluders {
     }
 
     /// Adds every house and barn of `settlements` as a column up to its
-    /// roof. Tanks, haystacks, corrals and the thin props are left out like
-    /// tree trunks: low or thin, they fade instead (see [`SightLine`]).
+    /// roof. Tanks, haystacks, corrals and the thin props are left out: low
+    /// or thin, they fade instead (see [`SightLine`]).
     pub fn with_settlements(mut self, settlements: &SettlementLayout, terrain: &Terrain) -> Self {
         let ground = |p: GroundVec2| terrain.height(p.x, p.y);
         self.0.extend(
@@ -333,6 +338,210 @@ pub fn car_occluders(cars: &[PlacedCar], terrain: &Terrain, near: GroundVec2) ->
                 .map(move |b| Occluder::column(b, ground(b.center()), top))
         })
         .collect()
+}
+
+/// A tree trunk the camera keeps off the line of sight to the rider.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Trunk {
+    pub at: GroundVec2,
+    pub radius: f32,
+    /// Heights the trunk and its main limbs span, world meters. A line
+    /// under `bottom` passes below the trunk's foot (through a rise), a line
+    /// over `top` through the crown: neither is blocked.
+    pub bottom: f32,
+    pub top: f32,
+}
+
+/// How much of a tree's height the camera treats as trunk, up to where the
+/// crown's mass begins. Above it the line of sight runs through leaves,
+/// which are alpha-cut cards the rider shows through.
+const TRUNK_TOP: f32 = 0.6;
+/// A line this far (meters) past a trunk's side, or above its top, is
+/// unaffected; the pull-in grows smoothly to the full stop from there, so a
+/// trunk sweeping across the view moves the camera gradually instead of
+/// snapping it.
+const TRUNK_SOFT: f32 = 0.8;
+const TRUNK_TOP_SOFT: f32 = 1.2;
+/// A trunk this close (meters along the line) to the rider is ignored, and
+/// counts fully from `TRUNK_NEAR + TRUNK_NEAR_BLEND`: a tree beside the
+/// rider must not slam the camera onto it.
+const TRUNK_NEAR: f32 = 1.5;
+const TRUNK_NEAR_BLEND: f32 = 1.5;
+
+fn smooth(x: f32) -> f32 {
+    let x = x.clamp(0.0, 1.0);
+    x * x * (3.0 - 2.0 * x)
+}
+
+/// How far along the line from `focus` to `wanted` the trunks leave the
+/// line of sight clear, as a fraction of it: 1 if none is in the way,
+/// otherwise a point just in front of the first trunk.
+///
+/// Unlike a wall ([`clear_reach`]), the result is continuous in where the
+/// trunks stand: a trunk fully blocks only on the line itself, and its
+/// effect fades out with the line's distance from it, its height above its
+/// top or below its foot, and its nearness to the rider. Riding past a row of trees therefore
+/// never makes the camera jump. Crowns do not block at all: pulling in under
+/// every crown of a monte would keep the camera on the rider's shoulder.
+pub fn trunk_reach(focus: Vec3, wanted: Vec3, trunks: &[Trunk]) -> f32 {
+    let (from, to) = (
+        GroundVec2::new(focus.x, -focus.z),
+        GroundVec2::new(wanted.x, -wanted.z),
+    );
+    let length = from.distance(to);
+    if length <= f32::EPSILON {
+        return 1.0;
+    }
+    let along = (to - from) * (1.0 / length);
+    let mut reach = 1.0_f32;
+    for t in trunks {
+        // The point of the line nearest the trunk, and how far it passes.
+        let at = (t.at - from).dot(along).clamp(0.0, length);
+        let d = t.at.distance(from + along * at);
+        let entry = at - (t.radius * t.radius - d * d).max(0.0).sqrt();
+        let stop = ((entry - WALL_CLEARANCE) / length).max(0.0);
+        if stop >= 1.0 {
+            continue;
+        }
+        let height = focus.y + (wanted.y - focus.y) * at / length;
+        let slack = smooth((d - t.radius) / TRUNK_SOFT)
+            .max(smooth((height - t.top) / TRUNK_TOP_SOFT))
+            .max(smooth((t.bottom - height) / TRUNK_TOP_SOFT))
+            .max(1.0 - smooth((at - TRUNK_NEAR) / TRUNK_NEAR_BLEND));
+        reach = reach.min(stop + (1.0 - stop) * slack);
+    }
+    reach
+}
+
+/// The trunks near the camera's line of sight, from the field's own trees
+/// (the same ones [`FloraSite`] plants, so a tree stands where it is drawn),
+/// kept per chunk while the rider is near it. The streamed obstacles hold
+/// only footprints, and mix in signposts and lamps, which fade instead.
+#[derive(Default)]
+pub struct TrunkCache(std::collections::HashMap<ChunkCoord, Vec<Trunk>>);
+
+impl TrunkCache {
+    /// The trunks within reach of the segment from `a` to `b`.
+    pub fn along(&mut self, flora: &FloraSite, world: &World, a: Vec3, b: Vec3) -> Vec<Trunk> {
+        let config = world.config;
+        let (lo, hi) = segment_box(a, b);
+        let (first, last) = (config.chunk_of(lo), config.chunk_of(hi));
+        let here = config.chunk_of(GroundVec2::new(a.x, -a.z));
+        self.0
+            .retain(|c, _| (c.x - here.x).abs().max((c.y - here.y).abs()) <= 2);
+        let mut found = Vec::new();
+        for y in first.y..=last.y {
+            for x in first.x..=last.x {
+                let coord = ChunkCoord::new(x, y);
+                if !config.has_chunk(coord) {
+                    continue;
+                }
+                let trunks = self.0.entry(coord).or_insert_with(|| {
+                    flora
+                        .trees(coord)
+                        .iter()
+                        .map(|t| {
+                            let ground = world.terrain.height(t.at.x, t.at.y);
+                            Trunk {
+                                at: t.at,
+                                radius: t.trunk_radius(),
+                                bottom: ground - 0.5,
+                                top: ground + TRUNK_TOP * t.height,
+                            }
+                        })
+                        .collect()
+                });
+                found.extend(trunks.iter().filter(|t| {
+                    (lo.x..=hi.x).contains(&t.at.x) && (lo.y..=hi.y).contains(&t.at.y)
+                }));
+            }
+        }
+        found
+    }
+}
+
+/// How far up a town tree counts as trunk, meters over the ground. Core
+/// knows no town tree's height (render scales them), so this is a flat
+/// stand-in: a trimmed street tree's crown starts over 3.5 m, and a line
+/// above it runs through leaves like any other.
+const TOWN_TREE_TRUNK_TOP: f32 = 3.5;
+
+/// The trunks of the trees that never come and go with a chunk: the rings,
+/// groves and street trees of the towns, and the estancias' eucalyptus and
+/// poplars. Each is solid, so render never fades it and the camera must
+/// ease round it instead. Built once from the layouts (their positions and
+/// radii are the ones collision uses) and kept per chunk, so a frame
+/// only looks at the chunks the sight line crosses.
+#[derive(Debug, Default)]
+pub struct StaticTrunks(std::collections::HashMap<ChunkCoord, Vec<Trunk>>);
+
+impl StaticTrunks {
+    /// Every town and settlement tree, standing on `terrain`.
+    pub fn build(
+        config: pampa_core::WorldConfig,
+        terrain: &Terrain,
+        towns: &[TownLayout],
+        settlements: &SettlementLayout,
+    ) -> Self {
+        let mut cache = Self::default();
+        let mut add = |at: GroundVec2, radius: f32, height: f32| {
+            let ground = terrain.height(at.x, at.y);
+            cache.0.entry(config.chunk_of(at)).or_default().push(Trunk {
+                at,
+                radius,
+                bottom: ground - 0.5,
+                top: ground + height,
+            });
+        };
+        for town in towns {
+            let ring = town.trees.iter().copied();
+            let shade = town.shade_trees.iter().map(|t| t.at);
+            for at in ring.chain(shade) {
+                add(at, pampa_core::town::TREE_TRUNK_RADIUS, TOWN_TREE_TRUNK_TOP);
+            }
+        }
+        for tree in settlements
+            .settlements
+            .iter()
+            .flat_map(|s| s.structures.iter())
+            .filter(|s| s.kind.is_tree())
+        {
+            add(
+                tree.footprint.center(),
+                tree.trunk_radius(),
+                TRUNK_TOP * tree.height,
+            );
+        }
+        cache
+    }
+
+    /// The trunks within reach of the segment from `a` to `b`.
+    pub fn along(&self, config: pampa_core::WorldConfig, a: Vec3, b: Vec3) -> Vec<Trunk> {
+        let (lo, hi) = segment_box(a, b);
+        let (first, last) = (config.chunk_of(lo), config.chunk_of(hi));
+        let mut found = Vec::new();
+        for y in first.y..=last.y {
+            for x in first.x..=last.x {
+                if let Some(trunks) = self.0.get(&ChunkCoord::new(x, y)) {
+                    found.extend(trunks.iter().filter(|t| {
+                        (lo.x..=hi.x).contains(&t.at.x) && (lo.y..=hi.y).contains(&t.at.y)
+                    }));
+                }
+            }
+        }
+        found
+    }
+}
+
+/// The ground box round the segment from `a` to `b`, padded by the reach of
+/// a trunk's soft edge.
+fn segment_box(a: Vec3, b: Vec3) -> (GroundVec2, GroundVec2) {
+    let (a, b) = (GroundVec2::new(a.x, -a.z), GroundVec2::new(b.x, -b.z));
+    let pad = TRUNK_SOFT + 1.0;
+    (
+        GroundVec2::new(a.x.min(b.x) - pad, a.y.min(b.y) - pad),
+        GroundVec2::new(a.x.max(b.x) + pad, a.y.max(b.y) + pad),
+    )
 }
 
 /// The next frame's [`CameraReach`]: `allowed` (the clear part of the arm)
@@ -579,9 +788,15 @@ fn follow_player(
     tuning: Res<CameraTuning>,
     input: Res<CameraInput>,
     sight: Option<ResMut<SightLine>>,
+    flora: Option<Res<WorldFlora>>,
+    (towns, settlements): (Option<Res<WorldTowns>>, Option<Res<WorldSettlements>>),
     player: Single<(&Player, Option<&OnTrain>)>,
     (view, mut look, mode): RideCamera,
-    mut was: Local<Option<RideView>>,
+    (mut was, mut trunks, mut solid): (
+        Local<Option<RideView>>,
+        Local<TrunkCache>,
+        Local<Option<StaticTrunks>>,
+    ),
     camera: Single<(
         &mut Transform,
         &FollowCamera,
@@ -676,7 +891,30 @@ fn follow_player(
             car_occluders(&cars, &world.0.terrain, rider.position)
         })
         .unwrap_or_default();
-    let allowed = clear_reach(target, desired, occluders.0.iter().chain(&cars));
+    // And of the trunks of the trees round it: it eases in round them.
+    let mut trunks = flora
+        .as_deref()
+        .map(|f| trunks.along(&f.0, &world.0, target, desired))
+        .unwrap_or_default();
+    // Town and estancia trees are solid: the camera eases round them too.
+    // Their layouts rarely change, so the trunks are gathered once and
+    // gathered again whenever a layout is added or replaced.
+    if towns.as_ref().is_some_and(|t| t.is_changed())
+        || settlements.as_ref().is_some_and(|s| s.is_changed())
+    {
+        *solid = None;
+    }
+    if towns.is_some() || settlements.is_some() {
+        let solid = solid.get_or_insert_with(|| {
+            let none = SettlementLayout::default();
+            let towns = towns.as_deref().map_or(&[][..], |t| &t.0);
+            let settlements = settlements.as_deref().map_or(&none, |s| &s.0);
+            StaticTrunks::build(world.0.config, &world.0.terrain, towns, settlements)
+        });
+        trunks.extend(solid.along(world.0.config, target, desired));
+    }
+    let allowed = clear_reach(target, desired, occluders.0.iter().chain(&cars))
+        .min(trunk_reach(target, desired, &trunks));
     reach.0 = if snapped {
         allowed
     } else {
@@ -688,8 +926,8 @@ fn follow_player(
         target.lerp(desired, reach.0)
     };
     transform.look_at(focus, Vec3::Y);
-    // Trees, fences and signs in the way fade instead (render); nothing
-    // stands between the eyes and the player.
+    // Fences and signs in the way fade instead (render); nothing stands
+    // between the eyes and the player.
     if let Some(mut sight) = sight {
         sight.0 = (!first).then_some((target, transform.translation));
     }
@@ -948,35 +1186,26 @@ mod tests {
         assert!(at.y > -4.0 && at.y < 0.0, "between wall and rider: {at:?}");
     }
 
-    /// A caldén 6 m south of a rider at the origin facing north, planted,
-    /// and drawn as one fading part.
-    fn tree_app(walls: CameraOccluders) -> (App, Entity) {
-        let tree = pampa_core::Tree {
-            at: GroundVec2::new(0.0, -6.0),
-            species: pampa_core::Species::Calden,
-            height: 7.0,
-            yaw: 0.0,
-            variant: 0,
-        };
-        let mut world = World::default();
-        world.obstacles.push(tree.obstacle());
-        let mut app = headless_app(world.clone(), north_at(0.0, 0.0), walls);
+    /// A fence 6 m south of a rider at the origin facing north, drawn as one
+    /// fading part: thin, so it fades instead of moving the camera.
+    fn fence_app(walls: CameraOccluders) -> (App, Entity) {
+        let mut app = headless_app(World::default(), north_at(0.0, 0.0), walls);
         app.init_resource::<Assets<StandardMaterial>>()
             .add_plugins(pampa_render::ThinFadePlugin);
         let material = app
             .world_mut()
             .resource_mut::<Assets<StandardMaterial>>()
             .add(StandardMaterial::default());
-        let ground = world.terrain.height(0.0, -6.0);
+        let ground = World::default().terrain.height(0.0, -6.0);
         let part = app
             .world_mut()
             .spawn((
                 pampa_render::ThinOccluder {
-                    a: tree.at,
-                    b: tree.at,
-                    radius: 0.8 * tree.crown_radius(),
+                    a: GroundVec2::new(-4.0, -6.0),
+                    b: GroundVec2::new(4.0, -6.0),
+                    radius: 0.4,
                     bottom: ground - 0.5,
-                    top: ground + tree.height,
+                    top: ground + 7.0,
                 },
                 MeshMaterial3d(material),
             ))
@@ -985,8 +1214,8 @@ mod tests {
     }
 
     #[test]
-    fn a_tree_behind_the_rider_fades_instead_of_pulling_the_camera_in() {
-        let (mut app, tree) = tree_app(CameraOccluders::default());
+    fn a_fence_behind_the_rider_fades_instead_of_pulling_the_camera_in() {
+        let (mut app, fence) = fence_app(CameraOccluders::default());
         for _ in 0..3 {
             app.update();
         }
@@ -997,29 +1226,279 @@ mod tests {
         let full = follow.desired(focus, &orbit, &world);
         let at = camera(&mut app).translation;
         assert!(at.distance(full) < 1e-3, "pulled in: {at} vs {full}");
-        // The camera is south of the tree, which stands in the view.
+        // The camera is south of the fence, which stands in the view.
         assert!(ground(at).y < -6.0, "{at}");
         assert!(r.position.y > -6.0);
-        assert!(app.world().get::<pampa_render::Faded>(tree).is_some());
+        assert!(app.world().get::<pampa_render::Faded>(fence).is_some());
     }
 
     #[test]
-    fn a_building_still_pulls_the_camera_in_past_a_faded_tree() {
+    fn a_building_still_pulls_the_camera_in_past_a_faded_fence() {
         let wall = Occluder::column(
             Aabb::new(GroundVec2::new(-5.0, -11.0), GroundVec2::new(5.0, -8.0)),
             -10.0,
             50.0,
         );
-        let (mut app, tree) = tree_app(CameraOccluders(vec![wall]));
+        let (mut app, fence) = fence_app(CameraOccluders(vec![wall]));
         for _ in 0..3 {
             app.update();
         }
         let at = ground(camera(&mut app).translation);
         assert!(at.y > -8.0 && at.y < 0.0, "in front of the wall: {at:?}");
         assert!(!wall.footprint.contains_point(at));
-        // Between the wall and the rider, the tree is still in the way.
+        // Between the wall and the rider, the fence is still in the way.
         assert!(at.y < -6.0, "{at:?}");
-        assert!(app.world().get::<pampa_render::Faded>(tree).is_some());
+        assert!(app.world().get::<pampa_render::Faded>(fence).is_some());
+    }
+
+    /// A caldén of the field standing alone: no other tree within 40 m.
+    fn lone_tree(flora: &FloraSite) -> pampa_core::Tree {
+        let trees: Vec<pampa_core::Tree> = (-19..1)
+            .flat_map(|x| (3..19).map(move |y| ChunkCoord::new(x, y)))
+            .flat_map(|c| flora.trees(c))
+            .collect();
+        *trees
+            .iter()
+            .find(|t| {
+                t.species == pampa_core::Species::Calden
+                    && t.height > 6.0
+                    && trees
+                        .iter()
+                        .all(|o| std::ptr::eq(o, *t) || o.at.distance(t.at) > 40.0)
+            })
+            .expect("a lone caldén")
+    }
+
+    fn flora_site() -> FloraSite {
+        let world = World::default();
+        FloraSite::new(
+            world.config,
+            &world.terrain,
+            &pampa_core::RailLine::default(),
+        )
+    }
+
+    /// An app with the field's trees, the rider 6 m north of `tree` facing
+    /// north (away from it), so the tree stands behind the rider, where the
+    /// camera goes.
+    fn grove_app(tree: &pampa_core::Tree) -> App {
+        let mut app = headless_app(
+            World::default(),
+            north_at(tree.at.x, tree.at.y + 6.0),
+            CameraOccluders::default(),
+        );
+        app.insert_resource(pampa_render::WorldFlora(flora_site()));
+        app
+    }
+
+    #[test]
+    fn a_tree_behind_the_rider_pulls_the_camera_in_to_clear_its_trunk() {
+        let tree = lone_tree(&flora_site());
+        let mut app = grove_app(&tree);
+        for _ in 0..3 {
+            app.update();
+        }
+        let follow = FollowCamera::default();
+        let (orbit, focus) = rig(&mut app);
+        let world = app.world().resource::<GameWorld>().0.clone();
+        let full = follow.desired(focus, &orbit, &world);
+        let at = camera(&mut app).translation;
+        // Pulled in short of where it wants to be, in front of the tree.
+        assert!(
+            at.distance(focus) < full.distance(focus) - 1.0,
+            "{at} {full}"
+        );
+        assert!(
+            ground(at).y > tree.at.y,
+            "the camera is past the tree: {at}"
+        );
+        // The line from the rider's head to the camera clears the trunk.
+        let clearance = |c: GroundVec2| {
+            let (a, b) = (ground(focus), ground(at));
+            let t = ((c - a).dot(b - a) / (b - a).dot(b - a)).clamp(0.0, 1.0);
+            c.distance(a + (b - a) * t)
+        };
+        assert!(
+            clearance(tree.at) > tree.trunk_radius(),
+            "{}",
+            clearance(tree.at)
+        );
+    }
+
+    fn trunk(x: f32, y: f32) -> Trunk {
+        Trunk {
+            at: GroundVec2::new(x, y),
+            radius: 0.4,
+            bottom: -0.5,
+            top: 4.0,
+        }
+    }
+
+    #[test]
+    fn a_trunk_on_the_line_stops_the_camera_short_of_it_and_a_crown_does_not() {
+        // Rider at the origin looking north, the camera 10 m south of it
+        // and 3 m up (z is south).
+        let (head, camera) = (Vec3::new(0.0, 2.0, 0.0), Vec3::new(0.0, 5.0, 10.0));
+        assert_eq!(trunk_reach(head, camera, &[]), 1.0);
+        // A trunk 6 m behind the rider, on the line: the camera stops in
+        // front of it, 6 m out of the 10 m arm.
+        let on_line = trunk_reach(head, camera, &[trunk(0.0, -6.0)]);
+        assert!(on_line < 0.6, "{on_line}");
+        // Over the top of the trunk's limbs, the line runs through leaves.
+        let high = Trunk {
+            top: 1.0,
+            ..trunk(0.0, -6.0)
+        };
+        assert_eq!(trunk_reach(head, camera, &[high]), 1.0);
+        // Well to the side, or beyond the camera, or behind the rider.
+        assert_eq!(trunk_reach(head, camera, &[trunk(3.0, -6.0)]), 1.0);
+        assert_eq!(trunk_reach(head, camera, &[trunk(0.0, -14.0)]), 1.0);
+        assert_eq!(trunk_reach(head, camera, &[trunk(0.0, 6.0)]), 1.0);
+    }
+
+    #[test]
+    fn a_line_passing_under_a_trunks_base_is_not_blocked_by_it() {
+        // The line at the trunk is about 3.8 m up. A trunk standing on a
+        // rise, its base above that, is passed under (through the rise,
+        // which is the terrain's to stop); one whose base is below it blocks.
+        let (head, camera) = (Vec3::new(0.0, 2.0, 0.0), Vec3::new(0.0, 5.0, 10.0));
+        let on_rise = Trunk {
+            bottom: 6.0,
+            top: 12.0,
+            ..trunk(0.0, -6.0)
+        };
+        assert_eq!(trunk_reach(head, camera, &[on_rise]), 1.0);
+        let standing = Trunk {
+            bottom: 1.0,
+            ..on_rise
+        };
+        assert!(trunk_reach(head, camera, &[standing]) < 0.6);
+    }
+
+    /// A rider 6 m west of `tree` and a camera 4 m east of it, 3 m up.
+    fn behind_a_tree(tree: GroundVec2, ground: f32) -> (Vec3, Vec3) {
+        (
+            Vec3::new(tree.x - 6.0, ground + 1.6, -tree.y),
+            Vec3::new(tree.x + 4.0, ground + 4.0, -tree.y),
+        )
+    }
+
+    #[test]
+    fn a_plaza_or_street_tree_pulls_the_camera_in_like_a_field_tree() {
+        let town = TownLayout::castex_inspired();
+        let world = World::with_town(Terrain::default(), &town);
+        let solid = StaticTrunks::build(
+            world.config,
+            &world.terrain,
+            std::slice::from_ref(&town),
+            &SettlementLayout::default(),
+        );
+        assert!(!town.trees.is_empty() && !town.shade_trees.is_empty());
+        let ring = town.trees[0];
+        let shade = town.shade_trees[0].at;
+        for tree in [ring, shade] {
+            let ground = world.terrain.height(tree.x, tree.y);
+            let (head, camera) = behind_a_tree(tree, ground);
+            let trunks = solid.along(world.config, head, camera);
+            let reach = trunk_reach(head, camera, &trunks);
+            assert!(reach < 0.8, "{tree:?}: {reach}");
+            // Far from every tree the set is empty and the view clear.
+            let far = Vec3::new(head.x, head.y, head.z + 400.0);
+            assert!(solid.along(world.config, far, far + Vec3::X).is_empty());
+        }
+    }
+
+    /// A hut settlement whose only structure is an 18 m eucalyptus at `at`.
+    fn eucalyptus_at(at: GroundVec2) -> SettlementLayout {
+        let spot = Aabb::from_center_size(at, GroundVec2::new(1.0, 1.0));
+        let mut settlements = SettlementLayout::default();
+        settlements.settlements.push(pampa_core::Settlement {
+            kind: pampa_core::SettlementKind::Hut,
+            gate: 0,
+            hub: spot.center(),
+            patio: spot,
+            structures: vec![pampa_core::Structure {
+                kind: StructureKind::Eucalyptus,
+                footprint: spot,
+                height: 18.0,
+                front: pampa_core::Side::South,
+                variant: 0,
+            }],
+            tracks: Vec::new(),
+            bounds: spot,
+            seed: 0,
+        });
+        settlements
+    }
+
+    #[test]
+    fn an_estancia_tree_pulls_the_camera_in() {
+        let settlements = eucalyptus_at(GroundVec2::new(30.0, 40.0));
+        let world = World::default();
+        let solid = StaticTrunks::build(world.config, &world.terrain, &[], &settlements);
+        let tree = settlements
+            .settlements
+            .iter()
+            .flat_map(|s| s.structures.iter())
+            .find(|s| s.kind.is_tree())
+            .expect("an estancia tree");
+        let at = tree.footprint.center();
+        let ground = world.terrain.height(at.x, at.y);
+        let (head, camera) = behind_a_tree(at, ground);
+        let reach = trunk_reach(head, camera, &solid.along(world.config, head, camera));
+        assert!(reach < 0.8, "{reach}");
+    }
+
+    #[test]
+    fn estancias_laid_out_after_the_towns_still_pull_the_camera_in() {
+        // The towns are there first; the estancias arrive a few frames
+        // later, with a eucalyptus between the rider and the camera.
+        let tree = GroundVec2::new(30.0, 40.0);
+        let mut app = headless_app(
+            World::default(),
+            north_at(tree.x, tree.y + 6.0),
+            CameraOccluders::default(),
+        );
+        app.insert_resource(WorldTowns(Vec::new()));
+        for _ in 0..3 {
+            app.update();
+        }
+        app.insert_resource(WorldSettlements(eucalyptus_at(tree)));
+        for _ in 0..3 {
+            app.update();
+        }
+        let follow = FollowCamera::default();
+        let (orbit, focus) = rig(&mut app);
+        let world = app.world().resource::<GameWorld>().0.clone();
+        let full = follow.desired(focus, &orbit, &world);
+        let at = camera(&mut app).translation;
+        assert!(
+            at.distance(focus) < full.distance(focus) - 1.0,
+            "{at} {full}"
+        );
+    }
+
+    #[test]
+    fn riding_past_a_row_of_trees_never_makes_the_camera_jump() {
+        // Trunks every 5 m along a line, the rider crossing them 0.05 m at
+        // a time, the camera 8 m behind and 3 m up: the pulled-in reach
+        // changes a little each step, never by a jump.
+        let row: Vec<Trunk> = (0..6)
+            .map(|i| trunk(-12.0 + i as f32 * 5.0, -5.0))
+            .collect();
+        let (mut last, mut worst, mut lowest) = (None::<f32>, 0.0_f32, 1.0_f32);
+        let mut x = -15.0;
+        while x < 15.0 {
+            let (head, camera) = (Vec3::new(x, 2.0, 0.0), Vec3::new(x, 5.0, 8.0));
+            let reach = trunk_reach(head, camera, &row);
+            if let Some(last) = last {
+                worst = worst.max((reach - last).abs());
+            }
+            (last, lowest) = (Some(reach), lowest.min(reach));
+            x += 0.05;
+        }
+        assert!(lowest < 0.8, "the camera never pulled in: {lowest}");
+        assert!(worst < 0.1, "jumped by {worst} in one step");
     }
 
     #[test]

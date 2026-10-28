@@ -6,6 +6,7 @@ Pampa Seca is mostly built procedurally in code. These are the third-party asset
 
 | Asset | Author / source | Licence | Where | Changes |
 |---|---|---|---|---|
+| Scattered Leaves 009 | ambientCG (https://ambientcg.com/view?id=ScatteredLeaves009) | CC0 1.0 | `assets/textures/ground/ScatteredLeaves009/` | Colour map only, converted to a 512×512 PNM; the leaf litter under the monte, toned darker and browner in the game and blended in by the ground shader |
 | Ground 109 | ambientCG (https://ambientcg.com/view?id=Ground109) | CC0 1.0 | `assets/textures/ground/Ground109/` | Converted to 512×512 PNM; blended with Grass 004 and tinted in the game |
 | Ground 102 | ambientCG (https://ambientcg.com/view?id=Ground102) | CC0 1.0 | `assets/textures/ground/Ground102/` | Converted to 512×512 PNM; the dirt roads' surface, tinted and feathered at the edges in the game |
 | Grass 004 | ambientCG (https://ambientcg.com/view?id=Grass004) | CC0 1.0 | `assets/textures/ground/Grass004/` | Converted to 512×512 PNM; blended with Ground 109 and retinted dry in the game |
@@ -39,15 +40,27 @@ The `thatch/` set next to them is our own work. The game loads every set as KTX2
 | Asset | Author / source | Licence | Where | Changes |
 |---|---|---|---|---|
 | Bark 014 | ambientCG (https://ambientcg.com/view?id=Bark014) | CC0 1.0 | `assets/textures/trees/Bark014/` | 1K maps renamed; paraíso bark |
-| Bark 001 | ambientCG (https://ambientcg.com/view?id=Bark001) | CC0 1.0 | `assets/textures/trees/Bark001/` | 1K maps renamed; olmo bark |
-| Bark 009 | ambientCG (https://ambientcg.com/view?id=Bark009) | CC0 1.0 | `assets/textures/trees/Bark009/` | 1K maps renamed; eucalipto bark |
+| Bark 001 | ambientCG (https://ambientcg.com/view?id=Bark001) | CC0 1.0 | `assets/textures/trees/Bark001/` | 1K maps renamed; olmo and álamo bark |
+| Bark 009 | ambientCG (https://ambientcg.com/view?id=Bark009) | CC0 1.0 | `assets/textures/trees/Bark009/` | 1K maps renamed; not used now (the eucalipto moved to `bark_bluegum`) |
 | Bark 002 | ambientCG (https://ambientcg.com/view?id=Bark002) | CC0 1.0 | `assets/textures/trees/Bark002/` | 1K maps renamed; aromo bark |
+| Bark 005 | ambientCG (https://ambientcg.com/view?id=Bark005) | CC0 1.0 | `assets/textures/trees/Bark005/` | 1K maps renamed; ombú bark |
 | Leaf Set 013 | ambientCG (https://ambientcg.com/view?id=LeafSet013) | CC0 1.0 | `assets/textures/trees/LeafSet013/`, `paraiso_leaves/` | 1K maps renamed; leaflets laid into the paraíso's pinnate leaves by `tools/leaf_atlas.py` (a derived atlas) |
-| Leaf Set 001 | ambientCG (https://ambientcg.com/view?id=LeafSet001) | CC0 1.0 | `assets/textures/trees/LeafSet001/`, `olmo_leaves/` | 1K maps renamed; leaves laid along twigs into the olmo atlas by `tools/leaf_atlas.py` |
+| Leaf Set 001 | ambientCG (https://ambientcg.com/view?id=LeafSet001) | CC0 1.0 | `assets/textures/trees/LeafSet001/`, `olmo_leaves/` | 1K maps renamed; leaves laid along twigs into the olmo atlas by `tools/leaf_atlas.py` (the álamo wears it too) |
 | Leaf Set 003 | ambientCG (https://ambientcg.com/view?id=LeafSet003) | CC0 1.0 | `assets/textures/trees/LeafSet003/`, `eucalipto_leaves/` | 1K maps renamed; leaves hung along twigs into the eucalipto atlas by `tools/leaf_atlas.py` |
 | Leaf Set 019 | ambientCG (https://ambientcg.com/view?id=LeafSet019) | CC0 1.0 | `assets/textures/trees/LeafSet019/`, `aromo_leaves/` | 1K maps renamed; sprays stood upright into the aromo atlas by `tools/leaf_atlas.py`; tinted silver-green in the game |
+| Bark Willow | Poly Haven, Dario Barresi (processing), Dimitrios Savva (photography) (https://polyhaven.com/a/bark_willow) | CC0 1.0 | `assets/textures/trees/bark_willow/` | 1K JPG maps renamed; caldén bark, shaded grey-brown in the game |
+| Bark Platanus | Poly Haven, Dimitrios Savva (https://polyhaven.com/a/bark_platanus) | CC0 1.0 | `assets/textures/trees/bark_platanus/` | 1K JPG maps renamed; chañar bark, tinted greenish ochre in the game |
+| Bark Bluegum | Poly Haven, Dimitrios Savva (https://polyhaven.com/a/bark_bluegum) | CC0 1.0 | `assets/textures/trees/bark_bluegum/` | 1K JPG maps renamed; eucalipto bark (replaces Bark 009) |
+| Chinese Cedar Bark | Poly Haven, Charlotte Baglioni (https://polyhaven.com/a/chinese_cedar_bark) | CC0 1.0 | `assets/textures/trees/chinese_cedar_bark/` | 1K JPG maps renamed; algarrobo bark |
+| Chinese Hackberry Bark | Poly Haven, Charlotte Baglioni (https://polyhaven.com/a/chinese_hackberry_bark) | CC0 1.0 | `assets/textures/trees/chinese_hackberry_bark/` | 1K JPG maps renamed; tala bark |
+| Bark Willow 02 | Poly Haven, Charlotte Baglioni (https://polyhaven.com/a/bark_willow_02) | CC0 1.0 | `assets/textures/trees/bark_willow_02/` | 1K JPG maps renamed; jarilla stems bark |
+| Bark Brown 01 | Poly Haven, as credited on its page (https://polyhaven.com/a/bark_brown_01) | CC0 1.0 | `assets/textures/trees/bark_brown_01/` | 1K JPG maps renamed; espinillo bark (downloaded 2026-10-28) |
 
-The plaza trees' bark and leaf sets were downloaded by the project owner on 2026-10-26. The game loads the barks and the composed leaf atlases as KTX2 made by `tools/textures_to_ktx2.sh` (the leaves' opacity in the colour's alpha). See `assets/textures/trees/CREDITS.md` for details.
+The plaza trees' bark and leaf sets were downloaded by the project owner on 2026-10-26, and the six Poly Haven bark sets on 2026-10-27. The game loads the barks and the composed leaf atlases as KTX2 made by `tools/textures_to_ktx2.sh` (the leaves' opacity in the colour's alpha). See `assets/textures/trees/CREDITS.md` for details.
+
+| Asset | Author / source | Licence | Where | Changes |
+|---|---|---|---|---|
+| Grass Medium 01 | Poly Haven (https://polyhaven.com/a/grass_medium_01) | CC0 1.0 | `assets/textures/grass/grass_medium_01/` | Four clumps cut from the 1K sheet's diffuse (dry and green) and alpha maps into a 1024x512 atlas, with the opacity in the colour's alpha; paja wears the dry colour, flechilla the green one, tinted dry-green in the game. See `assets/textures/grass/CREDITS.md` |
 
 | Asset | Author / source | Licence | Where | Changes |
 |---|---|---|---|---|

@@ -278,7 +278,7 @@ fn settlements_share_a_few_ranges_and_one_material_per_surface() {
         "{} materials",
         materials.len()
     );
-    // Thin things fade out of the camera's way; houses do not.
+    // Thin things fade out of the camera's way; houses and trees do not.
     let mut q = app
         .world_mut()
         .query::<(&SettlementPart, Has<ThinOccluder>)>();
@@ -292,8 +292,6 @@ fn settlements_share_a_few_ranges_and_one_material_per_surface() {
                 | StructureKind::WreckedWagon
                 | StructureKind::HitchingPost
                 | StructureKind::Haystack
-                | StructureKind::Eucalyptus
-                | StructureKind::Poplar
         );
         assert_eq!(fades, thin, "{:?}", part.kind);
     }
@@ -392,51 +390,208 @@ fn tracks_drape_over_the_drawn_ground_with_two_ruts() {
     assert!(points.len() / 42 >= 180 / 2, "{}", points.len());
 }
 
-#[test]
-fn trees_grow_slender_on_their_spots() {
+/// One drawn piece of a tree: its structure, mesh, material and transform.
+struct TreePiece {
+    structure: Structure,
+    mesh: AssetId<Mesh>,
+    material: AssetId<StandardMaterial>,
+    scale: Vec3,
+}
+
+/// The structure of `kind` standing at `at` (world translation) in the test
+/// layout.
+fn spot(kind: StructureKind, at: Vec3) -> Structure {
+    layout()
+        .settlements
+        .iter()
+        .flat_map(|s| s.structures.iter())
+        .find(|s| {
+            s.kind == kind && s.footprint.center().distance(GroundVec2::new(at.x, -at.z)) < 1e-3
+        })
+        .cloned()
+        .unwrap_or_else(|| panic!("no {kind:?} at {at:?}"))
+}
+
+/// Every drawn piece of an estancia tree, bark and leaves.
+fn tree_pieces(app: &mut App) -> Vec<TreePiece> {
+    let mut q = app.world_mut().query::<(
+        &SettlementPart,
+        &Mesh3d,
+        &MeshMaterial3d<StandardMaterial>,
+        &Transform,
+    )>();
+    q.iter(app.world())
+        .filter(|(p, ..)| p.kind.is_tree())
+        .map(|(p, mesh, material, t)| TreePiece {
+            structure: spot(p.kind, t.translation),
+            mesh: mesh.id(),
+            material: material.id(),
+            scale: t.scale,
+        })
+        .collect()
+}
+
+/// The tree kit's species for a tree structure kind.
+fn kit_species(kind: StructureKind) -> crate::tree::Species {
+    if kind == StructureKind::Poplar {
+        crate::tree::Species::Alamo
+    } else {
+        crate::tree::Species::Eucalipto
+    }
+}
+
+fn settled_app() -> App {
     let mut app = app(GroundVec2::new(100.0, 100.0));
     app.update();
     app.update();
-    let kit = app.world().resource::<SettlementKit>().clone();
-    let bark = [kit.trees[0][0].id(), kit.trees[1][0].id()];
-    let mut q = app.world_mut().query::<(
-        &SettlementPart,
-        &Transform,
-        &MeshMaterial3d<StandardMaterial>,
-    )>();
-    let trees: Vec<(StructureKind, Vec3, Vec3, bool)> = q
-        .iter(app.world())
-        .filter(|(p, ..)| p.kind.is_tree())
-        .map(|(p, t, m)| (p.kind, t.translation, t.scale, bark.contains(&m.id())))
-        .collect();
-    assert!(!trees.is_empty());
-    // Every species draws its trunks, not just crowns.
+    app
+}
+
+#[test]
+fn estancia_trees_are_tree_kit_trees_of_their_species() {
+    let mut app = settled_app();
+    let kit = app.world().resource::<crate::tree::TreeKit>().clone();
+    let pieces = tree_pieces(&mut app);
     for kind in [StructureKind::Poplar, StructureKind::Eucalyptus] {
-        let trunks = trees.iter().filter(|t| t.0 == kind && t.3).count();
-        assert!(trunks >= 1, "no {kind:?} trunk drawn");
+        let species = kit.species(kit_species(kind));
+        let of_kind: Vec<_> = pieces.iter().filter(|p| p.structure.kind == kind).collect();
+        assert!(!of_kind.is_empty(), "{kind:?}");
+        let (mut barks, mut leaves) = (0, 0);
+        for p in of_kind {
+            if p.material == species.bark.id() {
+                assert!(species.variants.iter().any(|v| v.bark.id() == p.mesh));
+                barks += 1;
+            } else {
+                assert_eq!(p.material, species.leaves.id(), "{kind:?}: wrong paint");
+                assert!(species.variants.iter().any(|v| v.leaves.id() == p.mesh));
+                leaves += 1;
+            }
+        }
+        // Every tree draws its trunk and its leaves, one piece each.
+        assert!(barks >= 1 && barks == leaves, "{kind:?}: {barks} {leaves}");
     }
-    for (kind, at, scale, trunk) in trees {
-        // Trunks taller than wide: a poplar's much more so. (Crowns are
-        // built to their shape and scaled evenly; see the crown tests.)
-        let slender = if trunk {
-            scale.y / scale.x
-        } else {
-            f32::INFINITY
-        };
-        let least = if kind == StructureKind::Poplar {
-            2.5
-        } else {
-            1.2
-        };
-        assert!(slender > least, "{kind:?}: {scale:?}");
-        let spot = layout()
-            .settlements
+}
+
+#[test]
+fn an_estancia_tree_stands_as_tall_as_its_structure() {
+    let mut app = settled_app();
+    let kit = app.world().resource::<crate::tree::TreeKit>().clone();
+    for p in tree_pieces(&mut app) {
+        let species = kit.species(kit_species(p.structure.kind));
+        let variant = species
+            .variants
             .iter()
-            .flat_map(|s| s.structures.iter())
-            .any(|s| {
-                s.kind == kind && s.footprint.center().distance(GroundVec2::new(at.x, -at.z)) < 1e-3
-            });
-        assert!(spot);
+            .find(|v| v.bark.id() == p.mesh || v.leaves.id() == p.mesh)
+            .expect("a kit variant");
+        // Never fatter than tall, and round.
+        assert!(p.scale.x <= p.scale.y + 1e-4 && (p.scale.x - p.scale.z).abs() < 1e-4);
+        let top = variant.height * p.scale.y;
+        assert!(
+            (top - p.structure.height).abs() < 0.02 * p.structure.height,
+            "{:?}: drawn {top} m, structure {} m",
+            p.structure.kind,
+            p.structure.height
+        );
+    }
+}
+
+#[test]
+fn a_poplar_is_a_narrow_column_and_a_eucalyptus_a_broader_crown() {
+    let mut app = settled_app();
+    let pieces = tree_pieces(&mut app);
+    let meshes = app.world().resource::<Assets<Mesh>>();
+    let kit = app.world().resource::<crate::tree::TreeKit>();
+    let mut seen = HashSet::new();
+    for p in &pieces {
+        let species = kit.species(kit_species(p.structure.kind));
+        if !species.variants.iter().any(|v| v.leaves.id() == p.mesh) {
+            continue;
+        }
+        let size = extent(meshes.get(p.mesh).unwrap()) * p.scale;
+        let wide = size.x.max(size.z);
+        seen.insert(p.structure.kind);
+        if p.structure.kind == StructureKind::Poplar {
+            assert!(p.structure.height >= 3.5 * wide, "{size:?}");
+        } else {
+            // A eucalyptus spreads: wider than a poplar's column, but a tall
+            // tree still.
+            assert!(wide > 0.25 * p.structure.height, "{size:?}");
+            assert!(p.structure.height > 1.5 * wide, "{size:?}");
+        }
+    }
+    assert_eq!(seen.len(), 2, "both species measured");
+}
+
+#[test]
+fn an_estancia_tree_costs_a_few_hundred_triangles() {
+    let mut app = settled_app();
+    let pieces = tree_pieces(&mut app);
+    let meshes = app.world().resource::<Assets<Mesh>>();
+    // Bark and leaves of one tree add up, keyed by where it stands.
+    let mut costs: std::collections::HashMap<(u32, u32), usize> = Default::default();
+    for p in &pieces {
+        let at = p.structure.footprint.center();
+        *costs.entry((at.x.to_bits(), at.y.to_bits())).or_default() +=
+            triangles(meshes.get(p.mesh).unwrap());
+    }
+    assert!(!costs.is_empty());
+    for tris in costs.into_values() {
+        assert!((200..=1200).contains(&tris), "{tris}");
+    }
+}
+
+#[test]
+fn an_estancia_trunk_stands_within_the_collider_core_plants_for_it() {
+    let mut app = settled_app();
+    let kit = app.world().resource::<crate::tree::TreeKit>().clone();
+    let pieces = tree_pieces(&mut app);
+    let meshes = app.world().resource::<Assets<Mesh>>();
+    let mut checked = 0;
+    for p in pieces {
+        let species = kit.species(kit_species(p.structure.kind));
+        if !species.variants.iter().any(|v| v.bark.id() == p.mesh) {
+            continue;
+        }
+        let Some(bevy::mesh::VertexAttributeValues::Float32x3(points)) = meshes
+            .get(p.mesh)
+            .unwrap()
+            .attribute(Mesh::ATTRIBUTE_POSITION)
+        else {
+            panic!()
+        };
+        let foot = points
+            .iter()
+            .filter(|q| q[1] < 0.5)
+            .map(|q| Vec2::new(q[0], q[2]).length())
+            .fold(0.0, f32::max);
+        let drawn = foot * p.scale.x;
+        let core = p.structure.trunk_radius();
+        // A rider is stopped at the bark, never inside it.
+        assert!(
+            drawn <= core * 1.02,
+            "{:?}: bark {drawn} m, core {core} m",
+            p.structure.kind
+        );
+        checked += 1;
+    }
+    assert!(checked >= 2);
+}
+
+#[test]
+fn a_row_of_estancia_trees_is_not_cloned_from_one_variant() {
+    let mut app = settled_app();
+    let kit = app.world().resource::<crate::tree::TreeKit>().clone();
+    let pieces = tree_pieces(&mut app);
+    for kind in [StructureKind::Poplar, StructureKind::Eucalyptus] {
+        let barks: HashSet<AssetId<Mesh>> = pieces
+            .iter()
+            .filter(|p| {
+                p.structure.kind == kind && p.material == kit.species(kit_species(kind)).bark.id()
+            })
+            .map(|p| p.mesh)
+            .collect();
+        assert!(barks.len() >= 2, "{kind:?}: one tree for all");
+        assert!(barks.len() <= crate::tree::VARIANTS, "{kind:?}");
     }
 }
 
@@ -455,50 +610,7 @@ fn extent(mesh: &Mesh) -> Vec3 {
 }
 
 #[test]
-fn tree_crowns_are_round_from_every_side_varied_and_shared() {
-    let mut app = app(GroundVec2::new(100.0, 100.0));
-    app.update();
-    app.update();
-    let kit = app.world().resource::<SettlementKit>().clone();
-    let mut q = app.world_mut().query::<(
-        &SettlementPart,
-        &Mesh3d,
-        &MeshMaterial3d<StandardMaterial>,
-        &Transform,
-    )>();
-    let crowns: Vec<(StructureKind, AssetId<Mesh>, Vec3)> = q
-        .iter(app.world())
-        .filter(|(p, _, m, _)| {
-            p.kind.is_tree() && (m.id() == kit.trees[0][1].id() || m.id() == kit.trees[1][1].id())
-        })
-        .map(|(p, mesh, _, t)| (p.kind, mesh.id(), t.scale))
-        .collect();
-    let meshes = app.world().resource::<Assets<Mesh>>();
-    for kind in [StructureKind::Poplar, StructureKind::Eucalyptus] {
-        let of_kind: Vec<_> = crowns.iter().filter(|c| c.0 == kind).collect();
-        assert!(of_kind.len() >= 2, "{kind:?}");
-        for (_, mesh, scale) in &of_kind {
-            let size = extent(meshes.get(*mesh).unwrap()) * *scale;
-            // Real depth along both ground axes: not a slab.
-            let (wide, deep) = (size.x.max(size.z), size.x.min(size.z));
-            assert!(deep >= 0.6 * wide, "{kind:?}: {size:?}");
-            if kind == StructureKind::Poplar {
-                // A Lombardy poplar's crown is a tall column.
-                assert!(size.y >= 3.0 * wide, "{size:?}");
-                assert!(wide >= 1.5, "{size:?}");
-            }
-            let tris = triangles(meshes.get(*mesh).unwrap());
-            assert!((300..=800).contains(&tris), "{kind:?}: {tris}");
-        }
-        // A row is not cloned: several crowns, from a few shared meshes.
-        let distinct: HashSet<AssetId<Mesh>> = of_kind.iter().map(|c| c.1).collect();
-        assert!(distinct.len() >= 2, "{kind:?}: one crown for all");
-        assert!(distinct.len() <= 4, "{kind:?}: {} crowns", distinct.len());
-    }
-}
-
-#[test]
-fn without_a_trunk_model_or_stand_in_no_crown_floats() {
+fn estancia_trees_need_the_tree_kit_and_not_the_vegetation_models() {
     // No flora plugin: neither the vegetation models nor their stand-ins.
     let mut app = App::new();
     app.add_plugins(MinimalPlugins)
@@ -520,64 +632,28 @@ fn without_a_trunk_model_or_stand_in_no_crown_floats() {
     app.update();
     let drawn = parts(&mut app);
     assert!(drawn.iter().any(|p| p.kind == StructureKind::Barn), "drawn");
-    assert!(
-        drawn.iter().all(|p| !p.kind.is_tree()),
-        "a tree drawn without a trunk"
-    );
+    for kind in [StructureKind::Poplar, StructureKind::Eucalyptus] {
+        assert!(drawn.iter().any(|p| p.kind == kind), "{kind:?} not drawn");
+    }
 }
 
 #[test]
-fn a_tree_fades_over_its_whole_crown() {
+fn a_settlement_tree_is_solid_and_never_fades() {
     let mut app = app(GroundVec2::new(100.0, 100.0));
     app.update();
     app.update();
-    let kit = app.world().resource::<SettlementKit>().clone();
-    let leaves = [kit.trees[0][1].id(), kit.trees[1][1].id()];
-    let mut q = app.world_mut().query::<(
-        &SettlementPart,
-        &Mesh3d,
-        &MeshMaterial3d<StandardMaterial>,
-        &Transform,
-        &ThinOccluder,
-    )>();
-    let crowns: Vec<(StructureKind, AssetId<Mesh>, Transform, ThinOccluder)> = q
+    let mut q = app
+        .world_mut()
+        .query::<(&SettlementPart, Has<ThinOccluder>)>();
+    let trees: Vec<(StructureKind, bool)> = q
         .iter(app.world())
-        .filter(|(p, _, m, ..)| p.kind.is_tree() && leaves.contains(&m.id()))
-        .map(|(p, mesh, _, t, o)| (p.kind, mesh.id(), *t, *o))
+        .filter(|(p, _)| p.kind.is_tree())
+        .map(|(p, fades)| (p.kind, fades))
         .collect();
-    let meshes = app.world().resource::<Assets<Mesh>>();
     for kind in [StructureKind::Poplar, StructureKind::Eucalyptus] {
-        assert!(crowns.iter().any(|c| c.0 == kind), "{kind:?}");
+        assert!(trees.iter().any(|t| t.0 == kind), "{kind:?}");
     }
-    for (kind, mesh, transform, fade) in crowns {
-        let Some(bevy::mesh::VertexAttributeValues::Float32x3(points)) = meshes
-            .get(mesh)
-            .unwrap()
-            .attribute(Mesh::ATTRIBUTE_POSITION)
-        else {
-            panic!()
-        };
-        // The crown's reach from its trunk, as drawn (turned and scaled).
-        let at = transform.translation;
-        let reach = points
-            .iter()
-            .map(|p| {
-                let w = transform.transform_point(Vec3::from_array(*p)) - at;
-                w.with_y(0.0).length()
-            })
-            .fold(0.0, f32::max);
-        assert!(
-            fade.radius >= reach - 1e-3,
-            "{kind:?}: fades within {} m of a crown reaching {reach} m",
-            fade.radius
-        );
-        // The widest crown variant of its species, no wider than that.
-        assert!(
-            fade.radius <= 0.6 * transform.scale.y,
-            "{kind:?}: {}",
-            fade.radius
-        );
-    }
+    assert!(trees.iter().all(|t| !t.1), "{trees:?}");
 }
 
 /// An app that loads glTF models from `root`, drawing the two test

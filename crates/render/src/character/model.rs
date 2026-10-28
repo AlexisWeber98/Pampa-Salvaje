@@ -410,16 +410,26 @@ mod tests {
             .chain(townsfolk)
         {
             let path = model_path(name);
+            // The file's own handle is held from before the scene loads: a
+            // file nobody holds is dropped the moment it lands, and loading
+            // it again then races that drop against the new load.
+            let gltf: Handle<bevy::gltf::Gltf> = server.load(path.clone());
             let scene = gltf::load_scene(&server, Some(&root()), &path).expect(&path);
             assert_eq!(settle(&mut app, &scene), ModelState::Ready, "{path}");
-            let gltf: Handle<bevy::gltf::Gltf> = server.load(path.clone());
-            while !app
-                .world()
-                .resource::<Assets<bevy::gltf::Gltf>>()
-                .contains(&gltf)
-            {
+            let mut loaded = false;
+            for _ in 0..2000 {
+                if app
+                    .world()
+                    .resource::<Assets<bevy::gltf::Gltf>>()
+                    .contains(&gltf)
+                {
+                    loaded = true;
+                    break;
+                }
                 app.update();
+                std::thread::sleep(std::time::Duration::from_millis(5));
             }
+            assert!(loaded, "{path}: its glTF never landed");
             let world = app.world();
             let gltf = world
                 .resource::<Assets<bevy::gltf::Gltf>>()

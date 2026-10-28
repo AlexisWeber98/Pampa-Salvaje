@@ -57,7 +57,7 @@ pub use fauna::{
     Cow, CowCoat, CowState, Duck, FaunaSite, Flock, FlockState, Hare, HareState, Herd, Raptor,
 };
 pub use fence::{FenceLayout, FenceRun, Frontage, Gate, Opening, OpeningKind};
-pub use flora::{ChunkFlora, FloraSite, Species, Tree, Tuft, TuftKind};
+pub use flora::{ChunkFlora, FloraSite, Shrub, ShrubKind, Species, Tree, Tuft, TuftKind};
 pub use heading::Heading;
 pub use lagoon::{Lagoon, LagoonConfig, LagoonError, place_lagoons};
 pub use lamps::{LampSite, LampTier, StreetLamp, StreetLamps};

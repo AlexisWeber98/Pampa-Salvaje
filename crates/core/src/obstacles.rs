@@ -4,17 +4,26 @@
 use std::collections::HashMap;
 use std::ops::Deref;
 
-use crate::{Aabb, Vec2};
+use crate::{Aabb, ChunkCoord, Vec2, WorldConfig};
 
 /// Every static footprint of the world, with a uniform-grid index.
 ///
 /// Reads like a slice of [`Aabb`] (in insertion order); [`Self::near`]
 /// returns only the footprints overlapping an area.
+///
+/// Besides the permanent footprints it holds a streamed layer: footprints
+/// grouped by the chunk they belong to, added and dropped a chunk at a time
+/// (see [`Self::set_chunk`]). Only [`Self::near`] sees that layer; the slice
+/// view, iteration, `len` and equality cover the permanent footprints.
 #[derive(Debug, Clone, Default)]
 pub struct StaticObstacles {
     items: Vec<Aabb>,
     /// Footprint indices per grid cell.
     cells: HashMap<(i32, i32), Vec<u32>>,
+    /// The streamed footprints of each loaded chunk.
+    chunks: HashMap<ChunkCoord, Vec<Aabb>>,
+    /// Streamed footprints per grid cell: the chunk and index in it.
+    chunk_cells: HashMap<(i32, i32), Vec<(ChunkCoord, u32)>>,
 }
 
 impl StaticObstacles {
@@ -59,8 +68,69 @@ impl StaticObstacles {
         true
     }
 
-    /// Every footprint overlapping or touching `area`, once each, in
-    /// insertion order. A non-finite `area` finds nothing.
+    /// Makes `items` the streamed footprints of `coord`, replacing any it
+    /// held. An empty `items` still marks the chunk as loaded. A footprint
+    /// with a corner past the largest possible world
+    /// ([`WorldConfig::MAX_HALF_EXTENT`]), or not finite, is dropped:
+    /// indexing it could take effectively forever, and no real footprint
+    /// reaches there ([`Self::near`] likewise finds nothing for a
+    /// non-finite area).
+    pub fn set_chunk(&mut self, coord: ChunkCoord, mut items: Vec<Aabb>) {
+        self.clear_chunk(coord);
+        // `abs() <= max` is false for NaN and infinities too.
+        items.retain(|i| {
+            [i.min.x, i.min.y, i.max.x, i.max.y]
+                .iter()
+                .all(|v| v.abs() <= WorldConfig::MAX_HALF_EXTENT)
+        });
+        for (index, item) in items.iter().enumerate() {
+            for cell in Self::cells_of(*item) {
+                self.chunk_cells
+                    .entry(cell)
+                    .or_default()
+                    .push((coord, index as u32));
+            }
+        }
+        self.chunks.insert(coord, items);
+    }
+
+    /// Drops the streamed footprints of `coord`. Returns whether the chunk
+    /// was loaded.
+    pub fn clear_chunk(&mut self, coord: ChunkCoord) -> bool {
+        let Some(items) = self.chunks.remove(&coord) else {
+            return false;
+        };
+        for item in items {
+            for cell in Self::cells_of(item) {
+                if let Some(entries) = self.chunk_cells.get_mut(&cell) {
+                    entries.retain(|(c, _)| *c != coord);
+                    if entries.is_empty() {
+                        self.chunk_cells.remove(&cell);
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    /// Whether `coord` holds streamed footprints (possibly none).
+    pub fn has_chunk(&self, coord: ChunkCoord) -> bool {
+        self.chunks.contains_key(&coord)
+    }
+
+    /// The chunks that hold streamed footprints.
+    pub fn loaded_chunks(&self) -> impl Iterator<Item = ChunkCoord> + '_ {
+        self.chunks.keys().copied()
+    }
+
+    /// How many streamed footprints are loaded, over every chunk.
+    pub fn streamed_len(&self) -> usize {
+        self.chunks.values().map(Vec::len).sum()
+    }
+
+    /// Every footprint overlapping or touching `area`, once each: the
+    /// permanent ones in insertion order, then the streamed ones by chunk
+    /// and index. A non-finite `area` finds nothing.
     pub fn near(&self, area: Aabb) -> Vec<&Aabb> {
         let finite = [area.min.x, area.min.y, area.max.x, area.max.y]
             .iter()
@@ -75,9 +145,21 @@ impl StaticObstacles {
             .collect();
         found.sort_unstable();
         found.dedup();
+        let mut streamed: Vec<(ChunkCoord, u32)> = Self::cells_of(area)
+            .filter_map(|cell| self.chunk_cells.get(&cell))
+            .flatten()
+            .copied()
+            .collect();
+        streamed.sort_unstable();
+        streamed.dedup();
         found
             .into_iter()
             .map(|i| &self.items[i as usize])
+            .chain(
+                streamed
+                    .into_iter()
+                    .map(|(coord, i)| &self.chunks[&coord][i as usize]),
+            )
             .filter(|o| touches(o, &area))
             .collect()
     }
@@ -160,6 +242,77 @@ mod tests {
                 Aabb::from_center_size(c, s)
             })
             .collect()
+    }
+
+    #[test]
+    fn a_non_finite_streamed_footprint_is_dropped_and_the_rest_kept() {
+        let mut obstacles = StaticObstacles::default();
+        let coord = ChunkCoord::new(0, 0);
+        let good = Aabb::from_center_size(Vec2::new(10.0, 10.0), Vec2::new(1.0, 1.0));
+        let nan = Aabb::from_center_size(Vec2::new(f32::NAN, 10.0), Vec2::new(1.0, 1.0));
+        let inf = Aabb::from_center_size(Vec2::new(10.0, 10.0), Vec2::new(f32::INFINITY, 1.0));
+        obstacles.set_chunk(coord, vec![nan, good, inf]);
+        // The chunk is loaded; only the finite footprint is held and found.
+        assert!(obstacles.has_chunk(coord));
+        assert_eq!(obstacles.streamed_len(), 1);
+        let found: Vec<Aabb> = obstacles
+            .near(around(Vec2::new(10.0, 10.0), 5.0))
+            .into_iter()
+            .copied()
+            .collect();
+        assert_eq!(found, vec![good]);
+        // Clearing leaves no stale index entry behind.
+        assert!(obstacles.clear_chunk(coord));
+        assert!(
+            obstacles
+                .near(around(Vec2::new(10.0, 10.0), 5.0))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_streamed_footprint_reaching_past_any_world_is_dropped() {
+        let mut obstacles = StaticObstacles::default();
+        let coord = ChunkCoord::new(0, 0);
+        let good = Aabb::from_center_size(Vec2::new(10.0, 10.0), Vec2::new(1.0, 1.0));
+        // Finite, but spanning about 1e30 m: indexing it would never end.
+        let huge = Aabb::from_center_size(Vec2::new(10.0, 10.0), Vec2::new(1e30, 1.0));
+        obstacles.set_chunk(coord, vec![huge, good]);
+        assert_eq!(obstacles.streamed_len(), 1);
+        let found: Vec<Aabb> = obstacles
+            .near(around(Vec2::new(10.0, 10.0), 5.0))
+            .into_iter()
+            .copied()
+            .collect();
+        assert_eq!(found, vec![good]);
+    }
+
+    #[test]
+    fn a_streamed_chunk_is_found_by_queries_and_gone_when_cleared() {
+        let mut obstacles = StaticObstacles::new(scattered(50));
+        let permanent: Vec<Aabb> = obstacles.to_vec();
+        let (a, b) = (ChunkCoord::new(0, 0), ChunkCoord::new(1, 0));
+        // One box spans several grid cells and must be reported once.
+        let wide = Aabb::from_center_size(Vec2::new(500.0, 500.0), Vec2::new(40.0, 3.0));
+        let small = Aabb::from_center_size(Vec2::new(510.0, 520.0), Vec2::new(1.0, 1.0));
+        obstacles.set_chunk(a, vec![wide, small]);
+        obstacles.set_chunk(b, Vec::new());
+        assert!(obstacles.has_chunk(a) && obstacles.has_chunk(b));
+        assert_eq!(obstacles.streamed_len(), 2);
+        let area = around(Vec2::new(505.0, 505.0), 30.0);
+        let found: Vec<Aabb> = obstacles.near(area).into_iter().copied().collect();
+        assert_eq!(found, vec![wide, small]);
+        // The slice view and equality still read the permanent ones only.
+        assert_eq!(obstacles.len(), permanent.len());
+        assert_eq!(obstacles, permanent);
+        // Replacing a chunk drops what it held.
+        obstacles.set_chunk(a, vec![small]);
+        assert_eq!(obstacles.near(area).len(), 1);
+        assert!(obstacles.clear_chunk(a));
+        assert!(!obstacles.clear_chunk(a));
+        assert!(obstacles.near(area).is_empty());
+        assert_eq!(obstacles.streamed_len(), 0);
+        assert_eq!(obstacles.loaded_chunks().collect::<Vec<_>>(), vec![b]);
     }
 
     #[test]

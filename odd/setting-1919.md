@@ -69,13 +69,76 @@ Most characters are **humble**: clerks, peones, farmhands, railway workers and s
 - Brick or adobe houses with flat roofs and parapets, or corrugated-iron roofs.
 - Water tanks, windmills (molinos) and grain sheds near the station.
 - Hitching posts, carts, barrels, sacks of grain, and kerosene lamps.
-- Caldén and chañar trees.
+- Caldén and chañar trees. See "Field flora" below for the other trees, the grasses and the estancia plantings.
 - Rural settlements behind some open field gates (user, 2026-10-22):
   - **Rancho**: a small adobe house under thatch (paja) or corrugated iron, a well, maybe a small corral.
   - **Puesto**: a herdsman's hut with a corral and an aguada (trough, sometimes a molino).
   - **Chacra**: a whitewashed brick house with a parapet (or adobe under iron), a galpón, a molino with its australian tank and bebedero, a corral and haystacks.
   - **Estancia**: the Italianate casco with its gallery, 2–4 casas de peones, galpones, corrals, the aguada, a eucalyptus monte and a poplar alameda, spread over several hectares.
   - Dirt huellas (two ruts) lead from the gate to the houses.
+
+## Field flora (research 2026-10-27)
+
+Scope: the eastern and northeastern caldenal and its grassland edge (Castex, Metileo, Monte Nievas, General Pico). Sources are mostly secondary (encyclopaedias, a provincial government page, divulgation); heights and bark come from general botanical descriptions, not from La Pampa surveys. Claims marked *unverified* have no source found. Source list at the end of this section.
+
+### How common, relative to caldén
+- Caldén is the one tree of the open caldenal and the dominant woody species ([S1]). Chañar is its usual companion ([S1], [S3]).
+- Tala and espinillo are **not** in the caldenal species lists consulted ([S1], [S2]). They fit only as scattered, rare trees on the edge and on disturbed ground. Keep them a small share of field trees.
+- Ombú and the estancia plantings are not field trees: see their entries.
+
+### Native trees
+- **Tala** (*Celtis tala* / *C. ehrenbergiana*): rare, scattered or in small groves at the edge, not in the pure caldén stand. 4–9 m, a low shrubby tree in dry sites. Dense zigzag branching, so an irregular round-to-spreading crown. Light grey-brown bark that splits on old trees. Small simple serrated leaves, up to about 3.5 × 2 cm, with paired straight spines up to 1.5 cm [S4]. Its fit to the caldenal is weak: one divulgation source says it appears only sporadically at the northern limit of the caldenal ([S5], *unverified* against a scholarly flora). Leaf colour: not found in the sources (*unverified*; assume mid green).
+- **Espinillo** (*Vachellia caven*, once *Acacia caven*): rare, a shrub or small tree on open, disturbed or burnt ground and well-drained rises [S6]. Up to 5 m, rounded crown, dark brown bark with deep oblique cracks, small fragrant yellow ball flowers, small deciduous bipinnate leaves [S6]. Not on the caldenal lists [S1], and in a Buenos Aires paper it is a new record ([S2]), so treat it as a marginal edge species. Leaf size and colour: *unverified*.
+- **Algarrobo** (*Prosopis flexuosa*): the provincial flora page names the algarrobo as a companion of the caldén in the caldenal [S1]; in the game it is a modest share of the monte's trees, never the dominant one. Height 4–8 m, low and wide, often several stems from low down, with fine pendulous bipinnate leaves and fibrous, fissured reddish bark: general botanical description, no La Pampa source fetched (*unverified*). Leaf colour: *unverified* (the game draws a fresh green).
+- **Chañar** (already in the game): the companion of caldén, in low groves outside the forest ([S3], [S1]).
+
+### Monte and shrubs (F1c)
+- **Monte** (the dense caldenal, bosque): the caldenal's tree cover is not even. Dense stands of caldén with chañar and thorny shrubs stand beside open grassland ([S1], [S2], [S3]). Patch size and tree density are *unverified*: the game uses patches a few hundred metres across as a design choice.
+- **Piquillín** (*Condalia microphylla*): a dense, thorny, evergreen shrub, 0.8–2 m (up to about 3.2 m in one ecoregional sheet), with tiny, leathery, dark-green leaves about 5–8 × 2.5 mm; red edible fruit; flowers October–November. It grows in the caldenal and, more abundantly, in the Monte, where it forms dense colonies [S16, S17]. Bark colour: not found (*unverified*; the game draws grey-brown). One sheet calls it native to North America; it contradicts every other source, so it is ignored.
+- **Jarilla** (*Larrea divaricata*, "jarilla hembra"): an erect, branched, resinous shrub of many woody stems, 1–3 m (up to 5 m in one CONICET text), with dark-green resinous leaves of two leaflets and solitary yellow flowers in spring. Typical of the arid and semi-arid Monte [S18, S19]. A local blog calls it the commonest jarilla in La Pampa. Its place in the caldenal itself was **not confirmed** by the sources found (*unverified*), so the game puts it on open dry ground. The yellow-green colour is *unverified* (the sources say dark green and resinous).
+- **Fachinal** (chañar thickets): chañar spreads by root suckers into dense thickets (chañarales) [S3]. The name "fachinal" is used here for those thickets; its use in La Pampa is *unverified*.
+
+
+### Ombú
+- **Verdict: planted, settlements only, rare. Do not place it in open field.**
+- Sources disagree on origin. English Wikipedia says native to the Pampas [S7]; Spanish Wikipedia says native to the woodlands of the northeast, Uruguay and southern Brazil [S8]. None of them places it in the La Pampa caldenal, and the caldenal sources do not list it [S1], [S2]. A divulgation source argues the caldén, not the ombú or tala, is the true tree of the pampa [S3].
+- It is a well-known shade tree beside ranchos and the humble house of the plains [S9, weak source]. That it was planted beside puestos and estancias in La Pampa is plausible but *unverified* for La Pampa itself.
+- Look: a huge swollen, fleshy trunk (soft spongy wood, no real bark ridges, *unverified* for bark colour), an umbrella crown 12–15 m across on a 12–18 m tree [S7], glossy dark green elliptical leaves up to 20 cm long [S8]. Its sap is poisonous, so cattle leave it alone [S7]. Frost sensitivity: only from a weak source [S9].
+
+### Field grasses
+- **Flechilla** (*Nassella tenuis*, *N. longiglumis*, *Piptochaetium napostaense*): the dominant grasses of the caldenal and of the short-grass steppe from central La Pampa to the southeast ([S10], [S2], [S11]). Low, fine tussocks (height *unverified*; "bajo" in [S11]). Winter grasses, so green in the cool season and straw-yellow in summer (*unverified* for colour). The commonest ground cover.
+- **Paja** (in the game, the tall tussock): *Nassella tenuissima* is native to Argentina, a dense fountain-like clump of wiry rolled leaves, 0.3–0.6 m tall, greenish flower heads ripening to golden brown, flowering in November in La Pampa [S12]. It is a sign of overgrazed or degraded range, so put it in patches on worn ground, fewer than flechilla. Name caution: "paja vizcachera" is not confirmed for this species in any source found; other grasses (Amelichloa) are plausible bearers of the name. The provincial page lists "paja blanca" (*Stipa gynerioides*) and "paja voladora" ([S11]). Call the game's tuft "paja" and do not rely on "vizcachera".
+- **Cardos** (thistles, introduced): the Pampa was invaded by thistles from the 18th century, helped by cattle, and the big *cardales* shrank with the agricultural expansion of the late 19th century, replaced by weedy thistles of mixed origin [S13]. For 1919 they fit as scattered patches near roads, fences, corrals and settlements, not as a sea of thistles. Height and colour: tall, spiny, grey-green with purple heads (*unverified*, general knowledge). Species identity (Cynara, Carduus, Onopordum) is *unverified*.
+
+### Town trees escaped into the field (user, 2026-10-27)
+- Paraíso, olmo, eucalipto and aromo also stand in the field, as escaped plantings: rare in the open field and commoner along roads and round settlements (and, later, taperas). That placement is a design choice, not a sourced fact (*unverified* for La Pampa in 1919).
+
+### Estancia plantings (exotic, near settlements only)
+- Eucalyptus, Lombardy poplar and paraíso are not native; none of the sources found documents their planting on La Pampa estancias in 1919 (*unverified*). They fit the guide through its existing line about an estancia monte and alameda, and the user already chose them.
+- **Eucalyptus** (monte, a grove of many trees): tall straight trees, aromatic grey-green narrow leaves, peeling pale bark (*unverified*, no source fetched).
+- **Lombardy poplar** (*Populus nigra* 'Italica', alameda: a row or avenue): 20–30 m, very narrow upright crown, thick grey-brown furrowed bark, leaves 5–8 cm long [S14].
+- **Paraíso** (*Melia azedarach*): 7–12 m, rounded spreading crown, dark green leaves up to 50 cm long in two or three levels of leaflets, marble-sized yellow fruit that stays through winter [S15]. Bark: *unverified*. Deciduous, so bare in winter (*unverified*, general knowledge). Place it by the casco and the casas, as a small shade tree.
+
+### Sources
+- [S1] Distrito fitogeográfico del caldén and La Pampa provincial flora page: https://drn.lapampa.gob.ar/especies-de-la-flora-pampeana.html (caldenal 400–600 mm isohyets, chañar and algarrobo companions, flechilla and paja species).
+- [S2] Las ingresiones e islas de los bosques espinosos del Caldenal dentro de los pastizales Austral Pampeanos: https://www.scielo.org.mx/scielo.php?script=sci_arttext&pid=S1405-27682022000100056 (woody species list without tala; espinillo only a Buenos Aires record; Nassella and Piptochaetium grasses).
+- [S3] Ecorregiones de la Argentina VI, El Distrito del Caldén: https://www.losquesevan.com/ecorregiones-de-la-argentina-vi-el-espinal.-el-distrito-del-calden.714c (divulgation).
+- [S4] Celtis ehrenbergiana, Spanish Wikipedia: https://es.wikipedia.org/wiki/Celtis_ehrenbergiana
+- [S5] Search summary of caldenal divulgation sources on tala at the northern limit; no single URL confirmed, treat as *unverified*.
+- [S6] Vachellia caven, Spanish Wikipedia: https://es.wikipedia.org/wiki/Vachellia_caven
+- [S7] Phytolacca dioica, English Wikipedia: https://en.wikipedia.org/wiki/Phytolacca_dioica
+- [S8] Phytolacca dioica, Spanish Wikipedia: https://es.wikipedia.org/wiki/Phytolacca_dioica
+- [S9] Ombú, EcuRed (weak): https://www.ecured.cu/Omb%C3%BA
+- [S10] Piptochaetium napostaense in La Pampa, UNLPam Semiárida: https://ojs.unlpam.edu.ar/index.php/semiarida/article/view/5118
+- [S11] See S1.
+- [S12] Nassella tenuissima, GISD: https://www.iucngisd.org/gisd/species.php?sc=463
+- [S13] Cardos in the Pampa region, Mundo Agrario (UNLP): https://mundoagrario.unlp.edu.ar/article/download/v04n08a04/1443/1947 (read only through a search summary).
+- [S14] Populus nigra var. italica, Wikipedia: https://en.wikipedia.org/wiki/Populus_nigra_var._italica
+- [S15] Melia azedarach, Wikipedia: https://en.wikipedia.org/wiki/Melia_azedarach
+- [S16] Condalia microphylla, SIB (Sistema de Información de Biodiversidad): https://sib.gob.ar/especies/condalia-microphylla (0.8–2 m, thorny, leaf size, caldenal and Monte; read through a search summary).
+- [S17] Condalia microphylla, Ecoregistros: https://www.ecoregistros.org/ficha/Condalia-microphylla&idpais=2 (up to 3.2 m; search summary).
+- [S18] Larrea divaricata, Wikipedia: https://en.wikipedia.org/wiki/Larrea_divaricata (up to 3 m).
+- [S19] Jarilla, Larrea divaricata, CONICET Digital: https://ri.conicet.gov.ar/bitstream/handle/11336/8519/CONICET_Digital_Nro.11832.pdf and Ecoregistros: https://www.ecoregistros.org/ficha/Larrea-divaricata&idprovincia=18 (read only through a search summary).
 
 ## Roads, fences and gates (user, 2026-10-22)
 
