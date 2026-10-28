@@ -66,6 +66,14 @@ impl Species {
             Self::Piquillin => "Bark009",
             // Grey furrowed bark, the olmo's set shaded cooler grey.
             Self::Alamo => "Bark001",
+            // Fibrous, fissured reddish bark.
+            Self::Algarrobo => "chinese_cedar_bark",
+            // Light grey-brown bark that splits with age.
+            Self::Tala => "chinese_hackberry_bark",
+            // Dark brown bark with deep oblique cracks.
+            Self::Espinillo => "bark_brown_01",
+            // Light, smooth, spongy bark.
+            Self::Ombu => "Bark005",
         }
     }
 
@@ -86,6 +94,16 @@ impl Species {
             Self::Jarilla => "eucalipto_leaves",
             // Small simple leaves along a twig, the olmo's atlas, fresh green.
             Self::Alamo => "olmo_leaves",
+            // Fine pendulous bipinnate leaves: the aromo's feathery atlas,
+            // a fresh green.
+            Self::Algarrobo => "aromo_leaves",
+            // Small simple serrated leaves: the olmo's atlas, mid green.
+            Self::Tala => "olmo_leaves",
+            // Tiny bipinnate leaves: the aromo's atlas, a dull dark green.
+            Self::Espinillo => "aromo_leaves",
+            // Large glossy simple leaves: the olmo's atlas drawn on big
+            // cards, deep green.
+            Self::Ombu => "olmo_leaves",
         }
     }
 
@@ -106,6 +124,14 @@ impl Species {
             (Self::Piquillin, 2) => Color::srgb(0.46, 0.58, 0.34),
             (Self::Jarilla, 1) => Color::srgb(0.9, 0.9, 0.4),
             (Self::Jarilla, 2) => Color::srgb(0.7, 0.82, 0.42),
+            (Self::Algarrobo, 1) => Color::srgb(0.7, 0.84, 0.46),
+            (Self::Algarrobo, 2) => Color::srgb(0.54, 0.7, 0.5),
+            (Self::Tala, 1) => Color::srgb(0.6, 0.76, 0.4),
+            (Self::Tala, 2) => Color::srgb(0.42, 0.6, 0.46),
+            (Self::Espinillo, 1) => Color::srgb(0.5, 0.62, 0.34),
+            (Self::Espinillo, 2) => Color::srgb(0.36, 0.5, 0.4),
+            (Self::Ombu, 1) => Color::srgb(0.34, 0.54, 0.32),
+            (Self::Ombu, 2) => Color::srgb(0.46, 0.68, 0.34),
             _ => self.leaf_tint_base(),
         }
     }
@@ -121,6 +147,10 @@ impl Species {
             Self::Piquillin => Color::srgb(0.28, 0.42, 0.26),
             Self::Jarilla => Color::srgb(0.82, 0.88, 0.45),
             Self::Alamo => Color::srgb(0.72, 0.9, 0.55),
+            Self::Algarrobo => Color::srgb(0.62, 0.78, 0.5),
+            Self::Tala => Color::srgb(0.5, 0.68, 0.42),
+            Self::Espinillo => Color::srgb(0.4, 0.56, 0.36),
+            Self::Ombu => Color::srgb(0.4, 0.62, 0.36),
         }
     }
 
@@ -136,6 +166,10 @@ impl Species {
             Self::Piquillin => Color::srgb(0.16, 0.26, 0.14),
             Self::Jarilla => Color::srgb(0.46, 0.5, 0.22),
             Self::Alamo => Color::srgb(0.3, 0.4, 0.17),
+            Self::Algarrobo => Color::srgb(0.3, 0.4, 0.2),
+            Self::Tala => Color::srgb(0.26, 0.36, 0.18),
+            Self::Espinillo => Color::srgb(0.2, 0.3, 0.15),
+            Self::Ombu => Color::srgb(0.2, 0.32, 0.14),
         }
     }
 
@@ -151,6 +185,10 @@ impl Species {
             Self::Piquillin => Color::srgb(0.3, 0.26, 0.2),
             Self::Jarilla => Color::srgb(0.24, 0.19, 0.14),
             Self::Alamo => Color::srgb(0.32, 0.3, 0.27),
+            Self::Algarrobo => Color::srgb(0.35, 0.25, 0.18),
+            Self::Tala => Color::srgb(0.4, 0.36, 0.3),
+            Self::Espinillo => Color::srgb(0.2, 0.15, 0.1),
+            Self::Ombu => Color::srgb(0.5, 0.46, 0.38),
         }
     }
 
@@ -178,6 +216,20 @@ impl Species {
             (Self::Jarilla, _) => Color::srgb(0.88, 0.84, 0.76),
             // A cooler grey than the olmo's warm brown, same texture.
             (Self::Alamo, _) => Color::srgb(0.78, 0.8, 0.82),
+            // The new field trees' sets are shaded a little, a darker and a
+            // paler tint beside the first.
+            (Self::Algarrobo, 1) => Color::srgb(0.78, 0.7, 0.62),
+            (Self::Algarrobo, 2) => Color::srgb(1.0, 0.92, 0.84),
+            (Self::Algarrobo, _) => Color::srgb(0.9, 0.82, 0.74),
+            (Self::Tala, 1) => Color::srgb(0.8, 0.78, 0.72),
+            (Self::Tala, 2) => Color::srgb(1.0, 0.98, 0.92),
+            (Self::Tala, _) => Color::srgb(0.95, 0.92, 0.86),
+            (Self::Espinillo, 1) => Color::srgb(0.65, 0.58, 0.52),
+            (Self::Espinillo, 2) => Color::srgb(0.95, 0.86, 0.76),
+            (Self::Espinillo, _) => Color::srgb(0.8, 0.7, 0.62),
+            (Self::Ombu, 1) => Color::srgb(0.8, 0.8, 0.74),
+            (Self::Ombu, 2) => Color::srgb(1.0, 0.96, 0.88),
+            (Self::Ombu, _) => Color::srgb(0.9, 0.88, 0.8),
             _ => Color::WHITE,
         }
     }
@@ -440,7 +492,7 @@ mod tests {
         // The fachinal is a chañar's suckers: it wears the chañar's bark.
         assert_eq!(Species::Fachinal.bark_set(), Species::Chanar.bark_set());
         // The álamo borrows the olmo's grey furrows (every other shipped set
-        // is another species' or reserved for F4), shaded a cooler grey so
+        // is another species'), shaded a cooler grey so
         // the two do not read as one tree.
         assert_eq!(Species::Alamo.bark_set(), Species::Olmo.bark_set());
         assert_ne!(Species::Alamo.bark_tint(0), Species::Olmo.bark_tint(0));
@@ -452,6 +504,31 @@ mod tests {
         for (i, a) in sets.iter().enumerate() {
             for b in &sets[i + 1..] {
                 assert_ne!(a, b, "two species share a bark set");
+            }
+        }
+    }
+
+    #[test]
+    fn each_new_field_species_wears_its_own_bark_set_and_a_leaf_atlas_that_exists() {
+        let want = [
+            (Species::Algarrobo, "chinese_cedar_bark", "aromo_leaves"),
+            (Species::Tala, "chinese_hackberry_bark", "olmo_leaves"),
+            (Species::Espinillo, "bark_brown_01", "aromo_leaves"),
+            (Species::Ombu, "Bark005", "olmo_leaves"),
+        ];
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        for (species, bark, leaves) in want {
+            assert_eq!(species.bark_set(), bark, "{species:?}");
+            assert_eq!(species.leaf_set(), leaves, "{species:?}");
+            // No other species wears that bark.
+            let wearers = Species::EVERY
+                .iter()
+                .filter(|s| s.bark_set() == bark)
+                .count();
+            assert_eq!(wearers, 1, "{bark}");
+            for map in ["color", "normal_gl", "orm"] {
+                let file = root.join(tree_map_path(bark, map));
+                assert!(file.is_file(), "{}", file.display());
             }
         }
     }

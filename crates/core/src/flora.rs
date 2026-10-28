@@ -1,7 +1,9 @@
 //! Native flora of the open pampa between towns: grass tufts (paja and
-//! flechilla), caldén and chañar trees, scattered and in small groves and
-//! in the dense monte patches, and the shrubs (piquillín, jarilla and
-//! chañar thickets) of the understory.
+//! flechilla), caldén and chañar trees (with the algarrobo, tala and
+//! espinillo among them, and the town trees that escaped into the field),
+//! scattered and in small groves and in the dense monte patches, an ombú
+//! beside some settlements, and the shrubs (piquillín, jarilla and chañar
+//! thickets) of the understory.
 //!
 //! Placement is pure and deterministic: each chunk's flora is seeded by its
 //! coordinate, so render can rebuild any chunk at any time and logic can
@@ -24,6 +26,27 @@ pub enum Species {
     /// *Geoffroea decorticans*: 3–5 m. It grows in dense thickets
     /// (chañarales), so it is drawn and collides as one.
     Chanar,
+    /// *Prosopis flexuosa*: a low, wide, often multi-stem companion of the
+    /// caldén in the monte.
+    Algarrobo,
+    /// *Celtis tala*: a rare edge tree, zigzag branches under an irregular
+    /// round crown.
+    Tala,
+    /// *Vachellia caven*: a rare small tree with a rounded crown, on open,
+    /// disturbed ground.
+    Espinillo,
+    /// *Phytolacca dioica*: a huge buttressed trunk under a broad dense
+    /// dome. Planted beside settlements only, never in the open field.
+    Ombu,
+    /// The towns' paraíso, escaped into the field along roads and round
+    /// settlements.
+    Paraiso,
+    /// The towns' olmo, escaped like the paraíso.
+    Olmo,
+    /// The towns' eucalipto, escaped like the paraíso.
+    Eucalipto,
+    /// The towns' aromo, escaped like the paraíso.
+    Aromo,
 }
 
 /// How far along its life a tree is: it decides the size and the girth.
@@ -258,6 +281,46 @@ impl FloraSite {
     /// monte: the monte is a young, regrowing stand.
     const AGE_SHARES: [f32; 3] = [0.07, 0.21, 0.965];
     const MONTE_AGE_SHARES: [f32; 3] = [0.22, 0.50, 0.97];
+
+    /// Chance, per candidate spot at a settlement's best ring, of an ombú
+    /// ([`Self::ombu_zone`]).
+    const OMBU_TREE: f32 = 0.0025;
+    /// Chance, per candidate spot by a road or a settlement, of an escaped
+    /// town tree on top of the field's own trees ([`Self::escape`]): the
+    /// seedlings of the plantings, left to grow.
+    const ESCAPED_TREE: f32 = 0.03;
+    /// Share of the monte's trees that are algarrobos (a companion of the
+    /// caldén), at the monte's heart.
+    const ALGARROBO_SHARE: f32 = 0.12;
+    /// Share of the trees that are tala, and of those that are espinillo, on
+    /// the fringes of the groves and the monte (a fraction of it, see
+    /// [`Self::EDGE_FLOOR`], elsewhere).
+    const EDGE_SHARE: f32 = 0.04;
+    /// The part of [`Self::EDGE_SHARE`] that tala and espinillo keep off the
+    /// fringes: a few stand alone on open or disturbed ground.
+    const EDGE_FLOOR: f32 = 0.3;
+    /// Share of the trees that are town species in the open field, and
+    /// where [`Self::escape`] is 1 (by a road or a settlement).
+    const TOWN_SHARE_OPEN: f32 = 0.004;
+    const TOWN_SHARE_NEAR: f32 = 0.09;
+    /// How the escaped town trees divide among paraíso, olmo, eucalipto and
+    /// aromo.
+    const TOWN_MIX: [f32; 4] = [0.35, 0.15, 0.30, 0.20];
+    /// Cumulative share of the ombúes that are young and mature (the rest
+    /// are old): they are planted trees, none a sapling.
+    const OMBU_AGE_SHARES: [f32; 3] = [0.0, 0.2, 0.8];
+
+    /// How far from a settlement's hub an ombú may be planted, in meters:
+    /// beside the casco, the puesto or the rancho, never in the open field.
+    pub const OMBU_REACH: f32 = 140.0;
+    /// Roads are lined with escaped town trees (paraíso, olmo, eucalipto,
+    /// aromo) out to this distance from their centerline, in meters.
+    pub const ESCAPE_ROAD_REACH: f32 = 60.0;
+    /// Round a settlement's hub the escaped town trees thin out between
+    /// [`Self::ESCAPE_HUB_NEAR`] and this distance, in meters.
+    pub const ESCAPE_HUB_FAR: f32 = 260.0;
+    /// See [`Self::ESCAPE_HUB_FAR`].
+    pub const ESCAPE_HUB_NEAR: f32 = 60.0;
 
     /// The flora of `config`'s world over `terrain` (already leveled for its
     /// towns, with its roads laid), kept off the `line`'s track and the
@@ -512,6 +575,21 @@ impl FloraSite {
     /// the open country); and [`Self::WORKED_SHARE`] at a settlement's
     /// hub, back to 1 at [`Self::WORKED_FULL`].
     pub fn rural(&self, p: Vec2) -> f32 {
+        self.rural_by(p, self.hub_distance(p))
+    }
+
+    /// Distance from `p` to the nearest settlement hub, in meters (infinite
+    /// without settlements).
+    fn hub_distance(&self, p: Vec2) -> f32 {
+        self.worked
+            .iter()
+            .map(|h| h.distance(p))
+            .fold(f32::MAX, f32::min)
+    }
+
+    /// [`Self::rural`], given the distance to the nearest hub already worked
+    /// out.
+    fn rural_by(&self, p: Vec2, casco: f32) -> f32 {
         if !self.redistribute {
             return 1.0;
         }
@@ -523,14 +601,95 @@ impl FloraSite {
         let by_town = Self::TOWN_NEAR_SHARE
             + (1.0 - Self::TOWN_NEAR_SHARE) * smoothstep(Self::TOWN_NEAR, Self::TOWN_FULL, town)
             + (Self::FAR_BOOST - 1.0) * smoothstep(Self::TOWN_FULL, Self::FAR_FULL, town);
-        let casco = self
-            .worked
-            .iter()
-            .map(|h| h.distance(p))
-            .fold(f32::MAX, f32::min);
         let by_casco = Self::WORKED_SHARE
             + (1.0 - Self::WORKED_SHARE) * smoothstep(Self::WORKED_NEAR, Self::WORKED_FULL, casco);
         by_town * by_casco
+    }
+
+    /// How much of an ombú's ground `p` is, in `[0, 1]`, `hub` meters from
+    /// the nearest settlement's hub: a ring beside the casco, the puesto or
+    /// the rancho (outside the patio and the yard, kept clear of trees),
+    /// gone at [`Self::OMBU_REACH`]. It is 0 past that, so no ombú grows in
+    /// the open field.
+    fn ombu_zone(hub: f32) -> f32 {
+        smoothstep(20.0, 45.0, hub)
+            * (1.0 - smoothstep(0.6 * Self::OMBU_REACH, Self::OMBU_REACH, hub))
+    }
+
+    /// How much escaped town trees favour `p`, in `[0, 1]`: 1 by a road
+    /// (past the margin the trees keep off it) and round a settlement's hub,
+    /// easing out to 0 at [`Self::ESCAPE_ROAD_REACH`] from the road and
+    /// [`Self::ESCAPE_HUB_FAR`] from a hub; 0 in the open field.
+    pub fn escape(&self, p: Vec2) -> f32 {
+        self.escape_by(p, self.hub_distance(p))
+    }
+
+    fn escape_by(&self, p: Vec2, hub: f32) -> f32 {
+        let by_hub = 1.0 - smoothstep(Self::ESCAPE_HUB_NEAR, Self::ESCAPE_HUB_FAR, hub);
+        let by_road = self
+            .roads
+            .as_ref()
+            .and_then(|r| r.near(p, Self::ESCAPE_ROAD_REACH))
+            .map_or(0.0, |d| {
+                1.0 - smoothstep(Self::TREE_ROAD_MARGIN, Self::ESCAPE_ROAD_REACH, d)
+            });
+        by_hub.max(by_road)
+    }
+
+    /// The species of a field tree at a spot of the given `grove`, `monte`
+    /// and `fringe` masks and `escape` share, from `roll`, a uniform `[0, 1)`
+    /// draw. The caldén and the chañar are most of the field; the algarrobo
+    /// comes with the caldén in the monte, the tala and the espinillo are a
+    /// few on the edges and open ground, and the town species are rarer
+    /// still, and commoner by roads and settlements.
+    fn species_at(roll: f32, grove: f32, monte: f32, fringe: f32, escape: f32) -> Species {
+        let edge = Self::EDGE_SHARE * (Self::EDGE_FLOOR + (1.0 - Self::EDGE_FLOOR) * fringe);
+        let bands = [
+            (Species::Algarrobo, Self::ALGARROBO_SHARE * monte),
+            (Species::Tala, edge),
+            (Species::Espinillo, edge),
+        ];
+        let town = Self::TOWN_SHARE_OPEN + (Self::TOWN_SHARE_NEAR - Self::TOWN_SHARE_OPEN) * escape;
+        let mut at = roll;
+        for (species, share) in bands {
+            if at < share {
+                return species;
+            }
+            at -= share;
+        }
+        if at < town {
+            return Self::town_species(at / town);
+        }
+        let rest = (at - town) / (1.0 - town - bands.iter().map(|b| b.1).sum::<f32>());
+        // Caldenes rule the groves' cores; chañares fill their edges and
+        // the open ground, and the understory of the monte.
+        let edge = 4.0 * grove * (1.0 - grove);
+        let calden = (0.3 + 0.45 * grove - 0.2 * edge + 0.3 * monte).clamp(0.1, 0.9);
+        if rest < calden {
+            Species::Calden
+        } else {
+            Species::Chanar
+        }
+    }
+
+    /// The town species a `roll` in `[0, 1)` picks, by [`Self::TOWN_MIX`].
+    fn town_species(roll: f32) -> Species {
+        let mut at = roll;
+        for (species, share) in [
+            Species::Paraiso,
+            Species::Olmo,
+            Species::Eucalipto,
+            Species::Aromo,
+        ]
+        .into_iter()
+        .zip(Self::TOWN_MIX)
+        {
+            if at < share {
+                return species;
+            }
+            at -= share;
+        }
+        Species::Aromo
     }
 
     /// Whether the tree planted at `at` stays: [`Self::TREE_KEEP`] of them
@@ -592,7 +751,8 @@ impl FloraSite {
             // wider far out (the patches and groves spread: the stands are
             // as dense as they can be already, so more of them, not
             // denser); the lone trees keep a little more than the stands.
-            let rural = self.rural(at);
+            let hub = self.hub_distance(at);
+            let rural = self.rural_by(at, hub);
             let widen = Self::FAR_WIDEN * (rural - 1.0).max(0.0);
             let grove = self.grove_wide(at, widen);
             let monte = self.monte_wide(at, widen);
@@ -609,24 +769,30 @@ impl FloraSite {
             let thin = rural.min(1.0);
             let (grove_chance, monte_chance) = (grove_chance * thin, monte_chance * thin);
             let chance = Self::LONE_TREE * rural.sqrt() + grove_chance.max(monte_chance);
-            if pick >= chance {
+            // Besides the field's own trees: an ombú beside a settlement,
+            // and the town trees that escaped by the roads and settlements.
+            let ombu = Self::OMBU_TREE * Self::ombu_zone(hub);
+            let escape = self.escape_by(at, hub);
+            let escaped = Self::ESCAPED_TREE * escape;
+            let species = if pick < ombu {
+                Species::Ombu
+            } else if pick < ombu + escaped {
+                Self::town_species(species_roll)
+            } else if pick >= chance {
                 continue;
-            }
-            // A grove stops at its budget; only the monte goes on past it.
-            if trees.len() >= Self::GROVE_BUDGET && monte_chance <= grove_chance {
+            } else if trees.len() >= Self::GROVE_BUDGET && monte_chance <= grove_chance {
+                // A grove stops at its budget; only the monte goes on past it.
                 continue;
-            }
-            // Caldenes rule the groves' cores; chañares fill their edges and
-            // the open ground, and the understory of the monte.
-            let edge = 4.0 * grove * (1.0 - grove);
-            let calden = (0.3 + 0.45 * grove - 0.2 * edge + 0.3 * monte).clamp(0.1, 0.9);
-            let species = if species_roll < calden {
-                Species::Calden
             } else {
-                Species::Chanar
+                let fringe = Self::fringe_of(grove, monte);
+                Self::species_at(species_roll, grove, monte, fringe, escape)
             };
             let shares = [0, 1, 2].map(|i| {
-                Self::AGE_SHARES[i] + (Self::MONTE_AGE_SHARES[i] - Self::AGE_SHARES[i]) * monte
+                if species == Species::Ombu {
+                    Self::OMBU_AGE_SHARES[i]
+                } else {
+                    Self::AGE_SHARES[i] + (Self::MONTE_AGE_SHARES[i] - Self::AGE_SHARES[i]) * monte
+                }
             });
             let age = match shares.iter().position(|&c| age_roll < c) {
                 Some(0) => Age::Sapling,
@@ -637,6 +803,9 @@ impl FloraSite {
             let (lo, hi) = age.height_range(species);
             // An old giant stands broad; the rest a little narrow or wide.
             let width = match age {
+                // An ombú's trunk is the collider's widest: it stays modest
+                // across, whatever its age.
+                _ if species == Species::Ombu => 0.95 + 0.2 * width_roll,
                 Age::Old => 1.15 + 0.25 * width_roll,
                 _ => 0.82 + 0.36 * width_roll,
             };
@@ -938,15 +1107,28 @@ impl Age {
 
     /// Lowest and highest height of a `species` of this age, in meters.
     pub fn height_range(self, species: Species) -> (f32, f32) {
-        match (species, self) {
-            (Species::Calden, Self::Sapling) => (2.0, 3.5),
-            (Species::Calden, Self::Young) => (3.5, 6.0),
-            (Species::Calden, Self::Mature) => (6.0, 9.0),
-            (Species::Calden, Self::Old) => (10.0, 12.0),
-            (Species::Chanar, Self::Sapling) => (1.5, 2.8),
-            (Species::Chanar, Self::Young) => (2.8, 3.8),
-            (Species::Chanar, Self::Mature) => (3.8, 5.0),
-            (Species::Chanar, Self::Old) => (5.0, 6.5),
+        // Sapling, young, mature and old, in that order.
+        let [sapling, young, mature, old] = match species {
+            Species::Calden => [(2.0, 3.5), (3.5, 6.0), (6.0, 9.0), (10.0, 12.0)],
+            Species::Chanar => [(1.5, 2.8), (2.8, 3.8), (3.8, 5.0), (5.0, 6.5)],
+            // Low and wide: 4-8 m.
+            Species::Algarrobo => [(1.8, 3.0), (3.0, 4.5), (4.5, 6.5), (6.5, 8.0)],
+            // A low shrubby tree of 4-9 m.
+            Species::Tala => [(1.5, 2.5), (2.5, 4.0), (4.0, 6.5), (6.5, 8.5)],
+            // Up to 5 m.
+            Species::Espinillo => [(1.2, 2.0), (2.0, 3.0), (3.0, 4.2), (4.2, 5.0)],
+            // 12-18 m when old; it is planted as a young tree at the least.
+            Species::Ombu => [(5.0, 6.0), (6.0, 10.0), (10.0, 13.0), (13.0, 16.0)],
+            Species::Paraiso => [(2.0, 4.0), (4.0, 7.0), (7.0, 10.0), (10.0, 12.0)],
+            Species::Olmo => [(3.0, 5.0), (5.0, 9.0), (9.0, 14.0), (14.0, 18.0)],
+            Species::Eucalipto => [(4.0, 8.0), (8.0, 14.0), (14.0, 19.0), (19.0, 22.0)],
+            Species::Aromo => [(1.5, 2.5), (2.5, 4.0), (4.0, 6.0), (6.0, 7.0)],
+        };
+        match self {
+            Self::Sapling => sapling,
+            Self::Young => young,
+            Self::Mature => mature,
+            Self::Old => old,
         }
     }
 }
@@ -1024,6 +1206,15 @@ impl Tree {
         match self.species {
             Species::Calden => 0.035 * self.age.girth() * self.height,
             Species::Chanar => 0.09 * self.height,
+            Species::Algarrobo => 0.07 * self.height,
+            Species::Tala => 0.07 * self.height,
+            Species::Espinillo => 0.09 * self.height,
+            // A huge buttressed trunk.
+            Species::Ombu => 0.1 * self.height,
+            Species::Paraiso => 0.055 * self.height,
+            Species::Olmo => 0.05 * self.height,
+            Species::Eucalipto => 0.045 * self.height,
+            Species::Aromo => 0.055 * self.height,
         }
     }
 
@@ -1032,6 +1223,14 @@ impl Tree {
         let base = match self.species {
             Species::Calden => 0.55,
             Species::Chanar => 0.35,
+            Species::Algarrobo => 0.6,
+            Species::Tala => 0.4,
+            Species::Espinillo => 0.45,
+            Species::Ombu => 0.5,
+            Species::Paraiso => 0.5,
+            Species::Olmo => 0.4,
+            Species::Eucalipto => 0.22,
+            Species::Aromo => 0.5,
         };
         base * self.width * self.height
     }
@@ -1050,8 +1249,14 @@ impl Tree {
     /// takes more room, a sapling can stand in the shade of an old one.
     fn spacing(&self) -> f32 {
         match self.species {
-            Species::Calden => 1.6 + 0.3 * self.height,
-            Species::Chanar => 1.4 + 0.25 * self.height,
+            Species::Calden | Species::Algarrobo => 1.6 + 0.3 * self.height,
+            Species::Chanar | Species::Tala => 1.4 + 0.25 * self.height,
+            Species::Espinillo => 1.3 + 0.25 * self.height,
+            Species::Ombu => 3.0 + 0.3 * self.height,
+            Species::Paraiso => 1.8 + 0.3 * self.height,
+            Species::Olmo => 2.0 + 0.3 * self.height,
+            Species::Eucalipto => 2.0 + 0.25 * self.height,
+            Species::Aromo => 1.4 + 0.3 * self.height,
         }
     }
 }
@@ -1276,7 +1481,8 @@ mod tests {
         assert!(
             trees
                 .iter()
-                .all(|t| t.trunk_radius() > 0.05 && t.trunk_radius() < 0.7)
+                // (A giant eucalipto's trunk, the stoutest here, is under a meter.)
+                .all(|t| t.trunk_radius() > 0.05 && t.trunk_radius() < 1.0)
         );
     }
 
@@ -1424,8 +1630,13 @@ mod tests {
             .filter(|t| (0.15..0.85).contains(&flora.grove(t.at)))
             .collect();
         let core: Vec<&Tree> = trees.iter().filter(|t| flora.grove(t.at) >= 0.85).collect();
+        // Among the two main trees: the other species are a few in the hundred.
         let share = |ts: &[&Tree]| {
-            ts.iter().filter(|t| t.species == Species::Chanar).count() as f32 / ts.len() as f32
+            let main: Vec<&&Tree> = ts
+                .iter()
+                .filter(|t| matches!(t.species, Species::Calden | Species::Chanar))
+                .collect();
+            main.iter().filter(|t| t.species == Species::Chanar).count() as f32 / main.len() as f32
         };
         println!(
             "chañar share: edge {:.2} of {}, core {:.2} of {}",
@@ -2505,7 +2716,10 @@ mod tests {
         // Trees and ground by distance to the nearest hub: the ring a casco
         // clears, and the field round it.
         let (mut ring, mut field) = ((0.0_f32, 0.0_f32), (0.0_f32, 0.0_f32));
-        for t in flora.all_trees() {
+        // The monte, groves and lone trees `rural` thins: not the ombú and the
+        // escaped town trees, which a settlement draws in.
+        let native = |t: &Tree| !is_town(t.species) && t.species != Species::Ombu;
+        for t in flora.all_trees().iter().filter(|t| native(t)) {
             match away(t.at) {
                 d if (FloraSite::WORKED_NEAR..FloraSite::WORKED_FULL).contains(&d) => ring.0 += 1.0,
                 d if (800.0..1500.0).contains(&d) => field.0 += 1.0,
@@ -2598,5 +2812,245 @@ mod tests {
         for &c in &block {
             assert_eq!(flora.trees(c), flora.chunk(c).trees);
         }
+    }
+
+    /// The shipped world's flora (towns, roads, fences and settlements as the
+    /// game lays them) with every tree it plants, and the settlements' hubs.
+    /// Built once for the tests that count species over the whole world.
+    fn shipped() -> &'static (FloraSite, Vec<Tree>, Vec<Vec2>) {
+        static SHIPPED: std::sync::OnceLock<(FloraSite, Vec<Tree>, Vec<Vec2>)> =
+            std::sync::OnceLock::new();
+        SHIPPED.get_or_init(|| {
+            let (world, towns, line, fences, layout) = crate::settlement::tests::settled();
+            let flora = FloraSite::new(world.config, &world.terrain, &line)
+                .with_track(&line.full_path(&towns))
+                .with_fences(&fences)
+                .with_settlements(&layout);
+            let hubs = layout.settlements.iter().map(|s| s.hub).collect();
+            let trees = flora.all_trees();
+            (flora, trees, hubs)
+        })
+    }
+
+    fn share_of(trees: &[Tree], keep: impl Fn(Species) -> bool) -> f32 {
+        trees.iter().filter(|t| keep(t.species)).count() as f32 / trees.len() as f32
+    }
+
+    fn is_town(species: Species) -> bool {
+        matches!(
+            species,
+            Species::Paraiso | Species::Olmo | Species::Eucalipto | Species::Aromo
+        )
+    }
+
+    #[test]
+    fn the_new_species_keep_their_shares_of_the_shipped_world() {
+        let (_, trees, hubs) = shipped();
+        assert!(trees.len() > 100_000 && !hubs.is_empty(), "{}", trees.len());
+        let share = |s: Species| share_of(trees, |t| t == s);
+        for s in [
+            Species::Calden,
+            Species::Chanar,
+            Species::Algarrobo,
+            Species::Tala,
+            Species::Espinillo,
+            Species::Ombu,
+        ] {
+            println!(
+                "{s:?}: {:.4} ({})",
+                share(s),
+                trees.iter().filter(|t| t.species == s).count()
+            );
+        }
+        let town = share_of(trees, is_town);
+        println!("town species: {town:.4}");
+        for s in [
+            Species::Paraiso,
+            Species::Olmo,
+            Species::Eucalipto,
+            Species::Aromo,
+        ] {
+            println!("  {s:?}: {:.4}", share(s));
+            assert!(share(s) > 0.0005, "{s:?}");
+        }
+        let calden = share(Species::Calden);
+        // The caldén still rules the field; the algarrobo is a modest
+        // companion; tala and espinillo are a small share, well below it.
+        assert!(calden > 0.4, "{calden}");
+        assert!((0.04..=0.12).contains(&share(Species::Algarrobo)));
+        for s in [Species::Tala, Species::Espinillo] {
+            assert!((0.01..=0.045).contains(&share(s)), "{s:?} {}", share(s));
+            assert!(share(s) < 0.15 * calden, "{s:?}");
+        }
+        // The escaped town trees are a few in the thousand, below every native
+        // companion: nearly all of them by a road or a settlement.
+        assert!((0.006..=0.04).contains(&town), "{town}");
+        // The ombú is rare: about one a settlement in a world of 200,000 trees.
+        let ombu = trees.iter().filter(|t| t.species == Species::Ombu).count();
+        assert!((8..=60).contains(&ombu), "{ombu}");
+    }
+
+    #[test]
+    fn the_ombu_stands_only_beside_a_settlement_and_never_in_the_open_field() {
+        let (_, trees, hubs) = shipped();
+        let away = |p: Vec2| hubs.iter().map(|h| h.distance(p)).fold(f32::MAX, f32::min);
+        let ombus: Vec<&Tree> = trees
+            .iter()
+            .filter(|t| t.species == Species::Ombu)
+            .collect();
+        assert!(!ombus.is_empty());
+        for t in &ombus {
+            assert!(
+                away(t.at) <= FloraSite::OMBU_REACH,
+                "an ombú {} m from the nearest settlement",
+                away(t.at)
+            );
+        }
+        // And it is not every settlement's: some have none.
+        let with: usize = hubs
+            .iter()
+            .filter(|h| {
+                ombus
+                    .iter()
+                    .any(|t| t.at.distance(**h) <= FloraSite::OMBU_REACH)
+            })
+            .count();
+        println!("{with} of {} settlements have an ombú", hubs.len());
+        assert!(with * 10 >= hubs.len() * 2 && with < hubs.len(), "{with}");
+        // No site without settlements ever plants one.
+        let (_, _, open) = site();
+        assert!(sample(&open).iter().all(|t| t.species != Species::Ombu));
+    }
+
+    #[test]
+    fn the_algarrobo_grows_in_the_monte_and_tala_and_espinillo_on_its_edges() {
+        let (flora, trees, _) = shipped();
+        let mean = |s: Species, f: &dyn Fn(Vec2) -> f32| {
+            let own: Vec<&Tree> = trees.iter().filter(|t| t.species == s).collect();
+            own.iter().map(|t| f(t.at)).sum::<f32>() / own.len() as f32
+        };
+        let monte = |p: Vec2| flora.monte(p);
+        let fringe = |p: Vec2| flora.fringe(p);
+        let (alg, calden) = (
+            mean(Species::Algarrobo, &monte),
+            mean(Species::Calden, &monte),
+        );
+        println!("monte: algarrobo {alg:.2}, caldén {calden:.2}");
+        assert!(alg > 0.8 && alg > calden + 0.1, "{alg} {calden}");
+        for s in [Species::Tala, Species::Espinillo] {
+            let (own, all) = (mean(s, &fringe), mean(Species::Calden, &fringe));
+            println!("fringe: {s:?} {own:.2}, caldén {all:.2}");
+            assert!(own > all + 0.05, "{s:?}");
+            assert!(mean(s, &monte) < alg, "{s:?} is not a monte companion");
+        }
+    }
+
+    #[test]
+    fn escaped_town_trees_are_denser_by_roads_and_settlements_than_in_the_open_field() {
+        let (flora, trees, hubs) = shipped();
+        let roads = flora.roads.as_ref().expect("the shipped roads");
+        let away = |p: Vec2| hubs.iter().map(|h| h.distance(p)).fold(f32::MAX, f32::min);
+        let near = |p: Vec2| {
+            roads.near(p, FloraSite::ESCAPE_ROAD_REACH).is_some()
+                || away(p) < FloraSite::ESCAPE_HUB_FAR
+        };
+        let open = |p: Vec2| roads.distance(p) > 400.0 && away(p) > 1000.0;
+        let (mut by, mut apart) = ((0.0_f32, 0.0_f32), (0.0_f32, 0.0_f32));
+        for t in trees {
+            let town = f32::from(is_town(t.species));
+            if near(t.at) {
+                by = (by.0 + town, by.1 + 1.0);
+            } else if open(t.at) {
+                apart = (apart.0 + town, apart.1 + 1.0);
+            }
+        }
+        // Per tree standing there, and per hectare of ground.
+        let (by_share, open_share) = (by.0 / by.1, apart.0 / apart.1);
+        println!(
+            "town share of trees: by {by_share:.4} ({}), open {open_share:.4} ({})",
+            by.0, apart.0
+        );
+        assert!(
+            open_share > 0.0 && by_share > 3.0 * open_share,
+            "{by_share} {open_share}"
+        );
+        let bounds = flora.config.bounds();
+        let (mut ground_by, mut ground_open) = (0.0_f32, 0.0_f32);
+        let mut at = bounds.min;
+        while at.y < bounds.max.y {
+            at.x = bounds.min.x;
+            while at.x < bounds.max.x {
+                if near(at) {
+                    ground_by += 1.0;
+                } else if open(at) {
+                    ground_open += 1.0;
+                }
+                at.x += 50.0;
+            }
+            at.y += 50.0;
+        }
+        let (d_by, d_open) = (by.0 / ground_by, apart.0 / ground_open);
+        println!("town trees per sample: by {d_by:.5}, open {d_open:.5}");
+        assert!(d_by > 5.0 * d_open, "{d_by} {d_open}");
+    }
+
+    #[test]
+    fn every_species_fits_its_spacing_and_collision_to_its_size() {
+        for species in [
+            Species::Calden,
+            Species::Chanar,
+            Species::Algarrobo,
+            Species::Tala,
+            Species::Espinillo,
+            Species::Ombu,
+            Species::Paraiso,
+            Species::Olmo,
+            Species::Eucalipto,
+            Species::Aromo,
+        ] {
+            let mut last = (0.0, 0.0);
+            for age in Age::ALL {
+                let (lo, hi) = age.height_range(species);
+                assert!(
+                    lo < hi && lo >= last.0 && hi > last.1,
+                    "{species:?} {age:?}"
+                );
+                last = (lo, hi);
+                let tree = |height| Tree {
+                    at: Vec2::ZERO,
+                    species,
+                    age,
+                    height,
+                    width: 1.0,
+                    yaw: 0.0,
+                    variant: 0,
+                };
+                // The widest spacing any tree asks is what neighbouring
+                // chunks look for.
+                assert!(
+                    tree(hi).spacing() <= Tree::MAX_SPACING,
+                    "{species:?} {age:?}"
+                );
+                assert!(tree(hi).trunk_radius() < tree(hi).crown_radius());
+            }
+        }
+        // The ombú's trunk is the stoutest of all, the espinillo the lowest tree.
+        let trunk = |s: Species| {
+            Tree {
+                at: Vec2::ZERO,
+                species: s,
+                age: Age::Mature,
+                height: Age::Mature.height_range(s).1,
+                width: 1.0,
+                yaw: 0.0,
+                variant: 0,
+            }
+            .trunk_radius()
+        };
+        for s in [Species::Calden, Species::Eucalipto, Species::Algarrobo] {
+            assert!(trunk(Species::Ombu) > 1.5 * trunk(s), "{s:?}");
+        }
+        assert!(Species::Espinillo.height_range().1 <= 5.0);
+        assert!(Species::Ombu.height_range().1 >= 15.0);
     }
 }

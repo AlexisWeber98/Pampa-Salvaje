@@ -77,6 +77,11 @@ pub(crate) struct Form {
     /// A shrub: its stems taper to fine tips and carry fine twigs, where a
     /// tree's limbs end at a twig's girth whatever the trunk's radius.
     pub shrub: bool,
+    /// Buttress roots flaring from the trunk to the ground (the ombú's).
+    pub buttress: u32,
+    /// How far a limb's middle zigzags off its line, a fraction of its
+    /// length (the tala's).
+    pub kink: f32,
 }
 
 impl Species {
@@ -131,6 +136,8 @@ impl Species {
                 wind: 0.0,
                 clump: 0.0,
                 shrub: false,
+                buttress: 0,
+                kink: 0.0,
             },
             Self::Olmo => Form {
                 height: (11.0, 13.0),
@@ -153,6 +160,8 @@ impl Species {
                 wind: 0.0,
                 clump: 0.0,
                 shrub: false,
+                buttress: 0,
+                kink: 0.0,
             },
             Self::Eucalipto => Form {
                 height: (14.0, 17.0),
@@ -174,6 +183,8 @@ impl Species {
                 wind: 0.0,
                 clump: 0.0,
                 shrub: false,
+                buttress: 0,
+                kink: 0.0,
             },
             Self::Aromo => Form {
                 height: (6.5, 7.5),
@@ -195,6 +206,8 @@ impl Species {
                 wind: 0.0,
                 clump: 0.0,
                 shrub: false,
+                buttress: 0,
+                kink: 0.0,
             },
             // The caldén: a short thick trunk forking low into near
             // horizontal limbs, a broad flat umbrella wider than it is
@@ -223,6 +236,8 @@ impl Species {
                 wind: 0.0,
                 clump: 0.6,
                 shrub: false,
+                buttress: 0,
+                kink: 0.0,
             },
             // The chañar: several slim stems fanning from one low stool,
             // twiggy, with an irregular crown of small leaves in clumps.
@@ -246,6 +261,8 @@ impl Species {
                 wind: 0.0,
                 clump: 0.5,
                 shrub: false,
+                buttress: 0,
+                kink: 0.0,
             },
             // The piquillín: a dense thorny shrub, many fine stems from the
             // ground under a mass of tiny leaves.
@@ -269,6 +286,8 @@ impl Species {
                 wind: 0.0,
                 clump: 0.5,
                 shrub: true,
+                buttress: 0,
+                kink: 0.0,
             },
             // The jarilla: many upright, slender stems, sparse and resinous.
             Self::Jarilla => Form {
@@ -291,6 +310,8 @@ impl Species {
                 wind: 0.0,
                 clump: 0.3,
                 shrub: true,
+                buttress: 0,
+                kink: 0.0,
             },
             // The fachinal: chañar suckers, a thicket of slim stems.
             Self::Fachinal => Form {
@@ -313,6 +334,8 @@ impl Species {
                 wind: 0.0,
                 clump: 0.5,
                 shrub: true,
+                buttress: 0,
+                kink: 0.0,
             },
             // The Lombardy poplar: a short bole, then a bundle of limbs
             // swept almost straight up into a column about a fifth as wide
@@ -339,6 +362,111 @@ impl Species {
                 wind: 0.0,
                 clump: 0.0,
                 shrub: false,
+                buttress: 0,
+                kink: 0.0,
+            },
+            // The algarrobo: a low, wide, often multi-stem tree, several
+            // stout stems from near the ground under a broad crown of fine
+            // pendulous leaves.
+            Self::Algarrobo => Form {
+                height: (5.0, 6.0),
+                fork: 0.16,
+                trunk_radius: 0.16,
+                limbs: (4, 6),
+                tilt: (28.0, 45.0),
+                reach: 0.6,
+                rise: 0.18,
+                twigs: 4,
+                leader: false,
+                cards: 150,
+                card: 1.1,
+                hang: 0.3,
+                sag: 0.2,
+                scatter: 0.35,
+                bark_tile: Vec2::new(1.0, 1.6),
+                lean: 0.1,
+                wind: 0.0,
+                clump: 0.45,
+                shrub: false,
+                buttress: 0,
+                kink: 0.0,
+            },
+            // The tala: a short trunk and crooked, zigzag branches, dense
+            // with twigs, under an irregular round crown of small leaves.
+            Self::Tala => Form {
+                height: (4.5, 5.5),
+                fork: 0.16,
+                trunk_radius: 0.12,
+                limbs: (5, 7),
+                tilt: (35.0, 60.0),
+                reach: 0.55,
+                rise: 0.1,
+                twigs: 5,
+                leader: false,
+                cards: 140,
+                card: 0.7,
+                hang: 0.15,
+                sag: 0.15,
+                scatter: 0.5,
+                bark_tile: Vec2::new(1.0, 1.6),
+                lean: 0.05,
+                wind: 0.0,
+                clump: 0.4,
+                shrub: false,
+                buttress: 0,
+                kink: 0.22,
+            },
+            // The espinillo: a small tree, a short stem under a rounded
+            // crown of tiny leaves.
+            Self::Espinillo => Form {
+                height: (3.4, 4.2),
+                fork: 0.2,
+                trunk_radius: 0.09,
+                limbs: (4, 5),
+                tilt: (30.0, 45.0),
+                reach: 0.5,
+                rise: 0.1,
+                twigs: 5,
+                leader: false,
+                cards: 150,
+                card: 0.45,
+                hang: 0.2,
+                sag: 0.2,
+                scatter: 0.45,
+                bark_tile: Vec2::new(0.9, 1.6),
+                lean: 0.06,
+                wind: 0.0,
+                clump: 0.5,
+                shrub: false,
+                buttress: 0,
+                kink: 0.05,
+            },
+            // The ombú: a huge swollen trunk with buttress roots, a short
+            // bole, then a few massive limbs under a broad dense dome. Its
+            // roots stay within what `pampa_core::Tree::trunk_radius`
+            // collides for it (a tenth of the height).
+            Self::Ombu => Form {
+                height: (9.0, 10.0),
+                fork: 0.28,
+                trunk_radius: 0.6,
+                limbs: (6, 7),
+                tilt: (40.0, 55.0),
+                reach: 0.4,
+                rise: 0.2,
+                twigs: 2,
+                leader: false,
+                cards: 150,
+                card: 1.9,
+                hang: 0.15,
+                sag: 0.15,
+                scatter: 0.35,
+                bark_tile: Vec2::new(1.6, 2.0),
+                lean: 0.03,
+                wind: 0.0,
+                clump: 0.75,
+                shrub: false,
+                buttress: 5,
+                kink: 0.0,
             },
         }
     }
@@ -531,6 +659,144 @@ impl Species {
                     height: (form.height.0 * 1.25, form.height.1 * 1.25),
                     tilt: (form.tilt.0 * 0.7, form.tilt.1 * 0.7),
                     clump: (form.clump + 0.2).min(1.0),
+                    ..form
+                },
+            },
+            Self::Algarrobo => match v {
+                // The classic: a few stems fanning from low down.
+                0 => form,
+                // A single stout trunk forking low, a broad crown.
+                1 => Form {
+                    fork: 0.22,
+                    limbs: (5, 6),
+                    tilt: (50.0, 65.0),
+                    reach: 0.62,
+                    trunk_radius: 0.2,
+                    ..form
+                },
+                // Crooked: the whole tree leans.
+                2 => Form {
+                    fork: 0.16,
+                    lean: 0.13,
+                    cards: 120,
+                    ..form
+                },
+                // A taller vase of steep stems.
+                3 => Form {
+                    height: (6.5, 7.5),
+                    tilt: (14.0, 26.0),
+                    reach: 0.45,
+                    cards: 170,
+                    ..form
+                },
+                // Low and very wide.
+                _ => Form {
+                    height: (3.6, 4.2),
+                    limbs: (5, 6),
+                    tilt: (58.0, 74.0),
+                    reach: 0.9,
+                    cards: 100,
+                    card: 1.0,
+                    ..form
+                },
+            },
+            Self::Tala => match v {
+                0 => form,
+                // Low and shrubby, spreading.
+                1 => Form {
+                    height: (3.2, 3.8),
+                    tilt: (50.0, 70.0),
+                    reach: 0.85,
+                    cards: 110,
+                    ..form
+                },
+                // Taller and more upright.
+                2 => Form {
+                    height: (6.0, 7.0),
+                    tilt: (18.0, 32.0),
+                    reach: 0.4,
+                    kink: 0.15,
+                    cards: 170,
+                    ..form
+                },
+                // Leaning, wind-bent.
+                3 => Form {
+                    lean: 0.1,
+                    tilt: (45.0, 70.0),
+                    reach: 0.65,
+                    ..form
+                },
+                // A dense, compact round crown.
+                _ => Form {
+                    reach: 0.4,
+                    twigs: 6,
+                    cards: 190,
+                    card: 0.6,
+                    clump: 0.6,
+                    kink: 0.12,
+                    ..form
+                },
+            },
+            Self::Espinillo => match v {
+                0 => form,
+                // A low spreading shrub-tree.
+                1 => Form {
+                    height: (2.6, 3.0),
+                    fork: 0.16,
+                    tilt: (45.0, 62.0),
+                    reach: 0.8,
+                    cards: 110,
+                    ..form
+                },
+                // A taller single stem.
+                2 => Form {
+                    height: (4.4, 5.0),
+                    fork: 0.3,
+                    tilt: (20.0, 32.0),
+                    reach: 0.4,
+                    cards: 130,
+                    ..form
+                },
+                // Leaning.
+                3 => Form {
+                    lean: 0.18,
+                    fork: 0.25,
+                    ..form
+                },
+                // Dense and round.
+                _ => Form {
+                    limbs: (5, 6),
+                    cards: 190,
+                    card: 0.5,
+                    clump: 0.7,
+                    ..form
+                },
+            },
+            Self::Ombu => match v {
+                0 => form,
+                // Broader and flatter.
+                1 => Form {
+                    fork: 0.3,
+                    tilt: (55.0, 68.0),
+                    reach: 0.52,
+                    cards: 160,
+                    ..form
+                },
+                // A taller dome on a longer bole.
+                2 => Form {
+                    height: (10.0, 11.0),
+                    fork: 0.34,
+                    tilt: (30.0, 45.0),
+                    reach: 0.36,
+                    ..form
+                },
+                // Leaning, with few massive limbs.
+                _ => Form {
+                    fork: 0.3,
+                    limbs: (4, 5),
+                    lean: 0.04,
+                    wind: 0.5,
+                    card: 2.1,
                     ..form
                 },
             },
@@ -767,6 +1033,27 @@ fn grow(form: Form, mut rng: Rng) -> TreeMesh {
         })
         .collect();
     tube(&mut bark, &trunk, &radii, TRUNK_SIDES, form.bark_tile);
+    // Buttress roots: from the swollen trunk out and down into the ground,
+    // inside the foot's collider (a root's tube reaches 1.2 trunk radii).
+    for k in 0..form.buttress {
+        let out = heading(
+            std::f32::consts::TAU * (k as f32 + rng.range((-0.15, 0.15))) / form.buttress as f32,
+        );
+        let climb = (0.8 * fork).min(2.0);
+        let up = r0 * (1.0 - 0.3 * climb / fork);
+        let roots = [
+            out * 0.8 * up + Vec3::Y * climb,
+            out * r0 * 1.0 + Vec3::Y * climb * 0.45,
+            out * r0 * 1.1 + Vec3::Y * r0 * 0.12,
+        ];
+        tube(
+            &mut bark,
+            &roots,
+            &[r0 * 0.3, r0 * 0.2, r0 * 0.08],
+            LIMB_SIDES,
+            form.bark_tile,
+        );
+    }
     if form.leader {
         leafy.push(Leafy {
             from: trunk[steps - 1],
@@ -797,9 +1084,12 @@ fn grow(form: Form, mut rng: Rng) -> TreeMesh {
         };
         let start = on_trunk(h);
         let dir = out * tilt.sin() + Vec3::Y * tilt.cos();
-        let mid = start + dir * length * 0.5;
         let end_dir = (dir + Vec3::Y * form.rise * 2.0).normalize();
-        let end = mid + end_dir * length * 0.5;
+        // A zigzag limb bows off its line one way, then back the other.
+        let zig = heading(around + std::f32::consts::FRAC_PI_2)
+            * (form.kink * length * if i % 2 == 0 { 1.0 } else { -1.0 });
+        let mid = start + dir * length * 0.5 + zig;
+        let end = mid + end_dir * length * 0.5 - zig * 2.0;
         let width = (r0 * 0.55).min(r0 * 0.5 + 0.03);
         // A shrub's stems taper to a fine tip, a tree's limbs to a twig's
         // girth (by [`Form::shrub`], not by how thin the trunk is).
@@ -1198,8 +1488,13 @@ mod tests {
             for (v, o) in &forms {
                 println!("{species:?} {v}: {o:.2?}");
             }
-            // At least 8 live caldén forms and 5 chañar ones.
-            assert!(forms.len() >= if species == Species::Calden { 8 } else { 5 });
+            // At least 8 live caldén forms, 4 ombú ones and 5 of each other.
+            let least = match species {
+                Species::Calden => 8,
+                Species::Ombu => 4,
+                _ => 5,
+            };
+            assert!(forms.len() >= least, "{species:?}");
             for (i, (a, oa)) in forms.iter().enumerate() {
                 for (b, ob) in &forms[i + 1..] {
                     // Clearly apart in some trait: over a fifth of it
@@ -1249,20 +1544,30 @@ mod tests {
     fn field_trunks_stand_within_the_collision_core_plants_for_them() {
         use pampa_core::flora::Age;
         use pampa_core::{Species as Core, Tree, Vec2 as Ground};
-        for (species, v, t) in field() {
-            let core = if species == Species::Calden {
-                Core::Calden
-            } else {
-                Core::Chanar
-            };
+        // The town species that escaped into the field stand within their
+        // core radius too.
+        let town = Species::ALL
+            .iter()
+            .flat_map(|&s| (0..s.variants() as u32).map(move |v| (s, v, tree(s, v))));
+        for (species, v, t) in field().into_iter().chain(town) {
+            let core = crate::flora::core_species(species);
             for age in Age::ALL {
+                // An ombú is never planted a sapling.
+                if core == Core::Ombu && age == Age::Sapling {
+                    continue;
+                }
                 // Only a mature caldén is ever a snag.
                 if !live(species, v) && age != Age::Mature {
                     continue;
                 }
                 let (lo, hi) = age.height_range(core);
                 // The widest the age is planted.
-                let width = if age == Age::Old { 1.4 } else { 1.18 };
+                let width = match (core, age) {
+                    // An ombú's width stays modest at every age.
+                    (Core::Ombu, _) => 1.15,
+                    (_, Age::Old) => 1.4,
+                    _ => 1.18,
+                };
                 for h in [lo, 0.5 * (lo + hi), hi] {
                     let planted = Tree {
                         at: Ground::ZERO,
@@ -1310,7 +1615,8 @@ mod tests {
         assert!(mean(calden, |t| t.crown_base / t.height) < 0.45);
         // Small leaves, no coarser than the aromo's feathery ones, and
         // smaller still on the chañar.
-        for s in Species::FIELD {
+        // (The ombú's big glossy leaves are the one exception.)
+        for s in Species::FIELD.into_iter().filter(|&s| s != Species::Ombu) {
             assert!(s.form().card <= Species::Aromo.form().card, "{s:?}");
         }
         assert!(Species::Chanar.form().card < 0.6 * Species::Calden.form().card);
@@ -1649,5 +1955,143 @@ mod tests {
             let core = 0.012 * t.height;
             assert!(foot <= core, "variant {v}: bark {foot}, core {core}");
         }
+    }
+
+    /// The mean of `f` over a species' forms.
+    fn mean_of(s: Species, f: impl Fn(&TreeMesh) -> f32) -> f32 {
+        let all: Vec<f32> = (0..s.variants() as u32).map(|v| f(&tree(s, v))).collect();
+        all.iter().sum::<f32>() / all.len() as f32
+    }
+
+    /// Farthest bark from the axis below height `y`, meters.
+    fn foot(t: &TreeMesh, y: f32) -> f32 {
+        t.bark
+            .positions
+            .iter()
+            .filter(|p| p.y < y)
+            .map(|p| Vec2::new(p.x, p.z).length())
+            .fold(0.0, f32::max)
+    }
+
+    #[test]
+    fn the_new_field_species_keep_to_their_triangle_budget_and_wear_a_form_each() {
+        for species in [
+            Species::Algarrobo,
+            Species::Tala,
+            Species::Espinillo,
+            Species::Ombu,
+        ] {
+            for v in 0..species.variants() as u32 {
+                let t = tree(species, v);
+                let tris = t.bark.triangles() + t.leaves.triangles();
+                assert!((200..=1200).contains(&tris), "{species:?} {v}: {tris}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_algarrobo_is_low_wide_and_multi_stem() {
+        let (h, w) = (
+            mean_of(Species::Algarrobo, |t| t.height),
+            mean_of(Species::Algarrobo, |t| 2.0 * t.crown_radius),
+        );
+        println!("algarrobo {h:.1} x {w:.1}");
+        assert!(h < 6.0 && w > 1.6 * h, "{h} tall, {w} wide");
+        // Several stems fan out from low down, past the stool they rise from.
+        let spread = mean_of(Species::Algarrobo, |t| foot(t, 0.5 * t.height) / t.height);
+        assert!(spread > 0.25, "{spread}");
+        // Lower than the caldén's neighbours it grows among.
+        assert!(h < mean_of(Species::Calden, |t| t.height) + 1.0);
+    }
+
+    #[test]
+    fn the_tala_zigzags_into_an_irregular_round_crown() {
+        // Its limbs bow off their line and back; without that the same seed
+        // grows straight limbs.
+        let form = Species::Tala.form();
+        assert!(form.kink >= 0.15);
+        for other in Species::EVERY.into_iter().filter(|&s| s != Species::Tala) {
+            assert!(other.form().kink < 0.1, "{other:?}");
+        }
+        let zig = grow(form, Rng::new(Species::Tala, 0));
+        let straight = grow(Form { kink: 0.0, ..form }, Rng::new(Species::Tala, 0));
+        assert_ne!(zig.bark, straight.bark);
+        // The limbs' zigzag shifts the bark's reach off the trunk.
+        let reach = |t: &TreeMesh| foot(t, f32::MAX);
+        assert!(
+            reach(&zig) > 1.02 * reach(&straight),
+            "{} {}",
+            reach(&zig),
+            reach(&straight)
+        );
+        // An irregular crown: the middle of the leaves stands off the trunk
+        // in some forms, and no form is a column.
+        let (w, h) = (
+            mean_of(Species::Tala, |t| 2.0 * t.crown_radius),
+            mean_of(Species::Tala, |t| t.height),
+        );
+        assert!(w > 1.3 * h, "{w} wide, {h} tall");
+        assert!(
+            (0..Species::Tala.variants() as u32).any(|v| outline(&tree(Species::Tala, v))[2] > 0.5)
+        );
+    }
+
+    #[test]
+    fn the_espinillo_is_the_smallest_rounded_crown() {
+        let h = |s| mean_of(s, |t| t.height);
+        for s in [
+            Species::Calden,
+            Species::Algarrobo,
+            Species::Tala,
+            Species::Ombu,
+        ] {
+            assert!(h(Species::Espinillo) < h(s), "{s:?}");
+        }
+        assert!(Species::Espinillo.variants() >= 5);
+        for v in 0..Species::Espinillo.variants() as u32 {
+            let t = tree(Species::Espinillo, v);
+            // A small tree under 5 m, its crown about as wide as it is tall
+            // or a little wider: round, not a column or a flat umbrella.
+            let ratio = 2.0 * t.crown_radius / t.height;
+            assert!(
+                t.height < 5.0 && (0.8..2.4).contains(&ratio),
+                "{v}: {} {ratio}",
+                t.height
+            );
+        }
+    }
+
+    #[test]
+    fn the_ombu_has_a_huge_buttressed_trunk_under_a_broad_dense_dome() {
+        let form = Species::Ombu.form();
+        assert_eq!(form.buttress, 5);
+        for other in Species::EVERY.into_iter().filter(|&s| s != Species::Ombu) {
+            assert_eq!(other.form().buttress, 0, "{other:?}");
+        }
+        for v in 0..Species::Ombu.variants() as u32 {
+            let t = tree(Species::Ombu, v);
+            // The roots flare past the trunk at the foot.
+            let plain = grow(
+                Form {
+                    buttress: 0,
+                    ..Species::Ombu.variant_form(v)
+                },
+                Rng::new(Species::Ombu, v),
+            );
+            let (roots, trunk) = (foot(&t, 0.3), foot(&plain, 0.3));
+            assert!(roots > 1.08 * trunk, "{v}: {roots} against {trunk}");
+            // A huge trunk: stouter against its height than any other tree's.
+            for other in [Species::Calden, Species::Eucalipto, Species::Algarrobo] {
+                let o = tree(other, 0);
+                assert!(
+                    foot(&t, 0.3) / t.height > 2.0 * foot(&o, 0.3) / o.height,
+                    "{v} against {other:?}"
+                );
+            }
+            // A broad dome of big leaves, dense.
+            assert!(t.crown_radius * 2.0 > 1.2 * t.height, "{v}");
+            assert!(t.leaves.triangles() >= 560, "{v}");
+        }
+        assert!(Species::Ombu.form().card >= 1.8);
     }
 }

@@ -1,6 +1,7 @@
 //! The towns' trees: procedural paraísos, olmos, eucaliptos and aromos,
 //! the trees of 1919 pampa plazas, streets and yards, and the open
-//! country's caldén and chañar ([`Species::FIELD`]).
+//! country's caldén, chañar, algarrobo, tala, espinillo and ombú
+//! ([`Species::FIELD`]; the town species also stand in the field).
 //!
 //! Each [`Species`] has [`VARIANTS`] seeded trees (the field species
 //! [`CALDEN_VARIANTS`] and [`CHANAR_VARIANTS`] distinct forms, so the fields
@@ -35,6 +36,14 @@ pub const CALDEN_VARIANTS: usize = 12;
 /// Distinct forms built of the chañar.
 pub const CHANAR_VARIANTS: usize = 6;
 
+/// Distinct forms built of the algarrobo, the tala and the espinillo.
+pub const ALGARROBO_VARIANTS: usize = 5;
+pub const TALA_VARIANTS: usize = 5;
+pub const ESPINILLO_VARIANTS: usize = 5;
+
+/// Distinct forms built of the ombú (a rare tree, a few of them).
+pub const OMBU_VARIANTS: usize = 4;
+
 /// How many of the caldén's variants are live trees; the rest are dead or
 /// sparse snags ([`mesh::tree`]).
 pub const CALDEN_LIVE: usize = 9;
@@ -47,7 +56,7 @@ pub const SHRUB_VARIANTS: usize = 6;
 /// every tint still batch by variant and tint).
 pub const FIELD_TINTS: usize = 3;
 
-/// A tree's species: the towns' four, the fields' two, the fields' three
+/// A tree's species: the towns' four, the fields' six, the fields' three
 /// shrubs and the estancias' poplar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Species {
@@ -79,17 +88,35 @@ pub enum Species {
     /// Álamo (Lombardy poplar, _Populus nigra_ 'Italica'), the estancias'
     /// windbreak rows: a tall narrow column of upswept limbs.
     Alamo,
+    /// Algarrobo (_Prosopis flexuosa_), the caldén's companion in the monte:
+    /// low, wide and often multi-stem.
+    Algarrobo,
+    /// Tala (_Celtis tala_): zigzag branches under an irregular round crown.
+    Tala,
+    /// Espinillo (_Vachellia caven_): a small tree with a rounded crown.
+    Espinillo,
+    /// Ombú (_Phytolacca dioica_): a huge buttressed trunk under a broad
+    /// dense dome.
+    Ombu,
 }
 
 impl Species {
     /// The towns' species, in order: what plazas, streets and yards plant.
     pub const ALL: [Species; 4] = [Self::Paraiso, Self::Olmo, Self::Eucalipto, Self::Aromo];
-    /// The fields' species, in order.
-    pub const FIELD: [Species; 2] = [Self::Calden, Self::Chanar];
+    /// The fields' own species, in order (the town species that escaped
+    /// into the field are [`Self::ALL`]).
+    pub const FIELD: [Species; 6] = [
+        Self::Calden,
+        Self::Chanar,
+        Self::Algarrobo,
+        Self::Tala,
+        Self::Espinillo,
+        Self::Ombu,
+    ];
     /// The fields' shrubs, in order.
     pub const SHRUBS: [Species; 3] = [Self::Piquillin, Self::Jarilla, Self::Fachinal];
     /// Every species the [`TreeKit`] builds, in `Species as usize` order.
-    pub const EVERY: [Species; 10] = [
+    pub const EVERY: [Species; 14] = [
         Self::Paraiso,
         Self::Olmo,
         Self::Eucalipto,
@@ -100,6 +127,10 @@ impl Species {
         Self::Jarilla,
         Self::Fachinal,
         Self::Alamo,
+        Self::Algarrobo,
+        Self::Tala,
+        Self::Espinillo,
+        Self::Ombu,
     ];
 
     /// How many seeded variants the kit holds of it.
@@ -107,6 +138,10 @@ impl Species {
         match self {
             Self::Calden => CALDEN_VARIANTS,
             Self::Chanar => CHANAR_VARIANTS,
+            Self::Algarrobo => ALGARROBO_VARIANTS,
+            Self::Tala => TALA_VARIANTS,
+            Self::Espinillo => ESPINILLO_VARIANTS,
+            Self::Ombu => OMBU_VARIANTS,
             Self::Piquillin | Self::Jarilla | Self::Fachinal => SHRUB_VARIANTS,
             _ => VARIANTS,
         }
@@ -115,9 +150,15 @@ impl Species {
     /// How many leaf tints, and bark tints, the kit holds of it.
     pub const fn tints(self) -> usize {
         match self {
-            Self::Calden | Self::Chanar | Self::Piquillin | Self::Jarilla | Self::Fachinal => {
-                FIELD_TINTS
-            }
+            Self::Calden
+            | Self::Chanar
+            | Self::Algarrobo
+            | Self::Tala
+            | Self::Espinillo
+            | Self::Ombu
+            | Self::Piquillin
+            | Self::Jarilla
+            | Self::Fachinal => FIELD_TINTS,
             _ => 1,
         }
     }
@@ -313,11 +354,12 @@ mod tests {
             for v in k.variants.iter().chain(&k.pruned) {
                 meshes.insert(v.bark.id());
                 meshes.insert(v.leaves.id());
-                // A tree stands over 3 m; a shrub is a low mass over 1 m.
+                // A tree stands over 2 m (the low forms of the tala and the
+                // espinillo); a shrub is a low mass over 1 m.
                 let (tall, wide) = if Species::SHRUBS.contains(&species) {
                     (1.0, 0.4)
                 } else {
-                    (3.0, 1.0)
+                    (2.0, 1.0)
                 };
                 assert!(v.height > tall && v.crown_radius > wide, "{species:?}");
             }
@@ -327,6 +369,7 @@ mod tests {
         // the street species and the plants'.
         let built = 2 * VARIANTS * (Species::ALL.len() + STREET_SPECIES.len())
             + 2 * (CALDEN_VARIANTS + CHANAR_VARIANTS + 3 * SHRUB_VARIANTS + VARIANTS)
+            + 2 * (ALGARROBO_VARIANTS + TALA_VARIANTS + ESPINILLO_VARIANTS + OMBU_VARIANTS)
             + 2 * plants::VARIANTS as usize;
         let plant_meshes = (kit.plants.shrubs.iter().chain(&kit.plants.flowers)).map(|h| h.id());
         meshes.extend(plant_meshes);

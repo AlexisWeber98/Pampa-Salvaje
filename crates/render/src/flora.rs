@@ -518,8 +518,58 @@ pub fn tree_model(tree: &Tree) -> Model {
             Model::DeadTree((spot_unit(tree.at, 3) * 5.0) as u8 % 5 + 1)
         }
         Species::Calden => Model::CommonTree((tree.variant % 5) as u8 + 1),
-        Species::Chanar => Model::Bush((tree.variant % 2) as u8 + 1),
+        Species::Chanar | Species::Tala | Species::Espinillo | Species::Aromo => {
+            Model::Bush((tree.variant % 2) as u8 + 1)
+        }
+        _ => Model::CommonTree((tree.variant % 5) as u8 + 1),
     }
+}
+
+/// The tree kit's species that draws a core `species`: the field's own
+/// and the town species that escaped into the field.
+pub(crate) fn kit_species(species: Species) -> tree::Species {
+    match species {
+        Species::Calden => tree::Species::Calden,
+        Species::Chanar => tree::Species::Chanar,
+        Species::Algarrobo => tree::Species::Algarrobo,
+        Species::Tala => tree::Species::Tala,
+        Species::Espinillo => tree::Species::Espinillo,
+        Species::Ombu => tree::Species::Ombu,
+        Species::Paraiso => tree::Species::Paraiso,
+        Species::Olmo => tree::Species::Olmo,
+        Species::Eucalipto => tree::Species::Eucalipto,
+        Species::Aromo => tree::Species::Aromo,
+    }
+}
+
+/// The core species a kit `species` is drawn for (the inverse of
+/// [`kit_species`]; the field's own and the escaped town trees only).
+#[cfg(test)]
+pub(crate) fn core_species(species: tree::Species) -> Species {
+    [
+        Species::Calden,
+        Species::Chanar,
+        Species::Algarrobo,
+        Species::Tala,
+        Species::Espinillo,
+        Species::Ombu,
+        Species::Paraiso,
+        Species::Olmo,
+        Species::Eucalipto,
+        Species::Aromo,
+    ]
+    .into_iter()
+    .find(|&c| kit_species(c) == species)
+    .expect("a species the field plants")
+}
+
+/// Whether the stand-in and the Quaternius fallback draw `species` as a
+/// low thicket rather than a tree.
+fn thicket(species: Species) -> bool {
+    matches!(
+        species,
+        Species::Chanar | Species::Tala | Species::Espinillo | Species::Aromo
+    )
 }
 
 /// The tree kit's species and form drawn for `tree`, from its seed. A
@@ -539,6 +589,11 @@ pub(crate) fn kit_variant(tree: &Tree) -> (tree::Species, usize) {
         ),
         Species::Calden => (tree::Species::Calden, weighted(&CALDEN_FORM_WEIGHTS, roll)),
         Species::Chanar => (tree::Species::Chanar, weighted(&CHANAR_FORM_WEIGHTS, roll)),
+        // The other species: every form equally.
+        other => {
+            let kit = kit_species(other);
+            (kit, roll as usize * kit.variants() / 256)
+        }
     }
 }
 
@@ -566,11 +621,7 @@ pub(crate) fn shrub_tints(shrub: &Shrub) -> (usize, usize) {
 
 /// The bark tint and the leaf tint drawn for `tree`, from its seed.
 pub(crate) fn kit_tints(tree: &Tree) -> (usize, usize) {
-    let n = match tree.species {
-        Species::Calden => tree::Species::Calden,
-        Species::Chanar => tree::Species::Chanar,
-    }
-    .tints();
+    let n = kit_species(tree.species).tints();
     (
         look_byte(tree, 2) as usize * n / 256,
         look_byte(tree, 3) as usize * n / 256,
@@ -869,10 +920,7 @@ pub fn load_vegetation(
 /// Height the stand-in tree meshes are built at, per species; each tree is
 /// scaled from it.
 pub(crate) fn reference_height(species: Species) -> f32 {
-    match species {
-        Species::Calden => 7.5,
-        Species::Chanar => 4.0,
-    }
+    if thicket(species) { 4.0 } else { 7.5 }
 }
 
 /// The procedural stand-in meshes and materials.
@@ -889,9 +937,10 @@ pub struct FloraKit {
 
 impl FloraKit {
     pub(crate) fn tree(&self, species: Species) -> [(Handle<Mesh>, Handle<StandardMaterial>); 2] {
-        let (trunk, crown) = match species {
-            Species::Calden => (&self.calden_trunk, &self.calden_crown),
-            Species::Chanar => (&self.chanar_trunk, &self.chanar_crown),
+        let (trunk, crown) = if thicket(species) {
+            (&self.chanar_trunk, &self.chanar_crown)
+        } else {
+            (&self.calden_trunk, &self.calden_crown)
         };
         [
             (trunk.clone(), self.bark.clone()),
@@ -1006,9 +1055,10 @@ impl Painter<'_> {
             return;
         };
         let h = tree.height;
-        let scale = match tree.species {
-            Species::Calden => Vec3::splat(h),
-            Species::Chanar => Vec3::new(h * THICKET_WIDTH, h, h * THICKET_WIDTH),
+        let scale = if thicket(tree.species) {
+            Vec3::new(h * THICKET_WIDTH, h, h * THICKET_WIDTH)
+        } else {
+            Vec3::splat(h)
         };
         for (mesh, material) in parts {
             out.push(part(
@@ -1628,10 +1678,7 @@ mod tests {
     }
 
     fn kit_variant_species(species: Species) -> KitSpecies {
-        match species {
-            Species::Calden => KitSpecies::Calden,
-            Species::Chanar => KitSpecies::Chanar,
-        }
+        kit_species(species)
     }
 
     #[test]
@@ -1700,7 +1747,7 @@ mod tests {
                     assert!(GIANT_FORMS.contains(&v), "{v}");
                 }
             } else {
-                assert_eq!(species, KitSpecies::Chanar);
+                assert_eq!(species, kit_species(tree.species));
             }
         }
         // Every form of both species is drawn, among the many trees.
@@ -1709,6 +1756,12 @@ mod tests {
         for species in [Species::Calden, Species::Chanar] {
             assert_eq!(tints[&species].0.len(), crate::tree::FIELD_TINTS);
             assert_eq!(tints[&species].1.len(), crate::tree::FIELD_TINTS);
+        }
+        // The algarrobo, tala and espinillo draw each of their own forms and
+        // tints too (the ombú is too rare to count on here).
+        for species in [Species::Algarrobo, Species::Tala, Species::Espinillo] {
+            assert_eq!(forms[&species].len(), kit_species(species).variants());
+            assert_eq!(tints[&species].0.len(), crate::tree::FIELD_TINTS);
         }
         // The live forms share out by their weights: the classic form is
         // the commonest, no live form is rare or rules.
@@ -1751,6 +1804,64 @@ mod tests {
 
     fn mesh_ids(parts: &[Part]) -> Vec<AssetId<Mesh>> {
         parts.iter().map(|p| p.0.0.id()).collect()
+    }
+
+    /// A tree of `species` and `age` at the ground's origin.
+    fn planted(species: Species, age: Age, variant: u32) -> Tree {
+        let (lo, hi) = age.height_range(species);
+        Tree {
+            at: GroundVec2::new(30.0, 40.0),
+            species,
+            age,
+            height: 0.5 * (lo + hi),
+            width: 1.0,
+            yaw: 0.3,
+            variant,
+        }
+    }
+
+    const EVERY_CORE_SPECIES: [Species; 10] = [
+        Species::Calden,
+        Species::Chanar,
+        Species::Algarrobo,
+        Species::Tala,
+        Species::Espinillo,
+        Species::Ombu,
+        Species::Paraiso,
+        Species::Olmo,
+        Species::Eucalipto,
+        Species::Aromo,
+    ];
+
+    #[test]
+    fn every_field_species_is_drawn_as_its_own_kit_species_at_its_core_height() {
+        let mut app = app_with(grove_chunk(), Some(assets()), 1, 4);
+        app.update();
+        let kit = app.world().resource::<TreeKit>().clone();
+        let mut seen = std::collections::HashSet::new();
+        for species in EVERY_CORE_SPECIES {
+            let want = kit_species(species);
+            assert!(seen.insert(want), "{species:?} shares a kit species");
+            for variant in [0, 0x0101_0101, 0x8080_8080, 0xFFFF_FFFF] {
+                let tree = planted(species, Age::Mature, variant);
+                assert_eq!(kit_variant(&tree).0, want);
+                let parts = painted(&app, &tree, true);
+                let drawn: Vec<_> = parts
+                    .iter()
+                    .filter(|p| !matches!(p.4, Plant::Accent))
+                    .collect();
+                assert_eq!(drawn.len(), 2, "{species:?}");
+                let own = kit.species(want);
+                let v = own
+                    .variants
+                    .iter()
+                    .find(|v| v.bark.id() == drawn[0].0.0.id())
+                    .unwrap_or_else(|| panic!("{species:?} draws another species' bark"));
+                assert_eq!(v.leaves.id(), drawn[1].0.0.id(), "{species:?}");
+                let high = v.height * drawn[0].2.scale.y;
+                assert!((high - tree.height).abs() < 0.01, "{species:?} {high}");
+            }
+        }
     }
 
     #[test]
@@ -1797,9 +1908,10 @@ mod tests {
         for tree in grove_trees().iter().take(20) {
             let mut out = Vec::new();
             painter.tree(tree, &mut out);
-            let want = match tree.species {
-                Species::Calden => [kit.calden_trunk.id(), kit.calden_crown.id()],
-                Species::Chanar => [kit.chanar_trunk.id(), kit.chanar_crown.id()],
+            let want = if thicket(tree.species) {
+                [kit.chanar_trunk.id(), kit.chanar_crown.id()]
+            } else {
+                [kit.calden_trunk.id(), kit.calden_crown.id()]
             };
             assert_eq!(mesh_ids(&out), want.to_vec(), "{tree:?}");
         }
@@ -2316,7 +2428,15 @@ mod tests {
             .map(|(m, mat)| (m.id(), mat.id()))
             .collect();
         assert!(
-            distinct(pairs.iter().map(|p| p.0)) <= 9 + 28 * 2 + 6 + 2 * 3 * tree::SHRUB_VARIANTS,
+            distinct(pairs.iter().map(|p| p.0))
+                <= 9 + 28 * 2
+                    + 6
+                    + 2 * 3 * tree::SHRUB_VARIANTS
+                    + 2 * (tree::ALGARROBO_VARIANTS
+                        + tree::TALA_VARIANTS
+                        + tree::ESPINILLO_VARIANTS
+                        + tree::OMBU_VARIANTS)
+                    + 2 * 4 * tree::VARIANTS,
             "{}",
             pairs.len()
         );
@@ -2325,7 +2445,13 @@ mod tests {
             * (crate::tree::FIELD_TINTS - 1)
             * (KitSpecies::FIELD.len() + KitSpecies::SHRUBS.len());
         // And the shrubs' own first bark and leaves.
-        assert!(distinct(pairs.iter().map(|p| p.1)) <= 16 + 2 * KitSpecies::SHRUBS.len() + tints);
+        // And the first bark and leaves of the species the field added: the
+        // algarrobo, tala, espinillo and ombú, and the four town species.
+        let added = 2 * (KitSpecies::FIELD.len() - 2 + KitSpecies::ALL.len());
+        assert!(
+            distinct(pairs.iter().map(|p| p.1))
+                <= 16 + 2 * KitSpecies::SHRUBS.len() + tints + added
+        );
         // Tufts are tinted from grey-green to dry yellow.
         let mut q = with
             .world_mut()
