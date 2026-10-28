@@ -1,6 +1,10 @@
 //! Native flora on the streamed chunks: caldén and chañar and grass tufts,
 //! placed by [`pampa_core::FloraSite`].
 //!
+//! Shrubs (piquillín, jarilla and the chañar thickets of the fachinal) are
+//! the same kit's low multi-stem forms ([`shrub_variant`]), on the same
+//! single tree visibility range. Without the kit they are not drawn.
+//!
 //! Trees are the textured town tree kit's caldén and chañar
 //! ([`crate::tree::Species::FIELD`]: seeded variants with photographic bark
 //! and alpha-masked leaf cards), scaled to the height core planted
@@ -21,7 +25,8 @@
 //! inside it, and tufts stay solid near the rider and thin out smoothly
 //! farther away.
 //!
-//! Thin things (trees here, and fences and signposts elsewhere) carry a
+//! Trees are solid: the follow camera pulls in round their trunks instead.
+//! Thin things (fences, signposts and lamps elsewhere) carry a
 //! [`ThinOccluder`]: when one comes between the camera and the rider (the
 //! [`SightLine`] the game sets each frame), the [`ThinFadePlugin`] turns it
 //! see-through instead of the camera pulling in, and restores it once the
@@ -35,7 +40,7 @@ use bevy::camera::visibility::VisibilityRange;
 use bevy::mesh::{PrimitiveTopology, VertexAttributeValues};
 use bevy::prelude::*;
 use pampa_core::flora::Age;
-use pampa_core::{FloraSite, Species, Tree, Tuft, TuftKind, Vec2 as GroundVec2};
+use pampa_core::{FloraSite, Shrub, ShrubKind, Species, Tree, Tuft, TuftKind, Vec2 as GroundVec2};
 
 use crate::AssetRoot;
 use crate::character::finish::Finish;
@@ -53,6 +58,10 @@ pub struct WorldFlora(pub FloraSite);
 /// A drawn tree part (trunk, crown or a model part), a child of its chunk.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TreePart(pub Species);
+
+/// A drawn shrub part (stems or leaves), a child of its chunk.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShrubPart(pub ShrubKind);
 
 /// A drawn grass tuft or weed, a child of its chunk.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
@@ -550,6 +559,28 @@ pub(crate) fn kit_variant(tree: &Tree) -> (tree::Species, usize) {
     }
 }
 
+/// The tree kit's species and form drawn for `shrub`, from its seed.
+pub(crate) fn shrub_variant(shrub: &Shrub) -> (tree::Species, usize) {
+    let species = match shrub.kind {
+        ShrubKind::Piquillin => tree::Species::Piquillin,
+        ShrubKind::Jarilla => tree::Species::Jarilla,
+        ShrubKind::Fachinal => tree::Species::Fachinal,
+    };
+    (
+        species,
+        (shrub.variant & 0xFF) as usize * tree::SHRUB_VARIANTS / 256,
+    )
+}
+
+/// The bark tint and the leaf tint drawn for `shrub`, from its seed.
+pub(crate) fn shrub_tints(shrub: &Shrub) -> (usize, usize) {
+    let n = shrub_variant(shrub).0.tints();
+    (
+        ((shrub.variant >> 16) & 0xFF) as usize * n / 256,
+        ((shrub.variant >> 24) & 0xFF) as usize * n / 256,
+    )
+}
+
 /// The bark tint and the leaf tint drawn for `tree`, from its seed.
 pub(crate) fn kit_tints(tree: &Tree) -> (usize, usize) {
     let n = match tree.species {
@@ -952,8 +983,9 @@ pub(crate) fn visible_within(far: f32, fade: f32) -> VisibilityRange {
 
 #[derive(Clone, Copy)]
 enum Plant {
-    Tree(Species, ThinOccluder),
+    Tree(Species),
     Tuft(TuftKind),
+    Shrub(ShrubKind),
     Accent,
 }
 
@@ -981,16 +1013,9 @@ impl Painter<'_> {
         let turned =
             Transform::from_translation(base).with_rotation(Quat::from_rotation_y(tree.yaw));
         let model = tree_model(tree);
-        // The crown fades when it hides the rider; most of it, not its rim.
-        let ground = self.terrain.height(tree.at.x, tree.at.y);
-        let fade = ThinOccluder {
-            a: tree.at,
-            b: tree.at,
-            radius: 0.8 * tree.crown_radius(),
-            bottom: ground - 0.5,
-            top: ground + tree.height,
-        };
-        let plant = Plant::Tree(tree.species, fade);
+        // Trees are solid: the follow camera pulls in round a trunk instead
+        // of the tree fading out of its way.
+        let plant = Plant::Tree(tree.species);
         let range = visible_within(TREE_FAR, TREE_FADE);
         if tree.species == Species::Calden {
             self.accent(tree, out);
@@ -1039,6 +1064,34 @@ impl Painter<'_> {
                 turned.with_scale(scale),
                 range.clone(),
                 plant,
+            ));
+        }
+    }
+
+    /// A shrub: a kit form's two shared meshes scaled to the height and
+    /// width core gave it. Without the kit it is not drawn.
+    fn shrub(&self, shrub: &Shrub, out: &mut Vec<Part>) {
+        let Some(kit) = self.trees else {
+            return;
+        };
+        let base = world_from_ground(shrub.at, self.terrain.height(shrub.at.x, shrub.at.y) - 0.05);
+        let turned =
+            Transform::from_translation(base).with_rotation(Quat::from_rotation_y(shrub.yaw));
+        let (species, v) = shrub_variant(shrub);
+        let (bark_tint, leaf_tint) = shrub_tints(shrub);
+        let own = kit.species(species);
+        let variant = &own.variants[v];
+        let high = shrub.height / variant.height;
+        let scale = Vec3::new(high * shrub.width, high, high * shrub.width);
+        let range = visible_within(TREE_FAR, TREE_FADE);
+        let (bark, leaves) = (&own.bark_tints[bark_tint], &own.leaf_tints[leaf_tint]);
+        for (mesh, material) in [(&variant.bark, bark), (&variant.leaves, leaves)] {
+            out.push(part(
+                mesh.clone(),
+                material.clone(),
+                turned.with_scale(scale),
+                range.clone(),
+                Plant::Shrub(shrub.kind),
             ));
         }
     }
@@ -1151,9 +1204,13 @@ fn grow_flora(
     };
     for (chunk, coord) in &chunks {
         let grown = flora.0.chunk(coord.0);
-        let mut parts: Vec<Part> = Vec::with_capacity(grown.trees.len() * 4 + TUFTS_DRAWN);
+        let mut parts: Vec<Part> =
+            Vec::with_capacity(grown.trees.len() * 4 + grown.shrubs.len() * 2 + TUFTS_DRAWN);
         for tree in &grown.trees {
             painter.tree(tree, &mut parts);
+        }
+        for shrub in &grown.shrubs {
+            painter.shrub(shrub, &mut parts);
         }
         for tuft in grown.tufts.iter().take(TUFTS_DRAWN) {
             painter.tuft(tuft, &mut parts);
@@ -1168,8 +1225,9 @@ fn grow_flora(
                 for (mesh, material, transform, range, plant) in parts {
                     let mut part = children.spawn((mesh, material, transform, range));
                     match plant {
-                        Plant::Tree(species, fade) => part.insert((TreePart(species), fade)),
+                        Plant::Tree(species) => part.insert(TreePart(species)),
                         Plant::Tuft(kind) => part.insert(GrassTuft(kind)),
+                        Plant::Shrub(kind) => part.insert(ShrubPart(kind)),
                         Plant::Accent => part.insert(FloraAccent),
                     };
                 }
@@ -1544,15 +1602,14 @@ mod tests {
         app
     }
 
-    /// Every tree part of `app`: its species, mesh, material, transform,
-    /// range and fade.
+    /// Every tree part of `app`: its species, mesh, material, transform
+    /// and range.
     type DrawnTree = (
         Species,
         AssetId<Mesh>,
         AssetId<StandardMaterial>,
         Transform,
         VisibilityRange,
-        ThinOccluder,
     );
 
     fn drawn_trees(app: &mut App) -> Vec<DrawnTree> {
@@ -1562,11 +1619,22 @@ mod tests {
             &MeshMaterial3d<StandardMaterial>,
             &Transform,
             &VisibilityRange,
-            &ThinOccluder,
         )>();
         q.iter(app.world())
-            .map(|(p, m, mat, t, r, f)| (p.0, m.id(), mat.id(), *t, r.clone(), *f))
+            .map(|(p, m, mat, t, r)| (p.0, m.id(), mat.id(), *t, r.clone()))
             .collect()
+    }
+
+    #[test]
+    fn a_field_tree_never_fades_out_of_the_cameras_way() {
+        let mut app = textured_app(grove_chunk());
+        app.update();
+        let mut q = app
+            .world_mut()
+            .query_filtered::<Has<ThinOccluder>, With<TreePart>>();
+        let parts: Vec<bool> = q.iter(app.world()).collect();
+        assert!(parts.len() > 20, "{}", parts.len());
+        assert!(parts.iter().all(|fades| !fades));
     }
 
     #[test]
@@ -1628,13 +1696,13 @@ mod tests {
     }
 
     #[test]
-    fn a_kit_tree_stands_at_its_core_size_and_keeps_its_fade_and_range() {
+    fn a_kit_tree_stands_at_its_core_size_and_keeps_its_range() {
         let mut app = textured_app(grove_chunk());
         app.update();
         let kit = app.world().resource::<TreeKit>().clone();
         let range = visible_within(TREE_FAR, TREE_FADE);
         let mut widths = std::collections::HashSet::new();
-        for (species, mesh, _, transform, drawn_range, fade) in drawn_trees(&mut app) {
+        for (species, mesh, _, transform, drawn_range) in drawn_trees(&mut app) {
             let k = kit.species(kit_variant_species(species));
             let v = k
                 .variants
@@ -1652,7 +1720,6 @@ mod tests {
             widths.insert((width * 50.0).round() as i32);
             // One shared range, as the Quaternius trees had.
             assert!(drawn_range == range);
-            assert!(fade.radius > 0.25 && (fade.top - fade.bottom - h).abs() < 1.0);
         }
         // Trees come narrow and broad, not all as modelled.
         assert!(widths.len() >= 8, "{widths:?}");
@@ -1827,6 +1894,14 @@ mod tests {
         );
     }
 
+    /// The triangles of a kit form's bark and leaves.
+    fn form_triangles(meshes: &Assets<Mesh>, variant: &crate::tree::TreeVariant) -> usize {
+        [&variant.bark, &variant.leaves]
+            .iter()
+            .map(|h| triangles(meshes.get(*h).unwrap()))
+            .sum()
+    }
+
     #[test]
     fn a_dense_chunk_of_kit_trees_stays_within_the_per_tree_budget() {
         let flora = site();
@@ -1839,23 +1914,188 @@ mod tests {
         app.update();
         let kit = app.world().resource::<TreeKit>().clone();
         let meshes = app.world().resource::<Assets<Mesh>>();
+        // The per-tree range comes from the forms themselves, not from a
+        // number a seed could undercut: the lightest and the heaviest of
+        // every field form (the stub snag is the lightest caldén).
+        let forms: Vec<usize> = KitSpecies::FIELD
+            .iter()
+            .flat_map(|&s| kit.species(s).variants.iter())
+            .map(|v| form_triangles(meshes, v))
+            .collect();
+        let (lightest, heaviest) = (
+            *forms.iter().min().expect("forms"),
+            *forms.iter().max().expect("forms"),
+        );
+        // The town trees' range (0.7-1.2k) at the top, the snags under it.
+        assert!(heaviest <= 1200, "{heaviest}");
+        assert!(lightest >= 200, "{lightest}");
         let mut total = 0;
         for tree in &trees {
             let (species, v) = kit_variant(tree);
-            let variant = &kit.species(species).variants[v];
-            let tris: usize = [&variant.bark, &variant.leaves]
-                .iter()
-                .map(|h| triangles(meshes.get(*h).unwrap()))
-                .sum();
-            // The town trees' range (0.7-1.2k), less for a sparse or dead
-            // caldén.
-            assert!((300..=1200).contains(&tris), "{species:?} {v}: {tris}");
+            let tris = form_triangles(meshes, &kit.species(species).variants[v]);
+            assert!(
+                (lightest..=heaviest).contains(&tris),
+                "{species:?} {v}: {tris}"
+            );
             total += tris;
         }
-        println!("densest chunk: {} trees, {total} triangles", trees.len());
+        println!(
+            "densest chunk: {} trees, {total} triangles (forms {lightest}-{heaviest})",
+            trees.len()
+        );
         assert!(trees.len() >= 60, "{}", trees.len());
-        // Every one of 90 at the top of the range, at the most.
-        assert!(total <= 90 * 1200, "{total}");
+        // Every one at the top of the range, at the most, over the budget.
+        assert!(total <= FloraSite::TREE_BUDGET * heaviest, "{total}");
+    }
+
+    /// The chunk with the most shrubs near the origin.
+    fn shrub_chunk() -> ChunkCoord {
+        let flora = site();
+        (-12..12)
+            .flat_map(|x| (-12..12).map(move |y| ChunkCoord::new(x, y)))
+            .max_by_key(|&c| flora.shrubs(c).len())
+            .expect("chunks")
+    }
+
+    #[test]
+    fn shrubs_wear_the_kit_in_seeded_forms_on_the_one_tree_range() {
+        let coord = shrub_chunk();
+        let mut app = textured_app(coord.center(WorldConfig::default().chunk_size));
+        app.update();
+        let kit = app.world().resource::<TreeKit>().clone();
+        let planted: Vec<Shrub> = WorldConfig::default()
+            .chunks_near(coord.center(WorldConfig::default().chunk_size), 1)
+            .iter()
+            .flat_map(|&c| site().shrubs(c))
+            .collect();
+        let mut q = app.world_mut().query::<(
+            &ShrubPart,
+            &Mesh3d,
+            &MeshMaterial3d<StandardMaterial>,
+            &Transform,
+            &VisibilityRange,
+        )>();
+        let drawn: Vec<_> = q
+            .iter(app.world())
+            .map(|(p, m, mat, t, r)| (p.0, m.id(), mat.id(), *t, r.clone()))
+            .collect();
+        // A bark and a leaf entity each.
+        assert_eq!(drawn.len(), planted.len() * 2);
+        assert!(planted.len() > 200, "{}", planted.len());
+        let range = visible_within(TREE_FAR, TREE_FADE);
+        let mut forms = std::collections::HashSet::new();
+        for (kind, mesh, material, transform, drawn_range) in &drawn {
+            // The one shared tree range: no per-entity ranges.
+            assert!(*drawn_range == range);
+            let (species, _) = shrub_variant(&Shrub {
+                at: GroundVec2::ZERO,
+                kind: *kind,
+                height: 1.0,
+                width: 1.0,
+                yaw: 0.0,
+                variant: 0,
+            });
+            let k = kit.species(species);
+            let bark = k.variants.iter().any(|v| v.bark.id() == *mesh);
+            let leaves = k.variants.iter().any(|v| v.leaves.id() == *mesh);
+            assert!(bark != leaves, "{kind:?} draws a kit mesh");
+            let tints = if bark { &k.bark_tints } else { &k.leaf_tints };
+            assert!(tints.iter().any(|m| m.id() == *material), "{kind:?}");
+            // Scaled evenly across, within the heights core planted.
+            let v = k
+                .variants
+                .iter()
+                .find(|v| v.bark.id() == *mesh || v.leaves.id() == *mesh)
+                .unwrap();
+            assert_eq!(transform.scale.x, transform.scale.z);
+            let (lo, hi) = kind.height_range();
+            let h = v.height * transform.scale.y;
+            assert!((lo - 0.01..=hi + 0.01).contains(&h), "{kind:?} {h}");
+            forms.insert((*kind as u8, *mesh));
+        }
+        // Several seeded forms of each kind.
+        for kind in ShrubKind::ALL {
+            let n = forms.iter().filter(|f| f.0 == kind as u8).count();
+            assert!(n >= 8, "{kind:?}: {n} meshes");
+        }
+        // The form and the tints are the shrub's seed, nothing else.
+        for shrub in &planted {
+            assert_eq!(
+                shrub_variant(shrub),
+                shrub_variant(&Shrub {
+                    at: GroundVec2::ZERO,
+                    ..*shrub
+                })
+            );
+            assert_eq!(
+                shrub_tints(shrub),
+                shrub_tints(&Shrub { yaw: 0.0, ..*shrub })
+            );
+        }
+        let seen: std::collections::HashSet<usize> =
+            planted.iter().map(|s| shrub_variant(s).1).collect();
+        assert_eq!(seen.len(), tree::SHRUB_VARIANTS);
+    }
+
+    #[test]
+    fn without_the_tree_kit_no_shrub_is_drawn() {
+        let coord = shrub_chunk();
+        let mut app = app_with(
+            coord.center(WorldConfig::default().chunk_size),
+            Some(assets()),
+            1,
+            4,
+        );
+        app.update();
+        let (kit, models, trees) = (
+            app.world().resource::<FloraKit>(),
+            app.world().resource::<VegetationModels>(),
+            app.world().resource::<TreeKit>(),
+        );
+        let terrain = &app.world().resource::<WorldTerrain>().0;
+        let site = site();
+        let shrubs = site.shrubs(coord);
+        let paint = |with_kit: bool| {
+            let painter = Painter {
+                terrain,
+                site: &site,
+                kit,
+                models: Some(models),
+                trees: with_kit.then_some(trees),
+            };
+            let mut out = Vec::new();
+            for shrub in &shrubs {
+                painter.shrub(shrub, &mut out);
+            }
+            out
+        };
+        assert!(shrubs.len() > 100);
+        assert_eq!(paint(true).len(), shrubs.len() * 2);
+        assert!(paint(false).is_empty());
+    }
+
+    #[test]
+    fn the_densest_shrub_chunk_stays_within_the_per_shrub_budget() {
+        let coord = shrub_chunk();
+        let shrubs = site().shrubs(coord);
+        let mut app = app(coord.center(WorldConfig::default().chunk_size));
+        app.update();
+        let kit = app.world().resource::<TreeKit>().clone();
+        let meshes = app.world().resource::<Assets<Mesh>>();
+        let mut total = 0;
+        for shrub in &shrubs {
+            let (species, v) = shrub_variant(shrub);
+            let tris = form_triangles(meshes, &kit.species(species).variants[v]);
+            assert!((200..=500).contains(&tris), "{species:?} {v}: {tris}");
+            total += tris;
+        }
+        println!(
+            "densest shrub chunk: {} shrubs, {total} triangles",
+            shrubs.len()
+        );
+        assert!(shrubs.len() >= 200, "{}", shrubs.len());
+        assert!(shrubs.len() <= FloraSite::SHRUB_BUDGET);
+        assert!(total <= FloraSite::SHRUB_BUDGET * 500, "{total}");
     }
 
     #[test]
@@ -2139,13 +2379,16 @@ mod tests {
             .map(|(m, mat)| (m.id(), mat.id()))
             .collect();
         assert!(
-            distinct(pairs.iter().map(|p| p.0)) <= 9 + 28 * 2 + 6,
+            distinct(pairs.iter().map(|p| p.0)) <= 9 + 28 * 2 + 6 + 2 * 3 * tree::SHRUB_VARIANTS,
             "{}",
             pairs.len()
         );
         // The field trees' bark and leaves come in a few tints each.
-        let tints = 2 * (crate::tree::FIELD_TINTS - 1) * KitSpecies::FIELD.len();
-        assert!(distinct(pairs.iter().map(|p| p.1)) <= 16 + tints);
+        let tints = 2
+            * (crate::tree::FIELD_TINTS - 1)
+            * (KitSpecies::FIELD.len() + KitSpecies::SHRUBS.len());
+        // And the shrubs' own first bark and leaves.
+        assert!(distinct(pairs.iter().map(|p| p.1)) <= 16 + 2 * KitSpecies::SHRUBS.len() + tints);
         // Tufts are tinted from grey-green to dry yellow.
         let mut q = with
             .world_mut()
@@ -2492,10 +2735,10 @@ mod tests {
     }
 
     #[test]
-    fn a_tree_between_the_camera_and_the_rider_fades_and_comes_back() {
+    fn a_thin_occluder_between_the_camera_and_the_rider_fades_and_comes_back() {
         let (mut app, tree, solid) = fade_app();
         let rider = Vec3::new(0.0, 1.5, 0.0);
-        // Camera 12 m south of the rider, the tree 5 m north: clear.
+        // Camera 12 m south of the rider, the occluder 5 m north: clear.
         app.world_mut().resource_mut::<SightLine>().0 = Some((rider, Vec3::new(0.0, 4.0, 12.0)));
         app.update();
         assert!(app.world().get::<Faded>(tree).is_none());

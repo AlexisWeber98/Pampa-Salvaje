@@ -39,11 +39,16 @@ pub const CHANAR_VARIANTS: usize = 6;
 /// sparse snags ([`mesh::tree`]).
 pub const CALDEN_LIVE: usize = 9;
 
+/// Distinct forms built of each shrub: three shapes (plain, low and
+/// spreading, tall and dense), two seeds of each.
+pub const SHRUB_VARIANTS: usize = 6;
+
 /// Leaf and bark tints a field species has (shared materials, so trees of
 /// every tint still batch by variant and tint).
 pub const FIELD_TINTS: usize = 3;
 
-/// A tree's species: the towns' four and the fields' two.
+/// A tree's species: the towns' four, the fields' two and the fields' three
+/// shrubs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Species {
     /// Paraíso (_Melia azedarach_): a round umbrella crown of pinnate
@@ -62,6 +67,15 @@ pub enum Species {
     /// Chañar (_Geoffroea decorticans_): small, multi-stemmed and twiggy,
     /// a sparse irregular crown.
     Chanar,
+    /// Piquillín (_Condalia microphylla_), a shrub of the monte: a dense
+    /// thorny mass of fine stems under tiny dark leaves.
+    Piquillin,
+    /// Jarilla (_Larrea divaricata_), a shrub of the open dry ground: many
+    /// upright stems, resinous yellow-green leaves.
+    Jarilla,
+    /// Fachinal: a thicket of chañar suckers (the chañar's own bark and
+    /// leaves).
+    Fachinal,
 }
 
 impl Species {
@@ -69,14 +83,19 @@ impl Species {
     pub const ALL: [Species; 4] = [Self::Paraiso, Self::Olmo, Self::Eucalipto, Self::Aromo];
     /// The fields' species, in order.
     pub const FIELD: [Species; 2] = [Self::Calden, Self::Chanar];
+    /// The fields' shrubs, in order.
+    pub const SHRUBS: [Species; 3] = [Self::Piquillin, Self::Jarilla, Self::Fachinal];
     /// Every species the [`TreeKit`] builds, in `Species as usize` order.
-    pub const EVERY: [Species; 6] = [
+    pub const EVERY: [Species; 9] = [
         Self::Paraiso,
         Self::Olmo,
         Self::Eucalipto,
         Self::Aromo,
         Self::Calden,
         Self::Chanar,
+        Self::Piquillin,
+        Self::Jarilla,
+        Self::Fachinal,
     ];
 
     /// How many seeded variants the kit holds of it.
@@ -84,6 +103,7 @@ impl Species {
         match self {
             Self::Calden => CALDEN_VARIANTS,
             Self::Chanar => CHANAR_VARIANTS,
+            Self::Piquillin | Self::Jarilla | Self::Fachinal => SHRUB_VARIANTS,
             _ => VARIANTS,
         }
     }
@@ -91,7 +111,9 @@ impl Species {
     /// How many leaf tints, and bark tints, the kit holds of it.
     pub const fn tints(self) -> usize {
         match self {
-            Self::Calden | Self::Chanar => FIELD_TINTS,
+            Self::Calden | Self::Chanar | Self::Piquillin | Self::Jarilla | Self::Fachinal => {
+                FIELD_TINTS
+            }
             _ => 1,
         }
     }
@@ -287,14 +309,20 @@ mod tests {
             for v in k.variants.iter().chain(&k.pruned) {
                 meshes.insert(v.bark.id());
                 meshes.insert(v.leaves.id());
-                assert!(v.height > 3.0 && v.crown_radius > 1.0, "{species:?}");
+                // A tree stands over 3 m; a shrub is a low mass over 1 m.
+                let (tall, wide) = if Species::SHRUBS.contains(&species) {
+                    (1.0, 0.4)
+                } else {
+                    (3.0, 1.0)
+                };
+                assert!(v.height > tall && v.crown_radius > wide, "{species:?}");
             }
             materials.extend(k.bark_tints.iter().chain(&k.leaf_tints).map(|m| m.id()));
         }
         // Every species' variants, the trimmed ones of the street species and
         // the plants'.
         let built = 2 * VARIANTS * (Species::ALL.len() + STREET_SPECIES.len())
-            + 2 * (CALDEN_VARIANTS + CHANAR_VARIANTS)
+            + 2 * (CALDEN_VARIANTS + CHANAR_VARIANTS + 3 * SHRUB_VARIANTS)
             + 2 * plants::VARIANTS as usize;
         let plant_meshes = (kit.plants.shrubs.iter().chain(&kit.plants.flowers)).map(|h| h.id());
         meshes.extend(plant_meshes);

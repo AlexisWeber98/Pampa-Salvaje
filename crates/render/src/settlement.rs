@@ -29,9 +29,10 @@
 //! holds one; the procedural mesh stands in while it loads and stays if it
 //! fails ([`slots`]).
 //!
-//! Corral sides, windpumps, wells, carts, haystacks and trees fade out of
-//! the camera's way ([`ThinOccluder`]); houses and barns stop the camera
-//! instead (the game's camera occluders). Everything is drawn within a few
+//! Corral sides, windpumps, wells, carts and haystacks fade out of the
+//! camera's way ([`ThinOccluder`]); houses and barns stop the camera
+//! instead (the game's camera occluders), and so do trees, solid, round
+//! their trunks. Everything is drawn within a few
 //! shared [`VisibilityRange`]s: Bevy keeps a GPU slot for every distinct
 //! range for good (see [`crate::flora::TUFT_FADE_STEPS`]).
 
@@ -151,9 +152,6 @@ struct SettlementKit {
     trees: [[Handle<StandardMaterial>; 2]; 2],
     /// The seeded crown variants of the eucalyptus, then of the poplar.
     crowns: [Vec<Handle<Mesh>>; 2],
-    /// How far the widest crown variant of each species reaches out from
-    /// its trunk, per meter of tree height: the fade shape's radius.
-    crown_reach: [f32; 2],
     /// The yard shrubs and flower beds, the towns' ([`crate::tree`]).
     plants: crate::tree::plants::PlantKit,
 }
@@ -226,17 +224,11 @@ fn setup_kit(
             paint(Finish::Leaves, (1.2, 1.6, 0.95)),
         ],
     ];
-    let mut crown_reach = [0.0_f32; 2];
     let crowns = [crown::CrownKind::Eucalyptus, crown::CrownKind::Poplar]
         .into_iter()
-        .enumerate()
-        .map(|(species, kind)| {
+        .map(|kind| {
             (0..crown::CROWN_VARIANTS)
-                .map(|v| {
-                    let mesh = crown::crown(kind, v);
-                    crown_reach[species] = crown_reach[species].max(reach_from_axis(&mesh));
-                    meshes.add(mesh)
-                })
+                .map(|v| meshes.add(crown::crown(kind, v)))
                 .collect()
         })
         .collect::<Vec<Vec<Handle<Mesh>>>>();
@@ -246,22 +238,8 @@ fn setup_kit(
         rotor,
         trees,
         crowns: [eucalyptus, poplar],
-        crown_reach,
         plants: tree_kit.plants.clone(),
     });
-}
-
-/// The farthest a mesh's points lie from its vertical axis (`x = z = 0`).
-fn reach_from_axis(mesh: &Mesh) -> f32 {
-    let Some(bevy::mesh::VertexAttributeValues::Float32x3(points)) =
-        mesh.attribute(Mesh::ATTRIBUTE_POSITION)
-    else {
-        return 0.0;
-    };
-    points
-        .iter()
-        .map(|p| (p[0] * p[0] + p[2] * p[2]).sqrt())
-        .fold(0.0, f32::max)
 }
 
 /// What one chunk child is.
@@ -721,21 +699,10 @@ impl Painter<'_> {
         // eucalyptus's spreading into its crown.
         let width = if poplar { 0.22 } else { 0.5 };
         let paint = &self.kit.trees[poplar as usize];
-        let ground = self.terrain.height(at.x, at.y);
         let turned = Transform::from_translation(world_from_ground(at, (self.ground)(at) - 0.1))
             .with_rotation(Quat::from_rotation_y(
                 (structure.variant % 360) as f32 / 57.3,
             ));
-        // The crown's whole reach, so the camera never looks through
-        // leaves that do not fade.
-        let crown_radius = self.kit.crown_reach[poplar as usize] * h;
-        let fade = ThinOccluder {
-            a: at,
-            b: at,
-            radius: crown_radius,
-            bottom: ground - 0.5,
-            top: ground + h,
-        };
         let range = visible_within(TREE_FAR, TREE_FADE);
         // A tree slot's model is fitted per meter of the spot's height.
         let slot = self.slot_use(structure.kind);
@@ -745,7 +712,7 @@ impl Painter<'_> {
                 structure.kind,
                 turned * per_meter,
                 range.clone(),
-                Some(fade),
+                None,
                 0.0,
                 Tag::Part(tag),
             ));
@@ -759,7 +726,7 @@ impl Painter<'_> {
                 look: Look::Mesh(mesh, paint[if bark { 0 } else { 1 }].clone()),
                 transform,
                 range: Some(range.clone()),
-                fade: Some(fade),
+                fade: None,
                 rotor: None,
                 tag: Tag::Part(tag),
                 stand_in,

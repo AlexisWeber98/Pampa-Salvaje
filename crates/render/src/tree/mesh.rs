@@ -238,6 +238,70 @@ impl Species {
                 wind: 0.0,
                 clump: 0.5,
             },
+            // The piquillín: a dense thorny shrub, many fine stems from the
+            // ground under a mass of tiny leaves.
+            Self::Piquillin => Form {
+                height: (1.4, 1.7),
+                fork: 0.05,
+                trunk_radius: 0.035,
+                limbs: (5, 6),
+                tilt: (28.0, 48.0),
+                reach: 0.8,
+                rise: 0.1,
+                twigs: 2,
+                leader: false,
+                cards: 50,
+                card: 0.24,
+                hang: 0.15,
+                sag: 0.15,
+                scatter: 0.4,
+                bark_tile: Vec2::new(0.3, 0.5),
+                lean: 0.02,
+                wind: 0.0,
+                clump: 0.5,
+            },
+            // The jarilla: many upright, slender stems, sparse and resinous.
+            Self::Jarilla => Form {
+                height: (1.2, 1.5),
+                fork: 0.04,
+                trunk_radius: 0.03,
+                limbs: (7, 8),
+                tilt: (6.0, 16.0),
+                reach: 0.95,
+                rise: 0.05,
+                twigs: 1,
+                leader: false,
+                cards: 55,
+                card: 0.2,
+                hang: 0.1,
+                sag: 0.1,
+                scatter: 0.35,
+                bark_tile: Vec2::new(0.3, 0.6),
+                lean: 0.01,
+                wind: 0.0,
+                clump: 0.3,
+            },
+            // The fachinal: chañar suckers, a thicket of slim stems.
+            Self::Fachinal => Form {
+                height: (1.8, 2.1),
+                fork: 0.06,
+                trunk_radius: 0.05,
+                limbs: (5, 6),
+                tilt: (10.0, 26.0),
+                reach: 0.8,
+                rise: 0.1,
+                twigs: 2,
+                leader: false,
+                cards: 50,
+                card: 0.4,
+                hang: 0.2,
+                sag: 0.2,
+                scatter: 0.5,
+                bark_tile: Vec2::new(0.5, 1.0),
+                lean: 0.03,
+                wind: 0.0,
+                clump: 0.5,
+            },
         }
     }
 
@@ -415,10 +479,30 @@ impl Species {
                     ..form
                 },
             },
+            // The shrubs: the plain form, a low spreading one, a tall dense
+            // one, the seed turning the stems of each.
+            Self::Piquillin | Self::Jarilla | Self::Fachinal => match v % 3 {
+                0 => form,
+                1 => Form {
+                    height: (form.height.0 * 0.7, form.height.1 * 0.7),
+                    tilt: (form.tilt.0 + 14.0, form.tilt.1 + 16.0),
+                    reach: form.reach * 1.2,
+                    ..form
+                },
+                _ => Form {
+                    height: (form.height.0 * 1.25, form.height.1 * 1.25),
+                    tilt: (form.tilt.0 * 0.7, form.tilt.1 * 0.7),
+                    clump: (form.clump + 0.2).min(1.0),
+                    ..form
+                },
+            },
             _ => form,
         }
     }
 }
+
+/// Trunk radius under which a form is a shrub's, in meters.
+const SHRUB_STEM: f32 = 0.06;
 
 /// Dense clumps of leaves a crown hangs ([`Form::clump`]).
 const CLUMPS: usize = 9;
@@ -682,10 +766,17 @@ fn grow(form: Form, mut rng: Rng) -> TreeMesh {
         let end_dir = (dir + Vec3::Y * form.rise * 2.0).normalize();
         let end = mid + end_dir * length * 0.5;
         let width = (r0 * 0.55).min(r0 * 0.5 + 0.03);
+        // A shrub's stems taper to a fine tip, a tree's limbs to a twig's
+        // girth.
+        let (tip, twig_radii) = if r0 < SHRUB_STEM {
+            (width * 0.3, [0.012, 0.005])
+        } else {
+            (0.035, [0.03, 0.012])
+        };
         tube(
             &mut bark,
             &[start - dir * width, mid, end],
-            &[width, width * 0.55, 0.035],
+            &[width, width * 0.55, tip],
             LIMB_SIDES,
             form.bark_tile,
         );
@@ -707,7 +798,7 @@ fn grow(form: Form, mut rng: Rng) -> TreeMesh {
             tube(
                 &mut bark,
                 &[from, to],
-                &[0.03, 0.012],
+                &twig_radii,
                 TWIG_SIDES,
                 form.bark_tile,
             );
@@ -1356,5 +1447,76 @@ mod tests {
             // Every variant of a town species is its one form.
             assert_eq!(species.variant_form(2).height, f.height);
         }
+    }
+
+    fn shrubs() -> Vec<(Species, u32, TreeMesh)> {
+        Species::SHRUBS
+            .iter()
+            .flat_map(|&s| (0..s.variants() as u32).map(move |v| (s, v, tree(s, v))))
+            .collect()
+    }
+
+    #[test]
+    fn shrubs_are_low_multi_stem_forms_within_their_triangle_budget() {
+        for (species, v, t) in shrubs() {
+            let tris = t.bark.triangles() + t.leaves.triangles();
+            println!(
+                "{species:?} {v}: {tris} triangles, {:.2} m high, {:.2} m reach",
+                t.height, t.crown_radius
+            );
+            // Cheap, so a thicket of them stays within the frame: 200-500.
+            assert!((200..=500).contains(&tris), "{species:?} {v}: {tris}");
+            // Low: far under any tree, and wider than the stems' foot.
+            assert!(
+                (0.9..3.0).contains(&t.height),
+                "{species:?} {v}: {}",
+                t.height
+            );
+            assert!(
+                t.crown_radius > 0.4 && t.crown_radius < 2.2,
+                "{species:?} {v}"
+            );
+            // Many stems from the ground, not one trunk: the leaves hang
+            // low.
+            assert!(t.crown_base < 0.7 * t.height, "{species:?} {v}");
+            assert!(!t.leaves.positions.is_empty() && !t.bark.positions.is_empty());
+        }
+    }
+
+    #[test]
+    fn shrub_variants_are_seeded_and_differ_in_shape() {
+        for species in Species::SHRUBS {
+            let built: Vec<TreeMesh> = (0..species.variants() as u32)
+                .map(|v| tree(species, v))
+                .collect();
+            // The same seed builds the same shrub.
+            assert_eq!(built[2], tree(species, 2), "{species:?}");
+            for (i, a) in built.iter().enumerate() {
+                for b in &built[i + 1..] {
+                    assert_ne!(a.bark.positions, b.bark.positions, "{species:?}");
+                }
+            }
+            // The three shapes differ in height: low and spreading, plain,
+            // and tall and dense.
+            let (plain, low, tall) = (&built[0], &built[1], &built[2]);
+            assert!(
+                low.height < plain.height && plain.height < tall.height,
+                "{species:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn each_shrub_species_stands_apart_from_the_others() {
+        let mean = |s: Species, f: fn(&TreeMesh) -> f32| {
+            let v: Vec<f32> = (0..s.variants() as u32).map(|v| f(&tree(s, v))).collect();
+            v.iter().sum::<f32>() / v.len() as f32
+        };
+        // Jarilla: upright stems, so narrow for its height; piquillín a
+        // broad dense mass of tiny leaves; fachinal the tallest.
+        let narrow = |s| mean(s, |t| t.crown_radius / t.height);
+        assert!(narrow(Species::Jarilla) < narrow(Species::Piquillin));
+        assert!(mean(Species::Fachinal, |t| t.height) > mean(Species::Piquillin, |t| t.height));
+        assert!(mean(Species::Piquillin, |t| t.leaves.triangles() as f32) > 0.0);
     }
 }

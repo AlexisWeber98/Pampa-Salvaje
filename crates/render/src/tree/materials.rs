@@ -59,7 +59,11 @@ impl Species {
             // Dark, deeply furrowed willow bark, shaded grey-brown.
             Self::Calden => "bark_willow",
             // Peeling plane-tree strips, shaded greenish ochre.
-            Self::Chanar => "bark_platanus",
+            Self::Chanar | Self::Fachinal => "bark_platanus",
+            // Thin, dark, rough upright stems.
+            Self::Jarilla => "bark_willow_02",
+            // Grey-brown thorny twigs.
+            Self::Piquillin => "Bark009",
         }
     }
 
@@ -73,7 +77,11 @@ impl Species {
             // Fine feathery sprays, the aromo's atlas, in a dull grey-green.
             Self::Calden => "aromo_leaves",
             // Small simple leaves along a twig, the olmo's atlas, yellower.
-            Self::Chanar => "olmo_leaves",
+            Self::Chanar | Self::Fachinal => "olmo_leaves",
+            // Tiny dark leaves: the olmo's small simple ones, deep green.
+            Self::Piquillin => "olmo_leaves",
+            // Narrow resinous leaflets, yellow-green.
+            Self::Jarilla => "eucalipto_leaves",
         }
     }
 
@@ -88,6 +96,12 @@ impl Species {
             (Self::Calden, 2) => Color::srgb(0.56, 0.66, 0.58),
             (Self::Chanar, 1) => Color::srgb(0.68, 0.84, 0.52),
             (Self::Chanar, 2) => Color::srgb(0.92, 0.9, 0.58),
+            (Self::Fachinal, 1) => Color::srgb(0.68, 0.84, 0.52),
+            (Self::Fachinal, 2) => Color::srgb(0.92, 0.9, 0.58),
+            (Self::Piquillin, 1) => Color::srgb(0.36, 0.5, 0.3),
+            (Self::Piquillin, 2) => Color::srgb(0.46, 0.58, 0.34),
+            (Self::Jarilla, 1) => Color::srgb(0.9, 0.9, 0.4),
+            (Self::Jarilla, 2) => Color::srgb(0.7, 0.82, 0.42),
             _ => self.leaf_tint_base(),
         }
     }
@@ -99,7 +113,9 @@ impl Species {
             Self::Eucalipto => Color::srgb(0.86, 0.95, 0.95),
             Self::Aromo => Color::srgb(0.84, 0.94, 0.9),
             Self::Calden => Color::srgb(0.66, 0.74, 0.62),
-            Self::Chanar => Color::srgb(0.8, 0.88, 0.6),
+            Self::Chanar | Self::Fachinal => Color::srgb(0.8, 0.88, 0.6),
+            Self::Piquillin => Color::srgb(0.28, 0.42, 0.26),
+            Self::Jarilla => Color::srgb(0.82, 0.88, 0.45),
         }
     }
 
@@ -111,7 +127,9 @@ impl Species {
             Self::Eucalipto => Color::srgb(0.36, 0.42, 0.33),
             Self::Aromo => Color::srgb(0.30, 0.38, 0.27),
             Self::Calden => Color::srgb(0.28, 0.33, 0.22),
-            Self::Chanar => Color::srgb(0.38, 0.44, 0.24),
+            Self::Chanar | Self::Fachinal => Color::srgb(0.38, 0.44, 0.24),
+            Self::Piquillin => Color::srgb(0.16, 0.26, 0.14),
+            Self::Jarilla => Color::srgb(0.46, 0.5, 0.22),
         }
     }
 
@@ -123,7 +141,9 @@ impl Species {
             Self::Eucalipto => Color::srgb(0.55, 0.50, 0.43),
             Self::Aromo => Color::srgb(0.28, 0.22, 0.17),
             Self::Calden => Color::srgb(0.17, 0.14, 0.11),
-            Self::Chanar => Color::srgb(0.48, 0.44, 0.27),
+            Self::Chanar | Self::Fachinal => Color::srgb(0.48, 0.44, 0.27),
+            Self::Piquillin => Color::srgb(0.3, 0.26, 0.2),
+            Self::Jarilla => Color::srgb(0.24, 0.19, 0.14),
         }
     }
 
@@ -139,6 +159,16 @@ impl Species {
             (Self::Chanar, 2) => Color::srgb(1.0, 0.98, 0.78),
             (Self::Calden, _) => Color::srgb(0.84, 0.82, 0.8),
             (Self::Chanar, _) => Color::srgb(0.9, 0.95, 0.68),
+            (Self::Fachinal, 1) => Color::srgb(0.78, 0.82, 0.6),
+            (Self::Fachinal, 2) => Color::srgb(1.0, 0.98, 0.78),
+            (Self::Fachinal, _) => Color::srgb(0.9, 0.95, 0.68),
+            // The shrubs' stems show little: a grey-brown, darker, paler.
+            (Self::Piquillin, 1) => Color::srgb(0.7, 0.66, 0.6),
+            (Self::Piquillin, 2) => Color::srgb(1.0, 0.95, 0.88),
+            (Self::Piquillin, _) => Color::srgb(0.85, 0.8, 0.74),
+            (Self::Jarilla, 1) => Color::srgb(0.75, 0.7, 0.62),
+            (Self::Jarilla, 2) => Color::srgb(1.0, 0.95, 0.85),
+            (Self::Jarilla, _) => Color::srgb(0.88, 0.84, 0.76),
             _ => Color::WHITE,
         }
     }
@@ -398,7 +428,13 @@ mod tests {
     fn no_two_species_wear_the_same_bark() {
         // Every species has a bark set of its own, so the tints only shade
         // the real texture and never fake a different bark.
-        let sets: Vec<&str> = Species::EVERY.iter().map(|s| s.bark_set()).collect();
+        // The fachinal is a chañar's suckers: it wears the chañar's bark.
+        assert_eq!(Species::Fachinal.bark_set(), Species::Chanar.bark_set());
+        let sets: Vec<&str> = Species::EVERY
+            .iter()
+            .filter(|&&s| s != Species::Fachinal)
+            .map(|s| s.bark_set())
+            .collect();
         for (i, a) in sets.iter().enumerate() {
             for b in &sets[i + 1..] {
                 assert_ne!(a, b, "two species share a bark set");
@@ -409,14 +445,14 @@ mod tests {
     #[test]
     fn the_field_species_have_tints_that_differ_and_share_their_maps() {
         for species in Species::EVERY {
-            let want = if Species::FIELD.contains(&species) {
+            let want = if Species::FIELD.contains(&species) || Species::SHRUBS.contains(&species) {
                 super::super::FIELD_TINTS
             } else {
                 1
             };
             assert_eq!(species.tints(), want, "{species:?}");
         }
-        for species in Species::FIELD {
+        for species in Species::FIELD.into_iter().chain(Species::SHRUBS) {
             let (bark, leaf): (Vec<_>, Vec<_>) = (0..species.tints())
                 .map(|t| (species.bark_tint(t), species.leaf_tint(t)))
                 .unzip();

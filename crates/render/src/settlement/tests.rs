@@ -278,7 +278,7 @@ fn settlements_share_a_few_ranges_and_one_material_per_surface() {
         "{} materials",
         materials.len()
     );
-    // Thin things fade out of the camera's way; houses do not.
+    // Thin things fade out of the camera's way; houses and trees do not.
     let mut q = app
         .world_mut()
         .query::<(&SettlementPart, Has<ThinOccluder>)>();
@@ -292,8 +292,6 @@ fn settlements_share_a_few_ranges_and_one_material_per_surface() {
                 | StructureKind::WreckedWagon
                 | StructureKind::HitchingPost
                 | StructureKind::Haystack
-                | StructureKind::Eucalyptus
-                | StructureKind::Poplar
         );
         assert_eq!(fades, thin, "{:?}", part.kind);
     }
@@ -527,57 +525,22 @@ fn without_a_trunk_model_or_stand_in_no_crown_floats() {
 }
 
 #[test]
-fn a_tree_fades_over_its_whole_crown() {
+fn a_settlement_tree_is_solid_and_never_fades() {
     let mut app = app(GroundVec2::new(100.0, 100.0));
     app.update();
     app.update();
-    let kit = app.world().resource::<SettlementKit>().clone();
-    let leaves = [kit.trees[0][1].id(), kit.trees[1][1].id()];
-    let mut q = app.world_mut().query::<(
-        &SettlementPart,
-        &Mesh3d,
-        &MeshMaterial3d<StandardMaterial>,
-        &Transform,
-        &ThinOccluder,
-    )>();
-    let crowns: Vec<(StructureKind, AssetId<Mesh>, Transform, ThinOccluder)> = q
+    let mut q = app
+        .world_mut()
+        .query::<(&SettlementPart, Has<ThinOccluder>)>();
+    let trees: Vec<(StructureKind, bool)> = q
         .iter(app.world())
-        .filter(|(p, _, m, ..)| p.kind.is_tree() && leaves.contains(&m.id()))
-        .map(|(p, mesh, _, t, o)| (p.kind, mesh.id(), *t, *o))
+        .filter(|(p, _)| p.kind.is_tree())
+        .map(|(p, fades)| (p.kind, fades))
         .collect();
-    let meshes = app.world().resource::<Assets<Mesh>>();
     for kind in [StructureKind::Poplar, StructureKind::Eucalyptus] {
-        assert!(crowns.iter().any(|c| c.0 == kind), "{kind:?}");
+        assert!(trees.iter().any(|t| t.0 == kind), "{kind:?}");
     }
-    for (kind, mesh, transform, fade) in crowns {
-        let Some(bevy::mesh::VertexAttributeValues::Float32x3(points)) = meshes
-            .get(mesh)
-            .unwrap()
-            .attribute(Mesh::ATTRIBUTE_POSITION)
-        else {
-            panic!()
-        };
-        // The crown's reach from its trunk, as drawn (turned and scaled).
-        let at = transform.translation;
-        let reach = points
-            .iter()
-            .map(|p| {
-                let w = transform.transform_point(Vec3::from_array(*p)) - at;
-                w.with_y(0.0).length()
-            })
-            .fold(0.0, f32::max);
-        assert!(
-            fade.radius >= reach - 1e-3,
-            "{kind:?}: fades within {} m of a crown reaching {reach} m",
-            fade.radius
-        );
-        // The widest crown variant of its species, no wider than that.
-        assert!(
-            fade.radius <= 0.6 * transform.scale.y,
-            "{kind:?}: {}",
-            fade.radius
-        );
-    }
+    assert!(trees.iter().all(|t| !t.1), "{trees:?}");
 }
 
 /// An app that loads glTF models from `root`, drawing the two test

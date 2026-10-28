@@ -63,7 +63,6 @@ use crate::facade::palenque;
 use crate::facade::shape::Shape;
 use crate::facade::town_buildings::{self, Lot};
 use crate::facade::{FacadeMaterials, Surface};
-use crate::flora::ThinOccluder;
 use crate::rail::TrackKit;
 use crate::railbed::{Parts, Track};
 use crate::settlement::{props, ranges};
@@ -964,8 +963,8 @@ fn plaza(b: &mut Builder, p: Aabb) {
 
 /// Every plaza tree: a variant of its plaza's species ([`plaza_species`])
 /// from the shared [`TreeKit`], its bark and its leaves, turned and scaled
-/// a little per tree. Each fades out of the way of the camera like a
-/// settlement's tree ([`ThinOccluder`]).
+/// a little per tree. Trees are solid: the follow camera pulls in round
+/// them instead of fading them.
 fn plaza_trees(b: &mut Builder, town: &TownLayout) {
     for (plaza, tree) in plaza_tree_sites(town) {
         let kit = b.trees.species(plaza_species(town.seed, plaza));
@@ -975,18 +974,12 @@ fn plaza_trees(b: &mut Builder, town: &TownLayout) {
         let transform = Transform::from_translation(world_from_ground(tree.at, ground - TREE_SINK))
             .with_rotation(Quat::from_rotation_y(tree.yaw))
             .with_scale(Vec3::splat(tree.scale));
-        let fade = ThinOccluder::post(
-            tree.at,
-            variant.crown_radius * tree.scale,
-            b.terrain,
-            variant.height * tree.scale,
-        );
-        spawn_tree(b, (variant, &bark, &leaves), transform, fade, TownTree);
+        spawn_tree(b, (variant, &bark, &leaves), transform, TownTree);
     }
 }
 
 /// A tree's bark and its leaves, two entities sharing the kit's meshes and
-/// materials, each fading out of the camera's way and tagged `marker`.
+/// materials, tagged `marker`.
 fn spawn_tree(
     b: &mut Builder,
     (variant, bark, leaves): (
@@ -995,7 +988,6 @@ fn spawn_tree(
         &Handle<StandardMaterial>,
     ),
     transform: Transform,
-    fade: ThinOccluder,
     marker: impl Bundle + Copy,
 ) {
     for (mesh, material) in [(&variant.bark, bark), (&variant.leaves, leaves)] {
@@ -1004,7 +996,6 @@ fn spawn_tree(
             MeshMaterial3d(material.clone()),
             transform,
             ranges()[2].clone(),
-            fade,
             marker,
             ChildOf(b.root),
         ));
@@ -1029,13 +1020,7 @@ fn shade_trees(b: &mut Builder, town: &TownLayout) {
         };
         let variant = &variants[look.variant];
         let transform = shade_transform(tree, &look, variant.crown_radius, b.ground(tree.at));
-        let fade = ThinOccluder::post(
-            tree.at,
-            variant.crown_radius * transform.scale.x,
-            b.terrain,
-            variant.height * transform.scale.y,
-        );
-        spawn_tree(b, (variant, &bark, &leaves), transform, fade, TownShadeTree);
+        spawn_tree(b, (variant, &bark, &leaves), transform, TownShadeTree);
     }
 }
 
@@ -1464,6 +1449,7 @@ mod tests {
     use std::collections::HashSet;
 
     use super::*;
+    use crate::flora::ThinOccluder;
     use crate::tree::{STREET_SPECIES, Species};
     use pampa_core::{TownConfig, Vec2};
 
@@ -1644,7 +1630,7 @@ mod tests {
     }
 
     #[test]
-    fn plaza_trees_share_the_kit_and_fade_out_of_the_way() {
+    fn plaza_trees_share_the_kit_and_stay_solid() {
         let mut app = app();
         app.update();
         let town = app.world().resource::<WorldTowns>().0[0].clone();
@@ -1660,12 +1646,12 @@ mod tests {
             &Mesh3d,
             &MeshMaterial3d<StandardMaterial>,
             &VisibilityRange,
-            &ThinOccluder,
             &Transform,
+            Has<ThinOccluder>,
         ), With<TownTree>>();
         let mut drawn = 0;
         let mut used = HashSet::new();
-        for (mesh, material, range, fade, at) in q.iter(app.world()) {
+        for (mesh, material, range, at, fades) in q.iter(app.world()) {
             drawn += 1;
             // Castex has one plaza: its species' shared meshes and
             // materials, as far as the trees reach.
@@ -1673,13 +1659,8 @@ mod tests {
             assert!([own.bark.id(), own.leaves.id()].contains(&material.id()));
             assert!(range == &ranges()[2]);
             used.insert(mesh.id());
-            // Round the trunk, as tall as the tree.
-            let foot = Vec2::new(at.translation.x, -at.translation.z);
-            assert_eq!((fade.a, fade.b), (foot, foot));
-            assert!(
-                fade.radius > 1.0 && fade.top - fade.bottom > 3.0,
-                "{fade:?}"
-            );
+            // Solid: a tree never fades out of the camera's way.
+            assert!(!fades);
             assert!(at.scale.x <= TREE_SCALE_MAX && at.scale.x >= TREE_SCALE_MIN);
         }
         // A bark and a leaf mesh per tree, the variants shared.
@@ -2569,13 +2550,14 @@ mod tests {
         assert!(trimmed > 0 && trimmed < town.shade_trees.len());
         let mut q = app
             .world_mut()
-            .query_filtered::<(&Mesh3d, &VisibilityRange, &ThinOccluder), With<TownShadeTree>>();
+            .query_filtered::<(&Mesh3d, &VisibilityRange, Has<ThinOccluder>), With<TownShadeTree>>(
+            );
         let mut drawn = 0;
-        for (mesh, range, fade) in q.iter(app.world()) {
+        for (mesh, range, fades) in q.iter(app.world()) {
             drawn += 1;
             assert!(expected.contains(&mesh.id()));
             assert!(range == &ranges()[2]);
-            assert!(fade.top - fade.bottom > 3.0, "{fade:?}");
+            assert!(!fades, "a shade tree fades");
         }
         assert_eq!(drawn, 2 * town.shade_trees.len());
         assert!(town.shade_trees.len() > 5);
