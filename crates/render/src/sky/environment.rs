@@ -8,8 +8,10 @@
 //! Cost control: the cubemap is repainted, and the GPU filter run, only when
 //! the sky has moved meaningfully ([`needs_refresh`]), never every frame.
 //! Bevy re-filters every frame while a [`GeneratedEnvironmentMapLight`] is on
-//! an entity, so the component is added for [`FILTER_FRAMES`] frames after a
-//! repaint and then removed; the filtered [`EnvironmentMapLight`] stays.
+//! an entity, so the component is added to each camera and removed
+//! [`FILTER_FRAMES`] frames after that camera has its filtered
+//! [`EnvironmentMapLight`] (each camera counts its own [`FilterFrames`]); the
+//! filtered light stays.
 
 use crate::atmosphere::{EnvironmentShare, Sky, WorldClock, clock_days, sky_with_moon};
 use crate::sky::astro;
@@ -58,6 +60,11 @@ impl Plugin for SkyEnvironmentPlugin {
     }
 }
 
+/// Frames the GPU filter still has to run for this camera, counted down once
+/// the camera has its filtered light; at zero the generator is removed.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct FilterFrames(u8);
+
 /// Marks a camera lit by the sky's environment map.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct SkyEnvironmentLight;
@@ -70,8 +77,6 @@ pub struct SkyEnvironment {
     painted: Snapshot,
     /// The cubemap's mean luminance, to normalize its exposure.
     mean_luma: f32,
-    /// Frames the GPU filter still has to run.
-    filter_frames: u8,
     /// The paint in flight, if any.
     pending: Option<Task<Painted>>,
     /// How many paints have been started.
@@ -211,6 +216,29 @@ fn current_sky(clock: &WorldClock) -> Sky {
     sky_with_moon(clock.0.hour(), astro::moon_age(clock_days(&clock.0)))
 }
 
+/// The environment light's intensity right now, from the clock (the default
+/// hour without one), the share and the cubemap's mean luminance.
+fn current_intensity(clock: Option<&WorldClock>, share: f32, mean_luma: f32) -> f32 {
+    let sky = clock.map_or_else(
+        || crate::atmosphere::sky_at(crate::atmosphere::DEFAULT_HOUR),
+        current_sky,
+    );
+    environment_intensity(&sky, share, mean_luma)
+}
+
+/// The generator for a camera, carrying the current intensity from the first
+/// frame (Bevy copies it into the filtered light when it creates it).
+fn generator(env: &SkyEnvironment, intensity: f32) -> impl Bundle {
+    (
+        GeneratedEnvironmentMapLight {
+            environment_map: env.image.clone(),
+            intensity,
+            ..default()
+        },
+        FilterFrames(FILTER_FRAMES),
+    )
+}
+
 fn create_environment(
     mut commands: Commands,
     clock: Option<Res<WorldClock>>,
@@ -242,7 +270,6 @@ fn create_environment(
         image: images.add(image),
         painted: Snapshot::of(&sky),
         mean_luma,
-        filter_frames: FILTER_FRAMES,
         pending: None,
         repaints: 1,
     });
@@ -251,21 +278,19 @@ fn create_environment(
 /// Lights every 3D camera with the sky's environment map.
 fn attach_environment(
     mut commands: Commands,
+    clock: Option<Res<WorldClock>>,
+    share: Res<EnvironmentShare>,
     env: Option<Res<SkyEnvironment>>,
     cameras: Query<Entity, (With<Camera3d>, Without<SkyEnvironmentLight>)>,
 ) {
     let Some(env) = env else {
         return;
     };
+    let intensity = current_intensity(clock.as_deref(), share.0, env.mean_luma);
     for camera in &cameras {
-        commands.entity(camera).insert((
-            SkyEnvironmentLight,
-            GeneratedEnvironmentMapLight {
-                environment_map: env.image.clone(),
-                intensity: 0.0,
-                ..default()
-            },
-        ));
+        commands
+            .entity(camera)
+            .insert((SkyEnvironmentLight, generator(&env, intensity)));
     }
 }
 
@@ -282,6 +307,7 @@ pub struct Painted {
 fn repaint_environment(
     mut commands: Commands,
     clock: Option<Res<WorldClock>>,
+    share: Res<EnvironmentShare>,
     env: Option<ResMut<SkyEnvironment>>,
     mut images: ResMut<Assets<Image>>,
     cameras: Query<
@@ -304,15 +330,9 @@ fn repaint_environment(
             image.data = Some(done.bytes);
         }
         env.mean_luma = done.mean_luma;
-        env.filter_frames = FILTER_FRAMES;
+        let intensity = current_intensity(Some(&clock), share.0, env.mean_luma);
         for camera in &cameras {
-            commands
-                .entity(camera)
-                .insert(GeneratedEnvironmentMapLight {
-                    environment_map: env.image.clone(),
-                    intensity: 0.0,
-                    ..default()
-                });
+            commands.entity(camera).insert(generator(&env, intensity));
         }
     }
     let sky = current_sky(&clock);
@@ -327,31 +347,18 @@ fn repaint_environment(
     env.repaints += 1;
 }
 
-/// Counts the filter's frames down once a camera has its filtered light, then
-/// removes the generator so Bevy stops re-filtering every frame.
+/// Counts each camera's filter frames down once it has its filtered light,
+/// then removes its generator so Bevy stops re-filtering every frame.
 fn settle_filter(
     mut commands: Commands,
-    env: Option<ResMut<SkyEnvironment>>,
-    cameras: Query<
-        Entity,
-        (
-            With<GeneratedEnvironmentMapLight>,
-            With<EnvironmentMapLight>,
-        ),
-    >,
+    mut cameras: Query<(Entity, &mut FilterFrames), With<EnvironmentMapLight>>,
 ) {
-    let Some(mut env) = env else {
-        return;
-    };
-    if cameras.is_empty() || env.filter_frames == 0 {
-        return;
-    }
-    env.filter_frames -= 1;
-    if env.filter_frames == 0 {
-        for camera in &cameras {
+    for (camera, mut frames) in &mut cameras {
+        frames.0 = frames.0.saturating_sub(1);
+        if frames.0 == 0 {
             commands
                 .entity(camera)
-                .remove::<GeneratedEnvironmentMapLight>();
+                .remove::<(GeneratedEnvironmentMapLight, FilterFrames)>();
         }
     }
 }
@@ -368,7 +375,7 @@ fn follow_exposure(
     };
     let intensity = environment_intensity(&current_sky(&clock), share.0, env.mean_luma);
     for mut light in &mut lights {
-        if (light.intensity - intensity).abs() > 0.5 {
+        if light.intensity != intensity {
             light.intensity = intensity;
         }
     }
@@ -482,18 +489,36 @@ mod tests {
     }
 
     #[test]
-    fn the_intensity_keeps_the_ambient_budget_and_follows_daylight() {
-        let noon = sky_at(13.0);
-        let night = sky_at(1.0);
-        let (_, noon_mean) = paint_cubemap(&noon, 8);
-        let (_, night_mean) = paint_cubemap(&night, 8);
-        // Radiance times intensity is the budget's environment share, so the
-        // night keeps its floor and the day stays brighter.
-        let night_exposure =
-            environment_intensity(&night, ENVIRONMENT_SHARE, night_mean) * night_mean;
-        let noon_exposure = environment_intensity(&noon, ENVIRONMENT_SHARE, noon_mean) * noon_mean;
-        assert!((night_exposure - night.ambient_brightness * ENVIRONMENT_SHARE).abs() < 1e-2);
-        assert!(noon_exposure > night_exposure);
+    fn the_intensity_is_the_budget_share_over_the_cubemaps_mean_luminance() {
+        // Known numbers, not the formula run on its own output.
+        let sky = Sky {
+            ambient_brightness: 200.0,
+            ..sky_at(13.0)
+        };
+        assert!((environment_intensity(&sky, 0.6, 0.5) - 240.0).abs() < 1e-3);
+        assert!((environment_intensity(&sky, 0.5, 2.0) - 50.0).abs() < 1e-3);
+        // A black cubemap must not blow the intensity up to infinity.
+        assert!(environment_intensity(&sky, 0.6, 0.0).is_finite());
+
+        // A sky of one known grey (no sun halo, no dusk, no moon): the painted
+        // mean sits between the ground's luminance and the sky's 0.5.
+        let grey = Color::linear_rgb(0.5, 0.5, 0.5);
+        let flat = Sky {
+            haze: grey,
+            zenith: grey,
+            twilight: 0.0,
+            daylight: 1.0,
+            elevation: -1.0,
+            ..sky
+        };
+        let (_, mean) = paint_cubemap(&flat, 16);
+        let ground = 0.5 * luma(Vec3::new(0.62, 0.5, 0.38)) * 0.45;
+        assert!(mean < 0.5 && mean > ground, "{mean} vs {ground}");
+        let intensity = environment_intensity(&flat, 0.6, mean);
+        assert!(
+            (intensity - 120.0 / mean).abs() < 1e-2 && intensity > 240.0,
+            "{intensity}"
+        );
     }
 
     fn app_at(hour: u32) -> App {
@@ -640,5 +665,109 @@ mod tests {
             }));
         until_landed(&mut app);
         assert_eq!(app.world().resource::<SkyEnvironment>().repaints, 2);
+    }
+
+    /// What Bevy's generator does on the render side once it has the cubemap.
+    fn give_filtered_light(app: &mut App, camera: Entity) {
+        app.world_mut()
+            .entity_mut(camera)
+            .insert(EnvironmentMapLight::default());
+    }
+
+    #[test]
+    fn a_camera_spawned_after_settling_loses_its_generator_too() {
+        let mut app = app_at(13);
+        let first = app.world_mut().spawn(Camera3d::default()).id();
+        app.update();
+        give_filtered_light(&mut app, first);
+        for _ in 0..(FILTER_FRAMES as usize + 2) {
+            app.update();
+        }
+        assert!(
+            app.world()
+                .get::<GeneratedEnvironmentMapLight>(first)
+                .is_none()
+        );
+
+        // A camera that shows up later, with the sky frozen (no repaint).
+        let late = app.world_mut().spawn(Camera3d::default()).id();
+        app.update();
+        assert!(
+            app.world()
+                .get::<GeneratedEnvironmentMapLight>(late)
+                .is_some()
+        );
+        give_filtered_light(&mut app, late);
+        for _ in 0..(FILTER_FRAMES as usize + 2) {
+            app.update();
+        }
+        assert!(
+            app.world()
+                .get::<GeneratedEnvironmentMapLight>(late)
+                .is_none(),
+            "the late camera keeps the generator, so Bevy filters every frame"
+        );
+    }
+
+    #[test]
+    fn a_filtered_light_that_arrives_late_still_ends_the_generator() {
+        let mut app = app_at(13);
+        let first = app.world_mut().spawn(Camera3d::default()).id();
+        let slow = app.world_mut().spawn(Camera3d::default()).id();
+        app.update();
+        give_filtered_light(&mut app, first);
+        for _ in 0..(FILTER_FRAMES as usize + 2) {
+            app.update();
+        }
+        // The second camera's light only shows up now.
+        give_filtered_light(&mut app, slow);
+        for _ in 0..(FILTER_FRAMES as usize + 2) {
+            app.update();
+        }
+        assert!(
+            app.world()
+                .get::<GeneratedEnvironmentMapLight>(slow)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_landed_paint_never_shows_a_zero_intensity() {
+        let mut app = app_at(13);
+        let camera = app.world_mut().spawn(Camera3d::default()).id();
+        app.update();
+        let expected = |app: &App| {
+            let env = app.world().resource::<SkyEnvironment>();
+            let clock = app.world().resource::<WorldClock>();
+            environment_intensity(&current_sky(clock), ENVIRONMENT_SHARE, env.mean_luma)
+        };
+        // From the first frame the generator carries the real intensity.
+        let generated = app
+            .world()
+            .get::<GeneratedEnvironmentMapLight>(camera)
+            .unwrap();
+        assert!(generated.intensity > 0.0);
+        assert!((generated.intensity - expected(&app)).abs() < 1.0);
+
+        give_filtered_light(&mut app, camera);
+        for _ in 0..(FILTER_FRAMES as usize + 2) {
+            app.update();
+        }
+        app.world_mut().resource_mut::<WorldClock>().0 = GameClock::at(TimeOfDay::hm(19, 0));
+        app.update();
+        until_landed(&mut app);
+        let want = expected(&app);
+        let generated = app
+            .world()
+            .get::<GeneratedEnvironmentMapLight>(camera)
+            .unwrap();
+        let light = app.world().get::<EnvironmentMapLight>(camera).unwrap();
+        assert!(want > 0.0);
+        assert!(
+            (generated.intensity - want).abs() < 1.0,
+            "{}",
+            generated.intensity
+        );
+        assert!((light.intensity - want).abs() < 1.0, "{}", light.intensity);
     }
 }

@@ -8,7 +8,7 @@
 
 use crate::character::viewer::world_layers;
 use crate::sky::astro;
-use bevy::light::{CascadeShadowConfig, CascadeShadowConfigBuilder};
+use bevy::light::{CascadeShadowConfig, CascadeShadowConfigBuilder, EnvironmentMapLight};
 use bevy::prelude::*;
 use pampa_core::GameClock;
 
@@ -306,6 +306,7 @@ fn follow_the_clock(
     mut sun: Query<(&mut DirectionalLight, &mut Transform), With<Sun>>,
     mut ambient: ResMut<GlobalAmbientLight>,
     environment: Option<Res<EnvironmentShare>>,
+    lit: Query<&EnvironmentMapLight, With<Camera3d>>,
     mut clear: ResMut<ClearColor>,
     mut fogs: Query<&mut DistanceFog>,
 ) {
@@ -320,7 +321,14 @@ fn follow_the_clock(
             Transform::from_translation(sky.toward_light * 100.0).looking_at(Vec3::ZERO, Vec3::Y);
     }
     ambient.color = sky.ambient_color;
-    ambient.brightness = sky.ambient_brightness * (1.0 - environment.map_or(0.0, |share| share.0));
+    // The flat ambient yields its share only while a camera really has the
+    // environment light (so not before it arrives, nor where the GPU filter
+    // is unavailable and it never does).
+    let in_effect = lit.iter().any(|light| light.intensity > 0.0);
+    let share = environment
+        .filter(|_| in_effect)
+        .map_or(0.0, |share| share.0);
+    ambient.brightness = sky.ambient_brightness * (1.0 - share);
     clear.0 = sky.haze;
     for mut fog in &mut fogs {
         *fog = haze_fog(&sky);
@@ -502,12 +510,62 @@ mod tests {
             .insert_resource(WorldClock(GameClock::at(TimeOfDay::hm(1, 0))))
             .insert_resource(EnvironmentShare(0.6))
             .add_plugins(AtmospherePlugin);
+        app.world_mut().spawn((
+            Camera3d::default(),
+            bevy::light::EnvironmentMapLight {
+                intensity: 50.0,
+                ..default()
+            },
+        ));
         app.update();
         let night = sky_at(1.0);
         let flat = app.world().resource::<GlobalAmbientLight>().brightness;
         // Flat plus environment share is the budget, so the moonlit floor holds.
         assert!((flat - night.ambient_brightness * 0.4).abs() < 1e-3);
         assert!(flat + night.ambient_brightness * 0.6 >= 180.0);
+    }
+
+    fn ambient_app() -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Assets<Mesh>>()
+            .insert_resource(WorldClock(GameClock::at(TimeOfDay::hm(1, 0))))
+            .insert_resource(EnvironmentShare(0.6))
+            .add_plugins(AtmospherePlugin);
+        app
+    }
+
+    #[test]
+    fn the_flat_ambient_keeps_the_whole_budget_until_an_environment_light_is_in_effect() {
+        use bevy::light::EnvironmentMapLight;
+        let budget = sky_at(1.0).ambient_brightness;
+        let flat = |app: &App| app.world().resource::<GlobalAmbientLight>().brightness;
+
+        // No camera, a camera without the filtered light, one whose light is dark.
+        let mut app = ambient_app();
+        app.update();
+        assert!((flat(&app) - budget).abs() < 1e-3, "no camera");
+        let camera = app.world_mut().spawn(Camera3d::default()).id();
+        app.update();
+        assert!((flat(&app) - budget).abs() < 1e-3, "no environment light");
+        app.world_mut()
+            .entity_mut(camera)
+            .insert(EnvironmentMapLight {
+                intensity: 0.0,
+                ..default()
+            });
+        app.update();
+        assert!((flat(&app) - budget).abs() < 1e-3, "intensity 0");
+
+        // The light is in effect: the flat ambient yields its share.
+        app.world_mut()
+            .entity_mut(camera)
+            .insert(EnvironmentMapLight {
+                intensity: 50.0,
+                ..default()
+            });
+        app.update();
+        assert!((flat(&app) - budget * 0.4).abs() < 1e-3, "light in effect");
     }
 
     #[test]
