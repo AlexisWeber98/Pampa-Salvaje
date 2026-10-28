@@ -41,9 +41,9 @@ use pampa_core::{
     Circle, FaunaSite, Rider, RiderParams, SettlementKind, SettlementLayout, TetheredHorse,
     TimeOfDay, TownLayout, Travel, Vec2 as GroundVec2, World,
 };
-use pampa_render::hud::{panel_colors, text_image};
+use pampa_render::hud::{LINE_PX, ink_font, panel_colors};
 use pampa_render::{
-    CharacterModelsShown, CharacterVisual, Coat, StreamFocus, VisualPose, WorldClock,
+    CharacterModelsShown, CharacterVisual, Coat, StreamFocus, Typefaces, VisualPose, WorldClock,
     WorldSettlements, WorldTowns, world_from_ground,
 };
 
@@ -53,8 +53,6 @@ use crate::first_person::ViewMode;
 use crate::player::{DrivePlayer, GameWorld, Player, PlayerTuning};
 use crate::ride::OnTrain;
 
-/// Pixel scale of the console's lettering (the HUD objective's).
-const SCALE: usize = 2;
 /// Most output lines kept on screen.
 const LOG_LINES: usize = 6;
 /// Top gallop of the player's horse with `turbo on`, in km/h.
@@ -333,6 +331,7 @@ impl Plugin for ConsolePlugin {
         app.init_resource::<Console>()
             .init_resource::<ButtonInput<KeyCode>>()
             .init_resource::<StreamFocus>()
+            .init_resource::<Typefaces>()
             .init_resource::<PlayerAbilities>()
             .add_message::<KeyboardInput>()
             .add_message::<Unlocked>()
@@ -636,17 +635,14 @@ fn spawn_panel(mut commands: Commands) {
     ));
 }
 
-/// Shows the panel while the console is open and reletters it when it
+/// Shows the panel while the console is open and rewrites its text when it
 /// changed: the output, then the line being typed.
 fn draw_panel(
     mut commands: Commands,
     console: Res<Console>,
-    images: Option<ResMut<Assets<Image>>>,
+    faces: Res<Typefaces>,
     mut panels: Query<(Entity, &mut Node), With<ConsolePanel>>,
 ) {
-    let Some(mut images) = images else {
-        return;
-    };
     if !console.is_changed() {
         return;
     }
@@ -659,13 +655,11 @@ fn draw_panel(
         commands.entity(panel).despawn_related::<Children>();
         let typing = format!(": {}-", console.input);
         for line in console.log.iter().chain([&typing]) {
-            let image = text_image(line, SCALE);
-            let size = image.size_f32();
             commands.entity(panel).with_child((
-                ImageNode::new(images.add(image)),
+                Text::new(line.clone()),
+                ink_font(&faces.body, LINE_PX),
                 Node {
-                    width: Val::Px(size.x),
-                    height: Val::Px(size.y),
+                    min_height: Val::Px(LINE_PX),
                     ..default()
                 },
             ));
@@ -741,7 +735,7 @@ mod tests {
     }
 
     #[test]
-    fn everything_the_console_prints_is_in_the_font() {
+    fn everything_the_console_prints_is_in_the_typeface() {
         let lines = HELP.iter().map(|s| s.to_string()).chain([
             parse("fly").unwrap_err(),
             parse("goto").unwrap_err(),
@@ -772,7 +766,9 @@ mod tests {
         for line in lines {
             let missing: Vec<char> = line
                 .chars()
-                .filter(|&c| !pampa_render::font::supports(c))
+                .filter(|&c| {
+                    !pampa_render::lettering::supports(pampa_render::lettering::Face::Body, c)
+                })
                 .collect();
             assert!(missing.is_empty(), "{line:?}: {missing:?}");
         }
@@ -1064,36 +1060,30 @@ mod tests {
         });
     }
 
-    /// The lines the panel shows, top to bottom, as (width, height) of
-    /// their lettering images, and whether the panel is shown.
-    fn panel_lines(app: &mut App) -> (bool, Vec<(u32, u32)>) {
+    /// The lines the panel shows, top to bottom, as their text, and whether
+    /// the panel is shown. Every line is ink text in the body typeface.
+    fn panel_lines(app: &mut App) -> (bool, Vec<String>) {
         let mut panels = app
             .world_mut()
             .query_filtered::<(&Node, Option<&Children>), With<ConsolePanel>>();
         let (node, children) = panels.single(app.world()).unwrap();
         let shown = node.display != Display::None;
         let children: Vec<Entity> = children.into_iter().flatten().copied().collect();
-        let images = app.world().resource::<Assets<Image>>();
+        let (font, color) = ink_font(&Handle::default(), LINE_PX);
         let lines = children
             .iter()
-            .filter_map(|&c| app.world().get::<ImageNode>(c))
-            .filter_map(|i| images.get(&i.image))
-            .inspect(|i| {
-                let inked = i
-                    .data
-                    .as_ref()
-                    .is_some_and(|d| d.chunks(4).any(|p| p[3] > 0));
-                assert!(inked, "a line with no lettering");
+            .map(|&c| {
+                assert_eq!(app.world().get::<TextFont>(c), Some(&font));
+                assert_eq!(app.world().get::<TextColor>(c), Some(&color));
+                app.world().get::<Text>(c).expect("a text line").0.clone()
             })
-            .map(|i| (i.width(), i.height()))
             .collect();
         (shown, lines)
     }
 
     #[test]
-    fn the_open_panel_letters_the_prompt_and_what_help_prints() {
+    fn the_open_panel_shows_the_prompt_and_what_help_prints() {
         let mut app = app();
-        app.init_resource::<Assets<Image>>();
         app.update();
         {
             let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
@@ -1105,9 +1095,8 @@ mod tests {
         app.update();
         let (shown, lines) = panel_lines(&mut app);
         assert!(shown, "the panel opens");
-        // The prompt alone, ": -", lettered.
-        let prompt = text_image(": -", SCALE);
-        assert_eq!(lines, vec![(prompt.width(), prompt.height())]);
+        // The prompt alone.
+        assert_eq!(lines, [": -"]);
         for (code, text) in [
             (KeyCode::KeyH, "h"),
             (KeyCode::KeyE, "e"),
@@ -1117,11 +1106,7 @@ mod tests {
             key(&mut app, code, Some(text));
         }
         app.update();
-        let typed = text_image(": help-", SCALE);
-        assert_eq!(
-            panel_lines(&mut app).1,
-            vec![(typed.width(), typed.height())]
-        );
+        assert_eq!(panel_lines(&mut app).1, [": help-"]);
         key(&mut app, KeyCode::Enter, Some("\r"));
         app.update();
         app.update();
@@ -1130,16 +1115,9 @@ mod tests {
         let log = app.world().resource::<Console>().log.clone();
         assert_eq!(log.len(), LOG_LINES);
         assert_eq!(log.last().map(String::as_str), HELP.last().copied());
-        let expected: Vec<(u32, u32)> = log
-            .iter()
-            .map(String::as_str)
-            .chain([": -"])
-            .map(|l| text_image(l, SCALE))
-            .map(|i| (i.width(), i.height()))
-            .collect();
+        let expected: Vec<&str> = log.iter().map(String::as_str).chain([": -"]).collect();
         assert_eq!(lines, expected);
-        assert!(lines.iter().all(|&(w, h)| w > 2 * SCALE as u32 && h > 0));
-        // Idle, the lines stay put: relettered every frame, they would be
+        // Idle, the lines stay put: rewritten every frame, they would be
         // despawned before the UI ever laid them out, and never show.
         let children = |app: &mut App| -> Vec<Entity> {
             let mut q = app
@@ -1150,7 +1128,7 @@ mod tests {
         let before = children(&mut app);
         app.update();
         app.update();
-        assert_eq!(children(&mut app), before, "relettered while idle");
+        assert_eq!(children(&mut app), before, "rewritten while idle");
     }
 
     #[test]
@@ -1178,6 +1156,7 @@ mod tests {
         send(&mut app, KeyCode::F12, None, ButtonState::Pressed);
         app.update();
         assert!(!app.world().resource::<Console>().open, "closed");
+        assert!(!panel_lines(&mut app).0, "the panel hides with it");
         // F12 alone, after letting go of Shift, does not close it.
         let mut app = self::app();
         {

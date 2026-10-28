@@ -10,8 +10,8 @@
 //! not when the errand's person or a horse is in reach, which keep F. The
 //! board system runs first and eats the press when it acts.
 //!
-//! The panel and the "F: horarios" prompt are lettered in the HUD's bitmap
-//! font on its paper panels ([`pampa_render::hud`]).
+//! The panel and the "F: horarios" prompt are lettered as UI text in IM
+//! Fell English on its paper panels ([`pampa_render::hud`]).
 
 use bevy::prelude::*;
 use pampa_core::places::side_normal;
@@ -19,8 +19,8 @@ use pampa_core::{
     Ability, BoardRow, Bound, Errand, Interaction, Service, TownLayout, Travel, Vec2 as GroundVec2,
     station_board,
 };
-use pampa_render::hud::{panel_colors, text_image};
-use pampa_render::{ScreenFade, WorldTowns, WorldTrains};
+use pampa_render::hud::{LINE_PX, ink_font, panel_colors};
+use pampa_render::{ScreenFade, Typefaces, WorldTowns, WorldTrains};
 
 use crate::abilities::PlayerAbilities;
 use crate::errand::{ErrandRun, INTERACT_KEY, LooseHorse, Mountable};
@@ -34,9 +34,6 @@ pub const KEEP_RANGE: f32 = 5.5;
 /// How squarely the player must face the board: the cosine of the widest
 /// angle between where they look and the board (about 50 degrees).
 pub const FACING: f32 = 0.64;
-
-/// Pixel scale of the panel's lettering.
-const SCALE: usize = 2;
 
 /// The boards the player stands at, and the panel.
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
@@ -60,6 +57,7 @@ pub struct TimetablePlugin;
 impl Plugin for TimetablePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Timetables>()
+            .init_resource::<Typefaces>()
             .add_systems(Startup, spawn_ui)
             .add_systems(Update, read_board.before(crate::ride::ride_keys))
             .add_systems(PostUpdate, draw_ui);
@@ -271,16 +269,13 @@ type Roots<'w, 's> = Query<
 >;
 
 /// Shows the prompt while a board is in reach and the panel is shut, and
-/// the panel while it is open, relettering them when they change.
+/// the panel while it is open, rewriting their text when it changes.
 fn draw_ui(
     mut commands: Commands,
     state: Res<Timetables>,
-    images: Option<ResMut<Assets<Image>>>,
+    faces: Res<Typefaces>,
     mut roots: Roots,
 ) {
-    let Some(mut images) = images else {
-        return;
-    };
     if !state.is_changed() {
         return;
     }
@@ -301,14 +296,13 @@ fn draw_ui(
             continue;
         };
         commands.entity(frame).despawn_related::<Children>();
-        for line in &lines {
-            let image = text_image(line, SCALE);
-            let size = image.size_f32();
+        for line in lines {
             commands.entity(frame).with_child((
-                ImageNode::new(images.add(image)),
+                Text::new(line),
+                ink_font(&faces.body, LINE_PX),
+                // An empty line still keeps its height.
                 Node {
-                    width: Val::Px(size.x),
-                    height: Val::Px(size.y),
+                    min_height: Val::Px(LINE_PX),
                     ..default()
                 },
             ));
@@ -321,13 +315,12 @@ mod tests {
     use super::*;
     use crate::ride::testing::{press, shipped_app_at};
     use pampa_core::{GameClock, Heading, Npc, TetheredHorse, TimeOfDay};
-    use pampa_render::font;
+    use pampa_render::lettering::{self, Face};
 
     /// The shipped towns at midday, the player on foot on the first town's
     /// platform.
     fn app() -> App {
         let mut app = shipped_app_at(Some(GameClock::at(TimeOfDay::hm(12, 0))));
-        app.init_resource::<Assets<Image>>();
         app.update();
         app
     }
@@ -394,9 +387,12 @@ mod tests {
             (Some((9, 40)), None),
         );
         assert_eq!(row_text(&arrives), "09:40 Ramal de Caleufú  Llega 09:40");
-        // Everything the panel can say, the HUD font can letter.
+        // Everything the panel can say, the typeface can letter.
         for text in [row_text(&stop), row_text(&leaves), row_text(&arrives)] {
-            assert!(text.chars().all(font::supports), "{text}");
+            assert!(
+                text.chars().all(|c| lettering::supports(Face::Body, c)),
+                "{text}"
+            );
         }
     }
 
@@ -408,7 +404,9 @@ mod tests {
         let trains = &app.world().resource::<WorldTrains>().0;
         let lines = panel_lines(trains, towns, metileo);
         assert!(
-            lines.iter().all(|l| l.chars().all(font::supports)),
+            lines
+                .iter()
+                .all(|l| l.chars().all(|c| lettering::supports(Face::Body, c))),
             "{lines:?}"
         );
         // Taken from the trains' own stop times: the line train's two runs
@@ -590,41 +588,76 @@ mod tests {
         assert_ne!(app.world().resource::<ErrandRun>().0.stage(), before);
     }
 
+    /// The (text, font) of every line in the wrapper `W` (the panel or the
+    /// prompt) and whether the wrapper is shown.
+    fn lettering_of<W: Component>(app: &mut App) -> (bool, Vec<(String, TextFont, Color)>) {
+        let mut roots = app
+            .world_mut()
+            .query_filtered::<(&Node, &Children), With<W>>();
+        let (node, children) = roots.single(app.world()).unwrap();
+        let shown = node.display != Display::None;
+        let frame = children[0];
+        let lines: Vec<Entity> = app
+            .world()
+            .get::<Children>(frame)
+            .map(|c| c.to_vec())
+            .unwrap_or_default();
+        let lines = lines
+            .into_iter()
+            .map(|l| {
+                let text = app.world().get::<Text>(l).expect("a text line");
+                let font = app.world().get::<TextFont>(l).unwrap().clone();
+                let color = app.world().get::<TextColor>(l).unwrap().0;
+                (text.0.clone(), font, color)
+            })
+            .collect();
+        (shown, lines)
+    }
+
     #[test]
     fn the_panel_and_prompt_are_lettered_when_shown() {
         let mut app = app();
         let metileo = town_named(&app, "Metileo");
-        let shown = |app: &mut App| -> (Vec<Display>, usize) {
-            let mut q = app.world_mut().query_filtered::<
-                (&Node, &Children, Has<BoardPanel>),
-                Or<(With<BoardPanel>, With<BoardPrompt>)>,
-            >();
-            let roots: Vec<(Display, usize, bool)> = q
-                .iter(app.world())
-                .map(|(n, c, panel)| (n.display, c.len(), panel))
-                .collect();
-            let frames: Vec<Entity> = {
-                let mut q = app
-                    .world_mut()
-                    .query_filtered::<&Children, With<BoardPanel>>();
-                q.iter(app.world()).flat_map(|c| c.iter()).collect()
-            };
-            let lines = frames
-                .iter()
-                .map(|f| app.world().get::<Children>(*f).map_or(0, |c| c.len()))
-                .sum();
-            (roots.iter().map(|r| r.0).collect(), lines)
-        };
-        let (display, lines) = shown(&mut app);
-        assert_eq!(lines, 0);
-        assert!(display.iter().all(|d| *d == Display::None));
+        let body: Handle<Font> = bevy::asset::uuid_handle!("00000000-0000-0000-0000-0000000000b0");
+        app.world_mut().insert_resource(Typefaces {
+            body: body.clone(),
+            ..default()
+        });
+        let ink = ink_font(&body, LINE_PX);
+        let (shown, lines) = lettering_of::<BoardPanel>(&mut app);
+        assert!(!shown && lines.is_empty());
+        let (shown, lines) = lettering_of::<BoardPrompt>(&mut app);
+        assert!(!shown && lines.is_empty());
+
+        // In reach of the board, the prompt only.
         stand_at_board(&mut app, metileo, 2.0, true);
+        app.update();
+        let (shown, lines) = lettering_of::<BoardPrompt>(&mut app);
+        assert!(shown);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].0, "F: horarios");
+        assert_eq!(lines[0].1, ink.0);
+        assert_eq!(lines[0].2, ink.1.0);
+        assert!(!lettering_of::<BoardPanel>(&mut app).0);
+
+        // F opens the panel, one text line per panel line, in order.
         press(&mut app, INTERACT_KEY);
         app.update();
-        let (display, lines) = shown(&mut app);
-        // The panel is shown and the prompt (shown only before F) is not.
-        assert_eq!(display.iter().filter(|d| **d == Display::Flex).count(), 1);
-        assert_eq!(lines, app.world().resource::<Timetables>().lines.len());
-        assert!(lines > 3);
+        let (shown, lines) = lettering_of::<BoardPanel>(&mut app);
+        assert!(shown);
+        let expected = app.world().resource::<Timetables>().lines.clone();
+        assert!(expected.len() > 3);
+        let shown_lines: Vec<&str> = lines.iter().map(|l| l.0.as_str()).collect();
+        assert_eq!(shown_lines, expected);
+        assert!(lines.iter().all(|l| l.1 == ink.0 && l.2 == ink.1.0));
+        // The prompt is gone while the panel is open.
+        let (shown, lines) = lettering_of::<BoardPrompt>(&mut app);
+        assert!(!shown && lines.is_empty());
+
+        // F again closes it.
+        press(&mut app, INTERACT_KEY);
+        app.update();
+        let (shown, lines) = lettering_of::<BoardPanel>(&mut app);
+        assert!(!shown && lines.is_empty());
     }
 }

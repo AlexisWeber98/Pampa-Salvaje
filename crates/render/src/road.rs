@@ -14,7 +14,7 @@
 //! [`crate::terrain`]). A level crossing gets timber planks between and
 //! beside the rails, ramps up to them, and a St Andrew's cross on a post
 //! on either side; a signpost is a wooden post with an arrow board per
-//! town, painted in the bitmap font. Signs and signposts are
+//! town, lettered in the sign face. Signs and signposts are
 //! [`ThinOccluder`]s: they fade when they hide the rider.
 
 use bevy::asset::RenderAssetUsages;
@@ -554,7 +554,7 @@ fn signpost_pieces(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::font;
+    use crate::lettering::{self, Face};
     use crate::{StreamFocus, TerrainPlugin};
     use pampa_core::{
         PlazaPlacement, RailLine, RailwayConfig, Side, Terrain, TownConfig, TownLayout,
@@ -984,13 +984,20 @@ mod tests {
     }
 
     #[test]
-    fn signpost_boards_read_in_the_font() {
+    fn signpost_boards_read_in_the_display_face() {
         let (_, _, terrain) = world();
         let roads = terrain.roads.clone().unwrap();
         assert!(!roads.signposts.is_empty());
         for post in &roads.signposts {
             for board in &post.boards {
-                assert!(board.text.chars().all(font::supports), "{}", board.text);
+                assert!(
+                    board
+                        .text
+                        .chars()
+                        .all(|c| lettering::supports(Face::Display, c)),
+                    "{}",
+                    board.text
+                );
                 assert!(board.text.ends_with(" KM"));
                 let layout = layout_board(&board.text, BOARD_WIDTH, BOARD_HEIGHT);
                 assert!(layout.height_m <= BOARD_HEIGHT + 1e-4);
@@ -999,7 +1006,10 @@ mod tests {
         // The shipped names, as signposts would print them.
         for name in ["Eduardo Castex", "Monte Nievas", "General Pico"] {
             let text = pampa_core::road::board_text(name, 2349.0);
-            assert!(text.chars().all(font::supports), "{text}");
+            assert!(
+                text.chars().all(|c| lettering::supports(Face::Display, c)),
+                "{text}"
+            );
         }
     }
 

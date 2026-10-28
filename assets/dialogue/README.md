@@ -50,13 +50,14 @@ These hold for every file in this folder.
   `che`, `pingo`, `paisano`...). Keep it respectful: no slurs.
 - **Length.** At most **40 characters** per line (accents count as one
   character). Lines are drawn in a small speech bubble.
-- **Characters.** Lines are drawn with the game's own pixel font, which has:
+- **Characters.** Lines are drawn in the game's own typeface (IM Fell English), which has:
   - letters `A`–`Z` and `a`–`z`, digits `0`–`9`;
   - `Á É Í Ó Ú Ñ Ü` and `á é í ó ú ñ ü`;
-  - space and `. , - : ' ! ? ¡ ¿`.
+  - space and `. , : ; - ' " ! ? ¡ ¿ ( ) % $ /`.
 
-  Anything else (quotes, `#`, emoji...) is not drawn. The tests reject such
-  characters in the shipped file, and the game logs a warning at startup.
+  Anything the typeface lacks (emoji, other alphabets...) is not drawn. The
+  tests reject such characters in the shipped file, and the game logs a
+  warning at startup.
 - **No empty pools, no blank lines.** Every pool needs at least one line.
 
 ## `errand.ron`: the first errand
@@ -90,7 +91,7 @@ These hold for every file in this folder.
   the horse before talking to Don Hidalgo.
 - `farach` is said once, when the player reports; the errand is then done.
 - The rules above (voice, length, characters, no empty lists, no blank lines)
-  apply here too. Note the font has no double quotes, `;` or parentheses.
+  apply here too. The typeface has double quotes, `;` and parentheses, so they are fine.
 
 ## When something is wrong
 

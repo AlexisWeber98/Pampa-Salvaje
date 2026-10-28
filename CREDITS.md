@@ -127,8 +127,8 @@ The title and pause menus' pictures are baked by `tools/menu_poster.sh` from the
 
 | Asset | Author / source | Licence | Where | Changes |
 |---|---|---|---|---|
-| Rye | Sorkin Type Co, Google Fonts (https://github.com/google/fonts/tree/main/ofl/rye) | SIL Open Font License 1.1 (`OFL.txt` beside it) | `assets/fonts/rye/` | None; the menus' headings and the poster's "SE BUSCA" |
-| IM Fell English, roman and italic | Igino Marini, Google Fonts (https://github.com/google/fonts/tree/main/ofl/imfellenglish) | SIL Open Font License 1.1 (`OFL.txt` beside it) | `assets/fonts/im_fell_english/` | None; the menus' text and the poster's lettering |
+| Rye | Sorkin Type Co, Google Fonts (https://github.com/google/fonts/tree/main/ofl/rye) | SIL Open Font License 1.1 (`OFL.txt` beside it) | `assets/fonts/rye/` | None; the menus' headings, the signboards, the timetable board's heading and the poster's "SE BUSCA" |
+| IM Fell English, roman and italic | Igino Marini, Google Fonts (https://github.com/google/fonts/tree/main/ofl/imfellenglish) | SIL Open Font License 1.1 (`OFL.txt` beside it) | `assets/fonts/im_fell_english/` | None; the menus' text, the HUD, the console, the speech bubbles, the minimap and the poster's lettering |
 
 ## Rules
 

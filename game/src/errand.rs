@@ -25,9 +25,10 @@ use pampa_core::{
     Ability, Errand, ErrandEvent, Interaction, MAX_STEP, Npc, Rider, TownLayout, Travel, World,
 };
 use pampa_render::bubble::LIFETIME;
+use pampa_render::lettering::{self, Face};
 use pampa_render::{
     Animal, CharacterVisual, Coat, FigureKind, HudObjective, MapTarget, Say, Talking, VisualPose,
-    font, world_from_ground,
+    world_from_ground,
 };
 
 use crate::abilities::{PlayerAbilities, Unlocked, announce_unlocks, unlock_on_mount};
@@ -179,7 +180,7 @@ pub fn read_dialogue() -> (ErrandDialogue, DialogueReport) {
             .info
             .push(format!("errand dialogue loaded from {}", path.display())),
     }
-    let unsupported = lines.unsupported_chars(font::supports);
+    let unsupported = lines.unsupported_chars(|c| lettering::supports(Face::Body, c));
     if !unsupported.is_empty() {
         report.warnings.push(format!(
             "errand dialogue uses characters the font cannot draw: {unsupported:?}"
@@ -1057,7 +1058,10 @@ mod tests {
     #[test]
     fn the_shipped_lines_only_use_characters_the_font_draws() {
         for lines in [shipped_lines(), ErrandLines::builtin()] {
-            assert_eq!(lines.unsupported_chars(font::supports), Vec::<char>::new());
+            assert_eq!(
+                lines.unsupported_chars(|c| lettering::supports(Face::Body, c)),
+                Vec::<char>::new()
+            );
         }
     }
 

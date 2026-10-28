@@ -9,7 +9,8 @@
 use bevy::prelude::*;
 use pampa_content::{BUMPS_FILE, BumpLines, asset_path, load_bumps_or_builtin};
 use pampa_core::{BumpSeverity, BumpTracker, LinePicker, MAX_STEP};
-use pampa_render::{Say, font};
+use pampa_render::Say;
+use pampa_render::lettering::{self, Face};
 
 use crate::life::{Shoved, Walker, jostle_crowd};
 use crate::player::{DrivePlayer, PlayerTuning};
@@ -64,7 +65,7 @@ fn load_dialogue(mut commands: Commands, existing: Option<Res<Dialogue>>) {
         Some(error) => warn!("bump dialogue: {error}; using the built-in lines"),
         None => info!("bump dialogue loaded from {}", path.display()),
     }
-    let unsupported = bumps.unsupported_chars(font::supports);
+    let unsupported = bumps.unsupported_chars(|c| lettering::supports(Face::Body, c));
     if !unsupported.is_empty() {
         warn!("bump dialogue uses characters the font cannot draw: {unsupported:?}");
     }
@@ -321,7 +322,10 @@ mod tests {
         let (shipped, error) = load_bumps_or_builtin(&asset_path(BUMPS_FILE));
         assert!(error.is_none(), "{error:?}");
         for lines in [shipped, BumpLines::builtin()] {
-            assert_eq!(lines.unsupported_chars(font::supports), Vec::<char>::new());
+            assert_eq!(
+                lines.unsupported_chars(|c| lettering::supports(Face::Body, c)),
+                Vec::<char>::new()
+            );
         }
     }
 
