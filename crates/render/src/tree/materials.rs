@@ -64,6 +64,8 @@ impl Species {
             Self::Jarilla => "bark_willow_02",
             // Grey-brown thorny twigs.
             Self::Piquillin => "Bark009",
+            // Grey furrowed bark, the olmo's set shaded cooler grey.
+            Self::Alamo => "Bark001",
         }
     }
 
@@ -82,6 +84,8 @@ impl Species {
             Self::Piquillin => "olmo_leaves",
             // Narrow resinous leaflets, yellow-green.
             Self::Jarilla => "eucalipto_leaves",
+            // Small simple leaves along a twig, the olmo's atlas, fresh green.
+            Self::Alamo => "olmo_leaves",
         }
     }
 
@@ -116,6 +120,7 @@ impl Species {
             Self::Chanar | Self::Fachinal => Color::srgb(0.8, 0.88, 0.6),
             Self::Piquillin => Color::srgb(0.28, 0.42, 0.26),
             Self::Jarilla => Color::srgb(0.82, 0.88, 0.45),
+            Self::Alamo => Color::srgb(0.72, 0.9, 0.55),
         }
     }
 
@@ -130,6 +135,7 @@ impl Species {
             Self::Chanar | Self::Fachinal => Color::srgb(0.38, 0.44, 0.24),
             Self::Piquillin => Color::srgb(0.16, 0.26, 0.14),
             Self::Jarilla => Color::srgb(0.46, 0.5, 0.22),
+            Self::Alamo => Color::srgb(0.3, 0.4, 0.17),
         }
     }
 
@@ -144,6 +150,7 @@ impl Species {
             Self::Chanar | Self::Fachinal => Color::srgb(0.48, 0.44, 0.27),
             Self::Piquillin => Color::srgb(0.3, 0.26, 0.2),
             Self::Jarilla => Color::srgb(0.24, 0.19, 0.14),
+            Self::Alamo => Color::srgb(0.32, 0.3, 0.27),
         }
     }
 
@@ -169,6 +176,8 @@ impl Species {
             (Self::Jarilla, 1) => Color::srgb(0.75, 0.7, 0.62),
             (Self::Jarilla, 2) => Color::srgb(1.0, 0.95, 0.85),
             (Self::Jarilla, _) => Color::srgb(0.88, 0.84, 0.76),
+            // A cooler grey than the olmo's warm brown, same texture.
+            (Self::Alamo, _) => Color::srgb(0.78, 0.8, 0.82),
             _ => Color::WHITE,
         }
     }
@@ -430,9 +439,14 @@ mod tests {
         // the real texture and never fake a different bark.
         // The fachinal is a chañar's suckers: it wears the chañar's bark.
         assert_eq!(Species::Fachinal.bark_set(), Species::Chanar.bark_set());
+        // The álamo borrows the olmo's grey furrows (every other shipped set
+        // is another species' or reserved for F4), shaded a cooler grey so
+        // the two do not read as one tree.
+        assert_eq!(Species::Alamo.bark_set(), Species::Olmo.bark_set());
+        assert_ne!(Species::Alamo.bark_tint(0), Species::Olmo.bark_tint(0));
         let sets: Vec<&str> = Species::EVERY
             .iter()
-            .filter(|&&s| s != Species::Fachinal)
+            .filter(|&&s| s != Species::Fachinal && s != Species::Alamo)
             .map(|s| s.bark_set())
             .collect();
         for (i, a) in sets.iter().enumerate() {

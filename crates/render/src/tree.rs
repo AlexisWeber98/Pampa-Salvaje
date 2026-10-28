@@ -47,8 +47,8 @@ pub const SHRUB_VARIANTS: usize = 6;
 /// every tint still batch by variant and tint).
 pub const FIELD_TINTS: usize = 3;
 
-/// A tree's species: the towns' four, the fields' two and the fields' three
-/// shrubs.
+/// A tree's species: the towns' four, the fields' two, the fields' three
+/// shrubs and the estancias' poplar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Species {
     /// Paraíso (_Melia azedarach_): a round umbrella crown of pinnate
@@ -76,6 +76,9 @@ pub enum Species {
     /// Fachinal: a thicket of chañar suckers (the chañar's own bark and
     /// leaves).
     Fachinal,
+    /// Álamo (Lombardy poplar, _Populus nigra_ 'Italica'), the estancias'
+    /// windbreak rows: a tall narrow column of upswept limbs.
+    Alamo,
 }
 
 impl Species {
@@ -86,7 +89,7 @@ impl Species {
     /// The fields' shrubs, in order.
     pub const SHRUBS: [Species; 3] = [Self::Piquillin, Self::Jarilla, Self::Fachinal];
     /// Every species the [`TreeKit`] builds, in `Species as usize` order.
-    pub const EVERY: [Species; 9] = [
+    pub const EVERY: [Species; 10] = [
         Self::Paraiso,
         Self::Olmo,
         Self::Eucalipto,
@@ -96,6 +99,7 @@ impl Species {
         Self::Piquillin,
         Self::Jarilla,
         Self::Fachinal,
+        Self::Alamo,
     ];
 
     /// How many seeded variants the kit holds of it.
@@ -319,10 +323,10 @@ mod tests {
             }
             materials.extend(k.bark_tints.iter().chain(&k.leaf_tints).map(|m| m.id()));
         }
-        // Every species' variants, the trimmed ones of the street species and
-        // the plants'.
+        // Every species' variants (the álamo's among them), the trimmed ones of
+        // the street species and the plants'.
         let built = 2 * VARIANTS * (Species::ALL.len() + STREET_SPECIES.len())
-            + 2 * (CALDEN_VARIANTS + CHANAR_VARIANTS + 3 * SHRUB_VARIANTS)
+            + 2 * (CALDEN_VARIANTS + CHANAR_VARIANTS + 3 * SHRUB_VARIANTS + VARIANTS)
             + 2 * plants::VARIANTS as usize;
         let plant_meshes = (kit.plants.shrubs.iter().chain(&kit.plants.flowers)).map(|h| h.id());
         meshes.extend(plant_meshes);

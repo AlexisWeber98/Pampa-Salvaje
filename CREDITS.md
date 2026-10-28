@@ -40,12 +40,12 @@ The `thatch/` set next to them is our own work. The game loads every set as KTX2
 | Asset | Author / source | Licence | Where | Changes |
 |---|---|---|---|---|
 | Bark 014 | ambientCG (https://ambientcg.com/view?id=Bark014) | CC0 1.0 | `assets/textures/trees/Bark014/` | 1K maps renamed; paraíso bark |
-| Bark 001 | ambientCG (https://ambientcg.com/view?id=Bark001) | CC0 1.0 | `assets/textures/trees/Bark001/` | 1K maps renamed; olmo bark |
+| Bark 001 | ambientCG (https://ambientcg.com/view?id=Bark001) | CC0 1.0 | `assets/textures/trees/Bark001/` | 1K maps renamed; olmo and álamo bark |
 | Bark 009 | ambientCG (https://ambientcg.com/view?id=Bark009) | CC0 1.0 | `assets/textures/trees/Bark009/` | 1K maps renamed; not used now (the eucalipto moved to `bark_bluegum`) |
 | Bark 002 | ambientCG (https://ambientcg.com/view?id=Bark002) | CC0 1.0 | `assets/textures/trees/Bark002/` | 1K maps renamed; aromo bark |
 | Bark 005 | ambientCG (https://ambientcg.com/view?id=Bark005) | CC0 1.0 | `assets/textures/trees/Bark005/` | 1K maps renamed; for F4 (ombú); not used yet |
 | Leaf Set 013 | ambientCG (https://ambientcg.com/view?id=LeafSet013) | CC0 1.0 | `assets/textures/trees/LeafSet013/`, `paraiso_leaves/` | 1K maps renamed; leaflets laid into the paraíso's pinnate leaves by `tools/leaf_atlas.py` (a derived atlas) |
-| Leaf Set 001 | ambientCG (https://ambientcg.com/view?id=LeafSet001) | CC0 1.0 | `assets/textures/trees/LeafSet001/`, `olmo_leaves/` | 1K maps renamed; leaves laid along twigs into the olmo atlas by `tools/leaf_atlas.py` |
+| Leaf Set 001 | ambientCG (https://ambientcg.com/view?id=LeafSet001) | CC0 1.0 | `assets/textures/trees/LeafSet001/`, `olmo_leaves/` | 1K maps renamed; leaves laid along twigs into the olmo atlas by `tools/leaf_atlas.py` (the álamo wears it too) |
 | Leaf Set 003 | ambientCG (https://ambientcg.com/view?id=LeafSet003) | CC0 1.0 | `assets/textures/trees/LeafSet003/`, `eucalipto_leaves/` | 1K maps renamed; leaves hung along twigs into the eucalipto atlas by `tools/leaf_atlas.py` |
 | Leaf Set 019 | ambientCG (https://ambientcg.com/view?id=LeafSet019) | CC0 1.0 | `assets/textures/trees/LeafSet019/`, `aromo_leaves/` | 1K maps renamed; sprays stood upright into the aromo atlas by `tools/leaf_atlas.py`; tinted silver-green in the game |
 | Bark Willow | Poly Haven, Dario Barresi (processing), Dimitrios Savva (photography) (https://polyhaven.com/a/bark_willow) | CC0 1.0 | `assets/textures/trees/bark_willow/` | 1K JPG maps renamed; caldén bark, shaded grey-brown in the game |

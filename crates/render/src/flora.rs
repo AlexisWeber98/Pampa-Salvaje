@@ -809,12 +809,6 @@ impl VegetationModels {
         )
     }
 
-    /// `model`'s meshes with their finishes, for a caller that paints them
-    /// with its own materials; `None` when it was not loaded.
-    pub(crate) fn finished_parts(&self, model: Model) -> Option<&[(Finish, Handle<Mesh>)]> {
-        self.parts.get(&model).map(Vec::as_slice)
-    }
-
     fn material(&self, model: Model, finish: Finish, tint: usize) -> Handle<StandardMaterial> {
         match (model.role(), finish) {
             (_, Finish::Bark) => self.bark.clone(),

@@ -314,6 +314,32 @@ impl Species {
                 clump: 0.5,
                 shrub: true,
             },
+            // The Lombardy poplar: a short bole, then a bundle of limbs
+            // swept almost straight up into a column about a fifth as wide
+            // as it is tall, small leaves all along them. Its trunk stays
+            // within what `pampa_core::Structure::trunk_radius` collides
+            // for a poplar (0.012 of the height).
+            Self::Alamo => Form {
+                height: (14.0, 16.0),
+                fork: 0.08,
+                trunk_radius: 0.16,
+                limbs: (10, 12),
+                tilt: (1.5, 4.0),
+                reach: 0.75,
+                rise: 0.05,
+                twigs: 0,
+                leader: false,
+                cards: 170,
+                card: 1.0,
+                hang: 0.05,
+                sag: 0.1,
+                scatter: 0.15,
+                bark_tile: Vec2::new(0.8, 1.6),
+                lean: 0.01,
+                wind: 0.0,
+                clump: 0.0,
+                shrub: false,
+            },
         }
     }
 
@@ -1582,5 +1608,46 @@ mod tests {
         assert!(narrow(Species::Jarilla) < narrow(Species::Piquillin));
         assert!(mean(Species::Fachinal, |t| t.height) > mean(Species::Piquillin, |t| t.height));
         assert!(mean(Species::Piquillin, |t| t.leaves.triangles() as f32) > 0.0);
+    }
+    #[test]
+    fn the_alamo_is_a_tall_narrow_column_within_the_field_triangle_budget() {
+        for v in 0..Species::Alamo.variants() as u32 {
+            let t = tree(Species::Alamo, v);
+            let tris = t.bark.triangles() + t.leaves.triangles();
+            assert!((200..=1200).contains(&tris), "variant {v}: {tris}");
+            // A Lombardy poplar's column: at least 3.5 times as tall as wide,
+            // where the eucalipto is about 1.5 times.
+            assert!(
+                t.height >= 3.5 * 2.0 * t.crown_radius,
+                "variant {v}: {} m tall, {} m wide",
+                t.height,
+                2.0 * t.crown_radius
+            );
+            // Leaves from the middle of the limbs right up to the top, the
+            // lower bole bare as in a self-pruned windbreak row.
+            assert!(
+                t.crown_base < 0.55 * t.height,
+                "variant {v}: {}",
+                t.crown_base
+            );
+            assert!(t.height > 12.0, "variant {v}: {}", t.height);
+        }
+    }
+
+    #[test]
+    fn the_alamos_trunk_stands_within_what_core_collides_for_a_poplar() {
+        for v in 0..Species::Alamo.variants() as u32 {
+            let t = tree(Species::Alamo, v);
+            let foot = t
+                .bark
+                .positions
+                .iter()
+                .filter(|p| p.y < 0.5)
+                .map(|p| Vec2::new(p.x, p.z).length())
+                .fold(0.0, f32::max);
+            // Core's radius for a poplar of this height, at any scale of it.
+            let core = 0.012 * t.height;
+            assert!(foot <= core, "variant {v}: bark {foot}, core {core}");
+        }
     }
 }

@@ -13,10 +13,9 @@
 //!   with the facade kit shared with the towns ([`crate::facade`]);
 //! - the windpump's wheel apart, spinning as a [`WindmillRotor`] (turned by
 //!   the [`crate::TownPlugin`]);
-//! - the eucalyptus grove and the poplar row: the vegetation models'
-//!   trunks (or their stand-ins) under procedural crowns ([`crown`]), a
-//!   Lombardy poplar's column and a eucalyptus's clumps, recoloured per
-//!   species;
+//! - the eucalyptus grove and the poplar row: textured trees of the shared
+//!   [`crate::tree::TreeKit`] (the towns' eucalipto and the field's álamo, a
+//!   Lombardy poplar's column), scaled to each spot's height;
 //! - the tracks (huellas) and the trodden yards as decals over the drawn
 //!   ground ([`track`]);
 //! - the abandoned wagons, in some yards and on a few road verges;
@@ -37,7 +36,6 @@
 //! range for good (see [`crate::flora::TUFT_FADE_STEPS`]).
 
 pub mod buildings;
-pub mod crown;
 pub mod props;
 pub mod slots;
 pub mod track;
@@ -59,26 +57,23 @@ use bevy::world_serialization::{WorldAsset, WorldAssetRoot};
 use pampa_core::settlement::RoadsideWreck;
 use pampa_core::town::PlantKind;
 use pampa_core::{
-    Aabb, ChunkCoord, Settlement, SettlementLayout, Side, Species, Structure, StructureKind,
-    Terrain, Track, Vec2 as GroundVec2,
+    Aabb, ChunkCoord, Settlement, SettlementLayout, Side, Structure, StructureKind, Terrain, Track,
+    Vec2 as GroundVec2,
 };
 
 pub use materials::{FacadeMaterials, Livery, Surface};
 pub use slots::{ModelRotor, ModelSlots, SlotFit, SlotFolder, SlotModels, SlotRotor, StandIn};
 pub use yard::{YardModels, YardProp};
 
-use crate::character::finish::Finish;
 use crate::coords::world_from_ground;
-use crate::flora::{
-    FloraKit, Model, TREE_FADE, TREE_FAR, ThinOccluder, VegetationModels, reference_height, tinted,
-    visible_within,
-};
+use crate::flora::{TREE_FADE, TREE_FAR, ThinOccluder, visible_within};
 use crate::gltf::{self, ModelState};
 use crate::terrain::{
     ChunkDetail, ChunkStreaming, PendingGround, TerrainChunk, WorldChunks, WorldTerrain,
     mesh_height,
 };
 use crate::town::WindmillRotor;
+use crate::tree::Species as TreeSpecies;
 use shape::Shape;
 use slots::SceneDress;
 
@@ -144,21 +139,18 @@ pub fn ranges() -> [VisibilityRange; 3] {
 }
 
 /// The meshes and materials shared by every settlement beyond the surface
-/// materials: the windpump's wheel and the trees' paint.
+/// materials: the windpump's wheel and the trees' kit.
 #[derive(Resource, Debug, Clone)]
 struct SettlementKit {
     rotor: Vec<(Surface, Handle<Mesh>)>,
-    /// Bark and leaves of the eucalyptus, then of the poplar.
-    trees: [[Handle<StandardMaterial>; 2]; 2],
-    /// The seeded crown variants of the eucalyptus, then of the poplar.
-    crowns: [Vec<Handle<Mesh>>; 2],
+    /// The tree kit's eucalipto, then its álamo.
+    trees: [crate::tree::SpeciesKit; 2],
     /// The yard shrubs and flower beds, the towns' ([`crate::tree`]).
     plants: crate::tree::plants::PlantKit,
 }
 
 /// Draws the [`WorldSettlements`] chunk by chunk. Needs the
-/// [`crate::TerrainPlugin`]; trees need the [`crate::FloraPlugin`]'s models
-/// or stand-ins, and the windpump wheels turn with the
+/// [`crate::TerrainPlugin`]; the windpump wheels turn with the
 /// [`crate::TownPlugin`].
 pub struct SettlementPlugin;
 
@@ -194,7 +186,6 @@ impl Plugin for SettlementPlugin {
 fn setup_kit(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     tree_kit: Option<Res<crate::tree::TreeKit>>,
 ) {
     // Ordered after `setup_trees` by the plugin, so a missing kit means the
@@ -208,36 +199,12 @@ fn setup_kit(
         .into_iter()
         .map(|(surface, mesh)| (surface, meshes.add(mesh)))
         .collect();
-    // Multiplied over the models' bark and leaf paint (linear, so above 1
-    // brightens): the eucalyptus's pale peeling bole and blue-grey leaves,
-    // the poplar's grey bark and fresh green.
-    let mut paint = |finish: Finish, (r, g, b): (f32, f32, f32)| {
-        materials.add(tinted(finish, false, Color::linear_rgb(r, g, b)))
-    };
-    let trees = [
-        [
-            paint(Finish::Bark, (5.5, 7.0, 8.0)),
-            paint(Finish::Leaves, (1.1, 1.2, 2.6)),
-        ],
-        [
-            paint(Finish::Bark, (2.8, 3.6, 4.2)),
-            paint(Finish::Leaves, (1.2, 1.6, 0.95)),
-        ],
-    ];
-    let crowns = [crown::CrownKind::Eucalyptus, crown::CrownKind::Poplar]
-        .into_iter()
-        .map(|kind| {
-            (0..crown::CROWN_VARIANTS)
-                .map(|v| meshes.add(crown::crown(kind, v)))
-                .collect()
-        })
-        .collect::<Vec<Vec<Handle<Mesh>>>>();
-    let [eucalyptus, poplar]: [Vec<Handle<Mesh>>; 2] =
-        crowns.try_into().expect("two species of crowns");
     commands.insert_resource(SettlementKit {
         rotor,
-        trees,
-        crowns: [eucalyptus, poplar],
+        trees: [
+            tree_kit.species(TreeSpecies::Eucalipto).clone(),
+            tree_kit.species(TreeSpecies::Alamo).clone(),
+        ],
         plants: tree_kit.plants.clone(),
     });
 }
@@ -296,8 +263,6 @@ struct Painter<'a> {
     ground: &'a dyn Fn(GroundVec2) -> f32,
     surfaces: &'a FacadeMaterials,
     kit: &'a SettlementKit,
-    models: Option<&'a VegetationModels>,
-    stand_ins: Option<&'a FloraKit>,
     server: Option<&'a AssetServer>,
     slots: Option<&'a SlotModels>,
     fits: &'a ModelSlots,
@@ -688,17 +653,20 @@ impl Painter<'_> {
         }
     }
 
-    /// A planted tree on a tree spot: a vegetation model's trunk (or its
-    /// stand-in's) drawn slender, under one of the species' shared
-    /// procedural crowns ([`crown`]), picked by its variant.
+    /// A planted tree on a tree spot: a tree of the shared tree kit (the
+    /// eucalipto, or the álamo for a poplar), picked by the spot's variant
+    /// and scaled evenly so it stands as tall as the spot.
     fn tree(&self, structure: &Structure, tag: SettlementPart, out: &mut Vec<Piece>) {
         let at = structure.footprint.center();
         let h = structure.height;
         let poplar = structure.kind == StructureKind::Poplar;
-        // Trunk width for its height: the poplar's slender, the
-        // eucalyptus's spreading into its crown.
-        let width = if poplar { 0.22 } else { 0.5 };
-        let paint = &self.kit.trees[poplar as usize];
+        let species = &self.kit.trees[poplar as usize];
+        let species_kind = if poplar {
+            TreeSpecies::Alamo
+        } else {
+            TreeSpecies::Eucalipto
+        };
+        let variant = &species.variants[(structure.variant / 7) as usize % species.variants.len()];
         let turned = Transform::from_translation(world_from_ground(at, (self.ground)(at) - 0.1))
             .with_rotation(Quat::from_rotation_y(
                 (structure.variant % 360) as f32 / 57.3,
@@ -721,38 +689,26 @@ impl Painter<'_> {
             }
         }
         let stand_in = matches!(slot, SlotUse::Loading(_));
-        let mut push = |mesh: Handle<Mesh>, bark: bool, transform: Transform| {
+        // Stood to the spot's height; a trunk that would come out fatter than
+        // the collider core plants for it (a eucalyptus's, over 18 m) is
+        // slimmed, crown and all, so a rider is never inside the bark.
+        let k = h / variant.height;
+        let girth = k.min(structure.trunk_radius() / species_kind.form().trunk_radius);
+        let scaled = turned.with_scale(Vec3::new(girth, k, girth));
+        for (mesh, paint) in [
+            (&variant.bark, &species.bark),
+            (&variant.leaves, &species.leaves),
+        ] {
             out.push(Piece {
-                look: Look::Mesh(mesh, paint[if bark { 0 } else { 1 }].clone()),
-                transform,
+                look: Look::Mesh(mesh.clone(), paint.clone()),
+                transform: scaled,
                 range: Some(range.clone()),
                 fade: None,
                 rotor: None,
                 tag: Tag::Part(tag),
                 stand_in,
             });
-        };
-        let model = Model::CommonTree((structure.variant % 5) as u8 + 1);
-        if let Some(parts) = self.models.and_then(|m| m.finished_parts(model)) {
-            for (_, mesh) in parts.iter().filter(|(f, _)| *f == Finish::Bark) {
-                push(
-                    mesh.clone(),
-                    true,
-                    turned.with_scale(Vec3::new(h * width, h, h * width)),
-                );
-            }
-        } else if let Some(kit) = self.stand_ins {
-            let k = h / reference_height(Species::Calden);
-            let scale = Vec3::new(k * width * 1.6, k, k * width * 1.6);
-            let [(trunk, _), _] = kit.tree(Species::Calden);
-            push(trunk, true, turned.with_scale(scale));
-        } else {
-            // No trunk to carry it: no floating crown either.
-            return;
         }
-        let crowns = &self.kit.crowns[poplar as usize];
-        let crown = crowns[(structure.variant / 7) as usize % crowns.len()].clone();
-        push(crown, false, turned.with_scale(Vec3::splat(h)));
     }
 }
 
@@ -840,8 +796,6 @@ struct PaintKit {
     resolution: u32,
     surfaces: FacadeMaterials,
     kit: SettlementKit,
-    models: Option<VegetationModels>,
-    stand_ins: Option<FloraKit>,
     server: Option<AssetServer>,
     slots: Option<SlotModels>,
     fits: ModelSlots,
@@ -858,8 +812,6 @@ impl PaintKit {
             ground: &ground,
             surfaces: &self.surfaces,
             kit: &self.kit,
-            models: self.models.as_ref(),
-            stand_ins: self.stand_ins.as_ref(),
             server: self.server.as_ref(),
             slots: self.slots.as_ref(),
             fits: &self.fits,
@@ -894,7 +846,6 @@ fn lay_settlements(
     mut commands: Commands,
     (layout, terrain, world, detail): LayInputs,
     (surfaces, kit): (Option<Res<FacadeMaterials>>, Option<Res<SettlementKit>>),
-    (models, stand_ins): (Option<Res<VegetationModels>>, Option<Res<FloraKit>>),
     (server, slots, fits, yard): LayModels,
     chunks: Query<(Entity, &TerrainChunk, Has<PendingGround>), Without<SettlementsLaid>>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -921,8 +872,6 @@ fn lay_settlements(
                     resolution: detail.resolution,
                     surfaces: surfaces.clone(),
                     kit: kit.clone(),
-                    models: models.as_deref().cloned(),
-                    stand_ins: stand_ins.as_deref().cloned(),
                     server: server.as_deref().cloned(),
                     slots: slots.as_deref().cloned(),
                     fits: fits.clone(),

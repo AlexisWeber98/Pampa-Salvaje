@@ -5,7 +5,7 @@ These are the bark and leaf sets of the plaza trees (paraíso, olmo, eucalipto a
 | Folder | Asset | Source | Used for | Changes |
 |---|---|---|---|---|
 | `Bark014/` | Bark 014 | ambientCG (https://ambientcg.com/view?id=Bark014) | Paraíso bark | 1K JPG maps renamed |
-| `Bark001/` | Bark 001 | ambientCG (https://ambientcg.com/view?id=Bark001) | Olmo bark | 1K JPG maps renamed |
+| `Bark001/` | Bark 001 | ambientCG (https://ambientcg.com/view?id=Bark001) | Olmo and álamo bark (the álamo shades it cooler grey) | 1K JPG maps renamed |
 | `Bark009/` | Bark 009 | ambientCG (https://ambientcg.com/view?id=Bark009) | Not used now (the eucalipto and chañar moved to Poly Haven sets) | 1K JPG maps renamed |
 | `Bark002/` | Bark 002 | ambientCG (https://ambientcg.com/view?id=Bark002) | Aromo bark | 1K JPG maps renamed |
 | `Bark005/` | Bark 005 | ambientCG (https://ambientcg.com/view?id=Bark005) | For F4 (ombú); not used yet | 1K JPG maps (Color, NormalGL, Roughness, AmbientOcclusion) renamed; downloaded by the project owner on 2026-10-27 |
@@ -14,7 +14,7 @@ These are the bark and leaf sets of the plaza trees (paraíso, olmo, eucalipto a
 | `LeafSet003/` | Leaf Set 003 | ambientCG (https://ambientcg.com/view?id=LeafSet003) | Leaves of the eucalipto atlas | 1K JPG maps renamed; source only |
 | `LeafSet019/` | Leaf Set 019 | ambientCG (https://ambientcg.com/view?id=LeafSet019) | Sprays of the aromo atlas (and, through it, the caldén's) | 1K JPG maps renamed; source only; tinted silver-green in the game |
 | `paraiso_leaves/` | Derived from Leaf Set 013 | ambientCG (https://ambientcg.com/view?id=LeafSet013) | Paraíso leaf cards | Leaflets cut out and laid in opposite pairs along a drawn rachis, as the paraíso's pinnate leaf (no scanned set has one), by `tools/leaf_atlas.py` |
-| `olmo_leaves/` | Derived from Leaf Set 001 | ambientCG (https://ambientcg.com/view?id=LeafSet001) | Olmo and chañar leaf cards | Leaves cut out and laid alternately along drawn twigs by `tools/leaf_atlas.py` |
+| `olmo_leaves/` | Derived from Leaf Set 001 | ambientCG (https://ambientcg.com/view?id=LeafSet001) | Olmo, chañar and álamo leaf cards | Leaves cut out and laid alternately along drawn twigs by `tools/leaf_atlas.py` |
 | `eucalipto_leaves/` | Derived from Leaf Set 003 | ambientCG (https://ambientcg.com/view?id=LeafSet003) | Eucalipto leaf cards | Leaves cut out and hung close along drawn twigs by `tools/leaf_atlas.py` |
 | `aromo_leaves/` | Derived from Leaf Set 019 | ambientCG (https://ambientcg.com/view?id=LeafSet019) | Aromo and caldén leaf cards | Sprays cut out and stood upright by `tools/leaf_atlas.py` |
 
