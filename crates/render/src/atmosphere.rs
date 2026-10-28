@@ -78,6 +78,14 @@ const SUN_LUX: f32 = 10_000.0;
 /// Illuminance of the moon, in lux: dim, but enough to read the ground.
 const MOON_LUX: f32 = 900.0;
 
+/// The share of [`Sky::ambient_brightness`] that image-based light from the
+/// sky's environment map carries, when a renderer provides one (see
+/// `sky::environment`); the flat [`GlobalAmbientLight`] keeps the rest, so
+/// the total ambient exposure stays the sky's budget. Absent, the flat
+/// ambient carries all of it.
+#[derive(Resource, Debug, Clone, Copy, PartialEq)]
+pub struct EnvironmentShare(pub f32);
+
 /// How the sky lights the world at one hour.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Sky {
@@ -297,6 +305,7 @@ fn follow_the_clock(
     clock: Option<Res<WorldClock>>,
     mut sun: Query<(&mut DirectionalLight, &mut Transform), With<Sun>>,
     mut ambient: ResMut<GlobalAmbientLight>,
+    environment: Option<Res<EnvironmentShare>>,
     mut clear: ResMut<ClearColor>,
     mut fogs: Query<&mut DistanceFog>,
 ) {
@@ -311,7 +320,7 @@ fn follow_the_clock(
             Transform::from_translation(sky.toward_light * 100.0).looking_at(Vec3::ZERO, Vec3::Y);
     }
     ambient.color = sky.ambient_color;
-    ambient.brightness = sky.ambient_brightness;
+    ambient.brightness = sky.ambient_brightness * (1.0 - environment.map_or(0.0, |share| share.0));
     clear.0 = sky.haze;
     for mut fog in &mut fogs {
         *fog = haze_fog(&sky);
@@ -483,6 +492,22 @@ mod tests {
         app.update();
         let ambient = app.world().resource::<GlobalAmbientLight>().brightness;
         assert_eq!(ambient, sky_at(1.0).ambient_brightness);
+    }
+
+    #[test]
+    fn an_environment_map_takes_its_share_of_the_ambient_budget() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Assets<Mesh>>()
+            .insert_resource(WorldClock(GameClock::at(TimeOfDay::hm(1, 0))))
+            .insert_resource(EnvironmentShare(0.6))
+            .add_plugins(AtmospherePlugin);
+        app.update();
+        let night = sky_at(1.0);
+        let flat = app.world().resource::<GlobalAmbientLight>().brightness;
+        // Flat plus environment share is the budget, so the moonlit floor holds.
+        assert!((flat - night.ambient_brightness * 0.4).abs() < 1e-3);
+        assert!(flat + night.ambient_brightness * 0.6 >= 180.0);
     }
 
     #[test]
