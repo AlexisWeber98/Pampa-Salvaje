@@ -11,6 +11,7 @@
 
 pub mod astro;
 pub mod birds;
+pub mod environment;
 
 use crate::atmosphere::{DEFAULT_HOUR, Sky, WorldClock, clock_days, sky_with_moon};
 use crate::character::viewer::world_layers;
@@ -47,7 +48,11 @@ pub struct SkyPlugin;
 impl Plugin for SkyPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "sky.wesl");
-        app.add_plugins((MaterialPlugin::<SkyMaterial>::default(), SkyLogic));
+        app.add_plugins((
+            MaterialPlugin::<SkyMaterial>::default(),
+            SkyLogic,
+            environment::SkyEnvironmentPlugin,
+        ));
     }
 }
 
