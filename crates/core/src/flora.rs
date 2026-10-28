@@ -713,26 +713,49 @@ impl FloraSite {
     /// they were when the trees were thinned.
     fn chunk_trees(&self, coord: ChunkCoord, rail: &[(Vec2, Vec2)]) -> Vec<Tree> {
         let size = self.config.chunk_size;
-        let mut trees = self.scattered_trees(coord, rail);
+        let mut natives = self.native_trees(coord, rail);
+        let mut extras = self.extra_trees(coord, rail, &natives);
         for (dx, dy) in [(-1, -1), (0, -1), (1, -1), (-1, 0)] {
             let earlier = ChunkCoord::new(coord.x + dx, coord.y + dy);
             let reach = earlier.bounds(size).expanded(Tree::MAX_SPACING);
-            if !self.config.has_chunk(earlier) || !trees.iter().any(|t| reach.contains_point(t.at))
-            {
+            let near = |t: &Tree| reach.contains_point(t.at);
+            if !self.config.has_chunk(earlier) || !(natives.iter().chain(&extras).any(near)) {
                 continue;
             }
-            let theirs = self.scattered_trees(earlier, &self.rail_near(earlier));
-            trees.retain(|t| {
+            // The natives give way to the earlier natives only, so the
+            // extras never displace one; the extras give way to the earlier
+            // extras (and keep clear of every native by their own draw).
+            let rail = self.rail_near(earlier);
+            let theirs = self.native_trees(earlier, &rail);
+            natives.retain(|t| {
+                theirs
+                    .iter()
+                    .all(|u| u.at.distance(t.at) >= u.spacing().max(t.spacing()))
+            });
+            let theirs = self.extra_trees(earlier, &rail, &theirs);
+            extras.retain(|t| {
                 theirs
                     .iter()
                     .all(|u| u.at.distance(t.at) >= u.spacing().max(t.spacing()))
             });
         }
+        natives.extend(extras);
+        natives
+    }
+
+    /// The trees scattered over chunk `coord` (the field's own and the
+    /// extras), spaced apart within it.
+    fn scattered_trees(&self, coord: ChunkCoord, rail: &[(Vec2, Vec2)]) -> Vec<Tree> {
+        let mut trees = self.native_trees(coord, rail);
+        let extras = self.extra_trees(coord, rail, &trees);
+        trees.extend(extras);
         trees
     }
 
-    /// The trees scattered over chunk `coord`, spaced apart within it.
-    fn scattered_trees(&self, coord: ChunkCoord, rail: &[(Vec2, Vec2)]) -> Vec<Tree> {
+    /// The field's own trees of chunk `coord` (the monte, the groves and the
+    /// lone trees), spaced apart within it. Nothing else is drawn here, so
+    /// they stand as they always did, whatever [`Self::extra_trees`] adds.
+    fn native_trees(&self, coord: ChunkCoord, rail: &[(Vec2, Vec2)]) -> Vec<Tree> {
         let size = self.config.chunk_size;
         let min = coord.min(size);
         let mut rng = Rng::new(coord.seed(self.seed), 0);
@@ -769,16 +792,8 @@ impl FloraSite {
             let thin = rural.min(1.0);
             let (grove_chance, monte_chance) = (grove_chance * thin, monte_chance * thin);
             let chance = Self::LONE_TREE * rural.sqrt() + grove_chance.max(monte_chance);
-            // Besides the field's own trees: an ombú beside a settlement,
-            // and the town trees that escaped by the roads and settlements.
-            let ombu = Self::OMBU_TREE * Self::ombu_zone(hub);
             let escape = self.escape_by(at, hub);
-            let escaped = Self::ESCAPED_TREE * escape;
-            let species = if pick < ombu {
-                Species::Ombu
-            } else if pick < ombu + escaped {
-                Self::town_species(species_roll)
-            } else if pick >= chance {
+            let species = if pick >= chance {
                 continue;
             } else if trees.len() >= Self::GROVE_BUDGET && monte_chance <= grove_chance {
                 // A grove stops at its budget; only the monte goes on past it.
@@ -787,37 +802,8 @@ impl FloraSite {
                 let fringe = Self::fringe_of(grove, monte);
                 Self::species_at(species_roll, grove, monte, fringe, escape)
             };
-            let shares = [0, 1, 2].map(|i| {
-                if species == Species::Ombu {
-                    Self::OMBU_AGE_SHARES[i]
-                } else {
-                    Self::AGE_SHARES[i] + (Self::MONTE_AGE_SHARES[i] - Self::AGE_SHARES[i]) * monte
-                }
-            });
-            let age = match shares.iter().position(|&c| age_roll < c) {
-                Some(0) => Age::Sapling,
-                Some(1) => Age::Young,
-                Some(_) => Age::Mature,
-                None => Age::Old,
-            };
-            let (lo, hi) = age.height_range(species);
-            // An old giant stands broad; the rest a little narrow or wide.
-            let width = match age {
-                // An ombú's trunk is the collider's widest: it stays modest
-                // across, whatever its age.
-                _ if species == Species::Ombu => 0.95 + 0.2 * width_roll,
-                Age::Old => 1.15 + 0.25 * width_roll,
-                _ => 0.82 + 0.36 * width_roll,
-            };
-            let tree = Tree {
-                at,
-                species,
-                age,
-                height: lo + (hi - lo) * height_roll,
-                width,
-                yaw: yaw * std::f32::consts::TAU,
-                variant,
-            };
+            let rolls = [age_roll, height_roll, yaw, width_roll];
+            let tree = Self::grow(at, species, monte, rolls, variant);
             let spaced = trees
                 .iter()
                 .all(|t| t.at.distance(at) >= t.spacing().max(tree.spacing()));
@@ -826,6 +812,125 @@ impl FloraSite {
             }
         }
         trees
+    }
+
+    /// The tree of `species` that grows at `at`, in a spot of the given
+    /// `monte` mask, from the age, height, yaw and width `rolls`.
+    fn grow(at: Vec2, species: Species, monte: f32, rolls: [f32; 4], variant: u32) -> Tree {
+        let [age_roll, height_roll, yaw, width_roll] = rolls;
+        let shares = [0, 1, 2].map(|i| {
+            if species == Species::Ombu {
+                Self::OMBU_AGE_SHARES[i]
+            } else {
+                Self::AGE_SHARES[i] + (Self::MONTE_AGE_SHARES[i] - Self::AGE_SHARES[i]) * monte
+            }
+        });
+        let age = match shares.iter().position(|&c| age_roll < c) {
+            Some(0) => Age::Sapling,
+            Some(1) => Age::Young,
+            Some(_) => Age::Mature,
+            None => Age::Old,
+        };
+        let (lo, hi) = age.height_range(species);
+        // An old giant stands broad; the rest a little narrow or wide.
+        let width = match age {
+            // An ombú's trunk is the collider's widest: it stays modest
+            // across, whatever its age.
+            _ if species == Species::Ombu => 0.95 + 0.2 * width_roll,
+            Age::Old => 1.15 + 0.25 * width_roll,
+            _ => 0.82 + 0.36 * width_roll,
+        };
+        Tree {
+            at,
+            species,
+            age,
+            height: lo + (hi - lo) * height_roll,
+            width,
+            yaw: yaw * std::f32::consts::TAU,
+            variant,
+        }
+    }
+
+    /// The trees that come on top of the field's own in chunk `coord`: an
+    /// ombú beside a settlement, and the town trees that escaped by the
+    /// roads and settlements. They are planted after the natives, spaced
+    /// from them (and from those of the neighbouring chunks, before these
+    /// give way to theirs), so they never take a native's place. Each is
+    /// drawn from a hash of its spot with its own salt, so the same spot
+    /// gives the same tree whichever chunk asks.
+    ///
+    /// The `natives` of the chunk are given. The extras are not scaled by
+    /// [`Self::rural`] (the land the towns clear of monte is where the
+    /// planted trees stand) and are not capped by [`Self::GROVE_BUDGET`]
+    /// (that stops groves); they stop at [`Self::TREE_BUDGET`] with the
+    /// natives, and [`Self::thinned`] thins them like every other tree.
+    fn extra_trees(&self, coord: ChunkCoord, rail: &[(Vec2, Vec2)], natives: &[Tree]) -> Vec<Tree> {
+        const SALT: u32 = 0x0e57_7a11;
+        let size = self.config.chunk_size;
+        let min = coord.min(size);
+        let mut rng = Rng::new(coord.seed(self.seed), 3);
+        let mut extras: Vec<Tree> = Vec::new();
+        let mut neighbours: Vec<(ChunkCoord, Vec<Tree>)> = Vec::new();
+        for _ in 0..self.scaled(Self::TREE_CANDIDATES) {
+            let at = min + Vec2::new(rng.unit() * size, rng.unit() * size);
+            if natives.len() + extras.len() >= Self::TREE_BUDGET {
+                break;
+            }
+            let hub = self.hub_distance(at);
+            let ombu = Self::OMBU_TREE * Self::ombu_zone(hub);
+            let escaped = Self::ESCAPED_TREE * self.escape_by(at, hub);
+            if ombu + escaped <= 0.0 {
+                continue;
+            }
+            let mut draw = Rng::new(self.seed ^ SALT ^ at.x.to_bits(), at.y.to_bits());
+            let pick = draw.unit();
+            if pick >= ombu + escaped {
+                continue;
+            }
+            let species = if pick < ombu {
+                Species::Ombu
+            } else {
+                Self::town_species(draw.unit())
+            };
+            let rolls = [draw.unit(), draw.unit(), draw.unit(), draw.unit()];
+            let tree = Self::grow(at, species, self.monte(at), rolls, draw.next());
+            let apart = |t: &Tree| t.at.distance(at) >= t.spacing().max(tree.spacing());
+            if !extras.iter().all(apart) || !natives.iter().all(apart) || !self.tree_room(at, rail)
+            {
+                continue;
+            }
+            // Clear of the neighbouring chunks' natives too, as they stand
+            // before giving way: a superset of what is planted there.
+            let mut clear = true;
+            for (dx, dy) in [
+                (-1, -1),
+                (0, -1),
+                (1, -1),
+                (-1, 0),
+                (1, 0),
+                (-1, 1),
+                (0, 1),
+                (1, 1),
+            ] {
+                let other = ChunkCoord::new(coord.x + dx, coord.y + dy);
+                let reach = other.bounds(size).expanded(Tree::MAX_SPACING);
+                if !clear || !self.config.has_chunk(other) || !reach.contains_point(at) {
+                    continue;
+                }
+                let index = match neighbours.iter().position(|(c, _)| *c == other) {
+                    Some(i) => i,
+                    None => {
+                        neighbours.push((other, self.native_trees(other, &self.rail_near(other))));
+                        neighbours.len() - 1
+                    }
+                };
+                clear = neighbours[index].1.iter().all(apart);
+            }
+            if clear {
+                extras.push(tree);
+            }
+        }
+        extras
     }
 
     fn chunk_tufts(&self, coord: ChunkCoord, rail: &[(Vec2, Vec2)], trees: &[Tree]) -> Vec<Tuft> {
@@ -1481,7 +1586,10 @@ mod tests {
         assert!(
             trees
                 .iter()
-                // (A giant eucalipto's trunk, the stoutest here, is under a meter.)
+                // (A giant eucalipto's trunk, the stoutest here, is under a meter.
+                // The ombú, whose old trunk is 1.6 m, is left out: this site has
+                // no settlement, so none grows here.)
+                .filter(|t| t.species != Species::Ombu)
                 .all(|t| t.trunk_radius() > 0.05 && t.trunk_radius() < 1.0)
         );
     }
@@ -2992,6 +3100,58 @@ mod tests {
         let (d_by, d_open) = (by.0 / ground_by, apart.0 / ground_open);
         println!("town trees per sample: by {d_by:.5}, open {d_open:.5}");
         assert!(d_by > 5.0 * d_open, "{d_by} {d_open}");
+    }
+
+    #[test]
+    fn the_ombu_and_escaped_trees_come_on_top_of_the_native_trees_and_never_replace_them() {
+        let (flora, _, hubs) = shipped();
+        let (mut natives, mut extras) = (0, 0);
+        for hub in hubs {
+            for c in flora.config.chunks_near(*hub, 3) {
+                let rail = flora.rail_near(c);
+                let planted = flora.chunk_trees(c, &rail);
+                // The field's own trees of the chunk, giving way only to its
+                // earlier neighbours' own trees (as they did before there
+                // were extras), all stand in what is planted.
+                let mut native = flora.native_trees(c, &rail);
+                for (dx, dy) in [(-1, -1), (0, -1), (1, -1), (-1, 0)] {
+                    let earlier = ChunkCoord::new(c.x + dx, c.y + dy);
+                    if !flora.config.has_chunk(earlier) {
+                        continue;
+                    }
+                    let theirs = flora.native_trees(earlier, &flora.rail_near(earlier));
+                    native.retain(|t| {
+                        theirs
+                            .iter()
+                            .all(|u| u.at.distance(t.at) >= u.spacing().max(t.spacing()))
+                    });
+                }
+                for t in &native {
+                    assert!(
+                        planted.contains(t),
+                        "{c:?}: the native tree at {:?} is gone",
+                        t.at
+                    );
+                }
+                // Planted side by side: no two stand closer than their spacing.
+                for (i, a) in planted.iter().enumerate() {
+                    for b in &planted[i + 1..] {
+                        assert!(
+                            a.at.distance(b.at) >= a.spacing().max(b.spacing()),
+                            "{c:?}: {:?} at {:?} crowds {:?} at {:?}",
+                            a.species,
+                            a.at,
+                            b.species,
+                            b.at
+                        );
+                    }
+                }
+                natives += native.len();
+                extras += planted.len() - native.len();
+            }
+        }
+        println!("round the settlements: {natives} native trees, {extras} extra");
+        assert!(natives > 0 && extras > 0, "{natives} {extras}");
     }
 
     #[test]
