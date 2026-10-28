@@ -228,4 +228,43 @@ F2 (estancia monte and alameda), on `feat/field-flora`.
   - Tests: monte share pinned to 0.21..0.25, kept share to 0.616 (slack from 0.616 x 0.384), age bands (sapling 0.04-0.09, young 0.10-0.20, mature 0.70-0.85, old 0.025-0.04), monte heart (young over 0.45, mature over 0.42, giants over 0.02), shipped-towns total pinned to 218,995 +-5%. Each saw RED on the old values and was proven by sabotage (old `TREE_KEEP`, old age shares, old monte shares, old monte mask each fail exactly the tests that pin them).
   - Closes the F1e tuning ("cerramos acá"). Look in game unverified (playtest).
 
-Next step: commit the F1c–F1e work, run the native review, then F1d (leaf litter), F2, F3 and F4 in a later session.
+- F1c–F1e committed by the user as 24a11ed (core), feb04c0 (render) and
+  d441d54 (game and docs). The whole change exceeded the reviewer's
+  context budget, so the native review ran per part. The user granted
+  each of the three reviews, and each was approved and acknowledged:
+  `review-d247c4dce3706c54` (core), `review-2a44bffe7bc25a3e` (render),
+  `review-1fce5885a5850506` (game).
+
+## Review follow-ups (non-blocking, from the three reviews above)
+
+- [ ] Camera: town and estancia trees are solid now, but the follow camera
+  only pulls in round field trees (`game/src/camera.rs:804-810`). A plaza
+  or estancia tree can hide the rider. Add them to the trunk set.
+- [ ] `a_tree_is_solid_so_it_never_asks_render_to_fade_it`
+  (`game/src/camera.rs:1222-1237`) cannot fail, because no render plugin
+  spawns a `TreePart` in that app. Make it able to fail, or drop it.
+- [ ] `grow()` picks the shrubs' fine stem tips by limb radius, not by
+  shrub form (`crates/render/src/tree/mesh.rs:769-775`). This may thin
+  the limbs of chañares and caldén snags by accident. Gate it on the
+  shrub forms.
+- [ ] The dense-chunk per-tree triangle check is tautological
+  (`crates/render/src/flora.rs:1935-1939`), and its floor dropped from 300
+  to 200. Restore a real absolute bound.
+- [ ] The road ride-clear test plants only the 4 orthogonal chunks, not
+  the full 3×3 ring (`game/src/main.rs:603`).
+- [ ] `chunk_shrubs`' 2 m `BORDER` is not tied to the largest trunk
+  reach (`crates/core/src/flora.rs:756-759`).
+- [ ] `set_chunk` has no finiteness guard
+  (`crates/core/src/obstacles.rs:73-84`).
+- [ ] A tautological `rural(p) == rural(p)` assert
+  (`crates/core/src/flora.rs:2518-2520`).
+- [ ] `Trunk.bottom` is filled but never read (`game/src/camera.rs:348`).
+- [ ] Flaky render tests, each seen failing once and passing on rerun:
+  `the_long_gallop...`, `every_character_model_loads_skinned...`,
+  `a_chunk_gone_before_its_ground_lands_drops_the_build`.
+
+## Next step
+
+In a later session: the review follow-ups above, then F1d (leaf litter;
+`~/Downloads/ScatteredLeaves009_1K-JPG.zip` is downloaded), F2, F3 and
+F4.
