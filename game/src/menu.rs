@@ -10,9 +10,9 @@
 //!
 //! `tools/menu_poster.sh` bakes the poster and the band.
 //!
-//! In game, Esc pauses. The world stays on screen, turned grey with dark
+//! In game, Esc or the keyboard's Pause key pauses. The world stays on screen, turned grey with dark
 //! corners (`assets/menu/vignette.png`). The same poster and band show,
-//! with Continuar, Sonido and Salir. Esc again, or Continuar, goes back to
+//! with Continuar, Sonido and Salir. Esc or Pause again, or Continuar, goes back to
 //! the game.
 //!
 //! Sonido sets the volumes ([`SoundSettings`]). They are saved when the
@@ -32,7 +32,9 @@
 //! - Up/Down or W/S: choose a line.
 //! - Left/Right or A/D: turn a volume down or up.
 //! - Enter, Space or F: take the choice.
-//! - Esc: go back.
+//! - Esc or Pause: go back (in game, pause).
+//!
+//! Quitting with Sonido open (closing the window) saves its volumes too.
 
 use std::path::PathBuf;
 
@@ -228,7 +230,8 @@ impl Plugin for MenuPlugin {
             .add_systems(Startup, spawn_menu)
             .add_systems(PreUpdate, read_keys.after(InputSystems).in_set(MenuKeys))
             .add_systems(Update, (hold_world, grey_world, play_music))
-            .add_systems(PostUpdate, draw_menu);
+            .add_systems(PostUpdate, draw_menu)
+            .add_systems(Last, save_on_exit);
     }
 }
 
@@ -372,7 +375,7 @@ fn spawn_menu(
 /// What the menus read and write of the sound.
 type Sound<'w> = (ResMut<'w, SoundSettings>, Res<'w, SettingsFile>);
 
-/// Esc opens the pause menu; in a menu, moves the highlight, sets volumes
+/// Esc or Pause opens the pause menu; in a menu, moves the highlight, sets volumes
 /// and takes the choice, and keeps every key, button and mouse move from
 /// the game.
 fn read_keys(
@@ -384,14 +387,14 @@ fn read_keys(
     (mut sound, file): Sound,
     mut exit: MessageWriter<AppExit>,
 ) {
+    let any = |codes: &[KeyCode]| keys.any_just_pressed(codes.iter().copied());
     let Some(screen) = menu.screen else {
-        if keys.just_pressed(KeyCode::Escape) {
+        if any(&BACK_KEYS) {
             menu.open(Screen::Pause);
-            keys.reset_all();
+            keep_from_game(&mut keys, &mut buttons, &mut moved, &mut scrolled);
         }
         return;
     };
-    let any = |codes: &[KeyCode]| keys.any_just_pressed(codes.iter().copied());
     if any(&[KeyCode::ArrowUp, KeyCode::KeyW]) {
         menu.step(-1);
     }
@@ -424,7 +427,7 @@ fn read_keys(
             menu.show(from.into(), 1);
         }
     };
-    if any(&[KeyCode::Escape]) {
+    if any(&BACK_KEYS) {
         back(&mut menu);
     } else if any(&[
         KeyCode::Enter,
@@ -449,17 +452,43 @@ fn read_keys(
             Some(Choice::General | Choice::Music) | None => {}
         }
     }
+    keep_from_game(&mut keys, &mut buttons, &mut moved, &mut scrolled);
+}
+
+/// Esc and the keyboard's Pause key: they open the pause menu in game,
+/// and go back (or resume) in a menu.
+const BACK_KEYS: [KeyCode; 2] = [KeyCode::Escape, KeyCode::Pause];
+
+/// Clears this frame's keys, mouse buttons, motion and wheel, so the game
+/// sees none of them.
+fn keep_from_game(
+    keys: &mut ButtonInput<KeyCode>,
+    buttons: &mut Option<ResMut<ButtonInput<MouseButton>>>,
+    moved: &mut Option<ResMut<AccumulatedMouseMotion>>,
+    scrolled: &mut Option<ResMut<AccumulatedMouseScroll>>,
+) {
     keys.reset_all();
-    if let Some(buttons) = &mut buttons {
+    if let Some(buttons) = buttons {
         buttons.reset_all();
     }
-    if let Some(moved) = &mut moved {
+    if let Some(moved) = moved {
         **moved = default();
     }
-    if let Some(scrolled) = &mut scrolled {
+    if let Some(scrolled) = scrolled {
         **scrolled = default();
     }
 }
+
+/// When the game quits with Sonido open (the window closed), saves the
+/// volumes set there, which would otherwise be saved on leaving it.
+fn save_on_exit(mut exits: MessageReader<AppExit>, menu: Res<Menu>, (sound, file): SoundRead) {
+    if exits.read().count() > 0 && matches!(menu.screen, Some(Screen::Sound { .. })) {
+        save(&sound, &file);
+    }
+}
+
+/// What quitting reads of the sound.
+type SoundRead<'w> = (Res<'w, SoundSettings>, Res<'w, SettingsFile>);
 
 /// Writes the settings to their file, if they have one; a failure is
 /// logged and the game goes on with them.
@@ -521,11 +550,29 @@ fn play_music(
         if sink.volume() != volume {
             sink.set_volume(volume);
         }
-        if open && sink.is_paused() {
-            sink.play();
-        } else if !open && !sink.is_paused() {
-            sink.pause();
+        match playback(open, sink.is_paused()) {
+            Some(Playback::Play) => sink.play(),
+            Some(Playback::Pause) => sink.pause(),
+            None => {}
         }
+    }
+}
+
+/// What the music's sink must do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Playback {
+    Play,
+    Pause,
+}
+
+/// Whether the music must start or stop: it plays while a menu is `open`
+/// and is silent in game; `None` when the sink (`paused` or not) already
+/// does what it should.
+fn playback(open: bool, paused: bool) -> Option<Playback> {
+    match (open, paused) {
+        (true, true) => Some(Playback::Play),
+        (false, false) => Some(Playback::Pause),
+        _ => None,
     }
 }
 
@@ -809,6 +856,83 @@ mod tests {
         press(&mut app, KeyCode::Escape);
         assert_eq!(menu(&app).screen, None);
         assert_eq!(saturation(&mut app), 1.0);
+    }
+
+    #[test]
+    fn the_pause_key_pauses_the_game_and_resumes_it_like_esc() {
+        let mut app = app(false);
+        press(&mut app, KeyCode::Pause);
+        assert_eq!(menu(&app).screen, Some(Screen::Pause));
+        assert!(paused(&app));
+        // In Sonido it goes back, as Esc does.
+        press(&mut app, KeyCode::ArrowDown);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Pause);
+        assert_eq!(menu(&app).screen, Some(Screen::Pause));
+        press(&mut app, KeyCode::Pause);
+        assert_eq!(menu(&app).screen, None);
+        assert!(!paused(&app));
+        assert_eq!(exits(&mut app), 0);
+    }
+
+    #[test]
+    fn the_pause_key_on_the_title_does_nothing() {
+        let mut app = app(true);
+        press(&mut app, KeyCode::Pause);
+        assert_eq!(menu(&app).screen, Some(Screen::Title));
+    }
+
+    #[test]
+    fn the_frame_that_opens_the_pause_keeps_the_mouse_from_the_game() {
+        let mut app = app(false);
+        let world = app.world_mut();
+        world
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Escape);
+        world
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .press(MouseButton::Left);
+        world.resource_mut::<AccumulatedMouseMotion>().delta = Vec2::new(5.0, 3.0);
+        world.resource_mut::<AccumulatedMouseScroll>().delta = Vec2::new(0.0, 2.0);
+        app.world_mut()
+            .run_system_once(read_keys)
+            .expect("the menu reads keys");
+        assert_eq!(menu(&app).screen, Some(Screen::Pause));
+        let world = app.world();
+        assert!(
+            !world
+                .resource::<ButtonInput<MouseButton>>()
+                .pressed(MouseButton::Left)
+        );
+        assert_eq!(world.resource::<AccumulatedMouseMotion>().delta, Vec2::ZERO);
+        assert_eq!(world.resource::<AccumulatedMouseScroll>().delta, Vec2::ZERO);
+    }
+
+    #[test]
+    fn quitting_with_sonido_open_keeps_the_new_volumes() {
+        let scratch = Scratch::new("exit");
+        let path = scratch.0.join("settings.ron");
+        let mut app = app_with(true, Some(path.clone()));
+        press(&mut app, KeyCode::ArrowDown);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::ArrowDown);
+        press(&mut app, KeyCode::ArrowLeft);
+        // The window closes with Sonido still open.
+        app.world_mut().write_message(AppExit::Success);
+        app.update();
+        let wanted = SoundSettings {
+            general: MAX_STEP,
+            music: 3,
+        };
+        assert_eq!(SoundSettings::load(&path), (wanted, None));
+    }
+
+    #[test]
+    fn the_music_plays_only_while_a_menu_is_open() {
+        assert_eq!(playback(true, true), Some(Playback::Play));
+        assert_eq!(playback(true, false), None);
+        assert_eq!(playback(false, false), Some(Playback::Pause));
+        assert_eq!(playback(false, true), None);
     }
 
     #[test]

@@ -60,14 +60,22 @@ impl SoundSettings {
         }
     }
 
-    /// Writes the settings to `path`, making its directory.
+    /// Writes the settings to `path`, making its directory. The text goes
+    /// to a temporary file beside it first and is renamed over `path`, so a
+    /// crash or a full disk mid-write never leaves a truncated file.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
         let text = ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())
             .map_err(std::io::Error::other)?;
-        std::fs::write(path, text)
+        let mut temporary = path.as_os_str().to_owned();
+        temporary.push(".tmp");
+        let temporary = PathBuf::from(temporary);
+        std::fs::write(&temporary, text)?;
+        std::fs::rename(&temporary, path).inspect_err(|_| {
+            let _ = std::fs::remove_file(&temporary);
+        })
     }
 
     fn clamped(self) -> Self {
@@ -148,6 +156,24 @@ mod tests {
         };
         settings.save(&path).expect("saved");
         assert_eq!(SoundSettings::load(&path), (settings, None));
+    }
+
+    #[test]
+    fn saving_replaces_the_old_file_whole_and_leaves_nothing_beside_it() {
+        let scratch = Scratch::new("atomic");
+        let path = scratch.0.join("settings.ron");
+        SoundSettings::default().save(&path).expect("first save");
+        let settings = SoundSettings {
+            general: 3,
+            music: 9,
+        };
+        settings.save(&path).expect("second save");
+        assert_eq!(SoundSettings::load(&path), (settings, None));
+        let files: Vec<_> = std::fs::read_dir(&scratch.0)
+            .expect("dir")
+            .map(|e| e.expect("entry").file_name())
+            .collect();
+        assert_eq!(files, ["settings.ron"]);
     }
 
     #[test]

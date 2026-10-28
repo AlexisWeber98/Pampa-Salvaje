@@ -30,7 +30,7 @@ Test runner: `cargo test -p game menu` while iterating, `cargo test -p game` onc
 | T2 | S3, S5-S7 | inline | done, uncommitted, user to playtest: poster + band + vignette baked by `tools/menu_poster.sh`; menu rewritten with Rye / IM Fell (`pampa-render` `typeface`); Sonido screen (`game/src/sound.rs`, settings.ron); paused world grey via camera `ColorGrading` |
 | T3 | S6 | inline | pending: replace the bitmap font in HUD, signs, timetables, minimap and speech bubbles |
 | T4 | S3 | user | Mate Cosido photo traced to Infobae 2023 (uncredited, 1930s police photo), credited as public domain in Argentina; still pending: delete unused `assets/menu/{bairoletto,mate_cosido}.png` (rm was denied to the agent) |
-| T5 | - | native review | pending: assess says high (item 5, audio deps); run once the slice is committed |
+| T5 | - | native review | done: commit b5abdfb approved and acknowledged (lineage review-6e5344f89e221395; lenses risk, resilience, reliability; authority burned); 5 non-blocking advisories, see L13 |
 
 ## Log
 
@@ -94,3 +94,25 @@ Test runner: `cargo test -p game menu` while iterating, `cargo test -p game` onc
   1936" under Peralta, with "Policía de los Territorios Nacionales" at the
   foot. T3 (the game-wide typeface) moves to its own branch and PR after
   this one.
+- L13: Native review of b5abdfb (base 26a2f33): granted by the user, then
+  approved with no blocking findings, then acknowledged. Advisories, for
+  later work:
+  - R4-alsa-build-dep (WARNING): Linux builds now need the ALSA dev package
+    (pkg-config `alsa`), and the README does not say so.
+  - R3-unsaved-volumes-on-exit (WARNING): closing the window while Sonido
+    is open loses the volume changes.
+  - R4-nonatomic-settings-write: `save` should write a temp file, then
+    rename it.
+  - R3-play-music-untested: nothing tests the sink's play, pause and
+    volume.
+  - R3-pause-frame-mouse-leak: the frame on which Esc opens the pause does
+    not clear the mouse.
+- L14 (user): "el boton "pausa" tambien debe pausar el juego, corrija
+  nomás". The keyboard's Pause key now acts as Esc does: it pauses, resumes,
+  and goes back from Sonido. All five L13 advisories are fixed:
+  - the README lists ALSA;
+  - quitting with Sonido open saves the volumes (`save_on_exit`, in Last);
+  - the save is atomic (temp file, then rename);
+  - `playback` is a tested pure function;
+  - the frame that opens the pause clears the mouse too.
+  Uncommitted.

@@ -564,7 +564,7 @@ Bevy is pinned to an exact version (`=0.20.0`) and only upgraded between milesto
 cargo run -p game
 ```
 
-On Linux the build links with LLVM's `lld` through `clang` (`.cargo/config.toml`), so both must be installed (Arch: `pacman -S clang lld`). Dev builds keep only line tables for our crates and no debug info for dependencies. On this machine that makes an incremental rebuild after touching `crates/render` take about 12 s instead of 47 s, and the dev binary 172 MB instead of 1.6 GB.
+On Linux the build links with LLVM's `lld` through `clang` (`.cargo/config.toml`), so both must be installed (Arch: `pacman -S clang lld`). The menu music plays through ALSA, so its development files and `pkg-config` are needed too (Arch: `pacman -S alsa-lib pkgconf`; Debian/Ubuntu: `apt install libasound2-dev pkg-config`). Dev builds keep only line tables for our crates and no debug info for dependencies. On this machine that makes an incremental rebuild after touching `crates/render` take about 12 s instead of 47 s, and the dev binary 172 MB instead of 1.6 GB.
 
 Checks:
 
@@ -576,7 +576,7 @@ cargo test --workspace
 
 ## Controls
 
-The game opens on a title screen. On the left, a "Se busca" poster of Juan Bautista Bairoletto and Mate Cosido (born Segundo David Peralta), two of the rural bandits of León Gieco's "Bandidos rurales", is pinned over an 1882 map of Argentina. On the right, a band of red paint carries "Pampa Seca" and the choices Jugar, Sonido and Salir. `Esc` in game opens the same screen over the world. The world stays visible, turned grey with dark corners, and it stands still: virtual time is paused, so the clock, the trains, the animals and the people wait. Sonido sets the general volume and the music's, from 0 to 100 % in steps of 10. They are saved in `settings.ron` under the user's config directory (`~/.config/pampa-seca/` on Linux, `%APPDATA%\pampa-seca\` on Windows). The menu music (`assets/menu/menu_2.mp3`, the project's own song) loops only while a menu is open. The dev screenshot tour (`PAMPA_SHOTS`) skips the title. `tools/menu_poster.sh` bakes the poster and the band. See `game/src/menu.rs` and `game/src/sound.rs`.
+The game opens on a title screen. On the left, a "Se busca" poster of Juan Bautista Bairoletto and Mate Cosido (born Segundo David Peralta), two of the rural bandits of León Gieco's "Bandidos rurales", is pinned over an 1882 map of Argentina. On the right, a band of red paint carries "Pampa Seca" and the choices Jugar, Sonido and Salir. `Esc` (or the keyboard's `Pause` key) in game opens the same screen over the world. The world stays visible, turned grey with dark corners, and it stands still: virtual time is paused, so the clock, the trains, the animals and the people wait. Sonido sets the general volume and the music's, from 0 to 100 % in steps of 10. They are saved, when the player leaves Sonido or quits with it open, in `settings.ron` under the user's config directory (`~/.config/pampa-seca/` on Linux, `%APPDATA%\pampa-seca\` on Windows). The menu music (`assets/menu/menu_2.mp3`, the project's own song) loops only while a menu is open. The dev screenshot tour (`PAMPA_SHOTS`) skips the title. `tools/menu_poster.sh` bakes the poster and the band. See `game/src/menu.rs` and `game/src/sound.rs`.
 
 | Key | Action |
 |-----|--------|
@@ -590,7 +590,7 @@ The game opens on a title screen. On the left, a "Se busca" poster of Juan Bauti
 | `Q` / `E` | Orbit the camera left / right, or turn the head in first person |
 | Mouse wheel | Zoom in / out (6–25 m; not in first person) |
 | `M` | Toggle the enlarged minimap |
-| `Esc` | Pause: the world stands still and the menu opens (Continuar, Sonido, Salir); `Esc` again resumes, or goes back from Sonido |
+| `Esc` or `Pause` | Pause: the world stands still and the menu opens (Continuar, Sonido, Salir); `Esc` or `Pause` again resumes, or goes back from Sonido |
 | `↑` / `↓` or `W` / `S`, then `Enter`, `Space` or `F` | Choose in the title screen and the pause menu |
 | `←` / `→` or `A` / `D` | In Sonido: turn the highlighted volume down / up |
 
