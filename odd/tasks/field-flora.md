@@ -89,9 +89,37 @@ does not apply to this download. This closes the note at
     field trees (monte, groves and lone trees) evenly. Shrubs stay as
     they are.
   - Route: delegated writer.
-- [ ] F1d Leaf litter under the monte: ambientCG `ScatteredLeaves009`
+- [x] F1d Leaf litter under the monte: ambientCG `ScatteredLeaves009`
   (1K JPG, downloaded by the user to `~/Downloads`), blended into the
   ground under monte patches. Route: delegated writer.
+  - Done (2026-10-28, option B approved by the user): colour map only,
+    converted to 512×512 PNM in `assets/textures/ground/ScatteredLeaves009/`.
+    `ground::GroundMaterial` = `StandardMaterial` + `LitterExt`
+    (`assets/shaders/ground_litter.wesl`, loaded by path; the game adds
+    `GroundMaterialPlugin`). The terrain's per-vertex colour alpha carries
+    `ground::litter_weight(FloraSite::monte(p), cleared)`, where `cleared`
+    is the max of town flat-area weight, road wear and lagoon wetness; the
+    weight is 0 when the flora is absent. Frame cost: one extra texture
+    sample per ground fragment, no extra draw calls. The shader multiplies
+    the ground colour by the tile (tiling 3 per ground tile, 2 m).
+  - Tests: `litter_is_full_in_the_monte_none_in_the_open_and_feathers_between`,
+    `the_shipped_leaves_are_a_darker_browner_tile_than_the_ground` (ground),
+    `the_ground_alpha_carries_the_litter_under_the_monte_only`,
+    `a_towns_leveled_ground_keeps_the_monte_litter_off`, and the extended
+    `the_ground_material_wears_the_ambientcg_textures_or_falls_back` (terrain).
+    RED: the first two failed against stubs. The terrain tests were
+    written after the implementation, so their evidence is sabotage only.
+  - Sabotage (each broken, seen failing, restored byte for byte): drop
+    `(1 - cleared)` (litter and town tests fail); smoothstep replaced by a
+    step (litter and alpha tests fail); `flora.map_or(1.0, ..)` for the
+    no-flora fallback (alpha test fails); `LITTER_BRIGHTNESS` 0.95 (shipped
+    leaves test fails); not setting `extension.litter` (material test
+    fails); drop `town` from `cleared` (town test fails).
+  - Not covered by a test: the road-wear and lagoon-mud terms of `cleared`
+    (only the pure `litter_weight` takes them). The shader itself has no
+    headless test; a 40 s `target/debug/game` run logged no shader errors.
+  - Verified: fmt, clippy `-D warnings`, workspace tests and
+    `cargo build -p game` pass. Look at it live: ride into a dense monte.
 - [ ] F2 Estancia monte and alameda: replace the blob crowns with textured
   `TreeKit` eucalyptus and poplar. Route: delegated writer.
 - [ ] F3 Grass cards: alpha-cut textured cards for paja and flechilla
@@ -237,31 +265,171 @@ F2 (estancia monte and alameda), on `feat/field-flora`.
 
 ## Review follow-ups (non-blocking, from the three reviews above)
 
-- [ ] Camera: town and estancia trees are solid now, but the follow camera
-  only pulls in round field trees (`game/src/camera.rs:804-810`). A plaza
-  or estancia tree can hide the rider. Add them to the trunk set.
-- [ ] `a_tree_is_solid_so_it_never_asks_render_to_fade_it`
-  (`game/src/camera.rs:1222-1237`) cannot fail, because no render plugin
-  spawns a `TreePart` in that app. Make it able to fail, or drop it.
-- [ ] `grow()` picks the shrubs' fine stem tips by limb radius, not by
-  shrub form (`crates/render/src/tree/mesh.rs:769-775`). This may thin
-  the limbs of chañares and caldén snags by accident. Gate it on the
-  shrub forms.
-- [ ] The dense-chunk per-tree triangle check is tautological
-  (`crates/render/src/flora.rs:1935-1939`), and its floor dropped from 300
-  to 200. Restore a real absolute bound.
-- [ ] The road ride-clear test plants only the 4 orthogonal chunks, not
-  the full 3×3 ring (`game/src/main.rs:603`).
-- [ ] `chunk_shrubs`' 2 m `BORDER` is not tied to the largest trunk
-  reach (`crates/core/src/flora.rs:756-759`).
-- [ ] `set_chunk` has no finiteness guard
-  (`crates/core/src/obstacles.rs:73-84`).
-- [ ] A tautological `rural(p) == rural(p)` assert
-  (`crates/core/src/flora.rs:2518-2520`).
-- [ ] `Trunk.bottom` is filled but never read (`game/src/camera.rs:348`).
-- [ ] Flaky render tests, each seen failing once and passing on rerun:
-  `the_long_gallop...`, `every_character_model_loads_skinned...`,
-  `a_chunk_gone_before_its_ground_lands_drops_the_build`.
+- [x] Camera: town and estancia trees are solid now, but the follow camera
+  only pulled in round field trees. Done in `game/src/camera.rs`: a new
+  `StaticTrunks` gathers the plaza ring, grove, street and yard trees
+  (`TownLayout::trees`, `shade_trees`, radius `TREE_TRUNK_RADIUS`) and the
+  estancia eucalyptus and poplars (`Structure::trunk_radius`, top at
+  `TRUNK_TOP` of the height) once, per chunk, and `follow_player` adds the
+  ones near the sight line to the field trunks. Core knows no town tree
+  height, so town trunks count up to a flat `TOWN_TREE_TRUNK_TOP` (3.5 m).
+  Tests `a_plaza_or_street_tree_pulls_the_camera_in_like_a_field_tree` and
+  `an_estancia_tree_pulls_the_camera_in` (the second builds the estancia by
+  hand). RED: the tests were written with the code already in place, so RED
+  was shown by sabotage: `StaticTrunks::along` returning nothing failed
+  both (reach stayed 1.0). Further sabotage: dropping the shade trees
+  failed the town test; filtering out settlement trees failed the estancia
+  test. All restored, both pass.
+- [x] `a_tree_is_solid_so_it_never_asks_render_to_fade_it` could not fail.
+  Deleted: render already has the real version,
+  `a_field_tree_never_fades_out_of_the_cameras_way`
+  (`crates/render/src/flora.rs`), which runs `FloraPlugin`, asserts more than
+  20 real `TreePart`s exist and that none carries a `ThinOccluder`. No
+  camera-side version can add to it. (Not re-sabotaged: unchanged code.)
+- [x] `grow()` picked the shrubs' fine stem tips by limb radius
+  (`r0 < SHRUB_STEM`), not by shrub form. Done in
+  `crates/render/src/tree/mesh.rs`: `Form` has a `shrub` flag (true for the
+  piquillín, jarilla and fachinal, false for every tree), `grow()` gates the
+  fine tips on it, and `SHRUB_STEM` is gone. The bug was latent: every real
+  tree form already had a trunk of 0.09 m or more (chañar 0.09, caldén snag
+  0.12), so none was thinned yet; a thinner tree form would have been.
+  Shrubs are unchanged (their radii 0.03-0.05 were under 0.06). Tests
+  `only_a_shrub_form_gets_fine_stem_tips_whatever_its_trunk` (RED on the
+  old rule: a 4 cm chañar form had the same bark area as its shrub twin,
+  2.4126 both) and `the_shrub_species_are_the_shrub_forms_and_no_tree_is`.
+  Sabotage: the old `r0 < 0.06` rule failed the first (2.4126 vs 2.4126);
+  `if false` failed it (4.79 vs 4.79); every form flagged shrub failed the
+  second (Paraiso 0). All restored, both pass.
+- [x] The dense-chunk per-tree triangle check was tautological
+  (`crates/render/src/flora.rs:1935-1939`): the range came from the forms'
+  own min/max, so every tree passed by construction (commit feb04c0 replaced
+  the absolute `300..=1200`). Now absolute: each tree must be in
+  `TREE_MIN..=TREE_MAX` = 200..=1200. Real counts: 272 (stub snag) to 1136
+  (town tree); the ceiling is about 5% over, the floor about 25% under
+  (the old 300 was above the 272 snag, so it could not come back as is).
+  The forms-level asserts and the total budget are unchanged. Sabotage:
+  adding 5000 to the per-tree count failed it (`Calden 11: 5272`); lowering
+  `TREE_MAX` to 1000 also failed (1136). Both restored, test passes.
+- [x] The road ride-clear test planted only the 4 orthogonal chunks, not
+  the full 3×3 ring (`game/src/main.rs:603`). Now it plants every chunk
+  within `plant_collision::LOAD_RADIUS` of each road chunk (the ring the
+  game loads, diagonals included), so the test follows the game's radius.
+  Still proves its name: the rider rides the whole road clear with the
+  trees planted. Sabotage: collider radius 40 m failed it (a push-out at
+  2882.5, 1064.5); planting nothing (`r = -1`) failed
+  `streamed_len() > 0`. Both restored, test passes.
+- [x] `chunk_shrubs`' 2 m `BORDER` was not tied to the largest trunk
+  reach (`crates/core/src/flora.rs:756-759`). It is now the named const
+  `FloraSite::SHRUB_BORDER` (still 2 m), and the test
+  `the_shrub_border_covers_the_farthest_a_trunk_keeps_a_shrub_off` builds
+  the stoutest tree (every species and age at its tallest, through
+  `Tree::trunk_radius`) and the stoutest shrub and asserts the border covers
+  trunk + shrub + `SHRUB_TRUNK_GAP` (1.488 m today). Chosen over deriving the
+  value: a derived border would shift shrub placement (and every seeded
+  chunk); the test breaks instead when a trunk or gap grows past it.
+  Sabotage: `SHRUB_BORDER = 1.0` failed it (1.488 m missed, 1 m). Restored.
+- [x] `set_chunk` had no finiteness guard
+  (`crates/core/src/obstacles.rs:73-84`). It now drops any footprint with a
+  non-finite corner, the module's style (`near` returns nothing for a
+  non-finite area; no `Result`s or panics here); the chunk still counts as
+  loaded. Test `a_non_finite_streamed_footprint_is_dropped_and_the_rest_kept`.
+  RED: before the guard the test hung (indexing an infinite box never ends;
+  stopped by hand). Sabotage: disabling the `retain` hung it again (60 s
+  timeout). Restored, test passes.
+- [x] A tautological `rural(p) == rural(p)` assert
+  (`crates/core/src/flora.rs:2518-2520`). Now compares against a second,
+  separately built site: the share is a function of the spot, not of any
+  state. Sabotage: the second site made without `redistribute` failed it
+  (0.12 vs 1.0). Restored, passes.
+- [x] `Trunk.bottom` was filled but never read. It is now read by
+  `trunk_reach`: a line passing under the trunk's foot (over a rise, through
+  the ground, which terrain stops) is slack, mirroring `top`. Test
+  `a_line_passing_under_a_trunks_base_is_not_blocked_by_it`: RED before the
+  change (the base-above-line trunk still blocked); sabotage
+  (deleting the `bottom` term) failed it again, restored and green.
+- [x] Flaky render tests, each seen failing once and passing on rerun. None
+  could be reproduced (CPU-stress loops and 2 parallel suites at 8 threads
+  all passed, before and after), so each fix removes the evident timing
+  dependence found by reading:
+  - `a_chunk_gone_before_its_ground_lands_drops_the_build` (`terrain.rs`):
+    the chunks streamed back in near the focus build on the async pool, and
+    the final "no build pending" count only waited 10 frames for them. Now
+    `finish_builds` blocks on them and one more update lands them before the
+    count. Sabotage: skipping the despawn in `stream_chunks` failed it
+    ("stayed"), restored and green.
+  - `every_character_model_loads_skinned_within_the_triangle_budget`
+    (`model.rs`): the file's `Gltf` handle was taken only after the scene
+    settled, when nobody held it (dropped on landing, then reloaded, a
+    drop-versus-load race), and waited in an unbounded spin loop. Now the
+    handle is held from before the scene loads and the wait is a bounded
+    loop with a sleep. Sabotage: budget range `FLOOR..=FLOOR` failed it
+    (hidalgo: 5064 triangles), restored and green.
+  - `the_long_gallop_keeps_its_hooves_still_...` (`horse.rs`): time is
+    manual, but `saddled_every` returned after 10 quiet frames (about 50 ms
+    of wall time), so a file landing later on a loaded machine respawned the
+    scene mid-measure. Now 40 quiet frames (at least 200 ms). Sabotage:
+    playback rate `gait_rate * 0.8` failed it (natural 6.13), restored and
+    green.
+  Evidence: render suite 497 passed on 5 further runs (2 at a time), full
+  workspace test, clippy `-D warnings`, fmt and `cargo build -p game` clean.
+
+### Camera follow-ups review (commit f57bd7b)
+
+Review of the shrub stem-tip fix: approved and acknowledged (lineage
+`review-e5919d0b6e634846`); its two suggestions repeat the StaticTrunks items above.
+
+Review of the triangle bound, road test, `SHRUB_BORDER`, `set_chunk`
+guard and `rural` assert fixes: approved and acknowledged (lineage
+`review-d50e4eacf5fa5900`). Non-blocking findings, left as later work:
+
+- [x] WARNING: `set_chunk` drops only non-finite footprints
+  (`crates/core/src/obstacles.rs:77-81`). A finite but huge footprint
+  (corners near 1e30) still passes and `cells_of` would loop over an
+  effectively unbounded cell count. Bound the footprint size too.
+  Fixed: a footprint with any corner past `WorldConfig::MAX_HALF_EXTENT`
+  (8.4 km) is dropped; `abs() <= max` also rejects NaN and infinities,
+  so one check covers both and caps the cells indexed. Test
+  `a_streamed_footprint_reaching_past_any_world_is_dropped` hung before
+  the fix (RED: killed by a 120 s timeout); sabotage (bound raised to
+  `f32::MAX`) hung it again, restored and green. fmt, clippy
+  `-D warnings`, `test -p pampa-core` (445) and `build -p game` pass.
+- [ ] The `SHRUB_BORDER` coverage test lists Calden and Chanar by hand
+  and samples width 1.0 only (`crates/core/src/flora.rs:1904-1927`).
+  Iterate every field species and the top of the width range so a new
+  species or a wider tree cannot slip past the 2 m border.
+
+Native review, one reliability lens, medium risk: approved and
+acknowledged (lineage `review-d5fcfdbb6d9862cd`). Non-blocking findings,
+left as later work:
+
+- [x] WARNING: `StaticTrunks` is built once, on the first frame
+  `WorldTowns` exists, and never rebuilt (`game/src/camera.rs:901-906`).
+  If `WorldSettlements` is not there yet, estancia trees are left out
+  for the session; a replaced town or settlement layout leaves stale
+  trunks. Fixed: the cache is dropped whenever `WorldTowns` or
+  `WorldSettlements` is added or changed, and built from whichever of
+  the two exists (estancias alone count too). `GameWorld` is not a key:
+  other systems mutate it every frame. Test
+  `estancias_laid_out_after_the_towns_still_pull_the_camera_in` was RED
+  before the fix; sabotage (commenting out the cache reset) failed it
+  again, restored and green. fmt, clippy `-D warnings`, `test -p game`
+  (180) and `build -p game` pass.
+- [ ] No system-level test shows `follow_player` pulling the camera in
+  behind a town tree (`game/src/camera.rs:899-907`). The estancia case
+  is covered by `estancias_laid_out_after_the_towns_still_pull_the_camera_in`.
+- [ ] The `StaticTrunks` reset fires on add or replace, not on removal:
+  removing `WorldTowns` or `WorldSettlements` while the other stays keeps
+  the removed layout's trunks. Only matters if a layout can be removed.
+- [ ] No test covers a replaced layout: swap `WorldSettlements` for one
+  with no tree near the sight line and check the camera returns to full
+  reach.
+
+Review of the `StaticTrunks` fix: approved and acknowledged (lineage
+`review-40f04640248dec37`, one reliability lens); the three items above
+are its non-blocking suggestions.
+- [ ] The new below-base slack in `trunk_reach` also applies to field
+  trunks; no test checks real flora trunks' `bottom` still blocks lines
+  near their foot (`game/src/camera.rs:409`).
 
 ## Next step
 

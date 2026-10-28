@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::ops::Deref;
 
-use crate::{Aabb, ChunkCoord, Vec2};
+use crate::{Aabb, ChunkCoord, Vec2, WorldConfig};
 
 /// Every static footprint of the world, with a uniform-grid index.
 ///
@@ -69,9 +69,20 @@ impl StaticObstacles {
     }
 
     /// Makes `items` the streamed footprints of `coord`, replacing any it
-    /// held. An empty `items` still marks the chunk as loaded.
-    pub fn set_chunk(&mut self, coord: ChunkCoord, items: Vec<Aabb>) {
+    /// held. An empty `items` still marks the chunk as loaded. A footprint
+    /// with a corner past the largest possible world
+    /// ([`WorldConfig::MAX_HALF_EXTENT`]), or not finite, is dropped:
+    /// indexing it could take effectively forever, and no real footprint
+    /// reaches there ([`Self::near`] likewise finds nothing for a
+    /// non-finite area).
+    pub fn set_chunk(&mut self, coord: ChunkCoord, mut items: Vec<Aabb>) {
         self.clear_chunk(coord);
+        // `abs() <= max` is false for NaN and infinities too.
+        items.retain(|i| {
+            [i.min.x, i.min.y, i.max.x, i.max.y]
+                .iter()
+                .all(|v| v.abs() <= WorldConfig::MAX_HALF_EXTENT)
+        });
         for (index, item) in items.iter().enumerate() {
             for cell in Self::cells_of(*item) {
                 self.chunk_cells
@@ -231,6 +242,49 @@ mod tests {
                 Aabb::from_center_size(c, s)
             })
             .collect()
+    }
+
+    #[test]
+    fn a_non_finite_streamed_footprint_is_dropped_and_the_rest_kept() {
+        let mut obstacles = StaticObstacles::default();
+        let coord = ChunkCoord::new(0, 0);
+        let good = Aabb::from_center_size(Vec2::new(10.0, 10.0), Vec2::new(1.0, 1.0));
+        let nan = Aabb::from_center_size(Vec2::new(f32::NAN, 10.0), Vec2::new(1.0, 1.0));
+        let inf = Aabb::from_center_size(Vec2::new(10.0, 10.0), Vec2::new(f32::INFINITY, 1.0));
+        obstacles.set_chunk(coord, vec![nan, good, inf]);
+        // The chunk is loaded; only the finite footprint is held and found.
+        assert!(obstacles.has_chunk(coord));
+        assert_eq!(obstacles.streamed_len(), 1);
+        let found: Vec<Aabb> = obstacles
+            .near(around(Vec2::new(10.0, 10.0), 5.0))
+            .into_iter()
+            .copied()
+            .collect();
+        assert_eq!(found, vec![good]);
+        // Clearing leaves no stale index entry behind.
+        assert!(obstacles.clear_chunk(coord));
+        assert!(
+            obstacles
+                .near(around(Vec2::new(10.0, 10.0), 5.0))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_streamed_footprint_reaching_past_any_world_is_dropped() {
+        let mut obstacles = StaticObstacles::default();
+        let coord = ChunkCoord::new(0, 0);
+        let good = Aabb::from_center_size(Vec2::new(10.0, 10.0), Vec2::new(1.0, 1.0));
+        // Finite, but spanning about 1e30 m: indexing it would never end.
+        let huge = Aabb::from_center_size(Vec2::new(10.0, 10.0), Vec2::new(1e30, 1.0));
+        obstacles.set_chunk(coord, vec![huge, good]);
+        assert_eq!(obstacles.streamed_len(), 1);
+        let found: Vec<Aabb> = obstacles
+            .near(around(Vec2::new(10.0, 10.0), 5.0))
+            .into_iter()
+            .copied()
+            .collect();
+        assert_eq!(found, vec![good]);
     }
 
     #[test]

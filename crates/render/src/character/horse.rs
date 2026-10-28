@@ -1011,6 +1011,7 @@ pub(crate) mod tests {
             .id();
         // Until the horse plays, the same model for a while, its assets
         // settled.
+        const QUIET: u32 = 40;
         let mut held = (Entity::PLACEHOLDER, 0);
         for _ in 0..3000 {
             app.update();
@@ -1025,7 +1026,10 @@ pub(crate) mod tests {
                 Some(player) => held = (player, 0),
                 None => held = (Entity::PLACEHOLDER, 0),
             }
-            if held.1 >= 10 && world.resource::<Settled>().0 >= 10 {
+            // Quiet for 40 frames (at least 200 ms of wall time, however
+            // loaded the machine): a file landing later than that would
+            // spawn the scene again in the middle of a measure.
+            if held.1 >= QUIET && world.resource::<Settled>().0 >= QUIET {
                 return (app, me);
             }
             std::thread::sleep(std::time::Duration::from_millis(5));

@@ -897,12 +897,19 @@ fn follow_player(
         .map(|f| trunks.along(&f.0, &world.0, target, desired))
         .unwrap_or_default();
     // Town and estancia trees are solid: the camera eases round them too.
-    // Their layouts are fixed, so the trunks are gathered on first need.
-    if let Some(towns) = towns.as_deref() {
+    // Their layouts rarely change, so the trunks are gathered once and
+    // gathered again whenever a layout is added or replaced.
+    if towns.as_ref().is_some_and(|t| t.is_changed())
+        || settlements.as_ref().is_some_and(|s| s.is_changed())
+    {
+        *solid = None;
+    }
+    if towns.is_some() || settlements.is_some() {
         let solid = solid.get_or_insert_with(|| {
             let none = SettlementLayout::default();
+            let towns = towns.as_deref().map_or(&[][..], |t| &t.0);
             let settlements = settlements.as_deref().map_or(&none, |s| &s.0);
-            StaticTrunks::build(world.0.config, &world.0.terrain, &towns.0, settlements)
+            StaticTrunks::build(world.0.config, &world.0.terrain, towns, settlements)
         });
         trunks.extend(solid.along(world.0.config, target, desired));
     }
@@ -1401,9 +1408,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn an_estancia_tree_pulls_the_camera_in() {
-        let spot = Aabb::from_center_size(GroundVec2::new(30.0, 40.0), GroundVec2::new(1.0, 1.0));
+    /// A hut settlement whose only structure is an 18 m eucalyptus at `at`.
+    fn eucalyptus_at(at: GroundVec2) -> SettlementLayout {
+        let spot = Aabb::from_center_size(at, GroundVec2::new(1.0, 1.0));
         let mut settlements = SettlementLayout::default();
         settlements.settlements.push(pampa_core::Settlement {
             kind: pampa_core::SettlementKind::Hut,
@@ -1421,6 +1428,12 @@ mod tests {
             bounds: spot,
             seed: 0,
         });
+        settlements
+    }
+
+    #[test]
+    fn an_estancia_tree_pulls_the_camera_in() {
+        let settlements = eucalyptus_at(GroundVec2::new(30.0, 40.0));
         let world = World::default();
         let solid = StaticTrunks::build(world.config, &world.terrain, &[], &settlements);
         let tree = settlements
@@ -1434,6 +1447,35 @@ mod tests {
         let (head, camera) = behind_a_tree(at, ground);
         let reach = trunk_reach(head, camera, &solid.along(world.config, head, camera));
         assert!(reach < 0.8, "{reach}");
+    }
+
+    #[test]
+    fn estancias_laid_out_after_the_towns_still_pull_the_camera_in() {
+        // The towns are there first; the estancias arrive a few frames
+        // later, with a eucalyptus between the rider and the camera.
+        let tree = GroundVec2::new(30.0, 40.0);
+        let mut app = headless_app(
+            World::default(),
+            north_at(tree.x, tree.y + 6.0),
+            CameraOccluders::default(),
+        );
+        app.insert_resource(WorldTowns(Vec::new()));
+        for _ in 0..3 {
+            app.update();
+        }
+        app.insert_resource(WorldSettlements(eucalyptus_at(tree)));
+        for _ in 0..3 {
+            app.update();
+        }
+        let follow = FollowCamera::default();
+        let (orbit, focus) = rig(&mut app);
+        let world = app.world().resource::<GameWorld>().0.clone();
+        let full = follow.desired(focus, &orbit, &world);
+        let at = camera(&mut app).translation;
+        assert!(
+            at.distance(focus) < full.distance(focus) - 1.0,
+            "{at} {full}"
+        );
     }
 
     #[test]

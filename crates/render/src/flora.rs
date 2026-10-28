@@ -1926,15 +1926,22 @@ mod tests {
             *forms.iter().min().expect("forms"),
             *forms.iter().max().expect("forms"),
         );
-        // The town trees' range (0.7-1.2k) at the top, the snags under it.
-        assert!(heaviest <= 1200, "{heaviest}");
-        assert!(lightest >= 200, "{lightest}");
+        // Absolute per-tree bounds, fixed numbers on purpose: the forms'
+        // own min/max can never fail a check against themselves. Real
+        // counts today: 272 (the stub snag) to 1136 (a town tree). The
+        // ceiling keeps about 5% over 1136 and the floor about 25% under
+        // 272, so a form that blows past its budget (or a mesh that
+        // collapses) fails, but ordinary retuning does not.
+        const TREE_MIN: usize = 200;
+        const TREE_MAX: usize = 1200;
+        assert!(heaviest <= TREE_MAX, "{heaviest}");
+        assert!(lightest >= TREE_MIN, "{lightest}");
         let mut total = 0;
         for tree in &trees {
             let (species, v) = kit_variant(tree);
             let tris = form_triangles(meshes, &kit.species(species).variants[v]);
             assert!(
-                (lightest..=heaviest).contains(&tris),
+                (TREE_MIN..=TREE_MAX).contains(&tris),
                 "{species:?} {v}: {tris}"
             );
             total += tris;

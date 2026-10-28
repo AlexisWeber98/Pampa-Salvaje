@@ -13,6 +13,11 @@
 //! are blended the same way. UVs are world space ([`ground_uv`]), so the
 //! tiles run on across chunk borders without a seam.
 //!
+//! Under the monte patches the ground shows leaf litter (ScatteredLeaves009,
+//! CC0 1.0): [`GroundMaterial`] extends the standard material with the
+//! litter tile ([`LitterExt`], `assets/shaders/ground_litter.wesl`), and the
+//! per-vertex weight comes from [`litter_weight`].
+//!
 //! Roads wear Ground 102 (compressed dirt, ambientCG, CC0 1.0) alone:
 //! [`road_material`], on the road surface drawn by [`crate::road`].
 
@@ -21,8 +26,11 @@ use std::path::Path;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
+use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
-use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::reflect::TypePath;
+use bevy::render::render_resource::{AsBindGroup, Extent3d, TextureDimension, TextureFormat};
+use bevy::shader::ShaderRef;
 
 /// Where the ground textures live, under the [`crate::AssetRoot`].
 pub const GROUND_DIR: &str = "textures/ground";
@@ -297,6 +305,64 @@ pub fn load_detail(dir: &Path) -> Result<GroundDetail, PnmError> {
     Ok(blend(&soil, &grass))
 }
 
+/// Monte coverage where the litter starts and where it is complete. The
+/// monte's own edge is already a soft noise ramp; this widens the feather.
+const LITTER_FROM: f32 = 0.1;
+const LITTER_FULL: f32 = 0.8;
+
+/// How much leaf litter lies at a point of the ground, in `[0, 1]`, given
+/// the `monte` coverage there ([`pampa_core::FloraSite::monte`]) and how
+/// `cleared` the ground is (0 open pampa, 1 a town's leveled ground, a road
+/// or a lagoon's mud). It is stored per vertex, in the ground colour's
+/// alpha, and the ground shader (`ground_litter.wesl`) blends the leaves in.
+pub fn litter_weight(monte: f32, cleared: f32) -> f32 {
+    smoothstep(LITTER_FROM, LITTER_FULL, monte) * (1.0 - cleared.clamp(0.0, 1.0))
+}
+
+/// The litter's colour tile (RGBA8, sRGB) and its side.
+pub struct LitterTile {
+    pub size: u32,
+    pub color: Vec<u8>,
+}
+
+/// How much of the leaves' colour and contrast is kept: more than the
+/// grass ground, so the leaves read as brown litter, not as tinted grass.
+const LITTER_SATURATION: f32 = 0.7;
+const LITTER_CONTRAST: f32 = 0.6;
+/// Mean brightness of the litter (sRGB): well under the ground's
+/// [`BRIGHTNESS`], so the monte floor is darker than the open pampa. The
+/// shader multiplies the ground by this tile, so it is a ratio.
+const LITTER_BRIGHTNESS: f32 = 0.6;
+/// Litter tiles per ground tile: the leaves repeat every 2 m, not 6 m.
+pub const LITTER_TILING: f32 = 3.0;
+
+/// Reads ScatteredLeaves009 (colour map only) from `dir`, mean-normalised
+/// and toned like the rest of the ground.
+pub fn load_litter(dir: &Path) -> Result<LitterTile, PnmError> {
+    let id = "ScatteredLeaves009";
+    let color = load_pnm(&dir.join(id).join(format!("{id}_Color.ppm")))?;
+    if color.channels != 3 || color.width != color.height {
+        return Err(PnmError(format!(
+            "{id}: colour map is not a square RGB image"
+        )));
+    }
+    let n = (color.width * color.height) as usize;
+    let mean = (0..n).map(|i| luma(Maps::rgb(&color, i))).sum::<f32>() / n as f32;
+    let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let mut out = Vec::with_capacity(n * 4);
+    for i in 0..n {
+        let c = Maps::rgb(&color, i) / mean.max(1e-3);
+        let c = Vec3::splat(luma(c)).lerp(c, LITTER_SATURATION);
+        let c =
+            Vec3::splat(LITTER_BRIGHTNESS) + (c - Vec3::ONE) * LITTER_CONTRAST * LITTER_BRIGHTNESS;
+        out.extend([byte(c.x), byte(c.y), byte(c.z), 255]);
+    }
+    Ok(LitterTile {
+        size: color.width,
+        color: out,
+    })
+}
+
 /// `pixels` (RGBA8, `size` square) with its full mip chain appended, each
 /// level a 2×2 box filter of the last: tiled ground must not shimmer.
 fn with_mips(size: u32, pixels: Vec<u8>) -> (Vec<u8>, u32) {
@@ -348,20 +414,54 @@ fn image(size: u32, pixels: Vec<u8>, format: TextureFormat) -> Image {
     image
 }
 
+/// What the ground shader adds to the standard material: the leaf litter
+/// tile (ScatteredLeaves009, ambientCG, CC0 1.0). Without it the sampler
+/// falls back to white and the ground is left as it is.
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
+pub struct LitterExt {
+    #[texture(100)]
+    #[sampler(101)]
+    pub litter: Option<Handle<Image>>,
+}
+
+impl MaterialExtension for LitterExt {
+    /// `assets/shaders/ground_litter.wesl`: the standard fragment shader,
+    /// with the ground colour darkened toward the litter by the vertex
+    /// colour's alpha ([`litter_weight`]).
+    fn fragment_shader() -> ShaderRef {
+        "shaders/ground_litter.wesl".into()
+    }
+}
+
+/// The terrain's material: [`StandardMaterial`] plus [`LitterExt`].
+pub type GroundMaterial = ExtendedMaterial<StandardMaterial, LitterExt>;
+
+/// Renders [`GroundMaterial`]. Needs a renderer, like [`crate::SkyPlugin`];
+/// without it the terrain still builds its chunks, with the assets only.
+pub struct GroundMaterialPlugin;
+
+impl Plugin for GroundMaterialPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(MaterialPlugin::<GroundMaterial>::default());
+    }
+}
+
 /// The terrain's material: white and matte, its colour from the vertex
 /// paint. It carries the ground detail textures from ambientCG (Ground 109
 /// and Grass 004, CC0 1.0; see assets/textures/ground/CREDITS.md) when
-/// they can be read from `root`; otherwise a warning is logged and the
-/// plain vertex-painted ground is drawn.
-pub fn ground_material(
-    root: Option<&Path>,
-    images: Option<&mut Assets<Image>>,
-) -> StandardMaterial {
-    let mut material = StandardMaterial {
-        base_color: Color::WHITE,
-        perceptual_roughness: 1.0,
-        reflectance: 0.1,
-        ..default()
+/// they can be read from `root`, and the leaf litter of the monte
+/// (ScatteredLeaves009, [`load_litter`]) when that can be read too;
+/// otherwise a warning is logged and the plain vertex-painted ground is
+/// drawn.
+pub fn ground_material(root: Option<&Path>, images: Option<&mut Assets<Image>>) -> GroundMaterial {
+    let mut material = GroundMaterial {
+        base: StandardMaterial {
+            base_color: Color::WHITE,
+            perceptual_roughness: 1.0,
+            reflectance: 0.1,
+            ..default()
+        },
+        extension: LitterExt::default(),
     };
     let (Some(root), Some(images)) = (root, images) else {
         return material;
@@ -374,7 +474,17 @@ pub fn ground_material(
                 detail.size,
                 started.elapsed().as_secs_f64() * 1000.0
             );
-            wear(&mut material, detail, images);
+            wear(&mut material.base, detail, images);
+            match load_litter(&root.join(GROUND_DIR)) {
+                Ok(tile) => {
+                    material.extension.litter = Some(images.add(image(
+                        tile.size,
+                        tile.color,
+                        TextureFormat::Rgba8UnormSrgb,
+                    )));
+                }
+                Err(error) => warn!("leaf litter not loaded ({error}); no litter in the monte"),
+            }
         }
         Err(error) => warn!("ground textures not loaded ({error}); drawing plain ground"),
     }
@@ -537,6 +647,8 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let mut images = Assets::<Image>::default();
         let ground = ground_material(Some(&root), Some(&mut images));
+        assert!(ground.extension.litter.is_none());
+        let ground = ground.base;
         let road = road_material(Some(&root), Some(&mut images));
         std::fs::remove_dir(&root).unwrap();
         for material in [&ground, &road] {
@@ -547,6 +659,50 @@ mod tests {
         }
         assert_eq!(road.alpha_mode, AlphaMode::Blend);
         assert_eq!(images.len(), 0, "no half-made textures");
+    }
+
+    #[test]
+    fn litter_is_full_in_the_monte_none_in_the_open_and_feathers_between() {
+        assert_eq!(litter_weight(0.0, 0.0), 0.0);
+        assert_eq!(litter_weight(1.0, 0.0), 1.0);
+        // Feathered: it rises smoothly with the monte, never jumping.
+        let steps: Vec<f32> = (0..=20)
+            .map(|i| litter_weight(i as f32 / 20.0, 0.0))
+            .collect();
+        assert!(
+            steps.windows(2).all(|w| w[1] >= w[0] && w[1] - w[0] < 0.2),
+            "{steps:?}"
+        );
+        assert!((0.2..0.8).contains(&litter_weight(0.45, 0.0)));
+        // Towns, roads and mud clear it, whatever the monte says.
+        assert_eq!(litter_weight(1.0, 1.0), 0.0);
+        assert!((litter_weight(1.0, 0.5) - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_shipped_leaves_are_a_darker_browner_tile_than_the_ground() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets")
+            .join(GROUND_DIR);
+        let litter = load_litter(&dir).unwrap();
+        assert_eq!(litter.size, 512);
+        assert_eq!(litter.color.len(), 512 * 512 * 4);
+        let mean = |c: &[u8]| {
+            let n = (c.len() / 4) as f32;
+            let sum = c.chunks(4).fold(Vec3::ZERO, |a, p| {
+                a + Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32) / 255.0
+            });
+            sum / n
+        };
+        let leaves = mean(&litter.color);
+        let ground = mean(&load_detail(&dir).unwrap().color);
+        // Darker than the ground detail, so the monte reads as litter, and
+        // warmer than grey: red over blue.
+        assert!(luma(leaves) < luma(ground) - 0.1, "{leaves:?} {ground:?}");
+        assert!(leaves.x > leaves.z + 0.03, "{leaves:?}");
+        assert!(litter.color.chunks(4).all(|p| p[3] == 255));
+        // Missing files are an error, not a panic.
+        assert!(load_litter(Path::new("/nonexistent")).is_err());
     }
 
     #[test]

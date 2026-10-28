@@ -195,6 +195,11 @@ impl FloraSite {
     pub const SHRUB_SPACING: f32 = 1.9;
     /// Clear ground between a shrub and a tree's trunk, in meters.
     const SHRUB_TRUNK_GAP: f32 = 0.6;
+    /// How near a chunk's border a shrub must stand for the trees of the
+    /// chunk across it to be checked, in meters. It must cover the farthest
+    /// a trunk keeps a shrub off: the stoutest trunk, the stoutest shrub
+    /// and [`Self::SHRUB_TRUNK_GAP`] (a test holds it to that).
+    const SHRUB_BORDER: f32 = 2.0;
     /// The share of the planted trees that stay (user, 2026-10-27: "sacale
     /// un 20% al total", then "sacale otro 30%": 0.8 x 0.7, then "un 10% más de árboles":
     /// 0.56 x 1.1): monte, groves
@@ -756,7 +761,7 @@ impl FloraSite {
         // The trees of the chunks around, fetched when a shrub stands near
         // the border they share.
         let mut neighbours: Vec<((i32, i32), Vec<Tree>)> = Vec::new();
-        const BORDER: f32 = 2.0;
+        const BORDER: f32 = FloraSite::SHRUB_BORDER;
         for _ in 0..candidates {
             let at = min + Vec2::new(rng.unit() * size, rng.unit() * size);
             let (pick, kind_roll, height_roll, width_roll, yaw) =
@@ -1894,6 +1899,47 @@ mod tests {
     }
 
     #[test]
+    fn the_shrub_border_covers_the_farthest_a_trunk_keeps_a_shrub_off() {
+        // The stoutest tree trunk over every species and age, at its tallest.
+        let trunk = [Species::Calden, Species::Chanar]
+            .iter()
+            .flat_map(|&species| Age::ALL.iter().map(move |&age| (species, age)))
+            .map(|(species, age)| {
+                Tree {
+                    at: Vec2::ZERO,
+                    species,
+                    age,
+                    height: age.height_range(species).1,
+                    width: 1.0,
+                    yaw: 0.0,
+                    variant: 0,
+                }
+                .trunk_radius()
+            })
+            .fold(0.0, f32::max);
+        let shrub = ShrubKind::ALL
+            .iter()
+            .map(|&k| {
+                let sample = Shrub {
+                    at: Vec2::ZERO,
+                    kind: k,
+                    height: k.height_range().1,
+                    width: 1.0,
+                    yaw: 0.0,
+                    variant: 0,
+                };
+                sample.trunk_radius()
+            })
+            .fold(0.0, f32::max);
+        let reach = trunk + shrub + FloraSite::SHRUB_TRUNK_GAP;
+        assert!(
+            FloraSite::SHRUB_BORDER >= reach,
+            "a shrub {reach} m from a trunk across the border is missed ({} m)",
+            FloraSite::SHRUB_BORDER
+        );
+    }
+
+    #[test]
     fn shrubs_keep_off_roads_and_lagoons_and_apart() {
         let (towns, line, roads) = crate::road::tests::shipped_roads();
         let config = WorldConfig {
@@ -2515,9 +2561,11 @@ mod tests {
             assert!((now - last).abs() < 0.01, "{k} m: {last} to {now}");
             last = now;
         }
-        // The same share whichever chunk asks (it is a function of the spot).
+        // The same share whichever site asks (it is a function of the spot,
+        // not of any state): a second site, built apart, agrees.
         let p = Vec2::new(west - 1234.5, area.center.y + 321.0);
-        assert_eq!(flora.rural(p), flora.rural(p));
+        let (_, _, other) = redistributed();
+        assert_eq!(flora.rural(p), other.rural(p));
     }
 
     #[test]

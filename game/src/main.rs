@@ -332,6 +332,8 @@ fn main() {
     .add_plugins(LampPlugin)
     // Trees collide in the chunks round the player.
     .add_plugins(plant_collision::PlantCollisionPlugin)
+    // The ground's material: the standard one plus the monte's leaf litter.
+    .add_plugins(pampa_render::ground::GroundMaterialPlugin)
     // The sky dome (sun, moon, stars, clouds) and the birds flying in it.
     .add_plugins(pampa_render::SkyPlugin)
     // Cattle, corral horses, hares and birds round the player.
@@ -595,14 +597,18 @@ mod tests {
         // A rider rides it end to end: no fence, gate, settlement, tree or
         // signpost stands on it.
         // The trees are planted as a rider nears them (see
-        // `plant_collision`): plant the chunks the road crosses.
+        // `plant_collision`): plant the chunks the road crosses and the full
+        // ring (3x3, diagonals included) the game loads around the rider.
         let collider = pampa_core::Circle::new(pampa_core::Rider::COLLIDER_RADIUS);
         let mut planted = laid.world.clone();
         for p in &road.path {
             let here = planted.config.chunk_of(*p);
-            for (dx, dy) in [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)] {
-                let c = pampa_core::ChunkCoord::new(here.x + dx, here.y + dy);
-                planted.plant_chunk(&laid.flora, c);
+            let r = plant_collision::LOAD_RADIUS;
+            for dy in -r..=r {
+                for dx in -r..=r {
+                    let c = pampa_core::ChunkCoord::new(here.x + dx, here.y + dy);
+                    planted.plant_chunk(&laid.flora, c);
+                }
             }
         }
         assert!(planted.obstacles.streamed_len() > 0);

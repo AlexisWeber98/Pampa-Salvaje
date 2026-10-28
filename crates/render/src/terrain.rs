@@ -4,7 +4,10 @@
 //! to measure speed by. The ground is painted per vertex, from grey-green to
 //! dry yellow grass, with plain earth on towns' leveled ground, and wears
 //! the CC0 ambientCG soil-and-grass detail textures of [`crate::ground`]
-//! over that paint. The native flora on it is grown by [`crate::flora`].
+//! over that paint. Under the monte patches the colour's alpha carries the
+//! leaf litter weight ([`crate::ground::litter_weight`], from the flora's
+//! `monte`), which the ground shader blends in. The native flora on it is
+//! grown by [`crate::flora`].
 //!
 //! Every chunk is sampled from the logic [`Terrain`], the single source of
 //! truth for height, so neighboring chunks meet without seams, in height and
@@ -34,7 +37,7 @@ use crate::coords::world_from_ground;
 use crate::flora::{
     Model, VegetationLoad, VegetationModels, WorldFlora, spot_unit, visible_within,
 };
-use crate::ground::{ground_material, ground_uv};
+use crate::ground::{GroundMaterial, ground_material, ground_uv, litter_weight};
 use crate::streaming::StreamingSet;
 
 /// The logic terrain this world is drawn from. Insert before the plugin runs,
@@ -108,7 +111,7 @@ pub(crate) struct ChunkDetail {
 /// Meshes and materials shared by every chunk.
 #[derive(Resource)]
 struct TerrainKit {
-    ground: Handle<StandardMaterial>,
+    ground: Handle<GroundMaterial>,
     rock_mesh: Handle<Mesh>,
     shrub_mesh: Handle<Mesh>,
     rock_material: Handle<StandardMaterial>,
@@ -117,7 +120,8 @@ struct TerrainKit {
 
 impl Plugin for TerrainPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<WorldTerrain>()
+        app.init_resource::<Assets<GroundMaterial>>()
+            .init_resource::<WorldTerrain>()
             .init_resource::<WorldChunks>()
             .init_resource::<StreamFocus>()
             .insert_resource(ChunkDetail {
@@ -143,12 +147,13 @@ fn setup_kit(
     root: Option<Res<AssetRoot>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut grounds: ResMut<Assets<GroundMaterial>>,
     mut images: Option<ResMut<Assets<Image>>>,
 ) {
     commands.insert_resource(TerrainKit {
         // Vertex colors carry the palette; the material stays white and
         // matte, with the tiled ground detail on top when it is found.
-        ground: materials.add(ground_material(
+        ground: grounds.add(ground_material(
             root.as_deref().map(|r| r.0.as_path()),
             images.as_deref_mut(),
         )),
@@ -321,14 +326,15 @@ fn spawn_chunk(
     ));
     match build {
         GroundBuild::Inline => {
-            let mesh = build_chunk_mesh(terrain, coord, size, resolution);
+            let mesh = build_chunk_mesh(terrain, coord, size, resolution, track);
             chunk.insert(Mesh3d(meshes.add(mesh)));
         }
         GroundBuild::Background => {
             // Cheap: the terrain shares its roads.
-            let terrain = terrain.clone();
-            let task = AsyncComputeTaskPool::get()
-                .spawn(async move { build_chunk_mesh(&terrain, coord, size, resolution) });
+            let (terrain, flora) = (terrain.clone(), track.cloned());
+            let task = AsyncComputeTaskPool::get().spawn(async move {
+                build_chunk_mesh(&terrain, coord, size, resolution, flora.as_ref())
+            });
             chunk.insert(PendingGround(task));
         }
     }
@@ -483,7 +489,13 @@ pub(crate) fn slope_frame(dx: f32, dy: f32) -> ([f32; 3], [f32; 4]) {
 /// sampled on a lattice numbered across the whole world, not per chunk, so
 /// the corners two chunks share get exactly the same normal and the ground
 /// shades without seams.
-fn build_chunk_mesh(terrain: &Terrain, coord: ChunkCoord, size: f32, resolution: u32) -> Mesh {
+fn build_chunk_mesh(
+    terrain: &Terrain,
+    coord: ChunkCoord,
+    size: f32,
+    resolution: u32,
+    flora: Option<&FloraSite>,
+) -> Mesh {
     let side = resolution + 1;
     let quad = size / resolution as f32;
     // Heights on the world lattice from one quad before this chunk to one
@@ -514,7 +526,7 @@ fn build_chunk_mesh(terrain: &Terrain, coord: ChunkCoord, size: f32, resolution:
             let dy = (lat(i + 1, j + 2) - lat(i + 1, j)) / (2.0 * quad);
             let (normal, tangent) = slope_frame(dx, dy);
             positions.push(p.to_array());
-            colors.push(ground_color(terrain, ground));
+            colors.push(ground_color(terrain, flora, ground));
             uvs.push(ground_uv(p));
             normals.push(normal);
             tangents.push(tangent);
@@ -577,7 +589,7 @@ fn palette_range() -> ([f32; 3], [f32; 3]) {
 /// low-frequency noise ([`grass_dryness`]), plain earth on town ground,
 /// darker on slopes and in dips. A function of the position alone, so
 /// neighbouring chunks agree on their shared vertices.
-fn ground_color(terrain: &Terrain, g: GroundVec2) -> [f32; 4] {
+fn ground_color(terrain: &Terrain, flora: Option<&FloraSite>, g: GroundVec2) -> [f32; 4] {
     let grass = GREEN_GRASS.lerp(DRY_GRASS, grass_dryness(terrain, g));
     let town = terrain
         .flat_areas
@@ -592,7 +604,11 @@ fn ground_color(terrain: &Terrain, g: GroundVec2) -> [f32; 4] {
             .map_or(0.0, |d| 1.0 - smoothstep(RoadNetwork::HALF_WIDTH, reach, d))
     });
     let rgb = rgb.lerp(ROAD_EARTH, 0.6 * worn);
-    let rgb = rgb.lerp(LAGOON_MUD, lagoon_wetness(terrain, g));
+    let wet = lagoon_wetness(terrain, g);
+    let rgb = rgb.lerp(LAGOON_MUD, wet);
+    // Leaf litter under the monte (the alpha): none without the flora,
+    // and none on cleared ground, the road's worn verge or a lagoon's mud.
+    let litter = flora.map_or(0.0, |f| litter_weight(f.monte(g), town.max(worn).max(wet)));
     let e = 0.75;
     let dx = terrain.height(g.x + e, g.y) - terrain.height(g.x - e, g.y);
     let dy = terrain.height(g.x, g.y + e) - terrain.height(g.x, g.y - e);
@@ -600,7 +616,9 @@ fn ground_color(terrain: &Terrain, g: GroundVec2) -> [f32; 4] {
     let dip = 0.5 - 0.5 * (terrain.height(g.x, g.y) / terrain.amplitude).clamp(-1.0, 1.0);
     let shade = (1.0 - 0.6 * slope - 0.05 * dip).clamp(SHADE_MIN, 1.0);
     let rgb = rgb * shade;
-    LinearRgba::from(Color::srgb(rgb.x, rgb.y, rgb.z)).to_f32_array()
+    let mut color = LinearRgba::from(Color::srgb(rgb.x, rgb.y, rgb.z)).to_f32_array();
+    color[3] = litter;
+    color
 }
 
 /// How wet the ground at `g` is, from 0 (dry grass) to 1 (mud): wet under
@@ -790,7 +808,7 @@ mod tests {
         for (coord, mesh) in ground(&mut app) {
             let mesh = mesh.expect("the ground lands");
             let built = app.world().resource::<Assets<Mesh>>().get(mesh).cloned();
-            let expected = build_chunk_mesh(&terrain, coord, 200.0, 4);
+            let expected = build_chunk_mesh(&terrain, coord, 200.0, 4, None);
             assert_eq!(
                 built.map(|m| m.attribute(Mesh::ATTRIBUTE_POSITION).cloned()),
                 Some(expected.attribute(Mesh::ATTRIBUTE_POSITION).cloned())
@@ -818,6 +836,11 @@ mod tests {
         for chunk in streamed {
             assert!(app.world().get_entity(chunk).is_err(), "{chunk} stayed");
         }
+        // The chunks back near the focus build on the pool too: wait for
+        // those builds instead of counting frames, so a slow pool cannot
+        // leave one pending. Nothing else may be.
+        finish_builds(&mut app, PendingGround::is_finished);
+        app.update();
         let mut q = app.world_mut().query::<&PendingGround>();
         assert_eq!(q.iter(app.world()).count(), 0, "a build stayed pending");
     }
@@ -840,7 +863,7 @@ mod tests {
                 );
             }
         }
-        let mesh = build_chunk_mesh(&terrain, ChunkCoord::new(2, -1), size, 4);
+        let mesh = build_chunk_mesh(&terrain, ChunkCoord::new(2, -1), size, 4, None);
         assert_eq!(mesh.count_vertices(), 5 * 5);
         assert_eq!(mesh.indices().map(|i| i.len()), Some(4 * 4 * 6));
     }
@@ -982,12 +1005,13 @@ mod tests {
             app.update();
             let mut q = app
                 .world_mut()
-                .query::<(&MeshMaterial3d<StandardMaterial>, &TerrainChunk)>();
+                .query::<(&MeshMaterial3d<GroundMaterial>, &TerrainChunk)>();
             let id = q.iter(app.world()).next().expect("a chunk").0.id();
-            let materials = app.world().resource::<Assets<StandardMaterial>>();
-            let m = materials.get(id).unwrap().clone();
+            let materials = app.world().resource::<Assets<GroundMaterial>>();
+            let ground = materials.get(id).unwrap().clone();
+            let (m, litter) = (ground.base, ground.extension.litter);
             let images = app.world().resource::<Assets<Image>>();
-            let sizes: Vec<u32> = [&m.base_color_texture, &m.normal_map_texture]
+            let sizes: Vec<u32> = [&m.base_color_texture, &m.normal_map_texture, &litter]
                 .into_iter()
                 .flatten()
                 .map(|h| images.get(h).unwrap().texture_descriptor.mip_level_count)
@@ -995,6 +1019,7 @@ mod tests {
             (m, sizes)
         };
         let (textured, mips) = material(root.clone());
+        assert_eq!(mips.len(), 3, "colour, normal and leaf litter: {mips:?}");
         assert!(textured.base_color_texture.is_some());
         assert!(textured.normal_map_texture.is_some());
         assert!(textured.occlusion_texture.is_some());
@@ -1002,8 +1027,70 @@ mod tests {
         assert_eq!(textured.metallic, 0.0);
         assert!(mips.iter().all(|&m| m == 10), "512 px down to 1: {mips:?}");
         // Missing files: plain vertex-painted ground, no panic.
-        let (plain, _) = material(root.join("nowhere"));
+        let (plain, none) = material(root.join("nowhere"));
+        assert!(none.is_empty(), "no textures, no litter: {none:?}");
         assert!(plain.base_color_texture.is_none() && plain.normal_map_texture.is_none());
+    }
+
+    /// A point deep in a monte patch of the default world's flora.
+    fn monte_heart(flora: &FloraSite) -> GroundVec2 {
+        (-60..60)
+            .flat_map(|i| (-60..60).map(move |j| GroundVec2::new(i as f32 * 50.0, j as f32 * 50.0)))
+            .find(|&p| flora.monte(p) > 0.97)
+            .expect("a monte patch within 3 km")
+    }
+
+    fn default_flora() -> FloraSite {
+        FloraSite::new(
+            WorldConfig::default(),
+            &Terrain::default(),
+            &pampa_core::RailLine::default(),
+        )
+    }
+
+    #[test]
+    fn the_ground_alpha_carries_the_litter_under_the_monte_only() {
+        let (flora, terrain) = (default_flora(), Terrain::default());
+        let heart = monte_heart(&flora);
+        let alpha = |f: Option<&FloraSite>, p| ground_color(&terrain, f, p)[3];
+        assert_eq!(alpha(Some(&flora), heart), 1.0);
+        // Open field: the first point of a scan with no monte at all.
+        let open = (0..400)
+            .map(|i| GroundVec2::new(i as f32 * 37.0, 11.0 * i as f32))
+            .find(|&p| flora.monte(p) == 0.0)
+            .expect("open pampa");
+        assert_eq!(alpha(Some(&flora), open), 0.0);
+        // Flora not there yet: no litter, whatever the monte would say.
+        assert_eq!(alpha(None, heart), 0.0);
+        // Walking out of the patch's heart a meter at a time, the weight
+        // falls to nothing through a feather, never in a jump.
+        let walk: Vec<f32> = (0..600)
+            .map(|m| alpha(Some(&flora), heart + GroundVec2::new(m as f32, 0.0)))
+            .collect();
+        assert!(walk.contains(&0.0), "the patch ends within 600 m");
+        assert!(walk.iter().any(|a| (0.1..0.9).contains(a)), "no feather");
+        assert!(
+            walk.windows(2).all(|w| (w[1] - w[0]).abs() < 0.1),
+            "{walk:?}"
+        );
+    }
+
+    #[test]
+    fn a_towns_leveled_ground_keeps_the_monte_litter_off() {
+        let (flora, plain) = (default_flora(), Terrain::default());
+        let heart = monte_heart(&flora);
+        let town = plain.clone().with_flat_area(FlatArea {
+            center: heart,
+            half_extents: GroundVec2::new(40.0, 40.0),
+            falloff: 60.0,
+            height: 0.0,
+        });
+        let alpha = |t: &Terrain, p| ground_color(t, Some(&flora), p)[3];
+        assert_eq!(alpha(&plain, heart), 1.0);
+        assert_eq!(alpha(&town, heart), 0.0);
+        // The falloff band feathers it back in.
+        let rim = heart + GroundVec2::new(70.0, 0.0);
+        assert!((0.0..1.0).contains(&alpha(&town, rim)) && alpha(&town, rim) > 0.0);
     }
 
     #[test]
@@ -1011,7 +1098,7 @@ mod tests {
         use bevy::mesh::VertexAttributeValues as V;
         let terrain = Terrain::default();
         let attrs = |c: ChunkCoord| {
-            let mesh = build_chunk_mesh(&terrain, c, 200.0, 8);
+            let mesh = build_chunk_mesh(&terrain, c, 200.0, 8, None);
             let Some(V::Float32x3(p)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION).cloned() else {
                 panic!("positions")
             };
@@ -1078,7 +1165,7 @@ mod tests {
             // within a chunk and across the border.
             let mut at: HashMap<[u32; 3], ([f32; 3], [f32; 4])> = HashMap::new();
             for coord in [a, b] {
-                let (p, n, t) = vectors(&build_chunk_mesh(&terrain, coord, 200.0, 8));
+                let (p, n, t) = vectors(&build_chunk_mesh(&terrain, coord, 200.0, 8, None));
                 for ((p, n), t) in p.into_iter().zip(n).zip(t) {
                     match at.get(&p.map(f32::to_bits)) {
                         Some(&(m, u)) => {
@@ -1129,6 +1216,7 @@ mod tests {
             ChunkCoord::new(2, -1),
             size,
             res,
+            None,
         ));
         let mut tilted = 0;
         for (p, n) in p.into_iter().zip(n) {
@@ -1153,7 +1241,7 @@ mod tests {
         let terrain = Terrain::default();
         let terrain = terrain.clone().with_flat_area(town.flat_area(&terrain));
         let colors = |c: ChunkCoord| {
-            let mesh = build_chunk_mesh(&terrain, c, 200.0, 8);
+            let mesh = build_chunk_mesh(&terrain, c, 200.0, 8, None);
             let Some(bevy::mesh::VertexAttributeValues::Float32x3(p)) =
                 mesh.attribute(Mesh::ATTRIBUTE_POSITION).cloned()
             else {

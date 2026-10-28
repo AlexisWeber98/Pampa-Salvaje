@@ -74,6 +74,9 @@ pub(crate) struct Form {
     /// Share of the leaf cards hung in dense clumps at the branch tips
     /// instead of scattered along the branches.
     pub clump: f32,
+    /// A shrub: its stems taper to fine tips and carry fine twigs, where a
+    /// tree's limbs end at a twig's girth whatever the trunk's radius.
+    pub shrub: bool,
 }
 
 impl Species {
@@ -127,6 +130,7 @@ impl Species {
                 lean: 0.04,
                 wind: 0.0,
                 clump: 0.0,
+                shrub: false,
             },
             Self::Olmo => Form {
                 height: (11.0, 13.0),
@@ -148,6 +152,7 @@ impl Species {
                 lean: 0.04,
                 wind: 0.0,
                 clump: 0.0,
+                shrub: false,
             },
             Self::Eucalipto => Form {
                 height: (14.0, 17.0),
@@ -168,6 +173,7 @@ impl Species {
                 lean: 0.04,
                 wind: 0.0,
                 clump: 0.0,
+                shrub: false,
             },
             Self::Aromo => Form {
                 height: (6.5, 7.5),
@@ -188,6 +194,7 @@ impl Species {
                 lean: 0.04,
                 wind: 0.0,
                 clump: 0.0,
+                shrub: false,
             },
             // The caldén: a short thick trunk forking low into near
             // horizontal limbs, a broad flat umbrella wider than it is
@@ -215,6 +222,7 @@ impl Species {
                 lean: 0.04,
                 wind: 0.0,
                 clump: 0.6,
+                shrub: false,
             },
             // The chañar: several slim stems fanning from one low stool,
             // twiggy, with an irregular crown of small leaves in clumps.
@@ -237,6 +245,7 @@ impl Species {
                 lean: 0.04,
                 wind: 0.0,
                 clump: 0.5,
+                shrub: false,
             },
             // The piquillín: a dense thorny shrub, many fine stems from the
             // ground under a mass of tiny leaves.
@@ -259,6 +268,7 @@ impl Species {
                 lean: 0.02,
                 wind: 0.0,
                 clump: 0.5,
+                shrub: true,
             },
             // The jarilla: many upright, slender stems, sparse and resinous.
             Self::Jarilla => Form {
@@ -280,6 +290,7 @@ impl Species {
                 lean: 0.01,
                 wind: 0.0,
                 clump: 0.3,
+                shrub: true,
             },
             // The fachinal: chañar suckers, a thicket of slim stems.
             Self::Fachinal => Form {
@@ -301,6 +312,7 @@ impl Species {
                 lean: 0.03,
                 wind: 0.0,
                 clump: 0.5,
+                shrub: true,
             },
         }
     }
@@ -500,9 +512,6 @@ impl Species {
         }
     }
 }
-
-/// Trunk radius under which a form is a shrub's, in meters.
-const SHRUB_STEM: f32 = 0.06;
 
 /// Dense clumps of leaves a crown hangs ([`Form::clump`]).
 const CLUMPS: usize = 9;
@@ -767,8 +776,8 @@ fn grow(form: Form, mut rng: Rng) -> TreeMesh {
         let end = mid + end_dir * length * 0.5;
         let width = (r0 * 0.55).min(r0 * 0.5 + 0.03);
         // A shrub's stems taper to a fine tip, a tree's limbs to a twig's
-        // girth.
-        let (tip, twig_radii) = if r0 < SHRUB_STEM {
+        // girth (by [`Form::shrub`], not by how thin the trunk is).
+        let (tip, twig_radii) = if form.shrub {
             (width * 0.3, [0.012, 0.005])
         } else {
             (0.035, [0.03, 0.012])
@@ -1446,6 +1455,61 @@ mod tests {
             assert_eq!((f.lean, f.wind, f.clump), (0.04, 0.0, 0.0), "{species:?}");
             // Every variant of a town species is its one form.
             assert_eq!(species.variant_form(2).height, f.height);
+        }
+    }
+
+    /// Total area of a bark mesh: a thinner limb has less of it.
+    fn bark_area(t: &TreeMesh) -> f32 {
+        let b = &t.bark;
+        b.indices
+            .chunks(3)
+            .map(|c| {
+                let [p, q, r] = [c[0], c[1], c[2]].map(|i| b.positions[i as usize]);
+                (q - p).cross(r - p).length() / 2.0
+            })
+            .sum()
+    }
+
+    #[test]
+    fn only_a_shrub_form_gets_fine_stem_tips_whatever_its_trunk() {
+        // A thin-trunked tree (a chañar's form at 4 cm) and the same form
+        // marked a shrub, grown from the same seed: the shrub's stems end
+        // finer, the tree's limbs keep a twig's girth.
+        let thin = Form {
+            trunk_radius: 0.04,
+            ..Species::Chanar.form()
+        };
+        let tree_area = bark_area(&grow(thin, Rng::new(Species::Chanar, 0)));
+        let shrub = Form {
+            shrub: true,
+            ..thin
+        };
+        let shrub_area = bark_area(&grow(shrub, Rng::new(Species::Chanar, 0)));
+        assert!(
+            tree_area > shrub_area * 1.05,
+            "tree {tree_area} vs shrub {shrub_area}"
+        );
+        // A real shrub keeps its fine tips: unmarked, it would grow thicker.
+        let piquillin = Species::Piquillin.form();
+        let fine = bark_area(&grow(piquillin, Rng::new(Species::Piquillin, 0)));
+        let plain = Form {
+            shrub: false,
+            ..piquillin
+        };
+        let thick = bark_area(&grow(plain, Rng::new(Species::Piquillin, 0)));
+        assert!(thick > fine * 1.05, "unmarked {thick} vs shrub {fine}");
+    }
+
+    #[test]
+    fn the_shrub_species_are_the_shrub_forms_and_no_tree_is() {
+        for species in Species::EVERY {
+            let shrub = Species::SHRUBS.contains(&species);
+            for v in 0..species.variants() as u32 {
+                assert_eq!(species.variant_form(v).shrub, shrub, "{species:?} {v}");
+            }
+            assert_eq!(species.form().shrub, shrub, "{species:?}");
+            // A street form keeps its species' shrubness.
+            assert_eq!(species.street_form().shrub, shrub, "{species:?}");
         }
     }
 
