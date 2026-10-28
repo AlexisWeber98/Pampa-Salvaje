@@ -91,6 +91,13 @@ Scope: the eastern and northeastern caldenal and its grassland edge (Castex, Met
 - **Espinillo** (*Vachellia caven*, once *Acacia caven*): rare, a shrub or small tree on open, disturbed or burnt ground and well-drained rises [S6]. Up to 5 m, rounded crown, dark brown bark with deep oblique cracks, small fragrant yellow ball flowers, small deciduous bipinnate leaves [S6]. Not on the caldenal lists [S1], and in a Buenos Aires paper it is a new record ([S2]), so treat it as a marginal edge species. Leaf size and colour: *unverified*.
 - **Chañar** (already in the game): the companion of caldén, in low groves outside the forest ([S3], [S1]).
 
+### Monte and shrubs (F1c)
+- **Monte** (the dense caldenal, bosque): the caldenal's tree cover is not even. Dense stands of caldén with chañar and thorny shrubs stand beside open grassland ([S1], [S2], [S3]). Patch size and tree density are *unverified*: the game uses patches a few hundred metres across as a design choice.
+- **Piquillín** (*Condalia microphylla*): a dense, thorny, evergreen shrub, 0.8–2 m (up to about 3.2 m in one ecoregional sheet), with tiny, leathery, dark-green leaves about 5–8 × 2.5 mm; red edible fruit; flowers October–November. It grows in the caldenal and, more abundantly, in the Monte, where it forms dense colonies [S16, S17]. Bark colour: not found (*unverified*; the game draws grey-brown). One sheet calls it native to North America; it contradicts every other source, so it is ignored.
+- **Jarilla** (*Larrea divaricata*, "jarilla hembra"): an erect, branched, resinous shrub of many woody stems, 1–3 m (up to 5 m in one CONICET text), with dark-green resinous leaves of two leaflets and solitary yellow flowers in spring. Typical of the arid and semi-arid Monte [S18, S19]. A local blog calls it the commonest jarilla in La Pampa. Its place in the caldenal itself was **not confirmed** by the sources found (*unverified*), so the game puts it on open dry ground. The yellow-green colour is *unverified* (the sources say dark green and resinous).
+- **Fachinal** (chañar thickets): chañar spreads by root suckers into dense thickets (chañarales) [S3]. The name "fachinal" is used here for those thickets; its use in La Pampa is *unverified*.
+
+
 ### Ombú
 - **Verdict: planted, settlements only, rare. Do not place it in open field.**
 - Sources disagree on origin. English Wikipedia says native to the Pampas [S7]; Spanish Wikipedia says native to the woodlands of the northeast, Uruguay and southern Brazil [S8]. None of them places it in the La Pampa caldenal, and the caldenal sources do not list it [S1], [S2]. A divulgation source argues the caldén, not the ombú or tala, is the true tree of the pampa [S3].
@@ -124,6 +131,10 @@ Scope: the eastern and northeastern caldenal and its grassland edge (Castex, Met
 - [S13] Cardos in the Pampa region, Mundo Agrario (UNLP): https://mundoagrario.unlp.edu.ar/article/download/v04n08a04/1443/1947 (read only through a search summary).
 - [S14] Populus nigra var. italica, Wikipedia: https://en.wikipedia.org/wiki/Populus_nigra_var._italica
 - [S15] Melia azedarach, Wikipedia: https://en.wikipedia.org/wiki/Melia_azedarach
+- [S16] Condalia microphylla, SIB (Sistema de Información de Biodiversidad): https://sib.gob.ar/especies/condalia-microphylla (0.8–2 m, thorny, leaf size, caldenal and Monte; read through a search summary).
+- [S17] Condalia microphylla, Ecoregistros: https://www.ecoregistros.org/ficha/Condalia-microphylla&idpais=2 (up to 3.2 m; search summary).
+- [S18] Larrea divaricata, Wikipedia: https://en.wikipedia.org/wiki/Larrea_divaricata (up to 3 m).
+- [S19] Jarilla, Larrea divaricata, CONICET Digital: https://ri.conicet.gov.ar/bitstream/handle/11336/8519/CONICET_Digital_Nro.11832.pdf and Ecoregistros: https://www.ecoregistros.org/ficha/Larrea-divaricata&idprovincia=18 (read only through a search summary).
 
 ## Roads, fences and gates (user, 2026-10-22)
 
