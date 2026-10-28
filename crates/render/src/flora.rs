@@ -12,7 +12,9 @@
 //! models from the Ultimate Nature Pack by Quaternius (see
 //! [`load_vegetation`]), recoloured and rescaled in code for the dry 1919
 //! pampa, with their faceted normals smoothed when baked (see
-//! [`smoothing`]); the tufts, stones and stumps are those models. When a
+//! [`smoothing`]); the stones, stumps, weeds and wildflowers are those models.
+//! The grass tufts (paja and flechilla) are alpha-cut texture cards
+//! ([`crate::grass`]) either way. When a
 //! model is missing, the faceted procedural stand-ins below are drawn
 //! instead, and only then.
 //!
@@ -37,6 +39,7 @@ use std::time::Instant;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::VisibilityRange;
+use bevy::image::CompressedImageFormatSupport;
 use bevy::mesh::{PrimitiveTopology, VertexAttributeValues};
 use bevy::prelude::*;
 use pampa_core::flora::Age;
@@ -45,6 +48,7 @@ use pampa_core::{FloraSite, Shrub, ShrubKind, Species, Tree, Tuft, TuftKind, Vec
 use crate::AssetRoot;
 use crate::character::finish::Finish;
 use crate::coords::world_from_ground;
+use crate::grass::{CARD_VARIANTS, GRASS_TINTS, GrassCards, load_maps};
 use crate::obj::{self, MaterialColors, ObjGroup, ObjModel};
 use crate::smooth::smooth_normals;
 use crate::terrain::{ChunkStreaming, TerrainChunk, WorldTerrain};
@@ -402,8 +406,6 @@ const FLOWER_SHARE: f32 = 0.015;
 const THICKET_WIDTH: f32 = 0.7;
 /// How much wider the caldén's crown is drawn than the model's.
 const CROWN_WIDEN: f32 = 0.25;
-/// Grass tints from grey-green to dry yellow.
-const GRASS_TINTS: usize = 4;
 
 /// Where the vegetation models live, under the [`AssetRoot`].
 pub const MODEL_DIR: &str = "models/vegetation/quaternius-ultimate-nature";
@@ -414,10 +416,6 @@ pub enum Model {
     CommonTree(u8),
     DeadTree(u8),
     Bush(u8),
-    Grass,
-    TallGrass,
-    ShortGrass,
-    Wheat,
     Plant(u8),
     Flowers,
     Rock(u8),
@@ -434,8 +432,6 @@ pub enum Role {
     Snag,
     /// A chañar or jarilla thicket.
     Thicket,
-    /// Grass tufts and paja brava.
-    Grass,
     /// Weeds and wildflowers.
     Weed,
     /// Tosca stones.
@@ -453,15 +449,7 @@ impl Model {
         }
         all.extend([Self::Bush(1), Self::Bush(2)]);
         all.extend((1..=4).map(Self::Rock));
-        all.extend([
-            Self::Grass,
-            Self::TallGrass,
-            Self::ShortGrass,
-            Self::Wheat,
-            Self::Flowers,
-            Self::Stump,
-            Self::Log,
-        ]);
+        all.extend([Self::Flowers, Self::Stump, Self::Log]);
         all
     }
 
@@ -471,10 +459,6 @@ impl Model {
             Self::CommonTree(n) => format!("CommonTree_{n}.obj"),
             Self::DeadTree(n) => format!("CommonTree_Dead_{n}.obj"),
             Self::Bush(n) => format!("Bush_{n}.obj"),
-            Self::Grass => "Grass.obj".into(),
-            Self::TallGrass => "Grass_2.obj".into(),
-            Self::ShortGrass => "Grass_Short.obj".into(),
-            Self::Wheat => "Wheat.obj".into(),
             Self::Plant(n) => format!("Plant_{n}.obj"),
             Self::Flowers => "Flowers.obj".into(),
             Self::Rock(n) => format!("Rock_{n}.obj"),
@@ -488,7 +472,6 @@ impl Model {
             Self::CommonTree(_) => Role::Calden,
             Self::DeadTree(_) => Role::Snag,
             Self::Bush(_) => Role::Thicket,
-            Self::Grass | Self::TallGrass | Self::ShortGrass | Self::Wheat => Role::Grass,
             Self::Plant(_) | Self::Flowers => Role::Weed,
             Self::Rock(_) => Role::Stone,
             Self::Stump | Self::Log => Role::Deadwood,
@@ -594,24 +577,18 @@ pub(crate) fn kit_tints(tree: &Tree) -> (usize, usize) {
     )
 }
 
-/// The model drawn for `tuft`: tall paja is wheat-like paja brava or tall
-/// grass, flechilla is grass or short grass, and a seeded few are weeds
-/// and wildflowers.
-pub fn tuft_model(tuft: &Tuft) -> Model {
+/// The Quaternius model drawn for `tuft` when it is one of the seeded few
+/// weeds and wildflowers; `None` for the grass, which is drawn as
+/// [`crate::grass`] cards.
+pub fn tuft_model(tuft: &Tuft) -> Option<Model> {
     let roll = spot_unit(tuft.at, 7);
     if roll < FLOWER_SHARE {
-        return Model::Flowers;
+        return Some(Model::Flowers);
     }
     if roll < WEED_SHARE {
-        return Model::Plant((spot_unit(tuft.at, 8) * 5.0) as u8 % 5 + 1);
+        return Some(Model::Plant((spot_unit(tuft.at, 8) * 5.0) as u8 % 5 + 1));
     }
-    let tall = spot_unit(tuft.at, 9) < 0.5;
-    match (tuft.kind, tall) {
-        (TuftKind::Paja, true) => Model::Wheat,
-        (TuftKind::Paja, false) => Model::TallGrass,
-        (TuftKind::Flechilla, true) => Model::Grass,
-        (TuftKind::Flechilla, false) => Model::ShortGrass,
-    }
+    None
 }
 
 /// The 1919 pampa's colour (sRGB) and finish for `role`'s MTL material
@@ -629,8 +606,6 @@ pub fn recolour(role: Role, name: &str, kd: [f32; 3]) -> ([f32; 3], Finish) {
         (Role::Calden, "DarkGreen") => ([0.26, 0.30, 0.17], Finish::Leaves),
         (Role::Calden, _) => ([0.34, 0.38, 0.21], Finish::Leaves),
         (Role::Thicket, _) => ([0.42, 0.46, 0.31], Finish::Leaves),
-        // Pale straw; each tuft is tinted on top (see `grass_tint`).
-        (Role::Grass, _) => ([0.86, 0.82, 0.66], Finish::Leaves),
         (Role::Weed, "Cyan") => ([0.52, 0.50, 0.68], Finish::Leaves),
         (Role::Weed, "Yellow") => ([0.70, 0.62, 0.34], Finish::Leaves),
         (Role::Weed, "Pink") => ([0.72, 0.52, 0.56], Finish::Leaves),
@@ -663,14 +638,11 @@ fn smoothstep(lo: f32, hi: f32, x: f32) -> f32 {
 /// facets that still blends, in degrees, and how far the normals lean
 /// toward straight up (0 none, 1 all the way). Crowns, bushes and weeds
 /// blend almost every facet; bark and dead wood keep their broken edges a
-/// little; tosca stones keep their hard ones. Grass blades are thin cards:
-/// leaning their normals up lights a tuft like the ground under it rather
-/// than darkening its shaded side.
+/// little; tosca stones keep their hard ones.
 pub fn smoothing(role: Role) -> (f32, f32) {
     match role {
         Role::Calden | Role::Thicket | Role::Weed => (60.0, 0.0),
         Role::Snag | Role::Deadwood => (50.0, 0.0),
-        Role::Grass => (80.0, 0.5),
         Role::Stone => (40.0, 0.0),
     }
 }
@@ -784,7 +756,6 @@ pub struct VegetationModels {
     leaves: Handle<StandardMaterial>,
     weeds: Handle<StandardMaterial>,
     rock: Handle<StandardMaterial>,
-    grass: [Handle<StandardMaterial>; GRASS_TINTS],
 }
 
 impl VegetationModels {
@@ -793,27 +764,27 @@ impl VegetationModels {
         self.parts.contains_key(&model)
     }
 
-    /// `model`'s meshes and materials, the grass tinted `tint` (see
-    /// [`grass_tint`]); `None` when it was not loaded.
+    /// `model`'s meshes and materials; `None` when it was not loaded. The
+    /// models are not tinted: `_tint` is only there for the callers that
+    /// still pass one.
     pub fn parts(
         &self,
         model: Model,
-        tint: usize,
+        _tint: usize,
     ) -> Option<Vec<(Handle<Mesh>, Handle<StandardMaterial>)>> {
         let parts = self.parts.get(&model)?;
         Some(
             parts
                 .iter()
-                .map(|(finish, mesh)| (mesh.clone(), self.material(model, *finish, tint)))
+                .map(|(finish, mesh)| (mesh.clone(), self.material(model, *finish)))
                 .collect(),
         )
     }
 
-    fn material(&self, model: Model, finish: Finish, tint: usize) -> Handle<StandardMaterial> {
+    fn material(&self, model: Model, finish: Finish) -> Handle<StandardMaterial> {
         match (model.role(), finish) {
             (_, Finish::Bark) => self.bark.clone(),
             (_, Finish::Rock) => self.rock.clone(),
-            (Role::Grass, _) => self.grass[tint.min(GRASS_TINTS - 1)].clone(),
             (Role::Weed, _) => self.weeds.clone(),
             _ => self.leaves.clone(),
         }
@@ -886,20 +857,12 @@ pub fn load_vegetation(
             started.elapsed().as_secs_f64() * 1000.0
         );
     }
-    // Grey-green to dry yellow, multiplied over the pale straw paint.
-    let green = Vec3::new(0.66, 0.72, 0.56);
-    let dry = Vec3::new(1.0, 0.88, 0.58);
-    let grass = std::array::from_fn(|k| {
-        let c = green.lerp(dry, k as f32 / (GRASS_TINTS - 1) as f32);
-        materials.add(tinted(Finish::Leaves, true, Color::srgb(c.x, c.y, c.z)))
-    });
     commands.insert_resource(VegetationModels {
         parts,
         bark: materials.add(finished(Finish::Bark, false)),
         leaves: materials.add(finished(Finish::Leaves, false)),
         weeds: materials.add(finished(Finish::Leaves, true)),
         rock: materials.add(finished(Finish::Rock, false)),
-        grass,
     });
 }
 
@@ -919,11 +882,9 @@ pub struct FloraKit {
     calden_crown: Handle<Mesh>,
     chanar_trunk: Handle<Mesh>,
     chanar_crown: Handle<Mesh>,
-    paja: Handle<Mesh>,
-    flechilla: Handle<Mesh>,
     bark: Handle<StandardMaterial>,
     leaves: Handle<StandardMaterial>,
-    grass: Handle<StandardMaterial>,
+    cards: GrassCards,
 }
 
 impl FloraKit {
@@ -937,17 +898,13 @@ impl FloraKit {
             (crown.clone(), self.leaves.clone()),
         ]
     }
-
-    fn tuft(&self, kind: TuftKind) -> Handle<Mesh> {
-        match kind {
-            TuftKind::Paja => self.paja.clone(),
-            TuftKind::Flechilla => self.flechilla.clone(),
-        }
-    }
 }
 
 fn setup_kit(
     mut commands: Commands,
+    root: Option<Res<AssetRoot>>,
+    server: Option<Res<AssetServer>>,
+    support: Option<Res<CompressedImageFormatSupport>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
@@ -956,11 +913,13 @@ fn setup_kit(
         calden_crown: meshes.add(calden_crown()),
         chanar_trunk: meshes.add(chanar_trunk()),
         chanar_crown: meshes.add(chanar_crown()),
-        paja: meshes.add(tuft_mesh(TuftKind::Paja)),
-        flechilla: meshes.add(tuft_mesh(TuftKind::Flechilla)),
         bark: materials.add(finished(Finish::Bark, false)),
         leaves: materials.add(finished(Finish::Leaves, false)),
-        grass: materials.add(finished(Finish::Leaves, true)),
+        cards: GrassCards::new(
+            load_maps(root.as_deref(), server.as_deref(), support.as_deref()),
+            &mut meshes,
+            &mut materials,
+        ),
     });
 }
 
@@ -1133,29 +1092,35 @@ impl Painter<'_> {
         let fade_from = TUFT_SOLID + CAMERA_REACH + TUFT_SPREAD * step;
         let range = visible_within(fade_from + TUFT_FADE, TUFT_FADE);
         let plant = Plant::Tuft(tuft.kind);
-        let model = tuft_model(tuft);
-        let tint = grass_tint(self.site.dryness(tuft.at), tuft.at);
-        match self.models.and_then(|m| m.parts(model, tint)) {
-            Some(parts) => {
-                let size = if model.role() == Role::Weed { 1.1 } else { 1.0 } * tuft.size;
-                for (mesh, material) in parts {
-                    out.push(part(
-                        mesh,
-                        material,
-                        transform.with_scale(Vec3::splat(size)),
-                        range.clone(),
-                        plant,
-                    ));
-                }
+        // A seeded few are weeds and wildflowers, the Quaternius models;
+        // the rest is grass, one alpha-cut card tuft (one mesh, one
+        // material, so the same one range as any other tuft).
+        let weed = tuft_model(tuft).and_then(|model| {
+            let tint = grass_tint(self.site.dryness(tuft.at), tuft.at);
+            self.models?.parts(model, tint)
+        });
+        if let Some(parts) = weed {
+            for (mesh, material) in parts {
+                out.push(part(
+                    mesh,
+                    material,
+                    transform.with_scale(Vec3::splat(1.1 * tuft.size)),
+                    range.clone(),
+                    plant,
+                ));
             }
-            None => out.push(part(
-                self.kit.tuft(tuft.kind),
-                self.kit.grass.clone(),
-                transform.with_scale(Vec3::splat(tuft.size)),
-                range,
-                plant,
-            )),
+            return;
         }
+        let variant = (spot_unit(tuft.at, 6) * CARD_VARIANTS as f32) as usize;
+        let tint = grass_tint(self.site.dryness(tuft.at), tuft.at);
+        let (mesh, material) = self.kit.cards.card(tuft.kind, variant, tint);
+        out.push(part(
+            mesh,
+            material,
+            transform.with_scale(Vec3::splat(tuft.size)),
+            range,
+            plant,
+        ));
     }
 }
 
@@ -1475,26 +1440,6 @@ fn chanar_crown() -> Mesh {
         33,
         shade(leaves, 1.03),
     );
-    f.into_mesh()
-}
-
-/// A grass tuft one meter tall: thin blades fanned out from the root,
-/// green-brown at the base and pale straw at the dry tips.
-fn tuft_mesh(kind: TuftKind) -> Mesh {
-    let (blades, spread, base, tip) = match kind {
-        TuftKind::Paja => (9, 0.35, paint(0.42, 0.42, 0.24), paint(0.78, 0.70, 0.46)),
-        TuftKind::Flechilla => (7, 0.55, paint(0.55, 0.52, 0.32), paint(0.86, 0.80, 0.58)),
-    };
-    let mut f = Facets::default();
-    for b in 0..blades {
-        let a = b as f32 / blades as f32 * std::f32::consts::TAU + jitter(7, b) * 0.6;
-        let out = Vec3::new(a.cos(), 0.0, a.sin());
-        let across = Vec3::new(-out.z, 0.0, out.x) * 0.05;
-        let lean = spread * (0.6 + 0.6 * jitter(9, b));
-        let top = out * lean + Vec3::Y * (0.75 + 0.25 * jitter(5, b));
-        let root = out * 0.04;
-        f.tri([root - across, root + across, top], [base, base, tip]);
-    }
     f.into_mesh()
 }
 
@@ -2135,18 +2080,19 @@ mod tests {
         let mut weeds = 0;
         for tuft in &tufts {
             let model = tuft_model(tuft);
-            match (tuft.kind, model) {
-                (_, Model::Plant(1..=5) | Model::Flowers) => weeds += 1,
-                (TuftKind::Paja, Model::Wheat | Model::TallGrass) => {}
-                (TuftKind::Flechilla, Model::Grass | Model::ShortGrass) => {}
+            match model {
+                Some(Model::Plant(1..=5) | Model::Flowers) => weeds += 1,
+                // Grass is drawn as cards, not as a model.
+                None => {}
                 other => panic!("{other:?}"),
             }
         }
         let share = weeds as f32 / tufts.len() as f32;
         assert!((0.02..=0.12).contains(&share), "weeds {share}");
-        // Every model has a file, and the set covers the 28 shipped files.
+        // Every model has a file, and the set covers the 24 files still used
+        // (the four Quaternius grass OBJs are on disk but unused).
         let all = Model::all();
-        assert_eq!(all.len(), 28);
+        assert_eq!(all.len(), 24);
         for model in &all {
             assert!(
                 assets().join(MODEL_DIR).join(model.file()).exists(),
@@ -2313,13 +2259,8 @@ mod tests {
             let (obj, kd) = loaded(model);
             bake(model, &obj, &kd)
         };
-        // Crowns, bushes and grass blend across their facets.
-        for model in [
-            Model::CommonTree(1),
-            Model::Bush(1),
-            Model::Grass,
-            Model::Plant(3),
-        ] {
+        // Crowns, bushes and weeds blend across their facets.
+        for model in [Model::CommonTree(1), Model::Bush(1), Model::Plant(3)] {
             for (finish, mesh) in bake_of(model) {
                 let share = blend_share(&mesh);
                 assert!(share > 0.9, "{model:?} {finish:?}: {share}");
@@ -2335,14 +2276,9 @@ mod tests {
         let rock = &bake_of(Model::Rock(1))[0].1;
         let share = smooth_share(rock);
         assert!(share < 0.95, "rock creases: {share}");
-        // Grass blades lean their normals up, so a tuft lights like the
-        // ground under it instead of going dark on its shaded side.
-        let grass = &bake_of(Model::Grass)[0].1;
-        let up = normals(grass).iter().map(|n| n[1]).sum::<f32>() / grass.count_vertices() as f32;
-        assert!(up > 0.5, "grass normals lean up: {up}");
         // Baking is deterministic.
-        let again = &bake_of(Model::Grass)[0].1;
-        assert_eq!(normals(grass), normals(again));
+        let weed = |model| normals(&bake_of(model)[0].1);
+        assert_eq!(weed(Model::Plant(3)), weed(Model::Plant(3)));
     }
 
     #[test]
@@ -2617,11 +2553,80 @@ mod tests {
             kit.calden_crown.id(),
             kit.chanar_trunk.id(),
             kit.chanar_crown.id(),
-            kit.paja.id(),
-            kit.flechilla.id(),
         ];
         let mut q = app.world_mut().query::<&Mesh3d>();
         assert!(q.iter(app.world()).all(|m| !stand_ins.contains(&m.id())));
+    }
+
+    /// The parts a [`Painter`] draws for the tufts of six chunks, with the
+    /// models or without.
+    fn painted_tufts(app: &App, models: bool) -> Vec<(Tuft, Vec<Part>)> {
+        let kit = app.world().resource::<FloraKit>();
+        let all = app.world().resource::<VegetationModels>();
+        let terrain = &app.world().resource::<WorldTerrain>().0;
+        let site = site();
+        let painter = Painter {
+            terrain,
+            site: &site,
+            kit,
+            models: models.then_some(all),
+            trees: None,
+        };
+        (0..6)
+            .flat_map(|x| site.chunk(ChunkCoord::new(x, 3)).tufts)
+            .map(|tuft| {
+                let mut out = Vec::new();
+                painter.tuft(&tuft, &mut out);
+                (tuft, out)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn grass_tufts_are_alpha_cut_cards_not_quaternius_models() {
+        let mut app = app_with(grove_chunk(), Some(assets()), 1, 4);
+        app.update();
+        let meshes = app.world().resource::<Assets<Mesh>>();
+        let materials = app.world().resource::<Assets<StandardMaterial>>();
+        let mut grass = 0;
+        for models in [true, false] {
+            for (tuft, parts) in painted_tufts(&app, models) {
+                if models && spot_unit(tuft.at, 7) < WEED_SHARE {
+                    continue; // a weed or a wildflower keeps its model
+                }
+                grass += 1;
+                assert_eq!(parts.len(), 1, "{tuft:?}");
+                let (mesh, material) = (&parts[0].0, &parts[0].1);
+                assert_eq!(triangles(meshes.get(&mesh.0).unwrap()), 6, "{tuft:?}");
+                let material = materials.get(&material.0).unwrap();
+                assert!(matches!(material.alpha_mode, AlphaMode::Mask(_)));
+                assert!(matches!(parts[0].4, Plant::Tuft(kind) if kind == tuft.kind));
+            }
+        }
+        assert!(grass > 200, "{grass}");
+    }
+
+    #[test]
+    fn tufts_fade_at_one_of_eight_steps_models_or_cards() {
+        let mut app = app_with(grove_chunk(), Some(assets()), 1, 4);
+        app.update();
+        for models in [true, false] {
+            let mut ranges: Vec<(f32, f32)> = Vec::new();
+            for (_, parts) in painted_tufts(&app, models) {
+                for part in &parts {
+                    let r = &part.3;
+                    let r = (r.end_margin.start, r.end_margin.end);
+                    if !ranges.contains(&r) {
+                        ranges.push(r);
+                    }
+                    assert!(r.0 >= TUFT_SOLID + CAMERA_REACH);
+                }
+            }
+            assert!(
+                (2..=TUFT_FADE_STEPS as usize).contains(&ranges.len()),
+                "{ranges:?}"
+            );
+        }
     }
 
     /// The center of a chunk holding a grove.
@@ -2695,7 +2700,10 @@ mod tests {
                 materials.push(material.id());
             }
         }
-        assert!(meshes.len() <= 2 && materials.len() == 1, "{meshes:?}");
+        assert!(
+            meshes.len() <= 2 * CARD_VARIANTS && materials.len() <= 2 * GRASS_TINTS,
+            "{meshes:?}"
+        );
         // Trees are the kit's: a bark and a leaf mesh a variant, a bark and
         // a leaf material a species, however many trees there are.
         let drawn = drawn_trees(&mut app);
@@ -2914,9 +2922,6 @@ mod tests {
         let chanar = triangles(&chanar_trunk()) + triangles(&chanar_crown());
         assert!((300..=800).contains(&calden), "{calden}");
         assert!((150..=500).contains(&chanar), "{chanar}");
-        for kind in [TuftKind::Paja, TuftKind::Flechilla] {
-            assert!(triangles(&tuft_mesh(kind)) <= 10);
-        }
         // The caldén's crown spreads wider than the chañar's.
         let width = |mesh: &Mesh| match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
             Some(VertexAttributeValues::Float32x3(p)) => {

@@ -59,6 +59,10 @@ The plaza trees' bark and leaf sets were downloaded by the project owner on 2026
 
 | Asset | Author / source | Licence | Where | Changes |
 |---|---|---|---|---|
+| Grass Medium 01 | Poly Haven (https://polyhaven.com/a/grass_medium_01) | CC0 1.0 | `assets/textures/grass/grass_medium_01/` | Four clumps cut from the 1K sheet's diffuse (dry and green) and alpha maps into a 1024x512 atlas, with the opacity in the colour's alpha; paja wears the dry colour, flechilla the green one, tinted dry-green in the game. See `assets/textures/grass/CREDITS.md` |
+
+| Asset | Author / source | Licence | Where | Changes |
+|---|---|---|---|---|
 | Stars + Milky Way (8k) | Solar System Scope (solarsystemscope.com), https://www.solarsystemscope.com/textures/ | CC BY 4.0 (attribution required) | `assets/textures/sky/stars_milky_way/` | The 8192x4096 JPG kept as the source; baked to UASTC KTX2 with mips for the game; brightened and turned with the hour in the sky shader |
 
 The star map was downloaded by the project owner on 2026-10-27. Attribution: "Stars + Milky Way" texture by Solar System Scope (solarsystemscope.com), licensed under Creative Commons Attribution 4.0 International. See `assets/textures/sky/CREDITS.md` for details.
