@@ -40,7 +40,8 @@ use pampa_core::{
 };
 use pampa_render::character::viewer::world_layers;
 use pampa_render::{
-    CloseShadows, HudHint, SightLine, WorldFlora, WorldTrains, car_transform, world_from_ground,
+    CloseShadows, HudHint, SightLine, WorldFlora, WorldSettlements, WorldTowns, WorldTrains,
+    car_transform, world_from_ground,
 };
 
 use crate::first_person::{
@@ -344,7 +345,9 @@ pub fn car_occluders(cars: &[PlacedCar], terrain: &Terrain, near: GroundVec2) ->
 pub struct Trunk {
     pub at: GroundVec2,
     pub radius: f32,
-    /// Heights the trunk and its main limbs span, world meters.
+    /// Heights the trunk and its main limbs span, world meters. A line
+    /// under `bottom` passes below the trunk's foot (through a rise), a line
+    /// over `top` through the crown: neither is blocked.
     pub bottom: f32,
     pub top: f32,
 }
@@ -377,7 +380,7 @@ fn smooth(x: f32) -> f32 {
 /// Unlike a wall ([`clear_reach`]), the result is continuous in where the
 /// trunks stand: a trunk fully blocks only on the line itself, and its
 /// effect fades out with the line's distance from it, its height above its
-/// top and its nearness to the rider. Riding past a row of trees therefore
+/// top or below its foot, and its nearness to the rider. Riding past a row of trees therefore
 /// never makes the camera jump. Crowns do not block at all: pulling in under
 /// every crown of a monte would keep the camera on the rider's shoulder.
 pub fn trunk_reach(focus: Vec3, wanted: Vec3, trunks: &[Trunk]) -> f32 {
@@ -403,6 +406,7 @@ pub fn trunk_reach(focus: Vec3, wanted: Vec3, trunks: &[Trunk]) -> f32 {
         let height = focus.y + (wanted.y - focus.y) * at / length;
         let slack = smooth((d - t.radius) / TRUNK_SOFT)
             .max(smooth((height - t.top) / TRUNK_TOP_SOFT))
+            .max(smooth((t.bottom - height) / TRUNK_TOP_SOFT))
             .max(1.0 - smooth((at - TRUNK_NEAR) / TRUNK_NEAR_BLEND));
         reach = reach.min(stop + (1.0 - stop) * slack);
     }
@@ -420,12 +424,9 @@ impl TrunkCache {
     /// The trunks within reach of the segment from `a` to `b`.
     pub fn along(&mut self, flora: &FloraSite, world: &World, a: Vec3, b: Vec3) -> Vec<Trunk> {
         let config = world.config;
-        let (a, b) = (GroundVec2::new(a.x, -a.z), GroundVec2::new(b.x, -b.z));
-        let pad = TRUNK_SOFT + 1.0;
-        let lo = GroundVec2::new(a.x.min(b.x) - pad, a.y.min(b.y) - pad);
-        let hi = GroundVec2::new(a.x.max(b.x) + pad, a.y.max(b.y) + pad);
+        let (lo, hi) = segment_box(a, b);
         let (first, last) = (config.chunk_of(lo), config.chunk_of(hi));
-        let here = config.chunk_of(a);
+        let here = config.chunk_of(GroundVec2::new(a.x, -a.z));
         self.0
             .retain(|c, _| (c.x - here.x).abs().max((c.y - here.y).abs()) <= 2);
         let mut found = Vec::new();
@@ -457,6 +458,90 @@ impl TrunkCache {
         }
         found
     }
+}
+
+/// How far up a town tree counts as trunk, meters over the ground. Core
+/// knows no town tree's height (render scales them), so this is a flat
+/// stand-in: a trimmed street tree's crown starts over 3.5 m, and a line
+/// above it runs through leaves like any other.
+const TOWN_TREE_TRUNK_TOP: f32 = 3.5;
+
+/// The trunks of the trees that never come and go with a chunk: the rings,
+/// groves and street trees of the towns, and the estancias' eucalyptus and
+/// poplars. Each is solid, so render never fades it and the camera must
+/// ease round it instead. Built once from the layouts (their positions and
+/// radii are the ones collision uses) and kept per chunk, so a frame
+/// only looks at the chunks the sight line crosses.
+#[derive(Debug, Default)]
+pub struct StaticTrunks(std::collections::HashMap<ChunkCoord, Vec<Trunk>>);
+
+impl StaticTrunks {
+    /// Every town and settlement tree, standing on `terrain`.
+    pub fn build(
+        config: pampa_core::WorldConfig,
+        terrain: &Terrain,
+        towns: &[TownLayout],
+        settlements: &SettlementLayout,
+    ) -> Self {
+        let mut cache = Self::default();
+        let mut add = |at: GroundVec2, radius: f32, height: f32| {
+            let ground = terrain.height(at.x, at.y);
+            cache.0.entry(config.chunk_of(at)).or_default().push(Trunk {
+                at,
+                radius,
+                bottom: ground - 0.5,
+                top: ground + height,
+            });
+        };
+        for town in towns {
+            let ring = town.trees.iter().copied();
+            let shade = town.shade_trees.iter().map(|t| t.at);
+            for at in ring.chain(shade) {
+                add(at, pampa_core::town::TREE_TRUNK_RADIUS, TOWN_TREE_TRUNK_TOP);
+            }
+        }
+        for tree in settlements
+            .settlements
+            .iter()
+            .flat_map(|s| s.structures.iter())
+            .filter(|s| s.kind.is_tree())
+        {
+            add(
+                tree.footprint.center(),
+                tree.trunk_radius(),
+                TRUNK_TOP * tree.height,
+            );
+        }
+        cache
+    }
+
+    /// The trunks within reach of the segment from `a` to `b`.
+    pub fn along(&self, config: pampa_core::WorldConfig, a: Vec3, b: Vec3) -> Vec<Trunk> {
+        let (lo, hi) = segment_box(a, b);
+        let (first, last) = (config.chunk_of(lo), config.chunk_of(hi));
+        let mut found = Vec::new();
+        for y in first.y..=last.y {
+            for x in first.x..=last.x {
+                if let Some(trunks) = self.0.get(&ChunkCoord::new(x, y)) {
+                    found.extend(trunks.iter().filter(|t| {
+                        (lo.x..=hi.x).contains(&t.at.x) && (lo.y..=hi.y).contains(&t.at.y)
+                    }));
+                }
+            }
+        }
+        found
+    }
+}
+
+/// The ground box round the segment from `a` to `b`, padded by the reach of
+/// a trunk's soft edge.
+fn segment_box(a: Vec3, b: Vec3) -> (GroundVec2, GroundVec2) {
+    let (a, b) = (GroundVec2::new(a.x, -a.z), GroundVec2::new(b.x, -b.z));
+    let pad = TRUNK_SOFT + 1.0;
+    (
+        GroundVec2::new(a.x.min(b.x) - pad, a.y.min(b.y) - pad),
+        GroundVec2::new(a.x.max(b.x) + pad, a.y.max(b.y) + pad),
+    )
 }
 
 /// The next frame's [`CameraReach`]: `allowed` (the clear part of the arm)
@@ -704,9 +789,14 @@ fn follow_player(
     input: Res<CameraInput>,
     sight: Option<ResMut<SightLine>>,
     flora: Option<Res<WorldFlora>>,
+    (towns, settlements): (Option<Res<WorldTowns>>, Option<Res<WorldSettlements>>),
     player: Single<(&Player, Option<&OnTrain>)>,
     (view, mut look, mode): RideCamera,
-    (mut was, mut trunks): (Local<Option<RideView>>, Local<TrunkCache>),
+    (mut was, mut trunks, mut solid): (
+        Local<Option<RideView>>,
+        Local<TrunkCache>,
+        Local<Option<StaticTrunks>>,
+    ),
     camera: Single<(
         &mut Transform,
         &FollowCamera,
@@ -802,10 +892,20 @@ fn follow_player(
         })
         .unwrap_or_default();
     // And of the trunks of the trees round it: it eases in round them.
-    let trunks = flora
+    let mut trunks = flora
         .as_deref()
         .map(|f| trunks.along(&f.0, &world.0, target, desired))
         .unwrap_or_default();
+    // Town and estancia trees are solid: the camera eases round them too.
+    // Their layouts are fixed, so the trunks are gathered on first need.
+    if let Some(towns) = towns.as_deref() {
+        let solid = solid.get_or_insert_with(|| {
+            let none = SettlementLayout::default();
+            let settlements = settlements.as_deref().map_or(&none, |s| &s.0);
+            StaticTrunks::build(world.0.config, &world.0.terrain, &towns.0, settlements)
+        });
+        trunks.extend(solid.along(world.0.config, target, desired));
+    }
     let allowed = clear_reach(target, desired, occluders.0.iter().chain(&cars))
         .min(trunk_reach(target, desired, &trunks));
     reach.0 = if snapped {
@@ -1218,25 +1318,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_tree_is_solid_so_it_never_asks_render_to_fade_it() {
-        // Nothing the camera hands render for fading is a tree: the sight
-        // line is set, and a tree part carries no `ThinOccluder`.
-        let tree = lone_tree(&flora_site());
-        let mut app = grove_app(&tree);
-        app.add_plugins(pampa_render::ThinFadePlugin)
-            .init_resource::<Assets<StandardMaterial>>();
-        for _ in 0..3 {
-            app.update();
-        }
-        assert!(app.world().resource::<SightLine>().0.is_some());
-        let mut trees = app.world_mut().query_filtered::<(), (
-            With<pampa_render::TreePart>,
-            With<pampa_render::ThinOccluder>,
-        )>();
-        assert_eq!(trees.iter(app.world()).count(), 0);
-    }
-
     fn trunk(x: f32, y: f32) -> Trunk {
         Trunk {
             at: GroundVec2::new(x, y),
@@ -1266,6 +1347,93 @@ mod tests {
         assert_eq!(trunk_reach(head, camera, &[trunk(3.0, -6.0)]), 1.0);
         assert_eq!(trunk_reach(head, camera, &[trunk(0.0, -14.0)]), 1.0);
         assert_eq!(trunk_reach(head, camera, &[trunk(0.0, 6.0)]), 1.0);
+    }
+
+    #[test]
+    fn a_line_passing_under_a_trunks_base_is_not_blocked_by_it() {
+        // The line at the trunk is about 3.8 m up. A trunk standing on a
+        // rise, its base above that, is passed under (through the rise,
+        // which is the terrain's to stop); one whose base is below it blocks.
+        let (head, camera) = (Vec3::new(0.0, 2.0, 0.0), Vec3::new(0.0, 5.0, 10.0));
+        let on_rise = Trunk {
+            bottom: 6.0,
+            top: 12.0,
+            ..trunk(0.0, -6.0)
+        };
+        assert_eq!(trunk_reach(head, camera, &[on_rise]), 1.0);
+        let standing = Trunk {
+            bottom: 1.0,
+            ..on_rise
+        };
+        assert!(trunk_reach(head, camera, &[standing]) < 0.6);
+    }
+
+    /// A rider 6 m west of `tree` and a camera 4 m east of it, 3 m up.
+    fn behind_a_tree(tree: GroundVec2, ground: f32) -> (Vec3, Vec3) {
+        (
+            Vec3::new(tree.x - 6.0, ground + 1.6, -tree.y),
+            Vec3::new(tree.x + 4.0, ground + 4.0, -tree.y),
+        )
+    }
+
+    #[test]
+    fn a_plaza_or_street_tree_pulls_the_camera_in_like_a_field_tree() {
+        let town = TownLayout::castex_inspired();
+        let world = World::with_town(Terrain::default(), &town);
+        let solid = StaticTrunks::build(
+            world.config,
+            &world.terrain,
+            std::slice::from_ref(&town),
+            &SettlementLayout::default(),
+        );
+        assert!(!town.trees.is_empty() && !town.shade_trees.is_empty());
+        let ring = town.trees[0];
+        let shade = town.shade_trees[0].at;
+        for tree in [ring, shade] {
+            let ground = world.terrain.height(tree.x, tree.y);
+            let (head, camera) = behind_a_tree(tree, ground);
+            let trunks = solid.along(world.config, head, camera);
+            let reach = trunk_reach(head, camera, &trunks);
+            assert!(reach < 0.8, "{tree:?}: {reach}");
+            // Far from every tree the set is empty and the view clear.
+            let far = Vec3::new(head.x, head.y, head.z + 400.0);
+            assert!(solid.along(world.config, far, far + Vec3::X).is_empty());
+        }
+    }
+
+    #[test]
+    fn an_estancia_tree_pulls_the_camera_in() {
+        let spot = Aabb::from_center_size(GroundVec2::new(30.0, 40.0), GroundVec2::new(1.0, 1.0));
+        let mut settlements = SettlementLayout::default();
+        settlements.settlements.push(pampa_core::Settlement {
+            kind: pampa_core::SettlementKind::Hut,
+            gate: 0,
+            hub: spot.center(),
+            patio: spot,
+            structures: vec![pampa_core::Structure {
+                kind: StructureKind::Eucalyptus,
+                footprint: spot,
+                height: 18.0,
+                front: pampa_core::Side::South,
+                variant: 0,
+            }],
+            tracks: Vec::new(),
+            bounds: spot,
+            seed: 0,
+        });
+        let world = World::default();
+        let solid = StaticTrunks::build(world.config, &world.terrain, &[], &settlements);
+        let tree = settlements
+            .settlements
+            .iter()
+            .flat_map(|s| s.structures.iter())
+            .find(|s| s.kind.is_tree())
+            .expect("an estancia tree");
+        let at = tree.footprint.center();
+        let ground = world.terrain.height(at.x, at.y);
+        let (head, camera) = behind_a_tree(at, ground);
+        let reach = trunk_reach(head, camera, &solid.along(world.config, head, camera));
+        assert!(reach < 0.8, "{reach}");
     }
 
     #[test]
