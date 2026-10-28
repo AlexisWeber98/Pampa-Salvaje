@@ -23,6 +23,7 @@ pub mod ground;
 pub mod hud;
 pub mod lagoon;
 pub mod lamps;
+pub mod lettering;
 pub mod minimap;
 pub mod obj;
 pub mod rail;

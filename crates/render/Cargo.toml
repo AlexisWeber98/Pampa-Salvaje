@@ -9,3 +9,5 @@ publish.workspace = true
 [dependencies]
 pampa-core.workspace = true
 bevy.workspace = true
+# Rasterizes the game's TrueType faces on the CPU (already in the lock via bevy).
+ab_glyph = "=0.2.32"
