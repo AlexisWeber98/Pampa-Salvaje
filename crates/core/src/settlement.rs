@@ -7,7 +7,8 @@
 //! round a bare patio (the hub), with a galpón, corrals, a molino with its
 //! tank and trough, haystacks and the spots where its trees will grow (a
 //! compound plants a third more of them than its kind lays out, on a random
-//! stream of its own: [`Settlement::MORE_TREES`]).
+//! stream of its own: [`Settlement::MORE_TREES`]; then each kind keeps its
+//! share, [`Settlement::tree_keep`]).
 //!
 //! Dirt tracks (huellas) join it to the gate: a trunk from just inside the gate to
 //! the hub, and a branch from the hub to the door of every house, galpón
@@ -265,6 +266,17 @@ impl Settlement {
     /// Extra eucalyptus a compound plants, as a share of the trees its kind
     /// lays out (the count rounds at random).
     pub const MORE_TREES: f32 = 0.35;
+    /// The share of its trees a compound of `kind` keeps (user,
+    /// 2026-10-27: 30% fewer, then "chacras y estancias sacale del total
+    /// que tiene ahora, un 30%", then puestos and ranchos too: "se desmonta
+    /// para huerto, animales, plantaciones"): ranchos, puestos and chacras
+    /// 0.7, estancias 0.49 (0.7 x 0.7).
+    pub fn tree_keep(kind: SettlementKind) -> f32 {
+        match kind {
+            SettlementKind::Hut | SettlementKind::Outpost | SettlementKind::Farm => 0.7,
+            SettlementKind::Ranch => 0.49,
+        }
+    }
     /// Least ground an estancia's compound spreads over, in square meters.
     pub const RANCH_AREA: f32 = 20_000.0;
     /// Chance of an abandoned wagon at a chacra, and at an estancia.
@@ -1165,6 +1177,30 @@ impl<'a> Compound<'a> {
             self.place(tree, self.round(16.0, 34.0));
         }
         std::mem::swap(&mut self.rng, &mut own);
+        self.thin_trees(own.unit());
+    }
+
+    /// A compound keeps [`Settlement::tree_keep`] of its trees: a tree stays when its share of the running
+    /// total crosses a whole number, so the ones that go are spread evenly through the order they were planted in (a grid's rows, an
+    /// alameda's pairs) and nothing else moves. `start` in [0, 1) offsets
+    /// the total.
+    fn thin_trees(&mut self, start: f32) {
+        let keep = Settlement::tree_keep(self.kind);
+        if keep >= 1.0 {
+            return;
+        }
+        let mut seen = 0.0_f32;
+        self.structures.retain(|s| {
+            if !s.kind.is_tree() {
+                return true;
+            }
+            // The epsilon keeps a share that lands on a whole number from
+            // rounding down.
+            let at = |n: f32| (start + n * keep + 1e-4).floor();
+            let stays = at(seen + 1.0) > at(seen);
+            seen += 1.0;
+            stays
+        });
     }
 
     fn tree(&mut self, kind: StructureKind) -> Part {
@@ -2339,9 +2375,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn settlements_plant_thirty_percent_more_trees_clear_of_everything() {
-        // 93 tree spots in the 17 sample settlements before the extra ones
-        // (2026-10-26); a third more where they fit, never past 135.
+    fn settlements_plant_their_trees_clear_of_everything() {
         let (_, _, _, _, layout) = settled();
         let trees: Vec<&Structure> = layout
             .settlements
@@ -2349,7 +2383,7 @@ pub(crate) mod tests {
             .flat_map(|s| s.structures.iter())
             .filter(|s| s.kind.is_tree())
             .collect();
-        assert!((121..=135).contains(&trees.len()), "{} trees", trees.len());
+        assert!(!trees.is_empty());
         for s in &layout.settlements {
             for (k, tree) in s
                 .structures
@@ -2367,6 +2401,78 @@ pub(crate) mod tests {
                 }
                 for (a, b) in s.tracks.iter().flat_map(Track::segments) {
                     assert!(segment_distance(at, a, b) >= 2.2, "a tree on a huella");
+                }
+            }
+        }
+    }
+
+    /// Trees standing in the settlements of `kind` in the sample world.
+    fn trees_of(layout: &SettlementLayout, kind: SettlementKind) -> usize {
+        layout
+            .settlements
+            .iter()
+            .filter(|s| s.kind == kind)
+            .flat_map(|s| s.structures.iter())
+            .filter(|s| s.kind.is_tree())
+            .count()
+    }
+
+    #[test]
+    fn estancias_keep_half_and_chacras_seven_tenths_of_their_trees() {
+        // Trees in the sample world before the thinning (2026-10-27): the
+        // chacras 28, the estancias 96. No puesto or rancho of the sample
+        // plants any (`a_compound_keeps_..._by_kind` covers those).
+        let (_, _, _, _, layout) = settled();
+        let farms = trees_of(&layout, SettlementKind::Farm) as f32 / 28.0;
+        let ranches = trees_of(&layout, SettlementKind::Ranch) as f32 / 96.0;
+        assert!((0.66..=0.74).contains(&farms), "chacras {farms}");
+        assert!((0.45..=0.53).contains(&ranches), "estancias {ranches}");
+    }
+
+    #[test]
+    fn a_compound_keeps_its_kinds_share_of_its_trees_spread_evenly() {
+        let ground = Ground {
+            roads: None,
+            rails: Vec::new(),
+            bands: Vec::new(),
+            cell: Aabb::from_center_size(Vec2::ZERO, Vec2::new(2000.0, 2000.0)),
+        };
+        for (kind, kept, gap) in [
+            (SettlementKind::Hut, 14, 2),
+            (SettlementKind::Outpost, 14, 2),
+            (SettlementKind::Farm, 14, 2),
+            (SettlementKind::Ranch, 10, 3),
+        ] {
+            for start in [0.0, 0.3, 0.99] {
+                let hub = Vec2::new(0.0, -300.0);
+                let mut c = Compound::new(
+                    &ground,
+                    Rng::new(7, 9),
+                    kind,
+                    hub,
+                    Vec2::new(0.0, 1.0),
+                    [hub, hub, hub],
+                );
+                let spots: Vec<Vec2> = (0..20)
+                    .map(|k| Vec2::new(k as f32 * 12.0 - 120.0, 0.0))
+                    .collect();
+                for &at in &spots {
+                    let tree = c.tree(StructureKind::Eucalyptus);
+                    assert!(c.place_at(tree, at).is_some());
+                }
+                c.thin_trees(start);
+                let left: Vec<usize> = spots
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, at)| c.structures.iter().any(|s| s.footprint.center() == **at))
+                    .map(|(k, _)| k)
+                    .collect();
+                // 20 trees at 0.49 keep 9 or 10 by the offset.
+                let ok = left.len() == kept || (kept == 10 && left.len() == 9);
+                assert!(ok, "{kind:?} {start}: {}", left.len());
+                // Evenly: the ones that go are never in a run.
+                for w in left.windows(2) {
+                    assert!(w[1] - w[0] <= gap, "{kind:?} {left:?}");
                 }
             }
         }

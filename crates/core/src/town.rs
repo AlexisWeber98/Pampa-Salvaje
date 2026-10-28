@@ -473,8 +473,9 @@ impl ShadeTree {
     /// Gap kept between a yard crown and any building, meters.
     pub const BUILDING_GAP: f32 = 0.6;
     /// Gap between a street tree and the next one along its sidewalk, meters
-    /// (min, max).
-    pub const SPACING: (f32, f32) = (17.0, 21.2);
+    /// (min, max). 15% more trees than the first planting (user, 2026-10-27:
+    /// "subile otro 15% a pueblos y aldeas"): (17, 21.2) / 1.15.
+    pub const SPACING: (f32, f32) = (14.8, 18.4);
     /// Least gap between two trunks, whatever they are, in meters.
     pub const APART: f32 = 4.0;
     /// How far a trimmed tree leans toward the street, in degrees.
@@ -483,8 +484,10 @@ impl ShadeTree {
     pub const GROVE_CROWN: f32 = 6.0;
     /// How far a grove stays in from its plaza's edge, meters.
     const GROVE_INSET: f32 = 4.0;
-    /// Gap between the spots a grove is laid out on, meters.
-    const GROVE_STEP: f32 = 10.0;
+    /// Gap between the spots a grove is laid out on, meters (was 10 m; the
+    /// plaza ring grew too, and a very big town's cut takes its share of
+    /// the groves).
+    const GROVE_STEP: f32 = 8.8;
     /// How far each grove spot strays, meters.
     const GROVE_JITTER: f32 = 2.5;
     /// How far from a block's edge a yard tree stands at least, meters.
@@ -1211,13 +1214,14 @@ impl TownLayout {
             plaza,
             station_plaza: station.map(|s| s.area),
             size,
-            trees: plaza_trees(plaza, (4 * w, 4 * h))
+            trees: plaza_trees(plaza, (more_steps(4 * w), more_steps(4 * h)))
                 .into_iter()
-                .chain(
-                    station
-                        .into_iter()
-                        .flat_map(|s| plaza_trees(s.area, s.tree_steps)),
-                )
+                .chain(station.into_iter().flat_map(|s| {
+                    plaza_trees(
+                        s.area,
+                        (more_steps(s.tree_steps.0), more_steps(s.tree_steps.1)),
+                    )
+                }))
                 .collect(),
             shade_trees: Vec::new(),
             yard_plants: Vec::new(),
@@ -3068,12 +3072,15 @@ impl TownLayout {
             }
             let stream = (j * grid.cols + i) as u32;
             let mut rng = Rng::new(self.seed ^ 0x3d1a, stream);
-            // 30% more than the first planting: a city's blocks get up to
-            // three trees and a fourth in seven of ten, a town's eight in ten one.
+            // 30% more than the first planting, then 15% more (user,
+            // 2026-10-27): a city's blocks get up to three trees, a fourth in
+            // seven of ten and a fifth in two of ten; a town's nine in ten one.
             let wanted = if city {
-                1 + rng.below(3) + usize::from(rng.below(100) < 70)
+                1 + rng.below(3)
+                    + usize::from(rng.below(100) < 70)
+                    + usize::from(rng.below(100) < 40)
             } else {
-                usize::from(rng.below(100) < 80)
+                usize::from(rng.below(100) < 92)
             };
             let area = block.expanded(-ShadeTree::YARD_INSET);
             for n in 0..wanted {
@@ -3096,7 +3103,7 @@ impl TownLayout {
                 .filter(|(_, b)| b.kind == BuildingKind::House)
             {
                 let mut rng = Rng::new(self.seed ^ 0xf20e, k as u32);
-                if rng.below(100) >= 55 {
+                if rng.below(100) >= 63 {
                     continue;
                 }
                 let n = crate::places::side_normal(b.front);
@@ -3237,6 +3244,16 @@ fn plaza_trees(plaza: Aabb, steps: (usize, usize)) -> Vec<Vec2> {
     });
     trees
 }
+
+/// A plaza ring's step count with a few more spots (user, 2026-10-27:
+/// "subile otro 15% a pueblos y aldeas"); the steps are whole, so the ring
+/// grows less than the rest.
+fn more_steps(steps: usize) -> usize {
+    (steps as f32 * PLAZA_RING_MORE).round() as usize
+}
+
+/// How many times the steps of the first planting a plaza ring takes.
+const PLAZA_RING_MORE: f32 = 1.08;
 
 /// Spots in a ring just inside the plaza edge (see [`plaza_trees`]).
 fn plaza_ring(plaza: Aabb, steps: (usize, usize)) -> Vec<Vec2> {
@@ -5915,7 +5932,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_street_row_keeps_seventeen_to_twenty_one_meters_between_its_trees() {
+    fn a_street_row_keeps_fifteen_to_eighteen_meters_between_its_trees() {
         let mut gaps = Vec::new();
         for (name, t) in towns_with_names()
             .into_iter()
@@ -5930,14 +5947,15 @@ pub(crate) mod tests {
                 at.sort_by(|a, b| (a.x + a.y).total_cmp(&(b.x + b.y)));
                 for pair in at.windows(2) {
                     let gap = pair[0].distance(pair[1]);
-                    assert!(gap >= 17.0 - 1e-3, "{name}: row {row}, {gap} m apart");
+                    assert!(gap >= 14.8 - 1e-3, "{name}: row {row}, {gap} m apart");
                     gaps.push(gap);
                 }
             }
         }
         assert!(gaps.len() > 250, "{} gaps", gaps.len());
-        // Most of them are the planned 17 to 21 m; the rest skip a door or a lamp.
-        let planned = gaps.iter().filter(|&&g| g < 28.0).count();
+        // Most of them are the planned 14.8 to 18.4 m; the rest skip a door
+        // or a lamp.
+        let planned = gaps.iter().filter(|&&g| g < 24.0).count();
         assert!(planned * 10 > gaps.len() * 8, "{planned} of {}", gaps.len());
     }
 
@@ -5947,18 +5965,19 @@ pub(crate) mod tests {
         // Counts before the user's second playtest (2026-10-26), on the
         // 2026-10-26 street widths: 2247 street trees in the cities of these
         // samples; before the first playtest, 119 front trees in the towns
-        // (on the old widths).
+        // (on the old widths); 189 front trees before the 15% more.
         let (mut pits, mut fronts) = (0, 0);
         for (_, t) in towns_with_names() {
             pits += trees_of(&t, ShadeKind::Pit).len();
             fronts += trees_of(&t, ShadeKind::Front).len();
         }
+        // Then 15% more (2026-10-27): 2039 before, so 1.12 to 1.18 times.
         assert!(
-            (2247 * 85 / 100..=2247 * 95 / 100).contains(&pits),
+            (2039 * 112 / 100..=2039 * 118 / 100).contains(&pits),
             "{pits} street trees"
         );
         assert!(
-            (119 * 3 / 2..=119 * 19 / 10).contains(&fronts),
+            (189 * 112 / 100..=189 * 123 / 100).contains(&fronts),
             "{fronts} front trees"
         );
     }
@@ -6199,12 +6218,15 @@ pub(crate) mod tests {
                 .filter(|p| p.kind == PlantKind::Flowers)
                 .count();
         }
+
+        // After the 15% more (2026-10-27): the sample towns 178, the cities
+        // 968.
         assert!(
-            (129..=160).contains(&small),
+            (165..=190).contains(&small),
             "{small} yard trees in the towns"
         );
         assert!(
-            (843..=1040).contains(&city),
+            (910..=1030).contains(&city),
             "{city} yard trees in the cities"
         );
         // Plants on top: at least a third as many as the trees.
@@ -6284,15 +6306,17 @@ pub(crate) mod tests {
         // Before the thinning (user, 2026-10-26) the very big samples had
         // 90, 75 and 90 plaza trees (the rings' 36 and 54, 39 and 54 groves);
         // a fifth fewer after the first playtest (72, 60, 72), 36 in 100
-        // fewer after the second (58, 48, 58), all of it from the groves.
+        // fewer after the second (58, 48, 58), all of it from the groves;
+        // then 15% more trees in towns (2026-10-27): the rings grew to 44
+        // and the cut, a share of the whole, with them (71, 64, 73).
         let very_big: Vec<(String, TownLayout)> = towns_with_names()
             .into_iter()
             .filter(|(_, t)| t.size == TownSize::VeryBig)
             .collect();
         assert_eq!(very_big.len(), 3);
-        for ((name, t), total) in very_big.iter().zip([58, 48, 58]) {
+        for ((name, t), total) in very_big.iter().zip([71, 64, 73]) {
             let groves = trees_of(t, ShadeKind::Grove).len();
-            assert_eq!(t.trees.len(), 36, "{name}: the rings stay whole");
+            assert_eq!(t.trees.len(), 44, "{name}: the rings stay whole");
             assert_eq!(t.trees.len() + groves, total, "{name}");
             // Still groves in the middle, not just at the edge.
             let plaza = t.plaza.expanded(-12.0);
@@ -6302,14 +6326,45 @@ pub(crate) mod tests {
                 .count();
             assert!(inside >= 4, "{name}: {inside} grove trees in the middle");
         }
-        // The big towns' plazas are as they were.
+        // The big towns' groves with the denser grid (9, 7, 11, 17 before).
         let big: Vec<(String, TownLayout)> = towns_with_names()
             .into_iter()
             .filter(|(_, t)| t.size == TownSize::Big)
             .collect();
         assert_eq!(big.len(), 4);
-        for ((name, t), groves) in big.iter().zip([9, 7, 11, 17]) {
+        for ((name, t), groves) in big.iter().zip([10, 12, 11, 19]) {
             assert_eq!(trees_of(t, ShadeKind::Grove).len(), groves, "{name}");
         }
+    }
+
+    #[test]
+    fn towns_plant_fifteen_percent_more_trees() {
+        // Trees of the sample towns before the extra ones (2026-10-27):
+        // plaza rings 340, street trees 2039, front 189, groves 100, yards
+        // 1013, 3681 in all. Whole steps and a very big town's grove cut
+        // keep the parts apart from a flat 15%.
+        let count = |kind| {
+            sample_towns()
+                .iter()
+                .flat_map(|t| t.shade_trees.iter())
+                .filter(|s| s.kind == kind)
+                .count()
+        };
+        let ring: usize = sample_towns().iter().map(|t| t.trees.len()).sum();
+        let total = ring
+            + [
+                ShadeKind::Pit,
+                ShadeKind::Front,
+                ShadeKind::Grove,
+                ShadeKind::Yard,
+            ]
+            .map(count)
+            .iter()
+            .sum::<usize>();
+        let share = total as f32 / 3681.0;
+        assert!((1.12..=1.18).contains(&share), "{total} trees: {share}");
+        assert!(count(ShadeKind::Pit) as f32 >= 1.12 * 2039.0);
+        assert!(count(ShadeKind::Yard) as f32 >= 1.08 * 1013.0);
+        assert!(ring as f32 >= 1.08 * 340.0);
     }
 }
