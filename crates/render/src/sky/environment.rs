@@ -375,10 +375,20 @@ fn follow_exposure(
     };
     let intensity = environment_intensity(&current_sky(&clock), share.0, env.mean_luma);
     for mut light in &mut lights {
-        if light.intensity != intensity {
+        if exposure_drifted(light.intensity, intensity) {
             light.intensity = intensity;
         }
     }
+}
+
+/// Relative change in the environment light's intensity worth writing.
+/// The clock moves every frame; below this the step is invisible, and
+/// skipping it spares a change-detected re-extraction each frame.
+const EXPOSURE_TOLERANCE: f32 = 0.01;
+
+/// Whether `current` is far enough from `target` to be updated.
+fn exposure_drifted(current: f32, target: f32) -> bool {
+    (current - target).abs() > EXPOSURE_TOLERANCE * target.abs().max(current.abs())
 }
 
 #[cfg(test)]
@@ -729,6 +739,18 @@ mod tests {
                 .get::<GeneratedEnvironmentMapLight>(slow)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn exposure_follows_real_changes_but_ignores_tiny_drift() {
+        // A sliver of drift each frame is left alone, so the light isn't
+        // marked changed (and re-extracted) every frame.
+        assert!(!exposure_drifted(240.0, 240.5));
+        assert!(!exposure_drifted(240.0, 238.0));
+        // A real change, or a light still at zero, is followed.
+        assert!(exposure_drifted(240.0, 245.0));
+        assert!(exposure_drifted(240.0, 200.0));
+        assert!(exposure_drifted(0.0, 0.5));
     }
 
     #[test]
