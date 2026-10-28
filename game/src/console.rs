@@ -337,7 +337,10 @@ impl Plugin for ConsolePlugin {
             .add_message::<KeyboardInput>()
             .add_message::<Unlocked>()
             .add_systems(Startup, spawn_panel)
-            .add_systems(PreUpdate, read_keys.after(InputSystems))
+            .add_systems(
+                PreUpdate,
+                read_keys.after(InputSystems).before(crate::menu::MenuKeys),
+            )
             .add_systems(Update, run_entered.after(DrivePlayer))
             .add_systems(PostUpdate, draw_panel);
     }
@@ -1242,5 +1245,24 @@ mod tests {
         key(&mut app, KeyCode::Escape, None);
         app.update();
         assert!(!app.world().resource::<Console>().open);
+    }
+
+    #[test]
+    fn the_esc_that_closes_the_console_does_not_pause_the_game() {
+        let mut app = app();
+        app.add_plugins(crate::menu::MenuPlugin {
+            title: false,
+            settings: None,
+        });
+        app.update();
+        app.world_mut().resource_mut::<Console>().open = true;
+        // The window's Esc, both as the key held and as the key typed.
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Escape);
+        send(&mut app, KeyCode::Escape, None, ButtonState::Pressed);
+        app.update();
+        assert!(!app.world().resource::<Console>().open);
+        assert_eq!(app.world().resource::<crate::menu::Menu>().screen, None);
     }
 }

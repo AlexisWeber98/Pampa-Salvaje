@@ -37,6 +37,7 @@ pub mod terrain;
 pub mod town;
 pub mod train;
 pub mod tree;
+pub mod typeface;
 
 pub use atmosphere::{AtmospherePlugin, CloseShadows, DUST_COLOR, Sky, Sun, WorldClock, sky_at};
 pub use bubble::{Say, SpeechBubble, SpeechBubblePlugin};
@@ -71,6 +72,7 @@ pub use terrain::{StreamFocus, TerrainChunk, TerrainPlugin, WorldChunks, WorldTe
 pub use town::{ActiveTowns, StreamTowns, TownPlugin, TownRoot, WindmillRotor, WorldTowns};
 pub use train::{TRAIN_DRAW_RADIUS, TrainCar, TrainPlugin, TrainWheel, WorldTrains, car_transform};
 pub use tree::{Species, TreeKit, TreePlugin};
+pub use typeface::{TypefacePlugin, Typefaces};
 
 /// The game's `assets/` folder. Vegetation models and ground textures are
 /// read from it at startup. Without it, or when a file is missing, their
