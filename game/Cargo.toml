@@ -1,6 +1,6 @@
 [package]
 name = "game"
-description = "Pampa Seca game binary: wires core logic and rendering together."
+description = "Pampa Salvaje game binary: wires core logic and rendering together."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

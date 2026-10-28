@@ -6,7 +6,7 @@
 //!   (born Segundo David Peralta). It is pinned over an 1882 map of
 //!   Argentina (`assets/menu/poster.png`).
 //! - On the right is a band of red paint (`assets/menu/band.png`) lettered
-//!   with "Pampa Seca" and the choices Jugar, Sonido and Salir.
+//!   with "Pampa Salvaje" and the choices Jugar, Sonido and Salir.
 //!
 //! `tools/menu_poster.sh` bakes the poster and the band.
 //!
@@ -336,7 +336,7 @@ fn spawn_menu(
                 ))
                 .with_children(|band| {
                     band.spawn((
-                        Text::new("Pampa Seca"),
+                        Text::new("Pampa Salvaje"),
                         font(&faces.display, 7.5),
                         TextColor(PAPER),
                     ));

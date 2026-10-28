@@ -1,7 +1,7 @@
 //! The player's sound settings: a general volume and the music's, set in
 //! the menus' Sonido screen and kept between runs in `settings.ron` under
-//! the user's config directory (`$XDG_CONFIG_HOME/pampa-seca`,
-//! `~/.config/pampa-seca`, or `%APPDATA%\pampa-seca` on Windows).
+//! the user's config directory (`$XDG_CONFIG_HOME/pampa-salvaje`,
+//! `~/.config/pampa-salvaje`, or `%APPDATA%\pampa-salvaje` on Windows).
 //!
 //! Each volume is a step from 0 to [`MAX_STEP`]. What the ear hears grows
 //! with the square of the amplitude's step, so [`SoundSettings::music_gain`]
@@ -100,7 +100,7 @@ pub fn settings_path() -> Option<PathBuf> {
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
     }?;
-    Some(base.join("pampa-seca").join("settings.ron"))
+    Some(base.join("pampa-salvaje").join("settings.ron"))
 }
 
 #[cfg(test)]

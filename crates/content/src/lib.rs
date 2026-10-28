@@ -1,4 +1,4 @@
-//! Editable game content for Pampa Seca, read from RON files under `assets/`.
+//! Editable game content for Pampa Salvaje, read from RON files under `assets/`.
 //!
 //! Content is data, not code: writers edit `assets/dialogue/*.ron` (lines)
 //! and `assets/world/towns.ron` (towns), and the game picks the changes up

@@ -1,4 +1,4 @@
-//! Bevy plugins that draw the Pampa Seca world.
+//! Bevy plugins that draw the Pampa Salvaje world.
 //!
 //! Everything here reads logic state from `pampa-core` and turns it into
 //! pixels. Nothing here feeds back into game rules.

@@ -1,6 +1,6 @@
 [package]
 name = "pampa-render"
-description = "Bevy plugins that draw the Pampa Seca world."
+description = "Bevy plugins that draw the Pampa Salvaje world."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

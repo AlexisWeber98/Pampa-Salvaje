@@ -1,6 +1,6 @@
 [package]
 name = "pampa-core"
-description = "Pure game logic for Pampa Seca. Must never depend on a renderer or engine."
+description = "Pure game logic for Pampa Salvaje. Must never depend on a renderer or engine."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -278,7 +278,7 @@ pub(crate) mod tests {
     impl Scratch {
         pub(crate) fn new(name: &str) -> Self {
             let dir =
-                std::env::temp_dir().join(format!("pampa-seca-{name}-{}", std::process::id()));
+                std::env::temp_dir().join(format!("pampa-salvaje-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             Self(dir)

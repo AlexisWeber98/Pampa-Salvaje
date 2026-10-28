@@ -1,7 +1,7 @@
 //! The game's typefaces, loaded once for every UI that letters text.
 //!
 //! - Display: Rye (Sorkin Type Co, SIL OFL 1.1), the wood type of a 1919
-//!   poster, for headings ("SE BUSCA", "Pampa Seca").
+//!   poster, for headings ("SE BUSCA", "Pampa Salvaje").
 //! - Body: IM Fell English (Igino Marini, SIL OFL 1.1), old book print, in
 //!   roman and italic, for everything else.
 //!
