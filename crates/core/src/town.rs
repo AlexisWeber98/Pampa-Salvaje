@@ -4843,19 +4843,21 @@ pub(crate) mod tests {
         // Este: their 10 and 11 m sample streets are 12 m now, because every
         // town has sidewalks). Nine were re-pinned for T5b (2026-10-27): every
         // platform grew 2.35 m toward the track (edge 1.65 m from it, was
-        // 4 m); the two towns without a train are unchanged.
+        // 4 m); the two towns without a train are unchanged. All eleven were
+        // re-pinned when the church lost its signboard (2026-10-28): the
+        // places' signs are part of the fingerprint.
         let pinned = [
-            0x4f1e_6a49_2be4_82de,
-            0x740a_932e_20b5_4950,
-            0x7e52_940f_8dff_5e79,
-            0xda4e_9af6_878e_3cf1,
-            0x7a05_aeb9_d800_9a6e,
-            0xd776_e920_251c_ce3d,
-            0xa4c9_d99b_867c_fefe,
-            0x33cc_abb9_b720_f13d,
-            0x2a00_7462_898d_b811,
-            0xca25_ea1d_f2d9_60f1,
-            0x8df6_2300_5168_f874,
+            0x724c_91c9_470f_e41f,
+            0xddf4_88db_9aca_9d42,
+            0xabf1_d06d_e5fe_009f,
+            0x1967_ad10_c15d_9323,
+            0x4d89_5840_612f_7b5e,
+            0x13b1_8853_df0f_ebac,
+            0x365f_dd8c_2dfa_515e,
+            0x1aae_2a35_d655_4343,
+            0x22e7_02d3_ccc3_bbdf,
+            0x4d1c_69a6_fa5a_47b4,
+            0x8854_fa05_02dd_27b9,
         ];
         let configs = small_configs();
         assert_eq!(configs.len(), pinned.len());
