@@ -10,7 +10,8 @@
 //! list every tree of the world once, at load, for collision.
 
 use crate::rng::Rng;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::{Arc, Mutex};
 
 use crate::{
     Aabb, ChunkCoord, FenceLayout, FlatArea, KeepOut, Lagoon, LinePath, RailLine, RoadNetwork,
@@ -60,6 +61,89 @@ pub enum Age {
     Mature,
     /// A rare old giant: tall, thick-trunked and broad-crowned.
     Old,
+}
+
+/// The most recent chunks' natives, kept across calls so the chunks of a
+/// stream (and the extras of each) reuse each other's: oldest out first,
+/// at most `cap` chunks. A clone starts empty, and the cache never takes
+/// part in comparing two sites.
+struct NativeCache {
+    cap: usize,
+    inner: Mutex<NativeCacheInner>,
+}
+
+#[derive(Default)]
+struct NativeCacheInner {
+    /// The natives by chunk and by whether the stands were redistributed
+    /// (the one switch of a site that changes them after it is built).
+    map: HashMap<(ChunkCoord, bool), Arc<[Tree]>>,
+    order: VecDeque<(ChunkCoord, bool)>,
+}
+
+impl NativeCache {
+    /// Chunks kept by default: the radius-3 scene is 49 chunks, and a pass
+    /// over the whole world, row by row, needs about five rows of 120.
+    const DEFAULT_CAP: usize = 1024;
+
+    fn new(cap: usize) -> Self {
+        Self {
+            cap,
+            inner: Mutex::default(),
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, NativeCacheInner> {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn len(&self) -> usize {
+        self.lock().map.len()
+    }
+
+    fn clear(&self) {
+        *self.lock() = NativeCacheInner::default();
+    }
+
+    fn get_or_insert(
+        &self,
+        key: (ChunkCoord, bool),
+        work: impl FnOnce() -> Vec<Tree>,
+    ) -> Arc<[Tree]> {
+        if let Some(hit) = self.lock().map.get(&key) {
+            return hit.clone();
+        }
+        // Worked out outside the lock; two threads may both do it, and the
+        // trees are the same.
+        let trees: Arc<[Tree]> = work().into();
+        let mut inner = self.lock();
+        if inner.map.insert(key, trees.clone()).is_none() {
+            inner.order.push_back(key);
+            while inner.order.len() > self.cap {
+                if let Some(old) = inner.order.pop_front() {
+                    inner.map.remove(&old);
+                }
+            }
+        }
+        trees
+    }
+}
+
+impl Clone for NativeCache {
+    fn clone(&self) -> Self {
+        Self::new(self.cap)
+    }
+}
+
+impl PartialEq for NativeCache {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for NativeCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "NativeCache({}/{})", self.len(), self.cap)
+    }
 }
 
 /// One tree on the ground plane.
@@ -146,6 +230,12 @@ pub struct FloraSite {
     lagoons: Vec<Lagoon>,
     rail: Vec<(Vec2, Vec2)>,
     roads: Option<Arc<RoadNetwork>>,
+    /// The chunks a road may reach the extras of: every chunk whose box,
+    /// grown by [`Self::ESCAPE_ROAD_REACH`], meets the bounds of a road
+    /// piece. The others have no escaped tree by a road.
+    road_chunks: HashSet<ChunkCoord>,
+    /// The natives of the latest chunks, shared by the calls on this site.
+    natives: NativeCache,
     /// The surveyed fence lines: `x` of the north–south ones, `y` of the
     /// east–west ones.
     fences: (Vec<f32>, Vec<f32>),
@@ -326,12 +416,26 @@ impl FloraSite {
     /// towns, with its roads laid), kept off the `line`'s track and the
     /// roads.
     pub fn new(config: WorldConfig, terrain: &Terrain, line: &RailLine) -> Self {
+        let size = config.chunk_size;
+        let mut road_chunks = HashSet::new();
+        for (a, b) in terrain.roads.iter().flat_map(|r| r.segments()) {
+            let reach = Vec2::new(Self::ESCAPE_ROAD_REACH, Self::ESCAPE_ROAD_REACH);
+            let lo = ChunkCoord::containing(Vec2::new(a.x.min(b.x), a.y.min(b.y)) - reach, size);
+            let hi = ChunkCoord::containing(Vec2::new(a.x.max(b.x), a.y.max(b.y)) + reach, size);
+            for y in lo.y..=hi.y {
+                for x in lo.x..=hi.x {
+                    road_chunks.insert(ChunkCoord::new(x, y));
+                }
+            }
+        }
         Self {
             config,
             flat_areas: terrain.flat_areas.clone(),
             lagoons: terrain.lagoons.clone(),
             rail: line.segments().map(|s| (s.start, s.end)).collect(),
             roads: terrain.roads.clone(),
+            road_chunks,
+            natives: NativeCache::new(NativeCache::DEFAULT_CAP),
             fences: (Vec::new(), Vec::new()),
             settlements: None,
             worked: Vec::new(),
@@ -347,6 +451,7 @@ impl FloraSite {
     pub fn with_track(mut self, path: &LinePath) -> Self {
         self.rail
             .extend(path.points().windows(2).map(|w| (w[0], w[1])));
+        self.natives.clear();
         self
     }
 
@@ -375,6 +480,7 @@ impl FloraSite {
     /// This flora, with trees kept off the surveyed lines of `fences`.
     pub fn with_fences(mut self, fences: &FenceLayout) -> Self {
         self.fences = fences.surveyed.clone();
+        self.natives.clear();
         self
     }
 
@@ -383,6 +489,7 @@ impl FloraSite {
     pub fn with_settlements(mut self, settlements: &SettlementLayout) -> Self {
         self.settlements = Some(settlements.keep_out.clone());
         self.worked = settlements.settlements.iter().map(|s| s.hub).collect();
+        self.natives.clear();
         self
     }
 
@@ -713,7 +820,8 @@ impl FloraSite {
     /// they were when the trees were thinned.
     fn chunk_trees(&self, coord: ChunkCoord, rail: &[(Vec2, Vec2)]) -> Vec<Tree> {
         let size = self.config.chunk_size;
-        let mut natives = self.native_trees(coord, rail);
+        debug_assert_eq!(rail, self.rail_near(coord));
+        let mut natives = self.cached_natives(coord).to_vec();
         let mut extras = self.extra_trees(coord, rail, &natives);
         for (dx, dy) in [(-1, -1), (0, -1), (1, -1), (-1, 0)] {
             let earlier = ChunkCoord::new(coord.x + dx, coord.y + dy);
@@ -726,7 +834,7 @@ impl FloraSite {
             // extras never displace one; the extras give way to the earlier
             // extras (and keep clear of every native by their own draw).
             let rail = self.rail_near(earlier);
-            let theirs = self.native_trees(earlier, &rail);
+            let theirs = self.cached_natives(earlier);
             natives.retain(|t| {
                 theirs
                     .iter()
@@ -750,6 +858,20 @@ impl FloraSite {
         let extras = self.extra_trees(coord, rail, &trees);
         trees.extend(extras);
         trees
+    }
+
+    /// [`Self::native_trees`] of chunk `coord` over its own rail, from the
+    /// cache when it holds them.
+    fn cached_natives(&self, coord: ChunkCoord) -> Arc<[Tree]> {
+        self.natives.get_or_insert((coord, self.redistribute), || {
+            self.native_trees(coord, &self.rail_near(coord))
+        })
+    }
+
+    #[cfg(test)]
+    fn with_native_cap(mut self, cap: usize) -> Self {
+        self.natives = NativeCache::new(cap);
+        self
     }
 
     /// The field's own trees of chunk `coord` (the monte, the groves and the
@@ -870,13 +992,29 @@ impl FloraSite {
         let min = coord.min(size);
         let mut rng = Rng::new(coord.seed(self.seed), 3);
         let mut extras: Vec<Tree> = Vec::new();
-        let mut neighbours: Vec<(ChunkCoord, Vec<Tree>)> = Vec::new();
+        // No hub reaches the chunk: past both reaches the hubs favour
+        // nothing, so the per-spot distance is not worked out.
+        let reach = Self::OMBU_REACH.max(Self::ESCAPE_HUB_FAR);
+        let hub_free = self.worked.iter().all(|h| {
+            let b = coord.bounds(size);
+            let nearest = Vec2::new(h.x.clamp(b.min.x, b.max.x), h.y.clamp(b.min.y, b.max.y));
+            nearest.distance(*h) > reach
+        });
+        // Nor a road within the escaped trees' reach of the chunk.
+        let road_free = !self.road_chunks.contains(&coord);
+        if hub_free && road_free {
+            return extras;
+        }
         for _ in 0..self.scaled(Self::TREE_CANDIDATES) {
             let at = min + Vec2::new(rng.unit() * size, rng.unit() * size);
             if natives.len() + extras.len() >= Self::TREE_BUDGET {
                 break;
             }
-            let hub = self.hub_distance(at);
+            let hub = if hub_free {
+                f32::MAX
+            } else {
+                self.hub_distance(at)
+            };
             let ombu = Self::OMBU_TREE * Self::ombu_zone(hub);
             let escaped = Self::ESCAPED_TREE * self.escape_by(at, hub);
             if ombu + escaped <= 0.0 {
@@ -917,14 +1055,7 @@ impl FloraSite {
                 if !clear || !self.config.has_chunk(other) || !reach.contains_point(at) {
                     continue;
                 }
-                let index = match neighbours.iter().position(|(c, _)| *c == other) {
-                    Some(i) => i,
-                    None => {
-                        neighbours.push((other, self.native_trees(other, &self.rail_near(other))));
-                        neighbours.len() - 1
-                    }
-                };
-                clear = neighbours[index].1.iter().all(apart);
+                clear = self.cached_natives(other).iter().all(apart);
             }
             if clear {
                 extras.push(tree);
@@ -3212,5 +3343,74 @@ mod tests {
         }
         assert!(Species::Espinillo.height_range().1 <= 5.0);
         assert!(Species::Ombu.height_range().1 >= 15.0);
+    }
+
+    /// A hash of every tree [`FloraSite::chunk_trees`] plants in the chunks
+    /// round the shipped hubs and in a sparse sweep of the open field. It
+    /// was taken with the straightforward per-neighbour recomputation, so
+    /// any shortcut in the extras' path must keep it.
+    #[test]
+    fn the_planted_trees_of_the_shipped_world_keep_their_golden_hash() {
+        let (flora, _, hubs) = shipped();
+        let size = flora.config.chunk_size;
+        let mut chunks: Vec<ChunkCoord> = hubs
+            .iter()
+            .flat_map(|h| flora.config.chunks_near(*h, 3))
+            .collect();
+        let b = flora.config.bounds();
+        let (lo, hi) = (
+            ChunkCoord::containing(b.min, size),
+            ChunkCoord::containing(b.max, size),
+        );
+        for y in (lo.y..=hi.y).step_by(7) {
+            for x in (lo.x..=hi.x).step_by(7) {
+                chunks.push(ChunkCoord::new(x, y));
+            }
+        }
+        chunks.sort();
+        chunks.dedup();
+        let (mut hash, mut count) = (0xcbf2_9ce4_8422_2325_u64, 0_usize);
+        for c in chunks.into_iter().filter(|c| flora.config.has_chunk(*c)) {
+            for t in flora.chunk_trees(c, &flora.rail_near(c)) {
+                for w in [
+                    t.at.x.to_bits(),
+                    t.at.y.to_bits(),
+                    t.variant,
+                    t.species as u32,
+                ] {
+                    hash = (hash ^ u64::from(w)).wrapping_mul(0x0100_0000_01b3);
+                }
+                count += 1;
+            }
+        }
+        assert_eq!((count, hash), (12028, 0x85d0_b8bb_c3da_7e5e));
+    }
+
+    /// Streaming chunks through a small cache, the first again once it has
+    /// pushed them out, plants what a site with nothing cached plants.
+    #[test]
+    fn the_native_cache_plants_what_a_fresh_site_plants_even_after_eviction() {
+        let (flora, _, hubs) = shipped();
+        let streamed = flora.clone().with_native_cap(8);
+        let chunks: Vec<ChunkCoord> = flora.config.chunks_near(hubs[0], 3);
+        for pass in 0..2 {
+            for &c in &chunks {
+                let fresh = flora.clone().chunk_trees(c, &flora.rail_near(c));
+                let cached = streamed.chunk_trees(c, &streamed.rail_near(c));
+                assert_eq!(cached, fresh, "{c:?} on pass {pass}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_native_cache_keeps_to_its_cap() {
+        let (flora, _, hubs) = shipped();
+        let streamed = flora.clone().with_native_cap(8);
+        for c in flora.config.chunks_near(hubs[0], 3) {
+            streamed.chunk_trees(c, &streamed.rail_near(c));
+            assert!(streamed.natives.len() <= 8);
+        }
+        assert_eq!(streamed.natives.len(), 8);
+        assert_eq!(flora.clone().natives.len(), 0, "a clone starts empty");
     }
 }
