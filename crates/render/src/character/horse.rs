@@ -21,8 +21,16 @@
 //! up, the stride plays backward at the same pace; turning on the spot,
 //! it walks in place at the small pace of [`stepping_speed`]. A tied
 //! horse changes idle now and then, as the corral horses do; a ridden one
-//! stands still. A horse out of view or far off keeps its last pose, but
-//! never the player's.
+//! stands still. In the air ([`VisualPose::flight`](super::VisualPose))
+//! only the jump clip plays ([`Clip::GallopJump`], weighed up at
+//! [`JUMP_BLEND_RATE`]): it never runs by the clock but is set each frame to
+//! [`jump_time`] of the physics' own flight, so the tuck and the pitch land
+//! with the arc, and the gait clips pick up where they were once it ends.
+//! The flight starts on the clip's own push, lingering on it
+//! ([`JUMP_LINGER`]), and the fitting adds the hind legs' thrust and a
+//! deeper foreleg tuck (see [`gait`](super::gait)).
+//! A horse out of view or far off keeps its last pose, but never the
+//! player's.
 //!
 //! Coats are painted into the model's vertex colours from where each vertex
 //! sits on the standing horse ([`Coat::color_at`]), so patches, dapples and
@@ -43,8 +51,8 @@ use super::gait::{
 use super::visual::VisualPose;
 use crate::fauna::Animal;
 use crate::fauna::livestock::{
-    self, Clip, CoatCache, HORSE_IDLE, HORSE_WALK_SPEED, LivestockModels, ModelPart, Species,
-    any_in_view, dress_meshes, frozen, mix, start_offset, view_eye,
+    self, CLIP_COUNT, Clip, CoatCache, HORSE_IDLE, HORSE_WALK_SPEED, LivestockModels, ModelPart,
+    Species, any_in_view, dress_meshes, frozen, mix, start_offset, view_eye,
 };
 use crate::gltf::{self, ModelState};
 
@@ -223,9 +231,9 @@ pub const GALLOP_SPEED: f32 = 7.3;
 /// The weight of each clip, in [`Clip::ALL`] order, for a horse standing
 /// with `idle` or moving at `speed` m/s with `stride` (the walk or the
 /// gallop): the idle fades into the stride. They add up to one.
-pub fn gait_weights(idle: Clip, stride: Clip, speed: f32) -> [f32; 6] {
+pub fn gait_weights(idle: Clip, stride: Clip, speed: f32) -> [f32; CLIP_COUNT] {
     let moving = ((speed - WALK_BAND.0) / (WALK_BAND.1 - WALK_BAND.0)).clamp(0.0, 1.0);
-    let mut out = [0.0; 6];
+    let mut out = [0.0; CLIP_COUNT];
     out[idle.index()] = 1.0 - moving;
     out[stride.index()] += moving;
     out
@@ -262,6 +270,9 @@ pub struct HorseBody {
     pub gallop: f32,
     /// Its ground speed now, m/s (none standing).
     pub speed: f32,
+    /// How far through a jump's flight it is (`0..=1`), none on the ground:
+    /// a rider keeps his balance through it.
+    pub flight: Option<f32>,
     /// Its own seed: where its clips start and which idle a tied horse
     /// plays.
     pub seed: u32,
@@ -304,16 +315,18 @@ pub struct HorseRig {
     /// Its drawn meshes: it is in view while any of them is.
     pub probes: Vec<Entity>,
     /// Each clip's weight now, in [`Clip::ALL`] order.
-    pub weights: [f32; 6],
+    pub weights: [f32; CLIP_COUNT],
     /// Whether its clips are playing.
     pub started: bool,
     /// Whether its bones keep their last pose.
     pub frozen: bool,
     /// Each clip's length, seconds, once it has loaded.
-    pub durations: [f32; 6],
+    pub durations: [f32; CLIP_COUNT],
     /// The stride clip it is mostly playing (the walk or the gallop): the
     /// other is put in step with it as it takes over.
     pub lead: Clip,
+    /// How far through a jump's flight it is (`0..=1`), none on the ground.
+    pub flight: Option<f32>,
 }
 
 impl HorseRig {
@@ -322,11 +335,12 @@ impl HorseRig {
         Self {
             player,
             probes,
-            weights: [0.0; 6],
+            weights: [0.0; CLIP_COUNT],
             started: false,
             frozen: false,
-            durations: [0.0; 6],
+            durations: [0.0; CLIP_COUNT],
             lead: Clip::Walk,
+            flight: None,
         }
     }
 }
@@ -348,6 +362,34 @@ pub fn in_step(to: Clip, phase: f32) -> f32 {
 /// How fast the clips' weights ease toward their targets, per second: a
 /// quick fade, so two clips are seldom seen half and half.
 pub const HORSE_BLEND_RATE: f32 = 12.0;
+
+/// The same, taking off: faster, so the legs are tucked as the horse
+/// leaves the ground.
+pub const JUMP_BLEND_RATE: f32 = 40.0;
+
+/// The part of the `Gallop_Jump` clip that is the flight, in seconds of the
+/// clip (measured on its `Body` and hind legs' curves): from the hind legs'
+/// push, the hooves reaching back and down as they leave the ground, to the
+/// `Body` back at its rest height, the hooves down. What comes before is
+/// the crouch and the wind-up and what comes after the settle, which the
+/// stride clips take over.
+pub const JUMP_FLIGHT: (f32, f32) = (0.45, 1.17);
+
+/// How many seconds of the clip the takeoff's push is drawn out by: the
+/// clip starts slow (at about a third of its pace) on the hind legs' push,
+/// so it reads as the horse leaves the ground, and catches up by a third
+/// of the flight.
+pub const JUMP_LINGER: f32 = 0.15;
+
+/// Where in the `Gallop_Jump` clip a horse `flight` (`0..=1`) of the way
+/// through its jump is, seconds: the clip is spread over the physics' own
+/// flight, not played by the clock, lingering on the push
+/// ([`JUMP_LINGER`]).
+pub fn jump_time(flight: f32) -> f32 {
+    let f = flight.clamp(0.0, 1.0);
+    let span = JUMP_FLIGHT.1 - JUMP_FLIGHT.0 + JUMP_LINGER;
+    JUMP_FLIGHT.0 + span * f - JUMP_LINGER * (1.0 - (1.0 - f).powi(4))
+}
 
 /// The model's transform under its body: the horse's export turned to face
 /// +X and scaled to life (the corral horses' scale).
@@ -372,6 +414,7 @@ pub(super) fn spawn_horse(
                 gait: HorseGait::Idle,
                 gallop: 0.0,
                 speed: 0.0,
+                flight: None,
                 seed: parent.index_u32(),
             },
             Transform::default(),
@@ -576,6 +619,7 @@ fn find_bones(scene: &HorseScene, root: Entity) -> Option<HorseBones> {
         partial,
         means,
         standing,
+        body_rest: rest(bones[GaitBone::Body.index()])?.translation,
     })
 }
 
@@ -601,7 +645,7 @@ pub(super) fn fit_horses(
             .ok()
             .and_then(|p| p.animation(species.nodes[gallop]))
             .map_or(0.0, |a| a.seek_time() / rig.durations[gallop].max(1e-3));
-        fit_horse(bones, &mut transforms, &rig.weights, phase);
+        fit_horse(bones, &mut transforms, &rig.weights, phase, rig.flight);
     }
 }
 
@@ -675,7 +719,13 @@ pub(super) fn drive_horses(
         } else {
             Clip::Walk
         };
-        let goal = gait_weights(body.idle(clock), stride, speed);
+        // In the air only the jump plays, along the flight.
+        let flight = poses.get(parent.parent()).ok().and_then(|p| p.flight);
+        let mut goal = gait_weights(body.idle(clock), stride, speed);
+        if flight.is_some() {
+            goal = [0.0; CLIP_COUNT];
+            goal[Clip::GallopJump.index()] = 1.0;
+        }
         if !rig.started {
             let Some(loaded) = loaded.as_deref() else {
                 continue;
@@ -712,17 +762,33 @@ pub(super) fn drive_horses(
             }
             rig.lead = lead;
         }
-        let k = 1.0 - (-HORSE_BLEND_RATE * dt).exp();
+        let rate = if flight.is_some() {
+            JUMP_BLEND_RATE
+        } else {
+            HORSE_BLEND_RATE
+        };
+        let k = 1.0 - (-rate * dt).exp();
         for (w, t) in rig.weights.iter_mut().zip(goal) {
             *w += (t - *w) * k;
         }
         body.gallop = rig.weights[Clip::Gallop.index()];
         body.speed = speed;
+        body.flight = flight;
+        rig.flight = flight;
         for clip in Clip::ALL {
             if let Some(active) = player.animation_mut(species.nodes[clip.index()]) {
-                active
-                    .set_weight(rig.weights[clip.index()])
-                    .set_speed(gait_rate(clip, velocity));
+                if clip == Clip::GallopJump {
+                    // Never plays by the clock (so never loops): it is set
+                    // to the flight's point, and left there as it fades.
+                    if let Some(flight) = flight {
+                        active.seek_to(jump_time(flight));
+                    }
+                    active.set_weight(rig.weights[clip.index()]).set_speed(0.0);
+                } else {
+                    active
+                        .set_weight(rig.weights[clip.index()])
+                        .set_speed(gait_rate(clip, velocity));
+                }
             }
         }
     }
@@ -869,7 +935,7 @@ pub(crate) mod tests {
 
     #[test]
     fn the_idle_fades_into_the_stride_and_the_gallop_takes_over_outright() {
-        let only = |w: [f32; 6], clip: Clip| {
+        let only = |w: [f32; CLIP_COUNT], clip: Clip| {
             w.iter()
                 .enumerate()
                 .all(|(k, w)| *w == if k == clip.index() { 1.0 } else { 0.0 })
@@ -936,6 +1002,7 @@ pub(crate) mod tests {
             gait: HorseGait::Idle,
             gallop: 0.0,
             speed: 0.0,
+            flight: None,
             seed: 11,
         };
         for k in 0..40 {
@@ -1065,6 +1132,292 @@ pub(crate) mod tests {
         assert!(bend > 0.1, "the horse's back bends over a stride: {bend}");
     }
 
+    /// `visual` riding at `speed` (a gallop) `flight` of the way through a
+    /// jump, for one frame.
+    fn fly(app: &mut App, me: Entity, flight: Option<f32>) {
+        app.world_mut().entity_mut(me).insert(VisualPose {
+            animation: AnimationState::Gallop,
+            speed: 12.2,
+            flight,
+            ..default()
+        });
+        app.update();
+    }
+
+    /// The playing rig: a scene spawned again under load leaves a fresh,
+    /// unstarted one beside it until it settles.
+    fn rig_of(app: &mut App) -> (Entity, [f32; CLIP_COUNT]) {
+        let world = app.world_mut();
+        let (_, rig) = world
+            .query::<(Entity, &HorseRig)>()
+            .iter(world)
+            .find(|(_, r)| r.started)
+            .unwrap();
+        (rig.player, rig.weights)
+    }
+
+    #[test]
+    fn the_jump_clip_is_set_to_the_flights_point_and_never_plays_by_the_clock() {
+        let rider = CharacterVisual::Mounted {
+            rider: FigureKind::Protagonist,
+            coat: Coat::Bayo,
+        };
+        let (mut app, me) = saddled_every(rider, 12.2, 20);
+        let node = app
+            .world()
+            .resource::<LivestockModels>()
+            .get(Species::Horse)
+            .unwrap()
+            .nodes[Clip::GallopJump.index()];
+        let jump = Clip::GallopJump.index();
+        for _ in 0..40 {
+            ride(&mut app, me, 12.2);
+        }
+        let (_, galloping) = rig_of(&mut app);
+        assert!(galloping[jump] < 1e-3 && galloping[Clip::Gallop.index()] > 0.95);
+        let seek = |app: &mut App| {
+            let (player, _) = rig_of(app);
+            let player = app.world().get::<AnimationPlayer>(player).unwrap();
+            let active = player.animation(node).unwrap();
+            (active.seek_time(), active.speed())
+        };
+        for flight in [0.0, 0.25, 0.5, 1.0] {
+            for _ in 0..10 {
+                fly(&mut app, me, Some(flight));
+            }
+            let (_, weights) = rig_of(&mut app);
+            assert!(weights[jump] > 0.99, "{flight}: {weights:?}");
+            assert!(
+                weights[Clip::Gallop.index()] < 0.01,
+                "{flight}: {weights:?}"
+            );
+            let (at, speed) = seek(&mut app);
+            assert!((at - jump_time(flight)).abs() < 1e-3, "{flight}: {at}");
+            assert_eq!(speed, 0.0);
+            // A held point does not creep on.
+            fly(&mut app, me, Some(flight));
+            assert_eq!(seek(&mut app).0, at, "{flight}");
+        }
+        // The flight spans the clip's own flight, whole.
+        assert_eq!(jump_time(0.0), JUMP_FLIGHT.0);
+        assert_eq!(jump_time(1.0), JUMP_FLIGHT.1);
+        // Landed: back to the gallop, the jump at nothing, and it stays
+        // there (the clip is not left looping).
+        for _ in 0..60 {
+            ride(&mut app, me, 12.2);
+        }
+        let (_, weights) = rig_of(&mut app);
+        assert!(weights[jump] < 1e-3, "{weights:?}");
+        assert!(weights[Clip::Gallop.index()] > 0.95, "{weights:?}");
+        assert!((seek(&mut app).0 - JUMP_FLIGHT.1).abs() < 1e-3);
+        // The stride clips' weights are as the gait alone makes them.
+        let goal = gait_weights(Clip::Idle, Clip::Gallop, 12.2);
+        for (w, g) in weights.iter().zip(goal) {
+            assert!((w - g).abs() < 0.05, "{weights:?} vs {goal:?}");
+        }
+    }
+
+    #[test]
+    fn in_the_air_the_horses_body_keeps_its_height_the_clips_own_rise_taken_out() {
+        let rider = CharacterVisual::Mounted {
+            rider: FigureKind::Protagonist,
+            coat: Coat::Bayo,
+        };
+        let (mut app, me) = saddled_every(rider, 12.2, 20);
+        let carrier = app.world().get::<Children>(me).unwrap()[0];
+        for _ in 0..40 {
+            ride(&mut app, me, 12.2);
+        }
+        let body_height = |app: &App| {
+            let world = app.world();
+            let body = named(world, carrier, "Body");
+            let to_body = world
+                .get::<GlobalTransform>(carrier)
+                .unwrap()
+                .affine()
+                .inverse();
+            to_body
+                .transform_point3(world.get::<GlobalTransform>(body).unwrap().translation())
+                .y
+        };
+        let rest = {
+            let world = app.world_mut();
+            let (_, bones) = world
+                .query::<(&HorseRig, &HorseBones)>()
+                .iter(world)
+                .next()
+                .unwrap();
+            bones.armature.transform_point3(bones.body_rest).y
+        };
+        let mut heights = Vec::new();
+        for flight in [0.0, 0.2, 0.5, 0.8, 1.0] {
+            for _ in 0..10 {
+                fly(&mut app, me, Some(flight));
+            }
+            heights.push(body_height(&app));
+        }
+        for h in &heights {
+            assert!((h - rest).abs() < 0.03, "{heights:?} against rest {rest}");
+        }
+    }
+
+    #[test]
+    fn in_the_air_each_hoof_stays_on_the_end_of_its_leg() {
+        // The hooves hang from IK targets under the armature, not from the
+        // legs: the clip keeps each target on its leg's end (within 4 cm,
+        // where its IK falls short), and taking the clip's rise out of the body must not
+        // leave the targets behind, or the hooves come off the legs.
+        let rider = CharacterVisual::Mounted {
+            rider: FigureKind::Protagonist,
+            coat: Coat::Bayo,
+        };
+        let (mut app, me) = saddled_every(rider, 12.2, 20);
+        let carrier = app.world().get::<Children>(me).unwrap()[0];
+        for _ in 0..40 {
+            ride(&mut app, me, 12.2);
+        }
+        let legs = [
+            ("FrontLowerLeg.L_end", "IKFrontLeg.L"),
+            ("FrontLowerLeg.R_end", "IKFrontLeg.R"),
+            ("BackLowerLeg.L_end", "IKBackLeg.L"),
+            ("BackLowerLeg.R_end", "IKBackLeg.R"),
+        ];
+        let gaps = |app: &App| {
+            let world = app.world();
+            let at = |n: &str| {
+                world
+                    .get::<GlobalTransform>(named(world, carrier, n))
+                    .unwrap()
+                    .translation()
+            };
+            legs.map(|(end, hoof)| at(end).distance(at(hoof)))
+        };
+        for flight in [0.1, 0.3, 0.5, 0.7, 0.9] {
+            for _ in 0..10 {
+                fly(&mut app, me, Some(flight));
+            }
+            for (leg, gap) in gaps(&app).into_iter().enumerate() {
+                assert!(gap < 0.05, "flight {flight}, leg {leg}: {gap} m");
+            }
+        }
+    }
+
+    #[test]
+    fn at_the_top_of_the_jump_all_four_hooves_are_tucked_off_the_ground() {
+        let rider = CharacterVisual::Mounted {
+            rider: FigureKind::Protagonist,
+            coat: Coat::Bayo,
+        };
+        let (mut app, me) = saddled_every(rider, 12.2, 20);
+        let carrier = app.world().get::<Children>(me).unwrap()[0];
+        let toes = |app: &App| {
+            let world = app.world();
+            let to_body = world
+                .get::<GlobalTransform>(carrier)
+                .unwrap()
+                .affine()
+                .inverse();
+            ["FF.L_end", "FF.R_end", "FFB.L_end", "FFB.R_end"].map(|n| {
+                let e = named(world, carrier, n);
+                to_body
+                    .transform_point3(world.get::<GlobalTransform>(e).unwrap().translation())
+                    .y
+            })
+        };
+        let mut ground = f32::MAX;
+        for _ in 0..80 {
+            ride(&mut app, me, 12.2);
+            ground = toes(&app).into_iter().fold(ground, f32::min);
+        }
+        for _ in 0..10 {
+            fly(&mut app, me, Some(0.5));
+        }
+        for (leg, y) in toes(&app).into_iter().enumerate() {
+            assert!(
+                y > ground + 0.1,
+                "leg {leg}: {y} against the ground at {ground}"
+            );
+        }
+    }
+
+    /// Each leg's hoof (its IK target) from its top joint (the hind hip,
+    /// the front elbow), in the horse's body frame: `[front L, front R,
+    /// hind L, hind R]`.
+    fn hooves_from_joints(app: &App, carrier: Entity) -> [Vec3; 4] {
+        let world = app.world();
+        let to_body = world
+            .get::<GlobalTransform>(carrier)
+            .unwrap()
+            .affine()
+            .inverse();
+        let at = |n: &str| {
+            let e = named(world, carrier, n);
+            to_body.transform_point3(world.get::<GlobalTransform>(e).unwrap().translation())
+        };
+        [
+            ("FrontUpperLeg.L", "IKFrontLeg.L"),
+            ("FrontUpperLeg.R", "IKFrontLeg.R"),
+            ("BackLeg.L", "IKBackLeg.L"),
+            ("BackLeg.R", "IKBackLeg.R"),
+        ]
+        .map(|(joint, hoof)| at(hoof) - at(joint))
+    }
+
+    #[test]
+    fn at_takeoff_the_hind_legs_push_back_and_down_then_fold_up_by_mid_flight() {
+        let rider = CharacterVisual::Mounted {
+            rider: FigureKind::Protagonist,
+            coat: Coat::Bayo,
+        };
+        let (mut app, me) = saddled_every(rider, 12.2, 20);
+        let carrier = app.world().get::<Children>(me).unwrap()[0];
+        for _ in 0..40 {
+            ride(&mut app, me, 12.2);
+        }
+        let mut hind = |flight: f32| {
+            for _ in 0..10 {
+                fly(&mut app, me, Some(flight));
+            }
+            let legs = hooves_from_joints(&app, carrier);
+            println!("{flight}: {:?}", &legs[2..]);
+            [legs[2], legs[3]]
+        };
+        // Leaving the ground: each hind leg reaches back and down from the
+        // hip, near its full length (the plain clip still has it under the
+        // belly there, its hoof ahead of the hip).
+        for leg in hind(0.05) {
+            assert!(leg.x < -0.3 && leg.length() > 1.0, "pushing: {leg}");
+        }
+        // Mid-flight the push is gone: folded up, the hoof under the belly.
+        for leg in hind(0.5) {
+            assert!(leg.x > 0.1 && leg.length() < 1.0, "folded: {leg}");
+        }
+    }
+
+    #[test]
+    fn at_the_top_of_the_jump_the_forelegs_tuck_up_close_to_the_elbows() {
+        let rider = CharacterVisual::Mounted {
+            rider: FigureKind::Protagonist,
+            coat: Coat::Bayo,
+        };
+        let (mut app, me) = saddled_every(rider, 12.2, 20);
+        let carrier = app.world().get::<Children>(me).unwrap()[0];
+        for _ in 0..40 {
+            ride(&mut app, me, 12.2);
+        }
+        for flight in [0.45, 0.5] {
+            for _ in 0..10 {
+                fly(&mut app, me, Some(flight));
+            }
+            // The plain clip leaves the front hooves about 0.72 m from their
+            // elbows there, on average: a little more folded.
+            let [l, r, ..] = hooves_from_joints(&app, carrier);
+            let reach = (l.length() + r.length()) / 2.0;
+            println!("{flight}: {l} {r} {reach}");
+            assert!(reach < 0.66, "flight {flight}: {l} {r}");
+        }
+    }
+
     /// Writes CPU-skinned frames to `PAMPA_PREVIEW` (a folder) for the
     /// offline preview renderer: a ridden horse standing (and settled),
     /// walking and through a gallop's loop, braking from the gallop to a
@@ -1111,6 +1464,25 @@ pub(crate) mod tests {
                 }
                 dump(&mut app, me, format!("{name}_{k:02}"));
             }
+        }
+        // A jump at full gallop, as logic flies it (about 1.1 s): every
+        // 0.1 s through the flight, then the landing.
+        let (mut app, me) = saddled_every(rider, 12.2, 20);
+        for _ in 0..60 {
+            ride(&mut app, me, 12.2);
+        }
+        let frames = 55;
+        for f in 0..=frames {
+            fly(&mut app, me, Some(f as f32 / frames as f32));
+            if f % 5 == 0 {
+                dump(&mut app, me, format!("jump_{:02}", f / 5));
+            }
+        }
+        for k in 0..6 {
+            for _ in 0..5 {
+                ride(&mut app, me, 12.2);
+            }
+            dump(&mut app, me, format!("landing_{k:02}"));
         }
         // Standing: at once, and settled after a few seconds.
         let (mut app, me) = saddled_every(rider, 0.0, 20);
@@ -1188,7 +1560,7 @@ pub(crate) mod tests {
             .expect("the horse's model")
             .nodes
             .clone();
-        let rigs: Vec<(Entity, u32, [f32; 6])> = world
+        let rigs: Vec<(Entity, u32, [f32; CLIP_COUNT])> = world
             .query::<(&ChildOf, &HorseRig)>()
             .iter(world)
             .map(|(child_of, rig)| {

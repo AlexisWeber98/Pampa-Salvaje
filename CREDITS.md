@@ -93,7 +93,7 @@ See `assets/models/third-party/3td-starter-pack/CREDITS.md` for details.
 
 | Asset | Author / source | Licence | Where | Changes |
 |---|---|---|---|---|
-| Cow, Bull, Horse (animated) | Quaternius, poly.pizza (https://poly.pizza/m/26zM1outCr, https://poly.pizza/m/a8PIIYwF7r, https://poly.pizza/m/qvTrSG9pZF) | CC0 1.0 | `assets/models/fauna/quaternius/` | Trimmed with `tools/glbtrim.py` to six clips (the duplicate `AnimalArmature` clips, Attack, Death and Jump dropped, with the data only they used) and given smooth normals; scaled, turned and recoloured per coat in the game |
+| Cow, Bull, Horse (animated) | Quaternius, poly.pizza (https://poly.pizza/m/26zM1outCr, https://poly.pizza/m/a8PIIYwF7r, https://poly.pizza/m/qvTrSG9pZF) | CC0 1.0 | `assets/models/fauna/quaternius/` | Trimmed with `tools/glbtrim.py` to seven clips (the duplicate `AnimalArmature` clips, Attack, Death and the standing Jump dropped, with the data only they used) and given smooth normals; scaled, turned and recoloured per coat in the game |
 
 See `assets/models/fauna/quaternius/CREDITS.md` for details.
 

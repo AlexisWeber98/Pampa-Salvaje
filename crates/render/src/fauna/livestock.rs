@@ -1,6 +1,6 @@
 //! Cattle and corral horses: Quaternius' animated low-poly models (CC0,
 //! from poly.pizza; credited in `assets/models/fauna/quaternius/CREDITS.md`
-//! and the root `CREDITS.md`), trimmed to six clips by `tools/glbtrim.py`.
+//! and the root `CREDITS.md`), trimmed to seven clips by `tools/glbtrim.py`.
 //!
 //! Each [`Species`] loads once at startup ([`LivestockModels`]): its glTF
 //! scene, its clips and one shared [`AnimationGraph`]. A cow, bull or horse
@@ -153,16 +153,23 @@ pub enum Clip {
     Eating,
     Walk,
     Gallop,
+    /// The airborne jump (legs tucked, body pitching): only a ridden horse
+    /// in flight plays it, so every other animal keeps it at weight zero.
+    GallopJump,
 }
 
+/// How many clips every model holds ([`Clip::ALL`]'s length).
+pub const CLIP_COUNT: usize = 7;
+
 impl Clip {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; CLIP_COUNT] = [
         Self::Idle,
         Self::Idle2,
         Self::IdleHeadlow,
         Self::Eating,
         Self::Walk,
         Self::Gallop,
+        Self::GallopJump,
     ];
 
     /// The clip's name in the glTF file.
@@ -174,6 +181,7 @@ impl Clip {
             Self::Eating => "Eating",
             Self::Walk => "Walk",
             Self::Gallop => "Gallop",
+            Self::GallopJump => "Gallop_Jump",
         }
     }
 

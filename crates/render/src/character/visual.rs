@@ -61,6 +61,11 @@ pub struct VisualPose {
     /// this frame, 0 when not turning; standing still, render steps in
     /// place by its size.
     pub turn: f32,
+    /// How far through a jump's flight a mounted rider is, `0..=1` (none on
+    /// the ground, and always none for people on foot): the saddled horse
+    /// plays its jump clip along it, tucked at the top and stretching out
+    /// to land.
+    pub flight: Option<f32>,
 }
 
 /// Draws entities carrying a [`CharacterVisual`].
@@ -268,6 +273,7 @@ mod tests {
                     animation: AnimationState::Gallop,
                     speed: 11.0,
                     turn: 0.0,
+                    flight: None,
                 },
             ))
             .id();
@@ -290,6 +296,7 @@ mod tests {
             animation: AnimationState::Gallop,
             speed: 5.0,
             turn: 0.0,
+            flight: None,
         });
         app.update();
         let (b, t) = body(&mut app);
@@ -339,6 +346,7 @@ mod tests {
                     animation: AnimationState::Walk,
                     speed: 1.4,
                     turn: 0.0,
+                    flight: None,
                 },
             ))
             .id();

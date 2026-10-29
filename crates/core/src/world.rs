@@ -176,22 +176,28 @@ impl World {
     }
 
     /// Adds every span and every shut gate of `fences` as thin static
-    /// obstacles; open gates and broken spans are gaps. Returns how many
+    /// obstacles [`FenceLayout::HEIGHT`] tall, which a jumping horse
+    /// clears; open gates and broken spans are gaps. Returns how many
     /// boxes were added.
     pub fn fence(&mut self, fences: &FenceLayout) -> usize {
         let spans = fences.obstacles();
         let count = spans.len();
-        self.obstacles.extend(spans);
+        for span in spans {
+            self.obstacles.push_low(span, FenceLayout::HEIGHT);
+        }
         count
     }
 
     /// Adds every house, galpón, tank and prop of `settlements` as a static
     /// obstacle, every corral as its rail spans (open at its gate) and
-    /// every tree spot as its trunk. Tracks are no obstacle. Returns how
-    /// many boxes were added.
+    /// every tree spot as its trunk, each as tall as its structure
+    /// ([`SettlementLayout::obstacle_heights`]). Tracks are no obstacle.
+    /// Returns how many boxes were added.
     pub fn settle(&mut self, settlements: &SettlementLayout) -> usize {
         let before = self.obstacles.len();
-        self.obstacles.extend(settlements.obstacles());
+        for (obstacle, height) in settlements.obstacle_heights() {
+            self.obstacles.push_low(obstacle, height);
+        }
         self.obstacles.len() - before
     }
 
@@ -251,6 +257,19 @@ impl World {
         self.resolve_among(collider, center, &[], on_push)
     }
 
+    /// Like [`Self::resolve`] for a body `clearance` meters above the
+    /// ground (a jumping horse): low obstacles no taller than that
+    /// ([`StaticObstacles::near_above`]) let it pass.
+    pub fn resolve_above(
+        &self,
+        collider: Circle,
+        center: Vec2,
+        clearance: f32,
+        on_push: impl FnMut(Vec2),
+    ) -> Vec2 {
+        self.resolve_among_above(collider, center, &[], clearance, on_push)
+    }
+
     /// Like [`Self::resolve`], also pushing the circle clear of other
     /// characters' `bodies`. Bodies give way to the world: when a body and
     /// a wall pinch the circle, the wall wins.
@@ -259,16 +278,35 @@ impl World {
         collider: Circle,
         center: Vec2,
         bodies: &[Body],
+        on_push: impl FnMut(Vec2),
+    ) -> Vec2 {
+        self.resolve_among_above(
+            collider,
+            center,
+            bodies,
+            StaticObstacles::ON_GROUND,
+            on_push,
+        )
+    }
+
+    /// [`Self::resolve_among`] for a body `clearance` meters above the
+    /// ground, like [`Self::resolve_above`].
+    pub fn resolve_among_above(
+        &self,
+        collider: Circle,
+        center: Vec2,
+        bodies: &[Body],
+        clearance: f32,
         mut on_push: impl FnMut(Vec2),
     ) -> Vec2 {
         let start = center;
-        let resolved = self.push_passes(collider, center, bodies, true, &mut on_push);
-        if self.overlap(collider, resolved) < CLEAR {
+        let resolved = self.push_passes(collider, center, bodies, clearance, true, &mut on_push);
+        if self.overlap(collider, resolved, clearance) < CLEAR {
             return resolved;
         }
-        let spot = match self.nearest_clear(collider, start) {
+        let spot = match self.nearest_clear(collider, start, clearance) {
             Some(spot) => spot,
-            None => self.push_passes(collider, resolved, &[], false, &mut |_| ()),
+            None => self.push_passes(collider, resolved, &[], clearance, false, &mut |_| ()),
         };
         let push = spot - resolved;
         let length = push.length();
@@ -280,12 +318,14 @@ impl World {
 
     /// Up to [`PASSES`] rounds of pushing the circle out of each body, then
     /// each obstacle in turn (moving ones only when `with_moving`), so the
-    /// world gets the last word in every round.
+    /// world gets the last word in every round. Low obstacles no taller
+    /// than `clearance` are passed over.
     fn push_passes(
         &self,
         collider: Circle,
         mut center: Vec2,
         bodies: &[Body],
+        clearance: f32,
         with_moving: bool,
         on_push: &mut impl FnMut(Vec2),
     ) -> Vec2 {
@@ -305,7 +345,7 @@ impl World {
             }
             let nearby = self
                 .obstacles
-                .near(around(center, collider.radius + LOOKUP_SLACK));
+                .near_above(around(center, collider.radius + LOOKUP_SLACK), clearance);
             for obstacle in nearby {
                 apply(collider.push_out(center, obstacle), &mut center);
             }
@@ -325,11 +365,12 @@ impl World {
         center
     }
 
-    /// Deepest overlap of a circle at `center` with any obstacle, in meters.
-    fn overlap(&self, collider: Circle, center: Vec2) -> f32 {
+    /// Deepest overlap of a circle at `center` with any obstacle taller
+    /// than `clearance`, in meters.
+    fn overlap(&self, collider: Circle, center: Vec2, clearance: f32) -> f32 {
         let footprints = self
             .obstacles
-            .near(around(center, collider.radius + LOOKUP_SLACK))
+            .near_above(around(center, collider.radius + LOOKUP_SLACK), clearance)
             .into_iter()
             .chain(self.moving.iter().map(|m| &m.footprint));
         footprints
@@ -347,7 +388,7 @@ impl World {
     /// Nearest spot to `from` where the circle overlaps nothing, along the
     /// directions across and along every moving obstacle it touches and the
     /// world axes; `None` if there is none within [`SEARCH_RANGE`].
-    fn nearest_clear(&self, collider: Circle, from: Vec2) -> Option<Vec2> {
+    fn nearest_clear(&self, collider: Circle, from: Vec2, clearance: f32) -> Option<Vec2> {
         let axes = [Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0)];
         let touching = self
             .moving
@@ -356,7 +397,7 @@ impl World {
             .flat_map(|m| [m.across, Vec2::new(-m.across.y, m.across.x)]);
         let directions: Vec<Vec2> = touching.chain(axes).flat_map(|d| [d, d * -1.0]).collect();
         // Strictly clear: the result must not count as touching anything.
-        let clear = |p: Vec2| self.overlap(collider, p) == 0.0;
+        let clear = |p: Vec2| self.overlap(collider, p, clearance) == 0.0;
         let mut best: Option<(f32, Vec2)> = None;
         for direction in directions {
             let limit = best.map_or(SEARCH_RANGE, |(t, _)| t);
@@ -395,7 +436,7 @@ impl World {
         let fits = |p: Vec2| {
             self.bounds.contain(p, collider.radius).position == p
                 && !self.terrain.lagoons.iter().any(|l| l.is_bare(p))
-                && self.overlap(collider, p) == 0.0
+                && self.overlap(collider, p, StaticObstacles::ON_GROUND) == 0.0
         };
         if fits(near) {
             return Some(near);
@@ -457,6 +498,28 @@ mod tests {
         let c = Circle::new(0.9);
         let end = world.resolve(c, wall.center(), |_| ());
         assert!(deepest_overlap(&world, c, end) < 1e-3, "{end:?}");
+    }
+
+    #[test]
+    fn a_body_higher_than_a_low_footprint_passes_over_it() {
+        let mut world = World::default();
+        let fence = Aabb::from_center_size(Vec2::ZERO, Vec2::new(10.0, 0.15));
+        world.obstacles.push_low(fence, 1.3);
+        let c = Circle::new(0.9);
+        let on_it = Vec2::new(0.0, 0.3);
+        // Above the wires: left where it is, nothing pushed.
+        let mut pushes = 0;
+        let end = world.resolve_above(c, on_it, 1.4, |_| pushes += 1);
+        assert_eq!((end, pushes), (on_it, 0));
+        // Lower than the wires, or on the ground: pushed clear as ever.
+        for clearance in [1.2, 0.0] {
+            let end = world.resolve_above(c, on_it, clearance, |_| ());
+            assert!(end.y >= 0.9 + 0.075 - 1e-4, "{clearance}: {end:?}");
+        }
+        assert_eq!(
+            world.resolve(c, on_it, |_| ()),
+            world.resolve_above(c, on_it, 0.0, |_| ())
+        );
     }
 
     #[test]

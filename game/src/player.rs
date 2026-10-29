@@ -153,6 +153,10 @@ pub(crate) fn follow_player(players: Query<&Player>, mut focus: ResMut<StreamFoc
     }
 }
 
+/// Makes the horse jump at full gallop (see [`Rider::jump`]); slower, or on
+/// foot, it does nothing.
+pub const JUMP_KEY: KeyCode = KeyCode::Space;
+
 /// Maps held keys to logic intent: W/S throttle, A/D turn, Shift gallop.
 pub fn read_input(keys: &ButtonInput<KeyCode>) -> RiderInput {
     let axis = |positive: KeyCode, negative: KeyCode| {
@@ -181,13 +185,17 @@ pub(crate) fn drive_player(
             Travel::Riding => &tuning.0,
         };
         let before = rider.heading;
+        if keys.just_pressed(JUMP_KEY) {
+            rider.jump(params);
+        }
         rider.step(input, params, &world.0, dt);
-        transform.translation = world_from_ground(rider.position, rider.height);
+        transform.translation = world_from_ground(rider.position, rider.elevation());
         *pose = VisualPose {
             heading: rider.heading,
             animation: rider.animation(params),
             speed: rider.speed,
             turn: yaw_rate(before, rider.heading, dt),
+            flight: rider.flight(),
         };
     }
 }
@@ -289,6 +297,75 @@ mod tests {
         );
         // The world streams around the rider.
         assert_eq!(app.world().resource::<StreamFocus>().0, rider.position);
+    }
+
+    /// Rides with W and Shift for four seconds (a horse reaches full
+    /// gallop), then taps the jump key for one frame.
+    fn tap_jump_moving(app: &mut App) {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.press(KeyCode::KeyW);
+        keys.press(KeyCode::ShiftLeft);
+        for _ in 0..250 {
+            app.update();
+        }
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(JUMP_KEY);
+        app.update();
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.release(JUMP_KEY);
+        keys.clear_just_pressed(JUMP_KEY);
+    }
+
+    #[test]
+    fn the_jump_key_lifts_a_moving_horse_and_its_transform() {
+        let mut app = headless_app(Duration::from_millis(16));
+        tap_jump_moving(&mut app);
+        app.update();
+        let rider = player_rider(&mut app);
+        assert!(rider.airborne() && rider.air > 0.0, "{rider:?}");
+        let mut query = app.world_mut().query_filtered::<&Transform, With<Player>>();
+        let transform = query.single(app.world()).unwrap();
+        assert_eq!(
+            transform.translation,
+            world_from_ground(rider.position, rider.elevation())
+        );
+        // It comes down again.
+        for _ in 0..90 {
+            app.update();
+        }
+        assert!(!player_rider(&mut app).airborne());
+    }
+
+    #[test]
+    fn the_jump_key_does_nothing_short_of_full_gallop() {
+        let mut app = headless_app(Duration::from_millis(16));
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyW);
+        for _ in 0..120 {
+            app.update();
+        }
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(JUMP_KEY);
+        app.update();
+        let rider = player_rider(&mut app);
+        assert!(rider.speed > 0.0);
+        assert!(!rider.airborne());
+    }
+
+    #[test]
+    fn the_jump_key_does_nothing_on_foot() {
+        let mut app = headless_app(Duration::from_millis(16));
+        app.insert_resource(PlayerSpawn {
+            travel: Travel::OnFoot,
+            ..PlayerSpawn::default()
+        });
+        tap_jump_moving(&mut app);
+        let rider = player_rider(&mut app);
+        assert!(rider.speed > 0.0);
+        assert!(!rider.airborne());
     }
 
     #[test]

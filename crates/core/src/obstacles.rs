@@ -15,9 +15,16 @@ use crate::{Aabb, ChunkCoord, Vec2, WorldConfig};
 /// grouped by the chunk they belong to, added and dropped a chunk at a time
 /// (see [`Self::set_chunk`]). Only [`Self::near`] sees that layer; the slice
 /// view, iteration, `len` and equality cover the permanent footprints.
+///
+/// A permanent footprint may be low (see [`Self::push_low`]): something a
+/// jumping horse clears, such as a fence. [`Self::near_above`] leaves out
+/// the low footprints a body is higher than. Everything else, streamed
+/// footprints included, is unbounded.
 #[derive(Debug, Clone, Default)]
 pub struct StaticObstacles {
     items: Vec<Aabb>,
+    /// The height of each of `items`, in meters; infinite unless low.
+    tops: Vec<f32>,
     /// Footprint indices per grid cell.
     cells: HashMap<(i32, i32), Vec<u32>>,
     /// The streamed footprints of each loaded chunk.
@@ -30,6 +37,10 @@ impl StaticObstacles {
     /// Side of one index cell, in meters: about a house lot.
     pub const CELL: f32 = 16.0;
 
+    /// The clearance of a body on the ground ([`Self::near_above`]): every
+    /// footprint blocks it, however low.
+    pub const ON_GROUND: f32 = f32::NEG_INFINITY;
+
     /// The obstacles in `items`, indexed.
     pub fn new(items: Vec<Aabb>) -> Self {
         let mut obstacles = Self::default();
@@ -39,13 +50,20 @@ impl StaticObstacles {
         obstacles
     }
 
-    /// Adds one footprint.
+    /// Adds one footprint, unbounded upward.
     pub fn push(&mut self, item: Aabb) {
+        self.push_low(item, f32::INFINITY);
+    }
+
+    /// Adds one footprint `height` meters tall, which a body higher than
+    /// that clears ([`Self::near_above`]).
+    pub fn push_low(&mut self, item: Aabb, height: f32) {
         let index = self.items.len() as u32;
         for cell in Self::cells_of(item) {
             self.cells.entry(cell).or_default().push(index);
         }
         self.items.push(item);
+        self.tops.push(height);
     }
 
     /// Adds every footprint of `items`.
@@ -63,8 +81,13 @@ impl StaticObstacles {
             return false;
         };
         let mut items = std::mem::take(&mut self.items);
+        let mut tops = std::mem::take(&mut self.tops);
         items.remove(index);
-        *self = Self::new(items);
+        tops.remove(index);
+        *self = Self::default();
+        for (item, top) in items.into_iter().zip(tops) {
+            self.push_low(item, top);
+        }
         true
     }
 
@@ -132,6 +155,13 @@ impl StaticObstacles {
     /// permanent ones in insertion order, then the streamed ones by chunk
     /// and index. A non-finite `area` finds nothing.
     pub fn near(&self, area: Aabb) -> Vec<&Aabb> {
+        self.near_above(area, Self::ON_GROUND)
+    }
+
+    /// Like [`Self::near`], leaving out the low footprints no taller than
+    /// `clearance` meters: what a body that high above the ground runs
+    /// into.
+    pub fn near_above(&self, area: Aabb, clearance: f32) -> Vec<&Aabb> {
         let finite = [area.min.x, area.min.y, area.max.x, area.max.y]
             .iter()
             .all(|v| v.is_finite());
@@ -154,6 +184,7 @@ impl StaticObstacles {
         streamed.dedup();
         found
             .into_iter()
+            .filter(|&i| self.tops[i as usize] > clearance)
             .map(|i| &self.items[i as usize])
             .chain(
                 streamed
@@ -242,6 +273,54 @@ mod tests {
                 Aabb::from_center_size(c, s)
             })
             .collect()
+    }
+
+    #[test]
+    fn a_low_footprint_is_cleared_only_above_its_top() {
+        let wall = Aabb::from_center_size(Vec2::new(0.0, 0.0), Vec2::new(1.0, 1.0));
+        let fence = Aabb::from_center_size(Vec2::new(2.0, 0.0), Vec2::new(4.0, 0.15));
+        let mut obstacles = StaticObstacles::default();
+        obstacles.push(wall);
+        obstacles.push_low(fence, 1.3);
+        let area = around(Vec2::ZERO, 10.0);
+        let found = |clearance| -> Vec<Aabb> {
+            obstacles
+                .near_above(area, clearance)
+                .into_iter()
+                .copied()
+                .collect()
+        };
+        assert_eq!(found(0.0), vec![wall, fence]);
+        assert_eq!(found(1.29), vec![wall, fence]);
+        // At its top or higher, the fence is cleared; the wall never is.
+        assert_eq!(found(1.3), vec![wall]);
+        assert_eq!(found(50.0), vec![wall]);
+        // Plain queries and the slice view still see every footprint.
+        assert_eq!(obstacles.near(area).len(), 2);
+        assert_eq!(obstacles, vec![wall, fence]);
+    }
+
+    #[test]
+    fn streamed_footprints_are_never_cleared() {
+        let mut obstacles = StaticObstacles::default();
+        let trunk = Aabb::from_center_size(Vec2::new(10.0, 10.0), Vec2::new(0.6, 0.6));
+        obstacles.set_chunk(ChunkCoord::new(0, 0), vec![trunk]);
+        let found = obstacles.near_above(around(Vec2::new(10.0, 10.0), 2.0), 100.0);
+        assert_eq!(found, vec![&trunk]);
+    }
+
+    #[test]
+    fn removing_a_footprint_keeps_the_others_heights() {
+        let a = Aabb::from_center_size(Vec2::new(0.0, 0.0), Vec2::new(1.0, 1.0));
+        let b = Aabb::from_center_size(Vec2::new(3.0, 0.0), Vec2::new(1.0, 1.0));
+        let c = Aabb::from_center_size(Vec2::new(6.0, 0.0), Vec2::new(1.0, 1.0));
+        let mut obstacles = StaticObstacles::default();
+        obstacles.push_low(a, 1.3);
+        obstacles.push_low(b, 0.6);
+        obstacles.push(c);
+        assert!(obstacles.remove(&a));
+        let found = obstacles.near_above(around(Vec2::new(3.0, 0.0), 10.0), 1.0);
+        assert_eq!(found, vec![&c]);
     }
 
     #[test]
