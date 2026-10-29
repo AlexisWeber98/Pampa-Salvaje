@@ -10,14 +10,22 @@
 //!
 //! - **walking** it sits deep in the recado, upright and relaxed, its seat
 //!   going with the horse's back (it hangs from it) while the spine counters
-//!   the saddle's pitch and roll, late ([`COUNTER`]), so the upper body
-//!   stays quiet;
+//!   the saddle's pitch and roll ([`saddle_attitude`]), late
+//!   ([`COUNTER`]), so the upper body stays quiet;
 //! - **galloping** it rides the half-seat ([`HALF_SEAT`]): the seat hovers
 //!   over the saddle, forward over the knees, and does not ride the
 //!   saddle's bounce (it only just touches at the top of a stride, never
 //!   below); the legs take it, the knees and hips opening and closing and
 //!   the heels sinking ([`HEEL`]); the rider leans about 20° from the hips,
 //!   the back flat ([`LEAN`], [`HIP_SHARE`]), and back when braking;
+//! - **over a jump** it keeps its balance: it holds the half-seat, folds
+//!   forward from the hips as the horse takes off and over the top
+//!   ([`JUMP_FOLD`], [`jump_fold`]), taking the horse's pitch since it
+//!   left the ground at the hips rather than the spine ([`JUMP_BALANCE`]),
+//!   the rein hand forward and down along the neck
+//!   ([`JUMP_HAND`]); landing, it sits up and the knees and hips give, the
+//!   seat coming down to the saddle and never into it ([`landing`],
+//!   [`LANDING_GIVE`]);
 //! - the head stays level and looks ahead, steadied against the lean and
 //!   the saddle's pitch;
 //! - each leg is bent round the barrel by a two-bone IK ([`two_bone`]): the
@@ -230,6 +238,52 @@ pub const COUNTER: (f32, f32) = (0.95, 0.6);
 /// How far the back rounds as the saddle comes up under it at the walk,
 /// radians a meter.
 pub const FLEX: f32 = 1.2;
+
+/// How far the rider folds forward from the hips over a jump, radians, on
+/// top of the half-seat's lean ([`jump_fold`]).
+pub const JUMP_FOLD: f32 = 0.4;
+
+/// Where the rein hand goes over a jump, on top of where it is: forward
+/// and down along the horse's neck, giving it its head (a crest release),
+/// meters at the full fold.
+pub const JUMP_HAND: Vec3 = Vec3::new(0.0, -0.06, 0.16);
+
+/// How much of the horse's pitch over a jump (since it left the ground)
+/// the rider takes at the hips: his upper body keeps its balance.
+pub const JUMP_BALANCE: f32 = 0.9;
+
+/// The fold coming in and going: quick, but never a snap.
+pub const JUMP_EASE: f32 = 14.0;
+
+/// How long the landing takes the rider, seconds ([`landing`]): he sits up
+/// and sinks into the saddle through the knees and hips, then rides on.
+pub const LANDING: f32 = 0.5;
+
+/// How far he sits up on landing, radians against the half-seat's lean,
+/// and how much of the half-seat's hover his knees and hips give at the
+/// bottom of it.
+pub const LANDING_GIVE: (f32, f32) = (0.25, 1.0);
+
+/// How far forward the rider is folded (`0..1`) `flight` (`0..=1`) of the
+/// way through his horse's jump: folding as the horse takes off, folded
+/// over the top, and sitting up again for the landing.
+pub fn jump_fold(flight: f32) -> f32 {
+    let smooth = |u: f32| {
+        let u = u.clamp(0.0, 1.0);
+        u * u * (3.0 - 2.0 * u)
+    };
+    smooth(flight / 0.1) * (1.0 - smooth((flight - 0.7) / 0.3))
+}
+
+/// How much of the landing (`0..1`) the rider takes `since` seconds after
+/// his horse lands: none at the touchdown, all of it a fifth of a second
+/// on, none again after [`LANDING`].
+pub fn landing(since: f32) -> f32 {
+    if !(0.0..LANDING).contains(&since) {
+        return 0.0;
+    }
+    (std::f32::consts::PI * since / LANDING).sin().powi(2)
+}
 
 /// Where on the hand bone the reins are held (the palm), its own space.
 pub const PALM: Vec3 = Vec3::new(0.0, 0.05, 0.0);
@@ -511,6 +565,16 @@ pub struct RiderMotion {
     pub free: [Spring; 3],
     /// The shoulders' shrug.
     pub shrug: Spring,
+    /// How far folded forward over a jump (`0..1`), easing.
+    pub fold: Spring,
+    /// Whether the horse was in the air last frame, and how long since it
+    /// landed, seconds (none once the landing is over).
+    pub flying: bool,
+    pub landed: Option<f32>,
+    /// The saddle's pitch along the horse, smoothed on the ground and held
+    /// over a jump, and how far into a jump the rider is (`0..1`), easing.
+    pub level: Spring,
+    pub air: Spring,
     /// The rider's seed, for its own moments.
     pub seed: u32,
     pub speed: f32,
@@ -554,6 +618,17 @@ fn turn_bone(transforms: &mut Bones, parent: Place, bone: Entity, turn: Quat) {
     }
 }
 
+/// The saddle's pitch (nose up positive) and roll (its right side up
+/// positive), radians, from the `Torso` bone's turn in the horse's body
+/// frame: the bone runs along its own +Y to the horse's front, its +X to
+/// the horse's right.
+pub fn saddle_attitude(tilt: Quat) -> (f32, f32) {
+    (
+        (tilt * Vec3::Y).y.clamp(-1.0, 1.0).asin(),
+        (tilt * Vec3::X).y.clamp(-1.0, 1.0).asin(),
+    )
+}
+
 /// Fits every playing rider to its horse (see the module notes), after the
 /// clips have posed it (and the horse) and before the transforms are worked
 /// out.
@@ -593,17 +668,15 @@ pub(super) fn pose_riders(
         let (_, tilt, _) = torso.to_scale_rotation_translation();
         // The seat's height (where the pelvis sits), and the saddle's
         // pitch and roll.
-        let now = [
-            rider.translation.y,
-            (tilt * Vec3::X).y.clamp(-1.0, 1.0).asin(),
-            (tilt * Vec3::Z).y.clamp(-1.0, 1.0).asin(),
-        ];
+        let (saddle_pitch, saddle_roll) = saddle_attitude(tilt);
+        let now = [rider.translation.y, saddle_pitch, saddle_roll];
         let head = chain_affine(&saddle.head, &transforms);
         let bit = rider
             .inverse()
             .transform_point3(head.transform_point3(saddle.bit));
         if !m.primed {
             m.saddle = now.map(Spring::at);
+            m.level = Spring::at((tilt * Vec3::Y).y.clamp(-1.0, 1.0).asin());
             m.bit = bit.to_array().map(Spring::at);
             m.free = THIGH_HAND.to_array().map(Spring::at);
             m.seed = riding.seed;
@@ -611,12 +684,44 @@ pub(super) fn pose_riders(
             m.primed = true;
         }
         m.clock = pampa_core::tick_clock(m.clock, dt);
+        // A jump: folded forward from the takeoff over the top, then sitting
+        // up and taking the landing in the knees and hips.
+        let fold = m
+            .fold
+            .step(horse.flight.map_or(0.0, jump_fold), JUMP_EASE, dt)
+            .clamp(0.0, 1.0);
+        m.landed = match (m.flying, horse.flight) {
+            (_, Some(_)) => None,
+            (true, None) => Some(0.0),
+            (false, None) => m.landed.map(|t| t + dt).filter(|t| *t < LANDING),
+        };
+        m.flying = horse.flight.is_some();
+        let give = m.landed.map_or(0.0, landing);
+        // The gait's clips stop in the air: the half-seat is held through
+        // the jump and its landing.
+        let jumping = f32::from(m.flying || m.landed.is_some());
         // What the saddle does beyond its smoothed path.
         let mut off = [0.0; 3];
         for k in 0..3 {
             let smooth = m.saddle[k].step(now[k], SADDLE_EASE, dt);
             off[k] = now[k] - smooth;
         }
+        // Over a jump he keeps his balance however the horse pitches: its
+        // pitch since it left the ground (the `Torso` bone runs along its
+        // own +Y, forward) is taken at the hips, eased in and out.
+        let heave = (tilt * Vec3::Y).y.clamp(-1.0, 1.0).asin();
+        let level = if jumping > 0.0 {
+            m.level.value
+        } else {
+            m.level.step(heave, SADDLE_EASE, dt)
+        };
+        // At once on takeoff (the horse has not pitched yet), easing out
+        // once landed.
+        if jumping > 0.0 {
+            m.air = Spring::at(1.0);
+        }
+        let air = m.air.step(0.0, JUMP_EASE, dt).clamp(0.0, 1.0);
+        let balance = JUMP_BALANCE * air * (heave - level);
         let [rise, pitch, roll] = off;
         // Speed, braking and standing still.
         let accel = if dt > 0.0 {
@@ -635,7 +740,7 @@ pub(super) fn pose_riders(
         };
         let settled = f32::from(m.still > STILL);
         let rest = m.rest.step(settled, REST_EASE, dt).clamp(0.0, 1.0);
-        let gallop = horse.gallop.clamp(0.0, 1.0);
+        let gallop = horse.gallop.max(jumping).clamp(0.0, 1.0);
         // The half-seat comes in with the gallop, late.
         let half = m.half.step(gallop, HALF_SEAT_EASE, dt).clamp(0.0, 1.0);
         let walking = (horse.speed / WALK_TOP).min(1.0) * (1.0 - gallop);
@@ -643,10 +748,13 @@ pub(super) fn pose_riders(
             LEAN.0 * half + LEAN.1 * walking - LEAN.2 * braking,
             LEAN_EASE,
             dt,
-        );
-        let counter_pitch = m.counter[0].step(COUNTER.0 * pitch, COUNTER_EASE, dt);
+        ) + JUMP_FOLD * fold
+            - LANDING_GIVE.0 * give
+            + balance;
+        // Over a jump the hips take the pitch (`balance`), not the spine.
+        let counter_pitch = m.counter[0].step(COUNTER.0 * pitch * (1.0 - air), COUNTER_EASE, dt);
         let counter_roll = m.counter[1].step(COUNTER.1 * roll, COUNTER_EASE, dt);
-        let give = Vec3::new(
+        let slack = Vec3::new(
             bit.x - m.bit[0].step(bit.x, BIT_EASE, dt),
             bit.y - m.bit[1].step(bit.y, BIT_EASE, dt),
             bit.z - m.bit[2].step(bit.z, BIT_EASE, dt),
@@ -656,7 +764,10 @@ pub(super) fn pose_riders(
         // The seat. Walking it sits deep in the recado; in the half-seat
         // it hovers above it, forward over the knees, not riding the
         // saddle's bounce: the legs take it. Never below the seat.
-        let hover = (HALF_SEAT.y - rise).clamp(0.0, HALF_SEAT.y * 2.0);
+        // On landing the knees and hips give, the seat coming down to the
+        // saddle (never into it).
+        let hover = (HALF_SEAT.y - rise).clamp(0.0, HALF_SEAT.y * 2.0)
+            * (1.0 - LANDING_GIVE.1 * give).max(0.0);
         let seat = Vec3::new(0.0, half * hover, half * HALF_SEAT.z);
         let period = SHIFT.0 + (riding.seed % SHIFT.1) as f32;
         let shift = Quat::from_rotation_z(
@@ -752,15 +863,15 @@ pub(super) fn pose_riders(
         // the elbows open as the head goes forward and down); the free hand
         // rests by the thigh, going with the seat.
         let follow = FOLLOW.0 + (FOLLOW.1 - FOLLOW.0) * half;
-        let give = give.clamp_length_max(GIVE_MAX) * follow * (1.0 - rest);
-        let reins = REINS_HAND.lerp(GALLOP_HAND, half).lerp(POMMEL_HAND, rest);
+        let slack = slack.clamp_length_max(GIVE_MAX) * follow * (1.0 - rest);
+        let reins = REINS_HAND.lerp(GALLOP_HAND, half).lerp(POMMEL_HAND, rest) + JUMP_HAND * fold;
         let free = free_hand(
             &mut m,
             (rise, pitch, roll),
             (walking, gallop, braking, rest),
             dt,
         );
-        let hands = [reins + give, seat + free];
+        let hands = [reins + slack, seat + free];
         // The shoulders go with the torso, late: up as the saddle drops
         // away, forward as it pitches down.
         let shrug = m.shrug.step(SHRUG * (pitch - 2.0 * rise), SHRUG_EASE, dt);
@@ -1041,6 +1152,24 @@ pub(crate) mod tests {
             let side = if s == 0 { 1.0 } else { -1.0 };
             assert!(ANKLES[s].x * side > 0.25 && ANKLES[s].y < -0.6);
             assert!(KNEE_POLE[s].x * side > 0.0 && ELBOW_POLE[s].x * side > 0.0);
+        }
+    }
+
+    #[test]
+    fn the_saddle_pitches_with_the_horses_nose_and_rolls_with_its_sides() {
+        // The `Torso` bone at rest: it runs along its own +Y to the horse's
+        // front (+X), its +X to the horse's right (+Z), its +Z up.
+        let rest = Quat::from_mat3(&Mat3::from_cols(Vec3::Z, Vec3::X, Vec3::Y));
+        for angle in [-0.4f32, -0.1, 0.1, 0.4] {
+            // Nose up (about the body's side axis, +Z) is a pitch alone.
+            let (pitch, roll) = saddle_attitude(Quat::from_rotation_z(angle) * rest);
+            assert!((pitch - angle).abs() < 1e-4, "{angle}: pitch {pitch}");
+            assert!(roll.abs() < 1e-4, "{angle}: roll {roll}");
+            // The right side up (about the body's long axis, +X) a roll
+            // alone.
+            let (pitch, roll) = saddle_attitude(Quat::from_rotation_x(-angle) * rest);
+            assert!(pitch.abs() < 1e-4, "{angle}: pitch {pitch}");
+            assert!((roll - angle).abs() < 1e-4, "{angle}: roll {roll}");
         }
     }
 
@@ -1373,6 +1502,148 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn through_a_jump_the_rider_stays_on_the_saddle() {
+        let rider = CharacterVisual::Mounted {
+            rider: FigureKind::Protagonist,
+            coat: Coat::Bayo,
+        };
+        let (mut app, me) = seated_every(rider, 12.2, 20);
+        let carrier = app.world().get::<Children>(me).unwrap()[0];
+        // The pelvis in the saddle's (`Torso` bone's) frame.
+        let seat = |app: &App| {
+            let world = app.world();
+            let model = named(world, carrier, "Rider model");
+            let [torso, pelvis] = [
+                named(world, carrier, "Torso"),
+                named(world, model, "pelvis"),
+            ];
+            let g = |e: Entity| world.get::<GlobalTransform>(e).unwrap().affine();
+            g(torso)
+                .inverse()
+                .transform_point3(Vec3::from(g(pelvis).translation))
+        };
+        let fly = |app: &mut App, flight: Option<f32>| {
+            app.world_mut()
+                .entity_mut(me)
+                .insert(crate::character::VisualPose {
+                    animation: pampa_core::AnimationState::Gallop,
+                    speed: 12.2,
+                    flight,
+                    ..default()
+                });
+            app.update();
+        };
+        for _ in 0..80 {
+            fly(&mut app, None);
+        }
+        let ground = seat(&app);
+        // A jump's whole flight, at its real pace (1.1 s of 20 ms frames).
+        for k in 0..55 {
+            fly(&mut app, Some(k as f32 / 54.0));
+            let off = seat(&app).distance(ground);
+            assert!(off < 0.15, "frame {k}: the rider is {off} m off the saddle");
+        }
+        for _ in 0..60 {
+            fly(&mut app, None);
+        }
+        assert!(seat(&app).distance(ground) < 0.15, "and back on it");
+    }
+
+    #[test]
+    fn over_a_jump_the_rider_folds_forward_follows_the_neck_and_sits_up_to_land() {
+        let rider = CharacterVisual::Mounted {
+            rider: FigureKind::Protagonist,
+            coat: Coat::Bayo,
+        };
+        let (mut app, me) = seated_every(rider, 12.2, 20);
+        let carrier = app.world().get::<Children>(me).unwrap()[0];
+        // How far the rider leans forward from the vertical (his neck over
+        // his pelvis), degrees; how far his seat is over the saddle, in his
+        // own (seat) frame, meters; and his rein hand ahead of the saddle,
+        // along the horse, meters.
+        let measure = |app: &App| {
+            let world = app.world();
+            let model = named(world, carrier, "Rider model");
+            let [pelvis, neck, hand] =
+                ["pelvis", "neck_01", "hand_l"].map(|n| named(world, model, n));
+            let torso = named(world, carrier, "Torso");
+            let g = |e: Entity| *world.get::<GlobalTransform>(e).unwrap();
+            let body = g(carrier).affine().inverse();
+            let back = body.transform_vector3(g(neck).translation() - g(pelvis).translation());
+            let gap = g(model)
+                .affine()
+                .inverse()
+                .transform_point3(g(pelvis).translation())
+                .y;
+            let reach = body.transform_point3(g(hand).translation()).x
+                - body.transform_point3(g(torso).translation()).x;
+            (back.x.atan2(back.y).to_degrees(), gap, reach)
+        };
+        let fly = |app: &mut App, flight: Option<f32>| {
+            app.world_mut()
+                .entity_mut(me)
+                .insert(crate::character::VisualPose {
+                    animation: pampa_core::AnimationState::Gallop,
+                    speed: 12.2,
+                    flight,
+                    ..default()
+                });
+            app.update();
+        };
+        let mean = |v: &[(f32, f32, f32)], k: usize| {
+            v.iter().map(|m| [m.0, m.1, m.2][k]).sum::<f32>() / v.len() as f32
+        };
+        for _ in 0..80 {
+            fly(&mut app, None);
+        }
+        let mut ground = Vec::new();
+        for _ in 0..40 {
+            fly(&mut app, None);
+            ground.push(measure(&app));
+        }
+        // A jump's whole flight, at its real pace (1.1 s of 20 ms frames).
+        let mut flight = Vec::new();
+        for k in 0..55 {
+            fly(&mut app, Some(k as f32 / 54.0));
+            flight.push(measure(&app));
+        }
+        let mut landing = Vec::new();
+        for _ in 0..100 {
+            fly(&mut app, None);
+            landing.push(measure(&app));
+        }
+        let (lean, reach) = (mean(&ground, 0), mean(&ground, 2));
+        let all: Vec<_> = flight.iter().chain(&landing).collect();
+        let jolt = all
+            .windows(2)
+            .map(|w| (w[1].0 - w[0].0).abs())
+            .fold(0.0, f32::max);
+        let top = &flight[15..45];
+        let sitting = landing[..25].iter().map(|m| m.0).fold(f32::MAX, f32::min);
+        println!(
+            "gallop {lean:.1}° {reach:.2} m, over the top {:.1}° {:.2} m, landing {sitting:.1}°, after {:.1}°, jolt {jolt:.1}°",
+            mean(top, 0),
+            mean(top, 2),
+            mean(&landing[60..], 0),
+        );
+        // Folded forward from the hips over the top, his hand forward
+        // along the neck.
+        let leans: Vec<f32> = top.iter().map(|m| m.0).collect();
+        assert!(
+            leans.iter().all(|l| (lean + 12.0..lean + 35.0).contains(l)),
+            "{leans:?} vs {lean}"
+        );
+        assert!(mean(top, 2) > reach + 0.1, "{} vs {reach}", mean(top, 2));
+        // Sitting up to land, then riding on in the half-seat.
+        assert!(sitting < lean - 6.0, "{sitting} vs {lean}");
+        assert!((mean(&landing[60..], 0) - lean).abs() < 4.0);
+        // Never a snap, and never into the saddle.
+        assert!(jolt < 5.0, "{jolt}° in a frame");
+        let lowest = all.iter().map(|m| m.1).fold(f32::MAX, f32::min);
+        assert!(lowest > -0.002, "the seat {lowest} m into the saddle");
+    }
+
+    #[test]
     fn at_the_gallop_the_rider_rides_the_half_seat() {
         let rider = CharacterVisual::Mounted {
             rider: FigureKind::Protagonist,
@@ -1427,7 +1698,8 @@ pub(crate) mod tests {
                 up.x.atan2(up.y)
             };
             nods.push(pitch(turn(head)));
-            pitches.push((body.transform_vector3(turn(torso) * Vec3::X)).y.asin());
+            // The saddle's pitch along the horse (the bone runs along +Y).
+            pitches.push((body.transform_vector3(turn(torso) * Vec3::Y)).y.asin());
             let back = body.transform_vector3(at(neck) - at(pelvis));
             leans.push(back.x.atan2(back.y).to_degrees());
             let head_at = at(head);
@@ -1458,8 +1730,20 @@ pub(crate) mod tests {
         );
         // Leaning forward about 15–25° from the vertical.
         let lean = leans.iter().sum::<f32>() / leans.len() as f32;
-        println!("lean {lean:.1}°");
+        println!(
+            "lean {lean:.1}°, spread {:.1}° against the saddle's {:.1}°",
+            spread(&leans),
+            spread(&pitches).to_degrees()
+        );
         assert!((15.0..25.0).contains(&lean), "lean {lean}°");
+        // The spine counters the saddle's pitch: the upper body pitches
+        // less than the horse under it.
+        assert!(
+            spread(&leans) < 0.8 * spread(&pitches).to_degrees(),
+            "the rider pitches {}° on a saddle pitching {}°",
+            spread(&leans),
+            spread(&pitches).to_degrees()
+        );
         // The seat hovers and gives, never below the saddle.
         assert!(gap.iter().all(|g| *g > -0.002), "{gap:?}");
         assert!(spread(&gap) > 0.02, "the seat gives {}", spread(&gap));

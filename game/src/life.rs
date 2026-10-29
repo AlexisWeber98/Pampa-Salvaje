@@ -322,6 +322,7 @@ fn spawn_walkers(commands: &mut Commands, crowd: &Townsfolk, town: usize, world:
                 animation: person.animation(),
                 speed: person.speed,
                 turn: 0.0,
+                flight: None,
             },
             Transform::from_translation(world_from_ground(person.position, height)),
         ));
@@ -477,7 +478,7 @@ pub(crate) fn jostle_crowd(
             bodies.extend(crowd.bodies());
         }
         rider.keep_clear_of(&world.0, &bodies);
-        transform.translation = world_from_ground(rider.position, rider.height);
+        transform.translation = world_from_ground(rider.position, rider.elevation());
     }
 }
 
@@ -505,6 +506,7 @@ fn place_walkers(
             animation: person.animation(),
             speed: person.speed,
             turn: 0.0,
+            flight: None,
         };
     }
 }
@@ -1105,13 +1107,23 @@ mod tests {
             let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
             keys.press(KeyCode::KeyW);
             keys.press(KeyCode::ShiftLeft);
+            // Held down (never cleared here), it jumps whenever it can.
+            keys.press(crate::player::JUMP_KEY);
         }
+        let mut jumped = false;
         for frame in 0..200 {
+            if frame == 1 {
+                // At full gallop already, so it can jump among them.
+                let mut q = app.world_mut().query::<&mut crate::player::Player>();
+                let mut player = q.single_mut(app.world_mut()).unwrap();
+                player.rider.speed = pampa_core::RiderParams::default().gallop_max;
+            }
             app.update();
             let rider = {
                 let mut q = app.world_mut().query::<&crate::player::Player>();
                 q.single(app.world()).unwrap().rider
             };
+            jumped |= rider.airborne();
             let crowd = app.world().resource::<Crowds>().0[0].clone();
             for p in &crowd.people {
                 let gap = p.position.distance(rider.position);
@@ -1127,8 +1139,9 @@ mod tests {
             let t = q.single(app.world()).unwrap();
             assert_eq!(
                 t.translation,
-                world_from_ground(rider.position, rider.height)
+                world_from_ground(rider.position, rider.elevation())
             );
         }
+        assert!(jumped);
     }
 }

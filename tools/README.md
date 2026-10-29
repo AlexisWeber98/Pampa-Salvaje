@@ -187,7 +187,7 @@ for pair in "cow_a cow" "bull bull" "horse_a horse"; do
   set -- $pair
   python3 -I tools/glbtrim.py ~/Downloads/quaternius/$1.glb \
     assets/models/fauna/quaternius/$2.glb \
-    --keep Idle Idle_2 Idle_Headlow Eating Walk Gallop
+    --keep Idle Idle_2 Idle_Headlow Eating Walk Gallop Gallop_Jump
 done
 ```
 

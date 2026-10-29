@@ -395,7 +395,7 @@ fn step_fauna(
     }
     if let Some((player, transform)) = player.as_mut().filter(|_| !bodies.is_empty()) {
         player.rider.keep_clear_of(&world.0, &bodies);
-        transform.translation = world_from_ground(player.rider.position, player.rider.height);
+        transform.translation = world_from_ground(player.rider.position, player.rider.elevation());
     }
 }
 

@@ -855,7 +855,7 @@ fn follow_player(
             RideView::Coach => {}
         }
     }
-    let feet = world_from_ground(rider.position, rider.height);
+    let feet = world_from_ground(rider.position, rider.elevation());
     let look_height = match rider.travel() {
         Travel::OnFoot => follow.on_foot_look_height,
         Travel::Riding => follow.look_height,
@@ -1695,6 +1695,32 @@ mod tests {
             "{heights:?}"
         );
         assert!(follow.on_foot_look_height < follow.look_height);
+    }
+
+    #[test]
+    fn the_camera_rises_with_a_jumping_horse() {
+        let mut app = headless_app(
+            World::default(),
+            north_at(0.0, 0.0),
+            CameraOccluders::default(),
+        );
+        app.update();
+        {
+            let mut q = app.world_mut().query::<&mut Player>();
+            let mut player = q.single_mut(app.world_mut()).unwrap();
+            (player.rider.air, player.rider.lift) = (1.0, 0.0);
+        }
+        app.update();
+        let r = rider(&mut app);
+        assert!(r.airborne());
+        // The focus eases up toward the lifted rider, above where it looks
+        // with the horse on the ground.
+        let ground = world_from_ground(r.position, r.height);
+        let above = rig(&mut app).1.y - ground.y;
+        assert!(
+            above > FollowCamera::default().look_height + 0.05,
+            "{above}"
+        );
     }
 
     #[test]

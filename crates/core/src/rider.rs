@@ -1,6 +1,6 @@
 //! Kinematic rider (horse + outlaw) model.
 
-use crate::{AnimationState, Body, Circle, Ground, Heading, Vec2, World};
+use crate::{AnimationState, Body, Circle, Ground, Heading, Travel, Vec2, World};
 
 /// Longest step the game feeds the simulation, in seconds, so a hitch never
 /// teleports anything. [`Rider::step`] stays safe for longer steps anyway.
@@ -33,8 +33,8 @@ impl Default for RiderParams {
             braking: 8.0,
             friction: 3.0,
             walk_max: 3.0,
-            // 44 km/h.
-            gallop_max: 44.0 / 3.6,
+            // 49 km/h (user, 2026-10-29; it was 44).
+            gallop_max: 49.0 / 3.6,
             reverse_max: 1.2,
         }
     }
@@ -62,6 +62,12 @@ pub struct Rider {
     /// Signed speed along the heading, in m/s.
     pub speed: f32,
     pub collider: Circle,
+    /// How high a jumping horse is above [`Self::height`], in meters; 0 on
+    /// the ground.
+    pub air: f32,
+    /// Upward speed while jumping, in m/s (negative coming down); 0 on the
+    /// ground.
+    pub lift: f32,
 }
 
 impl Rider {
@@ -74,6 +80,20 @@ impl Rider {
     /// its radius plus the box half-width; half the rider's radius keeps a
     /// wide margin even for the thinnest obstacle (a 0.7 m tree trunk).
     pub const MAX_SUBSTEP_DISTANCE: f32 = Self::COLLIDER_RADIUS * 0.5;
+
+    /// Upward speed a horse takes off with, in m/s: the arc peaks about
+    /// 1.55 m up, above a fence's wires ([`crate::FenceLayout::HEIGHT`]).
+    /// The user asked for a 4 % higher jump than the first 5.4 m/s
+    /// (1.49 m) on 2026-10-29.
+    pub const JUMP_SPEED: f32 = 5.51;
+
+    /// Downward acceleration in the air, in m/s².
+    pub const GRAVITY: f32 = 9.81;
+
+    /// Share of the gallop's top speed ([`RiderParams::gallop_max`]) a
+    /// horse must be going to jump: only at full gallop (85 %, the user's
+    /// choice on 2026-10-29).
+    pub const FULL_GALLOP: f32 = 0.85;
 
     /// How many collision sub-steps a step of `dt` seconds needs so that no
     /// sub-step moves farther than [`Self::MAX_SUBSTEP_DISTANCE`].
@@ -98,7 +118,45 @@ impl Rider {
             heading,
             speed: 0.0,
             collider: Circle::new(Self::COLLIDER_RADIUS),
+            air: 0.0,
+            lift: 0.0,
         }
+    }
+
+    /// Makes a horse at full gallop ([`Self::FULL_GALLOP`] of `params`'
+    /// top speed) jump; it rises at [`Self::JUMP_SPEED`] and clears the
+    /// low obstacles it gets higher than ([`World::resolve_above`]).
+    /// Returns whether it took off: never on foot, slower, or already in
+    /// the air.
+    pub fn jump(&mut self, params: &RiderParams) -> bool {
+        let takes_off = self.travel() == Travel::Riding
+            && self.speed >= Self::FULL_GALLOP * params.gallop_max
+            && !self.airborne();
+        if takes_off {
+            self.lift = Self::JUMP_SPEED;
+        }
+        takes_off
+    }
+
+    /// Whether a jump has it off the ground.
+    pub fn airborne(&self) -> bool {
+        self.air > 0.0 || self.lift > 0.0
+    }
+
+    /// How far through its jump's flight it is, `0..=1` (none on the ground):
+    /// the time since takeoff over the flight's length, so the animation
+    /// follows the same arc the physics flies.
+    pub fn flight(&self) -> Option<f32> {
+        if !self.airborne() {
+            return None;
+        }
+        let aloft = (Self::JUMP_SPEED - self.lift) / Self::GRAVITY;
+        Some((aloft / (2.0 * Self::JUMP_SPEED / Self::GRAVITY)).clamp(0.0, 1.0))
+    }
+
+    /// The height it is at: the ground's plus any jump's.
+    pub fn elevation(&self) -> f32 {
+        self.height + self.air
     }
 
     /// Advances the rider by `dt` seconds inside `world`.
@@ -124,9 +182,21 @@ impl Rider {
     }
 
     /// One collision sub-step with already sanitized input.
+    ///
+    /// In the air the horse holds its heading and speed (only an obstacle
+    /// stops it) and falls under [`Self::GRAVITY`], landing at 0.
     fn substep(&mut self, input: RiderInput, params: &RiderParams, world: &World, dt: f32) {
-        self.heading = self.heading.rotated(input.turn * params.turn_rate * dt);
-        self.speed = next_speed(self.speed, input.throttle, input.gallop, params, dt);
+        if self.airborne() {
+            self.air += (self.lift - Self::GRAVITY * dt / 2.0) * dt;
+            self.lift -= Self::GRAVITY * dt;
+            if self.air <= 0.0 {
+                self.air = 0.0;
+                self.lift = 0.0;
+            }
+        } else {
+            self.heading = self.heading.rotated(input.turn * params.turn_rate * dt);
+            self.speed = next_speed(self.speed, input.throttle, input.gallop, params, dt);
+        }
         self.position += self.heading.forward() * (self.speed * dt);
 
         self.resolve_obstacles(world);
@@ -137,10 +207,13 @@ impl Rider {
         }
     }
 
-    /// Pushes the rider out of every overlapping obstacle, sliding along walls.
+    /// Pushes the rider out of every overlapping obstacle it is not jumping
+    /// over, sliding along walls.
     fn resolve_obstacles(&mut self, world: &World) {
         let mut normals = Vec::new();
-        self.position = world.resolve(self.collider, self.position, |n| normals.push(n));
+        self.position = world.resolve_above(self.collider, self.position, self.air, |n| {
+            normals.push(n);
+        });
         for normal in normals {
             self.block(normal);
         }
@@ -167,10 +240,11 @@ impl Rider {
 
     /// Moves the rider out of any of `bodies` it still overlaps (people
     /// pinned against a wall that could not make way), stopping its motion
-    /// into them.
+    /// into them. A jumping horse stays clear of what it is jumping over.
     pub fn keep_clear_of(&mut self, world: &World, bodies: &[Body]) {
         let mut normals = Vec::new();
-        self.position = world.resolve_among(self.collider, self.position, bodies, |n| {
+        let (collider, position) = (self.collider, self.position);
+        self.position = world.resolve_among_above(collider, position, bodies, self.air, |n| {
             normals.push(n);
         });
         for normal in normals {
@@ -238,6 +312,178 @@ mod tests {
         for _ in 0..(seconds / DT) as usize {
             r.step(input, p, t, DT);
         }
+    }
+
+    const GALLOP: RiderInput = RiderInput {
+        throttle: 1.0,
+        turn: 0.0,
+        gallop: true,
+    };
+    const WALK: RiderInput = RiderInput {
+        throttle: 1.0,
+        turn: 0.0,
+        gallop: false,
+    };
+
+    /// The default world with a fence across the way east, 1.3 m tall, its
+    /// middle at `x`.
+    fn fenced_at(x: f32) -> World {
+        let mut world = World::default();
+        let span = Aabb::from_center_size(Vec2::new(x, -2.0), Vec2::new(0.15, 40.0));
+        world.obstacles.push_low(span, crate::FenceLayout::HEIGHT);
+        world
+    }
+
+    /// Rides east with `input` from (3, -2) until `x`, jumps there (when
+    /// `jump`), then keeps riding for `seconds`.
+    fn ride_at_fence(world: &World, input: RiderInput, x: f32, jump: bool, seconds: f32) -> Rider {
+        let p = RiderParams::default();
+        let mut r = Rider::new(Vec2::new(3.0, -2.0), Heading::from_radians(0.0), world);
+        while r.position.x < x {
+            r.step(input, &p, world, DT);
+        }
+        if jump {
+            assert!(r.jump(&p));
+        }
+        run(&mut r, input, &p, world, seconds);
+        r
+    }
+
+    #[test]
+    fn the_flight_share_runs_from_takeoff_through_the_peak_to_landing() {
+        let (mut r, p, t) = rider();
+        assert_eq!(r.flight(), None, "on the ground");
+        run(&mut r, GALLOP, &p, &t, 3.5);
+        assert!(r.jump(&p));
+        assert!(r.flight().unwrap() < 1e-6, "takeoff");
+        let mut last = 0.0;
+        let mut at_peak = None;
+        let mut peak = 0.0;
+        while r.airborne() {
+            r.step(RiderInput::default(), &p, &t, DT);
+            if let Some(f) = r.flight() {
+                assert!(f >= last, "never goes back");
+                last = f;
+                if r.air > peak {
+                    peak = r.air;
+                    at_peak = Some(f);
+                }
+            }
+        }
+        assert!((at_peak.unwrap() - 0.5).abs() < 0.02, "{at_peak:?}");
+        assert!(last > 0.95, "ends near landing: {last}");
+        assert_eq!(r.flight(), None, "landed");
+    }
+
+    #[test]
+    fn a_galloping_horse_jumps_up_and_lands_again() {
+        let (mut r, p, t) = rider();
+        run(&mut r, GALLOP, &p, &t, 3.5);
+        let speed = r.speed;
+        assert!(r.jump(&p));
+        assert!(r.airborne());
+        // One jump at a time.
+        assert!(!r.jump(&p));
+        let mut peak: f32 = 0.0;
+        for _ in 0..(1.3 / DT) as usize {
+            r.step(RiderInput::default(), &p, &t, DT);
+            peak = peak.max(r.air);
+            assert!(r.air >= 0.0);
+            assert!((r.elevation() - r.height - r.air).abs() < 1e-6);
+        }
+        assert!((1.5..1.6).contains(&peak), "{peak}");
+        // Down again, on the ground, and slowing once it lands.
+        assert!(!r.airborne());
+        assert_eq!((r.air, r.lift), (0.0, 0.0));
+        assert!(r.speed < speed);
+        run(&mut r, GALLOP, &p, &t, 1.0);
+        assert!(r.jump(&p), "landed, ready to jump again at full gallop");
+    }
+
+    #[test]
+    fn only_a_horse_at_full_gallop_jumps() {
+        let (mut r, p, t) = rider();
+        let full = Rider::FULL_GALLOP * p.gallop_max;
+        for (speed, why) in [
+            (0.0, "standing still"),
+            (-1.0, "backing up"),
+            (p.walk_max, "walking"),
+            (6.5, "trotting"),
+            (full - 0.05, "short of full gallop"),
+        ] {
+            r.speed = speed;
+            assert!(!r.jump(&p), "{why}");
+            assert!(!r.airborne(), "{why}");
+        }
+        r.speed = full;
+        assert!(r.jump(&p), "at full gallop");
+        let mut person = Rider::on_foot(Vec2::new(3.0, -2.0), Heading::from_radians(0.0), &t);
+        person.speed = p.gallop_max;
+        assert!(!person.jump(&p), "on foot");
+        assert!(!person.airborne());
+    }
+
+    #[test]
+    fn in_the_air_the_horse_holds_its_line_and_its_rider_stays_on() {
+        let (mut r, p, t) = rider();
+        run(&mut r, GALLOP, &p, &t, 3.5);
+        assert!(r.jump(&p));
+        // Slow enough to get off, if it were on the ground.
+        r.speed = 0.8;
+        let (heading, speed) = (r.heading, r.speed);
+        let turn_and_brake = RiderInput {
+            throttle: -1.0,
+            turn: 1.0,
+            gallop: false,
+        };
+        r.step(turn_and_brake, &p, &t, DT);
+        assert!(r.airborne());
+        assert_eq!((r.heading, r.speed), (heading, speed));
+        assert!(r.dismount(&t).is_none());
+    }
+
+    #[test]
+    fn a_galloping_jump_clears_a_fence() {
+        let world = fenced_at(40.0);
+        // Takeoff about where the arc peaks over the wires.
+        let r = ride_at_fence(&world, GALLOP, 40.0 - 6.7, true, 1.5);
+        assert!(r.position.x > 42.0, "{:?}", r.position);
+    }
+
+    #[test]
+    fn a_fence_stops_a_horse_that_does_not_jump_or_cannot_at_a_walk() {
+        let world = fenced_at(40.0);
+        let r = ride_at_fence(&world, GALLOP, 40.0 - 6.7, false, 3.0);
+        assert!(r.position.x < 40.0, "no jump: {:?}", r.position);
+        // At a walk Space does nothing: the fence stops it.
+        let mut r = ride_at_fence(&world, WALK, 40.0 - 1.65, false, 0.0);
+        let p = RiderParams::default();
+        assert!(!r.jump(&p));
+        run(&mut r, WALK, &p, &world, 3.0);
+        assert!(r.position.x < 40.0, "walking: {:?}", r.position);
+    }
+
+    #[test]
+    fn keeping_clear_of_others_in_the_air_still_passes_over_a_fence() {
+        let world = fenced_at(30.0);
+        let over = Vec2::new(30.0, -2.0);
+        let mut r = Rider::new(over, Heading::from_radians(0.0), &world);
+        (r.air, r.lift) = (1.4, 0.5);
+        r.keep_clear_of(&world, &[]);
+        assert_eq!(r.position, over);
+        // On the ground the fence pushes it off as ever.
+        (r.air, r.lift) = (0.0, 0.0);
+        r.keep_clear_of(&world, &[]);
+        assert!(r.position.x < 30.0 - 0.9, "{:?}", r.position);
+    }
+
+    #[test]
+    fn a_jump_never_clears_a_tall_obstacle() {
+        let mut world = World::default();
+        let wall = Aabb::from_center_size(Vec2::new(40.0, -2.0), Vec2::new(0.6, 40.0));
+        world.obstacles.push(wall);
+        let r = ride_at_fence(&world, GALLOP, 40.0 - 6.7, true, 3.0);
+        assert!(r.position.x < 40.0, "{:?}", r.position);
     }
 
     #[test]

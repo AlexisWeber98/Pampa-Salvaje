@@ -219,6 +219,8 @@ that, only Don Hidalgo's horse lets him on. Riding is the first of the
 player's abilities (`pampa_core::Abilities`); the lasso, weapons and cars are
 kept for later.
 
+On horseback at full gallop (at least 85 % of the gallop's top speed, 49 km/h) `Space` jumps (`Rider::jump`). In the air the horse holds its line and speed, and it passes over every low obstacle while it is higher than that obstacle. Fences are 1.3 m, and a settlement prop is as tall as its structure. Everything else counts as unbounded (`StaticObstacles::push_low`, `World::resolve_above`). The horse plays Quaternius' `Gallop_Jump` clip in the air (legs tucked, body pitching), set each frame to `Rider::flight` (the share of the flight elapsed) so the pose follows the physics arc rather than its own; the clip's own rise is taken out of the body. On top of the clip the hind legs visibly push the horse off at takeoff and the forelegs tuck a little more over the top, while the rider folds forward from the hips with his rein hand along the neck, then sits up and absorbs the landing in his knees and hips.
+
 On foot the player walks at 1.6 m/s (about 5.8 km/h) and jogs with `Shift` at 18 km/h, with the same keys, the same collision and a person-sized body.
 People make way for somebody on foot without complaint; only the horse gets
 them talking.
@@ -585,7 +587,7 @@ The game opens on a title screen. On the left, a "Se busca" poster of Juan Bauti
 | `A` / `D` | Turn left / right |
 | `Shift` (hold) | Jog on foot, gallop on horseback |
 | `F` | Interact: talk to somebody, mount or get off a horse, board or get off the train at a coach door, or wait for the train near a platform's middle |
-| `Space` | Aboard the train: skip to the next stop |
+| `Space` | On horseback at full gallop: jump. Slower, it does nothing. The arc peaks about 1.55 m up, so it clears a fence (1.3 m) and the low props of a settlement (trough, well curb, palenque). Trees, buildings, corrals, tanks, carts, people and animals stay in the way. Aboard the train: skip to the next stop |
 | `V` | Off the train: toggle the first-person view from the player's eyes. Aboard the train: cycle the view (window seat, around the coach, the whole train) |
 | Mouse | Orbit the camera, or look round in first person (the cursor is locked while the window has focus) |
 | `Q` / `E` | Orbit the camera left / right, or turn the head in first person |

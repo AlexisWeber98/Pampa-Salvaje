@@ -45,9 +45,12 @@ impl Rider {
     /// its way, and the horse left tied loosely where it stood. The person
     /// steps off on the horse's left, or its right when the left is
     /// blocked. `None` while riding faster than [`Self::DISMOUNT_SPEED`],
-    /// when both flanks are blocked, or when already on foot.
+    /// in the air, when both flanks are blocked, or when already on foot.
     pub fn dismount(&self, world: &World) -> Option<(Self, TetheredHorse)> {
-        if self.travel() != Travel::Riding || self.speed.abs() > Self::DISMOUNT_SPEED {
+        if self.travel() != Travel::Riding
+            || self.speed.abs() > Self::DISMOUNT_SPEED
+            || self.airborne()
+        {
             return None;
         }
         let horse = TetheredHorse::standing(self.position, self.heading);

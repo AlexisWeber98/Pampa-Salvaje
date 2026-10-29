@@ -23,6 +23,14 @@
 //!   hock just enough ([`lift_legs`]). The model's hooves hang from IK
 //!   targets, not from the legs, so each hoof is then put on its leg's end
 //!   ([`reattach`]), never below where it would stand.
+//! - **A jump in the air.** While the jump clip plays ([`level_flight`]) the
+//!   gallop's flexing is muted by its weight and the hooves are left as the
+//!   clip tucks them ([`JUMP_FREE`]); the clip's own rise of the `Body`
+//!   bone (and of the hooves' IK targets with it) is taken out, since the
+//!   entity already flies the physics arc. On top of the clip the hind legs
+//!   push the horse off, reaching back and down as it leaves the ground
+//!   ([`push`], [`PUSH`]), and the forelegs tuck a little more over the top
+//!   ([`tuck`], [`TUCK`]), each hoof put back on its leg's end.
 //!
 //! All of it is deterministic, worked out afresh each frame from the clips'
 //! pose, and allocates nothing.
@@ -30,7 +38,7 @@
 use bevy::math::Affine3A;
 use bevy::prelude::*;
 
-use crate::fauna::livestock::Clip;
+use crate::fauna::livestock::{CLIP_COUNT, Clip};
 
 /// Which part of a bone's transform a clip animates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,32 +49,34 @@ pub enum Property {
 
 /// The properties not every clip animates, with the clips that do (bit
 /// `k` for [`Clip::ALL`]`[k]`), as `horse.glb` has them; every other
-/// animated property is in all six clips.
-pub const PARTIAL: [(&str, Property, u8); 24] = [
-    ("Back", Property::Rotation, 0b010000),
-    ("Back", Property::Translation, 0b110000),
-    ("BackShoulder.L", Property::Translation, 0b100010),
-    ("BackShoulder.R", Property::Translation, 0b100000),
-    ("Ear2.L", Property::Rotation, 0b101111),
-    ("Ear2.R", Property::Rotation, 0b101111),
-    ("Ear3.L", Property::Rotation, 0b100100),
-    ("Ear3.R", Property::Rotation, 0b100100),
-    ("Ear4.L", Property::Rotation, 0b110000),
-    ("Ear4.R", Property::Rotation, 0b110000),
-    ("FrontShoulder.L", Property::Translation, 0b111101),
-    ("FrontShoulder.R", Property::Translation, 0b110000),
-    ("IKBackLeg.L", Property::Rotation, 0b110000),
-    ("IKBackLeg.L", Property::Translation, 0b110010),
-    ("IKBackLeg.R", Property::Rotation, 0b110100),
-    ("IKBackLeg.R", Property::Translation, 0b110100),
-    ("IKFrontLeg.L", Property::Rotation, 0b110100),
-    ("IKFrontLeg.L", Property::Translation, 0b111101),
-    ("IKFrontLeg.R", Property::Rotation, 0b110000),
-    ("IKFrontLeg.R", Property::Translation, 0b110000),
-    ("Neck3", Property::Rotation, 0b110011),
-    ("Tail2", Property::Rotation, 0b100000),
-    ("Torso2", Property::Rotation, 0b010000),
-    ("Torso3", Property::Rotation, 0b001000),
+/// animated property is in every clip.
+pub const PARTIAL: [(&str, Property, u8); 26] = [
+    ("Back", Property::Rotation, 0b0010000),
+    ("Back", Property::Translation, 0b1110000),
+    ("BackShoulder.L", Property::Translation, 0b1100010),
+    ("BackShoulder.R", Property::Translation, 0b1100000),
+    ("Ear2.L", Property::Rotation, 0b1101111),
+    ("Ear2.R", Property::Rotation, 0b1101111),
+    ("Ear3.L", Property::Rotation, 0b1100100),
+    ("Ear3.R", Property::Rotation, 0b1100100),
+    ("Ear4.L", Property::Rotation, 0b1110000),
+    ("Ear4.R", Property::Rotation, 0b1110000),
+    ("FrontShoulder.L", Property::Translation, 0b1111101),
+    ("FrontShoulder.R", Property::Translation, 0b1110000),
+    ("IKBackLeg.L", Property::Rotation, 0b1110000),
+    ("IKBackLeg.L", Property::Translation, 0b1110010),
+    ("IKBackLeg.R", Property::Rotation, 0b1110100),
+    ("IKBackLeg.R", Property::Translation, 0b1110100),
+    ("IKFrontLeg.L", Property::Rotation, 0b1110100),
+    ("IKFrontLeg.L", Property::Translation, 0b1111101),
+    ("IKFrontLeg.R", Property::Rotation, 0b1110000),
+    ("IKFrontLeg.R", Property::Translation, 0b1110000),
+    ("Neck3", Property::Rotation, 0b1110011),
+    ("PoleTarget.L", Property::Translation, 0b1000000),
+    ("PoleTarget.R", Property::Translation, 0b1000000),
+    ("Tail2", Property::Rotation, 0b1100000),
+    ("Torso2", Property::Rotation, 0b0010000),
+    ("Torso3", Property::Rotation, 0b0001000),
 ];
 
 /// The bones no clip turns that [`fit_horse`] turns: they are put back at
@@ -75,7 +85,7 @@ pub const UNANIMATED: [&str; 2] = ["Torso", "Tail1"];
 
 /// The share of a property `mask` (see [`PARTIAL`]) the clips playing with
 /// `weights` animate: the rest of it stays at rest.
-pub fn animated_share(mask: u8, weights: &[f32; 6]) -> f32 {
+pub fn animated_share(mask: u8, weights: &[f32; CLIP_COUNT]) -> f32 {
     Clip::ALL
         .iter()
         .filter(|c| mask & (1 << c.index()) != 0)
@@ -326,6 +336,9 @@ pub struct HorseBones {
     pub means: Vec<(usize, Entity, Quat)>,
     /// How high each hoof's target stands at rest in the body frame.
     pub standing: [f32; 4],
+    /// The `Body` bone's rest translation (in the armature's space): the
+    /// jump clip's rise is measured from it.
+    pub body_rest: Vec3,
 }
 
 /// The placement of `bone` in the armature's space, from `transforms`.
@@ -449,24 +462,156 @@ fn reattach(bones: &HorseBones, transforms: &mut Query<&mut Transform>, before: 
     }
 }
 
+/// The share of the jump clip's weight from which the hooves are no longer
+/// clamped to the ground (see [`fit_horse`]).
+pub const JUMP_FREE: f32 = 0.05;
+
+/// Takes the jump clip's own rise out of the horse: `Body` carries the clip's
+/// crouch and leap, but the horse's height in the air is the physics arc
+/// (the game lifts the whole entity by it), so the clip's rise would add
+/// to it. The bone's vertical offset from rest (in the body frame) is
+/// removed, `jump` (the clip's weight) of it, after the clips have set it
+/// and before anything hangs off it; the tuck and pitch stay.
+///
+/// The hooves' IK targets are the body's siblings under the armature, not
+/// its children, and the clip lifts them with it: they are lowered by the
+/// same offset, or the hooves would stay up where the clip put them while
+/// the legs come down, off their legs.
+///
+/// Reading the bone after the animation (rather than sampling the curve)
+/// follows whatever the blend really produced, in the model's own scale.
+fn level_flight(bones: &HorseBones, transforms: &mut Query<&mut Transform>, jump: f32) {
+    let Ok(body) = transforms.get(bones.bones[Bone::Body.index()]) else {
+        return;
+    };
+    let rise = bones
+        .armature
+        .transform_vector3(body.translation - bones.body_rest)
+        .y;
+    let drop = bones
+        .armature
+        .inverse()
+        .transform_vector3(Vec3::Y * rise * jump);
+    let hooves = (0..4).map(|leg| bones.bones[Bone::Hoof(leg).index()]);
+    for entity in std::iter::once(bones.bones[Bone::Body.index()]).chain(hooves) {
+        if let Ok(mut t) = transforms.get_mut(entity) {
+            t.translation -= drop;
+        }
+    }
+}
+
+/// The hind legs' push at takeoff, radians: each thigh swung back at the
+/// hip and each hock opened, so the hooves reach back and down as they
+/// leave the ground (the clip has the push, but too short to read).
+pub const PUSH: (f32, f32) = (0.3, 0.45);
+
+/// The flight (`0..=1`) by which the push is gone: the clip folds the hind
+/// legs up from there.
+pub const PUSH_END: f32 = 0.25;
+
+/// The forelegs' extra tuck at the top of the jump, radians: each forearm
+/// lifted forward at the elbow and each knee folded, a little more than
+/// the clip does.
+pub const TUCK: (f32, f32) = (0.15, 0.4);
+
+/// How much of the hind legs' push (`0..1`) there is `flight` (`0..=1`)
+/// of the way through a jump: all of it as the horse leaves the ground,
+/// easing out by [`PUSH_END`].
+pub fn push(flight: f32) -> f32 {
+    let u = (flight / PUSH_END).clamp(0.0, 1.0);
+    1.0 - u * u * (3.0 - 2.0 * u)
+}
+
+/// How much of the forelegs' extra tuck (`0..1`) there is `flight` of the
+/// way through a jump: none at either end, all of it at the top, smooth
+/// throughout.
+pub fn tuck(flight: f32) -> f32 {
+    (std::f32::consts::PI * flight.clamp(0.0, 1.0))
+        .sin()
+        .powi(2)
+}
+
+/// Adds the hind legs' push and the forelegs' tuck ([`PUSH`], [`TUCK`])
+/// to the jump clip's pose, `flight` of the way through the jump and
+/// weighed by `jump` (the clip's weight), then puts each hoof back on its
+/// leg's end ([`reattach`]: never below where it stands, so the push does
+/// not sink the hooves at takeoff).
+fn push_and_tuck(
+    bones: &HorseBones,
+    transforms: &mut Query<&mut Transform>,
+    flight: f32,
+    jump: f32,
+    before: &[Quat; 4],
+) {
+    let (push, tuck) = (push(flight) * jump, tuck(flight) * jump);
+    if push < 1e-4 && tuck < 1e-4 {
+        return;
+    }
+    // About the body's side axis: positive swings a hanging leg forward.
+    let pitch = Quat::from_rotation_z;
+    for leg in 0..4 {
+        let chain = Bone::chain(leg);
+        let parent = |bone: Bone| {
+            let at = chain.iter().position(|b| *b == bone).unwrap_or(0);
+            &chain[..at]
+        };
+        if leg < 2 {
+            let (forearm, knee) = (Bone::UpperLeg(leg), Bone::LowerLeg(leg));
+            turn_in_body(
+                bones,
+                transforms,
+                parent(forearm),
+                forearm,
+                pitch(TUCK.0 * tuck),
+            );
+            turn_in_body(bones, transforms, parent(knee), knee, pitch(-TUCK.1 * tuck));
+        } else {
+            let (thigh, hock) = (Bone::Leg(leg), Bone::LowerLeg(leg));
+            turn_in_body(
+                bones,
+                transforms,
+                parent(thigh),
+                thigh,
+                pitch(-PUSH.0 * push),
+            );
+            turn_in_body(bones, transforms, parent(hock), hock, pitch(-PUSH.1 * push));
+        }
+    }
+    reattach(bones, transforms, before);
+}
+
 /// Fits one horse's pose for `weights` (in [`Clip::ALL`] order) at
-/// `phase` of the gallop's loop: see the module notes.
+/// `phase` of the gallop's loop, `flight` of the way through a jump (none
+/// on the ground): see the module notes.
 pub fn fit_horse(
     bones: &HorseBones,
     transforms: &mut Query<&mut Transform>,
-    weights: &[f32; 6],
+    weights: &[f32; CLIP_COUNT],
     phase: f32,
+    flight: Option<f32>,
 ) {
     for (entity, property, mask, rest) in &bones.partial {
         if let Ok(mut t) = transforms.get_mut(*entity) {
             complete_blend(*property, rest, &mut t, animated_share(*mask, weights));
         }
     }
+    let jump = weights[Clip::GallopJump.index()];
+    if jump > 0.0 {
+        level_flight(bones, transforms, jump);
+    }
     let before: [Quat; 4] = std::array::from_fn(|leg| {
         let chain = Bone::chain(leg);
         turn(&placed(bones, &chain[..chain.len() - 1], transforms))
     });
-    let gallop = weights[Clip::Gallop.index()];
+    // The jump's own tuck and pitch replace the gallop's: its legs are meant
+    // to leave the ground, so they are not clamped back to it either.
+    if jump >= JUMP_FREE {
+        if let Some(flight) = flight {
+            push_and_tuck(bones, transforms, flight, jump, &before);
+        }
+        return;
+    }
+    let gallop = weights[Clip::Gallop.index()] * (1.0 - jump);
     if gallop < 1e-3 {
         lift_legs(bones, transforms);
         reattach(bones, transforms, &before);
@@ -537,12 +682,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_push_is_whole_at_takeoff_and_gone_by_its_end_and_the_tuck_peaks_mid_flight() {
+        assert_eq!(push(0.0), 1.0);
+        assert!(push(0.1) > 0.3 && push(0.1) < 1.0);
+        for f in [PUSH_END, 0.5, 1.0] {
+            assert_eq!(push(f), 0.0, "{f}");
+        }
+        assert!(tuck(0.0).abs() < 1e-6 && tuck(1.0).abs() < 1e-6);
+        assert!((tuck(0.5) - 1.0).abs() < 1e-6);
+        // Smooth: no step anywhere along the flight.
+        for k in 0..100 {
+            let (a, b) = (k as f32 / 100.0, (k + 1) as f32 / 100.0);
+            assert!((push(b) - push(a)).abs() < 0.07, "push at {a}");
+            assert!((tuck(b) - tuck(a)).abs() < 0.07, "tuck at {a}");
+        }
+    }
+
+    #[test]
     fn a_property_the_fading_clips_do_not_animate_eases_back_to_rest() {
         // Only the walk and the gallop sway the back.
         let mask = 0b110000;
-        let walking = [0.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+        let walking = [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0];
         assert_eq!(animated_share(mask, &walking), 1.0);
-        let halfway = [0.5, 0.0, 0.0, 0.0, 0.5, 0.0];
+        let halfway = [0.5, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0];
         assert!((animated_share(mask, &halfway) - 0.5).abs() < 1e-6);
         let rest = Transform::from_xyz(0.0, 1.0, 0.0);
         let mut walked =
@@ -556,7 +718,7 @@ mod tests {
             Property::Rotation,
             &rest,
             &mut walked,
-            animated_share(mask, &[1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            animated_share(mask, &[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
         );
         assert!(walked.rotation.angle_between(Quat::IDENTITY) < 1e-6);
     }
@@ -605,7 +767,7 @@ mod tests {
         }
         let partial: Vec<(String, &str, u8)> = found
             .into_iter()
-            .filter(|(_, m)| *m != 0b111111)
+            .filter(|(_, m)| *m != (1 << Clip::ALL.len()) - 1)
             .map(|((n, p), m)| (n, p, m))
             .collect();
         let table: Vec<(String, &str, u8)> = PARTIAL

@@ -552,6 +552,22 @@ impl SettlementLayout {
             .chain(self.roadside.iter().flat_map(RoadsideWreck::obstacles))
     }
 
+    /// [`Self::obstacles`] in the same order, each with how tall it is in
+    /// meters: a structure's own height (a jumping horse clears a low
+    /// trough or palenque), a roadside wreck's unbounded.
+    pub fn obstacle_heights(&self) -> impl Iterator<Item = (Aabb, f32)> + '_ {
+        self.settlements
+            .iter()
+            .flat_map(|s| s.structures.iter())
+            .flat_map(|s| s.obstacles().into_iter().map(|o| (o, s.height)))
+            .chain(
+                self.roadside
+                    .iter()
+                    .flat_map(RoadsideWreck::obstacles)
+                    .map(|o| (o, f32::INFINITY)),
+            )
+    }
+
     /// The settlements whose hub lies in `area` (a terrain chunk; west and
     /// south edges in, east and north out), so each has one chunk.
     pub fn in_area(&self, area: Aabb) -> impl Iterator<Item = &Settlement> + '_ {
@@ -2226,6 +2242,34 @@ pub(crate) mod tests {
                 .map(|s| s.tracks.len())
                 .sum::<usize>()
         );
+    }
+
+    #[test]
+    fn every_structure_blocks_up_to_its_own_height() {
+        let (world, _, _, _, layout) = settled();
+        let wreck_parts: Vec<Aabb> = layout
+            .roadside
+            .iter()
+            .flat_map(RoadsideWreck::obstacles)
+            .collect();
+        let structures = layout.settlements.iter().flat_map(|s| s.structures.iter());
+        let mut checked = 0;
+        for s in structures {
+            for o in s.obstacles() {
+                let found = |clearance| world.obstacles.near_above(o, clearance).contains(&&o);
+                assert!(found(s.height - 0.01), "{:?} under its top", s.kind);
+                // Another footprint may share the box (a wreck's own, say).
+                if !wreck_parts.contains(&o) {
+                    assert!(!found(s.height), "{:?} at its top", s.kind);
+                }
+                checked += 1;
+            }
+        }
+        assert!(checked > 0);
+        // Roadside wrecks have no height: they are never cleared.
+        for o in &wreck_parts {
+            assert!(world.obstacles.near_above(*o, 1e6).contains(&o));
+        }
     }
 
     #[test]

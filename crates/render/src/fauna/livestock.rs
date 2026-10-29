@@ -1,6 +1,6 @@
 //! Cattle and corral horses: Quaternius' animated low-poly models (CC0,
 //! from poly.pizza; credited in `assets/models/fauna/quaternius/CREDITS.md`
-//! and the root `CREDITS.md`), trimmed to six clips by `tools/glbtrim.py`.
+//! and the root `CREDITS.md`), trimmed to seven clips by `tools/glbtrim.py`.
 //!
 //! Each [`Species`] loads once at startup ([`LivestockModels`]): its glTF
 //! scene, its clips and one shared [`AnimationGraph`]. A cow, bull or horse
@@ -153,16 +153,23 @@ pub enum Clip {
     Eating,
     Walk,
     Gallop,
+    /// The airborne jump (legs tucked, body pitching): only a ridden horse
+    /// in flight plays it, so every other animal keeps it at weight zero.
+    GallopJump,
 }
 
+/// How many clips every model holds ([`Clip::ALL`]'s length).
+pub const CLIP_COUNT: usize = 7;
+
 impl Clip {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; CLIP_COUNT] = [
         Self::Idle,
         Self::Idle2,
         Self::IdleHeadlow,
         Self::Eating,
         Self::Walk,
         Self::Gallop,
+        Self::GallopJump,
     ];
 
     /// The clip's name in the glTF file.
@@ -174,6 +181,7 @@ impl Clip {
             Self::Eating => "Eating",
             Self::Walk => "Walk",
             Self::Gallop => "Gallop",
+            Self::GallopJump => "Gallop_Jump",
         }
     }
 
@@ -741,6 +749,25 @@ mod tests {
             gait,
             speed,
             ..default()
+        }
+    }
+
+    #[test]
+    fn no_animal_ever_picks_the_jump_clip() {
+        // Only a ridden horse in flight plays it ([`Clip::GallopJump`]):
+        // cattle and corral horses never leave the ground.
+        let animals = [Animal::Cow(CowCoat::Hereford), Animal::Horse(Coat::Overo)];
+        for animal in animals {
+            for gait in [Gait::Stand, Gait::Graze, Gait::Walk, Gait::Run] {
+                for speed in [0.0, 0.5, 4.0, 12.0] {
+                    for seed in 0..20 {
+                        for clock in [0.0, 15.0, 40.0] {
+                            let clip = clip_for(animal, &standing(gait, speed), seed, clock);
+                            assert_ne!(clip, Clip::GallopJump, "{animal:?} {gait:?}");
+                        }
+                    }
+                }
+            }
         }
     }
 

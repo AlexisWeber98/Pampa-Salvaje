@@ -1131,6 +1131,18 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_fence_blocks_up_to_its_wires_only() {
+        let (world, _, _, fences) = fenced();
+        let spans = fences.obstacles();
+        assert!(!spans.is_empty());
+        for span in spans.iter().take(500) {
+            let found = |clearance| world.obstacles.near_above(*span, clearance).contains(&span);
+            assert!(found(FenceLayout::HEIGHT - 0.01), "{span:?}");
+            assert!(!found(FenceLayout::HEIGHT), "{span:?}");
+        }
+    }
+
+    #[test]
     fn field_of_finds_the_paddock_between_its_survey_lines() {
         let layout = FenceLayout {
             surveyed: (vec![0.0, 300.0, 800.0], vec![-400.0, 0.0, 500.0]),

@@ -14,10 +14,11 @@ from poly.pizza on 2026-10-23.
 ## Changes
 
 Each file was trimmed with `tools/glbtrim.py`, keeping the clips `Idle`,
-`Idle_2`, `Idle_Headlow`, `Eating`, `Walk` and `Gallop` in that order:
+`Idle_2`, `Idle_Headlow`, `Eating`, `Walk`, `Gallop` and `Gallop_Jump` in
+that order:
 
 - the duplicate `AnimalArmature|…` clips and the unused Attack, Death,
-  hit-react and Jump clips were dropped, with the accessors and binary data
+  hit-react and `Jump_toIdle` clips were dropped, with the accessors and binary data
   only they used, and the unused texture samplers;
 - the vertex normals were recomputed smooth (60° angle, never across
   different skinning; the exports are flat-shaded);
