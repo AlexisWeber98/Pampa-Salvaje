@@ -1,55 +1,58 @@
-//! The game clock: the time of day and the day count, in game seconds.
+//! El reloj del juego: la hora del día y el número de día, en segundos de
+//! juego.
 //!
-//! One game day lasts [`DAY_REAL_SECONDS`] real seconds, so the clock runs
-//! [`BASE_RATE`] times faster than real time (30×: one game minute every
-//! two real seconds). The game can slow it down or speed it up with a rate
-//! multiplier (riding the train runs it at about 12×), and can jump it
-//! forward (skipping a trip, waiting for a train).
+//! Un día de juego dura [`DAY_REAL_SECONDS`] segundos reales, así que el reloj
+//! corre [`BASE_RATE`] veces más rápido que el tiempo real (30×: un minuto de
+//! juego cada dos segundos reales). El juego puede frenarlo o acelerarlo con un
+//! multiplicador de velocidad (viajar en tren lo hace correr a unas 12×), y
+//! puede adelantarlo de golpe (al saltear un viaje o al esperar un tren).
 //!
-//! The clock is plain data: it only moves when told to, so it is
-//! deterministic.
+//! El reloj son datos simples: solo avanza cuando se le indica, así que es
+//! determinista.
 
 use std::fmt;
 
-/// Game seconds in one day.
+/// Segundos de juego en un día.
 pub const DAY_SECONDS: f64 = 24.0 * 60.0 * 60.0;
-/// Real seconds one game day lasts at the base rate (48 minutes).
+/// Segundos reales que dura un día de juego a la velocidad base (48 minutos).
 pub const DAY_REAL_SECONDS: f64 = 48.0 * 60.0;
-/// Game seconds per real second at the base rate (30×).
+/// Segundos de juego por segundo real a la velocidad base (30×).
 pub const BASE_RATE: f64 = DAY_SECONDS / DAY_REAL_SECONDS;
 
-/// A time of day, in game seconds since midnight, in `[0, DAY_SECONDS)`.
+/// Una hora del día, en segundos de juego desde la medianoche, en `[0,
+/// DAY_SECONDS)`.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default)]
 pub struct TimeOfDay(f64);
 
 impl TimeOfDay {
-    /// `seconds` since midnight, wrapped into one day. Non-finite input
-    /// reads as midnight.
+    /// `seconds` desde la medianoche, ajustados a un solo día. Una entrada no
+    /// finita se interpreta como medianoche.
     pub fn from_seconds(seconds: f64) -> Self {
         if !seconds.is_finite() {
             return Self(0.0);
         }
         let wrapped = seconds.rem_euclid(DAY_SECONDS);
-        // `rem_euclid` can round up to exactly one day for tiny negatives.
+        // `rem_euclid` puede redondear hasta exactamente un día con negativos
+        // muy pequeños.
         Self(if wrapped >= DAY_SECONDS { 0.0 } else { wrapped })
     }
 
-    /// `hour:minute`, wrapped into one day (`hm(24, 0)` is midnight).
+    /// `hour:minute`, ajustado a un solo día (`hm(24, 0)` es medianoche).
     pub fn hm(hour: u32, minute: u32) -> Self {
         Self::from_seconds(f64::from(hour) * 3600.0 + f64::from(minute) * 60.0)
     }
 
-    /// Game seconds since midnight.
+    /// Segundos de juego desde la medianoche.
     pub fn seconds(self) -> f64 {
         self.0
     }
 
-    /// Hours since midnight, with the fraction (07:30 is 7.5).
+    /// Horas desde la medianoche, con la fracción (07:30 es 7,5).
     pub fn hour(self) -> f32 {
         (self.0 / 3600.0) as f32
     }
 
-    /// Whole hours and minutes, as a clock face shows them.
+    /// Horas y minutos enteros, como los muestra la esfera de un reloj.
     pub fn hour_minute(self) -> (u32, u32) {
         let minutes = (self.0 / 60.0).floor() as u32;
         (minutes / 60 % 24, minutes % 60)
@@ -63,15 +66,15 @@ impl fmt::Display for TimeOfDay {
     }
 }
 
-/// The game clock: which day it is and the time of day.
+/// El reloj del juego: qué día es y la hora del día.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GameClock {
-    /// Days since the game began (day 0 is the first).
+    /// Días desde que empezó el juego (el día 0 es el primero).
     day: u32,
-    /// Game seconds since midnight, in `[0, DAY_SECONDS)`.
+    /// Segundos de juego desde la medianoche, en `[0, DAY_SECONDS)`.
     seconds: f64,
-    /// How much faster or slower than [`BASE_RATE`] the clock runs. `1.0`
-    /// is the base rate; riding the train sets about `0.4` (12×).
+    /// Cuánto más rápido o más lento que [`BASE_RATE`] corre el reloj. `1.0` es
+    /// la velocidad base; viajar en tren la pone en alrededor de `0.4` (12×).
     pub multiplier: f64,
 }
 
@@ -82,7 +85,7 @@ impl Default for GameClock {
 }
 
 impl GameClock {
-    /// Day 0 at `time`, running at the base rate.
+    /// Día 0 a la hora `time`, corriendo a la velocidad base.
     pub fn at(time: TimeOfDay) -> Self {
         Self {
             day: 0,
@@ -91,40 +94,40 @@ impl GameClock {
         }
     }
 
-    /// Days since the game began.
+    /// Días desde que empezó el juego.
     pub fn day(&self) -> u32 {
         self.day
     }
 
-    /// The time of day.
+    /// La hora del día.
     pub fn time_of_day(&self) -> TimeOfDay {
         TimeOfDay(self.seconds)
     }
 
-    /// Game seconds since midnight of day 0: the clock as one number, for
-    /// timetables.
+    /// Segundos de juego desde la medianoche del día 0: el reloj como un solo
+    /// número, para los horarios.
     pub fn elapsed(&self) -> f64 {
         f64::from(self.day) * DAY_SECONDS + self.seconds
     }
 
-    /// Hours since midnight, with the fraction.
+    /// Horas desde la medianoche, con la fracción.
     pub fn hour(&self) -> f32 {
         self.time_of_day().hour()
     }
 
-    /// The time of day as `HH:MM`.
+    /// La hora del día como `HH:MM`.
     pub fn hh_mm(&self) -> String {
         self.time_of_day().to_string()
     }
 
-    /// Game seconds per real second right now.
+    /// Segundos de juego por segundo real en este momento.
     pub fn rate(&self) -> f64 {
         BASE_RATE * self.multiplier.max(0.0)
     }
 
-    /// Runs the clock for `real_dt` real seconds at its current rate and
-    /// returns the game seconds that passed. Non-finite or non-positive
-    /// `real_dt` changes nothing.
+    /// Hace correr el reloj durante `real_dt` segundos reales a su velocidad
+    /// actual y devuelve los segundos de juego que pasaron. Un `real_dt` no
+    /// finito o no positivo no cambia nada.
     pub fn tick(&mut self, real_dt: f32) -> f64 {
         if !(real_dt.is_finite() && real_dt > 0.0) {
             return 0.0;
@@ -133,9 +136,9 @@ impl GameClock {
         self.advance_by(game)
     }
 
-    /// Jumps the clock `game_seconds` forward, wrapping at midnight into the
-    /// next day, and returns how far it went. Non-finite or negative input
-    /// changes nothing: the clock never runs backwards.
+    /// Adelanta el reloj `game_seconds`, pasando al día siguiente al cruzar la
+    /// medianoche, y devuelve cuánto avanzó. Una entrada no finita o negativa
+    /// no cambia nada: el reloj nunca corre hacia atrás.
     pub fn advance_by(&mut self, game_seconds: f64) -> f64 {
         if !(game_seconds.is_finite() && game_seconds > 0.0) {
             return 0.0;
@@ -147,8 +150,8 @@ impl GameClock {
         game_seconds
     }
 
-    /// Jumps the clock forward to the next time it reads `time` (staying
-    /// put if it already does) and returns the game seconds skipped.
+    /// Adelanta el reloj hasta la próxima vez que marque `time` (sin moverse si
+    /// ya la marca) y devuelve los segundos de juego salteados.
     pub fn advance_until(&mut self, time: TimeOfDay) -> f64 {
         let wait = (time.seconds() - self.seconds).rem_euclid(DAY_SECONDS);
         let wait = if wait >= DAY_SECONDS { 0.0 } else { wait };
@@ -164,10 +167,10 @@ mod tests {
     fn the_base_rate_is_thirty_times_real_time() {
         assert_eq!(BASE_RATE, 30.0);
         let mut clock = GameClock::at(TimeOfDay::hm(7, 0));
-        // One game minute every two real seconds.
+        // Un minuto de juego cada dos segundos reales.
         assert_eq!(clock.tick(2.0), 60.0);
         assert_eq!(clock.hh_mm(), "07:01");
-        // 48 real minutes make a whole day.
+        // 48 minutos reales forman un día entero.
         let mut day = GameClock::default();
         for _ in 0..48 * 60 {
             day.tick(1.0);
@@ -201,9 +204,9 @@ mod tests {
         let mut clock = GameClock::at(TimeOfDay::hm(6, 0));
         assert_eq!(clock.advance_until(TimeOfDay::hm(7, 0)), 3600.0);
         assert_eq!((clock.day(), clock.hh_mm()), (0, "07:00".to_string()));
-        // Already there: no jump.
+        // Ya está ahí: no hay salto.
         assert_eq!(clock.advance_until(TimeOfDay::hm(7, 0)), 0.0);
-        // Past it today: tomorrow's.
+        // Ya pasó hoy: el de mañana.
         clock.advance_by(60.0);
         let skipped = clock.advance_until(TimeOfDay::hm(7, 0));
         assert_eq!(skipped, DAY_SECONDS - 60.0);

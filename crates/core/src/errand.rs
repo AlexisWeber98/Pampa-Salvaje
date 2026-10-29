@@ -1,58 +1,59 @@
-//! The first errand: Don Hidalgo, in the plaza of the town where the player
-//! gets off the train, sends the player to report to comisario Elías Farach
-//! at another town's police station, and lends the horse tied at the
-//! general store for the ride.
+//! El primer encargo: Don Hidalgo, en la plaza del pueblo donde el jugador baja
+//! del tren, lo manda a presentarse ante el comisario Elías Farach en la
+//! comisaría de otro pueblo, y le presta el caballo atado en el almacén de
+//! ramos generales para el viaje.
 //!
-//! Pure rules: where each character stands, the stages in order, and which
-//! interaction is in range. Each stage is one variant of [`ErrandStage`],
-//! so an errand can never be "talked to Hidalgo" and "not talked" at once,
-//! and each transition fires once: it only happens from the stage before
-//! it.
+//! Reglas puras: dónde está cada personaje, las etapas en orden y qué
+//! interacción está al alcance. Cada etapa es una variante de [`ErrandStage`],
+//! así que un encargo nunca puede estar a la vez en "habló con Hidalgo" y "no
+//! habló", y cada transición ocurre una sola vez: solo sucede desde la etapa
+//! anterior a ella.
 
 use crate::{Aabb, Heading, TetheredHorse, TownLayout, Vec2};
 
-/// Who takes part in the errand.
+/// Quién participa en el encargo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Npc {
-    /// Don Hidalgo, standing in the plaza: gives the errand.
+    /// Don Hidalgo, parado en la plaza: da el encargo.
     Hidalgo,
-    /// Comisario Elías Farach, at his police station's door.
+    /// El comisario Elías Farach, en la puerta de su comisaría.
     Farach,
 }
 
-/// Where a character of the errand stands, for good.
+/// Dónde está un personaje del encargo, de forma permanente.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Standing {
-    /// Index (into the world's towns) of the town they stand in.
+    /// Índice (dentro de los pueblos del mundo) del pueblo en el que está.
     pub town: usize,
     pub position: Vec2,
     pub heading: Heading,
 }
 
 impl Standing {
-    /// The collision footprint of a person standing here.
+    /// La huella de colisión de una persona parada aquí.
     pub fn footprint(&self) -> Aabb {
         let side = Errand::PERSON_FOOTPRINT;
         Aabb::from_center_size(self.position, Vec2::new(side, side))
     }
 }
 
-/// How far along the errand is.
+/// Qué tan avanzado está el encargo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ErrandStage {
-    /// Find Don Hidalgo in the plaza and talk to him.
+    /// Encontrar a Don Hidalgo en la plaza y hablar con él.
     MeetHidalgo,
-    /// Take Don Hidalgo's horse, tied at the general store.
+    /// Tomar el caballo de Don Hidalgo, atado en el almacén de ramos generales.
     TakeHorse,
-    /// Ride to the other town and report to comisario Farach.
+    /// Cabalgar hasta el otro pueblo y presentarse ante el comisario Farach.
     ReportToFarach,
-    /// Reported: nothing left to do.
+    /// Presentado: no queda nada por hacer.
     Done,
 }
 
 impl ErrandStage {
-    /// The one-line objective shown on screen for this stage, in Spanish,
-    /// for an errand to the comisario of `police_town`; `None` once done.
+    /// El objetivo de una línea que se muestra en pantalla para esta etapa, en
+    /// español, para un encargo ante el comisario de `police_town`; `None` una
+    /// vez terminado.
     pub fn objective(self, police_town: &str) -> Option<String> {
         match self {
             Self::MeetHidalgo => Some("Buscá a Don Hidalgo en la plaza".into()),
@@ -65,59 +66,61 @@ impl ErrandStage {
     }
 }
 
-/// Something the errand moved on by. Each happens at most once.
+/// Algo que hizo avanzar el encargo. Cada uno ocurre como mucho una vez.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ErrandEvent {
-    /// Talked to Don Hidalgo: he sent the player to Farach and lent the
-    /// horse.
+    /// Habló con Don Hidalgo: mandó al jugador a ver a Farach y le prestó el
+    /// caballo.
     TalkedToHidalgo,
-    /// Mounted Don Hidalgo's horse.
+    /// Montó el caballo de Don Hidalgo.
     MountedHorse,
-    /// Reported to comisario Farach: the errand is done.
+    /// Se presentó ante el comisario Farach: el encargo está terminado.
     ReportedToFarach,
 }
 
-/// What pressing the interact key did.
+/// Lo que hizo apretar la tecla de interacción.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Interaction {
-    /// The errand moved on.
+    /// El encargo avanzó.
     Event(ErrandEvent),
-    /// At Don Hidalgo's horse before talking to him: it is not the
-    /// player's to take.
+    /// Junto al caballo de Don Hidalgo antes de hablar con él: no le
+    /// corresponde al jugador llevárselo.
     NotYourHorse,
-    /// Nothing in range to interact with.
+    /// No hay nada al alcance con lo que interactuar.
     Nothing,
 }
 
-/// The errand: who stands where, the horse and the current stage.
+/// El encargo: quién está dónde, el caballo y la etapa actual.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Errand {
     stage: ErrandStage,
     hidalgo: Standing,
     farach: Standing,
-    /// Town of the horse, and the horse.
+    /// Pueblo del caballo, y el caballo.
     horse: (usize, TetheredHorse),
-    /// Name of the town Farach is in.
+    /// Nombre del pueblo en el que está Farach.
     police_name: String,
 }
 
 impl Errand {
-    /// Farthest the player may be from Don Hidalgo to talk, in meters.
+    /// Distancia máxima a la que puede estar el jugador de Don Hidalgo para
+    /// hablarle, en metros.
     pub const TALK_RANGE: f32 = 3.0;
-    /// Farthest the player may be from the horse to mount it, in meters.
+    /// Distancia máxima a la que puede estar el jugador del caballo para
+    /// montarlo, en metros.
     pub const MOUNT_RANGE: f32 = 3.0;
-    /// Farthest the player (on foot or mounted) may be from Farach to
-    /// report, in meters.
+    /// Distancia máxima a la que puede estar el jugador (a pie o montado) de
+    /// Farach para presentarse, en metros.
     pub const REPORT_RANGE: f32 = 4.0;
-    /// Side of a standing person's square collision footprint, in meters.
+    /// Lado de la huella de colisión cuadrada de una persona parada, en metros.
     pub const PERSON_FOOTPRINT: f32 = 0.8;
-    /// How far Bairoletto stands to Farach's left, in meters.
+    /// A qué distancia a la izquierda de Farach está Bairoletto, en metros.
     pub const BAIROLETTO_GAP: f32 = 1.1;
 
-    /// The errand from town `giver` (Don Hidalgo in its plaza, his horse at
-    /// its general store) to town `police` (Farach at its first police
-    /// station's door). `None` if either town is missing, they are the
-    /// same town, or `police` has no police station.
+    /// El encargo desde el pueblo `giver` (Don Hidalgo en su plaza, su caballo
+    /// en su almacén de ramos generales) hasta el pueblo `police` (Farach en la
+    /// puerta de su primera comisaría). `None` si falta alguno de los pueblos,
+    /// si son el mismo pueblo o si `police` no tiene comisaría.
     pub fn new(towns: &[TownLayout], giver: usize, police: usize) -> Option<Self> {
         if giver == police {
             return None;
@@ -142,9 +145,9 @@ impl Errand {
         })
     }
 
-    /// The town an errand from town `giver` sends the player to: the town
-    /// named `name` when it has a police station, otherwise the nearest
-    /// other town (by grid center) that has one.
+    /// El pueblo al que un encargo desde el pueblo `giver` manda al jugador: el
+    /// pueblo llamado `name` cuando tiene comisaría o, si no, el otro pueblo
+    /// más cercano (según el centro de la cuadrícula) que tenga una.
     pub fn police_town(towns: &[TownLayout], giver: usize, name: &str) -> Option<usize> {
         let from = towns.get(giver)?.grid().center();
         let candidates = || {
@@ -171,17 +174,17 @@ impl Errand {
         self.stage
     }
 
-    /// Name of the town the errand sends the player to, Farach's.
+    /// Nombre del pueblo al que el encargo manda al jugador, el de Farach.
     pub fn police_name(&self) -> &str {
         &self.police_name
     }
 
-    /// The current stage's objective (see [`ErrandStage::objective`]).
+    /// El objetivo de la etapa actual (ver [`ErrandStage::objective`]).
     pub fn objective(&self) -> Option<String> {
         self.stage.objective(&self.police_name)
     }
 
-    /// Where `npc` stands.
+    /// Dónde está `npc`.
     pub fn standing(&self, npc: Npc) -> Standing {
         match npc {
             Npc::Hidalgo => self.hidalgo,
@@ -189,9 +192,9 @@ impl Errand {
         }
     }
 
-    /// Where Juan Bautista Bairoletto stands: at Farach's left by the
-    /// police station door, facing the same way. He has no part in the
-    /// errand yet.
+    /// Dónde está Juan Bautista Bairoletto: a la izquierda de Farach junto a la
+    /// puerta de la comisaría, mirando hacia el mismo lado. Todavía no tiene
+    /// ningún papel en el encargo.
     pub fn bairoletto(&self) -> Standing {
         let forward = self.farach.heading.forward();
         let left = Vec2::new(-forward.y, forward.x);
@@ -201,13 +204,13 @@ impl Errand {
         }
     }
 
-    /// The horse Don Hidalgo lends, and its town.
+    /// El caballo que presta Don Hidalgo, y su pueblo.
     pub fn horse(&self) -> (usize, TetheredHorse) {
         self.horse
     }
 
-    /// Where the current stage sends the player: Don Hidalgo, then his
-    /// horse, then Farach; `None` once done.
+    /// Adónde manda al jugador la etapa actual: a Don Hidalgo, después a su
+    /// caballo y después a Farach; `None` una vez terminado.
     pub fn target(&self) -> Option<Vec2> {
         match self.stage {
             ErrandStage::MeetHidalgo => Some(self.hidalgo.position),
@@ -217,8 +220,8 @@ impl Errand {
         }
     }
 
-    /// Collision footprints of the people standing in the errand:
-    /// Hidalgo, Farach and Bairoletto.
+    /// Huellas de colisión de las personas que están en el encargo: Hidalgo,
+    /// Farach y Bairoletto.
     pub fn obstacles(&self) -> [Aabb; 3] {
         [
             self.hidalgo.footprint(),
@@ -227,8 +230,8 @@ impl Errand {
         ]
     }
 
-    /// Talks to `npc` from `at`: only in range, and only at the stage that
-    /// expects it.
+    /// Habla con `npc` desde `at`: solo si está al alcance, y solo en la etapa
+    /// que lo espera.
     pub fn talk(&mut self, npc: Npc, at: Vec2) -> Option<ErrandEvent> {
         let (due, range, next, event) = match npc {
             Npc::Hidalgo => (
@@ -248,8 +251,8 @@ impl Errand {
         self.advance(due, near, next, event)
     }
 
-    /// Mounts the horse from `at`: only in range, and only once Don
-    /// Hidalgo lent it.
+    /// Monta el caballo desde `at`: solo si está al alcance, y solo una vez que
+    /// Don Hidalgo lo prestó.
     pub fn mount(&mut self, at: Vec2) -> Option<ErrandEvent> {
         let near = self.near_horse(at);
         self.advance(
@@ -260,8 +263,8 @@ impl Errand {
         )
     }
 
-    /// Presses the interact key at `at`: talks or mounts, whichever is in
-    /// range and due.
+    /// Aprieta la tecla de interacción en `at`: habla o monta, lo que esté al
+    /// alcance y corresponda.
     pub fn interact(&mut self, at: Vec2) -> Interaction {
         let event = match self.stage {
             ErrandStage::MeetHidalgo => self.talk(Npc::Hidalgo, at),
@@ -282,8 +285,9 @@ impl Errand {
         at.distance(self.horse.1.position) <= Self::MOUNT_RANGE
     }
 
-    /// Moves from stage `due` to `next` when `near`, reporting `event`;
-    /// from any other stage nothing happens, so each event fires once.
+    /// Pasa de la etapa `due` a `next` cuando `near`, informando `event`; desde
+    /// cualquier otra etapa no pasa nada, así que cada evento ocurre una sola
+    /// vez.
     fn advance(
         &mut self,
         due: ErrandStage,
@@ -304,7 +308,8 @@ mod tests {
     use super::*;
     use crate::{Terrain, TownConfig, World};
 
-    /// A giver town and, far east, a police town.
+    /// Un pueblo que da el encargo y, lejos hacia el este, un pueblo con
+    /// comisaría.
     fn towns() -> Vec<TownLayout> {
         let giver = TownLayout::generate(&TownConfig {
             name: "Monte Nievas".into(),
@@ -329,7 +334,7 @@ mod tests {
         (towns, errand)
     }
 
-    /// A point `d` meters east of `p`.
+    /// Un punto a `d` metros al este de `p`.
     fn east(p: Vec2, d: f32) -> Vec2 {
         p + Vec2::new(d, 0.0)
     }
@@ -390,7 +395,7 @@ mod tests {
         let gap = him.position.distance(farach.position);
         assert!((gap - Errand::BAIROLETTO_GAP).abs() < 1e-4);
         assert!(gap > Errand::PERSON_FOOTPRINT);
-        // Beside him, not in front or behind.
+        // A su lado, no adelante ni atrás.
         let along = (him.position - farach.position).dot(farach.heading.forward());
         assert!(along.abs() < 1e-4);
         assert!(e.obstacles()[2].contains_point(him.position));
@@ -422,9 +427,9 @@ mod tests {
         .unwrap();
         towns.push(far);
         assert_eq!(Errand::police_town(&towns, 0, "Lejos"), Some(2));
-        // Unknown name: the nearest other town.
+        // Nombre desconocido: el otro pueblo más cercano.
         assert_eq!(Errand::police_town(&towns, 0, "Atlantis"), Some(1));
-        // Never the giver's own town.
+        // Nunca el propio pueblo del que da el encargo.
         assert_eq!(Errand::police_town(&towns, 0, "Monte Nievas"), Some(1));
         assert_eq!(Errand::police_town(&towns[..1], 0, "Eduardo Castex"), None);
     }
@@ -437,8 +442,8 @@ mod tests {
         let farach = e.standing(Npc::Farach).position;
 
         assert_eq!(e.target(), Some(hidalgo));
-        // Out of order: the horse is not lent yet, Farach is not expecting
-        // the player.
+        // Fuera de orden: el caballo todavía no fue prestado y Farach no espera
+        // al jugador.
         assert_eq!(e.mount(horse), None);
         assert_eq!(e.talk(Npc::Farach, farach), None);
         assert_eq!(e.stage(), ErrandStage::MeetHidalgo);

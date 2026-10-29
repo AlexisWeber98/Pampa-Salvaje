@@ -1,21 +1,23 @@
-//! Logical animation state. Render decides how it is drawn: joint poses
-//! ([`crate::pose`]) for people and horses.
+//! Estado lógico de la animación. El render decide cómo se dibuja: poses de
+//! articulaciones ([`crate::pose`]) para personas y caballos.
 
-/// What the rider is doing, independent of how it is drawn.
+/// Lo que está haciendo el jinete, sin importar cómo se dibuja.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum AnimationState {
     #[default]
     Idle,
     Walk,
-    /// A gallop on horseback; a jog on foot.
+    /// Un galope a caballo; un trote a pie.
     Gallop,
 }
 
 impl AnimationState {
-    /// Speed (m/s, absolute) below which the rider counts as standing still.
+    /// Velocidad (m/s, en valor absoluto) por debajo de la cual se considera
+    /// que el jinete está quieto.
     pub const IDLE_THRESHOLD: f32 = 0.1;
 
-    /// Classifies a ground speed given the top walking speed.
+    /// Clasifica una velocidad sobre el suelo a partir de la velocidad máxima
+    /// al caminar.
     pub fn from_speed(speed: f32, walk_max: f32) -> Self {
         let speed = speed.abs();
         if speed < Self::IDLE_THRESHOLD {

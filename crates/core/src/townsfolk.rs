@@ -1,30 +1,32 @@
-//! Townsfolk: simple walkers that wander the streets between intersections.
+//! Vecinos: peatones simples que deambulan por las calles entre intersecciones.
 //!
-//! Deterministic for a given seed. Each person walks from one street
-//! intersection to a neighboring one, pauses there a moment, then picks the
-//! next one at random (avoiding turning straight back when it can). People
-//! collide with the same static obstacles as the rider.
+//! Deterministas para una semilla dada. Cada persona camina desde una
+//! intersección de calles hasta una vecina, se detiene ahí un momento y después
+//! elige la siguiente al azar (evitando dar media vuelta cuando puede). Las
+//! personas chocan con los mismos obstáculos estáticos que el jinete.
 
 use crate::rng::Rng;
 use crate::{Aabb, AnimationState, Body, Circle, Heading, TownLayout, Vec2, World};
 
-/// Street intersections and the street segments joining them.
+/// Intersecciones de calles y los tramos de calle que las unen.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StreetGraph {
-    /// Intersection centers.
+    /// Centros de las intersecciones.
     pub nodes: Vec<Vec2>,
-    /// For each node, the indices of the nodes one block away along a street.
+    /// Para cada nodo, los índices de los nodos que están a una cuadra por una
+    /// calle.
     pub links: Vec<Vec<usize>>,
 }
 
 impl StreetGraph {
-    /// The intersections of `town`'s north-south and east-west streets, row
-    /// by row from the south-west, each linked to its neighbors one block
-    /// away. A merged plaza has no street through it: intersections inside
-    /// it are left out, and no link crosses it.
+    /// Las intersecciones de las calles norte-sur y este-oeste de `town`, fila
+    /// por fila desde el sudoeste, cada una unida a sus vecinas a una cuadra de
+    /// distancia. Una plaza fusionada no tiene ninguna calle que la atraviese:
+    /// las intersecciones que quedan adentro se omiten, y ningún enlace la
+    /// cruza.
     pub fn from_town(town: &TownLayout) -> Self {
-        // Centerlines of the streets of one direction, in order; a street
-        // cut by a plaza counts once.
+        // Líneas centrales de las calles de una dirección, en orden; una calle
+        // cortada por una plaza cuenta una sola vez.
         let lines = |key: fn(&Aabb) -> f32, keep: fn(&Aabb) -> bool| {
             let mut lines: Vec<f32> = town.streets.iter().filter(|s| keep(s)).map(key).collect();
             lines.sort_by(f32::total_cmp);
@@ -35,7 +37,7 @@ impl StreetGraph {
         let ys = lines(|s| s.center().y, |s| s.size().x > s.size().y);
         let on_street = |p: Vec2| town.streets.iter().any(|s| s.contains_point(p));
 
-        // Node index of each intersection on a street, row by row.
+        // Índice de nodo de cada intersección de una calle, fila por fila.
         let mut nodes = Vec::with_capacity(xs.len() * ys.len());
         let mut index = vec![None; xs.len() * ys.len()];
         for (j, &y) in ys.iter().enumerate() {
@@ -72,42 +74,43 @@ impl StreetGraph {
     }
 }
 
-/// One walker.
+/// Un peatón.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Townsperson {
     pub position: Vec2,
     pub heading: Heading,
-    /// Current ground speed, in m/s.
+    /// Velocidad actual sobre el suelo, en m/s.
     pub speed: f32,
     pub collider: Circle,
-    /// Appearance variation; render decides what each value looks like.
+    /// Variación de apariencia; el render decide cómo se ve cada valor.
     pub look: u8,
     walk_speed: f32,
-    /// Fixed offset from street centerlines, so people do not walk in file.
+    /// Desplazamiento fijo respecto de la línea central de las calles, para que
+    /// la gente no camine en fila.
     lane: Vec2,
     from: usize,
     to: usize,
-    /// Seconds left standing at the current waypoint.
+    /// Segundos que le quedan parado en el punto de paso actual.
     pause: f32,
-    /// Seconds spent making almost no progress toward the target.
+    /// Segundos que lleva casi sin avanzar hacia el objetivo.
     stuck: f32,
     rng: Rng,
 }
 
 impl Townsperson {
-    /// Collision radius of a person seen from above, in meters.
+    /// Radio de colisión de una persona vista desde arriba, en metros.
     pub const COLLIDER_RADIUS: f32 = 0.3;
-    /// Fastest walking pace, in m/s: an easy street walk is 1.25 to 1.5
-    /// (the animation's walk, stood up for 1919, steps naturally at about
-    /// 1.27 m/s).
+    /// Ritmo de caminata más rápido, en m/s: un paseo tranquilo por la calle va
+    /// de 1,25 a 1,5 (la caminata de la animación, erguida para 1919, avanza
+    /// naturalmente a alrededor de 1,27 m/s).
     pub const WALK_MAX: f32 = 1.5;
 
-    /// What the person is doing, independent of how it is drawn.
+    /// Lo que está haciendo la persona, sin importar cómo se dibuja.
     pub fn animation(&self) -> AnimationState {
         AnimationState::from_speed(self.speed, Self::WALK_MAX)
     }
 
-    /// Where this person stands, as an obstacle for others.
+    /// Dónde está parada esta persona, como obstáculo para los demás.
     pub fn body(&self) -> Body {
         Body {
             position: self.position,
@@ -115,39 +118,40 @@ impl Townsperson {
         }
     }
 
-    /// Index of the intersection last reached (or walked away from).
+    /// Índice de la última intersección a la que llegó (o de la que se alejó).
     pub fn last_waypoint(&self) -> usize {
         self.from
     }
 
-    /// Index of the intersection being walked to.
+    /// Índice de la intersección hacia la que camina.
     pub fn next_waypoint(&self) -> usize {
         self.to
     }
 }
 
-/// Everyone walking around town, plus the street graph they follow.
+/// Todos los que caminan por el pueblo, más el grafo de calles que siguen.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Townsfolk {
     pub graph: StreetGraph,
     pub people: Vec<Townsperson>,
 }
 
-/// How many people walk around a small town, such as the Castex-inspired
-/// one. Bigger towns get more ([`TownLayout::townsfolk_count`]).
+/// Cuántas personas caminan por un pueblo chico, como el inspirado en Castex.
+/// Los pueblos más grandes tienen más ([`TownLayout::townsfolk_count`]).
 pub const TOWNSFOLK_COUNT: usize = 16;
 
 impl Townsfolk {
-    /// `count` people spread over `town`'s streets, placed from `seed`.
+    /// `count` personas repartidas por las calles de `town`, ubicadas a partir
+    /// de `seed`.
     pub fn new(town: &TownLayout, count: usize, seed: u32) -> Self {
         Self::from_graph(StreetGraph::from_town(town), count, seed)
     }
 
-    /// `count` people spread over `graph`, placed from `seed`.
+    /// `count` personas repartidas por `graph`, ubicadas a partir de `seed`.
     ///
-    /// Degenerate graphs never panic: with no intersections nobody spawns,
-    /// and people placed on an intersection with no streets leading away
-    /// stand there idle.
+    /// Los grafos degenerados nunca provocan un panic: sin intersecciones no
+    /// aparece nadie, y las personas ubicadas en una intersección de la que no
+    /// sale ninguna calle se quedan ahí paradas.
     pub fn from_graph(graph: StreetGraph, count: usize, seed: u32) -> Self {
         let people = if graph.nodes.is_empty() {
             Vec::new()
@@ -159,14 +163,14 @@ impl Townsfolk {
         Self { graph, people }
     }
 
-    /// Advances everyone by `dt` seconds inside `world`. Non-finite or
-    /// non-positive `dt` changes nothing.
+    /// Hace avanzar a todos `dt` segundos dentro de `world`. Un `dt` no finito
+    /// o no positivo no cambia nada.
     pub fn step(&mut self, world: &World, dt: f32) {
         self.step_around(world, &[], dt);
     }
 
-    /// Like [`Self::step`], with `obstacles` (the rider) that people walk
-    /// around instead of through.
+    /// Como [`Self::step`], con `obstacles` (el jinete) que la gente rodea en
+    /// lugar de atravesar.
     pub fn step_around(&mut self, world: &World, obstacles: &[Body], dt: f32) {
         if !(dt.is_finite() && dt > 0.0) {
             return;
@@ -176,10 +180,10 @@ impl Townsfolk {
         }
     }
 
-    /// Shoves everyone overlapping `body` (a rider barging through) out of
-    /// its way, without pushing anyone into the world's obstacles. Returns
-    /// the indices of the people it touched, in order (the contacts that
-    /// [`crate::BumpTracker`] turns into complaints).
+    /// Aparta del camino de `body` (un jinete que se abre paso) a todos los que
+    /// se superponen con él, sin empujar a nadie contra los obstáculos del
+    /// mundo. Devuelve los índices de las personas que tocó, en orden (los
+    /// contactos que [`crate::BumpTracker`] convierte en quejas).
     pub fn make_way(&mut self, world: &World, body: Body) -> Vec<usize> {
         let mut touched = Vec::new();
         for (index, person) in self.people.iter_mut().enumerate() {
@@ -191,25 +195,27 @@ impl Townsfolk {
         touched
     }
 
-    /// Where everyone stands, as obstacles for others.
+    /// Dónde está parado cada uno, como obstáculo para los demás.
     pub fn bodies(&self) -> Vec<Body> {
         self.people.iter().map(Townsperson::body).collect()
     }
 }
 
-/// Largest offset from a street centerline, in meters: keeps people clear of
-/// the hitching rail and anything else at the street's edge.
+/// Desplazamiento máximo respecto de la línea central de una calle, en metros:
+/// mantiene a la gente lejos del palenque y de cualquier otra cosa que haya en
+/// el borde de la calle.
 const MAX_LANE: f32 = 0.7;
-/// Range of the pause at each intersection, in seconds.
+/// Rango de la pausa en cada intersección, en segundos.
 const PAUSE: (f32, f32) = (0.5, 4.0);
-/// Range of walking paces, in m/s.
+/// Rango de ritmos de caminata, en m/s.
 const PACE: (f32, f32) = (1.25, Townsperson::WALK_MAX);
-/// Seconds of almost no progress before a person gives up and turns back.
+/// Segundos casi sin avanzar antes de que una persona se rinda y dé media
+/// vuelta.
 const GIVE_UP: f32 = 2.0;
 
 impl Townsperson {
-    /// A person somewhere along a street of `graph` (which has nodes). On an
-    /// isolated intersection the person starts, and stays, right there.
+    /// Una persona en algún punto de una calle de `graph` (que tiene nodos). En
+    /// una intersección aislada la persona empieza ahí mismo y se queda ahí.
     fn spawn(graph: &StreetGraph, mut rng: Rng) -> Self {
         let from = rng.below(graph.nodes.len());
         let links = &graph.links[from];
@@ -262,7 +268,7 @@ impl Townsperson {
         }
         self.position = world.resolve_among(self.collider, self.position, obstacles, |_| ());
 
-        // Something in the way (a wall, the tethered horse): turn back.
+        // Algo en el camino (una pared, el caballo atado): dar media vuelta.
         if self.speed > 0.0 && self.position.distance(start) < 0.25 * stride {
             self.stuck += dt;
             if self.stuck > GIVE_UP {
@@ -274,14 +280,15 @@ impl Townsperson {
         }
     }
 
-    /// Reached `to`: pick the next intersection and stand still a moment.
+    /// Llegó a `to`: elige la siguiente intersección y se queda quieta un
+    /// momento.
     fn arrive(&mut self, graph: &StreetGraph) {
         let came_from = self.from;
         self.from = self.to;
         let links = &graph.links[self.from];
         let onward: Vec<usize> = links.iter().copied().filter(|&n| n != came_from).collect();
         let choices = if onward.is_empty() { links } else { &onward };
-        // Nowhere to go from an isolated intersection: stay put.
+        // No hay adónde ir desde una intersección aislada: se queda donde está.
         self.to = if choices.is_empty() {
             self.from
         } else {
@@ -313,16 +320,17 @@ mod tests {
 
     #[test]
     fn street_graph_joins_neighboring_intersections_along_streets() {
-        // A walker strays at most this far from the centerline.
+        // Un peatón se aleja como mucho esta distancia de la línea central.
         let reach = MAX_LANE + Townsperson::COLLIDER_RADIUS;
         for (c, town) in sample_configs().iter().zip(sample_towns()) {
             let world = World::with_town(Terrain::default(), &town);
             let graph = StreetGraph::from_town(&town);
             let (cols, rows) = c.blocks;
-            // Intersections inside a merged plaza are gone.
+            // Las intersecciones dentro de una plaza fusionada desaparecen.
             let (w, h) = town.size.plaza_span(c.blocks);
             let inside = (w - 1) * (h - 1);
-            // A line through the town adds a row of crossings by its band.
+            // Una línea que atraviesa el pueblo agrega una fila de cruces junto
+            // a su franja.
             let band = if town.rail_band().is_some() {
                 cols + 1
             } else {
@@ -342,8 +350,8 @@ mod tests {
                     assert!(graph.links[b].contains(&a), "links are symmetric");
                     let (pa, pb) = (graph.nodes[a], graph.nodes[b]);
                     assert!(pa.x == pb.x || pa.y == pb.y, "straight along a street");
-                    // Every point of the link is on a street and clear of
-                    // obstacles by more than a walker's reach.
+                    // Cada punto del enlace está sobre una calle y lejos de los
+                    // obstáculos más que el alcance de un peatón.
                     for k in 0..=20 {
                         let p = pa + (pb - pa) * (k as f32 / 20.0);
                         assert!(on_street(p), "{p:?} off the street");
@@ -404,7 +412,8 @@ mod tests {
 
     #[test]
     fn people_walk_at_an_easy_street_pace() {
-        // 1.25 to 1.5 m/s, each their own: a 1919 street, nobody hurrying.
+        // De 1,25 a 1,5 m/s, cada uno el suyo: una calle de 1919, nadie
+        // apurado.
         let (town, _) = town();
         let folk = Townsfolk::new(&town, 200, 3);
         let paces: Vec<f32> = folk.people.iter().map(|p| p.walk_speed).collect();
@@ -495,7 +504,8 @@ mod tests {
                 let to = folk.graph.nodes[p.next_waypoint()] + p.lane - p.position;
                 let distance = to.length();
                 if p.animation() == AnimationState::Walk && distance > 0.5 {
-                    // Facing the next intersection (continuous, not snapped).
+                    // Mirando hacia la siguiente intersección (continuo, sin
+                    // ajustar a pasos fijos).
                     let facing = p.heading.forward().dot(to * (1.0 / distance));
                     assert!(facing > 0.99, "{p:?} faces away ({facing})");
                 }
@@ -516,7 +526,7 @@ mod tests {
     #[test]
     fn people_on_an_isolated_intersection_stand_there() {
         let (mut town, world) = town();
-        // Keep one north-south and one east-west street: a single crossing.
+        // Se conserva una calle norte-sur y una este-oeste: un único cruce.
         let ns = *town
             .streets
             .iter()
@@ -563,7 +573,7 @@ mod tests {
         assert!(folk.people.iter().any(|p| p.last_waypoint() == 2));
     }
 
-    /// No person overlaps `body` (beyond rounding).
+    /// Ninguna persona se superpone con `body` (más allá del redondeo).
     fn assert_clear_of(folk: &Townsfolk, body: Body, when: &str) {
         for p in &folk.people {
             let gap = p.position.distance(body.position);
@@ -576,7 +586,7 @@ mod tests {
     fn people_walk_around_a_standing_rider() {
         let (town, world) = town();
         let mut folk = Townsfolk::new(&town, TOWNSFOLK_COUNT, 3);
-        // A rider standing still on each person's path, one at a time.
+        // Un jinete quieto en el camino de cada persona, de a una por vez.
         for i in 0..4 {
             let p = &folk.people[i];
             let ahead = folk.graph.nodes[p.next_waypoint()] - p.position;
@@ -604,7 +614,7 @@ mod tests {
             gallop: true,
             turn: 0.3,
         };
-        // Start right on top of the first person.
+        // Empieza justo encima de la primera persona.
         let at = folk.people[0].position;
         let mut rider = crate::Rider::new(at, Heading::from_radians(0.0), &world);
         let mut shoved = 0;
@@ -649,7 +659,7 @@ mod tests {
         };
         assert_eq!(folk.make_way(&world, rider), [0, 2]);
         assert_clear_of(&folk, rider, "shoved");
-        // Nobody left in the way: no contacts.
+        // Ya no queda nadie en el camino: no hay contactos.
         assert!(folk.make_way(&world, rider).is_empty());
     }
 
@@ -688,8 +698,9 @@ mod tests {
 
     #[test]
     fn walkers_keep_inside_the_lane_the_palenques_leave_free() {
-        // 2.5 m sidewalks leave an 8 m street a 3 m carriageway: its walkers'
-        // reach stays within 1 m of the middle, where rails and horses begin.
+        // Veredas de 2,5 m dejan a una calle de 8 m una calzada de 3 m: el
+        // alcance de sus peatones queda a menos de 1 m del medio, donde
+        // empiezan los palenques y los caballos.
         const { assert!(MAX_LANE + Townsperson::COLLIDER_RADIUS <= 1.0 + 1e-4) };
         const { assert!(MAX_LANE + Townsperson::COLLIDER_RADIUS <= crate::town::Palenque::LANE + 1e-4) };
     }

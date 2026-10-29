@@ -1,5 +1,5 @@
-//! The static world the rider moves through: terrain, raised floors and
-//! playable bounds.
+//! El mundo estático por el que se mueve el jinete: terreno, pisos elevados y
+//! límites jugables.
 
 use std::sync::Arc;
 
@@ -9,25 +9,27 @@ use crate::{
     SettlementLayout, SideObstacle, StaticObstacles, Terrain, TownLayout, Vec2, WorldConfig,
 };
 
-/// Axis-aligned playable area on the ground plane.
+/// Área jugable alineada con los ejes en el plano del suelo.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WorldBounds {
     pub min: Vec2,
     pub max: Vec2,
 }
 
-/// Result of keeping a circle inside [`WorldBounds`].
+/// Resultado de mantener un círculo dentro de [`WorldBounds`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Contained {
     pub position: Vec2,
-    /// Unit direction the circle was pushed back in along `x`, if it was.
+    /// Dirección unitaria en la que se empujó de vuelta al círculo sobre `x`,
+    /// si se lo empujó.
     pub push_x: Option<Vec2>,
-    /// Unit direction the circle was pushed back in along `y`, if it was.
+    /// Dirección unitaria en la que se empujó de vuelta al círculo sobre `y`,
+    /// si se lo empujó.
     pub push_y: Option<Vec2>,
 }
 
 impl WorldBounds {
-    /// A square of side `2 * half_extent` centered on the origin.
+    /// Un cuadrado de lado `2 * half_extent` centrado en el origen.
     pub const fn centered(half_extent: f32) -> Self {
         Self {
             min: Vec2::new(-half_extent, -half_extent),
@@ -35,12 +37,13 @@ impl WorldBounds {
         }
     }
 
-    /// Side lengths along `x` and `y`.
+    /// Longitudes de los lados sobre `x` y sobre `y`.
     pub fn size(&self) -> Vec2 {
         self.max - self.min
     }
 
-    /// Clamps a circle of `radius` at `center` so it lies fully inside.
+    /// Ajusta un círculo de radio `radius` ubicado en `center` para que quede
+    /// completamente adentro.
     pub fn contain(&self, center: Vec2, radius: f32) -> Contained {
         let (x, push_x) = clamp_axis(center.x, self.min.x + radius, self.max.x - radius);
         let (y, push_y) = clamp_axis(center.y, self.min.y + radius, self.max.y - radius);
@@ -52,7 +55,7 @@ impl WorldBounds {
     }
 }
 
-/// Clamps `value` into `[lo, hi]`, reporting the sign of the push, if any.
+/// Ajusta `value` a `[lo, hi]`, informando el signo del empuje, si lo hubo.
 fn clamp_axis(value: f32, lo: f32, hi: f32) -> (f32, Option<f32>) {
     if value < lo {
         (lo, Some(1.0))
@@ -63,29 +66,29 @@ fn clamp_axis(value: f32, lo: f32, hi: f32) -> (f32, Option<f32>) {
     }
 }
 
-/// Everything static the rider collides with or stands on.
+/// Todo lo estático con lo que choca el jinete o sobre lo que se apoya.
 #[derive(Debug, Clone, PartialEq)]
 pub struct World {
     pub config: WorldConfig,
     pub terrain: Terrain,
     pub bounds: WorldBounds,
-    /// Static footprints the rider cannot pass through, indexed so
-    /// collision only looks at the nearby ones.
+    /// Huellas estáticas que el jinete no puede atravesar, indexadas para que
+    /// la colisión solo mire las cercanas.
     pub obstacles: StaticObstacles,
-    /// Moving footprints (the train), refreshed by the game every frame.
+    /// Huellas en movimiento (el tren), que el juego actualiza en cada frame.
     pub moving: Vec<SideObstacle>,
-    /// Raised floors people walk on (station platforms), part of
-    /// [`Self::ground_height`].
+    /// Pisos elevados por los que camina la gente (andenes de las estaciones),
+    /// parte de [`Self::ground_height`].
     pub floors: Vec<Floor>,
 }
 
-/// Something that knows how high the ground is where bodies stand.
+/// Algo que sabe a qué altura está el suelo donde se apoyan los cuerpos.
 pub trait Ground {
-    /// Height of the walkable surface at `p`, in meters.
+    /// Altura de la superficie transitable en `p`, en metros.
     fn ground_height(&self, p: Vec2) -> f32;
 }
 
-/// Bare terrain: no floors on it.
+/// Terreno desnudo: sin pisos encima.
 impl Ground for Terrain {
     fn ground_height(&self, p: Vec2) -> f32 {
         self.height(p.x, p.y)
@@ -99,8 +102,8 @@ impl Ground for World {
 }
 
 impl World {
-    /// Open `terrain` inside the world `config` describes, with nothing
-    /// built on it.
+    /// `terrain` abierto dentro del mundo que describe `config`, sin nada
+    /// construido encima.
     pub fn new(config: WorldConfig, terrain: Terrain) -> Self {
         Self {
             config,
@@ -112,12 +115,11 @@ impl World {
         }
     }
 
-    /// Height of the surface bodies stand on at `p`: the terrain, raised by
-    /// the highest floor (a platform or its ramp) there, or by a level
-    /// crossing's approach and deck
-    /// ([`RoadNetwork::crossing_rise`]).
-    /// Everything placed on the ground (riders, people, horses, the camera
-    /// floor) uses this.
+    /// Altura de la superficie sobre la que se apoyan los cuerpos en `p`: el
+    /// terreno, elevado por el piso más alto que haya ahí (un andén o su
+    /// rampa), o por el acceso y la plataforma de un paso a nivel
+    /// ([`RoadNetwork::crossing_rise`]). Todo lo que se coloca sobre el suelo
+    /// (jinetes, personas, caballos, el piso de la cámara) usa esto.
     pub fn ground_height(&self, p: Vec2) -> f32 {
         let crossing = self
             .terrain
@@ -132,21 +134,21 @@ impl World {
         self.terrain.height(p.x, p.y) + rise
     }
 
-    /// Open terrain in the default world, with nothing built on it.
+    /// Terreno abierto en el mundo por defecto, sin nada construido encima.
     pub fn open(terrain: Terrain) -> Self {
         Self::new(WorldConfig::default(), terrain)
     }
 
-    /// `terrain` leveled under `town`, with the town's footprints as
-    /// obstacles, in the default world.
+    /// `terrain` nivelado debajo de `town`, con las huellas del pueblo como
+    /// obstáculos, en el mundo por defecto.
     pub fn with_town(terrain: Terrain, town: &TownLayout) -> Self {
         Self::with_towns(WorldConfig::default(), terrain, std::slice::from_ref(town))
     }
 
-    /// The world `config` describes, with `terrain` leveled under every
-    /// town, every town's footprints as obstacles and its platforms as
-    /// floors. The towns should come
-    /// from [`crate::place_towns`], so they stay apart and inside.
+    /// El mundo que describe `config`, con `terrain` nivelado debajo de cada
+    /// pueblo, las huellas de cada pueblo como obstáculos y sus andenes como
+    /// pisos. Los pueblos deberían venir de [`crate::place_towns`], para que
+    /// queden separados y adentro.
     pub fn with_towns(config: WorldConfig, terrain: Terrain, towns: &[TownLayout]) -> Self {
         let mut terrain = terrain;
         for town in towns {
@@ -161,24 +163,25 @@ impl World {
         world
     }
 
-    /// Adds the bays' platforms as floors ([`RailLine::floors`]).
+    /// Agrega los andenes de las vías muertas como pisos
+    /// ([`RailLine::floors`]).
     pub fn lay_rail(&mut self, line: &RailLine) {
         self.floors.extend(line.floors());
     }
 
-    /// Cuts `roads` into the terrain and adds their signposts and level
-    /// crossing signs as obstacles. Lay roads before growing flora, which
-    /// keeps off them.
+    /// Corta `roads` en el terreno y agrega sus carteles indicadores y las
+    /// señales de los pasos a nivel como obstáculos. Hay que trazar los caminos
+    /// antes de hacer crecer la flora, que se mantiene fuera de ellos.
     pub fn lay_roads(&mut self, roads: RoadNetwork) {
         self.obstacles.extend(roads.obstacles());
         let terrain = std::mem::take(&mut self.terrain);
         self.terrain = terrain.with_roads(Arc::new(roads));
     }
 
-    /// Adds every span and every shut gate of `fences` as thin static
-    /// obstacles [`FenceLayout::HEIGHT`] tall, which a jumping horse
-    /// clears; open gates and broken spans are gaps. Returns how many
-    /// boxes were added.
+    /// Agrega cada tramo y cada tranquera cerrada de `fences` como obstáculos
+    /// estáticos delgados de [`FenceLayout::HEIGHT`] de alto, que un caballo
+    /// supera al saltar; las tranqueras abiertas y los tramos rotos son huecos.
+    /// Devuelve cuántos rectángulos se agregaron.
     pub fn fence(&mut self, fences: &FenceLayout) -> usize {
         let spans = fences.obstacles();
         let count = spans.len();
@@ -188,11 +191,11 @@ impl World {
         count
     }
 
-    /// Adds every house, galpón, tank and prop of `settlements` as a static
-    /// obstacle, every corral as its rail spans (open at its gate) and
-    /// every tree spot as its trunk, each as tall as its structure
-    /// ([`SettlementLayout::obstacle_heights`]). Tracks are no obstacle.
-    /// Returns how many boxes were added.
+    /// Agrega cada casa, galpón, tanque y elemento decorativo de `settlements`
+    /// como obstáculo estático, cada corral como sus tramos de baranda (abierto
+    /// en su tranquera) y cada lugar de árbol como su tronco, cada uno tan alto
+    /// como su estructura ([`SettlementLayout::obstacle_heights`]). Las huellas
+    /// no son obstáculos. Devuelve cuántos rectángulos se agregaron.
     pub fn settle(&mut self, settlements: &SettlementLayout) -> usize {
         let before = self.obstacles.len();
         for (obstacle, height) in settlements.obstacle_heights() {
@@ -201,20 +204,20 @@ impl World {
         self.obstacles.len() - before
     }
 
-    /// Adds every tree trunk `flora` grows anywhere in the world as a
-    /// static obstacle, so collision holds in chunks that are not drawn.
-    /// Returns how many trees were planted. Shrubs and grass are not
-    /// obstacles: a rider rides through them.
+    /// Agrega cada tronco de árbol que `flora` hace crecer en cualquier parte
+    /// del mundo como obstáculo estático, para que la colisión funcione en los
+    /// chunks que no se dibujan. Devuelve cuántos árboles se plantaron. Los
+    /// arbustos y el pasto no son obstáculos: un jinete pasa a través de ellos.
     pub fn plant(&mut self, flora: &FloraSite) -> usize {
         let trees = flora.all_trees();
         self.obstacles.extend(trees.iter().map(|t| t.obstacle()));
         trees.len()
     }
 
-    /// Streams the trunks of chunk `coord`'s trees in as obstacles,
-    /// replacing any it held, so the chunk collides without the whole map
-    /// being planted. The same trees every time. Returns how many were
-    /// planted. See [`Self::unplant_chunk`].
+    /// Carga por streaming los troncos de los árboles del chunk `coord` como
+    /// obstáculos, reemplazando los que tuviera, para que el chunk tenga
+    /// colisión sin plantar el mapa entero. Siempre los mismos árboles.
+    /// Devuelve cuántos se plantaron. Ver [`Self::unplant_chunk`].
     pub fn plant_chunk(&mut self, flora: &FloraSite, coord: ChunkCoord) -> usize {
         let trees = flora.trees(coord);
         let count = trees.len();
@@ -223,43 +226,47 @@ impl World {
         count
     }
 
-    /// Drops what [`Self::plant_chunk`] planted in `coord`. Returns whether
-    /// the chunk was planted.
+    /// Descarta lo que [`Self::plant_chunk`] plantó en `coord`. Devuelve si el
+    /// chunk estaba plantado.
     pub fn unplant_chunk(&mut self, coord: ChunkCoord) -> bool {
         self.obstacles.clear_chunk(coord)
     }
 }
 
-/// Overlap (in meters) below which a circle counts as clear of an obstacle.
+/// Superposición (en metros) por debajo de la cual un círculo se considera
+/// libre de un obstáculo.
 const CLEAR: f32 = 1e-3;
-/// Push-out passes before a circle counts as pinched.
+/// Pasadas de empuje antes de que un círculo se considere atrapado.
 const PASSES: usize = 8;
-/// Sample spacing of the free-spot search, in meters.
+/// Separación entre muestras de la búsqueda de lugar libre, en metros.
 const SEARCH_STEP: f32 = 0.25;
-/// Farthest the free-spot search looks, in meters: past either end of the
-/// longest train.
+/// Lo más lejos que busca la búsqueda de lugar libre, en metros: más allá de
+/// cualquiera de los dos extremos del tren más largo.
 const SEARCH_RANGE: f32 = 60.0;
-/// Extra reach of the static-obstacle lookup around a circle, in meters.
+/// Alcance extra de la búsqueda de obstáculos estáticos alrededor de un
+/// círculo, en metros.
 const LOOKUP_SLACK: f32 = 0.5;
 
 impl World {
-    /// Pushes a circle at `center` out of every overlapping obstacle, static
-    /// or moving, and returns where it ends up. `on_push` receives the unit
-    /// direction of each push (to cancel velocity into walls).
+    /// Saca un círculo ubicado en `center` de todos los obstáculos con los que
+    /// se superpone, estáticos o en movimiento, y devuelve dónde termina.
+    /// `on_push` recibe la dirección unitaria de cada empuje (para anular la
+    /// velocidad contra las paredes).
     ///
-    /// A few passes settle corners where two footprints meet. When the
-    /// pushes fight each other (a train car shoving the circle into a wall),
-    /// the circle is pinched: it moves to the nearest spot clear of
-    /// everything instead, searching across and along the moving obstacles
-    /// and along the axes. If no such spot exists nearby, static obstacles
-    /// win and the circle is only pushed out of those.
+    /// Unas pocas pasadas resuelven las esquinas donde se juntan dos huellas.
+    /// Cuando los empujes se contrarrestan entre sí (un vagón de tren que
+    /// empuja el círculo contra una pared), el círculo queda atrapado: entonces
+    /// se mueve al lugar más cercano libre de todo, buscando a lo ancho y a lo
+    /// largo de los obstáculos en movimiento y sobre los ejes. Si no existe un
+    /// lugar así cerca, ganan los obstáculos estáticos y el círculo solo se
+    /// saca de esos.
     pub fn resolve(&self, collider: Circle, center: Vec2, on_push: impl FnMut(Vec2)) -> Vec2 {
         self.resolve_among(collider, center, &[], on_push)
     }
 
-    /// Like [`Self::resolve`] for a body `clearance` meters above the
-    /// ground (a jumping horse): low obstacles no taller than that
-    /// ([`StaticObstacles::near_above`]) let it pass.
+    /// Como [`Self::resolve`] para un cuerpo que está a `clearance` metros
+    /// sobre el suelo (un caballo que salta): los obstáculos bajos que no
+    /// superan esa altura ([`StaticObstacles::near_above`]) lo dejan pasar.
     pub fn resolve_above(
         &self,
         collider: Circle,
@@ -270,9 +277,9 @@ impl World {
         self.resolve_among_above(collider, center, &[], clearance, on_push)
     }
 
-    /// Like [`Self::resolve`], also pushing the circle clear of other
-    /// characters' `bodies`. Bodies give way to the world: when a body and
-    /// a wall pinch the circle, the wall wins.
+    /// Como [`Self::resolve`], pero además aleja el círculo de los `bodies` de
+    /// otros personajes. Los cuerpos ceden ante el mundo: cuando un cuerpo y
+    /// una pared atrapan al círculo, gana la pared.
     pub fn resolve_among(
         &self,
         collider: Circle,
@@ -289,8 +296,8 @@ impl World {
         )
     }
 
-    /// [`Self::resolve_among`] for a body `clearance` meters above the
-    /// ground, like [`Self::resolve_above`].
+    /// [`Self::resolve_among`] para un cuerpo que está a `clearance` metros
+    /// sobre el suelo, como [`Self::resolve_above`].
     pub fn resolve_among_above(
         &self,
         collider: Circle,
@@ -316,10 +323,11 @@ impl World {
         spot
     }
 
-    /// Up to [`PASSES`] rounds of pushing the circle out of each body, then
-    /// each obstacle in turn (moving ones only when `with_moving`), so the
-    /// world gets the last word in every round. Low obstacles no taller
-    /// than `clearance` are passed over.
+    /// Hasta [`PASSES`] rondas en las que se saca el círculo de cada cuerpo y
+    /// después de cada obstáculo por turno (los que se mueven, solo cuando
+    /// `with_moving`), de modo que el mundo tiene la última palabra en cada
+    /// ronda. Los obstáculos bajos que no superan `clearance` se pasan por
+    /// encima.
     fn push_passes(
         &self,
         collider: Circle,
@@ -349,7 +357,7 @@ impl World {
             for obstacle in nearby {
                 apply(collider.push_out(center, obstacle), &mut center);
             }
-            // Deep water turns bodies back to the shallows.
+            // El agua profunda devuelve los cuerpos a las partes bajas.
             for lagoon in &self.terrain.lagoons {
                 apply(lagoon.push_out(center), &mut center);
             }
@@ -365,8 +373,8 @@ impl World {
         center
     }
 
-    /// Deepest overlap of a circle at `center` with any obstacle taller
-    /// than `clearance`, in meters.
+    /// La mayor superposición de un círculo ubicado en `center` con cualquier
+    /// obstáculo más alto que `clearance`, en metros.
     fn overlap(&self, collider: Circle, center: Vec2, clearance: f32) -> f32 {
         let footprints = self
             .obstacles
@@ -385,9 +393,10 @@ impl World {
             .fold(0.0, f32::max)
     }
 
-    /// Nearest spot to `from` where the circle overlaps nothing, along the
-    /// directions across and along every moving obstacle it touches and the
-    /// world axes; `None` if there is none within [`SEARCH_RANGE`].
+    /// El lugar más cercano a `from` donde el círculo no se superpone con nada,
+    /// en las direcciones transversal y longitudinal de cada obstáculo en
+    /// movimiento que toca y en los ejes del mundo; `None` si no hay ninguno
+    /// dentro de [`SEARCH_RANGE`].
     fn nearest_clear(&self, collider: Circle, from: Vec2, clearance: f32) -> Option<Vec2> {
         let axes = [Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0)];
         let touching = self
@@ -396,7 +405,7 @@ impl World {
             .filter(|m| collider.push_out(from, &m.footprint).is_some())
             .flat_map(|m| [m.across, Vec2::new(-m.across.y, m.across.x)]);
         let directions: Vec<Vec2> = touching.chain(axes).flat_map(|d| [d, d * -1.0]).collect();
-        // Strictly clear: the result must not count as touching anything.
+        // Estrictamente libre: el resultado no debe contar como que toca algo.
         let clear = |p: Vec2| self.overlap(collider, p, clearance) == 0.0;
         let mut best: Option<(f32, Vec2)> = None;
         for direction in directions {
@@ -405,8 +414,8 @@ impl World {
             let mut t = SEARCH_STEP;
             while t <= limit {
                 if clear(from + direction * t) {
-                    // Tighten onto the edge between the last blocked sample
-                    // and this clear one.
+                    // Ajustar hasta el borde entre la última muestra bloqueada
+                    // y esta libre.
                     let mut free = t;
                     for _ in 0..12 {
                         let mid = (blocked + free) / 2.0;
@@ -428,10 +437,11 @@ impl World {
         best.map(|(_, spot)| spot)
     }
 
-    /// Nearest spot to `near`, at most `range` meters away, where a body of
-    /// `collider` can stand: clear of every obstacle, inside the bounds and
-    /// on dry ground off the lagoons' wet mud. Searched on rings
-    /// [`SPOT_STEP`] apart, nearest first; `None` if there is none.
+    /// El lugar más cercano a `near`, a como mucho `range` metros, donde puede
+    /// pararse un cuerpo con `collider`: libre de todo obstáculo, dentro de los
+    /// límites y en suelo seco, fuera del barro húmedo de las lagunas. Se busca
+    /// en anillos separados por [`SPOT_STEP`], del más cercano al más lejano;
+    /// `None` si no hay ninguno.
     pub fn clear_spot(&self, collider: Circle, near: Vec2, range: f32) -> Option<Vec2> {
         let fits = |p: Vec2| {
             self.bounds.contain(p, collider.radius).position == p
@@ -455,7 +465,7 @@ impl World {
     }
 }
 
-/// Spacing of the rings [`World::clear_spot`] searches, in meters.
+/// Separación de los anillos en los que busca [`World::clear_spot`], en metros.
 const SPOT_STEP: f32 = 1.0;
 
 impl Default for World {
@@ -493,7 +503,8 @@ mod tests {
             all.extend(t.obstacles());
         }
         assert_eq!(world.obstacles, all);
-        // Riding into a building of the far town is blocked there too.
+        // Cabalgar hacia un edificio del pueblo lejano también queda bloqueado
+        // ahí.
         let wall = towns[1].buildings[0].footprint;
         let c = Circle::new(0.9);
         let end = world.resolve(c, wall.center(), |_| ());
@@ -507,11 +518,11 @@ mod tests {
         world.obstacles.push_low(fence, 1.3);
         let c = Circle::new(0.9);
         let on_it = Vec2::new(0.0, 0.3);
-        // Above the wires: left where it is, nothing pushed.
+        // Por encima de los alambres: se queda donde está, sin ningún empuje.
         let mut pushes = 0;
         let end = world.resolve_above(c, on_it, 1.4, |_| pushes += 1);
         assert_eq!((end, pushes), (on_it, 0));
-        // Lower than the wires, or on the ground: pushed clear as ever.
+        // Más bajo que los alambres, o en el suelo: se lo saca como siempre.
         for clearance in [1.2, 0.0] {
             let end = world.resolve_above(c, on_it, clearance, |_| ());
             assert!(end.y >= 0.9 + 0.075 - 1e-4, "{clearance}: {end:?}");
@@ -527,18 +538,19 @@ mod tests {
         let town = crate::TownLayout::castex_inspired();
         let world = World::with_town(Terrain::default(), &town);
         let c = Circle::new(0.9);
-        // Open ground is its own clear spot.
+        // El terreno abierto es su propio lugar libre.
         let open = world.bounds.min + Vec2::new(50.0, 50.0);
         assert_eq!(world.clear_spot(c, open, 10.0), Some(open));
-        // Inside a building: the nearest spot out of it, overlapping nothing.
+        // Dentro de un edificio: el lugar más cercano fuera de él, sin
+        // superponerse con nada.
         let wall = town.buildings[0].footprint;
         let spot = world.clear_spot(c, wall.center(), 100.0).unwrap();
         assert_eq!(deepest_overlap(&world, c, spot), 0.0, "{spot:?}");
         assert_eq!(world.resolve(c, spot, |_| ()), spot);
-        // Out of the corner of the world: pulled back inside.
+        // Fuera de la esquina del mundo: se lo devuelve hacia adentro.
         let corner = world.clear_spot(c, world.bounds.max, 5.0).unwrap();
         assert_eq!(world.bounds.contain(corner, 0.9).position, corner);
-        // Nothing free within reach.
+        // No hay nada libre al alcance.
         assert_eq!(world.clear_spot(c, wall.center(), 0.0), None);
     }
 
@@ -566,7 +578,8 @@ mod tests {
         assert_eq!(world.floors.len(), platforms + 1);
         let bay = line.bays[0].platform;
         assert!(world.floors.contains(&bay));
-        // The ground on it is its top, 0.9 m up, and level beside it.
+        // El suelo sobre él es su parte superior, a 0,9 m de altura, y está
+        // nivelado al costado.
         let on = bay.footprint.center();
         let rise = |p: Vec2| world.ground_height(p) - world.terrain.height(p.x, p.y);
         assert!((rise(on) - 0.9).abs() < 1e-5, "{}", rise(on));
@@ -590,13 +603,14 @@ mod tests {
             let floor = world.floors[0];
             let f = platform.footprint;
             let terrain = |p: Vec2| world.terrain.height(p.x, p.y);
-            // Anywhere on the platform, the ground is its top.
+            // En cualquier punto del andén, el suelo es su parte superior.
             for (i, j) in [(0.5, 0.5), (0.0, 0.0), (1.0, 1.0), (0.1, 0.9), (0.95, 0.2)] {
                 let p = f.min + Vec2::new(f.size().x * i, f.size().y * j);
                 assert_eq!(world.ground_height(p), terrain(p) + platform.height);
                 assert_eq!(Ground::ground_height(&world, p), world.ground_height(p));
             }
-            // Down each ramp, steadily, to the bare ground at its foot.
+            // Bajando por cada rampa, de forma pareja, hasta el terreno desnudo
+            // al pie.
             let mid = f.center().dot(floor.across());
             let (lo, hi) = (f.min.dot(floor.along), f.max.dot(floor.along));
             for (end, out) in [(hi, 1.0), (lo, -1.0)] {
@@ -611,7 +625,8 @@ mod tests {
                 assert!((last - terrain(at(Floor::RAMP_LENGTH))).abs() < 1e-4);
                 assert_eq!(world.ground_height(at(4.0)), terrain(at(4.0)));
             }
-            // Off its long sides, the bare ground: they are steps.
+            // Al costado de sus lados largos, el terreno desnudo: son
+            // escalones.
             for side in [
                 f.min.dot(floor.across()) - 0.1,
                 f.max.dot(floor.across()) + 0.1,
@@ -619,7 +634,7 @@ mod tests {
                 let p = floor.along * f.center().dot(floor.along) + floor.across() * side;
                 assert_eq!(world.ground_height(p), terrain(p), "{}", town.name);
             }
-            // The bare terrain knows nothing of platforms.
+            // El terreno desnudo no sabe nada de andenes.
             let c = f.center();
             assert_eq!(Ground::ground_height(&world.terrain, c), terrain(c));
             checked += 1;
@@ -636,8 +651,8 @@ mod tests {
             Terrain::default().with_lagoon(lagoon.clone()),
         );
         let collider = Circle::new(crate::Rider::COLLIDER_RADIUS);
-        // Riding straight at the middle from every side: each step is
-        // resolved, and the rider ends in the shallows, never deeper.
+        // Cabalgando directo hacia el medio desde todos los lados: cada paso se
+        // resuelve y el jinete termina en las partes bajas, nunca más hondo.
         for k in 0..16 {
             let angle = k as f32 * std::f32::consts::TAU / 16.0;
             let dir = Vec2::new(angle.cos(), angle.sin());
@@ -650,7 +665,7 @@ mod tests {
             assert!(pushed && lagoon.is_water(at), "{at:?}");
             assert!(world.ground_height(at) < lagoon.level);
         }
-        // Dry land is left alone.
+        // La tierra firme queda como está.
         let dry = lagoon.center + Vec2::new(lagoon.radii.x * 2.0, 0.0);
         assert_eq!(world.resolve(collider, dry, |_| ()), dry);
     }
@@ -694,7 +709,8 @@ mod tests {
         }
     }
 
-    /// Deepest overlap of a circle at `p` with anything in `world`, in meters.
+    /// La mayor superposición de un círculo ubicado en `p` con cualquier cosa
+    /// de `world`, en metros.
     pub(crate) fn deepest_overlap(world: &World, collider: Circle, p: Vec2) -> f32 {
         let statics = world
             .obstacles
@@ -704,8 +720,8 @@ mod tests {
         statics.chain(moving).map(Vec2::length).fold(0.0, f32::max)
     }
 
-    /// A 10 m car along `x` (3 m wide) with a wall 0.5 m north of it: too
-    /// narrow a gap for a 0.9 m circle.
+    /// Un vagón de 10 m a lo largo de `x` (de 3 m de ancho) con una pared 0,5 m
+    /// al norte: un hueco demasiado angosto para un círculo de 0,9 m.
     fn pinch_world() -> World {
         let mut world = World::default();
         world
@@ -723,7 +739,7 @@ mod tests {
         let world = pinch_world();
         let c = Circle::new(0.9);
         for k in 0..=20 {
-            // From inside the car's north half up to touching the wall.
+            // Desde dentro de la mitad norte del vagón hasta tocar la pared.
             let start = Vec2::new(-4.0 + 0.4 * k as f32, 0.1 + 0.1 * k as f32);
             let mut pushes = 0;
             let end = world.resolve(c, start, |n| {
@@ -735,8 +751,9 @@ mod tests {
                 deepest_overlap(&world, c, end) < 1e-3,
                 "{start:?} -> {end:?} still overlaps"
             );
-            // Nearest free spot: across the car to its far side, or past
-            // either end when the wall leaves room there and that is closer.
+            // El lugar libre más cercano: cruzando el vagón hasta su otro lado,
+            // o más allá de alguno de sus extremos cuando la pared deja lugar
+            // ahí y eso queda más cerca.
             let across = start.y + 1.5 + 0.9;
             let past_end = (start.x + 5.9).min(5.9 - start.x);
             let nearest = if start.y + 0.9 <= 2.0 {
@@ -753,7 +770,7 @@ mod tests {
 
     #[test]
     fn a_pinch_near_the_car_end_escapes_past_the_end_when_closer() {
-        // The wall only covers the car's east end, and leaves room past it.
+        // La pared solo cubre el extremo este del vagón, y deja lugar más allá.
         let mut world = pinch_world();
         world.obstacles =
             StaticObstacles::new(vec![Aabb::new(Vec2::new(3.0, 2.0), Vec2::new(4.6, 6.0))]);
@@ -772,14 +789,15 @@ mod tests {
             position: Vec2::new(0.0, 10.0),
             collider: Circle::new(0.9),
         };
-        // Open ground: straight out of the rider.
+        // Terreno abierto: directo hacia afuera del jinete.
         let end = world.resolve_among(c, Vec2::new(0.0, 10.5), &[rider], |_| ());
         assert!(end.distance(Vec2::new(0.0, 11.2)) < 1e-4, "{end:?}");
         assert_eq!(
             world.resolve(c, Vec2::new(0.0, 10.5), |_| ()),
             Vec2::new(0.0, 10.5)
         );
-        // A rider against the wall's north face cannot push into the wall.
+        // Un jinete contra la cara norte de la pared no puede meterse en la
+        // pared.
         let rider = Body {
             position: Vec2::new(0.0, 7.0),
             ..rider
@@ -792,16 +810,18 @@ mod tests {
     fn unpinched_pushes_are_unchanged() {
         let world = pinch_world();
         let c = Circle::new(0.9);
-        // South half of the car, open ground beyond: plain push across.
+        // Mitad sur del vagón, terreno abierto más allá: empuje simple a lo
+        // ancho.
         let end = world.resolve(c, Vec2::new(1.0, -0.5), |_| ());
         assert!(end.distance(Vec2::new(1.0, -2.4)) < 1e-4, "{end:?}");
-        // Against the wall from the north: plain push out.
+        // Contra la pared desde el norte: empuje simple hacia afuera.
         let end = world.resolve(c, Vec2::new(0.0, 6.5), |_| ());
         assert!(end.distance(Vec2::new(0.0, 6.9)) < 1e-4, "{end:?}");
     }
 
-    /// The shipped towns with their roads laid, unplanted: trees keep off
-    /// the roads (`nothing_blocks_a_rider_...` checks it).
+    /// Los pueblos distribuidos con sus caminos trazados, sin plantar: los
+    /// árboles se mantienen fuera de los caminos (`nothing_blocks_a_rider_...`
+    /// lo comprueba).
     fn roaded_world() -> (World, crate::RoadNetwork, RailLine) {
         let (towns, line, roads) = crate::road::tests::shipped_roads();
         let config = WorldConfig {
@@ -826,7 +846,8 @@ mod tests {
                 }
             }
         }
-        // The signs stand beside the crossing, the post beside the road.
+        // Las señales están al costado del paso a nivel, el poste al costado
+        // del camino.
         assert!(world.obstacles.len() > roads.obstacles().len());
     }
 
@@ -849,7 +870,7 @@ mod tests {
             );
             let mut passed = false;
             for _ in 0..60 * 120 {
-                // Steer for a point a little ahead along the road.
+                // Apuntar a un punto un poco más adelante sobre el camino.
                 let near = (0..road.path.len())
                     .min_by(|&a, &b| {
                         road.path[a]
@@ -886,7 +907,8 @@ mod tests {
         }
     }
 
-    /// The deck of a level crossing, above the ground: the planks' top.
+    /// La plataforma de un paso a nivel, por encima del suelo: la parte
+    /// superior de los tablones.
     const DECK: f32 = crate::LineTrain::RAIL_TOP - 0.02;
 
     #[test]
@@ -914,8 +936,8 @@ mod tests {
             for s in [-12.0, 12.0] {
                 assert!(raised(c.at + c.road * s).abs() < 1e-4);
             }
-            // Along the track, past the road's edges, the ground is the
-            // terrain's (and the terrain under the track is untouched).
+            // A lo largo de la vía, más allá de los bordes del camino, el suelo
+            // es el del terreno (y el terreno debajo de la vía está intacto).
             for s in [-9.0, -6.0, 6.0, 9.0] {
                 let p = c.at + c.rail * s;
                 assert_eq!(

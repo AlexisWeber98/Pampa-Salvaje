@@ -1,71 +1,76 @@
-//! The railway line: one track through every railway town of the world.
+//! La línea del ferrocarril: una vía que pasa por cada pueblo con ferrocarril
+//! del mundo.
 //!
-//! Inside a town the track stays axis-aligned along the station (see
-//! [`TownLayout::railway`]). Between two towns listed next to each other, a
-//! link joins the run-out tip of one town's track nearest the other town to
-//! the other town's tip nearest the first, so the town tracks and the links
-//! form one continuous line.
+//! Dentro de un pueblo la vía se mantiene alineada con los ejes a lo largo de
+//! la estación (ver [`TownLayout::railway`]). Entre dos pueblos listados uno al
+//! lado del otro, un enlace une la punta del tramo final de la vía de un pueblo
+//! más cercana al otro pueblo con la punta del otro pueblo más cercana al
+//! primero, de modo que las vías de los pueblos y los enlaces forman una sola
+//! línea continua.
 //!
-//! A link leaves its first tip straight on along that town's track, bends
-//! onto the diagonal on a wide circular curve, runs straight, and bends
-//! back onto the second town's track just as it reaches that town's tip.
-//! The curves live wholly on the link, so a town's own straight track is
-//! never cut short, and the line keeps one heading through every tip.
+//! Un enlace sale de su primera punta en línea recta siguiendo la vía de ese
+//! pueblo, entra en la diagonal con una curva circular amplia, sigue recto y
+//! vuelve a la vía del segundo pueblo justo cuando llega a la punta de ese
+//! pueblo. Las curvas quedan completamente en el enlace, así que la vía recta
+//! propia de un pueblo nunca se acorta, y la línea mantiene una misma
+//! orientación al pasar por cada punta.
 //!
-//! A branch ([`RailBranch`]) leaves the line at a junction town and runs
-//! out to towns only it serves: its first link starts at the junction's
-//! tip nearest the branch, the same tip the line may already leave by, so
-//! the two tracks part there on their own curves (Metileo to Caleufú, as
-//! the real Metileo–Arizona branch of 1911).
+//! Un ramal ([`RailBranch`]) sale de la línea en un pueblo de empalme y llega
+//! hasta pueblos a los que solo sirve él: su primer enlace empieza en la punta
+//! del empalme más cercana al ramal, la misma punta por la que puede salir ya
+//! la línea, así que las dos vías se separan ahí con sus propias curvas (de
+//! Metileo a Caleufú, como el ramal real Metileo–Arizona de 1911).
 //!
-//! A branch's junction town also gets a bay ([`RailBay`]): a dead-end track
-//! beside the station track, opposite the station platform, so the
-//! branch's shuttle never stands on the line train's rails.
+//! El pueblo de empalme de un ramal también tiene una vía muerta ([`RailBay`]):
+//! una vía sin salida al lado de la vía de la estación, enfrente del andén de
+//! la estación, para que la lanzadera del ramal nunca se detenga sobre los
+//! rieles del tren de la línea.
 //!
-//! The line is a world rule: every railway town must be on it or on a
-//! branch, and no link may cross another town or leave the world. Bad data
-//! never crashes; the offending towns or links are left out and reported.
+//! La línea es una regla del mundo: todo pueblo con ferrocarril debe estar
+//! sobre ella o sobre un ramal, y ningún enlace puede atravesar otro pueblo ni
+//! salir del mundo. Los datos incorrectos nunca hacen fallar el juego; los
+//! pueblos o enlaces problemáticos se dejan fuera y se informan.
 
 use std::fmt;
 
 use crate::train::{branch_consist, consist_length};
 use crate::{Aabb, BuildingKind, Floor, Railway, RoadNetwork, TownLayout, Vec2, WorldBounds};
 
-/// A stretch of track between two towns of the line.
+/// Un tramo de vía entre dos pueblos de la línea.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RailLink {
-    /// Index (into the world's towns) of the town the link leaves.
+    /// Índice (dentro de los pueblos del mundo) del pueblo del que sale el
+    /// enlace.
     pub from: usize,
-    /// Index of the town the link reaches.
+    /// Índice del pueblo al que llega el enlace.
     pub to: usize,
-    /// The straight chord from a run-out tip of `from` to a run-out tip of
-    /// `to`. The track itself follows [`Self::path`].
+    /// La cuerda recta desde una punta del tramo final de `from` hasta una
+    /// punta del tramo final de `to`. La vía en sí sigue [`Self::path`].
     pub track: Railway,
-    /// The centerline the track follows, from `track.start` to `track.end`:
-    /// short straight pieces that bend at most [`RailLine::MAX_TURN`]
-    /// radians from one to the next.
+    /// La línea central que sigue la vía, desde `track.start` hasta
+    /// `track.end`: tramos rectos cortos que se desvían como mucho
+    /// [`RailLine::MAX_TURN`] radianes de uno al siguiente.
     pub path: Vec<Vec2>,
-    /// The curves of the link, in path order (none on a link that already
-    /// runs straight on from both tips).
+    /// Las curvas del enlace, en el orden del recorrido (ninguna en un enlace
+    /// que ya sigue recto desde ambas puntas).
     pub curves: Vec<RailCurve>,
 }
 
-/// A circular curve of the line, fitted into the corner between two
-/// straights.
+/// Una curva circular de la línea, encajada en la esquina entre dos rectas.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RailCurve {
-    /// Radius of the arc, in meters: [`RailLine::CURVE_RADIUS`] unless the
-    /// straights around it are too short for that.
+    /// Radio del arco, en metros: [`RailLine::CURVE_RADIUS`] salvo que las
+    /// rectas que lo rodean sean demasiado cortas para eso.
     pub radius: f32,
-    /// Distance from the corner to either end of the arc, in meters
+    /// Distancia desde la esquina hasta cada extremo del arco, en metros
     /// (`radius * tan(turn / 2)`).
     pub tangent: f32,
-    /// How far the track turns, in radians, counter-clockwise positive.
+    /// Cuánto gira la vía, en radianes, positivo en sentido antihorario.
     pub turn: f32,
 }
 
 impl RailLink {
-    /// The straight pieces of [`Self::path`], in order.
+    /// Los tramos rectos de [`Self::path`], en orden.
     pub fn segments(&self) -> impl Iterator<Item = Railway> + '_ {
         let gauge = self.track.gauge;
         self.path.windows(2).map(move |w| Railway {
@@ -75,149 +80,158 @@ impl RailLink {
         })
     }
 
-    /// Length of the track along [`Self::path`], in meters.
+    /// Longitud de la vía a lo largo de [`Self::path`], en metros.
     pub fn length(&self) -> f32 {
         self.path.windows(2).map(|w| w[0].distance(w[1])).sum()
     }
 }
 
-/// The railway line through the world's towns.
+/// La línea del ferrocarril que pasa por los pueblos del mundo.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct RailLine {
-    /// Indices (into the world's towns) of the towns on the line, in order.
+    /// Índices (dentro de los pueblos del mundo) de los pueblos de la línea, en
+    /// orden.
     pub towns: Vec<usize>,
-    /// The links between consecutive towns, in line order, then each
-    /// branch's links in branch order. A link that breaks a rule is left
-    /// out, so the line may have gaps.
+    /// Los enlaces entre pueblos consecutivos, en el orden de la línea, y
+    /// después los enlaces de cada ramal en el orden de los ramales. Un enlace
+    /// que rompe una regla se deja fuera, así que la línea puede tener huecos.
     pub links: Vec<RailLink>,
-    /// The branches off the line, in the order they were listed.
+    /// Los ramales que salen de la línea, en el orden en que se listaron.
     pub branches: Vec<RailBranch>,
-    /// The bay track at each branch's junction town, in branch order (a
-    /// branch whose junction has no room for one has none).
+    /// La vía muerta en el pueblo de empalme de cada ramal, en el orden de los
+    /// ramales (un ramal cuyo empalme no tiene lugar para una no tiene
+    /// ninguna).
     pub bays: Vec<RailBay>,
 }
 
-/// A branch of the railway: track from a town on the line (the junction)
-/// out through towns no other track reaches. Its links live in
-/// [`RailLine::links`] with the line's, so everything that lays or draws
-/// track treats it alike; only the line train keeps to the line.
+/// Un ramal del ferrocarril: vía desde un pueblo de la línea (el empalme) que
+/// llega hasta pueblos a los que no llega ninguna otra vía. Sus enlaces están
+/// en [`RailLine::links`] junto con los de la línea, así que todo lo que coloca
+/// o dibuja vías lo trata igual; solo el tren de la línea se mantiene en la
+/// línea.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct RailBranch {
-    /// Indices (into the world's towns) of the branch's towns, in order,
-    /// the junction first.
+    /// Índices (dentro de los pueblos del mundo) de los pueblos del ramal, en
+    /// orden, primero el empalme.
     pub towns: Vec<usize>,
 }
 
-/// A dead-end bay track at a branch's junction town, beside the station
-/// track on the side away from the town and joined to it by a turnout, so
-/// the branch's shuttle stands there while the line train keeps the
-/// station track.
+/// Una vía muerta sin salida en el pueblo de empalme de un ramal, al lado de la
+/// vía de la estación, del lado opuesto al pueblo, y unida a ella por un
+/// desvío, para que la lanzadera del ramal se detenga ahí mientras el tren de
+/// la línea ocupa la vía de la estación.
 ///
-/// Its [`Self::link`] is one more piece of track (`from` and `to` are the
-/// junction), so everything that lays, draws or keeps off the line's
-/// track sees the bay with no change. The path runs from the buffer stop,
-/// level with the station platform's far end from the junction tip,
-/// straight along the bay past the platform, then out through the turnout
-/// (two arcs of [`RailBay::TURNOUT_RADIUS`]) onto the station track's
-/// straight run-out toward the junction tip, where the branch goes on.
-/// The shuttle stands opposite the station platform, at the bay's own
-/// platform ([`Self::platform`]); people cross the tracks between the
-/// platforms at the road's level crossing, on [`Self::walks`].
+/// Su [`Self::link`] es una pieza más de vía (`from` y `to` son el empalme),
+/// así que todo lo que coloca, dibuja o se mantiene lejos de la vía de la línea
+/// ve la vía muerta sin ningún cambio. El recorrido va desde el paragolpes, a
+/// la altura del extremo del andén de la estación opuesto a la punta del
+/// empalme, en línea recta a lo largo de la vía muerta pasando el andén, y
+/// después sale por el desvío (dos arcos de [`RailBay::TURNOUT_RADIUS`]) hasta
+/// el tramo final recto de la vía de la estación hacia la punta del empalme,
+/// donde sigue el ramal. La lanzadera se detiene enfrente del andén de la
+/// estación, en el andén propio de la vía muerta ([`Self::platform`]); la gente
+/// cruza las vías entre los andenes por el paso a nivel del camino, a través de
+/// [`Self::walks`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct RailBay {
-    /// Index (into the world's branches) of the branch the bay serves.
+    /// Índice (dentro de los ramales del mundo) del ramal al que sirve la vía
+    /// muerta.
     pub branch: usize,
-    /// Index (into the world's towns) of the junction town.
+    /// Índice (dentro de los pueblos del mundo) del pueblo de empalme.
     pub town: usize,
-    /// The bay and its turnout, from the buffer stop to the point where it
-    /// joins the station track.
+    /// La vía muerta y su desvío, desde el paragolpes hasta el punto donde se
+    /// une con la vía de la estación.
     pub link: RailLink,
-    /// Where the middle of the shuttle's consist stands, stopped in the
-    /// bay opposite the middle of the station platform.
+    /// Dónde queda el centro de la formación de la lanzadera, detenida en la
+    /// vía muerta enfrente del centro del andén de la estación.
     pub stop: Vec2,
-    /// The bay's platform, on its far side from the station track, along
-    /// the standing shuttle and opposite the station platform: built and
-    /// as high as a station platform.
+    /// El andén de la vía muerta, del lado opuesto a la vía de la estación, a
+    /// lo largo de la lanzadera detenida y enfrente del andén de la estación:
+    /// construido y tan alto como el andén de una estación.
     pub platform: Floor,
-    /// The beaten-earth walks from each platform's end toward the junction
-    /// tip to the road that crosses the station track there, so people
-    /// change platforms over its level crossing: the station platform's
-    /// walk, then the bay platform's. Empty until
-    /// [`RailLine::lay_walks`] has seen the roads.
+    /// Los senderos de tierra apisonada desde el extremo de cada andén hacia la
+    /// punta del empalme hasta el camino que cruza ahí la vía de la estación,
+    /// para que la gente cambie de andén por su paso a nivel: primero el
+    /// sendero del andén de la estación y después el del andén de la vía
+    /// muerta. Vacío hasta que [`RailLine::lay_walks`] haya visto los caminos.
     pub walks: Vec<Aabb>,
 }
 
 impl RailBay {
-    /// Distance from the station track's centerline to the bay's, in
-    /// meters (3 m wide cars and a 1.5 m gap between them).
+    /// Distancia desde la línea central de la vía de la estación hasta la de la
+    /// vía muerta, en metros (vagones de 3 m de ancho y una separación de 1,5 m
+    /// entre ellos).
     pub const SPACING: f32 = 4.5;
-    /// Free track between the buffer stop and the tail of a standing
-    /// shuttle, in meters.
+    /// Vía libre entre el paragolpes y la cola de una lanzadera detenida, en
+    /// metros.
     pub const BUFFER_GAP: f32 = 2.0;
-    /// Straight track past the front of a standing shuttle before the
-    /// turnout begins, in meters.
+    /// Vía recta más allá del frente de una lanzadera detenida antes de que
+    /// empiece el desvío, en metros.
     pub const FRONT_CLEAR: f32 = 10.0;
-    /// Run-out left between the end of the turnout and the junction tip,
-    /// in meters.
+    /// Tramo final que queda entre el final del desvío y la punta del empalme,
+    /// en metros.
     const RUN_OUT_LEFT: f32 = 100.0;
-    /// Radius of the bay's turnout arcs, in meters: tighter than the
-    /// line's, so the bay rejoins the station track short of the road
-    /// that crosses it by the platform (a sharp turnout, as a yard's).
+    /// Radio de los arcos del desvío de la vía muerta, en metros: más cerrado
+    /// que el de la línea, para que la vía muerta vuelva a unirse a la vía de
+    /// la estación antes del camino que la cruza junto al andén (un desvío
+    /// cerrado, como el de una playa de maniobras).
     pub const TURNOUT_RADIUS: f32 = 150.0;
-    /// Distance from the bay's centerline to its platform's track edge, in
-    /// meters: as at a station ([`Floor::PLATFORM_EDGE`]).
+    /// Distancia desde la línea central de la vía muerta hasta el borde de su
+    /// andén junto a la vía, en metros: como en una estación
+    /// ([`Floor::PLATFORM_EDGE`]).
     pub const PLATFORM_EDGE: f32 = Floor::PLATFORM_EDGE;
-    /// Width of the bay platform across the track, in meters: its far edge
-    /// stands 11 m from the track, as the station platform's does, so the
-    /// platform grew toward the track when its edge came in.
+    /// Ancho del andén de la vía muerta a lo ancho de la vía, en metros: su
+    /// borde lejano queda a 11 m de la vía, como el del andén de la estación,
+    /// así que el andén creció hacia la vía cuando su borde se acercó.
     pub const PLATFORM_DEPTH: f32 = 11.0 - Self::PLATFORM_EDGE;
-    /// Width of the walks from the platforms to the road, in meters.
+    /// Ancho de los senderos desde los andenes hasta el camino, en metros.
     pub const WALK_WIDTH: f32 = 2.0;
-    /// How far from the road's centerline a walk ends, in meters: inside
-    /// the roadway's edge, so the two meet.
+    /// A qué distancia de la línea central del camino termina un sendero, en
+    /// metros: dentro del borde de la calzada, para que los dos se unan.
     const WALK_INTO_ROAD: f32 = 2.5;
-    /// Farthest a walk reaches from its platform in search of the road,
-    /// in meters.
+    /// Lo más lejos que llega un sendero desde su andén buscando el camino, en
+    /// metros.
     const WALK_REACH: f32 = 150.0;
-    /// How near the station track's level crossing a walk meets the road,
-    /// in meters.
+    /// Qué tan cerca del paso a nivel de la vía de la estación se une un
+    /// sendero con el camino, en metros.
     const WALK_NEAR_CROSSING: f32 = 25.0;
 
-    /// The dead end of the track.
+    /// El extremo sin salida de la vía.
     pub fn buffer(&self) -> Vec2 {
         self.link.path[0]
     }
 
-    /// Unit direction of the bay at its buffer stop, pointing out of the
-    /// bay (the way the shuttle leaves).
+    /// Dirección unitaria de la vía muerta en su paragolpes, apuntando hacia
+    /// afuera de la vía muerta (por donde sale la lanzadera).
     pub fn heading(&self) -> Vec2 {
         unit(self.link.path[1] - self.link.path[0]).unwrap_or(Vec2::new(1.0, 0.0))
     }
 }
 
-/// Why a town or a link was left out of the railway line.
+/// Por qué un pueblo o un enlace quedó fuera de la línea del ferrocarril.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RailLineError {
-    /// The line names a town the world does not have (or could not build).
+    /// La línea nombra un pueblo que el mundo no tiene (o que no se pudo
+    /// construir).
     UnknownTown { name: String },
-    /// The line names a town twice.
+    /// La línea nombra un pueblo dos veces.
     DuplicateTown { name: String },
-    /// The line names a town without a railway.
+    /// La línea nombra un pueblo sin ferrocarril.
     NoRailway { name: String },
-    /// A railway town the line leaves out.
+    /// Un pueblo con ferrocarril que la línea deja fuera.
     NotOnLine { name: String },
-    /// The link between `from` and `to` runs across `other`'s leveled
-    /// ground (`other` may be `from` or `to` itself, when the link comes back
-    /// across its own town).
+    /// El enlace entre `from` y `to` atraviesa el terreno nivelado de `other`
+    /// (`other` puede ser el propio `from` o `to`, cuando el enlace vuelve a
+    /// cruzar su propio pueblo).
     CrossesTown {
         from: String,
         to: String,
         other: String,
     },
-    /// The link between `from` and `to` leaves the world.
+    /// El enlace entre `from` y `to` sale del mundo.
     OutsideWorld { from: String, to: String },
-    /// A branch whose first town (`name`) is not on the line, or that
-    /// names no town past it.
+    /// Un ramal cuyo primer pueblo (`name`) no está sobre la línea, o que no
+    /// nombra ningún pueblo más allá de él.
     BadJunction { name: String },
 }
 
@@ -258,23 +272,24 @@ impl fmt::Display for RailLineError {
 impl std::error::Error for RailLineError {}
 
 impl RailLine {
-    /// Radius of the line's curves, in meters, where the straights around
-    /// a curve leave room for it.
+    /// Radio de las curvas de la línea, en metros, donde las rectas que rodean
+    /// una curva dejan lugar para él.
     pub const CURVE_RADIUS: f32 = 500.0;
-    /// Longest straight piece a curve is drawn with, in meters.
+    /// El tramo recto más largo con el que se dibuja una curva, en metros.
     pub const CURVE_STEP: f32 = 8.0;
-    /// Largest heading change from one piece of a curve to the next, in
-    /// radians (2°).
+    /// Mayor cambio de orientación de un tramo de una curva al siguiente, en
+    /// radianes (2°).
     pub const MAX_TURN: f32 = 2.0 * std::f32::consts::PI / 180.0;
 
-    /// Builds the line through `towns` (already placed, see
-    /// [`crate::place_towns`]) inside `bounds`.
+    /// Construye la línea a través de `towns` (ya ubicados, ver
+    /// [`crate::place_towns`]) dentro de `bounds`.
     ///
-    /// `names` lists the towns in line order. Without it, every railway
-    /// town is on the line, west to east by the center of its grid. Unknown,
-    /// duplicated and railway-less names are left out, railway towns the
-    /// list misses stay off the line, and links that cross another town or
-    /// leave the world are dropped; each is reported.
+    /// `names` lista los pueblos en el orden de la línea. Sin esa lista, todos
+    /// los pueblos con ferrocarril están sobre la línea, de oeste a este según
+    /// el centro de su cuadrícula. Los nombres desconocidos, duplicados y sin
+    /// ferrocarril se dejan fuera, los pueblos con ferrocarril que faltan en la
+    /// lista quedan fuera de la línea, y los enlaces que atraviesan otro pueblo
+    /// o salen del mundo se descartan; cada caso se informa.
     pub fn build(
         names: Option<&[String]>,
         towns: &[TownLayout],
@@ -283,12 +298,12 @@ impl RailLine {
         Self::build_with_branches(names, &[], towns, bounds)
     }
 
-    /// [`Self::build`], with the `branches` off the line: each lists a
-    /// town on the line (the junction) and then, in order, the towns the
-    /// branch runs out to. Branch towns follow the line's naming rules
-    /// (never a town already on the line or another branch); a branch
-    /// whose junction is not on the line, or that keeps no town past it,
-    /// is left out and reported.
+    /// [`Self::build`], con los `branches` que salen de la línea: cada uno
+    /// lista un pueblo de la línea (el empalme) y después, en orden, los
+    /// pueblos hasta los que llega el ramal. Los pueblos de un ramal siguen las
+    /// reglas de nombres de la línea (nunca un pueblo que ya está en la línea o
+    /// en otro ramal); un ramal cuyo empalme no está en la línea, o que no
+    /// conserva ningún pueblo más allá de él, se deja fuera y se informa.
     pub fn build_with_branches(
         names: Option<&[String]>,
         branches: &[Vec<String>],
@@ -377,21 +392,21 @@ impl RailLine {
         )
     }
 
-    /// The straight pieces of every link's track, in line order, then
-    /// those of each bay.
+    /// Los tramos rectos de la vía de cada enlace, en el orden de la línea, y
+    /// después los de cada vía muerta.
     pub fn segments(&self) -> impl Iterator<Item = Railway> + '_ {
         self.tracks().flat_map(RailLink::segments)
     }
 
-    /// Every piece of track between towns and in junction bays: the links,
-    /// then the bays.
+    /// Cada tramo de vía entre pueblos y en las vías muertas de los empalmes:
+    /// primero los enlaces y después las vías muertas.
     fn tracks(&self) -> impl Iterator<Item = &RailLink> + '_ {
         self.links.iter().chain(self.bays.iter().map(|b| &b.link))
     }
 
-    /// The parts of the links inside `area` (a terrain chunk, a map frame),
-    /// one per straight piece, in line order. Parts that only touch its edge
-    /// are skipped.
+    /// Las partes de los enlaces dentro de `area` (un chunk del terreno, un
+    /// cuadro del mapa), una por tramo recto, en el orden de la línea. Se
+    /// saltean las partes que solo tocan su borde.
     pub fn segments_in(&self, area: Aabb) -> Vec<RailSpan> {
         let mut spans = Vec::new();
         for link in self.tracks() {
@@ -419,28 +434,30 @@ impl RailLine {
 }
 
 impl RailLine {
-    /// The whole line as one path a train can run, from the first town's
-    /// far run-out tip to the last connected town's far tip: each town's
-    /// straight track, tip to tip, joined by the curved links.
+    /// La línea entera como un solo recorrido que puede hacer un tren, desde la
+    /// punta lejana del tramo final del primer pueblo hasta la punta lejana del
+    /// último pueblo conectado: la vía recta de cada pueblo, de punta a punta,
+    /// unida por los enlaces curvos.
     ///
-    /// The path stops at the first gap (a link left out); a line without
-    /// links is just its first town's track, and a line without towns is
-    /// empty.
+    /// El recorrido se detiene en el primer hueco (un enlace dejado fuera); una
+    /// línea sin enlaces es solo la vía de su primer pueblo, y una línea sin
+    /// pueblos está vacía.
     pub fn full_path(&self, towns: &[TownLayout]) -> LinePath {
         self.path_through(&self.connected_towns(), towns)
     }
 
-    /// The towns [`Self::full_path`] runs through, in line order: the first
-    /// town and every town reached from it without a gap.
+    /// Los pueblos por los que pasa [`Self::full_path`], en el orden de la
+    /// línea: el primer pueblo y cada pueblo al que se llega desde él sin un
+    /// hueco.
     pub fn connected_towns(&self) -> Vec<usize> {
         self.connected(&self.towns)
     }
 
-    /// Each branch as one path, like [`Self::full_path`]: from the
-    /// junction's far tip, through its station and out along the branch
-    /// to the last connected town's far tip, so it runs outward from the
-    /// line. A branch whose first link is missing is just the junction's
-    /// track.
+    /// Cada ramal como un solo recorrido, como [`Self::full_path`]: desde la
+    /// punta lejana del empalme, pasando por su estación y saliendo a lo largo
+    /// del ramal hasta la punta lejana del último pueblo conectado, de modo que
+    /// avanza hacia afuera desde la línea. Un ramal al que le falta su primer
+    /// enlace es solo la vía del empalme.
     pub fn branch_paths(&self, towns: &[TownLayout]) -> Vec<LinePath> {
         self.branches
             .iter()
@@ -448,10 +465,11 @@ impl RailLine {
             .collect()
     }
 
-    /// Every path of track a train could run: [`Self::full_path`] first,
-    /// then [`Self::branch_paths`], then each bay from its buffer stop to
-    /// where it joins the station track. Each town's own track and its
-    /// run-outs are on one of them.
+    /// Cada recorrido de vía que podría hacer un tren: primero
+    /// [`Self::full_path`], después [`Self::branch_paths`] y después cada vía
+    /// muerta desde su paragolpes hasta donde se une con la vía de la estación.
+    /// La vía propia de cada pueblo y sus tramos finales están en alguno de
+    /// ellos.
     pub fn track_paths(&self, towns: &[TownLayout]) -> Vec<LinePath> {
         let mut paths = vec![self.full_path(towns)];
         paths.extend(self.branch_paths(towns));
@@ -459,11 +477,12 @@ impl RailLine {
         paths
     }
 
-    /// Each branch as the path its shuttle runs, like [`Self::branch_paths`]
-    /// but out of the junction's bay: from the bay's buffer stop, through
-    /// the turnout, along the station track's run-out and the branch to the
-    /// last connected town's far tip. A branch without a bay runs its
-    /// [`Self::branch_paths`] path.
+    /// Cada ramal como el recorrido que hace su lanzadera, como
+    /// [`Self::branch_paths`] pero saliendo de la vía muerta del empalme: desde
+    /// el paragolpes de la vía muerta, pasando por el desvío, a lo largo del
+    /// tramo final de la vía de la estación y del ramal hasta la punta lejana
+    /// del último pueblo conectado. Un ramal sin vía muerta hace su recorrido
+    /// de [`Self::branch_paths`].
     pub fn shuttle_paths(&self, towns: &[TownLayout]) -> Vec<LinePath> {
         self.branch_paths(towns)
             .into_iter()
@@ -472,7 +491,8 @@ impl RailLine {
                 let Some(bay) = self.bay_of(index) else {
                     return path;
                 };
-                // The bay joins the straight run-out: carry on from there.
+                // La vía muerta se une al tramo final recto: se sigue desde
+                // ahí.
                 let joined = *bay.link.path.last().expect("a bay has a path");
                 let at = path.project(joined) + CLIP_EPSILON;
                 let mut points = bay.link.path.clone();
@@ -488,18 +508,19 @@ impl RailLine {
             .collect()
     }
 
-    /// The bays' platforms, as floors people walk on and board from.
+    /// Los andenes de las vías muertas, como pisos por los que camina la gente
+    /// y desde los que sube.
     pub fn floors(&self) -> Vec<Floor> {
         self.bays.iter().map(|b| b.platform).collect()
     }
 
-    /// Lays each bay's [`RailBay::walks`]: from the end of the station
-    /// platform and of the bay platform toward the junction tip, straight
-    /// along the platform's middle to the road that crosses the station
-    /// track there. People change trains over that level crossing: it lies
-    /// past the turnout, beyond where any train stands, so it is always
-    /// open. A bay with no such road, or one whose platforms do not reach
-    /// it, gets no walks.
+    /// Coloca los [`RailBay::walks`] de cada vía muerta: desde el extremo del
+    /// andén de la estación y del andén de la vía muerta hacia la punta del
+    /// empalme, en línea recta por el centro del andén hasta el camino que
+    /// cruza ahí la vía de la estación. La gente cambia de tren por ese paso a
+    /// nivel: queda pasando el desvío, más allá de donde se detiene cualquier
+    /// tren, así que siempre está libre. Una vía muerta sin ese camino, o cuyos
+    /// andenes no llegan hasta él, no tiene senderos.
     pub fn lay_walks(&mut self, towns: &[TownLayout], roads: &RoadNetwork) {
         for bay in &mut self.bays {
             bay.walks = towns
@@ -509,12 +530,12 @@ impl RailLine {
         }
     }
 
-    /// The bay of branch `branch` (index into [`Self::branches`]).
+    /// La vía muerta del ramal `branch` (índice dentro de [`Self::branches`]).
     pub fn bay_of(&self, branch: usize) -> Option<&RailBay> {
         self.bays.iter().find(|b| b.branch == branch)
     }
 
-    /// The towns of `order` reached from its first without a gap.
+    /// Los pueblos de `order` a los que se llega desde el primero sin un hueco.
     fn connected(&self, order: &[usize]) -> Vec<usize> {
         let mut served: Vec<usize> = order.iter().take(1).copied().collect();
         for pair in order.windows(2) {
@@ -526,8 +547,9 @@ impl RailLine {
         served
     }
 
-    /// The path through `served` (towns joined by links, in order): the
-    /// first town's far tip, every link, the last town's far tip.
+    /// El recorrido a través de `served` (pueblos unidos por enlaces, en
+    /// orden): la punta lejana del primer pueblo, cada enlace y la punta lejana
+    /// del último pueblo.
     fn path_through(&self, served: &[usize], towns: &[TownLayout]) -> LinePath {
         let Some(rail) = served.first().and_then(|&i| towns.get(i)?.railway) else {
             return LinePath::default();
@@ -549,13 +571,13 @@ impl RailLine {
         LinePath::new(points)
     }
 
-    /// The link from town `from` to town `to`, if the line has it.
+    /// El enlace del pueblo `from` al pueblo `to`, si la línea lo tiene.
     fn link(&self, from: usize, to: usize) -> Option<&RailLink> {
         self.links.iter().find(|l| l.from == from && l.to == to)
     }
 }
 
-/// The tip of `rail` farther from `tip`.
+/// La punta de `rail` más alejada de `tip`.
 fn far_tip(rail: Railway, tip: Vec2) -> Vec2 {
     if rail.start.distance(tip) < rail.end.distance(tip) {
         rail.end
@@ -564,16 +586,16 @@ fn far_tip(rail: Railway, tip: Vec2) -> Vec2 {
     }
 }
 
-/// A polyline measured by arc length: where a train runs.
+/// Una polilínea medida por longitud de arco: por donde avanza un tren.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct LinePath {
     points: Vec<Vec2>,
-    /// Arc length from the first point to each point.
+    /// Longitud de arco desde el primer punto hasta cada punto.
     arcs: Vec<f32>,
 }
 
 impl LinePath {
-    /// The path through `points`, dropping repeated points.
+    /// El recorrido a través de `points`, descartando los puntos repetidos.
     pub fn new(points: Vec<Vec2>) -> Self {
         let mut kept: Vec<Vec2> = Vec::with_capacity(points.len());
         for p in points {
@@ -590,17 +612,18 @@ impl LinePath {
         Self { points: kept, arcs }
     }
 
-    /// The corners of the path, in order.
+    /// Las esquinas del recorrido, en orden.
     pub fn points(&self) -> &[Vec2] {
         &self.points
     }
 
-    /// Length of the path, in meters.
+    /// Longitud del recorrido, en metros.
     pub fn length(&self) -> f32 {
         self.arcs.last().copied().unwrap_or(0.0)
     }
 
-    /// The point `distance` meters along the path, clamped to its ends.
+    /// El punto a `distance` metros a lo largo del recorrido, limitado a sus
+    /// extremos.
     pub fn at(&self, distance: f32) -> Vec2 {
         let Some(i) = self.piece(distance) else {
             return self.points.first().copied().unwrap_or(Vec2::ZERO);
@@ -611,15 +634,17 @@ impl LinePath {
         a + (b - a) * t
     }
 
-    /// The unit direction of travel `distance` meters along the path (the
-    /// heading of the straight piece there), east on an empty path.
+    /// La dirección unitaria de avance a `distance` metros a lo largo del
+    /// recorrido (la orientación del tramo recto en ese punto), hacia el este
+    /// en un recorrido vacío.
     pub fn direction_at(&self, distance: f32) -> Vec2 {
         self.piece(distance)
             .and_then(|i| unit(self.points[i + 1] - self.points[i]))
             .unwrap_or(Vec2::new(1.0, 0.0))
     }
 
-    /// Distance along the path to the point of the path nearest `p`.
+    /// Distancia a lo largo del recorrido hasta el punto del recorrido más
+    /// cercano a `p`.
     pub fn project(&self, p: Vec2) -> f32 {
         let mut best = (f32::INFINITY, 0.0);
         for (i, w) in self.points.windows(2).enumerate() {
@@ -634,8 +659,8 @@ impl LinePath {
         best.1
     }
 
-    /// Index of the straight piece holding `distance` (clamped), or `None`
-    /// when the path has no piece.
+    /// Índice del tramo recto que contiene `distance` (limitada), o `None`
+    /// cuando el recorrido no tiene tramos.
     fn piece(&self, distance: f32) -> Option<usize> {
         let pieces = self.points.len().checked_sub(1).filter(|&n| n > 0)?;
         let i = self.arcs.partition_point(|&a| a <= distance);
@@ -643,29 +668,29 @@ impl LinePath {
     }
 }
 
-/// The part of one straight piece of a track inside an area, measured along
-/// the whole track (a link's path, or a town's straight track) it belongs
-/// to: the piece, how far along the track the piece starts, where the part
-/// begins and ends, and the whole track's length, all in meters. Measuring
-/// along the whole track lets each part place its sleepers where the whole
-/// track would, so parts drawn chunk by chunk and piece by piece meet
-/// without a seam.
+/// La parte de un tramo recto de una vía dentro de un área, medida a lo largo
+/// de toda la vía a la que pertenece (el recorrido de un enlace, o la vía recta
+/// de un pueblo): el tramo, a qué distancia a lo largo de la vía empieza el
+/// tramo, dónde empieza y dónde termina la parte, y la longitud de toda la vía,
+/// todo en metros. Medir a lo largo de toda la vía permite que cada parte
+/// coloque sus durmientes donde los colocaría la vía completa, así que las
+/// partes dibujadas chunk por chunk y tramo por tramo se unen sin costura.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RailSpan {
-    /// The straight piece the part lies on.
+    /// El tramo recto sobre el que está la parte.
     pub track: Railway,
-    /// Distance along the whole track to `track.start`.
+    /// Distancia a lo largo de toda la vía hasta `track.start`.
     pub from: f32,
-    /// Distance along the whole track to where the part begins.
+    /// Distancia a lo largo de toda la vía hasta donde empieza la parte.
     pub enter: f32,
-    /// Distance along the whole track to where the part ends.
+    /// Distancia a lo largo de toda la vía hasta donde termina la parte.
     pub exit: f32,
-    /// Length of the whole track.
+    /// Longitud de toda la vía.
     pub total: f32,
 }
 
 impl RailSpan {
-    /// The whole of a single straight track.
+    /// Toda una vía recta simple.
     pub fn whole(track: Railway) -> Self {
         let total = track.start.distance(track.end);
         Self {
@@ -677,18 +702,18 @@ impl RailSpan {
         }
     }
 
-    /// Where the part begins on the ground.
+    /// Dónde empieza la parte sobre el suelo.
     pub fn start(&self) -> Vec2 {
         self.at(self.enter)
     }
 
-    /// Where the part ends on the ground.
+    /// Dónde termina la parte sobre el suelo.
     pub fn end(&self) -> Vec2 {
         self.at(self.exit)
     }
 
-    /// The point `distance` meters along the whole track (on this piece's
-    /// line).
+    /// El punto a `distance` metros a lo largo de toda la vía (sobre la línea
+    /// de este tramo).
     fn at(&self, distance: f32) -> Vec2 {
         let along = self.track.end - self.track.start;
         let length = along.length();
@@ -699,11 +724,12 @@ impl RailSpan {
     }
 }
 
-/// Clipped parts shorter than this (in meters) only touch an area.
+/// Las partes recortadas más cortas que esto (en metros) solo tocan un área.
 const CLIP_EPSILON: f32 = 1e-3;
 
-/// The towns `names` lists, as indices, keeping the first of each name and
-/// leaving out (and reporting) unknown and railway-less towns.
+/// Los pueblos que lista `names`, como índices, conservando el primero de cada
+/// nombre y dejando fuera (e informando) los pueblos desconocidos y los que no
+/// tienen ferrocarril.
 fn listed(names: &[String], towns: &[TownLayout], errors: &mut Vec<RailLineError>) -> Vec<usize> {
     let mut order: Vec<usize> = Vec::new();
     for name in names {
@@ -722,8 +748,8 @@ fn listed(names: &[String], towns: &[TownLayout], errors: &mut Vec<RailLineError
     order
 }
 
-/// Every railway town, west to east by the center of its grid (list order
-/// breaks ties).
+/// Todos los pueblos con ferrocarril, de oeste a este según el centro de su
+/// cuadrícula (el orden de la lista desempata).
 fn west_to_east(towns: &[TownLayout]) -> Vec<usize> {
     let mut order: Vec<usize> = (0..towns.len())
         .filter(|&i| towns[i].railway.is_some())
@@ -735,10 +761,10 @@ fn west_to_east(towns: &[TownLayout]) -> Vec<usize> {
     order
 }
 
-/// The link from town `from` to town `to`, both with a railway, or why it
-/// breaks the rules: its curved track must stay inside `bounds` and clear
-/// of every other town's leveled ground, ballast included. It may only
-/// leave its own two towns' ground, never come back across it.
+/// El enlace del pueblo `from` al pueblo `to`, ambos con ferrocarril, o por qué
+/// rompe las reglas: su vía curva debe mantenerse dentro de `bounds` y lejos
+/// del terreno nivelado de todos los demás pueblos, balasto incluido. Solo
+/// puede salir del terreno de sus dos propios pueblos, nunca volver a cruzarlo.
 fn link(
     towns: &[TownLayout],
     from: usize,
@@ -746,7 +772,8 @@ fn link(
     bounds: WorldBounds,
 ) -> Result<RailLink, RailLineError> {
     let (a, b) = (&towns[from], &towns[to]);
-    // Only railway towns get on the line, so this never fires.
+    // Solo los pueblos con ferrocarril entran en la línea, así que esto nunca
+    // se dispara.
     let (Some(rail_a), Some(rail_b)) = (a.railway, b.railway) else {
         let name = if a.railway.is_none() {
             &a.name
@@ -757,7 +784,8 @@ fn link(
     };
     let (start, start_back) = nearest_tip(rail_a, b.grid().center());
     let (end, end_back) = nearest_tip(rail_b, a.grid().center());
-    // Leave `a` heading out along its track; reach `b` heading into it.
+    // Sale de `a` en la dirección de su vía; llega a `b` entrando en la
+    // dirección de la suya.
     let out = unit(start - start_back).unwrap_or(Vec2::ZERO);
     let into = unit(end_back - end).unwrap_or(Vec2::ZERO);
     let (path, curves) = smooth_link(start, out, end, into, RailLine::CURVE_RADIUS);
@@ -770,7 +798,8 @@ fn link(
             && p.x + half <= bounds.max.x
             && p.y + half <= bounds.max.y
     };
-    // Every corner of the path inside the (convex) world keeps all of it in.
+    // Si cada esquina del recorrido está dentro del mundo (convexo), todo el
+    // recorrido queda adentro.
     if !path.iter().all(inside) {
         let (from, to) = names();
         return Err(RailLineError::OutsideWorld { from, to });
@@ -783,8 +812,8 @@ fn link(
                 .windows(2)
                 .any(|w| ground.segment_overlap(w[0], w[1]).is_some())
     });
-    // Out of the first town, it never comes back; into the last, it only
-    // arrives (read from that end, it never comes back either).
+    // Una vez fuera del primer pueblo, nunca vuelve; en el último, solo llega
+    // (leído desde ese extremo, tampoco vuelve nunca).
     let own = |town: &TownLayout| town.leveled().expanded(half);
     let crossed = crossed.map(|(_, other)| other).or_else(|| {
         let back_into_a = reenters(own(a), path.windows(2));
@@ -818,15 +847,16 @@ fn link(
     })
 }
 
-/// The bay for `branch` at its junction, beside the station track of the
-/// town the branch's `first` link leaves, `beside` other bays already there
-/// (each gets the next track out). The bay lies on the side of the track
-/// away from the town, opposite the station platform: its buffer stop level
-/// with the platform's end away from the junction tip, the shuttle standing
-/// at the platform's middle, and its turnout on the run-out past the
-/// platform's other end. `None`
-/// for a town without a railway or one grown on both sides of its line,
-/// and when the run-out is too short to hold the bay and its turnout.
+/// La vía muerta de `branch` en su empalme, al lado de la vía de la estación
+/// del pueblo del que sale el enlace `first` del ramal, junto a las otras vías
+/// muertas `beside` que ya estén ahí (cada una ocupa la siguiente vía hacia
+/// afuera). La vía muerta queda del lado de la vía opuesto al pueblo, enfrente
+/// del andén de la estación: su paragolpes a la altura del extremo del andén
+/// alejado de la punta del empalme, la lanzadera detenida en el centro del
+/// andén, y su desvío en el tramo final, pasando el otro extremo del andén.
+/// `None` para un pueblo sin ferrocarril o que creció a ambos lados de su
+/// línea, y cuando el tramo final es demasiado corto para contener la vía
+/// muerta y su desvío.
 fn bay(towns: &[TownLayout], branch: usize, first: &RailLink, beside: usize) -> Option<RailBay> {
     let town = towns.get(first.from)?;
     let rail = town.railway?;
@@ -836,16 +866,17 @@ fn bay(towns: &[TownLayout], branch: usize, first: &RailLink, beside: usize) -> 
     let tip = first.track.start;
     let back = far_tip(rail, tip);
     let out = unit(tip - back)?;
-    // The side of the track away from the town.
+    // El lado de la vía opuesto al pueblo.
     let left = Vec2::new(-out.y, out.x);
     let side = if (town.grid().center() - back).dot(left) > 0.0 {
         left * -1.0
     } else {
         left
     };
-    // Along the track from its far tip, and out from it.
+    // A lo largo de la vía desde su punta lejana, y hacia afuera de ella.
     let at = |x: f32, y: f32| back + out * x + side * y;
-    // The station platform's extent along the track, from its far tip.
+    // La extensión del andén de la estación a lo largo de la vía, desde su
+    // punta lejana.
     let platform = town
         .buildings
         .iter()
@@ -871,12 +902,12 @@ fn bay(towns: &[TownLayout], branch: usize, first: &RailLink, beside: usize) -> 
     let consist = consist_length(&branch_consist());
     let gap = RailBay::SPACING * (beside + 1) as f32;
     let radius = RailBay::TURNOUT_RADIUS;
-    // Two arcs of `radius` bring the bay down onto the track.
+    // Dos arcos de radio `radius` llevan la vía muerta hasta la vía.
     let angle = (1.0 - gap / (2.0 * radius)).clamp(-1.0, 1.0).acos();
     let buffer = platform.0;
     let held = RailBay::BUFFER_GAP + consist;
-    // The turnout starts at the platform's other end, past the shuttle's
-    // front (a platform too short for it is outrun).
+    // El desvío empieza en el otro extremo del andén, pasando el frente de la
+    // lanzadera (si el andén es demasiado corto, la lanzadera lo excede).
     let turnout = platform.1.max(buffer + held + RailBay::FRONT_CLEAR);
     let stop = ((platform.0 + platform.1) / 2.0).max(buffer + held - consist / 2.0);
     if turnout + 2.0 * radius * angle.sin() + RailBay::RUN_OUT_LEFT > back.distance(tip) {
@@ -887,7 +918,7 @@ fn bay(towns: &[TownLayout], branch: usize, first: &RailLink, beside: usize) -> 
         .ceil()
         .max(1.0) as usize;
     let mut path = vec![at(buffer, gap), at(turnout, gap)];
-    // First arc: leaves the straight bay toward the track.
+    // Primer arco: sale de la vía muerta recta hacia la vía.
     let (sin, cos) = (angle.sin(), angle.cos());
     for k in 1..=pieces {
         let phi = angle * k as f32 / pieces as f32;
@@ -896,7 +927,7 @@ fn bay(towns: &[TownLayout], branch: usize, first: &RailLink, beside: usize) -> 
             gap - radius * (1.0 - phi.cos()),
         ));
     }
-    // Second arc: back to the track's heading.
+    // Segundo arco: vuelve a la orientación de la vía.
     let (mid_x, mid_y) = (turnout + radius * sin, gap - radius * (1.0 - cos));
     for k in 1..=pieces {
         let psi = angle * k as f32 / pieces as f32;
@@ -906,7 +937,7 @@ fn bay(towns: &[TownLayout], branch: usize, first: &RailLink, beside: usize) -> 
             mid_y - radius * (heading.cos() - cos),
         ));
     }
-    // The first arc turns toward the track, the second back.
+    // El primer arco gira hacia la vía y el segundo, de vuelta.
     let toward = turn(out, side * -1.0).signum();
     let tangent = radius * (angle / 2.0).tan();
     let curve = |sign: f32| RailCurve {
@@ -915,8 +946,9 @@ fn bay(towns: &[TownLayout], branch: usize, first: &RailLink, beside: usize) -> 
         turn: sign * toward * angle,
     };
     let end = *path.last()?;
-    // Axis-aligned boxes from frame corners (the towns' tracks run along
-    // an axis): `x` along the track, `y` out from it.
+    // Rectángulos alineados con los ejes a partir de esquinas del sistema de
+    // referencia (las vías de los pueblos corren a lo largo de un eje): `x` a
+    // lo largo de la vía, `y` hacia afuera de ella.
     let area = |x: (f32, f32), y: (f32, f32)| {
         let (p, q) = (at(x.0, y.0), at(x.1, y.1));
         Aabb::new(
@@ -956,14 +988,16 @@ fn bay(towns: &[TownLayout], branch: usize, first: &RailLink, beside: usize) -> 
     })
 }
 
-/// The walks of `bay` (see [`RailLine::lay_walks`]): the station
-/// platform's, then the bay platform's. `None` without a level crossing of
-/// the station track past the turnout, or when a walk finds no road.
+/// Los senderos de `bay` (ver [`RailLine::lay_walks`]): primero el del andén de
+/// la estación y después el del andén de la vía muerta. `None` si no hay un
+/// paso a nivel sobre la vía de la estación pasando el desvío, o cuando un
+/// sendero no encuentra ningún camino.
 fn walks(bay: &RailBay, town: &TownLayout, roads: &RoadNetwork) -> Option<Vec<Aabb>> {
     let station = *town.floors().first()?;
     let out = bay.heading();
     let join = *bay.link.path.last()?;
-    // Past the bay's join, out along the station track, on it.
+    // Pasando la unión de la vía muerta, hacia afuera a lo largo de la vía de
+    // la estación, sobre ella.
     let crossing = roads
         .crossings()
         .filter(|c| {
@@ -974,16 +1008,17 @@ fn walks(bay: &RailBay, town: &TownLayout, roads: &RoadNetwork) -> Option<Vec<Aa
         .min_by(|a, b| (a.at - join).dot(out).total_cmp(&(b.at - join).dot(out)))?;
     let reach = |floor: Floor, track: Vec2| {
         let (along, across) = (floor.along, floor.across());
-        // The platform's end toward the tip, and a ramp past it.
+        // El extremo del andén hacia la punta, y una rampa más allá.
         let sign = along.dot(out).signum();
         let (lo, hi) = (
             floor.footprint.min.dot(along),
             floor.footprint.max.dot(along),
         );
         let start = (if sign > 0.0 { hi } else { lo }) + sign * Floor::RAMP_LENGTH;
-        // The walk runs 3.5 m in from the platform's far edge (where the
-        // middle of a 7 m platform was, before the platforms grew toward
-        // the track), so it keeps clear of what stands by the crossing.
+        // El sendero corre 3,5 m hacia adentro del borde lejano del andén
+        // (donde estaba el centro de un andén de 7 m, antes de que los andenes
+        // crecieran hacia la vía), así que se mantiene lejos de lo que hay
+        // junto al paso a nivel.
         let (low, high) = (
             floor.footprint.min.dot(across),
             floor.footprint.max.dot(across),
@@ -1011,7 +1046,7 @@ fn walks(bay: &RailBay, town: &TownLayout, roads: &RoadNetwork) -> Option<Vec<Aa
             min = Vec2::new(min.x.min(c.x), min.y.min(c.y));
             max = Vec2::new(max.x.max(c.x), max.y.max(c.y));
         }
-        // The road at the end of the walk is by the crossing.
+        // El camino al final del sendero está junto al paso a nivel.
         (at(end).distance(crossing.at) < RailBay::WALK_NEAR_CROSSING).then(|| Aabb::new(min, max))
     };
     Some(vec![
@@ -1020,9 +1055,9 @@ fn walks(bay: &RailBay, town: &TownLayout, roads: &RoadNetwork) -> Option<Vec<Aa
     ])
 }
 
-/// Whether a path, read as its `pieces` in order, comes back onto `band`
-/// after it has left it: a link leaving its town's ground and crossing it
-/// again further on.
+/// Si un recorrido, leído como sus `pieces` en orden, vuelve a entrar en `band`
+/// después de haber salido: un enlace que sale del terreno de su pueblo y lo
+/// vuelve a cruzar más adelante.
 fn reenters<'a>(band: Aabb, pieces: impl Iterator<Item = &'a [Vec2]>) -> bool {
     let mut left = false;
     for w in pieces {
@@ -1035,7 +1070,7 @@ fn reenters<'a>(band: Aabb, pieces: impl Iterator<Item = &'a [Vec2]>) -> bool {
     false
 }
 
-/// The tip of `rail` nearest `toward`, and its other tip.
+/// La punta de `rail` más cercana a `toward`, y su otra punta.
 fn nearest_tip(rail: Railway, toward: Vec2) -> (Vec2, Vec2) {
     if rail.start.distance(toward) <= rail.end.distance(toward) {
         (rail.start, rail.end)
@@ -1044,17 +1079,19 @@ fn nearest_tip(rail: Railway, toward: Vec2) -> (Vec2, Vec2) {
     }
 }
 
-/// The centerline of a link from `start`, leaving along unit `out`, to
-/// `end`, arriving along unit `into`, and its curves.
+/// La línea central de un enlace desde `start`, saliendo en la dirección
+/// unitaria `out`, hasta `end`, llegando en la dirección unitaria `into`, y sus
+/// curvas.
 ///
-/// The link is the polyline `start → p1 → p2 → end`, where `p1` lies ahead
-/// of `start` along `out` and `p2` behind `end` along `into`, with each
-/// corner filleted by an arc of `radius`. The corners sit exactly one
-/// tangent length from the tips, so the first arc begins at `start` and the
-/// second ends at `end`: the link joins both town tracks without a kink, a
-/// gap or an overlap. Tangent lengths are capped at a quarter of the
-/// tip-to-tip distance, which keeps each within half of the middle
-/// straight; a capped curve gets the radius that fits.
+/// El enlace es la polilínea `start → p1 → p2 → end`, donde `p1` está delante
+/// de `start` en la dirección `out` y `p2` detrás de `end` en la dirección
+/// `into`, con cada esquina redondeada por un arco de radio `radius`. Las
+/// esquinas quedan exactamente a una longitud de tangente de las puntas, así
+/// que el primer arco empieza en `start` y el segundo termina en `end`: el
+/// enlace une ambas vías de los pueblos sin quiebres, huecos ni
+/// superposiciones. Las longitudes de tangente se limitan a un cuarto de la
+/// distancia entre las puntas, lo que mantiene cada una dentro de la mitad de
+/// la recta del medio; una curva limitada recibe el radio que le cabe.
 fn smooth_link(
     start: Vec2,
     out: Vec2,
@@ -1064,9 +1101,10 @@ fn smooth_link(
 ) -> (Vec<Vec2>, Vec<RailCurve>) {
     let cap = start.distance(end) / 4.0;
     let corners = |(ta, tb): (f32, f32)| (start + out * ta, end - into * tb);
-    // The tangent lengths depend on the middle straight's heading, which
-    // depends on them: iterate to a fixed point (a few rounds suffice, since
-    // the tangents are short against the link).
+    // Las longitudes de tangente dependen de la orientación de la recta del
+    // medio, que a su vez depende de ellas: se itera hasta un punto fijo
+    // (alcanzan unas pocas rondas, ya que las tangentes son cortas comparadas
+    // con el enlace).
     let mut tangents = (0.0, 0.0);
     for _ in 0..64 {
         let (p1, p2) = corners(tangents);
@@ -1093,10 +1131,10 @@ fn smooth_link(
     (path, curves)
 }
 
-/// Appends to `path` the arc rounding `corner` between the unit headings
-/// `before` and `after`, `tangent` meters to either side of it, in straight
-/// pieces at most [`RailLine::CURVE_STEP`] long that turn at most
-/// [`RailLine::MAX_TURN`] each. Without a turn, nothing is added.
+/// Agrega a `path` el arco que redondea `corner` entre las orientaciones
+/// unitarias `before` y `after`, a `tangent` metros a cada lado, en tramos
+/// rectos de como mucho [`RailLine::CURVE_STEP`] de largo que giran como mucho
+/// [`RailLine::MAX_TURN`] cada uno. Sin giro, no se agrega nada.
 fn fillet(
     path: &mut Vec<Vec2>,
     corner: Vec2,
@@ -1130,7 +1168,7 @@ fn fillet(
     })
 }
 
-/// Appends `p` unless it repeats the last point.
+/// Agrega `p` salvo que repita el último punto.
 fn push_point(path: &mut Vec<Vec2>, p: Vec2) {
     if path
         .last()
@@ -1140,26 +1178,28 @@ fn push_point(path: &mut Vec<Vec2>, p: Vec2) {
     }
 }
 
-/// Distance from a corner turning `delta` radians to where an arc of
-/// `radius` meets the straights. Near a U-turn it grows without bound, so
-/// callers cap it.
+/// Distancia desde una esquina que gira `delta` radianes hasta donde un arco de
+/// radio `radius` se une con las rectas. Cerca de un giro en U crece sin
+/// límite, así que quienes la llaman la limitan.
 fn tangent_length(radius: f32, delta: f32) -> f32 {
-    // Half a U-turn is π/2, where tan blows up (and flips sign in f32).
+    // La mitad de un giro en U es π/2, donde tan se dispara (y cambia de signo
+    // en f32).
     radius * (delta.abs() / 2.0).min(1.55).tan()
 }
 
-/// The signed angle from unit `a` to unit `b`, counter-clockwise positive.
+/// El ángulo con signo desde el vector unitario `a` hasta el vector unitario
+/// `b`, positivo en sentido antihorario.
 fn turn(a: Vec2, b: Vec2) -> f32 {
     (a.x * b.y - a.y * b.x).atan2(a.dot(b))
 }
 
-/// `v` rotated `angle` radians counter-clockwise.
+/// `v` rotado `angle` radianes en sentido antihorario.
 fn rotate(v: Vec2, angle: f32) -> Vec2 {
     let (sin, cos) = angle.sin_cos();
     Vec2::new(v.x * cos - v.y * sin, v.x * sin + v.y * cos)
 }
 
-/// `v` scaled to length one, or `None` when it has no length.
+/// `v` escalado a longitud uno, o `None` cuando no tiene longitud.
 fn unit(v: Vec2) -> Option<Vec2> {
     let length = v.length();
     (length > 0.0).then(|| v * (1.0 / length))
@@ -1198,15 +1238,15 @@ pub(crate) mod tests {
         towns
     }
 
-    /// The three towns of the line, as `assets/world/towns.ron` lays them
-    /// out, in file order.
+    /// Los tres pueblos de la línea, tal como los distribuye
+    /// `assets/world/towns.ron`, en el orden del archivo.
     fn pampa_line() -> (WorldConfig, Vec<TownLayout>) {
         let world = WorldConfig {
             half_extent: WorldConfig::MAX_HALF_EXTENT,
             ..WorldConfig::default()
         };
-        // Monte Nievas, and the others at their real offsets from it
-        // (east, north, in meters) scaled 1:7 and rounded to the meter.
+        // Monte Nievas, y los demás en sus desplazamientos reales respecto de
+        // él (este, norte, en metros), escalados 1:7 y redondeados al metro.
         let nievas = (-2450.0, -1950.0);
         let at = |east: f32, north: f32| {
             (
@@ -1234,8 +1274,8 @@ pub(crate) mod tests {
         line.towns.iter().map(|&i| towns[i].name.clone()).collect()
     }
 
-    /// Three towns on one east-west row, 2 km apart, the middle one
-    /// optionally without a railway.
+    /// Tres pueblos en una misma fila este-oeste, a 2 km de distancia, el del
+    /// medio opcionalmente sin ferrocarril.
     fn row(middle_rail: bool) -> Vec<TownLayout> {
         place(
             WorldConfig::default(),
@@ -1256,7 +1296,8 @@ pub(crate) mod tests {
         assert_eq!(line_names(&line, &towns), list);
         let pairs: Vec<(usize, usize)> = line.links.iter().map(|l| (l.from, l.to)).collect();
         assert_eq!(pairs, [(1, 0), (0, 2)]);
-        // Each link bends twice, so it is drawn with many straight pieces.
+        // Cada enlace se curva dos veces, así que se dibuja con muchos tramos
+        // rectos.
         assert!(line.segments().count() > 2 * 4);
     }
 
@@ -1275,9 +1316,9 @@ pub(crate) mod tests {
             assert!([to.start, to.end].contains(&link.track.end), "{link:?}");
             assert_eq!(link.track.gauge, from.gauge);
         }
-        // All three towns lie west to east and their tracks run east-west:
-        // each link leaves from the east tip and arrives at the west tip, so
-        // the middle town's track carries the line through.
+        // Los tres pueblos están de oeste a este y sus vías corren de este a
+        // oeste: cada enlace sale de la punta este y llega a la punta oeste,
+        // así que la vía del pueblo del medio continúa la línea.
         let (castex, nievas, pico) = (rail(1), rail(0), rail(2));
         assert_eq!(line.links[0].track.start, castex.end);
         assert_eq!(line.links[0].track.end, nievas.start);
@@ -1311,13 +1352,13 @@ pub(crate) mod tests {
             Vec2::new(150.0, 50.0),
             Vec2::new(300.0, 50.0),
         ];
-        // Leaving the band and staying out is fine.
+        // Salir de la franja y quedarse afuera está bien.
         assert!(!reenters(band, out.windows(2)));
         assert!(!reenters(
             band,
             [Vec2::new(200.0, 0.0), Vec2::new(300.0, 0.0)].windows(2)
         ));
-        // Out and back in is not.
+        // Salir y volver a entrar no.
         let back = [
             Vec2::new(50.0, 50.0),
             Vec2::new(150.0, 50.0),
@@ -1326,7 +1367,7 @@ pub(crate) mod tests {
             Vec2::new(50.0, 90.0),
         ];
         assert!(reenters(band, back.windows(2)));
-        // The shipped line never does.
+        // La línea distribuida nunca lo hace.
         let (towns, line) = shipped();
         for link in &line.links {
             for (town, from_end) in [(link.from, false), (link.to, true)] {
@@ -1363,7 +1404,7 @@ pub(crate) mod tests {
         for name in ["Oeste", "Este", "Medio"] {
             assert!(message.contains(name), "{message}");
         }
-        // The default line is held to the same rule.
+        // La línea por defecto cumple la misma regla.
         let (line, errors) = RailLine::build(None, &towns, bounds);
         assert!(line.links.is_empty());
         assert_eq!(errors.len(), 1, "{errors:?}");
@@ -1416,8 +1457,8 @@ pub(crate) mod tests {
     #[test]
     fn a_link_leaving_the_world_is_left_out() {
         let towns = row(true);
-        // A world too small for the links (the towns themselves were placed
-        // in a bigger one).
+        // Un mundo demasiado chico para los enlaces (los pueblos en sí se
+        // ubicaron en uno más grande).
         let bounds = WorldBounds::centered(1200.0);
         let (line, errors) = RailLine::build(None, &towns, bounds);
         assert!(line.links.is_empty());
@@ -1431,7 +1472,7 @@ pub(crate) mod tests {
         assert!(errors[0].to_string().contains("leaves the world"));
     }
 
-    /// The line as `assets/world/towns.ron` ships it.
+    /// La línea tal como la distribuye `assets/world/towns.ron`.
     pub(crate) fn shipped() -> (Vec<TownLayout>, RailLine) {
         let (world, towns) = pampa_line();
         let list = names(&["Eduardo Castex", "Monte Nievas", "General Pico"]);
@@ -1440,7 +1481,7 @@ pub(crate) mod tests {
         (towns, line)
     }
 
-    /// The largest heading change between consecutive pieces of `points`.
+    /// El mayor cambio de orientación entre tramos consecutivos de `points`.
     fn sharpest_bend(points: &[Vec2]) -> f32 {
         points
             .windows(3)
@@ -1452,7 +1493,7 @@ pub(crate) mod tests {
             .fold(0.0, f32::max)
     }
 
-    /// The tip of `rail` other than `tip`.
+    /// La punta de `rail` distinta de `tip`.
     fn other_tip(rail: Railway, tip: Vec2) -> Vec2 {
         if rail.start == tip {
             rail.end
@@ -1466,8 +1507,9 @@ pub(crate) mod tests {
         let (towns, line) = shipped();
         let rail = |i: usize| towns[i].railway.expect("a railway");
         for link in &line.links {
-            // Ride in along the first town's track and out along the next's,
-            // so the joins at the tips count too.
+            // Entrar a lo largo de la vía del primer pueblo y salir a lo largo
+            // de la del siguiente, para que también cuenten las uniones en las
+            // puntas.
             let mut ride = vec![other_tip(rail(link.from), link.track.start)];
             ride.extend(&link.path);
             ride.push(other_tip(rail(link.to), link.track.end));
@@ -1477,7 +1519,7 @@ pub(crate) mod tests {
                 "bends {}° at once",
                 sharpest.to_degrees()
             );
-            // It does turn: the links run diagonally between east-west tracks.
+            // Sí gira: los enlaces corren en diagonal entre vías este-oeste.
             let turned: f32 = link.curves.iter().map(|c| c.turn.abs()).sum();
             assert!(turned.to_degrees() > 20.0, "{:?}", link.curves);
         }
@@ -1494,15 +1536,16 @@ pub(crate) mod tests {
             for pair in pieces.windows(2) {
                 assert_eq!(pair[0].end, pair[1].start);
             }
-            // Curve pieces stay short; only the straights run long.
+            // Los tramos de curva se mantienen cortos; solo las rectas son
+            // largas.
             let short = pieces
                 .iter()
                 .filter(|p| p.start.distance(p.end) <= RailLine::CURVE_STEP + 1e-2)
                 .count();
             assert!(short >= pieces.len() - 1, "{short} of {}", pieces.len());
-            // Bending adds only a little to the straight chord. At 1:7 the
-            // Castex–Monte Nievas link turns 73° and is 9.2% longer than its
-            // chord, so the bound leaves 10%.
+            // Curvar agrega solo un poco a la cuerda recta. A escala 1:7 el
+            // enlace Castex–Monte Nievas gira 73° y es un 9,2 % más largo que
+            // su cuerda, así que el límite deja un 10 %.
             let chord = link.track.start.distance(link.track.end);
             assert!(
                 link.length() > chord && link.length() < chord * 1.10,
@@ -1524,33 +1567,35 @@ pub(crate) mod tests {
                 assert!((curve.tangent - expected).abs() < 1e-2, "{curve:?}");
                 assert!(curve.tangent <= chord / 4.0 + 1e-2, "{curve:?}");
                 if curve.tangent < chord / 4.0 - 1e-2 {
-                    // Room to spare: the full radius.
+                    // Hay lugar de sobra: el radio completo.
                     assert!(
                         (curve.radius - RailLine::CURVE_RADIUS).abs() < 1.0,
                         "{curve:?}"
                     );
                     full += 1;
                 } else {
-                    // Capped at a quarter of the chord: tighter, but still a
-                    // wide curve. At 1:7 the short Castex–Monte Nievas link
-                    // turns 73° on curves of about 362 m.
+                    // Limitado a un cuarto de la cuerda: más cerrado, pero
+                    // sigue siendo una curva amplia. A escala 1:7 el enlace
+                    // corto Castex–Monte Nievas gira 73° en curvas de unos
+                    // 362 m.
                     assert!(curve.radius < RailLine::CURVE_RADIUS, "{curve:?}");
                     assert!(curve.radius > 300.0, "{curve:?}");
                 }
             }
-            // Both town tracks run east-west: the link turns back the way
-            // it turned.
+            // Las dos vías de los pueblos corren de este a oeste: el enlace
+            // vuelve a girar en sentido contrario al que giró.
             let net = link.curves[0].turn + link.curves[1].turn;
             assert!(net.abs() < 1e-3, "{:?}", link.curves);
         }
-        // The long Monte Nievas–General Pico link keeps the full radius.
+        // El enlace largo Monte Nievas–General Pico conserva el radio completo.
         assert_eq!(full, 2, "{:?}", line.links);
     }
 
     #[test]
     fn a_curve_between_short_straights_is_tightened_to_fit() {
-        // A right-angle turn within 200 m each way: a 500 m radius would
-        // need tangents of 207 m, but only a quarter of the 283 m chord fits.
+        // Un giro en ángulo recto con 200 m hacia cada lado: un radio de 500 m
+        // necesitaría tangentes de 207 m, pero solo cabe un cuarto de la cuerda
+        // de 283 m.
         let (start, end) = (Vec2::ZERO, Vec2::new(200.0, 200.0));
         let (path, curves) = smooth_link(
             start,
@@ -1593,8 +1638,8 @@ pub(crate) mod tests {
         let (world, towns) = pampa_line();
         let (line, _) = RailLine::build(None, &towns, world.bounds());
         let link = &line.links[1];
-        // The long straight in the middle of the link, and how far along
-        // the link it starts.
+        // La recta larga en el medio del enlace, y a qué distancia a lo largo
+        // del enlace empieza.
         let len = |p: &Railway| p.start.distance(p.end);
         let (from, piece) = link
             .segments()
@@ -1619,7 +1664,7 @@ pub(crate) mod tests {
         assert!(part.exit - part.enter > 100.0);
         let half = from + len(&piece) / 2.0;
         assert!(part.enter < half && half < part.exit, "{part:?}");
-        // The parts of two neighboring areas meet end to end.
+        // Las partes de dos áreas vecinas se unen extremo con extremo.
         let east = Aabb::new(
             Vec2::new(area.max.x, area.min.y),
             Vec2::new(area.max.x + 200.0, area.max.y),
@@ -1628,7 +1673,7 @@ pub(crate) mod tests {
         if let Some(next) = next.first() {
             assert!((next.enter - part.exit).abs() < 1e-2, "{next:?} {part:?}");
         }
-        // An area off the line holds nothing.
+        // Un área fuera de la línea no contiene nada.
         let off = Aabb::from_center_size(Vec2::new(0.0, -7000.0), Vec2::new(200.0, 200.0));
         assert!(line.segments_in(off).is_empty());
     }
@@ -1662,14 +1707,15 @@ pub(crate) mod tests {
         let rail = |i: usize| towns[i].railway.expect("a railway");
         let (castex, nievas, pico) = (rail(1), rail(0), rail(2));
         let points = path.points();
-        // From Castex's west run-out tip to Pico's east run-out tip.
+        // Desde la punta del tramo final oeste de Castex hasta la punta del
+        // tramo final este de Pico.
         assert_eq!(points[0], castex.start);
         assert_eq!(*points.last().unwrap(), pico.end);
-        // Monte Nievas's whole straight track is one piece of the path.
+        // Toda la vía recta de Monte Nievas es un tramo del recorrido.
         let i = points.iter().position(|&p| p == nievas.start).unwrap();
         assert_eq!(points[i + 1], nievas.end);
         assert_eq!(line.connected_towns(), [1, 0, 2]);
-        // Arc length is the sum of the pieces, and it bends gently.
+        // La longitud de arco es la suma de los tramos, y se curva suavemente.
         let sum: f32 = points.windows(2).map(|w| w[0].distance(w[1])).sum();
         assert!((path.length() - sum).abs() < 1e-2);
         assert!(sharpest_bend(points) <= RailLine::MAX_TURN + 1e-4);
@@ -1716,8 +1762,8 @@ pub(crate) mod tests {
         assert_eq!(RailLine::default().full_path(&towns).length(), 0.0);
     }
 
-    /// The row of three towns and Norte north-west of Medio, for a branch
-    /// off the line at Medio.
+    /// La fila de tres pueblos y Norte al noroeste de Medio, para un ramal que
+    /// sale de la línea en Medio.
     pub(crate) fn branched() -> (Vec<TownLayout>, Vec<String>, Vec<Vec<String>>) {
         let towns = place(
             WorldConfig::default(),
@@ -1745,14 +1791,14 @@ pub(crate) mod tests {
         assert_eq!(line.branches, [RailBranch { towns: vec![1, 3] }]);
         let pairs: Vec<(usize, usize)> = line.links.iter().map(|l| (l.from, l.to)).collect();
         assert_eq!(pairs, [(0, 1), (1, 2), (1, 3)]);
-        // The branch starts at Medio's west tip, where the line arrives from
-        // Oeste, and reaches Norte's tip nearest Medio.
+        // El ramal empieza en la punta oeste de Medio, donde llega la línea
+        // desde Oeste, y llega a la punta de Norte más cercana a Medio.
         let (into_medio, branch) = (&line.links[0], &line.links[2]);
         let (medio, norte) = (towns[1].railway.unwrap(), towns[3].railway.unwrap());
         assert_eq!(branch.track.start, medio.start);
         assert_eq!(into_medio.track.end, medio.start);
         assert_eq!(branch.track.end, norte.end);
-        // Without the branch, Norte is a railway town off the line.
+        // Sin el ramal, Norte es un pueblo con ferrocarril fuera de la línea.
         let (_, errors) = RailLine::build(Some(&list), &towns, bounds);
         assert_eq!(
             errors,
@@ -1768,14 +1814,15 @@ pub(crate) mod tests {
         let bounds = WorldConfig::default().bounds();
         let (line, _) = RailLine::build_with_branches(Some(&list), &branches, &towns, bounds);
         let (plain, _) = RailLine::build(Some(&list), &towns, bounds);
-        // The line train's path is the line's alone.
+        // El recorrido del tren de la línea es solo el de la línea.
         assert_eq!(line.full_path(&towns), plain.full_path(&towns));
         assert_eq!(line.connected_towns(), [0, 1, 2]);
         let paths = line.branch_paths(&towns);
         assert_eq!(paths.len(), 1);
         let points = paths[0].points();
-        // From Medio's far (east) tip, through its station and the junction,
-        // out to Norte's far (west) tip, never bending more than the line.
+        // Desde la punta lejana (este) de Medio, pasando por su estación y el
+        // empalme, hasta la punta lejana (oeste) de Norte, sin curvarse nunca
+        // más que la línea.
         let (medio, norte) = (towns[1].railway.unwrap(), towns[3].railway.unwrap());
         assert_eq!(points.first(), Some(&medio.end));
         assert!(points.contains(&medio.start));
@@ -1785,12 +1832,12 @@ pub(crate) mod tests {
             + line.links[2].length()
             + norte.start.distance(norte.end);
         assert!((paths[0].length() - expected).abs() < 0.1);
-        // The line, the branch, then the junction's bay.
+        // La línea, el ramal y después la vía muerta del empalme.
         let tracks = line.track_paths(&towns);
         assert_eq!(tracks.len(), 3);
         assert_eq!(tracks[1], paths[0]);
         assert_eq!(tracks[2].points(), line.bays[0].link.path);
-        // Laid the same way every time.
+        // Se coloca igual siempre.
         let (again, _) = RailLine::build_with_branches(Some(&list), &branches, &towns, bounds);
         assert_eq!(again, line);
     }
@@ -1807,11 +1854,12 @@ pub(crate) mod tests {
         let off = RailLineError::NotOnLine {
             name: "Norte".into(),
         };
-        // The junction must be on the line.
+        // El empalme tiene que estar en la línea.
         let (line, errors) = build(&[&["Norte", "Este"]]);
         assert!(line.branches.is_empty() && line.links.len() == 2);
         assert!(errors.contains(&bad("Norte")), "{errors:?}");
-        // A branch needs a town past its junction, one not on the line.
+        // Un ramal necesita un pueblo más allá de su empalme, uno que no esté
+        // en la línea.
         let (_, errors) = build(&[&["Medio"]]);
         assert_eq!(errors, [bad("Medio"), off.clone()]);
         let (_, errors) = build(&[&["Medio", "Este"]]);
@@ -1825,13 +1873,14 @@ pub(crate) mod tests {
         };
         assert_eq!(errors, [unknown, bad("Medio"), off]);
         assert!(bad("Medio").to_string().contains("branch left out"));
-        // A town is on one branch only.
+        // Un pueblo está en un solo ramal.
         let (line, errors) = build(&[&["Medio", "Norte"], &["Oeste", "Norte"]]);
         assert_eq!(line.branches.len(), 1);
         assert_eq!(errors.len(), 2, "{errors:?}");
     }
 
-    /// The branched world's one bay, with the junction's station track.
+    /// La única vía muerta del mundo con ramal, con la vía de la estación del
+    /// empalme.
     fn bayed() -> (Vec<TownLayout>, RailLine, Railway) {
         let (towns, list, branches) = branched();
         let bounds = WorldConfig::default().bounds();
@@ -1841,7 +1890,7 @@ pub(crate) mod tests {
         (towns, line, track)
     }
 
-    /// Distance from `p` to the segment `a`-`b`.
+    /// Distancia desde `p` hasta el segmento `a`-`b`.
     fn gap(p: Vec2, a: Vec2, b: Vec2) -> f32 {
         let d = b - a;
         let t = ((p - a).dot(d) / d.dot(d)).clamp(0.0, 1.0);
@@ -1851,21 +1900,23 @@ pub(crate) mod tests {
     #[test]
     fn a_junction_town_gets_a_bay_beside_its_station_track_at_the_junction_end() {
         let (towns, line, track) = bayed();
-        // One bay, for the one branch, at its junction (Medio).
+        // Una vía muerta, para el único ramal, en su empalme (Medio).
         assert_eq!(line.bays.len(), 1);
         let bay = line.bay_of(0).expect("a bay");
         assert_eq!((bay.branch, bay.town), (0, 1));
         assert_eq!((bay.link.from, bay.link.to), (1, 1));
         assert_eq!(line.bay_of(1), None);
         let medio = &towns[1];
-        // Beside the track on the side away from the town, 4.5 m out.
+        // Al lado de la vía, del lado opuesto al pueblo, a 4,5 m.
         let (buffer, heading) = (bay.buffer(), bay.heading());
-        // Broad-gauge track spacing: 4.5 m, a cars' width and a half.
+        // Separación entre vías de trocha ancha: 4,5 m, el ancho de un vagón y
+        // medio.
         assert_eq!(RailBay::SPACING, 4.5);
         assert!((gap(buffer, track.start, track.end) - 4.5).abs() < 1e-3);
         assert!(buffer.y > track.start.y, "away from the town (north)");
         assert!(medio.grid().center().y < track.start.y);
-        // It leaves toward the junction tip (west), the dead end to the east.
+        // Sale hacia la punta del empalme (oeste); el extremo cerrado queda al
+        // este.
         let tip = line.links[2].track.start;
         assert_eq!(tip, track.start);
         assert!(
@@ -1873,16 +1924,17 @@ pub(crate) mod tests {
             "{heading:?}"
         );
         assert!(buffer.x > tip.x && buffer.x < track.end.x);
-        // The buffer stop stands level with the station platform's east end
-        // (far from the junction tip), so the bay runs along the platform.
+        // El paragolpes está a la altura del extremo este del andén de la
+        // estación (lejos de la punta del empalme), así que la vía muerta corre
+        // a lo largo del andén.
         let platform = medio
             .buildings
             .iter()
             .find(|b| b.kind == BuildingKind::Platform)
             .unwrap();
         assert!((buffer.x - platform.footprint.max.x).abs() < 1e-3);
-        // Room for the shuttle: the consist, the gap at the buffer and the
-        // clear track before the turnout.
+        // Lugar para la lanzadera: la formación, la separación en el paragolpes
+        // y la vía libre antes del desvío.
         let straight = bay
             .link
             .path
@@ -1897,12 +1949,12 @@ pub(crate) mod tests {
             length >= consist + 10.0,
             "{length} m for a {consist} m consist"
         );
-        // The consist's middle stands in the bay opposite the middle of the
-        // station platform, its tail clear of the buffer.
+        // El centro de la formación está en la vía muerta enfrente del centro
+        // del andén de la estación, con la cola lejos del paragolpes.
         assert!((bay.stop.y - buffer.y).abs() < 1e-3);
         assert!((bay.stop.x - platform.footprint.center().x).abs() < 1e-3);
         assert!(buffer.x - bay.stop.x - consist / 2.0 >= RailBay::BUFFER_GAP);
-        // Clear of every building and of the platform, by the cars' width.
+        // Lejos de todo edificio y del andén, por el ancho de los vagones.
         let wide = 3.0 / 2.0 + 0.5;
         for b in &medio.buildings {
             let keep = b.footprint.expanded(wide);
@@ -1910,8 +1962,8 @@ pub(crate) mod tests {
                 assert!(keep.segment_overlap(w[0], w[1]).is_none(), "{:?}", b.kind);
             }
         }
-        // A town no branch leaves from gets none, nor does a line without
-        // branches.
+        // Un pueblo del que no sale ningún ramal no tiene ninguna, y tampoco
+        // una línea sin ramales.
         assert!(line.bays.iter().all(|b| b.town == 1));
         let (_, list, _) = branched();
         let (plain, _) = RailLine::build(Some(&list), &towns, WorldConfig::default().bounds());
@@ -1924,13 +1976,14 @@ pub(crate) mod tests {
         let (towns, line, track) = bayed();
         let bay = line.bay_of(0).unwrap();
         let (buffer, out) = (bay.buffer(), bay.heading());
-        // Across the tracks, away from the station track.
+        // Del otro lado de las vías, lejos de la vía de la estación.
         let across = Vec2::new(-out.y, out.x);
         let across = across * across.dot(buffer - track.start).signum();
         let platform = bay.platform;
         let station = towns[1].floors()[0];
-        // The station platform's build: height, depth, its edge 1.65 m from
-        // the track, on the bay's far side from the station track.
+        // La construcción del andén de la estación: altura, profundidad, su
+        // borde a 1,65 m de la vía, del lado de la vía muerta opuesto a la vía
+        // de la estación.
         assert_eq!(platform.height, station.height);
         let (lo, hi) = (platform.footprint.min, platform.footprint.max);
         let corners = [lo, hi, Vec2::new(lo.x, hi.y), Vec2::new(hi.x, lo.y)];
@@ -1946,10 +1999,11 @@ pub(crate) mod tests {
         let depth = |f: &Floor| f.footprint.size().x.min(f.footprint.size().y);
         assert!((depth(&platform) - depth(&station)).abs() < 1e-3);
         assert!((depth(&platform) - 9.35).abs() < 1e-3);
-        // The cars' side (1.5 m from the centerline) leaves 0.15 m to it.
+        // El costado de los vagones (a 1,5 m de la línea central) deja 0,15 m
+        // hasta él.
         assert!((near - LineTrain::WIDTH / 2.0 - 0.15).abs() < 1e-3);
-        // Along the track it runs from the buffer stop past the front of
-        // the standing consist, whole of it beside the platform.
+        // A lo largo de la vía va desde el paragolpes hasta pasar el frente de
+        // la formación detenida, que queda entera al lado del andén.
         let consist = consist_length(&branch_consist());
         let along = |c: Vec2| (c - buffer).dot(out);
         let (a, b) = corners
@@ -1959,7 +2013,7 @@ pub(crate) mod tests {
         assert!(a.abs() < 1e-3);
         assert!(b >= RailBay::BUFFER_GAP + consist);
         assert_eq!(platform.along.dot(out).abs(), 1.0);
-        // Beside the straight bay: before the turnout bends it away.
+        // Al lado de la vía muerta recta: antes de que el desvío la curve.
         assert!(b <= bay.link.path[1].distance(buffer) + 1e-3);
     }
 
@@ -1969,25 +2023,26 @@ pub(crate) mod tests {
         let bay = line.bay_of(0).unwrap();
         let station = towns[1].floors()[0];
         let platform = bay.platform;
-        // The same stretch of the track, end to end, 60 m of it.
+        // El mismo tramo de la vía, de extremo a extremo, 60 m.
         assert_eq!(platform.footprint.min.x, station.footprint.min.x);
         assert_eq!(platform.footprint.max.x, station.footprint.max.x);
         assert_eq!(platform.footprint.size().x, 60.0);
-        // On the other side of the station track from the station platform.
+        // Del otro lado de la vía de la estación respecto del andén de la
+        // estación.
         assert!(station.footprint.max.y < track.start.y);
         assert!(platform.footprint.min.y > track.start.y);
-        // The standing shuttle's coaches lie wholly opposite it, nose and
-        // tail within the platform's length, at its middle.
+        // Los coches de la lanzadera detenida quedan completamente enfrente,
+        // con el frente y la cola dentro del largo del andén, en su centro.
         let consist = consist_length(&branch_consist());
         let (stop, half) = (bay.stop.x, consist / 2.0);
         assert!(stop - half >= platform.footprint.min.x, "{stop}");
         assert!(stop + half <= platform.footprint.max.x, "{stop}");
         assert!((stop - station.footprint.center().x).abs() < 1e-3);
-        // The turnout begins where the platform ends, so the bay runs
-        // straight the whole length of the platform.
+        // El desvío empieza donde termina el andén, así que la vía muerta corre
+        // recta a lo largo de todo el andén.
         let straight = bay.link.path[1];
         assert!((straight.x - platform.footprint.min.x).abs() < 1e-3);
-        // The line's floors are the bays' platforms.
+        // Los pisos de la línea son los andenes de las vías muertas.
         assert_eq!(line.floors(), [platform]);
     }
 
@@ -1997,25 +2052,26 @@ pub(crate) mod tests {
         let bay = line.bay_of(0).unwrap();
         let path = &bay.link.path;
         assert!(sharpest_bend(path) <= RailLine::MAX_TURN + 1e-4);
-        // Two arcs of the bay's 150 m radius, bending opposite ways, no net
-        // turn.
+        // Dos arcos del radio de 150 m de la vía muerta, que se curvan en
+        // sentidos opuestos, sin giro neto.
         let curves = &bay.link.curves;
         assert_eq!(curves.len(), 2);
         assert!(curves.iter().all(|c| (c.radius - 150.0).abs() < 1e-3));
         assert!((curves[0].turn + curves[1].turn).abs() < 1e-5);
-        // It ends on the station track, heading along it, short of the tip.
+        // Termina sobre la vía de la estación, orientada a lo largo de ella,
+        // antes de la punta.
         let join = *path.last().unwrap();
         assert!((join.y - track.start.y).abs() < 1e-2, "{join:?}");
         assert!(join.x > track.start.x + 90.0, "within the run-out");
         let last = path[path.len() - 1] - path[path.len() - 2];
         assert!(last.y.abs() / last.length() < 0.02, "{last:?}");
-        // The turnout lies past the platform, never over the yard.
+        // El desvío queda más allá del andén, nunca sobre la playa.
         let medio = &towns[1];
         let grid = medio.grid();
         for p in path {
             assert!(p.y > grid.max.y, "{p:?}");
         }
-        // The link measures like any other.
+        // El enlace se mide como cualquier otro.
         assert_eq!(bay.link.track.start, bay.buffer());
         assert_eq!(bay.link.track.end, join);
         let length: f32 = path.windows(2).map(|w| w[0].distance(w[1])).sum();
@@ -2033,16 +2089,18 @@ pub(crate) mod tests {
         assert_eq!(points.first(), Some(&bay.buffer()));
         assert_eq!(points.last(), Some(&norte.start));
         assert!(sharpest_bend(points) <= RailLine::MAX_TURN + 1e-4);
-        // Out of the bay it takes the branch path's own track: the station
-        // track's run-out west of the turnout, then the branch link.
+        // Al salir de la vía muerta toma la vía propia del recorrido del ramal:
+        // el tramo final de la vía de la estación al oeste del desvío y después
+        // el enlace del ramal.
         let join = *bay.link.path.last().unwrap();
         let on_branch = line.branch_paths(&towns).remove(0);
         let rest = on_branch.length() - on_branch.project(join);
         assert!((paths[0].length() - (bay.link.length() + rest)).abs() < 0.1);
         assert!(points.contains(&track.start));
         let at = paths[0].project(join);
-        // Until the last stretch of the turnout it keeps off the station
-        // track, so no train on it shares the line train's rails.
+        // Hasta el último tramo del desvío se mantiene fuera de la vía de la
+        // estación, así que ningún tren sobre ella comparte los rieles del tren
+        // de la línea.
         for k in 0..=200 {
             let d = at * k as f32 / 200.0;
             if d < at - 20.0 {
@@ -2050,7 +2108,8 @@ pub(crate) mod tests {
                 assert!(off > 0.3, "{d} {off}");
             }
         }
-        // Laid the same way every time; a branch without a bay keeps its path.
+        // Se coloca igual siempre; un ramal sin vía muerta conserva su
+        // recorrido.
         let (again, _) = RailLine::build_with_branches(
             Some(&names(&["Oeste", "Medio", "Este"])),
             &[names(&["Medio", "Norte"])],
@@ -2067,16 +2126,16 @@ pub(crate) mod tests {
     fn the_bay_is_track_everything_that_keeps_off_track_sees() {
         let (towns, line, _) = bayed();
         let bay = line.bay_of(0).unwrap();
-        // The pieces of the bay are among the line's pieces.
+        // Los tramos de la vía muerta están entre los tramos de la línea.
         let pieces: Vec<Railway> = line.segments().collect();
         for w in bay.link.path.windows(2) {
             assert!(pieces.iter().any(|r| (r.start, r.end) == (w[0], w[1])));
         }
-        // And are cut to the area around it like any link's.
+        // Y se recortan al área que los rodea como los de cualquier enlace.
         let area = Aabb::from_center_size(bay.stop, Vec2::new(40.0, 40.0));
         let spans = line.segments_in(area);
         assert!(spans.iter().any(|s| s.total == bay.link.length()));
-        // Roads see it as a track path of its own.
+        // Los caminos la ven como un recorrido de vía propio.
         assert_eq!(
             line.track_paths(&towns).last().unwrap().points(),
             bay.link.path

@@ -1,4 +1,4 @@
-//! Cattle: a herd grazing in its pasture (see [`super`]).
+//! Ganado: un rodeo que pasta en su potrero (ver [`super`]).
 
 use std::f32::consts::TAU;
 
@@ -6,21 +6,22 @@ use super::turn_toward;
 use crate::rng::Rng;
 use crate::{Aabb, Body, Circle, Heading, StaticObstacles, Vec2};
 
-/// A cow's coat (pelaje), by breed.
+/// El pelaje de una vaca, según la raza.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CowCoat {
-    /// Hereford: red with a white face, chest and belly.
+    /// Hereford: colorada con la cara, el pecho y la panza blancos.
     Hereford,
-    /// Aberdeen Angus: solid black.
+    /// Aberdeen Angus: negra entera.
     Angus,
-    /// Overo: white with black patches.
+    /// Overo: blanco con manchas negras.
     Overo,
 }
 
 impl CowCoat {
     pub const ALL: [Self; 3] = [Self::Hereford, Self::Angus, Self::Overo];
 
-    /// A herd's breed: mostly Hereford, then Angus, some overos.
+    /// La raza de un rodeo: sobre todo Hereford, después Angus y algunos
+    /// overos.
     fn seeded(rng: &mut Rng) -> Self {
         match rng.unit() {
             u if u < 0.45 => Self::Hereford,
@@ -30,60 +31,62 @@ impl CowCoat {
     }
 }
 
-/// What a cow is doing.
+/// Lo que está haciendo una vaca.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CowState {
-    /// Head down in the grass.
+    /// Con la cabeza agachada en el pasto.
     Graze,
-    /// Standing, head up, chewing.
+    /// Parada, con la cabeza levantada, rumiando.
     Stand,
-    /// Walking slowly somewhere.
+    /// Caminando despacio hacia algún lado.
     Walk,
 }
 
-/// One head of cattle.
+/// Una cabeza de ganado.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Cow {
     pub position: Vec2,
     pub heading: Heading,
     pub state: CowState,
-    /// Ground speed, in m/s.
+    /// Velocidad sobre el suelo, en m/s.
     pub speed: f32,
     pub coat: CowCoat,
-    /// The herd's bull (toro): drawn bigger.
+    /// El toro del rodeo: se dibuja más grande.
     pub bull: bool,
     target: Vec2,
-    /// Seconds left in this state.
+    /// Segundos que le quedan en este estado.
     timer: f32,
     rng: Rng,
 }
 
-/// A herd and the pasture it keeps to.
+/// Un rodeo y el potrero en el que se queda.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Herd {
-    /// Its field's survey cell, as an index: stable across runs.
+    /// La celda del relevamiento de su campo, como índice: estable entre
+    /// ejecuciones.
     pub id: u32,
     pub pasture: Aabb,
     pub cows: Vec<Cow>,
 }
 
 impl Herd {
-    /// A cow's body radius, in meters.
+    /// El radio del cuerpo de una vaca, en metros.
     pub const RADIUS: f32 = 0.8;
-    /// Grazing walk, in m/s.
+    /// Caminata mientras pasta, en m/s.
     pub const WALK: f32 = 0.5;
-    /// Walking off from a rider, in m/s.
+    /// Caminata para alejarse de un jinete, en m/s.
     pub const SHY_WALK: f32 = 1.3;
-    /// A rider closer than this walks a standing cow off, meters.
+    /// Un jinete más cerca que esto hace que una vaca parada se aleje
+    /// caminando, en metros.
     pub const SHY: f32 = 7.0;
-    /// Fastest turn, radians per second.
+    /// Giro más rápido, en radianes por segundo.
     pub const TURN: f32 = 0.9;
-    /// Farthest a cow wanders from the herd's middle, meters.
+    /// Lo más lejos que se aleja una vaca del centro del rodeo, en metros.
     pub const SPREAD: f32 = 22.0;
-    /// Fewest head in a herd that runs a bull with it.
+    /// Mínimo de cabezas que debe tener un rodeo para llevar un toro.
     pub const BULL_HERD: usize = 10;
 
-    /// A herd of `count` head bunched in `pasture`, seeded.
+    /// Un rodeo de `count` cabezas agrupadas en `pasture`, con semilla.
     pub fn new(id: u32, pasture: Aabb, count: usize, seed: u32) -> Self {
         let mut rng = Rng::new(seed, id);
         let breed = CowCoat::seeded(&mut rng);
@@ -98,7 +101,7 @@ impl Herd {
                 let at = inner.closest_point(
                     middle + Vec2::new(rng.range(-15.0, 15.0), rng.range(-15.0, 15.0)),
                 );
-                // One in eight from another breed: herds were mixed.
+                // Una de cada ocho es de otra raza: los rodeos eran mezclados.
                 let coat = if rng.unit() < 0.125 {
                     CowCoat::seeded(&mut rng)
                 } else {
@@ -118,7 +121,7 @@ impl Herd {
                 }
             })
             .collect();
-        // A herd big enough runs one bull of its breed.
+        // Un rodeo lo bastante grande lleva un toro de su raza.
         if count >= Self::BULL_HERD {
             let bull = &mut cows[rng.below(count)];
             bull.bull = true;
@@ -127,13 +130,13 @@ impl Herd {
         Self { id, pasture, cows }
     }
 
-    /// The middle of the herd.
+    /// El centro del rodeo.
     pub fn center(&self) -> Vec2 {
         let n = self.cows.len().max(1) as f32;
         self.cows.iter().fold(Vec2::ZERO, |a, c| a + c.position) * (1.0 / n)
     }
 
-    /// Every cow as a soft body the rider is blocked by.
+    /// Cada vaca como un cuerpo blando que bloquea al jinete.
     pub fn bodies(&self) -> impl Iterator<Item = Body> + '_ {
         self.cows.iter().map(|c| Body {
             position: c.position,
@@ -141,9 +144,10 @@ impl Herd {
         })
     }
 
-    /// Advances the herd `dt` seconds: each cow grazes, walks, stands or
-    /// stands; a rider at `threat` walks cows off.
-    /// Cows keep apart, out of `obstacles` and inside the pasture.
+    /// Hace avanzar el rodeo `dt` segundos: cada vaca pasta, camina o se queda
+    /// parada; un jinete en `threat` hace que las vacas se alejen caminando.
+    /// Las vacas se mantienen separadas, fuera de `obstacles` y dentro del
+    /// potrero.
     pub fn step(&mut self, dt: f32, threat: Option<Vec2>, obstacles: &StaticObstacles) {
         let center = self.center();
         let inner = inner(self.pasture);
@@ -157,7 +161,7 @@ impl Herd {
         }
     }
 
-    /// Pushes overlapping cows apart, half each.
+    /// Separa las vacas que se superponen, la mitad cada una.
     fn keep_apart(&mut self) {
         let gap = 2.0 * Self::RADIUS;
         for i in 0..self.cows.len() {
@@ -174,10 +178,12 @@ impl Herd {
     }
 }
 
-/// Where a cow at `at` ends up both inside `inner` and clear of every
-/// obstacle: clamped, then pushed out, a few passes (a tree on the pasture's
-/// edge pushes it out of the box, the box back into the tree). `None` when
-/// no pass satisfies both: the cow then stays where it was.
+/// Dónde termina una vaca que está en `at` de modo que quede a la vez dentro de
+/// `inner` y lejos de todo obstáculo: se ajusta a los límites y después se
+/// empuja hacia afuera, en algunas pasadas (un árbol en el borde del potrero la
+/// empuja fuera del rectángulo, y el rectángulo la devuelve contra el árbol).
+/// `None` cuando ninguna pasada cumple ambas condiciones: la vaca se queda
+/// entonces donde estaba.
 fn settle(at: Vec2, inner: Aabb, obstacles: &StaticObstacles) -> Option<Vec2> {
     let circle = Circle::new(Herd::RADIUS);
     let mut at = inner.closest_point(at);
@@ -203,7 +209,7 @@ fn settle(at: Vec2, inner: Aabb, obstacles: &StaticObstacles) -> Option<Vec2> {
     clear.then_some(at)
 }
 
-/// The pasture less a cow's radius: where its middle may stand.
+/// El potrero menos el radio de una vaca: donde puede estar su centro.
 fn inner(pasture: Aabb) -> Aabb {
     pasture.expanded(-Herd::RADIUS)
 }
@@ -227,7 +233,7 @@ impl Cow {
             let turn = turn_toward(self.heading, to);
             let max = Herd::TURN * dt;
             self.heading = self.heading.rotated(turn.clamp(-max, max));
-            // Turn on the spot first, then walk on.
+            // Primero gira en el lugar y después sigue caminando.
             let pace = if turn.abs() < 1.0 { self.speed } else { 0.2 };
             self.position += self.heading.forward() * (pace * dt);
             if to.length() < 1.0 {
@@ -239,7 +245,7 @@ impl Cow {
         }
     }
 
-    /// The next thing to do, by chance.
+    /// Lo próximo que va a hacer, al azar.
     fn choose(&mut self, center: Vec2, inner: Aabb) {
         let r = &mut self.rng;
         let (state, timer) = match r.unit() {
@@ -327,7 +333,8 @@ mod tests {
     fn a_tree_on_the_pasture_edge_never_holds_a_cow_inside_it() {
         let mut h = herd();
         let inner = inner(h.pasture);
-        // A trunk straddling the west edge, and every cow walking at it.
+        // Un tronco a caballo del borde oeste, y todas las vacas caminando
+        // hacia él.
         let tree = Aabb::from_center_size(
             Vec2::new(h.pasture.min.x, h.pasture.center().y),
             Vec2::new(1.2, 1.2),

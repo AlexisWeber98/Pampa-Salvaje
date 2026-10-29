@@ -1,8 +1,9 @@
-//! Minimal planar vector type, so `core` stays dependency-free.
+//! Tipo mínimo de vector en el plano, para que `core` no tenga dependencias.
 
 use std::ops::{Add, AddAssign, Mul, Sub};
 
-/// A point or direction on the ground plane (`x` east, `y` north).
+/// Un punto o una dirección en el plano del suelo (`x` hacia el este, `y` hacia
+/// el norte).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Vec2 {
     pub x: f32,

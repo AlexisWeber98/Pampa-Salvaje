@@ -1,47 +1,51 @@
-//! Static obstacles indexed on a uniform grid, so collision only looks at
-//! the footprints near a point instead of every footprint in the world.
+//! Obstáculos estáticos indexados en una grilla uniforme, para que la colisión
+//! solo mire las huellas cercanas a un punto en lugar de todas las huellas del
+//! mundo.
 
 use std::collections::HashMap;
 use std::ops::Deref;
 
 use crate::{Aabb, ChunkCoord, Vec2, WorldConfig};
 
-/// Every static footprint of the world, with a uniform-grid index.
+/// Todas las huellas estáticas del mundo, con un índice de grilla uniforme.
 ///
-/// Reads like a slice of [`Aabb`] (in insertion order); [`Self::near`]
-/// returns only the footprints overlapping an area.
+/// Se lee como un slice de [`Aabb`] (en orden de inserción); [`Self::near`]
+/// devuelve solo las huellas que se superponen con un área.
 ///
-/// Besides the permanent footprints it holds a streamed layer: footprints
-/// grouped by the chunk they belong to, added and dropped a chunk at a time
-/// (see [`Self::set_chunk`]). Only [`Self::near`] sees that layer; the slice
-/// view, iteration, `len` and equality cover the permanent footprints.
+/// Además de las huellas permanentes, guarda una capa cargada por streaming:
+/// huellas agrupadas según el chunk al que pertenecen, que se agregan y se
+/// descartan de a un chunk por vez (ver [`Self::set_chunk`]). Solo
+/// [`Self::near`] ve esa capa; la vista como slice, la iteración, `len` y la
+/// igualdad abarcan las huellas permanentes.
 ///
-/// A permanent footprint may be low (see [`Self::push_low`]): something a
-/// jumping horse clears, such as a fence. [`Self::near_above`] leaves out
-/// the low footprints a body is higher than. Everything else, streamed
-/// footprints included, is unbounded.
+/// Una huella permanente puede ser baja (ver [`Self::push_low`]): algo que un
+/// caballo salta, como un alambrado. [`Self::near_above`] deja afuera las
+/// huellas bajas que quedan por debajo de un cuerpo. Todo lo demás, incluidas
+/// las huellas cargadas por streaming, no tiene límite de altura.
 #[derive(Debug, Clone, Default)]
 pub struct StaticObstacles {
     items: Vec<Aabb>,
-    /// The height of each of `items`, in meters; infinite unless low.
+    /// La altura de cada uno de los `items`, en metros; infinita salvo que sea
+    /// baja.
     tops: Vec<f32>,
-    /// Footprint indices per grid cell.
+    /// Índices de huellas por celda de la grilla.
     cells: HashMap<(i32, i32), Vec<u32>>,
-    /// The streamed footprints of each loaded chunk.
+    /// Las huellas cargadas por streaming de cada chunk cargado.
     chunks: HashMap<ChunkCoord, Vec<Aabb>>,
-    /// Streamed footprints per grid cell: the chunk and index in it.
+    /// Huellas cargadas por streaming por celda de la grilla: el chunk y el
+    /// índice dentro de él.
     chunk_cells: HashMap<(i32, i32), Vec<(ChunkCoord, u32)>>,
 }
 
 impl StaticObstacles {
-    /// Side of one index cell, in meters: about a house lot.
+    /// Lado de una celda del índice, en metros: más o menos un lote de casa.
     pub const CELL: f32 = 16.0;
 
-    /// The clearance of a body on the ground ([`Self::near_above`]): every
-    /// footprint blocks it, however low.
+    /// La altura libre de un cuerpo que está en el suelo
+    /// ([`Self::near_above`]): toda huella lo bloquea, por baja que sea.
     pub const ON_GROUND: f32 = f32::NEG_INFINITY;
 
-    /// The obstacles in `items`, indexed.
+    /// Los obstáculos de `items`, indexados.
     pub fn new(items: Vec<Aabb>) -> Self {
         let mut obstacles = Self::default();
         for item in items {
@@ -50,13 +54,13 @@ impl StaticObstacles {
         obstacles
     }
 
-    /// Adds one footprint, unbounded upward.
+    /// Agrega una huella, sin límite de altura hacia arriba.
     pub fn push(&mut self, item: Aabb) {
         self.push_low(item, f32::INFINITY);
     }
 
-    /// Adds one footprint `height` meters tall, which a body higher than
-    /// that clears ([`Self::near_above`]).
+    /// Agrega una huella de `height` metros de alto, que un cuerpo más alto que
+    /// eso supera ([`Self::near_above`]).
     pub fn push_low(&mut self, item: Aabb, height: f32) {
         let index = self.items.len() as u32;
         for cell in Self::cells_of(item) {
@@ -66,16 +70,17 @@ impl StaticObstacles {
         self.tops.push(height);
     }
 
-    /// Adds every footprint of `items`.
+    /// Agrega todas las huellas de `items`.
     pub fn extend(&mut self, items: impl IntoIterator<Item = Aabb>) {
         for item in items {
             self.push(item);
         }
     }
 
-    /// Removes the first footprint equal to `item` and rebuilds the index,
-    /// keeping the others in order. Returns whether one was removed. Rare
-    /// (a tied horse led away), so a full rebuild is fine.
+    /// Quita la primera huella igual a `item` y reconstruye el índice,
+    /// manteniendo las demás en orden. Devuelve si se quitó alguna. Es poco
+    /// frecuente (un caballo atado que se lleva), así que una reconstrucción
+    /// completa está bien.
     pub fn remove(&mut self, item: &Aabb) -> bool {
         let Some(index) = self.items.iter().position(|o| o == item) else {
             return false;
@@ -91,16 +96,16 @@ impl StaticObstacles {
         true
     }
 
-    /// Makes `items` the streamed footprints of `coord`, replacing any it
-    /// held. An empty `items` still marks the chunk as loaded. A footprint
-    /// with a corner past the largest possible world
-    /// ([`WorldConfig::MAX_HALF_EXTENT`]), or not finite, is dropped:
-    /// indexing it could take effectively forever, and no real footprint
-    /// reaches there ([`Self::near`] likewise finds nothing for a
-    /// non-finite area).
+    /// Convierte `items` en las huellas cargadas por streaming de `coord`,
+    /// reemplazando las que tuviera. Un `items` vacío igual marca el chunk como
+    /// cargado. Se descarta una huella con una esquina más allá del mundo más
+    /// grande posible ([`WorldConfig::MAX_HALF_EXTENT`]), o que no sea finita:
+    /// indexarla podría tardar prácticamente para siempre, y ninguna huella
+    /// real llega hasta ahí ([`Self::near`] tampoco encuentra nada para un área
+    /// no finita).
     pub fn set_chunk(&mut self, coord: ChunkCoord, mut items: Vec<Aabb>) {
         self.clear_chunk(coord);
-        // `abs() <= max` is false for NaN and infinities too.
+        // `abs() <= max` también es falso para NaN e infinitos.
         items.retain(|i| {
             [i.min.x, i.min.y, i.max.x, i.max.y]
                 .iter()
@@ -117,8 +122,8 @@ impl StaticObstacles {
         self.chunks.insert(coord, items);
     }
 
-    /// Drops the streamed footprints of `coord`. Returns whether the chunk
-    /// was loaded.
+    /// Descarta las huellas cargadas por streaming de `coord`. Devuelve si el
+    /// chunk estaba cargado.
     pub fn clear_chunk(&mut self, coord: ChunkCoord) -> bool {
         let Some(items) = self.chunks.remove(&coord) else {
             return false;
@@ -136,31 +141,31 @@ impl StaticObstacles {
         true
     }
 
-    /// Whether `coord` holds streamed footprints (possibly none).
+    /// Si `coord` tiene huellas cargadas por streaming (posiblemente ninguna).
     pub fn has_chunk(&self, coord: ChunkCoord) -> bool {
         self.chunks.contains_key(&coord)
     }
 
-    /// The chunks that hold streamed footprints.
+    /// Los chunks que tienen huellas cargadas por streaming.
     pub fn loaded_chunks(&self) -> impl Iterator<Item = ChunkCoord> + '_ {
         self.chunks.keys().copied()
     }
 
-    /// How many streamed footprints are loaded, over every chunk.
+    /// Cuántas huellas cargadas por streaming hay, sumando todos los chunks.
     pub fn streamed_len(&self) -> usize {
         self.chunks.values().map(Vec::len).sum()
     }
 
-    /// Every footprint overlapping or touching `area`, once each: the
-    /// permanent ones in insertion order, then the streamed ones by chunk
-    /// and index. A non-finite `area` finds nothing.
+    /// Cada huella que se superpone con `area` o la toca, una vez cada una:
+    /// primero las permanentes en orden de inserción, después las cargadas por
+    /// streaming por chunk e índice. Un `area` no finita no encuentra nada.
     pub fn near(&self, area: Aabb) -> Vec<&Aabb> {
         self.near_above(area, Self::ON_GROUND)
     }
 
-    /// Like [`Self::near`], leaving out the low footprints no taller than
-    /// `clearance` meters: what a body that high above the ground runs
-    /// into.
+    /// Como [`Self::near`], pero dejando afuera las huellas bajas que no
+    /// superan `clearance` metros de alto: aquello con lo que choca un cuerpo
+    /// que está a esa altura sobre el suelo.
     pub fn near_above(&self, area: Aabb, clearance: f32) -> Vec<&Aabb> {
         let finite = [area.min.x, area.min.y, area.max.x, area.max.y]
             .iter()
@@ -195,8 +200,8 @@ impl StaticObstacles {
             .collect()
     }
 
-    /// How many indexed footprints a query of `area` looks at before
-    /// keeping the overlapping ones: what [`Self::near`] costs.
+    /// Cuántas huellas indexadas revisa una consulta de `area` antes de
+    /// quedarse con las que se superponen: lo que cuesta [`Self::near`].
     #[cfg(test)]
     fn scanned(&self, area: Aabb) -> usize {
         Self::cells_of(area)
@@ -205,7 +210,7 @@ impl StaticObstacles {
             .sum()
     }
 
-    /// The grid cells `area` covers.
+    /// Las celdas de la grilla que cubre `area`.
     fn cells_of(area: Aabb) -> impl Iterator<Item = (i32, i32)> {
         let cell = |v: f32| (v / Self::CELL).floor() as i32;
         let (x0, y0) = (cell(area.min.x), cell(area.min.y));
@@ -249,12 +254,12 @@ impl From<Vec<Aabb>> for StaticObstacles {
     }
 }
 
-/// Whether two boxes overlap or share an edge.
+/// Si dos rectángulos se superponen o comparten un borde.
 fn touches(a: &Aabb, b: &Aabb) -> bool {
     a.min.x <= b.max.x && b.min.x <= a.max.x && a.min.y <= b.max.y && b.min.y <= a.max.y
 }
 
-/// A square query area of half side `reach` around `center`.
+/// Un área de consulta cuadrada de medio lado `reach` alrededor de `center`.
 pub(crate) fn around(center: Vec2, reach: f32) -> Aabb {
     Aabb::from_center_size(center, Vec2::new(2.0 * reach, 2.0 * reach))
 }
@@ -292,10 +297,12 @@ mod tests {
         };
         assert_eq!(found(0.0), vec![wall, fence]);
         assert_eq!(found(1.29), vec![wall, fence]);
-        // At its top or higher, the fence is cleared; the wall never is.
+        // A la altura de su borde superior o más arriba, el alambrado se
+        // supera; la pared nunca.
         assert_eq!(found(1.3), vec![wall]);
         assert_eq!(found(50.0), vec![wall]);
-        // Plain queries and the slice view still see every footprint.
+        // Las consultas comunes y la vista como slice siguen viendo todas las
+        // huellas.
         assert_eq!(obstacles.near(area).len(), 2);
         assert_eq!(obstacles, vec![wall, fence]);
     }
@@ -328,7 +335,8 @@ mod tests {
         let mut obstacles = StaticObstacles::default();
         let coord = ChunkCoord::new(0, 0);
         let good = Aabb::from_center_size(Vec2::new(10.0, 10.0), Vec2::new(1.0, 1.0));
-        // Finite, but spanning about 1e30 m: indexing it would never end.
+        // Finito, pero de alrededor de 1e30 m de extensión: indexarlo no
+        // terminaría nunca.
         let huge = Aabb::from_center_size(Vec2::new(10.0, 10.0), Vec2::new(1e30, 1.0));
         obstacles.set_chunk(coord, vec![huge, good]);
         assert_eq!(obstacles.streamed_len(), 1);
@@ -345,7 +353,8 @@ mod tests {
         let mut obstacles = StaticObstacles::new(scattered(50));
         let permanent: Vec<Aabb> = obstacles.to_vec();
         let (a, b) = (ChunkCoord::new(0, 0), ChunkCoord::new(1, 0));
-        // One box spans several grid cells and must be reported once.
+        // Un rectángulo abarca varias celdas de la grilla y debe informarse una
+        // sola vez.
         let wide = Aabb::from_center_size(Vec2::new(500.0, 500.0), Vec2::new(40.0, 3.0));
         let small = Aabb::from_center_size(Vec2::new(510.0, 520.0), Vec2::new(1.0, 1.0));
         obstacles.set_chunk(a, vec![wide, small]);
@@ -355,10 +364,11 @@ mod tests {
         let area = around(Vec2::new(505.0, 505.0), 30.0);
         let found: Vec<Aabb> = obstacles.near(area).into_iter().copied().collect();
         assert_eq!(found, vec![wide, small]);
-        // The slice view and equality still read the permanent ones only.
+        // La vista como slice y la igualdad siguen leyendo solo las
+        // permanentes.
         assert_eq!(obstacles.len(), permanent.len());
         assert_eq!(obstacles, permanent);
-        // Replacing a chunk drops what it held.
+        // Reemplazar un chunk descarta lo que tenía.
         obstacles.set_chunk(a, vec![small]);
         assert_eq!(obstacles.near(area).len(), 1);
         assert!(obstacles.clear_chunk(a));
@@ -370,7 +380,7 @@ mod tests {
 
     #[test]
     fn queries_stay_local_with_ten_thousand_obstacles() {
-        // Fence-like boxes every 4 m over 400 m square.
+        // Rectángulos tipo alambrado cada 4 m sobre un cuadrado de 400 m.
         let side = 100;
         let items: Vec<Aabb> = (0..side * side)
             .map(|k| {
@@ -383,7 +393,8 @@ mod tests {
         for _ in 0..200 {
             let at = Vec2::new(rng.range(0.0, 396.0), rng.range(0.0, 396.0));
             let area = around(at, 2.0);
-            // A rider's query looks at a few cells' worth, not the world.
+            // La consulta de un jinete revisa unas pocas celdas, no el mundo
+            // entero.
             let scanned = obstacles.scanned(area);
             assert!(scanned <= 200, "{scanned}");
             let found = obstacles.near(area);
@@ -453,7 +464,7 @@ mod tests {
             assert_eq!(obstacles.near(area), expected, "{area:?}");
         }
         assert!(!obstacles.near(gone).contains(&&gone));
-        // Removing what is not there changes nothing.
+        // Quitar lo que no está no cambia nada.
         assert!(!obstacles.remove(&gone));
         let missing = Aabb::from_center_size(Vec2::new(9000.0, 9000.0), Vec2::new(1.0, 1.0));
         assert!(!obstacles.remove(&missing));

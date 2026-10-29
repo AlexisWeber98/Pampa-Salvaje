@@ -1,14 +1,16 @@
-//! Lagoons: the shallow freshwater "lagunas" of the plains.
+//! Lagunas: las "lagunas" poco profundas de agua dulce de la llanura.
 //!
-//! A [`Lagoon`] is a basin lowered into the [`Terrain`] around an irregular
-//! shore, holding a flat sheet of water. Its shore is a rounded rectangle (a
-//! superellipse, like the squarish real Laguna La Arocena), roughened by a
-//! few small seeded harmonics of the radius, so it stays star-shaped around
-//! the center; its bottom shelves down from the shore and its bank eases back
-//! into the pampa. The water stands a little below the lowest ground of the
-//! bank, so it never spills over. People and horses wade the shallows and
-//! stop where the water gets deep ([`Lagoon::push_out`]); fences, settlements,
-//! roads and trees keep off its [`Lagoon::keep_out`] box.
+//! Una [`Lagoon`] es una cuenca hundida en el [`Terrain`] alrededor de una
+//! orilla irregular, que contiene una lámina plana de agua. Su orilla es un
+//! rectángulo redondeado (una superelipse, como la real Laguna La Arocena, de
+//! forma casi cuadrada), irregularizado por unos pocos armónicos pequeños del
+//! radio, con semilla, de modo que sigue siendo estrellada respecto del centro;
+//! su fondo baja en pendiente desde la orilla y su barranca vuelve suavemente a
+//! la pampa. El agua queda un poco por debajo del punto más bajo de la
+//! barranca, así que nunca desborda. Las personas y los caballos vadean las
+//! partes bajas y se detienen donde el agua se vuelve profunda
+//! ([`Lagoon::push_out`]); los alambrados, los asentamientos, los caminos y los
+//! árboles se mantienen fuera de su rectángulo [`Lagoon::keep_out`].
 
 use std::f32::consts::TAU;
 use std::fmt;
@@ -16,36 +18,36 @@ use std::fmt;
 use crate::rng::Rng;
 use crate::{Aabb, RailLine, RoadNetwork, Terrain, TownLayout, Vec2, WorldConfig};
 
-/// How many harmonics roughen the shore (the third to the sixth).
+/// Cuántos armónicos irregularizan la orilla (del tercero al sexto).
 const HARMONICS: usize = 4;
 
-/// A lagoon as configured: where it lies and how big it is.
+/// Una laguna tal como se configura: dónde está y qué tamaño tiene.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LagoonConfig {
-    /// Its name, for warnings and the map.
+    /// Su nombre, para las advertencias y el mapa.
     pub name: String,
-    /// Center of the water, in meters.
+    /// Centro del agua, en metros.
     pub center: Vec2,
-    /// Full size of the rounded rectangle the shore follows: east-west, then
-    /// north-south, in meters.
+    /// Tamaño total del rectángulo redondeado que sigue la orilla: primero
+    /// este-oeste y después norte-sur, en metros.
     pub size: Vec2,
-    /// Varies the shore's wobble.
+    /// Varía la ondulación de la orilla.
     pub seed: u32,
 }
 
-/// Why a lagoon cannot be laid.
+/// Por qué no se puede ubicar una laguna.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LagoonError {
-    /// A size outside [`Lagoon::MIN_SIZE`] to [`Lagoon::MAX_SIZE`], or a
-    /// number that is not finite.
+    /// Un tamaño fuera del rango de [`Lagoon::MIN_SIZE`] a
+    /// [`Lagoon::MAX_SIZE`], o un número que no es finito.
     BadSize { name: String },
-    /// Its bank reaches past the world's edge.
+    /// Su barranca se sale del borde del mundo.
     OutsideWorld { name: String },
-    /// Its bank touches a town's leveled band.
+    /// Su barranca toca la franja nivelada de un pueblo.
     Town { name: String, town: String },
-    /// The railway runs across its bank.
+    /// La vía férrea atraviesa su barranca.
     Railway { name: String },
-    /// A road runs across its bank.
+    /// Un camino atraviesa su barranca.
     Road { name: String },
 }
 
@@ -74,56 +76,60 @@ impl fmt::Display for LagoonError {
 
 impl std::error::Error for LagoonError {}
 
-/// A shallow lagoon sunk into the terrain (see the module docs).
+/// Una laguna poco profunda hundida en el terreno (ver la documentación del
+/// módulo).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Lagoon {
     pub name: String,
     pub center: Vec2,
-    /// Half sides of the rounded rectangle the shore follows, in meters.
+    /// Medios lados del rectángulo redondeado que sigue la orilla, en metros.
     pub radii: Vec2,
-    /// Amplitude (a share of the radius) and phase of each harmonic.
+    /// Amplitud (una fracción del radio) y fase de cada armónico.
     wobble: [(f32, f32); HARMONICS],
-    /// Height of the water surface, in meters.
+    /// Altura de la superficie del agua, en metros.
     pub level: f32,
 }
 
 impl Lagoon {
-    /// Depth of the water in the middle, in meters: a plains lagoon is
-    /// shallow.
+    /// Profundidad del agua en el medio, en metros: una laguna de llanura es
+    /// poco profunda.
     pub const DEPTH: f32 = 1.6;
-    /// How far in from the shore the bottom reaches its full depth, meters.
+    /// A qué distancia de la orilla hacia adentro el fondo alcanza su
+    /// profundidad máxima, en metros.
     pub const SHELF: f32 = 30.0;
-    /// Width of the bank where the ground eases from the water's edge back
-    /// into the pampa, in meters.
+    /// Ancho de la barranca donde el suelo pasa suavemente del borde del agua a
+    /// la pampa, en metros.
     pub const BANK: f32 = 30.0;
-    /// How far in from the shore people and horses can wade, in meters
-    /// (about half a meter of water); past it the water is too deep.
+    /// Hasta qué distancia de la orilla hacia adentro pueden vadear las
+    /// personas y los caballos, en metros (alrededor de medio metro de agua);
+    /// más allá, el agua es demasiado profunda.
     pub const WADE: f32 = 5.0;
-    /// Least height of the bank above the water, in meters.
+    /// Altura mínima de la barranca sobre el agua, en metros.
     pub const FREEBOARD: f32 = 0.6;
-    /// Margin past the bank that fences, settlements, roads and trees keep
-    /// clear of, in meters.
+    /// Margen más allá de la barranca del que se mantienen alejados los
+    /// alambrados, los asentamientos, los caminos y los árboles, en metros.
     pub const MARGIN: f32 = 15.0;
-    /// Smallest and largest size each way, in meters.
+    /// Tamaño mínimo y máximo en cada dirección, en metros.
     pub const MIN_SIZE: f32 = 40.0;
     pub const MAX_SIZE: f32 = 1500.0;
-    /// Largest sum of the harmonics' amplitudes: the shore stays within
-    /// this share of its rounded rectangle.
+    /// Suma máxima de las amplitudes de los armónicos: la orilla se mantiene
+    /// dentro de esta fracción de su rectángulo redondeado.
     const MAX_WOBBLE: f32 = 0.05;
-    /// Exponent of the shore's superellipse: 2 is an ellipse; higher is
-    /// squarer, with softly rounded corners.
+    /// Exponente de la superelipse de la orilla: 2 es una elipse; un valor más
+    /// alto es más cuadrado, con esquinas suavemente redondeadas.
     const SQUARENESS: f32 = 5.0;
-    /// Width of the wet mud along the waterline, in meters: past it the
-    /// grass grows again ([`Self::is_bare`]).
+    /// Ancho del barro húmedo a lo largo de la línea del agua, en metros: más
+    /// allá vuelve a crecer el pasto ([`Self::is_bare`]).
     pub const MUD_BAND: f32 = 3.0;
 
-    /// The lagoon `config` describes, its water set just below the lowest
-    /// natural ground of its bank on `terrain`.
+    /// La laguna que describe `config`, con su agua justo por debajo del punto
+    /// natural más bajo de su barranca en `terrain`.
     pub fn new(config: &LagoonConfig, terrain: &Terrain) -> Self {
         let mut rng = Rng::new(config.seed ^ LAGOON_SEED, 0);
         let mut wobble = [(0.0, 0.0); HARMONICS];
         for (k, w) in wobble.iter_mut().enumerate() {
-            // Lower harmonics bend the shore more: a shallow bay, then coves.
+            // Los armónicos más bajos curvan más la orilla: primero una bahía
+            // poco profunda, después ensenadas.
             let share = Self::MAX_WOBBLE * [0.34, 0.28, 0.22, 0.16][k];
             *w = (share * rng.range(0.55, 1.0), rng.unit() * TAU);
         }
@@ -142,8 +148,8 @@ impl Lagoon {
         lagoon
     }
 
-    /// Points around the bank, from the shore to its outer edge: where the
-    /// water level is measured against the land.
+    /// Puntos alrededor de la barranca, desde la orilla hasta su borde
+    /// exterior: donde se compara el nivel del agua con el terreno.
     fn bank_samples(&self) -> impl Iterator<Item = Vec2> + '_ {
         const ANGLES: usize = 96;
         (0..ANGLES).flat_map(move |k| {
@@ -154,7 +160,8 @@ impl Lagoon {
         })
     }
 
-    /// Distance from the center to the shore at `angle` (radians from east).
+    /// Distancia desde el centro hasta la orilla en `angle` (radianes desde el
+    /// este).
     pub fn shore_radius(&self, angle: f32) -> f32 {
         let rectangle = self.rounded_rectangle(angle);
         let wobble: f32 = self
@@ -166,45 +173,46 @@ impl Lagoon {
         rectangle * (1.0 + wobble)
     }
 
-    /// Distance from the center to the smooth rounded rectangle (the
-    /// superellipse `|x/a|^n + |y/b|^n = 1`) at `angle`, before the
-    /// harmonics roughen it.
+    /// Distancia desde el centro hasta el rectángulo redondeado suave (la
+    /// superelipse `|x/a|^n + |y/b|^n = 1`) en `angle`, antes de que los
+    /// armónicos lo irregularicen.
     pub fn rounded_rectangle(&self, angle: f32) -> f32 {
         let n = Self::SQUARENESS;
         let (c, s) = (angle.cos().abs(), angle.sin().abs());
         ((c / self.radii.x).powf(n) + (s / self.radii.y).powf(n)).powf(-1.0 / n)
     }
 
-    /// Whether `p` is in the water or on the bare wet mud just above it,
-    /// where no grass grows.
+    /// Si `p` está en el agua o en el barro húmedo pelado justo por encima de
+    /// ella, donde no crece pasto.
     pub fn is_bare(&self, p: Vec2) -> bool {
         self.offshore(p) < Self::MUD_BAND
     }
 
-    /// How far `p` lies past the shore, in meters, along the line from the
-    /// center: negative in the water.
+    /// A qué distancia más allá de la orilla está `p`, en metros, sobre la
+    /// línea desde el centro: negativa en el agua.
     pub fn offshore(&self, p: Vec2) -> f32 {
         let d = p - self.center;
         d.length() - self.shore_radius(d.y.atan2(d.x))
     }
 
-    /// Whether `p` is in the water.
+    /// Si `p` está en el agua.
     pub fn is_water(&self, p: Vec2) -> bool {
         self.offshore(p) < 0.0
     }
 
-    /// Whether `p` is in water too deep to wade.
+    /// Si `p` está en agua demasiado profunda para vadear.
     pub fn is_deep(&self, p: Vec2) -> bool {
         self.offshore(p) < -Self::WADE
     }
 
-    /// `n` points along the shore, counter-clockwise from east.
+    /// `n` puntos a lo largo de la orilla, en sentido antihorario desde el
+    /// este.
     pub fn shore(&self, n: usize) -> Vec<Vec2> {
         self.ring(n, 0.0)
     }
 
-    /// `n` points `offset` meters past the shore (negative: in the water),
-    /// counter-clockwise from east.
+    /// `n` puntos a `offset` metros más allá de la orilla (negativo: en el
+    /// agua), en sentido antihorario desde el este.
     pub fn ring(&self, n: usize, offset: f32) -> Vec<Vec2> {
         (0..n)
             .map(|k| {
@@ -215,32 +223,33 @@ impl Lagoon {
             .collect()
     }
 
-    /// Box around the whole water.
+    /// Rectángulo alrededor de toda el agua.
     pub fn bounds(&self) -> Aabb {
         let reach = 1.0 + Self::MAX_WOBBLE;
         Aabb::from_center_size(self.center, self.radii * (2.0 * reach))
     }
 
-    /// Box around the water, its bank and [`Self::MARGIN`]: what fences,
-    /// settlements, roads and trees keep out of.
+    /// Rectángulo alrededor del agua, su barranca y [`Self::MARGIN`]: aquello
+    /// de lo que se mantienen fuera los alambrados, los asentamientos, los
+    /// caminos y los árboles.
     pub fn keep_out(&self) -> Aabb {
         self.bounds().expanded(Self::BANK + Self::MARGIN)
     }
 
-    /// Depth of the water at `p`, in meters: zero on dry land.
+    /// Profundidad del agua en `p`, en metros: cero en tierra firme.
     pub fn depth_at(&self, p: Vec2) -> f32 {
         let u = self.offshore(p);
         if u >= 0.0 {
             return 0.0;
         }
         let t = (-u / Self::SHELF).min(1.0);
-        // Steepest at the shore, flat in the middle.
+        // Más empinado en la orilla, plano en el medio.
         Self::DEPTH * (1.0 - (1.0 - t) * (1.0 - t))
     }
 
-    /// The ground at `p`, given the `ground` around it without the lagoon:
-    /// its bottom under the water, its bank easing back into `ground`
-    /// over [`Self::BANK`] meters, and `ground` itself past the bank.
+    /// El suelo en `p`, dado el `ground` que lo rodea sin la laguna: su fondo
+    /// bajo el agua, su barranca volviendo suavemente a `ground` a lo largo de
+    /// [`Self::BANK`] metros, y el propio `ground` más allá de la barranca.
     pub fn shape(&self, p: Vec2, ground: f32) -> f32 {
         let u = self.offshore(p);
         if u < 0.0 {
@@ -250,19 +259,20 @@ impl Lagoon {
             return ground;
         }
         let s = u / Self::BANK;
-        // Rises from the water's edge, easing into the land at the top.
+        // Sube desde el borde del agua y se une suavemente con el terreno en lo
+        // alto.
         let ease = 1.0 - (1.0 - s) * (1.0 - s);
         self.level + (ground - self.level) * ease
     }
 
-    /// Whether the lagoon may change the ground at `p` at all.
+    /// Si la laguna puede llegar a cambiar el suelo en `p`.
     pub fn touches(&self, p: Vec2) -> bool {
         self.bounds().expanded(Self::BANK).contains_point(p)
     }
 
-    /// How far to move a body standing at `center` to take it out of the
-    /// deep water, back to where it can still wade: `None` when it is not
-    /// in deep water.
+    /// Cuánto hay que mover un cuerpo parado en `center` para sacarlo del agua
+    /// profunda y llevarlo de vuelta a donde todavía puede vadear: `None`
+    /// cuando no está en agua profunda.
     pub fn push_out(&self, center: Vec2) -> Option<Vec2> {
         let d = center - self.center;
         let r = d.length();
@@ -280,12 +290,13 @@ impl Lagoon {
     }
 }
 
-/// Seed salt of every lagoon's shore.
+/// Sal de la semilla de la orilla de cada laguna.
 const LAGOON_SEED: u32 = 0x1a6_0a5e;
 
-/// Lays every lagoon of `configs` on `terrain`, leaving out (with an
-/// error each) those too small or too big, past the world's edge, or whose
-/// bank touches a town's leveled band, the railway `line` or a road.
+/// Ubica cada laguna de `configs` en `terrain`, dejando fuera (con un error
+/// para cada una) las demasiado chicas o demasiado grandes, las que se salen
+/// del borde del mundo o aquellas cuya barranca toca la franja nivelada de un
+/// pueblo, la vía férrea `line` o un camino.
 pub fn place_lagoons(
     config: &WorldConfig,
     terrain: &Terrain,
@@ -370,11 +381,12 @@ pub(crate) mod tests {
             hi = hi.max(share);
             assert!(lagoon.bounds().contains_point(lagoon.shore(360)[k]));
         }
-        // A little irregular, still the rectangle it was configured as.
+        // Un poco irregular, pero sigue siendo el rectángulo con el que se
+        // configuró.
         assert!(hi - lo > 0.02, "{lo}..{hi}");
         assert!(lo > 0.94 && hi < 1.06, "{lo}..{hi}");
-        // Squarish: it fills most of the box around its shore (an ellipse
-        // fills 79%).
+        // Casi cuadrada: llena la mayor parte del rectángulo que rodea su
+        // orilla (una elipse llena el 79 %).
         let shore = lagoon.shore(720);
         let (min, max) = shore.iter().fold(
             (Vec2::new(f32::MAX, f32::MAX), Vec2::new(f32::MIN, f32::MIN)),
@@ -398,7 +410,7 @@ pub(crate) mod tests {
         }
         let fill = inside as f32 / total as f32;
         assert!(fill > 0.85, "{fill}");
-        // About 1.5 to 1, longer east-west.
+        // Alrededor de 1,5 a 1, más larga de este a oeste.
         let aspect = (max.x - min.x) / (max.y - min.y);
         assert!((1.35..1.65).contains(&aspect), "{aspect}");
         assert_eq!(Lagoon::new(&arocena_config(), &Terrain::default()), lagoon);
@@ -427,22 +439,23 @@ pub(crate) mod tests {
     #[test]
     fn the_water_is_flat_below_its_whole_bank_and_deepest_inside() {
         let (terrain, lagoon) = arocena();
-        // The bank stands above the water all round: it never spills.
+        // La barranca queda por encima del agua en todo el contorno: nunca
+        // desborda.
         for p in lagoon.ring(128, 0.5) {
             assert!(terrain.height(p.x, p.y) > lagoon.level, "{p:?}");
         }
         for p in lagoon.ring(128, Lagoon::BANK * 0.5) {
             assert!(terrain.height(p.x, p.y) >= lagoon.level + Lagoon::FREEBOARD * 0.5);
         }
-        // The bottom is under the water everywhere inside the shore, and
-        // deepest in the middle.
+        // El fondo está bajo el agua en todos los puntos dentro de la orilla, y
+        // es más profundo en el medio.
         for p in lagoon.ring(128, -0.5).into_iter().chain([lagoon.center]) {
             let h = terrain.height(p.x, p.y);
             assert!(h < lagoon.level, "{p:?}: {h} vs {}", lagoon.level);
         }
         let middle = terrain.height(lagoon.center.x, lagoon.center.y);
         assert!((lagoon.level - middle - Lagoon::DEPTH).abs() < 1e-3);
-        // Past the bank the pampa is untouched.
+        // Más allá de la barranca la pampa está intacta.
         for p in lagoon.ring(64, Lagoon::BANK + 1.0) {
             assert_eq!(terrain.height(p.x, p.y), terrain.natural_height(p.x, p.y));
         }
@@ -472,7 +485,7 @@ pub(crate) mod tests {
     fn deep_water_pushes_a_body_back_to_the_shallows() {
         let (_, lagoon) = arocena();
         assert_eq!(lagoon.push_out(lagoon.center + Vec2::new(500.0, 0.0)), None);
-        // Wading the shallows is fine.
+        // Vadear las partes bajas está bien.
         for p in lagoon.ring(64, -Lagoon::WADE + 0.5) {
             assert_eq!(lagoon.push_out(p), None, "{p:?}");
             assert!(lagoon.is_water(p) && !lagoon.is_deep(p));

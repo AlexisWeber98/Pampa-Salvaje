@@ -1,16 +1,18 @@
-//! Continuous facing angle. Never quantized in logic.
+//! Ángulo de orientación continuo. La lógica nunca lo cuantiza.
 
 use crate::math::Vec2;
 use std::f32::consts::TAU;
 
-/// Facing angle in radians, counter-clockwise from east, normalized to `[0, TAU)`.
+/// Ángulo de orientación en radianes, antihorario desde el este, normalizado a
+/// `[0, TAU)`.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Heading(f32);
 
 impl Heading {
     pub fn from_radians(radians: f32) -> Self {
         let wrapped = radians.rem_euclid(TAU);
-        // `rem_euclid` can round up to exactly TAU for tiny negative inputs.
+        // `rem_euclid` puede redondear hasta exactamente TAU con entradas
+        // negativas muy pequeñas.
         Self(if wrapped >= TAU { 0.0 } else { wrapped })
     }
 
@@ -18,12 +20,14 @@ impl Heading {
         self.0
     }
 
-    /// Returns this heading turned by `delta` radians (positive = left).
+    /// Devuelve esta orientación girada `delta` radianes (positivo = a la
+    /// izquierda).
     pub fn rotated(self, delta: f32) -> Self {
         Self::from_radians(self.0 + delta)
     }
 
-    /// Unit vector on the ground plane pointing where this heading faces.
+    /// Vector unitario en el plano del suelo que apunta hacia donde mira esta
+    /// orientación.
     pub fn forward(self) -> Vec2 {
         let (sin, cos) = self.0.sin_cos();
         Vec2::new(cos, sin)

@@ -1,15 +1,18 @@
-//! Chunks: the square tiles the open world is streamed in.
+//! Chunks: las baldosas cuadradas en las que se carga por streaming el mundo
+//! abierto.
 //!
-//! Chunk `(0, 0)` covers `[0, size) x [0, size)` on the ground plane; chunk
-//! `(x, y)` is shifted by `x * size` east and `y * size` north. Logic never
-//! needs chunks to exist: [`crate::Terrain::height`] is defined everywhere,
-//! so render can build any chunk on demand and neighbors always meet.
+//! El chunk `(0, 0)` cubre `[0, size) x [0, size)` en el plano del suelo; el
+//! chunk `(x, y)` está desplazado `x * size` hacia el este e `y * size` hacia
+//! el norte. La lógica nunca necesita que existan los chunks:
+//! [`crate::Terrain::height`] está definida en todas partes, así que el render
+//! puede construir cualquier chunk cuando lo necesita y los vecinos siempre
+//! coinciden en el borde.
 
 use std::fmt;
 
 use crate::{Aabb, Vec2, WorldBounds};
 
-/// Integer coordinate of one chunk.
+/// Coordenada entera de un chunk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ChunkCoord {
     pub x: i32,
@@ -21,36 +24,37 @@ impl ChunkCoord {
         Self { x, y }
     }
 
-    /// The chunk of side `size` that holds point `p`.
+    /// El chunk de lado `size` que contiene el punto `p`.
     pub fn containing(p: Vec2, size: f32) -> Self {
         Self::new((p.x / size).floor() as i32, (p.y / size).floor() as i32)
     }
 
-    /// South-west corner of this chunk.
+    /// Esquina sudoeste de este chunk.
     pub fn min(self, size: f32) -> Vec2 {
         Vec2::new(self.x as f32 * size, self.y as f32 * size)
     }
 
-    /// Center of this chunk.
+    /// Centro de este chunk.
     pub fn center(self, size: f32) -> Vec2 {
         self.min(size) + Vec2::new(size, size) * 0.5
     }
 
-    /// The square this chunk covers.
+    /// El cuadrado que cubre este chunk.
     pub fn bounds(self, size: f32) -> Aabb {
         let min = self.min(size);
         Aabb::new(min, min + Vec2::new(size, size))
     }
 
-    /// Squared distance to `other`, in chunks.
+    /// Distancia al cuadrado hasta `other`, en chunks.
     pub fn distance_squared(self, other: Self) -> i64 {
         let dx = i64::from(self.x) - i64::from(other.x);
         let dy = i64::from(self.y) - i64::from(other.y);
         dx * dx + dy * dy
     }
 
-    /// Every chunk within `radius` chunks of this one (a disc, this one
-    /// included), nearest first; ties go south to north, then west to east.
+    /// Todos los chunks a `radius` chunks o menos de este (un disco, este
+    /// incluido), del más cercano al más lejano; los empates se ordenan de sur
+    /// a norte y después de oeste a este.
     pub fn within(self, radius: i32) -> Vec<Self> {
         if radius < 0 {
             return Vec::new();
@@ -65,8 +69,8 @@ impl ChunkCoord {
         chunks
     }
 
-    /// A seed for whatever is scattered over this chunk, mixed from
-    /// `seed` and the coordinate so neighbors differ.
+    /// Una semilla para lo que se distribuya sobre este chunk, mezclada a
+    /// partir de `seed` y de la coordenada para que los vecinos sean distintos.
     pub fn seed(self, seed: u32) -> u32 {
         let mixed = seed
             ^ (self.x as u32).wrapping_mul(0x9e37_79b9)
@@ -75,12 +79,12 @@ impl ChunkCoord {
     }
 }
 
-/// Size of the open world and of the chunks it is streamed in.
+/// Tamaño del mundo abierto y de los chunks en los que se carga por streaming.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WorldConfig {
-    /// Half the side of the square world, centered on the origin, in meters.
+    /// La mitad del lado del mundo cuadrado, centrado en el origen, en metros.
     pub half_extent: f32,
-    /// Side of one square chunk, in meters.
+    /// Lado de un chunk cuadrado, en metros.
     pub chunk_size: f32,
 }
 
@@ -93,14 +97,16 @@ impl Default for WorldConfig {
     }
 }
 
-/// Why a [`WorldConfig`] cannot be used.
+/// Por qué no se puede usar una [`WorldConfig`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum WorldConfigError {
-    /// A number is NaN or infinite.
+    /// Un número es NaN o infinito.
     NotFinite { field: &'static str },
-    /// The world is empty or wider than f32 positions stay precise for.
+    /// El mundo está vacío o es más ancho de lo que las posiciones f32 permiten
+    /// con precisión.
     HalfExtentOutOfRange { half_extent: f32, max: f32 },
-    /// Chunks too small to stream cheaply, or bigger than the world.
+    /// Chunks demasiado chicos para cargarlos por streaming de forma barata, o
+    /// más grandes que el mundo.
     ChunkSizeOutOfRange { chunk_size: f32, min: f32, max: f32 },
 }
 
@@ -127,19 +133,20 @@ impl fmt::Display for WorldConfigError {
 impl std::error::Error for WorldConfigError {}
 
 impl WorldConfig {
-    /// 4 km from the center to each edge: an 8 km square world.
+    /// 4 km desde el centro hasta cada borde: un mundo cuadrado de 8 km.
     pub const DEFAULT_HALF_EXTENT: f32 = 4000.0;
-    /// 200 m chunks.
+    /// Chunks de 200 m.
     pub const DEFAULT_CHUNK_SIZE: f32 = 200.0;
-    /// Farthest a world may reach from the origin: 8.4 km, room for the
-    /// line at a 1:7 scale plus 5%. Positions are `f32`, which resolve
-    /// about a millimeter anywhere below 16 km (2^14 m), so 8.4 km keeps
-    /// them precise to about a millimeter with room to spare.
+    /// Lo más lejos que puede llegar un mundo desde el origen: 8,4 km, lugar
+    /// para la línea a escala 1:7 más un 5 %. Las posiciones son `f32`, que
+    /// resuelven alrededor de un milímetro en cualquier punto por debajo de
+    /// 16 km (2^14 m), así que 8,4 km las mantiene precisas a alrededor de un
+    /// milímetro con margen de sobra.
     pub const MAX_HALF_EXTENT: f32 = 8400.0;
-    /// Smallest chunk worth streaming on its own.
+    /// El chunk más chico que vale la pena cargar por streaming por separado.
     pub const MIN_CHUNK_SIZE: f32 = 50.0;
 
-    /// This config, after checking every number in it.
+    /// Esta configuración, después de comprobar cada uno de sus números.
     pub fn validated(self) -> Result<Self, WorldConfigError> {
         if !self.half_extent.is_finite() {
             return Err(WorldConfigError::NotFinite {
@@ -168,17 +175,17 @@ impl WorldConfig {
         Ok(self)
     }
 
-    /// The playable square.
+    /// El cuadrado jugable.
     pub fn bounds(&self) -> WorldBounds {
         WorldBounds::centered(self.half_extent)
     }
 
-    /// The chunk that holds `p`.
+    /// El chunk que contiene `p`.
     pub fn chunk_of(&self, p: Vec2) -> ChunkCoord {
         ChunkCoord::containing(p, self.chunk_size)
     }
 
-    /// Whether any part of chunk `c` lies inside the world.
+    /// Si alguna parte del chunk `c` está dentro del mundo.
     pub fn has_chunk(&self, c: ChunkCoord) -> bool {
         let b = c.bounds(self.chunk_size);
         let world = self.bounds();
@@ -188,8 +195,8 @@ impl WorldConfig {
             && b.max.y > world.min.y
     }
 
-    /// Chunks within `radius` chunks of the one holding `p` that touch the
-    /// world, nearest first (see [`ChunkCoord::within`]).
+    /// Los chunks a `radius` chunks o menos del que contiene `p` que tocan el
+    /// mundo, del más cercano al más lejano (ver [`ChunkCoord::within`]).
     pub fn chunks_near(&self, p: Vec2, radius: i32) -> Vec<ChunkCoord> {
         self.chunk_of(p)
             .within(radius)
@@ -236,7 +243,7 @@ mod tests {
                 assert_eq!(b.center(), c.center(size));
                 assert_eq!(ChunkCoord::containing(c.center(size), size), c);
                 assert_eq!(ChunkCoord::containing(b.min, size), c);
-                // The east neighbor starts where this one ends.
+                // El vecino del este empieza donde termina este.
                 assert_eq!(ChunkCoord::new(x + 1, y).min(size).x, b.max.x);
             }
         }
@@ -250,7 +257,7 @@ mod tests {
         assert_eq!(ring.len(), 5);
         assert_eq!(ring[0], c);
         let disc = c.within(3);
-        // 3^2 disc: 29 lattice points.
+        // Disco de 3^2: 29 puntos de la grilla.
         assert_eq!(disc.len(), 29);
         assert!(disc.iter().all(|o| o.distance_squared(c) <= 9));
         assert!(disc.windows(2).all(|w| {
@@ -290,7 +297,7 @@ mod tests {
         let w = WorldConfig::default();
         let near = w.chunks_near(Vec2::new(10.0, 10.0), 2);
         assert_eq!(near, ChunkCoord::new(0, 0).within(2));
-        // In the north-east corner only the chunks inside are kept.
+        // En la esquina noreste solo se conservan los chunks que están adentro.
         let corner = w.chunks_near(Vec2::new(3990.0, 3990.0), 2);
         assert!(!corner.is_empty());
         assert!(corner.iter().all(|&c| w.has_chunk(c)));

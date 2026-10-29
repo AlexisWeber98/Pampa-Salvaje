@@ -1,88 +1,96 @@
-//! Riding the line train: boarding at a station, sitting in a coach while
-//! the train runs, getting off onto a platform, skipping to the next stop
-//! and waiting on a platform for the next train.
+//! Viajar en el tren de la línea: subir en una estación, ir sentado en un coche
+//! mientras el tren avanza, bajar a un andén, saltear hasta la próxima parada y
+//! esperar en un andén el próximo tren.
 //!
-//! Every rule here is pure. The game reads the keys, plays the fade and
-//! moves the player; the clock and the train jump through
-//! [`skip_ride`] and [`wait_for_train`], which land the train exactly where
-//! following the clock would ([`LineTrain::state_at`]).
+//! Todas las reglas de este módulo son puras. El juego lee las teclas,
+//! reproduce el fundido y mueve al jugador; el reloj y el tren saltan mediante
+//! [`skip_ride`] y [`wait_for_train`], que dejan el tren exactamente donde lo
+//! dejaría seguir el reloj ([`LineTrain::state_at`]).
 
 use crate::{
     BASE_RATE, CarKind, Circle, Floor, GameClock, Heading, LinePhase, LineTrain, LineTrainState,
     PlacedCar, RailBay, Rider, Run, TimeOfDay, TownLayout, Travel, Vec2, World,
 };
 
-/// The clock's multiplier while the player rides the train: 12× instead of
-/// the base 30×, so the whole line (about 11 real minutes) reads as about
-/// two game hours.
+/// El multiplicador del reloj mientras el jugador viaja en el tren: 12× en
+/// lugar de los 30× de base, así que la línea entera (unos 11 minutos reales)
+/// equivale a unas dos horas de juego.
 pub const ONBOARD_MULTIPLIER: f64 = 0.4;
 
-/// Farthest a person may stand from a coach door to board, in meters. A
-/// lone coach (the shuttle's) stops with its doors 3.4 m along the platform
-/// from the middle spot and 3.5 m across, so 5 reaches them from there.
+/// Distancia máxima a la que puede estar una persona de la puerta de un coche
+/// para subir, en metros. Un coche solo (el de la lanzadera) se detiene con sus
+/// puertas a 3,4 m del lugar central a lo largo del andén y a 3,5 m a lo ancho,
+/// así que 5 las alcanza desde ahí.
 pub const BOARD_RANGE: f32 = 5.0;
 
-/// Farthest from the middle of a platform ([`TownLayout::platform_spot`]) a
-/// person may stand to wait for the train there, in meters.
+/// Distancia máxima desde el centro de un andén ([`TownLayout::platform_spot`])
+/// a la que puede estar una persona para esperar ahí el tren, en metros.
 pub const WAIT_RANGE: f32 = 8.0;
 
-/// Farthest from a platform's stop spot a person may stand and still count
-/// as standing at it, for [`boarding_at`], in meters.
+/// Distancia máxima desde el lugar de parada de un andén a la que puede estar
+/// una persona y seguir contando como parada en él, para [`boarding_at`], en
+/// metros.
 pub const STOP_SPOT_RADIUS: f32 = 1.5;
 
-/// Height of a seated passenger's feet above the rail tops, in meters.
+/// Altura de los pies de un pasajero sentado sobre la parte superior de los
+/// rieles, en metros.
 pub const SEAT_HEIGHT: f32 = 1.0;
 
-/// Real seconds the game starts before the morning train pulls into the
-/// first town: long enough to watch it come in, short enough not to bore.
+/// Segundos reales que pasan desde que empieza el juego hasta que el tren de la
+/// mañana entra en el primer pueblo: lo bastante para verlo llegar, y lo
+/// bastante poco para no aburrir.
 pub const OPENING_LEAD: f64 = 50.0;
 
-/// Real seconds before the next station a skipped ride lands, so the
-/// train still comes in and brakes to a stop there.
+/// Segundos reales antes de la próxima estación en los que termina un viaje
+/// salteado, para que el tren igual entre y frene hasta detenerse ahí.
 pub const APPROACH_LEAD: f64 = 3.0;
 
-/// How far in from each end of the platform a passenger gets off, at most,
-/// in meters.
+/// A qué distancia hacia adentro de cada extremo del andén baja un pasajero,
+/// como mucho, en metros.
 const PLATFORM_END_MARGIN: f32 = 2.0;
 
-/// How far in from each end of a coach its end doors are, in meters.
+/// A qué distancia hacia adentro de cada extremo de un coche están sus puertas
+/// de los extremos, en metros.
 const DOOR_INSET: f32 = 0.6;
 
-/// The player riding a train.
+/// El jugador que viaja en un tren.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Ride {
-    /// The train, by index into the world's trains (the line train is 0).
-    /// [`Self::new`] says 0; [`boarding`] and [`Self::on_train`] set it.
+    /// El tren, como índice dentro de los trenes del mundo (el tren de la línea
+    /// es el 0). [`Self::new`] indica 0; [`boarding`] y [`Self::on_train`] lo
+    /// asignan.
     pub train: usize,
-    /// The coach the player sits in, by index into [`LineTrain::cars`].
+    /// El coche en el que va sentado el jugador, como índice dentro de
+    /// [`LineTrain::cars`].
     pub car: usize,
-    /// The station (index into [`LineTrain::stations`]) where the player is
-    /// put off as soon as the train stands there, if any (the opening).
+    /// La estación (índice dentro de [`LineTrain::stations`]) en la que se baja
+    /// al jugador apenas el tren se detiene ahí, si la hay (la apertura).
     pub alight_at: Option<usize>,
-    /// Which side of the coach the player sits at the window: `1.0` on the
-    /// car's right (looking the way it runs), `-1.0` on its left. Chosen
-    /// facing the next stop's platform ([`Self::facing_platform`]).
+    /// De qué lado del coche se sienta el jugador junto a la ventanilla: `1.0`
+    /// a la derecha del vagón (mirando hacia donde avanza), `-1.0` a su
+    /// izquierda. Se elige mirando hacia el andén de la próxima parada
+    /// ([`Self::facing_platform`]).
     pub side: f32,
-    /// Whether the train has run since the player boarded: arriving at a
-    /// terminal then ends the ride, while boarding a train laid over at one
-    /// does not.
+    /// Si el tren avanzó desde que subió el jugador: llegar a una terminal
+    /// termina entonces el viaje, mientras que subir a un tren que espera en
+    /// una terminal no lo termina.
     under_way: bool,
 }
 
-/// What the interact key does beside the line train.
+/// Lo que hace la tecla de interacción al lado del tren de la línea.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Boarding {
-    /// Get on: the ride in that coach.
+    /// Subir: el viaje en ese coche.
     Board(Ride),
-    /// Mounted at a coach door: the horse stays on the platform, so the
-    /// player has to get off it first.
+    /// Montado junto a la puerta de un coche: el caballo se queda en el andén,
+    /// así que el jugador primero tiene que bajarse.
     DismountFirst,
-    /// No train to board here.
+    /// No hay ningún tren al que subir aquí.
     Nothing,
 }
 
 impl Ride {
-    /// A ride in coach `car` of `train`, from where it stands now.
+    /// Un viaje en el coche `car` de `train`, desde donde está ahora.
     pub fn new(train: &LineTrain, car: usize) -> Self {
         Self {
             train: 0,
@@ -93,15 +101,15 @@ impl Ride {
         }
     }
 
-    /// This ride on the train at index `train` of the world's trains.
+    /// Este viaje en el tren de índice `train` entre los trenes del mundo.
     pub fn on_train(self, train: usize) -> Self {
         Self { train, ..self }
     }
 
-    /// This ride seated on the side of the coach that faces the platform
-    /// of the train's next stop (from a station, the one after it), so the
-    /// arrival is seen through the window (a stop in a bay has the bay's
-    /// platform, one of `floors`). Unchanged without one.
+    /// Este viaje sentado del lado del coche que mira hacia el andén de la
+    /// próxima parada del tren (desde una estación, la siguiente), para que la
+    /// llegada se vea por la ventanilla (una parada en una vía muerta tiene el
+    /// andén de la vía muerta, uno de `floors`). Sin cambios si no hay ninguna.
     pub fn facing_platform(
         self,
         train: &LineTrain,
@@ -135,8 +143,8 @@ impl Ride {
         Self { side, ..self }
     }
 
-    /// A ride in coach `car` that ends at `station`: the player is put off
-    /// there as soon as the train stands at it.
+    /// Un viaje en el coche `car` que termina en `station`: se baja al jugador
+    /// ahí apenas el tren se detiene.
     pub fn to_station(train: &LineTrain, car: usize, station: usize) -> Self {
         Self {
             alight_at: Some(station),
@@ -144,17 +152,17 @@ impl Ride {
         }
     }
 
-    /// Where the seated passenger is: the middle of the coach, facing the
-    /// way the train runs. `None` for a car the train lacks.
+    /// Dónde está el pasajero sentado: en el centro del coche, mirando hacia
+    /// donde avanza el tren. `None` para un vagón que el tren no tiene.
     pub fn seat(&self, train: &LineTrain) -> Option<(Vec2, Heading)> {
         let coach = *train.placed_cars().get(self.car)?;
         let d = coach.direction;
         Some((coach.center, Heading::from_radians(d.y.atan2(d.x))))
     }
 
-    /// Follows the train to its state `now`; `true` when the ride ends here
-    /// and the player must get off: at the station the ride ends at, or at
-    /// a terminal the train arrived at with the player aboard.
+    /// Sigue al tren hasta su estado en `now`; `true` cuando el viaje termina
+    /// aquí y el jugador tiene que bajarse: en la estación donde termina el
+    /// viaje, o en una terminal a la que llegó el tren con el jugador a bordo.
     pub fn put_off(&mut self, now: &LineTrainState) -> bool {
         if now.phase != LinePhase::Parked {
             self.under_way = true;
@@ -166,12 +174,14 @@ impl Ride {
     }
 }
 
-/// Whether the train stands (dwells, or lays over) at `station`.
+/// Si el tren está detenido (en una parada o esperando en la terminal) en
+/// `station`.
 pub fn stands_at(state: &LineTrainState, station: usize) -> bool {
     state.phase != LinePhase::Running && state.station == Some(station)
 }
 
-/// The two end doors on each side of a coach, on its sides.
+/// Las dos puertas de los extremos de cada lado de un coche, sobre sus
+/// costados.
 pub fn coach_doors(car: &PlacedCar) -> [Vec2; 4] {
     let d = car.direction;
     let along = d * (car.length / 2.0 - DOOR_INSET);
@@ -184,9 +194,9 @@ pub fn coach_doors(car: &PlacedCar) -> [Vec2; 4] {
     ]
 }
 
-/// The coach of `train` whose door is nearest `rider`, and the distance to
-/// it, while the train stands at a station and the rider is on a platform
-/// (one of `floors`).
+/// El coche de `train` cuya puerta está más cerca de `rider`, y la distancia
+/// hasta ella, mientras el tren está detenido en una estación y el jinete está
+/// en un andén (uno de `floors`).
 fn nearest_coach_door(train: &LineTrain, rider: &Rider, floors: &[Floor]) -> Option<(usize, f32)> {
     let state = train.state();
     if state.phase == LinePhase::Running || state.station.is_none() {
@@ -205,23 +215,23 @@ fn nearest_coach_door(train: &LineTrain, rider: &Rider, floors: &[Floor]) -> Opt
         .min_by(|a, b| a.1.total_cmp(&b.1))
 }
 
-/// What the interact key does for `rider` beside the `trains`: board the
-/// coach whose door is within [`BOARD_RANGE`] while its train stands at a
-/// station and the rider is on foot on a platform (one of `floors`: a
-/// station's or a bay's). Of several trains in reach, the one with the
-/// nearest door wins. See [`boarding_at`] for the longer reach at a stop
-/// spot.
+/// Lo que hace la tecla de interacción para `rider` al lado de los `trains`:
+/// subir al coche cuya puerta está a [`BOARD_RANGE`] o menos mientras su tren
+/// está detenido en una estación y el jinete está a pie en un andén (uno de
+/// `floors`: el de una estación o el de una vía muerta). Si hay varios trenes
+/// al alcance, gana el de la puerta más cercana. Ver [`boarding_at`] para el
+/// alcance mayor en un lugar de parada.
 pub fn boarding(trains: &[LineTrain], rider: &Rider, floors: &[Floor]) -> Boarding {
     boarding_at(trains, &[], rider, floors)
 }
 
-/// [`boarding`], but a rider waiting at a station platform's stop spot
-/// ([`TownLayout::platform_spot`], within [`STOP_SPOT_RADIUS`]) reaches the
-/// nearest door of the train standing there up to [`WAIT_RANGE`] away. At
-/// the line's terminals the consist stands centered on the station, so its
-/// coaches' nearest door is about 7 m from the spot, on one side or the
-/// other as the layover turns it round. Every other case keeps
-/// [`BOARD_RANGE`].
+/// [`boarding`], pero un jinete que espera en el lugar de parada del andén de
+/// una estación ([`TownLayout::platform_spot`], a [`STOP_SPOT_RADIUS`] o menos)
+/// alcanza la puerta más cercana del tren detenido ahí hasta a [`WAIT_RANGE`].
+/// En las terminales de la línea la formación se detiene centrada en la
+/// estación, así que la puerta más cercana de sus coches queda a unos 7 m del
+/// lugar, de un lado o del otro según cómo la haya dado vuelta la espera en la
+/// terminal. Todos los demás casos conservan [`BOARD_RANGE`].
 pub fn boarding_at(
     trains: &[LineTrain],
     towns: &[TownLayout],
@@ -245,9 +255,9 @@ pub fn boarding_at(
     }
 }
 
-/// How far from a coach door `rider` may board `train`: [`WAIT_RANGE`] at
-/// the stop spot of the station platform the train stands at, otherwise
-/// [`BOARD_RANGE`].
+/// Desde qué distancia de la puerta de un coche puede `rider` subir a `train`:
+/// [`WAIT_RANGE`] en el lugar de parada del andén de la estación donde está
+/// detenido el tren y, si no, [`BOARD_RANGE`].
 fn reach(train: &LineTrain, towns: &[TownLayout], rider: &Rider) -> f32 {
     let state = train.state();
     let at_stop_spot = state
@@ -263,13 +273,14 @@ fn reach(train: &LineTrain, towns: &[TownLayout], rider: &Rider) -> f32 {
     }
 }
 
-/// Where a passenger in coach `car` gets off while the train stands at a
-/// station: on top of that town's platform (a bay train's, the bay's
-/// platform among `world`'s floors) beside the coach's door nearest the
-/// platform's middle (so F boards again from there), a step in from its
-/// track edge, facing away from the track, pushed clear of everything in
-/// `world` (whose moving obstacles should be the train's cars). `None` while
-/// the train runs or when the station's town has no platform.
+/// Dónde baja un pasajero del coche `car` mientras el tren está detenido en una
+/// estación: sobre el andén de ese pueblo (para un tren de vía muerta, el andén
+/// de la vía muerta entre los pisos de `world`) al lado de la puerta del coche
+/// más cercana al centro del andén (para que F vuelva a subir desde ahí), un
+/// paso hacia adentro desde su borde junto a la vía, de espaldas a la vía,
+/// apartado de todo lo que hay en `world` (cuyos obstáculos en movimiento
+/// deberían ser los vagones del tren). `None` mientras el tren avanza o cuando
+/// el pueblo de la estación no tiene andén.
 pub fn alight_spot(
     train: &LineTrain,
     car: usize,
@@ -312,7 +323,7 @@ pub fn alight_spot(
     Some((spot, facing))
 }
 
-/// The floor of `floors` nearest `at`.
+/// El piso de `floors` más cercano a `at`.
 fn nearest_floor(floors: &[Floor], at: Vec2) -> Option<Floor> {
     let gap = |f: &&Floor| f.footprint.closest_point(at).distance(at);
     floors
@@ -321,8 +332,9 @@ fn nearest_floor(floors: &[Floor], at: Vec2) -> Option<Floor> {
         .copied()
 }
 
-/// The platform's `middle` spot slid along `floor` to beside `door`,
-/// staying off its ramps, whichever way `floor.along` points.
+/// El lugar `middle` del andén desplazado a lo largo de `floor` hasta quedar al
+/// lado de `door`, fuera de sus rampas, apunte hacia donde apunte
+/// `floor.along`.
 fn beside_door(floor: &Floor, middle: Vec2, door: Vec2) -> Vec2 {
     let along = floor.along;
     let (min, max) = (floor.footprint.min, floor.footprint.max);
@@ -340,19 +352,19 @@ fn beside_door(floor: &Floor, middle: Vec2, door: Vec2) -> Vec2 {
     middle + along * (a - middle.dot(along))
 }
 
-/// A platform to wait on for a train: a town's station platform, or the
-/// bay platform beside it (the branch shuttle's).
+/// Un andén en el que esperar un tren: el andén de la estación de un pueblo, o
+/// el andén de la vía muerta que está al lado (el de la lanzadera del ramal).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WaitingPlace {
-    /// Index (into the world's towns) of the platform's town.
+    /// Índice (dentro de los pueblos del mundo) del pueblo del andén.
     pub town: usize,
-    /// Whether it is the town's bay platform instead of its station's.
+    /// Si es el andén de la vía muerta del pueblo en lugar del de su estación.
     pub bay: bool,
 }
 
 impl WaitingPlace {
-    /// The station of `train` that stops at this platform: the one at its
-    /// town on its bay track or not, as the platform is.
+    /// La estación de `train` que para en este andén: la de su pueblo, en su
+    /// vía muerta o no, según sea el andén.
     fn station_of(self, train: &LineTrain) -> Option<usize> {
         train
             .stations()
@@ -361,12 +373,12 @@ impl WaitingPlace {
     }
 }
 
-/// The platform `rider` waits on: on foot within [`WAIT_RANGE`] of the
-/// middle of a town's station platform, or on a bay platform (one of
-/// `bays`), that some train stops at, while none stands beside it (then the
-/// rider boards instead). Trains stopping at the town's other platform do
-/// not count: from the station platform the rider waits for the trains
-/// there, not the shuttle in its bay.
+/// El andén en el que espera `rider`: a pie, a [`WAIT_RANGE`] o menos del
+/// centro del andén de la estación de un pueblo, o en un andén de vía muerta
+/// (uno de `bays`), en el que para algún tren, mientras no haya ninguno
+/// detenido al lado (en ese caso el jinete sube). Los trenes que paran en el
+/// otro andén del pueblo no cuentan: desde el andén de la estación el jinete
+/// espera los trenes de ahí, no la lanzadera en su vía muerta.
 pub fn waiting_place(
     trains: &[LineTrain],
     towns: &[TownLayout],
@@ -407,10 +419,10 @@ pub fn waiting_place(
     })
 }
 
-/// Fast-forwards the clock (at the base rate) and every train until one of
-/// them next arrives at `place` (whichever comes first), and returns the
-/// game seconds skipped (zero when one already stands there). The next
-/// day's train if none comes sooner.
+/// Adelanta el reloj (a la velocidad base) y todos los trenes hasta que alguno
+/// de ellos llegue a `place` (el que llegue primero), y devuelve los segundos
+/// de juego salteados (cero cuando ya hay uno detenido ahí). Si no llega
+/// ninguno antes, el tren del día siguiente.
 pub fn wait_for_train(
     trains: &mut [LineTrain],
     clock: &mut GameClock,
@@ -430,10 +442,10 @@ pub fn wait_for_train(
     Some(clock.advance_by(wait))
 }
 
-/// Brings every train but `ridden` along with a clock jump of `game`
-/// seconds from game time `from` at `rate` game seconds per real second,
-/// after [`skip_ride`], [`depart_now`] or [`skip_to_approach`] moved the
-/// ridden one by itself.
+/// Lleva a todos los trenes menos `ridden` junto con un salto de reloj de
+/// `game` segundos desde la hora de juego `from` a `rate` segundos de juego por
+/// segundo real, después de que [`skip_ride`], [`depart_now`] o
+/// [`skip_to_approach`] movieran por su cuenta el tren en el que se viaja.
 pub fn follow_jump(trains: &mut [LineTrain], ridden: usize, from: f64, game: f64, rate: f64) {
     for (i, train) in trains.iter_mut().enumerate() {
         if i != ridden {
@@ -442,28 +454,29 @@ pub fn follow_jump(trains: &mut [LineTrain], ridden: usize, from: f64, game: f64
     }
 }
 
-/// Skips the rest of the ride to the train's next stop: the clock jumps by
-/// the game time the ride would take at its current (onboard) rate, and the
-/// train to its arrival there. Returns that station.
+/// Saltea el resto del viaje hasta la próxima parada del tren: el reloj salta
+/// el tiempo de juego que tardaría el viaje a su velocidad actual (a bordo), y
+/// el tren hasta su llegada ahí. Devuelve esa estación.
 pub fn skip_ride(train: &mut LineTrain, clock: &mut GameClock) -> Option<usize> {
     let (station, game) = train.skip_to_next_stop(clock.elapsed(), clock.rate())?;
     clock.advance_by(game);
     Some(station)
 }
 
-/// Pulls the train out of the station it stands at now (the rest of the
-/// dwell, or the wait for a terminal's departure), the clock jumping by the
-/// same game time at its current rate. Returns the game seconds jumped:
-/// zero for a train already running.
+/// Hace salir al tren de la estación en la que está detenido ahora (el resto de
+/// la parada, o la espera para la salida desde una terminal), con el reloj
+/// saltando el mismo tiempo de juego a su velocidad actual. Devuelve los
+/// segundos de juego saltados: cero para un tren que ya está en marcha.
 pub fn depart_now(train: &mut LineTrain, clock: &mut GameClock) -> Option<f64> {
     let game = train.skip_to_departure(clock.elapsed(), clock.rate())?;
     clock.advance_by(game);
     Some(game)
 }
 
-/// Skips the ride to [`APPROACH_LEAD`] real seconds before the next stop,
-/// the clock jumping by the game time that takes at its current rate, so
-/// the train comes in for real from there. Returns that station.
+/// Saltea el viaje hasta [`APPROACH_LEAD`] segundos reales antes de la próxima
+/// parada, con el reloj saltando el tiempo de juego que eso lleva a su
+/// velocidad actual, para que el tren entre de verdad desde ahí. Devuelve esa
+/// estación.
 pub fn skip_to_approach(train: &mut LineTrain, clock: &mut GameClock) -> Option<usize> {
     let (station, game) =
         train.skip_toward_next_stop(clock.elapsed(), clock.rate(), APPROACH_LEAD)?;
@@ -471,19 +484,19 @@ pub fn skip_to_approach(train: &mut LineTrain, clock: &mut GameClock) -> Option<
     Some(station)
 }
 
-/// The next station the train arrives at and the time of day it does, with
-/// the clock running at its current rate.
+/// La próxima estación a la que llega el tren y la hora del día en que lo hace,
+/// con el reloj corriendo a su velocidad actual.
 pub fn next_arrival(train: &LineTrain, clock: &GameClock) -> Option<(usize, TimeOfDay)> {
     let (station, game) = train.next_arrival(clock.elapsed(), clock.rate())?;
     Some((station, TimeOfDay::from_seconds(clock.elapsed() + game)))
 }
 
-/// The game's opening: the train placed [`OPENING_LEAD`] real seconds
-/// before `run` arrives at the station of `town`, the clock reading so
-/// that riding on at the onboard rate brings it there at its timetabled
-/// arrival (base rate), and the player seated in the first coach, to be
-/// put off at that station. `None` when the town has no station or the
-/// train no coach.
+/// La apertura del juego: el tren ubicado [`OPENING_LEAD`] segundos reales
+/// antes de que `run` llegue a la estación de `town`, el reloj marcando una
+/// hora tal que seguir viajando a la velocidad a bordo lo lleve ahí a su hora
+/// de llegada según el horario (a la velocidad base), y el jugador sentado en
+/// el primer coche, para bajarlo en esa estación. `None` cuando el pueblo no
+/// tiene estación o el tren no tiene coches.
 pub fn opening(train: &mut LineTrain, town: usize, run: Run) -> Option<(GameClock, Ride)> {
     let station = train.station_of_town(town)?;
     let car = train.cars().iter().position(|c| c.kind == CarKind::Coach)?;
@@ -503,8 +516,8 @@ mod tests {
     use super::*;
     use crate::{Terrain, WorldConfig};
 
-    /// Castex, Monte Nievas and Pico as shipped, their world with the train
-    /// as moving obstacles, and the train.
+    /// Castex, Monte Nievas y Pico tal como se distribuyen, su mundo con el
+    /// tren como obstáculos en movimiento, y el tren.
     fn shipped() -> (Vec<TownLayout>, World, LineTrain) {
         let (towns, line) = crate::rail::tests::shipped();
         let train = LineTrain::new(&line, &towns, crate::Timetable::default()).unwrap();
@@ -527,14 +540,14 @@ mod tests {
         TimeOfDay::hm(h, m).seconds()
     }
 
-    /// The train jumped from midnight to game time `at`.
+    /// El tren saltado desde la medianoche hasta la hora de juego `at`.
     fn at(train: &LineTrain, at: f64) -> LineTrain {
         let mut train = train.clone();
         train.advance(0.0, at, BASE_RATE);
         train
     }
 
-    /// The train standing at `station` on its next visit after `from`.
+    /// El tren detenido en `station` en su próxima visita después de `from`.
     fn standing(train: &LineTrain, from: f64, station: usize) -> (LineTrain, f64) {
         let mut train = at(train, from);
         let wait = train.time_until_at(station, from).unwrap();
@@ -556,7 +569,7 @@ mod tests {
         Rider::on_foot(at, Heading::from_radians(0.0), world)
     }
 
-    /// The unit direction across coach `car` toward the platform.
+    /// La dirección unitaria transversal al coche `car`, hacia el andén.
     fn to_platform(train: &LineTrain, car: usize, towns: &[TownLayout]) -> Vec2 {
         let station = train.state().station.unwrap();
         let (middle, _) = town_of(towns, train, station).platform_spot().unwrap();
@@ -565,8 +578,8 @@ mod tests {
         across * (middle - c.center).dot(across).signum()
     }
 
-    /// A spot on the platform 3 m out from the coach's door on that side
-    /// nearest the platform's middle.
+    /// Un lugar del andén a 3 m de la puerta del coche de ese lado más cercana
+    /// al centro del andén.
     fn by_the_door(train: &LineTrain, car: usize, towns: &[TownLayout]) -> Vec2 {
         let side = to_platform(train, car, towns);
         let c = train.placed_cars()[car];
@@ -598,8 +611,8 @@ mod tests {
                 other => panic!("car {car}: {other:?}"),
             }
         }
-        // The old platform start, beside the middle of the coaches, is in
-        // reach of a door.
+        // El antiguo punto de partida del andén, al lado del centro de los
+        // coches, está al alcance de una puerta.
         let (middle, _) = town_of(&towns, &train, NIEVAS).platform_spot().unwrap();
         assert!(matches!(
             boarding(
@@ -651,9 +664,9 @@ mod tests {
         let (train, _) = standing(&train, 0.0, CASTEX);
         let (middle, _) = town_of(&towns, &train, CASTEX).platform_spot().unwrap();
         let along = train.placed_cars()[coaches(&train)[0]].direction;
-        // 2 m along the platform toward the nearest door: past the stop
-        // spot's radius, yet still 5 to 8 m from the door, so only
-        // BOARD_RANGE applies.
+        // 2 m a lo largo del andén hacia la puerta más cercana: fuera del radio
+        // del lugar de parada, pero todavía a 5 a 8 m de la puerta, así que
+        // solo aplica BOARD_RANGE.
         let (rider, gap) = [-2.0, 2.0]
             .map(|step| on_foot(middle + along * step, &world))
             .map(|r| {
@@ -668,7 +681,7 @@ mod tests {
             boarding_at(std::slice::from_ref(&train), &towns, &rider, &world.floors),
             Boarding::Nothing
         );
-        // And exactly at the spot the longer reach applies.
+        // Y justo en el lugar aplica el alcance mayor.
         let rider = on_foot(middle, &world);
         let gap = nearest_coach_door(&train, &rider, &world.floors).unwrap().1;
         assert!(gap > BOARD_RANGE && gap <= WAIT_RANGE, "{gap}");
@@ -681,13 +694,13 @@ mod tests {
         let (dwelling, _) = standing(&train, 0.0, NIEVAS);
         let car = coaches(&dwelling)[0];
         let spot = by_the_door(&dwelling, car, &towns);
-        // Mounted: get off the horse first.
+        // Montado: primero hay que bajarse del caballo.
         let mounted = Rider::new(spot, Heading::from_radians(0.0), &world);
         assert_eq!(
             boarding(std::slice::from_ref(&dwelling), &mounted, floors),
             Boarding::DismountFirst
         );
-        // Too far along the platform from every door.
+        // Demasiado lejos de todas las puertas a lo largo del andén.
         let far = spot + dwelling.placed_cars()[car].direction * 40.0;
         assert_eq!(
             boarding(
@@ -697,7 +710,7 @@ mod tests {
             ),
             Boarding::Nothing
         );
-        // On the far side of the track: not on the platform.
+        // Del otro lado de la vía: no está en el andén.
         let c = dwelling.placed_cars()[car];
         let beyond = c.center - to_platform(&dwelling, car, &towns) * 3.0;
         assert!(!floors.iter().any(|f| f.footprint.contains_point(beyond)));
@@ -709,7 +722,7 @@ mod tests {
             ),
             Boarding::Nothing
         );
-        // A moment after it pulls out: nothing to board.
+        // Un momento después de que sale: no hay nada a qué subir.
         let mut gone = dwelling.clone();
         let run = gone.state().run;
         let (_, depart) = gone.stop_times(run, NIEVAS).unwrap();
@@ -738,8 +751,8 @@ mod tests {
     #[test]
     fn passengers_get_off_on_the_platform_beside_their_coach_clear_of_everything() {
         let (towns, mut world, train) = shipped();
-        // Monte Nievas mid-run, and both terminals with the consist
-        // centred on the station.
+        // Monte Nievas a mitad del recorrido, y las dos terminales con la
+        // formación centrada en la estación.
         for (from, station) in [(0.0, NIEVAS), (hm(11, 0), CASTEX), (hm(18, 0), PICO)] {
             let (train, _) = standing(&train, from, station);
             world.moving = train.obstacles();
@@ -755,7 +768,7 @@ mod tests {
                 let coach = train.placed_cars()[car];
                 let along = (spot - coach.center).dot(floor.along).abs();
                 assert!(along <= coach.length / 2.0 + 0.5, "beside it: {along}");
-                // Within reach of a door, to board again.
+                // Al alcance de una puerta, para volver a subir.
                 assert!(matches!(
                     boarding(
                         std::slice::from_ref(&train),
@@ -764,21 +777,22 @@ mod tests {
                     ),
                     Boarding::Board(_)
                 ));
-                // On top of the platform.
+                // Sobre el andén.
                 assert_eq!(
                     world.ground_height(spot),
                     world.terrain.height(spot.x, spot.y) + floor.height
                 );
             }
         }
-        // Not while it runs.
+        // No mientras avanza.
         let running = at(&train, hm(7, 3));
         assert_eq!(alight_spot(&running, 1, &towns, &world), None);
     }
 
     #[test]
     fn the_alighting_spot_slides_beside_the_door_whichever_way_the_platform_runs() {
-        // A 40 m platform along x, then along y, each named both ways.
+        // Un andén de 40 m a lo largo de x y después a lo largo de y, cada uno
+        // nombrado en ambos sentidos.
         let x = crate::Aabb::new(Vec2::new(-20.0, 4.0), Vec2::new(20.0, 8.0));
         let y = crate::Aabb::new(Vec2::new(4.0, -20.0), Vec2::new(8.0, 20.0));
         for (footprint, axis) in [(x, Vec2::new(1.0, 0.0)), (y, Vec2::new(0.0, 1.0))] {
@@ -790,14 +804,14 @@ mod tests {
                     height: 0.9,
                     along,
                 };
-                // A door 9 m from the middle, beside the platform's edge.
+                // Una puerta a 9 m del centro, al lado del borde del andén.
                 let door = middle + axis * 9.0 - across * 3.0;
                 let spot = beside_door(&floor, middle, door);
                 assert!(
                     spot.distance(middle + axis * 9.0) < 1e-4,
                     "{along:?}: {spot:?}"
                 );
-                // Past the end, held a margin short of the ramp.
+                // Más allá del extremo, retenida a un margen antes de la rampa.
                 let far = beside_door(&floor, middle, middle + axis * 30.0);
                 let end = 20.0 - PLATFORM_END_MARGIN;
                 assert!(
@@ -812,7 +826,7 @@ mod tests {
     fn the_ride_ends_at_its_station_or_on_arriving_at_a_terminal() {
         let (_, _, train) = shipped();
         let car = coaches(&train)[0];
-        // Boarded at Monte Nievas on the up run: on to Castex.
+        // Subió en Monte Nievas en el recorrido de subida: sigue hasta Castex.
         let (mut train, now) = standing(&train, 0.0, NIEVAS);
         let mut ride = Ride::new(&train, car);
         assert!(!ride.put_off(&train.state()));
@@ -822,7 +836,8 @@ mod tests {
         assert_eq!(train.state().phase, LinePhase::Parked);
         assert!(ride.put_off(&train.state()), "put off at the terminal");
 
-        // Boarded while laid over at Castex: not put off until it ran.
+        // Subió mientras esperaba en Castex: no se lo baja hasta que el tren
+        // avanzó.
         let mut parked = Ride::new(&train, car);
         assert!(!parked.put_off(&train.state()));
         train.advance(clock.elapsed(), 600.0, BASE_RATE);
@@ -835,7 +850,7 @@ mod tests {
         assert_eq!(skip_ride(&mut train, &mut clock), Some(PICO));
         assert!(parked.put_off(&train.state()));
 
-        // A ride to a station ends as soon as the train stands there.
+        // Un viaje hasta una estación termina apenas el tren se detiene ahí.
         let (mut opening, _) = standing(&train, 0.0, NIEVAS);
         let run = opening.state().run;
         let (arrive, _) = opening.stop_times(run, NIEVAS).unwrap();
@@ -855,7 +870,7 @@ mod tests {
         clock.multiplier = ONBOARD_MULTIPLIER;
         let (_, eta) = next_arrival(&train, &clock).unwrap();
         let (arrive, _) = train.stop_times(Run::Up, NIEVAS).unwrap();
-        // 12× for the rest of the leg.
+        // 12× durante el resto del tramo.
         let expected = from + (arrive - 100.0) * 12.0;
         assert!((eta.seconds() - expected).abs() < 1e-6);
         assert_eq!(skip_ride(&mut train, &mut clock), Some(NIEVAS));
@@ -863,7 +878,7 @@ mod tests {
         let s = train.state();
         assert_eq!((s.phase, s.station), (LinePhase::Dwelling, Some(NIEVAS)));
         assert_eq!(s, train.state_at(Run::Up, arrive));
-        // The ETA from the dwell is Castex.
+        // La hora estimada de llegada desde la parada es Castex.
         let (next, _) = next_arrival(&train, &clock).unwrap();
         assert_eq!(next, CASTEX);
     }
@@ -879,12 +894,13 @@ mod tests {
         assert!(jumped > 0.0);
         assert!((clock.elapsed() - now - jumped).abs() < 1e-6);
         assert_eq!(train.state(), train.state_at(Run::Up, depart));
-        // Three real seconds of pulling out, at 12×.
+        // Tres segundos reales de salida, a 12×.
         let game = clock.tick(3.0);
         train.advance(clock.elapsed() - game, game, clock.rate());
         assert_eq!(train.state().phase, LinePhase::Running);
         assert_eq!(depart_now(&mut train, &mut clock), Some(0.0));
-        // The black: to 3 s before Castex, the clock by the same ride time.
+        // El negro: hasta 3 s antes de Castex, el reloj avanza el mismo tiempo
+        // de viaje.
         let before = clock.elapsed();
         let (_, eta) = next_arrival(&train, &clock).unwrap();
         assert_eq!(skip_to_approach(&mut train, &mut clock), Some(CASTEX));
@@ -896,7 +912,7 @@ mod tests {
             train.state(),
             train.state_at(Run::Up, castex - APPROACH_LEAD)
         );
-        // Coming in for real: stopped at Castex on time.
+        // Entrando de verdad: detenido en Castex a horario.
         let game = clock.tick(APPROACH_LEAD as f32);
         train.advance(clock.elapsed() - game, game, clock.rate());
         assert!(stands_at(&train.state(), CASTEX));
@@ -907,12 +923,12 @@ mod tests {
     fn waiting_on_a_platform_lands_on_the_next_train_there() {
         let (towns, world, train) = shipped();
         let nievas = town_of(&towns, &train, NIEVAS);
-        // Waiting is by town: the shuttle may serve it too.
+        // La espera es por pueblo: la lanzadera también puede pasar por ahí.
         let (nievas_town, castex_town) =
             (train.stations()[NIEVAS].town, train.stations()[CASTEX].town);
         let (middle, _) = nievas.platform_spot().unwrap();
-        // 13:00: the train lays over at Castex; the next one at Monte
-        // Nievas is the afternoon down run.
+        // 13:00: el tren espera en Castex; el próximo en Monte Nievas es el
+        // recorrido de bajada de la tarde.
         let mut train = at(&train, hm(13, 0));
         let rider = on_foot(middle, &world);
         assert_eq!(
@@ -954,10 +970,10 @@ mod tests {
             clock.hh_mm()
         );
         assert!((waited - (arrival - hm(13, 0))).abs() < 0.01);
-        // The pure state at that arrival.
+        // El estado puro en esa llegada.
         let (arrive, _) = train.stop_times(Run::Down, NIEVAS).unwrap();
         assert!((s.front - train.state_at(Run::Down, arrive).front).abs() < 1e-3);
-        // With the train there, nothing to wait for.
+        // Con el tren ahí, no hay nada que esperar.
         assert_eq!(
             waiting_place(std::slice::from_ref(&train), &towns, &[], &rider),
             None
@@ -974,7 +990,8 @@ mod tests {
             Some(0.0)
         );
 
-        // After the evening train, the wait runs into the next morning.
+        // Después del tren de la noche, la espera se extiende hasta la mañana
+        // siguiente.
         let mut late = at(&train, hm(22, 0));
         let mut clock = GameClock::at(TimeOfDay::hm(22, 0));
         wait_for_train(
@@ -989,7 +1006,7 @@ mod tests {
         assert_eq!(clock.day(), 1);
         assert_eq!(late.state().run, Run::Up);
         assert!(stands_at(&late.state(), NIEVAS));
-        // At a terminal the train lays over: it stands there too.
+        // En una terminal el tren espera: también está detenido ahí.
         let mut clock = GameClock::at(TimeOfDay::hm(10, 0));
         let mut castex = at(&train, hm(10, 0));
         wait_for_train(
@@ -1005,8 +1022,8 @@ mod tests {
         assert_eq!(castex.state().phase, LinePhase::Parked);
     }
 
-    /// Whether the seat of `ride` looks toward the platform of the station
-    /// the train stands at.
+    /// Si el asiento de `ride` mira hacia el andén de la estación en la que
+    /// está detenido el tren.
     fn faces_the_platform(train: &LineTrain, ride: &Ride, towns: &[TownLayout]) -> bool {
         let station = train.state().station.unwrap();
         let (platform, _) = town_of(towns, train, station).platform_spot().unwrap();
@@ -1020,8 +1037,8 @@ mod tests {
         let (towns, _, train) = shipped();
         let car = coaches(&train)[0];
         let mut sides = Vec::new();
-        // Running in on the morning run, the afternoon run, and to both
-        // terminals: seated on the platform side when it stops.
+        // Entrando en el recorrido de la mañana, en el de la tarde y hacia las
+        // dos terminales: sentado del lado del andén cuando se detiene.
         for (from, station) in [
             (hm(7, 3), NIEVAS),
             (hm(11, 0), CASTEX),
@@ -1036,15 +1053,16 @@ mod tests {
             assert!(faces_the_platform(&moving, &ride, &towns), "to {station}");
             sides.push(ride.side);
         }
-        // Boarded at a dwell: the next stop's platform, not this one's.
+        // Subió durante una parada: el andén de la próxima parada, no el de
+        // esta.
         let (dwelling, _) = standing(&train, 0.0, NIEVAS);
         let mut ride = Ride::new(&dwelling, car).facing_platform(&dwelling, &towns, &[]);
         let mut on = dwelling.clone();
         on.skip_to_next_stop(0.0, BASE_RATE);
         assert!(faces_the_platform(&on, &ride, &towns));
         assert!(!ride.put_off(&dwelling.state()));
-        // The platforms lie on both sides across these runs, so the seat
-        // really is chosen, not fixed.
+        // En estos recorridos los andenes quedan a ambos lados, así que el
+        // asiento realmente se elige y no es fijo.
         assert!(sides.contains(&1.0) && sides.contains(&-1.0), "{sides:?}");
     }
 
@@ -1063,26 +1081,27 @@ mod tests {
         assert_eq!(next, NIEVAS);
         assert!((left - OPENING_LEAD).abs() < 1e-9);
         assert!(!ride.put_off(&s));
-        // Riding on at 12× arrives at the timetabled time.
+        // Seguir viajando a 12× llega a la hora del horario.
         let game = clock.tick(OPENING_LEAD as f32);
         train.advance(clock.elapsed() - game, game, ONBOARD_MULTIPLIER * BASE_RATE);
         let arrival = train.arrival_time_at(Run::Up, NIEVAS).unwrap();
         assert!((clock.time_of_day().seconds() - arrival.seconds()).abs() < 0.01);
         assert!(ride.put_off(&train.state()));
         assert!(towns[nievas].platform_spot().is_some());
-        // Seated facing the Monte Nievas platform as it comes in.
+        // Sentado mirando hacia el andén de Monte Nievas mientras entra.
         let seated = ride.facing_platform(&train, &towns, &[]);
         assert!(faces_the_platform(&train, &seated, &towns));
         assert_eq!(opening(&mut train, 99, Run::Up), None);
     }
 
-    // The branched world: the line train through Medio and the shuttle in
-    // Medio's bay on the way to Norte.
+    // El mundo con ramal: el tren de la línea pasa por Medio y la lanzadera
+    // está en la vía muerta de Medio camino a Norte.
 
     use crate::train::line_tests::{MEDIO, NORTE, branched_line, branched_trains};
 
-    /// The towns, their world (with the bay's platform laid), the line's
-    /// bays and the world's trains: the line train, then the shuttle.
+    /// Los pueblos, su mundo (con el andén de la vía muerta colocado), las vías
+    /// muertas de la línea y los trenes del mundo: el tren de la línea y
+    /// después la lanzadera.
     fn branched() -> (Vec<TownLayout>, World, Vec<RailBay>, Vec<LineTrain>) {
         let (towns, line, shuttle) = branched_trains(crate::Timetable::default());
         let mut world = World::with_towns(WorldConfig::default(), Terrain::default(), &towns);
@@ -1091,12 +1110,13 @@ mod tests {
         (towns, world, bays.bays, vec![line, shuttle])
     }
 
-    /// Every train jumped from midnight to game time `now`.
+    /// Todos los trenes saltados desde la medianoche hasta la hora de juego
+    /// `now`.
     fn all_at(trains: &[LineTrain], now: f64) -> Vec<LineTrain> {
         trains.iter().map(|t| at(t, now)).collect()
     }
 
-    /// The trains standing (not running) at Medio.
+    /// Los trenes detenidos (no en marcha) en Medio.
     fn standing_at_medio(trains: &[LineTrain]) -> Vec<usize> {
         (0..trains.len())
             .filter(|&i| {
@@ -1108,8 +1128,9 @@ mod tests {
             .collect()
     }
 
-    /// A spot 1 m beyond the door of the shuttle's coach nearest the line
-    /// train's track: the ground between the two tracks, off any platform.
+    /// Un lugar 1 m más allá de la puerta del coche de la lanzadera más cercana
+    /// a la vía del tren de la línea: el terreno entre las dos vías, fuera de
+    /// cualquier andén.
     fn beside_the_bay(line: &LineTrain, shuttle: &LineTrain) -> Vec2 {
         let car = coaches(shuttle)[0];
         let placed = shuttle.placed_cars()[car];
@@ -1122,8 +1143,8 @@ mod tests {
         door - from_track * (1.0 / from_track.length())
     }
 
-    /// A spot on the bay platform beside the shuttle's coach door nearest
-    /// the platform's middle spot.
+    /// Un lugar del andén de la vía muerta al lado de la puerta del coche de la
+    /// lanzadera más cercana al lugar central del andén.
     fn on_the_bay_platform(shuttle: &LineTrain, world: &World) -> Vec2 {
         let coach = shuttle.placed_cars()[coaches(shuttle)[0]];
         let floor = nearest_floor(&world.floors, coach.center).unwrap();
@@ -1138,13 +1159,14 @@ mod tests {
     #[test]
     fn boarding_takes_the_standing_train_beside_the_rider_among_several() {
         let (towns, world, _, trains) = branched();
-        // Both stand at Medio: the line train beside the platform, the
-        // shuttle in its bay.
+        // Los dos están detenidos en Medio: el tren de la línea junto al andén
+        // y la lanzadera en su vía muerta.
         let now = trains[0].stop_at(MEDIO, Run::Up).unwrap().seconds();
         let trains = all_at(&trains, now);
         assert_eq!(standing_at_medio(&trains), [0, 1]);
         assert!(trains[1].stands_in_bay() && !trains[0].stands_in_bay());
-        // On the platform by the line train's coach: the line train.
+        // En el andén, junto al coche del tren de la línea: el tren de la
+        // línea.
         let car = coaches(&trains[0])[0];
         let spot = by_the_door(&trains[0], car, &towns);
         let rider = on_foot(spot, &world);
@@ -1152,7 +1174,8 @@ mod tests {
             panic!("boards the line train");
         };
         assert_eq!((ride.train, ride.car), (0, car));
-        // On the bay platform by the shuttle's coach: the shuttle.
+        // En el andén de la vía muerta, junto al coche de la lanzadera: la
+        // lanzadera.
         let spot = on_the_bay_platform(&trains[1], &world);
         assert!(
             world
@@ -1166,13 +1189,13 @@ mod tests {
         };
         assert_eq!(ride.train, 1);
         assert_eq!(trains[1].cars()[ride.car].kind, CarKind::Coach);
-        // Mounted there it is the same dismount first.
+        // Montado ahí, también hay que bajarse primero.
         let mounted = Rider::new(spot, Heading::from_radians(0.0), &world);
         assert_eq!(
             boarding(&trains, &mounted, &world.floors),
             Boarding::DismountFirst
         );
-        // Far from both, nothing.
+        // Lejos de los dos, nada.
         let far = on_foot(spot + Vec2::new(0.0, 40.0), &world);
         assert_eq!(boarding(&trains, &far, &world.floors), Boarding::Nothing);
     }
@@ -1182,8 +1205,8 @@ mod tests {
         let (towns, world, _, trains) = branched();
         let now = trains[0].stop_at(MEDIO, Run::Up).unwrap().seconds();
         let trains = all_at(&trains, now);
-        // Beside the line train's coach but off the platform (across the
-        // track from it): no step there.
+        // Al lado del coche del tren de la línea pero fuera del andén (del otro
+        // lado de la vía): ahí no se puede subir.
         let car = coaches(&trains[0])[0];
         let on_platform = by_the_door(&trains[0], car, &towns);
         let side = to_platform(&trains[0], car, &towns);
@@ -1195,7 +1218,8 @@ mod tests {
                 .any(|f| f.footprint.contains_point(off.position))
         );
         assert_eq!(boarding(&trains, &off, &world.floors), Boarding::Nothing);
-        // Nor beside the shuttle in its bay, on the ground between the tracks.
+        // Tampoco al lado de la lanzadera en su vía muerta, en el terreno entre
+        // las vías.
         let ground = on_foot(beside_the_bay(&trains[0], &trains[1]), &world);
         assert!(
             !world
@@ -1204,7 +1228,7 @@ mod tests {
                 .any(|f| f.footprint.contains_point(ground.position))
         );
         assert_eq!(boarding(&trains, &ground, &world.floors), Boarding::Nothing);
-        // It is boarded from the bay platform, but not once it has left.
+        // Se sube desde el andén de la vía muerta, pero no una vez que salió.
         let rider = on_foot(on_the_bay_platform(&trains[1], &world), &world);
         let leaving = trains[1].timetable().departure(Run::Down).seconds() + 120.0;
         let gone = all_at(&trains, leaving);
@@ -1238,7 +1262,7 @@ mod tests {
             let now = f64::from(k) * 300.0;
             let now_trains = all_at(&trains, now);
             let standing = standing_at_medio(&now_trains);
-            // Nothing to wait for beside a platform with its train in.
+            // No hay nada que esperar junto a un andén con su tren detenido.
             let place = |rider: &Rider| waiting_place(&now_trains, &towns, &bays, rider);
             assert_eq!(
                 place(&on_station),
@@ -1256,7 +1280,7 @@ mod tests {
                 let mut clock = GameClock::at(TimeOfDay::from_seconds(now));
                 let waited = wait_for_train(&mut waiting, &mut clock, wanted).unwrap();
                 assert!(waited > 0.0, "{now}");
-                // The train of that platform has come in, in its place.
+                // El tren de ese andén llegó, en su lugar.
                 assert!(standing_at_medio(&waiting).contains(&want), "{now}");
                 if want == 1 {
                     shuttle_waits += 1;
@@ -1265,9 +1289,10 @@ mod tests {
                 }
             }
         }
-        // The shuttle stands before and after the line train: waiting for
-        // the line train goes on past it in its bay (it is not the train
-        // of that platform), and the bay platform's wait is for the shuttle.
+        // La lanzadera está detenida antes y después del tren de la línea: la
+        // espera del tren de la línea continúa aunque ella esté en su vía
+        // muerta (no es el tren de ese andén), y la espera en el andén de la
+        // vía muerta es por la lanzadera.
         assert!(line_while_shuttle_in > 0 && shuttle_waits > 0);
     }
 
@@ -1276,7 +1301,8 @@ mod tests {
         let (towns, world, _, trains) = branched();
         let (middle, _) = towns[NORTE].platform_spot().unwrap();
         let rider = on_foot(middle, &world);
-        // 13:00: the shuttle is somewhere on its day; wait for it at Norte.
+        // 13:00: la lanzadera está en algún punto de su jornada; se la espera
+        // en Norte.
         let mut now_trains = all_at(&trains, hm(13, 0));
         let mut clock = GameClock::at(TimeOfDay::hm(13, 0));
         if let Some(place) = waiting_place(&now_trains, &towns, &[], &rider) {
@@ -1293,8 +1319,8 @@ mod tests {
         let at_norte = shuttle.station_of_town(NORTE).unwrap();
         assert!(stands_at(&shuttle.state(), at_norte));
         assert!(now_trains[0].station_of_town(NORTE).is_none());
-        // Boarding it from the platform and riding on lands it at Medio,
-        // the line train following the clock on the way.
+        // Subir desde el andén y seguir viajando la deja en Medio, mientras el
+        // tren de la línea sigue el reloj en el camino.
         let car = coaches(shuttle)[0];
         let spot = by_the_door(shuttle, car, &towns);
         let Boarding::Board(ride) = boarding(&now_trains, &on_foot(spot, &world), &world.floors)
@@ -1307,7 +1333,7 @@ mod tests {
     #[test]
     fn a_jump_of_the_ridden_train_leaves_the_others_following_the_clock() {
         let (_, _, _, trains) = branched();
-        // A moment with both trains running.
+        // Un momento con los dos trenes en marcha.
         let moment = (0..24 * 60)
             .map(|k| f64::from(k) * 60.0)
             .find(|&now| {
@@ -1330,10 +1356,11 @@ mod tests {
             clock.elapsed() - from,
             clock.rate(),
         );
-        // The ridden train stands at its next stop.
+        // El tren en el que se viaja está detenido en su próxima parada.
         assert_eq!(Some(station), now_trains[1].state().station);
         assert!(stands_at(&now_trains[1].state(), station));
-        // The line train is where the clock puts it: not skipped to a stop.
+        // El tren de la línea está donde lo pone el reloj: no saltó hasta una
+        // parada.
         let mut expected = all_at(&trains, from)[0].clone();
         expected.advance(from, clock.elapsed() - from, clock.rate());
         assert_eq!(now_trains[0], expected);
@@ -1348,8 +1375,9 @@ mod tests {
         let norte = shuttle.station_of_town(NORTE).unwrap();
         let (middle, _) = towns[NORTE].platform_spot().unwrap();
         let rider = on_foot(middle, &world);
-        // The first layover, arrival to departure: its first half before
-        // the shuttle is turned round, its second after.
+        // La primera espera en la terminal, de la llegada a la salida: su
+        // primera mitad antes de que la lanzadera dé la vuelta y la segunda
+        // después.
         let first = shuttle.arrival_time_at(Run::Down, norte).unwrap().seconds();
         let (last, run) = shuttle.next_departure_after(first + 1.0);
         assert_eq!(run, Run::Up);
@@ -1379,8 +1407,9 @@ mod tests {
         assert!(shuttle.stands_in_bay());
         let car = coaches(shuttle)[0];
         let (spot, heading) = alight_spot(shuttle, car, &towns, &world).expect("a spot");
-        // On the bay's platform, in reach of the coach's door, facing away
-        // from the track; not on the station platform across the line.
+        // En el andén de la vía muerta, al alcance de la puerta del coche, de
+        // espaldas a la vía; no en el andén de la estación del otro lado de la
+        // línea.
         let bay = world.floors.last().unwrap();
         assert!(bay.footprint.contains_point(spot), "{spot:?}");
         assert!(!towns[MEDIO].floors()[0].footprint.contains_point(spot));
@@ -1399,13 +1428,15 @@ mod tests {
         let (towns, world, _, trains) = branched();
         let shuttle = &trains[1];
         let medio = shuttle.station_of_town(MEDIO).unwrap();
-        // Underway toward Medio (the up run), a minute before the stop.
+        // En camino hacia Medio (el recorrido de subida), un minuto antes de la
+        // parada.
         let arrival = shuttle.arrival_time_at(Run::Up, medio).unwrap().seconds();
         let running = at(shuttle, arrival - 60.0);
         assert_eq!(running.state().phase, LinePhase::Running);
         let car = coaches(&running)[0];
         let ride = Ride::new(&running, car).facing_platform(&running, &towns, &world.floors);
-        // Where it stands, the platform is on the side the ride faces.
+        // Donde está detenido, el andén está del lado hacia el que mira el
+        // viaje.
         let standing = at(shuttle, arrival + 1.0);
         assert_eq!(standing.state().station, Some(medio));
         let coach = standing.placed_cars()[car];
@@ -1413,7 +1444,7 @@ mod tests {
         let (spot, _) = bay.spot_beside(coach.center);
         let right = Vec2::new(coach.direction.y, -coach.direction.x);
         assert_eq!((spot - coach.center).dot(right).signum(), ride.side);
-        // Not the station platform's side, across the line.
+        // No del lado del andén de la estación, del otro lado de la línea.
         let (station, _) = towns[MEDIO].platform_spot().unwrap();
         assert_ne!((station - coach.center).dot(right).signum(), ride.side);
     }
@@ -1425,8 +1456,8 @@ mod tests {
         let norte = shuttle.station_of_town(NORTE).unwrap();
         let arrivals = shuttle.arrivals_at(Run::Down, norte);
         assert_eq!(arrivals.len(), 2, "one arrival at Norte per down run");
-        // Just after the first has left again, waiting at Norte lands on
-        // the second.
+        // Justo después de que el primero vuelve a salir, esperar en Norte
+        // termina en el segundo.
         let (_, left) = shuttle.stop_times(Run::Down, norte).unwrap();
         let _ = left;
         let after_first = arrivals[0].seconds() + 60.0;

@@ -1,45 +1,51 @@
-//! Rigid-part poses for people: how far each joint turns at a point of the
-//! gait cycle. Render rotates the parts of a low-poly figure by these
-//! angles; logic never needs them. Horses are animated models: only their
-//! gait is worked out here ([`HorseGait`]).
+//! Poses de partes rígidas para personas: cuánto gira cada articulación en un
+//! punto del ciclo de la marcha. El render rota las partes de una figura
+//! low-poly según estos ángulos; la lógica nunca los necesita. Los caballos son
+//! modelos animados: aquí solo se calcula su marcha ([`HorseGait`]).
 //!
-//! Angles are radians about the body's side-to-side axis, positive when the
-//! limb below the joint swings forward. People have no gallop: their
-//! [`AnimationState::Gallop`] is a jog.
+//! Los ángulos están en radianes alrededor del eje lateral del cuerpo,
+//! positivos cuando el miembro que está debajo de la articulación se balancea
+//! hacia adelante. Las personas no galopan: su [`AnimationState::Gallop`] es un
+//! trote.
 
 use crate::AnimationState;
 
-/// Joint angles and body offsets of one pose.
+/// Ángulos de las articulaciones y desplazamientos del cuerpo de una pose.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct JointAngles {
-    /// Hip swing (upper leg), left and right.
+    /// Balanceo de la cadera (muslo), izquierda y derecha.
     pub hip: [f32; 2],
-    /// Knee bend, left and right: the lower leg folds back (always `<= 0`).
+    /// Flexión de la rodilla, izquierda y derecha: la pierna se pliega hacia
+    /// atrás (siempre `<= 0`).
     pub knee: [f32; 2],
-    /// Shoulder swing (upper arm), left and right.
+    /// Balanceo del hombro (brazo), izquierdo y derecho.
     pub shoulder: [f32; 2],
-    /// Elbow bend, left and right: the forearm folds forward (always `>= 0`).
+    /// Flexión del codo, izquierdo y derecho: el antebrazo se pliega hacia
+    /// adelante (siempre `>= 0`).
     pub elbow: [f32; 2],
-    /// Forward lean of the torso.
+    /// Inclinación del torso hacia adelante.
     pub lean: f32,
-    /// Rise of the whole body in meters (the stride's bob).
+    /// Elevación de todo el cuerpo en metros (el rebote de la zancada).
     pub bob: f32,
-    /// Rise of the torso in meters while breathing.
+    /// Elevación del torso en metros al respirar.
     pub breath: f32,
-    /// Head nod (forward positive) that steadies the gaze.
+    /// Cabeceo (positivo hacia adelante) que estabiliza la mirada.
     pub nod: f32,
-    /// Hat tilt, brim down in front positive: the brim follows the step.
+    /// Inclinación del sombrero, positiva con el ala hacia abajo por delante:
+    /// el ala acompaña el paso.
     pub hat: f32,
-    /// Fore-and-aft swing of a poncho, shawl or skirt, hem forward positive.
+    /// Balanceo adelante-atrás de un poncho, un chal o una pollera, positivo
+    /// con el ruedo hacia adelante.
     pub drape: f32,
-    /// Side-to-side sway of the same, hem to the right positive.
+    /// Balanceo lateral de lo mismo, positivo con el ruedo hacia la derecha.
     pub drape_side: f32,
 }
 
-/// Breaths per second while standing.
+/// Respiraciones por segundo estando parado.
 pub const BREATHS_PER_SECOND: f32 = 0.25;
 
-/// Swing amplitude (hip, shoulder, knee fold, elbow fold), lean, bob.
+/// Amplitud del balanceo (cadera, hombro, pliegue de rodilla, pliegue de codo),
+/// inclinación, rebote.
 fn gait(animation: AnimationState) -> (f32, f32, f32, f32, f32, f32) {
     match animation {
         AnimationState::Idle => (0.0, 0.0, 0.0, 0.08, 0.0, 0.0),
@@ -48,12 +54,13 @@ fn gait(animation: AnimationState) -> (f32, f32, f32, f32, f32, f32) {
     }
 }
 
-/// The pose of `animation` at `phase` (cycles, wrapped to `0..1`).
+/// La pose de `animation` en `phase` (ciclos, ajustados a `0..1`).
 ///
-/// Legs swing in opposite phase, each arm against the leg on its side, and
-/// the body rises twice per cycle, once per step. A walking leg sweeps its
-/// foot back at an even pace while on the ground ([`foot_sweep`]); a jogging
-/// one swings evenly. Idle only breathes, the same on both sides.
+/// Las piernas se balancean en fase opuesta, cada brazo contra la pierna de su
+/// lado, y el cuerpo se eleva dos veces por ciclo, una por paso. Una pierna que
+/// camina lleva su pie hacia atrás a ritmo parejo mientras está en el suelo
+/// ([`foot_sweep`]); una que trota se balancea de forma pareja. En reposo solo
+/// respira, igual de ambos lados.
 pub fn pose(animation: AnimationState, phase: f32) -> JointAngles {
     use std::f32::consts::TAU;
     let phase = wrap(phase);
@@ -78,7 +85,8 @@ pub fn pose(animation: AnimationState, phase: f32) -> JointAngles {
     };
     JointAngles {
         hip: [hip(phase), hip(phase + 0.5)],
-        // A leg folds while it swings forward (its hip angle rising).
+        // Una pierna se pliega mientras se balancea hacia adelante (cuando sube
+        // el ángulo de su cadera).
         knee: [-fold * c.max(0.0), -fold * (-c).max(0.0)],
         shoulder: [-arm * s, arm * s],
         elbow: [elbow + 0.1 * (-s).max(0.0), elbow + 0.1 * s.max(0.0)],
@@ -92,10 +100,11 @@ pub fn pose(animation: AnimationState, phase: f32) -> JointAngles {
     }
 }
 
-/// Where a walking leg's foot is, front `1` to back `-1`, at `phase` of
-/// its cycle (the left leg's; the right one is half a cycle on). From the
-/// front at `0.25` it sweeps back at an even pace for half a cycle, so a
-/// foot on the ground keeps still on it, then eases forward again.
+/// Dónde está el pie de una pierna que camina, de `1` adelante a `-1` atrás, en
+/// el punto `phase` de su ciclo (el de la pierna izquierda; la derecha va medio
+/// ciclo adelantada). Desde adelante, en `0.25`, va hacia atrás a ritmo parejo
+/// durante medio ciclo, de modo que un pie apoyado en el suelo se queda quieto
+/// sobre él, y después vuelve suavemente hacia adelante.
 pub fn foot_sweep(phase: f32) -> f32 {
     let p = wrap(phase - 0.25);
     if p < 0.5 {
@@ -106,58 +115,60 @@ pub fn foot_sweep(phase: f32) -> f32 {
     }
 }
 
-/// Gait cycles per second at ground `speed` (m/s): a cycle is two steps, so
-/// feet keep pace with the ground. Standing breathes at a fixed rate.
+/// Ciclos de marcha por segundo a velocidad `speed` sobre el suelo (m/s): un
+/// ciclo son dos pasos, así que los pies acompañan al suelo. Parado, respira a
+/// un ritmo fijo.
 pub fn cadence(animation: AnimationState, speed: f32) -> f32 {
     let speed = if speed.is_finite() { speed.abs() } else { 0.0 };
     match animation {
         AnimationState::Idle => BREATHS_PER_SECOND,
-        // Two steps of about 0.7 m: the foot on the ground sweeps back as
-        // far as the body goes in a step.
+        // Dos pasos de unos 0,7 m: el pie apoyado en el suelo se desplaza hacia
+        // atrás tanto como avanza el cuerpo en un paso.
         AnimationState::Walk => speed.max(0.8) / 1.4,
-        // Two bounding steps of about 1.35 m, with a moment in the air:
-        // the foot meets the ground in mid-swing, sweeping back as fast as
-        // the body goes.
+        // Dos pasos con rebote de unos 1,35 m, con un momento en el aire: el
+        // pie toca el suelo a mitad del balanceo y va hacia atrás tan rápido
+        // como avanza el cuerpo.
         AnimationState::Gallop => speed.max(2.0) / 2.7,
     }
 }
 
-/// `phase` advanced by `dt` seconds of `animation` at `speed`, wrapped to
-/// `0..1`.
+/// `phase` avanzada `dt` segundos de `animation` a velocidad `speed`, ajustada
+/// a `0..1`.
 pub fn advance(phase: f32, animation: AnimationState, speed: f32, dt: f32) -> f32 {
     let step = cadence(animation, speed) * dt.max(0.0);
     wrap(phase + step)
 }
 
-/// How a horse moves. Logic only knows [`AnimationState`]; the horse trots
-/// in the slower part of its gallop range.
+/// Cómo se mueve un caballo. La lógica solo conoce [`AnimationState`]; el
+/// caballo trota en la parte más lenta de su rango de galope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum HorseGait {
-    /// Standing: breathing, the weight shifted onto three legs.
+    /// Parado: respirando, con el peso cargado sobre tres patas.
     #[default]
     Idle,
-    /// The four-beat walk.
+    /// El paso, de cuatro tiempos.
     Walk,
-    /// The two-beat trot: diagonal pairs of legs together.
+    /// El trote, de dos tiempos: pares diagonales de patas juntas.
     Trot,
-    /// The gallop, with a moment of suspension.
+    /// El galope, con un momento de suspensión.
     Gallop,
 }
 
 impl HorseGait {
-    /// Every gait, slowest first.
+    /// Todas las marchas, de la más lenta a la más rápida.
     pub const ALL: [Self; 4] = [Self::Idle, Self::Walk, Self::Trot, Self::Gallop];
 
-    /// Speed (m/s) above which a horse in its gallop range gallops rather
-    /// than trots.
+    /// Velocidad (m/s) por encima de la cual un caballo en su rango de galope
+    /// galopa en lugar de trotar.
     pub const TROT_MAX: f32 = 6.5;
 
-    /// The gait for logic's `animation` at ground `speed` (m/s).
+    /// La marcha para el `animation` de la lógica a velocidad `speed` sobre el
+    /// suelo (m/s).
     pub fn of(animation: AnimationState, speed: f32) -> Self {
         match animation {
             AnimationState::Idle => Self::Idle,
             AnimationState::Walk => Self::Walk,
-            // Not finite: the slower gait.
+            // No finita: la marcha más lenta.
             AnimationState::Gallop if speed.is_finite() && speed.abs() > Self::TROT_MAX => {
                 Self::Gallop
             }
@@ -166,13 +177,14 @@ impl HorseGait {
     }
 }
 
-/// Secondary motion: how far the hat, a poncho or a skirt swing at `phase`
-/// of a person's `animation` (see [`JointAngles::hat`]). They lag the
-/// step, so they swing after the body.
+/// Movimiento secundario: cuánto se balancean el sombrero, un poncho o una
+/// pollera en el punto `phase` de la `animation` de una persona (ver
+/// [`JointAngles::hat`]). Van con retraso respecto del paso, así que se
+/// balancean después del cuerpo.
 pub fn drape(animation: AnimationState, phase: f32) -> (f32, f32, f32) {
     use std::f32::consts::TAU;
     let angle = wrap(phase) * TAU;
-    // Brim, fore-and-aft and side amplitudes.
+    // Amplitudes del ala, adelante-atrás y lateral.
     let (brim, fore, side) = match animation {
         AnimationState::Idle => return (0.0, 0.012 * angle.sin(), 0.0),
         AnimationState::Walk => (0.04, 0.07, 0.04),
@@ -185,7 +197,7 @@ pub fn drape(animation: AnimationState, phase: f32) -> (f32, f32, f32) {
     )
 }
 
-/// A cheap integer hash for deterministic moments.
+/// Un hash entero barato para momentos deterministas.
 fn mix(mut h: u32) -> u32 {
     h ^= h >> 16;
     h = h.wrapping_mul(0x7feb_352d);
@@ -194,24 +206,25 @@ fn mix(mut h: u32) -> u32 {
     h ^ (h >> 16)
 }
 
-/// The secondary-motion clock ([`glance`]) wraps after this many seconds
-/// (7.7 h): a multiple of every cycle it uses (6–10 s), so each starts a
-/// fresh cycle, at rest, right at the wrap, and an `f32` clock never grows
-/// coarse.
+/// El reloj del movimiento secundario ([`glance`]) vuelve a cero después de
+/// esta cantidad de segundos (7,7 h): un múltiplo de cada ciclo que usa
+/// (6–10 s), así que cada uno empieza un ciclo nuevo, en reposo, justo al volver a
+/// cero, y un reloj `f32` nunca pierde precisión.
 pub const MOTION_CLOCK_PERIOD: f32 = 27_720.0;
 
-/// The secondary-motion `clock` advanced by `dt` seconds, wrapped at
-/// [`MOTION_CLOCK_PERIOD`]. A clock that is not finite restarts at 0; a
-/// step that is not finite (or negative) is ignored.
+/// El `clock` del movimiento secundario avanzado `dt` segundos, ajustado en
+/// [`MOTION_CLOCK_PERIOD`]. Un reloj que no es finito vuelve a empezar en 0; un
+/// paso que no es finito (o que es negativo) se ignora.
 pub fn tick_clock(clock: f32, dt: f32) -> f32 {
     let clock = if clock.is_finite() { clock } else { 0.0 };
     let dt = if dt.is_finite() { dt.max(0.0) } else { 0.0 };
     (clock + dt).rem_euclid(MOTION_CLOCK_PERIOD)
 }
 
-/// Where `time` falls in a run of `period`-second cycles of a `seed`, each
-/// holding one event `length` seconds long at a hashed moment: the event's
-/// progress `0..1` while it lasts, and the cycle's hash.
+/// En qué punto cae `time` dentro de una serie de ciclos de `period` segundos
+/// de una `seed`, cada uno con un evento de `length` segundos en un momento
+/// determinado por hash: el progreso `0..1` del evento mientras dura, y el hash
+/// del ciclo.
 fn moment(seed: u32, time: f32, period: f32, length: f32) -> Option<(f32, u32)> {
     if !time.is_finite() || time < 0.0 {
         return None;
@@ -223,7 +236,8 @@ fn moment(seed: u32, time: f32, period: f32, length: f32) -> Option<(f32, u32)> 
     (0.0..1.0).contains(&s).then_some((s, h))
 }
 
-/// Smoothly up from 0 to 1 over the first `edge` of `0..1`, down over the last.
+/// Sube suavemente de 0 a 1 durante el primer tramo `edge` de `0..1`, y baja
+/// durante el último.
 fn plateau(s: f32, edge: f32) -> f32 {
     let smooth = |x: f32| {
         let x = x.clamp(0.0, 1.0);
@@ -232,9 +246,10 @@ fn plateau(s: f32, edge: f32) -> f32 {
     smooth(s / edge).min(smooth((1.0 - s) / edge))
 }
 
-/// How far an idle person glances aside (radians, left positive) at `time`
-/// seconds: now and then, deterministically per `seed`, a look to one side
-/// that eases in, holds and eases back.
+/// Cuánto mira hacia un costado una persona en reposo (en radianes, positivo a
+/// la izquierda) a los `time` segundos: de vez en cuando, de forma determinista
+/// según `seed`, una mirada hacia un lado que entra suavemente, se sostiene y
+/// vuelve suavemente.
 pub fn glance(seed: u32, time: f32) -> f32 {
     let period = 6.0 + (mix(seed) % 5) as f32;
     let Some((s, h)) = moment(seed, time, period, 2.4) else {
@@ -245,11 +260,11 @@ pub fn glance(seed: u32, time: f32) -> f32 {
     side * amount * plateau(s, 0.3)
 }
 
-/// `phase` wrapped to `0..1`, negative phases included (`-0.25` is `0.75`);
-/// anything not finite is `0`.
+/// `phase` ajustada a `0..1`, incluidas las fases negativas (`-0.25` es
+/// `0.75`); cualquier valor que no sea finito es `0`.
 fn wrap(phase: f32) -> f32 {
     let wrapped = phase.rem_euclid(1.0);
-    // A tiny negative phase rounds up to exactly 1.0.
+    // Una fase negativa muy pequeña se redondea hasta exactamente 1.0.
     if wrapped.is_finite() && wrapped < 1.0 {
         wrapped
     } else {
@@ -306,7 +321,7 @@ mod tests {
             }
         }
         assert_eq!(forward, [true, true], "each leg steps forward");
-        // The head bobs: two rises per cycle.
+        // La cabeza rebota: dos elevaciones por ciclo.
         assert!(pose(Walk, 0.25).bob > 0.02 && pose(Walk, 0.0).bob < 1e-6);
     }
 
@@ -325,8 +340,9 @@ mod tests {
 
     #[test]
     fn a_walking_foot_sweeps_back_evenly_while_its_leg_is_straight() {
-        // Half a cycle with the knee straight, the foot (at `sin(hip)` of
-        // the leg's length forward) moves back the same each moment.
+        // Durante medio ciclo con la rodilla estirada, el pie (adelantado
+        // `sin(hip)` del largo de la pierna) se mueve hacia atrás lo mismo en
+        // cada momento.
         let at = |t: f32| pose(Walk, t).hip[0].sin();
         let mut straight = 0;
         for k in 0..200 {
@@ -346,18 +362,19 @@ mod tests {
 
     #[test]
     fn a_foot_on_the_ground_keeps_pace_with_it() {
-        // A person's leg, hip to ankle, about.
+        // La pierna de una persona, de la cadera al tobillo, aproximadamente.
         const LEG: f32 = 0.85;
         for speed in [1.2, 6.0 / 3.6] {
-            // Walking, a straight leg carries the body through a whole step:
-            // its foot sweeps from one end of the swing to the other.
+            // Al caminar, una pierna estirada lleva al cuerpo a lo largo de un
+            // paso entero: su pie va de un extremo del balanceo al otro.
             let swing = pose(Walk, 0.25).hip[0];
             let sweep = 2.0 * LEG * swing.sin();
             let step = speed / cadence(Walk, speed) / 2.0;
             assert!((sweep / step - 1.0).abs() < 0.06, "{sweep} {step}");
         }
         for speed in [3.0, 18.0 / 3.6] {
-            // Jogging, the foot lands in mid-swing, sweeping back fastest.
+            // Al trotar, el pie toca el suelo a mitad del balanceo, cuando va
+            // hacia atrás más rápido.
             let swing = pose(Gallop, 0.25).hip[0];
             let foot = swing * LEG * std::f32::consts::TAU * cadence(Gallop, speed);
             assert!((foot / speed - 1.0).abs() < 0.06, "{foot} {speed}");
@@ -366,14 +383,14 @@ mod tests {
 
     #[test]
     fn the_phase_advances_with_speed_whatever_the_frame_rate() {
-        // Proportional to speed above the slowest stride.
+        // Proporcional a la velocidad por encima de la zancada más lenta.
         let walk = |s| cadence(Walk, s);
         assert!((walk(2.4) - 2.0 * walk(1.2)).abs() < 1e-6);
         let jog = |s| cadence(Gallop, s);
         assert!((jog(6.0) - 2.0 * jog(3.0)).abs() < 1e-6);
         assert_eq!(cadence(Idle, 5.0), BREATHS_PER_SECOND);
 
-        // Ten 10 ms frames reach where one 100 ms frame does.
+        // Diez frames de 10 ms llegan a donde llega un frame de 100 ms.
         let mut small = 0.3;
         for _ in 0..10 {
             small = advance(small, Walk, 1.5, 0.01);
@@ -383,7 +400,7 @@ mod tests {
         let wrapped = advance(0.9, Gallop, 4.0, 0.5);
         assert!((0.0..1.0).contains(&wrapped));
         assert_eq!(advance(0.4, Walk, 1.5, -1.0), 0.4, "time never runs back");
-        // A negative phase wraps into 0..1 too, to the same point of the cycle.
+        // Una fase negativa también se ajusta a 0..1, al mismo punto del ciclo.
         let from_negative = advance(-0.25, Walk, 1.5, 0.0);
         assert!((from_negative - 0.75).abs() < 1e-6, "{from_negative}");
         assert!((0.0..1.0).contains(&advance(-3.6, Gallop, 4.0, 0.1)));
@@ -393,13 +410,14 @@ mod tests {
 
     #[test]
     fn the_motion_clock_wraps_seamlessly_and_never_loses_precision() {
-        // A clock left running for weeks stays small and keeps ticking.
+        // Un reloj que queda corriendo durante semanas se mantiene chico y
+        // sigue avanzando.
         let late = tick_clock(1.0e9, 0.016);
         assert!((0.0..MOTION_CLOCK_PERIOD).contains(&late), "{late}");
         assert!((tick_clock(late, 0.25) - late - 0.25).abs() < 1e-2);
         assert!((tick_clock(MOTION_CLOCK_PERIOD - 0.01, 0.02) - 0.01).abs() < 1e-2);
-        // The glance is at rest across the wrap, so it is seamless
-        // whatever the seed.
+        // La mirada está en reposo al volver a cero, así que no hay saltos sea
+        // cual sea la semilla.
         for seed in 0..64 {
             for t in [MOTION_CLOCK_PERIOD - 0.01, 0.0, 0.01] {
                 assert!(glance(seed, t).abs() < 0.02, "{seed} {t}");
@@ -439,7 +457,8 @@ mod tests {
         assert!(swing(Walk) > 0.03 && swing(Gallop) > swing(Walk));
         let brim = |a| samples().map(|t| drape(a, t).0.abs()).fold(0.0, f32::max);
         assert!(brim(Walk) > 0.02 && brim(Idle) == 0.0);
-        // It lags the step: the skirt is not at its peak when the leg is.
+        // Va con retraso respecto del paso: la pollera no está en su punto
+        // máximo cuando la pierna sí lo está.
         assert!(drape(Walk, 0.25).1.abs() < swing(Walk) * 0.95);
     }
 
@@ -453,7 +472,7 @@ mod tests {
             assert!(aside > 0, "seed {seed} glances");
             assert!(ahead > looks.len() / 2, "seed {seed} mostly looks ahead");
             assert_eq!(looks, times().map(|t| glance(seed, t)).collect::<Vec<_>>());
-            // Smooth: no jumps between 20 ms frames.
+            // Suave: no hay saltos entre frames de 20 ms.
             assert!(looks.windows(2).all(|w| (w[1] - w[0]).abs() < 0.08));
         }
         let a: Vec<f32> = times().map(|t| glance(1, t)).collect();

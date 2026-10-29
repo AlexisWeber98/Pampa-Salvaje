@@ -1,26 +1,30 @@
-//! Procedural heightmap shared by logic (ground snapping) and render (mesh).
+//! Mapa de alturas procedural que comparten la lógica (ajuste al suelo) y el
+//! render (mesh).
 
 use std::sync::Arc;
 
 use crate::{Lagoon, RoadNetwork, Vec2};
 
-/// Gently rolling pampa: a few summed sine octaves. Deterministic per seed.
+/// Pampa de ondulación suave: unas pocas octavas de senos sumadas. Determinista
+/// para cada semilla.
 ///
-/// [`Terrain::height`] is the single source of truth for the natural ground
-/// height; both logic and render sample it, including any [`FlatArea`]
-/// leveled for a town. Where bodies stand, [`crate::World::ground_height`]
-/// adds the raised floors (station platforms) on top of it.
+/// [`Terrain::height`] es la única fuente de verdad para la altura natural del
+/// suelo; tanto la lógica como el render la muestrean, incluida cualquier
+/// [`FlatArea`] nivelada para un pueblo. Donde se apoyan los cuerpos,
+/// [`crate::World::ground_height`] le suma encima los pisos elevados (los
+/// andenes de las estaciones).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Terrain {
-    /// Peak deviation from zero height, in meters.
+    /// Desviación máxima respecto de la altura cero, en metros.
     pub amplitude: f32,
-    /// Variation seed; changes phases of every octave.
+    /// Semilla de variación; cambia las fases de cada octava.
     pub seed: u32,
-    /// Ground leveled for settlements, one area per town.
+    /// Terreno nivelado para los asentamientos, un área por pueblo.
     pub flat_areas: Vec<FlatArea>,
-    /// The roads cut into the ground, shared (cloning the terrain is cheap).
+    /// Los caminos cortados en el suelo, compartidos (clonar el terreno es
+    /// barato).
     pub roads: Option<Arc<RoadNetwork>>,
-    /// Lagoons sunk into the ground, each in its own basin.
+    /// Lagunas hundidas en el suelo, cada una en su propia cuenca.
     pub lagoons: Vec<Lagoon>,
 }
 
@@ -36,22 +40,23 @@ impl Default for Terrain {
     }
 }
 
-/// A rectangle of ground leveled to one height, blending smoothly back into
-/// the natural terrain over `falloff` meters around it.
+/// Un rectángulo de terreno nivelado a una sola altura, que se funde suavemente
+/// con el terreno natural a lo largo de `falloff` metros a su alrededor.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FlatArea {
     pub center: Vec2,
-    /// Half width (`x`) and half depth (`y`) of the fully flat core.
+    /// Medio ancho (`x`) y media profundidad (`y`) del núcleo completamente
+    /// plano.
     pub half_extents: Vec2,
-    /// Width of the blend band around the core, in meters.
+    /// Ancho de la franja de transición alrededor del núcleo, en metros.
     pub falloff: f32,
-    /// Height of the leveled ground.
+    /// Altura del terreno nivelado.
     pub height: f32,
 }
 
 impl FlatArea {
-    /// How strongly this area levels the ground at `p`: `1` on the flat core,
-    /// easing to `0` at `falloff` meters outside it.
+    /// Con cuánta fuerza esta área nivela el suelo en `p`: `1` sobre el núcleo
+    /// plano, bajando suavemente hasta `0` a `falloff` metros fuera de él.
     pub fn weight(&self, p: Vec2) -> f32 {
         let dx = ((p.x - self.center.x).abs() - self.half_extents.x).max(0.0);
         let dy = ((p.y - self.center.y).abs() - self.half_extents.y).max(0.0);
@@ -63,42 +68,45 @@ impl FlatArea {
             return 0.0;
         }
         let t = (1.0 - outside / self.falloff).clamp(0.0, 1.0);
-        // Smoothstep: no crease where the flat core meets the slope.
+        // Smoothstep: no hay pliegue donde el núcleo plano se une con la
+        // pendiente.
         t * t * (3.0 - 2.0 * t)
     }
 }
 
 impl Terrain {
-    /// This terrain with `area` leveled too.
+    /// Este terreno con `area` también nivelada.
     pub fn with_flat_area(mut self, area: FlatArea) -> Self {
         self.flat_areas.push(area);
         self
     }
 
-    /// This terrain with `lagoon` sunk into it (see [`Lagoon::shape`]).
+    /// Este terreno con `lagoon` hundida en él (ver [`Lagoon::shape`]).
     pub fn with_lagoon(mut self, lagoon: Lagoon) -> Self {
         self.lagoons.push(lagoon);
         self
     }
 
-    /// The lagoon whose water covers `p`, if any.
+    /// La laguna cuya agua cubre `p`, si hay alguna.
     pub fn lagoon_at(&self, p: Vec2) -> Option<&Lagoon> {
         self.lagoons.iter().find(|l| l.is_water(p))
     }
 
-    /// This terrain with `roads` cut into it (see [`RoadNetwork::cut`]).
+    /// Este terreno con `roads` cortados en él (ver [`RoadNetwork::cut`]).
     pub fn with_roads(mut self, roads: Arc<RoadNetwork>) -> Self {
         self.roads = Some(roads);
         self
     }
 
-    /// Ground height at `(x, y)`, including any leveled area.
+    /// Altura del suelo en `(x, y)`, incluida cualquier área nivelada.
     ///
-    /// Where bands overlap, the leveled heights are averaged by weight and
-    /// eased in by the strongest weight, so the ground stays continuous
-    /// everywhere (world validation keeps town bands apart, so in practice
-    /// at most one area touches any point). Roads are cut into that ground:
-    /// a shallow bed, level across, easing back into the land beside it.
+    /// Donde las franjas se superponen, las alturas niveladas se promedian
+    /// según su peso y se aplican suavemente según el peso más fuerte, para que
+    /// el suelo siga siendo continuo en todas partes (la validación del mundo
+    /// mantiene separadas las franjas de los pueblos, así que en la práctica
+    /// como mucho un área toca cada punto). Los caminos se cortan en ese suelo:
+    /// un lecho poco profundo, nivelado de lado a lado, que vuelve suavemente
+    /// al terreno de al lado.
     pub fn height(&self, x: f32, y: f32) -> f32 {
         let ground = self.leveled_height(x, y);
         let Some(roads) = &self.roads else {
@@ -110,8 +118,8 @@ impl Terrain {
         }
     }
 
-    /// Ground height at `(x, y)` with the towns leveled and the lagoons
-    /// sunk, before roads.
+    /// Altura del suelo en `(x, y)` con los pueblos nivelados y las lagunas
+    /// hundidas, antes de los caminos.
     fn leveled_height(&self, x: f32, y: f32) -> f32 {
         let p = Vec2::new(x, y);
         let ground = self.town_height(p);
@@ -121,7 +129,7 @@ impl Terrain {
             .fold(ground, |h, l| l.shape(p, h))
     }
 
-    /// Ground height at `p` with the towns leveled.
+    /// Altura del suelo en `p` con los pueblos nivelados.
     fn town_height(&self, p: Vec2) -> f32 {
         let (x, y) = (p.x, p.y);
         let natural = self.natural_height(x, y);
@@ -145,7 +153,7 @@ impl Terrain {
         natural + (leveled - natural) * strongest
     }
 
-    /// Height of the untouched rolling pampa at `(x, y)`.
+    /// Altura de la pampa ondulada intacta en `(x, y)`.
     pub fn natural_height(&self, x: f32, y: f32) -> f32 {
         let mut sum = 0.0;
         let mut weights = 0.0;
@@ -165,11 +173,12 @@ impl Terrain {
 
 const TAU_F: f32 = std::f32::consts::TAU;
 
-/// `(wavelength in meters, relative weight)`, from broad swells to small bumps.
-/// Kept long and shallow so slopes stay gentle.
+/// `(longitud de onda en metros, peso relativo)`, desde ondulaciones amplias
+/// hasta pequeños montículos. Se mantienen largas y poco profundas para que las
+/// pendientes sigan siendo suaves.
 const OCTAVES: [(f32, f32); 3] = [(180.0, 0.6), (70.0, 0.3), (30.0, 0.1)];
 
-/// Small integer hash (lowbias32) so the seed scrambles every octave.
+/// Hash entero pequeño (lowbias32) para que la semilla mezcle cada octava.
 fn hash(mut v: u32) -> u32 {
     v ^= v >> 16;
     v = v.wrapping_mul(0x7feb_352d);
@@ -178,7 +187,7 @@ fn hash(mut v: u32) -> u32 {
     v ^ (v >> 16)
 }
 
-/// Low 8 bits of `v` mapped to `[0, 1)`.
+/// Los 8 bits bajos de `v` llevados a `[0, 1)`.
 fn unit(v: u32) -> f32 {
     (v & 0xff) as f32 / 256.0
 }
@@ -214,7 +223,7 @@ mod tests {
 
     #[test]
     fn is_gentle() {
-        // The pampa is mostly flat: no slope steeper than ~20 degrees.
+        // La pampa es casi toda plana: ninguna pendiente supera los ~20 grados.
         let t = Terrain::default();
         let step = 0.5;
         for i in -100..100 {
@@ -263,11 +272,11 @@ mod tests {
     #[test]
     fn flat_area_blends_back_into_natural_terrain() {
         let (t, area) = leveled();
-        // Beyond the falloff band the pampa is untouched.
+        // Más allá de la franja de transición la pampa está intacta.
         for (x, y) in [(120.0, -5.0), (10.0, 100.0), (-200.0, -200.0)] {
             assert_eq!(t.height(x, y), t.natural_height(x, y));
         }
-        // Weight eases monotonically from 1 to 0 across the band.
+        // El peso baja de forma monótona de 1 a 0 a lo largo de la franja.
         let mut last = 1.0;
         for i in 0..=50 {
             let w = area.weight(Vec2::new(50.0 + i as f32, -5.0));
@@ -302,7 +311,7 @@ mod tests {
         assert_eq!(t.height(-99.0, 119.0), a.height);
         assert_eq!(t.height(2500.0, -1800.0), b.height);
         assert_eq!(t.height(2579.0, -1879.0), b.height);
-        // Between them the pampa is untouched.
+        // Entre ellas la pampa está intacta.
         for (x, y) in [(1200.0, -900.0), (2500.0, -1650.0), (300.0, 0.0)] {
             assert_eq!(t.height(x, y), t.natural_height(x, y), "({x}, {y})");
         }
@@ -310,7 +319,8 @@ mod tests {
 
     #[test]
     fn overlapping_bands_blend_continuously() {
-        // Two areas at different heights whose bands overlap: no step.
+        // Dos áreas a distinta altura cuyas franjas se superponen: no hay
+        // escalón.
         let a = FlatArea {
             center: Vec2::new(-60.0, 0.0),
             half_extents: Vec2::new(30.0, 30.0),
@@ -368,8 +378,9 @@ mod tests {
             let mid = (a + b) * 0.5;
             let d = b - a;
             let left = Vec2::new(-d.y, d.x) * (1.0 / d.length());
-            // Mid-road (away from its ends), the bed is a little below the
-            // land at the centerline, and level across the road.
+            // En medio del camino (lejos de sus extremos), el lecho queda un
+            // poco por debajo del terreno en la línea central, y nivelado de
+            // lado a lado del camino.
             let center = t.height(mid.x, mid.y);
             let depth = plain.height(mid.x, mid.y) - center;
             let across = |t: &Terrain, s: f32| {
@@ -383,9 +394,10 @@ mod tests {
                 hs.iter().fold(f32::MIN, |m, h| m.max(*h))
                     - hs.iter().fold(f32::MAX, |m, h| m.min(*h))
             };
-            // Beside a level crossing the cut eases off the track bed on
-            // purpose (`RoadNetwork::cut`), so the bed is not level there.
-            // The cut is never deeper than its depth, by a crossing or not.
+            // Al lado de un paso a nivel el corte se suaviza a propósito contra
+            // el lecho de la vía (`RoadNetwork::cut`), así que ahí el lecho no
+            // está nivelado. El corte nunca es más hondo que su profundidad,
+            // haya un paso a nivel o no.
             let by_crossing = roads.crossings().any(|c| c.at.distance(mid) < 40.0);
             let cut = roads.near(mid, RoadNetwork::CUT_REACH * 3.0).is_some() && depth > 0.0;
             if cut {
@@ -396,14 +408,15 @@ mod tests {
                 flatter += usize::from(spread(&t) < spread(&plain));
                 checked += 1;
             }
-            // Continuous: no step walking across the road and its banks.
+            // Continuo: no hay escalón al cruzar caminando el camino y sus
+            // banquinas.
             let mut last = across(&t, -15.0);
             for k in 1..=600 {
                 let h = across(&t, -15.0 + k as f32 * 0.05);
                 assert!((h - last).abs() < 0.02, "step at {mid:?}");
                 last = h;
             }
-            // Past the banks the land is untouched.
+            // Pasando las banquinas el terreno está intacto.
             for s in [-RoadNetwork::CUT_REACH - 1.0, RoadNetwork::CUT_REACH + 1.0] {
                 let p = mid + left * s;
                 if roads.distance(p) > RoadNetwork::CUT_REACH {
@@ -413,7 +426,7 @@ mod tests {
         }
         assert!(checked > 100, "{checked}");
         assert!(flatter * 10 > checked * 9, "{flatter} of {checked}");
-        // Far from every road the terrain is unchanged.
+        // Lejos de todo camino el terreno no cambia.
         assert_eq!(t.height(7000.0, -7000.0), plain.height(7000.0, -7000.0));
     }
 
@@ -424,7 +437,7 @@ mod tests {
         let plain = Terrain::default();
         let reach = RoadNetwork::CUT_REACH;
         let (mut outside, mut touched) = (0, 0);
-        // Around every corner of every road, and past both ends.
+        // Alrededor de cada curva de cada camino, y más allá de ambos extremos.
         for road in &roads.roads {
             for &corner in road.path.iter().step_by(3).chain(road.path.last()) {
                 for k in 0..48 {
@@ -466,7 +479,7 @@ mod tests {
                 if crossings.iter().all(|c| c.distance(on) > 60.0) {
                     continue;
                 }
-                // The track bed: sleepers and ballast either side.
+                // El lecho de la vía: durmientes y balasto a cada lado.
                 for s in [-2.5, -1.5, -0.5, 0.0, 0.5, 1.5, 2.5] {
                     let p = on + left * s;
                     assert_eq!(t.height(p.x, p.y), plain.height(p.x, p.y), "at {p:?}");
@@ -475,8 +488,8 @@ mod tests {
             }
         }
         assert!(checked > 1000, "{checked}");
-        // The road is still cut just past the track bed and continuous
-        // walking along the road across the track.
+        // El camino sigue cortado justo después del lecho de la vía y es
+        // continuo al caminar por el camino cruzando la vía.
         for c in t.roads.clone().unwrap().crossings() {
             let mut last = t.height(c.at.x - c.road.x * 30.0, c.at.y - c.road.y * 30.0);
             for k in 1..=1200 {
