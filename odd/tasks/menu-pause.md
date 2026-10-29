@@ -116,3 +116,11 @@ Test runner: `cargo test -p game menu` while iterating, `cargo test -p game` onc
   - `playback` is a tested pure function;
   - the frame that opens the pause clears the mouse too.
   Uncommitted.
+- L15 (2026-10-29, user): "cuando vuelvo la música arranca desde donde se
+  quedo, debe losver a iniciar cada vez que se abre el menu o se pausa".
+  `play_music` now spawns a fresh `AudioPlayer` when a menu opens and
+  despawns it when the game resumes; despawning stops it, because bevy does
+  not detach the rodio Player. Moving between the menu's screens keeps the
+  same player. The `playback` pure function is gone. Test: the music starts
+  over each time a menu opens. RED was observed, and three sabotages were
+  caught: never stopped, spawned paused, respawned every frame.

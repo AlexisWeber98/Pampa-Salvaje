@@ -26,7 +26,7 @@
 //! - The cursor is free.
 //!
 //! The music (`assets/menu/menu_2.mp3`, the project's own song) loops only
-//! while a menu is open.
+//! while a menu is open, and starts from the top each time one opens.
 //!
 //! Keys:
 //! - Up/Down or W/S: choose a line.
@@ -38,7 +38,9 @@
 
 use std::path::PathBuf;
 
-use bevy::audio::{AudioPlayer, AudioSink, AudioSinkPlayback, PlaybackSettings, Volume};
+use bevy::audio::{
+    AudioPlayer, AudioSink, AudioSinkPlayback, AudioSource, PlaybackSettings, Volume,
+};
 use bevy::input::InputSystems;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::prelude::*;
@@ -226,6 +228,7 @@ impl Plugin for MenuPlugin {
         app.insert_resource(menu)
             .insert_resource(sound)
             .insert_resource(SettingsFile(self.settings.clone()))
+            .init_resource::<MenuSong>()
             .init_resource::<Typefaces>()
             .add_systems(Startup, spawn_menu)
             .add_systems(PreUpdate, read_keys.after(InputSystems).in_set(MenuKeys))
@@ -255,33 +258,26 @@ struct MenuLine(usize);
 #[derive(Component)]
 struct MenuHint;
 
-/// The menus' music.
+/// The menus' music: one player while a menu is open, despawned (which
+/// stops it) when the game resumes.
 #[derive(Component)]
 struct MenuMusic;
 
-fn spawn_menu(
-    mut commands: Commands,
-    server: Option<Res<AssetServer>>,
-    faces: Res<Typefaces>,
-    sound: Res<SoundSettings>,
-) {
+/// The menus' song, loaded once.
+#[derive(Resource, Default)]
+struct MenuSong(Handle<AudioSource>);
+
+fn spawn_menu(mut commands: Commands, server: Option<Res<AssetServer>>, faces: Res<Typefaces>) {
     let load = |path: &'static str| {
         server
             .as_ref()
             .map_or_else(Handle::default, |s| s.load(path))
     };
-    if let Some(server) = &server {
-        commands.spawn((
-            Name::new("Menu music"),
-            MenuMusic,
-            AudioPlayer::new(server.load(MUSIC)),
-            PlaybackSettings {
-                paused: true,
-                volume: Volume::Linear(sound.music_gain()),
-                ..PlaybackSettings::LOOP
-            },
-        ));
-    }
+    commands.insert_resource(MenuSong(
+        server
+            .as_ref()
+            .map_or_else(Handle::default, |s| s.load(MUSIC)),
+    ));
     let font = |face: &Handle<Font>, vh: f32| TextFont {
         font: face.into(),
         font_size: FontSize::Vh(vh),
@@ -537,42 +533,42 @@ fn grey_world(
     }
 }
 
-/// Plays the music at its volume while a menu is open and pauses it in
-/// game. The sink shows up once the song has loaded.
+/// Plays the music while a menu is open, from the song's start each time a
+/// menu opens (resuming mid-song jars, user 2026-10-29): a fresh player is
+/// spawned when the title or the pause menu opens and despawned, which stops
+/// it, when the game resumes. Moving between the menu's screens keeps it.
+/// The player's sink, once the song has loaded, follows the volumes.
 fn play_music(
+    mut commands: Commands,
     menu: Res<Menu>,
-    sound: Res<SoundSettings>,
+    (sound, song): (Res<SoundSettings>, Res<MenuSong>),
+    players: Query<Entity, With<MenuMusic>>,
     mut sinks: Query<&mut AudioSink, With<MenuMusic>>,
 ) {
-    let open = menu.screen.is_some();
     let volume = Volume::Linear(sound.music_gain());
+    match (menu.screen.is_some(), players.is_empty()) {
+        (true, true) => {
+            commands.spawn((
+                Name::new("Menu music"),
+                MenuMusic,
+                AudioPlayer::new(song.0.clone()),
+                PlaybackSettings {
+                    volume,
+                    ..PlaybackSettings::LOOP
+                },
+            ));
+        }
+        (false, false) => {
+            for player in &players {
+                commands.entity(player).despawn();
+            }
+        }
+        _ => {}
+    }
     for mut sink in &mut sinks {
         if sink.volume() != volume {
             sink.set_volume(volume);
         }
-        match playback(open, sink.is_paused()) {
-            Some(Playback::Play) => sink.play(),
-            Some(Playback::Pause) => sink.pause(),
-            None => {}
-        }
-    }
-}
-
-/// What the music's sink must do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Playback {
-    Play,
-    Pause,
-}
-
-/// Whether the music must start or stop: it plays while a menu is `open`
-/// and is silent in game; `None` when the sink (`paused` or not) already
-/// does what it should.
-fn playback(open: bool, paused: bool) -> Option<Playback> {
-    match (open, paused) {
-        (true, true) => Some(Playback::Play),
-        (false, false) => Some(Playback::Pause),
-        _ => None,
     }
 }
 
@@ -665,6 +661,7 @@ fn draw_menu(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::audio::PlaybackMode;
     use bevy::ecs::system::RunSystemOnce;
     use bevy::input::ButtonState;
     use bevy::input::InputPlugin;
@@ -927,12 +924,43 @@ mod tests {
         assert_eq!(SoundSettings::load(&path), (wanted, None));
     }
 
+    /// The menu music's players: a fresh one plays the song from its start.
+    fn music_players(app: &mut App) -> Vec<(Entity, PlaybackSettings)> {
+        let mut players = app
+            .world_mut()
+            .query_filtered::<(Entity, &PlaybackSettings), With<MenuMusic>>();
+        players.iter(app.world()).map(|(e, p)| (e, *p)).collect()
+    }
+
     #[test]
-    fn the_music_plays_only_while_a_menu_is_open() {
-        assert_eq!(playback(true, true), Some(Playback::Play));
-        assert_eq!(playback(true, false), None);
-        assert_eq!(playback(false, false), Some(Playback::Pause));
-        assert_eq!(playback(false, true), None);
+    fn the_music_starts_over_each_time_a_menu_opens() {
+        // The title plays the song from its start, looping, at its volume.
+        let mut app = app(true);
+        let title = music_players(&mut app);
+        assert_eq!(title.len(), 1);
+        let (_, settings) = title[0];
+        assert!(matches!(settings.mode, PlaybackMode::Loop));
+        assert!(!settings.paused);
+        assert_eq!(settings.volume, Volume::Linear(sound(&app).music_gain()));
+        // Silent in game.
+        press(&mut app, KeyCode::Enter);
+        assert!(music_players(&mut app).is_empty());
+        // Every pause starts the song over with a fresh player.
+        press(&mut app, KeyCode::Escape);
+        let first = music_players(&mut app);
+        assert_eq!(first.len(), 1);
+        assert_ne!(first[0].0, title[0].0);
+        // Going into Sonido and back is the same menu: the song goes on.
+        press(&mut app, KeyCode::ArrowDown);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Escape);
+        assert_eq!(music_players(&mut app)[0].0, first[0].0);
+        press(&mut app, KeyCode::Escape);
+        assert!(music_players(&mut app).is_empty());
+        press(&mut app, KeyCode::Pause);
+        let second = music_players(&mut app);
+        assert_eq!(second.len(), 1);
+        assert_ne!(second[0].0, first[0].0);
     }
 
     #[test]
