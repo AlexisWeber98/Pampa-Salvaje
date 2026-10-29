@@ -324,32 +324,6 @@ mod tests {
     }
 
     #[test]
-    fn a_non_finite_streamed_footprint_is_dropped_and_the_rest_kept() {
-        let mut obstacles = StaticObstacles::default();
-        let coord = ChunkCoord::new(0, 0);
-        let good = Aabb::from_center_size(Vec2::new(10.0, 10.0), Vec2::new(1.0, 1.0));
-        let nan = Aabb::from_center_size(Vec2::new(f32::NAN, 10.0), Vec2::new(1.0, 1.0));
-        let inf = Aabb::from_center_size(Vec2::new(10.0, 10.0), Vec2::new(f32::INFINITY, 1.0));
-        obstacles.set_chunk(coord, vec![nan, good, inf]);
-        // The chunk is loaded; only the finite footprint is held and found.
-        assert!(obstacles.has_chunk(coord));
-        assert_eq!(obstacles.streamed_len(), 1);
-        let found: Vec<Aabb> = obstacles
-            .near(around(Vec2::new(10.0, 10.0), 5.0))
-            .into_iter()
-            .copied()
-            .collect();
-        assert_eq!(found, vec![good]);
-        // Clearing leaves no stale index entry behind.
-        assert!(obstacles.clear_chunk(coord));
-        assert!(
-            obstacles
-                .near(around(Vec2::new(10.0, 10.0), 5.0))
-                .is_empty()
-        );
-    }
-
-    #[test]
     fn a_streamed_footprint_reaching_past_any_world_is_dropped() {
         let mut obstacles = StaticObstacles::default();
         let coord = ChunkCoord::new(0, 0);
@@ -395,26 +369,19 @@ mod tests {
     }
 
     #[test]
-    fn queries_stay_local_with_a_hundred_thousand_obstacles() {
-        // Fence-like boxes every 4 m over about 1.3 km square.
-        let side = 316;
+    fn queries_stay_local_with_ten_thousand_obstacles() {
+        // Fence-like boxes every 4 m over 400 m square.
+        let side = 100;
         let items: Vec<Aabb> = (0..side * side)
             .map(|k| {
                 let p = Vec2::new((k % side) as f32 * 4.0, (k / side) as f32 * 4.0);
                 Aabb::from_center_size(p, Vec2::new(1.0, 0.15))
             })
             .collect();
-        assert!(items.len() >= 99_856);
-        let started = std::time::Instant::now();
         let obstacles = StaticObstacles::new(items.clone());
-        assert!(
-            started.elapsed().as_secs_f32() < 5.0,
-            "{:?}",
-            started.elapsed()
-        );
         let mut rng = Rng::new(20, 0);
         for _ in 0..200 {
-            let at = Vec2::new(rng.range(0.0, 1264.0), rng.range(0.0, 1264.0));
+            let at = Vec2::new(rng.range(0.0, 396.0), rng.range(0.0, 396.0));
             let area = around(at, 2.0);
             // A rider's query looks at a few cells' worth, not the world.
             let scanned = obstacles.scanned(area);

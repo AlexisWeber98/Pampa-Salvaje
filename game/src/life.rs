@@ -680,8 +680,8 @@ mod tests {
         assert_eq!(crowds.0[0], small);
     }
 
-    fn shipped() -> crate::towns::LoadedWorld {
-        crate::towns::load_world(&pampa_content::asset_path(pampa_content::TOWNS_FILE))
+    fn shipped() -> &'static crate::towns::LoadedWorld {
+        crate::shipped_world::loaded()
     }
 
     /// The shipped world with its clock at `clock` and the line train
@@ -696,7 +696,7 @@ mod tests {
                 train.advance(0.0, clock.elapsed(), BASE_RATE);
             }
         }
-        let mut app = app_with(loaded.towns, 1);
+        let mut app = app_with(loaded.towns.clone(), 1);
         app.insert_resource(WorldClock(clock))
             .insert_resource(WorldTrains(trains));
         app

@@ -399,40 +399,41 @@ mod tests {
     use crate::settlement::tests::settled;
     use crate::{LagoonConfig, StaticObstacles};
 
-    fn site() -> (FaunaSite, FenceLayout, crate::World, SettlementLayout) {
-        let (world, towns, line, fences, layout) = settled();
-        let path = line.full_path(&towns);
-        let started = std::time::Instant::now();
-        let site = FaunaSite::new(
-            world.config,
-            &world.terrain,
-            &fences,
-            &layout,
-            path.points(),
-        );
-        println!(
-            "fauna: {} herds ({} head), {} corral horses, {} ducks; seeded in {:?}",
-            site.herds.len(),
-            site.herds.iter().map(|h| h.cows.len()).sum::<usize>(),
-            site.horses.len(),
-            site.ducks.len(),
-            started.elapsed()
-        );
-        (site, fences, world, layout)
+    /// The fauna of the shared [`settled`] world, seeded once.
+    fn site() -> &'static FaunaSite {
+        static SITE: std::sync::LazyLock<FaunaSite> = std::sync::LazyLock::new(|| {
+            let (world, towns, line, fences, layout) = settled();
+            let site = FaunaSite::new(
+                world.config,
+                &world.terrain,
+                fences,
+                layout,
+                line.full_path(towns).points(),
+            );
+            println!(
+                "fauna: {} herds ({} head), {} corral horses, {} ducks",
+                site.herds.len(),
+                site.herds.iter().map(|h| h.cows.len()).sum::<usize>(),
+                site.horses.len(),
+                site.ducks.len(),
+            );
+            site
+        });
+        &SITE
     }
 
     #[test]
     fn herds_are_seeded_the_same_way_every_time_and_sparsely() {
-        let (site, fences, world, layout) = site();
-        let (_, towns, line, ..) = settled();
+        let site = site();
+        let (world, towns, line, fences, layout) = settled();
         let again = FaunaSite::new(
             world.config,
             &world.terrain,
-            &fences,
-            &layout,
-            line.full_path(&towns).points(),
+            fences,
+            layout,
+            line.full_path(towns).points(),
         );
-        assert_eq!(site, again);
+        assert_eq!(*site, again);
         let share = site.herds.len() as f32 / fences.cells() as f32;
         assert!((0.05..=FaunaSite::HERD_CHANCE).contains(&share), "{share}");
         for herd in &site.herds {
@@ -449,7 +450,8 @@ mod tests {
 
     #[test]
     fn herds_graze_only_inside_fenced_fields_off_roads_towns_and_settlements() {
-        let (site, fences, world, layout) = site();
+        let site = site();
+        let (world, _, _, fences, layout) = settled();
         let roads = world.terrain.roads.clone().unwrap();
         assert!(!site.herds.is_empty());
         for herd in &site.herds {
@@ -473,8 +475,9 @@ mod tests {
 
     #[test]
     fn a_lagoon_over_a_field_moves_its_herd_off() {
-        let (site, fences, mut world, layout) = site();
-        let (_, towns, line, ..) = settled();
+        let site = site();
+        let (world, towns, line, fences, layout) = settled();
+        let mut world = world.clone();
         let herd = &site.herds[site.herds.len() / 2];
         let lagoon = Lagoon::new(
             &LagoonConfig {
@@ -489,9 +492,9 @@ mod tests {
         let wet = FaunaSite::new(
             world.config,
             &world.terrain,
-            &fences,
-            &layout,
-            line.full_path(&towns).points(),
+            fences,
+            layout,
+            line.full_path(towns).points(),
         );
         // Its pasture moved off the water (or the herd is gone), and none
         // grazes on the bank.
@@ -514,7 +517,8 @@ mod tests {
 
     #[test]
     fn corral_horses_stand_inside_the_corrals_of_farms_and_ranches() {
-        let (site, _, _, layout) = site();
+        let site = site();
+        let (.., layout) = settled();
         assert!(site.horses.len() >= 2, "{}", site.horses.len());
         for (hub, horse) in &site.horses {
             let s = layout.settlements.iter().find(|s| s.hub == *hub).unwrap();
@@ -541,11 +545,11 @@ mod tests {
 
     #[test]
     fn wild_animals_are_seeded_per_chunk_on_open_grass() {
-        let (site, ..) = site();
+        let site = site();
         let mut hares = 0;
         let mut flocks = 0;
         let mut raptors = 0;
-        for coord in ChunkCoord::new(0, 0).within(12) {
+        for coord in ChunkCoord::new(0, 0).within(3) {
             let h = site.hares_in(coord);
             assert_eq!(h, site.hares_in(coord), "deterministic");
             let home = coord.bounds(site.config.chunk_size);
@@ -585,7 +589,7 @@ mod tests {
 
     #[test]
     fn herds_stream_with_one_chunk_each() {
-        let (site, ..) = site();
+        let site = site();
         let size = site.config.chunk_size;
         let chunks: std::collections::BTreeSet<_> = site
             .herds

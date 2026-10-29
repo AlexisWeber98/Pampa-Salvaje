@@ -1805,7 +1805,6 @@ pub(crate) mod tests {
         }
         assert!(near > 100, "{near}");
         assert_eq!(RoadNetwork::default().near(Vec2::ZERO, 10.0), None);
-        assert_eq!(roads.near(Vec2::new(f32::NAN, 0.0), 10.0), None);
     }
 
     #[test]

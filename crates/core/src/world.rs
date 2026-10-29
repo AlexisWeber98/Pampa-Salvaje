@@ -800,8 +800,9 @@ mod tests {
         assert!(end.distance(Vec2::new(0.0, 6.9)) < 1e-4, "{end:?}");
     }
 
-    /// The shipped towns with their roads laid and every tree planted.
-    fn roaded_world() -> (World, crate::RoadNetwork) {
+    /// The shipped towns with their roads laid, unplanted: trees keep off
+    /// the roads (`nothing_blocks_a_rider_...` checks it).
+    fn roaded_world() -> (World, crate::RoadNetwork, RailLine) {
         let (towns, line, roads) = crate::road::tests::shipped_roads();
         let config = WorldConfig {
             half_extent: WorldConfig::MAX_HALF_EXTENT,
@@ -809,14 +810,13 @@ mod tests {
         };
         let mut world = World::with_towns(config, Terrain::default(), &towns);
         world.lay_roads(roads.clone());
-        let flora = FloraSite::new(config, &world.terrain, &line);
-        world.plant(&flora);
-        (world, roads)
+        (world, roads, line)
     }
 
     #[test]
     fn nothing_blocks_a_rider_anywhere_on_a_road_or_its_level_crossings() {
-        let (world, roads) = roaded_world();
+        let (mut world, roads, line) = roaded_world();
+        world.plant(&FloraSite::new(world.config, &world.terrain, &line));
         let c = Circle::new(crate::Rider::COLLIDER_RADIUS);
         for road in &roads.roads {
             for w in road.path.windows(2) {
@@ -832,7 +832,7 @@ mod tests {
 
     #[test]
     fn a_rider_rides_out_of_town_across_the_level_crossing_to_the_rural_track() {
-        let (world, roads) = roaded_world();
+        let (world, roads, _) = roaded_world();
         let params = crate::RiderParams::default();
         for road in roads
             .roads
@@ -891,7 +891,7 @@ mod tests {
 
     #[test]
     fn the_road_climbs_gently_onto_each_crossing_deck_and_down_again() {
-        let (world, roads) = roaded_world();
+        let (world, roads, _) = roaded_world();
         let raised = |p: Vec2| world.ground_height(p) - world.terrain.height(p.x, p.y);
         for c in roads.crossings() {
             let mut last: Option<f32> = None;
@@ -929,7 +929,7 @@ mod tests {
 
     #[test]
     fn a_rider_rides_up_onto_the_deck_and_over_the_rails() {
-        let (world, roads) = roaded_world();
+        let (world, roads, _) = roaded_world();
         let params = crate::RiderParams::default();
         for c in roads.crossings() {
             let start = c.at - c.road * 20.0;
@@ -958,7 +958,7 @@ mod tests {
 
     #[test]
     fn a_train_car_on_the_level_crossing_still_blocks_a_rider() {
-        let (mut world, roads) = roaded_world();
+        let (mut world, roads, _) = roaded_world();
         let crossing = *roads.crossings().next().expect("a level crossing");
         let across = Vec2::new(-crossing.rail.y, crossing.rail.x);
         world.moving.push(SideObstacle {

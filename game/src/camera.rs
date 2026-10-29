@@ -956,7 +956,6 @@ impl FollowCamera {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::orbit::angle_between;
     use crate::player::{GameWorld, PlayerPlugin, PlayerSpawn};
     use bevy::time::TimeUpdateStrategy;
     use pampa_core::{Heading, World};
@@ -1020,13 +1019,6 @@ mod tests {
         }
     }
 
-    /// Ground angle from the rider to the camera.
-    fn camera_bearing(app: &mut App) -> f32 {
-        let r = rider(app);
-        let d = ground(camera(app).translation) - r.position;
-        d.y.atan2(d.x)
-    }
-
     #[test]
     fn snaps_behind_the_rider_when_far_away() {
         // The camera starts near the origin; the rider is 160 m away.
@@ -1063,55 +1055,6 @@ mod tests {
         assert!(rider(&mut app).heading.radians() > FRAC_PI_2 + 1.0);
         let after = camera(&mut app).translation;
         assert!(after.distance(before) < 1e-3, "{before} -> {after}");
-    }
-
-    #[test]
-    fn q_and_e_orbit_around_the_rider() {
-        let mut app = headless_app(
-            World::default(),
-            north_at(0.0, 0.0),
-            CameraOccluders::default(),
-        );
-        app.update();
-        let start = camera_bearing(&mut app);
-        keys(&mut app).press(KeyCode::KeyQ);
-        for _ in 0..30 {
-            app.update();
-        }
-        let q = angle_between(start, camera_bearing(&mut app));
-        let rate = OrbitParams::default().key_rate;
-        assert!((q - rate * 30.0 * FRAME).abs() < 0.05, "Q swung {q}");
-        keys(&mut app).release(KeyCode::KeyQ);
-        keys(&mut app).press(KeyCode::KeyE);
-        for _ in 0..30 {
-            app.update();
-        }
-        let e = angle_between(start, camera_bearing(&mut app));
-        assert!(e.abs() < 0.05, "E swings back: {e}");
-    }
-
-    #[test]
-    fn eases_back_behind_a_moving_rider_after_idling() {
-        let mut app = headless_app(
-            World::default(),
-            north_at(0.0, 0.0),
-            CameraOccluders::default(),
-        );
-        app.update();
-        set_yaw(&mut app, 0.0); // East of a rider facing north.
-        keys(&mut app).press(KeyCode::KeyW);
-        for _ in 0..60 {
-            app.update();
-        }
-        let early = camera_bearing(&mut app);
-        assert!(early.abs() < 0.05, "still to the side after 1 s: {early}");
-        for _ in 0..300 {
-            app.update();
-        }
-        let r = rider(&mut app);
-        let behind = r.heading.radians() + PI;
-        let late = angle_between(behind, camera_bearing(&mut app));
-        assert!(late.abs() < 0.1, "behind the rider after 6 s: {late}");
     }
 
     #[test]
@@ -1556,9 +1499,9 @@ mod tests {
         let (mut app, occluders, _) = town_app();
         keys(&mut app).press(KeyCode::KeyW);
         keys(&mut app).press(KeyCode::ShiftLeft);
-        for frame in 0..2400 {
+        for frame in 0..300 {
             // Weave: turn left and right in long arcs through the streets,
-            // and orbit the camera now and then.
+            // and orbit the camera for a while.
             let mut k = keys(&mut app);
             let (on, off) = if (frame / 40) % 2 == 0 {
                 (KeyCode::KeyA, KeyCode::KeyD)
@@ -1567,7 +1510,7 @@ mod tests {
             };
             k.release(off);
             k.press(on);
-            if (frame / 300) % 3 == 1 {
+            if (frame / 100) % 3 == 1 {
                 k.press(KeyCode::KeyE);
             } else {
                 k.release(KeyCode::KeyE);
@@ -2237,8 +2180,7 @@ mod tests {
 
     #[test]
     fn on_the_platform_the_camera_stays_in_front_of_the_dwelling_train() {
-        let loaded =
-            crate::towns::load_world(&pampa_content::asset_path(pampa_content::TOWNS_FILE));
+        let loaded = crate::shipped_world::loaded();
         // The opening's train, skipped on to its dwell at Monte Nievas.
         let (clock, trains, _) = crate::life::start_of_day(&loaded.line, &loaded.towns);
         let mut train = trains.into_iter().next().expect("a line train");

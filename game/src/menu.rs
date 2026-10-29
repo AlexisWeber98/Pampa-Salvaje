@@ -809,11 +809,13 @@ mod tests {
     }
 
     #[test]
-    fn esc_on_the_title_does_nothing() {
+    fn esc_and_the_pause_key_on_the_title_do_nothing() {
         let mut app = app(true);
         press(&mut app, KeyCode::Escape);
         assert_eq!(menu(&app).screen, Some(Screen::Title));
         assert_eq!(exits(&mut app), 0);
+        press(&mut app, KeyCode::Pause);
+        assert_eq!(menu(&app).screen, Some(Screen::Title));
     }
 
     #[test]
@@ -870,13 +872,6 @@ mod tests {
         assert_eq!(menu(&app).screen, None);
         assert!(!paused(&app));
         assert_eq!(exits(&mut app), 0);
-    }
-
-    #[test]
-    fn the_pause_key_on_the_title_does_nothing() {
-        let mut app = app(true);
-        press(&mut app, KeyCode::Pause);
-        assert_eq!(menu(&app).screen, Some(Screen::Title));
     }
 
     #[test]

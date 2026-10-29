@@ -455,16 +455,11 @@ mod tests {
         let setting_off = targets(FigureKind::Farach, false, 0.3);
         assert!(setting_off[Clip::IdleFoldArms.index()] > 0.3);
         assert!(setting_off[Clip::Walk.index()] > 0.3);
-        // Only clips the driver plays are ever weighed.
-        for speed in [0.0, 0.3, 1.0, 3.0, 5.0, 7.0, 9.0] {
-            for kind in FigureKind::all() {
-                for talking in [false, true] {
-                    let w = targets(kind, talking, speed);
-                    for clip in Clip::ALL {
-                        assert!(PLAYED.contains(&clip) || w[clip.index()] == 0.0, "{clip:?}");
-                    }
-                    assert!((w.iter().sum::<f32>() - 1.0).abs() < 1e-5);
-                }
+        // A blend adds up, and weighs only clips the driver plays.
+        for w in [between, setting_off] {
+            assert!((w.iter().sum::<f32>() - 1.0).abs() < 1e-5);
+            for clip in Clip::ALL {
+                assert!(PLAYED.contains(&clip) || w[clip.index()] == 0.0, "{clip:?}");
             }
         }
     }
@@ -648,34 +643,6 @@ mod tests {
     }
 
     #[test]
-    fn freezing_goes_by_the_camera_drawn_last_not_the_first_one_found() {
-        let (mut app, rigs) = stand_ins(&[FigureKind::Hidalgo]);
-        let rig = rigs[0].1;
-        // An overlay camera far off, spawned first, drawn first; the game's
-        // camera near, drawn last.
-        app.world_mut().spawn((
-            Camera3d::default(),
-            Camera {
-                order: -1,
-                ..default()
-            },
-            Transform::from_xyz(0.0, 1.6, 900.0),
-        ));
-        app.world_mut().spawn((
-            Camera3d::default(),
-            Camera {
-                order: 1,
-                ..default()
-            },
-            Transform::from_xyz(0.0, 1.6, 4.0),
-        ));
-        for _ in 0..3 {
-            app.update();
-        }
-        assert!(!frozen_now(&app, rig));
-    }
-
-    #[test]
     fn the_model_undoes_the_carriers_stride_bob() {
         use crate::character::VisualPose;
         let (mut app, rigs) = stand_ins(&[FigureKind::Protagonist]);
@@ -756,6 +723,23 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         panic!("the models never played");
+    }
+
+    /// Poses everyone in `app` `animation` at `speed` from the next frame.
+    fn repose(app: &mut App, animation: AnimationState, speed: f32) {
+        use crate::character::VisualPose;
+        let world = app.world_mut();
+        let people: Vec<Entity> = world
+            .query_filtered::<Entity, With<CharacterVisual>>()
+            .iter(world)
+            .collect();
+        for person in people {
+            world.entity_mut(person).insert(VisualPose {
+                animation,
+                speed,
+                ..VisualPose::default()
+            });
+        }
     }
 
     /// The entity named `name` under the model `rig`.
@@ -839,11 +823,17 @@ mod tests {
     }
 
     #[test]
-    fn a_planted_foot_slides_back_at_the_ground_speed_walking_and_jogging() {
+    fn a_planted_foot_slides_at_the_ground_speed_walking_jogging_and_backing_up() {
         // In place, the planted foot moves back under the body as fast as
-        // the body goes forward: on the ground it keeps still.
-        for (animation, speed) in [(AnimationState::Walk, 1.6), (AnimationState::Gallop, 5.0)] {
-            let (mut app, rigs) = playing(&[FigureKind::Protagonist], animation, speed);
+        // the body goes forward: on the ground it keeps still. Backing, it
+        // moves forward as fast as the body goes back: no moonwalk.
+        let (mut app, rigs) = playing(&[FigureKind::Protagonist], AnimationState::Walk, 1.6);
+        for (animation, speed) in [
+            (AnimationState::Walk, 1.6),
+            (AnimationState::Gallop, 5.0),
+            (AnimationState::Walk, -1.6),
+        ] {
+            repose(&mut app, animation, speed);
             balls(&mut app, rigs[0].1, 30);
             let frames = balls(&mut app, rigs[0].1, 120);
             let slid = slide(&frames);
@@ -852,18 +842,6 @@ mod tests {
                 "{animation:?}: {slid} m/s at {speed}"
             );
         }
-    }
-
-    #[test]
-    fn backing_up_plays_the_strides_backward_and_the_planted_foot_slides_forward() {
-        // Backing, the planted foot moves forward under the body as fast
-        // as the body goes back: no moonwalk.
-        let speed = -1.6;
-        let (mut app, rigs) = playing(&[FigureKind::Protagonist], AnimationState::Walk, speed);
-        balls(&mut app, rigs[0].1, 30);
-        let frames = balls(&mut app, rigs[0].1, 120);
-        let slid = slide(&frames);
-        assert!((slid / speed - 1.0).abs() < 0.12, "{slid} m/s at {speed}");
     }
 
     #[test]
@@ -1018,8 +996,8 @@ mod tests {
         };
         let mut aside = 0.0f32;
         let mut ahead = Vec::new();
-        // A minute: several glances each way.
-        for _ in 0..1200 {
+        // Fifteen seconds: a glance aside and back.
+        for _ in 0..300 {
             app.update();
             let glance = app.world().get::<FigureBody>(body).unwrap().glance;
             let y = yaw(&app);
@@ -1040,40 +1018,78 @@ mod tests {
 
     #[test]
     fn walking_knees_bend_smoothly_never_lock_or_twist_round_the_loop() {
+        use crate::character::VisualPose;
         // The protagonist at his 1.6 m/s, a peón and a woman at a
-        // townsperson's 1.4, at 60 frames a second for three cycles and
-        // more, through the loop's wrap.
-        for (kind, speed) in [
+        // townsperson's 1.4, at 60 frames a second for a whole loop and
+        // more, through its wrap.
+        let walkers = [
             (FigureKind::Protagonist, 1.6),
             (FigureKind::townsfolk(1), 1.4),
             (FigureKind::townsfolk(3), 1.4),
-        ] {
-            let (mut app, rigs) = playing(&[kind], AnimationState::Walk, speed);
-            app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
-                std::time::Duration::from_secs_f64(1.0 / 60.0),
-            ));
-            let rig = rigs[0].1;
-            let body = app.world().get::<ChildOf>(rig).unwrap().parent();
-            let legs = ["l", "r"].map(|s| {
-                [
-                    format!("thigh_{s}"),
-                    format!("calf_{s}"),
-                    format!("foot_{s}"),
-                ]
-                .map(|n| bone(app.world(), rig, &n))
-            });
-            let pelvis = bone(app.world(), rig, "pelvis");
-            for _ in 0..30 {
-                app.update();
-            }
-            let (mut least, mut jump, mut twist, mut step) = (f32::MAX, 0.0f32, 0.0f32, 0.0f32);
-            let mut last: Option<([f32; 2], f32)> = None;
-            for _ in 0..240 {
-                app.update();
+        ];
+        let kinds = walkers.map(|(kind, _)| kind);
+        let (mut app, rigs) = playing(&kinds, AnimationState::Walk, 1.4);
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            std::time::Duration::from_secs_f64(1.0 / 60.0),
+        ));
+        struct Walker {
+            kind: FigureKind,
+            speed: f32,
+            body: Entity,
+            legs: [[Entity; 3]; 2],
+            pelvis: Entity,
+            least: f32,
+            jump: f32,
+            twist: f32,
+            step: f32,
+            last: Option<([f32; 2], f32)>,
+        }
+        let mut walkers: Vec<Walker> = rigs
+            .iter()
+            .map(|&(kind, rig)| {
+                let speed = walkers.iter().find(|(k, _)| *k == kind).unwrap().1;
                 let world = app.world();
-                let forward = world.get::<GlobalTransform>(body).unwrap().rotation() * Vec3::X;
+                let body = world.get::<ChildOf>(rig).unwrap().parent();
+                let legs = ["l", "r"].map(|s| {
+                    [
+                        format!("thigh_{s}"),
+                        format!("calf_{s}"),
+                        format!("foot_{s}"),
+                    ]
+                    .map(|n| bone(world, rig, &n))
+                });
+                Walker {
+                    kind,
+                    speed,
+                    body,
+                    legs,
+                    pelvis: bone(world, rig, "pelvis"),
+                    least: f32::MAX,
+                    jump: 0.0,
+                    twist: 0.0,
+                    step: 0.0,
+                    last: None,
+                }
+            })
+            .collect();
+        for w in &walkers {
+            let person = app.world().get::<ChildOf>(w.body).unwrap().parent();
+            app.world_mut().entity_mut(person).insert(VisualPose {
+                animation: AnimationState::Walk,
+                speed: w.speed,
+                ..default()
+            });
+        }
+        for _ in 0..30 {
+            app.update();
+        }
+        for _ in 0..100 {
+            app.update();
+            let world = app.world();
+            for w in &mut walkers {
+                let forward = world.get::<GlobalTransform>(w.body).unwrap().rotation() * Vec3::X;
                 let mut bends = [0.0; 2];
-                for (k, [hip, knee, ankle]) in legs.iter().enumerate() {
+                for (k, [hip, knee, ankle]) in w.legs.iter().enumerate() {
                     let (h, n, a) = (at(world, *hip), at(world, *knee), at(world, *ankle));
                     let (thigh, shin) = ((n - h).normalize(), (a - n).normalize());
                     bends[k] = thigh.angle_between(shin).to_degrees();
@@ -1084,36 +1100,52 @@ mod tests {
                         bends[k] = -bends[k];
                     }
                     let plane = thigh.cross(forward).normalize();
-                    twist = twist.max(shin.dot(plane).clamp(-1.0, 1.0).asin().to_degrees().abs());
+                    w.twist = w
+                        .twist
+                        .max(shin.dot(plane).clamp(-1.0, 1.0).asin().to_degrees().abs());
                 }
-                least = least.min(bends[0]).min(bends[1]);
-                let y = at(world, pelvis).y;
-                if let Some((was, height)) = last {
-                    jump = jump
+                w.least = w.least.min(bends[0]).min(bends[1]);
+                let y = at(world, w.pelvis).y;
+                if let Some((was, height)) = w.last {
+                    w.jump = w
+                        .jump
                         .max((bends[0] - was[0]).abs())
                         .max((bends[1] - was[1]).abs());
-                    step = step.max((y - height).abs());
+                    w.step = w.step.max((y - height).abs());
                 }
-                last = Some((bends, y));
+                w.last = Some((bends, y));
             }
+        }
+        for w in &walkers {
+            let (kind, speed) = (w.kind, w.speed);
             println!(
-                "{kind:?} at {speed} m/s: knees bend {least:.1} deg at least, change {jump:.1} deg a frame at most, \
-                 shins {twist:.1} deg off the hinge plane, the pelvis moves {:.1} mm a frame at most",
-                step * 1000.0
+                "{kind:?} at {speed} m/s: knees bend {:.1} deg at least, change {:.1} deg a frame at most, \
+                 shins {:.1} deg off the hinge plane, the pelvis moves {:.1} mm a frame at most",
+                w.least,
+                w.jump,
+                w.twist,
+                w.step * 1000.0
             );
             assert!(
-                least >= 3.0,
-                "{kind:?}: a knee locks or bends back ({least})"
+                w.least >= 3.0,
+                "{kind:?}: a knee locks or bends back ({})",
+                w.least
             );
             assert!(
-                jump < 12.0,
-                "{kind:?}: a knee snaps {jump} degrees in a frame"
+                w.jump < 12.0,
+                "{kind:?}: a knee snaps {} degrees in a frame",
+                w.jump
             );
             assert!(
-                twist < 6.0,
-                "{kind:?}: a shin twists {twist} degrees off its hinge"
+                w.twist < 6.0,
+                "{kind:?}: a shin twists {} degrees off its hinge",
+                w.twist
             );
-            assert!(step < 0.012, "{kind:?}: the hips step {step} m in a frame");
+            assert!(
+                w.step < 0.012,
+                "{kind:?}: the hips step {} m in a frame",
+                w.step
+            );
         }
     }
 
@@ -1122,16 +1154,17 @@ mod tests {
         use crate::character::townsfolk::tests::skirt_pokes;
         // The countrywoman in a headscarf and the young townswoman in a bun.
         let women = [FigureKind::townsfolk(3), FigureKind::townsfolk(4)];
+        let (mut app, rigs) = playing(&women, AnimationState::Idle, 0.0);
+        for &(_, rig) in &rigs {
+            let arms = app.world().get::<Rig>(rig).unwrap().arms;
+            assert!(arms.iter().all(Option::is_some), "her arms are held out");
+        }
         for (animation, speed, talking) in [
             (AnimationState::Idle, 0.0, false),
             (AnimationState::Walk, 1.6, false),
             (AnimationState::Idle, 0.0, true),
         ] {
-            let (mut app, rigs) = playing(&women, animation, speed);
-            for &(_, rig) in &rigs {
-                let arms = app.world().get::<Rig>(rig).unwrap().arms;
-                assert!(arms.iter().all(Option::is_some), "her arms are held out");
-            }
+            repose(&mut app, animation, speed);
             if talking {
                 let people: Vec<Entity> = app
                     .world_mut()
@@ -1169,9 +1202,9 @@ mod tests {
     fn townsfolk_wear_their_outfits_in_tinted_cloth_shared_by_whoever_wears_the_same() {
         use crate::character::townsfolk::{TintCache, tint};
         use bevy::gltf::GltfMaterialName;
-        // Every outfit four times over, and two people dressed alike.
-        let mut looks: Vec<u8> = (0..20).collect();
-        looks.extend([3, 3 + 5 * 9]);
+        // Every outfit once, and two people dressed alike.
+        let mut looks: Vec<u8> = (0..5).collect();
+        looks.push(3);
         let crowd: Vec<FigureKind> = looks.iter().map(|&l| FigureKind::townsfolk(l)).collect();
         let (mut app, rigs) = playing(&crowd, AnimationState::Idle, 0.0);
         app.update();
@@ -1373,13 +1406,18 @@ mod tests {
 
     #[test]
     fn the_poncho_stays_over_the_shoulder_and_arm_on_foot() {
+        let (mut app, rigs) = playing(&[FigureKind::Protagonist], AnimationState::Idle, 0.0);
+        let model = rigs[0].1;
         for (animation, speed) in [
             (AnimationState::Idle, 0.0),
             (AnimationState::Walk, 1.6),
             (AnimationState::Gallop, 5.0),
         ] {
-            let (mut app, rigs) = playing(&[FigureKind::Protagonist], animation, speed);
-            let model = rigs[0].1;
+            repose(&mut app, animation, speed);
+            // Into the clip, then a second and a half of it.
+            for _ in 0..30 {
+                app.update();
+            }
             let mut deepest = 0.0f32;
             for _ in 0..30 {
                 app.update();

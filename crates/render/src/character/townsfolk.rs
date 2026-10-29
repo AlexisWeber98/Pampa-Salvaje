@@ -329,45 +329,46 @@ pub(crate) mod tests {
     use crate::gltf::tests::root;
 
     #[test]
-    fn each_look_wears_its_own_outfit_and_every_one_is_shipped() {
-        let mut seen = std::collections::HashSet::new();
+    fn each_person_wears_one_shipped_model_and_a_look_its_outfits_whatever_its_colours() {
+        use crate::character::model::CharacterModels;
+        // The models are loaded once per folder: a townsperson of any look
+        // (0 to 255, its high part only their colours) finds the one of
+        // their outfit, never a model per look.
+        let mut models = CharacterModels::default();
+        for kind in FigureKind::all() {
+            let name = model_name(kind).unwrap();
+            let id = models.0.len() as u128 + 1;
+            models.0.entry(name).or_insert_with(|| {
+                Handle::Uuid(
+                    bevy::asset::uuid::Uuid::from_u128(id),
+                    std::marker::PhantomData,
+                )
+            });
+            let path = model_path(name);
+            assert!(crate::gltf::is_inside(&path));
+            assert!(root().0.join(&path).is_file(), "{path}");
+        }
+        assert_eq!(models.0.len(), 4 + OUTFITS.len(), "each folder once");
         for look in 0..=255u8 {
             let name = model_name(FigureKind::townsfolk(look)).unwrap();
             assert_eq!(name, OUTFITS[(look % TOWNSFOLK_LOOKS) as usize]);
-            seen.insert(name);
-        }
-        assert_eq!(seen.len(), OUTFITS.len());
-        for name in OUTFITS {
-            assert!(root().0.join(model_path(name)).is_file(), "{name}");
+            let mine = models.of(FigureKind::townsfolk(look)).expect("a model");
+            assert_eq!(Some(mine), models.0.get(name), "{look}");
         }
     }
 
-    /// The material names of each outfit's shipped glTF, loaded as the
-    /// game loads it.
+    /// The material names of each outfit's shipped glTF.
     fn material_names() -> Vec<Vec<String>> {
-        use crate::gltf::tests::unfinished_app;
-        let mut app = unfinished_app(&root());
-        app.init_asset::<bevy::mesh::skinning::SkinnedMeshInverseBindposes>();
-        app.finish();
-        app.cleanup();
-        let server = app.world().resource::<AssetServer>().clone();
-        let handles: Vec<Handle<bevy::gltf::Gltf>> =
-            OUTFITS.iter().map(|n| server.load(model_path(n))).collect();
-        for _ in 0..2000 {
-            let gltfs = app.world().resource::<Assets<bevy::gltf::Gltf>>();
-            if handles.iter().all(|h| gltfs.contains(h)) {
-                return handles
-                    .iter()
-                    .map(|h| {
-                        let gltf = gltfs.get(h).unwrap();
-                        gltf.named_materials.keys().map(|k| k.to_string()).collect()
-                    })
-                    .collect();
-            }
-            app.update();
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-        panic!("the outfits never loaded");
+        use crate::character::model::tests::shipped_model;
+        OUTFITS
+            .iter()
+            .map(|name| {
+                shipped_model(name)
+                    .materials()
+                    .filter_map(|m| m.name().map(str::to_owned))
+                    .collect()
+            })
+            .collect()
     }
 
     #[test]

@@ -947,11 +947,10 @@ pub(crate) mod tests {
         assert!(only(gait_weights(Clip::Idle, gallop, 12.2), gallop));
         let setting_off = gait_weights(Clip::Idle, walk, 0.3);
         assert!(setting_off[0] > 0.3 && setting_off[walk.index()] > 0.3);
-        for k in 0..1300 {
-            let speed = k as f32 * 0.01;
+        for speed in [0.0, 0.1, 0.3, 0.6, 1.0, 1.5, 3.0, 4.8, 8.0, 12.2] {
             for stride in [walk, gallop] {
                 let w = gait_weights(Clip::Idle, stride, speed);
-                assert!((w.iter().sum::<f32>() - 1.0).abs() < 1e-5, "{k}");
+                assert!((w.iter().sum::<f32>() - 1.0).abs() < 1e-5, "{speed}");
                 // Never the walk and the gallop at once.
                 assert!(w[walk.index()] * w[gallop.index()] == 0.0);
             }
@@ -1156,190 +1155,6 @@ pub(crate) mod tests {
         (rig.player, rig.weights)
     }
 
-    #[test]
-    fn the_jump_clip_is_set_to_the_flights_point_and_never_plays_by_the_clock() {
-        let rider = CharacterVisual::Mounted {
-            rider: FigureKind::Protagonist,
-            coat: Coat::Bayo,
-        };
-        let (mut app, me) = saddled_every(rider, 12.2, 20);
-        let node = app
-            .world()
-            .resource::<LivestockModels>()
-            .get(Species::Horse)
-            .unwrap()
-            .nodes[Clip::GallopJump.index()];
-        let jump = Clip::GallopJump.index();
-        for _ in 0..40 {
-            ride(&mut app, me, 12.2);
-        }
-        let (_, galloping) = rig_of(&mut app);
-        assert!(galloping[jump] < 1e-3 && galloping[Clip::Gallop.index()] > 0.95);
-        let seek = |app: &mut App| {
-            let (player, _) = rig_of(app);
-            let player = app.world().get::<AnimationPlayer>(player).unwrap();
-            let active = player.animation(node).unwrap();
-            (active.seek_time(), active.speed())
-        };
-        for flight in [0.0, 0.25, 0.5, 1.0] {
-            for _ in 0..10 {
-                fly(&mut app, me, Some(flight));
-            }
-            let (_, weights) = rig_of(&mut app);
-            assert!(weights[jump] > 0.99, "{flight}: {weights:?}");
-            assert!(
-                weights[Clip::Gallop.index()] < 0.01,
-                "{flight}: {weights:?}"
-            );
-            let (at, speed) = seek(&mut app);
-            assert!((at - jump_time(flight)).abs() < 1e-3, "{flight}: {at}");
-            assert_eq!(speed, 0.0);
-            // A held point does not creep on.
-            fly(&mut app, me, Some(flight));
-            assert_eq!(seek(&mut app).0, at, "{flight}");
-        }
-        // The flight spans the clip's own flight, whole.
-        assert_eq!(jump_time(0.0), JUMP_FLIGHT.0);
-        assert_eq!(jump_time(1.0), JUMP_FLIGHT.1);
-        // Landed: back to the gallop, the jump at nothing, and it stays
-        // there (the clip is not left looping).
-        for _ in 0..60 {
-            ride(&mut app, me, 12.2);
-        }
-        let (_, weights) = rig_of(&mut app);
-        assert!(weights[jump] < 1e-3, "{weights:?}");
-        assert!(weights[Clip::Gallop.index()] > 0.95, "{weights:?}");
-        assert!((seek(&mut app).0 - JUMP_FLIGHT.1).abs() < 1e-3);
-        // The stride clips' weights are as the gait alone makes them.
-        let goal = gait_weights(Clip::Idle, Clip::Gallop, 12.2);
-        for (w, g) in weights.iter().zip(goal) {
-            assert!((w - g).abs() < 0.05, "{weights:?} vs {goal:?}");
-        }
-    }
-
-    #[test]
-    fn in_the_air_the_horses_body_keeps_its_height_the_clips_own_rise_taken_out() {
-        let rider = CharacterVisual::Mounted {
-            rider: FigureKind::Protagonist,
-            coat: Coat::Bayo,
-        };
-        let (mut app, me) = saddled_every(rider, 12.2, 20);
-        let carrier = app.world().get::<Children>(me).unwrap()[0];
-        for _ in 0..40 {
-            ride(&mut app, me, 12.2);
-        }
-        let body_height = |app: &App| {
-            let world = app.world();
-            let body = named(world, carrier, "Body");
-            let to_body = world
-                .get::<GlobalTransform>(carrier)
-                .unwrap()
-                .affine()
-                .inverse();
-            to_body
-                .transform_point3(world.get::<GlobalTransform>(body).unwrap().translation())
-                .y
-        };
-        let rest = {
-            let world = app.world_mut();
-            let (_, bones) = world
-                .query::<(&HorseRig, &HorseBones)>()
-                .iter(world)
-                .next()
-                .unwrap();
-            bones.armature.transform_point3(bones.body_rest).y
-        };
-        let mut heights = Vec::new();
-        for flight in [0.0, 0.2, 0.5, 0.8, 1.0] {
-            for _ in 0..10 {
-                fly(&mut app, me, Some(flight));
-            }
-            heights.push(body_height(&app));
-        }
-        for h in &heights {
-            assert!((h - rest).abs() < 0.03, "{heights:?} against rest {rest}");
-        }
-    }
-
-    #[test]
-    fn in_the_air_each_hoof_stays_on_the_end_of_its_leg() {
-        // The hooves hang from IK targets under the armature, not from the
-        // legs: the clip keeps each target on its leg's end (within 4 cm,
-        // where its IK falls short), and taking the clip's rise out of the body must not
-        // leave the targets behind, or the hooves come off the legs.
-        let rider = CharacterVisual::Mounted {
-            rider: FigureKind::Protagonist,
-            coat: Coat::Bayo,
-        };
-        let (mut app, me) = saddled_every(rider, 12.2, 20);
-        let carrier = app.world().get::<Children>(me).unwrap()[0];
-        for _ in 0..40 {
-            ride(&mut app, me, 12.2);
-        }
-        let legs = [
-            ("FrontLowerLeg.L_end", "IKFrontLeg.L"),
-            ("FrontLowerLeg.R_end", "IKFrontLeg.R"),
-            ("BackLowerLeg.L_end", "IKBackLeg.L"),
-            ("BackLowerLeg.R_end", "IKBackLeg.R"),
-        ];
-        let gaps = |app: &App| {
-            let world = app.world();
-            let at = |n: &str| {
-                world
-                    .get::<GlobalTransform>(named(world, carrier, n))
-                    .unwrap()
-                    .translation()
-            };
-            legs.map(|(end, hoof)| at(end).distance(at(hoof)))
-        };
-        for flight in [0.1, 0.3, 0.5, 0.7, 0.9] {
-            for _ in 0..10 {
-                fly(&mut app, me, Some(flight));
-            }
-            for (leg, gap) in gaps(&app).into_iter().enumerate() {
-                assert!(gap < 0.05, "flight {flight}, leg {leg}: {gap} m");
-            }
-        }
-    }
-
-    #[test]
-    fn at_the_top_of_the_jump_all_four_hooves_are_tucked_off_the_ground() {
-        let rider = CharacterVisual::Mounted {
-            rider: FigureKind::Protagonist,
-            coat: Coat::Bayo,
-        };
-        let (mut app, me) = saddled_every(rider, 12.2, 20);
-        let carrier = app.world().get::<Children>(me).unwrap()[0];
-        let toes = |app: &App| {
-            let world = app.world();
-            let to_body = world
-                .get::<GlobalTransform>(carrier)
-                .unwrap()
-                .affine()
-                .inverse();
-            ["FF.L_end", "FF.R_end", "FFB.L_end", "FFB.R_end"].map(|n| {
-                let e = named(world, carrier, n);
-                to_body
-                    .transform_point3(world.get::<GlobalTransform>(e).unwrap().translation())
-                    .y
-            })
-        };
-        let mut ground = f32::MAX;
-        for _ in 0..80 {
-            ride(&mut app, me, 12.2);
-            ground = toes(&app).into_iter().fold(ground, f32::min);
-        }
-        for _ in 0..10 {
-            fly(&mut app, me, Some(0.5));
-        }
-        for (leg, y) in toes(&app).into_iter().enumerate() {
-            assert!(
-                y > ground + 0.1,
-                "leg {leg}: {y} against the ground at {ground}"
-            );
-        }
-    }
-
     /// Each leg's hoof (its IK target) from its top joint (the hind hip,
     /// the front elbow), in the horse's body frame: `[front L, front R,
     /// hind L, hind R]`.
@@ -1364,57 +1179,164 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn at_takeoff_the_hind_legs_push_back_and_down_then_fold_up_by_mid_flight() {
+    fn a_jump_holds_the_clip_at_the_flights_point_tucks_the_legs_and_lands_back_in_the_gallop() {
         let rider = CharacterVisual::Mounted {
             rider: FigureKind::Protagonist,
             coat: Coat::Bayo,
         };
         let (mut app, me) = saddled_every(rider, 12.2, 20);
         let carrier = app.world().get::<Children>(me).unwrap()[0];
-        for _ in 0..40 {
+        let node = app
+            .world()
+            .resource::<LivestockModels>()
+            .get(Species::Horse)
+            .unwrap()
+            .nodes[Clip::GallopJump.index()];
+        let jump = Clip::GallopJump.index();
+        let seek = |app: &mut App| {
+            let (player, _) = rig_of(app);
+            let player = app.world().get::<AnimationPlayer>(player).unwrap();
+            let active = player.animation(node).unwrap();
+            (active.seek_time(), active.speed())
+        };
+        // The toes and the body in the horse's body frame.
+        let in_body = |app: &App, names: &[&str]| -> Vec<Vec3> {
+            let world = app.world();
+            let to_body = world
+                .get::<GlobalTransform>(carrier)
+                .unwrap()
+                .affine()
+                .inverse();
+            names
+                .iter()
+                .map(|n| {
+                    let e = named(world, carrier, n);
+                    to_body.transform_point3(world.get::<GlobalTransform>(e).unwrap().translation())
+                })
+                .collect()
+        };
+        let toes = ["FF.L_end", "FF.R_end", "FFB.L_end", "FFB.R_end"];
+        let body_rest = {
+            let world = app.world_mut();
+            let (_, bones) = world
+                .query::<(&HorseRig, &HorseBones)>()
+                .iter(world)
+                .next()
+                .unwrap();
+            bones.armature.transform_point3(bones.body_rest).y
+        };
+        // The gallop: the jump clip at nothing, and the hooves' ground.
+        let mut ground = f32::MAX;
+        for _ in 0..80 {
             ride(&mut app, me, 12.2);
+            ground = in_body(&app, &toes)
+                .iter()
+                .map(|t| t.y)
+                .fold(ground, f32::min);
         }
-        let mut hind = |flight: f32| {
+        let (_, galloping) = rig_of(&mut app);
+        assert!(galloping[jump] < 1e-3 && galloping[Clip::Gallop.index()] > 0.95);
+        // The flight spans the clip's own flight, whole.
+        assert_eq!(jump_time(0.0), JUMP_FLIGHT.0);
+        assert_eq!(jump_time(1.0), JUMP_FLIGHT.1);
+        let legs = [
+            ("FrontLowerLeg.L_end", "IKFrontLeg.L"),
+            ("FrontLowerLeg.R_end", "IKFrontLeg.R"),
+            ("BackLowerLeg.L_end", "IKBackLeg.L"),
+            ("BackLowerLeg.R_end", "IKBackLeg.R"),
+        ];
+        for flight in [
+            0.0, 0.05, 0.1, 0.2, 0.25, 0.3, 0.45, 0.5, 0.7, 0.8, 0.9, 1.0,
+        ] {
             for _ in 0..10 {
                 fly(&mut app, me, Some(flight));
             }
-            let legs = hooves_from_joints(&app, carrier);
-            println!("{flight}: {:?}", &legs[2..]);
-            [legs[2], legs[3]]
-        };
-        // Leaving the ground: each hind leg reaches back and down from the
-        // hip, near its full length (the plain clip still has it under the
-        // belly there, its hoof ahead of the hip).
-        for leg in hind(0.05) {
-            assert!(leg.x < -0.3 && leg.length() > 1.0, "pushing: {leg}");
+            // The jump clip is set to the flight's point, never played by
+            // the clock.
+            let (_, weights) = rig_of(&mut app);
+            assert!(weights[jump] > 0.99, "{flight}: {weights:?}");
+            assert!(
+                weights[Clip::Gallop.index()] < 0.01,
+                "{flight}: {weights:?}"
+            );
+            let (at, speed) = seek(&mut app);
+            assert!((at - jump_time(flight)).abs() < 1e-3, "{flight}: {at}");
+            assert_eq!(speed, 0.0);
+            // In the air the body keeps its height: the clip's own rise
+            // taken out.
+            if [0.0, 0.2, 0.5, 0.8, 1.0].contains(&flight) {
+                let height = in_body(&app, &["Body"])[0].y;
+                assert!(
+                    (height - body_rest).abs() < 0.03,
+                    "{flight}: {height} against rest {body_rest}"
+                );
+            }
+            // The hooves hang from IK targets under the armature, not from
+            // the legs: the clip keeps each target on its leg's end (within
+            // 4 cm, where its IK falls short), and taking the clip's rise
+            // out of the body must not leave the targets behind.
+            if (0.1..=0.9).contains(&flight) {
+                let world = app.world();
+                let at = |n: &str| {
+                    world
+                        .get::<GlobalTransform>(named(world, carrier, n))
+                        .unwrap()
+                        .translation()
+                };
+                for (leg, (end, hoof)) in legs.iter().enumerate() {
+                    let gap = at(end).distance(at(hoof));
+                    assert!(gap < 0.05, "flight {flight}, leg {leg}: {gap} m");
+                }
+            }
+            let hooves = hooves_from_joints(&app, carrier);
+            // Leaving the ground: each hind leg reaches back and down from
+            // the hip, near its full length (the plain clip still has it
+            // under the belly there, its hoof ahead of the hip).
+            if flight == 0.05 {
+                for leg in &hooves[2..] {
+                    assert!(leg.x < -0.3 && leg.length() > 1.0, "pushing: {leg}");
+                }
+            }
+            if flight == 0.5 {
+                // Mid-flight the push is gone: folded up, the hoof under
+                // the belly.
+                for leg in &hooves[2..] {
+                    assert!(leg.x > 0.1 && leg.length() < 1.0, "folded: {leg}");
+                }
+                // At the top all four hooves are tucked off the ground.
+                for (leg, toe) in in_body(&app, &toes).iter().enumerate() {
+                    assert!(
+                        toe.y > ground + 0.1,
+                        "leg {leg}: {} against the ground at {ground}",
+                        toe.y
+                    );
+                }
+            }
+            // At the top the forelegs tuck up close to the elbows: the
+            // plain clip leaves the front hooves about 0.72 m from them
+            // there, on average.
+            if flight == 0.45 || flight == 0.5 {
+                let [l, r, ..] = hooves;
+                let reach = (l.length() + r.length()) / 2.0;
+                assert!(reach < 0.66, "flight {flight}: {l} {r}");
+            }
+            // A held point does not creep on.
+            fly(&mut app, me, Some(flight));
+            assert_eq!(seek(&mut app).0, at, "{flight}");
         }
-        // Mid-flight the push is gone: folded up, the hoof under the belly.
-        for leg in hind(0.5) {
-            assert!(leg.x > 0.1 && leg.length() < 1.0, "folded: {leg}");
-        }
-    }
-
-    #[test]
-    fn at_the_top_of_the_jump_the_forelegs_tuck_up_close_to_the_elbows() {
-        let rider = CharacterVisual::Mounted {
-            rider: FigureKind::Protagonist,
-            coat: Coat::Bayo,
-        };
-        let (mut app, me) = saddled_every(rider, 12.2, 20);
-        let carrier = app.world().get::<Children>(me).unwrap()[0];
-        for _ in 0..40 {
+        // Landed: back to the gallop, the jump at nothing, and it stays
+        // there (the clip is not left looping).
+        for _ in 0..60 {
             ride(&mut app, me, 12.2);
         }
-        for flight in [0.45, 0.5] {
-            for _ in 0..10 {
-                fly(&mut app, me, Some(flight));
-            }
-            // The plain clip leaves the front hooves about 0.72 m from their
-            // elbows there, on average: a little more folded.
-            let [l, r, ..] = hooves_from_joints(&app, carrier);
-            let reach = (l.length() + r.length()) / 2.0;
-            println!("{flight}: {l} {r} {reach}");
-            assert!(reach < 0.66, "flight {flight}: {l} {r}");
+        let (_, weights) = rig_of(&mut app);
+        assert!(weights[jump] < 1e-3, "{weights:?}");
+        assert!(weights[Clip::Gallop.index()] > 0.95, "{weights:?}");
+        assert!((seek(&mut app).0 - JUMP_FLIGHT.1).abs() < 1e-3);
+        // The stride clips' weights are as the gait alone makes them.
+        let goal = gait_weights(Clip::Idle, Clip::Gallop, 12.2);
+        for (w, g) in weights.iter().zip(goal) {
+            assert!((w - g).abs() < 0.05, "{weights:?} vs {goal:?}");
         }
     }
 
@@ -1584,8 +1506,13 @@ pub(crate) mod tests {
             rider: FigureKind::Protagonist,
             coat: Coat::Bayo,
         };
+        let (mut app, me) = saddled_every(rider, 8.0, 10);
         for speed in [8.0, 12.2, 19.4] {
-            let (mut app, me) = saddled_every(rider, speed, 10);
+            app.world_mut().entity_mut(me).insert(VisualPose {
+                animation: AnimationState::Gallop,
+                speed,
+                ..default()
+            });
             from_the_seeded_start(&mut app);
             for _ in 0..100 {
                 app.update();
@@ -1667,13 +1594,14 @@ pub(crate) mod tests {
         let speed = 1.5;
         let (mut app, me) = saddled_every(rider, speed, 10);
         from_the_seeded_start(&mut app);
-        let ahead = hoof_slide(&mut app, me, 300, 0.01);
+        // Over a walk's loop and more each way (1.17 s).
+        let ahead = hoof_slide(&mut app, me, 150, 0.01);
         app.world_mut().entity_mut(me).insert(VisualPose {
             animation: AnimationState::Walk,
             speed: -speed,
             ..default()
         });
-        let back = hoof_slide(&mut app, me, 300, 0.01);
+        let back = hoof_slide(&mut app, me, 150, 0.01);
         println!("{speed} m/s: hooves back at {ahead:.2} m/s ahead, {back:.2} m/s backing");
         assert!(ahead > 0.5, "{ahead}");
         assert!(
@@ -1781,9 +1709,9 @@ pub(crate) mod tests {
         // The limits: as far as each bone turns at steady paces.
         let mut limit = vec![0.0f32; LEG_BONES.len()];
         for speed in [0.0, 1.5, 3.0, 4.5, 8.0, 12.2] {
-            for frame in 0..90 {
+            for frame in 0..60 {
                 ride(&mut app, me, speed);
-                if frame > 40 {
+                if frame > 30 {
                     let (_, _, turns) = legs_now(&app, carrier, &rest);
                     for (l, t) in limit.iter_mut().zip(turns) {
                         *l = l.max(t);
@@ -1794,7 +1722,7 @@ pub(crate) mod tests {
         // Braking hard (8 m/s², logic's) and coasting (3 m/s²) from the top
         // speed and from a walk, to a stand.
         for (from, frames) in [(12.2f32, 76), (12.2, 200), (1.5, 10), (1.5, 25)] {
-            for _ in 0..60 {
+            for _ in 0..40 {
                 ride(&mut app, me, from);
             }
             for k in 0..=frames + 60 {

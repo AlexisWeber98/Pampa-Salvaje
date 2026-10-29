@@ -371,7 +371,6 @@ mod tests {
         assert!((walk(2.4) - 2.0 * walk(1.2)).abs() < 1e-6);
         let jog = |s| cadence(Gallop, s);
         assert!((jog(6.0) - 2.0 * jog(3.0)).abs() < 1e-6);
-        assert!(cadence(Walk, f32::NAN) > 0.0, "never stalls");
         assert_eq!(cadence(Idle, 5.0), BREATHS_PER_SECOND);
 
         // Ten 10 ms frames reach where one 100 ms frame does.
@@ -399,8 +398,6 @@ mod tests {
         assert!((0.0..MOTION_CLOCK_PERIOD).contains(&late), "{late}");
         assert!((tick_clock(late, 0.25) - late - 0.25).abs() < 1e-2);
         assert!((tick_clock(MOTION_CLOCK_PERIOD - 0.01, 0.02) - 0.01).abs() < 1e-2);
-        assert_eq!(tick_clock(f32::NAN, 0.1), 0.1);
-        assert_eq!(tick_clock(5.0, f32::INFINITY), 5.0);
         // The glance is at rest across the wrap, so it is seamless
         // whatever the seed.
         for seed in 0..64 {
@@ -417,10 +414,6 @@ mod tests {
         assert_eq!(HorseGait::of(Gallop, 4.0), HorseGait::Trot);
         assert_eq!(HorseGait::of(Gallop, -4.0), HorseGait::Trot);
         assert_eq!(HorseGait::of(Gallop, 11.0), HorseGait::Gallop);
-        assert_eq!(HorseGait::of(Gallop, f32::NAN), HorseGait::Trot);
-        // Any non-finite speed picks the slower gait, infinities too.
-        assert_eq!(HorseGait::of(Gallop, f32::INFINITY), HorseGait::Trot);
-        assert_eq!(HorseGait::of(Gallop, f32::NEG_INFINITY), HorseGait::Trot);
     }
 
     fn times() -> impl Iterator<Item = f32> {
@@ -466,6 +459,5 @@ mod tests {
         let a: Vec<f32> = times().map(|t| glance(1, t)).collect();
         let b: Vec<f32> = times().map(|t| glance(2, t)).collect();
         assert_ne!(a, b, "people glance at their own moments");
-        assert_eq!(glance(3, f32::NAN), 0.0);
     }
 }

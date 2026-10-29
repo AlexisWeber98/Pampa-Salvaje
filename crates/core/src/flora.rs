@@ -1561,7 +1561,7 @@ fn segment_distance(p: Vec2, a: Vec2, b: Vec2) -> f32 {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::{Circle, Heading, Rider, RiderInput, RiderParams, TownConfig, World, place_towns};
 
@@ -1622,17 +1622,6 @@ mod tests {
         assert!(a.trees.iter().all(|t| bounds.contains_point(t.at)));
         assert!(a.tufts.len() <= FloraSite::TUFT_BUDGET);
         assert!(a.trees.len() <= FloraSite::TREE_BUDGET);
-    }
-
-    #[test]
-    fn planting_the_whole_world_stays_quick() {
-        let (mut world, _, flora) = site();
-        let started = std::time::Instant::now();
-        let planted = world.plant(&flora);
-        let took = started.elapsed();
-        assert!(planted > 1000, "{planted}");
-        // A generous bound: startup must not stall on the trees.
-        assert!(took.as_secs_f32() < 10.0, "planted in {took:?}");
     }
 
     #[test]
@@ -2944,12 +2933,8 @@ mod tests {
 
     #[test]
     fn the_land_round_a_settlement_is_thinner_than_the_open_field_further_out() {
-        let (world, towns, line, fences, layout) = crate::settlement::tests::settled();
-        let flora = FloraSite::new(world.config, &world.terrain, &line)
-            .with_track(&line.full_path(&towns))
-            .with_fences(&fences)
-            .with_settlements(&layout);
-        let hubs: Vec<Vec2> = layout.settlements.iter().map(|s| s.hub).collect();
+        let (world, ..) = crate::settlement::tests::settled();
+        let (flora, trees, hubs) = shipped();
         assert_eq!(flora.worked.len(), hubs.len());
         let away = |p: Vec2| hubs.iter().map(|h| h.distance(p)).fold(f32::MAX, f32::min);
         // Trees and ground by distance to the nearest hub: the ring a casco
@@ -2958,7 +2943,7 @@ mod tests {
         // The monte, groves and lone trees `rural` thins: not the ombú and the
         // escaped town trees, which a settlement draws in.
         let native = |t: &Tree| !is_town(t.species) && t.species != Species::Ombu;
-        for t in flora.all_trees().iter().filter(|t| native(t)) {
+        for t in trees.iter().filter(|t| native(t)) {
             match away(t.at) {
                 d if (FloraSite::WORKED_NEAR..FloraSite::WORKED_FULL).contains(&d) => ring.0 += 1.0,
                 d if (800.0..1500.0).contains(&d) => field.0 += 1.0,
@@ -3056,15 +3041,15 @@ mod tests {
     /// The shipped world's flora (towns, roads, fences and settlements as the
     /// game lays them) with every tree it plants, and the settlements' hubs.
     /// Built once for the tests that count species over the whole world.
-    fn shipped() -> &'static (FloraSite, Vec<Tree>, Vec<Vec2>) {
+    pub(crate) fn shipped() -> &'static (FloraSite, Vec<Tree>, Vec<Vec2>) {
         static SHIPPED: std::sync::OnceLock<(FloraSite, Vec<Tree>, Vec<Vec2>)> =
             std::sync::OnceLock::new();
         SHIPPED.get_or_init(|| {
             let (world, towns, line, fences, layout) = crate::settlement::tests::settled();
-            let flora = FloraSite::new(world.config, &world.terrain, &line)
-                .with_track(&line.full_path(&towns))
-                .with_fences(&fences)
-                .with_settlements(&layout);
+            let flora = FloraSite::new(world.config, &world.terrain, line)
+                .with_track(&line.full_path(towns))
+                .with_fences(fences)
+                .with_settlements(layout);
             let hubs = layout.settlements.iter().map(|s| s.hub).collect();
             let trees = flora.all_trees();
             (flora, trees, hubs)

@@ -671,7 +671,6 @@ fn draw_panel(
 mod tests {
     use super::*;
     use crate::ride::testing::shipped_app_at;
-    use pampa_content::{TOWNS_FILE, asset_path};
     use pampa_core::{Ability, GameClock, TimeOfDay};
 
     #[test]
@@ -776,8 +775,8 @@ mod tests {
 
     #[test]
     fn goto_finds_clear_dry_ground_at_every_named_place() {
-        let loaded = crate::towns::load_world(&asset_path(TOWNS_FILE));
-        let laid = crate::lay_out(&loaded);
+        let loaded = crate::shipped_world::loaded();
+        let laid = crate::shipped_world::laid();
         let world = &laid.world;
         let collider = Circle::new(Rider::COLLIDER_RADIUS);
         let lagoon = &world.terrain.lagoons[0];
