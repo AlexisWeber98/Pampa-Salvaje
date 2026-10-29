@@ -1,11 +1,11 @@
-//! How each third-party model that fills a model slot is fitted in place:
-//! `assets/models/third-party/slots.ron`.
+//! Cómo se ajusta en su lugar cada modelo de terceros que ocupa una ranura de
+//! modelo: `assets/models/third-party/slots.ron`.
 //!
-//! A model slot is a folder `assets/models/third-party/<slot>/` (see
-//! [`pampa_core::StructureKind::SLOTS`]); a `model.glb` or `model.gltf`
-//! there replaces the procedural mesh of that structure kind. This file
-//! only says how to scale, move and turn it, and which of its nodes spins.
-//! A slot with a model and no entry is drawn as it comes.
+//! Una ranura de modelo es una carpeta `assets/models/third-party/<slot>/` (ver
+//! [`pampa_core::StructureKind::SLOTS`]); un `model.glb` o `model.gltf` allí
+//! reemplaza la mesh procedural de ese tipo de estructura. Este archivo solo
+//! indica cómo escalarlo, moverlo y girarlo, y cuál de sus nodos gira. Una
+//! ranura con modelo y sin entrada se dibuja tal como viene.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -15,35 +15,37 @@ use serde::Deserialize;
 
 use crate::ContentError;
 
-/// Where the slot fits live, relative to the assets folder.
+/// Dónde están los ajustes de las ranuras, relativo a la carpeta de assets.
 pub const SLOTS_FILE: &str = "models/third-party/slots.ron";
 
-/// The fits of the model slots, by slot name.
+/// Los ajustes de las ranuras de modelo, por nombre de ranura.
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct ModelSlots {
     pub slots: BTreeMap<String, SlotFit>,
 }
 
-/// How a slot's model sits in its structure's own space (`x` along the
-/// front, `y` up from the ground at the middle, `z` out of the front).
+/// Cómo se ubica el modelo de una ranura en el espacio propio de su estructura
+/// (`x` a lo largo del frente, `y` hacia arriba desde el suelo en el centro,
+/// `z` hacia afuera del frente).
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct SlotFit {
-    /// Uniform scale applied to the model.
+    /// Escala uniforme aplicada al modelo.
     #[serde(default = "one")]
     pub scale: f32,
-    /// Offset after scaling, in meters.
+    /// Desplazamiento después de escalar, en metros.
     #[serde(default)]
     pub offset: (f32, f32, f32),
-    /// Turn about the vertical, in degrees (counter-clockwise from above).
+    /// Giro alrededor de la vertical, en grados (antihorario visto desde
+    /// arriba).
     #[serde(default)]
     pub yaw: f32,
-    /// The node that spins, like a windpump's wheel.
+    /// El nodo que gira, como la rueda de un molino.
     #[serde(default)]
     pub rotor: Option<SlotRotor>,
 }
 
-/// A model's spinning part: its glTF node name and the axis, in the
-/// node's own space, it turns about.
+/// La parte giratoria de un modelo: el nombre de su nodo glTF y el eje, en el
+/// espacio propio del nodo, alrededor del cual gira.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct SlotRotor {
     pub node: String,
@@ -66,15 +68,15 @@ impl Default for SlotFit {
 }
 
 impl ModelSlots {
-    /// Parses and validates the RON text of a slots file.
+    /// Interpreta y valida el texto RON de un archivo de ranuras.
     pub fn parse(text: &str) -> Result<Self, ContentError> {
         let slots: Self = ron::from_str(text).map_err(ContentError::Parse)?;
         slots.validate()?;
         Ok(slots)
     }
 
-    /// Checks every slot is known, its scale positive, its numbers finite
-    /// and its rotor (if any) named with a non-zero axis.
+    /// Comprueba que cada ranura sea conocida, su escala positiva, sus números
+    /// finitos y su rotor (si lo hay) tenga nombre y un eje distinto de cero.
     pub fn validate(&self) -> Result<(), ContentError> {
         for (slot, fit) in &self.slots {
             let bad = |reason| {
@@ -108,9 +110,9 @@ impl ModelSlots {
     }
 }
 
-/// Reads the slots file at `path`. A missing file means no fits (every
-/// model as it comes); an unreadable or invalid one is an error, and the
-/// caller falls back to no fits.
+/// Lee el archivo de ranuras en `path`. Un archivo ausente significa que no hay
+/// ajustes (cada modelo tal como viene); uno ilegible o no válido es un error,
+/// y quien llama recurre a no usar ajustes.
 pub fn load_model_slots(path: &Path) -> Result<ModelSlots, ContentError> {
     if !path.exists() {
         return Ok(ModelSlots::default());
@@ -160,7 +162,8 @@ mod tests {
             ContentError::Slot { .. }
         ));
         assert!(matches!(refused("(slots: 3)"), ContentError::Parse(_)));
-        // Every field but the slot name has a default.
+        // Todos los campos salvo el nombre de la ranura tienen un valor por
+        // defecto.
         let slots = ModelSlots::parse(r#"(slots: { "well": () })"#).unwrap();
         assert_eq!(slots.slots["well"], SlotFit::default());
         let missing = Path::new("definitely/not/here/slots.ron");

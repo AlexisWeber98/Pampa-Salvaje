@@ -1,37 +1,38 @@
-//! The development cheat console. Only debug builds have it: `main`
-//! declares this module under `cfg(debug_assertions)`, so a `--release`
-//! build has none of it.
+//! La consola de trucos para desarrollo. Solo la tienen las compilaciones de
+//! depuración: `main` declara este módulo bajo `cfg(debug_assertions)`, así que
+//! una compilación `--release` no tiene nada de ella.
 //!
-//! Ctrl+Shift+F12 ([`is_toggle`]) opens it: a small panel in the HUD's
-//! style at the bottom left, with a line to type into. Enter runs the line,
-//! Esc (or the combination again) closes it. While it is open the game
-//! sees no keys at all ([`read_keys`] clears them), so typing never drives
-//! the rider, quits or orbits the camera.
+//! Ctrl+Shift+F12 ([`is_toggle`]) la abre: un pequeño panel con el estilo del
+//! HUD abajo a la izquierda, con una línea para escribir. Enter ejecuta la
+//! línea; Esc (o la combinación de nuevo) la cierra. Mientras está abierta, el
+//! juego no ve ninguna tecla ([`read_keys`] las borra), así que escribir nunca
+//! mueve al jinete, ni sale del juego, ni orbita la cámara.
 //!
-//! Commands ([`parse`]):
-//! - `goto PLACE`: pico, castex, nievas, metileo, caleufu, arocena (any
-//!   word of a town's or lagoon's name, accents optional), `lake` (the nearest lagoon), `ranch` (the
-//!   nearest estancia) or
-//!   `ranch castex` / `ranch pico` (the one nearest that town);
-//! - `goto herd`: the pasture of the nearest herd;
-//! - `goto X Y`: a point, in game meters;
-//! - `horse`: a saddled horse beside the player;
-//! - `turbo on` / `turbo off`: the player's horse gallops at up to
-//!   [`TURBO_KMH`] (and gets there fast), or back to its normal gallop;
-//! - `fauna`: how many animals of each kind live round the player;
-//! - `unlock all`: every ability ([`PlayerAbilities`]);
-//! - `models on` / `models off`: draw Hidalgo, Farach and Bairoletto as the MakeHuman models
-//!   (the default) or back as the old rigid figures
-//!   ([`CharacterModelsShown`]; only this console turns them off);
-//! - `time HH` / `time HH:MM`: move the clock on to that time;
-//! - `view fp` / `view tp`: look from the player's eyes or from the orbit
-//!   ([`ViewMode`]), like `V` off the train;
-//! - `help`: the list.
+//! Comandos ([`parse`]):
+//! - `goto PLACE`: pico, castex, nievas, metileo, caleufu, arocena (cualquier
+//!   palabra del nombre de un pueblo o de una laguna, con acentos opcionales),
+//!   `lake` (la laguna más cercana), `ranch` (la estancia más cercana) o
+//!   `ranch castex` / `ranch pico` (la más cercana a ese pueblo);
+//! - `goto herd`: el potrero de la manada más cercana;
+//! - `goto X Y`: un punto, en metros del juego;
+//! - `horse`: un caballo ensillado junto al jugador;
+//! - `turbo on` / `turbo off`: el caballo del jugador galopa a hasta
+//!   [`TURBO_KMH`] (y llega rápido a esa velocidad), o vuelve a su galope
+//!   normal;
+//! - `fauna`: cuántos animales de cada tipo viven alrededor del jugador;
+//! - `unlock all`: todas las habilidades ([`PlayerAbilities`]);
+//! - `models on` / `models off`: dibuja a Hidalgo, Farach y Bairoletto como los
+//!   modelos de MakeHuman (por defecto) o de vuelta como las viejas figuras
+//!   rígidas ([`CharacterModelsShown`]; solo esta consola los desactiva);
+//! - `time HH` / `time HH:MM`: adelanta el reloj hasta esa hora;
+//! - `view fp` / `view tp`: mira desde los ojos del jugador o desde la órbita
+//!   ([`ViewMode`]), como `V` fuera del tren;
+//! - `help`: la lista.
 //!
-//! `goto` puts the player (and the horse, when riding) on the nearest clear
-//! ground to the place ([`World::clear_spot`]) and moves the streaming focus
-//! there at once. Aboard the train it refuses: the ride owns the player
-//! until they get off.
+//! `goto` pone al jugador (y al caballo, si cabalga) en el terreno despejado
+//! más cercano al lugar ([`World::clear_spot`]) y mueve allí el foco del
+//! streaming de inmediato. A bordo del tren se niega: el viaje controla al
+//! jugador hasta que se baja.
 
 use bevy::input::ButtonState;
 use bevy::input::InputSystems;
@@ -53,16 +54,17 @@ use crate::first_person::ViewMode;
 use crate::player::{DrivePlayer, GameWorld, Player, PlayerTuning};
 use crate::ride::OnTrain;
 
-/// Most output lines kept on screen.
+/// Máximo de líneas de salida que se mantienen en pantalla.
 const LOG_LINES: usize = 6;
-/// Top gallop of the player's horse with `turbo on`, in km/h.
+/// Galope máximo del caballo del jugador con `turbo on`, en km/h.
 pub const TURBO_KMH: f32 = 70.0;
-/// How fast the horse gets there with `turbo on`, in m/s².
+/// Qué tan rápido llega el caballo a esa velocidad con `turbo on`, en m/s².
 const TURBO_ACCELERATION: f32 = 10.0;
-/// Farthest from a place the clear ground may be, in meters.
+/// Distancia máxima desde un lugar a la que puede estar el terreno despejado,
+/// en metros.
 const SEARCH: f32 = 300.0;
 
-/// What the console lists for `help`.
+/// Lo que la consola enumera con `help`.
 pub const HELP: [&str; 10] = [
     "goto lake, pico, castex, nievas, metileo, caleufu",
     "goto ranch, ranch castex, ranch pico, herd",
@@ -76,48 +78,49 @@ pub const HELP: [&str; 10] = [
     "view fp, tp: first or third person",
 ];
 
-/// Whether this frame's keys open (or close) the console: Ctrl+Shift+F12.
+/// Si las teclas de este frame abren (o cierran) la consola: Ctrl+Shift+F12.
 pub fn is_toggle(keys: &ButtonInput<KeyCode>) -> bool {
     keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight])
         && keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight])
         && keys.just_pressed(KeyCode::F12)
 }
 
-/// A console command.
+/// Un comando de la consola.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     Goto(Destination),
     Horse,
-    /// Counts the animals round the player.
+    /// Cuenta los animales alrededor del jugador.
     Fauna,
     UnlockAll,
-    /// Draw the errand's people as the MakeHuman models (or not).
+    /// Dibuja a las personas del encargo como los modelos de MakeHuman (o no).
     Models(bool),
-    /// Moves the clock on to this time of day (today or tomorrow).
+    /// Adelanta el reloj hasta esta hora del día (hoy o mañana).
     Time(TimeOfDay),
-    /// Lets the player's horse gallop at [`TURBO_KMH`] (or back to normal).
+    /// Deja que el caballo del jugador galope a [`TURBO_KMH`] (o vuelva a lo
+    /// normal).
     Turbo(bool),
-    /// Looks from the player's eyes (`true`) or from the orbit.
+    /// Mira desde los ojos del jugador (`true`) o desde la órbita.
     View(bool),
     Help,
 }
 
-/// Where `goto` goes.
+/// A dónde va `goto`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Destination {
-    /// A town or a lagoon, by a word of its name.
+    /// Un pueblo o una laguna, por una palabra de su nombre.
     Named(String),
-    /// The lagoon nearest the player.
+    /// La laguna más cercana al jugador.
     Lake,
-    /// The pasture of the herd nearest the player.
+    /// El potrero de la manada más cercana al jugador.
     Herd,
-    /// The estancia nearest the player, or the town named.
+    /// La estancia más cercana al jugador, o al pueblo nombrado.
     Ranch(Option<String>),
-    /// A point, in game meters.
+    /// Un punto, en metros del juego.
     Point(GroundVec2),
 }
 
-/// Reads a typed line; `Err` is the line to show instead.
+/// Lee una línea escrita; `Err` es la línea a mostrar en su lugar.
 pub fn parse(line: &str) -> Result<Command, String> {
     let lower = line.trim().to_lowercase();
     let words: Vec<&str> = lower.split_whitespace().collect();
@@ -156,21 +159,21 @@ pub fn parse(line: &str) -> Result<Command, String> {
     }
 }
 
-/// `HH` or `HH:MM` on a 24-hour clock.
+/// `HH` o `HH:MM` en un reloj de 24 horas.
 fn time_of_day(word: &str) -> Option<TimeOfDay> {
     let (h, m) = word.split_once(':').unwrap_or((word, "0"));
     let (h, m) = (h.parse::<u32>().ok()?, m.parse::<u32>().ok()?);
     (h < 24 && m < 60).then(|| TimeOfDay::hm(h, m))
 }
 
-/// Whether a word of `name` is `word`, ignoring case and accents
-/// (`caleufu` names Caleufú).
+/// Si una palabra de `name` es `word`, sin distinguir mayúsculas ni acentos
+/// (`caleufu` nombra a Caleufú).
 fn named(name: &str, word: &str) -> bool {
     let word = plain(word);
     plain(name).split_whitespace().any(|w| w == word)
 }
 
-/// `text` in lower case with its Spanish accents and tilde dropped.
+/// `text` en minúsculas, sin sus acentos ni su tilde del español.
 fn plain(text: &str) -> String {
     text.to_lowercase()
         .chars()
@@ -186,14 +189,15 @@ fn plain(text: &str) -> String {
         .collect()
 }
 
-/// The town with a word of its name `word`.
+/// El pueblo con una palabra de su nombre igual a `word`.
 fn town<'a>(towns: &'a [TownLayout], word: &str) -> Option<&'a TownLayout> {
     towns.iter().find(|t| named(&t.name, word))
 }
 
-/// The point `goto` aims at, before looking for clear ground: a town's
-/// arrival on its main road, a lagoon's landing at the end of its road
-/// (or its dry bank nearest `from`), an estancia's patio.
+/// El punto al que apunta `goto`, antes de buscar terreno despejado: la llegada
+/// de un pueblo por su camino principal, el desembarcadero de una laguna al
+/// final de su camino (o su ribera seca más cercana a `from`), el patio de una
+/// estancia.
 fn aim(
     destination: &Destination,
     towns: &[TownLayout],
@@ -215,8 +219,8 @@ fn aim(
     };
     match destination {
         Destination::Point(p) => Ok(*p),
-        // The herds live in the fauna, not here: `run_entered` turns this
-        // into the pasture's point first.
+        // Las manadas viven en la fauna, no aquí: `run_entered` primero
+        // convierte esto en el punto del potrero.
         Destination::Herd => Err("no herds".to_string()),
         Destination::Ranch(None) => nearest_ranch(&|p| p.distance(from)),
         Destination::Ranch(Some(word)) => {
@@ -264,7 +268,7 @@ fn aim(
     }
 }
 
-/// The player's horse tuning with `turbo` on or off.
+/// El ajuste del caballo del jugador con `turbo` activado o desactivado.
 fn turbo(on: bool) -> RiderParams {
     let normal = RiderParams::default();
     if !on {
@@ -277,7 +281,7 @@ fn turbo(on: bool) -> RiderParams {
     }
 }
 
-/// The middle of the pasture of the herd nearest `from`.
+/// El centro del potrero de la manada más cercana a `from`.
 fn nearest_herd(site: &FaunaSite, from: GroundVec2) -> Option<GroundVec2> {
     site.herds()
         .iter()
@@ -285,8 +289,9 @@ fn nearest_herd(site: &FaunaSite, from: GroundVec2) -> Option<GroundVec2> {
         .min_by(|a, b| a.distance(from).total_cmp(&b.distance(from)))
 }
 
-/// Where `goto destination` puts the player: the nearest clear, dry ground
-/// inside the world to the place, roomy enough for a horse and rider.
+/// Dónde pone al jugador `goto destination`: el terreno despejado y seco más
+/// cercano al lugar dentro del mundo, con lugar suficiente para un caballo y su
+/// jinete.
 pub fn resolve(
     destination: &Destination,
     towns: &[TownLayout],
@@ -302,13 +307,13 @@ pub fn resolve(
         .ok_or_else(|| "no clear ground there".to_string())
 }
 
-/// The console: open or not, the line being typed, what it printed.
+/// La consola: abierta o no, la línea que se está escribiendo, lo que imprimió.
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct Console {
     pub open: bool,
     pub input: String,
     pub log: Vec<String>,
-    /// Lines entered and not yet run.
+    /// Líneas ingresadas y todavía no ejecutadas.
     pub entered: Vec<String>,
 }
 
@@ -320,7 +325,7 @@ impl Console {
     }
 }
 
-/// The console's panel and its lines.
+/// El panel de la consola y sus líneas.
 #[derive(Component, Debug)]
 pub struct ConsolePanel;
 
@@ -345,10 +350,11 @@ impl Plugin for ConsolePlugin {
     }
 }
 
-/// The modifiers of the toggle ([`is_toggle`]) held down while the console
-/// is open. The console clears [`ButtonInput`] every frame, which forgets
-/// held keys until they are pressed again, so it follows them from the
-/// keyboard's own presses and releases instead.
+/// Los modificadores de la combinación ([`is_toggle`]) mantenidos presionados
+/// mientras la consola está abierta. La consola borra [`ButtonInput`] en cada
+/// frame, lo que olvida las teclas mantenidas hasta que se vuelven a presionar,
+/// así que en su lugar las sigue a partir de las propias pulsaciones y
+/// liberaciones del teclado.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct Held {
     ctrl: [bool; 2],
@@ -356,7 +362,7 @@ struct Held {
 }
 
 impl Held {
-    /// What `keys` holds down.
+    /// Lo que mantiene presionado `keys`.
     fn from_keys(keys: &ButtonInput<KeyCode>) -> Self {
         Self {
             ctrl: [KeyCode::ControlLeft, KeyCode::ControlRight].map(|k| keys.pressed(k)),
@@ -364,7 +370,8 @@ impl Held {
         }
     }
 
-    /// Follows a press or release of `key`; `false` if it is no modifier.
+    /// Sigue una pulsación o liberación de `key`; `false` si no es un
+    /// modificador.
     fn follow(&mut self, key: KeyCode, down: bool) -> bool {
         let slot = match key {
             KeyCode::ControlLeft => &mut self.ctrl[0],
@@ -382,8 +389,8 @@ impl Held {
     }
 }
 
-/// Opens and closes the console and, while open, types into it and keeps
-/// every key from the game.
+/// Abre y cierra la consola y, mientras está abierta, escribe en ella y oculta
+/// todas las teclas al juego.
 fn read_keys(
     mut keys: ResMut<ButtonInput<KeyCode>>,
     mut typed: MessageReader<KeyboardInput>,
@@ -425,7 +432,7 @@ fn read_keys(
     keys.reset_all();
 }
 
-/// What a command reads of the world.
+/// Lo que un comando lee del mundo.
 type Places<'w> = (
     Option<Res<'w, WorldTowns>>,
     Option<Res<'w, WorldSettlements>>,
@@ -433,14 +440,14 @@ type Places<'w> = (
     ResMut<'w, StreamFocus>,
 );
 
-/// What a command reads of the fauna, and the view it may switch.
+/// Lo que un comando lee de la fauna, y la vista que puede cambiar.
 type Watched<'w> = (
     Option<Res<'w, crate::fauna::Fauna>>,
     Option<Res<'w, crate::fauna::WorldFauna>>,
     Option<ResMut<'w, ViewMode>>,
 );
 
-/// Runs the lines entered, printing what each did.
+/// Ejecuta las líneas ingresadas e imprime lo que hizo cada una.
 fn run_entered(
     mut commands: Commands,
     mut console: ResMut<Console>,
@@ -458,9 +465,9 @@ fn run_entered(
     ),
     (fauna, site, mut view): Watched,
 ) {
-    // Only touched with lines to run: a change every frame would reletter
-    // the panel every frame, despawning its lines before the UI lays them
-    // out, so it would show empty.
+    // Solo se toca cuando hay líneas para ejecutar: un cambio en cada frame
+    // volvería a rotular el panel en cada frame, eliminando sus líneas antes de
+    // que la UI las disponga, así que se vería vacío.
     if console.entered.is_empty() {
         return;
     }
@@ -590,8 +597,8 @@ fn run_entered(
     }
 }
 
-/// Puts `rider` at `to`, at rest and facing the same way, on foot or on
-/// horseback as they were.
+/// Pone a `rider` en `to`, en reposo y mirando hacia el mismo lado, a pie o a
+/// caballo como estaba.
 pub fn teleport(rider: &mut Rider, transform: &mut Transform, to: GroundVec2, world: &World) {
     let heading = rider.heading;
     *rider = match rider.travel() {
@@ -601,19 +608,21 @@ pub fn teleport(rider: &mut Rider, transform: &mut Transform, to: GroundVec2, wo
     transform.translation = world_from_ground(rider.position, rider.height);
 }
 
-/// A horse standing a few meters off the rider's left (or the nearest clear
-/// ground to that), facing their way, clear of them too.
+/// Un caballo parado a unos metros a la izquierda del jinete (o en el terreno
+/// despejado más cercano a ese punto), mirando hacia su mismo lado, y también
+/// apartado de él.
 pub fn horse_beside(rider: &Rider, world: &World) -> Option<TetheredHorse> {
     let ahead = rider.heading.forward();
     let left = GroundVec2::new(-ahead.y, ahead.x);
-    // A circle round the horse's footprint, turned any way.
+    // Un círculo alrededor de la huella en planta del caballo, girado en
+    // cualquier dirección.
     let body = Circle::new(TetheredHorse::LENGTH / 2.0 + 0.2);
     let clear = body.radius + rider.collider.radius;
     let spot = world.clear_spot(body, rider.position + left * (clear + 0.5), 30.0)?;
     (spot.distance(rider.position) >= clear).then(|| TetheredHorse::standing(spot, rider.heading))
 }
 
-/// The console panel, hidden, at the bottom left.
+/// El panel de la consola, oculto, abajo a la izquierda.
 fn spawn_panel(mut commands: Commands) {
     let (border, background) = panel_colors();
     commands.spawn((
@@ -635,8 +644,8 @@ fn spawn_panel(mut commands: Commands) {
     ));
 }
 
-/// Shows the panel while the console is open and rewrites its text when it
-/// changed: the output, then the line being typed.
+/// Muestra el panel mientras la consola está abierta y reescribe su texto
+/// cuando cambió: la salida y luego la línea que se está escribiendo.
 fn draw_panel(
     mut commands: Commands,
     console: Res<Console>,
@@ -786,7 +795,8 @@ mod tests {
             move |p: GroundVec2| band.closest_point(p).distance(p)
         };
         let from = loaded.towns[0].arrival().0;
-        // Each line, how far its spot lies from where it names, and the most.
+        // Cada línea, a qué distancia queda su punto del lugar que nombra, y el
+        // máximo.
         type Distance<'a> = Box<dyn Fn(GroundVec2) -> f32 + 'a>;
         let cases: [(&str, Distance, f32); 11] = [
             ("goto lake", Box::new(|p| lagoon.offshore(p)), 40.0),
@@ -795,7 +805,7 @@ mod tests {
             ("goto castex", Box::new(near_town("Eduardo Castex")), 400.0),
             ("goto nievas", Box::new(near_town("Monte Nievas")), 400.0),
             ("goto metileo", Box::new(near_town("Metileo")), 400.0),
-            // Accents are optional: "caleufu" names Caleufú.
+            // Los acentos son opcionales: "caleufu" nombra a Caleufú.
             ("goto caleufu", Box::new(near_town("Caleufú")), 400.0),
             ("goto caleufú", Box::new(near_town("Caleufú")), 400.0),
             ("goto ranch", Box::new(|p| p.distance(from)), 8000.0),
@@ -831,7 +841,7 @@ mod tests {
             assert!(!lagoon.is_bare(to), "{line}: {to:?}");
             assert!(distance(to) <= within, "{line}: {to:?} {}", distance(to));
         }
-        // An estancia's patio, by the nearest ranch.
+        // El patio de una estancia, junto a la estancia más cercana.
         let to = resolve(
             &Destination::Ranch(Some("castex".into())),
             &loaded.towns,
@@ -846,7 +856,8 @@ mod tests {
                 .iter()
                 .any(|s| s.kind == SettlementKind::Ranch && s.hub.distance(to) < 60.0)
         );
-        // Points: off the map, pulled inside; unknown names say so.
+        // Puntos: fuera del mapa, se traen hacia adentro; los nombres
+        // desconocidos lo informan.
         let edge = world.bounds.max + GroundVec2::new(500.0, 500.0);
         let to = resolve(&Destination::Point(edge), &[], world, None, from).unwrap();
         assert_eq!(world.bounds.contain(to, collider.radius).position, to);
@@ -856,8 +867,8 @@ mod tests {
         assert!(resolve(&no_ranch, &loaded.towns, world, None, from).is_err());
     }
 
-    /// The shipped towns at midday, the player on foot on the Monte Nievas
-    /// platform, with the console.
+    /// Los pueblos incluidos al mediodía, con el jugador a pie en el andén de
+    /// Monte Nievas, con la consola.
     fn app() -> App {
         let mut app = shipped_app_at(Some(GameClock::at(TimeOfDay::hm(12, 0))));
         app.add_plugins(ConsolePlugin);
@@ -939,14 +950,15 @@ mod tests {
         let at = rider(&mut app);
         assert!(at.position.distance(pico) < 30.0, "{:?}", at.position);
         assert_eq!(at.travel(), Travel::OnFoot);
-        // The world streams around the new spot, the nearest chunk first.
+        // El mundo hace streaming alrededor del nuevo punto, el chunk más
+        // cercano primero.
         let focus = app.world().resource::<StreamFocus>().0;
         assert_eq!(focus, at.position);
         let config = app.world().resource::<GameWorld>().0.config;
         let mut chunks = pampa_render::StreamingSet::new(3, 4);
         let plan = chunks.update(&config, focus);
         assert_eq!(plan.spawn[0], config.chunk_of(at.position));
-        // On horseback the horse comes along.
+        // A caballo, el caballo viene también.
         {
             let world = app.world().resource::<GameWorld>().0.clone();
             let mut q = app.world_mut().query::<&mut Player>();
@@ -964,7 +976,7 @@ mod tests {
             transform.translation,
             world_from_ground(at.position, at.height)
         );
-        // Unknown places stay put and say so.
+        // Los lugares desconocidos no mueven al jugador y lo informan.
         enter(&mut app, "goto rosario");
         assert_eq!(rider(&mut app).position, at.position);
         assert!(last_line(&app).contains("rosario"));
@@ -979,7 +991,7 @@ mod tests {
         assert_eq!(clock.time_of_day().hour_minute(), (21, 30));
         assert_eq!(clock.day(), before, "later the same day");
         assert_eq!(last_line(&app), "it is 21:30");
-        // An earlier hour is tomorrow's: the clock never runs back.
+        // Una hora anterior es la de mañana: el reloj nunca retrocede.
         enter(&mut app, "time 6");
         let clock = app.world().resource::<WorldClock>().0;
         assert_eq!((clock.day(), clock.hour() as u32), (before + 1, 6));
@@ -1001,7 +1013,7 @@ mod tests {
     #[test]
     fn horse_stands_a_horse_beside_the_player_mountable_once_riding_is_unlocked() {
         let mut app = app();
-        // Out on the open pampa.
+        // En plena pampa.
         enter(&mut app, "goto 100 -200");
         enter(&mut app, "horse");
         let me = rider(&mut app);
@@ -1021,10 +1033,10 @@ mod tests {
                 .obstacles
                 .contains(&horse.footprint)
         );
-        // Not his to ride yet: F does nothing.
+        // Todavía no le corresponde montarlo: F no hace nada.
         crate::ride::testing::press(&mut app, crate::errand::INTERACT_KEY);
         assert_eq!(rider(&mut app).travel(), Travel::OnFoot);
-        // Every ability unlocked: now it lets him on.
+        // Todas las habilidades desbloqueadas: ahora lo deja subir.
         enter(&mut app, "unlock all");
         let abilities = app.world().resource::<PlayerAbilities>().0;
         assert!(Ability::ALL.iter().all(|&a| abilities.has(a)));
@@ -1034,13 +1046,13 @@ mod tests {
         assert_eq!(me.position, horse.position);
     }
 
-    /// One key pressed and released, as the window sends it.
+    /// Una tecla presionada y soltada, tal como la envía la ventana.
     fn key(app: &mut App, code: KeyCode, text: Option<&str>) {
         send(app, code, text, ButtonState::Pressed);
         send(app, code, text, ButtonState::Released);
     }
 
-    /// One key going down or up, as the window sends it.
+    /// Una tecla que baja o sube, tal como la envía la ventana.
     fn send(app: &mut App, code: KeyCode, text: Option<&str>, state: ButtonState) {
         use bevy::input::keyboard::Key;
         let logical_key = text.map_or(
@@ -1059,8 +1071,9 @@ mod tests {
         });
     }
 
-    /// The lines the panel shows, top to bottom, as their text, and whether
-    /// the panel is shown. Every line is ink text in the body typeface.
+    /// Las líneas que muestra el panel, de arriba abajo, como su texto, y si el
+    /// panel está visible. Cada línea es texto en tinta con la tipografía del
+    /// cuerpo.
     fn panel_lines(app: &mut App) -> (bool, Vec<String>) {
         let mut panels = app
             .world_mut()
@@ -1094,7 +1107,7 @@ mod tests {
         app.update();
         let (shown, lines) = panel_lines(&mut app);
         assert!(shown, "the panel opens");
-        // The prompt alone.
+        // Solo el prompt.
         assert_eq!(lines, [": -"]);
         for (code, text) in [
             (KeyCode::KeyH, "h"),
@@ -1110,14 +1123,15 @@ mod tests {
         app.update();
         app.update();
         let (_, lines) = panel_lines(&mut app);
-        // The last LOG_LINES lines of the log, then the empty prompt.
+        // Las últimas LOG_LINES líneas del log, y luego el prompt vacío.
         let log = app.world().resource::<Console>().log.clone();
         assert_eq!(log.len(), LOG_LINES);
         assert_eq!(log.last().map(String::as_str), HELP.last().copied());
         let expected: Vec<&str> = log.iter().map(String::as_str).chain([": -"]).collect();
         assert_eq!(lines, expected);
-        // Idle, the lines stay put: rewritten every frame, they would be
-        // despawned before the UI ever laid them out, and never show.
+        // En reposo, las líneas no cambian: reescritas en cada frame, se
+        // eliminarían antes de que la UI llegue a disponerlas, y nunca se
+        // verían.
         let children = |app: &mut App| -> Vec<Entity> {
             let mut q = app
                 .world_mut()
@@ -1141,8 +1155,8 @@ mod tests {
         }
         app.update();
         assert!(app.world().resource::<Console>().open);
-        // Let go of everything, then Ctrl, Shift and F12 down a frame
-        // apart, as a hand presses them.
+        // Soltar todo, y luego bajar Ctrl, Shift y F12 con un frame de
+        // diferencia, como los presiona una mano.
         for code in [KeyCode::F12, KeyCode::ShiftLeft, KeyCode::ControlLeft] {
             send(&mut app, code, None, ButtonState::Released);
         }
@@ -1156,7 +1170,7 @@ mod tests {
         app.update();
         assert!(!app.world().resource::<Console>().open, "closed");
         assert!(!panel_lines(&mut app).0, "the panel hides with it");
-        // F12 alone, after letting go of Shift, does not close it.
+        // F12 sola, después de soltar Shift, no la cierra.
         let mut app = self::app();
         {
             let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
@@ -1176,7 +1190,7 @@ mod tests {
     #[test]
     fn ctrl_shift_f12_opens_it_to_type_and_keeps_keys_from_the_game() {
         let mut app = app();
-        // Without the combination, typing does nothing.
+        // Sin la combinación, escribir no hace nada.
         key(&mut app, KeyCode::KeyH, Some("h"));
         app.update();
         assert_eq!(*app.world().resource::<Console>(), Console::default());
@@ -1188,7 +1202,8 @@ mod tests {
         }
         app.update();
         assert!(app.world().resource::<Console>().open);
-        // While open, a held W reaches no one: the rider stays put.
+        // Mientras está abierta, una W mantenida no llega a nadie: el jinete no
+        // se mueve.
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(KeyCode::KeyW);
@@ -1201,7 +1216,7 @@ mod tests {
             );
         }
         assert_eq!(rider(&mut app).speed, 0.0);
-        // Typed, corrected, entered and run.
+        // Escrita, corregida, ingresada y ejecutada.
         for (code, text) in [
             (KeyCode::KeyH, "h"),
             (KeyCode::KeyE, "e"),
@@ -1219,7 +1234,7 @@ mod tests {
         let console = app.world().resource::<Console>();
         assert_eq!(console.input, "");
         assert_eq!(console.log.last().map(String::as_str), HELP.last().copied());
-        // Esc closes it, and does not reach the game (which would quit).
+        // Esc la cierra, y no llega al juego (que saldría).
         key(&mut app, KeyCode::Escape, None);
         app.update();
         assert!(!app.world().resource::<Console>().open);
@@ -1234,7 +1249,7 @@ mod tests {
         });
         app.update();
         app.world_mut().resource_mut::<Console>().open = true;
-        // The window's Esc, both as the key held and as the key typed.
+        // El Esc de la ventana, tanto como tecla mantenida como tecla escrita.
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(KeyCode::Escape);

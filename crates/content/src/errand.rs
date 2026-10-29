@@ -1,6 +1,6 @@
-//! The errand's lines: what Don Hidalgo and comisario Farach say, and what
-//! the player says at a horse that is not theirs yet. Read from
-//! `assets/dialogue/errand.ron`, validated like the bump lines.
+//! Las líneas del encargo: lo que dicen Don Hidalgo y el comisario Farach, y lo
+//! que dice el jugador ante un caballo que todavía no es suyo. Se leen de
+//! `assets/dialogue/errand.ron` y se validan como las líneas de los choques.
 
 use std::path::Path;
 
@@ -8,30 +8,31 @@ use serde::Deserialize;
 
 use crate::{ContentError, check_pools, unsupported_in};
 
-/// Where the errand lines live, relative to the assets folder.
+/// Dónde están las líneas del encargo, relativo a la carpeta de assets.
 pub const ERRAND_FILE: &str = "dialogue/errand.ron";
 
-/// What is said during the errand, each a short sequence of lines shown one
-/// after the other.
+/// Lo que se dice durante el encargo; cada una es una breve secuencia de líneas
+/// que se muestran una tras otra.
 ///
-/// Unknown fields in the file are ignored, like in the bumps file.
+/// Los campos desconocidos del archivo se ignoran, como en el archivo de
+/// choques.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ErrandLines {
-    /// Don Hidalgo, in the plaza: sends the player to Farach and lends the
-    /// horse.
+    /// Don Hidalgo, en la plaza: manda al jugador a ver a Farach y le presta el
+    /// caballo.
     pub hidalgo: Vec<String>,
-    /// The player, at Don Hidalgo's horse before talking to him.
+    /// El jugador, junto al caballo de Don Hidalgo antes de hablar con él.
     pub not_your_horse: Vec<String>,
-    /// Comisario Farach, when the player reports.
+    /// El comisario Farach, cuando el jugador se presenta.
     pub farach: Vec<String>,
-    /// The town whose comisario the errand sends the player to, by name
-    /// (the nearest other town with a police station when no such town
-    /// has one). Defaults to [`DEFAULT_POLICE_TOWN`].
+    /// El pueblo a cuyo comisario el encargo envía al jugador, por nombre (el
+    /// otro pueblo más cercano con comisaría cuando ese pueblo no tiene una).
+    /// Por defecto, [`DEFAULT_POLICE_TOWN`].
     #[serde(default = "default_police_town")]
     pub police_town: String,
 }
 
-/// The errand's police town when the file does not name one.
+/// El pueblo de la comisaría del encargo cuando el archivo no nombra uno.
 pub const DEFAULT_POLICE_TOWN: &str = "Eduardo Castex";
 
 fn default_police_town() -> String {
@@ -39,14 +40,14 @@ fn default_police_town() -> String {
 }
 
 impl ErrandLines {
-    /// Parses and validates the RON text of an errand file.
+    /// Interpreta y valida el texto RON de un archivo de encargo.
     pub fn parse(text: &str) -> Result<Self, ContentError> {
         let lines: Self = ron::from_str(text).map_err(ContentError::Parse)?;
         lines.validate()?;
         Ok(lines)
     }
 
-    /// Reads, parses and validates the errand file at `path`.
+    /// Lee, interpreta y valida el archivo de encargo en `path`.
     pub fn load(path: &Path) -> Result<Self, ContentError> {
         let text = std::fs::read_to_string(path).map_err(|source| ContentError::Io {
             path: path.to_path_buf(),
@@ -55,8 +56,8 @@ impl ErrandLines {
         Self::parse(&text)
     }
 
-    /// The lines compiled into the game, used when the file is missing or
-    /// invalid.
+    /// Las líneas compiladas en el juego, que se usan cuando el archivo falta o
+    /// no es válido.
     pub fn builtin() -> Self {
         let own = |lines: &[&str]| lines.iter().map(|l| l.to_string()).collect();
         Self {
@@ -72,19 +73,20 @@ impl ErrandLines {
         }
     }
 
-    /// Checks every sequence has lines, and every line (and the police
-    /// town's name) is non-blank and at most [`crate::MAX_LINE_CHARS`] long.
+    /// Comprueba que cada secuencia tenga líneas, y que cada línea (y el nombre
+    /// del pueblo de la comisaría) no esté en blanco y tenga como máximo
+    /// [`crate::MAX_LINE_CHARS`] caracteres.
     pub fn validate(&self) -> Result<(), ContentError> {
         check_pools(&self.pools())
     }
 
-    /// Every distinct character in any line that `supported` rejects, in
-    /// order of first appearance.
+    /// Cada carácter distinto de cualquier línea que `supported` rechaza, en
+    /// orden de primera aparición.
     pub fn unsupported_chars(&self, supported: impl Fn(char) -> bool) -> Vec<char> {
         unsupported_in(&self.pools(), supported)
     }
 
-    /// Every sequence with the name it has in the file.
+    /// Cada secuencia con el nombre que tiene en el archivo.
     fn pools(&self) -> [(&'static str, &[String]); 4] {
         [
             ("hidalgo", &self.hidalgo),
@@ -95,9 +97,9 @@ impl ErrandLines {
     }
 }
 
-/// Loads the errand file at `path`, falling back to
-/// [`ErrandLines::builtin`]. The error, if any, is returned so the caller
-/// can log it.
+/// Carga el archivo de encargo en `path` y recurre a [`ErrandLines::builtin`]
+/// si falla. El error, si lo hay, se devuelve para que quien llama pueda
+/// registrarlo.
 pub fn load_errand_or_builtin(path: &Path) -> (ErrandLines, Option<ContentError>) {
     match ErrandLines::load(path) {
         Ok(lines) => (lines, None),
@@ -137,8 +139,9 @@ mod tests {
                 assert!(!line.contains(banned), "{line}");
             }
         }
-        // The story: no police in Monte Nievas, report to Farach at the
-        // Castex comisaría, on Don Hidalgo's horse from the general store.
+        // La historia: no hay policía en Monte Nievas; hay que presentarse ante
+        // Farach en la comisaría de Castex, en el caballo de Don Hidalgo, del
+        // almacén de ramos generales.
         let hidalgo = lines.hidalgo.join(" ");
         for needed in ["comisaría", "Castex", "Farach", "caballo", "almacén"] {
             assert!(hidalgo.contains(needed), "Hidalgo never says {needed}");
@@ -220,7 +223,8 @@ mod tests {
             ErrandLines::parse(r#"(hidalgo: ["ab#"], not_your_horse: ["a"], farach: ["~b#"])"#)
                 .unwrap();
         assert_eq!(
-            // The default police town's name has a space.
+            // El nombre del pueblo de la comisaría por defecto tiene un
+            // espacio.
             lines.unsupported_chars(|c| c.is_ascii_alphabetic() || c == ' '),
             ['#', '~']
         );

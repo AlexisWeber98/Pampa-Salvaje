@@ -1,9 +1,9 @@
-// The first errand: Don Hidalgo, in the Monte Nievas plaza, sends the
-// player to comisario Elías Farach at the Castex comisaría.
-// See README.md in this folder for the rules (characters, length).
+// El primer encargo: Don Hidalgo, en la plaza de Monte Nievas, manda al jugador
+// a ver al comisario Elías Farach en la comisaría de Castex. Ver README.md en
+// esta carpeta para las reglas (caracteres, longitud).
 (
-    // Don Hidalgo, when the player talks to him in the plaza. One line
-    // after the other, a few seconds each.
+    // Don Hidalgo, cuando el jugador le habla en la plaza. Una línea tras otra,
+    // unos segundos cada una.
     hidalgo: [
         "¡Buenas! Usted es el que llegó en tren.",
         "Acá en Monte Nievas no hay comisaría.",
@@ -12,19 +12,19 @@
         "Llévese mi caballo, el del almacén.",
         "Castex queda al oeste, siguiendo la vía.",
     ],
-    // The player, at Don Hidalgo's horse before talking to him.
+    // El jugador, junto al caballo de Don Hidalgo antes de hablar con él.
     not_your_horse: [
         "Este caballo no es mío.",
     ],
-    // Comisario Farach, when the player reports at his door.
+    // El comisario Farach, cuando el jugador se presenta a su puerta.
     farach: [
         "¡Buenas! ¿Lo manda Don Hidalgo?",
         "Soy Elías Farach, el comisario.",
         "Bienvenido a Castex, paisano.",
         "Quédese cerca, que trabajo no falta.",
     ],
-    // The town whose comisaría the errand sends the player to, by its name
-    // in world/towns.ron (the HUD objective names it too). Without it, or
-    // when that town has no police station, the nearest other town with one.
+    // El pueblo a cuya comisaría el encargo envía al jugador, por su nombre en
+    // world/towns.ron (el objetivo del HUD también lo nombra). Sin él, o cuando
+    // ese pueblo no tiene comisaría, el otro pueblo más cercano que tenga una.
     police_town: "Eduardo Castex",
 )

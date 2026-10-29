@@ -1,17 +1,17 @@
-//! The timetable board at each station: stand near the painted board on the
-//! station wall, facing it, and F opens a panel with every train that stops
-//! there ([`pampa_core::station_board`]); F again, or walking away, closes
-//! it.
+//! El tablero de horarios de cada estación: parado cerca del tablero pintado en
+//! la pared de la estación, mirándolo, F abre un panel con cada tren que para
+//! allí ([`pampa_core::station_board`]); F de nuevo, o alejarse, lo cierra.
 //!
-//! F is the one context key ([`INTERACT_KEY`]), shared with the errand, the
-//! horse and the train. The board goes by what is faced: it takes F when the
-//! player stands in reach looking at it, ahead of boarding or waiting for a
-//! train on the platform (the player looks at the wall, not the train), but
-//! not when the errand's person or a horse is in reach, which keep F. The
-//! board system runs first and eats the press when it acts.
+//! F es la única tecla de contexto ([`INTERACT_KEY`]), compartida con el
+//! encargo, el caballo y el tren. El tablero se rige por lo que se mira: toma
+//! la F cuando el jugador está al alcance mirándolo, por delante de subir o de
+//! esperar un tren en el andén (el jugador mira la pared, no el tren), pero no
+//! cuando la persona del encargo o un caballo están al alcance, que conservan
+//! la F. El sistema del tablero se ejecuta primero y consume la pulsación
+//! cuando actúa.
 //!
-//! The panel and the "F: horarios" prompt are lettered as UI text in IM
-//! Fell English on its paper panels ([`pampa_render::hud`]).
+//! El panel y el aviso "F: horarios" se rotulan como texto de UI en IM Fell
+//! English sobre sus paneles de papel ([`pampa_render::hud`]).
 
 use bevy::prelude::*;
 use pampa_core::places::side_normal;
@@ -27,22 +27,22 @@ use crate::errand::{ErrandRun, INTERACT_KEY, LooseHorse, Mountable};
 use crate::player::Player;
 use crate::ride::OnTrain;
 
-/// How near the board the player must stand to read it, in meters.
+/// Qué tan cerca del tablero debe estar el jugador para leerlo, en metros.
 pub const BOARD_RANGE: f32 = 3.5;
-/// How far off the panel stays open, in meters.
+/// Hasta qué distancia el panel sigue abierto, en metros.
 pub const KEEP_RANGE: f32 = 5.5;
-/// How squarely the player must face the board: the cosine of the widest
-/// angle between where they look and the board (about 50 degrees).
+/// Qué tan de frente debe mirar el jugador el tablero: el coseno del ángulo más
+/// amplio entre hacia donde mira y el tablero (unos 50 grados).
 pub const FACING: f32 = 0.64;
 
-/// The boards the player stands at, and the panel.
+/// Los tableros junto a los que está el jugador, y el panel.
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct Timetables {
-    /// The town whose board is in reach and faced, if any.
+    /// El pueblo cuyo tablero está al alcance y de frente, si lo hay.
     pub near: Option<usize>,
-    /// The town whose panel is open, if any.
+    /// El pueblo cuyo panel está abierto, si lo hay.
     pub open: Option<usize>,
-    /// The panel's lines as drawn (empty while closed).
+    /// Las líneas del panel tal como se dibujan (vacías mientras está cerrado).
     pub lines: Vec<String>,
 }
 
@@ -64,8 +64,8 @@ impl Plugin for TimetablePlugin {
     }
 }
 
-/// The town of the board the person at `at` facing `heading` reads, if any:
-/// within [`BOARD_RANGE`] of it, on the side it faces, looking at it.
+/// El pueblo del tablero que lee la persona en `at` mirando hacia `heading`, si
+/// lo hay: dentro de [`BOARD_RANGE`] de él, del lado al que da, y mirándolo.
 pub fn board_in_reach(
     towns: &[TownLayout],
     at: GroundVec2,
@@ -75,7 +75,8 @@ pub fn board_in_reach(
         .iter()
         .enumerate()
         .filter_map(|(i, town)| {
-            // The nearest of the station's three boards the person reads.
+            // El más cercano de los tres tableros de la estación que lee la
+            // persona.
             town.timetable_boards()
                 .into_iter()
                 .filter_map(|sign| {
@@ -92,12 +93,12 @@ pub fn board_in_reach(
         .map(|(i, _)| i)
 }
 
-/// Whether the errand has somebody or something to do at `at` on F.
+/// Si el encargo tiene a alguien o algo con qué actuar en `at` al pulsar F.
 fn errand_wants_f(errand: &Errand, at: GroundVec2) -> bool {
     errand.clone().interact(at) != Interaction::Nothing
 }
 
-/// One row of the board as the panel letters it, in Spanish.
+/// Una fila del tablero tal como la rotula el panel, en español.
 pub fn row_text(row: &BoardRow) -> String {
     let service = match row.service {
         Service::Line => "Tren",
@@ -116,8 +117,8 @@ pub fn row_text(row: &BoardRow) -> String {
     format!("{} {service} {bound}  {stops}", row.at())
 }
 
-/// The panel's lines for the station of `town`: its title, then a row per
-/// stop of every train, earliest first.
+/// Las líneas del panel para la estación de `town`: su título, y luego una fila
+/// por parada de cada tren, la más temprana primero.
 pub fn panel_lines(
     trains: &[pampa_core::LineTrain],
     towns: &[TownLayout],
@@ -133,7 +134,7 @@ pub fn panel_lines(
     lines
 }
 
-/// Works out the board in reach, and opens or closes the panel on F.
+/// Determina el tablero al alcance, y abre o cierra el panel con F.
 #[allow(clippy::too_many_arguments)]
 fn read_board(
     keys: Option<ResMut<ButtonInput<KeyCode>>>,
@@ -162,7 +163,7 @@ fn read_board(
         near,
         ..state.clone()
     });
-    // Walking away, or onto a horse or a train, closes the panel.
+    // Alejarse, o subir a un caballo o a un tren, cierra el panel.
     if let Some(open) = state.open {
         let away = towns
             .0
@@ -198,7 +199,8 @@ fn read_board(
     let Some(town) = near else {
         return;
     };
-    // F is for the errand, or a horse, when either is in reach.
+    // La F es para el encargo, o para un caballo, cuando alguno está al
+    // alcance.
     let at = rider.position;
     let horse_in_reach = loose
         .and_then(|l| l.0)
@@ -217,9 +219,10 @@ fn read_board(
     }
 }
 
-/// The prompt and the panel, hidden, in the HUD's panel style: the prompt
-/// at the bottom middle, the panel in the middle of the screen. Each is a
-/// full-width wrapper (shown or hidden) around one framed column of lines.
+/// El aviso y el panel, ocultos, con el estilo de panel del HUD: el aviso abajo
+/// en el centro, el panel en el medio de la pantalla. Cada uno es un contenedor
+/// de ancho completo (visible u oculto) alrededor de una columna enmarcada de
+/// líneas.
 fn spawn_ui(mut commands: Commands) {
     for panel in [false, true] {
         let mut root = Node {
@@ -260,7 +263,7 @@ fn spawn_ui(mut commands: Commands) {
     }
 }
 
-/// The prompt's and the panel's wrapper nodes.
+/// Los nodos contenedores del aviso y del panel.
 type Roots<'w, 's> = Query<
     'w,
     's,
@@ -268,8 +271,8 @@ type Roots<'w, 's> = Query<
     Or<(With<BoardPanel>, With<BoardPrompt>)>,
 >;
 
-/// Shows the prompt while a board is in reach and the panel is shut, and
-/// the panel while it is open, rewriting their text when it changes.
+/// Muestra el aviso mientras hay un tablero al alcance y el panel está cerrado,
+/// y el panel mientras está abierto, reescribiendo su texto cuando cambia.
 fn draw_ui(
     mut commands: Commands,
     state: Res<Timetables>,
@@ -300,7 +303,7 @@ fn draw_ui(
             commands.entity(frame).with_child((
                 Text::new(line),
                 ink_font(&faces.body, LINE_PX),
-                // An empty line still keeps its height.
+                // Una línea vacía conserva igual su altura.
                 Node {
                     min_height: Val::Px(LINE_PX),
                     ..default()
@@ -317,8 +320,8 @@ mod tests {
     use pampa_core::{GameClock, Heading, Npc, TetheredHorse, TimeOfDay};
     use pampa_render::lettering::{self, Face};
 
-    /// The shipped towns at midday, the player on foot on the first town's
-    /// platform.
+    /// Los pueblos incluidos al mediodía, con el jugador a pie en el andén del
+    /// primer pueblo.
     fn app() -> App {
         let mut app = shipped_app_at(Some(GameClock::at(TimeOfDay::hm(12, 0))));
         app.update();
@@ -330,14 +333,14 @@ mod tests {
         towns.iter().position(|t| t.name == name).expect(name)
     }
 
-    /// Puts the player `meters` out from the middle of `town`'s board,
-    /// looking at it (`toward`) or the other way.
+    /// Pone al jugador a `meters` del centro del tablero de `town`, mirándolo
+    /// (`toward`) o hacia el otro lado.
     fn stand_at_board(app: &mut App, town: usize, meters: f32, toward: bool) {
         stand_at_nth_board(app, town, 0, meters, toward);
     }
 
-    /// [`stand_at_board`] for the station's `n`th board (0 on the track
-    /// side, 1 and 2 on the street front).
+    /// [`stand_at_board`] para el tablero número `n` de la estación (0 del lado
+    /// de la vía, 1 y 2 en el frente de la calle).
     fn stand_at_nth_board(app: &mut App, town: usize, n: usize, meters: f32, toward: bool) {
         let sign = app.world().resource::<WorldTowns>().0[town].timetable_boards()[n];
         let out = side_normal(sign.facing);
@@ -353,7 +356,7 @@ mod tests {
         app.world().resource::<Timetables>().open
     }
 
-    /// An hour and a minute.
+    /// Una hora y un minuto.
     type Hm = (u32, u32);
 
     fn row(service: Service, bound: Bound, at: (Option<Hm>, Option<Hm>)) -> BoardRow {
@@ -387,7 +390,7 @@ mod tests {
             (Some((9, 40)), None),
         );
         assert_eq!(row_text(&arrives), "09:40 Ramal de Caleufú  Llega 09:40");
-        // Everything the panel can say, the typeface can letter.
+        // Todo lo que puede decir el panel, la tipografía lo puede rotular.
         for text in [row_text(&stop), row_text(&leaves), row_text(&arrives)] {
             assert!(
                 text.chars().all(|c| lettering::supports(Face::Body, c)),
@@ -409,8 +412,9 @@ mod tests {
                 .all(|l| l.chars().all(|c| lettering::supports(Face::Body, c))),
             "{lines:?}"
         );
-        // Taken from the trains' own stop times: the line train's two runs
-        // and the shuttle's two round trips, earliest first.
+        // Tomado de los horarios de parada de los propios trenes: los dos
+        // viajes del tren de la línea y los dos viajes de ida y vuelta de la
+        // lanzadera, los más tempranos primero.
         assert_eq!(
             lines,
             [
@@ -439,7 +443,8 @@ mod tests {
         assert_eq!(open(&app), Some(metileo));
         let lines = app.world().resource::<Timetables>().lines.clone();
         assert_eq!(lines[0], "Horarios - Estación Metileo");
-        // Both trains' rows: the line train's and the shuttle's.
+        // Las filas de ambos trenes: la del tren de la línea y la de la
+        // lanzadera.
         assert!(lines.iter().any(|l| l.contains(" Tren a ")), "{lines:?}");
         assert!(
             lines.iter().any(|l| l.contains(" Ramal a Caleufú")),
@@ -453,8 +458,8 @@ mod tests {
 
     #[test]
     fn far_away_or_looking_away_f_opens_nothing() {
-        // A fresh game each time: an F out of reach starts waiting for the
-        // train, and the screen fades for a while.
+        // Un juego nuevo cada vez: una F fuera de alcance empieza a esperar el
+        // tren, y la pantalla hace un fundido durante un rato.
         for (meters, toward) in [(8.0, true), (2.0, false)] {
             let mut app = app();
             let metileo = town_named(&app, "Metileo");
@@ -478,8 +483,8 @@ mod tests {
         let sign = towns[metileo].timetable_boards()[0];
         let out = side_normal(sign.facing);
         let heading = |d: GroundVec2| Heading::from_radians(d.y.atan2(d.x));
-        // In front, looking at it: read. The same spot from inside the
-        // station, looking at the same board: not.
+        // De frente, mirándolo: se lee. El mismo punto desde dentro de la
+        // estación, mirando el mismo tablero: no.
         let read = |at: GroundVec2, look: GroundVec2| board_in_reach(towns, at, heading(look));
         assert_eq!(read(sign.anchor + out * 2.0, out * -1.0), Some(metileo));
         assert_eq!(read(sign.anchor - out * 2.0, out), None);
@@ -496,7 +501,8 @@ mod tests {
         };
         assert_eq!(track[0], "Horarios - Estación Metileo");
         for n in [1, 2] {
-            // A fresh game: the F above may have left a fade running.
+            // Un juego nuevo: la F de arriba puede haber dejado un fundido en
+            // curso.
             let mut app = super::tests::app();
             stand_at_nth_board(&mut app, metileo, n, 2.0, true);
             app.update();
@@ -516,7 +522,7 @@ mod tests {
         stand_at_board(&mut app, metileo, 2.0, true);
         press(&mut app, INTERACT_KEY);
         assert_eq!(open(&app), Some(metileo));
-        // Turning in place does not close it; walking off does.
+        // Girar en el lugar no lo cierra; alejarse sí.
         stand_at_board(&mut app, metileo, 2.0, false);
         app.update();
         assert_eq!(open(&app), Some(metileo));
@@ -530,7 +536,8 @@ mod tests {
         let mut app = app();
         let metileo = town_named(&app, "Metileo");
         stand_at_board(&mut app, metileo, 2.0, true);
-        // A horse left beside the player: F is the horse's, not the board's.
+        // Un caballo dejado junto al jugador: la F es del caballo, no del
+        // tablero.
         let beside = {
             let mut q = app.world_mut().query::<&Player>();
             q.single(app.world()).unwrap().rider.position + GroundVec2::new(1.5, 0.0)
@@ -541,8 +548,8 @@ mod tests {
         press(&mut app, INTERACT_KEY);
         assert_eq!(open(&app), None);
 
-        // The errand's person in reach wants F too, and the board is not
-        // anywhere near him.
+        // La persona del encargo al alcance también quiere la F, y el tablero
+        // no está para nada cerca de ella.
         let errand = app.world().resource::<ErrandRun>().0.clone();
         let hidalgo = errand.standing(Npc::Hidalgo).position;
         assert!(errand_wants_f(&errand, hidalgo));
@@ -556,8 +563,8 @@ mod tests {
         let mut app = app();
         let errand = app.world().resource::<ErrandRun>().0.clone();
         let hidalgo = errand.standing(Npc::Hidalgo).position;
-        // Move the first town's station so that Don Hidalgo stands right
-        // in front of its track-side board.
+        // Mover la estación del primer pueblo para que Don Hidalgo quede justo
+        // frente a su tablero del lado de la vía.
         let (town, out) = {
             let mut towns = app.world_mut().resource_mut::<WorldTowns>();
             let town = &mut towns.0[0];
@@ -588,8 +595,8 @@ mod tests {
         assert_ne!(app.world().resource::<ErrandRun>().0.stage(), before);
     }
 
-    /// The (text, font) of every line in the wrapper `W` (the panel or the
-    /// prompt) and whether the wrapper is shown.
+    /// El (texto, fuente) de cada línea del contenedor `W` (el panel o el
+    /// aviso) y si el contenedor está visible.
     fn lettering_of<W: Component>(app: &mut App) -> (bool, Vec<(String, TextFont, Color)>) {
         let mut roots = app
             .world_mut()
@@ -629,7 +636,7 @@ mod tests {
         let (shown, lines) = lettering_of::<BoardPrompt>(&mut app);
         assert!(!shown && lines.is_empty());
 
-        // In reach of the board, the prompt only.
+        // Al alcance del tablero, solo el aviso.
         stand_at_board(&mut app, metileo, 2.0, true);
         app.update();
         let (shown, lines) = lettering_of::<BoardPrompt>(&mut app);
@@ -640,7 +647,7 @@ mod tests {
         assert_eq!(lines[0].2, ink.1.0);
         assert!(!lettering_of::<BoardPanel>(&mut app).0);
 
-        // F opens the panel, one text line per panel line, in order.
+        // F abre el panel, una línea de texto por línea del panel, en orden.
         press(&mut app, INTERACT_KEY);
         app.update();
         let (shown, lines) = lettering_of::<BoardPanel>(&mut app);
@@ -650,11 +657,11 @@ mod tests {
         let shown_lines: Vec<&str> = lines.iter().map(|l| l.0.as_str()).collect();
         assert_eq!(shown_lines, expected);
         assert!(lines.iter().all(|l| l.1 == ink.0 && l.2 == ink.1.0));
-        // The prompt is gone while the panel is open.
+        // El aviso desaparece mientras el panel está abierto.
         let (shown, lines) = lettering_of::<BoardPrompt>(&mut app);
         assert!(!shown && lines.is_empty());
 
-        // F again closes it.
+        // F de nuevo lo cierra.
         press(&mut app, INTERACT_KEY);
         app.update();
         let (shown, lines) = lettering_of::<BoardPanel>(&mut app);

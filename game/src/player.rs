@@ -1,10 +1,10 @@
-//! The player: keyboard -> `RiderInput` -> core step -> visuals.
+//! El jugador: teclado -> `RiderInput` -> paso del core -> visuales.
 //!
-//! The player starts aboard the train ([`StartAboard`]), gets off on foot
-//! and may later mount a horse; on foot and on horseback they move with the
-//! same core model ([`Rider`]), the body and the tuning tell them apart
-//! ([`Rider::travel`]). Aboard the train ([`OnTrain`]) the ride moves them
-//! instead.
+//! El jugador empieza a bordo del tren ([`StartAboard`]), se baja a pie y más
+//! tarde puede montar un caballo; a pie y a caballo se mueve con el mismo
+//! modelo del core ([`Rider`]); el cuerpo y el ajuste los distinguen
+//! ([`Rider::travel`]). A bordo del tren ([`OnTrain`]) lo mueve, en cambio, el
+//! viaje.
 
 use bevy::prelude::*;
 use pampa_core::{
@@ -17,20 +17,20 @@ use pampa_render::{
 
 use crate::ride::{OnTrain, StartAboard};
 
-/// The logic body this entity represents, on foot or on horseback. Logic
-/// state lives here; the entity's `Transform` and `VisualPose` are derived
-/// from it every frame.
+/// El cuerpo lógico que representa esta entidad, a pie o a caballo. El estado
+/// lógico vive aquí; el `Transform` y el `VisualPose` de la entidad se derivan
+/// de él en cada frame.
 #[derive(Component, Debug)]
 pub struct Player {
     pub rider: Rider,
 }
 
-/// The logic world the player moves through. Render draws from the same
-/// value (see `main`), so what collides is what is drawn.
+/// El mundo lógico por el que se mueve el jugador. Render dibuja a partir del
+/// mismo valor (ver `main`), así que lo que colisiona es lo que se dibuja.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct GameWorld(pub World);
 
-/// Where, facing which way and how the player starts.
+/// Dónde, mirando hacia dónde y cómo empieza el jugador.
 #[derive(Resource, Debug, Clone, Copy)]
 pub struct PlayerSpawn {
     pub position: GroundVec2,
@@ -39,8 +39,8 @@ pub struct PlayerSpawn {
 }
 
 impl Default for PlayerSpawn {
-    /// The origin, facing north (where the camera initially looks), on
-    /// horseback. The game itself starts on foot (see `main`).
+    /// El origen, mirando al norte (hacia donde mira inicialmente la cámara), a
+    /// caballo. El juego en sí empieza a pie (ver `main`).
     fn default() -> Self {
         Self {
             position: GroundVec2::ZERO,
@@ -50,11 +50,11 @@ impl Default for PlayerSpawn {
     }
 }
 
-/// Movement tuning for the player's horse.
+/// Ajuste de movimiento para el caballo del jugador.
 #[derive(Resource, Debug, Default)]
 pub struct PlayerTuning(pub RiderParams);
 
-/// Movement tuning for the player on foot.
+/// Ajuste de movimiento para el jugador a pie.
 #[derive(Resource, Debug)]
 pub struct FootTuning(pub RiderParams);
 
@@ -64,15 +64,15 @@ impl Default for FootTuning {
     }
 }
 
-/// How the player getting around by `travel` is drawn: the clerk on foot,
-/// or the clerk in the saddle of Don Hidalgo's bayo, the first horse he
-/// rides.
+/// Cómo se dibuja al jugador según cómo se desplaza (`travel`): el empleado a
+/// pie, o el empleado en la montura del bayo de Don Hidalgo, el primer caballo
+/// que monta.
 pub fn player_visual(travel: Travel) -> CharacterVisual {
     player_visual_on(travel, Coat::HIDALGO)
 }
 
-/// How the player getting around by `travel` is drawn, in the saddle of a
-/// horse of `coat` when riding.
+/// Cómo se dibuja al jugador según cómo se desplaza (`travel`), en la montura
+/// de un caballo de pelaje `coat` cuando cabalga.
 pub fn player_visual_on(travel: Travel, coat: Coat) -> CharacterVisual {
     match travel {
         Travel::OnFoot => CharacterVisual::Figure(FigureKind::Protagonist),
@@ -83,8 +83,8 @@ pub fn player_visual_on(travel: Travel, coat: Coat) -> CharacterVisual {
     }
 }
 
-/// The coat of the horse the player rides (or last rode): Don Hidalgo's
-/// bayo until riding another one.
+/// El pelaje del caballo que monta el jugador (o que montó por última vez): el
+/// bayo de Don Hidalgo hasta que monte otro.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RiddenCoat(pub Coat);
 
@@ -94,7 +94,8 @@ impl Default for RiddenCoat {
     }
 }
 
-/// Systems that advance the player's logic; run cameras after this.
+/// Sistemas que hacen avanzar la lógica del jugador; las cámaras se ejecutan
+/// después.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DrivePlayer;
 
@@ -121,7 +122,8 @@ fn spawn_player(
     spawn: Res<PlayerSpawn>,
     aboard: Option<Res<StartAboard>>,
 ) {
-    // On the world's ground, so a spawn on the platform stands on its top.
+    // Sobre el suelo del mundo, para que al crearse en el andén quede parado
+    // encima.
     let ground = &world.0;
     let rider = match spawn.travel {
         Travel::OnFoot => Rider::on_foot(spawn.position, spawn.heading, ground),
@@ -130,7 +132,7 @@ fn spawn_player(
     let mut player = commands.spawn((
         Name::new("Player"),
         MapIcon::Player,
-        // The first-person camera sits in this body's head.
+        // La cámara en primera persona se ubica en la cabeza de este cuerpo.
         ViewerBody,
         player_visual(spawn.travel),
         VisualPose {
@@ -140,24 +142,25 @@ fn spawn_player(
         Transform::from_translation(world_from_ground(rider.position, rider.height)),
         Player { rider },
     ));
-    // Seated in a coach (the ride places them), out of sight.
+    // Sentado en un coche (el viaje lo ubica), fuera de la vista.
     if let Some(ride) = aboard.and_then(|a| a.0) {
         player.insert((OnTrain(ride), Visibility::Hidden));
     }
 }
 
-/// The world streams (ground chunks, towns) around the player.
+/// El mundo hace streaming (chunks de suelo, pueblos) alrededor del jugador.
 pub(crate) fn follow_player(players: Query<&Player>, mut focus: ResMut<StreamFocus>) {
     if let Some(player) = players.iter().next() {
         focus.0 = player.rider.position;
     }
 }
 
-/// Makes the horse jump at full gallop (see [`Rider::jump`]); slower, or on
-/// foot, it does nothing.
+/// Hace saltar al caballo a galope tendido (ver [`Rider::jump`]); más lento, o
+/// a pie, no hace nada.
 pub const JUMP_KEY: KeyCode = KeyCode::Space;
 
-/// Maps held keys to logic intent: W/S throttle, A/D turn, Shift gallop.
+/// Traduce las teclas presionadas a intención lógica: W/S acelerador, A/D giro,
+/// Shift galope.
 pub fn read_input(keys: &ButtonInput<KeyCode>) -> RiderInput {
     let axis = |positive: KeyCode, negative: KeyCode| {
         f32::from(u8::from(keys.pressed(positive))) - f32::from(u8::from(keys.pressed(negative)))
@@ -200,8 +203,9 @@ pub(crate) fn drive_player(
     }
 }
 
-/// The yaw rate (rad/s, positive to the left) that turned `before` into
-/// `after` over `dt` seconds, the short way round; none without time.
+/// La velocidad de giro (rad/s, positiva hacia la izquierda) que convirtió
+/// `before` en `after` en `dt` segundos, por el camino más corto; ninguna si no
+/// pasó tiempo.
 fn yaw_rate(before: Heading, after: Heading, dt: f32) -> f32 {
     if dt <= 0.0 {
         return 0.0;
@@ -216,7 +220,8 @@ mod tests {
     use bevy::time::TimeUpdateStrategy;
     use std::time::Duration;
 
-    /// Headless app: no window, no renderer, time advanced by hand.
+    /// App sin interfaz: sin ventana, sin renderer, con el tiempo avanzado a
+    /// mano.
     fn headless_app(frame: Duration) -> App {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
@@ -233,8 +238,8 @@ mod tests {
 
     #[test]
     fn long_frames_are_capped_to_max_step() {
-        // Bevy's virtual clock already clamps at 0.25 s; stay below that so
-        // this exercises our own cap.
+        // El reloj virtual de Bevy ya limita a 0.25 s; se queda por debajo para
+        // que esto ejercite nuestro propio límite.
         let mut app = headless_app(Duration::from_millis(200));
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
@@ -295,12 +300,12 @@ mod tests {
             transform.translation,
             world_from_ground(rider.position, rider.height)
         );
-        // The world streams around the rider.
+        // El mundo hace streaming alrededor del jinete.
         assert_eq!(app.world().resource::<StreamFocus>().0, rider.position);
     }
 
-    /// Rides with W and Shift for four seconds (a horse reaches full
-    /// gallop), then taps the jump key for one frame.
+    /// Cabalga con W y Shift durante cuatro segundos (un caballo llega a galope
+    /// tendido) y luego toca la tecla de salto durante un frame.
     fn tap_jump_moving(app: &mut App) {
         let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
         keys.press(KeyCode::KeyW);
@@ -330,7 +335,7 @@ mod tests {
             transform.translation,
             world_from_ground(rider.position, rider.elevation())
         );
-        // It comes down again.
+        // Vuelve a bajar.
         for _ in 0..90 {
             app.update();
         }
@@ -396,7 +401,7 @@ mod tests {
 
     #[test]
     fn the_poses_turn_is_the_heading_actually_turned() {
-        // A frame with no time turns nothing, so the pose takes no steps.
+        // Un frame sin tiempo no gira nada, así que la pose no da pasos.
         let mut app = headless_app(Duration::ZERO);
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
@@ -412,7 +417,8 @@ mod tests {
 
     #[test]
     fn a_turn_across_east_is_the_short_way_round() {
-        // Headings wrap at 0 (east): 2π - 0.01 to 0.01 is 0.02 to the left.
+        // Los rumbos dan la vuelta en 0 (este): de 2π - 0.01 a 0.01 hay 0.02
+        // hacia la izquierda.
         let before = Heading::from_radians(-0.01);
         let after = Heading::from_radians(0.01);
         assert!((yaw_rate(before, after, 0.1) - 0.2).abs() < 1e-4);
@@ -435,7 +441,7 @@ mod tests {
             .world_mut()
             .query_filtered::<&VisualPose, With<Player>>();
         let pose = query.single(app.world()).unwrap();
-        // Render plays the stride backward by this sign.
+        // Render reproduce el tranco hacia atrás según este signo.
         assert_eq!(pose.speed, rider.speed);
     }
 
@@ -462,7 +468,7 @@ mod tests {
             assert!(at.distance(expected) < 1e-3, "{at:?} vs {expected:?}");
             marks.push(at);
         }
-        // Riding north moves the arrow up the map.
+        // Cabalgar hacia el norte mueve la flecha hacia arriba en el mapa.
         assert!(marks.last().unwrap().y < marks[0].y);
     }
 

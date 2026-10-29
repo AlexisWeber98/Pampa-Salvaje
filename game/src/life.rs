@@ -1,18 +1,21 @@
-//! Town life: the game clock, the line train, townsfolk walking the
-//! streets, the horse tied in front of each general store, and the people
-//! of the errand standing in their towns.
+//! La vida en el pueblo: el reloj del juego, el tren de la línea, los vecinos
+//! que caminan por las calles, el caballo atado frente a cada almacén de ramos
+//! generales, y las personas del encargo paradas en sus pueblos.
 //!
-//! Logic lives in `pampa-core`; this module steps it once per frame, before
-//! the player, lets the rider shove walkers aside after the player moved,
-//! and copies the results onto entities that render draws.
+//! La lógica vive en `pampa-core`; este módulo la hace avanzar una vez por
+//! frame, antes que al jugador, deja que el jinete aparte a los peatones
+//! después de que el jugador se movió, y copia los resultados en entidades que
+//! dibuja render.
 //!
-//! Every town has its own crowd, seeded from the town's seed. Only the towns
-//! near the player ([`ActiveTowns`]) have their people and tied horse
-//! spawned and simulated; without [`ActiveTowns`] (no town streaming) every
-//! crowd is. The errand's people ([`Cast`]) come and go with their towns
-//! the same way, and a horse led away ([`LedAway`]) is not tied up again. The clock ticks every frame and the one line train follows
-//! it everywhere: departures come from the clock, running is in real
-//! seconds, and its cars are always moving obstacles (eight cars: cheap).
+//! Cada pueblo tiene su propia gente, sembrada a partir de la semilla del
+//! pueblo. Solo los pueblos cercanos al jugador ([`ActiveTowns`]) tienen a su
+//! gente y su caballo atado creados y simulados; sin [`ActiveTowns`] (sin
+//! streaming de pueblos), lo está la gente de todos. Las personas del encargo
+//! ([`Cast`]) vienen y van con sus pueblos de la misma forma, y un caballo que
+//! se llevaron ([`LedAway`]) no se vuelve a atar. El reloj avanza en cada frame
+//! y el único tren de la línea lo sigue en todas partes: las salidas salen del
+//! reloj, la marcha va en segundos reales, y sus vagones son siempre obstáculos
+//! en movimiento (ocho vagones: barato).
 
 use std::collections::BTreeSet;
 
@@ -29,16 +32,16 @@ use pampa_render::{
 use crate::player::{DrivePlayer, GameWorld, Player, drive_player};
 use crate::ride::OnTrain;
 
-/// The clock, the trains and the player's ride as the game begins
-/// (the opening): the protagonist comes from General Pico, so he rides the
-/// morning (up) train from Pico, a little before it pulls into the first
-/// town's station ([`pampa_core::OPENING_LEAD`] real seconds), and is put
-/// off there. The clock runs at the onboard rate and reaches the
-/// timetabled arrival, in the mid-morning, as the train stops. Without a
-/// train (or a station in the first town) there is no ride, and the clock
-/// starts at the morning departure time from Pico. The trains are the
-/// line train and the branch shuttle ([`LineTrain::all_of`]); the shuttle
-/// is brought to the opening's time from midnight, like the clock would.
+/// El reloj, los trenes y el viaje del jugador al comenzar el juego (la
+/// apertura): el protagonista viene de General Pico, así que viaja en el tren
+/// de la mañana (ascendente) desde Pico, poco antes de que entre a la estación
+/// del primer pueblo ([`pampa_core::OPENING_LEAD`] segundos reales), y allí lo
+/// bajan. El reloj corre al ritmo de a bordo y llega a la hora de llegada del
+/// horario, a media mañana, cuando el tren se detiene. Sin tren (o sin estación
+/// en el primer pueblo) no hay viaje, y el reloj empieza en la hora de salida
+/// matutina desde Pico. Los trenes son el tren de la línea y la lanzadera del
+/// ramal ([`LineTrain::all_of`]); la lanzadera se lleva a la hora de la
+/// apertura desde la medianoche, como lo haría el reloj.
 pub fn start_of_day(
     line: &RailLine,
     towns: &[TownLayout],
@@ -47,7 +50,7 @@ pub fn start_of_day(
     let start = trains.first_mut().and_then(|t| opening(t, 0, Run::Up));
     match start {
         Some((clock, ride)) => {
-            // Seated by the window on the Monte Nievas platform's side.
+            // Sentado junto a la ventanilla del lado del andén de Monte Nievas.
             let ride = ride.facing_platform(&trains[0], towns, &line.floors());
             for shuttle in trains.iter_mut().skip(1) {
                 shuttle.advance(0.0, clock.elapsed(), BASE_RATE);
@@ -62,15 +65,16 @@ pub fn start_of_day(
     }
 }
 
-/// Mixed with each town's seed for where its people start and wander.
+/// Se mezcla con la semilla de cada pueblo para decidir dónde empieza y por
+/// dónde deambula su gente.
 const TOWNSFOLK_SEED: u32 = 1927;
 
-/// Everyone walking around each town, by town index.
+/// Todos los que caminan por cada pueblo, por índice de pueblo.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct Crowds(pub Vec<Townsfolk>);
 
 impl Crowds {
-    /// A crowd for every town, seeded from the town's seed.
+    /// Gente para cada pueblo, sembrada a partir de la semilla del pueblo.
     pub fn for_towns(towns: &[TownLayout]) -> Self {
         Self(
             towns
@@ -81,56 +85,56 @@ impl Crowds {
     }
 }
 
-/// The crowd seed of a town with seed `seed`.
+/// La semilla de la gente de un pueblo con semilla `seed`.
 pub fn crowd_seed(seed: u32) -> u32 {
     TOWNSFOLK_SEED ^ seed.wrapping_mul(0x9e37_79b9)
 }
 
-/// Entity drawing person `index` of town `town`'s crowd.
+/// Entidad que dibuja a la persona `index` de la gente del pueblo `town`.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Walker {
     pub town: usize,
     pub index: usize,
 }
 
-/// The horse tied at town `.0`'s hitching rail.
+/// El caballo atado en el palenque del pueblo `.0`.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct TetheredHorse(pub usize);
 
-/// A horse tied at one of town `town`'s palenques (a city's, besides the
-/// store's [`TetheredHorse`]): it only stands there. `index` is the
-/// palenque's place in [`TownLayout::palenques`].
+/// Un caballo atado en uno de los palenques del pueblo `town` (los de una
+/// ciudad, además del [`TetheredHorse`] del almacén): solo está parado allí.
+/// `index` es el lugar del palenque en [`TownLayout::palenques`].
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PalenqueHorse {
     pub town: usize,
     pub index: usize,
 }
 
-/// A person of the errand standing in town `town`.
+/// Una persona del encargo parada en el pueblo `town`.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StandingNpc {
     pub town: usize,
     pub npc: Npc,
 }
 
-/// The errand's people and where they stand, spawned with their towns;
-/// then the people who only stand there (Bairoletto beside Farach), as
-/// the figure each is drawn as.
+/// Las personas del encargo y dónde están paradas, creadas con sus pueblos;
+/// luego las personas que solo están paradas allí (Bairoletto junto a Farach),
+/// con la figura con la que se dibuja cada una.
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct Cast(pub Vec<(Npc, Standing)>, pub Vec<(FigureKind, Standing)>);
 
-/// Someone standing in town `town` who takes no part in the errand.
+/// Alguien parado en el pueblo `town` que no participa en el encargo.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Bystander {
     pub town: usize,
 }
 
-/// Towns whose tied horse was led away this session: it is not tied up
-/// there again.
+/// Pueblos cuyo caballo atado se llevaron en esta sesión: no se vuelve a atar
+/// allí.
 #[derive(Resource, Debug, Clone, Default, PartialEq, Eq)]
 pub struct LedAway(pub BTreeSet<usize>);
 
-/// The figure of an errand person.
+/// La figura de una persona del encargo.
 pub fn npc_figure(npc: Npc) -> FigureKind {
     match npc {
         Npc::Hidalgo => FigureKind::Hidalgo,
@@ -138,13 +142,13 @@ pub fn npc_figure(npc: Npc) -> FigureKind {
     }
 }
 
-/// Towns whose people and horse are spawned.
+/// Pueblos cuya gente y caballo están creados.
 #[derive(Resource, Debug, Clone, Default, PartialEq, Eq)]
 pub struct Populated(pub BTreeSet<usize>);
 
-/// Systems that advance the clock, the train and the towns around the
-/// player; they run before it so the rider collides with this frame's
-/// train.
+/// Sistemas que hacen avanzar el reloj, el tren y los pueblos alrededor del
+/// jugador; se ejecutan antes que él para que el jinete colisione con el tren
+/// de este frame.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SimulateTown;
 
@@ -174,8 +178,8 @@ impl Plugin for TownLifePlugin {
     }
 }
 
-/// Warns about stations the line train cannot stop alongside (too near a
-/// tip of the line).
+/// Avisa sobre las estaciones junto a las que el tren de la línea no puede
+/// detenerse (demasiado cerca de una punta de la línea).
 fn report_train(trains: Option<Res<WorldTrains>>, towns: Option<Res<WorldTowns>>) {
     let Some(trains) = trains else {
         return;
@@ -193,8 +197,8 @@ fn report_train(trains: Option<Res<WorldTrains>>, towns: Option<Res<WorldTowns>>
     }
 }
 
-/// Indices of the crowds to simulate: the active towns, or every crowd when
-/// towns are not streamed.
+/// Índices de la gente a simular: los pueblos activos, o la de todos cuando los
+/// pueblos no hacen streaming.
 fn live_towns(crowds: &Crowds, active: Option<&ActiveTowns>) -> Vec<usize> {
     match active {
         Some(active) => active.0.active().filter(|&i| i < crowds.0.len()).collect(),
@@ -202,7 +206,7 @@ fn live_towns(crowds: &Crowds, active: Option<&ActiveTowns>) -> Vec<usize> {
     }
 }
 
-/// Resources [`populate_towns`] reads.
+/// Recursos que lee [`populate_towns`].
 type TownInputs<'a> = (
     Option<Res<'a, Crowds>>,
     Option<Res<'a, WorldTowns>>,
@@ -211,7 +215,8 @@ type TownInputs<'a> = (
     Res<'a, LedAway>,
 );
 
-/// Everyone living in a town: walkers, the tied horse and errand people.
+/// Todos los que viven en un pueblo: peatones, el caballo atado y las personas
+/// del encargo.
 type Residents<'a> = (
     Entity,
     Option<&'a Walker>,
@@ -221,8 +226,8 @@ type Residents<'a> = (
     Option<&'a Bystander>,
 );
 
-/// Spawns the people and tied horse of towns that just became active, and
-/// despawns those of towns left behind.
+/// Crea a la gente y el caballo atado de los pueblos que acaban de activarse, y
+/// elimina los de los pueblos que quedaron atrás.
 fn populate_towns(
     mut commands: Commands,
     (crowds, towns, active, cast, led_away): TownInputs,
@@ -267,7 +272,7 @@ fn populate_towns(
     }
 }
 
-/// An errand person standing still where the errand put them.
+/// Una persona del encargo parada, quieta donde la puso el encargo.
 fn spawn_standing_npc(commands: &mut Commands, npc: Npc, standing: Standing, world: &GameWorld) {
     let at = standing.position;
     let height = world.0.ground_height(at);
@@ -286,7 +291,7 @@ fn spawn_standing_npc(commands: &mut Commands, npc: Npc, standing: Standing, wor
     ));
 }
 
-/// Someone standing still beside the errand's people.
+/// Alguien parado, quieto junto a las personas del encargo.
 fn spawn_bystander(
     commands: &mut Commands,
     kind: FigureKind,
@@ -329,8 +334,9 @@ fn spawn_walkers(commands: &mut Commands, crowd: &Townsfolk, town: usize, world:
     }
 }
 
-/// The coat of the horse tied at `town`'s store: Don Hidalgo's bayo in his
-/// town (the horse he lends), else one seeded from the town.
+/// El pelaje del caballo atado en el almacén de `town`: el bayo de Don Hidalgo
+/// en su pueblo (el caballo que presta); si no, uno sembrado a partir del
+/// pueblo.
 pub fn tethered_coat(layout: &TownLayout, cast: &Cast, town: usize) -> Coat {
     let hidalgo = cast
         .0
@@ -365,8 +371,9 @@ fn spawn_tethered_horse(
     ));
 }
 
-/// The horses tied at `layout`'s palenques (a city's), each its own seeded
-/// coat; scenery, not the errand's to lend.
+/// Los caballos atados en los palenques de `layout` (los de una ciudad), cada
+/// uno con su propio pelaje sembrado; escenografía, no caballos que preste el
+/// encargo.
 fn spawn_palenque_horses(
     commands: &mut Commands,
     layout: &TownLayout,
@@ -391,8 +398,8 @@ fn spawn_palenque_horses(
     }
 }
 
-/// Ticks the game clock, lets every train follow it and hands their cars
-/// to the logic world as moving obstacles.
+/// Hace avanzar el reloj del juego, deja que cada tren lo siga y entrega sus
+/// vagones al mundo lógico como obstáculos en movimiento.
 fn run_clock_and_train(
     time: Res<Time>,
     clock: Option<ResMut<WorldClock>>,
@@ -403,8 +410,9 @@ fn run_clock_and_train(
         return;
     };
     let before = clock.0.elapsed();
-    // Capped like the rider's step, so a frame hitch cannot jump the train
-    // tens of meters onto a rider that was clear the frame before.
+    // Limitado como el paso del jinete, para que un tirón de frame no haga
+    // saltar el tren decenas de metros sobre un jinete que estaba despejado en
+    // el frame anterior.
     let game = clock.0.tick(time.delta_secs().min(MAX_STEP));
     let Some(mut trains) = trains else {
         world.0.moving.clear();
@@ -416,8 +424,8 @@ fn run_clock_and_train(
     world.0.moving = trains.obstacles();
 }
 
-/// Steps the live crowds, walking around the rider where it stood last
-/// frame.
+/// Hace avanzar a la gente activa, que camina esquivando al jinete donde estaba
+/// en el frame anterior.
 fn walk_crowds(
     time: Res<Time>,
     crowds: Option<ResMut<Crowds>>,
@@ -435,8 +443,8 @@ fn walk_crowds(
     }
 }
 
-/// The rider shoved these walkers (indices into town `town`'s crowd) while
-/// moving at `speed` (m/s, signed).
+/// El jinete empujó a estos peatones (índices de la gente del pueblo `town`)
+/// mientras se movía a `speed` (m/s, con signo).
 #[derive(Message, Debug, Clone, PartialEq)]
 pub struct Shoved {
     pub town: usize,
@@ -444,10 +452,10 @@ pub struct Shoved {
     pub speed: f32,
 }
 
-/// The player barges through: walkers in the way are shoved aside, and
-/// anyone pinned against a wall stops the player instead. Only a rider's
-/// shoves are reported ([`Shoved`]): people make way for somebody on foot
-/// without complaint.
+/// El jugador se abre paso: los peatones en el camino son apartados a
+/// empujones, y cualquiera aplastado contra una pared detiene en cambio al
+/// jugador. Solo se informan los empujones de un jinete ([`Shoved`]): la gente
+/// le abre paso sin quejarse a alguien que va a pie.
 pub(crate) fn jostle_crowd(
     crowds: Option<ResMut<Crowds>>,
     active: Option<Res<ActiveTowns>>,
@@ -462,13 +470,14 @@ pub(crate) fn jostle_crowd(
     for (mut player, mut transform) in &mut players {
         let rider = &mut player.rider;
         let mut bodies = Vec::new();
-        // Townsfolk only complain about the horse.
+        // Los vecinos solo se quejan del caballo.
         let riding = rider.travel() == Travel::Riding;
         for &town in &live {
             let crowd = &mut crowds.0[town];
             let walkers = crowd.make_way(&world.0, rider.body());
             if riding && !walkers.is_empty() {
-                // The speed of the impact, before a pinned walker stops the rider.
+                // La velocidad del impacto, antes de que un peatón aplastado
+                // detenga al jinete.
                 shoved.write(Shoved {
                     town,
                     walkers,
@@ -482,7 +491,7 @@ pub(crate) fn jostle_crowd(
     }
 }
 
-/// Copies the crowds' logic state onto the walker entities.
+/// Copia el estado lógico de la gente en las entidades de los peatones.
 fn place_walkers(
     crowds: Option<Res<Crowds>>,
     world: Res<GameWorld>,
@@ -618,7 +627,8 @@ mod tests {
         };
         assert_eq!(towns_of(&mut app), vec![0]);
         assert_eq!(walkers(&mut app).len(), 5);
-        // The far crowd stands frozen while nobody is there.
+        // La gente del pueblo lejano queda congelada mientras no hay nadie
+        // allí.
         assert_eq!(app.world().resource::<Crowds>().0[1], far_start);
         let horses = |app: &mut App| {
             let mut q = app.world_mut().query::<&TetheredHorse>();
@@ -626,7 +636,8 @@ mod tests {
         };
         assert_eq!(horses(&mut app), vec![0]);
 
-        // Ride to the far town: Castex empties, the far town fills up.
+        // Cabalgar hasta el pueblo lejano: Castex se vacía y el pueblo lejano
+        // se llena.
         app.world_mut()
             .resource_mut::<ActiveTowns>()
             .0
@@ -675,7 +686,7 @@ mod tests {
         let crowds = Crowds::for_towns(&towns);
         assert_eq!(crowds.0[0].people.len(), 16);
         assert_eq!(crowds.0[1].people.len(), 51);
-        // A small town's crowd is the one it always had.
+        // La gente de un pueblo pequeño es la que tuvo siempre.
         let small = Townsfolk::new(&towns[0], 16, crowd_seed(towns[0].seed));
         assert_eq!(crowds.0[0], small);
     }
@@ -684,8 +695,8 @@ mod tests {
         crate::shipped_world::loaded()
     }
 
-    /// The shipped world with its clock at `clock` and the line train
-    /// jumped there from midnight.
+    /// El mundo incluido con su reloj en `clock` y el tren de la línea llevado
+    /// hasta allí desde la medianoche.
     fn shipped_app(clock: Option<GameClock>) -> App {
         let loaded = shipped();
         let (start, mut trains, _) = start_of_day(&loaded.line, &loaded.towns);
@@ -722,30 +733,32 @@ mod tests {
             .expect("the shipped line has a train");
         let s = train.state();
         assert_eq!(s.phase, LinePhase::Running);
-        // Pulling into Monte Nievas, a little under a minute out.
+        // Entrando a Monte Nievas, a poco menos de un minuto.
         let nievas = train.station_of_town(0).unwrap();
         let (next, left) = train.next_stop().unwrap();
         assert_eq!(next, nievas);
         assert!((left - OPENING_LEAD).abs() < 1e-9);
-        // Seated in the first coach, to get off at Monte Nievas.
+        // Sentado en el primer coche, para bajarse en Monte Nievas.
         let ride = ride.expect("the opening ride");
         assert_eq!(ride.alight_at, Some(nievas));
         assert_eq!(ride.car, 1);
-        // The up run, from Pico after its 07:00 departure, on to Castex.
+        // El viaje ascendente, desde Pico después de su salida de las 07:00,
+        // hacia Castex.
         assert_eq!(s.run, Run::Up);
         let pico = train.stations().len() - 1;
         assert_eq!(
             loaded.towns[train.stations()[pico].town].name,
             "General Pico"
         );
-        // The locomotive faces Castex: up the line, against its direction.
+        // La locomotora mira hacia Castex: hacia arriba de la línea, en contra
+        // de su dirección.
         let loco = train.placed_cars()[0];
         assert!(loco.direction.dot(train.path().direction_at(s.front)) < -0.9);
         assert_eq!(clock.day(), 0);
-        // Mid-morning, in full daylight, at the onboard rate: ten game
-        // minutes (50 real seconds at 12×) before the timetabled arrival
-        // (10:53:59 since Metileo's 40 m blocks, 2026-10-25; 10:53:40 since
-        // the Metileo stop, 2026-10-23; 10:14:45 before).
+        // A media mañana, a plena luz del día, al ritmo de a bordo: diez
+        // minutos de juego (50 segundos reales a 12×) antes de la llegada del
+        // horario (10:53:59 desde las manzanas de 40 m de Metileo, 2026-10-25;
+        // 10:53:40 desde la parada de Metileo, 2026-10-23; 10:14:45 antes).
         assert_eq!(clock.multiplier, ONBOARD_MULTIPLIER);
         let arrival = train.arrival_time_at(Run::Up, nievas).unwrap();
         let (morning, noon) = (TimeOfDay::hm(9, 30), TimeOfDay::hm(11, 30));
@@ -759,7 +772,7 @@ mod tests {
 
     #[test]
     fn the_clock_ticks_and_the_train_stays_an_obstacle() {
-        // Half way through the morning dwell at Monte Nievas, on foot.
+        // A mitad de la parada matutina en Monte Nievas, a pie.
         let loaded = shipped();
         let timetabled =
             LineTrain::new(&loaded.line, &loaded.towns, Timetable::default()).expect("a train");
@@ -772,7 +785,7 @@ mod tests {
         for _ in 0..20 {
             app.update();
         }
-        // 20 frames of 50 ms at 30×: 30 game seconds.
+        // 20 frames de 50 ms a 30×: 30 segundos de juego.
         let clock = app.world().resource::<WorldClock>().0;
         assert!((clock.elapsed() - start.elapsed() - 30.0).abs() < 1e-3);
         let train = train(&app);
@@ -795,7 +808,8 @@ mod tests {
         let start = app.world().resource::<WorldClock>().0;
         let before = train(&app).state();
         assert_eq!(before.phase, LinePhase::Running);
-        // A two-second stall (window drag, load hitch) in a single frame.
+        // Un atasco de dos segundos (arrastre de ventana, tirón de carga) en un
+        // solo frame.
         app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(2)));
         app.update();
         let clock = app.world().resource::<WorldClock>().0;
@@ -818,7 +832,7 @@ mod tests {
         let mut app = shipped_app(Some(GameClock::at(TimeOfDay::hm(6, 59))));
         app.update();
         assert_eq!(train(&app).state().phase, LinePhase::Parked);
-        // Four real seconds: two game minutes, past 07:00.
+        // Cuatro segundos reales: dos minutos de juego, pasadas las 07:00.
         for _ in 0..80 {
             app.update();
         }
@@ -837,14 +851,14 @@ mod tests {
 
     #[test]
     fn the_clock_advances_every_train_and_all_their_cars_are_obstacles() {
-        // A minute before the shuttle's first departure from Caleufu: the
-        // line train is somewhere else, parked or running.
+        // Un minuto antes de la primera salida de la lanzadera desde Caleufu:
+        // el tren de la línea está en otro lado, estacionado o en marcha.
         let probe = shuttle(&shipped_app(None));
         let leaves = probe.timetable().departure(Run::Up).seconds();
         let mut app = shipped_app(Some(GameClock::at(TimeOfDay::from_seconds(leaves - 60.0))));
         app.update();
         assert_eq!(shuttle(&app).state().phase, LinePhase::Parked);
-        // Four real seconds: two game minutes, past the departure.
+        // Cuatro segundos reales: dos minutos de juego, pasada la salida.
         for _ in 0..80 {
             app.update();
         }
@@ -893,19 +907,20 @@ mod tests {
             assert_eq!(pose.heading, horse.heading);
             assert!(matches!(visual, CharacterVisual::Horse(_)));
         }
-        // The store's horse is still the only one the errand can lend.
+        // El caballo del almacén sigue siendo el único que el encargo puede
+        // prestar.
         let mut store = app.world_mut().query::<&TetheredHorse>();
         assert_eq!(store.iter(app.world()).count(), 1);
         let mut mountable = app.world_mut().query::<&crate::errand::Mountable>();
         assert_eq!(mountable.iter(app.world()).count(), 1);
-        // They leave with their town, like the store's horse.
+        // Se van con su pueblo, como el caballo del almacén.
         let mut activation = TownActivation::default();
         activation.update(&[city], Vec2::new(1.0e6, 1.0e6));
         app.insert_resource(ActiveTowns(activation));
         app.update();
         let mut left = app.world_mut().query::<&PalenqueHorse>();
         assert_eq!(left.iter(app.world()).count(), 0);
-        // A small town's palenques stay empty.
+        // Los palenques de un pueblo pequeño quedan vacíos.
         let mut small = town_app();
         small.update();
         let mut none = small.world_mut().query::<&PalenqueHorse>();
@@ -923,15 +938,15 @@ mod tests {
             .world_mut()
             .query_filtered::<(&Transform, &CharacterVisual, &VisualPose), With<TetheredHorse>>();
         let (transform, visual, pose) = query.single(app.world()).unwrap();
-        // A saddled 3D horse, no rider; with no errand here its coat is the
-        // town's own.
+        // Un caballo 3D ensillado, sin jinete; sin encargo aquí, su pelaje es
+        // el propio del pueblo.
         let town = &app.world().resource::<WorldTowns>().0[0];
         let coat = Coat::seeded(town.seed ^ 0x4f52_5345);
         assert_eq!(*visual, CharacterVisual::Horse(coat));
         assert_eq!(pose.heading, horse.heading);
         assert_eq!(transform.translation.x, horse.position.x);
         assert_eq!(transform.translation.z, -horse.position.y);
-        // The rider cannot pass through it: it is a static obstacle.
+        // El jinete no puede atravesarlo: es un obstáculo estático.
         assert!(
             app.world()
                 .resource::<GameWorld>()
@@ -954,8 +969,8 @@ mod tests {
             .town;
         assert_eq!(tethered_coat(&towns[hidalgo], &cast, hidalgo), Coat::Bayo);
         let empty = Cast::default();
-        // Even where the town's own seed would give another coat: Don
-        // Hidalgo's town ties up his bayo, not the seeded horse.
+        // Incluso donde la semilla propia del pueblo daría otro pelaje: el
+        // pueblo de Don Hidalgo ata a su bayo, no al caballo sembrado.
         let mut his = towns[hidalgo].clone();
         his.seed = (0..)
             .find(|&seed| Coat::seeded(seed ^ 0x4f52_5345) != Coat::Bayo)
@@ -1017,7 +1032,8 @@ mod tests {
             (spot.x, spot.y)
         );
 
-        // Over at the far town: Hidalgo is gone, the comisario stands there.
+        // En el pueblo lejano: Hidalgo ya no está, el comisario está parado
+        // allí.
         app.world_mut()
             .resource_mut::<ActiveTowns>()
             .0
@@ -1027,7 +1043,7 @@ mod tests {
         assert_eq!(there.len(), 1);
         assert_eq!(there[0].0.npc, Npc::Farach);
         assert_eq!(there[0].1, CharacterVisual::Figure(FigureKind::Farach));
-        // Bairoletto stands at Farach's side, and only there.
+        // Bairoletto está junto a Farach, y solo allí.
         let mut q = app
             .world_mut()
             .query::<(&Bystander, &CharacterVisual, &Transform)>();
@@ -1096,7 +1112,7 @@ mod tests {
     #[test]
     fn the_rider_shoves_walkers_aside() {
         let mut app = town_app();
-        // Spawn the rider right on top of the first walker, galloping.
+        // Crear al jinete justo encima del primer peatón, al galope.
         let at = app.world().resource::<Crowds>().0[0].people[0].position;
         app.insert_resource(crate::player::PlayerSpawn {
             position: at,
@@ -1107,13 +1123,14 @@ mod tests {
             let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
             keys.press(KeyCode::KeyW);
             keys.press(KeyCode::ShiftLeft);
-            // Held down (never cleared here), it jumps whenever it can.
+            // Mantenida presionada (nunca se suelta aquí), salta cada vez que
+            // puede.
             keys.press(crate::player::JUMP_KEY);
         }
         let mut jumped = false;
         for frame in 0..200 {
             if frame == 1 {
-                // At full gallop already, so it can jump among them.
+                // Ya a galope tendido, para poder saltar entre ellos.
                 let mut q = app.world_mut().query::<&mut crate::player::Player>();
                 let mut player = q.single_mut(app.world_mut()).unwrap();
                 player.rider.speed = pampa_core::RiderParams::default().gallop_max;

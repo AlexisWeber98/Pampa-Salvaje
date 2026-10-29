@@ -1,18 +1,19 @@
-// The world and its towns. See README.md in this folder for every field.
-// Edit and restart, no recompiling needed. The player starts at the first
-// town; the others appear as you ride towards them.
+// El mundo y sus pueblos. Ver README.md en esta carpeta para cada campo. Editar
+// y reiniciar, sin necesidad de recompilar. El jugador empieza en el primer
+// pueblo; los otros aparecen a medida que cabalga hacia ellos.
 (
     world: (
-        // 8.4 km from the center to each edge: a 16.8 km x 16.8 km world,
-        // the largest allowed. Room for the railway line at a 1:7 scale.
+        // 8.4 km del centro a cada borde: un mundo de 16.8 km x 16.8 km, el más
+        // grande permitido. Espacio para la línea del ferrocarril a escala 1:7.
         half_extent: 8400.0,
-        // Ground is built in 200 m square chunks around the rider.
+        // El suelo se construye en chunks cuadrados de 200 m alrededor del
+        // jinete.
         chunk_size: 200.0,
     ),
     towns: [
         (
-            // The player starts here, where the first errand begins. About
-            // 12.6 km east and 5.4 km north of Castex, scaled 1:7.
+            // El jugador empieza aquí, donde comienza el primer encargo. Unos
+            // 12.6 km al este y 5.4 km al norte de Castex, a escala 1:7.
             name: "Monte Nievas",
             origin: (-2450.0, -1950.0),
             blocks: (4, 3),
@@ -21,14 +22,16 @@
             railway: Some((side: North, offset: 24.0)),
             plaza: Auto,
             seed: 7,
-            // No comisaría here: Don Hidalgo sends the player to Castex.
+            // Aquí no hay comisaría: Don Hidalgo manda al jugador a Castex.
             police_stations: Some(0),
-            // Six tenths of a small town's 16, to spare the frame budget.
+            // Seis décimos de los 16 de un pueblo pequeño, para cuidar el
+            // presupuesto del frame.
             townsfolk: Some(10),
         ),
         (
-            // A small railway town inspired by 1920s–1930s Eduardo Castex,
-            // La Pampa. The plaza faces the station across the street.
+            // Un pequeño pueblo ferroviario inspirado en el Eduardo Castex de
+            // 1920–1930, La Pampa. La plaza da a la estación, al otro lado de
+            // la calle.
             name: "Eduardo Castex",
             origin: (-4250.0, -2721.0),
             blocks: (5, 4),
@@ -40,10 +43,10 @@
             townsfolk: Some(10),
         ),
         (
-            // A railway halt between Monte Nievas and General Pico (station
-            // 1906): a few houses round a store. At its real place,
-            // -35.774, -63.941: 16.63 km west and 12.56 km south of Pico's
-            // plaza, scaled 1:7.
+            // Un apeadero del ferrocarril entre Monte Nievas y General Pico
+            // (estación de 1906): unas pocas casas alrededor de un almacén. En
+            // su lugar real, -35.774, -63.941: 16.63 km al oeste y 12.56 km al
+            // sur de la plaza de Pico, a escala 1:7.
             name: "Metileo",
             origin: (288.0, -544.0),
             blocks: (3, 3),
@@ -53,20 +56,21 @@
             plaza: Auto,
             seed: 19,
             police_stations: Some(0),
-            // Only about a third of the lots are built: a village, not a town.
+            // Solo alrededor de un tercio de los lotes están construidos: una
+            // aldea, no un pueblo.
             density: Some(0.3),
             townsfolk: Some(10),
         ),
         (
-            // A very big town (8 x 8 blocks): a 2 x 2 plaza, a station
-            // plaza, and a general store and a police station on each side
-            // of the line. About
-            // 35.8 km east and 22.4 km north of Monte Nievas, scaled 1:7.
-            // The Ferrocarril Oeste runs through the middle of town, as in
-            // the real Pico, which grew on both sides of it; the station
-            // stands in the north half, the plaza a few blocks north-west of
-            // it. (The real grid is turned 45°, along the line; here it is
-            // square to the map, the line along its east-west axis.)
+            // Un pueblo muy grande (8 x 8 manzanas): una plaza de 2 x 2, una
+            // plaza de la estación, y un almacén de ramos generales y una
+            // comisaría a cada lado de la línea. Unos 35.8 km al este y 22.4 km
+            // al norte de Monte Nievas, a escala 1:7. El Ferrocarril Oeste pasa
+            // por el centro del pueblo, como en el Pico real, que creció a
+            // ambos lados de él; la estación está en la mitad norte y la plaza,
+            // unas cuadras al noroeste de ella. (La cuadrícula real está girada
+            // 45°, a lo largo de la línea; aquí está alineada con el mapa, con
+            // la línea sobre su eje este-oeste).
             name: "General Pico",
             origin: (2664.0, 1250.0),
             blocks: (8, 8),
@@ -75,15 +79,16 @@
             railway: Some((side: North, offset: 24.0, through: true)),
             plaza: Auto,
             seed: 13,
-            // Six tenths of the 51 its 64 blocks would get.
+            // Seis décimos de los 51 que le tocarían por sus 64 manzanas.
             townsfolk: Some(31),
         ),
         (
-            // A young railway town (founded 29 October 1911) on the
-            // Metileo–Arizona branch, 41 km north-west of Castex: 3.38 km
-            // west and 4.82 km north of it at 1:7, 774 m inside the world's
-            // west edge. A plaza, a comisaría, a pulpería and houses on
-            // about two thirds of its lots; the branch ends at its station.
+            // Un pueblo ferroviario joven (fundado el 29 de octubre de 1911)
+            // sobre el ramal Metileo–Arizona, 41 km al noroeste de Castex:
+            // 3.38 km al oeste y 4.82 km al norte de él a escala 1:7, 774 m
+            // hacia adentro del borde oeste del mundo. Una plaza, una
+            // comisaría, una pulpería y casas en alrededor de dos tercios de
+            // sus lotes; el ramal termina en su estación.
             name: "Caleufú",
             origin: (-7626.0, 2100.0),
             blocks: (4, 4),
@@ -96,23 +101,24 @@
             townsfolk: Some(10),
         ),
     ],
-    // The railway line, in order: links that bend on wide curves join each
-    // town's track to the next one's. Every town with a railway must be
-    // listed.
+    // La línea del ferrocarril, en orden: tramos que se doblan en curvas
+    // amplias unen la vía de cada pueblo con la del siguiente. Todo pueblo con
+    // ferrocarril debe estar en la lista.
     line: Some(["Eduardo Castex", "Monte Nievas", "Metileo", "General Pico"]),
-    // Branches off the line: a junction town on it, then the towns the
-    // branch runs out to. The Metileo–Arizona branch leaves Metileo's
-    // west end, where the line to Monte Nievas does, and curves away
-    // north-west to Caleufú.
+    // Ramales de la línea: un pueblo de empalme sobre ella y luego los pueblos
+    // hasta los que llega el ramal. El ramal Metileo–Arizona sale del extremo
+    // oeste de Metileo, por donde sale la línea hacia Monte Nievas, y se curva
+    // hacia el noroeste hasta Caleufú.
     branches: [["Metileo", "Caleufú"]],
-    // Shallow freshwater lagoons, sunk into the pampa with a reed belt.
+    // Lagunas de agua dulce poco profundas, hundidas en la pampa con un
+    // cinturón de juncos.
     lagoons: [
         (
-            // Real 5.9 km at bearing 119° from General Pico (5.16 km east,
-            // 2.86 km south), scaled 1:7. About 150 ha in reality: its
-            // shape is kept, at 215 x 145 m. Its middle is 3 m east of that
-            // place, so the survey fences keep off its bank beside the wider
-            // streets of Pico (S6c).
+            // 5.9 km reales con rumbo de 119° desde General Pico (5.16 km al
+            // este, 2.86 km al sur), a escala 1:7. Unas 150 ha en la realidad:
+            // se conserva su forma, con 215 x 145 m. Su centro está 3 m al este
+            // de ese lugar, para que los alambrados de la mensura no toquen su
+            // orilla junto a las calles más anchas de Pico (S6c).
             name: "Laguna La Arocena",
             center: (3404.0, 841.0),
             size: (215.0, 145.0),

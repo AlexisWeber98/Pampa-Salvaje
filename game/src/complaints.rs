@@ -1,10 +1,10 @@
-//! Townsfolk complain when the rider bumps into them.
+//! Los vecinos se quejan cuando el jinete los choca.
 //!
-//! [`crate::life`] reports who the rider shoved and how fast it was going
-//! ([`Shoved`]); `pampa-core` decides which shoves are worth a complaint
-//! ([`BumpTracker`]) and which line to say ([`LinePicker`]); the lines come
-//! from `assets/dialogue/bumps.ron` through `pampa-content`; render shows
-//! them as speech bubbles ([`Say`]).
+//! [`crate::life`] informa a quién empujó el jinete y a qué velocidad iba
+//! ([`Shoved`]); `pampa-core` decide qué empujones merecen una queja
+//! ([`BumpTracker`]) y qué línea decir ([`LinePicker`]); las líneas vienen de
+//! `assets/dialogue/bumps.ron` a través de `pampa-content`; render las muestra
+//! como globos de diálogo ([`Say`]).
 
 use bevy::prelude::*;
 use pampa_content::{BUMPS_FILE, BumpLines, asset_path, load_bumps_or_builtin};
@@ -15,17 +15,17 @@ use pampa_render::lettering::{self, Face};
 use crate::life::{Shoved, Walker, jostle_crowd};
 use crate::player::{DrivePlayer, PlayerTuning};
 
-/// Seed for which lines townsfolk pick.
+/// Semilla para las líneas que eligen los vecinos.
 const LINE_SEED: u32 = 1931;
 
-/// The dialogue lines townsfolk say.
+/// Las líneas de diálogo que dicen los vecinos.
 #[derive(Resource, Debug, Clone, PartialEq)]
 pub struct Dialogue {
     pub bumps: BumpLines,
 }
 
-/// Who may complain again (per town, by town index), and which line was
-/// said last.
+/// Quién puede volver a quejarse (por pueblo, según el índice del pueblo), y
+/// qué línea se dijo por última vez.
 #[derive(Resource, Debug, Clone)]
 pub struct Complaints {
     pub trackers: Vec<BumpTracker>,
@@ -53,8 +53,8 @@ impl Plugin for ComplaintsPlugin {
     }
 }
 
-/// Reads `assets/dialogue/bumps.ron` unless dialogue was already provided,
-/// falling back to the built-in lines with a warning.
+/// Lee `assets/dialogue/bumps.ron` salvo que el diálogo ya se haya
+/// proporcionado, y recurre a las líneas incorporadas con un aviso.
 fn load_dialogue(mut commands: Commands, existing: Option<Res<Dialogue>>) {
     if existing.is_some() {
         return;
@@ -72,7 +72,8 @@ fn load_dialogue(mut commands: Commands, existing: Option<Res<Dialogue>>) {
     commands.insert_resource(Dialogue { bumps });
 }
 
-/// Turns this frame's shoves into complaints above the walkers' heads.
+/// Convierte los empujones de este frame en quejas sobre la cabeza de los
+/// peatones.
 fn complain(
     time: Res<Time>,
     mut shoved: MessageReader<Shoved>,
@@ -117,7 +118,7 @@ fn complain(
     }
 }
 
-/// Index of a severity's pool for the [`LinePicker`].
+/// Índice del grupo de una gravedad para el [`LinePicker`].
 fn pool_id(severity: BumpSeverity) -> usize {
     match severity {
         BumpSeverity::Walk => 0,
@@ -138,11 +139,11 @@ mod tests {
     const WALK: [&str; 2] = ["¡Ojo, che!", "¡Despacito!"];
     const GALLOP: [&str; 2] = ["¡Bruto!", "¡Casi me pisa!"];
 
-    /// Every line said, in order.
+    /// Cada línea dicha, en orden.
     #[derive(Resource, Default)]
     struct Said(Vec<String>);
 
-    /// How many times the rider shoved somebody.
+    /// Cuántas veces el jinete empujó a alguien.
     #[derive(Resource, Default)]
     struct Shoves(usize);
 
@@ -154,7 +155,7 @@ mod tests {
         shoves.0 += shoved.read().count();
     }
 
-    /// One person standing alone on open ground, and the rider. Frames last
+    /// Una persona sola de pie en campo abierto, y el jinete. Los frames duran
     /// 50 ms.
     fn app(tuning: RiderParams) -> App {
         let graph = StreetGraph {
@@ -202,7 +203,7 @@ mod tests {
         app.world().resource::<Crowds>().0[0].people[0].position
     }
 
-    /// Lets go of the keys and waits until the person stands still.
+    /// Suelta las teclas y espera hasta que la persona se quede quieta.
     fn settle(app: &mut App) {
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
@@ -219,8 +220,8 @@ mod tests {
         panic!("the person never stood still");
     }
 
-    /// Puts the rider `distance` m south of the (settled) person, a little
-    /// to the side, standing still and facing north.
+    /// Pone al jinete `distance` m al sur de la persona (ya quieta), un poco al
+    /// costado, detenido y mirando al norte.
     fn aim(app: &mut App, distance: f32) {
         settle(app);
         let target = person(app);
@@ -265,7 +266,7 @@ mod tests {
         let said = said(&app);
         assert_eq!(said.len(), 1, "{said:?}");
         assert!(GALLOP.contains(&said[0].as_str()), "{said:?}");
-        // Above the walker's head.
+        // Sobre la cabeza del peatón.
         let walker = {
             let mut q = app.world_mut().query_filtered::<Entity, With<Walker>>();
             q.single(app.world()).unwrap()
@@ -279,11 +280,11 @@ mod tests {
         aim(&mut app, 15.0);
         ride(&mut app, true, 3.5);
         assert_eq!(said(&app).len(), 1);
-        // Charge again at once: still cooling down.
+        // Embestir otra vez enseguida: todavía en enfriamiento.
         aim(&mut app, 4.0);
         ride(&mut app, true, 1.5);
         assert_eq!(said(&app).len(), 1, "{:?}", said(&app));
-        // Once the cooldown is over, a new (different) complaint.
+        // Una vez terminado el enfriamiento, una queja nueva (distinta).
         ride(&mut app, true, 4.0);
         aim(&mut app, 4.0);
         ride(&mut app, true, 1.5);

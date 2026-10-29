@@ -1,14 +1,16 @@
-//! The animals round the player: `pampa-core` seeds them
-//! ([`FaunaSite`]) and steps them; this module streams them with the chunks
-//! within [`RADIUS`] of the player, nearest first and up to the
-//! [`caps`] (re-planned each time the player enters another chunk, so
-//! nearer chunks take the room first), steps them with the player as the threat they shy from, and
-//! copies their state onto the entities render draws ([`Animal`]).
+//! Los animales alrededor del jugador: `pampa-core` los siembra ([`FaunaSite`])
+//! y los hace avanzar; este módulo los trae por streaming con los chunks dentro
+//! de [`RADIUS`] del jugador, los más cercanos primero y hasta los [`caps`] (se
+//! replanifica cada vez que el jugador entra en otro chunk, para que los chunks
+//! más cercanos ocupen el lugar primero), los hace avanzar con el jugador como
+//! la amenaza que esquivan, y copia su estado en las entidades que dibuja
+//! render ([`Animal`]).
 //!
-//! Cattle are soft bodies: the player is kept clear of them, and walks
-//! them off. The horses standing in the corrals are [`Mountable`] (once
-//! riding is unlocked, any horse is) and obstacles while they stand; one
-//! taken stays the player's and is not seeded again this session.
+//! El ganado es un cuerpo blando: el jugador se mantiene apartado de él y lo
+//! aparta al caminar. Los caballos que están en los corrales son [`Mountable`]
+//! (una vez desbloqueada la monta, cualquier caballo lo es) y obstáculos
+//! mientras están quietos; uno que se toma queda para el jugador y no se vuelve
+//! a sembrar en esta sesión.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -24,17 +26,18 @@ use crate::errand::Mountable;
 use crate::player::{DrivePlayer, GameWorld, Player, drive_player};
 use crate::ride::OnTrain;
 
-/// Chunks out from the player's that hold live animals.
+/// Chunks, contados desde el del jugador, que tienen animales vivos.
 pub const RADIUS: i32 = 2;
-/// Herds farther than this from the player are not checked against the
-/// rider, meters.
+/// Las manadas a más de esta distancia del jugador no se comprueban contra el
+/// jinete, en metros.
 const BODY_REACH: f32 = 40.0;
 
-/// Where the world's animals live.
+/// Dónde viven los animales del mundo.
 #[derive(Resource, Debug, Clone)]
 pub struct WorldFauna(pub FaunaSite);
 
-/// The animals of one streamed chunk, each with the entities drawing it.
+/// Los animales de un chunk cargado por streaming, cada uno con las entidades
+/// que lo dibujan.
 #[derive(Debug, Default)]
 struct ChunkFauna {
     herds: Vec<(Herd, Vec<Entity>)>,
@@ -43,18 +46,19 @@ struct ChunkFauna {
     flocks: Vec<(Flock, Vec<Entity>)>,
     raptors: Vec<(Raptor, Entity)>,
     ducks: Vec<(Duck, Entity)>,
-    /// Which of the chunk's seeded animals it holds (see [`Picks`]).
+    /// Cuáles de los animales sembrados del chunk contiene (ver [`Picks`]).
     picks: Picks,
 }
 
-/// Which of a chunk's seeded animals are drawn, by kind in
-/// [`Fauna::counts`] order: herds by id, corral horses by their
-/// footprint ([`horse_key`]), the rest by their place in the chunk's
-/// seeded list. Two plans with equal picks hold the very same animals.
+/// Cuáles de los animales sembrados de un chunk se dibujan, por tipo en el
+/// orden de [`Fauna::counts`]: las manadas por id, los caballos de corral por
+/// su huella en planta ([`horse_key`]), el resto por su lugar en la lista
+/// sembrada del chunk. Dos planes con las mismas selecciones contienen
+/// exactamente los mismos animales.
 type Picks = [Vec<u64>; 6];
 
 impl ChunkFauna {
-    /// Cows, horses, hares, teros, raptors and ducks.
+    /// Vacas, caballos, liebres, teros, rapaces y patos.
     fn counts(&self) -> [usize; 6] {
         [
             self.herds.iter().map(|h| h.0.cows.len()).sum(),
@@ -78,17 +82,18 @@ impl ChunkFauna {
     }
 }
 
-/// The animals alive round the player now.
+/// Los animales vivos alrededor del jugador ahora.
 #[derive(Resource, Debug, Default)]
 pub struct Fauna {
     center: Option<ChunkCoord>,
     chunks: BTreeMap<ChunkCoord, ChunkFauna>,
-    /// Corral horses the player took, by their footprint's corner.
+    /// Caballos de corral que tomó el jugador, por la esquina de su huella en
+    /// planta.
     taken: HashSet<(u32, u32)>,
 }
 
 impl Fauna {
-    /// Cows, horses, hares, teros, raptors and ducks alive now.
+    /// Vacas, caballos, liebres, teros, rapaces y patos vivos ahora.
     pub fn counts(&self) -> [usize; 6] {
         self.chunks.values().fold([0; 6], |mut sum, c| {
             for (s, n) in sum.iter_mut().zip(c.counts()) {
@@ -99,7 +104,7 @@ impl Fauna {
     }
 }
 
-/// The most of each kind, in [`Fauna::counts`] order.
+/// El máximo de cada tipo, en el orden de [`Fauna::counts`].
 pub const CAPS: [usize; 6] = [
     caps::COWS,
     caps::HORSES,
@@ -109,7 +114,7 @@ pub const CAPS: [usize; 6] = [
     caps::DUCKS,
 ];
 
-/// The caps in force: [`CAPS`] unless a test lowers them.
+/// Los límites vigentes: [`CAPS`] salvo que un test los baje.
 #[derive(Resource, Debug, Clone, Copy, PartialEq)]
 pub struct FaunaCaps(pub [usize; 6]);
 
@@ -123,7 +128,7 @@ fn horse_key(h: &TetheredHorse) -> (u32, u32) {
     (h.footprint.min.x.to_bits(), h.footprint.min.y.to_bits())
 }
 
-/// A horse's [`horse_key`] as one pick.
+/// La [`horse_key`] de un caballo como una selección.
 fn horse_pick(h: &TetheredHorse) -> u64 {
     let (x, y) = horse_key(h);
     (u64::from(x) << 32) | u64::from(y)
@@ -145,16 +150,16 @@ impl Plugin for FaunaPlugin {
     }
 }
 
-/// Where the player stands, unless aboard the train.
+/// Dónde está el jugador, salvo que esté a bordo del tren.
 type Players<'w, 's> =
     Query<'w, 's, (&'static mut Player, &'static mut Transform), Without<OnTrain>>;
 
-/// Re-plans the animals round the player each time they enter another
-/// chunk: the chunks within [`RADIUS`], nearest first, each take what of
-/// theirs still fits under the [`CAPS`]. A loaded chunk whose share is
-/// unchanged keeps its animals as they are; one whose share changed (a
-/// nearer chunk now takes the room, or room freed up) is drawn again with
-/// its new share; chunks out of range go.
+/// Replanifica los animales alrededor del jugador cada vez que entra en otro
+/// chunk: los chunks dentro de [`RADIUS`], los más cercanos primero, toman cada
+/// uno lo que de lo suyo todavía entra bajo los [`CAPS`]. Un chunk cargado cuya
+/// parte no cambió conserva sus animales tal como están; uno cuya parte cambió
+/// (un chunk más cercano ahora ocupa el lugar, o se liberó lugar) se vuelve a
+/// dibujar con su nueva parte; los chunks fuera de alcance se van.
 fn stream_fauna(
     mut commands: Commands,
     site: Option<Res<WorldFauna>>,
@@ -166,7 +171,8 @@ fn stream_fauna(
     let (Some(site), Ok(player)) = (site, players.single()) else {
         return;
     };
-    // A horse gone from its corral was taken: never seed it again.
+    // Un caballo que falta de su corral fue tomado: no se vuelve a sembrar
+    // nunca.
     let fauna = &mut *fauna;
     for chunk in fauna.chunks.values_mut() {
         chunk.horses.retain(|(horse, e)| {
@@ -213,7 +219,8 @@ fn stream_fauna(
     }
 }
 
-/// What of a chunk's animals fits under the caps, before it is drawn.
+/// Lo que de los animales de un chunk entra bajo los límites, antes de
+/// dibujarlo.
 #[derive(Debug, Default)]
 struct Share {
     herds: Vec<Herd>,
@@ -225,15 +232,15 @@ struct Share {
     picks: Picks,
 }
 
-/// The animals of `coord` that fit in the `room` left under the caps
-/// (whole herds and flocks only), leaving out the horses `taken`.
+/// Los animales de `coord` que entran en el lugar `room` que queda bajo los
+/// límites (solo manadas y bandadas enteras), sin los caballos `taken`.
 fn select(
     site: &FaunaSite,
     coord: ChunkCoord,
     room: &mut [usize; 6],
     taken: &HashSet<(u32, u32)>,
 ) -> Share {
-    /// The `items` that fit in `room`, in order, with their picks.
+    /// Los `items` que entran en `room`, en orden, con sus selecciones.
     fn fits<T>(
         items: Vec<T>,
         size: impl Fn(&T) -> usize,
@@ -252,7 +259,7 @@ fn select(
         }
         kept
     }
-    /// The pick of a kind without an id: its place in the seeded list.
+    /// La selección de un tipo sin id: su lugar en la lista sembrada.
     fn index<T>(k: usize, _: &T) -> u64 {
         k as u64
     }
@@ -290,10 +297,11 @@ fn select(
     }
 }
 
-/// Spawns the entities drawing a chunk's `share`; its corral horses
-/// stand as obstacles.
+/// Crea las entidades que dibujan la parte `share` de un chunk; sus caballos de
+/// corral quedan como obstáculos.
 fn spawn_share(commands: &mut Commands, share: Share, world: &mut GameWorld) -> ChunkFauna {
-    // Only the livestock models read the seed (their idles and offsets).
+    // Solo los modelos del ganado leen la semilla (sus esperas y
+    // desplazamientos).
     let mut spawn = |animal: Animal, seed: u32| {
         commands
             .spawn((Name::new("Animal"), animal, AnimalSeed(seed)))
@@ -354,8 +362,8 @@ fn spawn_share(commands: &mut Commands, share: Share, world: &mut GameWorld) -> 
     chunk
 }
 
-/// Steps every live animal with the player as the threat, and keeps the
-/// player clear of the cattle.
+/// Hace avanzar a cada animal vivo con el jugador como amenaza, y mantiene al
+/// jugador apartado del ganado.
 fn step_fauna(
     time: Res<Time>,
     site: Option<Res<WorldFauna>>,
@@ -375,8 +383,8 @@ fn step_fauna(
                 bodies.extend(herd.bodies());
             }
         }
-        // Hares run and teros land only on open grass (see
-        // `FaunaSite::grazeable`), inside their own chunk.
+        // Las liebres corren y los teros se posan solo sobre pasto abierto (ver
+        // `FaunaSite::grazeable`), dentro de su propio chunk.
         let open = |p| site.0.grazeable(p);
         chunk
             .hares
@@ -399,7 +407,7 @@ fn step_fauna(
     }
 }
 
-/// Copies each animal's state onto the entity drawing it.
+/// Copia el estado de cada animal en la entidad que lo dibuja.
 fn place_fauna(
     site: Option<Res<WorldFauna>>,
     fauna: Res<Fauna>,
@@ -496,7 +504,7 @@ mod tests {
     use pampa_core::{Rider, World};
     use std::time::Duration;
 
-    /// The shipped world's fauna, headless, with the player at `at`.
+    /// La fauna del mundo incluido, sin interfaz, con el jugador en `at`.
     fn app(at: GroundVec2) -> (App, FaunaSite) {
         let laid = crate::shipped_world::laid();
         let site = laid.fauna.clone();
@@ -530,7 +538,7 @@ mod tests {
         let (mut app, site) = app(GroundVec2::ZERO);
         let head: usize = site.herds().iter().map(|h| h.cows.len()).sum();
         println!("shipped world: {} herds, {head} head", site.herds().len());
-        // Where the most cattle graze, then by a lagoon and a corral.
+        // Donde pasta más ganado, y luego junto a una laguna y a un corral.
         let busiest = site
             .herds()
             .iter()
@@ -575,7 +583,7 @@ mod tests {
                 _ => assert!(counts[1] > 0, "horses in the corral"),
             }
         }
-        // Far out, nothing is left of what was loaded before.
+        // Lejos, no queda nada de lo que estaba cargado antes.
         moved(&mut app, GroundVec2::new(8000.0, 8000.0));
         let counts = app.world().resource::<Fauna>().counts();
         assert_eq!(counts[0..2], [0, 0], "{counts:?}");
@@ -592,7 +600,7 @@ mod tests {
             .into_iter()
             .filter(|&c| teros(c) > 0)
             .collect();
-        // Two tero chunks within the load radius of each other.
+        // Dos chunks de teros dentro del radio de carga uno del otro.
         let (near, edge) = chunks
             .iter()
             .flat_map(|&a| chunks.iter().map(move |&b| (a, b)))
@@ -600,8 +608,8 @@ mod tests {
                 a != b && (1..=i64::from(RADIUS).pow(2)).contains(&a.distance_squared(*b))
             })
             .expect("two tero chunks near each other");
-        // Room for exactly the edge chunk's flock, planned afresh from far
-        // away.
+        // Lugar exactamente para la bandada del chunk del borde, planificado de
+        // nuevo desde lejos.
         moved(&mut app, GroundVec2::new(8000.0, 8000.0));
         app.world_mut().resource_mut::<FaunaCaps>().0[3] = teros(edge);
         let loaded = |app: &App, c: ChunkCoord| {
@@ -648,14 +656,15 @@ mod tests {
         };
         let before = cows(&mut app);
         assert!(!before.is_empty());
-        // Same totals, other content: as if a different herd of the same
-        // size had been picked.
+        // Los mismos totales, otro contenido: como si se hubiera elegido otra
+        // manada del mismo tamaño.
         {
             let mut fauna = app.world_mut().resource_mut::<Fauna>();
             let chunk = fauna.chunks.get_mut(&home).unwrap();
             chunk.picks[0] = chunk.picks[0].iter().map(|id| id + 1_000_000).collect();
         }
-        // One chunk over (home still within reach), and the plan runs.
+        // Un chunk más allá (el de origen todavía al alcance), y el plan se
+        // ejecuta.
         moved(&mut app, ChunkCoord::new(home.x + 1, home.y).center(size));
         let after = cows(&mut app);
         assert_eq!(after.len(), before.len());
@@ -667,7 +676,7 @@ mod tests {
             .map(|h| u64::from(h.0.id))
             .collect();
         assert_eq!(fauna.chunks[&home].picks[0], ids);
-        // An unchanged chunk keeps its animals as they are.
+        // Un chunk sin cambios conserva sus animales tal como están.
         let kept = cows(&mut app);
         moved(&mut app, home.center(size));
         assert_eq!(cows(&mut app), kept);
@@ -693,7 +702,8 @@ mod tests {
                 .obstacles
                 .contains(&horse.footprint)
         );
-        // Taken (as the errand's mount does): it goes with its footprint.
+        // Tomado (como lo hace la montura del encargo): se va con su huella en
+        // planta.
         app.world_mut()
             .resource_mut::<GameWorld>()
             .0

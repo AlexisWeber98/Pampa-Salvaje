@@ -1,8 +1,8 @@
-//! Builds the world and its towns from `assets/world/towns.ron`.
+//! Construye el mundo y sus pueblos a partir de `assets/world/towns.ron`.
 //!
-//! The towns are needed before the app starts (the leveled terrain, the
-//! crowds and the trains all come from them), when logging is not up yet,
-//! so problems are kept in [`TownReport`] and logged at startup.
+//! Los pueblos se necesitan antes de que arranque la app (el terreno nivelado,
+//! la gente y los trenes salen de ellos), cuando el log todavía no está listo,
+//! así que los problemas se guardan en [`TownReport`] y se registran al inicio.
 
 use std::path::Path;
 
@@ -14,40 +14,41 @@ use pampa_core::{
 };
 use pampa_render::lettering::{self, Face};
 
-/// The world to build, its towns, and what went wrong reading them.
+/// El mundo a construir, sus pueblos, y lo que salió mal al leerlos.
 #[derive(Debug, Clone)]
 pub struct LoadedWorld {
     pub world: WorldConfig,
-    /// Every valid town, in file order; never empty. The player starts at
-    /// the first one.
+    /// Cada pueblo válido, en el orden del archivo; nunca vacío. El jugador
+    /// empieza en el primero.
     pub towns: Vec<TownLayout>,
-    /// The railway line through the towns, its links checked against them.
+    /// La línea del ferrocarril que pasa por los pueblos, con sus tramos
+    /// comprobados contra ellos.
     pub line: RailLine,
-    /// The dirt roads between neighbouring towns, and each railway town's
-    /// rural track across its level crossing.
+    /// Los caminos de tierra entre pueblos vecinos, y la huella rural de cada
+    /// pueblo ferroviario a través de su paso a nivel.
     pub roads: RoadNetwork,
-    /// The lagoons, clear of the towns, the railway and the roads, their
-    /// water set against the default terrain.
+    /// Las lagunas, apartadas de los pueblos, del ferrocarril y de los caminos,
+    /// con su agua ajustada contra el terreno por defecto.
     pub lagoons: Vec<Lagoon>,
-    /// Problems found, ready to log as warnings.
+    /// Problemas encontrados, listos para registrarse como avisos.
     pub warnings: Vec<String>,
 }
 
-/// Loads the towns file at `path` and places every valid town in its world,
-/// falling back to the built-in Eduardo Castex when no town can be built,
-/// then runs the railway line and the roads through them and lays the
-/// lagoons clear of them all.
+/// Carga el archivo de pueblos en `path` y ubica cada pueblo válido en su
+/// mundo, recurriendo al Eduardo Castex incorporado cuando no se puede
+/// construir ningún pueblo; luego tiende la línea del ferrocarril y los caminos
+/// entre ellos y coloca las lagunas apartadas de todo.
 pub fn load_world(path: &Path) -> LoadedWorld {
     let (content, errors) = load_towns_or_builtin(path);
     let mut warnings: Vec<String> = errors.iter().map(|e| format!("towns: {e}")).collect();
     let mut world = content.world;
     let mut names = content.line;
     let mut branches = content.branches;
-    // Content already placed these towns once; this only builds them.
+    // Content ya ubicó estos pueblos una vez; esto solo los construye.
     let (mut towns, rejected) = place_towns(&world, &content.towns);
     warnings.extend(rejected.iter().map(|e| format!("towns: {e}")));
     if towns.is_empty() {
-        // The file's line names towns that are gone.
+        // La línea del archivo nombra pueblos que ya no están.
         names = None;
         branches.clear();
         warnings.push(
@@ -74,10 +75,11 @@ pub fn load_world(path: &Path) -> LoadedWorld {
         &content.lagoons,
     );
     warnings.extend(left_out.iter().map(|e| format!("towns: {e}")));
-    // A public road out to each lagoon from the nearest town.
+    // Un camino público hasta cada laguna desde el pueblo más cercano.
     let (roads, left_out) = roads.with_lagoons(&towns, &line, world.bounds(), &lagoons);
     warnings.extend(left_out.iter().map(|e| format!("towns: {e}")));
-    // The walks from the bays' platforms to the road crossing by the station.
+    // Los senderos desde los andenes de las vías muertas hasta el cruce del
+    // camino junto a la estación.
     line.lay_walks(&towns, &roads);
     LoadedWorld {
         world,
@@ -89,7 +91,8 @@ pub fn load_world(path: &Path) -> LoadedWorld {
     }
 }
 
-/// A warning for each station sign of `town` the typefaces cannot fully draw.
+/// Un aviso por cada cartel de estación de `town` que las tipografías no pueden
+/// dibujar por completo.
 fn unsupported_glyphs(town: &TownLayout) -> Vec<String> {
     let stations = town
         .places()
@@ -115,7 +118,7 @@ fn unsupported_glyphs(town: &TownLayout) -> Vec<String> {
     warnings
 }
 
-/// What loading the towns reported, logged once at startup.
+/// Lo que informó la carga de los pueblos, registrado una sola vez al inicio.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct TownReport {
     pub names: Vec<String>,
@@ -123,8 +126,8 @@ pub struct TownReport {
 }
 
 impl LoadedWorld {
-    /// The default terrain with every lagoon sunk into it, before the towns
-    /// are leveled.
+    /// El terreno por defecto con cada laguna hundida en él, antes de nivelar
+    /// los pueblos.
     pub fn terrain(&self) -> Terrain {
         self.lagoons
             .iter()
@@ -141,7 +144,7 @@ impl TownReport {
     }
 }
 
-/// Logs the towns that were built and any problems loading them.
+/// Registra los pueblos que se construyeron y cualquier problema al cargarlos.
 pub fn log_town_report(report: Res<TownReport>) {
     for warning in &report.warnings {
         warn!("{warning}");
@@ -184,9 +187,10 @@ mod tests {
                 "Caleufú"
             ]
         );
-        // General Pico is very big: a 2 x 2 plaza, a station plaza, two
-        // general stores, two police stations and the 31 people its town
-        // file sets (its size alone would get 51).
+        // General Pico es muy grande: una plaza de 2 x 2, una plaza de la
+        // estación, dos almacenes de ramos generales, dos comisarías y las 31
+        // personas que fija su archivo de pueblos (por su tamaño le tocarían
+        // 51).
         let pico = &loaded.towns[3];
         assert_eq!(pico.size, TownSize::VeryBig);
         assert!(pico.station_plaza.is_some());
@@ -200,15 +204,15 @@ mod tests {
             assert_eq!(small.station_plaza, None, "{}", small.name);
             assert_eq!(small.townsfolk_count(), 10, "{}", small.name);
         }
-        // One railway line runs Castex, Monte Nievas, Metileo, General Pico,
-        // and a branch leaves it at Metileo for Caleufú.
+        // Una línea del ferrocarril recorre Castex, Monte Nievas, Metileo y
+        // General Pico, y un ramal sale de ella en Metileo hacia Caleufú.
         assert_eq!(loaded.line.towns, [1, 0, 2, 3]);
         let links: Vec<(usize, usize)> = loaded.line.links.iter().map(|l| (l.from, l.to)).collect();
         assert_eq!(links, [(1, 0), (0, 2), (2, 3), (2, 4)]);
         assert_eq!(loaded.line.branches.len(), 1);
         assert_eq!(loaded.line.branches[0].towns, [2, 4]);
-        // The small towns' stores are pulperías; Pico's, almacenes de ramos
-        // generales.
+        // Los almacenes de los pueblos pequeños son pulperías; los de Pico,
+        // almacenes de ramos generales.
         for town in &loaded.towns {
             let expected = if town.size == TownSize::Small {
                 "PULPERÍA"
@@ -223,7 +227,7 @@ mod tests {
                 assert_eq!(store.name, expected, "{}", town.name);
             }
         }
-        // Laguna La Arocena is laid, clear of everything.
+        // Se coloca la Laguna La Arocena, apartada de todo.
         assert_eq!(loaded.lagoons.len(), 1);
         assert_eq!(loaded.lagoons[0].name, "Laguna La Arocena");
     }
@@ -235,8 +239,8 @@ mod tests {
         let rail = pico.railway.expect("a railway");
         let band = pico.rail_band().expect("the line runs through Pico");
         let grid = pico.grid();
-        // The track runs east-west through the town's core, not along its
-        // edge: within a block of the middle row, inside the band.
+        // La vía va de este a oeste por el centro del pueblo, no por su borde:
+        // a menos de una manzana de la fila del medio, dentro de la franja.
         let y = rail.start.y;
         assert_eq!(rail.end.y, y);
         assert!(
@@ -246,7 +250,7 @@ mod tests {
         );
         assert!(band.min.y < y && y < band.max.y);
         assert!(rail.start.x < grid.min.x && rail.end.x > grid.max.x);
-        // Houses on both sides, and nothing built on the track.
+        // Casas a ambos lados, y nada construido sobre la vía.
         let houses = |north: bool| {
             pico.buildings
                 .iter()
@@ -268,17 +272,17 @@ mod tests {
         {
             assert!(!b.footprint.intersects(&corridor), "{b:?} on the track");
         }
-        // (The platform's edge is 1.65 m from the track, inside the corridor.)
-        // The station and its platform stand in the middle of town on the
-        // north side of the track, the platform along it.
+        // (El borde del andén está a 1.65 m de la vía, dentro del corredor). La
+        // estación y su andén están en el centro del pueblo, del lado norte de
+        // la vía, con el andén a lo largo de ella.
         let of = |kind| pico.buildings.iter().find(|b| b.kind == kind).unwrap();
         let (station, platform) = (of(BuildingKind::Station), of(BuildingKind::Platform));
         assert!(band.contains(&station.footprint) && band.contains(&platform.footprint));
         assert!(station.footprint.min.y > platform.footprint.max.y - 1e-3);
         assert!(platform.footprint.min.y > y);
         assert!((platform.footprint.center().x - grid.center().x).abs() < 1.0);
-        // A store and a comisaría on each side of the line, each serving
-        // its half of the town.
+        // Un almacén y una comisaría a cada lado de la línea, cada uno al
+        // servicio de su mitad del pueblo.
         for kind in [BuildingKind::GeneralStore, BuildingKind::PoliceStation] {
             let north: Vec<bool> = pico
                 .buildings
@@ -289,13 +293,13 @@ mod tests {
             assert_eq!(north.len(), 2, "{kind:?}");
             assert_ne!(north[0], north[1], "{kind:?}");
         }
-        // The main plaza lies north-west of the station, a few blocks off.
+        // La plaza principal queda al noroeste de la estación, a unas cuadras.
         let to_plaza = pico.plaza.center() - station.footprint.center();
         assert!(to_plaza.x < -40.0 && to_plaza.y > 60.0, "{to_plaza:?}");
         assert!(pico.plaza.min.y > band.max.y);
-        // Every north-south street that crosses the track has its level
-        // crossing, on a street road, square to the track; the others stop
-        // short of the station yard.
+        // Cada calle norte-sur que cruza la vía tiene su paso a nivel, sobre un
+        // camino de calle, perpendicular a la vía; las demás terminan antes del
+        // playón de la estación.
         let streets = pico.crossing_streets();
         assert!(streets.len() >= 3, "{streets:?}");
         let crossings: Vec<_> = loaded
@@ -320,7 +324,7 @@ mod tests {
                 assert!(!s.intersects(&b.footprint), "{s:?} into {b:?}");
             }
         }
-        // Walkers cross the line at the level crossings.
+        // Los peatones cruzan la línea por los pasos a nivel.
         let graph = pampa_core::StreetGraph::from_town(pico);
         let across = graph.links.iter().enumerate().any(|(n, links)| {
             links
@@ -328,8 +332,8 @@ mod tests {
                 .any(|&m| (graph.nodes[n].y - y) * (graph.nodes[m].y - y) < 0.0)
         });
         assert!(across);
-        // The ground rises onto each crossing's deck and the rider rides
-        // across, from one half of town to the other.
+        // El suelo sube hasta la plataforma de cada paso a nivel y el jinete la
+        // cruza, de una mitad del pueblo a la otra.
         let mut world = World::with_towns(loaded.world, Terrain::default(), &loaded.towns);
         world.lay_roads(loaded.roads.clone());
         let collider = pampa_core::Circle::new(pampa_core::Rider::COLLIDER_RADIUS);
@@ -378,14 +382,15 @@ mod tests {
         let loaded = crate::shipped_world::loaded();
         let metileo = &loaded.towns[2];
         assert_eq!(metileo.name, "Metileo");
-        // A halt: a few houses round its store, no comisaría.
+        // Un apeadero: unas pocas casas alrededor de su almacén, sin comisaría.
         let count = |kind| metileo.buildings.iter().filter(|b| b.kind == kind).count();
         assert_eq!(count(BuildingKind::PoliceStation), 0);
         assert_eq!(count(BuildingKind::GeneralStore), 1);
         assert!((3..=15).contains(&(count(BuildingKind::House) + count(BuildingKind::Shed))));
         let train = LineTrain::new(&loaded.line, &loaded.towns, Timetable::default()).unwrap();
         let station = train.station_of_town(2).expect("Metileo is a station");
-        // Both runs stop there: up from Pico and down to it.
+        // Ambos viajes paran allí: el ascendente desde Pico y el descendente
+        // hacia Pico.
         for run in [Run::Up, Run::Down] {
             let (arrive, depart) = train.stop_times(run, station).unwrap();
             assert!(depart > arrive, "{run:?}");
@@ -393,7 +398,7 @@ mod tests {
             assert!(pampa_core::stands_at(&mid, station), "{run:?}");
         }
         assert!(train.misplaced_stops().is_empty());
-        // Its platform is reachable on foot from the street.
+        // Su andén es accesible a pie desde la calle.
         let (spot, _) = metileo.platform_spot().expect("a platform");
         let world = World::with_towns(loaded.world, Terrain::default(), &loaded.towns);
         let collider = pampa_core::Circle::new(pampa_core::Rider::COLLIDER_RADIUS);
@@ -401,12 +406,12 @@ mod tests {
         assert!(world.ground_height(spot) > world.terrain.height(spot.x, spot.y) + 0.5);
     }
 
-    /// The narrowest front that takes a three-bay town house: three 2.8 m
-    /// bays between walls set 0.1 m in from the lot (`pampa_render`'s
-    /// facade kit).
+    /// El frente más angosto que admite una casa de pueblo de tres módulos:
+    /// tres módulos de 2.8 m entre paredes retiradas 0.1 m del lote (el kit de
+    /// fachadas de `pampa_render`).
     const THREE_BAYS: f32 = 3.0 * 2.8 + 2.0 * 0.1;
 
-    /// Width of `b` along its front, in meters.
+    /// Ancho de `b` a lo largo de su frente, en metros.
     fn frontage(b: &pampa_core::Building) -> f32 {
         let s = b.footprint.size();
         match b.front {
@@ -417,22 +422,25 @@ mod tests {
 
     #[test]
     fn metileo_has_lots_wide_enough_for_three_bay_houses_and_a_windowed_church() {
-        // Metileo's blocks are 40 m, as in the other towns. Its 30 m blocks
-        // (until 2026-10-25) left 6–7.5 m house lots, two bays each, and a
-        // 9 m church front with no room for a window beside its tower.
+        // Las manzanas de Metileo miden 40 m, como en los otros pueblos. Sus
+        // manzanas de 30 m (hasta 2026-10-25) dejaban lotes de casa de 6–7.5 m,
+        // de dos módulos cada uno, y un frente de iglesia de 9 m sin lugar para
+        // una ventana junto a su torre.
         let loaded = crate::shipped_world::loaded();
         let metileo = &loaded.towns[2];
         assert_eq!(metileo.name, "Metileo");
         let of = |kind| metileo.buildings.iter().filter(move |b| b.kind == kind);
         let houses: Vec<f32> = of(BuildingKind::House).map(frontage).collect();
-        // No house narrower than the narrowest in the other towns (8 m),
-        // and most wide enough for three 2.8 m bays between their walls.
+        // Ninguna casa más angosta que la más angosta de los otros pueblos
+        // (8 m), y la mayoría lo bastante anchas para tres módulos de 2.8 m
+        // entre sus paredes.
         assert!(houses.iter().all(|&w| w >= 8.0), "{houses:?}");
         let three = houses.iter().filter(|&&w| w >= THREE_BAYS).count();
         assert!(2 * three >= houses.len(), "{houses:?}");
-        // The church front is 12 m, as in every other town: beside its 4 m
-        // tower that leaves 3.9 m of nave wall on either side (inside its
-        // 0.1 m insets), past the 2.4 m an arched window needs.
+        // El frente de la iglesia mide 12 m, como en todos los demás pueblos:
+        // junto a su torre de 4 m deja 3.9 m de pared de nave a cada lado
+        // (dentro de sus retiros de 0.1 m), más que los 2.4 m que necesita una
+        // ventana en arco.
         let church = of(BuildingKind::Church).map(frontage).collect::<Vec<_>>();
         assert_eq!(church.len(), 1);
         assert!(church[0] >= 12.0 - 1e-3, "{church:?}");
@@ -441,8 +449,8 @@ mod tests {
     #[test]
     fn the_shipped_streets_are_two_meters_wider_and_picos_three_and_every_town_paves_by_its_tier() {
         let loaded = crate::shipped_world::loaded();
-        // (name, street width, carriageway left between the sidewalks), all
-        // literal: the carriageway is not derived from the width here.
+        // (nombre, ancho de la calle, calzada que queda entre las veredas),
+        // todo literal: aquí la calzada no se deriva del ancho.
         let wanted: [(&str, f32, f32); 5] = [
             ("Monte Nievas", 12.0, 5.0),
             ("Eduardo Castex", 12.0, 5.0),
@@ -453,20 +461,22 @@ mod tests {
         assert_eq!(loaded.towns.len(), wanted.len());
         for (town, &(name, width, carriageway)) in loaded.towns.iter().zip(&wanted) {
             assert_eq!(town.name, name);
-            // The ring street round the grid is as wide as the streets.
+            // La calle de circunvalación alrededor de la cuadrícula es tan
+            // ancha como las calles.
             let first = town
                 .streets
                 .iter()
                 .map(|s| s.size().x.min(s.size().y))
                 .fold(f32::INFINITY, f32::min);
             assert!((first - width).abs() < 1e-3, "{name}: streets {first} m");
-            // Every town has sidewalks (3.5 m a side), village included, and
-            // they leave the carriageway 5 m, Pico 6 m.
+            // Todos los pueblos tienen veredas (3.5 m por lado), incluida la
+            // aldea, y dejan una calzada de 5 m, en Pico de 6 m.
             assert!(!town.sidewalks().is_empty(), "{name}");
             assert_eq!(pampa_core::town::Sidewalk::WIDTH, 3.5);
             assert_sidewalks_line_every_cross_section(town, carriageway);
-            // Brick: all of Pico's, the plaza's ring of a town (4 strips), none
-            // of a village's; every strip has its curbs.
+            // Ladrillo: todas las de Pico, el anillo de la plaza de un pueblo
+            // (4 franjas), ninguna de una aldea; cada franja tiene sus
+            // cordones.
             let brick = town
                 .sidewalks()
                 .iter()
@@ -485,16 +495,17 @@ mod tests {
         }
     }
 
-    /// Checks every cross-section along the middle half of each of the town's
-    /// streets (at its ends a crossing street's sidewalk may run right across
-    /// it, and an intersection has no frontage), one street edge at a time. A
-    /// sidewalk belongs on an edge exactly where the land beyond it is a block
-    /// or plaza: inside the grid, not on another street and not in the rail
-    /// band (where the track and the station yard lie; the ring street's outer
-    /// edge faces the pampa). Where one belongs it must be `Sidewalk::WIDTH`
-    /// deep from the edge; where none does, nothing may cover that edge;
-    /// nothing covers the middle of the street; and where both belong
-    /// `carriageway` is what is left.
+    /// Comprueba cada sección transversal a lo largo de la mitad central de
+    /// cada calle del pueblo (en sus extremos, la vereda de una calle
+    /// transversal puede atravesarla, y una intersección no tiene frente), un
+    /// borde de calle a la vez. Una vereda corresponde a un borde exactamente
+    /// donde el terreno más allá es una manzana o una plaza: dentro de la
+    /// cuadrícula, no en otra calle y no en la franja del ferrocarril (donde
+    /// están la vía y el playón de la estación; el borde exterior de la calle
+    /// de circunvalación da a la pampa). Donde corresponde una, debe tener
+    /// `Sidewalk::WIDTH` de profundidad desde el borde; donde no corresponde
+    /// ninguna, nada puede cubrir ese borde; nada cubre el centro de la calle;
+    /// y donde corresponden ambas, `carriageway` es lo que queda.
     fn assert_sidewalks_line_every_cross_section(
         town: &pampa_core::town::TownLayout,
         carriageway: f32,
@@ -512,7 +523,7 @@ mod tests {
         };
         for street in &town.streets {
             let size = street.size();
-            // Whether the street runs along x; across it is the other axis.
+            // Si la calle va a lo largo de x; el eje transversal es el otro.
             let x = size.x >= size.y;
             let (lo, hi) = (axis(street.min, !x), axis(street.max, !x));
             for k in 0..SAMPLES {
@@ -525,8 +536,8 @@ mod tests {
                         Vec2::new(across, at)
                     }
                 };
-                // An intersection has no frontage: the crossing street's
-                // sidewalks run round its corners.
+                // Una intersección no tiene frente: las veredas de la calle
+                // transversal rodean sus esquinas.
                 let middle = point((lo + hi) / 2.0);
                 if town
                     .streets
@@ -544,8 +555,8 @@ mod tests {
                     .filter(|(a, z)| a < z)
                     .collect();
                 covered.sort_by(|a, b| a.0.total_cmp(&b.0));
-                // The runs the sidewalks leave touching each edge, and what
-                // they cover in all.
+                // Los tramos que las veredas dejan en contacto con cada borde,
+                // y lo que cubren en total.
                 let (mut low, mut high, mut total) = (0.0f32, 0.0f32, 0.0f32);
                 let mut edge = lo;
                 for &(a, z) in &covered {
@@ -588,12 +599,12 @@ mod tests {
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
         const METILEO: usize = 2;
         let metileo = &loaded.towns[METILEO];
-        // Still centered on its origin, now 168 m across: three 40 m blocks
-        // and four 12 m streets.
+        // Todavía centrado en su origen, ahora de 168 m de ancho: tres manzanas
+        // de 40 m y cuatro calles de 12 m.
         let grid = metileo.grid();
         assert_eq!(grid.center(), Vec2::new(288.0, -544.0));
         assert_eq!(grid.size(), Vec2::new(168.0, 168.0));
-        // Nothing built on another: buildings, streets and the plaza.
+        // Nada construido sobre otra cosa: edificios, calles y la plaza.
         let built = &metileo.buildings;
         for (i, a) in built.iter().enumerate() {
             for b in &built[i + 1..] {
@@ -607,8 +618,8 @@ mod tests {
                 assert!(!a.footprint.intersects(s), "{a:?} in {s:?}");
             }
         }
-        // Metileo and Caleufú lie clear of the other towns, the lagoon, other
-        // towns' roads and every settlement.
+        // Metileo y Caleufú quedan apartados de los otros pueblos, de la
+        // laguna, de los caminos de otros pueblos y de todos los asentamientos.
         const CALEUFU: usize = 4;
         let laid = crate::shipped_world::laid();
         for town in [METILEO, CALEUFU] {
@@ -622,7 +633,7 @@ mod tests {
             for lagoon in &loaded.lagoons {
                 assert!(!lagoon.keep_out().intersects(&band.expanded(500.0)));
             }
-            // Only its own roads reach its ground.
+            // Solo sus propios caminos llegan a su terreno.
             let reach = band.expanded(100.0);
             for road in &loaded.roads.roads {
                 if road.from != town && road.to != town {
@@ -638,7 +649,8 @@ mod tests {
                 );
             }
         }
-        // Caleufú lies inside the west edge, its track's run-outs too.
+        // Caleufú queda dentro del borde oeste, y también las prolongaciones de
+        // su vía.
         let caleufu = &loaded.towns[CALEUFU];
         assert_eq!(caleufu.name, "Caleufú");
         let bounds = loaded.world.bounds();
@@ -651,10 +663,11 @@ mod tests {
 
     #[test]
     fn no_two_level_crossings_of_the_shipped_world_share_a_stretch_of_road() {
-        // Each crossing is signed on both sides (two St Andrew's crosses,
-        // 6 m out): crossings of one road closer than 20 m would crowd four
-        // signs round one crossing (render `signs_posted` folds those into
-        // two). The shipped world has none: the closest are 53 m apart.
+        // Cada paso a nivel tiene señales a ambos lados (dos cruces de San
+        // Andrés, a 6 m): pasos a nivel de un mismo camino a menos de 20 m
+        // amontonarían cuatro señales alrededor de un solo paso (`signs_posted`
+        // de render los reduce a dos). El mundo incluido no tiene ninguno: los
+        // más cercanos están a 53 m.
         let loaded = crate::shipped_world::loaded();
         let all: Vec<_> = loaded.roads.crossings().copied().collect();
         assert!(all.len() >= 10, "{}", all.len());
@@ -679,15 +692,16 @@ mod tests {
         assert!(roads.length_between(0, 1).is_some());
         assert!(roads.length_between(0, 2).is_some());
         for (i, town) in loaded.towns.iter().enumerate() {
-            // General Pico, on both sides of its line, crosses it by its
-            // streets instead (see the test above).
+            // General Pico, a ambos lados de su línea, la cruza en cambio por
+            // sus calles (ver el test de arriba).
             if town.rail_band().is_some() {
                 continue;
             }
-            // Its rural track crosses its own line by the station, once: the
-            // bay beside it (Metileo's) rejoins the line east of the road
-            // (the road out of Castex to Caleufú crosses the line's run-out
-            // too; see the Caleufú tests).
+            // Su huella rural cruza su propia línea junto a la estación, una
+            // sola vez: la vía muerta a su lado (la de Metileo) se vuelve a
+            // unir a la línea al este del camino (el camino que sale de Castex
+            // hacia Caleufú también cruza la prolongación de la línea; ver los
+            // tests de Caleufú).
             let crossings: Vec<_> = roads
                 .roads
                 .iter()
@@ -703,7 +717,7 @@ mod tests {
             for crossing in &crossings {
                 assert!(crossing.at.distance(station.footprint.center()) < 160.0);
             }
-            // Its rural track runs from the street over the crossing.
+            // Su huella rural va desde la calle por encima del paso a nivel.
             assert!(
                 roads
                     .roads
@@ -735,7 +749,7 @@ mod tests {
         assert!(duplicate.contains("`Este`"), "{duplicate}");
         assert!(unknown.contains("`Rancul`"), "{unknown}");
         assert!(crossing.contains("`Medio`"), "{crossing}");
-        // The road between them would cross Medio too, and is left out.
+        // El camino entre ellos también cruzaría Medio, así que se deja afuera.
         assert!(road.contains("road") && road.contains("`Medio`"), "{road}");
         let report = TownReport::new(&loaded);
         assert_eq!(report.warnings, loaded.warnings);
@@ -758,8 +772,8 @@ mod tests {
         assert_eq!(world.obstacles, town.obstacles());
         let (spawn, _) = town.arrival();
         assert!(world.obstacles.iter().all(|o| !o.contains_point(spawn)));
-        // The station stands beside the railway, within its span, for the
-        // line train to stop at.
+        // La estación está junto al ferrocarril, dentro de su extensión, para
+        // que el tren de la línea pare allí.
         let rail = town.railway.expect("a railway");
         let station = town
             .buildings
@@ -858,7 +872,7 @@ mod tests {
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
-    /// Caleufú, the shipped world's fifth town, and its branch.
+    /// Caleufú, el quinto pueblo del mundo incluido, y su ramal.
     mod caleufu {
         use super::*;
         use pampa_core::{
@@ -877,7 +891,7 @@ mod tests {
             loaded
         }
 
-        /// Where segments `p`–`q` and `a`–`b` cross, if they do.
+        /// Dónde se cruzan los segmentos `p`–`q` y `a`–`b`, si se cruzan.
         fn crossing(p: Vec2, q: Vec2, a: Vec2, b: Vec2) -> Option<Vec2> {
             let (r, s) = (q - p, b - a);
             let denom = r.x * s.y - r.y * s.x;
@@ -913,7 +927,7 @@ mod tests {
                 .filter(|b| b.kind == BuildingKind::House)
                 .count();
             assert!(houses >= 8, "{houses}");
-            // The pulpería and the comisaría stand blocks apart.
+            // La pulpería y la comisaría están a varias manzanas de distancia.
             let at = |kind: PlaceKind| places.iter().find(|p| p.kind == kind).unwrap().center();
             let apart = at(PlaceKind::GeneralStore) - at(PlaceKind::PoliceStation);
             let pitch = 40.0 + 10.0;
@@ -931,14 +945,14 @@ mod tests {
                 .iter()
                 .find(|l| (l.from, l.to) == (METILEO, CALEUFU))
                 .expect("the branch link");
-            // The junction: Metileo's west tip, where the line from Monte
-            // Nievas arrives.
+            // El empalme: la punta oeste de Metileo, adonde llega la línea
+            // desde Monte Nievas.
             let from_nievas = line.links.iter().find(|l| l.to == METILEO).unwrap();
             assert_eq!(branch.track.start, metileo.start);
             assert_eq!(from_nievas.track.end, metileo.start);
             assert_eq!(branch.track.end, caleufu.end);
-            // One unbroken path, bending gently, through Metileo's station
-            // and out to Caleufú's far tip.
+            // Un único recorrido sin cortes, con curvas suaves, por la estación
+            // de Metileo y hasta la punta lejana de Caleufú.
             let paths = line.branch_paths(&loaded.towns);
             let points = paths[0].points();
             assert_eq!(points.first(), Some(&metileo.end));
@@ -959,7 +973,7 @@ mod tests {
             assert!(sharpest <= max, "{}", sharpest.to_degrees());
             let radius = pampa_core::RailLine::CURVE_RADIUS - 0.1;
             assert!(branch.curves.iter().all(|c| c.radius >= radius));
-            // Past the junction the branch parts from the line for good.
+            // Pasado el empalme, el ramal se separa de la línea para siempre.
             let main = line.full_path(&loaded.towns);
             for p in &branch.path {
                 if p.distance(metileo.start) > 400.0 {
@@ -967,11 +981,11 @@ mod tests {
                     assert!(gap > 50.0, "{p:?} {gap}");
                 }
             }
-            // Caleufú's platform stands by the branch.
+            // El andén de Caleufú está junto al ramal.
             let (spot, _) = loaded.towns[CALEUFU].platform_spot().expect("a platform");
             let on = paths[0].at(paths[0].project(spot));
             assert!(on.distance(spot) < 12.0, "{}", on.distance(spot));
-            // The line train still runs the line alone.
+            // El tren de la línea sigue recorriendo solo la línea.
             let train =
                 pampa_core::LineTrain::new(line, &loaded.towns, pampa_core::Timetable::default())
                     .unwrap();
@@ -984,7 +998,7 @@ mod tests {
         fn a_road_joins_caleufu_to_castex_and_every_road_on_the_branch_crosses_it_level() {
             let loaded = loaded();
             let roads = &loaded.roads;
-            // Its nearest town is Eduardo Castex, about 5.9 km away.
+            // Su pueblo más cercano es Eduardo Castex, a unos 5.9 km.
             let road = roads
                 .roads
                 .iter()
@@ -992,12 +1006,13 @@ mod tests {
                 .expect("Castex to Caleufú");
             let length = roads.length_between(CASTEX, CALEUFU).unwrap();
             assert!((5_000.0..7_000.0).contains(&length), "{length}");
-            // It crosses Castex's run-out squarely, west of the town.
+            // Cruza en perpendicular la prolongación de Castex, al oeste del
+            // pueblo.
             assert_eq!(road.crossings.len(), 1);
             let crossing_at = road.crossings[0];
             assert!(crossing_at.angle() > RoadNetwork::MIN_CROSSING_ANGLE);
             assert!(crossing_at.at.x < loaded.towns[CASTEX].grid().min.x);
-            // Signposts at either end name the other town.
+            // Los carteles indicadores de cada extremo nombran al otro pueblo.
             let boards: Vec<&str> = roads
                 .signposts
                 .iter()
@@ -1010,14 +1025,14 @@ mod tests {
             );
             let castex = boards.iter().filter(|b| b.starts_with("EDUARDO CASTEX "));
             assert!(castex.count() >= 2, "{boards:?}");
-            // Caleufú's rural track crosses the branch by the station.
+            // La huella rural de Caleufú cruza el ramal junto a la estación.
             let rural = roads
                 .roads
                 .iter()
                 .find(|r| r.kind == RoadKind::Rural && r.from == CALEUFU)
                 .expect("Caleufú's rural track");
             assert_eq!(rural.crossings.len(), 1);
-            // Wherever a road meets the branch, it has a level crossing.
+            // Donde un camino se encuentra con el ramal, tiene un paso a nivel.
             let branch = &loaded.line.branch_paths(&loaded.towns)[0];
             let mut met = 0;
             for road in &roads.roads {
@@ -1035,7 +1050,7 @@ mod tests {
             assert!(met >= 1);
         }
 
-        /// The line train and the shuttle of the shipped world.
+        /// El tren de la línea y la lanzadera del mundo incluido.
         fn trains(loaded: &LoadedWorld) -> (LineTrain, LineTrain) {
             let line = LineTrain::new(&loaded.line, &loaded.towns, Timetable::default())
                 .expect("a line train");
@@ -1061,15 +1076,16 @@ mod tests {
             let track = metileo.railway.unwrap();
             let bay = loaded.line.bay_of(0).expect("Metileo's bay");
             assert_eq!((bay.town, bay.branch), (METILEO, 0));
-            // North of the station track (away from the town), 4.5 m out,
-            // its dead end at the platform's east end, running west.
+            // Al norte de la vía de la estación (del lado opuesto al pueblo), a
+            // 4.5 m, con su extremo muerto en el extremo este del andén, hacia
+            // el oeste.
             assert!(bay.buffer().y > track.start.y);
             assert!((bay.buffer().y - track.start.y - 4.5).abs() < 1e-3);
             assert!(bay.buffer().x < track.end.x && bay.buffer().x > track.start.x);
             assert!(bay.heading().x < -0.99);
-            // Nothing built, planted or fenced stands on it, nor a lagoon,
-            // a settlement or a road; the 40 m road clearance keeps the
-            // roads off it too.
+            // Nada construido, plantado o alambrado está sobre ella, ni una
+            // laguna, un asentamiento o un camino; el despeje de 40 m de los
+            // caminos también los mantiene fuera.
             let laid = crate::shipped_world::laid();
             let car = 3.0 / 2.0 + 0.2;
             let around = |a: Vec2, b: Vec2| {
@@ -1081,7 +1097,7 @@ mod tests {
             };
             for w in bay.link.path.windows(2) {
                 let reach = around(w[0], w[1]);
-                // Every obstacle keeps the cars' half width off the track.
+                // Cada obstáculo se mantiene a medio ancho de vagón de la vía.
                 for o in laid.world.obstacles.near(reach) {
                     for k in 0..=8 {
                         let p = w[0] + (w[1] - w[0]) * (k as f32 / 8.0);
@@ -1096,8 +1112,9 @@ mod tests {
                     assert!(!settlement.bounds.intersects(&reach));
                 }
             }
-            // No road meets the bay: Metileo's rural track crosses the
-            // station track alone, west of where the bay joins it.
+            // Ningún camino se encuentra con la vía muerta: la huella rural de
+            // Metileo cruza solo la vía de la estación, al oeste de donde se
+            // une la vía muerta.
             let mut met = 0;
             for road in &loaded.roads.roads {
                 for r in road.path.windows(2) {
@@ -1113,13 +1130,13 @@ mod tests {
                 }
             }
             assert_eq!(met, 0);
-            // The flora keeps off it as it keeps off any track: a spot 8 m
-            // north of the bay is 12.5 m from the station track, so only
-            // the bay itself rules it out.
+            // La flora se mantiene fuera de ella como de cualquier vía: un
+            // punto 8 m al norte de la vía muerta está a 12.5 m de la vía de la
+            // estación, así que solo la vía muerta en sí lo descarta.
             let beside = bay.stop + Vec2::new(0.0, 8.0);
             assert!(!laid.flora.off_track(beside, 10.0));
             assert!(laid.flora.off_track(beside, 7.0));
-            // Nor does anything the town itself planted or tied up.
+            // Tampoco nada que el propio pueblo haya plantado o atado.
             for w in bay.link.path.windows(2) {
                 let keep = around(w[0], w[1]);
                 let trees = metileo.trees.iter().copied();
@@ -1132,13 +1149,14 @@ mod tests {
                     assert!(!keep.intersects(&palenque.rail));
                 }
             }
-            // The built world walks and boards on its platform, which keeps
-            // clear as the bay does.
+            // El mundo construido camina y sube al tren desde su andén, que se
+            // mantiene despejado como la vía muerta.
             assert!(laid.world.floors.contains(&bay.platform));
             let (road, crossing) = metileos_road(loaded);
             for area in platform_works(bay) {
                 let keep = area.expanded(1.0);
-                // No building, sign, fence span, tree trunk or prop.
+                // Ningún edificio, cartel, tramo de alambrado, tronco de árbol
+                // ni objeto.
                 assert!(
                     laid.world
                         .obstacles
@@ -1147,14 +1165,15 @@ mod tests {
                         .all(|o| !o.intersects(&keep)),
                     "{area:?}"
                 );
-                // No road, nor the level crossing's signs and planks.
+                // Ningún camino, ni las señales y los tablones del paso a
+                // nivel.
                 for w in road.path.windows(2) {
                     let reach = keep.expanded(RoadNetwork::HALF_WIDTH);
                     assert!(reach.segment_overlap(w[0], w[1]).is_none(), "{area:?}");
                 }
                 assert!(crossing.at.distance(area.center()) > 15.0);
-                // No flora where the platform stands: tufts would poke
-                // through it, trees would grow in it.
+                // Nada de flora donde está el andén: las matas lo atravesarían,
+                // los árboles crecerían en él.
                 let chunk = laid.world.config.chunk_of(area.center());
                 let flora = laid.flora.chunk(chunk);
                 assert!(flora.tufts.iter().all(|t| !keep.contains_point(t.at)));
@@ -1165,16 +1184,17 @@ mod tests {
                         .all(|t| !keep.expanded(2.0).contains_point(t.at))
                 );
             }
-            // The walks, for their part, keep half a meter off whatever
-            // is built, planted or driven, and off the lagoons and the
-            // settlements; they end on the road.
+            // Los senderos, por su parte, se mantienen a medio metro de todo lo
+            // construido, plantado o transitado, y de las lagunas y los
+            // asentamientos; terminan en el camino.
             assert_eq!(bay.walks.len(), 2);
-            // Each is 2 m wide along its platform's middle, from the foot of
-            // the platform's west ramp.
+            // Cada uno mide 2 m de ancho a lo largo del centro de su andén,
+            // desde el pie de la rampa oeste del andén.
             let station = loaded.towns[METILEO].floors()[0];
             for (walk, floor) in bay.walks.iter().zip([station, bay.platform]) {
                 assert!((walk.size().y - 2.0).abs() < 1e-3, "{walk:?}");
-                // 3.5 m in from the platform's far edge (11 m from its track).
+                // A 3.5 m hacia adentro del borde lejano del andén (a 11 m de
+                // su vía).
                 let far = if floor == station {
                     -436.0 - 11.0
                 } else {
@@ -1215,8 +1235,8 @@ mod tests {
                 let by_road = ends.iter().filter(|p| road_distance(loaded, **p) < 3.0);
                 assert_eq!(by_road.count(), 1, "{walk:?}");
             }
-            // The ground under the platform is level to within the 0.2 m the
-            // slab reaches below it, so it sits flat.
+            // El suelo bajo el andén está nivelado dentro de los 0.2 m que la
+            // losa llega por debajo de él, así que se apoya plano.
             let ground = |p: Vec2| laid.world.terrain.height(p.x, p.y);
             let f = bay.platform.footprint;
             let heights: Vec<f32> = [
@@ -1243,7 +1263,8 @@ mod tests {
             let track = loaded.towns[METILEO].railway.unwrap();
             let (platform, _) = loaded.towns[CALEUFU].platform_spot().expect("a platform");
             let (_, crossing) = metileos_road(loaded);
-            // The crossing's deck and approaches, and each walk's strip.
+            // La plataforma y los accesos del paso a nivel, y la franja de cada
+            // sendero.
             let deck = Aabb::from_center_size(
                 crossing.at,
                 Vec2::new(2.0 * (RoadNetwork::HALF_WIDTH + 1.0), 2.0 * 10.0),
@@ -1252,14 +1273,16 @@ mod tests {
             keep.extend(bay.walks.iter().copied());
             let (mut meetings, mut at_caleufu) = (0, 0);
             let (mut standing, mut tightest, mut nearest) = (0, f32::MAX, f32::MAX);
-            // The moments the shuttle runs the turnout (the line train runs, or
-            // is out of the way), and how near the two cars come then.
+            // Los momentos en que la lanzadera pasa por el desvío (el tren de
+            // la línea está en marcha, o fuera del camino), y qué tan cerca
+            // están entonces los dos vagones.
             let (mut on_turnout, mut turnout_gap) = (0, f32::MAX);
             let join = bay.link.path.last().unwrap().x;
-            // Two game days, every 15 game seconds: both line runs, both
-            // shuttle round trips, every layover and turnout. And every 2 s
-            // from before the line train comes in to Metileo to after the
-            // shuttle has left, around each of its stops there.
+            // Dos días de juego, cada 15 segundos de juego: ambos viajes de la
+            // línea, ambos viajes de ida y vuelta de la lanzadera, cada espera
+            // en la terminal y cada paso por el desvío. Y cada 2 s desde antes
+            // de que el tren de la línea entre a Metileo hasta después de que
+            // la lanzadera se fue, alrededor de cada una de sus paradas allí.
             let mut times: Vec<f64> = (0..(2 * 86_400 / 15))
                 .map(|k| f64::from(k) * 15.0)
                 .collect();
@@ -1295,12 +1318,12 @@ mod tests {
                 }
                 let state = s.state();
                 if state.station == Some(0) {
-                    // Standing at Metileo: in the bay, beside the station
-                    // track, never on it.
+                    // Detenida en Metileo: en la vía muerta, junto a la vía de
+                    // la estación, nunca sobre ella.
                     for car in s.placed_cars() {
                         let off = car.center.y - track.start.y;
                         assert!((off - 4.5).abs() < 0.2, "{off}");
-                        // Short of the buffer stop.
+                        // Antes del paragolpes.
                         assert!(car.center.x + car.length / 2.0 < bay.buffer().x - 1.0);
                     }
                     if l.state().station == Some(2) {
@@ -1308,7 +1331,7 @@ mod tests {
                     }
                 }
                 if state.station == Some(1) {
-                    // Standing at Caleufú: coaches by the platform.
+                    // Detenida en Caleufú: coches junto al andén.
                     let cars = s.placed_cars();
                     let coach = cars.iter().find(|c| c.kind == CarKind::Coach).unwrap();
                     assert!(coach.center.distance(platform) < MAX_STOP_MISS);
@@ -1320,9 +1343,9 @@ mod tests {
                     })
                 {
                     on_turnout += 1;
-                    // Not with the line train standing in the station: the
-                    // timetable's margin keeps the shuttle off the turnout
-                    // then.
+                    // No con el tren de la línea detenido en la estación: el
+                    // margen del horario mantiene a la lanzadera fuera del
+                    // desvío en ese momento.
                     assert!(!pampa_core::stands_at(&l.state(), 2), "t = {t}");
                 }
                 for (train, cars) in [(&l, &lc), (&s, &sc)] {
@@ -1351,26 +1374,26 @@ mod tests {
                     }
                 }
             }
-            // The trains were there together at Metileo, and it was tested.
+            // Los trenes estuvieron juntos en Metileo, y se comprobó.
             assert!(meetings > 100, "{meetings}");
             assert!(at_caleufu > 100, "{at_caleufu}");
             assert!(standing > 1000, "{standing}");
-            // The shuttle runs the turnout with the line train in, and the
-            // trains never come closer than 0.4 m.
+            // La lanzadera pasa por el desvío con el tren de la línea en la
+            // estación, y los trenes nunca se acercan a menos de 0.4 m.
             assert!(on_turnout > 50, "{on_turnout} samples on the turnout");
             assert!(turnout_gap > 0.4, "{turnout_gap}");
             assert!(tightest > 0.4, "{tightest}");
             assert!(nearest > 25.0, "{nearest}");
         }
 
-        /// Footprints of the platform with its ramps.
+        /// Huellas en planta del andén con sus rampas.
         fn platform_works(bay: &pampa_core::RailBay) -> Vec<Aabb> {
             let f = bay.platform;
             f.ramps().into_iter().chain([f.footprint]).collect()
         }
 
-        /// Metileo's rural road and the level crossing it makes with the
-        /// station track.
+        /// El camino rural de Metileo y el paso a nivel que forma con la vía de
+        /// la estación.
         fn metileos_road(loaded: &LoadedWorld) -> (&pampa_core::Road, pampa_core::LevelCrossing) {
             let road = loaded
                 .roads
@@ -1388,16 +1411,17 @@ mod tests {
             (road, crossing)
         }
 
-        /// Distance from `p` to the nearest road.
+        /// Distancia desde `p` hasta el camino más cercano.
         fn road_distance(loaded: &LoadedWorld, p: Vec2) -> f32 {
             loaded.roads.distance(p)
         }
 
         #[test]
         fn the_roads_and_their_level_crossings_by_metileo_are_where_they_were() {
-            // The bay moved opposite the platform; the road keeps its one
-            // crossing of the station track (about x 189.7) and has none of
-            // the bay, which now joins the run-out east of it.
+            // La vía muerta se movió enfrente del andén; el camino conserva su
+            // único cruce de la vía de la estación (alrededor de x 189.7) y no
+            // tiene ninguno de la vía muerta, que ahora se une a la
+            // prolongación al este de él.
             let loaded = loaded();
             let (road, crossing) = metileos_road(loaded);
             assert!((crossing.at.x - 189.75).abs() < 0.1, "{:?}", crossing.at);
@@ -1419,9 +1443,10 @@ mod tests {
             let mut world = crate::shipped_world::laid().world.clone();
             let collider = pampa_core::Circle::new(pampa_core::Rider::COLLIDER_RADIUS);
             let (w0, w1) = (bay.walks[0], bay.walks[1]);
-            // West along the station platform's walk to the road, along the
-            // road over the level crossing, east along the bay platform's
-            // walk, up its ramp.
+            // Hacia el oeste por el sendero del andén de la estación hasta el
+            // camino, a lo largo del camino por encima del paso a nivel, hacia
+            // el este por el sendero del andén de la vía muerta, y arriba por
+            // su rampa.
             let end0 = Vec2::new(w0.min.x, w0.center().y);
             let end1 = Vec2::new(w1.min.x, w1.center().y);
             let near = |p: Vec2| {
@@ -1437,7 +1462,7 @@ mod tests {
             let mut route = vec![start, Vec2::new(start.x, end0.y), end0];
             route.extend(road.path[a..=b].iter().copied());
             route.extend([end1, Vec2::new(bay.platform.footprint.center().x, end1.y)]);
-            // The crossing is on the way.
+            // El paso a nivel está en el camino.
             assert!(route.windows(2).any(|w| {
                 crossing(w[0], w[1], crossing_rail(loaded).0, crossing_rail(loaded).1).is_some()
             }));
@@ -1464,12 +1489,12 @@ mod tests {
                             last = h;
                         }
                     }
-                    // Ends on the bay platform, at its height.
+                    // Termina en el andén de la vía muerta, a su altura.
                     let end = *route.last().unwrap();
                     assert!(bay.platform.footprint.contains_point(end), "{end:?}");
                     let rise = world.ground_height(end) - world.terrain.height(end.x, end.y);
                     assert!((rise - Floor::PLATFORM_HEIGHT).abs() < 1e-3, "{rise}");
-                    // And back, the other way, as open.
+                    // Y de vuelta, en el otro sentido, igual de despejado.
                     for p in route.iter().rev() {
                         assert_eq!(world.resolve(collider, *p, |_| ()), *p, "{p:?}");
                     }
@@ -1480,7 +1505,8 @@ mod tests {
                 }
             }
             assert!(checked >= 2, "{checked} moments with both trains in");
-            // Neither standing train comes within 25 m of the crossing.
+            // Ninguno de los dos trenes detenidos llega a menos de 25 m del
+            // paso a nivel.
             assert!(nearest > 25.0, "{nearest}");
         }
 
@@ -1497,9 +1523,10 @@ mod tests {
                 for town in 0..loaded.towns.len() {
                     for run in [Run::Up, Run::Down] {
                         for at in train.stops_at(town, run) {
-                            // 30 s into the stop: standing (dwelling, or laid over
-                            // at a terminal, where the line train's engine is at
-                            // the platform's end, not its middle).
+                            // 30 s después de iniciada la parada: detenido (en
+                            // parada, o en espera en una terminal, donde la
+                            // locomotora del tren de la línea está en el
+                            // extremo del andén, no en su centro).
                             let train = jumped(train, at.seconds() + 30.0);
                             let phase = train.state().phase;
                             if phase == pampa_core::LinePhase::Running {
@@ -1512,7 +1539,7 @@ mod tests {
                             } else {
                                 loaded.towns[town].floors()[0]
                             };
-                            // The coach nearest the middle of the platform.
+                            // El coche más cercano al centro del andén.
                             let middle = floor.footprint.center();
                             let cars = train.placed_cars();
                             let coach = (0..cars.len())
@@ -1528,8 +1555,9 @@ mod tests {
                             } else {
                                 loaded.towns[town].platform_spot().unwrap()
                             };
-                            // Beside the coach's nearest door, a step along the
-                            // platform from the middle spot: boards at once.
+                            // Junto a la puerta más cercana del coche, a un
+                            // paso a lo largo del andén desde el punto central:
+                            // sube de inmediato.
                             let door = coach_doors(&placed)
                                 .into_iter()
                                 .min_by(|a, b| a.distance(spot).total_cmp(&b.distance(spot)))
@@ -1552,8 +1580,9 @@ mod tests {
                                 ),
                                 "{name} train {t}: no boarding at {by_door:?}, door {door:?}"
                             );
-                            // From the middle spot too, wherever the train stands
-                            // at it (dwelling, and the shuttle's whole layover).
+                            // También desde el punto central, dondequiera que
+                            // el tren esté detenido en él (en parada, y durante
+                            // toda la espera de la lanzadera en la terminal).
                             if phase == pampa_core::LinePhase::Dwelling || t == 1 {
                                 assert!(
                                     matches!(
@@ -1563,7 +1592,8 @@ mod tests {
                                     "{name} train {t}: no boarding at the spot {spot:?}"
                                 );
                             }
-                            // Alighting puts the rider on the platform, off the cars.
+                            // Bajarse pone al jinete en el andén, fuera de los
+                            // vagones.
                             let (down, _) = alight_spot(&train, coach, &loaded.towns, &world)
                                 .unwrap_or_else(|| panic!("{} alights", loaded.towns[town].name));
                             assert!(
@@ -1589,8 +1619,8 @@ mod tests {
             );
         }
 
-        /// The station track's two points around the crossing, for a
-        /// segment test.
+        /// Los dos puntos de la vía de la estación alrededor del paso a nivel,
+        /// para un test de segmentos.
         fn crossing_rail(loaded: &LoadedWorld) -> (Vec2, Vec2) {
             let y = loaded.towns[METILEO].railway.unwrap().start.y;
             (Vec2::new(0.0, y), Vec2::new(500.0, y))
@@ -1609,7 +1639,8 @@ mod tests {
             let mut boarded = 0;
             for arrive in shuttle.arrivals_at(Run::Down, station) {
                 let (leave, _) = shuttle.next_departure_after(arrive.seconds() + 1.0);
-                // Arrival to departure: before and after it is turned round.
+                // De la llegada a la salida: antes y después de que dé la
+                // vuelta.
                 for k in 0..=10 {
                     let t = arrive.seconds() + (leave - arrive.seconds()) * f64::from(k) / 10.0;
                     let now = jumped(&shuttle, t.clamp(arrive.seconds() + 1.0, leave - 1.0));

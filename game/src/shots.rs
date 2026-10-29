@@ -1,23 +1,26 @@
-//! A dev-only screenshot tour: `PAMPA_SHOTS=<file>` takes the shots the file
-//! lists, one PNG each, and quits. Without the variable nothing here runs.
+//! Un recorrido de capturas solo para desarrollo: `PAMPA_SHOTS=<file>` toma las
+//! capturas que enumera el archivo, un PNG cada una, y sale. Sin la variable,
+//! nada de esto se ejecuta.
 //!
-//! The file has one shot a line (blank lines and `#` comments are skipped):
+//! El archivo tiene una captura por línea (se omiten las líneas en blanco y los
+//! comentarios con `#`):
 //!
 //! ```text
 //! name  eye_x eye_y eye_height  target_x target_y target_height  [HH:MM]
 //! ```
 //!
-//! `x`/`y` are ground coordinates (east, north); the heights are meters
-//! over the ground under that point. A time of day sets the clock for the
-//! shot (the sky and the sun follow it, and every train runs along with
-//! the jump, so a train stands where the timetable puts it; the clock only
-//! goes forward, to the next time it reads that, and the shots of a tour
-//! with times are best listed in increasing order); without one the clock
-//! runs as it does. For each shot the camera is held at the eye looking at the target
-//! (the follow camera is overridden) and the world streams around it; once
-//! the chunks stop arriving and every texture is loaded, a few more frames
-//! settle and `<name>.png` is saved in `PAMPA_SHOTS_DIR` (default
-//! `shots`). `PAMPA_SHOTS_WAIT` sets those settling frames (default 90).
+//! `x`/`y` son coordenadas del suelo (este, norte); las alturas son metros
+//! sobre el suelo bajo ese punto. Una hora del día fija el reloj para la
+//! captura (el cielo y el sol la siguen, y cada tren avanza junto con el salto,
+//! así que un tren queda donde lo pone el horario; el reloj solo avanza, hasta
+//! la próxima vez que marque esa hora, y conviene listar las capturas de un
+//! recorrido con horas en orden creciente); sin ella, el reloj corre como
+//! corre. Para cada captura, la cámara se mantiene en el ojo mirando al
+//! objetivo (se anula la cámara de seguimiento) y el mundo hace streaming a su
+//! alrededor; cuando dejan de llegar chunks y todas las texturas están
+//! cargadas, se asientan unos frames más y se guarda `<name>.png` en
+//! `PAMPA_SHOTS_DIR` (por defecto `shots`). `PAMPA_SHOTS_WAIT` fija esos frames
+//! de asentamiento (por defecto 90).
 
 use std::path::PathBuf;
 
@@ -32,7 +35,7 @@ use pampa_render::{
 
 use crate::camera::FollowCamera;
 
-/// One shot of the tour.
+/// Una captura del recorrido.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Shot {
     pub name: String,
@@ -41,7 +44,7 @@ pub struct Shot {
     pub time: Option<TimeOfDay>,
 }
 
-/// Parses a shot list (see the module docs).
+/// Interpreta una lista de capturas (ver la documentación del módulo).
 pub fn parse_shots(text: &str) -> Result<Vec<Shot>, String> {
     let mut shots = Vec::new();
     for (n, line) in text.lines().enumerate() {
@@ -80,11 +83,12 @@ pub fn parse_shots(text: &str) -> Result<Vec<Shot>, String> {
     Ok(shots)
 }
 
-/// Takes the tour of `PAMPA_SHOTS`, if the variable is set.
+/// Hace el recorrido de `PAMPA_SHOTS`, si la variable está definida.
 pub struct ShotsPlugin;
 
 impl ShotsPlugin {
-    /// The plugin, when `PAMPA_SHOTS` names a readable, valid shot list.
+    /// El plugin, cuando `PAMPA_SHOTS` nombra una lista de capturas legible y
+    /// válida.
     pub fn from_env() -> Option<Tour> {
         let file = std::env::var_os("PAMPA_SHOTS")?;
         let text = std::fs::read_to_string(&file)
@@ -112,20 +116,21 @@ impl ShotsPlugin {
     }
 }
 
-/// The tour in progress.
+/// El recorrido en curso.
 #[derive(Resource, Debug)]
 pub struct Tour {
     shots: Vec<Shot>,
     dir: PathBuf,
-    /// Frames the world must hold still before a shot.
+    /// Frames que el mundo debe mantenerse quieto antes de una captura.
     wait: u32,
     index: usize,
-    /// Chunks standing last frame, and for how many frames that has held.
+    /// Los chunks presentes en el frame anterior, y durante cuántos frames se
+    /// mantuvo eso.
     chunks: usize,
     stable: u32,
     waited: u32,
     requested: bool,
-    /// The shot whose time the clock has been taken to.
+    /// La captura a cuya hora se llevó el reloj.
     jumped: Option<usize>,
 }
 
@@ -151,7 +156,8 @@ impl Plugin for Tour {
     }
 }
 
-/// Streams the world around the current shot's eye and sets its time.
+/// Hace streaming del mundo alrededor del ojo de la captura actual y fija su
+/// hora.
 fn aim_focus(
     mut tour: ResMut<Tour>,
     mut focus: ResMut<StreamFocus>,
@@ -167,12 +173,13 @@ fn aim_focus(
         && tour.jumped != Some(index)
     {
         tour.jumped = Some(index);
-        // The trains run the jump like a skipped wait.
+        // Los trenes recorren el salto como una espera omitida.
         let from = clock.0.elapsed();
         let skipped = clock.0.advance_until(time);
         for (i, train) in trains.iter_mut().flat_map(|t| t.0.iter_mut()).enumerate() {
             train.advance(from, skipped, BASE_RATE);
-            // Where each train's locomotive and last car stand, to aim at.
+            // Dónde están la locomotora y el último vagón de cada tren, para
+            // apuntar.
             let cars = train.placed_cars();
             if let (Some(first), Some(last)) = (cars.first(), cars.last()) {
                 info!(
@@ -190,7 +197,7 @@ fn aim_focus(
     }
 }
 
-/// Holds the camera at the current shot's eye, over the target.
+/// Mantiene la cámara en el ojo de la captura actual, sobre el objetivo.
 fn aim_camera(
     tour: Res<Tour>,
     terrain: Res<WorldTerrain>,
@@ -206,8 +213,8 @@ fn aim_camera(
     }
 }
 
-/// Once the world around the shot has settled, saves the picture; moves on
-/// when the file is there; quits after the last.
+/// Una vez que el mundo alrededor de la captura se asentó, guarda la imagen;
+/// pasa a la siguiente cuando el archivo está; sale después de la última.
 fn take_shot(
     mut commands: Commands,
     mut tour: ResMut<Tour>,
@@ -255,7 +262,8 @@ fn take_shot(
         tour.chunks = count;
     }
     if tour.stable >= tour.wait {
-        // A picture left by an earlier tour must not pass for this one.
+        // Una imagen dejada por un recorrido anterior no debe pasar por la de
+        // este.
         std::fs::remove_file(&path).ok();
         commands
             .spawn(Screenshot::primary_window())

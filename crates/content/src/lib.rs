@@ -1,16 +1,17 @@
-//! Editable game content for Pampa Salvaje, read from RON files under `assets/`.
+//! Contenido editable del juego para Pampa Salvaje, leído de archivos RON bajo
+//! `assets/`.
 //!
-//! Content is data, not code: writers edit `assets/dialogue/*.ron` (lines)
-//! and `assets/world/towns.ron` (towns), and the game picks the changes up
-//! on its next start, without recompiling. This crate only parses and
-//! validates; it knows nothing about how anything is drawn and must never
-//! depend on Bevy.
+//! El contenido son datos, no código: los guionistas editan
+//! `assets/dialogue/*.ron` (líneas) y `assets/world/towns.ron` (pueblos), y el
+//! juego toma los cambios en su siguiente inicio, sin recompilar. Este crate
+//! solo interpreta y valida; no sabe nada de cómo se dibuja cada cosa y nunca
+//! debe depender de Bevy.
 //!
-//! Which characters a line may use is decided by the body typeface in
-//! `pampa-render`. This crate cannot see the typeface, so it offers
-//! [`BumpLines::unsupported_chars`] with a caller-supplied predicate; the
-//! game checks the shipped file against the real typeface in its tests and
-//! warns at runtime.
+//! Qué caracteres puede usar una línea lo decide la tipografía del cuerpo de
+//! texto en `pampa-render`. Este crate no puede ver la tipografía, así que
+//! ofrece [`BumpLines::unsupported_chars`] con un predicado que aporta quien
+//! llama; el juego comprueba el archivo incluido contra la tipografía real en
+//! sus tests y avisa en tiempo de ejecución.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -26,33 +27,34 @@ pub use errand::{DEFAULT_POLICE_TOWN, ERRAND_FILE, ErrandLines, load_errand_or_b
 pub use slots::{ModelSlots, SLOTS_FILE, SlotFit, SlotRotor, load_model_slots};
 pub use towns::{TOWNS_FILE, WorldContent, load_towns, load_towns_or_builtin, parse_towns};
 
-/// Longest line, in characters, so it fits a speech bubble.
+/// Línea más larga, en caracteres, para que entre en un globo de diálogo.
 pub const MAX_LINE_CHARS: usize = 40;
 
-/// Where the bump complaints live, relative to the assets folder.
+/// Dónde están las quejas por choques, relativo a la carpeta de assets.
 pub const BUMPS_FILE: &str = "dialogue/bumps.ron";
 
-/// What townsfolk say when the rider bumps into them, by severity.
+/// Lo que dicen los vecinos cuando el jinete los choca, según la gravedad.
 ///
-/// Unknown fields in the file are ignored, so newer files (with pools added
-/// later, e.g. per walker look) still load in older builds.
+/// Los campos desconocidos del archivo se ignoran, así que los archivos más
+/// nuevos (con grupos agregados después, p. ej. por aspecto de peatón) siguen
+/// cargando en versiones anteriores.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct BumpLines {
-    /// Shoved at a walking pace.
+    /// Empujado al paso.
     pub walk: Vec<String>,
-    /// Run into at a gallop.
+    /// Atropellado al galope.
     pub gallop: Vec<String>,
 }
 
 impl BumpLines {
-    /// Parses and validates the RON text of a bumps file.
+    /// Interpreta y valida el texto RON de un archivo de choques.
     pub fn parse(text: &str) -> Result<Self, ContentError> {
         let lines: Self = ron::from_str(text).map_err(ContentError::Parse)?;
         lines.validate()?;
         Ok(lines)
     }
 
-    /// Reads, parses and validates the bumps file at `path`.
+    /// Lee, interpreta y valida el archivo de choques en `path`.
     pub fn load(path: &Path) -> Result<Self, ContentError> {
         let text = std::fs::read_to_string(path).map_err(|source| ContentError::Io {
             path: path.to_path_buf(),
@@ -61,8 +63,8 @@ impl BumpLines {
         Self::parse(&text)
     }
 
-    /// A small pool compiled into the game, used when the file is missing or
-    /// invalid.
+    /// Un pequeño grupo compilado en el juego, que se usa cuando el archivo
+    /// falta o no es válido.
     pub fn builtin() -> Self {
         let own = |lines: &[&str]| lines.iter().map(|l| l.to_string()).collect();
         Self {
@@ -71,13 +73,13 @@ impl BumpLines {
         }
     }
 
-    /// Checks every pool has lines, and every line is non-blank and at most
-    /// [`MAX_LINE_CHARS`] long.
+    /// Comprueba que cada grupo tenga líneas, y que cada línea no esté en
+    /// blanco y tenga como máximo [`MAX_LINE_CHARS`] caracteres.
     pub fn validate(&self) -> Result<(), ContentError> {
         check_pools(&self.pools())
     }
 
-    /// The lines for a bump of `severity`.
+    /// Las líneas para un choque de gravedad `severity`.
     pub fn pool(&self, severity: BumpSeverity) -> &[String] {
         match severity {
             BumpSeverity::Walk => &self.walk,
@@ -85,20 +87,20 @@ impl BumpLines {
         }
     }
 
-    /// Every distinct character in any line that `supported` rejects, in
-    /// order of first appearance.
+    /// Cada carácter distinto de cualquier línea que `supported` rechaza, en
+    /// orden de primera aparición.
     pub fn unsupported_chars(&self, supported: impl Fn(char) -> bool) -> Vec<char> {
         unsupported_in(&self.pools(), supported)
     }
 
-    /// Every pool with the name it has in the file.
+    /// Cada grupo con el nombre que tiene en el archivo.
     fn pools(&self) -> [(&'static str, &[String]); 2] {
         [("walk", &self.walk), ("gallop", &self.gallop)]
     }
 }
 
-/// Checks every named pool has lines, and every line is non-blank and at
-/// most [`MAX_LINE_CHARS`] long.
+/// Comprueba que cada grupo con nombre tenga líneas, y que cada línea no esté
+/// en blanco y tenga como máximo [`MAX_LINE_CHARS`] caracteres.
 pub(crate) fn check_pools(pools: &[(&'static str, &[String])]) -> Result<(), ContentError> {
     for &(pool, lines) in pools {
         if lines.is_empty() {
@@ -117,8 +119,8 @@ pub(crate) fn check_pools(pools: &[(&'static str, &[String])]) -> Result<(), Con
     Ok(())
 }
 
-/// Every distinct character in any line of `pools` that `supported`
-/// rejects, in order of first appearance.
+/// Cada carácter distinto de cualquier línea de `pools` que `supported`
+/// rechaza, en orden de primera aparición.
 pub(crate) fn unsupported_in(
     pools: &[(&'static str, &[String])],
     supported: impl Fn(char) -> bool,
@@ -134,8 +136,9 @@ pub(crate) fn unsupported_in(
     found
 }
 
-/// Loads the bumps file at `path`, falling back to [`BumpLines::builtin`].
-/// The error, if any, is returned so the caller can log it.
+/// Carga el archivo de choques en `path` y recurre a [`BumpLines::builtin`] si
+/// falla. El error, si lo hay, se devuelve para que quien llama pueda
+/// registrarlo.
 pub fn load_bumps_or_builtin(path: &Path) -> (BumpLines, Option<ContentError>) {
     match BumpLines::load(path) {
         Ok(lines) => (lines, None),
@@ -143,12 +146,13 @@ pub fn load_bumps_or_builtin(path: &Path) -> (BumpLines, Option<ContentError>) {
     }
 }
 
-/// Path of `relative` inside the workspace `assets/` folder.
+/// Ruta de `relative` dentro de la carpeta `assets/` del workspace.
 ///
-/// Tries the folder next to this workspace's sources first (so `cargo run`
-/// works from any directory), then `assets/` under the current directory (a
-/// game shipped next to its assets). Returns the first that exists, or the
-/// current-directory path when neither does.
+/// Prueba primero la carpeta junto a las fuentes de este workspace (para que
+/// `cargo run` funcione desde cualquier directorio) y luego `assets/` bajo el
+/// directorio actual (un juego distribuido junto a sus assets). Devuelve la
+/// primera que existe, o la ruta del directorio actual cuando no existe
+/// ninguna.
 pub fn asset_path(relative: &str) -> PathBuf {
     let beside_sources = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../assets")
@@ -160,42 +164,44 @@ pub fn asset_path(relative: &str) -> PathBuf {
     }
 }
 
-/// Why content could not be used.
+/// Por qué no se pudo usar el contenido.
 #[derive(Debug)]
 pub enum ContentError {
-    /// The file could not be read.
+    /// No se pudo leer el archivo.
     Io {
         path: PathBuf,
         source: std::io::Error,
     },
-    /// The file is not valid RON for this content.
+    /// El archivo no es RON válido para este contenido.
     Parse(ron::error::SpannedError),
-    /// A pool has no lines.
+    /// Un grupo no tiene líneas.
     EmptyPool { pool: &'static str },
-    /// A line is empty or only whitespace.
+    /// Una línea está vacía o solo tiene espacios en blanco.
     BlankLine { pool: &'static str, index: usize },
-    /// A line is longer than [`MAX_LINE_CHARS`].
+    /// Una línea supera los [`MAX_LINE_CHARS`] caracteres.
     LineTooLong {
         pool: &'static str,
         index: usize,
         chars: usize,
     },
-    /// A town cannot be built, or does not fit the world next to the
-    /// towns before it.
+    /// Un pueblo no se puede construir, o no entra en el mundo junto a los
+    /// pueblos anteriores.
     Town(PlacementError),
-    /// The `world` section is unusable: the default world is used.
+    /// La sección `world` no se puede usar: se usa el mundo por defecto.
     World(WorldConfigError),
-    /// No valid town is left: the built-in one is used.
+    /// No queda ningún pueblo válido: se usa el incorporado.
     NoTowns,
-    /// A town asks for more than [`pampa_core::TownConfig::MAX_TOWNSFOLK`]
-    /// people: its size tier's crowd is used instead.
+    /// Un pueblo pide más de [`pampa_core::TownConfig::MAX_TOWNSFOLK`]
+    /// personas: en su lugar se usa la cantidad de gente de su categoría de
+    /// tamaño.
     Townsfolk {
         town: String,
         wanted: usize,
         max: usize,
     },
-    /// A model slot entry is unusable: its slot is unknown, or a number
-    /// is out of range. No slot tuning is used.
+    /// Una entrada de ranura de modelo no se puede usar: su ranura es
+    /// desconocida, o un número está fuera de rango. No se usa ningún ajuste de
+    /// ranuras.
     Slot { slot: String, reason: &'static str },
 }
 
@@ -250,7 +256,7 @@ mod tests {
             assert!(line.chars().count() <= MAX_LINE_CHARS, "{line}");
             assert_eq!(line.trim(), line, "no stray spaces: {line:?}");
         }
-        // The pools say different things.
+        // Los grupos dicen cosas distintas.
         assert!(lines.walk.iter().all(|l| !lines.gallop.contains(l)));
     }
 
@@ -308,7 +314,7 @@ mod tests {
             let error = BumpLines::parse(&text).expect_err(&text);
             assert!(error.to_string().contains(message), "{text}: {error}");
         }
-        // Length counts characters, not bytes: accents are fine.
+        // La longitud cuenta caracteres, no bytes: los acentos están bien.
         let accented = "á".repeat(MAX_LINE_CHARS);
         assert!(BumpLines::parse(&format!(r#"(walk: ["{accented}"], gallop: ["b"])"#)).is_ok());
     }

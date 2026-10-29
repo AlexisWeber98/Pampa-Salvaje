@@ -1,15 +1,16 @@
-//! Trees collide only where the rider is: the trunks of the trees of the
-//! chunks round the player are obstacles, streamed in as the player nears a
-//! chunk and out as they leave it. Planting the whole 24 km world at startup
-//! (hundreds of thousands of trunks) took seconds, for trees nobody can
-//! reach. Shrubs and grass are never obstacles.
+//! Los árboles colisionan solo donde está el jinete: los troncos de los árboles
+//! de los chunks alrededor del jugador son obstáculos, que entran por streaming
+//! a medida que el jugador se acerca a un chunk y salen cuando lo deja. Plantar
+//! todo el mundo de 24 km al inicio (cientos de miles de troncos) tardaba
+//! segundos, para árboles que nadie puede alcanzar. Los arbustos y el pasto
+//! nunca son obstáculos.
 //!
-//! Each chunk's trees come from [`FloraSite`], deterministic per chunk, so
-//! a chunk that leaves and returns has exactly the same trees. This ring is
-//! separate from the render crate's terrain streaming, so headless games
-//! collide the same way. What moves far from the player (cattle in their
-//! fenced fields) does not see trees there; trains never need them, the
-//! flora keeps off the whole track.
+//! Los árboles de cada chunk vienen de [`FloraSite`], determinista por chunk,
+//! así que un chunk que se va y vuelve tiene exactamente los mismos árboles.
+//! Este anillo es independiente del streaming de terreno del crate de render,
+//! así que los juegos sin interfaz colisionan igual. Lo que se mueve lejos del
+//! jugador (el ganado en sus campos alambrados) no ve árboles allí; los trenes
+//! nunca los necesitan, la flora se mantiene fuera de toda la vía.
 
 use bevy::prelude::*;
 use pampa_core::{ChunkCoord, FloraSite, Vec2, World};
@@ -17,21 +18,24 @@ use pampa_render::WorldFlora;
 
 use crate::player::{DrivePlayer, GameWorld, Player};
 
-/// Chunks (Chebyshev distance from the player's chunk) whose trees are
-/// loaded. A chunk is 200 m: with one chunk loaded all round, every tree
-/// within 200 m of the player collides, far past the rider's reach in a
-/// frame (about 12 m/s at a gallop), the nearest cattle and townsfolk, and
-/// the follow camera's few meters.
+/// Chunks (distancia de Chebyshev desde el chunk del jugador) cuyos árboles
+/// están cargados. Un chunk mide 200 m: con un chunk cargado todo alrededor,
+/// cada árbol a menos de 200 m del jugador colisiona, mucho más allá de lo que
+/// el jinete alcanza en un frame (unos 12 m/s al galope), el ganado y los
+/// vecinos más cercanos, y los pocos metros de la cámara de seguimiento.
 pub const LOAD_RADIUS: i32 = 1;
-/// Chunks past this distance are dropped. One more than [`LOAD_RADIUS`], so
-/// riding along a chunk border does not plant and drop the same chunk.
+/// Los chunks más allá de esta distancia se descartan. Uno más que
+/// [`LOAD_RADIUS`], para que cabalgar a lo largo del borde de un chunk no
+/// plante y descarte el mismo chunk.
 pub const KEEP_RADIUS: i32 = 2;
-/// Most chunks planted in a frame besides the player's own, which is always
-/// planted at once. A chunk's plants take a few milliseconds to work out.
+/// Máximo de chunks plantados en un frame además del propio del jugador, que
+/// siempre se planta de inmediato. Calcular las plantas de un chunk lleva unos
+/// milisegundos.
 pub const BUDGET: usize = 1;
 
-/// The loaded chunks past [`KEEP_RADIUS`] of `center`, and the chunks within
-/// [`LOAD_RADIUS`] still to plant: the player's own first, then the nearest.
+/// Los chunks cargados más allá de [`KEEP_RADIUS`] de `center`, y los chunks
+/// dentro de [`LOAD_RADIUS`] que faltan plantar: primero el del jugador, luego
+/// los más cercanos.
 fn pending(world: &World, center: Vec2) -> (Vec<ChunkCoord>, Vec<ChunkCoord>) {
     let config = world.config;
     let here = config.chunk_of(center);
@@ -53,9 +57,9 @@ fn pending(world: &World, center: Vec2) -> (Vec<ChunkCoord>, Vec<ChunkCoord>) {
     (far, wanted)
 }
 
-/// Plants the chunks round `center` and drops the far ones, working out at
-/// most `budget` chunks besides the one holding `center`, nearest first.
-/// Returns how many chunks were planted and dropped.
+/// Planta los chunks alrededor de `center` y descarta los lejanos, calculando
+/// como máximo `budget` chunks además del que contiene `center`, los más
+/// cercanos primero. Devuelve cuántos chunks se plantaron y se descartaron.
 pub fn stream_plants(
     world: &mut World,
     flora: &FloraSite,
@@ -82,7 +86,8 @@ pub fn stream_plants(
     (planted, far.len())
 }
 
-/// Keeps the plants round the player planted, before the player moves.
+/// Mantiene plantadas las plantas alrededor del jugador, antes de que el
+/// jugador se mueva.
 fn stream_plants_round_player(
     flora: Option<Res<WorldFlora>>,
     mut world: ResMut<GameWorld>,
@@ -92,7 +97,8 @@ fn stream_plants_round_player(
         return;
     };
     let center = player.rider.position;
-    // Look first: a frame with nothing to do must not mark the world changed.
+    // Primero mirar: un frame sin nada que hacer no debe marcar el mundo como
+    // cambiado.
     let (far, wanted) = pending(&world.0, center);
     if !far.is_empty() || !wanted.is_empty() {
         stream_plants(&mut world.0, &flora.0, center, BUDGET);
@@ -115,16 +121,17 @@ mod tests {
     use pampa_core::{Aabb, Circle, Heading, Rider};
     use std::time::Duration;
 
-    /// The footprints `near` finds in the three-by-three chunks round (less a
-    /// meter at the edge, so a loaded chunk beyond does not touch it)
-    /// `center`, in query order.
+    /// Las huellas que `near` encuentra en los tres por tres chunks alrededor
+    /// de `center` (menos un metro en el borde, para que un chunk cargado más
+    /// allá no lo toque), en el orden de la consulta.
     fn seen(world: &World, center: Vec2) -> Vec<Aabb> {
         let side = 3.0 * world.config.chunk_size - 2.0;
         let area = Aabb::from_center_size(center, Vec2::new(side, side));
         world.obstacles.near(area).into_iter().copied().collect()
     }
 
-    /// The densest of the first chunks of the monte, with plants all round.
+    /// El más denso de los primeros chunks del monte, con plantas todo
+    /// alrededor.
     fn planted_chunk(flora: &FloraSite, world: &World) -> ChunkCoord {
         let size = world.config.chunk_size;
         (-5..=5)
@@ -141,15 +148,16 @@ mod tests {
         let coord = planted_chunk(&laid.flora, &world);
         let trees = laid.flora.trees(coord);
         assert!(trees.len() > 20, "a chunk with trees");
-        // The whole world is not planted: no chunk streamed, no tree among
-        // the permanent footprints.
+        // No se planta todo el mundo: ningún chunk entró por streaming, ningún
+        // árbol entre las huellas permanentes.
         assert_eq!(world.obstacles.streamed_len(), 0);
         assert!(world.obstacles.len() < 200_000);
         for p in trees.iter().map(|t| t.obstacle()) {
             assert!(!world.obstacles.contains(&p), "{p:?} planted at startup");
         }
-        // The player's own chunk is planted at once, the rest within the
-        // load radius over the next frames, nearest first.
+        // El chunk propio del jugador se planta de inmediato, el resto dentro
+        // del radio de carga en los frames siguientes, los más cercanos
+        // primero.
         let size = world.config.chunk_size;
         let center = coord.center(size);
         let (planted, dropped) = stream_plants(&mut world, &laid.flora, center, 0);
@@ -165,7 +173,8 @@ mod tests {
         for c in loaded_chunks {
             assert!((c.x - coord.x).abs() <= LOAD_RADIUS && (c.y - coord.y).abs() <= LOAD_RADIUS);
         }
-        // The plants collide: each one blocks a rider from a few meters off.
+        // Las plantas colisionan: cada una bloquea a un jinete desde unos
+        // metros.
         let collider = Circle::new(Rider::COLLIDER_RADIUS);
         let tree = trees[0];
         let inside = world.resolve(collider, tree.at, |_| ());
@@ -183,13 +192,13 @@ mod tests {
         let first = seen(&world, here);
         assert!(first.len() > 100, "{}", first.len());
         let streamed = world.obstacles.streamed_len();
-        // Four chunks east, past the keep radius: the first chunk is gone,
-        // and so are its footprints.
+        // Cuatro chunks al este, más allá del radio de conservación: el primer
+        // chunk desapareció, y sus huellas también.
         let away = here + Vec2::new(4.0 * size, 0.0);
         let (_, dropped) = stream_plants(&mut world, &laid.flora, away, 8);
         assert!(dropped >= 3, "{dropped}");
         assert!(!world.obstacles.has_chunk(coord));
-        // Permanent footprints (fences) stay; no plant is left behind.
+        // Las huellas permanentes (alambrados) quedan; no queda ninguna planta.
         let left: Vec<Aabb> = world
             .obstacles
             .near(coord.bounds(size))
@@ -198,9 +207,11 @@ mod tests {
             .copied()
             .collect();
         assert!(left.is_empty(), "{} plants left behind", left.len());
-        // Ring-sized: the plants held never exceed the ring's chunks.
+        // Del tamaño del anillo: las plantas cargadas nunca superan los chunks
+        // del anillo.
         assert!(world.obstacles.loaded_chunks().count() <= 25);
-        // Riding along a chunk border plants and drops nothing again.
+        // Cabalgar a lo largo del borde de un chunk ya no planta ni descarta
+        // nada.
         let edge = here + Vec2::new(size / 2.0, 0.0);
         stream_plants(&mut world, &laid.flora, edge - Vec2::new(0.1, 0.0), 8);
         stream_plants(&mut world, &laid.flora, edge + Vec2::new(0.1, 0.0), 8);
@@ -210,13 +221,13 @@ mod tests {
             assert_eq!(moved, (0, 0), "no churn at a border");
         }
         assert_eq!(world.obstacles.streamed_len(), held);
-        // Back again: the same plants, to the footprint.
+        // De vuelta: las mismas plantas, hasta la huella.
         stream_plants(&mut world, &laid.flora, here, 8);
         assert_eq!(seen(&world, here), first);
         assert!(world.obstacles.streamed_len() >= streamed);
     }
 
-    /// A headless game with the player at `spawn` and the plant ring.
+    /// Un juego sin interfaz con el jugador en `spawn` y el anillo de plantas.
     fn headless_game(world: World, flora: FloraSite, spawn: PlayerSpawn) -> App {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
@@ -240,7 +251,7 @@ mod tests {
         let radius = Rider::COLLIDER_RADIUS;
         let mut full = laid.world.clone();
         full.plant_chunk(&laid.flora, coord);
-        // Plants with no tree of the chunk within the gallop lane.
+        // Plantas sin ningún árbol del chunk dentro del carril de galope.
         let lane = |at: Vec2| Aabb::new(at - Vec2::new(1.0, 3.0), at + Vec2::new(11.0, 3.0));
         let lone = |core: Aabb, at: Vec2| {
             full.obstacles
@@ -257,8 +268,8 @@ mod tests {
             (tree.obstacle(), tree.at, true),
             (shrub.obstacle(), shrub.at, false),
         ] {
-            // The player starts 10 m east of it and gallops west: its chunk
-            // is not planted yet.
+            // El jugador empieza 10 m al este y galopa hacia el oeste: su chunk
+            // todavía no está plantado.
             let start = at + Vec2::new(10.0, 0.0);
             let spawn = PlayerSpawn {
                 position: start,
@@ -290,7 +301,7 @@ mod tests {
             let mut query = game.world_mut().query::<&Player>();
             let rider = query.single(game.world()).unwrap().rider;
             if blocks {
-                // Stopped against it, not carried past it.
+                // Detenido contra él, no arrastrado más allá.
                 assert!(!through, "inside the tree");
                 assert!(rider.position.x > at.x, "{:?}", rider.position);
                 assert!(rider.position.x < at.x + 3.0, "{:?}", rider.position);

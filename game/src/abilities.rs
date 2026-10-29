@@ -1,10 +1,10 @@
-//! The protagonist's abilities ([`Abilities`]) as game state, which other
-//! systems ask before letting the player do something (see
-//! [`crate::errand`] for horses).
+//! Las habilidades del protagonista ([`Abilities`]) como estado del juego, que
+//! otros sistemas consultan antes de dejar que el jugador haga algo (ver
+//! [`crate::errand`] para los caballos).
 //!
-//! Riding unlocks the first time the protagonist mounts Don Hidalgo's
-//! horse: from then on any horse lets him on. Each unlock shows a short
-//! notice in the HUD's announcement panel.
+//! Montar se desbloquea la primera vez que el protagonista monta el caballo de
+//! Don Hidalgo: desde entonces cualquier caballo lo deja subir. Cada desbloqueo
+//! muestra un breve aviso en el panel de anuncios del HUD.
 
 use bevy::prelude::*;
 use pampa_core::{Abilities, Ability, ErrandEvent};
@@ -12,16 +12,17 @@ use pampa_core::{Abilities, Ability, ErrandEvent};
 use crate::errand::ErrandProgress;
 use crate::ride::Announcer;
 
-/// What the protagonist can do so far.
+/// Lo que el protagonista puede hacer hasta ahora.
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PlayerAbilities(pub Abilities);
 
-/// An ability just unlocked (each one is written once).
+/// Una habilidad recién desbloqueada (cada una se escribe una sola vez).
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Unlocked(pub Ability);
 
 impl PlayerAbilities {
-    /// Unlocks `ability`, telling `unlocked` if it was locked until now.
+    /// Desbloquea `ability` y avisa a `unlocked` si estaba bloqueada hasta
+    /// ahora.
     pub fn unlock(&mut self, ability: Ability, unlocked: &mut MessageWriter<Unlocked>) {
         if self.0.unlock(ability) {
             unlocked.write(Unlocked(ability));
@@ -29,7 +30,8 @@ impl PlayerAbilities {
     }
 }
 
-/// Unlocks riding as the protagonist first mounts Don Hidalgo's horse.
+/// Desbloquea la monta cuando el protagonista monta por primera vez el caballo
+/// de Don Hidalgo.
 pub(crate) fn unlock_on_mount(
     mut progress: MessageReader<ErrandProgress>,
     mut abilities: ResMut<PlayerAbilities>,
@@ -42,9 +44,9 @@ pub(crate) fn unlock_on_mount(
     }
 }
 
-/// Shows each unlock's notice in the announcement panel.
+/// Muestra el aviso de cada desbloqueo en el panel de anuncios.
 pub(crate) fn announce_unlocks(mut unlocked: MessageReader<Unlocked>, mut announcer: Announcer) {
-    // Several at once (all unlocked together): the last one shows.
+    // Varios a la vez (desbloqueados juntos): se muestra el último.
     if let Some(last) = unlocked.read().last() {
         announcer.show(last.0.notice().to_string());
     }
