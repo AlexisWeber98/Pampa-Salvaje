@@ -1,50 +1,58 @@
-//! Procedural low-poly town drawn from a `pampa-core` [`TownLayout`]:
-//! dirt streets (one earth mesh with world-space UVs, plus the goods
-//! yard's cart tracks) with sidewalks, brick in a city and round a town's
-//! plaza and beaten earth blending into the grass elsewhere
-//! ([`TownLayout::sidewalks`], [`pampa_core::town::Walk`]), the hitching rails of the store and the
-//! palenques ([`crate::facade::palenque`]), a tree-lined plaza (its paths, monument, benches and
-//! railing from [`crate::facade::plaza`], its paraísos, olmos, eucaliptos or
-//! aromos from [`crate::tree`]), the 1919 Italianate buildings of the
-//! facade kit ([`crate::facade::town_buildings`]), a railway with its
-//! station, grain sheds, and windmills over round water tanks.
+//! Pueblo procedural low-poly dibujado a partir de un [`TownLayout`] de
+//! `pampa-core`: calles de tierra (una malla de tierra con UV en espacio del
+//! mundo, más las huellas de carro del patio de cargas) con veredas, de
+//! ladrillo en una ciudad y alrededor de la plaza de un pueblo, y de tierra
+//! apisonada que se funde con el pasto en el resto ([`TownLayout::sidewalks`],
+//! [`pampa_core::town::Walk`]), la barra para atar caballos del almacén y los
+//! palenques ([`crate::facade::palenque`]), una plaza arbolada (sus senderos,
+//! monumento, bancos y reja de [`crate::facade::plaza`], sus paraísos, olmos,
+//! eucaliptos o aromos de [`crate::tree`]), los edificios italianizantes de
+//! 1919 del kit de fachadas ([`crate::facade::town_buildings`]), un ferrocarril
+//! con su estación, galpones de cereal y molinos de viento sobre tanques de
+//! agua redondos.
 //!
-//! Trees beyond the plaza rings ([`TownLayout::shade_trees`]) are the
-//! kit's shared meshes too: a city's sidewalk trees are the street species'
-//! trimmed variants in their cazuelas ([`tree_pit_shape`]), groves and yard
-//! trees the plain ones; a town's front trees are trimmed and stand on the
-//! dirt. Yard shrubs and flower beds ([`TownLayout::yard_plants`]) are one
-//! small shared mesh each ([`crate::tree::plants`]).
+//! Los árboles fuera de los anillos de la plaza ([`TownLayout::shade_trees`])
+//! también son mallas compartidas del kit: los árboles de vereda de una ciudad
+//! son las variantes podadas de las especies de calle en sus cazuelas
+//! ([`tree_pit_shape`]), los de las isletas y los patios, las variantes
+//! comunes; los árboles de frente de un pueblo están podados y se levantan
+//! sobre la tierra. Los arbustos de patio y los canteros de flores
+//! ([`TownLayout::yard_plants`]) son cada uno una pequeña malla compartida
+//! ([`crate::tree::plants`]).
 //!
-//! Logic owns every footprint; this module only decides how each
-//! [`BuildingKind`] looks.
+//! La lógica es dueña de cada huella; este módulo solo decide cómo se ve cada
+//! [`BuildingKind`].
 //!
-//! Towns are streamed: a town's meshes are built under one [`TownRoot`]
-//! when the rider comes within [`TownActivation`]'s margin of it, and
-//! despawned (root and all) past the margin plus the hysteresis. Signs and
-//! the train hang their entities off the same root.
+//! Los pueblos se cargan por streaming: las mallas de un pueblo se construyen
+//! bajo un único [`TownRoot`] cuando el jinete se acerca a menos del margen de
+//! [`TownActivation`], y se eliminan (raíz incluida) al pasar el margen más la
+//! histéresis. Los carteles y el tren cuelgan sus entidades de la misma raíz.
 //!
-//! Each building is one mesh per [`Surface`] it wears, sharing the kit's
-//! [`FacadeMaterials`]. The first town filled is built at once, so the
-//! first frame shows it; a town streamed in later builds its buildings on
-//! the async compute pool and they land a few frames after its root, still
-//! far past [`crate::settlement::BUILDING_FAR`] (the activation margin is wider). The
-//! plazas' paths, monuments, benches and railings are built the same way. Buildings,
-//! sidewalks, small props and trees are drawn within the settlements' shared
-//! [`ranges`]: no new [`VisibilityRange`].
+//! Cada edificio es una malla por cada [`Surface`] que lleva, compartiendo los
+//! [`FacadeMaterials`] del kit. El primer pueblo que se llena se construye de
+//! una vez, para que el primer frame lo muestre; un pueblo que llega más tarde
+//! por streaming construye sus edificios en el pool de cómputo asíncrono y
+//! estos aparecen unos pocos frames después de su raíz, todavía bastante más
+//! allá de [`crate::settlement::BUILDING_FAR`] (el margen de activación es más
+//! amplio). Los senderos, monumentos, bancos y rejas de las plazas se
+//! construyen de la misma forma. Los edificios, las veredas, los objetos
+//! pequeños y los árboles se dibujan dentro de los [`ranges`] compartidos de
+//! los asentamientos: ningún [`VisibilityRange`] nuevo.
 //!
-//! The streets wear no wheel ruts: people walk and ride them. Cart tracks
-//! are drawn only where carts go: from the street to the door of each goods
-//! building of the station yard ([`goods_tracks`]; the estancias' huellas
-//! are the settlements'). Streets and palenques are one mesh per surface
-//! and town, within the buildings' and the props' ranges.
+//! Las calles no tienen surcos de ruedas: la gente camina y cabalga por ellas.
+//! Las huellas de carro se dibujan solo por donde pasan los carros: desde la
+//! calle hasta la puerta de cada edificio de cargas del patio de la estación
+//! ([`goods_tracks`]; las huellas de las estancias son de los asentamientos).
+//! Las calles y los palenques son una malla por superficie y por pueblo, dentro
+//! de los rangos de los edificios y de los objetos.
 //!
-//! A brick sidewalk is a strip of paving [`SIDEWALK_TOP`] over the ground
-//! with a stucco curb [`CURB_TOP`] over it on the roadway side; an earth walk
-//! has the same curb and, for a floor, a feathered decal of the trodden yard
-//! dirt ([`TownEarthWalk`]) a few centimeters over the ground. Both are drawn on the
-//! ground like the streets and the plaza paths, which core walks people over
-//! at the ground's own height.
+//! Una vereda de ladrillo es una franja de pavimento a [`SIDEWALK_TOP`] sobre
+//! el suelo con un cordón de revoque a [`CURB_TOP`] sobre él del lado de la
+//! calzada; una vereda de tierra tiene el mismo cordón y, como piso, un decal
+//! difuminado de la tierra pisoteada de los patios ([`TownEarthWalk`]) unos
+//! pocos centímetros por encima del suelo. Ambas se dibujan sobre el suelo como
+//! las calles y los senderos de la plaza, por los que core hace caminar a la
+//! gente a la altura propia del suelo.
 
 use bevy::camera::visibility::VisibilityRange;
 use bevy::prelude::*;
@@ -69,27 +77,30 @@ use crate::settlement::{props, ranges};
 use crate::terrain::{StreamFocus, WorldTerrain, hash2};
 use crate::tree::{TreeKit, TreeVariant, VARIANTS, plaza_species, street_species, yard_species};
 
-/// Every town of the world, in the order the game placed them; a town's
-/// index here is its id everywhere in render. Without it nothing is drawn.
+/// Todos los pueblos del mundo, en el orden en que los ubicó el juego; el
+/// índice de un pueblo aquí es su id en todo render. Sin esto no se dibuja
+/// nada.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct WorldTowns(pub Vec<TownLayout>);
 
-/// Which towns are near the rider (see [`TownActivation`]). Render builds
-/// the active towns; the game simulates their people.
+/// Qué pueblos están cerca del jinete (ver [`TownActivation`]). Render
+/// construye los pueblos activos; el juego simula a su gente.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct ActiveTowns(pub TownActivation);
 
-/// Root of one drawn town: every mesh, sign and train car of town `.0`
-/// hangs off it, so despawning it drops the whole town.
+/// Raíz de un pueblo dibujado: cada malla, cartel y vagón del pueblo `.0`
+/// cuelga de ella, así que eliminarla quita todo el pueblo.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TownRoot(pub usize);
 
-/// Updates [`ActiveTowns`] and spawns or despawns [`TownRoot`]s; runs in
-/// `PreUpdate`, so every `Update` system sees this frame's towns.
+/// Actualiza [`ActiveTowns`] y crea o elimina los [`TownRoot`]; corre en
+/// `PreUpdate`, para que cada sistema de `Update` vea los pueblos de este
+/// frame.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct StreamTowns;
 
-/// Draws the [`WorldTowns`] near the rider and turns windmill rotors.
+/// Dibuja los [`WorldTowns`] cercanos al jinete y hace girar los rotores de los
+/// molinos de viento.
 pub struct TownPlugin;
 
 impl Plugin for TownPlugin {
@@ -109,10 +120,10 @@ impl Plugin for TownPlugin {
     }
 }
 
-/// Windmill wheel, turning about its local Z axis.
+/// Rueda del molino de viento, que gira alrededor de su eje Z local.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct WindmillRotor {
-    /// Radians per second.
+    /// Radianes por segundo.
     pub speed: f32,
 }
 
@@ -122,51 +133,54 @@ fn spin_rotors(time: Res<Time>, mut rotors: Query<(&WindmillRotor, &mut Transfor
     }
 }
 
-/// One drawn piece of building `.0` of its town (an index into
+/// Una pieza dibujada del edificio `.0` de su pueblo (un índice en
 /// [`TownLayout::buildings`]).
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TownBuilding(pub usize);
 
-/// One drawn piece of plaza `.0` of its town (an index into
-/// [`TownLayout::plazas`]): its paths and monument, or its benches and
-/// railing.
+/// Una pieza dibujada de la plaza `.0` de su pueblo (un índice en
+/// [`TownLayout::plazas`]): sus senderos y su monumento, o sus bancos y su
+/// reja.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TownPlaza(pub usize);
 
-/// One piece of a town's sidewalks: a block's or the plaza's ring.
+/// Una pieza de las veredas de un pueblo: el anillo de una manzana o el de la
+/// plaza.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TownSidewalk;
 
-/// The beaten-earth walks of a town's blocks (and a village's): one feathered
-/// decal ([`crate::settlement::track::walks_mesh`]); their curbs are sidewalk
-/// meshes like the brick ones.
+/// Las veredas de tierra apisonada de las manzanas de un pueblo (y de una
+/// aldea): un único decal difuminado
+/// ([`crate::settlement::track::walks_mesh`]); sus cordones son mallas de
+/// vereda como las de ladrillo.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TownEarthWalk;
 
-/// The cazuelas of a city's street trees: one mesh of rim and earth.
+/// Las cazuelas de los árboles de calle de una ciudad: una malla de borde y
+/// tierra.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TownTreePit;
 
-/// A town's dirt carriageway: its streets' earth, or the wheel ruts worn
-/// into it (one mesh per surface).
+/// La calzada de tierra de un pueblo: la tierra de sus calles, o los surcos de
+/// ruedas gastados en ella (una malla por superficie).
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TownStreet;
 
-/// A town's palenques, the store's hitching rail among them: one mesh in
-/// timber for all of them.
+/// Los palenques de un pueblo, entre ellos la barra para atar caballos del
+/// almacén: una sola malla de madera para todos.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TownPalenque;
 
-/// Shared meshes, scaled per instance.
+/// Mallas compartidas, escaladas por instancia.
 #[derive(Resource)]
 struct Shapes {
     cube: Handle<Mesh>,
-    /// The windmill's wheel, one mesh per surface (the settlements' molino
-    /// wheel).
+    /// La rueda del molino de viento, una malla por superficie (la rueda del
+    /// molino de los asentamientos).
     rotor: Vec<(Surface, Handle<Mesh>)>,
 }
 
-/// Earthy palette of the streets, plaza, buffer stops and platform.
+/// Paleta terrosa de las calles, la plaza, los topes de fin de vía y el andén.
 #[derive(Resource)]
 struct Palette {
     timber: Handle<StandardMaterial>,
@@ -194,7 +208,7 @@ impl Palette {
         }
     }
 
-    /// The track materials, with the shared cube, for [`TrackKit`].
+    /// Los materiales de la vía, con el cubo compartido, para [`TrackKit`].
     fn track_kit(&self, cube: Handle<Mesh>) -> TrackKit {
         TrackKit {
             cube,
@@ -204,8 +218,8 @@ impl Palette {
     }
 }
 
-/// Spawn helper that keeps the per-element code short. Everything it
-/// spawns hangs off the town's `root`, within `range` when one is set.
+/// Ayudante de creación que mantiene corto el código por elemento. Todo lo que
+/// crea cuelga del `root` del pueblo, dentro de `range` cuando se fija uno.
 struct Builder<'c, 'w, 's, 'a> {
     commands: &'c mut Commands<'w, 's>,
     shapes: &'a Shapes,
@@ -229,7 +243,8 @@ impl Builder<'_, '_, '_, '_> {
         }
     }
 
-    /// Axis-aligned box from world `center` with world `size`.
+    /// Caja alineada con los ejes desde el `center` del mundo con el `size` del
+    /// mundo.
     fn cube(&mut self, material: &Handle<StandardMaterial>, center: Vec3, size: Vec3) {
         let mesh = self.shapes.cube.clone();
         self.spawn(
@@ -251,7 +266,7 @@ fn setup_kit(
 ) {
     let cube = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
     let palette = Palette::new(&mut materials);
-    // The railway line between towns is drawn with the same track kit.
+    // La línea ferroviaria entre pueblos se dibuja con el mismo kit de vía.
     commands.insert_resource(palette.track_kit(cube.clone()));
     let rotor = props::rotor()
         .into_meshes()
@@ -262,8 +277,8 @@ fn setup_kit(
     commands.insert_resource(palette);
 }
 
-/// Shared town meshes and materials, once [`setup_kit`], the facade kit
-/// and the tree kit ran.
+/// Mallas y materiales compartidos de los pueblos, una vez que corrieron
+/// [`setup_kit`], el kit de fachadas y el kit de árboles.
 type TownKit<'a> = (
     Option<Res<'a, Shapes>>,
     Option<Res<'a, Palette>>,
@@ -271,16 +286,16 @@ type TownKit<'a> = (
     Option<Res<'a, TreeKit>>,
 );
 
-/// A town's buildings, being built on the async compute pool;
-/// [`land_buildings`] spawns them when ready. Despawning the town's root
-/// first drops it, which cancels the build.
+/// Los edificios de un pueblo, mientras se construyen en el pool de cómputo
+/// asíncrono; [`land_buildings`] los crea cuando están listos. Eliminar antes
+/// la raíz del pueblo los descarta, lo que cancela la construcción.
 #[derive(Component)]
 struct PendingBuildings(Task<Vec<Built>>);
 
-/// Activates the towns near [`StreamFocus`]: builds the newly active ones
-/// under a fresh [`TownRoot`] and despawns the roots of the ones left behind.
-/// The first run lays its towns' buildings at once; later ones build them
-/// off the main thread.
+/// Activa los pueblos cercanos a [`StreamFocus`]: construye los recién
+/// activados bajo un [`TownRoot`] nuevo y elimina las raíces de los que
+/// quedaron atrás. La primera ejecución tiende los edificios de sus pueblos de
+/// una vez; las siguientes los construyen fuera del hilo principal.
 fn stream_towns(
     mut commands: Commands,
     (towns, terrain, focus): (Res<WorldTowns>, Res<WorldTerrain>, Res<StreamFocus>),
@@ -374,7 +389,7 @@ fn stream_towns(
     *first_fill_laid = true;
 }
 
-/// Spawns every town's buildings whose build finished.
+/// Crea los edificios de cada pueblo cuya construcción terminó.
 fn land_buildings(
     mut commands: Commands,
     mut pending: Query<(Entity, &mut PendingBuildings)>,
@@ -392,7 +407,8 @@ fn land_buildings(
     }
 }
 
-/// Every mesh of `town` but its buildings, under the builder's root.
+/// Todas las mallas de `town` salvo sus edificios, bajo la raíz del
+/// constructor.
 fn build_town(b: &mut Builder, town: &TownLayout) {
     plazas(b, town);
     b.range = Some(ranges()[0].clone());
@@ -407,35 +423,37 @@ fn build_town(b: &mut Builder, town: &TownLayout) {
     b.range = None;
 }
 
-/// Height of the dirt carriageway over the ground, meters: under the
-/// sidewalks' [`SIDEWALK_TOP`]. Core walks people over it at the ground's
-/// own height.
+/// Altura de la calzada de tierra sobre el suelo, en metros: por debajo del
+/// [`SIDEWALK_TOP`] de las veredas. Core hace caminar a la gente sobre ella a
+/// la altura propia del suelo.
 pub const STREET_TOP: f32 = 0.03;
-/// How far the carriageway reaches under the ground, meters.
+/// Cuánto se extiende la calzada por debajo del suelo, en metros.
 const STREET_FOOT: f32 = -0.05;
-/// Height of the cart tracks over the dirt level, meters: a few
-/// millimeters, so they never fight it.
+/// Altura de las huellas de carro sobre el nivel de la tierra, en metros: unos
+/// pocos milímetros, para que nunca compitan con ella.
 pub const RUT_LIFT: f32 = 0.006;
-/// Width of one wheel rut, meters.
+/// Ancho de un surco de rueda, en metros.
 const RUT_WIDTH: f32 = 0.25;
-/// Distance between the two ruts of a cart's track, meters.
+/// Distancia entre los dos surcos de la huella de un carro, en metros.
 const RUT_GAUGE: f32 = 1.4;
-/// Shortest stretch of rut worth drawing, meters.
+/// El trecho de surco más corto que vale la pena dibujar, en metros.
 const RUT_MIN: f32 = 1.0;
-/// Where a goods track starts out of the facade, meters.
+/// Dónde empieza una huella de cargas desde la fachada, en metros.
 const RUT_START: f32 = 0.3;
-/// Gap a goods track keeps from anything in its way, meters.
+/// Distancia que mantiene una huella de cargas respecto de cualquier cosa que
+/// esté en su camino, en metros.
 const RUT_GAP: f32 = 0.3;
-/// How far from a goods building's door to look for the street its cart
-/// track runs to, meters.
+/// Hasta qué distancia de la puerta de un edificio de cargas se busca la calle
+/// hacia la que corre su huella de carro, en metros.
 const GOODS_REACH: f32 = 12.0;
-/// Length of the track out of a goods building with no street in reach:
-/// the loading apron, meters.
+/// Largo de la huella que sale de un edificio de cargas sin ninguna calle al
+/// alcance: la explanada de carga, en metros.
 const GOODS_APPROACH: f32 = 8.0;
 
-/// Spawns the carriageway of `town` under `root`: one mesh of earth and
-/// one of the goods yard's cart tracks, in the buildings' shared range,
-/// with world-space UVs so the strips meet at the crossings without a seam.
+/// Crea la calzada de `town` bajo `root`: una malla de tierra y otra de las
+/// huellas de carro del patio de cargas, en el rango compartido de los
+/// edificios, con UV en espacio del mundo para que las franjas se encuentren en
+/// los cruces sin costura.
 fn spawn_streets(
     commands: &mut Commands,
     root: Entity,
@@ -458,10 +476,11 @@ fn spawn_streets(
     }
 }
 
-/// The streets of `town` as one shape built around `origin`, the middle of
-/// its grid on the ground: every strip a slab of [`Surface::Earth`] topped
-/// at [`STREET_TOP`], and the [`goods_tracks`] in [`Surface::Mud`]. The
-/// streets themselves wear no ruts: people walk and ride them.
+/// Las calles de `town` como una sola forma construida alrededor de `origin`,
+/// el medio de su grilla sobre el suelo: cada franja es una losa de
+/// [`Surface::Earth`] con su parte superior en [`STREET_TOP`], y las
+/// [`goods_tracks`] en [`Surface::Mud`]. Las calles mismas no tienen surcos: la
+/// gente camina y cabalga por ellas.
 fn street_shape(town: &TownLayout, terrain: &Terrain) -> (Vec3, Shape) {
     let middle = town.grid().center();
     let origin = world_from_ground(middle, terrain.height(middle.x, middle.y));
@@ -486,7 +505,7 @@ fn street_shape(town: &TownLayout, terrain: &Terrain) -> (Vec3, Shape) {
             world_from_ground(rut.max, 0.0) - origin,
         );
         let (lo, hi) = (p.min(q), p.max(q));
-        // Seen from above, counter-clockwise.
+        // Visto desde arriba, en sentido antihorario.
         shape.face(
             Surface::Mud,
             &[
@@ -500,7 +519,7 @@ fn street_shape(town: &TownLayout, terrain: &Terrain) -> (Vec3, Shape) {
     (origin, shape)
 }
 
-/// The unit ground vector pointing out of `side`.
+/// El vector unitario del suelo que apunta hacia afuera de `side`.
 fn side_vector(side: Side) -> GroundVec2 {
     match side {
         Side::North => GroundVec2::new(0.0, 1.0),
@@ -510,9 +529,10 @@ fn side_vector(side: Side) -> GroundVec2 {
     }
 }
 
-/// Whether `b` is one of the railway's goods buildings: a shed or grain
-/// store of the station yard, beside the line outside the grid or in a
-/// through line's band, not one of the sheds among the houses.
+/// Si `b` es uno de los edificios de cargas del ferrocarril: un galpón o
+/// depósito de cereal del patio de la estación, junto a la línea fuera de la
+/// grilla o en la franja de una línea de paso, no uno de los galpones entre las
+/// casas.
 fn is_goods_yard(town: &TownLayout, b: &Building) -> bool {
     matches!(b.kind, BuildingKind::Shed | BuildingKind::GrainStore)
         && (town
@@ -521,11 +541,12 @@ fn is_goods_yard(town: &TownLayout, b: &Building) -> bool {
             || !town.grid().contains(&b.footprint))
 }
 
-/// How long the cart track out of a goods building's `door` facing `n` is:
-/// up to a quarter meter short of the first of `streets` within
-/// [`GOODS_REACH`], else [`GOODS_APPROACH`]. `None` when the street is so
-/// close (or the door already stands on it, where the streets wear no ruts)
-/// that no stretch of [`RUT_MIN`] fits: the street is the door's apron.
+/// Qué largo tiene la huella de carro que sale de la `door` de un edificio de
+/// cargas que mira hacia `n`: hasta un cuarto de metro antes de la primera de
+/// las `streets` dentro de [`GOODS_REACH`], o si no [`GOODS_APPROACH`]. `None`
+/// cuando la calle está tan cerca (o la puerta ya está sobre ella, donde las
+/// calles no tienen surcos) que no cabe ningún trecho de [`RUT_MIN`]: la calle
+/// es la explanada de la puerta.
 fn goods_track_length(streets: &[Aabb], door: GroundVec2, n: GroundVec2) -> Option<f32> {
     let to_street = (0..=(GOODS_REACH * 4.0) as usize)
         .map(|k| k as f32 * 0.25)
@@ -535,12 +556,13 @@ fn goods_track_length(streets: &[Aabb], door: GroundVec2, n: GroundVec2) -> Opti
     (length - RUT_START >= RUT_MIN).then_some(length)
 }
 
-/// The cart tracks of `town`, on the ground: from the door of each goods
-/// building ([`is_goods_yard`]) straight out along its front, two wheel
-/// ruts a [`RUT_GAUGE`] apart, to the street if one lies within
-/// [`GOODS_REACH`] and else [`GOODS_APPROACH`] out. They stop short of
-/// whatever stands in the way (buildings, trees, the line, platforms,
-/// plazas, sidewalks, signs and palenques).
+/// Las huellas de carro de `town`, sobre el suelo: desde la puerta de cada
+/// edificio de cargas ([`is_goods_yard`]) en línea recta hacia afuera a lo
+/// largo de su frente, dos surcos de rueda separados por [`RUT_GAUGE`], hasta
+/// la calle si hay una dentro de [`GOODS_REACH`], o si no hasta
+/// [`GOODS_APPROACH`] de distancia. Se detienen antes de lo que haya en el
+/// camino (edificios, árboles, la línea, andenes, plazas, veredas, carteles y
+/// palenques).
 fn goods_tracks(town: &TownLayout) -> Vec<Aabb> {
     let mut keep_off: Vec<Aabb> = town.obstacles();
     for floor in town.floors() {
@@ -563,7 +585,8 @@ fn goods_tracks(town: &TownLayout) -> Vec<Aabb> {
         let own = b.collider();
         for wheel in [-1.0, 1.0] {
             let lane = across * (wheel * RUT_GAUGE / 2.0);
-            // Where along the front each thing in the way cuts the rut.
+            // En qué lugar del frente corta el surco cada cosa que está en el
+            // camino.
             let mut pieces = vec![(RUT_START, length)];
             for o in keep_off.iter().filter(|o| **o != own) {
                 let at = |p: GroundVec2| ((p - door - lane).dot(n), (p - door - lane).dot(across));
@@ -597,8 +620,8 @@ fn goods_tracks(town: &TownLayout) -> Vec<Aabb> {
     out
 }
 
-/// Spawns the palenques of `town` under `root`: one mesh in timber, within
-/// the small props' range.
+/// Crea los palenques de `town` bajo `root`: una malla de madera, dentro del
+/// rango de los objetos pequeños.
 fn spawn_palenques(
     commands: &mut Commands,
     root: Entity,
@@ -621,9 +644,10 @@ fn spawn_palenques(
     }
 }
 
-/// The rails of `town` as one shape built around `origin`, the middle of
-/// its grid on the ground: the general store's hitching rail and every
-/// palenque, each along its footprint's long side.
+/// Las barras de `town` como una sola forma construida alrededor de `origin`,
+/// el medio de su grilla sobre el suelo: la barra para atar caballos del
+/// almacén de ramos generales y cada palenque, cada uno a lo largo del lado
+/// largo de su huella.
 fn palenque_shape(town: &TownLayout, terrain: &Terrain) -> (Vec3, Shape) {
     let middle = town.grid().center();
     let origin = world_from_ground(middle, terrain.height(middle.x, middle.y));
@@ -635,7 +659,8 @@ fn palenque_shape(town: &TownLayout, terrain: &Terrain) -> (Vec3, Shape) {
         let along_x = size.x >= size.y;
         let c = rail.center();
         let at = world_from_ground(c, terrain.height(c.x, c.y)) - origin;
-        // A rail along the ground's y runs along the world's z.
+        // Una barra a lo largo de la y del suelo corre a lo largo de la z del
+        // mundo.
         let turn = if along_x {
             0.0
         } else {
@@ -649,19 +674,21 @@ fn palenque_shape(town: &TownLayout, terrain: &Terrain) -> (Vec3, Shape) {
     (origin, shape)
 }
 
-/// Height of a sidewalk's brick paving over the ground, meters: just over
-/// the street's 0.03 and under the plaza paths' 0.07.
+/// Altura del pavimento de ladrillo de una vereda sobre el suelo, en metros:
+/// apenas por encima de los 0.03 de la calle y por debajo de los 0.07 de los
+/// senderos de la plaza.
 pub const SIDEWALK_TOP: f32 = 0.06;
-/// Height of its curb over the ground, meters: 3 cm over the paving.
+/// Altura de su cordón sobre el suelo, en metros: 3 cm por encima del
+/// pavimento.
 pub const CURB_TOP: f32 = 0.09;
-/// Width of a curb, meters.
+/// Ancho de un cordón, en metros.
 const CURB_WIDTH: f32 = 0.15;
-/// How far sidewalks reach under the ground, meters.
+/// Cuánto se extienden las veredas por debajo del suelo, en metros.
 const SIDEWALK_FOOT: f32 = -0.05;
 
-/// Spawns the sidewalks of `town` under `root`: one entity per group of
-/// touching strips and surface (paving, curb), within the buildings'
-/// shared range.
+/// Crea las veredas de `town` bajo `root`: una entidad por cada grupo de
+/// franjas que se tocan y por superficie (pavimento, cordón), dentro del rango
+/// compartido de los edificios.
 fn spawn_sidewalks(
     commands: &mut Commands,
     root: Entity,
@@ -671,7 +698,8 @@ fn spawn_sidewalks(
     meshes: &mut Assets<Mesh>,
 ) {
     let range = ranges()[0].clone();
-    // The walkable floor of each ring of earth walks, inside its curbs.
+    // El piso transitable de cada anillo de veredas de tierra, dentro de sus
+    // cordones.
     let rings: Vec<Vec<Aabb>> = town
         .sidewalks()
         .iter()
@@ -705,8 +733,9 @@ fn spawn_sidewalks(
     }
 }
 
-/// The groups of touching `walks` (a ring's four strips), each built around its first strip's middle on the ground: where
-/// it stands in the world, and its shape there.
+/// Los grupos de `walks` que se tocan (las cuatro franjas de un anillo), cada
+/// uno construido alrededor del medio de su primera franja sobre el suelo:
+/// dónde se ubica en el mundo, y su forma allí.
 fn sidewalk_shapes(walks: &[Sidewalk], terrain: &Terrain) -> Vec<(Vec3, Shape)> {
     let mut groups: Vec<(Vec<Aabb>, Vec3, Shape)> = Vec::new();
     for walk in walks {
@@ -718,8 +747,8 @@ fn sidewalk_shapes(walks: &[Sidewalk], terrain: &Terrain) -> Vec<(Vec3, Shape)> 
         let mut touching = (0..groups.len()).filter(|&k| touches(&groups[k].0));
         let k = match touching.next() {
             Some(k) => {
-                // A strip joining two groups (a ring's east strip, between
-                // its north and south ones) merges them.
+                // Una franja que une dos grupos (la franja este de un anillo,
+                // entre la norte y la sur) los fusiona.
                 let rest: Vec<usize> = touching.collect();
                 for j in rest.into_iter().rev() {
                     let (areas, origin, shape) = groups.remove(j);
@@ -749,13 +778,15 @@ fn sidewalk_shapes(walks: &[Sidewalk], terrain: &Terrain) -> Vec<(Vec3, Shape)> 
         .collect()
 }
 
-/// How wide a cazuela's rim is, meters.
+/// Qué tan ancho es el borde de una cazuela, en metros.
 const PIT_RIM: f32 = 0.1;
-/// How far a cazuela's earth stands over the paving, meters.
+/// Cuánto sobresale la tierra de una cazuela por encima del pavimento, en
+/// metros.
 const PIT_EARTH_LIFT: f32 = 0.005;
 
-/// Spawns the cazuelas of `town`'s street trees under `root`: one mesh of
-/// curb-high rims and one of earth, in the sidewalks' range.
+/// Crea las cazuelas de los árboles de calle de `town` bajo `root`: una malla
+/// de bordes a la altura del cordón y otra de tierra, en el rango de las
+/// veredas.
 fn spawn_tree_pits(
     commands: &mut Commands,
     root: Entity,
@@ -780,10 +811,10 @@ fn spawn_tree_pits(
     }
 }
 
-/// The cazuelas of `town`'s [`ShadeKind::Pit`] trees as one shape around
-/// `origin`, the middle of its grid on the ground: a square of stucco rim
-/// (as high as the curb) round [`Surface::Earth`], on the paving. `None`
-/// for a town without street trees.
+/// Las cazuelas de los árboles [`ShadeKind::Pit`] de `town` como una sola forma
+/// alrededor de `origin`, el medio de su grilla sobre el suelo: un cuadrado de
+/// borde de revoque (tan alto como el cordón) alrededor de [`Surface::Earth`],
+/// sobre el pavimento. `None` para un pueblo sin árboles de calle.
 fn tree_pit_shape(town: &TownLayout, terrain: &Terrain) -> Option<(Vec3, Shape)> {
     let pits: Vec<&ShadeTree> = town
         .shade_trees
@@ -804,7 +835,7 @@ fn tree_pit_shape(town: &TownLayout, terrain: &Terrain) -> Option<(Vec3, Shape)>
         let ground = terrain.height(tree.at.x, tree.at.y) - origin.y;
         let corner = |dx: f32, dy: f32| tree.at + GroundVec2::new(dx, dy);
         let rim = (ground, SIDEWALK_FOOT, CURB_TOP);
-        // South and north rims whole, west and east ones between them.
+        // Los bordes sur y norte enteros, los oeste y este entre ellos.
         for (a, b) in [
             (corner(-outer, -outer), corner(outer, -inner)),
             (corner(-outer, inner), corner(outer, outer)),
@@ -820,8 +851,8 @@ fn tree_pit_shape(town: &TownLayout, terrain: &Terrain) -> Option<(Vec3, Shape)>
     Some((origin, shape))
 }
 
-/// The box between ground corners `a` and `b`, from `low` to `high` over
-/// `ground`, in the space of a group standing at `origin`.
+/// La caja entre las esquinas del suelo `a` y `b`, desde `low` hasta `high`
+/// sobre `ground`, en el espacio de un grupo ubicado en `origin`.
 fn ground_box(
     shape: &mut Shape,
     surface: Surface,
@@ -840,7 +871,8 @@ fn ground_box(
     );
 }
 
-/// The floor of `walk`: its area less the curb along each curbed edge.
+/// El piso de `walk`: su área menos el cordón a lo largo de cada borde con
+/// cordón.
 fn walk_floor(walk: &Sidewalk) -> Aabb {
     let (mut lo, mut hi) = (walk.area.min, walk.area.max);
     for side in &walk.curbs {
@@ -854,14 +886,14 @@ fn walk_floor(walk: &Sidewalk) -> Aabb {
     Aabb::new(lo, hi)
 }
 
-/// One strip: brick paving (none on an earth walk), and a curb along each of
-/// its curbed edges
-/// (the first one whole, the others stopping short of it).
+/// Una franja: pavimento de ladrillo (ninguno en una vereda de tierra), y un
+/// cordón a lo largo de cada uno de sus bordes con cordón (el primero entero,
+/// los demás deteniéndose antes de él).
 fn sidewalk(shape: &mut Shape, walk: &Sidewalk, origin: Vec3, ground: f32) {
     let w = CURB_WIDTH;
     let a = walk.area;
-    // The brick paving stops at the curbs; an earth walk has none (its
-    // floor is a decal, [`walk_floor`]).
+    // El pavimento de ladrillo se detiene en los cordones; una vereda de tierra
+    // no tiene (su piso es un decal, [`walk_floor`]).
     if walk.walk == Walk::Brick {
         let floor = walk_floor(walk);
         let paving = (ground, SIDEWALK_FOOT, SIDEWALK_TOP);
@@ -896,11 +928,12 @@ fn sidewalk(shape: &mut Shape, walk: &Sidewalk, origin: Vec3, ground: f32) {
     }
 }
 
-/// Thickness of a ramp slab, in meters.
+/// Espesor de la losa de una rampa, en metros.
 const RAMP_THICKNESS: f32 = 0.2;
 
-/// A concrete slab sloping from each end of a platform's top down to the
-/// ground, along the ramps logic walks people over ([`Floor::rise_at`]).
+/// Una losa de hormigón que baja desde cada extremo de la parte superior de un
+/// andén hasta el suelo, a lo largo de las rampas por las que la lógica hace
+/// caminar a la gente ([`Floor::rise_at`]).
 fn floor_ramps(b: &mut Builder, floor: &Floor) {
     let concrete = b.palette.concrete.clone();
     let f = floor.footprint;
@@ -908,7 +941,7 @@ fn floor_ramps(b: &mut Builder, floor: &Floor) {
     let width = f.size().dot(floor.across());
     let (lo, hi) = (f.min.dot(floor.along), f.max.dot(floor.along));
     for (end, out) in [(lo, -1.0), (hi, 1.0)] {
-        // From the platform's edge (top) to the ramp's foot (ground).
+        // Desde el borde del andén (arriba) hasta el pie de la rampa (suelo).
         let top = mid + floor.along * end;
         let foot = top + floor.along * (out * Floor::RAMP_LENGTH);
         let (top3, foot3) = (
@@ -931,7 +964,7 @@ fn floor_ramps(b: &mut Builder, floor: &Floor) {
     }
 }
 
-/// A thin slab lying on (leveled) ground over `area`.
+/// Una losa delgada apoyada sobre el suelo (nivelado) en `area`.
 fn flat_patch(b: &mut Builder, material: &Handle<StandardMaterial>, area: &Aabb, lift: f32) {
     let center = area.center();
     let size = area.size();
@@ -943,8 +976,8 @@ fn flat_patch(b: &mut Builder, material: &Handle<StandardMaterial>, area: &Aabb,
     );
 }
 
-/// Every plaza (the main one, and a big town's second one), then the
-/// trees of all of them, and the street, grove and yard trees.
+/// Cada plaza (la principal, y la segunda de un pueblo grande), luego los
+/// árboles de todas ellas, y los árboles de calle, de isleta y de patio.
 fn plazas(b: &mut Builder, town: &TownLayout) {
     for p in town.plazas() {
         plaza(b, p);
@@ -954,17 +987,17 @@ fn plazas(b: &mut Builder, town: &TownLayout) {
     yard_plants(b, town);
 }
 
-/// One plaza's lawn. Its paths, monument, benches and railing are built
-/// with the buildings ([`plaza_jobs`], [`crate::facade::plaza`]).
+/// El césped de una plaza. Sus senderos, monumento, bancos y reja se construyen
+/// con los edificios ([`plaza_jobs`], [`crate::facade::plaza`]).
 fn plaza(b: &mut Builder, p: Aabb) {
     let lawn = b.palette.plaza.clone();
     flat_patch(b, &lawn, &p, crate::facade::plaza::LAWN_TOP);
 }
 
-/// Every plaza tree: a variant of its plaza's species ([`plaza_species`])
-/// from the shared [`TreeKit`], its bark and its leaves, turned and scaled
-/// a little per tree. Trees are solid: the follow camera pulls in round
-/// them instead of fading them.
+/// Cada árbol de plaza: una variante de la especie de su plaza
+/// ([`plaza_species`]) del [`TreeKit`] compartido, su corteza y sus hojas,
+/// girado y escalado un poco por árbol. Los árboles son sólidos: en lugar de
+/// desvanecerlos, la cámara de seguimiento se acerca alrededor de ellos.
 fn plaza_trees(b: &mut Builder, town: &TownLayout) {
     for (plaza, tree) in plaza_tree_sites(town) {
         let kit = b.trees.species(plaza_species(town.seed, plaza));
@@ -978,8 +1011,8 @@ fn plaza_trees(b: &mut Builder, town: &TownLayout) {
     }
 }
 
-/// A tree's bark and its leaves, two entities sharing the kit's meshes and
-/// materials, tagged `marker`.
+/// La corteza y las hojas de un árbol, dos entidades que comparten las mallas y
+/// los materiales del kit, etiquetadas con `marker`.
 fn spawn_tree(
     b: &mut Builder,
     (variant, bark, leaves): (
@@ -1002,11 +1035,12 @@ fn spawn_tree(
     }
 }
 
-/// Every street, grove and yard tree ([`TownLayout::shade_trees`]) from the
-/// shared [`TreeKit`]: a street tree is one of the street species' trimmed
-/// variants (a bare trunk to about 4 m, a narrow crown leaning over the
-/// street), a grove tree a variant of its plaza's species, a yard tree any
-/// species, scaled down to fit its crown's room.
+/// Cada árbol de calle, de isleta y de patio ([`TownLayout::shade_trees`]) del
+/// [`TreeKit`] compartido: un árbol de calle es una de las variantes podadas de
+/// las especies de calle (un tronco desnudo hasta unos 4 m, una copa angosta
+/// inclinada sobre la calle), un árbol de isleta es una variante de la especie
+/// de su plaza, y un árbol de patio, de cualquier especie, escalado hacia abajo
+/// para que entre en el espacio de su copa.
 fn shade_trees(b: &mut Builder, town: &TownLayout) {
     let plazas: Vec<Aabb> = town.plazas().collect();
     for tree in &town.shade_trees {
@@ -1024,8 +1058,9 @@ fn shade_trees(b: &mut Builder, town: &TownLayout) {
     }
 }
 
-/// Every yard shrub and flower bed ([`TownLayout::yard_plants`]): a shared
-/// plant mesh turned a little, in the small props' range.
+/// Cada arbusto de patio y cantero de flores ([`TownLayout::yard_plants`]): una
+/// malla de planta compartida girada un poco, en el rango de los objetos
+/// pequeños.
 fn yard_plants(b: &mut Builder, town: &TownLayout) {
     let plants = &b.trees.plants;
     for plant in &town.yard_plants {
@@ -1044,8 +1079,8 @@ fn yard_plants(b: &mut Builder, town: &TownLayout) {
     }
 }
 
-/// The shared mesh `plant` is drawn as, one of its kind's variants picked
-/// by its spot.
+/// La malla compartida con la que se dibuja `plant`, una de las variantes de su
+/// tipo elegida según su lugar.
 fn plant_mesh(plants: &crate::tree::plants::PlantKit, plant: &YardPlant) -> Handle<Mesh> {
     let pick = |meshes: &[Handle<Mesh>]| {
         let k = (hash2(plant.at.x + 5.0, plant.at.y - 9.0) * meshes.len() as f32) as usize;
@@ -1057,28 +1092,30 @@ fn plant_mesh(plants: &crate::tree::plants::PlantKit, plant: &YardPlant) -> Hand
     }
 }
 
-/// One of a town's drawn yard shrubs or flower beds.
+/// Uno de los arbustos de patio o canteros de flores dibujados de un pueblo.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TownYardPlant;
 
-/// One of a town's drawn street, grove or yard trees (its bark or its leaves).
+/// Uno de los árboles de calle, de isleta o de patio dibujados de un pueblo (su
+/// corteza o sus hojas).
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TownShadeTree;
 
-/// Which tree a [`ShadeTree`] is drawn as.
+/// Como qué árbol se dibuja un [`ShadeTree`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct ShadeLook {
     species: crate::tree::Species,
-    /// Drawn from the trimmed variants.
+    /// Se dibuja a partir de las variantes podadas.
     trimmed: bool,
     variant: usize,
     yaw: f32,
-    /// Seeded by its spot, from 0 to 1: its size within the range.
+    /// Con semilla según su lugar, de 0 a 1: su tamaño dentro del rango.
     jitter: f32,
 }
 
-/// The look of `tree` in the town seeded `seed` with `plazas`: street trees
-/// of a sidewalk row share a species; the others follow the plaza or the spot.
+/// El aspecto de `tree` en el pueblo con semilla `seed` con `plazas`: los
+/// árboles de calle de una hilera de vereda comparten especie; los demás siguen
+/// la plaza o el lugar.
 fn shade_look(seed: u32, plazas: &[Aabb], tree: &ShadeTree) -> ShadeLook {
     let at = tree.at;
     let (a, b) = (hash2(at.x, at.y), hash2(at.y + 7.0, at.x));
@@ -1098,11 +1135,12 @@ fn shade_look(seed: u32, plazas: &[Aabb], tree: &ShadeTree) -> ShadeLook {
     }
 }
 
-/// Where and how a variant of `crown_radius` stands for `tree` over `ground`. A trimmed tree
-/// keeps its height (a little taller, so its crown stays over 3.5 m), is
-/// never wider than its crown, and leans [`ShadeTree::LEAN`] degrees toward
-/// the street; any other is scaled evenly to fit its crown's room. A tree
-/// with no street direction (zero, or straight up) stands upright.
+/// Dónde y cómo se ubica una variante de `crown_radius` para `tree` sobre
+/// `ground`. Un árbol podado conserva su altura (un poco más alto, para que su
+/// copa quede por encima de 3.5 m), nunca es más ancho que su copa y se inclina
+/// [`ShadeTree::LEAN`] grados hacia la calle; cualquier otro se escala de forma
+/// uniforme para que entre en el espacio de su copa. Un árbol sin dirección de
+/// calle (cero, o vertical) se mantiene derecho.
 fn shade_transform(
     tree: &ShadeTree,
     look: &ShadeLook,
@@ -1131,35 +1169,38 @@ fn shade_transform(
         .with_scale(Vec3::new(wide, 1.0 + 0.08 * look.jitter, wide))
 }
 
-/// One of a town's drawn plaza trees (its bark or its leaves).
+/// Uno de los árboles de plaza dibujados de un pueblo (su corteza o sus hojas).
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TownTree;
 
-/// Where and how one plaza tree stands.
+/// Dónde y cómo se ubica un árbol de plaza.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct TreeSite {
     at: GroundVec2,
     variant: usize,
     yaw: f32,
-    /// Uniform scale, from [`TREE_SCALE_MIN`] to [`TREE_SCALE_MAX`].
+    /// Escala uniforme, de [`TREE_SCALE_MIN`] a [`TREE_SCALE_MAX`].
     scale: f32,
 }
 
-/// The largest a plaza tree is drawn over its variant: its trunk stays
-/// within core's [`pampa_core::town::TREE_TRUNK_RADIUS`].
+/// Lo más grande que se dibuja un árbol de plaza respecto de su variante: su
+/// tronco se mantiene dentro de [`pampa_core::town::TREE_TRUNK_RADIUS`] de
+/// core.
 pub(crate) const TREE_SCALE_MAX: f32 = 1.08;
 
-/// The smallest a plaza tree is drawn over its variant: each tree's scale
-/// lies between this and [`TREE_SCALE_MAX`], seeded by its spot.
+/// Lo más pequeño que se dibuja un árbol de plaza respecto de su variante: la
+/// escala de cada árbol queda entre esto y [`TREE_SCALE_MAX`], con semilla
+/// según su lugar.
 const TREE_SCALE_MIN: f32 = 0.92;
 
-/// How far a plaza tree's foot sits under the ground at its spot, meters:
-/// the trunk's flat bottom stays buried where the lawn slopes a little.
+/// Cuánto queda el pie de un árbol de plaza por debajo del suelo en su lugar,
+/// en metros: la base plana del tronco queda enterrada donde el césped tiene un
+/// poco de pendiente.
 const TREE_SINK: f32 = 0.05;
 
-/// Each of `town`'s trees with the index of the plaza it stands in
-/// ([`TownLayout::plazas`], [`plaza_of`]), its variant, yaw and scale,
-/// seeded by its spot.
+/// Cada árbol de `town` con el índice de la plaza en la que está
+/// ([`TownLayout::plazas`], [`plaza_of`]), su variante, giro y escala, con
+/// semilla según su lugar.
 fn plaza_tree_sites(town: &TownLayout) -> Vec<(usize, TreeSite)> {
     let plazas: Vec<Aabb> = town.plazas().collect();
     town.trees
@@ -1179,10 +1220,10 @@ fn plaza_tree_sites(town: &TownLayout) -> Vec<(usize, TreeSite)> {
         .collect()
 }
 
-/// The index of the plaza of `plazas` that tree `at` stands in. Core plants
-/// every tree inside a plaza; one outside them all (after a layout change)
-/// is filed under the nearest, with a warning, rather than quietly under
-/// the main plaza.
+/// El índice de la plaza de `plazas` en la que está el árbol `at`. Core planta
+/// cada árbol dentro de una plaza; uno que quede fuera de todas (después de un
+/// cambio de disposición) se asigna a la más cercana, con una advertencia, en
+/// lugar de asignarse en silencio a la plaza principal.
 fn plaza_of(plazas: &[Aabb], at: GroundVec2) -> usize {
     if let Some(inside) = plazas.iter().position(|p| p.contains_point(at)) {
         return inside;
@@ -1198,10 +1239,10 @@ fn plaza_of(plazas: &[Aabb], at: GroundVec2) -> usize {
     nearest
 }
 
-/// Spawns the station track of `town` under `root`: the ballast bed,
-/// sleepers and rails the railway line between towns is laid with too (see
-/// [`crate::railbed`]), one mesh each, with no range: the track runs out
-/// of the town to the line.
+/// Crea la vía de la estación de `town` bajo `root`: el lecho de balasto, los
+/// durmientes y los rieles con los que también se tiende la línea ferroviaria
+/// entre pueblos (ver [`crate::railbed`]), una malla cada uno, sin rango: la
+/// vía sale del pueblo hacia la línea.
 fn spawn_track(
     commands: &mut Commands,
     root: Entity,
@@ -1225,8 +1266,8 @@ fn spawn_track(
     }
 }
 
-/// The station platform: a plain concrete floor, its top at the height
-/// core walks people on.
+/// El andén de la estación: un piso de hormigón liso, con su parte superior a
+/// la altura sobre la que core hace caminar a la gente.
 fn platform(b: &mut Builder, building: &Building) {
     let concrete = b.palette.concrete.clone();
     let (c, size, h) = (
@@ -1242,21 +1283,21 @@ fn platform(b: &mut Builder, building: &Building) {
     );
 }
 
-/// How far in from the street grid's edge a house counts as on the
-/// outskirts, meters: about one block.
+/// Qué tan adentro del borde de la grilla de calles cuenta una casa como de las
+/// afueras, en metros: más o menos una manzana.
 const OUTSKIRTS: f32 = 50.0;
 
-/// A building of the town to build, with where it stands.
+/// Un edificio del pueblo por construir, con el lugar donde se ubica.
 #[derive(Debug, Clone, Copy)]
 struct Job {
     index: usize,
     lot: Lot,
-    /// Its footprint's middle on the ground, in the world.
+    /// El medio de su huella sobre el suelo, en el mundo.
     base: Vec3,
 }
 
-/// Every building of `town` the facade kit builds (the platform apart),
-/// placed on `terrain`.
+/// Cada edificio de `town` que construye el kit de fachadas (salvo el andén),
+/// ubicado sobre `terrain`.
 fn lots(town: &TownLayout, terrain: &Terrain) -> Vec<Job> {
     let grid = town.grid();
     let store = StoreStyle::of(town.size);
@@ -1285,7 +1326,7 @@ fn lots(town: &TownLayout, terrain: &Terrain) -> Vec<Job> {
         .collect()
 }
 
-/// A well-mixed seed from a building's index and footprint.
+/// Una semilla bien mezclada a partir del índice y la huella de un edificio.
 fn variant(index: usize, footprint: &Aabb) -> u32 {
     let mut v = (index as u32).wrapping_mul(0x9e37_79b9)
         ^ (footprint.min.x.to_bits()).wrapping_mul(0x85eb_ca6b)
@@ -1297,17 +1338,17 @@ fn variant(index: usize, footprint: &Aabb) -> u32 {
     v ^ (v >> 16)
 }
 
-/// What a built piece of a town is.
+/// Qué es una pieza construida de un pueblo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Part {
-    /// Building `.0` of [`TownLayout::buildings`].
+    /// El edificio `.0` de [`TownLayout::buildings`].
     Building(usize),
-    /// Plaza `.0` of [`TownLayout::plazas`].
+    /// La plaza `.0` de [`TownLayout::plazas`].
     Plaza(usize),
 }
 
-/// One plaza of the town to build: what core puts in it, and its middle
-/// on the ground in the world.
+/// Una plaza del pueblo por construir: lo que core pone en ella, y su medio
+/// sobre el suelo en el mundo.
 #[derive(Debug, Clone)]
 struct PlazaJob {
     index: usize,
@@ -1315,7 +1356,7 @@ struct PlazaJob {
     base: Vec3,
 }
 
-/// Every plaza of `town`, placed on `terrain`.
+/// Cada plaza de `town`, ubicada sobre `terrain`.
 fn plaza_jobs(town: &TownLayout, terrain: &Terrain) -> Vec<PlazaJob> {
     town.plaza_furniture()
         .into_iter()
@@ -1331,9 +1372,9 @@ fn plaza_jobs(town: &TownLayout, terrain: &Terrain) -> Vec<PlazaJob> {
         .collect()
 }
 
-/// One built piece (a building or a plaza's share of one range): its
-/// meshes in its own space, where it stands, the index of its shared
-/// range, and a windmill's wheel.
+/// Una pieza construida (un edificio o la parte de una plaza que corresponde a
+/// un rango): sus mallas en su propio espacio, dónde se ubica, el índice de su
+/// rango compartido y la rueda de un molino de viento.
 struct Built {
     part: Part,
     transform: Transform,
@@ -1342,9 +1383,9 @@ struct Built {
     rotor: Option<(Transform, WindmillRotor)>,
 }
 
-/// Builds every job's meshes, then every plaza's: its paths, curbs and
-/// monument within the buildings' range, its benches and railing within
-/// the props'.
+/// Construye las mallas de cada trabajo y luego las de cada plaza: sus
+/// senderos, cordones y monumento dentro del rango de los edificios, y sus
+/// bancos y reja dentro del de los objetos.
 fn build_lots(jobs: &[Job], plazas: &[PlazaJob]) -> Vec<Built> {
     let plazas = plazas.iter().flat_map(|job| {
         let shapes = crate::facade::plaza::plaza(&job.furniture);
@@ -1374,7 +1415,7 @@ fn build_lots(jobs: &[Job], plazas: &[PlazaJob]) -> Vec<Built> {
                     WindmillRotor { speed },
                 )
             });
-            // Small things go before the houses do.
+            // Las cosas pequeñas se van antes que las casas.
             let range = match kind {
                 BuildingKind::Windmill | BuildingKind::WaterTank => 1,
                 _ => 0,
@@ -1391,7 +1432,7 @@ fn build_lots(jobs: &[Job], plazas: &[PlazaJob]) -> Vec<Built> {
         .collect()
 }
 
-/// Spawns `built` under `root`: one entity per building and surface.
+/// Crea `built` bajo `root`: una entidad por edificio y superficie.
 fn spawn_built(
     commands: &mut Commands,
     root: Entity,
@@ -1487,7 +1528,8 @@ mod tests {
         q.iter(app.world()).count()
     }
 
-    /// Updates until no town's buildings are still being built.
+    /// Actualiza hasta que no quede ningún pueblo con edificios en
+    /// construcción.
     fn settle(app: &mut App) {
         for _ in 0..2000 {
             if count::<With<PendingBuildings>>(app) == 0 {
@@ -1504,26 +1546,27 @@ mod tests {
         let mut app = app();
         app.update();
         assert_eq!(roots(&mut app), vec![0]);
-        // The first town is laid at once, buildings and all.
+        // El primer pueblo se tiende de una vez, edificios incluidos.
         assert_eq!(count::<With<PendingBuildings>>(&mut app), 0);
         let castex = count::<With<Mesh3d>>(&mut app);
         assert!(castex > 100, "{castex} meshes");
         assert!(count::<With<TownBuilding>>(&mut app) > 100);
 
-        // Ride to the far town: Castex goes, the far town comes, its
-        // buildings built off the main thread and landing a little later.
+        // Se cabalga hasta el pueblo lejano: Castex se va, llega el pueblo
+        // lejano, y sus edificios se construyen fuera del hilo principal y
+        // aparecen un poco después.
         app.world_mut().resource_mut::<StreamFocus>().0 = Vec2::new(2950.0, -1950.0);
         app.update();
         assert_eq!(roots(&mut app), vec![1]);
         assert!(app.world().resource::<ActiveTowns>().0.is_active(1));
         settle(&mut app);
-        // Same layout shifted, other seeds per building: about as many
-        // meshes, none of them left over from Castex.
+        // La misma disposición desplazada, con otras semillas por edificio: más
+        // o menos la misma cantidad de mallas, ninguna sobrante de Castex.
         let far = count::<With<Mesh3d>>(&mut app);
         assert!(far.abs_diff(castex) < castex / 5, "{far} vs {castex}");
         assert!(count::<With<TownBuilding>>(&mut app) > 100);
 
-        // Halfway between them: nothing is drawn.
+        // A mitad de camino entre ellos: no se dibuja nada.
         app.world_mut().resource_mut::<StreamFocus>().0 = Vec2::new(1500.0, -1000.0);
         app.update();
         assert!(roots(&mut app).is_empty());
@@ -1563,7 +1606,8 @@ mod tests {
             .collect();
         let mut per: Vec<Vec<AssetId<StandardMaterial>>> = vec![Vec::new(); town.buildings.len()];
         for (b, m, parent) in q.iter(app.world()) {
-            // A windmill's wheel is its own mesh per surface.
+            // La rueda de un molino de viento es su propia malla por
+            // superficie.
             if !wheels.contains(&parent.parent()) {
                 per[b.0].push(m.id());
             }
@@ -1613,9 +1657,10 @@ mod tests {
                 _ => panic!("plazas draw within the buildings' and props' ranges"),
             };
         }
-        // Castex is a small town: earth paths with brick curbs and a
-        // stucco and whitewash monument with bronze plaques as far as the buildings; iron and
-        // timber benches and an iron railing as far as the props.
+        // Castex es un pueblo pequeño: senderos de tierra con cordones de
+        // ladrillo y un monumento de revoque y encalado con placas de bronce
+        // hasta donde llegan los edificios; bancos de hierro y madera y una
+        // reja de hierro hasta donde llegan los objetos.
         let want = [
             Surface::Earth,
             Surface::Brick,
@@ -1653,17 +1698,18 @@ mod tests {
         let mut used = HashSet::new();
         for (mesh, material, range, at, fades) in q.iter(app.world()) {
             drawn += 1;
-            // Castex has one plaza: its species' shared meshes and
-            // materials, as far as the trees reach.
+            // Castex tiene una plaza: las mallas y materiales compartidos de su
+            // especie, hasta donde llegan los árboles.
             assert!(meshes.contains(&mesh.id()));
             assert!([own.bark.id(), own.leaves.id()].contains(&material.id()));
             assert!(range == &ranges()[2]);
             used.insert(mesh.id());
-            // Solid: a tree never fades out of the camera's way.
+            // Sólido: un árbol nunca se desvanece para no estorbar a la cámara.
             assert!(!fades);
             assert!(at.scale.x <= TREE_SCALE_MAX && at.scale.x >= TREE_SCALE_MIN);
         }
-        // A bark and a leaf mesh per tree, the variants shared.
+        // Una malla de corteza y una de hojas por árbol, con las variantes
+        // compartidas.
         assert_eq!(drawn, 2 * town.trees.len());
         assert!(town.trees.len() > 2 * VARIANTS);
         assert_eq!(
@@ -1675,7 +1721,8 @@ mod tests {
 
     #[test]
     fn a_town_with_a_station_plaza_plants_another_species_there() {
-        // General Pico as the preview lays it: a city with a station plaza.
+        // General Pico tal como lo dispone la vista previa: una ciudad con una
+        // plaza de estación.
         let town = TownLayout::generate(&pampa_core::TownConfig {
             name: "General Pico".into(),
             origin: Vec2::ZERO,
@@ -1702,10 +1749,11 @@ mod tests {
 
     #[test]
     fn every_tree_stands_in_exactly_one_plaza_and_is_filed_under_it() {
-        // Every town shape the shipped towns take (3 to 8 blocks a side,
-        // with and without a railway, a through line making a station
-        // plaza) over a few seeds: core plants each tree in one plaza, so
-        // a layout change that moves one out fails here, not quietly.
+        // Cada forma de pueblo que toman los pueblos del juego (de 3 a 8
+        // manzanas por lado, con y sin ferrocarril, con una línea de paso que
+        // forma una plaza de estación) con unas pocas semillas: core planta
+        // cada árbol en una plaza, así que un cambio de disposición que deje
+        // uno afuera falla aquí, no en silencio.
         let mut towns = 0;
         for blocks in [(3, 3), (4, 3), (4, 4), (4, 5), (5, 4), (8, 8)] {
             for seed in [1, 2, 13, 19] {
@@ -1763,9 +1811,10 @@ mod tests {
             seen.insert(range.clone());
             buildings += usize::from(building && mesh);
         }
-        // Bevy never frees a range's GPU slot: towns add none.
+        // Bevy nunca libera el lugar en la GPU de un rango: los pueblos no
+        // agregan ninguno.
         assert!(seen.len() <= ranges().len());
-        // Every building mesh is ranged, the houses at BUILDING_FAR.
+        // Cada malla de edificio tiene rango, las casas en BUILDING_FAR.
         assert_eq!(
             buildings,
             count::<(With<TownBuilding>, With<Mesh3d>)>(&mut app)
@@ -1773,13 +1822,14 @@ mod tests {
         assert!(seen.contains(&ranges()[0]));
     }
 
-    /// Writes three towns as shipped (General Pico, Eduardo Castex,
-    /// Metileo) to `PAMPA_PREVIEW` (a folder) for the offline renderer, in
-    /// the format of `facade::town_buildings::tests::preview_town_street`:
-    /// buildings, the dirt streets with the goods yard's cart tracks, the
-    /// palenques, sidewalks, and the plazas (lawn, paths, monument, benches,
-    /// railing and trees) on flat ground. Run
-    /// with `PAMPA_PREVIEW=/some/dir cargo test -p pampa-render -- --ignored preview_town`.
+    /// Escribe tres pueblos tal como vienen en el juego (General Pico,
+    /// Eduardo Castex, Metileo) en `PAMPA_PREVIEW` (una carpeta) para el
+    /// renderer offline, en el formato de
+    /// `facade::town_buildings::tests::preview_town_street`: edificios, las
+    /// calles de tierra con las huellas de carro del patio de cargas, los
+    /// palenques, las veredas y las plazas (césped, senderos, monumento,
+    /// bancos, reja y árboles) sobre suelo plano. Se ejecuta con
+    /// `PAMPA_PREVIEW=/some/dir cargo test -p pampa-render -- --ignored preview_town`.
     #[test]
     #[ignore = "writes preview files"]
     fn preview_town_sidewalks() {
@@ -1842,7 +1892,7 @@ mod tests {
                     put_part(text, shape, surface, at);
                 }
             };
-            // Ground patches as named flat quads.
+            // Parches de suelo como quads planos con nombre.
             let patch = |text: &mut String, name: &str, a: &Aabb, lift: f32| {
                 let (p, q) = (
                     world_from_ground(a.min, lift),
@@ -1854,8 +1904,8 @@ mod tests {
                 }
                 let _ = writeln!(text, "f 0 2 1\nf 0 3 2");
             };
-            // The dirt streets with the goods yard's cart tracks, and the
-            // palenques, as the game builds them.
+            // Las calles de tierra con las huellas de carro del patio de
+            // cargas, y los palenques, tal como los construye el juego.
             let (origin, streets) = street_shape(&town, &terrain);
             put(&mut text, &streets, Transform::from_translation(origin));
             let (origin, rails) = palenque_shape(&town, &terrain);
@@ -1869,8 +1919,8 @@ mod tests {
                 put(&mut text, &shapes.ground, at);
                 put(&mut text, &shapes.furniture, at);
             }
-            // Trees as the game draws them: a variant of the plaza's
-            // species, turned and scaled.
+            // Árboles tal como los dibuja el juego: una variante de la especie
+            // de la plaza, girada y escalada.
             for (plaza, site) in plaza_tree_sites(&town) {
                 let species = plaza_species(town.seed, plaza);
                 let tree = crate::tree::mesh::tree(species, site.variant as u32);
@@ -1894,7 +1944,7 @@ mod tests {
                 put(&mut text, &shape, at);
             }
             std::fs::write(dir.join(format!("town_{name}.txt")), text).expect("preview written");
-            // Where the plaza is, for framing the camera.
+            // Dónde está la plaza, para encuadrar la cámara.
             let c = town.plaza.center();
             println!(
                 "{name}: plaza at x {} z {}, grid {:?}",
@@ -1905,9 +1955,9 @@ mod tests {
         }
     }
 
-    /// Writes `tree` placed `at` to a preview `text`: its bark as
-    /// `m Bark(<species>)`, its leaves as `m Leaves(<species>)`, `floor`
-    /// lifted off the heights.
+    /// Escribe `tree` ubicado en `at` en un `text` de vista previa: su corteza
+    /// como `m Bark(<species>)`, sus hojas como `m Leaves(<species>)`, con
+    /// `floor` levantado de las alturas.
     fn put_tree(
         text: &mut String,
         species: crate::tree::Species,
@@ -1932,10 +1982,10 @@ mod tests {
         }
     }
 
-    /// Writes every variant of the four species in a row, 14 m apart
-    /// (paraíso, olmo, eucalipto, aromo from west to east, the variants
-    /// north to south), to `PAMPA_PREVIEW/trees.txt` for the offline
-    /// renderer. Run with
+    /// Escribe cada variante de las cuatro especies en una fila, separadas
+    /// 14 m (paraíso, olmo, eucalipto y aromo de oeste a este, las variantes
+    /// de norte a sur), en `PAMPA_PREVIEW/trees.txt` para el renderer
+    /// offline. Se ejecuta con
     /// `PAMPA_PREVIEW=/some/dir cargo test -p pampa-render -- --ignored preview_tree_species`.
     #[test]
     #[ignore = "writes preview files"]
@@ -1975,11 +2025,13 @@ mod tests {
                 curbs += 1;
             }
         }
-        // Castex has 20 blocks: one brick ring round the plaza's block, and a
-        // curb mesh for it and for each of the other 19 blocks' rings.
+        // Castex tiene 20 manzanas: un anillo de ladrillo alrededor de la
+        // manzana de la plaza, y una malla de cordón para él y para los anillos
+        // de cada una de las otras 19 manzanas.
         assert_eq!(brick, 1, "brick sidewalk meshes");
         assert_eq!(curbs, 20, "curb meshes");
-        // The earth walks inside those 19 rings: one feathered yard decal.
+        // Las veredas de tierra dentro de esos 19 anillos: un único decal
+        // difuminado de patio.
         let mut q = app.world_mut().query_filtered::<
             (&MeshMaterial3d<StandardMaterial>, &VisibilityRange),
             With<TownEarthWalk>,
@@ -2010,8 +2062,9 @@ mod tests {
         };
         let drawn = towns_to_draw();
         let (village, town, city) = (&drawn[0].0, &drawn[1].0, &drawn[2].0);
-        // A city: brick and curbs, no earth. A town: brick round the plaza,
-        // earth elsewhere, curbs on both. A village: earth and curbs, no brick.
+        // Una ciudad: ladrillo y cordones, sin tierra. Un pueblo: ladrillo
+        // alrededor de la plaza, tierra en el resto, cordones en ambos. Una
+        // aldea: tierra y cordones, sin ladrillo.
         assert_eq!(
             surfaces(city, Walk::Brick),
             HashSet::from([Surface::Paving, Surface::Stucco])
@@ -2021,7 +2074,7 @@ mod tests {
             surfaces(town, Walk::Brick),
             HashSet::from([Surface::Paving, Surface::Stucco])
         );
-        // Earth walks draw a curb and no paving.
+        // Las veredas de tierra dibujan un cordón y nada de pavimento.
         assert_eq!(
             surfaces(town, Walk::Earth),
             HashSet::from([Surface::Stucco])
@@ -2061,16 +2114,17 @@ mod tests {
         let (mut solid, mut edge) = (0, 0);
         for (p, c) in points.iter().zip(colors) {
             let g = GroundVec2::new(p[0], -p[2]);
-            // Flush: 3 to 5 cm over the ground (the streets are 3 cm, the
-            // brick walks 6, the curbs 9).
+            // Al ras: de 3 a 5 cm por encima del suelo (las calles están a
+            // 3 cm, las veredas de ladrillo a 6 y los cordones a 9).
             let over = p[1] - terrain.height(g.x, g.y);
             assert!((0.03..=0.05).contains(&over), "{over} m over the ground");
             let near = areas
                 .iter()
                 .map(|a| a.closest_point(g).distance(g))
                 .fold(f32::INFINITY, f32::min);
-            // Nothing visible past a meter of feather (the mesh's own corners
-            // reach under 2 m, with no alpha); opaque (0.9) only on the walk.
+            // Nada visible más allá de un metro de difuminado (las propias
+            // esquinas de la malla llegan a menos de 2 m, sin alfa); opaca
+            // (0.9) solo sobre la vereda.
             assert!(near <= 2.0, "{near} m off the walk");
             assert!(
                 c[3] < 1e-3 || near <= 1.0 + 1e-3,
@@ -2090,12 +2144,12 @@ mod tests {
             solid > 500 && edge > 500,
             "{solid} solid and {edge} feathered corners"
         );
-        // Grassy edges: several alpha steps between the middle and the rim.
+        // Bordes con pasto: varios escalones de alfa entre el medio y el borde.
         let steps: HashSet<u32> = colors.iter().map(|c| (c[3] * 10.0) as u32).collect();
         assert!(steps.len() >= 4, "{steps:?}");
     }
 
-    /// Every sidewalk point of `town`, over the ground under it.
+    /// Cada punto de vereda de `town`, sobre el suelo que tiene debajo.
     fn sidewalk_heights(town: &TownLayout, terrain: &Terrain) -> Vec<(Surface, f32)> {
         sidewalk_shapes(town.sidewalks(), terrain)
             .into_iter()
@@ -2115,16 +2169,16 @@ mod tests {
 
     #[test]
     fn sidewalks_stand_a_few_centimeters_proud_like_the_plaza_paths() {
-        // People walk at the ground's own height over the streets (0.03 m),
-        // the paths (0.07 m) and so the sidewalks: their paving and curb
-        // stay within those few centimeters.
+        // La gente camina a la altura propia del suelo sobre las calles
+        // (0.03 m), los senderos (0.07 m) y por lo tanto las veredas: su
+        // pavimento y su cordón se mantienen dentro de esos pocos centímetros.
         let pico = TownLayout::generate(&pampa_core::TownConfig {
             name: "Pico".into(),
             blocks: (8, 8),
             ..TownConfig::castex()
         })
         .unwrap();
-        // The game levels the ground under a town.
+        // El juego nivela el suelo bajo un pueblo.
         let terrain = WorldTerrain::default().0;
         let terrain = terrain.clone().with_flat_area(pico.flat_area(&terrain));
         let heights = sidewalk_heights(&pico, &terrain);
@@ -2143,16 +2197,17 @@ mod tests {
                 "{surface:?} at {y}"
             );
         }
-        // A ring per block but the plaza's four, and the plaza's own: one
-        // shape each.
+        // Un anillo por manzana salvo las cuatro de la plaza, y el de la plaza
+        // misma: una forma cada uno.
         assert_eq!(
             sidewalk_shapes(pico.sidewalks(), &terrain).len(),
             64 - 4 + 1
         );
     }
 
-    /// A village, a small town, a city, and a city grown on both sides of its
-    /// line, with the ground leveled under each as the game does.
+    /// Una aldea, un pueblo pequeño, una ciudad y una ciudad crecida a ambos
+    /// lados de su línea, con el suelo nivelado bajo cada uno como lo hace el
+    /// juego.
     fn towns_to_draw() -> Vec<(TownLayout, Terrain)> {
         let line = |through| {
             Some(pampa_core::RailwayConfig {
@@ -2183,8 +2238,8 @@ mod tests {
         .collect()
     }
 
-    /// Every vertex of `shape`'s `surface`, as `(world position, normal, uv)`
-    /// for a shape standing at `origin`.
+    /// Cada vértice de la `surface` de `shape`, como `(world position, normal,
+    /// uv)` para una forma ubicada en `origin`.
     fn world_vertices(
         origin: Vec3,
         shape: &Shape,
@@ -2197,7 +2252,7 @@ mod tests {
             .collect()
     }
 
-    /// The ground point under a world position.
+    /// El punto del suelo bajo una posición del mundo.
     fn ground_of(p: Vec3) -> GroundVec2 {
         GroundVec2::new(p.x, -p.z)
     }
@@ -2234,7 +2289,8 @@ mod tests {
                 assert!(mesh.attribute(Mesh::ATTRIBUTE_TANGENT).is_some());
             }
         }
-        // No flat-colored street cubes any more: every street piece is textured.
+        // Ya no hay cubos de calle de color liso: cada pieza de calle tiene
+        // textura.
         assert_eq!(
             streets
                 .iter()
@@ -2254,13 +2310,15 @@ mod tests {
                 Default::default();
             let mut shared = 0;
             for (p, n, uv) in world_vertices(origin, &shape, Surface::Earth) {
-                // The tops lie flat on the ground: the planar UV of the world.
+                // Las caras superiores quedan planas sobre el suelo: la UV
+                // planar del mundo.
                 if n.y < 0.9 {
                     continue;
                 }
                 let want = bevy::math::Vec2::new((p.x - origin.x) / tile, (p.z - origin.z) / tile);
                 assert!(uv.distance(want) < 1e-3, "{}: uv {uv:?} at {p}", town.name);
-                // Whichever strip drew a point, it got the same UV.
+                // Sea cual sea la franja que dibujó un punto, recibió la misma
+                // UV.
                 let key = ((p.x * 100.0).round() as i32, (p.z * 100.0).round() as i32);
                 if let Some(other) = seen.insert(key, uv) {
                     assert!(other.distance(uv) < 1e-3, "{}: a seam at {p}", town.name);
@@ -2292,7 +2350,7 @@ mod tests {
                     town.name
                 );
             }
-            // Every strip's four corners are corners of the dirt.
+            // Las cuatro esquinas de cada franja son esquinas de la tierra.
             for street in &town.streets {
                 for corner in [
                     street.min,
@@ -2311,9 +2369,9 @@ mod tests {
         }
     }
 
-    /// The goods buildings of `town`, told apart from the sheds among the
-    /// houses by what the station yard builds: grain stores and its long
-    /// 25 m shed.
+    /// Los edificios de cargas de `town`, distinguidos de los galpones entre
+    /// las casas por lo que construye el patio de la estación: depósitos de
+    /// cereal y su galpón largo de 25 m.
     fn goods(town: &TownLayout) -> Vec<&Building> {
         town.buildings
             .iter()
@@ -2325,8 +2383,8 @@ mod tests {
             .collect()
     }
 
-    /// The building (of any kind) a `track` piece starts out of: the one
-    /// whose footprint lies nearest it.
+    /// El edificio (de cualquier tipo) del que sale una pieza de `track`: aquel
+    /// cuya huella queda más cerca de ella.
     fn owner<'t>(town: &'t TownLayout, track: &Aabb) -> &'t Building {
         let gap = |b: &Building| {
             let p = b.footprint.closest_point(track.center());
@@ -2358,8 +2416,8 @@ mod tests {
                     b.kind
                 );
             }
-            // The sheds among the houses, the station, houses, stores and
-            // the plazas have none.
+            // Los galpones entre las casas, la estación, las casas, los
+            // comercios y las plazas no tienen ninguna.
             for b in town.buildings.iter().filter(|b| !goods(&town).contains(b)) {
                 assert!(
                     tracks.iter().all(|t| b
@@ -2372,7 +2430,7 @@ mod tests {
                     b.kind
                 );
             }
-            // Every grain store and the yard's shed lead out a track.
+            // Cada depósito de cereal y el galpón del patio sacan una huella.
             for b in town
                 .buildings
                 .iter()
@@ -2393,7 +2451,7 @@ mod tests {
                 .filter(|b| b.kind == BuildingKind::Shed)
                 .count();
             assert_eq!(sheds, 1, "{}: one goods shed in the yard", town.name);
-            // Every goods building leads out two ruts a gauge apart.
+            // Cada edificio de cargas saca dos surcos separados por una trocha.
             for b in goods(&town) {
                 let n = side_vector(b.front);
                 let across = GroundVec2::new(-n.y, n.x);
@@ -2416,7 +2474,8 @@ mod tests {
                 yards += 1;
             }
             for street in &town.streets {
-                // The plain streets are dirt, no more: no rut lies on one.
+                // Las calles comunes son de tierra, nada más: ningún surco
+                // queda sobre una.
                 assert!(
                     tracks.iter().all(|t| !t.intersects(street)),
                     "{}",
@@ -2434,7 +2493,7 @@ mod tests {
         for (town, _) in towns_to_draw() {
             let obstacles = town.obstacles();
             for track in goods_tracks(&town) {
-                // Short, along the front, off everything.
+                // Corta, a lo largo del frente, sin tocar nada.
                 let size = track.size();
                 assert!(
                     size.x.max(size.y) <= GOODS_REACH + RUT_WIDTH,
@@ -2458,7 +2517,8 @@ mod tests {
                         town.name
                     );
                 }
-                // Ends at a street when one is near its end, else is an apron.
+                // Termina en una calle cuando hay una cerca de su extremo; si
+                // no, es una explanada.
                 let touches = town
                     .streets
                     .iter()
@@ -2476,30 +2536,34 @@ mod tests {
 
     #[test]
     fn a_goods_door_on_or_next_to_a_street_gets_no_track_and_others_stop_short() {
-        // A street along x from y = 0 to 10; the doors look north (+y) at it.
+        // Una calle a lo largo de x desde y = 0 hasta 10; las puertas miran al
+        // norte (+y), hacia ella.
         let street = [Aabb::new(
             GroundVec2::new(-50.0, 0.0),
             GroundVec2::new(50.0, 10.0),
         )];
         let north = GroundVec2::new(0.0, 1.0);
         let at = |y: f32| GroundVec2::new(3.0, y);
-        // On the street's edge, or inside it: the street is the apron.
+        // Sobre el borde de la calle, o dentro de ella: la calle es la
+        // explanada.
         assert_eq!(goods_track_length(&street, at(0.0), north), None);
         assert_eq!(goods_track_length(&street, at(5.0), north), None);
-        // Too near for a stretch worth drawing (0.3 m start plus 1 m).
+        // Demasiado cerca para un trecho que valga la pena dibujar (0.3 m de
+        // inicio más 1 m).
         assert_eq!(goods_track_length(&street, at(-1.0), north), None);
-        // A track runs up to a quarter meter short of the street.
+        // Una huella llega hasta un cuarto de metro antes de la calle.
         let far = goods_track_length(&street, at(-4.0), north).unwrap();
         assert!((far - 3.75).abs() < 1e-4, "{far}");
-        // Out of the street's reach: the 8 m apron.
+        // Fuera del alcance de la calle: la explanada de 8 m.
         let apron = goods_track_length(&street, at(-30.0), north).unwrap();
         assert!((apron - 8.0).abs() < 1e-4, "{apron}");
-        // Facing away from the street: the apron too.
+        // Mirando en sentido contrario a la calle: también la explanada.
         let away = goods_track_length(&street, at(-4.0), GroundVec2::new(0.0, -1.0)).unwrap();
         assert!((away - 8.0).abs() < 1e-4, "{away}");
     }
 
-    /// Towns of other street widths (10, 11, 13 and 16 m), a small one and cities.
+    /// Pueblos con otros anchos de calle (10, 11, 13 y 16 m), uno pequeño y
+    /// ciudades.
     fn varied_streets() -> Vec<(TownLayout, Terrain)> {
         [
             ((4, 4), 10.0),
@@ -2530,8 +2594,8 @@ mod tests {
         app.update();
         let town = app.world().resource::<WorldTowns>().0[0].clone();
         let kit = app.world().resource::<crate::tree::TreeKit>().clone();
-        // Castex is a small town: trimmed trees in front of houses, free
-        // ones in the yards, all from the kit's shared meshes.
+        // Castex es un pueblo pequeño: árboles podados frente a las casas,
+        // libres en los patios, todos de las mallas compartidas del kit.
         let plazas: Vec<Aabb> = town.plazas().collect();
         let mut expected: HashSet<AssetId<Mesh>> = HashSet::new();
         let mut trimmed = 0;
@@ -2561,7 +2625,7 @@ mod tests {
         }
         assert_eq!(drawn, 2 * town.shade_trees.len());
         assert!(town.shade_trees.len() > 5);
-        // No new mesh: the kit's, as many as it built.
+        // Ninguna malla nueva: las del kit, tantas como construyó.
         let meshes = app.world().resource::<Assets<Mesh>>().len();
         let kit_meshes = 2 * VARIANTS * (Species::ALL.len() + STREET_SPECIES.len());
         assert!(meshes > kit_meshes);
@@ -2596,7 +2660,7 @@ mod tests {
         }
         assert_eq!(drawn, town.yard_plants.len());
         assert!(drawn > 10, "{drawn}");
-        // Shrubs and beds both: more than one mesh in use.
+        // Arbustos y canteros: más de una malla en uso.
         let used: HashSet<AssetId<Mesh>> = q.iter(app.world()).map(|(m, _, _)| m.id()).collect();
         assert!(used.len() >= 3, "{} meshes", used.len());
     }
@@ -2621,7 +2685,7 @@ mod tests {
             let at = shade_transform(&tree, &look, crown_radius, 0.0);
             assert!(at.translation.is_finite() && at.scale.is_finite());
             assert!(at.rotation.is_finite(), "{crown_radius}: {:?}", at.rotation);
-            // No direction to lean toward: it stands upright.
+            // No hay dirección hacia la cual inclinarse: se mantiene derecho.
             assert!((at.rotation * Vec3::Y).angle_between(Vec3::Y) < 1e-3);
         }
         let plain = ShadeLook {
@@ -2654,14 +2718,15 @@ mod tests {
                     crate::tree::mesh::tree(look.species, look.variant as u32)
                 };
                 let at = shade_transform(tree, &look, mesh.crown_radius, 0.0);
-                // Never wider than the room core left it.
+                // Nunca más ancho que el espacio que le dejó core.
                 assert!(
                     at.scale.x * mesh.crown_radius <= tree.crown + 1e-3,
                     "{:?}",
                     tree.kind
                 );
-                // A trimmed tree stands nearly straight (user, 2026-10-26): at most
-                // six degrees off the vertical, and leaning toward the street.
+                // Un árbol podado se mantiene casi derecho (usuario,
+                // 2026-10-26): como mucho seis grados fuera de la vertical, e
+                // inclinado hacia la calle.
                 let up = at.rotation * Vec3::Y;
                 let off = up.angle_between(Vec3::Y).to_degrees();
                 if look.trimmed {
@@ -2679,7 +2744,8 @@ mod tests {
                     let p = at.transform_point(*leaf);
                     let ground = GroundVec2::new(p.x, -p.z);
                     if look.trimmed {
-                        // Bare trunk to about 2.5 m: no leaf under 1.9 m.
+                        // Tronco desnudo hasta unos 2.5 m: ninguna hoja por
+                        // debajo de 1.9 m.
                         assert!(p.y >= 1.9, "{:?}: a leaf at {:.2} m", look.species, p.y);
                     }
                     for wall in &walls {
@@ -2709,7 +2775,8 @@ mod tests {
             match tree.kind {
                 ShadeKind::Pit => {
                     assert!(look.trimmed);
-                    // The species Aromo stays low: never along a street.
+                    // La especie Aromo se queda baja: nunca a lo largo de una
+                    // calle.
                     assert_ne!(look.species, Species::Aromo);
                     rows.entry(tree.row).or_default().insert(look.species);
                 }
@@ -2721,7 +2788,7 @@ mod tests {
                 ShadeKind::Front => unreachable!("a city has no front trees"),
             }
         }
-        // One species a row, different species across the town.
+        // Una especie por hilera, especies distintas a lo largo del pueblo.
         assert!(rows.values().all(|s| s.len() == 1));
         let across: HashSet<Species> = rows.values().flatten().copied().collect();
         assert_eq!(across.len(), 3, "{across:?}");
@@ -2739,7 +2806,8 @@ mod tests {
             .count();
         let rim = world_vertices(origin, &shape, Surface::Stucco);
         let soil = world_vertices(origin, &shape, Surface::Earth);
-        // A soil block (20 vertices, no underside) and four rim slabs for every pit.
+        // Un bloque de tierra (20 vértices, sin cara inferior) y cuatro losas
+        // de borde por cada cazuela.
         assert_eq!(soil.len(), 20 * pits);
         assert_eq!(rim.len(), 4 * soil.len());
         let top = |v: &[(Vec3, Vec3, bevy::math::Vec2)]| {
@@ -2748,10 +2816,12 @@ mod tests {
                 .map(|(p, _, _)| p.y - terrain.height(p.x, -p.z))
                 .fold(f32::NEG_INFINITY, f32::max)
         };
-        // The rim as high as the curb (9 cm) and the earth just over the paving (6 cm).
+        // El borde tan alto como el cordón (9 cm) y la tierra apenas por encima
+        // del pavimento (6 cm).
         assert!((top(&rim) - 0.09).abs() < 2e-3, "{}", top(&rim));
         assert!((top(&soil) - 0.065).abs() < 2e-3, "{}", top(&soil));
-        // Every vertex lies on a sidewalk, 0.4 m or more in from the curb's edge.
+        // Cada vértice queda sobre una vereda, a 0.4 m o más hacia adentro del
+        // borde del cordón.
         for (p, _, _) in &rim {
             let g = GroundVec2::new(p.x, -p.z);
             assert!(
@@ -2762,7 +2832,7 @@ mod tests {
             );
         }
         assert!(pits > 100);
-        // A small town has none.
+        // Un pueblo pequeño no tiene ninguna.
         let (small, terrain) = &towns_to_draw()[1];
         assert!(tree_pit_shape(small, terrain).is_none());
     }
@@ -2777,11 +2847,12 @@ mod tests {
                 assert!(n.y > 0.99, "{}: a rut that leans", town.name);
                 let g = ground_of(*p);
                 let over = p.y - terrain.height(g.x, g.y);
-                // 5 mm or more over the street's dirt (no fight with it),
-                // and under the sidewalks' paving.
+                // 5 mm o más por encima de la tierra de la calle (sin competir
+                // con ella), y por debajo del pavimento de las veredas.
                 assert!(over >= 0.03 + 0.005, "{}: {over} m", town.name);
                 assert!(over < SIDEWALK_TOP, "{}: {over} m", town.name);
-                // And never over a street's dirt: the streets wear no ruts.
+                // Y nunca sobre la tierra de una calle: las calles no tienen
+                // surcos.
                 for street in &town.streets {
                     assert!(
                         !street.expanded(-0.01).contains_point(g),
@@ -2790,7 +2861,7 @@ mod tests {
                     );
                 }
             }
-            // No two ruts overlap.
+            // No hay dos surcos que se superpongan.
             let tracks = goods_tracks(&town);
             for (i, a) in tracks.iter().enumerate() {
                 assert!(
@@ -2850,7 +2921,8 @@ mod tests {
                     .collect();
                 assert!(!mine.is_empty(), "{}: nothing at {rail:?}", town.name);
                 claimed += mine.len();
-                // End to end along the rail's long side, a post wide across.
+                // De punta a punta a lo largo del lado largo de la barra, con
+                // el ancho de un poste a lo ancho.
                 let (lo, hi) = mine.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| {
                     let g = ground_of(**p);
                     let t = if rail.size().x >= rail.size().y {
@@ -2862,14 +2934,15 @@ mod tests {
                 });
                 let long = rail.size().x.max(rail.size().y);
                 assert!((hi - lo - long).abs() < 1e-2, "{}: {}", town.name, hi - lo);
-                // The posts stand on the ground there and the bar rides at its height.
+                // Los postes se apoyan sobre el suelo allí y la barra va a su
+                // altura.
                 let c = rail.center();
                 let ground = terrain.height(c.x, c.y);
                 let top = mine.iter().fold(f32::MIN, |m, p| m.max(p.y)) - ground;
                 assert!((top - 1.15).abs() < 1e-3, "{}", town.name);
                 assert!(mine.iter().any(|p| ((p.y - ground) - 1.0).abs() < 0.06));
             }
-            // Nothing else is drawn, and it stays light.
+            // No se dibuja nada más, y se mantiene liviano.
             assert_eq!(claimed, verts.len(), "{}: stray timber", town.name);
             assert!(shape.triangles() < 120 * rails.len(), "{}", town.name);
         }

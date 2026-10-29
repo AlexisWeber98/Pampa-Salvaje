@@ -1,26 +1,26 @@
-//! A brief fade to black and back over the whole screen, to cover a jump in
-//! time (skipping a train ride, waiting for the train).
+//! Un breve fundido a negro y de vuelta sobre toda la pantalla, para tapar un
+//! salto en el tiempo (omitir un viaje en tren, esperar el tren).
 //!
-//! The game starts it ([`ScreenFade::start`]) and ticks it
-//! ([`ScreenFade::tick`]), which says on which frame the screen is fully
-//! black: the moment to jump. Render only draws it, as a black UI layer over
-//! everything.
+//! El juego lo inicia ([`ScreenFade::start`]) y lo hace avanzar
+//! ([`ScreenFade::tick`]), que indica en qué frame la pantalla está
+//! completamente negra: el momento de saltar. Render solo lo dibuja, como una
+//! capa de UI negra por encima de todo.
 
 use bevy::prelude::*;
 
-/// The fade's state: `None` while the screen is clear.
+/// El estado del fundido: `None` mientras la pantalla está despejada.
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
 pub struct ScreenFade(Option<f32>);
 
 impl ScreenFade {
-    /// Seconds to fade to black.
+    /// Segundos para fundir a negro.
     pub const OUT: f32 = 0.35;
-    /// Seconds black before fading back.
+    /// Segundos en negro antes de volver.
     pub const HOLD: f32 = 0.15;
-    /// Seconds to fade back in.
+    /// Segundos para volver a la imagen.
     pub const IN: f32 = 0.35;
 
-    /// Starts a fade; `false` (and nothing changes) while one is running.
+    /// Inicia un fundido; `false` (y no cambia nada) mientras hay uno en curso.
     pub fn start(&mut self) -> bool {
         if self.0.is_some() {
             return false;
@@ -29,13 +29,13 @@ impl ScreenFade {
         true
     }
 
-    /// Whether a fade is running.
+    /// Si hay un fundido en curso.
     pub fn active(&self) -> bool {
         self.0.is_some()
     }
 
-    /// Runs the fade for `dt` seconds; `true` on the one tick that reaches
-    /// full black. It clears once faded back in.
+    /// Hace avanzar el fundido `dt` segundos; `true` en el único tick que llega
+    /// al negro total. Se borra una vez que vuelve la imagen.
     pub fn tick(&mut self, dt: f32) -> bool {
         let Some(t) = self.0 else {
             return false;
@@ -46,7 +46,7 @@ impl ScreenFade {
         t < Self::OUT && next >= Self::OUT
     }
 
-    /// Opacity of the black layer, 0 (clear) to 1 (black).
+    /// Opacidad de la capa negra, de 0 (despejada) a 1 (negra).
     pub fn alpha(&self) -> f32 {
         let Some(t) = self.0 else {
             return 0.0;
@@ -61,11 +61,11 @@ impl ScreenFade {
     }
 }
 
-/// The black layer over the screen.
+/// La capa negra sobre la pantalla.
 #[derive(Component, Debug)]
 pub struct FadeLayer;
 
-/// Draws the [`ScreenFade`].
+/// Dibuja el [`ScreenFade`].
 pub struct FadePlugin;
 
 impl Plugin for FadePlugin {
@@ -87,7 +87,7 @@ fn spawn_layer(mut commands: Commands) {
             ..default()
         },
         BackgroundColor(Color::NONE),
-        // Over the HUD and the minimap.
+        // Por encima del HUD y del minimapa.
         GlobalZIndex(100),
     ));
 }
@@ -124,7 +124,7 @@ mod tests {
         assert_eq!(fade.alpha(), 0.0);
         let peak = alphas.iter().position(|&a| a == 1.0).unwrap();
         assert!(alphas[..peak].windows(2).all(|w| w[0] <= w[1]));
-        // A long frame still goes black once, then clears.
+        // Un frame largo igual pasa a negro una vez y luego se despeja.
         assert!(fade.start());
         assert!(fade.tick(1.0));
         assert!(!fade.active());

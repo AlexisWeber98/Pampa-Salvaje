@@ -1,21 +1,24 @@
-//! Grass cards: the paja and flechilla tufts of the field.
+//! Tarjetas de pasto: las matas de paja y flechilla del campo.
 //!
-//! A tuft is three alpha-cut quads fanned 60 degrees apart round a vertical
-//! axis, like the tree leaf cards, each wearing one clump of an atlas cut
-//! from Poly Haven's `grass_medium_01` (CC0, see the root CREDITS.md): 6
-//! triangles a tuft where the Quaternius tufts they replace had 108 to 212.
-//! The atlas has four clumps in a 2x2 grid, so a tuft picks one of
-//! [`CARD_VARIANTS`] forms. Paja (dry bunch grass) wears the dry diffuse;
-//! flechilla wears the green one, tinted toward the dry-green palette. The
-//! colour map carries the opacity in its alpha (`tools/textures_to_ktx2.sh`
-//! style, mips from `tools/leaf_atlas.py --mips`) and is alpha-tested like
-//! the leaves, so there is no sorting.
+//! Una mata son tres quads recortados por alfa, abiertos en abanico a 60 grados
+//! entre sí alrededor de un eje vertical, como las tarjetas de hojas de los
+//! árboles. Cada uno lleva una macolla de un atlas recortado de
+//! `grass_medium_01` de Poly Haven (CC0, ver el CREDITS.md de la raíz): 6
+//! triángulos por mata, donde las matas de Quaternius a las que reemplazan
+//! tenían de 108 a 212. El atlas tiene cuatro macollas en una grilla de 2x2,
+//! así que una mata elige una de las [`CARD_VARIANTS`] formas. La paja
+//! (gramínea seca en macolla) lleva el difuso seco; la flechilla lleva el
+//! verde, teñido hacia la paleta verde seca. El mapa de color lleva la opacidad
+//! en su alfa (al estilo de `tools/textures_to_ktx2.sh`, con mips de
+//! `tools/leaf_atlas.py --mips`) y se prueba por alfa como las hojas, así que
+//! no hay ordenamiento.
 //!
-//! One mesh a (kind, form) and one material a (kind, tint) are shared by
-//! every tuft: the tufts' fade is a [`bevy::camera::visibility::VisibilityRange`]
-//! on the entity, which [`crate::flora`] keeps to a few seeded steps.
-//! Without an asset server, asset root, compressed texture format or the
-//! files, the cards draw a plain colour of the same look.
+//! Una malla por (tipo, forma) y un material por (tipo, tinte) se comparten
+//! entre todas las matas: el fundido de las matas es un
+//! [`bevy::camera::visibility::VisibilityRange`] en la entidad, que
+//! [`crate::flora`] limita a unos pocos escalones con semilla. Sin servidor de
+//! assets, raíz de assets, formato de textura comprimida o los archivos, las
+//! tarjetas se dibujan en un color liso del mismo aspecto.
 
 use std::path::Path;
 
@@ -29,16 +32,16 @@ use crate::AssetRoot;
 use crate::facade::materials::load_map_with;
 use crate::tree::materials::{LEAF_CUTOFF, clamped};
 
-/// Where the grass texture set lives, under the [`AssetRoot`].
+/// Dónde está el conjunto de texturas de pasto, bajo el [`AssetRoot`].
 pub const GRASS_TEXTURE_DIR: &str = "textures/grass/grass_medium_01";
-/// Clump forms in the atlas (a 2x2 grid).
+/// Formas de macolla en el atlas (una grilla de 2x2).
 pub const CARD_VARIANTS: usize = 4;
-/// Grass tints from grey-green to dry yellow.
+/// Tintes del pasto, de verde grisáceo a amarillo seco.
 pub const GRASS_TINTS: usize = 4;
-/// Quads a tuft is built from.
+/// Quads con los que se construye una mata.
 pub const CARDS_PER_TUFT: usize = 3;
 
-/// Index of `kind` in the per-kind tables.
+/// Índice de `kind` en las tablas por tipo.
 fn slot(kind: TuftKind) -> usize {
     match kind {
         TuftKind::Paja => 0,
@@ -46,8 +49,8 @@ fn slot(kind: TuftKind) -> usize {
     }
 }
 
-/// The path of `kind`'s colour map, under the [`AssetRoot`]: paja the dry
-/// diffuse, flechilla the green one.
+/// La ruta del mapa de color de `kind`, bajo el [`AssetRoot`]: la paja usa el
+/// difuso seco y la flechilla el verde.
 pub fn grass_map_path(kind: TuftKind) -> String {
     let name = match kind {
         TuftKind::Paja => "dry_color",
@@ -56,8 +59,8 @@ pub fn grass_map_path(kind: TuftKind) -> String {
     format!("{GRASS_TEXTURE_DIR}/{name}.ktx2")
 }
 
-/// How wide a card is, for a height of 1: paja is a tall bunch, flechilla
-/// spreads wider.
+/// Qué tan ancha es una tarjeta para una altura de 1: la paja es una macolla
+/// alta y la flechilla se extiende más a lo ancho.
 fn card_width(kind: TuftKind) -> f32 {
     match kind {
         TuftKind::Paja => 1.1,
@@ -65,9 +68,10 @@ fn card_width(kind: TuftKind) -> f32 {
     }
 }
 
-/// The mesh of `kind`'s clump `variant`: [`CARDS_PER_TUFT`] quads one meter
-/// tall standing on the origin, fanned evenly round the vertical axis, each
-/// showing the clump's cell of the atlas with its bottom edge on the ground.
+/// La malla de la macolla `variant` de `kind`: [`CARDS_PER_TUFT`] quads de un
+/// metro de alto parados sobre el origen, repartidos en abanico alrededor del
+/// eje vertical, cada uno mostrando la celda del atlas de la macolla con su
+/// borde inferior sobre el suelo.
 pub fn card_mesh(kind: TuftKind, variant: usize) -> Mesh {
     let half = 0.5 * card_width(kind);
     let (u0, v0) = ((variant % 2) as f32 * 0.5, (variant / 2) as f32 * 0.5);
@@ -92,8 +96,8 @@ pub fn card_mesh(kind: TuftKind, variant: usize) -> Mesh {
         ]);
         indices.extend([0, 1, 2, 0, 2, 3].map(|i| first + i));
     }
-    // Normals all straight up: a tuft is lit like the ground under it,
-    // front and back alike.
+    // Todas las normales apuntan derecho hacia arriba: una mata se ilumina como
+    // el suelo que tiene debajo, por delante y por detrás por igual.
     let normals = vec![[0.0, 1.0, 0.0]; positions.len()];
     Mesh::new(
         PrimitiveTopology::TriangleList,
@@ -105,9 +109,10 @@ pub fn card_mesh(kind: TuftKind, variant: usize) -> Mesh {
     .with_inserted_indices(Indices::U32(indices))
 }
 
-/// `kind`'s tint `tint` (sRGB), from grey-green to dry yellow. It
-/// multiplies the map: paja's dry diffuse only shades, flechilla's green
-/// one is pushed toward the dry-green palette the old tufts had.
+/// El tinte `tint` de `kind` (sRGB), de verde grisáceo a amarillo seco.
+/// Multiplica el mapa: el difuso seco de la paja solo se sombrea, y el verde de
+/// la flechilla se lleva hacia la paleta verde seca que tenían las matas
+/// anteriores.
 fn tint_color(kind: TuftKind, tint: usize) -> Color {
     let k = tint as f32 / (GRASS_TINTS - 1) as f32;
     let (from, to) = match kind {
@@ -118,7 +123,7 @@ fn tint_color(kind: TuftKind, tint: usize) -> Color {
     Color::srgb(c.x, c.y, c.z)
 }
 
-/// The plain colour of `kind`'s cards without their map.
+/// El color liso de las tarjetas de `kind` sin su mapa.
 fn plain_color(kind: TuftKind, tint: usize) -> Color {
     let k = tint as f32 / (GRASS_TINTS - 1) as f32;
     let (from, to) = match kind {
@@ -129,8 +134,9 @@ fn plain_color(kind: TuftKind, tint: usize) -> Color {
     Color::srgb(c.x, c.y, c.z)
 }
 
-/// `kind`'s card material in tint `tint`, wearing `map` when it is loading:
-/// alpha-tested and drawn from both sides, like the leaf cards.
+/// El material de tarjeta de `kind` en el tinte `tint`, con `map` cuando se
+/// está cargando: probado por alfa y dibujado por ambas caras, como las
+/// tarjetas de hojas.
 pub fn card_material(kind: TuftKind, tint: usize, map: Option<Handle<Image>>) -> StandardMaterial {
     StandardMaterial {
         base_color: if map.is_some() {
@@ -144,23 +150,25 @@ pub fn card_material(kind: TuftKind, tint: usize, map: Option<Handle<Image>>) ->
         reflectance: 0.3,
         alpha_mode: AlphaMode::Mask(LEAF_CUTOFF),
         cull_mode: None,
-        // Not `double_sided`: the normals already point up on both faces.
+        // No es `double_sided`: las normales ya apuntan hacia arriba en ambas
+        // caras.
         double_sided: false,
         ..default()
     }
 }
 
-/// The cards' meshes and materials, shared by every tuft.
+/// Las mallas y materiales de las tarjetas, compartidos por todas las matas.
 #[derive(Clone)]
 pub struct GrassCards {
-    /// By kind, then form.
+    /// Por tipo, luego por forma.
     meshes: Vec<Handle<Mesh>>,
-    /// By kind, then tint.
+    /// Por tipo, luego por tinte.
     materials: Vec<Handle<StandardMaterial>>,
 }
 
 impl GrassCards {
-    /// Builds the cards, wearing `maps` (paja's, flechilla's) when loaded.
+    /// Construye las tarjetas, con `maps` (el de la paja, el de la flechilla)
+    /// cuando están cargados.
     pub fn new(
         maps: [Option<Handle<Image>>; 2],
         meshes: &mut Assets<Mesh>,
@@ -181,7 +189,8 @@ impl GrassCards {
         }
     }
 
-    /// The mesh and material of `kind`'s clump `variant` in tint `tint`.
+    /// La malla y el material de la macolla `variant` de `kind` en el tinte
+    /// `tint`.
     pub fn card(
         &self,
         kind: TuftKind,
@@ -195,9 +204,10 @@ impl GrassCards {
     }
 }
 
-/// Starts loading both colour maps (paja's, flechilla's), each `None` when
-/// an asset server, an asset root or a compressed texture format is
-/// missing, or its file is (with a warning for the file).
+/// Empieza a cargar ambos mapas de color (el de la paja, el de la flechilla),
+/// cada uno `None` cuando falta un servidor de assets, una raíz de assets o un
+/// formato de textura comprimida, o falta su archivo (con una advertencia en el
+/// caso del archivo).
 pub fn load_maps(
     root: Option<&AssetRoot>,
     server: Option<&AssetServer>,
@@ -248,10 +258,12 @@ mod tests {
                 let lowest = at.iter().map(|p| p[1]).fold(f32::MAX, f32::min);
                 let highest = at.iter().map(|p| p[1]).fold(f32::MIN, f32::max);
                 assert_eq!((lowest, highest), (0.0, 1.0));
-                // The cards fan out in different planes: not one flat quad.
+                // Las tarjetas se abren en abanico en planos distintos: no es
+                // un único quad plano.
                 assert!(at.iter().any(|p| p[0].abs() > 0.1));
                 assert!(at.iter().any(|p| p[2].abs() > 0.1));
-                // Normals lean up so a tuft lights like the ground.
+                // Las normales se inclinan hacia arriba para que una mata se
+                // ilumine como el suelo.
                 assert!(
                     floats(&mesh, Mesh::ATTRIBUTE_NORMAL)
                         .iter()
@@ -275,7 +287,7 @@ mod tests {
                     assert!(u0 <= p[0] && p[0] <= u1, "{kind:?} {variant}: {p:?}");
                     assert!(v0 <= p[1] && p[1] <= v0 + 0.5, "{kind:?} {variant}: {p:?}");
                 }
-                // The base of the card is the cell's bottom edge.
+                // La base de la tarjeta es el borde inferior de la celda.
                 let base = floats(&card_mesh(kind, variant), Mesh::ATTRIBUTE_POSITION)
                     .iter()
                     .zip(&uv)
@@ -300,12 +312,13 @@ mod tests {
                 assert!(!m.double_sided, "no normal flip on the back");
                 assert_eq!(m.base_color_texture, Some(map.clone()));
             }
-            // Without the map: the same cards in a plain colour, still cut.
+            // Sin el mapa: las mismas tarjetas en un color liso, todavía
+            // recortadas.
             let plain = card_material(kind, 0, None);
             assert!(plain.base_color_texture.is_none());
             assert_eq!(plain.alpha_mode, AlphaMode::Mask(LEAF_CUTOFF));
         }
-        // Dry to green: the tints differ.
+        // De seco a verde: los tintes difieren.
         let tints: Vec<Color> = (0..GRASS_TINTS)
             .map(|t| card_material(TuftKind::Flechilla, t, Some(map.clone())).base_color)
             .collect();

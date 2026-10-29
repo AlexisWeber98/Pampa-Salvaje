@@ -1,23 +1,25 @@
-//! Lagoons: a flat sheet of water in each basin, with totoras along its
-//! edges.
+//! Lagunas: una lámina plana de agua en cada cuenca, con totoras a lo largo de
+//! sus orillas.
 //!
-//! Every [`Lagoon`] of the [`WorldTerrain`] gets two meshes at startup,
-//! each on an entity standing at the lagoon's middle (visibility ranges are
-//! measured from there): its water, a sheet at the water level reaching a
-//! little under the bank so the ground hides its rim, and its reed belt,
-//! clumps of thin blades in patches along the waterline, merged into one
-//! mesh. All lagoons share two materials.
+//! Cada [`Lagoon`] del [`WorldTerrain`] recibe dos mallas al inicio, cada una
+//! en una entidad ubicada en el medio de la laguna (los rangos de visibilidad
+//! se miden desde allí): su agua, una lámina al nivel del agua que se extiende
+//! un poco por debajo de la barranca para que el suelo oculte su borde, y su
+//! franja de juncos, matas de hojas finas en manchones a lo largo de la línea
+//! del agua, fusionadas en una sola malla. Todas las lagunas comparten dos
+//! materiales.
 //!
-//! The water is a dark olive-brown plains lagoon: smooth, with the
-//! reflectance of water, darker and more opaque toward the middle and
-//! see-through over the mud near the shore (vertex colours). Fine, faint
-//! ripples come from a small tiling normal map painted in code (several
-//! small wave layers, with its own mip chain so it calms into a smooth
-//! surface far away), drifted slowly by its UV transform: no extra pass and
-//! no screen-space reflections, so the Renoir iGPU pays one draw for it. The
-//! reeds are drawn within the settlements' shared prop range
-//! ([`crate::settlement::ranges`]), so they add no visibility range of
-//! their own.
+//! El agua es la de una laguna de llanura, de un pardo oliva oscuro: lisa, con
+//! la reflectancia del agua, más oscura y opaca hacia el medio y translúcida
+//! sobre el barro cerca de la orilla (colores de vértice). Unas ondas finas y
+//! tenues salen de un pequeño normal map repetible pintado en código (varias
+//! capas de ondas pequeñas, con su propia cadena de mips para que se calme en
+//! una superficie lisa a lo lejos), que se desplaza lentamente mediante su
+//! transformación de UV: sin pasadas extra y sin reflejos en espacio de
+//! pantalla, así que la iGPU Renoir paga un solo draw por ella. Los juncos se
+//! dibujan dentro del rango compartido de objetos de los asentamientos
+//! ([`crate::settlement::ranges`]), así que no agregan ningún rango de
+//! visibilidad propio.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::VisibilityRange;
@@ -31,7 +33,7 @@ use pampa_core::{Lagoon, Vec2 as GroundVec2};
 use crate::coords::world_from_ground;
 use crate::terrain::WorldTerrain;
 
-/// Draws the water and reeds of every lagoon in [`WorldTerrain`].
+/// Dibuja el agua y los juncos de cada laguna de [`WorldTerrain`].
 pub struct LagoonPlugin;
 
 impl Plugin for LagoonPlugin {
@@ -42,46 +44,47 @@ impl Plugin for LagoonPlugin {
     }
 }
 
-/// A lagoon's water surface.
+/// La superficie de agua de una laguna.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LagoonWater;
 
-/// A lagoon's reed belt.
+/// La franja de juncos de una laguna.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LagoonReeds;
 
-/// The shared water material, drifted by [`ripple`].
+/// El material compartido del agua, desplazado por [`ripple`].
 #[derive(Resource, Debug, Clone)]
 struct WaterMaterial(Handle<StandardMaterial>);
 
-/// Points around the water's edge.
+/// Puntos alrededor del borde del agua.
 const SHORE_POINTS: usize = 160;
-/// How far past the shore the water sheet reaches under the bank, meters.
+/// Cuánto se extiende la lámina de agua más allá de la orilla, por debajo de la
+/// barranca, en metros.
 const UNDER_BANK: f32 = 3.0;
-/// Side of one tile of the ripple normal map on the water, in meters: small
-/// wind ripples, not swells.
+/// Lado de una baldosa del normal map de ondas sobre el agua, en metros:
+/// pequeñas ondas de viento, no oleaje.
 const RIPPLE_TILE: f32 = 2.5;
-/// How fast the ripples drift, in tiles per second.
+/// Qué tan rápido se desplazan las ondas, en baldosas por segundo.
 const RIPPLE_DRIFT: Vec2 = Vec2::new(0.03, 0.017);
-/// Side of the painted ripple normal map, in pixels.
+/// Lado del normal map de ondas pintado, en píxeles.
 const RIPPLE_PIXELS: u32 = 64;
-/// Most the ripples tilt the surface, as a slope: faint.
+/// Inclinación máxima que las ondas dan a la superficie, como pendiente: tenue.
 pub const RIPPLE_MAX_SLOPE: f32 = 0.08;
-/// Most reed triangles one lagoon may draw.
+/// Cantidad máxima de triángulos de juncos que puede dibujar una laguna.
 pub const REED_TRIANGLE_BUDGET: usize = 6000;
-/// Blades in one reed clump.
+/// Hojas en una mata de juncos.
 const BLADES: usize = 6;
-/// Spacing of reed clumps along the shore, in meters.
+/// Separación entre matas de juncos a lo largo de la orilla, en metros.
 const CLUMP_SPACING: f32 = 1.1;
-/// Height of a reed, from tallest to shortest, in meters.
+/// Altura de un junco, del más alto al más bajo, en metros.
 pub const REED_HEIGHT: (f32, f32) = (1.5, 2.5);
-/// The water's colour (sRGB) and opacity: over the deep middle, over the
-/// shallows, and at its rim under the bank, where the mud shows through.
+/// El color (sRGB) y la opacidad del agua: sobre el medio profundo, sobre los
+/// bajíos y en su borde bajo la barranca, donde se transparenta el barro.
 const WATER_DEEP: [f32; 4] = [0.10, 0.13, 0.09, 0.94];
 const WATER_SHALLOW: [f32; 4] = [0.16, 0.19, 0.12, 0.86];
 const WATER_RIM: [f32; 4] = [0.24, 0.25, 0.17, 0.5];
-/// Rings of the water sheet: meters past the shore (negative: in the
-/// water) and their colour.
+/// Anillos de la lámina de agua: metros más allá de la orilla (negativo: dentro
+/// del agua) y su color.
 const WATER_RINGS: [(f32, [f32; 4]); 3] = [
     (-20.0, WATER_DEEP),
     (-6.0, WATER_SHALLOW),
@@ -111,7 +114,8 @@ fn spawn_lagoons(
     commands.insert_resource(WaterMaterial(water.clone()));
     let range = reed_range();
     for lagoon in lagoons {
-        // At the lagoon's middle, so the reeds' range counts from there.
+        // En el medio de la laguna, para que el rango de los juncos se cuente
+        // desde allí.
         let at = Transform::from_translation(world_from_ground(lagoon.center, lagoon.level));
         commands.spawn((
             Name::new(format!("{} water", lagoon.name)),
@@ -131,9 +135,10 @@ fn spawn_lagoons(
     }
 }
 
-/// The water's material: white, so the vertex colours paint it; smooth,
-/// with water's reflectance (about 2% straight on, rising toward grazing
-/// angles), never metallic, blended so the shallows show the mud.
+/// El material del agua: blanco, para que lo pinten los colores de vértice;
+/// liso, con la reflectancia del agua (cerca del 2% de frente, subiendo hacia
+/// los ángulos rasantes), nunca metálico, y mezclado para que los bajíos dejen
+/// ver el barro.
 pub(crate) fn water_material(ripples: Option<Handle<Image>>) -> StandardMaterial {
     StandardMaterial {
         base_color: Color::WHITE,
@@ -147,12 +152,12 @@ pub(crate) fn water_material(ripples: Option<Handle<Image>>) -> StandardMaterial
     }
 }
 
-/// The reeds' range: the settlements' shared one for props.
+/// El rango de los juncos: el compartido de los asentamientos para objetos.
 fn reed_range() -> VisibilityRange {
     crate::settlement::ranges()[1].clone()
 }
 
-/// Drifts the ripples across every lagoon.
+/// Desplaza las ondas sobre todas las lagunas.
 fn ripple(
     time: Res<Time>,
     water: Option<Res<WaterMaterial>>,
@@ -170,11 +175,12 @@ fn ripple(
     );
 }
 
-/// The water sheet, relative to the lagoon's middle at the water level: a
-/// fan from the middle to the deep ring, then strips out through the
-/// shallows to [`UNDER_BANK`] meters past the shore, each ring painted its
-/// [`WATER_RINGS`] colour; flat, facing up, its UVs in world meters (the
-/// material scales them to ripple tiles).
+/// La lámina de agua, relativa al medio de la laguna al nivel del agua: un
+/// abanico desde el medio hasta el anillo profundo, y luego tiras hacia afuera
+/// a través de los bajíos hasta [`UNDER_BANK`] metros más allá de la orilla,
+/// cada anillo pintado con su color de [`WATER_RINGS`]; plana, mirando hacia
+/// arriba, con sus UV en metros del mundo (el material las escala a baldosas de
+/// ondas).
 pub(crate) fn water_mesh(lagoon: &Lagoon) -> Mesh {
     let n = SHORE_POINTS;
     let srgba = |c: [f32; 4]| LinearRgba::from(Color::srgba(c[0], c[1], c[2], c[3])).to_f32_array();
@@ -193,9 +199,9 @@ pub(crate) fn water_mesh(lagoon: &Lagoon) -> Mesh {
     let ring = |r: usize, k: usize| (1 + r * n + k % n) as u32;
     let mut indices = Vec::with_capacity(n * 3 * (1 + 2 * (WATER_RINGS.len() - 1)));
     for k in 0..n {
-        // Counter-clockwise on the ground is clockwise seen from above in
-        // Bevy's -Z north, so each triangle runs outward-then-along to
-        // face up.
+        // El sentido antihorario sobre el suelo es horario visto desde arriba
+        // con el norte en -Z de Bevy, así que cada triángulo va primero hacia
+        // afuera y luego a lo largo, para mirar hacia arriba.
         indices.extend([0, ring(0, k), ring(0, k + 1)]);
         for r in 0..WATER_RINGS.len() - 1 {
             let (a, b) = (ring(r, k), ring(r, k + 1));
@@ -215,7 +221,7 @@ pub(crate) fn water_mesh(lagoon: &Lagoon) -> Mesh {
     .with_inserted_indices(Indices::U32(indices))
 }
 
-/// Small deterministic hash into `[0, 1)`.
+/// Pequeño hash determinista en `[0, 1)`.
 fn unit(seed: u32) -> f32 {
     let mut v = seed.wrapping_mul(0x9e37_79b9) ^ 0x7a3c_51e9;
     v ^= v >> 16;
@@ -226,15 +232,16 @@ fn unit(seed: u32) -> f32 {
     (v >> 8) as f32 / (1u32 << 24) as f32
 }
 
-/// Reed colours, sRGB: fresh green, olive and the dry tan of old stems.
+/// Colores de los juncos, sRGB: verde fresco, oliva y el ocre seco de los
+/// tallos viejos.
 const REED_COLORS: [[f32; 3]; 3] = [[0.36, 0.45, 0.22], [0.47, 0.49, 0.26], [0.62, 0.55, 0.36]];
 
-/// The totoras of `lagoon`, relative to its middle at the water level:
-/// clumps of thin blades in two loose rows, one in the shallows and one at
-/// the waterline, gathered in patches along parts of the shore with open
-/// stretches between them where the cattle come down to drink. Each blade
-/// is one double-sided triangle standing on `terrain`, [`REED_HEIGHT`] tall,
-/// leaning a little.
+/// Las totoras de `lagoon`, relativas a su medio al nivel del agua: matas de
+/// hojas finas en dos hileras sueltas, una en los bajíos y otra en la línea del
+/// agua, agrupadas en manchones a lo largo de partes de la orilla, con trechos
+/// abiertos entre ellos por donde baja el ganado a beber. Cada hoja es un
+/// triángulo de doble cara parado sobre `terrain`, de [`REED_HEIGHT`] de alto,
+/// algo inclinado.
 pub(crate) fn reed_mesh(lagoon: &Lagoon, terrain: &pampa_core::Terrain) -> Mesh {
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut colors: Vec<[f32; 4]> = Vec::new();
@@ -252,13 +259,14 @@ pub(crate) fn reed_mesh(lagoon: &Lagoon, terrain: &pampa_core::Terrain) -> Mesh 
         unit(seed)
     };
     for row in 0..2 {
-        // In the shallows (about a meter of reed belt into the water), then
-        // on the shore just above the water.
+        // En los bajíos (cerca de un metro de franja de juncos dentro del
+        // agua), y luego en la orilla, justo por encima del agua.
         let (lo, hi) = if row == 0 { (-3.5, -1.0) } else { (-1.0, 1.2) };
         for k in 0..clumps {
             let angle = (k as f32 + next()) / clumps as f32 * std::f32::consts::TAU;
-            // Patches: two slow waves round the shore; where they sum high
-            // the reeds stand thick, elsewhere the shore is open.
+            // Manchones: dos ondas lentas alrededor de la orilla; donde su suma
+            // es alta los juncos crecen tupidos, y en el resto la orilla queda
+            // abierta.
             let belt = (5.0 * angle + 0.7).sin() + 0.6 * (11.0 * angle + 2.1).sin();
             if belt < 0.2 || next() > 0.9 {
                 continue;
@@ -301,9 +309,9 @@ pub(crate) fn reed_mesh(lagoon: &Lagoon, terrain: &pampa_core::Terrain) -> Mesh 
     .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
 }
 
-/// Wave layers of the ripple map: (waves along x, waves along y, height,
-/// phase), whole numbers of waves across the tile so it repeats
-/// seamlessly; finer layers are lower.
+/// Capas de ondas del mapa de ondas: (ondas a lo largo de x, ondas a lo largo
+/// de y, altura, fase), con cantidades enteras de ondas a lo ancho de la
+/// baldosa para que se repita sin costuras; las capas más finas son más bajas.
 const RIPPLE_WAVES: [(f32, f32, f32, f32); 6] = [
     (3.0, 1.0, 0.0018, 0.0),
     (-2.0, 4.0, 0.0014, 1.7),
@@ -313,10 +321,11 @@ const RIPPLE_WAVES: [(f32, f32, f32, f32); 6] = [
     (11.0, -10.0, 0.0003, 0.9),
 ];
 
-/// The ripple normal map: [`RIPPLE_WAVES`] summed into a faint, seamless
-/// tile of small wind ripples, with a box-filtered mip chain down to one
-/// pixel (the surface calms into a mirror far away instead of shimmering);
-/// stored linear (a normal map is data, not colour).
+/// El normal map de ondas: las [`RIPPLE_WAVES`] sumadas en una baldosa tenue y
+/// sin costuras de pequeñas ondas de viento, con una cadena de mips filtrada
+/// por caja hasta un píxel (la superficie se calma como un espejo a lo lejos en
+/// lugar de titilar); guardado en lineal (un normal map es un dato, no un
+/// color).
 pub(crate) fn ripple_image() -> Image {
     let n = RIPPLE_PIXELS as usize;
     let tau = std::f32::consts::TAU;
@@ -324,7 +333,8 @@ pub(crate) fn ripple_image() -> Image {
     for y in 0..n {
         for x in 0..n {
             let (u, v) = (x as f32 / n as f32, y as f32 / n as f32);
-            // Slope of the summed layers along u and v, per meter of water.
+            // Pendiente de las capas sumadas a lo largo de u y v, por metro de
+            // agua.
             let (mut du, mut dv) = (0.0, 0.0);
             for (kx, ky, h, phase) in RIPPLE_WAVES {
                 let c = (tau * (kx * u + ky * v) + phase).cos() * h * tau / RIPPLE_TILE;
@@ -405,7 +415,8 @@ mod tests {
         }
     }
 
-    /// Ground point of a mesh vertex placed relative to `lagoon`'s middle.
+    /// Punto del suelo de un vértice de malla ubicado en relación con el medio
+    /// de `lagoon`.
     fn ground(lagoon: &Lagoon, p: [f32; 3]) -> GroundVec2 {
         lagoon.center + GroundVec2::new(p[0], -p[2])
     }
@@ -416,14 +427,14 @@ mod tests {
         let mesh = water_mesh(&lagoon);
         let points = positions(&mesh);
         assert!(points.iter().all(|p| p[1] == 0.0));
-        // Its rim lies under the bank, out of the water.
+        // Su borde queda bajo la barranca, fuera del agua.
         let rim = &points[points.len() - SHORE_POINTS..];
         for &p in rim {
             let g = ground(&lagoon, p);
             assert!(!lagoon.is_water(g));
             assert!(terrain.height(g.x, g.y) > lagoon.level, "{g:?}");
         }
-        // Every triangle faces up.
+        // Todos los triángulos miran hacia arriba.
         let Some(Indices::U32(indices)) = mesh.indices() else {
             panic!("indices")
         };
@@ -432,8 +443,8 @@ mod tests {
             let [a, b, c] = [t[0], t[1], t[2]].map(|i| Vec3::from(points[i as usize]));
             assert!((b - a).cross(c - a).y > 0.0);
         }
-        // Dark and nearly opaque in the middle, see-through over the mud
-        // at its rim.
+        // Oscura y casi opaca en el medio, translúcida sobre el barro en su
+        // borde.
         let Some(VertexAttributeValues::Float32x4(colors)) = mesh.attribute(Mesh::ATTRIBUTE_COLOR)
         else {
             panic!("colors")
@@ -441,7 +452,8 @@ mod tests {
         let (middle, edge) = (colors[0], colors[colors.len() - 1]);
         assert!(middle[3] > 0.9 && edge[3] < 0.6);
         assert!(middle[0] + middle[1] + middle[2] < edge[0] + edge[1] + edge[2]);
-        // Olive-brown, never sandy: green at least as strong as red.
+        // Pardo oliva, nunca arenoso: el verde al menos tan intenso como el
+        // rojo.
         assert!(middle[1] >= middle[0] && middle[1] > middle[2]);
     }
 
@@ -455,7 +467,7 @@ mod tests {
             (1000..=REED_TRIANGLE_BUDGET).contains(&triangles),
             "{triangles}"
         );
-        // Every blade stands at the water's edge, 1.5 to 2.5 m tall.
+        // Cada hoja se levanta en el borde del agua, con 1.5 a 2.5 m de alto.
         let mut angles = Vec::new();
         for t in points.chunks(3) {
             let foot = ground(&lagoon, t[0]);
@@ -469,8 +481,8 @@ mod tests {
             let d = foot - lagoon.center;
             angles.push(d.y.atan2(d.x));
         }
-        // In patches: some stretches of shore are thick with reeds, others
-        // open.
+        // En manchones: algunos trechos de orilla están tupidos de juncos y
+        // otros abiertos.
         let mut sectors = [0usize; 36];
         for a in angles {
             let k = ((a + std::f32::consts::PI) / std::f32::consts::TAU * 36.0) as usize;
@@ -479,7 +491,7 @@ mod tests {
         let open = sectors.iter().filter(|&&c| c == 0).count();
         let thick = sectors.iter().filter(|&&c| c > 60).count();
         assert!(open >= 4 && thick >= 8, "{sectors:?}");
-        // The same reeds every time.
+        // Los mismos juncos cada vez.
         assert_eq!(positions(&reed_mesh(&lagoon, &terrain)), points);
     }
 
@@ -497,11 +509,12 @@ mod tests {
             )
         };
         for k in 0..n {
-            // Across each edge it steps no more than between neighbours.
+            // De un lado a otro de cada borde, el salto no es mayor que entre
+            // vecinos.
             assert!(normal(0, k).distance(normal(n - 1, k)) < 0.05);
             assert!(normal(k, 0).distance(normal(k, n - 1)) < 0.05);
         }
-        // Faint: no ripple tilts the water more than a few degrees.
+        // Tenue: ninguna onda inclina el agua más de unos pocos grados.
         let mut steepest: f32 = 0.0;
         for y in 0..n {
             for x in 0..n {
@@ -511,9 +524,9 @@ mod tests {
         }
         assert!(steepest < RIPPLE_MAX_SLOPE, "{steepest}");
         assert!(steepest > 0.01, "{steepest}");
-        // Fine: a tile is a couple of meters of water.
+        // Fina: una baldosa equivale a un par de metros de agua.
         const { assert!(RIPPLE_TILE <= 3.0) };
-        // A full mip chain, so it calms with distance.
+        // Una cadena de mips completa, para que se calme con la distancia.
         assert_eq!(image.texture_descriptor.mip_level_count, 7);
         assert_eq!(
             data.len(),
@@ -560,8 +573,8 @@ mod tests {
                 .iter()
                 .all(|(_, r, _)| *r == crate::settlement::ranges()[1])
         );
-        // The range counts from each lagoon's middle, so a rider at its
-        // shore sees its reeds.
+        // El rango se cuenta desde el medio de cada laguna, así que un jinete
+        // en su orilla ve sus juncos.
         for (_, _, t) in &reeds {
             let at = GroundVec2::new(t.translation.x, -t.translation.z);
             assert!(

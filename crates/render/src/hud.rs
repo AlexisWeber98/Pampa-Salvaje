@@ -1,17 +1,18 @@
-//! Heads-up display in the top-left corner: the game clock (`HH:MM`),
-//! under it the current objective in one line, and while the player rides
-//! the train the next station and its arrival time.
+//! HUD en la esquina superior izquierda: el reloj del juego (`HH:MM`), debajo
+//! el objetivo actual en una línea y, mientras el jugador viaja en el tren, la
+//! próxima estación y su hora de llegada.
 //!
-//! All are UI [`Text`] lettered in IM Fell English ([`Typefaces`]), ink on
-//! the same paper panel as the minimap, and rewritten only when their text
-//! changes (the clock once a game minute). The clock comes from
-//! [`WorldClock`]; the game sets the objective through [`HudObjective`] and
-//! the ride line through [`HudRide`], and a key hint under it through
-//! [`HudHint`] (the riding view, "V: vista - ventana", in italics).
+//! Todos son [`Text`] de UI rotulados en IM Fell English ([`Typefaces`]), tinta
+//! sobre el mismo panel de papel que el minimapa, y se reescriben solo cuando
+//! cambia su texto (el reloj, una vez por minuto de juego). El reloj viene de
+//! [`WorldClock`]; el juego fija el objetivo mediante [`HudObjective`], la
+//! línea del viaje mediante [`HudRide`], y una pista de tecla debajo de ella
+//! mediante [`HudHint`] (la vista del viaje, "V: vista - ventana", en cursiva).
 //!
-//! Station announcements ("Estación Monte Nievas", "Próxima estación:
-//! Eduardo Castex") show in a panel of the same style centered along the
-//! top of the screen while [`HudAnnouncement`] has text.
+//! Los anuncios de estación ("Estación Monte Nievas", "Próxima estación:
+//! Eduardo Castex") se muestran en un panel del mismo estilo centrado a lo
+//! largo del borde superior de la pantalla mientras [`HudAnnouncement`] tiene
+//! texto.
 
 use bevy::prelude::*;
 
@@ -19,71 +20,72 @@ use crate::atmosphere::WorldClock;
 use crate::minimap::raster::palette;
 use crate::typeface::Typefaces;
 
-/// Font size of the clock, in logical pixels.
+/// Tamaño de fuente del reloj, en píxeles lógicos.
 pub const CLOCK_PX: f32 = 30.0;
-/// Font size of the objective, the ride line, the key hint and of the
-/// panels that follow the HUD's style (timetable, console).
+/// Tamaño de fuente del objetivo, la línea del viaje, la pista de tecla y los
+/// paneles que siguen el estilo del HUD (horario, consola).
 pub const LINE_PX: f32 = 20.0;
-/// Font size of the announcement, in logical pixels.
+/// Tamaño de fuente del anuncio, en píxeles lógicos.
 pub const ANNOUNCEMENT_PX: f32 = 28.0;
 
-/// The one-line objective under the clock; `None` hides it.
+/// El objetivo de una línea debajo del reloj; `None` lo oculta.
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct HudObjective(pub Option<String>);
 
-/// The ride line under the objective (next station and arrival time);
-/// `None` hides it.
+/// La línea del viaje debajo del objetivo (próxima estación y hora de llegada);
+/// `None` la oculta.
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct HudRide(pub Option<String>);
 
-/// A one-line key hint under the ride line; `None` hides it.
+/// Una pista de tecla de una línea debajo de la línea del viaje; `None` la
+/// oculta.
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct HudHint(pub Option<String>);
 
-/// The text node lettering the key hint.
+/// El nodo de texto que rotula la pista de tecla.
 #[derive(Component, Debug)]
 pub struct HudHintLine;
 
-/// The announcement centered at the top of the screen; `None` hides it.
+/// El anuncio centrado en la parte superior de la pantalla; `None` lo oculta.
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct HudAnnouncement(pub Option<String>);
 
-/// The panel framing the announcement.
+/// El panel que enmarca el anuncio.
 #[derive(Component, Debug)]
 pub struct HudAnnouncementPanel;
 
-/// The text node lettering the announcement.
+/// El nodo de texto que rotula el anuncio.
 #[derive(Component, Debug)]
 pub struct HudAnnouncementLine;
 
-/// What the HUD shows right now.
+/// Lo que muestra el HUD en este momento.
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct Hud {
-    /// The clock as drawn, `HH:MM`; empty without a [`WorldClock`].
+    /// El reloj tal como se dibuja, `HH:MM`; vacío sin un [`WorldClock`].
     pub clock: String,
-    /// The objective as drawn, if any.
+    /// El objetivo tal como se dibuja, si lo hay.
     pub objective: Option<String>,
-    /// The ride line as drawn, if any.
+    /// La línea del viaje tal como se dibuja, si la hay.
     pub ride: Option<String>,
-    /// The announcement as drawn, if any.
+    /// El anuncio tal como se dibuja, si lo hay.
     pub announcement: Option<String>,
-    /// The key hint as drawn, if any.
+    /// La pista de tecla tal como se dibuja, si la hay.
     pub hint: Option<String>,
 }
 
-/// The text node lettering the clock.
+/// El nodo de texto que rotula el reloj.
 #[derive(Component, Debug)]
 pub struct HudClock;
 
-/// The text node lettering the objective.
+/// El nodo de texto que rotula el objetivo.
 #[derive(Component, Debug)]
 pub struct HudObjectiveLine;
 
-/// The text node lettering the ride line.
+/// El nodo de texto que rotula la línea del viaje.
 #[derive(Component, Debug)]
 pub struct HudRideLine;
 
-/// Shows the clock and the objective.
+/// Muestra el reloj y el objetivo.
 pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
@@ -103,8 +105,8 @@ fn rgba(c: [u8; 4]) -> Color {
     Color::srgba_u8(c[0], c[1], c[2], c[3])
 }
 
-/// The colors of a HUD panel, for other panels in the same style: an ink
-/// border on paper.
+/// Los colores de un panel del HUD, para otros paneles del mismo estilo: un
+/// borde de tinta sobre papel.
 pub fn panel_colors() -> (BorderColor, BackgroundColor) {
     (
         BorderColor::all(rgba(palette::INK)),
@@ -112,8 +114,8 @@ pub fn panel_colors() -> (BorderColor, BackgroundColor) {
     )
 }
 
-/// The font and color of a line of HUD text: `face` at `px` logical pixels,
-/// in ink, for other panels in the same style.
+/// La fuente y el color de una línea de texto del HUD: `face` a `px` píxeles
+/// lógicos, en tinta, para otros paneles del mismo estilo.
 pub fn ink_font(face: &Handle<Font>, px: f32) -> (TextFont, TextColor) {
     (
         TextFont {
@@ -125,7 +127,7 @@ pub fn ink_font(face: &Handle<Font>, px: f32) -> (TextFont, TextColor) {
     )
 }
 
-/// A hidden line, shown once it has text.
+/// Una línea oculta, que se muestra una vez que tiene texto.
 fn line_node() -> Node {
     Node {
         display: Display::None,
@@ -133,7 +135,7 @@ fn line_node() -> Node {
     }
 }
 
-/// A hidden, empty line of ink text.
+/// Una línea de texto en tinta, oculta y vacía.
 fn line(face: &Handle<Font>, px: f32) -> impl Bundle {
     (Text::default(), ink_font(face, px), line_node())
 }
@@ -169,7 +171,7 @@ fn spawn_hud(mut commands: Commands, faces: Res<Typefaces>) {
         });
 }
 
-/// Rewrites the key hint when its text changed.
+/// Reescribe la pista de tecla cuando su texto cambió.
 fn update_hint(
     hint: Res<HudHint>,
     mut hud: ResMut<Hud>,
@@ -185,7 +187,7 @@ fn update_hint(
     hud.hint = hint.0.clone();
 }
 
-/// The announcement panel, hidden, centered along the top edge.
+/// El panel del anuncio, oculto y centrado a lo largo del borde superior.
 fn spawn_announcement(mut commands: Commands, faces: Res<Typefaces>) {
     commands
         .spawn((
@@ -216,7 +218,7 @@ fn spawn_announcement(mut commands: Commands, faces: Res<Typefaces>) {
         });
 }
 
-/// Rewrites the announcement and shows its panel while it has text.
+/// Reescribe el anuncio y muestra su panel mientras tiene texto.
 fn update_announcement(
     announcement: Res<HudAnnouncement>,
     mut hud: ResMut<Hud>,
@@ -240,7 +242,7 @@ fn update_announcement(
     hud.announcement = announcement.0.clone();
 }
 
-/// Sets `text` on a line; empty text hides the line.
+/// Pone `text` en una línea; un texto vacío oculta la línea.
 fn set_line(text: &str, line: &mut Text, node: &mut Node) {
     node.display = if text.is_empty() {
         Display::None
@@ -250,10 +252,10 @@ fn set_line(text: &str, line: &mut Text, node: &mut Node) {
     line.0 = text.to_string();
 }
 
-/// One text line of the HUD: its text and its layout.
+/// Una línea de texto del HUD: su texto y su disposición.
 type Line<'a> = (&'a mut Text, &'a mut Node);
 
-/// The HUD's text lines: the clock, the objective and the ride line.
+/// Las líneas de texto del HUD: el reloj, el objetivo y la línea del viaje.
 type Lines<'w, 's> = (
     Query<
         'w,
@@ -269,8 +271,7 @@ type Lines<'w, 's> = (
     Query<'w, 's, Line<'static>, With<HudRideLine>>,
 );
 
-/// Rewrites the clock, the objective and the ride line when their text
-/// changed.
+/// Reescribe el reloj, el objetivo y la línea del viaje cuando su texto cambió.
 fn update_hud(
     clock: Option<Res<WorldClock>>,
     (objective, ride): (Res<HudObjective>, Res<HudRide>),
@@ -328,7 +329,8 @@ mod tests {
         app
     }
 
-    /// What a line shows: its text, its display, its font and its color.
+    /// Lo que muestra una línea: su texto, su visualización, su fuente y su
+    /// color.
     fn line_of<T: Component>(app: &mut App) -> (String, Display, TextFont, Color) {
         let mut q = app
             .world_mut()
@@ -355,12 +357,12 @@ mod tests {
         assert_eq!(display, Display::Flex);
         assert_eq!(font, lettered(body(), 30.0));
         assert_eq!(color, rgba(palette::INK), "ink");
-        // Later, the clock is relettered.
+        // Más tarde, el reloj se vuelve a rotular.
         app.world_mut().resource_mut::<WorldClock>().0 = GameClock::at(TimeOfDay::hm(11, 5));
         app.update();
         assert_eq!(app.world().resource::<Hud>().clock, "11:05");
         assert_eq!(line_of::<HudClock>(&mut app).0, "11:05");
-        // Unchanged text is not touched: its change tick stays put.
+        // El texto sin cambios no se toca: su tick de cambio no se mueve.
         let changed = |app: &mut App| {
             let mut q = app
                 .world_mut()
@@ -429,7 +431,7 @@ mod tests {
         let (shown, display, font, _) = line_of::<HudRideLine>(&mut app);
         assert_eq!((shown, display), (text, Display::Flex));
         assert_eq!(font, lettered(body(), 20.0));
-        // The objective line is untouched.
+        // La línea del objetivo no se toca.
         assert_eq!(line_of::<HudObjectiveLine>(&mut app).1, Display::None);
         app.insert_resource(HudRide(None));
         app.update();

@@ -1,23 +1,25 @@
-//! The pampa's animals.
+//! Los animales de la pampa.
 //!
-//! The game simulates them (see `pampa_core::fauna`) and hands each entity
-//! an [`Animal`] (what it is), an [`AnimalPose`] (where it faces and what
-//! it does) and, optionally, an [`AnimalSeed`] (its stable identity); its
-//! `Transform` carries translation only, on the ground, the water or up in
-//! the air.
+//! El juego los simula (ver `pampa_core::fauna`) y le da a cada entidad un
+//! [`Animal`] (qué es), un [`AnimalPose`] (hacia dónde mira y qué hace) y,
+//! opcionalmente, un [`AnimalSeed`] (su identidad estable); su `Transform`
+//! lleva solo la traslación, sobre el suelo, el agua o en el aire.
 //!
-//! - Cattle (cows and bulls) and the corral horses are skinned, animated
-//!   glTF models whose clips follow the fauna state (see [`livestock`]).
-//! - The small wild animals are drawn like the townsfolk figures: rigid
-//!   low-poly parts hung off a few joints, so animation only turns joints
-//!   (legs swing, heads go down to peck or bob, tails swish, wings flap),
-//!   from one [`FaunaKit`] of four shared unit meshes, scaled per part, and
-//!   one shared material per [`Paint`]. Past [`ANIMATE_FAR`] from the
-//!   camera they keep their last pose (only the body turns).
+//! - El ganado (vacas y toros) y los caballos del corral son modelos glTF
+//!   animados con skinning cuyos clips siguen el estado de la fauna (ver
+//!   [`livestock`]).
+//! - Los animales silvestres pequeños se dibujan como las figuras de los
+//!   vecinos: piezas rígidas low-poly colgadas de unas pocas articulaciones,
+//!   así que la animación solo gira articulaciones (las patas se balancean, las
+//!   cabezas bajan para picotear o se mecen, las colas se agitan, las alas
+//!   aletean), a partir de un único [`FaunaKit`] de cuatro mallas unitarias
+//!   compartidas, escaladas por pieza, y un material compartido por cada
+//!   [`Paint`]. Más allá de [`ANIMATE_FAR`] desde la cámara conservan su última
+//!   pose (solo gira el cuerpo).
 //!
-//! Every mesh is drawn within the settlements' shared ranges (ground
-//! animals the props', soaring birds the buildings'): no new
-//! `VisibilityRange`.
+//! Cada malla se dibuja dentro de los rangos compartidos de los asentamientos
+//! (los animales de suelo, el de los objetos; las aves que planean, el de los
+//! edificios): ningún `VisibilityRange` nuevo.
 
 pub mod livestock;
 
@@ -34,81 +36,82 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 
 use crate::character::Coat;
 
-/// What an animal is.
+/// Qué es un animal.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[require(AnimalPose, Transform, Visibility)]
 pub enum Animal {
     Cow(CowCoat),
-    /// A herd's bull, in its breed's coat.
+    /// El toro de una tropa, con el pelaje de su raza.
     Bull(CowCoat),
-    /// A loose horse standing in a corral.
+    /// Un caballo suelto parado en un corral.
     Horse(Coat),
     Hare,
-    /// A tero (southern lapwing).
+    /// Un tero (avefría sureña).
     Tero,
-    /// A chimango or carancho.
+    /// Un chimango o carancho.
     Raptor,
     Duck,
 }
 
 impl Animal {
-    /// Whether it is drawn from an animated model (see [`livestock`])
-    /// rather than rigid parts.
+    /// Si se dibuja a partir de un modelo animado (ver [`livestock`]) en lugar
+    /// de piezas rígidas.
     pub fn is_livestock(self) -> bool {
         Species::of(self).is_some()
     }
 }
 
-/// An animal's stable identity, from its seeded place in the world: picks
-/// its idle and desyncs its clips from its neighbours'. Without it the
-/// entity's index stands in.
+/// La identidad estable de un animal, a partir de su lugar con semilla en el
+/// mundo: elige su espera y desincroniza sus clips de los de sus vecinos. Sin
+/// ella, el índice de la entidad la sustituye.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct AnimalSeed(pub u32);
 
-/// What an animal is doing, as drawn.
+/// Qué está haciendo un animal, tal como se dibuja.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Gait {
     #[default]
     Stand,
-    /// Head down in the grass (or pecking).
+    /// Cabeza gacha en el pasto (o picoteando).
     Graze,
     Walk,
-    /// Bolting or hopping fast.
+    /// Huyendo a toda carrera o saltando rápido.
     Run,
-    /// Flapping.
+    /// Aleteando.
     Fly,
-    /// Soaring on still wings.
+    /// Planeando con las alas quietas.
     Glide,
     Swim,
 }
 
-/// Logic state the drawing needs, copied from `pampa-core` by the game.
+/// Estado lógico que necesita el dibujo, copiado de `pampa-core` por el juego.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Default)]
 pub struct AnimalPose {
     pub heading: Heading,
     pub gait: Gait,
-    /// Ground speed, in m/s: paces the legs.
+    /// Velocidad sobre el suelo, en m/s: marca el ritmo de las patas.
     pub speed: f32,
-    /// Roll into a turn, radians (positive: left wing down).
+    /// Alabeo al girar, en radianes (positivo: ala izquierda hacia abajo).
     pub bank: f32,
 }
 
-/// Past this distance from the camera an animal's joints stop moving.
+/// Más allá de esta distancia de la cámara, las articulaciones de un animal
+/// dejan de moverse.
 pub const ANIMATE_FAR: f32 = 80.0;
 
-/// The joints of an animal: the body holds all the others.
+/// Las articulaciones de un animal: el cuerpo contiene a todas las demás.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Joint {
     Head,
-    /// Legs: a hare's front and hind pairs are `Leg(0)` and `Leg(2)`; a
-    /// bird's two `Leg(0)` and `Leg(1)`.
+    /// Patas: los pares delantero y trasero de una liebre son `Leg(0)` y
+    /// `Leg(2)`; las dos de un ave, `Leg(0)` y `Leg(1)`.
     Leg(u8),
     Tail,
-    /// Left (`0`, -Z) and right (`1`, +Z).
+    /// Izquierda (`0`, -Z) y derecha (`1`, +Z).
     Wing(u8),
 }
 
-/// A shared unit mesh.
+/// Una malla unitaria compartida.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Shape {
     Ball,
@@ -130,7 +133,7 @@ impl Shape {
     }
 }
 
-/// A shared material.
+/// Un material compartido.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Paint {
     White,
@@ -176,8 +179,8 @@ impl Paint {
     }
 }
 
-/// One rigid part: a unit shape scaled to `size`, placed at `at` from its
-/// joint (or the body), in `paint`.
+/// Una pieza rígida: una forma unitaria escalada a `size`, colocada en `at`
+/// respecto de su articulación (o del cuerpo), en `paint`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Part {
     pub joint: Option<Joint>,
@@ -187,7 +190,7 @@ pub struct Part {
     pub size: Vec3,
 }
 
-/// The shared meshes and materials every animal is drawn with.
+/// Las mallas y materiales compartidos con los que se dibuja todo animal.
 #[derive(Resource, Debug, Clone)]
 pub struct FaunaKit {
     meshes: Vec<(Shape, Handle<Mesh>)>,
@@ -226,11 +229,11 @@ impl FaunaKit {
 }
 
 impl Animal {
-    /// Where each joint sits on the standing animal.
+    /// Dónde se ubica cada articulación en el animal parado.
     pub fn joints(self) -> Vec<(Joint, Vec3)> {
         let v = Vec3::new;
         match self {
-            // Drawn from a model (see `livestock`).
+            // Se dibuja a partir de un modelo (ver `livestock`).
             Self::Cow(_) | Self::Bull(_) | Self::Horse(_) => Vec::new(),
             Self::Hare => vec![
                 (Joint::Head, v(0.18, 0.27, 0.0)),
@@ -257,7 +260,7 @@ impl Animal {
         if self == Self::Raptor { 2.4 } else { 1.0 }
     }
 
-    /// Every rigid part.
+    /// Todas las piezas rígidas.
     pub fn parts(self) -> Vec<Part> {
         let mut parts = Vec::new();
         let mut add = |joint, shape, paint, at: [f32; 3], size: [f32; 3]| {
@@ -412,7 +415,7 @@ impl Animal {
         parts
     }
 
-    /// The shared range its meshes are drawn within.
+    /// El rango compartido dentro del cual se dibujan sus mallas.
     pub fn range(self) -> VisibilityRange {
         let [buildings, props, _] = crate::settlement::ranges();
         if self == Self::Raptor {
@@ -423,19 +426,19 @@ impl Animal {
     }
 }
 
-/// The body of a drawn animal, child of its entity: it turns to the
-/// heading and holds the joints.
+/// El cuerpo de un animal dibujado, hijo de su entidad: gira hacia el rumbo y
+/// contiene las articulaciones.
 #[derive(Component, Debug, Clone)]
 pub struct AnimalRig {
     joints: Vec<(Joint, Entity)>,
-    /// Stride (or wingbeat) cycles so far, wrapped.
+    /// Ciclos de zancada (o de aleteo) hasta ahora, acotados.
     phase: f32,
-    /// Seconds since drawn, wrapped, for heads and tails.
+    /// Segundos desde que se dibujó, acotados, para cabezas y colas.
     clock: f32,
     seed: f32,
 }
 
-/// A joint entity of an animal.
+/// Una entidad de articulación de un animal.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct AnimalJoint(pub Joint, pub Vec3);
 
@@ -469,7 +472,7 @@ fn load_kit(
     commands.insert_resource(FaunaKit::new(&mut meshes, &mut materials));
 }
 
-/// Draws every new animal.
+/// Dibuja cada animal nuevo.
 fn attach_animals(
     mut commands: Commands,
     kit: Option<Res<FaunaKit>>,
@@ -522,7 +525,7 @@ fn attach_animals(
     }
 }
 
-/// How many stride cycles a meter is, by animal.
+/// Cuántos ciclos de zancada equivalen a un metro, por animal.
 fn strides_per_meter(animal: Animal) -> f32 {
     match animal {
         Animal::Hare => 0.6,
@@ -530,7 +533,8 @@ fn strides_per_meter(animal: Animal) -> f32 {
     }
 }
 
-/// Turns each body to its heading and, near the camera, poses its joints.
+/// Gira cada cuerpo hacia su rumbo y, cerca de la cámara, posiciona sus
+/// articulaciones.
 fn animate_animals(
     time: Res<Time>,
     cameras: Query<&GlobalTransform, With<Camera3d>>,
@@ -569,8 +573,8 @@ fn animate_animals(
     }
 }
 
-/// One joint's turn and rise for `gait`, at stride angle `phase` and
-/// `clock` seconds.
+/// El giro y la elevación de una articulación para `gait`, en el ángulo de
+/// zancada `phase` y a los `clock` segundos.
 pub fn joint_pose(
     animal: Animal,
     gait: Gait,
@@ -598,7 +602,8 @@ pub fn joint_pose(
             if !moving {
                 return (Quat::IDENTITY, Vec3::ZERO);
             }
-            // A bird's legs in turn; a hare's bound: pairs together.
+            // Las patas de un ave, por turnos; el salto de una liebre: los
+            // pares juntos.
             let offset = match (animal, k) {
                 (Animal::Hare, k) => (k / 2) as f32 * std::f32::consts::PI,
                 (_, 0) => 0.0,
@@ -616,7 +621,7 @@ pub fn joint_pose(
             let beat = match gait {
                 Gait::Fly => 0.9 * phase.sin(),
                 Gait::Glide => 0.12 + 0.04 * phase.sin(),
-                // Folded back along the body.
+                // Plegadas hacia atrás a lo largo del cuerpo.
                 _ => return (Quat::from_rotation_y(side * FRAC_PI_2), Vec3::ZERO),
             };
             (Quat::from_rotation_x(side * beat), Vec3::ZERO)
@@ -628,10 +633,10 @@ pub fn joint_pose(
 mod tests {
     use super::*;
 
-    /// The species drawn from rigid parts.
+    /// Las especies dibujadas a partir de piezas rígidas.
     const RIGID: [Animal; 4] = [Animal::Hare, Animal::Tero, Animal::Raptor, Animal::Duck];
 
-    /// The species drawn from models.
+    /// Las especies dibujadas a partir de modelos.
     const LIVESTOCK: [Animal; 7] = [
         Animal::Cow(CowCoat::Hereford),
         Animal::Cow(CowCoat::Angus),
@@ -714,7 +719,8 @@ mod tests {
             }
         }
         assert_eq!(ranges.len(), 2, "props' and buildings'");
-        // Each cow, bull and horse waits for its model (none loads here).
+        // Cada vaca, toro y caballo espera su modelo (aquí no se carga
+        // ninguno).
         let mut models = app.world_mut().query::<(&LivestockModel, &ChildOf)>();
         assert_eq!(models.iter(app.world()).count(), 3 * LIVESTOCK.len());
     }

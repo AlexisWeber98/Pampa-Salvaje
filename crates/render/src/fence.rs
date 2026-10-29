@@ -1,15 +1,16 @@
-//! Wire fences (alambrados) and their open gates (tranqueras), streamed
-//! with the terrain chunks.
+//! Alambrados y sus tranqueras abiertas, cargados por streaming junto con los
+//! chunks de terreno.
 //!
-//! `pampa-core` lays the fences out ([`FenceLayout`]). When a terrain chunk
-//! is built, the fence spans whose middle lies in it are drawn as its
-//! children: pieces of a few spans each, every piece one mesh of wooden
-//! posts and one of galvanised wire, so a piece can fade on its own when it
-//! comes between the camera and the rider ([`crate::flora::ThinOccluder`]).
-//! Roads run between two fences that follow their curves. A gate (into a
-//! field from the road, or between paddocks) gets two stout posts and one
-//! or two timber leaves swung open back along the fence; a broken span gets
-//! a leaning post, a fallen one and a sagging wire.
+//! `pampa-core` traza los alambrados ([`FenceLayout`]). Cuando se construye un
+//! chunk de terreno, los tramos de alambrado cuyo punto medio cae en él se
+//! dibujan como hijos suyos: piezas de unos pocos tramos cada una, cada pieza
+//! con una malla de postes de madera y otra de alambre galvanizado, para que
+//! una pieza pueda desvanecerse por sí sola cuando se interpone entre la cámara
+//! y el jinete ([`crate::flora::ThinOccluder`]). Los caminos corren entre dos
+//! alambrados que siguen sus curvas. Una tranquera (del camino a un campo, o
+//! entre potreros) recibe dos postes robustos y una o dos hojas de madera
+//! abiertas hacia atrás a lo largo del alambrado; un tramo roto recibe un poste
+//! inclinado, uno caído y un alambre combado.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::PrimitiveTopology;
@@ -21,16 +22,16 @@ use crate::coords::world_from_ground;
 use crate::flora::ThinOccluder;
 use crate::terrain::{ChunkStreaming, TerrainChunk, WorldChunks, WorldTerrain};
 
-/// The world's fences. Insert before the plugin runs; without it no fence
-/// is drawn.
+/// Los alambrados del mundo. Se insertan antes de que corra el plugin; sin
+/// ellos no se dibuja ningún alambrado.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct WorldFences(pub FenceLayout);
 
-/// A drawn piece of fence (posts or wire), child of its chunk.
+/// Una pieza dibujada de alambrado (postes o alambre), hija de su chunk.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FencePiece;
 
-/// A post or leaf of a gate, or a piece of a broken span, child of its
+/// Un poste u hoja de una tranquera, o una pieza de un tramo roto, hijo de su
 /// chunk.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GatePart;
@@ -45,7 +46,7 @@ struct FenceKit {
     cube: Handle<Mesh>,
 }
 
-/// Draws the [`WorldFences`] chunk by chunk. Needs the
+/// Dibuja los [`WorldFences`] chunk por chunk. Necesita el
 /// [`crate::TerrainPlugin`].
 pub struct FencePlugin;
 
@@ -85,15 +86,15 @@ fn setup_kit(
     });
 }
 
-/// Spans per drawn piece: short enough that only the stretch in front of
-/// the camera fades.
+/// Tramos por pieza dibujada: lo bastante cortos para que solo se desvanezca el
+/// trecho que está delante de la cámara.
 pub const SPANS_PER_PIECE: usize = 5;
-/// Heights of the wires above the ground, in meters.
+/// Alturas de los alambres sobre el suelo, en metros.
 const WIRES: [f32; FenceLayout::WIRES] = [0.3, 0.52, 0.74, 0.96, 1.18];
-/// Thickness of a wire as drawn, in meters (a little over the real 4 mm,
-/// so it does not vanish at a distance).
+/// Grosor de un alambre tal como se dibuja, en metros (un poco más que los 4 mm
+/// reales, para que no desaparezca a la distancia).
 const WIRE: f32 = 0.014;
-/// Side of a post, in meters.
+/// Lado de un poste, en metros.
 const POST: f32 = 0.12;
 
 type FenceBundle = (
@@ -214,9 +215,9 @@ fn lay_fences(
     }
 }
 
-/// The posts and the wires of a few consecutive spans, as two meshes in
-/// world space: a post at every span's start and one at the last span's
-/// end, and every wire from post to post.
+/// Los postes y los alambres de unos pocos tramos consecutivos, como dos mallas
+/// en el espacio del mundo: un poste al inicio de cada tramo y otro al final
+/// del último, y cada alambre de poste a poste.
 pub(crate) fn piece_meshes(spans: &[(GroundVec2, GroundVec2)], terrain: &Terrain) -> (Mesh, Mesh) {
     let ground = |p: GroundVec2| terrain.height(p.x, p.y);
     let mut posts = Boxes::default();
@@ -251,8 +252,8 @@ pub(crate) fn piece_meshes(spans: &[(GroundVec2, GroundVec2)], terrain: &Terrain
     (posts.into_mesh(), wires.into_mesh())
 }
 
-/// The fade shape of a piece: the line from its first to its last post,
-/// up to the posts' tops.
+/// La forma de fundido de una pieza: la línea de su primer a su último poste,
+/// hasta la punta de los postes.
 fn piece_occluder(spans: &[(GroundVec2, GroundVec2)], terrain: &Terrain) -> ThinOccluder {
     let (a, b) = (spans[0].0, spans[spans.len() - 1].1);
     let ground = |p: GroundVec2| terrain.height(p.x, p.y);
@@ -267,9 +268,9 @@ fn piece_occluder(spans: &[(GroundVec2, GroundVec2)], terrain: &Terrain) -> Thin
     }
 }
 
-/// The gate's two stout posts and its leaf or two, as unit-cube
-/// transforms: swung open back against the fence beside the opening, or
-/// shut across it.
+/// Los dos postes robustos de la tranquera y su hoja o sus dos hojas, como
+/// transformaciones de cubo unitario: abiertas hacia atrás contra el alambrado
+/// junto a la abertura, o cerradas a través de ella.
 pub(crate) fn gate_pieces(gate: &Gate, terrain: &Terrain) -> Vec<Transform> {
     let ground = |p: GroundVec2| terrain.height(p.x, p.y);
     let along = gate.along;
@@ -284,12 +285,13 @@ pub(crate) fn gate_pieces(gate: &Gate, terrain: &Terrain) -> Vec<Transform> {
             Transform::from_translation(world_from_ground(hinge, ground(hinge) - 0.1 + h / 2.0))
                 .with_scale(Vec3::new(0.2, h, 0.2)),
         );
-        // A single gate hangs on one post only.
+        // Una tranquera simple cuelga de un solo poste.
         if !gate.double && s > 0.0 {
             continue;
         }
-        // Open: swung through 170°, the leaf lies back along the fence just
-        // off its line, away from the opening. Closed: across the opening.
+        // Abierta: girada 170°, la hoja queda hacia atrás a lo largo del
+        // alambrado, apenas fuera de su línea y lejos de la abertura. Cerrada:
+        // a través de la abertura.
         let (base, dir, leaf) = if gate.open {
             (hinge + side * 0.25, s, leaf)
         } else {
@@ -306,7 +308,7 @@ pub(crate) fn gate_pieces(gate: &Gate, terrain: &Terrain) -> Vec<Transform> {
                     .with_scale(Vec3::new(leaf, bar, 0.05)),
             );
         }
-        // A diagonal brace and the stile at the leaf's free end.
+        // Una riostra diagonal y el montante en el extremo libre de la hoja.
         let rise = 0.95_f32;
         let brace = Quat::from_rotation_z(rise.atan2(leaf) * if dir > 0.0 { 1.0 } else { -1.0 });
         pieces.push(
@@ -322,9 +324,10 @@ pub(crate) fn gate_pieces(gate: &Gate, terrain: &Terrain) -> Vec<Transform> {
     pieces
 }
 
-/// A broken stretch of fence across `opening`: posts leaning or fallen
-/// in it, and one wire sagging to the grass between the posts at its ends,
-/// as (timber, wire) unit-cube transforms. None of it is an obstacle.
+/// Un trecho roto de alambrado a través de `opening`: postes inclinados o
+/// caídos en él, y un alambre que se comba hasta el pasto entre los postes de
+/// sus extremos, como transformaciones de cubo unitario (madera, alambre). Nada
+/// de esto es un obstáculo.
 pub(crate) fn broken_pieces(
     opening: &Opening,
     terrain: &Terrain,
@@ -336,7 +339,7 @@ pub(crate) fn broken_pieces(
     let (a, b) = (opening.at - along * half, opening.at + along * half);
     let yaw = Quat::from_rotation_y(along.y.atan2(along.x));
     let mut timber = Vec::new();
-    // A post leaning hard over in the middle, and one fallen in the grass.
+    // Un poste muy inclinado en el medio, y uno caído en el pasto.
     let lean = opening.at + side * 0.3;
     let h = FenceLayout::HEIGHT + 0.1;
     timber.push(
@@ -350,7 +353,8 @@ pub(crate) fn broken_pieces(
             .with_rotation(yaw)
             .with_scale(Vec3::new(h, POST, POST)),
     );
-    // The top wire hangs on from both end posts, sagging to the middle.
+    // El alambre superior sigue colgado de ambos postes extremos y se comba
+    // hacia el medio.
     let mut wire = Vec::new();
     let sag = opening.at + side * 0.2;
     let low = world_from_ground(sag, ground(sag) + 0.15);
@@ -369,16 +373,16 @@ pub(crate) fn broken_pieces(
     (timber, wire)
 }
 
-/// Unit boxes merged into one flat-shaded mesh.
+/// Cajas unitarias fusionadas en una malla con sombreado plano.
 #[derive(Default)]
 struct Boxes {
     positions: Vec<[f32; 3]>,
 }
 
 impl Boxes {
-    /// The unit cube's faces as quads, corners counter-clockwise from
-    /// outside (the bottom is left out: it sits in the ground or is never
-    /// seen).
+    /// Las caras del cubo unitario como cuadriláteros, con las esquinas en
+    /// sentido antihorario vistas desde afuera (se omite la base: queda dentro
+    /// del suelo o nunca se ve).
     const FACES: [[[f32; 3]; 4]; 5] = [
         [
             [0.5, -0.5, -0.5],
@@ -431,7 +435,8 @@ impl Boxes {
     }
 }
 
-/// Triangles in the meshes a fence piece of `spans` spans draws.
+/// Triángulos de las mallas que dibuja una pieza de alambrado de `spans`
+/// tramos.
 pub fn piece_triangles(spans: usize) -> usize {
     2 * Boxes::FACES.len() * ((spans + 1) + spans * FenceLayout::WIRES)
 }
@@ -480,7 +485,7 @@ mod tests {
         let mut app = app(GroundVec2::new(x, 0.0));
         app.update();
         app.update();
-        // Every span in the loaded chunks is drawn in exactly one piece.
+        // Cada tramo de los chunks cargados se dibuja en exactamente una pieza.
         let mut chunks = app.world_mut().query::<&TerrainChunk>();
         let loaded: Vec<ChunkCoord> = chunks.iter(app.world()).map(|c| c.0).collect();
         let size = WorldConfig::default().chunk_size;
@@ -496,7 +501,8 @@ mod tests {
             .map(|r| r.spans().count().div_ceil(SPANS_PER_PIECE))
             .sum();
         assert_eq!(count::<FencePiece>(&mut app), 2 * pieces);
-        // A piece is posts plus wires, and each fades on its own.
+        // Una pieza es postes más alambres, y cada uno se desvanece por su
+        // cuenta.
         assert_eq!(
             count::<FencePiece>(&mut app),
             app.world_mut()
@@ -572,7 +578,7 @@ mod tests {
         for t in timber.iter().chain(&wire) {
             let g = GroundVec2::new(t.translation.x, -t.translation.z);
             assert!(g.distance(opening.at) <= opening.width / 2.0 + 0.1, "{g:?}");
-            // Nothing stands up to full height: it is broken.
+            // Nada queda en pie a toda su altura: está roto.
             let top = t.translation.y - terrain.height(g.x, g.y);
             assert!(top < FenceLayout::HEIGHT, "{top}");
         }
@@ -610,10 +616,12 @@ mod tests {
         assert_eq!(single.len(), 2 + 4 + 2);
         for t in pieces {
             let g = GroundVec2::new(t.translation.x, -t.translation.z);
-            // Nothing stands inside the opening between the gate posts.
+            // Nada queda en pie dentro de la abertura entre los postes de la
+            // tranquera.
             assert!(g.y.abs() >= gate.width / 2.0 - 0.15, "{g:?}");
         }
-        // Shut, the leaves meet across the opening, in the fence line.
+        // Cerradas, las hojas se juntan a través de la abertura, en la línea
+        // del alambrado.
         let shut = gate_pieces(
             &Gate {
                 open: false,

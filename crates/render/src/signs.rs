@@ -1,9 +1,9 @@
-//! Painted signboards naming the town's landmarks.
+//! Carteles pintados que nombran los lugares destacados del pueblo.
 //!
-//! `pampa-core` decides which places have signs, where they stand and which
-//! way they read ([`pampa_core::Place`]). This module lays the lettering out
-//! in the wood-type [`Face::Display`], paints a weathered board texture and
-//! mounts it on the facade or on posts.
+//! `pampa-core` decide qué lugares tienen cartel, dónde se ubican y hacia qué
+//! lado se leen ([`pampa_core::Place`]). Este módulo dispone el rótulo en la
+//! letra de madera [`Face::Display`], pinta una textura de tabla gastada y la
+//! monta en la fachada o sobre postes.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::ImageSampler;
@@ -18,16 +18,17 @@ use crate::lettering::{self, Extent, Face};
 use crate::terrain::{WorldTerrain, hash2};
 use crate::town::{TownRoot, WorldTowns};
 
-/// Size of the lettering on a board texture, in texture pixels.
+/// Tamaño del rótulo en la textura de una tabla, en píxeles de textura.
 pub const TEXT_PX: f32 = 56.0;
-/// Painted frame width around a board, in texture pixels.
+/// Ancho del marco pintado alrededor de una tabla, en píxeles de textura.
 pub const BORDER: usize = 6;
-/// Clear space between the frame and the lettering, in texture pixels.
+/// Espacio libre entre el marco y el rótulo, en píxeles de textura.
 pub const PADDING: usize = 20;
 
-/// The lettering's footprint on a board: the inked width and height in
-/// pixels, and the ink's offset from the pen origin and from the top of the
-/// line. Blank text has no ink, so it takes the line's ascent for height.
+/// La huella del rótulo sobre una tabla: el ancho y el alto entintados en
+/// píxeles, y el desplazamiento de la tinta respecto del origen de la pluma y
+/// de la parte superior de la línea. El texto en blanco no tiene tinta, así que
+/// toma como alto el ascendente de la línea.
 struct Lettering {
     width: usize,
     height: usize,
@@ -53,7 +54,7 @@ fn lettering_of(text: &str) -> Lettering {
     }
 }
 
-/// Pixel size of a board texture and its size in meters.
+/// Tamaño en píxeles de la textura de una tabla y su tamaño en metros.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BoardLayout {
     pub width_px: usize,
@@ -62,16 +63,17 @@ pub struct BoardLayout {
     pub height_m: f32,
 }
 
-/// Lays out a one-line board `width_m` wide and at most `max_height_m` tall
-/// with square pixels: the lettering is as large as fits, centered, and the
-/// board is never narrower than the text it carries.
+/// Dispone una tabla de una línea de `width_m` de ancho y como máximo
+/// `max_height_m` de alto, con píxeles cuadrados: el rótulo es tan grande como
+/// quepa, centrado, y la tabla nunca es más angosta que el texto que lleva.
 pub fn layout_board(text: &str, width_m: f32, max_height_m: f32) -> BoardLayout {
     let margin = 2 * (BORDER + PADDING);
     let lettering = lettering_of(text);
     let height_px = lettering.height + margin;
     let min_width_px = lettering.width + margin;
-    // The largest pixel that fits both the text across and the height limit;
-    // rounding the pixel count up only ever shrinks the pixel.
+    // El píxel más grande que respeta tanto el ancho del texto como el límite
+    // de altura; redondear hacia arriba la cantidad de píxeles solo puede
+    // achicar el píxel.
     let pixel = (width_m / min_width_px as f32).min(max_height_m / height_px as f32);
     let width_px = ((width_m / pixel).ceil() as usize).max(min_width_px);
     BoardLayout {
@@ -82,18 +84,19 @@ pub fn layout_board(text: &str, width_m: f32, max_height_m: f32) -> BoardLayout 
     }
 }
 
-/// Colors of one board style (sRGB).
+/// Colores de un estilo de tabla (sRGB).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BoardStyle {
     pub board: [u8; 3],
     pub frame: [u8; 3],
     pub ink: [u8; 3],
-    /// Horizontal wood grain instead of a flat painted surface.
+    /// Veta horizontal de madera en lugar de una superficie pintada lisa.
     pub grain: bool,
 }
 
 impl BoardStyle {
-    /// A road signpost's arrow board: whitewashed timber, black letters.
+    /// La tabla en flecha de un poste indicador de camino: madera encalada,
+    /// letras negras.
     pub fn signpost() -> Self {
         Self {
             board: [214, 204, 182],
@@ -103,38 +106,38 @@ impl BoardStyle {
         }
     }
 
-    /// A period-appropriate look per landmark.
+    /// Un aspecto acorde a la época para cada lugar destacado.
     pub fn for_place(kind: PlaceKind) -> Self {
         match kind {
-            // Dark green fascia with gold letters.
+            // Friso verde oscuro con letras doradas.
             PlaceKind::GeneralStore => Self {
                 board: [38, 64, 46],
                 frame: [92, 66, 40],
                 ink: [214, 178, 92],
                 grain: false,
             },
-            // White enamel with blue letters.
+            // Esmalte blanco con letras azules.
             PlaceKind::PoliceStation => Self {
                 board: [228, 224, 210],
                 frame: [40, 62, 112],
                 ink: [36, 58, 118],
                 grain: false,
             },
-            // Lime-washed band with dark brown letters.
+            // Franja encalada con letras marrón oscuro.
             PlaceKind::Church => Self {
                 board: [222, 208, 176],
                 frame: [104, 76, 52],
                 ink: [72, 46, 30],
                 grain: false,
             },
-            // Railway board: black letters on white, black frame.
+            // Tabla ferroviaria: letras negras sobre blanco, marco negro.
             PlaceKind::Station => Self {
                 board: [232, 230, 220],
                 frame: [30, 28, 26],
                 ink: [24, 22, 20],
                 grain: false,
             },
-            // Weathered timber with cream letters.
+            // Madera gastada con letras color crema.
             PlaceKind::Plaza => Self {
                 board: [104, 74, 48],
                 frame: [62, 44, 30],
@@ -145,7 +148,7 @@ impl BoardStyle {
     }
 }
 
-/// The board `paint_board` paints, as a texture with smooth lettering.
+/// La tabla que pinta `paint_board`, como textura con un rótulo suave.
 pub fn board_image(text: &str, layout: BoardLayout, style: BoardStyle, seed: f32) -> Image {
     let mut image = Image::new(
         Extent3d {
@@ -162,8 +165,9 @@ pub fn board_image(text: &str, layout: BoardLayout, style: BoardStyle, seed: f32
     image
 }
 
-/// Paints `text` on a board of `layout` size: framed, slightly worn and, for
-/// timber, grained. Returns RGBA8 sRGB pixels, row by row from the top.
+/// Pinta `text` sobre una tabla del tamaño de `layout`: enmarcada, algo gastada
+/// y, si es de madera, con veta. Devuelve píxeles RGBA8 sRGB, fila por fila
+/// desde arriba.
 pub fn paint_board(text: &str, layout: BoardLayout, style: BoardStyle, seed: f32) -> Vec<u8> {
     let (w, h) = (layout.width_px, layout.height_px);
     let noise =
@@ -172,7 +176,7 @@ pub fn paint_board(text: &str, layout: BoardLayout, style: BoardStyle, seed: f32
 
     let mut colors = vec![[0u8; 3]; w * h];
     for y in 0..h {
-        // Timber planks: each row a little lighter or darker.
+        // Tablones de madera: cada fila un poco más clara o más oscura.
         let plank = if style.grain {
             0.88 + 0.2 * hash2(y as f32 * 0.7, seed)
         } else {
@@ -184,7 +188,7 @@ pub fn paint_board(text: &str, layout: BoardLayout, style: BoardStyle, seed: f32
             colors[y * w + x] = if frame {
                 shade(style.frame, speckle)
             } else {
-                // A little grime along the inside of the frame.
+                // Un poco de mugre a lo largo del borde interior del marco.
                 let edge = x == BORDER || y == BORDER || x == w - BORDER - 1 || y == h - BORDER - 1;
                 let grime = if edge { 0.9 } else { 1.0 };
                 shade(style.board, speckle * plank * grime)
@@ -192,7 +196,7 @@ pub fn paint_board(text: &str, layout: BoardLayout, style: BoardStyle, seed: f32
         }
     }
 
-    // The lettering's ink is centered on the board, across and down.
+    // La tinta del rótulo se centra en la tabla, a lo ancho y a lo alto.
     let lettering = lettering_of(text);
     let dx = (w - lettering.width) as f32 / 2.0 - lettering.left;
     let dy = (h - lettering.height) as f32 / 2.0 - lettering.top;
@@ -204,14 +208,15 @@ pub fn paint_board(text: &str, layout: BoardLayout, style: BoardStyle, seed: f32
         }
         let (px, py) = (px as usize, py as usize);
         let worn = noise(px, py, 7.0) < 0.07;
-        // Flaked paint lets the board show through.
+        // La pintura descascarada deja ver la tabla.
         let f = if worn {
             0.4
         } else {
             0.95 + 0.08 * noise(px, py, 3.0)
         };
         let ink = shade(style.ink, if worn { 1.0 } else { f });
-        // Antialiased edges blend with the board; worn paint only half-covers.
+        // Los bordes con antialiasing se mezclan con la tabla; la pintura
+        // gastada solo cubre a medias.
         let cover = f32::from(alpha) / 255.0 * if worn { f } else { 1.0 };
         let under = colors[py * w + px];
         colors[py * w + px] = std::array::from_fn(|i| {
@@ -225,8 +230,9 @@ pub fn paint_board(text: &str, layout: BoardLayout, style: BoardStyle, seed: f32
         .collect()
 }
 
-/// Draws each town's place signs when the town is built (see
-/// [`crate::TownPlugin`]); they hang off its [`TownRoot`] and go with it.
+/// Dibuja los carteles de los lugares de cada pueblo cuando se construye el
+/// pueblo (ver [`crate::TownPlugin`]); cuelgan de su [`TownRoot`] y se van con
+/// él.
 pub struct SignPlugin;
 
 impl Plugin for SignPlugin {
@@ -235,18 +241,18 @@ impl Plugin for SignPlugin {
     }
 }
 
-/// Marks a signboard entity and the place it names.
+/// Marca una entidad de cartel y el lugar que nombra.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Signboard(pub PlaceKind);
 
-/// Marks the timetable board hung on a station's platform wall.
+/// Marca el tablero de horarios colgado en la pared del andén de una estación.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TimetableBoard;
 
-/// The lettering of the timetable board.
+/// El rótulo del tablero de horarios.
 pub const TIMETABLE_BOARD_TEXT: &str = "HORARIOS";
 
-/// Asset stores a sign needs.
+/// Almacenes de assets que necesita un cartel.
 type SignAssets<'a> = (
     ResMut<'a, Assets<Image>>,
     ResMut<'a, Assets<Mesh>>,
@@ -280,7 +286,7 @@ fn spawn_signs(
     }
 }
 
-/// Every sign of `town`, as children of `root`.
+/// Todos los carteles de `town`, como hijos de `root`.
 fn spawn_town_signs(
     commands: &mut Commands,
     root: Entity,
@@ -339,7 +345,8 @@ fn spawn_town_signs(
                 Transform::from_translation(c).with_rotation(turn),
             ));
             if sign.mount == SignMount::Posts {
-                // Readable from both sides, on two posts behind the board.
+                // Legible desde ambos lados, sobre dos postes detrás de la
+                // tabla.
                 parts.push((
                     quad,
                     face,
@@ -379,9 +386,9 @@ fn spawn_town_signs(
     }
 }
 
-/// The timetable boards of `town`'s station, if it has one, as children of
-/// `root`: small period boards in the station's sign style, on the walls
-/// between the openings (see [`TownLayout::timetable_boards`]).
+/// Los tableros de horarios de la estación de `town`, si tiene una, como hijos
+/// de `root`: pequeñas tablas de época en el estilo de cartel de la estación,
+/// en las paredes entre las aberturas (ver [`TownLayout::timetable_boards`]).
 fn spawn_timetable_boards(
     commands: &mut Commands,
     root: Entity,
@@ -439,7 +446,8 @@ fn spawn_timetable_boards(
     }
 }
 
-/// World-space outward direction of a footprint side (core north is -Z).
+/// Dirección hacia afuera, en el espacio del mundo, de un lado de una huella
+/// (el norte de core es -Z).
 fn facing_dir(side: Side) -> Vec3 {
     match side {
         Side::North => Vec3::NEG_Z,
@@ -449,9 +457,10 @@ fn facing_dir(side: Side) -> Vec3 {
     }
 }
 
-/// Height of a facade board's center above the ground (or of a post board's
-/// bottom edge above its base) and the tallest the board may be, chosen to
-/// fit each building's look in [`crate::town`].
+/// Altura del centro de una tabla de fachada sobre el suelo (o del borde
+/// inferior de una tabla sobre postes sobre su base) y la altura máxima que
+/// puede tener la tabla, elegidas para que encajen con el aspecto de cada
+/// edificio en [`crate::town`].
 fn mount_height(town: &TownLayout, kind: PlaceKind, sign: &Sign) -> (f32, f32) {
     if sign.mount == SignMount::Posts {
         return if sign.elevation > 0.0 {
@@ -467,11 +476,11 @@ fn mount_height(town: &TownLayout, kind: PlaceKind, sign: &Sign) -> (f32, f32) {
             .map_or(4.0, |b| b.height)
     };
     match kind {
-        // On the false-front parapet above the veranda.
+        // En el parapeto de falsa fachada sobre la galería.
         PlaceKind::GeneralStore => (wall(BuildingKind::GeneralStore) + 1.1, 1.8),
-        // Above the door.
+        // Sobre la puerta.
         PlaceKind::PoliceStation => (3.45, 1.4),
-        // On the bell tower, above the door.
+        // En el campanario, sobre la puerta.
         PlaceKind::Church => (4.2, 1.2),
         PlaceKind::Station => (3.8, 1.6),
         PlaceKind::Plaza => (1.2, 1.0),
@@ -494,7 +503,8 @@ mod tests {
             .sum()
     }
 
-    /// Inked size of `text` in the board face, as (width, height) pixels.
+    /// Tamaño entintado de `text` en la tipografía de las tablas, como píxeles
+    /// (ancho, alto).
     fn ink_size(text: &str) -> (f32, f32) {
         let ink = lettering::measure(text, Face::Display, TEXT_PX)
             .ink
@@ -508,12 +518,13 @@ mod tests {
         for kind in PlaceKind::ALL {
             let text = kind.name();
             let (ink_w, ink_h) = ink_size(text);
-            // Sharp lettering: capitals at least 30 texture pixels tall.
+            // Rótulo nítido: mayúsculas de al menos 30 píxeles de textura de
+            // alto.
             assert!(ink_h >= 30.0, "{text} {ink_h}");
             for (width, max_height) in [(13.0, 1.8), (3.4, 1.2), (7.0, 1.0), (1.0, 2.0)] {
                 let l = layout_board(text, width, max_height);
-                // The inked text plus the frame and padding fit, and nothing
-                // much more: whole pixels either way.
+                // El texto entintado más el marco y el relleno caben, y no
+                // mucho más: píxeles enteros en ambos sentidos.
                 assert!(l.width_px >= ink_w.ceil() as usize + margin, "{text}");
                 assert!(l.height_px >= ink_h.ceil() as usize + margin, "{text}");
                 assert!(l.height_px <= ink_h.ceil() as usize + 1 + margin, "{text}");
@@ -530,9 +541,10 @@ mod tests {
 
     #[test]
     fn board_sizes_in_meters_stay_close_to_the_bitmap_boards() {
-        // Heights the 5x7 bitmap boards had, in meters, for a board of the
-        // given width and height limit. The new boards letter in Rye, whose
-        // caps are wider and heavier, so sizes may differ by up to a fifth.
+        // Alturas que tenían las tablas de mapa de bits de 5x7, en metros, para
+        // una tabla del ancho y el límite de altura dados. Las tablas nuevas
+        // rotulan en Rye, cuyas mayúsculas son más anchas y pesadas, así que
+        // los tamaños pueden diferir hasta en un quinto.
         for (text, width, max_height, before) in [
             ("PLAZA", 3.0, 1.0, 1.0),
             ("ESTACIÓN", 7.0, 1.4, 1.4),
@@ -555,7 +567,7 @@ mod tests {
     fn a_wide_board_is_as_tall_as_allowed() {
         let l = layout_board("PLAZA", 3.0, 1.0);
         assert!((l.height_m - 1.0).abs() < 0.06, "{l:?}");
-        // A long name on a short board shrinks its height instead.
+        // Un nombre largo en una tabla corta reduce en cambio su altura.
         let long = layout_board(PlaceKind::GeneralStore.name(), 6.0, 1.8);
         assert!(long.height_m < 1.0, "{long:?}");
     }
@@ -588,10 +600,12 @@ mod tests {
             .filter(inside)
             .filter(|&(x, y)| near_ink(at(x, y)))
             .collect();
-        // Most letter pixels survive the wear, and nothing else looks like ink.
+        // La mayoría de los píxeles de las letras sobreviven al desgaste, y
+        // nada más parece tinta.
         assert!(inked.len() * 10 >= solid * 8, "{} of {solid}", inked.len());
         assert!(inked.len() <= solid + partial);
-        // Antialiased edges blend ink into the board: colors in between.
+        // Los bordes con antialiasing mezclan la tinta con la tabla: colores
+        // intermedios.
         let blended = all()
             .filter(inside)
             .filter(|&(x, y)| {
@@ -600,13 +614,13 @@ mod tests {
             })
             .count();
         assert!(blended * 2 >= partial, "{blended} blended of {partial}");
-        // Centered horizontally within two pixels.
+        // Centrado horizontalmente con un margen de dos píxeles.
         let (min_x, max_x) = inked
             .iter()
             .fold((usize::MAX, 0), |(lo, hi), &(x, _)| (lo.min(x), hi.max(x)));
         let (left, right) = (min_x, l.width_px - 1 - max_x);
         assert!(left.abs_diff(right) <= 2, "left {left} right {right}");
-        // The inked rows are centered vertically, accents included.
+        // Las filas entintadas se centran verticalmente, acentos incluidos.
         let (min_y, max_y) = inked
             .iter()
             .fold((usize::MAX, 0), |(lo, hi), &(_, y)| (lo.min(y), hi.max(y)));
@@ -614,7 +628,7 @@ mod tests {
             min_y.abs_diff(l.height_px - 1 - max_y) <= 2,
             "{min_y} {max_y}"
         );
-        // The lettering is as large as the face makes it, not a speck.
+        // El rótulo es tan grande como lo permite la tipografía, no una mota.
         let (ink_w, ink_h) = ink_size(text);
         assert!((max_x - min_x) as f32 >= ink_w - 6.0);
         assert!((max_y - min_y) as f32 >= ink_h - 6.0);
@@ -645,7 +659,8 @@ mod tests {
         let l = layout_board("PLAZA", 3.0, 1.0);
         let a = paint_board("PLAZA", l, style, 3.0);
         assert_eq!(a, paint_board("PLAZA", l, style, 3.0));
-        // Wear varies the surface: the board is not one flat color.
+        // El desgaste varía la superficie: la tabla no es de un único color
+        // liso.
         let row = l.height_px / 2;
         let colors: std::collections::HashSet<_> = (BORDER..l.width_px - BORDER)
             .map(|x| pixel(&a, l, x, row))
@@ -674,13 +689,14 @@ mod tests {
             .collect();
         assert_eq!(found.len(), signs);
         for (kind, parts) in &found {
-            // Backing and face; post boards add a back face and two posts.
+            // Respaldo y frente; las tablas sobre postes agregan una cara
+            // trasera y dos postes.
             assert!(*parts == 2 || *parts == 5, "{kind:?} has {parts} parts");
         }
-        // Three more images: the station's timetable boards.
+        // Tres imágenes más: los tableros de horarios de la estación.
         assert_eq!(app.world().resource::<Assets<Image>>().len(), signs + 3);
 
-        // Every face quad (+Z normal) points the way its sign faces.
+        // Cada quad de frente (normal +Z) apunta hacia donde mira su cartel.
         let mut faces = app
             .world_mut()
             .query_filtered::<(&Transform, &MeshMaterial3d<StandardMaterial>), Without<Signboard>>(
@@ -737,15 +753,15 @@ mod tests {
                 .unwrap();
             let signs = town.timetable_boards();
             assert_eq!(signs.len(), 3);
-            // One facing the platform, two facing the street.
+            // Uno mirando al andén, dos mirando a la calle.
             let facing: Vec<Side> = signs.iter().map(|s| s.facing).collect();
             assert_eq!(
                 facing,
                 [station.front.opposite(), station.front, station.front]
             );
             for sign in signs {
-                // Beside every door and window: none of them reaches the
-                // board.
+                // Junto a cada puerta y ventana: ninguna de ellas alcanza la
+                // tabla.
                 let n = pampa_core::places::side_normal(sign.facing);
                 let along = pampa_core::Vec2::new(n.y.abs(), n.x.abs());
                 let x = (sign.anchor - station.footprint.center()).dot(along);
@@ -756,7 +772,8 @@ mod tests {
                     station.height,
                 ));
                 assert!(openings.len() >= 3);
-                // The openings are laid out the same from either end.
+                // Las aberturas se disponen igual desde cualquiera de los dos
+                // extremos.
                 for (a, b) in openings {
                     for x in [x, -x] {
                         let (lo, hi) = (x - sign.width / 2.0, x + sign.width / 2.0);
@@ -766,8 +783,9 @@ mod tests {
                         );
                     }
                 }
-                // Its face quad points the way the board faces, 1.7 m over
-                // the floor it stands on (0.9 m for the platform's).
+                // Su quad de frente apunta hacia donde mira la tabla, 1.7 m por
+                // encima del piso sobre el que se apoya (0.9 m para la del
+                // andén).
                 let dir = facing_dir(sign.facing);
                 let ground = pampa_core::Terrain::default().height(sign.anchor.x, sign.anchor.y);
                 let floor = if sign.facing == station.front {

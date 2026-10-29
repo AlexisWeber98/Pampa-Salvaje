@@ -1,11 +1,13 @@
-//! Speech bubbles: a line of dialogue floating above somebody's head.
+//! Globos de diálogo: una línea de diálogo que flota sobre la cabeza de
+//! alguien.
 //!
-//! The game writes a [`Say`] message naming the speaker entity and the line;
-//! this module lays the line out in the body [`Face`], paints
-//! a paper bubble with an ink outline and a tail pointing down, and shows it
-//! above the speaker, always facing the camera, for [`LIFETIME`] seconds
-//! with a fade over the last [`FADE`] seconds. A speaker has at most one
-//! bubble: a new line replaces the old one.
+//! El juego escribe un mensaje [`Say`] que nombra la entidad que habla y la
+//! línea; este módulo dispone la línea en la tipografía de cuerpo [`Face`],
+//! pinta un globo de papel con contorno de tinta y una cola que apunta hacia
+//! abajo, y lo muestra sobre quien habla, siempre mirando a la cámara, durante
+//! [`LIFETIME`] segundos, con un fundido en los últimos [`FADE`] segundos. Cada
+//! hablante tiene como máximo un globo: una línea nueva reemplaza a la
+//! anterior.
 
 use std::collections::HashMap;
 
@@ -17,40 +19,42 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::lettering::{self, Face};
 
-/// Most characters on one line of a bubble before it wraps.
+/// Cantidad máxima de caracteres en una línea de un globo antes de que se
+/// corte.
 pub const BUBBLE_CHARS: usize = 16;
-/// Seconds a bubble stays up.
+/// Segundos que un globo permanece visible.
 pub const LIFETIME: f32 = 3.0;
-/// Seconds at the end of [`LIFETIME`] over which the bubble fades out.
+/// Segundos del final de [`LIFETIME`] durante los cuales el globo se desvanece.
 pub const FADE: f32 = 0.6;
-/// Height of the tail's tip above the speaker's feet, in meters.
+/// Altura de la punta de la cola sobre los pies de quien habla, en metros.
 pub const HEIGHT: f32 = 2.2;
-/// Size of the lettering on a bubble texture, in texture pixels.
+/// Tamaño del rótulo en la textura de un globo, en píxeles de textura.
 pub const TEXT_PX: f32 = 38.0;
-/// Vertical distance between two lines of text, in texture pixels.
+/// Distancia vertical entre dos líneas de texto, en píxeles de textura.
 const LINE_PITCH: usize = 34;
-/// Vertical distance between two lines of text in the world, in meters.
-/// Bubbles keep this size whatever the texture resolution.
+/// Distancia vertical entre dos líneas de texto en el mundo, en metros. Los
+/// globos mantienen este tamaño sea cual sea la resolución de la textura.
 const LINE_PITCH_M: f32 = 0.264;
-/// Size of one texture pixel in the world, in meters.
+/// Tamaño de un píxel de textura en el mundo, en metros.
 pub const METERS_PER_PIXEL: f32 = LINE_PITCH_M / LINE_PITCH as f32;
 
-/// Ink outline width, in texture pixels.
+/// Ancho del contorno de tinta, en píxeles de textura.
 const OUTLINE: usize = 3;
-/// Paper between the outline and the lettering, across and down.
+/// Papel entre el contorno y el rótulo, a lo ancho y a lo alto.
 const PADDING_X: usize = 11;
 const PADDING_Y: usize = 9;
-/// Radius of the rounded corners, in texture pixels.
+/// Radio de las esquinas redondeadas, en píxeles de textura.
 const CORNER: f32 = 8.0;
-/// Rows the tail hangs below the body's outline.
+/// Filas que cuelga la cola por debajo del contorno del cuerpo.
 const TAIL: usize = 11;
 
-/// Paper and ink colors (sRGB).
+/// Colores del papel y de la tinta (sRGB).
 pub const PAPER: [u8; 3] = [241, 233, 212];
 pub const INK: [u8; 3] = [46, 36, 28];
 
-/// Splits `text` into lines of at most `max_chars` characters, breaking at
-/// spaces (runs of spaces collapse) and splitting words longer than a line.
+/// Divide `text` en líneas de como máximo `max_chars` caracteres, cortando en
+/// los espacios (los espacios seguidos se colapsan) y partiendo las palabras
+/// más largas que una línea.
 pub fn wrap(text: &str, max_chars: usize) -> Vec<String> {
     let max_chars = max_chars.max(1);
     let mut lines: Vec<String> = Vec::new();
@@ -58,7 +62,8 @@ pub fn wrap(text: &str, max_chars: usize) -> Vec<String> {
     let mut current_len = 0;
     for word in text.split_whitespace() {
         let mut chars: Vec<char> = word.chars().collect();
-        // Too long for any line: fill lines with pieces of it.
+        // Demasiado larga para cualquier línea: se llenan líneas con trozos de
+        // ella.
         while chars.len() > max_chars {
             if current_len > 0 {
                 lines.push(std::mem::take(&mut current));
@@ -84,29 +89,31 @@ pub fn wrap(text: &str, max_chars: usize) -> Vec<String> {
     lines
 }
 
-/// Pixel layout of one bubble texture.
+/// Disposición en píxeles de la textura de un globo.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BubbleLayout {
-    /// The wrapped lines, top to bottom.
+    /// Las líneas ya cortadas, de arriba abajo.
     pub lines: Vec<String>,
     pub width_px: usize,
-    /// Texture height: the body plus the tail.
+    /// Alto de la textura: el cuerpo más la cola.
     pub height_px: usize,
-    /// Height of the rounded body, outline included.
+    /// Alto del cuerpo redondeado, contorno incluido.
     pub body_height_px: usize,
-    /// Texture row of the top of the first line (negative when the line's
-    /// blank rows above its ink rise above the texture).
+    /// Fila de la textura donde empieza la primera línea (negativa cuando las
+    /// filas en blanco de la línea por encima de su tinta sobresalen de la
+    /// textura).
     pub text_top: isize,
 }
 
 impl BubbleLayout {
-    /// Size in the world, in meters (width, height).
+    /// Tamaño en el mundo, en metros (ancho, alto).
     pub fn size_m(&self) -> Vec2 {
         Vec2::new(self.width_px as f32, self.height_px as f32) * METERS_PER_PIXEL
     }
 }
 
-/// Lays out `text` in a bubble just large enough for its wrapped lines.
+/// Dispone `text` en un globo apenas lo bastante grande para sus líneas
+/// cortadas.
 pub fn layout_bubble(text: &str) -> BubbleLayout {
     let lines = wrap(text, BUBBLE_CHARS);
     let measured: Vec<_> = lines
@@ -114,8 +121,9 @@ pub fn layout_bubble(text: &str) -> BubbleLayout {
         .map(|l| lettering::measure(l, Face::Body, TEXT_PX))
         .collect();
     let text_width = measured.iter().map(|e| e.width as usize).max().unwrap_or(0);
-    // Inked rows of the whole block, so blank rows above the accents and
-    // below the descenders do not pad the bubble unevenly.
+    // Filas entintadas de todo el bloque, para que las filas en blanco por
+    // encima de los acentos y por debajo de los descendentes no rellenen el
+    // globo de forma irregular.
     let first = measured
         .first()
         .and_then(|e| e.ink)
@@ -140,13 +148,14 @@ pub fn layout_bubble(text: &str) -> BubbleLayout {
     }
 }
 
-/// Paints the bubble of `layout`: RGBA8 sRGB pixels, row by row from the
-/// top, transparent outside the bubble and its tail.
+/// Pinta el globo de `layout`: píxeles RGBA8 sRGB, fila por fila desde arriba,
+/// transparentes fuera del globo y su cola.
 pub fn paint_bubble(layout: &BubbleLayout) -> Vec<u8> {
     let (w, h, body) = (layout.width_px, layout.height_px, layout.body_height_px);
     let mut colors: Vec<Option<[u8; 3]>> = vec![None; w * h];
 
-    // Rounded body: ink where the outer shape is but the inset one is not.
+    // Cuerpo redondeado: tinta donde está la forma exterior pero no la
+    // interior.
     let outline = OUTLINE as f32;
     for y in 0..body {
         for x in 0..w {
@@ -164,7 +173,7 @@ pub fn paint_bubble(layout: &BubbleLayout) -> Vec<u8> {
         }
     }
 
-    // Tail: a triangle hanging from the bottom edge, opening it.
+    // Cola: un triángulo que cuelga del borde inferior y lo abre.
     let center = w as f32 / 2.0;
     for t in 0..=TAIL {
         let y = body - OUTLINE + t;
@@ -181,8 +190,8 @@ pub fn paint_bubble(layout: &BubbleLayout) -> Vec<u8> {
         }
     }
 
-    // Lettering, each line centered, its antialiased edges blended over the
-    // paper (or the outline, where it brushes it).
+    // Rótulo, cada línea centrada, con sus bordes con antialiasing mezclados
+    // sobre el papel (o sobre el contorno, donde lo roza).
     for (n, line) in layout.lines.iter().enumerate() {
         let coverage = lettering::rasterize(line, Face::Body, TEXT_PX);
         let left = (w as isize - coverage.width as isize) / 2;
@@ -210,8 +219,8 @@ pub fn paint_bubble(layout: &BubbleLayout) -> Vec<u8> {
         .collect()
 }
 
-/// Whether point `(x, y)` lies in a `w` x `h` rectangle at the origin with
-/// corners rounded by `radius`.
+/// Si el punto `(x, y)` cae en un rectángulo de `w` x `h` en el origen con
+/// esquinas redondeadas de radio `radius`.
 fn rounded(x: f32, y: f32, w: f32, h: f32, radius: f32) -> bool {
     if x < 0.0 || y < 0.0 || x > w || y > h {
         return false;
@@ -221,8 +230,8 @@ fn rounded(x: f32, y: f32, w: f32, h: f32, radius: f32) -> bool {
     (x - cx).powi(2) + (y - cy).powi(2) <= radius * radius
 }
 
-/// Opacity of a bubble `age` seconds old: opaque, then fading to zero over
-/// the last [`FADE`] seconds of its [`LIFETIME`].
+/// Opacidad de un globo de `age` segundos: opaco, y luego se desvanece hasta
+/// cero durante los últimos [`FADE`] segundos de su [`LIFETIME`].
 pub fn bubble_alpha(age: f32) -> f32 {
     if age <= LIFETIME - FADE {
         1.0
@@ -231,23 +240,23 @@ pub fn bubble_alpha(age: f32) -> f32 {
     }
 }
 
-/// Asks for `line` to be shown above `speaker`.
+/// Pide que se muestre `line` sobre `speaker`.
 #[derive(Message, Debug, Clone, PartialEq)]
 pub struct Say {
     pub speaker: Entity,
     pub line: String,
 }
 
-/// A bubble on screen: a child of its speaker.
+/// Un globo en pantalla: hijo de quien habla.
 #[derive(Component, Debug, Clone, PartialEq)]
 pub struct SpeechBubble {
     pub speaker: Entity,
     pub line: String,
-    /// Seconds since it appeared.
+    /// Segundos desde que apareció.
     pub age: f32,
 }
 
-/// Shows [`Say`] lines as speech bubbles.
+/// Muestra las líneas de [`Say`] como globos de diálogo.
 pub struct SpeechBubblePlugin;
 
 impl Plugin for SpeechBubblePlugin {
@@ -263,7 +272,7 @@ impl Plugin for SpeechBubblePlugin {
     }
 }
 
-/// Bubble textures by line, and the quad they are drawn on.
+/// Texturas de globo por línea, y el quad sobre el que se dibujan.
 #[derive(Resource, Default)]
 struct BubbleAssets {
     quad: Option<Handle<Mesh>>,
@@ -271,7 +280,8 @@ struct BubbleAssets {
 }
 
 impl BubbleAssets {
-    /// The texture of `line` and its size in meters, painted on first use.
+    /// La textura de `line` y su tamaño en metros, pintada la primera vez que
+    /// se usa.
     fn texture(&mut self, line: &str, images: &mut Assets<Image>) -> (Handle<Image>, Vec2) {
         if let Some(found) = self.textures.get(line) {
             return found.clone();
@@ -288,7 +298,7 @@ impl BubbleAssets {
             TextureFormat::Rgba8UnormSrgb,
             RenderAssetUsages::RENDER_WORLD,
         );
-        // Smooth lettering.
+        // Rótulo suave.
         image.sampler = ImageSampler::linear();
         let entry = (images.add(image), layout.size_m());
         self.textures.insert(line.to_string(), entry.clone());
@@ -296,14 +306,14 @@ impl BubbleAssets {
     }
 }
 
-/// Asset stores a bubble is built from.
+/// Almacenes de assets a partir de los cuales se construye un globo.
 type BubbleStores<'w> = (
     ResMut<'w, Assets<Image>>,
     ResMut<'w, Assets<Mesh>>,
     ResMut<'w, Assets<StandardMaterial>>,
 );
 
-/// Spawns a bubble for every [`Say`], replacing the speaker's previous one.
+/// Crea un globo por cada [`Say`], reemplazando el anterior de quien habla.
 fn show_bubbles(
     mut commands: Commands,
     mut said: MessageReader<Say>,
@@ -317,7 +327,7 @@ fn show_bubbles(
         if !speakers.contains(say.speaker) {
             continue;
         }
-        // One bubble per speaker: the new line replaces the old one.
+        // Un globo por hablante: la línea nueva reemplaza a la anterior.
         for (entity, bubble) in &bubbles {
             if bubble.speaker == say.speaker && !replaced.contains(&entity) {
                 commands.entity(entity).despawn();
@@ -332,7 +342,7 @@ fn show_bubbles(
         let material = materials.add(StandardMaterial {
             base_color_texture: Some(texture),
             alpha_mode: AlphaMode::Blend,
-            // Paper reads the same in sun and shade.
+            // El papel se ve igual al sol y a la sombra.
             unlit: true,
             ..default()
         });
@@ -352,7 +362,7 @@ fn show_bubbles(
     }
 }
 
-/// Fades bubbles out and removes them at the end of their life.
+/// Desvanece los globos y los elimina al final de su vida.
 fn age_bubbles(
     mut commands: Commands,
     time: Res<Time>,
@@ -365,8 +375,8 @@ fn age_bubbles(
             commands.entity(entity).despawn();
             continue;
         }
-        // Touch the material only while fading, so it is not re-uploaded
-        // every frame.
+        // Se toca el material solo durante el fundido, para que no se vuelva a
+        // subir en cada frame.
         let alpha = bubble_alpha(bubble.age);
         if alpha < 1.0
             && let Some(mut material) = materials.get_mut(&material.0)
@@ -376,7 +386,8 @@ fn age_bubbles(
     }
 }
 
-/// Turns every bubble around Y to face the camera, staying upright.
+/// Gira cada globo alrededor de Y para que mire a la cámara, sin dejar de estar
+/// derecho.
 fn face_camera(
     camera: Option<Single<&GlobalTransform, With<Camera3d>>>,
     speakers: Query<&GlobalTransform, Without<SpeechBubble>>,
@@ -392,7 +403,7 @@ fn face_camera(
         };
         let to_camera = eye - speaker.translation();
         let world = Quat::from_rotation_y(to_camera.x.atan2(to_camera.z));
-        // Undo the speaker's own turn, if any.
+        // Se deshace el propio giro de quien habla, si lo hay.
         transform.rotation = speaker.rotation().inverse() * world;
     }
 }
@@ -422,10 +433,10 @@ mod tests {
         assert_eq!(wrap("  a   b  ", 16), ["a b"]);
         assert!(wrap("", 16).is_empty());
         assert!(wrap("   ", 16).is_empty());
-        // Exactly the limit fits.
+        // Cabe exactamente el límite.
         assert_eq!(wrap("abcd efgh", 9), ["abcd efgh"]);
         assert_eq!(wrap("abcd efgh", 8), ["abcd", "efgh"]);
-        // A word longer than a line is split.
+        // Una palabra más larga que una línea se parte.
         assert_eq!(wrap("abcdefghij xy", 4), ["abcd", "efgh", "ij", "xy"]);
         let text = "¡Más despacio, que no es carrera! ¡Bárbaro! ¡Me llenó de tierra!";
         let lines = wrap(text, BUBBLE_CHARS);
@@ -444,13 +455,15 @@ mod tests {
         assert!(one.width_px >= advance("¡Epa!") + 2 * (OUTLINE + PADDING_X));
         assert_eq!(one.height_px, one.body_height_px + TAIL + 1 - OUTLINE);
 
-        // The longest dialogue line (40 characters) needs at most 3 lines.
+        // La línea de diálogo más larga (40 caracteres) necesita como máximo 3
+        // líneas.
         let long = layout_bubble("¡Más despacio, que no es carrera, che!!!");
         assert!(long.lines.len() <= 3, "{:?}", long.lines);
         for line in &long.lines {
             assert!(long.width_px >= advance(line) + 2 * (OUTLINE + PADDING_X));
         }
-        // Each extra line adds one line pitch, and the widest line sets the width.
+        // Cada línea extra agrega un paso de línea, y la línea más ancha fija
+        // el ancho.
         let (one_line, two) = (
             layout_bubble("Epa che"),
             layout_bubble("Epa che Epa che Epa che"),
@@ -466,15 +479,17 @@ mod tests {
 
     #[test]
     fn bubble_sizes_in_meters_stay_close_to_the_bitmap_bubbles() {
-        // One line is one 0.264 m pitch, as it was with the 12 px bitmap rows.
+        // Una línea es un paso de 0.264 m, igual que con las filas de mapa de
+        // bits de 12 px.
         let (one, two) = (
             layout_bubble("Epa che"),
             layout_bubble("Epa che Epa che Epa che"),
         );
         let pitch = (two.body_height_px - one.body_height_px) as f32 * METERS_PER_PIXEL;
         assert!((pitch - 0.264).abs() < 1e-3, "{pitch}");
-        // Sizes (meters) the bitmap bubbles had; IM Fell is narrower than the
-        // 6 px bitmap cells, so lines come out up to a third narrower.
+        // Tamaños (en metros) que tenían los globos de mapa de bits; IM Fell es
+        // más angosta que las celdas de mapa de bits de 6 px, así que las
+        // líneas salen hasta un tercio más angostas.
         for (text, width, height) in [
             ("¡Epa!", 0.858, 0.462),
             ("¡Más despacio, que no es carrera, che!!!", 2.178, 0.968),
@@ -496,7 +511,7 @@ mod tests {
         assert_eq!(px.len(), l.width_px * l.height_px * 4);
         let (w, body) = (l.width_px, l.body_height_px);
         let mid = w / 2;
-        // Rounded corners are clear; the edges are ink.
+        // Las esquinas redondeadas son transparentes; los bordes son de tinta.
         for (x, y) in [(0, 0), (w - 1, 0), (0, body - 1), (w - 1, body - 1)] {
             assert_eq!(pixel(&px, &l, x, y), CLEAR, "corner ({x}, {y})");
         }
@@ -505,20 +520,21 @@ mod tests {
             assert_eq!(pixel(&px, &l, k, body / 2), rgb(INK), "left {k}");
             assert_eq!(pixel(&px, &l, w - 1 - k, body / 2), rgb(INK), "right {k}");
         }
-        // Paper inside, between the outline and the lettering.
+        // Papel adentro, entre el contorno y el rótulo.
         assert_eq!(pixel(&px, &l, OUTLINE, body / 2), rgb(PAPER));
         assert_eq!(pixel(&px, &l, mid, OUTLINE), rgb(PAPER));
-        // The tail opens the bottom edge and ends in an ink tip.
+        // La cola abre el borde inferior y termina en una punta de tinta.
         assert_eq!(pixel(&px, &l, mid, body - 1), rgb(PAPER));
         assert_eq!(pixel(&px, &l, mid, l.height_px - 1), rgb(INK));
         assert_eq!(pixel(&px, &l, 0, l.height_px - 1), CLEAR);
         assert_eq!(pixel(&px, &l, w - 1, l.height_px - 1), CLEAR);
-        // The tail narrows toward its tip, row by row.
+        // La cola se angosta hacia su punta, fila por fila.
         let widths: Vec<usize> = (body..l.height_px)
             .map(|y| (0..w).filter(|&x| pixel(&px, &l, x, y)[3] != 0).count())
             .collect();
         assert!(widths.windows(2).all(|p| p[1] < p[0]), "{widths:?}");
-        // Clear or opaque, and never a color outside the paper-to-ink range.
+        // Transparente u opaco, y nunca un color fuera del rango que va del
+        // papel a la tinta.
         for p in px.chunks(4) {
             if p[3] == 0 {
                 assert_eq!(p, CLEAR);
@@ -531,8 +547,8 @@ mod tests {
         }
     }
 
-    /// Pixels strictly inside the outline whose red channel is at least
-    /// 12 below the paper's: lettering with coverage of 16 or more.
+    /// Píxeles estrictamente dentro del contorno cuyo canal rojo está al menos
+    /// 12 por debajo del papel: rótulo con una cobertura de 16 o más.
     fn lettered(px: &[u8], l: &BubbleLayout) -> Vec<(usize, usize)> {
         let inner = |x: usize, y: usize| {
             x > OUTLINE
@@ -558,7 +574,8 @@ mod tests {
         }
         let lettering = lettered(&px, &l);
         assert_eq!(lettering.len(), covered);
-        // Antialiased: edge pixels sit between paper and ink.
+        // Con antialiasing: los píxeles del borde quedan entre el papel y la
+        // tinta.
         let soft = lettering
             .iter()
             .filter(|&&(x, y)| {
@@ -567,8 +584,8 @@ mod tests {
             })
             .count();
         assert!(soft * 4 >= covered, "{soft} soft of {covered}");
-        // The lettering keeps paper between it and the outline, and sits
-        // centered down the bubble within two pixels.
+        // El rótulo mantiene papel entre él y el contorno, y queda centrado
+        // verticalmente en el globo con un margen de dos píxeles.
         let top = lettering.iter().map(|&(_, y)| y).min().unwrap();
         let bottom = lettering.iter().map(|&(_, y)| y).max().unwrap();
         assert!(top >= OUTLINE + PADDING_Y - 1, "top {top}");
@@ -662,7 +679,7 @@ mod tests {
             };
             assert_eq!(line_of(a), "¡Che!");
             assert_eq!(line_of(b), "¡Epa!");
-            // Textures are cached by line.
+            // Las texturas se guardan en caché por línea.
             assert_eq!(app.world().resource::<Assets<Image>>().len(), 2);
         }
 
@@ -689,7 +706,7 @@ mod tests {
                     .alpha()
             };
             assert_eq!(alpha(&app), 1.0);
-            // 2.7 s in: fading.
+            // A los 2.7 s: en pleno fundido.
             for _ in 0..26 {
                 app.update();
             }

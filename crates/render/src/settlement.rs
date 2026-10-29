@@ -1,39 +1,45 @@
-//! Rural settlements (ranchos, puestos, chacras and estancias), streamed
-//! with the terrain chunks like the fences and the roads.
+//! Asentamientos rurales (ranchos, puestos, chacras y estancias), cargados por
+//! streaming junto con los chunks de terreno, como los alambrados y los
+//! caminos.
 //!
-//! `pampa-core` lays them out ([`SettlementLayout`]). When a terrain chunk
-//! is built, every settlement whose hub lies in it is drawn as the chunk's
-//! children, and goes with it. A chunk streamed in while riding builds them
-//! on the async compute pool, like its ground, and they land a few frames
-//! later:
+//! `pampa-core` los dispone ([`SettlementLayout`]). Cuando se construye un
+//! chunk de terreno, cada asentamiento cuyo centro cae en él se dibuja como
+//! hijo del chunk y se va con él. Un chunk que llega por streaming mientras se
+//! cabalga los construye en el pool de cómputo asíncrono, como su suelo, y
+//! aparecen unos pocos frames después:
 //!
-//! - every house, barn and prop, built procedurally in its own space (see
-//!   [`buildings`] and [`props`]) as one mesh per [`Surface`] it wears, all
-//!   sharing one PBR material per surface ([`FacadeMaterials`]), built
-//!   with the facade kit shared with the towns ([`crate::facade`]);
-//! - the windpump's wheel apart, spinning as a [`WindmillRotor`] (turned by
-//!   the [`crate::TownPlugin`]);
-//! - the eucalyptus grove and the poplar row: textured trees of the shared
-//!   [`crate::tree::TreeKit`] (the towns' eucalipto and the field's álamo, a
-//!   Lombardy poplar's column), scaled to each spot's height;
-//! - the tracks (huellas) and the trodden yards as decals over the drawn
-//!   ground ([`track`]);
-//! - the abandoned wagons, in some yards and on a few road verges;
-//! - the Poly Haven yard props about the barns and wells ([`yard`]);
-//! - yard shrubs and flower beds by the houses ([`yard::yard_plants`]),
-//!   shared meshes of the tree kit ([`crate::tree::plants`]).
+//! - cada casa, galpón y objeto, construidos de forma procedural en su propio
+//!   espacio (ver [`buildings`] y [`props`]) como una malla por cada
+//!   [`Surface`] que llevan, todas compartiendo un material PBR por superficie
+//!   ([`FacadeMaterials`]), construidos con el kit de fachadas compartido con
+//!   los pueblos ([`crate::facade`]);
+//! - la rueda del molino de viento aparte, girando como un [`WindmillRotor`]
+//!   (que hace girar el [`crate::TownPlugin`]);
+//! - la isleta de eucaliptos y la hilera de álamos: árboles texturizados del
+//!   [`crate::tree::TreeKit`] compartido (el eucalipto de los pueblos y el
+//!   álamo del campo, la columna de un álamo de Lombardía), escalados a la
+//!   altura de cada lugar;
+//! - las huellas y los patios pisoteados, como decals sobre el suelo dibujado
+//!   ([`track`]);
+//! - los carros abandonados, en algunos patios y en unas pocas banquinas;
+//! - los objetos de patio de Poly Haven alrededor de los galpones y los pozos
+//!   ([`yard`]);
+//! - arbustos de patio y canteros de flores junto a las casas
+//!   ([`yard::yard_plants`]), mallas compartidas del kit de árboles
+//!   ([`crate::tree::plants`]).
 //!
-//! A structure kind with a model slot draws a third-party glTF model
-//! instead of its procedural mesh when `assets/models/third-party/<slot>/`
-//! holds one; the procedural mesh stands in while it loads and stays if it
-//! fails ([`slots`]).
+//! Un tipo de estructura con una ranura de modelo dibuja un modelo glTF de
+//! terceros en lugar de su malla procedural cuando
+//! `assets/models/third-party/<slot>/` contiene uno; la malla procedural lo
+//! sustituye mientras carga y se queda si falla ([`slots`]).
 //!
-//! Corral sides, windpumps, wells, carts and haystacks fade out of the
-//! camera's way ([`ThinOccluder`]); houses and barns stop the camera
-//! instead (the game's camera occluders), and so do trees, solid, round
-//! their trunks. Everything is drawn within a few
-//! shared [`VisibilityRange`]s: Bevy keeps a GPU slot for every distinct
-//! range for good (see [`crate::flora::TUFT_FADE_STEPS`]).
+//! Los lados de los corrales, los molinos de viento, los pozos, los carros y
+//! las parvas se desvanecen cuando estorban a la cámara ([`ThinOccluder`]); las
+//! casas y los galpones, en cambio, detienen la cámara (los oclusores de cámara
+//! del juego), y lo mismo hacen los árboles, sólidos alrededor de sus troncos.
+//! Todo se dibuja dentro de unos pocos [`VisibilityRange`] compartidos: Bevy
+//! conserva para siempre un lugar en la GPU por cada rango distinto (ver
+//! [`crate::flora::TUFT_FADE_STEPS`]).
 
 pub mod buildings;
 pub mod props;
@@ -41,8 +47,8 @@ pub mod slots;
 pub mod track;
 pub mod yard;
 
-/// The shared facade kit's mesh builder and materials, which the
-/// settlements were first built with.
+/// El constructor de mallas y los materiales del kit de fachadas compartido,
+/// con los que se construyeron originalmente los asentamientos.
 pub use crate::facade::{materials, shape};
 
 use bevy::camera::visibility::VisibilityRange;
@@ -77,14 +83,14 @@ use crate::tree::Species as TreeSpecies;
 use shape::Shape;
 use slots::SceneDress;
 
-/// The world's settlements. Insert before the plugin runs; without it none
-/// is drawn.
+/// Los asentamientos del mundo. Se insertan antes de que corra el plugin; sin
+/// ellos no se dibuja ninguno.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct WorldSettlements(pub SettlementLayout);
 
-/// A drawn piece of a settlement's structure, child of its chunk: which
-/// settlement (an index into [`SettlementLayout::settlements`]), which of its
-/// structures, and what it is.
+/// Una pieza dibujada de la estructura de un asentamiento, hija de su chunk:
+/// qué asentamiento (un índice en [`SettlementLayout::settlements`]), cuál de
+/// sus estructuras y qué es.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SettlementPart {
     pub settlement: u32,
@@ -93,43 +99,46 @@ pub struct SettlementPart {
 }
 
 impl SettlementPart {
-    /// The `settlement` of a roadside wreck, whose `structure` indexes
-    /// [`SettlementLayout::roadside`].
+    /// El `settlement` de un carro abandonado junto al camino, cuyo `structure`
+    /// es un índice en [`SettlementLayout::roadside`].
     pub const ROADSIDE: u32 = u32::MAX;
 }
 
-/// A yard prop's scene, child of its chunk: which settlement, and what.
+/// La escena de un objeto de patio, hija de su chunk: qué asentamiento y qué
+/// objeto.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct YardPart {
     pub settlement: u32,
     pub prop: YardProp,
 }
 
-/// A yard shrub or flower bed, child of its chunk: its settlement.
+/// Un arbusto de patio o cantero de flores, hijo de su chunk: su asentamiento.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct YardPlantPart(pub u32);
 
-/// A settlement's tracks, one decal mesh, child of its chunk.
+/// Las huellas de un asentamiento, una malla de decal, hija de su chunk.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TrackSurface(pub u32);
 
-/// A settlement's patio and corral floors, one decal mesh.
+/// Los pisos del patio y del corral de un asentamiento, una malla de decal.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct YardSurface(pub u32);
 
 #[derive(Component)]
 struct SettlementsLaid;
 
-/// Where houses, barns, tanks and haystacks stop being drawn, meters:
-/// well past the dust fog, near the streaming edge.
+/// Dónde dejan de dibujarse las casas, galpones, tanques y parvas, en metros:
+/// bastante más allá de la niebla de polvo, cerca del borde del streaming.
 pub const BUILDING_FAR: f32 = 400.0;
 const BUILDING_FADE: f32 = 25.0;
-/// Where corrals, windpumps and the small props stop being drawn.
+/// Dónde dejan de dibujarse los corrales, los molinos de viento y los objetos
+/// pequeños.
 pub const PROP_FAR: f32 = 220.0;
 const PROP_FADE: f32 = 20.0;
 
-/// The few shared ranges settlements are drawn within: buildings, props,
-/// and the trees' (the same as the wild trees').
+/// Los pocos rangos compartidos dentro de los cuales se dibujan los
+/// asentamientos: edificios, objetos y el de los árboles (el mismo que el de
+/// los árboles silvestres).
 pub fn ranges() -> [VisibilityRange; 3] {
     [
         visible_within(BUILDING_FAR, BUILDING_FADE),
@@ -138,19 +147,21 @@ pub fn ranges() -> [VisibilityRange; 3] {
     ]
 }
 
-/// The meshes and materials shared by every settlement beyond the surface
-/// materials: the windpump's wheel and the trees' kit.
+/// Las mallas y materiales compartidos por todos los asentamientos, además de
+/// los materiales de superficie: la rueda del molino de viento y el kit de los
+/// árboles.
 #[derive(Resource, Debug, Clone)]
 struct SettlementKit {
     rotor: Vec<(Surface, Handle<Mesh>)>,
-    /// The tree kit's eucalipto, then its álamo.
+    /// El eucalipto del kit de árboles, y luego su álamo.
     trees: [crate::tree::SpeciesKit; 2],
-    /// The yard shrubs and flower beds, the towns' ([`crate::tree`]).
+    /// Los arbustos de patio y canteros de flores, los de los pueblos
+    /// ([`crate::tree`]).
     plants: crate::tree::plants::PlantKit,
 }
 
-/// Draws the [`WorldSettlements`] chunk by chunk. Needs the
-/// [`crate::TerrainPlugin`]; the windpump wheels turn with the
+/// Dibuja los [`WorldSettlements`] chunk por chunk. Necesita el
+/// [`crate::TerrainPlugin`]; las ruedas de los molinos de viento giran con el
 /// [`crate::TownPlugin`].
 pub struct SettlementPlugin;
 
@@ -188,8 +199,9 @@ fn setup_kit(
     mut meshes: ResMut<Assets<Mesh>>,
     tree_kit: Option<Res<crate::tree::TreeKit>>,
 ) {
-    // Ordered after `setup_trees` by the plugin, so a missing kit means the
-    // tree plugin is not there: say so rather than draw no settlements.
+    // El plugin lo ordena después de `setup_trees`, así que si falta el kit es
+    // que el plugin de árboles no está: se avisa en lugar de no dibujar ningún
+    // asentamiento.
     let Some(tree_kit) = tree_kit else {
         warn!("tree kit missing; settlement kit not built, settlements will not be drawn");
         return;
@@ -209,7 +221,7 @@ fn setup_kit(
     });
 }
 
-/// What one chunk child is.
+/// Qué es un hijo de chunk.
 #[derive(Clone, Copy, Debug)]
 enum Tag {
     Part(SettlementPart),
@@ -219,9 +231,10 @@ enum Tag {
     Plant(u32),
 }
 
-/// What a piece draws: a shared mesh, a procedural mesh just built (added
-/// to the meshes when it is spawned), or a glTF model's scene (spawned now
-/// when `ready`, else once its model has loaded).
+/// Lo que dibuja una pieza: una malla compartida, una malla procedural recién
+/// construida (que se agrega a las mallas cuando se crea), o la escena de un
+/// modelo glTF (que se crea ahora cuando está `ready`, o si no una vez que su
+/// modelo se ha cargado).
 enum Look {
     Mesh(Handle<Mesh>, Handle<StandardMaterial>),
     Built(Mesh, Handle<StandardMaterial>),
@@ -232,7 +245,7 @@ enum Look {
     },
 }
 
-/// One entity to spawn under a chunk.
+/// Una entidad a crear bajo un chunk.
 struct Piece {
     look: Look,
     transform: Transform,
@@ -240,26 +253,27 @@ struct Piece {
     fade: Option<ThinOccluder>,
     rotor: Option<WindmillRotor>,
     tag: Tag,
-    /// Drawn only until its structure's slot model is ready.
+    /// Se dibuja solo hasta que el modelo de la ranura de su estructura esté
+    /// listo.
     stand_in: bool,
 }
 
-/// Whether a structure kind's slot model is used, and how far it has
-/// loaded.
+/// Si se usa el modelo de ranura de un tipo de estructura, y cuánto se ha
+/// cargado.
 #[derive(Clone, Debug)]
 enum SlotUse {
-    /// No model, or it failed: the procedural mesh only.
+    /// Sin modelo, o falló: solo la malla procedural.
     Procedural,
-    /// Loading: the procedural mesh stands in until it is ready.
+    /// Cargando: la malla procedural lo sustituye hasta que esté listo.
     Loading(Handle<WorldAsset>),
     Ready(Handle<WorldAsset>),
 }
 
-/// What drawing a settlement needs.
+/// Lo que necesita el dibujo de un asentamiento.
 struct Painter<'a> {
     terrain: &'a Terrain,
-    /// The drawn ground's height (the chunk mesh's, not the finer logic
-    /// terrain's), so nothing floats or sinks.
+    /// La altura del suelo dibujado (la de la malla del chunk, no la del
+    /// terreno lógico, más fino), para que nada flote ni se hunda.
     ground: &'a dyn Fn(GroundVec2) -> f32,
     surfaces: &'a FacadeMaterials,
     kit: &'a SettlementKit,
@@ -269,7 +283,7 @@ struct Painter<'a> {
     yard: Option<&'a YardModels>,
 }
 
-/// The yaw that turns a structure's own `+Z` toward its `front`.
+/// El giro que lleva el `+Z` propio de una estructura hacia su `front`.
 fn yaw(front: Side) -> Quat {
     use std::f32::consts::{FRAC_PI_2, PI};
     Quat::from_rotation_y(match front {
@@ -281,7 +295,7 @@ fn yaw(front: Side) -> Quat {
 }
 
 impl Painter<'_> {
-    /// Whether `kind`'s slot model is used, and how far it has loaded.
+    /// Si se usa el modelo de ranura de `kind`, y cuánto se ha cargado.
     fn slot_use(&self, kind: StructureKind) -> SlotUse {
         let (Some(slot), Some(models), Some(server)) = (kind.slot(), self.slots, self.server)
         else {
@@ -297,8 +311,8 @@ impl Painter<'_> {
         }
     }
 
-    /// The scene piece of `kind`'s slot model at `transform` (the
-    /// structure's own space), when it has one.
+    /// La pieza de escena del modelo de ranura de `kind` en `transform` (el
+    /// espacio propio de la estructura), cuando tiene uno.
     fn slot_scene(
         &self,
         kind: StructureKind,
@@ -334,9 +348,9 @@ impl Painter<'_> {
         })
     }
 
-    /// Where `structure` stands: its middle on the ground, turned to its
-    /// front; and how far its lowest corner lies under that, plus a margin,
-    /// for its walls and footings to reach down to.
+    /// Dónde se ubica `structure`: su medio sobre el suelo, girada hacia su
+    /// frente; y cuánto queda su esquina más baja por debajo de eso, más un
+    /// margen, hasta donde deben bajar sus paredes y cimientos.
     fn place(&self, structure: &Structure) -> (Transform, f32) {
         let fp = structure.footprint;
         let base = (self.ground)(fp.center());
@@ -354,7 +368,7 @@ impl Painter<'_> {
         (transform, base - low + 0.3)
     }
 
-    /// Every piece of settlement `index`.
+    /// Todas las piezas del asentamiento `index`.
     fn settlement(&self, index: u32, settlement: &Settlement) -> Vec<Piece> {
         let mut pieces = Vec::new();
         for (k, structure) in settlement.structures.iter().enumerate() {
@@ -429,7 +443,8 @@ impl Painter<'_> {
         pieces
     }
 
-    /// Roadside wreck `index`: lying along the road, a little tilted.
+    /// El carro abandonado junto al camino `index`: tendido a lo largo del
+    /// camino, algo inclinado.
     fn roadside(&self, index: u32, wreck: &RoadsideWreck) -> Vec<Piece> {
         let (wide, deep) = Settlement::WRECK_SIZE;
         let structure = Structure {
@@ -444,14 +459,14 @@ impl Painter<'_> {
             structure: index,
             kind: StructureKind::WreckedWagon,
         };
-        // Its own `x` along the road.
+        // Su propio `x` a lo largo del camino.
         let heading = Quat::from_rotation_y(wreck.along.y.atan2(wreck.along.x));
         let mut pieces = Vec::new();
         self.structure_turned(&structure, tag, Some(heading), &mut pieces);
         pieces
     }
 
-    /// A world-space decal: no range, like the roads.
+    /// Un decal en el espacio del mundo: sin rango, como los caminos.
     fn decal(&self, mesh: Mesh, surface: Surface, tag: Tag) -> Piece {
         Piece {
             look: Look::Built(mesh, self.surfaces.get(surface)),
@@ -468,10 +483,10 @@ impl Painter<'_> {
         self.structure_turned(structure, tag, None, out);
     }
 
-    /// Every piece of `structure`, turned by `heading` instead of toward
-    /// its front when given (a roadside wreck along its road). A kind
-    /// whose slot model is ready draws that model only; while it loads, the
-    /// procedural pieces stand in.
+    /// Todas las piezas de `structure`, giradas según `heading` en lugar de
+    /// hacia su frente cuando se indica (un carro abandonado a lo largo de su
+    /// camino). Un tipo cuyo modelo de ranura está listo dibuja solo ese
+    /// modelo; mientras carga, lo sustituyen las piezas procedurales.
     fn structure_turned(
         &self,
         structure: &Structure,
@@ -488,7 +503,7 @@ impl Painter<'_> {
             transform.rotation = heading;
         }
         if structure.kind == StructureKind::WreckedWagon {
-            // Settled askew where it broke down.
+            // Asentado torcido donde se rompió.
             let v = structure.variant;
             let (roll, pitch) = ((v % 7) as f32 - 3.0, (v / 7 % 5) as f32 - 2.0);
             transform.rotation *= Quat::from_rotation_x(roll * 0.012)
@@ -605,21 +620,23 @@ impl Painter<'_> {
                 add(props::prop(structure, drop), transform, 1, None, None);
             }
             StructureKind::WreckedWagon => {
-                // The carreta's frame stands in, sunk to its axles.
+                // El bastidor de la carreta lo sustituye, hundido hasta los
+                // ejes.
                 let fade = ThinOccluder::post(at, reach, self.terrain, structure.height + 1.0);
                 let sunk = transform * Transform::from_xyz(0.0, -0.25, 0.0);
                 add(props::prop(structure, drop), sunk, 1, Some(fade), None);
             }
             _ => {
-                // The well, the hitching post and the cart.
+                // El pozo, el palenque y el carro.
                 let fade = ThinOccluder::post(at, reach, self.terrain, structure.height + 1.0);
                 add(props::prop(structure, drop), transform, 1, Some(fade), None);
             }
         }
     }
 
-    /// The shared range, fade shape and rotor speed `structure`'s slot
-    /// model is drawn with: the same as its procedural pieces'.
+    /// El rango compartido, la forma de fundido y la velocidad del rotor con
+    /// los que se dibuja el modelo de ranura de `structure`: los mismos que los
+    /// de sus piezas procedurales.
     fn slot_look(
         &self,
         structure: &Structure,
@@ -653,9 +670,10 @@ impl Painter<'_> {
         }
     }
 
-    /// A planted tree on a tree spot: a tree of the shared tree kit (the
-    /// eucalipto, or the álamo for a poplar), picked by the spot's variant
-    /// and scaled evenly so it stands as tall as the spot.
+    /// Un árbol plantado en un lugar para árbol: un árbol del kit de árboles
+    /// compartido (el eucalipto, o el álamo para una hilera de álamos), elegido
+    /// según la variante del lugar y escalado de forma uniforme para que tenga
+    /// la altura del lugar.
     fn tree(&self, structure: &Structure, tag: SettlementPart, out: &mut Vec<Piece>) {
         let at = structure.footprint.center();
         let h = structure.height;
@@ -672,7 +690,8 @@ impl Painter<'_> {
                 (structure.variant % 360) as f32 / 57.3,
             ));
         let range = visible_within(TREE_FAR, TREE_FADE);
-        // A tree slot's model is fitted per meter of the spot's height.
+        // El modelo de una ranura de árbol se ajusta por metro de altura del
+        // lugar.
         let slot = self.slot_use(structure.kind);
         if !matches!(slot, SlotUse::Procedural) {
             let per_meter = Transform::from_scale(Vec3::splat(h));
@@ -689,9 +708,10 @@ impl Painter<'_> {
             }
         }
         let stand_in = matches!(slot, SlotUse::Loading(_));
-        // Stood to the spot's height; a trunk that would come out fatter than
-        // the collider core plants for it (a eucalyptus's, over 18 m) is
-        // slimmed, crown and all, so a rider is never inside the bark.
+        // Llevado a la altura del lugar; un tronco que saldría más grueso que
+        // el collider que core planta para él (el de un eucalipto, de más de
+        // 18 m) se adelgaza, con copa y todo, para que un jinete nunca quede
+        // dentro de la corteza.
         let k = h / variant.height;
         let girth = k.min(structure.trunk_radius() / species_kind.form().trunk_radius);
         let scaled = turned.with_scale(Vec3::new(girth, k, girth));
@@ -712,14 +732,15 @@ impl Painter<'_> {
     }
 }
 
-/// Whether chunk `coord` owns `settlement`: its hub lies in it (west and
-/// south edges in), as [`SettlementLayout::in_area`] counts.
+/// Si el chunk `coord` es dueño de `settlement`: su centro cae en él (bordes
+/// oeste y sur incluidos), según cuenta [`SettlementLayout::in_area`].
 fn owns(coord: ChunkCoord, size: f32, settlement: &Settlement) -> bool {
     ChunkCoord::containing(settlement.hub, size) == coord
 }
 
-/// What chunk `coord` lays: the settlements it owns and the roadside
-/// wrecks lying in it, each with its index in the layout.
+/// Lo que tiende el chunk `coord`: los asentamientos de los que es dueño y los
+/// carros abandonados junto al camino que caen en él, cada uno con su índice en
+/// la disposición.
 #[derive(Debug, Clone, Default)]
 struct ChunkShare {
     settlements: Vec<(u32, Settlement)>,
@@ -751,7 +772,7 @@ impl ChunkShare {
     }
 }
 
-/// Every piece of a chunk's `share`.
+/// Todas las piezas del `share` de un chunk.
 fn chunk_pieces(painter: &Painter, share: &ChunkShare) -> Vec<Piece> {
     let mut pieces: Vec<Piece> = share
         .settlements
@@ -764,13 +785,13 @@ fn chunk_pieces(painter: &Painter, share: &ChunkShare) -> Vec<Piece> {
     pieces
 }
 
-/// How fast a windpump's wheel turns, radians per second: a little
-/// different on every one.
+/// Qué tan rápido gira la rueda de un molino de viento, en radianes por
+/// segundo: un poco distinto en cada uno.
 fn rotor_speed(structure: &Structure) -> f32 {
     1.4 + (structure.variant % 89) as f32 / 89.0
 }
 
-/// What laying the settlements reads.
+/// Lo que lee el tendido de los asentamientos.
 type LayInputs<'a> = (
     Res<'a, WorldSettlements>,
     Res<'a, WorldTerrain>,
@@ -778,7 +799,7 @@ type LayInputs<'a> = (
     Option<Res<'a, ChunkDetail>>,
 );
 
-/// The models laying the settlements may draw.
+/// Los modelos que puede dibujar el tendido de los asentamientos.
 type LayModels<'a> = (
     Option<Res<'a, AssetServer>>,
     Option<Res<'a, SlotModels>>,
@@ -786,9 +807,9 @@ type LayModels<'a> = (
     Option<Res<'a, YardModels>>,
 );
 
-/// Everything a [`Painter`] borrows, owned, so a chunk's settlements can be
-/// built on the async compute pool. Cheap to clone: handles, and a terrain
-/// that shares its roads.
+/// Todo lo que toma prestado un [`Painter`], en propiedad, para que los
+/// asentamientos de un chunk se puedan construir en el pool de cómputo
+/// asíncrono. Barato de clonar: handles, y un terreno que comparte sus caminos.
 #[derive(Clone)]
 struct PaintKit {
     terrain: Terrain,
@@ -803,7 +824,7 @@ struct PaintKit {
 }
 
 impl PaintKit {
-    /// The pieces of a chunk's `share`.
+    /// Las piezas del `share` de un chunk.
     fn pieces(&self, share: &ChunkShare) -> Vec<Piece> {
         let (terrain, size, resolution) = (&self.terrain, self.size, self.resolution);
         let ground = |p: GroundVec2| mesh_height(terrain, p, size, resolution);
@@ -821,9 +842,10 @@ impl PaintKit {
     }
 }
 
-/// A streamed chunk's settlements, being built on the async compute pool.
-/// [`land_settlements`] spawns them when they are ready; a chunk despawned
-/// first drops it, which cancels the build.
+/// Los asentamientos de un chunk cargado por streaming, mientras se construyen
+/// en el pool de cómputo asíncrono. [`land_settlements`] los crea cuando están
+/// listos; un chunk eliminado antes lo descarta, lo que cancela la
+/// construcción.
 #[derive(Component)]
 struct PendingSettlements(Task<Vec<Piece>>);
 
@@ -834,13 +856,14 @@ impl PendingSettlements {
     }
 }
 
-/// Draws the settlements of each newly built chunk as its children. The
-/// chunks of the first fill are laid now, so the first frame shows them; a
-/// chunk streamed in while riding (its ground still building) builds them
-/// on the async compute pool, so laying an estancia never stalls a frame.
-/// It is at the edge of the load radius, past the buildings' range, so its
-/// settlements landing a few frames later are never seen. A chunk that
-/// vanishes before the commands apply simply gets none.
+/// Dibuja los asentamientos de cada chunk recién construido como hijos suyos.
+/// Los chunks del primer llenado se tienden ahora, para que el primer frame los
+/// muestre; un chunk que llega por streaming mientras se cabalga (con su suelo
+/// todavía en construcción) los construye en el pool de cómputo asíncrono, así
+/// que tender una estancia nunca traba un frame. Está en el borde del radio de
+/// carga, más allá del rango de los edificios, así que sus asentamientos, que
+/// aparecen unos pocos frames después, nunca se ven. Un chunk que desaparece
+/// antes de que se apliquen los comandos simplemente no recibe ninguno.
 #[allow(clippy::too_many_arguments)]
 fn lay_settlements(
     mut commands: Commands,
@@ -855,7 +878,8 @@ fn lay_settlements(
         return;
     };
     let size = world.0.chunk_size;
-    // Built afresh each frame there is work: the models load over time.
+    // Se construye de nuevo en cada frame en que hay trabajo: los modelos se
+    // cargan con el tiempo.
     *paint = None;
     for (chunk, coord, streamed) in &chunks {
         let mut laid = commands.entity(chunk);
@@ -889,7 +913,7 @@ fn lay_settlements(
     }
 }
 
-/// Spawns every chunk's settlements whose build finished.
+/// Crea los asentamientos de cada chunk cuya construcción terminó.
 fn land_settlements(
     mut commands: Commands,
     mut pending: Query<(Entity, &mut PendingSettlements)>,
@@ -904,8 +928,8 @@ fn land_settlements(
     }
 }
 
-/// Queues `pieces` to spawn as children of `chunk`, adding their freshly
-/// built meshes now.
+/// Encola `pieces` para crearlas como hijas de `chunk`, agregando ahora sus
+/// mallas recién construidas.
 fn spawn_pieces(chunk: &mut EntityCommands, pieces: Vec<Piece>, meshes: &mut Assets<Mesh>) {
     if pieces.is_empty() {
         return;
@@ -966,8 +990,8 @@ fn spawn_pieces(chunk: &mut EntityCommands, pieces: Vec<Piece>, meshes: &mut Ass
     });
 }
 
-/// Triangles `structure` draws, wheel and trees aside: what the budget
-/// tests and the startup log count.
+/// Triángulos que dibuja `structure`, sin contar la rueda ni los árboles: lo
+/// que cuentan los tests de presupuesto y el log de inicio.
 pub fn structure_triangles(structure: &Structure) -> usize {
     match structure.kind {
         StructureKind::MainHouse(_) | StructureKind::WorkerHouse(_) | StructureKind::Barn => {

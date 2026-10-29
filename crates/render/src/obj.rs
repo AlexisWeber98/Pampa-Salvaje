@@ -1,17 +1,17 @@
-//! A small Wavefront OBJ and MTL reader for the vegetation models.
+//! Un pequeño lector de Wavefront OBJ y MTL para los modelos de vegetación.
 //!
-//! It reads the "Ultimate Nature Pack by Quaternius, CC0 1.0; see
-//! assets/models/vegetation/quaternius-ultimate-nature/CREDITS.md". Only
-//! what those files use is supported.
+//! Lee el "Ultimate Nature Pack by Quaternius, CC0 1.0; see
+//! assets/models/vegetation/quaternius-ultimate-nature/CREDITS.md". Solo se
+//! admite lo que usan esos archivos.
 
 use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
 
-/// Diffuse colours (`Kd`) by material name.
+/// Colores difusos (`Kd`) por nombre de material.
 pub type MaterialColors = HashMap<String, [f32; 3]>;
 
-/// The triangles that use one material.
+/// Los triángulos que usan un material.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ObjGroup {
     pub material: String,
@@ -20,14 +20,14 @@ pub struct ObjGroup {
     pub uvs: Option<Vec<[f32; 2]>>,
 }
 
-/// A parsed OBJ file.
+/// Un archivo OBJ ya interpretado.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ObjModel {
     pub mtllib: Option<String>,
     pub groups: Vec<ObjGroup>,
 }
 
-/// Why a model could not be read.
+/// Por qué no se pudo leer un modelo.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ObjError {
     Io { path: String, error: String },
@@ -54,7 +54,7 @@ fn parse_error(line: usize, message: impl Into<String>) -> ObjError {
     }
 }
 
-/// `N` numbers from `words`, exactly.
+/// Exactamente `N` números tomados de `words`.
 fn numbers<const N: usize>(
     line: usize,
     mut words: std::str::SplitWhitespace,
@@ -73,8 +73,8 @@ fn numbers<const N: usize>(
     Ok(out)
 }
 
-/// Parses MTL text into each material's diffuse colour. Every statement
-/// but `newmtl` and `Kd` is ignored.
+/// Interpreta texto MTL y obtiene el color difuso de cada material. Se ignora
+/// toda instrucción salvo `newmtl` y `Kd`.
 pub fn parse_mtl(text: &str) -> Result<MaterialColors, ObjError> {
     let mut colors = MaterialColors::new();
     let mut current: Option<String> = None;
@@ -101,10 +101,11 @@ pub fn parse_mtl(text: &str) -> Result<MaterialColors, ObjError> {
     Ok(colors)
 }
 
-/// One face corner's position, texture and normal indices, zero-based.
+/// Los índices de posición, textura y normal de una esquina de cara, base cero.
 type Corner = (usize, Option<usize>, Option<usize>);
 
-/// A one-based (or negative, relative) OBJ index into a list of `len`.
+/// Un índice OBJ con base uno (o negativo, relativo) dentro de una lista de
+/// `len`.
 fn index(line: usize, word: &str, len: usize) -> Result<usize, ObjError> {
     let i: i64 = word
         .parse()
@@ -123,7 +124,7 @@ fn index(line: usize, word: &str, len: usize) -> Result<usize, ObjError> {
     }
 }
 
-/// A corner in the `v`, `v/vt`, `v//vn` or `v/vt/vn` form.
+/// Una esquina en la forma `v`, `v/vt`, `v//vn` o `v/vt/vn`.
 fn corner(line: usize, word: &str, lens: (usize, usize, usize)) -> Result<Corner, ObjError> {
     let mut parts = word.split('/');
     let v = index(line, parts.next().unwrap_or(""), lens.0)?;
@@ -136,10 +137,10 @@ fn corner(line: usize, word: &str, lens: (usize, usize, usize)) -> Result<Corner
     Ok((v, vt, vn))
 }
 
-/// Parses OBJ text into triangles grouped by material. Quads and n-gons
-/// are fan-triangulated from their first corner; faces without normals get
-/// their flat face normal. Statements other than `v`, `vt`, `vn`, `f`,
-/// `usemtl` and `mtllib` are ignored.
+/// Interpreta texto OBJ y obtiene triángulos agrupados por material. Los
+/// cuadriláteros y n-gonos se triangulan en abanico desde su primera esquina;
+/// las caras sin normales reciben su normal de cara plana. Se ignoran las
+/// instrucciones que no sean `v`, `vt`, `vn`, `f`, `usemtl` y `mtllib`.
 pub fn parse_obj(text: &str) -> Result<ObjModel, ObjError> {
     let (mut v, mut vt, mut vn) = (Vec::new(), Vec::new(), Vec::new());
     let mut model = ObjModel::default();
@@ -228,14 +229,14 @@ fn sub(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
 }
 
 impl ObjModel {
-    /// Triangles in every group.
+    /// Triángulos de todos los grupos.
     pub fn triangles(&self) -> usize {
         self.groups.iter().map(|g| g.positions.len() / 3).sum()
     }
 }
 
-/// Reads the OBJ file at `path` and the `mtllib` beside it. A missing or
-/// broken MTL leaves the colours empty rather than failing the model.
+/// Lee el archivo OBJ en `path` y el `mtllib` que está a su lado. Un MTL
+/// faltante o roto deja los colores vacíos en lugar de hacer fallar el modelo.
 pub fn load(path: &Path) -> Result<(ObjModel, MaterialColors), ObjError> {
     let read = |p: &Path| {
         std::fs::read_to_string(p).map_err(|e| ObjError::Io {
@@ -280,7 +281,7 @@ f 1//2 2//2 5//2
         let green = &model.groups[0];
         assert_eq!(green.material, "Green");
         assert_eq!(green.positions.len(), 6);
-        // Fan from the first corner: (1 2 3) and (1 3 4).
+        // Abanico desde la primera esquina: (1 2 3) y (1 3 4).
         assert_eq!(
             green.positions,
             vec![
@@ -317,12 +318,12 @@ f -3/1/ -2/2/ -1/3/
         let uvs = group.uvs.as_ref().unwrap();
         assert_eq!(uvs.len(), 12);
         assert_eq!(uvs[1], [1.0, 0.0]);
-        // No normals given: the face normal faces up for a counter-clockwise
-        // face seen from above (+Y).
+        // Sin normales: la normal de la cara apunta hacia arriba para una cara
+        // en sentido antihorario vista desde arriba (+Y).
         for n in &group.normals {
             assert!((n[1].abs() - 1.0).abs() < 1e-5, "{n:?}");
         }
-        // Negative indices count back from the last vertex.
+        // Los índices negativos cuentan hacia atrás desde el último vértice.
         assert_eq!(group.positions[9], [2.0, 0.0, 1.0]);
     }
 
