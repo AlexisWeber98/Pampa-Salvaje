@@ -280,7 +280,13 @@ impl World {
         bodies: &[Body],
         on_push: impl FnMut(Vec2),
     ) -> Vec2 {
-        self.resolve_among_above(collider, center, bodies, 0.0, on_push)
+        self.resolve_among_above(
+            collider,
+            center,
+            bodies,
+            StaticObstacles::ON_GROUND,
+            on_push,
+        )
     }
 
     /// [`Self::resolve_among`] for a body `clearance` meters above the
@@ -430,7 +436,7 @@ impl World {
         let fits = |p: Vec2| {
             self.bounds.contain(p, collider.radius).position == p
                 && !self.terrain.lagoons.iter().any(|l| l.is_bare(p))
-                && self.overlap(collider, p, 0.0) == 0.0
+                && self.overlap(collider, p, StaticObstacles::ON_GROUND) == 0.0
         };
         if fits(near) {
             return Some(near);

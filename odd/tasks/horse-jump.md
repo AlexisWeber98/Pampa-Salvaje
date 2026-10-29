@@ -88,3 +88,12 @@ Objective: a mounted player jumps over fences and other low obstacles. Branch `f
   - No test pins that `obstacle_heights` yields the same boxes as `obstacles()`.
   - The fauna.rs `elevation()` line is untested (L6).
   - `println!` in the new tests (repo convention; kept).
+- L20 (2026-10-29) Review follow-ups, staged for a separate commit:
+  - Ground sentinel: `StaticObstacles::ON_GROUND` is used by `near`, World resolve and clear_spot, and by `Rider::clearance()`. No test was added: a height ≤ 0 is never produced, per the user's lean-tests rule.
+  - Fixed the `landing()` doc (0.25 s).
+  - Used `saddle_pitch` instead of the duplicated expression.
+  - Renamed `RiderMotion.air` → `poise`, with a doc per field.
+  - Named `JUMP_FOLD_IN` and `JUMP_SIT_UP`.
+  - Asserted that `obstacle_heights` yields the same boxes as `obstacles()` (sabotaged: fails).
+  - Kept untested: the fauna.rs `elevation()` line, since its fixture loads the whole shipped world.
+  - Checks: clippy 0 warnings; core 470 and render 558 pass, capped at 5 GB.

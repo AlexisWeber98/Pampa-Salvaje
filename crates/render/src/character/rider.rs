@@ -264,20 +264,28 @@ pub const LANDING: f32 = 0.5;
 /// bottom of it.
 pub const LANDING_GIVE: (f32, f32) = (0.25, 1.0);
 
+/// The share of the flight (`0..1`) by which the rider is folded forward.
+pub const JUMP_FOLD_IN: f32 = 0.1;
+
+/// The share of the flight (`0..1`) at which he starts sitting up for the
+/// landing; he is upright again as the horse lands.
+pub const JUMP_SIT_UP: f32 = 0.7;
+
 /// How far forward the rider is folded (`0..1`) `flight` (`0..=1`) of the
-/// way through his horse's jump: folding as the horse takes off, folded
-/// over the top, and sitting up again for the landing.
+/// way through his horse's jump: folding as the horse takes off
+/// ([`JUMP_FOLD_IN`]), folded over the top, and sitting up again for the
+/// landing (from [`JUMP_SIT_UP`]).
 pub fn jump_fold(flight: f32) -> f32 {
     let smooth = |u: f32| {
         let u = u.clamp(0.0, 1.0);
         u * u * (3.0 - 2.0 * u)
     };
-    smooth(flight / 0.1) * (1.0 - smooth((flight - 0.7) / 0.3))
+    smooth(flight / JUMP_FOLD_IN) * (1.0 - smooth((flight - JUMP_SIT_UP) / (1.0 - JUMP_SIT_UP)))
 }
 
 /// How much of the landing (`0..1`) the rider takes `since` seconds after
-/// his horse lands: none at the touchdown, all of it a fifth of a second
-/// on, none again after [`LANDING`].
+/// his horse lands: none at the touchdown, all of it halfway through
+/// [`LANDING`] (a quarter of a second on), none again after it.
 pub fn landing(since: f32) -> f32 {
     if !(0.0..LANDING).contains(&since) {
         return 0.0;
@@ -567,14 +575,17 @@ pub struct RiderMotion {
     pub shrug: Spring,
     /// How far folded forward over a jump (`0..1`), easing.
     pub fold: Spring,
-    /// Whether the horse was in the air last frame, and how long since it
-    /// landed, seconds (none once the landing is over).
+    /// Whether the horse was in the air last frame.
     pub flying: bool,
+    /// How long since the horse landed, seconds (none once the landing is
+    /// over).
     pub landed: Option<f32>,
     /// The saddle's pitch along the horse, smoothed on the ground and held
-    /// over a jump, and how far into a jump the rider is (`0..1`), easing.
+    /// over a jump: the level he balances against.
     pub level: Spring,
-    pub air: Spring,
+    /// How much of his jump balance is on (`0..1`, not a height): whole
+    /// from the takeoff, easing out once landed.
+    pub poise: Spring,
     /// The rider's seed, for its own moments.
     pub seed: u32,
     pub speed: f32,
@@ -676,7 +687,7 @@ pub(super) fn pose_riders(
             .transform_point3(head.transform_point3(saddle.bit));
         if !m.primed {
             m.saddle = now.map(Spring::at);
-            m.level = Spring::at((tilt * Vec3::Y).y.clamp(-1.0, 1.0).asin());
+            m.level = Spring::at(saddle_pitch);
             m.bit = bit.to_array().map(Spring::at);
             m.free = THIGH_HAND.to_array().map(Spring::at);
             m.seed = riding.seed;
@@ -709,19 +720,18 @@ pub(super) fn pose_riders(
         // Over a jump he keeps his balance however the horse pitches: its
         // pitch since it left the ground (the `Torso` bone runs along its
         // own +Y, forward) is taken at the hips, eased in and out.
-        let heave = (tilt * Vec3::Y).y.clamp(-1.0, 1.0).asin();
         let level = if jumping > 0.0 {
             m.level.value
         } else {
-            m.level.step(heave, SADDLE_EASE, dt)
+            m.level.step(saddle_pitch, SADDLE_EASE, dt)
         };
         // At once on takeoff (the horse has not pitched yet), easing out
         // once landed.
         if jumping > 0.0 {
-            m.air = Spring::at(1.0);
+            m.poise = Spring::at(1.0);
         }
-        let air = m.air.step(0.0, JUMP_EASE, dt).clamp(0.0, 1.0);
-        let balance = JUMP_BALANCE * air * (heave - level);
+        let poise = m.poise.step(0.0, JUMP_EASE, dt).clamp(0.0, 1.0);
+        let balance = JUMP_BALANCE * poise * (saddle_pitch - level);
         let [rise, pitch, roll] = off;
         // Speed, braking and standing still.
         let accel = if dt > 0.0 {
@@ -752,7 +762,7 @@ pub(super) fn pose_riders(
             - LANDING_GIVE.0 * give
             + balance;
         // Over a jump the hips take the pitch (`balance`), not the spine.
-        let counter_pitch = m.counter[0].step(COUNTER.0 * pitch * (1.0 - air), COUNTER_EASE, dt);
+        let counter_pitch = m.counter[0].step(COUNTER.0 * pitch * (1.0 - poise), COUNTER_EASE, dt);
         let counter_roll = m.counter[1].step(COUNTER.1 * roll, COUNTER_EASE, dt);
         let slack = Vec3::new(
             bit.x - m.bit[0].step(bit.x, BIT_EASE, dt),

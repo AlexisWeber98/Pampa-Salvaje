@@ -37,6 +37,10 @@ impl StaticObstacles {
     /// Side of one index cell, in meters: about a house lot.
     pub const CELL: f32 = 16.0;
 
+    /// The clearance of a body on the ground ([`Self::near_above`]): every
+    /// footprint blocks it, however low.
+    pub const ON_GROUND: f32 = f32::NEG_INFINITY;
+
     /// The obstacles in `items`, indexed.
     pub fn new(items: Vec<Aabb>) -> Self {
         let mut obstacles = Self::default();
@@ -151,7 +155,7 @@ impl StaticObstacles {
     /// permanent ones in insertion order, then the streamed ones by chunk
     /// and index. A non-finite `area` finds nothing.
     pub fn near(&self, area: Aabb) -> Vec<&Aabb> {
-        self.near_above(area, f32::NEG_INFINITY)
+        self.near_above(area, Self::ON_GROUND)
     }
 
     /// Like [`Self::near`], leaving out the low footprints no taller than

@@ -2247,6 +2247,10 @@ pub(crate) mod tests {
     #[test]
     fn every_structure_blocks_up_to_its_own_height() {
         let (world, _, _, _, layout) = settled();
+        // The same boxes as `obstacles`, in the same order: settling with
+        // heights drops none.
+        let boxes: Vec<Aabb> = layout.obstacle_heights().map(|(o, _)| o).collect();
+        assert_eq!(boxes, layout.obstacles().collect::<Vec<_>>());
         let wreck_parts: Vec<Aabb> = layout
             .roadside
             .iter()

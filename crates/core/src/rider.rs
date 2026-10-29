@@ -1,6 +1,6 @@
 //! Kinematic rider (horse + outlaw) model.
 
-use crate::{AnimationState, Body, Circle, Ground, Heading, Travel, Vec2, World};
+use crate::{AnimationState, Body, Circle, Ground, Heading, StaticObstacles, Travel, Vec2, World};
 
 /// Longest step the game feeds the simulation, in seconds, so a hitch never
 /// teleports anything. [`Rider::step`] stays safe for longer steps anyway.
@@ -154,6 +154,17 @@ impl Rider {
         Some((aloft / (2.0 * Self::JUMP_SPEED / Self::GRAVITY)).clamp(0.0, 1.0))
     }
 
+    /// How high above the ground it is for collision: a jump's height, or
+    /// on the ground [`StaticObstacles::ON_GROUND`] (every footprint
+    /// blocks it).
+    fn clearance(&self) -> f32 {
+        if self.airborne() {
+            self.air
+        } else {
+            StaticObstacles::ON_GROUND
+        }
+    }
+
     /// The height it is at: the ground's plus any jump's.
     pub fn elevation(&self) -> f32 {
         self.height + self.air
@@ -211,7 +222,7 @@ impl Rider {
     /// over, sliding along walls.
     fn resolve_obstacles(&mut self, world: &World) {
         let mut normals = Vec::new();
-        self.position = world.resolve_above(self.collider, self.position, self.air, |n| {
+        self.position = world.resolve_above(self.collider, self.position, self.clearance(), |n| {
             normals.push(n);
         });
         for normal in normals {
@@ -244,7 +255,8 @@ impl Rider {
     pub fn keep_clear_of(&mut self, world: &World, bodies: &[Body]) {
         let mut normals = Vec::new();
         let (collider, position) = (self.collider, self.position);
-        self.position = world.resolve_among_above(collider, position, bodies, self.air, |n| {
+        let clearance = self.clearance();
+        self.position = world.resolve_among_above(collider, position, bodies, clearance, |n| {
             normals.push(n);
         });
         for normal in normals {
