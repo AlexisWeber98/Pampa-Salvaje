@@ -50,6 +50,9 @@ bevy = { version = "=0.20.0", default-features = false, features = [
     "gltf_animation",
     "png",
     "jpeg",
+    # The title and pause menus' music (`assets/menu/menu_2.mp3`).
+    "bevy_audio",
+    "mp3",
     "reflect_auto_register",
 ] }
 

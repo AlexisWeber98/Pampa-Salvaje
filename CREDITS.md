@@ -112,6 +112,24 @@ The other clothes are not third-party assets: `tools/mh2gltf.py` makes them from
 
 See `assets/characters/CREDITS.md` for the assets each character uses, what stands in for what, and which clip comes from which library.
 
+## Menu
+
+The title and pause menus' pictures are baked by `tools/menu_poster.sh` from the sources in `assets/menu/sources/` into `assets/menu/poster.png`, `band.png` and `vignette.png`. The band and the vignette are made from scratch.
+
+| Asset | Author / source | Licence | Where | Changes |
+|---|---|---|---|---|
+| Mapa geográfico de la República Argentina, 1882 | Francisco Latzina; lithograph by Curt Stiller. Wikimedia Commons, `File:Map_of_Argentina_by_Francisco_Latzina,_1882.jpg` (https://commons.wikimedia.org/wiki/File:Map_of_Argentina_by_Francisco_Latzina,_1882.jpg) | Public domain (PD-old, PD-scan; Public Domain Mark 1.0) | `assets/menu/sources/latzina_1882.jpg` | In the poster: edges shaved, black and white, mapped from ink to old paper, grain and dust |
+| Juan Bautista Bairoletto, 1928, restored | Winifreda police photograph (1928), restored by Roly Santos (2021); uploaded by Laromanacoop. Wikimedia Commons, `File:Juan_Bautista_Bairoletto.jpg` (https://commons.wikimedia.org/wiki/File:Juan_Bautista_Bairoletto.jpg) | CC BY-SA 4.0 | `assets/menu/sources/bairoletto_1928_restored.jpg` | Downscaled from 7350 px to 1200 px; in the poster, cropped, black and white and newsprint-hard. The derived poster is under CC BY-SA 4.0 as well |
+| Police photographs of Mate Cosido (Segundo David Peralta), profile and front | Argentine police photographs, 1930s (Peralta disappeared in 1940); author unknown. Copy from Infobae, "La increíble vida de Mate Cosido" (2023-07-28, https://www.infobae.com/sociedad/2023/07/28/la-increible-vida-de-mate-cosido-el-bandido-de-los-pobres-repartia-lo-robado-y-nunca-fue-atrapado/), which credits no source | Public domain in Argentina: photographs are protected for 25 years from publication (Ley 11.723 art. 34). A faithful copy adds no new rights. Assessed by the project, not by a licence notice | `assets/menu/sources/mate_cosido.png` | Converted from WebP to PNG; in the poster, the front shot cropped, black and white |
+| Menu music `menu_2.mp3` | The Pampa Seca project's own song | Same as the project | `assets/menu/menu_2.mp3` | None |
+
+## Fonts
+
+| Asset | Author / source | Licence | Where | Changes |
+|---|---|---|---|---|
+| Rye | Sorkin Type Co, Google Fonts (https://github.com/google/fonts/tree/main/ofl/rye) | SIL Open Font License 1.1 (`OFL.txt` beside it) | `assets/fonts/rye/` | None; the menus' headings and the poster's "SE BUSCA" |
+| IM Fell English, roman and italic | Igino Marini, Google Fonts (https://github.com/google/fonts/tree/main/ofl/imfellenglish) | SIL Open Font License 1.1 (`OFL.txt` beside it) | `assets/fonts/im_fell_english/` | None; the menus' text and the poster's lettering |
+
 ## Rules
 
 - Every free or open-source asset is credited in this file and next to its files, and the code that loads it says where it comes from in a doc comment. This applies even when the licence does not ask for credit.

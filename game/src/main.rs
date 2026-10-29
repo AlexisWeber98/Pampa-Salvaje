@@ -4,6 +4,7 @@ mod abilities;
 mod camera;
 mod complaints;
 mod shots;
+mod sound;
 // The cheat console: debug builds only, never in `--release`.
 #[cfg(debug_assertions)]
 mod console;
@@ -11,6 +12,7 @@ mod errand;
 mod fauna;
 mod first_person;
 mod life;
+mod menu;
 mod orbit;
 mod plant_collision;
 mod player;
@@ -366,22 +368,25 @@ fn main() {
         );
         info!("street lamps: {}", lamp_counts.join(", "));
         info!("fauna: {herds} herds ({head} head), {horses} corral horses; seeded in {seeded:.1?}");
-    })
-    .add_systems(Update, quit_on_escape);
+    });
+    // PAMPA_SHOTS=<file>: a dev screenshot tour (see `shots`), which skips
+    // the title screen.
+    let tour = shots::ShotsPlugin::from_env();
+    // The title screen, and Esc's pause menu, with their music.
+    app.add_plugins((
+        pampa_render::TypefacePlugin,
+        menu::MenuPlugin {
+            title: tour.is_none(),
+            settings: sound::settings_path(),
+        },
+    ));
     // Ctrl+Shift+F12: the cheat console (see `console`), in debug builds.
     #[cfg(debug_assertions)]
     app.add_plugins(console::ConsolePlugin);
-    // PAMPA_SHOTS=<file>: a dev screenshot tour (see `shots`).
-    if let Some(tour) = shots::ShotsPlugin::from_env() {
+    if let Some(tour) = tour {
         app.add_plugins(tour);
     }
     app.run();
-}
-
-fn quit_on_escape(keys: Res<ButtonInput<KeyCode>>, mut exit: MessageWriter<AppExit>) {
-    if keys.just_pressed(KeyCode::Escape) {
-        exit.write(AppExit::Success);
-    }
 }
 
 #[cfg(test)]

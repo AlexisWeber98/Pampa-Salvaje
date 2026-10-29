@@ -682,10 +682,15 @@ fn spawn_camera(mut commands: Commands) {
 }
 
 /// Locks and hides the cursor while the window has focus, so the mouse
-/// orbits the camera; frees it when the player switches away.
-fn grab_cursor(mut windows: Query<(&Window, &mut CursorOptions), With<PrimaryWindow>>) {
+/// orbits the camera; frees it when the player switches away or a menu is
+/// open.
+fn grab_cursor(
+    mut windows: Query<(&Window, &mut CursorOptions), With<PrimaryWindow>>,
+    menu: Option<Res<crate::menu::Menu>>,
+) {
+    let in_menu = menu.is_some_and(|m| m.screen.is_some());
     for (window, mut cursor) in &mut windows {
-        let (grab_mode, visible) = if window.focused {
+        let (grab_mode, visible) = if window.focused && !in_menu {
             (CursorGrabMode::Locked, false)
         } else {
             (CursorGrabMode::None, true)

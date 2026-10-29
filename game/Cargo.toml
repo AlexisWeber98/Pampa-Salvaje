@@ -11,3 +11,6 @@ pampa-core.workspace = true
 pampa-render.workspace = true
 pampa-content.workspace = true
 bevy.workspace = true
+# The sound settings file (`sound`).
+serde.workspace = true
+ron.workspace = true
