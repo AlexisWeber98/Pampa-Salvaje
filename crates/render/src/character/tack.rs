@@ -1373,6 +1373,7 @@ pub(crate) mod tests {
     use crate::character::horse::{HorseBody, TIED_IDLES};
     use crate::character::{CharacterVisual, Coat, FigureKind};
     use bevy::mesh::skinning::SkinnedMesh;
+    use bevy::platform::collections::HashMap;
 
     /// The signed distance from `p` to the nearest of `triangles` (over
     /// `positions`), positive on the side its winding faces.
@@ -1458,6 +1459,59 @@ pub(crate) mod tests {
         (positions, triangles)
     }
 
+    /// `triangles` (over `positions`) bucketed by 10 cm cells, to find the
+    /// nearest one to a point only among those within 10 cm of it.
+    struct Near<'a> {
+        positions: &'a [Vec3],
+        triangles: &'a [[u32; 3]],
+        cells: HashMap<IVec3, Vec<u32>>,
+    }
+
+    impl<'a> Near<'a> {
+        const CELL: f32 = 0.1;
+
+        fn new(positions: &'a [Vec3], triangles: &'a [[u32; 3]]) -> Self {
+            let cell = |p: Vec3| (p / Self::CELL).floor().as_ivec3();
+            let mut cells: HashMap<IVec3, Vec<u32>> = HashMap::default();
+            for (k, t) in triangles.iter().enumerate() {
+                let [a, b, c] = t.map(|i| positions[i as usize]);
+                let (lo, hi) = (cell(a.min(b).min(c)), cell(a.max(b).max(c)));
+                for x in lo.x..=hi.x {
+                    for y in lo.y..=hi.y {
+                        for z in lo.z..=hi.z {
+                            cells.entry(IVec3::new(x, y, z)).or_default().push(k as u32);
+                        }
+                    }
+                }
+            }
+            Self {
+                positions,
+                triangles,
+                cells,
+            }
+        }
+
+        /// [`signed_distance`] from `p` to the triangles, if the nearest
+        /// lies within 10 cm of it.
+        fn signed_distance(&self, p: Vec3) -> Option<f32> {
+            let at = (p / Self::CELL).floor().as_ivec3();
+            let mut near: Vec<[u32; 3]> = Vec::new();
+            for x in -1..=1 {
+                for y in -1..=1 {
+                    for z in -1..=1 {
+                        if let Some(ks) = self.cells.get(&(at + IVec3::new(x, y, z))) {
+                            near.extend(ks.iter().map(|&k| self.triangles[k as usize]));
+                        }
+                    }
+                }
+            }
+            near.sort_unstable();
+            near.dedup();
+            let s = signed_distance(p, self.positions, &near);
+            (!near.is_empty() && s.abs() <= Self::CELL).then_some(s)
+        }
+    }
+
     /// The worst clearances over `frames` frames of `app`'s saddled horse
     /// under `me`, within 10 cm of its skin: how far the tack's shells stand
     /// off it (negative: inside it), how far the rider's model does, and
@@ -1490,6 +1544,7 @@ pub(crate) mod tests {
             app.update();
             let drawn = cpu::drawn(app.world_mut(), Some(me));
             let (skin, tris) = horse_skin(&drawn);
+            let near = Near::new(&skin, &tris);
             for d in &drawn {
                 let (is_tack, is_rider) = (
                     shells.contains(&d.name.as_str()),
@@ -1499,13 +1554,12 @@ pub(crate) mod tests {
                     continue;
                 }
                 for p in d.positions.iter().step_by(3) {
-                    let s = signed_distance(*p, &skin, &tris);
                     // The nearest triangle's side only tells inside from
                     // outside near the skin (far off, a thin ear's back
                     // can be nearest).
-                    if s.abs() > 0.1 {
+                    let Some(s) = near.signed_distance(*p) else {
                         continue;
-                    }
+                    };
                     let worst = if is_tack { &mut tack } else { &mut rider };
                     *worst = worst.min(s);
                 }
@@ -1682,25 +1736,33 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_tack_clears_the_horse_through_every_gait() {
+    fn the_tack_and_the_rider_clear_the_horse_through_every_gait() {
+        use crate::character::horse::tests::ride;
+        use crate::character::rider::tests::seated;
         let rider = CharacterVisual::Mounted {
             rider: FigureKind::Protagonist,
             coat: Coat::Bayo,
         };
+        let (mut app, me) = seated(rider, 0.0);
         // Standing, walking, the stretched walk and the top speed: over a
         // whole stride or more each.
         for (speed, frames) in [(0.0, 8), (1.5, 24), (4.5, 12), (12.2, 12)] {
-            let (mut app, me) = saddled(rider, speed);
             for _ in 0..30 {
-                app.update();
+                ride(&mut app, me, speed);
             }
-            let (tack, _, cuts) = clearances(&mut app, me, frames);
-            println!("{speed} m/s: tack {tack:.4} m off the skin, cuts {cuts:?}");
+            let (tack, seat, cuts) = clearances(&mut app, me, frames);
+            println!(
+                "{speed} m/s: tack {tack:.4} m and the rider {seat:.4} m off the skin, cuts {cuts:?}"
+            );
             assert!(
                 tack > 0.002,
                 "{speed} m/s: the tack cuts into the horse ({tack})"
             );
             assert!(cuts.is_empty(), "{speed} m/s: {cuts:?}");
+            assert!(
+                seat > 0.0,
+                "{speed} m/s: the rider sinks into the horse ({seat})"
+            );
         }
     }
 
@@ -1708,28 +1770,36 @@ pub(crate) mod tests {
     fn a_tied_horse_keeps_its_tack_and_reins_clear_through_every_idle() {
         let (mut app, me) = saddled(CharacterVisual::Horse(Coat::Overo), 0.0);
         let carrier = app.world().get::<Children>(me).unwrap()[0];
-        let body = app.world().get::<HorseBody>(carrier).unwrap().clone();
-        // Each idle once it has faded in.
-        let mut checked = Vec::new();
-        let mut held = 0;
-        let mut last = None;
-        for _ in 0..6000 {
-            app.update();
+        // Each idle in turn: a seed that picks it for the next few seconds,
+        // then once it has faded in.
+        for idle in TIED_IDLES {
             let clock = app.world().resource::<Time>().elapsed_secs();
-            let idle = body.idle(clock);
-            held = if last == Some(idle) { held + 1 } else { 0 };
-            last = Some(idle);
-            if held == 30 && !checked.contains(&idle) {
-                let (tack, _, cuts) = clearances(&mut app, me, 8);
-                assert!(tack > 0.002, "{idle:?}: {tack}");
-                assert!(cuts.is_empty(), "{idle:?}: {cuts:?}");
-                checked.push(idle);
+            let mut body = app.world().get::<HorseBody>(carrier).unwrap().clone();
+            body.seed = (0..1000)
+                .find(|&seed| {
+                    let body = HorseBody {
+                        seed,
+                        ..body.clone()
+                    };
+                    (0..80).all(|k| body.idle(clock + k as f32 * 0.05) == idle)
+                })
+                .expect("a seed that picks it");
+            app.world_mut().entity_mut(carrier).insert(body.clone());
+            for _ in 0..30 {
+                app.update();
             }
-            if checked.len() == TIED_IDLES.len() {
-                break;
-            }
+            let (tack, _, cuts) = clearances(&mut app, me, 8);
+            let world = app.world_mut();
+            let weight = world
+                .query::<&crate::character::horse::HorseRig>()
+                .iter(world)
+                .find(|r| r.started)
+                .unwrap()
+                .weights[idle.index()];
+            assert!(weight > 0.9, "{idle:?} plays: {weight}");
+            assert!(tack > 0.002, "{idle:?}: {tack}");
+            assert!(cuts.is_empty(), "{idle:?}: {cuts:?}");
         }
-        assert_eq!(checked.len(), TIED_IDLES.len(), "{checked:?}");
         // Nobody rides it: the stirrups hang from the saddle, the reins
         // rest on the pommel.
         let tack = *app.world().get::<Tack>(carrier).unwrap();

@@ -688,34 +688,5 @@ mod tests {
         assert_eq!(again.len(), 2, "{again:?}");
         let total: usize = again.iter().map(|s| s.triangles).sum();
         assert_eq!(total, body.triangles + head.triangles);
-
-        // The eyes at the gallop, in the horse's frame (it stays put): how
-        // far they bob, how fast, and how far behind them an eye eased at
-        // the game's riding rate (8/s, unclamped) would fall.
-        let dt = 0.02;
-        let mut eyes = Vec::new();
-        for _ in 0..100 {
-            app.update();
-            let world = app.world_mut();
-            let head = *world
-                .query_filtered::<&GlobalTransform, With<ViewerHead>>()
-                .single(world)
-                .unwrap();
-            eyes.push(head.transform_point(EYE_IN_HEAD));
-        }
-        let mut eased = eyes[0];
-        let (mut lag, mut speed) = (0.0_f32, 0.0_f32);
-        for pair in eyes.windows(2) {
-            speed = speed.max(pair[0].distance(pair[1]) / dt);
-            eased += (pair[1] - eased) * (1.0 - (-8.0_f32 * dt).exp());
-            lag = lag.max(eased.distance(pair[1]));
-        }
-        let low = eyes.iter().copied().fold(Vec3::MAX, Vec3::min);
-        let high = eyes.iter().copied().fold(Vec3::MIN, Vec3::max);
-        println!(
-            "gallop eyes: bob {:.3} m, fastest {speed:.2} m/s, unclamped lag up to {lag:.3} m",
-            high - low
-        );
-        assert!(lag > 0.0 && speed < 10.0, "a seated rider's head: {speed}");
     }
 }

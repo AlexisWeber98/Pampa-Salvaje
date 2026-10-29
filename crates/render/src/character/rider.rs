@@ -1273,8 +1273,8 @@ pub(crate) mod tests {
     // --- with the shipped horse and rider ------------------------------------
 
     use crate::character::cpu;
-    use crate::character::horse::tests::{named, saddled_every};
-    use crate::character::tack::tests::{clearances, horse_skin, signed_distance};
+    use crate::character::horse::tests::{named, ride, saddled_every};
+    use crate::character::tack::tests::{horse_skin, signed_distance};
     use crate::character::tack::{HorsePiece, Strap, Tack};
     use crate::character::{CharacterVisual, Coat, FigureKind, HorseModel, Rig};
 
@@ -1492,75 +1492,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_rider_clears_the_horse_through_every_gait() {
-        let rider = CharacterVisual::Mounted {
-            rider: FigureKind::Protagonist,
-            coat: Coat::Bayo,
-        };
-        for (speed, frames) in [(0.0, 8), (1.5, 24), (4.5, 12), (12.2, 12)] {
-            let (mut app, me) = seated(rider, speed);
-            for _ in 0..30 {
-                app.update();
-            }
-            let (_, seat, _) = clearances(&mut app, me, frames);
-            println!("{speed} m/s: the rider {seat:.4} m off the horse's skin");
-            assert!(
-                seat > 0.0,
-                "{speed} m/s: the rider sinks into the horse ({seat})"
-            );
-        }
-    }
-
-    #[test]
-    fn through_a_jump_the_rider_stays_on_the_saddle() {
-        let rider = CharacterVisual::Mounted {
-            rider: FigureKind::Protagonist,
-            coat: Coat::Bayo,
-        };
-        let (mut app, me) = seated_every(rider, 12.2, 20);
-        let carrier = app.world().get::<Children>(me).unwrap()[0];
-        // The pelvis in the saddle's (`Torso` bone's) frame.
-        let seat = |app: &App| {
-            let world = app.world();
-            let model = named(world, carrier, "Rider model");
-            let [torso, pelvis] = [
-                named(world, carrier, "Torso"),
-                named(world, model, "pelvis"),
-            ];
-            let g = |e: Entity| world.get::<GlobalTransform>(e).unwrap().affine();
-            g(torso)
-                .inverse()
-                .transform_point3(Vec3::from(g(pelvis).translation))
-        };
-        let fly = |app: &mut App, flight: Option<f32>| {
-            app.world_mut()
-                .entity_mut(me)
-                .insert(crate::character::VisualPose {
-                    animation: pampa_core::AnimationState::Gallop,
-                    speed: 12.2,
-                    flight,
-                    ..default()
-                });
-            app.update();
-        };
-        for _ in 0..80 {
-            fly(&mut app, None);
-        }
-        let ground = seat(&app);
-        // A jump's whole flight, at its real pace (1.1 s of 20 ms frames).
-        for k in 0..55 {
-            fly(&mut app, Some(k as f32 / 54.0));
-            let off = seat(&app).distance(ground);
-            assert!(off < 0.15, "frame {k}: the rider is {off} m off the saddle");
-        }
-        for _ in 0..60 {
-            fly(&mut app, None);
-        }
-        assert!(seat(&app).distance(ground) < 0.15, "and back on it");
-    }
-
-    #[test]
-    fn over_a_jump_the_rider_folds_forward_follows_the_neck_and_sits_up_to_land() {
+    fn over_a_jump_the_rider_stays_on_the_saddle_folds_forward_and_sits_up_to_land() {
         let rider = CharacterVisual::Mounted {
             rider: FigureKind::Protagonist,
             coat: Coat::Bayo,
@@ -1589,6 +1521,19 @@ pub(crate) mod tests {
                 - body.transform_point3(g(torso).translation()).x;
             (back.x.atan2(back.y).to_degrees(), gap, reach)
         };
+        // The pelvis in the saddle's (`Torso` bone's) frame.
+        let seat = |app: &App| {
+            let world = app.world();
+            let model = named(world, carrier, "Rider model");
+            let [torso, pelvis] = [
+                named(world, carrier, "Torso"),
+                named(world, model, "pelvis"),
+            ];
+            let g = |e: Entity| world.get::<GlobalTransform>(e).unwrap().affine();
+            g(torso)
+                .inverse()
+                .transform_point3(Vec3::from(g(pelvis).translation))
+        };
         let fly = |app: &mut App, flight: Option<f32>| {
             app.world_mut()
                 .entity_mut(me)
@@ -1611,17 +1556,22 @@ pub(crate) mod tests {
             fly(&mut app, None);
             ground.push(measure(&app));
         }
-        // A jump's whole flight, at its real pace (1.1 s of 20 ms frames).
+        let saddle = seat(&app);
+        // A jump's whole flight, at its real pace (1.1 s of 20 ms frames),
+        // the rider staying on the saddle.
         let mut flight = Vec::new();
         for k in 0..55 {
             fly(&mut app, Some(k as f32 / 54.0));
             flight.push(measure(&app));
+            let off = seat(&app).distance(saddle);
+            assert!(off < 0.15, "frame {k}: the rider is {off} m off the saddle");
         }
         let mut landing = Vec::new();
         for _ in 0..100 {
             fly(&mut app, None);
             landing.push(measure(&app));
         }
+        assert!(seat(&app).distance(saddle) < 0.15, "and back on it");
         let (lean, reach) = (mean(&ground, 0), mean(&ground, 2));
         let all: Vec<_> = flight.iter().chain(&landing).collect();
         let jolt = all
@@ -1883,10 +1833,13 @@ pub(crate) mod tests {
             coat: Coat::Bayo,
         };
         let mut seen = Vec::new();
-        for (speed, frames) in [(12.2, 40), (1.5, 60), (0.0, 600)] {
-            let (mut app, me) = seated_every(rider, speed, 20);
+        // Walking first: slowing from the gallop would brake the hand
+        // toward the pommel. Standing, a whole loop of the horse's idle
+        // (3.33 s).
+        let (mut app, me) = seated_every(rider, 1.5, 20);
+        for (speed, frames) in [(1.5, 60), (12.2, 40), (0.0, 170)] {
             for _ in 0..80 {
-                app.update();
+                ride(&mut app, me, speed);
             }
             let (elbow, places, skin, saddle) = free_arm(&mut app, me, frames);
             let moved = places
@@ -1908,8 +1861,8 @@ pub(crate) mod tests {
             seen.push((spread(&elbow), moved, mean));
         }
         let [
-            (gallop_bend, gallop_moves, _),
             (walk_bend, walk_moves, walk_mean),
+            (gallop_bend, gallop_moves, _),
             _,
         ] = seen[..]
         else {
@@ -1982,10 +1935,10 @@ pub(crate) mod tests {
             rider: FigureKind::Protagonist,
             coat: Coat::Bayo,
         };
+        let (mut app, me) = seated_every(rider, 0.0, 20);
         for (speed, frames) in [(0.0, 10), (1.5, 30), (12.2, 30)] {
-            let (mut app, me) = seated_every(rider, speed, 20);
             for _ in 0..80 {
-                app.update();
+                ride(&mut app, me, speed);
             }
             let carrier = app.world().get::<Children>(me).unwrap()[0];
             let mut deepest = 0.0f32;

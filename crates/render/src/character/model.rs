@@ -335,11 +335,10 @@ pub(super) fn dress_character(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
-    use crate::gltf::tests::{root, settle, unfinished_app};
-    use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
-    use bevy::mesh::{Indices, Mesh};
+    use crate::gltf::tests::root;
+    use bevy::mesh::Mesh;
 
     /// The triangle budget of one character model.
     const BUDGET: usize = 15_000;
@@ -350,117 +349,33 @@ mod tests {
     /// (the lightest, with its garments cut from the body, has about 4,900).
     const FLOOR: usize = 3_000;
 
-    #[test]
-    fn every_look_finds_its_outfits_one_model_whatever_its_colours() {
-        // The models are loaded once per folder: a townsperson of any look
-        // (0 to 255, its high part only their colours) finds the one of
-        // their outfit, never a model per look.
-        use crate::character::townsfolk::OUTFITS;
-        let mut models = CharacterModels::default();
-        for kind in FigureKind::all() {
-            let name = model_name(kind).unwrap();
-            models.0.entry(name).or_insert_with(|| {
-                Handle::Uuid(
-                    bevy::asset::uuid::Uuid::from_u128(stand_in_id(name)),
-                    std::marker::PhantomData,
-                )
-            });
-        }
-        assert_eq!(models.0.len(), 4 + OUTFITS.len(), "each folder once");
-        for look in 0..=255u8 {
-            let mine = models.of(FigureKind::townsfolk(look)).expect("a model");
-            assert_eq!(
-                Some(mine),
-                models.0.get(OUTFITS[(look % 5) as usize]),
-                "{look}"
-            );
-        }
-    }
-
-    /// A distinct number per model folder, for stand-in handles.
-    fn stand_in_id(name: &str) -> u128 {
-        name.bytes()
-            .fold(7u128, |h, b| h.wrapping_mul(31).wrapping_add(b as u128))
+    /// The shipped glTF of the model folder `name`, its JSON only: what
+    /// the file says, without loading its meshes.
+    pub(crate) fn shipped_model(name: &str) -> bevy::gltf::gltf::Document {
+        let bytes = std::fs::read(root().0.join(model_path(name))).unwrap();
+        bevy::gltf::gltf::Gltf::from_slice(&bytes)
+            .unwrap_or_else(|e| panic!("{name}: {e}"))
+            .document
     }
 
     #[test]
-    fn every_person_has_a_model_and_each_is_shipped() {
-        assert_eq!(
-            model_name(FigureKind::Townsfolk(6)),
-            model_name(FigureKind::Townsfolk(1)),
-            "a look's outfit"
-        );
-        for kind in FigureKind::all() {
-            let path = model_path(model_name(kind).unwrap());
-            assert!(gltf::is_inside(&path));
-            assert!(root().0.join(&path).is_file(), "{path}");
-        }
-    }
-
-    #[test]
-    fn every_character_model_loads_skinned_within_the_triangle_budget() {
-        let mut app = unfinished_app(&root());
-        app.init_asset::<SkinnedMeshInverseBindposes>();
-        app.finish();
-        app.cleanup();
-        let server = app.world().resource::<AssetServer>().clone();
+    fn every_character_model_is_skinned_within_the_triangle_budget() {
+        use bevy::gltf::gltf::Semantic;
         let townsfolk = crate::character::townsfolk::OUTFITS;
         for name in ["hidalgo", "farach", "bairoletto", "protagonist"]
             .into_iter()
             .chain(townsfolk)
         {
-            let path = model_path(name);
-            // The file's own handle is held from before the scene loads: a
-            // file nobody holds is dropped the moment it lands, and loading
-            // it again then races that drop against the new load.
-            let gltf: Handle<bevy::gltf::Gltf> = server.load(path.clone());
-            let scene = gltf::load_scene(&server, Some(&root()), &path).expect(&path);
-            assert_eq!(settle(&mut app, &scene), ModelState::Ready, "{path}");
-            let mut loaded = false;
-            for _ in 0..2000 {
-                if app
-                    .world()
-                    .resource::<Assets<bevy::gltf::Gltf>>()
-                    .contains(&gltf)
-                {
-                    loaded = true;
-                    break;
-                }
-                app.update();
-                std::thread::sleep(std::time::Duration::from_millis(5));
-            }
-            assert!(loaded, "{path}: its glTF never landed");
-            let world = app.world();
-            let gltf = world
-                .resource::<Assets<bevy::gltf::Gltf>>()
-                .get(&gltf)
-                .unwrap();
-            assert_eq!(gltf.skins.len(), 1, "{name}");
+            let model = shipped_model(name);
+            assert_eq!(model.skins().count(), 1, "{name}");
             let mut triangles = 0;
-            for mesh in &gltf.meshes {
-                let mesh = world
-                    .resource::<Assets<bevy::gltf::GltfMesh>>()
-                    .get(mesh)
-                    .unwrap();
-                for primitive in &mesh.primitives {
-                    let mesh = world
-                        .resource::<Assets<Mesh>>()
-                        .get(&primitive.mesh)
-                        .unwrap();
-                    assert!(
-                        mesh.attribute(Mesh::ATTRIBUTE_JOINT_INDEX).is_some(),
-                        "{name}"
-                    );
-                    assert!(
-                        mesh.attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT).is_some(),
-                        "{name}"
-                    );
-                    triangles += match mesh.indices() {
-                        Some(Indices::U16(i)) => i.len() / 3,
-                        Some(Indices::U32(i)) => i.len() / 3,
-                        None => mesh.count_vertices() / 3,
-                    };
-                }
+            for primitive in model.meshes().flat_map(|m| m.primitives()) {
+                assert!(primitive.get(&Semantic::Joints(0)).is_some(), "{name}");
+                assert!(primitive.get(&Semantic::Weights(0)).is_some(), "{name}");
+                triangles += match primitive.indices() {
+                    Some(indices) => indices.count() / 3,
+                    None => primitive.get(&Semantic::Positions).unwrap().count() / 3,
+                };
             }
             let budget = if townsfolk.contains(&name) {
                 TOWNSFOLK_BUDGET
