@@ -753,25 +753,6 @@ mod tests {
     }
 
     #[test]
-    fn no_animal_ever_picks_the_jump_clip() {
-        // Only a ridden horse in flight plays it ([`Clip::GallopJump`]):
-        // cattle and corral horses never leave the ground.
-        let animals = [Animal::Cow(CowCoat::Hereford), Animal::Horse(Coat::Overo)];
-        for animal in animals {
-            for gait in [Gait::Stand, Gait::Graze, Gait::Walk, Gait::Run] {
-                for speed in [0.0, 0.5, 4.0, 12.0] {
-                    for seed in 0..20 {
-                        for clock in [0.0, 15.0, 40.0] {
-                            let clip = clip_for(animal, &standing(gait, speed), seed, clock);
-                            assert_ne!(clip, Clip::GallopJump, "{animal:?} {gait:?}");
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    #[test]
     fn fauna_states_map_to_clips() {
         let cow = Animal::Cow(CowCoat::Hereford);
         let clip = |animal, gait, speed| clip_for(animal, &standing(gait, speed), 3, 0.0);

@@ -690,12 +690,6 @@ mod tests {
         }
         assert!(tuck(0.0).abs() < 1e-6 && tuck(1.0).abs() < 1e-6);
         assert!((tuck(0.5) - 1.0).abs() < 1e-6);
-        // Smooth: no step anywhere along the flight.
-        for k in 0..100 {
-            let (a, b) = (k as f32 / 100.0, (k + 1) as f32 / 100.0);
-            assert!((push(b) - push(a)).abs() < 0.07, "push at {a}");
-            assert!((tuck(b) - tuck(a)).abs() < 0.07, "tuck at {a}");
-        }
     }
 
     #[test]

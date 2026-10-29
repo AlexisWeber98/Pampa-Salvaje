@@ -75,3 +75,16 @@ Objective: a mounted player jumps over fences and other low obstacles. Branch `f
   - Tests: 4 new plus 1 changed, all RED→GREEN and sabotaged. Parent spot check: 7 pass. Workspace 212+32+470+559; clippy 0.
   - Parent checked the renders by eye.
   - Risks: takeoff rears within ~60 ms; gait lean changes. Both to check in the playtest.
+- L18 (2026-10-29) The user committed ee59081 (feat: implement horse jumping mechanics).
+  - Independent verifier (Opus) over the whole feature: no blockers, S1–S8 met. It probed the takeoff window (6–8.5 m clears), the 84 %/85 % threshold, the 1.6 m rail, landing push-out, and S8 against the base (seat unchanged, lean swing narrower). Every `gallop_max` consumer behaves sensibly at 49 km/h. Peak RSS: core tests ~19 MB, render jump tests ~230 MB.
+  - User rule (2026-10-29): "que los test no tengan demasiada sobreingeniería innecesaria, si algo no puede ocurrir de ningun modo que no se testee, no puede ser que un rtest me cuelgue la PC y me usa más de 5GB de RAM". Applied as a follow-up, uncommitted: removed `no_animal_ever_picks_the_jump_clip` (it tested what cannot happen) and the 100-step smoothness loop in the push/tuck envelope test.
+  - Native review: assess high (item 3 plus the glbs). The user granted it: lineage review-2f641ee0eae6d95f, lenses readability and reliability.
+- L19 (2026-10-29) Native review review-2f641ee0eae6d95f approved and acknowledged; authority burned. Non-blocking follow-ups:
+  - Two "on the ground" sentinels: `near` uses NEG_INFINITY, resolve and clear_spot use 0.0. A footprint pushed with height ≤ 0 would silently stop blocking.
+  - The `landing()` doc says the peak is "a fifth of a second on"; it is really at 0.25 s.
+  - The saddle pitch expression is duplicated outside `saddle_attitude`.
+  - `RiderMotion.air` is a 0..1 spring, while core `Rider::air` is in meters; `air` and `landed` share one doc comment.
+  - `jump_fold` uses bare literals, and its smoothstep duplicates `gait::push`.
+  - No test pins that `obstacle_heights` yields the same boxes as `obstacles()`.
+  - The fauna.rs `elevation()` line is untested (L6).
+  - `println!` in the new tests (repo convention; kept).
