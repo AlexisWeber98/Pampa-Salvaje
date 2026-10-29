@@ -12,7 +12,7 @@ use pampa_core::{
     Lagoon, PlaceKind, RailLine, RoadNetwork, Terrain, TownLayout, WorldConfig, place_lagoons,
     place_towns,
 };
-use pampa_render::font;
+use pampa_render::lettering::{self, Face};
 
 /// The world to build, its towns, and what went wrong reading them.
 #[derive(Debug, Clone)]
@@ -89,7 +89,7 @@ pub fn load_world(path: &Path) -> LoadedWorld {
     }
 }
 
-/// A warning for each station sign of `town` the font cannot fully draw.
+/// A warning for each station sign of `town` the typefaces cannot fully draw.
 fn unsupported_glyphs(town: &TownLayout) -> Vec<String> {
     let stations = town
         .places()
@@ -98,14 +98,16 @@ fn unsupported_glyphs(town: &TownLayout) -> Vec<String> {
     let mut warnings = Vec::new();
     for place in stations {
         let mut unsupported: Vec<char> = Vec::new();
-        for c in place.name.chars().filter(|&c| !font::supports(c)) {
+        for c in place.name.chars().filter(|&c| {
+            !(lettering::supports(Face::Body, c) && lettering::supports(Face::Display, c))
+        }) {
             if !unsupported.contains(&c) {
                 unsupported.push(c);
             }
         }
         if !unsupported.is_empty() {
             warnings.push(format!(
-                "towns: the station sign \"{}\" uses characters the font cannot draw: {unsupported:?}",
+                "towns: the station sign \"{}\" uses characters the typefaces cannot draw: {unsupported:?}",
                 place.name
             ));
         }
@@ -862,13 +864,13 @@ mod tests {
 
         let path = temp_towns(
             "glyphs",
-            r#"(towns: [(name: "Ciudad #1", blocks: (3, 3), block_size: 40.0, street_width: 10.0,
+            r#"(towns: [(name: "Ciudad 漢1", blocks: (3, 3), block_size: 40.0, street_width: 10.0,
                 railway: Some((side: North, offset: 24.0)))])"#,
         );
         let loaded = load_world(&path);
-        assert_eq!(loaded.towns[0].name, "Ciudad #1");
+        assert_eq!(loaded.towns[0].name, "Ciudad 漢1");
         assert!(
-            loaded.warnings.iter().any(|w| w.contains("'#'")),
+            loaded.warnings.iter().any(|w| w.contains("'漢'")),
             "{:?}",
             loaded.warnings
         );

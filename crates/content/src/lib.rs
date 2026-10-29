@@ -1,4 +1,4 @@
-//! Editable game content for Pampa Seca, read from RON files under `assets/`.
+//! Editable game content for Pampa Salvaje, read from RON files under `assets/`.
 //!
 //! Content is data, not code: writers edit `assets/dialogue/*.ron` (lines)
 //! and `assets/world/towns.ron` (towns), and the game picks the changes up
@@ -6,10 +6,10 @@
 //! validates; it knows nothing about how anything is drawn and must never
 //! depend on Bevy.
 //!
-//! Which characters a line may use is decided by the bitmap font in
-//! `pampa-render`. This crate cannot see the font, so it offers
+//! Which characters a line may use is decided by the body typeface in
+//! `pampa-render`. This crate cannot see the typeface, so it offers
 //! [`BumpLines::unsupported_chars`] with a caller-supplied predicate; the
-//! game checks the shipped file against the real font in its tests and
+//! game checks the shipped file against the real typeface in its tests and
 //! warns at runtime.
 
 use std::fmt;

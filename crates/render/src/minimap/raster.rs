@@ -12,7 +12,7 @@ use pampa_core::{
     StructureKind, TownLayout, Track, Vec2 as GroundVec2,
 };
 
-use crate::font::{self, GLYPH_HEIGHT};
+use crate::lettering::{self, Face};
 use crate::terrain::hash2;
 
 /// Meters of open ground shown around the town's extent.
@@ -134,6 +134,22 @@ impl Canvas {
         self.pixels[i..i + 4].copy_from_slice(&color);
     }
 
+    /// Blends `color` over the pixel at `(x, y)` by `alpha` (0..=255); off
+    /// the canvas does nothing.
+    pub fn blend(&mut self, x: i32, y: i32, color: [u8; 4], alpha: u8) {
+        if x < 0 || y < 0 || x as usize >= self.size || y as usize >= self.size {
+            return;
+        }
+        let i = (y as usize * self.size + x as usize) * 4;
+        let a = u32::from(alpha);
+        for (dst, &src) in self.pixels[i..i + 3].iter_mut().zip(&color) {
+            *dst = ((u32::from(*dst) * (255 - a) + u32::from(src) * a + 127) / 255) as u8;
+        }
+        let dst_a = u32::from(self.pixels[i + 3]);
+        self.pixels[i + 3] =
+            (dst_a + (u32::from(color[3]) - dst_a.min(u32::from(color[3]))) * a / 255) as u8;
+    }
+
     /// Fills the pixels whose centers fall inside `[min, max)` (map pixels).
     pub fn fill_rect(&mut self, min: Vec2, max: Vec2, color: [u8; 4]) {
         let (x0, y0) = ((min.x - 0.5).ceil() as i32, (min.y - 0.5).ceil() as i32);
@@ -199,8 +215,12 @@ pub struct Overlay<'a> {
 /// The color of a platform.
 const PLATFORM: [u8; 4] = [184, 174, 152, 255];
 
-/// Pixel scale of place initials on the map.
-pub const LABEL_SCALE: usize = 2;
+/// Pixel size of place initials and the title on the map (a capital stands
+/// about 14 px tall, as the old 7-row bitmap did at 2x).
+pub const LABEL_PX: f32 = 21.0;
+/// Pixel size of the small lettering: the compass letters and a title too
+/// long for [`LABEL_PX`].
+pub const SMALL_LABEL_PX: f32 = 11.0;
 
 /// Paints the town once: paper, streets, plaza, railway, the railway line's
 /// `links` where they cross the frame, buildings colored by kind and each
@@ -530,44 +550,47 @@ fn track_line(map: &mut Canvas, s: Vec2, e: Vec2, ties: bool) {
 }
 
 /// Writes the town's name, in capitals, centered along the top edge; at
-/// half size when it is too long for the map.
+/// [`SMALL_LABEL_PX`] when it is too long for the map.
 fn title(map: &mut Canvas, name: &str) {
     let text = name.to_uppercase();
     let size = map.size as f32;
-    let fits = (font::text_width(&text) * LABEL_SCALE) as f32 <= size - 48.0;
-    let scale = if fits { LABEL_SCALE } else { 1 };
-    label_scaled(map, &text, Vec2::new(size / 2.0, 18.0), scale);
+    let fits = lettering::measure(&text, Face::Body, LABEL_PX).width as f32 <= size - 48.0;
+    let px = if fits { LABEL_PX } else { SMALL_LABEL_PX };
+    label_scaled(map, &text, Vec2::new(size / 2.0, 18.0), px);
 }
 
-/// Writes `text` in ink at [`LABEL_SCALE`], centered on `center`, over a
+/// Writes `text` in ink at [`LABEL_PX`], centered on `center`, over a
 /// one-pixel paper halo so it reads on top of buildings.
 fn label(map: &mut Canvas, text: &str, center: Vec2) {
-    label_scaled(map, text, center, LABEL_SCALE);
+    label_scaled(map, text, center, LABEL_PX);
 }
 
-/// [`label`] at pixel scale `scale`.
-fn label_scaled(map: &mut Canvas, text: &str, center: Vec2, scale: usize) {
-    let s = scale as i32;
-    let (first, last) = font::ink_rows(text).unwrap_or((0, GLYPH_HEIGHT - 1));
-    let w = font::text_width(text) as i32 * s;
-    let h = (last - first + 1) as i32 * s;
-    let (left, top) = (center.x as i32 - w / 2, center.y as i32 - h / 2);
-    let mut pixels = Vec::new();
-    font::for_each_pixel(text, |x, y| {
-        for dy in 0..s {
-            for dx in 0..s {
-                pixels.push((left + x as i32 * s + dx, top + (y - first) as i32 * s + dy));
-            }
+/// Coverage at which a pixel earns a paper halo around it.
+const HALO_COVERAGE: u8 = 96;
+
+/// [`label`] at `px` pixels: the letters' ink bounds are centered on
+/// `center`, a paper halo goes under every well-covered pixel, and the ink
+/// blends over it by coverage.
+fn label_scaled(map: &mut Canvas, text: &str, center: Vec2, px: f32) {
+    let extent = lettering::measure(text, Face::Body, px);
+    let Some(ink) = extent.ink else { return };
+    let coverage = lettering::rasterize(text, Face::Body, px);
+    // The coverage's origin is the pen origin; ink bounds are relative to it.
+    let left = (center.x - (ink.min_x + ink.max_x) / 2.0).round() as i32;
+    let top = (center.y - (ink.min_y + ink.max_y) / 2.0).round() as i32;
+    coverage.for_each(|x, y, a| {
+        if a < HALO_COVERAGE {
+            return;
         }
-    });
-    for &(x, y) in &pixels {
+        let (x, y) = (left + x, top + y);
         for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
             map.set(x + dx, y + dy, palette::PAPER);
         }
-    }
-    for (x, y) in pixels {
-        map.set(x, y, palette::INK);
-    }
+    });
+    coverage.for_each(|x, y, a| {
+        let (x, y) = (left + x, top + y);
+        map.blend(x, y, palette::INK, a);
+    });
 }
 
 /// Radius of the compass rose's ring, in map pixels.
@@ -623,7 +646,12 @@ pub fn draw_compass(canvas: &mut Canvas, frame: &MapFrame) {
         canvas.set(p.x.floor() as i32, p.y.floor() as i32, palette::PLAYER);
     }
     for (letter, d) in marks {
-        label_scaled(canvas, &letter.to_string(), c + d * (r * 0.6), 1);
+        label_scaled(
+            canvas,
+            &letter.to_string(),
+            c + d * (r * 0.6),
+            SMALL_LABEL_PX,
+        );
     }
 }
 
@@ -963,15 +991,126 @@ pub(crate) mod tests {
             let c = frame.to_map(place.center());
             assert!(c.x > 0.0 && c.y > 0.0 && c.x < 320.0 && c.y < 320.0);
             let mut ink = 0;
-            for y in (c.y as usize - 8)..(c.y as usize + 8) {
-                for x in (c.x as usize - 8)..(c.x as usize + 8) {
-                    ink += usize::from(map.get(x, y) == palette::INK);
+            for y in (c.y as usize - 12)..(c.y as usize + 12) {
+                for x in (c.x as usize - 12)..(c.x as usize + 12) {
+                    ink += usize::from(dark(map.get(x, y)));
                 }
             }
             assert!(ink >= 8, "{:?} label has {ink} ink pixels", place.kind);
         }
         assert_eq!(place_initial(PlaceKind::GeneralStore), 'A');
         assert_eq!(place_initial(PlaceKind::Plaza), 'P');
+    }
+
+    /// True for a pixel that is mostly ink: lettering strokes are thin, so
+    /// few of them reach full coverage.
+    fn dark(px: [u8; 4]) -> bool {
+        px[0] < 110 && px[1] < 100 && px[2] < 100
+    }
+
+    /// Ink, halo and blended pixels of `canvas`, which was filled with `ground`.
+    fn tally(canvas: &Canvas, ground: [u8; 4]) -> (usize, usize, usize) {
+        let (mut ink, mut halo, mut blended) = (0, 0, 0);
+        for y in 0..canvas.size {
+            for x in 0..canvas.size {
+                let px = canvas.get(x, y);
+                if dark(px) {
+                    ink += 1;
+                } else if px == palette::PAPER {
+                    halo += 1;
+                } else if px != ground {
+                    blended += 1;
+                }
+            }
+        }
+        (ink, halo, blended)
+    }
+
+    /// Bounds `(min_x, min_y, max_x, max_y)` of the pixels that are not `ground`.
+    fn bounds(canvas: &Canvas, ground: [u8; 4]) -> (usize, usize, usize, usize) {
+        let mut b = (usize::MAX, usize::MAX, 0, 0);
+        for y in 0..canvas.size {
+            for x in 0..canvas.size {
+                if canvas.get(x, y) != ground {
+                    b = (b.0.min(x), b.1.min(y), b.2.max(x), b.3.max(y));
+                }
+            }
+        }
+        b
+    }
+
+    fn filled(size: usize, color: [u8; 4]) -> Canvas {
+        let mut c = Canvas::new(size);
+        c.fill_rect(Vec2::ZERO, Vec2::splat(size as f32), color);
+        c
+    }
+
+    #[test]
+    fn a_label_is_antialiased_ink_over_a_paper_halo_centered_on_its_spot() {
+        let mut canvas = filled(200, palette::HOUSE);
+        label(&mut canvas, "ALMACÉN", Vec2::new(100.0, 100.0));
+        let (ink, halo, blended) = tally(&canvas, palette::HOUSE);
+        assert!(ink >= 30, "ink {ink}");
+        assert!(halo >= 30, "paper halo {halo}");
+        assert!(blended >= 10, "antialiased edges {blended}");
+        let (x0, y0, x1, y1) = bounds(&canvas, palette::HOUSE);
+        let (cx, cy) = ((x0 + x1) as f32 / 2.0, (y0 + y1) as f32 / 2.0);
+        assert!((cx - 100.0).abs() <= 3.0, "centered x {cx}");
+        assert!((cy - 100.0).abs() <= 3.0, "centered y {cy}");
+        // The halo reaches out on every side of the lettering, past the
+        // well-covered ink. Only the faint antialiased edge of a serif,
+        // which earns no halo, may lie up to two pixels beyond it.
+        let row_has_paper = |y: usize| (x0..=x1).any(|x| canvas.get(x, y) == palette::PAPER);
+        let col_has_paper = |x: usize| (y0..=y1).any(|y| canvas.get(x, y) == palette::PAPER);
+        let near = |edge: usize, inward: isize, has: &dyn Fn(usize) -> bool| {
+            (0..=2).any(|d| has((edge as isize + inward * d) as usize))
+        };
+        assert!(
+            near(y0, 1, &row_has_paper) && near(y1, -1, &row_has_paper),
+            "halo above and below"
+        );
+        assert!(
+            near(x0, 1, &col_has_paper) && near(x1, -1, &col_has_paper),
+            "halo left and right"
+        );
+        // About the old bitmap height: 7 rows at 2x, plus the halo.
+        let h = y1 - y0 + 1;
+        assert!((12..=24).contains(&h), "height {h}");
+    }
+
+    #[test]
+    fn blending_mixes_the_color_over_the_pixel_by_alpha() {
+        let mut canvas = filled(4, [200, 100, 0, 255]);
+        canvas.blend(1, 1, [0, 0, 100, 255], 0);
+        assert_eq!(canvas.get(1, 1), [200, 100, 0, 255], "alpha 0 leaves it");
+        canvas.blend(1, 1, [0, 0, 100, 255], 255);
+        assert_eq!(canvas.get(1, 1), [0, 0, 100, 255], "alpha 255 replaces it");
+        canvas.blend(2, 2, [0, 100, 100, 255], 128);
+        assert_eq!(canvas.get(2, 2), [100, 100, 50, 255], "halfway");
+        canvas.blend(-1, 0, palette::INK, 255);
+        canvas.blend(0, 4, palette::INK, 255);
+        let mut clear = Canvas::new(2);
+        clear.blend(0, 0, palette::INK, 255);
+        assert_eq!(clear.get(0, 0)[3], 255, "ink over nothing is opaque");
+    }
+
+    #[test]
+    fn a_title_that_does_not_fit_falls_back_to_the_smaller_size() {
+        let mut short = filled(320, palette::PAPER);
+        title(&mut short, "Pico");
+        let mut long = filled(320, palette::PAPER);
+        title(&mut long, "Coronel Francisco de Paula Rodriguez Larreta");
+        let (a0, a1, a2, a3) = bounds(&short, palette::PAPER);
+        let (b0, b1, b2, b3) = bounds(&long, palette::PAPER);
+        assert!(a2 - a0 > 20 && b2 - b0 > 20);
+        // The long name is narrower than the map less a margin, and its
+        // letters are smaller than the short name's.
+        assert!(b2 - b0 < 320 - 48, "long title width {}", b2 - b0 + 1);
+        assert!(b3 - b1 < a3 - a1, "long {} short {}", b3 - b1, a3 - a1);
+        // Both are centered along the top.
+        assert!((((a0 + a2) as f32 / 2.0) - 160.0).abs() <= 3.0);
+        assert!((((b0 + b2) as f32 / 2.0) - 160.0).abs() <= 3.0);
+        assert!(a1 < 30 && b1 < 30, "along the top edge");
     }
 
     #[test]
@@ -1068,7 +1207,11 @@ pub(crate) mod tests {
         let marks = compass_marks(&frame);
         let letters: Vec<char> = marks.iter().map(|m| m.0).collect();
         assert_eq!(letters, ['N', 'E', 'S', 'O']);
-        assert!(letters.iter().all(|&c| font::supports(c)));
+        assert!(
+            letters
+                .iter()
+                .all(|&c| crate::lettering::supports(crate::lettering::Face::Body, c))
+        );
         // N points where ground +y lands on the map: up (map y grows south).
         let north =
             frame.to_map(frame.center + GroundVec2::new(0.0, 10.0)) - frame.to_map(frame.center);
@@ -1094,11 +1237,18 @@ pub(crate) mod tests {
             let ink = (-3..=3)
                 .flat_map(|dy| (-3..=3).map(move |dx| (dx, dy)))
                 .filter(|(dx, dy)| {
-                    canvas.get((at.x as i32 + dx) as usize, (at.y as i32 + dy) as usize)
-                        == palette::INK
+                    dark(canvas.get((at.x as i32 + dx) as usize, (at.y as i32 + dy) as usize))
                 })
                 .count();
             assert!(ink >= 3, "{d:?}: {ink}");
+            let halo = (-6..=6)
+                .flat_map(|dy| (-6..=6).map(move |dx| (dx, dy)))
+                .filter(|(dx, dy)| {
+                    canvas.get((at.x as i32 + dx) as usize, (at.y as i32 + dy) as usize)
+                        == palette::PAPER
+                })
+                .count();
+            assert!(halo >= 3, "{d:?} letter sits on paper: {halo}");
         }
         assert_eq!(
             canvas.get(c.x as usize, (c.y - 3.0) as usize),

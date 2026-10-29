@@ -1,4 +1,4 @@
-//! Bevy plugins that draw the Pampa Seca world.
+//! Bevy plugins that draw the Pampa Salvaje world.
 //!
 //! Everything here reads logic state from `pampa-core` and turns it into
 //! pixels. Nothing here feeds back into game rules.
@@ -16,13 +16,13 @@ pub mod fade;
 pub mod fauna;
 pub mod fence;
 pub mod flora;
-pub mod font;
 pub mod gltf;
 pub mod grass;
 pub mod ground;
 pub mod hud;
 pub mod lagoon;
 pub mod lamps;
+pub mod lettering;
 pub mod minimap;
 pub mod obj;
 pub mod rail;

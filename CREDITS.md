@@ -1,6 +1,6 @@
 # Credits
 
-Pampa Seca is mostly built procedurally in code. These are the third-party assets it uses. Each one is also credited next to its files.
+Pampa Salvaje is mostly built procedurally in code. These are the third-party assets it uses. Each one is also credited next to its files.
 
 ## Textures
 
@@ -121,14 +121,14 @@ The title and pause menus' pictures are baked by `tools/menu_poster.sh` from the
 | Mapa geográfico de la República Argentina, 1882 | Francisco Latzina; lithograph by Curt Stiller. Wikimedia Commons, `File:Map_of_Argentina_by_Francisco_Latzina,_1882.jpg` (https://commons.wikimedia.org/wiki/File:Map_of_Argentina_by_Francisco_Latzina,_1882.jpg) | Public domain (PD-old, PD-scan; Public Domain Mark 1.0) | `assets/menu/sources/latzina_1882.jpg` | In the poster: edges shaved, black and white, mapped from ink to old paper, grain and dust |
 | Juan Bautista Bairoletto, 1928, restored | Winifreda police photograph (1928), restored by Roly Santos (2021); uploaded by Laromanacoop. Wikimedia Commons, `File:Juan_Bautista_Bairoletto.jpg` (https://commons.wikimedia.org/wiki/File:Juan_Bautista_Bairoletto.jpg) | CC BY-SA 4.0 | `assets/menu/sources/bairoletto_1928_restored.jpg` | Downscaled from 7350 px to 1200 px; in the poster, cropped, black and white and newsprint-hard. The derived poster is under CC BY-SA 4.0 as well |
 | Police photographs of Mate Cosido (Segundo David Peralta), profile and front | Argentine police photographs, 1930s (Peralta disappeared in 1940); author unknown. Copy from Infobae, "La increíble vida de Mate Cosido" (2023-07-28, https://www.infobae.com/sociedad/2023/07/28/la-increible-vida-de-mate-cosido-el-bandido-de-los-pobres-repartia-lo-robado-y-nunca-fue-atrapado/), which credits no source | Public domain in Argentina: photographs are protected for 25 years from publication (Ley 11.723 art. 34). A faithful copy adds no new rights. Assessed by the project, not by a licence notice | `assets/menu/sources/mate_cosido.png` | Converted from WebP to PNG; in the poster, the front shot cropped, black and white |
-| Menu music `menu_2.mp3` | The Pampa Seca project's own song | Same as the project | `assets/menu/menu_2.mp3` | None |
+| Menu music `menu_2.mp3` | The Pampa Salvaje project's own song | Same as the project | `assets/menu/menu_2.mp3` | None |
 
 ## Fonts
 
 | Asset | Author / source | Licence | Where | Changes |
 |---|---|---|---|---|
-| Rye | Sorkin Type Co, Google Fonts (https://github.com/google/fonts/tree/main/ofl/rye) | SIL Open Font License 1.1 (`OFL.txt` beside it) | `assets/fonts/rye/` | None; the menus' headings and the poster's "SE BUSCA" |
-| IM Fell English, roman and italic | Igino Marini, Google Fonts (https://github.com/google/fonts/tree/main/ofl/imfellenglish) | SIL Open Font License 1.1 (`OFL.txt` beside it) | `assets/fonts/im_fell_english/` | None; the menus' text and the poster's lettering |
+| Rye | Sorkin Type Co, Google Fonts (https://github.com/google/fonts/tree/main/ofl/rye) | SIL Open Font License 1.1 (`OFL.txt` beside it) | `assets/fonts/rye/` | None; the menus' headings, the signboards, the timetable board's heading and the poster's "SE BUSCA" |
+| IM Fell English, roman and italic | Igino Marini, Google Fonts (https://github.com/google/fonts/tree/main/ofl/imfellenglish) | SIL Open Font License 1.1 (`OFL.txt` beside it) | `assets/fonts/im_fell_english/` | None; the menus' text, the HUD, the console, the speech bubbles, the minimap and the poster's lettering |
 
 ## Rules
 

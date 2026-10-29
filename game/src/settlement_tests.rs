@@ -17,7 +17,7 @@ fn the_shipped_slot_fits_reach_the_renderer() {
         assert!(StructureKind::SLOTS.contains(&slot.as_str()), "{slot}");
     }
     // A broken file fits nothing and says so; a missing one fits nothing.
-    let dir = std::env::temp_dir().join(format!("pampa-seca-slots-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("pampa-salvaje-slots-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let broken = dir.join("slots.ron");
     std::fs::write(&broken, r#"(slots: { "carreta": () })"#).unwrap();

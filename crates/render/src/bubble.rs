@@ -1,7 +1,7 @@
 //! Speech bubbles: a line of dialogue floating above somebody's head.
 //!
 //! The game writes a [`Say`] message naming the speaker entity and the line;
-//! this module lays the line out in the bitmap [`font`](crate::font), paints
+//! this module lays the line out in the body [`Face`], paints
 //! a paper bubble with an ink outline and a tail pointing down, and shows it
 //! above the speaker, always facing the camera, for [`LIFETIME`] seconds
 //! with a fade over the last [`FADE`] seconds. A speaker has at most one
@@ -15,7 +15,7 @@ use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-use crate::font::{self, BASELINE, GLYPH_HEIGHT, GLYPH_WIDTH, X_TOP};
+use crate::lettering::{self, Face};
 
 /// Most characters on one line of a bubble before it wraps.
 pub const BUBBLE_CHARS: usize = 16;
@@ -25,20 +25,25 @@ pub const LIFETIME: f32 = 3.0;
 pub const FADE: f32 = 0.6;
 /// Height of the tail's tip above the speaker's feet, in meters.
 pub const HEIGHT: f32 = 2.2;
+/// Size of the lettering on a bubble texture, in texture pixels.
+pub const TEXT_PX: f32 = 38.0;
+/// Vertical distance between two lines of text, in texture pixels.
+const LINE_PITCH: usize = 34;
+/// Vertical distance between two lines of text in the world, in meters.
+/// Bubbles keep this size whatever the texture resolution.
+const LINE_PITCH_M: f32 = 0.264;
 /// Size of one texture pixel in the world, in meters.
-pub const METERS_PER_PIXEL: f32 = 0.022;
+pub const METERS_PER_PIXEL: f32 = LINE_PITCH_M / LINE_PITCH as f32;
 
 /// Ink outline width, in texture pixels.
-const OUTLINE: usize = 1;
+const OUTLINE: usize = 3;
 /// Paper between the outline and the lettering, across and down.
-const PADDING_X: usize = 4;
-const PADDING_Y: usize = 3;
+const PADDING_X: usize = 11;
+const PADDING_Y: usize = 9;
 /// Radius of the rounded corners, in texture pixels.
-const CORNER: f32 = 3.0;
-/// Rows the tail hangs below the bubble.
-const TAIL: usize = 4;
-/// Vertical distance between two lines of text, in pixels.
-const LINE_PITCH: usize = GLYPH_HEIGHT;
+const CORNER: f32 = 8.0;
+/// Rows the tail hangs below the body's outline.
+const TAIL: usize = 11;
 
 /// Paper and ink colors (sRGB).
 pub const PAPER: [u8; 3] = [241, 233, 212];
@@ -89,8 +94,8 @@ pub struct BubbleLayout {
     pub height_px: usize,
     /// Height of the rounded body, outline included.
     pub body_height_px: usize,
-    /// Texture row of the top of the first line's glyph cells (negative
-    /// when the cell's blank accent rows rise above the texture).
+    /// Texture row of the top of the first line (negative when the line's
+    /// blank rows above its ink rise above the texture).
     pub text_top: isize,
 }
 
@@ -104,27 +109,34 @@ impl BubbleLayout {
 /// Lays out `text` in a bubble just large enough for its wrapped lines.
 pub fn layout_bubble(text: &str) -> BubbleLayout {
     let lines = wrap(text, BUBBLE_CHARS);
-    let text_width = lines.iter().map(|l| font::text_width(l)).max().unwrap_or(0);
-    // Inked rows of the whole block, so blank accent and descender rows do
-    // not pad the bubble unevenly.
-    let first = lines
+    let measured: Vec<_> = lines
+        .iter()
+        .map(|l| lettering::measure(l, Face::Body, TEXT_PX))
+        .collect();
+    let text_width = measured.iter().map(|e| e.width as usize).max().unwrap_or(0);
+    // Inked rows of the whole block, so blank rows above the accents and
+    // below the descenders do not pad the bubble unevenly.
+    let first = measured
         .first()
-        .and_then(|l| font::ink_rows(l))
-        .map_or(X_TOP, |(first, _)| first);
-    let last = lines
+        .and_then(|e| e.ink)
+        .map_or(0, |ink| ink.min_y.floor() as isize);
+    let last = measured
         .last()
-        .and_then(|l| font::ink_rows(l))
-        .map_or(BASELINE, |(_, last)| last)
-        + LINE_PITCH * lines.len().saturating_sub(1);
-    let ink_height = last.max(first) - first + 1;
-    let width_px = text_width.max(GLYPH_WIDTH) + 2 * (OUTLINE + PADDING_X);
+        .map(|e| {
+            e.ink
+                .map_or(e.ascent as isize, |ink| ink.max_y.ceil() as isize)
+        })
+        .unwrap_or(0)
+        + (LINE_PITCH * lines.len().saturating_sub(1)) as isize;
+    let ink_height = (last - first).max(1) as usize;
+    let width_px = text_width.max(TEXT_PX as usize) + 2 * (OUTLINE + PADDING_X);
     let body_height_px = ink_height + 2 * (OUTLINE + PADDING_Y);
     BubbleLayout {
         lines,
         width_px,
-        height_px: body_height_px + TAIL,
+        height_px: body_height_px + TAIL + 1 - OUTLINE,
         body_height_px,
-        text_top: (OUTLINE + PADDING_Y) as isize - first as isize,
+        text_top: (OUTLINE + PADDING_Y) as isize - first,
     }
 }
 
@@ -163,21 +175,29 @@ pub fn paint_bubble(layout: &BubbleLayout) -> Vec<u8> {
         for x in 0..w {
             let d = (x as f32 + 0.5 - center).abs();
             if d <= half {
-                let edge = d > half - 1.0 || t == TAIL;
+                let edge = d > half - OUTLINE as f32 || t == TAIL;
                 colors[y * w + x] = Some(if edge { INK } else { PAPER });
             }
         }
     }
 
-    // Lettering, each line centered.
+    // Lettering, each line centered, its antialiased edges blended over the
+    // paper (or the outline, where it brushes it).
     for (n, line) in layout.lines.iter().enumerate() {
-        let left = (w - font::text_width(line)) / 2;
+        let coverage = lettering::rasterize(line, Face::Body, TEXT_PX);
+        let left = (w as isize - coverage.width as isize) / 2;
         let top = layout.text_top + (n * LINE_PITCH) as isize;
-        font::for_each_pixel(line, |x, y| {
-            let py = top + y as isize;
-            if (0..h as isize).contains(&py) {
-                colors[py as usize * w + left + x] = Some(INK);
+        coverage.for_each(|x, y, alpha| {
+            let (px, py) = (left + x as isize, top + y as isize);
+            if !(0..w as isize).contains(&px) || !(0..h as isize).contains(&py) {
+                return;
             }
+            let cell = &mut colors[py as usize * w + px as usize];
+            let under = cell.unwrap_or(PAPER);
+            let cover = f32::from(alpha) / 255.0;
+            *cell = Some(std::array::from_fn(|i| {
+                (f32::from(INK[i]) * cover + f32::from(under[i]) * (1.0 - cover)).round() as u8
+            }));
         });
     }
 
@@ -268,8 +288,8 @@ impl BubbleAssets {
             TextureFormat::Rgba8UnormSrgb,
             RenderAssetUsages::RENDER_WORLD,
         );
-        // Crisp pixel lettering.
-        image.sampler = ImageSampler::nearest();
+        // Smooth lettering.
+        image.sampler = ImageSampler::linear();
         let entry = (images.add(image), layout.size_m());
         self.textures.insert(line.to_string(), entry.clone());
         entry
@@ -413,23 +433,60 @@ mod tests {
         assert_eq!(lines.join(" "), text);
     }
 
+    fn advance(line: &str) -> usize {
+        lettering::measure(line, Face::Body, TEXT_PX).width as usize
+    }
+
     #[test]
     fn a_bubble_fits_its_lines_and_stays_small() {
         let one = layout_bubble("¡Epa!");
         assert_eq!(one.lines, ["¡Epa!"]);
-        assert!(one.width_px >= font::text_width("¡Epa!") + 2 * (OUTLINE + PADDING_X));
-        assert_eq!(one.height_px, one.body_height_px + TAIL);
+        assert!(one.width_px >= advance("¡Epa!") + 2 * (OUTLINE + PADDING_X));
+        assert_eq!(one.height_px, one.body_height_px + TAIL + 1 - OUTLINE);
 
         // The longest dialogue line (40 characters) needs at most 3 lines.
         let long = layout_bubble("¡Más despacio, que no es carrera, che!!!");
         assert!(long.lines.len() <= 3, "{:?}", long.lines);
         for line in &long.lines {
-            assert!(long.width_px >= font::text_width(line) + 2 * (OUTLINE + PADDING_X));
+            assert!(long.width_px >= advance(line) + 2 * (OUTLINE + PADDING_X));
         }
-        assert!(long.body_height_px > one.body_height_px);
+        // Each extra line adds one line pitch, and the widest line sets the width.
+        let (one_line, two) = (
+            layout_bubble("Epa che"),
+            layout_bubble("Epa che Epa che Epa che"),
+        );
+        assert_eq!((one_line.lines.len(), two.lines.len()), (1, 2));
+        assert_eq!(two.body_height_px - one_line.body_height_px, LINE_PITCH);
+        let widest = long.lines.iter().map(|l| advance(l)).max().unwrap();
+        assert!(long.width_px <= widest + 2 * (OUTLINE + PADDING_X) + 1);
         let size = long.size_m();
         assert!(size.x < 2.5 && size.y < 1.2, "{size:?}");
         assert_eq!(layout_bubble(""), layout_bubble(" "));
+    }
+
+    #[test]
+    fn bubble_sizes_in_meters_stay_close_to_the_bitmap_bubbles() {
+        // One line is one 0.264 m pitch, as it was with the 12 px bitmap rows.
+        let (one, two) = (
+            layout_bubble("Epa che"),
+            layout_bubble("Epa che Epa che Epa che"),
+        );
+        let pitch = (two.body_height_px - one.body_height_px) as f32 * METERS_PER_PIXEL;
+        assert!((pitch - 0.264).abs() < 1e-3, "{pitch}");
+        // Sizes (meters) the bitmap bubbles had; IM Fell is narrower than the
+        // 6 px bitmap cells, so lines come out up to a third narrower.
+        for (text, width, height) in [
+            ("¡Epa!", 0.858, 0.462),
+            ("¡Más despacio, que no es carrera, che!!!", 2.178, 0.968),
+            ("¡Casi me pisa el pingo, che!", 2.31, 0.726),
+            ("¡Bárbaro! ¡Me llenó de tierra!", 2.31, 0.704),
+        ] {
+            let size = layout_bubble(text).size_m();
+            assert!(
+                (size.x - width).abs() <= width * 0.35 && (size.y - height).abs() <= height * 0.2,
+                "{text}: {size:?}, was {width} x {height} m"
+            );
+        }
     }
 
     #[test]
@@ -443,9 +500,11 @@ mod tests {
         for (x, y) in [(0, 0), (w - 1, 0), (0, body - 1), (w - 1, body - 1)] {
             assert_eq!(pixel(&px, &l, x, y), CLEAR, "corner ({x}, {y})");
         }
-        assert_eq!(pixel(&px, &l, mid, 0), rgb(INK));
-        assert_eq!(pixel(&px, &l, 0, body / 2), rgb(INK));
-        assert_eq!(pixel(&px, &l, w - 1, body / 2), rgb(INK));
+        for k in 0..OUTLINE {
+            assert_eq!(pixel(&px, &l, mid, k), rgb(INK), "top {k}");
+            assert_eq!(pixel(&px, &l, k, body / 2), rgb(INK), "left {k}");
+            assert_eq!(pixel(&px, &l, w - 1 - k, body / 2), rgb(INK), "right {k}");
+        }
         // Paper inside, between the outline and the lettering.
         assert_eq!(pixel(&px, &l, OUTLINE, body / 2), rgb(PAPER));
         assert_eq!(pixel(&px, &l, mid, OUTLINE), rgb(PAPER));
@@ -454,45 +513,83 @@ mod tests {
         assert_eq!(pixel(&px, &l, mid, l.height_px - 1), rgb(INK));
         assert_eq!(pixel(&px, &l, 0, l.height_px - 1), CLEAR);
         assert_eq!(pixel(&px, &l, w - 1, l.height_px - 1), CLEAR);
-        // Only paper, ink and clear pixels.
+        // The tail narrows toward its tip, row by row.
+        let widths: Vec<usize> = (body..l.height_px)
+            .map(|y| (0..w).filter(|&x| pixel(&px, &l, x, y)[3] != 0).count())
+            .collect();
+        assert!(widths.windows(2).all(|p| p[1] < p[0]), "{widths:?}");
+        // Clear or opaque, and never a color outside the paper-to-ink range.
         for p in px.chunks(4) {
-            let p = [p[0], p[1], p[2], p[3]];
-            assert!(p == CLEAR || p == rgb(PAPER) || p == rgb(INK), "{p:?}");
+            if p[3] == 0 {
+                assert_eq!(p, CLEAR);
+                continue;
+            }
+            assert_eq!(p[3], 255, "{p:?}");
+            for i in 0..3 {
+                assert!((INK[i]..=PAPER[i]).contains(&p[i]), "{p:?}");
+            }
         }
     }
 
+    /// Pixels strictly inside the outline whose red channel is at least
+    /// 12 below the paper's: lettering with coverage of 16 or more.
+    fn lettered(px: &[u8], l: &BubbleLayout) -> Vec<(usize, usize)> {
+        let inner = |x: usize, y: usize| {
+            x > OUTLINE
+                && x + OUTLINE + 1 < l.width_px
+                && y > OUTLINE
+                && y + OUTLINE + 1 < l.body_height_px
+        };
+        (0..l.body_height_px)
+            .flat_map(|y| (0..l.width_px).map(move |x| (x, y)))
+            .filter(|&(x, y)| inner(x, y) && pixel(px, l, x, y)[0] + 12 <= PAPER[0])
+            .collect()
+    }
+
     #[test]
-    fn letters_every_glyph_pixel_inside_the_paper() {
+    fn letters_every_glyph_pixel_inside_the_paper_blended() {
         let l = layout_bubble("¡Bárbaro! ¡Me llenó de tierra!");
         let px = paint_bubble(&l);
-        let ink_bits: usize = l
-            .lines
+        let mut covered = 0;
+        for line in &l.lines {
+            lettering::rasterize(line, Face::Body, TEXT_PX).for_each(|_, _, a| {
+                covered += usize::from(a >= 16);
+            });
+        }
+        let lettering = lettered(&px, &l);
+        assert_eq!(lettering.len(), covered);
+        // Antialiased: edge pixels sit between paper and ink.
+        let soft = lettering
             .iter()
-            .map(|line| {
-                let mut n = 0;
-                font::for_each_pixel(line, |_, _| n += 1);
-                n
+            .filter(|&&(x, y)| {
+                let c = pixel(&px, &l, x, y);
+                c != rgb(INK) && c != rgb(PAPER)
             })
-            .sum();
-        // Ink strictly inside the outline is lettering.
-        let inner = |x: usize, y: usize| {
-            x > OUTLINE + 1
-                && x + OUTLINE + 2 < l.width_px
-                && y > OUTLINE
-                && y + OUTLINE < l.body_height_px - 1
-        };
-        let lettering = (0..l.body_height_px)
-            .flat_map(|y| (0..l.width_px).map(move |x| (x, y)))
-            .filter(|&(x, y)| inner(x, y) && pixel(&px, &l, x, y) == rgb(INK))
             .count();
-        assert_eq!(lettering, ink_bits);
-        // The lettering keeps at least a pixel of paper from the outline.
-        let first_ink = font::ink_rows(&l.lines[0]).unwrap().0 as isize;
-        assert!(l.text_top + first_ink > OUTLINE as isize);
-        let last = l.lines.len() - 1;
-        let last_ink = font::ink_rows(&l.lines[last]).unwrap().1;
-        let bottom = l.text_top + (last * LINE_PITCH + last_ink) as isize;
-        assert!(bottom < (l.body_height_px - OUTLINE - 1) as isize);
+        assert!(soft * 4 >= covered, "{soft} soft of {covered}");
+        // The lettering keeps paper between it and the outline, and sits
+        // centered down the bubble within two pixels.
+        let top = lettering.iter().map(|&(_, y)| y).min().unwrap();
+        let bottom = lettering.iter().map(|&(_, y)| y).max().unwrap();
+        assert!(top >= OUTLINE + PADDING_Y - 1, "top {top}");
+        assert!(
+            bottom + OUTLINE + PADDING_Y < l.body_height_px + 2,
+            "bottom {bottom}"
+        );
+        assert!(
+            top.abs_diff(l.body_height_px - 1 - bottom) <= 3,
+            "{top} {bottom}"
+        );
+    }
+
+    #[test]
+    fn a_line_is_centered_across_the_bubble() {
+        let l = layout_bubble("¡Epa!");
+        let lettering = lettered(&paint_bubble(&l), &l);
+        let left = lettering.iter().map(|&(x, _)| x).min().unwrap();
+        let right = l.width_px - 1 - lettering.iter().map(|&(x, _)| x).max().unwrap();
+        assert!(left > OUTLINE + 1 && right > OUTLINE + 1, "{left} {right}");
+        assert!(left.abs_diff(right) <= 4, "left {left} right {right}");
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! Pampa Seca: wires player input, `pampa-core` logic and `pampa-render` drawing.
+//! Pampa Salvaje: wires player input, `pampa-core` logic and `pampa-render` drawing.
 
 mod abilities;
 mod camera;
@@ -305,7 +305,7 @@ fn main() {
         DefaultPlugins
             .set(WindowPlugin {
                 primary_window: Some(Window {
-                    title: "Pampa Seca".into(),
+                    title: "Pampa Salvaje".into(),
                     ..default()
                 }),
                 ..default()

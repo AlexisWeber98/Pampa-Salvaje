@@ -2,7 +2,7 @@
 //!
 //! `pampa-core` decides which places have signs, where they stand and which
 //! way they read ([`pampa_core::Place`]). This module lays the lettering out
-//! in the bitmap [`font`](crate::font), paints a weathered board texture and
+//! in the wood-type [`Face::Display`], paints a weathered board texture and
 //! mounts it on the facade or on posts.
 
 use bevy::asset::RenderAssetUsages;
@@ -14,14 +14,44 @@ use pampa_core::{
 };
 
 use crate::coords::world_from_ground;
-use crate::font::{self, GLYPH_HEIGHT};
+use crate::lettering::{self, Extent, Face};
 use crate::terrain::{WorldTerrain, hash2};
 use crate::town::{TownRoot, WorldTowns};
 
+/// Size of the lettering on a board texture, in texture pixels.
+pub const TEXT_PX: f32 = 56.0;
 /// Painted frame width around a board, in texture pixels.
-pub const BORDER: usize = 2;
+pub const BORDER: usize = 6;
 /// Clear space between the frame and the lettering, in texture pixels.
-pub const PADDING: usize = 3;
+pub const PADDING: usize = 20;
+
+/// The lettering's footprint on a board: the inked width and height in
+/// pixels, and the ink's offset from the pen origin and from the top of the
+/// line. Blank text has no ink, so it takes the line's ascent for height.
+struct Lettering {
+    width: usize,
+    height: usize,
+    left: f32,
+    top: f32,
+}
+
+fn lettering_of(text: &str) -> Lettering {
+    let Extent { ascent, ink, .. } = lettering::measure(text, Face::Display, TEXT_PX);
+    match ink {
+        Some(ink) => Lettering {
+            width: (ink.max_x - ink.min_x).ceil() as usize,
+            height: (ink.max_y.ceil() - ink.min_y.floor()) as usize,
+            left: ink.min_x,
+            top: ink.min_y.floor(),
+        },
+        None => Lettering {
+            width: 0,
+            height: ascent as usize,
+            left: 0.0,
+            top: 0.0,
+        },
+    }
+}
 
 /// Pixel size of a board texture and its size in meters.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -37,8 +67,9 @@ pub struct BoardLayout {
 /// board is never narrower than the text it carries.
 pub fn layout_board(text: &str, width_m: f32, max_height_m: f32) -> BoardLayout {
     let margin = 2 * (BORDER + PADDING);
-    let height_px = font::line_rows(text) + margin;
-    let min_width_px = font::text_width(text) + margin;
+    let lettering = lettering_of(text);
+    let height_px = lettering.height + margin;
+    let min_width_px = lettering.width + margin;
     // The largest pixel that fits both the text across and the height limit;
     // rounding the pixel count up only ever shrinks the pixel.
     let pixel = (width_m / min_width_px as f32).min(max_height_m / height_px as f32);
@@ -114,8 +145,7 @@ impl BoardStyle {
     }
 }
 
-/// The board `paint_board` paints, as a texture with crisp pixel
-/// lettering.
+/// The board `paint_board` paints, as a texture with smooth lettering.
 pub fn board_image(text: &str, layout: BoardLayout, style: BoardStyle, seed: f32) -> Image {
     let mut image = Image::new(
         Extent3d {
@@ -128,7 +158,7 @@ pub fn board_image(text: &str, layout: BoardLayout, style: BoardStyle, seed: f32
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::RENDER_WORLD,
     );
-    image.sampler = ImageSampler::nearest();
+    image.sampler = ImageSampler::linear();
     image
 }
 
@@ -162,11 +192,17 @@ pub fn paint_board(text: &str, layout: BoardLayout, style: BoardStyle, seed: f32
         }
     }
 
-    let left = (w - font::text_width(text)) / 2;
-    let (first, last) = font::ink_rows(text).unwrap_or((0, GLYPH_HEIGHT - 1));
-    let top = (h - (last - first + 1)) / 2;
-    font::for_each_pixel(text, |x, y| {
-        let (px, py) = (left + x, top + y - first);
+    // The lettering's ink is centered on the board, across and down.
+    let lettering = lettering_of(text);
+    let dx = (w - lettering.width) as f32 / 2.0 - lettering.left;
+    let dy = (h - lettering.height) as f32 / 2.0 - lettering.top;
+    let (dx, dy) = (dx.round() as isize, dy.round() as isize);
+    lettering::rasterize(text, Face::Display, TEXT_PX).for_each(|x, y, alpha| {
+        let (px, py) = (x as isize + dx, y as isize + dy);
+        if !(0..w as isize).contains(&px) || !(0..h as isize).contains(&py) {
+            return;
+        }
+        let (px, py) = (px as usize, py as usize);
         let worn = noise(px, py, 7.0) < 0.07;
         // Flaked paint lets the board show through.
         let f = if worn {
@@ -175,14 +211,12 @@ pub fn paint_board(text: &str, layout: BoardLayout, style: BoardStyle, seed: f32
             0.95 + 0.08 * noise(px, py, 3.0)
         };
         let ink = shade(style.ink, if worn { 1.0 } else { f });
+        // Antialiased edges blend with the board; worn paint only half-covers.
+        let cover = f32::from(alpha) / 255.0 * if worn { f } else { 1.0 };
         let under = colors[py * w + px];
-        colors[py * w + px] = if worn {
-            std::array::from_fn(|i| {
-                (f32::from(ink[i]) * f + f32::from(under[i]) * (1.0 - f)).round() as u8
-            })
-        } else {
-            ink
-        };
+        colors[py * w + px] = std::array::from_fn(|i| {
+            (f32::from(ink[i]) * cover + f32::from(under[i]) * (1.0 - cover)).round() as u8
+        });
     });
 
     colors
@@ -447,7 +481,6 @@ fn mount_height(town: &TownLayout, kind: PlaceKind, sign: &Sign) -> (f32, f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::font::{CAP_TOP, text_width};
 
     fn pixel(pixels: &[u8], layout: BoardLayout, x: usize, y: usize) -> [u8; 3] {
         let i = (y * layout.width_px + x) * 4;
@@ -461,17 +494,29 @@ mod tests {
             .sum()
     }
 
+    /// Inked size of `text` in the board face, as (width, height) pixels.
+    fn ink_size(text: &str) -> (f32, f32) {
+        let ink = lettering::measure(text, Face::Display, TEXT_PX)
+            .ink
+            .unwrap();
+        (ink.max_x - ink.min_x, ink.max_y - ink.min_y)
+    }
+
     #[test]
     fn boards_fit_their_text_with_square_pixels() {
+        let margin = 2 * (BORDER + PADDING);
         for kind in PlaceKind::ALL {
             let text = kind.name();
+            let (ink_w, ink_h) = ink_size(text);
+            // Sharp lettering: capitals at least 30 texture pixels tall.
+            assert!(ink_h >= 30.0, "{text} {ink_h}");
             for (width, max_height) in [(13.0, 1.8), (3.4, 1.2), (7.0, 1.0), (1.0, 2.0)] {
                 let l = layout_board(text, width, max_height);
-                assert!(
-                    l.width_px >= text_width(text) + 2 * (BORDER + PADDING),
-                    "{text}"
-                );
-                assert_eq!(l.height_px, font::ASCENT + 2 * (BORDER + PADDING));
+                // The inked text plus the frame and padding fit, and nothing
+                // much more: whole pixels either way.
+                assert!(l.width_px >= ink_w.ceil() as usize + margin, "{text}");
+                assert!(l.height_px >= ink_h.ceil() as usize + margin, "{text}");
+                assert!(l.height_px <= ink_h.ceil() as usize + 1 + margin, "{text}");
                 assert_eq!(l.width_m, width);
                 assert!(l.height_m <= max_height + 1e-4, "{text} {l:?}");
                 let (px_w, px_h) = (
@@ -480,6 +525,29 @@ mod tests {
                 );
                 assert!((px_w - px_h).abs() < 1e-4, "{text} {l:?}");
             }
+        }
+    }
+
+    #[test]
+    fn board_sizes_in_meters_stay_close_to_the_bitmap_boards() {
+        // Heights the 5x7 bitmap boards had, in meters, for a board of the
+        // given width and height limit. The new boards letter in Rye, whose
+        // caps are wider and heavier, so sizes may differ by up to a fifth.
+        for (text, width, max_height, before) in [
+            ("PLAZA", 3.0, 1.0, 1.0),
+            ("ESTACIÓN", 7.0, 1.4, 1.4),
+            (PlaceKind::PoliceStation.name(), 6.0, 1.8, 1.791),
+            (PlaceKind::GeneralStore.name(), 6.0, 1.8, 0.727),
+            (TIMETABLE_BOARD_TEXT, 2.0, 0.8, 0.702),
+            ("12 KM", 1.6, 0.34, 0.337),
+        ] {
+            let l = layout_board(text, width, max_height);
+            assert!(l.height_m <= max_height + 1e-4, "{text} {l:?}");
+            assert!(
+                (l.height_m - before).abs() <= before * 0.2,
+                "{text}: {} m tall, was {before} m",
+                l.height_m
+            );
         }
     }
 
@@ -493,7 +561,7 @@ mod tests {
     }
 
     #[test]
-    fn painted_board_carries_its_lettering_centered_in_ink() {
+    fn painted_board_carries_its_blended_lettering_centered_in_ink() {
         let text = PlaceKind::PoliceStation.name();
         let style = BoardStyle::for_place(PlaceKind::PoliceStation);
         let l = layout_board(text, 7.0, 1.4);
@@ -501,42 +569,55 @@ mod tests {
         assert_eq!(pixels.len(), l.width_px * l.height_px * 4);
         assert!(pixels.chunks(4).all(|p| p[3] == 255), "opaque");
 
-        let mut ink_bits = 0;
-        font::for_each_pixel(text, |_, _| ink_bits += 1);
-        let near =
-            |c: [u8; 3], target: [u8; 3], other: [u8; 3]| distance(c, target) < distance(c, other);
-        let inked = (0..l.height_px)
-            .flat_map(|y| (0..l.width_px).map(move |x| (x, y)))
-            .filter(|&(x, y)| {
-                let inside = x >= BORDER
-                    && y >= BORDER
-                    && x < l.width_px - BORDER
-                    && y < l.height_px - BORDER;
-                inside && near(pixel(&pixels, l, x, y), style.ink, style.board)
-            })
-            .collect::<Vec<_>>();
+        let coverage = lettering::rasterize(text, Face::Display, TEXT_PX);
+        let (mut solid, mut partial) = (0, 0);
+        coverage.for_each(|_, _, a| {
+            if a >= 230 {
+                solid += 1;
+            } else {
+                partial += 1;
+            }
+        });
+        let at = |x: usize, y: usize| pixel(&pixels, l, x, y);
+        let near_ink = |c: [u8; 3]| distance(c, style.ink) < distance(c, style.board);
+        let all = || (0..l.height_px).flat_map(|y| (0..l.width_px).map(move |x| (x, y)));
+        let inside = |&(x, y): &(usize, usize)| {
+            x >= BORDER && y >= BORDER && x < l.width_px - BORDER && y < l.height_px - BORDER
+        };
+        let inked: Vec<_> = all()
+            .filter(inside)
+            .filter(|&(x, y)| near_ink(at(x, y)))
+            .collect();
         // Most letter pixels survive the wear, and nothing else looks like ink.
-        assert!(
-            inked.len() * 10 >= ink_bits * 8,
-            "{} of {ink_bits}",
-            inked.len()
-        );
-        assert!(inked.len() <= ink_bits);
-        // Centered horizontally within a pixel.
+        assert!(inked.len() * 10 >= solid * 8, "{} of {solid}", inked.len());
+        assert!(inked.len() <= solid + partial);
+        // Antialiased edges blend ink into the board: colors in between.
+        let blended = all()
+            .filter(inside)
+            .filter(|&(x, y)| {
+                let c = at(x, y);
+                distance(c, style.ink) > 60 && distance(c, style.board) > 60
+            })
+            .count();
+        assert!(blended * 2 >= partial, "{blended} blended of {partial}");
+        // Centered horizontally within two pixels.
         let (min_x, max_x) = inked
             .iter()
             .fold((usize::MAX, 0), |(lo, hi), &(x, _)| (lo.min(x), hi.max(x)));
         let (left, right) = (min_x, l.width_px - 1 - max_x);
-        assert!(left.abs_diff(right) <= 1, "left {left} right {right}");
+        assert!(left.abs_diff(right) <= 2, "left {left} right {right}");
         // The inked rows are centered vertically, accents included.
         let (min_y, max_y) = inked
             .iter()
             .fold((usize::MAX, 0), |(lo, hi), &(_, y)| (lo.min(y), hi.max(y)));
         assert!(
-            min_y.abs_diff(l.height_px - 1 - max_y) <= 1,
+            min_y.abs_diff(l.height_px - 1 - max_y) <= 2,
             "{min_y} {max_y}"
         );
-        assert!(max_y - min_y >= font::ASCENT - CAP_TOP);
+        // The lettering is as large as the face makes it, not a speck.
+        let (ink_w, ink_h) = ink_size(text);
+        assert!((max_x - min_x) as f32 >= ink_w - 6.0);
+        assert!((max_y - min_y) as f32 >= ink_h - 6.0);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 [package]
 name = "pampa-render"
-description = "Bevy plugins that draw the Pampa Seca world."
+description = "Bevy plugins that draw the Pampa Salvaje world."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,3 +9,6 @@ publish.workspace = true
 [dependencies]
 pampa-core.workspace = true
 bevy.workspace = true
+# Rasterizes the game's TrueType faces on the CPU (already in the lock via
+# bevy; a caret requirement follows bevy's copy instead of pinning a second).
+ab_glyph = "0.2.32"

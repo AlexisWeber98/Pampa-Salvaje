@@ -19,7 +19,7 @@ These are PBR texture sets for the rural settlements and the towns: walls, roofs
 | `brick_floor_003/` | Brick Floor 003 | Dimitrios Savva, Rob Tuytel, Poly Haven (https://polyhaven.com/a/brick_floor_003) | Flat brick sidewalks (veredas) of General Pico and round small towns' plazas |
 | `dirt_path/` | Dirt | Charlotte Baglioni, Poly Haven (https://polyhaven.com/a/dirt) | Beaten earth of the plaza paths of small towns and villages, and of the earth sidewalks |
 | `bronze/` | Metal 017 | ambientCG (https://ambientcg.com/view?id=Metal017), CC0 1.0 | The bronze plaques of the plaza monuments |
-| `thatch/` | Thatch | Pampa Seca (own work, generated with ImageMagick from seeded noise by `thatch/generate.sh`) | Thatched (paja) roofs of ranchos. CC0, like the rest of the project's own assets |
+| `thatch/` | Thatch | Pampa Salvaje (own work, generated with ImageMagick from seeded noise by `thatch/generate.sh`) | Thatched (paja) roofs of ranchos. CC0, like the rest of the project's own assets |
 | `gravel_road/` | Gravel Road | Amal Kumar, Poly Haven (https://polyhaven.com/a/gravel_road) | The ballast bed of the railway track |
 | `rough_wood/` | Rough Wood | Rob Tuytel, Poly Haven (https://polyhaven.com/a/rough_wood) | The railway's timber sleepers |
 | `rust_coarse_01/` | Rust Coarse 01 | Dimitrios Savva, Rico Cilliers, Poly Haven (https://polyhaven.com/a/rust_coarse_01) | The rails, with a smoother, brighter running head |

@@ -1,4 +1,4 @@
-# Pampa Seca
+# Pampa Salvaje
 
 An Argentine rural-outlaw western set on the dry pampa in 1919,
 inspired by Red Dead Redemption. The visual direction is a low-poly 3D world
@@ -53,7 +53,7 @@ flying low to roost at dusk, none at night. The game begins in the mid-morning, 
 General Pico: the protagonist, a former hardware-shop clerk from Pico, rides
 it into Monte Nievas. The
 time of day (`HH:MM`) is shown in the top-left corner, lettered in the game's
-pixel font on a paper panel, with the current objective under it and, while
+typeface (IM Fell English) on a paper panel, with the current objective under it and, while
 riding the train, the next station and its arrival time
 (for example "Próxima: Eduardo Castex, 11:46").
 
@@ -91,7 +91,7 @@ the police station ("COMISARÍA"), the church
 name boards at the track edge, one near each end of the platform, past the
 coaches, facing the train windows) and the plaza. `pampa-core` names the places and
 says where each sign stands (`TownLayout::places`); render letters them in a
-procedural bitmap pixel font (no third-party font) on weathered boards.
+Rye wood-type face (embedded TrueType, antialiased) on weathered boards.
 The station is an FCO-style brick building with stucco pilasters, hooded
 openings and a pedimented central pavilion on both its street and track
 fronts, and a canopy over the platform on cast-iron columns standing on it,
@@ -302,7 +302,7 @@ Roads, fences and gates cross that land:
 - **Dirt roads** for carts and riders join neighbouring towns on the line (Eduardo Castex–Monte Nievas, Monte Nievas–Metileo, Metileo–General Pico), and each town on a branch to its nearest town (Caleufú–Eduardo Castex, 5.8 km, crossing the line's run-out west of Castex). Each leaves a town by the street facing the other town and runs on a gently curving, seeded line. It is more direct than the railway, which loses distance on its run-outs and wide curves. A road keeps 40 m clear of the track and crosses it only where its ends lie on opposite sides, and then squarely. A road never leaves General Pico along its line, which runs out of both ends of the town. A public dead-end road also leaves General Pico by its east side for Laguna La Arocena, with a signpost naming the lagoon at its start; it ends on the lagoon's bank in a small turnaround loop that comes to the wet mud and no farther.
 - **Level crossings and rural tracks:** every railway town has one street that crosses its track by the station, square, at a level crossing. That is the street through the station yard nearest the station, or the ring street carried just past the grid when the yard fills the town's track side. The crossing has timber planks flush under the rail heads, between the rails and in a strip of about half a meter outside each, exactly the road's width along the track. The dirt road itself rises to them as packed earth over 7 m on each side (about 1 in 10 at the steepest), on its own axis and as wide as the road, its edges sloping down to the grass. Riders, people and the camera climb the same rise; the track bed itself is never lowered or raised by the road. A St Andrew's cross stands on a post on each approach. Past it, a short seeded rural track of 300–800 m runs out toward the chacras and estancias and ends in the open land. A rider can always cross; a train car standing on the crossing still blocks it.
 - **Road surface:** each road is cut a shallow 15 cm into the ground, level across and easing back into the land beside it, so `Terrain::height` stays continuous. Nothing farther than the cut's reach from the road is touched, and the track bed at a level crossing is left as it is. It wears Ground 102 compressed dirt from ambientCG, with its edges feathered into the grass, which is worn to earth along it. No tree, tuft, stone or shrub grows on a road or its verges.
-- **Signposts:** a wooden signpost stands at each town's road exit. Its arrow board names the far town and the distance in kilometres, to a tenth, in the pixel font, for example "GENERAL PICO 6,9 KM".
+- **Signposts:** a wooden signpost stands at each town's road exit. Its arrow board names the far town and the distance in kilometres, to a tenth, in the same Rye face, for example "GENERAL PICO 6,9 KM".
 - **Wire fences (alambrados)** mark out the private land: estancias, tambos, fields and plots. Roads are public, and no fence or gate ever crosses one.
   - Every road is 6.5 m wide and runs between two fences 8.5 m from its centerline, at least 5 m past its edge on each side: a wide "calle entre alambrados" for carts and, later, routes. The fences follow the road's curves and stop at the towns' leveled ground and by the railway, so there is no fence at a level crossing.
   - The land away from the roads is surveyed on a north–south grid, with lines a seeded 300–800 m apart. A grid line stops at the roadside fence and joins it at a corner post.
@@ -474,7 +474,7 @@ speech bubble above their head ("¡Eh, mirá por dónde andás!" at a walk,
 "¡Casi me pisa el pingo, che!" at a gallop). Brushing past at a crawl says
 nothing, the same person waits a few seconds before complaining again, and the
 same line never repeats twice in a row. Bubbles are paper with an ink outline,
-lettered in the bitmap font (now with lowercase, accents and `¡ ¿`), face the
+lettered in IM Fell English (antialiased, with lowercase, accents and `¡ ¿`), face the
 camera and fade out after about 3 s.
 
 ### Dialogue is data
@@ -484,7 +484,7 @@ under `assets/dialogue/`, not in code: `bumps.ron` holds one pool of lines per
 bump severity (`walk`, `gallop`), and `errand.ron` holds what Don Hidalgo and
 comisario Farach say during the errand. Edit them and restart the game; no
 recompiling. The `pampa-content` crate parses and validates them (non-empty pools, at most 40
-characters per line); the game checks the characters against the font, and
+characters per line); the game checks the characters against the typeface, and
 falls back to a small built-in set of lines with a warning if the file is
 missing or invalid. See [`assets/dialogue/README.md`](assets/dialogue/README.md)
 for how to write lines.
@@ -576,7 +576,8 @@ cargo test --workspace
 
 ## Controls
 
-The game opens on a title screen. On the left, a "Se busca" poster of Juan Bautista Bairoletto and Mate Cosido (born Segundo David Peralta), two of the rural bandits of León Gieco's "Bandidos rurales", is pinned over an 1882 map of Argentina. On the right, a band of red paint carries "Pampa Seca" and the choices Jugar, Sonido and Salir. `Esc` (or the keyboard's `Pause` key) in game opens the same screen over the world. The world stays visible, turned grey with dark corners, and it stands still: virtual time is paused, so the clock, the trains, the animals and the people wait. Sonido sets the general volume and the music's, from 0 to 100 % in steps of 10. They are saved, when the player leaves Sonido or quits with it open, in `settings.ron` under the user's config directory (`~/.config/pampa-seca/` on Linux, `%APPDATA%\pampa-seca\` on Windows). The menu music (`assets/menu/menu_2.mp3`, the project's own song) loops only while a menu is open, and starts from the top each time the title or the pause menu opens. The dev screenshot tour (`PAMPA_SHOTS`) skips the title. `tools/menu_poster.sh` bakes the poster and the band. See `game/src/menu.rs` and `game/src/sound.rs`.
+
+The game opens on a title screen. On the left, a "Se busca" poster of Juan Bautista Bairoletto and Mate Cosido (born Segundo David Peralta), two of the rural bandits of León Gieco's "Bandidos rurales", is pinned over an 1882 map of Argentina. On the right, a band of red paint carries "Pampa Salvaje" and the choices Jugar, Sonido and Salir. `Esc` (or the keyboard's `Pause` key) in game opens the same screen over the world. The world stays visible, turned grey with dark corners, and it stands still: virtual time is paused, so the clock, the trains, the animals and the people wait. Sonido sets the general volume and the music's, from 0 to 100 % in steps of 10. They are saved, when the player leaves Sonido or quits with it open, in `settings.ron` under the user's config directory (`~/.config/pampa-salvaje/` on Linux, `%APPDATA%\pampa-salvaje\` on Windows). The menu music (`assets/menu/menu_2.mp3`, the project's own song) loops only while a menu is open, and starts from the top each time the title or the pause menu opens. The dev screenshot tour (`PAMPA_SHOTS`) skips the title. `tools/menu_poster.sh` bakes the poster and the band. See `game/src/menu.rs` and `game/src/sound.rs`.
 
 | Key | Action |
 |-----|--------|

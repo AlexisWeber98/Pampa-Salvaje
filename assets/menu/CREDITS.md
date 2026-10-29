@@ -9,4 +9,4 @@ Shown and played by the title screen, the pause menu and the Sonido screen (`gam
 | `sources/mate_cosido.png` | Argentine police photographs of Mate Cosido (born Segundo David Peralta), profile and front, 1930s; author unknown. Copied from Infobae, "La increíble vida de Mate Cosido" (2023-07-28), which credits no source. | Public domain in Argentina (Ley 11.723 art. 34: photographs, 25 years from publication); assessed by the project | Converted from WebP to PNG |
 | `poster.png` | Baked from the three above, with Rye and IM Fell English lettering (`assets/fonts/`) | CC BY-SA 4.0 (it adapts the Bairoletto restoration) | See `tools/menu_poster.sh` |
 | `band.png`, `vignette.png` | Made by `tools/menu_poster.sh` | Same as the project | — |
-| `menu_2.mp3` | The Pampa Seca project's own song | Same as the project | None |
+| `menu_2.mp3` | The Pampa Salvaje project's own song | Same as the project | None |

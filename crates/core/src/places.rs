@@ -166,14 +166,10 @@ impl TownLayout {
                     )
                 })
                 .collect(),
-            // Narrow enough for the face of the bell tower above the door.
+            // No signboard: the bell tower says what it is (user,
+            // 2026-10-28).
             PlaceKind::Church => building(BuildingKind::Church)
-                .map(|church| {
-                    (
-                        church.footprint,
-                        vec![facade_sign(church.footprint, church.front, 3.4)],
-                    )
-                })
+                .map(|church| (church.footprint, Vec::new()))
                 .into_iter()
                 .collect(),
             PlaceKind::Station => building(BuildingKind::Station)
@@ -484,7 +480,14 @@ mod tests {
                     kind => kind.name(),
                 };
                 assert!(p.name.starts_with(sign), "{}", p.name);
-                assert!(!p.signs.is_empty(), "{:?} has a sign", p.kind);
+                // The church carries no signboard (user, 2026-10-28): its
+                // bell tower says what it is.
+                assert_eq!(
+                    p.signs.is_empty(),
+                    p.kind == PlaceKind::Church,
+                    "{:?} signs",
+                    p.kind
+                );
                 assert!(p.signs.iter().all(|s| s.width > 0.5));
             }
             if let Some(station) = place(&t, PlaceKind::Station) {
@@ -564,7 +567,6 @@ mod tests {
             for (kind, building_kind) in [
                 (PlaceKind::GeneralStore, BuildingKind::GeneralStore),
                 (PlaceKind::PoliceStation, BuildingKind::PoliceStation),
-                (PlaceKind::Church, BuildingKind::Church),
                 (PlaceKind::Station, BuildingKind::Station),
             ] {
                 let Some(b) = building(&t, building_kind) else {

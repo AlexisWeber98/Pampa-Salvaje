@@ -750,7 +750,12 @@ mod tests {
             ride_line.as_deref(),
             Some(format!("Próxima: Monte Nievas, {due}").as_str())
         );
-        assert!(ride_line.unwrap().chars().all(pampa_render::font::supports));
+        assert!(
+            ride_line
+                .unwrap()
+                .chars()
+                .all(|c| pampa_render::lettering::supports(pampa_render::lettering::Face::Body, c))
+        );
         assert_eq!(
             announcement(&app).as_deref(),
             Some("Próxima estación: Monte Nievas")
@@ -929,7 +934,11 @@ mod tests {
         let (rider, ride) = passenger(&mut app);
         assert_eq!(ride, None, "not on horseback");
         assert_eq!(rider.travel(), pampa_core::Travel::Riding, "still mounted");
-        assert!(DISMOUNT_FIRST.chars().all(pampa_render::font::supports));
+        assert!(
+            DISMOUNT_FIRST
+                .chars()
+                .all(|c| pampa_render::lettering::supports(pampa_render::lettering::Face::Body, c))
+        );
     }
 
     #[test]
