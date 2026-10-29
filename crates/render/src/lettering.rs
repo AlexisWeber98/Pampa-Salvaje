@@ -73,29 +73,70 @@ pub struct Extent {
     pub ink: Option<Ink>,
 }
 
-/// Antialiased coverage of one line, `width * height` bytes, row-major.
+/// Antialiased coverage of one line.
+///
+/// `width`, `height` and `baseline` describe the line's box: its advance
+/// width by its ascent plus descent. The canvas behind it is grown to hold
+/// all the ink, so a glyph that overhangs its advance (the italic f's
+/// swash, the roman Q's tail, a j's hook) is kept, not clipped.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Coverage {
+    /// Advance width in pixels: what a caller centers or boxes.
     pub width: u32,
+    /// Line height in pixels: ascent plus descent.
     pub height: u32,
     /// Row of the baseline (the line's ascent).
     pub baseline: u32,
-    /// Coverage `0..=255` per pixel.
-    pub alpha: Vec<u8>,
+    /// The canvas's width, the line box plus any overhang on either side.
+    canvas_width: u32,
+    /// Canvas columns left of the line box, and rows above it.
+    left: u32,
+    top: u32,
+    /// Coverage `0..=255` per canvas pixel, row-major.
+    alpha: Vec<u8>,
 }
 
 impl Coverage {
-    /// Calls `f(x, y, alpha)` for every pixel with coverage.
-    pub fn for_each(&self, mut f: impl FnMut(u32, u32, u8)) {
-        if self.width == 0 {
+    /// No ink at all, in an empty box.
+    fn empty() -> Self {
+        Coverage {
+            width: 0,
+            height: 0,
+            baseline: 0,
+            canvas_width: 0,
+            left: 0,
+            top: 0,
+            alpha: Vec::new(),
+        }
+    }
+
+    /// Calls `f(x, y, alpha)` for every pixel with coverage, `x` and `y`
+    /// from the top-left of the line box (the pen origin at the top of the
+    /// line). Ink overhanging the box comes with negative coordinates or
+    /// ones at or past `width` and `height`.
+    pub fn for_each(&self, mut f: impl FnMut(i32, i32, u8)) {
+        if self.canvas_width == 0 {
             return;
         }
+        let w = self.canvas_width as usize;
         for (i, &a) in self.alpha.iter().enumerate() {
             if a > 0 {
-                f(i as u32 % self.width, i as u32 / self.width, a);
+                let x = (i % w) as i32 - self.left as i32;
+                let y = (i / w) as i32 - self.top as i32;
+                f(x, y, a);
             }
         }
     }
+}
+
+/// The largest size lettered, in pixels: a bigger request is lettered at
+/// this size, so no line's canvas can grow without bound.
+pub const MAX_PX: f32 = 512.0;
+
+/// `px` as a size to letter at: `None` when it is not a finite, positive
+/// number; capped at [`MAX_PX`].
+fn size(px: f32) -> Option<f32> {
+    (px.is_finite() && px > 0.0).then(|| px.min(MAX_PX))
 }
 
 /// True when `face` has a real glyph for `c`; whitespace always counts.
@@ -109,7 +150,10 @@ fn layout(text: &str, face: Face, px: f32) -> (Vec<(ab_glyph::GlyphId, f32)>, f3
     let mut pen = 0.0;
     let mut prev = None;
     let mut glyphs = Vec::new();
-    for c in text.chars() {
+    // Control characters (a stray newline or tab) take no room and draw
+    // nothing; a character the face lacks draws its .notdef box (callers
+    // check `supports` on their text when it loads).
+    for c in text.chars().filter(|c| !c.is_control()) {
         let id = scaled.glyph_id(c);
         if let Some(p) = prev {
             pen += scaled.kern(p, id);
@@ -130,7 +174,16 @@ fn metrics(face: Face, px: f32) -> (u32, u32) {
 }
 
 /// Measures one line of `text` in `face` at `px` pixels, kerning included.
+/// A size that is not a finite, positive number measures nothing.
 pub fn measure(text: &str, face: Face, px: f32) -> Extent {
+    let Some(px) = size(px) else {
+        return Extent {
+            width: 0,
+            ascent: 0,
+            descent: 0,
+            ink: None,
+        };
+    };
     let scaled = font(face).as_scaled(PxScale::from(px));
     let (ascent, descent) = metrics(face, px);
     let (glyphs, end) = layout(text, face, px);
@@ -164,15 +217,29 @@ pub fn measure(text: &str, face: Face, px: f32) -> Extent {
     }
 }
 
-/// Rasterizes one line of `text` in `face` at `px` pixels.
-///
-/// The canvas is the advance width by the line height; ink that overhangs it
-/// (a side bearing, an italic tail) is clipped.
+/// Rasterizes one line of `text` in `face` at `px` pixels: the line box of
+/// [`measure`], grown to hold every glyph's whole ink. A size that is not a
+/// finite, positive number letters nothing.
 pub fn rasterize(text: &str, face: Face, px: f32) -> Coverage {
+    let Some(px) = size(px) else {
+        return Coverage::empty();
+    };
     let scaled = font(face).as_scaled(PxScale::from(px));
     let e = measure(text, face, px);
     let (width, height) = (e.width, e.ascent + e.descent);
-    let mut alpha = vec![0u8; (width * height) as usize];
+    // How far the ink reaches past each side of the line box.
+    let past = |inner: f32, outer: f32| (inner - outer).ceil().max(0.0) as u32;
+    let (left, top, right, bottom) = e.ink.map_or((0, 0, 0, 0), |i| {
+        (
+            past(0.0, i.min_x),
+            past(0.0, i.min_y),
+            past(i.max_x, width as f32),
+            past(i.max_y, height as f32),
+        )
+    });
+    let canvas_width = (left + width + right) as usize;
+    let canvas_height = (top + height + bottom) as usize;
+    let mut alpha = vec![0u8; canvas_width * canvas_height];
     let (glyphs, _) = layout(text, face, px);
     for (id, x) in glyphs {
         let glyph = id.with_scale_and_position(scaled.scale(), point(x, e.ascent as f32));
@@ -181,11 +248,12 @@ pub fn rasterize(text: &str, face: Face, px: f32) -> Coverage {
         };
         let b = outlined.px_bounds();
         outlined.draw(|gx, gy, c| {
-            let (x, y) = (b.min.x as i32 + gx as i32, b.min.y as i32 + gy as i32);
-            if x < 0 || y < 0 || x >= width as i32 || y >= height as i32 {
+            let x = b.min.x as i64 + i64::from(gx) + i64::from(left);
+            let y = b.min.y as i64 + i64::from(gy) + i64::from(top);
+            if x < 0 || y < 0 || x >= canvas_width as i64 || y >= canvas_height as i64 {
                 return;
             }
-            let cell = &mut alpha[(y as u32 * width + x as u32) as usize];
+            let cell = &mut alpha[y as usize * canvas_width + x as usize];
             *cell = (*cell).max((c.clamp(0.0, 1.0) * 255.0).round() as u8);
         });
     }
@@ -193,6 +261,9 @@ pub fn rasterize(text: &str, face: Face, px: f32) -> Coverage {
         width,
         height,
         baseline: e.ascent,
+        canvas_width: canvas_width as u32,
+        left,
+        top,
         alpha,
     }
 }
@@ -204,7 +275,7 @@ mod tests {
 
     const FACES: [Face; 3] = [Face::Display, Face::Body, Face::Italic];
 
-    fn ink_rows(cov: &Coverage) -> Vec<u32> {
+    fn ink_rows(cov: &Coverage) -> Vec<i32> {
         let mut rows = Vec::new();
         cov.for_each(|_, y, _| rows.push(y));
         rows
@@ -291,13 +362,23 @@ mod tests {
     }
 
     #[test]
-    fn rasterized_text_has_ink_inside_its_box() {
+    fn rasterized_text_has_ink_inside_its_measured_bounds() {
         for face in FACES {
             let cov = rasterize("Hola", face, 24.0);
-            assert_eq!(cov.alpha.len(), (cov.width * cov.height) as usize);
+            // The ink stays inside its measured bounds, overhang included.
+            let ink = measure("Hola", face, 24.0).ink.expect("ink");
             let mut n = 0;
             cov.for_each(|x, y, a| {
-                assert!(a > 0 && x < cov.width && y < cov.height);
+                let (x, y) = (x as f32, y as f32);
+                assert!(a > 0, "{face:?}");
+                assert!(
+                    x + 1.0 >= ink.min_x && x <= ink.max_x + 1.0,
+                    "{face:?} x {x}"
+                );
+                assert!(
+                    y + 1.0 >= ink.min_y && y <= ink.max_y + 1.0,
+                    "{face:?} y {y}"
+                );
                 n += 1;
             });
             assert!(n > 0, "{face:?}");
@@ -309,8 +390,8 @@ mod tests {
         let ag = rasterize("Ag", Face::Body, 40.0);
         let ab = rasterize("AB", Face::Body, 40.0);
         // A descender drops well below the baseline; capitals only overshoot it by a row.
-        assert!(ink_rows(&ag).iter().any(|&y| y >= ag.baseline + 5));
-        assert!(ink_rows(&ab).iter().all(|&y| y <= ab.baseline));
+        assert!(ink_rows(&ag).iter().any(|&y| y >= ag.baseline as i32 + 5));
+        assert!(ink_rows(&ab).iter().all(|&y| y <= ab.baseline as i32));
     }
 
     #[test]
@@ -334,6 +415,86 @@ mod tests {
             assert!(cov.alpha.iter().all(|&a| a == 0));
             assert_eq!(e.ink, None);
         }
+    }
+
+    /// The leftmost and rightmost inked columns, from the pen origin.
+    fn ink_columns(cov: &Coverage) -> (i64, i64) {
+        let (mut lo, mut hi) = (i64::MAX, i64::MIN);
+        cov.for_each(|x, _, _| {
+            lo = lo.min(x as i64);
+            hi = hi.max(x as i64);
+        });
+        (lo, hi)
+    }
+
+    #[test]
+    fn ink_overhanging_the_advance_box_is_kept() {
+        // The italic f swings well left of its pen origin; the roman Q's
+        // tail runs far past its advance.
+        let f = rasterize("f", Face::Italic, 100.0);
+        let f_ink = measure("f", Face::Italic, 100.0).ink.expect("ink");
+        let (lo, _) = ink_columns(&f);
+        assert!(lo < 0, "f starts at {lo}");
+        assert!(
+            (lo as f32 - f_ink.min_x).abs() <= 1.0,
+            "{lo} vs {}",
+            f_ink.min_x
+        );
+        let q = rasterize("Q", Face::Body, 100.0);
+        let q_ink = measure("Q", Face::Body, 100.0).ink.expect("ink");
+        let (_, hi) = ink_columns(&q);
+        assert!(
+            hi >= i64::from(q.width),
+            "Q ends at {hi}, advance {}",
+            q.width
+        );
+        assert!(
+            (hi as f32 + 1.0 - q_ink.max_x).abs() <= 1.0,
+            "{hi} vs {}",
+            q_ink.max_x
+        );
+    }
+
+    #[test]
+    fn invalid_sizes_letter_nothing() {
+        for px in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -5.0, 0.0] {
+            let e = measure("Hola", Face::Body, px);
+            assert_eq!(
+                e,
+                Extent {
+                    width: 0,
+                    ascent: 0,
+                    descent: 0,
+                    ink: None
+                },
+                "{px}"
+            );
+            let cov = rasterize("Hola", Face::Body, px);
+            assert_eq!((cov.width, cov.height), (0, 0), "{px}");
+            let mut n = 0;
+            cov.for_each(|_, _, _| n += 1);
+            assert_eq!(n, 0, "{px}");
+        }
+    }
+
+    #[test]
+    fn huge_sizes_are_capped() {
+        assert_eq!(
+            measure("A", Face::Body, 1.0e9),
+            measure("A", Face::Body, MAX_PX)
+        );
+    }
+
+    #[test]
+    fn control_characters_take_no_room() {
+        assert_eq!(
+            measure("a\nb\t", Face::Body, 24.0),
+            measure("ab", Face::Body, 24.0)
+        );
+        assert_eq!(
+            rasterize("a\nb", Face::Body, 24.0),
+            rasterize("ab", Face::Body, 24.0)
+        );
     }
 
     #[test]

@@ -582,13 +582,13 @@ fn label_scaled(map: &mut Canvas, text: &str, center: Vec2, px: f32) {
         if a < HALO_COVERAGE {
             return;
         }
-        let (x, y) = (left + x as i32, top + y as i32);
+        let (x, y) = (left + x, top + y);
         for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
             map.set(x + dx, y + dy, palette::PAPER);
         }
     });
     coverage.for_each(|x, y, a| {
-        let (x, y) = (left + x as i32, top + y as i32);
+        let (x, y) = (left + x, top + y);
         map.blend(x, y, palette::INK, a);
     });
 }
@@ -1057,15 +1057,20 @@ pub(crate) mod tests {
         let (cx, cy) = ((x0 + x1) as f32 / 2.0, (y0 + y1) as f32 / 2.0);
         assert!((cx - 100.0).abs() <= 3.0, "centered x {cx}");
         assert!((cy - 100.0).abs() <= 3.0, "centered y {cy}");
-        // The halo reaches one pixel out on every side of the lettering.
+        // The halo reaches out on every side of the lettering, past the
+        // well-covered ink. Only the faint antialiased edge of a serif,
+        // which earns no halo, may lie up to two pixels beyond it.
         let row_has_paper = |y: usize| (x0..=x1).any(|x| canvas.get(x, y) == palette::PAPER);
         let col_has_paper = |x: usize| (y0..=y1).any(|y| canvas.get(x, y) == palette::PAPER);
+        let near = |edge: usize, inward: isize, has: &dyn Fn(usize) -> bool| {
+            (0..=2).any(|d| has((edge as isize + inward * d) as usize))
+        };
         assert!(
-            row_has_paper(y0) && row_has_paper(y1),
+            near(y0, 1, &row_has_paper) && near(y1, -1, &row_has_paper),
             "halo above and below"
         );
         assert!(
-            col_has_paper(x0) && col_has_paper(x1),
+            near(x0, 1, &col_has_paper) && near(x1, -1, &col_has_paper),
             "halo left and right"
         );
         // About the old bitmap height: 7 rows at 2x, plus the halo.

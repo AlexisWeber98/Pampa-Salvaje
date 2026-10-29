@@ -2,6 +2,8 @@
 //! the menus' Sonido screen and kept between runs in `settings.ron` under
 //! the user's config directory (`$XDG_CONFIG_HOME/pampa-salvaje`,
 //! `~/.config/pampa-salvaje`, or `%APPDATA%\pampa-salvaje` on Windows).
+//! The directory was `pampa-seca` until the game was renamed (2026-10-28,
+//! before any release); that old file is not read.
 //!
 //! Each volume is a step from 0 to [`MAX_STEP`]. What the ear hears grows
 //! with the square of the amplitude's step, so [`SoundSettings::music_gain`]
@@ -72,10 +74,20 @@ impl SoundSettings {
         let mut temporary = path.as_os_str().to_owned();
         temporary.push(".tmp");
         let temporary = PathBuf::from(temporary);
-        std::fs::write(&temporary, text)?;
-        std::fs::rename(&temporary, path).inspect_err(|_| {
+        // Written and flushed to disk before the rename, so a power cut never
+        // leaves an empty file behind the new name; any failure on the way
+        // removes the temporary file.
+        let written = (|| {
+            use std::io::Write;
+            let mut file = std::fs::File::create(&temporary)?;
+            file.write_all(text.as_bytes())?;
+            file.sync_all()?;
+            std::fs::rename(&temporary, path)
+        })();
+        if written.is_err() {
             let _ = std::fs::remove_file(&temporary);
-        })
+        }
+        written
     }
 
     fn clamped(self) -> Self {
@@ -174,6 +186,22 @@ mod tests {
             .map(|e| e.expect("entry").file_name())
             .collect();
         assert_eq!(files, ["settings.ron"]);
+    }
+
+    #[test]
+    fn a_failed_save_leaves_no_temporary_file_behind() {
+        let scratch = Scratch::new("failed");
+        // A non-empty directory where the file should go: the rename fails.
+        let path = scratch.0.join("settings.ron");
+        std::fs::create_dir_all(path.join("in-the-way")).expect("dir");
+        assert!(SoundSettings::default().save(&path).is_err());
+        let mut temporary = path.as_os_str().to_owned();
+        temporary.push(".tmp");
+        assert!(!PathBuf::from(temporary).exists());
+        assert!(
+            path.join("in-the-way").is_dir(),
+            "what was there is untouched"
+        );
     }
 
     #[test]

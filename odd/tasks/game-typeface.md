@@ -125,3 +125,52 @@ Test runner: `cargo test -p pampa-render` / `cargo test -p game` per unit, then 
   workspace tests 207 + 32 + 456 + 544 pass, a 40 s smoke run is clean.
   Pending: the user deletes the orphaned `crates/render/src/font.rs` (rm was
   denied to the agents) and commits. The native review runs on that commit.
+- L8: Native review. The whole range b5abdfb..HEAD (36 files, 2735 lines)
+  stopped with `lens_context_budget_exceeded`. The user chose to review it
+  in slices, using detached worktrees in the session scratchpad:
+  - Slice 1, b5abdfb..e35863b: approved (review-6bd3434a2c6865d4).
+    Advisories:
+    - `settings.ron.tmp` is left behind when the temp write fails.
+    - There is no `sync_all` before the rename.
+    - Nothing tests how `play_music` applies its decision to the sink.
+  - Slice 2 (old), e35863b..32fd09a: the reviewer found a CRITICAL. The user
+    had committed the deletion of `font.rs` before the commits that migrate
+    its users, so the commit did not build. The lineage was abandoned. With
+    the user's agreement the commits were reordered by a non-interactive
+    rebase: the deletion now comes after the typeface commit. Backup branch:
+    `backup/game-typeface-before-reorder`. The final tree is identical.
+  - Slice 2, e35863b..647e3cb: approved (review-90bcd192ac51c90e).
+    Advisories:
+    - `rasterize` does not validate px (overflow, NaN).
+    - The notdef glyph and control chars are drawn silently.
+    - No test covers the overhang clip.
+    - ab_glyph has an exact pin.
+  - Slice 3, 647e3cb..dfafe3a: escalated with unknown causality (R3-001).
+    R3-001 claims `lettering` is missing, but it exists in the base 647e3cb
+    (verified). It is a false positive from a diff-only view. Terminal
+    native stop, informational.
+  - Slice 4, dfafe3a..2d92730: approved (review-1cb6017a7c3d33bf).
+    Advisories:
+    - The settings dir rename has no migration from the old dir.
+    - The font.rs deletion is unexplained in that slice (it is explained by
+      the commit order).
+- L9 (user): "correja nomás mientras reviso". The review advisories were
+  fixed, uncommitted:
+  - lettering: the canvas now grows to hold all the ink. A probe showed the
+    italic f's swash, the roman Q's tail and the hooks of j, y and J were
+    being clipped by tens of pixels, a visible bug in signs, bubbles and the
+    minimap. `Coverage::for_each` now yields i32 line-box coordinates.
+  - lettering: px that is not finite or not positive letters nothing; px is
+    capped at MAX_PX = 512; control chars take no room.
+  - ab_glyph uses a caret requirement (the lock is unchanged).
+  - settings: the temp file is flushed with `sync_all` before the rename and
+    removed on any failure. The sound.rs doc says the old pampa-seca dir is
+    no longer read (renamed before any release, so there is no migration).
+  - The minimap halo test allows a 2 px faint serif edge, measured: ink
+    columns 56..144, paper columns 58..144.
+  Not done: a play_music sink test. AudioSink needs a real audio device, and
+  the decision is already the tested pure `playback`.
+  Checks: fmt clean, clippy clean, and workspace tests 208 + 32 + 456 + 548
+  pass. The flaky character-model test failed once in a crate run and
+  passed alone. Each of the 5 new tests was sabotaged and each sabotage was
+  caught. A 40 s smoke run is clean.
