@@ -1,22 +1,24 @@
-//! The settlements' houses and galpones, built procedurally from the 1919
-//! building list (`odd/setting-1919.md`) with the facade kit's walls and
-//! roofs ([`crate::facade::walls`]).
+//! Las casas y los galpones de los asentamientos, construidos de forma
+//! procedural a partir de la lista de edificios de 1919 (`odd/setting-1919.md`)
+//! con las paredes y los techos del kit de fachadas ([`crate::facade::walls`]).
 //!
-//! Every building is made in its own space: `x` along its front, `z` out
-//! of its front (the front wall's outer face at `+depth / 2`), `y` up from
-//! the ground at its middle. Walls run down to `-drop` so they meet the
-//! ground on a slope.
+//! Cada edificio se arma en su propio espacio: `x` a lo largo de su frente, `z`
+//! hacia afuera del frente (la cara exterior de la pared del frente en `+depth
+//! / 2`), `y` hacia arriba desde el suelo en su centro. Las paredes bajan hasta
+//! `-drop` para encontrarse con el suelo en una pendiente.
 //!
-//! - The adobe rancho: thick mud-plastered walls under a steep, thick paja
-//!   roof with a deep overhang, or under a single slope of old corrugated
-//!   iron falling to the front, its walls built up to meet it.
-//! - The chacra house and the brick worker houses: whitewash or bare brick,
-//!   a flat azotea behind a parapet with a cornice, tall openings with
-//!   wooden doors and shutters.
-//! - The estancia casco: a long Italianate whitewashed house with pilasters,
-//!   a parapet and a front gallery on wooden or iron posts.
-//! - The galpón: corrugated-iron walls and gable roof on timber corner
-//!   posts, with big plank doors.
+//! - El rancho de adobe: paredes gruesas revocadas con barro bajo un techo de
+//!   paja empinado y grueso con un alero profundo, o bajo una sola caída de
+//!   chapa acanalada vieja que baja hacia el frente, con las paredes levantadas
+//!   hasta alcanzarla.
+//! - La casa de chacra y las casas de ladrillo de los trabajadores: encalado o
+//!   ladrillo visto, una azotea plana detrás de un parapeto con cornisa,
+//!   aberturas altas con puertas y postigos de madera.
+//! - El casco de estancia: una casa italianizante larga y encalada con
+//!   pilastras, un parapeto y una galería al frente sobre postes de madera o de
+//!   hierro.
+//! - El galpón: paredes y techo a dos aguas de chapa acanalada sobre postes
+//!   esquineros de madera, con grandes portones de tablones.
 
 use bevy::prelude::*;
 use pampa_core::{HouseStyle, Structure, StructureKind};
@@ -25,8 +27,8 @@ use super::materials::Surface;
 use super::shape::Shape;
 use crate::facade::walls::{Walls, barn, chimney, gable_roof, lean_to, parapet_roof, slab, spread};
 
-/// The size of `structure` in its own space: width along its front and
-/// depth out of it.
+/// El tamaño de `structure` en su propio espacio: ancho a lo largo de su frente
+/// y profundidad hacia afuera de él.
 pub(crate) fn local_size(structure: &Structure) -> Vec2 {
     let s = structure.footprint.size();
     match structure.front {
@@ -35,8 +37,8 @@ pub(crate) fn local_size(structure: &Structure) -> Vec2 {
     }
 }
 
-/// The house or galpón `structure` in its own space, its walls run
-/// `drop` meters below its middle's ground.
+/// La casa o el galpón `structure` en su propio espacio, con las paredes
+/// bajando `drop` metros por debajo del suelo en su centro.
 pub(crate) fn building(structure: &Structure, drop: f32) -> Shape {
     let size = local_size(structure);
     let (w, d, h) = (size.x, size.y, structure.height);
@@ -79,8 +81,8 @@ fn house(
     };
     match style {
         HouseStyle::AdobeThatch | HouseStyle::AdobeIron => {
-            // Adobe: thick walls, few and small openings, inset from the
-            // footprint by the roof's overhang.
+            // Adobe: paredes gruesas, pocas aberturas y pequeñas, metidas hacia
+            // adentro de la huella de edificio tanto como sobresale el alero.
             let inset = if style == HouseStyle::AdobeThatch {
                 0.55
             } else {
@@ -112,7 +114,7 @@ fn house(
                 walls.side(east).build(shape, Surface::Adobe, &[], v);
             }
             if style == HouseStyle::AdobeThatch {
-                // Steep paja, thick and low over the walls.
+                // Paja empinada, gruesa y baja sobre las paredes.
                 let rise = walls.depth() / 2.0 * 0.95;
                 gable_roof(
                     shape,
@@ -177,8 +179,8 @@ fn house(
     }
 }
 
-/// The Italianate casco: whitewashed, pilastered, a parapet with a
-/// balustrade over each bay, and a gallery the whole front long.
+/// El casco italianizante: encalado, con pilastras, un parapeto con balaustrada
+/// sobre cada vano y una galería a lo largo de todo el frente.
 fn homestead(shape: &mut Shape, (w, d, h): (f32, f32, f32), drop: f32, v: u32) {
     let gallery = 3.0;
     let walls = Walls {
@@ -192,7 +194,8 @@ fn homestead(shape: &mut Shape, (w, d, h): (f32, f32, f32), drop: f32, v: u32) {
     };
     let len = walls.width();
     let bays = ((len / 3.2) as usize).clamp(5, 9) | 1;
-    // Doors in the middle and every other bay; tall windows between.
+    // Puertas en el centro y en un vano de por medio; ventanas altas entre
+    // ellas.
     let doors: Vec<usize> = (0..bays).filter(|k| k % 2 == (bays / 2) % 2).collect();
     let front = spread(len, bays, &doors, (1.3, 3.0), (1.2, 0.7, 3.0));
     walls.front().build(shape, Surface::Whitewash, &front, v);
@@ -212,7 +215,7 @@ fn homestead(shape: &mut Shape, (w, d, h): (f32, f32, f32), drop: f32, v: u32) {
             v,
         );
     }
-    // Pilasters between the bays, from the plinth to the cornice.
+    // Pilastras entre los vanos, desde el zócalo hasta la cornisa.
     for k in 0..=bays {
         let x = walls.x0 + len * k as f32 / bays as f32;
         let x = x.clamp(walls.x0 + 0.25, walls.x1 - 0.25);
@@ -223,7 +226,7 @@ fn homestead(shape: &mut Shape, (w, d, h): (f32, f32, f32), drop: f32, v: u32) {
         );
     }
     parapet_roof(shape, Surface::Whitewash, &walls, 0.9);
-    // Balusters in the parapet over the middle bay: the casco's crest.
+    // Balaustres en el parapeto sobre el vano central: la cresta del casco.
     let mid = walls.x0 + len / 2.0;
     for k in 0..9 {
         let x = mid - 1.2 + k as f32 * 0.3;
@@ -239,8 +242,8 @@ fn homestead(shape: &mut Shape, (w, d, h): (f32, f32, f32), drop: f32, v: u32) {
         Vec3::new(mid - 1.5, h + 1.5, walls.z1 - 0.2),
         Vec3::new(mid + 1.5, h + 1.65, walls.z1 + 0.15),
     );
-    // The gallery: a brick floor, a row of posts and an iron roof sloping
-    // gently out from under the cornice.
+    // La galería: un piso de ladrillo, una fila de postes y un techo de chapa
+    // que baja suavemente hacia afuera desde debajo de la cornisa.
     let (g0, g1) = (walls.z1, walls.z1 + gallery);
     shape.block(
         Surface::Brick,
@@ -273,7 +276,7 @@ fn homestead(shape: &mut Shape, (w, d, h): (f32, f32, f32), drop: f32, v: u32) {
     let low = Vec3::new(0.0, top - 0.15, g1 + 0.3);
     let high = Vec3::new(0.0, h - 0.25, g0);
     slab(shape, Surface::OldIron, low, high, len + 0.4, 0.06);
-    // The fascia board along the gallery's edge.
+    // La tabla de frente a lo largo del borde de la galería.
     shape.block(
         Surface::Planks,
         Vec3::new(walls.x0 - 0.2, top - 0.4, g1 + 0.2),

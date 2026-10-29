@@ -1,20 +1,22 @@
-//! Model slots: third-party glTF models that replace a structure kind's
-//! procedural mesh, and the scenes the settlements spawn from them.
+//! Slots de modelos: modelos glTF de terceros que reemplazan la mesh procedural
+//! de un tipo de estructura, y las escenas que los asentamientos crean a partir
+//! de ellos.
 //!
-//! Each kind with a [`StructureKind::slot`] looks for
-//! `assets/models/third-party/<slot>/model.glb` (or `model.gltf`) at
-//! startup ([`SlotModels`]). Where one is found, a structure of that kind
-//! spawns the model's scene, fitted by its [`SlotFit`] (from
-//! `slots.ron`, loaded by the game), instead of its procedural mesh:
+//! Cada tipo con un [`StructureKind::slot`] busca
+//! `assets/models/third-party/<slot>/model.glb` (o `model.gltf`) al iniciar
+//! ([`SlotModels`]). Donde se encuentra uno, una estructura de ese tipo crea la
+//! escena del modelo, ajustada por su [`SlotFit`] (de `slots.ron`, que carga el
+//! juego), en lugar de su mesh procedural:
 //!
-//! - while the model loads, the procedural mesh stands in ([`StandIn`])
-//!   and the scene waits ([`SlotPending`]);
-//! - once it is ready the scene spawns, its meshes are dressed with the
-//!   structure's shared range and fade ([`SceneDress`]), its rotor node
-//!   spins ([`ModelRotor`]) and the stand-in goes;
-//! - if it fails to load, the stand-in stays for good.
+//! - mientras el modelo carga, la mesh procedural lo sustituye ([`StandIn`]) y
+//!   la escena espera ([`SlotPending`]);
+//! - cuando está listo, se crea la escena, sus meshes reciben el rango
+//!   compartido y el fundido de la estructura ([`SceneDress`]), su nodo de
+//!   rotor gira ([`ModelRotor`]) y el sustituto desaparece;
+//! - si falla la carga, el sustituto queda para siempre.
 //!
-//! Obstacles and camera occluders come from `pampa-core` and do not change.
+//! Los obstáculos y los oclusores de cámara vienen de `pampa-core` y no
+//! cambian.
 
 use std::collections::HashMap;
 
@@ -28,11 +30,12 @@ use crate::AssetRoot;
 use crate::flora::ThinOccluder;
 use crate::gltf::{self, ModelState};
 
-/// Where the model slots live, under the [`AssetRoot`].
+/// Dónde viven los slots de modelos, bajo el [`AssetRoot`].
 pub const SLOT_DIR: &str = "models/third-party";
 
-/// How a slot's model sits in its structure's own space: scaled, turned
-/// about the vertical by `yaw` radians, then moved by `offset` meters.
+/// Cómo se ubica el modelo de un slot en el espacio propio de su estructura:
+/// escalado, girado alrededor de la vertical `yaw` radianes, y después
+/// desplazado `offset` metros.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SlotFit {
     pub scale: f32,
@@ -53,7 +56,7 @@ impl Default for SlotFit {
 }
 
 impl SlotFit {
-    /// The model's transform in its structure's own space.
+    /// El transform del modelo en el espacio propio de su estructura.
     pub fn transform(&self) -> Transform {
         Transform::from_translation(self.offset)
             .with_rotation(Quat::from_rotation_y(self.yaw))
@@ -61,29 +64,29 @@ impl SlotFit {
     }
 }
 
-/// A model's spinning part: its glTF node and the axis, in the node's own
-/// space, it turns about.
+/// La parte giratoria de un modelo: su nodo glTF y el eje, en el espacio propio
+/// del nodo, alrededor del cual gira.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SlotRotor {
     pub node: String,
     pub axis: Dir3,
 }
 
-/// The fits of the model slots, by slot name. Insert before the
-/// [`super::SettlementPlugin`] starts; a slot without one is drawn as its
-/// model comes.
+/// Los ajustes de los slots de modelos, por nombre de slot. Se insertan antes
+/// de que arranque el [`super::SettlementPlugin`]; un slot sin ajuste se dibuja
+/// tal como viene su modelo.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct ModelSlots(pub HashMap<String, SlotFit>);
 
 impl ModelSlots {
-    /// The fit of `slot`, or the identity.
+    /// El ajuste de `slot`, o la identidad.
     pub fn fit(&self, slot: &str) -> SlotFit {
         self.0.get(slot).cloned().unwrap_or_default()
     }
 }
 
-/// The folder, under the [`AssetRoot`], the slots are looked up in
-/// ([`SLOT_DIR`] unless a test points elsewhere).
+/// La carpeta, bajo el [`AssetRoot`], en la que se buscan los slots
+/// ([`SLOT_DIR`] salvo que un test apunte a otro lugar).
 #[derive(Resource, Debug, Clone)]
 pub struct SlotFolder(pub String);
 
@@ -93,12 +96,13 @@ impl Default for SlotFolder {
     }
 }
 
-/// The slot models found at startup, loading or loaded, by slot name.
+/// Los modelos de slot encontrados al iniciar, cargando o ya cargados, por
+/// nombre de slot.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct SlotModels(pub HashMap<&'static str, Handle<WorldAsset>>);
 
-/// The model file of `slot` under `folder`, if there is one: `model.glb`
-/// first, then `model.gltf`.
+/// El archivo del modelo de `slot` bajo `folder`, si lo hay: primero
+/// `model.glb`, después `model.gltf`.
 pub fn slot_path(root: &AssetRoot, folder: &str, slot: &str) -> Option<String> {
     ["glb", "gltf"]
         .into_iter()
@@ -106,8 +110,8 @@ pub fn slot_path(root: &AssetRoot, folder: &str, slot: &str) -> Option<String> {
         .find(|path| gltf::is_inside(path) && root.0.join(path).is_file())
 }
 
-/// Starts loading every slot that has a model. Without an asset server or
-/// root (tests, a bare app) none is loaded and everything is procedural.
+/// Empieza a cargar cada slot que tiene un modelo. Sin un servidor de assets o
+/// una raíz (tests, una app vacía) no se carga ninguno y todo es procedural.
 pub(super) fn load_slot_models(
     mut commands: Commands,
     server: Option<Res<AssetServer>>,
@@ -129,39 +133,41 @@ pub(super) fn load_slot_models(
     commands.insert_resource(models);
 }
 
-/// What the meshes of a spawned model scene get: the structure's shared
-/// range, its fade shape, the spin of its rotor node, and whether its
-/// see-through materials need their glass fixed (see [`dress_scene`]).
+/// Lo que reciben las meshes de una escena de modelo creada: el rango
+/// compartido de la estructura, su forma de fundido, el giro de su nodo de
+/// rotor y si hay que corregir el vidrio de sus materiales translúcidos (ver
+/// [`dress_scene`]).
 #[derive(Component, Clone)]
 pub struct SceneDress {
     pub range: VisibilityRange,
     pub fade: Option<ThinOccluder>,
-    /// The rotor node and its speed in radians per second.
+    /// El nodo del rotor y su velocidad en radianes por segundo.
     pub rotor: Option<(SlotRotor, f32)>,
     pub glass: bool,
 }
 
-/// A slot model still loading: its scene is spawned here once ready.
+/// Un modelo de slot que todavía carga: su escena se crea aquí cuando esté
+/// listo.
 #[derive(Component, Debug, Clone)]
 pub struct SlotPending(pub Handle<WorldAsset>);
 
-/// A procedural piece drawn while its structure's slot model loads, and
-/// despawned when the model's scene is ready.
+/// Una pieza procedural que se dibuja mientras carga el modelo de slot de su
+/// estructura, y se elimina cuando la escena del modelo está lista.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct StandIn;
 
-/// A model's node spinning about `axis` (its own space), like a windpump's
-/// wheel.
+/// Un nodo de un modelo que gira alrededor de `axis` (en su propio espacio),
+/// como la rueda de un molino.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct ModelRotor {
     pub axis: Dir3,
-    /// Radians per second.
+    /// Radianes por segundo.
     pub speed: f32,
 }
 
-/// Spawns each waiting slot model's scene once its model is ready. If it
-/// failed, drops the wait and keeps the stand-in for good (no longer a
-/// stand-in).
+/// Crea la escena de cada modelo de slot en espera en cuanto su modelo está
+/// listo. Si falló, abandona la espera y conserva el sustituto para siempre
+/// (que ya no es un sustituto).
 pub(super) fn swap_in_models(
     mut commands: Commands,
     server: Option<Res<AssetServer>>,
@@ -200,26 +206,27 @@ pub(super) fn swap_in_models(
     }
 }
 
-/// The see-through look given to a glTF's blended glass whose base colour
-/// texture has no alpha: how opaque it is.
+/// El aspecto translúcido que se le da al vidrio con mezcla de un glTF cuya
+/// textura de color base no tiene alfa: qué tan opaco es.
 pub const GLASS_ALPHA: f32 = 0.3;
 
-/// What [`dress_scene`] reads off a spawned scene's entities.
+/// Lo que [`dress_scene`] lee de las entidades de una escena creada.
 type SceneParts<'a> = (
     Option<&'a Name>,
     Has<Mesh3d>,
     Option<&'a MeshMaterial3d<StandardMaterial>>,
 );
 
-/// Dresses a model scene the moment it spawns: every mesh gets the shared
-/// range (and fade shape), the rotor node spins, blended glass is made
-/// see-through, and the structure's stand-in goes.
+/// Prepara una escena de modelo en el momento en que se crea: cada mesh recibe
+/// el rango compartido (y la forma de fundido), el nodo de rotor gira, el
+/// vidrio con mezcla se vuelve translúcido y el sustituto de la estructura
+/// desaparece.
 ///
-/// Glass: a glTF material in `BLEND` mode whose base colour is an opaque
-/// JPEG multiplies to alpha 1, so it draws solid. Its base colour alpha is
-/// set to [`GLASS_ALPHA`] and it is made smooth, so the lantern's panes read
-/// as glass. The material is the glTF's own, shared by every instance, and
-/// the change is idempotent.
+/// Vidrio: un material glTF en modo `BLEND` cuyo color base es un JPEG opaco se
+/// multiplica hasta alfa 1, así que se dibuja sólido. El alfa de su color base
+/// se fija en [`GLASS_ALPHA`] y se lo vuelve liso, para que los vidrios del
+/// farol se vean como vidrio. El material es el propio del glTF, compartido por
+/// todas las instancias, y el cambio es idempotente.
 pub(super) fn dress_scene(
     ready: On<WorldInstanceReady>,
     mut commands: Commands,
@@ -261,7 +268,8 @@ pub(super) fn dress_scene(
             named.push((entity, mesh));
         }
     }
-    // The node itself, not its mesh primitives (which may share its name).
+    // El nodo en sí, no sus primitivas de mesh (que pueden compartir su
+    // nombre).
     let spun = named
         .iter()
         .find(|(_, mesh)| !mesh)
@@ -282,7 +290,7 @@ pub(super) fn dress_scene(
     }
 }
 
-/// Turns every [`ModelRotor`].
+/// Hace girar cada [`ModelRotor`].
 pub(super) fn spin_model_rotors(time: Res<Time>, mut rotors: Query<(&ModelRotor, &mut Transform)>) {
     for (rotor, mut transform) in &mut rotors {
         transform.rotate_local_axis(rotor.axis, rotor.speed * time.delta_secs());

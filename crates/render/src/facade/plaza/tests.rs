@@ -5,7 +5,8 @@ use pampa_core::{Aabb, PLAZA_MONUMENT, Side, Vec2 as GroundVec2};
 
 use super::*;
 
-/// A plaza `side` meters square round the origin, furnished as `paving`.
+/// Una plaza de `side` metros de lado alrededor del origen, amueblada como
+/// `paving`.
 fn furnished(paving: Paving, side: f32, main: bool) -> PlazaFurniture {
     let area = Aabb::from_center_size(GroundVec2::new(0.0, 0.0), GroundVec2::new(side, side));
     PlazaFurniture::of(area, paving, main, &[])
@@ -13,15 +14,16 @@ fn furnished(paving: Paving, side: f32, main: bool) -> PlazaFurniture {
 
 const TIERS: [Paving; 3] = [Paving::None, Paving::Plaza, Paving::Everywhere];
 
-/// A world point's place on the ground, for comparing with core's boxes.
+/// El lugar en el suelo de un punto del mundo, para comparar con las cajas de
+/// core.
 fn ground(p: Vec3) -> GroundVec2 {
     GroundVec2::new(p.x, -p.z)
 }
 
 #[test]
 fn each_tier_dresses_its_paths_as_the_sidewalk_rule_does() {
-    // Brick in the city, earth with a brick curb in a town, plain earth in
-    // a village: the same split as the sidewalks (`Paving`).
+    // Ladrillo en la ciudad, tierra con cordón de ladrillo en un pueblo, tierra
+    // sola en una aldea: la misma división que las veredas (`Paving`).
     assert_eq!(
         path_surfaces(Paving::Everywhere),
         (Surface::Paving, Some(Surface::Stucco))
@@ -37,7 +39,8 @@ fn each_tier_dresses_its_paths_as_the_sidewalk_rule_does() {
         let (path, curb) = path_surfaces(paving);
         let surfaces: HashSet<Surface> = s.ground.surfaces().collect();
         assert!(surfaces.contains(&path), "{paving:?}");
-        // The paths lie at their old height, the curbs 3 cm over them.
+        // Los senderos quedan a su altura anterior y los cordones 3 cm por
+        // encima.
         let top = s
             .ground
             .points(path)
@@ -47,14 +50,14 @@ fn each_tier_dresses_its_paths_as_the_sidewalk_rule_does() {
         assert!((top - PATH_TOP).abs() < 1e-5, "{paving:?}: {top}");
         match curb {
             Some(curb) => {
-                // The paths alone: the city's curbs share stucco with its
-                // monument.
+                // Solo los senderos: los cordones de la ciudad comparten
+                // revoque con su monumento.
                 let mut alone = Shape::default();
                 paths(&mut alone, &f, f.area.center());
                 let points = alone.points(curb);
                 let top = points.iter().map(|p| p.y).fold(f32::MIN, f32::max);
                 assert!((top - PATH_CURB_TOP).abs() < 1e-5, "{paving:?}: {top}");
-                // Curbs lie beside the paths, never on them.
+                // Los cordones quedan al costado de los senderos, nunca encima.
                 for p in points.iter().filter(|p| p.y > PATH_TOP) {
                     let g = ground(*p);
                     let on_x = g.y.abs() < PLAZA_PATH_WIDTH / 2.0 - 1e-4
@@ -66,8 +69,8 @@ fn each_tier_dresses_its_paths_as_the_sidewalk_rule_does() {
             }
             None => assert!(!surfaces.contains(&Surface::Brick), "{paving:?}"),
         }
-        // Only the city has a railing: elsewhere the furniture is the
-        // benches alone.
+        // Solo la ciudad tiene verja: en los demás lugares el mobiliario son
+        // únicamente los bancos.
         let mut one = Shape::default();
         bench(&mut one);
         let bench_iron = one.points(Surface::Steel).len();
@@ -83,11 +86,12 @@ fn the_monument_grows_with_the_town_and_stays_on_its_plinth() {
     assert!(heights[0] < 4.6 && heights[2] > 8.5, "{heights:?}");
     for paving in TIERS {
         let p = Proportions::of(paving);
-        // Its lowest step is core's collider, inside the old plinth.
+        // Su escalón más bajo es el collider de core, dentro del zócalo
+        // anterior.
         let side = PlazaFurniture::monument_side(paving);
         assert!((p.steps[0].0 - side).abs() < 1e-6, "{paving:?}");
         assert!(side <= PLAZA_MONUMENT);
-        // Each step, the pedestal and the shaft narrow upward.
+        // Cada escalón, el pedestal y el fuste se angostan hacia arriba.
         assert!(p.steps.windows(2).all(|w| w[0].0 > w[1].0));
         let last = p.steps.last().expect("a step").0;
         assert!(p.pedestal.0 < last && p.cornice.0 < last + 0.01);
@@ -121,7 +125,7 @@ fn the_monument_plaques_are_bronze_on_every_face() {
         let mut shape = Shape::default();
         monument(&mut shape, paving, PATH_TOP);
         let surfaces: HashSet<Surface> = shape.surfaces().collect();
-        // The bare plaza's monument has no plaques.
+        // El monumento de la plaza desnuda no tiene placas.
         if paving == Paving::None {
             assert!(!surfaces.contains(&Surface::Bronze));
             continue;
@@ -147,13 +151,13 @@ fn a_bench_keeps_within_its_footprint_and_faces_its_path() {
             assert!((-0.01..1.0).contains(&p.y), "{s:?}: {p}");
         }
     }
-    // Its back leans behind the seat, away from the front (+z).
+    // Su respaldo se inclina por detrás del asiento, lejos del frente (+z).
     let mean = |pts: Vec<Vec3>| pts.iter().sum::<Vec3>() / pts.len() as f32;
     let planks = shape.points(Surface::Planks);
     let (seat, back): (Vec<Vec3>, Vec<Vec3>) = planks.into_iter().partition(|p| p.y < SEAT + 0.1);
     assert!(mean(back).z < mean(seat).z - 0.1);
-    // Placed in a plaza, every bench's back is farther from the paths
-    // than its seat, and it stays upright.
+    // Colocado en una plaza, el respaldo de cada banco queda más lejos de los
+    // senderos que su asiento, y el banco sigue derecho.
     for paving in TIERS {
         let f = furnished(paving, 40.0, true);
         for b in &f.benches {
@@ -176,14 +180,14 @@ fn a_bench_keeps_within_its_footprint_and_faces_its_path() {
                 .partition(|p| p.y < LAWN_TOP + SEAT + 0.1);
             let far = |v: &[Vec3]| v.iter().map(to_path).sum::<f32>() / v.len() as f32;
             assert!(far(&back) > far(&seat) + 0.1, "{b:?} faces away");
-            // And within core's collider.
+            // Y dentro del collider de core.
             let footprint = b.footprint().expanded(1e-3);
             for p in placed.points(Surface::Steel) {
                 assert!(footprint.contains_point(ground(p)), "{b:?}: {p}");
             }
         }
     }
-    // A half turn is about `y`: facing south stays upright.
+    // Media vuelta es alrededor de `y`: mirando al sur sigue derecho.
     let south = facing(Side::South) * Vec3::Y;
     assert!(south.distance(Vec3::Y) < 1e-5);
 }
@@ -210,7 +214,8 @@ fn the_railing_stands_within_its_colliders_open_at_the_mouths() {
                 );
             }
         }
-        // Piers or posts at the four corners and both sides of each mouth.
+        // Pilares o postes en las cuatro esquinas y a ambos lados de cada
+        // entrada.
         assert_eq!(stands(&f, 0.1).len(), 4 + 8);
         let top = s
             .furniture
@@ -224,8 +229,9 @@ fn the_railing_stands_within_its_colliders_open_at_the_mouths() {
 
 #[test]
 fn a_plaza_keeps_to_its_triangle_budget() {
-    // General Pico's main plaza (2 x 2 blocks of 40 m and a 10 m street)
-    // is the biggest: every tier stays under 30k triangles a plaza.
+    // La plaza principal de General Pico (2 x 2 manzanas de 40 m y una calle de
+    // 10 m) es la más grande: cada nivel queda por debajo de 30k triángulos por
+    // plaza.
     const BUDGET: usize = 30_000;
     for paving in TIERS {
         for (side, main) in [(90.0, true), (40.0, true), (40.0, false)] {

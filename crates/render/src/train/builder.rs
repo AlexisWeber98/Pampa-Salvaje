@@ -1,6 +1,7 @@
-//! The car builder: collects a car's static shapes by material and makes
-//! one mesh of each, spawns its wheels, rods and smoke as entities of their
-//! own, and builds the underframe and bogies every car stands on.
+//! El constructor de vagones: reúne las formas estáticas de un vagón por
+//! material y hace una mesh de cada una, crea sus ruedas, bielas y humo como
+//! entidades propias, y construye el bastidor y los bogies sobre los que se
+//! apoya cada vagón.
 
 use std::collections::BTreeMap;
 use std::f32::consts::{FRAC_PI_2, PI};
@@ -12,19 +13,22 @@ use super::shape::{Grain, Shape};
 use super::wheels::{WHEEL_Z, WheelStyle};
 use super::{SmokePuff, TrainRod, TrainWheel};
 
-/// Where the underframe's top meets the body, over the rail tops.
+/// Donde la parte superior del bastidor se encuentra con la caja, por encima de
+/// la cara superior de los rieles.
 pub const DECK: f32 = 1.1;
 
-/// Spawns child meshes of one car, in its local frame (origin on the rails
-/// at the car's middle, +X forward, +Z to the car's right).
+/// Crea las meshes hijas de un vagón, en su marco local (origen sobre los
+/// rieles en el centro del vagón, +X hacia adelante, +Z hacia la derecha del
+/// vagón).
 pub struct CarBuilder<'a, 'c> {
     pub car: EntityCommands<'c>,
-    /// Index of the car's train in [`super::WorldTrains`].
+    /// Índice del tren del vagón en [`super::WorldTrains`].
     pub train: usize,
     pub kit: &'a Kit,
     meshes: &'a mut Assets<Mesh>,
     parts: BTreeMap<Mat, Shape>,
-    /// The coach's inside, drawn apart so it can be told from the shell.
+    /// El interior del coche, dibujado aparte para poder distinguirlo de la
+    /// carcasa.
     inside: BTreeMap<Mat, Shape>,
 }
 
@@ -45,43 +49,44 @@ impl<'a, 'c> CarBuilder<'a, 'c> {
         }
     }
 
-    /// Adds `shape` to the car's mesh of `mat`.
+    /// Agrega `shape` a la mesh del vagón de material `mat`.
     pub fn add(&mut self, mat: Mat, shape: Shape) {
         self.parts.entry(mat).or_default().append(&shape);
     }
 
-    /// Adds `shape` to the car's inside mesh of `mat` (see
+    /// Agrega `shape` a la mesh interior del vagón de material `mat` (ver
     /// [`super::CoachInterior`]).
     pub fn inside(&mut self, mat: Mat, shape: Shape) {
         self.inside.entry(mat).or_default().append(&shape);
     }
 
-    /// A box inside the car.
+    /// Una caja dentro del vagón.
     pub fn inside_box(&mut self, mat: Mat, center: Vec3, size: Vec3) {
         self.inside(mat, Shape::cuboid(center, size, Grain::Along));
     }
 
-    /// Adds `shape` moved by `t`.
+    /// Agrega `shape` desplazada por `t`.
     pub fn put(&mut self, mat: Mat, shape: &Shape, t: Transform) {
         self.add(mat, shape.transformed(t));
     }
 
-    /// A box, its boards running along the first texture axis.
+    /// Una caja con las tablas a lo largo del primer eje de textura.
     pub fn boxed(&mut self, mat: Mat, center: Vec3, size: Vec3) {
         self.add(mat, Shape::cuboid(center, size, Grain::Along));
     }
 
-    /// A box with upright boards.
+    /// Una caja con tablas verticales.
     pub fn boxed_upright(&mut self, mat: Mat, center: Vec3, size: Vec3) {
         self.add(mat, Shape::cuboid(center, size, Grain::Across));
     }
 
-    /// A round bar of radius `r` from `a` to `b`.
+    /// Una barra redonda de radio `r` desde `a` hasta `b`.
     pub fn bar(&mut self, mat: Mat, a: Vec3, b: Vec3, r: f32) {
         self.add(mat, bar_shape(a, b, r, 8));
     }
 
-    /// A lathe turning about the axis from `at` along `dir`.
+    /// Un torneado que gira alrededor del eje que parte de `at` en la dirección
+    /// `dir`.
     pub fn turned(&mut self, mat: Mat, profile: &[(f32, f32)], sides: usize, at: Vec3, dir: Vec3) {
         let shape = Shape::lathe(profile, sides);
         self.put(
@@ -91,7 +96,7 @@ impl<'a, 'c> CarBuilder<'a, 'c> {
         );
     }
 
-    /// A pair of wheels on one axle at `x`, with the axle between them.
+    /// Un par de ruedas sobre un eje en `x`, con el eje entre ellas.
     pub fn axle(&mut self, x: f32, radius: f32, style: WheelStyle) {
         let steel = self.kit.material(Mat::TYRE);
         let black = self.kit.material(Mat::BLACK);
@@ -123,11 +128,11 @@ impl<'a, 'c> CarBuilder<'a, 'c> {
         );
     }
 
-    /// A rod swung round by the drivers' cranks (see [`TrainRod`]): the
-    /// shape is the rod at rest, centred on `base`.
+    /// Una biela que hacen girar las manivelas de las ruedas motrices (ver
+    /// [`TrainRod`]): la forma es la biela en reposo, centrada en `base`.
     pub fn rod(&mut self, shape: Shape, base: Vec3, phase: f32, length: f32) {
         let mesh = self.meshes.add(shape.into_mesh());
-        // Bright steel: the rods catch the eye as they swing.
+        // Acero brillante: las bielas llaman la atención al girar.
         let material = self.kit.material(Mat::TYRE);
         self.car.with_child((
             Mesh3d(mesh),
@@ -144,8 +149,8 @@ impl<'a, 'c> CarBuilder<'a, 'c> {
         ));
     }
 
-    /// Smoke puffs, under a holder at the car's origin so they never count
-    /// as the car's own height, rising from `chimney`.
+    /// Bocanadas de humo, bajo un soporte en el origen del vagón para que nunca
+    /// cuenten como altura propia del vagón, saliendo de `chimney`.
     pub fn smoke(&mut self, chimney: Vec3) {
         let (mesh, smoke) = (self.kit.puff.clone(), self.kit.smoke.clone());
         let train = self.train;
@@ -169,7 +174,7 @@ impl<'a, 'c> CarBuilder<'a, 'c> {
         });
     }
 
-    /// Makes the merged meshes, one child per material.
+    /// Hace las meshes fusionadas, una hija por material.
     pub fn finish(mut self) {
         for (mat, shape) in std::mem::take(&mut self.parts) {
             let mesh = self.meshes.add(shape.into_mesh());
@@ -186,9 +191,9 @@ impl<'a, 'c> CarBuilder<'a, 'c> {
         }
     }
 
-    /// The underframe every car but the engine stands on: solebars, buffer
-    /// beams with their sprung buffers, a screw coupling, truss rods and
-    /// the hint of brake gear.
+    /// El bastidor sobre el que se apoya cada vagón salvo la locomotora:
+    /// largueros, testeros con sus topes de resorte, un enganche a tornillo,
+    /// tensores y un esbozo del equipo de freno.
     pub fn underframe(&mut self, length: f32) {
         let half = length / 2.0;
         self.boxed(
@@ -205,13 +210,13 @@ impl<'a, 'c> CarBuilder<'a, 'c> {
         }
         for end in [-1.0, 1.0] {
             self.buffer_beam(end * (half - 0.4), end);
-            // A headstock cross-brace, and the screw coupling's link.
+            // Un travesaño en el testero, y el eslabón del enganche a tornillo.
             self.boxed(
                 Mat::BLACK,
                 Vec3::new(end * (half - 1.0), DECK, 0.0),
                 Vec3::new(0.1, 0.22, 2.1),
             );
-            // Truss rods from the headstock down under the middle.
+            // Tensores desde el testero hacia abajo, bajo el centro.
             for side in [-1.0, 1.0] {
                 let z = side * 0.55;
                 let low = DECK - 0.32;
@@ -224,7 +229,7 @@ impl<'a, 'c> CarBuilder<'a, 'c> {
                 self.bar(Mat::BLACK, b, c, 0.018);
             }
         }
-        // Brake cylinder and its pull rods.
+        // El cilindro de freno y sus varillas de tiro.
         self.turned(
             Mat::BLACK,
             &[(-0.3, 0.0), (-0.3, 0.15), (0.3, 0.15), (0.3, 0.0)],
@@ -242,8 +247,8 @@ impl<'a, 'c> CarBuilder<'a, 'c> {
         }
     }
 
-    /// A buffer beam at `x`, facing `end` (+1 forward), with two sprung
-    /// buffers and a coupling hook.
+    /// Un testero en `x`, mirando hacia `end` (+1 hacia adelante), con dos
+    /// topes de resorte y un gancho de enganche.
     pub fn buffer_beam(&mut self, x: f32, end: f32) {
         self.boxed(
             Mat::BUFFER_RED,
@@ -253,7 +258,7 @@ impl<'a, 'c> CarBuilder<'a, 'c> {
         self.fittings(x + end * 0.1, end, DECK);
     }
 
-    /// The buffers and coupling in front of a buffer-beam face at `x`.
+    /// Los topes y el enganche delante de la cara de un testero en `x`.
     pub fn fittings(&mut self, x: f32, end: f32, y: f32) {
         let buffer = [
             (0.0, 0.0),
@@ -265,7 +270,8 @@ impl<'a, 'c> CarBuilder<'a, 'c> {
             (0.30, 0.20),
             (0.30, 0.0),
         ];
-        // The profile runs outward along +X; the buffer stands on the beam.
+        // El perfil corre hacia afuera a lo largo de +X; el tope se apoya en el
+        // testero.
         let buffer = Shape::lathe(&buffer, 14);
         let turn = Quat::from_rotation_y(if end > 0.0 { 0.0 } else { PI });
         for side in [-1.0, 1.0] {
@@ -275,7 +281,7 @@ impl<'a, 'c> CarBuilder<'a, 'c> {
                 Transform::from_translation(Vec3::new(x, y, side * 0.9)).with_rotation(turn),
             );
         }
-        // The draw hook and a hanging screw link.
+        // El gancho de tracción y un eslabón de tornillo colgante.
         self.boxed(
             Mat::BLACK,
             Vec3::new(x + end * 0.2, y - 0.05, 0.0),
@@ -288,15 +294,15 @@ impl<'a, 'c> CarBuilder<'a, 'c> {
         );
     }
 
-    /// Two four-wheeled plate-wheel bogies under a coach or freight car.
+    /// Dos bogies de cuatro ruedas de disco bajo un coche o un vagón de carga.
     pub fn bogies(&mut self, length: f32) {
         for end in [-1.0, 1.0] {
             self.bogie(end * (length / 2.0 - 2.3));
         }
     }
 
-    /// One bogie centred at `x`: two axles, outside plate frames, leaf
-    /// springs over the axle boxes and a bolster.
+    /// Un bogie centrado en `x`: dos ejes, bastidores de chapa exteriores,
+    /// ballestas sobre las cajas de grasa y un travesaño de carga.
     fn bogie(&mut self, x: f32) {
         let spring = leaf_spring(0.55);
         for dx in [-0.95, 0.95] {
@@ -310,7 +316,7 @@ impl<'a, 'c> CarBuilder<'a, 'c> {
                 Vec3::new(2.4, 0.14, 0.06),
             );
             for dx in [-0.95, 0.95] {
-                // Axle box, spring, hanger.
+                // Caja de grasa, ballesta, colgante.
                 self.boxed(
                     Mat::BLACK,
                     Vec3::new(x + dx, BOGIE_RADIUS, z),
@@ -329,7 +335,7 @@ impl<'a, 'c> CarBuilder<'a, 'c> {
                     );
                 }
             }
-            // The pedestals tying the frame to the axle boxes.
+            // Los pedestales que unen el bastidor con las cajas de grasa.
             for dx in [-1.25, -0.65, 0.65, 1.25] {
                 self.boxed(
                     Mat::BLACK,
@@ -346,7 +352,7 @@ impl<'a, 'c> CarBuilder<'a, 'c> {
     }
 }
 
-/// A round bar of radius `r` from `a` to `b`.
+/// Una barra redonda de radio `r` desde `a` hasta `b`.
 pub fn bar_shape(a: Vec3, b: Vec3, r: f32, sides: usize) -> Shape {
     let length = a.distance(b);
     Shape::lathe(&[(0.0, 0.0), (0.0, r), (length, r), (length, 0.0)], sides).transformed(
@@ -355,7 +361,8 @@ pub fn bar_shape(a: Vec3, b: Vec3, r: f32, sides: usize) -> Shape {
     )
 }
 
-/// A leaf spring: a lens `length` long, one box thick across Z.
+/// Una ballesta: una lente de `length` de largo, del grosor de una caja a lo
+/// largo de Z.
 fn leaf_spring(length: f32) -> Shape {
     let mut ring = vec![Vec2::new(-length / 2.0, 0.0)];
     for i in 1..8 {

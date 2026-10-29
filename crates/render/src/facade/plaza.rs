@@ -1,24 +1,26 @@
-//! A 1919 pampa plaza, dressed by its town's [`Paving`] from the
-//! [`PlazaFurniture`] core lays out: paths with low curbs, a paved
-//! crossing, a monument in the manner of the Pirámide de Mayo (a stepped
-//! base, a pedestal under a cornice, an obelisk and a finial), slatted
-//! benches on cast-iron ends, and a low railing round the edge.
+//! Una plaza pampeana de 1919, vestida según el [`Paving`] de su pueblo a
+//! partir del [`PlazaFurniture`] que dispone core: senderos con cordones bajos,
+//! un cruce pavimentado, un monumento al estilo de la Pirámide de Mayo (una
+//! base escalonada, un pedestal bajo una cornisa, un obelisco y un remate),
+//! bancos de listones sobre laterales de hierro fundido, y una verja baja
+//! alrededor del borde.
 //!
-//! - **City** ([`Paving::Everywhere`], General Pico): brick paths with
-//!   stucco curbs, a monument of about 8.8 m on three steps, three benches a
-//!   side, and an iron railing over a stucco plinth between piers.
-//! - **Town** ([`Paving::Plaza`], Castex): compacted earth paths with brick
-//!   curbs, a monument of about 6.4 m on two steps, one bench by each path
-//!   (one to a quadrant), no railing.
-//! - **Village** ([`Paving::None`], Metileo): earth paths with no curbs, a
-//!   small monument of about 4.5 m, two benches, no railing.
+//! - **Ciudad** ([`Paving::Everywhere`], General Pico): senderos de ladrillo
+//!   con cordones de revoque, un monumento de unos 8.8 m sobre tres escalones,
+//!   tres bancos por lado y una verja de hierro sobre un zócalo de revoque
+//!   entre pilares.
+//! - **Pueblo** ([`Paving::Plaza`], Castex): senderos de tierra compactada con
+//!   cordones de ladrillo, un monumento de unos 6.4 m sobre dos escalones, un
+//!   banco junto a cada sendero (uno por cuadrante), sin verja.
+//! - **Aldea** ([`Paving::None`], Metileo): senderos de tierra sin cordones, un
+//!   monumento pequeño de unos 4.5 m, dos bancos, sin verja.
 //!
-//! Everything is built round the plaza's middle on the ground, `x` east,
-//! `y` up and `z` south (the world's axes), into two [`Shape`]s: the
-//! [`PlazaShapes::ground`] (paths, curbs, crossing and monument, drawn as
-//! far as the buildings) and the [`PlazaShapes::furniture`] (benches and
-//! railing, drawn as far as the small props). Each ends up as one mesh per
-//! [`Surface`].
+//! Todo se construye alrededor del centro de la plaza sobre el suelo, con `x`
+//! hacia el este, `y` hacia arriba y `z` hacia el sur (los ejes del mundo),
+//! dentro de dos [`Shape`]: el [`PlazaShapes::ground`] (senderos, cordones,
+//! cruce y monumento, dibujado hasta la distancia de los edificios) y el
+//! [`PlazaShapes::furniture`] (bancos y verja, dibujado hasta la distancia de
+//! los accesorios pequeños). Cada uno termina como una mesh por [`Surface`].
 
 use bevy::prelude::*;
 use pampa_core::town::{Bench, Paving, PlazaFurniture};
@@ -29,27 +31,31 @@ use super::materials::Surface;
 use super::shape::Shape;
 use crate::coords::world_from_ground;
 
-/// Top of the plaza's lawn over the ground, meters (the town's lawn patch).
+/// Parte superior del césped de la plaza sobre el suelo, en metros (el parche
+/// de césped del pueblo).
 pub const LAWN_TOP: f32 = 0.05;
-/// Top of the paths and the crossing over the ground, meters: as before.
+/// Parte superior de los senderos y del cruce sobre el suelo, en metros: como
+/// antes.
 pub const PATH_TOP: f32 = 0.07;
-/// Top of a path's curb over the ground, meters: 3 cm over the path.
+/// Parte superior del cordón de un sendero sobre el suelo, en metros: 3 cm por
+/// encima del sendero.
 pub const PATH_CURB_TOP: f32 = 0.10;
-/// Width of a path's curb, on the lawn beside it, meters.
+/// Ancho del cordón de un sendero, sobre el césped de al lado, en metros.
 pub const PATH_CURB: f32 = 0.15;
-/// How far paths and curbs reach under the ground, meters.
+/// Cuánto se meten los senderos y los cordones bajo el suelo, en metros.
 const FOOT: f32 = -0.05;
 
-/// One plaza's meshes, round its middle on the ground.
+/// Las meshes de una plaza, alrededor de su centro sobre el suelo.
 #[derive(Debug, Default)]
 pub(crate) struct PlazaShapes {
-    /// Paths, curbs, crossing and monument.
+    /// Senderos, cordones, cruce y monumento.
     pub ground: Shape,
-    /// Benches and railing.
+    /// Bancos y verja.
     pub furniture: Shape,
 }
 
-/// The surfaces a plaza of `paving` wears for its paths and their curbs.
+/// Las superficies que lleva una plaza de `paving` para sus senderos y sus
+/// cordones.
 pub(crate) fn path_surfaces(paving: Paving) -> (Surface, Option<Surface>) {
     match paving {
         Paving::Everywhere => (Surface::Paving, Some(Surface::Stucco)),
@@ -58,7 +64,7 @@ pub(crate) fn path_surfaces(paving: Paving) -> (Surface, Option<Surface>) {
     }
 }
 
-/// Builds the plaza `f` lays out.
+/// Construye la plaza que dispone `f`.
 pub(crate) fn plaza(f: &PlazaFurniture) -> PlazaShapes {
     let mut s = PlazaShapes::default();
     let c = f.area.center();
@@ -77,15 +83,16 @@ pub(crate) fn plaza(f: &PlazaFurniture) -> PlazaShapes {
     s
 }
 
-/// The turn taking a piece's `+Z` (its front) to face `side`.
+/// El giro que lleva el `+Z` de una pieza (su frente) a mirar hacia `side`.
 fn facing(side: Side) -> Quat {
     let n = pampa_core::places::side_normal(side);
     let d = world_from_ground(n, 0.0);
-    // A turn about `y` only: a half turn must not flip it over.
+    // Un giro solo alrededor de `y`: media vuelta no debe darla vuelta.
     Quat::from_rotation_y(d.x.atan2(d.z))
 }
 
-/// The box over ground `area` from `low` to `high`, round ground `c`.
+/// La caja sobre el área del suelo `area` desde `low` hasta `high`, alrededor
+/// del punto del suelo `c`.
 fn ground_block(
     shape: &mut Shape,
     surface: Surface,
@@ -101,8 +108,8 @@ fn ground_block(
     shape.block(surface, p.min(q).with_y(low), p.max(q).with_y(high));
 }
 
-/// The crossing, the four paths out of it to the plaza's edge, and their
-/// curbs on the lawn side (none in a village).
+/// El cruce, los cuatro senderos que salen de él hasta el borde de la plaza y
+/// sus cordones del lado del césped (ninguno en una aldea).
 fn paths(shape: &mut Shape, f: &PlazaFurniture, c: GroundVec2) {
     let (path, curb) = path_surfaces(f.paving);
     let (area, x) = (f.area, f.crossing);
@@ -134,7 +141,8 @@ fn paths(shape: &mut Shape, f: &PlazaFurniture, c: GroundVec2) {
     };
     let w = PATH_CURB;
     let mut curbs = Vec::new();
-    // Along each arm, both sides, from the crossing's curb to the edge.
+    // A lo largo de cada brazo, a ambos lados, desde el cordón del cruce hasta
+    // el borde.
     for (lo, hi) in [(x.max.x + w, area.max.x), (area.min.x, x.min.x - w)] {
         curbs.push(Aabb::new(
             GroundVec2::new(lo, c.y + h),
@@ -155,12 +163,13 @@ fn paths(shape: &mut Shape, f: &PlazaFurniture, c: GroundVec2) {
             GroundVec2::new(c.x - h, hi),
         ));
     }
-    // Round the crossing, between the arms, its corners included.
+    // Alrededor del cruce, entre los brazos, esquinas incluidas.
     for (sx, sy) in [(1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)] {
         let corner = c + GroundVec2::new(sx, sy) * (half(x) + w);
         let inner = c + GroundVec2::new(sx * h, sy * h);
         let edge = c + GroundVec2::new(sx, sy) * half(x);
-        // The run along x (its north or south side), then along y.
+        // El tramo a lo largo de x (su lado norte o sur), y después a lo largo
+        // de y.
         curbs.push(span(
             GroundVec2::new(inner.x, edge.y),
             GroundVec2::new(corner.x, corner.y),
@@ -175,12 +184,12 @@ fn paths(shape: &mut Shape, f: &PlazaFurniture, c: GroundVec2) {
     }
 }
 
-/// Half the side of a square `a`.
+/// La mitad del lado de un cuadrado `a`.
 fn half(a: Aabb) -> f32 {
     a.size().x / 2.0
 }
 
-/// The box between two ground corners in any order.
+/// La caja entre dos esquinas del suelo, en cualquier orden.
 fn span(a: GroundVec2, b: GroundVec2) -> Aabb {
     Aabb::new(
         GroundVec2::new(a.x.min(b.x), a.y.min(b.y)),
@@ -188,28 +197,29 @@ fn span(a: GroundVec2, b: GroundVec2) -> Aabb {
     )
 }
 
-/// How a monument is proportioned, meters.
+/// Las proporciones de un monumento, en metros.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Proportions {
-    /// Each step's side and rise, from the lowest.
+    /// El lado y la altura de cada escalón, desde el más bajo.
     pub steps: &'static [(f32, f32)],
-    /// The pedestal's side and height.
+    /// El lado y la altura del pedestal.
     pub pedestal: (f32, f32),
-    /// The cornice's side and depth over the pedestal.
+    /// El lado de la cornisa y su altura sobre el pedestal.
     pub cornice: (f32, f32),
-    /// The die (attic) over the cornice: side and height.
+    /// El dado (ático) sobre la cornisa: lado y altura.
     pub die: (f32, f32),
-    /// The obelisk's side at its foot and at its top, and its height.
+    /// El lado del obelisco en su pie y en su punta, y su altura.
     pub shaft: (f32, f32, f32),
-    /// The pyramidion's height over the shaft.
+    /// La altura del piramidión sobre el fuste.
     pub point: f32,
-    /// Urns on the cornice's corners.
+    /// Macetones en las esquinas de la cornisa.
     pub urns: bool,
 }
 
 impl Proportions {
-    /// The monument of a plaza of `paving`: grander as the town grows. Its
-    /// lowest step is [`PlazaFurniture::monument_side`] wide.
+    /// El monumento de una plaza de `paving`: más imponente a medida que crece
+    /// el pueblo. Su escalón más bajo tiene [`PlazaFurniture::monument_side`]
+    /// de ancho.
     pub fn of(paving: Paving) -> Self {
         match paving {
             Paving::None => Self {
@@ -242,7 +252,7 @@ impl Proportions {
         }
     }
 
-    /// Height of the finial's tip over the monument's foot.
+    /// Altura de la punta del remate sobre el pie del monumento.
     #[cfg(test)]
     pub fn height(&self) -> f32 {
         let steps: f32 = self.steps.iter().map(|s| s.1).sum();
@@ -250,13 +260,14 @@ impl Proportions {
     }
 }
 
-/// Height of the monument's finial (a ball on a collar), meters.
+/// Altura del remate del monumento (una esfera sobre un collar), en metros.
 const FINIAL: f32 = 0.35;
 
-/// The monument for a plaza of `paving`, standing at `foot` over the
-/// plaza's middle: stucco steps, a whitewashed pedestal on a moulded base
-/// with a bronze plaque on each face, a stucco cornice, a die, a tapering
-/// whitewashed obelisk with its pyramidion, and an iron finial.
+/// El monumento de una plaza de `paving`, apoyado en `foot` sobre el centro de
+/// la plaza: escalones de revoque, un pedestal encalado sobre una basa
+/// moldurada con una placa de bronce en cada cara, una cornisa de revoque, un
+/// dado, un obelisco encalado que se angosta hacia arriba con su piramidión, y
+/// un remate de hierro.
 pub(crate) fn monument(shape: &mut Shape, paving: Paving, foot: f32) {
     let p = Proportions::of(paving);
     let mut y = foot;
@@ -269,7 +280,7 @@ pub(crate) fn monument(shape: &mut Shape, paving: Paving, foot: f32) {
         shape.chamfered(Surface::Stucco, lo, hi, 0.12);
         y += rise;
     }
-    // Pedestal: a moulded base, the die of the pedestal, plaques.
+    // Pedestal: una basa moldurada, el dado del pedestal y las placas.
     let (side, height) = p.pedestal;
     let (lo, hi) = square(side + 0.12, y, y + 0.18);
     shape.chamfered(Surface::Stucco, lo, hi, CHAMFER);
@@ -290,7 +301,7 @@ pub(crate) fn monument(shape: &mut Shape, paving: Paving, foot: f32) {
         }
     }
     y += height;
-    // Cornice: a fascia under a wider drip.
+    // Cornisa: una faja bajo un goterón más ancho.
     let (side, depth) = p.cornice;
     let (lo, hi) = square(side - 0.12, y, y + depth * 0.45);
     shape.chamfered(Surface::Stucco, lo, hi, CHAMFER);
@@ -309,7 +320,8 @@ pub(crate) fn monument(shape: &mut Shape, paving: Paving, foot: f32) {
     y += height;
     let (lo, hi) = square(side + 0.1, y - 0.06, y);
     shape.block(Surface::Stucco, lo, hi);
-    // The obelisk, its four faces leaning in, then its pyramidion.
+    // El obelisco, con sus cuatro caras inclinadas hacia adentro, y después su
+    // piramidión.
     let (bottom, top, tall) = p.shaft;
     frustum(shape, Surface::Whitewash, y, bottom / 2.0, top / 2.0, tall);
     y += tall;
@@ -330,8 +342,8 @@ pub(crate) fn monument(shape: &mut Shape, paving: Paving, foot: f32) {
     );
 }
 
-/// A square frustum round the `y` axis from `y0`, `bottom` and `top` half
-/// wide, `height` tall, with no caps.
+/// Un tronco de pirámide cuadrado alrededor del eje `y` desde `y0`, con
+/// semianchos `bottom` y `top`, de `height` de alto, sin tapas.
 fn frustum(shape: &mut Shape, surface: Surface, y0: f32, bottom: f32, top: f32, height: f32) {
     let ring = |h: f32, y: f32| {
         [
@@ -348,13 +360,14 @@ fn frustum(shape: &mut Shape, surface: Surface, y0: f32, bottom: f32, top: f32, 
     }
 }
 
-/// Seat height of a bench, meters.
+/// Altura del asiento de un banco, en metros.
 pub(crate) const SEAT: f32 = 0.44;
 
-/// A slatted bench in its own space: [`Bench::LENGTH`] along `x`, its
-/// front toward `+z`, within [`Bench::DEPTH`] front to back, on the ground
-/// at `y = 0`. Two cast-iron ends (legs, seat bearer, back support and
-/// armrest) carry four seat slats and three back slats.
+/// Un banco de listones en su propio espacio: [`Bench::LENGTH`] a lo largo de
+/// `x`, con el frente hacia `+z`, dentro de [`Bench::DEPTH`] de adelante hacia
+/// atrás, sobre el suelo en `y = 0`. Dos laterales de hierro fundido (patas,
+/// soporte del asiento, soporte del respaldo y apoyabrazos) sostienen cuatro
+/// listones de asiento y tres de respaldo.
 pub(crate) fn bench(shape: &mut Shape) {
     let (half, d) = (Bench::LENGTH / 2.0, Bench::DEPTH / 2.0);
     let iron = 0.05;
@@ -372,7 +385,7 @@ pub(crate) fn bench(shape: &mut Shape) {
             shape.beam(Surface::Steel, a, b, iron);
         }
     }
-    // Seat slats, front to back.
+    // Listones del asiento, de adelante hacia atrás.
     let length = Bench::LENGTH - 0.04;
     for k in 0..4 {
         let z = d - 0.1 - k as f32 * 0.095;
@@ -382,7 +395,7 @@ pub(crate) fn bench(shape: &mut Shape) {
             Vec3::new(length / 2.0, SEAT + 0.035, z + 0.04),
         );
     }
-    // Back slats, leaning back with the iron support.
+    // Listones del respaldo, inclinados hacia atrás con el soporte de hierro.
     let lean = Quat::from_rotation_x(-0.25);
     for k in 0..3 {
         let y = SEAT + 0.15 + k as f32 * 0.11;
@@ -397,14 +410,15 @@ pub(crate) fn bench(shape: &mut Shape) {
     }
 }
 
-/// Height of the railing's stucco plinth, meters.
+/// Altura del zócalo de revoque de la verja, en metros.
 pub(crate) const RAILING_PLINTH: f32 = 0.35;
-/// Height of the railing's top rail over the lawn, meters.
+/// Altura del pasamanos superior de la verja sobre el césped, en metros.
 pub(crate) const RAILING_TOP: f32 = 1.05;
 
-/// The city's railing (only a city's plaza has one): iron pickets between
-/// two rails over a stucco plinth along each of `f`'s pieces, with stucco
-/// piers at the corners and the path mouths.
+/// La verja de la ciudad (solo la plaza de una ciudad tiene una): barrotes de
+/// hierro entre dos barras sobre un zócalo de revoque a lo largo de cada una de
+/// las piezas de `f`, con pilares de revoque en las esquinas y en las entradas
+/// de los senderos.
 fn railing(shape: &mut Shape, f: &PlazaFurniture, c: GroundVec2) {
     if f.railing.is_empty() {
         return;
@@ -428,7 +442,7 @@ fn railing(shape: &mut Shape, f: &PlazaFurniture, c: GroundVec2) {
         let (a, b) = (mid - across * (t / 2.0), mid + across * (t / 2.0));
         let (a, b) = (a - dir * (length / 2.0), b + dir * (length / 2.0));
         shape.block(Surface::Stucco, a.with_y(LAWN_TOP - 0.05), b.with_y(base));
-        // Two rails, then pickets between them and past the top.
+        // Dos barras, y después barrotes entre ellas y más allá de la superior.
         for y in [base + 0.08, top - 0.08] {
             shape.beam(
                 Surface::Steel,
@@ -447,7 +461,7 @@ fn railing(shape: &mut Shape, f: &PlazaFurniture, c: GroundVec2) {
                 false,
             );
         }
-        // A stout post every few meters keeps the run upright.
+        // Un poste grueso cada pocos metros mantiene derecho el tramo.
         let posts = (length / 2.5).floor() as usize;
         for k in 1..posts {
             let at = start + dir * (k as f32 * length / posts as f32);
@@ -458,8 +472,8 @@ fn railing(shape: &mut Shape, f: &PlazaFurniture, c: GroundVec2) {
             );
         }
     }
-    // Piers at the corners and on both sides of each mouth, all within the
-    // railing's collider.
+    // Pilares en las esquinas y a ambos lados de cada entrada, todos dentro del
+    // collider de la verja.
     for p in stands(f, PIER) {
         let at = world_from_ground(p - c, 0.0);
         let w = PIER - 0.01;
@@ -477,15 +491,16 @@ fn railing(shape: &mut Shape, f: &PlazaFurniture, c: GroundVec2) {
     }
 }
 
-/// Gap between the railing's pickets, meters.
+/// Espacio entre los barrotes de la verja, en metros.
 const PICKET_PITCH: f32 = 0.25;
 
-/// Half the side of a city railing's stucco pier (its cap), meters.
+/// La mitad del lado de un pilar de revoque de la verja de la ciudad (su
+/// capitel), en metros.
 pub(crate) const PIER: f32 = 0.14;
 
-/// Where the railing of `f` has its piers or stout posts, `half` wide
-/// each way: the four corners, and both sides of each path's mouth, just
-/// off the mouth.
+/// Dónde tiene la verja de `f` sus pilares o postes gruesos, de `half` de ancho
+/// hacia cada lado: las cuatro esquinas y ambos lados de la entrada de cada
+/// sendero, justo al costado de la entrada.
 pub(crate) fn stands(f: &PlazaFurniture, half: f32) -> Vec<GroundVec2> {
     let area = f.area;
     let inset = PlazaFurniture::RAILING_INSET + PlazaFurniture::RAILING_DEPTH / 2.0;

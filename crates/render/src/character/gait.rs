@@ -1,55 +1,61 @@
-//! The saddled horse's clips, fitted after the animation systems (see
-//! [`horse`](super::horse)): whatever the clips leave undone or too short.
+//! Los clips del caballo ensillado, ajustados después de los sistemas de
+//! animación (ver [`horse`](super::horse)): todo lo que los clips dejan sin
+//! hacer o se quedan cortos.
 //!
-//! - **Blending** ([`complete_blend`]). Bevy weighs each bone's property
-//!   only among the clips that animate it: a property that only the walk
-//!   animates (the back's sway, the hooves' IK targets) would keep the walk
-//!   at full strength while the walk fades out, folding the legs. Each such
-//!   property is eased back toward its rest by the weight of the clips that
-//!   do not animate it ([`PARTIAL`]).
-//! - **A longer gallop.** Quaternius' gallop has a short stride (about 2.3
-//!   m a loop): played fast enough not to slide at a full gallop it reads
-//!   frantic. At the gallop each leg's swing about its own mean
-//!   ([`GALLOP_MEANS`]) is stretched by [`STRIDE`], so the clip covers more
-//!   ground a loop and plays slower.
-//! - **A flexing body** ([`articulation`]), phase-locked to the gallop's
-//!   loop: the croup drops as the hind legs reach under the belly and rises
-//!   at the push-off, the back rounds and extends against it, so the
-//!   withers pitch the other way, the neck pumps against the forehand and
-//!   the head steadies, the hips roll and yaw a little with the lead, and
-//!   the tail follows late. The walk is left as it is.
-//! - **The hooves stay on the legs, above the ground.** A leg whose end a
-//!   blend or the stretch puts below the ground is folded at the knee or
-//!   hock just enough ([`lift_legs`]). The model's hooves hang from IK
-//!   targets, not from the legs, so each hoof is then put on its leg's end
-//!   ([`reattach`]), never below where it would stand.
-//! - **A jump in the air.** While the jump clip plays ([`level_flight`]) the
-//!   gallop's flexing is muted by its weight and the hooves are left as the
-//!   clip tucks them ([`JUMP_FREE`]); the clip's own rise of the `Body`
-//!   bone (and of the hooves' IK targets with it) is taken out, since the
-//!   entity already flies the physics arc. On top of the clip the hind legs
-//!   push the horse off, reaching back and down as it leaves the ground
-//!   ([`push`], [`PUSH`]), and the forelegs tuck a little more over the top
-//!   ([`tuck`], [`TUCK`]), each hoof put back on its leg's end.
+//! - **Mezcla** ([`complete_blend`]). Bevy pondera cada propiedad de un hueso
+//!   solo entre los clips que la animan: una propiedad que solo anima la
+//!   caminata (el balanceo del lomo, los objetivos de IK de los vasos)
+//!   mantendría la caminata con toda su fuerza mientras la caminata se
+//!   desvanece, plegando las patas. Cada una de esas propiedades se devuelve
+//!   suavemente hacia su reposo según el peso de los clips que no la animan
+//!   ([`PARTIAL`]).
+//! - **Un galope más largo.** El galope de Quaternius tiene una zancada corta
+//!   (unos 2.3 m por ciclo): reproducido lo bastante rápido como para no
+//!   deslizarse a galope tendido, parece frenético. Al galope, el recorrido de
+//!   cada pata alrededor de su propia media ([`GALLOP_MEANS`]) se estira por
+//!   [`STRIDE`], así que el clip cubre más terreno por ciclo y se reproduce más
+//!   lento.
+//! - **Un cuerpo que se flexiona** ([`articulation`]), sincronizado con el
+//!   ciclo del galope: la grupa baja cuando las patas traseras llegan bajo la
+//!   panza y sube en el impulso, el lomo se arquea y se estira en contra, así
+//!   que la cruz cabecea en sentido opuesto, el cuello bombea contra el tercio
+//!   anterior y la cabeza se estabiliza, la cadera rola y gira un poco con la
+//!   mano de galope, y la cola sigue con retraso. La caminata se deja como
+//!   está.
+//! - **Los vasos se quedan en las patas, por encima del suelo.** Una pata cuyo
+//!   extremo queda bajo el suelo por una mezcla o por el estiramiento se pliega
+//!   en la rodilla o el corvejón lo justo ([`lift_legs`]). Los vasos del modelo
+//!   cuelgan de objetivos de IK, no de las patas, así que después cada vaso se
+//!   coloca en el extremo de su pata ([`reattach`]), nunca por debajo de donde
+//!   estaría parado.
+//! - **Un salto en el aire.** Mientras se reproduce el clip de salto
+//!   ([`level_flight`]) la flexión del galope se atenúa según su peso y los
+//!   vasos se dejan como los recoge el clip ([`JUMP_FREE`]); se quita la
+//!   elevación propia del clip en el hueso `Body` (y con ella la de los
+//!   objetivos de IK de los vasos), ya que la entidad ya vuela el arco de la
+//!   física. Además del clip, las patas traseras impulsan al caballo,
+//!   estirándose hacia atrás y hacia abajo al dejar el suelo ([`push`],
+//!   [`PUSH`]), y las manos se recogen un poco más en lo alto ([`tuck`],
+//!   [`TUCK`]), con cada vaso devuelto al extremo de su pata.
 //!
-//! All of it is deterministic, worked out afresh each frame from the clips'
-//! pose, and allocates nothing.
+//! Todo es determinista, se calcula de nuevo en cada frame a partir de la pose
+//! de los clips, y no reserva memoria.
 
 use bevy::math::Affine3A;
 use bevy::prelude::*;
 
 use crate::fauna::livestock::{CLIP_COUNT, Clip};
 
-/// Which part of a bone's transform a clip animates.
+/// Qué parte del transform de un hueso anima un clip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Property {
     Rotation,
     Translation,
 }
 
-/// The properties not every clip animates, with the clips that do (bit
-/// `k` for [`Clip::ALL`]`[k]`), as `horse.glb` has them; every other
-/// animated property is in every clip.
+/// Las propiedades que no anima cada clip, con los clips que sí lo hacen (el
+/// bit `k` para [`Clip::ALL`]`[k]`), tal como las tiene `horse.glb`; todas las
+/// demás propiedades animadas están en todos los clips.
 pub const PARTIAL: [(&str, Property, u8); 26] = [
     ("Back", Property::Rotation, 0b0010000),
     ("Back", Property::Translation, 0b1110000),
@@ -79,12 +85,12 @@ pub const PARTIAL: [(&str, Property, u8); 26] = [
     ("Torso3", Property::Rotation, 0b0001000),
 ];
 
-/// The bones no clip turns that [`fit_horse`] turns: they are put back at
-/// rest first each frame, or the turns would add up.
+/// Los huesos que ningún clip gira pero que gira [`fit_horse`]: se devuelven
+/// primero al reposo en cada frame, o los giros se acumularían.
 pub const UNANIMATED: [&str; 2] = ["Torso", "Tail1"];
 
-/// The share of a property `mask` (see [`PARTIAL`]) the clips playing with
-/// `weights` animate: the rest of it stays at rest.
+/// La parte de una propiedad `mask` (ver [`PARTIAL`]) que animan los clips que
+/// se reproducen con `weights`: el resto queda en reposo.
 pub fn animated_share(mask: u8, weights: &[f32; CLIP_COUNT]) -> f32 {
     Clip::ALL
         .iter()
@@ -94,8 +100,8 @@ pub fn animated_share(mask: u8, weights: &[f32; CLIP_COUNT]) -> f32 {
         .clamp(0.0, 1.0)
 }
 
-/// `value` (what the clips set) eased toward `rest` by the share the clips
-/// that set it do not have.
+/// `value` (lo que fijan los clips) llevado suavemente hacia `rest` según la
+/// parte que no tienen los clips que lo fijan.
 pub fn complete_blend(property: Property, rest: &Transform, value: &mut Transform, share: f32) {
     match property {
         Property::Rotation => value.rotation = rest.rotation.slerp(value.rotation, share),
@@ -105,12 +111,13 @@ pub fn complete_blend(property: Property, rest: &Transform, value: &mut Transfor
     }
 }
 
-/// How much longer the gallop's stride is than the clip's.
+/// Cuánto más larga es la zancada del galope que la del clip.
 pub const STRIDE: f32 = 1.4;
 
-/// Each swinging upper leg bone's mean turn over the gallop's loop (its
-/// own local rotation, measured on `horse.glb`): the stride is stretched
-/// about it. The lower legs fold as the clip folds them.
+/// El giro medio de cada hueso superior de pata que se balancea a lo largo del
+/// ciclo del galope (su propia rotación local, medida en `horse.glb`): la
+/// zancada se estira alrededor de él. Las partes inferiores de las patas se
+/// pliegan como las pliega el clip.
 pub const GALLOP_MEANS: [(&str, [f32; 4]); 8] = [
     ("FrontUpperLeg.L", [0.72688, 0.63446, 0.17364, 0.1974]),
     ("FrontUpperLeg.R", [0.72373, -0.63646, -0.17442, 0.20176]),
@@ -122,7 +129,7 @@ pub const GALLOP_MEANS: [(&str, [f32; 4]); 8] = [
     ("BackUpperLeg.R", [0.64587, 0.00303, -0.0341, 0.76268]),
 ];
 
-/// `rotation` swung `k` times as far from `mean`.
+/// `rotation` balanceada `k` veces más lejos de `mean`.
 pub fn stretch(rotation: Quat, mean: Quat, k: f32) -> Quat {
     let mut delta = mean.inverse() * rotation;
     if delta.w < 0.0 {
@@ -132,14 +139,16 @@ pub fn stretch(rotation: Quat, mean: Quat, k: f32) -> Quat {
     (mean * Quat::from_axis_angle(axis, angle * k)).normalize()
 }
 
-/// Where in the gallop's loop (`0..1`) the hind legs reach furthest under
-/// the belly and the left hind strikes: the croup is lowest there.
+/// En qué punto del ciclo del galope (`0..1`) las patas traseras llegan más
+/// lejos bajo la panza y apoya la trasera izquierda: ahí la grupa está más
+/// baja.
 pub const GATHER: f32 = 0.57;
 
-/// The body's own motion at the gallop, radians, at `phase` of its loop
-/// (`0..1`): pitches about the body's side axis (nose or front end up
-/// positive) of the hindquarters (`Back`), each back bone, the neck and the
-/// head, the hips' roll and yaw, and the tail's lift.
+/// El movimiento propio del cuerpo al galope, en radianes, en la fase `phase`
+/// de su ciclo (`0..1`): cabeceos alrededor del eje lateral del cuerpo
+/// (positivos con la nariz o el extremo delantero hacia arriba) del tercio
+/// posterior (`Back`), de cada hueso del lomo, del cuello y de la cabeza, el
+/// rolido y el giro de la cadera, y la elevación de la cola.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Articulation {
     pub back: f32,
@@ -151,14 +160,14 @@ pub struct Articulation {
     pub tail: f32,
 }
 
-/// The croup's pitch either way at the gallop, radians (about 7°).
+/// El cabeceo de la grupa hacia cada lado al galope, en radianes (unos 7°).
 pub const CROUP: f32 = 0.12;
 
-/// The [`Articulation`] at `phase` of the gallop. The hindquarters pitch
-/// most; the back bones bend against them, a little more each toward the
-/// withers, so the forehand pitches the other way; the neck pumps against
-/// the forehand and the head undoes half of it; the tail lags a fifth of a
-/// loop.
+/// La [`Articulation`] en la fase `phase` del galope. El tercio posterior es el
+/// que más cabecea; los huesos del lomo se doblan en contra, cada uno un poco
+/// más hacia la cruz, así que el tercio anterior cabecea en sentido opuesto; el
+/// cuello bombea contra el tercio anterior y la cabeza deshace la mitad; la
+/// cola va un quinto de ciclo atrasada.
 pub fn articulation(phase: f32) -> Articulation {
     use std::f32::consts::TAU;
     let gather = (TAU * (phase - GATHER)).cos();
@@ -176,7 +185,7 @@ pub fn articulation(phase: f32) -> Articulation {
     }
 }
 
-/// The horse's bones this module moves, by name.
+/// Los huesos del caballo que mueve este módulo, por nombre.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Bone {
     Armature,
@@ -190,17 +199,17 @@ pub enum Bone {
     Neck3,
     Head,
     Tail1,
-    /// Upper bone of each leg: the front shoulder or the hind hip.
+    /// El hueso superior de cada pata: el hombro delantero o la cadera trasera.
     Shoulder(usize),
     UpperLeg(usize),
-    /// The hind leg's extra bone between the hip and the thigh.
+    /// El hueso extra de la pata trasera entre la cadera y el muslo.
     Leg(usize),
     LowerLeg(usize),
     End(usize),
     Hoof(usize),
 }
 
-/// The legs, in [`Bone`]'s leg index order.
+/// Las patas, en el orden de índice de pata de [`Bone`].
 pub const LEGS: [&str; 4] = ["Front?.L", "Front?.R", "Back?.L", "Back?.R"];
 
 impl Bone {
@@ -228,7 +237,7 @@ impl Bone {
         }
     }
 
-    /// Its node's name in `horse.glb`.
+    /// El nombre de su nodo en `horse.glb`.
     pub fn name(self) -> String {
         let leg = |l: usize, part: &str| LEGS[l].replace('?', part);
         match self {
@@ -246,7 +255,8 @@ impl Bone {
             Self::Shoulder(l) => leg(l, "Shoulder"),
             Self::UpperLeg(l) if l < 2 => leg(l, "UpperLeg"),
             Self::UpperLeg(l) => leg(l, "UpperLeg"),
-            // The front legs have no such bone: their shoulder stands in.
+            // Las patas delanteras no tienen ese hueso: su hombro ocupa su
+            // lugar.
             Self::Leg(l) if l < 2 => leg(l, "Shoulder"),
             Self::Leg(l) => leg(l, "Leg"),
             Self::LowerLeg(l) => leg(l, "LowerLeg"),
@@ -256,7 +266,7 @@ impl Bone {
         }
     }
 
-    /// Every bone, by [`Self::index`].
+    /// Todos los huesos, por [`Self::index`].
     pub fn all() -> [Self; Self::COUNT] {
         let mut out = [Self::Armature; Self::COUNT];
         let fixed = [
@@ -290,8 +300,8 @@ impl Bone {
         out
     }
 
-    /// The leg's chain from the body down to its end (the front legs hang
-    /// from the withers, the hind ones from the hindquarters).
+    /// La cadena de la pata desde el cuerpo hasta su extremo (las patas
+    /// delanteras cuelgan de la cruz, las traseras del tercio posterior).
     fn chain(leg: usize) -> [Self; 8] {
         if leg < 2 {
             [
@@ -319,29 +329,31 @@ impl Bone {
     }
 }
 
-/// A horse model's bones and rests, found when its scene spawns; on its
-/// root next to its [`HorseRig`](super::horse::HorseRig).
+/// Los huesos y reposos del modelo de un caballo, ubicados cuando se crea su
+/// escena; en su raíz junto a su [`HorseRig`](super::horse::HorseRig).
 #[derive(Component, Debug, Clone)]
 pub struct HorseBones {
-    /// By [`Bone::index`].
+    /// Por [`Bone::index`].
     pub bones: [Entity; Bone::COUNT],
-    /// The armature's placement in the body frame (the model's root and
-    /// the scene's root node above it).
+    /// La ubicación del armature en el marco del cuerpo (la raíz del modelo y
+    /// el nodo raíz de la escena por encima de ella).
     pub armature: Affine3A,
-    /// Each partly animated property's bone, its rest and mask (the
-    /// [`UNANIMATED`] bones' turns too, with no clip in theirs).
+    /// El hueso de cada propiedad animada en parte, su reposo y su máscara
+    /// (también los giros de los huesos [`UNANIMATED`], sin ningún clip en la
+    /// suya).
     pub partial: Vec<(Entity, Property, u8, Transform)>,
-    /// Each stretched leg bone, its leg (by [`LEGS`]) and its mean turn
-    /// at the gallop.
+    /// Cada hueso de pata estirado, su pata (según [`LEGS`]) y su giro medio al
+    /// galope.
     pub means: Vec<(usize, Entity, Quat)>,
-    /// How high each hoof's target stands at rest in the body frame.
+    /// A qué altura está en reposo el objetivo de cada vaso en el marco del
+    /// cuerpo.
     pub standing: [f32; 4],
-    /// The `Body` bone's rest translation (in the armature's space): the
-    /// jump clip's rise is measured from it.
+    /// La traslación de reposo del hueso `Body` (en el espacio del armature):
+    /// la elevación del clip de salto se mide a partir de ella.
     pub body_rest: Vec3,
 }
 
-/// The placement of `bone` in the armature's space, from `transforms`.
+/// La ubicación de `bone` en el espacio del armature, a partir de `transforms`.
 fn placed(bones: &HorseBones, chain: &[Bone], transforms: &Query<&mut Transform>) -> Affine3A {
     let mut at = Affine3A::IDENTITY;
     let mut last = None;
@@ -357,14 +369,14 @@ fn placed(bones: &HorseBones, chain: &[Bone], transforms: &Query<&mut Transform>
     at
 }
 
-/// The rotation part of a placement with uniform scale.
+/// La parte de rotación de una ubicación con escala uniforme.
 fn turn(a: &Affine3A) -> Quat {
     let (_, rotation, _) = a.to_scale_rotation_translation();
     rotation
 }
 
-/// Turns `bone` by `delta`, a turn in the body frame (taken into the
-/// armature's space by `armature`), about itself.
+/// Gira `bone` por `delta`, un giro en el marco del cuerpo (llevado al espacio
+/// del armature por `armature`), alrededor de sí mismo.
 fn turn_in_body(
     bones: &HorseBones,
     transforms: &mut Query<&mut Transform>,
@@ -379,14 +391,14 @@ fn turn_in_body(
     }
 }
 
-/// How far below where it stands a leg's end may reach before its stride
-/// is stretched less, meters.
+/// Cuánto puede bajar el extremo de una pata por debajo de donde se apoya antes
+/// de que su zancada se estire menos, en metros.
 pub const PLANTED: f32 = 0.015;
 
-/// Folds each leg whose end the blend or the stretch has put below the
-/// ground at its lower joint (the knee or the hock), just enough to bring
-/// it back up: two clips half and half can reach further down than
-/// either.
+/// Pliega en su articulación inferior (la rodilla o el corvejón) cada pata cuyo
+/// extremo quedó bajo el suelo por la mezcla o el estiramiento, lo justo para
+/// volver a subirlo: dos clips mitad y mitad pueden bajar más que cualquiera de
+/// los dos.
 fn lift_legs(bones: &HorseBones, transforms: &mut Query<&mut Transform>) {
     for leg in 0..4 {
         let chain = Bone::chain(leg);
@@ -406,8 +418,9 @@ fn lift_legs(bones: &HorseBones, transforms: &mut Query<&mut Transform>) {
         let Ok(start) = transforms.get(lower).map(|t| t.rotation) else {
             continue;
         };
-        // The fold about the body's side axis, in the lower bone's parent's
-        // space (its rotation is applied there): the chain down to it.
+        // El pliegue alrededor del eje lateral del cuerpo, en el espacio del
+        // padre del hueso inferior (ahí se aplica su rotación): la cadena hasta
+        // él.
         let Some(at) = chain.iter().position(|b| *b == Bone::LowerLeg(leg)) else {
             continue;
         };
@@ -436,12 +449,13 @@ fn lift_legs(bones: &HorseBones, transforms: &mut Query<&mut Transform>) {
     }
 }
 
-/// Puts each hoof's IK target on its leg's end, turned as far as the
-/// lower leg turned since `before` (the lower legs' turns as the clips left
-/// them), and never below where it would stand (or the clip's own place,
-/// if the clip has it lower). Blending clips weighs the legs' turns and the
-/// hoofs' targets apart: without this a hoof drifts off its leg between
-/// two clips.
+/// Coloca el objetivo de IK de cada vaso en el extremo de su pata, girado tanto
+/// como giró la parte inferior de la pata desde `before` (los giros de las
+/// partes inferiores tal como los dejaron los clips), y nunca por debajo de
+/// donde estaría parado (o del lugar propio del clip, si el clip lo tiene más
+/// abajo). La mezcla de clips pondera por separado los giros de las patas y los
+/// objetivos de los vasos: sin esto, un vaso se separa de su pata entre dos
+/// clips.
 fn reattach(bones: &HorseBones, transforms: &mut Query<&mut Transform>, before: &[Quat; 4]) {
     for (leg, was_turned) in before.iter().enumerate() {
         let chain = Bone::chain(leg);
@@ -462,24 +476,25 @@ fn reattach(bones: &HorseBones, transforms: &mut Query<&mut Transform>, before: 
     }
 }
 
-/// The share of the jump clip's weight from which the hooves are no longer
-/// clamped to the ground (see [`fit_horse`]).
+/// La parte del peso del clip de salto a partir de la cual los vasos ya no se
+/// sujetan al suelo (ver [`fit_horse`]).
 pub const JUMP_FREE: f32 = 0.05;
 
-/// Takes the jump clip's own rise out of the horse: `Body` carries the clip's
-/// crouch and leap, but the horse's height in the air is the physics arc
-/// (the game lifts the whole entity by it), so the clip's rise would add
-/// to it. The bone's vertical offset from rest (in the body frame) is
-/// removed, `jump` (the clip's weight) of it, after the clips have set it
-/// and before anything hangs off it; the tuck and pitch stay.
+/// Quita del caballo la elevación propia del clip de salto: `Body` lleva el
+/// agachado y el salto del clip, pero la altura del caballo en el aire es el
+/// arco de la física (el juego eleva la entidad entera según él), así que la
+/// elevación del clip se le sumaría. El desplazamiento vertical del hueso
+/// respecto del reposo (en el marco del cuerpo) se quita, en la proporción
+/// `jump` (el peso del clip), después de que lo fijan los clips y antes de que
+/// nada cuelgue de él; el recogido y el cabeceo se mantienen.
 ///
-/// The hooves' IK targets are the body's siblings under the armature, not
-/// its children, and the clip lifts them with it: they are lowered by the
-/// same offset, or the hooves would stay up where the clip put them while
-/// the legs come down, off their legs.
+/// Los objetivos de IK de los vasos son hermanos del cuerpo bajo el armature,
+/// no sus hijos, y el clip los eleva junto con él: se bajan el mismo
+/// desplazamiento, o los vasos se quedarían arriba donde los puso el clip
+/// mientras las patas bajan, separados de sus patas.
 ///
-/// Reading the bone after the animation (rather than sampling the curve)
-/// follows whatever the blend really produced, in the model's own scale.
+/// Leer el hueso después de la animación (en lugar de muestrear la curva) sigue
+/// lo que realmente produjo la mezcla, en la escala propia del modelo.
 fn level_flight(bones: &HorseBones, transforms: &mut Query<&mut Transform>, jump: f32) {
     let Ok(body) = transforms.get(bones.bones[Bone::Body.index()]) else {
         return;
@@ -500,42 +515,43 @@ fn level_flight(bones: &HorseBones, transforms: &mut Query<&mut Transform>, jump
     }
 }
 
-/// The hind legs' push at takeoff, radians: each thigh swung back at the
-/// hip and each hock opened, so the hooves reach back and down as they
-/// leave the ground (the clip has the push, but too short to read).
+/// El impulso de las patas traseras al despegar, en radianes: cada muslo
+/// balanceado hacia atrás en la cadera y cada corvejón abierto, así que los
+/// vasos se estiran hacia atrás y hacia abajo al dejar el suelo (el clip tiene
+/// el impulso, pero demasiado corto para que se note).
 pub const PUSH: (f32, f32) = (0.3, 0.45);
 
-/// The flight (`0..=1`) by which the push is gone: the clip folds the hind
-/// legs up from there.
+/// El vuelo (`0..=1`) en el que el impulso ya terminó: a partir de ahí el clip
+/// pliega hacia arriba las patas traseras.
 pub const PUSH_END: f32 = 0.25;
 
-/// The forelegs' extra tuck at the top of the jump, radians: each forearm
-/// lifted forward at the elbow and each knee folded, a little more than
-/// the clip does.
+/// El recogido extra de las manos en lo alto del salto, en radianes: cada
+/// antebrazo levantado hacia adelante en el codo y cada rodilla plegada, un
+/// poco más de lo que lo hace el clip.
 pub const TUCK: (f32, f32) = (0.15, 0.4);
 
-/// How much of the hind legs' push (`0..1`) there is `flight` (`0..=1`)
-/// of the way through a jump: all of it as the horse leaves the ground,
-/// easing out by [`PUSH_END`].
+/// Cuánto impulso de las patas traseras (`0..1`) hay en la fracción `flight`
+/// (`0..=1`) de un salto: todo cuando el caballo deja el suelo, y se desvanece
+/// hasta [`PUSH_END`].
 pub fn push(flight: f32) -> f32 {
     let u = (flight / PUSH_END).clamp(0.0, 1.0);
     1.0 - u * u * (3.0 - 2.0 * u)
 }
 
-/// How much of the forelegs' extra tuck (`0..1`) there is `flight` of the
-/// way through a jump: none at either end, all of it at the top, smooth
-/// throughout.
+/// Cuánto recogido extra de las manos (`0..1`) hay en la fracción `flight` de
+/// un salto: nada en ambos extremos, todo en lo alto, suave en todo el
+/// recorrido.
 pub fn tuck(flight: f32) -> f32 {
     (std::f32::consts::PI * flight.clamp(0.0, 1.0))
         .sin()
         .powi(2)
 }
 
-/// Adds the hind legs' push and the forelegs' tuck ([`PUSH`], [`TUCK`])
-/// to the jump clip's pose, `flight` of the way through the jump and
-/// weighed by `jump` (the clip's weight), then puts each hoof back on its
-/// leg's end ([`reattach`]: never below where it stands, so the push does
-/// not sink the hooves at takeoff).
+/// Agrega el impulso de las patas traseras y el recogido de las manos
+/// ([`PUSH`], [`TUCK`]) a la pose del clip de salto, en la fracción `flight`
+/// del salto y ponderado por `jump` (el peso del clip), y después devuelve cada
+/// vaso al extremo de su pata ([`reattach`]: nunca por debajo de donde se
+/// apoya, así que el impulso no hunde los vasos al despegar).
 fn push_and_tuck(
     bones: &HorseBones,
     transforms: &mut Query<&mut Transform>,
@@ -547,7 +563,8 @@ fn push_and_tuck(
     if push < 1e-4 && tuck < 1e-4 {
         return;
     }
-    // About the body's side axis: positive swings a hanging leg forward.
+    // Alrededor del eje lateral del cuerpo: positivo balancea hacia adelante
+    // una pata que cuelga.
     let pitch = Quat::from_rotation_z;
     for leg in 0..4 {
         let chain = Bone::chain(leg);
@@ -580,9 +597,9 @@ fn push_and_tuck(
     reattach(bones, transforms, before);
 }
 
-/// Fits one horse's pose for `weights` (in [`Clip::ALL`] order) at
-/// `phase` of the gallop's loop, `flight` of the way through a jump (none
-/// on the ground): see the module notes.
+/// Ajusta la pose de un caballo para `weights` (en el orden de [`Clip::ALL`])
+/// en la fase `phase` del ciclo del galope y en la fracción `flight` de un
+/// salto (nada en el suelo): ver las notas del módulo.
 pub fn fit_horse(
     bones: &HorseBones,
     transforms: &mut Query<&mut Transform>,
@@ -603,8 +620,8 @@ pub fn fit_horse(
         let chain = Bone::chain(leg);
         turn(&placed(bones, &chain[..chain.len() - 1], transforms))
     });
-    // The jump's own tuck and pitch replace the gallop's: its legs are meant
-    // to leave the ground, so they are not clamped back to it either.
+    // El recogido y el cabeceo propios del salto reemplazan a los del galope:
+    // sus patas deben dejar el suelo, así que tampoco se las sujeta a él.
     if jump >= JUMP_FREE {
         if let Some(flight) = flight {
             push_and_tuck(bones, transforms, flight, jump, &before);
@@ -640,7 +657,8 @@ pub fn fit_horse(
     turn_in_body(bones, transforms, &spine[..5], B::Neck1, pitch(a.neck));
     turn_in_body(bones, transforms, &spine, B::Head, pitch(a.head));
     turn_in_body(bones, transforms, &spine[..2], B::Tail1, pitch(-a.tail));
-    // Each leg's swing stretched, as far as its end stays above the ground.
+    // El recorrido de cada pata estirado, mientras su extremo siga por encima
+    // del suelo.
     let k = 1.0 + (STRIDE - 1.0) * gallop;
     for leg in 0..4 {
         let mut clip = [(Entity::PLACEHOLDER, Quat::IDENTITY, Quat::IDENTITY); 3];
@@ -694,7 +712,7 @@ mod tests {
 
     #[test]
     fn a_property_the_fading_clips_do_not_animate_eases_back_to_rest() {
-        // Only the walk and the gallop sway the back.
+        // Solo la caminata y el galope balancean el lomo.
         let mask = 0b110000;
         let walking = [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0];
         assert_eq!(animated_share(mask, &walking), 1.0);
@@ -707,7 +725,7 @@ mod tests {
         complete_blend(Property::Rotation, &rest, &mut walked, 0.5);
         assert!((walked.translation.y - 1.1).abs() < 1e-6);
         assert!((walked.rotation.angle_between(Quat::IDENTITY) - 0.3).abs() < 1e-5);
-        // Standing: wholly at rest.
+        // Parado: completamente en reposo.
         complete_blend(
             Property::Rotation,
             &rest,
@@ -723,9 +741,11 @@ mod tests {
         let data = std::fs::read(root().0.join("models/fauna/quaternius/horse.glb")).unwrap();
         let len = u32::from_le_bytes(data[12..16].try_into().unwrap()) as usize;
         let json = String::from_utf8(data[20..20 + len].to_vec()).unwrap();
-        // Node names in file order, and each animation's (node, path)s.
+        // Nombres de nodo en el orden del archivo, y los pares (nodo, ruta) de
+        // cada animación.
         let names: Vec<&str> = {
-            // The top-level node list is the file's last key.
+            // La lista de nodos de nivel superior es la última clave del
+            // archivo.
             let nodes = &json[json.rfind("\"nodes\":[").unwrap()..];
             nodes
                 .match_indices("\"name\":\"")
@@ -795,10 +815,11 @@ mod tests {
         assert!(stretch(swung, mean, 1.0).angle_between(swung) < 1e-4);
     }
 
-    /// Raises the ground 12 cm under `legs` of a standing saddled horse, so
-    /// [`lift_legs`] must fold them, and checks each folds at its lower
-    /// joint (the knee or the hock) about the body's side axis: its end
-    /// comes up, the joint stays, and the end keeps its side offset.
+    /// Eleva el suelo 12 cm bajo las patas `legs` de un caballo ensillado
+    /// parado, para que [`lift_legs`] tenga que plegarlas, y comprueba que cada
+    /// una se pliega en su articulación inferior (la rodilla o el corvejón)
+    /// alrededor del eje lateral del cuerpo: su extremo sube, la articulación
+    /// se queda y el extremo conserva su desplazamiento lateral.
     fn folds_in_the_sagittal_plane(legs: [usize; 2]) {
         use crate::character::horse::tests::saddled;
         use crate::character::{CharacterVisual, Coat};
@@ -806,7 +827,8 @@ mod tests {
         let (mut app, _) = saddled(CharacterVisual::Horse(Coat::Bayo), 0.0);
         let world = app.world_mut();
         let mut bones = world.query::<&HorseBones>().single(world).unwrap().clone();
-        // Body-frame places of each leg's lower joint and end.
+        // Las posiciones en el marco del cuerpo de la articulación inferior y
+        // del extremo de cada pata.
         let at = |world: &mut World, bones: &HorseBones, leg: usize| {
             let bones = bones.clone();
             world
@@ -842,8 +864,9 @@ mod tests {
                 joint2.distance(joint) < 1e-4,
                 "leg {leg}'s joint stays: {joint} {joint2}"
             );
-            // A fold about the side axis keeps the end's side offset
-            // exactly (about the bone's own axis instead it drifts ~1 mm).
+            // Un pliegue alrededor del eje lateral conserva exactamente el
+            // desplazamiento lateral del extremo (alrededor del propio eje del
+            // hueso, en cambio, se desvía ~1 mm).
             assert!(
                 (end2.z - end.z).abs() < 2e-4,
                 "leg {leg} twisted sideways: {end} -> {end2}"
@@ -858,9 +881,9 @@ mod tests {
 
     #[test]
     fn a_folded_front_leg_stays_in_the_bodys_sagittal_plane() {
-        // The front legs fold at the knee: their chain ends in a single
-        // `End`, so the lower bone's parent sits elsewhere in it than a
-        // hind leg's.
+        // Las patas delanteras se pliegan en la rodilla: su cadena termina en
+        // un único `End`, así que el padre del hueso inferior está en otro
+        // lugar de ella que en una pata trasera.
         folds_in_the_sagittal_plane([0, 1]);
     }
 
@@ -870,7 +893,7 @@ mod tests {
         for k in 0..100 {
             let phase = k as f32 / 100.0;
             let a = articulation(phase);
-            // The withers turn by the croup's and every back bone's.
+            // La cruz gira según la grupa y cada hueso del lomo.
             let withers = a.back + a.torso.iter().sum::<f32>();
             assert!(a.back * withers <= 0.0, "{phase}: {a:?}");
             assert!(a.back.abs() <= CROUP + 1e-6 && a.roll.abs() < 0.05);
@@ -880,8 +903,9 @@ mod tests {
             let again = articulation(phase + 1.0);
             assert!((a.back - again.back).abs() < 1e-5 && (a.tail - again.tail).abs() < 1e-5);
         }
-        // The croup is lowest (the hindquarters' front end up most) as the
-        // hind legs gather under the belly.
+        // La grupa está en su punto más bajo (el extremo delantero del tercio
+        // posterior más arriba) cuando las patas traseras se juntan bajo la
+        // panza.
         assert!((low.1 - GATHER).abs() < 0.02, "{low:?}");
     }
 }

@@ -1,10 +1,12 @@
-//! How character surfaces take the light: a PBR finish per material, small
-//! textures painted in code, and helpers that bake ambient occlusion into
-//! vertex shades. Nothing here adds triangles.
+//! Cómo reciben la luz las superficies de los personajes: un acabado PBR por
+//! material, pequeñas texturas pintadas en código y funciones auxiliares que
+//! hornean la oclusión ambiental en los tonos de los vertices. Nada de esto
+//! agrega triángulos.
 //!
-//! Materials are cached by colour and [`Finish`] in a [`Palette`], and each
-//! [`Texture`] is painted once, so a crowd still shares a handful of
-//! materials and a few kilobytes of textures.
+//! Los materiales se guardan en caché por color y [`Finish`] en una
+//! [`Palette`], y cada [`Texture`] se pinta una sola vez, así que una multitud
+//! sigue compartiendo un puñado de materiales y unos pocos kilobytes de
+//! texturas.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor};
@@ -15,42 +17,42 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use super::figure::Rgb;
 
-/// What a surface is made of.
+/// De qué está hecha una superficie.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Finish {
-    /// Shirts, trousers, bombachas, skirts and tunics: matte, woven.
+    /// Camisas, pantalones, bombachas, polleras y túnicas: mate, tejido.
     Cloth,
-    /// Ponchos, shawls and the saddle's woven sudadera: the most matte.
+    /// Ponchos, chales y la sudadera tejida de la montura: lo más mate.
     Wool,
-    /// Hats and boinas.
+    /// Sombreros y boinas.
     Felt,
-    /// Tanned leather: jackets, boots, belts, the carona and bastos.
+    /// Cuero curtido: chaquetas, botas, cinturones, la carona y los bastos.
     Leather,
-    /// Raw hide: the bridle, the reins and the cincha.
+    /// Cuero crudo: la brida, las riendas y la cincha.
     Rawhide,
-    /// Satin skin.
+    /// Piel satinada.
     Skin,
-    /// A person's head: skin with eyes, brows and a mouth painted on.
+    /// La cabeza de una persona: piel con ojos, cejas y boca pintados.
     Face,
     Hair,
-    /// Police buttons.
+    /// Botones de policía.
     Brass,
-    /// The rastra's coins and buckle.
+    /// Las monedas y la hebilla de la rastra.
     Silver,
-    /// Stirrups, bit and rings.
+    /// Estribos, freno y argollas.
     Iron,
-    /// The pellón's sheepskin.
+    /// El cuero de oveja del pellón.
     Fleece,
-    /// Tree bark: the roughest surface.
+    /// Corteza de árbol: la superficie más rugosa.
     Bark,
-    /// Leaf clusters: matte, a little softer than bark.
+    /// Racimos de hojas: mate, un poco más suave que la corteza.
     Leaves,
-    /// Stones on the pampa: rough, a touch less than bark.
+    /// Piedras en la pampa: rugosas, un poco menos que la corteza.
     Rock,
 }
 
 impl Finish {
-    /// Perceptual roughness, metallic and reflectance.
+    /// Rugosidad perceptual, metalicidad y reflectancia.
     pub fn pbr(self) -> (f32, f32, f32) {
         match self {
             Self::Cloth => (0.92, 0.0, 0.3),
@@ -69,8 +71,8 @@ impl Finish {
         }
     }
 
-    /// The texture this finish wears, and how many times it repeats across
-    /// a part.
+    /// La textura que lleva este acabado y cuántas veces se repite a lo largo
+    /// de una pieza.
     pub fn texture(self) -> Option<(Texture, f32)> {
         match self {
             Self::Cloth => Some((Texture::Weave, 4.0)),
@@ -83,26 +85,26 @@ impl Finish {
     }
 }
 
-/// A small texture painted in code.
+/// Una textura pequeña pintada en código.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Texture {
-    /// Eyes, brows and a mouth, white elsewhere (see [`face_uvs`]).
+    /// Ojos, cejas y boca, blanco en el resto (ver [`face_uvs`]).
     Face,
-    /// A fine cloth weave.
+    /// Un tejido de tela fino.
     Weave,
-    /// Leather grain.
+    /// Grano de cuero.
     Grain,
-    /// Soft felt.
+    /// Fieltro suave.
     Felt,
 }
 
 impl Texture {
-    /// Every texture.
+    /// Todas las texturas.
     pub fn all() -> impl Iterator<Item = Self> {
         [Self::Face, Self::Weave, Self::Grain, Self::Felt].into_iter()
     }
 
-    /// Width, height and RGBA8 sRGB pixels.
+    /// Ancho, alto y píxeles RGBA8 sRGB.
     pub fn paint(self) -> (u32, u32, Vec<u8>) {
         const N: u32 = 64;
         let mut pixels = Vec::with_capacity((N * N * 4) as usize);
@@ -118,12 +120,13 @@ impl Texture {
 
     fn texel(self, u: f32, v: f32, x: u32, y: u32) -> Rgb {
         let grey = |k: f32| [(255.0 * k.clamp(0.0, 1.0)) as u8; 3];
-        // A cheap hash per texel for grain and felt.
+        // Un hash barato por texel para el grano y el fieltro.
         let noise = (x.wrapping_mul(73_856_093) ^ y.wrapping_mul(19_349_663)) % 97;
         let noise = noise as f32 / 96.0;
         match self {
             Self::Weave => {
-                // Over-under threads: alternate rows and columns darken.
+                // Hilos que pasan por encima y por debajo: se oscurecen filas y
+                // columnas alternadas.
                 let warp = if (x / 2 + y / 4).is_multiple_of(2) {
                     0.0
                 } else {
@@ -146,15 +149,16 @@ impl Texture {
     }
 }
 
-/// Inside the ellipse at `(cu, cv)` with radii `(ru, rv)`.
+/// Dentro de la elipse en `(cu, cv)` con radios `(ru, rv)`.
 fn within(u: f32, v: f32, (cu, cv): (f32, f32), (ru, rv): (f32, f32)) -> bool {
     let (du, dv) = ((u - cu) / ru, (v - cv) / rv);
     du * du + dv * dv < 1.0
 }
 
-/// The front of a person's head (see [`face_uvs`]): `u` from the right ear
-/// (0.25) through the nose (0.5) to the left (0.75), `v` from the crown (0)
-/// to the chin (1). White outside the features, so it only darkens skin.
+/// El frente de la cabeza de una persona (ver [`face_uvs`]): `u` va desde la
+/// oreja derecha (0.25) pasando por la nariz (0.5) hasta la izquierda (0.75),
+/// `v` desde la coronilla (0) hasta el mentón (1). Blanco fuera de los rasgos,
+/// así que solo oscurece la piel.
 fn face_texel(u: f32, v: f32) -> Rgb {
     for side in [-1.0, 1.0] {
         let eye = (0.5 + 0.085 * side, 0.47);
@@ -174,7 +178,7 @@ fn face_texel(u: f32, v: f32) -> Rgb {
     [255; 3]
 }
 
-/// Every material and texture characters are drawn with.
+/// Todos los materiales y texturas con los que se dibujan los personajes.
 #[derive(Resource, Default)]
 pub struct Palette {
     materials: HashMap<(Rgb, Finish), Handle<StandardMaterial>>,
@@ -182,7 +186,7 @@ pub struct Palette {
 }
 
 impl Palette {
-    /// The material for `color` with `finish`, made once.
+    /// El material para `color` con `finish`, creado una sola vez.
     pub fn material(
         &mut self,
         color: Rgb,
@@ -242,13 +246,14 @@ impl Palette {
     }
 }
 
-/// Bytes of every texture characters can use, painted once each.
+/// Los bytes de todas las texturas que pueden usar los personajes, pintadas una
+/// vez cada una.
 pub fn texture_bytes() -> usize {
     Texture::all().map(|t| t.paint().2.len()).sum()
 }
 
-/// `mesh` with each vertex shade multiplied by `occlusion(position,
-/// normal)`: baked ambient occlusion, no extra triangles.
+/// `mesh` con el tono de cada vertex multiplicado por `occlusion(position,
+/// normal)`: oclusión ambiental horneada, sin triángulos extra.
 pub(super) fn occlude(mut mesh: Mesh, occlusion: impl Fn(Vec3, Vec3) -> f32) -> Mesh {
     use bevy::mesh::VertexAttributeValues as V;
     let (Some(V::Float32x3(points)), Some(V::Float32x3(normals))) = (
@@ -275,15 +280,17 @@ pub(super) fn occlude(mut mesh: Mesh, occlusion: impl Fn(Vec3, Vec3) -> f32) -> 
     mesh
 }
 
-/// Darker toward `edge`'s far end: `0` below `from`, `1` past `to`.
+/// Más oscuro hacia el extremo lejano de `edge`: `0` por debajo de `from`, `1`
+/// más allá de `to`.
 pub(super) fn ramp(x: f32, from: f32, to: f32) -> f32 {
     ((x - from) / (to - from)).clamp(0.0, 1.0)
 }
 
-/// UVs that lay [`Texture::Face`] on the front of a head sphere (front +X):
-/// around the head from the right ear (`u` 0.25) to the left (0.75), down
-/// from the crown (`v` 0) to the chin (1). The back of the head maps onto
-/// the texture's blank top row, so the face shows only in front.
+/// UVs que colocan [`Texture::Face`] en el frente de una esfera de cabeza
+/// (frente +X): alrededor de la cabeza desde la oreja derecha (`u` 0.25) hasta
+/// la izquierda (0.75), hacia abajo desde la coronilla (`v` 0) hasta el mentón
+/// (1). La nuca se mapea a la fila superior vacía de la textura, así que la
+/// cara solo se ve por delante.
 pub(super) fn face_uvs(mut mesh: Mesh) -> Mesh {
     use bevy::mesh::VertexAttributeValues as V;
     let Some(V::Float32x3(points)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else {
@@ -327,7 +334,7 @@ mod tests {
         let (skin, ..) = Finish::Skin.pbr();
         assert!(skin < cloth, "satin skin");
 
-        // The palette makes one material per colour and finish.
+        // La paleta crea un material por color y acabado.
         let mut palette = Palette::default();
         let mut materials = Assets::<StandardMaterial>::default();
         let mut images = Assets::<Image>::default();
@@ -339,7 +346,8 @@ mod tests {
         assert_eq!(materials.len(), 2);
         let leather = materials.get(&a).unwrap();
         assert!(leather.base_color_texture.is_some(), "leather grain");
-        // Two textured finishes painted two textures; leather again none.
+        // Dos acabados texturizados pintaron dos texturas; el cuero otra vez,
+        // ninguna.
         assert_eq!(images.len(), 2);
     }
 
@@ -357,11 +365,11 @@ mod tests {
             assert!(dark(at(0.5 + 0.088 * side, 0.415)), "a brow");
         }
         assert!(at(0.5, 0.6)[0] < 200, "a mouth");
-        // Blank where the back of the head maps, and between the eyes.
+        // Vacío donde se mapea la nuca, y entre los ojos.
         assert_eq!(at(0.5, 0.01), [255; 3]);
         assert_eq!(at(0.1, 0.5), [255; 3]);
         assert_eq!(at(0.5, 0.47), [255; 3]);
-        // The head's back vertices land on the blank top row.
+        // Los vertices de la nuca caen en la fila superior vacía.
         let head = face_uvs(Sphere::new(0.5).mesh().uv(18, 12));
         let Some(bevy::mesh::VertexAttributeValues::Float32x2(uvs)) =
             head.attribute(Mesh::ATTRIBUTE_UV_0)

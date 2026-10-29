@@ -1,21 +1,23 @@
-//! Walls with their openings, and the roofs over them: the building
-//! blocks every settlement house and town building is made of.
+//! Paredes con sus aberturas, y los techos que las cubren: los bloques con los
+//! que se hace cada casa de asentamiento y cada edificio de pueblo.
 //!
-//! A [`Walls`] is the four walls of a box in the structure's own space
-//! (front at `z1`); each [`Wall`] builds itself with doors and windows left
-//! open. The roofs: a gable ([`gable_roof`]), a single slope falling to the
-//! front ([`lean_to`]), and a flat azotea behind a parapet
-//! ([`parapet_roof`]). The galpón ([`barn`]) is a whole building.
+//! Un [`Walls`] son las cuatro paredes de una caja en el espacio propio de la
+//! estructura (el frente en `z1`); cada [`Wall`] se construye a sí misma
+//! dejando abiertas las puertas y ventanas. Los techos: a dos aguas
+//! ([`gable_roof`]), a un agua cayendo hacia el frente ([`lean_to`]), y una
+//! azotea plana detrás de un parapeto ([`parapet_roof`]). El galpón ([`barn`])
+//! es un edificio completo.
 
 use bevy::prelude::*;
 
 use super::materials::Surface;
 use super::shape::Shape;
 
-/// A doorway or a window in a wall.
+/// Una puerta o una ventana en una pared.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Opening {
-    /// Its middle, in meters along the wall from the wall's start.
+    /// Su centro, en metros a lo largo de la pared desde el comienzo de la
+    /// pared.
     pub at: f32,
     pub width: f32,
     pub bottom: f32,
@@ -24,20 +26,21 @@ pub(crate) struct Opening {
 }
 
 impl Opening {
-    /// Its two jambs, in meters along the wall.
+    /// Sus dos jambas, en metros a lo largo de la pared.
     pub fn span(&self) -> (f32, f32) {
         (self.at - self.width / 2.0, self.at + self.width / 2.0)
     }
 }
 
-/// One straight wall, `thickness` thick inward from its outer face.
+/// Una pared recta, de `thickness` de grosor hacia adentro desde su cara
+/// exterior.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Wall {
-    /// Where its outer face starts, on the ground.
+    /// Dónde empieza su cara exterior, sobre el suelo.
     pub start: Vec3,
-    /// Unit direction along it (local `±X` or `±Z`).
+    /// Dirección unitaria a lo largo de ella (`±X` o `±Z` locales).
     pub along: Vec3,
-    /// Unit direction out of its outer face.
+    /// Dirección unitaria hacia afuera de su cara exterior.
     pub out: Vec3,
     pub length: f32,
     pub thickness: f32,
@@ -46,13 +49,14 @@ pub(crate) struct Wall {
 }
 
 impl Wall {
-    /// The point `a` meters along, `inward` meters in from the outer face,
-    /// at height `y`.
+    /// El punto a `a` metros a lo largo, `inward` metros hacia adentro desde la
+    /// cara exterior, a la altura `y`.
     pub fn at(&self, a: f32, inward: f32, y: f32) -> Vec3 {
         self.start + self.along * a - self.out * inward + Vec3::Y * y
     }
 
-    /// An axis-aligned box between two points given in wall terms.
+    /// Una caja alineada con los ejes entre dos puntos dados en términos de
+    /// pared.
     pub fn piece(
         &self,
         shape: &mut Shape,
@@ -61,7 +65,8 @@ impl Wall {
         hi: (f32, f32, f32),
     ) {
         let (p, q) = (self.at(lo.0, lo.1, lo.2), self.at(hi.0, hi.1, hi.2));
-        // Undersides show only on lintels, which face down into an opening.
+        // Las caras inferiores solo se ven en los dinteles, que miran hacia
+        // abajo dentro de una abertura.
         let min = p.min(q);
         let max = p.max(q);
         if lo.2 > 0.0 {
@@ -75,10 +80,10 @@ impl Wall {
         }
     }
 
-    /// The wall in `surface` with `openings` left in it: piers between
-    /// them, a lintel over and a sill under each, a dark recess inside, a
-    /// plank door (shut unless `open`) or a window with its two shutters
-    /// swung back against the wall.
+    /// La pared en `surface` con `openings` dejadas en ella: pilares entre
+    /// ellas, un dintel encima y un alféizar debajo de cada una, un hueco
+    /// oscuro adentro, una puerta de tablones (cerrada salvo que `open`) o una
+    /// ventana con sus dos postigos abiertos contra la pared.
     pub fn build(&self, shape: &mut Shape, surface: Surface, openings: &[Opening], open: u32) {
         let (t, h, drop) = (self.thickness, self.height, self.drop);
         let mut from = 0.0;
@@ -95,7 +100,7 @@ impl Wall {
             if o.bottom > -drop + 0.01 {
                 self.piece(shape, surface, (a, 0.0, -drop), (b, t, o.bottom));
             }
-            // The dark inside, seen through the opening.
+            // El interior oscuro, visto a través de la abertura.
             self.piece(
                 shape,
                 Surface::Recess,
@@ -103,7 +108,8 @@ impl Wall {
                 (b, t * 0.75, o.top),
             );
             if o.door {
-                // Planks on a frame; a seeded few doors stand open.
+                // Tablones sobre un marco; unas pocas puertas, según la
+                // semilla, quedan abiertas.
                 if (open >> (k % 16)) & 1 == 0 {
                     self.piece(
                         shape,
@@ -113,7 +119,8 @@ impl Wall {
                     );
                 }
             } else {
-                // The sill sticks out, and the shutters lie back open.
+                // El alféizar sobresale, y los postigos quedan abiertos hacia
+                // atrás.
                 self.piece(
                     shape,
                     surface,
@@ -129,7 +136,7 @@ impl Wall {
                         (l1, -0.01, o.top - 0.02),
                     );
                 }
-                // A glazed sash in the reveal, dark.
+                // Una hoja vidriada en el vano, oscura.
                 self.piece(
                     shape,
                     Surface::Recess,
@@ -145,8 +152,9 @@ impl Wall {
     }
 }
 
-/// A house's four walls round `x0..x1`, `z0..z1` (outer faces): front at
-/// `z1`, back at `z0`, both running the full width; the sides between them.
+/// Las cuatro paredes de una casa alrededor de `x0..x1`, `z0..z1` (caras
+/// exteriores): el frente en `z1` y el fondo en `z0`, ambos a todo el ancho;
+/// los laterales entre ellos.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Walls {
     pub x0: f32,
@@ -180,8 +188,8 @@ impl Walls {
         }
     }
 
-    /// The side at `x1` (`east = true`) or at `x0`, between the front and
-    /// back walls.
+    /// El lateral en `x1` (`east = true`) o en `x0`, entre las paredes del
+    /// frente y del fondo.
     pub fn side(&self, east: bool) -> Wall {
         let t = self.thickness;
         let (x, z, along, out) = if east {
@@ -207,8 +215,8 @@ impl Walls {
     }
 }
 
-/// `count` openings spread evenly along a wall `length` long: doors at the
-/// `doors` positions, windows elsewhere.
+/// `count` aberturas repartidas de forma pareja a lo largo de una pared de
+/// `length` de largo: puertas en las posiciones `doors` y ventanas en el resto.
 pub(crate) fn spread(
     length: f32,
     count: usize,
@@ -240,9 +248,9 @@ pub(crate) fn spread(
         .collect()
 }
 
-/// A thick or thin roof slab over a slope from `low` (the eave edge) up to
-/// `high` (the ridge or high edge), `width` meters along `X`, its
-/// underside on the line.
+/// Una losa de techo gruesa o fina sobre una pendiente desde `low` (el borde
+/// del alero) hasta `high` (la cumbrera o el borde alto), de `width` metros a
+/// lo largo de `X`, con su cara inferior sobre la línea.
 pub(crate) fn slab(
     shape: &mut Shape,
     surface: Surface,
@@ -253,7 +261,7 @@ pub(crate) fn slab(
 ) {
     let d = high - low;
     let len = d.length();
-    // The slope's direction in the Y–Z plane, and its outward normal.
+    // La dirección de la pendiente en el plano Y–Z, y su normal hacia afuera.
     let dir = d / len;
     let normal = Vec3::new(0.0, dir.z.abs(), if dir.z < 0.0 { dir.y } else { -dir.y });
     let normal = normal.normalize_or(Vec3::Y);
@@ -268,9 +276,9 @@ pub(crate) fn slab(
     );
 }
 
-/// A gable roof over `walls`, its ridge along `X`, rising `rise` over the
-/// eaves, overhanging `overhang` all round; the gable ends filled in
-/// `gable`.
+/// Un techo a dos aguas sobre `walls`, con la cumbrera a lo largo de `X`,
+/// subiendo `rise` por encima de los aleros y sobresaliendo `overhang` todo
+/// alrededor; los hastiales se rellenan en `gable`.
 pub(crate) fn gable_roof(
     shape: &mut Shape,
     (roof, gable): (Surface, Surface),
@@ -289,7 +297,7 @@ pub(crate) fn gable_roof(
         let eave = Vec3::new(xc, h - overhang * slope, zc + s * (half + overhang));
         slab(shape, roof, eave, ridge.with_x(xc), width, thickness);
     }
-    // The gable ends, flush with the side walls' outer faces.
+    // Los hastiales, al ras de las caras exteriores de las paredes laterales.
     for (x, e) in [(walls.x1, 1.0), (walls.x0, -1.0)] {
         let (f, b, top) = (
             Vec3::new(x, h, walls.z1),
@@ -304,9 +312,9 @@ pub(crate) fn gable_roof(
     }
 }
 
-/// A solid wall top over `xa..xb`, `za..zb`, from `base` up to a sloped
-/// top `ya` high at `za` and `yb` at `zb`, its bottom left open on the wall
-/// it crowns.
+/// Un remate de pared macizo sobre `xa..xb`, `za..zb`, desde `base` hasta una
+/// parte superior inclinada de altura `ya` en `za` y `yb` en `zb`, con la base
+/// abierta sobre la pared que corona.
 pub(crate) fn wedge(
     shape: &mut Shape,
     surface: Surface,
@@ -316,7 +324,7 @@ pub(crate) fn wedge(
     (ya, yb): (f32, f32),
 ) {
     const EPS: f32 = 1e-3;
-    // The end profile, in (z, y), without its corners of no height.
+    // El perfil del extremo, en (z, y), sin sus esquinas de altura cero.
     let mut profile = vec![(zb, base), (za, base)];
     if ya - base > EPS {
         profile.push((za, ya));
@@ -368,11 +376,12 @@ pub(crate) fn wedge(
     );
 }
 
-/// A single-slope (a un agua) roof of corrugated iron, high over the back
-/// wall and low over the front so its ridges are seen from the patio,
-/// overhanging `overhang` at the eaves and the verges. Every wall is built
-/// up in `gable` to meet the sheet: the sides as solid gables, the back
-/// and front as sloped bands.
+/// Un techo de una sola caída (a un agua) de chapa acanalada, alto sobre la
+/// pared del fondo y bajo sobre el frente para que sus canaletas se vean desde
+/// el patio, sobresaliendo `overhang` en los aleros y en los bordes laterales.
+/// Cada pared se levanta en `gable` hasta encontrarse con la chapa: los
+/// laterales como hastiales macizos, el fondo y el frente como franjas
+/// inclinadas.
 pub(crate) fn lean_to(
     shape: &mut Shape,
     (roof, gable): (Surface, Surface),
@@ -383,13 +392,13 @@ pub(crate) fn lean_to(
     let (h, t) = (walls.height, walls.thickness);
     let (x0, x1, z0, z1) = (walls.x0, walls.x1, walls.z0, walls.z1);
     let slope = rise / walls.depth();
-    // The sheet's underside, over the outer faces.
+    // La cara inferior de la chapa, sobre las caras exteriores.
     let under = |z: f32| h + (z1 - z) * slope;
     let xc = (x0 + x1) / 2.0;
     let low = Vec3::new(xc, under(z1 + overhang), z1 + overhang);
     let high = Vec3::new(xc, under(z0 - overhang), z0 - overhang);
     slab(shape, roof, low, high, walls.width() + 2.0 * overhang, 0.06);
-    // The side gables run the whole depth, over the corners.
+    // Los hastiales laterales abarcan toda la profundidad, sobre las esquinas.
     for xs in [(x1 - t, x1), (x0, x0 + t)] {
         wedge(shape, gable, xs, (z0, z1), h, (under(z0), under(z1)));
     }
@@ -405,8 +414,8 @@ pub(crate) fn lean_to(
     }
 }
 
-/// A band round `walls` from `y0` to `y1`, standing `out` proud of their
-/// outer faces and reaching `inner` in from them.
+/// Una franja alrededor de `walls` desde `y0` hasta `y1`, que sobresale `out`
+/// de sus caras exteriores y se mete `inner` hacia adentro desde ellas.
 pub(crate) fn ring(
     shape: &mut Shape,
     surface: Surface,
@@ -436,13 +445,13 @@ pub(crate) fn ring(
     );
 }
 
-/// A flat azotea behind a parapet `parapet` tall, with a cornice band
-/// under it and a coping on top.
+/// Una azotea plana detrás de un parapeto de `parapet` de alto, con una franja
+/// de cornisa debajo y una albardilla encima.
 pub(crate) fn parapet_roof(shape: &mut Shape, surface: Surface, walls: &Walls, parapet: f32) {
     let (h, t) = (walls.height, walls.thickness);
     flat_roof(shape, walls);
     ring(shape, surface, walls, 0.0, (h, h + parapet), t * 0.6);
-    // The cornice under the parapet and the coping over it stand proud.
+    // La cornisa bajo el parapeto y la albardilla encima sobresalen.
     ring(shape, surface, walls, 0.1, (h - 0.22, h + 0.06), 0.12);
     ring(
         shape,
@@ -454,7 +463,8 @@ pub(crate) fn parapet_roof(shape: &mut Shape, surface: Surface, walls: &Walls, p
     );
 }
 
-/// The brick-tiled flat roof inside `walls`, just under a parapet's foot.
+/// El techo plano de baldosas de ladrillo dentro de `walls`, justo por debajo
+/// del pie de un parapeto.
 pub(crate) fn flat_roof(shape: &mut Shape, walls: &Walls) {
     let (h, t) = (walls.height, walls.thickness);
     shape.block(
@@ -464,7 +474,8 @@ pub(crate) fn flat_roof(shape: &mut Shape, walls: &Walls) {
     );
 }
 
-/// A brick chimney through a roof at `at`, `top` meters up.
+/// Una chimenea de ladrillo que atraviesa un techo en `at`, de `top` metros de
+/// alto.
 pub(crate) fn chimney(shape: &mut Shape, at: Vec3, top: f32) {
     shape.block(
         Surface::Brick,
@@ -478,20 +489,23 @@ pub(crate) fn chimney(shape: &mut Shape, at: Vec3, top: f32) {
     );
 }
 
-/// A galpón's eaves and verges: how far its roof overhangs its walls.
+/// Los aleros y los bordes laterales de un galpón: cuánto sobresale su techo de
+/// sus paredes.
 const BARN_OVERHANG: f32 = 0.4;
-/// The thickness of a galpón's roof sheet.
+/// El grosor de la chapa del techo de un galpón.
 const BARN_SHEET: f32 = 0.05;
 
-/// How far a galpón's roof reaches out past its walls ([`barn`]): its
-/// eaves and verges, plus at most its sheet's thickness tilted out. A
-/// galpón that must keep inside a footprint stands this far in from it:
-/// core's [`pampa_core::Building::BARN_EAVES`], where its collider is.
+/// Cuánto sobresale el techo de un galpón más allá de sus paredes ([`barn`]):
+/// sus aleros y bordes laterales, más como mucho el grosor de su chapa
+/// inclinada hacia afuera. Un galpón que debe quedar dentro de una huella de
+/// edificio se retira esa distancia de ella: el
+/// [`pampa_core::Building::BARN_EAVES`] de core, donde está su collider.
 pub(crate) const BARN_REACH: f32 = BARN_OVERHANG + BARN_SHEET;
 
-/// The galpón: `walls` of corrugated iron on timber, a gable roof along its
-/// width (`X`) in `roof`, and `doors` pairs of big plank doors spread along
-/// its front; `w`, `d`, `h` its width, depth and wall height.
+/// El galpón: `walls` de chapa acanalada sobre madera, un techo a dos aguas a
+/// lo largo de su ancho (`X`) en `roof`, y `doors` pares de grandes portones de
+/// tablones repartidos a lo largo de su frente; `w`, `d`, `h` son su ancho, su
+/// profundidad y la altura de sus paredes.
 pub(crate) fn barn(
     shape: &mut Shape,
     (walls, roof): (Surface, Surface),
@@ -524,14 +538,16 @@ pub(crate) fn barn(
             door: true,
         })
         .collect();
-    // A big door is mostly shut; one in three stands open on the dark.
+    // Un portón grande está casi siempre cerrado; uno de cada tres queda
+    // abierto hacia la oscuridad.
     let open = u32::from(v.is_multiple_of(3));
     box_.front().build(shape, walls, &openings, open);
     box_.back().build(shape, walls, &[], 0);
     for east in [true, false] {
         box_.side(east).build(shape, walls, &[], 0);
     }
-    // Timber corner posts and a plank skirting, the doors' frame.
+    // Postes esquineros de madera y un zócalo de tablones, el marco de los
+    // portones.
     for (x, z) in [
         (box_.x0, box_.z0),
         (box_.x1, box_.z0),
@@ -590,7 +606,7 @@ mod tests {
             top: 2.2,
             door: true,
         };
-        // Door open (bit 0 set): nothing of the wall fills the doorway.
+        // Portón abierto (bit 0 activado): nada de la pared rellena el vano.
         wall.build(&mut shape, Surface::Whitewash, &[door], 1);
         let blocked = shape.points(Surface::Whitewash).chunks(4).any(|q| {
             let c = q.iter().fold(Vec3::ZERO, |a, p| a + *p) / 4.0;
@@ -601,7 +617,7 @@ mod tests {
         assert!(!shape.surfaces().any(|s| s == Surface::Planks));
     }
 
-    /// The walls of a chacra's adobe house under a lean-to.
+    /// Las paredes de la casa de adobe de una chacra bajo un techo a un agua.
     fn cottage() -> Walls {
         Walls {
             x0: -7.0,
@@ -614,8 +630,8 @@ mod tests {
         }
     }
 
-    /// The highest point of `surface` straight over `(x, z)`, if any of its
-    /// triangles covers it.
+    /// El punto más alto de `surface` justo encima de `(x, z)`, si alguno de
+    /// sus triángulos lo cubre.
     pub(crate) fn top_at(shape: &Shape, surface: Surface, x: f32, z: f32) -> Option<f32> {
         shape
             .triangles_of(surface)
@@ -651,8 +667,9 @@ mod tests {
         walls.front().build(&mut shape, Surface::Adobe, &[], 0);
         walls.back().build(&mut shape, Surface::Adobe, &[], 0);
         let t = walls.thickness;
-        // Down the middle of each wall's top, the wall meets the roof's
-        // underside: no gap, and nothing through the sheet.
+        // A lo largo del centro de la parte superior de cada pared, la pared se
+        // encuentra con la cara inferior del techo: sin hueco y sin atravesar
+        // la chapa.
         let mut columns = Vec::new();
         for k in 0..=20 {
             let z = walls.z0 + 0.05 + (walls.depth() - 0.1) * k as f32 / 20.0;
@@ -709,7 +726,7 @@ mod tests {
             0.7,
             0.35,
         );
-        // The sheet's upper face: its four corners.
+        // La cara superior de la chapa: sus cuatro esquinas.
         let top: Vec<_> = shape
             .vertices(Surface::OldIron)
             .into_iter()
@@ -720,14 +737,15 @@ mod tests {
             top.iter().max_by(|a, b| a.0.y.total_cmp(&b.0.y)).unwrap(),
             top.iter().min_by(|a, b| a.0.y.total_cmp(&b.0.y)).unwrap(),
         );
-        // The ridges of the texture run along `v`: down the slope `v`
-        // changes and `u` does not, and the sheet repeats several times.
+        // Las canaletas de la textura corren a lo largo de `v`: pendiente abajo
+        // cambia `v` y no `u`, y la chapa se repite varias veces.
         let down = low.2 - high.2;
         assert!(down.y.abs() > 2.0 && down.x.abs() < 0.2, "{down:?}");
         let along = top.iter().map(|(_, _, uv)| uv.x).fold(f32::MIN, f32::max)
             - top.iter().map(|(_, _, uv)| uv.x).fold(f32::MAX, f32::min);
         assert!(along > 2.0, "{along}");
-        // The top faces up and out over the front, where it is seen from.
+        // La parte superior mira hacia arriba y hacia afuera sobre el frente,
+        // desde donde se la ve.
         assert!(top.iter().all(|(_, n, _)| n.z > 0.0), "{top:?}");
     }
 }

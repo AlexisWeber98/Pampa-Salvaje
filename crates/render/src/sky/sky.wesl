@@ -1,44 +1,48 @@
-// The sky dome: gradient, twilight, sun, moon with phases, stars, the Milky
-// Way, the Southern Cross, cumulus and cirrus, all in one fragment shader.
-// Colors are linear. The dome is drawn inside out around the camera; its
-// horizon color is the fog color, so distant ground melts into it.
+// La cúpula del cielo: degradado, crepúsculo, sol, luna con sus fases,
+// estrellas, la Vía Láctea, la Cruz del Sur, cúmulos y cirros, todo en un solo
+// fragment shader. Los colores son lineales. La cúpula se dibuja invertida
+// alrededor de la cámara; el color de su horizonte es el color de la niebla,
+// así que el suelo lejano se funde con ella.
 
 import bevy_pbr::render::forward_io::VertexOutput;
 
 struct Sky {
-    // xyz: direction toward the sun; w: how visible its glow is (0..1).
+    // xyz: dirección hacia el sol; w: qué tan visible es su resplandor (0..1).
     sun: vec4<f32>,
-    // xyz: direction toward the moon; w: how visible its disc is (0..1).
+    // xyz: dirección hacia la luna; w: qué tan visible es su disco (0..1).
     moon: vec4<f32>,
-    // xyz: direction from the moon toward its light; w: earthshine.
+    // xyz: dirección desde la luna hacia su luz; w: luz cenicienta.
     moon_light: vec4<f32>,
-    // rgb: color overhead; w: star fade (0 by day).
+    // rgb: color en lo alto; w: desvanecimiento de las estrellas (0 de día).
     zenith: vec4<f32>,
-    // rgb: color at the horizon (the fog); w: twilight strength.
+    // rgb: color en el horizonte (la niebla); w: intensidad del crepúsculo.
     horizon: vec4<f32>,
-    // rgb: color of the sunlight; w: daylight.
+    // rgb: color de la luz del sol; w: luz del día.
     sun_color: vec4<f32>,
-    // rgb: sunlit cloud color; w: cumulus coverage (0..1).
+    // rgb: color de las nubes al sol; w: cobertura de cúmulos (0..1).
     cloud_lit: vec4<f32>,
-    // rgb: cloud shade color; w: real seconds.
+    // rgb: color de las nubes a la sombra; w: segundos reales.
     cloud_shade: vec4<f32>,
-    // xy: cloud drift in noise units; zw: unit wind direction.
+    // xy: desplazamiento de las nubes en unidades de ruido; zw: dirección
+    // unitaria del viento.
     drift: vec4<f32>,
-    // Rows taking a world direction to galactic coordinates.
+    // Filas que llevan una dirección del mundo a coordenadas galácticas.
     star_x: vec4<f32>,
     star_y: vec4<f32>,
     star_z: vec4<f32>,
-    // xyz: where the camera is.
+    // xyz: dónde está la cámara.
     center: vec4<f32>,
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> sky: Sky;
-// The star map: an equirectangular map in galactic coordinates (Solar System
-// Scope, CC BY 4.0). Longitude grows to the left; the top row is latitude -90.
+// El mapa de estrellas: un mapa equirrectangular en coordenadas galácticas
+// (Solar System Scope, CC BY 4.0). La longitud crece hacia la izquierda; la
+// fila superior es la latitud -90.
 @group(constants::MATERIAL_BIND_GROUP) @binding(1) var star_map: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(2) var star_sampler: sampler;
 
-// How bright the map shows: it is dark, to be seen under a night sky.
+// Qué tan brillante se ve el mapa: es oscuro, para verse bajo un cielo
+// nocturno.
 const STAR_GAIN: f32 = 5.0;
 
 const SUN_RADIUS: f32 = 0.017;
@@ -95,8 +99,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let time = sky.cloud_shade.w;
     let above = smoothstep(-0.01, 0.02, d.y);
 
-    // The star map, sampled in uniform control flow. The longitude wraps, so
-    // the derivatives come from whichever of two seamless copies is smoother.
+    // El mapa de estrellas, muestreado en flujo de control uniforme. La
+    // longitud da la vuelta, así que las derivadas salen de la más suave de dos
+    // copias sin costura.
     let g = vec3<f32>(dot(sky.star_x.xyz, d), dot(sky.star_y.xyz, d), dot(sky.star_z.xyz, d));
     let u = 0.5 - atan2(g.y, g.x) / 6.2831853;
     let v = 0.5 + asin(clamp(g.z, -1.0, 1.0)) / 3.1415927;
@@ -105,11 +110,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let ddy_u = select(dpdy(u_alt), dpdy(u), abs(dpdy(u)) <= abs(dpdy(u_alt)));
     let stars = textureSampleGrad(star_map, star_sampler, vec2<f32>(u, v), vec2<f32>(ddx_u, dpdx(v)), vec2<f32>(ddy_u, dpdy(v))).rgb;
 
-    // Gradient: haze at the horizon rising into the zenith's blue.
+    // Degradado: bruma en el horizonte que sube hacia el azul del cenit.
     var col = mix(sky.zenith.rgb, horizon, pow(1.0 - up, 3.6));
 
-    // Twilight: orange where the sun went down, the pink belt opposite, a
-    // violet band above.
+    // Crepúsculo: naranja donde se puso el sol, el cinturón rosado del lado
+    // opuesto y una franja violeta encima.
     let sun_h = normalize(sky.sun.xz + vec2<f32>(0.0001, 0.0));
     let d_h = normalize(d.xz + vec2<f32>(0.0001, 0.0));
     let toward = smoothstep(-0.3, 1.0, dot(d_h, sun_h));
@@ -118,16 +123,17 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     col = mix(col, vec3<f32>(0.62, 0.30, 0.40), twilight * (1.0 - toward) * 0.38 * exp(-pow((up - 0.09) / 0.10, 2.0)));
     col = mix(col, vec3<f32>(0.20, 0.12, 0.36), twilight * toward * 0.30 * smoothstep(0.08, 0.35, up) * (1.0 - smoothstep(0.35, 0.9, up)));
 
-    // Stars and the Milky Way, behind everything else: none by day, in
-    // after the sun is well under the horizon (the sun's own height here,
-    // as well as the CPU's fade, so they cannot disagree).
+    // Las estrellas y la Vía Láctea, detrás de todo lo demás: ninguna de día, y
+    // aparecen después de que el sol está bien por debajo del horizonte (aquí,
+    // la propia altura del sol, además del desvanecimiento de la CPU, para que
+    // no puedan contradecirse).
     let star_vis = min(star_fade, 1.0 - smoothstep(-0.3146, -0.06, sky.sun.y));
     if star_vis > 0.002 && d.y > 0.0 {
         let moon_wash = 1.0 - 0.55 * sky.moon.w * pow(max(dot(d, sky.moon.xyz), 0.0), 6.0);
         col += stars * STAR_GAIN * star_vis * smoothstep(0.0, 0.2, d.y) * moon_wash;
     }
 
-    // Sun glow and disc.
+    // Resplandor y disco del sol.
     let mu = dot(d, sky.sun.xyz);
     let sun_vis = sky.sun.w;
     let glow = 0.16 * pow(max(mu, 0.0), 5.0) + 0.55 * pow(max(mu, 0.0), 40.0) + 0.9 * pow(max(mu, 0.0), 400.0);
@@ -135,7 +141,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let disc = smoothstep(cos(SUN_RADIUS * 1.15), cos(SUN_RADIUS * 0.85), mu) * above * sun_vis;
     col = mix(col, vec3<f32>(1.0, 0.96, 0.85) * 1.6 + sky.sun_color.rgb * 0.2, disc);
 
-    // Clouds: cumulus lit from the sun's side, cirrus streaks above them.
+    // Nubes: cúmulos iluminados desde el lado del sol, y estrías de cirros por
+    // encima.
     let wind = sky.drift.zw;
     let across = vec2<f32>(-wind.y, wind.x);
     let fade = smoothstep(0.02, 0.24, d.y);
@@ -145,7 +152,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let p = plane * 0.55 + sky.drift.xy;
         let n = fbm4(p);
         let cover = sky.cloud_lit.w;
-        // `cover` is about the share of the sky under cumulus.
+        // `cover` es aproximadamente la proporción del cielo bajo cúmulos.
         let edge = 0.72 - 0.9 * cover;
         let body = smoothstep(edge, edge + 0.12, n);
         let toward_sun = sun_h * 0.07;
@@ -154,7 +161,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let core = smoothstep(edge + 0.06, edge + 0.22, n);
         let sunlit = clamp(lit * (1.0 - 0.45 * core) + 0.25 * (1.0 - core), 0.0, 1.0);
         var cloud = mix(sky.cloud_shade.rgb, sky.cloud_lit.rgb, sunlit);
-        // Sunset: the sun-facing sides and undersides glow.
+        // Atardecer: los lados y las caras inferiores que miran al sol brillan.
         cloud += vec3<f32>(1.0, 0.42, 0.15) * twilight * toward * toward * (1.0 - core * 0.6) * 0.7;
         let a = body * fade;
         col = mix(col, cloud, a);
@@ -168,7 +175,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         cloud_alpha = max(cloud_alpha, ca);
     }
 
-    // Moon with its phase, in front of the stars, behind the clouds.
+    // La luna con su fase, delante de las estrellas y detrás de las nubes.
     let m = sky.moon.xyz;
     let mc = dot(d, m);
     if mc > 0.9 {
@@ -192,7 +199,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    // Below the horizon the dome is plain haze, like the fog.
+    // Por debajo del horizonte la cúpula es bruma lisa, como la niebla.
     col = mix(horizon, col, above);
     return vec4<f32>(col, 1.0);
 }

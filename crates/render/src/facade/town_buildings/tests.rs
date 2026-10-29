@@ -2,8 +2,9 @@ use pampa_core::{Aabb, Vec2 as GroundVec2};
 
 use super::*;
 
-/// A lot for a building of `kind`, `w` along its front and `d` deep, `h`
-/// tall, facing south (its own `+Z`), seeded `variant`.
+/// Un lote para un edificio de tipo `kind`, de `w` a lo largo de su frente, `d`
+/// de profundidad y `h` de alto, mirando al sur (su propio `+Z`), con semilla
+/// `variant`.
 fn lot(kind: BuildingKind, (w, d, h): (f32, f32, f32), variant: u32) -> Lot {
     Lot {
         building: Building {
@@ -19,7 +20,7 @@ fn lot(kind: BuildingKind, (w, d, h): (f32, f32, f32), variant: u32) -> Lot {
     }
 }
 
-/// Every surface's points of `shape`.
+/// Los puntos de todas las superficies de `shape`.
 fn points(shape: &Shape) -> Vec<(Surface, Vec3)> {
     shape
         .surfaces()
@@ -27,7 +28,8 @@ fn points(shape: &Shape) -> Vec<(Surface, Vec3)> {
         .collect()
 }
 
-/// The buildings of a street, at their core sizes, a few seeds each.
+/// Los edificios de una calle, a sus tamaños de core, con unas pocas semillas
+/// cada uno.
 fn street() -> Vec<Lot> {
     let mut lots = Vec::new();
     for v in 0..48u32 {
@@ -55,8 +57,9 @@ fn street() -> Vec<Lot> {
     lots
 }
 
-/// The station yard's buildings and the town's sheds, at their core
-/// sizes: the station, a few iron sheds and the two grain stores.
+/// Los edificios del cuadro de la estación y los galpones del pueblo, a sus
+/// tamaños de core: la estación, unos cuantos galpones de chapa y los dos
+/// depósitos de granos.
 fn yard() -> Vec<Lot> {
     let mut lots = vec![lot(BuildingKind::Station, (24.0, 9.0, 5.0), 0)];
     for v in 0..4 {
@@ -74,10 +77,11 @@ fn yard() -> Vec<Lot> {
 
 #[test]
 fn masonry_fronts_stay_inside_their_footprints() {
-    // Colliders are the footprints and the facade signs hang just outside
-    // them: no pilaster, cornice, sill, shutter or eave may reach out
-    // there. Only a store's galería reaches over the sidewalk, and the
-    // station's platform canopy over the platform (core's canopy).
+    // Los colliders son las huellas de edificio y los carteles de fachada
+    // cuelgan justo por fuera: ninguna pilastra, cornisa, alféizar, postigo ni
+    // alero puede asomar ahí. Solo la galería de un almacén se extiende sobre
+    // la vereda, y la marquesina del andén de la estación sobre el andén (la
+    // marquesina de core).
     for lot in street().into_iter().chain(yard()) {
         let shape = building(&lot).expect("a building");
         let size = lot.size();
@@ -86,15 +90,15 @@ fn masonry_fronts_stay_inside_their_footprints() {
         for (surface, p) in points(&shape) {
             let over_street = p.z > half_d;
             if lot.building.kind == BuildingKind::GeneralStore && over_street {
-                // The galería: under the cornice, within the veranda.
+                // La galería: bajo la cornisa, dentro de la galería de core.
                 assert!(p.y < h - 0.5, "{surface:?} at {p} over the sidewalk");
                 assert!(p.z < half_d + lot.veranda + 0.1, "{surface:?} at {p}");
                 assert!(p.x.abs() < half_w + 0.2, "{surface:?} at {p}");
                 continue;
             }
             if lot.building.kind == BuildingKind::Station && p.z < -half_d {
-                // The canopy and its posts: on the track side, under the
-                // canopy's top, the station's length.
+                // La marquesina y sus postes: del lado de la vía, bajo la parte
+                // superior de la marquesina, a lo largo de toda la estación.
                 let top = Canopy::HEIGHT + Canopy::THICKNESS / 2.0 + 1e-3;
                 assert!(p.y <= top, "{surface:?} at {p} over the platform");
                 assert!(p.z >= -half_d - Canopy::DEPTH, "{surface:?} at {p}");
@@ -110,8 +114,8 @@ fn masonry_fronts_stay_inside_their_footprints() {
     }
 }
 
-/// Whether a triangle of `shape` facing the street covers `(x, y)` within
-/// `reach` of the front.
+/// Si un triángulo de `shape` que mira hacia la calle cubre `(x, y)` dentro de
+/// `reach` del frente.
 fn front_covers(shape: &Shape, front: f32, (x, y): (f32, f32), reach: f32) -> bool {
     shape.surfaces().any(|s| {
         shape.triangles_of(s).into_iter().any(|[a, b, c]| {
@@ -130,9 +134,9 @@ fn front_covers(shape: &Shape, front: f32, (x, y): (f32, f32), reach: f32) -> bo
 
 #[test]
 fn a_galpon_wall_stands_where_core_collides() {
-    // Core collides at a galpón's walls, not at its lot: the iron walls
-    // must stand on that collider, and the roof reach no farther than the
-    // lot.
+    // Core detecta colisiones en las paredes de un galpón, no en su lote: las
+    // paredes de chapa deben apoyarse en ese collider, y el techo no debe
+    // llegar más lejos que el lote.
     assert!((BARN_REACH - pampa_core::Building::BARN_EAVES).abs() < 1e-6);
     let mut checked = 0;
     for lot in yard() {
@@ -147,13 +151,14 @@ fn a_galpon_wall_stands_where_core_collides() {
         let walls: Vec<Vec3> = [Surface::OldIron, Surface::Galvanised]
             .into_iter()
             .flat_map(|s| shape.points(s))
-            // Their feet, under the ground: no roof comes down there.
+            // Sus pies, bajo el suelo: ningún techo baja hasta ahí.
             .filter(|p| p.y < 0.0)
             .collect();
         let reach = walls
             .iter()
             .fold(Vec2::ZERO, |m, p| m.max(Vec2::new(p.x.abs(), p.z.abs())));
-        // Facing south: the building's `x` is the ground's, `z` across.
+        // Mirando al sur: la `x` del edificio es la del suelo, y `z` es la
+        // transversal.
         let want = Vec2::new(collider.x, collider.y);
         assert!(
             (reach - want).abs().max_element() < 0.05,
@@ -167,8 +172,9 @@ fn a_galpon_wall_stands_where_core_collides() {
 
 #[test]
 fn a_store_parapet_stands_solid_behind_its_sign() {
-    // `signs` hangs the store's board 0.2–2.0 m over its wall height,
-    // nearly the front's width: the parapet must stand whole behind it.
+    // `signs` cuelga el cartel del almacén entre 0.2 y 2.0 m por encima de la
+    // altura de su pared, casi del ancho del frente: el parapeto debe quedar
+    // entero detrás de él.
     for store in [StoreStyle::GeneralStore, StoreStyle::Pulperia] {
         let lot = Lot {
             store,
@@ -192,8 +198,9 @@ fn a_store_parapet_stands_solid_behind_its_sign() {
 fn the_station_canopy_is_the_roof_core_gives_the_camera() {
     let (w, d, h) = (24.0, 9.0, 5.0);
     let shape = building(&lot(BuildingKind::Station, (w, d, h), 0)).unwrap();
-    // Core's canopy reaches `DEPTH` back from the track-side (back) wall,
-    // the whole wall long, its slab `THICKNESS` thick round `HEIGHT`.
+    // La marquesina de core se extiende `DEPTH` hacia atrás desde la pared del
+    // lado de la vía (la trasera), a lo largo de toda la pared, con su losa de
+    // `THICKNESS` de grosor alrededor de `HEIGHT`.
     let slab: Vec<Vec3> = shape
         .points(Surface::Galvanised)
         .into_iter()
@@ -218,12 +225,12 @@ fn the_station_canopy_is_the_roof_core_gives_the_camera() {
     );
 }
 
-/// The station of the yard, at its core size.
+/// La estación del cuadro, a su tamaño de core.
 fn station_shape() -> Shape {
     building(&lot(BuildingKind::Station, (24.0, 9.0, 5.0), 0)).unwrap()
 }
 
-/// The points of `surface` on the track side of the station (`z < -d / 2`).
+/// Los puntos de `surface` del lado de la vía de la estación (`z < -d / 2`).
 fn track_side(shape: &Shape, surface: Surface) -> Vec<Vec3> {
     shape
         .points(surface)
@@ -232,7 +239,7 @@ fn track_side(shape: &Shape, surface: Surface) -> Vec<Vec3> {
         .collect()
 }
 
-/// The x of every canopy column's foot, from the platform up.
+/// La x del pie de cada columna de la marquesina, desde el andén hacia arriba.
 fn column_xs(iron: &[Vec3]) -> Vec<f32> {
     let mut xs: Vec<f32> = iron
         .iter()
@@ -240,7 +247,7 @@ fn column_xs(iron: &[Vec3]) -> Vec<f32> {
         .map(|p| p.x)
         .collect();
     xs.sort_by(f32::total_cmp);
-    // Several points per foot: keep one per column.
+    // Varios puntos por pie: se conserva uno por columna.
     xs.dedup_by(|a, b| (*a - *b).abs() < 0.5);
     xs
 }
@@ -260,8 +267,9 @@ fn the_platform_top_is_the_height_core_gives_its_platform() {
     assert!(platforms > 0);
 }
 
-/// How deep core lays a station's platform, from the station's back wall
-/// to the track edge (its short side; it runs long along the track).
+/// Qué profundidad le da core al andén de una estación, desde la pared trasera
+/// de la estación hasta el borde de la vía (su lado corto; se extiende a lo
+/// largo de la vía).
 fn platform_depth() -> f32 {
     let town = pampa_core::TownLayout::castex_inspired();
     let platform = town
@@ -278,8 +286,8 @@ fn the_canopy_columns_stand_on_the_platform_not_in_it() {
     let (w, d) = (24.0, 9.0);
     let shape = station_shape();
     let iron = track_side(&shape, Surface::Steel);
-    // Nothing of the canopy's ironwork reaches below the platform's top,
-    // and every column's foot rests on it.
+    // Nada de la herrería de la marquesina llega por debajo de la parte
+    // superior del andén, y el pie de cada columna se apoya en él.
     let lowest = iron.iter().fold(f32::MAX, |a, p| a.min(p.y));
     assert!(
         (lowest - PLATFORM_TOP).abs() < 1e-3,
@@ -287,15 +295,16 @@ fn the_canopy_columns_stand_on_the_platform_not_in_it() {
     );
     let feet = column_xs(&iron);
     assert!(feet.len() >= 6, "{} columns", feet.len());
-    // Evenly spaced, three to four meters apart, within the station's width.
+    // Espaciadas de forma pareja, de tres a cuatro metros entre sí, dentro del
+    // ancho de la estación.
     let gaps: Vec<f32> = feet.windows(2).map(|p| p[1] - p[0]).collect();
     for gap in &gaps {
         assert!((3.0..=4.0).contains(gap), "gap {gap}");
         assert!((gap - gaps[0]).abs() < 0.2, "uneven {gaps:?}");
     }
     assert!(feet[0] > -w / 2.0 && feet[feet.len() - 1] < w / 2.0);
-    // On the platform: it runs out from the station's back wall as deep as
-    // core lays it, and the column rows stand well within it.
+    // Sobre el andén: se extiende desde la pared trasera de la estación con la
+    // profundidad que le da core, y las filas de columnas quedan bien adentro.
     let depth = platform_depth();
     for p in iron.iter().filter(|p| (p.y - PLATFORM_TOP).abs() < 1e-3) {
         assert!(p.z > -d / 2.0 - depth + 0.5 && p.z < -d / 2.0, "{p}");
@@ -308,8 +317,8 @@ fn the_canopy_wears_a_fascia_a_timber_valance_and_iron_brackets() {
     let bottom = Canopy::HEIGHT - Canopy::THICKNESS / 2.0;
     let z0 = -4.5 - Canopy::DEPTH;
     let timber = track_side(&shape, Surface::Planks);
-    // A fascia on the track edge, and a valance hanging below the slab,
-    // still well over a person's head on the platform.
+    // Una tabla de frente en el borde de la vía, y un faldón colgando bajo la
+    // losa, todavía muy por encima de la cabeza de una persona en el andén.
     let hanging: Vec<&Vec3> = timber.iter().filter(|p| p.y < bottom - 0.2).collect();
     assert!(hanging.len() > 100, "{} valance points", hanging.len());
     assert!(
@@ -323,8 +332,9 @@ fn the_canopy_wears_a_fascia_a_timber_valance_and_iron_brackets() {
             .iter()
             .any(|p| (p.y - (bottom + Canopy::THICKNESS)).abs() < 1e-3)
     );
-    // Brackets: iron under the slab, beside each column along the roof's
-    // edge and back toward the station wall (a column is 0.2 m across).
+    // Ménsulas: de hierro bajo la losa, junto a cada columna a lo largo del
+    // borde del techo y hacia atrás, hacia la pared de la estación (una columna
+    // mide 0.2 m de ancho).
     let iron = track_side(&shape, Surface::Steel);
     let columns = column_xs(&iron);
     let zc = z0 + 0.4;
@@ -353,12 +363,13 @@ fn the_station_has_a_pedimented_pavilion_on_both_fronts() {
     for sign in [1.0, -1.0] {
         let pediment = above(sign);
         assert!(pediment.len() > 8, "no pediment at {sign}");
-        // Over the middle, narrower than the whole front, in the footprint.
+        // Sobre el centro, más angosto que el frente entero, dentro de la
+        // huella de edificio.
         let (lo, hi) = pediment
             .iter()
             .fold((f32::MAX, f32::MIN), |(a, b), p| (a.min(p.x), b.max(p.x)));
         assert!(lo > -8.0 && hi < 8.0 && hi - lo > 6.0, "{lo}..{hi}");
-        // The apex stands well over the eaves, over the middle.
+        // El vértice queda muy por encima de los aleros, sobre el centro.
         let apex = pediment.iter().fold(f32::MIN, |a, p| a.max(p.y));
         assert!(apex > h + 2.2, "apex {apex}");
         assert!(pediment.iter().all(|p| p.z.abs() <= d / 2.0 + 1e-3));
@@ -383,9 +394,10 @@ fn town_buildings_keep_to_their_triangle_budgets() {
             lot.outskirts
         );
     }
-    // The station and its canopy (eight turned columns, a valance of
-    // lozenges, two dressed fronts): a landmark, built once per town, so
-    // dearer than a store; 7.2k at the time of writing.
+    // La estación y su marquesina (ocho columnas torneadas, un faldón de
+    // rombos, dos frentes ornamentados): un hito, construido una vez por
+    // pueblo, así que más costoso que un almacén; 7.2k al momento de escribir
+    // esto.
     let tris = station_shape().triangles();
     assert!((3000..=8000).contains(&tris), "station: {tris} triangles");
 }
@@ -396,9 +408,9 @@ fn town_houses_vary_their_wash_roof_and_dressing() {
         .into_iter()
         .filter(|l| l.building.kind == BuildingKind::House && !l.outskirts)
         .collect();
-    // Each wash, paint and brick appears on some front, painted ones over
-    // the beige band.
-    // Every low nibble (the finish), the other bits mixed.
+    // Cada encalado, pintura y ladrillo aparece en algún frente, y los pintados
+    // por encima de la franja beige.
+    // Cada nibble bajo (el acabado), con los demás bits mezclados.
     let seeded: Vec<Lot> = (0..64u32)
         .map(|v| v & 0xf | (v.wrapping_mul(0x9e37_79b9) & !0xf))
         .map(|v| lot(BuildingKind::House, (10.0, 9.5, 3.8), v))
@@ -420,7 +432,8 @@ fn town_houses_vary_their_wash_roof_and_dressing() {
     for finish in finishes {
         assert!(worn.contains(&finish), "no front wears {finish:?}");
     }
-    // A young town: plaster flaking off the brick is the rarest front.
+    // Un pueblo joven: el revoque descascarándose del ladrillo es el frente más
+    // raro.
     let fronts: Vec<Surface> = seeded.iter().map(|l| house_finish(l.variant).0).collect();
     let patched = fronts
         .iter()
@@ -445,7 +458,7 @@ fn town_houses_vary_their_wash_roof_and_dressing() {
         })
         .count();
     assert!(iron > 0 && iron < lots.len(), "{iron} of {}", lots.len());
-    // Outskirts houses are mostly plain cottages under iron.
+    // Las casas de las afueras son en su mayoría casitas simples bajo chapa.
     let plain = street()
         .into_iter()
         .filter(|l| l.outskirts)
@@ -459,9 +472,9 @@ fn town_houses_vary_their_wash_roof_and_dressing() {
     assert!(plain > 24, "{plain} plain outskirts houses of 48");
 }
 
-/// Writes the preview street to `PAMPA_PREVIEW` (a folder) for the
-/// offline renderer: `m <surface>` per mesh, then `v x y z nx ny nz u v`
-/// and `f a b c` lines. Run with
+/// Escribe la calle de vista previa en `PAMPA_PREVIEW` (una carpeta) para el
+/// renderizador offline: `m <surface>` por mesh, después líneas
+/// `v x y z nx ny nz u v` y líneas `f a b c`. Se ejecuta con
 /// `PAMPA_PREVIEW=/some/dir cargo test -p pampa-render -- --ignored preview_town`.
 #[test]
 #[ignore = "writes preview files"]
@@ -475,8 +488,8 @@ fn preview_town_street() {
         store: StoreStyle::Pulperia,
         ..lot(BuildingKind::GeneralStore, (14.0, 14.0, 5.0), 2)
     };
-    // One house of each new finish: the five paints, whitewashed brick
-    // and plaster flaking off brick (the finish is `variant % 16`).
+    // Una casa de cada acabado nuevo: las cinco pinturas, el ladrillo encalado
+    // y el revoque descascarándose del ladrillo (el acabado es `variant % 16`).
     let finishes: Vec<Lot> = [6u32, 7, 9, 10, 11, 12, 14]
         .into_iter()
         .map(|nibble| lot(BuildingKind::House, (9.5, 9.5, 4.0), 0x0000_0080 | nibble))

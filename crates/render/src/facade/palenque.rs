@@ -1,35 +1,37 @@
-//! A palenque, the hitching rail of a pampa town: two chamfered timber
-//! posts and a round bar through them, in weathered boards
-//! ([`Surface::Planks`]). It stands on the ground at the origin, its rail
-//! along `x` (turn it with a transform for a rail along the other axis).
-//! Core lays out where each one stands ([`pampa_core::TownLayout::palenques`]
-//! and the store's [`pampa_core::town::HitchingPost`]); render builds them
-//! all into one mesh per town.
+//! Un palenque, la barra para atar caballos de un pueblo pampeano: dos postes
+//! de madera ochavados y una barra redonda que los atraviesa, de tablas
+//! curtidas por la intemperie ([`Surface::Planks`]). Se apoya en el suelo en el
+//! origen, con la barra a lo largo de `x` (se gira con un transform para una
+//! barra en el otro eje). Core decide dónde va cada uno
+//! ([`pampa_core::TownLayout::palenques`] y el
+//! [`pampa_core::town::HitchingPost`] del almacén); render los construye todos
+//! en una sola mesh por pueblo.
 
 use bevy::prelude::*;
 
 use super::materials::Surface;
 use super::shape::Shape;
 
-/// Side of a post, meters.
+/// Lado de un poste, en metros.
 pub const POST: f32 = 0.18;
-/// Height of a post over the ground, meters.
+/// Altura de un poste sobre el suelo, en metros.
 pub const POST_HEIGHT: f32 = 1.15;
-/// Bevel of a post's four vertical edges, meters.
+/// Chaflán de las cuatro aristas verticales de un poste, en metros.
 const POST_CHAMFER: f32 = 0.04;
-/// How far a post's foot reaches under the ground, meters.
+/// Cuánto se mete el pie de un poste bajo el suelo, en metros.
 const FOOT: f32 = -0.05;
-/// Distance from a rail's end to its post's middle, meters.
+/// Distancia desde el extremo de una barra hasta el centro de su poste, en
+/// metros.
 pub const POST_INSET: f32 = 0.2;
-/// Height of the bar's axis over the ground, meters.
+/// Altura del eje de la barra sobre el suelo, en metros.
 pub const BAR_HEIGHT: f32 = 1.0;
-/// Radius of the bar, meters.
+/// Radio de la barra, en metros.
 pub const BAR_RADIUS: f32 = 0.05;
-/// Sides of the bar's section.
+/// Lados de la sección de la barra.
 const BAR_SEGMENTS: u32 = 8;
 
-/// A palenque of `length` along `x`, on the ground at its middle: a post
-/// near each end and the bar across, end to end.
+/// Un palenque de `length` a lo largo de `x`, en el suelo en su centro: un
+/// poste cerca de cada extremo y la barra cruzada de punta a punta.
 pub(crate) fn palenque(length: f32) -> Shape {
     let mut shape = Shape::default();
     let half = POST / 2.0;
@@ -42,7 +44,8 @@ pub(crate) fn palenque(length: f32) -> Shape {
             POST_CHAMFER,
         );
     }
-    // The bar is a lathe along local Y, laid down along `x`.
+    // La barra es un torneado a lo largo del Y local, acostado a lo largo de
+    // `x`.
     let lay = Transform::from_translation(Vec3::new(-length / 2.0, BAR_HEIGHT, 0.0))
         .with_rotation(Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2));
     shape.lathe(
@@ -69,27 +72,30 @@ mod tests {
         let shape = palenque(length);
         assert_eq!(shape.surfaces().collect::<Vec<_>>(), [Surface::Planks]);
         let vertices = shape.vertices(Surface::Planks);
-        // Within its footprint: the rail's length, a post's width, the posts' height.
+        // Dentro de su huella: el largo de la barra, el ancho de un poste, la
+        // altura de los postes.
         for (p, _, _) in &vertices {
             assert!(p.x.abs() <= length / 2.0 + 1e-4, "{p}");
             assert!(p.z.abs() <= POST / 2.0 + 1e-4, "{p}");
             assert!((FOOT..=POST_HEIGHT + 1e-4).contains(&p.y), "{p}");
         }
-        // Posts near both ends, standing proud of the ground.
+        // Postes cerca de ambos extremos, sobresaliendo del suelo.
         for end in [-1.0f32, 1.0] {
             assert!(vertices.iter().any(|(p, _, _)| {
                 (p.x - end * (length / 2.0 - POST_INSET)).abs() < POST / 2.0
                     && (p.y - POST_HEIGHT).abs() < 1e-4
             }));
         }
-        // Chamfered: faces leaning 45 degrees about the vertical, besides the square ones.
+        // Ochavados: caras inclinadas 45 grados alrededor de la vertical,
+        // además de las cuadradas.
         assert!(
             vertices
                 .iter()
                 .any(|(_, n, _)| n.y.abs() < 1e-3 && n.x.abs() > 0.5 && n.z.abs() > 0.5),
             "no chamfer"
         );
-        // A round bar end to end at its height: normals turn all the way round it.
+        // Una barra redonda de punta a punta a su altura: las normales dan toda
+        // la vuelta alrededor.
         let bar: Vec<_> = vertices
             .iter()
             .filter(|(p, _, _)| {
@@ -108,7 +114,7 @@ mod tests {
         let down = bar.iter().any(|(_, n, _)| n.y < -0.9);
         let sides = bar.iter().any(|(_, n, _)| n.z.abs() > 0.9);
         assert!(up && down && sides, "the bar is not round");
-        // Light: two posts and one bar.
+        // Liviano: dos postes y una barra.
         assert!(shape.triangles() < 120, "{} triangles", shape.triangles());
     }
 }

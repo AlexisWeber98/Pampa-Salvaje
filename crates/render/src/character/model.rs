@@ -1,44 +1,46 @@
-//! MakeHuman characters: skinned glTF people that replace a figure's rigid
-//! parts (see `assets/characters/README.md` and `tools/mh2gltf.py`).
+//! Personajes de MakeHuman: personas glTF con skinning que reemplazan las
+//! piezas rígidas de una figura (ver `assets/characters/README.md` y
+//! `tools/mh2gltf.py`).
 //!
-//! The models are built offline from MakeHuman's CC0 data and a few
-//! community assets (CC0, and CC-BY by their authors; credited in
-//! `assets/characters/CREDITS.md` and the root `CREDITS.md`). Their 1919
-//! wardrobe is mostly made by the converter: shirts, waistcoats, a police
-//! guerrera, a three-piece suit, bombachas and knee boots cut from the
-//! body and skinned like it, and the hats, kepi, neckerchiefs, faja and
-//! rastra, poncho, strap, watch chain and brass buttons; and for the
-//! townsfolk ([`townsfolk`](super::townsfolk)) a boina and alpargatas, and
-//! the women's blouses, long skirts, aprons, crossed shawls, a headscarf and
-//! hair worn up. They are drawn by default
-//! ([`CharacterModelsShown`]); the debug console's `models off`
-//! brings back the rigid figures of the people on foot. Riders are always
-//! models: the rigid rider is gone with the procedural horse (see
-//! [`rider`](super::rider)).
+//! Los modelos se construyen offline a partir de los datos CC0 de MakeHuman y
+//! de algunos assets de la comunidad (CC0 y CC-BY de sus autores; con crédito
+//! en `assets/characters/CREDITS.md` y en el `CREDITS.md` de la raíz). Su
+//! vestuario de 1919 lo hace en su mayor parte el conversor: camisas, chalecos,
+//! una guerrera de policía, un traje de tres piezas, bombachas y botas altas
+//! cortadas a partir del cuerpo y con skinning como él, y los sombreros, el
+//! quepí, los pañuelos de cuello, la faja y la rastra, el poncho, la correa, la
+//! cadena del reloj y los botones de bronce; y para los vecinos
+//! ([`townsfolk`](super::townsfolk)) una boina y alpargatas, y para las mujeres
+//! blusas, polleras largas, delantales, chales cruzados, un pañuelo en la
+//! cabeza y el pelo recogido. Se dibujan por defecto
+//! ([`CharacterModelsShown`]); el `models off` de la consola de depuración
+//! vuelve a traer las figuras rígidas de las personas a pie. Los jinetes
+//! siempre son modelos: el jinete rígido se fue junto con el caballo procedural
+//! (ver [`rider`](super::rider)).
 //!
-//! A [`FigureKind`]'s model ([`model_name`]; a townsperson's by their
-//! look) is `assets/characters/<name>/model.gltf`, loaded once at startup
-//! ([`CharacterModels`]).
-//! With the models shown, a figure of that kind on foot still spawns its
-//! rigid body, joints and parts, and also a [`CharacterModel`] under its
-//! body:
+//! El modelo de un [`FigureKind`] ([`model_name`]; el de un vecino según su
+//! aspecto) es `assets/characters/<name>/model.gltf`, que se carga una vez al
+//! iniciar ([`CharacterModels`]). Con los modelos visibles, una figura de ese
+//! tipo a pie igual crea su cuerpo rígido, sus articulaciones y sus piezas, y
+//! además un [`CharacterModel`] bajo su cuerpo:
 //!
-//! - while the model loads, the rigid figure is drawn and the model waits
+//! - mientras el modelo carga, se dibuja la figura rígida y el modelo espera
 //!   ([`ModelPending`]);
-//! - once it is ready its scene spawns, turned to face the body's front
-//!   (+X; the glTF faces +Z), its meshes get the props' shared range, its
-//!   `Root` node gets the shared clips' player and its bones become their
-//!   targets ([`Rig`]), and the rigid parts are hidden;
-//! - if it fails to load, the rigid figure stays for good.
+//! - cuando está listo, se crea su escena, girada para mirar hacia el frente
+//!   del cuerpo (+X; el glTF mira hacia +Z), sus meshes reciben el rango
+//!   compartido de los accesorios, su nodo `Root` recibe el reproductor de los
+//!   clips compartidos y sus huesos pasan a ser sus objetivos ([`Rig`]), y las
+//!   piezas rígidas se ocultan;
+//! - si falla la carga, la figura rígida queda para siempre.
 //!
-//! The body keeps turning to the heading as before, carrying the model,
-//! and the clip driver ([`rig`](super::rig)) plays the shared animation
-//! clips ([`clips`](super::clips)) on it: it stands, walks, jogs and talks
-//! with them, and glances around like the figure.
+//! El cuerpo sigue girando hacia el rumbo como antes, llevando el modelo, y el
+//! controlador de clips ([`rig`](super::rig)) reproduce sobre él los clips de
+//! animación compartidos ([`clips`](super::clips)): con ellos se queda parado,
+//! camina, trota y habla, y mira a su alrededor como la figura.
 //!
-//! A rider's model has no figure: the saddled horse spawns it on its
-//! `Torso` bone once its own scene has spawned ([`Riding`]), and it is
-//! dressed the same, with its bones found for the seat ([`Seated`]).
+//! El modelo de un jinete no tiene figura: el caballo ensillado lo crea sobre
+//! su hueso `Torso` una vez que se creó su propia escena ([`Riding`]), y se
+//! prepara igual, con sus huesos ubicados para la montura ([`Seated`]).
 
 use std::collections::HashMap;
 use std::f32::consts::FRAC_PI_2;
@@ -56,12 +58,12 @@ use super::townsfolk::{TintCache, Worn, dress_townsperson, outfit};
 use crate::AssetRoot;
 use crate::gltf::{self, ModelState};
 
-/// Where the character models live, under the [`AssetRoot`].
+/// Dónde viven los modelos de personaje, bajo el [`AssetRoot`].
 pub const CHARACTER_DIR: &str = "characters";
 
-/// The model folder of a figure kind: on foot (unless the models are off)
-/// and in the saddle. A townsperson's is their look's outfit
-/// ([`townsfolk`](super::townsfolk)).
+/// La carpeta del modelo de un tipo de figura: a pie (salvo que los modelos
+/// estén desactivados) y en la montura. La de un vecino es el atuendo de su
+/// aspecto ([`townsfolk`](super::townsfolk)).
 pub fn model_name(kind: FigureKind) -> Option<&'static str> {
     match kind {
         FigureKind::Protagonist => Some("protagonist"),
@@ -72,25 +74,26 @@ pub fn model_name(kind: FigureKind) -> Option<&'static str> {
     }
 }
 
-/// The model file of `name` under the [`CHARACTER_DIR`].
+/// El archivo del modelo `name` bajo el [`CHARACTER_DIR`].
 pub fn model_path(name: &str) -> String {
     format!("{CHARACTER_DIR}/{name}/model.gltf")
 }
 
-/// The character models found at startup, loading or loaded, by model
-/// folder: each is loaded once, whoever wears it.
+/// Los modelos de personaje encontrados al iniciar, cargando o ya cargados, por
+/// carpeta de modelo: cada uno se carga una sola vez, lo use quien lo use.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct CharacterModels(pub HashMap<&'static str, Handle<WorldAsset>>);
 
 impl CharacterModels {
-    /// The model `kind` is drawn with, if there is one.
+    /// El modelo con el que se dibuja `kind`, si hay uno.
     pub fn of(&self, kind: FigureKind) -> Option<&Handle<WorldAsset>> {
         self.0.get(model_name(kind)?)
     }
 }
 
-/// Starts loading every character model there is. Without an asset server
-/// or root (tests, a bare app) none is loaded and every figure stays rigid.
+/// Empieza a cargar todos los modelos de personaje que haya. Sin un servidor de
+/// assets o una raíz (tests, una app vacía) no se carga ninguno y todas las
+/// figuras quedan rígidas.
 pub(super) fn load_character_models(
     mut commands: Commands,
     server: Option<Res<AssetServer>>,
@@ -114,8 +117,9 @@ pub(super) fn load_character_models(
     commands.insert_resource(models);
 }
 
-/// Whether the character models are drawn instead of the rigid figures
-/// (on by default). Turning it on or off redraws the figures standing.
+/// Si los modelos de personaje se dibujan en lugar de las figuras rígidas
+/// (activado por defecto). Activarlo o desactivarlo vuelve a dibujar las
+/// figuras que están en pie.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CharacterModelsShown(pub bool);
 
@@ -125,21 +129,22 @@ impl Default for CharacterModelsShown {
     }
 }
 
-/// A character model's root, child of its figure's body.
+/// La raíz de un modelo de personaje, hija del cuerpo de su figura.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct CharacterModel;
 
-/// A character model still loading: its scene spawns here once ready.
+/// Un modelo de personaje que todavía carga: su escena se crea aquí cuando esté
+/// listo.
 #[derive(Component, Debug, Clone)]
 pub struct ModelPending(pub Handle<WorldAsset>);
 
-/// The model's root transform under the body: the glTF faces +Z, the
-/// body's front is +X.
+/// El transform raíz del modelo bajo el cuerpo: el glTF mira hacia +Z y el
+/// frente del cuerpo es +X.
 pub fn model_transform() -> Transform {
     Transform::from_rotation(Quat::from_rotation_y(FRAC_PI_2))
 }
 
-/// Puts `kind`'s model, if it has one, under the figure `body`.
+/// Pone el modelo de `kind`, si tiene uno, bajo la figura `body`.
 pub(super) fn attach_model(
     commands: &mut Commands,
     models: Option<&CharacterModels>,
@@ -159,9 +164,9 @@ pub(super) fn attach_model(
     ));
 }
 
-/// Puts the models on (or takes them off) the figures already standing
-/// when [`CharacterModelsShown`] changes; taken off, their rigid parts
-/// show again.
+/// Pone los modelos en las figuras que ya están en pie (o los quita) cuando
+/// cambia [`CharacterModelsShown`]; al quitarlos, sus piezas rígidas vuelven a
+/// verse.
 pub(super) fn toggle_character_models(
     mut commands: Commands,
     shown: Res<CharacterModelsShown>,
@@ -190,8 +195,8 @@ pub(super) fn toggle_character_models(
     }
 }
 
-/// Spawns each waiting model's scene once ready; drops a failed one, so
-/// its figure stays rigid.
+/// Crea la escena de cada modelo en espera cuando está listo; descarta uno que
+/// falló, así que su figura queda rígida.
 pub(super) fn swap_in_character_models(
     mut commands: Commands,
     server: Option<Res<AssetServer>>,
@@ -216,18 +221,20 @@ pub(super) fn swap_in_character_models(
     }
 }
 
-/// The range a character model's meshes are drawn within: the settlement
-/// props' shared one (no new GPU slot).
+/// El rango dentro del cual se dibujan las meshes de un modelo de personaje: el
+/// compartido de los accesorios de los asentamientos (sin un slot de GPU
+/// nuevo).
 pub fn model_range() -> VisibilityRange {
     crate::settlement::ranges()[1].clone()
 }
 
-/// Dresses a character model the moment its scene spawns: the shared
-/// range on its meshes, a townsperson's clothes tinted (and, in a long
-/// skirt, the arms to hold out found), its `Root` made the clips' player with every bone
-/// a target ([`bind_targets`]), its rig found for the clip driver, and its
-/// figure's rigid parts hidden. A rider's bones are found for the seat
-/// ([`Seated`]) instead of the pelvis fit and the glance.
+/// Prepara un modelo de personaje en el momento en que se crea su escena: el
+/// rango compartido en sus meshes, la ropa de un vecino teñida (y, con pollera
+/// larga, los brazos a separar ubicados), su `Root` convertido en el
+/// reproductor de los clips con cada hueso como objetivo ([`bind_targets`]), su
+/// rig ubicado para el controlador de clips y las piezas rígidas de su figura
+/// ocultas. Los huesos de un jinete se ubican para la montura ([`Seated`]) en
+/// lugar del ajuste de la pelvis y la mirada.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn dress_character(
     ready: On<WorldInstanceReady>,
@@ -266,8 +273,8 @@ pub(super) fn dress_character(
             probes.push(entity);
         }
     }
-    // A townsperson's clothes in their own colours; a long skirt holds the
-    // arms out a little.
+    // La ropa de un vecino en sus propios colores; una pollera larga separa un
+    // poco los brazos.
     let skirt = match (kind, cache, materials) {
         (Some(kind), Some(mut cache), Some(mut materials)) => dress_townsperson(
             &mut commands,
@@ -292,8 +299,9 @@ pub(super) fn dress_character(
             let rest = |e: Entity| rest_affine(e, root, &parents, &transforms);
             match Seated::find(root, named, rest) {
                 Some(seated) => {
-                    // Hidden until posed in the saddle (again, if its scene
-                    // was spawned again): it spawns standing at rest.
+                    // Oculto hasta que se lo pone en pose en la montura (otra
+                    // vez, si su escena se volvió a crear): se crea parado en
+                    // reposo.
                     commands.entity(root).try_insert((
                         seated,
                         RiderMotion::default(),
@@ -340,17 +348,18 @@ pub(crate) mod tests {
     use crate::gltf::tests::root;
     use bevy::mesh::Mesh;
 
-    /// The triangle budget of one character model.
+    /// El presupuesto de triángulos de un modelo de personaje.
     const BUDGET: usize = 15_000;
-    /// The cap of one townsperson's model (user, 2026-10-25): 31 of them
-    /// may stand in a plaza.
+    /// El tope del modelo de un vecino (usuario, 2026-10-25): puede haber 31 de
+    /// ellos parados en una plaza.
     const TOWNSFOLK_BUDGET: usize = 11_000;
-    /// Fewer triangles than this means a model lost its body or clothes
-    /// (the lightest, with its garments cut from the body, has about 4,900).
+    /// Menos triángulos que esto significa que un modelo perdió su cuerpo o su
+    /// ropa (el más liviano, con sus prendas cortadas a partir del cuerpo,
+    /// tiene unos 4,900).
     const FLOOR: usize = 3_000;
 
-    /// The shipped glTF of the model folder `name`, its JSON only: what
-    /// the file says, without loading its meshes.
+    /// El glTF incluido de la carpeta de modelo `name`, solo su JSON: lo que
+    /// dice el archivo, sin cargar sus meshes.
     pub(crate) fn shipped_model(name: &str) -> bevy::gltf::gltf::Document {
         let bytes = std::fs::read(root().0.join(model_path(name))).unwrap();
         bevy::gltf::gltf::Gltf::from_slice(&bytes)
@@ -390,8 +399,8 @@ pub(crate) mod tests {
         }
     }
 
-    /// The character plugin, headless, with a stand-in model for Farach
-    /// (never loaded: no asset server), and Farach standing.
+    /// El plugin de personajes, headless, con un modelo sustituto para Farach
+    /// (que nunca se carga: no hay servidor de assets), y Farach parado.
     fn toggle_app() -> (App, Entity) {
         use crate::character::{CharacterVisual, CharacterVisualPlugin};
         let mut app = App::new();
@@ -425,12 +434,12 @@ pub(crate) mod tests {
     fn the_models_are_shown_by_default_and_off_restores_the_figures() {
         let (mut app, _) = toggle_app();
         assert!(app.world().resource::<CharacterModelsShown>().0);
-        // Farach, standing, has his model; the townsperson has none.
+        // Farach, parado, tiene su modelo; el vecino no tiene ninguno.
         assert_eq!(model_count(&mut app), 1);
         app.update();
         assert_eq!(model_count(&mut app), 1, "attached once");
 
-        // Off: the models go and the rigid parts show.
+        // Desactivados: los modelos se van y se ven las piezas rígidas.
         app.insert_resource(CharacterModelsShown(false));
         app.update();
         assert_eq!(model_count(&mut app), 0);
@@ -439,7 +448,7 @@ pub(crate) mod tests {
             .query_filtered::<&Visibility, With<FigureJoint>>();
         assert!(joints.iter(app.world()).all(|v| *v != Visibility::Hidden));
 
-        // A figure drawn while they are off stays rigid.
+        // Una figura dibujada mientras están desactivados queda rígida.
         app.world_mut()
             .spawn(crate::character::CharacterVisual::Figure(
                 FigureKind::Farach,
@@ -447,7 +456,7 @@ pub(crate) mod tests {
         app.update();
         assert_eq!(model_count(&mut app), 0);
 
-        // On again: both standing Farachs get theirs.
+        // Activados otra vez: los dos Farach parados reciben el suyo.
         app.insert_resource(CharacterModelsShown(true));
         app.update();
         assert_eq!(model_count(&mut app), 2);
@@ -472,14 +481,14 @@ pub(crate) mod tests {
                 coat: Coat::HIDALGO,
             });
         app.update();
-        // His figure and its model go; his rider's model waits for the
-        // horse's scene (none in this app).
+        // Su figura y su modelo se van; el modelo de su jinete espera la escena
+        // del caballo (ninguna en esta app).
         assert_eq!(
             model_count(&mut app),
             1,
             "no model on a figure in the saddle"
         );
-        // Even when the models are turned off and on again.
+        // Incluso cuando los modelos se desactivan y se vuelven a activar.
         app.insert_resource(CharacterModelsShown(false));
         app.update();
         app.insert_resource(CharacterModelsShown(true));

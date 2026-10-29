@@ -1,13 +1,14 @@
-//! The branch engine: a small British-built 2-6-2T tank engine, in worn
-//! black with a brass dome and copper-capped chimney, drawn as one 12 m
-//! car. Its water rides in side tanks along the boiler and its coal in a
-//! bunker behind the cab, so there is no tender.
+//! La locomotora del ramal: una pequeña locomotora tanque 2-6-2T de fabricación
+//! británica, en negro gastado con domo de bronce y chimenea con remate de
+//! cobre, dibujada como un solo vagón de 12 m. El agua va en tanques laterales
+//! a lo largo de la caldera y el carbón en una carbonera detrás de la cabina,
+//! así que no tiene ténder.
 //!
-//! From the front (+X): buffer beam, smokebox with its door, the short
-//! chimney, cylinders and their guides, the leading wheels, the side
-//! tanks along the boiler with its steam dome, three coupled drivers
-//! under them, the cab with its roof, the trailing wheels and the coal
-//! bunker.
+//! Desde el frente (+X): testero, caja de humo con su puerta, la chimenea
+//! corta, los cilindros y sus guías, las ruedas delanteras, los tanques
+//! laterales a lo largo de la caldera con su domo de vapor, tres ejes motores
+//! acoplados debajo de ellos, la cabina con su techo, las ruedas traseras y la
+//! carbonera.
 
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
@@ -20,21 +21,22 @@ use super::loco::{BOILER_Y, boss, rod_bar};
 use super::shape::{Grain, Shape, rounded_rect};
 use super::wheels::WheelStyle;
 
-/// Top of the running plate and footplate.
+/// Parte superior de la plataforma lateral y de la plancha del maquinista.
 const PLATE: f32 = 1.6;
-/// The coupled drivers' axles.
+/// Los ejes de las ruedas motrices acopladas.
 const DRIVERS: [f32; 3] = [-0.9, 0.8, 2.5];
-/// The leading and trailing trucks' axles.
+/// Los ejes de los bogies delantero y trasero.
 const LEADING: f32 = 4.9;
 const TRAILING: f32 = -3.5;
-/// The chimney's place along the car, and the height of its top, where the
-/// smoke leaves.
+/// La posición de la chimenea a lo largo del vagón y la altura de su remate,
+/// por donde sale el humo.
 const CHIMNEY_X: f32 = 4.8;
 const CHIMNEY_TOP: f32 = 4.2;
-/// The side tanks' span along the boiler, and their middle height.
+/// El tramo de los tanques laterales a lo largo de la caldera y su altura
+/// media.
 const TANK: (f32, f32) = (-1.0, 3.5);
 const TANK_Y: f32 = 2.35;
-/// The cab: its front wall, back and roof.
+/// La cabina: su pared delantera, la trasera y el techo.
 const CAB: (f32, f32) = (-3.0, -1.0);
 const ROOF: f32 = 3.88;
 
@@ -50,9 +52,9 @@ impl CarBuilder<'_, '_> {
         self.smoke(Vec3::new(CHIMNEY_X, CHIMNEY_TOP, 0.0));
     }
 
-    /// The plate frames, the buffer beams at both ends, the tread-plate
-    /// running plate beside the smokebox and the footplate under cab and
-    /// bunker.
+    /// Los bastidores de chapa, los testeros en ambos extremos, la plataforma
+    /// lateral de chapa antideslizante junto a la caja de humo y la plancha del
+    /// maquinista bajo la cabina y la carbonera.
     fn tank_frame(&mut self, front: f32) {
         for side in [-1.0, 1.0] {
             self.boxed(
@@ -75,8 +77,8 @@ impl CarBuilder<'_, '_> {
             Vec3::new(front - 0.7, 0.95, 0.0),
             Vec3::new(0.5, 0.5, 1.0),
         );
-        // Running plates ahead of the tanks, with a valance, and a front
-        // plate across the beam.
+        // Plataformas laterales delante de los tanques, con un faldón, y una
+        // chapa frontal que cruza el testero.
         for side in [-1.0, 1.0] {
             self.boxed(
                 Mat::TREAD,
@@ -94,7 +96,7 @@ impl CarBuilder<'_, '_> {
             Vec3::new(front - 0.7, PLATE - 0.03, 0.0),
             Vec3::new(0.9, 0.06, 1.0),
         );
-        // The footplate under the cab and the bunker.
+        // La plancha del maquinista bajo la cabina y la carbonera.
         let (x0, x1) = (-front + 0.5, CAB.1 + 0.1);
         self.boxed(
             Mat::TREAD,
@@ -103,8 +105,8 @@ impl CarBuilder<'_, '_> {
         );
     }
 
-    /// The six drivers, the leading and trailing wheels, and the four rods
-    /// the drivers' cranks swing.
+    /// Las seis ruedas motrices, las ruedas delanteras y traseras, y las cuatro
+    /// bielas que hacen girar las manivelas de las motrices.
     fn tank_wheels_and_rods(&mut self) {
         for x in DRIVERS {
             self.axle(x, DRIVER_RADIUS, WheelStyle::Spoked(12));
@@ -112,7 +114,7 @@ impl CarBuilder<'_, '_> {
         for x in [LEADING, TRAILING] {
             self.axle(x, SMALL_RADIUS, WheelStyle::Spoked(8));
         }
-        // Axle boxes and springs on every axle.
+        // Cajas de grasa y resortes en todos los ejes.
         let spring = Shape::cuboid(Vec3::ZERO, Vec3::new(0.9, 0.05, 0.06), Grain::Along);
         for x in DRIVERS {
             for side in [-1.0, 1.0] {
@@ -137,8 +139,9 @@ impl CarBuilder<'_, '_> {
                 );
             }
         }
-        // Rods, as the tender engine's: the right side (+Z) cranks lead
-        // by a quarter turn; the drivers turn clockwise.
+        // Bielas, como en la locomotora con ténder: las manivelas del lado
+        // derecho (+Z) van un cuarto de vuelta adelantadas; las motrices giran
+        // en sentido horario.
         for (i, side) in [-1.0f32, 1.0].into_iter().enumerate() {
             let phase = (i as f32 * -FRAC_PI_2).rem_euclid(TAU);
             let pitch = DRIVERS[1] - DRIVERS[0];
@@ -152,8 +155,8 @@ impl CarBuilder<'_, '_> {
                 phase,
                 0.0,
             );
-            // The connecting rod, from the middle driver's pin to the
-            // crosshead.
+            // La biela motriz, desde el muñón de la rueda motriz central hasta
+            // la cruceta.
             let reach = 2.6;
             let mut main = rod_bar(reach + 0.2, 0.1);
             main.append(&boss(-reach / 2.0, 0.08));
@@ -166,8 +169,8 @@ impl CarBuilder<'_, '_> {
         }
     }
 
-    /// The boiler with its firebox wrapper, smokebox, chimney, dome,
-    /// safety valves, handrails and headlamp.
+    /// La caldera con el revestimiento del hogar, la caja de humo, la chimenea,
+    /// el domo, las válvulas de seguridad, los pasamanos y el farol delantero.
     fn tank_boiler(&mut self) {
         let y = BOILER_Y;
         let body = Shape::lathe(
@@ -199,7 +202,8 @@ impl CarBuilder<'_, '_> {
             );
             self.put(Mat::BRASS, &band, Transform::from_xyz(0.0, y, 0.0));
         }
-        // The smokebox door's ring and dart, and a number plate.
+        // El aro y el cierre de la puerta de la caja de humo, y una placa de
+        // número.
         let ring = Shape::lathe(&[(5.18, 0.74), (5.18, 0.8), (5.24, 0.8), (5.24, 0.74)], 28);
         self.put(Mat::BRASS, &ring, Transform::from_xyz(0.0, y, 0.0));
         self.turned(
@@ -214,8 +218,8 @@ impl CarBuilder<'_, '_> {
             Vec3::new(5.38, y - 0.2, 0.0),
             Vec3::new(0.02, 0.18, 0.4),
         );
-        // A short chimney, flared at the mouth, with a copper cap whose
-        // top is the smoke's mouth.
+        // Una chimenea corta, acampanada en la boca, con un remate de cobre
+        // cuya parte superior es la boca del humo.
         let base = y + 0.78 - 0.1;
         let height = CHIMNEY_TOP - base;
         self.turned(
@@ -248,8 +252,8 @@ impl CarBuilder<'_, '_> {
             Vec3::new(CHIMNEY_X, base, 0.0),
             Vec3::Y,
         );
-        // The steam dome between the tanks, in brass, and the safety
-        // valves behind the chimney.
+        // El domo de vapor entre los tanques, de bronce, y las válvulas de
+        // seguridad detrás de la chimenea.
         self.turned(
             Mat::BRASS,
             &[
@@ -282,7 +286,8 @@ impl CarBuilder<'_, '_> {
                 Vec3::Y,
             );
         }
-        // Handrails along the smokebox, on knobbed posts, and a headlamp.
+        // Pasamanos a lo largo de la caja de humo, sobre soportes con perilla,
+        // y un farol delantero.
         for side in [-1.0, 1.0] {
             let z = side * 0.9;
             self.bar(
@@ -314,8 +319,8 @@ impl CarBuilder<'_, '_> {
         );
     }
 
-    /// Cylinders with their valve chests, the crosshead guides and the
-    /// leading wheels' springs.
+    /// Los cilindros con sus cajas de válvulas, las guías de la cruceta y los
+    /// resortes de las ruedas delanteras.
     fn tank_front_gear(&mut self) {
         let cylinder = Shape::lathe(
             &[
@@ -338,7 +343,8 @@ impl CarBuilder<'_, '_> {
                 Vec3::new(3.75, 1.28, z),
                 Vec3::X,
             );
-            // Steam pipe up to the smokebox, slide bars and a guide yoke.
+            // Tubo de vapor hasta la caja de humo, correderas y un yugo de
+            // guía.
             self.bar(
                 Mat::BLACK,
                 Vec3::new(4.35, 1.35, z - side * 0.2),
@@ -365,8 +371,9 @@ impl CarBuilder<'_, '_> {
         }
     }
 
-    /// The side tanks along the boiler: rounded boxes with cream beading,
-    /// riveted straps, a filler cap and a brass rail on top.
+    /// Los tanques laterales a lo largo de la caldera: cajas redondeadas con
+    /// molduras color crema, flejes remachados, una tapa de carga y una baranda
+    /// de bronce arriba.
     fn side_tanks(&mut self) {
         let (x0, x1) = TANK;
         let section = rounded_rect(0.46, 1.2, 0.14, 4);
@@ -389,7 +396,8 @@ impl CarBuilder<'_, '_> {
                     Vec3::new(0.08, 0.9, 0.015),
                 );
             }
-            // The filler cap on top, and a brass rail along the shoulder.
+            // La tapa de carga arriba, y una baranda de bronce a lo largo del
+            // hombro.
             self.turned(
                 Mat::BRASS,
                 &[(0.0, 0.0), (0.0, 0.16), (0.05, 0.14), (0.05, 0.0)],
@@ -406,13 +414,14 @@ impl CarBuilder<'_, '_> {
         }
     }
 
-    /// The cab with its arched roof and spectacle glasses, and the coal
-    /// bunker behind it, with the rear lamp.
+    /// La cabina con su techo abovedado y sus vidrios frontales, y la carbonera
+    /// detrás de ella, con el farol trasero.
     fn tank_cab(&mut self, front: f32) {
         let (back, wall) = CAB;
         let half = 1.3;
         let (floor, roof) = (PLATE, ROOF);
-        // Side sheets: a window in the cab, a low rise round the bunker.
+        // Chapas laterales: una ventana en la cabina, una elevación baja
+        // alrededor de la carbonera.
         let window = (-2.6, -1.5, 2.5, 3.2);
         for side in [-1.0, 1.0] {
             let z = side * half;
@@ -448,7 +457,8 @@ impl CarBuilder<'_, '_> {
                 Vec3::new((window.0 + window.1) / 2.0, (window.2 + window.3) / 2.0, z),
                 Vec3::new(window.1 - window.0, window.3 - window.2, 0.01),
             );
-            // A brass number plate on the bunker, and the cab steps.
+            // Una placa de número de bronce en la carbonera, y los estribos de
+            // la cabina.
             self.boxed(
                 Mat::BRASS,
                 Vec3::new(-4.2, 2.45, z + side * 0.03),
@@ -469,8 +479,8 @@ impl CarBuilder<'_, '_> {
                 );
             }
         }
-        // The front wall round the boiler, with spectacle glasses, and the
-        // firebox door behind.
+        // La pared delantera alrededor de la caldera, con los vidrios
+        // frontales, y la puerta del hogar detrás.
         for side in [-1.0, 1.0] {
             self.boxed(
                 Mat::BLACK,
@@ -507,7 +517,7 @@ impl CarBuilder<'_, '_> {
             Vec3::new(wall - 0.07, 2.0, 0.0),
             Vec3::new(0.02, 0.3, 0.36),
         );
-        // The roof: arched, overhanging the sheets.
+        // El techo: abovedado, sobresaliendo de las chapas.
         let mut ring: Vec<Vec2> = (0..=10)
             .map(|i| {
                 let a = PI * i as f32 / 10.0;
@@ -532,7 +542,8 @@ impl CarBuilder<'_, '_> {
             Vec3::new(-1.6, roof + 0.18, 0.0),
             Vec3::Y,
         );
-        // The bunker: end wall, a coaming and the coal heaped in it.
+        // La carbonera: pared trasera, un borde elevado y el carbón apilado
+        // dentro.
         let (x0, x1) = (-front + 0.5, back);
         self.boxed(
             Mat::BLACK,
@@ -554,7 +565,7 @@ impl CarBuilder<'_, '_> {
             Mat::Coal,
             Shape::along_x(&heap, x0 + 0.15, x1 - 0.1, true, true),
         );
-        // A rear lamp bracket and handrail.
+        // Un soporte de farol trasero y un pasamanos.
         self.boxed(
             Mat::BLACK,
             Vec3::new(x0 - 0.05, 2.95, 0.0),

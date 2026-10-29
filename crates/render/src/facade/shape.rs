@@ -1,11 +1,11 @@
-//! A small mesh builder for the procedural settlement and town buildings
-//! and props.
+//! Un pequeño constructor de meshes para los edificios y accesorios
+//! procedurales de los asentamientos y los pueblos.
 //!
-//! Every piece is added to the buffer of its [`Surface`], so a structure
-//! ends up as one mesh per surface it wears. Faces carry flat normals,
-//! UVs scaled to the world (one texture repeat every [`Surface::tiles`]
-//! meters, whatever the size of the piece) and tangents for the normal
-//! maps.
+//! Cada pieza se agrega al buffer de su [`Surface`], así que una estructura
+//! termina como una mesh por cada superficie que lleva. Las caras llevan
+//! normales planas, UVs escaladas al mundo (una repetición de la textura cada
+//! [`Surface::tiles`] metros, sea cual sea el tamaño de la pieza) y tangentes
+//! para los normal maps.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
@@ -14,7 +14,7 @@ use bevy::prelude::*;
 use super::materials::Surface;
 use crate::ground::face_tangent;
 
-/// The vertices of one surface's mesh while it is built.
+/// Los vertices de la mesh de una superficie mientras se construye.
 #[derive(Default, Debug, Clone)]
 struct Buffers {
     positions: Vec<[f32; 3]>,
@@ -24,14 +24,15 @@ struct Buffers {
     indices: Vec<u32>,
 }
 
-/// One structure's meshes, one per surface, in the structure's own space.
+/// Las meshes de una estructura, una por superficie, en el espacio propio de la
+/// estructura.
 #[derive(Default, Debug, Clone)]
 pub(crate) struct Shape {
     parts: Vec<(Surface, Buffers)>,
 }
 
-/// The unit cube's faces, corners counter-clockwise from outside: +X, -X,
-/// +Y, +Z, -Z, -Y.
+/// Las caras del cubo unitario, con las esquinas en sentido antihorario vistas
+/// desde afuera: +X, -X, +Y, +Z, -Z, -Y.
 const CUBE: [[[f32; 3]; 4]; 6] = [
     [
         [0.5, -0.5, -0.5],
@@ -71,9 +72,9 @@ const CUBE: [[[f32; 3]; 4]; 6] = [
     ],
 ];
 
-/// The planar UV of `p` on a face with normal `n`: walls and slopes run
-/// their `u` level and their `v` up the face; floors and roofs flat on the
-/// ground take the ground plane's.
+/// La UV planar de `p` en una cara con normal `n`: en las paredes y las
+/// pendientes la `u` va horizontal y la `v` sube por la cara; los pisos y los
+/// techos planos sobre el suelo toman la del plano del suelo.
 fn planar_uv(p: Vec3, n: Vec3, tile: Vec2) -> [f32; 2] {
     if n.y.abs() > 0.9 {
         return [p.x / tile.x, p.z / tile.y];
@@ -95,8 +96,8 @@ impl Shape {
         &mut self.parts[k].1
     }
 
-    /// A flat polygon (a triangle or a quad), corners counter-clockwise
-    /// seen from outside.
+    /// Un polígono plano (un triángulo o un quad), con las esquinas en sentido
+    /// antihorario vistas desde afuera.
     pub fn face(&mut self, surface: Surface, corners: &[Vec3]) {
         debug_assert!(corners.len() == 3 || corners.len() == 4);
         let n = (corners[1] - corners[0])
@@ -119,8 +120,8 @@ impl Shape {
         }
     }
 
-    /// A box: the unit cube through `transform`. `bottom` keeps its
-    /// underside (left out for things standing on the ground).
+    /// Una caja: el cubo unitario pasado por `transform`. `bottom` conserva su
+    /// cara inferior (se omite para lo que se apoya en el suelo).
     pub fn cuboid(&mut self, surface: Surface, transform: Transform, bottom: bool) {
         let m = transform.to_matrix();
         let faces = if bottom { &CUBE[..] } else { &CUBE[..5] };
@@ -130,7 +131,8 @@ impl Shape {
         }
     }
 
-    /// An axis-aligned box from `min` to `max`, without its underside.
+    /// Una caja alineada con los ejes desde `min` hasta `max`, sin su cara
+    /// inferior.
     pub fn block(&mut self, surface: Surface, min: Vec3, max: Vec3) {
         self.cuboid(
             surface,
@@ -139,8 +141,9 @@ impl Shape {
         );
     }
 
-    /// An axis-aligned box from `min` to `max` without its underside, its
-    /// four vertical edges bevelled `chamfer` wide: an octagonal prism.
+    /// Una caja alineada con los ejes desde `min` hasta `max` sin su cara
+    /// inferior, con sus cuatro aristas verticales achaflanadas con un ancho de
+    /// `chamfer`: un prisma octogonal.
     pub fn chamfered(&mut self, surface: Surface, min: Vec3, max: Vec3, chamfer: f32) {
         let c = chamfer
             .min((max.x - min.x) / 3.0)
@@ -149,7 +152,8 @@ impl Shape {
             self.block(surface, min, max);
             return;
         }
-        // The section's corners, counter-clockwise seen from above.
+        // Las esquinas de la sección, en sentido antihorario vistas desde
+        // arriba.
         let ring = [
             (max.x - c, max.z),
             (max.x, max.z - c),
@@ -172,7 +176,7 @@ impl Shape {
                 ],
             );
         }
-        // The top, as a fan of quads round its middle.
+        // La parte superior, como un abanico de quads alrededor de su centro.
         let top = |(x, z): (f32, f32)| Vec3::new(x, max.y, z);
         for k in (0..ring.len()).step_by(2) {
             let n = ring.len();
@@ -188,7 +192,7 @@ impl Shape {
         }
     }
 
-    /// Adds every piece of `other`, moved by the rigid `transform`.
+    /// Agrega todas las piezas de `other`, movidas por el `transform` rígido.
     pub fn merge(&mut self, other: Shape, transform: Transform) {
         let m = transform.to_matrix();
         for (surface, part) in other.parts {
@@ -208,8 +212,8 @@ impl Shape {
         }
     }
 
-    /// A square-section beam `thickness` thick from `from` to `to`, its
-    /// ends closed.
+    /// Una viga de sección cuadrada de `thickness` de grosor desde `from` hasta
+    /// `to`, con los extremos cerrados.
     pub fn beam(&mut self, surface: Surface, from: Vec3, to: Vec3, thickness: f32) {
         let d = to - from;
         let len = d.length();
@@ -225,12 +229,13 @@ impl Shape {
         );
     }
 
-    /// A surface of revolution round the local Y axis of `transform`:
-    /// `profile` is (radius, height) from bottom to top, `segments` round.
-    /// Smooth normals round, `u` along the circumference and `v` up the
-    /// profile, both in meters over the surface's tile. A radius of 0 closes
-    /// the shape there. Normals face out when the profile runs upward on the
-    /// outside; pass it top to bottom for an inner wall.
+    /// Una superficie de revolución alrededor del eje Y local de `transform`:
+    /// `profile` es (radio, altura) de abajo hacia arriba, con `segments` lados
+    /// alrededor. Normales suavizadas alrededor, `u` a lo largo de la
+    /// circunferencia y `v` subiendo por el perfil, ambas en metros sobre el
+    /// tile de la superficie. Un radio de 0 cierra la forma en ese punto. Las
+    /// normales miran hacia afuera cuando el perfil sube por el exterior; se
+    /// pasa de arriba hacia abajo para una pared interior.
     pub fn lathe(
         &mut self,
         surface: Surface,
@@ -244,7 +249,7 @@ impl Shape {
         let b = self.buffers(surface);
         let base = b.positions.len() as u32;
         let ring = segments + 1;
-        // Arc length up the profile, for `v`.
+        // Longitud de arco subiendo por el perfil, para `v`.
         let mut along = vec![0.0f32; profile.len()];
         for k in 1..profile.len() {
             let (r0, y0) = profile[k - 1];
@@ -257,9 +262,9 @@ impl Shape {
             .fold(0.0, f32::max)
             .max(0.05);
         for (k, &(r, y)) in profile.iter().enumerate() {
-            // The profile's slope here, for the normal; a point repeated
-            // in the profile makes a hard edge, each copy taking the slope
-            // of its own side.
+            // La pendiente del perfil en este punto, para la normal; un punto
+            // repetido en el perfil crea una arista viva, y cada copia toma la
+            // pendiente de su propio lado.
             let last = profile.len() - 1;
             let before = if k > 0 && profile[k - 1] != profile[k] {
                 k - 1
@@ -286,8 +291,9 @@ impl Shape {
                 let p = m.transform_point3(local);
                 let n = normal_m.transform_vector3(n_local).normalize_or(Vec3::Y);
                 let t = m.transform_vector3(t_local).normalize_or(Vec3::X);
-                // `v` grows down the profile, so the bitangent points down
-                // it: its sign keeps the normal map's +Y up.
+                // `v` crece bajando por el perfil, así que la bitangente apunta
+                // hacia abajo por él: su signo mantiene el +Y del normal map
+                // hacia arriba.
                 let up = m.transform_vector3(Vec3::new(dr * cos, dy, dr * sin));
                 let w = if n.cross(t).dot(-up) < 0.0 { -1.0 } else { 1.0 };
                 b.positions.push(p.to_array());
@@ -304,7 +310,8 @@ impl Shape {
         }
     }
 
-    /// A flat disc of `radius` facing up, round the origin of `transform`.
+    /// Un disco plano de radio `radius` mirando hacia arriba, alrededor del
+    /// origen de `transform`.
     pub fn disc(&mut self, surface: Surface, transform: Transform, radius: f32, segments: u32) {
         let m = transform.to_matrix();
         let center = m.transform_point3(Vec3::ZERO);
@@ -317,18 +324,18 @@ impl Shape {
         }
     }
 
-    /// Triangles in all its meshes.
+    /// Los triángulos de todas sus meshes.
     pub fn triangles(&self) -> usize {
         self.parts.iter().map(|(_, b)| b.indices.len() / 3).sum()
     }
 
-    /// The surfaces it wears.
+    /// Las superficies que lleva.
     #[cfg(test)]
     pub fn surfaces(&self) -> impl Iterator<Item = Surface> + '_ {
         self.parts.iter().map(|(s, _)| *s)
     }
 
-    /// The points of the mesh of `surface`, for tests and bounds.
+    /// Los puntos de la mesh de `surface`, para tests y límites.
     #[cfg(test)]
     pub fn points(&self, surface: Surface) -> Vec<Vec3> {
         self.parts
@@ -338,7 +345,7 @@ impl Shape {
             .collect()
     }
 
-    /// The triangles of the mesh of `surface`, for tests.
+    /// Los triángulos de la mesh de `surface`, para tests.
     #[cfg(test)]
     pub fn triangles_of(&self, surface: Surface) -> Vec<[Vec3; 3]> {
         self.parts
@@ -352,7 +359,7 @@ impl Shape {
             .collect()
     }
 
-    /// The vertices of the mesh of `surface` as (position, normal, uv), for
+    /// Los vertices de la mesh de `surface` como (posición, normal, uv), para
     /// tests.
     #[cfg(test)]
     pub fn vertices(&self, surface: Surface) -> Vec<(Vec3, Vec3, Vec2)> {
@@ -371,8 +378,8 @@ impl Shape {
             .collect()
     }
 
-    /// The indices of the mesh of `surface`, into [`Self::vertices`], for
-    /// tests and previews.
+    /// Los índices de la mesh de `surface`, en [`Self::vertices`], para tests y
+    /// vistas previas.
     #[cfg(test)]
     pub fn indices(&self, surface: Surface) -> Vec<u32> {
         let mut base = 0;
@@ -386,7 +393,7 @@ impl Shape {
         out
     }
 
-    /// One mesh per surface.
+    /// Una mesh por superficie.
     pub fn into_meshes(self) -> Vec<(Surface, Mesh)> {
         self.parts
             .into_iter()
@@ -416,7 +423,8 @@ mod tests {
     #[test]
     fn uvs_repeat_with_the_world_not_the_piece() {
         let mut shape = Shape::default();
-        // A 10 m wall and a 1 m one: the long wall repeats ten times more.
+        // Una pared de 10 m y una de 1 m: la pared larga se repite diez veces
+        // más.
         shape.block(Surface::Whitewash, Vec3::ZERO, Vec3::new(10.0, 3.0, 0.5));
         let tile = Surface::Whitewash.tile();
         let mut meshes = shape.into_meshes();
@@ -426,7 +434,7 @@ mod tests {
         else {
             panic!()
         };
-        // The front (+Z) face: the cube's fourth, four corners.
+        // La cara frontal (+Z): la cuarta del cubo, cuatro esquinas.
         let front = &uvs[12..16];
         let span = front.iter().map(|u| u[0]).fold(f32::MIN, f32::max)
             - front.iter().map(|u| u[0]).fold(f32::MAX, f32::min);
@@ -467,17 +475,18 @@ mod tests {
         let (min, max) = (Vec3::new(-0.25, 0.0, -0.1), Vec3::new(0.25, 3.0, 0.1));
         shape.chamfered(Surface::Whitewash, min, max, 0.04);
         let vertices = shape.vertices(Surface::Whitewash);
-        // Eight sides and a top, no underside.
+        // Ocho lados y una tapa, sin cara inferior.
         assert_eq!(shape.triangles(), 8 * 2 + 4 * 2);
         assert!(vertices.iter().all(|(_, n, _)| n.y > -0.5));
-        // Four bevels at 45 degrees between the faces.
+        // Cuatro chaflanes a 45 grados entre las caras.
         let bevels: HashSet<[i32; 3]> = vertices
             .iter()
             .filter(|(_, n, _)| n.y.abs() < 0.1 && n.x.abs() > 0.5 && n.z.abs() > 0.5)
             .map(|(_, n, _)| (*n * 10.0).round().as_ivec3().to_array())
             .collect();
         assert_eq!(bevels.len(), 4, "{bevels:?}");
-        // Every face looks away from the middle, and stays in the box.
+        // Cada cara mira en dirección opuesta al centro y queda dentro de la
+        // caja.
         let mid = (min + max) / 2.0;
         for [a, b, c] in shape.triangles_of(Surface::Whitewash) {
             let n = (b - a).cross(c - a);
@@ -501,13 +510,14 @@ mod tests {
         shape.merge(part.clone(), place);
         assert_eq!(shape.triangles(), 10 + part.triangles());
         let after = shape.vertices(Surface::Brick);
-        // Brick's own block first, then the merged one, moved and turned.
+        // Primero el bloque propio del ladrillo, después el fusionado, movido y
+        // girado.
         for ((p0, n0, uv0), (p1, n1, uv1)) in before.iter().zip(&after[before.len()..]) {
             assert!(place.transform_point(*p0).distance(*p1) < 1e-5);
             assert!((turn * *n0).distance(*n1) < 1e-5);
             assert_eq!(uv0, uv1);
         }
-        // Its indices point at its own vertices.
+        // Sus índices apuntan a sus propios vertices.
         let indices = shape.indices(Surface::Brick);
         assert!(
             indices[indices.len() / 2..]

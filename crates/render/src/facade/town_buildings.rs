@@ -1,31 +1,37 @@
-//! The town's buildings on the facade kit: the 1919 Italianate fronts of a
-//! young pampa railway town (`odd/setting-1919.md`).
+//! Los edificios del pueblo hechos con el kit de fachadas: los frentes
+//! italianizantes de 1919 de un pueblo ferroviario pampeano joven
+//! (`odd/setting-1919.md`).
 //!
-//! - Houses: one-storey fronts on a plinth, whitewashed, lime-washed,
-//!   painted in a muted 1919 colour (lime white, ochre, pale rose,
-//!   grey-blue, light terracotta) over a beige band, bare brick, brick
-//!   under a worn wash, or, now and then, brick with its plaster flaking, with chamfered corner piers and pilasters, a moulded cornice
-//!   and a parapet (solid or balustraded, some with urns or a small
-//!   pediment) hiding a flat azotea or a corrugated roof; on the outskirts
-//!   most are plainer adobe or whitewash ranchos under corrugated iron.
-//! - The general store: a tall solid parapet behind its sign and a galería
-//!   over the sidewalk on cast-iron posts; a small town's pulpería is
-//!   whitewashed, barred and under a galería on timber posts.
-//! - The comisaría: whitewashed, barred windows, a balustraded parapet with
-//!   a pediment, and its flagpole.
-//! - The church: a pedimented front and a bell tower with a belfry of round
-//!   arches under a zinc spire.
-//! - The station: an FCO-style brick front with stucco pilasters, hooded
-//!   openings and a pedimented central pavilion on both its street and
-//!   track sides, under a galvanised roof, and the platform canopy core
-//!   gives the camera, dressed with a fascia and a timber valance on
-//!   cast-iron columns that stand on the platform.
-//! - Sheds and grain stores: corrugated-iron galpones; the water tank and
-//!   the windmill are the settlements' molino and australian tank.
+//! - Casas: frentes de una planta sobre un zócalo, encalados, blanqueados a la
+//!   cal, pintados en un color apagado de 1919 (blanco cal, ocre, rosa pálido,
+//!   gris azulado, terracota clara) sobre una franja beige, de ladrillo visto,
+//!   de ladrillo bajo un encalado gastado o, de vez en cuando, de ladrillo con
+//!   el revoque descascarándose, con pilares esquineros ochavados y pilastras,
+//!   una cornisa moldurada y un parapeto (macizo o con balaustrada, algunos con
+//!   macetones o un pequeño frontón) que oculta una azotea plana o un techo de
+//!   chapa acanalada; en las afueras la mayoría son ranchos más simples de
+//!   adobe o encalados bajo chapa acanalada.
+//! - El almacén de ramos generales: un parapeto alto y macizo detrás de su
+//!   cartel y una galería sobre la vereda con postes de hierro fundido; la
+//!   pulpería de un pueblo pequeño es encalada, con rejas y bajo una galería
+//!   sobre postes de madera.
+//! - La comisaría: encalada, con ventanas enrejadas, un parapeto con
+//!   balaustrada y un frontón, y su mástil.
+//! - La iglesia: un frente con frontón y un campanario con un cuerpo de
+//!   campanas de arcos de medio punto bajo una aguja de zinc.
+//! - La estación: un frente de ladrillo al estilo del FCO con pilastras de
+//!   revoque, aberturas con guardapolvo y un pabellón central con frontón tanto
+//!   del lado de la calle como del de la vía, bajo un techo galvanizado, y la
+//!   marquesina del andén que core le da a la cámara, vestida con una tabla de
+//!   frente y un faldón de madera sobre columnas de hierro fundido que se
+//!   apoyan en el andén.
+//! - Galpones y depósitos de granos: galpones de chapa acanalada; el tanque de
+//!   agua y el molino son el molino y el tanque australiano de los
+//!   asentamientos.
 //!
-//! Every masonry wall stands [`PROUD`] in from its footprint, so its
-//! dressing stays inside the footprint core collides with and the facade
-//! signs hang just outside of.
+//! Cada pared de mampostería se retira [`PROUD`] de su huella de edificio, así
+//! que su ornamentación queda dentro de la huella con la que colisiona core y
+//! de la que cuelgan, justo por fuera, los carteles de fachada.
 
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 
@@ -43,31 +49,33 @@ use super::walls::{
 };
 use crate::settlement::props;
 
-/// How far walls run under the ground at a building's middle, meters.
+/// Cuánto bajan las paredes bajo el suelo en el centro de un edificio, en
+/// metros.
 pub const DROP: f32 = 0.3;
 
-/// Height of the station platform's top above the ground under the
-/// station, meters: core's platform (`station_yard`), which the canopy's
-/// columns stand on.
+/// Altura de la parte superior del andén de la estación sobre el suelo bajo la
+/// estación, en metros: el andén de core (`station_yard`), sobre el que se
+/// apoyan las columnas de la marquesina.
 pub const PLATFORM_TOP: f32 = 0.9;
 
-/// What a town building's look depends on beyond its core [`Building`].
+/// De qué depende el aspecto de un edificio del pueblo además de su
+/// [`Building`] de core.
 #[derive(Debug, Clone, Copy)]
 pub struct Lot {
     pub building: Building,
-    /// A seeded variant: which wash, roof and dressing it gets.
+    /// Una variante con semilla: qué encalado, techo y ornamentación recibe.
     pub variant: u32,
-    /// On the town's outer blocks, where houses are plainer.
+    /// En las manzanas exteriores del pueblo, donde las casas son más simples.
     pub outskirts: bool,
-    /// What the town's general store is.
+    /// Qué es el almacén de ramos generales del pueblo.
     pub store: StoreStyle,
-    /// How deep the general store's galería is (the hitching post's
-    /// veranda).
+    /// Qué profundidad tiene la galería del almacén de ramos generales (la
+    /// galería del palenque).
     pub veranda: f32,
 }
 
 impl Lot {
-    /// Width along its front and depth away from it.
+    /// Ancho a lo largo de su frente y profundidad hacia atrás.
     pub fn size(&self) -> Vec2 {
         let s = self.building.footprint.size();
         match self.building.front {
@@ -76,8 +84,8 @@ impl Lot {
         }
     }
 
-    /// The settlements' structure of the same size, for the molino and the
-    /// tank they share with the towns.
+    /// La estructura de los asentamientos del mismo tamaño, para el molino y el
+    /// tanque que comparten con los pueblos.
     fn structure(&self, kind: StructureKind) -> Structure {
         Structure {
             kind,
@@ -89,7 +97,7 @@ impl Lot {
     }
 }
 
-/// The yaw that turns a building's own `+Z` toward its `front`.
+/// La guiñada que orienta el `+Z` propio de un edificio hacia su `front`.
 pub fn yaw(front: Side) -> Quat {
     Quat::from_rotation_y(match front {
         Side::South => 0.0,
@@ -99,8 +107,8 @@ pub fn yaw(front: Side) -> Quat {
     })
 }
 
-/// The building of `lot` in its own space (its windmill's wheel apart),
-/// or `None` for the platform, which the town draws as a plain floor.
+/// El edificio de `lot` en su propio espacio (salvo la rueda de su molino), o
+/// `None` para el andén, que el pueblo dibuja como un piso liso.
 pub fn building(lot: &Lot) -> Option<Shape> {
     let size = lot.size();
     let (w, d, h) = (size.x, size.y, lot.building.height);
@@ -123,8 +131,8 @@ pub fn building(lot: &Lot) -> Option<Shape> {
             } else {
                 1
             };
-            // Its walls stand in from the lot so the eaves end on it; core
-            // collides at the walls (`Building::collider`).
+            // Sus paredes se retiran del lote para que los aleros terminen
+            // sobre él; core colisiona en las paredes (`Building::collider`).
             let inside = (w - 2.0 * BARN_REACH, d - 2.0 * BARN_REACH, h);
             barn(&mut shape, (iron, Surface::OldIron), inside, DROP, v, doors);
         }
@@ -139,13 +147,13 @@ pub fn building(lot: &Lot) -> Option<Shape> {
     Some(shape)
 }
 
-/// Where a windmill's wheel turns in its own space, and its yaw.
+/// Dónde gira la rueda de un molino en su propio espacio, y su guiñada.
 pub fn rotor_place(lot: &Lot) -> (Vec3, Quat) {
     props::rotor_place(&lot.structure(StructureKind::Windpump))
 }
 
-/// The walls of a masonry building `w` by `d`, [`PROUD`] in from its
-/// footprint all round.
+/// Las paredes de un edificio de mampostería de `w` por `d`, retiradas
+/// [`PROUD`] de su huella de edificio todo alrededor.
 fn masonry((w, d, h): (f32, f32, f32), thickness: f32) -> Walls {
     Walls {
         x0: -w / 2.0 + PROUD,
@@ -158,31 +166,31 @@ fn masonry((w, d, h): (f32, f32, f32), thickness: f32) -> Walls {
     }
 }
 
-/// What lies behind a parapet.
+/// Lo que hay detrás de un parapeto.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Roof {
-    /// A flat brick azotea behind a parapet all round.
+    /// Una azotea plana de ladrillo detrás de un parapeto todo alrededor.
     Flat,
-    /// Corrugated iron falling to the back behind a front parapet.
+    /// Chapa acanalada que cae hacia atrás detrás de un parapeto en el frente.
     Iron(Surface),
 }
 
-/// An Italianate front and the box behind it.
+/// Un frente italianizante y la caja detrás de él.
 #[derive(Debug, Clone)]
 struct Front {
     wall: Surface,
-    /// Piers, pilasters, cornice, parapet and frames.
+    /// Pilares, pilastras, cornisa, parapeto y marcos.
     trim: Surface,
     plinth: Surface,
     bays: usize,
     doors: Vec<usize>,
-    /// Door width and height.
+    /// Ancho y alto de las puertas.
     door: (f32, f32),
-    /// Window width, sill and head heights.
+    /// Ancho de las ventanas y alturas del alféizar y del dintel.
     window: (f32, f32, f32),
     parapet: f32,
     crown: Crown,
-    /// A small pediment over the middle of the parapet.
+    /// Un pequeño frontón sobre el centro del parapeto.
     crest: bool,
     urns: bool,
     roof: Roof,
@@ -191,14 +199,15 @@ struct Front {
     transom: bool,
 }
 
-/// Builds `f` on `walls`: the walls with their openings, plinth, piers,
-/// pilasters between the bays, cornice, parapet and roof.
+/// Construye `f` sobre `walls`: las paredes con sus aberturas, el zócalo, los
+/// pilares, las pilastras entre los vanos, la cornisa, el parapeto y el techo.
 fn italianate(shape: &mut Shape, walls: &Walls, f: &Front, v: u32) {
     let (h, t) = (walls.height, walls.thickness);
     let front = walls.front();
     let len = front.length;
     let openings = spread(len, f.bays, &f.doors, f.door, f.window);
-    // Every door gets its own leaves below, so the wall leaves them open.
+    // Cada puerta recibe sus propias hojas abajo, así que la pared las deja
+    // abiertas.
     front.build(shape, f.wall, &openings, u32::MAX);
     dress(shape, &front, &openings, f);
     let back_n = (f.bays / 2).max(1);
@@ -228,11 +237,12 @@ fn italianate(shape: &mut Shape, walls: &Walls, f: &Front, v: u32) {
     }
     corner_piers(shape, f.trim, walls, 0.55, PROUD, (-DROP, capital));
     cornice(shape, f.trim, walls);
-    // Pedestals over the corner piers and the pilasters.
+    // Pedestales sobre los pilares esquineros y las pilastras.
     let mut pillars: Vec<f32> = (1..f.bays)
         .map(|k| len * k as f32 / f.bays as f32)
         .collect();
-    // Over the corner piers, their caps kept inside the footprint.
+    // Sobre los pilares esquineros, con sus remates dentro de la huella de
+    // edificio.
     let end = 0.2;
     pillars.extend([end, len - end]);
     parapet(
@@ -268,7 +278,7 @@ fn italianate(shape: &mut Shape, walls: &Walls, f: &Front, v: u32) {
     }
 }
 
-/// Frames, leaves, grilles and hoods on `openings` of `wall`.
+/// Marcos, hojas, rejas y guardapolvos en las `openings` de `wall`.
 fn dress(shape: &mut Shape, wall: &Wall, openings: &[Opening], f: &Front) {
     for o in openings {
         if o.door {
@@ -283,9 +293,10 @@ fn dress(shape: &mut Shape, wall: &Wall, openings: &[Opening], f: &Front) {
     }
 }
 
-/// A corrugated roof hidden behind a front parapet `parapet` tall, falling
-/// from just under its coping to past the back wall; the side walls built
-/// up in `gable` to meet it.
+/// Un techo acanalado oculto detrás de un parapeto de `parapet` de alto en el
+/// frente, que cae desde justo debajo de su albardilla hasta más allá de la
+/// pared del fondo; las paredes laterales se levantan en `gable` hasta
+/// alcanzarlo.
 fn iron_behind(shape: &mut Shape, (roof, gable): (Surface, Surface), walls: &Walls, parapet: f32) {
     let (h, t) = (walls.height, walls.thickness);
     let (x0, x1, z0, z1) = (walls.x0, walls.x1, walls.z0, walls.z1);
@@ -293,7 +304,8 @@ fn iron_behind(shape: &mut Shape, (roof, gable): (Surface, Surface), walls: &Wal
     let zf = z1 - t * 0.6;
     let slope = (high - low) / (zf - z0);
     let under = |z: f32| low + (z - z0) * slope;
-    // Kept inside the footprint, the sheet's tilt included.
+    // Se mantiene dentro de la huella de edificio, incluida la inclinación de
+    // la chapa.
     let overhang = PROUD - 0.03;
     super::walls::slab(
         shape,
@@ -316,7 +328,8 @@ fn iron_behind(shape: &mut Shape, (roof, gable): (Surface, Surface), walls: &Wal
     );
 }
 
-/// A house: Italianate in town, mostly a plain rancho on the outskirts.
+/// Una casa: italianizante en el pueblo, casi siempre un rancho simple en las
+/// afueras.
 fn house(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32, outskirts: bool) {
     if outskirts && v % 20 < 13 {
         return cottage(shape, (w, d, h), v);
@@ -324,7 +337,7 @@ fn house(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32, outskirts: bool)
     let (wall, trim, plinth) = house_finish(v);
     let walls = masonry((w, d, h), 0.4);
     let bays = ((walls.width() / 2.8) as usize).clamp(2, 5);
-    // The zaguán door at one end, windows down the rest.
+    // La puerta del zaguán en un extremo y ventanas en el resto.
     let door = if v & 0x40 == 0 { 0 } else { bays - 1 };
     let head = (h - 0.85).min(2.7);
     let f = Front {
@@ -355,11 +368,12 @@ fn house(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32, outskirts: bool)
     italianate(shape, &walls, &f, v);
 }
 
-/// A town house's wall, mouldings and plinth, from the low bits of its
-/// variant (`v % 16`, so the other bits stay free for the dressing): of 16
-/// houses, 6 are painted (2 ochre, one each of the other paints), 3
-/// lime-washed, 2 whitewashed, 2 bare brick, 2 brick under a worn wash and
-/// 1 with its plaster flaking off the brick, the town being young.
+/// La pared, las molduras y el zócalo de una casa del pueblo, según los bits
+/// bajos de su variante (`v % 16`, así que los demás bits quedan libres para la
+/// ornamentación): de 16 casas, 6 están pintadas (2 ocre, una de cada una de
+/// las otras pinturas), 3 blanqueadas a la cal, 2 encaladas, 2 de ladrillo
+/// visto, 2 de ladrillo bajo un encalado gastado y 1 con el revoque
+/// descascarándose del ladrillo, ya que el pueblo es joven.
 pub(crate) fn house_finish(v: u32) -> (Surface, Surface, Surface) {
     let wall = match v % 16 {
         0 | 1 => Surface::Whitewash,
@@ -375,7 +389,7 @@ pub(crate) fn house_finish(v: u32) -> (Surface, Surface, Surface) {
     };
     let stucco_trim = v & 0x20 != 0;
     match wall {
-        // White mouldings on a coloured front, grey ones on a white one.
+        // Molduras blancas en un frente de color, grises en uno blanco.
         Surface::Painted(Paint::LimeWhite) => (wall, Surface::Stucco, Surface::Band),
         Surface::Painted(_) => (wall, Surface::Whitewash, Surface::Band),
         Surface::Brick if stucco_trim => (wall, Surface::Stucco, Surface::Stucco),
@@ -385,8 +399,9 @@ pub(crate) fn house_finish(v: u32) -> (Surface, Surface, Surface) {
     }
 }
 
-/// An outskirts rancho: thick adobe or whitewashed walls set in under a
-/// corrugated roof, a door and a window or two, and a chimney.
+/// Un rancho de las afueras: paredes gruesas de adobe o encaladas, retiradas
+/// bajo un techo de chapa acanalada, una puerta y una o dos ventanas, y una
+/// chimenea.
 fn cottage(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
     let inset = 0.4;
     let walls = Walls {
@@ -398,7 +413,7 @@ fn cottage(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
         height: (h - 0.6).max(2.8),
         drop: DROP,
     };
-    // Adobe or whitewash; one whitewashed rancho in four is of brick.
+    // Adobe o encalado; uno de cada cuatro ranchos encalados es de ladrillo.
     let wall = match (v & 1, (v >> 4) % 4) {
         (0, _) => Surface::Adobe,
         (_, 0) => Surface::WashedBrick,
@@ -443,15 +458,17 @@ fn cottage(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
     );
 }
 
-/// The general store, or a small town's pulpería, with its galería.
+/// El almacén de ramos generales, o la pulpería de un pueblo pequeño, con su
+/// galería.
 fn store(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32, style: StoreStyle, veranda: f32) {
     let walls = masonry((w, d, h), 0.45);
     let bays = (((walls.width() / 3.2) as usize).clamp(3, 7)) | 1;
-    // Doors in the middle and every other bay, shop windows between.
+    // Puertas en el centro y en un vano de por medio, vidrieras entre ellas.
     let doors: Vec<usize> = (0..bays).filter(|k| k % 2 == (bays / 2) % 2).collect();
     let general = style == StoreStyle::GeneralStore;
-    // An almacén is brick, lime-washed or painted ochre or grey-blue; a
-    // pulpería whitewashed, lime-washed or old brick losing its plaster.
+    // Un almacén es de ladrillo, blanqueado a la cal o pintado de ocre o de
+    // gris azulado; una pulpería, encalada, blanqueada a la cal o de ladrillo
+    // viejo que pierde su revoque.
     let wall = match (general, v % 6) {
         (true, 0) => Surface::Lime,
         (true, 1 | 2) => Surface::Brick,
@@ -468,14 +485,14 @@ fn store(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32, style: StoreStyl
     };
     let f = Front {
         wall,
-        // Whitewashed mouldings and parapet over the brick or the wash.
+        // Molduras y parapeto encalados sobre el ladrillo o el encalado.
         trim: Surface::Whitewash,
         plinth,
         bays,
         doors,
         door: (1.3, (h - 1.3).min(3.4)),
         window: (1.3, 0.7, (h - 1.3).min(3.4)),
-        // Tall and solid: the store's sign hangs on it.
+        // Alto y macizo: de él cuelga el cartel del almacén.
         parapet: 2.3,
         crown: Crown::Solid,
         crest: general,
@@ -495,8 +512,8 @@ fn store(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32, style: StoreStyl
     } else {
         (Surface::OldIron, Posts::Timber)
     };
-    // From under the cornice, out over the sidewalk to the footprint's
-    // street edge plus the veranda.
+    // Desde debajo de la cornisa, hacia afuera sobre la vereda hasta el borde
+    // de la huella de edificio del lado de la calle más la galería.
     let mut over = walls.front();
     over.start.x -= PROUD;
     over.length += 2.0 * PROUD;
@@ -505,7 +522,7 @@ fn store(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32, style: StoreStyl
     gallery(shape, roof, posts, &over, depth, (high, high - 0.3 * depth));
 }
 
-/// The comisaría: whitewashed, barred, balustraded, with its flagpole.
+/// La comisaría: encalada, enrejada, con balaustrada, con su mástil.
 fn police(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
     let walls = masonry((w, d, h), 0.45);
     let bays = (((walls.width() / 2.9) as usize).clamp(3, 7)) | 1;
@@ -515,7 +532,7 @@ fn police(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
         plinth: Surface::Stucco,
         bays,
         doors: vec![bays / 2],
-        // Low enough for the sign over the door.
+        // Lo bastante bajo para el cartel sobre la puerta.
         door: (1.4, 2.5),
         window: (1.0, 0.9, 2.5),
         parapet: 1.0,
@@ -528,7 +545,8 @@ fn police(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
         transom: true,
     };
     italianate(shape, &walls, &f, v);
-    // The flagpole on the flat_roof, by a front corner, with its finial.
+    // El mástil sobre la azotea plana, junto a una esquina del frente, con su
+    // remate.
     let foot = Vec3::new(walls.x1 - 1.0, h - 0.1, walls.z1 - 1.0);
     let top = h + 5.5;
     shape.lathe(
@@ -545,19 +563,21 @@ fn police(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
     );
 }
 
-/// How far the church's tower stands out of its nave's front, meters.
+/// Cuánto sobresale el campanario de la iglesia del frente de su nave, en
+/// metros.
 const TOWER_OUT: f32 = 0.7;
 
-/// The church: a pedimented nave with arched windows and a bell tower in
-/// the middle of its front.
+/// La iglesia: una nave con frontón y ventanas de arco y un campanario en el
+/// centro de su frente.
 fn church(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
-    // The nave stands back behind its tower, which reaches the footprint.
+    // La nave se retira detrás de su campanario, que llega hasta la huella de
+    // edificio.
     let mut walls = masonry((w, d, h), 0.6);
     walls.z1 -= TOWER_OUT;
     let (wall, trim) = (Surface::Whitewash, Surface::Whitewash);
     let tower = 4.0_f32.min(walls.width() - 2.0);
     let len = walls.width();
-    // The nave front: an arched window either side of the tower.
+    // El frente de la nave: una ventana de arco a cada lado del campanario.
     let side = (len - tower) / 2.0;
     let mut front_openings = Vec::new();
     if side > 2.4 {
@@ -567,7 +587,7 @@ fn church(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
                 width: 1.1,
                 bottom: 1.6,
                 top: (h - 1.4).min(5.0),
-                // Glazed, unshuttered: built as an open doorway.
+                // Vidriada, sin postigos: construida como una puerta abierta.
                 door: true,
             });
         }
@@ -589,7 +609,7 @@ fn church(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
                 width: 1.1,
                 bottom: 2.0,
                 top: (h - 1.2).min(5.4),
-                // Glazed, unshuttered: built as an open doorway.
+                // Vidriada, sin postigos: construida como una puerta abierta.
                 door: true,
             })
             .collect();
@@ -598,7 +618,7 @@ fn church(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
             arch(shape, (wall, trim), &side, o);
         }
         plinth(shape, Surface::Stucco, &side, &windows, 0.7, 0.04);
-        // Buttressing pilasters between the windows.
+        // Pilastras de contrafuerte entre las ventanas.
         for k in 0..=n {
             let at = (side.length * k as f32 / n as f32).clamp(0.3, side.length - 0.3);
             pilaster(shape, trim, &side, at, 0.5, 0.09, (-DROP, 0.85, h - 0.55));
@@ -606,8 +626,9 @@ fn church(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
     }
     corner_piers(shape, trim, &walls, 0.7, PROUD, (-DROP, h - 0.55));
     cornice(shape, trim, &walls);
-    // The nave's gable roof runs back from the front: built along X, then
-    // turned so its ridge runs along Z.
+    // El techo a dos aguas de la nave va hacia atrás desde el frente: se
+    // construye a lo largo de X y después se gira para que su cumbrera corra a
+    // lo largo de Z.
     let rise = len / 2.0 * 0.55;
     let turned = Walls {
         x0: walls.z0,
@@ -629,7 +650,7 @@ fn church(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
         roof,
         Transform::from_rotation(Quat::from_rotation_y(-FRAC_PI_2)),
     );
-    // The pediment over the front gable.
+    // El frontón sobre el hastial del frente.
     pediment(
         shape,
         trim,
@@ -642,10 +663,10 @@ fn church(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
     bell_tower(shape, &walls, tower, rise + 0.5, v);
 }
 
-/// The church's bell tower, `size` square, standing [`TOWER_OUT`] out of
-/// the `nave` front and rising `over` its cornice: a door under a round
-/// arch, a belfry of round arches, a drum and a zinc spire with an iron
-/// cross.
+/// El campanario de la iglesia, de `size` de lado, que sobresale [`TOWER_OUT`]
+/// del frente de la nave `nave` y sube `over` por encima de su cornisa: una
+/// puerta bajo un arco de medio punto, un cuerpo de campanas de arcos de medio
+/// punto, un tambor y una aguja de zinc con una cruz de hierro.
 fn bell_tower(shape: &mut Shape, nave: &Walls, size: f32, over: f32, _v: u32) {
     let (wall, trim) = (Surface::Whitewash, Surface::Whitewash);
     let h = nave.height;
@@ -674,12 +695,14 @@ fn bell_tower(shape: &mut Shape, nave: &Walls, size: f32, over: f32, _v: u32) {
     for east in [true, false] {
         shaft.side(east).build(shape, wall, &[], 0);
     }
-    // Chamfered piers up the shaft's corners, a cornice over it.
+    // Pilares ochavados subiendo por las esquinas del fuste, y una cornisa
+    // encima.
     corner_piers(shape, trim, &shaft, 0.45, PROUD, (-DROP, h + over));
     let mut level = shaft;
     level.height = h + over;
     cornice(shape, trim, &level);
-    // The belfry: four walls of round arches on the shaft.
+    // El cuerpo de campanas: cuatro paredes de arcos de medio punto sobre el
+    // fuste.
     let base = h + over;
     let belfry = Walls {
         x0: -size / 2.0 + 0.15,
@@ -699,7 +722,7 @@ fn bell_tower(shape: &mut Shape, nave: &Walls, size: f32, over: f32, _v: u32) {
         width: 1.3,
         bottom: 0.6,
         top: 3.0,
-        // Open, unshuttered: built as a doorway left open.
+        // Abierto, sin postigos: construido como una puerta que queda abierta.
         door: true,
     };
     for face in [
@@ -720,7 +743,7 @@ fn bell_tower(shape: &mut Shape, nave: &Walls, size: f32, over: f32, _v: u32) {
     top.height = base + 3.6;
     corner_piers(shape, trim, &top, 0.4, 0.05, (base, base + 3.6));
     cornice(shape, trim, &top);
-    // A square drum, then the spire and its cross.
+    // Un tambor cuadrado, y después la aguja y su cruz.
     let drum = size - 0.9;
     let y = base + 3.6 + 0.04;
     shape.chamfered(
@@ -758,15 +781,17 @@ fn bell_tower(shape: &mut Shape, nave: &Walls, size: f32, over: f32, _v: u32) {
     );
 }
 
-/// The station: an FCO-style brick front with stucco dressings (a plinth,
-/// pilasters between its bays, hooded openings, a cornice) and a central
-/// pavilion under a pediment, the same on the street and the track side,
-/// under a galvanised gable roof; and the platform canopy on the track side
-/// exactly where core puts it, on cast-iron columns.
+/// La estación: un frente de ladrillo al estilo del FCO con ornamentos de
+/// revoque (un zócalo, pilastras entre sus vanos, aberturas con guardapolvo,
+/// una cornisa) y un pabellón central bajo un frontón, igual del lado de la
+/// calle y del de la vía, bajo un techo galvanizado a dos aguas; y la
+/// marquesina del andén del lado de la vía exactamente donde la pone core,
+/// sobre columnas de hierro fundido.
 fn station(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
     let walls = masonry((w, d, h), 0.45);
     let f = station_front(&walls);
-    // The track side mirrors the town side: one face, turned half way round.
+    // El lado de la vía refleja el del pueblo: una sola cara, girada media
+    // vuelta.
     let mut face = Shape::default();
     station_face(&mut face, &walls, &f);
     shape.merge(face.clone(), Transform::IDENTITY);
@@ -780,9 +805,10 @@ fn station(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
     }
     corner_piers(shape, f.trim, &walls, 0.55, PROUD, (-DROP, h - 0.55));
     cornice(shape, f.trim, &walls);
-    // The eaves end just inside the footprint, over the cornice (the
-    // slab's thickness tilts out a few centimeters past its overhang): the
-    // collider, and the name boards hung just outside it, stay true.
+    // Los aleros terminan justo dentro de la huella de edificio, sobre la
+    // cornisa (el grosor de la losa se inclina unos centímetros hacia afuera
+    // más allá de su vuelo): el collider, y los carteles con el nombre colgados
+    // justo por fuera, siguen siendo correctos.
     gable_roof(
         shape,
         (Surface::Galvanised, Surface::Brick),
@@ -796,7 +822,7 @@ fn station(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
     canopy(shape, (w, d));
 }
 
-/// The openings and trim of a station's long walls.
+/// Las aberturas y los ornamentos de las paredes largas de una estación.
 fn station_front(walls: &Walls) -> Front {
     let bays = pampa_core::station_bays(walls.width());
     Front {
@@ -818,9 +844,9 @@ fn station_front(walls: &Walls) -> Front {
     }
 }
 
-/// The doors and windows along a long wall of the station of a footprint
-/// `w` by `d` (the same on both faces, mirrored), as `(first jamb, second
-/// jamb)` in meters from the wall's middle.
+/// Las puertas y ventanas a lo largo de una pared larga de la estación de una
+/// huella de edificio de `w` por `d` (iguales en ambas caras, espejadas), como
+/// `(first jamb, second jamb)` en metros desde el centro de la pared.
 #[cfg(test)]
 pub(crate) fn station_openings((w, d, h): (f32, f32, f32)) -> Vec<(f32, f32)> {
     let walls = masonry((w, d, h), 0.45);
@@ -834,8 +860,9 @@ pub(crate) fn station_openings((w, d, h): (f32, f32, f32)) -> Vec<(f32, f32)> {
         .collect()
 }
 
-/// The street front of the station on `walls`, seen from `+Z`: the wall with
-/// its openings, plinth, pilasters, and the pavilion over its middle bays.
+/// El frente a la calle de la estación sobre `walls`, visto desde `+Z`: la
+/// pared con sus aberturas, el zócalo, las pilastras y el pabellón sobre sus
+/// vanos centrales.
 fn station_face(shape: &mut Shape, walls: &Walls, f: &Front) {
     let (h, len) = (walls.height, walls.width());
     let front = walls.front();
@@ -843,8 +870,8 @@ fn station_face(shape: &mut Shape, walls: &Walls, f: &Front) {
     front.build(shape, f.wall, &openings, u32::MAX);
     dress(shape, &front, &openings, f);
     plinth(shape, f.plinth, &front, &openings, 0.6, 0.05);
-    // The middle three bays make the pavilion: its edges carry wider
-    // pilasters than the ones between the other bays.
+    // Los tres vanos centrales forman el pabellón: sus bordes llevan pilastras
+    // más anchas que las que hay entre los demás vanos.
     let middle = f.bays / 2;
     let (first, last) = (middle.saturating_sub(1), (middle + 2).min(f.bays));
     let capital = h - 0.55;
@@ -862,8 +889,8 @@ fn station_face(shape: &mut Shape, walls: &Walls, f: &Front) {
             (-DROP, 0.75, capital),
         );
     }
-    // Over the cornice the pavilion rises into an attic of brick between
-    // stucco ends, a cap, and a pediment.
+    // Por encima de la cornisa el pabellón se eleva en un ático de ladrillo
+    // entre extremos de revoque, un remate y un frontón.
     let x0 = walls.x0 + len * first as f32 / f.bays as f32;
     let x1 = walls.x0 + len * last as f32 / f.bays as f32;
     let z = walls.z1;
@@ -896,9 +923,9 @@ fn station_face(shape: &mut Shape, walls: &Walls, f: &Front) {
     );
 }
 
-/// The platform canopy: core's slab (`Canopy`) with a fascia, a cut timber
-/// valance and rafters, held up by cast-iron columns standing on the
-/// platform with iron brackets to the roof.
+/// La marquesina del andén: la losa de core (`Canopy`) con una tabla de frente,
+/// un faldón de madera calada y cabios, sostenida por columnas de hierro
+/// fundido apoyadas en el andén con ménsulas de hierro hasta el techo.
 fn canopy(shape: &mut Shape, (w, d): (f32, f32)) {
     let (bottom, top) = (
         Canopy::HEIGHT - Canopy::THICKNESS / 2.0,
@@ -911,8 +938,9 @@ fn canopy(shape: &mut Shape, (w, d): (f32, f32)) {
             .with_scale(Vec3::new(w, top - bottom, z1 - z0)),
         true,
     );
-    // The fascia board over the slab's edge (a hair in from it, so the two
-    // never share a face) and the valance below it: a row of lozenges.
+    // La tabla de frente sobre el borde de la losa (apenas hacia adentro de él,
+    // para que los dos nunca compartan una cara) y el faldón debajo: una fila
+    // de rombos.
     let edge = z0 + 0.01;
     let fascia = 0.22;
     shape.block(
@@ -932,9 +960,10 @@ fn canopy(shape: &mut Shape, (w, d): (f32, f32)) {
             true,
         );
     }
-    // Columns every three to four meters, the outer two just inside the
-    // slab's ends, a little in from its edge; a rafter over each across the
-    // underside; scrolled brackets from each to the rafters and the wall.
+    // Columnas cada tres a cuatro metros, las dos exteriores justo dentro de
+    // los extremos de la losa, un poco hacia adentro de su borde; un cabio
+    // sobre cada una cruzando la cara inferior; ménsulas con volutas desde cada
+    // una hasta los cabios y la pared.
     let n = ((w - 0.9) / 3.5).ceil().max(1.0) as usize;
     let zc = z0 + 0.4;
     for k in 0..=n {
@@ -966,9 +995,9 @@ fn canopy(shape: &mut Shape, (w, d): (f32, f32)) {
     }
 }
 
-/// The profile of a cast-iron column `height` tall (radius, height), from
-/// its base: a plinth, a moulded foot, a tapering shaft, a necking ring and
-/// a flared capital under the roof.
+/// El perfil de una columna de hierro fundido de `height` de alto (radio,
+/// altura), desde su base: un plinto, un pie moldurado, un fuste que se
+/// angosta, un anillo de collarino y un capitel acampanado bajo el techo.
 fn column(height: f32) -> Vec<(f32, f32)> {
     let top = height;
     vec![

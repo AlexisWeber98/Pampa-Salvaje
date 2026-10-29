@@ -5,8 +5,8 @@ use pampa_core::{HouseStyle, SettlementKind, WorldConfig};
 use super::*;
 use crate::{FloraPlugin, StreamFocus, TerrainPlugin, flora::triangles};
 
-/// A structure of `kind` centred on `(x, y)`, `w` wide along its front and
-/// `d` deep, facing `front`.
+/// Una estructura de tipo `kind` centrada en `(x, y)`, de `w` de ancho a lo
+/// largo de su frente y `d` de profundidad, mirando hacia `front`.
 fn structure(
     kind: StructureKind,
     (x, y): (f32, f32),
@@ -27,7 +27,8 @@ fn structure(
     }
 }
 
-/// One of every structure kind round a hub at `hub`, at their largest.
+/// Una de cada tipo de estructura alrededor de un centro en `hub`, en su tamaño
+/// más grande.
 fn every_kind(hub: (f32, f32)) -> Settlement {
     use StructureKind::*;
     let (hx, hy) = hub;
@@ -73,7 +74,8 @@ fn every_kind(hub: (f32, f32)) -> Settlement {
         structure(WreckedWagon, at(70.0, 10.0), (4.8, 3.6), 2.2, Side::West),
         structure(Eucalyptus, at(-60.0, -10.0), (1.0, 1.0), 26.0, Side::East),
         structure(Poplar, at(-5.0, -60.0), (1.0, 1.0), 18.0, Side::North),
-        // The rest of a short poplar row, 8 m apart, and a second eucalyptus.
+        // El resto de una hilera corta de álamos, separados 8 m, y un segundo
+        // eucalipto.
         structure(Poplar, at(-5.0, -68.0), (1.0, 1.0), 16.0, Side::North),
         structure(Poplar, at(-5.0, -76.0), (1.0, 1.0), 19.0, Side::North),
         structure(Poplar, at(-5.0, -84.0), (1.0, 1.0), 17.0, Side::North),
@@ -103,7 +105,7 @@ fn every_kind(hub: (f32, f32)) -> Settlement {
     }
 }
 
-/// Two settlements: one in chunk (0, 0), one in chunk (1, 0).
+/// Dos asentamientos: uno en el chunk (0, 0) y otro en el chunk (1, 0).
 fn layout() -> SettlementLayout {
     let mut layout = SettlementLayout::default();
     layout.settlements = vec![every_kind((100.0, 100.0)), every_kind((300.0, 100.0))];
@@ -148,15 +150,16 @@ fn count<T: Component>(app: &mut App) -> usize {
 
 #[test]
 fn chunks_draw_each_owned_settlement_once_and_drop_it() {
-    // The focus on chunk (0, 0): both settlements' chunks are loaded.
+    // El foco en el chunk (0, 0): los chunks de ambos asentamientos están
+    // cargados.
     let mut app = app(GroundVec2::new(100.0, 100.0));
     app.update();
     app.update();
     let drawn = parts(&mut app);
     let layout = layout();
     for (k, s) in layout.settlements.iter().enumerate() {
-        // Every structure is drawn, with as many pieces as it has
-        // surfaces: none twice.
+        // Cada estructura se dibuja, con tantas piezas como superficies tiene:
+        // ninguna dos veces.
         for (j, st) in s.structures.iter().enumerate() {
             let pieces = drawn
                 .iter()
@@ -176,17 +179,18 @@ fn chunks_draw_each_owned_settlement_once_and_drop_it() {
     }
     assert_eq!(count::<TrackSurface>(&mut app), 2);
     assert_eq!(count::<YardSurface>(&mut app), 2);
-    // The windpumps' wheels turn.
+    // Las ruedas de los molinos giran.
     assert_eq!(
         count::<WindmillRotor>(&mut app),
         2 * props::rotor().surfaces().count()
     );
-    // Laying again changes nothing: each chunk lays its settlements once.
+    // Volver a colocar no cambia nada: cada chunk coloca sus asentamientos una
+    // sola vez.
     let before = drawn.len();
     app.update();
     assert_eq!(parts(&mut app).len(), before);
 
-    // Far away, the chunks go and their settlements with them.
+    // Lejos, los chunks se van y sus asentamientos con ellos.
     app.insert_resource(StreamFocus(GroundVec2::new(-3500.0, 3500.0)));
     for _ in 0..10 {
         app.update();
@@ -195,8 +199,8 @@ fn chunks_draw_each_owned_settlement_once_and_drop_it() {
     assert_eq!(count::<TrackSurface>(&mut app), 0);
 }
 
-/// Steps `app` until every background ground and settlement build has
-/// landed (at most 20 updates).
+/// Avanza `app` hasta que haya terminado cada construcción en segundo plano del
+/// suelo y de los asentamientos (como mucho 20 actualizaciones).
 fn land_all(app: &mut App) {
     for _ in 0..20 {
         let pending =
@@ -213,22 +217,24 @@ fn land_all(app: &mut App) {
 
 #[test]
 fn a_streamed_chunk_lays_its_settlements_off_the_main_schedule() {
-    // What the first frame lays inline, for comparison.
+    // Lo que el primer frame coloca en línea, para comparar.
     let mut inline = app(GroundVec2::new(100.0, 100.0));
     inline.update();
     inline.update();
     let mut expected = parts(&mut inline);
     expected.sort_by_key(|p| (p.settlement, p.structure));
     let tracks = count::<TrackSurface>(&mut inline);
-    // Starting far off, then riding in: the chunks are streamed.
+    // Empezando lejos y después acercándose a caballo: los chunks se cargan por
+    // streaming.
     let mut app = app(GroundVec2::new(-3500.0, 3500.0));
     app.update();
     app.insert_resource(StreamFocus(GroundVec2::new(100.0, 100.0)));
     app.update();
-    // The update that streamed the chunks did not build their settlements.
+    // La actualización que cargó los chunks por streaming no construyó sus
+    // asentamientos.
     assert_eq!(parts(&mut app).len(), 0);
     assert!(count::<PendingSettlements>(&mut app) > 0);
-    // They land once built: the same pieces, once each.
+    // Aparecen una vez construidos: las mismas piezas, una vez cada una.
     land_all(&mut app);
     app.update();
     let mut landed = parts(&mut app);
@@ -244,7 +250,7 @@ fn a_chunk_gone_before_its_settlements_land_drops_them() {
     app.insert_resource(StreamFocus(GroundVec2::new(100.0, 100.0)));
     app.update();
     assert!(count::<PendingSettlements>(&mut app) > 0);
-    // Away again the very next frame, before anything lands.
+    // Otra vez lejos en el frame siguiente, antes de que aparezca nada.
     app.insert_resource(StreamFocus(GroundVec2::new(-3500.0, 3500.0)));
     for _ in 0..10 {
         app.update();
@@ -263,7 +269,7 @@ fn settlements_share_a_few_ranges_and_one_material_per_surface() {
         .world_mut()
         .query_filtered::<&VisibilityRange, With<SettlementPart>>();
     let distinct: HashSet<VisibilityRange> = q.iter(app.world()).cloned().collect();
-    // Bevy never frees a range's GPU slot: a handful, shared.
+    // Bevy nunca libera el slot de GPU de un rango: un puñado, compartido.
     assert!(distinct.len() <= 3, "{} distinct ranges", distinct.len());
     assert!(distinct.iter().all(|r| ranges().contains(r)));
     let mut q = app.world_mut().query_filtered::<
@@ -272,13 +278,14 @@ fn settlements_share_a_few_ranges_and_one_material_per_surface() {
     >();
     let materials: HashSet<AssetId<StandardMaterial>> =
         q.iter(app.world()).map(|m| m.id()).collect();
-    // One per surface, and the two trees' bark and leaves.
+    // Uno por superficie, y la corteza y las hojas de los dos árboles.
     assert!(
         materials.len() <= Surface::ALL.len() + 4,
         "{} materials",
         materials.len()
     );
-    // Thin things fade out of the camera's way; houses and trees do not.
+    // Lo delgado se desvanece al estorbar a la cámara; las casas y los árboles
+    // no.
     let mut q = app
         .world_mut()
         .query::<(&SettlementPart, Has<ThinOccluder>)>();
@@ -363,7 +370,7 @@ fn tracks_drape_over_the_drawn_ground_with_two_ruts() {
         let lift = p[1] - ground(g);
         assert!((lift - track::LIFT).abs() < 1e-3, "{lift} at {g:?}");
         assert!(n[1] > 0.0, "faces up");
-        // Distance from the track's line.
+        // Distancia desde la línea de la huella.
         let d = track
             .segments()
             .map(|(a, b)| {
@@ -386,11 +393,11 @@ fn tracks_drape_over_the_drawn_ground_with_two_ruts() {
         }
     }
     assert!(ruts > 10 && middle > 10, "{ruts} {middle}");
-    // Laid every couple of meters: it follows the ground's rises.
+    // Colocada cada un par de metros: sigue las subidas del suelo.
     assert!(points.len() / 42 >= 180 / 2, "{}", points.len());
 }
 
-/// One drawn piece of a tree: its structure, mesh, material and transform.
+/// Una pieza dibujada de un árbol: su estructura, mesh, material y transform.
 struct TreePiece {
     structure: Structure,
     mesh: AssetId<Mesh>,
@@ -398,8 +405,8 @@ struct TreePiece {
     scale: Vec3,
 }
 
-/// The structure of `kind` standing at `at` (world translation) in the test
-/// layout.
+/// La estructura de tipo `kind` que está en `at` (traslación en el mundo) en la
+/// disposición de prueba.
 fn spot(kind: StructureKind, at: Vec3) -> Structure {
     layout()
         .settlements
@@ -412,7 +419,7 @@ fn spot(kind: StructureKind, at: Vec3) -> Structure {
         .unwrap_or_else(|| panic!("no {kind:?} at {at:?}"))
 }
 
-/// Every drawn piece of an estancia tree, bark and leaves.
+/// Todas las piezas dibujadas de un árbol de estancia, corteza y hojas.
 fn tree_pieces(app: &mut App) -> Vec<TreePiece> {
     let mut q = app.world_mut().query::<(
         &SettlementPart,
@@ -431,7 +438,7 @@ fn tree_pieces(app: &mut App) -> Vec<TreePiece> {
         .collect()
 }
 
-/// The tree kit's species for a tree structure kind.
+/// La especie del kit de árboles para un tipo de estructura de árbol.
 fn kit_species(kind: StructureKind) -> crate::tree::Species {
     if kind == StructureKind::Poplar {
         crate::tree::Species::Alamo
@@ -467,7 +474,7 @@ fn estancia_trees_are_tree_kit_trees_of_their_species() {
                 leaves += 1;
             }
         }
-        // Every tree draws its trunk and its leaves, one piece each.
+        // Cada árbol dibuja su tronco y sus hojas, una pieza cada uno.
         assert!(barks >= 1 && barks == leaves, "{kind:?}: {barks} {leaves}");
     }
 }
@@ -483,7 +490,7 @@ fn an_estancia_tree_stands_as_tall_as_its_structure() {
             .iter()
             .find(|v| v.bark.id() == p.mesh || v.leaves.id() == p.mesh)
             .expect("a kit variant");
-        // Never fatter than tall, and round.
+        // Nunca más ancho que alto, y redondo.
         assert!(p.scale.x <= p.scale.y + 1e-4 && (p.scale.x - p.scale.z).abs() < 1e-4);
         let top = variant.height * p.scale.y;
         assert!(
@@ -513,8 +520,8 @@ fn a_poplar_is_a_narrow_column_and_a_eucalyptus_a_broader_crown() {
         if p.structure.kind == StructureKind::Poplar {
             assert!(p.structure.height >= 3.5 * wide, "{size:?}");
         } else {
-            // A eucalyptus spreads: wider than a poplar's column, but a tall
-            // tree still.
+            // Un eucalipto se extiende: más ancho que la columna de un álamo,
+            // pero sigue siendo un árbol alto.
             assert!(wide > 0.25 * p.structure.height, "{size:?}");
             assert!(p.structure.height > 1.5 * wide, "{size:?}");
         }
@@ -527,7 +534,7 @@ fn an_estancia_tree_costs_a_few_hundred_triangles() {
     let mut app = settled_app();
     let pieces = tree_pieces(&mut app);
     let meshes = app.world().resource::<Assets<Mesh>>();
-    // Bark and leaves of one tree add up, keyed by where it stands.
+    // La corteza y las hojas de un árbol se suman, indexadas por dónde está.
     let mut costs: std::collections::HashMap<(u32, u32), usize> = Default::default();
     for p in &pieces {
         let at = p.structure.footprint.center();
@@ -566,7 +573,7 @@ fn an_estancia_trunk_stands_within_the_collider_core_plants_for_it() {
             .fold(0.0, f32::max);
         let drawn = foot * p.scale.x;
         let core = p.structure.trunk_radius();
-        // A rider is stopped at the bark, never inside it.
+        // Un jinete se detiene en la corteza, nunca dentro de ella.
         assert!(
             drawn <= core * 1.02,
             "{:?}: bark {drawn} m, core {core} m",
@@ -595,7 +602,7 @@ fn a_row_of_estancia_trees_is_not_cloned_from_one_variant() {
     }
 }
 
-/// The extent of `mesh` along each axis.
+/// La extensión de `mesh` a lo largo de cada eje.
 fn extent(mesh: &Mesh) -> Vec3 {
     let Some(bevy::mesh::VertexAttributeValues::Float32x3(points)) =
         mesh.attribute(Mesh::ATTRIBUTE_POSITION)
@@ -611,7 +618,7 @@ fn extent(mesh: &Mesh) -> Vec3 {
 
 #[test]
 fn estancia_trees_need_the_tree_kit_and_not_the_vegetation_models() {
-    // No flora plugin: neither the vegetation models nor their stand-ins.
+    // Sin plugin de flora: ni los modelos de vegetación ni sus sustitutos.
     let mut app = App::new();
     app.add_plugins(MinimalPlugins)
         .init_resource::<Assets<Mesh>>()
@@ -656,8 +663,8 @@ fn a_settlement_tree_is_solid_and_never_fades() {
     assert!(trees.iter().all(|t| !t.1), "{trees:?}");
 }
 
-/// An app that loads glTF models from `root`, drawing the two test
-/// settlements with the given slot fits.
+/// Una app que carga modelos glTF desde `root` y dibuja los dos asentamientos
+/// de prueba con los ajustes de slot indicados.
 fn model_app(root: &crate::AssetRoot, fits: ModelSlots) -> App {
     let mut app = crate::gltf::tests::unfinished_app(root);
     app.insert_resource(root.clone())
@@ -679,15 +686,15 @@ fn model_app(root: &crate::AssetRoot, fits: ModelSlots) -> App {
     app
 }
 
-/// Updates `app` until no slot model is waiting or standing in; panics
-/// after 10 s.
+/// Actualiza `app` hasta que ningún modelo de slot esté esperando o sustituido;
+/// hace panic después de 10 s.
 fn settle_models(app: &mut App) {
     for _ in 0..2000 {
         app.update();
         let waiting = count::<slots::SlotPending>(app) + count::<StandIn>(app);
         let laid = !parts(app).is_empty();
         if laid && waiting == 0 {
-            // One more frame for the last scenes to spawn and be dressed.
+            // Un frame más para que las últimas escenas se creen y se preparen.
             app.update();
             app.update();
             return;
@@ -697,7 +704,7 @@ fn settle_models(app: &mut App) {
     panic!("timed out after 10 s waiting for the slot models to load");
 }
 
-/// The structure kinds drawn with a procedural mesh, and with a model.
+/// Los tipos de estructura dibujados con una mesh procedural y con un modelo.
 fn drawn_kinds(app: &mut App) -> (Vec<StructureKind>, Vec<StructureKind>) {
     let mut q = app
         .world_mut()
@@ -714,7 +721,7 @@ fn drawn_kinds(app: &mut App) -> (Vec<StructureKind>, Vec<StructureKind>) {
     (meshes, scenes)
 }
 
-/// Every entity under `root`, depth first.
+/// Todas las entidades bajo `root`, en profundidad primero.
 fn descendants(world: &World, root: Entity) -> Vec<Entity> {
     let mut found = Vec::new();
     let mut stack = vec![root];
@@ -729,8 +736,8 @@ fn descendants(world: &World, root: Entity) -> Vec<Entity> {
     found
 }
 
-/// The world-space meshes spawned under each model scene, with the range
-/// and fade they were dressed with.
+/// Las meshes en espacio de mundo creadas bajo cada escena de modelo, con el
+/// rango y el fundido con los que se prepararon.
 fn dressed_meshes(app: &mut App) -> Vec<(Entity, Option<VisibilityRange>, Option<ThinOccluder>)> {
     let roots: Vec<Entity> = app
         .world_mut()
@@ -755,8 +762,8 @@ fn dressed_meshes(app: &mut App) -> Vec<(Entity, Option<VisibilityRange>, Option
 fn a_slot_model_replaces_the_mesh_and_a_broken_or_missing_one_does_not() {
     use crate::gltf::tests::Scratch;
     let scratch = Scratch::new("slot-models");
-    // The well's slot holds the test triangle; the cart's a broken file;
-    // the windpump's nothing at all.
+    // El slot del pozo contiene el triángulo de prueba; el de la carreta, un
+    // archivo roto; el del molino, nada en absoluto.
     scratch.write(
         "models/third-party/well/model.gltf",
         include_str!("../../../../assets/models/test/triangle.gltf"),
@@ -770,7 +777,8 @@ fn a_slot_model_replaces_the_mesh_and_a_broken_or_missing_one_does_not() {
     let mut app = model_app(&root, ModelSlots([("well".to_owned(), fit)].into()));
     settle_models(&mut app);
     let (meshes, scenes) = drawn_kinds(&mut app);
-    // Two settlements, one well each: drawn by the model, never the mesh.
+    // Dos asentamientos, un pozo cada uno: dibujados por el modelo, nunca por
+    // la mesh.
     assert_eq!(
         scenes.iter().filter(|k| **k == StructureKind::Well).count(),
         2
@@ -779,12 +787,12 @@ fn a_slot_model_replaces_the_mesh_and_a_broken_or_missing_one_does_not() {
         !meshes.contains(&StructureKind::Well),
         "the well's mesh stayed"
     );
-    // The broken cart and the missing windpump stay procedural.
+    // La carreta rota y el molino que falta siguen siendo procedurales.
     assert!(!scenes.contains(&StructureKind::Cart));
     assert!(meshes.contains(&StructureKind::Cart) && meshes.contains(&StructureKind::Windpump));
     assert_eq!(count::<StandIn>(&mut app), 0);
-    // The model's triangle hangs under each well, fitted, dressed with the
-    // props' shared range and the well's fade.
+    // El triángulo del modelo cuelga bajo cada pozo, ajustado, preparado con el
+    // rango compartido de los accesorios y el fundido del pozo.
     let dressed = dressed_meshes(&mut app);
     assert_eq!(dressed.len(), 2);
     for (_, range, fade) in &dressed {
@@ -798,7 +806,7 @@ fn a_slot_model_replaces_the_mesh_and_a_broken_or_missing_one_does_not() {
         assert_eq!(part.kind, StructureKind::Well);
         assert!((transform.scale - Vec3::splat(2.0)).length() < 1e-5);
     }
-    // Still a few shared ranges in all, models included.
+    // Todavía unos pocos rangos compartidos en total, modelos incluidos.
     let mut q = app
         .world_mut()
         .query_filtered::<&VisibilityRange, With<SettlementPart>>();
@@ -837,7 +845,7 @@ fn the_shipped_windpump_model_spins_its_rotor_and_replaces_the_mesh() {
         2
     );
     assert!(!meshes.contains(&StructureKind::Windpump));
-    // The procedural wheels went with their stand-ins.
+    // Las ruedas procedurales se fueron con sus sustitutos.
     assert_eq!(count::<WindmillRotor>(&mut app), 0);
     let mut q = app.world_mut().query::<(&ModelRotor, &Name, &Transform)>();
     let before: Vec<(Quat, f32)> = q
@@ -857,7 +865,7 @@ fn the_shipped_windpump_model_spins_its_rotor_and_replaces_the_mesh() {
     for ((was, speed), now) in before.iter().zip(&after) {
         assert!(*speed > 1.0);
         assert!(was.angle_between(*now) > 1e-3, "the rotor did not turn");
-        // About its axis only: the axis stays put.
+        // Solo alrededor de su eje: el eje se queda en su lugar.
         assert!((*was * Vec3::NEG_Z).distance(*now * Vec3::NEG_Z) < 1e-4);
     }
 }
@@ -870,7 +878,7 @@ fn every_slot_name_is_a_model_folder_and_every_folder_a_slot() {
         let path = format!("{}/{slot}/model.glb", slots::SLOT_DIR);
         assert!(crate::gltf::is_inside(&path), "{slot}");
     }
-    // Every folder beside the source packs is a known slot.
+    // Cada carpeta junto a los paquetes de origen es un slot conocido.
     let folders: BTreeSet<String> = std::fs::read_dir(root.0.join(slots::SLOT_DIR))
         .unwrap()
         .flatten()
@@ -889,7 +897,8 @@ fn every_slot_name_is_a_model_folder_and_every_folder_a_slot() {
         );
     }
     assert!(folders.contains("windpump") && folders.contains("wrecked_wagon"));
-    // The cart is still procedural: the 3TD wagon is a wreck, not a carreta.
+    // La carreta sigue siendo procedural: el carro de 3TD es una ruina, no una
+    // carreta.
     assert!(slots::slot_path(&root, slots::SLOT_DIR, "cart").is_none());
 }
 
@@ -912,12 +921,13 @@ fn yard_props_keep_off_tracks_and_structures_and_barrels_stay_rare() {
             assert!(!s.footprint.contains_point(spot.at), "{spot:?} in {s:?}");
         }
     }
-    // Hung lanterns hang by a barn's front wall, above a man's head.
+    // Los faroles colgados cuelgan junto a la pared del frente de un galpón,
+    // por encima de la cabeza de un hombre.
     for spot in spots.iter().filter(|s| s.hung) {
         assert_eq!(spot.prop, YardProp::Lantern);
         assert!(spot.lift > 2.0);
     }
-    // Only an estancia gets the heavy barrels.
+    // Solo una estancia recibe los barriles pesados.
     ranch.kind = pampa_core::SettlementKind::Farm;
     assert!(
         yard::yard_props(&ranch)
@@ -930,7 +940,7 @@ fn yard_props_keep_off_tracks_and_structures_and_barrels_stay_rare() {
 fn yard_props_spawn_as_scenes_and_the_lantern_glass_is_see_through() {
     let mut app = model_app(&crate::gltf::tests::root(), ModelSlots::default());
     settle_models(&mut app);
-    // Wait for every prop's scene to spawn.
+    // Esperar a que se cree la escena de cada accesorio.
     let spawned = |app: &mut App| {
         let roots: Vec<Entity> = app
             .world_mut()
@@ -966,7 +976,7 @@ fn yard_props_spawn_as_scenes_and_the_lantern_glass_is_see_through() {
     for (_, range, _) in dressed_meshes(&mut app) {
         assert!(range.is_some_and(|r| ranges().contains(&r)));
     }
-    // The lantern's panes: blended, and see-through now.
+    // Los vidrios del farol: con mezcla, y ahora translúcidos.
     let lanterns: Vec<Entity> = app
         .world_mut()
         .query::<(Entity, &YardPart)>()
@@ -1007,8 +1017,8 @@ fn a_slot_model_that_fails_after_laying_leaves_its_stand_in_for_good() {
     let server = app.world().resource::<AssetServer>().clone();
     let scene = crate::gltf::load_scene(&server, Some(&root), "models/third-party/cart/model.gltf")
         .expect("the file exists");
-    // Laid while the model was still loading: a waiting scene and its
-    // stand-in under one chunk.
+    // Colocado mientras el modelo todavía cargaba: una escena en espera y su
+    // sustituto bajo un chunk.
     let part = SettlementPart {
         settlement: 0,
         structure: 3,
@@ -1040,13 +1050,14 @@ fn a_slot_model_that_fails_after_laying_leaves_its_stand_in_for_good() {
     assert_eq!(kept.get::<SettlementPart>(), Some(&part));
 }
 
-/// Loads `paths` (with their sRGB flags) from the shipped assets in a
-/// headless app whose loader, like a desktop GPU's, takes BC formats, and
-/// waits until every one is in; panics on a failed load or after 10 s.
+/// Carga `paths` (con sus indicadores sRGB) desde los assets incluidos en una
+/// app headless cuyo cargador, como el de una GPU de escritorio, acepta
+/// formatos BC, y espera hasta que estén todos; hace panic ante una carga
+/// fallida o después de 10 s.
 ///
-/// Bevy 0.20 cannot transcode UASTC to plain RGBA8 (it slices the UASTC
-/// levels by the output's block size and panics), so these tests, like the
-/// game, need a GPU format: BC7, ASTC or ETC2.
+/// Bevy 0.20 no puede transcodificar UASTC a RGBA8 simple (divide los niveles
+/// UASTC según el tamaño de bloque de la salida y hace panic), así que estos
+/// tests, igual que el juego, necesitan un formato de GPU: BC7, ASTC o ETC2.
 fn load_shipped(paths: &[(String, bool)]) -> (App, Vec<Handle<Image>>) {
     let mut app = App::new();
     app.add_plugins((
@@ -1077,7 +1088,8 @@ fn load_shipped(paths: &[(String, bool)]) -> (App, Vec<Handle<Image>>) {
     (app, handles)
 }
 
-/// How many surfaces get a colour texture when the GPU supports `formats`.
+/// Cuántas superficies reciben una textura de color cuando la GPU admite
+/// `formats`.
 fn textured_surfaces(formats: bevy::image::CompressedImageFormats) -> usize {
     let mut app = App::new();
     app.add_plugins((
@@ -1105,8 +1117,8 @@ fn textured_surfaces(formats: bevy::image::CompressedImageFormats) -> usize {
 
 #[test]
 fn a_gpu_without_compressed_formats_draws_plain_colour() {
-    // UASTC needs BC, ASTC or ETC2; without any, Bevy 0.20's loader panics,
-    // so no map may even start loading.
+    // UASTC necesita BC, ASTC o ETC2; sin ninguno, el cargador de Bevy 0.20
+    // hace panic, así que ningún mapa puede siquiera empezar a cargarse.
     assert_eq!(
         textured_surfaces(bevy::image::CompressedImageFormats::NONE),
         0
@@ -1117,7 +1129,7 @@ fn a_gpu_without_compressed_formats_draws_plain_colour() {
 #[test]
 fn every_set_ships_its_three_ktx2_maps_as_bc7_with_baked_mips() {
     use bevy::render::render_resource::TextureFormat;
-    // A set worn under several tints is loaded once.
+    // Un conjunto que se usa con varios tintes se carga una sola vez.
     let sets: std::collections::BTreeSet<&str> =
         Surface::ALL.iter().filter_map(|s| s.set()).collect();
     let paths: Vec<(String, bool)> = sets
@@ -1153,8 +1165,8 @@ fn yard_plants_stand_by_the_houses_off_tracks_structures_and_the_patio() {
     let ranch = every_kind((100.0, 100.0));
     let spots = yard::yard_plants(&ranch);
     assert_eq!(spots, yard::yard_plants(&ranch), "the same every time");
-    // Four houses: shrubs at every one, a second at the main houses,
-    // and flower beds at some.
+    // Cuatro casas: arbustos en todas, un segundo en las casas principales y
+    // canteros en algunas.
     let shrubs = spots.iter().filter(|s| s.kind == PlantKind::Shrub).count();
     let beds = spots
         .iter()
@@ -1164,7 +1176,8 @@ fn yard_plants_stand_by_the_houses_off_tracks_structures_and_the_patio() {
     assert!((1..=4).contains(&beds), "{beds} flower beds");
     for spot in &spots {
         let reach = spot.kind.radius();
-        // Not on a track (2.6 m wide), a structure, the 24 m patio, and inside.
+        // No sobre una huella (de 2.6 m de ancho), una estructura, el patio de
+        // 24 m, y dentro.
         for (a, b) in ranch.tracks.iter().flat_map(Track::segments) {
             let ab = b - a;
             let t = ((spot.at - a).dot(ab) / ab.dot(ab)).clamp(0.0, 1.0);
@@ -1185,7 +1198,7 @@ fn yard_plants_stand_by_the_houses_off_tracks_structures_and_the_patio() {
             "{spot:?} on the patio"
         );
         assert!(ranch.bounds.contains_point(spot.at));
-        // Near a house: within 4 m of one's wall.
+        // Cerca de una casa: a menos de 4 m de su pared.
         let by_house = ranch
             .structures
             .iter()
@@ -1227,7 +1240,8 @@ fn settlements_draw_their_yard_plants_from_the_shared_kit() {
         );
         assert_eq!(material.id(), kit.material.id());
     }
-    // Only the chunk in focus is laid; both settlements when focus is near.
+    // Solo se coloca el chunk en foco; ambos asentamientos cuando el foco está
+    // cerca.
     assert!(drawn > 0 && drawn <= want, "{drawn} of {want}");
 }
 
@@ -1239,7 +1253,7 @@ fn a_yard_plant_that_would_land_on_a_track_a_structure_the_patio_or_outside_is_l
     let left_out =
         |settlement: &Settlement| !yard::yard_plants(settlement).iter().any(|s| s.at == spot);
     assert!(!left_out(&ranch));
-    // A huella through it.
+    // Una huella que lo atraviesa.
     let mut track = ranch.clone();
     track.tracks.push(Track {
         points: vec![
@@ -1248,7 +1262,7 @@ fn a_yard_plant_that_would_land_on_a_track_a_structure_the_patio_or_outside_is_l
         ],
     });
     assert!(left_out(&track), "a plant on a track");
-    // A prop standing on it.
+    // Un accesorio apoyado sobre él.
     let mut built = ranch.clone();
     built.structures.push(structure(
         StructureKind::Cart,
@@ -1258,7 +1272,7 @@ fn a_yard_plant_that_would_land_on_a_track_a_structure_the_patio_or_outside_is_l
         Side::North,
     ));
     assert!(left_out(&built), "a plant under a structure");
-    // The patio grown over it, and the settlement shrunk away from it.
+    // El patio crecido sobre él, y el asentamiento achicado lejos de él.
     let mut patio = ranch.clone();
     patio.patio = Aabb::from_center_size(spot, GroundVec2::new(8.0, 8.0));
     assert!(left_out(&patio), "a plant on the patio");

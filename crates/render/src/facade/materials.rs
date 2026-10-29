@@ -1,41 +1,44 @@
-//! The settlements' and towns' PBR materials: one shared material per
-//! surface.
+//! Los materiales PBR de los asentamientos y los pueblos: un material
+//! compartido por superficie.
 //!
-//! The textured surfaces wear the CC0 sets in
-//! `assets/textures/buildings/<set>/` (ambientCG and Poly Haven, plus our
-//! own thatch; see that folder's CREDITS.md). The game loads each set's
-//! GPU-ready KTX2 files through the [`AssetServer`] with a repeating,
-//! anisotropic sampler: `color.ktx2` (sRGB), `normal_gl.ktx2` (OpenGL +Y,
-//! as Bevy reads them) and `orm.ktx2`, occlusion in red, roughness in green
-//! and full metallic in blue (the material's own `metallic` scales it per
-//! surface). `tools/textures_to_ktx2.sh` makes them from the JPEG sources
-//! beside them: UASTC with baked mips, which Bevy transcodes at load to the
-//! GPU's block format (BC7 on desktop), a quarter of RGBA8's memory.
+//! Las superficies texturizadas llevan los conjuntos CC0 de
+//! `assets/textures/buildings/<set>/` (ambientCG y Poly Haven, más nuestra
+//! propia paja; ver el CREDITS.md de esa carpeta). El juego carga los archivos
+//! KTX2 listos para la GPU de cada conjunto a través del [`AssetServer`] con un
+//! sampler de repetición anisotrópico: `color.ktx2` (sRGB), `normal_gl.ktx2`
+//! (+Y de OpenGL, como los lee Bevy) y `orm.ktx2`, con la oclusión en rojo, la
+//! rugosidad en verde y la metalicidad completa en azul (el `metallic` propio
+//! del material la escala por superficie). `tools/textures_to_ktx2.sh` los
+//! genera a partir de las fuentes JPEG que están al lado: UASTC con mips
+//! horneados, que Bevy transcodifica al cargar al formato de bloques de la GPU
+//! (BC7 en escritorio), un cuarto de la memoria de RGBA8.
 //!
-//! A few surfaces wear the same set under another tint (the towns' lime
-//! washes and grey stucco over `plaster_003`, the five [`Paint`]s over
-//! `painted_plaster_wall`); the asset server loads such a set's maps once.
+//! Algunas superficies llevan el mismo conjunto con otro tinte (los encalados y
+//! el revoque gris de los pueblos sobre `plaster_003`, las cinco [`Paint`]
+//! sobre `painted_plaster_wall`); el servidor de assets carga los mapas de ese
+//! conjunto una sola vez.
 //!
-//! The 2026-10-25 Poly Haven sets (painted plaster, whitewashed brick,
-//! plaster patched over red brick, a beige band and brick paving) are
-//! scanned darker than the 1919 surface they stand for. Their material
-//! colour lifts each scan's mean albedo ([`Look::Lifted`]) to a muted
-//! target, so a mean texel lands on the paint's colour while the scan keeps
-//! its stains and joints.
+//! Los conjuntos de Poly Haven del 2026-10-25 (revoque pintado, ladrillo
+//! encalado, revoque emparchado sobre ladrillo rojo, una franja beige y piso de
+//! ladrillo) están escaneados más oscuros que la superficie de 1919 que
+//! representan. El color de su material eleva el albedo medio de cada escaneo
+//! ([`Look::Lifted`]) hasta un objetivo apagado, así que un texel medio cae en
+//! el color de la pintura mientras el escaneo conserva sus manchas y juntas.
 //!
-//! The railway's permanent way wears three more Poly Haven CC0 sets
-//! (`gravel_road` by Amal Kumar, `rough_wood` by Rob Tuytel and
-//! `rust_coarse_01` by Dimitrios Savva and Rico Cilliers; their folders'
-//! CREDITS.md and the root CREDITS.md credit them): the ballast, the
-//! sleepers and the rails (see [`crate::rail`]). The ballast's scan is
-//! lifted to a grey gravel; the rail head wears the rail's scan with a
-//! smoother, more metallic finish, the running band.
+//! La vía permanente del ferrocarril lleva tres conjuntos CC0 más de Poly Haven
+//! (`gravel_road` de Amal Kumar, `rough_wood` de Rob Tuytel y `rust_coarse_01`
+//! de Dimitrios Savva y Rico Cilliers; los CREDITS.md de sus carpetas y el
+//! CREDITS.md de la raíz les dan crédito): el balasto, los durmientes y los
+//! rieles (ver [`crate::rail`]). El escaneo del balasto se eleva hasta una
+//! grava gris; la cabeza del riel lleva el escaneo del riel con un acabado más
+//! liso y más metálico, la banda de rodadura.
 //!
-//! The rolling stock wears two of those sets and a fourth, `metal_plate`
-//! (a diamond tread plate by Rob Tuytel, Poly Haven, CC0): see [`Livery`].
+//! El material rodante lleva dos de esos conjuntos y un cuarto, `metal_plate`
+//! (una chapa antideslizante de diamante de Rob Tuytel, Poly Haven, CC0): ver
+//! [`Livery`].
 //!
-//! Without an asset server (headless tests) or when a set's files are
-//! missing, the surface falls back to a plain colour of the same look.
+//! Sin un servidor de assets (tests headless) o cuando faltan los archivos de
+//! un conjunto, la superficie vuelve a un color liso del mismo aspecto.
 
 use std::path::Path;
 
@@ -48,103 +51,107 @@ use bevy::prelude::*;
 
 use crate::AssetRoot;
 
-/// Where the building texture sets live, under the [`AssetRoot`].
+/// Dónde viven los conjuntos de texturas de edificios, bajo el [`AssetRoot`].
 pub const TEXTURE_DIR: &str = "textures/buildings";
 
-/// What a piece of a settlement or a town building is made of. Each is
-/// one shared material.
+/// De qué está hecha una pieza de un asentamiento o de un edificio de pueblo.
+/// Cada una es un material compartido.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Surface {
-    /// Adobe walls: mud plaster (`clay_plaster`).
+    /// Paredes de adobe: revoque de barro (`clay_plaster`).
     Adobe,
-    /// Whitewashed lime plaster (`plaster_003`).
+    /// Revoque de cal encalado (`plaster_003`).
     Whitewash,
-    /// Exposed brick (`brick_wall_02`), and the brick of a well's curb.
+    /// Ladrillo visto (`brick_wall_02`), y el ladrillo del brocal de un pozo.
     Brick,
-    /// Old, rust-streaked corrugated roofing (`corrugated_iron_02`).
+    /// Techado acanalado viejo con vetas de óxido (`corrugated_iron_02`).
     OldIron,
-    /// Bright galvanised corrugated sheet (`corrugated_iron`): tanks.
+    /// Chapa acanalada galvanizada brillante (`corrugated_iron`): tanques.
     Galvanised,
-    /// Weathered boards (`brown_planks_05`): doors, shutters, rails, posts.
+    /// Tablas curtidas (`brown_planks_05`): puertas, postigos, travesaños,
+    /// postes.
     Planks,
-    /// Paja roofs and haystacks (`thatch`, generated by us).
+    /// Techos de paja y parvas (`thatch`, generada por nosotros).
     Thatch,
-    /// The tracks' dry mud (`brown_mud_dry`), feathered into the grass.
+    /// El barro seco de las huellas (`brown_mud_dry`), difuminado en el pasto.
     Mud,
-    /// Trodden patios and yards (`dry_ground_01`), feathered too.
+    /// Patios pisoteados (`dry_ground_01`), también difuminados.
     Yard,
-    /// The dark inside of an open doorway or window.
+    /// El interior oscuro de una puerta o ventana abierta.
     Recess,
-    /// Painted steel: the molino's tower, the gallery's iron posts.
+    /// Acero pintado: la torre del molino, los postes de hierro de la galería.
     Steel,
-    /// Thin galvanised sheet: the molino's blades and vane.
+    /// Chapa galvanizada fina: las aspas y la veleta del molino.
     Sheet,
-    /// Still water in a tank, trough or well.
+    /// Agua quieta en un tanque, un bebedero o un pozo.
     Water,
-    /// A warm ochre lime wash over plaster (`plaster_003`, tinted): town
-    /// fronts.
+    /// Un encalado ocre cálido sobre revoque (`plaster_003`, teñido): frentes
+    /// del pueblo.
     Lime,
-    /// Grey stucco (`plaster_003`, tinted): plinths, sills and the
-    /// mouldings of brick fronts; the sidewalks' curbs.
+    /// Revoque gris (`plaster_003`, teñido): zócalos, alféizares y las molduras
+    /// de los frentes de ladrillo; los cordones de las veredas.
     Stucco,
-    /// Smooth plaster painted in one of the muted 1919 [`Paint`]s
-    /// (`painted_plaster_wall`): town fronts.
+    /// Revoque liso pintado en una de las [`Paint`] apagadas de 1919
+    /// (`painted_plaster_wall`): frentes del pueblo.
     Painted(Paint),
-    /// Brick under a worn lime wash (`whitewashed_brick`).
+    /// Ladrillo bajo un encalado gastado (`whitewashed_brick`).
     WashedBrick,
-    /// Old red brick with the plaster flaking off it in patches
-    /// (`red_brick_plaster_patch_02`): poorer or older fronts.
+    /// Ladrillo rojo viejo con el revoque descascarándose a parches
+    /// (`red_brick_plaster_patch_02`): frentes más pobres o más viejos.
     PatchedBrick,
-    /// A beige rendered band (`beige_wall_002`, a 4:1 strip): the plinths
-    /// of painted fronts.
+    /// Una franja revocada beige (`beige_wall_002`, una tira de 4:1): los
+    /// zócalos de los frentes pintados.
     Band,
-    /// Flat brick paving (`brick_floor_003`): the sidewalks (veredas).
+    /// Piso de ladrillo plano (`brick_floor_003`): las veredas.
     Paving,
-    /// Beaten earth (`dirt_path`, opaque, unlike [`Surface::Yard`]): the
-    /// paths of a small town's or a village's plaza, and the earth sidewalks.
+    /// Tierra apisonada (`dirt_path`, opaca, a diferencia de
+    /// [`Surface::Yard`]): los senderos de la plaza de un pueblo pequeño o de
+    /// una aldea, y las veredas de tierra.
     Earth,
-    /// Old weathered bronze with a greenish patina (`bronze`): the plaques
-    /// of the plaza monuments.
+    /// Bronce viejo y curtido con una pátina verdosa (`bronze`): las placas de
+    /// los monumentos de las plazas.
     Bronze,
-    /// Track ballast (`gravel_road`, Poly Haven, Amal Kumar), lifted to a
-    /// grey gravel: the bed the track lies on.
+    /// Balasto de la vía (`gravel_road`, Poly Haven, Amal Kumar), elevado a una
+    /// grava gris: el lecho sobre el que se apoya la vía.
     Ballast,
-    /// Weathered sleepers (`rough_wood`, Poly Haven, Rob Tuytel): the grain
-    /// runs along each sleeper's length.
+    /// Durmientes curtidos (`rough_wood`, Poly Haven, Rob Tuytel): la veta
+    /// corre a lo largo de cada durmiente.
     Sleeper,
-    /// The foot and web of the rails (`rust_coarse_01`, Poly Haven, Dimitrios
-    /// Savva and Rico Cilliers): rusty steel.
+    /// El patín y el alma de los rieles (`rust_coarse_01`, Poly Haven,
+    /// Dimitrios Savva y Rico Cilliers): acero oxidado.
     RailSteel,
-    /// The running band of the rails (`rust_coarse_01` again): the same
-    /// scan, smoother and more metallic where the wheels polish it.
+    /// La banda de rodadura de los rieles (otra vez `rust_coarse_01`): el mismo
+    /// escaneo, más liso y más metálico donde lo pulen las ruedas.
     RailHead,
-    /// The rolling stock's steel and boards, one scan under several paints
-    /// (see [`Livery`]).
+    /// El acero y las tablas del material rodante, un escaneo bajo varias
+    /// pinturas (ver [`Livery`]).
     Livery(Livery),
 }
 
-/// What the train is painted with. Each is a scan under a tint: the tread
-/// plate as it is, black enamel and dark red over the rust (`rust_coarse_01`),
-/// maroon, varnish and oxide red over the grey planks (`brown_planks_05`).
+/// Con qué está pintado el tren. Cada una es un escaneo bajo un tinte: la chapa
+/// antideslizante tal como es, el esmalte negro y el rojo oscuro sobre el óxido
+/// (`rust_coarse_01`), el granate, el barniz y el rojo óxido sobre las tablas
+/// grises (`brown_planks_05`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Livery {
-    /// Tread plate (`metal_plate`, Poly Haven, Rob Tuytel): running plates,
-    /// footplates, steps and platforms.
+    /// Chapa antideslizante (`metal_plate`, Poly Haven, Rob Tuytel):
+    /// plataformas laterales, planchas del maquinista, estribos y plataformas.
     Tread,
-    /// Worn black enamel: the locomotive, tender and underframes.
+    /// Esmalte negro gastado: la locomotora, el ténder y los bastidores.
     Black,
-    /// Dark red: the buffer beams.
+    /// Rojo oscuro: los testeros.
     BufferRed,
-    /// The coaches' maroon, boarded.
+    /// El granate de los coches, entablado.
     Maroon,
-    /// Varnished brown wood: the coaches' panelling and ceilings.
+    /// Madera marrón barnizada: el revestimiento y los cielorrasos de los
+    /// coches.
     Varnish,
-    /// Oxide red, the freight cars' boards.
+    /// Rojo óxido, las tablas de los vagones de carga.
     Oxide,
 }
 
 impl Livery {
-    /// Every livery, in order.
+    /// Todas las libreas, en orden.
     pub const ALL: [Livery; 6] = [
         Livery::Tread,
         Livery::Black,
@@ -155,8 +162,8 @@ impl Livery {
     ];
 }
 
-/// The muted colours a 1919 town front is painted in
-/// (`odd/setting-1919.md`: earthy, dusty, never bright).
+/// Los colores apagados con los que se pinta un frente de pueblo de 1919
+/// (`odd/setting-1919.md`: terrosos, polvorientos, nunca brillantes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Paint {
     LimeWhite,
@@ -167,7 +174,7 @@ pub enum Paint {
 }
 
 impl Paint {
-    /// Every paint, in order.
+    /// Todas las pinturas, en orden.
     pub const ALL: [Paint; 5] = [
         Paint::LimeWhite,
         Paint::Ochre,
@@ -176,7 +183,7 @@ impl Paint {
         Paint::Terracotta,
     ];
 
-    /// Its mean colour on the wall (sRGB).
+    /// Su color medio en la pared (sRGB).
     pub fn albedo(self) -> [f32; 3] {
         match self {
             Self::LimeWhite => [0.86, 0.84, 0.79],
@@ -188,17 +195,17 @@ impl Paint {
     }
 }
 
-/// How a surface's material colour is chosen.
+/// Cómo se elige el color del material de una superficie.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Look {
-    /// Multiplies the scan: sRGB, at most white.
+    /// Multiplica el escaneo: sRGB, como mucho blanco.
     Tint([f32; 3]),
-    /// Lifts the scan, whose mean albedo is `scan` (linear, measured
-    /// from its `color.jpg`), so that its mean becomes `target` (sRGB).
+    /// Eleva el escaneo, cuyo albedo medio es `scan` (lineal, medido sobre su
+    /// `color.jpg`), para que su media pase a ser `target` (sRGB).
     Lifted { scan: [f32; 3], target: [f32; 3] },
 }
 
-/// Mean linear albedo of each new scan's `color.jpg`, measured with
+/// El albedo lineal medio del `color.jpg` de cada escaneo nuevo, medido con
 /// `magick color.jpg -colorspace RGB -format '%[fx:mean.r] %[fx:mean.g] %[fx:mean.b]' info:`.
 const PAINTED_PLASTER_SCAN: [f32; 3] = [0.407, 0.366, 0.351];
 const WASHED_BRICK_SCAN: [f32; 3] = [0.385, 0.326, 0.269];
@@ -208,17 +215,18 @@ const PAVING_SCAN: [f32; 3] = [0.115, 0.081, 0.058];
 const DIRT_PATH_SCAN: [f32; 3] = [0.126, 0.086, 0.049];
 const GRAVEL_SCAN: [f32; 3] = [0.193, 0.099, 0.051];
 
-/// The most a [`Look::Lifted`] material may multiply its scan by, in any
-/// channel. The shipped lifts stay under it and push
-/// no texel of their scans past white (a test reads the scans), so the
-/// bound only holds back a darker scan added later: past it, the rest of
-/// the lift is folded into the target, which comes out a darker shade of
-/// itself instead of the scan's bright texels burning out.
+/// Lo máximo que un material [`Look::Lifted`] puede multiplicar su escaneo, en
+/// cualquier canal. Las elevaciones incluidas quedan por debajo y no llevan
+/// ningún texel de sus escaneos más allá del blanco (un test lee los escaneos),
+/// así que el límite solo frena un escaneo más oscuro que se agregue más
+/// adelante: pasado el límite, el resto de la elevación se incorpora al
+/// objetivo, que queda como un tono más oscuro de sí mismo en lugar de quemar
+/// los texels brillantes del escaneo.
 pub const MAX_LIFT: f32 = 2.5;
 
-/// The linear gain per channel that lifts a scan of mean linear albedo
-/// `scan` to the sRGB `target`, scaled down as one, hue kept, so that no
-/// channel passes [`MAX_LIFT`].
+/// La ganancia lineal por canal que eleva un escaneo de albedo lineal medio
+/// `scan` hasta el `target` sRGB, reducida en bloque, conservando el tono, para
+/// que ningún canal supere [`MAX_LIFT`].
 pub fn lift(scan: [f32; 3], target: [f32; 3]) -> [f32; 3] {
     let t = Color::srgb(target[0], target[1], target[2]).to_linear();
     let gain = [t.red / scan[0], t.green / scan[1], t.blue / scan[2]];
@@ -228,7 +236,7 @@ pub fn lift(scan: [f32; 3], target: [f32; 3]) -> [f32; 3] {
 }
 
 impl Surface {
-    /// Every surface, in order.
+    /// Todas las superficies, en orden.
     pub const ALL: [Surface; 36] = [
         Surface::Adobe,
         Surface::Whitewash,
@@ -268,7 +276,7 @@ impl Surface {
         Surface::Livery(Livery::Oxide),
     ];
 
-    /// The texture set it wears, if any.
+    /// El conjunto de texturas que lleva, si tiene uno.
     pub fn set(self) -> Option<&'static str> {
         Some(match self {
             Self::Adobe => "clay_plaster",
@@ -297,68 +305,75 @@ impl Surface {
         })
     }
 
-    /// Meters per texture repeat along `u`: the world width one texture
-    /// covers.
+    /// Metros por repetición de la textura a lo largo de `u`: el ancho del
+    /// mundo que cubre una textura.
     pub fn tile(self) -> f32 {
         self.tiles().x
     }
 
-    /// Meters per texture repeat along `u` and `v`. Only the beige band's
-    /// 1024x256 strip covers four times its height in width.
+    /// Metros por repetición de la textura a lo largo de `u` y `v`. Solo la
+    /// tira de 1024x256 de la franja beige cubre de ancho cuatro veces su
+    /// altura.
     pub fn tiles(self) -> Vec2 {
         let tile = match self {
             Self::Brick | Self::Planks | Self::Thatch | Self::WashedBrick => 2.0,
             Self::OldIron | Self::Galvanised | Self::Paving => 2.0,
-            // Its bricks are bigger in the scan: courses of about 7 cm.
+            // Sus ladrillos son más grandes en el escaneo: hiladas de unos
+            // 7 cm.
             Self::PatchedBrick => 1.4,
             Self::Adobe | Self::Whitewash | Self::Lime | Self::Stucco | Self::Mud => 2.5,
             Self::Painted(_) => 2.5,
             Self::Band => return Vec2::new(4.0, 1.0),
             Self::Yard => 3.0,
             Self::Earth => 2.0,
-            // A gravel tile covers about 2 m; the scan's timber about
-            // 0.5 m, a sleeper's width twice over; its steel about 2.2 m.
+            // Un tile de grava cubre unos 2 m; la madera del escaneo, unos
+            // 0.5 m, dos veces el ancho de un durmiente; su acero, unos 2.2 m.
             Self::Ballast => 2.0,
             Self::Sleeper => 0.5,
             Self::RailSteel | Self::RailHead => 2.2,
             Self::Livery(Livery::Black | Livery::BufferRed) => 2.2,
             Self::Livery(Livery::Tread) => 0.5,
             Self::Livery(_) => 2.0,
-            // A plaque is under a metre wide: the scan repeats about twice over it.
+            // Una placa mide menos de un metro de ancho: el escaneo se repite
+            // unas dos veces sobre ella.
             Self::Bronze => 0.5,
             Self::Recess | Self::Steel | Self::Sheet | Self::Water => 1.0,
         };
         Vec2::splat(tile)
     }
 
-    /// The colour its material gives the scan.
+    /// El color que su material le da al escaneo.
     pub fn look(self) -> Look {
         let lifted = |scan, target| Look::Lifted { scan, target };
         match self {
-            // A touch of the 1919 dust over the clean scans.
+            // Un toque del polvo de 1919 sobre los escaneos limpios.
             Self::Whitewash => Look::Tint([0.97, 0.95, 0.90]),
             Self::Galvanised => Look::Tint([0.92, 0.93, 0.94]),
             Self::Lime => Look::Tint([0.96, 0.84, 0.64]),
             Self::Stucco => Look::Tint([0.70, 0.68, 0.64]),
-            // Dusted a little darker than the clean scan.
+            // Empolvado un poco más oscuro que el escaneo limpio.
             Self::Bronze => Look::Tint([0.88, 0.85, 0.80]),
             Self::Painted(paint) => lifted(PAINTED_PLASTER_SCAN, paint.albedo()),
             Self::WashedBrick => lifted(WASHED_BRICK_SCAN, [0.80, 0.78, 0.73]),
-            // Dusted: a little paler and browner than the clean scan.
+            // Empolvado: un poco más pálido y más marrón que el escaneo limpio.
             Self::PatchedBrick => lifted(PATCHED_BRICK_SCAN, [0.58, 0.45, 0.35]),
             Self::Band => lifted(BAND_SCAN, [0.64, 0.58, 0.50]),
             Self::Paving => lifted(PAVING_SCAN, [0.48, 0.36, 0.30]),
-            // Trodden a little paler and dustier than a yard.
+            // Pisoteado un poco más pálido y polvoriento que un patio.
             Self::Earth => lifted(DIRT_PATH_SCAN, [0.50, 0.43, 0.33]),
-            // The scan's brown packed earth, greyed to a dusty gravel.
+            // La tierra compactada marrón del escaneo, agrisada hasta una grava
+            // polvorienta.
             Self::Ballast => lifted(GRAVEL_SCAN, [0.48, 0.43, 0.37]),
-            // Creosote-dark and weathered, darker than the grey scan.
+            // Oscuro como la creosota y curtido, más oscuro que el escaneo
+            // gris.
             Self::Sleeper => Look::Tint([0.62, 0.52, 0.44]),
-            // The scans' rust is saturated: a little cooled toward steel.
+            // El óxido de los escaneos está saturado: un poco enfriado hacia el
+            // acero.
             Self::RailSteel | Self::RailHead => Look::Tint([0.85, 0.92, 1.0]),
-            // The rust scan is orange and the planks grey: these tints bring
-            // a mean texel to a worn black, a dark red, a maroon, a
-            // varnished brown and an oxide red, the grain and stains kept.
+            // El escaneo de óxido es naranja y las tablas, grises: estos tintes
+            // llevan un texel medio a un negro gastado, un rojo oscuro, un
+            // granate, un marrón barnizado y un rojo óxido, conservando la veta
+            // y las manchas.
             Self::Livery(Livery::Tread) => Look::Tint([1.0, 1.0, 1.0]),
             Self::Livery(Livery::Black) => Look::Tint([0.43, 0.71, 1.0]),
             Self::Livery(Livery::BufferRed) => Look::Tint([1.0, 0.37, 0.54]),
@@ -369,14 +384,14 @@ impl Surface {
         }
     }
 
-    /// Its plain colour (sRGB): the whole look without textures, and the
-    /// tint over them.
+    /// Su color liso (sRGB): todo el aspecto sin texturas, y el tinte sobre
+    /// ellas.
     fn color(self, textured: bool) -> Color {
         match (self.look(), textured) {
             (Look::Tint([r, g, b]), true) => return Color::srgb(r, g, b),
             (Look::Lifted { scan, target }, true) => {
-                // Past 1 where the scan is darker than the paint, but never
-                // past MAX_LIFT.
+                // Por encima de 1 donde el escaneo es más oscuro que la
+                // pintura, pero nunca por encima de MAX_LIFT.
                 let [r, g, b] = lift(scan, target);
                 return Color::linear_rgb(r, g, b);
             }
@@ -425,23 +440,24 @@ impl Surface {
         Color::srgb(r, g, b)
     }
 
-    /// Roughness, metallic and reflectance.
+    /// Rugosidad, metalicidad y reflectancia.
     fn pbr(self) -> (f32, f32, f32) {
         match self {
             Self::Galvanised => (1.0, 0.75, 0.5),
             Self::OldIron => (1.0, 0.35, 0.4),
             Self::Sheet => (0.45, 0.8, 0.5),
             Self::Steel => (0.6, 0.6, 0.5),
-            // A real metal; the map's roughness scales the 1.0.
+            // Un metal real; la rugosidad del mapa escala el 1.0.
             Self::Bronze => (1.0, 1.0, 0.5),
-            // Rusted steel; the head's wheels have polished it.
-            // Low reflectance: ballast and timber stay matte against a low sun.
+            // Acero oxidado; las ruedas pulieron el de la cabeza.
+            // Reflectancia baja: el balasto y la madera quedan mate con el sol
+            // bajo.
             Self::Ballast => (1.0, 0.0, 0.1),
             Self::Sleeper => (1.0, 0.0, 0.15),
             Self::RailSteel => (1.0, 0.7, 0.4),
             Self::RailHead => (0.55, 0.9, 0.5),
-            // Painted steel: enamel is glossy over a metal's grain; the
-            // varnish and the oxide paint sit on wood.
+            // Acero pintado: el esmalte es brillante sobre la veta de un metal;
+            // el barniz y la pintura de óxido van sobre madera.
             Self::Livery(Livery::Tread) => (0.8, 0.5, 0.4),
             Self::Livery(Livery::Black) => (0.75, 0.4, 0.5),
             Self::Livery(Livery::BufferRed) => (0.75, 0.3, 0.45),
@@ -454,20 +470,21 @@ impl Surface {
         }
     }
 
-    /// The decals laid over the ground blend into it by vertex alpha.
+    /// Los decals tendidos sobre el suelo se mezclan con él según el alfa por
+    /// vertex.
     fn blended(self) -> bool {
         matches!(self, Self::Mud | Self::Yard)
     }
 }
 
-/// One shared material per [`Surface`].
+/// Un material compartido por [`Surface`].
 #[derive(Resource, Debug, Clone)]
 pub struct FacadeMaterials {
     materials: Vec<(Surface, Handle<StandardMaterial>)>,
 }
 
 impl FacadeMaterials {
-    /// The material of `surface`.
+    /// El material de `surface`.
     pub fn get(&self, surface: Surface) -> Handle<StandardMaterial> {
         self.materials
             .iter()
@@ -476,8 +493,8 @@ impl FacadeMaterials {
             .expect("every surface has a material")
     }
 
-    /// Plain-colour materials for an app with no asset server (headless
-    /// tests): every surface in its untextured colour.
+    /// Materiales de color liso para una app sin servidor de assets (tests
+    /// headless): cada superficie en su color sin textura.
     pub(crate) fn plain(materials: &mut Assets<StandardMaterial>) -> Self {
         let materials = Surface::ALL
             .iter()
@@ -487,14 +504,15 @@ impl FacadeMaterials {
     }
 }
 
-/// Builds the shared materials, starting the texture loads when an asset
-/// server and an asset root are there.
+/// Construye los materiales compartidos, empezando la carga de texturas cuando
+/// hay un servidor de assets y una raíz de assets.
 ///
-/// The maps are UASTC, which Bevy 0.20 can only transcode to a GPU
-/// compressed format (BC, ASTC or ETC2): on an adapter with none of them
-/// its loader panics instead of falling back. So on such an adapter no map
-/// is loaded and every surface draws its plain colour. Without the
-/// [`CompressedImageFormatSupport`] resource (headless apps) the maps load.
+/// Los mapas son UASTC, que Bevy 0.20 solo puede transcodificar a un formato
+/// comprimido de GPU (BC, ASTC o ETC2): en un adaptador sin ninguno de ellos su
+/// cargador hace panic en lugar de usar una alternativa. Así que en ese
+/// adaptador no se carga ningún mapa y cada superficie dibuja su color liso.
+/// Sin el recurso [`CompressedImageFormatSupport`] (apps headless) los mapas se
+/// cargan.
 pub(crate) fn setup_materials(
     mut commands: Commands,
     root: Option<Res<AssetRoot>>,
@@ -532,25 +550,25 @@ pub(crate) fn setup_materials(
     commands.insert_resource(FacadeMaterials { materials: built });
 }
 
-/// The files of a texture set, under `TEXTURE_DIR/<set>/`: colour (sRGB),
-/// normal and ORM (linear).
+/// Los archivos de un conjunto de texturas, bajo `TEXTURE_DIR/<set>/`: color
+/// (sRGB), normal y ORM (lineal).
 pub const MAPS: [(&str, bool); 3] = [("color", true), ("normal_gl", false), ("orm", false)];
 
-/// The path of map `name` of set `set`, under the [`AssetRoot`].
+/// La ruta del mapa `name` del conjunto `set`, bajo el [`AssetRoot`].
 pub fn map_path(set: &str, name: &str) -> String {
     format!("{TEXTURE_DIR}/{set}/{name}.ktx2")
 }
 
-/// A set's loading maps: colour, normal and the packed
-/// occlusion-roughness-metallic map.
+/// Los mapas en carga de un conjunto: color, normal y el mapa empaquetado de
+/// oclusión, rugosidad y metalicidad.
 struct Maps {
     color: Handle<Image>,
     normal: Handle<Image>,
     orm: Handle<Image>,
 }
 
-/// Starts loading texture set `set`, or warns and returns `None` when one
-/// of its files is missing.
+/// Empieza a cargar el conjunto de texturas `set`, o advierte y devuelve `None`
+/// cuando falta uno de sus archivos.
 fn load_set(server: &AssetServer, root: &Path, set: &str) -> Option<Maps> {
     let missing: Vec<String> = MAPS
         .into_iter()
@@ -570,13 +588,13 @@ fn load_set(server: &AssetServer, root: &Path, set: &str) -> Option<Maps> {
     Some(Maps { color, normal, orm })
 }
 
-/// Loads one KTX2 map with the repeating sampler. Its mips are baked in and
-/// it is used as is, so it lives on the GPU only.
+/// Carga un mapa KTX2 con el sampler de repetición. Sus mips vienen horneados y
+/// se usa tal cual, así que vive solo en la GPU.
 pub(crate) fn load_map(server: &AssetServer, path: &str, srgb: bool) -> Handle<Image> {
     load_map_with(server, path, srgb, repeating())
 }
 
-/// Loads one KTX2 map like [`load_map`], with `sampler`.
+/// Carga un mapa KTX2 como [`load_map`], con `sampler`.
 pub(crate) fn load_map_with(
     server: &AssetServer,
     path: &str,
@@ -593,7 +611,7 @@ pub(crate) fn load_map_with(
         .load(path.to_owned())
 }
 
-/// The repeating, anisotropic sampler of tiled surfaces.
+/// El sampler de repetición anisotrópico de las superficies con tiles.
 pub(crate) fn repeating() -> ImageSamplerDescriptor {
     ImageSamplerDescriptor {
         address_mode_u: ImageAddressMode::Repeat,
@@ -606,7 +624,7 @@ pub(crate) fn repeating() -> ImageSamplerDescriptor {
     }
 }
 
-/// The material of `surface`, wearing `maps` when they are loading.
+/// El material de `surface`, con `maps` cuando se están cargando.
 fn material(surface: Surface, maps: Option<Maps>) -> StandardMaterial {
     let (perceptual_roughness, metallic, reflectance) = surface.pbr();
     let mut material = StandardMaterial {
@@ -617,16 +635,17 @@ fn material(surface: Surface, maps: Option<Maps>) -> StandardMaterial {
         ..default()
     };
     if surface.blended() {
-        // Laid over the ground like the road: blended by vertex alpha and
-        // pulled a little toward the camera so it never fights the terrain.
+        // Tendido sobre el suelo como el camino: mezclado según el alfa por
+        // vertex y acercado un poco hacia la cámara para que nunca compita con
+        // el terreno.
         material.alpha_mode = AlphaMode::Blend;
         material.depth_bias = 2.0;
     }
     if let Some(maps) = maps {
         material.base_color_texture = Some(maps.color);
         material.normal_map_texture = Some(maps.normal);
-        // One map for both: Bevy reads occlusion from red, roughness from
-        // green and metallic from blue.
+        // Un mapa para ambos: Bevy lee la oclusión del rojo, la rugosidad del
+        // verde y la metalicidad del azul.
         material.metallic_roughness_texture = Some(maps.orm.clone());
         material.occlusion_texture = Some(maps.orm);
     }
@@ -658,7 +677,7 @@ mod tests {
                 continue;
             };
             lifted += 1;
-            // A mean texel of the scan lands on the target colour.
+            // Un texel medio del escaneo cae en el color objetivo.
             let tint = surface.color(true).to_linear();
             let want = Color::srgb(target[0], target[1], target[2]).to_linear();
             for (t, (s, w)) in [tint.red, tint.green, tint.blue]
@@ -667,12 +686,13 @@ mod tests {
             {
                 assert!((t * s - w).abs() < 1e-3, "{surface:?}: {t} x {s} vs {w}");
             }
-            // Untextured, it is that colour.
+            // Sin textura, es ese color.
             assert_eq!(
                 surface.color(false),
                 Color::srgb(target[0], target[1], target[2])
             );
-            // Muted: dusty, never bright or saturated, never glaring white.
+            // Apagados: polvorientos, nunca brillantes ni saturados, nunca de
+            // un blanco enceguecedor.
             let (max, min) = (
                 target.iter().copied().fold(0.0, f32::max),
                 target.iter().copied().fold(1.0, f32::min),
@@ -700,9 +720,9 @@ mod tests {
                 assert!(g <= MAX_LIFT + 1e-6, "{surface:?}: {g}");
             }
         }
-        // A scan far too dark for its paint: the lift stops at the bound,
-        // the same in every channel's proportion, so the mean texel lands
-        // on a darker shade of the target.
+        // Un escaneo demasiado oscuro para su pintura: la elevación se detiene
+        // en el límite, con la misma proporción en cada canal, así que el texel
+        // medio cae en un tono más oscuro del objetivo.
         let (scan, target) = ([0.05, 0.04, 0.03], [0.80, 0.70, 0.60]);
         let gain = lift(scan, target);
         let steepest = gain.into_iter().fold(0.0, f32::max);
@@ -714,15 +734,15 @@ mod tests {
         for (g, f) in gain.into_iter().zip(full) {
             assert!((g / f - k).abs() < 1e-5, "hue kept: {gain:?} vs {full:?}");
         }
-        // Under the bound, the lift is the whole ratio.
+        // Por debajo del límite, la elevación es la proporción completa.
         assert_eq!(lift([0.4, 0.4, 0.4], [0.5, 0.5, 0.5])[0], {
             let t = Color::srgb(0.5, 0.5, 0.5).to_linear();
             t.red / 0.4
         });
     }
 
-    /// The fraction of `set`'s scan (its `color.jpg`) whose texels any
-    /// channel of `gain` pushes past white.
+    /// La fracción del escaneo de `set` (su `color.jpg`) cuyos texels lleva más
+    /// allá del blanco algún canal de `gain`.
     fn clipped(set: &str, gain: [f32; 3]) -> f32 {
         use bevy::image::{CompressedImageFormats, ImageType};
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
@@ -775,7 +795,7 @@ mod tests {
         ] {
             assert_eq!(surface.set(), Some(set));
             assert_eq!(surface.tiles(), Vec2::splat(tile));
-            // Without an asset server: a plain colour, never white.
+            // Sin un servidor de assets: un color liso, nunca blanco.
             let plain = surface.color(false).to_srgba();
             assert!(
                 plain.red < 0.7 && plain.blue < 0.7,
@@ -784,7 +804,7 @@ mod tests {
             let m = material(surface, None);
             assert!(m.base_color_texture.is_none());
         }
-        // The head is the smoother, more metallic of the rail's two.
+        // La cabeza es la más lisa y más metálica de las dos del riel.
         let (body, head) = (Surface::RailSteel.pbr(), Surface::RailHead.pbr());
         assert!(head.0 < body.0 && head.1 > body.1);
     }
@@ -803,14 +823,15 @@ mod tests {
             assert_eq!(surface.set(), Some(set), "{livery:?}");
             assert_eq!(surface.tiles(), Vec2::splat(tile), "{livery:?}");
             assert!(Surface::ALL.contains(&surface));
-            // A tint only darkens its scan.
+            // Un tinte solo oscurece su escaneo.
             let Look::Tint(tint) = surface.look() else {
                 panic!("{livery:?} is a tint");
             };
             assert!(tint.iter().all(|c| (0.0..=1.0).contains(c)));
         }
-        // What a mean texel comes to (linear): the scans' measured means
-        // times the tint land near the paint's own colour (sRGB).
+        // A qué llega un texel medio (lineal): las medias medidas de los
+        // escaneos por el tinte caen cerca del propio color de la pintura
+        // (sRGB).
         let mean = |scan: [f32; 3], livery: Livery| {
             let Look::Tint(t) = Surface::Livery(livery).look() else {
                 unreachable!()
@@ -833,14 +854,15 @@ mod tests {
         );
         let oxide = mean(planks, Livery::Oxide);
         assert!(oxide.red > 0.35 && oxide.green < 0.3, "{oxide:?}");
-        // Painted wood has no metal; the enamel over steel has some.
+        // La madera pintada no tiene metal; el esmalte sobre acero tiene algo.
         assert_eq!(Surface::Livery(Livery::Maroon).pbr().1, 0.0);
         assert!(Surface::Livery(Livery::Black).pbr().1 > 0.2);
     }
 
     #[test]
     fn the_band_strip_keeps_its_texels_square() {
-        // beige_wall_002 is 1024 x 256: one repeat four times wider than tall.
+        // beige_wall_002 mide 1024 x 256: una repetición cuatro veces más ancha
+        // que alta.
         let band = Surface::Band.tiles();
         assert!((band.x - 4.0 * band.y).abs() < 1e-6, "{band}");
         for surface in Surface::ALL.into_iter().filter(|&s| s != Surface::Band) {

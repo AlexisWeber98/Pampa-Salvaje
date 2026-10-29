@@ -1,29 +1,33 @@
-//! Cattle and corral horses: Quaternius' animated low-poly models (CC0,
-//! from poly.pizza; credited in `assets/models/fauna/quaternius/CREDITS.md`
-//! and the root `CREDITS.md`), trimmed to seven clips by `tools/glbtrim.py`.
+//! Vacunos y caballos de corral: los modelos low-poly animados de Quaternius
+//! (CC0, de poly.pizza; con crédito en
+//! `assets/models/fauna/quaternius/CREDITS.md` y en el `CREDITS.md` de la
+//! raíz), recortados a siete clips por `tools/glbtrim.py`.
 //!
-//! Each [`Species`] loads once at startup ([`LivestockModels`]): its glTF
-//! scene, its clips and one shared [`AnimationGraph`]. A cow, bull or horse
-//! [`Animal`] gets a [`LivestockModel`] child that spawns the shared scene
-//! once it has loaded. The child carries the species' scale (the export is
-//! about 3 units to the meter) and turns the model (facing +Z) to the
-//! animal's heading (+X is its front). When the scene is ready:
+//! Cada [`Species`] se carga una vez al iniciar ([`LivestockModels`]): su
+//! escena glTF, sus clips y un [`AnimationGraph`] compartido. Una vaca, un toro
+//! o un caballo [`Animal`] recibe un hijo [`LivestockModel`] que crea la escena
+//! compartida una vez que terminó de cargar. El hijo lleva la escala de la
+//! especie (la exportación está a unas 3 unidades por metro) y gira el modelo
+//! (que mira hacia +Z) hacia el rumbo del animal (+X es su frente). Cuando la
+//! escena está lista:
 //!
-//! - its meshes get the settlement props' shared range (no new
-//!   `VisibilityRange`);
-//! - its materials are swapped for copies tinted to the animal's coat,
-//!   made once per coat and material and shared by every animal wearing it
-//!   ([`paint`]); the overo cows' patches and the horses' coats are vertex
-//!   colours on one copy of the body mesh per coat, shared the same way;
-//! - its animation player gets the species' graph.
+//! - sus meshes reciben el rango compartido de los accesorios de los
+//!   asentamientos (sin un `VisibilityRange` nuevo);
+//! - sus materiales se cambian por copias teñidas con el pelaje del animal,
+//!   creadas una vez por pelaje y material y compartidas por todos los animales
+//!   que lo llevan ([`paint`]); las manchas de las vacas overas y los pelajes
+//!   de los caballos son colores por vertex en una copia de la mesh del cuerpo
+//!   por pelaje, compartida de la misma forma;
+//! - su reproductor de animación recibe el grafo de la especie.
 //!
-//! Every frame [`clip_for`] picks the clip from the fauna state
-//! ([`AnimalPose`]), walking clips are paced to the ground speed
-//! ([`clip_speed`]) and each animal starts its clips at its own seeded
-//! offset. A player farther than [`FREEZE_FAR`] from the camera, or not in
-//! view, loses its graph: its bones keep their last pose and the animation
-//! systems skip it. The cattle never lie down: the simulation has no lying
-//! state (every lying pose tried read unnaturally on this rig).
+//! En cada frame [`clip_for`] elige el clip a partir del estado de la fauna
+//! ([`AnimalPose`]), los clips de caminata se ajustan a la velocidad sobre el
+//! suelo ([`clip_speed`]) y cada animal empieza sus clips en su propio desfase
+//! con semilla. Un reproductor más lejos que [`FREEZE_FAR`] de la cámara, o
+//! fuera de la vista, pierde su grafo: sus huesos conservan su última pose y
+//! los sistemas de animación lo saltean. Los vacunos nunca se echan: la
+//! simulación no tiene estado de echado (toda pose echada que se probó se veía
+//! poco natural en este rig).
 
 use std::collections::HashMap;
 use std::f32::consts::FRAC_PI_2;
@@ -41,32 +45,36 @@ use super::{Animal, AnimalPose, AnimalSeed, Gait};
 use crate::AssetRoot;
 use crate::gltf::{self, ModelState};
 
-/// Where the animal models live, under the [`AssetRoot`].
+/// Dónde viven los modelos de animales, bajo el [`AssetRoot`].
 pub const LIVESTOCK_DIR: &str = "models/fauna/quaternius";
 
-/// Past this distance from the camera an animal's animation freezes on its
-/// current pose, meters; it plays again once back within [`RESUME_NEAR`].
+/// Más allá de esta distancia de la cámara la animación de un animal se congela
+/// en su pose actual, en metros; vuelve a reproducirse una vez que regresa
+/// dentro de [`RESUME_NEAR`].
 pub const FREEZE_FAR: f32 = 120.0;
-/// Within this distance a frozen animal plays again, meters: a little
-/// nearer than [`FREEZE_FAR`], so one at the edge does not flicker.
+/// Dentro de esta distancia un animal congelado vuelve a reproducirse, en
+/// metros: un poco más cerca que [`FREEZE_FAR`], para que uno en el borde no
+/// parpadee.
 pub const RESUME_NEAR: f32 = 110.0;
 
-/// Above this ground speed a walking animal gallops, m/s.
+/// Por encima de esta velocidad sobre el suelo un animal que camina galopa, en
+/// m/s.
 pub const GALLOP_SPEED: f32 = 2.5;
 
-/// Fade between two clips.
+/// Fundido entre dos clips.
 const BLEND: Duration = Duration::from_millis(300);
 
-/// The ground speed the horse's `Walk` clip shows at life size, m/s: the
-/// mean backward slide of every hoof while it is within 1.5 cm of its
-/// lowest, over the whole loop (1.17 s). The clip is uneven: the hind hooves
-/// slide back at about 1.4 m/s, the fore at about 0.85.
+/// La velocidad sobre el suelo que muestra el clip `Walk` del caballo a tamaño
+/// real, en m/s: el deslizamiento medio hacia atrás de cada vaso mientras está
+/// a menos de 1.5 cm de su punto más bajo, a lo largo de todo el ciclo
+/// (1.17 s). El clip es irregular: los vasos traseros se deslizan hacia atrás a
+/// unos 1.4 m/s y los delanteros a unos 0.85.
 pub const HORSE_WALK_SPEED: f32 = 1.25;
-/// The same for its `Gallop` clip (0.58 s, about 2.3 m a stride): the hind
-/// hooves at about 4.4 m/s, the fore at 2.6 to 4.1.
+/// Lo mismo para su clip `Gallop` (0.58 s, unos 2.3 m por zancada): los vasos
+/// traseros a unos 4.4 m/s y los delanteros a entre 2.6 y 4.1.
 pub const HORSE_GALLOP_SPEED: f32 = 3.94;
 
-/// The animals drawn from a model.
+/// Los animales que se dibujan a partir de un modelo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Species {
     Cow,
@@ -77,7 +85,7 @@ pub enum Species {
 impl Species {
     pub const ALL: [Self; 3] = [Self::Cow, Self::Bull, Self::Horse];
 
-    /// The species `animal` is drawn as, if it is livestock.
+    /// La especie con la que se dibuja `animal`, si es ganado.
     pub fn of(animal: Animal) -> Option<Self> {
         match animal {
             Animal::Cow(_) => Some(Self::Cow),
@@ -87,7 +95,7 @@ impl Species {
         }
     }
 
-    /// The model file, under the [`AssetRoot`].
+    /// El archivo del modelo, bajo el [`AssetRoot`].
     pub fn path(self) -> String {
         let name = match self {
             Self::Cow => "cow",
@@ -97,8 +105,9 @@ impl Species {
         format!("{LIVESTOCK_DIR}/{name}.glb")
     }
 
-    /// Height at the withers in the model's own units: the top of the back
-    /// above the forelegs, measured on the exported meshes.
+    /// Altura a la cruz en las unidades propias del modelo: la parte superior
+    /// del lomo por encima de las patas delanteras, medida sobre las meshes
+    /// exportadas.
     pub const fn model_withers(self) -> f32 {
         match self {
             Self::Cow | Self::Bull => 4.4,
@@ -106,9 +115,9 @@ impl Species {
         }
     }
 
-    /// Height at the withers in the game, meters: like the procedural
-    /// cattle and criollo horses they replace (a cow 1.4 m, a horse 1.5 m),
-    /// the bull a little bigger.
+    /// Altura a la cruz en el juego, en metros: como los vacunos y los caballos
+    /// criollos procedurales a los que reemplazan (una vaca 1.4 m, un caballo
+    /// 1.5 m), con el toro un poco más grande.
     pub const fn withers(self) -> f32 {
         match self {
             Self::Cow => 1.4,
@@ -117,12 +126,12 @@ impl Species {
         }
     }
 
-    /// Meters per model unit.
+    /// Metros por unidad del modelo.
     pub fn scale(self) -> f32 {
         self.withers() / self.model_withers()
     }
 
-    /// The ground speed its `Walk` clip shows, m/s.
+    /// La velocidad sobre el suelo que muestra su clip `Walk`, en m/s.
     pub fn walk_speed(self) -> f32 {
         match self {
             Self::Cow | Self::Bull => 1.0,
@@ -130,7 +139,7 @@ impl Species {
         }
     }
 
-    /// The ground speed its `Gallop` clip shows, m/s.
+    /// La velocidad sobre el suelo que muestra su clip `Gallop`, en m/s.
     pub fn gallop_speed(self) -> f32 {
         match self {
             Self::Cow | Self::Bull => 6.0,
@@ -143,8 +152,8 @@ impl Species {
     }
 }
 
-/// The clips kept in every model, in the order `tools/glbtrim.py` wrote
-/// them (their glTF animation indices).
+/// Los clips que se conservan en cada modelo, en el orden en que los escribió
+/// `tools/glbtrim.py` (sus índices de animación glTF).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Clip {
     Idle,
@@ -153,12 +162,13 @@ pub enum Clip {
     Eating,
     Walk,
     Gallop,
-    /// The airborne jump (legs tucked, body pitching): only a ridden horse
-    /// in flight plays it, so every other animal keeps it at weight zero.
+    /// El salto en el aire (patas recogidas, cuerpo cabeceando): solo lo
+    /// reproduce un caballo montado en vuelo, así que todos los demás animales
+    /// lo mantienen con peso cero.
     GallopJump,
 }
 
-/// How many clips every model holds ([`Clip::ALL`]'s length).
+/// Cuántos clips contiene cada modelo (la longitud de [`Clip::ALL`]).
 pub const CLIP_COUNT: usize = 7;
 
 impl Clip {
@@ -172,7 +182,7 @@ impl Clip {
         Self::GallopJump,
     ];
 
-    /// The clip's name in the glTF file.
+    /// El nombre del clip en el archivo glTF.
     pub fn name(self) -> &'static str {
         match self {
             Self::Idle => "Idle",
@@ -190,7 +200,7 @@ impl Clip {
     }
 }
 
-/// A seeded mix of `seed` and `salt`, for deterministic variety.
+/// Una mezcla con semilla de `seed` y `salt`, para una variedad determinista.
 pub(crate) fn mix(seed: u32, salt: u32) -> u32 {
     let mut h = seed.wrapping_mul(0x9e37_79b9) ^ salt.wrapping_mul(0x85eb_ca6b);
     h ^= h >> 15;
@@ -198,12 +208,12 @@ pub(crate) fn mix(seed: u32, salt: u32) -> u32 {
     h ^ (h >> 12)
 }
 
-/// Seconds a corral horse keeps one idle before the next.
+/// Segundos que un caballo de corral mantiene una espera antes de la siguiente.
 pub(crate) const HORSE_IDLE: f32 = 14.0;
 
-/// The clip `animal` plays for `pose`. Standing animals pick one of the
-/// idles by their `seed`; corral horses, which never move, change idle
-/// (or crop the ground) every [`HORSE_IDLE`] seconds of `clock`.
+/// El clip que reproduce `animal` para `pose`. Los animales parados eligen una
+/// de las esperas según su `seed`; los caballos de corral, que nunca se mueven,
+/// cambian de espera (o pastan) cada [`HORSE_IDLE`] segundos de `clock`.
 pub fn clip_for(animal: Animal, pose: &AnimalPose, seed: u32, clock: f32) -> Clip {
     let idles = [Clip::Idle, Clip::Idle2, Clip::IdleHeadlow];
     match pose.gait {
@@ -219,8 +229,9 @@ pub fn clip_for(animal: Animal, pose: &AnimalPose, seed: u32, clock: f32) -> Cli
     }
 }
 
-/// Playback speed of `clip` for an animal of `species` moving at
-/// `ground` m/s: the walk and gallop paced to it, the rest as authored.
+/// La velocidad de reproducción de `clip` para un animal de `species` que se
+/// mueve a `ground` m/s: la caminata y el galope ajustados a ella, el resto tal
+/// como se creó.
 pub fn clip_speed(clip: Clip, species: Species, ground: f32) -> f32 {
     match clip {
         Clip::Walk => (ground / species.walk_speed()).clamp(0.4, 2.0),
@@ -229,21 +240,23 @@ pub fn clip_speed(clip: Clip, species: Species, ground: f32) -> f32 {
     }
 }
 
-/// The seeded share of a clip already played when an animal starts it,
-/// in `[0, 1)`: neighbours never move in step.
+/// La fracción con semilla de un clip ya reproducida cuando un animal lo
+/// empieza, en `[0, 1)`: los vecinos nunca se mueven al mismo paso.
 pub fn start_offset(seed: u32, clip: Clip) -> f32 {
     (mix(seed, 7 + clip.index() as u32) % 1000) as f32 / 1000.0
 }
 
-/// Whether an animal's animation is frozen: out of view, or past
-/// [`FREEZE_FAR`] (back within [`RESUME_NEAR`] once `was` frozen).
+/// Si la animación de un animal está congelada: fuera de la vista, o más allá
+/// de [`FREEZE_FAR`] (de vuelta dentro de [`RESUME_NEAR`] una vez que `was`
+/// congelado).
 pub fn frozen(was: bool, distance: f32, in_view: bool) -> bool {
     !in_view || distance > if was { RESUME_NEAR } else { FREEZE_FAR }
 }
 
-/// Where the world is seen from: the active 3D camera drawn last (the
-/// highest order), the lowest entity among equals; `None` without one.
-/// The same camera whatever order a query lists them in.
+/// Desde dónde se ve el mundo: la cámara 3D activa dibujada en último lugar (el
+/// orden más alto), la entidad más baja entre iguales; `None` si no hay
+/// ninguna. La misma cámara sea cual sea el orden en que las liste una
+/// consulta.
 pub fn view_eye<'a>(
     cameras: impl IntoIterator<Item = (Entity, &'a GlobalTransform, &'a Camera)>,
 ) -> Option<Vec3> {
@@ -254,52 +267,53 @@ pub fn view_eye<'a>(
         .map(|(_, at, _)| at.translation())
 }
 
-/// Whether a model is in view: any of its meshes (`probes`) is, by
-/// `visible`; a small piece culled (a hat, a button) does not hide the rest.
-/// With no mesh to ask, it is.
+/// Si un modelo está a la vista: alguna de sus meshes (`probes`) lo está, según
+/// `visible`; una pieza pequeña descartada por culling (un sombrero, un botón)
+/// no oculta el resto. Si no hay ninguna mesh a la que preguntar, lo está.
 pub fn any_in_view(probes: &[Entity], visible: impl Fn(Entity) -> bool) -> bool {
     probes.is_empty() || probes.iter().any(|&p| visible(p))
 }
 
-/// The model's transform under its animal: turned from facing +Z to the
-/// `heading` (+X is the body's front) and scaled to life size.
+/// El transform del modelo bajo su animal: girado de mirar hacia +Z al
+/// `heading` (+X es el frente del cuerpo) y escalado a tamaño real.
 pub fn model_transform(species: Species, heading: Heading) -> Transform {
     Transform::from_rotation(Quat::from_rotation_y(heading.radians() + FRAC_PI_2))
         .with_scale(Vec3::splat(species.scale()))
 }
 
-/// A vertex of the exported mesh (Z up, about 1/100 of a model unit) in
-/// the standing animal's body frame, meters: +X its front, +Y up, +Z its
-/// right side.
+/// Un vertex de la mesh exportada (Z hacia arriba, alrededor de 1/100 de una
+/// unidad del modelo) en el marco del cuerpo del animal parado, en metros: +X
+/// su frente, +Y hacia arriba, +Z su lado derecho.
 pub fn body_point(species: Species, raw: Vec3) -> Vec3 {
-    // The mesh node turns -90° about X and scales by 100: Z up to Y up.
+    // El nodo de la mesh gira -90° alrededor de X y escala por 100: de Z hacia
+    // arriba a Y hacia arriba.
     let scene = Vec3::new(raw.x, raw.z, -raw.y) * 100.0;
-    // Then the model turns to face +X.
+    // Después el modelo gira para mirar hacia +X.
     Vec3::new(scene.z, scene.y, -scene.x) * species.scale()
 }
 
-/// How a coat paints one of the model's materials.
+/// Cómo pinta un pelaje uno de los materiales del modelo.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Paint {
-    /// Its own colour, kept.
+    /// Su propio color, sin cambios.
     Keep,
-    /// A flat colour.
+    /// Un color liso.
     Flat(Color),
-    /// White, with the colour in the vertices of the body mesh's copy for
-    /// this coat ([`coat_color_at`]).
+    /// Blanco, con el color en los vertices de la copia de la mesh del cuerpo
+    /// para este pelaje ([`coat_color_at`]).
     Vertex,
-    /// Not drawn (the polled Angus' horns).
+    /// No se dibuja (los cuernos del Angus mocho).
     Hidden,
 }
 
-/// Paint `animal`'s coat gives the material named `material`.
+/// La pintura que el pelaje de `animal` le da al material llamado `material`.
 ///
-/// Cattle: `Main` is the hide and `Main_Light` the face and the lower legs.
-/// A Hereford is red with a white face and socks; an Angus all black and
-/// polled; an overo white with black patches, its face and legs black.
-/// Horses: `Main` is the body (vertex colours, from the criollo coats,
-/// [`Coat`](crate::character::Coat)), `Hair` the mane and tail, `Main_Dark` and
-/// `Main_Light` bits of the head.
+/// Vacunos: `Main` es el cuero y `Main_Light` la cara y la parte inferior de
+/// las patas. Un Hereford es colorado con la cara y las medias blancas; un
+/// Angus, todo negro y mocho; un overo, blanco con manchas negras, con la cara
+/// y las patas negras. Caballos: `Main` es el cuerpo (colores por vertex, de
+/// los pelajes criollos, [`Coat`](crate::character::Coat)), `Hair` la crin y la
+/// cola, y `Main_Dark` y `Main_Light` partes de la cabeza.
 pub fn paint(animal: Animal, material: &str) -> Paint {
     let rgb = |c: [u8; 3]| Paint::Flat(Color::srgb_u8(c[0], c[1], c[2]));
     match animal {
@@ -327,17 +341,19 @@ pub fn paint(animal: Animal, material: &str) -> Paint {
     }
 }
 
-/// Whether point `p` of an overo's body (meters, body frame) lies in a
-/// black patch: a few large blotches from crossed waves. An approximation
-/// of the real pattern, cheap enough to bake once per vertex.
+/// Si el punto `p` del cuerpo de un overo (en metros, marco del cuerpo) cae en
+/// una mancha negra: unas pocas manchas grandes a partir de ondas cruzadas. Una
+/// aproximación del patrón real, lo bastante barata para hornearla una vez por
+/// vertex.
 pub fn overo_black(p: Vec3) -> bool {
     let wave = (p.x * 3.1 + 0.7).sin() * (p.y * 2.3 + p.z * 1.9 + 1.1).sin()
         + 0.6 * (p.x * 5.3 - p.z * 3.7 + 2.0).sin() * (p.y * 4.1 + 0.3).cos();
     wave > 0.3
 }
 
-/// The vertex colour of `animal`'s body at `p` (meters, body frame),
-/// facing `normal`, as linear RGBA. Only for [`Paint::Vertex`] materials.
+/// El color por vertex del cuerpo de `animal` en `p` (en metros, marco del
+/// cuerpo), mirando hacia `normal`, como RGBA lineal. Solo para los materiales
+/// [`Paint::Vertex`].
 pub fn coat_color_at(animal: Animal, p: Vec3, normal: Vec3) -> [f32; 4] {
     let srgb = match animal {
         Animal::Horse(coat) => coat.color_at(p, normal),
@@ -349,22 +365,23 @@ pub fn coat_color_at(animal: Animal, p: Vec3, normal: Vec3) -> [f32; 4] {
         .to_f32_array()
 }
 
-/// One loaded species: its scene, clips and shared graph.
+/// Una especie cargada: su escena, sus clips y su grafo compartido.
 #[derive(Debug, Clone)]
 pub struct SpeciesModel {
-    /// The whole file, held so it is loaded once: with only labelled parts
-    /// of it held, a part asked for later loads the file again, and the
-    /// scene spawned from the first load is spawned again.
+    /// El archivo completo, retenido para que se cargue una sola vez: si solo
+    /// se retienen partes etiquetadas de él, una parte pedida más tarde vuelve
+    /// a cargar el archivo, y la escena creada a partir de la primera carga se
+    /// crea otra vez.
     pub file: Handle<bevy::gltf::Gltf>,
     pub scene: Handle<WorldAsset>,
     pub clips: Vec<Handle<AnimationClip>>,
     pub graph: Handle<AnimationGraph>,
-    /// The graph node of each [`Clip`], in [`Clip::ALL`] order.
+    /// El nodo del grafo de cada [`Clip`], en el orden de [`Clip::ALL`].
     pub nodes: Vec<AnimationNodeIndex>,
 }
 
-/// The livestock models found at startup, by [`Species`] (`None` when the
-/// file is missing: that species is not drawn).
+/// Los modelos de ganado encontrados al iniciar, por [`Species`] (`None` cuando
+/// falta el archivo: esa especie no se dibuja).
 #[derive(Resource, Debug, Clone, Default)]
 pub struct LivestockModels(pub [Option<SpeciesModel>; 3]);
 
@@ -374,8 +391,8 @@ impl LivestockModels {
     }
 }
 
-/// The coat copies of the models' materials and body meshes, made once and
-/// shared by every animal of that coat.
+/// Las copias por pelaje de los materiales y las meshes del cuerpo de los
+/// modelos, creadas una vez y compartidas por todos los animales de ese pelaje.
 #[derive(Resource, Debug, Default)]
 pub struct CoatCache {
     materials: HashMap<(AssetId<StandardMaterial>, Animal), Handle<StandardMaterial>>,
@@ -383,36 +400,36 @@ pub struct CoatCache {
 }
 
 impl CoatCache {
-    /// Coat copies made so far: materials, then meshes.
+    /// Las copias por pelaje creadas hasta ahora: materiales, y después meshes.
     pub fn len(&self) -> (usize, usize) {
         (self.materials.len(), self.meshes.len())
     }
 }
 
-/// A livestock model's root, child of its animal.
+/// La raíz de un modelo de ganado, hija de su animal.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct LivestockModel {
     pub species: Species,
 }
 
-/// A model still loading: its scene spawns once ready.
+/// Un modelo que todavía carga: su escena se crea cuando esté listo.
 #[derive(Component, Debug, Clone)]
 pub struct LivestockPending(pub Handle<WorldAsset>);
 
-/// A spawned model's animation state.
+/// El estado de animación de un modelo creado.
 #[derive(Component, Debug, Clone)]
 pub struct LivestockRig {
-    /// The entity with its `AnimationPlayer`.
+    /// La entidad con su `AnimationPlayer`.
     pub player: Entity,
-    /// Its drawn meshes: it is in view while any of them is.
+    /// Sus meshes dibujadas: está a la vista mientras alguna lo esté.
     pub probes: Vec<Entity>,
     pub clip: Option<Clip>,
     pub frozen: bool,
 }
 
-/// Starts loading the three models and builds each one's graph. Without
-/// an asset server, a root or the animation plugin (tests, a bare app)
-/// none loads.
+/// Empieza a cargar los tres modelos y construye el grafo de cada uno. Sin un
+/// servidor de assets, una raíz o el plugin de animación (tests, una app vacía)
+/// no carga ninguno.
 pub(super) fn load_livestock(
     mut commands: Commands,
     server: Option<Res<AssetServer>>,
@@ -447,7 +464,7 @@ pub(super) fn load_livestock(
     commands.insert_resource(models);
 }
 
-/// Hangs a model under every new cow, bull and corral horse.
+/// Cuelga un modelo bajo cada vaca, toro y caballo de corral nuevo.
 pub(super) fn attach_livestock(
     mut commands: Commands,
     models: Option<Res<LivestockModels>>,
@@ -470,7 +487,8 @@ pub(super) fn attach_livestock(
     }
 }
 
-/// Spawns each waiting model's scene once ready; drops a failed one.
+/// Crea la escena de cada modelo en espera cuando está listo; descarta uno que
+/// falló.
 pub(super) fn swap_in_livestock(
     mut commands: Commands,
     server: Option<Res<AssetServer>>,
@@ -493,15 +511,16 @@ pub(super) fn swap_in_livestock(
     }
 }
 
-/// What [`dress_livestock`] tints with.
+/// Con qué tiñe [`dress_livestock`].
 type Stores<'w> = (
     ResMut<'w, CoatCache>,
     ResMut<'w, Assets<StandardMaterial>>,
     ResMut<'w, Assets<Mesh>>,
 );
 
-/// Dresses a model the moment its scene spawns: the shared range on its
-/// meshes, its coat, and the species' graph on its player.
+/// Prepara un modelo en el momento en que se crea su escena: el rango
+/// compartido en sus meshes, su pelaje y el grafo de la especie en su
+/// reproductor.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn dress_livestock(
     ready: On<WorldInstanceReady>,
@@ -545,8 +564,8 @@ pub(super) fn dress_livestock(
     }
 }
 
-/// What [`dress_meshes`] reads of a model's nodes: its mesh, material and
-/// material name, and whether it is the animation player.
+/// Lo que [`dress_meshes`] lee de los nodos de un modelo: su mesh, su material
+/// y el nombre del material, y si es el reproductor de animación.
 pub(crate) type ModelPart = (
     Option<&'static Mesh3d>,
     Option<&'static MeshMaterial3d<StandardMaterial>>,
@@ -554,12 +573,13 @@ pub(crate) type ModelPart = (
     Has<AnimationPlayer>,
 );
 
-/// Dresses the meshes of the model spawned under `root` as `animal` (of
-/// `species`): the props' shared range, the coat's tinted materials and
-/// vertex-coloured body (copies made once per coat, in `cache`), and hidden
-/// parts hidden. Returns the entity with its animation player and the
-/// meshes drawn (its in-view probes). The saddled horses' models are dressed
-/// the same (see [`horse`](crate::character::horse)).
+/// Prepara las meshes del modelo creado bajo `root` como `animal` (de
+/// `species`): el rango compartido de los accesorios, los materiales teñidos
+/// del pelaje y el cuerpo con colores por vertex (copias creadas una vez por
+/// pelaje, en `cache`), y las partes ocultas ocultas. Devuelve la entidad con
+/// su reproductor de animación y las meshes dibujadas (sus sondas de
+/// visibilidad). Los modelos de los caballos ensillados se preparan igual (ver
+/// [`horse`](crate::character::horse)).
 pub(crate) fn dress_meshes(
     commands: &mut Commands,
     (cache, materials, meshes): (
@@ -602,7 +622,7 @@ pub(crate) fn dress_meshes(
                         Paint::Vertex => m.base_color = Color::WHITE,
                         Paint::Keep | Paint::Hidden => {}
                     }
-                    // The export's metallic sheen reads as plastic.
+                    // El brillo metálico de la exportación parece plástico.
                     m.metallic = 0.0;
                     m.perceptual_roughness = 0.9;
                     materials.add(m)
@@ -631,7 +651,7 @@ pub(crate) fn dress_meshes(
     (player, probes)
 }
 
-/// `mesh` with each vertex coloured for `animal`'s coat.
+/// `mesh` con cada vertex coloreado para el pelaje de `animal`.
 fn coat_mesh(mesh: &Mesh, animal: Animal, species: Species) -> Mesh {
     let mut out = mesh.clone();
     let positions = match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
@@ -655,7 +675,7 @@ fn coat_mesh(mesh: &Mesh, animal: Animal, species: Species) -> Mesh {
     out
 }
 
-/// A model as [`drive_livestock`] sees it.
+/// Un modelo tal como lo ve [`drive_livestock`].
 type ModelRig = (
     &'static ChildOf,
     &'static LivestockModel,
@@ -664,9 +684,9 @@ type ModelRig = (
     Option<&'static mut LivestockRig>,
 );
 
-/// Turns each model, and plays its clip: chosen from the fauna state,
-/// paced to its speed, started at its seeded offset, and frozen far off or
-/// out of view.
+/// Gira cada modelo y reproduce su clip: elegido a partir del estado de la
+/// fauna, ajustado a su velocidad, empezado en su desfase con semilla, y
+/// congelado lejos o fuera de la vista.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn drive_livestock(
     mut commands: Commands,
@@ -685,7 +705,7 @@ pub(super) fn drive_livestock(
         let Ok((&animal, pose, seed)) = animals.get(child_of.parent()) else {
             continue;
         };
-        // Only when it moved: a still animal leaves its subtree untouched.
+        // Solo cuando se movió: un animal quieto deja intacto su subárbol.
         transform.set_if_neq(model_transform(model.species, pose.heading));
         let (Some(mut rig), Some(species)) =
             (rig, models.as_ref().and_then(|m| m.get(model.species)))
@@ -693,7 +713,7 @@ pub(super) fn drive_livestock(
             continue;
         };
         let distance = eye.map_or(0.0, |e| e.distance(at.translation()));
-        // Visibility is only known with a camera drawing.
+        // La visibilidad solo se conoce con una cámara dibujando.
         let in_view =
             eye.is_none() || any_in_view(&rig.probes, |p| seen.get(p).is_ok_and(|v| v.get()));
         let freeze = frozen(rig.frozen, distance, in_view);
@@ -765,8 +785,8 @@ mod tests {
         );
         assert_eq!(clip(cow, Gait::Walk, 4.0), Clip::Gallop);
         assert_eq!(clip(cow, Gait::Run, 4.0), Clip::Gallop);
-        // Standing: one of the idles, the same for the same animal, and
-        // not the same for the whole herd.
+        // Parado: una de las esperas, la misma para el mismo animal, y no la
+        // misma para toda la tropa.
         let idles: std::collections::HashSet<Clip> = (0..40)
             .map(|seed| {
                 let c = clip_for(cow, &standing(Gait::Stand, 0.0), seed, 0.0);
@@ -779,7 +799,8 @@ mod tests {
             [Clip::Idle, Clip::Idle2, Clip::IdleHeadlow].into(),
             "{idles:?}"
         );
-        // A corral horse changes what it does now and then, deterministically.
+        // Un caballo de corral cambia lo que hace cada tanto, de forma
+        // determinista.
         let horse = Animal::Horse(Coat::Bayo);
         let seen: std::collections::HashSet<Clip> = (0..40)
             .map(|k| {
@@ -828,13 +849,14 @@ mod tests {
             is_active: false,
             ..default()
         };
-        // The highest active order wins, listed first or last.
+        // Gana el orden activo más alto, listado primero o último.
         let cams = [(a, &far, &other), (b, &near, &main), (c, &off, &inactive)];
         assert_eq!(view_eye(cams), Some(Vec3::X));
         let mut reversed = cams;
         reversed.reverse();
         assert_eq!(view_eye(reversed), Some(Vec3::X));
-        // Equal orders: the lowest entity, in either listing.
+        // Órdenes iguales: la entidad más baja, en cualquiera de los dos
+        // listados.
         let ties = [(b, &far, &other), (a, &near, &other)];
         let lowest = if a < b { Vec3::X } else { Vec3::X * 500.0 };
         assert_eq!(view_eye(ties), Some(lowest));
@@ -848,7 +870,7 @@ mod tests {
     fn a_model_is_in_view_while_any_of_its_meshes_is() {
         let mut world = World::new();
         let [hat, body] = [(); 2].map(|_| world.spawn_empty().id());
-        // The hat culled, the body drawn: in view.
+        // El sombrero descartado por culling, el cuerpo dibujado: a la vista.
         assert!(any_in_view(&[hat, body], |e| e == body));
         assert!(!any_in_view(&[hat, body], |_| false));
         assert!(any_in_view(&[], |_| false), "nothing to ask");
@@ -860,12 +882,13 @@ mod tests {
         assert!(frozen(false, 50.0, false), "culled");
         assert!(!frozen(false, FREEZE_FAR - 1.0, true));
         assert!(frozen(false, FREEZE_FAR + 1.0, true));
-        // Between the two it keeps whatever it was doing.
+        // Entre los dos sigue haciendo lo que estaba haciendo.
         let edge = (FREEZE_FAR + RESUME_NEAR) / 2.0;
         assert!(frozen(true, edge, true));
         assert!(!frozen(false, edge, true));
         assert!(!frozen(true, RESUME_NEAR - 1.0, true));
-        // Every frozen animal is still drawn: the props' range reaches past.
+        // Cada animal congelado se sigue dibujando: el rango de los accesorios
+        // llega más lejos.
         let props = crate::settlement::ranges()[1].clone();
         assert!(props.end_margin.start > FREEZE_FAR);
     }
@@ -875,7 +898,7 @@ mod tests {
         let heading = Heading::from_radians(0.7);
         for species in Species::ALL {
             let t = model_transform(species, heading);
-            // The model's front (+Z) points along the body's heading.
+            // El frente del modelo (+Z) apunta a lo largo del rumbo del cuerpo.
             let front = (t.rotation * Vec3::Z).normalize();
             let along = Quat::from_rotation_y(heading.radians()) * Vec3::X;
             assert!(front.distance(along) < 1e-5, "{species:?}: {front}");
@@ -885,8 +908,9 @@ mod tests {
         assert!(Species::Bull.withers() > Species::Cow.withers());
         assert!((1.3..1.5).contains(&Species::Cow.withers()));
         assert!((1.4..1.6).contains(&Species::Horse.withers()));
-        // A raw vertex up the mesh's Z is up in the body; one down its -Y
-        // (the head's side) is at the body's front.
+        // Un vertex crudo hacia arriba en la Z de la mesh está arriba en el
+        // cuerpo; uno hacia abajo en su -Y (el lado de la cabeza) está en el
+        // frente del cuerpo.
         let up = body_point(Species::Cow, Vec3::new(0.0, 0.0, 0.01));
         let head = body_point(Species::Cow, Vec3::new(0.0, -0.01, 0.0));
         assert!(up.y > 0.0 && up.x.abs() < 1e-6 && head.x > 0.0 && head.y.abs() < 1e-6);
@@ -920,7 +944,7 @@ mod tests {
             tint(Animal::Cow(CowCoat::Hereford), "Eye_Black"),
             Paint::Keep
         );
-        // The bull wears its breed's coat like the cows.
+        // El toro lleva el pelaje de su raza como las vacas.
         for material in ["Main", "Main_Light", "Muzzle", "Horns"] {
             for coat in CowCoat::ALL {
                 assert_eq!(
@@ -929,7 +953,7 @@ mod tests {
                 );
             }
         }
-        // About a third to a half of an overo's barrel is black.
+        // Entre un tercio y la mitad del costillar de un overo es negro.
         let mut black = 0;
         let mut all = 0;
         for i in 0..30 {
@@ -947,8 +971,8 @@ mod tests {
         }
         let share = black as f32 / all as f32;
         assert!((0.2..0.55).contains(&share), "{share}");
-        // Horses take the criollo coats: the body in vertex colours, the
-        // mane its colour.
+        // Los caballos toman los pelajes criollos: el cuerpo en colores por
+        // vertex, la crin en su color.
         for coat in Coat::ALL {
             assert_eq!(tint(Animal::Horse(coat), "Main"), Paint::Vertex);
             let m = coat.mane();
@@ -963,7 +987,7 @@ mod tests {
         }
     }
 
-    /// The three shipped models, loaded headless.
+    /// Los tres modelos incluidos, cargados en modo headless.
     fn loaded() -> (App, Vec<Handle<bevy::gltf::Gltf>>) {
         let mut app = unfinished_app(&root());
         app.init_asset::<bevy::mesh::skinning::SkinnedMeshInverseBindposes>()
@@ -998,7 +1022,8 @@ mod tests {
                 .resource::<Assets<bevy::gltf::Gltf>>()
                 .get(&handle)
                 .unwrap();
-            // The clips the game plays, in the order it plays them by.
+            // Los clips que reproduce el juego, en el orden en que los
+            // reproduce.
             assert_eq!(gltf.animations.len(), Clip::ALL.len(), "{species:?}");
             for clip in Clip::ALL {
                 let named = &gltf.named_animations[clip.name()];
@@ -1023,7 +1048,7 @@ mod tests {
                 _ => 42,
             };
             assert_eq!(skin.joints.len(), joints, "{species:?}");
-            // Its body stands at life size in the body frame.
+            // Su cuerpo está a tamaño real en el marco del cuerpo.
             let mut top = 0.0f32;
             let mut triangles = 0;
             let mut names: Vec<&str> = gltf.named_materials.keys().map(|k| &**k).collect();
@@ -1045,7 +1070,7 @@ mod tests {
                 };
                 for p in p {
                     let b = body_point(species, Vec3::from(*p));
-                    // The back, behind the head and neck.
+                    // El lomo, detrás de la cabeza y el cuello.
                     if b.x < 0.2 {
                         top = top.max(b.y);
                     }
@@ -1064,7 +1089,7 @@ mod tests {
         }
     }
 
-    /// The fauna plugin with the shipped models, headless.
+    /// El plugin de fauna con los modelos incluidos, headless.
     fn fauna_app() -> App {
         let mut app = unfinished_app(&root());
         app.init_asset::<bevy::mesh::skinning::SkinnedMeshInverseBindposes>()
@@ -1076,7 +1101,8 @@ mod tests {
         app
     }
 
-    /// Updates `app` until every model has its rig; panics after 10 s.
+    /// Actualiza `app` hasta que cada modelo tenga su rig; hace panic después
+    /// de 10 s.
     fn until_rigged(app: &mut App, count: usize) {
         for _ in 0..2000 {
             app.update();
@@ -1114,7 +1140,7 @@ mod tests {
         until_rigged(&mut app, herd.len());
         app.update();
         let world = app.world_mut();
-        // Every player has its species' graph and plays its clip.
+        // Cada reproductor tiene el grafo de su especie y reproduce su clip.
         let mut rigs = world.query::<(&LivestockRig, &LivestockModel)>();
         let rigs: Vec<(LivestockRig, Species)> = rigs
             .iter(world)
@@ -1129,8 +1155,9 @@ mod tests {
         }
         let cows = rigs.iter().filter(|r| r.1 == Species::Cow).count();
         assert_eq!(cows, 3);
-        // The meshes share the props' range, and the coat copies are made
-        // once per coat: the two Angus share theirs.
+        // Las meshes comparten el rango de los accesorios, y las copias por
+        // pelaje se crean una vez por pelaje: los dos Angus comparten las
+        // suyas.
         let props = crate::settlement::ranges()[1].clone();
         let mut parts = world.query::<(
             &Mesh3d,
@@ -1166,12 +1193,13 @@ mod tests {
         assert_eq!(angus_main.len(), 1, "one shared Angus hide");
         assert_eq!(horns_hidden, 2, "the Angus are polled");
         let (materials, meshes) = world.resource::<CoatCache>().len();
-        // Two cow coats, an overo bull and a horse, a few materials each;
-        // the overo cow's, the overo bull's and the horse's body meshes.
+        // Dos pelajes de vaca, un toro overo y un caballo, unos pocos
+        // materiales cada uno; las meshes del cuerpo de la vaca overa, del toro
+        // overo y del caballo.
         assert!(materials <= 4 * 8, "{materials}");
         assert_eq!(meshes, 3);
 
-        // A camera far off: every animal freezes, its graph taken away.
+        // Una cámara lejos: cada animal se congela y se le quita su grafo.
         world.spawn((Camera3d::default(), Transform::from_xyz(0.0, 2.0, 500.0)));
         app.update();
         app.update();

@@ -1,25 +1,25 @@
-//! The plaza trees' materials: one bark and one leaf material per
-//! [`Species`].
+//! Los materiales de los árboles de la plaza: un material de corteza y uno de
+//! hojas por [`Species`].
 //!
-//! Each wears a KTX2 set from `assets/textures/trees/` (ambientCG, CC0; see
-//! that folder's CREDITS.md), made by `tools/textures_to_ktx2.sh` like the
-//! building sets: bark tiles with the repeating sampler; the leaf atlas
-//! (`tools/leaf_atlas.py`) carries its opacity in the colour's alpha and is
-//! sampled clamped to its edges. Leaves are alpha-tested
-//! ([`AlphaMode::Mask`]): no sorting, and their cut-outs cast shadows.
-//! The atlas's mips are made so that each level draws the share of texels
-//! over [`LEAF_CUTOFF`] that the full-size atlas draws (`leaf_atlas.py
-//! --mips`): plain mips average a thin leaf with the clear ground round
-//! it, under the cutoff, and distant crowns thinned out. Bevy's
-//! [`AlphaMode::AlphaToCoverage`] would not help: it sharpens alpha round
-//! the same fixed 0.5, and cuts its shadows and prepass at 0.05.
-//! They are drawn from both sides without Bevy's double-sided normal flip,
-//! so a card's back keeps the normal leaning out of the crown that its
-//! front has (see [`super::mesh`]).
+//! Cada uno lleva un conjunto KTX2 de `assets/textures/trees/` (ambientCG, CC0;
+//! ver el CREDITS.md de esa carpeta), hecho por `tools/textures_to_ktx2.sh`
+//! como los conjuntos de los edificios: la corteza se repite con el sampler de
+//! repetición; el atlas de hojas (`tools/leaf_atlas.py`) lleva su opacidad en
+//! el alfa del color y se muestrea limitado a sus bordes. Las hojas usan alpha
+//! test ([`AlphaMode::Mask`]): sin ordenamiento, y sus recortes proyectan
+//! sombras. Los mips del atlas se hacen de modo que cada nivel dibuje la misma
+//! proporción de texels por encima de [`LEAF_CUTOFF`] que dibuja el atlas a
+//! tamaño completo (`leaf_atlas.py --mips`): los mips comunes promedian una
+//! hoja delgada con el fondo transparente que la rodea, por debajo del umbral,
+//! y las copas lejanas se ralean. El [`AlphaMode::AlphaToCoverage`] de Bevy no
+//! ayudaría: afila el alfa alrededor del mismo 0.5 fijo, y corta sus sombras y
+//! su prepass en 0.05. Se dibujan por ambos lados sin la inversión de normales
+//! de doble cara de Bevy, así que el dorso de una tarjeta conserva la normal
+//! inclinada hacia afuera de la copa que tiene su frente (ver [`super::mesh`]).
 //!
-//! Without an asset server, on a GPU without compressed formats, or when a
-//! set's files are missing, the bark and the cards draw a plain colour of
-//! the same look.
+//! Sin un servidor de assets, en una GPU sin formatos comprimidos, o cuando
+//! faltan los archivos de un conjunto, la corteza y las tarjetas se dibujan con
+//! un color liso del mismo aspecto.
 
 use std::path::Path;
 
@@ -30,88 +30,96 @@ use super::Species;
 use crate::AssetRoot;
 use crate::facade::materials::{MAPS, load_map_with, repeating};
 
-/// Where the tree texture sets live, under the [`AssetRoot`].
+/// Dónde viven los conjuntos de texturas de árboles, bajo el [`AssetRoot`].
 pub const TREE_TEXTURE_DIR: &str = "textures/trees";
 
-/// The alpha a leaf texel needs to be drawn: `leaf_atlas.py`'s `CUTOFF`
-/// (128 of 255) keeps the atlas mips' coverage for it.
+/// El alfa que necesita un texel de hoja para dibujarse: el `CUTOFF` de
+/// `leaf_atlas.py` (128 de 255) conserva para él la cobertura de los mips del
+/// atlas.
 pub const LEAF_CUTOFF: f32 = 0.5;
 
-/// The path of map `name` of tree set `set`, under the [`AssetRoot`].
+/// La ruta del mapa `name` del conjunto de árbol `set`, bajo el [`AssetRoot`].
 pub fn tree_map_path(set: &str, name: &str) -> String {
     format!("{TREE_TEXTURE_DIR}/{set}/{name}.ktx2")
 }
 
 impl Species {
-    /// Its bark set, by name under [`TREE_TEXTURE_DIR`]. A species with
-    /// its own set only needs the set's KTX2 files added there and its one
-    /// line here changed. Every species wears a set of its own, so the
-    /// tints only shade the real texture. The Poly Haven sets
-    /// (`bark_willow`, `bark_platanus`, `bark_bluegum`) are lower-case; the
-    /// ambientCG ones are `BarkNNN`.
+    /// Su conjunto de corteza, por nombre bajo [`TREE_TEXTURE_DIR`]. Para una
+    /// especie con su propio conjunto solo hace falta agregar ahí los archivos
+    /// KTX2 del conjunto y cambiar aquí su única línea. Cada especie lleva un
+    /// conjunto propio, así que los tintes solo matizan la textura real. Los
+    /// conjuntos de Poly Haven (`bark_willow`, `bark_platanus`, `bark_bluegum`)
+    /// van en minúsculas; los de ambientCG son `BarkNNN`.
     pub fn bark_set(self) -> &'static str {
         match self {
             Self::Paraiso => "Bark014",
             Self::Olmo => "Bark001",
-            // Mottled smooth grey-beige bark, as photographed.
+            // Corteza lisa gris beige moteada, tal como se fotografió.
             Self::Eucalipto => "bark_bluegum",
             Self::Aromo => "Bark002",
-            // Dark, deeply furrowed willow bark, shaded grey-brown.
+            // Corteza de sauce oscura y muy surcada, matizada en gris pardo.
             Self::Calden => "bark_willow",
-            // Peeling plane-tree strips, shaded greenish ochre.
+            // Tiras de plátano que se descascaran, matizadas en ocre verdoso.
             Self::Chanar | Self::Fachinal => "bark_platanus",
-            // Thin, dark, rough upright stems.
+            // Tallos verticales delgados, oscuros y ásperos.
             Self::Jarilla => "bark_willow_02",
-            // Grey-brown thorny twigs.
+            // Ramitas espinosas gris pardo.
             Self::Piquillin => "Bark009",
-            // Grey furrowed bark, the olmo's set shaded cooler grey.
+            // Corteza gris surcada, el conjunto del olmo matizado en un gris
+            // más frío.
             Self::Alamo => "Bark001",
-            // Fibrous, fissured reddish bark.
+            // Corteza rojiza fibrosa y agrietada.
             Self::Algarrobo => "chinese_cedar_bark",
-            // Light grey-brown bark that splits with age.
+            // Corteza gris pardo clara que se parte con la edad.
             Self::Tala => "chinese_hackberry_bark",
-            // Dark brown bark with deep oblique cracks.
+            // Corteza marrón oscura con grietas oblicuas profundas.
             Self::Espinillo => "bark_brown_01",
-            // Light, smooth, spongy bark.
+            // Corteza clara, lisa y esponjosa.
             Self::Ombu => "Bark005",
         }
     }
 
-    /// Its leaf atlas, composed by `tools/leaf_atlas.py`.
+    /// Su atlas de hojas, compuesto por `tools/leaf_atlas.py`.
     pub fn leaf_set(self) -> &'static str {
         match self {
             Self::Paraiso => "paraiso_leaves",
             Self::Olmo => "olmo_leaves",
             Self::Eucalipto => "eucalipto_leaves",
             Self::Aromo => "aromo_leaves",
-            // Fine feathery sprays, the aromo's atlas, in a dull grey-green.
+            // Ramilletes finos y plumosos, el atlas del aromo, en un verde
+            // grisáceo apagado.
             Self::Calden => "aromo_leaves",
-            // Small simple leaves along a twig, the olmo's atlas, yellower.
+            // Hojas simples pequeñas a lo largo de una ramita, el atlas del
+            // olmo, más amarillas.
             Self::Chanar | Self::Fachinal => "olmo_leaves",
-            // Tiny dark leaves: the olmo's small simple ones, deep green.
+            // Hojas diminutas y oscuras: las simples y pequeñas del olmo, verde
+            // profundo.
             Self::Piquillin => "olmo_leaves",
-            // Narrow resinous leaflets, yellow-green.
+            // Folíolos angostos y resinosos, verde amarillento.
             Self::Jarilla => "eucalipto_leaves",
-            // Small simple leaves along a twig, the olmo's atlas, fresh green.
+            // Hojas simples pequeñas a lo largo de una ramita, el atlas del
+            // olmo, verde fresco.
             Self::Alamo => "olmo_leaves",
-            // Fine pendulous bipinnate leaves: the aromo's feathery atlas,
-            // a fresh green.
+            // Hojas bipinnadas finas y colgantes: el atlas plumoso del aromo,
+            // en un verde fresco.
             Self::Algarrobo => "aromo_leaves",
-            // Small simple serrated leaves: the olmo's atlas, mid green.
+            // Hojas simples pequeñas y aserradas: el atlas del olmo, verde
+            // medio.
             Self::Tala => "olmo_leaves",
-            // Tiny bipinnate leaves: the aromo's atlas, a dull dark green.
+            // Hojas bipinnadas diminutas: el atlas del aromo, en un verde
+            // oscuro apagado.
             Self::Espinillo => "aromo_leaves",
-            // Large glossy simple leaves: the olmo's atlas drawn on big
-            // cards, deep green.
+            // Hojas simples grandes y brillantes: el atlas del olmo dibujado en
+            // tarjetas grandes, verde profundo.
             Self::Ombu => "olmo_leaves",
         }
     }
 
-    /// The leaves' tint `tint` over the atlas (sRGB). Tint 0 is the
-    /// species' own, the paraíso's yellow scan deepened, the eucalipto
-    /// greyed, the aromo silvered; the field species have two more
-    /// ([`Species::tints`]), a fresher and a bluer-grey (the chañar's a
-    /// yellower one).
+    /// El tinte `tint` de las hojas sobre el atlas (sRGB). El tinte 0 es el
+    /// propio de la especie: el escaneo amarillo del paraíso oscurecido, el
+    /// eucalipto agrisado, el aromo plateado; las especies de campo tienen dos
+    /// más ([`Species::tints`]), uno más fresco y uno gris más azulado (el del
+    /// chañar, uno más amarillo).
     fn leaf_tint(self, tint: usize) -> Color {
         match (self, tint) {
             (Self::Calden, 1) => Color::srgb(0.76, 0.82, 0.58),
@@ -154,7 +162,7 @@ impl Species {
         }
     }
 
-    /// The leaves' plain colour, without their atlas.
+    /// El color liso de las hojas, sin su atlas.
     fn leaf_plain(self) -> Color {
         match self {
             Self::Paraiso => Color::srgb(0.32, 0.40, 0.18),
@@ -173,7 +181,7 @@ impl Species {
         }
     }
 
-    /// The bark's plain colour, without its maps.
+    /// El color liso de la corteza, sin sus mapas.
     fn bark_plain(self) -> Color {
         match self {
             Self::Paraiso => Color::srgb(0.30, 0.25, 0.20),
@@ -192,10 +200,10 @@ impl Species {
         }
     }
 
-    /// The bark's tint `tint` over its maps (sRGB): the caldén's a dull
-    /// grey-brown over its already dark set (its other two darker and
-    /// paler), the chañar's strips turned greenish ochre (its other two
-    /// greyer and paler).
+    /// El tinte `tint` de la corteza sobre sus mapas (sRGB): el del caldén, un
+    /// gris pardo apagado sobre su conjunto ya oscuro (sus otros dos, más
+    /// oscuro y más pálido), y las tiras del chañar vueltas ocre verdoso (sus
+    /// otros dos, más gris y más pálido).
     pub(crate) fn bark_tint(self, tint: usize) -> Color {
         match (self, tint) {
             (Self::Calden, 1) => Color::srgb(0.7, 0.68, 0.66),
@@ -207,17 +215,19 @@ impl Species {
             (Self::Fachinal, 1) => Color::srgb(0.78, 0.82, 0.6),
             (Self::Fachinal, 2) => Color::srgb(1.0, 0.98, 0.78),
             (Self::Fachinal, _) => Color::srgb(0.9, 0.95, 0.68),
-            // The shrubs' stems show little: a grey-brown, darker, paler.
+            // Los tallos de los arbustos se ven poco: un gris pardo, más
+            // oscuro, más pálido.
             (Self::Piquillin, 1) => Color::srgb(0.7, 0.66, 0.6),
             (Self::Piquillin, 2) => Color::srgb(1.0, 0.95, 0.88),
             (Self::Piquillin, _) => Color::srgb(0.85, 0.8, 0.74),
             (Self::Jarilla, 1) => Color::srgb(0.75, 0.7, 0.62),
             (Self::Jarilla, 2) => Color::srgb(1.0, 0.95, 0.85),
             (Self::Jarilla, _) => Color::srgb(0.88, 0.84, 0.76),
-            // A cooler grey than the olmo's warm brown, same texture.
+            // Un gris más frío que el marrón cálido del olmo, con la misma
+            // textura.
             (Self::Alamo, _) => Color::srgb(0.78, 0.8, 0.82),
-            // The new field trees' sets are shaded a little, a darker and a
-            // paler tint beside the first.
+            // Los conjuntos de los nuevos árboles de campo se matizan un poco,
+            // con un tinte más oscuro y uno más pálido junto al primero.
             (Self::Algarrobo, 1) => Color::srgb(0.78, 0.7, 0.62),
             (Self::Algarrobo, 2) => Color::srgb(1.0, 0.92, 0.84),
             (Self::Algarrobo, _) => Color::srgb(0.9, 0.82, 0.74),
@@ -235,7 +245,7 @@ impl Species {
     }
 }
 
-/// A set's loading maps: colour, normal and ORM.
+/// Los mapas en carga de un conjunto: color, normal y ORM.
 #[derive(Clone)]
 pub(crate) struct Maps {
     pub color: Handle<Image>,
@@ -243,8 +253,8 @@ pub(crate) struct Maps {
     pub orm: Handle<Image>,
 }
 
-/// The clamped sampler of the leaf atlases: a card's edge never wraps
-/// round to the far side of the atlas.
+/// El sampler limitado de los atlas de hojas: el borde de una tarjeta nunca da
+/// la vuelta hasta el lado opuesto del atlas.
 pub(crate) fn clamped() -> ImageSamplerDescriptor {
     ImageSamplerDescriptor {
         address_mode_u: ImageAddressMode::ClampToEdge,
@@ -253,8 +263,8 @@ pub(crate) fn clamped() -> ImageSamplerDescriptor {
     }
 }
 
-/// Starts loading tree set `set` with `sampler`, or warns and returns
-/// `None` when one of its files is missing.
+/// Empieza a cargar el conjunto de árbol `set` con `sampler`, o advierte y
+/// devuelve `None` cuando falta uno de sus archivos.
 fn load_set(
     server: &AssetServer,
     root: &Path,
@@ -280,15 +290,16 @@ fn load_set(
     Some(Maps { color, normal, orm })
 }
 
-/// A species' bark and leaf materials, a tint each ([`Species::tints`]).
+/// Los materiales de corteza y de hojas de una especie, un tinte cada uno
+/// ([`Species::tints`]).
 pub(crate) struct Paint {
     pub bark: Vec<Handle<StandardMaterial>>,
     pub leaves: Vec<Handle<StandardMaterial>>,
 }
 
-/// The bark and leaf materials of every species, in [`Species::EVERY`]
-/// order, loading their maps when an asset server, an asset root and a
-/// compressed texture format are there.
+/// Los materiales de corteza y de hojas de todas las especies, en el orden de
+/// [`Species::EVERY`], cargando sus mapas cuando hay un servidor de assets, una
+/// raíz de assets y un formato de textura comprimido.
 pub(crate) fn tree_materials(
     root: Option<&AssetRoot>,
     server: Option<&AssetServer>,
@@ -319,7 +330,8 @@ pub(crate) fn tree_materials(
         .collect()
 }
 
-/// Wears `maps` on `material`, occlusion and roughness from the one ORM map.
+/// Pone `maps` sobre `material`, con la oclusión y la rugosidad del único mapa
+/// ORM.
 fn wear(material: &mut StandardMaterial, maps: Maps) {
     material.base_color_texture = Some(maps.color);
     material.normal_map_texture = Some(maps.normal);
@@ -327,7 +339,7 @@ fn wear(material: &mut StandardMaterial, maps: Maps) {
     material.occlusion_texture = Some(maps.orm);
 }
 
-/// The bark of `species`, in tint `tint`.
+/// La corteza de `species`, en el tinte `tint`.
 pub(crate) fn bark_material(species: Species, tint: usize, maps: Option<Maps>) -> StandardMaterial {
     let mut material = StandardMaterial {
         base_color: if maps.is_some() {
@@ -346,8 +358,8 @@ pub(crate) fn bark_material(species: Species, tint: usize, maps: Option<Maps>) -
     material
 }
 
-/// The leaf cards of `species` in tint `tint`: alpha-tested, drawn from
-/// both sides.
+/// Las tarjetas de hojas de `species` en el tinte `tint`: con alpha test,
+/// dibujadas por ambos lados.
 pub(crate) fn leaf_material(species: Species, tint: usize, maps: Option<Maps>) -> StandardMaterial {
     let mut material = StandardMaterial {
         base_color: if maps.is_some() {
@@ -360,8 +372,8 @@ pub(crate) fn leaf_material(species: Species, tint: usize, maps: Option<Maps>) -
         reflectance: 0.35,
         alpha_mode: AlphaMode::Mask(LEAF_CUTOFF),
         cull_mode: None,
-        // Not `double_sided`: that would flip the back's normals into the
-        // crown, darkening every card seen from behind.
+        // Sin `double_sided`: eso invertiría las normales del dorso hacia la
+        // copa, oscureciendo cada tarjeta vista desde atrás.
         double_sided: false,
         ..default()
     };
@@ -419,9 +431,9 @@ mod tests {
     #[test]
     fn the_calden_wears_dark_furrowed_bark_and_the_chanar_greenish_ochre_strips() {
         let (calden, chanar) = (Species::Calden, Species::Chanar);
-        // Each has a set of its own: the caldén's is the dark willow bark,
-        // shaded grey-brown; the chañar's the peeling plane bark, tinted
-        // green-ochre.
+        // Cada una tiene un conjunto propio: el del caldén es la corteza oscura
+        // de sauce, matizada en gris pardo; el del chañar, la corteza de
+        // plátano que se descascara, teñida de ocre verdoso.
         assert_eq!(calden.bark_set(), "bark_willow");
         assert_eq!(chanar.bark_set(), "bark_platanus");
         let c = calden.bark_tint(0).to_srgba();
@@ -429,13 +441,14 @@ mod tests {
         assert!(c.red.max(c.green).max(c.blue) < 0.9, "{c:?}");
         assert!(c.red - c.blue < 0.1, "dull, not coloured: {c:?}");
         assert!(ch.green > ch.blue + 0.2 && ch.red > ch.blue + 0.2, "{ch:?}");
-        // The other species' bark is left as photographed.
+        // La corteza de las demás especies queda tal como se fotografió.
         assert_eq!(Species::Olmo.bark_tint(0), Color::WHITE);
-        // The textured bark carries the tint; plain bark its own colour.
+        // La corteza texturizada lleva el tinte; la corteza lisa, su propio
+        // color.
         let textured = bark_material(chanar, 0, Some(maps()));
         assert_eq!(textured.base_color, chanar.bark_tint(0));
-        // Fine, dull leaves: the caldén's grey-green sits darker than the
-        // aromo's silver.
+        // Hojas finas y apagadas: el verde grisáceo del caldén queda más oscuro
+        // que el plateado del aromo.
         let (cl, al) = (
             calden.leaf_tint(0).to_srgba(),
             Species::Aromo.leaf_tint(0).to_srgba(),
@@ -445,8 +458,8 @@ mod tests {
 
     #[test]
     fn the_atlas_mips_keep_coverage_for_this_cutoff() {
-        // The lowest byte alpha drawn is the one `leaf_atlas.py` keeps
-        // each mip's share of texels over.
+        // El alfa de byte más bajo que se dibuja es aquel por encima del cual
+        // `leaf_atlas.py` conserva la proporción de texels de cada mip.
         let tool = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/leaf_atlas.py");
         let text = std::fs::read_to_string(tool).unwrap();
         let cutoff: u32 = text
@@ -471,7 +484,8 @@ mod tests {
     #[test]
     fn missing_sets_draw_plain_colour() {
         let mut materials = Assets::<StandardMaterial>::default();
-        // No asset server: nothing loads, every species still has both.
+        // Sin servidor de assets: no carga nada, y cada especie igual tiene
+        // ambos.
         let built = tree_materials(None, None, None, &mut materials);
         assert_eq!(built.len(), Species::EVERY.len());
         for (species, paint) in Species::EVERY.iter().zip(&built) {
@@ -487,13 +501,14 @@ mod tests {
 
     #[test]
     fn no_two_species_wear_the_same_bark() {
-        // Every species has a bark set of its own, so the tints only shade
-        // the real texture and never fake a different bark.
-        // The fachinal is a chañar's suckers: it wears the chañar's bark.
+        // Cada especie tiene un conjunto de corteza propio, así que los tintes
+        // solo matizan la textura real y nunca imitan una corteza distinta.
+        // El fachinal son los retoños de un chañar: lleva la corteza del
+        // chañar.
         assert_eq!(Species::Fachinal.bark_set(), Species::Chanar.bark_set());
-        // The álamo borrows the olmo's grey furrows (every other shipped set
-        // is another species'), shaded a cooler grey so
-        // the two do not read as one tree.
+        // El álamo toma prestados los surcos grises del olmo (todos los demás
+        // conjuntos incluidos son de otra especie), matizados en un gris más
+        // frío para que los dos no parezcan un mismo árbol.
         assert_eq!(Species::Alamo.bark_set(), Species::Olmo.bark_set());
         assert_ne!(Species::Alamo.bark_tint(0), Species::Olmo.bark_tint(0));
         let sets: Vec<&str> = Species::EVERY
@@ -520,7 +535,7 @@ mod tests {
         for (species, bark, leaves) in want {
             assert_eq!(species.bark_set(), bark, "{species:?}");
             assert_eq!(species.leaf_set(), leaves, "{species:?}");
-            // No other species wears that bark.
+            // Ninguna otra especie lleva esa corteza.
             let wearers = Species::EVERY
                 .iter()
                 .filter(|s| s.bark_set() == bark)
@@ -547,7 +562,8 @@ mod tests {
             let (bark, leaf): (Vec<_>, Vec<_>) = (0..species.tints())
                 .map(|t| (species.bark_tint(t), species.leaf_tint(t)))
                 .unzip();
-            // Three distinct tints of each, none far from the species' own.
+            // Tres tintes distintos de cada una, ninguno lejos del propio de la
+            // especie.
             for tints in [&bark, &leaf] {
                 for (i, a) in tints.iter().enumerate() {
                     for b in &tints[i + 1..] {
@@ -560,7 +576,7 @@ mod tests {
                     assert!(drift < 0.5, "{species:?}: {drift}");
                 }
             }
-            // Each tint is its own material over the same maps.
+            // Cada tinte es un material propio sobre los mismos mapas.
             let (a, b) = (
                 bark_material(species, 0, Some(maps())),
                 bark_material(species, 1, Some(maps())),
@@ -574,8 +590,8 @@ mod tests {
             assert_ne!(a.base_color, b.base_color);
             assert_eq!(a.alpha_mode, b.alpha_mode);
         }
-        // The first tint is the town kit's own, and the towns' trees have
-        // one only.
+        // El primer tinte es el propio del kit del pueblo, y los árboles de los
+        // pueblos tienen uno solo.
         assert_eq!(Species::Calden.bark_tint(0), Color::srgb(0.84, 0.82, 0.8));
         assert_eq!(Species::Olmo.leaf_tint(0), Species::Olmo.leaf_tint(3));
         let mut materials = Assets::<StandardMaterial>::default();

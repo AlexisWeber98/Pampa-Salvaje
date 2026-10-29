@@ -1,17 +1,19 @@
-//! Low-poly 3D people, built from rigid faceted parts like the buildings and
-//! the train: flat colours, per-vertex shades with baked ambient occlusion,
-//! a PBR finish per material and a few small painted textures (see
-//! [`finish`](super::finish)).
+//! Personas 3D low-poly, construidas con piezas rígidas facetadas como los
+//! edificios y el tren: colores lisos, tonos por vertex con oclusión ambiental
+//! horneada, un acabado PBR por material y unas pocas texturas pequeñas
+//! pintadas (ver [`finish`](super::finish)).
 //!
-//! A figure is a body entity (turned to the heading) holding a tree of joint
-//! entities: pelvis, waist, neck, shoulders, elbows, hips and knees. Each
-//! part (head, torso, a forearm, a hat brim...) is a scaled unit mesh hung
-//! off its joint, so animation only turns joints (see
-//! [`pampa_core::pose`]). Every figure shares the same four unit meshes and
-//! one material per colour, so nothing is built per figure or per frame.
+//! Una figura es una entidad de cuerpo (girada hacia el rumbo) que contiene un
+//! árbol de entidades de articulación: pelvis, cintura, cuello, hombros, codos,
+//! caderas y rodillas. Cada pieza (cabeza, torso, un antebrazo, el ala de un
+//! sombrero...) es una mesh unitaria escalada colgada de su articulación, así
+//! que la animación solo gira articulaciones (ver [`pampa_core::pose`]). Todas
+//! las figuras comparten las mismas cuatro meshes unitarias y un material por
+//! color, así que no se construye nada por figura ni por frame.
 //!
-//! The figure faces local +X, its right is +Z and its feet stand on the
-//! body's origin, about 1.75 m below the top of its head.
+//! La figura mira hacia el +X local, su derecha es +Z y sus pies se apoyan en
+//! el origen del cuerpo, a unos 1.75 m por debajo de la parte superior de su
+//! cabeza.
 
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
@@ -19,38 +21,38 @@ use pampa_core::{AnimationState, Heading, JointAngles, pose};
 
 use super::finish::{Finish, Palette, face_uvs, occlude, ramp};
 
-/// An RGB colour in sRGB bytes.
+/// Un color RGB en bytes sRGB.
 pub type Rgb = [u8; 3];
 
-/// How many townsfolk looks there are; logic's `look` picks one.
+/// Cuántos aspectos de vecinos hay; el `look` de la lógica elige uno.
 pub const TOWNSFOLK_LOOKS: u8 = 5;
 
-/// Who a figure is drawn as.
+/// Cómo se dibuja una figura.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FigureKind {
-    /// The player on foot: a hardware-shop clerk from General Pico in his
-    /// city clothes.
+    /// El jugador a pie: un empleado de ferretería de General Pico con su ropa
+    /// de ciudad.
     Protagonist,
-    /// A townsperson of a logic `look`: `look % TOWNSFOLK_LOOKS` picks the
-    /// outfit, the rest the colours they wear (see
+    /// Un vecino con un `look` de la lógica: `look % TOWNSFOLK_LOOKS` elige el
+    /// atuendo y el resto, los colores que lleva (ver
     /// [`townsfolk`](super::townsfolk)).
     Townsfolk(u8),
-    /// Don Hidalgo, the old estanciero who gives the first errand.
+    /// Don Hidalgo, el viejo estanciero que da el primer mandado.
     Hidalgo,
-    /// Comisario Elías Farach, in uniform.
+    /// El comisario Elías Farach, de uniforme.
     Farach,
-    /// Juan Bautista Bairoletto, 25 in 1919: black shirt, white
-    /// neckerchief, a light chambergo; standing at Farach's side.
+    /// Juan Bautista Bairoletto, de 25 años en 1919: camisa negra, pañuelo de
+    /// cuello blanco, un chambergo claro; parado al lado de Farach.
     Bairoletto,
 }
 
 impl FigureKind {
-    /// A townsperson of a logic appearance value.
+    /// Un vecino según un valor de aspecto de la lógica.
     pub fn townsfolk(look: u8) -> Self {
         Self::Townsfolk(look)
     }
 
-    /// Every figure.
+    /// Todas las figuras.
     pub fn all() -> impl Iterator<Item = Self> {
         [
             Self::Protagonist,
@@ -63,7 +65,7 @@ impl FigureKind {
     }
 }
 
-/// A pivot that animation turns. Left is -Z, right +Z.
+/// Un pivote que gira la animación. La izquierda es -Z y la derecha, +Z.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Joint {
     Pelvis,
@@ -73,11 +75,12 @@ pub enum Joint {
     Elbow(Side),
     Hip(Side),
     Knee(Side),
-    /// Where the hat's brim sits on the head; the hat tips with the step.
+    /// Dónde se apoya el ala del sombrero sobre la cabeza; el sombrero se
+    /// inclina con el paso.
     Brim,
-    /// The shoulders a poncho or shawl hangs from.
+    /// Los hombros de los que cuelga un poncho o un chal.
     Drape,
-    /// The waist a skirt hangs from.
+    /// La cintura de la que cuelga una pollera.
     Hem,
 }
 
@@ -94,7 +97,7 @@ impl Side {
         self as usize
     }
 
-    /// Sign along the body's Z axis.
+    /// Signo a lo largo del eje Z del cuerpo.
     pub(super) fn z(self) -> f32 {
         match self {
             Self::Left => -1.0,
@@ -104,7 +107,7 @@ impl Side {
 }
 
 impl Joint {
-    /// Every joint, each after its parent.
+    /// Todas las articulaciones, cada una después de su padre.
     pub const ALL: [Self; 14] = [
         Self::Pelvis,
         Self::Waist,
@@ -122,7 +125,7 @@ impl Joint {
         Self::Hem,
     ];
 
-    /// The joint this one hangs from (`None`: the body).
+    /// La articulación de la que cuelga esta (`None`: el cuerpo).
     pub fn parent(self) -> Option<Self> {
         match self {
             Self::Pelvis => None,
@@ -134,7 +137,8 @@ impl Joint {
         }
     }
 
-    /// Offset from the parent joint (or the feet) when standing.
+    /// Desplazamiento desde la articulación padre (o desde los pies) estando de
+    /// pie.
     pub fn rest(self) -> Vec3 {
         match self {
             Self::Pelvis => Vec3::new(0.0, 0.92, 0.0),
@@ -150,7 +154,7 @@ impl Joint {
         }
     }
 
-    /// Standing position above the feet.
+    /// Posición de pie por encima de los pies.
     pub fn rest_position(self) -> Vec3 {
         self.rest() + self.parent().map_or(Vec3::ZERO, Self::rest_position)
     }
@@ -159,16 +163,16 @@ impl Joint {
         Self::ALL.iter().position(|j| *j == self).unwrap_or(0)
     }
 
-    /// This joint's turn in `angles`, about the body's side axis; the head
-    /// also turns aside by `glance`.
+    /// El giro de esta articulación en `angles`, alrededor del eje lateral del
+    /// cuerpo; la cabeza además gira hacia un costado según `glance`.
     pub(super) fn rotation(self, a: &JointAngles, glance: f32) -> Quat {
-        // Positive Z turns a hanging limb toward +X (forward).
+        // Una Z positiva gira un miembro que cuelga hacia +X (hacia adelante).
         match self {
             Self::Hip(s) => Quat::from_rotation_z(a.hip[s.index()]),
             Self::Knee(s) => Quat::from_rotation_z(a.knee[s.index()]),
             Self::Pelvis => Quat::IDENTITY,
             Self::Waist => Quat::from_rotation_z(-a.lean),
-            // The head stays nearly level while the torso leans.
+            // La cabeza se mantiene casi nivelada mientras el torso se inclina.
             Self::Neck => {
                 Quat::from_rotation_y(glance) * Quat::from_rotation_z(0.6 * a.lean - a.nod)
             }
@@ -182,72 +186,81 @@ impl Joint {
     }
 }
 
-/// The shared unit meshes parts are scaled copies of. Each fits a 1 m box
-/// centered on the origin, so a part's size is its bounding box.
+/// Las meshes unitarias compartidas de las que las piezas son copias escaladas.
+/// Cada una cabe en una caja de 1 m centrada en el origen, así que el tamaño de
+/// una pieza es su caja envolvente.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Shape {
-    /// Tapered limbs with rounded ends: thigh, shin, upper arm, forearm.
+    /// Miembros que se afinan, con los extremos redondeados: muslo, canilla,
+    /// brazo, antebrazo.
     Thigh,
     Shin,
-    /// A bombacha's lower leg: baggy, gathered at the ankle.
+    /// La parte baja de la pierna de una bombacha: holgada, fruncida en el
+    /// tobillo.
     BaggyShin,
     UpperArm,
     Forearm,
     Neck,
-    /// Rounded block of a hand.
+    /// Bloque redondeado de una mano.
     Hand,
-    /// A shoe along +X: heel, instep and a lower toe.
+    /// Un zapato a lo largo de +X: talón, empeine y una punta más baja.
     Shoe,
-    /// A plain work boot along +X, its shaft rising at the heel.
+    /// Una bota de trabajo simple a lo largo de +X, con la caña subiendo en el
+    /// talón.
     Boot,
-    /// Rounded pelvis.
+    /// Pelvis redondeada.
     Hips,
-    /// Chest wider than the waist, with shoulders.
+    /// Pecho más ancho que la cintura, con hombros.
     Torso,
-    /// The torso of a jacket or tunic, flaring at the hem.
+    /// El torso de una chaqueta o una túnica, acampanado en el ruedo.
     Coat,
-    /// A worn leather jacket: the coat's cut with scuffed shading.
+    /// Una chaqueta de cuero gastada: el corte del saco con un sombreado
+    /// raspado.
     Jacket,
-    /// A thin front panel (waistcoat, shirt front), flaring at the hem.
+    /// Un panel delantero delgado (chaleco, pechera de camisa), acampanado en
+    /// el ruedo.
     Panel,
-    /// The head: a smooth sphere of 18 sides and 12 rings.
+    /// La cabeza: una esfera suave de 18 lados y 12 anillos.
     Head,
-    /// A small rounded lump (jaw, hair, boina, knot, buckle).
+    /// Un pequeño bulto redondeado (mandíbula, pelo, boina, nudo, hebilla).
     Lump,
-    /// A tiny bump (nose, moustache, buttons).
+    /// Una protuberancia diminuta (nariz, bigote, botones).
     Bump,
-    /// A flat round disc with hard edges (hat brims, bands, the kepi visor).
+    /// Un disco plano y redondo con aristas vivas (alas de sombrero, cintas, la
+    /// visera del quepí).
     Disc,
-    /// A lighter ring for cuffs, seams and soles.
+    /// Un anillo más claro para puños, costuras y suelas.
     Band,
-    /// A soft brim turned slightly down (the gacho).
+    /// Un ala blanda inclinada levemente hacia abajo (el gacho).
     Brim,
-    /// A hat crown, a little narrower at the top.
+    /// Una copa de sombrero, un poco más angosta arriba.
     Crown,
-    /// A long skirt flaring to the hem.
+    /// Una pollera larga acampanada hacia el ruedo.
     Skirt,
-    /// A poncho draped over the shoulders, with hard folds.
+    /// Un poncho que cae sobre los hombros, con pliegues marcados.
     Poncho,
 }
 
-/// One ring of a loft: height, half extents along X and Z, X offset and a
-/// shade multiplied into the colour (for cheap darkening at hems and joints).
+/// Un anillo de un loft: altura, semiextensiones a lo largo de X y Z,
+/// desplazamiento en X y un tono que se multiplica en el color (para oscurecer
+/// de forma barata los ruedos y las articulaciones).
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Ring(pub f32, pub f32, pub f32, pub f32, pub f32);
 
-/// A round ring of radius `r` at `y`.
+/// Un anillo redondo de radio `r` en `y`.
 pub(super) const fn round(y: f32, r: f32) -> Ring {
     Ring(y, r, r, 0.0, 1.0)
 }
 
-/// Sides around limbs, neck, hands and feet.
+/// Lados alrededor de los miembros, el cuello, las manos y los pies.
 pub(super) const LIMB_SIDES: usize = 14;
-/// Sides around the torso, hips and coats.
+/// Lados alrededor del torso, las caderas y los sacos.
 pub(super) const BODY_SIDES: usize = 16;
 
-/// A limb from `top` radius down to `bottom` radius, with rounded ends, darker
-/// toward its lower end. Its muscle swells a little above the middle and
-/// narrows before the lower joint, so knees, calves and elbows read.
+/// Un miembro desde un radio `top` hasta un radio `bottom`, con los extremos
+/// redondeados, más oscuro hacia su extremo inferior. Su músculo se hincha un
+/// poco por encima del centro y se angosta antes de la articulación inferior,
+/// para que se distingan las rodillas, las pantorrillas y los codos.
 pub(super) fn limb(top: f32, bottom: f32) -> Vec<Ring> {
     let at = |t: f32| bottom + (top - bottom) * t;
     let shaded = |ring: Ring, shade: f32| Ring(ring.0, ring.1, ring.2, 0.0, shade);
@@ -290,8 +303,9 @@ impl Shape {
         Self::Poncho,
     ];
 
-    /// Builds this unit mesh with its ambient occlusion baked into the
-    /// vertex shades: armpits, the crotch, under the jaw and under brims.
+    /// Construye esta mesh unitaria con su oclusión ambiental horneada en los
+    /// tonos de los vertices: axilas, entrepierna, debajo de la mandíbula y
+    /// debajo de las alas.
     pub fn mesh(self) -> Mesh {
         let mesh = self.build();
         let under = |n: Vec3, from: f32| ramp(-n.y, from, 0.95);
@@ -316,12 +330,13 @@ impl Shape {
         }
     }
 
-    /// Builds the bare unit mesh. Skin and body rounds get smooth normals;
-    /// brims and the poncho keep hard edges.
+    /// Construye la mesh unitaria desnuda. La piel y las partes redondeadas del
+    /// cuerpo reciben normales suavizadas; las alas y el poncho conservan
+    /// aristas vivas.
     fn build(self) -> Mesh {
         let sphere = Sphere::new(0.5);
         match self {
-            // Trousers crease toward the knee.
+            // Los pantalones se arrugan hacia la rodilla.
             Self::Thigh => loft_cloth(
                 &limb(0.5, 0.36),
                 LIMB_SIDES,
@@ -365,8 +380,9 @@ impl Shape {
                 ],
                 8,
             ),
-            // Lofted heel to toe along Y, then laid along +X: a ring's X
-            // half extent becomes the height and its offset lowers the toe.
+            // Loft del talón a la punta a lo largo de Y, y después acostado a
+            // lo largo de +X: la semiextensión en X de un anillo pasa a ser la
+            // altura y su desplazamiento baja la punta.
             Self::Shoe => loft(
                 &[
                     Ring(-0.5, 0.36, 0.3, 0.0, 0.9),
@@ -379,7 +395,8 @@ impl Shape {
                 LIMB_SIDES,
             )
             .rotated_by(Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2)),
-            // A work boot: like the shoe, with a shaft rising at the heel.
+            // Una bota de trabajo: como el zapato, con una caña que sube en el
+            // talón.
             Self::Boot => loft(
                 &[
                     Ring(-0.5, 0.5, 0.3, -0.0, 0.85),
@@ -403,7 +420,8 @@ impl Shape {
             ),
             Self::Torso => loft(&torso(0.4, 0.36), BODY_SIDES),
             Self::Coat => loft(&torso(0.5, 0.48), BODY_SIDES),
-            // Worn leather: the coat's cut with scuffed, uneven shading.
+            // Cuero gastado: el corte del saco con un sombreado raspado e
+            // irregular.
             Self::Jacket => loft_cloth(
                 &torso(0.5, 0.48),
                 BODY_SIDES,
@@ -421,7 +439,7 @@ impl Shape {
                 ],
                 8,
             ),
-            // Twelve rings give the cheekbones and chin their curve.
+            // Doce anillos les dan su curva a los pómulos y al mentón.
             Self::Head => face_uvs(sphere.mesh().uv(18, 12)),
             Self::Lump => sphere
                 .mesh()
@@ -429,9 +447,10 @@ impl Shape {
                 .unwrap_or_else(|_| sphere.mesh().uv(10, 6)),
             Self::Bump => sphere.mesh().uv(8, 5),
             Self::Disc => Cylinder::new(0.5, 1.0).mesh().resolution(24).build(),
-            // A light ring for cuffs, seams and soles.
+            // Un anillo claro para puños, costuras y suelas.
             Self::Band => Cylinder::new(0.5, 1.0).mesh().resolution(14).build(),
-            // A soft wide brim turned slightly down all round.
+            // Un ala blanda y ancha inclinada levemente hacia abajo todo
+            // alrededor.
             Self::Brim => loft_cloth(
                 &[
                     Ring(-0.5, 0.5, 0.5, 0.0, 0.85),
@@ -491,8 +510,8 @@ impl Shape {
     }
 }
 
-/// A torso from the waist (or hem) up to the shoulders and the base of the
-/// neck: `hem` is the half width at the bottom, `waist` a little above it.
+/// Un torso desde la cintura (o el ruedo) hasta los hombros y la base del
+/// cuello: `hem` es el semiancho abajo y `waist`, un poco por encima.
 fn torso(hem: f32, waist: f32) -> Vec<Ring> {
     vec![
         Ring(-0.5, hem * 0.9, hem, 0.0, 0.82),
@@ -506,9 +525,9 @@ fn torso(hem: f32, waist: f32) -> Vec<Ring> {
     ]
 }
 
-/// How a loft's cloth hangs: `folds` vertical folds, deepening toward the
-/// hem to `depth` (a fraction of the radius), and `scuff`, how unevenly worn
-/// its shading is.
+/// Cómo cae la tela de un loft: `folds` pliegues verticales, que se profundizan
+/// hacia el ruedo hasta `depth` (una fracción del radio), y `scuff`, qué tan
+/// irregular es el desgaste de su sombreado.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Cloth {
     pub folds: u32,
@@ -524,21 +543,22 @@ impl Cloth {
     };
 }
 
-/// A closed surface through `rings` (bottom to top), `segments` around, with
-/// smooth normals and per-vertex shades.
+/// Una superficie cerrada a través de `rings` (de abajo hacia arriba), con
+/// `segments` lados alrededor, normales suavizadas y tonos por vertex.
 pub(super) fn loft(rings: &[Ring], segments: usize) -> Mesh {
     loft_cloth(rings, segments, Cloth::PLAIN)
 }
 
-/// [`loft`] with folds and wear (see [`Cloth`]).
+/// [`loft`] con pliegues y desgaste (ver [`Cloth`]).
 pub(super) fn loft_cloth(rings: &[Ring], segments: usize, cloth: Cloth) -> Mesh {
     use bevy::asset::RenderAssetUsages;
     use bevy::mesh::{Indices, PrimitiveTopology};
     use std::f32::consts::TAU;
     let n = segments;
-    // Each ring has n + 1 vertices: the first and last are the same point at
-    // the back (-X), so textures wrap with their seam behind; `u` is 0.5 at
-    // the front (+X), `v` runs from the bottom ring (0) to the top (1).
+    // Cada anillo tiene n + 1 vertices: el primero y el último son el mismo
+    // punto atrás (-X), así que las texturas dan la vuelta con la costura
+    // detrás; `u` vale 0.5 en el frente (+X), y `v` va del anillo inferior (0)
+    // al superior (1).
     let row = n + 1;
     let mut positions = Vec::with_capacity(rings.len() * row + 2);
     let mut colors = Vec::with_capacity(rings.len() * row + 2);
@@ -549,11 +569,12 @@ pub(super) fn loft_cloth(rings: &[Ring], segments: usize, cloth: Cloth) -> Mesh 
             uvs.push([kk as f32 / n as f32, y + 0.5]);
             let angle = k as f32 / n as f32 * TAU;
             let (s, c) = angle.sin_cos();
-            // Folds pull in between their ridges, most at the hem (y = -0.5).
+            // Los pliegues se meten entre sus crestas, sobre todo en el ruedo
+            // (y = -0.5).
             let fold = (1.0 - (cloth.folds as f32 * angle).cos()) / 2.0;
             let pull = 1.0 - cloth.depth * (0.5 - y) * fold;
             positions.push([dx + rx * pull * c, y, rz * pull * s]);
-            // Deterministic wear: a cheap hash of the vertex.
+            // Desgaste determinista: un hash barato del vertex.
             let wear = ((r * 31 + k * 17) % 7) as f32 / 6.0;
             let shade = shade * (1.0 - cloth.scuff * wear) * (1.0 - 0.25 * cloth.depth * fold);
             colors.push([shade, shade, shade, 1.0]);
@@ -567,7 +588,7 @@ pub(super) fn loft_cloth(rings: &[Ring], segments: usize, cloth: Cloth) -> Mesh 
             indices.extend([a, c, b, b, c, d]);
         }
     }
-    // Close both ends with a fan round a center point.
+    // Cerrar ambos extremos con un abanico alrededor de un punto central.
     let last = rings.len() - 1;
     for (ring, bottom) in [(0, true), (last, false)] {
         let Ring(y, _, _, dx, shade) = rings[ring];
@@ -594,8 +615,8 @@ pub(super) fn loft_cloth(rings: &[Ring], segments: usize, cloth: Cloth) -> Mesh 
     .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
     .with_inserted_indices(Indices::U32(indices))
     .with_computed_smooth_normals();
-    // The seam's two copies of each vertex share one normal, so no crease
-    // shows down the back.
+    // Las dos copias de cada vertex de la costura comparten una normal, así que
+    // no se ve ningún pliegue a lo largo de la espalda.
     if let Some(bevy::mesh::VertexAttributeValues::Float32x3(normals)) =
         mesh.attribute_mut(Mesh::ATTRIBUTE_NORMAL)
     {
@@ -610,12 +631,12 @@ pub(super) fn loft_cloth(rings: &[Ring], segments: usize, cloth: Cloth) -> Mesh 
     mesh
 }
 
-/// What a part is; tests and accessories go by it.
+/// Qué es una pieza; los tests y los accesorios se guían por esto.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Piece {
     Head,
     Jaw,
-    /// The front marker: it sits on the face, along +X.
+    /// La marca del frente: va en la cara, a lo largo de +X.
     Nose,
     Hair,
     Neck,
@@ -627,53 +648,57 @@ pub enum Piece {
     UpperLeg,
     LowerLeg,
     Foot,
-    /// Waistcoat or chaleco front.
+    /// La parte delantera de un chaleco.
     Vest,
-    /// Shirt front showing in an open jacket.
+    /// La pechera de la camisa que se ve en una chaqueta abierta.
     Shirt,
-    /// A high collar: the city shirt's stiff one, or a blouse's high neck.
+    /// Un cuello alto: el cuello duro de la camisa de ciudad, o el cuello alto
+    /// de una blusa.
     Collar,
     Tie,
-    /// Pañuelo knotted at the neck.
+    /// Pañuelo anudado al cuello.
     Neckerchief,
     Button,
-    /// Rastra or leather belt, and the rastra's silver buckle.
+    /// La rastra o el cinturón de cuero, y la hebilla de plata de la rastra.
     Belt,
     Buckle,
-    /// A coloured sash (faja) round the waist.
+    /// Una faja de color alrededor de la cintura.
     Faja,
     Moustache,
     Poncho,
     Shawl,
     Skirt,
-    /// A wide-brimmed felt hat: brim and crown.
+    /// Un sombrero de fieltro de ala ancha: ala y copa.
     Hat,
-    /// The city man's bowler (bombín): a round crown and a narrow brim.
+    /// El bombín del hombre de ciudad: una copa redonda y un ala angosta.
     Bowler,
-    /// The gacho: a soft wide-brimmed felt hat, brim turned slightly down.
+    /// El gacho: un sombrero de fieltro blando de ala ancha, con el ala
+    /// inclinada levemente hacia abajo.
     Gacho,
-    /// The leather jacket's collar and lapels.
+    /// El cuello y las solapas de la chaqueta de cuero.
     Lapel,
     Pocket,
-    /// Small face details: brow ridge, ears and the shadowed eye sockets.
+    /// Detalles pequeños de la cara: el arco de las cejas, las orejas y las
+    /// cuencas de los ojos en sombra.
     Brow,
     Ear,
     Eye,
     Thumb,
-    /// Sleeve or shirt cuffs, the jacket's hem seam, the kepi's crown seam.
+    /// Los puños de las mangas o de la camisa, la costura del ruedo de la
+    /// chaqueta, la costura de la copa del quepí.
     Cuff,
     Seam,
-    /// Boot and shoe soles with their heels.
+    /// Las suelas de las botas y los zapatos con sus tacos.
     Sole,
-    /// Hair worn up in a bun.
+    /// El pelo recogido en un rodete.
     Bun,
     Boina,
     Kepi,
     Headscarf,
 }
 
-/// One part of a figure, at rest: a scaled unit [`Shape`] centered at
-/// `center` relative to its joint.
+/// Una pieza de una figura, en reposo: un [`Shape`] unitario escalado centrado
+/// en `center` respecto de su articulación.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PartSpec {
     pub piece: Piece,
@@ -682,29 +707,30 @@ pub struct PartSpec {
     pub color: Rgb,
     pub center: Vec3,
     pub size: Vec3,
-    /// What it is made of.
+    /// De qué está hecha.
     pub finish: Finish,
 }
 
-/// Headwear of a look.
+/// El sombrero de un aspecto.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Headwear {
-    /// The city bowler (bombín) with a dark band, kept for the town
-    /// gentlemen of the setting guide; nobody wears it yet.
+    /// El bombín de ciudad con una cinta oscura, que se conserva para los
+    /// caballeros del pueblo de la guía de ambientación; todavía no lo usa
+    /// nadie.
     #[expect(dead_code, reason = "for the later town-gentleman looks")]
     Bowler {
         felt: Rgb,
         band: Rgb,
     },
-    /// A soft wide-brimmed country hat.
+    /// Un sombrero de campo blando de ala ancha.
     FeltHat(Rgb),
-    /// The gacho: a soft wide-brimmed felt hat, its brim turned slightly
-    /// down, a creased crown and a band.
+    /// El gacho: un sombrero de fieltro blando de ala ancha, con el ala
+    /// inclinada levemente hacia abajo, una copa hundida y una cinta.
     Gacho {
         felt: Rgb,
         band: Rgb,
     },
-    /// No hat: hair worn up in a bun.
+    /// Sin sombrero: el pelo recogido en un rodete.
     Bun,
     Boina(Rgb),
     Kepi {
@@ -714,35 +740,37 @@ enum Headwear {
     Headscarf(Rgb),
 }
 
-/// Clothes and colouring of a figure.
+/// La ropa y los colores de una figura.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Look {
     skin: Rgb,
     hair: Rgb,
-    /// Jacket, shirt, blouse or tunic: torso and sleeves.
+    /// Chaqueta, camisa, blusa o túnica: torso y mangas.
     coat: Rgb,
-    /// A jacket or tunic, flaring over the hips.
+    /// Una chaqueta o una túnica, acampanada sobre las caderas.
     jacket: bool,
-    /// Waistcoat: a front panel in an open jacket, else a chaleco.
+    /// Chaleco: un panel delantero en una chaqueta abierta o, si no, un chaleco
+    /// suelto.
     vest: Option<Rgb>,
-    /// Shirt front showing in an open jacket.
+    /// La pechera de la camisa que se ve en una chaqueta abierta.
     shirt: Option<Rgb>,
-    /// A high collar (stiff shirt collar or high-necked blouse) and a tie.
+    /// Un cuello alto (cuello duro de camisa o blusa de cuello alto) y una
+    /// corbata.
     collar: Option<Rgb>,
     tie: Option<Rgb>,
     neckerchief: Option<Rgb>,
-    /// A sash, or a plain leather belt.
+    /// Una faja, o un cinturón de cuero simple.
     faja: Option<Rgb>,
     shawl: Option<Rgb>,
-    /// Tall boots up to the knee, in the shoes' colour.
+    /// Botas altas hasta la rodilla, del color de los zapatos.
     tall_boots: bool,
-    /// Plain work boots instead of shoes or alpargatas.
+    /// Botas de trabajo simples en lugar de zapatos o alpargatas.
     boots: bool,
-    /// A worn leather jacket with collar, lapels and pockets.
+    /// Una chaqueta de cuero gastada con cuello, solapas y bolsillos.
     leather: bool,
-    /// Trousers, bombacha or skirt.
+    /// Pantalón, bombacha o pollera.
     legs: Rgb,
-    /// Baggy bombacha gathered at the ankle.
+    /// Bombacha holgada fruncida en el tobillo.
     bombacha: bool,
     skirt: bool,
     shoes: Rgb,
@@ -753,9 +781,10 @@ struct Look {
     buttons: Option<Rgb>,
 }
 
-// Earthy, muted 1919 palette (see `odd/setting-1919.md`): dust, ochre,
-// faded blue, brown, grey and black wool, off-white shirts. Bright colour
-// only in accents: pañuelos, a faja, the police's brass buttons.
+// Paleta terrosa y apagada de 1919 (ver `odd/setting-1919.md`): polvo, ocre,
+// azul desteñido, lana marrón, gris y negra, camisas de blanco roto. Color
+// brillante solo en los detalles: pañuelos, una faja, los botones de bronce de
+// la policía.
 const SKIN: Rgb = [206, 162, 124];
 const HAIR: Rgb = [58, 42, 32];
 const OFF_WHITE: Rgb = [214, 206, 186];
@@ -763,8 +792,9 @@ const ALPARGATAS: Rgb = [190, 178, 150];
 const BOOTS: Rgb = [52, 38, 30];
 const PANUELO_RED: Rgb = [164, 44, 36];
 
-/// A plain man's look, for the townsfolk to vary: a Basque-style paisano in
-/// a collarless shirt, boina, bombacha, faja, alpargatas and a pañuelo.
+/// Un aspecto masculino simple, para que los vecinos lo varíen: un paisano de
+/// estilo vasco con camisa sin cuello, boina, bombacha, faja, alpargatas y un
+/// pañuelo.
 const PAISANO: Look = Look {
     skin: SKIN,
     hair: HAIR,
@@ -791,12 +821,13 @@ const PAISANO: Look = Look {
     buttons: None,
 };
 
-/// The protagonist's worn brown leather.
+/// El cuero marrón gastado del protagonista.
 pub const LEATHER: Rgb = [108, 72, 46];
 
-/// The protagonist, a humble hardware-shop clerk from General Pico: a plain
-/// work shirt, a worn leather jacket, faded trousers, used boots and a gacho.
-/// Townsman's working clothes, not a gaucho's.
+/// El protagonista, un humilde empleado de ferretería de General Pico: una
+/// camisa de trabajo simple, una chaqueta de cuero gastada, pantalones
+/// desteñidos, botas usadas y un gacho. Ropa de trabajo de un hombre de pueblo,
+/// no la de un gaucho.
 const PROTAGONIST: Look = Look {
     skin: [216, 174, 136],
     hair: [70, 50, 36],
@@ -823,8 +854,8 @@ const PROTAGONIST: Look = Look {
 
 const TOWNSFOLK: [Look; TOWNSFOLK_LOOKS as usize] = [
     PAISANO,
-    // Peón: chaleco over a collarless shirt, soft wide-brimmed hat, worn
-    // boots and a white pañuelo.
+    // Peón: chaleco sobre una camisa sin cuello, sombrero blando de ala ancha,
+    // botas gastadas y un pañuelo blanco.
     Look {
         skin: [190, 142, 104],
         coat: [170, 158, 132],
@@ -837,7 +868,7 @@ const TOWNSFOLK: [Look; TOWNSFOLK_LOOKS as usize] = [
         moustache: Some(HAIR),
         ..PAISANO
     },
-    // A Volga German farmhand in a poncho against the cold.
+    // Un peón alemán del Volga con un poncho contra el frío.
     Look {
         skin: [212, 172, 140],
         hair: [150, 120, 80],
@@ -850,8 +881,8 @@ const TOWNSFOLK: [Look; TOWNSFOLK_LOOKS as usize] = [
         shoes: BOOTS,
         ..PAISANO
     },
-    // Women: ankle-length skirts, high-necked long-sleeved blouses, a
-    // shawl, and a headscarf or hair worn up.
+    // Mujeres: polleras hasta el tobillo, blusas de cuello alto y manga larga,
+    // un chal, y un pañuelo en la cabeza o el pelo recogido.
     Look {
         skin: [212, 168, 132],
         coat: [116, 128, 142],
@@ -882,9 +913,9 @@ const TOWNSFOLK: [Look; TOWNSFOLK_LOOKS as usize] = [
     },
 ];
 
-/// Don Hidalgo, an older estanciero: a good brown jacket over a dark
-/// waistcoat, bombacha, tall boots, a rastra, a light wide-brimmed hat and a
-/// white moustache.
+/// Don Hidalgo, un estanciero mayor: una buena chaqueta marrón sobre un chaleco
+/// oscuro, bombacha, botas altas, una rastra, un sombrero claro de ala ancha y
+/// un bigote blanco.
 const HIDALGO: Look = Look {
     skin: [212, 168, 132],
     hair: [226, 222, 214],
@@ -903,11 +934,11 @@ const HIDALGO: Look = Look {
     ..PAISANO
 };
 
-/// The police uniform's dark blue.
+/// El azul oscuro del uniforme de policía.
 pub const POLICE_BLUE: Rgb = [38, 50, 86];
 
-/// Comisario Farach: kepi, dark blue tunic with brass buttons, a leather
-/// belt, dark trousers and boots.
+/// El comisario Farach: quepí, túnica azul oscuro con botones de bronce, un
+/// cinturón de cuero, pantalones oscuros y botas.
 const FARACH: Look = Look {
     skin: [196, 150, 112],
     hair: [36, 28, 24],
@@ -928,9 +959,9 @@ const FARACH: Look = Look {
     ..PAISANO
 };
 
-/// Bairoletto: a slight young man in a black shirt with a white
-/// neckerchief, dark trousers, boots and a light felt chambergo; light-brown
-/// hair and a short beard (drawn as a moustache).
+/// Bairoletto: un joven delgado con camisa negra y pañuelo de cuello blanco,
+/// pantalones oscuros, botas y un chambergo de fieltro claro; pelo castaño
+/// claro y una barba corta (dibujada como bigote).
 const BAIROLETTO: Look = Look {
     skin: [222, 184, 152],
     hair: [124, 92, 62],
@@ -949,7 +980,7 @@ const BAIROLETTO: Look = Look {
     ..PAISANO
 };
 
-/// `color` a shade darker: seams, cuffs, soles and eye sockets.
+/// `color` un tono más oscuro: costuras, puños, suelas y cuencas de los ojos.
 pub(super) fn darker(color: Rgb) -> Rgb {
     color.map(|c| (c as f32 * 0.78) as u8)
 }
@@ -964,8 +995,9 @@ fn look(kind: FigureKind) -> &'static Look {
     }
 }
 
-/// Every part of `kind`, standing. Deterministic. Hats, ponchos and
-/// skirts hang from their own joints so they can sway ([`hang`]).
+/// Todas las piezas de `kind`, de pie. Determinista. Los sombreros, los ponchos
+/// y las polleras cuelgan de sus propias articulaciones para poder balancearse
+/// ([`hang`]).
 pub fn figure_parts(kind: FigureKind) -> Vec<PartSpec> {
     let l = look(kind);
     let mut parts = laid_parts(kind);
@@ -975,10 +1007,10 @@ pub fn figure_parts(kind: FigureKind) -> Vec<PartSpec> {
     hang(parts)
 }
 
-/// Every part of `kind`, standing, each on the body joint it is laid out
-/// on.
+/// Todas las piezas de `kind`, de pie, cada una en la articulación del cuerpo
+/// sobre la que está dispuesta.
 ///
-/// Kept as a table, one part per line.
+/// Se mantiene como una tabla, una pieza por línea.
 #[rustfmt::skip]
 fn laid_parts(kind: FigureKind) -> Vec<PartSpec> {
     let l = look(kind);
@@ -997,9 +1029,10 @@ fn laid_parts(kind: FigureKind) -> Vec<PartSpec> {
     use Joint::*;
     use Piece::*;
 
-    // Legs, from the hip down to the sole at the feet's origin. Segments
-    // overlap past each joint so no gap opens when it turns. Trousers are
-    // wider than a bare leg; a bombacha is baggier still.
+    // Piernas, desde la cadera hasta la suela en el origen de los pies. Los
+    // segmentos se superponen más allá de cada articulación para que no se abra
+    // ningún hueco al girar. Los pantalones son más anchos que una pierna
+    // desnuda; una bombacha, más holgada todavía.
     let (hips, thigh, shin, shin_shape) = if l.bombacha {
         ([0.27, 0.22, 0.4], [0.22, 0.5, 0.22], [0.19, 0.45, 0.19], Shape::BaggyShin)
     } else {
@@ -1025,11 +1058,11 @@ fn laid_parts(kind: FigureKind) -> Vec<PartSpec> {
         add(Skirt, Pelvis, Shape::Skirt, l.legs, [0.0, -0.36, 0.0], [0.58, 0.88, 0.62]);
     }
 
-    // Torso, arms and what is worn over them. A jacket or tunic reaches
-    // over the hips and flares at the hem.
+    // El torso, los brazos y lo que se lleva encima. Una chaqueta o una túnica
+    // llega por encima de las caderas y se acampana en el ruedo.
     if l.leather {
-        // Open at the front over the shirt: a turned-down collar, lapels and
-        // two flapped pockets, all in the same worn leather, a shade darker.
+        // Abierta por delante sobre la camisa: un cuello vuelto, solapas y dos
+        // bolsillos con tapa, todo del mismo cuero gastado, un tono más oscuro.
         let edge = [l.coat[0] - 18, l.coat[1] - 14, l.coat[2] - 10];
         add(Torso, Waist, Shape::Jacket, l.coat, [0.0, 0.2, 0.0], [0.27, 0.6, 0.43]);
         add(Seam, Waist, Shape::Band, edge, [0.0, -0.075, 0.0], [0.27, 0.02, 0.43]);
@@ -1054,14 +1087,14 @@ fn laid_parts(kind: FigureKind) -> Vec<PartSpec> {
         add(Cuff, Elbow(s), Shape::Band, darker(l.coat), [0.0, -0.255, 0.0], [0.1, 0.025, 0.1]);
     }
     match (l.vest, l.jacket) {
-        // A waistcoat and shirt front showing in the open jacket.
+        // Un chaleco y una pechera de camisa que se ven en la chaqueta abierta.
         (Some(vest), true) => {
             add(Vest, Waist, Shape::Panel, vest, [0.125, 0.2, 0.0], [0.03, 0.42, 0.2]);
             if let Some(shirt) = l.shirt {
                 add(Shirt, Waist, Shape::Panel, shirt, [0.137, 0.34, 0.0], [0.02, 0.2, 0.09]);
             }
         }
-        // A chaleco over the shirt, its sleeves showing.
+        // Un chaleco sobre la camisa, con sus mangas a la vista.
         (Some(vest), false) => {
             add(Vest, Waist, Shape::Torso, vest, [0.0, 0.2, 0.0], [0.27, 0.42, 0.44]);
         }
@@ -1089,7 +1122,8 @@ fn laid_parts(kind: FigureKind) -> Vec<PartSpec> {
         add(Shawl, Waist, Shape::Poncho, shawl, [0.0, 0.3, 0.0], [0.36, 0.42, 0.52]);
     }
 
-    // Head: neck, skull, jaw, the nose as the front marker, hair, headwear.
+    // La cabeza: cuello, cráneo, mandíbula, la nariz como marca del frente, el
+    // pelo y el sombrero.
     let (neck, skin) = (Joint::Neck, l.skin);
     add(Piece::Neck, neck, Shape::Neck, skin, [0.0, 0.04, 0.0], [0.1, 0.12, 0.1]);
     add(Head, neck, Shape::Head, skin, [0.0, 0.17, 0.0], [0.2, 0.22, 0.18]);
@@ -1146,8 +1180,9 @@ fn laid_parts(kind: FigureKind) -> Vec<PartSpec> {
     parts
 }
 
-/// `parts` with hats, ponchos and skirts moved onto their own joints
-/// (hanging from the joint they were laid on), at the same rest place.
+/// `parts` con los sombreros, los ponchos y las polleras pasados a sus propias
+/// articulaciones (colgando de la articulación sobre la que estaban
+/// dispuestos), en el mismo lugar de reposo.
 fn hang(mut parts: Vec<PartSpec>) -> Vec<PartSpec> {
     use Joint::*;
     use Piece::*;
@@ -1167,7 +1202,7 @@ fn hang(mut parts: Vec<PartSpec>) -> Vec<PartSpec> {
     parts
 }
 
-/// What `part` of look `l` is made of.
+/// De qué está hecha la pieza `part` del aspecto `l`.
 fn finish_of(l: &Look, part: &PartSpec) -> Finish {
     use Piece::*;
     match part.piece {
@@ -1188,7 +1223,7 @@ fn finish_of(l: &Look, part: &PartSpec) -> Finish {
     }
 }
 
-/// Height of the top of `kind`'s head or headwear, standing.
+/// La altura de la parte superior de la cabeza o el sombrero de `kind`, de pie.
 pub fn figure_height(kind: FigureKind) -> f32 {
     figure_parts(kind)
         .iter()
@@ -1196,13 +1231,13 @@ pub fn figure_height(kind: FigureKind) -> f32 {
         .fold(0.0, f32::max)
 }
 
-/// The body's turn for a ground `heading`: its front (+X) points along the
-/// heading on the ground (ground north is Bevy -Z).
+/// El giro del cuerpo para un rumbo en el suelo `heading`: su frente (+X)
+/// apunta según el rumbo sobre el suelo (el norte del suelo es -Z en Bevy).
 pub fn body_rotation(heading: Heading) -> Quat {
     Quat::from_rotation_y(heading.radians())
 }
 
-/// The shared unit meshes; materials come from the [`Palette`].
+/// Las meshes unitarias compartidas; los materiales vienen de la [`Palette`].
 #[derive(Resource, Default)]
 pub struct FigureKit {
     meshes: HashMap<Shape, Handle<Mesh>>,
@@ -1216,40 +1251,43 @@ impl FigureKit {
     }
 }
 
-/// The asset stores and palette a figure is drawn with.
+/// Los almacenes de assets y la paleta con los que se dibuja una figura.
 pub(super) type Paints<'a> = (
     &'a mut Palette,
     &'a mut Assets<StandardMaterial>,
     &'a mut Assets<Image>,
 );
 
-/// The turning body of a figure, child of the character entity.
+/// El cuerpo que gira de una figura, hijo de la entidad del personaje.
 #[derive(Component, Debug, Clone)]
 pub struct FigureBody {
     pub kind: FigureKind,
-    /// How far through the gait (or breath) cycle, in cycles (`0..1`).
+    /// Qué tan avanzado está el ciclo del andar (o de la respiración), en
+    /// ciclos (`0..1`).
     pub phase: f32,
-    /// Seconds since it was drawn (wrapped at
-    /// [`pampa_core::MOTION_CLOCK_PERIOD`]), and its own seed, for glancing around.
+    /// Segundos desde que se dibujó (con vuelta en
+    /// [`pampa_core::MOTION_CLOCK_PERIOD`]), y su propia semilla, para mirar a
+    /// su alrededor.
     pub clock: f32,
     pub seed: u32,
-    /// How far the head is turned aside now, easing toward the glance; a
-    /// character model on it turns its head the same (see
-    /// [`rig`](super::rig)).
+    /// Cuánto está girada la cabeza hacia un costado en este momento,
+    /// acercándose suavemente a la mirada; un modelo de personaje sobre ella
+    /// gira la cabeza igual (ver [`rig`](super::rig)).
     pub glance: f32,
-    /// Joint entities in [`Joint::ALL`] order.
+    /// Las entidades de articulación en el orden de [`Joint::ALL`].
     joints: Vec<Entity>,
 }
 
-/// A joint entity of a figure.
+/// Una entidad de articulación de una figura.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct FigureJoint(pub Joint);
 
-/// A part mesh of a figure.
+/// Una mesh de pieza de una figura.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct FigurePart(pub Piece);
 
-/// Spawns `kind`'s body, joints and parts under `parent`; returns the body.
+/// Crea el cuerpo, las articulaciones y las piezas de `kind` bajo `parent`;
+/// devuelve el cuerpo.
 pub(super) fn spawn_figure(
     commands: &mut Commands,
     kit: &mut FigureKit,
@@ -1303,8 +1341,8 @@ pub(super) fn spawn_figure(
     body
 }
 
-/// Turns, bobs and poses each figure from its character's pose, its gait
-/// paced by speed.
+/// Gira, hace rebotar y pone en pose cada figura a partir de la pose de su
+/// personaje, con su andar al ritmo de la velocidad.
 pub(super) fn update_figures(
     time: Res<Time>,
     poses: Query<&super::VisualPose>,
@@ -1313,7 +1351,8 @@ pub(super) fn update_figures(
 ) {
     let dt = time.delta_secs();
     for (child_of, mut body, mut transform) in &mut bodies {
-        // Wrapped, seamlessly: a game left running keeps a fine clock.
+        // Con vuelta, sin saltos: un juego que queda corriendo mantiene un
+        // reloj preciso.
         body.clock = pampa_core::tick_clock(body.clock, dt);
         let Ok(visual) = poses.get(child_of.parent()) else {
             continue;
@@ -1323,8 +1362,9 @@ pub(super) fn update_figures(
         let angles = pose::pose(visual.animation, body.phase);
         transform.rotation = body_rotation(visual.heading);
         transform.translation.y = angles.bob;
-        // Standing people glance around now and then; the turn eases in and
-        // out, so starting to walk looks ahead again smoothly.
+        // La gente parada mira a su alrededor de vez en cuando; el giro entra y
+        // sale de forma gradual, así que al empezar a caminar vuelve a mirar al
+        // frente con suavidad.
         let target = if idle {
             pose::glance(body.seed, body.clock)
         } else {
@@ -1371,15 +1411,15 @@ mod tests {
             assert_eq!(parts, figure_parts(kind), "{kind:?} is deterministic");
             let height = figure_height(kind);
             assert!((1.6..=1.9).contains(&height), "{kind:?}: {height} m");
-            // Feet on the ground.
+            // Los pies en el suelo.
             let sole = parts
                 .iter()
                 .map(|p| p.joint.rest_position().y + p.center.y - p.size.y / 2.0)
                 .fold(f32::MAX, f32::min);
             assert!(sole.abs() < 1e-4, "{kind:?}: sole at {sole}");
         }
-        // The look's low part picks the clothes: 7 is drawn as 2 (`models
-        // off`); the rest is kept for the model's colours.
+        // La parte baja del aspecto elige la ropa: 7 se dibuja como 2 (`models
+        // off`); el resto se guarda para los colores del modelo.
         assert_eq!(FigureKind::townsfolk(7), FigureKind::Townsfolk(7));
         assert_eq!(
             figure_parts(FigureKind::townsfolk(7)),
@@ -1404,25 +1444,26 @@ mod tests {
                 .find(|p| p.piece == piece)
                 .map(|p| p.shape)
         };
-        // A gacho, a worn leather jacket with lapels, a work shirt, boots.
+        // Un gacho, una chaqueta de cuero gastada con solapas, una camisa de
+        // trabajo, botas.
         assert!(has(me, Piece::Gacho) && has(me, Piece::Shirt));
         assert_eq!(shape_of(Piece::Torso), Some(Shape::Jacket));
         assert_eq!(color_of(me, Piece::Torso), Some(LEATHER));
         assert!(has(me, Piece::Lapel) && has(me, Piece::Pocket));
         assert_eq!(shape_of(Piece::Foot), Some(Shape::Boot));
-        // Not a town gentleman: no bowler, tie or stiff collar.
+        // No es un caballero del pueblo: sin bombín, corbata ni cuello duro.
         assert!(!has(me, Piece::Bowler) && !has(me, Piece::Tie) && !has(me, Piece::Collar));
-        // Not a gaucho: no poncho, bombacha or faja.
+        // No es un gaucho: sin poncho, bombacha ni faja.
         assert!(!has(me, Piece::Poncho) && !has(me, Piece::Faja) && !has(me, Piece::Boina));
         assert!(!has(me, Piece::Skirt) && !has(me, Piece::Neckerchief));
-        // Nobody else wears a gacho or his jacket.
+        // Nadie más lleva un gacho ni su chaqueta.
         for kind in FigureKind::all().filter(|k| *k != me) {
             assert!(
                 !has(kind, Piece::Gacho) && !has(kind, Piece::Lapel),
                 "{kind:?}"
             );
         }
-        // Trousers, not a bombacha: as slim as the comisario's.
+        // Pantalones, no bombacha: tan delgados como los del comisario.
         let thigh = |k| {
             figure_parts(k)
                 .iter()
@@ -1431,12 +1472,12 @@ mod tests {
         };
         assert_eq!(thigh(me), thigh(FigureKind::Farach));
         assert!(thigh(me) < thigh(FigureKind::Townsfolk(0)));
-        // His jacket is a colour nobody in town wears.
+        // Su chaqueta es de un color que nadie del pueblo lleva.
         let jacket = color_of(me, Piece::Torso);
         for n in 0..TOWNSFOLK_LOOKS {
             assert_ne!(jacket, color_of(FigureKind::Townsfolk(n), Piece::Torso));
         }
-        // The townsfolk wear the country clothes.
+        // Los vecinos llevan la ropa de campo.
         assert!((0..TOWNSFOLK_LOOKS).any(|n| has(FigureKind::Townsfolk(n), Piece::Poncho)));
         assert!((0..TOWNSFOLK_LOOKS).any(|n| has(FigureKind::Townsfolk(n), Piece::Boina)));
         assert!((0..TOWNSFOLK_LOOKS).any(|n| has(FigureKind::Townsfolk(n), Piece::Skirt)));
@@ -1455,7 +1496,8 @@ mod tests {
                 .find(|p| p.piece == Piece::Skirt)
                 .unwrap();
             let hem = skirt.joint.rest_position().y + skirt.center.y - skirt.size.y / 2.0;
-            // Down to the ankle, just above the shoes' tops (0.1 m).
+            // Hasta el tobillo, justo por encima de la parte superior de los
+            // zapatos (0.1 m).
             assert!((0.05..=0.15).contains(&hem), "{kind:?}: hem at {hem} m");
             assert!(
                 has(kind, Piece::Collar) && has(kind, Piece::Shawl),
@@ -1466,7 +1508,7 @@ mod tests {
                 "{kind:?}"
             );
         }
-        // Peones wear the faja and the pañuelo.
+        // Los peones llevan la faja y el pañuelo.
         assert!(has(FigureKind::Townsfolk(0), Piece::Faja));
         assert!(has(FigureKind::Townsfolk(1), Piece::Neckerchief));
     }
@@ -1559,7 +1601,7 @@ mod tests {
             Some(Finish::Cloth),
             "alpargatas"
         );
-        // Every head wears the face texture.
+        // Cada cabeza lleva la textura de la cara.
         for kind in FigureKind::all() {
             assert_eq!(
                 finish_of_piece(kind, Piece::Head),
@@ -1619,11 +1661,12 @@ mod tests {
         );
         assert_eq!(on(FigureKind::Townsfolk(2), Piece::Poncho), [Joint::Drape]);
         assert_eq!(on(FigureKind::Townsfolk(3), Piece::Skirt), [Joint::Hem]);
-        // Each new joint hangs off the one its parts used to.
+        // Cada articulación nueva cuelga de aquella de la que colgaban antes
+        // sus piezas.
         assert_eq!(Joint::Brim.parent(), Some(Joint::Neck));
         assert_eq!(Joint::Drape.parent(), Some(Joint::Waist));
         assert_eq!(Joint::Hem.parent(), Some(Joint::Pelvis));
-        // Swaying turns them; still they stay put at rest.
+        // El balanceo las gira; quietas, se quedan en su lugar en reposo.
         let walk = pose::pose(AnimationState::Walk, 0.4);
         assert_ne!(Joint::Brim.rotation(&walk, 0.0), Quat::IDENTITY);
         assert_ne!(Joint::Drape.rotation(&walk, 0.0), Quat::IDENTITY);
@@ -1631,12 +1674,13 @@ mod tests {
             Joint::Hem.rotation(&JointAngles::default(), 0.0),
             Quat::IDENTITY
         );
-        // A glance turns the head about the vertical.
+        // Una mirada gira la cabeza alrededor de la vertical.
         let turned = Joint::Neck.rotation(&JointAngles::default(), 0.4) * Vec3::X;
         assert!(turned.z.abs() > 0.3 && turned.y.abs() < 1e-5);
     }
 
-    /// Vertex positions, normals and shades of `shape`'s unit mesh.
+    /// Las posiciones, las normales y los tonos de los vertices de la mesh
+    /// unitaria de `shape`.
     fn shaded(shape: Shape) -> Vec<(Vec3, Vec3, f32)> {
         use bevy::mesh::VertexAttributeValues as V;
         let mesh = shape.mesh();
@@ -1714,7 +1758,7 @@ mod tests {
         };
         for (p, uv) in p.iter().zip(uv) {
             assert!((0.0..=1.0).contains(&uv[0]) && (0.0..=1.0).contains(&uv[1]));
-            // The front is the middle of the texture; its edges meet behind.
+            // El frente es el centro de la textura; sus bordes se juntan atrás.
             if p[0] > 0.1 && p[2].abs() < 1e-4 {
                 assert!((uv[0] - 0.5).abs() < 1e-4, "{uv:?}");
             }
@@ -1764,13 +1808,14 @@ mod tests {
                 slanted * 3 > normals.len(),
                 "{shape:?}: mostly axis-aligned normals"
             );
-            // Smooth: faces share vertices, so there are fewer vertices than
-            // three per triangle.
+            // Suavizada: las caras comparten vertices, así que hay menos de
+            // tres vertices por triángulo.
             assert!(
                 mesh.count_vertices() < triangles(shape) * 2,
                 "{shape:?} is faceted"
             );
-            // It fits its unit box, so a part's size is its bounding box.
+            // Cabe en su caja unitaria, así que el tamaño de una pieza es su
+            // caja envolvente.
             let Some(VertexAttributeValues::Float32x3(points)) =
                 mesh.attribute(Mesh::ATTRIBUTE_POSITION)
             else {
@@ -1778,7 +1823,7 @@ mod tests {
             };
             assert!(points.iter().flatten().all(|c| c.abs() <= 0.5 + 1e-4));
         }
-        // Brims keep their hard edge; the poncho its folds.
+        // Las alas conservan su arista viva; el poncho, sus pliegues.
         assert!(
             Shape::Poncho.mesh().indices().is_none(),
             "unshared vertices"

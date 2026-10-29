@@ -1,17 +1,20 @@
-//! The settlements' smaller structures, built procedurally in their own
-//! space like the buildings (see [`super::buildings`]): `x` along the
-//! front, `z` out of it, `y` up from the ground at the middle.
+//! Las estructuras más pequeñas de los asentamientos, construidas de forma
+//! procedural en su propio espacio como los edificios (ver
+//! [`super::buildings`]): `x` a lo largo del frente, `z` hacia afuera de él,
+//! `y` hacia arriba desde el suelo en el centro.
 //!
-//! - The corral: posts and three rails of weathered boards, its 4 m
-//!   opening in the middle of its front, as core leaves it.
-//! - The molino: an Aermotor-style steel lattice tower with its platform,
-//!   gearbox and tail vane, and a many-bladed wheel built apart so it can
-//!   spin ([`crate::WindmillRotor`]).
-//! - The australian tank: a round galvanised corrugated wall on a brick
-//!   footing, full of water. The bebedero: a long plank trough.
-//! - The well: a brick curb with a timber frame, pulley and bucket.
-//! - The parva (a loaf of hay), the palenque and the carreta with its two
-//!   very tall wheels, its bed, its paja toldo and its pole.
+//! - El corral: postes y tres travesaños de tablas curtidas, con su abertura de
+//!   4 m en el centro del frente, tal como la deja core.
+//! - El molino: una torre de reticulado de acero estilo Aermotor con su
+//!   plataforma, caja de engranajes y veleta, y una rueda de muchas aspas
+//!   construida aparte para que pueda girar ([`crate::WindmillRotor`]).
+//! - El tanque australiano: una pared redonda de chapa acanalada galvanizada
+//!   sobre una base de ladrillo, llena de agua. El bebedero: un largo
+//!   abrevadero de tablones.
+//! - El pozo: un brocal de ladrillo con un armazón de madera, una roldana y un
+//!   balde.
+//! - La parva (un montón de heno), el palenque y la carreta con sus dos ruedas
+//!   altísimas, su caja, su toldo de paja y su lanza.
 
 use std::f32::consts::{FRAC_PI_2, TAU};
 
@@ -22,24 +25,24 @@ use super::buildings::local_size;
 use super::materials::Surface;
 use super::shape::Shape;
 
-/// Local height of the ground under a point of a structure's own space,
-/// relative to its middle.
+/// Altura local del suelo bajo un punto del espacio propio de una estructura,
+/// relativa a su centro.
 pub(crate) type LocalGround<'a> = &'a dyn Fn(Vec3) -> f32;
 
-/// One side of a corral: its mesh and the ends of its line, in the
-/// corral's own space (for its fade shape).
+/// Un lado de un corral: su mesh y los extremos de su línea, en el espacio
+/// propio del corral (para su forma de fundido).
 pub(crate) struct CorralSide {
     pub shape: Shape,
     pub ends: (Vec3, Vec3),
 }
 
-/// Spacing of a corral's posts, in meters.
+/// Separación entre los postes de un corral, en metros.
 const POST_SPACING: f32 = 2.4;
-/// Heights of a corral's rails.
+/// Alturas de los travesaños de un corral.
 const RAILS: [f32; 3] = [0.45, 0.9, 1.35];
 
-/// The corral `structure`'s sides, each following the ground: the front
-/// in two pieces either side of its opening.
+/// Los lados del corral `structure`, cada uno siguiendo el suelo: el frente en
+/// dos piezas, una a cada lado de su abertura.
 pub(crate) fn corral(structure: &Structure, ground: LocalGround) -> Vec<CorralSide> {
     let size = local_size(structure);
     let (hx, hz) = (size.x / 2.0, size.y / 2.0);
@@ -60,7 +63,7 @@ pub(crate) fn corral(structure: &Structure, ground: LocalGround) -> Vec<CorralSi
                 .map(|k| at(a.lerp(b, k as f32 / n as f32)))
                 .collect();
             for (k, &p) in points.iter().enumerate() {
-                // The gate posts are stouter and taller.
+                // Los postes de la tranquera son más gruesos y más altos.
                 let gate_post = front && ((k == n && a.x < 0.0) || (k == 0 && a.x > 0.0));
                 let (side, top) = if gate_post { (0.24, 1.9) } else { (0.15, 1.6) };
                 shape.beam(Surface::Planks, p - Vec3::Y * 0.3, p + Vec3::Y * top, side);
@@ -83,19 +86,20 @@ pub(crate) fn corral(structure: &Structure, ground: LocalGround) -> Vec<CorralSi
         .collect()
 }
 
-/// Radius of the molino's wheel, in meters.
+/// Radio de la rueda del molino, en metros.
 pub(crate) const WHEEL_RADIUS: f32 = 1.8;
 
-/// Where the molino's wheel turns in its own space, and its yaw: facing
-/// the prevailing wind, a little different on every molino.
+/// Dónde gira la rueda del molino en su propio espacio, y su guiñada: de cara
+/// al viento predominante, un poco distinta en cada molino.
 pub(crate) fn rotor_place(structure: &Structure) -> (Vec3, Quat) {
     let yaw = Quat::from_rotation_y(0.6 + (structure.variant % 97) as f32 / 97.0 * 0.8);
     let hub = Vec3::new(0.0, structure.height + 0.45, 0.0);
     (hub + yaw * Vec3::Z * 0.7, yaw)
 }
 
-/// The molino's tower, platform, gearbox, vane and pump rod (the wheel is
-/// [`rotor`]), `drop` meters into the ground.
+/// La torre, la plataforma, la caja de engranajes, la veleta y la varilla de
+/// bombeo del molino (la rueda es [`rotor`]), metidas `drop` metros en el
+/// suelo.
 pub(crate) fn windpump(structure: &Structure, drop: f32) -> Shape {
     let mut shape = Shape::default();
     let foot = local_size(structure).x.min(local_size(structure).y) / 2.0 - 0.1;
@@ -112,7 +116,7 @@ pub(crate) fn windpump(structure: &Structure, drop: f32) -> Shape {
             leg(sx, sz, top),
             0.09,
         );
-        // A concrete-set anchor at each foot.
+        // Un anclaje fijado en hormigón en cada pie.
         let f = leg(sx, sz, 0.0);
         shape.block(
             Surface::Brick,
@@ -120,7 +124,7 @@ pub(crate) fn windpump(structure: &Structure, drop: f32) -> Shape {
             f + Vec3::new(0.2, 0.15, 0.2),
         );
     }
-    // Girts at every level and crossed diagonal rods between.
+    // Travesaños en cada nivel y varillas diagonales cruzadas entre ellos.
     let levels = [0.0, 0.22, 0.42, 0.6, 0.76, 0.9];
     for (k, &l) in levels.iter().enumerate() {
         let y = top * l + 0.3;
@@ -134,7 +138,8 @@ pub(crate) fn windpump(structure: &Structure, drop: f32) -> Shape {
             }
         }
     }
-    // The platform round the top and its pump rod down the middle.
+    // La plataforma alrededor de la parte superior y su varilla de bombeo por
+    // el centro.
     shape.block(
         Surface::Planks,
         Vec3::new(-0.75, top - 0.6, -0.75),
@@ -146,14 +151,15 @@ pub(crate) fn windpump(structure: &Structure, drop: f32) -> Shape {
         Vec3::new(0.0, top, 0.0),
         0.04,
     );
-    // The pump head at the foot.
+    // El cabezal de la bomba al pie.
     shape.lathe(
         Surface::Steel,
         Transform::IDENTITY,
         &[(0.12, -0.1), (0.12, 0.7), (0.06, 0.8), (0.0, 0.8)],
         8,
     );
-    // Gearbox, turntable and the tail vane on its boom, in the wheel's yaw.
+    // Caja de engranajes, plataforma giratoria y la veleta en su brazo, con la
+    // guiñada de la rueda.
     let (hub, yaw) = rotor_place(structure);
     let mount = Vec3::new(0.0, hub.y, 0.0);
     shape.lathe(
@@ -181,9 +187,9 @@ pub(crate) fn windpump(structure: &Structure, drop: f32) -> Shape {
     shape
 }
 
-/// The molino's wheel in its own space, turning about `Z`: eighteen
-/// curved galvanised blades between an inner and an outer steel ring, on
-/// a hub.
+/// La rueda del molino en su propio espacio, girando alrededor de `Z`:
+/// dieciocho aspas curvas galvanizadas entre un aro interior y uno exterior de
+/// acero, sobre un cubo.
 pub(crate) fn rotor() -> Shape {
     let mut shape = Shape::default();
     let blades = 18;
@@ -192,7 +198,7 @@ pub(crate) fn rotor() -> Shape {
         let a = k as f32 / blades as f32 * TAU;
         let dir = Vec3::new(a.cos(), a.sin(), 0.0);
         let mid = dir * ((inner + WHEEL_RADIUS) / 2.0);
-        // Each blade twisted into the wind, wider at the rim.
+        // Cada aspa torcida hacia el viento, más ancha en el borde.
         let turn = Quat::from_rotation_z(a - FRAC_PI_2) * Quat::from_rotation_y(0.5);
         shape.cuboid(
             Surface::Sheet,
@@ -232,8 +238,8 @@ pub(crate) fn rotor() -> Shape {
     shape
 }
 
-/// The australian tank: corrugated galvanised walls round a brick footing,
-/// the water a little under the rim.
+/// El tanque australiano: paredes de chapa acanalada galvanizada alrededor de
+/// una base de ladrillo, con el agua un poco por debajo del borde.
 pub(crate) fn tank(structure: &Structure, drop: f32) -> Shape {
     let mut shape = Shape::default();
     let r = local_size(structure).x.min(local_size(structure).y) / 2.0 - 0.15;
@@ -251,7 +257,7 @@ pub(crate) fn tank(structure: &Structure, drop: f32) -> Shape {
         &[(r, 0.2), (r, h)],
         segments,
     );
-    // The rolled rim, then the inner wall back down.
+    // El borde enrollado, y después la pared interior bajando de nuevo.
     shape.lathe(
         Surface::Galvanised,
         Transform::IDENTITY,
@@ -278,13 +284,14 @@ pub(crate) fn tank(structure: &Structure, drop: f32) -> Shape {
     shape
 }
 
-/// The bebedero: a long trough of planks on short legs, brim-full.
+/// El bebedero: un largo abrevadero de tablones sobre patas cortas, lleno hasta
+/// el borde.
 pub(crate) fn trough(structure: &Structure, drop: f32) -> Shape {
     let mut shape = Shape::default();
     let size = local_size(structure);
     let (hx, hz, h) = (size.x / 2.0, size.y / 2.0, structure.height);
     let wall = 0.06;
-    // The sides and ends, then the water between.
+    // Los laterales y los extremos, y después el agua entre ellos.
     shape.block(
         Surface::Planks,
         Vec3::new(-hx, 0.15, hz - wall),
@@ -335,8 +342,8 @@ pub(crate) fn trough(structure: &Structure, drop: f32) -> Shape {
     shape
 }
 
-/// The well: a round brick curb, a timber frame with a pulley, a bucket
-/// on its rope, and dark water down inside.
+/// El pozo: un brocal redondo de ladrillo, un armazón de madera con una
+/// roldana, un balde colgado de su soga y agua oscura en el fondo.
 pub(crate) fn well(structure: &Structure, drop: f32) -> Shape {
     let mut shape = Shape::default();
     let r = local_size(structure).x.min(local_size(structure).y) / 2.0 - 0.05;
@@ -403,7 +410,7 @@ pub(crate) fn well(structure: &Structure, drop: f32) -> Shape {
     shape
 }
 
-/// A parva: a loaf of hay over its footprint, rounded on top.
+/// Una parva: un montón de heno sobre su huella, redondeado arriba.
 pub(crate) fn haystack(structure: &Structure, drop: f32) -> Shape {
     let mut shape = Shape::default();
     let size = local_size(structure);
@@ -425,7 +432,7 @@ pub(crate) fn haystack(structure: &Structure, drop: f32) -> Shape {
     shape
 }
 
-/// The palenque: two stout posts and a rail to tie horses to.
+/// El palenque: dos postes gruesos y una barra para atar caballos.
 pub(crate) fn hitching_post(structure: &Structure, drop: f32) -> Shape {
     let mut shape = Shape::default();
     let hx = local_size(structure).x / 2.0 - 0.15;
@@ -447,8 +454,8 @@ pub(crate) fn hitching_post(structure: &Structure, drop: f32) -> Shape {
     shape
 }
 
-/// The carreta: a bed between two very tall wheels, a paja toldo arched
-/// over it and its long pole resting on the ground ahead.
+/// La carreta: una caja entre dos ruedas altísimas, un toldo de paja arqueado
+/// encima y su larga lanza apoyada en el suelo por delante.
 pub(crate) fn cart(structure: &Structure) -> Shape {
     let mut shape = Shape::default();
     let size = local_size(structure);
@@ -464,7 +471,7 @@ pub(crate) fn cart(structure: &Structure) -> Shape {
         axle.with_z(hz - 0.05),
         0.12,
     );
-    // The bed: a floor, stakes and side boards.
+    // La caja: un piso, estacas y tablas laterales.
     let (b0, b1) = (-hx + 0.3, 1.2);
     let bed = radius + 0.1;
     let bw = hz - 0.35;
@@ -496,7 +503,7 @@ pub(crate) fn cart(structure: &Structure) -> Shape {
             );
         }
     }
-    // The toldo: an arch of paja over hoops, open at both ends.
+    // El toldo: un arco de paja sobre aros, abierto en ambos extremos.
     let arch = 8;
     let at = |k: usize, x: f32| {
         let a = k as f32 / arch as f32 * std::f32::consts::PI;
@@ -509,7 +516,7 @@ pub(crate) fn cart(structure: &Structure) -> Shape {
         shape.face(Surface::Thatch, &[p, p1, q1, q]);
         shape.face(Surface::Thatch, &[p, q, q1, p1]);
     }
-    // The pole, its far end resting on the ground.
+    // La lanza, con el extremo lejano apoyado en el suelo.
     shape.beam(
         Surface::Planks,
         Vec3::new(b1 - 0.6, bed - 0.05, 0.0),
@@ -519,7 +526,7 @@ pub(crate) fn cart(structure: &Structure) -> Shape {
     shape
 }
 
-/// A spoked wheel round `hub` (axle along `Z`).
+/// Una rueda de rayos alrededor de `hub` (eje a lo largo de `Z`).
 fn wheel(shape: &mut Shape, hub: Vec3, radius: f32) {
     let rim = 20;
     for k in 0..rim {
@@ -558,9 +565,9 @@ fn wheel(shape: &mut Shape, hub: Vec3, radius: f32) {
     );
 }
 
-/// The prop `structure` in its own space, for every kind but the houses,
-/// galpones, corrals, trees and the molino's wheel. An abandoned wagon
-/// without its model is drawn as a carreta.
+/// El accesorio `structure` en su propio espacio, para todos los tipos salvo
+/// las casas, los galpones, los corrales, los árboles y la rueda del molino.
+/// Una carreta abandonada sin su modelo se dibuja como carreta.
 pub(crate) fn prop(structure: &Structure, drop: f32) -> Shape {
     match structure.kind {
         StructureKind::Windpump => windpump(structure, drop),

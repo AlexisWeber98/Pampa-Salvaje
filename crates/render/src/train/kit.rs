@@ -1,5 +1,5 @@
-//! The train's materials and its wheel meshes, made once and shared by
-//! every car.
+//! Los materiales del tren y las meshes de sus ruedas, hechos una sola vez y
+//! compartidos por todos los vagones.
 
 use std::collections::HashMap;
 
@@ -8,67 +8,69 @@ use bevy::prelude::*;
 use super::wheels::{WheelStyle, wheel_centre, wheel_tyre};
 use crate::facade::{FacadeMaterials, Livery, Surface};
 
-/// What a part of a car is made of: a surface of the towns' materials, or
-/// a plain finish of the train's own.
+/// De qué está hecha una parte de un vagón: una superficie de los materiales de
+/// los pueblos, o un acabado simple propio del tren.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Mat {
     Surface(Surface),
-    /// Clear window glass.
+    /// Vidrio transparente de ventana.
     Glass,
-    /// A lamp's glowing glass.
+    /// El vidrio encendido de un farol.
     Lamp,
-    /// Coal heaped in the tender.
+    /// Carbón apilado en el ténder.
     Coal,
-    /// Upholstery.
+    /// Tapizado.
     Leather,
-    /// Cream lining and beading.
+    /// Forro y molduras color crema.
     Cream,
-    /// The aisle runner.
+    /// La alfombra del pasillo.
     Runner,
-    /// The coaches' painted canvas roofs.
+    /// Los techos de lona pintada de los coches.
     Canvas,
-    /// Dark glazing: the cab's windows, a clerestory's panes.
+    /// Vidriado oscuro: las ventanas de la cabina, los paneles de una linterna.
     Dark,
 }
 
 impl Mat {
-    /// Worn black enamel: boiler, tender, wheels, underframes.
+    /// Esmalte negro gastado: caldera, ténder, ruedas, bastidores.
     pub const BLACK: Mat = Mat::Surface(Surface::Livery(Livery::Black));
-    /// Tread plate: running plates, footplates, steps.
+    /// Chapa antideslizante: plataformas laterales, planchas del maquinista,
+    /// estribos.
     pub const TREAD: Mat = Mat::Surface(Surface::Livery(Livery::Tread));
-    /// Dark red buffer beams.
+    /// Testeros rojo oscuro.
     pub const BUFFER_RED: Mat = Mat::Surface(Surface::Livery(Livery::BufferRed));
-    /// Maroon coach boards.
+    /// Tablas granate de los coches.
     pub const MAROON: Mat = Mat::Surface(Surface::Livery(Livery::Maroon));
-    /// Varnished brown wood.
+    /// Madera marrón barnizada.
     pub const VARNISH: Mat = Mat::Surface(Surface::Livery(Livery::Varnish));
-    /// Oxide red freight boards.
+    /// Tablas de carga rojo óxido.
     pub const OXIDE: Mat = Mat::Surface(Surface::Livery(Livery::Oxide));
-    /// Rusty steel: frames, hoppers.
+    /// Acero oxidado: bastidores, tolvas.
     pub const STEEL: Mat = Mat::Surface(Surface::RailSteel);
-    /// The polished running face of a tyre.
+    /// La cara de rodadura pulida de una llanta.
     pub const TYRE: Mat = Mat::Surface(Surface::RailHead);
-    /// Plain weathered boards.
+    /// Tablas curtidas comunes.
     pub const PLANKS: Mat = Mat::Surface(Surface::Planks);
-    /// Brass and copper.
+    /// Bronce y cobre.
     pub const BRASS: Mat = Mat::Surface(Surface::Bronze);
-    /// Weathered corrugated iron.
+    /// Chapa acanalada curtida.
     pub const OLD_IRON: Mat = Mat::Surface(Surface::OldIron);
 }
 
-/// The wheels' radii (meters) and kinds.
+/// Los radios de las ruedas (en metros) y sus tipos.
 pub const WHEELS: [(f32, WheelStyle); 3] = [
     (super::DRIVER_RADIUS, WheelStyle::Spoked(12)),
     (SMALL_RADIUS, WheelStyle::Spoked(8)),
     (BOGIE_RADIUS, WheelStyle::Plate),
 ];
 
-/// The leading truck's and the tender's wheels.
+/// Las ruedas del bogie delantero y del ténder.
 pub const SMALL_RADIUS: f32 = 0.5;
-/// The coaches' and freight cars' wheels.
+/// Las ruedas de los coches y de los vagones de carga.
 pub const BOGIE_RADIUS: f32 = 0.45;
 
-/// A wheel's radius, style and side, and its tyre and centre meshes.
+/// El radio, el estilo y el lado de una rueda, y las meshes de su llanta y su
+/// centro.
 type KitWheel = (f32, WheelStyle, f32, Handle<Mesh>, Handle<Mesh>);
 
 #[derive(Clone)]
@@ -77,8 +79,8 @@ pub struct Kit {
     plain: HashMap<Mat, Handle<StandardMaterial>>,
     pub puff: Handle<Mesh>,
     pub smoke: Handle<StandardMaterial>,
-    /// `(radius, style, side)` to the wheel's steel tyre and its enamelled
-    /// centre.
+    /// `(radius, style, side)` a la llanta de acero de la rueda y a su centro
+    /// esmaltado.
     wheels: Vec<KitWheel>,
 }
 
@@ -151,7 +153,7 @@ impl Kit {
         }
     }
 
-    /// The material of `mat`.
+    /// El material de `mat`.
     pub fn material(&self, mat: Mat) -> Handle<StandardMaterial> {
         match mat {
             Mat::Surface(surface) => self.surfaces.get(surface),
@@ -159,7 +161,7 @@ impl Kit {
         }
     }
 
-    /// A wheel's tyre and centre meshes.
+    /// Las meshes de la llanta y el centro de una rueda.
     pub fn wheel(&self, radius: f32, style: WheelStyle, side: f32) -> (Handle<Mesh>, Handle<Mesh>) {
         let (.., tyre, centre) = self
             .wheels

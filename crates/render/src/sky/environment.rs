@@ -1,17 +1,18 @@
-//! Image-based ambient light from the sky: a small cubemap painted on the
-//! CPU from the same [`Sky`] the dome shows (blue from above, warm at the
-//! horizon at dusk, dark below), filtered on the GPU by Bevy's
-//! [`GeneratedEnvironmentMapLight`] into a diffuse irradiance map and a
-//! prefiltered specular chain, so shaded faces pick up the sky's colour and
-//! glossy surfaces reflect it.
+//! Luz ambiental basada en imagen a partir del cielo: un pequeño cubemap
+//! pintado en la CPU a partir del mismo [`Sky`] que muestra la cúpula (azul
+//! desde arriba, cálido en el horizonte al anochecer, oscuro abajo), filtrado
+//! en la GPU por el [`GeneratedEnvironmentMapLight`] de Bevy en un mapa de
+//! irradiancia difusa y una cadena especular prefiltrada, así que las caras
+//! sombreadas toman el color del cielo y las superficies brillantes lo
+//! reflejan.
 //!
-//! Cost control: the cubemap is repainted, and the GPU filter run, only when
-//! the sky has moved meaningfully ([`needs_refresh`]), never every frame.
-//! Bevy re-filters every frame while a [`GeneratedEnvironmentMapLight`] is on
-//! an entity, so the component is added to each camera and removed
-//! [`FILTER_FRAMES`] frames after that camera has its filtered
-//! [`EnvironmentMapLight`] (each camera counts its own [`FilterFrames`]); the
-//! filtered light stays.
+//! Control de costo: el cubemap se vuelve a pintar, y el filtro de la GPU se
+//! ejecuta, solo cuando el cielo cambió de forma significativa
+//! ([`needs_refresh`]), nunca en cada frame. Bevy vuelve a filtrar en cada
+//! frame mientras una entidad tiene un [`GeneratedEnvironmentMapLight`], así
+//! que el componente se agrega a cada cámara y se quita [`FILTER_FRAMES`]
+//! frames después de que esa cámara tiene su [`EnvironmentMapLight`] filtrado
+//! (cada cámara cuenta sus propios [`FilterFrames`]); la luz filtrada se queda.
 
 use crate::atmosphere::{EnvironmentShare, Sky, WorldClock, clock_days, sky_with_moon};
 use crate::sky::astro;
@@ -25,22 +26,27 @@ use bevy::render::render_resource::{
 use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 
-/// Cubemap face size in texels (power of two). 128 keeps the specular chain
-/// cheap and is plenty for a smooth sky.
+/// Tamaño de cara del cubemap en texels (potencia de dos). 128 mantiene barata
+/// la cadena especular y alcanza de sobra para un cielo suave.
 pub const FACE_SIZE: u32 = 128;
-/// How much of the ambient budget ([`Sky::ambient_brightness`]) the sky's
-/// image-based light carries; the rest stays a flat [`GlobalAmbientLight`].
+/// Qué parte del presupuesto ambiental ([`Sky::ambient_brightness`]) lleva la
+/// luz basada en imagen del cielo; el resto queda como un
+/// [`GlobalAmbientLight`] plano.
 pub const ENVIRONMENT_SHARE: f32 = 0.6;
-/// Frames the GPU filter stays on after a repaint: the new texture upload and
-/// the downsample and filter passes need a couple of frames to settle.
+/// Frames que el filtro de la GPU sigue activo después de volver a pintar: la
+/// subida de la nueva textura y las pasadas de reducción y filtrado necesitan
+/// un par de frames para estabilizarse.
 pub const FILTER_FRAMES: u8 = 3;
-/// Repaint once the sun or the moon has moved this many degrees.
+/// Volver a pintar una vez que el sol o la luna se movieron esta cantidad de
+/// grados.
 pub const ANGLE_STEP_DEGREES: f32 = 2.0;
-/// Repaint once daylight or twilight has changed by this much.
+/// Volver a pintar una vez que la luz del día o el crepúsculo cambiaron esta
+/// cantidad.
 pub const LIGHT_STEP: f32 = 0.03;
 
-/// Paints the sky into a cubemap, lights the cameras with it and keeps it
-/// current. Needs a renderer; headless apps use [`crate::sky::SkyLogic`].
+/// Pinta el cielo en un cubemap, ilumina las cámaras con él y lo mantiene al
+/// día. Necesita un renderizador; las apps headless usan
+/// [`crate::sky::SkyLogic`].
 pub struct SkyEnvironmentPlugin;
 
 impl Plugin for SkyEnvironmentPlugin {
@@ -60,30 +66,31 @@ impl Plugin for SkyEnvironmentPlugin {
     }
 }
 
-/// Frames the GPU filter still has to run for this camera, counted down once
-/// the camera has its filtered light; at zero the generator is removed.
+/// Frames que el filtro de la GPU todavía tiene que ejecutarse para esta
+/// cámara, en cuenta regresiva una vez que la cámara tiene su luz filtrada; en
+/// cero se quita el generador.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct FilterFrames(u8);
 
-/// Marks a camera lit by the sky's environment map.
+/// Marca una cámara iluminada por el environment map del cielo.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct SkyEnvironmentLight;
 
-/// The sky cubemap, what it was painted from and the filter's state.
+/// El cubemap del cielo, a partir de qué se pintó y el estado del filtro.
 #[derive(Resource)]
 pub struct SkyEnvironment {
     pub image: Handle<Image>,
-    /// The sky the cubemap shows now.
+    /// El cielo que muestra ahora el cubemap.
     painted: Snapshot,
-    /// The cubemap's mean luminance, to normalize its exposure.
+    /// La luminancia media del cubemap, para normalizar su exposición.
     mean_luma: f32,
-    /// The paint in flight, if any.
+    /// La pintura en curso, si hay una.
     pending: Option<Task<Painted>>,
-    /// How many paints have been started.
+    /// Cuántas pinturas se empezaron.
     pub repaints: u32,
 }
 
-/// The part of a [`Sky`] that decides what the cubemap looks like.
+/// La parte de un [`Sky`] que decide cómo se ve el cubemap.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Snapshot {
     sun_dir: Vec3,
@@ -103,7 +110,8 @@ impl Snapshot {
     }
 }
 
-/// Whether the sky has moved enough since `painted` to be worth a repaint.
+/// Si el cielo cambió lo suficiente desde `painted` como para que valga la pena
+/// volver a pintar.
 pub fn needs_refresh(painted: &Snapshot, sky: &Sky) -> bool {
     let limit = ANGLE_STEP_DEGREES.to_radians().cos();
     painted.sun_dir.dot(sky.sun_dir) < limit
@@ -122,35 +130,39 @@ fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// The sky's radiance toward `dir` (unit, Bevy world space), linear and
-/// relative: overhead zenith colour, haze at the horizon, a dim ground below,
-/// the sun's glow and its dusk stain, a faint moon glow at night.
+/// La radiancia del cielo hacia `dir` (unitaria, en espacio de mundo de Bevy),
+/// lineal y relativa: el color del cenit arriba, bruma en el horizonte, un
+/// suelo tenue abajo, el resplandor del sol y su mancha al anochecer, y un leve
+/// resplandor de la luna de noche.
 pub fn sky_radiance(sky: &Sky, dir: Vec3) -> Vec3 {
     let haze = linear(sky.haze);
     let zenith = linear(sky.zenith);
     let up = smoothstep(0.0, 0.7, dir.y.max(0.0)).sqrt();
     let mut color = haze.lerp(zenith, up);
 
-    // Dusk: the horizon glows with the sun's colour toward the sun.
+    // Anochecer: el horizonte brilla con el color del sol en dirección al sol.
     let sun_cos = dir.dot(sky.sun_dir).max(0.0);
     let sun_up = smoothstep(-0.12, 0.06, sky.elevation);
     let sun_color = linear(sky.light_color);
     let horizon = (1.0 - dir.y.abs()).powi(4);
     color += sun_color * sun_cos.powi(4) * horizon * sky.twilight * 1.2;
-    // A soft halo round the sun itself; the disc is the directional light's.
+    // Un halo suave alrededor del propio sol; el disco es el de la luz
+    // direccional.
     color += sun_color * sun_cos.powi(24) * sun_up * 0.6;
 
-    // The moon, only when it is dark.
+    // La luna, solo cuando está oscuro.
     let moon_cos = dir.dot(sky.moon_dir).max(0.0);
     color += Vec3::new(0.55, 0.62, 0.8) * moon_cos.powi(48) * (1.0 - sky.daylight) * 0.08;
 
-    // Below the horizon: the dry ground, a warm dim version of the haze.
+    // Por debajo del horizonte: el suelo seco, una versión cálida y tenue de la
+    // bruma.
     let ground = haze * Vec3::new(0.62, 0.5, 0.38) * 0.45;
     color.lerp(ground, smoothstep(0.0, -0.18, dir.y))
 }
 
-/// The world direction of texel `(x, y)` on cubemap `face` of a `size`-texel
-/// face, in wgpu's cube layer order (+X, -X, +Y, -Y, +Z, -Z).
+/// La dirección del mundo del texel `(x, y)` en la cara `face` de un cubemap
+/// con caras de `size` texels, en el orden de capas de cubo de wgpu (+X, -X,
+/// +Y, -Y, +Z, -Z).
 pub fn texel_direction(face: u32, x: u32, y: u32, size: u32) -> Vec3 {
     let u = (x as f32 + 0.5) / size as f32 * 2.0 - 1.0;
     let v = (y as f32 + 0.5) / size as f32 * 2.0 - 1.0;
@@ -165,8 +177,9 @@ pub fn texel_direction(face: u32, x: u32, y: u32, size: u32) -> Vec3 {
     .normalize()
 }
 
-/// `value` as IEEE half-float bits: positive-range values are enough here,
-/// tiny ones flush to zero and big ones clamp to the largest finite half.
+/// `value` como bits de half-float IEEE: aquí alcanza con valores del rango
+/// positivo, los muy pequeños se redondean a cero y los grandes se limitan al
+/// mayor half finito.
 pub fn f16_bits(value: f32) -> u16 {
     let bits = value.to_bits();
     let sign = ((bits >> 16) & 0x8000) as u16;
@@ -181,13 +194,13 @@ pub fn f16_bits(value: f32) -> u16 {
     if exp <= 0 {
         return sign;
     }
-    // Round to nearest by adding half the dropped bits.
+    // Redondea al más cercano sumando la mitad de los bits descartados.
     let rounded = (((exp as u32) << 10) | (mantissa >> 13)) + ((mantissa >> 12) & 1);
     sign | rounded.min(0x7bff) as u16
 }
 
-/// The cubemap's six faces for `sky` as `Rgba16Float` bytes, and its mean
-/// luminance.
+/// Las seis caras del cubemap para `sky` como bytes `Rgba16Float`, y su
+/// luminancia media.
 pub fn paint_cubemap(sky: &Sky, size: u32) -> (Vec<u8>, f32) {
     let mut bytes = Vec::with_capacity((6 * size * size * 8) as usize);
     let mut luma_sum = 0.0;
@@ -205,9 +218,10 @@ pub fn paint_cubemap(sky: &Sky, size: u32) -> (Vec<u8>, f32) {
     (bytes, luma_sum / (6 * size * size) as f32)
 }
 
-/// The environment light's intensity for `sky`: the share of the ambient
-/// budget it carries, over the cubemap's mean luminance so the brightness
-/// stays the sky's budget however bright the painted colours are.
+/// La intensidad de la luz de entorno para `sky`: la parte del presupuesto
+/// ambiental que lleva, dividida por la luminancia media del cubemap, para que
+/// el brillo siga siendo el presupuesto del cielo por más brillantes que sean
+/// los colores pintados.
 pub fn environment_intensity(sky: &Sky, share: f32, mean_luma: f32) -> f32 {
     sky.ambient_brightness * share / mean_luma.max(1e-3)
 }
@@ -216,8 +230,8 @@ fn current_sky(clock: &WorldClock) -> Sky {
     sky_with_moon(clock.0.hour(), astro::moon_age(clock_days(&clock.0)))
 }
 
-/// The environment light's intensity right now, from the clock (the default
-/// hour without one), the share and the cubemap's mean luminance.
+/// La intensidad de la luz de entorno en este momento, a partir del reloj (la
+/// hora por defecto si no hay uno), la parte y la luminancia media del cubemap.
 fn current_intensity(clock: Option<&WorldClock>, share: f32, mean_luma: f32) -> f32 {
     let sky = clock.map_or_else(
         || crate::atmosphere::sky_at(crate::atmosphere::DEFAULT_HOUR),
@@ -226,8 +240,8 @@ fn current_intensity(clock: Option<&WorldClock>, share: f32, mean_luma: f32) -> 
     environment_intensity(&sky, share, mean_luma)
 }
 
-/// The generator for a camera, carrying the current intensity from the first
-/// frame (Bevy copies it into the filtered light when it creates it).
+/// El generador para una cámara, con la intensidad actual desde el primer frame
+/// (Bevy la copia en la luz filtrada cuando la crea).
 fn generator(env: &SkyEnvironment, intensity: f32) -> impl Bundle {
     (
         GeneratedEnvironmentMapLight {
@@ -275,7 +289,7 @@ fn create_environment(
     });
 }
 
-/// Lights every 3D camera with the sky's environment map.
+/// Ilumina cada cámara 3D con el environment map del cielo.
 fn attach_environment(
     mut commands: Commands,
     clock: Option<Res<WorldClock>>,
@@ -294,16 +308,17 @@ fn attach_environment(
     }
 }
 
-/// A finished paint: the cubemap bytes and their mean luminance.
+/// Una pintura terminada: los bytes del cubemap y su luminancia media.
 pub struct Painted {
     bytes: Vec<u8>,
     mean_luma: f32,
 }
 
-/// Repaints the cubemap when the sky has moved enough, and turns the GPU
-/// filter back on for the cameras. The paint runs on the async compute pool,
-/// one at a time: while one is pending a further change just waits, and is
-/// picked up (the sky is compared again) the frame the paint lands.
+/// Vuelve a pintar el cubemap cuando el cielo cambió lo suficiente, y vuelve a
+/// activar el filtro de la GPU para las cámaras. La pintura se ejecuta en el
+/// pool de cómputo asíncrono, de a una: mientras hay una pendiente, un cambio
+/// adicional simplemente espera, y se toma (el cielo se vuelve a comparar) en
+/// el frame en que llega la pintura.
 fn repaint_environment(
     mut commands: Commands,
     clock: Option<Res<WorldClock>>,
@@ -347,8 +362,9 @@ fn repaint_environment(
     env.repaints += 1;
 }
 
-/// Counts each camera's filter frames down once it has its filtered light,
-/// then removes its generator so Bevy stops re-filtering every frame.
+/// Hace la cuenta regresiva de los frames de filtro de cada cámara una vez que
+/// tiene su luz filtrada, y después quita su generador para que Bevy deje de
+/// volver a filtrar en cada frame.
 fn settle_filter(
     mut commands: Commands,
     mut cameras: Query<(Entity, &mut FilterFrames), With<EnvironmentMapLight>>,
@@ -363,7 +379,8 @@ fn settle_filter(
     }
 }
 
-/// Keeps the environment light's intensity on the clock's ambient budget.
+/// Mantiene la intensidad de la luz de entorno en el presupuesto ambiental del
+/// reloj.
 fn follow_exposure(
     clock: Option<Res<WorldClock>>,
     env: Option<Res<SkyEnvironment>>,
@@ -381,12 +398,13 @@ fn follow_exposure(
     }
 }
 
-/// Relative change in the environment light's intensity worth writing.
-/// The clock moves every frame; below this the step is invisible, and
-/// skipping it spares a change-detected re-extraction each frame.
+/// Cambio relativo en la intensidad de la luz de entorno que vale la pena
+/// escribir. El reloj avanza en cada frame; por debajo de esto el paso es
+/// invisible, y omitirlo ahorra una reextracción por detección de cambios en
+/// cada frame.
 const EXPOSURE_TOLERANCE: f32 = 0.01;
 
-/// Whether `current` is far enough from `target` to be updated.
+/// Si `current` está lo bastante lejos de `target` como para actualizarlo.
 fn exposure_drifted(current: f32, target: f32) -> bool {
     (current - target).abs() > EXPOSURE_TOLERANCE * target.abs().max(current.abs())
 }
@@ -406,13 +424,14 @@ mod tests {
         let sky = sky_at(13.0);
         let painted = Snapshot::of(&sky);
         assert!(!needs_refresh(&painted, &sky));
-        // Seconds of game time: the sun has hardly moved.
+        // Segundos de tiempo de juego: el sol apenas se movió.
         assert!(!needs_refresh(&painted, &sky_at(13.0 + 1.0 / 120.0)));
-        // Two hours: the sun has crossed tens of degrees.
+        // Dos horas: el sol recorrió decenas de grados.
         assert!(needs_refresh(&painted, &sky_at(15.0)));
-        // Dusk changes daylight and twilight fast.
+        // El anochecer cambia rápido la luz del día y el crepúsculo.
         assert!(needs_refresh(&Snapshot::of(&sky_at(19.0)), &sky_at(19.5)));
-        // Light alone, with every direction still: each of its terms counts.
+        // Solo la luz, con todas las direcciones quietas: cada uno de sus
+        // términos cuenta.
         let dimmer = Sky {
             daylight: sky.daylight - 0.1,
             ..sky
@@ -438,13 +457,13 @@ mod tests {
         assert!(up.z > up.x, "blue overhead: {up:?}");
         assert!(luma(up) > luma(down) * 1.5, "{up:?} vs {down:?}");
 
-        // Sunset: the horizon toward the sun is warmer than the opposite one.
+        // Atardecer: el horizonte hacia el sol es más cálido que el opuesto.
         let dusk = sky_at(19.0);
         let toward = Vec3::new(dusk.sun_dir.x, 0.0, dusk.sun_dir.z).normalize();
         let warm = sky_radiance(&dusk, toward);
         let cool = sky_radiance(&dusk, -toward);
         assert!(warm.x / warm.z > cool.x / cool.z, "{warm:?} vs {cool:?}");
-        // The stain is the twilight's doing, not only the sun's halo.
+        // La mancha es obra del crepúsculo, no solo del halo del sol.
         let plain = Sky {
             twilight: 0.0,
             ..dusk
@@ -458,7 +477,7 @@ mod tests {
         let (_, night_mean) = paint_cubemap(&sky_at(1.0), 8);
         assert_eq!(day.len(), 6 * 8 * 8 * 8);
         assert!(day_mean > 2.0 * night_mean, "{day_mean} vs {night_mean}");
-        // Every direction lands on its own face's side.
+        // Cada dirección cae del lado de su propia cara.
         for face in 0..6 {
             let d = texel_direction(face, 4, 4, 8);
             let axis = [
@@ -485,7 +504,8 @@ mod tests {
             }
         }
         eprintln!("repaints per game day: {repaints}");
-        // About one repaint per 5 game minutes (~10 s of play at 30x), nowhere near every frame.
+        // Alrededor de una pintura cada 5 minutos de juego (~10 s de juego a
+        // 30x), ni cerca de una por frame.
         assert!((20..=300).contains(&repaints), "{repaints}");
     }
 
@@ -500,18 +520,19 @@ mod tests {
 
     #[test]
     fn the_intensity_is_the_budget_share_over_the_cubemaps_mean_luminance() {
-        // Known numbers, not the formula run on its own output.
+        // Números conocidos, no la fórmula aplicada sobre su propia salida.
         let sky = Sky {
             ambient_brightness: 200.0,
             ..sky_at(13.0)
         };
         assert!((environment_intensity(&sky, 0.6, 0.5) - 240.0).abs() < 1e-3);
         assert!((environment_intensity(&sky, 0.5, 2.0) - 50.0).abs() < 1e-3);
-        // A black cubemap must not blow the intensity up to infinity.
+        // Un cubemap negro no debe disparar la intensidad al infinito.
         assert!(environment_intensity(&sky, 0.6, 0.0).is_finite());
 
-        // A sky of one known grey (no sun halo, no dusk, no moon): the painted
-        // mean sits between the ground's luminance and the sky's 0.5.
+        // Un cielo de un gris conocido (sin halo solar, sin anochecer, sin
+        // luna): la media pintada queda entre la luminancia del suelo y el 0.5
+        // del cielo.
         let grey = Color::linear_rgb(0.5, 0.5, 0.5);
         let flat = Sky {
             haze: grey,
@@ -556,13 +577,14 @@ mod tests {
         );
         assert_eq!(world.resource::<SkyEnvironment>().repaints, 1);
 
-        // Many frames at the same hour: still one paint.
+        // Muchos frames a la misma hora: igual una sola pintura.
         for _ in 0..10 {
             app.update();
         }
         assert_eq!(app.world().resource::<SkyEnvironment>().repaints, 1);
 
-        // The clock jumps: one repaint, and the generator is back on.
+        // El reloj salta: una nueva pintura, y el generador vuelve a estar
+        // activo.
         app.world_mut().resource_mut::<WorldClock>().0 = GameClock::at(TimeOfDay::hm(19, 0));
         app.update();
         assert_eq!(app.world().resource::<SkyEnvironment>().repaints, 2);
@@ -573,7 +595,7 @@ mod tests {
         let mut app = app_at(13);
         let camera = app.world_mut().spawn(Camera3d::default()).id();
         app.update();
-        // What Bevy's generator does on the render side.
+        // Lo que hace el generador de Bevy del lado del render.
         app.world_mut()
             .entity_mut(camera)
             .insert(EnvironmentMapLight::default());
@@ -585,7 +607,8 @@ mod tests {
         assert!(world.get::<EnvironmentMapLight>(camera).is_some());
     }
 
-    /// Runs frames until the paint in flight lands (at most about 5 s).
+    /// Ejecuta frames hasta que llega la pintura en curso (como mucho unos
+    /// 5 s).
     fn until_landed(app: &mut App) {
         for _ in 0..500 {
             app.update();
@@ -613,7 +636,7 @@ mod tests {
         let mut app = app_at(13);
         let camera = app.world_mut().spawn(Camera3d::default()).id();
         app.update();
-        // The first filter has finished: the generator is off.
+        // El primer filtro terminó: el generador está desactivado.
         app.world_mut()
             .entity_mut(camera)
             .insert(EnvironmentMapLight::default());
@@ -631,8 +654,8 @@ mod tests {
         app.update();
         let env = app.world().resource::<SkyEnvironment>();
         assert_eq!(env.repaints, 2, "one paint task spawned");
-        // The spawning frame changed nothing: the paint is in flight, or at
-        // most landed on a later frame.
+        // El frame de creación no cambió nada: la pintura está en curso, o como
+        // mucho llegó en un frame posterior.
         assert!(env.pending.is_some());
         assert_eq!(image_bytes(&app), before);
 
@@ -652,7 +675,7 @@ mod tests {
         let mut app = app_at(13);
         app.world_mut().spawn(Camera3d::default());
         app.update();
-        // A paint that cannot land yet.
+        // Una pintura que todavía no puede llegar.
         app.world_mut().resource_mut::<SkyEnvironment>().pending =
             Some(AsyncComputeTaskPool::get().spawn(std::future::pending()));
         app.world_mut().resource_mut::<WorldClock>().0 = GameClock::at(TimeOfDay::hm(19, 0));
@@ -665,7 +688,8 @@ mod tests {
             "no second task while one is pending"
         );
 
-        // It lands: the sky has moved since, so one more paint starts.
+        // Llega: el cielo cambió desde entonces, así que empieza una pintura
+        // más.
         app.world_mut().resource_mut::<SkyEnvironment>().pending =
             Some(AsyncComputeTaskPool::get().spawn(async {
                 Painted {
@@ -677,7 +701,8 @@ mod tests {
         assert_eq!(app.world().resource::<SkyEnvironment>().repaints, 2);
     }
 
-    /// What Bevy's generator does on the render side once it has the cubemap.
+    /// Lo que hace el generador de Bevy del lado del render una vez que tiene
+    /// el cubemap.
     fn give_filtered_light(app: &mut App, camera: Entity) {
         app.world_mut()
             .entity_mut(camera)
@@ -699,7 +724,8 @@ mod tests {
                 .is_none()
         );
 
-        // A camera that shows up later, with the sky frozen (no repaint).
+        // Una cámara que aparece más tarde, con el cielo congelado (sin volver
+        // a pintar).
         let late = app.world_mut().spawn(Camera3d::default()).id();
         app.update();
         assert!(
@@ -729,7 +755,7 @@ mod tests {
         for _ in 0..(FILTER_FRAMES as usize + 2) {
             app.update();
         }
-        // The second camera's light only shows up now.
+        // La luz de la segunda cámara recién aparece ahora.
         give_filtered_light(&mut app, slow);
         for _ in 0..(FILTER_FRAMES as usize + 2) {
             app.update();
@@ -743,11 +769,11 @@ mod tests {
 
     #[test]
     fn exposure_follows_real_changes_but_ignores_tiny_drift() {
-        // A sliver of drift each frame is left alone, so the light isn't
-        // marked changed (and re-extracted) every frame.
+        // Un mínimo desvío en cada frame se deja pasar, para que la luz no se
+        // marque como cambiada (y se vuelva a extraer) en cada frame.
         assert!(!exposure_drifted(240.0, 240.5));
         assert!(!exposure_drifted(240.0, 238.0));
-        // A real change, or a light still at zero, is followed.
+        // Un cambio real, o una luz todavía en cero, se sigue.
         assert!(exposure_drifted(240.0, 245.0));
         assert!(exposure_drifted(240.0, 200.0));
         assert!(exposure_drifted(0.0, 0.5));
@@ -763,7 +789,7 @@ mod tests {
             let clock = app.world().resource::<WorldClock>();
             environment_intensity(&current_sky(clock), ENVIRONMENT_SHARE, env.mean_luma)
         };
-        // From the first frame the generator carries the real intensity.
+        // Desde el primer frame el generador lleva la intensidad real.
         let generated = app
             .world()
             .get::<GeneratedEnvironmentMapLight>(camera)
