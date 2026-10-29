@@ -694,6 +694,8 @@ impl TownConfig {
     /// El único pueblo con intendencia municipal (usuario, 2026-11-02:
     /// "agregar intendencia en General Pico").
     pub const TOWN_HALL_TOWN: &'static str = "General Pico";
+    /// Por debajo de esta `density`, un pueblo chico es una aldea.
+    pub const VILLAGE_DENSITY: f32 = 0.5;
 
     /// Pueblo inspirado en Eduardo Castex: 4 x 5 manzanas de 40 m (4 de este a
     /// oeste, 5 de norte a sur), calles de 12 m, vía férrea 24 m al norte de la
@@ -749,6 +751,33 @@ impl TownConfig {
     pub fn townsfolk_count(&self) -> usize {
         self.townsfolk
             .unwrap_or_else(|| self.size().townsfolk(self.blocks))
+    }
+
+    /// Cuántos vecinos recorren el pueblo a caballo: los de su categoría de
+    /// tamaño, o uno solo en una aldea (un pueblo chico con `density` menor que
+    /// [`TownConfig::VILLAGE_DENSITY`]).
+    pub fn riders_count(&self) -> usize {
+        if self.village() {
+            1
+        } else {
+            self.size().riders()
+        }
+    }
+
+    /// Cuántos sulkies recorren el pueblo: los de su categoría de tamaño, o
+    /// ninguno en una aldea.
+    pub fn sulkies_count(&self) -> usize {
+        if self.village() {
+            0
+        } else {
+            self.size().sulkies()
+        }
+    }
+
+    /// Si es una aldea: un pueblo chico con `density` menor que
+    /// [`TownConfig::VILLAGE_DENSITY`].
+    fn village(&self) -> bool {
+        self.size() == TownSize::Small && self.density.is_some_and(|d| d < Self::VILLAGE_DENSITY)
     }
 }
 
@@ -813,6 +842,24 @@ impl TownSize {
 
     /// Comisarías, salvo que un pueblo lo reemplace.
     pub fn police_stations(self) -> usize {
+        match self {
+            Self::Small | Self::Big => 1,
+            Self::VeryBig => 2,
+        }
+    }
+
+    /// Jinetes que recorren un pueblo de esta categoría: los más en una
+    /// ciudad.
+    pub fn riders(self) -> usize {
+        match self {
+            Self::Small => 2,
+            Self::Big => 3,
+            Self::VeryBig => 6,
+        }
+    }
+
+    /// Sulkies que recorren un pueblo de esta categoría: dos en una ciudad.
+    pub fn sulkies(self) -> usize {
         match self {
             Self::Small | Self::Big => 1,
             Self::VeryBig => 2,
@@ -980,6 +1027,10 @@ pub struct TownLayout {
     pub seed: u32,
     /// Personas que caminan por las calles ([`TownConfig::townsfolk_count`]).
     townsfolk: usize,
+    /// Vecinos a caballo ([`TownConfig::riders_count`]).
+    riders: usize,
+    /// Sulkies ([`TownConfig::sulkies_count`]).
+    sulkies: usize,
     blocks: (usize, usize),
     grid: Aabb,
     extent: Aabb,
@@ -1338,6 +1389,8 @@ impl TownLayout {
             palenques: Vec::new(),
             seed: config.seed,
             townsfolk: config.townsfolk_count(),
+            riders: config.riders_count(),
+            sulkies: config.sulkies_count(),
             blocks: config.blocks,
             grid: bounds,
             extent,
@@ -1396,6 +1449,17 @@ impl TownLayout {
     /// manzanas (al menos 16) en los más grandes.
     pub fn townsfolk_count(&self) -> usize {
         self.townsfolk
+    }
+
+    /// Cuántos vecinos recorren el pueblo a caballo
+    /// ([`TownConfig::riders_count`]).
+    pub fn riders_count(&self) -> usize {
+        self.riders
+    }
+
+    /// Cuántos sulkies recorren el pueblo ([`TownConfig::sulkies_count`]).
+    pub fn sulkies_count(&self) -> usize {
+        self.sulkies
     }
 
     /// Manzanas `(east_west, north_south)`, tomadas de su configuración.
@@ -5530,6 +5594,41 @@ pub(crate) mod tests {
         assert_eq!(pico.size, TownSize::VeryBig);
         assert_eq!(count(&pico, BuildingKind::GeneralStore), 2);
         assert_eq!(pico.townsfolk_count(), 51);
+    }
+
+    #[test]
+    fn cities_have_the_most_riders_and_villages_the_fewest() {
+        let with = |blocks, density| {
+            TownLayout::generate(&TownConfig {
+                blocks,
+                density,
+                ..TownConfig::castex()
+            })
+            .unwrap()
+            .riders_count()
+        };
+        assert_eq!(with((8, 8), None), 6, "city");
+        assert_eq!(with((7, 7), None), 3, "big town");
+        assert_eq!(with((4, 5), None), 2, "small town");
+        assert_eq!(with((4, 5), Some(0.6)), 2, "thinned small town");
+        assert_eq!(with((3, 3), Some(0.3)), 1, "village");
+    }
+
+    #[test]
+    fn cities_have_two_sulkies_towns_one_and_villages_none() {
+        let with = |blocks, density| {
+            TownLayout::generate(&TownConfig {
+                blocks,
+                density,
+                ..TownConfig::castex()
+            })
+            .unwrap()
+            .sulkies_count()
+        };
+        assert_eq!(with((8, 8), None), 2, "city");
+        assert_eq!(with((7, 7), None), 1, "big town");
+        assert_eq!(with((4, 5), None), 1, "small town");
+        assert_eq!(with((3, 3), Some(0.3)), 0, "village");
     }
 
     #[test]

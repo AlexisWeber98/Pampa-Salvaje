@@ -40,8 +40,11 @@ pub mod road;
 pub mod settlement;
 pub mod terrain;
 pub mod town;
+pub mod town_riders;
 pub mod townsfolk;
 pub mod train;
+pub mod travellers;
+pub mod vehicles;
 pub mod walker;
 pub mod world;
 
@@ -94,10 +97,13 @@ pub use town::{
     PLAZA_PATH_WIDTH, PlazaPlacement, Railway, RailwayConfig, Side, TetheredHorse, TownConfig,
     TownConfigError, TownLayout, TownSize, plaza_monument, plaza_paths,
 };
-pub use townsfolk::{StreetGraph, Townsfolk, Townsperson};
+pub use town_riders::{TownRider, TownRiders};
+pub use townsfolk::{Sidewalks, StreetGraph, Townsfolk, Townsperson};
 pub use train::{
     Car, CarKind, CoachBody, LinePhase, LineTrain, LineTrainState, MAX_STOP_MISS, PlacedCar, Run,
     SHUTTLE_MARGIN, Station, Timetable, TimetableError, shuttle_timetable,
 };
+pub use travellers::{Traveller, Travellers};
+pub use vehicles::Vehicle;
 pub use walker::Travel;
 pub use world::{Ground, World, WorldBounds};

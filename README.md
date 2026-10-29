@@ -21,7 +21,19 @@ El pueblo está vivo: los vecinos deambulan por las calles entre las esquinas
 frente al almacén de ramos generales (y una ciudad ata algunos más en los
 palenques de su comisaría, su iglesia y su estación), y el jugador se abre paso
 entre la gente apartando a empujones a los peatones, mientras los peatones lo
-esquivan.
+esquivan. Algunos vecinos recorren las calles a caballo, al paso, por la mano
+izquierda como se circulaba entonces: seis en una ciudad, tres en un pueblo
+grande, dos en uno chico y uno solo en una aldea. Por la calzada andan también
+sulkies (dos ruedas altas, un asiento y dos varas a los costados de un
+caballo): dos en una ciudad, uno en cada pueblo y ninguno en una aldea. Frenan
+ante quien se les cruza, y el jugador no puede atravesarlos. Por cada camino
+entre dos pueblos viajan dos jinetes, uno desde cada punta, al paso o al trote,
+y un carro de cuatro ruedas con barandas de listones, tirado al paso por dos
+caballos a los lados de la lanza: llegan al otro pueblo, descansan un rato en
+la entrada y emprenden la vuelta. Al que se les planta en el camino lo pasan
+por el costado, y antes de un paso a nivel esperan a que pase el tren. Los
+carros y los sulkies están hechos de madera de forma procedural, con un vecino
+sentado en el pescante y las ruedas girando con lo que avanzan.
 
 Las calles están sombreadas como en la pampa húmeda. Las calles de un pueblo
 miden 12 m de ancho (las de General Pico 13 m, las de la aldea Metileo también)

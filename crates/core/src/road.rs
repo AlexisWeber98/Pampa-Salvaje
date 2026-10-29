@@ -1660,7 +1660,7 @@ pub(crate) mod tests {
     /// Dos pueblos con ferrocarril a 3 km de distancia, con la vía del de oeste
     /// al norte del pueblo y la del de este al sur: el camino entre ellos tiene
     /// que cruzar la línea.
-    fn crossing_world() -> (Vec<TownLayout>, RailLine, RoadNetwork) {
+    pub(crate) fn crossing_world() -> (Vec<TownLayout>, RailLine, RoadNetwork) {
         let town = |name: &str, x: f32, side| TownConfig {
             name: name.into(),
             origin: Vec2::new(x, 0.0),

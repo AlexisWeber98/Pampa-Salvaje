@@ -34,6 +34,9 @@ pub enum CharacterVisual {
     /// almacén. (Los caballos sin aperos sueltos en los corrales son fauna: ver
     /// [`Animal::Horse`](crate::fauna::Animal::Horse).)
     Horse(Coat),
+    /// Un caballo de tiro, sin aperos de montar: el que tira de un carro o de
+    /// un sulky (ver [`vehicle`](crate::vehicle)).
+    Draught(Coat),
     /// Una persona montada en un caballo ensillado; la pose es la del caballo.
     /// Solo se dibuja encima un jinete con modelo
     /// ([`model_name`](super::model::model_name)).
@@ -174,10 +177,11 @@ fn attach_visuals(
                 }
                 body
             }
-            CharacterVisual::Horse(coat) => spawn_horse(&mut commands, entity, coat, None),
+            CharacterVisual::Horse(coat) => spawn_horse(&mut commands, entity, coat, None, true),
+            CharacterVisual::Draught(coat) => spawn_horse(&mut commands, entity, coat, None, false),
             // El jinete se sienta en cuanto aparece la escena del caballo.
             CharacterVisual::Mounted { rider, coat } => {
-                spawn_horse(&mut commands, entity, coat, Some(rider))
+                spawn_horse(&mut commands, entity, coat, Some(rider), true)
             }
         };
         commands.entity(body).insert(VisualPart);

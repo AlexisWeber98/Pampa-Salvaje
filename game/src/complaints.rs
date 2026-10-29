@@ -161,6 +161,7 @@ mod tests {
         let graph = StreetGraph {
             nodes: vec![GroundVec2::ZERO],
             links: vec![vec![]],
+            sidewalks: None,
         };
         let own = |lines: [&str; 2]| lines.map(String::from).to_vec();
         let mut app = App::new();

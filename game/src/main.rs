@@ -23,6 +23,7 @@ mod ride;
 mod settlement_tests;
 mod timetable;
 mod towns;
+mod travellers;
 
 use bevy::prelude::*;
 use pampa_content::{SLOTS_FILE, TOWNS_FILE, asset_path, load_model_slots};
@@ -33,8 +34,8 @@ use pampa_render::{
     AssetRoot, AtmospherePlugin, CharacterVisualPlugin, FadePlugin, FencePlugin, FloraPlugin,
     HudPlugin, LagoonPlugin, LampPlugin, MinimapPlugin, RailPlugin, RoadPlugin, SettlementPlugin,
     SignPlugin, SpeechBubblePlugin, StreamFocus, TerrainPlugin, ThinFadePlugin, TownPlugin,
-    TrainPlugin, WorldChunks, WorldClock, WorldFences, WorldFlora, WorldLamps, WorldRail,
-    WorldSettlements, WorldTerrain, WorldTowns, WorldTrains,
+    TrainPlugin, VehiclePlugin, WorldChunks, WorldClock, WorldFences, WorldFlora, WorldLamps,
+    WorldRail, WorldSettlements, WorldTerrain, WorldTowns, WorldTrains,
 };
 
 /// Los ajustes de los modelos de terceros en las ranuras de modelo
@@ -288,11 +289,13 @@ fn main() {
     .insert_resource(slots)
     .insert_resource(StreamFocus(position))
     .insert_resource(crowds)
+    .insert_resource(life::Horsemen::for_towns(&loaded.towns))
     .insert_resource(WorldClock(clock))
     .insert_resource(WorldTrains(trains))
     .insert_resource(WorldTowns(loaded.towns))
     // La línea del ferrocarril entre pueblos, colocada chunk por chunk.
     .insert_resource(WorldRail(loaded.line))
+    .insert_resource(travellers::RoadTravellers::of(&world))
     .insert_resource(player::GameWorld(world))
     .insert_resource(player::PlayerSpawn {
         position,
@@ -326,7 +329,7 @@ fn main() {
         MinimapPlugin,
         AtmospherePlugin,
         TrainPlugin,
-        CharacterVisualPlugin,
+        (CharacterVisualPlugin, VehiclePlugin),
         SpeechBubblePlugin,
         player::PlayerPlugin,
         life::TownLifePlugin,
@@ -338,6 +341,8 @@ fn main() {
     // árboles, los alambrados, los carteles y los objetos delgados se
     // desvanecen para no tapar la cámara.
     .add_plugins((RoadPlugin, FencePlugin, SettlementPlugin, ThinFadePlugin))
+    // Los jinetes que van de pueblo a pueblo por los caminos.
+    .add_plugins(travellers::TravellersPlugin)
     // Los faroles de kerosén, que brillan de noche, con los más cercanos
     // encendidos.
     .add_plugins(LampPlugin)

@@ -76,7 +76,7 @@ use bevy::world_serialization::WorldInstanceReady;
 
 use super::figure::Rgb;
 use super::finish::{Finish, Palette};
-use super::horse::{HorseModel, transform_of};
+use super::horse::{HorseBody, HorseModel, transform_of};
 use super::model::model_range;
 use crate::AssetRoot;
 use crate::facade::materials::{MAPS, load_map};
@@ -2003,6 +2003,7 @@ fn build_tack(
 /// le quitan los aperos viejos una vez que se verificó la escena nueva
 /// (cualquier jinete se fue con los huesos viejos); si no está completa, el
 /// caballo queda sin [`Tack`], nunca con uno que apunte a entidades eliminadas.
+/// Un caballo de tiro ([`HorseBody::saddled`] falso) queda sin aperos.
 pub(super) fn dress_tack(
     ready: On<WorldInstanceReady>,
     roots: Query<(), With<HorseModel>>,
@@ -2028,7 +2029,7 @@ pub(super) fn dress_pending(
     mut commands: Commands,
     mut stores: TackStores,
     scene: TackScene,
-    roots: Query<&ChildOf, With<HorseModel>>,
+    (roots, bodies): (Query<&ChildOf, With<HorseModel>>, Query<&HorseBody>),
     (pieces, worn): (Query<(), With<HorsePiece>>, Query<&Tack>),
     mut pending: ResMut<PendingTack>,
     mut built: ResMut<TackBuilt>,
@@ -2053,7 +2054,7 @@ pub(super) fn dress_pending(
             &mut commands,
             &mut stores,
             &scene,
-            &roots,
+            (&roots, &bodies),
             (&pieces, &worn),
             &mut built.0,
             root,
@@ -2069,7 +2070,7 @@ fn dress(
     commands: &mut Commands,
     stores: &mut TackStores,
     scene: &TackScene,
-    roots: &Query<&ChildOf, With<HorseModel>>,
+    (roots, bodies): (&Query<&ChildOf, With<HorseModel>>, &Query<&HorseBody>),
     (pieces, worn): (&Query<(), With<HorsePiece>>, &Query<&Tack>),
     tack: &mut Option<HorseTack>,
     root: Entity,
@@ -2079,6 +2080,9 @@ fn dress(
         return;
     };
     let carrier = child_of.parent();
+    if bodies.get(carrier).is_ok_and(|b| !b.saddled) {
+        return;
+    }
     // La piel del cuerpo, sus articulaciones y sus poses de bind, y los huesos
     // de los que cuelgan las correas: todo verificado antes de quitar nada.
     let skin = scene.children.iter_descendants(root).find_map(|e| {
@@ -2902,8 +2906,8 @@ pub(crate) mod tests {
     // --- con el caballo incluido ---------------------------------------------
 
     use crate::character::cpu;
+    use crate::character::horse::TIED_IDLES;
     use crate::character::horse::tests::saddled;
-    use crate::character::horse::{HorseBody, TIED_IDLES};
     use crate::character::{CharacterVisual, Coat, FigureKind};
     use bevy::mesh::skinning::SkinnedMesh;
     use bevy::platform::collections::HashMap;

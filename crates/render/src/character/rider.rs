@@ -75,7 +75,8 @@ use super::tack::{STIRRUP, Strap, Tack};
 /// del hueso `Torso` del caballo.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct Riding {
-    /// El cuerpo del caballo.
+    /// El cuerpo del caballo, o el asiento de un vehículo (sin caballo
+    /// ensillado debajo: ver [`pose_riders`]).
     pub horse: Entity,
     pub kind: FigureKind,
     pub seed: u32,
@@ -672,6 +673,18 @@ pub fn saddle_attitude(tilt: Quat) -> (f32, f32) {
     )
 }
 
+/// Sienta al conductor de un vehículo (ver [`vehicle`](crate::vehicle)): su
+/// pelvis en el origen del modelo, puesto sobre el asiento como un jinete
+/// ([`seat_transform`]).
+fn sit_on_bench(transforms: &mut Bones, seated: &Seated) {
+    let Some(root) = transforms.get(seated.bone(Bone::Root)).ok().copied() else {
+        return;
+    };
+    if let Ok(mut pelvis) = transforms.get_mut(seated.bone(Bone::Pelvis)) {
+        pelvis.translation = root.rotation.inverse() * -root.translation;
+    }
+}
+
 /// Ajusta cada jinete que se reproduce a su caballo (ver las notas del módulo),
 /// después de que los clips lo pusieron en pose (a él y al caballo) y antes de
 /// que se calculen los transforms.
@@ -696,6 +709,9 @@ pub(super) fn pose_riders(
         // En pose a partir de aquí: se dibuja.
         shown.set_if_neq(Visibility::Inherited);
         let Ok((horse, saddle)) = horses.get(riding.horse) else {
+            // En el pescante de un vehículo: la pelvis en el origen del
+            // modelo, sobre el asiento, y el resto como lo pone el clip.
+            sit_on_bench(&mut transforms, seated);
             continue;
         };
         let (Some(seat), Some(root)) = (

@@ -318,6 +318,8 @@ pub struct HorseBody {
     pub coat: Coat,
     /// Quién lo monta, si alguien lo hace.
     pub rider: Option<FigureKind>,
+    /// Si lleva el recado y la brida; un caballo de tiro no.
+    pub saddled: bool,
     /// Su andar: lo deciden la animación de la lógica y la velocidad.
     pub gait: HorseGait,
     /// Cuánto galope reproduce ahora (`0..1`): un jinete se inclina con él.
@@ -339,6 +341,8 @@ impl HorseBody {
     pub fn idle(&self, clock: f32) -> Clip {
         match self.rider {
             Some(_) => Clip::Idle,
+            // Enganchado a un vehículo, se queda quieto.
+            None if !self.saddled => Clip::Idle,
             None => {
                 let turn = ((clock.max(0.0) + (self.seed % 97) as f32) / HORSE_IDLE) as u32;
                 TIED_IDLES[mix(self.seed, turn) as usize % TIED_IDLES.len()]
@@ -480,6 +484,7 @@ pub(super) fn spawn_horse(
     parent: Entity,
     coat: Coat,
     rider: Option<FigureKind>,
+    saddled: bool,
 ) -> Entity {
     let body = commands
         .spawn((
@@ -487,6 +492,7 @@ pub(super) fn spawn_horse(
             HorseBody {
                 coat,
                 rider,
+                saddled,
                 gait: HorseGait::Idle,
                 gallop: 0.0,
                 speed: 0.0,
@@ -1129,6 +1135,7 @@ pub(crate) mod tests {
         let mut body = HorseBody {
             coat: Coat::Zaino,
             rider: Some(FigureKind::Protagonist),
+            saddled: true,
             gait: HorseGait::Idle,
             gallop: 0.0,
             speed: 0.0,
@@ -1248,6 +1255,25 @@ pub(crate) mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         panic!("the horse never played");
+    }
+
+    #[test]
+    fn a_draught_horse_wears_no_saddle_and_stands_still() {
+        use crate::character::tack::HorsePiece;
+        let (mut app, me) = saddled_every(CharacterVisual::Draught(Coat::Zaino), 0.0, 50);
+        let carrier = app.world().get::<Children>(me).unwrap()[0];
+        assert!(
+            app.world()
+                .get::<crate::character::tack::Tack>(carrier)
+                .is_none(),
+            "no tack"
+        );
+        let mut pieces = app.world_mut().query::<&HorsePiece>();
+        assert_eq!(pieces.iter(app.world()).count(), 0, "no saddle or bridle");
+        let body = app.world().get::<HorseBody>(carrier).unwrap().clone();
+        for k in 0..40 {
+            assert_eq!(body.idle(k as f32 * 14.0), Clip::Idle, "in harness");
+        }
     }
 
     #[test]

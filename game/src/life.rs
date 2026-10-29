@@ -1,5 +1,6 @@
 //! La vida en el pueblo: el reloj del juego, el tren de la línea, los vecinos
-//! que caminan por las calles, el caballo atado frente a cada almacén de ramos
+//! que caminan o cabalgan ([`Horsemen`]) por las calles, el caballo atado
+//! frente a cada almacén de ramos
 //! generales, y las personas del encargo paradas en sus pueblos.
 //!
 //! La lógica vive en `pampa-core`; este módulo la hace avanzar una vez por
@@ -22,11 +23,11 @@ use std::collections::BTreeSet;
 use bevy::prelude::*;
 use pampa_core::{
     BASE_RATE, GameClock, LineTrain, MAX_STEP, Npc, RailLine, Ride, Run, Standing, Timetable,
-    TownLayout, Townsfolk, Travel, opening,
+    TownLayout, TownRiders, Townsfolk, Travel, opening,
 };
 use pampa_render::{
-    ActiveTowns, CharacterVisual, Coat, FigureKind, MapIcon, VisualPose, WorldClock, WorldTowns,
-    WorldTrains, world_from_ground,
+    ActiveTowns, CharacterVisual, Coat, FigureKind, MapIcon, Rolled, VehicleVisual, VisualPose,
+    WorldClock, WorldTowns, WorldTrains, world_from_ground,
 };
 
 use crate::player::{DrivePlayer, GameWorld, Player, drive_player};
@@ -88,6 +89,37 @@ impl Crowds {
 /// La semilla de la gente de un pueblo con semilla `seed`.
 pub fn crowd_seed(seed: u32) -> u32 {
     TOWNSFOLK_SEED ^ seed.wrapping_mul(0x9e37_79b9)
+}
+
+/// Se mezcla con la semilla de la gente de cada pueblo para ubicar a sus
+/// jinetes.
+const RIDERS_SEED: u32 = 0x6a69_6e65;
+
+/// Los vecinos que recorren cada pueblo a caballo, por índice de pueblo.
+#[derive(Resource, Debug, Clone, Default)]
+pub struct Horsemen(pub Vec<TownRiders>);
+
+impl Horsemen {
+    /// Los jinetes y los sulkies de cada pueblo, tantos como su tamaño,
+    /// sembrados a partir de la semilla del pueblo.
+    pub fn for_towns(towns: &[TownLayout]) -> Self {
+        Self(
+            towns
+                .iter()
+                .map(|t| {
+                    let seed = crowd_seed(t.seed) ^ RIDERS_SEED;
+                    TownRiders::new(t, t.riders_count(), seed).with_sulkies(t.sulkies_count(), seed)
+                })
+                .collect(),
+        )
+    }
+}
+
+/// Entidad que dibuja al jinete (o al sulky) `index` de los del pueblo `town`.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Horseman {
+    pub town: usize,
+    pub index: usize,
 }
 
 /// Entidad que dibuja a la persona `index` de la gente del pueblo `town`.
@@ -170,7 +202,7 @@ impl Plugin for TownLifePlugin {
             )
             .add_systems(
                 Update,
-                (jostle_crowd, place_walkers)
+                (jostle_crowd, (place_walkers, place_horsemen))
                     .chain()
                     .in_set(DrivePlayer)
                     .after(drive_player),
@@ -213,6 +245,7 @@ type TownInputs<'a> = (
     Option<Res<'a, ActiveTowns>>,
     Res<'a, Cast>,
     Res<'a, LedAway>,
+    Option<Res<'a, Horsemen>>,
 );
 
 /// Todos los que viven en un pueblo: peatones, el caballo atado y las personas
@@ -224,13 +257,14 @@ type Residents<'a> = (
     Option<&'a PalenqueHorse>,
     Option<&'a StandingNpc>,
     Option<&'a Bystander>,
+    Option<&'a Horseman>,
 );
 
 /// Crea a la gente y el caballo atado de los pueblos que acaban de activarse, y
 /// elimina los de los pueblos que quedaron atrás.
 fn populate_towns(
     mut commands: Commands,
-    (crowds, towns, active, cast, led_away): TownInputs,
+    (crowds, towns, active, cast, led_away, horsemen): TownInputs,
     world: Res<GameWorld>,
     mut populated: ResMut<Populated>,
     residents: Query<Residents>,
@@ -239,13 +273,14 @@ fn populate_towns(
         return;
     };
     let wanted: BTreeSet<usize> = live_towns(&crowds, active.as_deref()).into_iter().collect();
-    for (entity, walker, horse, palenque, npc, bystander) in &residents {
+    for (entity, walker, horse, palenque, npc, bystander, horseman) in &residents {
         let town = walker
             .map(|w| w.town)
             .or(horse.map(|h| h.0))
             .or(palenque.map(|p| p.town))
             .or(npc.map(|n| n.town))
-            .or(bystander.map(|b| b.town));
+            .or(bystander.map(|b| b.town))
+            .or(horseman.map(|h| h.town));
         if town.is_some_and(|t| !wanted.contains(&t)) {
             commands.entity(entity).despawn();
         }
@@ -256,6 +291,9 @@ fn populate_towns(
             continue;
         }
         spawn_walkers(&mut commands, &crowds.0[town], town, &world);
+        if let Some(riders) = horsemen.as_ref().and_then(|h| h.0.get(town)) {
+            spawn_horsemen(&mut commands, riders, town, &world);
+        }
         if let Some(layout) = towns.as_ref().and_then(|t| t.0.get(town))
             && !led_away.0.contains(&town)
         {
@@ -334,6 +372,37 @@ fn spawn_walkers(commands: &mut Commands, crowd: &Townsfolk, town: usize, world:
     }
 }
 
+fn spawn_horsemen(commands: &mut Commands, riders: &TownRiders, town: usize, world: &GameWorld) {
+    for (index, rider) in riders.riders.iter().enumerate() {
+        let height = world.0.ground_height(rider.position);
+        let mut horseman = commands.spawn(Horseman { town, index });
+        match rider.vehicle {
+            Some(vehicle) => horseman.insert((
+                Name::new(format!("Sulky {town}.{index}")),
+                VehicleVisual::seeded(vehicle, rider.look, rider.coat),
+                Rolled(rider.travelled),
+            )),
+            None => horseman.insert((
+                Name::new(format!("Horseman {town}.{index}")),
+                CharacterVisual::Mounted {
+                    rider: FigureKind::townsfolk(rider.look),
+                    coat: Coat::seeded(rider.coat),
+                },
+            )),
+        };
+        horseman.insert((
+            VisualPose {
+                heading: rider.heading,
+                animation: rider.animation(),
+                speed: rider.speed,
+                turn: 0.0,
+                flight: None,
+            },
+            Transform::from_translation(world_from_ground(rider.position, height)),
+        ));
+    }
+}
+
 /// El pelaje del caballo atado en el almacén de `town`: el bayo de Don Hidalgo
 /// en su pueblo (el caballo que presta); si no, uno sembrado a partir del
 /// pueblo.
@@ -400,7 +469,7 @@ fn spawn_palenque_horses(
 
 /// Hace avanzar el reloj del juego, deja que cada tren lo siga y entrega sus
 /// vagones al mundo lógico como obstáculos en movimiento.
-fn run_clock_and_train(
+pub(crate) fn run_clock_and_train(
     time: Res<Time>,
     clock: Option<ResMut<WorldClock>>,
     trains: Option<ResMut<WorldTrains>>,
@@ -424,11 +493,13 @@ fn run_clock_and_train(
     world.0.moving = trains.obstacles();
 }
 
-/// Hace avanzar a la gente activa, que camina esquivando al jinete donde estaba
-/// en el frame anterior.
+/// Hace avanzar a la gente y a los jinetes activos: los jinetes frenan ante el
+/// jugador y los peatones, y los peatones esquivan al jugador y a los caballos,
+/// todos donde estaban en el frame anterior.
 fn walk_crowds(
     time: Res<Time>,
     crowds: Option<ResMut<Crowds>>,
+    horsemen: Option<ResMut<Horsemen>>,
     active: Option<Res<ActiveTowns>>,
     world: Res<GameWorld>,
     players: Query<&Player>,
@@ -436,10 +507,18 @@ fn walk_crowds(
     let Some(mut crowds) = crowds else {
         return;
     };
-    let riders: Vec<_> = players.iter().map(|p| p.rider.body()).collect();
+    let mut horsemen = horsemen;
+    let player: Vec<_> = players.iter().map(|p| p.rider.body()).collect();
     let dt = time.delta_secs().min(MAX_STEP);
     for town in live_towns(&crowds, active.as_deref()) {
-        crowds.0[town].step_around(&world.0, &riders, dt);
+        let mut obstacles = player.clone();
+        if let Some(riders) = horsemen.as_mut().and_then(|h| h.0.get_mut(town)) {
+            let mut around = player.clone();
+            around.extend(crowds.0[town].bodies());
+            riders.step_around(&world.0, &around, dt);
+            obstacles.extend(riders.bodies());
+        }
+        crowds.0[town].step_around(&world.0, &obstacles, dt);
     }
 }
 
@@ -458,6 +537,7 @@ pub struct Shoved {
 /// le abre paso sin quejarse a alguien que va a pie.
 pub(crate) fn jostle_crowd(
     crowds: Option<ResMut<Crowds>>,
+    horsemen: Option<Res<Horsemen>>,
     active: Option<Res<ActiveTowns>>,
     world: Res<GameWorld>,
     mut players: Query<(&mut Player, &mut Transform), Without<OnTrain>>,
@@ -485,6 +565,10 @@ pub(crate) fn jostle_crowd(
                 });
             }
             bodies.extend(crowd.bodies());
+            // Los caballos no se apartan: el jugador se detiene contra ellos.
+            if let Some(riders) = horsemen.as_ref().and_then(|h| h.0.get(town)) {
+                bodies.extend(riders.bodies());
+            }
         }
         rider.keep_clear_of(&world.0, &bodies);
         transform.translation = world_from_ground(rider.position, rider.elevation());
@@ -520,6 +604,46 @@ fn place_walkers(
     }
 }
 
+/// Copia el estado lógico de los jinetes en sus entidades.
+fn place_horsemen(
+    horsemen: Option<Res<Horsemen>>,
+    world: Res<GameWorld>,
+    mut entities: Query<
+        (
+            &Horseman,
+            &mut Transform,
+            &mut VisualPose,
+            Option<&mut Rolled>,
+        ),
+        Without<Player>,
+    >,
+) {
+    let Some(horsemen) = horsemen else {
+        return;
+    };
+    for (horseman, mut transform, mut pose, rolled) in &mut entities {
+        let Some(rider) = horsemen
+            .0
+            .get(horseman.town)
+            .and_then(|h| h.riders.get(horseman.index))
+        else {
+            continue;
+        };
+        let height = world.0.ground_height(rider.position);
+        transform.translation = world_from_ground(rider.position, height);
+        *pose = VisualPose {
+            heading: rider.heading,
+            animation: rider.animation(),
+            speed: rider.speed,
+            turn: 0.0,
+            flight: None,
+        };
+        if let Some(mut rolled) = rolled {
+            rolled.0 = rider.travelled;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -527,7 +651,7 @@ mod tests {
     use bevy::time::TimeUpdateStrategy;
     use pampa_core::{
         BASE_RATE, LinePhase, ONBOARD_MULTIPLIER, OPENING_LEAD, Terrain, TimeOfDay, TownActivation,
-        TownConfig, Vec2, World, WorldConfig,
+        TownConfig, Vec2, Vehicle, World, WorldConfig,
     };
     use std::time::Duration;
 
@@ -554,6 +678,7 @@ mod tests {
             )))
             .init_resource::<ButtonInput<KeyCode>>()
             .insert_resource(Crowds(crowds))
+            .insert_resource(Horsemen::for_towns(&towns))
             .insert_resource(WorldClock::default())
             .insert_resource(WorldTrains::default())
             .insert_resource(WorldTowns(towns))
@@ -925,6 +1050,80 @@ mod tests {
         small.update();
         let mut none = small.world_mut().query::<&PalenqueHorse>();
         assert_eq!(none.iter(small.world()).count(), 0);
+    }
+
+    #[test]
+    fn horsemen_ride_with_their_town_and_leave_with_it() {
+        let city = TownLayout::generate(&pampa_core::TownConfig {
+            name: "Ciudad".into(),
+            blocks: (8, 8),
+            ..pampa_core::TownConfig::castex()
+        })
+        .unwrap();
+        let mut app = app_with(vec![city.clone()], 3);
+        for _ in 0..40 {
+            app.update();
+        }
+        let riders = app.world().resource::<Horsemen>().0[0].clone();
+        assert_eq!(riders.riders.len(), 6 + 2, "six riders and two sulkies");
+        let world = app.world().resource::<GameWorld>().0.clone();
+        let mut query = app
+            .world_mut()
+            .query::<(&Horseman, &Transform, &VisualPose, &CharacterVisual)>();
+        let found: Vec<_> = query
+            .iter(app.world())
+            .map(|(h, t, p, v)| (*h, *t, *p, *v))
+            .collect();
+        assert_eq!(found.len(), 6);
+        let mut moving = false;
+        for (horseman, transform, pose, visual) in found {
+            assert_eq!(horseman.town, 0);
+            let rider = &riders.riders[horseman.index];
+            assert_eq!(
+                visual,
+                CharacterVisual::Mounted {
+                    rider: FigureKind::townsfolk(rider.look),
+                    coat: Coat::seeded(rider.coat),
+                }
+            );
+            let height = world.ground_height(rider.position);
+            assert_eq!(
+                transform.translation,
+                world_from_ground(rider.position, height)
+            );
+            assert_eq!(pose.heading, rider.heading);
+            assert_eq!(pose.speed, rider.speed);
+            moving |= rider.speed > 0.0;
+        }
+        assert!(moving);
+        // Los sulkies, dibujados como tales, rodando con su vecino.
+        let mut sulkies = app
+            .world_mut()
+            .query::<(&Horseman, &Transform, &VehicleVisual, &Rolled)>();
+        let found: Vec<_> = sulkies
+            .iter(app.world())
+            .map(|(h, t, v, r)| (*h, *t, *v, *r))
+            .collect();
+        assert_eq!(found.len(), 2);
+        for (horseman, transform, visual, rolled) in found {
+            let sulky = &riders.riders[horseman.index];
+            assert_eq!(
+                visual,
+                VehicleVisual::seeded(Vehicle::Sulky, sulky.look, sulky.coat)
+            );
+            let height = world.ground_height(sulky.position);
+            assert_eq!(
+                transform.translation,
+                world_from_ground(sulky.position, height)
+            );
+            assert_eq!(rolled.0, sulky.travelled);
+        }
+        let mut activation = TownActivation::default();
+        activation.update(&[city], Vec2::new(1.0e6, 1.0e6));
+        app.insert_resource(ActiveTowns(activation));
+        app.update();
+        let mut left = app.world_mut().query::<&Horseman>();
+        assert_eq!(left.iter(app.world()).count(), 0);
     }
 
     #[test]

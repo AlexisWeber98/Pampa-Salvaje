@@ -38,6 +38,7 @@ pub mod town;
 pub mod train;
 pub mod tree;
 pub mod typeface;
+pub mod vehicle;
 
 pub use atmosphere::{AtmospherePlugin, CloseShadows, DUST_COLOR, Sky, Sun, WorldClock, sky_at};
 pub use bubble::{Say, SpeechBubble, SpeechBubblePlugin};
@@ -73,6 +74,7 @@ pub use town::{ActiveTowns, StreamTowns, TownPlugin, TownRoot, WindmillRotor, Wo
 pub use train::{TRAIN_DRAW_RADIUS, TrainCar, TrainPlugin, TrainWheel, WorldTrains, car_transform};
 pub use tree::{Species, TreeKit, TreePlugin};
 pub use typeface::{TypefacePlugin, Typefaces};
+pub use vehicle::{Rolled, VehiclePlugin, VehicleVisual};
 
 /// La carpeta `assets/` del juego. De ella se leen al inicio los modelos de
 /// vegetación y las texturas del suelo. Sin ella, o cuando falta un archivo, se
