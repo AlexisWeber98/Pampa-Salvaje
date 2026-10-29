@@ -675,7 +675,7 @@ mod tests {
 
     #[test]
     fn a_taken_corral_horse_is_not_seeded_again() {
-        let (_, site) = app(GroundVec2::ZERO);
+        let site = &crate::shipped_world::laid().fauna;
         let horse = *site.all_horses().next().expect("a corral horse");
         let (mut app, _) = app(horse.position + GroundVec2::new(0.0, 30.0));
         app.update();

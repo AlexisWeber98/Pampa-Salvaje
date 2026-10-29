@@ -416,7 +416,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_shipped_world_is_settled_solid_and_seen_round() {
+    fn the_shipped_world_is_settled_solid_and_seen_round_with_a_few_wrecks_off_its_roads() {
         let laid = shipped_world::laid();
         let settlements = &laid.settlements;
         assert!(!settlements.settlements.is_empty());
@@ -463,6 +463,38 @@ mod tests {
             );
         }
         assert!(!laid.fences.gates.is_empty());
+        // A few wrecks lie in the yards and on the verges, off the roads,
+        // solid, and with no wild tree on them.
+        let roads = laid.world.terrain.roads.as_deref().expect("roads laid");
+        let yards = settlements
+            .settlements
+            .iter()
+            .flat_map(|s| s.of(pampa_core::StructureKind::WreckedWagon))
+            .count();
+        println!(
+            "wrecks: {yards} in yards, {} on verges",
+            settlements.roadside.len()
+        );
+        assert!(settlements.roadside.len() <= pampa_core::SettlementLayout::ROADSIDE_WRECKS);
+        assert!(yards + settlements.roadside.len() >= 1, "no wreck anywhere");
+        for wreck in &settlements.roadside {
+            for c in wreck.corners() {
+                assert!(
+                    roads.distance(c) > pampa_core::RoadNetwork::HALF_WIDTH,
+                    "{wreck:?}"
+                );
+            }
+            for o in wreck.obstacles() {
+                assert!(laid.world.obstacles.contains(&o));
+            }
+            let chunk = laid.world.config.chunk_of(wreck.at);
+            for t in laid.flora.trees(chunk) {
+                assert!(
+                    !wreck.footprint().expanded(0.5).contains_point(t.at),
+                    "{t:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -509,6 +541,24 @@ mod tests {
                 .count();
             assert_eq!(hits, 0, "the errand stands on {post:?}");
         }
+        // Every lamp stands clear of every tree, so it need not see the
+        // trees at startup (they are planted as the player nears them).
+        let mut trees = std::collections::HashMap::new();
+        for lamp in laid.lamps.all() {
+            let reach = lamp.obstacle().expanded(pampa_core::StreetLamps::CLEARANCE);
+            let here = laid.world.config.chunk_of(lamp.obstacle().center());
+            for dy in -1..=1 {
+                for dx in -1..=1 {
+                    let c = pampa_core::ChunkCoord::new(here.x + dx, here.y + dy);
+                    let near = trees.entry(c).or_insert_with(|| laid.flora.trees(c));
+                    for t in near.iter() {
+                        assert!(!t.obstacle().intersects(&reach), "{lamp:?} on {t:?}");
+                    }
+                }
+            }
+        }
+        let lamps = laid.lamps.all().count();
+        assert!(lamps > 50, "{lamps} lamps");
     }
 
     #[test]
@@ -665,8 +715,6 @@ mod tests {
         use pampa_core::{SettlementKind, StructureKind};
         let loaded = shipped_world::loaded();
         let laid = shipped_world::laid();
-        // Laid the same way every time.
-        assert_eq!(lay_out(loaded).settlements, laid.settlements);
         for name in RANCH_TOWNS {
             let town = loaded
                 .towns

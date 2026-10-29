@@ -123,7 +123,7 @@ Categories:
 - T1 [S1] Cache the shared shipped-world fixtures (core `fenced`, `settled`; game `lay_out`, `load_world`). Measure the suite's peak RSS before and after. Status: done (L4). Uncommitted.
 - T2 [S1,S2] core: deletes, merges and shrinks above. Status: done (L5). Uncommitted.
 - T3 [S1,S2] render: deletes, merges and shrinks above. Status: done (L6), in 351f674.
-- T4 [S1,S2] game: deletes, merges and shrinks above. Status: in progress (Opus writer).
+- T4 [S1,S2] game: deletes, merges and shrinks above. Status: done (L7), partly in c6cd46f, the rest staged.
 
 Route: one Opus writer at a time, in order T1 → T4. After each task the writer runs the crate's tests capped at 5 GB. A deleted test needs no sabotage; a shrunk test is sabotaged once.
 
@@ -155,3 +155,11 @@ Route: one Opus writer at a time, in order T1 → T4. After each task the writer
   - A 10 cm `Near` grid in tack `clearances` makes it 4× faster.
   - 22 sabotages, all failed as expected. fmt and clippy clean. Parent spot check: 547 pass in 17.4 s.
   - A rare 12-thread flake exists both before and after; it could not be reproduced in 21 runs.
+- L7 (2026-10-29) T4 done.
+  - game: 212 → 197 tests. Serial 9.4 → 4.7 s; 2 threads 5.1 → 2.7 s; RSS unchanged (≈150/230 MB).
+  - Deleted 9 tests. That includes the `#[global_allocator]` frame test, a self-imposed rule. `place_first_person` still says "Allocates nothing" with no test behind it: the user decides.
+  - Merged 6, shrank 5. The cheap entries (≤0.11 s after T1) were kept.
+  - 10 sabotages, all failed as expected. fmt and clippy clean.
+  - Workspace: game 197, content 32, core 464, render 547 pass. Parent spot check: game 197 pass in 2.7 s.
+  - Total across T1–T4: 1272 → 1240 tests. The compile-jobs cap is the real RAM fix.
+- L8 (2026-10-29) user: "dejalo". The `/// Allocates nothing.` doc on `place_first_person` stays, without a test.

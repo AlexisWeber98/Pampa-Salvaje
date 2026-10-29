@@ -1,5 +1,4 @@
-//! The game's wiring of the rural settlements: model slot fits, and the
-//! abandoned wagons laid on the shipped world.
+//! The game's wiring of the rural settlements: model slot fits.
 
 use super::*;
 use pampa_core::StructureKind;
@@ -26,43 +25,4 @@ fn the_shipped_slot_fits_reach_the_renderer() {
     let (slots, warning) = model_slots(&dir.join("missing.ron"));
     assert!(slots.0.is_empty() && warning.is_none());
     let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn the_shipped_world_has_a_few_wrecks_off_its_roads_and_tracks() {
-    let laid = crate::shipped_world::laid();
-    let layout = &laid.settlements;
-    let roads = laid.world.terrain.roads.as_deref().expect("roads laid");
-    let yards = layout
-        .settlements
-        .iter()
-        .flat_map(|s| s.of(StructureKind::WreckedWagon))
-        .count();
-    println!(
-        "wrecks: {yards} in yards, {} on verges",
-        layout.roadside.len()
-    );
-    assert!(layout.roadside.len() <= pampa_core::SettlementLayout::ROADSIDE_WRECKS);
-    assert!(yards + layout.roadside.len() >= 1, "no wreck anywhere");
-    for wreck in &layout.roadside {
-        for c in wreck.corners() {
-            assert!(
-                roads.distance(c) > pampa_core::RoadNetwork::HALF_WIDTH,
-                "{wreck:?}"
-            );
-        }
-        for o in wreck.obstacles() {
-            assert!(laid.world.obstacles.contains(&o));
-        }
-    }
-    // No wild tree grows on a wreck.
-    for wreck in &layout.roadside {
-        let chunk = laid.world.config.chunk_of(wreck.at);
-        for t in laid.flora.trees(chunk) {
-            assert!(
-                !wreck.footprint().expanded(0.5).contains_point(t.at),
-                "{t:?}"
-            );
-        }
-    }
 }

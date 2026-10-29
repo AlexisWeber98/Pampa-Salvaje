@@ -956,7 +956,6 @@ impl FollowCamera {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::orbit::angle_between;
     use crate::player::{GameWorld, PlayerPlugin, PlayerSpawn};
     use bevy::time::TimeUpdateStrategy;
     use pampa_core::{Heading, World};
@@ -1018,13 +1017,6 @@ mod tests {
             heading: Heading::from_radians(FRAC_PI_2),
             ..PlayerSpawn::default()
         }
-    }
-
-    /// Ground angle from the rider to the camera.
-    fn camera_bearing(app: &mut App) -> f32 {
-        let r = rider(app);
-        let d = ground(camera(app).translation) - r.position;
-        d.y.atan2(d.x)
     }
 
     #[test]
@@ -1507,9 +1499,9 @@ mod tests {
         let (mut app, occluders, _) = town_app();
         keys(&mut app).press(KeyCode::KeyW);
         keys(&mut app).press(KeyCode::ShiftLeft);
-        for frame in 0..2400 {
+        for frame in 0..300 {
             // Weave: turn left and right in long arcs through the streets,
-            // and orbit the camera now and then.
+            // and orbit the camera for a while.
             let mut k = keys(&mut app);
             let (on, off) = if (frame / 40) % 2 == 0 {
                 (KeyCode::KeyA, KeyCode::KeyD)
@@ -1518,7 +1510,7 @@ mod tests {
             };
             k.release(off);
             k.press(on);
-            if (frame / 300) % 3 == 1 {
+            if (frame / 100) % 3 == 1 {
                 k.press(KeyCode::KeyE);
             } else {
                 k.release(KeyCode::KeyE);

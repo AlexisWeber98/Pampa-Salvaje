@@ -112,7 +112,7 @@ mod tests {
     use super::*;
     use crate::player::{PlayerPlugin, PlayerSpawn};
     use bevy::time::TimeUpdateStrategy;
-    use pampa_core::{Aabb, Circle, Heading, Rider, StreetLamps};
+    use pampa_core::{Aabb, Circle, Heading, Rider};
     use std::time::Duration;
 
     /// The footprints `near` finds in the three-by-three chunks round (less a
@@ -299,25 +299,5 @@ mod tests {
                 assert!(rider.position.x < at.x - 1.0, "{:?}", rider.position);
             }
         }
-    }
-
-    #[test]
-    fn street_lamps_stand_clear_of_every_tree_so_they_need_not_see_the_trees_at_startup() {
-        let laid = crate::shipped_world::laid();
-        let mut checked = 0;
-        for lamp in laid.lamps.all() {
-            let reach = lamp.obstacle().expanded(StreetLamps::CLEARANCE);
-            let here = laid.world.config.chunk_of(lamp.obstacle().center());
-            for dy in -1..=1 {
-                for dx in -1..=1 {
-                    let c = ChunkCoord::new(here.x + dx, here.y + dy);
-                    for t in laid.flora.trees(c) {
-                        assert!(!t.obstacle().intersects(&reach), "{lamp:?} on {t:?}");
-                    }
-                }
-            }
-            checked += 1;
-        }
-        assert!(checked > 50, "{checked} lamps");
     }
 }
