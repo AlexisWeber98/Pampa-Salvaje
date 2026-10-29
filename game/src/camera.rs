@@ -1066,55 +1066,6 @@ mod tests {
     }
 
     #[test]
-    fn q_and_e_orbit_around_the_rider() {
-        let mut app = headless_app(
-            World::default(),
-            north_at(0.0, 0.0),
-            CameraOccluders::default(),
-        );
-        app.update();
-        let start = camera_bearing(&mut app);
-        keys(&mut app).press(KeyCode::KeyQ);
-        for _ in 0..30 {
-            app.update();
-        }
-        let q = angle_between(start, camera_bearing(&mut app));
-        let rate = OrbitParams::default().key_rate;
-        assert!((q - rate * 30.0 * FRAME).abs() < 0.05, "Q swung {q}");
-        keys(&mut app).release(KeyCode::KeyQ);
-        keys(&mut app).press(KeyCode::KeyE);
-        for _ in 0..30 {
-            app.update();
-        }
-        let e = angle_between(start, camera_bearing(&mut app));
-        assert!(e.abs() < 0.05, "E swings back: {e}");
-    }
-
-    #[test]
-    fn eases_back_behind_a_moving_rider_after_idling() {
-        let mut app = headless_app(
-            World::default(),
-            north_at(0.0, 0.0),
-            CameraOccluders::default(),
-        );
-        app.update();
-        set_yaw(&mut app, 0.0); // East of a rider facing north.
-        keys(&mut app).press(KeyCode::KeyW);
-        for _ in 0..60 {
-            app.update();
-        }
-        let early = camera_bearing(&mut app);
-        assert!(early.abs() < 0.05, "still to the side after 1 s: {early}");
-        for _ in 0..300 {
-            app.update();
-        }
-        let r = rider(&mut app);
-        let behind = r.heading.radians() + PI;
-        let late = angle_between(behind, camera_bearing(&mut app));
-        assert!(late.abs() < 0.1, "behind the rider after 6 s: {late}");
-    }
-
-    #[test]
     fn mouse_moves_only_a_grabbed_cursor_and_keys_and_wheel_always_work() {
         let mut keys = ButtonInput::<KeyCode>::default();
         let motion = Vec2::new(12.0, -3.0);

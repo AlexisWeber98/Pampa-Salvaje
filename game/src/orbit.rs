@@ -357,23 +357,4 @@ mod tests {
             );
         }
     }
-
-    #[test]
-    fn bad_input_is_ignored() {
-        let p = params();
-        let mut orbit = Orbit::behind(0.5);
-        let before = orbit;
-        let nan = OrbitInput {
-            look: (f32::NAN, f32::INFINITY),
-            keys: f32::NAN,
-            zoom: f32::NEG_INFINITY,
-        };
-        orbit.update(nan, 0.5, 0.0, &p, DT);
-        assert_eq!(
-            (orbit.yaw, orbit.pitch, orbit.distance),
-            (before.yaw, before.pitch, before.distance)
-        );
-        orbit.update(OrbitInput::default(), 0.5, 5.0, &p, f32::NAN);
-        assert_eq!(orbit.yaw, before.yaw);
-    }
 }

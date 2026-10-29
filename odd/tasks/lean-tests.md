@@ -122,8 +122,8 @@ Categories:
 
 - T1 [S1] Cache the shared shipped-world fixtures (core `fenced`, `settled`; game `lay_out`, `load_world`). Measure the suite's peak RSS before and after. Status: done (L4). Uncommitted.
 - T2 [S1,S2] core: deletes, merges and shrinks above. Status: done (L5). Uncommitted.
-- T3 [S1,S2] render: deletes, merges and shrinks above. Status: in progress (Opus writer).
-- T4 [S1,S2] game: deletes, merges and shrinks above. Status: approved, open.
+- T3 [S1,S2] render: deletes, merges and shrinks above. Status: done (L6), in 351f674.
+- T4 [S1,S2] game: deletes, merges and shrinks above. Status: in progress (Opus writer).
 
 Route: one Opus writer at a time, in order T1 → T4. After each task the writer runs the crate's tests capped at 5 GB. A deleted test needs no sabotage; a shrunk test is sabotaged once.
 
@@ -147,3 +147,11 @@ Route: one Opus writer at a time, in order T1 → T4. After each task the writer
   - Kept, with measured reasons: most "shrink" entries now cost ≤0.3 s thanks to T1. flora :2670 is the only `all_plants` coverage.
   - 9 sabotages, all failed as expected. fmt and clippy clean. Parent spot check: 464 pass in 42.5 s.
   - Heaviest left, not on the list, would need approval: fence `no_fence_crosses_a_road…` 15.6 s, flora `escaped_town_trees…` 11.7 s, fence `fences_keep_out…` 9.6 s, flora `shrubs_keep_off…` 7.8 s, lamps `plaza_furniture…` 6.3 s, terrain `the_cut_never_reaches…` 4.9 s.
+- L6 (2026-10-29) T3 done. The user committed T1+T2 as b1bfd52, and T3 as 351f674 while it was finishing (the writer confirmed it holds the final state).
+  - render: 558 → 547 tests; 2 threads 30 → 16 s; RSS barely moves (≈0.7–0.8 GB at 2 threads, 1.5–1.8 GB at 12), because each Bevy app costs 200–370 MB.
+  - The horse jump group was merged into one test.
+  - The model triangle and material tests now parse the glTF JSON (no asset server, no 10 s timeouts).
+  - The tied horse forces each idle by seed.
+  - A 10 cm `Near` grid in tack `clearances` makes it 4× faster.
+  - 22 sabotages, all failed as expected. fmt and clippy clean. Parent spot check: 547 pass in 17.4 s.
+  - A rare 12-thread flake exists both before and after; it could not be reproduced in 21 runs.

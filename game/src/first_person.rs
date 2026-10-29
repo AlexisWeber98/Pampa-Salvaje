@@ -511,8 +511,6 @@ mod tests {
     use bevy::window::{CursorOptions, PrimaryWindow};
     use pampa_core::{Vec2 as GroundVec2, World};
     use pampa_render::{OWN_HEAD_LAYER, world_from_ground};
-    use std::alloc::{GlobalAlloc, Layout, System};
-    use std::cell::Cell;
     use std::time::Duration;
 
     const FRAME: f32 = 1.0 / 60.0;
@@ -882,83 +880,6 @@ mod tests {
         // And V toggles again on the ground.
         tap(&mut app, VIEW_KEY);
         assert_eq!(*app.world().resource::<ViewMode>(), ViewMode::ThirdPerson);
-    }
-
-    /// Counts this thread's heap allocations, for
-    /// [`a_frame_from_the_eyes_allocates_nothing`].
-    struct Counting;
-
-    thread_local! {
-        static ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
-    }
-
-    fn count() {
-        let _ = ALLOCATIONS.try_with(|n| n.set(n.get() + 1));
-    }
-
-    // SAFETY: every call is passed straight on to the system allocator.
-    unsafe impl GlobalAlloc for Counting {
-        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-            count();
-            // SAFETY: the caller's contract, passed on.
-            unsafe { System.alloc(layout) }
-        }
-        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-            // SAFETY: the caller's contract, passed on.
-            unsafe { System.dealloc(ptr, layout) }
-        }
-        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-            count();
-            // SAFETY: the caller's contract, passed on.
-            unsafe { System.alloc_zeroed(layout) }
-        }
-        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {
-            count();
-            // SAFETY: the caller's contract, passed on.
-            unsafe { System.realloc(ptr, layout, size) }
-        }
-    }
-
-    #[global_allocator]
-    static COUNTING: Counting = Counting;
-
-    #[test]
-    fn a_frame_from_the_eyes_allocates_nothing() {
-        let params = OrbitParams::default();
-        let mut look = FirstPersonLook::default();
-        let mut eye = EyeFollow::default();
-        let mut blend = ViewBlend::default();
-        let orbit = Transform::from_xyz(0.0, 3.0, 9.0).looking_at(Vec3::Y, Vec3::Y);
-        let mut sum = Vec3::ZERO;
-        let before = ALLOCATIONS.with(Cell::get);
-        for k in 0..600 {
-            let t = k as f32 * FRAME;
-            let input = OrbitInput {
-                look: (t.sin() * 4.0, t.cos()),
-                keys: 0.0,
-                zoom: 0.0,
-            };
-            let travel = if k < 300 {
-                Travel::OnFoot
-            } else {
-                Travel::Riding
-            };
-            let turn = look.update(input, travel, 1.4, &params, FRAME);
-            blend.step(true, FRAME);
-            let anchor = Vec3::new(t, 0.0, -t);
-            let at = eye.follow(
-                anchor,
-                anchor + Vec3::new(0.0, 1.6 + t.sin() * 0.03, 0.1),
-                14.0,
-                FRAME,
-            );
-            let wide = lens(blend);
-            let placed = blend_transform(&orbit, at, look.rotation(turn), blend.weight());
-            sum += placed.translation + Vec3::splat(wide.fov);
-        }
-        let after = ALLOCATIONS.with(Cell::get);
-        assert!(sum.is_finite());
-        assert_eq!(after - before, 0, "allocations in 600 frames");
     }
 
     /// Puts the player's head bone at `head` in the world, under the

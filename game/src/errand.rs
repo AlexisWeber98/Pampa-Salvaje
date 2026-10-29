@@ -1113,13 +1113,6 @@ mod tests {
     }
 
     #[test]
-    fn the_interact_key_is_free_of_other_controls() {
-        for taken in [KeyCode::KeyE, KeyCode::KeyQ, KeyCode::KeyM, KeyCode::Escape] {
-            assert_ne!(INTERACT_KEY, taken);
-        }
-    }
-
-    #[test]
     fn a_corral_horse_drawn_as_fauna_lets_the_player_on_in_its_coat() {
         use pampa_core::{Abilities, GameClock, Heading, TimeOfDay};
         use pampa_render::{Animal, AnimalPose};
