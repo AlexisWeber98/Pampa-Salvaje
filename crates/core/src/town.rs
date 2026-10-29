@@ -4258,14 +4258,6 @@ pub(crate) mod tests {
         assert_eq!(Paving::of(village.blocks()), Paving::None);
         assert_eq!(village.sidewalks().len(), 36);
         assert_eq!(count(village, Walk::Earth), 36);
-    }
-
-    #[test]
-    fn a_village_has_no_brick_even_round_its_plaza() {
-        let towns = sample_towns();
-        let village = towns.iter().find(|t| t.blocks() == (3, 3)).unwrap();
-        assert_eq!(Paving::of(village.blocks()), Paving::None);
-        assert!(village.sidewalks().iter().all(|w| w.walk == Walk::Earth));
         // The plaza's ring is four strips against the plaza, beaten earth like
         // the rest, never brick.
         let ring = village.plaza.expanded(Sidewalk::WIDTH);

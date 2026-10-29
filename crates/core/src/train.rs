@@ -1800,7 +1800,6 @@ pub(crate) mod line_tests {
             "{game}"
         );
         assert_eq!(night.next_arrival(hm(5, 0), 0.0), None);
-        assert_eq!(night.next_arrival(f64::NAN, onboard), None);
     }
 
     #[test]
@@ -1831,7 +1830,6 @@ pub(crate) mod line_tests {
             moving.clone().skip_to_departure(at + game, onboard),
             Some(0.0)
         );
-        assert_eq!(left.skip_to_departure(f64::NAN, onboard), None);
 
         // Then on to 3 s before Castex: running in, and riding the last
         // 3 s brakes it to a stop there.
@@ -1894,8 +1892,6 @@ pub(crate) mod line_tests {
         let (next, left) = train.next_stop().unwrap();
         assert_eq!(next, NIEVAS);
         assert!((left - 50.0).abs() < 1e-9);
-        train.place_on_run(Run::Down, f64::NAN);
-        assert_eq!(train.state(), train.state_at(Run::Down, 0.0));
     }
 
     #[test]

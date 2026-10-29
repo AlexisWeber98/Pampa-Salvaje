@@ -2237,8 +2237,7 @@ mod tests {
 
     #[test]
     fn on_the_platform_the_camera_stays_in_front_of_the_dwelling_train() {
-        let loaded =
-            crate::towns::load_world(&pampa_content::asset_path(pampa_content::TOWNS_FILE));
+        let loaded = crate::shipped_world::loaded();
         // The opening's train, skipped on to its dwell at Monte Nievas.
         let (clock, trains, _) = crate::life::start_of_day(&loaded.line, &loaded.towns);
         let mut train = trains.into_iter().next().expect("a line train");

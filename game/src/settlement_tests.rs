@@ -30,8 +30,7 @@ fn the_shipped_slot_fits_reach_the_renderer() {
 
 #[test]
 fn the_shipped_world_has_a_few_wrecks_off_its_roads_and_tracks() {
-    let loaded = towns::load_world(&asset_path(TOWNS_FILE));
-    let laid = lay_out(&loaded);
+    let laid = crate::shipped_world::laid();
     let layout = &laid.settlements;
     let roads = laid.world.terrain.roads.as_deref().expect("roads laid");
     let yards = layout

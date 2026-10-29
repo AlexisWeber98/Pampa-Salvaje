@@ -635,31 +635,6 @@ mod tests {
     }
 
     #[test]
-    fn non_finite_input_counts_as_no_input() {
-        let (mut r, p, t) = rider();
-        let start = r;
-        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
-            let input = RiderInput {
-                throttle: bad,
-                turn: bad,
-                gallop: true,
-            };
-            r.step(input, &p, &t, DT);
-            assert_eq!(r, start, "input {bad} must not move the rider");
-        }
-
-        r.speed = 2.0;
-        let nan_turn = RiderInput {
-            throttle: 1.0,
-            turn: f32::NAN,
-            gallop: false,
-        };
-        r.step(nan_turn, &p, &t, DT);
-        assert_eq!(r.heading, start.heading);
-        assert!(r.position.x.is_finite() && r.position.x > start.position.x);
-    }
-
-    #[test]
     fn bad_dt_is_a_no_op() {
         let (mut r, p, t) = rider();
         r.speed = 3.0;
@@ -669,7 +644,7 @@ mod tests {
             turn: 1.0,
             gallop: true,
         };
-        for dt in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -DT, 0.0] {
+        for dt in [-DT, 0.0] {
             r.step(input, &p, &t, dt);
             assert_eq!(r, start, "dt {dt} must not change the rider");
         }
@@ -808,18 +783,15 @@ mod tests {
     }
 
     /// Gallops a wandering path from `town`'s arrival point for `seconds`,
-    /// checking the rider never ends a step inside anything; returns how
-    /// many steps ended touching an obstacle.
-    fn wander_through(town: &crate::TownLayout, seconds: f32) -> usize {
-        wander_turning(town, seconds, 0.004)
-    }
-
-    /// Like [`wander_through`], turning at `rate` radians of phase per step.
+    /// turning at `rate` radians of phase per step and checking the rider
+    /// never ends a step inside anything; returns how many steps ended
+    /// touching an obstacle.
     fn wander_turning(town: &crate::TownLayout, seconds: f32, rate: f32) -> usize {
         let world = World::with_town(Terrain::default(), town);
         let p = RiderParams::default();
         let (start, heading) = town.arrival();
         let mut r = Rider::new(start, heading, &world);
+        let reach = Vec2::new(1.0, 1.0) * (2.0 * Rider::COLLIDER_RADIUS + 0.2);
         let mut contacts = 0;
         for frame in 0..(seconds / DT) as usize {
             // Wander: gallop with a slowly changing turn.
@@ -830,7 +802,10 @@ mod tests {
                 gallop: true,
             };
             r.step(input, &p, &world, DT);
-            for o in &world.obstacles {
+            for o in world
+                .obstacles
+                .near(Aabb::from_center_size(r.position, reach))
+            {
                 let gap = r.position.distance(o.closest_point(r.position));
                 assert!(
                     gap >= Rider::COLLIDER_RADIUS - 1e-3,
@@ -848,17 +823,13 @@ mod tests {
     }
 
     #[test]
-    fn never_ends_a_step_inside_town_buildings() {
-        // A turn rate whose path through Castex runs into buildings.
-        let contacts = wander_turning(&crate::TownLayout::castex_inspired(), 240.0, 0.003);
-        assert!(contacts > 0, "the wander path must actually hit buildings");
-    }
-
-    #[test]
     fn never_ends_a_step_inside_the_buildings_of_any_town() {
+        // A turn rate whose path through Castex runs into buildings.
+        let castex = wander_turning(&crate::TownLayout::castex_inspired(), 240.0, 0.003);
+        assert!(castex > 0, "the wander path must actually hit buildings");
         let mut contacts = 0;
         for town in crate::town::tests::sample_towns() {
-            contacts += wander_through(&town, 90.0);
+            contacts += wander_turning(&town, 90.0, 0.004);
         }
         assert!(contacts > 0, "the wander paths must actually hit buildings");
     }

@@ -389,14 +389,35 @@ fn main() {
     app.run();
 }
 
+/// The shipped world, loaded and laid once for the tests that only read
+/// it; a test that changes it clones what it changes.
+#[cfg(test)]
+mod shipped_world {
+    use super::*;
+    use std::sync::LazyLock;
+
+    static LOADED: LazyLock<towns::LoadedWorld> =
+        LazyLock::new(|| towns::load_world(&asset_path(TOWNS_FILE)));
+    static LAID: LazyLock<Laid> = LazyLock::new(|| lay_out(loaded()));
+
+    /// The shipped towns file, loaded.
+    pub(crate) fn loaded() -> &'static towns::LoadedWorld {
+        &LOADED
+    }
+
+    /// [`loaded`] laid out as the game lays it.
+    pub(crate) fn laid() -> &'static Laid {
+        &LAID
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn the_shipped_world_is_settled_solid_and_seen_round() {
-        let loaded = towns::load_world(&asset_path(TOWNS_FILE));
-        let laid = lay_out(&loaded);
+        let laid = shipped_world::laid();
         let settlements = &laid.settlements;
         assert!(!settlements.settlements.is_empty());
         assert!(laid.report.kinds.iter().sum::<usize>() == settlements.settlements.len());
@@ -446,8 +467,8 @@ mod tests {
 
     #[test]
     fn every_town_and_estancia_is_lit_by_lamps_standing_clear_and_solid() {
-        let loaded = towns::load_world(&asset_path(TOWNS_FILE));
-        let mut laid = lay_out(&loaded);
+        let loaded = shipped_world::loaded();
+        let laid = shipped_world::laid();
         let lamps = &laid.lamps;
         for (town, placed) in loaded.towns.iter().zip(&lamps.towns) {
             println!("{}: {} street lamps", town.name, placed.len());
@@ -474,13 +495,13 @@ mod tests {
         // The errand's people and horse, placed after, stand clear of them.
         let (dialogue, _) = errand::read_dialogue();
         let before = laid.world.obstacles.len();
-        errand::plan(&loaded.towns, &mut laid.world, &dialogue.0.police_town)
+        let mut world = laid.world.clone();
+        errand::plan(&loaded.towns, &mut world, &dialogue.0.police_town)
             .expect("the shipped world has its errand");
-        let added = laid.world.obstacles.len() - before;
+        let added = world.obstacles.len() - before;
         assert!(added > 0);
         for post in &posts {
-            let hits = laid
-                .world
+            let hits = world
                 .obstacles
                 .near(*post)
                 .into_iter()
@@ -492,8 +513,7 @@ mod tests {
 
     #[test]
     fn laguna_la_arocena_keeps_everything_off_and_the_rider_out_of_deep_water() {
-        let loaded = towns::load_world(&asset_path(TOWNS_FILE));
-        let laid = lay_out(&loaded);
+        let laid = shipped_world::laid();
         let lagoon = laid
             .world
             .terrain
@@ -572,9 +592,9 @@ mod tests {
 
     #[test]
     fn a_public_road_leads_from_general_pico_to_the_lagoon_and_rides_clear() {
-        let loaded = towns::load_world(&asset_path(TOWNS_FILE));
+        let loaded = shipped_world::loaded();
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
-        let laid = lay_out(&loaded);
+        let laid = shipped_world::laid();
         let lagoon = &laid.world.terrain.lagoons[0];
         let roads = laid.world.terrain.roads.as_ref().unwrap();
         let to_lagoon: Vec<_> = roads
@@ -643,10 +663,10 @@ mod tests {
     #[test]
     fn castex_and_pico_each_have_an_estancia_nearby() {
         use pampa_core::{SettlementKind, StructureKind};
-        let loaded = towns::load_world(&asset_path(TOWNS_FILE));
-        let laid = lay_out(&loaded);
+        let loaded = shipped_world::loaded();
+        let laid = shipped_world::laid();
         // Laid the same way every time.
-        assert_eq!(lay_out(&loaded).settlements, laid.settlements);
+        assert_eq!(lay_out(loaded).settlements, laid.settlements);
         for name in RANCH_TOWNS {
             let town = loaded
                 .towns

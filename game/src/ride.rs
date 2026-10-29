@@ -577,7 +577,7 @@ pub(crate) mod testing {
     /// `clock`, the train jumped there from midnight and the player on foot
     /// at the middle of the Monte Nievas platform.
     pub fn shipped_app_at(clock: Option<GameClock>) -> App {
-        let loaded = crate::towns::load_world(&asset_path(pampa_content::TOWNS_FILE));
+        let loaded = crate::shipped_world::loaded();
         let mut world = World::with_towns(loaded.world, Terrain::default(), &loaded.towns);
         world.lay_rail(&loaded.line);
         let (run, cast) = plan(&loaded.towns, &mut world, &shipped_lines().police_town)
@@ -608,10 +608,10 @@ pub(crate) mod testing {
             )))
             .init_resource::<ButtonInput<KeyCode>>()
             .insert_resource(Crowds::for_towns(&loaded.towns))
-            .insert_resource(WorldTowns(loaded.towns))
+            .insert_resource(WorldTowns(loaded.towns.clone()))
             .insert_resource(WorldClock(clock))
             .insert_resource(WorldTrains(trains))
-            .insert_resource(WorldRail(loaded.line))
+            .insert_resource(WorldRail(loaded.line.clone()))
             .insert_resource(GameWorld(world))
             .insert_resource(PlayerSpawn {
                 position,
@@ -1098,8 +1098,7 @@ mod tests {
 
     #[test]
     fn each_of_metileos_platforms_waits_for_its_own_train() {
-        let loaded =
-            crate::towns::load_world(&pampa_content::asset_path(pampa_content::TOWNS_FILE));
+        let loaded = crate::shipped_world::loaded();
         let trains = LineTrain::all_of(
             &loaded.line,
             &loaded.towns,

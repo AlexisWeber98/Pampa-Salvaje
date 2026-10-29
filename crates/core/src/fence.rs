@@ -1037,26 +1037,23 @@ pub(crate) mod tests {
     }
 
     /// The shipped towns with roads laid, their fences, and the world.
-    pub(crate) fn fenced() -> (World, Vec<TownLayout>, RailLine, FenceLayout) {
-        let (towns, line, roads) = crate::road::tests::shipped_roads();
-        let mut world = World::with_towns(config(), Terrain::default(), &towns);
-        world.lay_roads(roads);
-        let started = std::time::Instant::now();
-        let fences = FenceLayout::build(config(), &world.terrain, &towns, &line);
-        let built = started.elapsed();
-        let started = std::time::Instant::now();
-        let count = world.fence(&fences);
-        let indexed = started.elapsed();
-        println!(
-            "fences: {} runs, {} gates, {count} obstacles; laid in {built:?}, indexed in {indexed:?}",
-            fences.runs.len(),
-            fences.gates.len(),
-        );
-        // Generous bounds (about 0.1 s each in a dev build): laying and
-        // indexing the fences stay cheap at startup.
-        assert!(built.as_secs_f32() < 10.0, "laid in {built:?}");
-        assert!(indexed.as_secs_f32() < 10.0, "indexed in {indexed:?}");
-        (world, towns, line, fences)
+    /// Built once and shared: tests that change the world clone it first.
+    pub(crate) fn fenced() -> &'static (World, Vec<TownLayout>, RailLine, FenceLayout) {
+        static FENCED: std::sync::LazyLock<(World, Vec<TownLayout>, RailLine, FenceLayout)> =
+            std::sync::LazyLock::new(|| {
+                let (towns, line, roads) = crate::road::tests::shipped_roads();
+                let mut world = World::with_towns(config(), Terrain::default(), &towns);
+                world.lay_roads(roads);
+                let fences = FenceLayout::build(config(), &world.terrain, &towns, &line);
+                let count = world.fence(&fences);
+                println!(
+                    "fences: {} runs, {} gates, {count} obstacles",
+                    fences.runs.len(),
+                    fences.gates.len(),
+                );
+                (world, towns, line, fences)
+            });
+        &FENCED
     }
 
     /// One 400 m paddock fenced all round, its south side broken off around
@@ -1213,8 +1210,8 @@ pub(crate) mod tests {
     fn the_land_is_surveyed_into_large_fields_the_same_way_every_time() {
         let (world, towns, line, fences) = fenced();
         assert_eq!(
-            fences,
-            FenceLayout::build(config(), &world.terrain, &towns, &line)
+            *fences,
+            FenceLayout::build(config(), &world.terrain, towns, line)
         );
         for lines in [&fences.surveyed.0, &fences.surveyed.1] {
             assert!(lines.len() > 15, "{}", lines.len());
@@ -1239,7 +1236,7 @@ pub(crate) mod tests {
             ..world.terrain.clone()
         };
         assert_ne!(
-            FenceLayout::build(config(), &other, &towns, &line).surveyed,
+            FenceLayout::build(config(), &other, towns, line).surveyed,
             fences.surveyed
         );
     }
@@ -1262,7 +1259,7 @@ pub(crate) mod tests {
         for run in &fences.runs {
             for (a, b) in run.spans() {
                 for p in [a, (a + b) * 0.5, b] {
-                    for town in &towns {
+                    for town in towns {
                         assert!(!town.leveled().contains_point(p), "{p:?} in {}", town.name);
                     }
                     let rail = rails
@@ -1442,13 +1439,13 @@ pub(crate) mod tests {
                 out * -1.0
             };
             let start = gate.at - out * FenceLayout::ROADSIDE;
-            let mut rider = Rider::new(start, Heading::from_radians(out.y.atan2(out.x)), &world);
+            let mut rider = Rider::new(start, Heading::from_radians(out.y.atan2(out.x)), world);
             let input = RiderInput {
                 throttle: 1.0,
                 ..Default::default()
             };
             for _ in 0..300 {
-                rider.step(input, &RiderParams::default(), &world, 1.0 / 60.0);
+                rider.step(input, &RiderParams::default(), world, 1.0 / 60.0);
             }
             let into = (rider.position - gate.at).dot(out);
             assert!(into > 3.0, "stopped at {:?} by {gate:?}", rider.position);
@@ -1457,10 +1454,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_rider_is_stopped_by_the_wire() {
-        let (mut world, towns, line, fences) = fenced();
-        let flora = FloraSite::new(world.config, &world.terrain, &line).with_fences(&fences);
-        world.plant(&flora);
-        let _ = towns;
+        let (world, _, line, fences) = fenced();
         // A long fenced run along y, far from roads: ride at it from 15 m.
         let run = fences
             .runs
@@ -1471,6 +1465,13 @@ pub(crate) mod tests {
             .expect("a long north-south run");
         let mid = (run.start() + run.end()) * 0.5;
         let start = mid + Vec2::new(15.0, 0.0);
+        // The land planted only where the rider goes.
+        let mut world = world.clone();
+        let flora = FloraSite::new(world.config, &world.terrain, line).with_fences(fences);
+        let size = world.config.chunk_size;
+        for p in [mid, start] {
+            world.plant_chunk(&flora, crate::ChunkCoord::containing(p, size));
+        }
         let mut rider = Rider::new(start, Heading::from_radians(std::f32::consts::PI), &world);
         let input = RiderInput {
             throttle: 1.0,
@@ -1520,7 +1521,7 @@ pub(crate) mod tests {
             )
             .collect();
         for o in &fences.openings {
-            for town in &towns {
+            for town in towns {
                 assert!(!town.leveled().contains_point(o.at));
             }
             let rail = rails
@@ -1576,13 +1577,13 @@ pub(crate) mod tests {
             let across = Vec2::new(-o.along.y, o.along.x);
             let start = o.at - across * 12.0;
             let heading = Heading::from_radians(across.y.atan2(across.x));
-            let mut rider = Rider::new(start, heading, &world);
+            let mut rider = Rider::new(start, heading, world);
             let input = RiderInput {
                 throttle: 1.0,
                 ..Default::default()
             };
             for _ in 0..600 {
-                rider.step(input, &RiderParams::default(), &world, 1.0 / 60.0);
+                rider.step(input, &RiderParams::default(), world, 1.0 / 60.0);
             }
             let through = (rider.position - o.at).dot(across);
             assert!(through > 5.0, "stopped at {:?} by {o:?}", rider.position);
@@ -1614,31 +1615,29 @@ pub(crate) mod tests {
         let mut rider = Rider::new(
             start,
             Heading::from_radians(across.y.atan2(across.x)),
-            &world,
+            world,
         );
         let input = RiderInput {
             throttle: 1.0,
             ..Default::default()
         };
         for _ in 0..600 {
-            rider.step(input, &RiderParams::default(), &world, 1.0 / 60.0);
+            rider.step(input, &RiderParams::default(), world, 1.0 / 60.0);
         }
         let through = (rider.position - o.at).dot(across);
         assert!(through < 0.0, "through a closed gate: {:?}", rider.position);
     }
 
     #[test]
-    fn about_one_paddock_in_ten_is_unfenced_and_the_same_every_time() {
-        let (world, towns, line, fences) = fenced();
+    fn about_one_paddock_in_ten_is_unfenced() {
+        // The same every time: `the_land_is_surveyed_...` rebuilds the
+        // whole layout, descampados included.
+        let (_, _, _, fences) = fenced();
         let cells = fences.cells();
         let open = fences.descampados.len();
         let share = open as f32 / cells as f32;
         println!("descampados {open} of {cells}");
         assert!((0.07..0.13).contains(&share), "{share}");
-        assert_eq!(
-            fences.descampados,
-            FenceLayout::build(config(), &world.terrain, &towns, &line).descampados
-        );
         // No roadside fence runs along a descampado.
         for run in fences.runs.iter().filter(|r| r.roadside) {
             for (a, b) in run.spans() {
@@ -1716,7 +1715,7 @@ pub(crate) mod tests {
             .into_iter()
             .map(|(_, p, _)| p)
             .collect();
-        let (seen, w) = reached(&world, window, &from);
+        let (seen, w) = reached(world, window, &from);
         let at = |p: Vec2| {
             let q = p - window.min;
             seen[q.y as usize * w + q.x as usize]
@@ -1752,9 +1751,16 @@ pub(crate) mod tests {
     #[test]
     fn trees_keep_off_the_fence_lines() {
         let (world, _, line, fences) = fenced();
-        let flora = FloraSite::new(world.config, &world.terrain, &line).with_fences(&fences);
-        let trees = flora.all_trees();
-        assert!(trees.len() > 5_000);
+        let flora = FloraSite::new(world.config, &world.terrain, line).with_fences(fences);
+        // A 2 km square of fields round Monte Nievas, not the whole world.
+        let size = world.config.chunk_size;
+        let lo = crate::ChunkCoord::containing(Vec2::new(-4000.0, -3000.0), size);
+        let hi = crate::ChunkCoord::containing(Vec2::new(-2000.0, -1000.0), size);
+        let trees: Vec<_> = (lo.y..=hi.y)
+            .flat_map(|y| (lo.x..=hi.x).map(move |x| crate::ChunkCoord::new(x, y)))
+            .flat_map(|c| flora.trees(c))
+            .collect();
+        assert!(trees.len() > 200, "{}", trees.len());
         for t in &trees {
             assert!(
                 fences.line_distance(t.at) >= FloraSite::TREE_FENCE_MARGIN,

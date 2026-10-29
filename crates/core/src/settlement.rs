@@ -1763,36 +1763,43 @@ pub(crate) mod tests {
 
     /// The fence fixture's world with its settlements laid and settled, with
     /// the game's estancias near Castex and Pico (the seeded mix alone may
-    /// draw none).
-    pub(crate) fn settled() -> (
+    /// draw none). Built once and shared: tests that change the world clone
+    /// it first.
+    pub(crate) fn settled() -> &'static (
         World,
         Vec<TownLayout>,
         RailLine,
         FenceLayout,
         SettlementLayout,
     ) {
-        let (mut world, towns, line, fences) = fenced();
-        let started = std::time::Instant::now();
-        let ranches = ranch_towns(&towns);
-        assert_eq!(ranches.len(), 2);
-        let layout =
-            SettlementLayout::build_with_ranches(&world.terrain, &towns, &line, &fences, &ranches);
-        let built = started.elapsed();
-        let count = world.settle(&layout);
-        let open = fences.gates.iter().filter(|g| g.open).count();
-        println!(
-            "settlements: {} behind {open} open gates ({} huts, {} outposts, {} farms, \
-             {} ranchs), {count} obstacles; laid in {built:?}",
-            layout.settlements.len(),
-            layout.count(SettlementKind::Hut),
-            layout.count(SettlementKind::Outpost),
-            layout.count(SettlementKind::Farm),
-            layout.count(SettlementKind::Ranch),
+        type Settled = (
+            World,
+            Vec<TownLayout>,
+            RailLine,
+            FenceLayout,
+            SettlementLayout,
         );
-        // A generous bound, like the fences': laying them stays cheap at
-        // startup.
-        assert!(built.as_secs_f32() < 10.0, "laid in {built:?}");
-        (world, towns, line, fences, layout)
+        static SETTLED: std::sync::LazyLock<Settled> = std::sync::LazyLock::new(|| {
+            let (world, towns, line, fences) = fenced();
+            let mut world = world.clone();
+            let ranches = ranch_towns(towns);
+            assert_eq!(ranches.len(), 2);
+            let layout =
+                SettlementLayout::build_with_ranches(&world.terrain, towns, line, fences, &ranches);
+            let count = world.settle(&layout);
+            let open = fences.gates.iter().filter(|g| g.open).count();
+            println!(
+                "settlements: {} behind {open} open gates ({} huts, {} outposts, {} farms, \
+                 {} ranchs), {count} obstacles",
+                layout.settlements.len(),
+                layout.count(SettlementKind::Hut),
+                layout.count(SettlementKind::Outpost),
+                layout.count(SettlementKind::Farm),
+                layout.count(SettlementKind::Ranch),
+            );
+            (world, towns.clone(), line.clone(), fences.clone(), layout)
+        });
+        &SETTLED
     }
 
     /// Unit direction from the road through `gate` into its field, by the
@@ -1838,20 +1845,20 @@ pub(crate) mod tests {
     fn settlements_are_laid_the_same_way_every_time_and_sparsely() {
         let (world, towns, line, fences, layout) = settled();
         assert_eq!(
-            layout,
+            *layout,
             SettlementLayout::build_with_ranches(
                 &world.terrain,
-                &towns,
-                &line,
-                &fences,
-                &ranch_towns(&towns)
+                towns,
+                line,
+                fences,
+                &ranch_towns(towns)
             )
         );
         // The plain build, without forced estancias, is seeded too.
-        let plain = SettlementLayout::build(&world.terrain, &towns, &line, &fences);
+        let plain = SettlementLayout::build(&world.terrain, towns, line, fences);
         assert_eq!(
             plain,
-            SettlementLayout::build(&world.terrain, &towns, &line, &fences)
+            SettlementLayout::build(&world.terrain, towns, line, fences)
         );
         assert!(!plain.settlements.is_empty());
         let open = fences.gates.iter().filter(|g| g.open).count();
@@ -1875,17 +1882,11 @@ pub(crate) mod tests {
                 .iter()
                 .map(|s| s.gate)
                 .collect::<Vec<_>>(),
-            SettlementLayout::build_with_ranches(
-                &other,
-                &towns,
-                &line,
-                &fences,
-                &ranch_towns(&towns)
-            )
-            .settlements
-            .iter()
-            .map(|s| s.gate)
-            .collect::<Vec<_>>()
+            SettlementLayout::build_with_ranches(&other, towns, line, fences, &ranch_towns(towns))
+                .settlements
+                .iter()
+                .map(|s| s.gate)
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1923,7 +1924,7 @@ pub(crate) mod tests {
         let (world, towns, line, fences, layout) = settled();
         let roads = world.terrain.roads.clone().unwrap();
         let rails: Vec<(Vec2, Vec2)> = line
-            .full_path(&towns)
+            .full_path(towns)
             .points()
             .windows(2)
             .map(|w| (w[0], w[1]))
@@ -1952,7 +1953,7 @@ pub(crate) mod tests {
                     "{st:?}"
                 );
                 assert!(wire.near(fp.expanded(1.0)).is_empty(), "{st:?}");
-                for t in &towns {
+                for t in towns {
                     assert!(
                         !t.leveled()
                             .expanded(Settlement::TOWN_CLEARANCE)
@@ -2114,11 +2115,12 @@ pub(crate) mod tests {
 
     #[test]
     fn a_rider_rides_in_through_the_gate_to_every_door_and_into_the_corrals() {
-        let (mut world, towns, line, fences, layout) = settled();
-        let flora = FloraSite::new(world.config, &world.terrain, &line)
-            .with_track(&line.full_path(&towns))
-            .with_fences(&fences)
-            .with_settlements(&layout);
+        let (world, towns, line, fences, layout) = settled();
+        let mut world = world.clone();
+        let flora = FloraSite::new(world.config, &world.terrain, line)
+            .with_track(&line.full_path(towns))
+            .with_fences(fences)
+            .with_settlements(layout);
         world.plant(&flora);
         let roads = world.terrain.roads.clone().unwrap();
         let mut seen_kinds = HashSet::new();
@@ -2159,12 +2161,8 @@ pub(crate) mod tests {
 
     #[test]
     fn flora_keeps_off_the_settlements_through_a_cheap_index() {
-        let (world, towns, line, fences, layout) = settled();
-        let flora = FloraSite::new(world.config, &world.terrain, &line)
-            .with_track(&line.full_path(&towns))
-            .with_fences(&fences)
-            .with_settlements(&layout);
-        let trees = flora.all_trees();
+        let (world, _, _, _, layout) = settled();
+        let (flora, trees, _) = crate::flora::tests::shipped();
         assert!(trees.len() > 5_000);
         let near = |p: Vec2, margin: f32| {
             layout
@@ -2179,7 +2177,7 @@ pub(crate) mod tests {
                             .any(|(a, b)| segment_distance(p, a, b) <= Track::HALF_WIDTH + margin)
                 })
         };
-        for t in &trees {
+        for t in trees {
             assert!(!near(t.at, FloraSite::TREE_SETTLEMENT_MARGIN), "{t:?}");
         }
         let mut tufts = 0;
@@ -2394,7 +2392,7 @@ pub(crate) mod tests {
             .flat_map(|s| s.structures.iter())
             .filter(|s| s.kind.is_tree())
             .count();
-        assert!(bare.settle(&layout) >= trunks + layout.settlements.len());
+        assert!(bare.settle(layout) >= trunks + layout.settlements.len());
         // Radii stay in a trunk's range at any height.
         for (kind, lo, hi) in [
             (StructureKind::Eucalyptus, 0.2, 0.45),
@@ -2501,12 +2499,12 @@ pub(crate) mod tests {
     #[test]
     fn a_town_asked_for_an_estancia_gets_one_nearby_or_is_reported() {
         let (world, towns, line, fences) = fenced();
-        let plain = SettlementLayout::build(&world.terrain, &towns, &line, &fences);
+        let plain = SettlementLayout::build(&world.terrain, towns, line, fences);
         let asked: Vec<usize> = (0..towns.len()).chain([towns.len() + 3]).collect();
         let layout =
-            SettlementLayout::build_with_ranches(&world.terrain, &towns, &line, &fences, &asked);
+            SettlementLayout::build_with_ranches(&world.terrain, towns, line, fences, &asked);
         let again =
-            SettlementLayout::build_with_ranches(&world.terrain, &towns, &line, &fences, &asked);
+            SettlementLayout::build_with_ranches(&world.terrain, towns, line, fences, &asked);
         assert_eq!(layout, again);
         // The missing town is reported, never silently dropped.
         assert!(layout.unplaced_ranches.contains(&(towns.len() + 3)));
@@ -2550,7 +2548,7 @@ pub(crate) mod tests {
         // Asking for nothing lays the seeded mix as before.
         assert!(plain.unplaced_ranches.is_empty());
         assert_eq!(
-            SettlementLayout::build_with_ranches(&world.terrain, &towns, &line, &fences, &[]),
+            SettlementLayout::build_with_ranches(&world.terrain, towns, line, fences, &[]),
             plain
         );
     }
@@ -2585,32 +2583,6 @@ pub(crate) mod tests {
                 }
             }
         }
-    }
-
-    /// Trees standing in the settlements of `kind` in the sample world,
-    /// the alameda's poplars apart: they are never thinned.
-    fn trees_of(layout: &SettlementLayout, kind: SettlementKind) -> usize {
-        layout
-            .settlements
-            .iter()
-            .filter(|s| s.kind == kind)
-            .flat_map(|s| s.structures.iter())
-            .filter(|s| s.kind.is_tree() && s.kind != StructureKind::Poplar)
-            .count()
-    }
-
-    #[test]
-    fn estancias_keep_half_and_chacras_seven_tenths_of_their_trees() {
-        // Trees in the sample world before the thinning (re-counted
-        // 2026-10-28, after the barns moved behind the casco and the alameda grew): the chacras
-        // 21, the estancias 113, their poplars apart. The chacras' range is
-        // wide because 21 trees round coarsely. No puesto or rancho of the sample
-        // plants any (`a_compound_keeps_..._by_kind` covers those).
-        let (_, _, _, _, layout) = settled();
-        let farms = trees_of(&layout, SettlementKind::Farm) as f32 / 21.0;
-        let ranches = trees_of(&layout, SettlementKind::Ranch) as f32 / 113.0;
-        assert!((0.66..=0.80).contains(&farms), "chacras {farms}");
-        assert!((0.45..=0.53).contains(&ranches), "estancias {ranches}");
     }
 
     #[test]

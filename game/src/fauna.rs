@@ -492,15 +492,13 @@ fn place_fauna(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{TOWNS_FILE, asset_path, lay_out, towns};
     use bevy::time::TimeUpdateStrategy;
     use pampa_core::{Rider, World};
     use std::time::Duration;
 
     /// The shipped world's fauna, headless, with the player at `at`.
     fn app(at: GroundVec2) -> (App, FaunaSite) {
-        let loaded = towns::load_world(&asset_path(TOWNS_FILE));
-        let laid = lay_out(&loaded);
+        let laid = crate::shipped_world::laid();
         let site = laid.fauna.clone();
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
@@ -508,7 +506,7 @@ mod tests {
                 50,
             )))
             .insert_resource(GameWorld(laid.world.clone()))
-            .insert_resource(WorldFauna(laid.fauna))
+            .insert_resource(WorldFauna(laid.fauna.clone()))
             .add_plugins(FaunaPlugin);
         let rider = Rider::on_foot(at, pampa_core::Heading::default(), &laid.world);
         app.world_mut()

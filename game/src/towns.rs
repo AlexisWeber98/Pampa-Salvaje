@@ -156,7 +156,6 @@ pub fn log_town_report(report: Res<TownReport>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pampa_content::{TOWNS_FILE, asset_path};
     use pampa_core::town::Walk;
     use pampa_core::{BuildingKind, Terrain, TownSize, Townsfolk, Vec2, World};
 
@@ -171,7 +170,7 @@ mod tests {
 
     #[test]
     fn the_shipped_file_builds_monte_nievas_first_without_warnings() {
-        let loaded = load_world(&asset_path(TOWNS_FILE));
+        let loaded = crate::shipped_world::loaded();
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
         assert_eq!(loaded.world.half_extent, WorldConfig::MAX_HALF_EXTENT);
         let names: Vec<&str> = loaded.towns.iter().map(|t| t.name.as_str()).collect();
@@ -231,7 +230,7 @@ mod tests {
 
     #[test]
     fn general_pico_grows_on_both_sides_of_the_line_through_its_middle() {
-        let loaded = load_world(&asset_path(TOWNS_FILE));
+        let loaded = crate::shipped_world::loaded();
         let pico = &loaded.towns[3];
         let rail = pico.railway.expect("a railway");
         let band = pico.rail_band().expect("the line runs through Pico");
@@ -349,7 +348,7 @@ mod tests {
 
     #[test]
     fn general_picos_sidewalks_keep_off_the_railway_band_and_the_platform() {
-        let loaded = load_world(&asset_path(TOWNS_FILE));
+        let loaded = crate::shipped_world::loaded();
         let pico = &loaded.towns[3];
         assert_eq!(
             pampa_core::town::Paving::of(pico.blocks()),
@@ -376,7 +375,7 @@ mod tests {
     #[test]
     fn the_train_stops_at_metileo_by_its_platform() {
         use pampa_core::{LineTrain, Run, Timetable};
-        let loaded = load_world(&asset_path(TOWNS_FILE));
+        let loaded = crate::shipped_world::loaded();
         let metileo = &loaded.towns[2];
         assert_eq!(metileo.name, "Metileo");
         // A halt: a few houses round its store, no comisaría.
@@ -421,7 +420,7 @@ mod tests {
         // Metileo's blocks are 40 m, as in the other towns. Its 30 m blocks
         // (until 2026-10-25) left 6–7.5 m house lots, two bays each, and a
         // 9 m church front with no room for a window beside its tower.
-        let loaded = load_world(&asset_path(TOWNS_FILE));
+        let loaded = crate::shipped_world::loaded();
         let metileo = &loaded.towns[2];
         assert_eq!(metileo.name, "Metileo");
         let of = |kind| metileo.buildings.iter().filter(move |b| b.kind == kind);
@@ -441,7 +440,7 @@ mod tests {
 
     #[test]
     fn the_shipped_streets_are_two_meters_wider_and_picos_three_and_every_town_paves_by_its_tier() {
-        let loaded = load_world(&asset_path(TOWNS_FILE));
+        let loaded = crate::shipped_world::loaded();
         // (name, street width, carriageway left between the sidewalks), all
         // literal: the carriageway is not derived from the width here.
         let wanted: [(&str, f32, f32); 5] = [
@@ -585,7 +584,7 @@ mod tests {
 
     #[test]
     fn metileo_on_40_m_blocks_keeps_clear_of_its_neighbours_roads_and_settlements() {
-        let loaded = load_world(&asset_path(TOWNS_FILE));
+        let loaded = crate::shipped_world::loaded();
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
         const METILEO: usize = 2;
         let metileo = &loaded.towns[METILEO];
@@ -630,7 +629,7 @@ mod tests {
                 assert!(!on, "{:?} {}->{}", road.kind, road.from, road.to);
             }
         }
-        let laid = crate::lay_out(&loaded);
+        let laid = crate::shipped_world::laid();
         for settlement in &laid.settlements.settlements {
             assert!(
                 !settlement.bounds.intersects(&band),
@@ -642,7 +641,7 @@ mod tests {
 
     #[test]
     fn the_shipped_world_plants_trees_between_towns_and_none_on_them() {
-        let loaded = load_world(&asset_path(TOWNS_FILE));
+        let loaded = crate::shipped_world::loaded();
         let mut world = World::with_towns(loaded.world, Terrain::default(), &loaded.towns);
         let flora = pampa_core::FloraSite::new(world.config, &world.terrain, &loaded.line);
         let before = world.obstacles.len();
@@ -669,7 +668,7 @@ mod tests {
         // 6 m out): crossings of one road closer than 20 m would crowd four
         // signs round one crossing (render `signs_posted` folds those into
         // two). The shipped world has none: the closest are 53 m apart.
-        let loaded = load_world(&asset_path(TOWNS_FILE));
+        let loaded = crate::shipped_world::loaded();
         let all: Vec<_> = loaded.roads.crossings().copied().collect();
         assert!(all.len() >= 10, "{}", all.len());
         for (i, c) in all.iter().enumerate() {
@@ -687,7 +686,7 @@ mod tests {
 
     #[test]
     fn the_shipped_world_has_its_roads_and_one_level_crossing_by_each_station() {
-        let loaded = load_world(&asset_path(TOWNS_FILE));
+        let loaded = crate::shipped_world::loaded();
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
         let roads = &loaded.roads;
         assert!(roads.length_between(0, 1).is_some());
@@ -907,8 +906,8 @@ mod tests {
         const METILEO: usize = 2;
         const CALEUFU: usize = 4;
 
-        fn loaded() -> LoadedWorld {
-            let loaded = load_world(&asset_path(TOWNS_FILE));
+        fn loaded() -> &'static LoadedWorld {
+            let loaded = crate::shipped_world::loaded();
             assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
             assert_eq!(loaded.towns[CALEUFU].name, "Caleufú");
             loaded
@@ -986,7 +985,7 @@ mod tests {
                     assert!(!on, "{:?} {}->{}", road.kind, road.from, road.to);
                 }
             }
-            let laid = crate::lay_out(&loaded);
+            let laid = crate::shipped_world::laid();
             for settlement in &laid.settlements.settlements {
                 assert!(
                     !settlement.bounds.intersects(&band),
@@ -1146,7 +1145,7 @@ mod tests {
             // Nothing built, planted or fenced stands on it, nor a lagoon,
             // a settlement or a road; the 40 m road clearance keeps the
             // roads off it too.
-            let laid = crate::lay_out(&loaded);
+            let laid = crate::shipped_world::laid();
             let car = 3.0 / 2.0 + 0.2;
             let around = |a: Vec2, b: Vec2| {
                 let (lo, hi) = (
@@ -1213,7 +1212,7 @@ mod tests {
         #[test]
         fn the_shuttle_stands_in_the_bay_and_never_overlaps_the_line_train_all_day() {
             let loaded = loaded();
-            let (line, shuttle) = trains(&loaded);
+            let (line, shuttle) = trains(loaded);
             let bay = loaded.line.bay_of(0).unwrap();
             let track = loaded.towns[METILEO].railway.unwrap();
             let (platform, _) = loaded.towns[CALEUFU].platform_spot().expect("a platform");
@@ -1290,10 +1289,10 @@ mod tests {
         fn the_bay_platform_and_walks_keep_clear_of_everything_built_planted_or_driven() {
             let loaded = loaded();
             let bay = loaded.line.bay_of(0).unwrap();
-            let laid = crate::lay_out(&loaded);
+            let laid = crate::shipped_world::laid();
             // The built world walks and boards on the platform.
             assert!(laid.world.floors.contains(&bay.platform));
-            let (road, crossing) = metileos_road(&loaded);
+            let (road, crossing) = metileos_road(loaded);
             for area in platform_works(bay) {
                 let keep = area.expanded(1.0);
                 // No building, sign, fence span, tree trunk or prop.
@@ -1370,7 +1369,7 @@ mod tests {
                     Vec2::new(walk.min.x, walk.center().y),
                     Vec2::new(walk.max.x, walk.center().y),
                 ];
-                let by_road = ends.iter().filter(|p| road_distance(&loaded, **p) < 3.0);
+                let by_road = ends.iter().filter(|p| road_distance(loaded, **p) < 3.0);
                 assert_eq!(by_road.count(), 1, "{walk:?}");
             }
             // The ground under the platform is level to within the 0.2 m the
@@ -1404,7 +1403,7 @@ mod tests {
             // crossing of the station track (about x 189.7) and has none of
             // the bay, which now joins the run-out east of it.
             let loaded = loaded();
-            let (road, crossing) = metileos_road(&loaded);
+            let (road, crossing) = metileos_road(loaded);
             assert!((crossing.at.x - 189.75).abs() < 0.1, "{:?}", crossing.at);
             assert!((crossing.at.y + 436.0).abs() < 1e-2);
             assert_eq!(road.crossings.len(), 1);
@@ -1434,11 +1433,11 @@ mod tests {
         #[test]
         fn a_walker_goes_from_the_station_platform_to_the_bay_platform_over_the_road_crossing() {
             let loaded = loaded();
-            let (line, shuttle) = trains(&loaded);
+            let (line, shuttle) = trains(loaded);
             let bay = loaded.line.bay_of(0).unwrap();
-            let (road, level) = metileos_road(&loaded);
+            let (road, level) = metileos_road(loaded);
             let (start, _) = loaded.towns[METILEO].platform_spot().unwrap();
-            let mut world = crate::lay_out(&loaded).world;
+            let mut world = crate::shipped_world::laid().world.clone();
             let collider = pampa_core::Circle::new(pampa_core::Rider::COLLIDER_RADIUS);
             let (w0, w1) = (bay.walks[0], bay.walks[1]);
             // West along the station platform's walk to the road, along the
@@ -1461,13 +1460,7 @@ mod tests {
             route.extend([end1, Vec2::new(bay.platform.footprint.center().x, end1.y)]);
             // The crossing is on the way.
             assert!(route.windows(2).any(|w| {
-                crossing(
-                    w[0],
-                    w[1],
-                    crossing_rail(&loaded).0,
-                    crossing_rail(&loaded).1,
-                )
-                .is_some()
+                crossing(w[0], w[1], crossing_rail(loaded).0, crossing_rail(loaded).1).is_some()
             }));
             let mut checked = 0;
             let mut nearest = f32::MAX;
@@ -1517,8 +1510,8 @@ mod tests {
         {
             use pampa_core::{Boarding, Rider, alight_spot, boarding, coach_doors};
             let loaded = loaded();
-            let (line, shuttle) = trains(&loaded);
-            let mut world = crate::lay_out(&loaded).world;
+            let (line, shuttle) = trains(loaded);
+            let mut world = crate::shipped_world::laid().world.clone();
             let bay = loaded.line.bay_of(0).unwrap().platform;
             let mut checked = std::collections::BTreeSet::new();
             for (t, train) in [&line, &shuttle].into_iter().enumerate() {
@@ -1627,9 +1620,9 @@ mod tests {
         #[test]
         fn a_standing_train_bars_the_track_by_the_platform_but_never_the_crossing_or_the_walks() {
             let loaded = loaded();
-            let (line, shuttle) = trains(&loaded);
+            let (line, shuttle) = trains(loaded);
             let bay = loaded.line.bay_of(0).unwrap();
-            let (_, crossing) = metileos_road(&loaded);
+            let (_, crossing) = metileos_road(loaded);
             let mut world = World::with_towns(loaded.world, Terrain::default(), &loaded.towns);
             world.lay_rail(&loaded.line);
             let collider = pampa_core::Circle::new(pampa_core::Rider::COLLIDER_RADIUS);
@@ -1669,9 +1662,9 @@ mod tests {
         #[test]
         fn no_standing_train_covers_the_crossing_or_the_walks_and_the_trains_keep_apart() {
             let loaded = loaded();
-            let (line, shuttle) = trains(&loaded);
+            let (line, shuttle) = trains(loaded);
             let bay = loaded.line.bay_of(0).unwrap();
-            let (_, crossing) = metileos_road(&loaded);
+            let (_, crossing) = metileos_road(loaded);
             // The crossing's deck and approaches, and each walk's strip.
             let deck = Aabb::from_center_size(
                 crossing.at,
@@ -1763,7 +1756,7 @@ mod tests {
         #[test]
         fn the_shuttle_is_boarded_from_caleufus_middle_spot_all_through_its_layover() {
             let loaded = loaded();
-            let (_, shuttle) = trains(&loaded);
+            let (_, shuttle) = trains(loaded);
             let (middle, _) = loaded.towns[CALEUFU].platform_spot().unwrap();
             let mut world = World::with_towns(loaded.world, Terrain::default(), &loaded.towns);
             world.lay_rail(&loaded.line);

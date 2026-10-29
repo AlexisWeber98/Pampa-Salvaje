@@ -112,7 +112,6 @@ mod tests {
     use super::*;
     use crate::player::{PlayerPlugin, PlayerSpawn};
     use bevy::time::TimeUpdateStrategy;
-    use pampa_content::{TOWNS_FILE, asset_path};
     use pampa_core::{Aabb, Circle, Heading, Rider, StreetLamps};
     use std::time::Duration;
 
@@ -137,34 +136,31 @@ mod tests {
 
     #[test]
     fn startup_plants_nothing_and_a_chunk_is_planted_only_when_the_player_is_near() {
-        let loaded = crate::towns::load_world(&asset_path(TOWNS_FILE));
-        let mut laid = crate::lay_out(&loaded);
-        let coord = planted_chunk(&laid.flora, &laid.world);
+        let laid = crate::shipped_world::laid();
+        let mut world = laid.world.clone();
+        let coord = planted_chunk(&laid.flora, &world);
         let trees = laid.flora.trees(coord);
         assert!(trees.len() > 20, "a chunk with trees");
         // The whole world is not planted: no chunk streamed, no tree among
         // the permanent footprints.
-        assert_eq!(laid.world.obstacles.streamed_len(), 0);
-        assert!(laid.world.obstacles.len() < 200_000);
+        assert_eq!(world.obstacles.streamed_len(), 0);
+        assert!(world.obstacles.len() < 200_000);
         for p in trees.iter().map(|t| t.obstacle()) {
-            assert!(
-                !laid.world.obstacles.contains(&p),
-                "{p:?} planted at startup"
-            );
+            assert!(!world.obstacles.contains(&p), "{p:?} planted at startup");
         }
         // The player's own chunk is planted at once, the rest within the
         // load radius over the next frames, nearest first.
-        let size = laid.world.config.chunk_size;
+        let size = world.config.chunk_size;
         let center = coord.center(size);
-        let (planted, dropped) = stream_plants(&mut laid.world, &laid.flora, center, 0);
+        let (planted, dropped) = stream_plants(&mut world, &laid.flora, center, 0);
         assert_eq!((planted, dropped), (1, 0));
-        assert!(laid.world.obstacles.has_chunk(coord));
+        assert!(world.obstacles.has_chunk(coord));
         let mut frames = 0;
-        while stream_plants(&mut laid.world, &laid.flora, center, BUDGET).0 > 0 {
+        while stream_plants(&mut world, &laid.flora, center, BUDGET).0 > 0 {
             frames += 1;
         }
         assert!(frames <= 8, "{frames} frames to fill the ring");
-        let loaded_chunks: Vec<_> = laid.world.obstacles.loaded_chunks().collect();
+        let loaded_chunks: Vec<_> = world.obstacles.loaded_chunks().collect();
         assert_eq!(loaded_chunks.len(), 9);
         for c in loaded_chunks {
             assert!((c.x - coord.x).abs() <= LOAD_RADIUS && (c.y - coord.y).abs() <= LOAD_RADIUS);
@@ -172,53 +168,52 @@ mod tests {
         // The plants collide: each one blocks a rider from a few meters off.
         let collider = Circle::new(Rider::COLLIDER_RADIUS);
         let tree = trees[0];
-        let inside = laid.world.resolve(collider, tree.at, |_| ());
+        let inside = world.resolve(collider, tree.at, |_| ());
         assert!(inside.distance(tree.at) > 0.0, "a tree pushes a body out");
     }
 
     #[test]
     fn plants_come_and_go_with_the_player_and_come_back_the_same() {
-        let loaded = crate::towns::load_world(&asset_path(TOWNS_FILE));
-        let mut laid = crate::lay_out(&loaded);
-        let coord = planted_chunk(&laid.flora, &laid.world);
-        let size = laid.world.config.chunk_size;
+        let laid = crate::shipped_world::laid();
+        let mut world = laid.world.clone();
+        let coord = planted_chunk(&laid.flora, &world);
+        let size = world.config.chunk_size;
         let here = coord.center(size);
-        stream_plants(&mut laid.world, &laid.flora, here, 8);
-        let first = seen(&laid.world, here);
+        stream_plants(&mut world, &laid.flora, here, 8);
+        let first = seen(&world, here);
         assert!(first.len() > 100, "{}", first.len());
-        let streamed = laid.world.obstacles.streamed_len();
+        let streamed = world.obstacles.streamed_len();
         // Four chunks east, past the keep radius: the first chunk is gone,
         // and so are its footprints.
         let away = here + Vec2::new(4.0 * size, 0.0);
-        let (_, dropped) = stream_plants(&mut laid.world, &laid.flora, away, 8);
+        let (_, dropped) = stream_plants(&mut world, &laid.flora, away, 8);
         assert!(dropped >= 3, "{dropped}");
-        assert!(!laid.world.obstacles.has_chunk(coord));
+        assert!(!world.obstacles.has_chunk(coord));
         // Permanent footprints (fences) stay; no plant is left behind.
-        let left: Vec<Aabb> = laid
-            .world
+        let left: Vec<Aabb> = world
             .obstacles
             .near(coord.bounds(size))
             .into_iter()
-            .filter(|o| !laid.world.obstacles.contains(o))
+            .filter(|o| !world.obstacles.contains(o))
             .copied()
             .collect();
         assert!(left.is_empty(), "{} plants left behind", left.len());
         // Ring-sized: the plants held never exceed the ring's chunks.
-        assert!(laid.world.obstacles.loaded_chunks().count() <= 25);
+        assert!(world.obstacles.loaded_chunks().count() <= 25);
         // Riding along a chunk border plants and drops nothing again.
         let edge = here + Vec2::new(size / 2.0, 0.0);
-        stream_plants(&mut laid.world, &laid.flora, edge - Vec2::new(0.1, 0.0), 8);
-        stream_plants(&mut laid.world, &laid.flora, edge + Vec2::new(0.1, 0.0), 8);
-        let held = laid.world.obstacles.streamed_len();
+        stream_plants(&mut world, &laid.flora, edge - Vec2::new(0.1, 0.0), 8);
+        stream_plants(&mut world, &laid.flora, edge + Vec2::new(0.1, 0.0), 8);
+        let held = world.obstacles.streamed_len();
         for dx in [-0.1, 0.1, -0.1, 0.1] {
-            let moved = stream_plants(&mut laid.world, &laid.flora, edge + Vec2::new(dx, 0.0), 8);
+            let moved = stream_plants(&mut world, &laid.flora, edge + Vec2::new(dx, 0.0), 8);
             assert_eq!(moved, (0, 0), "no churn at a border");
         }
-        assert_eq!(laid.world.obstacles.streamed_len(), held);
+        assert_eq!(world.obstacles.streamed_len(), held);
         // Back again: the same plants, to the footprint.
-        stream_plants(&mut laid.world, &laid.flora, here, 8);
-        assert_eq!(seen(&laid.world, here), first);
-        assert!(laid.world.obstacles.streamed_len() >= streamed);
+        stream_plants(&mut world, &laid.flora, here, 8);
+        assert_eq!(seen(&world, here), first);
+        assert!(world.obstacles.streamed_len() >= streamed);
     }
 
     /// A headless game with the player at `spawn` and the plant ring.
@@ -238,8 +233,7 @@ mod tests {
 
     #[test]
     fn a_rider_cannot_ride_through_a_tree_in_a_chunk_near_them_but_rides_through_a_shrub() {
-        let loaded = crate::towns::load_world(&asset_path(TOWNS_FILE));
-        let laid = crate::lay_out(&loaded);
+        let laid = crate::shipped_world::laid();
         let coord = planted_chunk(&laid.flora, &laid.world);
         let trees = laid.flora.trees(coord);
         let shrubs = laid.flora.shrubs(coord);
@@ -309,8 +303,7 @@ mod tests {
 
     #[test]
     fn street_lamps_stand_clear_of_every_tree_so_they_need_not_see_the_trees_at_startup() {
-        let loaded = crate::towns::load_world(&asset_path(TOWNS_FILE));
-        let laid = crate::lay_out(&loaded);
+        let laid = crate::shipped_world::laid();
         let mut checked = 0;
         for lamp in laid.lamps.all() {
             let reach = lamp.obstacle().expanded(StreetLamps::CLEARANCE);

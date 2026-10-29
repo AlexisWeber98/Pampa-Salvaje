@@ -1,3 +1,9 @@
+# At most four rustc jobs at once: each Bevy crate takes over 1 GB to
+# compile, and the default (one per core, 12 here) ran a 14 GB machine out
+# of memory with rust-analyzer open. Override with `cargo build -j N`.
+[build]
+jobs = 4
+
 # Faster linking on Linux: clang drives LLVM's lld, which links the big
 # Bevy binaries several times faster than the default system linker.
 # Needs `clang` and `lld` installed (Arch: `pacman -S clang lld`).

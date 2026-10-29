@@ -1067,7 +1067,7 @@ mod tests {
 
     #[test]
     fn there_is_an_errand_in_the_shipped_world_from_monte_nievas_to_castex() {
-        let loaded = crate::towns::load_world(&asset_path(pampa_content::TOWNS_FILE));
+        let loaded = crate::shipped_world::loaded();
         let mut world = World::with_towns(loaded.world, Terrain::default(), &loaded.towns);
         let before = world.obstacles.len();
         let lines = shipped_lines();
