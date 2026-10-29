@@ -1,40 +1,42 @@
-//! The title screen, the pause menu and their Sonido screen, with music.
+//! La pantalla de título, el menú de pausa y su pantalla Sonido, con música.
 //!
-//! The game starts on the title screen.
-//! - On the left is a "Se busca" poster of two rural bandits from León
-//!   Gieco's "Bandidos rurales": Juan Bautista Bairoletto and Mate Cosido
-//!   (born Segundo David Peralta). It is pinned over an 1882 map of
-//!   Argentina (`assets/menu/poster.png`).
-//! - On the right is a band of red paint (`assets/menu/band.png`) lettered
-//!   with "Pampa Salvaje" and the choices Jugar, Sonido and Salir.
+//! El juego empieza en la pantalla de título.
+//! - A la izquierda hay un cartel de "Se busca" de dos bandidos rurales de
+//!   "Bandidos rurales" de León Gieco: Juan Bautista Bairoletto y Mate Cosido
+//!   (nacido Segundo David Peralta). Está clavado sobre un mapa de Argentina de
+//!   1882 (`assets/menu/poster.png`).
+//! - A la derecha hay una franja de pintura roja (`assets/menu/band.png`)
+//!   rotulada con "Pampa Salvaje" y las opciones Jugar, Sonido y Salir.
 //!
-//! `tools/menu_poster.sh` bakes the poster and the band.
+//! `tools/menu_poster.sh` genera el cartel y la franja.
 //!
-//! In game, Esc or the keyboard's Pause key pauses. The world stays on screen, turned grey with dark
-//! corners (`assets/menu/vignette.png`). The same poster and band show,
-//! with Continuar, Sonido and Salir. Esc or Pause again, or Continuar, goes back to
-//! the game.
+//! En el juego, Esc o la tecla Pausa del teclado pausan. El mundo queda en
+//! pantalla, en gris y con las esquinas oscuras (`assets/menu/vignette.png`).
+//! Se muestran el mismo cartel y la misma franja, con Continuar, Sonido y
+//! Salir. Esc o Pausa de nuevo, o Continuar, vuelven al juego.
 //!
-//! Sonido sets the volumes ([`SoundSettings`]). They are saved when the
-//! player leaves it.
+//! Sonido ajusta los volúmenes ([`SoundSettings`]). Se guardan cuando el
+//! jugador sale de esa pantalla.
 //!
-//! While a menu is open ([`Menu::screen`]), the world stands still.
-//! - Virtual time is paused, so everything that runs on `Time` waits: the
-//!   clock, the trains, the animals and the people.
-//! - The game sees no keys, mouse buttons, motion or wheel. [`read_keys`]
-//!   clears them after the dev console has read its own.
-//! - The cursor is free.
+//! Mientras hay un menú abierto ([`Menu::screen`]), el mundo se queda quieto.
+//! - El tiempo virtual está en pausa, así que todo lo que corre sobre `Time`
+//!   espera: el reloj, los trenes, los animales y la gente.
+//! - El juego no ve teclas, botones del mouse, movimiento ni rueda.
+//!   [`read_keys`] los borra después de que la consola de desarrollo leyó los
+//!   suyos.
+//! - El cursor queda libre.
 //!
-//! The music (`assets/menu/menu_2.mp3`, the project's own song) loops only
-//! while a menu is open, and starts from the top each time one opens.
+//! La música (`assets/menu/menu_2.mp3`, la canción propia del proyecto) se
+//! repite solo mientras hay un menú abierto, y empieza desde el principio cada
+//! vez que se abre uno.
 //!
-//! Keys:
-//! - Up/Down or W/S: choose a line.
-//! - Left/Right or A/D: turn a volume down or up.
-//! - Enter, Space or F: take the choice.
-//! - Esc or Pause: go back (in game, pause).
+//! Teclas:
+//! - Arriba/Abajo o W/S: elegir una línea.
+//! - Izquierda/Derecha o A/D: bajar o subir un volumen.
+//! - Enter, Espacio o F: tomar la opción.
+//! - Esc o Pausa: volver (en el juego, pausar).
 //!
-//! Quitting with Sonido open (closing the window) saves its volumes too.
+//! Salir con Sonido abierto (cerrando la ventana) también guarda sus volúmenes.
 
 use std::path::PathBuf;
 
@@ -49,36 +51,37 @@ use pampa_render::Typefaces;
 
 use crate::sound::{MAX_STEP, SoundSettings};
 
-/// The menus' music, relative to the asset root.
+/// La música de los menús, relativa a la raíz de assets.
 pub const MUSIC: &str = "menu/menu_2.mp3";
-/// The "Se busca" poster over the map, relative to the asset root.
+/// El cartel de "Se busca" sobre el mapa, relativo a la raíz de assets.
 pub const POSTER: &str = "menu/poster.png";
-/// The band of red paint the choices are lettered on.
+/// La franja de pintura roja sobre la que se rotulan las opciones.
 pub const BAND: &str = "menu/band.png";
-/// The dark corners over the paused world.
+/// Las esquinas oscuras sobre el mundo en pausa.
 pub const VIGNETTE: &str = "menu/vignette.png";
 
-/// The title and the chosen line: the poster's paper, bright on the red.
+/// El título y la línea elegida: el papel del cartel, claro sobre el rojo.
 const PAPER: Color = Color::srgb_u8(246, 234, 204);
-/// A line not chosen, the heading and the hints: the paper, faded.
+/// Una línea no elegida, el encabezado y las ayudas: el papel, desteñido.
 const DIM: Color = Color::srgba_u8(233, 214, 178, 150);
-/// Behind the title screen, while the world loads.
+/// Detrás de la pantalla de título, mientras carga el mundo.
 const BACKDROP: Color = Color::srgb_u8(30, 22, 16);
-/// The most lines a screen has.
+/// La mayor cantidad de líneas que tiene una pantalla.
 const LINES: usize = 3;
 
-/// Which menu is open.
+/// Qué menú está abierto.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
-    /// Before the game: Jugar, Sonido, Salir.
+    /// Antes del juego: Jugar, Sonido, Salir.
     Title,
-    /// Esc in game: Continuar, Sonido, Salir.
+    /// Esc en el juego: Continuar, Sonido, Salir.
     Pause,
-    /// The volumes, opened from the title or the pause menu (`from`).
+    /// Los volúmenes, abiertos desde el título o desde el menú de pausa
+    /// (`from`).
     Sound { from: Parent },
 }
 
-/// The screen Sonido goes back to.
+/// La pantalla a la que vuelve Sonido.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Parent {
     Title,
@@ -94,25 +97,25 @@ impl From<Parent> for Screen {
     }
 }
 
-/// What a menu line does.
+/// Lo que hace una línea del menú.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Choice {
-    /// Close the menu and play (Jugar on the title, Continuar in pause).
+    /// Cerrar el menú y jugar (Jugar en el título, Continuar en la pausa).
     Play,
-    /// Open the Sonido screen.
+    /// Abrir la pantalla Sonido.
     Sound,
-    /// Quit the game.
+    /// Salir del juego.
     Quit,
-    /// The general volume: Left/Right set it.
+    /// El volumen general: Izquierda/Derecha lo ajustan.
     General,
-    /// The music's volume: Left/Right set it.
+    /// El volumen de la música: Izquierda/Derecha lo ajustan.
     Music,
-    /// Back from Sonido to where it was opened.
+    /// Volver de Sonido a donde se abrió.
     Back,
 }
 
 impl Screen {
-    /// The screen's lines, top to bottom.
+    /// Las líneas de la pantalla, de arriba abajo.
     pub fn choices(self) -> &'static [Choice] {
         match self {
             Screen::Title | Screen::Pause => &[Choice::Play, Choice::Sound, Choice::Quit],
@@ -120,8 +123,8 @@ impl Screen {
         }
     }
 
-    /// Whether the game is under this screen (paused) rather than not yet
-    /// started.
+    /// Si el juego está debajo de esta pantalla (en pausa) en lugar de no haber
+    /// empezado todavía.
     fn over_the_game(self) -> bool {
         matches!(
             self,
@@ -148,7 +151,7 @@ impl Screen {
     }
 }
 
-/// The text of `choice` on `screen`.
+/// El texto de `choice` en `screen`.
 pub fn label(choice: Choice, screen: Screen, sound: &SoundSettings) -> String {
     let percent = |step: u8| u32::from(step) * 100 / u32::from(MAX_STEP);
     match choice {
@@ -162,7 +165,7 @@ pub fn label(choice: Choice, screen: Screen, sound: &SoundSettings) -> String {
     }
 }
 
-/// The open menu, if any, and its highlighted line.
+/// El menú abierto, si lo hay, y su línea resaltada.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Menu {
     pub screen: Option<Screen>,
@@ -181,12 +184,13 @@ impl Menu {
         };
     }
 
-    /// The highlighted choice of the open menu.
+    /// La opción resaltada del menú abierto.
     pub fn choice(&self) -> Option<Choice> {
         self.screen.map(|s| s.choices()[self.selected])
     }
 
-    /// Moves the highlight `step` lines down (negative: up), wrapping round.
+    /// Mueve el resaltado `step` líneas hacia abajo (negativo: hacia arriba),
+    /// dando la vuelta.
     fn step(&mut self, step: isize) {
         if let Some(screen) = self.screen {
             let n = screen.choices().len() as isize;
@@ -195,20 +199,23 @@ impl Menu {
     }
 }
 
-/// Where [`SoundSettings`] are saved; `None` keeps them for this run only.
+/// Dónde se guarda [`SoundSettings`]; `None` los conserva solo durante esta
+/// ejecución.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct SettingsFile(pub Option<PathBuf>);
 
-/// The key readers that keep keys from the game: the menu's runs after
-/// the dev console's, so the Esc that closes the console never pauses.
+/// Los lectores de teclas que ocultan las teclas al juego: el del menú se
+/// ejecuta después del de la consola de desarrollo, así que el Esc que cierra
+/// la consola nunca pausa.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MenuKeys;
 
-/// The title screen, pause menu and Sonido screen.
+/// La pantalla de título, el menú de pausa y la pantalla Sonido.
 pub struct MenuPlugin {
-    /// Start on the title screen (the dev screenshot tour does not).
+    /// Empezar en la pantalla de título (el recorrido de capturas de desarrollo
+    /// no lo hace).
     pub title: bool,
-    /// Where the sound settings are read from and saved.
+    /// De dónde se lee y dónde se guarda la configuración de sonido.
     pub settings: Option<PathBuf>,
 }
 
@@ -238,32 +245,32 @@ impl Plugin for MenuPlugin {
     }
 }
 
-/// The full-screen layer of the menus.
+/// La capa de pantalla completa de los menús.
 #[derive(Component)]
 struct MenuLayer;
 
-/// The dark corners, shown over the paused world only.
+/// Las esquinas oscuras, mostradas solo sobre el mundo en pausa.
 #[derive(Component)]
 struct MenuVignette;
 
-/// The line under the title: "Bandidos rurales", "Pausa" or "Sonido".
+/// La línea bajo el título: "Bandidos rurales", "Pausa" o "Sonido".
 #[derive(Component)]
 struct MenuHeading;
 
-/// A choice's line, by its index in [`Screen::choices`].
+/// La línea de una opción, por su índice en [`Screen::choices`].
 #[derive(Component)]
 struct MenuLine(usize);
 
-/// The keys' hint at the foot of the choices.
+/// La ayuda de teclas al pie de las opciones.
 #[derive(Component)]
 struct MenuHint;
 
-/// The menus' music: one player while a menu is open, despawned (which
-/// stops it) when the game resumes.
+/// La música de los menús: un reproductor mientras hay un menú abierto,
+/// eliminado (lo que la detiene) cuando el juego se reanuda.
 #[derive(Component)]
 struct MenuMusic;
 
-/// The menus' song, loaded once.
+/// La canción de los menús, cargada una sola vez.
 #[derive(Resource, Default)]
 struct MenuSong(Handle<AudioSource>);
 
@@ -298,7 +305,7 @@ fn spawn_menu(mut commands: Commands, server: Option<Res<AssetServer>>, faces: R
                 ..fill.clone()
             },
             BackgroundColor(Color::NONE),
-            // Over the HUD, the minimap and the screen fade.
+            // Por encima del HUD, del minimapa y del fundido de pantalla.
             GlobalZIndex(200),
         ))
         .with_children(|layer| {
@@ -313,8 +320,8 @@ fn spawn_menu(mut commands: Commands, server: Option<Res<AssetServer>>, faces: R
                     ..default()
                 },
             ));
-            // The band, stretched down the right edge; the choices start
-            // clear of its ragged left side.
+            // La franja, estirada a lo largo del borde derecho; las opciones
+            // empiezan apartadas de su lado izquierdo irregular.
             layer
                 .spawn((
                     ImageNode::new(load(BAND)),
@@ -368,12 +375,12 @@ fn spawn_menu(mut commands: Commands, server: Option<Res<AssetServer>>, faces: R
         });
 }
 
-/// What the menus read and write of the sound.
+/// Lo que los menús leen y escriben del sonido.
 type Sound<'w> = (ResMut<'w, SoundSettings>, Res<'w, SettingsFile>);
 
-/// Esc or Pause opens the pause menu; in a menu, moves the highlight, sets volumes
-/// and takes the choice, and keeps every key, button and mouse move from
-/// the game.
+/// Esc o Pausa abren el menú de pausa; en un menú, mueve el resaltado, ajusta
+/// los volúmenes y toma la opción, y oculta al juego cada tecla, botón y
+/// movimiento del mouse.
 fn read_keys(
     mut keys: ResMut<ButtonInput<KeyCode>>,
     mut buttons: Option<ResMut<ButtonInput<MouseButton>>>,
@@ -451,12 +458,12 @@ fn read_keys(
     keep_from_game(&mut keys, &mut buttons, &mut moved, &mut scrolled);
 }
 
-/// Esc and the keyboard's Pause key: they open the pause menu in game,
-/// and go back (or resume) in a menu.
+/// Esc y la tecla Pausa del teclado: abren el menú de pausa en el juego, y
+/// vuelven (o reanudan) en un menú.
 const BACK_KEYS: [KeyCode; 2] = [KeyCode::Escape, KeyCode::Pause];
 
-/// Clears this frame's keys, mouse buttons, motion and wheel, so the game
-/// sees none of them.
+/// Borra las teclas, los botones del mouse, el movimiento y la rueda de este
+/// frame, para que el juego no vea ninguno.
 fn keep_from_game(
     keys: &mut ButtonInput<KeyCode>,
     buttons: &mut Option<ResMut<ButtonInput<MouseButton>>>,
@@ -475,19 +482,20 @@ fn keep_from_game(
     }
 }
 
-/// When the game quits with Sonido open (the window closed), saves the
-/// volumes set there, which would otherwise be saved on leaving it.
+/// Cuando el juego sale con Sonido abierto (cerrando la ventana), guarda los
+/// volúmenes ajustados allí, que de otro modo se guardarían al salir de esa
+/// pantalla.
 fn save_on_exit(mut exits: MessageReader<AppExit>, menu: Res<Menu>, (sound, file): SoundRead) {
     if exits.read().count() > 0 && matches!(menu.screen, Some(Screen::Sound { .. })) {
         save(&sound, &file);
     }
 }
 
-/// What quitting reads of the sound.
+/// Lo que lee del sonido la salida del juego.
 type SoundRead<'w> = (Res<'w, SoundSettings>, Res<'w, SettingsFile>);
 
-/// Writes the settings to their file, if they have one; a failure is
-/// logged and the game goes on with them.
+/// Escribe la configuración en su archivo, si tiene uno; un fallo se registra
+/// en el log y el juego sigue con ella.
 fn save(sound: &SoundSettings, file: &SettingsFile) {
     if let Some(path) = &file.0
         && let Err(e) = sound.save(path)
@@ -496,7 +504,7 @@ fn save(sound: &SoundSettings, file: &SettingsFile) {
     }
 }
 
-/// Pauses virtual time while a menu is open.
+/// Pausa el tiempo virtual mientras hay un menú abierto.
 fn hold_world(menu: Res<Menu>, mut time: ResMut<Time<Virtual>>) {
     let open = menu.screen.is_some();
     if open != time.is_paused() {
@@ -508,8 +516,9 @@ fn hold_world(menu: Res<Menu>, mut time: ResMut<Time<Virtual>>) {
     }
 }
 
-/// Turns the world grey under an open menu and back to color in game: the
-/// cameras' color grading, which nothing else in the game sets.
+/// Pone el mundo en gris bajo un menú abierto y lo devuelve al color en el
+/// juego: la gradación de color de las cámaras, que nada más en el juego
+/// ajusta.
 fn grey_world(
     mut commands: Commands,
     menu: Res<Menu>,
@@ -533,11 +542,13 @@ fn grey_world(
     }
 }
 
-/// Plays the music while a menu is open, from the song's start each time a
-/// menu opens (resuming mid-song jars, user 2026-10-29): a fresh player is
-/// spawned when the title or the pause menu opens and despawned, which stops
-/// it, when the game resumes. Moving between the menu's screens keeps it.
-/// The player's sink, once the song has loaded, follows the volumes.
+/// Reproduce la música mientras hay un menú abierto, desde el comienzo de la
+/// canción cada vez que se abre un menú (retomarla a mitad de la canción
+/// resulta chocante, usuario 2026-10-29): se crea un reproductor nuevo cuando
+/// se abre el título o el menú de pausa, y se elimina, lo que la detiene,
+/// cuando el juego se reanuda. Moverse entre las pantallas del menú la
+/// mantiene. El sink del reproductor, una vez cargada la canción, sigue los
+/// volúmenes.
 fn play_music(
     mut commands: Commands,
     menu: Res<Menu>,
@@ -572,7 +583,7 @@ fn play_music(
     }
 }
 
-/// The menu layer's node and backdrop.
+/// El nodo y el fondo de la capa del menú.
 type Layers<'w, 's> = Query<
     'w,
     's,
@@ -580,11 +591,11 @@ type Layers<'w, 's> = Query<
     (With<MenuLayer>, Without<MenuVignette>, Without<MenuLine>),
 >;
 
-/// The vignette's node.
+/// El nodo de la viñeta.
 type Vignettes<'w, 's> =
     Query<'w, 's, &'static mut Node, (With<MenuVignette>, Without<MenuLayer>, Without<MenuLine>)>;
 
-/// A choice's line: its text, color and node.
+/// La línea de una opción: su texto, color y nodo.
 type Lines<'w, 's> = Query<
     'w,
     's,
@@ -597,7 +608,7 @@ type Lines<'w, 's> = Query<
     (Without<MenuHeading>, Without<MenuHint>),
 >;
 
-/// The heading and the hint, apart from the lines.
+/// El encabezado y la ayuda, aparte de las líneas.
 type Notes<'w, 's> = Query<
     'w,
     's,
@@ -605,8 +616,8 @@ type Notes<'w, 's> = Query<
     (Or<(With<MenuHeading>, With<MenuHint>)>, Without<MenuLine>),
 >;
 
-/// Shows or hides the layer and rewrites its lines when the menu or the
-/// volumes changed.
+/// Muestra u oculta la capa y reescribe sus líneas cuando cambiaron el menú o
+/// los volúmenes.
 fn draw_menu(
     menu: Res<Menu>,
     sound: Res<SoundSettings>,
@@ -624,8 +635,8 @@ fn draw_menu(
         }
         return;
     };
-    // The title hides the world still loading behind it; the pause menu
-    // shows the world it holds, grey, with dark corners.
+    // El título oculta el mundo que todavía carga detrás; el menú de pausa
+    // muestra el mundo que detiene, en gris, con las esquinas oscuras.
     let over_the_game = screen.over_the_game();
     for (mut node, mut color) in &mut layers {
         node.display = Display::Flex;
@@ -679,7 +690,8 @@ mod tests {
         app_with(title, None)
     }
 
-    /// One key going down and up, as the window sends it, a frame each.
+    /// Una tecla que baja y sube, tal como la envía la ventana, un frame cada
+    /// vez.
     fn press(app: &mut App, key: KeyCode) {
         for state in [ButtonState::Pressed, ButtonState::Released] {
             app.world_mut().write_message(KeyboardInput {
@@ -718,8 +730,8 @@ mod tests {
         layers.single(app.world()).expect("one layer").0
     }
 
-    /// The shown lines' texts, top to bottom, with the highlighted one's
-    /// index.
+    /// Los textos de las líneas mostradas, de arriba abajo, con el índice de la
+    /// resaltada.
     fn lines(app: &mut App) -> (Vec<String>, Vec<usize>) {
         let mut query = app
             .world_mut()
@@ -743,7 +755,7 @@ mod tests {
         query.single(app.world()).expect("one heading").0.clone()
     }
 
-    /// The world camera's saturation; 1 without color grading.
+    /// La saturación de la cámara del mundo; 1 sin gradación de color.
     fn saturation(app: &mut App) -> f32 {
         let mut query = app
             .world_mut()
@@ -761,7 +773,8 @@ mod tests {
             .count()
     }
 
-    /// A fresh directory under the system temp dir, removed on drop.
+    /// Un directorio nuevo bajo el directorio temporal del sistema, que se
+    /// elimina al soltarlo.
     struct Scratch(PathBuf);
 
     impl Scratch {
@@ -785,7 +798,7 @@ mod tests {
         assert_eq!(menu(&app).screen, Some(Screen::Title));
         assert!(paused(&app));
         assert!(shown::<MenuLayer>(&mut app));
-        // The world loading behind is hidden, so no vignette over it.
+        // El mundo que carga detrás está oculto, así que no hay viñeta encima.
         assert_eq!(backdrop(&mut app), BACKDROP);
         assert!(!shown::<MenuVignette>(&mut app));
         assert_eq!(heading(&mut app), "Bandidos rurales");
@@ -829,7 +842,7 @@ mod tests {
         assert!(shown::<MenuLayer>(&mut app));
         assert_eq!(heading(&mut app), "Pausa");
         assert_eq!(lines(&mut app).0, ["Continuar", "Sonido", "Salir"]);
-        // Esc no longer quits.
+        // Esc ya no sale del juego.
         assert_eq!(exits(&mut app), 0);
         press(&mut app, KeyCode::Escape);
         assert_eq!(menu(&app).screen, None);
@@ -846,7 +859,7 @@ mod tests {
         assert_eq!(saturation(&mut app), 0.0);
         assert_eq!(backdrop(&mut app), Color::NONE);
         assert!(shown::<MenuVignette>(&mut app));
-        // Sonido from the pause menu keeps the world grey under it.
+        // Sonido desde el menú de pausa mantiene el mundo en gris debajo.
         press(&mut app, KeyCode::ArrowDown);
         press(&mut app, KeyCode::Enter);
         assert_eq!(saturation(&mut app), 0.0);
@@ -863,7 +876,7 @@ mod tests {
         press(&mut app, KeyCode::Pause);
         assert_eq!(menu(&app).screen, Some(Screen::Pause));
         assert!(paused(&app));
-        // In Sonido it goes back, as Esc does.
+        // En Sonido vuelve atrás, como lo hace Esc.
         press(&mut app, KeyCode::ArrowDown);
         press(&mut app, KeyCode::Enter);
         press(&mut app, KeyCode::Pause);
@@ -909,7 +922,7 @@ mod tests {
         press(&mut app, KeyCode::Enter);
         press(&mut app, KeyCode::ArrowDown);
         press(&mut app, KeyCode::ArrowLeft);
-        // The window closes with Sonido still open.
+        // La ventana se cierra con Sonido todavía abierto.
         app.world_mut().write_message(AppExit::Success);
         app.update();
         let wanted = SoundSettings {
@@ -919,7 +932,8 @@ mod tests {
         assert_eq!(SoundSettings::load(&path), (wanted, None));
     }
 
-    /// The menu music's players: a fresh one plays the song from its start.
+    /// Los reproductores de la música del menú: uno nuevo reproduce la canción
+    /// desde el comienzo.
     fn music_players(app: &mut App) -> Vec<(Entity, PlaybackSettings)> {
         let mut players = app
             .world_mut()
@@ -929,7 +943,8 @@ mod tests {
 
     #[test]
     fn the_music_starts_over_each_time_a_menu_opens() {
-        // The title plays the song from its start, looping, at its volume.
+        // El título reproduce la canción desde el comienzo, en bucle, a su
+        // volumen.
         let mut app = app(true);
         let title = music_players(&mut app);
         assert_eq!(title.len(), 1);
@@ -937,15 +952,15 @@ mod tests {
         assert!(matches!(settings.mode, PlaybackMode::Loop));
         assert!(!settings.paused);
         assert_eq!(settings.volume, Volume::Linear(sound(&app).music_gain()));
-        // Silent in game.
+        // En silencio en el juego.
         press(&mut app, KeyCode::Enter);
         assert!(music_players(&mut app).is_empty());
-        // Every pause starts the song over with a fresh player.
+        // Cada pausa vuelve a empezar la canción con un reproductor nuevo.
         press(&mut app, KeyCode::Escape);
         let first = music_players(&mut app);
         assert_eq!(first.len(), 1);
         assert_ne!(first[0].0, title[0].0);
-        // Going into Sonido and back is the same menu: the song goes on.
+        // Entrar a Sonido y volver es el mismo menú: la canción continúa.
         press(&mut app, KeyCode::ArrowDown);
         press(&mut app, KeyCode::Enter);
         press(&mut app, KeyCode::Escape);
@@ -1018,7 +1033,7 @@ mod tests {
                     vec![0]
                 )
             );
-            // Volver returns with Sonido highlighted.
+            // Volver regresa con Sonido resaltado.
             press(&mut app, KeyCode::ArrowUp);
             press(&mut app, KeyCode::Enter);
             let returned = Menu {
@@ -1026,7 +1041,7 @@ mod tests {
                 selected: 1,
             };
             assert_eq!(menu(&app), returned);
-            // So does Esc; Esc in Sonido never closes the pause menu.
+            // Lo mismo hace Esc; Esc en Sonido nunca cierra el menú de pausa.
             press(&mut app, KeyCode::Enter);
             press(&mut app, KeyCode::Escape);
             assert_eq!(menu(&app), returned);
@@ -1038,7 +1053,7 @@ mod tests {
         let mut app = app(true);
         press(&mut app, KeyCode::ArrowDown);
         press(&mut app, KeyCode::Enter);
-        // The general volume is at the top already.
+        // El volumen general ya está al máximo.
         press(&mut app, KeyCode::ArrowRight);
         assert_eq!(sound(&app).general, MAX_STEP);
         press(&mut app, KeyCode::KeyA);
@@ -1060,11 +1075,11 @@ mod tests {
             lines(&mut app).0[..2],
             ["Volumen general: 90 %", "Música: 10 %"]
         );
-        // On a line that is not a volume, Left and Right do nothing.
+        // En una línea que no es un volumen, Izquierda y Derecha no hacen nada.
         press(&mut app, KeyCode::ArrowDown);
         press(&mut app, KeyCode::ArrowRight);
         assert_eq!(sound(&app).music, 1);
-        // Outside Sonido neither.
+        // Fuera de Sonido tampoco.
         press(&mut app, KeyCode::Enter);
         press(&mut app, KeyCode::ArrowRight);
         assert_eq!(sound(&app).music, 1);

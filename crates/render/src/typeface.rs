@@ -1,24 +1,25 @@
-//! The game's typefaces, loaded once for every UI that letters text.
+//! Las tipografías del juego, cargadas una sola vez para toda UI que escriba
+//! texto.
 //!
-//! - Display: Rye (Sorkin Type Co, SIL OFL 1.1), the wood type of a 1919
-//!   poster, for headings ("SE BUSCA", "Pampa Salvaje").
-//! - Body: IM Fell English (Igino Marini, SIL OFL 1.1), old book print, in
-//!   roman and italic, for everything else.
+//! - Títulos: Rye (Sorkin Type Co, SIL OFL 1.1), la letra de madera de un
+//!   cartel de 1919, para los encabezados ("SE BUSCA", "Pampa Salvaje").
+//! - Cuerpo: IM Fell English (Igino Marini, SIL OFL 1.1), impresión de libro
+//!   antiguo, en redonda y cursiva, para todo lo demás.
 //!
-//! The fonts live in `assets/fonts/`, each with its licence (`OFL.txt`);
-//! see `CREDITS.md`. Without an asset server (headless tests) the handles
-//! stay default and nothing is loaded.
+//! Las fuentes están en `assets/fonts/`, cada una con su licencia (`OFL.txt`);
+//! ver `CREDITS.md`. Sin un servidor de assets (tests headless) los handles
+//! quedan por defecto y no se carga nada.
 
 use bevy::prelude::*;
 
-/// Rye, relative to the asset root.
+/// Rye, relativa a la raíz de assets.
 pub const DISPLAY_FONT: &str = "fonts/rye/Rye-Regular.ttf";
-/// IM Fell English roman, relative to the asset root.
+/// IM Fell English redonda, relativa a la raíz de assets.
 pub const BODY_FONT: &str = "fonts/im_fell_english/IMFeENrm28P.ttf";
-/// IM Fell English italic, relative to the asset root.
+/// IM Fell English cursiva, relativa a la raíz de assets.
 pub const ITALIC_FONT: &str = "fonts/im_fell_english/IMFeENit28P.ttf";
 
-/// Handles to the game's typefaces.
+/// Handles de las tipografías del juego.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct Typefaces {
     pub display: Handle<Font>,
@@ -26,8 +27,8 @@ pub struct Typefaces {
     pub italic: Handle<Font>,
 }
 
-/// Loads [`Typefaces`] before `Startup`, so every UI spawned there can use
-/// them.
+/// Carga [`Typefaces`] antes de `Startup`, para que toda UI creada allí pueda
+/// usarlas.
 pub struct TypefacePlugin;
 
 impl Plugin for TypefacePlugin {

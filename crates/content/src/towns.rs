@@ -1,20 +1,21 @@
-//! The world and its towns, read from `assets/world/towns.ron`.
+//! El mundo y sus pueblos, leídos de `assets/world/towns.ron`.
 //!
-//! The file mirrors [`pampa_core::WorldConfig`] and
-//! [`pampa_core::TownConfig`] through serde DTOs, so the core crate stays
-//! free of dependencies. The `world` section is optional (older files only
-//! list towns). Every town is validated by placing it in the world with
-//! [`pampa_core::place_towns`]: invalid towns, towns past the world edge
-//! and towns overlapping an earlier one are reported and skipped, and when
-//! no valid town is left the built-in Eduardo Castex config takes over.
-//! A town asking for too many `townsfolk` is kept with its size tier's
-//! crowd instead, and reported.
+//! El archivo refleja [`pampa_core::WorldConfig`] y [`pampa_core::TownConfig`]
+//! mediante DTO de serde, para que el crate core quede libre de dependencias.
+//! La sección `world` es opcional (los archivos más viejos solo enumeran
+//! pueblos). Cada pueblo se valida ubicándolo en el mundo con
+//! [`pampa_core::place_towns`]: los pueblos no válidos, los que pasan el borde
+//! del mundo y los que se superponen con uno anterior se informan y se omiten,
+//! y cuando no queda ningún pueblo válido toma el control la configuración
+//! incorporada de Eduardo Castex. Un pueblo que pide demasiados `townsfolk` se
+//! conserva con la cantidad de gente de su categoría de tamaño, y se informa.
 //!
-//! The optional `line` lists the railway towns in the order the railway
-//! line joins them, and the optional `branches` the spurs off it, each a
-//! junction town on the line and then the towns the branch runs out to;
-//! the game checks both with [`pampa_core::RailLine::build_with_branches`]
-//! once the towns are built.
+//! El `line` opcional enumera los pueblos ferroviarios en el orden en que los
+//! une la línea del ferrocarril, y el `branches` opcional los ramales que salen
+//! de ella, cada uno con un pueblo de empalme sobre la línea y luego los
+//! pueblos hasta los que llega el ramal; el juego comprueba ambos con
+//! [`pampa_core::RailLine::build_with_branches`] una vez construidos los
+//! pueblos.
 
 use std::path::Path;
 
@@ -25,27 +26,30 @@ use serde::Deserialize;
 
 use crate::ContentError;
 
-/// Where the world and its towns live, relative to the assets folder.
+/// Dónde están el mundo y sus pueblos, relativo a la carpeta de assets.
 pub const TOWNS_FILE: &str = "world/towns.ron";
 
-/// The world to build: its size and its valid towns, in file order.
+/// El mundo a construir: su tamaño y sus pueblos válidos, en el orden del
+/// archivo.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorldContent {
     pub world: WorldConfig,
     pub towns: Vec<TownConfig>,
-    /// Town names in railway line order, as written; `None` lets the line
-    /// run through every railway town west to east.
+    /// Nombres de los pueblos en el orden de la línea del ferrocarril, tal como
+    /// están escritos; `None` deja que la línea pase por todos los pueblos
+    /// ferroviarios de oeste a este.
     pub line: Option<Vec<String>>,
-    /// Branches off the line, as written: each a junction town on the line,
-    /// then the towns the branch runs out to, in order.
+    /// Ramales de la línea, tal como están escritos: cada uno con un pueblo de
+    /// empalme sobre la línea y luego los pueblos hasta los que llega el ramal,
+    /// en orden.
     pub branches: Vec<Vec<String>>,
-    /// Lagoons, as written; the game checks them against the towns, the
-    /// railway and the roads ([`pampa_core::place_lagoons`]).
+    /// Lagunas, tal como están escritas; el juego las comprueba contra los
+    /// pueblos, el ferrocarril y los caminos ([`pampa_core::place_lagoons`]).
     pub lagoons: Vec<LagoonConfig>,
 }
 
 impl WorldContent {
-    /// The default world with only the built-in Eduardo Castex.
+    /// El mundo por defecto con solo el Eduardo Castex incorporado.
     pub fn builtin() -> Self {
         Self {
             world: WorldConfig::default(),
@@ -57,9 +61,9 @@ impl WorldContent {
     }
 }
 
-/// The towns file: an optional world section, a list of towns and an
-/// optional railway line. Unknown fields are ignored, so newer files still
-/// load in older builds.
+/// El archivo de pueblos: una sección opcional del mundo, una lista de pueblos
+/// y una línea de ferrocarril opcional. Los campos desconocidos se ignoran, así
+/// que los archivos más nuevos siguen cargando en versiones anteriores.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 struct TownsFile {
     #[serde(default)]
@@ -73,7 +77,7 @@ struct TownsFile {
     lagoons: Vec<LagoonDto>,
 }
 
-/// One lagoon as written in the file (see [`LagoonConfig`]).
+/// Una laguna tal como está escrita en el archivo (ver [`LagoonConfig`]).
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 struct LagoonDto {
     name: String,
@@ -94,7 +98,7 @@ impl From<LagoonDto> for LagoonConfig {
     }
 }
 
-/// The `world` section (see [`WorldConfig`]); each field is optional.
+/// La sección `world` (ver [`WorldConfig`]); cada campo es opcional.
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 struct WorldDto {
     #[serde(default = "default_half_extent")]
@@ -120,7 +124,8 @@ fn default_chunk_size() -> f32 {
     WorldConfig::DEFAULT_CHUNK_SIZE
 }
 
-/// One town as written in the file (see [`TownConfig`] for each field).
+/// Un pueblo tal como está escrito en el archivo (ver [`TownConfig`] para cada
+/// campo).
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 struct TownDto {
     name: String,
@@ -135,13 +140,14 @@ struct TownDto {
     plaza: PlazaDto,
     #[serde(default)]
     seed: u32,
-    /// Overrides the size tier's police station count (`Some(0)`: none).
+    /// Reemplaza la cantidad de comisarías de la categoría de tamaño
+    /// (`Some(0)`: ninguna).
     #[serde(default)]
     police_stations: Option<usize>,
-    /// Share of the lots built (see [`TownConfig::density`]).
+    /// Proporción de lotes construidos (ver [`TownConfig::density`]).
     #[serde(default)]
     density: Option<f32>,
-    /// People walking the town (see [`TownConfig::townsfolk`]).
+    /// Personas que caminan por el pueblo (ver [`TownConfig::townsfolk`]).
     #[serde(default)]
     townsfolk: Option<usize>,
 }
@@ -150,8 +156,7 @@ struct TownDto {
 struct RailwayDto {
     side: SideDto,
     offset: f32,
-    /// The line runs through the middle of the town (see
-    /// [`RailwayConfig::through`]).
+    /// La línea pasa por el centro del pueblo (ver [`RailwayConfig::through`]).
     #[serde(default)]
     through: bool,
 }
@@ -217,10 +222,10 @@ impl From<TownDto> for TownConfig {
     }
 }
 
-/// Parses the RON text of a towns file. An unusable `world` section is
-/// reported and replaced by the default world. Every town is checked by
-/// placing it in the world: the valid ones are returned, in file order,
-/// with an error for each one left out.
+/// Interpreta el texto RON de un archivo de pueblos. Una sección `world` que no
+/// se puede usar se informa y se reemplaza por el mundo por defecto. Cada
+/// pueblo se comprueba ubicándolo en el mundo: se devuelven los válidos, en el
+/// orden del archivo, con un error por cada uno que queda afuera.
 pub fn parse_towns(text: &str) -> Result<(WorldContent, Vec<ContentError>), ContentError> {
     let file: TownsFile = ron::from_str(text).map_err(ContentError::Parse)?;
     let mut errors = Vec::new();
@@ -233,8 +238,8 @@ pub fn parse_towns(text: &str) -> Result<(WorldContent, Vec<ContentError>), Cont
         WorldConfig::default()
     });
     let mut configs: Vec<TownConfig> = file.towns.into_iter().map(TownConfig::from).collect();
-    // Too big a crowd is not worth losing the town over: drop it for the
-    // size tier's.
+    // No vale la pena perder el pueblo por tener demasiada gente: se la
+    // reemplaza por la de su categoría de tamaño.
     for config in &mut configs {
         if let Some(wanted) = config.townsfolk
             && wanted > TownConfig::MAX_TOWNSFOLK
@@ -271,7 +276,7 @@ pub fn parse_towns(text: &str) -> Result<(WorldContent, Vec<ContentError>), Cont
     ))
 }
 
-/// Reads and parses the towns file at `path` (see [`parse_towns`]).
+/// Lee e interpreta el archivo de pueblos en `path` (ver [`parse_towns`]).
 pub fn load_towns(path: &Path) -> Result<(WorldContent, Vec<ContentError>), ContentError> {
     let text = std::fs::read_to_string(path).map_err(|source| ContentError::Io {
         path: path.to_path_buf(),
@@ -280,10 +285,11 @@ pub fn load_towns(path: &Path) -> Result<(WorldContent, Vec<ContentError>), Cont
     parse_towns(&text)
 }
 
-/// Loads the towns file at `path`, skipping invalid towns and falling back
-/// to [`WorldContent::builtin`] when the file is missing or broken, and to
-/// [`TownConfig::castex`] (in the file's world) when it has no valid town.
-/// Every problem is returned so the caller can log it.
+/// Carga el archivo de pueblos en `path`, omite los pueblos no válidos y
+/// recurre a [`WorldContent::builtin`] cuando el archivo falta o está roto, y a
+/// [`TownConfig::castex`] (en el mundo del archivo) cuando no tiene ningún
+/// pueblo válido. Cada problema se devuelve para que quien llama pueda
+/// registrarlo.
 pub fn load_towns_or_builtin(path: &Path) -> (WorldContent, Vec<ContentError>) {
     let (mut content, mut errors) = match load_towns(path) {
         Ok(loaded) => loaded,
@@ -341,13 +347,13 @@ mod tests {
             through: false,
         };
         let north = Some(beside);
-        // The line runs through the middle of General Pico.
+        // La línea pasa por el centro de General Pico.
         let through = Some(RailwayConfig {
             through: true,
             ..beside
         });
-        // Real offsets in meters, scaled 1:7 from Monte Nievas, which keeps
-        // its origin, and rounded to the meter (see the README).
+        // Desplazamientos reales en metros, a escala 1:7 desde Monte Nievas,
+        // que conserva su origen, y redondeados al metro (ver el README).
         let nievas = Vec2::new(-2450.0, -1950.0);
         let scaled = |east: f32, north: f32| {
             Vec2::new(
@@ -373,9 +379,10 @@ mod tests {
             assert_eq!(town.railway, railway, "{}", town.name);
             assert_eq!(town.plaza, PlazaPlacement::Auto, "{}", town.name);
         }
-        // Metileo, a halt: at its real place, 16.63 km west and 12.56 km
-        // south of Pico's plaza, scaled 1:7; few houses, no comisaría. Its
-        // blocks are 40 m like the other towns', its streets the 12 m of the small towns.
+        // Metileo, un apeadero: en su lugar real, 16.63 km al oeste y 12.56 km
+        // al sur de la plaza de Pico, a escala 1:7; pocas casas, sin comisaría.
+        // Sus manzanas miden 40 m como las de los otros pueblos, y sus calles
+        // los 12 m de los pueblos pequeños.
         let metileo = &content.towns[2];
         let from_pico = Vec2::new(
             (pico.x - 16_630.0 / 7.0).round(),
@@ -386,9 +393,10 @@ mod tests {
         assert_eq!((metileo.block_size, metileo.street_width), (40.0, 12.0));
         assert_eq!(metileo.police_count(), 0);
         assert!(metileo.density.is_some_and(|d| d < 0.5));
-        // Caleufú, on the Metileo–Arizona branch: 41 km north-west of
-        // Castex (3.38 km west and 4.82 km north at 1:7), 774 m inside the
-        // world's west edge; a small town, two thirds built.
+        // Caleufú, sobre el ramal Metileo–Arizona: 41 km al noroeste de Castex
+        // (3.38 km al oeste y 4.82 km al norte a escala 1:7), 774 m hacia
+        // adentro del borde oeste del mundo; un pueblo pequeño, construido en
+        // dos tercios.
         let caleufu = &content.towns[4];
         let castex = content.towns[1].origin;
         assert_eq!(caleufu.origin, Vec2::new(-7626.0, 2100.0));
@@ -399,8 +407,8 @@ mod tests {
         assert_eq!((caleufu.blocks, caleufu.railway), ((4, 4), north));
         assert_eq!(caleufu.police_count(), 1);
         assert!(caleufu.density.is_some_and(|d| d > 0.5 && d < 1.0));
-        // Monte Nievas, Castex, Metileo and Caleufú are small, General Pico
-        // very big.
+        // Monte Nievas, Castex, Metileo y Caleufú son pequeños; General Pico,
+        // muy grande.
         let sizes: Vec<TownSize> = content.towns.iter().map(TownConfig::size).collect();
         assert_eq!(
             sizes,
@@ -415,13 +423,14 @@ mod tests {
         let (placed, errors) = pampa_core::place_towns(&content.world, &content.towns);
         assert!(errors.is_empty(), "{errors:?}");
         assert_eq!(placed.len(), content.towns.len());
-        // The railway line runs Castex, Monte Nievas, Metileo, General Pico.
+        // La línea del ferrocarril recorre Castex, Monte Nievas, Metileo y
+        // General Pico.
         let line = content.line.as_deref().expect("an explicit line");
         assert_eq!(
             line,
             ["Eduardo Castex", "Monte Nievas", "Metileo", "General Pico"]
         );
-        // One branch leaves it at Metileo for Caleufú.
+        // Un ramal sale de ella en Metileo hacia Caleufú.
         assert_eq!(content.branches, [["Metileo", "Caleufú"]]);
         let (rail, errors) = pampa_core::RailLine::build_with_branches(
             Some(line),
@@ -432,14 +441,16 @@ mod tests {
         assert!(errors.is_empty(), "{errors:?}");
         assert_eq!(rail.links.len(), 4);
         assert_eq!(rail.branches.len(), 1);
-        // Laguna La Arocena: real 5.9 km at bearing 119° from Pico, scaled.
+        // Laguna La Arocena: 5.9 km reales con rumbo de 119° desde Pico, a
+        // escala.
         assert_eq!(content.lagoons.len(), 1);
         let arocena = &content.lagoons[0];
         assert_eq!(arocena.name, "Laguna La Arocena");
         let bearing = 119.0_f32.to_radians();
         let real = Vec2::new(5_900.0 * bearing.sin(), 5_900.0 * bearing.cos());
-        // Its middle sits 3 m east of the real place, so the survey fences
-        // keep off its bank beside Pico's wider streets (see towns.ron).
+        // Su centro queda 3 m al este del lugar real, para que los alambrados
+        // de la mensura no toquen su orilla junto a las calles más anchas de
+        // Pico (ver towns.ron).
         let expected = Vec2::new(pico.x + real.x / 7.0 + 3.0, pico.y + real.y / 7.0);
         assert!(
             arocena.center.distance(expected) < 2.0,
@@ -478,7 +489,8 @@ mod tests {
         let (content, errors) =
             parse_towns(&format!(r#"(towns: [{town}], line: Some(["A", "B"]))"#)).unwrap();
         assert!(errors.is_empty(), "{errors:?}");
-        // Names are only read here; the game checks them against the towns.
+        // Aquí solo se leen los nombres; el juego los comprueba contra los
+        // pueblos.
         assert_eq!(content.line, Some(vec!["A".to_string(), "B".to_string()]));
     }
 
@@ -498,7 +510,7 @@ mod tests {
     #[test]
     fn the_readme_town_example_fits_next_to_the_shipped_towns() {
         const README: &str = include_str!("../../../assets/world/README.md");
-        let section = &README[README.find("### Adding another town").expect("section")..];
+        let section = &README[README.find("### Agregar otro pueblo").expect("section")..];
         let start = section.find("```ron").expect("example") + "```ron".len();
         let example = &section[start..start + section[start..].find("```").unwrap()];
         let shipped = SHIPPED.find("\n    ],").expect("end of the town list") + 1;
@@ -525,7 +537,8 @@ mod tests {
                 chunk_size: 100.0,
             }
         );
-        // Older files: no world section at all, or only some fields.
+        // Archivos más viejos: sin sección del mundo, o con solo algunos
+        // campos.
         let (content, _) = parse_towns(&format!("(towns: [{town}])")).unwrap();
         assert_eq!(content.world, WorldConfig::default());
         let (content, _) =
@@ -708,7 +721,7 @@ mod tests {
             .iter()
             .map(|t| (t.name.as_str(), t.townsfolk, t.townsfolk_count()))
             .collect();
-        // Before: 16 in each small town, 51 in General Pico.
+        // Antes: 16 en cada pueblo pequeño, 51 en General Pico.
         assert_eq!(
             crowds,
             [
@@ -738,7 +751,8 @@ mod tests {
             .iter()
             .map(|t| (t.townsfolk, t.townsfolk_count()))
             .collect();
-        // Missing keeps the size formula; too many is dropped for it.
+        // Si falta, se mantiene la fórmula de tamaño; si son demasiados, se
+        // descarta y se usa la fórmula.
         let small = pampa_core::townsfolk::TOWNSFOLK_COUNT;
         assert_eq!(
             crowds,
@@ -797,7 +811,7 @@ mod tests {
         assert_eq!(content, WorldContent::builtin());
         assert!(matches!(errors[..], [ContentError::Parse(_)]));
 
-        // An empty town list keeps the file's world.
+        // Una lista de pueblos vacía conserva el mundo del archivo.
         let empty = temp_file("empty", "(world: (half_extent: 1000.0), towns: [])");
         let (content, errors) = load_towns_or_builtin(&empty);
         assert_eq!(content.towns, castex);
@@ -815,7 +829,7 @@ mod tests {
             "{}",
             errors[0]
         );
-        // The fallback is announced too.
+        // También se anuncia el recurso de respaldo.
         assert!(errors.iter().any(|e| matches!(e, ContentError::NoTowns)));
 
         for path in [broken, empty, all_bad] {

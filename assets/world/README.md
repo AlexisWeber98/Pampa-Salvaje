@@ -1,11 +1,11 @@
-# World
+# Mundo
 
-The world and its towns live in this folder as plain text files in
-[RON](https://github.com/ron-rs/ron) (Rusty Object Notation). You do not need
-to know Rust to edit them: change a file, save it, and start the game again.
-No recompiling.
+El mundo y sus pueblos viven en esta carpeta como archivos de texto plano en
+[RON](https://github.com/ron-rs/ron) (Rusty Object Notation). No hace falta
+saber Rust para editarlos: se cambia un archivo, se guarda, y se vuelve a
+iniciar el juego. Sin recompilar.
 
-## `towns.ron`: the world, its towns and how they are laid out
+## `towns.ron`: el mundo, sus pueblos y cómo están dispuestos
 
 ```ron
 (
@@ -24,7 +24,7 @@ No recompiling.
             plaza: Auto,
             seed: 7,
         ),
-        // ... Eduardo Castex, Metileo, General Pico and Caleufú follow.
+        // ... siguen Eduardo Castex, Metileo, General Pico y Caleufú.
     ],
     line: Some(["Eduardo Castex", "Monte Nievas", "Metileo", "General Pico"]),
     branches: [["Metileo", "Caleufú"]],
@@ -39,100 +39,103 @@ No recompiling.
 )
 ```
 
-### The shipped geography
+### La geografía incluida
 
-The file lays out a first stretch of La Pampa: five railway towns at their
-real relative positions, with distances scaled 1:7 to fit the largest world
-(`half_extent: 8400`, a 16.8 km x 16.8 km square). Only the distances between
-towns are scaled; each town keeps its real size (blocks, streets, buildings
-and platforms).
+El archivo dispone un primer tramo de La Pampa: cinco pueblos ferroviarios en
+sus posiciones relativas reales, con las distancias a escala 1:7 para que
+entren en el mundo más grande (`half_extent: 8400`, un cuadrado de
+16.8 km x 16.8 km). Solo se escalan las distancias entre pueblos; cada pueblo
+conserva su tamaño real (manzanas, calles, edificios y andenes).
 
-| Town | `origin` | `blocks` | Size |
+| Pueblo | `origin` | `blocks` | Tamaño |
 |------|----------|----------|------|
-| Monte Nievas | `(-2450, -1950)` | 4 x 3 | small, and the player starts here |
-| Eduardo Castex | `(-4250, -2721)` | 5 x 4 | small |
-| Metileo | `(288, -544)` | 3 x 3 | a railway halt: a third of its lots built, no police station |
-| General Pico | `(2664, 1250)` | 8 x 8 | very big (see "Town size"); the line runs through its middle |
-| Caleufú | `(-7626, 2100)` | 4 x 4 | small, about two thirds built (`density: Some(0.6)`); the end of the branch from Metileo |
+| Monte Nievas | `(-2450, -1950)` | 4 x 3 | pequeño, y el jugador empieza aquí |
+| Eduardo Castex | `(-4250, -2721)` | 5 x 4 | pequeño |
+| Metileo | `(288, -544)` | 3 x 3 | un apeadero: un tercio de sus lotes construidos, sin comisaría |
+| General Pico | `(2664, 1250)` | 8 x 8 | muy grande (ver "Tamaño del pueblo"); la línea pasa por su centro |
+| Caleufú | `(-7626, 2100)` | 4 x 4 | pequeño, construido en unos dos tercios (`density: Some(0.6)`); el final del ramal desde Metileo |
 
-From Castex to Monte Nievas is about 12.6 km east and 5.4 km north in the
-real pampa; from Monte Nievas to General Pico, about 35.8 km east and
-22.4 km north. Monte Nievas is the anchor, at `(-2450, -1950)` (600 m east of
-where it stood at 1:6, to leave room for towns further west), and the others
-are placed from it with the real offsets divided by 7 and rounded to the
-meter:
+De Castex a Monte Nievas hay unos 12.6 km al este y 5.4 km al norte en la
+pampa real; de Monte Nievas a General Pico, unos 35.8 km al este y
+22.4 km al norte. Monte Nievas es el ancla, en `(-2450, -1950)` (600 m al este
+de donde estaba a escala 1:6, para dejar lugar a pueblos más al oeste), y los
+demás se ubican a partir de él con los desplazamientos reales divididos por 7
+y redondeados al metro:
 
 - Castex: `(-2450 - 12600 / 7, -1950 - 5400 / 7)` = `(-2450 - 1800, -1950 - 771.4)` = `(-4250, -2721)`,
-  1.8 km west and 0.77 km south of Monte Nievas (1.96 km between their centers).
-- Metileo, between them on the line (station 1906), is placed from Pico:
-  its station (-35.774, -63.941) is about 16.63 km west and 12.56 km south
-  of Pico's plaza (-35.659, -63.758; OpenStreetMap and es.wikipedia), so
+  1.8 km al oeste y 0.77 km al sur de Monte Nievas (1.96 km entre sus centros).
+- Metileo, entre ambos sobre la línea (estación de 1906), se ubica a partir de
+  Pico: su estación (-35.774, -63.941) está unos 16.63 km al oeste y 12.56 km
+  al sur de la plaza de Pico (-35.659, -63.758; OpenStreetMap y es.wikipedia),
+  así que
   `(2664 - 16630 / 7, 1250 - 12560 / 7)` = `(2664 - 2375.7, 1250 - 1794.3)` = `(288, -544)`,
-  about 260 m off the straight Monte Nievas–Pico chord (the line bends
-  through its station).
+  a unos 260 m de la cuerda recta Monte Nievas–Pico (la línea se curva para
+  pasar por su estación).
 - Pico: `(-2450 + 35800 / 7, -1950 + 22400 / 7)` = `(-2450 + 5114.3, -1950 + 3200)` = `(2664, 1250)`,
-  5.11 km east and 3.2 km north of it (6.03 km between their centers).
-- Caleufú (founded 29 October 1911 on the Metileo–Arizona branch, not the
-  main line) lies about 41 km north-west of Castex, so it is placed from
-  Castex: `(-4250 - 3376, -2721 + 4821)` = `(-7626, 2100)`, 5.89 km away
-  at 1:7 and 774 m inside the world's west edge; its track's west run-out
-  ends 269 m inside it.
+  5.11 km al este y 3.2 km al norte de él (6.03 km entre sus centros).
+- Caleufú (fundado el 29 de octubre de 1911 sobre el ramal Metileo–Arizona,
+  no sobre la línea principal) queda unos 41 km al noroeste de Castex, así que
+  se ubica a partir de Castex: `(-4250 - 3376, -2721 + 4821)` = `(-7626, 2100)`,
+  a 5.89 km a escala 1:7 y 774 m hacia adentro del borde oeste del mundo; la
+  prolongación oeste de su vía termina 269 m hacia adentro de ese borde.
 
-Monte Nievas, Castex, Metileo and Caleufú have the railway on their north side;
-General Pico grew on both sides of it, so its line runs through the middle
-of the town (`through: true`). The real Pico's grid is turned 45° and its
-line runs along it, parallel to the odd-numbered streets; the game keeps
-the grid square to the map and runs the line east-west through it. Monte
-Nievas and Metileo have no police station (`police_stations: Some(0)`).
+Monte Nievas, Castex, Metileo y Caleufú tienen el ferrocarril en su lado
+norte; General Pico creció a ambos lados de él, así que su línea pasa por el
+centro del pueblo (`through: true`). La cuadrícula del Pico real está girada
+45° y su línea corre a lo largo de ella, paralela a las calles impares; el
+juego mantiene la cuadrícula alineada con el mapa y hace pasar la línea de
+este a oeste a través de ella. Monte Nievas y Metileo no tienen comisaría
+(`police_stations: Some(0)`).
 
-### The world
+### El mundo
 
-| Field | Meaning | Rules |
+| Campo | Significado | Reglas |
 |-------|---------|-------|
-| `half_extent` | Distance from the world center to each edge, in meters. The world is a square of side `2 * half_extent`. | Above 0, at most 8400 (positions are `f32`, precise to about a millimeter anywhere below 16 km). Optional, `4000.0` by default. |
-| `chunk_size` | Side of the square chunks the ground is built in around the rider, in meters. | At least 50, at most the world's side. Optional, `200.0` by default. |
+| `half_extent` | Distancia del centro del mundo a cada borde, en metros. El mundo es un cuadrado de lado `2 * half_extent`. | Mayor que 0, como máximo 8400 (las posiciones son `f32`, con precisión de alrededor de un milímetro en cualquier punto por debajo de 16 km). Opcional, `4000.0` por defecto. |
+| `chunk_size` | Lado de los chunks cuadrados en los que se construye el suelo alrededor del jinete, en metros. | Como mínimo 50, como máximo el lado del mundo. Opcional, `200.0` por defecto. |
 
-The whole `world` section is optional: a file with only `towns: [...]` gets
-the default 8 km x 8 km world. An invalid section is reported and the default
-world is used.
+Toda la sección `world` es opcional: un archivo con solo `towns: [...]`
+recibe el mundo por defecto de 8 km x 8 km. Una sección no válida se informa
+y se usa el mundo por defecto.
 
-### Towns
+### Pueblos
 
-The game builds **every town** in the list, each at its own `origin`. The
-player starts at the first one, on its station platform (on the road into
-town when it has no railway); the others appear
-(with their signs and people) as you ride towards them. Roads between
-towns will come later; the railway line already joins them (see "The railway
-line").
+El juego construye **todos los pueblos** de la lista, cada uno en su propio
+`origin`. El jugador empieza en el primero, sobre el andén de su estación (en
+el camino de entrada al pueblo cuando no tiene ferrocarril); los demás
+aparecen (con sus carteles y su gente) a medida que se cabalga hacia ellos.
+Los caminos entre pueblos llegarán más adelante; la línea del ferrocarril ya
+los une (ver "La línea del ferrocarril").
 
-Towns must keep apart: a town, its leveled band (60 m around everything
-built) and its railway (which runs 400 m past either end of the grid) must not
-touch another town or its leveled band, and must stay inside the world. A
-town that breaks this is skipped with a warning naming it and the town it
-overlaps; the towns listed before it win.
+Los pueblos deben mantenerse separados: un pueblo, su franja nivelada (60 m
+alrededor de todo lo construido) y su ferrocarril (que se extiende 400 m más
+allá de cada extremo de la cuadrícula) no deben tocar otro pueblo ni su franja
+nivelada, y deben quedar dentro del mundo. Un pueblo que no cumple esto se
+omite con un aviso que lo nombra a él y al pueblo con el que se superpone;
+ganan los pueblos listados antes.
 
-| Field | Meaning | Rules |
+| Campo | Significado | Reglas |
 |-------|---------|-------|
-| `name` | The town's name. It is painted on the station sign, in capitals. | Not blank. Use only letters the pixel font has (see `assets/dialogue/README.md`). |
-| `origin` | Center of the street grid, in meters: `(east, north)` from the world center. | Optional, `(0.0, 0.0)` by default. |
-| `blocks` | Blocks `(east-west, north-south)`: columns and rows of the grid. | At least 3 each way. |
-| `block_size` | Side of one square block, in meters. | At least 30. Buildings and lots grow with the block. |
-| `street_width` | Width of every street, ring street included, in meters. | At least 10. Narrow streets get a shallower store veranda. |
-| `railway` | `Some((side: North, offset: 24.0))`: the side of the grid the track runs along (`North`, `South`, `East`, `West`) and its distance from the grid edge, in meters. `None` for a town without a railway (no station, and the line train never stops there). Add `through: true` for a town grown on both sides of its line (see "A line through the town"). | Optional, `None` by default. Offset at least 24 (room for the station yard). |
-| `density` | `Some(0.3)`: the share of house and shed lots that are built, from 0 to 1, for a village or a halt. | Optional, `None` (every lot as usual) by default. |
-| `plaza` | Which block is the plaza (see below). | Optional, `Auto` by default. |
-| `seed` | Varies which lots have houses or sheds. | Optional, `0` by default. |
-| `police_stations` | How many police stations ("COMISARÍA") the town has, instead of its size tier's count (see the size tiers below). `Some(0)` leaves the town without one; its block gets houses instead. Monte Nievas ships with `Some(0)`: the errand sends the player to Castex. | Optional, `None` (the tier's count) by default. At most the tier's count: 1 for a small or big town, 2 for a very big one. More is rejected. |
-| `townsfolk` | How many people walk the town's streets, instead of its size tier's crowd (see the size tiers below). `Some(0)` leaves the streets empty. Every shipped town sets about six tenths of its tier's crowd, to spare the frame budget: 10 in each small town (instead of 16), 31 in General Pico (instead of 51). | Optional, `None` (the tier's crowd) by default. At most 200: more is ignored with a warning, and the tier's crowd is used. |
+| `name` | El nombre del pueblo. Se pinta en el cartel de la estación, en mayúsculas. | No puede estar en blanco. Usar solo letras que tenga la fuente pixelada (ver `assets/dialogue/README.md`). |
+| `origin` | Centro de la cuadrícula de calles, en metros: `(east, north)` desde el centro del mundo. | Opcional, `(0.0, 0.0)` por defecto. |
+| `blocks` | Manzanas `(east-west, north-south)`: columnas y filas de la cuadrícula. | Como mínimo 3 en cada sentido. |
+| `block_size` | Lado de una manzana cuadrada, en metros. | Como mínimo 30. Los edificios y los lotes crecen con la manzana. |
+| `street_width` | Ancho de cada calle, incluida la calle de circunvalación, en metros. | Como mínimo 10. Las calles angostas tienen una galería del almacén menos profunda. |
+| `railway` | `Some((side: North, offset: 24.0))`: el lado de la cuadrícula a lo largo del cual corre la vía (`North`, `South`, `East`, `West`) y su distancia al borde de la cuadrícula, en metros. `None` para un pueblo sin ferrocarril (sin estación, y el tren de la línea nunca para allí). Agregar `through: true` para un pueblo que creció a ambos lados de su línea (ver "Una línea a través del pueblo"). | Opcional, `None` por defecto. Desplazamiento de como mínimo 24 (lugar para el playón de la estación). |
+| `density` | `Some(0.3)`: la proporción de lotes de casas y galpones que están construidos, de 0 a 1, para una aldea o un apeadero. | Opcional, `None` (cada lote como de costumbre) por defecto. |
+| `plaza` | Qué manzana es la plaza (ver más abajo). | Opcional, `Auto` por defecto. |
+| `seed` | Varía qué lotes tienen casas o galpones. | Opcional, `0` por defecto. |
+| `police_stations` | Cuántas comisarías ("COMISARÍA") tiene el pueblo, en lugar de la cantidad de su categoría de tamaño (ver las categorías de tamaño más abajo). `Some(0)` deja el pueblo sin ninguna; su manzana recibe casas en su lugar. Monte Nievas viene con `Some(0)`: el encargo manda al jugador a Castex. | Opcional, `None` (la cantidad de la categoría) por defecto. Como máximo la cantidad de la categoría: 1 para un pueblo pequeño o grande, 2 para uno muy grande. Más se rechaza. |
+| `townsfolk` | Cuántas personas caminan por las calles del pueblo, en lugar de la cantidad de gente de su categoría de tamaño (ver las categorías de tamaño más abajo). `Some(0)` deja las calles vacías. Cada pueblo incluido fija unos seis décimos de la cantidad de su categoría, para cuidar el presupuesto del frame: 10 en cada pueblo pequeño (en lugar de 16), 31 en General Pico (en lugar de 51). | Opcional, `None` (la cantidad de la categoría) por defecto. Como máximo 200: más se ignora con un aviso, y se usa la cantidad de la categoría. |
 
-The whole town, plus its 60 m band of leveled ground and its railway, must fit
-inside the world (see above).
+Todo el pueblo, más su franja de 60 m de terreno nivelado y su ferrocarril,
+debe entrar dentro del mundo (ver arriba).
 
-### Adding another town
+### Agregar otro pueblo
 
-Add another entry to `towns`, with an `origin` far enough from the others.
-For example, a town 3 km east and 2 km south of the world center, with the
-railway on its south side:
+Agregar otra entrada a `towns`, con un `origin` lo bastante lejos de los
+demás. Por ejemplo, un pueblo 3 km al este y 2 km al sur del centro del mundo,
+con el ferrocarril en su lado sur:
 
 ```ron
         (
@@ -147,206 +150,229 @@ railway on its south side:
         ),
 ```
 
-Leave room for each railway's 400 m run-out: towns lined up along their
-tracks need more space between them than towns side by side across them. If
-two towns are too close, the warning names both.
+Dejar lugar para la prolongación de 400 m de cada ferrocarril: los pueblos
+alineados a lo largo de sus vías necesitan más espacio entre ellos que los
+pueblos ubicados uno al lado del otro en sentido transversal. Si dos pueblos
+están demasiado cerca, el aviso nombra a ambos.
 
-A town with a railway must also be added to `line` or to a branch (see
-below), for example
-after General Pico: `line: Some(["Eduardo Castex", "Monte Nievas", "Metileo",
+Un pueblo con ferrocarril también debe agregarse a `line` o a un ramal (ver
+más abajo), por ejemplo
+después de General Pico: `line: Some(["Eduardo Castex", "Monte Nievas", "Metileo",
 "General Pico", "Winifreda"])`.
 
-### The railway line
+### La línea del ferrocarril
 
-`line` lists the railway towns in the order one railway line runs through
-them. Inside a town the track runs straight along the station; between two
-towns listed next to each other, a link (at any angle) joins the end of one
-town's track nearest the other town to the end of the other town's track
-nearest the first. The link leaves each town's track along it and bends
-with wide 500 m curves, tightened only when the towns are too close for
-them.
+`line` enumera los pueblos ferroviarios en el orden en que una línea de
+ferrocarril pasa por ellos. Dentro de un pueblo, la vía corre recta junto a
+la estación; entre dos pueblos listados uno junto al otro, un tramo (en
+cualquier ángulo) une el extremo de la vía de un pueblo más cercano al otro
+pueblo con el extremo de la vía del otro pueblo más cercano al primero. El
+tramo sale de la vía de cada pueblo en su misma dirección y se dobla con
+curvas amplias de 500 m, que solo se cierran cuando los pueblos están
+demasiado cerca para ellas.
 
-| Field | Meaning | Rules |
+| Campo | Significado | Reglas |
 |-------|---------|-------|
-| `line` | `Some(["Eduardo Castex", "Monte Nievas", "Metileo", "General Pico"])`: town names in line order. | Optional. Without it, the line runs through every railway town from west to east, by the east coordinate of each town's center, which is its `origin` (towns listed first win ties). |
+| `line` | `Some(["Eduardo Castex", "Monte Nievas", "Metileo", "General Pico"])`: nombres de pueblos en el orden de la línea. | Opcional. Sin él, la línea pasa por todos los pueblos ferroviarios de oeste a este, según la coordenada este del centro de cada pueblo, que es su `origin` (en caso de empate, ganan los pueblos listados primero). |
 
-The line is a rule of the world:
+La línea es una regla del mundo:
 
-- Every town with a railway must be on it, and every name must be a town of
-  the file with a railway, listed once.
-- A link must not cross or touch another town's leveled band (60 m around
-  everything built), and must stay inside the world.
+- Todo pueblo con ferrocarril debe estar en ella, y cada nombre debe ser un
+  pueblo del archivo con ferrocarril, listado una sola vez.
+- Un tramo no debe cruzar ni tocar la franja nivelada de otro pueblo (60 m
+  alrededor de todo lo construido), y debe quedar dentro del mundo.
 
-A name that breaks this is left out of the line, and a link that breaks it
-is not built; each gets a warning naming the towns. The towns themselves are
-still built.
+Un nombre que no cumple esto queda fuera de la línea, y un tramo que no lo
+cumple no se construye; cada uno recibe un aviso que nombra los pueblos. Los
+pueblos en sí se construyen igual.
 
-One train runs the whole line, from the first town listed to the last and
-back, stopping at every station on the way. It is a rural mixed train of 8
-cars (93 m): the locomotive, two passenger coaches and five freight cars, and
-it stops with the middle of its coaches at each station. Its timetable is in
-code (`pampa_core::Timetable`), not in this file. Since a user change on
-2026-10-21 it spends the night at the last town (General Pico), leaves it at
-07:00, lays over at the first town (Eduardo Castex), leaves it at 16:00 and
-runs back to the last town for the night. (Before, it slept at the first town
-and left it at 07:00.) It tops out at 65 km/h and stands 25 s at each station
-partway through a run. The game begins in the mid-morning with the morning train,
-from the last town on its up run, standing at
-the first town of the `towns` list, where the player starts on foot on top
-of the platform, half way along it, beside the coaches. The platform is a
-raised floor with a short ramp at each end, not an obstacle. The train runs
-as far as the line is unbroken: a link left out ends its run at the town
-before it, and a line with fewer than two stations has no train.
+Un tren recorre toda la línea, del primer pueblo listado al último y de
+vuelta, parando en cada estación del camino. Es un tren mixto rural de 8
+vagones (93 m): la locomotora, dos coches de pasajeros y cinco vagones de
+carga, y se detiene con el centro de sus coches en cada estación. Su horario
+está en el código (`pampa_core::Timetable`), no en este archivo. Desde un
+cambio del usuario del 2026-10-21, pasa la noche en el último pueblo (General
+Pico), sale de allí a las 07:00, hace su espera en la terminal en el primer
+pueblo (Eduardo Castex), sale de allí a las 16:00 y vuelve al último pueblo
+para pasar la noche. (Antes dormía en el primer pueblo y salía de allí a las
+07:00). Alcanza como máximo 65 km/h y se detiene 25 s en cada estación
+intermedia de un recorrido. El juego empieza a media mañana con el tren de la
+mañana, desde el último pueblo en su viaje ascendente, detenido en el primer
+pueblo de la lista `towns`, donde el jugador empieza a pie sobre el andén, a
+mitad de su largo, junto a los coches. El andén es un piso elevado con una
+rampa corta en cada extremo, no un obstáculo. El tren llega hasta donde la
+línea no está cortada: un tramo dejado afuera termina su recorrido en el
+pueblo anterior, y una línea con menos de dos estaciones no tiene tren.
 
-### Branches
+### Ramales
 
-`branches` lists the spurs off the line. Each is a list of town names: a
-town on `line` (the junction), then the towns the branch runs out to, in
-order. The first link leaves the junction's track at its end nearest the
-next town, which may be the very end the line leaves by: the two tracks
-part there, each on its own wide curve, like a turnout. The shipped file
-has one, the Metileo–Arizona branch from Metileo's west end to Caleufú.
+`branches` enumera los ramales que salen de la línea. Cada uno es una lista de
+nombres de pueblos: un pueblo de `line` (el empalme), y luego los pueblos
+hasta los que llega el ramal, en orden. El primer tramo sale de la vía del
+empalme por su extremo más cercano al pueblo siguiente, que puede ser el mismo
+extremo por el que sale la línea: las dos vías se separan allí, cada una en su
+propia curva amplia, como un desvío. El archivo incluido tiene uno, el ramal
+Metileo–Arizona desde el extremo oeste de Metileo hasta Caleufú.
 
-| Field | Meaning | Rules |
+| Campo | Significado | Reglas |
 |-------|---------|-------|
-| `branches` | `[["Metileo", "Caleufú"]]`: a junction town on the line, then the branch's towns. | Optional, empty by default. |
+| `branches` | `[["Metileo", "Caleufú"]]`: un pueblo de empalme sobre la línea, y luego los pueblos del ramal. | Opcional, vacío por defecto. |
 
-- The junction must be on the line, and every other name a town with a
-  railway that is on neither the line nor another branch. A branch without
-  a valid junction or with no town past it is left out, with a warning.
-- Its links follow the line's rules (no other town's band, inside the world).
-- Each town on a branch gets a road to its nearest town (Caleufú's goes to
-  Eduardo Castex), with level crossings wherever it meets a track.
+- El empalme debe estar sobre la línea, y cada uno de los demás nombres debe
+  ser un pueblo con ferrocarril que no esté ni en la línea ni en otro ramal.
+  Un ramal sin un empalme válido o sin ningún pueblo más allá de él queda
+  afuera, con un aviso.
+- Sus tramos siguen las reglas de la línea (sin tocar la franja de otro
+  pueblo, dentro del mundo).
+- Cada pueblo de un ramal recibe un camino hasta su pueblo más cercano (el de
+  Caleufú va a Eduardo Castex), con pasos a nivel dondequiera que se encuentre
+  con una vía.
 
-No train runs on a branch yet: the line train keeps to the line.
+Todavía no circula ningún tren por un ramal: el tren de la línea se mantiene
+en la línea.
 
-### A line through the town
+### Una línea a través del pueblo
 
-`railway: Some((side: North, offset: 24.0, through: true))` runs the track
-east-west through the middle of the town instead of along one side, like
-the big railway towns that grew on both sides of their line:
+`railway: Some((side: North, offset: 24.0, through: true))` hace pasar la vía
+de este a oeste por el centro del pueblo en lugar de a lo largo de un lado,
+como los grandes pueblos ferroviarios que crecieron a ambos lados de su
+línea:
 
-- The grid splits between its two middle rows of blocks (the south half gets
-  the fewer rows on an odd count). Each half keeps its own ring street, and
-  between them lies a band `offset + 16` meters wide: the track runs
-  `offset` meters from the edge of the half named by `side` (`North` or
-  `South`), and 16 meters from the other.
-- The station, its platform, grain stores, windmill and shed stand in the
-  band, in the middle of the town, the station facing its half across the
-  ring street.
-- Every north-south street that keeps 2 m clear of the station yard
-  crosses the band at a level crossing, with a plank deck and a St Andrew's
-  cross on each side, and walkers cross there too. The streets that would
-  run into the yard stop at the band on either side.
-- `plaza: Auto` takes the block one column west of the middle and two rows
-  back from the track in the station's half (a very big town's 2 x 2 plaza
-  covers it): a few blocks north-west of the station when `side` is
-  `North`. A plaza that would span the track is an error.
-- The town has no rural track: its streets cross the line. A road between
-  towns never leaves it eastward or westward, along the line.
-- It needs at least 4 rows of blocks, and `side` `North` or `South`.
+- La cuadrícula se divide entre sus dos filas centrales de manzanas (la mitad
+  sur recibe menos filas si la cantidad es impar). Cada mitad conserva su
+  propia calle de circunvalación, y entre ellas queda una franja de
+  `offset + 16` metros de ancho: la vía corre a `offset` metros del borde de
+  la mitad indicada por `side` (`North` o `South`), y a 16 metros de la otra.
+- La estación, su andén, los depósitos de granos, el molino y el galpón están
+  en la franja, en el centro del pueblo, con la estación de frente a su mitad
+  al otro lado de la calle de circunvalación.
+- Cada calle norte-sur que se mantiene a 2 m del playón de la estación cruza
+  la franja por un paso a nivel, con una plataforma de tablones y una cruz de
+  San Andrés a cada lado, y los peatones también cruzan por allí. Las calles
+  que entrarían al playón terminan en la franja a cada lado.
+- `plaza: Auto` toma la manzana una columna al oeste del centro y dos filas
+  hacia atrás desde la vía en la mitad de la estación (la plaza de 2 x 2 de un
+  pueblo muy grande la cubre): unas cuadras al noroeste de la estación cuando
+  `side` es `North`. Una plaza que abarcaría la vía es un error.
+- El pueblo no tiene huella rural: sus calles cruzan la línea. Un camino entre
+  pueblos nunca sale de él hacia el este ni hacia el oeste, a lo largo de la
+  línea.
+- Necesita al menos 4 filas de manzanas, y `side` `North` o `South`.
 
-### Lagoons
+### Lagunas
 
-`lagoons` lists the shallow freshwater lagoons of the plains:
+`lagoons` enumera las lagunas de agua dulce poco profundas de la llanura:
 
-| Field | Meaning | Rules |
+| Campo | Significado | Reglas |
 |-------|---------|-------|
-| `name` | Its name, for warnings. | |
-| `center` | Middle of the water, `(east, north)` in meters. | |
-| `size` | Size of the rounded rectangle its shore follows, `(east-west, north-south)` in meters. | Each between 40 and 1500. |
-| `seed` | Varies the shore. | Optional, `0` by default. |
+| `name` | Su nombre, para los avisos. | |
+| `center` | Centro del agua, `(east, north)` en metros. | |
+| `size` | Tamaño del rectángulo redondeado que sigue su orilla, `(east-west, north-south)` en metros. | Cada uno entre 40 y 1500. |
+| `seed` | Varía la orilla. | Opcional, `0` por defecto. |
 
-The shore is a rounded rectangle (a superellipse, squarish with soft
-corners), roughened by up to 5%. The water stands 0.6 m below the lowest
-ground of its 30 m bank, and the bottom shelves down to 1.6 m. People and
-horses wade the first 5 m of water and are turned back where it gets
-deeper. Fences and settlements keep 15 m past the bank; trees stay 12 m
-from the water, and grass, stones and shrubs grow right down to the 3 m of
-wet mud along the waterline. A lagoon whose bank (plus that margin) touches a town's leveled
-band, the railway or a road, or leaves the world, is left out with a
-warning. The whole list is optional.
+La orilla es un rectángulo redondeado (una superelipse, casi cuadrada con
+esquinas suaves), irregularizado hasta un 5%. El agua queda 0.6 m por debajo
+del punto más bajo de su ribera de 30 m, y el fondo desciende hasta 1.6 m. Las
+personas y los caballos vadean los primeros 5 m de agua y se los hace volver
+donde se vuelve más profunda. Los alambrados y los asentamientos se mantienen
+a 15 m más allá de la ribera; los árboles quedan a 12 m del agua, y el pasto,
+las piedras y los arbustos crecen hasta los 3 m de barro húmedo a lo largo de
+la línea del agua. Una laguna cuya ribera (más ese margen) toca la franja
+nivelada de un pueblo, el ferrocarril o un camino, o sale del mundo, queda
+afuera con un aviso. Toda la lista es opcional.
 
-Each lagoon gets a public road from the nearest town within 2.5 km of it: a
-dead-end dirt road between two fences, like the roads between towns. It
-leaves the town by the street through the side facing the lagoon that keeps
-40 m from the track, runs out on a gently curving line, and ends on the bank
-in a turnaround loop 6 m across whose edge comes to the wet mud and no
-farther. A signpost at its start names the lagoon. The road is the only
-thing laid on the bank and its margin, and only at its end.
+Cada laguna recibe un camino público desde el pueblo más cercano a menos de
+2.5 km de ella: un camino de tierra sin salida entre dos alambrados, como los
+caminos entre pueblos. Sale del pueblo por la calle que atraviesa el lado que
+da a la laguna y que se mantiene a 40 m de la vía, sigue una línea de curvas
+suaves, y termina en la ribera en un retorno de 6 m de diámetro cuyo borde
+llega hasta el barro húmedo y no más allá. Un cartel indicador en su inicio
+nombra la laguna. El camino es lo único que se coloca sobre la ribera y su
+margen, y solo en su extremo.
 
-The shipped Laguna La Arocena is real 5.9 km at bearing 119° from General
-Pico (5.16 km east, 2.86 km south), scaled 1:7: `(2664 + 5160 / 7, 1250 -
-2860 / 7)` = `(3401, 841)`. It covers about 150 ha in reality; the game keeps
-its proportions at 215 x 145 m.
+La Laguna La Arocena incluida está realmente a 5.9 km con rumbo de 119° desde
+General Pico (5.16 km al este, 2.86 km al sur), a escala 1:7: `(2664 + 5160 / 7, 1250 -
+2860 / 7)` = `(3401, 841)`. En la realidad cubre unas 150 ha; el juego conserva
+sus proporciones con 215 x 145 m.
 
-### Plaza placement
+### Ubicación de la plaza
 
-- `Auto`: the central block when both block counts are odd. Otherwise the
-  block **facing the station**, like many pampa railway towns. A town with no
-  railway and no central block takes the block nearest the center.
-- `Center`: the central block. It is an error on a grid with an even count.
-- `FacingStation`: the block in the row (or column) next to the railway,
-  nearest the middle (ties go west or south). The station is moved along the
-  track to face the plaza across the street. Needs a railway.
-- `Block(i, j)`: block column `i`, row `j`, counted from 0 at the south-west
-  corner.
+- `Auto`: la manzana central cuando ambas cantidades de manzanas son impares.
+  Si no, la manzana **frente a la estación**, como en muchos pueblos
+  ferroviarios de la pampa. Un pueblo sin ferrocarril y sin manzana central
+  toma la manzana más cercana al centro.
+- `Center`: la manzana central. Es un error en una cuadrícula con una
+  cantidad par.
+- `FacingStation`: la manzana de la fila (o columna) junto al ferrocarril más
+  cercana al centro (los empates van al oeste o al sur). La estación se mueve
+  a lo largo de la vía para quedar frente a la plaza, al otro lado de la
+  calle. Necesita un ferrocarril.
+- `Block(i, j)`: la manzana de la columna `i`, fila `j`, contadas desde 0 en
+  la esquina suroeste.
 
-The church faces the plaza from the block north of it (or the next free
-neighbor: south, east, west; the nearest free block for a plaza in a
-corner). The general stores and police stations are spread over the town so
-it has life all over (user, 2026-10-23): no two of these buildings (church
-included) stand on neighboring blocks, two of the same kind stand about
-half the town apart (half its longer side in blocks, at least two), and
-within that each takes the free block nearest the plaza (then the lowest
-column, then row), facing toward it. In a town grown on both sides of its
-line, each goes to the half with fewer of its kind, so each half has a
-store and a police station of its own. When no block keeps that spacing (a
-tiny grid), the building takes the one farthest from the others.
+La iglesia da a la plaza desde la manzana al norte de ella (o desde la
+siguiente vecina libre: sur, este, oeste; la manzana libre más cercana para
+una plaza en una esquina). Los almacenes de ramos generales y las comisarías
+se reparten por el pueblo para que tenga vida en todas partes (usuario,
+2026-10-23): ningún par de estos edificios (incluida la iglesia) está en
+manzanas vecinas, dos del mismo tipo están separados por alrededor de la
+mitad del pueblo (la mitad de su lado más largo en manzanas, al menos dos), y
+dentro de eso cada uno toma la manzana libre más cercana a la plaza (luego la
+columna más baja, luego la fila), mirando hacia ella. En un pueblo que creció
+a ambos lados de su línea, cada uno va a la mitad con menos edificios de su
+tipo, para que cada mitad tenga su propio almacén y su propia comisaría.
+Cuando ninguna manzana mantiene esa separación (una cuadrícula diminuta), el
+edificio toma la más alejada de los demás.
 
-A small town's store is a pulpería: its sign reads "PULPERÍA". A big or
-very big town's reads "ALMACÉN DE RAMOS GENERALES". (On the minimap both are
-marked "A", the plaza being "P".)
+El almacén de un pueblo pequeño es una pulpería: su cartel dice "PULPERÍA". El
+de un pueblo grande o muy grande dice "ALMACÉN DE RAMOS GENERALES". (En el
+minimapa ambos se marcan con "A", y la plaza con "P").
 
-### Town size
+### Tamaño del pueblo
 
-A town's size comes from its block count, `n` = columns times rows:
+El tamaño de un pueblo sale de su cantidad de manzanas, `n` = columnas por
+filas:
 
-| | Small (`n` up to 36) | Big (37 to 63) | Very big (64 or more) |
+| | Pequeño (`n` hasta 36) | Grande (37 a 63) | Muy grande (64 o más) |
 |---|---|---|---|
-| Main plaza | 1 block, placed by `plaza` | 2 blocks merged, centered | 2 x 2 blocks merged, centered |
-| Station plaza | no | yes | yes |
-| General stores | 1 | 2 | 2 |
-| Police stations | 1 | 1 | 2 |
-| People walking (unless `townsfolk` sets it) | 16 | `0.8 n`, rounded, at least 16 | same |
+| Plaza principal | 1 manzana, ubicada según `plaza` | 2 manzanas unidas, centrada | 2 x 2 manzanas unidas, centrada |
+| Plaza de la estación | no | sí | sí |
+| Almacenes de ramos generales | 1 | 2 | 2 |
+| Comisarías | 1 | 1 | 2 |
+| Personas que caminan (salvo que `townsfolk` lo fije) | 16 | `0.8 n`, redondeado, al menos 16 | igual |
 
-- A merged plaza includes the streets between its blocks: there is no road
-  through it and walkers go around it. A big town merges two blocks along
-  its longer side (east-west on a square grid). `Auto` and `Center` center
-  the plaza on the grid (ties go west or south); `Block` and
-  `FacingStation` keep the picked block inside it.
-- The station plaza is half a block. With a railway, it takes the half
-  nearest the track of the block, in the row next to the railway, that
-  faces the station; when that block is taken, the nearest free block
-  along that row. The other half of its block keeps houses. Without a
-  railway, it takes half of the free block farthest from the main plaza.
-- One general store faces the station plaza; the other is spread over the
-  town with the police stations (see above). The tied horse stays at that
-  other one, the town's first general store.
-- `police_stations` can lower the tier's police station count (down to
-  none), never raise it. A town without the field keeps the tier's count
-  and is laid out exactly as before.
-- `townsfolk` replaces the tier's crowd, up or down. A town without the
-  field keeps the tier's crowd.
+- Una plaza unida incluye las calles entre sus manzanas: no hay camino que la
+  atraviese y los peatones la rodean. Un pueblo grande une dos manzanas a lo
+  largo de su lado más largo (de este a oeste en una cuadrícula cuadrada).
+  `Auto` y `Center` centran la plaza en la cuadrícula (los empates van al
+  oeste o al sur); `Block` y `FacingStation` mantienen la manzana elegida
+  dentro de ella.
+- La plaza de la estación es media manzana. Con ferrocarril, toma la mitad
+  más cercana a la vía de la manzana, en la fila junto al ferrocarril, que da
+  a la estación; cuando esa manzana está ocupada, la manzana libre más
+  cercana a lo largo de esa fila. La otra mitad de su manzana conserva casas.
+  Sin ferrocarril, toma la mitad de la manzana libre más alejada de la plaza
+  principal.
+- Un almacén de ramos generales da a la plaza de la estación; el otro se
+  reparte por el pueblo junto con las comisarías (ver arriba). El caballo
+  atado queda en ese otro, el primer almacén de ramos generales del pueblo.
+- `police_stations` puede bajar la cantidad de comisarías de la categoría
+  (hasta ninguna), nunca subirla. Un pueblo sin el campo conserva la cantidad
+  de la categoría y se dispone exactamente como antes.
+- `townsfolk` reemplaza la cantidad de gente de la categoría, hacia arriba o
+  hacia abajo. Un pueblo sin el campo conserva la cantidad de gente de la
+  categoría.
 
-### When something is wrong
+### Cuando algo está mal
 
-If the file is missing or cannot be read, or a town breaks a rule above, the
-game still starts: it logs a warning naming the town and the problem, skips
-that town, and uses the built-in Eduardo Castex when no valid town is left.
-A `townsfolk` above 200 does not skip the town: it is logged and the tier's
-crowd walks there instead.
-Run `cargo test -p pampa-content` to check the shipped file before playing.
+Si el archivo falta o no se puede leer, o un pueblo no cumple una regla de
+arriba, el juego arranca igual: registra un aviso que nombra el pueblo y el
+problema, omite ese pueblo, y usa el Eduardo Castex incorporado cuando no
+queda ningún pueblo válido.
+Un `townsfolk` mayor que 200 no omite el pueblo: se registra y en su lugar
+camina por allí la cantidad de gente de la categoría.
+Ejecutar `cargo test -p pampa-content` para comprobar el archivo incluido
+antes de jugar.
 
-Fields the game does not know yet are ignored, so they can be added ahead of
-the code that uses them.
+Los campos que el juego todavía no conoce se ignoran, así que se pueden
+agregar antes que el código que los usa.

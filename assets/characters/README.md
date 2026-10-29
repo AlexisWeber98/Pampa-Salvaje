@@ -1,24 +1,24 @@
-# Characters
+# Personajes
 
-Skinned MakeHuman people. Each folder holds a character's source `.mhm` (MakeHuman's model file, written by hand), any recoloured materials (`.mhmat`), and the glTF built from them: `model.gltf`, `model.bin` and `textures/`. Credits and substitutions are in [CREDITS.md](CREDITS.md).
+Personas de MakeHuman con skinning. Cada carpeta contiene el `.mhm` fuente de un personaje (el archivo de modelo de MakeHuman, escrito a mano), los materiales recoloreados que tenga (`.mhmat`) y el glTF construido a partir de ellos: `model.gltf`, `model.bin` y `textures/`. Los créditos y las sustituciones están en [CREDITS.md](CREDITS.md).
 
-The game loads `protagonist`, `hidalgo`, `farach`, `bairoletto` and the five townsfolk outfits, `townsfolk_paisano`, `townsfolk_peon`, `townsfolk_volga`, `townsfolk_headscarf` and `townsfolk_bun` (`crates/render/src/character/model.rs`), each once, and draws them by default; the debug console's `models off` brings back the old rigid figures. A townsperson wears their look's outfit (`look % 5`); the rest of the look picks, for each garment, one of four muted colours, the first the model's own (`crates/render/src/character/townsfolk.rs`). A tinted material is a copy made once per (material, colour) and shared by whoever wears it. The two women wear long skirts: the game holds their upper arms 0.14 rad out, so their hands rest on the skirt instead of sinking into it. The protagonist wears his model on foot and in the saddle: there he sits on the horse's `Torso` bone and plays the seated `drive` clip, his legs bent to the stirrups and his hand to the reins by a small IK, with springs for the give in his seat, spine, head and hands (`crates/render/src/character/rider.rs`). `models off` only applies to people on foot. The protagonist's poncho is kept off his left upper arm by the converter (`clear_arms` in `tools/mh2gltf.py`), so it rides on the shoulder when the arm moves.
+El juego carga `protagonist`, `hidalgo`, `farach`, `bairoletto` y los cinco atuendos de los vecinos, `townsfolk_paisano`, `townsfolk_peon`, `townsfolk_volga`, `townsfolk_headscarf` y `townsfolk_bun` (`crates/render/src/character/model.rs`), cada uno una sola vez, y los dibuja por defecto; el `models off` de la consola de depuración trae de vuelta las viejas figuras rígidas. Un vecino lleva el atuendo de su aspecto (`look % 5`); el resto del aspecto elige, para cada prenda, uno de cuatro colores apagados, el primero el propio del modelo (`crates/render/src/character/townsfolk.rs`). Un material teñido es una copia que se hace una sola vez por (material, color) y que comparten todos los que lo usan. Las dos mujeres llevan polleras largas: el juego les mantiene los brazos 0.14 rad hacia afuera, para que las manos descansen sobre la pollera en lugar de hundirse en ella. El protagonista usa su modelo a pie y en la montura: allí se sienta sobre el hueso `Torso` del caballo y reproduce el clip sentado `drive`, con las piernas dobladas hacia los estribos y la mano hacia las riendas mediante un pequeño IK, con resortes para la holgura de su asiento, columna, cabeza y manos (`crates/render/src/character/rider.rs`). `models off` solo se aplica a las personas a pie. El conversor mantiene el poncho del protagonista apartado de su brazo izquierdo (`clear_arms` en `tools/mh2gltf.py`), así que queda sobre el hombro cuando el brazo se mueve.
 
-They move with animation clips, all in one shared file, `animations/humanoid.glb`: Quaternius' CC0 Universal Animation Library 1 and 2, retargeted to the `game_engine` skeleton by `tools/retarget.py`. The clip driver (`crates/render/src/character/rig.rs`, with `clips.rs`) works like this:
+Se mueven con clips de animación, todos en un único archivo compartido, `animations/humanoid.glb`: las Universal Animation Library 1 y 2 de Quaternius, CC0, adaptadas (retargeting) al esqueleto `game_engine` con `tools/retarget.py`. El controlador de clips (`crates/render/src/character/rig.rs`, con `clips.rs`) funciona así:
 
-- the idle fades into the walk, the jog and the sprint by ground speed;
-- each walking clip is paced to the ground speed, over the person's legs against the protagonist's, so the feet keep still on the ground and shorter people take shorter, quicker steps;
-- the walk is the pack's game walk stood up by the tool into an easy, upright street walk (straighter knees, the torso up, the shoulders down, the arms swinging at the sides), with a longer stride;
-- Farach waits with folded arms, and whoever is speaking talks with their hands;
-- each person starts their clips at their own point;
-- the head glances around on top of the clip;
-- a rider plays only the seated clip: a clip at no weight still sets the bones only it animates.
+- la espera se funde con la caminata, el trote y la carrera según la velocidad sobre el suelo;
+- cada clip de caminata se ajusta al ritmo de la velocidad sobre el suelo, según las piernas de la persona frente a las del protagonista, para que los pies queden quietos sobre el suelo y las personas más bajas den pasos más cortos y rápidos;
+- la caminata es la caminata de juego del paquete, que la herramienta endereza hasta convertirla en una caminata de calle tranquila y erguida (rodillas más rectas, el torso arriba, los hombros abajo, los brazos balanceándose a los costados), con un tranco más largo;
+- Farach espera con los brazos cruzados, y quien habla lo hace con las manos;
+- cada persona empieza sus clips en su propio punto;
+- la cabeza mira alrededor por encima del clip;
+- un jinete reproduce solo el clip sentado: un clip con peso cero igual fija los huesos que solo él anima.
 
-The clips find the bones by their name path from `Root` (`Root/pelvis/spine_01/...`), so a rebuilt model must keep the `game_engine` skeleton's bone names and hierarchy. The clips were made on the protagonist. Another model has its hips' moves scaled to its own legs when it plays them.
+Los clips encuentran los huesos por la ruta de sus nombres desde `Root` (`Root/pelvis/spine_01/...`), así que un modelo reconstruido debe conservar los nombres y la jerarquía de huesos del esqueleto `game_engine`. Los clips se hicieron sobre el protagonista. A otro modelo se le escalan los movimientos de la cadera a sus propias piernas cuando los reproduce.
 
-## Rebuilding the clips
+## Reconstruir los clips
 
-You need the two packs (see [CREDITS.md](CREDITS.md); they are not in the repository). Run, from the repository root:
+Se necesitan los dos paquetes (ver [CREDITS.md](CREDITS.md); no están en el repositorio). Ejecutar, desde la raíz del repositorio:
 
 ```sh
 python3 -I tools/retarget.py \
@@ -33,35 +33,35 @@ python3 -I tools/retarget.py \
   -o assets/characters/animations/humanoid.glb
 ```
 
-The output is deterministic. It prints each clip with its length and, for the walks and runs, the ground speed and stride it measured. The game's `Clip::ground_speed` (`crates/render/src/character/clips.rs`) must match them; a test checks it. The `--model` lines give the men whose chests the folded arms and talking hands must clear, the `--talker` lines the townsfolk, whose chests only the talking hands must clear (they never fold their arms). The standing clips are also calmed out of the packs' boxer's stance (see `tools/README.md`). Rebuild the clips after rebuilding any model.
+La salida es determinista. Imprime cada clip con su duración y, para las caminatas y carreras, la velocidad sobre el suelo y el tranco que midió. El `Clip::ground_speed` del juego (`crates/render/src/character/clips.rs`) debe coincidir con ellos; un test lo comprueba. Las líneas `--model` indican los hombres cuyo pecho deben esquivar los brazos cruzados y las manos que hablan; las líneas `--talker`, los vecinos, cuyo pecho solo deben esquivar las manos que hablan (nunca cruzan los brazos). Los clips de pie también se calman para sacarlos de la guardia de boxeador de los paquetes (ver `tools/README.md`). Reconstruir los clips después de reconstruir cualquier modelo.
 
-## Rebuilding a model
+## Reconstruir un modelo
 
-You need MakeHuman 1.x's data folder (only the data is read; the GUI is never started), the community asset packs the characters still use (see [CREDITS.md](CREDITS.md)) installed in it or in MakeHuman's user data folder, and Python 3 with numpy:
+Se necesitan la carpeta de datos de MakeHuman 1.x (solo se leen los datos; la GUI nunca se inicia), los paquetes de assets de la comunidad que todavía usan los personajes (ver [CREDITS.md](CREDITS.md)) instalados en ella o en la carpeta de datos de usuario de MakeHuman, y Python 3 con numpy:
 
 ```sh
 python3 -I tools/mh2gltf.py assets/characters/farach/farach.mhm -o assets/characters/farach
 python3 -I tools/mh2gltf.py --check assets/characters/farach/model.gltf
 ```
 
-The output is deterministic. A texture that a change no longer uses stays in `textures/` until you delete it: every file there should be named by its `model.gltf`.
+La salida es determinista. Una textura que un cambio ya no usa queda en `textures/` hasta que se la borre: cada archivo allí debería estar nombrado por su `model.gltf`.
 
-## Writing an .mhm
+## Escribir un .mhm
 
-These are MakeHuman's own lines (see `tools/README.md` for what the converter reads):
+Estas son las líneas propias de MakeHuman (ver `tools/README.md` para saber qué lee el conversor):
 
-- `modifier macrodetails/Age 0.538462`: the age is `0.5` at 25 years and `1.0` at 90. Years above 25 map to `0.5 + (years - 25) / 130`.
-- `proxy`, `eyes`, `eyebrows`, `hair`, `clothes`: a name and the asset's UUID, which is the one that counts.
-- `material <name> <uuid> <file>`: a material for that proxy. The file is looked up beside the `.mhm` first, then in the data folders.
+- `modifier macrodetails/Age 0.538462`: la edad es `0.5` a los 25 años y `1.0` a los 90. Los años por encima de 25 se corresponden con `0.5 + (years - 25) / 130`.
+- `proxy`, `eyes`, `eyebrows`, `hair`, `clothes`: un nombre y el UUID del asset, que es el que cuenta.
+- `material <name> <uuid> <file>`: un material para ese proxy. El archivo se busca primero junto al `.mhm`, y luego en las carpetas de datos.
 - `skeleton game_engine.mhskel`, `skinMaterial skins/.../x.mhmat`, `clothesHideFaces True`.
 
-A recoloured `.mhmat` points at the asset's own texture with a `data/` path (for example `data/clothes/grinsegold_moustache/Moustache_black_diff.png`). Its `diffuseColor` multiplies that texture. It can darken or tint an asset, but it cannot lighten one, unless `greyscaleTexture True` turns the texture grey and white first (Don Hidalgo's white hair). Without a `diffuseTexture` the garment is a plain colour (Bairoletto's bombacha).
+Un `.mhmat` recoloreado apunta a la textura propia del asset con una ruta `data/` (por ejemplo `data/clothes/grinsegold_moustache/Moustache_black_diff.png`). Su `diffuseColor` multiplica esa textura. Puede oscurecer o teñir un asset, pero no aclararlo, salvo que `greyscaleTexture True` convierta antes la textura a gris y blanco (el pelo blanco de Don Hidalgo). Sin un `diffuseTexture`, la prenda es de un color liso (la bombacha de Bairoletto).
 
-The converter also reads lines of its own. MakeHuman warns about them and skips them, so the files still load there:
+El conversor también lee líneas propias. MakeHuman avisa sobre ellas y las omite, así que los archivos siguen cargando allí:
 
-| Line | Meaning |
+| Línea | Significado |
 |---|---|
-| `decimate <name> <uuid> <triangles>` | Simplify the garment to at most that many triangles (UV seams and edges are kept, so it may stop above). |
-| `piece <kind> key=value ...` | A garment cut from the body (`shirt`, `waistcoat`, `jacket`, `trousers`, `bombacha`, `boots`, `alpargatas`, `shawl`, `headscarf`, `hair`), a woman's long `skirt` and its `apron`, or a generated piece (`hat`, `kepi`, `boina`, `bun`, `neckerchief`, `sash` (faja), `rastra`, `buttons`, `chain`, `strap`, `poncho`, `lapels`, `collar`). Their settings are in `tools/README.md`. |
+| `decimate <name> <uuid> <triangles>` | Simplifica la prenda a lo sumo a esa cantidad de triángulos (se conservan las costuras de UV y los bordes, así que puede quedar por encima). |
+| `piece <kind> key=value ...` | Una prenda recortada del cuerpo (`shirt`, `waistcoat`, `jacket`, `trousers`, `bombacha`, `boots`, `alpargatas`, `shawl`, `headscarf`, `hair`), la `skirt` larga de una mujer y su `apron`, o una pieza generada (`hat`, `kepi`, `boina`, `bun`, `neckerchief`, `sash` (faja), `rastra`, `buttons`, `chain`, `strap`, `poncho`, `lapels`, `collar`). Sus parámetros están en `tools/README.md`. |
 
-Most clothes are cut from the body itself rather than taken from asset packs, which read modern: each garment is a copy of the body's skin over the part it covers, pushed out a little and skinned exactly like it, so it bends with the body. Only Bairoletto wears pack clothes: the harem pants as his bombacha and the riding boots. The townswomen are cut from the female body proxy (`female1605`), the same way.
+La mayor parte de la ropa se recorta del propio cuerpo en lugar de tomarse de paquetes de assets, que se ven modernos: cada prenda es una copia de la piel del cuerpo sobre la parte que cubre, empujada un poco hacia afuera y con el mismo skinning, así que se dobla con el cuerpo. Solo Bairoletto usa ropa de paquetes: los pantalones bombachos como su bombacha y las botas de montar. Las vecinas se recortan del proxy de cuerpo femenino (`female1605`), de la misma forma.

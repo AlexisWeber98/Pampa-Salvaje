@@ -1,38 +1,40 @@
-//! Native flora on the streamed chunks: caldén and chañar and grass tufts,
-//! placed by [`pampa_core::FloraSite`].
+//! Flora nativa sobre los chunks cargados por streaming: caldén, chañar y matas
+//! de pasto, ubicados por [`pampa_core::FloraSite`].
 //!
-//! Shrubs (piquillín, jarilla and the chañar thickets of the fachinal) are
-//! the same kit's low multi-stem forms ([`shrub_variant`]), on the same
-//! single tree visibility range. Without the kit they are not drawn.
+//! Los arbustos (piquillín, jarilla y las marañas de chañar del fachinal) son
+//! las formas bajas de varios tallos del mismo kit ([`shrub_variant`]), en el
+//! mismo rango de visibilidad único de los árboles. Sin el kit no se dibujan.
 //!
-//! Trees are the textured town tree kit's caldén and chañar
-//! ([`crate::tree::Species::FIELD`]: seeded variants with photographic bark
-//! and alpha-masked leaf cards), scaled to the height core planted
-//! ([`kit_variant`]). Without the kit they fall back to the low-poly CC0
-//! models from the Ultimate Nature Pack by Quaternius (see
-//! [`load_vegetation`]), recoloured and rescaled in code for the dry 1919
-//! pampa, with their faceted normals smoothed when baked (see
-//! [`smoothing`]); the stones, stumps, weeds and wildflowers are those models.
-//! The grass tufts (paja and flechilla) are alpha-cut texture cards
-//! ([`crate::grass`]) either way. When a
-//! model is missing, the faceted procedural stand-ins below are drawn
-//! instead, and only then.
+//! Los árboles son el caldén y el chañar del kit texturizado de árboles de los
+//! pueblos ([`crate::tree::Species::FIELD`]: variantes con semilla, con corteza
+//! fotográfica y tarjetas de hojas con máscara de alfa), escalados a la altura
+//! que plantó core ([`kit_variant`]). Sin el kit recurren a los modelos
+//! low-poly CC0 del Ultimate Nature Pack de Quaternius (ver
+//! [`load_vegetation`]), recoloreados y reescalados en código para la pampa
+//! seca de 1919, con sus normales facetadas suavizadas al hornearlos (ver
+//! [`smoothing`]); las piedras, tocones, yuyos y flores silvestres son esos
+//! modelos. Las matas de pasto (paja y flechilla) son tarjetas de textura
+//! recortadas por alfa ([`crate::grass`]) en cualquier caso. Cuando falta un
+//! modelo, se dibujan en su lugar los sustitutos procedurales facetados de más
+//! abajo, y solo entonces.
 //!
-//! Every mesh and material is built once and shared, so Bevy batches
-//! identical draws. A chunk's flora are its children and go with it when it
-//! is dropped; every model pick, turn and size is seeded by the plant's
-//! placement, so a reloaded chunk looks exactly the same. Distance culling
-//! ([`VisibilityRange`]) keeps the drawn triangles low without any level of
-//! detail swap: a tree is the same model out to the dust fog and fades out
-//! inside it, and tufts stay solid near the rider and thin out smoothly
-//! farther away.
+//! Cada malla y material se construye una sola vez y se comparte, para que Bevy
+//! agrupe los draws idénticos. La flora de un chunk son sus hijos y se va con
+//! él cuando se descarta; cada elección de modelo, giro y tamaño tiene como
+//! semilla la ubicación de la planta, así que un chunk recargado se ve
+//! exactamente igual. El descarte por distancia ([`VisibilityRange`]) mantiene
+//! bajos los triángulos dibujados sin ningún cambio de nivel de detalle: un
+//! árbol es el mismo modelo hasta la niebla de polvo y se desvanece dentro de
+//! ella, y las matas se mantienen sólidas cerca del jinete y se van raleando
+//! suavemente más lejos.
 //!
-//! Trees are solid: the follow camera pulls in round their trunks instead.
-//! Thin things (fences, signposts and lamps elsewhere) carry a
-//! [`ThinOccluder`]: when one comes between the camera and the rider (the
-//! [`SightLine`] the game sets each frame), the [`ThinFadePlugin`] turns it
-//! see-through instead of the camera pulling in, and restores it once the
-//! view clears. Only those indexed near the sight line are looked at.
+//! Los árboles son sólidos: en cambio, la cámara de seguimiento se acerca
+//! alrededor de sus troncos. Las cosas delgadas (alambrados, postes indicadores
+//! y faroles en otros módulos) llevan un [`ThinOccluder`]: cuando una se
+//! interpone entre la cámara y el jinete (la [`SightLine`] que fija el juego en
+//! cada frame), el [`ThinFadePlugin`] la vuelve translúcida en lugar de que la
+//! cámara se acerque, y la restaura cuando la vista se despeja. Solo se revisan
+//! las que están indexadas cerca de la línea de visión.
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -54,38 +56,39 @@ use crate::smooth::smooth_normals;
 use crate::terrain::{ChunkStreaming, TerrainChunk, WorldTerrain};
 use crate::tree::{self, TreeKit};
 
-/// Where the flora grows. Insert it before the plugin runs; without it,
-/// chunks grow nothing.
+/// Dónde crece la flora. Se inserta antes de que corra el plugin; sin ella, los
+/// chunks no hacen crecer nada.
 #[derive(Resource, Debug, Clone)]
 pub struct WorldFlora(pub FloraSite);
 
-/// A drawn tree part (trunk, crown or a model part), a child of its chunk.
+/// Una parte dibujada de un árbol (tronco, copa o una parte de modelo), hija de
+/// su chunk.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TreePart(pub Species);
 
-/// A drawn shrub part (stems or leaves), a child of its chunk.
+/// Una parte dibujada de un arbusto (tallos u hojas), hija de su chunk.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ShrubPart(pub ShrubKind);
 
-/// A drawn grass tuft or weed, a child of its chunk.
+/// Una mata de pasto o un yuyo dibujados, hijos de su chunk.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GrassTuft(pub TuftKind);
 
-/// A stump or fallen log near a caldén, a child of its chunk.
+/// Un tocón o un tronco caído cerca de un caldén, hijo de su chunk.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FloraAccent;
 
-/// Marks a chunk whose flora is grown.
+/// Marca un chunk cuya flora ya creció.
 #[derive(Component)]
 struct FloraGrown;
 
-/// Loading the vegetation models, in `Startup`. Anything that draws them
-/// (the terrain's stones and shrubs) runs after it.
+/// Carga de los modelos de vegetación, en `Startup`. Todo lo que los dibuja
+/// (las piedras y matas del terreno) corre después.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct VegetationLoad;
 
-/// Grows flora on terrain chunks as they are streamed in. Needs the
-/// [`crate::TerrainPlugin`].
+/// Hace crecer flora sobre los chunks de terreno a medida que llegan por
+/// streaming. Necesita el [`crate::TerrainPlugin`].
 pub struct FloraPlugin;
 
 impl Plugin for FloraPlugin {
@@ -93,8 +96,9 @@ impl Plugin for FloraPlugin {
         tree::ensure_plugin(app);
         app.init_resource::<WorldTerrain>()
             .add_systems(Startup, (load_vegetation.in_set(VegetationLoad), setup_kit))
-            // Right after streaming, like the track: new chunks get their
-            // flora the frame they appear, before transforms propagate.
+            // Justo después del streaming, como la vía: los chunks nuevos
+            // reciben su flora en el frame en que aparecen, antes de que se
+            // propaguen las transformaciones.
             .add_systems(
                 PostUpdate,
                 grow_flora
@@ -104,16 +108,16 @@ impl Plugin for FloraPlugin {
     }
 }
 
-/// The segment from the point the camera looks at (the rider) to the
-/// camera, in world space; the game sets it every frame. `None` fades
-/// nothing.
+/// El segmento desde el punto al que mira la cámara (el jinete) hasta la
+/// cámara, en espacio del mundo; el juego lo fija en cada frame. `None` no
+/// desvanece nada.
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
 pub struct SightLine(pub Option<(Vec3, Vec3)>);
 
-/// Something thin that fades out of the way of the camera instead of
-/// pulling it in: a vertical slab along ground segment `a`–`b` (a point for
-/// a tree or a post), `radius` meters thick on either side, from height
-/// `bottom` to `top`.
+/// Algo delgado que se desvanece para no estorbar a la cámara en lugar de hacer
+/// que se acerque: una losa vertical a lo largo del segmento de suelo `a`–`b`
+/// (un punto para un árbol o un poste), de `radius` metros de espesor a cada
+/// lado, desde la altura `bottom` hasta `top`.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct ThinOccluder {
     pub a: GroundVec2,
@@ -124,8 +128,8 @@ pub struct ThinOccluder {
 }
 
 impl ThinOccluder {
-    /// A post or a tree standing at `at` on `terrain`, `radius` wide and
-    /// `height` tall.
+    /// Un poste o un árbol ubicado en `at` sobre `terrain`, de `radius` de
+    /// ancho y `height` de alto.
     pub fn post(at: GroundVec2, radius: f32, terrain: &pampa_core::Terrain, height: f32) -> Self {
         let ground = terrain.height(at.x, at.y);
         Self {
@@ -137,8 +141,8 @@ impl ThinOccluder {
         }
     }
 
-    /// Whether this stands in the way of the line of sight from `from` to
-    /// `to` (world space).
+    /// Si esto se interpone en la línea de visión de `from` a `to` (espacio del
+    /// mundo).
     pub fn blocks(&self, from: Vec3, to: Vec3) -> bool {
         let (p, q) = (
             GroundVec2::new(from.x, -from.z),
@@ -151,7 +155,7 @@ impl ThinOccluder {
         gap < self.radius && y > self.bottom && y < self.top
     }
 
-    /// Its ground footprint's bounding box, grown by its radius.
+    /// La caja delimitadora de su huella en el suelo, agrandada según su radio.
     fn reach(&self) -> (GroundVec2, GroundVec2) {
         let r = self.radius;
         (
@@ -161,9 +165,9 @@ impl ThinOccluder {
     }
 }
 
-/// Least distance between ground segments `p`–`q` (the sight line) and
-/// `a`–`b`, and where along `p`–`q` (`0..=1`) it is reached. `None` for a
-/// sight line without length.
+/// Distancia mínima entre los segmentos de suelo `p`–`q` (la línea de visión) y
+/// `a`–`b`, y en qué lugar de `p`–`q` (`0..=1`) se alcanza. `None` para una
+/// línea de visión sin largo.
 fn closest_approach(
     p: GroundVec2,
     q: GroundVec2,
@@ -177,7 +181,7 @@ fn closest_approach(
     }
     let on_sight = |x: GroundVec2| ((x - p).dot(d) / span).clamp(0.0, 1.0);
     let at = |t: f32| p + d * t;
-    // Crossing: distance 0 where they cross.
+    // Se cruzan: distancia 0 donde se cruzan.
     let e = b - a;
     let denom = d.x * e.y - d.y * e.x;
     if denom.abs() > 1e-9 {
@@ -207,16 +211,18 @@ fn closest_approach(
         .min_by(|l, r| l.0.total_cmp(&r.0))
 }
 
-/// Marks a faded thin occluder, keeping its own material to restore.
+/// Marca un oclusor delgado desvanecido, guardando su propio material para
+/// restaurarlo.
 #[derive(Component, Debug, Clone)]
 pub struct Faded(pub Handle<StandardMaterial>);
 
-/// How opaque a faded thin occluder is.
+/// Qué tan opaco es un oclusor delgado desvanecido.
 pub const FADED_ALPHA: f32 = 0.22;
-/// Side of a cell of the thin occluders' index, in meters.
+/// Lado de una celda del índice de oclusores delgados, en metros.
 const FADE_CELL: f32 = 16.0;
 
-/// Thin occluders by grid cell, kept in step as they come and go.
+/// Oclusores delgados por celda de la grilla, actualizados a medida que
+/// aparecen y desaparecen.
 #[derive(Resource, Debug, Default)]
 struct ThinIndex {
     cells: HashMap<(i32, i32), Vec<Entity>>,
@@ -235,12 +241,13 @@ fn fade_cells((lo, hi): (GroundVec2, GroundVec2)) -> impl Iterator<Item = (i32, 
     (y0..=y1).flat_map(move |y| (x0..=x1).map(move |x| (x, y)))
 }
 
-/// See-through copies of the materials of faded occluders, made once.
+/// Copias translúcidas de los materiales de los oclusores desvanecidos, creadas
+/// una sola vez.
 #[derive(Resource, Debug, Default)]
 struct FadeMaterials(HashMap<AssetId<StandardMaterial>, Handle<StandardMaterial>>);
 
-/// Fades thin occluders that come between the camera and the rider (see
-/// [`SightLine`]) and restores them when the view clears.
+/// Desvanece los oclusores delgados que se interponen entre la cámara y el
+/// jinete (ver [`SightLine`]) y los restaura cuando la vista se despeja.
 pub struct ThinFadePlugin;
 
 impl Plugin for ThinFadePlugin {
@@ -253,7 +260,7 @@ impl Plugin for ThinFadePlugin {
 }
 
 impl ThinIndex {
-    /// Takes `entity` out of the index, if it is in.
+    /// Saca `entity` del índice, si está.
     fn forget(&mut self, entity: Entity) {
         let Some(cells) = self.of.remove(&entity) else {
             return;
@@ -269,8 +276,8 @@ impl ThinIndex {
     }
 }
 
-/// Keeps the index in step: occluders added, changed (moved or resized:
-/// indexed again where they now reach) and removed.
+/// Mantiene el índice al día: oclusores agregados, cambiados (movidos o
+/// redimensionados: se vuelven a indexar donde llegan ahora) y quitados.
 fn index_thin(
     mut index: ResMut<ThinIndex>,
     changed: Query<(Entity, &ThinOccluder), Changed<ThinOccluder>>,
@@ -310,7 +317,7 @@ fn fade_thin(
         );
         let lo = GroundVec2::new(p.x.min(q.x), p.y.min(q.y));
         let hi = GroundVec2::new(p.x.max(q.x), p.y.max(q.y));
-        // Wide enough for the thickest occluder's radius.
+        // Lo bastante ancha para el radio del oclusor más grueso.
         let pad = GroundVec2::new(FADE_CELL, FADE_CELL);
         for cell in fade_cells((lo - pad, hi + pad)) {
             for &entity in index.cells.get(&cell).into_iter().flatten() {
@@ -345,8 +352,9 @@ fn fade_thin(
         let see_through = match cache.0.get(&original.id()) {
             Some(copy) => copy.clone(),
             None => {
-                // Not loaded yet: stay solid this frame rather than cache a
-                // see-through copy of a blank material for good.
+                // Todavía no se cargó: se queda sólido en este frame en lugar
+                // de guardar para siempre una copia translúcida de un material
+                // en blanco.
                 let Some(mut copy) = materials.get(&original).cloned() else {
                     continue;
                 };
@@ -362,55 +370,64 @@ fn fade_thin(
     }
 }
 
-/// Tufts drawn per chunk, at most.
+/// Cantidad máxima de matas dibujadas por chunk.
 pub const TUFTS_DRAWN: usize = 300;
-/// Where trees stop being drawn, in meters from the camera: past the dust
-/// fog ([`crate::atmosphere::FOG_VISIBILITY`]), so they fade out inside it.
-/// A tree is the same model at every distance; there is no far stand-in.
+/// Dónde dejan de dibujarse los árboles, en metros desde la cámara: más allá de
+/// la niebla de polvo ([`crate::atmosphere::FOG_VISIBILITY`]), así que se
+/// desvanecen dentro de ella. Un árbol es el mismo modelo a cualquier
+/// distancia; no hay sustituto lejano.
 pub const TREE_FAR: f32 = 200.0;
-/// Width of the trees' dithered fade-out, ending at [`TREE_FAR`].
+/// Ancho del desvanecimiento con dithering de los árboles, que termina en
+/// [`TREE_FAR`].
 pub(crate) const TREE_FADE: f32 = 15.0;
-/// Tufts within this distance of the rider are always drawn solid...
+/// Las matas dentro de esta distancia del jinete siempre se dibujan sólidas...
 pub const TUFT_SOLID: f32 = 40.0;
-/// ...wherever the orbit camera stands: at most this far from the rider
-/// (the orbit's longest zoom, `game/src/orbit.rs`).
+/// ...esté donde esté la cámara orbital: como mucho a esta distancia del jinete
+/// (el zoom más lejano de la órbita, `game/src/orbit.rs`).
 pub const CAMERA_REACH: f32 = 25.0;
-/// Beyond that, each tuft starts fading at its own seeded distance, up to
-/// this much farther: the grass thins out smoothly between.
+/// Más allá, cada mata empieza a desvanecerse a su propia distancia con
+/// semilla, hasta esta distancia extra: entre medio, el pasto se ralea
+/// suavemente.
 pub const TUFT_SPREAD: f32 = 50.0;
-/// Fade starts across [`TUFT_SPREAD`] come in this many steps. Bevy gives
-/// every distinct `VisibilityRange` a GPU slot it never frees, and past
-/// 65,535 slots it culls every unranged mesh (ground, buildings, the train),
-/// so tufts must share a few ranges instead of one each.
+/// Los inicios de fundido a lo largo de [`TUFT_SPREAD`] vienen en esta cantidad
+/// de escalones. Bevy le da a cada `VisibilityRange` distinto un lugar en la
+/// GPU que nunca libera, y pasados los 65.535 lugares descarta toda malla sin
+/// rango (suelo, edificios, el tren), así que las matas deben compartir unos
+/// pocos rangos en lugar de tener uno cada una.
 pub const TUFT_FADE_STEPS: f32 = 8.0;
-/// Width of a tuft's dithered fade-out.
+/// Ancho del desvanecimiento con dithering de una mata.
 const TUFT_FADE: f32 = 15.0;
-/// Where stumps and logs stop being drawn, and the width of their fade.
+/// Dónde dejan de dibujarse los tocones y troncos, y el ancho de su fundido.
 const ACCENT_FAR: f32 = 120.0;
 const ACCENT_FADE: f32 = 15.0;
-/// Share of mature caldenes (out of 256) that are dead or sparse snags.
+/// Proporción de caldenes maduros (sobre 256) que son árboles secos, muertos o
+/// ralos.
 const SNAG_SHARE: u32 = 28;
-/// How often each live caldén form ([`tree::CALDEN_LIVE`] of them) is
-/// drawn, out of 100: the classic umbrella most, the odd shapes less.
+/// Con qué frecuencia se dibuja cada forma viva del caldén (hay
+/// [`tree::CALDEN_LIVE`]), sobre 100: la sombrilla clásica la que más, las
+/// formas raras menos.
 const CALDEN_FORM_WEIGHTS: [u32; tree::CALDEN_LIVE] = [18, 12, 10, 12, 10, 12, 10, 8, 8];
-/// The forms an old giant takes: broad, full crowns, never a snag.
+/// Las formas que toma un gigante viejo: copas anchas y llenas, nunca un árbol
+/// seco.
 const GIANT_FORMS: [usize; 4] = [0, 3, 5, 7];
-/// How often each chañar form is drawn, out of 100.
+/// Con qué frecuencia se dibuja cada forma del chañar, sobre 100.
 const CHANAR_FORM_WEIGHTS: [u32; tree::CHANAR_VARIANTS] = [24, 16, 16, 14, 16, 14];
-/// Share of caldenes with a stump or a fallen log beside them.
+/// Proporción de caldenes con un tocón o un tronco caído al lado.
 const ACCENT_SHARE: f32 = 0.06;
-/// Share of tufts drawn as weeds, and the part of that share in flower.
+/// Proporción de matas dibujadas como yuyos, y la parte de esa proporción que
+/// está en flor.
 const WEED_SHARE: f32 = 0.06;
 const FLOWER_SHARE: f32 = 0.015;
-/// A chañar thicket is this wide for its height (the bush model is wider).
+/// Una maraña de chañar tiene este ancho en relación con su altura (el modelo
+/// de arbusto es más ancho).
 const THICKET_WIDTH: f32 = 0.7;
-/// How much wider the caldén's crown is drawn than the model's.
+/// Cuánto más ancha se dibuja la copa del caldén que la del modelo.
 const CROWN_WIDEN: f32 = 0.25;
 
-/// Where the vegetation models live, under the [`AssetRoot`].
+/// Dónde están los modelos de vegetación, bajo el [`AssetRoot`].
 pub const MODEL_DIR: &str = "models/vegetation/quaternius-ultimate-nature";
 
-/// One of the shipped vegetation models.
+/// Uno de los modelos de vegetación que trae el juego.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Model {
     CommonTree(u8),
@@ -423,25 +440,25 @@ pub enum Model {
     Log,
 }
 
-/// What a model stands for in the game; it decides the recolouring.
+/// Lo que representa un modelo en el juego; decide el recoloreado.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
-    /// A living caldén.
+    /// Un caldén vivo.
     Calden,
-    /// A dead caldén.
+    /// Un caldén muerto.
     Snag,
-    /// A chañar or jarilla thicket.
+    /// Una maraña de chañar o de jarilla.
     Thicket,
-    /// Weeds and wildflowers.
+    /// Yuyos y flores silvestres.
     Weed,
-    /// Tosca stones.
+    /// Piedras de tosca.
     Stone,
-    /// Stumps and fallen trunks.
+    /// Tocones y troncos caídos.
     Deadwood,
 }
 
 impl Model {
-    /// Every shipped model.
+    /// Todos los modelos que trae el juego.
     pub fn all() -> Vec<Self> {
         let mut all = Vec::new();
         for n in 1..=5 {
@@ -453,7 +470,7 @@ impl Model {
         all
     }
 
-    /// The model's OBJ file name.
+    /// El nombre del archivo OBJ del modelo.
     pub fn file(self) -> String {
         match self {
             Self::CommonTree(n) => format!("CommonTree_{n}.obj"),
@@ -479,18 +496,18 @@ impl Model {
     }
 }
 
-/// Deterministic `[0, 1)` for a ground spot and a salt.
+/// Un `[0, 1)` determinista para un lugar del suelo y una sal.
 pub(crate) fn spot_unit(at: GroundVec2, salt: u32) -> f32 {
     jitter(at.x.to_bits() ^ at.y.to_bits().rotate_left(16), salt)
 }
 
-/// Byte `k` (0 to 3) of a tree's seeded look.
+/// El byte `k` (de 0 a 3) del aspecto con semilla de un árbol.
 fn look_byte(tree: &Tree, k: u32) -> u32 {
     (tree.variant >> (8 * k)) & 0xFF
 }
 
-/// The index of `roll` (out of 256) among `weights`, each one's share of
-/// their sum.
+/// El índice de `roll` (sobre 256) entre `weights`, donde cada peso es su parte
+/// de la suma.
 fn weighted(weights: &[u32], roll: u32) -> usize {
     let total: u32 = weights.iter().sum();
     let mut at = roll * total / 256;
@@ -503,15 +520,16 @@ fn weighted(weights: &[u32], roll: u32) -> usize {
     weights.len() - 1
 }
 
-/// Whether `tree` is a caldén snag, dead or sparse: a seeded few of the
-/// mature ones (old giants and the young stay alive).
+/// Si `tree` es un caldén seco, muerto o ralo: unos pocos de los maduros,
+/// elegidos por semilla (los gigantes viejos y los jóvenes siguen vivos).
 pub(crate) fn is_snag(tree: &Tree) -> bool {
     tree.species == Species::Calden && tree.age == Age::Mature && look_byte(tree, 1) < SNAG_SHARE
 }
 
-/// The Quaternius model drawn for `tree` when the tree kit is not there
-/// ([`kit_variant`] otherwise): caldenes are common trees, a seeded few of
-/// them dead snags; chañares are bush thickets.
+/// El modelo de Quaternius que se dibuja para `tree` cuando no está el kit de
+/// árboles (si no, [`kit_variant`]): los caldenes son árboles comunes, unos
+/// pocos de ellos, elegidos por semilla, árboles secos muertos; los chañares
+/// son marañas de arbustos.
 pub fn tree_model(tree: &Tree) -> Model {
     match tree.species {
         Species::Calden if is_snag(tree) => {
@@ -525,8 +543,8 @@ pub fn tree_model(tree: &Tree) -> Model {
     }
 }
 
-/// The tree kit's species that draws a core `species`: the field's own
-/// and the town species that escaped into the field.
+/// La especie del kit de árboles que dibuja una `species` de core: las propias
+/// del campo y las especies de pueblo que se escaparon al campo.
 pub(crate) fn kit_species(species: Species) -> tree::Species {
     match species {
         Species::Calden => tree::Species::Calden,
@@ -542,8 +560,9 @@ pub(crate) fn kit_species(species: Species) -> tree::Species {
     }
 }
 
-/// The core species a kit `species` is drawn for (the inverse of
-/// [`kit_species`]; the field's own and the escaped town trees only).
+/// La especie de core para la que se dibuja una `species` del kit (la inversa
+/// de [`kit_species`]; solo las propias del campo y los árboles de pueblo
+/// escapados).
 #[cfg(test)]
 pub(crate) fn core_species(species: tree::Species) -> Species {
     [
@@ -563,8 +582,8 @@ pub(crate) fn core_species(species: tree::Species) -> Species {
     .expect("a species the field plants")
 }
 
-/// Whether the stand-in and the Quaternius fallback draw `species` as a
-/// low thicket rather than a tree.
+/// Si el sustituto y el respaldo de Quaternius dibujan `species` como una
+/// maraña baja en lugar de un árbol.
 fn thicket(species: Species) -> bool {
     matches!(
         species,
@@ -572,10 +591,11 @@ fn thicket(species: Species) -> bool {
     )
 }
 
-/// The tree kit's species and form drawn for `tree`, from its seed. A
-/// caldén snag draws one of the kit's three snag forms, an old giant one of
-/// the [`GIANT_FORMS`], any other caldén one of its live forms by their
-/// weights; a chañar one of its forms by theirs.
+/// La especie y la forma del kit de árboles que se dibujan para `tree`, a
+/// partir de su semilla. Un caldén seco dibuja una de las tres formas secas del
+/// kit, un gigante viejo una de las [`GIANT_FORMS`], cualquier otro caldén una
+/// de sus formas vivas según sus pesos; un chañar, una de sus formas según los
+/// suyos.
 pub(crate) fn kit_variant(tree: &Tree) -> (tree::Species, usize) {
     let roll = look_byte(tree, 0);
     match tree.species {
@@ -589,7 +609,7 @@ pub(crate) fn kit_variant(tree: &Tree) -> (tree::Species, usize) {
         ),
         Species::Calden => (tree::Species::Calden, weighted(&CALDEN_FORM_WEIGHTS, roll)),
         Species::Chanar => (tree::Species::Chanar, weighted(&CHANAR_FORM_WEIGHTS, roll)),
-        // The other species: every form equally.
+        // Las demás especies: todas las formas por igual.
         other => {
             let kit = kit_species(other);
             (kit, roll as usize * kit.variants() / 256)
@@ -597,7 +617,8 @@ pub(crate) fn kit_variant(tree: &Tree) -> (tree::Species, usize) {
     }
 }
 
-/// The tree kit's species and form drawn for `shrub`, from its seed.
+/// La especie y la forma del kit de árboles que se dibujan para `shrub`, a
+/// partir de su semilla.
 pub(crate) fn shrub_variant(shrub: &Shrub) -> (tree::Species, usize) {
     let species = match shrub.kind {
         ShrubKind::Piquillin => tree::Species::Piquillin,
@@ -610,7 +631,8 @@ pub(crate) fn shrub_variant(shrub: &Shrub) -> (tree::Species, usize) {
     )
 }
 
-/// The bark tint and the leaf tint drawn for `shrub`, from its seed.
+/// El tinte de corteza y el tinte de hojas que se dibujan para `shrub`, a
+/// partir de su semilla.
 pub(crate) fn shrub_tints(shrub: &Shrub) -> (usize, usize) {
     let n = shrub_variant(shrub).0.tints();
     (
@@ -619,7 +641,8 @@ pub(crate) fn shrub_tints(shrub: &Shrub) -> (usize, usize) {
     )
 }
 
-/// The bark tint and the leaf tint drawn for `tree`, from its seed.
+/// El tinte de corteza y el tinte de hojas que se dibujan para `tree`, a partir
+/// de su semilla.
 pub(crate) fn kit_tints(tree: &Tree) -> (usize, usize) {
     let n = kit_species(tree.species).tints();
     (
@@ -628,9 +651,9 @@ pub(crate) fn kit_tints(tree: &Tree) -> (usize, usize) {
     )
 }
 
-/// The Quaternius model drawn for `tuft` when it is one of the seeded few
-/// weeds and wildflowers; `None` for the grass, which is drawn as
-/// [`crate::grass`] cards.
+/// El modelo de Quaternius que se dibuja para `tuft` cuando es uno de los pocos
+/// yuyos y flores silvestres elegidos por semilla; `None` para el pasto, que se
+/// dibuja como tarjetas de [`crate::grass`].
 pub fn tuft_model(tuft: &Tuft) -> Option<Model> {
     let roll = spot_unit(tuft.at, 7);
     if roll < FLOWER_SHARE {
@@ -642,18 +665,19 @@ pub fn tuft_model(tuft: &Tuft) -> Option<Model> {
     None
 }
 
-/// The 1919 pampa's colour (sRGB) and finish for `role`'s MTL material
-/// `name`, whose own colour was `kd`.
+/// El color (sRGB) y el acabado de la pampa de 1919 para el material MTL `name`
+/// de `role`, cuyo color propio era `kd`.
 pub fn recolour(role: Role, name: &str, kd: [f32; 3]) -> ([f32; 3], Finish) {
     let dead = matches!(role, Role::Snag | Role::Deadwood);
     match (role, name) {
-        // Weathered grey on dead wood, dark grey-brown bark on the living.
+        // Gris curtido en la madera muerta, corteza de pardo grisáceo oscuro en
+        // la viva.
         (_, "Wood") if dead => ([0.42, 0.38, 0.33], Finish::Bark),
         (_, "Wood") => ([0.27, 0.22, 0.18], Finish::Bark),
         (_, "LightWood") => ([0.58, 0.49, 0.37], Finish::Bark),
-        // Tosca: the pale beige limestone crust of the pampa.
+        // Tosca: la costra caliza de un beige pálido de la pampa.
         (_, "Rock") => ([0.74, 0.67, 0.54], Finish::Rock),
-        // A dull olive crown.
+        // Una copa de oliva apagado.
         (Role::Calden, "DarkGreen") => ([0.26, 0.30, 0.17], Finish::Leaves),
         (Role::Calden, _) => ([0.34, 0.38, 0.21], Finish::Leaves),
         (Role::Thicket, _) => ([0.42, 0.46, 0.31], Finish::Leaves),
@@ -665,7 +689,8 @@ pub fn recolour(role: Role, name: &str, kd: [f32; 3]) -> ([f32; 3], Finish) {
         (Role::Deadwood, "Mushroom_Top") => ([0.55, 0.42, 0.33], Finish::Leaves),
         (Role::Deadwood, "Mushroom_Bottom") => ([0.78, 0.72, 0.62], Finish::Leaves),
         (Role::Deadwood, _) => ([0.40, 0.42, 0.26], Finish::Leaves),
-        // Anything else keeps its own colour, faded halfway to grey.
+        // Todo lo demás conserva su propio color, desvaído a mitad de camino
+        // hacia el gris.
         _ => {
             let srgb = Color::linear_rgb(kd[0], kd[1], kd[2]).to_srgba();
             let rgb = [srgb.red, srgb.green, srgb.blue];
@@ -685,11 +710,12 @@ fn smoothstep(lo: f32, hi: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// How `role`'s models are smoothed when baked: the largest bend between
-/// facets that still blends, in degrees, and how far the normals lean
-/// toward straight up (0 none, 1 all the way). Crowns, bushes and weeds
-/// blend almost every facet; bark and dead wood keep their broken edges a
-/// little; tosca stones keep their hard ones.
+/// Cómo se suavizan los modelos de `role` al hornearlos: el mayor doblez entre
+/// facetas que todavía se mezcla, en grados, y cuánto se inclinan las normales
+/// hacia la vertical (0 nada, 1 por completo). Las copas, los arbustos y los
+/// yuyos mezclan casi todas las facetas; la corteza y la madera muerta
+/// conservan un poco sus aristas quebradas; las piedras de tosca conservan las
+/// suyas marcadas.
 pub fn smoothing(role: Role) -> (f32, f32) {
     match role {
         Role::Calden | Role::Thicket | Role::Weed => (60.0, 0.0),
@@ -698,19 +724,21 @@ pub fn smoothing(role: Role) -> (f32, f32) {
     }
 }
 
-/// A finish and its positions, normals and colours, while baking.
+/// Un acabado y sus posiciones, normales y colores, durante el horneado.
 type BakedPart = (Finish, Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 4]>);
 
-/// `obj` as one mesh per finish, recoloured for `model`'s role into vertex
-/// colours and scaled to stand on the origin 1 unit tall, so a transform
-/// scale is its height in meters. Caldén crowns are widened. Vertices are
-/// a little darker low down: cheap baked occlusion. The pack ships one
-/// normal per face; they are smoothed here, once, per [`smoothing`]. A
-/// group that is not whole triangles with a normal per position is skipped
-/// with a warning.
+/// `obj` como una malla por acabado, recoloreada en colores de vértice según el
+/// rol de `model` y escalada para quedar parada sobre el origen con 1 unidad de
+/// alto, así que la escala de una transformación es su altura en metros. Las
+/// copas de caldén se ensanchan. Los vértices son un poco más oscuros abajo:
+/// oclusión horneada barata. El pack trae una normal por cara; aquí se
+/// suavizan, una sola vez, según [`smoothing`]. Un grupo que no está formado
+/// por triángulos enteros con una normal por posición se omite con una
+/// advertencia.
 pub fn bake(model: Model, obj: &ObjModel, colors: &MaterialColors) -> Vec<(Finish, Mesh)> {
-    // A group must be whole triangles with one normal per position; a
-    // malformed one is left out rather than shifting every later group.
+    // Un grupo debe estar formado por triángulos enteros con una normal por
+    // posición; uno mal formado se deja afuera en lugar de desplazar todos los
+    // grupos siguientes.
     let groups: Vec<&ObjGroup> = obj
         .groups
         .iter()
@@ -731,7 +759,8 @@ pub fn bake(model: Model, obj: &ObjModel, colors: &MaterialColors) -> Vec<(Finis
     let (lo, hi) = ys.fold((f32::MAX, f32::MIN), |(a, b), y| (a.min(y), b.max(y)));
     let height = (hi - lo).max(1e-3);
     let role = model.role();
-    // Stood up and widened first, so the smooth normals fit the final shape.
+    // Primero se para y se ensancha, para que las normales suaves se ajusten a
+    // la forma final.
     let stand = |p: &[f32; 3]| {
         let y = (p[1] - lo) / height;
         let widen = if role == Role::Calden {
@@ -748,7 +777,7 @@ pub fn bake(model: Model, obj: &ObjModel, colors: &MaterialColors) -> Vec<(Finis
     let (angle, lift) = smoothing(role);
     let smooth = smooth_normals(&stood, angle);
     let mut parts: Vec<BakedPart> = Vec::new();
-    // Each group's own slice of the positions and smooth normals.
+    // La porción propia de cada grupo de las posiciones y las normales suaves.
     let mut start = 0;
     for group in groups {
         let end = start + group.positions.len();
@@ -768,8 +797,9 @@ pub fn bake(model: Model, obj: &ObjModel, colors: &MaterialColors) -> Vec<(Finis
         for ((&p, &s), n) in stood.iter().zip(smooth).zip(&group.normals) {
             let y = p[1];
             part.1.push(p);
-            // A face wound against the file's own normal (a handful in the
-            // pack) keeps the file's normal rather than shading inside out.
+            // Una cara enrollada en contra de la normal propia del archivo
+            // (unas pocas en el pack) conserva la normal del archivo en lugar
+            // de sombrearse al revés.
             let (file, s) = (Vec3::from_array(*n), Vec3::from_array(s));
             let s = if s.dot(file) < 0.0 { file } else { s };
             part.2
@@ -798,8 +828,8 @@ pub fn bake(model: Model, obj: &ObjModel, colors: &MaterialColors) -> Vec<(Finis
         .collect()
 }
 
-/// The vegetation models, baked once at startup, and the few materials
-/// every one of them shares.
+/// Los modelos de vegetación, horneados una sola vez al inicio, y los pocos
+/// materiales que comparten todos ellos.
 #[derive(Resource, Clone)]
 pub struct VegetationModels {
     parts: HashMap<Model, Vec<(Finish, Handle<Mesh>)>>,
@@ -810,14 +840,14 @@ pub struct VegetationModels {
 }
 
 impl VegetationModels {
-    /// Whether `model` was loaded.
+    /// Si `model` se cargó.
     pub fn has(&self, model: Model) -> bool {
         self.parts.contains_key(&model)
     }
 
-    /// `model`'s meshes and materials; `None` when it was not loaded. The
-    /// models are not tinted: `_tint` is only there for the callers that
-    /// still pass one.
+    /// Las mallas y materiales de `model`; `None` cuando no se cargó. Los
+    /// modelos no se tiñen: `_tint` está solo para quienes llaman y todavía
+    /// pasan uno.
     pub fn parts(
         &self,
         model: Model,
@@ -842,14 +872,14 @@ impl VegetationModels {
     }
 }
 
-/// Which grass tint a tuft at `at` takes, from grey-green (0) to dry yellow:
-/// the ground's dryness there, jittered per tuft.
+/// Qué tinte de pasto toma una mata en `at`, de verde grisáceo (0) a amarillo
+/// seco: la sequedad del suelo allí, con una variación por mata.
 pub fn grass_tint(dryness: f32, at: GroundVec2) -> usize {
     let k = dryness * (GRASS_TINTS - 1) as f32 + (spot_unit(at, 4) - 0.5) * 1.4;
     k.round().clamp(0.0, (GRASS_TINTS - 1) as f32) as usize
 }
 
-/// A white material with `finish`: vertex colours carry the paint.
+/// Un material blanco con `finish`: los colores de vértice llevan la pintura.
 fn finished(finish: Finish, double_sided: bool) -> StandardMaterial {
     tinted(finish, double_sided, Color::WHITE)
 }
@@ -867,13 +897,13 @@ pub(crate) fn tinted(finish: Finish, double_sided: bool, base_color: Color) -> S
     }
 }
 
-/// Loads and bakes every vegetation model from the [`AssetRoot`]: the
+/// Carga y hornea todos los modelos de vegetación desde el [`AssetRoot`]: el
 /// "Ultimate Nature Pack by Quaternius, CC0 1.0; see
 /// assets/models/vegetation/quaternius-ultimate-nature/CREDITS.md".
 ///
-/// It runs once, at startup; chunks only reuse the handles. A missing or
-/// broken file logs a warning and leaves that model out, so the
-/// procedural stand-in is drawn in its place.
+/// Se ejecuta una sola vez, al inicio; los chunks solo reutilizan los handles.
+/// Un archivo faltante o roto registra una advertencia y deja afuera ese
+/// modelo, así que en su lugar se dibuja el sustituto procedural.
 pub fn load_vegetation(
     mut commands: Commands,
     root: Option<Res<AssetRoot>>,
@@ -917,13 +947,13 @@ pub fn load_vegetation(
     });
 }
 
-/// Height the stand-in tree meshes are built at, per species; each tree is
-/// scaled from it.
+/// Altura a la que se construyen las mallas de árboles sustitutos, por especie;
+/// cada árbol se escala a partir de ella.
 pub(crate) fn reference_height(species: Species) -> f32 {
     if thicket(species) { 4.0 } else { 7.5 }
 }
 
-/// The procedural stand-in meshes and materials.
+/// Las mallas y materiales sustitutos procedurales.
 #[derive(Resource, Clone)]
 pub struct FloraKit {
     calden_trunk: Handle<Mesh>,
@@ -972,9 +1002,10 @@ fn setup_kit(
     });
 }
 
-/// Drawn solid from the camera out to `far - fade` meters, then dithered
-/// out by `far`. There is no near cut-off and no level-of-detail swap: a
-/// plant never changes shape, it only fades at the far end.
+/// Se dibuja sólido desde la cámara hasta `far - fade` metros, y luego se
+/// desvanece con dithering hasta `far`. No hay recorte cercano ni cambio de
+/// nivel de detalle: una planta nunca cambia de forma, solo se desvanece en el
+/// extremo lejano.
 pub(crate) fn visible_within(far: f32, fade: f32) -> VisibilityRange {
     VisibilityRange {
         start_margin: 0.0..0.0,
@@ -991,7 +1022,7 @@ enum Plant {
     Accent,
 }
 
-/// One entity to spawn under a chunk.
+/// Una entidad a crear bajo un chunk.
 type Part = (
     Mesh3d,
     MeshMaterial3d<StandardMaterial>,
@@ -1000,7 +1031,7 @@ type Part = (
     Plant,
 );
 
-/// What drawing a chunk's flora needs.
+/// Lo que necesita el dibujo de la flora de un chunk.
 struct Painter<'a> {
     terrain: &'a pampa_core::Terrain,
     site: &'a FloraSite,
@@ -1015,17 +1046,19 @@ impl Painter<'_> {
         let turned =
             Transform::from_translation(base).with_rotation(Quat::from_rotation_y(tree.yaw));
         let model = tree_model(tree);
-        // Trees are solid: the follow camera pulls in round a trunk instead
-        // of the tree fading out of its way.
+        // Los árboles son sólidos: la cámara de seguimiento se acerca alrededor
+        // de un tronco en lugar de que el árbol se desvanezca para no
+        // estorbarla.
         let plant = Plant::Tree(tree.species);
         let range = visible_within(TREE_FAR, TREE_FADE);
         if tree.species == Species::Calden {
             self.accent(tree, out);
         }
         if let Some(kit) = self.trees {
-            // The textured tree kit, a form's two shared meshes scaled to
-            // the height core planted and the width it gave the tree, in
-            // the bark and leaf tints its seed draws.
+            // El kit texturizado de árboles: las dos mallas compartidas de una
+            // forma, escaladas a la altura que plantó core y al ancho que le
+            // dio al árbol, en los tintes de corteza y de hojas que elige su
+            // semilla.
             let (species, v) = kit_variant(tree);
             let (bark_tint, leaf_tint) = kit_tints(tree);
             let own = kit.species(species);
@@ -1046,7 +1079,7 @@ impl Painter<'_> {
             return;
         }
         let Some(parts) = self.models.and_then(|m| m.parts(model, 0)) else {
-            // The model is missing: its stand-in, at every distance.
+            // Falta el modelo: su sustituto, a cualquier distancia.
             let stand_in =
                 turned.with_scale(Vec3::splat(tree.height / reference_height(tree.species)));
             for (mesh, material) in self.kit.tree(tree.species) {
@@ -1071,8 +1104,8 @@ impl Painter<'_> {
         }
     }
 
-    /// A shrub: a kit form's two shared meshes scaled to the height and
-    /// width core gave it. Without the kit it is not drawn.
+    /// Un arbusto: las dos mallas compartidas de una forma del kit, escaladas a
+    /// la altura y el ancho que le dio core. Sin el kit no se dibuja.
     fn shrub(&self, shrub: &Shrub, out: &mut Vec<Part>) {
         let Some(kit) = self.trees else {
             return;
@@ -1099,7 +1132,8 @@ impl Painter<'_> {
         }
     }
 
-    /// A seeded few caldenes get a stump or a fallen log beside them.
+    /// Unos pocos caldenes elegidos por semilla reciben un tocón o un tronco
+    /// caído al lado.
     fn accent(&self, tree: &Tree, out: &mut Vec<Part>) {
         if spot_unit(tree.at, 11) >= ACCENT_SHARE {
             return;
@@ -1136,15 +1170,17 @@ impl Painter<'_> {
         let base = world_from_ground(tuft.at, self.terrain.height(tuft.at.x, tuft.at.y));
         let transform =
             Transform::from_translation(base).with_rotation(Quat::from_rotation_y(tuft.yaw));
-        // Solid near the rider; past that each tuft fades at one of a few
-        // seeded distances, so the grass thins out in fine steps.
+        // Sólidas cerca del jinete; más allá, cada mata se desvanece a una de
+        // unas pocas distancias con semilla, así que el pasto se ralea en
+        // escalones finos.
         let step = (spot_unit(tuft.at, 5) * TUFT_FADE_STEPS).floor() / TUFT_FADE_STEPS;
         let fade_from = TUFT_SOLID + CAMERA_REACH + TUFT_SPREAD * step;
         let range = visible_within(fade_from + TUFT_FADE, TUFT_FADE);
         let plant = Plant::Tuft(tuft.kind);
-        // A seeded few are weeds and wildflowers, the Quaternius models;
-        // the rest is grass, one alpha-cut card tuft (one mesh, one
-        // material, so the same one range as any other tuft).
+        // Unas pocas, elegidas por semilla, son yuyos y flores silvestres, los
+        // modelos de Quaternius; el resto es pasto, una mata de tarjetas
+        // recortadas por alfa (una malla, un material, y por eso el mismo rango
+        // que cualquier otra mata).
         let weed = tuft_model(tuft).and_then(|model| {
             let tint = grass_tint(self.site.dryness(tuft.at), tuft.at);
             self.models?.parts(model, tint)
@@ -1190,8 +1226,9 @@ fn part(
     )
 }
 
-/// Grows the flora of every chunk built since the last run. A chunk that
-/// vanishes before the commands apply simply gets none.
+/// Hace crecer la flora de cada chunk construido desde la última ejecución. Un
+/// chunk que desaparece antes de que se apliquen los comandos simplemente no
+/// recibe ninguna.
 fn grow_flora(
     mut commands: Commands,
     flora: Option<Res<WorldFlora>>,
@@ -1245,21 +1282,22 @@ fn grow_flora(
     }
 }
 
-/// Triangles in a triangle-list mesh, flat-shaded or indexed.
+/// Triángulos de una malla de lista de triángulos, con sombreado plano o
+/// indexada.
 pub fn triangles(mesh: &Mesh) -> usize {
     mesh.indices()
         .map_or(mesh.count_vertices(), |indices| indices.len())
         / 3
 }
 
-/// A flat-shaded triangle soup with per-vertex colours.
+/// Una sopa de triángulos con sombreado plano y colores por vértice.
 #[derive(Default)]
 struct Facets {
     positions: Vec<[f32; 3]>,
     colors: Vec<[f32; 4]>,
 }
 
-/// An sRGB colour as linear vertex paint.
+/// Un color sRGB como pintura de vértice lineal.
 fn paint(r: f32, g: f32, b: f32) -> [f32; 4] {
     LinearRgba::from(Color::srgb(r, g, b)).to_f32_array()
 }
@@ -1274,8 +1312,8 @@ impl Facets {
         self.colors.extend(colors);
     }
 
-    /// A tapered tube through `rings` (center, radius), `sides` facets
-    /// round, closed at the top.
+    /// Un tubo ahusado que pasa por `rings` (centro, radio), con `sides`
+    /// facetas alrededor, cerrado arriba.
     fn loft(&mut self, rings: &[(Vec3, f32)], sides: u32, color: [f32; 4]) {
         let frames: Vec<Vec<Vec3>> = rings
             .iter()
@@ -1302,7 +1340,7 @@ impl Facets {
             .collect();
         let n = rings.len();
         for k in 0..n.saturating_sub(1) {
-            // Darker low down: the trunk's foot sits in shade.
+            // Más oscuro abajo: el pie del tronco queda en sombra.
             let (lo, hi) = (
                 shade(color, 0.7 + 0.3 * k as f32 / (n - 1) as f32),
                 shade(color, 0.7 + 0.3 * (k + 1) as f32 / (n - 1) as f32),
@@ -1324,8 +1362,9 @@ impl Facets {
         }
     }
 
-    /// A lumpy leaf cluster: an icosphere stretched to `radii`, each vertex
-    /// pushed in or out a little by `seed`. Its underside is darker.
+    /// Un racimo de hojas grumoso: una icoesfera estirada a `radii`, con cada
+    /// vértice empujado un poco hacia adentro o hacia afuera según `seed`. Su
+    /// parte inferior es más oscura.
     fn blob(&mut self, center: Vec3, radii: Vec3, seed: u32, color: [f32; 4]) {
         let (points, indices) = icosphere();
         let lumpy: Vec<Vec3> = points
@@ -1358,7 +1397,7 @@ impl Facets {
     }
 }
 
-/// Unit icosphere (one subdivision: 80 faces), as points and indices.
+/// Icoesfera unitaria (una subdivisión: 80 caras), como puntos e índices.
 fn icosphere() -> (Vec<Vec3>, Vec<usize>) {
     let mesh = Sphere::new(1.0)
         .mesh()
@@ -1375,7 +1414,7 @@ fn icosphere() -> (Vec<Vec3>, Vec<usize>) {
     (points, indices)
 }
 
-/// Deterministic `[0, 1)` from a seed and an index.
+/// Un `[0, 1)` determinista a partir de una semilla y un índice.
 fn jitter(seed: u32, i: u32) -> f32 {
     let mut v = seed ^ i.wrapping_mul(0x9e37_79b9);
     v ^= v >> 16;
@@ -1386,17 +1425,18 @@ fn jitter(seed: u32, i: u32) -> f32 {
     (v >> 8) as f32 / (1u32 << 24) as f32
 }
 
-/// Caldén bark: dark, grey-brown.
+/// Corteza de caldén: oscura, pardo grisácea.
 fn calden_bark() -> [f32; 4] {
     paint(0.27, 0.22, 0.18)
 }
 
-/// Chañar bark: smooth and greenish.
+/// Corteza de chañar: lisa y verdosa.
 fn chanar_bark() -> [f32; 4] {
     paint(0.46, 0.49, 0.34)
 }
 
-/// A caldén 7.5 m tall: a short thick trunk forking into three limbs.
+/// Un caldén de 7.5 m de alto: un tronco corto y grueso que se bifurca en tres
+/// ramas.
 fn calden_trunk() -> Mesh {
     let mut f = Facets::default();
     let bark = calden_bark();
@@ -1419,8 +1459,8 @@ fn calden_trunk() -> Mesh {
     f.into_mesh()
 }
 
-/// A caldén's broad umbrella crown: a wide flat central cluster and four
-/// around it, from about 4.3 m to the top.
+/// La copa ancha en forma de sombrilla de un caldén: un racimo central ancho y
+/// plano y cuatro alrededor, desde unos 4.3 m hasta la punta.
 fn calden_crown() -> Mesh {
     let mut f = Facets::default();
     let leaves = paint(0.34, 0.38, 0.21);
@@ -1443,7 +1483,8 @@ fn calden_crown() -> Mesh {
     f.into_mesh()
 }
 
-/// A chañar 4 m tall: a slim leaning trunk splitting into two stems.
+/// Un chañar de 4 m de alto: un tronco delgado e inclinado que se divide en dos
+/// tallos.
 fn chanar_trunk() -> Mesh {
     let mut f = Facets::default();
     let bark = chanar_bark();
@@ -1468,7 +1509,7 @@ fn chanar_trunk() -> Mesh {
     f.into_mesh()
 }
 
-/// A chañar's small rounded crown of three clusters.
+/// La pequeña copa redondeada de un chañar, de tres racimos.
 fn chanar_crown() -> Mesh {
     let mut f = Facets::default();
     let leaves = paint(0.40, 0.46, 0.25);
@@ -1545,7 +1586,7 @@ mod tests {
         app
     }
 
-    /// Distinct asset ids in `ids`.
+    /// Ids de assets distintos en `ids`.
     fn distinct<T: PartialEq>(ids: impl Iterator<Item = T>) -> usize {
         let mut seen: Vec<T> = Vec::new();
         for id in ids {
@@ -1564,8 +1605,9 @@ mod tests {
             .collect()
     }
 
-    /// Like [`app_with`] over the shipped assets, with an asset server and
-    /// a GPU that takes BC7, so the tree kit's materials are textured.
+    /// Como [`app_with`] sobre los assets que trae el juego, con un servidor de
+    /// assets y una GPU que acepta BC7, para que los materiales del kit de
+    /// árboles tengan textura.
     fn textured_app(focus: GroundVec2) -> App {
         use bevy::image::{CompressedImageFormatSupport, CompressedImageFormats};
         let formats = CompressedImageFormats::BC;
@@ -1591,8 +1633,8 @@ mod tests {
         app
     }
 
-    /// Every tree part of `app`: its species, mesh, material, transform
-    /// and range.
+    /// Todas las partes de árbol de `app`: su especie, malla, material,
+    /// transformación y rango.
     type DrawnTree = (
         Species,
         AssetId<Mesh>,
@@ -1644,7 +1686,8 @@ mod tests {
             assert!(leaves.base_color_texture.is_some(), "{species:?} leaves");
             assert_eq!(leaves.alpha_mode, AlphaMode::Mask(0.5), "{species:?}");
         }
-        // Every tree is a bark and a leaf entity of its species' kit.
+        // Cada árbol es una entidad de corteza y una de hojas del kit de su
+        // especie.
         let drawn = drawn_trees(&mut app);
         let planted: Vec<Tree> = WorldConfig::default()
             .chunks_near(focus, 1)
@@ -1667,11 +1710,11 @@ mod tests {
             variants.insert((*species as u8, *mesh));
             tinted.insert((*species as u8, *material));
         }
-        // Several seeded variants of each: the fields do not repeat.
+        // Varias variantes con semilla de cada una: los campos no se repiten.
         for species in [Species::Calden, Species::Chanar] {
             let n = variants.iter().filter(|v| v.0 == species as u8).count();
             assert!(n >= 8, "{species:?}: {n} meshes");
-            // And their bark and leaves in several tints.
+            // Y su corteza y sus hojas en varios tintes.
             let m = tinted.iter().filter(|v| v.0 == species as u8).count();
             assert!(m >= 4, "{species:?}: {m} materials");
         }
@@ -1695,8 +1738,9 @@ mod tests {
                 .iter()
                 .find(|v| v.bark.id() == mesh || v.leaves.id() == mesh)
                 .unwrap();
-            // Scaled to a height core plants, and wider or narrower by the
-            // width it gave the tree, evenly across and no more.
+            // Escalados a una altura que planta core, y más anchos o más
+            // angostos según el ancho que le dio al árbol, de forma uniforme a
+            // lo ancho y nada más.
             let (lo, hi) = species.height_range();
             let h = v.height * transform.scale.y;
             assert!((lo - 0.01..=hi + 0.01).contains(&h), "{species:?} {h}");
@@ -1704,10 +1748,10 @@ mod tests {
             let width = transform.scale.x / transform.scale.y;
             assert!((0.8..=1.4).contains(&width), "{species:?} {width}");
             widths.insert((width * 50.0).round() as i32);
-            // One shared range, as the Quaternius trees had.
+            // Un único rango compartido, como tenían los árboles de Quaternius.
             assert!(drawn_range == range);
         }
-        // Trees come narrow and broad, not all as modelled.
+        // Los árboles salen angostos y anchos, no todos como en el modelo.
         assert!(widths.len() >= 8, "{widths:?}");
     }
 
@@ -1736,8 +1780,9 @@ mod tests {
                 assert_eq!(species, KitSpecies::Calden);
                 caldenes += 1;
                 mature += usize::from(tree.age == Age::Mature);
-                // A snag draws a dead or sparse form, and only the mature
-                // trees are snags; an old giant is a broad live form.
+                // Un árbol seco dibuja una forma muerta o rala, y solo los
+                // árboles maduros son árboles secos; un gigante viejo es una
+                // forma viva ancha.
                 assert_eq!(v >= CALDEN_LIVE, is_snag(tree));
                 snags += usize::from(is_snag(tree));
                 if is_snag(tree) {
@@ -1750,21 +1795,22 @@ mod tests {
                 assert_eq!(species, kit_species(tree.species));
             }
         }
-        // Every form of both species is drawn, among the many trees.
+        // Se dibujan todas las formas de ambas especies, entre los muchos
+        // árboles.
         assert_eq!(forms[&Species::Calden].len(), KitSpecies::Calden.variants());
         assert_eq!(forms[&Species::Chanar].len(), KitSpecies::Chanar.variants());
         for species in [Species::Calden, Species::Chanar] {
             assert_eq!(tints[&species].0.len(), crate::tree::FIELD_TINTS);
             assert_eq!(tints[&species].1.len(), crate::tree::FIELD_TINTS);
         }
-        // The algarrobo, tala and espinillo draw each of their own forms and
-        // tints too (the ombú is too rare to count on here).
+        // El algarrobo, el tala y el espinillo también dibujan cada una de sus
+        // formas y tintes (el ombú es demasiado raro para contar con él aquí).
         for species in [Species::Algarrobo, Species::Tala, Species::Espinillo] {
             assert_eq!(forms[&species].len(), kit_species(species).variants());
             assert_eq!(tints[&species].0.len(), crate::tree::FIELD_TINTS);
         }
-        // The live forms share out by their weights: the classic form is
-        // the commonest, no live form is rare or rules.
+        // Las formas vivas se reparten según sus pesos: la forma clásica es la
+        // más común, ninguna forma viva es rara ni domina.
         let live: Vec<&Tree> = trees
             .iter()
             .filter(|t| t.species == Species::Calden && !is_snag(t) && t.age != Age::Old)
@@ -1783,7 +1829,8 @@ mod tests {
         assert!((0.08..=0.14).contains(&share), "{share}");
     }
 
-    /// The parts a [`Painter`] draws for `tree`, with the tree kit or without.
+    /// Las partes que dibuja un [`Painter`] para `tree`, con el kit de árboles
+    /// o sin él.
     fn painted(app: &App, tree: &Tree, with_kit: bool) -> Vec<Part> {
         let kit = app.world().resource::<FloraKit>();
         let models = app.world().resource::<VegetationModels>();
@@ -1806,7 +1853,7 @@ mod tests {
         parts.iter().map(|p| p.0.0.id()).collect()
     }
 
-    /// A tree of `species` and `age` at the ground's origin.
+    /// Un árbol de `species` y `age` en el origen del suelo.
     fn planted(species: Species, age: Age, variant: u32) -> Tree {
         let (lo, hi) = age.height_range(species);
         Tree {
@@ -1880,7 +1927,7 @@ mod tests {
                 .map(|(m, _)| m.id())
                 .collect();
             assert_eq!(drawn, want, "{tree:?}");
-            // And the kit draws something else, two parts.
+            // Y el kit dibuja otra cosa, de dos partes.
             let with = painted(&app, tree, true);
             assert_eq!(with.iter().filter(accent).count(), 2);
             assert!(
@@ -1934,9 +1981,9 @@ mod tests {
             .filter(|p| matches!(p.4, Plant::Accent))
             .count();
         assert!(accents >= 1, "{accents}");
-        // The kit's tree under it: two parts, as without an accent.
+        // El árbol del kit debajo: dos partes, como sin un acento.
         assert_eq!(parts.len() - accents, 2);
-        // A chañar never gets one.
+        // Un chañar nunca recibe uno.
         let chanar = trees.iter().find(|t| t.species == Species::Chanar).unwrap();
         assert!(
             painted(&app, chanar, true)
@@ -1945,7 +1992,7 @@ mod tests {
         );
     }
 
-    /// The triangles of a kit form's bark and leaves.
+    /// Los triángulos de la corteza y las hojas de una forma del kit.
     fn form_triangles(meshes: &Assets<Mesh>, variant: &crate::tree::TreeVariant) -> usize {
         [&variant.bark, &variant.leaves]
             .iter()
@@ -1965,9 +2012,9 @@ mod tests {
         app.update();
         let kit = app.world().resource::<TreeKit>().clone();
         let meshes = app.world().resource::<Assets<Mesh>>();
-        // The per-tree range comes from the forms themselves, not from a
-        // number a seed could undercut: the lightest and the heaviest of
-        // every field form (the stub snag is the lightest caldén).
+        // El rango por árbol sale de las formas mismas, no de un número que una
+        // semilla podría socavar: la más liviana y la más pesada de cada forma
+        // de campo (el árbol seco trunco es el caldén más liviano).
         let forms: Vec<usize> = KitSpecies::FIELD
             .iter()
             .flat_map(|&s| kit.species(s).variants.iter())
@@ -1977,12 +2024,13 @@ mod tests {
             *forms.iter().min().expect("forms"),
             *forms.iter().max().expect("forms"),
         );
-        // Absolute per-tree bounds, fixed numbers on purpose: the forms'
-        // own min/max can never fail a check against themselves. Real
-        // counts today: 272 (the stub snag) to 1136 (a town tree). The
-        // ceiling keeps about 5% over 1136 and the floor about 25% under
-        // 272, so a form that blows past its budget (or a mesh that
-        // collapses) fails, but ordinary retuning does not.
+        // Límites absolutos por árbol, números fijos a propósito: el mínimo y
+        // el máximo propios de las formas nunca pueden fallar una verificación
+        // contra sí mismos. Cantidades reales hoy: de 272 (el árbol seco
+        // trunco) a 1136 (un árbol de pueblo). El techo deja cerca de un 5% por
+        // encima de 1136 y el piso cerca de un 25% por debajo de 272, así que
+        // una forma que se pasa de su presupuesto (o una malla que colapsa)
+        // falla, pero un reajuste común no.
         const TREE_MIN: usize = 200;
         const TREE_MAX: usize = 1200;
         assert!(heaviest <= TREE_MAX, "{heaviest}");
@@ -2002,11 +2050,11 @@ mod tests {
             trees.len()
         );
         assert!(trees.len() >= 60, "{}", trees.len());
-        // Every one at the top of the range, at the most, over the budget.
+        // Todos en el tope del rango, como mucho, por encima del presupuesto.
         assert!(total <= FloraSite::TREE_BUDGET * heaviest, "{total}");
     }
 
-    /// The chunk with the most shrubs near the origin.
+    /// El chunk con más arbustos cerca del origen.
     fn shrub_chunk() -> ChunkCoord {
         let flora = site();
         (-12..12)
@@ -2037,13 +2085,13 @@ mod tests {
             .iter(app.world())
             .map(|(p, m, mat, t, r)| (p.0, m.id(), mat.id(), *t, r.clone()))
             .collect();
-        // A bark and a leaf entity each.
+        // Una entidad de corteza y una de hojas cada uno.
         assert_eq!(drawn.len(), planted.len() * 2);
         assert!(planted.len() > 200, "{}", planted.len());
         let range = visible_within(TREE_FAR, TREE_FADE);
         let mut forms = std::collections::HashSet::new();
         for (kind, mesh, material, transform, drawn_range) in &drawn {
-            // The one shared tree range: no per-entity ranges.
+            // El único rango compartido de árboles: sin rangos por entidad.
             assert!(*drawn_range == range);
             let (species, _) = shrub_variant(&Shrub {
                 at: GroundVec2::ZERO,
@@ -2059,7 +2107,8 @@ mod tests {
             assert!(bark != leaves, "{kind:?} draws a kit mesh");
             let tints = if bark { &k.bark_tints } else { &k.leaf_tints };
             assert!(tints.iter().any(|m| m.id() == *material), "{kind:?}");
-            // Scaled evenly across, within the heights core planted.
+            // Escalados de forma uniforme a lo ancho, dentro de las alturas que
+            // plantó core.
             let v = k
                 .variants
                 .iter()
@@ -2071,12 +2120,12 @@ mod tests {
             assert!((lo - 0.01..=hi + 0.01).contains(&h), "{kind:?} {h}");
             forms.insert((*kind as u8, *mesh));
         }
-        // Several seeded forms of each kind.
+        // Varias formas con semilla de cada tipo.
         for kind in ShrubKind::ALL {
             let n = forms.iter().filter(|f| f.0 == kind as u8).count();
             assert!(n >= 8, "{kind:?}: {n} meshes");
         }
-        // The form and the tints are the shrub's seed, nothing else.
+        // La forma y los tintes son la semilla del arbusto, nada más.
         for shrub in &planted {
             assert_eq!(
                 shrub_variant(shrub),
@@ -2175,8 +2224,9 @@ mod tests {
         for tree in trees.iter().filter(|t| t.species == Species::Chanar) {
             assert!(matches!(tree_model(tree), Model::Bush(1 | 2)));
         }
-        // A few dead snags, deterministically by seed: a tenth of the
-        // mature caldenes, a few percent of all trees.
+        // Unos pocos árboles secos muertos, de forma determinista según la
+        // semilla: una décima parte de los caldenes maduros, un pequeño
+        // porcentaje de todos los árboles.
         let share = dead as f32 / trees.len() as f32;
         println!(
             "{dead} snags of {caldenes} caldenes, {} trees: {share}",
@@ -2194,15 +2244,16 @@ mod tests {
             let model = tuft_model(tuft);
             match model {
                 Some(Model::Plant(1..=5) | Model::Flowers) => weeds += 1,
-                // Grass is drawn as cards, not as a model.
+                // El pasto se dibuja como tarjetas, no como modelo.
                 None => {}
                 other => panic!("{other:?}"),
             }
         }
         let share = weeds as f32 / tufts.len() as f32;
         assert!((0.02..=0.12).contains(&share), "weeds {share}");
-        // Every model has a file, and the set covers the 24 files still used
-        // (the four Quaternius grass OBJs are on disk but unused).
+        // Cada modelo tiene un archivo, y el conjunto cubre los 24 archivos que
+        // todavía se usan (los cuatro OBJ de pasto de Quaternius están en disco
+        // pero sin usar).
         let all = Model::all();
         assert_eq!(all.len(), 24);
         for model in &all {
@@ -2243,7 +2294,7 @@ mod tests {
             .iter()
             .fold([0.0; 3], |a, c| [a[0] + c[0], a[1] + c[1], a[2] + c[2]]);
         let mean = mean.map(|c| c / leaves.len() as f32);
-        // Source: saturated green. Now: olive, redder and brighter.
+        // Origen: verde saturado. Ahora: oliva, más rojizo y más claro.
         assert!(
             mean[0] / mean[1] > source[0] / source[1] + 0.15,
             "{mean:?} {source:?}"
@@ -2252,7 +2303,7 @@ mod tests {
             mean[2] / mean[1] < source[2] / source[1],
             "{mean:?} {source:?}"
         );
-        // One unit tall, standing on the origin; the crown widened.
+        // Una unidad de alto, parado sobre el origen; la copa ensanchada.
         let all: Vec<[f32; 3]> = baked.iter().flat_map(|(_, m)| points(m)).collect();
         let (lo, hi) = all
             .iter()
@@ -2267,7 +2318,7 @@ mod tests {
             .fold(0.0, f32::max);
         let width = all.iter().map(|p| p[0].hypot(p[2])).fold(0.0, f32::max);
         assert!(width > raw_width / raw_height * 1.1, "{width}");
-        // Its trunk is as thick as the obstacle `flora` plants for it.
+        // Su tronco es tan grueso como el obstáculo que planta `flora` para él.
         let trunk = points(&baked[0].1)
             .into_iter()
             .filter(|p| (0.06..0.14).contains(&p[1]))
@@ -2277,7 +2328,7 @@ mod tests {
             (0.025..0.05).contains(&trunk),
             "trunk radius / height {trunk}"
         );
-        // Rocks are tosca beige and rough.
+        // Las rocas son de un beige tosca y rugosas.
         let (obj, kd) = loaded(Model::Rock(1));
         let rock = bake(Model::Rock(1), &obj, &kd);
         assert_eq!(rock[0].0, Finish::Rock);
@@ -2293,17 +2344,18 @@ mod tests {
             normals: vec![[0.0, 0.0, 1.0]; normals],
             uvs: None,
         };
-        // Two good triangles one unit tall, standing on the origin already.
+        // Dos triángulos correctos de una unidad de alto, ya parados sobre el
+        // origen.
         let a = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
         let b = [[3.0, 0.0, 0.0], [4.0, 0.0, 0.0], [3.0, 1.0, 0.0]];
         let obj = ObjModel {
             mtllib: None,
             groups: vec![
-                // Four positions for three normals: it would shift every
-                // later group by one vertex.
+                // Cuatro posiciones para tres normales: desplazaría todos los
+                // grupos siguientes en un vértice.
                 group(&[[9.0, 0.5, 0.0]; 4], 3),
                 group(&a, 3),
-                // Not whole triangles.
+                // No son triángulos enteros.
                 group(&[[9.0, 0.5, 0.0]; 2], 2),
                 group(&b, 3),
             ],
@@ -2323,7 +2375,8 @@ mod tests {
         }
     }
 
-    /// Vertices of a mesh grouped by position (welded points), by normal.
+    /// Vértices de una malla agrupados por posición (puntos soldados), según la
+    /// normal.
     fn welded(mesh: &Mesh) -> Vec<Vec<Vec3>> {
         let mut at: HashMap<[u32; 3], Vec<Vec3>> = HashMap::new();
         for (p, n) in points(mesh).into_iter().zip(normals(mesh)) {
@@ -2334,8 +2387,9 @@ mod tests {
         at.into_values().filter(|ns| ns.len() > 1).collect()
     }
 
-    /// The share of a mesh's welded points whose vertices all carry one
-    /// normal: about 0 for flat shading, 1 for smooth without creases.
+    /// La proporción de los puntos soldados de una malla cuyos vértices llevan
+    /// todos una misma normal: cerca de 0 para sombreado plano, 1 para suave
+    /// sin pliegues.
     fn smooth_share(mesh: &Mesh) -> f32 {
         let shared = welded(mesh);
         let smooth = shared
@@ -2345,11 +2399,12 @@ mod tests {
         smooth as f32 / shared.len().max(1) as f32
     }
 
-    /// Of the vertex pairs at one point whose normals are within 30 degrees
-    /// (neighbouring facets on one side of a surface), the share that carry
-    /// the same normal. Faceted meshes score about 0. Unlike
-    /// [`smooth_share`], the two faces of a card (a grass blade) welded
-    /// back to back do not count against it.
+    /// De los pares de vértices en un mismo punto cuyas normales difieren en
+    /// 30 grados o menos (facetas vecinas sobre un mismo lado de una
+    /// superficie), la proporción que lleva la misma normal. Las mallas
+    /// facetadas dan cerca de 0. A diferencia de [`smooth_share`], las dos
+    /// caras de una tarjeta (una hoja de pasto) soldadas espalda con espalda no
+    /// cuentan en contra.
     fn blend_share(mesh: &Mesh) -> f32 {
         let (mut near, mut same) = (0, 0);
         for ns in welded(mesh) {
@@ -2371,7 +2426,8 @@ mod tests {
             let (obj, kd) = loaded(model);
             bake(model, &obj, &kd)
         };
-        // Crowns, bushes and weeds blend across their facets.
+        // Las copas, los arbustos y los yuyos se mezclan a través de sus
+        // facetas.
         for model in [Model::CommonTree(1), Model::Bush(1), Model::Plant(3)] {
             for (finish, mesh) in bake_of(model) {
                 let share = blend_share(&mesh);
@@ -2384,11 +2440,11 @@ mod tests {
                 }
             }
         }
-        // Tosca stones keep some hard edges.
+        // Las piedras de tosca conservan algunas aristas marcadas.
         let rock = &bake_of(Model::Rock(1))[0].1;
         let share = smooth_share(rock);
         assert!(share < 0.95, "rock creases: {share}");
-        // Baking is deterministic.
+        // El horneado es determinista.
         let weed = |model| normals(&bake_of(model)[0].1);
         assert_eq!(weed(Model::Plant(3)), weed(Model::Plant(3)));
     }
@@ -2419,7 +2475,7 @@ mod tests {
                 .any(|id| *id == stand_ins[2] || *id == stand_ins[3]),
             "chañar stand-ins replaced"
         );
-        // Shared: a handful of meshes and materials for hundreds of parts.
+        // Compartidos: un puñado de mallas y materiales para cientos de partes.
         let mut q = with
             .world_mut()
             .query::<(&Mesh3d, &MeshMaterial3d<StandardMaterial>)>();
@@ -2440,27 +2496,29 @@ mod tests {
             "{}",
             pairs.len()
         );
-        // The field trees' bark and leaves come in a few tints each.
+        // La corteza y las hojas de los árboles de campo vienen en unos pocos
+        // tintes cada una.
         let tints = 2
             * (crate::tree::FIELD_TINTS - 1)
             * (KitSpecies::FIELD.len() + KitSpecies::SHRUBS.len());
-        // And the shrubs' own first bark and leaves.
-        // And the first bark and leaves of the species the field added: the
-        // algarrobo, tala, espinillo and ombú, and the four town species.
+        // Y la primera corteza y las primeras hojas propias de los arbustos.
+        // Y la primera corteza y las primeras hojas de las especies que agregó
+        // el campo: el algarrobo, el tala, el espinillo y el ombú, y las cuatro
+        // especies de pueblo.
         let added = 2 * (KitSpecies::FIELD.len() - 2 + KitSpecies::ALL.len());
         assert!(
             distinct(pairs.iter().map(|p| p.1))
                 <= 16 + 2 * KitSpecies::SHRUBS.len() + tints + added
         );
-        // Tufts are tinted from grey-green to dry yellow.
+        // Las matas se tiñen de verde grisáceo a amarillo seco.
         let mut q = with
             .world_mut()
             .query_filtered::<&MeshMaterial3d<StandardMaterial>, With<GrassTuft>>();
         assert!(distinct(q.iter(with.world()).map(|m| m.id())) >= 3);
 
-        // No asset folder, or a missing file: the kit's trees are drawn
-        // all the same (they need no model), and the stand-ins only when
-        // the kit is missing too.
+        // Sin carpeta de assets, o con un archivo faltante: los árboles del kit
+        // se dibujan igual (no necesitan modelo), y los sustitutos solo cuando
+        // también falta el kit.
         let mut without = app_with(focus, Some(assets().join("nowhere")), 1, 4);
         without.update();
         let models = without.world().resource::<VegetationModels>();
@@ -2476,8 +2534,8 @@ mod tests {
 
     #[test]
     fn visible_triangles_stay_under_budget_at_the_streaming_radius() {
-        // The densest grove nearby, with the default streaming radius and
-        // ground resolution.
+        // La isleta más densa de las cercanías, con el radio de streaming y la
+        // resolución de suelo por defecto.
         let flora = site();
         let size = WorldConfig::default().chunk_size;
         let densest = (-12..12)
@@ -2496,7 +2554,8 @@ mod tests {
         for (mesh, transform, range) in q.iter(app.world()) {
             let tris = meshes.get(&mesh.0).map_or(0, triangles);
             loaded += tris;
-            // Chunk meshes sit at the origin in world-space vertices.
+            // Las mallas de chunk quedan en el origen, con vértices en espacio
+            // del mundo.
             let Some(range) = range else {
                 ground += tris;
                 continue;
@@ -2517,8 +2576,8 @@ mod tests {
         assert!(visible < loaded, "distance culling works");
     }
 
-    /// How opaque `range` draws at `d` meters: 0 hidden, 1 solid, dithered
-    /// in between.
+    /// Qué tan opaco dibuja `range` a `d` metros: 0 oculto, 1 sólido, con
+    /// dithering entre medio.
     fn opacity(range: &VisibilityRange, d: f32) -> f32 {
         let ramp = |r: &std::ops::Range<f32>| {
             if r.end > r.start {
@@ -2532,11 +2591,11 @@ mod tests {
         ramp(&range.start_margin).min(1.0 - ramp(&range.end_margin))
     }
 
-    /// A drawn mesh and the distances it is drawn at.
+    /// Una malla dibujada y las distancias a las que se dibuja.
     type RangedMesh = (AssetId<Mesh>, VisibilityRange);
 
-    /// Every drawn tree part of a grove, with models loaded, grouped by the
-    /// spot it stands on.
+    /// Todas las partes de árbol dibujadas de una isleta, con los modelos
+    /// cargados, agrupadas según el lugar en que se encuentran.
     fn tree_groups(app: &mut App) -> Vec<Vec<RangedMesh>> {
         let mut q = app
             .world_mut()
@@ -2581,8 +2640,8 @@ mod tests {
     fn visibility_ranges_leave_no_gap_before_the_fog() {
         let mut app = app_with(grove_chunk(), Some(assets()), 1, 4);
         app.update();
-        // Trees are solid all the way to the dust fog; their fade-out is
-        // inside it.
+        // Los árboles son sólidos hasta la niebla de polvo; su desvanecimiento
+        // ocurre dentro de ella.
         for parts in tree_groups(&mut app) {
             for (_, range) in &parts {
                 assert!(
@@ -2597,7 +2656,8 @@ mod tests {
                 assert!(solid >= 1.0, "a tree half drawn at {d} m");
             }
         }
-        // Tufts stay solid near the rider, wherever the camera orbits.
+        // Las matas se mantienen sólidas cerca del jinete, orbite donde orbite
+        // la cámara.
         let mut q = app
             .world_mut()
             .query_filtered::<&VisibilityRange, With<GrassTuft>>();
@@ -2605,17 +2665,18 @@ mod tests {
             assert_eq!(range.start_margin, 0.0..0.0);
             assert!(range.end_margin.start >= TUFT_SOLID + CAMERA_REACH);
         }
-        // Bevy keeps every distinct range in a GPU slot for the app's whole
-        // life and culls unranged meshes once 65,535 are used: tufts share a
-        // few stepped ranges instead of one each.
+        // Bevy conserva cada rango distinto en un lugar de la GPU durante toda
+        // la vida de la app y descarta las mallas sin rango una vez que se usan
+        // 65.535: las matas comparten unos pocos rangos escalonados en lugar de
+        // tener uno cada una.
         let distinct: std::collections::HashSet<_> = q.iter(app.world()).cloned().collect();
         assert!(
             distinct.len() <= TUFT_FADE_STEPS as usize,
             "{} distinct tuft ranges",
             distinct.len()
         );
-        // Stones, shrubs, stumps and logs: solid from the rider, a fade at
-        // the far end only.
+        // Piedras, arbustos, tocones y troncos: sólidos desde el jinete, con un
+        // fundido solo en el extremo lejano.
         let mut q = app
             .world_mut()
             .query_filtered::<&VisibilityRange, (Without<GrassTuft>, Without<TreePart>)>();
@@ -2625,7 +2686,8 @@ mod tests {
         }
     }
 
-    /// Everything drawn on chunk `coord`: mesh, material and transform bits.
+    /// Todo lo dibujado en el chunk `coord`: datos de malla, material y
+    /// transformación.
     fn chunk_scene(app: &mut App, coord: ChunkCoord) -> Vec<(String, [u32; 10])> {
         let mut chunks = app.world_mut().query::<(Entity, &TerrainChunk)>();
         let chunk = chunks
@@ -2684,8 +2746,8 @@ mod tests {
         assert!(q.iter(app.world()).all(|m| !stand_ins.contains(&m.id())));
     }
 
-    /// The parts a [`Painter`] draws for the tufts of six chunks, with the
-    /// models or without.
+    /// Las partes que dibuja un [`Painter`] para las matas de seis chunks, con
+    /// los modelos o sin ellos.
     fn painted_tufts(app: &App, models: bool) -> Vec<(Tuft, Vec<Part>)> {
         let kit = app.world().resource::<FloraKit>();
         let all = app.world().resource::<VegetationModels>();
@@ -2718,7 +2780,7 @@ mod tests {
         for models in [true, false] {
             for (tuft, parts) in painted_tufts(&app, models) {
                 if models && spot_unit(tuft.at, 7) < WEED_SHARE {
-                    continue; // a weed or a wildflower keeps its model
+                    continue; // un yuyo o flor silvestre conserva su modelo
                 }
                 grass += 1;
                 assert_eq!(parts.len(), 1, "{tuft:?}");
@@ -2755,7 +2817,7 @@ mod tests {
         }
     }
 
-    /// The center of a chunk holding a grove.
+    /// El centro de un chunk que contiene una isleta.
     fn grove_chunk() -> GroundVec2 {
         let size = WorldConfig::default().chunk_size;
         let flora = site();
@@ -2787,8 +2849,8 @@ mod tests {
             })
             .fold((0, 0), |(a, b), (c, d)| (a + c, b + d));
         assert!(trees >= 10 && tufts > 100, "{trees} {tufts}");
-        // Two parts per tree (trunk and crown), one entity per tuft, all
-        // children of their chunk.
+        // Dos partes por árbol (tronco y copa), una entidad por mata, todas
+        // hijas de su chunk.
         assert_eq!(count::<TreePart>(&mut app), trees * 2);
         assert_eq!(count::<GrassTuft>(&mut app), tufts);
         let mut q = app
@@ -2801,7 +2863,7 @@ mod tests {
         let chunks: Vec<Entity> = chunks.iter(app.world()).collect();
         assert!(parents.iter().all(|p| chunks.contains(p)));
 
-        // Ride far away: the old chunks' flora goes with them.
+        // Se cabalga lejos: la flora de los chunks viejos se va con ellos.
         app.world_mut().resource_mut::<StreamFocus>().0 = focus + GroundVec2::new(3000.0, 0.0);
         app.update();
         let far = world.chunks_near(focus + GroundVec2::new(3000.0, 0.0), 1);
@@ -2830,8 +2892,9 @@ mod tests {
             meshes.len() <= 2 * CARD_VARIANTS && materials.len() <= 2 * GRASS_TINTS,
             "{meshes:?}"
         );
-        // Trees are the kit's: a bark and a leaf mesh a variant, a bark and
-        // a leaf material a species, however many trees there are.
+        // Los árboles son los del kit: una malla de corteza y una de hojas por
+        // variante, un material de corteza y uno de hojas por especie, sin
+        // importar cuántos árboles haya.
         let drawn = drawn_trees(&mut app);
         let tree_meshes = distinct(drawn.iter().map(|t| t.1));
         let tree_materials = distinct(drawn.iter().map(|t| t.2));
@@ -2873,11 +2936,11 @@ mod tests {
     fn a_thin_occluder_between_the_camera_and_the_rider_fades_and_comes_back() {
         let (mut app, tree, solid) = fade_app();
         let rider = Vec3::new(0.0, 1.5, 0.0);
-        // Camera 12 m south of the rider, the occluder 5 m north: clear.
+        // Cámara 12 m al sur del jinete, el oclusor 5 m al norte: despejado.
         app.world_mut().resource_mut::<SightLine>().0 = Some((rider, Vec3::new(0.0, 4.0, 12.0)));
         app.update();
         assert!(app.world().get::<Faded>(tree).is_none());
-        // Camera 12 m north: the tree is in the way.
+        // Cámara 12 m al norte: el árbol se interpone.
         app.world_mut().resource_mut::<SightLine>().0 = Some((rider, Vec3::new(0.0, 4.0, -12.0)));
         app.update();
         let faded = app
@@ -2895,7 +2958,7 @@ mod tests {
             .unwrap();
         assert_eq!(see_through.alpha_mode, AlphaMode::Blend);
         assert!((see_through.base_color.alpha() - FADED_ALPHA).abs() < 1e-6);
-        // Over the top of the crown, the camera sees past it.
+        // Por encima de la copa, la cámara ve más allá de ella.
         app.world_mut().resource_mut::<SightLine>().0 = Some((rider, Vec3::new(0.0, 30.0, -12.0)));
         app.update();
         assert!(app.world().get::<Faded>(tree).is_none());
@@ -2906,7 +2969,7 @@ mod tests {
                 .0,
             solid
         );
-        // A despawned occluder leaves the index.
+        // Un oclusor eliminado sale del índice.
         app.world_mut().despawn(tree);
         app.world_mut().resource_mut::<SightLine>().0 = Some((rider, Vec3::new(0.0, 4.0, -12.0)));
         app.update();
@@ -2917,19 +2980,19 @@ mod tests {
     fn a_moved_occluder_is_found_where_it_now_stands() {
         let (mut app, tree, solid) = fade_app();
         app.update();
-        // The tree is moved 100 m east, 5 m north of a rider there.
+        // El árbol se mueve 100 m al este, 5 m al norte de un jinete allí.
         let mut occluder = app.world_mut().get_mut::<ThinOccluder>(tree).unwrap();
         occluder.a = GroundVec2::new(100.0, 5.0);
         occluder.b = GroundVec2::new(100.0, 5.0);
         let rider = Vec3::new(100.0, 1.5, 0.0);
-        // Camera to the north: it is in the way where it now stands.
+        // Cámara al norte: se interpone donde está ahora.
         app.world_mut().resource_mut::<SightLine>().0 = Some((rider, Vec3::new(100.0, 4.0, -12.0)));
         app.update();
         assert_eq!(
             app.world().get::<Faded>(tree).map(|f| f.0.clone()),
             Some(solid)
         );
-        // Where it stood, nothing is left in the way.
+        // Donde estaba, ya no queda nada que se interponga.
         let rider = Vec3::new(0.0, 1.5, 0.0);
         app.world_mut().resource_mut::<SightLine>().0 = Some((rider, Vec3::new(0.0, 4.0, -12.0)));
         app.update();
@@ -2940,7 +3003,7 @@ mod tests {
     #[test]
     fn a_material_not_loaded_yet_is_not_faded_into_a_blank_copy() {
         let (mut app, tree, _) = fade_app();
-        // The occluder's material is not in the store (yet).
+        // El material del oclusor no está en el almacén (todavía).
         let pending: Handle<StandardMaterial> = Handle::default();
         app.world_mut()
             .get_mut::<MeshMaterial3d<StandardMaterial>>(tree)
@@ -2951,7 +3014,7 @@ mod tests {
         app.update();
         assert!(app.world().get::<Faded>(tree).is_none());
         assert!(app.world().resource::<FadeMaterials>().0.is_empty());
-        // Once loaded, it fades into a see-through copy of itself.
+        // Una vez cargado, se desvanece en una copia translúcida de sí mismo.
         let red = StandardMaterial {
             base_color: Color::srgb(0.8, 0.1, 0.1),
             ..default()
@@ -2987,13 +3050,13 @@ mod tests {
             top: 1.5,
         };
         let rider = Vec3::new(0.0, 1.0, 0.0);
-        // North of the rider, the camera low: the fence is in the way.
+        // Al norte del jinete, con la cámara baja: el alambrado se interpone.
         assert!(fence.blocks(rider, Vec3::new(3.0, 1.2, -10.0)));
-        // High camera: the line passes over the wire.
+        // Cámara alta: la línea pasa por encima del alambre.
         assert!(!fence.blocks(rider, Vec3::new(3.0, 6.0, -10.0)));
-        // Camera south: nothing between.
+        // Cámara al sur: nada en medio.
         assert!(!fence.blocks(rider, Vec3::new(3.0, 1.2, 10.0)));
-        // Past the fence's end.
+        // Más allá del extremo del alambrado.
         assert!(!fence.blocks(rider, Vec3::new(60.0, 1.2, -10.0)));
         let post = ThinOccluder::post(
             GroundVec2::new(0.0, 6.0),
@@ -3025,7 +3088,7 @@ mod tests {
                 [0.0, 1.0, 0.0],
             ],
         );
-        // Four vertices, two triangles; a soup of three has one.
+        // Cuatro vértices, dos triángulos; una sopa de tres tiene uno.
         assert_eq!(
             triangles(
                 &mesh
@@ -3048,7 +3111,7 @@ mod tests {
         let chanar = triangles(&chanar_trunk()) + triangles(&chanar_crown());
         assert!((300..=800).contains(&calden), "{calden}");
         assert!((150..=500).contains(&chanar), "{chanar}");
-        // The caldén's crown spreads wider than the chañar's.
+        // La copa del caldén se extiende más que la del chañar.
         let width = |mesh: &Mesh| match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
             Some(VertexAttributeValues::Float32x3(p)) => {
                 p.iter().map(|v| v[0].hypot(v[2])).fold(0.0, f32::max)

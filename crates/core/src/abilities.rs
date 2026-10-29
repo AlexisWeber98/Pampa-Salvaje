@@ -1,33 +1,34 @@
-//! What the protagonist has learned to do: abilities unlocked by the story
-//! (or, in development, all at once), which the game asks before letting
-//! the player do something.
+//! Lo que el protagonista aprendió a hacer: habilidades que desbloquea la
+//! historia (o, en desarrollo, todas a la vez) y que el juego consulta antes de
+//! dejar que el jugador haga algo.
 //!
-//! Riding is the first: before the protagonist first mounts Don Hidalgo's
-//! horse (the one he lends) no other horse lets him on; from then on any
-//! horse does. The lasso, weapons and cars are kept for later.
+//! Montar es la primera: antes de que el protagonista monte por primera vez el
+//! caballo de Don Hidalgo (el que él presta), ningún otro caballo lo deja
+//! subir; a partir de entonces, cualquier caballo lo hace. El lazo, las armas y
+//! los autos quedan para más adelante.
 
-/// One thing the protagonist may learn to do.
+/// Algo que el protagonista puede aprender a hacer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Ability {
-    /// Mount any horse, not only the one Don Hidalgo lends.
+    /// Montar cualquier caballo, no solo el que presta Don Hidalgo.
     Ride,
-    /// Throw the lasso.
+    /// Tirar el lazo.
     Lasso,
-    /// Carry and use weapons.
+    /// Llevar y usar armas.
     Weapons,
-    /// Drive cars.
+    /// Conducir autos.
     Cars,
 }
 
 impl Ability {
-    /// Every ability, in the order they are listed.
+    /// Todas las habilidades, en el orden en que se listan.
     pub const ALL: [Self; 4] = [Self::Ride, Self::Lasso, Self::Weapons, Self::Cars];
 
     fn bit(self) -> u8 {
         1 << self as u8
     }
 
-    /// The short notice the player reads when it unlocks.
+    /// El aviso breve que lee el jugador cuando se desbloquea.
     pub fn notice(self) -> &'static str {
         match self {
             Self::Ride => "Ahora podés montar cualquier caballo",
@@ -38,29 +39,31 @@ impl Ability {
     }
 }
 
-/// The set of abilities unlocked so far; none at the start of the game.
+/// El conjunto de habilidades desbloqueadas hasta ahora; ninguna al empezar el
+/// juego.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Abilities(u8);
 
 impl Abilities {
-    /// Every ability unlocked.
+    /// Todas las habilidades desbloqueadas.
     pub fn all() -> Self {
         Self(Ability::ALL.iter().fold(0, |bits, a| bits | a.bit()))
     }
 
-    /// Whether `ability` is unlocked.
+    /// Si `ability` está desbloqueada.
     pub fn has(self, ability: Ability) -> bool {
         self.0 & ability.bit() != 0
     }
 
-    /// Unlocks `ability`; `true` if it was locked until now.
+    /// Desbloquea `ability`; `true` si estaba bloqueada hasta ahora.
     pub fn unlock(&mut self, ability: Ability) -> bool {
         let new = !self.has(ability);
         self.0 |= ability.bit();
         new
     }
 
-    /// Unlocks every ability and returns those that were locked until now.
+    /// Desbloquea todas las habilidades y devuelve las que estaban bloqueadas
+    /// hasta ahora.
     pub fn unlock_all(&mut self) -> Vec<Ability> {
         Ability::ALL
             .into_iter()
@@ -68,8 +71,8 @@ impl Abilities {
             .collect()
     }
 
-    /// Whether the player may get on a horse: Don Hidalgo's (`lent`) always,
-    /// any other once [`Ability::Ride`] is unlocked.
+    /// Si el jugador puede subirse a un caballo: al de Don Hidalgo (`lent`)
+    /// siempre, a cualquier otro una vez desbloqueada [`Ability::Ride`].
     pub fn may_mount(self, lent: bool) -> bool {
         lent || self.has(Ability::Ride)
     }

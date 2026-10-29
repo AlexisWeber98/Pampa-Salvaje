@@ -1,20 +1,22 @@
-//! Settlement layouts: street grid, plaza, railway and building footprints.
+//! Distribución de los asentamientos: cuadrícula de calles, plaza, vía férrea y
+//! huellas de los edificios.
 //!
-//! Pure data. A [`TownConfig`] describes a town (grid size, block and street
-//! widths, railway side, plaza placement); [`TownLayout::generate`] turns it
-//! into footprints. Render decides walls, roofs and colors per
-//! [`BuildingKind`]; logic only needs footprints for collision and the
-//! leveled ground.
+//! Datos puros. Una [`TownConfig`] describe un pueblo (tamaño de la cuadrícula,
+//! anchos de las manzanas y de las calles, lado de la vía férrea, ubicación de
+//! la plaza); [`TownLayout::generate`] la convierte en huellas. El render
+//! decide las paredes, los techos y los colores según el [`BuildingKind`]; la
+//! lógica solo necesita las huellas para la colisión y el terreno nivelado.
 //!
-//! Sidewalks are [`Sidewalk::WIDTH`] (3.5 m) strips along the block fronts
-//! of a city and round the plaza of a town, inside the streets, so a street
-//! of `street_width` leaves a carriageway of `street_width - 7` where both
-//! its sides are paved (at least [`TownConfig::MIN_STREET_WIDTH`] - 7 m).
-//! Trees are core data and obstacles: the plazas' rings
-//! ([`TownLayout::trees`]) and the [`ShadeTree`]s (sidewalk trees in their
-//! cazuelas, groves between the plaza paths, front trees on the dirt, yard
-//! and landmark trees), with the [`YardPlant`]s (shrubs and flower beds) of
-//! the yards as scenery.
+//! Las veredas son franjas de [`Sidewalk::WIDTH`] (3,5 m) a lo largo de los
+//! frentes de las manzanas de una ciudad y alrededor de la plaza de un pueblo,
+//! dentro de las calles, así que una calle de `street_width` deja una calzada
+//! de `street_width - 7` donde sus dos lados están pavimentados (al menos
+//! [`TownConfig::MIN_STREET_WIDTH`] - 7 m). Los árboles son datos del núcleo y
+//! obstáculos: los anillos de las plazas ([`TownLayout::trees`]) y los
+//! [`ShadeTree`]s (árboles de vereda en sus cazuelas, bosquecillos entre los
+//! senderos de la plaza, árboles en la tierra frente a las casas, árboles de
+//! patio y de puntos de referencia), con las [`YardPlant`]s (arbustos y
+//! canteros de flores) de los patios como escenografía.
 
 use std::fmt;
 
@@ -23,28 +25,29 @@ use crate::places::PLATFORM_SPOT_FROM_EDGE;
 use crate::rng::Rng;
 use crate::{Aabb, FlatArea, Heading, Terrain, Vec2};
 
-/// What a building is, so render can pick its look and logic its role.
+/// Qué es un edificio, para que el render pueda elegir su aspecto y la lógica
+/// su función.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BuildingKind {
     House,
-    /// "Almacén de ramos generales": the town's general store.
+    /// "Almacén de ramos generales": el comercio general del pueblo.
     GeneralStore,
     PoliceStation,
     Church,
     Station,
-    /// Raised platform between the station and the track.
+    /// Plataforma elevada entre la estación y la vía.
     Platform,
-    /// Corrugated-metal shed.
+    /// Galpón de chapa ondulada.
     Shed,
-    /// Long grain storage shed by the railway.
+    /// Galpón largo para almacenar cereal junto a la vía férrea.
     GrainStore,
-    /// Round, low "australian" water tank.
+    /// Tanque de agua "australiano", redondo y bajo.
     WaterTank,
-    /// Windmill tower pumping into a water tank.
+    /// Torre de molino que bombea agua a un tanque.
     Windmill,
 }
 
-/// Which side of a footprint faces the street (where a facade goes).
+/// Qué lado de una huella da a la calle (donde va la fachada).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Side {
     North,
@@ -54,7 +57,7 @@ pub enum Side {
 }
 
 impl Side {
-    /// The side facing the other way.
+    /// El lado que mira hacia el lado contrario.
     pub fn opposite(self) -> Self {
         match self {
             Side::North => Side::South,
@@ -65,24 +68,28 @@ impl Side {
     }
 }
 
-/// One static building: a box footprint, a wall height and its street side.
+/// Un edificio estático: una huella rectangular, una altura de pared y su lado
+/// de la calle.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Building {
     pub kind: BuildingKind,
     pub footprint: Aabb,
-    /// Wall height in meters (roofs and parapets are a render choice).
+    /// Altura de la pared en metros (los techos y los parapetos son una
+    /// decisión del render).
     pub height: f32,
     pub front: Side,
 }
 
 impl Building {
-    /// How far a galpón's (shed's or grain store's) roof reaches past its
-    /// walls, in meters: its eaves and verges end on the footprint, and its
-    /// walls stand this far in from it (render's `facade::walls::barn`).
+    /// Cuánto sobresale el techo de un galpón (de un cobertizo o de un depósito
+    /// de cereal) más allá de sus paredes, en metros: sus aleros terminan sobre
+    /// la huella, y sus paredes quedan esta distancia hacia adentro de ella (el
+    /// `facade::walls::barn` del render).
     pub const BARN_EAVES: f32 = 0.45;
 
-    /// What people and horses bump into: the footprint, or a galpón's
-    /// walls, [`Self::BARN_EAVES`] in from it (only its roof reaches out).
+    /// Con qué chocan las personas y los caballos: la huella, o las paredes de
+    /// un galpón, a [`Self::BARN_EAVES`] hacia adentro de ella (solo su techo
+    /// sobresale).
     pub fn collider(&self) -> Aabb {
         match self.kind {
             BuildingKind::Shed | BuildingKind::GrainStore => {
@@ -93,26 +100,26 @@ impl Building {
     }
 }
 
-/// Which of a town's streets get a brick sidewalk (vereda), by its blocks
-/// (user, 2026-10-25). The rest stay dirt.
+/// Qué calles de un pueblo tienen vereda de ladrillo, según sus manzanas
+/// (usuario, 2026-10-25). El resto queda de tierra.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Paving {
-    /// A village of at most [`Paving::VILLAGE_MAX`] blocks (Metileo):
-    /// dirt everywhere.
+    /// Un pueblito de como mucho [`Paving::VILLAGE_MAX`] manzanas (Metileo):
+    /// tierra en todas partes.
     None,
-    /// A small town (Castex, Monte Nievas, Caleufú): only the plaza's own
-    /// edge, a ring round it (user, 2026-10-25).
+    /// Un pueblo chico (Castex, Monte Nievas, Caleufú): solo el borde propio de
+    /// la plaza, un anillo alrededor de ella (usuario, 2026-10-25).
     Plaza,
-    /// A big town (General Pico, [`TownSize::Big`] or bigger): along every
-    /// block front and round every plaza.
+    /// Un pueblo grande (General Pico, [`TownSize::Big`] o más grande): a lo
+    /// largo de todo frente de manzana y alrededor de toda plaza.
     Everywhere,
 }
 
 impl Paving {
-    /// Most blocks of a village with no paving at all (3 x 3).
+    /// El máximo de manzanas de un pueblito sin ningún pavimento (3 x 3).
     pub const VILLAGE_MAX: usize = 9;
 
-    /// The paving of a town of `blocks` (columns, rows).
+    /// El pavimento de un pueblo de `blocks` (columnas, filas).
     pub fn of(blocks: (usize, usize)) -> Self {
         match TownSize::of(blocks) {
             _ if blocks.0 * blocks.1 <= Self::VILLAGE_MAX => Self::None,
@@ -122,34 +129,34 @@ impl Paving {
     }
 }
 
-/// What a sidewalk is made of: brick in a city, and round a town's plaza;
-/// a beaten-earth walk that blends into the grass elsewhere, with its curbs
-/// all the same (user, 2026-10-26).
+/// De qué está hecha una vereda: de ladrillo en una ciudad, y alrededor de la
+/// plaza de un pueblo; en otros lugares, un sendero de tierra apisonada que se
+/// funde con el pasto, siempre con sus cordones (usuario, 2026-10-26).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Walk {
     Brick,
     Earth,
 }
 
-/// One straight strip of sidewalk (brick or beaten earth, [`Walk`]), lying
-/// on the street along a block or plaza edge. It is drawn on the ground like the streets and the plaza
-/// paths, a few centimeters proud: people walk over it at the ground's
-/// height, so it changes nothing in how anyone moves.
+/// Una franja recta de vereda (de ladrillo o de tierra apisonada, [`Walk`]), apoyada sobre la calle a
+/// lo largo del borde de una manzana o de una plaza. Se dibuja sobre el suelo como las calles y los
+/// senderos de la plaza, unos centímetros más alta: la gente camina sobre ella a la altura del suelo,
+/// así que no cambia en nada cómo se mueve nadie.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Sidewalk {
     pub area: Aabb,
-    /// Its edges on the roadway, each with a curb.
+    /// Sus bordes sobre la calzada, cada uno con un cordón.
     pub curbs: Vec<Side>,
     pub walk: Walk,
 }
 
 impl Sidewalk {
-    /// Width of a sidewalk, curb included, in meters.
+    /// Ancho de una vereda, cordón incluido, en metros.
     pub const WIDTH: f32 = 3.5;
 
-    /// The strips of a sidewalk all round `area`: the north and south ones
-    /// reach round the corners, curbed at their ends; the east and west
-    /// ones run between them.
+    /// Las franjas de una vereda alrededor de todo `area`: las del norte y el
+    /// sur doblan en las esquinas, con cordón en sus extremos; las del este y
+    /// el oeste van entre ellas.
     fn ring(area: Aabb, walk: Walk) -> [Sidewalk; 4] {
         let w = Self::WIDTH;
         let (min, max) = (area.min, area.max);
@@ -179,10 +186,11 @@ impl Sidewalk {
     }
 }
 
-/// The sidewalks of a town paved as `paving`, on `grid` round its main
-/// `plaza` (the blocks it takes): a city's are all brick; a town's plaza
-/// ring is brick and its other blocks have a walk of beaten earth; a
-/// village's are all beaten earth. Every one has its curbs.
+/// Las veredas de un pueblo pavimentado según `paving`, sobre `grid`, alrededor
+/// de su `plaza` principal (las manzanas que ocupa): las de una ciudad son
+/// todas de ladrillo; el anillo de la plaza de un pueblo es de ladrillo y sus
+/// otras manzanas tienen un sendero de tierra apisonada; las de un pueblito son
+/// todas de tierra apisonada. Todas tienen sus cordones.
 fn sidewalks(grid: &Grid, plaza: PlazaBlocks, paving: Paving) -> Vec<Sidewalk> {
     let area = grid.span(plaza);
     let blocks = (0..grid.rows).flat_map(|j| (0..grid.cols).map(move |i| (i, j)));
@@ -190,7 +198,8 @@ fn sidewalks(grid: &Grid, plaza: PlazaBlocks, paving: Paving) -> Vec<Sidewalk> {
         Paving::Everywhere => Walk::Brick,
         Paving::Plaza | Paving::None => Walk::Earth,
     };
-    // A village is too small for brick, even round its plaza.
+    // Un pueblito es demasiado chico para el ladrillo, incluso alrededor de su
+    // plaza.
     let plaza_walk = match paving {
         Paving::None => Walk::Earth,
         Paving::Plaza | Paving::Everywhere => Walk::Brick,
@@ -202,53 +211,58 @@ fn sidewalks(grid: &Grid, plaza: PlazaBlocks, paving: Paving) -> Vec<Sidewalk> {
         .collect()
 }
 
-/// Whether `a` and `b` share an area, not just an edge or a corner.
+/// Si `a` y `b` comparten un área, no solo un borde o una esquina.
 #[cfg(test)]
 fn overlap(a: &Aabb, b: &Aabb) -> bool {
     a.min.x.max(b.min.x) < a.max.x.min(b.max.x) && a.min.y.max(b.min.y) < a.max.y.min(b.max.y)
 }
 
-/// A raised floor people walk on: the station platform. Its top is part of
-/// the ground height ([`crate::World::ground_height`]), not an obstacle.
+/// Un piso elevado por el que camina la gente: el andén de la estación. Su
+/// parte superior forma parte de la altura del suelo
+/// ([`crate::World::ground_height`]), no es un obstáculo.
 ///
-/// A short ramp at each end leads down to the ground along the floor. Its
-/// long sides are plain steps: people walk up onto it from the town side or
-/// off it toward the track (where a standing train blocks them, its cars
-/// being moving obstacles).
+/// Una rampa corta en cada extremo baja hasta el suelo a lo largo del piso. Sus
+/// lados largos son escalones simples: la gente sube desde el lado del pueblo o
+/// baja hacia la vía (donde un tren detenido la bloquea, ya que sus vagones son
+/// obstáculos en movimiento).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Floor {
     pub footprint: Aabb,
-    /// Height of the top above the ground, in meters.
+    /// Altura de la parte superior sobre el suelo, en metros.
     pub height: f32,
-    /// Unit world axis along the floor (`+x` or `+y`), the way its ramps run.
+    /// Eje unitario del mundo a lo largo del piso (`+x` o `+y`), en la
+    /// dirección de sus rampas.
     pub along: Vec2,
 }
 
 impl Floor {
-    /// Height of a station platform's top above the ground, in meters.
+    /// Altura de la parte superior del andén de una estación sobre el suelo, en
+    /// metros.
     pub const PLATFORM_HEIGHT: f32 = 0.9;
-    /// Distance from a track's centerline to the track edge of its
-    /// platform, in meters: the cars' side is 1.5 m out, so a hand's
-    /// breadth of 0.15 m is left, as at a broad-gauge platform.
+    /// Distancia desde la línea central de una vía hasta el borde de su andén
+    /// junto a la vía, en metros: el costado de los vagones está a 1,5 m, así
+    /// que queda un palmo de 0,15 m, como en un andén de trocha ancha.
     pub const PLATFORM_EDGE: f32 = 1.65;
-    /// How far in from a platform's far edge a walk to it runs, in meters.
+    /// A qué distancia hacia adentro del borde lejano de un andén corre un
+    /// sendero hacia él, en metros.
     pub(crate) const WALK_LINE_IN: f32 = 3.5;
-    /// Length of the ramp past each end, in meters (a gentle 1:3 slope for
-    /// a 0.9 m platform).
+    /// Largo de la rampa más allá de cada extremo, en metros (una pendiente
+    /// suave de 1:3 para un andén de 0,9 m).
     pub const RAMP_LENGTH: f32 = 3.0;
 
-    /// Unit world axis across the floor.
+    /// Eje unitario del mundo transversal al piso.
     pub fn across(&self) -> Vec2 {
         Vec2::new(self.along.y, self.along.x)
     }
 
-    /// The floor's extent along `axis`, as `(low, high)`.
+    /// La extensión del piso a lo largo de `axis`, como `(low, high)`.
     fn span(&self, axis: Vec2) -> (f32, f32) {
         (self.footprint.min.dot(axis), self.footprint.max.dot(axis))
     }
 
-    /// Height above the ground at `p`: the floor's top on it, falling
-    /// linearly to zero down either ramp. `None` off the floor and ramps.
+    /// Altura sobre el suelo en `p`: la parte superior del piso sobre él,
+    /// bajando linealmente hasta cero por cualquiera de las rampas. `None`
+    /// fuera del piso y de las rampas.
     pub fn rise_at(&self, p: Vec2) -> Option<f32> {
         let (lo, hi) = self.span(self.across());
         let c = p.dot(self.across());
@@ -261,9 +275,10 @@ impl Floor {
         (past <= Self::RAMP_LENGTH).then(|| self.height * (1.0 - past / Self::RAMP_LENGTH))
     }
 
-    /// Where a passenger steps off a train standing at the floor's side
-    /// nearest `train`: half way along, a step in from that long edge (as
-    /// [`TownLayout::platform_spot`]), and the heading away from the edge.
+    /// Dónde baja un pasajero de un tren detenido del lado del piso más cercano
+    /// a `train`: a mitad del largo, un paso hacia adentro desde ese borde
+    /// largo (como [`TownLayout::platform_spot`]), y la orientación que se
+    /// aleja del borde.
     pub fn spot_beside(&self, train: Vec2) -> (Vec2, Heading) {
         let across = self.across();
         let (lo, hi) = self.span(across);
@@ -279,7 +294,8 @@ impl Floor {
         (at, Heading::from_radians(out.y.atan2(out.x)))
     }
 
-    /// The two ramps' footprints, low end first along [`Self::along`].
+    /// Las huellas de las dos rampas, primero el extremo bajo a lo largo de
+    /// [`Self::along`].
     pub fn ramps(&self) -> [Aabb; 2] {
         let reach = self.along * Self::RAMP_LENGTH;
         let f = self.footprint;
@@ -292,47 +308,48 @@ impl Floor {
     }
 }
 
-/// The platform canopy: a flat roof slab hung from the station's track-side
-/// wall over the platform, on thin posts. Render draws it from this, and the
-/// camera treats it as a roof it cannot see through (a slab, not a column:
-/// the camera may still sit under it).
+/// El techo del andén: una losa de techo plana colgada de la pared de la
+/// estación del lado de la vía sobre el andén, apoyada en postes delgados. El
+/// render la dibuja a partir de esto, y la cámara la trata como un techo a
+/// través del cual no puede ver (una losa, no una columna: la cámara igual
+/// puede quedar debajo).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Canopy {
-    /// The roof's footprint on the ground plane.
+    /// La huella del techo en el plano del suelo.
     pub footprint: Aabb,
-    /// Height of the roof slab's middle above the ground under the station.
+    /// Altura del centro de la losa del techo sobre el suelo bajo la estación.
     pub height: f32,
 }
 
 impl Canopy {
-    /// How far the roof reaches out from the station wall, in meters.
+    /// Cuánto sobresale el techo desde la pared de la estación, en metros.
     pub const DEPTH: f32 = 5.5;
-    /// Height of the roof above the ground under the station, in meters.
+    /// Altura del techo sobre el suelo bajo la estación, en metros.
     pub const HEIGHT: f32 = 3.6;
-    /// Thickness of the roof slab, in meters.
+    /// Espesor de la losa del techo, en metros.
     pub const THICKNESS: f32 = 0.12;
 
-    /// Height of the slab's underside above the ground under the station.
+    /// Altura de la parte inferior de la losa sobre el suelo bajo la estación.
     pub fn bottom(&self) -> f32 {
         self.height - Self::THICKNESS / 2.0
     }
 
-    /// Height of the slab's top above the ground under the station.
+    /// Altura de la parte superior de la losa sobre el suelo bajo la estación.
     pub fn top(&self) -> f32 {
         self.height + Self::THICKNESS / 2.0
     }
 }
 
-/// A straight railway line on the ground plane.
+/// Una línea de ferrocarril recta en el plano del suelo.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Railway {
     pub start: Vec2,
     pub end: Vec2,
-    /// Distance between the rails, in meters.
+    /// Distancia entre los rieles, en metros.
     pub gauge: f32,
 }
 
-/// A saddled horse tied in front of a building: it never moves.
+/// Un caballo ensillado atado frente a un edificio: nunca se mueve.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TetheredHorse {
     pub position: Vec2,
@@ -341,13 +358,15 @@ pub struct TetheredHorse {
 }
 
 impl TetheredHorse {
-    /// Length of a standing horse's footprint, nose to tail, in meters.
+    /// Largo de la huella de un caballo parado, de la nariz a la cola, en
+    /// metros.
     pub const LENGTH: f32 = 2.4;
-    /// Width of a standing horse's footprint, in meters.
+    /// Ancho de la huella de un caballo parado, en metros.
     pub const WIDTH: f32 = 1.0;
 
-    /// A horse standing tied at `position`, facing `heading`: its
-    /// footprint is the axis-aligned box around its turned body.
+    /// Un caballo atado y parado en `position`, mirando hacia `heading`: su
+    /// huella es el rectángulo alineado con los ejes que rodea su cuerpo
+    /// girado.
     pub fn standing(position: Vec2, heading: Heading) -> Self {
         let along = heading.forward();
         let half = Vec2::new(
@@ -362,162 +381,177 @@ impl TetheredHorse {
     }
 }
 
-/// A timber hitching rail with a horse tied alongside it.
+/// Un palenque de madera con un caballo atado al lado.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HitchingPost {
     pub rail: Aabb,
     pub horse: TetheredHorse,
-    /// Depth of the store's veranda, in meters: the rail stands just past
-    /// it, so narrow streets get a shallower veranda.
+    /// Profundidad de la galería del almacén, en metros: el palenque queda
+    /// justo más allá, así que las calles angostas tienen una galería menos
+    /// profunda.
     pub veranda: f32,
 }
 
-/// A hitching rail (palenque) in front of a landmark besides the general
-/// store's own [`HitchingPost`]: the other general stores, the comisarías,
-/// the church and the station. A city ties a horse to a few of them
-/// ([`Palenque::MAX_HORSES`]); a town or village leaves them empty.
+/// Un palenque frente a un punto de referencia además del propio
+/// [`HitchingPost`] del almacén de ramos generales: los otros almacenes, las
+/// comisarías, la iglesia y la estación. Una ciudad ata un caballo a algunos de
+/// ellos ([`Palenque::MAX_HORSES`]); un pueblo o un pueblito los deja vacíos.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Palenque {
-    /// The building it stands before: an index into [`TownLayout::buildings`].
+    /// El edificio frente al que está: un índice dentro de
+    /// [`TownLayout::buildings`].
     pub building: usize,
     pub rail: Aabb,
-    /// The horse tied alongside it, if any.
+    /// El caballo atado al lado, si hay alguno.
     pub horse: Option<TetheredHorse>,
 }
 
 impl Palenque {
-    /// Most horses a city ties at its palenques, so its animated figures
-    /// stay few.
+    /// El máximo de caballos que ata una ciudad en sus palenques, para que sus
+    /// figuras animadas sigan siendo pocas.
     pub const MAX_HORSES: usize = 3;
-    /// Length of the rail along the street, in meters.
+    /// Largo del palenque a lo largo de la calle, en metros.
     pub const LENGTH: f32 = 2.8;
-    /// Width of the rail across the street, in meters.
+    /// Ancho del palenque a lo ancho de la calle, en metros.
     pub const WIDTH: f32 = 0.2;
-    /// Gap kept between a palenque (and its horse's spot) and any building,
-    /// tree, sign, post or other obstacle, in meters.
+    /// Separación que se mantiene entre un palenque (y el lugar de su caballo)
+    /// y cualquier edificio, árbol, cartel, poste u otro obstáculo, en metros.
     pub const CLEARANCE: f32 = 0.5;
-    /// Gap kept round a street crossing, where the corner lamps stand.
+    /// Separación que se mantiene alrededor de un cruce de calles, donde están
+    /// los faroles de esquina.
     pub const CROSSING_MARGIN: f32 = 1.0;
-    /// How far from the street's middle line a palenque stays: the lane the
-    /// walkers use.
+    /// A qué distancia de la línea media de la calle se mantiene un palenque:
+    /// el carril que usan los peatones.
     pub const LANE: f32 = 1.0;
-    /// How far out of its facade the station's palenque stands on the yard,
-    /// meters.
+    /// A qué distancia hacia afuera de su fachada está el palenque de la
+    /// estación, sobre la playa, en metros.
     pub const YARD_OUT: f32 = 2.7;
 
-    /// How many of `posts` palenques tie a horse in a city: half of them, at
-    /// most [`Self::MAX_HORSES`].
+    /// Cuántos de los `posts` palenques atan un caballo en una ciudad: la
+    /// mitad, como mucho [`Self::MAX_HORSES`].
     pub fn horses_for(posts: usize) -> usize {
         (posts / 2).min(Self::MAX_HORSES)
     }
 
-    /// Its static obstacles: the rail, and the horse when there is one.
+    /// Sus obstáculos estáticos: el palenque, y el caballo cuando hay uno.
     pub fn obstacles(&self) -> impl Iterator<Item = Aabb> + '_ {
         std::iter::once(self.rail).chain(self.horse.map(|h| h.footprint))
     }
 }
 
-/// Where a [`ShadeTree`] stands.
+/// Dónde está un [`ShadeTree`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ShadeKind {
-    /// A street tree on a city's sidewalk, in its cazuela (a small earth
-    /// square rimmed in the paving), with a trimmed crown.
+    /// Un árbol de calle en la vereda de una ciudad, en su cazuela (un pequeño
+    /// cuadrado de tierra bordeado por el pavimento), con la copa podada.
     Pit,
-    /// A tree on the dirt in front of a house of a town or village, with a
-    /// trimmed crown.
+    /// Un árbol en la tierra frente a una casa de un pueblo o de un pueblito,
+    /// con la copa podada.
     Front,
-    /// A tree in a city's plaza, in the green between its paths.
+    /// Un árbol en la plaza de una ciudad, en el verde entre sus senderos.
     Grove,
-    /// A tree in a yard or beside a landmark, with a free crown.
+    /// Un árbol en un patio o al lado de un punto de referencia, con la copa
+    /// libre.
     Yard,
 }
 
-/// A tree outside the ring of [`TownLayout::trees`]: the street trees, the
-/// plaza groves and the yard trees. Its trunk is an obstacle like a plaza
-/// tree's ([`TownLayout::obstacles`]).
+/// Un árbol fuera del anillo de [`TownLayout::trees`]: los árboles de calle,
+/// los bosquecillos de la plaza y los árboles de patio. Su tronco es un
+/// obstáculo como el de un árbol de plaza ([`TownLayout::obstacles`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ShadeTree {
-    /// The middle of the trunk.
+    /// El centro del tronco.
     pub at: Vec2,
     pub kind: ShadeKind,
-    /// The widest its crown may reach from the trunk, in meters: render
-    /// narrows the tree to fit it, and core keeps every building that far
-    /// (and a margin) from the trunk.
+    /// Lo más lejos que puede llegar su copa desde el tronco, en metros: el
+    /// render angosta el árbol para que entre, y el núcleo mantiene a todos los
+    /// edificios a esa distancia (más un margen) del tronco.
     pub crown: f32,
-    /// The unit ground vector the trunk and crown lean along, toward the
-    /// street a trimmed tree stands beside; zero for the others.
+    /// El vector unitario del suelo hacia el que se inclinan el tronco y la
+    /// copa, hacia la calle junto a la que está un árbol podado; cero para los
+    /// demás.
     pub toward: Vec2,
-    /// The sidewalk strip of a [`ShadeKind::Pit`] tree: a row shares a species.
+    /// La franja de vereda de un árbol [`ShadeKind::Pit`]: una fila comparte
+    /// especie.
     pub row: u32,
 }
 
 impl ShadeTree {
-    /// Side of a cazuela, rim included, in meters.
+    /// Lado de una cazuela, borde incluido, en metros.
     pub const PIT_SIDE: f32 = 0.8;
-    /// Gap between a cazuela and the curb, in meters.
+    /// Separación entre una cazuela y el cordón, en metros.
     pub const PIT_FROM_CURB: f32 = 0.4;
-    /// Crown of a pit tree: a 2.5 m sidewalk leaves its trunk 1.7 m off the
-    /// facade, so the crown stays narrow (trimmed) and leans over the street.
+    /// Copa de un árbol de cazuela: una vereda de 2,5 m deja su tronco a 1,7 m
+    /// de la fachada, así que la copa se mantiene angosta (podada) y se inclina
+    /// sobre la calle.
     pub const PIT_CROWN: f32 = 2.3;
-    /// How far a front tree stands from the facade, in meters.
+    /// A qué distancia de la fachada está un árbol de frente, en metros.
     pub const FRONT_OUT: f32 = 2.2;
-    /// Crown of a tree on the dirt in front of a house.
+    /// Copa de un árbol en la tierra frente a una casa.
     pub const FRONT_CROWN: f32 = 1.9;
-    /// Least gap between two trees on the dirt in front of houses, meters.
+    /// Separación mínima entre dos árboles en la tierra frente a las casas, en
+    /// metros.
     pub const FRONT_APART: f32 = 13.0;
-    /// A town has no rows of front trees: within this reach of any one
-    /// stand at most two others, meters.
+    /// Un pueblo no tiene filas de árboles de frente: dentro de este alcance de
+    /// cualquiera de ellos hay como mucho otros dos, en metros.
     pub const FRONT_RUN: f32 = 30.0;
-    /// Crown of a yard tree.
+    /// Copa de un árbol de patio.
     pub const YARD_CROWN: f32 = 3.0;
-    /// Gap kept between a yard crown and any building, meters.
+    /// Separación que se mantiene entre la copa de un árbol de patio y
+    /// cualquier edificio, en metros.
     pub const BUILDING_GAP: f32 = 0.6;
-    /// Gap between a street tree and the next one along its sidewalk, meters
-    /// (min, max). 15% more trees than the first planting (user, 2026-10-27:
-    /// "subile otro 15% a pueblos y aldeas"): (17, 21.2) / 1.15.
+    /// Separación entre un árbol de calle y el siguiente a lo largo de su
+    /// vereda, en metros (mín, máx). Un 15 % más de árboles que en la primera
+    /// plantación (usuario, 2026-10-27: "subile otro 15% a pueblos y aldeas"):
+    /// (17, 21.2) / 1.15.
     pub const SPACING: (f32, f32) = (14.8, 18.4);
-    /// Least gap between two trunks, whatever they are, in meters.
+    /// Separación mínima entre dos troncos, sean lo que sean, en metros.
     pub const APART: f32 = 4.0;
-    /// How far a trimmed tree leans toward the street, in degrees.
+    /// Cuánto se inclina hacia la calle un árbol podado, en grados.
     pub const LEAN: f32 = 5.0;
-    /// Crown of a plaza grove tree: the species' own, uncapped.
+    /// Copa de un árbol de un bosquecillo de plaza: la propia de la especie,
+    /// sin límite.
     pub const GROVE_CROWN: f32 = 6.0;
-    /// How far a grove stays in from its plaza's edge, meters.
+    /// A qué distancia hacia adentro del borde de su plaza se mantiene un
+    /// bosquecillo, en metros.
     const GROVE_INSET: f32 = 4.0;
-    /// Gap between the spots a grove is laid out on, meters (was 10 m; the
-    /// plaza ring grew too, and a very big town's cut takes its share of
-    /// the groves).
+    /// Separación entre los lugares sobre los que se distribuye un bosquecillo,
+    /// en metros (antes eran 10 m; el anillo de la plaza también creció, y el
+    /// recorte de un pueblo muy grande se lleva su parte de los bosquecillos).
     const GROVE_STEP: f32 = 8.8;
-    /// How far each grove spot strays, meters.
+    /// Cuánto se desvía cada lugar de un bosquecillo, en metros.
     const GROVE_JITTER: f32 = 2.5;
-    /// How far from a block's edge a yard tree stands at least, meters.
+    /// A qué distancia del borde de una manzana está como mínimo un árbol de
+    /// patio, en metros.
     const YARD_INSET: f32 = 3.0;
-    /// How far past a landmark's walls its trees may stand, meters.
+    /// Cuánto más allá de las paredes de un punto de referencia pueden estar
+    /// sus árboles, en metros.
     const LANDMARK_REACH: f32 = 7.0;
 
-    /// The ground a trunk at `at` takes.
+    /// El terreno que ocupa un tronco en `at`.
     fn trunk(at: Vec2) -> Aabb {
         let side = 2.0 * TREE_TRUNK_RADIUS;
         Aabb::from_center_size(at, Vec2::new(side, side))
     }
 
-    /// The tree's trunk as the obstacle people and horses bump into.
+    /// El tronco del árbol como el obstáculo con el que chocan personas y
+    /// caballos.
     pub fn obstacle(&self) -> Aabb {
         Self::trunk(self.at)
     }
 }
 
-/// What a [`YardPlant`] is.
+/// Qué es una [`YardPlant`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PlantKind {
-    /// A low shrub against a wall.
+    /// Un arbusto bajo contra una pared.
     Shrub,
-    /// A small flower bed.
+    /// Un pequeño cantero de flores.
     Flowers,
 }
 
 impl PlantKind {
-    /// Half the side of the ground it takes, in meters.
+    /// La mitad del lado del terreno que ocupa, en metros.
     pub fn radius(self) -> f32 {
         match self {
             Self::Shrub => 0.6,
@@ -526,8 +560,9 @@ impl PlantKind {
     }
 }
 
-/// A shrub or a flower bed in a house's yard: scenery with no obstacle,
-/// kept off the streets, doors, other buildings and trunks.
+/// Un arbusto o un cantero de flores en el patio de una casa: escenografía sin
+/// obstáculo, fuera de las calles, las puertas, los demás edificios y los
+/// troncos.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct YardPlant {
     pub at: Vec2,
@@ -535,107 +570,115 @@ pub struct YardPlant {
 }
 
 impl YardPlant {
-    /// The ground it covers.
+    /// El terreno que cubre.
     pub fn area(&self) -> Aabb {
         let side = 2.0 * self.kind.radius();
         Aabb::from_center_size(self.at, Vec2::new(side, side))
     }
 }
 
-/// Where the plaza goes in the grid.
+/// Dónde va la plaza en la cuadrícula.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum PlazaPlacement {
-    /// The central block when there is one; otherwise the block facing the
-    /// station; otherwise (no railway) the block nearest the center.
+    /// La manzana central cuando hay una; si no, la manzana que mira a la
+    /// estación; si no (sin vía férrea), la manzana más cercana al centro.
     #[default]
     Auto,
-    /// The central block (both block counts must be odd).
+    /// La manzana central (las dos cantidades de manzanas deben ser impares).
     Center,
-    /// The block of the row (or column) next to the railway nearest the
-    /// grid center; the station is aligned to face it across the street.
+    /// La manzana de la fila (o columna) junto a la vía férrea más cercana al
+    /// centro de la cuadrícula; la estación se alinea para mirarla del otro
+    /// lado de la calle.
     FacingStation,
-    /// Block `(i, j)`, counted from the south-west corner.
+    /// La manzana `(i, j)`, contada desde la esquina sudoeste.
     Block(usize, usize),
 }
 
-/// Which side of the grid the railway runs along, and how far out; or, for
-/// a town grown on both sides of its line, which half of the town its
-/// station stands in.
+/// Por qué lado de la cuadrícula pasa la vía férrea, y a qué distancia; o, para
+/// un pueblo que creció a ambos lados de su línea, en qué mitad del pueblo está
+/// su estación.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RailwayConfig {
     pub side: Side,
-    /// Distance from the grid edge (outer edge of the ring street) to the
-    /// track centerline, in meters. For a `through` line, from the edge of
-    /// the station's half of the town.
+    /// Distancia desde el borde de la cuadrícula (el borde exterior de la calle
+    /// perimetral) hasta la línea central de la vía, en metros. Para una línea
+    /// `through`, desde el borde de la mitad del pueblo donde está la estación.
     pub offset: f32,
-    /// The track runs east-west through the middle of the town, between its
-    /// two middle rows of blocks, instead of along one side: the town grows
-    /// on both sides of the line, like the big railway towns. `side`
-    /// (`North` or `South`) is then the half the station stands in, facing
-    /// it across the street. The streets running north-south cross the
-    /// track at level crossings, except where the station yard stands.
+    /// La vía atraviesa el pueblo de este a oeste por el medio, entre sus dos
+    /// filas de manzanas centrales, en lugar de correr por un costado: el
+    /// pueblo crece a ambos lados de la línea, como los grandes pueblos
+    /// ferroviarios. `side` (`North` o `South`) es entonces la mitad en la que
+    /// está la estación, que la mira del otro lado de la calle. Las calles que
+    /// corren de norte a sur cruzan la vía en pasos a nivel, salvo donde está
+    /// la playa de la estación.
     pub through: bool,
 }
 
 impl RailwayConfig {
-    /// Least rows of blocks a town with a `through` line needs: two on each
-    /// side of the track.
+    /// La cantidad mínima de filas de manzanas que necesita un pueblo con una
+    /// línea `through`: dos a cada lado de la vía.
     pub const MIN_THROUGH_ROWS: usize = 4;
-    /// For a `through` line, how far the track runs from the edge of the
-    /// half of the town across from the station, in meters.
+    /// Para una línea `through`, a qué distancia corre la vía del borde de la
+    /// mitad del pueblo opuesta a la estación, en metros.
     pub const THROUGH_FAR_SIDE: f32 = 16.0;
 }
 
-/// Everything needed to generate a town.
+/// Todo lo necesario para generar un pueblo.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TownConfig {
-    /// The town's name (painted on its station).
+    /// El nombre del pueblo (pintado en su estación).
     pub name: String,
-    /// Center of the street grid in world coordinates.
+    /// Centro de la cuadrícula de calles en coordenadas del mundo.
     pub origin: Vec2,
-    /// Blocks `(east_west, north_south)`: columns and rows of the grid.
+    /// Manzanas `(east_west, north_south)`: columnas y filas de la cuadrícula.
     pub blocks: (usize, usize),
-    /// Side of one square block, in meters.
+    /// Lado de una manzana cuadrada, en metros.
     pub block_size: f32,
-    /// Width of every street, ring street included, in meters.
+    /// Ancho de todas las calles, calle perimetral incluida, en metros.
     pub street_width: f32,
     pub railway: Option<RailwayConfig>,
     pub plaza: PlazaPlacement,
-    /// Varies house and shed lots.
+    /// Varía los lotes de las casas y los galpones.
     pub seed: u32,
-    /// How many police stations the town has, overriding its size tier's
-    /// count ([`TownSize`]); `None` keeps the tier's. At most the tier's
-    /// count (a town without a comisaría is `Some(0)`).
+    /// Cuántas comisarías tiene el pueblo, reemplazando la cantidad de su
+    /// categoría de tamaño ([`TownSize`]); `None` conserva la de la categoría.
+    /// Como mucho la cantidad de la categoría (un pueblo sin comisaría es
+    /// `Some(0)`).
     pub police_stations: Option<usize>,
-    /// Share of the house and shed lots that are built, from 0 to 1; `None`
-    /// builds them all as usual. A village or a railway halt has few.
+    /// Proporción de los lotes de casas y galpones que están construidos, de 0
+    /// a 1; `None` los construye todos, como siempre. Un pueblito o un apeadero
+    /// tiene pocos.
     pub density: Option<f32>,
-    /// How many people walk the town, overriding its size tier's crowd
-    /// ([`TownSize`]); `None` keeps the tier's. At most
-    /// [`TownConfig::MAX_TOWNSFOLK`] (an empty halt is `Some(0)`).
+    /// Cuántas personas caminan por el pueblo, reemplazando la multitud de su
+    /// categoría de tamaño ([`TownSize`]); `None` conserva la de la categoría.
+    /// Como mucho [`TownConfig::MAX_TOWNSFOLK`] (un apeadero vacío es
+    /// `Some(0)`).
     pub townsfolk: Option<usize>,
 }
 
 impl TownConfig {
-    /// Fewest blocks along either axis.
+    /// La menor cantidad de manzanas a lo largo de cualquiera de los ejes.
     pub const MIN_BLOCKS: usize = 3;
-    /// Smallest block that still fits the landmarks and lots, in meters.
+    /// La manzana más chica en la que todavía entran los puntos de referencia y
+    /// los lotes, en metros.
     pub const MIN_BLOCK_SIZE: f32 = 30.0;
-    /// Narrowest street that leaves a 3 m carriageway between two 3.5 m
-    /// sidewalks, room for passers-by (the shipped towns are 12 m or wider,
-    /// a 5 m carriageway; a tied horse needs 12 m).
+    /// La calle más angosta que deja una calzada de 3 m entre dos veredas de
+    /// 3,5 m, con lugar para los transeúntes (los pueblos distribuidos tienen
+    /// 12 m o más, una calzada de 5 m; un caballo atado necesita 12 m).
     pub const MIN_STREET_WIDTH: f32 = 10.0;
-    /// Closest the track may run to the grid: the station yard needs it.
+    /// Lo más cerca que puede pasar la vía de la cuadrícula: la playa de la
+    /// estación lo necesita.
     pub const MIN_RAILWAY_OFFSET: f32 = 24.0;
-    /// Most people a town may ask for in `townsfolk`.
+    /// El máximo de personas que un pueblo puede pedir en `townsfolk`.
     pub const MAX_TOWNSFOLK: usize = 200;
 
-    /// Eduardo Castex-inspired town: 4 x 5 blocks of 40 m (4 east-west, 5
-    /// north-south), 12 m streets, railway 24 m north of the grid, at the
-    /// world center. With no central block, `Auto` puts the plaza in the top
-    /// row facing the station. The built-in fallback when
-    /// `assets/world/towns.ron` cannot be used; the shipped Eduardo Castex
-    /// there is laid out differently (5 x 4 blocks, at its place on the line).
+    /// Pueblo inspirado en Eduardo Castex: 4 x 5 manzanas de 40 m (4 de este a
+    /// oeste, 5 de norte a sur), calles de 12 m, vía férrea 24 m al norte de la
+    /// cuadrícula, en el centro del mundo. Sin manzana central, `Auto` pone la
+    /// plaza en la fila superior, mirando a la estación. Es la alternativa
+    /// incorporada cuando no se puede usar `assets/world/towns.ron`; el Eduardo
+    /// Castex distribuido ahí tiene otra distribución (5 x 4 manzanas, en su
+    /// lugar sobre la línea).
     pub fn castex() -> Self {
         Self {
             name: "Eduardo Castex".to_string(),
@@ -656,49 +699,51 @@ impl TownConfig {
         }
     }
 
-    /// How big the town is, from its block count.
+    /// Qué tan grande es el pueblo, según su cantidad de manzanas.
     pub fn size(&self) -> TownSize {
         TownSize::of(self.blocks)
     }
 
-    /// How many police stations the town gets: the override, or its size
-    /// tier's count.
+    /// Cuántas comisarías tiene el pueblo: el reemplazo, o la cantidad de su
+    /// categoría de tamaño.
     pub fn police_count(&self) -> usize {
         self.police_stations
             .unwrap_or_else(|| self.size().police_stations())
     }
 
-    /// How many people walk the town: the override, or its size tier's
-    /// crowd.
+    /// Cuántas personas caminan por el pueblo: el reemplazo, o la multitud de
+    /// su categoría de tamaño.
     pub fn townsfolk_count(&self) -> usize {
         self.townsfolk
             .unwrap_or_else(|| self.size().townsfolk(self.blocks))
     }
 }
 
-/// A town's size tier, from its block count `n = columns * rows`. It sets
-/// the main plaza, the station plaza, the landmarks and the crowd.
+/// La categoría de tamaño de un pueblo, según su cantidad de manzanas `n =
+/// columns * rows`. Define la plaza principal, la plaza de la estación, los
+/// puntos de referencia y la multitud.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TownSize {
-    /// Up to [`TownSize::SMALL_MAX`] blocks: a one-block plaza, one general
-    /// store, one police station and [`crate::townsfolk::TOWNSFOLK_COUNT`]
-    /// people.
+    /// Hasta [`TownSize::SMALL_MAX`] manzanas: una plaza de una manzana, un
+    /// almacén de ramos generales, una comisaría y
+    /// [`crate::townsfolk::TOWNSFOLK_COUNT`] personas.
     Small,
-    /// Up to [`TownSize::BIG_MAX`] blocks: a central plaza of two blocks, a
-    /// station plaza, two general stores and one police station.
+    /// Hasta [`TownSize::BIG_MAX`] manzanas: una plaza central de dos manzanas,
+    /// una plaza de la estación, dos almacenes de ramos generales y una
+    /// comisaría.
     Big,
-    /// More blocks: a central plaza of 2 x 2 blocks, a station plaza, two
-    /// general stores and two police stations.
+    /// Más manzanas: una plaza central de 2 x 2 manzanas, una plaza de la
+    /// estación, dos almacenes de ramos generales y dos comisarías.
     VeryBig,
 }
 
 impl TownSize {
-    /// Most blocks of a small town.
+    /// El máximo de manzanas de un pueblo chico.
     pub const SMALL_MAX: usize = 36;
-    /// Most blocks of a big town.
+    /// El máximo de manzanas de un pueblo grande.
     pub const BIG_MAX: usize = 63;
 
-    /// The tier of a grid of `blocks` (columns, rows).
+    /// La categoría de una cuadrícula de `blocks` (columnas, filas).
     pub fn of(blocks: (usize, usize)) -> Self {
         match blocks.0 * blocks.1 {
             n if n <= Self::SMALL_MAX => Self::Small,
@@ -707,11 +752,12 @@ impl TownSize {
         }
     }
 
-    /// Blocks the main plaza spans `(east-west, north-south)` on a grid of
-    /// `blocks`: a big town merges two along its longer side (east-west on
-    /// a square grid).
-    /// Never more blocks than the grid has, should a grid ever be narrower
-    /// than [`TownConfig::MIN_BLOCKS`] allows today.
+    /// Las manzanas que abarca la plaza principal `(east-west, north-south)` en
+    /// una cuadrícula de `blocks`: un pueblo grande fusiona dos a lo largo de
+    /// su lado más largo (de este a oeste en una cuadrícula cuadrada). Nunca
+    /// más manzanas de las que tiene la cuadrícula, por si alguna vez una
+    /// cuadrícula fuera más angosta de lo que hoy permite
+    /// [`TownConfig::MIN_BLOCKS`].
     pub(crate) fn plaza_span(self, blocks: (usize, usize)) -> (usize, usize) {
         let (w, h) = match self {
             Self::Small => (1, 1),
@@ -722,8 +768,9 @@ impl TownSize {
         (w.min(blocks.0.max(1)), h.min(blocks.1.max(1)))
     }
 
-    /// General stores in a town of this size: one per half of a town
-    /// split by its line, or one by each plaza (user, 2026-10-23).
+    /// Almacenes de ramos generales en un pueblo de este tamaño: uno por cada
+    /// mitad de un pueblo dividido por su línea, o uno junto a cada plaza
+    /// (usuario, 2026-10-23).
     fn general_stores(self) -> usize {
         match self {
             Self::Small => 1,
@@ -731,7 +778,7 @@ impl TownSize {
         }
     }
 
-    /// Police stations, unless a town overrides it.
+    /// Comisarías, salvo que un pueblo lo reemplace.
     pub fn police_stations(self) -> usize {
         match self {
             Self::Small | Self::Big => 1,
@@ -739,8 +786,9 @@ impl TownSize {
         }
     }
 
-    /// People walking a town of `blocks`: the small-town crowd, or four for
-    /// every five blocks in bigger towns, never fewer.
+    /// Personas que caminan por un pueblo de `blocks`: la multitud de un pueblo
+    /// chico, o cuatro por cada cinco manzanas en los pueblos más grandes,
+    /// nunca menos.
     fn townsfolk(self, blocks: (usize, usize)) -> usize {
         let small = crate::townsfolk::TOWNSFOLK_COUNT;
         match self {
@@ -753,42 +801,45 @@ impl TownSize {
     }
 }
 
-/// Why a [`TownConfig`] cannot be built.
+/// Por qué no se puede construir una [`TownConfig`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum TownConfigError {
-    /// The name is empty or blank.
+    /// El nombre está vacío o en blanco.
     EmptyName,
-    /// A number is NaN or infinite.
+    /// Un número es NaN o infinito.
     NotFinite { field: &'static str },
-    /// Fewer than [`TownConfig::MIN_BLOCKS`] blocks along an axis.
+    /// Menos de [`TownConfig::MIN_BLOCKS`] manzanas a lo largo de un eje.
     TooFewBlocks { blocks: (usize, usize), min: usize },
-    /// Blocks smaller than [`TownConfig::MIN_BLOCK_SIZE`].
+    /// Manzanas más chicas que [`TownConfig::MIN_BLOCK_SIZE`].
     BlockTooSmall { block_size: f32, min: f32 },
-    /// Streets narrower than [`TownConfig::MIN_STREET_WIDTH`].
+    /// Calles más angostas que [`TownConfig::MIN_STREET_WIDTH`].
     StreetTooNarrow { street_width: f32, min: f32 },
-    /// Track closer than [`TownConfig::MIN_RAILWAY_OFFSET`] to the grid.
+    /// La vía está más cerca de la cuadrícula que
+    /// [`TownConfig::MIN_RAILWAY_OFFSET`].
     RailwayTooClose { offset: f32, min: f32 },
-    /// `PlazaPlacement::Block` outside the grid.
+    /// `PlazaPlacement::Block` fuera de la cuadrícula.
     PlazaOutOfRange {
         block: (usize, usize),
         blocks: (usize, usize),
     },
-    /// `PlazaPlacement::Center` on a grid with an even block count.
+    /// `PlazaPlacement::Center` en una cuadrícula con una cantidad par de
+    /// manzanas.
     NoCentralBlock { blocks: (usize, usize) },
-    /// `PlazaPlacement::FacingStation` in a town without a railway.
+    /// `PlazaPlacement::FacingStation` en un pueblo sin vía férrea.
     NoStationToFace,
-    /// `police_stations` asks for more than the size tier places.
+    /// `police_stations` pide más de las que coloca la categoría de tamaño.
     TooManyPoliceStations { wanted: usize, max: usize },
-    /// `density` outside 0 to 1.
+    /// `density` fuera del rango de 0 a 1.
     BadDensity { density: f32 },
-    /// `townsfolk` asks for more than [`TownConfig::MAX_TOWNSFOLK`].
+    /// `townsfolk` pide más de [`TownConfig::MAX_TOWNSFOLK`].
     TooManyTownsfolk { wanted: usize, max: usize },
-    /// A `through` railway on the east or west side: it only runs east-west.
+    /// Una vía férrea `through` en el lado este u oeste: solo corre de este a
+    /// oeste.
     ThroughNotEastWest { side: Side },
-    /// A `through` railway in a town with too few rows to grow on both
-    /// sides of it ([`RailwayConfig::MIN_THROUGH_ROWS`]).
+    /// Una vía férrea `through` en un pueblo con muy pocas filas para crecer a
+    /// ambos lados de ella ([`RailwayConfig::MIN_THROUGH_ROWS`]).
     ThroughTooFewRows { rows: usize, min: usize },
-    /// The plaza spans both sides of a `through` railway.
+    /// La plaza abarca ambos lados de una vía férrea `through`.
     PlazaAcrossRailway,
 }
 
@@ -859,63 +910,68 @@ impl fmt::Display for TownConfigError {
 
 impl std::error::Error for TownConfigError {}
 
-/// A small railway town laid out on an orthogonal grid.
+/// Un pequeño pueblo ferroviario distribuido en una cuadrícula ortogonal.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TownLayout {
-    /// The town's name, from its config.
+    /// El nombre del pueblo, tomado de su configuración.
     pub name: String,
-    /// Street surfaces, including the ring street around the grid.
+    /// Superficies de las calles, incluida la calle perimetral alrededor de la
+    /// cuadrícula.
     pub streets: Vec<Aabb>,
-    /// The main square: one block, or several merged with the streets
-    /// between them in bigger towns.
+    /// La plaza principal: una manzana, o varias fusionadas con las calles
+    /// entre ellas en los pueblos más grandes.
     pub plaza: Aabb,
-    /// A bigger town's second, smaller square by the station: half a block.
+    /// La segunda plaza, más chica, de un pueblo más grande, junto a la
+    /// estación: media manzana.
     pub station_plaza: Option<Aabb>,
-    /// The town's size tier.
+    /// La categoría de tamaño del pueblo.
     pub size: TownSize,
-    /// Trunk positions of every plaza's ring trees.
+    /// Posiciones de los troncos de los árboles del anillo de cada plaza.
     pub trees: Vec<Vec2>,
-    /// The other trees: sidewalk and dirt street trees, plaza groves, yard
-    /// and landmark trees ([`ShadeTree`]).
+    /// Los demás árboles: árboles de vereda y de calle de tierra, bosquecillos
+    /// de plaza, árboles de patio y de puntos de referencia ([`ShadeTree`]).
     pub shade_trees: Vec<ShadeTree>,
-    /// The shrubs and flower beds of the yards behind the houses
+    /// Los arbustos y los canteros de flores de los patios detrás de las casas
     /// ([`YardPlant`]).
     pub yard_plants: Vec<YardPlant>,
     pub railway: Option<Railway>,
     pub buildings: Vec<Building>,
-    /// Hitching rail in front of the (first) general store.
+    /// Palenque frente al (primer) almacén de ramos generales.
     pub hitching_post: HitchingPost,
-    /// The other hitching rails: before the remaining general stores, the
-    /// comisarías, the church and the station ([`Palenque`]).
+    /// Los demás palenques: frente a los demás almacenes de ramos generales,
+    /// las comisarías, la iglesia y la estación ([`Palenque`]).
     pub palenques: Vec<Palenque>,
-    /// The config's seed, also used for the town's crowd.
+    /// La semilla de la configuración, que también se usa para la multitud del
+    /// pueblo.
     pub seed: u32,
-    /// People walking the streets ([`TownConfig::townsfolk_count`]).
+    /// Personas que caminan por las calles ([`TownConfig::townsfolk_count`]).
     townsfolk: usize,
     blocks: (usize, usize),
     grid: Aabb,
     extent: Aabb,
     arrival: (Vec2, Heading),
-    /// The strip between the two halves of a town grown on both sides of
-    /// its line ([`RailwayConfig::through`]): the track and station yard.
+    /// La franja entre las dos mitades de un pueblo que creció a ambos lados de
+    /// su línea ([`RailwayConfig::through`]): la vía y la playa de la estación.
     band: Option<Aabb>,
-    /// Its brick sidewalks ([`Paving`]).
+    /// Sus veredas de ladrillo ([`Paving`]).
     sidewalks: Vec<Sidewalk>,
 }
 
-/// Trunk radius used for tree collision.
+/// Radio del tronco que se usa para la colisión de los árboles.
 pub const TREE_TRUNK_RADIUS: f32 = 0.35;
 
-/// Width of the two paths crossing every plaza, in meters.
+/// Ancho de los dos senderos que cruzan cada plaza, en metros.
 pub const PLAZA_PATH_WIDTH: f32 = 3.0;
-/// Side of the square monument plinth where a plaza's paths meet, meters.
+/// Lado del pedestal cuadrado del monumento donde se encuentran los senderos de
+/// una plaza, en metros.
 pub const PLAZA_MONUMENT: f32 = 3.0;
-/// Least gap between a plaza tree's trunk and a path or the monument, in
-/// meters: trees stand in the green beds between the paths.
+/// Separación mínima entre el tronco de un árbol de plaza y un sendero o el
+/// monumento, en metros: los árboles están en los canteros verdes entre los
+/// senderos.
 pub const PLAZA_PATH_CLEARANCE: f32 = 1.5;
 
-/// The two paths crossing `plaza` through its center, edge to edge: the
-/// east–west one, then the north–south one.
+/// Los dos senderos que cruzan `plaza` por su centro, de borde a borde: primero
+/// el este–oeste y después el norte–sur.
 pub fn plaza_paths(plaza: Aabb) -> [Aabb; 2] {
     let (c, s) = (plaza.center(), plaza.size());
     [
@@ -924,43 +980,46 @@ pub fn plaza_paths(plaza: Aabb) -> [Aabb; 2] {
     ]
 }
 
-/// The monument's plinth at the center of `plaza`, where its paths meet.
+/// El pedestal del monumento en el centro de `plaza`, donde se encuentran sus
+/// senderos.
 pub fn plaza_monument(plaza: Aabb) -> Aabb {
     Aabb::from_center_size(plaza.center(), Vec2::new(PLAZA_MONUMENT, PLAZA_MONUMENT))
 }
 
-/// Side of the paved square where a plaza's paths cross, meters: a path's
-/// width all round the monument's plinth, so people and riders walk round
-/// the monument.
+/// Lado del cuadrado pavimentado donde se cruzan los senderos de una plaza, en
+/// metros: el ancho de un sendero alrededor de todo el pedestal del monumento,
+/// para que las personas y los jinetes rodeen el monumento.
 pub const PLAZA_CROSSING: f32 = PLAZA_MONUMENT + 2.0 * PLAZA_PATH_WIDTH;
 
-/// The paved square round the monument of `plaza`, where its paths cross.
+/// El cuadrado pavimentado alrededor del monumento de `plaza`, donde se cruzan
+/// sus senderos.
 pub fn plaza_crossing(plaza: Aabb) -> Aabb {
     Aabb::from_center_size(plaza.center(), Vec2::new(PLAZA_CROSSING, PLAZA_CROSSING))
 }
 
-/// A slatted plaza bench (banco de plaza) on cast-iron ends, in a green
-/// bed beside a path, facing it.
+/// Un banco de plaza de listones con laterales de hierro fundido, en un cantero
+/// verde al lado de un sendero, mirando hacia él.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Bench {
-    /// The middle of its footprint.
+    /// El centro de su huella.
     pub at: Vec2,
-    /// Where someone sitting on it looks: toward the path.
+    /// Hacia dónde mira alguien sentado en él: hacia el sendero.
     pub facing: Side,
 }
 
 impl Bench {
-    /// Length of a bench along its path, meters.
+    /// Largo de un banco a lo largo de su sendero, en metros.
     pub const LENGTH: f32 = 1.8;
-    /// Depth from the front of its seat to the back of its feet, meters.
+    /// Profundidad desde el frente del asiento hasta la parte trasera de sus
+    /// patas, en metros.
     pub const DEPTH: f32 = 0.6;
-    /// Gap between the path's edge and the front of the bench, meters:
-    /// room for the path's curb and the sitter's feet.
+    /// Separación entre el borde del sendero y el frente del banco, en metros:
+    /// lugar para el cordón del sendero y los pies de quien se sienta.
     pub const PATH_GAP: f32 = 0.3;
-    /// Least gap between two benches along a path, meters.
+    /// Separación mínima entre dos bancos a lo largo de un sendero, en metros.
     pub const SPACING: f32 = 1.0;
 
-    /// Its static obstacle: the whole bench.
+    /// Su obstáculo estático: todo el banco.
     pub fn footprint(&self) -> Aabb {
         let size = match self.facing {
             Side::North | Side::South => Vec2::new(Self::LENGTH, Self::DEPTH),
@@ -970,45 +1029,51 @@ impl Bench {
     }
 }
 
-/// What stands in one plaza besides its trees, by its town's [`Paving`]
-/// (phase 3 of the town facades): the monument on its plinth, the paved
-/// crossing round it, benches beside the paths and, in a city only, a low
-/// iron railing round the edge, open at each path's mouth. The
-/// monument, the benches and the railing are static obstacles; the paths
-/// and the crossing stay clear, so the streets, the townsfolk's graph and
-/// every lamp keep where they were.
+/// Lo que hay en una plaza además de sus árboles, según el [`Paving`] de su
+/// pueblo (fase 3 de las fachadas de los pueblos): el monumento sobre su
+/// pedestal, el cruce pavimentado a su alrededor, bancos al lado de los
+/// senderos y, solo en una ciudad, una reja baja de hierro alrededor del borde,
+/// abierta en la entrada de cada sendero. El monumento, los bancos y la reja
+/// son obstáculos estáticos; los senderos y el cruce quedan libres, así que las
+/// calles, el grafo de los vecinos y todos los faroles quedan donde estaban.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlazaFurniture {
-    /// The plaza.
+    /// La plaza.
     pub area: Aabb,
-    /// Its town's paving, which also sets how grand the plaza is.
+    /// El pavimento de su pueblo, que también define qué tan imponente es la
+    /// plaza.
     pub paving: Paving,
-    /// The monument's collider: its lowest step, inside [`plaza_monument`].
+    /// El collider del monumento: su escalón más bajo, dentro de
+    /// [`plaza_monument`].
     pub monument: Aabb,
-    /// The paved square round the monument ([`plaza_crossing`]).
+    /// El cuadrado pavimentado alrededor del monumento ([`plaza_crossing`]).
     pub crossing: Aabb,
     pub benches: Vec<Bench>,
-    /// The railing's pieces along the edge, each a thin box.
+    /// Las piezas de la reja a lo largo del borde, cada una un rectángulo
+    /// delgado.
     pub railing: Vec<Aabb>,
 }
 
 impl PlazaFurniture {
-    /// How far in from the plaza's edge the railing starts, meters.
+    /// A qué distancia hacia adentro del borde de la plaza empieza la reja, en
+    /// metros.
     pub const RAILING_INSET: f32 = 0.05;
-    /// Depth of the railing, its piers included, meters: it stays out of
-    /// the half meter round the lamps at the path mouths, a meter in from
-    /// the edge.
+    /// Profundidad de la reja, pilares incluidos, en metros: se mantiene fuera
+    /// del medio metro alrededor de los faroles en las entradas de los
+    /// senderos, a un metro hacia adentro del borde.
     pub const RAILING_DEPTH: f32 = 0.3;
-    /// How far to either side of a path's middle the railing opens: the
-    /// path and its curbs.
+    /// Cuánto se abre la reja a cada lado del centro de un sendero: el sendero
+    /// y sus cordones.
     pub const MOUTH_HALF: f32 = PLAZA_PATH_WIDTH / 2.0 + 0.15;
-    /// Least gap from the crossing to the first bench along a path, meters.
+    /// Separación mínima desde el cruce hasta el primer banco a lo largo de un
+    /// sendero, en metros.
     pub const CROSSING_GAP: f32 = 0.5;
-    /// Least gap from the plaza's edge to the last bench along a path,
-    /// meters: past the lamps at the path mouths.
+    /// Separación mínima desde el borde de la plaza hasta el último banco a lo
+    /// largo de un sendero, en metros: más allá de los faroles en las entradas
+    /// de los senderos.
     pub const EDGE_GAP: f32 = 2.6;
 
-    /// Side of the monument's lowest step: smaller in a village.
+    /// Lado del escalón más bajo del monumento: más chico en un pueblito.
     pub fn monument_side(paving: Paving) -> f32 {
         match paving {
             Paving::None => 2.4,
@@ -1016,13 +1081,13 @@ impl PlazaFurniture {
         }
     }
 
-    /// How the benches are spread (user, 2026-10-26: small plazas stay
-    /// sparse): the paths out of the crossing that get any (east, north,
-    /// west, south), how many each, and whether on both sides of the path
-    /// or only on its left, one per quadrant like a pinwheel. A city has
-    /// three on each side of every path (one in its station plaza), a town
-    /// one by each path, a village one by the east and one by the west
-    /// path.
+    /// Cómo se reparten los bancos (usuario, 2026-10-26: las plazas chicas
+    /// siguen siendo escasas): qué senderos que salen del cruce tienen alguno
+    /// (este, norte, oeste, sur), cuántos cada uno, y si van a ambos lados del
+    /// sendero o solo a su izquierda, uno por cuadrante como un molinete. Una
+    /// ciudad tiene tres a cada lado de cada sendero (uno en su plaza de la
+    /// estación), un pueblo uno junto a cada sendero y un pueblito uno junto al
+    /// sendero este y uno junto al oeste.
     pub fn bench_plan(paving: Paving, main: bool) -> (&'static [usize], usize, bool) {
         match paving {
             Paving::Everywhere => (&[0, 1, 2, 3], if main { 3 } else { 1 }, true),
@@ -1031,15 +1096,16 @@ impl PlazaFurniture {
         }
     }
 
-    /// How many benches a plaza gets when they all fit ([`Self::bench_plan`]).
+    /// Cuántos bancos tiene una plaza cuando entran todos
+    /// ([`Self::bench_plan`]).
     pub fn bench_count(paving: Paving, main: bool) -> usize {
         let (arms, per, both) = Self::bench_plan(paving, main);
         arms.len() * per * if both { 2 } else { 1 }
     }
 
-    /// The furniture of `area`, the town's main plaza when `main`, in a
-    /// town paved as `paving`. A bench that would stand on anything of
-    /// `keep_off` (tree trunks, signs) is left out.
+    /// El mobiliario de `area`, la plaza principal del pueblo cuando `main`, en
+    /// un pueblo pavimentado según `paving`. Un banco que quedaría sobre algo
+    /// de `keep_off` (troncos de árboles, carteles) se deja fuera.
     pub fn of(area: Aabb, paving: Paving, main: bool, keep_off: &[Aabb]) -> Self {
         let c = area.center();
         let side = Self::monument_side(paving);
@@ -1049,7 +1115,7 @@ impl PlazaFurniture {
             monument: Aabb::from_center_size(c, Vec2::new(side, side)),
             crossing: plaza_crossing(area),
             benches: benches(area, Self::bench_plan(paving, main), keep_off),
-            // Only a city fences its plaza (user, 2026-10-26).
+            // Solo una ciudad enreja su plaza (usuario, 2026-10-26).
             railing: match paving {
                 Paving::None | Paving::Plaza => Vec::new(),
                 Paving::Everywhere => railing(area),
@@ -1057,7 +1123,7 @@ impl PlazaFurniture {
         }
     }
 
-    /// Its static obstacles: the monument, the benches and the railing.
+    /// Sus obstáculos estáticos: el monumento, los bancos y la reja.
     pub fn obstacles(&self) -> impl Iterator<Item = Aabb> + '_ {
         std::iter::once(self.monument)
             .chain(self.benches.iter().map(Bench::footprint))
@@ -1065,9 +1131,9 @@ impl PlazaFurniture {
     }
 }
 
-/// The benches of `area` as `plan` spreads them ([`PlazaFurniture::bench_plan`]),
-/// each path's spread evenly between the crossing and the lamps at its
-/// mouth, clear of `keep_off`.
+/// Los bancos de `area` tal como los reparte `plan`
+/// ([`PlazaFurniture::bench_plan`]), cada sendero repartido de forma pareja entre
+/// el cruce y los faroles de su entrada, lejos de `keep_off`.
 fn benches(area: Aabb, plan: (&[usize], usize, bool), keep_off: &[Aabb]) -> Vec<Bench> {
     let (arms, per_side, both) = plan;
     let (c, half) = (area.center(), area.size() * 0.5);
@@ -1114,9 +1180,9 @@ fn benches(area: Aabb, plan: (&[usize], usize, bool), keep_off: &[Aabb]) -> Vec<
     out
 }
 
-/// The railing round `area`: along each edge, just inside it, open at the
-/// path's mouth. The north and south runs reach the corners; the east and
-/// west ones run between them.
+/// La reja alrededor de `area`: a lo largo de cada borde, justo por dentro,
+/// abierta en la entrada del sendero. Los tramos norte y sur llegan hasta las
+/// esquinas; los del este y el oeste van entre ellos.
 fn railing(area: Aabb) -> Vec<Aabb> {
     let (i, d) = (PlazaFurniture::RAILING_INSET, PlazaFurniture::RAILING_DEPTH);
     let (min, max, c) = (area.min, area.max, area.center());
@@ -1135,7 +1201,8 @@ fn railing(area: Aabb) -> Vec<Aabb> {
 }
 
 impl TownLayout {
-    /// Builds the town `config` describes, or explains why it cannot.
+    /// Construye el pueblo que describe `config`, o explica por qué no se
+    /// puede.
     pub fn generate(config: &TownConfig) -> Result<Self, TownConfigError> {
         let grid = Grid::validated(config)?;
         let size = config.size();
@@ -1168,10 +1235,11 @@ impl TownLayout {
                 );
             }
         }
-        // The first store, church and police station (if the town has one)
-        // come first, in block order; extra landmarks follow in the order
-        // they were placed, so the first general store found is the one the
-        // horse is tied at.
+        // El primer almacén, la iglesia y la comisaría (si el pueblo tiene una)
+        // van primero, en el orden de las manzanas; los puntos de referencia
+        // extra siguen en el orden en que se colocaron, así que el primer
+        // almacén de ramos generales que se encuentra es aquel en el que está
+        // atado el caballo.
         let primary = LANDMARK_PREFERENCES.len() - usize::from(police == 0);
         for extra in &landmarks[primary..] {
             let inside = grid.block(extra.block.0, extra.block.1);
@@ -1187,8 +1255,8 @@ impl TownLayout {
         let railway = config.railway.map(|r| {
             let (half, track) = grid.yard_half(r);
             let along = grid.along_half(track);
-            // A through line's station stands in the middle of the town;
-            // one beside the town faces the plaza.
+            // La estación de una línea que atraviesa el pueblo está en el medio
+            // del pueblo; una al costado del pueblo mira hacia la plaza.
             let wanted = if r.through {
                 0.0
             } else {
@@ -1244,29 +1312,31 @@ impl TownLayout {
         Ok(town)
     }
 
-    /// A small pampa railway town inspired by 1920s–1930s settlements of La
-    /// Pampa such as Eduardo Castex, generated from [`TownConfig::castex`].
-    /// It borrows the general pattern (grid, plaza, railway at the edge,
-    /// general store, grain sheds, windmills) and is not a reconstruction of
-    /// any real town.
+    /// Un pequeño pueblo ferroviario de la pampa inspirado en asentamientos de
+    /// La Pampa de los años 1920–1930, como Eduardo Castex, generado a partir
+    /// de [`TownConfig::castex`]. Toma el patrón general (cuadrícula, plaza,
+    /// vía férrea en el borde, almacén de ramos generales, galpones de cereal,
+    /// molinos) y no es una reconstrucción de ningún pueblo real.
     pub fn castex_inspired() -> Self {
         Self::generate(&TownConfig::castex()).expect("the built-in Castex config is valid")
     }
 
-    /// Its brick sidewalks: along every block front in a big town, round
-    /// the plaza in a small one, none in a village ([`Paving`]).
+    /// Sus veredas de ladrillo: a lo largo de todo frente de manzana en un
+    /// pueblo grande, alrededor de la plaza en uno chico, ninguna en un
+    /// pueblito ([`Paving`]).
     pub fn sidewalks(&self) -> &[Sidewalk] {
         &self.sidewalks
     }
 
-    /// Every plaza: the main one, then the station plaza of a bigger town.
+    /// Todas las plazas: la principal y después la plaza de la estación de un
+    /// pueblo más grande.
     pub fn plazas(&self) -> impl Iterator<Item = Aabb> + '_ {
         std::iter::once(self.plaza).chain(self.station_plaza)
     }
 
-    /// What stands in each of [`Self::plazas`], in the same order: its
-    /// monument, crossing, benches and railing ([`PlazaFurniture`]), clear
-    /// of its trees and signs.
+    /// Lo que hay en cada una de las [`Self::plazas`], en el mismo orden: su
+    /// monumento, cruce, bancos y reja ([`PlazaFurniture`]), lejos de sus
+    /// árboles y carteles.
     pub fn plaza_furniture(&self) -> Vec<PlazaFurniture> {
         let trunk = Vec2::new(2.0 * TREE_TRUNK_RADIUS, 2.0 * TREE_TRUNK_RADIUS);
         let keep_off: Vec<Aabb> = self
@@ -1282,37 +1352,38 @@ impl TownLayout {
             .collect()
     }
 
-    /// How many people walk the town's streets: its config's `townsfolk`,
-    /// or else 16 in a small town and four for every five blocks (at least
-    /// 16) in bigger ones.
+    /// Cuántas personas caminan por las calles del pueblo: el `townsfolk` de su
+    /// configuración o, si no, 16 en un pueblo chico y cuatro por cada cinco
+    /// manzanas (al menos 16) en los más grandes.
     pub fn townsfolk_count(&self) -> usize {
         self.townsfolk
     }
 
-    /// Blocks `(east_west, north_south)`, from its config.
+    /// Manzanas `(east_west, north_south)`, tomadas de su configuración.
     pub fn blocks(&self) -> (usize, usize) {
         self.blocks
     }
 
-    /// Bounding box of the street grid, ring street included.
+    /// Rectángulo envolvente de la cuadrícula de calles, calle perimetral
+    /// incluida.
     pub fn grid(&self) -> Aabb {
         self.grid
     }
 
-    /// Bounding box of everything built: grid, station yard and railway corridor
-    /// within the town.
+    /// Rectángulo envolvente de todo lo construido: la cuadrícula, la playa de
+    /// la estación y el corredor de la vía férrea dentro del pueblo.
     pub fn extent(&self) -> Aabb {
         self.extent
     }
 
-    /// The extent plus the band where the leveled ground blends back into
-    /// the pampa: everything the town changes on the ground.
+    /// La extensión más la franja donde el terreno nivelado se funde de nuevo
+    /// con la pampa: todo lo que el pueblo cambia en el suelo.
     pub fn leveled(&self) -> Aabb {
         self.extent.expanded(Self::LEVELED_BAND)
     }
 
-    /// The strip the railway runs along, a few meters to either side of the
-    /// track, from one end of the line to the other.
+    /// La franja a lo largo de la cual corre la vía férrea, unos metros a cada
+    /// lado de la vía, de un extremo de la línea al otro.
     pub fn rail_corridor(&self) -> Option<Aabb> {
         let r = self.railway?;
         let min = Vec2::new(r.start.x.min(r.end.x), r.start.y.min(r.end.y));
@@ -1320,18 +1391,18 @@ impl TownLayout {
         Some(Aabb::new(min, max).expanded(Self::RAIL_CORRIDOR_HALF))
     }
 
-    /// The strip between the two halves of a town grown on both sides of
-    /// its line ([`RailwayConfig::through`]), from one end of the grid to the
-    /// other: the track, the station yard and the level crossings. `None`
-    /// for a town beside its line or without one.
+    /// La franja entre las dos mitades de un pueblo que creció a ambos lados de
+    /// su línea ([`RailwayConfig::through`]), de un extremo de la cuadrícula al
+    /// otro: la vía, la playa de la estación y los pasos a nivel. `None` para
+    /// un pueblo al costado de su línea o sin ella.
     pub fn rail_band(&self) -> Option<Aabb> {
         self.band
     }
 
-    /// The streets that cross a [`Self::rail_band`] at a level crossing:
-    /// each one's centerline across the band, from the middle of the ring
-    /// street on one side to the middle of the one on the other, south to
-    /// north, west to east.
+    /// Las calles que cruzan una [`Self::rail_band`] en un paso a nivel: la
+    /// línea central de cada una a través de la franja, desde el medio de la
+    /// calle perimetral de un lado hasta el medio de la del otro, de sur a
+    /// norte y de oeste a este.
     pub fn crossing_streets(&self) -> Vec<(Vec2, Vec2)> {
         let Some(band) = self.band else {
             return Vec::new();
@@ -1353,7 +1424,7 @@ impl TownLayout {
         out
     }
 
-    /// Ground to level under the town, at the natural height of its center.
+    /// Terreno a nivelar debajo del pueblo, a la altura natural de su centro.
     pub fn flat_area(&self, terrain: &Terrain) -> FlatArea {
         let extent = self.extent();
         let center = extent.center();
@@ -1365,11 +1436,12 @@ impl TownLayout {
         }
     }
 
-    /// Static collision footprints: every building's [`Building::collider`]
-    /// but the platform's (a floor people walk on, see [`Self::floors`]),
-    /// every tree trunk (the plaza rings' and the [`ShadeTree`]s'), the
-    /// hitching rail with its horse, the palenques with their horses,
-    /// free-standing signs, and each plaza's monument, benches and railing
+    /// Huellas de colisión estáticas: el [`Building::collider`] de cada
+    /// edificio salvo el del andén (un piso por el que camina la gente, ver
+    /// [`Self::floors`]), cada tronco de árbol (los de los anillos de las
+    /// plazas y los de los [`ShadeTree`]s), el palenque con su caballo, los
+    /// demás palenques con sus caballos, los carteles independientes, y el
+    /// monumento, los bancos y la reja de cada plaza
     /// ([`PlazaFurniture::obstacles`]).
     pub fn obstacles(&self) -> Vec<Aabb> {
         let trunk = Vec2::new(2.0 * TREE_TRUNK_RADIUS, 2.0 * TREE_TRUNK_RADIUS);
@@ -1391,14 +1463,15 @@ impl TownLayout {
             .collect()
     }
 
-    /// Where a rider arriving from the open pampa starts: on the main road
-    /// outside the grid, on the side away from the railway, facing into town.
+    /// Dónde empieza un jinete que llega desde la pampa abierta: en el camino
+    /// principal fuera de la cuadrícula, del lado opuesto a la vía férrea,
+    /// mirando hacia el pueblo.
     pub fn arrival(&self) -> (Vec2, Heading) {
         self.arrival
     }
 
-    /// Raised floors people walk on: the station platform, running along
-    /// the track.
+    /// Pisos elevados por los que camina la gente: el andén de la estación, a
+    /// lo largo de la vía.
     pub fn floors(&self) -> Vec<Floor> {
         self.buildings
             .iter()
@@ -1414,9 +1487,9 @@ impl TownLayout {
             .collect()
     }
 
-    /// Roofs over the platform: each station's canopy, reaching
-    /// [`Canopy::DEPTH`] out from its track-side wall (the back, away from
-    /// its street front) along the whole wall.
+    /// Techos sobre el andén: el techo de cada estación, que sobresale
+    /// [`Canopy::DEPTH`] desde su pared del lado de la vía (la trasera, opuesta
+    /// a su frente sobre la calle) a lo largo de toda la pared.
     pub fn canopies(&self) -> Vec<Canopy> {
         self.buildings
             .iter()
@@ -1439,24 +1512,27 @@ impl TownLayout {
 }
 
 impl TownLayout {
-    /// Width of the band around the town where leveled ground blends back
-    /// into the pampa, in meters.
+    /// Ancho de la franja alrededor del pueblo donde el terreno nivelado se
+    /// funde de nuevo con la pampa, en metros.
     pub const LEVELED_BAND: f32 = 60.0;
-    /// How far the track runs on past either end of the grid, in meters: the
-    /// train enters and leaves the town's line out there, in the fog.
+    /// Cuánto sigue la vía más allá de cada extremo de la cuadrícula, en
+    /// metros: el tren entra y sale de la línea del pueblo ahí afuera, en la
+    /// niebla.
     pub const RAIL_RUN_OUT: f32 = 400.0;
-    /// Half the width of [`Self::rail_corridor`], in meters.
+    /// La mitad del ancho de [`Self::rail_corridor`], en metros.
     pub const RAIL_CORRIDOR_HALF: f32 = 4.0;
 }
 
-/// Broad track gauge, in meters.
+/// Trocha ancha, en metros.
 const RAIL_GAUGE: f32 = 1.676;
-/// Block size the landmark and lot proportions were drawn for, in meters.
+/// Tamaño de manzana para el que se dibujaron las proporciones de los puntos de
+/// referencia y de los lotes, en metros.
 const REFERENCE_BLOCK: f32 = 40.0;
-/// How far outside the grid a rider arrives, in meters.
+/// A qué distancia fuera de la cuadrícula llega un jinete, en metros.
 const ARRIVAL_DISTANCE: f32 = 25.0;
 
-/// The street grid's geometry, derived from a validated config.
+/// La geometría de la cuadrícula de calles, derivada de una configuración
+/// validada.
 #[derive(Debug, Clone, Copy)]
 struct Grid {
     origin: Vec2,
@@ -1464,26 +1540,28 @@ struct Grid {
     rows: usize,
     block: f32,
     street: f32,
-    /// A through line between two halves of the town.
+    /// Una línea que atraviesa el pueblo entre sus dos mitades.
     split: Option<Split>,
 }
 
-/// Where a through line splits the grid in two halves.
+/// Dónde divide la cuadrícula en dos mitades una línea que atraviesa el pueblo.
 #[derive(Debug, Clone, Copy)]
 struct Split {
-    /// The first row of blocks north of the line.
+    /// La primera fila de manzanas al norte de la línea.
     row: usize,
-    /// Width of the band between the two halves' ring streets, in meters.
+    /// Ancho de la franja entre las calles perimetrales de las dos mitades, en
+    /// metros.
     gap: f32,
 }
 
-/// The first row of blocks north of a through line in a town of `rows`.
+/// La primera fila de manzanas al norte de una línea que atraviesa un pueblo de
+/// `rows` filas.
 fn split_row(rows: usize) -> usize {
     rows / 2
 }
 
 impl Grid {
-    /// The grid of `config`, after checking every number in it.
+    /// La cuadrícula de `config`, después de comprobar cada uno de sus números.
     fn validated(config: &TownConfig) -> Result<Self, TownConfigError> {
         if config.name.trim().is_empty() {
             return Err(TownConfigError::EmptyName);
@@ -1548,8 +1626,8 @@ impl Grid {
                 });
             }
         }
-        // Only the tier's landmark blocks are set aside: fewer police
-        // stations fit, more do not.
+        // Solo se reservan las manzanas de los puntos de referencia de la
+        // categoría: entran menos comisarías, pero no más.
         let max = config.size().police_stations();
         if let Some(wanted) = config.police_stations
             && wanted > max
@@ -1577,8 +1655,9 @@ impl Grid {
         })
     }
 
-    /// Half the grid's size, ring street included (and, split by a through
-    /// line, both halves' ring streets and the band between them).
+    /// La mitad del tamaño de la cuadrícula, calle perimetral incluida (y, si
+    /// una línea la divide, las calles perimetrales de ambas mitades y la
+    /// franja entre ellas).
     fn half(&self) -> Vec2 {
         let span = |n: usize| n as f32 * self.block + (n + 1) as f32 * self.street;
         let split = self.split.map_or(0.0, |s| self.street + s.gap);
@@ -1589,14 +1668,15 @@ impl Grid {
         Aabb::from_center_size(self.origin, self.half() * 2.0)
     }
 
-    /// Lower `x` of north-south street `k` (0 = the west ring street).
+    /// `x` inferior de la calle norte-sur `k` (0 = la calle perimetral oeste).
     fn lane_x(&self, k: usize) -> f32 {
         self.origin.x - self.half().x + k as f32 * (self.block + self.street)
     }
 
-    /// Lower `y` of east-west street `k` (0 = the south ring street). Past
-    /// a through line, `k` from its split row on are the north half's
-    /// streets ([`Self::south_lane`] is the south half's last).
+    /// `y` inferior de la calle este-oeste `k` (0 = la calle perimetral sur).
+    /// Pasando una línea que atraviesa el pueblo, las `k` a partir de su fila
+    /// de división son las calles de la mitad norte ([`Self::south_lane`] es la
+    /// última de la mitad sur).
     fn lane_y(&self, k: usize) -> f32 {
         let shift = self
             .split
@@ -1605,13 +1685,14 @@ impl Grid {
         self.origin.y - self.half().y + k as f32 * (self.block + self.street) + shift
     }
 
-    /// Lower `y` of the south half's north ring street, by a through line.
+    /// `y` inferior de la calle perimetral norte de la mitad sur, junto a una
+    /// línea que atraviesa el pueblo.
     fn south_lane(&self) -> Option<f32> {
         let s = self.split?;
         Some(self.origin.y - self.half().y + s.row as f32 * (self.block + self.street))
     }
 
-    /// The band between the two halves of a split grid.
+    /// La franja entre las dos mitades de una cuadrícula dividida.
     fn band(&self) -> Option<Aabb> {
         let s = self.split?;
         let b = self.bounds();
@@ -1622,10 +1703,10 @@ impl Grid {
         ))
     }
 
-    /// The part of the grid the station yard is laid against, and the side
-    /// of it the track runs along: the whole grid and the railway's side,
-    /// or, for a through line, the half the station stands in and its side
-    /// facing the track.
+    /// La parte de la cuadrícula contra la que se coloca la playa de la
+    /// estación, y el lado de ella por el que corre la vía: toda la cuadrícula
+    /// y el lado de la vía férrea o, para una línea que atraviesa el pueblo, la
+    /// mitad en la que está la estación y su lado que mira hacia la vía.
     fn yard_half(&self, railway: RailwayConfig) -> (Aabb, Side) {
         let b = self.bounds();
         match self.band() {
@@ -1641,28 +1722,31 @@ impl Grid {
         }
     }
 
-    /// Footprint of block `(i, j)`, counted from the south-west corner.
+    /// Huella de la manzana `(i, j)`, contada desde la esquina sudoeste.
     fn block(&self, i: usize, j: usize) -> Aabb {
         let min = Vec2::new(self.lane_x(i) + self.street, self.lane_y(j) + self.street);
         Aabb::new(min, min + Vec2::new(self.block, self.block))
     }
 
-    /// The blocks of `plaza` merged into one area, streets between included.
+    /// Las manzanas de `plaza` fusionadas en una sola área, incluidas las
+    /// calles entre ellas.
     fn span(&self, plaza: PlazaBlocks) -> Aabb {
         let (lo, hi) = (plaza.min, plaza.max);
         Aabb::new(self.block(lo.0, lo.1).min, self.block(hi.0, hi.1).max)
     }
 
-    /// Every north-south street, west to east, then every east-west street,
-    /// south to north. A street running between the blocks of a merged
-    /// `plaza` stops at its edges: it becomes two pieces, one on either side.
-    /// A north-south street that would run into the station `yard` of a
-    /// through line stops at the band on either side; the others cross it.
+    /// Todas las calles norte-sur, de oeste a este, y después todas las calles
+    /// este-oeste, de sur a norte. Una calle que corre entre las manzanas de
+    /// una `plaza` fusionada se detiene en sus bordes: se convierte en dos
+    /// tramos, uno a cada lado. Una calle norte-sur que llegaría a la playa de
+    /// la estación `yard` de una línea que atraviesa el pueblo se detiene en la
+    /// franja a cada lado; las demás la cruzan.
     fn streets(&self, plaza: PlazaBlocks, yard: &[Aabb]) -> Vec<Aabb> {
         let b = self.bounds();
         let area = self.span(plaza);
         let band = self.band();
-        // `lane` from `lo` to `hi` along it, minus every one of `cuts`.
+        // `lane` de `lo` a `hi` a lo largo de ella, menos cada uno de los
+        // `cuts`.
         let pieces = |lo: f32, hi: f32, cuts: &[(f32, f32)]| {
             let mut out = vec![(lo, hi)];
             for &(c0, c1) in cuts {
@@ -1703,7 +1787,8 @@ impl Grid {
             }
         }
         for k in 0..=self.rows {
-            // A through line's band: the south half's ring street first.
+            // La franja de una línea que atraviesa el pueblo: primero la calle
+            // perimetral de la mitad sur.
             if let (Some(split), Some(y)) = (self.split, self.south_lane())
                 && split.row == k
             {
@@ -1723,8 +1808,9 @@ impl Grid {
         out
     }
 
-    /// The grid plus the station yard and railway corridor beside it (a
-    /// through line's lie inside it).
+    /// La cuadrícula más la playa de la estación y el corredor de la vía férrea
+    /// al lado (los de una línea que atraviesa el pueblo quedan dentro de
+    /// ella).
     fn extent(&self, railway: Option<RailwayConfig>) -> Aabb {
         let grid = self.bounds();
         let Some(r) = railway.filter(|r| !r.through) else {
@@ -1738,7 +1824,8 @@ impl Grid {
         )
     }
 
-    /// Half the grid's length along a track on `side`.
+    /// La mitad del largo de la cuadrícula a lo largo de una vía del lado
+    /// `side`.
     fn along_half(&self, side: Side) -> f32 {
         match side {
             Side::North | Side::South => self.half().x,
@@ -1746,24 +1833,26 @@ impl Grid {
         }
     }
 
-    /// Scale of block-relative proportions.
+    /// Escala de las proporciones relativas a la manzana.
     fn scale(&self) -> f32 {
         self.block / REFERENCE_BLOCK
     }
 }
 
-/// Index nearest the middle of `n` blocks; ties go to the lower index.
+/// El índice más cercano al medio de `n` manzanas; en caso de empate gana el
+/// índice más bajo.
 fn middle(n: usize) -> usize {
     (n - 1) / 2
 }
 
-/// The block that holds the plaza.
+/// La manzana que contiene la plaza.
 ///
-/// With a through line ([`RailwayConfig::through`]), facing the station is
-/// the row next to the track in the station's half; and `Auto` takes, in
-/// that half, the block one column west of the middle and two rows back
-/// from the track (the last row if there are fewer), so the main plaza
-/// stands a few blocks from the station, as in the big railway towns.
+/// Con una línea que atraviesa el pueblo ([`RailwayConfig::through`]), mirar a
+/// la estación es la fila junto a la vía en la mitad de la estación; y `Auto`
+/// toma, en esa mitad, la manzana una columna al oeste del medio y dos filas
+/// hacia atrás desde la vía (la última fila si hay menos), para que la plaza
+/// principal quede a unas pocas manzanas de la estación, como en los grandes
+/// pueblos ferroviarios.
 fn plaza_block(config: &TownConfig) -> Result<(usize, usize), TownConfigError> {
     let (cols, rows) = config.blocks;
     let through = config.railway.filter(|r| r.through);
@@ -1806,7 +1895,7 @@ fn plaza_block(config: &TownConfig) -> Result<(usize, usize), TownConfigError> {
     }
 }
 
-/// The blocks of the main plaza: columns `min.0..=max.0`, rows
+/// Las manzanas de la plaza principal: columnas `min.0..=max.0`, filas
 /// `min.1..=max.1`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PlazaBlocks {
@@ -1819,7 +1908,7 @@ impl PlazaBlocks {
         (self.min.0..=self.max.0).contains(&i) && (self.min.1..=self.max.1).contains(&j)
     }
 
-    /// Blocks `(east-west, north-south)`.
+    /// Manzanas `(east-west, north-south)`.
     fn span(&self) -> (usize, usize) {
         (self.max.0 - self.min.0 + 1, self.max.1 - self.min.1 + 1)
     }
@@ -1829,8 +1918,8 @@ impl PlazaBlocks {
         (lo.1..=hi.1).flat_map(move |j| (lo.0..=hi.0).map(move |i| (i, j)))
     }
 
-    /// The blocks just past the plaza's `side` (west to east, or south to
-    /// north), possibly outside the grid.
+    /// Las manzanas justo después del lado `side` de la plaza (de oeste a este,
+    /// o de sur a norte), posiblemente fuera de la cuadrícula.
     fn beside(&self, side: Side) -> Vec<(isize, isize)> {
         let (lo, hi) = (
             (self.min.0 as isize, self.min.1 as isize),
@@ -1844,8 +1933,9 @@ impl PlazaBlocks {
         }
     }
 
-    /// Blocks from `b` to the plaza along each axis: positive when the
-    /// plaza lies east (north), zero when `b` is level with it.
+    /// Manzanas desde `b` hasta la plaza a lo largo de cada eje: positivo
+    /// cuando la plaza está al este (al norte), cero cuando `b` está a su misma
+    /// altura.
     fn offset(&self, (i, j): (usize, usize)) -> (isize, isize) {
         let toward = |v: usize, lo: usize, hi: usize| {
             if v < lo {
@@ -1862,8 +1952,8 @@ impl PlazaBlocks {
         )
     }
 
-    /// The side of a block at `offset` (from [`Self::offset`]) that faces
-    /// the plaza, along the axis with the larger offset.
+    /// El lado de una manzana en `offset` (de [`Self::offset`]) que mira hacia
+    /// la plaza, a lo largo del eje con el desplazamiento mayor.
     fn facing((di, dj): (isize, isize)) -> Side {
         if di.abs() >= dj.abs() {
             if di > 0 { Side::East } else { Side::West }
@@ -1875,11 +1965,11 @@ impl PlazaBlocks {
     }
 }
 
-/// The main plaza's blocks. A small town's plaza is the block
-/// [`PlazaPlacement`] picks. A bigger town's spans several
-/// ([`TownSize::plaza_span`]): centered on the grid for `Auto` and `Center`
-/// (ties go west or south), otherwise covering the picked block, as close
-/// to the center as it allows.
+/// Las manzanas de la plaza principal. La plaza de un pueblo chico es la
+/// manzana que elige [`PlazaPlacement`]. La de un pueblo más grande abarca
+/// varias ([`TownSize::plaza_span`]): centrada en la cuadrícula para `Auto` y
+/// `Center` (los empates van al oeste o al sur) y, si no, cubriendo la manzana
+/// elegida, tan cerca del centro como lo permita.
 fn main_plaza(config: &TownConfig, size: TownSize) -> Result<PlazaBlocks, TownConfigError> {
     let anchor = plaza_block(config)?;
     let (w, h) = size.plaza_span(config.blocks);
@@ -1911,18 +2001,18 @@ fn main_plaza(config: &TownConfig, size: TownSize) -> Result<PlazaBlocks, TownCo
     Ok(plaza)
 }
 
-/// A landmark building facing the plaza from a nearby block.
+/// Un edificio de referencia que mira hacia la plaza desde una manzana cercana.
 #[derive(Debug, Clone, Copy)]
 struct Landmark {
     kind: BuildingKind,
     block: (usize, usize),
-    /// The block side it stands on (its facade side).
+    /// El lado de la manzana en el que está (el lado de su fachada).
     front: Side,
 }
 
-/// Where each landmark prefers to stand, seen from the plaza, in order.
-/// A central plaza gets the store to the west, the church to the north and
-/// the police station to the east.
+/// Dónde prefiere estar cada punto de referencia, visto desde la plaza, en
+/// orden. Una plaza central tiene el almacén al oeste, la iglesia al norte y la
+/// comisaría al este.
 const LANDMARK_PREFERENCES: [(BuildingKind, [Side; 4]); 3] = [
     (
         BuildingKind::GeneralStore,
@@ -1938,16 +2028,18 @@ const LANDMARK_PREFERENCES: [(BuildingKind, [Side; 4]); 3] = [
     ),
 ];
 
-/// Places the town's landmarks, spread over the town so it has life all
-/// over (user, 2026-10-23), and a bigger town's station plaza. Returns them
-/// as the main general store, the church and the first police station
-/// (unless `police_count` is zero), then the rest: a bigger town's station
-/// store, the other police stations and any extra stores.
+/// Coloca los puntos de referencia del pueblo, repartidos por el pueblo para
+/// que tenga vida en todas partes (usuario, 2026-10-23), y la plaza de la
+/// estación de un pueblo más grande. Los devuelve como el almacén de ramos
+/// generales principal, la iglesia y la primera comisaría (salvo que
+/// `police_count` sea cero), y después el resto: el almacén de la estación de
+/// un pueblo más grande, las demás comisarías y cualquier almacén extra.
 ///
-/// The church faces the main plaza from the first free neighbouring block
-/// of its preferences (see [`LANDMARK_PREFERENCES`]). A bigger town's station
-/// plaza and its store come next (see [`station_plaza`] and
-/// [`station_store`]). Every other landmark is dispersed ([`disperse`]).
+/// La iglesia mira hacia la plaza principal desde la primera manzana vecina
+/// libre según sus preferencias (ver [`LANDMARK_PREFERENCES`]). Después vienen
+/// la plaza de la estación de un pueblo más grande y su almacén (ver
+/// [`station_plaza`] y [`station_store`]). Todos los demás puntos de referencia
+/// se dispersan ([`disperse`]).
 fn place_landmarks(
     grid: &Grid,
     plaza: PlazaBlocks,
@@ -1986,30 +2078,31 @@ fn place_landmarks(
     (first, station)
 }
 
-/// Blocks between two civic buildings, at least: never side by side.
+/// Manzanas entre dos edificios cívicos, como mínimo: nunca uno al lado del
+/// otro.
 const CIVIC_SPACING: usize = 2;
 
-/// Least blocks between two landmarks of the same kind in a town of
-/// `cols` x `rows`: about half the town apart.
+/// Manzanas mínimas entre dos puntos de referencia del mismo tipo en un pueblo
+/// de `cols` x `rows`: más o menos la mitad del pueblo de distancia.
 fn same_kind_spacing(cols: usize, rows: usize) -> usize {
     CIVIC_SPACING.max(cols.max(rows) / 2)
 }
 
-/// Blocks apart, the most along either axis.
+/// Manzanas de distancia, el máximo a lo largo de cualquiera de los ejes.
 fn blocks_apart(a: (usize, usize), b: (usize, usize)) -> usize {
     a.0.abs_diff(b.0).max(a.1.abs_diff(b.1))
 }
 
-/// A `kind` landmark dispersed over the town: on a block that is not the
-/// plaza, `reserved` (the station plaza's) nor `placed`, at least
-/// [`CIVIC_SPACING`] blocks from every `placed` landmark and
-/// [`same_kind_spacing`] from those of its kind, as near the plaza as that
-/// allows (fewest blocks along either axis, then the lowest column, then
-/// row). In a town split by a through
-/// line, it goes to the half with fewer of its kind (the plaza's on a tie),
-/// so each half has its own. When no block keeps the spacing, it takes the
-/// one farthest from the others. It faces the plaza along the axis with the
-/// larger offset.
+/// Un punto de referencia de tipo `kind` disperso por el pueblo: en una manzana
+/// que no sea la plaza, ni `reserved` (la de la plaza de la estación) ni
+/// `placed`, al menos a [`CIVIC_SPACING`] manzanas de cada punto de referencia
+/// `placed` y a [`same_kind_spacing`] de los de su tipo, tan cerca de la plaza
+/// como eso permita (la menor cantidad de manzanas a lo largo de cualquiera de
+/// los ejes, después la columna más baja y después la fila). En un pueblo
+/// dividido por una línea que lo atraviesa, va a la mitad que tenga menos de su
+/// tipo (la de la plaza en caso de empate), para que cada mitad tenga el suyo.
+/// Cuando ninguna manzana mantiene la separación, toma la más alejada de las
+/// demás. Mira hacia la plaza a lo largo del eje con el desplazamiento mayor.
 fn disperse(
     grid: &Grid,
     plaza: PlazaBlocks,
@@ -2039,9 +2132,10 @@ fn disperse(
         .filter(|&b| placed.iter().all(|l| l.block != b))
         .filter(|&b| wanted.is_none() || half(b) == wanted)
         .collect();
-    // Blocks to the plaza, the most along either axis: a block across a
-    // corner counts as near as one beside it, so the landmarks can still
-    // fan out round a small plaza.
+    // Manzanas hasta la plaza, el máximo a lo largo de cualquiera de los ejes:
+    // una manzana en diagonal cuenta tan cerca como una al lado, así que los
+    // puntos de referencia todavía pueden abrirse en abanico alrededor de una
+    // plaza chica.
     let to_plaza = |b: (usize, usize)| {
         let (di, dj) = plaza.offset(b);
         di.unsigned_abs().max(dj.unsigned_abs())
@@ -2077,11 +2171,13 @@ fn disperse(
     }
 }
 
-/// A `kind` landmark facing `plaza`: the first block next to it, in
-/// `preferences` order (west to east, or south to north, along a side),
-/// that is not the plaza nor `taken`, facing it across the street;
-/// otherwise the nearest such block (fewest blocks away, then lowest column,
-/// then lowest row), facing the plaza along the axis with the larger offset.
+/// Un punto de referencia de tipo `kind` que mira hacia `plaza`: la primera
+/// manzana junto a ella, en el orden de `preferences` (de oeste a este, o de
+/// sur a norte, a lo largo de un lado), que no sea la plaza ni esté en `taken`,
+/// mirándola del otro lado de la calle; si no, la manzana de ese tipo más
+/// cercana (la menor cantidad de manzanas de distancia, después la columna más
+/// baja y después la fila más baja), mirando hacia la plaza a lo largo del eje
+/// con el desplazamiento mayor.
 fn place_landmark(
     grid: &Grid,
     plaza: PlazaBlocks,
@@ -2118,9 +2214,10 @@ fn place_landmark(
     })
 }
 
-/// Blocks with a windmill and its water tank in the back yard: the
-/// south-west corner, the east column one row below the top, and the second
-/// column of the top row, skipping `reserved` blocks (plazas and landmarks).
+/// Manzanas con un molino y su tanque de agua en el fondo: la esquina sudoeste,
+/// la columna este una fila por debajo de la superior y la segunda columna de
+/// la fila superior, salteando las manzanas `reserved` (plazas y puntos de
+/// referencia).
 fn windmill_blocks(grid: &Grid, reserved: &[(usize, usize)]) -> Vec<(usize, usize)> {
     [(0, 0), (grid.cols - 1, grid.rows - 2), (1, grid.rows - 1)]
         .into_iter()
@@ -2128,26 +2225,29 @@ fn windmill_blocks(grid: &Grid, reserved: &[(usize, usize)]) -> Vec<(usize, usiz
         .collect()
 }
 
-/// A bigger town's station plaza: half of `block`, on its `toward` side.
+/// La plaza de la estación de un pueblo más grande: la mitad de `block`, de su
+/// lado `toward`.
 #[derive(Debug, Clone, Copy)]
 struct StationPlaza {
     block: (usize, usize),
     toward: Side,
     area: Aabb,
-    /// Tree ring steps along x and y: half as many across the half block.
+    /// Pasos del anillo de árboles a lo largo de x y de y: la mitad a lo ancho
+    /// de la media manzana.
     tree_steps: (usize, usize),
 }
 
-/// Picks a bigger town's station plaza.
+/// Elige la plaza de la estación de un pueblo más grande.
 ///
-/// With a railway: the block of the railway-side row facing the station
-/// (which is aligned to the main plaza; its west or south block when it
-/// spans two), or, when that block holds the main plaza or a landmark, the
-/// nearest free block along that row (ties go to the lower index); the
-/// plaza takes the half of it nearest the railway. Without a railway (or
-/// with no free block on that row): the free block farthest from the main
-/// plaza (ties go to the lowest column, then row); the plaza takes the half
-/// facing the main plaza.
+/// Con vía férrea: la manzana de la fila del lado de la vía que mira a la
+/// estación (que está alineada con la plaza principal; su manzana oeste o sur
+/// cuando abarca dos) o, cuando esa manzana contiene la plaza principal o un
+/// punto de referencia, la manzana libre más cercana a lo largo de esa fila
+/// (los empates van al índice más bajo); la plaza ocupa la mitad más cercana a
+/// la vía férrea. Sin vía férrea (o sin manzanas libres en esa fila): la
+/// manzana libre más alejada de la plaza principal (los empates van a la
+/// columna más baja y después a la fila); la plaza ocupa la mitad que mira
+/// hacia la plaza principal.
 fn station_plaza(
     grid: &Grid,
     plaza: PlazaBlocks,
@@ -2157,8 +2257,8 @@ fn station_plaza(
     let free = |b: (usize, usize)| !plaza.contains(b) && landmarks.iter().all(|l| l.block != b);
     let on_row = railway.and_then(|r| {
         let (cols, rows) = (grid.cols, grid.rows);
-        // A through line's station stands in the middle of the town, in
-        // the row of its half next to the track.
+        // La estación de una línea que atraviesa el pueblo está en el medio del
+        // pueblo, en la fila de su mitad junto a la vía.
         let split = grid.split.map(|s| s.row);
         let (row, toward): (Vec<(usize, usize)>, Side) = match (r.side, split) {
             (Side::North, Some(s)) => ((0..cols).map(|i| (i, s)).collect(), Side::South),
@@ -2168,7 +2268,7 @@ fn station_plaza(
             (Side::East, None) => ((0..rows).map(|j| (cols - 1, j)).collect(), r.side),
             (Side::West, None) => ((0..rows).map(|j| (0, j)).collect(), r.side),
         };
-        // Index along the row of the block facing the station.
+        // Índice a lo largo de la fila de la manzana que mira a la estación.
         let along = |b: (usize, usize)| match r.side {
             Side::North | Side::South => b.0,
             Side::East | Side::West => b.1,
@@ -2209,8 +2309,9 @@ fn station_plaza(
     }
 }
 
-/// The station plaza's general store: on a free block beside it, facing it
-/// across the street, never on the side of its house half.
+/// El almacén de ramos generales de la plaza de la estación: en una manzana
+/// libre a su lado, mirándola del otro lado de la calle, nunca del lado de su
+/// mitad con casas.
 fn station_store(
     grid: &Grid,
     plaza: PlazaBlocks,
@@ -2235,8 +2336,9 @@ fn station_store(
     )
 }
 
-/// Box against the `side` edge of block `b`, from `a0` to `a1` along that
-/// edge (west to east, or south to north) and `depth` deep into the block.
+/// Rectángulo contra el borde `side` de la manzana `b`, de `a0` a `a1` a lo
+/// largo de ese borde (de oeste a este, o de sur a norte) y con `depth` de
+/// profundidad dentro de la manzana.
 fn side_box(b: Aabb, side: Side, a0: f32, a1: f32, depth: f32) -> Aabb {
     match side {
         Side::South => Aabb::new(
@@ -2267,18 +2369,19 @@ fn building(kind: BuildingKind, footprint: Aabb, height: f32, front: Side) -> Bu
     }
 }
 
-/// Footprint proportions of a landmark on a reference 40 m block: start and
-/// end along its street edge, depth into the block, and wall height.
+/// Proporciones de la huella de un punto de referencia sobre una manzana de
+/// referencia de 40 m: inicio y fin a lo largo de su borde sobre la calle,
+/// profundidad dentro de la manzana y altura de pared.
 fn landmark_shape(kind: BuildingKind) -> (f32, f32, f32, f32) {
     match kind {
         BuildingKind::GeneralStore => (12.0, 28.0, 14.0, 5.0),
         BuildingKind::PoliceStation => (13.0, 27.0, 12.0, 4.5),
-        // Church: deep nave behind a narrow front.
+        // Iglesia: nave profunda detrás de un frente angosto.
         _ => (14.0, 26.0, 22.0, 7.0),
     }
 }
 
-/// Small deterministic hash of lot coordinates into `[0, 1)`.
+/// Pequeño hash determinista de las coordenadas del lote en `[0, 1)`.
 fn lot_noise(i: usize, j: usize, lot: usize, salt: u32) -> f32 {
     let mut v = (i as u32).wrapping_mul(73_856_093)
         ^ (j as u32).wrapping_mul(19_349_663)
@@ -2292,10 +2395,11 @@ fn lot_noise(i: usize, j: usize, lot: usize, salt: u32) -> f32 {
     (v & 0xffff) as f32 / 65_536.0
 }
 
-/// Lines a block's street edges with houses (sheds on the outskirts) and adds
-/// its landmark or back-yard windmill, if any. Every proportion is drawn for
-/// a 40 m block and scales with the block. When a second plaza takes half
-/// the block, the other half gets every lot that stays clear of it.
+/// Bordea con casas los bordes de una manzana sobre la calle (galpones en las
+/// afueras) y agrega su punto de referencia o el molino del fondo, si hay. Cada
+/// proporción está dibujada para una manzana de 40 m y se escala con la
+/// manzana. Cuando una segunda plaza ocupa la mitad de la manzana, la otra
+/// mitad recibe todos los lotes que quedan lejos de ella.
 fn fill_block(
     grid: &Grid,
     (i, j): (usize, usize),
@@ -2326,8 +2430,9 @@ fn fill_block(
     } * config.density.unwrap_or(1.0);
     let noise = |lot: usize, salt: u32| lot_noise(i, j, lot, salt ^ seed.wrapping_mul(0x9e37_79b9));
 
-    // Lots: (street side, start along the street, lot length). North and south
-    // sides hold three lots; east and west one in the middle, clear of corners.
+    // Lotes: (lado de la calle, inicio a lo largo de la calle, largo del lote).
+    // Los lados norte y sur tienen tres lotes; el este y el oeste, uno en el
+    // medio, lejos de las esquinas.
     let lots = [
         (Side::South, 1.0, 10.0),
         (Side::South, 15.0, 10.0),
@@ -2359,7 +2464,7 @@ fn fill_block(
     }
 
     if windmill {
-        // Tower and tank centered in the back yard.
+        // Torre y tanque centrados en el fondo.
         let c = b.center();
         let tower = Aabb::new(
             Vec2::new(c.x - 5.5, c.y - 1.5),
@@ -2369,8 +2474,8 @@ fn fill_block(
     }
 }
 
-/// A 3 m windmill tower on `tower` and its round 7 m tank 1 m past it
-/// along `toward`.
+/// Una torre de molino de 3 m sobre `tower` y su tanque redondo de 7 m, 1 m más
+/// allá en la dirección de `toward`.
 fn windmill_with_tank(tower: Aabb, toward: Vec2) -> [Building; 2] {
     let reach = 1.5 + 1.0 + 3.5;
     let tank_center = tower.center() + toward * reach;
@@ -2385,9 +2490,9 @@ fn windmill_with_tank(tower: Aabb, toward: Vec2) -> [Building; 2] {
     ]
 }
 
-/// Box beside the grid on `side`: `u` along the grid edge (from the grid's
-/// center line, west to east or south to north) and `v` outward from the
-/// grid edge.
+/// Rectángulo al lado de la cuadrícula del lado `side`: `u` a lo largo del
+/// borde de la cuadrícula (desde la línea central de la cuadrícula, de oeste a
+/// este o de sur a norte) y `v` hacia afuera desde el borde de la cuadrícula.
 fn yard_box(grid: Aabb, side: Side, u: (f32, f32), v: (f32, f32)) -> Aabb {
     let c = grid.center();
     let (min, max) = match side {
@@ -2411,21 +2516,21 @@ fn yard_box(grid: Aabb, side: Side, u: (f32, f32), v: (f32, f32)) -> Aabb {
     Aabb::new(min, max)
 }
 
-/// Half the platform's length, in meters: longer than the train.
+/// La mitad del largo del andén, en metros: más largo que el tren.
 const PLATFORM_HALF: f32 = 30.0;
 
-/// Station, platform, grain stores, a shed and a windmill between the ring
-/// street and the track, anchored to the track. The station is centered on
-/// the plaza along the track (kept far enough from the grid's ends for the
-/// whole platform) and faces it across the ring street; grain stores line
-/// the track on one side, the shed and windmill on the other, as far as the
-/// grid reaches.
+/// Estación, andén, depósitos de cereal, un galpón y un molino entre la calle
+/// perimetral y la vía, anclados a la vía. La estación está centrada respecto
+/// de la plaza a lo largo de la vía (lo bastante lejos de los extremos de la
+/// cuadrícula para que entre todo el andén) y la mira del otro lado de la calle
+/// perimetral; los depósitos de cereal bordean la vía de un lado, y el galpón y
+/// el molino del otro, hasta donde llega la cuadrícula.
 ///
-/// `bounds` is the part of the grid the yard is laid against (the whole
-/// grid, or a through line's station half), `side` the side of it the track
-/// runs along `offset` meters out, `half` half its length along the track,
-/// and `wanted` where along the track (from its middle) the station should
-/// stand.
+/// `bounds` es la parte de la cuadrícula contra la que se coloca la playa (toda
+/// la cuadrícula, o la mitad de la estación de una línea que atraviesa el
+/// pueblo), `side` el lado de ella por el que corre la vía a `offset` metros,
+/// `half` la mitad de su largo a lo largo de la vía, y `wanted` dónde debería
+/// estar la estación a lo largo de la vía (desde su centro).
 fn station_yard(bounds: Aabb, side: Side, r: f32, half: f32, wanted: f32) -> Vec<Building> {
     let along = axis_along(side);
     let c = wanted.clamp(-half + PLATFORM_HALF, half - PLATFORM_HALF);
@@ -2453,7 +2558,7 @@ fn station_yard(bounds: Aabb, side: Side, r: f32, half: f32, wanted: f32) -> Vec
             to_track,
         ),
     ];
-    // Grain stores past the platform, toward +u.
+    // Depósitos de cereal más allá del andén, hacia +u.
     let mut start = PLATFORM_HALF + 10.0;
     for length in [40.0, 35.0] {
         let end = (start + length).min(reach - c);
@@ -2468,7 +2573,7 @@ fn station_yard(bounds: Aabb, side: Side, r: f32, half: f32, wanted: f32) -> Vec
         ));
         start = end + 10.0;
     }
-    // A windmill and a shed before the platform, toward -u.
+    // Un molino y un galpón antes del andén, hacia -u.
     if c - 45.0 >= -reach {
         let tower = yard(-45.0, -42.0, r - 17.0, r - 14.0);
         out.extend(windmill_with_tank(tower, along));
@@ -2484,7 +2589,8 @@ fn station_yard(bounds: Aabb, side: Side, r: f32, half: f32, wanted: f32) -> Vec
     out
 }
 
-/// Unit world axis along a track on `side` of a grid.
+/// Eje unitario del mundo a lo largo de una vía del lado `side` de una
+/// cuadrícula.
 fn axis_along(side: Side) -> Vec2 {
     match side {
         Side::North | Side::South => Vec2::new(1.0, 0.0),
@@ -2492,14 +2598,14 @@ fn axis_along(side: Side) -> Vec2 {
     }
 }
 
-/// How far a north-south street keeps from the station yard to cross a
-/// through line's band, in meters.
+/// A qué distancia se mantiene una calle norte-sur de la playa de la estación
+/// para cruzar la franja de una línea que atraviesa el pueblo, en metros.
 const YARD_CLEARANCE: f32 = 2.0;
 
-/// The track: parallel to the `grid`'s `side` at `offset`, running
-/// [`TownLayout::RAIL_RUN_OUT`] past either end of the grid.
+/// La vía: paralela al lado `side` de `grid` a `offset`, extendiéndose
+/// [`TownLayout::RAIL_RUN_OUT`] más allá de cada extremo de la cuadrícula.
 fn railway_line(grid: Aabb, side: Side, offset: f32, along_half: f32) -> Railway {
-    // A zero-size box on the track centerline.
+    // Un rectángulo de tamaño cero sobre la línea central de la vía.
     let line = yard_box(grid, side, (0.0, 0.0), (offset, offset));
     let reach = along_half + TownLayout::RAIL_RUN_OUT;
     let c = grid.center();
@@ -2520,14 +2626,15 @@ fn railway_line(grid: Aabb, side: Side, offset: f32, along_half: f32) -> Railway
     }
 }
 
-/// Depth of the general store's veranda: 3 m on wide streets, shallower on
-/// narrow ones so the tied horse stays clear of the walkers down the middle.
+/// Profundidad de la galería del almacén de ramos generales: 3 m en las calles
+/// anchas, menos en las angostas para que el caballo atado quede lejos de los
+/// peatones que van por el medio.
 fn veranda_depth(street: f32) -> f32 {
     (street / 2.0 - 2.7).clamp(1.2, Sidewalk::WIDTH)
 }
 
-/// A rail on the street side of `store`, past its `veranda`, with a horse
-/// tied alongside it facing along the street.
+/// Un palenque del lado de la calle de `store`, más allá de su `veranda`, con
+/// un caballo atado al lado mirando a lo largo de la calle.
 fn hitching_post(store: &Building, veranda: f32) -> HitchingPost {
     let (rail, horse) = tied_post(store, veranda + 0.2, 0.0, 2.8);
     HitchingPost {
@@ -2537,28 +2644,30 @@ fn hitching_post(store: &Building, veranda: f32) -> HitchingPost {
     }
 }
 
-/// A rail of `length` along the street `rail_offset` out of `building`'s
-/// facade and `lateral` meters off its middle (positive turns left of the
-/// outward normal), with a horse tied alongside facing along the street.
+/// Un palenque de largo `length` a lo largo de la calle, a `rail_offset` de la
+/// fachada de `building` y a `lateral` metros de su centro (positivo hacia la
+/// izquierda de la normal hacia afuera), con un caballo atado al lado mirando a
+/// lo largo de la calle.
 fn tied_post(
     building: &Building,
     rail_offset: f32,
     lateral: f32,
     length: f32,
 ) -> (Aabb, TetheredHorse) {
-    // Outward facade normal and the direction along the street.
+    // Normal de la fachada hacia afuera y la dirección a lo largo de la calle.
     let normal = crate::places::side_normal(building.front);
     let along = Vec2::new(normal.y.abs(), normal.x.abs());
     let half = building.footprint.size() * 0.5;
     let face = building.footprint.center()
         + normal * (normal.x.abs() * half.x + normal.y.abs() * half.y)
         + Vec2::new(-normal.y, normal.x) * lateral;
-    // Axis-aligned box of `length` along the street and `width` across it.
+    // Rectángulo alineado con los ejes de `length` a lo largo de la calle y
+    // `width` a lo ancho.
     let boxed = |center: Vec2, length: f32, width: f32| {
         let size = along * length + normal * width;
         Aabb::from_center_size(center, Vec2::new(size.x.abs(), size.y.abs()))
     };
-    // Just past the veranda.
+    // Justo más allá de la galería.
     let (rail_width, horse_width, horse_length) = (0.2, 1.0, 2.4);
     let rail = boxed(face + normal * rail_offset, length, rail_width);
     let horse_center = face + normal * (rail_offset + rail_width / 2.0 + 0.1 + horse_width / 2.0);
@@ -2573,16 +2682,18 @@ fn tied_post(
 }
 
 impl TownLayout {
-    /// The palenques of the town: one before each general store but the
-    /// first (whose post is [`Self::hitching_post`]), police station, church
-    /// and station that has room for one, in building order. A city ties a
-    /// horse to a seeded half of them, at most [`Palenque::MAX_HORSES`].
+    /// Los palenques del pueblo: uno frente a cada almacén de ramos generales
+    /// salvo el primero (cuyo palenque es [`Self::hitching_post`]), comisaría,
+    /// iglesia y estación que tenga lugar para uno, en el orden de los
+    /// edificios. Una ciudad ata un caballo a una mitad de ellos elegida por
+    /// semilla, como mucho [`Palenque::MAX_HORSES`].
     fn place_palenques(&self) -> Vec<Palenque> {
         let first_store = self
             .buildings
             .iter()
             .position(|b| b.kind == BuildingKind::GeneralStore);
-        // Ground a palenque keeps off, with the gap each one needs.
+        // Terreno del que se mantiene lejos un palenque, con la separación que
+        // necesita cada uno.
         let trunk = Vec2::new(2.0 * TREE_TRUNK_RADIUS, 2.0 * TREE_TRUNK_RADIUS);
         let mut solid: Vec<Aabb> = self
             .buildings
@@ -2607,11 +2718,13 @@ impl TownLayout {
         }
         open.extend(self.canopies().iter().map(|c| c.footprint));
         open.extend(self.rail_corridor());
-        // The corner lamps stand in the street crossings.
+        // Los faroles de esquina están en los cruces de calles.
         open.extend(self.crossings(Palenque::CROSSING_MARGIN));
-        // The ground in front of every door, as the lamps keep it clear.
+        // El terreno frente a cada puerta, tal como lo mantienen libre los
+        // faroles.
         open.extend(self.door_zones(0.0));
-        // Past the sidewalk, and past the store's veranda if the street is wide.
+        // Más allá de la vereda, y más allá de la galería del almacén si la
+        // calle es ancha.
         let offset = (self.hitching_post.veranda + 0.2).max(Sidewalk::WIDTH + 0.2);
         let mut posts: Vec<Palenque> = Vec::new();
         for (k, b) in self.buildings.iter().enumerate() {
@@ -2625,7 +2738,8 @@ impl TownLayout {
             if !wanted || Some(k) == first_store {
                 continue;
             }
-            // Beside the door, on the seeded side first, then further out.
+            // Al lado de la puerta, primero del lado elegido por semilla,
+            // después más lejos.
             let first = if Rng::new(self.seed ^ 0x9a1e, k as u32).below(2) == 0 {
                 1.0
             } else {
@@ -2637,8 +2751,9 @@ impl TownLayout {
                     [first * d, -first * d]
                 })
                 .collect();
-            // A city looks for room for a horse first; a rail alone is
-            // enough anywhere else, or when the street is too narrow.
+            // Una ciudad busca primero lugar para un caballo; en cualquier otro
+            // lugar, o cuando la calle es demasiado angosta, alcanza con el
+            // palenque solo.
             let passes: &[bool] = if self.size == TownSize::Small {
                 &[false]
             } else {
@@ -2646,7 +2761,8 @@ impl TownLayout {
             };
             'found: for &with_horse in passes {
                 for &lateral in &laterals {
-                    // The station's post stands on its yard, with no sidewalk to clear.
+                    // El palenque de la estación está sobre su playa, sin vereda que
+                    // despejar.
                     let out = if b.kind == BuildingKind::Station {
                         Palenque::YARD_OUT
                     } else {
@@ -2679,8 +2795,9 @@ impl TownLayout {
                 }
             }
         }
-        // A city ties a horse to a seeded half of its posts (the ones with
-        // the lowest rolls that have room for one).
+        // Una ciudad ata un caballo a una mitad de sus palenques elegida por
+        // semilla (los de valores aleatorios más bajos que tengan lugar para
+        // uno).
         let mut order: Vec<usize> = (0..posts.len())
             .filter(|&k| posts[k].horse.is_some())
             .collect();
@@ -2694,10 +2811,10 @@ impl TownLayout {
         posts
     }
 
-    /// Whether a palenque of a `kind` of building, filling `spot`, fits: on
-    /// one street and off its middle lane (the station's, on the yard in
-    /// front of it), `Palenque::CLEARANCE` from every `solid` obstacle and
-    /// clear of every `open` area.
+    /// Si entra un palenque de un edificio de tipo `kind` que ocupe `spot`:
+    /// sobre una calle y fuera de su carril central (el de la estación, sobre
+    /// la playa que tiene enfrente), a `Palenque::CLEARANCE` de todo obstáculo
+    /// `solid` y lejos de toda área `open`.
     fn palenque_fits(
         &self,
         kind: BuildingKind,
@@ -2710,7 +2827,8 @@ impl TownLayout {
         } else {
             self.on_street_off_lane(spot, Palenque::LANE)
         };
-        // The station stands in a through line's band; nothing else does.
+        // La estación está en la franja de una línea que atraviesa el pueblo;
+        // nada más lo está.
         let off_band =
             kind == BuildingKind::Station || self.band.is_none_or(|b| !b.intersects(spot));
         on_ground
@@ -2723,8 +2841,8 @@ impl TownLayout {
 }
 
 impl TownLayout {
-    /// Whether `spot` lies inside one street strip and at least `lane` meters
-    /// off its middle line, on one side of it.
+    /// Si `spot` está dentro de una franja de calle y al menos a `lane` metros
+    /// de su línea media, de un lado de ella.
     fn on_street_off_lane(&self, spot: &Aabb, lane: f32) -> bool {
         self.streets.iter().any(|street| {
             let across = if street.size().x > street.size().y {
@@ -2738,8 +2856,8 @@ impl TownLayout {
         })
     }
 
-    /// The street crossings, where a north-south street meets an east-west
-    /// one, each grown by `margin` meters.
+    /// Los cruces de calles, donde una calle norte-sur se encuentra con una
+    /// este-oeste, cada uno agrandado `margin` metros.
     fn crossings(&self, margin: f32) -> Vec<Aabb> {
         let (north_south, east_west): (Vec<&Aabb>, Vec<&Aabb>) =
             self.streets.iter().partition(|s| s.size().y > s.size().x);
@@ -2756,8 +2874,9 @@ impl TownLayout {
         out
     }
 
-    /// The ground in front of every door (but the platform's), as the lamps
-    /// keep it clear, each strip `extra` meters wider on both sides.
+    /// El terreno frente a cada puerta (salvo la del andén), tal como lo
+    /// mantienen libre los faroles, cada franja `extra` metros más ancha a
+    /// ambos lados.
     fn door_zones(&self, extra: f32) -> Vec<Aabb> {
         let reach = StreetLamps::DOOR_HALF_WIDTH + extra;
         self.buildings
@@ -2781,38 +2900,46 @@ impl TownLayout {
     }
 }
 
-/// What the trees of [`TownLayout::place_shade_trees`] keep off, and where
-/// they stand so far.
+/// Aquello de lo que se mantienen lejos los árboles de
+/// [`TownLayout::place_shade_trees`], y dónde están hasta ahora.
 struct ShadeGround {
-    /// Obstacles a trunk keeps [`ShadeGround::CLEARANCE`] from.
+    /// Obstáculos de los que un tronco se mantiene a
+    /// [`ShadeGround::CLEARANCE`].
     solid: Vec<Aabb>,
-    /// Ground no trunk stands on: crossings, doors, galerías, the line.
+    /// Terreno donde no puede haber ningún tronco: cruces, puertas, galerías,
+    /// la línea.
     zones: Vec<Aabb>,
-    /// The ground in front of every door, wider: no street tree stands on it.
+    /// El terreno frente a cada puerta, más ancho: ningún árbol de calle está
+    /// sobre él.
     pit_doors: Vec<Aabb>,
-    /// The ring round every plaza and its sidewalk: no trunk but a grove's.
+    /// El anillo alrededor de cada plaza y su vereda: ningún tronco salvo el de
+    /// un bosquecillo.
     plazas: Vec<Aabb>,
-    /// Every building footprint (the platform's excluded).
+    /// Todas las huellas de los edificios (excluida la del andén).
     buildings: Vec<Aabb>,
-    /// Every trunk placed so far, the plaza rings' included.
+    /// Todos los troncos colocados hasta ahora, incluidos los de los anillos de
+    /// las plazas.
     taken: Vec<Vec2>,
 }
 
 impl ShadeGround {
-    /// Gap between a trunk and any obstacle, in meters.
+    /// Separación entre un tronco y cualquier obstáculo, en metros.
     const CLEARANCE: f32 = 1.0;
-    /// Gap kept from a crossing, where the corner lamps stand, meters.
+    /// Separación que se mantiene respecto de un cruce, donde están los faroles
+    /// de esquina, en metros.
     const CROSSING: f32 = 3.5;
-    /// Extra width kept beside a door, meters.
+    /// Ancho extra que se deja al lado de una puerta, en metros.
     const DOOR: f32 = 1.8;
-    /// Extra width kept beside a door by a street tree, whose crown is
-    /// wider, meters.
+    /// Ancho extra que deja al lado de una puerta un árbol de calle, cuya copa
+    /// es más ancha, en metros.
     const PIT_DOOR: f32 = 2.4;
-    /// Depth of a store's galería zone, meters: the walk and its veranda.
+    /// Profundidad de la zona de la galería de un almacén, en metros: la vereda
+    /// y su galería.
     const GALLERY: f32 = 3.0;
-    /// Extra width kept beside a store's galería, meters.
+    /// Ancho extra que se deja al lado de la galería de un almacén, en metros.
     const GALLERY_SIDE: f32 = 2.5;
-    /// Gap kept between a yard plant and any obstacle, meters.
+    /// Separación que se mantiene entre una planta de patio y cualquier
+    /// obstáculo, en metros.
     const PLANT_GAP: f32 = 0.4;
 
     fn new(town: &TownLayout) -> Self {
@@ -2866,9 +2993,9 @@ impl ShadeGround {
         }
     }
 
-    /// Whether a trunk can stand at `p`: clear of the obstacles and the
-    /// zones (and the plazas unless `in_plaza`), and [`ShadeTree::APART`]
-    /// from every other trunk.
+    /// Si un tronco puede estar en `p`: lejos de los obstáculos y de las zonas
+    /// (y de las plazas salvo que `in_plaza`), y a [`ShadeTree::APART`] de
+    /// todos los demás troncos.
     fn fits(&self, p: Vec2, in_plaza: bool) -> bool {
         let trunk = ShadeTree::trunk(p);
         let spot = trunk.expanded(Self::CLEARANCE);
@@ -2878,7 +3005,7 @@ impl ShadeGround {
             && self.taken.iter().all(|t| t.distance(p) >= ShadeTree::APART)
     }
 
-    /// The distance from `p` to the nearest building.
+    /// La distancia desde `p` hasta el edificio más cercano.
     fn building_gap(&self, p: Vec2) -> f32 {
         self.buildings
             .iter()
@@ -2894,26 +3021,29 @@ impl ShadeGround {
 }
 
 impl TownLayout {
-    /// The trees outside the plaza rings, deterministic from the town's seed:
+    /// Los árboles fuera de los anillos de las plazas, deterministas a partir
+    /// de la semilla del pueblo:
     ///
-    /// - a city's sidewalk trees in their cazuelas, a trimmed crown every 8
-    ///   to 10 m, 0.4 m in from the curb, off the doors, galerías, crossings,
-    ///   palenques and signs ([`ShadeKind::Pit`]);
-    /// - groves between the paths of a city's plazas ([`ShadeKind::Grove`]);
-    /// - a city's yard trees and the ones by its church, comisarías and
-    ///   station, and a town's sparse ones behind its houses
-    ///   ([`ShadeKind::Yard`], never within a crown's reach of a building);
-    /// - a town's sparse trees on the dirt in front of some houses
+    /// - los árboles de vereda de una ciudad en sus cazuelas, una copa podada
+    ///   cada 8 a 10 m, a 0,4 m del cordón hacia adentro, lejos de las puertas,
+    ///   galerías, cruces, palenques y carteles ([`ShadeKind::Pit`]);
+    /// - bosquecillos entre los senderos de las plazas de una ciudad
+    ///   ([`ShadeKind::Grove`]);
+    /// - los árboles de patio de una ciudad y los que están junto a su iglesia,
+    ///   sus comisarías y su estación, y los escasos de un pueblo detrás de sus
+    ///   casas ([`ShadeKind::Yard`], nunca al alcance de una copa de un
+    ///   edificio);
+    /// - los escasos árboles de un pueblo en la tierra frente a algunas casas
     ///   ([`ShadeKind::Front`]).
     ///
-    /// Every trunk keeps [`ShadeTree::APART`] from the others.
+    /// Cada tronco se mantiene a [`ShadeTree::APART`] de los demás.
     fn place_shade_trees(&self, grid: &Grid, main: PlazaBlocks) -> Vec<ShadeTree> {
         let city = self.size != TownSize::Small;
         let mut ground = ShadeGround::new(self);
         let mut out: Vec<ShadeTree> = Vec::new();
         let trunk = ShadeTree::trunk;
 
-        // Sidewalk trees, along each strip's curb.
+        // Árboles de vereda, a lo largo del cordón de cada franja.
         if city {
             let inset = ShadeTree::PIT_FROM_CURB + ShadeTree::PIT_SIDE / 2.0;
             for (row, walk) in self.sidewalks.iter().enumerate() {
@@ -2946,8 +3076,9 @@ impl TownLayout {
                 let mut t = lo + rng.range(0.0, far);
                 let mut last = f32::NEG_INFINITY;
                 while t < hi {
-                    // The seeded spot, or one a little further or nearer (never
-                    // nearer than the least spacing to the last tree).
+                    // El lugar elegido por semilla, o uno un poco más lejos o
+                    // más cerca (nunca más cerca que la separación mínima
+                    // respecto del último árbol).
                     let found = [0.0, 1.5, -1.5, 3.0, -3.0]
                         .iter()
                         .map(|d| t + d)
@@ -2977,7 +3108,8 @@ impl TownLayout {
             }
         }
 
-        // Groves in the green between a city's plaza paths.
+        // Bosquecillos en el verde entre los senderos de las plazas de una
+        // ciudad.
         if city {
             let reach = TREE_TRUNK_RADIUS + PLAZA_PATH_CLEARANCE + 0.5;
             for (k, plaza) in self.plazas().enumerate() {
@@ -3016,8 +3148,9 @@ impl TownLayout {
             }
         }
 
-        // A yard tree at the first of a few seeded spots in `area` that is
-        // a crown's reach from every building and off the streets.
+        // Un árbol de patio en el primero de unos pocos lugares elegidos por
+        // semilla en `area` que esté a una distancia de copa de todo edificio y
+        // fuera de las calles.
         let yard = |ground: &mut ShadeGround,
                     out: &mut Vec<ShadeTree>,
                     area: Aabb,
@@ -3048,7 +3181,7 @@ impl TownLayout {
             }
         };
 
-        // By the church, the comisarías and the station of a city.
+        // Junto a la iglesia, las comisarías y la estación de una ciudad.
         if city {
             for (k, b) in self.buildings.iter().enumerate() {
                 let trees = match b.kind {
@@ -3063,8 +3196,8 @@ impl TownLayout {
             }
         }
 
-        // Behind the houses: every block's yard, a city's with a few trees,
-        // a town's sparse.
+        // Detrás de las casas: el patio de cada manzana, el de una ciudad con
+        // unos pocos árboles, el de un pueblo escaso.
         for (i, j) in (0..grid.rows).flat_map(|j| (0..grid.cols).map(move |i| (i, j))) {
             let block = grid.block(i, j);
             if main.contains((i, j)) || self.plazas().any(|p| p.intersects(&block)) {
@@ -3072,9 +3205,10 @@ impl TownLayout {
             }
             let stream = (j * grid.cols + i) as u32;
             let mut rng = Rng::new(self.seed ^ 0x3d1a, stream);
-            // 30% more than the first planting, then 15% more (user,
-            // 2026-10-27): a city's blocks get up to three trees, a fourth in
-            // seven of ten and a fifth in two of ten; a town's nine in ten one.
+            // Un 30 % más que la primera plantación y después un 15 % más
+            // (usuario, 2026-10-27): las manzanas de una ciudad tienen hasta
+            // tres árboles, un cuarto en siete de cada diez y un quinto en dos
+            // de cada diez; las de un pueblo, uno en nueve de cada diez.
             let wanted = if city {
                 1 + rng.below(3)
                     + usize::from(rng.below(100) < 70)
@@ -3094,7 +3228,7 @@ impl TownLayout {
             }
         }
 
-        // On the dirt in front of some houses of a town.
+        // En la tierra frente a algunas casas de un pueblo.
         if !city {
             for (k, b) in self
                 .buildings
@@ -3117,8 +3251,8 @@ impl TownLayout {
                     let p = facade + n * ShadeTree::FRONT_OUT + side * (d * lateral);
                     let lane = Palenque::LANE + TREE_TRUNK_RADIUS;
                     let on_dirt = self.on_street_off_lane(&trunk(p), lane);
-                    // Never a row: with this one, no tree has more than two
-                    // others within FRONT_RUN.
+                    // Nunca una fila: con este, ningún árbol tiene más de otros
+                    // dos dentro de FRONT_RUN.
                     let fronts = || out.iter().filter(|t| t.kind == ShadeKind::Front);
                     let within = |t: &ShadeTree, q: Vec2| t.at.distance(q) < ShadeTree::FRONT_RUN;
                     let sparse = fronts().all(|t| t.at.distance(p) >= ShadeTree::FRONT_APART)
@@ -3140,10 +3274,12 @@ impl TownLayout {
                 }
             }
         }
-        // General Pico's plaza was too leafy (user, 2026-10-26, twice): a very
-        // big town loses a fifth of its plaza trees and then a fifth again of
-        // what was left (36 in 100 in all), taken from the groves by seeded
-        // rolls so the rings along the edges stay.
+        // La plaza de General Pico tenía demasiado follaje (usuario,
+        // 2026-10-26, dos veces): un pueblo muy grande pierde una quinta parte
+        // de sus árboles de plaza y después otra quinta parte de lo que quedó
+        // (36 de cada 100 en total), tomados de los bosquecillos con valores
+        // aleatorios con semilla para que se conserven los anillos a lo largo
+        // de los bordes.
         if self.size == TownSize::VeryBig {
             let groves: Vec<usize> = (0..out.len())
                 .filter(|&k| out[k].kind == ShadeKind::Grove)
@@ -3163,10 +3299,11 @@ impl TownLayout {
 }
 
 impl TownLayout {
-    /// The shrubs and flower beds of the yards: behind every house (a shed
-    /// has none), against its back and side walls, seeded. Each stands clear
-    /// of every obstacle (the trunks too), the door zones and galerías, the
-    /// streets and plazas, and every other plant.
+    /// Los arbustos y los canteros de flores de los patios: detrás de cada casa
+    /// (un galpón no tiene), contra sus paredes trasera y laterales, con
+    /// semilla. Cada uno queda lejos de todo obstáculo (también de los
+    /// troncos), de las zonas de las puertas y las galerías, de las calles y
+    /// las plazas, y de todas las demás plantas.
     fn place_yard_plants(&self) -> Vec<YardPlant> {
         let ground = ShadeGround::new(self);
         let mut out: Vec<YardPlant> = Vec::new();
@@ -3194,7 +3331,7 @@ impl TownLayout {
             }
             for kind in wanted {
                 for _ in 0..8 {
-                    // Behind the house, or beside it toward the back.
+                    // Detrás de la casa, o a su lado hacia el fondo.
                     let along = rng.range(-wide, wide);
                     let out_of = rng.range(1.0, 2.6);
                     let p = b.footprint.center() - n * (deep + out_of) + side * along;
@@ -3222,14 +3359,16 @@ impl TownLayout {
     }
 }
 
-/// How far from the middle of a facade the nearest palenque's middle stands:
-/// past the door's keep-out and half the rail, in meters.
+/// A qué distancia del centro de una fachada está el centro del palenque más
+/// cercano: más allá de la zona prohibida de la puerta y de la mitad del
+/// palenque, en metros.
 const DOOR_SIDE: f32 = StreetLamps::DOOR_HALF_WIDTH + 0.3 + Palenque::LENGTH / 2.0;
 
-/// Trees in a ring just inside the plaza edge, leaving the center open:
-/// `steps.0` gaps along the x edges and `steps.1` along the y edges. Only
-/// the green beds are planted: a ring spot on a path, or within
-/// [`PLAZA_PATH_CLEARANCE`] of one or of the monument, stays empty.
+/// Árboles en un anillo justo dentro del borde de la plaza, dejando el centro
+/// libre: `steps.0` huecos a lo largo de los bordes x y `steps.1` a lo largo de
+/// los bordes y. Solo se plantan los canteros verdes: un lugar del anillo sobre
+/// un sendero, o a [`PLAZA_PATH_CLEARANCE`] o menos de uno o del monumento,
+/// queda vacío.
 fn plaza_trees(plaza: Aabb, steps: (usize, usize)) -> Vec<Vec2> {
     let reach = TREE_TRUNK_RADIUS + PLAZA_PATH_CLEARANCE;
     let keep_off: Vec<Aabb> = plaza_paths(plaza)
@@ -3245,17 +3384,19 @@ fn plaza_trees(plaza: Aabb, steps: (usize, usize)) -> Vec<Vec2> {
     trees
 }
 
-/// A plaza ring's step count with a few more spots (user, 2026-10-27:
-/// "subile otro 15% a pueblos y aldeas"); the steps are whole, so the ring
-/// grows less than the rest.
+/// La cantidad de pasos del anillo de una plaza con unos lugares más (usuario,
+/// 2026-10-27: "subile otro 15% a pueblos y aldeas"); los pasos son enteros,
+/// así que el anillo crece menos que el resto.
 fn more_steps(steps: usize) -> usize {
     (steps as f32 * PLAZA_RING_MORE).round() as usize
 }
 
-/// How many times the steps of the first planting a plaza ring takes.
+/// Cuántas veces los pasos de la primera plantación toma el anillo de una
+/// plaza.
 const PLAZA_RING_MORE: f32 = 1.08;
 
-/// Spots in a ring just inside the plaza edge (see [`plaza_trees`]).
+/// Lugares en un anillo justo dentro del borde de la plaza (ver
+/// [`plaza_trees`]).
 fn plaza_ring(plaza: Aabb, steps: (usize, usize)) -> Vec<Vec2> {
     let inset = 3.0;
     let (lo, hi) = (
@@ -3278,9 +3419,10 @@ fn plaza_ring(plaza: Aabb, steps: (usize, usize)) -> Vec<Vec2> {
     trees
 }
 
-/// The main road in: the north-south street just east of the plaza, entered
-/// from the south (from the north when the railway runs south of town, or
-/// when a through line's station stands in the north half).
+/// El camino principal de entrada: la calle norte-sur justo al este de la
+/// plaza, a la que se entra desde el sur (desde el norte cuando la vía férrea
+/// pasa al sur del pueblo, o cuando la estación de una línea que atraviesa el
+/// pueblo está en la mitad norte).
 fn arrival(grid: &Grid, plaza: PlazaBlocks, railway: Option<RailwayConfig>) -> (Vec2, Heading) {
     let bounds = grid.bounds();
     let road_x = grid.lane_x(plaza.max.0 + 1) + grid.street / 2.0;
@@ -3302,10 +3444,10 @@ pub(crate) mod tests {
     use super::*;
     use crate::Rider;
 
-    /// Configs every invariant is checked against: square and oblong grids,
-    /// odd and even block counts, blocks of 32–50 m, streets of 8–14 m, the
-    /// railway on every side or missing, every plaza placement, and big and
-    /// very big towns.
+    /// Configuraciones contra las que se comprueba cada invariante: cuadrículas
+    /// cuadradas y alargadas, cantidades de manzanas pares e impares, manzanas
+    /// de 32–50 m, calles de 8–14 m, la vía férrea de cada lado o ausente, cada
+    /// ubicación de plaza, y pueblos grandes y muy grandes.
     pub(crate) fn sample_configs() -> Vec<TownConfig> {
         let base = TownConfig::castex();
         let rail = |side, offset| {
@@ -3374,8 +3516,8 @@ pub(crate) mod tests {
                 plaza: PlazaPlacement::FacingStation,
                 ..base.clone()
             },
-            // Big towns (37 to 63 blocks): a two-block plaza and a station
-            // plaza.
+            // Pueblos grandes (de 37 a 63 manzanas): una plaza de dos manzanas
+            // y una plaza de la estación.
             TownConfig {
                 name: "Siete".into(),
                 blocks: (7, 7),
@@ -3410,7 +3552,7 @@ pub(crate) mod tests {
                 seed: 3,
                 ..base.clone()
             },
-            // Very big towns (64 blocks or more): a 2 x 2 plaza.
+            // Pueblos muy grandes (64 manzanas o más): una plaza de 2 x 2.
             TownConfig {
                 name: "Muy grande".into(),
                 blocks: (8, 8),
@@ -3425,7 +3567,8 @@ pub(crate) mod tests {
                 seed: 4,
                 ..base.clone()
             },
-            // Towns grown on both sides of a line through their middle.
+            // Pueblos que crecieron a ambos lados de una línea que los
+            // atraviesa por el medio.
             TownConfig {
                 name: "Partida".into(),
                 blocks: (8, 8),
@@ -3454,7 +3597,8 @@ pub(crate) mod tests {
         ]
     }
 
-    /// A 5 x 5 grid of 40 m blocks and 12 m streets with a central plaza.
+    /// Una cuadrícula de 5 x 5 manzanas de 40 m y calles de 12 m con una plaza
+    /// central.
     fn five_by_five() -> TownConfig {
         TownConfig {
             name: "Cinco por cinco".into(),
@@ -3464,7 +3608,7 @@ pub(crate) mod tests {
         }
     }
 
-    /// Every sample town, generated.
+    /// Todos los pueblos de ejemplo, generados.
     pub(crate) fn sample_towns() -> Vec<TownLayout> {
         sample_configs()
             .iter()
@@ -3480,7 +3624,7 @@ pub(crate) mod tests {
         t.buildings.iter().find(|b| b.kind == kind)
     }
 
-    /// Unit vector pointing out of `side`.
+    /// Vector unitario que apunta hacia afuera de `side`.
     fn normal(side: Side) -> Vec2 {
         crate::places::side_normal(side)
     }
@@ -3541,11 +3685,13 @@ pub(crate) mod tests {
         for (c, t) in sample_configs().iter().zip(sample_towns()) {
             let (cols, rows) = c.blocks;
             let (b, w) = (c.block_size, c.street_width);
-            // A street between the blocks of a merged plaza is cut in two.
+            // Una calle entre las manzanas de una plaza fusionada se corta en
+            // dos.
             let (pw, ph) = t.size.plaza_span(c.blocks);
             let cut = (pw - 1) + (ph - 1);
-            // A line through the town adds a ring street on each side of its
-            // band, and cuts the streets that would run into its yard.
+            // Una línea que atraviesa el pueblo agrega una calle perimetral a
+            // cada lado de su franja, y corta las calles que llegarían a su
+            // playa.
             let (split, band) = match c.railway.filter(|r| r.through) {
                 Some(r) => (
                     1 + (cols + 1 - t.crossing_streets().len()),
@@ -3566,7 +3712,7 @@ pub(crate) mod tests {
             );
             assert!(size.distance(expected) < 1e-3, "{}: {size:?}", c.name);
             assert!(t.grid().center().distance(c.origin) < 1e-3, "{}", c.name);
-            // Whole blocks, with the streets between them.
+            // Manzanas enteras, con las calles entre ellas.
             let merged = |n: usize| n as f32 * b + (n - 1) as f32 * w;
             let plaza = Vec2::new(merged(pw), merged(ph));
             assert!(t.plaza.size().distance(plaza) < 1e-3, "{}", c.name);
@@ -3578,7 +3724,7 @@ pub(crate) mod tests {
                 );
                 assert!(t.grid().contains(street));
             }
-            // The plaza is bordered by streets on all four sides.
+            // La plaza está rodeada de calles por los cuatro lados.
             for side in [Side::North, Side::South, Side::East, Side::West] {
                 let n = normal(side);
                 let reach = t.plaza.size().dot(Vec2::new(n.x.abs(), n.y.abs())) / 2.0;
@@ -3598,14 +3744,16 @@ pub(crate) mod tests {
         }
     }
 
-    /// Checks the plaza sits next to the railway, nearest the grid center
-    /// along it, with the station aligned to face it across the street.
+    /// Comprueba que la plaza esté junto a la vía férrea, la más cercana al
+    /// centro de la cuadrícula a lo largo de ella, con la estación alineada
+    /// para mirarla del otro lado de la calle.
     fn assert_plaza_faces_the_station(c: &TownConfig, t: &TownLayout) {
         let side = c.railway.unwrap().side;
         let n = normal(side);
         let along = Vec2::new(n.y.abs(), n.x.abs());
         let grid = t.grid();
-        // The plaza block borders the ring street on the railway side.
+        // La manzana de la plaza linda con la calle perimetral del lado de la
+        // vía férrea.
         let edge =
             |b: Aabb| b.center().dot(n) + b.size().dot(Vec2::new(n.x.abs(), n.y.abs())) / 2.0;
         assert!(
@@ -3613,12 +3761,14 @@ pub(crate) mod tests {
             "{}: plaza not on the railway row",
             c.name
         );
-        // Nearest the center along the track (ties go to the lower index).
+        // La más cercana al centro a lo largo de la vía (los empates van al
+        // índice más bajo).
         let offset = (t.plaza.center() - grid.center()).dot(along);
         let pitch = c.block_size + c.street_width;
         assert!(offset.abs() <= pitch / 2.0 + 1e-3, "{}: {offset}", c.name);
         assert!(offset <= 1e-3, "{}: ties go to the lower index", c.name);
-        // The station faces the plaza, centered on it, across the street.
+        // La estación mira hacia la plaza, centrada respecto de ella, del otro
+        // lado de la calle.
         let station = find(t, BuildingKind::Station).expect("a station");
         assert_eq!(station.front, side.opposite(), "{}", c.name);
         let off_axis = (station.footprint.center() - t.plaza.center()).dot(along);
@@ -3677,7 +3827,8 @@ pub(crate) mod tests {
         );
         let t = TownLayout::castex_inspired();
         assert_plaza_faces_the_station(&c, &t);
-        // The church stands across the street south of the plaza, facing it.
+        // La iglesia está del otro lado de la calle, al sur de la plaza,
+        // mirándola.
         let church = find(&t, BuildingKind::Church).unwrap();
         assert_eq!(church.front, Side::North);
         assert!(church.footprint.max.y < t.plaza.min.y);
@@ -3695,7 +3846,8 @@ pub(crate) mod tests {
         let expected =
             grid.min + Vec2::new(c.street_width, c.street_width) + Vec2::new(pitch, 3.0 * pitch);
         assert!(t.plaza.min.distance(expected) < 1e-3, "{:?}", t.plaza);
-        // No railway and no central block: the block nearest the center.
+        // Sin vía férrea y sin manzana central: la manzana más cercana al
+        // centro.
         let even = TownConfig {
             blocks: (4, 6),
             railway: None,
@@ -3722,10 +3874,10 @@ pub(crate) mod tests {
                 BuildingKind::Church,
             ] {
                 let b = find(&t, kind).unwrap();
-                // Its facade looks toward the plaza.
+                // Su fachada mira hacia la plaza.
                 let to_plaza = t.plaza.center() - b.footprint.center();
                 assert!(to_plaza.dot(normal(b.front)) > 0.0, "{}: {kind:?}", c.name);
-                // And a street lies just in front of it.
+                // Y hay una calle justo delante.
                 let half = b.footprint.size() * 0.5;
                 let n = normal(b.front);
                 let ahead = b.footprint.center()
@@ -3737,13 +3889,13 @@ pub(crate) mod tests {
                 );
             }
         }
-        // Around a central plaza: the church north of it, facing it; the
-        // store and the police station spread away from it and each other.
+        // Alrededor de una plaza central: la iglesia al norte, mirándola; el
+        // almacén y la comisaría alejados de ella y entre sí.
         let t = TownLayout::generate(&five_by_five()).unwrap();
         assert_eq!(find(&t, BuildingKind::Church).unwrap().front, Side::South);
     }
 
-    /// The civic buildings of `t`: stores, police stations and the church.
+    /// Los edificios cívicos de `t`: almacenes, comisarías y la iglesia.
     fn civic(t: &TownLayout) -> Vec<&Building> {
         t.buildings
             .iter()
@@ -3758,8 +3910,9 @@ pub(crate) mod tests {
 
     #[test]
     fn civic_buildings_are_spread_over_every_town() {
-        // User, 2026-10-23: never side by side, the same kind about half
-        // the town apart, so the whole town has life.
+        // Usuario, 2026-10-23: nunca uno al lado del otro, los del mismo tipo a
+        // más o menos la mitad del pueblo de distancia, para que todo el pueblo
+        // tenga vida.
         let mut configs = small_configs();
         configs.extend(
             sample_configs()
@@ -3775,7 +3928,7 @@ pub(crate) mod tests {
                 for b in &buildings[k + 1..] {
                     let d = a.footprint.center() - b.footprint.center();
                     let apart = d.x.abs().max(d.y.abs());
-                    // Across at least one whole block, not one street.
+                    // Al menos una manzana entera de por medio, no una calle.
                     assert!(apart > pitch, "{}: {a:?} by {b:?}", c.name);
                     if a.kind == b.kind {
                         assert!(apart > same, "{}: two {:?} {apart} m apart", c.name, a.kind);
@@ -3783,8 +3936,8 @@ pub(crate) mod tests {
                 }
             }
         }
-        // The dispersal is no accident of the samples: a small town keeps
-        // its store, comisaría and church apart too.
+        // La dispersión no es casualidad de los ejemplos: un pueblo chico
+        // también mantiene separados su almacén, su comisaría y su iglesia.
         let t = TownLayout::castex_inspired();
         assert_eq!(civic(&t).len(), 3);
     }
@@ -3801,7 +3954,7 @@ pub(crate) mod tests {
             assert_eq!(sides.len(), 2, "{kind:?}");
             assert_ne!(sides[0], sides[1], "{kind:?} both on one side");
         }
-        // The church faces the plaza, in the station's half.
+        // La iglesia mira hacia la plaza, en la mitad de la estación.
         let church = find(&t, BuildingKind::Church).unwrap();
         assert!(church.footprint.center().y > y);
     }
@@ -3889,7 +4042,7 @@ pub(crate) mod tests {
                 }
                 checked += 1;
             }
-            // Still a shady plaza.
+            // Sigue siendo una plaza con sombra.
             assert!(t.trees.len() >= 8, "{}", t.name);
         }
         assert!(checked > 100, "{checked}");
@@ -3903,15 +4056,15 @@ pub(crate) mod tests {
                 continue;
             };
             if config.through {
-                // Through the middle instead: see its own test.
+                // En cambio, por el medio: ver su propia prueba.
                 continue;
             }
             let rail = t.railway.expect("a railway");
             let n = normal(config.side);
             let grid = t.grid();
             let along = Vec2::new(n.y.abs(), n.x.abs());
-            // A straight line parallel to the grid side, running past both
-            // ends of the grid by the run-out.
+            // Una línea recta paralela al lado de la cuadrícula, que pasa más
+            // allá de ambos extremos de la cuadrícula por el tramo final.
             assert!((rail.end - rail.start).dot(n).abs() < 1e-4);
             let edge =
                 grid.center().dot(n) + grid.size().dot(Vec2::new(n.x.abs(), n.y.abs())) / 2.0;
@@ -3934,7 +4087,7 @@ pub(crate) mod tests {
                     .abs()
                     < 1e-3
             );
-            // The station stands between the grid and the track, close to it.
+            // La estación está entre la cuadrícula y la vía, cerca de ella.
             let station = find(&t, BuildingKind::Station).unwrap();
             let near = station.footprint.center().dot(n)
                 - station
@@ -3949,7 +4102,7 @@ pub(crate) mod tests {
                     .dot(Vec2::new(n.x.abs(), n.y.abs()));
             assert!(near > edge, "{}", c.name);
             assert!(rail.start.dot(n) - far < 15.0, "{}", c.name);
-            // The width of a train: the platform's edge stands just outside.
+            // El ancho de un tren: el borde del andén queda justo afuera.
             let corridor = Aabb::from_center_size(
                 rail.start,
                 Vec2::new(n.x.abs(), n.y.abs()) * 3.0 + along * 2000.0,
@@ -4033,18 +4186,18 @@ pub(crate) mod tests {
             for (k, (f, area)) in all.iter().zip(t.plazas()).enumerate() {
                 seen.insert(paving);
                 assert_eq!((f.area, f.paving), (area, paving));
-                // The monument stands on the plinth core always kept for
-                // it, smaller in a village.
+                // El monumento está sobre el núcleo del pedestal que siempre se
+                // le reserva, más chico en un pueblito.
                 assert!(plaza_monument(area).contains(&f.monument));
                 assert_eq!(f.monument.center(), area.center());
                 let side = if paving == Paving::None { 2.4 } else { 3.0 };
                 assert!((f.monument.size().x - side).abs() < 1e-4, "{}", t.name);
                 assert_eq!(f.crossing, plaza_crossing(area));
-                // A railing in the city only, open at the four mouths.
+                // Una reja solo en la ciudad, abierta en las cuatro entradas.
                 let railed = paving == Paving::Everywhere;
                 assert_eq!(f.railing.len(), if railed { 8 } else { 0 }, "{}", t.name);
-                // Benches by the tier: 24 round a city's main plaza, 4 in
-                // a town's, 2 in a village's.
+                // Bancos según la categoría: 24 alrededor de la plaza principal
+                // de una ciudad, 4 en la de un pueblo, 2 en la de un pueblito.
                 let want = PlazaFurniture::bench_count(paving, k == 0);
                 let main_want = match paving {
                     Paving::Everywhere => 24,
@@ -4056,7 +4209,7 @@ pub(crate) mod tests {
                 if k == 0 {
                     assert_eq!(f.benches.len(), main_want, "{}", t.name);
                 }
-                // A sparse plaza puts one bench to a quadrant at most.
+                // Una plaza escasa pone como mucho un banco por cuadrante.
                 if paving != Paving::Everywhere {
                     let c = area.center();
                     let quadrants: std::collections::HashSet<(bool, bool)> = f
@@ -4093,7 +4246,8 @@ pub(crate) mod tests {
                         assert!(!o.intersects(c), "{}: {o:?} on {c:?}", t.name);
                     }
                 }
-                // A bench faces its path, its front just off the path.
+                // Un banco mira hacia su sendero, con su frente justo al lado
+                // del sendero.
                 for b in &f.benches {
                     let front = b.at + crate::places::side_normal(b.facing) * (Bench::DEPTH / 2.0);
                     let gap = paths
@@ -4102,8 +4256,8 @@ pub(crate) mod tests {
                         .fold(f32::MAX, f32::min);
                     assert!((gap - Bench::PATH_GAP).abs() < 1e-3, "{}: {b:?}", t.name);
                 }
-                // The paths stay open from edge to edge: the railing only
-                // runs beside them.
+                // Los senderos quedan abiertos de borde a borde: la reja solo
+                // corre a su lado.
                 paths.push(f.crossing);
                 for r in &f.railing {
                     let mouth = Aabb::from_center_size(
@@ -4148,7 +4302,7 @@ pub(crate) mod tests {
         assert!(galpones > 10, "{galpones} galpones");
     }
 
-    /// Whether `p` lies on one of `t`'s streets.
+    /// Si `p` está sobre una de las calles de `t`.
     fn on_street(t: &TownLayout, p: Vec2) -> bool {
         t.streets.iter().any(|s| s.contains_point(p))
     }
@@ -4180,7 +4334,7 @@ pub(crate) mod tests {
                     "{}: {a:?}",
                     t.name
                 );
-                // Corners (just inside) and middle on a street.
+                // Esquinas (justo por dentro) y centro sobre una calle.
                 let inner = a.expanded(-0.01);
                 for p in [
                     inner.min,
@@ -4217,7 +4371,7 @@ pub(crate) mod tests {
         let towns = sample_towns();
         let count =
             |t: &TownLayout, walk: Walk| t.sidewalks().iter().filter(|w| w.walk == walk).count();
-        // Every strip of every town has its curbs.
+        // Cada franja de cada pueblo tiene sus cordones.
         for t in &towns {
             assert!(
                 t.sidewalks().iter().all(|w| !w.curbs.is_empty()),
@@ -4225,7 +4379,8 @@ pub(crate) mod tests {
                 t.name
             );
         }
-        // Pico: a ring round every block but the plaza's, and the plaza's, all brick.
+        // Pico: un anillo alrededor de cada manzana salvo la de la plaza, y el de la
+        // plaza, todo de ladrillo.
         let pico = TownLayout::generate(&TownConfig {
             name: "Pico".into(),
             blocks: (8, 8),
@@ -4234,8 +4389,9 @@ pub(crate) mod tests {
         .unwrap();
         assert_eq!(pico.sidewalks().len(), 4 * (64 - 4 + 1));
         assert_eq!(count(&pico, Walk::Brick), 244);
-        // Castex (20 blocks): brick round the plaza's one block, four strips,
-        // each against the plaza; earth round the other 19 blocks.
+        // Castex (20 manzanas): ladrillo alrededor de la única manzana de la
+        // plaza, cuatro franjas, cada una contra la plaza; tierra alrededor de
+        // las otras 19 manzanas.
         let castex = &towns[0];
         assert_eq!(Paving::of(castex.blocks()), Paving::Plaza);
         assert_eq!(castex.sidewalks().len(), 80);
@@ -4252,14 +4408,14 @@ pub(crate) mod tests {
             );
             assert!(!overlap(&walk.area, &castex.plaza));
         }
-        // A 3 x 3 village: nine rings less the plaza's block plus the plaza's,
-        // all beaten earth.
+        // Un pueblito de 3 x 3: nueve anillos menos el de la manzana de la
+        // plaza más el de la plaza, todos de tierra apisonada.
         let village = towns.iter().find(|t| t.blocks() == (3, 3)).unwrap();
         assert_eq!(Paving::of(village.blocks()), Paving::None);
         assert_eq!(village.sidewalks().len(), 36);
         assert_eq!(count(village, Walk::Earth), 36);
-        // The plaza's ring is four strips against the plaza, beaten earth like
-        // the rest, never brick.
+        // El anillo de la plaza son cuatro franjas contra la plaza, de tierra
+        // apisonada como el resto, nunca de ladrillo.
         let ring = village.plaza.expanded(Sidewalk::WIDTH);
         let round_plaza = village
             .sidewalks()
@@ -4286,11 +4442,12 @@ pub(crate) mod tests {
                 assert!(!obstacles.contains(&platform.footprint), "{}", t.name);
                 assert_eq!(floor.footprint, platform.footprint);
                 assert_eq!(floor.height, platform.height);
-                // Along the track, so the ramps lead along it.
+                // A lo largo de la vía, así que las rampas van a lo largo de
+                // ella.
                 let rail = t.railway.unwrap();
                 let track = rail.end - rail.start;
                 assert!((floor.along.dot(track) - track.length()).abs() < 1e-3);
-                // Nothing built stands on the platform or its ramps.
+                // Nada construido está sobre el andén ni sobre sus rampas.
                 for area in floor.ramps().into_iter().chain([floor.footprint]) {
                     for o in &obstacles {
                         let inside = Aabb::new(
@@ -4318,7 +4475,7 @@ pub(crate) mod tests {
             let platform = find(&t, BuildingKind::Platform).expect("a platform");
             assert_eq!(canopies.len(), 1, "{}", t.name);
             let canopy = canopies[0];
-            // Flush with the station's back wall, on the track side.
+            // Al ras de la pared trasera de la estación, del lado de la vía.
             let (s, c) = (station.footprint, canopy.footprint);
             assert!(!s.intersects(&c.expanded(-0.01)), "{}", t.name);
             assert!(
@@ -4335,7 +4492,8 @@ pub(crate) mod tests {
                 Side::West => -toward.x,
             };
             assert!(out > 0.0, "{}: on the track side", t.name);
-            // As wide as the station and as deep as the roof render draws.
+            // Tan ancho como la estación y tan profundo como el techo que
+            // dibuja el render.
             let size = c.size();
             let (width, depth, wall) = match back {
                 Side::North | Side::South => (size.x, size.y, s.size().x),
@@ -4343,7 +4501,8 @@ pub(crate) mod tests {
             };
             assert!((depth - Canopy::DEPTH).abs() < 1e-4, "{}", t.name);
             assert!((width - wall).abs() < 1e-4, "{}", t.name);
-            // Over the platform, with headroom above its top.
+            // Sobre el andén, con espacio libre por encima de su parte
+            // superior.
             assert!(platform.footprint.contains(&c), "{}", t.name);
             assert!(canopy.bottom() - platform.height > 2.0, "{}", t.name);
             assert!(canopy.top() > canopy.bottom());
@@ -4352,8 +4511,9 @@ pub(crate) mod tests {
         assert!(checked > 3);
     }
 
-    /// Distance from the railway's centerline to the near and far sides
-    /// of `area`, across the track (the towns' tracks run along an axis).
+    /// Distancia desde la línea central de la vía férrea hasta los lados
+    /// cercano y lejano de `area`, a lo ancho de la vía (las vías de los
+    /// pueblos corren a lo largo de un eje).
     fn across_the_track(t: &TownLayout, area: Aabb) -> (f32, f32) {
         let rail = t.railway.unwrap();
         let span = rail.end - rail.start;
@@ -4390,9 +4550,10 @@ pub(crate) mod tests {
                 continue;
             };
             let (near, far) = across_the_track(&t, canopy.footprint);
-            // The roof ends where it did, 5.5 m from the track (its columns
-            // stand 0.4 m in from the edge, 5.1 m out): a train's side is
-            // 1.5 m out, so neither reaches over the cars.
+            // El techo termina donde terminaba, a 5,5 m de la vía (sus columnas
+            // están 0,4 m hacia adentro del borde, a 5,1 m): el costado de un
+            // tren está a 1,5 m, así que ninguno de los dos llega por encima de
+            // los vagones.
             assert!((near - 5.5).abs() < 1e-3, "{}: {near}", t.name);
             assert!(far > near);
             assert!(near > crate::LineTrain::WIDTH / 2.0 + 3.0, "{}", t.name);
@@ -4407,7 +4568,8 @@ pub(crate) mod tests {
             let store = find(&t, BuildingKind::GeneralStore).unwrap();
             let post = t.hitching_post;
             let horse = post.horse;
-            // On the street the store faces, just past its veranda.
+            // En la calle a la que mira el almacén, justo más allá de su
+            // galería.
             let street = t
                 .streets
                 .iter()
@@ -4429,10 +4591,11 @@ pub(crate) mod tests {
             let off = (horse.footprint.center() - store.footprint.center()).dot(along);
             assert!(off.abs() < 1e-4);
             assert_eq!(horse.position, horse.footprint.center());
-            // Faces along the street, tied alongside the rail without touching it.
+            // Mira a lo largo de la calle, atado al lado del palenque sin tocarlo.
             assert!(horse.heading.forward().dot(n).abs() < 1e-5);
             assert!(!horse.footprint.intersects(&post.rail));
-            // Leaves room to pass: a rider fits between the horse and the far side.
+            // Deja lugar para pasar: un jinete entra entre el caballo y el otro
+            // lado.
             let far =
                 street.center().dot(n) + street.size().dot(Vec2::new(n.x.abs(), n.y.abs())) / 2.0;
             let room = far - (horse.footprint.center().dot(n) + horse_half);
@@ -4441,7 +4604,7 @@ pub(crate) mod tests {
                 "{}: room {room}",
                 c.name
             );
-            // And clear of the walkers' lanes down the middle of the street.
+            // Y lejos de los carriles de los peatones por el medio de la calle.
             let middle = street.center().dot(n);
             assert!(
                 middle - (horse.footprint.center().dot(n) + horse_half) > 1.25,
@@ -4470,8 +4633,8 @@ pub(crate) mod tests {
                     c.name
                 );
             }
-            // Through a line in the middle, it comes in on the station's
-            // side, from the edge away from the track.
+            // Con una línea por el medio, entra del lado de la estación, desde
+            // el borde opuesto a la vía.
             if let (Some(r), Some(band)) = (c.railway, t.rail_band()) {
                 assert!(
                     (spawn - band.center()).dot(normal(r.side)) > 0.0,
@@ -4603,8 +4766,8 @@ pub(crate) mod tests {
             assert_eq!(TownLayout::generate(&config), Err(expected.clone()));
             assert!(!expected.to_string().is_empty());
         }
-        // How far a town reaches is the world's business, not the town's:
-        // any size and origin that builds is a valid town.
+        // Hasta dónde llega un pueblo es asunto del mundo, no del pueblo:
+        // cualquier tamaño y origen que se pueda construir es un pueblo válido.
         for config in [
             TownConfig {
                 blocks: (12, 5),
@@ -4678,7 +4841,8 @@ pub(crate) mod tests {
         }
     }
 
-    /// FNV-1a hash of everything a town builds on the ground, to pin layouts.
+    /// Hash FNV-1a de todo lo que un pueblo construye sobre el suelo, para
+    /// fijar las distribuciones.
     fn fingerprint(t: &TownLayout) -> u64 {
         let text = format!(
             "{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}",
@@ -4697,14 +4861,14 @@ pub(crate) mod tests {
         })
     }
 
-    /// Whether `c`'s line runs through the middle of the town: these towns
-    /// keep their own tests, not the ones of a town beside its line.
+    /// Si la línea de `c` atraviesa el pueblo por el medio: estos pueblos
+    /// tienen sus propias pruebas, no las de un pueblo al costado de su línea.
     fn through(c: &TownConfig) -> bool {
         c.railway.is_some_and(|r| r.through)
     }
 
-    /// Small towns beside their line or without one: the sample configs of
-    /// 36 blocks or fewer, plus Monte Nievas and the 5 x 4 Castex of
+    /// Pueblos chicos al costado de su línea o sin ella: las configuraciones de
+    /// ejemplo de 36 manzanas o menos, más Monte Nievas y el Castex de 5 x 4 de
     /// `assets/world/towns.ron`.
     fn small_configs() -> Vec<TownConfig> {
         let shipped = [
@@ -4712,7 +4876,8 @@ pub(crate) mod tests {
                 name: "Monte Nievas".into(),
                 blocks: (4, 3),
                 seed: 7,
-                // As shipped: no comisaría (the errand's story).
+                // Tal como se distribuye: sin comisaría (la historia del
+                // encargo).
                 police_stations: Some(0),
                 ..TownConfig::castex()
             },
@@ -4732,7 +4897,8 @@ pub(crate) mod tests {
             .collect()
     }
 
-    /// Big and very big sample towns, generated, with their configs.
+    /// Pueblos de ejemplo grandes y muy grandes, generados, con sus
+    /// configuraciones.
     fn bigger_towns() -> Vec<(TownConfig, TownLayout)> {
         sample_configs()
             .into_iter()
@@ -4745,14 +4911,14 @@ pub(crate) mod tests {
         t.buildings.iter().filter(|b| b.kind == kind).collect()
     }
 
-    /// Blocks `(east-west, north-south)` the main plaza spans.
+    /// Manzanas `(east-west, north-south)` que abarca la plaza principal.
     fn plaza_span(c: &TownConfig, t: &TownLayout) -> (usize, usize) {
         let pitch = c.block_size + c.street_width;
         let blocks = |len: f32| ((len + c.street_width) / pitch).round() as usize;
         (blocks(t.plaza.size().x), blocks(t.plaza.size().y))
     }
 
-    /// Checks `b` looks toward `area` with a street just in front of it.
+    /// Comprueba que `b` mire hacia `area` con una calle justo delante.
     fn assert_faces(t: &TownLayout, b: &Building, area: Aabb, street_width: f32) {
         let n = normal(b.front);
         assert!(
@@ -4806,7 +4972,7 @@ pub(crate) mod tests {
             assert_eq!(t.plazas().count(), 1, "{}", c.name);
             assert_eq!(plaza_span(&c, &t), (1, 1), "{}", c.name);
             assert_eq!(count(&t, BuildingKind::GeneralStore), 1, "{}", c.name);
-            // One, unless overridden (Monte Nievas has none).
+            // Una, salvo que se reemplace (Monte Nievas no tiene ninguna).
             let police = c.police_stations.unwrap_or(1);
             assert_eq!(count(&t, BuildingKind::PoliceStation), police, "{}", c.name);
             assert_eq!(t.townsfolk_count(), crate::townsfolk::TOWNSFOLK_COUNT);
@@ -4815,29 +4981,32 @@ pub(crate) mod tests {
 
     #[test]
     fn small_towns_keep_their_layout_byte_for_byte() {
-        // Fingerprints of the layouts generated before big towns existed.
-        // Every one re-pinned on purpose (2026-10-23): the store and the
-        // police station are spread over the town instead of round the
-        // plaza, and a small town's store is a pulpería. Before that
-        // (PR-F1), plaza trees stopped standing on the plaza paths, so the
-        // ring spots on and beside the paths are left empty. Earlier, Monte
-        // Nievas was re-pinned when it shipped with `police_stations: Some(0)`.
-        // The towns with a platform were re-pinned again (2026-10-26): the
-        // station has two name boards on it instead of one (`places()` is
-        // part of the fingerprint); the two towns without a train are unchanged.
-        // Three were re-pinned for the 2.5 m sidewalks (2026-10-26): the
-        // store's veranda stays over the walk, so on a street wider than
-        // 10.4 m it is 2.5 m deep, not 3 (Cinco por cinco, Seis por cuatro,
-        // Oeste). The new shade trees are not part of the fingerprint.
-        // All eleven were re-pinned for S6c (2026-10-26): the sidewalks are
-        // 3.5 m and every sample street is 2 m wider, so every grid, and the
-        // store's veranda, moved. Two more were re-pinned for S6d (Tres and
-        // Este: their 10 and 11 m sample streets are 12 m now, because every
-        // town has sidewalks). Nine were re-pinned for T5b (2026-10-27): every
-        // platform grew 2.35 m toward the track (edge 1.65 m from it, was
-        // 4 m); the two towns without a train are unchanged. All eleven were
-        // re-pinned when the church lost its signboard (2026-10-28): the
-        // places' signs are part of the fingerprint.
+        // Huellas digitales de las distribuciones generadas antes de que
+        // existieran los pueblos grandes. Todas se volvieron a fijar a propósito
+        // (2026-10-23): el almacén y la comisaría se reparten por el pueblo en
+        // lugar de estar alrededor de la plaza, y el almacén de un pueblo chico
+        // es una pulpería. Antes de eso (PR-F1), los árboles de plaza dejaron de
+        // estar sobre los senderos de la plaza, así que los lugares del anillo
+        // sobre los senderos y al lado de ellos quedan vacíos. Antes, Monte
+        // Nievas se volvió a fijar cuando se distribuyó con `police_stations:
+        // Some(0)`. Los pueblos con andén se volvieron a fijar otra vez
+        // (2026-10-26): la estación tiene dos tableros con su nombre en lugar de
+        // uno (`places()` forma parte de la huella digital); los dos pueblos sin
+        // tren no cambian. Tres se volvieron a fijar por las veredas de 2,5 m
+        // (2026-10-26): la galería del almacén se mantiene sobre la vereda, así
+        // que en una calle de más de 10,4 m tiene 2,5 m de profundidad, no 3
+        // (Cinco por cinco, Seis por cuatro, Oeste). Los nuevos árboles de
+        // sombra no forman parte de la huella digital. Los once se volvieron a
+        // fijar para S6c (2026-10-26): las veredas miden 3,5 m y cada calle de
+        // ejemplo es 2 m más ancha, así que se movieron todas las cuadrículas y
+        // la galería del almacén. Otros dos se volvieron a fijar para S6d (Tres
+        // y Este: sus calles de ejemplo de 10 y 11 m ahora miden 12 m, porque
+        // todos los pueblos tienen veredas). Nueve se volvieron a fijar para T5b
+        // (2026-10-27): todos los andenes crecieron 2,35 m hacia la vía (el
+        // borde a 1,65 m de ella, antes 4 m); los dos pueblos sin tren no
+        // cambian. Los once se volvieron a fijar cuando la iglesia perdió su
+        // cartel (2026-10-28): los carteles de los lugares forman parte de la
+        // huella digital.
         let pinned = [
             0x724c_91c9_470f_e41f,
             0xddf4_88db_9aca_9d42,
@@ -4878,7 +5047,7 @@ pub(crate) mod tests {
                 c.name
             );
             assert_eq!(t.police_door(), None, "{}", c.name);
-            // Everything else a town needs is still there.
+            // Todo lo demás que necesita un pueblo sigue ahí.
             let default = TownLayout::generate(&c).unwrap();
             assert_eq!(count(&t, BuildingKind::Church), 1, "{}", c.name);
             assert_eq!(
@@ -4906,7 +5075,7 @@ pub(crate) mod tests {
             assert_eq!(count(&t, BuildingKind::PoliceStation), 1, "{}", c.name);
         }
         for c in small_configs() {
-            // The tier's own count is the same as no override.
+            // La cantidad propia de la categoría equivale a no reemplazar nada.
             let same = TownConfig {
                 police_stations: Some(1),
                 ..c.clone()
@@ -4929,7 +5098,7 @@ pub(crate) mod tests {
         }
     }
 
-    /// Whether `plaza` covers block `(i, j)` of town `c`.
+    /// Si `plaza` cubre la manzana `(i, j)` del pueblo `c`.
     fn covers(c: &TownConfig, t: &TownLayout, plaza: Aabb, (i, j): (usize, usize)) -> bool {
         let pitch = c.block_size + c.street_width;
         let g = t.grid().min;
@@ -4964,8 +5133,8 @@ pub(crate) mod tests {
                     );
                 }
             }
-            // Facing the station: on the row next to the railway (north),
-            // as near the middle as whole blocks allow.
+            // Mirando a la estación: en la fila junto a la vía férrea (al
+            // norte), tan cerca del medio como permiten las manzanas enteras.
             let c = base(blocks, PlazaPlacement::FacingStation);
             let t = TownLayout::generate(&c).unwrap();
             assert!(
@@ -4984,13 +5153,14 @@ pub(crate) mod tests {
 
     #[test]
     fn the_plaza_span_never_outgrows_a_narrow_grid() {
-        // The narrowest grid allowed, very big all the same.
+        // La cuadrícula más angosta permitida, igual muy grande.
         let narrow = (TownConfig::MIN_BLOCKS, 64 / TownConfig::MIN_BLOCKS + 1);
         let size = TownSize::of(narrow);
         assert_ne!(size, TownSize::Small);
         let (w, h) = size.plaza_span(narrow);
         assert!(w <= narrow.0 && h <= narrow.1);
-        // Should the least grid ever shrink, the span still fits.
+        // Si la cuadrícula mínima alguna vez se achicara, la extensión igual
+        // entra.
         for blocks in [(1, 64), (64, 1), (1, 40), (2, 70)] {
             for size in [TownSize::Small, TownSize::Big, TownSize::VeryBig] {
                 let (w, h) = size.plaza_span(blocks);
@@ -5015,7 +5185,8 @@ pub(crate) mod tests {
                 _ => (2, 2),
             };
             assert_eq!(span, expected, "{}", c.name);
-            // Centered: as close to the grid center as whole blocks allow.
+            // Centrada: tan cerca del centro de la cuadrícula como permiten las
+            // manzanas enteras.
             let pitch = c.block_size + c.street_width;
             let off = t.plaza.center() - t.grid().center();
             assert!(off.x.abs() <= pitch / 2.0 + 1e-3, "{}: {off:?}", c.name);
@@ -5025,7 +5196,8 @@ pub(crate) mod tests {
                 "{}: ties go west and south",
                 c.name
             );
-            // Its own trees, spread along its longer edges too.
+            // Sus propios árboles, repartidos también a lo largo de sus bordes
+            // más largos.
             let inner = t.plaza.expanded(-TREE_TRUNK_RADIUS);
             let trees = t.trees.iter().filter(|&&p| inner.contains_point(p)).count();
             assert!(trees >= 8 * span.0.max(span.1), "{}: {trees}", c.name);
@@ -5038,7 +5210,7 @@ pub(crate) mod tests {
             for street in &t.streets {
                 assert!(!street.intersects(&t.plaza), "{}: {street:?}", c.name);
             }
-            // Streets still border it on every side.
+            // Sigue rodeada de calles por todos los lados.
             for side in [Side::North, Side::South, Side::East, Side::West] {
                 let n = normal(side);
                 let reach = t.plaza.size().dot(Vec2::new(n.x.abs(), n.y.abs())) / 2.0;
@@ -5049,7 +5221,8 @@ pub(crate) mod tests {
                     c.name
                 );
             }
-            // Walkers have no intersection inside it and no way across it.
+            // Los peatones no tienen ninguna intersección dentro de ella ni
+            // forma de cruzarla.
             let graph = crate::StreetGraph::from_town(&t);
             let (cols, rows) = c.blocks;
             let (w, h) = plaza_span(&c, &t);
@@ -5067,8 +5240,7 @@ pub(crate) mod tests {
                     assert!(!t.plaza.contains_point(mid), "{}: across the plaza", c.name);
                 }
             }
-            // Nothing stands in it but its trees, its sign and its
-            // furniture.
+            // No hay nada en ella salvo sus árboles, su cartel y su mobiliario.
             let mut sign: Vec<Aabb> = t.sign_obstacles();
             sign.extend(
                 t.plaza_furniture()
@@ -5161,8 +5333,8 @@ pub(crate) mod tests {
         for (c, t) in bigger_towns() {
             let stores = all(&t, BuildingKind::GeneralStore);
             let (last, central) = stores.split_last().unwrap();
-            // Every store but the last faces the main plaza, the first one
-            // with the horse tied in front.
+            // Todos los almacenes salvo el último miran hacia la plaza
+            // principal, el primero con el caballo atado enfrente.
             for store in central {
                 assert_faces(&t, store, t.plaza, c.street_width);
             }
@@ -5196,7 +5368,7 @@ pub(crate) mod tests {
             let area = |a: Aabb| a.size().x * a.size().y;
             assert!(area(station_plaza) < area(t.plaza), "{}", c.name);
             let Some(r) = c.railway else {
-                // Without a railway: far from the main plaza.
+                // Sin vía férrea: lejos de la plaza principal.
                 let pitch = c.block_size + c.street_width;
                 let d = station_plaza.center() - t.plaza.center();
                 assert!(d.x.abs() + d.y.abs() > 2.0 * pitch, "{}", c.name);
@@ -5205,17 +5377,18 @@ pub(crate) mod tests {
             let n = normal(r.side);
             let across = Vec2::new(n.x.abs(), n.y.abs());
             let along = Vec2::new(n.y.abs(), n.x.abs());
-            // Half a block deep, a whole block long.
+            // Media manzana de profundidad, una manzana entera de largo.
             assert!((station_plaza.size().dot(across) - c.block_size / 2.0).abs() < 1e-3);
             assert!((station_plaza.size().dot(along) - c.block_size).abs() < 1e-3);
-            // The railway half of a block on the railway row.
+            // La mitad del lado de la vía férrea de una manzana de la fila de
+            // la vía férrea.
             let edge = |b: Aabb| b.center().dot(n) + b.size().dot(across) / 2.0;
             assert!(
                 (edge(t.grid()) - edge(station_plaza) - c.street_width).abs() < 1e-3,
                 "{}: station plaza not against the railway-side street",
                 c.name
             );
-            // Within a block and a half of the station along the track.
+            // A manzana y media o menos de la estación a lo largo de la vía.
             let station = find(&t, BuildingKind::Station).unwrap().footprint.center();
             let pitch = c.block_size + c.street_width;
             let distance = (station_plaza.center() - station).dot(along).abs();
@@ -5229,7 +5402,7 @@ pub(crate) mod tests {
     fn the_rest_of_the_station_plaza_block_keeps_houses() {
         for (c, t) in bigger_towns() {
             let half = t.station_plaza.unwrap();
-            // The other half: the side of the station plaza with no street.
+            // La otra mitad: el lado de la plaza de la estación sin calle.
             let blocks: Vec<Aabb> = [Side::North, Side::South, Side::East, Side::West]
                 .into_iter()
                 .map(|side| {
@@ -5272,7 +5445,7 @@ pub(crate) mod tests {
         assert!(error.to_string().contains("4x5"), "{error}");
     }
 
-    /// The very big sample town grown on both sides of its line.
+    /// El pueblo de ejemplo muy grande que creció a ambos lados de su línea.
     fn partida() -> (TownConfig, TownLayout) {
         let c = sample_configs()
             .into_iter()
@@ -5289,10 +5462,12 @@ pub(crate) mod tests {
         let rail = t.railway.unwrap();
         assert!(band.min.y < rail.start.y && rail.start.y < band.max.y);
         assert_eq!(rail.start.y, rail.end.y);
-        // The grid holds the band: its extent is the grid itself.
+        // La cuadrícula contiene la franja: su extensión es la propia
+        // cuadrícula.
         assert_eq!(t.extent(), t.grid());
         assert!(t.grid().contains(&band));
-        // Ring streets on both sides of the band, along its whole length.
+        // Calles perimetrales a ambos lados de la franja, a lo largo de todo su
+        // largo.
         for y in [band.min.y, band.max.y] {
             assert!(
                 t.streets.iter().any(|s| s.size().x >= band.size().x - 1e-3
@@ -5301,8 +5476,8 @@ pub(crate) mod tests {
                 "no ring street at {y}"
             );
         }
-        // Crossing streets run square across the band, clear of the yard;
-        // the rest stop at its edges.
+        // Las calles que cruzan atraviesan la franja en perpendicular, lejos de
+        // la playa; las demás se detienen en sus bordes.
         let crossings = t.crossing_streets();
         assert!(crossings.len() >= 3 && crossings.len() < 9, "{crossings:?}");
         for (a, b) in &crossings {
@@ -5319,8 +5494,8 @@ pub(crate) mod tests {
                 assert!(!s.intersects(&b.footprint), "{s:?} through {b:?}");
             }
         }
-        // The station faces its half of town across the ring street, with
-        // the platform between it and the track.
+        // La estación mira hacia su mitad del pueblo del otro lado de la calle
+        // perimetral, con el andén entre ella y la vía.
         let station = t
             .buildings
             .iter()
@@ -5329,9 +5504,10 @@ pub(crate) mod tests {
         assert_eq!(station.front, Side::North);
         let canopy = t.canopies()[0];
         assert!(canopy.footprint.max.y <= station.footprint.min.y + 1e-3);
-        // Its 2 x 2 plaza lies whole in the station's half, north-west of the
-        // station, with no street through it; the station plaza is the half
-        // block across the ring street from the station.
+        // Su plaza de 2 x 2 queda entera en la mitad de la estación, al
+        // noroeste de la estación, sin ninguna calle que la atraviese; la plaza
+        // de la estación es la media manzana del otro lado de la calle
+        // perimetral frente a la estación.
         assert!(t.plaza.min.y > band.max.y);
         let to_plaza = t.plaza.center() - station.footprint.center();
         assert!(to_plaza.x < 0.0 && to_plaza.y > 0.0, "{to_plaza:?}");
@@ -5374,7 +5550,8 @@ pub(crate) mod tests {
             TownLayout::generate(&low),
             Err(TownConfigError::ThroughTooFewRows { rows: 3, min: 4 })
         ));
-        // A plaza picked across the track is refused; its own half is fine.
+        // Una plaza elegida del otro lado de la vía se rechaza; la de su propia
+        // mitad está bien.
         let across = TownConfig {
             plaza: PlazaPlacement::Block(2, 3),
             ..c.clone()
@@ -5441,7 +5618,7 @@ pub(crate) mod tests {
         }
     }
 
-    /// The buildings that get a palenque besides the store's post.
+    /// Los edificios que tienen un palenque además del palenque del almacén.
     fn wants_palenque(t: &TownLayout, k: usize) -> bool {
         let first_store = t
             .buildings
@@ -5456,7 +5633,8 @@ pub(crate) mod tests {
         ) && Some(k) != first_store
     }
 
-    /// Every shipped-like town, with the through-line ones.
+    /// Todos los pueblos parecidos a los distribuidos, con los de línea que los
+    /// atraviesa.
     fn towns_with_names() -> Vec<(String, TownLayout)> {
         sample_towns()
             .into_iter()
@@ -5476,7 +5654,8 @@ pub(crate) mod tests {
                     .iter()
                     .find(|p| p.building == k)
                     .unwrap_or_else(|| panic!("{name}: no palenque before {:?}", b.kind));
-                // In front of the facade, on the street side, along the street.
+                // Delante de la fachada, del lado de la calle, a lo largo de la
+                // calle.
                 let n = normal(b.front);
                 let ahead = (p.rail.center() - b.footprint.center()).dot(n);
                 let half = b.footprint.size() * 0.5;
@@ -5486,7 +5665,7 @@ pub(crate) mod tests {
                 assert!((long - Palenque::LENGTH).abs() < 1e-4, "{name}");
             }
             assert_eq!(t.palenques.len(), wanted, "{name}: one per landmark");
-            // Never one before the store that already has its post.
+            // Nunca uno frente al almacén que ya tiene su palenque.
             assert!(t.palenques.iter().all(|p| wants_palenque(&t, p.building)));
         }
     }
@@ -5503,7 +5682,8 @@ pub(crate) mod tests {
                 let posts = t.palenques.len();
                 let share = Palenque::horses_for(posts);
                 assert!(horses <= share, "{name}");
-                // Where the streets are wide enough to leave a horse room.
+                // Donde las calles son lo bastante anchas para dejarle lugar a
+                // un caballo.
                 let narrowest = t
                     .streets
                     .iter()
@@ -5563,7 +5743,8 @@ pub(crate) mod tests {
                 let n = normal(t.buildings[p.building].front);
                 assert!(!horse.footprint.intersects(&p.rail), "{name}");
                 assert_eq!(horse.position, horse.footprint.center(), "{name}");
-                // Along the street, on the street side of the rail.
+                // A lo largo de la calle, del lado de la calle respecto del
+                // palenque.
                 assert!(horse.heading.forward().dot(n).abs() < 1e-5, "{name}");
                 assert!((horse.footprint.center() - p.rail.center()).dot(n) > 0.0);
                 seen += 1;
@@ -5620,8 +5801,8 @@ pub(crate) mod tests {
             let obstacles = t.obstacles();
             for (i, p) in t.palenques.iter().enumerate() {
                 let spots: Vec<Aabb> = p.obstacles().collect();
-                // On a street, off the walkers' lane down its middle (the
-                // station's, on the yard in front of it).
+                // Sobre una calle, fuera del carril de los peatones por su
+                // medio (el de la estación, sobre la playa que tiene enfrente).
                 if t.buildings[p.building].kind == BuildingKind::Station {
                     assert!(spots.iter().all(|o| t.extent().contains(o)), "{name}");
                 } else {
@@ -5645,9 +5826,10 @@ pub(crate) mod tests {
                     }
                 }
                 for o in &spots {
-                    // Off the sidewalks.
+                    // Fuera de las veredas.
                     assert!(walks.iter().all(|w| !overlap(w, o)), "{name}: {i}");
-                    // And off every other obstacle, with room to walk round.
+                    // Y lejos de todo otro obstáculo, con lugar para rodearlo
+                    // caminando.
                     let reach = o.expanded(Palenque::CLEARANCE - 0.01);
                     for other in &obstacles {
                         if spots.contains(other) {
@@ -5656,7 +5838,7 @@ pub(crate) mod tests {
                         assert!(!overlap(&reach, other), "{name}: palenque {i} by {other:?}");
                     }
                 }
-                // Clear of the doors, the plazas, the line and the street crossings.
+                // Lejos de las puertas, las plazas, la línea y los cruces de calles.
                 for (k, other) in t.buildings.iter().enumerate() {
                     if other.kind == BuildingKind::Platform {
                         continue;
@@ -5675,7 +5857,8 @@ pub(crate) mod tests {
                 for z in t.plazas().chain(t.floors().iter().map(|f| f.footprint)) {
                     assert!(spots.iter().all(|o| !overlap(o, &z)), "{name}: {i}");
                 }
-                // The station itself stands in a through line's band.
+                // La propia estación está en la franja de una línea que
+                // atraviesa el pueblo.
                 let band = t
                     .rail_band()
                     .filter(|_| t.buildings[p.building].kind != BuildingKind::Station);
@@ -5700,7 +5883,7 @@ pub(crate) mod tests {
                     assert!(spots.iter().all(|o| !overlap(o, &crossing)), "{name}: {i}");
                 }
             }
-            // And apart from each other.
+            // Y separados entre sí.
             for (i, a) in t.palenques.iter().enumerate() {
                 for b in &t.palenques[i + 1..] {
                     assert!(
@@ -5728,15 +5911,15 @@ pub(crate) mod tests {
             Aabb::new(spot.min + shift, spot.max + shift)
         };
         assert!(t.palenque_fits(kind, &spot, &[], &[]));
-        // Another obstacle within the clearance blocks it, just past it does not.
+        // Otro obstáculo dentro del despeje lo bloquea; uno justo más allá, no.
         let near = beside(Palenque::CLEARANCE - 0.1);
         let far = beside(Palenque::CLEARANCE + 0.1);
         assert!(!t.palenque_fits(kind, &spot, &[near], &[]));
         assert!(t.palenque_fits(kind, &spot, &[far], &[]));
-        // A keep-out area blocks it only when it overlaps.
+        // Un área de zona prohibida lo bloquea solo cuando se superpone.
         assert!(!t.palenque_fits(kind, &spot, &[], &[spot.expanded(-0.01)]));
         assert!(t.palenque_fits(kind, &spot, &[], &[beside(0.0)]));
-        // Off every street, or in the lane down the middle, it does not fit.
+        // Fuera de toda calle, o en el carril del medio, no entra.
         let off = Aabb::new(
             spot.min + Vec2::new(0.0, 15.0),
             spot.max + Vec2::new(0.0, 15.0),
@@ -5760,7 +5943,8 @@ pub(crate) mod tests {
     #[test]
     fn sidewalks_are_three_and_a_half_meters_and_the_galeria_stays_over_them() {
         assert!((Sidewalk::WIDTH - 3.5).abs() < 1e-6);
-        // The store's galería is as deep as the street allows, never past the walk.
+        // La galería del almacén es tan profunda como permite la calle, nunca más
+        // allá de la vereda.
         for (street, veranda) in [
             (10.0, 2.3),
             (11.0, 2.8),
@@ -5790,7 +5974,8 @@ pub(crate) mod tests {
                 "{street} m: {} posts",
                 t.palenques.len()
             );
-            // The station's post stands on its yard, not on a street.
+            // El palenque de la estación está sobre su playa, no sobre una
+            // calle.
             let on_streets: Vec<&Palenque> = t
                 .palenques
                 .iter()
@@ -5805,7 +5990,8 @@ pub(crate) mod tests {
             } else {
                 assert!(!horses.is_empty(), "{street} m street should tie a horse");
             }
-            // Past the 3.5 m walk, with the lane down the middle (1 m each way) free.
+            // Más allá de la vereda de 3,5 m, con el carril del medio (1 m hacia cada
+            // lado) libre.
             for p in on_streets {
                 let street_strip = t
                     .streets
@@ -5855,7 +6041,7 @@ pub(crate) mod tests {
                 assert!(fronts.is_empty(), "{name}");
                 assert!(pits.len() > 100 && groves.len() >= 4, "{name}");
             }
-            // Yards everywhere, but only a few in a village.
+            // Patios en todas partes, pero solo unos pocos en un pueblito.
             assert!(!trees_of(&t, ShadeKind::Yard).is_empty(), "{name}");
         }
         assert!(cities >= 4 && towns >= 6);
@@ -5873,8 +6059,8 @@ pub(crate) mod tests {
             .unwrap()
         };
         assert_eq!(pico(7).shade_trees, pico(7).shade_trees);
-        // The same sidewalks, a different seed: each row's first tree starts
-        // elsewhere along it.
+        // Las mismas veredas, otra semilla: el primer árbol de cada fila
+        // empieza en otro punto a lo largo de ella.
         let first = |t: &TownLayout, row: u32| {
             t.shade_trees
                 .iter()
@@ -5903,7 +6089,8 @@ pub(crate) mod tests {
                 let walk = &t.sidewalks()[tree.row as usize];
                 let curb = walk.curbs[0];
                 let n = normal(curb);
-                // The strip's outer (curb) edge along its normal.
+                // El borde exterior (el del cordón) de la franja a lo largo de
+                // su normal.
                 let edge = match curb {
                     Side::North => walk.area.max.y,
                     Side::South => walk.area.min.y,
@@ -5916,7 +6103,8 @@ pub(crate) mod tests {
                     Vec2::new(tree.at.x, edge)
                 };
                 let gap = on_edge.distance(tree.at);
-                // A 0.8 m cazuela, its edge 0.4 m in from the curb.
+                // Una cazuela de 0,8 m, con su borde a 0,4 m hacia adentro del
+                // cordón.
                 assert!((gap - 0.8).abs() < 1e-3, "{name}: pit center {gap} m in");
                 assert!(walk.area.contains_point(tree.at), "{name}");
                 assert_eq!(tree.toward, n, "{name}: leans over the street");
@@ -5947,8 +6135,8 @@ pub(crate) mod tests {
             }
         }
         assert!(gaps.len() > 250, "{} gaps", gaps.len());
-        // Most of them are the planned 14.8 to 18.4 m; the rest skip a door
-        // or a lamp.
+        // La mayoría están a los 14,8 a 18,4 m planificados; el resto saltean
+        // una puerta o un farol.
         let planned = gaps.iter().filter(|&&g| g < 24.0).count();
         assert!(planned * 10 > gaps.len() * 8, "{planned} of {}", gaps.len());
     }
@@ -5956,16 +6144,18 @@ pub(crate) mod tests {
     #[test]
     fn the_sample_cities_got_a_tenth_fewer_street_trees_and_the_towns_half_as_many_front_ones_again()
      {
-        // Counts before the user's second playtest (2026-10-26), on the
-        // 2026-10-26 street widths: 2247 street trees in the cities of these
-        // samples; before the first playtest, 119 front trees in the towns
-        // (on the old widths); 189 front trees before the 15% more.
+        // Conteos antes de la segunda prueba de juego del usuario (2026-10-26),
+        // con los anchos de calle del 2026-10-26: 2247 árboles de calle en las
+        // ciudades de estos ejemplos; antes de la primera prueba de juego, 119
+        // árboles de frente en los pueblos (con los anchos anteriores); 189
+        // árboles de frente antes del 15 % más.
         let (mut pits, mut fronts) = (0, 0);
         for (_, t) in towns_with_names() {
             pits += trees_of(&t, ShadeKind::Pit).len();
             fronts += trees_of(&t, ShadeKind::Front).len();
         }
-        // Then 15% more (2026-10-27): 2039 before, so 1.12 to 1.18 times.
+        // Después, un 15 % más (2026-10-27): 2039 antes, así que de 1,12 a 1,18
+        // veces.
         assert!(
             (2039 * 112 / 100..=2039 * 118 / 100).contains(&pits),
             "{pits} street trees"
@@ -5976,7 +6166,7 @@ pub(crate) mod tests {
         );
     }
 
-    /// Distance from `p` to the nearest of `boxes`.
+    /// Distancia desde `p` hasta el más cercano de los `boxes`.
     fn gap_to(boxes: impl IntoIterator<Item = Aabb>, p: Vec2) -> f32 {
         boxes
             .into_iter()
@@ -5996,8 +6186,9 @@ pub(crate) mod tests {
                 .collect();
             for tree in &t.shade_trees {
                 let gap = gap_to(walls.iter().copied(), tree.at);
-                // Literal gaps: a pit tree stands 2.7 m off its facade (3.5 m
-                // walk less the pit), a front one 2.2 m, a yard one 3.6 m.
+                // Separaciones literales: un árbol de cazuela queda a 2,7 m de
+                // su fachada (la vereda de 3,5 m menos la cazuela), uno de
+                // frente a 2,2 m y uno de patio a 3,6 m.
                 let least = match tree.kind {
                     ShadeKind::Pit => 2.65,
                     ShadeKind::Front => 2.15,
@@ -6029,7 +6220,7 @@ pub(crate) mod tests {
                         );
                     }
                 }
-                // Past the corner lamps' crossings.
+                // Más allá de los cruces de los faroles de esquina.
                 for (x, y) in t
                     .streets
                     .iter()
@@ -6078,7 +6269,8 @@ pub(crate) mod tests {
                         );
                     }
                 }
-                // Off every palenque, its horse, the store's post and every sign.
+                // Lejos de todo palenque, su caballo, el palenque del almacén y
+                // todo cartel.
                 let posts = t
                     .palenques
                     .iter()
@@ -6111,11 +6303,12 @@ pub(crate) mod tests {
                         "{name}: a grove tree on a path"
                     );
                 }
-                // In the middle of the green, not only along its edge.
+                // En el medio del verde, no solo a lo largo de su borde.
                 groves += usize::from(plaza.expanded(-10.0).contains_point(tree.at));
             }
-            // A tree within 8 m of each church, comisaría and station (a
-            // through line's station stands in its yard band, with no room).
+            // Un árbol a 8 m o menos de cada iglesia, comisaría y estación (la
+            // estación de una línea que atraviesa el pueblo está en su franja
+            // de playa, sin lugar).
             let yards = trees_of(&t, ShadeKind::Yard);
             for b in t.buildings.iter().filter(|b| {
                 matches!(b.kind, BuildingKind::Church | BuildingKind::PoliceStation)
@@ -6146,8 +6339,8 @@ pub(crate) mod tests {
                 .iter()
                 .filter(|b| b.kind == BuildingKind::House)
                 .count();
-            // Sparse: no more than one house in two, never two within 13 m,
-            // never more than two others within 30 m: no continuous row.
+            // Escasos: no más de una casa de cada dos, nunca dos a menos de
+            // 13 m, nunca más de otros dos a menos de 30 m: ninguna fila continua.
             assert!(
                 fronts.len() * 2 <= houses,
                 "{name}: {} of {houses}",
@@ -6159,8 +6352,9 @@ pub(crate) mod tests {
                 for b in &fronts[k + 1..] {
                     assert!(a.at.distance(b.at) >= 12.9, "{name}: trees too close");
                 }
-                // On a street, off its walkers' lane, on a beaten-earth walk (no
-                // cazuela) and at least a meter in from its curb.
+                // Sobre una calle, fuera del carril de sus peatones, sobre una
+                // vereda de tierra apisonada (sin cazuela) y al menos a un metro
+                // hacia adentro de su cordón.
                 assert!(on_street(&t, a.at), "{name}");
                 let on: Vec<&Sidewalk> = t
                     .sidewalks()
@@ -6169,8 +6363,9 @@ pub(crate) mod tests {
                     .collect();
                 assert!(!on.is_empty(), "{name}: a front tree off the walks");
                 assert!(on.iter().all(|w| w.walk == Walk::Earth), "{name}: on brick");
-                // In from the curb along the strip it stands on (a tree by a
-                // corner also lies on the cross strip, whose curb is near).
+                // Hacia adentro del cordón a lo largo de la franja sobre la que
+                // está (un árbol junto a una esquina también queda sobre la
+                // franja transversal, cuyo cordón está cerca).
                 let curb = on
                     .iter()
                     .map(|w| match w.curbs[0] {
@@ -6190,8 +6385,8 @@ pub(crate) mod tests {
 
     #[test]
     fn yards_have_thirty_percent_more_trees_and_shrubs_and_flower_beds_besides() {
-        // Yard trees before the playtest (2026-10-26): 99 in the sample
-        // towns, 648 in the sample cities.
+        // Árboles de patio antes de la prueba de juego (2026-10-26): 99 en los
+        // pueblos de ejemplo, 648 en las ciudades de ejemplo.
         let (mut small, mut city) = (0, 0);
         let (mut shrubs, mut flowers) = (0, 0);
         for (_, t) in towns_with_names() {
@@ -6213,8 +6408,8 @@ pub(crate) mod tests {
                 .count();
         }
 
-        // After the 15% more (2026-10-27): the sample towns 178, the cities
-        // 968.
+        // Después del 15 % más (2026-10-27): los pueblos de ejemplo 178, las
+        // ciudades 968.
         assert!(
             (165..=190).contains(&small),
             "{small} yard trees in the towns"
@@ -6223,7 +6418,7 @@ pub(crate) mod tests {
             (910..=1030).contains(&city),
             "{city} yard trees in the cities"
         );
-        // Plants on top: at least a third as many as the trees.
+        // Plantas además: al menos un tercio de la cantidad de árboles.
         assert!(
             shrubs * 3 > (small + city) && flowers * 3 > (small + city) / 2,
             "{shrubs} {flowers}"
@@ -6243,7 +6438,7 @@ pub(crate) mod tests {
             let obstacles = t.obstacles();
             for (k, plant) in t.yard_plants.iter().enumerate() {
                 let spot = plant.area();
-                // A shrub is 1.2 m across, a flower bed 1.4 m.
+                // Un arbusto mide 1,2 m de ancho; un cantero de flores, 1,4 m.
                 let side = spot.size().x;
                 assert!(
                     (side - 1.2).abs() < 1e-3 || (side - 1.4).abs() < 1e-3,
@@ -6266,7 +6461,8 @@ pub(crate) mod tests {
                     t.sidewalks().iter().all(|w| !overlap(&w.area, &spot)),
                     "{name}"
                 );
-                // Off the ground in front of every door (1.8 m each side, 4 m out).
+                // Fuera del terreno frente a cada puerta (1,8 m a cada lado, 4 m
+                // hacia afuera).
                 for b in t
                     .buildings
                     .iter()
@@ -6297,12 +6493,13 @@ pub(crate) mod tests {
 
     #[test]
     fn a_very_big_town_has_over_a_third_fewer_plaza_trees_taken_from_the_groves() {
-        // Before the thinning (user, 2026-10-26) the very big samples had
-        // 90, 75 and 90 plaza trees (the rings' 36 and 54, 39 and 54 groves);
-        // a fifth fewer after the first playtest (72, 60, 72), 36 in 100
-        // fewer after the second (58, 48, 58), all of it from the groves;
-        // then 15% more trees in towns (2026-10-27): the rings grew to 44
-        // and the cut, a share of the whole, with them (71, 64, 73).
+        // Antes del raleo (usuario, 2026-10-26) los ejemplos muy grandes tenían
+        // 90, 75 y 90 árboles de plaza (los 36 y 54 de los anillos, 39 y 54 de
+        // los bosquecillos); una quinta parte menos después de la primera
+        // prueba de juego (72, 60, 72), 36 de cada 100 menos después de la
+        // segunda (58, 48, 58), todo de los bosquecillos; después, un 15 % más
+        // de árboles en los pueblos (2026-10-27): los anillos crecieron a 44 y
+        // el recorte, una proporción del total, con ellos (71, 64, 73).
         let very_big: Vec<(String, TownLayout)> = towns_with_names()
             .into_iter()
             .filter(|(_, t)| t.size == TownSize::VeryBig)
@@ -6312,7 +6509,7 @@ pub(crate) mod tests {
             let groves = trees_of(t, ShadeKind::Grove).len();
             assert_eq!(t.trees.len(), 44, "{name}: the rings stay whole");
             assert_eq!(t.trees.len() + groves, total, "{name}");
-            // Still groves in the middle, not just at the edge.
+            // Sigue habiendo bosquecillos en el medio, no solo en el borde.
             let plaza = t.plaza.expanded(-12.0);
             let inside = trees_of(t, ShadeKind::Grove)
                 .iter()
@@ -6320,7 +6517,8 @@ pub(crate) mod tests {
                 .count();
             assert!(inside >= 4, "{name}: {inside} grove trees in the middle");
         }
-        // The big towns' groves with the denser grid (9, 7, 11, 17 before).
+        // Los bosquecillos de los pueblos grandes con la grilla más densa
+        // (antes 9, 7, 11, 17).
         let big: Vec<(String, TownLayout)> = towns_with_names()
             .into_iter()
             .filter(|(_, t)| t.size == TownSize::Big)
@@ -6333,10 +6531,11 @@ pub(crate) mod tests {
 
     #[test]
     fn towns_plant_fifteen_percent_more_trees() {
-        // Trees of the sample towns before the extra ones (2026-10-27):
-        // plaza rings 340, street trees 2039, front 189, groves 100, yards
-        // 1013, 3681 in all. Whole steps and a very big town's grove cut
-        // keep the parts apart from a flat 15%.
+        // Árboles de los pueblos de ejemplo antes de los extra (2026-10-27):
+        // anillos de plaza 340, árboles de calle 2039, de frente 189,
+        // bosquecillos 100, patios 1013, 3681 en total. Los pasos enteros y el
+        // recorte de bosquecillos de un pueblo muy grande hacen que las partes
+        // se aparten de un 15 % exacto.
         let count = |kind| {
             sample_towns()
                 .iter()

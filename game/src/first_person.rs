@@ -1,38 +1,40 @@
-//! First-person view from the player's eyes, toggled with `V` against the
-//! third-person orbit ([`ViewMode`]), to see the world's details up close.
+//! Vista en primera persona desde los ojos del jugador, que se alterna con `V`
+//! frente a la órbita en tercera persona ([`ViewMode`]), para ver de cerca los
+//! detalles del mundo.
 //!
-//! - **Eyes.** The camera sits at [`EYE_IN_HEAD`] in the frame of the
-//!   player's model's `head` bone ([`ViewerHead`], marked by render), on
-//!   foot following the walk and in the saddle following the seated rider.
-//!   Its offset from the player's feet is smoothed ([`EyeFollow`]), which
-//!   takes the jitter off the walk and the gallop, but never lets the eyes
-//!   fall more than [`MAX_LAG`] behind the head; the view's turn comes from
-//!   the look alone, never from the head. On foot it stays level; in the
-//!   saddle it takes [`RIDING_SWAY`] of the head's pitch and roll, so the
-//!   walk and the gallop rock it a little. Until the model is in (or without
-//!   one) the eyes stand at a fixed height.
-//! - **Look.** The mouse (or Q/E) turns the head ([`FirstPersonLook`]),
-//!   up and down within [`PITCH_LIMIT`]. On foot the body turns to follow
-//!   the view while walking; in the saddle the horse steers as before and
-//!   the head turns at most [`RIDING_YAW_LIMIT`] either way from its
-//!   heading. The keyboard drives the player as always.
-//! - **Own body.** Render cuts the player's face and skull out of his
-//!   skin and puts them, with the hat, hair and eyes, on a layer the
-//!   first-person camera does not draw ([`first_person_layers`]); the sun
-//!   still lights it, so the whole shadow stays. The arms, the hands, the
-//!   collar, the reins and the horse's neck and ears stay in view. An
-//!   orbit camera pulled in by a wall to within [`HIDE_BODY_WITHIN`] of
-//!   his head stops drawing his model, until it is past [`SHOW_BODY_PAST`]
-//!   again ([`BodyTooClose`]).
-//! - **Lens.** A near plane of [`NEAR`] keeps close things from vanishing,
-//!   the field of view widens to [`FOV`] and the sun's first shadow
-//!   cascade shortens ([`CloseShadows`]).
-//! - **Toggle.** The camera glides between the orbit and the eyes over
-//!   [`BLEND_SECONDS`] ([`ViewBlend`]); the lens and layers switch halfway.
-//!   The choice is kept for the session.
-//! - **Train.** Aboard ([`OnTrain`]) `V` keeps cycling the ride views,
-//!   whose window seat is the seated passenger's view already; the
-//!   first-person choice waits, and comes back when the player gets off.
+//! - **Ojos.** La cámara se ubica en [`EYE_IN_HEAD`] dentro del marco del hueso
+//!   `head` del modelo del jugador ([`ViewerHead`], marcado por render): a pie
+//!   sigue la caminata y en la montura sigue al jinete sentado. Su
+//!   desplazamiento respecto de los pies del jugador se suaviza
+//!   ([`EyeFollow`]), lo que quita el temblor de la caminata y del galope, pero
+//!   nunca deja que los ojos queden más de [`MAX_LAG`] detrás de la cabeza; el
+//!   giro de la vista viene solo de la mirada, nunca de la cabeza. A pie se
+//!   mantiene nivelada; en la montura toma [`RIDING_SWAY`] del pitch y del roll
+//!   de la cabeza, así que la caminata y el galope la mecen un poco. Hasta que
+//!   el modelo está cargado (o sin modelo), los ojos quedan a una altura fija.
+//! - **Mirada.** El mouse (o Q/E) gira la cabeza ([`FirstPersonLook`]), hacia
+//!   arriba y hacia abajo dentro de [`PITCH_LIMIT`]. A pie, el cuerpo gira para
+//!   seguir la vista mientras camina; en la montura el caballo se dirige como
+//!   antes y la cabeza gira como máximo [`RIDING_YAW_LIMIT`] hacia cada lado de
+//!   su rumbo. El teclado mueve al jugador como siempre.
+//! - **Cuerpo propio.** Render recorta la cara y el cráneo del jugador de su
+//!   piel y los pone, con el sombrero, el pelo y los ojos, en una capa que la
+//!   cámara en primera persona no dibuja ([`first_person_layers`]); el sol
+//!   igual la ilumina, así que la sombra queda entera. Los brazos, las manos,
+//!   el cuello de la camisa, las riendas y el cuello y las orejas del caballo
+//!   quedan a la vista. Una cámara de órbita empujada por una pared a menos de
+//!   [`HIDE_BODY_WITHIN`] de su cabeza deja de dibujar su modelo, hasta que
+//!   vuelve a pasar de [`SHOW_BODY_PAST`] ([`BodyTooClose`]).
+//! - **Lente.** Un plano cercano de [`NEAR`] evita que las cosas cercanas
+//!   desaparezcan, el campo de visión se amplía a [`FOV`] y la primera cascada
+//!   de sombras del sol se acorta ([`CloseShadows`]).
+//! - **Alternar.** La cámara se desliza entre la órbita y los ojos durante
+//!   [`BLEND_SECONDS`] ([`ViewBlend`]); la lente y las capas cambian a mitad de
+//!   camino. La elección se conserva durante la sesión.
+//! - **Tren.** A bordo ([`OnTrain`]), `V` sigue recorriendo las vistas del
+//!   viaje, cuyo asiento junto a la ventanilla ya es la vista del pasajero
+//!   sentado; la elección de primera persona espera, y vuelve cuando el jugador
+//!   se baja.
 
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
@@ -47,53 +49,58 @@ use crate::orbit::{OrbitInput, OrbitParams, angle_between};
 use crate::player::Player;
 use crate::ride::OnTrain;
 
-/// Farthest the player looks up or down, in radians (80°).
+/// Lo máximo que el jugador mira hacia arriba o hacia abajo, en radianes (80°).
 pub const PITCH_LIMIT: f32 = 80.0 * PI / 180.0;
-/// Farthest the rider turns their head from the horse's heading, either
-/// way, in radians (120°).
+/// Lo máximo que el jinete gira la cabeza respecto del rumbo del caballo, hacia
+/// cada lado, en radianes (120°).
 pub const RIDING_YAW_LIMIT: f32 = 120.0 * PI / 180.0;
-/// Exponential rate at which the body on foot turns to the view while
-/// walking (higher = quicker).
+/// Tasa exponencial a la que el cuerpo a pie gira hacia la vista mientras
+/// camina (más alta = más rápida).
 pub const TURN_RATE: f32 = 6.0;
-/// Ground speed (m/s, absolute) above which the player counts as walking.
+/// Velocidad sobre el suelo (m/s, absoluta) por encima de la cual el jugador
+/// cuenta como caminando.
 pub const WALKING: f32 = 0.3;
-/// Seconds the camera takes to glide between the orbit and the eyes.
+/// Segundos que tarda la cámara en deslizarse entre la órbita y los ojos.
 pub const BLEND_SECONDS: f32 = 0.25;
-/// Near plane from the eyes, in meters.
+/// Plano cercano desde los ojos, en metros.
 pub const NEAR: f32 = 0.05;
-/// Vertical field of view from the eyes, in radians (75°).
+/// Campo de visión vertical desde los ojos, en radianes (75°).
 pub const FOV: f32 = 75.0 * PI / 180.0;
-/// Exponential rate of the eyes catching up with the head on foot.
+/// Tasa exponencial con la que los ojos alcanzan a la cabeza a pie.
 pub const FOOT_EYE_RATE: f32 = 14.0;
-/// The same in the saddle. It was 8 (the gallop barely moved the view);
-/// a playtest asked for more of the ride in it.
+/// Lo mismo en la montura. Era 8 (el galope apenas movía la vista); una prueba
+/// de juego pidió que se sintiera más el andar del caballo.
 pub const RIDING_EYE_RATE: f32 = 14.0;
-/// Share of the rider's head pitch and roll the view takes in the saddle,
-/// so the walk and the gallop rock it a little. On foot the view stays level.
+/// Proporción del pitch y del roll de la cabeza del jinete que toma la vista en
+/// la montura, para que la caminata y el galope la mezan un poco. A pie, la
+/// vista se mantiene nivelada.
 pub const RIDING_SWAY: f32 = 0.4;
-/// Farther than this from where they were, the eyes jump (meters).
+/// Más lejos que esto de donde estaban, los ojos saltan (metros).
 pub const EYE_SNAP: f32 = 1.5;
-/// Farthest the eased eyes may fall behind the head's eye point, in meters.
-/// At the gallop the eyes surge about 0.56 m fore and aft, 0.09 m up and
-/// down and 0.11 m across, at up to 6 m/s (measured on the shipped rider:
+/// Lo máximo que los ojos suavizados pueden quedar detrás del punto de los ojos
+/// de la cabeza, en metros. Al galope los ojos oscilan unos 0.56 m adelante y
+/// atrás, 0.09 m arriba y abajo y 0.11 m de lado, a hasta 6 m/s (medido en el
+/// jinete incluido:
 /// `viewer::tests::the_players_head_is_cut_from_his_skin_onto_the_hidden_layer`),
-/// so an eye eased at [`RIDING_EYE_RATE`] alone fell up to 0.19 m behind,
-/// out of the head and past the neck. Within this the easing still takes
-/// the jitter off.
+/// así que un ojo suavizado solo a [`RIDING_EYE_RATE`] quedaba hasta 0.19 m
+/// atrás, fuera de la cabeza y más allá del cuello. Dentro de este margen, el
+/// suavizado sigue quitando el temblor.
 pub const MAX_LAG: f32 = 0.03;
-/// An orbit camera pulled in nearer than this to the player's head (by a
-/// wall) stops drawing the player's own model, in meters.
+/// Una cámara de órbita empujada (por una pared) más cerca que esto de la
+/// cabeza del jugador deja de dibujar el modelo propio del jugador, en metros.
 pub const HIDE_BODY_WITHIN: f32 = 0.6;
-/// ... and draws it again once farther than this (a gap, so it does not
-/// flicker at the edge).
+/// ... y lo vuelve a dibujar una vez más lejos que esto (un margen, para que no
+/// parpadee en el borde).
 pub const SHOW_BODY_PAST: f32 = 0.8;
-/// Eye height above the feet on foot while the model has no head yet.
+/// Altura de los ojos sobre los pies, a pie, mientras el modelo todavía no
+/// tiene cabeza.
 pub const FOOT_EYE_HEIGHT: f32 = 1.65;
-/// Eye height above the ground under the horse, in the saddle, likewise.
+/// Altura de los ojos sobre el suelo bajo el caballo, en la montura, del mismo
+/// modo.
 pub const RIDING_EYE_HEIGHT: f32 = 2.45;
 
-/// Whether the camera orbits the player or looks from their eyes. Kept
-/// for the session; `V` toggles it off the train.
+/// Si la cámara orbita al jugador o mira desde sus ojos. Se conserva durante la
+/// sesión; `V` la alterna fuera del tren.
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ViewMode {
     #[default]
@@ -102,7 +109,7 @@ pub enum ViewMode {
 }
 
 impl ViewMode {
-    /// The other view.
+    /// La otra vista.
     pub fn toggled(self) -> Self {
         match self {
             Self::ThirdPerson => Self::FirstPerson,
@@ -111,9 +118,9 @@ impl ViewMode {
     }
 }
 
-/// Where the player looks from their eyes: `yaw` turns the head from the
-/// body's heading (positive to the left), `pitch` looks up (positive) or
-/// down.
+/// Hacia dónde mira el jugador desde sus ojos: `yaw` gira la cabeza respecto
+/// del rumbo del cuerpo (positivo hacia la izquierda), `pitch` mira hacia
+/// arriba (positivo) o hacia abajo.
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
 pub struct FirstPersonLook {
     pub yaw: f32,
@@ -121,11 +128,12 @@ pub struct FirstPersonLook {
 }
 
 impl FirstPersonLook {
-    /// Turns the head with this frame's camera input (the mouse, Q/E). In
-    /// the saddle the head stays within [`RIDING_YAW_LIMIT`] of the
-    /// horse's heading. On foot, walking (`speed`), the body turns toward
-    /// the view; the turn is returned, to add to the heading, and taken off
-    /// the head so the view stays put. Non-finite input counts as none.
+    /// Gira la cabeza con la entrada de cámara de este frame (el mouse, Q/E).
+    /// En la montura, la cabeza se mantiene dentro de [`RIDING_YAW_LIMIT`] del
+    /// rumbo del caballo. A pie, caminando (`speed`), el cuerpo gira hacia la
+    /// vista; el giro se devuelve, para sumarlo al rumbo, y se le resta a la
+    /// cabeza para que la vista no se mueva. Una entrada no finita cuenta como
+    /// ninguna.
     pub fn update(
         &mut self,
         input: OrbitInput,
@@ -158,15 +166,17 @@ impl FirstPersonLook {
         }
     }
 
-    /// The camera's turn for a body facing `heading` (radians,
-    /// counter-clockwise from east).
+    /// El giro de la cámara para un cuerpo que mira hacia `heading` (radianes,
+    /// en sentido antihorario desde el este).
     pub fn rotation(&self, heading: f32) -> Quat {
-        // A camera looks down its -Z: a quarter turn right faces east.
+        // Una cámara mira a lo largo de su -Z: un cuarto de vuelta a la derecha
+        // mira al este.
         Quat::from_rotation_y(heading + self.yaw - FRAC_PI_2) * Quat::from_rotation_x(self.pitch)
     }
 
-    /// The look that sees what an orbit camera at `orbit_yaw` (its ground
-    /// angle from the player) sees, level, for a body facing `heading`.
+    /// La mirada que ve lo que ve una cámara de órbita en `orbit_yaw` (su
+    /// ángulo en el suelo desde el jugador), nivelada, para un cuerpo que mira
+    /// hacia `heading`.
     pub fn from_orbit(orbit_yaw: f32, heading: f32, travel: Travel) -> Self {
         let mut yaw = angle_between(heading, orbit_yaw + PI);
         if travel == Travel::Riding {
@@ -176,14 +186,15 @@ impl FirstPersonLook {
     }
 }
 
-/// The eyes' smoothed offset from the player's feet; `None` until placed.
+/// El desplazamiento suavizado de los ojos respecto de los pies del jugador;
+/// `None` hasta que se ubican.
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
 pub struct EyeFollow(pub Option<Vec3>);
 
 impl EyeFollow {
-    /// Where the camera sits: the feet at `anchor` plus the offset of the
-    /// `eye` eased in at `rate`, never more than [`MAX_LAG`] behind it, or
-    /// jumped to when far off.
+    /// Dónde se ubica la cámara: los pies en `anchor` más el desplazamiento del
+    /// `eye` suavizado a `rate`, nunca más de [`MAX_LAG`] detrás de él, o
+    /// saltando a él cuando está lejos.
     pub fn follow(&mut self, anchor: Vec3, eye: Vec3, rate: f32, dt: f32) -> Vec3 {
         let offset = eye - anchor;
         let smoothed = match self.0 {
@@ -203,13 +214,13 @@ impl EyeFollow {
     }
 }
 
-/// Whether the orbit camera is too close to the player's head to draw his
-/// own model ([`HIDE_BODY_WITHIN`], [`SHOW_BODY_PAST`]).
+/// Si la cámara de órbita está demasiado cerca de la cabeza del jugador para
+/// dibujar su modelo propio ([`HIDE_BODY_WITHIN`], [`SHOW_BODY_PAST`]).
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BodyTooClose(pub bool);
 
 impl BodyTooClose {
-    /// Follows the camera at `distance` from the head, with the gap.
+    /// Sigue a la cámara a `distance` de la cabeza, con el margen.
     pub fn update(&mut self, distance: f32) {
         if distance < HIDE_BODY_WITHIN {
             self.0 = true;
@@ -219,38 +230,39 @@ impl BodyTooClose {
     }
 }
 
-/// How far the camera is from the orbit (0) to the eyes (1).
+/// Qué tan lejos está la cámara entre la órbita (0) y los ojos (1).
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
 pub struct ViewBlend(pub f32);
 
 impl ViewBlend {
-    /// Moves toward the eyes (`first`) or the orbit over [`BLEND_SECONDS`].
+    /// Se mueve hacia los ojos (`first`) o hacia la órbita durante
+    /// [`BLEND_SECONDS`].
     pub fn step(&mut self, first: bool, dt: f32) {
         let step = if dt.is_finite() { dt.max(0.0) } else { 0.0 } / BLEND_SECONDS;
         self.0 = if first { self.0 + step } else { self.0 - step }.clamp(0.0, 1.0);
     }
 
-    /// The eased weight of the eyes.
+    /// El peso suavizado de los ojos.
     pub fn weight(self) -> f32 {
         let t = self.0.clamp(0.0, 1.0);
         t * t * (3.0 - 2.0 * t)
     }
 
-    /// Whether the lens and layers are the eyes' (past halfway).
+    /// Si la lente y las capas son las de los ojos (pasada la mitad).
     pub fn close(self) -> bool {
         self.0 >= 0.5
     }
 }
 
-/// The camera `weight` of the way from the `orbit`'s to the eyes at `eye`
-/// turned by `rotation`.
+/// La cámara a una fracción `weight` del camino desde la de la `orbit` hasta
+/// los ojos en `eye`, girados por `rotation`.
 pub fn blend_transform(orbit: &Transform, eye: Vec3, rotation: Quat, weight: f32) -> Transform {
     Transform::from_translation(orbit.translation.lerp(eye, weight))
         .with_rotation(orbit.rotation.slerp(rotation, weight))
 }
 
-/// The lens for the blend: the eyes' near plane as soon as the camera
-/// moves in, the field of view widening with the weight.
+/// La lente para la transición: el plano cercano de los ojos en cuanto la
+/// cámara se acerca, y el campo de visión que se amplía con el peso.
 pub fn lens(blend: ViewBlend) -> PerspectiveProjection {
     let orbit = PerspectiveProjection::default();
     if blend.0 <= 0.0 {
@@ -263,10 +275,10 @@ pub fn lens(blend: ViewBlend) -> PerspectiveProjection {
     }
 }
 
-/// Gives `projection` the field of view and near plane of `wanted`, in
-/// place: its aspect ratio (kept by Bevy to the viewport's) and far plane
-/// stay as they are. Touches it only when they change, so the projection is
-/// not marked changed every frame.
+/// Da a `projection` el campo de visión y el plano cercano de `wanted`, en el
+/// lugar: su relación de aspecto (que Bevy mantiene igual a la del viewport) y
+/// su plano lejano quedan como están. Solo la toca cuando cambian, para que la
+/// proyección no quede marcada como cambiada en cada frame.
 pub fn set_lens(projection: &mut Mut<Projection>, wanted: PerspectiveProjection) {
     match &**projection {
         Projection::Perspective(p) if p.fov == wanted.fov && p.near == wanted.near => {}
@@ -280,9 +292,9 @@ pub fn set_lens(projection: &mut Mut<Projection>, wanted: PerspectiveProjection)
     }
 }
 
-/// `V` off the train toggles the view. Into the eyes, the head turns to
-/// where the orbit camera looked; back out, the orbit swings behind where
-/// the eyes looked.
+/// `V` fuera del tren alterna la vista. Al entrar en los ojos, la cabeza gira
+/// hacia donde miraba la cámara de órbita; al salir, la órbita gira detrás de
+/// donde miraban los ojos.
 pub(crate) fn toggle_view(
     keys: Res<ButtonInput<KeyCode>>,
     player: Single<(&Player, Has<OnTrain>)>,
@@ -312,8 +324,8 @@ pub(crate) fn toggle_view(
     }
 }
 
-/// From the eyes, the camera input turns the head, and on foot the body
-/// follows it while walking.
+/// Desde los ojos, la entrada de cámara gira la cabeza, y a pie el cuerpo la
+/// sigue mientras camina.
 pub(crate) fn turn_to_view(
     time: Res<Time>,
     (mode, input, tuning): (Res<ViewMode>, Res<CameraInput>, Res<CameraTuning>),
@@ -339,7 +351,7 @@ pub(crate) fn turn_to_view(
     }
 }
 
-/// What [`place_first_person`] keeps between frames.
+/// Lo que [`place_first_person`] conserva entre frames.
 type FirstPersonState<'w> = (
     ResMut<'w, ViewBlend>,
     ResMut<'w, EyeFollow>,
@@ -347,19 +359,19 @@ type FirstPersonState<'w> = (
     ResMut<'w, BodyTooClose>,
 );
 
-/// The marked head bones and the parents to tell the player's own.
+/// Los huesos de cabeza marcados y los padres para distinguir el del jugador.
 type Heads<'w, 's> = (
     Query<'w, 's, (Entity, &'static GlobalTransform), (With<ViewerHead>, Without<FollowCamera>)>,
     Query<'w, 's, &'static ChildOf>,
 );
 
-/// Moves the camera (after transform propagation, so the head bone has
-/// this frame's pose) from where the orbit put it toward the eyes, and
-/// sets the lens, the layers and the shadows for the view. Aboard, the
-/// ride views keep the camera and the orbit's lens; off the train in the
-/// first person, the eyes are back at once. An orbit camera pulled in
-/// against the player's head stops drawing his model ([`BodyTooClose`]).
-/// Allocates nothing.
+/// Mueve la cámara (después de la propagación de transforms, para que el hueso
+/// de la cabeza tenga la pose de este frame) desde donde la puso la órbita
+/// hacia los ojos, y ajusta la lente, las capas y las sombras para la vista. A
+/// bordo, las vistas del viaje conservan la cámara y la lente de la órbita;
+/// fuera del tren en primera persona, los ojos vuelven de inmediato. Una cámara
+/// de órbita empujada contra la cabeza del jugador deja de dibujar su modelo
+/// ([`BodyTooClose`]). No reserva memoria.
 pub(crate) fn place_first_person(
     time: Res<Time>,
     (mode, look): (Res<ViewMode>, Res<FirstPersonLook>),
@@ -397,8 +409,8 @@ pub(crate) fn place_first_person(
         Travel::OnFoot => (FOOT_EYE_HEIGHT, FOOT_EYE_RATE),
         Travel::Riding => (RIDING_EYE_HEIGHT, RIDING_EYE_RATE),
     };
-    // The player's own head: render keeps one per body (the model dressed
-    // last), and any other model's is ignored.
+    // La cabeza propia del jugador: render conserva una por cuerpo (el modelo
+    // vestido en último lugar), y la de cualquier otro modelo se ignora.
     let own = heads
         .iter()
         .find(|(head, _)| parents.iter_ancestors(*head).any(|a| a == me))
@@ -437,16 +449,17 @@ pub(crate) fn place_first_person(
     *global = GlobalTransform::from(placed);
 }
 
-/// `facing` rocked by `share` of the head's pitch and roll. The head bone
-/// faces +Z with +Y up, as the model does. Both angles are measured in the
-/// head's own level frame, so a look turned away from the head takes its
-/// nod as pitch only, never as roll.
+/// `facing` mecido por la fracción `share` del pitch y del roll de la cabeza.
+/// El hueso de la cabeza mira hacia +Z con +Y hacia arriba, como el modelo.
+/// Ambos ángulos se miden en el marco nivelado propio de la cabeza, así que una
+/// mirada apartada de la cabeza toma su cabeceo solo como pitch, nunca como
+/// roll.
 fn ride_sway(facing: Quat, head: Quat, share: f32) -> Quat {
     let forward = head * Vec3::Z;
     let up = head * Vec3::Y;
     let pitch = forward.y.clamp(-1.0, 1.0).asin();
     let level = Vec3::new(forward.x, 0.0, forward.z).normalize_or_zero();
-    // A +Z-facing model's right hand is on its -X side.
+    // La mano derecha de un modelo que mira hacia +Z está en su lado -X.
     let right = level.cross(Vec3::Y);
     let roll = up.dot(right).clamp(-1.0, 1.0).asin();
     facing * Quat::from_rotation_x(pitch * share) * Quat::from_rotation_z(-roll * share)
@@ -459,32 +472,34 @@ mod tests {
 
     #[test]
     fn in_the_saddle_the_view_takes_a_share_of_the_heads_pitch_and_roll() {
-        // The view looks 0.7 rad round; a head facing the same way faces
-        // +Z where the camera faces -Z, hence the half turn.
+        // La vista mira girada 0.7 rad; una cabeza que mira hacia el mismo lado
+        // mira hacia +Z donde la cámara mira hacia -Z, de ahí la media vuelta.
         let facing = Quat::from_rotation_y(0.7);
         let head_facing = |yaw: f32| Quat::from_rotation_y(0.7 + PI + yaw);
-        // The view's pitch and its up's lean to its right, against `facing`.
+        // El pitch de la vista y la inclinación de su vector arriba hacia su
+        // derecha, respecto de `facing`.
         let rocked = |head: Quat| {
             let view = facing.inverse() * ride_sway(facing, head, RIDING_SWAY);
             ((view * Vec3::NEG_Z).y.asin(), (view * Vec3::Y).x)
         };
-        // A level head leaves the view as it is.
+        // Una cabeza nivelada deja la vista como está.
         let level = ride_sway(facing, head_facing(0.0), RIDING_SWAY);
         assert!(level.angle_between(facing) < 1e-5);
-        // A head nodding down 0.2 rad tips the view down by the share.
+        // Una cabeza que cabecea 0.2 rad hacia abajo inclina la vista hacia
+        // abajo según la fracción.
         let (pitch, lean) = rocked(head_facing(0.0) * Quat::from_rotation_x(0.2));
         assert!((pitch + 0.2 * RIDING_SWAY).abs() < 0.01, "pitch {pitch}");
         assert!(lean.abs() < 1e-3, "lean {lean}");
-        // A head tilted to its right (its up toward its -X) rolls the view
-        // to the right, by the share.
+        // Una cabeza inclinada hacia su derecha (su vector arriba hacia su -X)
+        // rota la vista hacia la derecha, según la fracción.
         let (pitch, lean) = rocked(head_facing(0.0) * Quat::from_rotation_z(0.2));
         assert!(
             (lean - (0.2 * RIDING_SWAY).sin()).abs() < 0.01,
             "lean {lean}"
         );
         assert!(pitch.abs() < 1e-3, "pitch {pitch}");
-        // With the look turned 0.5 rad off the head, the nod is still pitch
-        // only: none of it leaks into roll.
+        // Con la mirada girada 0.5 rad respecto de la cabeza, el cabeceo sigue
+        // siendo solo pitch: nada se filtra al roll.
         let (pitch, lean) = rocked(head_facing(0.5) * Quat::from_rotation_x(0.2));
         assert!((pitch + 0.2 * RIDING_SWAY).abs() < 0.01, "pitch {pitch}");
         assert!(lean.abs() < 1e-3, "lean {lean}");
@@ -578,8 +593,8 @@ mod tests {
         layers.intersects(&RenderLayers::layer(OWN_HEAD_LAYER))
     }
 
-    /// Moves the mouse for one frame, as a focused window with the cursor
-    /// grabbed passes it on.
+    /// Mueve el mouse durante un frame, tal como lo transmite una ventana con
+    /// foco y el cursor capturado.
     fn mouse(app: &mut App, delta: Vec2) {
         let world = app.world_mut();
         let mut windows = world.query_filtered::<(), With<PrimaryWindow>>();
@@ -600,7 +615,7 @@ mod tests {
         assert!(orbit.distance(feet(&mut app)) > 5.0, "out on the orbit");
         tap(&mut app, VIEW_KEY);
         assert_eq!(*app.world().resource::<ViewMode>(), ViewMode::FirstPerson);
-        // On the way in, between the orbit and the eyes.
+        // En el camino de entrada, entre la órbita y los ojos.
         frames(&mut app, 5);
         let eyes = feet(&mut app) + Vec3::Y * FOOT_EYE_HEIGHT;
         let midway = camera(&mut app).0.translation;
@@ -612,10 +627,11 @@ mod tests {
         assert!((lens.fov - FOV).abs() < 1e-5);
         assert!(!sees_own_head(&layers), "no own head from the eyes");
         assert!(app.world().resource::<CloseShadows>().0);
-        // Facing the way the player faces, level.
+        // Mirando hacia donde mira el jugador, nivelada.
         let forward = at.forward();
         assert!(forward.distance(Vec3::NEG_Z) < 1e-3, "{forward}");
-        // And back out, behind the player again, the head drawn.
+        // Y de vuelta afuera, detrás del jugador otra vez, con la cabeza
+        // dibujada.
         tap(&mut app, VIEW_KEY);
         frames(&mut app, 20);
         assert_eq!(*app.world().resource::<ViewMode>(), ViewMode::ThirdPerson);
@@ -633,7 +649,8 @@ mod tests {
     #[test]
     fn the_glide_keeps_the_viewports_aspect_ratio_and_the_far_plane() {
         let mut app = app(Travel::OnFoot);
-        // As Bevy sets them from the window and as a camera may set them.
+        // Como los fija Bevy a partir de la ventana y como puede fijarlos una
+        // cámara.
         let (aspect, far) = (2.25, 1234.0);
         {
             let world = app.world_mut();
@@ -673,7 +690,8 @@ mod tests {
         let mut app = app(Travel::Riding);
         tap(&mut app, VIEW_KEY);
         frames(&mut app, 20);
-        // The model's head, tipped forward a little, over the saddle.
+        // La cabeza del modelo, un poco inclinada hacia adelante, sobre la
+        // montura.
         let head = GlobalTransform::from(
             Transform::from_translation(feet(&mut app) + Vec3::new(0.2, 2.3, -0.1))
                 .with_rotation(Quat::from_rotation_x(-0.3) * Quat::from_rotation_y(0.4)),
@@ -687,15 +705,15 @@ mod tests {
             "{} vs {eye}",
             at.translation
         );
-        // In the saddle the view takes RIDING_SWAY of the head's pitch.
+        // En la montura, la vista toma RIDING_SWAY del pitch de la cabeza.
         let head_pitch = (head.rotation() * Vec3::Z).y.asin();
         let view_pitch = at.forward().y.asin();
         assert!(
             (view_pitch - head_pitch * RIDING_SWAY).abs() < 1e-3,
             "view {view_pitch} vs head {head_pitch}"
         );
-        // A small jolt of the head is eased, a big one followed to within
-        // MAX_LAG at once.
+        // Una pequeña sacudida de la cabeza se suaviza; una grande se sigue de
+        // inmediato hasta quedar dentro de MAX_LAG.
         let nudge = GlobalTransform::from(
             head.compute_transform()
                 .with_translation(head.translation() + Vec3::Y * 0.02),
@@ -738,7 +756,7 @@ mod tests {
         };
         look.update(up, Travel::Riding, 0.0, &params, FRAME);
         assert_eq!(look.pitch, PITCH_LIMIT);
-        // In the app too, the camera tips no further than the limit.
+        // También en la app, la cámara no se inclina más allá del límite.
         let mut app = app(Travel::OnFoot);
         tap(&mut app, VIEW_KEY);
         mouse(&mut app, Vec2::new(0.0, -1e6));
@@ -766,11 +784,12 @@ mod tests {
             look.update(left, Travel::Riding, 8.0, &params, FRAME);
         }
         assert_eq!(look.yaw, RIDING_YAW_LIMIT);
-        // Into the eyes from an orbit off the horse's front: clamped too.
+        // Hacia los ojos desde una órbita apartada del frente del caballo:
+        // también limitada.
         let front = FirstPersonLook::from_orbit(FRAC_PI_2, FRAC_PI_2, Travel::Riding);
         assert_eq!(front.yaw.abs(), RIDING_YAW_LIMIT);
-        // In the app, E turns the head to its limit; the horse keeps its
-        // heading.
+        // En la app, E gira la cabeza hasta su límite; el caballo conserva su
+        // rumbo.
         let mut app = app(Travel::Riding);
         tap(&mut app, VIEW_KEY);
         let heading = rider(&mut app).heading;
@@ -809,7 +828,8 @@ mod tests {
             (turned - 1.0).abs() < 1e-3 && look.yaw.abs() < 1e-3,
             "{turned}"
         );
-        // In the app: look left standing, then walk; the body comes round.
+        // En la app: mirar a la izquierda parado y luego caminar; el cuerpo
+        // gira.
         let mut app = app(Travel::OnFoot);
         tap(&mut app, VIEW_KEY);
         app.world_mut()
@@ -847,7 +867,7 @@ mod tests {
             crate::ride::testing::passenger(&mut app).1.is_some(),
             "aboard"
         );
-        // Aboard, V is the ride's: the view mode stays.
+        // A bordo, V es del viaje: el modo de vista no cambia.
         tap(&mut app, VIEW_KEY);
         app.update();
         assert_eq!(*app.world().resource::<RideView>(), RideView::Coach);
@@ -856,15 +876,15 @@ mod tests {
         tap(&mut app, VIEW_KEY);
         app.update();
         assert_eq!(*app.world().resource::<RideView>(), RideView::Window);
-        // First person chosen before boarding: the seat keeps the camera,
-        // the orbit's lens and the whole world drawn.
+        // Primera persona elegida antes de subir: el asiento conserva la
+        // cámara, la lente de la órbita y el mundo entero dibujado.
         app.insert_resource(ViewMode::FirstPerson);
         frames(&mut app, 5);
         let (_, layers, lens) = camera(&mut app);
         assert_eq!(app.world().resource::<ViewBlend>().0, 0.0);
         assert!(sees_own_head(&layers));
         assert_eq!(fov_near(&lens), fov_near(&PerspectiveProjection::default()));
-        // Off the train: straight into the eyes, on foot.
+        // Fuera del tren: directo a los ojos, a pie.
         crate::ride::testing::arrive_from_anywhere(&mut app);
         app.update();
         assert_eq!(app.world().resource::<ViewBlend>().0, 1.0);
@@ -877,15 +897,15 @@ mod tests {
         );
         assert!(!sees_own_head(&layers));
         assert_eq!(lens.near, NEAR);
-        // And V toggles again on the ground.
+        // Y V vuelve a alternar en el suelo.
         tap(&mut app, VIEW_KEY);
         assert_eq!(*app.world().resource::<ViewMode>(), ViewMode::ThirdPerson);
     }
 
-    /// Puts the player's head bone at `head` in the world, under the
-    /// player as his model's bone is (spawning it the first time); returns
-    /// the bone. These apps propagate no transforms: the bone's world
-    /// transform is set as propagation would leave it.
+    /// Pone el hueso de la cabeza del jugador en `head` en el mundo, bajo el
+    /// jugador como está el hueso de su modelo (creándolo la primera vez);
+    /// devuelve el hueso. Estas apps no propagan transforms: el transform
+    /// global del hueso se fija como lo dejaría la propagación.
     fn put_head(app: &mut App, head: GlobalTransform) -> Entity {
         let world = app.world_mut();
         let me = {
@@ -906,7 +926,8 @@ mod tests {
         }
     }
 
-    /// Puts the player's head so its eye point is at `eye`, upright.
+    /// Pone la cabeza del jugador de modo que el punto de sus ojos quede en
+    /// `eye`, erguida.
     fn head_at(app: &mut App, eye: Vec3) {
         put_head(app, GlobalTransform::from_translation(eye - EYE_IN_HEAD));
     }
@@ -916,8 +937,8 @@ mod tests {
         let mut app = app(Travel::OnFoot);
         tap(&mut app, VIEW_KEY);
         frames(&mut app, 20);
-        // Another model's head bone, marked but not the player's (a model
-        // being swapped out, or a stray), there first.
+        // El hueso de la cabeza de otro modelo, marcado pero no del jugador (un
+        // modelo que se está reemplazando, o uno perdido), primero allí.
         let stray = feet(&mut app) + Vec3::new(4.0, 1.6, 0.0);
         let other = app.world_mut().spawn_empty().id();
         app.world_mut().spawn((
@@ -937,9 +958,9 @@ mod tests {
         let mut app = app(Travel::Riding);
         tap(&mut app, VIEW_KEY);
         frames(&mut app, 20);
-        // The eye point surging as measured on the shipped rider at the
-        // gallop: 0.56 m fore and aft, 0.09 m up and down, 0.11 m across,
-        // up to 6 m/s.
+        // El punto de los ojos oscilando como se midió en el jinete incluido al
+        // galope: 0.56 m adelante y atrás, 0.09 m arriba y abajo, 0.11 m de
+        // lado, a hasta 6 m/s.
         let seat = feet(&mut app) + Vec3::new(0.0, 2.3, 0.0);
         let stride = std::f32::consts::TAU * 3.4;
         let eye_at = |t: f32| {
@@ -968,11 +989,12 @@ mod tests {
         let layers = |app: &mut App| camera(app).1;
         assert_eq!(layers(&mut app), world_layers());
         let at = camera(&mut app).0.translation;
-        // A wall pulls the camera in to 0.3 m of his head: no own model.
+        // Una pared empuja la cámara a 0.3 m de su cabeza: sin modelo propio.
         head_at(&mut app, at + Vec3::X * 0.3);
         app.update();
         assert_eq!(layers(&mut app), close_layers());
-        // Easing back out: still hidden inside the gap, drawn past it.
+        // Al volver a alejarse: todavía oculto dentro del margen, dibujado más
+        // allá.
         let at = camera(&mut app).0.translation;
         head_at(&mut app, at + Vec3::X * 0.7);
         app.update();
@@ -985,7 +1007,7 @@ mod tests {
         head_at(&mut app, at + Vec3::X * 0.7);
         app.update();
         assert_eq!(layers(&mut app), world_layers(), "inside the gap");
-        // The sun still sees the body: only the camera drops it.
+        // El sol todavía ve el cuerpo: solo la cámara lo descarta.
         assert!(!app.world().resource::<CloseShadows>().0);
     }
 }

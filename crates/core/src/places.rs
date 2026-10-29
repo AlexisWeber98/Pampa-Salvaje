@@ -1,12 +1,13 @@
-//! Named places: the town's landmarks, with the signs that name them.
+//! Lugares con nombre: los puntos de referencia del pueblo, con los carteles
+//! que los nombran.
 //!
-//! Pure data derived from a [`TownLayout`]. Sign text is in-world (period
-//! Spanish) content; render decides the lettering, the board and its height
-//! on the facade.
+//! Datos puros derivados de un [`TownLayout`]. El texto de los carteles es
+//! contenido del mundo del juego (español de época); el render decide las
+//! letras, el tablero y su altura en la fachada.
 
 use crate::{Aabb, Building, BuildingKind, Heading, Side, TownLayout, TownSize, Vec2};
 
-/// Which landmark a place is.
+/// Qué punto de referencia es un lugar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PlaceKind {
     GeneralStore,
@@ -17,7 +18,7 @@ pub enum PlaceKind {
 }
 
 impl PlaceKind {
-    /// Every landmark kind, in a stable order.
+    /// Todos los tipos de punto de referencia, en un orden estable.
     pub const ALL: [PlaceKind; 5] = [
         PlaceKind::GeneralStore,
         PlaceKind::PoliceStation,
@@ -26,10 +27,10 @@ impl PlaceKind {
         PlaceKind::Plaza,
     ];
 
-    /// The diegetic name painted on its sign (uppercase Spanish), as in a
-    /// big town: a small town's store is a pulpería instead
-    /// ([`StoreStyle`]). The station's sign adds the town's name
-    /// ([`Place::name`]).
+    /// El nombre diegético pintado en su cartel (en español, en mayúsculas),
+    /// como en un pueblo grande: el comercio de un pueblo chico es en cambio
+    /// una pulpería ([`StoreStyle`]). El cartel de la estación agrega el nombre
+    /// del pueblo ([`Place::name`]).
     pub fn name(self) -> &'static str {
         match self {
             PlaceKind::GeneralStore => "ALMACÉN DE RAMOS GENERALES",
@@ -41,17 +42,19 @@ impl PlaceKind {
     }
 }
 
-/// What a town's general store is, by the town's size (user, 2026-10-23).
+/// Qué es el almacén de ramos generales de un pueblo, según el tamaño del
+/// pueblo (usuario, 2026-10-23).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StoreStyle {
-    /// A small town's (pueblo's) store and bar: a pulpería.
+    /// El comercio y bar de un pueblo chico: una pulpería.
     Pulperia,
-    /// A big town's "almacén de ramos generales".
+    /// El "almacén de ramos generales" de un pueblo grande.
     GeneralStore,
 }
 
 impl StoreStyle {
-    /// The store of a town of `size`: a pulpería in a small town.
+    /// El comercio de un pueblo de tamaño `size`: una pulpería en un pueblo
+    /// chico.
     pub fn of(size: TownSize) -> Self {
         match size {
             TownSize::Small => Self::Pulperia,
@@ -59,7 +62,7 @@ impl StoreStyle {
         }
     }
 
-    /// The diegetic name painted on its sign (uppercase Spanish).
+    /// El nombre diegético pintado en su cartel (en español, en mayúsculas).
     pub fn sign(self) -> &'static str {
         match self {
             Self::Pulperia => "PULPERÍA",
@@ -68,36 +71,40 @@ impl StoreStyle {
     }
 }
 
-/// How a sign is held up.
+/// Cómo se sostiene un cartel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SignMount {
-    /// Flat against a building facade, above the door.
+    /// Pegado a la fachada de un edificio, sobre la puerta.
     Facade,
-    /// A free-standing board on two posts.
+    /// Un tablero independiente sobre dos postes.
     Posts,
 }
 
-/// One signboard: where it stands on the ground plane and which way it reads.
+/// Un cartel: dónde está en el plano del suelo y hacia qué lado se lee.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Sign {
-    /// Center of the board's base line on the ground plane. Facade signs sit
-    /// just outside the wall; post signs stand on this point.
+    /// Centro de la línea de base del tablero en el plano del suelo. Los
+    /// carteles de fachada quedan justo afuera de la pared; los carteles sobre
+    /// postes se apoyan en este punto.
     pub anchor: Vec2,
-    /// The side the lettering faces (outward normal of the board).
+    /// El lado hacia el que miran las letras (la normal hacia afuera del
+    /// tablero).
     pub facing: Side,
     pub mount: SignMount,
-    /// Height of the surface the sign stands on above the ground (a platform).
+    /// Altura sobre el suelo de la superficie en la que está el cartel (un
+    /// andén).
     pub elevation: f32,
-    /// Board width along its face, in meters.
+    /// Ancho del tablero a lo largo de su cara, en metros.
     pub width: f32,
 }
 
 impl Sign {
-    /// Thickness of a free-standing sign across its face, in meters.
+    /// Espesor de un cartel independiente a través de su cara, en metros.
     pub const POST_DEPTH: f32 = 0.3;
 
-    /// Collision footprint of a free-standing sign standing on the ground,
-    /// if it has one (facade signs live on walls, raised signs on platforms).
+    /// Huella de colisión de un cartel independiente apoyado en el suelo, si
+    /// tiene una (los carteles de fachada están en las paredes y los elevados,
+    /// en los andenes).
     pub fn footprint(&self) -> Option<Aabb> {
         if self.mount != SignMount::Posts || self.elevation > 0.0 {
             return None;
@@ -110,30 +117,34 @@ impl Sign {
     }
 }
 
-/// A named landmark of the town.
+/// Un punto de referencia del pueblo con nombre.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Place {
     pub kind: PlaceKind,
-    /// The diegetic name painted on its signs: the kind's name, plus the
-    /// town's name for the station (e.g. "ESTACIÓN EDUARDO CASTEX").
+    /// El nombre diegético pintado en sus carteles: el nombre del tipo, más el
+    /// nombre del pueblo en el caso de la estación (por ejemplo, "ESTACIÓN
+    /// EDUARDO CASTEX").
     pub name: String,
-    /// The landmark's ground area (building footprint, or the plaza).
+    /// El área del suelo del punto de referencia (la huella del edificio, o la
+    /// plaza).
     pub footprint: Aabb,
-    /// Signs naming it; the first is the main, street-facing one.
+    /// Carteles que lo nombran; el primero es el principal, el que da a la
+    /// calle.
     pub signs: Vec<Sign>,
 }
 
 impl Place {
-    /// Where the place is marked on a map.
+    /// Dónde se marca el lugar en un mapa.
     pub fn center(&self) -> Vec2 {
         self.footprint.center()
     }
 }
 
 impl TownLayout {
-    /// The town's named landmarks in [`PlaceKind::ALL`] order: every general
-    /// store, police station and plaza (bigger towns have several; the
-    /// first is the main one), the church and the station.
+    /// Los puntos de referencia con nombre del pueblo en el orden de
+    /// [`PlaceKind::ALL`]: cada almacén de ramos generales, comisaría y plaza
+    /// (los pueblos más grandes tienen varios; el primero es el principal), la
+    /// iglesia y la estación.
     pub fn places(&self) -> Vec<Place> {
         PlaceKind::ALL
             .into_iter()
@@ -166,8 +177,7 @@ impl TownLayout {
                     )
                 })
                 .collect(),
-            // No signboard: the bell tower says what it is (user,
-            // 2026-10-28).
+            // Sin cartel: el campanario dice lo que es (usuario, 2026-10-28).
             PlaceKind::Church => building(BuildingKind::Church)
                 .map(|church| (church.footprint, Vec::new()))
                 .into_iter()
@@ -203,9 +213,9 @@ impl TownLayout {
             .collect()
     }
 
-    /// Where somebody waits in the main plaza: on the path from the
-    /// monument toward the station (south without one), a few meters out,
-    /// facing whoever walks in from there.
+    /// Dónde espera alguien en la plaza principal: en el sendero que va del
+    /// monumento hacia la estación (hacia el sur si no hay estación), a unos
+    /// metros, mirando hacia quien entre caminando desde ahí.
     pub fn plaza_spot(&self) -> (Vec2, Heading) {
         let center = self.plaza.center();
         let out = self
@@ -218,9 +228,9 @@ impl TownLayout {
         (center + out * PLAZA_SPOT_DISTANCE, heading_of(out))
     }
 
-    /// Where somebody stands at the door of the first police station: on
-    /// the street side, a couple of meters out from the middle of its
-    /// facade, facing the street.
+    /// Dónde está parado alguien en la puerta de la primera comisaría: del lado
+    /// de la calle, a un par de metros del centro de su fachada, mirando hacia
+    /// la calle.
     pub fn police_door(&self) -> Option<(Vec2, Heading)> {
         let police = self
             .buildings
@@ -235,16 +245,18 @@ impl TownLayout {
         ))
     }
 
-    /// Where a passenger steps off the train: on top of the platform, half
-    /// way along it (where the middle of the coaches stops), a step in from
-    /// its track edge, facing town. `None` without a platform.
+    /// Dónde baja un pasajero del tren: sobre el andén, a mitad de su largo
+    /// (donde se detiene el centro de los coches), un paso hacia adentro desde
+    /// su borde junto a la vía, mirando hacia el pueblo. `None` si no hay
+    /// andén.
     pub fn platform_spot(&self) -> Option<(Vec2, Heading)> {
         let platform = self
             .buildings
             .iter()
             .find(|b| b.kind == BuildingKind::Platform)?;
-        // The platform faces the track. The station, and so the coaches
-        // standing at it, are centered on the platform along the track.
+        // El andén mira hacia la vía. La estación, y por lo tanto los coches
+        // que se detienen frente a ella, están centrados en el andén a lo largo
+        // de la vía.
         let track = side_normal(platform.front);
         let p = platform.footprint;
         let half = p.size() * 0.5;
@@ -253,7 +265,7 @@ impl TownLayout {
         Some((at, heading_of(track * -1.0)))
     }
 
-    /// Footprints of free-standing signs on the ground.
+    /// Huellas de los carteles independientes apoyados en el suelo.
     pub(crate) fn sign_obstacles(&self) -> Vec<Aabb> {
         self.places()
             .iter()
@@ -262,8 +274,8 @@ impl TownLayout {
     }
 }
 
-/// The plaza's sign on posts just inside its south edge, beside the central
-/// path (closer to it on a narrow plaza).
+/// El cartel de la plaza sobre postes, justo dentro de su borde sur, al lado
+/// del sendero central (más cerca de él en una plaza angosta).
 fn plaza_sign(plaza: Aabb) -> Sign {
     let offset = (plaza.size().x / 2.0 - 3.5).min(10.0);
     Sign {
@@ -275,18 +287,20 @@ fn plaza_sign(plaza: Aabb) -> Sign {
     }
 }
 
-/// How far from the plaza's monument [`TownLayout::plaza_spot`] is, in
-/// meters: past the monument's base, well inside the ring of trees.
+/// A qué distancia del monumento de la plaza está [`TownLayout::plaza_spot`],
+/// en metros: más allá de la base del monumento, bien dentro del anillo de
+/// árboles.
 const PLAZA_SPOT_DISTANCE: f32 = 6.0;
-/// How far out from a facade [`TownLayout::police_door`] is, in meters.
+/// A qué distancia de una fachada está [`TownLayout::police_door`], en metros.
 const DOOR_SPOT_DISTANCE: f32 = 2.0;
-/// How far in from the platform's track edge [`TownLayout::platform_spot`]
-/// is, in meters: the track runs [`Floor::PLATFORM_EDGE`] (1.65 m) out from
-/// that edge, so the spot is 2.65 m from the track, 1.15 m off a 3 m wide
-/// train, and stays clear of the station canopy's posts.
+/// A qué distancia hacia adentro del borde del andén junto a la vía está
+/// [`TownLayout::platform_spot`], en metros: la vía pasa a
+/// [`Floor::PLATFORM_EDGE`] (1,65 m) de ese borde, así que el lugar queda a
+/// 2,65 m de la vía, a 1,15 m de un tren de 3 m de ancho, y lejos de los postes
+/// del techo de la estación.
 pub(crate) const PLATFORM_SPOT_FROM_EDGE: f32 = 1.0;
 
-/// The world axis nearest the direction of `v` (south for zero).
+/// El eje del mundo más cercano a la dirección de `v` (el sur si es cero).
 fn axis_toward(v: Vec2) -> Vec2 {
     if v.x.abs() > v.y.abs() {
         Vec2::new(v.x.signum(), 0.0)
@@ -297,19 +311,20 @@ fn axis_toward(v: Vec2) -> Vec2 {
     }
 }
 
-/// The heading pointing along the unit direction `d`.
+/// La orientación que apunta en la dirección unitaria `d`.
 fn heading_of(d: Vec2) -> Heading {
     Heading::from_radians(d.y.atan2(d.x))
 }
 
-/// Gap between a wall and the board hung on it, in meters.
+/// Separación entre una pared y el tablero colgado en ella, en metros.
 const FACADE_GAP: f32 = 0.1;
 
-/// Margin a facade board leaves to the wall's ends, in meters.
+/// Margen que deja un tablero de fachada hasta los extremos de la pared, en
+/// metros.
 const FACADE_MARGIN: f32 = 0.5;
 
-/// A board of `width` (narrowed to fit a small facade) centered on the
-/// `front` facade of `footprint`.
+/// Un tablero de ancho `width` (angostado para que entre en una fachada chica)
+/// centrado en la fachada `front` de `footprint`.
 fn facade_sign(footprint: Aabb, front: Side, width: f32) -> Sign {
     let normal = side_normal(front);
     let half = footprint.size() * 0.5;
@@ -325,29 +340,31 @@ fn facade_sign(footprint: Aabb, front: Side, width: f32) -> Sign {
     }
 }
 
-/// How far the station's walls stand in from its footprint, in meters
-/// (render's `PROUD`): the walls are this much shorter at each end.
+/// A qué distancia hacia adentro de su huella están las paredes de la estación,
+/// en metros (el `PROUD` del render): las paredes son esta medida más cortas en
+/// cada extremo.
 pub const STATION_WALL_INSET: f32 = 0.1;
 
-/// Bays (openings, doors at the odd ones) in a station wall `length`
-/// meters long: one per 3 m, 3 to 9, always odd so a door is in the middle.
+/// Vanos (aberturas, con puertas en los impares) en una pared de estación de
+/// `length` metros de largo: uno cada 3 m, de 3 a 9, siempre una cantidad impar
+/// para que haya una puerta en el medio.
 pub fn station_bays(length: f32) -> usize {
     ((length / 3.0) as usize).clamp(3, 9) | 1
 }
 
-/// Width of the timetable board on the station wall, in meters.
+/// Ancho del tablero de horarios en la pared de la estación, en metros.
 pub const TIMETABLE_BOARD_WIDTH: f32 = 1.4;
-/// Height of the middle of the timetable board above the platform floor,
-/// in meters: beside the doors and windows, at eye level.
+/// Altura del centro del tablero de horarios sobre el piso del andén, en
+/// metros: al lado de las puertas y ventanas, a la altura de los ojos.
 pub const TIMETABLE_BOARD_HEIGHT: f32 = 1.7;
 
 impl TownLayout {
-    /// The station's three timetable boards, each a facade [`Sign`] hung on
-    /// a pier between openings, where no door or window is: first the one
-    /// on the track-side wall, facing the platform (the station faces the
-    /// town, so the track is behind it), then the two on the street front,
-    /// one on each side of the entrance bay, facing the street. Empty
-    /// without a station.
+    /// Los tres tableros de horarios de la estación, cada uno un [`Sign`] de
+    /// fachada colgado en un pilar entre aberturas, donde no hay puerta ni
+    /// ventana: primero el de la pared del lado de la vía, mirando hacia el
+    /// andén (la estación mira hacia el pueblo, así que la vía queda detrás), y
+    /// después los dos del frente que da a la calle, uno a cada lado del vano
+    /// de entrada, mirando hacia la calle. Vacío si no hay estación.
     pub fn timetable_boards(&self) -> Vec<Sign> {
         let Some(station) = self
             .buildings
@@ -356,7 +373,7 @@ impl TownLayout {
         else {
             return Vec::new();
         };
-        // The platform floor the track-side board stands on.
+        // El piso del andén sobre el que está el tablero del lado de la vía.
         let platform = self
             .buildings
             .iter()
@@ -367,9 +384,8 @@ impl TownLayout {
             let normal = side_normal(facing);
             let along = Vec2::new(normal.y.abs(), normal.x.abs());
             let length = footprint.size().dot(along) - 2.0 * STATION_WALL_INSET;
-            // The edge between the middle bay and its neighbour: the
-            // openings are centered in their bays, so it is clear of every
-            // one.
+            // El borde entre el vano del medio y su vecino: las aberturas están
+            // centradas en sus vanos, así que queda libre de todas ellas.
             let pier = length / (2.0 * station_bays(length) as f32);
             let half = footprint.size() * 0.5;
             let reach = normal.x.abs() * half.x + normal.y.abs() * half.y + FACADE_GAP;
@@ -389,19 +405,23 @@ impl TownLayout {
     }
 }
 
-/// Width of each station name board on the platform, in meters: a long
-/// period board, but short enough to stand clear of the platform's ends.
+/// Ancho de cada tablero con el nombre de la estación en el andén, en metros:
+/// un tablero largo de época, pero lo bastante corto como para quedar lejos de
+/// los extremos del andén.
 const PLATFORM_BOARD_WIDTH: f32 = 5.0;
-/// Gap from a platform's end to the board nearest it, in meters.
+/// Separación desde el extremo de un andén hasta el tablero más cercano, en
+/// metros.
 const PLATFORM_BOARD_MARGIN: f32 = 1.5;
-/// How far in from the platform's track edge a board stands, in meters.
+/// A qué distancia hacia adentro del borde del andén junto a la vía está un
+/// tablero, en metros.
 const PLATFORM_BOARD_FROM_EDGE: f32 = 0.8;
 
-/// The two station name boards on posts at the track edge of the platform,
-/// one near each end, reading toward the trains so a passenger looking out
-/// of a coach window sees the name. The ends lie past the stretch the
-/// coaches stand along, so a passenger never steps off into one. The
-/// station faces the town, so the track is behind it.
+/// Los dos tableros con el nombre de la estación sobre postes en el borde del
+/// andén junto a la vía, uno cerca de cada extremo, que se leen hacia los
+/// trenes para que un pasajero que mira por la ventanilla de un coche vea el
+/// nombre. Los extremos quedan más allá del tramo frente al que se detienen los
+/// coches, así que un pasajero nunca baja frente a uno. La estación mira hacia
+/// el pueblo, así que la vía queda detrás.
 fn platform_boards(platform: &Building, station: &Building) -> [Sign; 2] {
     let track = station.front.opposite();
     let n = side_normal(track);
@@ -420,7 +440,7 @@ fn platform_boards(platform: &Building, station: &Building) -> [Sign; 2] {
     })
 }
 
-/// Outward unit normal of a footprint side.
+/// Normal unitaria hacia afuera de un lado de una huella.
 pub fn side_normal(side: Side) -> Vec2 {
     match side {
         Side::North => Vec2::new(0.0, 1.0),
@@ -456,8 +476,8 @@ mod tests {
         for (c, t) in sample_configs().iter().zip(sample_towns()) {
             let places = t.places();
             let kinds: Vec<_> = places.iter().map(|p| p.kind).collect();
-            // Bigger towns have several general stores, police stations and
-            // plazas, listed together.
+            // Los pueblos más grandes tienen varios almacenes de ramos
+            // generales, comisarías y plazas, que se listan juntos.
             let expected: Vec<_> = PlaceKind::ALL
                 .into_iter()
                 .flat_map(|k| {
@@ -480,8 +500,8 @@ mod tests {
                     kind => kind.name(),
                 };
                 assert!(p.name.starts_with(sign), "{}", p.name);
-                // The church carries no signboard (user, 2026-10-28): its
-                // bell tower says what it is.
+                // La iglesia no lleva cartel (usuario, 2026-10-28): su
+                // campanario dice lo que es.
                 assert_eq!(
                     p.signs.is_empty(),
                     p.kind == PlaceKind::Church,
@@ -498,8 +518,8 @@ mod tests {
                 );
             }
         }
-        // A small town's store is a pulpería; a big town's, an almacén de
-        // ramos generales.
+        // El comercio de un pueblo chico es una pulpería; el de un pueblo
+        // grande, un almacén de ramos generales.
         assert_eq!(town().size, crate::TownSize::Small);
         assert_eq!(
             place(&town(), PlaceKind::GeneralStore).unwrap().name,
@@ -578,13 +598,13 @@ mod tests {
                 assert_eq!(sign.mount, SignMount::Facade);
                 assert_eq!(sign.facing, b.front, "{kind:?}");
                 assert_eq!(sign.elevation, 0.0);
-                // Outside the wall, but only just, on the facade side.
+                // Afuera de la pared, pero apenas, del lado de la fachada.
                 assert!(!b.footprint.contains_point(sign.anchor), "{kind:?}");
                 let gap = b.footprint.closest_point(sign.anchor).distance(sign.anchor);
                 assert!(gap > 0.0 && gap < 0.3, "{kind:?} gap {gap}");
                 let normal = side_normal(b.front);
                 assert!((sign.anchor - b.footprint.center()).dot(normal) > 0.0);
-                // Centered on the facade and narrower than it.
+                // Centrado en la fachada y más angosto que ella.
                 let along = Vec2::new(normal.y.abs(), normal.x.abs());
                 let offset = (sign.anchor - b.footprint.center()).dot(along);
                 assert!(offset.abs() < 1e-4, "{kind:?} off center by {offset}");
@@ -593,7 +613,7 @@ mod tests {
                     "{}: {kind:?} sign wider than its facade",
                     t.name
                 );
-                // A street lies a few meters out in front of it.
+                // Hay una calle unos metros más adelante.
                 let faces_street = (6..=12).any(|d| {
                     let ahead = sign.anchor + normal * d as f32;
                     t.streets.iter().any(|s| s.contains_point(ahead))
@@ -603,9 +623,9 @@ mod tests {
         }
     }
 
-    /// Half the stretch of platform the line train's coaches stand along,
-    /// in meters: the train stops with its coaches centered on the middle
-    /// of the platform (see `platform_spot`).
+    /// La mitad del tramo de andén frente al que se detienen los coches del
+    /// tren de la línea, en metros: el tren se detiene con sus coches centrados
+    /// en el medio del andén (ver `platform_spot`).
     fn coaches_half() -> f32 {
         let (first, last) = crate::train::coaches_span(&crate::train::line_consist()).unwrap();
         (last - first) / 2.0
@@ -641,8 +661,8 @@ mod tests {
                     t.name
                 );
                 assert_eq!(board.elevation, platform.height);
-                // At the track edge of the platform, on the near side of
-                // the rails.
+                // En el borde del andén junto a la vía, del lado cercano de los
+                // rieles.
                 assert!(board.anchor.dot(n) < railway.start.dot(n), "{}", t.name);
                 let edge = platform.footprint.center().dot(n)
                     + platform
@@ -652,13 +672,15 @@ mod tests {
                         / 2.0;
                 assert!(edge - board.anchor.dot(n) < 1.0, "{}: by the edge", t.name);
                 assert_eq!(board.footprint(), None, "raised on the platform");
-                // A period board: long, but not the whole platform.
+                // Un tablero de época: largo, pero no tanto como el andén
+                // entero.
                 assert!((4.0..=6.0).contains(&board.width), "{}", t.name);
-                // Within the platform along the track, with a margin.
+                // Dentro del andén a lo largo de la vía, con un margen.
                 let (a, half) = (board.anchor.dot(along), board.width / 2.0);
                 assert!(a - half >= plo + 1.0 && a + half <= phi - 1.0, "{}", t.name);
-                // Clear of the stretch the coaches stand along, which holds
-                // every alighting spot and every coach door.
+                // Lejos del tramo frente al que se detienen los coches, que
+                // contiene todos los lugares de descenso y todas las puertas de
+                // los coches.
                 assert!(
                     (a - middle).abs() - half >= coaches_half() + 1.0,
                     "{}",
@@ -683,7 +705,8 @@ mod tests {
             stations += 1;
             assert_eq!(boards.len(), 3, "{}", t.name);
             let platform = building(&t, BuildingKind::Platform).unwrap();
-            // The track side first, then the street front's two.
+            // Primero el del lado de la vía, después los dos del frente que da
+            // a la calle.
             let wanted = [
                 (station.front.opposite(), platform.height),
                 (station.front, 0.0),
@@ -704,7 +727,8 @@ mod tests {
                         / 2.0;
                 let gap = board.anchor.dot(n) - wall;
                 assert!((gap - 0.1).abs() < 1e-4, "{}: gap {gap}", t.name);
-                // Within the wall's length, a pier's width from its middle.
+                // Dentro del largo de la pared, a un ancho de pilar de su
+                // centro.
                 let along = Vec2::new(n.y.abs(), n.x.abs());
                 let offset = (board.anchor - station.footprint.center()).dot(along);
                 assert!(offset.abs() > 0.5, "{}: on the middle bay", t.name);
@@ -717,8 +741,8 @@ mod tests {
                     street.push(offset);
                 }
             }
-            // The street boards flank the entrance: equally far to either
-            // side of the middle.
+            // Los tableros de la calle flanquean la entrada: a la misma
+            // distancia a cada lado del centro.
             assert_eq!(street.len(), 2);
             assert!(
                 (street[0] + street[1]).abs() < 1e-4,
@@ -748,8 +772,9 @@ mod tests {
             let track = side_normal(platform.front);
             let along = Vec2::new(track.y.abs(), track.x.abs());
             let station = place(&t, PlaceKind::Station).unwrap();
-            // A passenger steps off beside any coach door, anywhere in the
-            // coaches' stretch, a step in from the track edge.
+            // Un pasajero baja al lado de cualquier puerta de coche, en
+            // cualquier punto del tramo de los coches, un paso hacia adentro
+            // desde el borde junto a la vía.
             for board in &station.signs[1..] {
                 let reach = board.width / 2.0 + crate::Rider::PERSON_RADIUS;
                 let a = board.anchor.dot(along);
@@ -782,7 +807,8 @@ mod tests {
                 for &tree in &t.trees {
                     assert!(!board.expanded(0.5).contains_point(tree), "{tree:?}");
                 }
-                // Clear of the central path so walkers and riders can enter.
+                // Lejos del sendero central para que peatones y jinetes puedan
+                // entrar.
                 assert!((sign.anchor.x - area.center().x).abs() - sign.width / 2.0 > 2.0);
             }
         }
@@ -816,7 +842,8 @@ mod tests {
         assert_eq!(facade.footprint(), None);
     }
 
-    /// Gap from `p` to the nearest of `town`'s obstacles, in meters.
+    /// Separación desde `p` hasta el obstáculo más cercano de `town`, en
+    /// metros.
     fn clearance(t: &TownLayout, p: Vec2) -> f32 {
         t.obstacles()
             .iter()
@@ -830,7 +857,7 @@ mod tests {
             let (at, heading) = t.plaza_spot();
             assert!(t.plaza.contains_point(at), "{}: {at:?}", t.name);
             let c = t.plaza.center();
-            // On one arm of the cross of paths, clear of the monument.
+            // En uno de los brazos de la cruz de senderos, lejos del monumento.
             let off = at - c;
             assert!(
                 off.x.abs() < 1.0 || off.y.abs() < 1.0,
@@ -843,10 +870,11 @@ mod tests {
                 "{}: {d} m from the monument",
                 t.name
             );
-            // Facing out along the arm, away from the monument.
+            // Mirando hacia afuera a lo largo del brazo, de espaldas al
+            // monumento.
             assert!(heading.forward().dot(off) > 0.9 * d, "{}", t.name);
             assert!(clearance(&t, at) > 1.5, "{}: {}", t.name, clearance(&t, at));
-            // Toward the station, when there is one.
+            // Hacia la estación, cuando hay una.
             if let Some(station) = building(&t, BuildingKind::Station) {
                 let to_station = station.footprint.center() - c;
                 assert!(off.dot(to_station) > 0.0, "{}", t.name);
@@ -861,15 +889,15 @@ mod tests {
             let (at, heading) = t.police_door().expect("every town has a police station");
             let normal = side_normal(police.front);
             assert_eq!(heading.forward().dot(normal).round(), 1.0, "{}", t.name);
-            // Out in front of the middle of the facade.
+            // Delante del centro de la fachada.
             let off = at - police.footprint.center();
             let along = Vec2::new(normal.y.abs(), normal.x.abs());
             assert!(off.dot(along).abs() < 1e-3, "{}", t.name);
             let gap = police.footprint.closest_point(at).distance(at);
             assert!((1.0..=3.0).contains(&gap), "{}: {gap}", t.name);
-            // Outside every obstacle, with room for a person beside it.
+            // Fuera de todo obstáculo, con lugar para una persona al lado.
             assert!(clearance(&t, at) > 1.0, "{}: {}", t.name, clearance(&t, at));
-            // A street lies just ahead.
+            // Hay una calle justo adelante.
             let ahead = (0..=6).any(|d| {
                 let p = at + normal * d as f32;
                 t.streets.iter().any(|s| s.contains_point(p))
@@ -889,8 +917,8 @@ mod tests {
             let railway = t.railway.unwrap();
             let (at, heading) = t.platform_spot().unwrap();
             let track = side_normal(platform.front);
-            // On the platform, clear of every obstacle by more than a
-            // person's radius.
+            // Sobre el andén, lejos de todo obstáculo a más que el radio de una
+            // persona.
             assert!(platform.footprint.contains_point(at), "{}", t.name);
             assert!(
                 clearance(&t, at) > crate::Rider::PERSON_RADIUS + 0.5,
@@ -898,8 +926,8 @@ mod tests {
                 t.name,
                 clearance(&t, at)
             );
-            // A step in from its track edge (1.65 m from the track), clear
-            // of a train standing on the track.
+            // Un paso hacia adentro desde el borde junto a la vía (a 1,65 m de
+            // la vía), lejos de un tren detenido en la vía.
             let off_track = (railway.start - at).dot(track).abs();
             let car_half = crate::LineTrain::WIDTH / 2.0;
             assert!((off_track - 2.65).abs() < 0.01, "{}: {off_track}", t.name);
@@ -908,11 +936,11 @@ mod tests {
                 "{}: {off_track}",
                 t.name
             );
-            // Half way along it, where the coaches stop.
+            // A mitad de su largo, donde se detienen los coches.
             let along = Vec2::new(track.y.abs(), track.x.abs());
             let middle = platform.footprint.center().dot(along);
             assert!((at.dot(along) - middle).abs() < 1e-3, "{}", t.name);
-            // Facing town: away from the track.
+            // Mirando hacia el pueblo: de espaldas a la vía.
             assert_eq!(heading.forward().dot(track).round(), -1.0, "{}", t.name);
             checked += 1;
         }
@@ -926,9 +954,10 @@ mod tests {
         let first = &towns[0];
         let fresh =
             LineTrain::new(&line, &towns, crate::Timetable::default()).expect("a line train");
-        // The game begins with the morning (up) train from Pico standing at
-        // the first town; the afternoon (down) train from Castex stops at the
-        // same spot, facing the other way after the turn at Castex.
+        // El juego empieza con el tren de la mañana (de subida) desde Pico
+        // detenido en el primer pueblo; el tren de la tarde (de bajada) desde
+        // Castex se detiene en el mismo lugar, mirando hacia el otro lado
+        // después de dar la vuelta en Castex.
         for run in [Run::Up, Run::Down] {
             let mut train = fresh.clone();
             let clock = GameClock::at(train.stop_at(0, run).unwrap());
@@ -939,8 +968,8 @@ mod tests {
         }
     }
 
-    /// The platform spot is on the platform's top, beside the middle of the
-    /// dwelling train's coaches and clear of everything.
+    /// El lugar del andén está sobre el andén, al lado del centro de los coches
+    /// del tren detenido y lejos de todo.
     fn beside_the_coaches(first: &TownLayout, towns: &[TownLayout], train: &crate::LineTrain) {
         use crate::{CarKind, Circle, LineTrain, Rider};
         let mut world = crate::World::with_towns(
@@ -954,12 +983,12 @@ mod tests {
         world.moving = train.obstacles();
         let (at, heading) = first.platform_spot().unwrap();
         let platform = building(first, BuildingKind::Platform).unwrap();
-        // Standing on the platform's top.
+        // Parado sobre el andén.
         let ground = world.terrain.height(at.x, at.y);
         assert_eq!(world.ground_height(at), ground + platform.height);
         let person = Rider::on_foot(at, heading, &world);
         assert_eq!(person.height, ground + platform.height);
-        // Beside the middle of the coaches, just across from them.
+        // Al lado del centro de los coches, justo enfrente de ellos.
         let coaches: Vec<_> = train
             .placed_cars()
             .into_iter()
@@ -971,11 +1000,11 @@ mod tests {
         let along = (at - middle).dot(d).abs();
         let across = (at - middle).dot(Vec2::new(-d.y, d.x)).abs();
         assert!(along < 1.0, "{along}");
-        // 2.65 m from the track's middle: the platform edge 1.65 m out and
-        // a step in.
+        // A 2,65 m del centro de la vía: el borde del andén a 1,65 m y un paso
+        // hacia adentro.
         assert!((across - 2.65).abs() < 0.01, "{across}");
         assert!(across > LineTrain::WIDTH / 2.0 + Rider::PERSON_RADIUS);
-        // Clear of every car and of everything built: nothing moves them.
+        // Lejos de cada vagón y de todo lo construido: nada los mueve.
         let c = Circle::new(Rider::PERSON_RADIUS);
         assert_eq!(world.resolve(c, at, |_| ()), at);
         for car in &world.moving {

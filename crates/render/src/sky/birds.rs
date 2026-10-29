@@ -1,16 +1,19 @@
-//! Birds in the sky: chimangos soaring in circles by day, flocks of palomas
-//! and teros crossing, and flocks heading to roost at dusk; none at night.
+//! Pájaros en el cielo: chimangos planeando en círculos de día, bandadas de
+//! palomas y teros que cruzan, y bandadas que van a dormir al anochecer;
+//! ninguno de noche.
 //!
-//! Every bird is one entity with one dark, unlit silhouette mesh swapped
-//! between a few wing-flap frames (7 small shared meshes, one material), so at
-//! most [`MAX_BIRDS`] draw calls and about 250 triangles. Their paths are
-//! analytic: a circle, or a straight line with a place in a V. Each is
-//! wrapped on a [`TORUS`] square round the camera, so there are always birds
-//! about without simulating any, and every one flies at least
-//! [`MIN_ABOVE_CAMERA`] meters over the camera, never near the player's face.
-//! A bird shows or hides only while it is beyond [`HIDE_RANGE`], where the
-//! dust fog has swallowed it, so none pops in view; one still in view when its
-//! gate closes is hidden after [`GATE_GRACE`] seconds, so none flies all night.
+//! Cada pájaro es una entidad con una mesh de silueta oscura y sin iluminación
+//! que alterna entre unos pocos frames de aleteo (7 meshes pequeñas
+//! compartidas, un material), así que como mucho [`MAX_BIRDS`] draw calls y
+//! unos 250 triángulos. Sus trayectorias son analíticas: un círculo, o una
+//! línea recta con un lugar en una V. Cada uno se envuelve en un cuadrado
+//! [`TORUS`] alrededor de la cámara, así que siempre hay pájaros cerca sin
+//! simular ninguno, y cada uno vuela al menos [`MIN_ABOVE_CAMERA`] metros por
+//! encima de la cámara, nunca cerca de la cara del jugador. Un pájaro aparece o
+//! se oculta solo mientras está más allá de [`HIDE_RANGE`], donde la niebla de
+//! polvo ya lo tapó, así que ninguno aparece de golpe a la vista; uno que sigue
+//! a la vista cuando se cierra su compuerta se oculta después de [`GATE_GRACE`]
+//! segundos, así que ninguno vuela toda la noche.
 
 use super::main_camera;
 use crate::atmosphere::{SUNRISE, SUNSET, WorldClock};
@@ -19,62 +22,69 @@ use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 
-/// The most birds there ever are.
+/// La mayor cantidad de pájaros que llega a haber.
 pub const MAX_BIRDS: usize = 48;
-/// Side of the square round the camera that birds are wrapped on, in meters.
+/// Lado del cuadrado alrededor de la cámara en el que se envuelven los pájaros,
+/// en metros.
 pub const TORUS: f32 = 440.0;
-/// The least height a bird flies over the camera, in meters.
+/// La altura mínima a la que vuela un pájaro por encima de la cámara, en
+/// metros.
 pub const MIN_ABOVE_CAMERA: f32 = 30.0;
-/// Beyond this many meters the fog hides a bird: the only distance at which
-/// it may appear or vanish.
+/// Más allá de esta cantidad de metros la niebla oculta a un pájaro: la única
+/// distancia a la que puede aparecer o desaparecer.
 pub const HIDE_RANGE: f32 = 200.0;
-/// How long a bird still in view may keep flying after its gate has closed,
-/// in seconds; then it is hidden even in sight.
+/// Cuánto tiempo puede seguir volando un pájaro todavía a la vista después de
+/// que se cerró su compuerta, en segundos; luego se oculta aunque esté a la
+/// vista.
 pub const GATE_GRACE: f32 = 45.0;
-/// Wing-flap frames in a cycle; the mesh after them is the glide.
+/// Frames de aleteo en un ciclo; la mesh que les sigue es el planeo.
 pub const FLAP_FRAMES: usize = 6;
-/// The way every flock bound for roost flies (toward the south-east), as
-/// `(x, z)`, unit length.
+/// El rumbo de todas las bandadas que van a dormir (hacia el sudeste), como
+/// `(x, z)`, de longitud unitaria.
 pub const ROOST_HEADING: Vec2 = Vec2::new(0.8, 0.6);
 
-/// Which kind of flight a bird has.
+/// Qué tipo de vuelo tiene un pájaro.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Group {
-    /// A chimango soaring in wide circles on the day's thermals.
+    /// Un chimango planeando en círculos amplios sobre las térmicas del día.
     Soarer,
-    /// A paloma or tero flock crossing by day.
+    /// Una bandada de palomas o teros que cruza de día.
     Crosser,
-    /// A flock flying low to roost at dusk.
+    /// Una bandada que vuela baja hacia el dormidero al anochecer.
     Roost,
 }
 
-/// Where one bird flies and how.
+/// Por dónde vuela un pájaro y cómo.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BirdSpec {
     pub group: Group,
-    /// Circle centre (soarers) or position at time zero (flocks), `(x, z)`.
+    /// Centro del círculo (los que planean) o posición en el tiempo cero (las
+    /// bandadas), `(x, z)`.
     pub anchor: Vec2,
-    /// Circle radius, in meters (soarers).
+    /// Radio del círculo, en metros (los que planean).
     pub radius: f32,
-    /// Angular speed, radians per second; negative circles the other way.
+    /// Velocidad angular, en radianes por segundo; negativa gira en el otro
+    /// sentido.
     pub rate: f32,
-    /// Unit heading of the flock (flocks).
+    /// Rumbo unitario de la bandada (bandadas).
     pub heading: Vec2,
-    /// Speed, in meters per second (flocks).
+    /// Velocidad, en metros por segundo (bandadas).
     pub speed: f32,
-    /// Height above sea level, in meters.
+    /// Altura sobre el nivel del mar, en metros.
     pub height: f32,
-    /// Place in the flock's V: along, then across, in meters (flocks).
+    /// Lugar en la V de la bandada: a lo largo y después a lo ancho, en metros
+    /// (bandadas).
     pub slot: Vec2,
-    /// Size multiplier of the unit silhouette (about 1.1 m across).
+    /// Multiplicador de tamaño de la silueta unitaria (de alrededor de 1.1 m de
+    /// envergadura).
     pub scale: f32,
-    /// Wing beats per second.
+    /// Aleteos por segundo.
     pub flap_hz: f32,
-    /// Offset into the circle or the wing cycle, in turns.
+    /// Desfase dentro del círculo o del ciclo de aleteo, en vueltas.
     pub phase: f32,
 }
 
-/// Whether birds of `group` are out at `hour`.
+/// Si los pájaros de `group` andan afuera a la hora `hour`.
 pub fn gate_open(group: Group, hour: f32) -> bool {
     let hour = hour.rem_euclid(24.0);
     let (from, to) = match group {
@@ -85,7 +95,7 @@ pub fn gate_open(group: Group, hour: f32) -> bool {
     (from..to).contains(&hour)
 }
 
-/// A repeatable number in `[0, 1)` for `seed` and `k`.
+/// Un número repetible en `[0, 1)` para `seed` y `k`.
 fn unit(seed: u32, k: u32) -> f32 {
     let mut x = seed
         .wrapping_mul(0x9E37_79B1)
@@ -127,7 +137,8 @@ fn flock(specs: &mut Vec<BirdSpec>, group: Group, seed: u32, size: usize) {
         )
     };
     for i in 0..size {
-        // A V: the leader first, then pairs falling back to either side.
+        // Una V: primero el líder, y después pares que se van quedando atrás a
+        // cada lado.
         let rank = i.div_ceil(2) as f32;
         let side = if i % 2 == 0 { 1.0 } else { -1.0 };
         let wobble = |k| between(seed, 10 + i as u32 * 4 + k, -0.6, 0.6);
@@ -147,8 +158,9 @@ fn flock(specs: &mut Vec<BirdSpec>, group: Group, seed: u32, size: usize) {
     }
 }
 
-/// Every bird there can be: six soaring chimangos, three crossing flocks of
-/// seven and three roost flocks of six. The same list every run.
+/// Todos los pájaros que puede haber: seis chimangos planeando, tres bandadas
+/// de siete que cruzan y tres bandadas de seis que van a dormir. La misma lista
+/// en cada ejecución.
 pub fn bird_specs() -> Vec<BirdSpec> {
     let mut specs = Vec::with_capacity(MAX_BIRDS);
     for i in 0..6u32 {
@@ -180,14 +192,14 @@ pub fn bird_specs() -> Vec<BirdSpec> {
     specs
 }
 
-/// Wraps `p` onto the [`TORUS`] square centred on `centre`.
+/// Envuelve `p` en el cuadrado [`TORUS`] centrado en `centre`.
 pub fn wrap_around(p: Vec2, centre: Vec2) -> Vec2 {
     centre + (p - centre + Vec2::splat(TORUS / 2.0)).rem_euclid(Vec2::splat(TORUS))
         - Vec2::splat(TORUS / 2.0)
 }
 
-/// Where a bird is at `seconds`, and the way it faces and banks, for a
-/// camera at `camera`.
+/// Dónde está un pájaro a los `seconds`, y hacia dónde mira y se inclina, para
+/// una cámara en `camera`.
 pub fn bird_pose(spec: &BirdSpec, seconds: f32, camera: Vec3) -> (Vec3, Vec3, f32) {
     let centre = Vec2::new(camera.x, camera.z);
     let (xz, heading, bank) = match spec.group {
@@ -195,12 +207,12 @@ pub fn bird_pose(spec: &BirdSpec, seconds: f32, camera: Vec3) -> (Vec3, Vec3, f3
             let turn = std::f32::consts::TAU * spec.phase + spec.rate * seconds;
             let ring = Vec2::from_angle(turn) * spec.radius;
             let tangent = ring.perp() * spec.rate.signum();
-            // Lean into the circle: the circle's centre is to the left
-            // of a counter-clockwise bird.
+            // Inclinarse hacia el círculo: el centro del círculo está a la
+            // izquierda de un pájaro que gira en sentido antihorario.
             let lean = -0.35 * spec.rate.signum();
             (
-                // Wrap the bird, not its circle: a wrapped centre would
-                // carry it across in view, closer than HIDE_RANGE.
+                // Se envuelve el pájaro, no su círculo: un centro envuelto lo
+                // llevaría a cruzar a la vista, más cerca que HIDE_RANGE.
                 wrap_around(spec.anchor + ring, centre),
                 tangent.normalize_or(Vec2::X),
                 lean,
@@ -227,8 +239,8 @@ pub fn bird_pose(spec: &BirdSpec, seconds: f32, camera: Vec3) -> (Vec3, Vec3, f3
     )
 }
 
-/// The mesh a bird shows at `seconds`: a flap frame, or the glide (the last
-/// index) for soarers.
+/// La mesh que muestra un pájaro a los `seconds`: un frame de aleteo, o el
+/// planeo (el último índice) para los que planean.
 pub fn frame_at(spec: &BirdSpec, seconds: f32) -> usize {
     if spec.group == Group::Soarer {
         return FLAP_FRAMES;
@@ -237,19 +249,20 @@ pub fn frame_at(spec: &BirdSpec, seconds: f32) -> usize {
     ((turns * FLAP_FRAMES as f32) as usize).min(FLAP_FRAMES - 1)
 }
 
-/// Whether a bird shows next: the gate decides while the fog hides it, and
-/// in view only once it has been closed for [`GATE_GRACE`] seconds.
+/// Si un pájaro se muestra a continuación: la compuerta decide mientras la
+/// niebla lo oculta, y a la vista solo una vez que estuvo cerrada durante
+/// [`GATE_GRACE`] segundos.
 pub fn next_visible(shown: bool, gate: bool, distance: f32, closed_for: f32) -> bool {
     if distance > HIDE_RANGE {
         gate
     } else {
-        // A bird circling in range would otherwise fly all night.
+        // Si no, un pájaro que circula dentro del rango volaría toda la noche.
         shown && (gate || closed_for < GATE_GRACE)
     }
 }
 
-/// A bird silhouette, 1.1 m across at rest, nose toward -Z, its wings
-/// raised `angle` radians (negative: lowered).
+/// Una silueta de pájaro, de 1.1 m de envergadura en reposo, con el pico hacia
+/// -Z y las alas levantadas `angle` radianes (negativo: bajadas).
 fn silhouette(angle: f32) -> Mesh {
     let (c, s) = (angle.cos(), angle.sin());
     let mut positions: Vec<[f32; 3]> =
@@ -280,26 +293,26 @@ fn silhouette(angle: f32) -> Mesh {
     .with_inserted_indices(Indices::U32(indices))
 }
 
-/// The shared silhouettes and material of every bird.
+/// Las siluetas y el material compartidos de todos los pájaros.
 #[derive(Resource, Debug, Clone)]
 pub struct BirdKit {
-    /// The [`FLAP_FRAMES`] flap frames, then the glide.
+    /// Los [`FLAP_FRAMES`] frames de aleteo, y después el planeo.
     pub frames: Vec<Handle<Mesh>>,
     pub material: Handle<StandardMaterial>,
 }
 
-/// One bird in the sky: an index into [`bird_specs`].
+/// Un pájaro en el cielo: un índice en [`bird_specs`].
 #[derive(Component, Debug, Clone, Copy)]
 pub struct Bird {
     pub index: usize,
-    /// Whether the gate has been applied once, so the first frame needs no
-    /// distance.
+    /// Si la compuerta ya se aplicó una vez, para que el primer frame no
+    /// necesite distancia.
     settled: bool,
-    /// Seconds the gate has been closed for, zero while it is open.
+    /// Segundos que lleva cerrada la compuerta, cero mientras está abierta.
     closed_for: f32,
 }
 
-/// Spawns the birds and flies them.
+/// Crea los pájaros y los hace volar.
 pub struct BirdsPlugin;
 
 impl Plugin for BirdsPlugin {
@@ -429,7 +442,8 @@ mod tests {
         assert!(gate_open(Group::Crosser, 10.0));
         assert!(!gate_open(Group::Roost, 13.0));
         assert!(!gate_open(Group::Roost, 15.5));
-        // Dusk: flocks head for roost while the soarers have come down.
+        // Anochecer: las bandadas van a dormir mientras los que planean ya
+        // bajaron.
         assert!(gate_open(Group::Roost, 19.0));
         assert!(!gate_open(Group::Soarer, 19.0));
         assert!(!gate_open(Group::Crosser, 19.0));
@@ -444,8 +458,8 @@ mod tests {
                     let (p, _, _) = bird_pose(spec, k as f32 * 1.7, camera);
                     let dx = (p.x - camera.x).abs();
                     let dz = (p.z - camera.z).abs();
-                    // Soarers circle a wrapped centre, so they can reach
-                    // their radius past the square.
+                    // Los que planean giran alrededor de un centro envuelto,
+                    // así que su radio puede llegar más allá del cuadrado.
                     let slack = spec.radius + 0.5;
                     assert!(dx <= 220.0 + slack && dz <= 220.0 + slack);
                     assert!(p.y >= camera.y + 30.0 - 1e-3);
@@ -469,7 +483,7 @@ mod tests {
         let camera = Vec3::ZERO;
         for k in 0..50 {
             let (p, _, _) = bird_pose(soarer, k as f32 * 3.0, camera);
-            // The bird is wrapped, so compare modulo the torus.
+            // El pájaro está envuelto, así que se compara módulo el toro.
             let d = Vec2::new(p.x, p.z) - soarer.anchor;
             let d = d - TORUS * (d / TORUS).round();
             let r = d.length();
@@ -523,7 +537,8 @@ mod tests {
         let specs = bird_specs();
         let seconds = 123.0;
         let mut worst = 0.0_f32;
-        // Walk the camera 500 m along x, then along z, in half-meter steps.
+        // Se mueve la cámara 500 m a lo largo de x, y después a lo largo de z,
+        // en pasos de medio metro.
         for axis in [Vec3::X, Vec3::Z] {
             for spec in &specs {
                 let at = |k: usize| Vec3::new(37.0, 2.0, -11.0) + axis * (k as f32 * 0.5);
@@ -558,7 +573,8 @@ mod tests {
             std::time::Duration::from_secs(10),
         ));
         let soarer = bird_specs()[0];
-        // The camera right under the soarer's circle: always within range.
+        // La cámara justo debajo del círculo del que planea: siempre dentro del
+        // rango.
         app.world_mut().spawn((
             Camera3d::default(),
             Transform::from_xyz(soarer.anchor.x, 0.0, soarer.anchor.y),

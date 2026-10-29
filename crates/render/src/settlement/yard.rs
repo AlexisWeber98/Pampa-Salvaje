@@ -1,14 +1,16 @@
-//! Yard props: the Poly Haven glTF barrels, bucket, crates, ladder and
-//! lantern (CC0, see `assets/models/props/polyhaven/CREDITS.md`) set
-//! about a settlement's barns and well.
+//! Accesorios de patio: los barriles, el balde, los cajones, la escalera y el
+//! farol en glTF de Poly Haven (CC0, ver
+//! `assets/models/props/polyhaven/CREDITS.md`) distribuidos alrededor de los
+//! galpones y el pozo de un asentamiento.
 //!
-//! Where they go is decided here, from the settlement alone, so it is the
-//! same every time: a lantern hung by each barn's big door, a stepladder
-//! by one side wall and crates at a back corner of some barns, the barrels
-//! (about 33k triangles, so one group at most) behind an estancia's first
-//! barn, and a bucket by the well or the trough. A standing prop that would
-//! land on a track, on another structure or outside the settlement is left
-//! out. They are scenery: no obstacles, drawn within the props' range.
+//! Dónde van se decide aquí, solo a partir del asentamiento, así que siempre es
+//! igual: un farol colgado junto al portón grande de cada galpón, una escalera
+//! de tijera junto a una pared lateral y cajones en una esquina trasera de
+//! algunos galpones, los barriles (unos 33k triángulos, así que como mucho un
+//! grupo) detrás del primer galpón de una estancia, y un balde junto al pozo o
+//! al bebedero. Un accesorio de pie que caería sobre una huella, sobre otra
+//! estructura o fuera del asentamiento se deja afuera. Son decorado: no son
+//! obstáculos, y se dibujan dentro del alcance de los accesorios.
 
 use std::collections::HashMap;
 
@@ -22,7 +24,7 @@ use super::yaw;
 use crate::AssetRoot;
 use crate::gltf;
 
-/// One of the Poly Haven props.
+/// Uno de los accesorios de Poly Haven.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum YardProp {
     Barrels,
@@ -41,7 +43,7 @@ impl YardProp {
         Self::Lantern,
     ];
 
-    /// Its glTF file, under the [`AssetRoot`].
+    /// Su archivo glTF, bajo el [`AssetRoot`].
     pub fn path(self) -> &'static str {
         match self {
             Self::Barrels => "models/props/polyhaven/wooden_barrels_01/wooden_barrels_01_1k.gltf",
@@ -52,8 +54,8 @@ impl YardProp {
         }
     }
 
-    /// How far it reaches from its middle on the ground, in meters: what
-    /// it keeps clear of tracks and other structures by.
+    /// Cuánto se extiende desde su centro sobre el suelo, en metros: la
+    /// distancia que mantiene libre de huellas y de otras estructuras.
     pub fn reach(self) -> f32 {
         match self {
             Self::Barrels => 2.6,
@@ -65,20 +67,21 @@ impl YardProp {
     }
 }
 
-/// Where a yard prop goes: its middle on the ground, how far above the
-/// ground it sits (stacked or hung), and its turn about the vertical.
+/// Dónde va un accesorio de patio: su centro sobre el suelo, a qué altura sobre
+/// el suelo está (apilado o colgado) y su giro alrededor de la vertical.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct YardSpot {
     pub prop: YardProp,
     pub at: GroundVec2,
     pub lift: f32,
     pub turn: Quat,
-    /// Hung on a wall, above the ground: nothing to keep clear.
+    /// Colgado en una pared, por encima del suelo: no hay nada que mantener
+    /// libre.
     pub hung: bool,
 }
 
-/// The ground point of `local` (in `structure`'s own space) and the turn
-/// of its front.
+/// El punto en el suelo de `local` (en el espacio propio de `structure`) y el
+/// giro de su frente.
 fn on(structure: &Structure, local: Vec3) -> (GroundVec2, Quat) {
     let turn = yaw(structure.front);
     let w = turn * local;
@@ -86,7 +89,7 @@ fn on(structure: &Structure, local: Vec3) -> (GroundVec2, Quat) {
     (GroundVec2::new(c.x + w.x, c.y - w.z), turn)
 }
 
-/// Every yard prop of `settlement`, in a fixed order.
+/// Todos los accesorios de patio de `settlement`, en un orden fijo.
 pub fn yard_props(settlement: &Settlement) -> Vec<YardSpot> {
     let mut spots = Vec::new();
     let mut barrels = settlement.kind == SettlementKind::Ranch;
@@ -111,7 +114,8 @@ pub fn yard_props(settlement: &Settlement) -> Vec<YardSpot> {
         let v = structure.variant;
         match structure.kind {
             StructureKind::Barn => {
-                // Hung beside the big door (as wide as the barn draws it).
+                // Colgado junto al portón grande (tan ancho como lo dibuja el
+                // galpón).
                 let door = (size.x * 0.3).clamp(4.0, 6.0) / 2.0;
                 let side = if v % 2 == 0 { 1.0 } else { -1.0 };
                 push(
@@ -168,8 +172,8 @@ pub fn yard_props(settlement: &Settlement) -> Vec<YardSpot> {
     spots
 }
 
-/// Whether a standing prop at `spot` keeps off every track and every
-/// structure but the one it stands by, and inside the settlement.
+/// Si un accesorio de pie en `spot` se mantiene lejos de toda huella y de toda
+/// estructura salvo aquella junto a la que está, y dentro del asentamiento.
 fn clear(settlement: &Settlement, spot: &YardSpot) -> bool {
     let reach = spot.prop.reach();
     let off_tracks = settlement
@@ -191,7 +195,8 @@ fn clear(settlement: &Settlement, spot: &YardSpot) -> bool {
         && settlement.bounds.contains_point(spot.at)
 }
 
-/// A yard shrub or flower bed by a house: what, where, and its turn.
+/// Un arbusto o un cantero de patio junto a una casa: qué es, dónde va y su
+/// giro.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PlantSpot {
     pub kind: PlantKind,
@@ -199,12 +204,13 @@ pub struct PlantSpot {
     pub turn: Quat,
 }
 
-/// Every yard plant of `settlement` (30% more yard vegetation, with the
-/// extra trees core plants): a shrub by a house's back and side walls and a
-/// flower bed by its side, a main house getting more than a peón's. Like the
-/// props they are decided from the settlement alone. One that would land on
-/// a track, on a structure or the patio, or outside the settlement is left
-/// out. They are scenery: no obstacles.
+/// Todas las plantas de patio de `settlement` (30% más de vegetación de patio,
+/// con los árboles extra que planta core): un arbusto junto a las paredes
+/// trasera y laterales de una casa y un cantero a su costado, y la casa
+/// principal recibe más que la de un peón. Igual que los accesorios, se deciden
+/// solo a partir del asentamiento. Una que caería sobre una huella, sobre una
+/// estructura o el patio, o fuera del asentamiento, se deja afuera. Son
+/// decorado: no son obstáculos.
 pub fn yard_plants(settlement: &Settlement) -> Vec<PlantSpot> {
     let mut spots = Vec::new();
     for structure in settlement.structures.iter().filter(|s| s.kind.is_house()) {
@@ -242,8 +248,8 @@ pub fn yard_plants(settlement: &Settlement) -> Vec<PlantSpot> {
     spots
 }
 
-/// Whether `spot` keeps off every track, structure and the patio, and
-/// stands inside the settlement.
+/// Si `spot` se mantiene lejos de toda huella, estructura y del patio, y queda
+/// dentro del asentamiento.
 fn plant_clear(settlement: &Settlement, spot: &PlantSpot) -> bool {
     let reach = spot.kind.radius();
     let off_tracks = settlement
@@ -265,12 +271,12 @@ fn plant_clear(settlement: &Settlement, spot: &PlantSpot) -> bool {
         && settlement.bounds.contains_point(spot.at)
 }
 
-/// The yard props' scenes, loading or loaded.
+/// Las escenas de los accesorios de patio, cargando o ya cargadas.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct YardModels(pub HashMap<YardProp, Handle<WorldAsset>>);
 
-/// Starts loading the yard props. Without an asset server or root, or
-/// without the files, there are simply none.
+/// Empieza a cargar los accesorios de patio. Sin un servidor de assets o una
+/// raíz, o sin los archivos, simplemente no hay ninguno.
 pub(super) fn load_yard_models(
     mut commands: Commands,
     server: Option<Res<AssetServer>>,

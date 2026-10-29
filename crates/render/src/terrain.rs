@@ -1,26 +1,28 @@
-//! Smooth-shaded ground streamed in square chunks around the rider, each with
-//! scattered props (tosca stones and small jarilla shrubs, drawn with the
-//! CC0 vegetation models when they are loaded) that give the eye something
-//! to measure speed by. The ground is painted per vertex, from grey-green to
-//! dry yellow grass, with plain earth on towns' leveled ground, and wears
-//! the CC0 ambientCG soil-and-grass detail textures of [`crate::ground`]
-//! over that paint. Under the monte patches the colour's alpha carries the
-//! leaf litter weight ([`crate::ground::litter_weight`], from the flora's
-//! `monte`), which the ground shader blends in. The native flora on it is
-//! grown by [`crate::flora`].
+//! Suelo con sombreado suave cargado por streaming en chunks cuadrados
+//! alrededor del jinete, cada uno con objetos dispersos (piedras de tosca y
+//! pequeñas matas de jarilla, dibujadas con los modelos de vegetación CC0
+//! cuando están cargados) que le dan al ojo algo con qué medir la velocidad. El
+//! suelo se pinta por vértice, de pasto verde grisáceo a pasto amarillo seco,
+//! con tierra lisa en el suelo nivelado de los pueblos, y lleva sobre esa
+//! pintura las texturas de detalle de tierra y pasto CC0 de ambientCG de
+//! [`crate::ground`]. Bajo los manchones de monte, el alfa del color lleva el
+//! peso de la hojarasca ([`crate::ground::litter_weight`], a partir del `monte`
+//! de la flora), que el shader del suelo mezcla. La flora nativa que crece
+//! sobre él la genera [`crate::flora`].
 //!
-//! Every chunk is sampled from the logic [`Terrain`], the single source of
-//! truth for height, so neighboring chunks meet without seams, in height and
-//! in shading: each corner's normal comes from the height field's slope (see
-//! [`build_chunk_mesh`]), so the ground reads as rolling land, not facets.
-//! Which chunks
-//! exist is decided by a [`StreamingSet`] around [`StreamFocus`]: chunks
-//! within the load radius are built, a bounded number per frame, and chunks
-//! past the radius plus one are despawned with their props. The chunks
-//! around the start are built at once; a chunk streamed in later spawns at
-//! once with its props, but its ground mesh, the costly part, is built on
-//! the async compute pool and lands a few frames later, out in the fog, so
-//! riding never stalls a frame on it.
+//! Cada chunk se muestrea a partir del [`Terrain`] lógico, la única fuente de
+//! verdad para la altura, así que los chunks vecinos se encuentran sin
+//! costuras, en altura y en sombreado: la normal de cada esquina sale de la
+//! pendiente del campo de alturas (ver [`build_chunk_mesh`]), así que el suelo
+//! se lee como tierra ondulada, no como facetas. Qué chunks existen lo decide
+//! un [`StreamingSet`] alrededor de [`StreamFocus`]: los chunks dentro del
+//! radio de carga se construyen, una cantidad acotada por frame, y los chunks
+//! más allá del radio más uno se eliminan junto con sus objetos. Los chunks
+//! alrededor del inicio se construyen de una vez; un chunk que llega por
+//! streaming más tarde se crea de inmediato con sus objetos, pero su malla de
+//! suelo, la parte costosa, se construye en el pool de cómputo asíncrono y
+//! aparece unos pocos frames después, allá en la niebla, así que cabalgar nunca
+//! traba un frame por eso.
 
 use std::collections::HashMap;
 
@@ -40,45 +42,49 @@ use crate::flora::{
 use crate::ground::{GroundMaterial, ground_material, ground_uv, litter_weight};
 use crate::streaming::StreamingSet;
 
-/// The logic terrain this world is drawn from. Insert before the plugin runs,
-/// or the default terrain is used.
+/// El terreno lógico a partir del cual se dibuja este mundo. Se inserta antes
+/// de que corra el plugin; si no, se usa el terreno por defecto.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct WorldTerrain(pub Terrain);
 
-/// The world's size and chunk size. Insert before the plugin runs, or the
-/// default world is used.
+/// El tamaño del mundo y el tamaño de los chunks. Se inserta antes de que corra
+/// el plugin; si no, se usa el mundo por defecto.
 #[derive(Resource, Debug, Clone, Copy, Default)]
 pub struct WorldChunks(pub WorldConfig);
 
-/// Ground point the world streams around (the rider). The game keeps it up
-/// to date; it starts at the origin.
+/// Punto del suelo alrededor del cual se carga el mundo por streaming (el
+/// jinete). El juego lo mantiene actualizado; empieza en el origen.
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
 pub struct StreamFocus(pub GroundVec2);
 
-/// One streamed chunk of ground; its props are its children.
+/// Un chunk de suelo cargado por streaming; sus objetos son sus hijos.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TerrainChunk(pub ChunkCoord);
 
-/// Chunk streaming, in `PostUpdate`: builds the chunks near the
-/// [`StreamFocus`] and despawns the far ones. Systems that decorate new
-/// chunks (see `crate::rail`) run after it, when its commands are applied.
+/// Streaming de chunks, en `PostUpdate`: construye los chunks cercanos al
+/// [`StreamFocus`] y elimina los lejanos. Los sistemas que decoran chunks
+/// nuevos (ver `crate::rail`) corren después de él, cuando se aplican sus
+/// comandos.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ChunkStreaming;
 
-/// The loaded chunks and their entities.
+/// Los chunks cargados y sus entidades.
 #[derive(Resource, Debug)]
 pub struct ChunkStreamer {
     pub set: StreamingSet,
     entities: HashMap<ChunkCoord, Entity>,
 }
 
-/// Streams terrain chunks and their props around [`StreamFocus`].
+/// Carga por streaming los chunks de terreno y sus objetos alrededor de
+/// [`StreamFocus`].
 pub struct TerrainPlugin {
-    /// Load radius, in chunks. Chunks past `radius + 1` are dropped.
+    /// Radio de carga, en chunks. Los chunks más allá de `radius + 1` se
+    /// descartan.
     pub radius: i32,
-    /// Most chunks built per frame (the first frame builds them all).
+    /// Cantidad máxima de chunks construidos por frame (el primer frame los
+    /// construye todos).
     pub budget: usize,
-    /// Quads along each side of a chunk.
+    /// Quads a lo largo de cada lado de un chunk.
     pub resolution: u32,
 }
 
@@ -93,22 +99,23 @@ impl Default for TerrainPlugin {
 }
 
 impl TerrainPlugin {
-    /// Distance from the focus within which the ground is always loaded,
-    /// wherever the focus stands in its chunk: `(radius - 1)` chunks. The
-    /// dust fog must swallow everything before this distance (see
+    /// Distancia desde el foco dentro de la cual el suelo siempre está cargado,
+    /// esté donde esté el foco dentro de su chunk: `(radius - 1)` chunks. La
+    /// niebla de polvo debe tragarse todo antes de esta distancia (ver
     /// [`crate::atmosphere::FOG_VISIBILITY`]).
     pub fn guaranteed_reach(&self, chunk_size: f32) -> f32 {
         (self.radius - 1).max(0) as f32 * chunk_size
     }
 }
 
-/// Quads along each side of a chunk, as the [`TerrainPlugin`] builds them.
+/// Quads a lo largo de cada lado de un chunk, tal como los construye el
+/// [`TerrainPlugin`].
 #[derive(Resource, Clone, Copy)]
 pub(crate) struct ChunkDetail {
     pub(crate) resolution: u32,
 }
 
-/// Meshes and materials shared by every chunk.
+/// Mallas y materiales compartidos por todos los chunks.
 #[derive(Resource)]
 struct TerrainKit {
     ground: Handle<GroundMaterial>,
@@ -151,8 +158,8 @@ fn setup_kit(
     mut images: Option<ResMut<Assets<Image>>>,
 ) {
     commands.insert_resource(TerrainKit {
-        // Vertex colors carry the palette; the material stays white and
-        // matte, with the tiled ground detail on top when it is found.
+        // Los colores de vértice llevan la paleta; el material queda blanco y
+        // mate, con el detalle de suelo en baldosas encima cuando se encuentra.
         ground: grounds.add(ground_material(
             root.as_deref().map(|r| r.0.as_path()),
             images.as_deref_mut(),
@@ -177,7 +184,8 @@ fn setup_kit(
     });
 }
 
-/// Everything a chunk spawn needs, bundled for the systems below.
+/// Todo lo que necesita la creación de un chunk, agrupado para los sistemas de
+/// abajo.
 type ChunkInputs<'a> = (
     Res<'a, WorldTerrain>,
     Res<'a, WorldChunks>,
@@ -185,8 +193,8 @@ type ChunkInputs<'a> = (
     Res<'a, StreamFocus>,
 );
 
-/// Builds every chunk around the start at once, so the first frame shows
-/// the whole view.
+/// Construye de una vez todos los chunks alrededor del inicio, para que el
+/// primer frame muestre toda la vista.
 fn fill_chunks(
     mut commands: Commands,
     (terrain, world, detail, focus): ChunkInputs,
@@ -211,7 +219,7 @@ fn fill_chunks(
     }
 }
 
-/// Gives every chunk whose ground finished building its mesh.
+/// Le da su malla a cada chunk cuyo suelo terminó de construirse.
 fn land_ground(
     mut commands: Commands,
     mut pending: Query<(Entity, &mut PendingGround)>,
@@ -227,7 +235,7 @@ fn land_ground(
     }
 }
 
-/// Builds the next few chunks near the focus and drops the far ones.
+/// Construye los siguientes chunks cercanos al foco y descarta los lejanos.
 fn stream_chunks(
     mut commands: Commands,
     (terrain, world, detail, focus): ChunkInputs,
@@ -242,7 +250,7 @@ fn stream_chunks(
     let plan = streamer.set.update(&world.0, focus.0);
     for coord in plan.despawn {
         if let Some(entity) = streamer.entities.remove(&coord) {
-            // Props are children: they go with the chunk.
+            // Los objetos son hijos: se van con el chunk.
             commands.entity(entity).despawn();
         }
     }
@@ -262,23 +270,25 @@ fn stream_chunks(
     }
 }
 
-/// A streamed chunk's ground mesh, being built on the async compute pool.
-/// [`land_ground`] swaps it for the chunk's `Mesh3d` when it is ready; a
-/// chunk despawned first drops it, which cancels the build.
+/// La malla de suelo de un chunk cargado por streaming, mientras se construye
+/// en el pool de cómputo asíncrono. [`land_ground`] la cambia por el `Mesh3d`
+/// del chunk cuando está lista; un chunk eliminado antes la descarta, lo que
+/// cancela la construcción.
 #[derive(Component)]
 pub(crate) struct PendingGround(Task<Mesh>);
 
 #[cfg(test)]
 impl PendingGround {
-    /// Whether the build is done (it lands on the next update).
+    /// Si la construcción terminó (aparece en la siguiente actualización).
     pub(crate) fn is_finished(&self) -> bool {
         self.0.is_finished()
     }
 }
 
-/// Blocks until every background build `done` reports on has finished, so
-/// the next update lands them all: tests step the async pool without
-/// depending on how many frames it takes. Fails after 30 s.
+/// Bloquea hasta que termina cada construcción en segundo plano que informa
+/// `done`, para que la siguiente actualización las haga aparecer todas: los
+/// tests hacen avanzar el pool asíncrono sin depender de cuántos frames tarde.
+/// Falla a los 30 s.
 #[cfg(test)]
 pub(crate) fn finish_builds<T: Component>(app: &mut App, done: fn(&T) -> bool) {
     let start = std::time::Instant::now();
@@ -295,20 +305,21 @@ pub(crate) fn finish_builds<T: Component>(app: &mut App, done: fn(&T) -> bool) {
     }
 }
 
-/// How a chunk gets its ground mesh.
+/// Cómo recibe un chunk su malla de suelo.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum GroundBuild {
-    /// Built now, on the main thread: the first frame shows the whole view.
+    /// Construida ahora, en el hilo principal: el primer frame muestra toda la
+    /// vista.
     Inline,
-    /// Built on the async compute pool, so a chunk streamed in while riding
-    /// never stalls a frame. The chunk is at the edge of the load radius,
-    /// inside the dust fog, so its ground landing a few frames later is
-    /// never seen.
+    /// Construida en el pool de cómputo asíncrono, para que un chunk que llega
+    /// por streaming mientras se cabalga nunca trabe un frame. El chunk está en
+    /// el borde del radio de carga, dentro de la niebla de polvo, así que nunca
+    /// se ve que su suelo aparezca unos pocos frames después.
     Background,
 }
 
-/// Spawns chunk `coord`: its ground mesh (or the task building it), and its
-/// props as children.
+/// Crea el chunk `coord`: su malla de suelo (o la tarea que la construye), y
+/// sus objetos como hijos.
 fn spawn_chunk(
     commands: &mut Commands,
     (kit, models): (&TerrainKit, Option<&VegetationModels>),
@@ -330,7 +341,7 @@ fn spawn_chunk(
             chunk.insert(Mesh3d(meshes.add(mesh)));
         }
         GroundBuild::Background => {
-            // Cheap: the terrain shares its roads.
+            // Barato: el terreno comparte sus caminos.
             let (terrain, flora) = (terrain.clone(), track.cloned());
             let task = AsyncComputeTaskPool::get().spawn(async move {
                 build_chunk_mesh(&terrain, coord, size, resolution, flora.as_ref())
@@ -371,9 +382,9 @@ fn spawn_chunk(
     chunk
 }
 
-/// Draws `prop` with a vegetation model: a tosca stone or a small jarilla
-/// shrub. Returns `false` when the model was not loaded, so the stand-in is
-/// drawn instead.
+/// Dibuja `prop` con un modelo de vegetación: una piedra de tosca o una pequeña
+/// mata de jarilla. Devuelve `false` cuando el modelo no se cargó, para que en
+/// su lugar se dibuje el sustituto.
 fn spawn_model_prop(
     commands: &mut Commands,
     models: &VegetationModels,
@@ -409,14 +420,15 @@ fn spawn_model_prop(
     true
 }
 
-/// Where model stones and shrubs stop being drawn, in meters, and the
-/// width of their dithered fade-out.
+/// Dónde dejan de dibujarse las piedras y matas con modelo, en metros, y el
+/// ancho de su desvanecimiento con dithering.
 const PROP_FAR: f32 = 160.0;
 const PROP_FADE: f32 = 15.0;
 
-/// Ground corner `(i, j)` of a chunk split into `resolution` quads per side.
-/// The last corner is the next chunk's first, computed the same way, so
-/// neighbors share their border vertices exactly.
+/// La esquina de suelo `(i, j)` de un chunk dividido en `resolution` quads por
+/// lado. La última esquina es la primera del chunk siguiente, calculada de la
+/// misma forma, así que los vecinos comparten exactamente sus vértices de
+/// borde.
 fn chunk_corner(coord: ChunkCoord, size: f32, resolution: u32, i: u32, j: u32) -> GroundVec2 {
     let axis = |c: i32, k: u32| {
         let (lo, hi) = (c as f32 * size, (c + 1) as f32 * size);
@@ -431,11 +443,11 @@ fn chunk_corner(coord: ChunkCoord, size: f32, resolution: u32, i: u32, j: u32) -
     GroundVec2::new(axis(coord.x, i), axis(coord.y, j))
 }
 
-/// Height of the drawn ground at ground point `p`: the terrain sampled at
-/// the chunk grid's corners, split into the same two triangles per quad as
-/// [`build_chunk_mesh`]. Things laid flat on the ground (the road surface)
-/// follow this, not the finer logic terrain, so the mesh never pokes
-/// through them.
+/// Altura del suelo dibujado en el punto del suelo `p`: el terreno muestreado
+/// en las esquinas de la grilla del chunk, dividido en los mismos dos
+/// triángulos por quad que [`build_chunk_mesh`]. Lo que se apoya plano sobre el
+/// suelo (la superficie del camino) sigue esto, no el terreno lógico más fino,
+/// para que la malla nunca lo atraviese.
 pub(crate) fn mesh_height(terrain: &Terrain, p: GroundVec2, size: f32, resolution: u32) -> f32 {
     let coord = ChunkCoord::containing(p, size);
     let min = coord.min(size);
@@ -452,7 +464,8 @@ pub(crate) fn mesh_height(terrain: &Terrain, p: GroundVec2, size: f32, resolutio
         terrain.height(c.x, c.y)
     };
     let (a, c) = (h(i, j), h(i + 1, j + 1));
-    // Triangles (a, b, c) below the diagonal a–c and (a, c, d) above it.
+    // Triángulos (a, b, c) por debajo de la diagonal a–c y (a, c, d) por encima
+    // de ella.
     if u >= v {
         a + (h(i + 1, j) - a) * (u - v) + (c - a) * v
     } else {
@@ -460,13 +473,14 @@ pub(crate) fn mesh_height(terrain: &Terrain, p: GroundVec2, size: f32, resolutio
     }
 }
 
-/// The smooth normal and the normal-map tangent (bitangent sign in `w`) of
-/// the ground where it rises `dx` meters per meter east and `dy` per meter
-/// north. The tangent follows the world-space U of [`ground_uv`], as
-/// [`crate::ground::face_tangent`] does for a flat face on the same slope.
+/// La normal suave y la tangente del normal map (con el signo de la bitangente
+/// en `w`) del suelo donde sube `dx` metros por metro hacia el este y `dy` por
+/// metro hacia el norte. La tangente sigue la U en espacio del mundo de
+/// [`ground_uv`], como hace [`crate::ground::face_tangent`] para una cara plana
+/// sobre la misma pendiente.
 pub(crate) fn slope_frame(dx: f32, dy: f32) -> ([f32; 3], [f32; 4]) {
-    // World X is east and world Z is south: along them the ground rises by
-    // `dx` and by `-dy`.
+    // La X del mundo es el este y la Z del mundo es el sur: a lo largo de ellas
+    // el suelo sube `dx` y `-dy`.
     let (along_u, along_v) = (Vec3::new(1.0, dx, 0.0), Vec3::new(0.0, -dy, 1.0));
     let normal = along_v.cross(along_u).normalize_or(Vec3::Y);
     let tangent = along_u.normalize();
@@ -478,17 +492,17 @@ pub(crate) fn slope_frame(dx: f32, dy: f32) -> ([f32; 3], [f32; 4]) {
     (normal.to_array(), [tangent.x, tangent.y, tangent.z, w])
 }
 
-/// An indexed grid of `(resolution + 1)²` corners, two triangles per quad
-/// (the split [`mesh_height`] follows). Vertices are in world space; the
-/// chunk entity stays at the origin. UVs are world space too
-/// ([`ground_uv`]), and the paint is sampled per corner.
+/// Una grilla indexada de `(resolution + 1)²` esquinas, dos triángulos por quad
+/// (la división que sigue [`mesh_height`]). Los vértices están en espacio del
+/// mundo; la entidad del chunk queda en el origen. Las UV también están en
+/// espacio del mundo ([`ground_uv`]), y la pintura se muestrea por esquina.
 ///
-/// Normals are smooth: each corner's comes from the height field's slope
-/// over one quad either way (central differences of [`Terrain::height`]),
-/// with the matching tangent for the ground's normal map. The slope is
-/// sampled on a lattice numbered across the whole world, not per chunk, so
-/// the corners two chunks share get exactly the same normal and the ground
-/// shades without seams.
+/// Las normales son suaves: la de cada esquina sale de la pendiente del campo
+/// de alturas a un quad hacia cada lado (diferencias centrales de
+/// [`Terrain::height`]), con la tangente correspondiente para el normal map del
+/// suelo. La pendiente se muestrea sobre una retícula numerada a lo largo de
+/// todo el mundo, no por chunk, así que las esquinas que comparten dos chunks
+/// reciben exactamente la misma normal y el suelo se sombrea sin costuras.
 fn build_chunk_mesh(
     terrain: &Terrain,
     coord: ChunkCoord,
@@ -498,8 +512,9 @@ fn build_chunk_mesh(
 ) -> Mesh {
     let side = resolution + 1;
     let quad = size / resolution as f32;
-    // Heights on the world lattice from one quad before this chunk to one
-    // past it: lattice point `n` along an axis is at `n * quad` meters.
+    // Alturas sobre la retícula del mundo desde un quad antes de este chunk
+    // hasta uno después: el punto `n` de la retícula a lo largo de un eje está
+    // a `n * quad` metros.
     let (lattice, origin) = (side + 2, |c: i32| c * resolution as i32 - 1);
     let (ox, oy) = (origin(coord.x), origin(coord.y));
     let heights: Vec<f32> = (0..lattice)
@@ -509,7 +524,7 @@ fn build_chunk_mesh(
             terrain.height(at(ox, i), at(oy, j))
         })
         .collect();
-    // Corner `(i, j)` is lattice point `(i + 1, j + 1)`.
+    // La esquina `(i, j)` es el punto `(i + 1, j + 1)` de la retícula.
     let lat = |i: u32, j: u32| heights[(j * lattice + i) as usize];
 
     let corners = (side * side) as usize;
@@ -538,7 +553,8 @@ fn build_chunk_mesh(
         for i in 0..resolution {
             let (a, b) = (at(i, j), at(i + 1, j));
             let (c, d) = (at(i + 1, j + 1), at(i, j + 1));
-            // World Z is -north, so (a, b, c) is counter-clockwise seen from above.
+            // La Z del mundo es -norte, así que (a, b, c) va en sentido
+            // antihorario visto desde arriba.
             indices.extend([a, b, c, a, c, d]);
         }
     }
@@ -555,24 +571,25 @@ fn build_chunk_mesh(
     .with_inserted_indices(Indices::U32(indices))
 }
 
-/// Grey-green grass where the pampa is greener (sRGB).
+/// Pasto verde grisáceo donde la pampa es más verde (sRGB).
 const GREEN_GRASS: Vec3 = Vec3::new(0.49, 0.54, 0.38);
-/// Dry yellow grass (sRGB).
+/// Pasto amarillo seco (sRGB).
 const DRY_GRASS: Vec3 = Vec3::new(0.71, 0.63, 0.40);
-/// Trodden earth of a town's leveled ground (sRGB): plain, so streets and
-/// buildings read on it.
+/// Tierra pisoteada del suelo nivelado de un pueblo (sRGB): lisa, para que las
+/// calles y los edificios se lean sobre ella.
 const TOWN_GROUND: Vec3 = Vec3::new(0.60, 0.53, 0.40);
-/// Worn earth beside a road (sRGB), and how far past the road's edge the
-/// wear reaches, in meters.
+/// Tierra gastada junto a un camino (sRGB), y hasta dónde llega el desgaste más
+/// allá del borde del camino, en metros.
 const ROAD_EARTH: Vec3 = Vec3::new(0.60, 0.52, 0.39);
 const ROAD_VERGE: f32 = 4.0;
-/// Wet earth of a lagoon's bottom and shore (sRGB): it reaches only
-/// [`pampa_core::Lagoon::MUD_BAND`] up the bank, then the grass resumes.
+/// Tierra húmeda del fondo y la orilla de una laguna (sRGB): llega solo
+/// [`pampa_core::Lagoon::MUD_BAND`] barranca arriba, y luego vuelve el pasto.
 const LAGOON_MUD: Vec3 = Vec3::new(0.36, 0.33, 0.25);
-/// Darkest shade slopes and dips may give the ground.
+/// El sombreado más oscuro que pueden darle al suelo las pendientes y las
+/// hondonadas.
 const SHADE_MIN: f32 = 0.82;
 
-/// The darkest and brightest linear colour the ground may take.
+/// El color lineal más oscuro y el más claro que puede tomar el suelo.
 #[cfg(test)]
 fn palette_range() -> ([f32; 3], [f32; 3]) {
     let colors = [GREEN_GRASS, DRY_GRASS, TOWN_GROUND, ROAD_EARTH, LAGOON_MUD];
@@ -585,10 +602,11 @@ fn palette_range() -> ([f32; 3], [f32; 3]) {
     (linear(lo), linear(hi))
 }
 
-/// Ground colour at ground point `g`: grey-green to dry yellow by
-/// low-frequency noise ([`grass_dryness`]), plain earth on town ground,
-/// darker on slopes and in dips. A function of the position alone, so
-/// neighbouring chunks agree on their shared vertices.
+/// Color del suelo en el punto del suelo `g`: de verde grisáceo a amarillo seco
+/// según un ruido de baja frecuencia ([`grass_dryness`]), tierra lisa en el
+/// suelo de los pueblos, más oscuro en pendientes y hondonadas. Función solo de
+/// la posición, así que los chunks vecinos coinciden en sus vértices
+/// compartidos.
 fn ground_color(terrain: &Terrain, flora: Option<&FloraSite>, g: GroundVec2) -> [f32; 4] {
     let grass = GREEN_GRASS.lerp(DRY_GRASS, grass_dryness(terrain, g));
     let town = terrain
@@ -597,7 +615,7 @@ fn ground_color(terrain: &Terrain, flora: Option<&FloraSite>, g: GroundVec2) -> 
         .map(|a| a.weight(g))
         .fold(0.0, f32::max);
     let rgb = grass.lerp(TOWN_GROUND, town);
-    // Worn earth along the roads, under their feathered edges.
+    // Tierra gastada a lo largo de los caminos, bajo sus bordes difuminados.
     let worn = terrain.roads.as_ref().map_or(0.0, |r| {
         let reach = RoadNetwork::HALF_WIDTH + ROAD_VERGE;
         r.near(g, reach)
@@ -606,8 +624,9 @@ fn ground_color(terrain: &Terrain, flora: Option<&FloraSite>, g: GroundVec2) -> 
     let rgb = rgb.lerp(ROAD_EARTH, 0.6 * worn);
     let wet = lagoon_wetness(terrain, g);
     let rgb = rgb.lerp(LAGOON_MUD, wet);
-    // Leaf litter under the monte (the alpha): none without the flora,
-    // and none on cleared ground, the road's worn verge or a lagoon's mud.
+    // Hojarasca bajo el monte (el alfa): nada sin la flora, y nada en suelo
+    // despejado, en la banquina gastada del camino ni en el barro de una
+    // laguna.
     let litter = flora.map_or(0.0, |f| litter_weight(f.monte(g), town.max(worn).max(wet)));
     let e = 0.75;
     let dx = terrain.height(g.x + e, g.y) - terrain.height(g.x - e, g.y);
@@ -621,8 +640,9 @@ fn ground_color(terrain: &Terrain, flora: Option<&FloraSite>, g: GroundVec2) -> 
     color
 }
 
-/// How wet the ground at `g` is, from 0 (dry grass) to 1 (mud): wet under
-/// a lagoon's water, drying over its narrow mud band up the bank.
+/// Qué tan húmedo está el suelo en `g`, de 0 (pasto seco) a 1 (barro): húmedo
+/// bajo el agua de una laguna, secándose a lo largo de su angosta franja de
+/// barro barranca arriba.
 pub(crate) fn lagoon_wetness(terrain: &Terrain, g: GroundVec2) -> f32 {
     terrain
         .lagoons
@@ -637,18 +657,19 @@ fn smoothstep(lo: f32, hi: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// Cheap deterministic hash of a 2D point into `[0, 1)`.
+/// Hash determinista y barato de un punto 2D en `[0, 1)`.
 pub(crate) fn hash2(x: f32, y: f32) -> f32 {
     let v = (x * 12.9898 + y * 78.233).sin() * 43_758.547;
     v - v.floor()
 }
 
-/// Ground area per prop, in square meters (about 44 props per 200 m chunk).
+/// Área de suelo por objeto, en metros cuadrados (unos 44 objetos por chunk de
+/// 200 m).
 const AREA_PER_PROP: f32 = 900.0;
-/// Mixed into every chunk's prop seed.
+/// Se mezcla en la semilla de objetos de cada chunk.
 const PROP_SEED: u32 = 0x5eed_0f1a;
 
-/// One rock or shrub on the ground plane.
+/// Una roca o mata sobre el plano del suelo.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Prop {
     at: GroundVec2,
@@ -657,21 +678,22 @@ struct Prop {
     yaw: f32,
 }
 
-/// Least distance from a stone or shrub to the track's centerline, in
-/// meters: off the ballast, like a grass tuft.
+/// Distancia mínima de una piedra o mata al eje de la vía, en metros: fuera del
+/// balasto, como una mata de pasto.
 const PROP_RAIL_MARGIN: f32 = FloraSite::TUFT_RAIL_MARGIN;
 
-/// Least distance from a stone or shrub to a road's edge, in meters.
+/// Distancia mínima de una piedra o mata al borde de un camino, en metros.
 const PROP_ROAD_MARGIN: f32 = 2.0;
 
-/// Least distance from a stone or shrub to a settlement's footprints,
-/// patios and tracks, in meters.
+/// Distancia mínima de una piedra o mata a las huellas, patios y senderos de un
+/// asentamiento, en metros.
 const PROP_SETTLEMENT_MARGIN: f32 = 2.0;
 
-/// The props of chunk `coord`, seeded by its coordinate, skipping leveled
-/// ground (towns are cleared land), the lagoons and their wet mud, the roads and, given the flora's
-/// keep-out (`track`), the whole train path with [`PROP_RAIL_MARGIN`] and
-/// the rural settlements with [`PROP_SETTLEMENT_MARGIN`].
+/// Los objetos del chunk `coord`, con semilla según su coordenada, que evitan
+/// el suelo nivelado (los pueblos son terreno despejado), las lagunas y su
+/// barro húmedo, los caminos y, dada la zona de exclusión de la flora
+/// (`track`), todo el recorrido del tren con [`PROP_RAIL_MARGIN`] y los
+/// asentamientos rurales con [`PROP_SETTLEMENT_MARGIN`].
 fn chunk_props(
     terrain: &Terrain,
     coord: ChunkCoord,
@@ -760,7 +782,8 @@ mod tests {
         app.world_mut().resource_mut::<StreamFocus>().0 = GroundVec2::new(2000.0, 0.0);
         app.update();
         let after_one = chunks(&mut app);
-        // Far chunks went at once; only `budget` new ones were built.
+        // Los chunks lejanos se fueron de una vez; solo se construyeron
+        // `budget` nuevos.
         assert_eq!(after_one.len(), 3, "{after_one:?}");
         for _ in 0..20 {
             app.update();
@@ -768,7 +791,8 @@ mod tests {
         let mut expected = WorldConfig::default().chunks_near(GroundVec2::new(2000.0, 0.0), 2);
         expected.sort();
         assert_eq!(chunks(&mut app), expected);
-        // Memory stays bounded: the old chunks' props went with them.
+        // La memoria se mantiene acotada: los objetos de los chunks viejos se
+        // fueron con ellos.
         assert!(props(&mut app) <= props_at_start * 3 / 2);
     }
 
@@ -784,19 +808,20 @@ mod tests {
                 .map(|(c, m)| (c.0, m.map(|m| m.id())))
                 .collect::<Vec<_>>()
         };
-        // The first frame shows the whole view: every ground is built.
+        // El primer frame muestra toda la vista: todo el suelo está construido.
         assert!(ground(&mut app).iter().all(|(_, m)| m.is_some()));
         app.world_mut().resource_mut::<StreamFocus>().0 = GroundVec2::new(2000.0, 0.0);
         app.update();
-        // The chunks streamed in exist at once (their props and decorations
-        // land the same frame), but the update that spawned them did not
-        // build their ground: it is built on the async compute pool.
+        // Los chunks que llegan por streaming existen de inmediato (sus objetos
+        // y decoraciones aparecen en el mismo frame), pero la actualización que
+        // los creó no construyó su suelo: se construye en el pool de cómputo
+        // asíncrono.
         let streamed = ground(&mut app);
         assert_eq!(streamed.len(), 3);
         assert!(streamed.iter().all(|(_, m)| m.is_none()), "{streamed:?}");
-        // It lands once built, the same mesh the main thread would have
-        // built. (Each update may stream in more chunks: step until all
-        // have landed.)
+        // Aparece una vez construida, la misma malla que habría construido el
+        // hilo principal. (Cada actualización puede traer más chunks por
+        // streaming: se avanza hasta que todos hayan aparecido.)
         for _ in 0..50 {
             if ground(&mut app).iter().all(|(_, m)| m.is_some()) {
                 break;
@@ -827,8 +852,8 @@ mod tests {
             .query_filtered::<Entity, With<PendingGround>>();
         let streamed: Vec<Entity> = q.iter(app.world()).collect();
         assert_eq!(streamed.len(), 3);
-        // Back before any of it lands: the chunks go, and their builds
-        // with them.
+        // Se vuelve atrás antes de que aparezca nada: los chunks se van, y sus
+        // construcciones con ellos.
         app.world_mut().resource_mut::<StreamFocus>().0 = GroundVec2::ZERO;
         for _ in 0..10 {
             app.update();
@@ -836,9 +861,10 @@ mod tests {
         for chunk in streamed {
             assert!(app.world().get_entity(chunk).is_err(), "{chunk} stayed");
         }
-        // The chunks back near the focus build on the pool too: wait for
-        // those builds instead of counting frames, so a slow pool cannot
-        // leave one pending. Nothing else may be.
+        // Los chunks que vuelven a estar cerca del foco también se construyen
+        // en el pool: se esperan esas construcciones en lugar de contar frames,
+        // para que un pool lento no pueda dejar una pendiente. No puede quedar
+        // ninguna otra.
         finish_builds(&mut app, PendingGround::is_finished);
         app.update();
         let mut q = app.world_mut().query::<&PendingGround>();
@@ -978,8 +1004,8 @@ mod tests {
         let reach = TerrainPlugin::default().guaranteed_reach(WorldConfig::DEFAULT_CHUNK_SIZE);
         assert_eq!(reach, 400.0);
         assert!(crate::atmosphere::FOG_VISIBILITY <= reach);
-        // Wherever the focus stands in its chunk, every point within the
-        // reach lies in a loaded chunk.
+        // Esté donde esté el foco dentro de su chunk, cada punto dentro del
+        // alcance cae en un chunk cargado.
         let world = WorldConfig::default();
         let plugin = TerrainPlugin::default();
         for focus in [
@@ -1026,13 +1052,14 @@ mod tests {
         assert!(textured.metallic_roughness_texture.is_some());
         assert_eq!(textured.metallic, 0.0);
         assert!(mips.iter().all(|&m| m == 10), "512 px down to 1: {mips:?}");
-        // Missing files: plain vertex-painted ground, no panic.
+        // Archivos faltantes: suelo liso pintado por vértice, sin pánico.
         let (plain, none) = material(root.join("nowhere"));
         assert!(none.is_empty(), "no textures, no litter: {none:?}");
         assert!(plain.base_color_texture.is_none() && plain.normal_map_texture.is_none());
     }
 
-    /// A point deep in a monte patch of the default world's flora.
+    /// Un punto en lo profundo de un manchón de monte de la flora del mundo por
+    /// defecto.
     fn monte_heart(flora: &FloraSite) -> GroundVec2 {
         (-60..60)
             .flat_map(|i| (-60..60).map(move |j| GroundVec2::new(i as f32 * 50.0, j as f32 * 50.0)))
@@ -1054,16 +1081,17 @@ mod tests {
         let heart = monte_heart(&flora);
         let alpha = |f: Option<&FloraSite>, p| ground_color(&terrain, f, p)[3];
         assert_eq!(alpha(Some(&flora), heart), 1.0);
-        // Open field: the first point of a scan with no monte at all.
+        // Campo abierto: el primer punto de un barrido sin nada de monte.
         let open = (0..400)
             .map(|i| GroundVec2::new(i as f32 * 37.0, 11.0 * i as f32))
             .find(|&p| flora.monte(p) == 0.0)
             .expect("open pampa");
         assert_eq!(alpha(Some(&flora), open), 0.0);
-        // Flora not there yet: no litter, whatever the monte would say.
+        // La flora todavía no está: no hay hojarasca, diga lo que diga el
+        // monte.
         assert_eq!(alpha(None, heart), 0.0);
-        // Walking out of the patch's heart a meter at a time, the weight
-        // falls to nothing through a feather, never in a jump.
+        // Al alejarse del corazón del manchón de a un metro por vez, el peso
+        // cae a cero a través de un difuminado, nunca de un salto.
         let walk: Vec<f32> = (0..600)
             .map(|m| alpha(Some(&flora), heart + GroundVec2::new(m as f32, 0.0)))
             .collect();
@@ -1088,7 +1116,7 @@ mod tests {
         let alpha = |t: &Terrain, p| ground_color(t, Some(&flora), p)[3];
         assert_eq!(alpha(&plain, heart), 1.0);
         assert_eq!(alpha(&town, heart), 0.0);
-        // The falloff band feathers it back in.
+        // La franja de caída la vuelve a difuminar.
         let rim = heart + GroundVec2::new(70.0, 0.0);
         assert!((0.0..1.0).contains(&alpha(&town, rim)) && alpha(&town, rim) > 0.0);
     }
@@ -1119,7 +1147,7 @@ mod tests {
         ] {
             let (a, b) = (attrs(a), attrs(b));
             for (p, uv) in &a {
-                // One tile every `TILE` meters of world X and Z.
+                // Una baldosa cada `TILE` metros de X y Z del mundo.
                 assert!((uv[0] * crate::ground::TILE - p[0]).abs() < 1e-3);
                 assert!((uv[1] * crate::ground::TILE - p[2]).abs() < 1e-3);
                 for (q, w) in &b {
@@ -1130,12 +1158,12 @@ mod tests {
                 }
             }
         }
-        // An 8-quad border shares its 9 corners, once each now the grid is
-        // indexed.
+        // Un borde de 8 quads comparte sus 9 esquinas, una sola vez cada una
+        // ahora que la grilla está indexada.
         assert_eq!(shared, 2 * 9);
     }
 
-    /// A mesh's positions, normals and tangents.
+    /// Las posiciones, normales y tangentes de una malla.
     type Vectors = (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 4]>);
 
     fn vectors(mesh: &Mesh) -> Vectors {
@@ -1161,8 +1189,8 @@ mod tests {
             (ChunkCoord::new(3, -2), ChunkCoord::new(3, -1)),
             (ChunkCoord::new(-4, 7), ChunkCoord::new(-3, 8)),
         ] {
-            // Every vertex at one position carries one normal and tangent,
-            // within a chunk and across the border.
+            // Cada vértice en una misma posición lleva una sola normal y
+            // tangente, dentro de un chunk y a través del borde.
             let mut at: HashMap<[u32; 3], ([f32; 3], [f32; 4])> = HashMap::new();
             for coord in [a, b] {
                 let (p, n, t) = vectors(&build_chunk_mesh(&terrain, coord, 200.0, 8, None));
@@ -1179,13 +1207,14 @@ mod tests {
                 }
             }
         }
-        // Two 8-quad borders and one diagonal corner.
+        // Dos bordes de 8 quads y una esquina diagonal.
         assert_eq!(shared, 9 + 9 + 1);
     }
 
     #[test]
     fn ground_normals_follow_the_slope_of_the_height_field() {
-        // A plane rising half a meter east and a quarter north per meter.
+        // Un plano que sube medio metro hacia el este y un cuarto hacia el
+        // norte por metro.
         let (n, t) = slope_frame(0.5, 0.25);
         let (n, tv) = (Vec3::from_array(n), Vec3::new(t[0], t[1], t[2]));
         let east = world_from_ground(GroundVec2::new(1.0, 0.0), 0.5);
@@ -1195,7 +1224,8 @@ mod tests {
             n.dot(east).abs() < 1e-6 && n.dot(north).abs() < 1e-6,
             "{n:?}"
         );
-        // The tangent is the one a face on that plane gets, sign and all.
+        // La tangente es la que recibe una cara sobre ese plano, signo
+        // incluido.
         let face = [Vec3::ZERO, east, east + north];
         let flat = face_tangent(face, face.map(ground_uv));
         assert!(
@@ -1203,11 +1233,11 @@ mod tests {
             "{t:?} {flat:?}"
         );
         assert_eq!(t[3], flat[3]);
-        // Level ground faces straight up.
+        // El suelo nivelado mira derecho hacia arriba.
         assert_eq!(slope_frame(0.0, 0.0).0, [0.0, 1.0, 0.0]);
 
-        // On the real terrain, each vertex's normal is the height field's
-        // slope over one quad either way.
+        // Sobre el terreno real, la normal de cada vértice es la pendiente del
+        // campo de alturas a un quad hacia cada lado.
         let terrain = Terrain::default();
         let (size, res) = (200.0, 8);
         let q = size / res as f32;
@@ -1275,7 +1305,7 @@ mod tests {
             }
         }
         assert_eq!(shared, 3 * 9, "every border corner is shared once");
-        // The grass varies from dry yellow to grey-green between towns.
+        // El pasto varía de amarillo seco a verde grisáceo entre pueblos.
         let open = colors(ChunkCoord::new(6, 6));
         let greens: Vec<f32> = open.iter().map(|(_, c)| c[1] / c[0]).collect();
         let (gmin, gmax) = greens
@@ -1306,7 +1336,7 @@ mod tests {
         for p in lagoon.ring(64, pampa_core::Lagoon::MUD_BAND + 0.1) {
             assert_eq!(lagoon_wetness(&terrain, p), 0.0, "{p:?}");
         }
-        // Past the mud, stones and shrubs come back.
+        // Más allá del barro vuelven las piedras y las matas.
         let keep = lagoon.keep_out();
         let (lo, hi) = (
             ChunkCoord::containing(keep.min, 200.0),

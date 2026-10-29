@@ -1,9 +1,10 @@
-//! Wheels: a steel tyre with its flange on the inside, and a centre of
-//! spokes (with a counterweight on the drivers) or a dished plate.
+//! Ruedas: una llanta de acero con su pestaña del lado de adentro, y un centro
+//! de rayos (con contrapeso en las motrices) o un disco embutido.
 //!
-//! A wheel mesh turns about its local Y axis, which the car builder lays
-//! along the axle; `side` says which side of the car it is for (+1 right):
-//! the flange is on the inside, toward the track's middle.
+//! La mesh de una rueda gira alrededor de su eje Y local, que el constructor
+//! del vagón coloca a lo largo del eje; `side` indica para qué lado del vagón
+//! es (+1 a la derecha): la pestaña va del lado de adentro, hacia el centro de
+//! la vía.
 
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
@@ -11,15 +12,16 @@ use bevy::prelude::*;
 
 use super::shape::{Grain, Shape};
 
-/// Half the distance between a pair of tyres' middles: the rails stand
-/// 0.838 m from the track's middle.
+/// La mitad de la distancia entre los centros de un par de llantas: los rieles
+/// están a 0.838 m del centro de la vía.
 pub const WHEEL_Z: f32 = 0.86;
-/// A tyre's width.
+/// El ancho de una llanta.
 pub const TYRE_WIDTH: f32 = 0.14;
-/// Facets round a spoked wheel, and a plate wheel.
+/// Facetas alrededor de una rueda de rayos, y de una rueda de disco.
 const SPOKED_SIDES: usize = 20;
 const PLATE_SIDES: usize = 16;
-/// How far a flange reaches below the tread, under the rail top.
+/// Cuánto baja una pestaña por debajo de la banda de rodadura, bajo la cara
+/// superior del riel.
 pub const FLANGE: f32 = 0.03;
 
 impl WheelStyle {
@@ -33,14 +35,14 @@ impl WheelStyle {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum WheelStyle {
-    /// Round spokes, this many.
+    /// Rayos redondos, esta cantidad.
     Spoked(usize),
-    /// A dished plate.
+    /// Un disco embutido.
     Plate,
 }
 
-/// The tyre, in the lathe frame (axis X, flange toward -X), then turned
-/// so that its axis is Y.
+/// La llanta, en el marco del torno (eje X, pestaña hacia -X), girada luego
+/// para que su eje sea Y.
 pub fn wheel_tyre(radius: f32, style: WheelStyle, side: f32) -> Shape {
     let sides = style.sides();
     let (w, inner) = (TYRE_WIDTH / 2.0, radius * 0.88);
@@ -58,7 +60,7 @@ pub fn wheel_tyre(radius: f32, style: WheelStyle, side: f32) -> Shape {
     seated(tyre, side)
 }
 
-/// The centre: hub, spokes or plate, and a driver's counterweight.
+/// El centro: cubo, rayos o disco, y el contrapeso de una rueda motriz.
 pub fn wheel_centre(radius: f32, style: WheelStyle, side: f32) -> Shape {
     let inner = radius * 0.88;
     let mut centre = Shape::lathe(
@@ -86,7 +88,7 @@ pub fn wheel_centre(radius: f32, style: WheelStyle, side: f32) -> Shape {
                     &spoke.transformed(Transform::from_rotation(Quat::from_rotation_x(angle))),
                 );
             }
-            // The felloe the spokes meet, inside the tyre.
+            // La pina donde terminan los rayos, dentro de la llanta.
             centre.append(&Shape::lathe(
                 &[
                     (-0.05, inner - 0.06),
@@ -98,7 +100,7 @@ pub fn wheel_centre(radius: f32, style: WheelStyle, side: f32) -> Shape {
                 style.sides(),
             ));
             if radius > 0.7 {
-                // A counterweight opposite the crank, a wedge between spokes.
+                // Un contrapeso opuesto a la manivela, una cuña entre rayos.
                 let reach = inner - 0.03;
                 let wedge = [Vec2::ZERO]
                     .into_iter()
@@ -107,7 +109,7 @@ pub fn wheel_centre(radius: f32, style: WheelStyle, side: f32) -> Shape {
                         Vec2::new(a.cos(), a.sin()) * reach
                     }))
                     .collect::<Vec<_>>();
-                // Pulled along X, in (z, y).
+                // Estirado a lo largo de X, en (z, y).
                 let ring: Vec<Vec2> = wedge.iter().map(|p| Vec2::new(p.x, p.y)).collect();
                 centre.append(&Shape::along_x(&ring, 0.01, 0.07, false, true));
             }
@@ -128,8 +130,8 @@ pub fn wheel_centre(radius: f32, style: WheelStyle, side: f32) -> Shape {
     seated(centre, side)
 }
 
-/// A lathe-frame wheel part (axis X, flange or inside toward -X) turned to
-/// axis Y, flipped for the left side.
+/// Una pieza de rueda en el marco del torno (eje X, pestaña o lado interior
+/// hacia -X) girada al eje Y, espejada para el lado izquierdo.
 fn seated(shape: Shape, side: f32) -> Shape {
     let to_y = Transform::from_rotation(Quat::from_rotation_z(FRAC_PI_2));
     let shape = shape.transformed(to_y);

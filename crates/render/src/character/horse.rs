@@ -1,40 +1,43 @@
-//! Saddled criollo horses: Quaternius' animated horse (the corral horses'
-//! model, see [`livestock`](crate::fauna::livestock)) wearing a 1919 recado
-//! and a rawhide bridle (see [`tack`](super::tack)), tied up or ridden.
+//! Caballos criollos ensillados: el caballo animado de Quaternius (el modelo de
+//! los caballos de corral, ver [`livestock`](crate::fauna::livestock)) con un
+//! recado de 1919 y una brida de cuero crudo (ver [`tack`](super::tack)), atado
+//! o montado.
 //!
-//! A saddled horse is a body entity ([`HorseBody`], turned to the heading,
-//! +X its front, its right +Z, hooves on its origin) holding the model
-//! ([`HorseModel`]). The model waits for its scene ([`HorsePending`]): until
-//! it has loaded, nothing is drawn (the scenes load with the game, long
-//! before anyone gets on a horse). Once it spawns, [`dress_horse`] gives
-//! its meshes the coat and the props' shared range, as the corral horses'
-//! do, and finds the bones the gaits drive ([`gait`](super::gait)). The
-//! same scene event puts the tack on ([`tack`](super::tack): the skinned
-//! recado and bridle, the stirrups and the straps), and once the tack is on
-//! a rider with a model sits on its `Torso` bone ([`rider`](super::rider)),
-//! so he rises, pitches and turns with the horse's own clip.
+//! Un caballo ensillado es una entidad de cuerpo ([`HorseBody`], girada hacia
+//! el rumbo, +X su frente, su derecha +Z, los vasos en su origen) que contiene
+//! el modelo ([`HorseModel`]). El modelo espera su escena ([`HorsePending`]):
+//! hasta que termina de cargar no se dibuja nada (las escenas cargan con el
+//! juego, mucho antes de que alguien se suba a un caballo). Cuando se crea,
+//! [`dress_horse`] les da a sus meshes el pelaje y el rango compartido de los
+//! accesorios, como a los caballos de corral, y ubica los huesos que mueven los
+//! andares ([`gait`](super::gait)). El mismo evento de escena pone los aperos
+//! ([`tack`](super::tack): el recado y la brida con skinning, los estribos y
+//! las correas), y una vez puestos los aperos un jinete con modelo se sienta
+//! sobre su hueso `Torso` ([`rider`](super::rider)), así que sube, cabecea y
+//! gira con el propio clip del caballo.
 //!
-//! [`drive_horses`] plays the clips: the idle, then the walk paced to the
-//! ground speed up to about 4.5 m/s (there is no trot clip), then the
-//! gallop ([`gait_weights`], [`gait_rate`]), each at the ground speed over
-//! the speed its hooves show, so they keep still on the ground; backing
-//! up, the stride plays backward at the same pace; turning on the spot,
-//! it walks in place at the small pace of [`stepping_speed`]. A tied
-//! horse changes idle now and then, as the corral horses do; a ridden one
-//! stands still. In the air ([`VisualPose::flight`](super::VisualPose))
-//! only the jump clip plays ([`Clip::GallopJump`], weighed up at
-//! [`JUMP_BLEND_RATE`]): it never runs by the clock but is set each frame to
-//! [`jump_time`] of the physics' own flight, so the tuck and the pitch land
-//! with the arc, and the gait clips pick up where they were once it ends.
-//! The flight starts on the clip's own push, lingering on it
-//! ([`JUMP_LINGER`]), and the fitting adds the hind legs' thrust and a
-//! deeper foreleg tuck (see [`gait`](super::gait)).
-//! A horse out of view or far off keeps its last pose, but never the
-//! player's.
+//! [`drive_horses`] reproduce los clips: la espera, después la caminata al
+//! ritmo de la velocidad sobre el suelo hasta unos 4.5 m/s (no hay clip de
+//! trote), y después el galope ([`gait_weights`], [`gait_rate`]), cada uno a la
+//! velocidad sobre el suelo dividida por la velocidad que muestran sus vasos,
+//! para que se queden quietos sobre el suelo; al retroceder, la zancada se
+//! reproduce hacia atrás al mismo ritmo; al girar en el lugar, camina en el
+//! sitio al ritmo corto de [`stepping_speed`]. Un caballo atado cambia de
+//! espera de vez en cuando, como los caballos de corral; uno montado se queda
+//! quieto. En el aire ([`VisualPose::flight`](super::VisualPose)) solo se
+//! reproduce el clip de salto ([`Clip::GallopJump`], que gana peso a
+//! [`JUMP_BLEND_RATE`]): nunca avanza con el reloj, sino que en cada frame se
+//! fija en el [`jump_time`] del propio vuelo de la física, así que el recogido
+//! y el cabeceo aterrizan con el arco, y los clips de andar retoman donde
+//! estaban cuando termina. El vuelo empieza en el propio impulso del clip,
+//! demorándose en él ([`JUMP_LINGER`]), y el ajuste agrega el empuje de las
+//! patas traseras y un recogido más profundo de las manos (ver
+//! [`gait`](super::gait)). Un caballo fuera de la vista o lejos conserva su
+//! última pose, pero nunca el del jugador.
 //!
-//! Coats are painted into the model's vertex colours from where each vertex
-//! sits on the standing horse ([`Coat::color_at`]), so patches, dapples and
-//! the dun's dorsal stripe run across the body.
+//! Los pelajes se pintan en los colores por vertex del modelo según dónde está
+//! cada vertex en el caballo parado ([`Coat::color_at`]), así que las manchas,
+//! los rodados y la raya de mula del bayo recorren el cuerpo.
 
 use bevy::animation::graph::AnimationGraphHandle;
 use bevy::ecs::system::SystemParam;
@@ -56,19 +59,19 @@ use crate::fauna::livestock::{
 };
 use crate::gltf::{self, ModelState};
 
-/// A horse's coat (pelaje).
+/// El pelaje de un caballo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Coat {
-    /// Solid dark brown, black mane and tail, no white.
+    /// Marrón oscuro entero, crin y cola negras, sin blanco.
     Zaino,
-    /// Grey with lighter dapples.
+    /// Gris con rodados más claros.
     Tordillo,
-    /// Bay with large white patches.
+    /// Bayo con grandes manchas blancas.
     Overo,
-    /// Chestnut, the mane and tail a little lighter.
+    /// Alazán, con la crin y la cola un poco más claras.
     Alazan,
-    /// Dun: sandy yellow with black mane, tail and lower legs and a dark
-    /// stripe down the back.
+    /// Bayo: amarillo arena con la crin, la cola y la parte baja de las patas
+    /// negras, y una raya oscura a lo largo del lomo.
     Bayo,
 }
 
@@ -81,10 +84,10 @@ impl Coat {
         Self::Bayo,
     ];
 
-    /// Don Hidalgo's horse, the one the player rides.
+    /// El caballo de Don Hidalgo, el que monta el jugador.
     pub const HIDALGO: Self = Self::Bayo;
 
-    /// A coat picked deterministically from `seed`.
+    /// Un pelaje elegido de forma determinista a partir de `seed`.
     pub fn seeded(seed: u32) -> Self {
         let mut h = seed.wrapping_mul(0x9e37_79b9) ^ 0x85eb_ca6b;
         h ^= h >> 15;
@@ -112,7 +115,7 @@ impl Coat {
         }
     }
 
-    /// The lower legs, darker on most coats.
+    /// La parte baja de las patas, más oscura en la mayoría de los pelajes.
     pub(crate) fn points(self) -> Rgb {
         match self {
             Self::Zaino => [44, 32, 26],
@@ -123,7 +126,7 @@ impl Coat {
         }
     }
 
-    /// The head, a little lighter on the grey.
+    /// La cabeza, un poco más clara en el tordillo.
     pub(crate) fn head(self) -> Rgb {
         match self {
             Self::Tordillo => [150, 150, 146],
@@ -138,12 +141,12 @@ impl Coat {
         }
     }
 
-    /// The colour of a coat vertex at `p` on the standing horse, its
-    /// surface facing `normal`.
+    /// El color de un vertex del pelaje en `p` sobre el caballo parado, con su
+    /// superficie mirando hacia `normal`.
     pub fn color_at(self, p: Vec3, normal: Vec3) -> Rgb {
         const WHITE: Rgb = [232, 228, 218];
         if p.y < POINTS_HEIGHT {
-            // Overo stockings on the near fore and the off hind.
+            // Medias del overo en la mano izquierda y en la pata derecha.
             let stocking = (p.x > 0.0 && p.z < 0.0) || (p.x < 0.0 && p.z > 0.0);
             if self == Self::Overo && stocking {
                 return WHITE;
@@ -153,7 +156,7 @@ impl Coat {
         match self {
             Self::Overo if overo_patch(p) => WHITE,
             Self::Tordillo if dapple(p) => [178, 176, 170],
-            // The dun's dorsal stripe, from the withers to the tail.
+            // La raya de mula del bayo, desde la cruz hasta la cola.
             Self::Bayo if normal.y > 0.6 && p.z.abs() < 0.05 && (-0.8..0.45).contains(&p.x) => {
                 [104, 76, 46]
             }
@@ -162,12 +165,12 @@ impl Coat {
     }
 }
 
-/// Below this height (m) the legs show the coat's points.
+/// Por debajo de esta altura (en m) las patas muestran los cabos del pelaje.
 const POINTS_HEIGHT: f32 = 0.5;
 
-/// The overo's white: big blobs on the belly, both flanks, the off side of
-/// the croup, both shoulders and both sides of the neck, so some white shows
-/// from every side.
+/// El blanco del overo: grandes manchas en la panza, en ambos costados, en el
+/// lado derecho de la grupa, en ambas paletas y a ambos lados del cuello, así
+/// que algo de blanco se ve desde cualquier lado.
 fn overo_patch(p: Vec3) -> bool {
     const BLOBS: [([f32; 3], [f32; 3]); 8] = [
         ([0.0, 0.8, 0.0], [0.5, 0.2, 0.4]),
@@ -185,7 +188,7 @@ fn overo_patch(p: Vec3) -> bool {
     })
 }
 
-/// The tordillo's dapples: a cheap 3D interference pattern.
+/// Los rodados del tordillo: un patrón de interferencia 3D barato.
 fn dapple(p: Vec3) -> bool {
     let a = (p.x * 23.0 + (p.z * 17.0).sin()).sin();
     let b = (p.y * 21.0 + (p.x * 13.0).cos()).sin();
@@ -193,44 +196,48 @@ fn dapple(p: Vec3) -> bool {
     a * b * c > 0.12
 }
 
-/// How far (m) a horse's hooves stand from the centre of a turn on the
-/// spot: wider than a person's, so its steps keep a walking rate (at the
-/// game's 1.8 rad/s turn rate, 0.54 m/s).
+/// A qué distancia (en m) están los vasos de un caballo del centro de un giro
+/// en el lugar: más que los pies de una persona, para que sus pasos mantengan
+/// un ritmo de caminata (con la velocidad de giro del juego de 1.8 rad/s,
+/// 0.54 m/s).
 pub const HORSE_TURN_STEP_RADIUS: f32 = 0.3;
 
-/// The ground speeds (m/s) across which the idle fades into the walk.
+/// Las velocidades sobre el suelo (m/s) entre las que la espera se funde con la
+/// caminata.
 pub const WALK_BAND: (f32, f32) = (0.05, 0.6);
 
-/// The ground speeds (m/s) at which a walking horse breaks into the gallop,
-/// and a galloping one comes back to the walk. Logic walks a horse up to
-/// about 3 m/s and "gallops" it from there (trotting up to
-/// [`HorseGait::TROT_MAX`]); with no trot clip the walk is stretched to
-/// about 4.5 m/s. The gait changes outright (and the weights fade fast,
-/// [`HORSE_BLEND_RATE`]), never holding the two half and half: their legs
-/// do not match.
+/// Las velocidades sobre el suelo (m/s) a las que un caballo que camina pasa al
+/// galope, y uno que galopa vuelve a la caminata. La lógica hace caminar a un
+/// caballo hasta unos 3 m/s y lo "hace galopar" a partir de ahí (trotando hasta
+/// [`HorseGait::TROT_MAX`]); sin clip de trote, la caminata se estira hasta
+/// unos 4.5 m/s. El andar cambia de golpe (y los pesos se funden rápido,
+/// [`HORSE_BLEND_RATE`]), sin mantener nunca los dos mitad y mitad: sus patas
+/// no coinciden.
 pub const GALLOP_FROM: (f32, f32) = (4.2, 4.8);
 
-/// Whether a horse moving at `speed` gallops, if it `was` galloping.
+/// Si un caballo que se mueve a `speed` galopa, según si `was` galopando.
 pub fn gallops(was: bool, speed: f32) -> bool {
     speed > if was { GALLOP_FROM.0 } else { GALLOP_FROM.1 }
 }
 
-/// How much slower or faster than recorded the walk may play: up to 3.8
-/// times at 4.8 m/s.
+/// Cuánto más lento o más rápido que lo grabado puede reproducirse la caminata:
+/// hasta 3.8 veces a 4.8 m/s.
 pub const RATE: (f32, f32) = (0.3, 3.9);
 
-/// How much slower or faster than recorded the (stretched) gallop may play:
-/// faster reads frantic, so above about 11.6 m/s its hooves slide a little.
+/// Cuánto más lento o más rápido que lo grabado puede reproducirse el galope
+/// (estirado): más rápido parece frenético, así que por encima de unos 11.6 m/s
+/// sus vasos se deslizan un poco.
 pub const GALLOP_RATE: (f32, f32) = (0.5, 2.0);
 
-/// The ground speed the gallop's hooves show with its stride stretched
-/// ([`STRIDE`](super::gait::STRIDE)), m/s, measured as the clip's own
+/// La velocidad sobre el suelo que muestran los vasos del galope con su zancada
+/// estirada ([`STRIDE`](super::gait::STRIDE)), en m/s, medida como la del
+/// propio clip
 /// ([`HORSE_GALLOP_SPEED`](crate::fauna::livestock::HORSE_GALLOP_SPEED)).
 pub const GALLOP_SPEED: f32 = 7.3;
 
-/// The weight of each clip, in [`Clip::ALL`] order, for a horse standing
-/// with `idle` or moving at `speed` m/s with `stride` (the walk or the
-/// gallop): the idle fades into the stride. They add up to one.
+/// El peso de cada clip, en el orden de [`Clip::ALL`], para un caballo parado
+/// con `idle` o que se mueve a `speed` m/s con `stride` (la caminata o el
+/// galope): la espera se funde con la zancada. Suman uno.
 pub fn gait_weights(idle: Clip, stride: Clip, speed: f32) -> [f32; CLIP_COUNT] {
     let moving = ((speed - WALK_BAND.0) / (WALK_BAND.1 - WALK_BAND.0)).clamp(0.0, 1.0);
     let mut out = [0.0; CLIP_COUNT];
@@ -239,9 +246,10 @@ pub fn gait_weights(idle: Clip, stride: Clip, speed: f32) -> [f32; CLIP_COUNT] {
     out
 }
 
-/// How fast `clip` plays for a horse moving at `speed` m/s: the ground
-/// speed over the speed its hooves show, within [`RATE`], negative backing
-/// up; an idle plays as recorded.
+/// Qué tan rápido se reproduce `clip` para un caballo que se mueve a `speed`
+/// m/s: la velocidad sobre el suelo dividida por la velocidad que muestran sus
+/// vasos, dentro de [`RATE`], negativa al retroceder; una espera se reproduce
+/// tal como se grabó.
 pub fn gait_rate(clip: Clip, speed: f32) -> f32 {
     let back = if speed < 0.0 { -1.0 } else { 1.0 };
     let speed = speed.abs();
@@ -252,36 +260,36 @@ pub fn gait_rate(clip: Clip, speed: f32) -> f32 {
     }
 }
 
-/// The idles a tied horse changes between. Tied short to the post, it
-/// cannot crop the ground (and its reins, over the pommel, would cut
-/// through its neck if it did).
+/// Las esperas entre las que alterna un caballo atado. Atado corto al poste, no
+/// puede pastar (y sus riendas, sobre la cabezada, le atravesarían el cuello si
+/// lo hiciera).
 pub const TIED_IDLES: [Clip; 3] = [Clip::Idle, Clip::Idle2, Clip::IdleHeadlow];
 
-/// A saddled horse's body, child of its character entity: turned to the
-/// heading, holding the model.
+/// El cuerpo de un caballo ensillado, hijo de su entidad de personaje: girado
+/// hacia el rumbo, contiene el modelo.
 #[derive(Component, Debug, Clone)]
 pub struct HorseBody {
     pub coat: Coat,
-    /// Who rides it, if anyone.
+    /// Quién lo monta, si alguien lo hace.
     pub rider: Option<FigureKind>,
-    /// Its gait: logic's animation and the speed decide it.
+    /// Su andar: lo deciden la animación de la lógica y la velocidad.
     pub gait: HorseGait,
-    /// How much of the gallop it plays now (`0..1`): a rider leans into it.
+    /// Cuánto galope reproduce ahora (`0..1`): un jinete se inclina con él.
     pub gallop: f32,
-    /// Its ground speed now, m/s (none standing).
+    /// Su velocidad sobre el suelo actual, en m/s (ninguna estando parado).
     pub speed: f32,
-    /// How far through a jump's flight it is (`0..=1`), none on the ground:
-    /// a rider keeps his balance through it.
+    /// Qué tan avanzado está el vuelo de un salto (`0..=1`), nada en el suelo:
+    /// un jinete mantiene el equilibrio durante él.
     pub flight: Option<f32>,
-    /// Its own seed: where its clips start and which idle a tied horse
-    /// plays.
+    /// Su propia semilla: dónde empiezan sus clips y qué espera reproduce un
+    /// caballo atado.
     pub seed: u32,
 }
 
 impl HorseBody {
-    /// The idle it stands with at `clock` seconds: a ridden horse stands
-    /// still; a tied one changes idle now and then, as the corral horses
-    /// do ([`TIED_IDLES`]).
+    /// La espera con la que está parado a los `clock` segundos: un caballo
+    /// montado se queda quieto; uno atado cambia de espera de vez en cuando,
+    /// como los caballos de corral ([`TIED_IDLES`]).
     pub fn idle(&self, clock: f32) -> Clip {
         match self.rider {
             Some(_) => Clip::Idle,
@@ -292,45 +300,46 @@ impl HorseBody {
         }
     }
 
-    /// Whether its clips keep playing out of view or far off: the player's
-    /// horse always does.
+    /// Si sus clips siguen reproduciéndose fuera de la vista o lejos: el
+    /// caballo del jugador siempre lo hace.
     pub fn never_freezes(&self) -> bool {
         self.rider == Some(FigureKind::Protagonist)
     }
 }
 
-/// The horse model's root, child of its [`HorseBody`].
+/// La raíz del modelo del caballo, hija de su [`HorseBody`].
 #[derive(Component, Debug, Clone, Copy)]
 pub struct HorseModel;
 
-/// A horse model waiting for its scene to load.
+/// Un modelo de caballo que espera que cargue su escena.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct HorsePending;
 
-/// A spawned horse model's animation state, on its root.
+/// El estado de animación de un modelo de caballo creado, en su raíz.
 #[derive(Component, Debug, Clone)]
 pub struct HorseRig {
-    /// The entity with its `AnimationPlayer`.
+    /// La entidad con su `AnimationPlayer`.
     pub player: Entity,
-    /// Its drawn meshes: it is in view while any of them is.
+    /// Sus meshes dibujadas: está a la vista mientras alguna lo esté.
     pub probes: Vec<Entity>,
-    /// Each clip's weight now, in [`Clip::ALL`] order.
+    /// El peso actual de cada clip, en el orden de [`Clip::ALL`].
     pub weights: [f32; CLIP_COUNT],
-    /// Whether its clips are playing.
+    /// Si sus clips se están reproduciendo.
     pub started: bool,
-    /// Whether its bones keep their last pose.
+    /// Si sus huesos conservan su última pose.
     pub frozen: bool,
-    /// Each clip's length, seconds, once it has loaded.
+    /// La duración de cada clip, en segundos, una vez que terminó de cargar.
     pub durations: [f32; CLIP_COUNT],
-    /// The stride clip it is mostly playing (the walk or the gallop): the
-    /// other is put in step with it as it takes over.
+    /// El clip de zancada que reproduce principalmente (la caminata o el
+    /// galope): el otro se pone al mismo paso cuando toma el relevo.
     pub lead: Clip,
-    /// How far through a jump's flight it is (`0..=1`), none on the ground.
+    /// Qué tan avanzado está el vuelo de un salto (`0..=1`), nada en el suelo.
     pub flight: Option<f32>,
 }
 
 impl HorseRig {
-    /// A model's rig, its clips played by `player`, seen through `probes`.
+    /// El rig de un modelo, con sus clips reproducidos por `player`, visto a
+    /// través de `probes`.
     pub fn new(player: Entity, probes: Vec<Entity>) -> Self {
         Self {
             player,
@@ -345,13 +354,13 @@ impl HorseRig {
     }
 }
 
-/// Where the walk's loop is in step with the gallop's: each with the left
-/// hind striking (the walk's at 0.25 of its loop, the gallop's at
-/// [`GATHER`](super::gait::GATHER)).
+/// Dónde está el ciclo de la caminata al mismo paso que el del galope: cada uno
+/// con la trasera izquierda apoyando (el de la caminata a 0.25 de su ciclo, el
+/// del galope en [`GATHER`](super::gait::GATHER)).
 pub const WALK_FROM_GALLOP: f32 = 0.25 - super::gait::GATHER;
 
-/// The share of its loop (`0..1`) a stride clip taking the lead from
-/// `from` at `phase` of its loop starts at.
+/// La fracción de su ciclo (`0..1`) en la que empieza un clip de zancada que
+/// toma el relevo de `from` en la fase `phase` de su ciclo.
 pub fn in_step(to: Clip, phase: f32) -> f32 {
     match to {
         Clip::Walk => (phase + WALK_FROM_GALLOP).rem_euclid(1.0),
@@ -359,31 +368,33 @@ pub fn in_step(to: Clip, phase: f32) -> f32 {
     }
 }
 
-/// How fast the clips' weights ease toward their targets, per second: a
-/// quick fade, so two clips are seldom seen half and half.
+/// Qué tan rápido se acercan los pesos de los clips a sus objetivos, por
+/// segundo: un fundido rápido, para que rara vez se vean dos clips mitad y
+/// mitad.
 pub const HORSE_BLEND_RATE: f32 = 12.0;
 
-/// The same, taking off: faster, so the legs are tucked as the horse
-/// leaves the ground.
+/// Lo mismo, al despegar: más rápido, para que las patas estén recogidas cuando
+/// el caballo deja el suelo.
 pub const JUMP_BLEND_RATE: f32 = 40.0;
 
-/// The part of the `Gallop_Jump` clip that is the flight, in seconds of the
-/// clip (measured on its `Body` and hind legs' curves): from the hind legs'
-/// push, the hooves reaching back and down as they leave the ground, to the
-/// `Body` back at its rest height, the hooves down. What comes before is
-/// the crouch and the wind-up and what comes after the settle, which the
-/// stride clips take over.
+/// La parte del clip `Gallop_Jump` que es el vuelo, en segundos del clip
+/// (medida sobre las curvas de su `Body` y de las patas traseras): desde el
+/// impulso de las patas traseras, con los vasos estirándose hacia atrás y hacia
+/// abajo al dejar el suelo, hasta el `Body` de vuelta a su altura de reposo,
+/// con los vasos abajo. Lo que viene antes es el agachado y la preparación, y
+/// lo que viene después, el asentamiento, del que se encargan los clips de
+/// zancada.
 pub const JUMP_FLIGHT: (f32, f32) = (0.45, 1.17);
 
-/// How many seconds of the clip the takeoff's push is drawn out by: the
-/// clip starts slow (at about a third of its pace) on the hind legs' push,
-/// so it reads as the horse leaves the ground, and catches up by a third
-/// of the flight.
+/// Cuántos segundos del clip se alarga el impulso del despegue: el clip empieza
+/// lento (a alrededor de un tercio de su ritmo) en el impulso de las patas
+/// traseras, para que se note cuando el caballo deja el suelo, y se pone al día
+/// hacia un tercio del vuelo.
 pub const JUMP_LINGER: f32 = 0.15;
 
-/// Where in the `Gallop_Jump` clip a horse `flight` (`0..=1`) of the way
-/// through its jump is, seconds: the clip is spread over the physics' own
-/// flight, not played by the clock, lingering on the push
+/// En qué punto del clip `Gallop_Jump` está un caballo en la fracción `flight`
+/// (`0..=1`) de su salto, en segundos: el clip se reparte a lo largo del propio
+/// vuelo de la física, no se reproduce con el reloj, y se demora en el impulso
 /// ([`JUMP_LINGER`]).
 pub fn jump_time(flight: f32) -> f32 {
     let f = flight.clamp(0.0, 1.0);
@@ -391,14 +402,15 @@ pub fn jump_time(flight: f32) -> f32 {
     JUMP_FLIGHT.0 + span * f - JUMP_LINGER * (1.0 - (1.0 - f).powi(4))
 }
 
-/// The model's transform under its body: the horse's export turned to face
-/// +X and scaled to life (the corral horses' scale).
+/// El transform del modelo bajo su cuerpo: la exportación del caballo girada
+/// para mirar hacia +X y escalada a tamaño real (la escala de los caballos de
+/// corral).
 pub fn model_transform() -> Transform {
     livestock::model_transform(Species::Horse, Heading::default())
 }
 
-/// Spawns a saddled horse in `coat` (ridden by `rider`) under `parent`:
-/// its body, and its model waiting for the scene. Returns the body.
+/// Crea un caballo ensillado con el pelaje `coat` (montado por `rider`) bajo
+/// `parent`: su cuerpo y su modelo esperando la escena. Devuelve el cuerpo.
 pub(super) fn spawn_horse(
     commands: &mut Commands,
     parent: Entity,
@@ -433,8 +445,8 @@ pub(super) fn spawn_horse(
     body
 }
 
-/// Spawns each waiting horse model's scene once it has loaded. Without the
-/// horse's file nothing is drawn.
+/// Crea la escena de cada modelo de caballo en espera una vez que terminó de
+/// cargar. Sin el archivo del caballo no se dibuja nada.
 pub(super) fn swap_in_horses(
     mut commands: Commands,
     server: Option<Res<AssetServer>>,
@@ -465,8 +477,8 @@ pub(super) fn swap_in_horses(
     }
 }
 
-/// `entity`'s rest placement in the body frame of the model `root` (its
-/// own transform and its ancestors', up to and including the root's).
+/// La ubicación de reposo de `entity` en el marco del cuerpo del modelo `root`
+/// (su propio transform y los de sus ancestros, hasta el de la raíz inclusive).
 pub(super) fn rest_affine(
     entity: Entity,
     root: Entity,
@@ -490,13 +502,13 @@ pub(super) fn rest_affine(
     affine
 }
 
-/// A transform from an affine placement.
+/// Un transform a partir de una ubicación afín.
 pub(super) fn transform_of(affine: Affine3A) -> Transform {
     Transform::from_matrix(Mat4::from(affine))
 }
 
-/// What a horse model is dressed from: its nodes' names, rests and
-/// meshes.
+/// A partir de qué se prepara un modelo de caballo: los nombres, los reposos y
+/// las meshes de sus nodos.
 #[derive(SystemParam)]
 pub(super) struct HorseScene<'w, 's> {
     names: Query<'w, 's, &'static Name>,
@@ -506,7 +518,7 @@ pub(super) struct HorseScene<'w, 's> {
     parts: Query<'w, 's, ModelPart>,
 }
 
-/// The stores a horse is dressed from.
+/// Los almacenes a partir de los que se prepara un caballo.
 #[derive(SystemParam)]
 pub(super) struct HorseStores<'w> {
     cache: Option<ResMut<'w, CoatCache>>,
@@ -515,9 +527,9 @@ pub(super) struct HorseStores<'w> {
     models: Option<Res<'w, LivestockModels>>,
 }
 
-/// Dresses a horse model the moment its scene spawns: its coat and range,
-/// its clips' graph and its bones for [`fit_horses`]. (The tack and the
-/// rider are put on by their own modules.)
+/// Prepara un modelo de caballo en el momento en que se crea su escena: su
+/// pelaje y su rango, el grafo de sus clips y sus huesos para [`fit_horses`].
+/// (Los aperos y el jinete los ponen sus propios módulos.)
 pub(super) fn dress_horse(
     ready: On<WorldInstanceReady>,
     mut commands: Commands,
@@ -576,7 +588,7 @@ pub(super) fn dress_horse(
     }
 }
 
-/// The bones [`fit_horses`] moves under the model `root`, and their rests.
+/// Los huesos que mueve [`fit_horses`] bajo el modelo `root`, y sus reposos.
 fn find_bones(scene: &HorseScene, root: Entity) -> Option<HorseBones> {
     let named = |name: &str| {
         scene
@@ -623,9 +635,9 @@ fn find_bones(scene: &HorseScene, root: Entity) -> Option<HorseBones> {
     })
 }
 
-/// Fits each playing horse's pose after its clips (see
-/// [`gait`](super::gait)): the blend completed, the gallop stretched and
-/// flexed, the hooves kept on the legs.
+/// Ajusta la pose de cada caballo que se reproduce después de sus clips (ver
+/// [`gait`](super::gait)): la mezcla completada, el galope estirado y
+/// flexionado, los vasos mantenidos en las patas.
 pub(super) fn fit_horses(
     models: Option<Res<LivestockModels>>,
     rigs: Query<(&HorseRig, &HorseBones)>,
@@ -649,9 +661,10 @@ pub(super) fn fit_horses(
     }
 }
 
-/// Turns each saddled horse to its heading and plays its clips (see the
-/// module notes): weighed and paced by speed, started at its seeded point,
-/// frozen far off or out of view unless it is the player's.
+/// Gira cada caballo ensillado hacia su rumbo y reproduce sus clips (ver las
+/// notas del módulo): ponderados y al ritmo de la velocidad, empezados en su
+/// punto con semilla, congelados lejos o fuera de la vista salvo que sea el del
+/// jugador.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn drive_horses(
     mut commands: Commands,
@@ -703,9 +716,9 @@ pub(super) fn drive_horses(
         let Ok(mut player) = players.get_mut(rig.player) else {
             continue;
         };
-        // Negative backing up: the stride plays backward, chosen and
-        // weighed by its size.
-        // Turning on the spot takes small steps ([`stepping_speed`]).
+        // Negativa al retroceder: la zancada se reproduce hacia atrás,
+        // elegida y ponderada según su magnitud.
+        // Girar en el lugar da pasos cortos ([`stepping_speed`]).
         let velocity = match poses.get(parent.parent()) {
             Ok(pose) if pose.animation != AnimationState::Idle => {
                 stepping_speed(pose.speed, pose.turn, HORSE_TURN_STEP_RADIUS)
@@ -719,7 +732,7 @@ pub(super) fn drive_horses(
         } else {
             Clip::Walk
         };
-        // In the air only the jump plays, along the flight.
+        // En el aire solo se reproduce el salto, a lo largo del vuelo.
         let flight = poses.get(parent.parent()).ok().and_then(|p| p.flight);
         let mut goal = gait_weights(body.idle(clock), stride, speed);
         if flight.is_some() {
@@ -748,7 +761,8 @@ pub(super) fn drive_horses(
             rig.weights = goal;
             rig.started = true;
         }
-        // The stride clip taking over starts in step with the one leaving.
+        // El clip de zancada que toma el relevo empieza al mismo paso que el
+        // que sale.
         let lead = stride;
         if lead != rig.lead {
             let from = rig.lead;
@@ -778,8 +792,9 @@ pub(super) fn drive_horses(
         for clip in Clip::ALL {
             if let Some(active) = player.animation_mut(species.nodes[clip.index()]) {
                 if clip == Clip::GallopJump {
-                    // Never plays by the clock (so never loops): it is set
-                    // to the flight's point, and left there as it fades.
+                    // Nunca se reproduce con el reloj (así que nunca hace
+                    // bucle): se fija en el punto del vuelo, y se deja ahí
+                    // mientras se desvanece.
                     if let Some(flight) = flight {
                         active.seek_to(jump_time(flight));
                     }
@@ -798,9 +813,9 @@ pub(super) fn drive_horses(
 pub(crate) mod tests {
     use super::*;
 
-    /// A stand-in horse's surface: points on its barrel, croup and
-    /// shoulders (a tube along +X round 1.14 m up), its neck, and its four
-    /// legs, each with its outward normal.
+    /// La superficie de un caballo sustituto: puntos en su costillar, su grupa
+    /// y sus paletas (un tubo a lo largo de +X alrededor de 1.14 m de altura),
+    /// su cuello y sus cuatro patas, cada uno con su normal hacia afuera.
     fn coat_points() -> Vec<(Vec3, Vec3)> {
         let mut out = Vec::new();
         for i in 0..40 {
@@ -951,12 +966,13 @@ pub(crate) mod tests {
             for stride in [walk, gallop] {
                 let w = gait_weights(Clip::Idle, stride, speed);
                 assert!((w.iter().sum::<f32>() - 1.0).abs() < 1e-5, "{speed}");
-                // Never the walk and the gallop at once.
+                // Nunca la caminata y el galope a la vez.
                 assert!(w[walk.index()] * w[gallop.index()] == 0.0);
             }
         }
-        // Logic's walk walks, the trot's fast half and the gallop gallop,
-        // with a margin either way so a steady pace never flickers.
+        // La caminata de la lógica camina, la mitad rápida del trote y el
+        // galope galopan, con un margen hacia cada lado para que un ritmo
+        // constante nunca parpadee.
         assert!(!gallops(false, 3.0) && !gallops(false, 4.5) && gallops(false, 4.9));
         assert!(gallops(true, 4.5) && !gallops(true, 4.1));
         assert!(gallops(false, 12.2) && gallops(true, 12.2));
@@ -966,11 +982,12 @@ pub(crate) mod tests {
     fn the_walk_and_the_gallop_play_at_the_ground_speed_over_their_own() {
         assert!((gait_rate(Clip::Walk, HORSE_WALK_SPEED) - 1.0).abs() < 1e-6);
         assert!((gait_rate(Clip::Gallop, GALLOP_SPEED) - 1.0).abs() < 1e-6);
-        // Logic's walk and the walk stretched to the top of the trot band.
+        // La caminata de la lógica y la caminata estirada hasta el tope de la
+        // franja del trote.
         assert!((gait_rate(Clip::Walk, 3.0) - 3.0 / HORSE_WALK_SPEED).abs() < 1e-5);
         assert!((gait_rate(Clip::Walk, 4.8) - 4.8 / HORSE_WALK_SPEED).abs() < 1e-5);
-        // The long gallop paced to the ground up to its cap, then capped:
-        // never frantic.
+        // El galope largo al ritmo del suelo hasta su tope, y después limitado:
+        // nunca frenético.
         assert!((gait_rate(Clip::Gallop, 8.0) - 8.0 / GALLOP_SPEED).abs() < 1e-5);
         assert!((gait_rate(Clip::Gallop, 12.2) - 12.2 / GALLOP_SPEED).abs() < 1e-5);
         assert_eq!(gait_rate(Clip::Gallop, 19.4), GALLOP_RATE.1);
@@ -1018,20 +1035,20 @@ pub(crate) mod tests {
         assert_eq!(body.idle(30.0), body.idle(30.0));
     }
 
-    // --- with the shipped horse, rider and clips -----------------------------
+    // --- con el caballo, el jinete y los clips incluidos ---------------------
 
     use crate::character::cpu;
     use crate::character::{CharacterVisual, CharacterVisualPlugin};
     use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 
-    /// The fauna and character plugins with the shipped models, and `visual`
-    /// at the origin facing +X, moving at `speed`; returns once the horse
-    /// plays its clips.
+    /// Los plugins de fauna y de personajes con los modelos incluidos, y
+    /// `visual` en el origen mirando hacia +X, moviéndose a `speed`; vuelve
+    /// cuando el caballo reproduce sus clips.
     pub(crate) fn saddled(visual: CharacterVisual, speed: f32) -> (App, Entity) {
         saddled_every(visual, speed, 50)
     }
 
-    /// [`saddled`], with frames `ms` milliseconds long.
+    /// [`saddled`], con frames de `ms` milisegundos.
     pub(crate) fn saddled_every(visual: CharacterVisual, speed: f32, ms: u64) -> (App, Entity) {
         use crate::gltf::tests::{root, unfinished_app};
         let mut app = unfinished_app(&root());
@@ -1042,8 +1059,9 @@ pub(crate) mod tests {
                 std::time::Duration::from_millis(ms),
             ))
             .add_plugins((crate::fauna::FaunaPlugin, CharacterVisualPlugin));
-        // Frames since a scene asset last changed: a scene spawned before
-        // its asset settles is spawned again, and the tests hold its bones.
+        // Frames desde que cambió por última vez un asset de escena: una escena
+        // creada antes de que su asset se estabilice se vuelve a crear, y los
+        // tests retienen sus huesos.
         #[derive(Resource, Default)]
         struct Settled(u32);
         app.init_resource::<Settled>().add_systems(
@@ -1075,8 +1093,8 @@ pub(crate) mod tests {
                 },
             ))
             .id();
-        // Until the horse plays, the same model for a while, its assets
-        // settled.
+        // Hasta que el caballo reproduce, el mismo modelo durante un rato, con
+        // sus assets estabilizados.
         const QUIET: u32 = 40;
         let mut held = (Entity::PLACEHOLDER, 0);
         for _ in 0..3000 {
@@ -1092,9 +1110,9 @@ pub(crate) mod tests {
                 Some(player) => held = (player, 0),
                 None => held = (Entity::PLACEHOLDER, 0),
             }
-            // Quiet for 40 frames (at least 200 ms of wall time, however
-            // loaded the machine): a file landing later than that would
-            // spawn the scene again in the middle of a measure.
+            // Quieto durante 40 frames (al menos 200 ms de tiempo real, sin
+            // importar qué tan cargada esté la máquina): un archivo que llegara
+            // más tarde volvería a crear la escena en medio de una medición.
             if held.1 >= QUIET && world.resource::<Settled>().0 >= QUIET {
                 return (app, me);
             }
@@ -1123,7 +1141,8 @@ pub(crate) mod tests {
             };
             flex.push(turn(croup).inverse() * turn(withers));
         }
-        // Not a rigid block: the croup and the withers turn apart and back.
+        // No es un bloque rígido: la grupa y la cruz giran por separado y
+        // vuelven.
         let bend = flex
             .iter()
             .map(|q| q.angle_between(flex[0]))
@@ -1131,8 +1150,8 @@ pub(crate) mod tests {
         assert!(bend > 0.1, "the horse's back bends over a stride: {bend}");
     }
 
-    /// `visual` riding at `speed` (a gallop) `flight` of the way through a
-    /// jump, for one frame.
+    /// `visual` cabalgando a `speed` (un galope) en la fracción `flight` de un
+    /// salto, durante un frame.
     fn fly(app: &mut App, me: Entity, flight: Option<f32>) {
         app.world_mut().entity_mut(me).insert(VisualPose {
             animation: AnimationState::Gallop,
@@ -1143,8 +1162,8 @@ pub(crate) mod tests {
         app.update();
     }
 
-    /// The playing rig: a scene spawned again under load leaves a fresh,
-    /// unstarted one beside it until it settles.
+    /// El rig que se reproduce: una escena creada de nuevo bajo carga deja uno
+    /// nuevo, sin empezar, a su lado hasta que se estabiliza.
     fn rig_of(app: &mut App) -> (Entity, [f32; CLIP_COUNT]) {
         let world = app.world_mut();
         let (_, rig) = world
@@ -1155,9 +1174,9 @@ pub(crate) mod tests {
         (rig.player, rig.weights)
     }
 
-    /// Each leg's hoof (its IK target) from its top joint (the hind hip,
-    /// the front elbow), in the horse's body frame: `[front L, front R,
-    /// hind L, hind R]`.
+    /// El vaso de cada pata (su objetivo de IK) desde su articulación superior
+    /// (la cadera trasera, el codo delantero), en el marco del cuerpo del
+    /// caballo: `[front L, front R, hind L, hind R]`.
     fn hooves_from_joints(app: &App, carrier: Entity) -> [Vec3; 4] {
         let world = app.world();
         let to_body = world
@@ -1199,7 +1218,7 @@ pub(crate) mod tests {
             let active = player.animation(node).unwrap();
             (active.seek_time(), active.speed())
         };
-        // The toes and the body in the horse's body frame.
+        // Las puntas y el cuerpo en el marco del cuerpo del caballo.
         let in_body = |app: &App, names: &[&str]| -> Vec<Vec3> {
             let world = app.world();
             let to_body = world
@@ -1225,7 +1244,7 @@ pub(crate) mod tests {
                 .unwrap();
             bones.armature.transform_point3(bones.body_rest).y
         };
-        // The gallop: the jump clip at nothing, and the hooves' ground.
+        // El galope: el clip de salto en cero, y el suelo de los vasos.
         let mut ground = f32::MAX;
         for _ in 0..80 {
             ride(&mut app, me, 12.2);
@@ -1236,7 +1255,7 @@ pub(crate) mod tests {
         }
         let (_, galloping) = rig_of(&mut app);
         assert!(galloping[jump] < 1e-3 && galloping[Clip::Gallop.index()] > 0.95);
-        // The flight spans the clip's own flight, whole.
+        // El vuelo abarca el propio vuelo del clip, entero.
         assert_eq!(jump_time(0.0), JUMP_FLIGHT.0);
         assert_eq!(jump_time(1.0), JUMP_FLIGHT.1);
         let legs = [
@@ -1251,8 +1270,8 @@ pub(crate) mod tests {
             for _ in 0..10 {
                 fly(&mut app, me, Some(flight));
             }
-            // The jump clip is set to the flight's point, never played by
-            // the clock.
+            // El clip de salto se fija en el punto del vuelo, nunca se
+            // reproduce con el reloj.
             let (_, weights) = rig_of(&mut app);
             assert!(weights[jump] > 0.99, "{flight}: {weights:?}");
             assert!(
@@ -1262,8 +1281,8 @@ pub(crate) mod tests {
             let (at, speed) = seek(&mut app);
             assert!((at - jump_time(flight)).abs() < 1e-3, "{flight}: {at}");
             assert_eq!(speed, 0.0);
-            // In the air the body keeps its height: the clip's own rise
-            // taken out.
+            // En el aire el cuerpo conserva su altura: se quita la elevación
+            // propia del clip.
             if [0.0, 0.2, 0.5, 0.8, 1.0].contains(&flight) {
                 let height = in_body(&app, &["Body"])[0].y;
                 assert!(
@@ -1271,10 +1290,10 @@ pub(crate) mod tests {
                     "{flight}: {height} against rest {body_rest}"
                 );
             }
-            // The hooves hang from IK targets under the armature, not from
-            // the legs: the clip keeps each target on its leg's end (within
-            // 4 cm, where its IK falls short), and taking the clip's rise
-            // out of the body must not leave the targets behind.
+            // Los vasos cuelgan de objetivos de IK bajo el armature, no de las
+            // patas: el clip mantiene cada objetivo en el extremo de su pata (a
+            // menos de 4 cm, donde su IK no llega), y quitar del cuerpo la
+            // elevación del clip no debe dejar atrás los objetivos.
             if (0.1..=0.9).contains(&flight) {
                 let world = app.world();
                 let at = |n: &str| {
@@ -1289,21 +1308,22 @@ pub(crate) mod tests {
                 }
             }
             let hooves = hooves_from_joints(&app, carrier);
-            // Leaving the ground: each hind leg reaches back and down from
-            // the hip, near its full length (the plain clip still has it
-            // under the belly there, its hoof ahead of the hip).
+            // Al dejar el suelo: cada pata trasera se estira hacia atrás y
+            // hacia abajo desde la cadera, cerca de su largo completo (el clip
+            // solo todavía la tiene bajo la panza en ese punto, con el vaso por
+            // delante de la cadera).
             if flight == 0.05 {
                 for leg in &hooves[2..] {
                     assert!(leg.x < -0.3 && leg.length() > 1.0, "pushing: {leg}");
                 }
             }
             if flight == 0.5 {
-                // Mid-flight the push is gone: folded up, the hoof under
-                // the belly.
+                // A mitad del vuelo el impulso ya terminó: plegada hacia
+                // arriba, con el vaso bajo la panza.
                 for leg in &hooves[2..] {
                     assert!(leg.x > 0.1 && leg.length() < 1.0, "folded: {leg}");
                 }
-                // At the top all four hooves are tucked off the ground.
+                // En lo alto los cuatro vasos están recogidos, lejos del suelo.
                 for (leg, toe) in in_body(&app, &toes).iter().enumerate() {
                     assert!(
                         toe.y > ground + 0.1,
@@ -1312,20 +1332,20 @@ pub(crate) mod tests {
                     );
                 }
             }
-            // At the top the forelegs tuck up close to the elbows: the
-            // plain clip leaves the front hooves about 0.72 m from them
-            // there, on average.
+            // En lo alto las manos se recogen cerca de los codos: el clip solo
+            // deja los vasos delanteros a unos 0.72 m de ellos en ese punto, en
+            // promedio.
             if flight == 0.45 || flight == 0.5 {
                 let [l, r, ..] = hooves;
                 let reach = (l.length() + r.length()) / 2.0;
                 assert!(reach < 0.66, "flight {flight}: {l} {r}");
             }
-            // A held point does not creep on.
+            // Un punto fijado no sigue avanzando.
             fly(&mut app, me, Some(flight));
             assert_eq!(seek(&mut app).0, at, "{flight}");
         }
-        // Landed: back to the gallop, the jump at nothing, and it stays
-        // there (the clip is not left looping).
+        // Aterrizado: de vuelta al galope, el salto en cero, y se queda ahí (el
+        // clip no queda en bucle).
         for _ in 0..60 {
             ride(&mut app, me, 12.2);
         }
@@ -1333,17 +1353,18 @@ pub(crate) mod tests {
         assert!(weights[jump] < 1e-3, "{weights:?}");
         assert!(weights[Clip::Gallop.index()] > 0.95, "{weights:?}");
         assert!((seek(&mut app).0 - JUMP_FLIGHT.1).abs() < 1e-3);
-        // The stride clips' weights are as the gait alone makes them.
+        // Los pesos de los clips de zancada son los que da el andar solo.
         let goal = gait_weights(Clip::Idle, Clip::Gallop, 12.2);
         for (w, g) in weights.iter().zip(goal) {
             assert!((w - g).abs() < 0.05, "{weights:?} vs {goal:?}");
         }
     }
 
-    /// Writes CPU-skinned frames to `PAMPA_PREVIEW` (a folder) for the
-    /// offline preview renderer: a ridden horse standing (and settled),
-    /// walking and through a gallop's loop, braking from the gallop to a
-    /// stand and from a walk to a stand, and a tied horse. Run by hand:
+    /// Escribe frames con skinning en CPU en `PAMPA_PREVIEW` (una carpeta) para
+    /// el renderizador de vistas previas offline: un caballo montado parado (y
+    /// asentado), caminando y a lo largo de un ciclo de galope, frenando del
+    /// galope hasta parar y de una caminata hasta parar, y un caballo atado. Se
+    /// ejecuta a mano:
     /// `PAMPA_PREVIEW=/some/dir cargo test -p pampa-render -- --ignored preview`.
     #[test]
     #[ignore = "writes preview files"]
@@ -1360,7 +1381,7 @@ pub(crate) mod tests {
             let drawn = cpu::drawn(app.world_mut(), Some(me));
             cpu::write(&dir.join(format!("{name}.txt")), &drawn);
         };
-        // Steady paces: 20 ms frames, every other one written.
+        // Ritmos constantes: frames de 20 ms, y se escribe uno de cada dos.
         for (name, speed, frames) in [("walk", 1.5, 24), ("gallop", 12.2, 16), ("trot", 4.5, 8)] {
             let (mut app, me) = saddled_every(rider, speed, 20);
             for _ in 0..60 {
@@ -1372,7 +1393,7 @@ pub(crate) mod tests {
                 dump(&mut app, me, format!("{name}_{k:02}"));
             }
         }
-        // Braking as hard as logic does (8 m/s²): every 0.1 s.
+        // Frenando tan fuerte como lo hace la lógica (8 m/s²): cada 0.1 s.
         for (name, from) in [("slowdown", 12.2f32), ("walkstop", 1.5)] {
             let (mut app, me) = saddled_every(rider, from, 20);
             for _ in 0..60 {
@@ -1387,8 +1408,8 @@ pub(crate) mod tests {
                 dump(&mut app, me, format!("{name}_{k:02}"));
             }
         }
-        // A jump at full gallop, as logic flies it (about 1.1 s): every
-        // 0.1 s through the flight, then the landing.
+        // Un salto a galope tendido, tal como lo vuela la lógica (alrededor de
+        // 1.1 s): cada 0.1 s a lo largo del vuelo, y después el aterrizaje.
         let (mut app, me) = saddled_every(rider, 12.2, 20);
         for _ in 0..60 {
             ride(&mut app, me, 12.2);
@@ -1406,7 +1427,7 @@ pub(crate) mod tests {
             }
             dump(&mut app, me, format!("landing_{k:02}"));
         }
-        // Standing: at once, and settled after a few seconds.
+        // Parado: enseguida, y asentado después de unos segundos.
         let (mut app, me) = saddled_every(rider, 0.0, 20);
         dump(&mut app, me, "idle_00".into());
         for k in 1..4 {
@@ -1431,16 +1452,18 @@ pub(crate) mod tests {
         panic!("no {name}");
     }
 
-    /// How fast each frame's planted hooves (toes within 1.5 cm of the
-    /// lowest) slide back in the horse's body frame, m/s, over `frames`
-    /// frames `dt` seconds long: their median.
+    /// Qué tan rápido se deslizan hacia atrás en el marco del cuerpo del
+    /// caballo los vasos apoyados de cada frame (puntas a menos de 1.5 cm de la
+    /// más baja), en m/s, a lo largo de `frames` frames de `dt` segundos: su
+    /// mediana.
     fn hoof_slide(app: &mut App, me: Entity, frames: usize, dt: f32) -> f32 {
         let carrier = app.world().get::<Children>(me).unwrap()[0];
         let mut tracks = Vec::new();
         for _ in 0..frames {
             app.update();
             let world = app.world();
-            // Found afresh: a scene spawned again has new bones.
+            // Ubicados de nuevo: una escena creada otra vez tiene huesos
+            // nuevos.
             let toes = ["FF.L_end", "FF.R_end", "FFB.L_end", "FFB.R_end"]
                 .map(|n| named(world, carrier, n));
             let body = world
@@ -1452,7 +1475,7 @@ pub(crate) mod tests {
                 body.transform_point3(world.get::<GlobalTransform>(t).unwrap().translation())
             }));
         }
-        // Each hoof's own ground: the lowest it goes.
+        // El suelo propio de cada vaso: lo más bajo que llega.
         let ground: [f32; 4] =
             std::array::from_fn(|k| tracks.iter().map(|t| t[k].y).fold(f32::MAX, f32::min));
         let mut slides: Vec<f32> = tracks
@@ -1470,10 +1493,11 @@ pub(crate) mod tests {
         slides[slides.len() / 2]
     }
 
-    /// Starts `app`'s horses' clips again from their seeded points, on
-    /// clips already blended in: how long their files took to load (and so
-    /// how many frames they played while [`saddled_every`] waited) no
-    /// longer decides where in its loop a measure starts.
+    /// Vuelve a empezar los clips de los caballos de `app` desde sus puntos con
+    /// semilla, sobre clips ya mezclados: cuánto tardaron en cargar sus
+    /// archivos (y por lo tanto cuántos frames se reprodujeron mientras
+    /// [`saddled_every`] esperaba) ya no decide en qué punto de su ciclo
+    /// empieza una medición.
     fn from_the_seeded_start(app: &mut App) {
         let world = app.world_mut();
         let nodes = world
@@ -1523,12 +1547,14 @@ pub(crate) mod tests {
             println!(
                 "{speed} m/s: hooves back at {back:.2} m/s (rate {rate:.2}, natural {natural:.2}), slide {slide:.2} m/s"
             );
-            // The stretched loop shows the speed it is paced by.
+            // El ciclo estirado muestra la velocidad con la que se marca su
+            // ritmo.
             assert!((natural / GALLOP_SPEED - 1.0).abs() < 0.06, "{natural}");
             if speed <= GALLOP_SPEED * GALLOP_RATE.1 {
                 assert!(slide.abs() < 0.5, "{speed} m/s: slides {slide} m/s");
             } else {
-                // Past the cap (the dev turbo) it slides, no faster.
+                // Pasado el tope (el turbo de desarrollo) se desliza, sin ir
+                // más rápido.
                 assert!(slide > 0.0 && slide < speed - GALLOP_SPEED * GALLOP_RATE.1 + 0.5);
             }
         }
@@ -1576,7 +1602,8 @@ pub(crate) mod tests {
         }
         let (weight, rate) = walk(&mut app);
         assert!(weight > 0.2 && weight < 0.95, "{weight}");
-        // Above the walk's slowest rate, so the steps do not drag.
+        // Por encima del ritmo mínimo de la caminata, para que los pasos no se
+        // arrastren.
         assert!(rate > RATE.0 + 0.05 && rate <= 0.5, "{rate}");
         app.world_mut().entity_mut(me).insert(VisualPose::default());
         for _ in 0..40 {
@@ -1594,7 +1621,8 @@ pub(crate) mod tests {
         let speed = 1.5;
         let (mut app, me) = saddled_every(rider, speed, 10);
         from_the_seeded_start(&mut app);
-        // Over a walk's loop and more each way (1.17 s).
+        // A lo largo de un ciclo de caminata y algo más hacia cada lado
+        // (1.17 s).
         let ahead = hoof_slide(&mut app, me, 150, 0.01);
         app.world_mut().entity_mut(me).insert(VisualPose {
             animation: AnimationState::Walk,
@@ -1610,9 +1638,10 @@ pub(crate) mod tests {
         );
     }
 
-    /// Per frame of `app`'s horse under `me`: the lowest toe (body frame),
-    /// the furthest any hoof stands from its leg's end, and each leg
-    /// bone's turn away from `rest` (by [`LEG_BONES`]).
+    /// Por cada frame del caballo de `app` bajo `me`: la punta más baja (marco
+    /// del cuerpo), lo más lejos que está cualquier vaso del extremo de su
+    /// pata, y el giro de cada hueso de pata respecto de `rest` (según
+    /// [`LEG_BONES`]).
     const LEG_BONES: [&str; 14] = [
         "FrontUpperLeg.L",
         "FrontUpperLeg.R",
@@ -1672,8 +1701,9 @@ pub(crate) mod tests {
         (low, apart, turns)
     }
 
-    /// Plays `app`'s horse at each speed of `speeds` for a frame, logic's
-    /// animation following the speed as the rider's does.
+    /// Reproduce el caballo de `app` a cada velocidad de `speeds` durante un
+    /// frame, con la animación de la lógica siguiendo la velocidad como lo hace
+    /// la del jinete.
     pub(crate) fn ride(app: &mut App, me: Entity, speed: f32) {
         let animation = if speed > 3.0 {
             AnimationState::Gallop
@@ -1706,7 +1736,7 @@ pub(crate) mod tests {
             })
             .map(|t| t.rotation)
             .collect();
-        // The limits: as far as each bone turns at steady paces.
+        // Los límites: lo más lejos que gira cada hueso a ritmos constantes.
         let mut limit = vec![0.0f32; LEG_BONES.len()];
         for speed in [0.0, 1.5, 3.0, 4.5, 8.0, 12.2] {
             for frame in 0..60 {
@@ -1719,8 +1749,8 @@ pub(crate) mod tests {
                 }
             }
         }
-        // Braking hard (8 m/s², logic's) and coasting (3 m/s²) from the top
-        // speed and from a walk, to a stand.
+        // Frenando fuerte (8 m/s², el de la lógica) y avanzando por inercia
+        // (3 m/s²) desde la velocidad máxima y desde una caminata, hasta parar.
         for (from, frames) in [(12.2f32, 76), (12.2, 200), (1.5, 10), (1.5, 25)] {
             for _ in 0..40 {
                 ride(&mut app, me, from);

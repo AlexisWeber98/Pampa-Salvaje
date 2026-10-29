@@ -1,19 +1,22 @@
-//! The pampa's animals (first pass): cattle grazing inside the fenced
-//! fields, loose horses in the corrals, hares in the open grass, teros on
-//! the ground, chimangos soaring overhead and ducks on the lagoons.
+//! Los animales de la pampa (primera versión): ganado que pasta dentro de los
+//! campos alambrados, caballos sueltos en los corrales, liebres en el pasto
+//! abierto, teros en el suelo, chimangos planeando en lo alto y patos en las
+//! lagunas.
 //!
-//! [`FaunaSite`] seeds where they live, deterministically from the terrain
-//! seed: a herd per some fenced fields ([`Herd`]), horses per corral
-//! ([`TetheredHorse`]s standing in it), and hares, tero flocks and raptors
-//! per chunk ([`Hare`], [`Flock`], [`Raptor`]), duck rafts per lagoon
-//! ([`Duck`]). The game spawns what lies in the chunks round the player,
-//! nearest first, up to [`caps`], and steps each animal; render draws them.
+//! [`FaunaSite`] siembra dónde viven, de forma determinista a partir de la
+//! semilla del terreno: un rodeo en algunos de los campos alambrados
+//! ([`Herd`]), caballos en cada corral ([`TetheredHorse`]s parados adentro), y
+//! liebres, bandadas de teros y aves rapaces por chunk ([`Hare`], [`Flock`],
+//! [`Raptor`]), y grupos de patos por laguna ([`Duck`]). El juego hace aparecer
+//! lo que hay en los chunks alrededor del jugador, del más cercano al más
+//! lejano, hasta [`caps`], y hace avanzar a cada animal; el render los dibuja.
 //!
-//! A herd lives in a *pasture*: a box inside one fenced survey cell,
-//! [`FaunaSite::FENCE_MARGIN`] off its wire, every point of it clear of
-//! the roads (and their roadside fences), the towns, the lagoons, the
-//! railway and the settlements. A pasture is convex, so a cow wandering
-//! anywhere inside it never crosses a road or a fence.
+//! Un rodeo vive en un *potrero*: un rectángulo dentro de una celda alambrada
+//! del relevamiento, a [`FaunaSite::FENCE_MARGIN`] de su alambre, con cada uno
+//! de sus puntos lejos de los caminos (y de sus alambrados al costado del
+//! camino), los pueblos, las lagunas, la vía férrea y los asentamientos. Un
+//! potrero es convexo, así que una vaca que deambula por cualquier parte de él
+//! nunca cruza un camino ni un alambrado.
 
 mod herd;
 mod wild;
@@ -32,7 +35,8 @@ use crate::{
     SettlementLayout, StructureKind, Terrain, TetheredHorse, Vec2, WorldConfig,
 };
 
-/// Most animals of each kind simulated and drawn near the player at once.
+/// Máximo de animales de cada tipo que se simulan y dibujan a la vez cerca del
+/// jugador.
 pub mod caps {
     pub const COWS: usize = 160;
     pub const HORSES: usize = 16;
@@ -42,7 +46,7 @@ pub mod caps {
     pub const DUCKS: usize = 32;
 }
 
-/// Where the animals live (see the module docs).
+/// Dónde viven los animales (ver la documentación del módulo).
 #[derive(Debug, Clone, PartialEq)]
 pub struct FaunaSite {
     config: WorldConfig,
@@ -52,43 +56,48 @@ pub struct FaunaSite {
     rail: Vec<(Vec2, Vec2)>,
     keep_out: Arc<KeepOut>,
     herds: Vec<Herd>,
-    /// By the settlement's hub: the horses standing in its corrals.
+    /// Según el centro del asentamiento: los caballos parados en sus corrales.
     horses: Vec<(Vec2, TetheredHorse)>,
     ducks: Vec<Duck>,
     seed: u32,
 }
 
-/// Mixed into the terrain seed for the fauna.
+/// Se mezcla con la semilla del terreno para la fauna.
 const FAUNA_SEED: u32 = 0xfa0a_1919;
 
 impl FaunaSite {
-    /// Share of the fenced fields that hold a herd.
+    /// Proporción de los campos alambrados que tienen un rodeo.
     pub const HERD_CHANCE: f32 = 0.55;
-    /// Fewest and most head in a herd.
+    /// Mínimo y máximo de cabezas en un rodeo.
     pub const HERD_SIZE: (usize, usize) = (6, 20);
-    /// Smallest and largest side of a pasture, in meters.
+    /// Lado más chico y más grande de un potrero, en metros.
     pub const PASTURE: (f32, f32) = (70.0, 150.0);
-    /// Least distance from a pasture to its field's survey lines, meters.
+    /// Distancia mínima desde un potrero hasta las líneas del relevamiento de
+    /// su campo, en metros.
     pub const FENCE_MARGIN: f32 = 4.0;
-    /// Spacing of the clearance samples over a pasture, in meters.
+    /// Separación de las muestras de despeje sobre un potrero, en metros.
     pub const SAMPLE: f32 = 6.0;
-    /// Least distance from a pasture to a road's centerline: past its
-    /// roadside fence, with a sample's reach to spare.
+    /// Distancia mínima desde un potrero hasta la línea central de un camino:
+    /// más allá de su alambrado al costado del camino, con el alcance de una
+    /// muestra de margen.
     pub const ROAD_MARGIN: f32 = FenceLayout::ROADSIDE + 6.0;
-    /// Least distance from grazing ground to the railway, in meters.
+    /// Distancia mínima desde el terreno de pastoreo hasta la vía férrea, en
+    /// metros.
     pub const RAIL_MARGIN: f32 = 20.0;
-    /// Least distance from grazing ground past a town's leveled band.
+    /// Distancia mínima desde el terreno de pastoreo más allá de la franja
+    /// nivelada de un pueblo.
     pub const TOWN_MARGIN: f32 = 30.0;
-    /// Chance of a hare in a chunk, tried twice.
+    /// Probabilidad de que haya una liebre en un chunk, con dos intentos.
     pub const HARE_CHANCE: f32 = 0.35;
-    /// Chance of a tero flock in a chunk.
+    /// Probabilidad de que haya una bandada de teros en un chunk.
     pub const FLOCK_CHANCE: f32 = 0.3;
-    /// Chance of a chimango or carancho circling over a chunk.
+    /// Probabilidad de que un chimango o un carancho vuele en círculos sobre un
+    /// chunk.
     pub const RAPTOR_CHANCE: f32 = 0.12;
 
-    /// The fauna of `config`'s world: `terrain` (leveled, with its roads and
-    /// lagoons), its `fences` and `settlements`, and the railway's whole
-    /// path as `rail` points.
+    /// La fauna del mundo de `config`: `terrain` (nivelado, con sus caminos y
+    /// lagunas), sus `fences` y `settlements`, y el recorrido completo de la
+    /// vía férrea como puntos `rail`.
     pub fn new(
         config: WorldConfig,
         terrain: &Terrain,
@@ -123,17 +132,17 @@ impl FaunaSite {
         site
     }
 
-    /// The world it was seeded for.
+    /// El mundo para el que se sembró.
     pub fn config(&self) -> WorldConfig {
         self.config
     }
 
-    /// Every herd of the world.
+    /// Todos los rodeos del mundo.
     pub fn herds(&self) -> &[Herd] {
         &self.herds
     }
 
-    /// The herds whose pasture's middle lies in chunk `coord`.
+    /// Los rodeos cuyo potrero tiene el centro en el chunk `coord`.
     pub fn herds_in(&self, coord: ChunkCoord) -> Vec<Herd> {
         let size = self.config.chunk_size;
         self.herds
@@ -143,8 +152,8 @@ impl FaunaSite {
             .collect()
     }
 
-    /// The horses standing in the corrals of the settlements whose hub
-    /// lies in chunk `coord`.
+    /// Los caballos parados en los corrales de los asentamientos cuyo centro
+    /// está en el chunk `coord`.
     pub fn horses_in(&self, coord: ChunkCoord) -> Vec<TetheredHorse> {
         let size = self.config.chunk_size;
         self.horses
@@ -154,12 +163,12 @@ impl FaunaSite {
             .collect()
     }
 
-    /// Every corral horse of the world.
+    /// Todos los caballos de corral del mundo.
     pub fn all_horses(&self) -> impl Iterator<Item = &TetheredHorse> + '_ {
         self.horses.iter().map(|(_, h)| h)
     }
 
-    /// The ducks whose raft's home lies in chunk `coord`.
+    /// Los patos cuyo grupo tiene su lugar de origen en el chunk `coord`.
     pub fn ducks_in(&self, coord: ChunkCoord) -> Vec<Duck> {
         let size = self.config.chunk_size;
         self.ducks
@@ -169,7 +178,7 @@ impl FaunaSite {
             .collect()
     }
 
-    /// The hares of chunk `coord`, sitting in open grass.
+    /// Las liebres del chunk `coord`, echadas en el pasto abierto.
     pub fn hares_in(&self, coord: ChunkCoord) -> Vec<Hare> {
         let mut rng = self.chunk_rng(coord, 1);
         (0..2)
@@ -183,7 +192,7 @@ impl FaunaSite {
             .collect()
     }
 
-    /// The tero flock of chunk `coord`, if it has one.
+    /// La bandada de teros del chunk `coord`, si tiene una.
     pub fn flocks_in(&self, coord: ChunkCoord) -> Vec<Flock> {
         let mut rng = self.chunk_rng(coord, 2);
         if rng.unit() >= Self::FLOCK_CHANCE {
@@ -196,7 +205,8 @@ impl FaunaSite {
             .collect()
     }
 
-    /// The raptor circling over chunk `coord`, if any.
+    /// El ave rapaz que vuela en círculos sobre el chunk `coord`, si hay
+    /// alguna.
     pub fn raptors_in(&self, coord: ChunkCoord) -> Vec<Raptor> {
         let mut rng = self.chunk_rng(coord, 3);
         if !self.config.has_chunk(coord) || rng.unit() >= Self::RAPTOR_CHANCE {
@@ -208,7 +218,8 @@ impl FaunaSite {
         vec![Raptor::new(center, rng.next())]
     }
 
-    /// Chunk `coord`'s ground: the home its wild animals keep to.
+    /// El terreno del chunk `coord`: el hogar del que no se alejan sus animales
+    /// silvestres.
     fn home(&self, coord: ChunkCoord) -> Aabb {
         coord.bounds(self.config.chunk_size)
     }
@@ -220,8 +231,9 @@ impl FaunaSite {
         )
     }
 
-    /// A clear spot of open grass in chunk `coord`: clear of roads, towns,
-    /// lagoons, the railway and settlements. A few tries.
+    /// Un lugar despejado de pasto abierto en el chunk `coord`: lejos de
+    /// caminos, pueblos, lagunas, la vía férrea y los asentamientos. Hace unos
+    /// pocos intentos.
     fn open_spot(&self, coord: ChunkCoord, rng: &mut Rng) -> Option<Vec2> {
         if !self.config.has_chunk(coord) {
             return None;
@@ -237,15 +249,15 @@ impl FaunaSite {
             .find(|&p| self.grazeable(p))
     }
 
-    /// Whether animals may graze at `p`: inside the world, clear of every
-    /// road (past its roadside fence), town, lagoon bank, the railway and
-    /// every settlement.
+    /// Si los animales pueden pastar en `p`: dentro del mundo, lejos de todo
+    /// camino (más allá de su alambrado al costado del camino), pueblo, orilla
+    /// de laguna, la vía férrea y todo asentamiento.
     pub fn grazeable(&self, p: Vec2) -> bool {
         let inner = self.config.bounds();
         if p.x.abs() > inner.max.x - 20.0 || p.y.abs() > inner.max.y - 20.0 {
             return false;
         }
-        // The margin is well inside the road index's reach.
+        // El margen queda bien dentro del alcance del índice de caminos.
         let off_roads = self
             .roads
             .as_ref()
@@ -267,7 +279,7 @@ impl FaunaSite {
             && self.keep_out.is_clear(p, KeepOut::MAX_MARGIN)
     }
 
-    /// Whether every sample over `pasture` is grazeable.
+    /// Si todas las muestras sobre `pasture` sirven para pastar.
     fn clear_pasture(&self, pasture: Aabb) -> bool {
         let size = pasture.size();
         let (nx, ny) = (
@@ -282,7 +294,7 @@ impl FaunaSite {
         })
     }
 
-    /// One herd for some fenced fields, in a clear pasture of their own.
+    /// Un rodeo para algunos campos alambrados, en un potrero despejado propio.
     fn seed_herds(&self, fences: &FenceLayout) -> Vec<Herd> {
         let (xs, ys) = &fences.surveyed;
         let mut herds = Vec::new();
@@ -305,7 +317,7 @@ impl FaunaSite {
         herds
     }
 
-    /// A clear pasture inside `field`, a few tries.
+    /// Un potrero despejado dentro de `field`, con unos pocos intentos.
     fn pasture(&self, field: Aabb, rng: &mut Rng) -> Option<Aabb> {
         let room = field.size();
         (0..6).find_map(|_| {
@@ -323,7 +335,7 @@ impl FaunaSite {
         })
     }
 
-    /// A few rafts of ducks on every lagoon, out on open water.
+    /// Unos pocos grupos de patos en cada laguna, en aguas abiertas.
     fn seed_ducks(&self) -> Vec<Duck> {
         let mut ducks = Vec::new();
         for (l, lagoon) in self.lagoons.iter().enumerate() {
@@ -347,14 +359,14 @@ impl FaunaSite {
         ducks
     }
 
-    /// The lagoons ducks swim on, by index.
+    /// Las lagunas en las que nadan los patos, por índice.
     pub fn lagoons(&self) -> &[Lagoon] {
         &self.lagoons
     }
 }
 
-/// The horses standing loose in `settlement`'s corrals: 1–3 at an
-/// estancia's, 1–2 at a chacra's, sometimes one at a puesto's.
+/// Los caballos sueltos en los corrales de `settlement`: 1–3 en los de una
+/// estancia, 1–2 en los de una chacra y a veces uno en los de un puesto.
 fn corral_horses(settlement: &crate::Settlement, seed: u32) -> Vec<TetheredHorse> {
     let mut rng = Rng::new(seed, 0x40e5);
     let mut horses: Vec<TetheredHorse> = Vec::new();
@@ -365,7 +377,7 @@ fn corral_horses(settlement: &crate::Settlement, seed: u32) -> Vec<TetheredHorse
             SettlementKind::Outpost => usize::from(rng.unit() < 0.6),
             SettlementKind::Hut => 0,
         };
-        // Clear of the rails, a horse length's half to spare.
+        // Lejos de los rieles, con medio largo de caballo de margen.
         let inner = corral.footprint.expanded(-1.4);
         for _ in 0..count {
             let placed = (0..8).find_map(|_| {
@@ -386,7 +398,7 @@ fn corral_horses(settlement: &crate::Settlement, seed: u32) -> Vec<TetheredHorse
     horses
 }
 
-/// The shortest turn from `from` to `to`, in radians, in `(-π, π]`.
+/// El giro más corto de `from` a `to`, en radianes, en `(-π, π]`.
 pub(crate) fn turn_toward(from: Heading, to: Vec2) -> f32 {
     let want = to.y.atan2(to.x);
     let d = (want - from.radians()).rem_euclid(TAU);
@@ -399,7 +411,7 @@ mod tests {
     use crate::settlement::tests::settled;
     use crate::{LagoonConfig, StaticObstacles};
 
-    /// The fauna of the shared [`settled`] world, seeded once.
+    /// La fauna del mundo compartido [`settled`], sembrada una sola vez.
     fn site() -> &'static FaunaSite {
         static SITE: std::sync::LazyLock<FaunaSite> = std::sync::LazyLock::new(|| {
             let (world, towns, line, fences, layout) = settled();
@@ -496,8 +508,8 @@ mod tests {
             layout,
             line.full_path(towns).points(),
         );
-        // Its pasture moved off the water (or the herd is gone), and none
-        // grazes on the bank.
+        // Su potrero se alejó del agua (o el rodeo ya no está), y ninguna vaca
+        // pasta en la orilla.
         let moved = wet.herds.iter().find(|h| h.id == herd.id);
         assert!(moved.is_none_or(|h| h.pasture != herd.pasture));
         for h in &wet.herds {
@@ -556,7 +568,8 @@ mod tests {
             for hare in &h {
                 assert!(site.grazeable(hare.position));
                 assert_eq!(hare.home, home);
-                // Chased about for a while, it stays on open grass at home.
+                // Después de que la persiguen un rato, se queda en el pasto
+                // abierto de su hogar.
                 let mut hare = hare.clone();
                 for k in 0..200 {
                     let rider = hare.position + Vec2::new((k as f32 * 0.1).cos(), 0.6) * 10.0;
@@ -598,7 +611,8 @@ mod tests {
             .collect();
         let streamed: usize = chunks.iter().map(|&c| site.herds_in(c).len()).sum();
         assert_eq!(streamed, site.herds.len());
-        // A herd stepped for minutes with a rider about stays in its pasture.
+        // Un rodeo que avanza durante minutos con un jinete cerca se queda en
+        // su potrero.
         let mut herd = site.herds[0].clone();
         let none = StaticObstacles::default();
         for k in 0..3000 {

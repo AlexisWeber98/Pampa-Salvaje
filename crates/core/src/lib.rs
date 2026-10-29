@@ -1,15 +1,16 @@
-//! Pure game logic for Pampa Salvaje.
+//! Lógica pura del juego para Pampa Salvaje.
 //!
-//! This crate must never depend on Bevy or any renderer: game logic never
-//! knows how things are drawn.
+//! Este crate nunca debe depender de Bevy ni de ningún renderizador: la lógica
+//! del juego nunca sabe cómo se dibujan las cosas.
 //!
-//! # Coordinate convention
+//! # Convención de coordenadas
 //!
-//! Logic lives on a 2D ground plane: `x` points east, `y` points north.
-//! Height above the ground plane is a separate scalar sampled from
-//! [`World::ground_height`]: the [`Terrain`], raised by station platforms
-//! ([`Floor`]). Angles are radians, counter-clockwise from east, so a
-//! positive turn is a turn to the left.
+//! La lógica vive en un plano del suelo 2D: `x` apunta al este, `y` al norte.
+//! La altura sobre el plano del suelo es un escalar aparte que se muestrea con
+//! [`World::ground_height`]: el [`Terrain`], elevado por los andenes de las
+//! estaciones ([`Floor`]). Los ángulos están en radianes, en sentido
+//! antihorario desde el este, así que un giro positivo es un giro a la
+//! izquierda.
 
 pub mod abilities;
 pub mod activation;

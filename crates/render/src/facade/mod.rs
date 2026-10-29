@@ -1,15 +1,16 @@
-//! The facade kit shared by the rural settlements and the towns: a mesh
-//! builder with world-scaled UVs ([`shape`]), the shared textured PBR
-//! materials ([`materials`]), walls with their openings and the roofs over
-//! them ([`walls`]), and the Italianate dressing of a 1919 pampa front
-//! ([`italianate`]): plinths, chamfered pilasters, moulded cornices,
-//! parapets with balustrades and pedestals, framed openings and galerías.
-//! [`plaza`] dresses a town's plaza with the same pieces: curbed paths,
-//! the monument, benches and the railing.
+//! El kit de fachadas que comparten los asentamientos rurales y los pueblos: un
+//! constructor de meshes con UVs a escala de mundo ([`shape`]), los materiales
+//! PBR texturizados compartidos ([`materials`]), las paredes con sus aberturas
+//! y los techos que las cubren ([`walls`]), y la ornamentación italianizante de
+//! un frente pampeano de 1919 ([`italianate`]): zócalos, pilastras ochavadas,
+//! cornisas molduradas, parapetos con balaustradas y pedestales, aberturas
+//! enmarcadas y galerías. [`plaza`] viste la plaza de un pueblo con las mismas
+//! piezas: senderos con cordón, el monumento, los bancos y la verja.
 //!
-//! Everything is built in a structure's own space, `x` along its front,
-//! `z` out of it and `y` up from the ground at its middle, into a [`Shape`]
-//! that ends up as one mesh per [`Surface`] it wears.
+//! Todo se construye en el espacio propio de la estructura, con `x` a lo largo
+//! de su frente, `z` hacia afuera y `y` hacia arriba desde el suelo en su
+//! centro, dentro de un [`Shape`] que termina como una mesh por cada
+//! [`Surface`] que lleva.
 
 pub mod italianate;
 pub mod materials;
@@ -23,8 +24,8 @@ pub use materials::{FacadeMaterials, Livery, Surface};
 
 use bevy::prelude::*;
 
-/// Builds the shared [`FacadeMaterials`] at startup. The settlement and
-/// town plugins both add it when it is not there yet.
+/// Construye los [`FacadeMaterials`] compartidos al iniciar. Los plugins de
+/// asentamientos y de pueblos lo agregan los dos cuando todavía no está.
 pub struct FacadePlugin;
 
 impl Plugin for FacadePlugin {
@@ -33,7 +34,7 @@ impl Plugin for FacadePlugin {
     }
 }
 
-/// Adds the [`FacadePlugin`] to `app` unless another plugin already did.
+/// Agrega el [`FacadePlugin`] a `app` salvo que otro plugin ya lo haya hecho.
 pub fn ensure_plugin(app: &mut App) {
     if !app.is_plugin_added::<FacadePlugin>() {
         app.add_plugins(FacadePlugin);

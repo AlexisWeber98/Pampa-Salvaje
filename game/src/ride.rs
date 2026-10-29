@@ -1,21 +1,21 @@
-//! Riding the line train, played: F boards a standing train from its
-//! platform, F gets off at a station (or, while running, at the next one),
-//! Space skips to the next stop, and F near the middle of an empty platform
-//! waits for the next train. The game opens with the player aboard the
-//! morning train from Pico, put off automatically at Monte Nievas.
+//! Viajar en el tren de la línea, en juego: F sube a un tren detenido desde su
+//! andén, F baja en una estación (o, si está en marcha, en la siguiente),
+//! Espacio salta a la siguiente parada, y F cerca del centro de un andén vacío
+//! espera el próximo tren. El juego empieza con el jugador a bordo del tren de
+//! la mañana desde Pico, que lo baja automáticamente en Monte Nievas.
 //!
-//! The skip is a short trip ([`Trip`]): the train pulls out for real for
-//! [`LEAVING_SECONDS`] ("Próxima estación: …"), the screen fades to black,
-//! the clock and the train jump to [`pampa_core::APPROACH_LEAD`] real
-//! seconds before the next stop, and the train comes in and brakes to a
-//! stop ("Estación …"). Space during the trip shortens it.
+//! El salto es un viaje corto ([`Trip`]): el tren arranca de verdad durante
+//! [`LEAVING_SECONDS`] ("Próxima estación: …"), la pantalla hace un fundido a
+//! negro, el reloj y el tren saltan a [`pampa_core::APPROACH_LEAD`] segundos
+//! reales antes de la siguiente parada, y el tren entra y frena hasta detenerse
+//! ("Estación …"). Espacio durante el viaje lo acorta.
 //!
-//! `pampa-core` owns the rules ([`pampa_core::ride`]): every jump uses its
-//! pure state functions. This module reads the keys, plays the fade
-//! ([`ScreenFade`]) and the announcements ([`HudAnnouncement`]), keeps the
-//! seated (hidden) player in the coach and the clock at the onboard rate,
-//! shows the next station and its arrival time on the HUD ([`HudRide`]),
-//! and puts the player off on the platform.
+//! `pampa-core` es dueño de las reglas ([`pampa_core::ride`]): cada salto usa
+//! sus funciones de estado puras. Este módulo lee las teclas, reproduce el
+//! fundido ([`ScreenFade`]) y los anuncios ([`HudAnnouncement`]), mantiene al
+//! jugador sentado (oculto) en el coche y el reloj al ritmo de a bordo, muestra
+//! la siguiente estación y su hora de llegada en el HUD ([`HudRide`]), y baja
+//! al jugador en el andén.
 
 use bevy::prelude::*;
 use pampa_core::{
@@ -31,64 +31,67 @@ use pampa_render::{
 use crate::errand::INTERACT_KEY;
 use crate::player::{DrivePlayer, GameWorld, Player, drive_player};
 
-/// Skips the rest of a train ride to the next stop.
+/// Omite el resto de un viaje en tren hasta la siguiente parada.
 pub const SKIP_KEY: KeyCode = KeyCode::Space;
 
-/// What the player says trying to board on horseback.
+/// Lo que dice el jugador al intentar subir a caballo.
 pub const DISMOUNT_FIRST: &str = "Primero bajate del caballo";
 
-/// The player is riding a train, seated (and hidden) in a coach.
+/// El jugador viaja en un tren, sentado (y oculto) en un coche.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct OnTrain(pub Ride);
 
-/// The ride the player starts the game on, if any (the opening).
+/// El viaje con el que el jugador empieza el juego, si lo hay (la apertura).
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
 pub struct StartAboard(pub Option<Ride>);
 
-/// Real seconds the train pulls out before a skip fades to black.
+/// Segundos reales que el tren avanza antes de que un salto haga el fundido a
+/// negro.
 pub const LEAVING_SECONDS: f32 = 3.0;
 
-/// Real seconds a station announcement stays on screen.
+/// Segundos reales que un anuncio de estación queda en pantalla.
 pub const ANNOUNCE_SECONDS: f32 = 3.0;
 
-/// Real seconds between the train stopping and the player getting off
-/// where the ride ends: long enough to read "Estación …".
+/// Segundos reales entre que el tren se detiene y el jugador se baja donde
+/// termina el viaje: lo suficiente para leer "Estación …".
 pub const ALIGHT_DELAY: f32 = 2.0;
 
-/// A jump in time waiting for the fade to reach black.
+/// Un salto en el tiempo que espera a que el fundido llegue al negro.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Jump {
-    /// Skip the ride to just before the next stop.
+    /// Saltar el viaje hasta justo antes de la siguiente parada.
     Approach,
-    /// Wait on this platform (a town's station platform or its bay
-    /// platform) for the next train that stops at it.
+    /// Esperar en este andén (el andén de la estación de un pueblo o el de su
+    /// vía muerta) el próximo tren que pare en él.
     Wait(WaitingPlace),
 }
 
-/// Where a skipped ride (Space aboard) is.
+/// En qué punto está un viaje saltado (Espacio a bordo).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TripPhase {
-    /// Pulling out for real, this many real seconds left before the fade.
+    /// Arrancando de verdad, con esta cantidad de segundos reales antes del
+    /// fundido.
     Leaving(f32),
-    /// Fading to black, to jump to just before the next stop.
+    /// Fundido a negro, para saltar a justo antes de la siguiente parada.
     Fading,
-    /// Coming in for real, until the train stands at the station.
+    /// Entrando de verdad, hasta que el tren queda detenido en la estación.
     Arriving,
 }
 
-/// The skipped ride underway, if any.
+/// El viaje saltado en curso, si lo hay.
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
 pub struct Trip(pub Option<TripPhase>);
 
-/// The station announcement on screen and its real seconds left.
+/// El anuncio de estación en pantalla y sus segundos reales restantes.
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
 pub struct AnnounceTimer(pub f32);
 
-/// Real seconds left before the player is put off where the ride ends.
+/// Segundos reales restantes antes de que el jugador se baje donde termina el
+/// viaje.
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
 pub struct PutOffIn(pub Option<f32>);
 
-/// The jump the running fade will make, if any.
+/// El salto que hará el fundido en curso, si lo hay.
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
 pub struct PendingJump(pub Option<Jump>);
 
@@ -123,14 +126,14 @@ impl Plugin for RidePlugin {
     }
 }
 
-/// What the ride systems read of the world.
+/// Lo que leen del mundo los sistemas del viaje.
 type Line<'w> = (
     Option<ResMut<'w, WorldTrains>>,
     Option<Res<'w, WorldTowns>>,
     ResMut<'w, GameWorld>,
 );
 
-/// The player as the ride systems change them.
+/// El jugador tal como lo cambian los sistemas del viaje.
 type Passenger<'a> = (
     Entity,
     &'a mut Player,
@@ -138,7 +141,7 @@ type Passenger<'a> = (
     Option<&'a mut OnTrain>,
 );
 
-/// What the ride keys change besides the player.
+/// Lo que cambian las teclas del viaje además del jugador.
 type RideState<'w> = (
     ResMut<'w, ScreenFade>,
     ResMut<'w, PendingJump>,
@@ -146,9 +149,9 @@ type RideState<'w> = (
     Option<ResMut<'w, WorldClock>>,
 );
 
-/// Makes `jump` (a clock jump of the ridden train: [`depart_now`],
-/// [`skip_ride`], [`skip_to_approach`]) and brings every other train along
-/// with the clock.
+/// Hace `jump` (un salto de reloj del tren en el que se viaja: [`depart_now`],
+/// [`skip_ride`], [`skip_to_approach`]) y lleva a todos los demás trenes junto
+/// con el reloj.
 fn ridden_jump<R>(
     trains: &mut [LineTrain],
     ridden: usize,
@@ -161,9 +164,9 @@ fn ridden_jump<R>(
     done
 }
 
-/// The keys: F boards, gets off or waits; Space skips the ride (or
-/// shortens a skip underway). A key used here is cleared, so the errand
-/// does not also act on it.
+/// Las teclas: F sube, baja o espera; Espacio salta el viaje (o acorta un salto
+/// en curso). Una tecla usada aquí se borra, para que el encargo no actúe
+/// también sobre ella.
 pub(crate) fn ride_keys(
     mut commands: Commands,
     keys: Option<ResMut<ButtonInput<KeyCode>>>,
@@ -198,8 +201,8 @@ pub(crate) fn ride_keys(
         {
             match trip.0 {
                 None => {
-                    // Pull out now (the rest of the dwell is invisible: the
-                    // train stands still), then ride for a moment.
+                    // Arrancar ya (el resto de la parada es invisible: el tren
+                    // está quieto), y luego viajar un momento.
                     ridden_jump(&mut trains.0, ridden, &mut clock.0, depart_now);
                     world.0.moving = trains.obstacles();
                     trip.0 = Some(TripPhase::Leaving(LEAVING_SECONDS));
@@ -228,7 +231,7 @@ pub(crate) fn ride_keys(
                 world: &world.0,
             };
             if !(standing && alight.put_off(me, &mut player.rider, &mut transform, ride)) {
-                // Running: get off at the next stop.
+                // En marcha: bajarse en la siguiente parada.
                 let now = clock.as_ref().map(|c| c.0);
                 if let Some((station, _)) = now.and_then(|c| next_arrival(train, &c)) {
                     on_train.0.alight_at = Some(station);
@@ -269,8 +272,8 @@ pub(crate) fn ride_keys(
     }
 }
 
-/// Runs the skipped ride: after pulling out, the fade to black; once the
-/// train stands at the next station, the trip is over.
+/// Ejecuta el viaje saltado: después de arrancar, el fundido a negro; una vez
+/// que el tren está detenido en la siguiente estación, el viaje termina.
 fn run_trip(
     time: Res<Time>,
     mut trip: ResMut<Trip>,
@@ -306,9 +309,9 @@ fn run_trip(
     }
 }
 
-/// Runs the fade and, at full black, makes the pending jump: the clock and
-/// the train land just before the next stop (skip) or on the next train at
-/// the platform (wait).
+/// Ejecuta el fundido y, en el negro total, hace el salto pendiente: el reloj y
+/// el tren quedan justo antes de la siguiente parada (salto) o en el próximo
+/// tren en el andén (espera).
 fn jump_at_black(
     time: Res<Time>,
     mut fade: ResMut<ScreenFade>,
@@ -339,9 +342,9 @@ fn jump_at_black(
     world.0.moving = trains.obstacles();
 }
 
-/// Keeps a seated player in their coach and the clock at the onboard rate,
-/// and puts them off where the ride ends, [`ALIGHT_DELAY`] after the train
-/// stops; on foot the clock runs at its base rate.
+/// Mantiene a un jugador sentado en su coche y el reloj al ritmo de a bordo, y
+/// lo baja donde termina el viaje, [`ALIGHT_DELAY`] después de que el tren se
+/// detiene; a pie, el reloj corre a su ritmo base.
 fn follow_train(
     mut commands: Commands,
     time: Res<Time>,
@@ -362,7 +365,7 @@ fn follow_train(
             let towns = towns.as_ref().map_or(&[][..], |t| &t.0[..]);
             let ends = on_train.0.put_off(&train.state());
             let ride = on_train.0;
-            // Off once "Estación …" has been read.
+            // Se baja una vez leído "Estación …".
             put_off_in.0 = match (ends, put_off_in.0) {
                 (false, _) => None,
                 (true, None) => Some(ALIGHT_DELAY),
@@ -392,7 +395,7 @@ fn follow_train(
     }
 }
 
-/// Writes station announcements on the HUD.
+/// Escribe los anuncios de estación en el HUD.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct Announcer<'w> {
     hud: ResMut<'w, HudAnnouncement>,
@@ -405,7 +408,7 @@ impl Announcer<'_> {
         self.timer.0 = ANNOUNCE_SECONDS;
     }
 
-    /// "Próxima estación: …", the train's next stop.
+    /// "Próxima estación: …", la siguiente parada del tren.
     fn next_station(
         &mut self,
         train: &LineTrain,
@@ -420,15 +423,15 @@ impl Announcer<'_> {
     }
 }
 
-/// The name of the town of `station`.
+/// El nombre del pueblo de `station`.
 fn town_name<'a>(train: &LineTrain, towns: &'a [TownLayout], station: usize) -> Option<&'a str> {
     let town = train.stations().get(station)?.town;
     towns.get(town).map(|t| t.name.as_str())
 }
 
-/// Announces, while aboard, the next station as the train pulls out (or as
-/// the player boards a running train) and the station as it stops there;
-/// clears the announcement after [`ANNOUNCE_SECONDS`].
+/// Anuncia, a bordo, la siguiente estación cuando el tren arranca (o cuando el
+/// jugador sube a un tren en marcha) y la estación cuando se detiene allí;
+/// borra el anuncio después de [`ANNOUNCE_SECONDS`].
 fn announce(
     time: Res<Time>,
     clock: Option<Res<WorldClock>>,
@@ -443,7 +446,7 @@ fn announce(
             announcer.hud.0 = None;
         }
     }
-    // The ridden train, else the line train.
+    // El tren en el que se viaja; si no, el tren de la línea.
     let ridden = aboard.single().map_or(0, |ride| ride.0.train);
     let (Some(train), Some(clock)) = (trains.as_ref().and_then(|t| t.0.get(ridden)), clock) else {
         return;
@@ -459,13 +462,13 @@ fn announce(
         return;
     }
     match (before, standing) {
-        // Stopped at a station.
+        // Detenido en una estación.
         (Some((true, None)), Some(station)) => {
             if let Some(name) = town_name(train, towns, station) {
                 announcer.show(format!("Estación {name}"));
             }
         }
-        // Pulled out, or just boarded a running train.
+        // Arrancó, o acaba de subir a un tren en marcha.
         (Some((true, Some(_))), None) | (None | Some((false, _)), None) => {
             announcer.next_station(train, towns, &clock.0);
         }
@@ -473,9 +476,9 @@ fn announce(
     }
 }
 
-/// The HUD's ride line while aboard: the next station and the time the
-/// train arrives there at the onboard rate, e.g. `Próxima: Eduardo Castex,
-/// 11:22`.
+/// La línea de viaje del HUD a bordo: la siguiente estación y la hora a la
+/// que el tren llega allí al ritmo de a bordo, p. ej.
+/// `Próxima: Eduardo Castex, 11:22`.
 fn show_ride(
     clock: Option<Res<WorldClock>>,
     (trains, towns, _): Line,
@@ -494,7 +497,7 @@ fn show_ride(
     hud.set_if_neq(HudRide(text));
 }
 
-/// Seats `rider` in the ride's coach, facing the way the train runs.
+/// Sienta a `rider` en el coche del viaje, mirando hacia donde avanza el tren.
 fn seat(
     rider: &mut Rider,
     transform: &mut Transform,
@@ -512,7 +515,7 @@ fn seat(
     transform.translation = world_from_ground(rider.position, rider.height);
 }
 
-/// What getting off the train reads.
+/// Lo que lee el bajarse del tren.
 struct Alight<'a, 'w, 's> {
     commands: &'a mut Commands<'w, 's>,
     train: &'a LineTrain,
@@ -521,9 +524,9 @@ struct Alight<'a, 'w, 's> {
 }
 
 impl Alight<'_, '_, '_> {
-    /// Puts the passenger (entity `me`) off on the platform beside their
-    /// coach, on foot and visible again. `false` (still aboard) while the
-    /// train runs or where there is no platform.
+    /// Baja al pasajero (la entidad `me`) en el andén junto a su coche, a pie y
+    /// visible de nuevo. `false` (sigue a bordo) mientras el tren está en
+    /// marcha o donde no hay andén.
     fn put_off(
         &mut self,
         me: Entity,
@@ -551,7 +554,8 @@ impl Alight<'_, '_, '_> {
     }
 }
 
-/// A headless app of the shipped world for the ride and errand tests.
+/// Una app sin interfaz del mundo incluido para los tests del viaje y del
+/// encargo.
 #[cfg(test)]
 pub(crate) mod testing {
     use super::*;
@@ -563,7 +567,7 @@ pub(crate) mod testing {
     use pampa_core::{BASE_RATE, GameClock, Terrain, Timetable, Travel, World};
     use std::time::Duration;
 
-    /// Seconds per frame.
+    /// Segundos por frame.
     pub const FRAME: f32 = 0.05;
 
     pub fn shipped_lines() -> ErrandLines {
@@ -572,10 +576,10 @@ pub(crate) mod testing {
         lines
     }
 
-    /// The shipped world with the errand. With no `clock`, the game's
-    /// opening: aboard the morning train pulling into Monte Nievas. With a
-    /// `clock`, the train jumped there from midnight and the player on foot
-    /// at the middle of the Monte Nievas platform.
+    /// El mundo incluido con el encargo. Sin `clock`, la apertura del juego: a
+    /// bordo del tren de la mañana entrando a Monte Nievas. Con un `clock`, el
+    /// tren llevado hasta allí desde la medianoche y el jugador a pie en el
+    /// centro del andén de Monte Nievas.
     pub fn shipped_app_at(clock: Option<GameClock>) -> App {
         let loaded = crate::shipped_world::loaded();
         let mut world = World::with_towns(loaded.world, Terrain::default(), &loaded.towns);
@@ -632,12 +636,12 @@ pub(crate) mod testing {
         app
     }
 
-    /// The game's opening.
+    /// La apertura del juego.
     pub fn shipped_app() -> App {
         shipped_app_at(None)
     }
 
-    /// Presses `key` for exactly one frame.
+    /// Presiona `key` durante exactamente un frame.
     pub fn press(app: &mut App, key: KeyCode) {
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
@@ -648,14 +652,14 @@ pub(crate) mod testing {
         keys.clear();
     }
 
-    /// The player's body and whether they ride the train.
+    /// El cuerpo del jugador y si viaja en el tren.
     pub fn passenger(app: &mut App) -> (Rider, Option<Ride>) {
         let mut q = app.world_mut().query::<(&Player, Option<&OnTrain>)>();
         let (p, on) = q.single(app.world()).unwrap();
         (p.rider, on.map(|o| o.0))
     }
 
-    /// Runs frames until the fade is over (at most two seconds).
+    /// Ejecuta frames hasta que termina el fundido (como máximo dos segundos).
     pub fn settle(app: &mut App) {
         for _ in 0..(2.0 / FRAME) as usize {
             app.update();
@@ -666,8 +670,8 @@ pub(crate) mod testing {
         panic!("the fade never ended");
     }
 
-    /// Runs frames until the player is off the train (at most `seconds`),
-    /// and returns the real seconds that took.
+    /// Ejecuta frames hasta que el jugador se baja del tren (como máximo
+    /// `seconds`), y devuelve los segundos reales que llevó.
     pub fn until_off(app: &mut App, seconds: f32) -> f32 {
         let mut frames = 0;
         while passenger(app).1.is_some() {
@@ -678,8 +682,7 @@ pub(crate) mod testing {
         frames as f32 * FRAME
     }
 
-    /// Skips the opening ride (Space) and lets the player off at Monte
-    /// Nievas.
+    /// Salta el viaje de apertura (Espacio) y deja al jugador en Monte Nievas.
     pub fn arrive(app: &mut App) {
         app.update();
         press(app, SKIP_KEY);
@@ -687,13 +690,13 @@ pub(crate) mod testing {
         assert_eq!(passenger(app).1, None, "off the train");
     }
 
-    /// Skips whatever ride is underway (Space) until the player is off.
+    /// Salta el viaje que esté en curso (Espacio) hasta que el jugador se baja.
     pub fn arrive_from_anywhere(app: &mut App) {
         press(app, SKIP_KEY);
         until_off(app, 20.0);
     }
 
-    /// The announcement on screen.
+    /// El anuncio en pantalla.
     pub fn announcement(app: &App) -> Option<String> {
         app.world().resource::<HudAnnouncement>().0.clone()
     }
@@ -722,7 +725,8 @@ mod tests {
         *q.single(app.world()).unwrap()
     }
 
-    /// The platform of the station the train stands at, if `at` is on it.
+    /// El andén de la estación en la que está detenido el tren, si `at` está
+    /// sobre él.
     fn on_platform(app: &App, at: pampa_core::Vec2) -> Option<String> {
         let towns = &app.world().resource::<WorldTowns>().0;
         towns
@@ -742,7 +746,7 @@ mod tests {
         assert_eq!((rider.position, rider.heading), (seat, heading));
         assert_eq!(clock(&app).multiplier, ONBOARD_MULTIPLIER);
         assert_eq!(train(&app).state().phase, LinePhase::Running);
-        // The HUD tells the next station and when the train gets there.
+        // El HUD indica la siguiente estación y cuándo llega el tren allí.
         let nievas = train(&app).station_of_town(0).unwrap();
         let due = train(&app).arrival_time_at(Run::Up, nievas).unwrap();
         let ride_line = app.world().resource::<HudRide>().0.clone();
@@ -760,8 +764,8 @@ mod tests {
             announcement(&app).as_deref(),
             Some("Próxima estación: Monte Nievas")
         );
-        // The train comes in for about 50 real seconds, then "Estación
-        // Monte Nievas" shows for a moment before he gets off.
+        // El tren entra durante unos 50 segundos reales, y luego "Estación
+        // Monte Nievas" se muestra un momento antes de que él se baje.
         let ridden = f64::from(until_off(&mut app, 70.0)) + f64::from(FRAME);
         let expected = OPENING_LEAD + f64::from(ALIGHT_DELAY);
         assert!((ridden - expected).abs() < 1.0, "{ridden}");
@@ -775,8 +779,8 @@ mod tests {
             Some("Monte Nievas")
         );
         assert_eq!(visibility(&mut app), Visibility::Inherited);
-        // In at the timetabled arrival and off two real seconds (24 game
-        // seconds) later.
+        // Entra a la hora de llegada del horario y se baja dos segundos reales
+        // (24 segundos de juego) después.
         let at = clock(&app).time_of_day().seconds();
         let arrival = train(&app)
             .arrival_time_at(Run::Up, s.station.unwrap())
@@ -787,7 +791,7 @@ mod tests {
         app.update();
         assert_eq!(clock(&app).multiplier, 1.0);
         assert_eq!(app.world().resource::<HudRide>().0, None, "line gone");
-        // The errand begins.
+        // Comienza el encargo.
         let errand = app.world().resource::<ErrandRun>().0.clone();
         assert_eq!(errand.stage(), ErrandStage::MeetHidalgo);
         assert_eq!(
@@ -802,7 +806,7 @@ mod tests {
         app.update();
         let front = train(&app).state().front;
         press(&mut app, SKIP_KEY);
-        // (a) Still riding in for real, "Próxima estación: Monte Nievas".
+        // (a) Todavía entrando de verdad, "Próxima estación: Monte Nievas".
         assert_eq!(
             app.world()
                 .resource::<Trip>()
@@ -823,19 +827,19 @@ mod tests {
             (train(&app).state().front - front).abs() > 20.0,
             "moved for real"
         );
-        // (b) The fade, and at black the jump to 3 s out.
+        // (b) El fundido, y en el negro el salto a 3 s de la llegada.
         while !app.world().resource::<ScreenFade>().active() {
             app.update();
         }
         while app.world().resource::<Trip>().0 == Some(TripPhase::Fading) {
             app.update();
         }
-        // (c) Coming in for real, braking: the pure state 3 s out at most.
+        // (c) Entrando de verdad, frenando: el estado puro a 3 s como máximo.
         let s = train(&app).state();
         assert_eq!(s.phase, LinePhase::Running);
         let (next, left) = train(&app).next_stop().unwrap();
         assert!(left <= pampa_core::APPROACH_LEAD && left > 2.0, "{left}");
-        // (d) "Estación Monte Nievas", then off on the platform.
+        // (d) "Estación Monte Nievas", y luego se baja en el andén.
         until_off(&mut app, 10.0);
         let (rider, _) = passenger(&mut app);
         assert_eq!(
@@ -845,7 +849,7 @@ mod tests {
         assert_eq!(announcement(&app).as_deref(), Some("Estación Monte Nievas"));
         let s = train(&app).state();
         assert_eq!((s.phase, s.station), (LinePhase::Dwelling, Some(next)));
-        // Exact: the clock reads the timetabled arrival plus the 2 s wait.
+        // Exacto: el reloj marca la llegada del horario más la espera de 2 s.
         let arrival = train(&app)
             .arrival_time_at(Run::Up, next)
             .unwrap()
@@ -863,13 +867,14 @@ mod tests {
     fn board_at_monte_nievas_skip_to_castex_and_get_off_there() {
         let mut app = shipped_app();
         arrive(&mut app);
-        // F beside the coach: aboard, hidden, riding at 12×.
+        // F junto al coche: a bordo, oculto, viajando a 12×.
         press(&mut app, INTERACT_KEY);
         assert!(passenger(&mut app).1.is_some(), "boarded");
         assert_eq!(visibility(&mut app), Visibility::Hidden);
         app.update();
         assert_eq!(clock(&app).multiplier, ONBOARD_MULTIPLIER);
-        // F again while it stands there: off again, then back on.
+        // F otra vez mientras está detenido allí: se baja otra vez, y luego
+        // vuelve a subir.
         press(&mut app, INTERACT_KEY);
         let (rider, ride) = passenger(&mut app);
         assert_eq!(ride, None);
@@ -879,8 +884,8 @@ mod tests {
         );
         press(&mut app, INTERACT_KEY);
         assert!(passenger(&mut app).1.is_some());
-        // Space: on to Castex, the terminal, where the ride ends; Space
-        // again cuts the pulling out short.
+        // Espacio: hasta Castex, la terminal, donde termina el viaje; Espacio
+        // otra vez acorta el arranque.
         press(&mut app, SKIP_KEY);
         press(&mut app, SKIP_KEY);
         app.update();
@@ -900,7 +905,7 @@ mod tests {
             Some("Eduardo Castex")
         );
         assert_eq!(visibility(&mut app), Visibility::Inherited);
-        // The errand still points at Don Hidalgo, and the player walks.
+        // El encargo todavía apunta a Don Hidalgo, y el jugador camina.
         let errand = app.world().resource::<ErrandRun>().0.clone();
         assert_eq!(errand.stage(), ErrandStage::MeetHidalgo);
         assert_eq!(app.world().resource::<MapTarget>().0, errand.target());
@@ -911,7 +916,7 @@ mod tests {
             app.update();
         }
         assert!(passenger(&mut app).0.position.distance(rider.position) > 1.0);
-        // And can board the laid-over train back.
+        // Y puede subir al tren en espera en la terminal para volver.
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .release(KeyCode::KeyW);
@@ -955,8 +960,8 @@ mod tests {
             (s.phase, s.station, s.run),
             (LinePhase::Dwelling, Some(nievas), Run::Down)
         );
-        // The afternoon train from Castex, in at its timetabled arrival
-        // and read a few frames later.
+        // El tren de la tarde desde Castex, que entra a la hora de llegada del
+        // horario y se lee unos frames después.
         let due = train(&app).arrival_time_at(Run::Down, nievas).unwrap();
         let late = clock(&app).time_of_day().seconds() - due.seconds();
         assert!(
@@ -965,7 +970,7 @@ mod tests {
             clock(&app).hh_mm()
         );
         assert_eq!(passenger(&mut app).1, None, "still on the platform");
-        // Now F boards it.
+        // Ahora F sube a él.
         let (middle, _) = app.world().resource::<WorldTowns>().0[0]
             .platform_spot()
             .unwrap();
@@ -978,7 +983,7 @@ mod tests {
     const METILEO: usize = 2;
     const CALEUFU: usize = 4;
 
-    /// Puts the player on foot at `at` on the shipped world.
+    /// Pone al jugador a pie en `at` en el mundo incluido.
     fn stand_at(app: &mut App, at: pampa_core::Vec2) {
         let world = app.world().resource::<GameWorld>().0.clone();
         let mut q = app.world_mut().query::<&mut Player>();
@@ -992,7 +997,7 @@ mod tests {
 
     #[test]
     fn waiting_at_caleufu_boards_the_shuttle_and_it_rides_to_metileo() {
-        // 13:00: the shuttle is somewhere on its day, not at Caleufu.
+        // 13:00: la lanzadera está en algún punto de su día, no en Caleufu.
         let mut app = shipped_app_at(Some(GameClock::at(TimeOfDay::hm(13, 0))));
         app.update();
         let towns = app.world().resource::<WorldTowns>().0.clone();
@@ -1004,15 +1009,15 @@ mod tests {
         assert!(app.world().resource::<ScreenFade>().active());
         settle(&mut app);
         assert!(stands_at(&shuttle(&app).state(), at_caleufu), "it came in");
-        // F boards it from the middle of the platform, where the wait
-        // left the player: the shuttle, not the line train.
+        // F sube a ella desde el centro del andén, donde la espera dejó al
+        // jugador: a la lanzadera, no al tren de la línea.
         press(&mut app, INTERACT_KEY);
         let (_, ride) = passenger(&mut app);
         assert_eq!(ride.expect("aboard").train, 1);
-        // The ridden train is the one the ride follows: on to Metileo.
-        // Space pulls the ridden train out: the clock jumps to the
-        // shuttle's next departure from Caleufu, whatever the line train
-        // does.
+        // El tren en el que se viaja es el que sigue el viaje: hacia Metileo.
+        // Espacio hace arrancar el tren en el que se viaja: el reloj salta a
+        // la próxima salida de la lanzadera desde Caleufu, haga lo que haga el
+        // tren de la línea.
         let now = clock(&app).elapsed();
         press(&mut app, SKIP_KEY);
         let day = 24.0 * 3600.0;
@@ -1041,8 +1046,8 @@ mod tests {
         assert_eq!(announcement(&app).as_deref(), Some("Estación Metileo"));
     }
 
-    /// A spot on the bay platform of the shipped world beside the standing
-    /// shuttle's coach door.
+    /// Un punto en el andén de la vía muerta del mundo incluido junto a la
+    /// puerta del coche de la lanzadera detenida.
     fn on_the_bay_platform(app: &App) -> pampa_core::Vec2 {
         let world = &app.world().resource::<GameWorld>().0;
         let placed = shuttle(app).placed_cars();
@@ -1062,7 +1067,7 @@ mod tests {
 
     #[test]
     fn the_shuttle_in_metileos_bay_is_boarded_from_its_platform_not_from_the_ground() {
-        // The shuttle stands in the bay at Metileo.
+        // La lanzadera está detenida en la vía muerta de Metileo.
         let probe = shipped_app_at(Some(GameClock::at(TimeOfDay::hm(1, 0))));
         let stops = shuttle(&probe).stops_at(METILEO, Run::Up);
         let mut app = shipped_app_at(Some(GameClock::at(stops[0])));
@@ -1074,7 +1079,7 @@ mod tests {
             .iter()
             .position(|c| c.kind == pampa_core::CarKind::Coach)
             .unwrap();
-        // From the ground beside the door, off the platform: nothing.
+        // Desde el suelo junto a la puerta, fuera del andén: nada.
         let placed = shuttle.placed_cars()[coach];
         let platform = on_the_bay_platform(&app);
         let door = pampa_core::coach_doors(&placed)
@@ -1083,13 +1088,14 @@ mod tests {
             .unwrap();
         let across = pampa_core::Vec2::new(-placed.direction.y, placed.direction.x);
         let side = across * (platform - placed.center).dot(across).signum();
-        // The ground just beyond the door on the side away from the
-        // platform (the line train's track side), the bay's own side.
+        // El suelo justo más allá de la puerta, del lado opuesto al andén (el
+        // lado de la vía del tren de la línea), el lado propio de la vía
+        // muerta.
         stand_at(&mut app, door - side * 1.0);
         press(&mut app, INTERACT_KEY);
         assert_eq!(passenger(&mut app).1, None, "not boarded from the ground");
         assert!(!app.world().resource::<ScreenFade>().active());
-        // From the bay platform, level with the door: it is boarded.
+        // Desde el andén de la vía muerta, a la altura de la puerta: sube.
         stand_at(&mut app, platform);
         press(&mut app, INTERACT_KEY);
         let ride = passenger(&mut app).1.expect("boarded from the platform");
@@ -1121,15 +1127,15 @@ mod tests {
                 .or_else(|| t.stations().iter().position(|s| s.town == METILEO))
                 .unwrap()
         };
-        // A time of day with neither train standing at Metileo.
+        // Una hora del día en la que ningún tren está detenido en Metileo.
         let quiet = (0..24 * 12)
             .find(|&k| at(k).iter().all(|t| !stands_at(&t.state(), metileo(t))))
             .expect("a quiet moment at Metileo");
         let clock = GameClock::at(TimeOfDay::from_seconds(f64::from(quiet) * 300.0));
         let town = &loaded.towns[METILEO];
         let bay_spot = loaded.line.bays[0].platform.footprint.center();
-        // From the station platform: the line train comes in; from the bay
-        // platform: the shuttle, in its bay.
+        // Desde el andén de la estación: entra el tren de la línea; desde el
+        // andén de la vía muerta: la lanzadera, en su vía muerta.
         for (spot, train) in [(town.platform_spot().unwrap().0, 0), (bay_spot, 1)] {
             let mut app = shipped_app_at(Some(clock));
             app.update();

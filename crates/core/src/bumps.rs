@@ -1,28 +1,29 @@
-//! Bumps: the rider barging into townsfolk, and who complains about it.
+//! Empujones: el jinete que se lleva por delante a los vecinos, y quién se
+//! queja por eso.
 //!
-//! [`crate::Townsfolk::make_way`] reports which walkers the rider shoved;
-//! [`BumpTracker`] turns those contacts into [`BumpEvent`]s when the rider
-//! was moving fast enough, at most once per walker every
-//! [`BumpTracker::COOLDOWN`] seconds. [`LinePicker`] then chooses which line
-//! of a pool the walker says, deterministically and without repeating the
-//! previous line of that pool.
+//! [`crate::Townsfolk::make_way`] informa a qué peatones empujó el jinete;
+//! [`BumpTracker`] convierte esos contactos en [`BumpEvent`]s cuando el jinete
+//! iba lo bastante rápido, como mucho una vez por peatón cada
+//! [`BumpTracker::COOLDOWN`] segundos. Después, [`LinePicker`] elige qué frase
+//! de un conjunto dice el peatón, de forma determinista y sin repetir la frase
+//! anterior de ese conjunto.
 
 use crate::rng::Rng;
 use crate::{AnimationState, RiderParams};
 
-/// How hard the rider bumped somebody.
+/// Qué tan fuerte empujó el jinete a alguien.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BumpSeverity {
-    /// Shoved at a walking pace.
+    /// Empujado al paso.
     Walk,
-    /// Run into at a gallop.
+    /// Atropellado al galope.
     Gallop,
 }
 
 impl BumpSeverity {
-    /// Severity of a contact at `speed` (m/s, either direction), or `None`
-    /// below [`BumpTracker::MIN_SPEED`] (a brush at a crawl). Uses the same
-    /// gait bands as the rider's animation.
+    /// Gravedad de un contacto a velocidad `speed` (m/s, en cualquier sentido),
+    /// o `None` por debajo de [`BumpTracker::MIN_SPEED`] (un roce casi
+    /// detenido). Usa las mismas franjas de marcha que la animación del jinete.
     pub fn from_speed(speed: f32, params: &RiderParams) -> Option<Self> {
         let speed = speed.abs();
         if speed.is_nan() || speed < BumpTracker::MIN_SPEED {
@@ -35,29 +36,31 @@ impl BumpSeverity {
     }
 }
 
-/// A walker complains about being bumped.
+/// Un peatón se queja porque lo empujaron.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BumpEvent {
-    /// Index of the walker in [`crate::Townsfolk::people`].
+    /// Índice del peatón en [`crate::Townsfolk::people`].
     pub walker: usize,
     pub severity: BumpSeverity,
 }
 
-/// Turns rider contacts into bump events, with a per-walker cooldown.
+/// Convierte los contactos del jinete en eventos de empujón, con un tiempo de
+/// espera por peatón.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct BumpTracker {
-    /// Seconds until each walker may complain again (indexed by walker).
+    /// Segundos hasta que cada peatón pueda volver a quejarse (indexado por
+    /// peatón).
     cooldown: Vec<f32>,
 }
 
 impl BumpTracker {
-    /// Slowest rider speed that counts as a bump, in m/s.
+    /// Velocidad mínima del jinete que cuenta como empujón, en m/s.
     pub const MIN_SPEED: f32 = 1.5;
-    /// Seconds before the same walker complains again.
+    /// Segundos antes de que el mismo peatón vuelva a quejarse.
     pub const COOLDOWN: f32 = 6.0;
 
-    /// Lets `dt` seconds of cooldown pass. Non-finite or non-positive `dt`
-    /// changes nothing.
+    /// Deja pasar `dt` segundos de tiempo de espera. Un `dt` no finito o no
+    /// positivo no cambia nada.
     pub fn tick(&mut self, dt: f32) {
         if !(dt.is_finite() && dt > 0.0) {
             return;
@@ -67,8 +70,9 @@ impl BumpTracker {
         }
     }
 
-    /// Events for the walkers in `contacts` the rider just shoved while
-    /// moving at `rider_speed`. Walkers still cooling down stay quiet.
+    /// Eventos para los peatones de `contacts` que el jinete acaba de empujar
+    /// mientras se movía a `rider_speed`. Los peatones que todavía están en
+    /// tiempo de espera se quedan callados.
     pub fn register(
         &mut self,
         contacts: &[usize],
@@ -93,13 +97,13 @@ impl BumpTracker {
     }
 }
 
-/// Chooses lines from pools of lines, deterministically for a seed, never
-/// picking the same index of a pool twice in a row when the pool has more
-/// than one line.
+/// Elige frases de conjuntos de frases, de forma determinista para una semilla,
+/// sin elegir nunca el mismo índice de un conjunto dos veces seguidas cuando el
+/// conjunto tiene más de una frase.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LinePicker {
     rng: Rng,
-    /// Last index picked per pool id.
+    /// Último índice elegido por id de conjunto.
     last: Vec<(usize, usize)>,
 }
 
@@ -111,8 +115,8 @@ impl LinePicker {
         }
     }
 
-    /// An index into pool `pool` holding `n` lines, or `None` when it is
-    /// empty.
+    /// Un índice dentro del conjunto `pool`, que tiene `n` frases, o `None`
+    /// cuando está vacío.
     pub fn pick(&mut self, pool: usize, n: usize) -> Option<usize> {
         if n == 0 {
             return None;
@@ -126,7 +130,7 @@ impl LinePicker {
         };
         let last = self.last[slot].1;
         let index = if n > 1 && last < n {
-            // Pick among the other n - 1 lines, skipping over the last one.
+            // Elige entre las otras n - 1 frases, salteando la última.
             let i = self.rng.below(n - 1);
             if i >= last { i + 1 } else { i }
         } else {
@@ -159,7 +163,7 @@ mod tests {
             BumpSeverity::from_speed(p.gallop_max, &p),
             Some(BumpSeverity::Gallop)
         );
-        // Backing into somebody counts by speed too.
+        // Chocar a alguien marcha atrás también cuenta según la velocidad.
         assert_eq!(BumpSeverity::from_speed(-2.0, &p), Some(BumpSeverity::Walk));
         for speed in [2.0, 5.0, 11.0] {
             let animation = AnimationState::from_speed(speed, p.walk_max);
@@ -179,12 +183,13 @@ mod tests {
                 severity: BumpSeverity::Gallop
             }]
         );
-        // Still shoving the same person: quiet during the cooldown.
+        // Sigue empujando a la misma persona: silencio durante el tiempo de
+        // espera.
         for _ in 0..119 {
             t.tick(0.05);
             assert!(t.register(&[3], 9.0, &p).is_empty());
         }
-        // Somebody else may still complain.
+        // Otra persona todavía puede quejarse.
         assert_eq!(t.register(&[1], 2.0, &p).len(), 1);
         t.tick(0.06);
         assert_eq!(
@@ -260,7 +265,7 @@ mod tests {
         assert_eq!(picker.pick(0, 0), None);
         assert_eq!(picker.pick(0, 1), Some(0));
         assert_eq!(picker.pick(0, 1), Some(0), "one line may repeat");
-        // Interleaving pools: each pool still never repeats itself.
+        // Conjuntos intercalados: cada conjunto sigue sin repetirse nunca.
         let (mut a, mut b) = (None, None);
         for _ in 0..200 {
             let x = picker.pick(1, 4);
@@ -269,7 +274,8 @@ mod tests {
             assert_ne!(y, b);
             (a, b) = (x, y);
         }
-        // A pool that shrank (content reloaded) never yields a stale index.
+        // Un conjunto que se achicó (contenido recargado) nunca devuelve un
+        // índice viejo.
         picker.pick(3, 10);
         for _ in 0..50 {
             assert!(picker.pick(3, 2).unwrap() < 2);

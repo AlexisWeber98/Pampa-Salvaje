@@ -1,29 +1,29 @@
-//! The player on foot, and mounting a tied horse.
+//! El jugador a pie, y cómo montar un caballo atado.
 //!
-//! On foot the player moves with the same kinematic model as the rider
-//! ([`Rider`]): the same input (W/S throttle, A/D turn, Shift to go
-//! faster), the same collision and the same world. Only the tuning
-//! ([`RiderParams::on_foot`]: a 1.6 m/s walk and an 18 km/h jog) and the body (a
-//! person-sized collider) differ.
+//! A pie, el jugador se mueve con el mismo modelo cinemático que el jinete
+//! ([`Rider`]): la misma entrada (W/S para acelerar, A/D para girar, Shift para
+//! ir más rápido), la misma colisión y el mismo mundo. Solo cambian el ajuste
+//! ([`RiderParams::on_foot`]: una caminata de 1,6 m/s y un trote de 18 km/h) y
+//! el cuerpo (un collider del tamaño de una persona).
 
 use crate::{Circle, Ground, Heading, Rider, RiderParams, TetheredHorse, Vec2, World};
 
-/// How the player gets around.
+/// Cómo se desplaza el jugador.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Travel {
-    /// Walking, or jogging with Shift.
+    /// Caminando, o trotando con Shift.
     #[default]
     OnFoot,
-    /// On horseback: walking, or galloping with Shift.
+    /// A caballo: al paso, o al galope con Shift.
     Riding,
 }
 
 impl Rider {
-    /// Collision radius of a person on foot seen from above, in meters.
+    /// Radio de colisión de una persona a pie vista desde arriba, en metros.
     pub const PERSON_RADIUS: f32 = 0.3;
 
-    /// A person standing on foot at `position`, facing `heading`, on
-    /// `ground` (pass the [`crate::World`] so platforms count).
+    /// Una persona parada a pie en `position`, mirando hacia `heading`, sobre
+    /// `ground` (pasar el [`crate::World`] para que cuenten los andenes).
     pub fn on_foot(position: Vec2, heading: Heading, ground: &(impl Ground + ?Sized)) -> Self {
         Self {
             collider: Circle::new(Self::PERSON_RADIUS),
@@ -31,21 +31,22 @@ impl Rider {
         }
     }
 
-    /// The horseback rider this person becomes on mounting `horse`: in the
-    /// saddle where the horse stands, facing the way it faces, at rest.
+    /// El jinete en que se convierte esta persona al montar `horse`: en la
+    /// montura, donde está el caballo, mirando hacia donde mira, en reposo.
     pub fn mount(&self, horse: &TetheredHorse, ground: &(impl Ground + ?Sized)) -> Self {
         Self::new(horse.position, horse.heading, ground)
     }
 
-    /// Fastest a rider may be going to get off, in m/s: stopped or at a
-    /// slow walk.
+    /// Velocidad máxima a la que puede ir un jinete para bajarse, en m/s:
+    /// detenido o a un paso lento.
     pub const DISMOUNT_SPEED: f32 = 1.0;
 
-    /// Getting off: the person on foot beside the horse, at rest and facing
-    /// its way, and the horse left tied loosely where it stood. The person
-    /// steps off on the horse's left, or its right when the left is
-    /// blocked. `None` while riding faster than [`Self::DISMOUNT_SPEED`],
-    /// in the air, when both flanks are blocked, or when already on foot.
+    /// Bajarse: la persona a pie al lado del caballo, en reposo y mirando hacia
+    /// donde mira el caballo, y el caballo atado sin apretar donde estaba. La
+    /// persona se baja por el lado izquierdo del caballo, o por el derecho
+    /// cuando el izquierdo está bloqueado. `None` mientras se cabalga más
+    /// rápido que [`Self::DISMOUNT_SPEED`], en el aire, cuando ambos flancos
+    /// están bloqueados o cuando ya se está a pie.
     pub fn dismount(&self, world: &World) -> Option<(Self, TetheredHorse)> {
         if self.travel() != Travel::Riding
             || self.speed.abs() > Self::DISMOUNT_SPEED
@@ -58,7 +59,7 @@ impl Rider {
         let left = Vec2::new(-ahead.y, ahead.x);
         let person = Circle::new(Self::PERSON_RADIUS);
         [left, left * -1.0].into_iter().find_map(|side| {
-            // Just clear of the horse's footprint on that side.
+            // Justo afuera de la huella del caballo de ese lado.
             let mut spot = self.position + side * (TetheredHorse::WIDTH / 2.0);
             while horse.footprint.closest_point(spot).distance(spot) < Self::PERSON_RADIUS + 0.05 {
                 spot += side * 0.1;
@@ -71,7 +72,8 @@ impl Rider {
         })
     }
 
-    /// How this body gets around: a person-sized collider is on foot.
+    /// Cómo se desplaza este cuerpo: un collider del tamaño de una persona va a
+    /// pie.
     pub fn travel(&self) -> Travel {
         if self.collider.radius < Self::COLLIDER_RADIUS {
             Travel::OnFoot
@@ -82,19 +84,20 @@ impl Rider {
 }
 
 impl RiderParams {
-    /// Walking pace 1.6 m/s (5.8 km/h: a brisk 1919 street walk, a little
-    /// faster than the townsfolk's 1.25 to 1.5), jogging (Shift) 18 km/h;
-    /// a person turns and stops quicker than a horse.
+    /// Ritmo de caminata de 1,6 m/s (5,8 km/h: un paso enérgico por la calle en
+    /// 1919, un poco más rápido que los 1,25 a 1,5 de los vecinos), trote
+    /// (Shift) de 18 km/h; una persona gira y se detiene más rápido que un
+    /// caballo.
     pub fn on_foot() -> Self {
         Self {
             turn_rate: 2.6,
             acceleration: 3.0,
             braking: 8.0,
             friction: 6.0,
-            // 1.6 m/s (user, 2026-10-25; it was 6 km/h, which played the
-            // walk clip hurried).
+            // 1,6 m/s (usuario, 2026-10-25; antes era 6 km/h, con lo que el
+            // clip de caminata se veía apurado).
             walk_max: 1.6,
-            // 18 km/h, jogging with Shift.
+            // 18 km/h, trotando con Shift.
             gallop_max: 18.0 / 3.6,
             reverse_max: 1.0,
         }
@@ -151,7 +154,7 @@ mod tests {
         };
         run(&mut r, jog, &p, &world, 4.0);
         assert!((r.speed - jog_speed).abs() < 1e-4, "jog {}", r.speed);
-        // Slower than a horse at either pace.
+        // Más lento que un caballo a cualquiera de los dos ritmos.
         let horse = RiderParams::default();
         assert!(p.walk_max < horse.walk_max && p.gallop_max < horse.gallop_max / 2.0);
     }
@@ -173,8 +176,8 @@ mod tests {
         assert!((r.position.x - face).abs() < 1e-3, "x = {}", r.position.x);
     }
 
-    /// Walks `person` with `input` for `seconds`, returning the ground
-    /// height at every step.
+    /// Hace caminar a `person` con `input` durante `seconds` y devuelve la
+    /// altura del suelo en cada paso.
     fn walk(person: &mut Rider, input: RiderInput, world: &World, seconds: f32) -> Vec<f32> {
         let p = RiderParams::on_foot();
         (0..(seconds / DT) as usize)
@@ -198,7 +201,8 @@ mod tests {
             ..Default::default()
         };
 
-        // Along the platform and down the ramp at its end, never stuck.
+        // A lo largo del andén y bajando por la rampa del extremo, sin trabarse
+        // nunca.
         let mut person = Rider::on_foot(start, Heading::from_radians(0.0), &world);
         person.heading = Heading::from_radians(floor.along.y.atan2(floor.along.x));
         assert_eq!(person.height, top);
@@ -209,7 +213,8 @@ mod tests {
         assert!(heights.windows(2).all(|w| w[1] <= w[0] + 1e-4));
         assert_eq!(person.height, ground(&person));
 
-        // Off the town side, past the station building, into the yard.
+        // Bajando por el lado del pueblo, pasando el edificio de la estación,
+        // hasta el patio.
         let beside_station = start + floor.along * 20.0;
         let mut person = Rider::on_foot(beside_station, facing, &world);
         assert_eq!(person.height, top);
@@ -243,7 +248,7 @@ mod tests {
         let world = World::default();
         let heading = Heading::from_radians(0.7);
         let mut rider = Rider::new(Vec2::new(20.0, -5.0), heading, &world);
-        // Not while riding on.
+        // No mientras se sigue cabalgando.
         rider.speed = 3.0;
         assert_eq!(rider.dismount(&world), None);
         rider.speed = Rider::DISMOUNT_SPEED * 0.5;
@@ -253,14 +258,15 @@ mod tests {
         assert_eq!(person.heading, heading);
         assert_eq!((horse.position, horse.heading), (rider.position, heading));
         assert!(horse.footprint.contains_point(horse.position));
-        // Beside the horse, clear of its footprint, close enough to remount.
+        // Al lado del caballo, afuera de su huella, lo bastante cerca como para
+        // volver a montar.
         let gap = horse
             .footprint
             .closest_point(person.position)
             .distance(person.position);
         assert!(gap >= Rider::PERSON_RADIUS, "{gap}");
         assert!(person.position.distance(horse.position) <= crate::Errand::MOUNT_RANGE);
-        // Tied, the horse blocks; mounting again puts the rider back.
+        // Atado, el caballo bloquea; volver a montar pone de nuevo al jinete.
         let mut world = world;
         world.obstacles.push(horse.footprint);
         let mut walker = person;
@@ -275,7 +281,7 @@ mod tests {
     fn a_rider_hemmed_in_on_both_sides_cannot_get_off() {
         let mut world = World::default();
         let rider = Rider::new(Vec2::new(0.0, 0.0), Heading::from_radians(0.0), &world);
-        // Walls hugging both flanks.
+        // Paredes pegadas a ambos flancos.
         world
             .obstacles
             .push(crate::Aabb::new(Vec2::new(-5.0, 1.0), Vec2::new(5.0, 3.0)));
@@ -284,7 +290,7 @@ mod tests {
             Vec2::new(5.0, -1.0),
         ));
         assert_eq!(rider.dismount(&world), None);
-        // On foot there is nothing to get off.
+        // A pie no hay nada de qué bajarse.
         let person = Rider::on_foot(Vec2::new(30.0, 0.0), Heading::from_radians(0.0), &world);
         assert_eq!(person.dismount(&world), None);
     }
@@ -301,13 +307,14 @@ mod tests {
             rider.step(RiderInput::default(), &RiderParams::default(), world, DT);
             rider.position.distance(horse.position)
         };
-        // While tied, the horse's footprint is an obstacle: a rider there
-        // is thrown well clear of it.
+        // Mientras está atado, la huella del caballo es un obstáculo: un jinete
+        // que está ahí sale despedido bien lejos.
         assert!(world.obstacles.contains(&horse.footprint));
         assert!(settle(&world) > 1.0, "{}", settle(&world));
         assert!(world.obstacles.remove(&horse.footprint));
         assert!(!world.obstacles.contains(&horse.footprint));
-        // Led away, it frees the spot: the rider only eases off the rail.
+        // Si se lo lleva, libera el lugar: el jinete solo se aparta un poco del
+        // riel.
         assert!(settle(&world) < 0.5, "{}", settle(&world));
     }
 }

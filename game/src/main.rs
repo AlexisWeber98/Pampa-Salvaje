@@ -1,11 +1,13 @@
-//! Pampa Salvaje: wires player input, `pampa-core` logic and `pampa-render` drawing.
+//! Pampa Salvaje: conecta la entrada del jugador, la lógica de `pampa-core` y
+//! el dibujo de `pampa-render`.
 
 mod abilities;
 mod camera;
 mod complaints;
 mod shots;
 mod sound;
-// The cheat console: debug builds only, never in `--release`.
+// La consola de trucos: solo en compilaciones de depuración, nunca en
+// `--release`.
 #[cfg(debug_assertions)]
 mod console;
 mod errand;
@@ -35,10 +37,10 @@ use pampa_render::{
     WorldSettlements, WorldTerrain, WorldTowns, WorldTrains,
 };
 
-/// The fits of the third-party models in the model slots
-/// (`assets/models/third-party/slots.ron`), for the renderer: yaw in
-/// radians, rotor axes as directions. An invalid file fits nothing (every
-/// model as it comes) and is reported.
+/// Los ajustes de los modelos de terceros en las ranuras de modelo
+/// (`assets/models/third-party/slots.ron`), para el renderer: yaw en radianes,
+/// ejes de rotor como direcciones. Un archivo no válido no ajusta nada (cada
+/// modelo tal como viene) y se informa.
 fn model_slots(path: &std::path::Path) -> (pampa_render::ModelSlots, Option<String>) {
     let file = match load_model_slots(path) {
         Ok(file) => file,
@@ -73,13 +75,13 @@ fn model_slots(path: &std::path::Path) -> (pampa_render::ModelSlots, Option<Stri
     (pampa_render::ModelSlots(fits), None)
 }
 
-/// The towns that each get an estancia nearby (user, 2026-10-22), by
-/// name in `assets/world/towns.ron`.
+/// Los pueblos que reciben cada uno una estancia cerca (usuario, 2026-10-22),
+/// por nombre en `assets/world/towns.ron`.
 const RANCH_TOWNS: [&str; 2] = ["Eduardo Castex", "General Pico"];
 
-/// The logic world and everything laid on it before the app starts: the
-/// roads, the fences, the rural settlements and the flora, with what laying
-/// them took for the startup log.
+/// El mundo lógico y todo lo que se coloca sobre él antes de que arranque la
+/// app: los caminos, los alambrados, los asentamientos rurales y la flora, con
+/// lo que llevó colocarlos para el log de inicio.
 struct Laid {
     world: World,
     fences: FenceLayout,
@@ -90,44 +92,46 @@ struct Laid {
     report: LaidReport,
 }
 
-/// Counts and timings of [`Laid`], logged at startup.
+/// Cantidades y tiempos de [`Laid`], registrados en el log al inicio.
 #[derive(Debug, Clone)]
 struct LaidReport {
     spans: usize,
     fenced: std::time::Duration,
-    /// Huts, outposts, farms and ranches.
+    /// Ranchos, puestos, chacras y estancias.
     kinds: [usize; 4],
     obstacles: usize,
     settled: std::time::Duration,
-    /// Herds, head of cattle, corral horses, and how long seeding took.
+    /// Manadas, cabezas de ganado, caballos de corral, y cuánto llevó
+    /// sembrarlos.
     fauna: (usize, usize, usize, std::time::Duration),
-    /// Towns of [`RANCH_TOWNS`] missing from the world or left without
-    /// their estancia, ready to log as warnings.
+    /// Pueblos de [`RANCH_TOWNS`] que faltan en el mundo o quedaron sin su
+    /// estancia, listos para registrarse como avisos.
     warnings: Vec<String>,
 }
 
-/// Builds the world of `loaded`: leveled for its towns, its roads cut in,
-/// fenced, settled behind some open gates and planted around it all.
+/// Construye el mundo de `loaded`: nivelado para sus pueblos, con sus caminos
+/// trazados, alambrado, poblado detrás de algunas tranqueras abiertas y
+/// plantado alrededor de todo.
 fn lay_out(loaded: &towns::LoadedWorld) -> Laid {
-    // The lagoons are sunk first: the towns level their ground on top.
+    // Las lagunas se hunden primero: los pueblos nivelan su suelo encima.
     let mut world = World::with_towns(loaded.world, loaded.terrain(), &loaded.towns);
-    // The dirt roads, cut into the ground, with their level crossings and
-    // signposts (thin obstacles).
+    // Los caminos de tierra, trazados en el suelo, con sus pasos a nivel y sus
+    // carteles indicadores (obstáculos delgados).
     world.lay_roads(loaded.roads.clone());
-    // The bays' platforms and foot crossings.
+    // Los andenes de las vías muertas y los cruces peatonales.
     world.lay_rail(&loaded.line);
-    // Wire fences on the surveyed grid and along both sides of every road,
-    // with gates into the fields; every span and shut gate is a thin
-    // obstacle.
+    // Alambrados sobre la cuadrícula de la mensura y a ambos lados de cada
+    // camino, con tranqueras hacia los campos; cada tramo y cada tranquera
+    // cerrada es un obstáculo delgado.
     let started = std::time::Instant::now();
     let fences = FenceLayout::build(world.config, &world.terrain, &loaded.towns, &loaded.line);
     let spans = world.fence(&fences);
     let fenced = started.elapsed();
-    // Ranchos, puestos, chacras and estancias behind some open gates, with
-    // their tracks from the gate; every building, prop, corral rail and tree
-    // trunk of theirs is an obstacle.
+    // Ranchos, puestos, chacras y estancias detrás de algunas tranqueras
+    // abiertas, con sus huellas desde la tranquera; cada edificio, objeto,
+    // travesaño de corral y tronco de árbol suyo es un obstáculo.
     let started = std::time::Instant::now();
-    // One estancia is always laid near each of the RANCH_TOWNS.
+    // Siempre se coloca una estancia cerca de cada uno de los RANCH_TOWNS.
     let mut warnings = Vec::new();
     let ranch_towns: Vec<usize> = RANCH_TOWNS
         .iter()
@@ -161,12 +165,13 @@ fn lay_out(loaded: &towns::LoadedWorld) -> Laid {
         SettlementKind::Ranch,
     ]
     .map(|k| settlements.count(k));
-    // Caldenes, chañares and grass between the towns, off the track, the
-    // roads, the fence lines and the settlements. Tree trunks are
-    // obstacles only in the chunks round the player (see `plant_collision`).
-    // Kept off the whole train path too: each town's own track and its
-    // run-outs, not only the links between towns.
-    // The branches' towns and run-outs too.
+    // Caldenes, chañares y pasto entre los pueblos, fuera de la vía, los
+    // caminos, las líneas de alambrado y los asentamientos. Los troncos de
+    // los árboles son obstáculos solo en los chunks alrededor del jugador
+    // (ver `plant_collision`).
+    // También fuera de todo el recorrido del tren: la vía propia de cada
+    // pueblo y sus prolongaciones, no solo los tramos entre pueblos.
+    // También los pueblos y las prolongaciones de los ramales.
     let flora = loaded
         .line
         .track_paths(&loaded.towns)
@@ -177,13 +182,14 @@ fn lay_out(loaded: &towns::LoadedWorld) -> Laid {
         )
         .with_fences(&fences)
         .with_settlements(&settlements);
-    // Kerosene street lamps round the plazas, at the town exits and street
-    // corners and at the estancias, clear of everything above; each post
-    // is a thin obstacle.
+    // Faroles de kerosén alrededor de las plazas, en las salidas de los
+    // pueblos, en las esquinas y en las estancias, apartados de todo lo
+    // anterior; cada poste es un obstáculo delgado.
     let lamps = StreetLamps::place(&loaded.towns, &loaded.roads, &settlements, &world.obstacles);
     world.obstacles.extend(lamps.obstacles());
-    // Cattle in some fenced fields, horses in the corrals, and the wild
-    // animals seeded per chunk and lagoon, off everything above.
+    // Ganado en algunos campos alambrados, caballos en los corrales, y los
+    // animales silvestres sembrados por chunk y por laguna, fuera de todo lo
+    // anterior.
     let started = std::time::Instant::now();
     let path = loaded.line.full_path(&loaded.towns);
     let fauna = FaunaSite::new(
@@ -220,9 +226,10 @@ fn lay_out(loaded: &towns::LoadedWorld) -> Laid {
 }
 
 fn main() {
-    // One logic world feeds both the simulation and the drawing: the leveled
-    // terrain, the town footprints and the bounds all come from `world`,
-    // built from every town of `assets/world/towns.ron`.
+    // Un único mundo lógico alimenta tanto la simulación como el dibujo: el
+    // terreno nivelado, las huellas en planta de los pueblos y los límites
+    // salen de `world`, construido con todos los pueblos de
+    // `assets/world/towns.ron`.
     let loaded = towns::load_world(&asset_path(TOWNS_FILE));
     let report = towns::TownReport::new(&loaded);
     let Laid {
@@ -244,23 +251,23 @@ fn main() {
             lamps.settlements.iter().map(Vec::len).sum::<usize>()
         )))
         .collect();
-    // The errand: Don Hidalgo in the first town's plaza sends the player to
-    // comisario Farach in the town the dialogue names. Both stand in the way
-    // like any obstacle.
+    // El encargo: Don Hidalgo, en la plaza del primer pueblo, manda al jugador
+    // a ver al comisario Farach en el pueblo que nombra el diálogo. Ambos
+    // estorban el paso como cualquier obstáculo.
     let (dialogue, dialogue_report) = errand::read_dialogue();
     let errand = errand::plan(&loaded.towns, &mut world, &dialogue.0.police_town);
     let crowds = life::Crowds::for_towns(&loaded.towns);
-    // The opening: the player rides the morning train from Pico, seated in
-    // a coach as it pulls into the first town, and gets off there on foot.
-    // Without a train they start on foot on the road into the first town.
+    // La apertura: el jugador viaja en el tren de la mañana desde Pico, sentado
+    // en un coche mientras entra al primer pueblo, y allí se baja a pie. Sin
+    // tren, empieza a pie en el camino de entrada al primer pueblo.
     let (clock, trains, ride) = life::start_of_day(&loaded.line, &loaded.towns);
     let (position, heading) = ride
         .and_then(|ride| ride.seat(trains.get(ride.train)?))
         .unwrap_or_else(|| loaded.towns[0].arrival());
     let mut app = App::new();
-    // The CC0 vegetation models, ground and building textures (see
-    // CREDITS.md); the asset server reads glTF models and building textures
-    // from the same folder.
+    // Los modelos de vegetación CC0 y las texturas del suelo y de los edificios
+    // (ver CREDITS.md); el servidor de assets lee los modelos glTF y las
+    // texturas de los edificios de la misma carpeta.
     let root = AssetRoot(asset_path(""));
     let (slots, slots_warning) = model_slots(&asset_path(SLOTS_FILE));
     if let Some(warning) = slots_warning {
@@ -284,7 +291,7 @@ fn main() {
     .insert_resource(WorldClock(clock))
     .insert_resource(WorldTrains(trains))
     .insert_resource(WorldTowns(loaded.towns))
-    // The railway line between towns, laid chunk by chunk.
+    // La línea del ferrocarril entre pueblos, colocada chunk por chunk.
     .insert_resource(WorldRail(loaded.line))
     .insert_resource(player::GameWorld(world))
     .insert_resource(player::PlayerSpawn {
@@ -326,26 +333,29 @@ fn main() {
         complaints::ComplaintsPlugin,
         camera::FollowCameraPlugin,
     ))
-    // The roads, their level crossings and signposts, the fences and gates,
-    // and the rural settlements, chunk by chunk; trees, fences, signs and
-    // thin props fade out of the camera's way.
+    // Los caminos, sus pasos a nivel y carteles indicadores, los alambrados y
+    // las tranqueras, y los asentamientos rurales, chunk por chunk; los
+    // árboles, los alambrados, los carteles y los objetos delgados se
+    // desvanecen para no tapar la cámara.
     .add_plugins((RoadPlugin, FencePlugin, SettlementPlugin, ThinFadePlugin))
-    // The kerosene street lamps, glowing by night, the nearest lit.
+    // Los faroles de kerosén, que brillan de noche, con los más cercanos
+    // encendidos.
     .add_plugins(LampPlugin)
-    // Trees collide in the chunks round the player.
+    // Los árboles colisionan en los chunks alrededor del jugador.
     .add_plugins(plant_collision::PlantCollisionPlugin)
-    // The ground's material: the standard one plus the monte's leaf litter.
+    // El material del suelo: el estándar más la hojarasca del monte.
     .add_plugins(pampa_render::ground::GroundMaterialPlugin)
-    // The sky dome (sun, moon, stars, clouds) and the birds flying in it.
+    // La bóveda del cielo (sol, luna, estrellas, nubes) y los pájaros que
+    // vuelan en ella.
     .add_plugins(pampa_render::SkyPlugin)
-    // Cattle, corral horses, hares and birds round the player.
+    // Ganado, caballos de corral, liebres y aves alrededor del jugador.
     .add_plugins((pampa_render::FaunaPlugin, fauna::FaunaPlugin))
-    // The lagoons' water and reeds.
+    // El agua y los juncos de las lagunas.
     .add_plugins(LagoonPlugin)
-    // The errand and the clock and objective in the corner.
+    // El encargo, y el reloj y el objetivo en la esquina.
     .add_plugins((errand::ErrandPlugin, timetable::TimetablePlugin, HudPlugin))
-    // Boarding, riding, skipping and waiting for the train, with a fade to
-    // cover jumps in time.
+    // Subir, viajar, omitir y esperar el tren, con un fundido para tapar los
+    // saltos en el tiempo.
     .add_plugins((ride::RidePlugin, FadePlugin))
     .add_systems(Startup, towns::log_town_report)
     .add_systems(Startup, move || {
@@ -369,10 +379,10 @@ fn main() {
         info!("street lamps: {}", lamp_counts.join(", "));
         info!("fauna: {herds} herds ({head} head), {horses} corral horses; seeded in {seeded:.1?}");
     });
-    // PAMPA_SHOTS=<file>: a dev screenshot tour (see `shots`), which skips
-    // the title screen.
+    // PAMPA_SHOTS=<file>: un recorrido de capturas para desarrollo (ver
+    // `shots`), que omite la pantalla de título.
     let tour = shots::ShotsPlugin::from_env();
-    // The title screen, and Esc's pause menu, with their music.
+    // La pantalla de título y el menú de pausa de Esc, con su música.
     app.add_plugins((
         pampa_render::TypefacePlugin,
         menu::MenuPlugin {
@@ -380,7 +390,8 @@ fn main() {
             settings: sound::settings_path(),
         },
     ));
-    // Ctrl+Shift+F12: the cheat console (see `console`), in debug builds.
+    // Ctrl+Shift+F12: la consola de trucos (ver `console`), en compilaciones de
+    // depuración.
     #[cfg(debug_assertions)]
     app.add_plugins(console::ConsolePlugin);
     if let Some(tour) = tour {
@@ -389,8 +400,8 @@ fn main() {
     app.run();
 }
 
-/// The shipped world, loaded and laid once for the tests that only read
-/// it; a test that changes it clones what it changes.
+/// El mundo incluido, cargado y colocado una sola vez para los tests que solo
+/// lo leen; un test que lo cambia clona lo que cambia.
 #[cfg(test)]
 mod shipped_world {
     use super::*;
@@ -400,12 +411,12 @@ mod shipped_world {
         LazyLock::new(|| towns::load_world(&asset_path(TOWNS_FILE)));
     static LAID: LazyLock<Laid> = LazyLock::new(|| lay_out(loaded()));
 
-    /// The shipped towns file, loaded.
+    /// El archivo de pueblos incluido, cargado.
     pub(crate) fn loaded() -> &'static towns::LoadedWorld {
         &LOADED
     }
 
-    /// [`loaded`] laid out as the game lays it.
+    /// [`loaded`] dispuesto como lo dispone el juego.
     pub(crate) fn laid() -> &'static Laid {
         &LAID
     }
@@ -421,13 +432,13 @@ mod tests {
         let settlements = &laid.settlements;
         assert!(!settlements.settlements.is_empty());
         assert!(laid.report.kinds.iter().sum::<usize>() == settlements.settlements.len());
-        // Every building, prop, rail and trunk is an obstacle of the world.
+        // Cada edificio, objeto, travesaño y tronco es un obstáculo del mundo.
         assert_eq!(laid.report.obstacles, settlements.obstacles().count());
         for o in settlements.obstacles() {
             assert!(laid.world.obstacles.contains(&o), "{o:?}");
         }
-        // No wild tree grows on a settlement: the flora keeps off them,
-        // over every chunk each one reaches into.
+        // Ningún árbol silvestre crece sobre un asentamiento: la flora se
+        // mantiene fuera de ellos, en cada chunk al que llega cada uno.
         let size = laid.world.config.chunk_size;
         for s in &settlements.settlements {
             let (lo, hi) = (
@@ -442,7 +453,7 @@ mod tests {
                 }
             }
         }
-        // Every house and barn stops the camera.
+        // Cada casa y cada galpón detienen la cámara.
         let occluders =
             camera::CameraOccluders::default().with_settlements(settlements, &laid.world.terrain);
         let buildings: Vec<_> = settlements
@@ -463,8 +474,8 @@ mod tests {
             );
         }
         assert!(!laid.fences.gates.is_empty());
-        // A few wrecks lie in the yards and on the verges, off the roads,
-        // solid, and with no wild tree on them.
+        // Algunos restos abandonados yacen en los patios y en las banquinas,
+        // fuera de los caminos, sólidos y sin ningún árbol silvestre encima.
         let roads = laid.world.terrain.roads.as_deref().expect("roads laid");
         let yards = settlements
             .settlements
@@ -512,7 +523,7 @@ mod tests {
                 assert_eq!(placed.len(), 3, "{:?}", s.hub);
             }
         }
-        // Every post is solid, and touches nothing else of the world.
+        // Cada poste es sólido y no toca nada más del mundo.
         let posts: Vec<_> = lamps.obstacles().collect();
         for post in &posts {
             let others = laid
@@ -524,7 +535,8 @@ mod tests {
                 .count();
             assert_eq!(others, 0, "{post:?}");
         }
-        // The errand's people and horse, placed after, stand clear of them.
+        // Las personas y el caballo del encargo, colocados después, quedan
+        // apartados de ellos.
         let (dialogue, _) = errand::read_dialogue();
         let before = laid.world.obstacles.len();
         let mut world = laid.world.clone();
@@ -541,8 +553,9 @@ mod tests {
                 .count();
             assert_eq!(hits, 0, "the errand stands on {post:?}");
         }
-        // Every lamp stands clear of every tree, so it need not see the
-        // trees at startup (they are planted as the player nears them).
+        // Cada farol queda apartado de todos los árboles, para que no necesite
+        // ver los árboles al inicio (se plantan a medida que el jugador se
+        // acerca).
         let mut trees = std::collections::HashMap::new();
         for lamp in laid.lamps.all() {
             let reach = lamp.obstacle().expanded(pampa_core::StreetLamps::CLEARANCE);
@@ -574,21 +587,22 @@ mod tests {
         let keep = lagoon.keep_out();
         let world = laid.world.config.bounds();
         assert!(keep.min.x > world.min.x && keep.max.x < world.max.x);
-        // Its water lies flat in a basin below the land around it.
+        // Su agua yace plana en una cuenca por debajo del terreno que la rodea.
         let middle = laid.world.terrain.height(lagoon.center.x, lagoon.center.y);
         assert!(middle < lagoon.level - 1.0);
         for p in lagoon.ring(64, 1.0) {
             assert!(laid.world.terrain.height(p.x, p.y) > lagoon.level, "{p:?}");
         }
-        // No fence, settlement or road inside its shore, bank and margin;
-        // trees keep back from the water and grass from its mud.
+        // Ningún alambrado, asentamiento ni camino dentro de su orilla, su
+        // ribera y su margen; los árboles se mantienen lejos del agua y el
+        // pasto, de su barro.
         for o in laid.fences.obstacles() {
             assert!(!o.intersects(&keep), "fence {o:?}");
         }
         for s in &laid.settlements.settlements {
             assert!(!s.bounds.intersects(&keep), "{:?}", s.bounds);
         }
-        // Only the public road out to it comes onto its bank.
+        // Solo el camino público que llega hasta ella entra en su ribera.
         let roads = laid.world.terrain.roads.as_ref().unwrap();
         for road in roads
             .roads
@@ -618,7 +632,7 @@ mod tests {
                         "{t:?}"
                     );
                 }
-                // Grass grows down to the narrow wet mud, not on it.
+                // El pasto crece hasta el barro húmedo angosto, no sobre él.
                 for t in &chunk.tufts {
                     assert!(!lagoon.is_bare(t.at), "{t:?}");
                     tufts +=
@@ -627,8 +641,8 @@ mod tests {
             }
         }
         assert!(tufts > 100, "{tufts} tufts near the shore");
-        // Riding in from the west, the rider wades in and stops in the
-        // shallows.
+        // Entrando a caballo desde el oeste, el jinete se mete en el agua y se
+        // detiene en lo poco profundo.
         let collider = pampa_core::Circle::new(pampa_core::Rider::COLLIDER_RADIUS);
         let mut at = lagoon.center - pampa_core::Vec2::new(lagoon.radii.x + 40.0, 0.0);
         for _ in 0..400 {
@@ -654,7 +668,7 @@ mod tests {
             .collect();
         assert_eq!(to_lagoon.len(), 1);
         let road = to_lagoon[0];
-        // From General Pico, out of its east or south side.
+        // Desde General Pico, saliendo por su lado este o sur.
         let pico = &loaded.towns[road.from];
         assert_eq!(pico.name, "General Pico");
         let grid = pico.grid();
@@ -662,18 +676,20 @@ mod tests {
         let east = (start.x - grid.max.x).abs() < 1e-2;
         let south = (start.y - grid.min.y).abs() < 1e-2;
         assert!(east || south, "{start:?} on {grid:?}");
-        // To the bank: never into the water or onto its mud, and ending by it.
+        // Hasta la ribera: nunca dentro del agua ni sobre su barro, y
+        // terminando junto a ella.
         let end = road
             .path
             .iter()
             .map(|&p| lagoon.offshore(p))
             .fold(f32::MAX, f32::min);
         assert!(end > pampa_core::Lagoon::MUD_BAND && end < 15.0, "{end}");
-        // A rider rides it end to end: no fence, gate, settlement, tree or
-        // signpost stands on it.
-        // The trees are planted as a rider nears them (see
-        // `plant_collision`): plant the chunks the road crosses and the full
-        // ring (3x3, diagonals included) the game loads around the rider.
+        // Un jinete lo recorre de punta a punta: ningún alambrado, tranquera,
+        // asentamiento, árbol ni cartel indicador está sobre él.
+        // Los árboles se plantan a medida que un jinete se acerca (ver
+        // `plant_collision`): se plantan los chunks que cruza el camino y el
+        // anillo completo (3x3, diagonales incluidas) que el juego carga
+        // alrededor del jinete.
         let collider = pampa_core::Circle::new(pampa_core::Rider::COLLIDER_RADIUS);
         let mut planted = laid.world.clone();
         for p in &road.path {
@@ -693,8 +709,8 @@ mod tests {
                 assert_eq!(planted.resolve(collider, p, |_| ()), p, "{p:?}");
             }
         }
-        // A fence each side, as along every road, out of town and off the
-        // lagoon's bank.
+        // Un alambrado a cada lado, como a lo largo de todo camino, fuera del
+        // pueblo y fuera de la ribera de la laguna.
         let half = pampa_core::RoadNetwork::HALF_WIDTH;
         let fenced = laid
             .fences

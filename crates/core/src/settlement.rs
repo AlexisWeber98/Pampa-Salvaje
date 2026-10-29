@@ -1,27 +1,28 @@
-//! Rural settlements behind the field gates (user, 2026-10-22): the
-//! ranchos, puestos, chacras and estancias of 1919 La Pampa.
+//! Asentamientos rurales detrás de las tranqueras de los campos (usuario,
+//! 2026-10-22): los ranchos, puestos, chacras y estancias de La Pampa de 1919.
 //!
-//! Some open roadside gates ([`crate::Gate`]) lead into a settled field.
-//! Behind such a gate, inside its survey cell and clear of the roads, the
-//! railway, the towns and the fences, stands a seeded compound: the houses
-//! round a bare patio (the hub), with a galpón, corrals, a molino with its
-//! tank and trough, haystacks and the spots where its trees will grow (a
-//! compound plants a third more of them than its kind lays out, on a random
-//! stream of its own: [`Settlement::MORE_TREES`]; then each kind keeps its
-//! share, [`Settlement::tree_keep`]).
+//! Algunas tranqueras abiertas al costado del camino ([`crate::Gate`]) llevan a un
+//! campo poblado. Detrás de una de esas tranqueras, dentro de su celda del
+//! relevamiento y lejos de los caminos, la vía férrea, los pueblos y los
+//! alambrados, hay un conjunto de edificaciones con semilla: las casas alrededor
+//! de un patio de tierra (el centro), con un galpón, corrales, un molino con su
+//! tanque y su bebedero, parvas y los lugares donde crecerán sus árboles (un
+//! conjunto planta un tercio más de los que corresponden a su tipo, con un flujo
+//! aleatorio propio: [`Settlement::MORE_TREES`]; después cada tipo conserva su
+//! proporción, [`Settlement::tree_keep`]).
 //!
-//! Dirt tracks (huellas) join it to the gate: a trunk from just inside the gate to
-//! the hub, and a branch from the hub to the door of every house, galpón
-//! and corral. Tracks are two wheel ruts, not roads: they live outside
-//! [`crate::RoadNetwork`], with no fences, signposts or terrain cut, and
-//! cross no fence but at their own gate.
+//! Huellas de tierra lo unen con la tranquera: un tronco desde justo dentro de la
+//! tranquera hasta el centro, y un ramal desde el centro hasta la puerta de cada
+//! casa, galpón y corral. Las huellas son dos surcos de ruedas, no caminos: quedan
+//! fuera de [`crate::RoadNetwork`], sin alambrados, carteles indicadores ni corte
+//! en el terreno, y no cruzan ningún alambrado salvo por su propia tranquera.
 //!
-//! Everything is axis-aligned, like the survey grid. Houses, galpones,
-//! tanks and props are box obstacles; a corral is its rail spans with one
-//! opening, so a rider can ride in; a tree spot blocks with its trunk only,
-//! and render grows the tree on it.
-//! Wild flora keeps off the compounds and the tracks through an indexed
-//! [`KeepOut`].
+//! Todo está alineado con los ejes, como la cuadrícula del relevamiento. Las
+//! casas, los galpones, los tanques y los elementos decorativos son obstáculos
+//! rectangulares; un corral son sus tramos de baranda con una abertura, para que
+//! un jinete pueda entrar; un lugar de árbol solo bloquea con su tronco, y el
+//! render hace crecer el árbol en él. La flora silvestre se mantiene fuera de los
+//! conjuntos y de las huellas mediante un [`KeepOut`] indexado.
 
 use std::collections::{HashMap, HashSet};
 use std::f32::consts::{PI, TAU};
@@ -31,86 +32,88 @@ use crate::rng::Rng;
 use crate::road::segment_distance;
 use crate::{Aabb, FenceLayout, RailLine, RoadNetwork, Side, Terrain, TownLayout, Vec2};
 
-/// What a settlement is, from poorest to richest.
+/// Qué es un asentamiento, del más pobre al más rico.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SettlementKind {
-    /// A rancho: a small adobe house, maybe a corral, and a well.
+    /// Un rancho: una pequeña casa de adobe, quizás un corral, y un pozo.
     Hut,
-    /// A puesto: a herdsman's hut out on an estancia's land, with a corral and an
-    /// aguada (a trough, sometimes a molino).
+    /// Un puesto: la choza de un puestero en las tierras de una estancia, con un
+    /// corral y una aguada (un bebedero, a veces un molino).
     Outpost,
-    /// A chacra: a farm with a brick or adobe house, a galpón, a molino with its tank and
-    /// trough, a corral and haystacks.
+    /// Una chacra: una granja con una casa de ladrillo o adobe, un galpón, un molino con
+    /// su tanque y su bebedero, un corral y parvas.
     Farm,
-    /// An estancia: its casco (the homestead) with its gallery, the houses of its peones,
-    /// galpones, corrals, the aguada and a grove, spread over hectares.
+    /// Una estancia: su casco (la casa principal) con su galería, las casas de sus
+    /// peones, galpones, corrales, la aguada y un monte, repartidos en hectáreas.
     Ranch,
 }
 
-/// How a house is built.
+/// Cómo está construida una casa.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HouseStyle {
-    /// Adobe walls under a thatched (paja) roof.
+    /// Paredes de adobe bajo un techo de paja.
     AdobeThatch,
-    /// Adobe walls under a corrugated-iron roof.
+    /// Paredes de adobe bajo un techo de chapa ondulada.
     AdobeIron,
-    /// Whitewashed brick with a flat roof behind a parapet.
+    /// Ladrillo encalado con techo plano detrás de un parapeto.
     BrickParapet,
-    /// An estancia's Italianate casco with a gallery along its front.
+    /// El casco italianizante de una estancia con una galería a lo largo del
+    /// frente.
     GalleryHouse,
 }
 
-/// One building or prop of a settlement.
+/// Un edificio o elemento decorativo de un asentamiento.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StructureKind {
     MainHouse(HouseStyle),
-    /// A casa de peones, or the caretaker's house.
+    /// Una casa de peones, o la casa del casero.
     WorkerHouse(HouseStyle),
-    /// A galpón: a sheet-iron shed for tools, carts and grain.
+    /// Un galpón: un cobertizo de chapa para herramientas, carros y cereal.
     Barn,
-    /// Post-and-rail corral, open on its front side.
+    /// Corral de postes y barandas, abierto en su lado frontal.
     Corral,
-    /// A molino (windpump): its footprint is the tower's base.
+    /// Un molino (bomba de viento): su huella es la base de la torre.
     Windpump,
-    /// The round corrugated "australian" tank the molino fills.
+    /// El tanque "australiano" redondo de chapa ondulada que llena el molino.
     Tank,
-    /// The bebedero the stock drinks from.
+    /// El bebedero del que toma agua el ganado.
     Trough,
-    /// A brick well curb (brocal) with its frame.
+    /// Un brocal de pozo de ladrillo con su armazón.
     Well,
-    /// A parva of hay.
+    /// Una parva de heno.
     Haystack,
-    /// A palenque to tie horses to.
+    /// Un palenque para atar caballos.
     HitchingPost,
-    /// A carreta: a two-wheeled ox cart left in the yard.
+    /// Una carreta: un carro de bueyes de dos ruedas dejado en el patio.
     Cart,
-    /// An abandoned four-wheeled wagon (a broken-down chata) rotting at a
-    /// yard edge or on a road verge: scenery, a small obstacle.
+    /// Un carro abandonado de cuatro ruedas (una chata rota) pudriéndose en el
+    /// borde de un patio o en la banquina de un camino: escenografía, un
+    /// obstáculo chico.
     WreckedWagon,
-    /// Where a eucalyptus of the grove grows; only its trunk blocks.
+    /// Donde crece un eucalipto del monte; solo bloquea su tronco.
     Eucalyptus,
-    /// Where a poplar of the entrance alameda grows; only its trunk blocks.
+    /// Donde crece un álamo de la alameda de entrada; solo bloquea su tronco.
     Poplar,
 }
 
 impl StructureKind {
-    /// A house people live in.
+    /// Una casa en la que vive gente.
     pub fn is_house(self) -> bool {
         matches!(self, Self::MainHouse(_) | Self::WorkerHouse(_))
     }
 
-    /// Whether a track leads to its door.
+    /// Si una huella lleva hasta su puerta.
     pub fn is_reached(self) -> bool {
         self.is_house() || matches!(self, Self::Barn | Self::Corral)
     }
 
-    /// A tree spot rather than a structure.
+    /// Un lugar de árbol y no una estructura.
     pub fn is_tree(self) -> bool {
         matches!(self, Self::Eucalyptus | Self::Poplar)
     }
 
-    /// Every model slot name [`Self::slot`] gives: lowercase folder names
-    /// under `assets/models/third-party/`.
+    /// Todos los nombres de ranura de modelo que da [`Self::slot`]: nombres de
+    /// carpeta en minúsculas dentro de `assets/models/third-party/`.
     pub const SLOTS: [&'static str; 9] = [
         "windpump",
         "eucalyptus",
@@ -123,8 +126,9 @@ impl StructureKind {
         "wrecked_wagon",
     ];
 
-    /// The model slot a downloaded glTF replaces the procedural mesh from
-    /// (`assets/models/third-party/<slot>/`), for the props that have one.
+    /// La ranura de modelo desde la que un glTF descargado reemplaza el mesh
+    /// procedural (`assets/models/third-party/<slot>/`), para los elementos que
+    /// tienen una.
     pub fn slot(self) -> Option<&'static str> {
         Some(match self {
             Self::Windpump => "windpump",
@@ -141,22 +145,23 @@ impl StructureKind {
     }
 }
 
-/// One building or prop: an axis-aligned footprint, its height and the
-/// side its front (door, gallery, corral opening) faces: toward the hub.
+/// Un edificio o elemento decorativo: una huella alineada con los ejes, su
+/// altura y el lado hacia el que mira su frente (puerta, galería, abertura del
+/// corral): hacia el centro.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Structure {
     pub kind: StructureKind,
     pub footprint: Aabb,
-    /// Wall height, or the prop's or tree's height, in meters.
+    /// Altura de la pared, o la altura del elemento o del árbol, en metros.
     pub height: f32,
     pub front: Side,
-    /// Seeded variant (render picks a shape or a texture with it).
+    /// Variante con semilla (el render elige con ella una forma o una textura).
     pub variant: u32,
 }
 
 impl Structure {
-    /// The point [`Settlement::DOOR_REACH`] meters out of the middle of
-    /// its front: where its track ends.
+    /// El punto a [`Settlement::DOOR_REACH`] metros hacia afuera del centro de
+    /// su frente: donde termina su huella.
     pub fn door(&self) -> Vec2 {
         let (fp, c) = (self.footprint, self.footprint.center());
         let reach = Settlement::DOOR_REACH;
@@ -168,8 +173,9 @@ impl Structure {
         }
     }
 
-    /// A tree spot's trunk radius at the ground, in meters: a eucalyptus's
-    /// thick pale bole, a poplar's slender one. 0 for anything else.
+    /// El radio del tronco de un lugar de árbol a nivel del suelo, en metros:
+    /// el tronco grueso y claro de un eucalipto, el delgado de un álamo. 0 para
+    /// cualquier otra cosa.
     pub fn trunk_radius(&self) -> f32 {
         match self.kind {
             StructureKind::Eucalyptus => (0.016 * self.height).clamp(0.2, 0.45),
@@ -178,9 +184,10 @@ impl Structure {
         }
     }
 
-    /// Its static obstacles: the footprint; a corral's rail spans with
-    /// [`Settlement::CORRAL_GATE`] meters open in the middle of its front;
-    /// a tree spot's trunk, a square [`Self::trunk_radius`] to either side.
+    /// Sus obstáculos estáticos: la huella; los tramos de baranda de un corral
+    /// con [`Settlement::CORRAL_GATE`] metros abiertos en el centro de su
+    /// frente; el tronco de un lugar de árbol, un cuadrado de
+    /// [`Self::trunk_radius`] hacia cada lado.
     pub fn obstacles(&self) -> Vec<Aabb> {
         match self.kind {
             k if k.is_tree() => {
@@ -196,150 +203,166 @@ impl Structure {
     }
 }
 
-/// An inner track (a huella): two wheel ruts along `points`,
-/// [`Track::HALF_WIDTH`] meters to either side.
+/// Una huella interna: dos surcos de ruedas a lo largo de `points`, a
+/// [`Track::HALF_WIDTH`] metros hacia cada lado.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Track {
     pub points: Vec<Vec2>,
 }
 
 impl Track {
-    /// Half the worn width, in meters (2.6 m in all).
+    /// La mitad del ancho gastado, en metros (2,6 m en total).
     pub const HALF_WIDTH: f32 = 1.3;
 
-    /// The straight pieces, in order.
+    /// Los tramos rectos, en orden.
     pub fn segments(&self) -> impl Iterator<Item = (Vec2, Vec2)> + '_ {
         self.points.windows(2).map(|w| (w[0], w[1]))
     }
 }
 
-/// One settlement behind a gate.
+/// Un asentamiento detrás de una tranquera.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Settlement {
     pub kind: SettlementKind,
-    /// The open gate it lies behind (an index into [`FenceLayout::gates`]).
+    /// La tranquera abierta detrás de la que está (un índice dentro de
+    /// [`FenceLayout::gates`]).
     pub gate: u32,
-    /// The middle of the patio, where the tracks meet.
+    /// El centro del patio, donde se encuentran las huellas.
     pub hub: Vec2,
-    /// The bare, trodden yard round the hub.
+    /// El patio de tierra pisoteada alrededor del centro.
     pub patio: Aabb,
     pub structures: Vec<Structure>,
-    /// The trunk from the gate to the hub first, then one branch from the
-    /// hub to each door.
+    /// Primero el tronco desde la tranquera hasta el centro y después un ramal
+    /// desde el centro hasta cada puerta.
     pub tracks: Vec<Track>,
-    /// Everything it covers: footprints, patio and tracks.
+    /// Todo lo que cubre: huellas de edificios, patio y huellas de tierra.
     pub bounds: Aabb,
-    /// Seed for render's own variety.
+    /// Semilla para la variedad propia del render.
     pub seed: u32,
 }
 
 impl Settlement {
-    /// How far out of a front its track ends, in meters.
+    /// A qué distancia hacia afuera de un frente termina su huella, en metros.
     pub const DOOR_REACH: f32 = 3.5;
-    /// Width of a corral's opening, in meters.
+    /// Ancho de la abertura de un corral, en metros.
     pub const CORRAL_GATE: f32 = 4.0;
-    /// Thickness of a corral rail's obstacle, in meters.
+    /// Espesor del obstáculo de una baranda de corral, en metros.
     pub const CORRAL_RAIL: f32 = 0.2;
-    /// Least distance from a footprint to a road's centerline, in meters:
-    /// well behind the roadside fence.
+    /// Distancia mínima desde una huella de edificio hasta la línea central de
+    /// un camino, en metros: bien detrás del alambrado al costado del camino.
     pub const ROAD_CLEARANCE: f32 = 25.0;
-    /// Least distance from a barn to a road, in meters: well past the
-    /// common clearance, so a visitor reaches the casco first and the
-    /// galpones stay off the roadside. The road index sees 64 m
-    /// ([`RoadNetwork::INDEX_REACH`]) and `off_roads_by` adds 2.5 m, so this
-    /// is as far as it can be checked.
+    /// Distancia mínima desde un galpón hasta un camino, en metros: bastante
+    /// más que el despeje común, para que un visitante llegue primero al casco
+    /// y los galpones queden lejos del costado del camino. El índice de caminos
+    /// ve 64 m ([`RoadNetwork::INDEX_REACH`]) y `off_roads_by` agrega 2,5 m,
+    /// así que esto es lo máximo que se puede comprobar.
     pub const BARN_ROAD_CLEARANCE: f32 = 60.0;
-    /// Least distance from a footprint to the track's centerline, meters.
+    /// Distancia mínima desde una huella de edificio hasta la línea central de
+    /// la vía, en metros.
     pub const RAIL_CLEARANCE: f32 = 40.0;
-    /// Least distance from a footprint or track to a town's leveled band.
+    /// Distancia mínima desde una huella de edificio o una huella de tierra
+    /// hasta la franja nivelada de un pueblo.
     pub const TOWN_CLEARANCE: f32 = 60.0;
-    /// Least distance from a footprint to its cell's survey lines (the
-    /// grid fences), in meters.
+    /// Distancia mínima desde una huella de edificio hasta las líneas del
+    /// relevamiento de su celda (los alambrados de la cuadrícula), en metros.
     pub const FENCE_CLEARANCE: f32 = 12.0;
-    /// Least distance from a track's centerline to the survey lines.
+    /// Distancia mínima desde la línea central de una huella hasta las líneas
+    /// del relevamiento.
     pub const TRACK_FENCE_CLEARANCE: f32 = 4.0;
-    /// Least distance from a track's centerline to a road's, past its
-    /// gate: its ruts stay off the roadside fence.
+    /// Distancia mínima desde la línea central de una huella hasta la de un
+    /// camino, pasando su tranquera: sus surcos se mantienen lejos del
+    /// alambrado al costado del camino.
     pub const TRACK_ROAD_CLEARANCE: f32 = FenceLayout::ROADSIDE + Track::HALF_WIDTH + 1.0;
-    /// How far from its gate a track's trunk may still be near the road.
+    /// Hasta qué distancia de su tranquera el tronco de una huella puede seguir
+    /// cerca del camino.
     pub const GATE_APPROACH: f32 = 6.0;
-    /// Least clear ground between two footprints, in meters: a rider fits.
+    /// Espacio libre mínimo entre dos huellas de edificio, en metros: cabe un
+    /// jinete.
     pub const GAP: f32 = 3.0;
-    /// Least distance from a track's centerline to a footprint, meters.
+    /// Distancia mínima desde la línea central de una huella hasta una huella
+    /// de edificio, en metros.
     pub const CORRIDOR: f32 = Track::HALF_WIDTH + 1.0;
-    /// Least distance between two settlements' hubs, in meters.
+    /// Distancia mínima entre los centros de dos asentamientos, en metros.
     pub const MIN_SPACING: f32 = 300.0;
-    /// Extra eucalyptus a compound plants, as a share of the trees its kind
-    /// lays out (the count rounds at random).
+    /// Eucaliptos extra que planta un conjunto, como proporción de los árboles
+    /// que corresponden a su tipo (la cantidad se redondea al azar).
     pub const MORE_TREES: f32 = 0.35;
-    /// The share of its trees a compound of `kind` keeps (user,
-    /// 2026-10-27: 30% fewer, then "chacras y estancias sacale del total
-    /// que tiene ahora, un 30%", then puestos and ranchos too: "se desmonta
-    /// para huerto, animales, plantaciones"): ranchos, puestos and chacras
-    /// 0.7, estancias 0.49 (0.7 x 0.7).
+    /// La proporción de sus árboles que conserva un conjunto de tipo `kind`
+    /// (usuario, 2026-10-27: 30 % menos, después "chacras y estancias sacale
+    /// del total que tiene ahora, un 30%", y después también puestos y ranchos:
+    /// "se desmonta para huerto, animales, plantaciones"): ranchos, puestos y
+    /// chacras 0,7, estancias 0,49 (0,7 x 0,7).
     pub fn tree_keep(kind: SettlementKind) -> f32 {
         match kind {
             SettlementKind::Hut | SettlementKind::Outpost | SettlementKind::Farm => 0.7,
             SettlementKind::Ranch => 0.49,
         }
     }
-    /// Meters between the pairs of an estancia's alameda, planted as a
-    /// windbreak (4 to 6 m).
+    /// Metros entre los pares de la alameda de una estancia, plantada como
+    /// cortina rompevientos (de 4 a 6 m).
     pub const POPLAR_SPACING: f32 = 6.0;
-    /// How far each row of the alameda stands from the trunk's centerline.
+    /// A qué distancia de la línea central del tronco está cada fila de la
+    /// alameda.
     pub const POPLAR_OFFSET: f32 = 5.0;
-    /// How far past the trunk's first point (half a meter inside the gate)
-    /// the alameda's last pair stands: about 4 m inside the tranquera.
+    /// Cuánto más allá del primer punto del tronco (medio metro dentro de la
+    /// tranquera) está el último par de la alameda: unos 4 m dentro de la
+    /// tranquera.
     pub const POPLAR_GATE_INSET: f32 = 3.5;
-    /// Least ground an estancia's compound spreads over, in square meters.
+    /// Superficie mínima que ocupa el conjunto de una estancia, en metros
+    /// cuadrados.
     pub const RANCH_AREA: f32 = 20_000.0;
-    /// Chance of an abandoned wagon at a chacra, and at an estancia.
+    /// Probabilidad de que haya un carro abandonado en una chacra y en una
+    /// estancia.
     pub const WRECKS: (f32, f32) = (0.3, 0.5);
-    /// An abandoned wagon's footprint: wide along its front, deep out of
-    /// it, in meters.
+    /// La huella de un carro abandonado: ancha a lo largo de su frente,
+    /// profunda hacia afuera de él, en metros.
     pub const WRECK_SIZE: (f32, f32) = (4.8, 3.6);
 
-    /// Every structure of `kind`.
+    /// Todas las estructuras de tipo `kind`.
     pub fn of(&self, kind: StructureKind) -> impl Iterator<Item = &Structure> + '_ {
         self.structures.iter().filter(move |s| s.kind == kind)
     }
 
-    /// The trunk track, from just inside the gate to the hub.
+    /// La huella troncal, desde justo dentro de la tranquera hasta el centro.
     pub fn trunk(&self) -> &Track {
         &self.tracks[0]
     }
 }
 
-/// Every settlement of the world, with the keep-out wild flora respects.
+/// Todos los asentamientos del mundo, con la zona prohibida que respeta la
+/// flora silvestre.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SettlementLayout {
     pub settlements: Vec<Settlement>,
     pub(crate) keep_out: Arc<KeepOut>,
-    /// The towns asked for an estancia that got none (see
-    /// [`Self::build_with_ranches`]): the caller warns about them.
+    /// Los pueblos para los que se pidió una estancia y no obtuvieron ninguna
+    /// (ver [`Self::build_with_ranches`]): quien llama avisa sobre ellos.
     pub unplaced_ranches: Vec<usize>,
-    /// Abandoned wagons on road verges, between the road's edge and its
-    /// fence: a handful on the whole map (see [`Self::ROADSIDE_WRECKS`]).
+    /// Carros abandonados en las banquinas de los caminos, entre el borde del
+    /// camino y su alambrado: unos pocos en todo el mapa (ver
+    /// [`Self::ROADSIDE_WRECKS`]).
     pub roadside: Vec<RoadsideWreck>,
 }
 
-/// An abandoned wagon on a road verge, lying along the road.
+/// Un carro abandonado en la banquina de un camino, a lo largo del camino.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RoadsideWreck {
-    /// The middle of its footprint.
+    /// El centro de su huella.
     pub at: Vec2,
-    /// Unit direction of the road beside it: its length runs this way.
+    /// Dirección unitaria del camino que está al lado: su largo corre en esa
+    /// dirección.
     pub along: Vec2,
-    /// Seeded variant (render tilts it with it).
+    /// Variante con semilla (el render lo inclina con ella).
     pub variant: u32,
 }
 
 impl RoadsideWreck {
-    /// Side of each of the boxes that block along its body, in meters.
+    /// Lado de cada uno de los rectángulos que bloquean a lo largo de su
+    /// cuerpo, en metros.
     pub const BLOCK: f32 = 2.0;
 
-    /// The corners of its turned footprint, [`Settlement::WRECK_SIZE`]:
-    /// long along the road, deep across it.
+    /// Las esquinas de su huella girada, [`Settlement::WRECK_SIZE`]: larga a lo
+    /// largo del camino, profunda a lo ancho.
     pub fn corners(&self) -> [Vec2; 4] {
         let (wide, deep) = Settlement::WRECK_SIZE;
         let (a, c) = (self.along * (wide / 2.0), self.across() * (deep / 2.0));
@@ -351,12 +374,14 @@ impl RoadsideWreck {
         ]
     }
 
-    /// Unit direction across the road (a quarter turn from `along`).
+    /// Dirección unitaria transversal al camino (un cuarto de vuelta desde
+    /// `along`).
     pub fn across(&self) -> Vec2 {
         Vec2::new(-self.along.y, self.along.x)
     }
 
-    /// The box round its turned footprint (the flora keeps off it).
+    /// El rectángulo que rodea su huella girada (la flora se mantiene fuera de
+    /// él).
     pub fn footprint(&self) -> Aabb {
         let [a, b, c, d] = self.corners();
         Aabb::new(
@@ -371,7 +396,8 @@ impl RoadsideWreck {
         )
     }
 
-    /// What blocks the rider: three [`Self::BLOCK`] boxes along its body.
+    /// Lo que bloquea al jinete: tres rectángulos de [`Self::BLOCK`] a lo largo
+    /// de su cuerpo.
     pub fn obstacles(&self) -> Vec<Aabb> {
         let reach = Settlement::WRECK_SIZE.0 / 2.0 - Self::BLOCK / 2.0;
         [-reach, 0.0, reach]
@@ -387,34 +413,40 @@ impl RoadsideWreck {
 }
 
 impl SettlementLayout {
-    /// Share of open gates (into an unsettled field) that lead to a
-    /// settlement near a town, and far from one.
+    /// Proporción de tranqueras abiertas (hacia un campo sin poblar) que llevan
+    /// a un asentamiento cerca de un pueblo, y lejos de uno.
     pub const SETTLED: (f32, f32) = (0.6, 0.45);
-    /// Distance from a town's leveled band within which a gate counts as
-    /// near the town (chacras gather there), in meters.
+    /// Distancia desde la franja nivelada de un pueblo dentro de la cual una
+    /// tranquera cuenta como cercana al pueblo (ahí se agrupan las chacras), en
+    /// metros.
     pub const NEAR_TOWN: f32 = 3000.0;
-    /// Tries at a hub per gate.
+    /// Intentos de centro por tranquera.
     const HUB_TRIES: usize = 16;
-    /// Tries at a hub per gate for a forced estancia: it needs a big field.
+    /// Intentos de centro por tranquera para una estancia forzada: necesita un
+    /// campo grande.
     pub const RANCH_TRIES: usize = 64;
-    /// How far from a town's leveled band a forced estancia's gate may be,
-    /// in meters: within 3 km, then wider steps when nothing fits.
+    /// A qué distancia de la franja nivelada de un pueblo puede estar la
+    /// tranquera de una estancia forzada, en metros: hasta 3 km, y después en
+    /// pasos más amplios cuando no entra nada.
     pub const RANCH_REACH: [f32; 4] = [3000.0, 6000.0, 12_000.0, f32::INFINITY];
-    /// Distance from the gate to the end of the trunk's first straight
-    /// piece, in meters.
+    /// Distancia desde la tranquera hasta el final del primer tramo recto del
+    /// tronco, en metros.
     const ENTRY: f32 = 12.0;
-    /// Most abandoned wagons on the road verges, map-wide.
+    /// Máximo de carros abandonados en las banquinas de los caminos, en todo el
+    /// mapa.
     pub const ROADSIDE_WRECKS: usize = 5;
-    /// Chance that a roadside fence run gets a wreck.
+    /// Probabilidad de que un tramo de alambrado al costado del camino tenga un
+    /// carro abandonado.
     const ROADSIDE_CHANCE: f32 = 0.15;
-    /// Least distance between two roadside wrecks, in meters.
+    /// Distancia mínima entre dos carros abandonados al costado del camino, en
+    /// metros.
     const ROADSIDE_SPACING: f32 = 1500.0;
-    /// Gap between a wreck and the road's edge, in meters.
+    /// Separación entre un carro abandonado y el borde del camino, en metros.
     const VERGE_GAP: f32 = 0.4;
 
-    /// The settlements behind the open gates of `fences`, over `terrain`
-    /// (with its roads laid), clear of the towns of `towns` and of `line`'s
-    /// whole track. Seeded per gate: the same every time.
+    /// Los asentamientos detrás de las tranqueras abiertas de `fences`, sobre
+    /// `terrain` (con sus caminos trazados), lejos de los pueblos de `towns` y
+    /// de toda la vía de `line`. Con semilla por tranquera: siempre iguales.
     pub fn build(
         terrain: &Terrain,
         towns: &[TownLayout],
@@ -424,17 +456,19 @@ impl SettlementLayout {
         Self::build_with_ranches(terrain, towns, line, fences, &[])
     }
 
-    /// Like [`Self::build`], with one estancia forced near each town of
-    /// `ranch_towns` (indices into `towns`), laid before the seeded mix so
-    /// the other settlements keep their spacing from it.
+    /// Como [`Self::build`], con una estancia forzada cerca de cada pueblo de
+    /// `ranch_towns` (índices dentro de `towns`), colocada antes de la mezcla
+    /// con semilla para que los demás asentamientos mantengan su separación
+    /// respecto de ella.
     ///
-    /// For each such town the open gates within [`Self::RANCH_REACH`] of its
-    /// leveled band are tried nearest first, each with up to
-    /// [`Self::RANCH_TRIES`] hubs; the first whose field holds a whole
-    /// estancia (its casco, at least two worker houses, a barn, a corral,
-    /// the water point, over [`Settlement::RANCH_AREA`]) wins. When none
-    /// fits, the reach widens step by step; a town that still gets none is
-    /// listed in [`Self::unplaced_ranches`].
+    /// Para cada uno de esos pueblos se prueban las tranqueras abiertas a
+    /// [`Self::RANCH_REACH`] o menos de su franja nivelada, de la más cercana a
+    /// la más lejana, cada una con hasta [`Self::RANCH_TRIES`] centros; gana la
+    /// primera cuyo campo contenga una estancia completa (su casco, al menos
+    /// dos casas de trabajadores, un galpón, un corral, la aguada, en más de
+    /// [`Settlement::RANCH_AREA`]). Cuando no entra ninguna, el alcance se
+    /// amplía paso a paso; un pueblo que sigue sin obtener ninguna se lista en
+    /// [`Self::unplaced_ranches`].
     pub fn build_with_ranches(
         terrain: &Terrain,
         towns: &[TownLayout],
@@ -452,7 +486,7 @@ impl SettlementLayout {
                     .collect::<Vec<_>>()
             }))
             .collect();
-        // Towns and lagoons with their banks.
+        // Pueblos y lagunas con sus barrancas.
         let bands: Vec<Aabb> = towns
             .iter()
             .map(|t| t.leveled().expanded(Settlement::TOWN_CLEARANCE))
@@ -538,12 +572,13 @@ impl SettlementLayout {
         }
     }
 
-    /// How many settlements are of `kind`.
+    /// Cuántos asentamientos son de tipo `kind`.
     pub fn count(&self, kind: SettlementKind) -> usize {
         self.settlements.iter().filter(|s| s.kind == kind).count()
     }
 
-    /// The static obstacles of every settlement and roadside wreck.
+    /// Los obstáculos estáticos de cada asentamiento y de cada carro abandonado
+    /// al costado del camino.
     pub fn obstacles(&self) -> impl Iterator<Item = Aabb> + '_ {
         self.settlements
             .iter()
@@ -552,9 +587,10 @@ impl SettlementLayout {
             .chain(self.roadside.iter().flat_map(RoadsideWreck::obstacles))
     }
 
-    /// [`Self::obstacles`] in the same order, each with how tall it is in
-    /// meters: a structure's own height (a jumping horse clears a low
-    /// trough or palenque), a roadside wreck's unbounded.
+    /// [`Self::obstacles`] en el mismo orden, cada uno con su altura en metros:
+    /// la altura propia de una estructura (un caballo que salta supera un
+    /// bebedero o un palenque bajos), sin límite para un carro abandonado al
+    /// costado del camino.
     pub fn obstacle_heights(&self) -> impl Iterator<Item = (Aabb, f32)> + '_ {
         self.settlements
             .iter()
@@ -568,8 +604,9 @@ impl SettlementLayout {
             )
     }
 
-    /// The settlements whose hub lies in `area` (a terrain chunk; west and
-    /// south edges in, east and north out), so each has one chunk.
+    /// Los asentamientos cuyo centro está en `area` (un chunk del terreno;
+    /// bordes oeste y sur incluidos, este y norte excluidos), para que cada uno
+    /// pertenezca a un solo chunk.
     pub fn in_area(&self, area: Aabb) -> impl Iterator<Item = &Settlement> + '_ {
         self.settlements.iter().filter(move |s| {
             let p = s.hub;
@@ -577,40 +614,42 @@ impl SettlementLayout {
         })
     }
 
-    /// The settlements reaching into `area`.
+    /// Los asentamientos que llegan hasta `area`.
     pub fn touching(&self, area: Aabb) -> impl Iterator<Item = &Settlement> + '_ {
         self.settlements
             .iter()
             .filter(move |s| s.bounds.intersects(&area))
     }
 
-    /// The tracks of the settlements [`Self::in_area`] holds.
+    /// Las huellas de los asentamientos que contiene [`Self::in_area`].
     pub fn tracks_in(&self, area: Aabb) -> impl Iterator<Item = &Track> + '_ {
         self.in_area(area).flat_map(|s| s.tracks.iter())
     }
 
-    /// Whether `p` is more than `margin` meters (at most
-    /// [`KeepOut::MAX_MARGIN`]) from every footprint, patio and track.
+    /// Si `p` está a más de `margin` metros (como mucho
+    /// [`KeepOut::MAX_MARGIN`]) de toda huella de edificio, patio y huella de
+    /// tierra.
     pub fn is_clear(&self, p: Vec2, margin: f32) -> bool {
         self.keep_out.is_clear(p, margin)
     }
 
-    /// The indexed keep-out of every settlement.
+    /// El índice de zonas prohibidas de todos los asentamientos.
     pub fn keep_out(&self) -> &KeepOut {
         &self.keep_out
     }
 }
 
-/// What every settlement keeps clear of, world-wide.
+/// Aquello de lo que se mantiene lejos cada asentamiento, en todo el mundo.
 struct Site<'a> {
     terrain: &'a Terrain,
     fences: &'a FenceLayout,
     rails: Vec<(Vec2, Vec2)>,
-    /// Town bands, already grown by [`Settlement::TOWN_CLEARANCE`].
+    /// Franjas de los pueblos, ya agrandadas en [`Settlement::TOWN_CLEARANCE`].
     bands: Vec<Aabb>,
 }
 
-/// The settlements laid so far and the survey cells they hold.
+/// Los asentamientos colocados hasta ahora y las celdas del relevamiento que
+/// ocupan.
 #[derive(Default)]
 struct Placed {
     settlements: Vec<Settlement>,
@@ -618,9 +657,10 @@ struct Placed {
 }
 
 impl Site<'_> {
-    /// Tries to settle the field behind gate `index`: by its seeded chance
-    /// and kind, or as `forced` (a kind and its hub tries) whatever the
-    /// chance. Whether a settlement was laid.
+    /// Intenta poblar el campo detrás de la tranquera `index`: según su
+    /// probabilidad y tipo con semilla, o como `forced` (un tipo y sus intentos
+    /// de centro) sea cual sea la probabilidad. Devuelve si se colocó un
+    /// asentamiento.
     fn settle_gate(
         &self,
         index: usize,
@@ -684,7 +724,7 @@ impl Site<'_> {
         let half = cell.size().x.min(cell.size().y) / 2.0 - 1.0;
         let inner = cell.expanded(-room.min(half));
         for _ in 0..tries {
-            // Somewhere ahead of the gate, kept inside the cell.
+            // En algún lugar delante de la tranquera, dentro de la celda.
             let ahead = gate.at
                 + into * rng.range(depth.0, depth.1)
                 + gate.along * rng.range(-depth.1, depth.1) * 0.5;
@@ -718,9 +758,9 @@ impl Site<'_> {
 }
 
 impl SettlementKind {
-    /// How far into the field (from the gate's road) the hub lies at
-    /// least, how far from the gate at most, and the room it keeps from its
-    /// cell's edges, in meters.
+    /// Cuánto adentro del campo (desde el camino de la tranquera) está como
+    /// mínimo el centro, a qué distancia de la tranquera como máximo, y el
+    /// espacio que deja respecto de los bordes de su celda, en metros.
     fn hub_reach(self) -> ((f32, f32), f32) {
         match self {
             Self::Hut => ((35.0, 250.0), 35.0),
@@ -730,7 +770,7 @@ impl SettlementKind {
         }
     }
 
-    /// Side of the patio, in meters.
+    /// Lado del patio, en metros.
     fn patio(self) -> f32 {
         match self {
             Self::Hut | Self::Outpost => 10.0,
@@ -740,8 +780,8 @@ impl SettlementKind {
     }
 }
 
-/// The kind of a new settlement: chacras near the towns, puestos and
-/// ranchos scattered, estancias rare.
+/// El tipo de un asentamiento nuevo: chacras cerca de los pueblos, puestos y
+/// ranchos dispersos, estancias poco frecuentes.
 fn pick_kind(rng: &mut Rng, near_town: bool) -> SettlementKind {
     use SettlementKind::*;
     let roll = rng.unit();
@@ -760,8 +800,8 @@ fn pick_kind(rng: &mut Rng, near_town: bool) -> SettlementKind {
     odds[0].0
 }
 
-/// Unit direction from the road through a gate at `at` (its fence along
-/// `along`) into the field.
+/// Dirección unitaria desde el camino, a través de una tranquera en `at` (con
+/// su alambrado a lo largo de `along`), hacia el campo.
 fn field_side(roads: Option<&RoadNetwork>, at: Vec2, along: Vec2) -> Vec2 {
     let across = Vec2::new(-along.y, along.x);
     let gap = |p: Vec2| {
@@ -776,24 +816,25 @@ fn field_side(roads: Option<&RoadNetwork>, at: Vec2, along: Vec2) -> Vec2 {
     }
 }
 
-/// What one settlement keeps clear of: the roads, the railway and the
-/// towns near its cell, and the cell's fences.
+/// Aquello de lo que se mantiene lejos un asentamiento: los caminos, la vía
+/// férrea y los pueblos cercanos a su celda, y los alambrados de la celda.
 struct Ground<'a> {
     roads: Option<&'a RoadNetwork>,
     rails: Vec<(Vec2, Vec2)>,
-    /// Town bands, already grown by [`Settlement::TOWN_CLEARANCE`].
+    /// Franjas de los pueblos, ya agrandadas en [`Settlement::TOWN_CLEARANCE`].
     bands: Vec<Aabb>,
     cell: Aabb,
 }
 
 impl Ground<'_> {
-    /// Whether a footprint may stand on `area`.
+    /// Si una huella de edificio puede estar sobre `area`.
     fn area_ok(&self, area: Aabb) -> bool {
         self.area_ok_by(area, Settlement::FENCE_CLEARANCE, true)
     }
 
-    /// [`Self::area_ok`] with its own `fence` clearance, and the roads' only
-    /// when `roads`: the alameda runs up to the gate, on the road's verge.
+    /// [`Self::area_ok`] con su propio despeje `fence`, y el de los caminos
+    /// solo cuando `roads`: la alameda llega hasta la tranquera, sobre la
+    /// banquina del camino.
     fn area_ok_by(&self, area: Aabb, fence: f32, roads: bool) -> bool {
         self.cell.expanded(-fence).contains(&area)
             && self.bands.iter().all(|b| !b.intersects(&area))
@@ -805,14 +846,14 @@ impl Ground<'_> {
             && (!roads || self.off_roads(area))
     }
 
-    /// Whether `area` is [`Settlement::ROAD_CLEARANCE`] from every road:
-    /// samples along its edges at most 5 m apart, each held 2.5 m farther
-    /// off, and its middle.
+    /// Si `area` está a [`Settlement::ROAD_CLEARANCE`] de todo camino: muestras
+    /// a lo largo de sus bordes separadas como mucho 5 m, cada una exigida
+    /// 2,5 m más lejos, y su centro.
     fn off_roads(&self, area: Aabb) -> bool {
         self.off_roads_by(area, Settlement::ROAD_CLEARANCE)
     }
 
-    /// [`Self::off_roads`] for any `clearance`.
+    /// [`Self::off_roads`] para cualquier `clearance`.
     fn off_roads_by(&self, area: Aabb, clearance: f32) -> bool {
         let Some(roads) = self.roads else {
             return true;
@@ -835,10 +876,10 @@ impl Ground<'_> {
             })
     }
 
-    /// Whether a track may run straight from `a` to `b`: inside the cell
-    /// off its fences, off the roads but within
-    /// [`Settlement::GATE_APPROACH`] of its `gate`, off the rail and the
-    /// towns. Sampled every meter.
+    /// Si una huella puede ir en línea recta de `a` a `b`: dentro de la celda
+    /// lejos de sus alambrados, lejos de los caminos pero a
+    /// [`Settlement::GATE_APPROACH`] o menos de su `gate`, lejos del riel y de
+    /// los pueblos. Se muestrea cada metro.
     fn track_ok(&self, a: Vec2, b: Vec2, gate: Option<Vec2>) -> bool {
         let inner = self.cell.expanded(-Settlement::TRACK_FENCE_CLEARANCE);
         let n = (a.distance(b).ceil() as usize).max(1);
@@ -863,8 +904,8 @@ impl Ground<'_> {
     }
 }
 
-/// A building or prop to place: its kind, its size (along its front, then
-/// deep) and its height.
+/// Un edificio o elemento decorativo a colocar: su tipo, su tamaño (a lo largo
+/// de su frente y después en profundidad) y su altura.
 #[derive(Clone, Copy)]
 struct Part {
     kind: StructureKind,
@@ -872,8 +913,8 @@ struct Part {
     height: f32,
 }
 
-/// Where to look for a part's middle: `radius` meters (least, most) from
-/// `around`, in a direction within `spread` radians of `bearing`.
+/// Dónde buscar el centro de una parte: a `radius` metros (mínimo, máximo) de
+/// `around`, en una dirección a `spread` radianes o menos de `bearing`.
 #[derive(Clone, Copy)]
 struct Spot {
     around: Vec2,
@@ -882,13 +923,13 @@ struct Spot {
     spread: f32,
 }
 
-/// One settlement being raised.
+/// Un asentamiento en construcción.
 struct Compound<'a> {
     ground: &'a Ground<'a>,
     rng: Rng,
     kind: SettlementKind,
     hub: Vec2,
-    /// Unit direction from the gate into the field.
+    /// Dirección unitaria desde la tranquera hacia el campo.
     into: Vec2,
     patio: Aabb,
     structures: Vec<Structure>,
@@ -896,7 +937,7 @@ struct Compound<'a> {
 }
 
 impl<'a> Compound<'a> {
-    /// Tries at placing one part.
+    /// Intentos para colocar una parte.
     const TRIES: usize = 24;
 
     fn new(
@@ -922,8 +963,8 @@ impl<'a> Compound<'a> {
         }
     }
 
-    /// Raises the compound of its kind. `false` when a part it must have
-    /// does not fit.
+    /// Levanta el conjunto de su tipo. `false` cuando una parte que debe tener
+    /// no entra.
     fn raise(&mut self) -> bool {
         if !self.ground.area_ok(self.patio) {
             return false;
@@ -1045,10 +1086,11 @@ impl<'a> Compound<'a> {
             return false;
         };
         let homestead = self.structures[casco].footprint;
-        // First, so the casas de peones and their tracks keep clear of the
-        // alameda instead of taking its place.
+        // Primero, para que las casas de peones y sus huellas se mantengan
+        // lejos de la alameda en lugar de ocupar su lugar.
         self.poplar_row();
-        // The casas de peones, each in its own sector round the patio.
+        // Las casas de peones, cada una en su propio sector alrededor del
+        // patio.
         let houses = 2 + self.rng.below(3);
         let turn = self.rng.range(0.0, TAU);
         let mut built = 0;
@@ -1079,7 +1121,7 @@ impl<'a> Compound<'a> {
             let barn = self.part(StructureKind::Barn, (20.0, 30.0), (10.0, 14.0), 5.5);
             barns += self.place_behind(barn, casco, (40.0, 80.0)).is_some() as usize;
         }
-        // The corrals go with the galpones, behind the casco.
+        // Los corrales van con los galpones, detrás del casco.
         let mut corrals = 0;
         for _ in 0..1 + self.rng.below(3) {
             let behind = self.behind(casco, (45.0, 100.0), 1.0);
@@ -1103,30 +1145,31 @@ impl<'a> Compound<'a> {
         if bounds.size().x * bounds.size().y < Settlement::RANCH_AREA {
             return false;
         }
-        // Drawn only once the estancia stands, so a retried hub draws the
-        // same numbers as before.
+        // Se sortea solo una vez que la estancia está en pie, para que un
+        // centro reintentado saque los mismos números que antes.
         if self.chance(Settlement::WRECKS.1) {
             self.wreck((60.0, 110.0));
         }
         true
     }
 
-    /// An abandoned wagon at the yard's edge, `at` meters from the hub:
-    /// placed last, so every door and track is already laid and it keeps
-    /// clear of them like any footprint.
+    /// Un carro abandonado en el borde del patio, a `at` metros del centro: se
+    /// coloca al final, así que todas las puertas y huellas ya están colocadas
+    /// y se mantiene lejos de ellas como cualquier huella de edificio.
     fn wreck(&mut self, at: (f32, f32)) {
         let (wide, deep) = Settlement::WRECK_SIZE;
         let part = self.part(StructureKind::WreckedWagon, (wide, wide), (deep, deep), 2.2);
         self.place(part, self.round(at.0, at.1));
     }
 
-    /// The alameda: poplars in pairs facing each other across the trunk,
-    /// [`Settlement::POPLAR_SPACING`] apart, from about 4 m inside the gate
-    /// back to 20 m from the hub, whatever the lane's length. The rows
-    /// follow the drawn trunk (gate, bend, hub), each pair across its own
-    /// leg. [`Self::thin_trees`] leaves them alone: it keeps every other
-    /// tree in planting order, which would fell one side or stagger the
-    /// pairs.
+    /// La alameda: álamos en pares enfrentados a ambos lados del tronco,
+    /// separados por [`Settlement::POPLAR_SPACING`], desde unos 4 m dentro de
+    /// la tranquera hasta 20 m antes del centro, sea cual sea el largo del
+    /// camino de entrada. Las filas siguen el tronco dibujado (tranquera,
+    /// curva, centro), cada par a ambos lados de su propio tramo.
+    /// [`Self::thin_trees`] no los toca: conserva uno de cada dos árboles de
+    /// los demás en el orden de plantación, lo que talaría un lado o
+    /// desalinearía los pares.
     fn poplar_row(&mut self) {
         let [gate, bend, hub] = [
             self.tracks[0].points[0],
@@ -1151,8 +1194,8 @@ impl<'a> Compound<'a> {
                 let tree = self.tree(StructureKind::Poplar);
                 planted += self.place_at_by(tree, at, true).is_some() as usize;
             }
-            // At the bend the inside tree can land on the other leg's
-            // track: skip the pair rather than leave one tree alone.
+            // En la curva el árbol del lado interior puede caer sobre la huella
+            // del otro tramo: se saltea el par en lugar de dejar un árbol solo.
             if planted == 1 {
                 self.structures.truncate(before + 1);
                 self.structures.pop();
@@ -1161,7 +1204,8 @@ impl<'a> Compound<'a> {
         }
     }
 
-    /// A monte of eucalyptus beside the casco: a jittered grid 6 m apart.
+    /// Un monte de eucaliptos al lado del casco: una grilla con variación
+    /// aleatoria de 6 m de separación.
     fn grove(&mut self, homestead: Aabb) {
         let across = Vec2::new(-self.into.y, self.into.x);
         let side = if self.chance(0.5) { 1.0 } else { -1.0 };
@@ -1179,8 +1223,8 @@ impl<'a> Compound<'a> {
         }
     }
 
-    /// A molino (or a well) with its trough, and the tank when `tank`, at
-    /// `radius` from the hub. `false` when the molino or well does not fit.
+    /// Un molino (o un pozo) con su bebedero, y el tanque cuando `tank`, a
+    /// `radius` del centro. `false` cuando el molino o el pozo no entra.
     fn water_point(&mut self, windpump: bool, tank: bool, radius: (f32, f32)) -> bool {
         let source = if windpump {
             self.part(StructureKind::Windpump, (2.4, 2.4), (2.4, 2.4), 10.0)
@@ -1213,14 +1257,14 @@ impl<'a> Compound<'a> {
         true
     }
 
-    /// A corral `side` meters square or so; whether it fits.
+    /// Un corral de unos `side` metros de lado; devuelve si entra.
     fn corral(&mut self, side: (f32, f32), spot: Spot) -> bool {
         let corral = self.part(StructureKind::Corral, side, side, 1.6);
         self.place(corral, spot).is_some()
     }
 
-    /// A hitching post by the patio and a carreta in the yard, each by
-    /// its chance.
+    /// Un palenque junto al patio y una carreta en el patio, cada uno según su
+    /// probabilidad.
     fn extras(&mut self, post: f32, cart: f32, post_at: (f32, f32), cart_at: (f32, f32)) {
         if self.chance(post) {
             let part = self.part(StructureKind::HitchingPost, (3.0, 3.0), (0.3, 0.3), 1.1);
@@ -1232,8 +1276,8 @@ impl<'a> Compound<'a> {
         }
     }
 
-    /// Plants 30% more eucalyptus than the compound already has, on a
-    /// stream of its own so the rest of the layout does not move.
+    /// Planta un 30 % más de eucaliptos de los que ya tiene el conjunto, con un
+    /// flujo aleatorio propio para que el resto de la distribución no se mueva.
     fn plant_more(&mut self) {
         let trees = self.structures.iter().filter(|s| s.kind.is_tree()).count();
         let mut own = Rng::new(0x70a1_a2c3 ^ self.hub.x.to_bits() ^ self.hub.y.to_bits(), 1);
@@ -1247,10 +1291,9 @@ impl<'a> Compound<'a> {
         self.thin_trees(own.unit());
     }
 
-    /// A compound keeps [`Settlement::tree_keep`] of its trees: a tree stays when its share of the running
-    /// total crosses a whole number, so the ones that go are spread evenly through the order they were planted in (a grid's rows, an
-    /// alameda's pairs) and nothing else moves. `start` in [0, 1) offsets
-    /// the total.
+    /// Un conjunto conserva [`Settlement::tree_keep`] de sus árboles: un árbol se queda cuando su parte del total acumulado cruza
+    /// un número entero, así que los que se van quedan repartidos de forma pareja en el orden en que se plantaron (las filas de una
+    /// grilla, los pares de una alameda) y nada más se mueve. `start` en [0, 1) desplaza el total.
     fn thin_trees(&mut self, start: f32) {
         let keep = Settlement::tree_keep(self.kind);
         if keep >= 1.0 {
@@ -1261,8 +1304,8 @@ impl<'a> Compound<'a> {
             if !s.kind.is_tree() || s.kind == StructureKind::Poplar {
                 return true;
             }
-            // The epsilon keeps a share that lands on a whole number from
-            // rounding down.
+            // El épsilon evita que una parte que cae justo en un número entero
+            // se redondee hacia abajo.
             let at = |n: f32| (start + n * keep + 1e-4).floor();
             let stays = at(seen + 1.0) > at(seen);
             seen += 1.0;
@@ -1300,7 +1343,7 @@ impl<'a> Compound<'a> {
         self.rng.unit() < p
     }
 
-    /// Behind the patio, as seen from the gate.
+    /// Detrás del patio, visto desde la tranquera.
     fn ahead(&self, near: f32, far: f32, spread: f32) -> Spot {
         Spot {
             around: self.hub,
@@ -1310,7 +1353,7 @@ impl<'a> Compound<'a> {
         }
     }
 
-    /// Anywhere round the patio.
+    /// En cualquier lugar alrededor del patio.
     fn round(&self, near: f32, far: f32) -> Spot {
         Spot {
             spread: PI,
@@ -1318,15 +1361,15 @@ impl<'a> Compound<'a> {
         }
     }
 
-    /// The unit direction of the last approach, from the trunk's bend to
-    /// the hub: the way a visitor rides toward the casco.
+    /// La dirección unitaria del último acceso, desde la curva del tronco hasta
+    /// el centro: por donde un visitante cabalga hacia el casco.
     fn lane(&self) -> Vec2 {
         let entry = self.tracks[0].points[1];
         (self.hub - entry) * (1.0 / self.hub.distance(entry).max(1e-6))
     }
 
-    /// A spot `radius` meters (least, most) from the casco `casco`, on the
-    /// far side of it along [`Self::lane`], within `spread` radians.
+    /// Un lugar a `radius` metros (mínimo, máximo) del casco `casco`, del lado
+    /// opuesto a lo largo de [`Self::lane`], a `spread` radianes o menos.
     fn behind(&self, casco: usize, radius: (f32, f32), spread: f32) -> Spot {
         let lane = self.lane();
         Spot {
@@ -1337,10 +1380,10 @@ impl<'a> Compound<'a> {
         }
     }
 
-    /// Places a barn behind the casco `casco`: its near edge past the
-    /// casco's far edge along the lane, and at least
-    /// [`Settlement::BARN_ROAD_CLEARANCE`] from every road. A try that
-    /// breaks either rule is taken back, its track too.
+    /// Coloca un galpón detrás del casco `casco`: su borde cercano más allá del
+    /// borde lejano del casco a lo largo del camino de entrada, y al menos a
+    /// [`Settlement::BARN_ROAD_CLEARANCE`] de todo camino. Un intento que rompe
+    /// cualquiera de las dos reglas se deshace, junto con su huella.
     fn place_behind(&mut self, part: Part, casco: usize, radius: (f32, f32)) -> Option<usize> {
         let lane = self.lane();
         let center = self.structures[casco].footprint.center();
@@ -1380,8 +1423,8 @@ impl<'a> Compound<'a> {
         None
     }
 
-    /// Places `part` somewhere in `spot`, facing the hub, with its branch
-    /// track when it has a door. Returns its index.
+    /// Coloca `part` en algún lugar de `spot`, mirando hacia el centro, con su
+    /// huella de ramal cuando tiene una puerta. Devuelve su índice.
     fn place(&mut self, part: Part, spot: Spot) -> Option<usize> {
         for _ in 0..Self::TRIES {
             let angle = spot.bearing + self.rng.range(-spot.spread, spot.spread);
@@ -1394,13 +1437,13 @@ impl<'a> Compound<'a> {
         None
     }
 
-    /// Places `part` centered on `at`, if it fits there.
+    /// Coloca `part` centrada en `at`, si entra ahí.
     fn place_at(&mut self, part: Part, at: Vec2) -> Option<usize> {
         self.place_at_by(part, at, false)
     }
 
-    /// [`Self::place_at`]; `lane` trees of the alameda may stand 2 m from
-    /// the cell's fences and on the road's verge.
+    /// [`Self::place_at`]; los árboles `lane` de la alameda pueden estar a 2 m
+    /// de los alambrados de la celda y sobre la banquina del camino.
     fn place_at_by(&mut self, part: Part, at: Vec2, lane: bool) -> Option<usize> {
         let front = facing(self.hub - at);
         let size = match front {
@@ -1430,9 +1473,10 @@ impl<'a> Compound<'a> {
         Some(self.structures.len() - 1)
     }
 
-    /// Whether `footprint` stands clear of the ground's keep-outs, the
-    /// patio, every other footprint and every track.
-    /// The alameda's trees (`lane`) get the looser ground.
+    /// Si `footprint` está lejos de las zonas prohibidas del terreno, del
+    /// patio, de toda otra huella de edificio y de toda huella de tierra. Los
+    /// árboles de la alameda (`lane`) usan el criterio de terreno más
+    /// permisivo.
     fn fits_by(&self, footprint: Aabb, lane: bool) -> bool {
         let corridor = footprint.expanded(Settlement::CORRIDOR);
         let ground = if lane {
@@ -1453,8 +1497,8 @@ impl<'a> Compound<'a> {
                 .all(|(a, b)| corridor.segment_overlap(a, b).is_none())
     }
 
-    /// Whether a branch may run from `a` to `b`, clear of every footprint
-    /// and of `own` (the one it leads to).
+    /// Si un ramal puede ir de `a` a `b`, lejos de toda huella de edificio y de
+    /// `own` (aquella a la que lleva).
     fn branch_ok(&self, a: Vec2, b: Vec2, own: Aabb) -> bool {
         self.ground.track_ok(a, b, None)
             && self
@@ -1469,7 +1513,7 @@ impl<'a> Compound<'a> {
                 })
     }
 
-    /// Everything the compound covers.
+    /// Todo lo que cubre el conjunto.
     fn bounds(&self) -> Aabb {
         let mut bounds = self.patio;
         let mut grow = |area: Aabb| {
@@ -1504,7 +1548,7 @@ impl<'a> Compound<'a> {
     }
 }
 
-/// The side of a footprint facing along `toward`.
+/// El lado de una huella de edificio que mira en la dirección de `toward`.
 fn facing(toward: Vec2) -> Side {
     if toward.x.abs() > toward.y.abs() {
         if toward.x > 0.0 {
@@ -1519,9 +1563,8 @@ fn facing(toward: Vec2) -> Side {
     }
 }
 
-/// Thin boxes along the four sides of a corral, with
-/// [`Settlement::CORRAL_GATE`] meters left open in the middle of its
-/// `front`.
+/// Rectángulos delgados a lo largo de los cuatro lados de un corral, con
+/// [`Settlement::CORRAL_GATE`] metros abiertos en el centro de su `front`.
 fn corral_rails(fp: Aabb, front: Side) -> Vec<Aabb> {
     let t = Settlement::CORRAL_RAIL / 2.0;
     let (lo, hi) = (fp.min, fp.max);
@@ -1551,8 +1594,8 @@ fn corral_rails(fp: Aabb, front: Side) -> Vec<Aabb> {
     rails
 }
 
-/// One kept-out shape: an area, or a strip `half` meters to either side of
-/// a segment.
+/// Una forma de zona prohibida: un área, o una franja de `half` metros a cada
+/// lado de un segmento.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Shape {
     Area(Aabb),
@@ -1560,7 +1603,7 @@ enum Shape {
 }
 
 impl Shape {
-    /// How far `p` is outside it (0 inside).
+    /// Qué tan afuera de ella está `p` (0 adentro).
     fn distance(&self, p: Vec2) -> f32 {
         match *self {
             Shape::Area(area) => area.closest_point(p).distance(p),
@@ -1580,9 +1623,10 @@ impl Shape {
     }
 }
 
-/// The ground wild flora keeps off: every settlement's footprints, patios
-/// and tracks, indexed on a uniform grid so a point's check only looks at
-/// the shapes near it.
+/// El terreno del que se mantiene lejos la flora silvestre: las huellas de
+/// edificio, los patios y las huellas de tierra de cada asentamiento, indexados
+/// en una grilla uniforme para que la comprobación de un punto solo mire las
+/// formas cercanas.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct KeepOut {
     shapes: Vec<Shape>,
@@ -1590,9 +1634,9 @@ pub struct KeepOut {
 }
 
 impl KeepOut {
-    /// Side of one index cell, in meters.
+    /// Lado de una celda del índice, en metros.
     pub const CELL: f32 = 32.0;
-    /// The widest margin a check can ask for, in meters.
+    /// El margen más amplio que puede pedir una comprobación, en metros.
     pub const MAX_MARGIN: f32 = 8.0;
 
     fn push(&mut self, shape: Shape) {
@@ -1608,7 +1652,7 @@ impl KeepOut {
         self.shapes.push(shape);
     }
 
-    /// The shapes indexed in `p`'s cell.
+    /// Las formas indexadas en la celda de `p`.
     fn nearby(&self, p: Vec2) -> &[u32] {
         if !(p.x.is_finite() && p.y.is_finite()) {
             return &[];
@@ -1616,8 +1660,8 @@ impl KeepOut {
         self.cells.get(&cell_of(p)).map_or(&[], Vec::as_slice)
     }
 
-    /// Whether `p` is more than `margin` meters (at most
-    /// [`Self::MAX_MARGIN`]) from every kept-out shape.
+    /// Si `p` está a más de `margin` metros (como mucho [`Self::MAX_MARGIN`])
+    /// de toda forma de zona prohibida.
     pub fn is_clear(&self, p: Vec2, margin: f32) -> bool {
         let margin = margin.min(Self::MAX_MARGIN);
         self.nearby(p)
@@ -1625,8 +1669,8 @@ impl KeepOut {
             .all(|&i| self.shapes[i as usize].distance(p) > margin)
     }
 
-    /// How many shapes a check at `p` looks at: what [`Self::is_clear`]
-    /// costs.
+    /// Cuántas formas revisa una comprobación en `p`: lo que cuesta
+    /// [`Self::is_clear`].
     pub fn scanned(&self, p: Vec2) -> usize {
         self.nearby(p).len()
     }
@@ -1639,19 +1683,22 @@ fn cell_of(p: Vec2) -> (i32, i32) {
     )
 }
 
-/// Mixed into the terrain seed for the settlements.
+/// Se mezcla con la semilla del terreno para los asentamientos.
 const SETTLEMENT_SEED: u32 = 0x5e77_1e05;
-/// Mixed into the terrain seed for the forced estancias.
+/// Se mezcla con la semilla del terreno para las estancias forzadas.
 const RANCH_SEED: u32 = 0x7a2c_4e11;
-/// Mixed into the terrain seed for the roadside wrecks.
+/// Se mezcla con la semilla del terreno para los carros abandonados al costado
+/// del camino.
 const WRECK_SEED: u32 = 0x3c4a_7a5e;
 
 impl Site<'_> {
-    /// A handful of abandoned wagons on road verges, seeded per roadside
-    /// fence run: by its chance, the first span from a seeded one whose
-    /// verge holds a wagon along the road, between the road's edge and the
-    /// fence, clear of gates, openings, signposts and crossings, rails,
-    /// towns, settlements and the other wrecks.
+    /// Unos pocos carros abandonados en las banquinas de los caminos, con
+    /// semilla por tramo de alambrado al costado del camino: según su
+    /// probabilidad, el primer tramo a partir de uno elegido por semilla cuya
+    /// banquina contenga un carro a lo largo del camino, entre el borde del
+    /// camino y el alambrado, lejos de tranqueras, aberturas, carteles
+    /// indicadores y pasos a nivel, rieles, pueblos, asentamientos y los demás
+    /// carros abandonados.
     fn roadside_wrecks(&self, seed: u32, settlements: &[Settlement]) -> Vec<RoadsideWreck> {
         let Some(roads) = self.terrain.roads.as_deref() else {
             return Vec::new();
@@ -1669,8 +1716,8 @@ impl Site<'_> {
             if rng.unit() >= SettlementLayout::ROADSIDE_CHANCE {
                 continue;
             }
-            // Spans inside the run (not at its ends, by a crossing or a
-            // gate), from a seeded one on.
+            // Tramos dentro del recorrido (no en sus extremos, junto a un paso
+            // a nivel o una tranquera), a partir de uno elegido por semilla.
             let spans = run.posts.len() - 3;
             let first = rng.below(spans);
             let variant = rng.next() >> 8;
@@ -1707,9 +1754,9 @@ impl Site<'_> {
         wrecks
     }
 
-    /// A wagon along the fence span `a`–`b`, on the road's side of it with
-    /// its near side a little off the road's edge, if the whole of it lies
-    /// in the verge.
+    /// Un carro a lo largo del tramo de alambrado `a`–`b`, del lado del camino,
+    /// con su lado cercano un poco apartado del borde del camino, si queda
+    /// entero dentro de la banquina.
     fn on_verge(
         &self,
         roads: &RoadNetwork,
@@ -1752,8 +1799,8 @@ pub(crate) mod tests {
     use crate::fence::tests::{fenced, reached};
     use crate::{ChunkCoord, FloraSite, StaticObstacles, World};
 
-    /// The towns of the fence fixture that get an estancia nearby, as the
-    /// game asks for them: Eduardo Castex and General Pico.
+    /// Los pueblos del fixture de alambrados que tienen una estancia cerca, tal
+    /// como los pide el juego: Eduardo Castex y General Pico.
     fn ranch_towns(towns: &[TownLayout]) -> Vec<usize> {
         ["Eduardo Castex", "General Pico"]
             .iter()
@@ -1761,10 +1808,10 @@ pub(crate) mod tests {
             .collect()
     }
 
-    /// The fence fixture's world with its settlements laid and settled, with
-    /// the game's estancias near Castex and Pico (the seeded mix alone may
-    /// draw none). Built once and shared: tests that change the world clone
-    /// it first.
+    /// El mundo del fixture de alambrados con sus asentamientos colocados y
+    /// asentados, con las estancias del juego cerca de Castex y Pico (la mezcla
+    /// con semilla por sí sola puede no sacar ninguna). Se construye una sola
+    /// vez y se comparte: las pruebas que cambian el mundo primero lo clonan.
     pub(crate) fn settled() -> &'static (
         World,
         Vec<TownLayout>,
@@ -1802,8 +1849,8 @@ pub(crate) mod tests {
         &SETTLED
     }
 
-    /// Unit direction from the road through `gate` into its field, by the
-    /// exact road distance.
+    /// Dirección unitaria desde el camino, a través de `gate`, hacia su campo,
+    /// según la distancia exacta al camino.
     fn into_field(roads: &RoadNetwork, gate: &crate::Gate) -> Vec2 {
         let out = Vec2::new(-gate.along.y, gate.along.x);
         if roads.distance(gate.at + out) > roads.distance(gate.at) {
@@ -1813,7 +1860,7 @@ pub(crate) mod tests {
         }
     }
 
-    /// Points along every track of `s`, `step` meters apart.
+    /// Puntos a lo largo de cada huella de `s`, separados `step` metros.
     fn track_points(s: &Settlement, step: f32) -> Vec<Vec2> {
         s.tracks
             .iter()
@@ -1825,7 +1872,7 @@ pub(crate) mod tests {
             .collect()
     }
 
-    /// Points round the edge of `area`, about a meter apart.
+    /// Puntos alrededor del borde de `area`, separados más o menos un metro.
     fn edge_points(area: Aabb) -> Vec<Vec2> {
         let size = area.size();
         let (nx, ny) = (size.x.ceil() as usize, size.y.ceil() as usize);
@@ -1854,7 +1901,8 @@ pub(crate) mod tests {
                 &ranch_towns(towns)
             )
         );
-        // The plain build, without forced estancias, is seeded too.
+        // La construcción simple, sin estancias forzadas, también tiene
+        // semilla.
         let plain = SettlementLayout::build(&world.terrain, towns, line, fences);
         assert_eq!(
             plain,
@@ -1863,7 +1911,8 @@ pub(crate) mod tests {
         assert!(!plain.settlements.is_empty());
         let open = fences.gates.iter().filter(|g| g.open).count();
         let total = layout.settlements.len();
-        // Only some open gates lead to a settlement, and estancias are few.
+        // Solo algunas tranqueras abiertas llevan a un asentamiento, y las
+        // estancias son pocas.
         assert!(total >= 10, "{total}");
         assert!(total * 2 < open, "{total} of {open}");
         let count = |k| layout.count(k);
@@ -1873,7 +1922,7 @@ pub(crate) mod tests {
         for k in [Hut, Outpost, Farm] {
             assert!(count(k) >= 1, "{k:?}");
         }
-        // Another seed lays another countryside.
+        // Otra semilla genera otro campo.
         let mut other = world.terrain.clone();
         other.seed ^= 0x55;
         assert_ne!(
@@ -1907,7 +1956,7 @@ pub(crate) mod tests {
             let cell = fences.field_of(gate.at + into * 3.0).unwrap();
             assert!(cell.contains(&s.bounds), "{cell:?} {:?}", s.bounds);
             assert!(!fences.is_descampado(s.hub));
-            // One settlement per field, and well apart.
+            // Un asentamiento por campo, y bien separados.
             assert!(!cells.contains(&cell));
             cells.push(cell);
             for t in &layout.settlements {
@@ -1940,8 +1989,8 @@ pub(crate) mod tests {
                 .collect();
             for st in &s.structures {
                 let fp = st.footprint;
-                // The alameda reaches the gate: it keeps 2 m off the fences
-                // and may stand on the road's verge.
+                // La alameda llega hasta la tranquera: se mantiene a 2 m de los
+                // alambrados y puede estar sobre la banquina del camino.
                 let lane = st.kind == StructureKind::Poplar;
                 assert!(
                     cell.expanded(if lane {
@@ -1970,8 +2019,9 @@ pub(crate) mod tests {
                     }
                 }
             }
-            // The tracks stay in the field, off the road and the rail, and
-            // cross no wire: the trunk passes the gate's open leaves.
+            // Las huellas se quedan en el campo, lejos del camino y del riel, y
+            // no cruzan ningún alambre: el tronco pasa por las hojas abiertas
+            // de la tranquera.
             let gate = fences.gates[s.gate as usize].at;
             for p in track_points(s, 0.5) {
                 assert!(cell.contains_point(p), "{p:?}");
@@ -2030,7 +2080,7 @@ pub(crate) mod tests {
     fn tracks_lead_from_the_gate_to_every_door() {
         let (_, _, _, _, layout) = settled();
         for s in &layout.settlements {
-            // Every branch leaves from the hub, where the trunk ends.
+            // Todos los ramales salen del centro, donde termina el tronco.
             for h in &s.tracks[1..] {
                 assert_eq!(h.points[0], s.hub);
             }
@@ -2189,8 +2239,8 @@ pub(crate) mod tests {
                     tufts += 1;
                 }
             }
-            // On the tracks and in the buildings nothing grows; far off,
-            // anything may.
+            // En las huellas y en los edificios no crece nada; lejos, puede
+            // crecer cualquier cosa.
             for p in track_points(s, 2.0) {
                 assert!(!layout.is_clear(p, 0.0) && !flora.off_settlements(p, 0.0));
             }
@@ -2199,7 +2249,8 @@ pub(crate) mod tests {
             }
         }
         assert!(tufts > 1_000, "{tufts}");
-        // The check only looks at a handful of nearby shapes, wherever.
+        // La comprobación solo mira unas pocas formas cercanas, en cualquier
+        // lugar.
         let busiest = layout
             .settlements
             .iter()
@@ -2245,8 +2296,8 @@ pub(crate) mod tests {
     #[test]
     fn every_structure_blocks_up_to_its_own_height() {
         let (world, _, _, _, layout) = settled();
-        // The same boxes as `obstacles`, in the same order: settling with
-        // heights drops none.
+        // Los mismos rectángulos que `obstacles`, en el mismo orden: asentar
+        // con alturas no descarta ninguno.
         let boxes: Vec<Aabb> = layout.obstacle_heights().map(|(o, _)| o).collect();
         assert_eq!(boxes, layout.obstacles().collect::<Vec<_>>());
         let wreck_parts: Vec<Aabb> = layout
@@ -2260,7 +2311,8 @@ pub(crate) mod tests {
             for o in s.obstacles() {
                 let found = |clearance| world.obstacles.near_above(o, clearance).contains(&&o);
                 assert!(found(s.height - 0.01), "{:?} under its top", s.kind);
-                // Another footprint may share the box (a wreck's own, say).
+                // Otra huella de edificio puede compartir el rectángulo (la
+                // propia de un carro abandonado, por ejemplo).
                 if !wreck_parts.contains(&o) {
                     assert!(!found(s.height), "{:?} at its top", s.kind);
                 }
@@ -2268,7 +2320,8 @@ pub(crate) mod tests {
             }
         }
         assert!(checked > 0);
-        // Roadside wrecks have no height: they are never cleared.
+        // Los carros abandonados al costado del camino no tienen altura: nunca
+        // se superan.
         for o in &wreck_parts {
             assert!(world.obstacles.near_above(*o, 1e6).contains(&o));
         }
@@ -2331,7 +2384,7 @@ pub(crate) mod tests {
                 "{slot}"
             );
         }
-        // The buildings and the corral are built procedurally only.
+        // Los edificios y el corral solo se construyen de forma procedural.
         assert!(Barn.slot().is_none() && Corral.slot().is_none() && Tank.slot().is_none());
     }
 
@@ -2352,16 +2405,16 @@ pub(crate) mod tests {
             assert_eq!(trunk.len(), 1, "{tree:?}");
             let r = tree.trunk_radius();
             assert!((trunk[0].size().x - 2.0 * r).abs() < 1e-3);
-            // A rider walking at the trunk is pushed clear of the trunk box
-            // itself, not just off its middle.
+            // Un jinete que camina hacia el tronco sale empujado del rectángulo
+            // del propio tronco, no solo de su centro.
             let pushed = world.resolve(collider, at, |_| ());
             let clear = r + crate::Rider::COLLIDER_RADIUS - 1e-3;
             assert!(
                 (pushed.x - at.x).abs() >= clear || (pushed.y - at.y).abs() >= clear,
                 "{tree:?} pushed to {pushed:?}"
             );
-            // No trunk stands on a track: the ruts and the alameda between
-            // its poplars stay open to the rider.
+            // Ningún tronco queda sobre una huella: los surcos y la alameda
+            // entre sus álamos siguen abiertos para el jinete.
             for s in &layout.settlements {
                 for (a, b) in s.tracks.iter().flat_map(Track::segments) {
                     assert!(
@@ -2374,7 +2427,7 @@ pub(crate) mod tests {
                 }
             }
         }
-        // `World::settle` counts the trunks with the other obstacles.
+        // `World::settle` cuenta los troncos junto con los demás obstáculos.
         assert_eq!(
             layout.obstacles().count(),
             layout
@@ -2393,7 +2446,7 @@ pub(crate) mod tests {
             .filter(|s| s.kind.is_tree())
             .count();
         assert!(bare.settle(layout) >= trunks + layout.settlements.len());
-        // Radii stay in a trunk's range at any height.
+        // Los radios se mantienen en el rango de un tronco a cualquier altura.
         for (kind, lo, hi) in [
             (StructureKind::Eucalyptus, 0.2, 0.45),
             (StructureKind::Poplar, 0.12, 0.25),
@@ -2421,8 +2474,9 @@ pub(crate) mod tests {
     fn abandoned_wagons_are_few_and_stay_off_roads_tracks_and_doors() {
         let (world, _, _, fences, layout) = settled();
         let roads = world.terrain.roads.as_deref().expect("roads laid");
-        // In the yards: at most one per settlement, only at chacras and
-        // estancias, clear of every track (so of every door) and patio.
+        // En los patios: como mucho uno por asentamiento, solo en chacras y
+        // estancias, lejos de toda huella (y por lo tanto de toda puerta) y
+        // patio.
         let mut yard = 0;
         for s in &layout.settlements {
             let wrecks: Vec<&Structure> = s.of(StructureKind::WreckedWagon).collect();
@@ -2450,8 +2504,9 @@ pub(crate) mod tests {
                 }
             }
         }
-        // On the verges: a handful, between the road's edge and the fence,
-        // never on the road, a gate or a signpost, far apart.
+        // En las banquinas: unos pocos, entre el borde del camino y el
+        // alambrado, nunca sobre el camino, una tranquera o un cartel
+        // indicador, bien separados.
         let verge = &layout.roadside;
         println!("wrecks: {yard} in yards, {} on verges", verge.len());
         assert!(verge.len() <= SettlementLayout::ROADSIDE_WRECKS);
@@ -2471,7 +2526,7 @@ pub(crate) mod tests {
                     .iter()
                     .all(|g| !fp.expanded(10.0).contains_point(g.at))
             );
-            // Its body blocks the rider, without reaching onto the road.
+            // Su cuerpo bloquea al jinete, sin llegar hasta el camino.
             for o in w.obstacles() {
                 assert!(world.obstacles.contains(&o), "{w:?} does not block");
                 for c in [
@@ -2506,10 +2561,10 @@ pub(crate) mod tests {
         let again =
             SettlementLayout::build_with_ranches(&world.terrain, towns, line, fences, &asked);
         assert_eq!(layout, again);
-        // The missing town is reported, never silently dropped.
+        // El pueblo que falta se informa, nunca se descarta en silencio.
         assert!(layout.unplaced_ranches.contains(&(towns.len() + 3)));
-        // The forced estancias are laid first, in the order asked: one per
-        // placed town, ahead of the seeded mix.
+        // Las estancias forzadas se colocan primero, en el orden pedido: una
+        // por pueblo ubicado, antes de la mezcla con semilla.
         let placed: Vec<usize> = asked
             .iter()
             .copied()
@@ -2520,11 +2575,13 @@ pub(crate) mod tests {
             let town = &towns[t];
             let forced = &layout.settlements[k];
             assert_eq!(forced.kind, SettlementKind::Ranch, "{}", town.name);
-            // It comes from the forced pass (its own seed), not the mix.
+            // Viene de la pasada forzada (con su propia semilla), no de la
+            // mezcla.
             assert!(!plain.settlements.contains(forced), "{}", town.name);
-            // Gates are tried nearest first and a step's gates are never
-            // tried again, so the step it was found in is the first whose
-            // reach holds its gate: never the unbounded last one here.
+            // Las tranqueras se prueban de la más cercana a la más lejana y las
+            // tranqueras de un paso nunca se vuelven a probar, así que el paso
+            // en el que se encontró es el primero cuyo alcance incluye su
+            // tranquera: aquí nunca el último, sin límite.
             let gate = fences.gates[forced.gate as usize].at;
             let gap = town.leveled().closest_point(gate).distance(gate);
             let step = SettlementLayout::RANCH_REACH
@@ -2539,13 +2596,13 @@ pub(crate) mod tests {
             );
         }
         assert!(layout.count(SettlementKind::Ranch) >= towns.len().min(1));
-        // Every settlement keeps its spacing, the forced ones too.
+        // Cada asentamiento mantiene su separación, también los forzados.
         for (i, a) in layout.settlements.iter().enumerate() {
             for b in &layout.settlements[i + 1..] {
                 assert!(a.hub.distance(b.hub) >= Settlement::MIN_SPACING);
             }
         }
-        // Asking for nothing lays the seeded mix as before.
+        // No pedir nada coloca la mezcla con semilla como antes.
         assert!(plain.unplaced_ranches.is_empty());
         assert_eq!(
             SettlementLayout::build_with_ranches(&world.terrain, towns, line, fences, &[]),
@@ -2623,18 +2680,18 @@ pub(crate) mod tests {
                     .filter(|(_, at)| c.structures.iter().any(|s| s.footprint.center() == **at))
                     .map(|(k, _)| k)
                     .collect();
-                // 20 trees at 0.49 keep 9 or 10 by the offset.
+                // 20 árboles a 0,49 conservan 9 o 10 según el desplazamiento.
                 let ok = left.len() == kept || (kept == 10 && left.len() == 9);
                 assert!(ok, "{kind:?} {start}: {}", left.len());
-                // Evenly: the ones that go are never in a run.
+                // De forma pareja: los que se van nunca están seguidos.
                 for w in left.windows(2) {
                     assert!(w[1] - w[0] <= gap, "{kind:?} {left:?}");
                 }
             }
         }
     }
-    /// The unit direction of an estancia's last approach, from its trunk's
-    /// bend toward the hub, and the casco.
+    /// La dirección unitaria del último acceso de una estancia, desde la curva
+    /// de su tronco hacia el centro, y el casco.
     fn approach(s: &Settlement) -> (Vec2, Vec2, &Structure) {
         let entry = s.tracks[0].points[1];
         let lane = (s.hub - entry) * (1.0 / s.hub.distance(entry));
@@ -2646,8 +2703,8 @@ pub(crate) mod tests {
         (entry, lane, casco)
     }
 
-    /// Where `p` stands against the trunk of `s`: meters along it from the
-    /// hub, and meters to its left (positive) or right.
+    /// Dónde está `p` respecto del tronco de `s`: metros a lo largo de él desde
+    /// el centro, y metros hacia su izquierda (positivo) o derecha.
     fn along_the_trunk(s: &Settlement, p: Vec2) -> (f32, f32) {
         let [gate, bend, hub] = [s.tracks[0].points[0], s.tracks[0].points[1], s.hub];
         let mut best = (f32::MAX, 0.0, 0.0);
@@ -2683,7 +2740,7 @@ pub(crate) mod tests {
                 let at = p.footprint.center();
                 let (along, across) = along_the_trunk(s, at);
                 if across.abs() > Settlement::POPLAR_OFFSET + 1.0 {
-                    continue; // the monte, not the row
+                    continue; // el monte, no la fila
                 }
                 nearest_gate = nearest_gate.min(at.distance(s.tracks[0].points[0]));
                 if across > 0.0 {
@@ -2692,7 +2749,7 @@ pub(crate) mod tests {
                     rights.push(along);
                 }
             }
-            // The last pair stands inside the tranquera, not at its post.
+            // El último par está dentro de la tranquera, no en su poste.
             assert!(
                 nearest_gate <= 8.0,
                 "the alameda stops {nearest_gate} m from the gate at {:?}",
@@ -2701,7 +2758,8 @@ pub(crate) mod tests {
             for side in [&mut lefts, &mut rights] {
                 side.sort_by(f32::total_cmp);
                 assert!(side.len() >= 4, "{} poplars at {:?}", side.len(), s.hub);
-                // Dense: a windbreak, with at most one skipped pair (the bend).
+                // Denso: una cortina rompevientos, con como mucho un par
+                // salteado (la curva).
                 let gaps = side.windows(2).map(|w| w[1] - w[0]);
                 let skipped = gaps
                     .clone()
@@ -2714,7 +2772,8 @@ pub(crate) mod tests {
                     s.hub
                 );
             }
-            // An alameda: every tree faces a partner across the lane.
+            // Una alameda: cada árbol tiene un compañero enfrente, al otro lado
+            // del camino de entrada.
             for (mine, other) in [(&lefts, &rights), (&rights, &lefts)] {
                 for a in mine {
                     assert!(

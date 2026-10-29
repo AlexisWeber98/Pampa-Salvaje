@@ -1,20 +1,20 @@
-# Dialogue
+# Diálogo
 
-Everything people say lives in this folder as plain text files in
-[RON](https://github.com/ron-rs/ron) (Rusty Object Notation). You do not need
-to know Rust to edit them: change a file, save it, and start the game again.
-No recompiling.
+Todo lo que dice la gente vive en esta carpeta como archivos de texto plano en
+[RON](https://github.com/ron-rs/ron) (Rusty Object Notation). No hace falta
+saber Rust para editarlos: se cambia un archivo, se guarda, y se vuelve a
+iniciar el juego. Sin recompilar.
 
-## `bumps.ron`: complaints when the rider bumps into somebody
+## `bumps.ron`: quejas cuando el jinete choca a alguien
 
 ```ron
 (
-    // Shoved at a walking pace: annoyed, but mild.
+    // Empujado al paso: molesto, pero sin exagerar.
     walk: [
         "¡Eh, mirá por dónde andás!",
         "¡Despacito, paisano!",
     ],
-    // Run into at a gallop: scared and angry.
+    // Atropellado al galope: asustado y enojado.
     gallop: [
         "¡Casi me pisa el pingo, che!",
         "¡Más despacio, que no es carrera!",
@@ -22,16 +22,17 @@ No recompiling.
 )
 ```
 
-- `walk` is used when the rider shoves somebody at a walking pace.
-- `gallop` is used when the rider runs into somebody at a gallop.
-- Brushing past at a crawl says nothing, and the same person does not
-  complain again for a few seconds.
-- The game picks a line at random from the right pool, never the same line
-  twice in a row.
+- `walk` se usa cuando el jinete empuja a alguien al paso.
+- `gallop` se usa cuando el jinete atropella a alguien al galope.
+- Rozar a alguien muy despacio no provoca ninguna línea, y la misma persona no
+  vuelve a quejarse durante unos segundos.
+- El juego elige una línea al azar del grupo que corresponde, nunca la misma
+  línea dos veces seguidas.
 
-### Adding a line
+### Agregar una línea
 
-Add a new quoted line inside the brackets, followed by a comma:
+Agregar una nueva línea entre comillas dentro de los corchetes, seguida de una
+coma:
 
 ```ron
     walk: [
@@ -40,66 +41,75 @@ Add a new quoted line inside the brackets, followed by a comma:
     ],
 ```
 
-Lines starting with `//` are comments and are ignored.
+Las líneas que empiezan con `//` son comentarios y se ignoran.
 
-### Rules
+### Reglas
 
-These hold for every file in this folder.
+Valen para todos los archivos de esta carpeta.
 
-- **Voice.** Spanish, Rioplatense rural voice of the 1920s–1930s (`vos`/`usted`,
-  `che`, `pingo`, `paisano`...). Keep it respectful: no slurs.
-- **Length.** At most **40 characters** per line (accents count as one
-  character). Lines are drawn in a small speech bubble.
-- **Characters.** Lines are drawn in the game's own typeface (IM Fell English), which has:
-  - letters `A`–`Z` and `a`–`z`, digits `0`–`9`;
-  - `Á É Í Ó Ú Ñ Ü` and `á é í ó ú ñ ü`;
-  - space and `. , : ; - ' " ! ? ¡ ¿ ( ) % $ /`.
+- **Voz.** Español, voz rural rioplatense de 1920–1930 (`vos`/`usted`,
+  `che`, `pingo`, `paisano`...). Mantenerla respetuosa: sin insultos
+  ofensivos.
+- **Longitud.** Como máximo **40 caracteres** por línea (cada letra acentuada
+  cuenta como un carácter). Las líneas se dibujan en un pequeño globo de
+  diálogo.
+- **Caracteres.** Las líneas se dibujan con la tipografía propia del juego (IM
+  Fell English), que tiene:
+  - las letras `A`–`Z` y `a`–`z`, los dígitos `0`–`9`;
+  - `Á É Í Ó Ú Ñ Ü` y `á é í ó ú ñ ü`;
+  - el espacio y `. , : ; - ' " ! ? ¡ ¿ ( ) % $ /`.
 
-  Anything the typeface lacks (emoji, other alphabets...) is not drawn. The
-  tests reject such characters in the shipped file, and the game logs a
-  warning at startup.
-- **No empty pools, no blank lines.** Every pool needs at least one line.
+  Lo que le falta a la tipografía (emoji, otros alfabetos...) no se dibuja.
+  Los tests rechazan esos caracteres en el archivo incluido, y el juego
+  registra un aviso al inicio.
+- **Sin grupos vacíos ni líneas en blanco.** Cada grupo necesita al menos una
+  línea.
 
-## `errand.ron`: the first errand
+## `errand.ron`: el primer encargo
 
 ```ron
 (
-    // Don Hidalgo, when the player talks to him in the plaza.
+    // Don Hidalgo, cuando el jugador le habla en la plaza.
     hidalgo: [
         "Acá en Monte Nievas no hay comisaría.",
         "Preséntese en la comisaría de Castex.",
     ],
-    // The player, at Don Hidalgo's horse before talking to him.
+    // El jugador, junto al caballo de Don Hidalgo antes de hablar con él.
     not_your_horse: [
         "Este caballo no es mío.",
     ],
-    // Comisario Farach, when the player reports at his door.
+    // El comisario Farach, cuando el jugador se presenta a su puerta.
     farach: [
         "¡Buenas! ¿Lo manda Don Hidalgo?",
     ],
 )
 ```
 
-- Each list is a short sequence, said **in order**, one line after the other
-  in a speech bubble, a few seconds each (`F` starts it; it plays by itself).
-- `hidalgo` is said once, when the player first talks to Don Hidalgo. It
-  should tell the player the story: Monte Nievas has no comisaría, report to
-  comisario Elías Farach at the Castex comisaría, and take the horse tied at
-  the general store (the tests check that it names the comisaría, Castex,
-  Farach, the horse and the almacén).
-- `not_your_horse` is said by the player above their own head when they try
-  the horse before talking to Don Hidalgo.
-- `farach` is said once, when the player reports; the errand is then done.
-- The rules above (voice, length, characters, no empty lists, no blank lines)
-  apply here too. The typeface has double quotes, `;` and parentheses, so they are fine.
+- Cada lista es una secuencia breve que se dice **en orden**, una línea tras
+  otra en un globo de diálogo, unos segundos cada una (`F` la inicia; se
+  reproduce sola).
+- `hidalgo` se dice una vez, cuando el jugador habla por primera vez con Don
+  Hidalgo. Debe contarle la historia al jugador: Monte Nievas no tiene
+  comisaría, hay que presentarse ante el comisario Elías Farach en la
+  comisaría de Castex, y tomar el caballo atado en el almacén de ramos
+  generales (los tests comprueban que nombre la comisaría, Castex, Farach, el
+  caballo y el almacén).
+- `not_your_horse` lo dice el jugador sobre su propia cabeza cuando intenta
+  usar el caballo antes de hablar con Don Hidalgo.
+- `farach` se dice una vez, cuando el jugador se presenta; con eso el encargo
+  termina.
+- Las reglas de arriba (voz, longitud, caracteres, sin listas vacías ni líneas
+  en blanco) también valen aquí. La tipografía tiene comillas dobles, `;` y
+  paréntesis, así que se pueden usar.
 
-## When something is wrong
+## Cuando algo está mal
 
-If a file is missing or cannot be read (a missing comma or quote, a line that
-is too long, an empty pool), the game still starts: it logs a warning naming
-the problem and uses a small built-in set of lines instead. Run
-`cargo test -p pampa-content -p game` to check the files (format, length and
-characters) before playing.
+Si un archivo falta o no se puede leer (una coma o una comilla que faltan, una
+línea demasiado larga, un grupo vacío), el juego arranca igual: registra un
+aviso que nombra el problema y usa en su lugar un pequeño conjunto de líneas
+incorporadas. Ejecutar `cargo test -p pampa-content -p game` para comprobar
+los archivos (formato, longitud y caracteres) antes de jugar.
 
-Fields the game does not know yet (for example a future per-look pool) are
-ignored, so they can be added ahead of the code that uses them.
+Los campos que el juego todavía no conoce (por ejemplo, un futuro grupo por
+aspecto) se ignoran, así que se pueden agregar antes que el código que los
+usa.

@@ -1,14 +1,14 @@
-//! The townsfolk's models: five outfits, one per look (see
-//! [`FigureKind::Townsfolk`] and `assets/characters/townsfolk_*`), each
-//! person's clothes tinted from a small 1919 palette, and the arms of the
-//! women in long skirts held a little out so their hands rest on the skirt
-//! instead of sinking into it.
+//! Los modelos de los vecinos: cinco atuendos, uno por aspecto (ver
+//! [`FigureKind::Townsfolk`] y `assets/characters/townsfolk_*`), con la ropa de
+//! cada persona teñida a partir de una pequeña paleta de 1919, y los brazos de
+//! las mujeres de pollera larga un poco separados para que sus manos descansen
+//! sobre la pollera en lugar de hundirse en ella.
 //!
-//! A townsperson's `look` (from logic) picks the outfit (`look % 5`) and,
-//! for each tintable garment, one of [`VARIANTS`] colours, the first being
-//! the model's own. A tinted material is a copy of the model's, made once
-//! per (material, colour) and shared by everyone who wears it
-//! ([`TintCache`]), never one per person.
+//! El `look` de un vecino (que viene de la lógica) elige el atuendo (`look %
+//! 5`) y, para cada prenda teñible, uno de [`VARIANTS`] colores, donde el
+//! primero es el propio del modelo. Un material teñido es una copia del del
+//! modelo, creada una vez por (material, color) y compartida por todos los que
+//! lo llevan ([`TintCache`]), nunca una por persona.
 
 use bevy::gltf::GltfMaterialName;
 use bevy::platform::collections::HashMap;
@@ -16,9 +16,9 @@ use bevy::prelude::*;
 
 use super::figure::{FigureKind, Rgb, TOWNSFOLK_LOOKS};
 
-/// Each look's model folder, in look order: the paisano, the peón, the
-/// Volga German farmhand, the countrywoman in a headscarf and the young
-/// townswoman with her hair in a bun.
+/// La carpeta del modelo de cada aspecto, en orden de aspecto: el paisano, el
+/// peón, el peón alemán del Volga, la campesina con pañuelo en la cabeza y la
+/// joven del pueblo con el pelo recogido en un rodete.
 pub const OUTFITS: [&str; TOWNSFOLK_LOOKS as usize] = [
     "townsfolk_paisano",
     "townsfolk_peon",
@@ -27,21 +27,21 @@ pub const OUTFITS: [&str; TOWNSFOLK_LOOKS as usize] = [
     "townsfolk_bun",
 ];
 
-/// How many colours each tintable garment comes in.
+/// En cuántos colores viene cada prenda teñible.
 pub const VARIANTS: usize = 4;
 
-/// The model folder of a townsperson of `look`.
+/// La carpeta del modelo de un vecino de aspecto `look`.
 pub fn outfit(look: u8) -> &'static str {
     OUTFITS[(look % TOWNSFOLK_LOOKS) as usize]
 }
 
-/// A garment (by its glTF material's name) and its colours (sRGB), the
-/// first the model's own.
+/// Una prenda (por el nombre de su material glTF) y sus colores (sRGB), el
+/// primero el propio del modelo.
 type Garment = (&'static str, [Rgb; VARIANTS]);
 
-// Muted 1919 cloth (see `odd/setting-1919.md`): dust, dun, faded blue,
-// brown, grey and black wool, off-white cotton; colour only in the
-// accents (the faja, the pañuelo).
+// Telas apagadas de 1919 (ver `odd/setting-1919.md`): polvo, pardo, azul
+// desteñido, lana marrón, gris y negra, algodón blanco roto; color solo en los
+// detalles (la faja, el pañuelo).
 #[rustfmt::skip]
 const PAISANO: &[Garment] = &[
     ("shirt", [[214, 207, 186], [190, 196, 198], [200, 186, 156], [226, 222, 210]]),
@@ -64,7 +64,7 @@ const VOLGA: &[Garment] = &[
     ("waistcoat", [[38, 36, 33], [70, 56, 42], [50, 54, 62], [60, 60, 56]]),
     ("trousers", [[66, 61, 54], [48, 46, 46], [84, 72, 56], [56, 58, 66]]),
     ("hat_felt", [[61, 54, 46], [38, 36, 34], [84, 74, 60], [52, 50, 48]]),
-    // The poncho's woven texture is coloured: these tint it.
+    // La textura tejida del poncho tiene color: estos la tiñen.
     ("poncho", [[158, 133, 107], [110, 120, 140], [170, 150, 120], [130, 110, 100]]),
 ];
 #[rustfmt::skip]
@@ -83,12 +83,12 @@ const BUN: &[Garment] = &[
     ("shawl", [[84, 84, 87], [110, 90, 70], [60, 40, 50], [140, 128, 108]]),
 ];
 
-/// Each outfit's tintable garments, in look order.
+/// Las prendas teñibles de cada atuendo, en orden de aspecto.
 pub const GARMENTS: [&[Garment]; TOWNSFOLK_LOOKS as usize] = [PAISANO, PEON, VOLGA, HEADSCARF, BUN];
 
-/// Which of its [`VARIANTS`] colours the `k`-th garment of a person of
-/// `look` wears: drawn from the look's high part (the low part picks the
-/// outfit), each garment by its own hash, so clothes mix.
+/// Cuál de sus [`VARIANTS`] colores lleva la prenda número `k` de una persona
+/// de aspecto `look`: se toma de la parte alta del aspecto (la parte baja elige
+/// el atuendo), cada prenda con su propio hash, así que la ropa se combina.
 pub fn variant(look: u8, k: usize) -> usize {
     let mut h = (look / TOWNSFOLK_LOOKS) as u32;
     h = h.wrapping_mul(0x9E37_79B1) ^ (k as u32).wrapping_mul(0x85EB_CA6B);
@@ -98,9 +98,9 @@ pub fn variant(look: u8, k: usize) -> usize {
     (h % VARIANTS as u32) as usize
 }
 
-/// The colour a townsperson of `look` wears for the glTF material
-/// `material`, when it differs from the model's own: None for a garment
-/// that is not tinted or a person in its first colour.
+/// El color que lleva un vecino de aspecto `look` para el material glTF
+/// `material`, cuando difiere del propio del modelo: None para una prenda que
+/// no se tiñe o una persona con su primer color.
 pub fn tint(look: u8, material: &str) -> Option<Rgb> {
     let garments = GARMENTS[(look % TOWNSFOLK_LOOKS) as usize];
     let k = garments.iter().position(|(name, _)| *name == material)?;
@@ -108,25 +108,25 @@ pub fn tint(look: u8, material: &str) -> Option<Rgb> {
     (v > 0).then_some(garments[k].1[v])
 }
 
-/// The tinted copies of the townsfolk's materials, one per (model
-/// material, colour), shared by everyone wearing it.
+/// Las copias teñidas de los materiales de los vecinos, una por (material del
+/// modelo, color), compartidas por todos los que las llevan.
 #[derive(Resource, Debug, Default)]
 pub struct TintCache {
     materials: HashMap<(AssetId<StandardMaterial>, Rgb), Handle<StandardMaterial>>,
 }
 
 impl TintCache {
-    /// Tinted copies made so far.
+    /// Copias teñidas creadas hasta ahora.
     pub fn len(&self) -> usize {
         self.materials.len()
     }
 
-    /// Whether none was made yet.
+    /// Si todavía no se creó ninguna.
     pub fn is_empty(&self) -> bool {
         self.materials.is_empty()
     }
 
-    /// `material` coloured `rgb`: the shared copy, made the first time.
+    /// `material` coloreado `rgb`: la copia compartida, creada la primera vez.
     pub fn tinted(
         &mut self,
         material: &Handle<StandardMaterial>,
@@ -145,15 +145,15 @@ impl TintCache {
     }
 }
 
-/// What [`dress_townsperson`] reads of a model's mesh.
+/// Lo que [`dress_townsperson`] lee de la mesh de un modelo.
 pub(super) type Worn = (
     &'static MeshMaterial3d<StandardMaterial>,
     &'static GltfMaterialName,
 );
 
-/// Gives the meshes of a townsperson of `look` their tinted materials.
-/// Returns whether the model wears a long skirt (a material named
-/// `skirt`): its arms are then held out a little ([`SKIRT_ARMS_OUT`]).
+/// Les da a las meshes de un vecino de aspecto `look` sus materiales teñidos.
+/// Devuelve si el modelo lleva pollera larga (un material llamado `skirt`): en
+/// ese caso sus brazos se separan un poco ([`SKIRT_ARMS_OUT`]).
 pub(super) fn dress_townsperson<'a>(
     commands: &mut Commands,
     (cache, materials): (&mut TintCache, &mut Assets<StandardMaterial>),
@@ -179,17 +179,17 @@ pub(super) fn dress_townsperson<'a>(
     skirt
 }
 
-/// How far (radians) the upper arms of a model in a long skirt are turned
-/// out from the body, on top of the clips: the clips were made on a man,
-/// and a woman's hips (with the skirt over them) are wider, so her
-/// hanging hands would sink up to 4–5 cm into the skirt. At 0.14 they
-/// keep about 2 cm off it through the idle, the walk and the talk.
+/// Cuánto (en radianes) se separan del cuerpo los brazos de un modelo con
+/// pollera larga, además de los clips: los clips se hicieron sobre un hombre, y
+/// las caderas de una mujer (con la pollera encima) son más anchas, así que sus
+/// manos colgando se hundirían hasta 4–5 cm en la pollera. Con 0.14 quedan a
+/// unos 2 cm de ella durante la espera, la caminata y la charla.
 pub const SKIRT_ARMS_OUT: f32 = 0.14;
 
-/// The local rotation `local` of an upper arm turned out by `angle`
-/// (radians) about the body's front (+X), away from the body on the left
-/// (-Z) for a positive angle; `frame` is its parent's rest orientation in
-/// the body frame.
+/// La rotación local `local` de un brazo separado `angle` (radianes) alrededor
+/// del frente del cuerpo (+X), alejándose del cuerpo hacia la izquierda (-Z)
+/// para un ángulo positivo; `frame` es la orientación en reposo de su padre en
+/// el marco del cuerpo.
 pub fn arm_out(local: Quat, frame: Quat, angle: f32) -> Quat {
     (frame.inverse() * Quat::from_rotation_x(angle) * frame * local).normalize()
 }
@@ -199,14 +199,15 @@ pub(crate) mod tests {
     use super::*;
     use crate::character::cpu;
 
-    /// How far, at worst, the model `model` (posed as drawn) has a leg
-    /// out through its skirt, and an arm in it, meters (negative: clear by
-    /// that much). Each vertex of the legs (thighs, shins, feet, and the
-    /// boots on them) and of the arms (by its strongest joint) is seen along
-    /// a level ray out from the pelvis through it: where the ray meets the
-    /// skirt, a leg must lie inside its outermost crossing and an arm
-    /// outside it. Points above or below the skirt meet none and count for
-    /// nothing. None for a model without a skirt.
+    /// Cuánto, en el peor caso, el modelo `model` (en la pose en que se dibuja)
+    /// saca una pierna a través de su pollera y mete un brazo en ella, en
+    /// metros (negativo: libre por esa distancia). Cada vertex de las piernas
+    /// (muslos, canillas, pies y las botas sobre ellos) y de los brazos (según
+    /// su articulación más fuerte) se mira a lo largo de un rayo horizontal que
+    /// sale de la pelvis y pasa por él: donde el rayo encuentra la pollera, una
+    /// pierna debe quedar dentro de su cruce más externo y un brazo, fuera. Los
+    /// puntos por encima o por debajo de la pollera no encuentran ninguno y no
+    /// cuentan. None para un modelo sin pollera.
     pub(crate) fn skirt_pokes(world: &mut World, model: Entity) -> Option<(f32, f32)> {
         let drawn = cpu::drawn(world, Some(model));
         let named = |e: Entity| world.get::<Name>(e).map(|n| n.as_str().to_owned());
@@ -280,8 +281,8 @@ pub(crate) mod tests {
         Some((legs, arms))
     }
 
-    /// Where a ray from `from` along `dir` crosses the triangle `t`
-    /// (Möller–Trumbore): the distance along it, if ahead.
+    /// Dónde cruza un rayo desde `from` en la dirección `dir` el triángulo `t`
+    /// (Möller–Trumbore): la distancia a lo largo de él, si está adelante.
     fn crossing(from: Vec3, dir: Vec3, t: &[Vec3; 3]) -> Option<f32> {
         let (e1, e2) = (t[1] - t[0], t[2] - t[0]);
         let h = dir.cross(e2);
@@ -300,7 +301,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_level_ray_meets_a_skirts_outer_wall_where_it_is() {
-        // A square tube of half-width 1 round the y axis, from y 0 to 1.
+        // Un tubo cuadrado de semiancho 1 alrededor del eje y, de y 0 a 1.
         let c = [
             Vec3::new(-1.0, 0.0, -1.0),
             Vec3::new(1.0, 0.0, -1.0),
@@ -331,9 +332,9 @@ pub(crate) mod tests {
     #[test]
     fn each_person_wears_one_shipped_model_and_a_look_its_outfits_whatever_its_colours() {
         use crate::character::model::CharacterModels;
-        // The models are loaded once per folder: a townsperson of any look
-        // (0 to 255, its high part only their colours) finds the one of
-        // their outfit, never a model per look.
+        // Los modelos se cargan una vez por carpeta: un vecino de cualquier
+        // aspecto (de 0 a 255, cuya parte alta solo da sus colores) encuentra
+        // el de su atuendo, nunca un modelo por aspecto.
         let mut models = CharacterModels::default();
         for kind in FigureKind::all() {
             let name = model_name(kind).unwrap();
@@ -357,7 +358,7 @@ pub(crate) mod tests {
         }
     }
 
-    /// The material names of each outfit's shipped glTF.
+    /// Los nombres de material del glTF incluido de cada atuendo.
     fn material_names() -> Vec<Vec<String>> {
         use crate::character::model::tests::shipped_model;
         OUTFITS
@@ -377,8 +378,9 @@ pub(crate) mod tests {
         for ((name, garments), names) in OUTFITS.iter().zip(GARMENTS).zip(&all) {
             for (garment, colours) in garments {
                 assert!(names.iter().any(|n| n == garment), "{name}: {garment}");
-                // Each colour differs, and stays muted: no garment brighter
-                // than off-white or more saturated than the faja's red.
+                // Cada color es distinto y se mantiene apagado: ninguna prenda
+                // más clara que el blanco roto ni más saturada que el rojo de
+                // la faja.
                 for (k, c) in colours.iter().enumerate() {
                     assert!(!colours[..k].contains(c), "{name} {garment}: {c:?} twice");
                     let (lo, hi) = (*c.iter().min().unwrap(), *c.iter().max().unwrap());
@@ -390,7 +392,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_look_picks_each_garments_colour_the_same_every_time_and_varies_across_people() {
-        // The first colour is the model's own: no tint.
+        // El primer color es el propio del modelo: sin teñido.
         let mut tinted = 0;
         let mut differ = 0;
         for look in 0..=255u8 {
@@ -401,7 +403,7 @@ pub(crate) mod tests {
                 assert_eq!(tint(look, garment), (v > 0).then_some(colours[v]));
                 tinted += usize::from(v > 0);
             }
-            // The same outfit, the next person: something else on.
+            // El mismo atuendo, la persona siguiente: lleva otra cosa.
             if let Some(next) = look.checked_add(TOWNSFOLK_LOOKS) {
                 differ +=
                     usize::from((0..garments.len()).any(|k| variant(look, k) != variant(next, k)));
@@ -409,7 +411,7 @@ pub(crate) mod tests {
         }
         assert!(tinted > 600, "{tinted}");
         assert!(differ > 240, "{differ}");
-        // Every colour of every garment is worn by someone.
+        // Cada color de cada prenda lo lleva alguien.
         for (o, garments) in GARMENTS.iter().enumerate() {
             for k in 0..garments.len() {
                 let worn: std::collections::HashSet<usize> = (0..=255u8)
@@ -444,15 +446,17 @@ pub(crate) mod tests {
 
     #[test]
     fn an_arm_turned_out_swings_its_hand_away_from_the_body_on_its_own_side() {
-        // A parent frame turned about the body's up, as a clavicle's is: the
-        // turn still goes about the body's front.
+        // Un marco padre girado alrededor del eje vertical del cuerpo, como el
+        // de una clavícula: el giro sigue siendo alrededor del frente del
+        // cuerpo.
         let frame = Quat::from_rotation_y(0.7) * Quat::from_rotation_z(0.3);
-        let local = frame.inverse(); // the arm hangs straight down in the body frame
+        let local = frame.inverse(); // el brazo cuelga recto en el marco del cuerpo
         let hand = |q: Quat| (frame * q) * Vec3::NEG_Y;
         assert!(hand(local).distance(Vec3::NEG_Y) < 1e-5);
         let left = hand(arm_out(local, frame, SKIRT_ARMS_OUT));
         let right = hand(arm_out(local, frame, -SKIRT_ARMS_OUT));
-        // The body's left is -Z: out, not forward or back.
+        // La izquierda del cuerpo es -Z: hacia afuera, no hacia adelante ni
+        // atrás.
         assert!(left.z < -0.13 && right.z > 0.13, "{left} {right}");
         assert!(left.x.abs() < 1e-5 && right.x.abs() < 1e-5);
         assert!((left.angle_between(Vec3::NEG_Y) - SKIRT_ARMS_OUT).abs() < 1e-5);

@@ -1,18 +1,19 @@
-//! Dirt roads between neighbouring towns, for carts and riders.
+//! Caminos de tierra entre pueblos vecinos, para carros y jinetes.
 //!
-//! A road joins two towns next to each other on the railway line, or a
-//! town on a branch of it to the town nearest it (see [`road_pairs`]). It leaves
-//! each town by the main street exit facing the other town, runs straight
-//! out across the town's leveled band, and then follows a gently curving,
-//! seeded line that is more direct than the railway: it skips the track's
-//! run-outs and its wide curves.
+//! Un camino une dos pueblos vecinos sobre la línea del ferrocarril, o un pueblo
+//! de un ramal con el pueblo más cercano (ver [`road_pairs`]). Sale de cada
+//! pueblo por la salida de la calle principal que mira hacia el otro pueblo,
+//! atraviesa en línea recta la franja nivelada del pueblo y después sigue una
+//! línea con semilla y curvas suaves, más directa que la vía férrea: se saltea
+//! los tramos finales de la vía y sus curvas amplias.
 //!
-//! The road keeps [`RoadNetwork::RAIL_CLEARANCE`] from the track. It only
-//! crosses the line where it must, when its two ends lie on opposite sides
-//! of it, and then squarely, at a level crossing ([`LevelCrossing`]).
+//! El camino se mantiene a [`RoadNetwork::RAIL_CLEARANCE`] de la vía. Solo cruza
+//! la línea donde debe, cuando sus dos extremos están en lados opuestos de ella,
+//! y lo hace en perpendicular, en un paso a nivel ([`LevelCrossing`]).
 //!
-//! Roads are a world rule like the railway: a road that would run across a
-//! third town's leveled ground or leave the world is left out and reported.
+//! Los caminos son una regla del mundo, como la vía férrea: un camino que
+//! atravesaría el terreno nivelado de un tercer pueblo o saldría del mundo se
+//! deja fuera y se informa.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -20,102 +21,107 @@ use std::fmt;
 use crate::rng::Rng;
 use crate::{Aabb, Lagoon, RailLine, TownLayout, Vec2, WorldBounds};
 
-/// What a road joins.
+/// Qué une un camino.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoadKind {
-    /// A road between two neighbouring towns.
+    /// Un camino entre dos pueblos vecinos.
     Between,
-    /// A short dead-end track from a town across its railway, by the
-    /// station, out to the chacras and estancias (user, 2026-10-22).
+    /// Una huella corta sin salida desde un pueblo, cruzando su vía férrea
+    /// junto a la estación, hacia las chacras y estancias (usuario,
+    /// 2026-10-22).
     Rural,
-    /// A town street across the railway running through the town
-    /// ([`crate::RailwayConfig::through`]), at its level crossing.
+    /// Una calle del pueblo que cruza la vía férrea que atraviesa el pueblo
+    /// ([`crate::RailwayConfig::through`]), en su paso a nivel.
     Street,
-    /// A public dead-end road from a town out to a lagoon's bank, ending in
-    /// a small turnaround by the water (user, 2026-10-23).
+    /// Un camino público sin salida desde un pueblo hasta la orilla de una
+    /// laguna, que termina en un pequeño retorno junto al agua (usuario,
+    /// 2026-10-23).
     Lagoon,
 }
 
-/// One road: between two towns, or a rural track out of one.
+/// Un camino: entre dos pueblos, o una huella rural que sale de uno.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Road {
     pub kind: RoadKind,
-    /// Index (into the world's towns) of the town the road leaves.
+    /// Índice (dentro de los pueblos del mundo) del pueblo del que sale el
+    /// camino.
     pub from: usize,
-    /// Index of the town the road reaches (`from` again for a rural
-    /// track, which ends in the open land, and for a street crossing).
+    /// Índice del pueblo al que llega el camino (otra vez `from` para una
+    /// huella rural, que termina en campo abierto, y para un cruce de calle).
     pub to: usize,
-    /// The centerline, from the street exit of `from` to that of `to` (or
-    /// to the rural track's end).
+    /// La línea central, desde la salida de calle de `from` hasta la de `to` (o
+    /// hasta el final de la huella rural).
     pub path: Vec<Vec2>,
-    /// Where the road leaves `from` and reaches `to`.
+    /// Dónde sale el camino de `from` y dónde llega a `to`.
     pub ends: [RoadEnd; 2],
-    /// Every place the road crosses the railway, in road order.
+    /// Todos los lugares donde el camino cruza la vía férrea, en el orden del
+    /// camino.
     pub crossings: Vec<LevelCrossing>,
 }
 
-/// Where a road meets a town's street grid.
+/// Donde un camino se encuentra con la cuadrícula de calles de un pueblo.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RoadEnd {
-    /// The street exit, on the grid's edge.
+    /// La salida de la calle, en el borde de la cuadrícula.
     pub at: Vec2,
-    /// Unit direction out of town, along the street.
+    /// Dirección unitaria hacia afuera del pueblo, a lo largo de la calle.
     pub out: Vec2,
 }
 
-/// A level crossing: a road crossing the railway.
+/// Un paso a nivel: un camino que cruza la vía férrea.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LevelCrossing {
-    /// Where the road and track centerlines meet.
+    /// Donde se encuentran las líneas centrales del camino y de la vía.
     pub at: Vec2,
-    /// Unit direction of the road there, in road order.
+    /// Dirección unitaria del camino en ese punto, en el orden del camino.
     pub road: Vec2,
-    /// Unit direction of the track there.
+    /// Dirección unitaria de la vía en ese punto.
     pub rail: Vec2,
-    /// Distance along the road to the crossing, in meters.
+    /// Distancia a lo largo del camino hasta el paso a nivel, en metros.
     pub along: f32,
 }
 
-/// A signpost by a road: a wooden post with one arrow board per town the
-/// road leads to.
+/// Un cartel indicador junto a un camino: un poste de madera con una tabla en
+/// forma de flecha por cada pueblo al que lleva el camino.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Signpost {
     pub at: Vec2,
     pub boards: Vec<SignBoard>,
 }
 
-/// One arrow board of a [`Signpost`].
+/// Una tabla en forma de flecha de un [`Signpost`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct SignBoard {
-    /// What the board reads, e.g. `EDUARDO CASTEX 2,3 KM`.
+    /// Lo que dice la tabla, por ejemplo `EDUARDO CASTEX 2,3 KM`.
     pub text: String,
-    /// Unit direction the arrow points, along the road.
+    /// Dirección unitaria hacia la que apunta la flecha, a lo largo del camino.
     pub toward: Vec2,
 }
 
-/// Why a road was left out.
+/// Por qué se dejó fuera un camino.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RoadError {
-    /// The road between `from` and `to` would run across `other`'s leveled
-    /// ground.
+    /// El camino entre `from` y `to` atravesaría el terreno nivelado de
+    /// `other`.
     CrossesTown {
         from: String,
         to: String,
         other: String,
     },
-    /// The road between `from` and `to` would leave the world.
+    /// El camino entre `from` y `to` saldría del mundo.
     OutsideWorld { from: String, to: String },
-    /// The road between `from` and `to` would cross the railway at
-    /// `degrees`, less square than [`RoadNetwork::MIN_CROSSING_ANGLE`].
+    /// El camino entre `from` y `to` cruzaría la vía férrea a `degrees`, menos
+    /// perpendicular que [`RoadNetwork::MIN_CROSSING_ANGLE`].
     UnsquareCrossing {
         from: String,
         to: String,
         degrees: f32,
     },
-    /// The road between `from` and `to` would run alongside the track,
-    /// closer than [`RoadNetwork::NEAR_RAIL`], away from its crossings.
+    /// El camino entre `from` y `to` correría junto a la vía, más cerca que
+    /// [`RoadNetwork::NEAR_RAIL`], lejos de sus pasos a nivel.
     NearRail { from: String, to: String },
-    /// `town`'s rural track has no clear way across its station yard.
+    /// La huella rural de `town` no tiene un paso libre a través de la playa de
+    /// su estación.
     NoRuralCrossing { town: String },
 }
 
@@ -148,18 +154,19 @@ impl fmt::Display for RoadError {
 
 impl std::error::Error for RoadError {}
 
-/// One straight piece of a road, for the index.
+/// Un tramo recto de un camino, para el índice.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Piece {
     a: Vec2,
     b: Vec2,
     road: u32,
-    /// Distance along the road to `a`.
+    /// Distancia a lo largo del camino hasta `a`.
     along: f32,
 }
 
-/// Every road of the world, with a grid index of their pieces so the ground
-/// and the flora can ask cheaply how far the nearest road is.
+/// Todos los caminos del mundo, con un índice en grilla de sus tramos para que
+/// el suelo y la flora puedan preguntar de forma barata a qué distancia está el
+/// camino más cercano.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct RoadNetwork {
     pub roads: Vec<Road>,
@@ -169,23 +176,25 @@ pub struct RoadNetwork {
     cells: HashMap<(i32, i32), Vec<u32>>,
 }
 
-/// The railway centerlines as oriented polylines, so "which side" is the
-/// same question all along each: the line's whole path, then each branch's
-/// path, running outward from its junction, then each bay's, turned to the
-/// line's heading ([`RailLine::track_paths`]).
-/// Oriented so, a branch's outer side is the line's: the land between a
-/// branch and the line it leaves is on the same side of both.
+/// Las líneas centrales de la vía férrea como polilíneas orientadas, para que
+/// "de qué lado" sea la misma pregunta a lo largo de cada una: el recorrido
+/// completo de la línea, después el recorrido de cada ramal, que avanza hacia
+/// afuera desde su empalme, y después el de cada vía muerta, girado según la
+/// orientación de la línea ([`RailLine::track_paths`]). Orientados así, el lado
+/// exterior de un ramal es el de la línea: la tierra entre un ramal y la línea
+/// de la que sale queda del mismo lado de ambos.
 struct Track(Vec<Vec<Vec2>>);
 
 impl Track {
-    /// Every track path of `line` through `towns`.
+    /// Todos los recorridos de vía de `line` a través de `towns`.
     fn of(line: &RailLine, towns: &[TownLayout]) -> Self {
         Self(
             line.track_paths(towns)
                 .iter()
                 .map(|p| p.points().to_vec())
-                // A bay runs from its dead end out to the track, against the
-                // line's heading there: turned round, its left is the line's.
+                // Una vía muerta va desde su extremo cerrado hasta la vía, en
+                // sentido contrario a la orientación de la línea en ese punto:
+                // dada vuelta, su izquierda es la de la línea.
                 .map(|mut p| {
                     if line.bays.iter().any(|b| b.link.path == p) {
                         p.reverse();
@@ -197,18 +206,19 @@ impl Track {
         )
     }
 
-    /// One straight track, start to end.
+    /// Una vía recta, de principio a fin.
     fn straight(start: Vec2, end: Vec2) -> Self {
         Self(vec![vec![start, end]])
     }
 
-    /// Every straight piece of every path.
+    /// Todos los tramos rectos de todos los recorridos.
     fn pieces(&self) -> impl Iterator<Item = &[Vec2]> + '_ {
         self.0.iter().flat_map(|p| p.windows(2))
     }
 
-    /// Distance from `p` to the nearest track, signed positive left of that
-    /// track's direction, and the unit normal pointing left there.
+    /// Distancia desde `p` hasta la vía más cercana, con signo positivo a la
+    /// izquierda de la dirección de esa vía, y la normal unitaria que apunta a
+    /// la izquierda en ese punto.
     fn signed(&self, p: Vec2) -> (f32, Vec2) {
         let mut best = (f32::INFINITY, 0.0, Vec2::new(0.0, 1.0));
         for w in self.pieces() {
@@ -227,8 +237,8 @@ impl Track {
         (best.0 * best.1, best.2)
     }
 
-    /// The first point where the segment `p`–`q` crosses a track, from
-    /// `p`, with the track's unit direction there.
+    /// El primer punto donde el segmento `p`–`q` cruza una vía, empezando desde
+    /// `p`, con la dirección unitaria de la vía en ese punto.
     fn first_crossing(&self, p: Vec2, q: Vec2) -> Option<(Vec2, Vec2)> {
         self.pieces()
             .filter_map(|w| {
@@ -241,87 +251,98 @@ impl Track {
 }
 
 impl RoadNetwork {
-    /// Width of the road surface, in meters: two carts wide, with room to
-    /// become a route later (user, 2026-10-22).
+    /// Ancho de la superficie del camino, en metros: el de dos carros, con
+    /// lugar para convertirse más adelante en una ruta (usuario, 2026-10-22).
     pub const WIDTH: f32 = 6.5;
-    /// Half of [`Self::WIDTH`].
+    /// La mitad de [`Self::WIDTH`].
     pub const HALF_WIDTH: f32 = Self::WIDTH / 2.0;
-    /// Least distance from the road's centerline to the track's, in meters,
-    /// away from level crossings.
+    /// Distancia mínima desde la línea central del camino hasta la de la vía,
+    /// en metros, lejos de los pasos a nivel.
     pub const RAIL_CLEARANCE: f32 = 40.0;
-    /// How far the road runs straight out of town, in meters: across the
-    /// leveled band and a little past it.
+    /// Cuánto sale el camino en línea recta desde el pueblo, en metros:
+    /// atravesando la franja nivelada y un poco más allá.
     pub const RUN_OUT: f32 = TownLayout::LEVELED_BAND + 20.0;
-    /// How deep the road is cut into the ground, in meters.
+    /// Qué tan hondo está cortado el camino en el suelo, en metros.
     pub const CUT_DEPTH: f32 = 0.15;
-    /// Width of the leveled ground on either side of the centerline: the
-    /// road and a shoulder, in meters.
+    /// Ancho del terreno nivelado a cada lado de la línea central: el camino y
+    /// una banquina, en metros.
     pub const CUT_FLAT: f32 = Self::HALF_WIDTH + 1.5;
-    /// Where the cut has blended back into the natural ground, in meters
-    /// from the centerline.
+    /// Donde el corte ya se fundió de nuevo con el terreno natural, en metros
+    /// desde la línea central.
     pub const CUT_REACH: f32 = Self::HALF_WIDTH + 8.0;
-    /// Along the first and last meters of a road, the cut eases in, so the
-    /// road meets the town's streets flush.
+    /// En los primeros y los últimos metros de un camino el corte aparece
+    /// suavemente, para que el camino se una al ras con las calles del pueblo.
     const CUT_EASE: f32 = 25.0;
-    /// How far past its ends a piece still levels the ground, in meters:
-    /// enough to cover the outside of the road's gentle bends.
+    /// Cuánto más allá de sus extremos un tramo todavía nivela el suelo, en
+    /// metros: lo suficiente para cubrir el lado exterior de las curvas suaves
+    /// del camino.
     const CUT_OVERLAP: f32 = 2.0;
-    /// Half the width of a level crossing's deck across the track, in
-    /// meters from the track's centerline: the planks and the ballast
-    /// beside them, where the road stands at rail-top level.
+    /// La mitad del ancho de la plataforma de un paso a nivel a través de la
+    /// vía, en metros desde la línea central de la vía: los tablones y el
+    /// balasto de al lado, donde el camino queda a la altura de la parte
+    /// superior de los rieles.
     pub const CROSSING_DECK: f32 = 1.7;
-    /// Length of the packed-earth approach on either side of a level
-    /// crossing, in meters: the road rises from the ground to the deck over
-    /// it, gentler than 1 in 10.
+    /// Largo del acceso de tierra apisonada a cada lado de un paso a nivel, en
+    /// metros: el camino sube del suelo a la plataforma a lo largo de él, con
+    /// una pendiente más suave que 1 en 10.
     pub const CROSSING_RAMP: f32 = 7.0;
-    /// Height of a level crossing's deck above the ground, in meters: the
-    /// planks' top, just under the rail heads.
+    /// Altura de la plataforma de un paso a nivel sobre el suelo, en metros: la
+    /// parte superior de los tablones, justo por debajo de las cabezas de los
+    /// rieles.
     pub const CROSSING_RISE: f32 = crate::LineTrain::RAIL_TOP - 0.02;
-    /// Beside the road, the approach slopes down to the ground between
-    /// this many meters inside and outside the road's edge.
+    /// Al costado del camino, el acceso baja hasta el suelo entre esta cantidad
+    /// de metros hacia adentro y hacia afuera del borde del camino.
     pub const CROSSING_SIDE: f32 = 0.8;
-    /// Half the width of the track bed (sleepers and ballast), in meters
-    /// from the track's centerline: a road's cut leaves it untouched, so the
-    /// track, the train and the platforms never dip at a level crossing.
+    /// La mitad del ancho del lecho de la vía (durmientes y balasto), en metros
+    /// desde la línea central de la vía: el corte de un camino lo deja intacto,
+    /// así que la vía, el tren y los andenes nunca se hunden en un paso a
+    /// nivel.
     pub const RAIL_BED: f32 = 3.0;
-    /// Past [`Self::RAIL_BED`], over this many meters the cut eases back in.
+    /// Pasado [`Self::RAIL_BED`], el corte vuelve a aparecer suavemente a lo
+    /// largo de esta cantidad de metros.
     const RAIL_BLEND: f32 = 6.0;
-    /// Along the track, the bed is kept within this many meters of a
-    /// crossing, fading out over the next ten (the cut is long gone there).
+    /// A lo largo de la vía, el lecho se conserva hasta esta cantidad de metros
+    /// de un paso a nivel y se desvanece en los diez siguientes (ahí el corte
+    /// ya desapareció hace rato).
     const RAIL_NEAR: f32 = 30.0;
-    /// Farthest any query of [`Self::near`] reaches, in meters.
+    /// Lo más lejos que llega cualquier consulta de [`Self::near`], en metros.
     pub const INDEX_REACH: f32 = 64.0;
-    /// Side of one index cell, in meters.
+    /// Lado de una celda del índice, en metros.
     const CELL: f32 = 32.0;
-    /// Spacing of the route's samples, in meters.
+    /// Separación de las muestras del trazado, en metros.
     const STEP: f32 = 10.0;
-    /// How far from the road's exit, in meters, its signpost stands.
+    /// A qué distancia de la salida del camino está su cartel indicador, en
+    /// metros.
     pub const SIGNPOST_OUT: f32 = 14.0;
-    /// Side of a post's square footprint (signposts, crossing signs).
+    /// Lado de la huella cuadrada de un poste (carteles indicadores, señales de
+    /// paso a nivel).
     pub const POST: f32 = 0.25;
-    /// Least angle between a road and the track where it crosses, in
-    /// radians (80°): crossings are built square.
+    /// Ángulo mínimo entre un camino y la vía donde se cruzan, en radianes
+    /// (80°): los pasos a nivel se construyen en perpendicular.
     pub const MIN_CROSSING_ANGLE: f32 = 80.0 * std::f32::consts::PI / 180.0;
-    /// Least distance from a road's centerline to the track's, in meters,
-    /// away from its crossings and its towns (see [`Self::RAIL_CLEARANCE`];
-    /// the bends that keep it there may fall a little short).
+    /// Distancia mínima desde la línea central de un camino hasta la de la vía,
+    /// en metros, lejos de sus pasos a nivel y de sus pueblos (ver
+    /// [`Self::RAIL_CLEARANCE`]; las curvas que lo mantienen ahí pueden quedar
+    /// un poco cortas).
     pub const NEAR_RAIL: f32 = 0.9 * Self::RAIL_CLEARANCE;
-    /// Farthest a town may lie from a lagoon (from its leveled band to the
-    /// lagoon's middle) for a road to be laid out to it, in meters.
+    /// Lo más lejos que puede estar un pueblo de una laguna (desde su franja
+    /// nivelada hasta el centro de la laguna) para que se trace un camino hasta
+    /// ella, en metros.
     pub const LAGOON_REACH: f32 = 2500.0;
-    /// Radius of the turnaround loop at a lagoon road's end, in meters.
+    /// Radio del lazo de retorno al final de un camino a una laguna, en metros.
     pub const TURNAROUND: f32 = 6.0;
-    /// How far past the waterline the turnaround's middle lies, in meters:
-    /// the loop's near edge comes to the wet mud and no farther.
+    /// A qué distancia más allá de la línea del agua está el centro del
+    /// retorno, en metros: el borde cercano del lazo llega hasta el barro
+    /// húmedo y no más.
     pub const LANDING: f32 = Lagoon::MUD_BAND + Self::HALF_WIDTH + Self::TURNAROUND + 0.5;
-    /// Within this many meters of a crossing, a road may come near the
-    /// track: its square approaches.
+    /// Dentro de esta cantidad de metros de un paso a nivel, un camino puede
+    /// acercarse a la vía: sus accesos perpendiculares.
     const CROSSING_APPROACH: f32 = Self::RAIL_CLEARANCE + 90.0;
 
-    /// The roads between every two towns next to each other on `line`, and
-    /// from each branch town to its nearest town, inside `bounds`, and the
-    /// roads left out, each reported. They cross the line and its branches
-    /// alike, at level crossings.
+    /// Los caminos entre cada par de pueblos vecinos sobre `line`, y desde cada
+    /// pueblo de un ramal hasta su pueblo más cercano, dentro de `bounds`, y
+    /// los caminos dejados fuera, cada uno informado. Cruzan por igual la línea
+    /// y sus ramales, en pasos a nivel.
     pub fn build(
         towns: &[TownLayout],
         line: &RailLine,
@@ -359,11 +380,12 @@ impl RoadNetwork {
         (Self::new(roads, &names), errors)
     }
 
-    /// This network with a road out to each of `lagoons` from the nearest
-    /// town within [`Self::LAGOON_REACH`] of it ([`lagoon_road`]), each with
-    /// a signpost at its start naming the lagoon, and the lagoon roads left
-    /// out, each reported. The lagoons should come from
-    /// [`crate::place_lagoons`], checked against this network's roads.
+    /// Esta red con un camino hasta cada una de las `lagoons` desde el pueblo
+    /// más cercano que esté a [`Self::LAGOON_REACH`] o menos ([`lagoon_road`]),
+    /// cada uno con un cartel indicador al comienzo que nombra la laguna, y los
+    /// caminos a lagunas dejados fuera, cada uno informado. Las lagunas
+    /// deberían venir de [`crate::place_lagoons`], comprobadas contra los
+    /// caminos de esta red.
     pub fn with_lagoons(
         self,
         towns: &[TownLayout],
@@ -413,8 +435,9 @@ impl RoadNetwork {
         (network, errors)
     }
 
-    /// The network of `roads`, indexed, with a signpost at every road end
-    /// naming the town at the other end (`names` holds the towns' names).
+    /// La red de `roads`, indexada, con un cartel indicador en cada extremo de
+    /// camino que nombra el pueblo del otro extremo (`names` contiene los
+    /// nombres de los pueblos).
     pub fn new(roads: Vec<Road>, names: &[&str]) -> Self {
         let mut network = Self {
             roads,
@@ -447,23 +470,23 @@ impl RoadNetwork {
         network
     }
 
-    /// The straight pieces of every road, in road order.
+    /// Los tramos rectos de todos los caminos, en el orden de los caminos.
     pub fn segments(&self) -> impl Iterator<Item = (Vec2, Vec2)> + '_ {
         self.pieces.iter().map(|p| (p.a, p.b))
     }
 
-    /// Every level crossing of every road.
+    /// Todos los pasos a nivel de todos los caminos.
     pub fn crossings(&self) -> impl Iterator<Item = &LevelCrossing> + '_ {
         self.roads.iter().flat_map(|r| r.crossings.iter())
     }
 
-    /// Length of road `index` along its centerline, in meters.
+    /// Longitud del camino `index` a lo largo de su línea central, en metros.
     pub fn length(&self, index: usize) -> f32 {
         self.lengths.get(index).copied().unwrap_or(0.0)
     }
 
-    /// Length of the road between towns `a` and `b` (either way round), if
-    /// the network has one.
+    /// Longitud del camino entre los pueblos `a` y `b` (en cualquier sentido),
+    /// si la red tiene uno.
     pub fn length_between(&self, a: usize, b: usize) -> Option<f32> {
         self.roads
             .iter()
@@ -474,9 +497,9 @@ impl RoadNetwork {
             .map(|i| self.length(i))
     }
 
-    /// Exact distance from `p` to the nearest road centerline (infinite
-    /// without roads). Looks at every piece: for tests and rare questions;
-    /// see [`Self::near`] for the cheap one.
+    /// Distancia exacta desde `p` hasta la línea central de camino más cercana
+    /// (infinita si no hay caminos). Revisa todos los tramos: para pruebas y
+    /// consultas poco frecuentes; ver [`Self::near`] para la versión barata.
     pub fn distance(&self, p: Vec2) -> f32 {
         self.pieces
             .iter()
@@ -484,8 +507,9 @@ impl RoadNetwork {
             .fold(f32::INFINITY, f32::min)
     }
 
-    /// Distance from `p` to the nearest road centerline when it is within
-    /// `reach` (at most [`Self::INDEX_REACH`]) meters, `None` otherwise.
+    /// Distancia desde `p` hasta la línea central de camino más cercana cuando
+    /// está a `reach` metros o menos (como mucho [`Self::INDEX_REACH`]); `None`
+    /// en caso contrario.
     pub fn near(&self, p: Vec2, reach: f32) -> Option<f32> {
         let reach = reach.min(Self::INDEX_REACH);
         self.nearby(p)
@@ -494,7 +518,7 @@ impl RoadNetwork {
             .min_by(f32::total_cmp)
     }
 
-    /// The indexed pieces whose reach covers `p`.
+    /// Los tramos indexados cuyo alcance cubre `p`.
     fn nearby(&self, p: Vec2) -> impl Iterator<Item = &Piece> + '_ {
         let cell = cell_of(p);
         let finite = p.x.is_finite() && p.y.is_finite();
@@ -506,8 +530,9 @@ impl RoadNetwork {
             .map(|&i| &self.pieces[i as usize])
     }
 
-    /// How much of the road surface is at `p`, in `[0, 1]`: 1 on the road,
-    /// fading to 0 over a meter and a half past its edge. Continuous.
+    /// Cuánta superficie de camino hay en `p`, en `[0, 1]`: 1 sobre el camino,
+    /// desvaneciéndose hasta 0 a lo largo de un metro y medio más allá de su
+    /// borde. Continua.
     pub fn surface(&self, p: Vec2) -> f32 {
         let Some(d) = self.near(p, Self::HALF_WIDTH + 1.5) else {
             return 0.0;
@@ -515,18 +540,18 @@ impl RoadNetwork {
         1.0 - smoothstep(Self::HALF_WIDTH - 0.5, Self::HALF_WIDTH + 1.5, d)
     }
 
-    /// The road's cut into the ground at `p`: how strongly it applies, in
-    /// `[0, 1]`, and the height it levels the ground to, given the uncut
-    /// ground height `base`. Across the road the ground is level, at the
-    /// height of the centerline, a little below it; along the road it
-    /// follows the land. `None` away from roads.
+    /// El corte del camino en el suelo en `p`: con cuánta fuerza se aplica, en
+    /// `[0, 1]`, y la altura a la que nivela el suelo, dada la altura del suelo
+    /// sin cortar `base`. A lo ancho del camino el suelo está nivelado, a la
+    /// altura de la línea central, un poco por debajo de ella; a lo largo del
+    /// camino sigue el terreno. `None` lejos de los caminos.
     ///
-    /// Continuous everywhere: each piece within reach pulls toward its own
-    /// level by a weight that fades to 0 at [`Self::CUT_REACH`] from it
-    /// and within a couple of meters past its ends, and the levels are
-    /// averaged by weight. Nothing farther than [`Self::CUT_REACH`] from
-    /// the road is touched. The track bed at a level crossing is left alone,
-    /// the cut easing back in beside it (see [`Self::RAIL_BED`]).
+    /// Continuo en todas partes: cada tramo al alcance tira hacia su propio
+    /// nivel con un peso que se desvanece hasta 0 a [`Self::CUT_REACH`] de él y
+    /// a un par de metros más allá de sus extremos, y los niveles se promedian
+    /// según el peso. No se toca nada que esté a más de [`Self::CUT_REACH`] del
+    /// camino. El lecho de la vía en un paso a nivel se deja como está, y el
+    /// corte vuelve a aparecer suavemente al lado (ver [`Self::RAIL_BED`]).
     pub fn cut(&self, p: Vec2, base: impl Fn(Vec2) -> f32) -> Option<(f32, f32)> {
         let (mut strongest, mut total, mut weighted) = (0.0_f32, 0.0, 0.0);
         for piece in self.nearby(p) {
@@ -536,13 +561,14 @@ impl RoadNetwork {
                 continue;
             }
             let dir = d * (1.0 / length);
-            // Across the piece's line, and past its ends along it.
+            // A lo ancho de la línea del tramo, y más allá de sus extremos a lo
+            // largo de ella.
             let s = (p - piece.a).dot(dir);
             let off = ((p - piece.a).x * dir.y - (p - piece.a).y * dir.x).abs();
             let past = (-s).max(s - length).max(0.0);
-            // Faded by the true distance to the piece (not just across its
-            // line), so nothing past `CUT_REACH` from the road is touched,
-            // round the ends of the pieces too.
+            // Se desvanece según la distancia real al tramo (no solo a lo ancho
+            // de su línea), así que no se toca nada más allá de `CUT_REACH`
+            // desde el camino, tampoco alrededor de los extremos de los tramos.
             let reach = off.hypot(past);
             let w = (1.0 - smoothstep(Self::CUT_FLAT, Self::CUT_REACH, reach))
                 * (1.0 - smoothstep(0.0, Self::CUT_OVERLAP, past));
@@ -565,9 +591,10 @@ impl RoadNetwork {
         (strongest > 0.0).then(|| (strongest, weighted / total))
     }
 
-    /// How much of the cut may apply at `p` beside the railway, in
-    /// `[0, 1]`: 0 on the track bed at a level crossing, easing to 1 past
-    /// it and away from the crossings. Continuous.
+    /// Cuánto del corte puede aplicarse en `p` al lado de la vía férrea, en
+    /// `[0, 1]`: 0 sobre el lecho de la vía en un paso a nivel, subiendo
+    /// suavemente hasta 1 más allá de él y lejos de los pasos a nivel.
+    /// Continuo.
     fn rail_keep(&self, p: Vec2) -> f32 {
         let reach = Self::RAIL_NEAR + 10.0;
         self.crossings()
@@ -584,16 +611,18 @@ impl RoadNetwork {
             .fold(1.0, f32::min)
     }
 
-    /// How far a level crossing's approach raises the road at `p` above
-    /// the terrain, in meters: [`Self::CROSSING_RISE`] on the deck across
-    /// the track, easing down to 0 over [`Self::CROSSING_RAMP`] on either
-    /// side along the road (no steeper than about 1 in 10), and sloping
-    /// down to the ground at the road's edges ([`Self::CROSSING_SIDE`]); 0
-    /// away from the crossings. Continuous.
+    /// Cuánto eleva el acceso de un paso a nivel el camino en `p` sobre el
+    /// terreno, en metros: [`Self::CROSSING_RISE`] sobre la plataforma a través
+    /// de la vía, bajando suavemente hasta 0 a lo largo de
+    /// [`Self::CROSSING_RAMP`] a cada lado sobre el camino (con una pendiente
+    /// no mayor que alrededor de 1 en 10), y bajando hasta el suelo en los
+    /// bordes del camino ([`Self::CROSSING_SIDE`]); 0 lejos de los pasos a
+    /// nivel. Continuo.
     ///
-    /// The one profile of the approach: [`crate::World::ground_height`]
-    /// adds it where bodies stand and render lays the road surface on it.
-    /// The terrain itself is not raised, so the track bed stays as it is.
+    /// El único perfil del acceso: [`crate::World::ground_height`] lo suma
+    /// donde se apoyan los cuerpos y el render apoya sobre él la superficie del
+    /// camino. El terreno en sí no se eleva, así que el lecho de la vía queda
+    /// como está.
     pub fn crossing_rise(&self, p: Vec2) -> f32 {
         let ramp = Self::CROSSING_DECK + Self::CROSSING_RAMP;
         let (inner, outer) = (
@@ -603,7 +632,8 @@ impl RoadNetwork {
         self.crossings()
             .map(|c| {
                 let rel = p - c.at;
-                // Across the track (along the road), and across the road.
+                // A lo ancho de la vía (a lo largo del camino), y a lo ancho
+                // del camino.
                 let across = (rel.x * c.rail.y - rel.y * c.rail.x).abs();
                 let aside = (rel.x * c.road.y - rel.y * c.road.x).abs();
                 Self::CROSSING_RISE
@@ -613,10 +643,11 @@ impl RoadNetwork {
             .fold(0.0, f32::max)
     }
 
-    /// The parts of every road inside `area` (a terrain chunk), each as
-    /// points along it with the road's left unit normal there and the
-    /// distance along the road. A part's ends lie on the area's edge, so
-    /// parts drawn chunk by chunk meet.
+    /// Las partes de cada camino dentro de `area` (un chunk del terreno), cada
+    /// una como puntos a lo largo de ella con la normal unitaria izquierda del
+    /// camino en cada punto y la distancia a lo largo del camino. Los extremos
+    /// de una parte están en el borde del área, así que las partes dibujadas
+    /// chunk por chunk coinciden.
     pub fn parts_in(&self, area: Aabb) -> Vec<Vec<RoadPoint>> {
         let mut parts = Vec::new();
         for road in &self.roads {
@@ -639,7 +670,7 @@ impl RoadNetwork {
                             }
                             current.push(point(enter));
                         } else if let Some(last) = current.last_mut() {
-                            // A bend: the miter between the two pieces.
+                            // Una curva: el inglete entre los dos tramos.
                             last.normal = unit(last.normal + normal).unwrap_or(normal);
                         }
                         current.push(point(exit));
@@ -663,8 +694,8 @@ impl RoadNetwork {
         parts
     }
 
-    /// Footprints of every signpost and level-crossing sign: thin posts,
-    /// all off the road.
+    /// Huellas de cada cartel indicador y de cada señal de paso a nivel: postes
+    /// delgados, todos fuera del camino.
     pub fn obstacles(&self) -> Vec<Aabb> {
         let post = Vec2::new(Self::POST, Self::POST);
         self.signposts
@@ -675,8 +706,9 @@ impl RoadNetwork {
             .collect()
     }
 
-    /// A signpost beside every road end, on the right of a rider leaving
-    /// town, naming the town at the far end and how far it is.
+    /// Un cartel indicador al lado de cada extremo de camino, a la derecha de
+    /// un jinete que sale del pueblo, que nombra el pueblo del otro extremo y a
+    /// qué distancia está.
     fn place_signposts(&self, names: &[&str]) -> Vec<Signpost> {
         let mut posts = Vec::new();
         for (i, road) in self.roads.iter().enumerate() {
@@ -701,23 +733,25 @@ impl RoadNetwork {
     }
 }
 
-/// One point of a road part inside an area (see [`RoadNetwork::parts_in`]).
+/// Un punto de una parte de camino dentro de un área (ver
+/// [`RoadNetwork::parts_in`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RoadPoint {
     pub at: Vec2,
-    /// Unit normal to the left of the road's direction.
+    /// Normal unitaria a la izquierda de la dirección del camino.
     pub normal: Vec2,
-    /// Distance along the whole road, in meters.
+    /// Distancia a lo largo de todo el camino, en metros.
     pub along: f32,
 }
 
 impl LevelCrossing {
-    /// Distance from the crossing, along the road, to the St Andrew's cross
-    /// signs on either side, in meters: clear of the track's ballast.
+    /// Distancia desde el paso a nivel, a lo largo del camino, hasta las
+    /// señales de cruz de San Andrés de cada lado, en metros: lejos del balasto
+    /// de la vía.
     pub const SIGN_BACK: f32 = 6.0;
 
-    /// Where the two St Andrew's cross signs stand: one before the track on
-    /// each approach, on the right of the traffic coming to it.
+    /// Dónde están las dos señales de cruz de San Andrés: una antes de la vía
+    /// en cada acceso, a la derecha del tránsito que se acerca.
     pub fn sign_spots(&self) -> [Vec2; 2] {
         let right = Vec2::new(self.road.y, -self.road.x);
         let side = RoadNetwork::HALF_WIDTH + 1.2;
@@ -727,26 +761,26 @@ impl LevelCrossing {
         ]
     }
 
-    /// The angle between road and track, in radians, in `[0, π/2]`.
+    /// El ángulo entre el camino y la vía, en radianes, en `[0, π/2]`.
     pub fn angle(&self) -> f32 {
         let cross = self.road.x * self.rail.y - self.road.y * self.rail.x;
         cross.abs().clamp(0.0, 1.0).asin()
     }
 }
 
-/// What a signpost board reads: the town's name in capitals and the
-/// distance in kilometers to a tenth, with a decimal comma.
+/// Lo que dice la tabla de un cartel indicador: el nombre del pueblo en
+/// mayúsculas y la distancia en kilómetros con un decimal, con coma decimal.
 pub fn board_text(name: &str, meters: f32) -> String {
     let tenths = (meters / 100.0).round() as u64;
     format!("{} {},{} KM", name.to_uppercase(), tenths / 10, tenths % 10)
 }
 
-/// The towns the roads between towns join, as `(from, to)`: every two
-/// towns next to each other on the line, then each branch town (past its
-/// junction) and the town nearest it by the middle of its grid, whichever
-/// it is; a branch runs out where no line road goes, and its nearest town
-/// is often off the branch (Caleufú's is Castex, not Metileo). A pair
-/// joined already is not joined twice.
+/// Los pueblos que unen los caminos entre pueblos, como `(from, to)`: cada par
+/// de pueblos vecinos sobre la línea y después cada pueblo de un ramal (más
+/// allá de su empalme) con el pueblo más cercano según el centro de su
+/// cuadrícula, sea cual sea; un ramal llega adonde no va ningún camino de la
+/// línea, y su pueblo más cercano a menudo está fuera del ramal (el de Caleufú
+/// es Castex, no Metileo). Un par que ya está unido no se une dos veces.
 fn road_pairs(towns: &[TownLayout], line: &RailLine) -> Vec<(usize, usize)> {
     let mut pairs: Vec<(usize, usize)> = line.towns.windows(2).map(|w| (w[0], w[1])).collect();
     let center = |i: usize| towns[i].grid().center();
@@ -770,15 +804,16 @@ fn road_pairs(towns: &[TownLayout], line: &RailLine) -> Vec<(usize, usize)> {
     pairs
 }
 
-/// The exit of `town`'s street grid facing `toward`: the side whose outward
-/// direction points most at it (never the railway's side, which the yard
-/// fills), and on that side the street through the grid nearest its middle.
+/// La salida de la cuadrícula de calles de `town` que mira hacia `toward`: el
+/// lado cuya dirección hacia afuera más apunta hacia ahí (nunca el lado de la
+/// vía férrea, que ocupa la playa), y de ese lado la calle que atraviesa la
+/// cuadrícula más cercana a su centro.
 fn exit(town: &TownLayout, toward: Vec2) -> RoadEnd {
     let grid = town.grid();
     let center = grid.center();
     let rail_side = town.railway.map(|r| ((r.start + r.end) * 0.5) - center);
-    // A line through the town runs out of both ends of it: a road leaving
-    // there would hug the track.
+    // Una línea que atraviesa el pueblo sale por ambos extremos: un camino que
+    // saliera por ahí iría pegado a la vía.
     let rail_axis = town
         .railway
         .filter(|_| town.rail_band().is_some())
@@ -798,7 +833,7 @@ fn exit(town: &TownLayout, toward: Vec2) -> RoadEnd {
         })
         .max_by(|a, b| a.dot(want).total_cmp(&b.dot(want)))
         .unwrap_or(Vec2::new(1.0, 0.0));
-    // Streets running out through that side, ring streets left out.
+    // Calles que salen por ese lado, sin contar las calles perimetrales.
     let across = Vec2::new(-out.y, out.x);
     let edge = if out.x + out.y > 0.0 {
         grid.max.dot(out)
@@ -835,7 +870,7 @@ fn exit(town: &TownLayout, toward: Vec2) -> RoadEnd {
     }
 }
 
-/// The road from town `a` to town `b`.
+/// El camino del pueblo `a` al pueblo `b`.
 fn route(a: &TownLayout, b: &TownLayout, track: &Track, (from, to): (usize, usize)) -> Road {
     let start = exit(a, b.grid().center());
     let end = exit(b, a.grid().center());
@@ -857,14 +892,14 @@ fn route(a: &TownLayout, b: &TownLayout, track: &Track, (from, to): (usize, usiz
     }
 }
 
-/// The rural track out of `town` across its railway: the street through
-/// the grid that runs out square to the track nearest the station, with a
-/// clear way across the station yard, a level crossing, and past the
-/// leveled band a seeded, gently curving dead end of 300–800 m. `None`
-/// for a town without a railway; an error when there is no clear way
-/// across its yard.
+/// La huella rural que sale de `town` cruzando su vía férrea: la calle que
+/// atraviesa la cuadrícula y sale perpendicular a la vía más cerca de la
+/// estación, con un paso libre a través de la playa de la estación, un paso a
+/// nivel y, más allá de la franja nivelada, un tramo sin salida con semilla y
+/// curvas suaves de 300–800 m. `None` para un pueblo sin vía férrea; un error
+/// cuando no hay un paso libre a través de su playa.
 fn rural(town: &TownLayout, index: usize, track: &Track) -> Option<Result<Road, RoadError>> {
-    // A town on both sides of its line reaches across it by its streets.
+    // Un pueblo a ambos lados de su línea llega al otro lado con sus calles.
     if town.rail_band().is_some() {
         return None;
     }
@@ -908,7 +943,7 @@ fn rural(town: &TownLayout, index: usize, track: &Track) -> Option<Result<Road, 
             .iter()
             .all(|b| !b.footprint.intersects(&corridor))
     };
-    // A street running out through the yard, square to the track...
+    // Una calle que sale atravesando la playa, perpendicular a la vía...
     let through = town
         .streets
         .iter()
@@ -916,8 +951,9 @@ fn rural(town: &TownLayout, index: usize, track: &Track) -> Option<Result<Road, 
         .map(|s| s.center().dot(along))
         .filter(|&c| clear_at(c))
         .min_by(|a, b| (a - station).abs().total_cmp(&(b - station).abs()));
-    // ...or, where the yard fills the town's whole side, the ring street
-    // along the track carried on past the grid's nearer end.
+    // ...o, donde la playa ocupa todo el lado del pueblo, la calle perimetral a
+    // lo largo de la vía prolongada más allá del extremo más cercano de la
+    // cuadrícula.
     let Some(ring) = town
         .streets
         .iter()
@@ -985,15 +1021,16 @@ fn rural(town: &TownLayout, index: usize, track: &Track) -> Option<Result<Road, 
     }))
 }
 
-/// The public road from `town` (index `index`) out to `lagoon`.
+/// El camino público desde `town` (índice `index`) hasta `lagoon`.
 ///
-/// It leaves the town by a street through the grid side facing the lagoon,
-/// the one nearest the lagoon across that side that keeps
-/// [`RoadNetwork::RAIL_CLEARANCE`] from the track (a town's line may run out
-/// of that side); runs straight out across the leveled band, then on a
-/// gently curving seeded line, clear of the track, to the lagoon's bank,
-/// and ends there in a turnaround loop of [`RoadNetwork::TURNAROUND`]
-/// meters whose near edge stops at the wet mud ([`RoadNetwork::LANDING`]).
+/// Sale del pueblo por una calle del lado de la cuadrícula que mira hacia la
+/// laguna, la más cercana a la laguna sobre ese lado que se mantiene a
+/// [`RoadNetwork::RAIL_CLEARANCE`] de la vía (la línea de un pueblo puede salir
+/// por ese lado); atraviesa en línea recta la franja nivelada y después sigue
+/// una línea con semilla y curvas suaves, lejos de la vía, hasta la orilla de
+/// la laguna, y termina ahí en un lazo de retorno de
+/// [`RoadNetwork::TURNAROUND`] metros cuyo borde cercano se detiene en el barro
+/// húmedo ([`RoadNetwork::LANDING`]).
 fn lagoon_road(town: &TownLayout, index: usize, lagoon: &Lagoon, track: &Track) -> Road {
     let grid = town.grid();
     let center = grid.center();
@@ -1045,7 +1082,7 @@ fn lagoon_road(town: &TownLayout, index: usize, lagoon: &Lagoon, track: &Track) 
         .unwrap_or((lo + hi) / 2.0);
     let start = out * edge + across * street;
     let p = start + out * RoadNetwork::RUN_OUT;
-    // The turnaround's middle, on the bank on the side facing the town.
+    // El centro del retorno, en la orilla, del lado que mira hacia el pueblo.
     let toward = unit(p - lagoon.center).unwrap_or(out * -1.0);
     let angle = toward.y.atan2(toward.x);
     let reach = lagoon.shore_radius(angle) + RoadNetwork::LANDING;
@@ -1055,7 +1092,7 @@ fn lagoon_road(town: &TownLayout, index: usize, lagoon: &Lagoon, track: &Track) 
     let mut rng = Rng::new(town.seed.wrapping_mul(131) ^ ROAD_SEED, 2);
     let mut path = vec![start];
     path.extend(between(p, q, track, &mut rng, 3));
-    // Round the loop and back to where it began, counter-clockwise.
+    // Alrededor del lazo y de vuelta adonde empezó, en sentido antihorario.
     let steps = 16;
     for k in 1..=steps {
         let a = angle + std::f32::consts::TAU * k as f32 / steps as f32;
@@ -1084,17 +1121,18 @@ fn lagoon_road(town: &TownLayout, index: usize, lagoon: &Lagoon, track: &Track) 
     }
 }
 
-/// Pushes `p` onto `path` unless it is (nearly) the last point already.
+/// Agrega `p` a `path` salvo que ya sea (casi) el último punto.
 fn push_unique(path: &mut Vec<Vec2>, p: Vec2) {
     if path.last().is_none_or(|l| l.distance(p) > 1e-3) {
         path.push(p);
     }
 }
 
-/// The level crossings of `town`'s streets over a line running through it
-/// ([`TownLayout::crossing_streets`]): one short straight road each, so
-/// the ground rises onto a plank deck and the crossing gets its signs, like
-/// a road's. None for a town beside its line.
+/// Los pasos a nivel de las calles de `town` sobre una línea que lo atraviesa
+/// ([`TownLayout::crossing_streets`]): un camino recto y corto para cada uno,
+/// para que el suelo suba hasta una plataforma de tablones y el paso a nivel
+/// tenga sus señales, como el de un camino. Ninguno para un pueblo junto a su
+/// línea.
 fn street_crossings(town: &TownLayout, index: usize, track: &Track) -> Vec<Road> {
     let Some(rail) = town.railway else {
         return Vec::new();
@@ -1126,13 +1164,13 @@ fn street_crossings(town: &TownLayout, index: usize, track: &Track) -> Vec<Road>
         .collect()
 }
 
-/// `1` along a positive axis, `-1` along a negative one.
+/// `1` a lo largo de un eje positivo, `-1` a lo largo de uno negativo.
 fn sign(axis: Vec2) -> f32 {
     if axis.x + axis.y >= 0.0 { 1.0 } else { -1.0 }
 }
 
-/// The way from `p` to `q` (both included), staying on one side of the
-/// track, or crossing it squarely when `p` and `q` lie on opposite sides.
+/// El trayecto de `p` a `q` (ambos incluidos), quedándose de un lado de la vía,
+/// o cruzándola en perpendicular cuando `p` y `q` están en lados opuestos.
 fn between(p: Vec2, q: Vec2, track: &Track, rng: &mut Rng, depth: u32) -> Vec<Vec2> {
     let side = |x: Vec2| track.signed(x).0.signum();
     let (sp, sq) = (side(p), side(q));
@@ -1142,8 +1180,8 @@ fn between(p: Vec2, q: Vec2, track: &Track, rng: &mut Rng, depth: u32) -> Vec<Ve
     let Some((at, dir)) = track.first_crossing(p, q) else {
         return on_side(p, q, sp, track, rng);
     };
-    // Square across the track, from well back on `p`'s side to well out on
-    // `q`'s.
+    // En perpendicular a través de la vía, desde bien atrás del lado de `p`
+    // hasta bien adentro del lado de `q`.
     let left = Vec2::new(-dir.y, dir.x);
     let toward_q = left * sq;
     let back = RoadNetwork::RAIL_CLEARANCE + 40.0;
@@ -1157,9 +1195,9 @@ fn between(p: Vec2, q: Vec2, track: &Track, rng: &mut Rng, depth: u32) -> Vec<Ve
     path
 }
 
-/// The way from `p` to `q` (both included) on side `side` of the track: the
-/// straight line with a gentle seeded wiggle, bent away from the track
-/// wherever it would come within [`RoadNetwork::RAIL_CLEARANCE`] of it.
+/// El trayecto de `p` a `q` (ambos incluidos) del lado `side` de la vía: la
+/// línea recta con una ondulación suave con semilla, desviada lejos de la vía
+/// donde quedaría a menos de [`RoadNetwork::RAIL_CLEARANCE`] de ella.
 fn on_side(p: Vec2, q: Vec2, side: f32, track: &Track, rng: &mut Rng) -> Vec<Vec2> {
     let length = p.distance(q);
     let Some(dir) = unit(q - p) else {
@@ -1168,7 +1206,8 @@ fn on_side(p: Vec2, q: Vec2, side: f32, track: &Track, rng: &mut Rng) -> Vec<Vec
     let perp = Vec2::new(-dir.y, dir.x);
     let n = ((length / RoadNetwork::STEP).ceil() as usize).max(2);
     let t: Vec<f32> = (0..=n).map(|i| i as f32 / n as f32).collect();
-    // A few seeded sine bends, vanishing at both ends: a gentle curve.
+    // Unas pocas curvas sinusoidales con semilla, que se anulan en ambos
+    // extremos: una curva suave.
     let amplitude = (0.012 * length).min(WIGGLE_MAX);
     let bends: Vec<f32> = (1..=3).map(|k| rng.range(-1.0, 1.0) / k as f32).collect();
     let mut offset: Vec<f32> = t
@@ -1193,7 +1232,7 @@ fn on_side(p: Vec2, q: Vec2, side: f32, track: &Track, rng: &mut Rng) -> Vec<Vec
             if gap >= RoadNetwork::RAIL_CLEARANCE {
                 continue;
             }
-            // Move along `perp` toward this side of the track.
+            // Moverse a lo largo de `perp` hacia este lado de la vía.
             let k = perp.dot(left * side);
             let k = k.signum() * k.abs().max(0.3);
             let shift = (RoadNetwork::RAIL_CLEARANCE + 1.0 - gap) / k;
@@ -1223,7 +1262,7 @@ fn on_side(p: Vec2, q: Vec2, side: f32, track: &Track, rng: &mut Rng) -> Vec<Vec
     (0..=n).map(|i| at(&offset, i)).collect()
 }
 
-/// Every place `path` crosses the track, in path order.
+/// Todos los lugares donde `path` cruza la vía, en el orden del recorrido.
 fn crossings_of(path: &[Vec2], track: &Track) -> Vec<LevelCrossing> {
     let mut found = Vec::new();
     let mut along = 0.0;
@@ -1247,15 +1286,16 @@ fn crossings_of(path: &[Vec2], track: &Track) -> Vec<LevelCrossing> {
         found.extend(here.into_iter().map(|(_, c)| c));
         along += w[0].distance(w[1]);
     }
-    // A crossing exactly on a joint between two track pieces is found twice.
+    // Un cruce exactamente sobre la unión entre dos tramos de vía se encuentra
+    // dos veces.
     found.dedup_by(|a, b| a.at.distance(b.at) < 1e-3);
     found
 }
 
-/// Checks `road` against the other towns, the world's edge and the
-/// `track`: it must cross squarely (the fallbacks of [`between`] and
-/// [`rural`] may not) and keep [`RoadNetwork::NEAR_RAIL`] from the track
-/// away from its crossings and its own towns.
+/// Comprueba `road` contra los otros pueblos, el borde del mundo y `track`:
+/// debe cruzar en perpendicular (las alternativas de [`between`] y [`rural`]
+/// pueden no hacerlo) y mantenerse a [`RoadNetwork::NEAR_RAIL`] de la vía lejos
+/// de sus pasos a nivel y de sus propios pueblos.
 fn check(
     road: &Road,
     towns: &[TownLayout],
@@ -1332,22 +1372,25 @@ fn check(
     Ok(())
 }
 
-/// Largest sideways wiggle of a road, in meters.
+/// Mayor ondulación lateral de un camino, en metros.
 const WIGGLE_MAX: f32 = 30.0;
-/// How far along the road a bend away from the track spreads, in meters.
+/// A lo largo de cuánto camino se extiende una curva que se aleja de la vía, en
+/// metros.
 const BEND_REACH: f32 = 300.0;
-/// Over this many meters from either end of a stretch, bends ease in.
+/// A lo largo de esta cantidad de metros desde cada extremo de un tramo, las
+/// curvas aparecen suavemente.
 const TAPER: f32 = 60.0;
-/// How far past the grid's end a rural track crosses the railway when the
-/// station yard fills the town's whole side, in meters.
+/// Cuánto más allá del extremo de la cuadrícula cruza la vía férrea una huella
+/// rural cuando la playa de la estación ocupa todo el lado del pueblo, en
+/// metros.
 const PAST_GRID: f32 = 15.0;
-/// Shortest and longest rural track, in meters.
+/// Huella rural más corta y más larga, en metros.
 const RURAL_LENGTH: (f32, f32) = (300.0, 800.0);
-/// Mixed into each road's seed.
+/// Se mezcla con la semilla de cada camino.
 const ROAD_SEED: u32 = 0x60ad_5eed;
 
-/// Corner cutting: each pass replaces every corner by two points a quarter
-/// of the way along its pieces, keeping the first and last points.
+/// Recorte de esquinas: cada pasada reemplaza cada esquina por dos puntos a un
+/// cuarto del recorrido de sus tramos, conservando el primer y el último punto.
 fn chaikin(points: Vec<Vec2>, passes: usize) -> Vec<Vec2> {
     let mut points = points;
     for _ in 0..passes {
@@ -1371,8 +1414,8 @@ fn chaikin(points: Vec<Vec2>, passes: usize) -> Vec<Vec2> {
     points
 }
 
-/// Where segments `p`–`q` and `a`–`b` cross: the parameters along each, in
-/// `[0, 1]`; `None` if they do not (or are parallel).
+/// Dónde se cruzan los segmentos `p`–`q` y `a`–`b`: los parámetros a lo largo
+/// de cada uno, en `[0, 1]`; `None` si no se cruzan (o son paralelos).
 pub(crate) fn intersect(p: Vec2, q: Vec2, a: Vec2, b: Vec2) -> Option<(f32, f32)> {
     let r = q - p;
     let s = b - a;
@@ -1386,7 +1429,7 @@ pub(crate) fn intersect(p: Vec2, q: Vec2, a: Vec2, b: Vec2) -> Option<(f32, f32)
     ((0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)).then_some((t, u))
 }
 
-/// The point of segment `a`–`b` nearest `p`, and its parameter.
+/// El punto del segmento `a`–`b` más cercano a `p`, y su parámetro.
 fn closest(p: Vec2, a: Vec2, b: Vec2) -> (Vec2, f32) {
     let d = b - a;
     let span = d.dot(d);
@@ -1397,7 +1440,7 @@ fn closest(p: Vec2, a: Vec2, b: Vec2) -> (Vec2, f32) {
     (a + d * t, t)
 }
 
-/// Distance from `p` to the segment `a`–`b`.
+/// Distancia desde `p` hasta el segmento `a`–`b`.
 pub(crate) fn segment_distance(p: Vec2, a: Vec2, b: Vec2) -> f32 {
     p.distance(closest(p, a, b).0)
 }
@@ -1438,7 +1481,7 @@ pub(crate) mod tests {
         }
     }
 
-    /// The shipped towns, their line and their roads.
+    /// Los pueblos distribuidos, su línea y sus caminos.
     pub(crate) fn shipped_roads() -> (Vec<TownLayout>, RailLine, RoadNetwork) {
         let (towns, line) = shipped();
         let (roads, errors) = RoadNetwork::build(&towns, &line, big_world().bounds());
@@ -1473,7 +1516,7 @@ pub(crate) mod tests {
             .iter()
             .map(|(_, r)| (r.from, r.to))
             .collect();
-        // Castex–Monte Nievas and Monte Nievas–General Pico.
+        // Castex–Monte Nievas y Monte Nievas–General Pico.
         assert_eq!(joined, [(1, 0), (0, 2)]);
         let track = track(&towns, &line);
         for (_, road) in between(&roads) {
@@ -1482,7 +1525,7 @@ pub(crate) mod tests {
             assert_eq!(*road.path.last().unwrap(), road.ends[1].at);
             assert!(on_edge(a.grid(), road.ends[0].at), "{:?}", road.ends);
             assert!(on_edge(b.grid(), road.ends[1].at), "{:?}", road.ends);
-            // Out of a street, facing the other town.
+            // Sale de una calle, mirando hacia el otro pueblo.
             for (end, town) in [(road.ends[0], a), (road.ends[1], b)] {
                 assert!(
                     town.streets
@@ -1491,7 +1534,8 @@ pub(crate) mod tests {
                 );
             }
             assert!(road.ends[0].out.dot(b.grid().center() - a.grid().center()) > 0.0);
-            // No third town's leveled band, no crossing, clear of the rail.
+            // Sin franja nivelada de un tercer pueblo, sin paso a nivel, lejos
+            // del riel.
             for (i, town) in towns.iter().enumerate() {
                 if i != road.from && i != road.to {
                     let band = town.leveled();
@@ -1503,7 +1547,7 @@ pub(crate) mod tests {
                 let gap = track.signed(*p).0.abs();
                 assert!(gap > 0.95 * RoadNetwork::RAIL_CLEARANCE, "{p:?}: {gap}");
             }
-            // Gently curving: no sharp bend.
+            // Con curvas suaves: ninguna curva cerrada.
             for w in road.path.windows(3) {
                 let (u, v) = (unit(w[1] - w[0]).unwrap(), unit(w[2] - w[1]).unwrap());
                 assert!(u.dot(v) > 0.9, "{w:?}");
@@ -1521,7 +1565,7 @@ pub(crate) mod tests {
             RoadNetwork::WIDTH
         );
         assert_eq!(RoadNetwork::HALF_WIDTH * 2.0, RoadNetwork::WIDTH);
-        // The cut and the drawn strip follow the width.
+        // El corte y la franja dibujada siguen el ancho.
         const {
             assert!(RoadNetwork::CUT_FLAT > RoadNetwork::HALF_WIDTH);
             assert!(RoadNetwork::CUT_REACH > RoadNetwork::CUT_FLAT);
@@ -1590,7 +1634,8 @@ pub(crate) mod tests {
                 "{}",
                 town.name
             );
-            // Out of the town's grid, square across the yard, into the open.
+            // Sale de la cuadrícula del pueblo, cruza la playa en perpendicular
+            // y llega a campo abierto.
             assert!(on_edge(town.grid(), road.path[0]), "{:?}", road.path[0]);
             let rail = town.railway.unwrap();
             assert!(crate::road::segment_distance(crossing.at, rail.start, rail.end) < 1e-3);
@@ -1612,8 +1657,9 @@ pub(crate) mod tests {
         }
     }
 
-    /// Two railway towns 3 km apart, the west one's track north of it and
-    /// the east one's south: the road between them must cross the line.
+    /// Dos pueblos con ferrocarril a 3 km de distancia, con la vía del de oeste
+    /// al norte del pueblo y la del de este al sur: el camino entre ellos tiene
+    /// que cruzar la línea.
     fn crossing_world() -> (Vec<TownLayout>, RailLine, RoadNetwork) {
         let town = |name: &str, x: f32, side| TownConfig {
             name: name.into(),
@@ -1654,7 +1700,8 @@ pub(crate) mod tests {
         let track = track(&towns, &line);
         let (_, road) = between(&roads)[0];
         assert_eq!(road.crossings.len(), 1, "{:?}", road.crossings);
-        // Every crossing lies on both centerlines, and they cross nowhere else.
+        // Cada paso a nivel está sobre las dos líneas centrales, y no se cruzan
+        // en ningún otro lugar.
         let mut brute = 0;
         for w in road.path.windows(2) {
             for r in track.pieces() {
@@ -1672,14 +1719,14 @@ pub(crate) mod tests {
             assert!(on_rail.fold(f32::INFINITY, f32::min) < 1e-3);
             assert!(c.angle() > 70f32.to_radians(), "{}", c.angle().to_degrees());
             assert!(c.along > 0.0 && c.along < roads.length_between(0, 1).unwrap());
-            // Its signs stand off the road and off the track.
+            // Sus señales están fuera del camino y fuera de la vía.
             for spot in c.sign_spots() {
                 let gap = roads.distance(spot);
                 assert!(gap > RoadNetwork::HALF_WIDTH + 0.5, "{gap}");
                 assert!(track.signed(spot).0.abs() > 4.0);
             }
         }
-        // Away from the crossing, the road keeps clear of the rail.
+        // Lejos del paso a nivel, el camino se mantiene lejos del riel.
         for p in &road.path {
             let near_crossing = road.crossings.iter().any(|c| c.at.distance(*p) < 130.0);
             if !near_crossing {
@@ -1691,7 +1738,8 @@ pub(crate) mod tests {
         }
     }
 
-    /// A short rural road of the first shipped town along `path`, checked.
+    /// Un camino rural corto del primer pueblo distribuido a lo largo de
+    /// `path`, comprobado.
     fn checked(path: Vec<Vec2>) -> Result<(), RoadError> {
         let (towns, line, _) = shipped_roads();
         let track = track(&towns, &line);
@@ -1716,8 +1764,8 @@ pub(crate) mod tests {
         check(&road, &towns, big_world().bounds(), &track)
     }
 
-    /// A point and the track's unit direction there, well out between
-    /// Monte Nievas and General Pico.
+    /// Un punto y la dirección unitaria de la vía en ese punto, bien afuera
+    /// entre Monte Nievas y General Pico.
     fn open_track() -> (Vec2, Vec2) {
         let (towns, line, _) = shipped_roads();
         let path = line.full_path(&towns);
@@ -1739,7 +1787,7 @@ pub(crate) mod tests {
         let along = |s: f32| at + dir * s + left * 12.0;
         let error = checked(vec![along(-30.0), along(0.0), along(30.0)]).expect_err("hugging");
         assert!(matches!(error, RoadError::NearRail { .. }), "{error:?}");
-        // Square across, and well clear: fine.
+        // En perpendicular, y bien lejos: está bien.
         assert_eq!(checked(vec![at - left * 60.0, at + left * 60.0]), Ok(()));
         assert_eq!(
             checked(vec![along(-30.0) + left * 50.0, along(30.0) + left * 50.0]),
@@ -1750,8 +1798,9 @@ pub(crate) mod tests {
     #[test]
     fn a_rural_track_with_no_way_across_the_yard_is_reported() {
         let (mut towns, line, _) = shipped_roads();
-        // Fill the first town's railway side with one long shed, from the
-        // grid's edge to past the track, along the whole run-out.
+        // Llenar el lado del ferrocarril del primer pueblo con un solo galpón
+        // largo, desde el borde de la cuadrícula hasta más allá de la vía, a lo
+        // largo de todo el tramo final.
         let rail = towns[0].railway.unwrap();
         let mut shed = towns[0].buildings[0];
         shed.footprint = Aabb::new(
@@ -1839,7 +1888,8 @@ pub(crate) mod tests {
                 assert!(roads.distance(post.at) > RoadNetwork::HALF_WIDTH + 1.0);
             }
         }
-        // Posts and crossing signs are thin obstacles, none on a road.
+        // Los postes y las señales de paso a nivel son obstáculos delgados,
+        // ninguno sobre un camino.
         let obstacles = roads.obstacles();
         assert_eq!(obstacles.len(), 4 + 2 * roads.crossings().count());
         for o in &obstacles {
@@ -1874,7 +1924,8 @@ pub(crate) mod tests {
         }
         let whole: f32 = (0..roads.roads.len()).map(|i| roads.length(i)).sum();
         assert!((total - whole).abs() < 0.5, "{total} vs {whole}");
-        // Every part end is a road end or meets another part's end.
+        // Cada extremo de parte es un extremo de camino o se une con el extremo
+        // de otra parte.
         let road_ends: Vec<Vec2> = roads
             .roads
             .iter()
@@ -1910,17 +1961,17 @@ pub(crate) mod tests {
         assert_eq!(roads.roads.len(), before + 1);
         let road = roads.roads.last().unwrap();
         assert_eq!(road.kind, RoadKind::Lagoon);
-        // From General Pico, the nearest town, out of its grid's edge on
-        // the lagoon's side.
+        // Desde General Pico, el pueblo más cercano, saliendo del borde de su
+        // cuadrícula del lado de la laguna.
         let pico = towns.iter().position(|t| t.name == "General Pico").unwrap();
         assert_eq!((road.from, road.to), (pico, pico));
         let grid = towns[pico].grid();
         assert!(on_edge(grid, road.path[0]), "{:?}", road.path[0]);
         assert!(road.ends[0].out.dot(lagoon.center - grid.center()) > 0.0);
-        // Never across the track, and clear of it away from town.
+        // Nunca cruza la vía, y se mantiene lejos de ella fuera del pueblo.
         assert!(road.crossings.is_empty());
-        // It ends on the bank: its edge comes to the wet mud and no farther,
-        // and its turnaround lies close by the water.
+        // Termina en la orilla: su borde llega hasta el barro húmedo y no más,
+        // y su retorno queda cerca del agua.
         for &p in &road.path {
             let off = lagoon.offshore(p);
             assert!(
@@ -1937,8 +1988,8 @@ pub(crate) mod tests {
             nearest < Lagoon::MUD_BAND + RoadNetwork::HALF_WIDTH + 2.0,
             "{nearest}"
         );
-        // Only its end enters the lagoon's keep-out: the rest of the road
-        // stays clear of the bank and its margin.
+        // Solo su extremo entra en la zona prohibida de la laguna: el resto del
+        // camino se mantiene lejos de la barranca y de su margen.
         let keep = lagoon.keep_out();
         let entered = road
             .path
@@ -1950,7 +2001,8 @@ pub(crate) mod tests {
                 .iter()
                 .all(|&p| keep.expanded(1.0).contains_point(p))
         );
-        // A turnaround loop at the end, and a signpost naming the lagoon.
+        // Un lazo de retorno al final, y un cartel indicador que nombra la
+        // laguna.
         let tail = &road.path[entered..];
         let span = tail.iter().fold(0.0_f32, |m, a| {
             tail.iter().fold(m, |m, b| m.max(a.distance(*b)))
@@ -1961,7 +2013,7 @@ pub(crate) mod tests {
                 .iter()
                 .any(|b| b.text.starts_with("LAGUNA LA AROCENA "))
         }));
-        // Laid the same way every time.
+        // Se traza igual siempre.
         let (again, _) =
             shipped_roads()
                 .2
@@ -1975,7 +2027,7 @@ pub(crate) mod tests {
         let bounds = WorldConfig::default().bounds();
         let (line, errors) = RailLine::build_with_branches(Some(&list), &branches, &towns, bounds);
         assert!(errors.is_empty(), "{errors:?}");
-        // Norte, on the branch from Medio, lies nearest Oeste.
+        // Norte, en el ramal desde Medio, queda más cerca de Oeste.
         assert_eq!(road_pairs(&towns, &line), [(0, 1), (1, 2), (0, 3)]);
         let (roads, errors) = RoadNetwork::build(&towns, &line, bounds);
         assert!(errors.is_empty(), "{errors:?}");
@@ -1984,10 +2036,11 @@ pub(crate) mod tests {
             .iter()
             .find(|r| r.kind == RoadKind::Between && (r.from, r.to) == (0, 3))
             .expect("a road from Oeste to Norte");
-        // It crosses Oeste's run-out squarely on its way north.
+        // Cruza en perpendicular el tramo final de Oeste en su camino hacia el
+        // norte.
         assert_eq!(road.crossings.len(), 1, "{:?}", road.crossings);
         assert!(road.crossings[0].angle() > RoadNetwork::MIN_CROSSING_ANGLE);
-        // Each end has its signpost naming the other town.
+        // Cada extremo tiene su cartel indicador que nombra el otro pueblo.
         let named = |name: &str| {
             roads
                 .signposts
@@ -1996,8 +2049,8 @@ pub(crate) mod tests {
                 .any(|b| b.text.starts_with(name))
         };
         assert!(named("NORTE") && named("OESTE"));
-        // Norte's rural track crosses the branch at a level crossing, and no
-        // road meets the branch anywhere without one.
+        // La huella rural de Norte cruza el ramal en un paso a nivel, y ningún
+        // camino se encuentra con el ramal en ningún lugar sin uno.
         let branch = &line.branch_paths(&towns)[0];
         let rural = roads
             .roads

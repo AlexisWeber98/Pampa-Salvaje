@@ -1,115 +1,122 @@
-//! Wire fences (alambrados) marking out the private land between towns:
-//! estancias, tambos, fields and plots, with wooden gates (tranqueras)
-//! into them.
+//! Alambrados que delimitan la tierra privada entre los pueblos: estancias,
+//! tambos, campos y parcelas, con tranqueras de madera para entrar.
 //!
-//! Roads are public (user, 2026-10-22): no fence or gate ever crosses one.
-//! Every road runs between two fences, one along each side
-//! [`FenceLayout::ROADSIDE`] meters from its centerline, following its
-//! curves: the classic "calle entre alambrados". They end at the towns'
-//! leveled ground, by the railway and so at the level crossings.
+//! Los caminos son públicos (usuario, 2026-10-22): ningún alambrado ni
+//! tranquera cruza nunca uno. Todo camino corre entre dos alambrados, uno a
+//! cada lado, a [`FenceLayout::ROADSIDE`] metros de su línea central, siguiendo
+//! sus curvas: la clásica "calle entre alambrados". Terminan en el terreno
+//! nivelado de los pueblos, junto a la vía férrea y, por lo tanto, en los pasos
+//! a nivel.
 //!
-//! Away from the roads the land is surveyed on a north–south grid, as the
-//! pampa was: fence lines run east–west and north–south a seeded
-//! 300–800 m apart, so paddocks are a few hundred meters on a side. A grid
-//! line stops at a roadside fence and joins it at a corner post. Every
-//! stretch of roadside fence between two corners is a field's frontage on
-//! the road, and gets one or two open gates into the field. The grid lines
-//! have openings every 300–500 m (user, "Alambrados con huecos",
-//! 2026-10-22): a field gate standing open, or a broken span.
+//! Lejos de los caminos, la tierra está relevada en una cuadrícula norte–sur,
+//! como lo estaba la pampa: las líneas de alambrado corren de este a oeste y de
+//! norte a sur, separadas por una distancia con semilla de 300–800 m, así que
+//! los potreros tienen unos cientos de metros de lado. Una línea de la
+//! cuadrícula se detiene en un alambrado al costado del camino y se une a él en
+//! un poste esquinero. Cada tramo de alambrado al costado del camino entre dos
+//! esquinas es el frente de un campo sobre el camino, y tiene una o dos
+//! tranqueras abiertas hacia el campo. Las líneas de la cuadrícula tienen
+//! aberturas cada 300–500 m (usuario, "Alambrados con huecos", 2026-10-22): una
+//! tranquera de campo abierta o un tramo roto.
 //!
-//! Posts stand at most [`FenceLayout::POST_SPACING`] meters apart, with
-//! [`FenceLayout::WIRES`] wires between them. Every span is a thin static
-//! obstacle (short boxes along it, so a slanted span stays thin), so riders
-//! and walkers are stopped by the wire and get through at the gates, the
-//! openings or round a fence's end. Gates and openings are no obstacle.
+//! Los postes están a [`FenceLayout::POST_SPACING`] metros como mucho entre sí,
+//! con [`FenceLayout::WIRES`] alambres entre ellos. Cada tramo es un obstáculo
+//! estático delgado (rectángulos cortos a lo largo de él, para que un tramo
+//! inclinado siga siendo delgado), así que el alambre detiene a jinetes y
+//! peatones, que pasan por las tranqueras, por las aberturas o rodeando el
+//! extremo de un alambrado. Las tranqueras y las aberturas no son obstáculos.
 
 use crate::rng::Rng;
 use crate::{Aabb, RailLine, RoadNetwork, Terrain, TownLayout, Vec2, WorldConfig};
 
-/// One unbroken run of fence: its posts in order, at most
-/// [`FenceLayout::POST_SPACING`] meters apart.
+/// Un tramo continuo de alambrado: sus postes en orden, a
+/// [`FenceLayout::POST_SPACING`] metros como mucho entre sí.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FenceRun {
     pub posts: Vec<Vec2>,
-    /// Along a road, rather than on the survey grid.
+    /// A lo largo de un camino, y no en la cuadrícula del relevamiento.
     pub roadside: bool,
 }
 
-/// An open gate in a roadside fence, from the road into a field: two gate
-/// posts `width` apart, centered on `at`, along the fence there.
+/// Una tranquera abierta en un alambrado al costado del camino, del camino
+/// hacia un campo: dos postes de tranquera separados por `width`, centrados en
+/// `at`, a lo largo del alambrado en ese punto.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Gate {
     pub at: Vec2,
-    /// Unit direction of the fence at the gate.
+    /// Dirección unitaria del alambrado en la tranquera.
     pub along: Vec2,
     pub width: f32,
-    /// Two leaves rather than one.
+    /// Dos hojas en lugar de una.
     pub double: bool,
-    /// Standing open; a closed gate blocks riders like the wire.
+    /// Abierta; una tranquera cerrada bloquea a los jinetes igual que el
+    /// alambre.
     pub open: bool,
-    /// The field frontage it opens from (an index into
+    /// El frente de campo desde el que se abre (un índice dentro de
     /// [`FenceLayout::frontages`]).
     pub frontage: u32,
 }
 
-/// One field's frontage on a road: a stretch of roadside fence between two
-/// corners where grid lines meet it, or the fence's ends.
+/// El frente de un campo sobre un camino: un tramo de alambrado al costado del
+/// camino entre dos esquinas donde se unen las líneas de la cuadrícula, o los
+/// extremos del alambrado.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Frontage {
     pub start: Vec2,
     pub end: Vec2,
-    /// Length along the fence, in meters.
+    /// Longitud a lo largo del alambrado, en metros.
     pub length: f32,
-    /// Fenced, with gates; `false` along a descampado.
+    /// Alambrado, con tranqueras; `false` a lo largo de un descampado.
     pub fenced: bool,
 }
 
-/// A passable opening in a grid fence (user, "Alambrados con huecos",
-/// 2026-10-22): one or two spans, centered on `at`, `width` meters along the
-/// fence, with no obstacle.
+/// Una abertura transitable en un alambrado de la cuadrícula (usuario,
+/// "Alambrados con huecos", 2026-10-22): uno o dos tramos, centrados en `at`,
+/// de `width` metros a lo largo del alambrado, sin obstáculo.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Opening {
     pub at: Vec2,
-    /// Unit direction of the fence line.
+    /// Dirección unitaria de la línea de alambrado.
     pub along: Vec2,
     pub width: f32,
     pub kind: OpeningKind,
-    /// The fenced stretch it was cut into (see [`FenceLayout::stretches`]).
+    /// El tramo alambrado en el que se abrió (ver [`FenceLayout::stretches`]).
     pub stretch: u32,
 }
 
-/// What a fence opening looks like.
+/// Cómo se ve una abertura en un alambrado.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpeningKind {
-    /// A field gate with one leaf or two, open or closed.
+    /// Una tranquera de campo con una hoja o dos, abierta o cerrada.
     FieldGate { double: bool, open: bool },
-    /// Fallen or broken wire: leaning posts and a sagging strand.
+    /// Alambre caído o roto: postes inclinados y un hilo combado.
     Broken,
 }
 
-/// Every fence, gate and opening of the world.
+/// Todos los alambrados, tranqueras y aberturas del mundo.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct FenceLayout {
     pub runs: Vec<FenceRun>,
-    /// Open gates from the roads into the fields.
+    /// Tranqueras abiertas desde los caminos hacia los campos.
     pub gates: Vec<Gate>,
-    /// Every field frontage on a road.
+    /// Todos los frentes de campo sobre un camino.
     pub frontages: Vec<Frontage>,
-    /// Field gates and broken spans along the grid fences.
+    /// Tranqueras de campo y tramos rotos a lo largo de los alambrados de la
+    /// cuadrícula.
     pub openings: Vec<Opening>,
-    /// Every fenced grid stretch before its openings were cut: its id and
-    /// length in meters.
+    /// Cada tramo alambrado de la cuadrícula antes de que se abrieran sus
+    /// aberturas: su id y su longitud en metros.
     pub stretches: Vec<(u32, f32)>,
-    /// Where the north–south lines run (their `x`) and the east–west ones
-    /// (their `y`), whether fenced there or not.
+    /// Por dónde corren las líneas norte–sur (su `x`) y las este–oeste (su
+    /// `y`), estén alambradas ahí o no.
     pub surveyed: (Vec<f32>, Vec<f32>),
-    /// The paddocks left unfenced (descampados, abandoned fields), as
-    /// `(i, j)`: between the `i`th and next north–south line and the `j`th
-    /// and next east–west line.
+    /// Los potreros que quedaron sin alambrar (descampados, campos
+    /// abandonados), como `(i, j)`: entre la línea norte–sur número `i` y la
+    /// siguiente, y entre la línea este–oeste número `j` y la siguiente.
     pub descampados: Vec<(usize, usize)>,
 }
 
-/// What one span of a grid line is.
+/// Qué es un tramo de una línea de la cuadrícula.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Span {
     Fenced,
@@ -118,9 +125,9 @@ enum Span {
     Blocked,
 }
 
-/// A roadside fence before it is cut into frontages and gates: a dense
-/// line beside a road, and the corners where grid lines join it (as
-/// distances along it).
+/// Un alambrado al costado del camino antes de dividirlo en frentes y
+/// tranqueras: una línea densa al costado de un camino, y las esquinas donde se
+/// le unen las líneas de la cuadrícula (como distancias a lo largo de ella).
 struct Roadside {
     line: Vec<Vec2>,
     arcs: Vec<f32>,
@@ -132,7 +139,8 @@ impl Roadside {
         self.arcs.last().copied().unwrap_or(0.0)
     }
 
-    /// The point `s` meters along, and the unit direction there.
+    /// El punto a `s` metros del recorrido, y la dirección unitaria en ese
+    /// punto.
     fn at(&self, s: f32) -> (Vec2, Vec2) {
         let i = self
             .arcs
@@ -145,9 +153,9 @@ impl Roadside {
         (a + (b - a) * t, (b - a) * (1.0 / span))
     }
 
-    /// Posts from `from` to `to` meters along, at most a post spacing apart,
-    /// closer round tight bends so no span cuts the curve by more than a
-    /// few centimeters.
+    /// Postes desde `from` hasta `to` metros del recorrido, separados como
+    /// mucho por un espaciado de poste, y más juntos en las curvas cerradas
+    /// para que ningún tramo corte la curva por más de unos pocos centímetros.
     fn posts(&self, from: f32, to: f32) -> Vec<Vec2> {
         let n = ((to - from) / FenceLayout::POST_SPACING).ceil().max(1.0) as usize;
         let mut posts = vec![self.at(from).0];
@@ -161,7 +169,7 @@ impl Roadside {
         posts
     }
 
-    /// Pushes the post at `b`, after any needed between `a` and `b`.
+    /// Agrega el poste en `b`, después de los que hagan falta entre `a` y `b`.
     fn subdivide(&self, a: f32, b: f32, posts: &mut Vec<Vec2>) {
         let (pa, pb) = (self.at(a).0, self.at(b).0);
         let mid = self.at((a + b) / 2.0).0;
@@ -175,47 +183,55 @@ impl Roadside {
 }
 
 impl FenceLayout {
-    /// Greatest distance between posts, in meters.
+    /// Distancia máxima entre postes, en metros.
     pub const POST_SPACING: f32 = 10.0;
-    /// Wires strung between the posts.
+    /// Alambres tendidos entre los postes.
     pub const WIRES: usize = 5;
-    /// Height of the posts above the ground, in meters.
+    /// Altura de los postes sobre el suelo, en metros.
     pub const HEIGHT: f32 = 1.3;
-    /// Thickness of a span's obstacle, in meters: about a post.
+    /// Espesor del obstáculo de un tramo, en metros: más o menos el de un
+    /// poste.
     pub const THICKNESS: f32 = 0.15;
-    /// Least and most distance between two parallel grid lines, in meters.
+    /// Distancia mínima y máxima entre dos líneas paralelas de la cuadrícula,
+    /// en metros.
     pub const FIELD: (f32, f32) = (300.0, 800.0);
-    /// Distance from a road's centerline to the fences along it, in
-    /// meters (8.5 m): its edge plus a verge of 5.25 m (so a span cut
-    /// across a tight bend still leaves 5 m), so the public calle between the
-    /// fences has room for carts and, later, a route.
+    /// Distancia desde la línea central de un camino hasta los alambrados que
+    /// lo bordean, en metros (8,5 m): su borde más una banquina de 5,25 m (para
+    /// que un tramo que corta una curva cerrada todavía deje 5 m), de modo que
+    /// la calle pública entre los alambrados tenga lugar para carros y, más
+    /// adelante, una ruta.
     pub const ROADSIDE: f32 = RoadNetwork::HALF_WIDTH + 5.25;
-    /// Least distance from a fence to the track's centerline, in meters.
+    /// Distancia mínima desde un alambrado hasta la línea central de la vía, en
+    /// metros.
     pub const RAIL_MARGIN: f32 = 15.0;
-    /// Least distance from a fence to a town's leveled band, in meters.
+    /// Distancia mínima desde un alambrado hasta la franja nivelada de un
+    /// pueblo, en metros.
     pub const TOWN_MARGIN: f32 = 10.0;
-    /// Least and most distance between two openings of a grid stretch, in
-    /// meters, and how far in from its start the first one is.
+    /// Distancia mínima y máxima entre dos aberturas de un tramo de la
+    /// cuadrícula, en metros, y a qué distancia de su comienzo está la primera.
     pub const OPENING_SPACING: (f32, f32) = (300.0, 500.0);
     const FIRST_OPENING: (f32, f32) = (100.0, 350.0);
-    /// Widths of a single and a double gate into a field, in meters.
+    /// Anchos de una tranquera simple y de una doble hacia un campo, en metros.
     pub const GATE_WIDTH: (f32, f32) = (4.5, 8.0);
-    /// Shortest frontage that gets a gate, in meters.
+    /// El frente más corto que tiene una tranquera, en metros.
     pub const MIN_FRONTAGE: f32 = 40.0;
-    /// Least distance from a gate to a corner, in meters.
+    /// Distancia mínima desde una tranquera hasta una esquina, en metros.
     const GATE_CORNER: f32 = 12.0;
-    /// Share of field gates standing open; the rest are closed.
+    /// Proporción de tranqueras de campo que están abiertas; el resto están
+    /// cerradas.
     pub const OPEN_GATES: f32 = 0.6;
-    /// Share of paddocks left unfenced (descampados).
+    /// Proporción de potreros que quedan sin alambrar (descampados).
     pub const DESCAMPADOS: f32 = 0.1;
-    /// Least distance from a fence line to the world's edge, in meters.
+    /// Distancia mínima desde una línea de alambrado hasta el borde del mundo,
+    /// en metros.
     pub const EDGE_MARGIN: f32 = 10.0;
-    /// Spacing of the dense line a roadside fence is traced along, meters.
+    /// Separación de la línea densa sobre la que se traza un alambrado al
+    /// costado del camino, en metros.
     const TRACE: f32 = 2.0;
 
-    /// The fences of `config`'s world over `terrain` (with its towns
-    /// leveled and its roads laid), kept off the towns of `towns`, the
-    /// `line`'s track and the roads.
+    /// Los alambrados del mundo de `config` sobre `terrain` (con sus pueblos
+    /// nivelados y sus caminos trazados), fuera de los pueblos de `towns`, de
+    /// la vía de `line` y de los caminos.
     pub fn build(
         config: WorldConfig,
         terrain: &Terrain,
@@ -247,7 +263,7 @@ impl FenceLayout {
                     .map(|r| (r.start, r.end)),
             )
             .collect();
-        // Towns and lagoons, with their banks.
+        // Pueblos y lagunas, con sus barrancas.
         let bands: Vec<Aabb> = towns
             .iter()
             .map(|t| t.leveled().expanded(Self::TOWN_MARGIN))
@@ -291,12 +307,14 @@ impl FenceLayout {
         layout
     }
 
-    /// How many paddocks the survey makes (between lines on all sides).
+    /// Cuántos potreros forma el relevamiento (entre líneas por todos los
+    /// lados).
     pub fn cells(&self) -> usize {
         self.surveyed.0.len().saturating_sub(1) * self.surveyed.1.len().saturating_sub(1)
     }
 
-    /// The paddock `p` is in, if it lies between survey lines on all sides.
+    /// El potrero en el que está `p`, si está entre líneas del relevamiento por
+    /// todos los lados.
     fn cell_of(&self, p: Vec2) -> Option<(usize, usize)> {
         let index = |lines: &[f32], v: f32| {
             let k = lines.partition_point(|&l| l <= v);
@@ -305,7 +323,8 @@ impl FenceLayout {
         Some((index(&self.surveyed.0, p.x)?, index(&self.surveyed.1, p.y)?))
     }
 
-    /// The paddock `p` is in, between survey lines on all sides, as a box.
+    /// El potrero en el que está `p`, entre líneas del relevamiento por todos
+    /// los lados, como rectángulo.
     pub fn field_of(&self, p: Vec2) -> Option<Aabb> {
         let (i, j) = self.cell_of(p)?;
         let (xs, ys) = &self.surveyed;
@@ -315,14 +334,14 @@ impl FenceLayout {
         ))
     }
 
-    /// Whether `p` is in an unfenced paddock.
+    /// Si `p` está en un potrero sin alambrar.
     pub fn is_descampado(&self, p: Vec2) -> bool {
         self.cell_of(p)
             .is_some_and(|c| self.descampados.binary_search(&c).is_ok())
     }
 
-    /// Whether the grid span from `a` to `b` lies between two unfenced
-    /// paddocks, so neither has a fence there.
+    /// Si el tramo de la cuadrícula de `a` a `b` está entre dos potreros sin
+    /// alambrar, de modo que ninguno de los dos tiene alambrado ahí.
     fn between_descampados(&self, a: Vec2, b: Vec2) -> bool {
         let mid = (a + b) * 0.5;
         let across = Vec2::new(-(b - a).y, (b - a).x);
@@ -330,8 +349,8 @@ impl FenceLayout {
         self.is_descampado(mid + across) && self.is_descampado(mid - across)
     }
 
-    /// Lays the posts of the grid line from `start` to `end`, stopping it
-    /// at the roadside fences it meets.
+    /// Coloca los postes de la línea de la cuadrícula de `start` a `end`,
+    /// deteniéndola en los alambrados al costado del camino que encuentre.
     fn lay_line(&mut self, start: Vec2, end: Vec2, site: &Site, sides: &mut [Roadside]) {
         let length = start.distance(end);
         let along = (end - start) * (1.0 / length);
@@ -348,7 +367,8 @@ impl FenceLayout {
             .copied()
             .filter(|&(a, b)| whole.segment_overlap(a, b).is_some())
             .collect();
-        // Inside the roadside fences, plus a little room for the corner.
+        // Dentro de los alambrados al costado del camino, más un poco de lugar
+        // para la esquina.
         let road_reach = Self::ROADSIDE + 0.5;
         let mut kind: Vec<Span> = (0..spans)
             .map(|k| {
@@ -385,8 +405,8 @@ impl FenceLayout {
                 continue;
             }
             let mut posts: Vec<Vec2> = (first..=k).map(post).collect();
-            // Where the line runs on into a road, it ends on the roadside
-            // fence, at a corner post.
+            // Donde la línea seguiría hasta un camino, termina en el alambrado
+            // al costado del camino, en un poste esquinero.
             if first > 0 && kind[first - 1] == Span::Road {
                 let from = post(first);
                 if let Some(corner) =
@@ -410,8 +430,9 @@ impl FenceLayout {
         }
     }
 
-    /// Cuts one roadside fence into field frontages at its corners, with one
-    /// or two open gates in each, and lays the fence between them.
+    /// Divide un alambrado al costado del camino en frentes de campo en sus
+    /// esquinas, con una o dos tranqueras abiertas en cada uno, y coloca el
+    /// alambrado entre ellas.
     fn cut_frontages(&mut self, side: &mut Roadside) {
         let total = side.length();
         side.corners.sort_by(f32::total_cmp);
@@ -430,7 +451,7 @@ impl FenceLayout {
                 continue;
             }
             let id = self.frontages.len() as u32;
-            // Along a descampado the road runs unfenced.
+            // A lo largo de un descampado el camino no tiene alambrado.
             let has_fence = !self.is_descampado(side.at((from + to) / 2.0).0);
             self.frontages.push(Frontage {
                 start: side.at(from).0,
@@ -456,7 +477,7 @@ impl FenceLayout {
                     } else {
                         Self::GATE_WIDTH.0
                     };
-                    // Each gate in its own share of the frontage.
+                    // Cada tranquera en su propia parte del frente.
                     let share = (to - from) / count as f32;
                     let lo = from + share * g as f32 + Self::GATE_CORNER;
                     let hi = from + share * (g + 1) as f32 - Self::GATE_CORNER - width;
@@ -467,7 +488,7 @@ impl FenceLayout {
                     let open = rng.unit() < Self::OPEN_GATES;
                     cuts.push((start, start + width, double, open));
                 }
-                // Every field keeps at least one way in from the road.
+                // Cada campo conserva al menos una entrada desde el camino.
                 if !cuts.iter().any(|c| c.3)
                     && let Some(first) = cuts.first_mut()
                 {
@@ -490,7 +511,7 @@ impl FenceLayout {
             }
             fenced.push((at, to));
         }
-        // Corners join the stretches on either side of them into one run.
+        // Las esquinas unen en un solo tramo los tramos que tienen a cada lado.
         let mut run: Vec<(f32, f32)> = Vec::new();
         for (from, to) in fenced {
             if let Some(last) = run.last()
@@ -508,7 +529,7 @@ impl FenceLayout {
         let mut posts: Vec<Vec2> = Vec::new();
         for &(from, to) in stretches {
             for p in side.posts(from, to) {
-                // A post right beside the last one is the same post.
+                // Un poste justo al lado del último es el mismo poste.
                 if posts.last().is_none_or(|l: &Vec2| l.distance(p) > 0.5) {
                     posts.push(p);
                 }
@@ -522,8 +543,9 @@ impl FenceLayout {
         }
     }
 
-    /// Cuts seeded openings into every fenced stretch of a grid line whose
-    /// spans are `kind`, posts from `start` along `along`.
+    /// Abre aberturas con semilla en cada tramo alambrado de una línea de la
+    /// cuadrícula cuyos tramos son de tipo `kind`, con postes desde `start` a
+    /// lo largo de `along`.
     fn cut_openings(&mut self, kind: &mut [Span], start: Vec2, along: Vec2) {
         let post = |k: usize| start + along * (k as f32 * Self::POST_SPACING);
         let spacing = Self::POST_SPACING;
@@ -552,7 +574,7 @@ impl FenceLayout {
                 if span + wide > k {
                     break;
                 }
-                // Not where a crossing fence line meets this one.
+                // No donde una línea de alambrado que cruza se une con esta.
                 let center = (post(span) + post(span + wide)) * 0.5;
                 if self.near_crossing_line(center, along, wide as f32 * spacing / 2.0 + spacing) {
                     at += 2.0 * spacing;
@@ -581,7 +603,7 @@ impl FenceLayout {
         }
     }
 
-    /// Whether a surveyed line square to `along` passes within `reach` of
+    /// Si una línea relevada perpendicular a `along` pasa a menos de `reach` de
     /// `p`.
     fn near_crossing_line(&self, p: Vec2, along: Vec2, reach: f32) -> bool {
         let (lines, v) = if along.x.abs() > along.y.abs() {
@@ -592,8 +614,9 @@ impl FenceLayout {
         lines.iter().any(|l| (l - v).abs() < reach)
     }
 
-    /// Thin boxes along every span of every run and across every closed
-    /// gate: the fences' static obstacles.
+    /// Rectángulos delgados a lo largo de cada tramo de cada recorrido y a
+    /// través de cada tranquera cerrada: los obstáculos estáticos de los
+    /// alambrados.
     pub fn obstacles(&self) -> Vec<Aabb> {
         let line = |at: Vec2, along: Vec2, width: f32| {
             (at - along * (width / 2.0), at + along * (width / 2.0))
@@ -616,9 +639,10 @@ impl FenceLayout {
             .collect()
     }
 
-    /// Makes sure every paddock has a way in: an open gate, a broken span
-    /// or an unfenced side. Where one has none, a closed gate on its edge
-    /// is opened, or else a span of its longest side is left broken.
+    /// Se asegura de que cada potrero tenga una entrada: una tranquera abierta,
+    /// un tramo roto o un lado sin alambrar. Donde un potrero no tiene ninguna,
+    /// se abre una tranquera cerrada de su borde o, si no, se deja roto un
+    /// tramo de su lado más largo.
     fn keep_fields_reachable(&mut self, site: &Site) {
         let (xs, ys) = self.surveyed.clone();
         for i in 0..xs.len().saturating_sub(1) {
@@ -641,7 +665,7 @@ impl FenceLayout {
         }
     }
 
-    /// Whether `cell` has a way in.
+    /// Si `cell` tiene una entrada.
     fn reachable(&self, cell: Aabb, site: &Site) -> bool {
         let passable = self.openings.iter().any(|o| {
             !matches!(o.kind, OpeningKind::FieldGate { open: false, .. }) && on_edge(cell, o.at)
@@ -653,7 +677,7 @@ impl FenceLayout {
         if passable || gate {
             return true;
         }
-        // An unfenced stretch of an edge, off the roads.
+        // Un tramo sin alambrar de un borde, lejos de los caminos.
         let near_road = |p: Vec2| {
             site.terrain
                 .roads
@@ -687,8 +711,8 @@ impl FenceLayout {
         })
     }
 
-    /// Whether a grid run passes through `p` (on a survey line), or a
-    /// closed field gate shuts the gap there.
+    /// Si un recorrido de la cuadrícula pasa por `p` (sobre una línea del
+    /// relevamiento), o si una tranquera de campo cerrada cierra el hueco ahí.
     fn fenced_at(&self, p: Vec2) -> bool {
         let run = self.runs.iter().filter(|r| !r.roadside).any(|r| {
             let (a, b) = (r.start(), r.end());
@@ -704,8 +728,8 @@ impl FenceLayout {
         })
     }
 
-    /// Leaves one span broken on the longest edge of `cell` that has a
-    /// whole span well away from its corners and the roads.
+    /// Deja roto un tramo en el borde más largo de `cell` que tenga un tramo
+    /// entero bien lejos de sus esquinas y de los caminos.
     fn break_edge(&mut self, cell: Aabb, site: &Site) {
         let middle = cell.center();
         let off_road = |p: Vec2| {
@@ -759,8 +783,9 @@ impl FenceLayout {
         });
     }
 
-    /// The parts of every run inside `area` (a terrain chunk): whole spans
-    /// whose middle lies in it, so neighbouring chunks share none.
+    /// Las partes de cada recorrido dentro de `area` (un chunk del terreno):
+    /// tramos enteros cuyo centro está en ella, para que los chunks vecinos no
+    /// compartan ninguno.
     pub fn runs_in(&self, area: Aabb) -> Vec<FenceRun> {
         let mut parts = Vec::new();
         let reach = area.expanded(Self::POST_SPACING);
@@ -794,8 +819,8 @@ impl FenceLayout {
         parts
     }
 
-    /// Distance from `p` to the nearest surveyed grid line, fenced there or
-    /// not, in meters.
+    /// Distancia desde `p` hasta la línea relevada de la cuadrícula más
+    /// cercana, esté alambrada ahí o no, en metros.
     pub fn line_distance(&self, p: Vec2) -> f32 {
         let nearest = |lines: &[f32], v: f32| {
             let i = lines.partition_point(|&l| l < v);
@@ -811,23 +836,23 @@ impl FenceLayout {
 }
 
 impl FenceRun {
-    /// The spans between consecutive posts, in order.
+    /// Los tramos entre postes consecutivos, en orden.
     pub fn spans(&self) -> impl Iterator<Item = (Vec2, Vec2)> + '_ {
         self.posts.windows(2).map(|w| (w[0], w[1]))
     }
 
-    /// The first post.
+    /// El primer poste.
     pub fn start(&self) -> Vec2 {
         self.posts[0]
     }
 
-    /// The last post.
+    /// El último poste.
     pub fn end(&self) -> Vec2 {
         self.posts[self.posts.len() - 1]
     }
 }
 
-/// What the fences keep out of.
+/// Aquello de lo que se mantienen fuera los alambrados.
 struct Site<'a> {
     terrain: &'a Terrain,
     rails: &'a [(Vec2, Vec2)],
@@ -836,10 +861,10 @@ struct Site<'a> {
     hi: Vec2,
 }
 
-/// The fences along both sides of every road, traced
-/// [`FenceLayout::ROADSIDE`] out from the centerline, and broken off where
-/// they would stand on a town's band, by the railway (so at every level
-/// crossing), off the world or near another road.
+/// Los alambrados a ambos lados de cada camino, trazados a
+/// [`FenceLayout::ROADSIDE`] de la línea central, e interrumpidos donde
+/// quedarían sobre la franja de un pueblo, junto a la vía férrea (por lo tanto,
+/// en cada paso a nivel), fuera del mundo o cerca de otro camino.
 fn roadsides(roads: &RoadNetwork, site: &Site) -> Vec<Roadside> {
     let mut sides = Vec::new();
     let near_rail = |p: Vec2| {
@@ -896,8 +921,8 @@ impl Roadside {
     }
 }
 
-/// Points along `path` about `step` meters apart, with the path's left unit
-/// normal at each (mitered at bends).
+/// Puntos a lo largo de `path` separados unos `step` metros, con la normal
+/// unitaria izquierda del recorrido en cada uno (con inglete en las curvas).
 fn trace(path: &[Vec2], step: f32) -> Vec<(Vec2, Vec2)> {
     let mut out = Vec::new();
     let unit = |v: Vec2| v * (1.0 / v.length().max(1e-9));
@@ -922,8 +947,9 @@ fn trace(path: &[Vec2], step: f32) -> Vec<(Vec2, Vec2)> {
     out
 }
 
-/// Where the grid line from `from` toward `to` first meets a roadside
-/// fence: that point, recorded as a corner of the fence it meets.
+/// Dónde la línea de la cuadrícula que va de `from` hacia `to` se encuentra por
+/// primera vez con un alambrado al costado del camino: ese punto, registrado
+/// como una esquina del alambrado que encuentra.
 fn join(sides: &mut [Roadside], from: Vec2, to: Vec2, site: &Site) -> Option<Vec2> {
     let mut best: Option<(f32, usize, f32)> = None;
     for (n, side) in sides.iter().enumerate() {
@@ -938,7 +964,8 @@ fn join(sides: &mut [Roadside], from: Vec2, to: Vec2, site: &Site) -> Option<Vec
     }
     let (t, n, arc) = best?;
     let corner = from + (to - from) * t;
-    // Only the near side's fence: never across the road to the far one.
+    // Solo el alambrado del lado cercano: nunca cruzando el camino hasta el del
+    // otro lado.
     let clear = site.terrain.roads.as_ref().is_none_or(|roads| {
         (0..=10).all(|k| {
             let p = from + (corner - from) * (k as f32 / 10.0);
@@ -952,7 +979,7 @@ fn join(sides: &mut [Roadside], from: Vec2, to: Vec2, site: &Site) -> Option<Vec
     Some(corner)
 }
 
-/// `posts` with posts added wherever two are farther apart than
+/// `posts` con postes agregados donde dos estén más separados que
 /// [`FenceLayout::POST_SPACING`].
 fn densify(posts: &[Vec2]) -> Vec<Vec2> {
     let mut out = vec![posts[0]];
@@ -967,7 +994,8 @@ fn densify(posts: &[Vec2]) -> Vec<Vec2> {
     out
 }
 
-/// Whether `p` lies on the edge of `cell` (within a few centimeters).
+/// Si `p` está en el borde de `cell` (con una tolerancia de unos pocos
+/// centímetros).
 fn on_edge(cell: Aabb, p: Vec2) -> bool {
     let near = |a: f32, b: f32| (a - b).abs() < 0.05;
     let within = |v: f32, lo: f32, hi: f32| v >= lo - 0.05 && v <= hi + 0.05;
@@ -975,14 +1003,16 @@ fn on_edge(cell: Aabb, p: Vec2) -> bool {
         || ((near(p.y, cell.min.y) || near(p.y, cell.max.y)) && within(p.x, cell.min.x, cell.max.x))
 }
 
-/// Whether `p` is inside `area`, its west and south edges in and its east
-/// and north edges out, so a point on a shared edge has one chunk.
+/// Si `p` está dentro de `area`, con sus bordes oeste y sur incluidos y sus
+/// bordes este y norte excluidos, para que un punto sobre un borde compartido
+/// pertenezca a un solo chunk.
 fn area_holds(area: Aabb, p: Vec2) -> bool {
     p.x >= area.min.x && p.x < area.max.x && p.y >= area.min.y && p.y < area.max.y
 }
 
-/// Thin boxes along one span: one for an axis-aligned span, short ones
-/// along a slanted span so none bulges more than a few centimeters off it.
+/// Rectángulos delgados a lo largo de un tramo: uno para un tramo alineado con
+/// los ejes, y varios cortos a lo largo de un tramo inclinado para que ninguno
+/// sobresalga más de unos pocos centímetros.
 fn span_boxes((a, b): (Vec2, Vec2)) -> Vec<Aabb> {
     let t = FenceLayout::THICKNESS / 2.0;
     let d = b - a;
@@ -1002,14 +1032,15 @@ fn span_boxes((a, b): (Vec2, Vec2)) -> Vec<Aabb> {
         .collect()
 }
 
-/// Least distance from a span broken to open a sealed paddock to the
-/// paddock's corners, in meters.
+/// Distancia mínima desde un tramo roto para abrir un potrero cerrado hasta las
+/// esquinas del potrero, en metros.
 const BREAK_CORNER: f32 = 30.0;
 
-/// Most a box of a slanted span reaches across it, in meters.
+/// Lo máximo que un rectángulo de un tramo inclinado se extiende a lo ancho de
+/// él, en metros.
 const SLANT_BULGE: f32 = 0.3;
 
-/// Least distance between segments `a`–`b` and `c`–`d`.
+/// Distancia mínima entre los segmentos `a`–`b` y `c`–`d`.
 fn segments_distance(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> f32 {
     if crate::road::intersect(a, b, c, d).is_some() {
         return 0.0;
@@ -1021,7 +1052,7 @@ fn segments_distance(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> f32 {
         .min(sd(d, a, b))
 }
 
-/// Mixed into the terrain seed for the survey.
+/// Se mezcla con la semilla del terreno para el relevamiento.
 const FENCE_SEED: u32 = 0xa1a3_b4ad;
 
 #[cfg(test)]
@@ -1036,8 +1067,9 @@ pub(crate) mod tests {
         }
     }
 
-    /// The shipped towns with roads laid, their fences, and the world.
-    /// Built once and shared: tests that change the world clone it first.
+    /// Los pueblos distribuidos con los caminos trazados, sus alambrados y el
+    /// mundo. Se construyen una sola vez y se comparten: las pruebas que
+    /// cambian el mundo primero lo clonan.
     pub(crate) fn fenced() -> &'static (World, Vec<TownLayout>, RailLine, FenceLayout) {
         static FENCED: std::sync::LazyLock<(World, Vec<TownLayout>, RailLine, FenceLayout)> =
             std::sync::LazyLock::new(|| {
@@ -1056,9 +1088,9 @@ pub(crate) mod tests {
         &FENCED
     }
 
-    /// One 400 m paddock fenced all round, its south side broken off around
-    /// `gaps` (as `(x, width)`), each a closed field gate; then the
-    /// reachability pass.
+    /// Un potrero de 400 m alambrado por todos lados, con su lado sur
+    /// interrumpido alrededor de `gaps` (como `(x, width)`), cada uno una
+    /// tranquera de campo cerrada; después, la pasada de accesibilidad.
     fn sealed_paddock(gaps: &[(f32, f32)]) -> FenceLayout {
         let side = 400.0;
         let posts = |a: Vec2, b: Vec2| -> Vec<Vec2> {
@@ -1084,7 +1116,7 @@ pub(crate) mod tests {
         layout.runs.push(run(posts(c1, c2)));
         layout.runs.push(run(posts(c2, c3)));
         layout.runs.push(run(posts(c3, c0)));
-        // The south side, in pieces between the gates.
+        // El lado sur, en partes entre las tranqueras.
         let mut from = 0.0;
         for &(x, width) in gaps {
             layout.runs.push(run(posts(
@@ -1116,7 +1148,7 @@ pub(crate) mod tests {
         layout
     }
 
-    /// The passable openings on the paddock's edge.
+    /// Las aberturas transitables en el borde del potrero.
     fn ways_in(layout: &FenceLayout) -> usize {
         let cell = Aabb::new(Vec2::new(0.0, 0.0), Vec2::new(400.0, 400.0));
         layout
@@ -1150,8 +1182,8 @@ pub(crate) mod tests {
             layout.field_of(Vec2::new(10.0, -10.0)),
             cell(0.0, -400.0, 300.0, 0.0)
         );
-        // On a survey line, the paddock east (north) of it: its west and
-        // south edges are in.
+        // Sobre una línea del relevamiento, el potrero al este (al norte) de
+        // ella: sus bordes oeste y sur están incluidos.
         assert_eq!(
             layout.field_of(Vec2::new(300.0, 0.0)),
             cell(300.0, 0.0, 800.0, 500.0)
@@ -1160,12 +1192,12 @@ pub(crate) mod tests {
             layout.field_of(Vec2::new(0.0, -400.0)),
             cell(0.0, -400.0, 300.0, 0.0)
         );
-        // The outermost cell, up to just inside its far lines.
+        // La celda más externa, hasta justo antes de sus líneas lejanas.
         assert_eq!(
             layout.field_of(Vec2::new(799.9, 499.9)),
             cell(300.0, 0.0, 800.0, 500.0)
         );
-        // Outside the grid, and on its far edges, there is no paddock.
+        // Fuera de la cuadrícula, y en sus bordes lejanos, no hay potrero.
         for p in [
             Vec2::new(-0.1, 10.0),
             Vec2::new(10.0, 500.0),
@@ -1189,7 +1221,8 @@ pub(crate) mod tests {
         assert_eq!(ways_in(&layout), 1, "{:?}", layout.openings);
         let broken = layout.openings[0];
         assert_eq!(broken.kind, OpeningKind::Broken);
-        // A whole span, well away from the corners, and no longer fenced.
+        // Un tramo entero, bien lejos de las esquinas, que ya no está
+        // alambrado.
         assert!((broken.width - FenceLayout::POST_SPACING).abs() < 1e-3);
         let corners = [0.0, 400.0];
         assert!(
@@ -1278,8 +1311,8 @@ pub(crate) mod tests {
         assert!(spans > 20_000, "{spans}");
     }
 
-    /// Points along every road every `step` meters with the road's left
-    /// unit normal there.
+    /// Puntos a lo largo de cada camino cada `step` metros, con la normal
+    /// unitaria izquierda del camino en cada uno.
     fn along_roads(roads: &crate::RoadNetwork, step: f32) -> Vec<(usize, Vec2, Vec2)> {
         let mut out = Vec::new();
         for (i, road) in roads.roads.iter().enumerate() {
@@ -1307,7 +1340,8 @@ pub(crate) mod tests {
             for (a, b) in run.spans() {
                 for k in 0..=4 {
                     let p = a + (b - a) * (k as f32 / 4.0);
-                    // A public calle: at least 5 m from the road's edge.
+                    // Una calle pública: al menos 5 m desde el borde del
+                    // camino.
                     let gap = roads.distance(p) - crate::RoadNetwork::HALF_WIDTH;
                     assert!(gap >= 5.0 - 1e-3, "{p:?}: {gap}");
                 }
@@ -1323,7 +1357,8 @@ pub(crate) mod tests {
         for (_, p, _) in along_roads(&roads, 1.0) {
             assert_eq!(world.resolve(c, p, |_| ()), p, "blocked at {p:?}");
         }
-        // Signposts and crossing signs stand clear of every fence.
+        // Los carteles indicadores y las señales de los pasos a nivel quedan
+        // lejos de todo alambrado.
         for post in roads.obstacles() {
             let c = post.center();
             for run in &fences.runs {
@@ -1409,11 +1444,12 @@ pub(crate) mod tests {
         }
         let obstacles = fences.obstacles();
         for gate in fences.gates.iter().filter(|g| g.open) {
-            // In the roadside fence, parallel to the road, open.
+            // En el alambrado al costado del camino, paralela al camino,
+            // abierta.
             let gap = roads.distance(gate.at);
             assert!((gap - FenceLayout::ROADSIDE).abs() < 0.5, "{gate:?}: {gap}");
-            // Clear across its opening, but for the posts' own boxes at
-            // its very ends.
+            // Libre de lado a lado en su abertura, salvo por los rectángulos de
+            // los propios postes en sus extremos.
             for k in 2..=8 {
                 let p = gate.at + gate.along * (gate.width * (k as f32 / 10.0 - 0.5));
                 assert!(
@@ -1431,7 +1467,8 @@ pub(crate) mod tests {
         let (world, _, _, fences) = fenced();
         let roads = world.terrain.roads.clone().unwrap();
         for gate in fences.gates.iter().filter(|g| g.open).step_by(5).take(6) {
-            // From the road's centerline square through the gate.
+            // Desde la línea central del camino, perpendicular, a través de la
+            // tranquera.
             let out = Vec2::new(-gate.along.y, gate.along.x);
             let out = if roads.distance(gate.at + out) > roads.distance(gate.at) {
                 out
@@ -1455,7 +1492,8 @@ pub(crate) mod tests {
     #[test]
     fn a_rider_is_stopped_by_the_wire() {
         let (world, _, line, fences) = fenced();
-        // A long fenced run along y, far from roads: ride at it from 15 m.
+        // Un recorrido alambrado largo sobre y, lejos de los caminos: cabalgar
+        // hacia él desde 15 m.
         let run = fences
             .runs
             .iter()
@@ -1465,7 +1503,7 @@ pub(crate) mod tests {
             .expect("a long north-south run");
         let mid = (run.start() + run.end()) * 0.5;
         let start = mid + Vec2::new(15.0, 0.0);
-        // The land planted only where the rider goes.
+        // La tierra se planta solo donde va el jinete.
         let mut world = world.clone();
         let flora = FloraSite::new(world.config, &world.terrain, line).with_fences(fences);
         let size = world.config.chunk_size;
@@ -1492,7 +1530,7 @@ pub(crate) mod tests {
     #[test]
     fn every_long_stretch_has_openings_every_300_to_500_m_off_the_rail_and_towns() {
         let (world, towns, line, fences) = fenced();
-        // A stretch: a fenced line between two gaps that are not openings.
+        // Un tramo: una línea alambrada entre dos huecos que no son aberturas.
         let mut by_stretch: std::collections::BTreeMap<u32, Vec<&Opening>> = Default::default();
         for o in fences.openings.iter().filter(|o| o.stretch != u32::MAX) {
             by_stretch.entry(o.stretch).or_default().push(o);
@@ -1506,7 +1544,7 @@ pub(crate) mod tests {
         for list in by_stretch.values() {
             for w in list.windows(2) {
                 let gap = w[0].at.distance(w[1].at);
-                // 300–500 m, nudged on up to 40 m where a crossing line is in the way.
+                // 300–500 m, corridos hasta 40 m donde una línea que cruza estorba.
                 assert!((290.0..=550.0).contains(&gap), "{gap}");
             }
         }
@@ -1531,7 +1569,7 @@ pub(crate) mod tests {
             assert!(rail >= FenceLayout::RAIL_MARGIN);
             assert!(o.width == 10.0 || o.width == 20.0, "{o:?}");
         }
-        // About half field gates, half broken spans.
+        // Más o menos la mitad tranqueras de campo y la mitad tramos rotos.
         let gates = fences
             .openings
             .iter()
@@ -1564,7 +1602,7 @@ pub(crate) mod tests {
             );
             assert!(!obstacles.iter().any(|b| b.intersects(&gap)), "{o:?}");
         }
-        // Ride square through one opening of each kind.
+        // Cabalgar en perpendicular a través de una abertura de cada tipo.
         for kind in [true, false] {
             let o = fences
                 .openings
@@ -1604,7 +1642,8 @@ pub(crate) mod tests {
         println!("field gates {}, closed {closed}", all.len());
         let share = closed as f32 / all.len() as f32;
         assert!((0.3..0.48).contains(&share), "{share}");
-        // Ride square at a closed grid gate: stopped at the gate line.
+        // Cabalgar en perpendicular hacia una tranquera cerrada de la
+        // cuadrícula: se detiene en la línea de la tranquera.
         let o = fences
             .openings
             .iter()
@@ -1630,15 +1669,16 @@ pub(crate) mod tests {
 
     #[test]
     fn about_one_paddock_in_ten_is_unfenced() {
-        // The same every time: `the_land_is_surveyed_...` rebuilds the
-        // whole layout, descampados included.
+        // Siempre igual: `the_land_is_surveyed_...` reconstruye toda la
+        // distribución, descampados incluidos.
         let (_, _, _, fences) = fenced();
         let cells = fences.cells();
         let open = fences.descampados.len();
         let share = open as f32 / cells as f32;
         println!("descampados {open} of {cells}");
         assert!((0.07..0.13).contains(&share), "{share}");
-        // No roadside fence runs along a descampado.
+        // Ningún alambrado al costado del camino corre a lo largo de un
+        // descampado.
         for run in fences.runs.iter().filter(|r| r.roadside) {
             for (a, b) in run.spans() {
                 assert!(!fences.is_descampado((a + b) * 0.5), "{a:?}");
@@ -1646,8 +1686,8 @@ pub(crate) mod tests {
         }
     }
 
-    /// Cells of a 1 m raster over `window` a rider can stand in, reached
-    /// from `from` through the gaps in `obstacles`.
+    /// Celdas de una grilla de 1 m sobre `window` en las que puede pararse un
+    /// jinete, alcanzadas desde `from` a través de los huecos de `obstacles`.
     pub(crate) fn reached(world: &World, window: Aabb, from: &[Vec2]) -> (Vec<bool>, usize) {
         let w = window.size().x as usize;
         let h = window.size().y as usize;
@@ -1709,7 +1749,7 @@ pub(crate) mod tests {
     fn every_field_can_be_reached_from_the_road() {
         let (world, towns, _, fences) = fenced();
         let roads = world.terrain.roads.clone().unwrap();
-        // Around Monte Nievas and the first stretch of the road to Pico.
+        // Alrededor de Monte Nievas y del primer tramo del camino a Pico.
         let window = Aabb::new(Vec2::new(-4600.0, -3600.0), Vec2::new(-1000.0, -400.0));
         let from: Vec<Vec2> = along_roads(&roads, 5.0)
             .into_iter()
@@ -1728,7 +1768,8 @@ pub(crate) mod tests {
                 if !window.contains(&cell) {
                     continue;
                 }
-                // Sample each field's middle, off roads, towns and the rail.
+                // Se muestrea el centro de cada campo, lejos de caminos,
+                // pueblos y la vía.
                 let c = cell.center();
                 let clear = roads.distance(c) > 30.0
                     && towns
@@ -1752,7 +1793,8 @@ pub(crate) mod tests {
     fn trees_keep_off_the_fence_lines() {
         let (world, _, line, fences) = fenced();
         let flora = FloraSite::new(world.config, &world.terrain, line).with_fences(fences);
-        // A 2 km square of fields round Monte Nievas, not the whole world.
+        // Un cuadrado de campos de 2 km alrededor de Monte Nievas, no el mundo
+        // entero.
         let size = world.config.chunk_size;
         let lo = crate::ChunkCoord::containing(Vec2::new(-4000.0, -3000.0), size);
         let hi = crate::ChunkCoord::containing(Vec2::new(-2000.0, -1000.0), size);

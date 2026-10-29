@@ -1,13 +1,14 @@
-//! The sky: a dome that follows the camera and a shader that paints the
-//! gradient, twilight, sun, moon with phases, stars, Milky Way, Southern
-//! Cross and clouds from the game clock; see [`SkyPlugin`]. Birds fly in it
-//! ([`birds`]).
+//! El cielo: una cúpula que sigue a la cámara y un shader que pinta el
+//! degradado, el crepúsculo, el sol, la luna con sus fases, las estrellas, la
+//! Vía Láctea, la Cruz del Sur y las nubes a partir del reloj del juego; ver
+//! [`SkyPlugin`]. En él vuelan pájaros ([`birds`]).
 //!
-//! The dome is one inside-out sphere (720 triangles, one draw call) of
-//! [`DOME_RADIUS`] meters, inside the cameras' 1000 m far plane, drawn
-//! without fog: its horizon color is the fog and clear color
-//! ([`crate::Sky::haze`]), so distant fogged ground meets it seamlessly. It
-//! is recentred on the drawing camera every frame, so it never gets closer.
+//! La cúpula es una sola esfera invertida (720 triángulos, un draw call) de
+//! [`DOME_RADIUS`] metros, dentro del plano lejano de 1000 m de las cámaras,
+//! dibujada sin niebla: el color de su horizonte es el color de la niebla y de
+//! fondo ([`crate::Sky::haze`]), así que el suelo lejano con niebla se une con
+//! ella sin costura. Se vuelve a centrar en la cámara que dibuja en cada frame,
+//! así que nunca se acerca.
 
 pub mod astro;
 pub mod birds;
@@ -23,26 +24,29 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
 use bevy::shader::ShaderRef;
 
-/// Radius of the sky dome, in meters.
+/// Radio de la cúpula del cielo, en metros.
 pub const DOME_RADIUS: f32 = 800.0;
-/// The star map, under `assets/`: the "Stars + Milky Way" 8k map of Solar
-/// System Scope (https://www.solarsystemscope.com/textures/, CC BY 4.0, see
-/// `assets/textures/sky/CREDITS.md`), an equirectangular map in galactic
-/// coordinates, baked to UASTC KTX2 with mips from the JPG next to it. It is
-/// sampled sharply so the stars stay pin-points.
+/// El mapa de estrellas, bajo `assets/`: el mapa "Stars + Milky Way" de 8k de
+/// Solar System Scope (https://www.solarsystemscope.com/textures/, CC BY 4.0,
+/// ver `assets/textures/sky/CREDITS.md`), un mapa equirrectangular en
+/// coordenadas galácticas, horneado a KTX2 UASTC con mips a partir del JPG que
+/// está al lado. Se muestrea con nitidez para que las estrellas sigan siendo
+/// puntos.
 pub const STAR_MAP: &str = "textures/sky/stars_milky_way/stars_milky_way.ktx2";
-/// How much of the sky the cumulus cover on an average day, about: a clear
-/// dry-pampa sky with a few scattered clouds. The one knob for cloudiness
-/// (see [`cloud_cover`] and `sky.wesl`).
+/// Cuánto del cielo cubren los cúmulos en un día promedio, aproximadamente: un
+/// cielo despejado de pampa seca con unas pocas nubes dispersas. El único
+/// control de la nubosidad (ver [`cloud_cover`] y `sky.wesl`).
 pub const CLOUD_COVER: f32 = 0.12;
-/// How fast the clouds drift, in noise units per real second.
+/// Qué tan rápido se desplazan las nubes, en unidades de ruido por segundo
+/// real.
 pub const CLOUD_SPEED: f32 = 0.0015;
-/// Where the clouds' wind blows toward on the ground plane (north-east, a
-/// pampero's opposite): `(x, z)`, unit length.
+/// Hacia dónde sopla el viento de las nubes sobre el plano del suelo (noreste,
+/// lo opuesto al pampero): `(x, z)`, de longitud unitaria.
 pub const WIND: Vec2 = Vec2::new(0.8, -0.6);
 
-/// Draws the sky dome with the clock and lets birds fly in it. Needs a
-/// renderer; [`SkyLogic`] is the part that runs without one.
+/// Dibuja la cúpula del cielo con el reloj y deja que los pájaros vuelen en
+/// ella. Necesita un renderizador; [`SkyLogic`] es la parte que funciona sin
+/// él.
 pub struct SkyPlugin;
 
 impl Plugin for SkyPlugin {
@@ -56,7 +60,8 @@ impl Plugin for SkyPlugin {
     }
 }
 
-/// The dome's and the birds' systems, without the material renderer.
+/// Los sistemas de la cúpula y de los pájaros, sin el renderizador de
+/// materiales.
 pub struct SkyLogic;
 
 impl Plugin for SkyLogic {
@@ -67,11 +72,11 @@ impl Plugin for SkyLogic {
     }
 }
 
-/// Marks the sky dome.
+/// Marca la cúpula del cielo.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct SkyDome;
 
-/// What the sky shader reads: see `sky.wesl`.
+/// Lo que lee el shader del cielo: ver `sky.wesl`.
 #[derive(ShaderType, Debug, Clone, Copy, Default, PartialEq)]
 pub struct SkyParams {
     pub sun: Vec4,
@@ -89,12 +94,12 @@ pub struct SkyParams {
     pub center: Vec4,
 }
 
-/// The sky dome's material.
+/// El material de la cúpula del cielo.
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
 pub struct SkyMaterial {
     #[uniform(0)]
     pub params: SkyParams,
-    /// The star map ([`STAR_MAP`]); black until it loads.
+    /// El mapa de estrellas ([`STAR_MAP`]); negro hasta que carga.
     #[texture(1)]
     #[sampler(2)]
     pub star_map: Option<Handle<Image>>,
@@ -124,21 +129,22 @@ fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// How much of the sky the cumulus cover on game day `days`: [`CLOUD_COVER`]
-/// give or take 40%, a few more or fewer scattered clouds from day to day,
-/// mostly open blue.
+/// Cuánto del cielo cubren los cúmulos en el día de juego `days`:
+/// [`CLOUD_COVER`] con un margen de 40% arriba o abajo, unas pocas nubes
+/// dispersas más o menos de un día a otro, casi todo azul abierto.
 pub fn cloud_cover(days: f64) -> f32 {
     CLOUD_COVER * (1.0 + 0.4 * (days as f32 * 2.1 + 1.0).sin())
 }
 
-/// Where the clouds have drifted to after `seconds` of real time, in noise
-/// units: they move along [`WIND`].
+/// Hasta dónde se desplazaron las nubes después de `seconds` de tiempo real, en
+/// unidades de ruido: se mueven a lo largo de [`WIND`].
 pub fn cloud_drift(seconds: f32) -> Vec2 {
     -WIND * CLOUD_SPEED * seconds
 }
 
-/// The sunlit and shaded colors of the clouds (linear): lit by the sun's
-/// color, so they glow orange at sunset, and a dim moonlit grey at night.
+/// Los colores de las nubes al sol y a la sombra (lineales): iluminadas por el
+/// color del sol, así que brillan naranjas al atardecer, y de un gris tenue
+/// iluminado por la luna de noche.
 pub fn cloud_colors(sky: &Sky) -> (Vec3, Vec3) {
     let sun = linear(sky.light_color);
     let sun_up = smoothstep(-0.12, 0.06, sky.elevation);
@@ -152,8 +158,8 @@ pub fn cloud_colors(sky: &Sky) -> (Vec3, Vec3) {
     (lit, shade)
 }
 
-/// Everything the shader needs for `sky`, the game clock at `days`, the
-/// real time `seconds` and a camera at `camera`.
+/// Todo lo que necesita el shader para `sky`, el reloj del juego en `days`, el
+/// tiempo real `seconds` y una cámara en `camera`.
 pub fn sky_params(sky: &Sky, days: f64, seconds: f32, camera: Vec3) -> SkyParams {
     let frame = astro::galactic_frame(days);
     let (lit, shade) = cloud_colors(sky);
@@ -177,7 +183,7 @@ pub fn sky_params(sky: &Sky, days: f64, seconds: f32, camera: Vec3) -> SkyParams
     }
 }
 
-/// The inside-out unit sphere of the dome.
+/// La esfera unitaria invertida de la cúpula.
 fn dome_mesh() -> Mesh {
     Sphere::new(1.0)
         .mesh()
@@ -186,9 +192,9 @@ fn dome_mesh() -> Mesh {
         .expect("a UV sphere is a triangle list")
 }
 
-/// Loads [`STAR_MAP`]: longitude wraps, latitude does not, filtered
-/// linearly through its mips. Without an asset server (tests) the sky has
-/// no stars.
+/// Carga [`STAR_MAP`]: la longitud da la vuelta, la latitud no, con filtrado
+/// lineal a través de sus mips. Sin un servidor de assets (en los tests) el
+/// cielo no tiene estrellas.
 fn load_star_map(server: Option<&AssetServer>) -> Option<Handle<Image>> {
     Some(
         server?
@@ -197,12 +203,13 @@ fn load_star_map(server: Option<&AssetServer>) -> Option<Handle<Image>> {
                 settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
                     address_mode_u: ImageAddressMode::Repeat,
                     address_mode_v: ImageAddressMode::ClampToEdge,
-                    // Near the galactic poles a pixel covers a long strip of
-                    // the map: filter along it rather than smear the stars.
+                    // Cerca de los polos galácticos un píxel cubre una franja
+                    // larga del mapa: se filtra a lo largo de ella en lugar de
+                    // emborronar las estrellas.
                     anisotropy_clamp: 16,
                     ..ImageSamplerDescriptor::linear()
                 });
-                // Only the GPU reads it: drop the CPU copy.
+                // Solo la lee la GPU: se descarta la copia en CPU.
                 settings.asset_usage = RenderAssetUsages::RENDER_WORLD;
             })
             .load(STAR_MAP),
@@ -224,15 +231,16 @@ fn spawn_dome(
             ..default()
         })),
         Transform::from_scale(Vec3::splat(DOME_RADIUS)),
-        // The dome always surrounds the camera, so never cull it.
+        // La cúpula siempre rodea a la cámara, así que nunca se descarta por
+        // culling.
         NoFrustumCulling,
         NotShadowCaster,
         world_layers(),
     ));
 }
 
-/// The position of the camera drawn last: the game's, and the one the sky
-/// and the birds are built round.
+/// La posición de la última cámara dibujada: la del juego, y alrededor de la
+/// que se construyen el cielo y los pájaros.
 pub(crate) fn main_camera(cameras: &Query<(&GlobalTransform, &Camera), With<Camera3d>>) -> Vec3 {
     cameras
         .iter()
@@ -241,7 +249,7 @@ pub(crate) fn main_camera(cameras: &Query<(&GlobalTransform, &Camera), With<Came
         .map_or(Vec3::ZERO, |(transform, _)| transform.translation())
 }
 
-/// Moves the dome to the camera and paints it for the clock's hour.
+/// Mueve la cúpula a la cámara y la pinta según la hora del reloj.
 fn follow_the_clock(
     clock: Option<Res<WorldClock>>,
     time: Res<Time<Real>>,
@@ -305,7 +313,7 @@ mod tests {
         assert!(dome.translation.distance(Vec3::new(40.0, 5.0, -70.0)) < 1e-3);
         let mesh = dome_mesh();
         assert_eq!(mesh.count_vertices(), 25 * 17);
-        // Inside out: every triangle's front face looks at the centre.
+        // Invertida: la cara frontal de cada triángulo mira hacia el centro.
         let positions = mesh
             .attribute(Mesh::ATTRIBUTE_POSITION)
             .unwrap()
@@ -482,7 +490,7 @@ mod tests {
         assert!(lum(night) < 0.06, "{night:?}");
     }
 
-    /// The bytes the GPU reads for binding 0, as floats.
+    /// Los bytes que lee la GPU para el binding 0, como floats.
     fn uniform_floats(params: &SkyParams) -> Vec<f32> {
         use bevy::render::render_resource::encase::UniformBuffer;
         let mut buffer = UniformBuffer::new(Vec::<u8>::new());
@@ -498,7 +506,7 @@ mod tests {
 
     #[test]
     fn the_material_uniform_holds_the_clocks_sky_in_the_shaders_layout() {
-        // The shader declares the same thirteen vec4s, in this order.
+        // El shader declara los mismos trece vec4, en este orden.
         let shader = include_str!("sky.wesl");
         let fields = [
             "sun",

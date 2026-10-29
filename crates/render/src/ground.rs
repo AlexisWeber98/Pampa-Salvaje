@@ -1,25 +1,28 @@
-//! Ground textures for the terrain chunks.
+//! Texturas del suelo para los chunks de terreno.
 //!
-//! They come from ambientCG, CC0 1.0 (Ground 109 and Grass 004; see
-//! assets/textures/ground/CREDITS.md). They are shipped as 512×512 binary
-//! PNM files (P6 colour and normal maps, P5 roughness and ambient occlusion)
-//! converted from ambientCG's 1K JPGs, so no image decoder is needed.
+//! Vienen de ambientCG, CC0 1.0 (Ground 109 y Grass 004; ver
+//! assets/textures/ground/CREDITS.md). Se distribuyen como archivos PNM
+//! binarios de 512×512 (mapas de color y de normales en P6, rugosidad y
+//! oclusión ambiental en P5) convertidos a partir de los JPG de 1K de
+//! ambientCG, así que no hace falta ningún decodificador de imágenes.
 //!
-//! Bevy's [`StandardMaterial`] takes one base-colour texture, so the two
-//! sets are blended here, once, into one tiling detail set: soil showing
-//! through the gaps of the grass. Its colour is kept low in saturation and
-//! contrast, so the per-vertex ground colour (dryness, town earth, shade)
-//! still decides the hue. The normal, roughness and ambient-occlusion maps
-//! are blended the same way. UVs are world space ([`ground_uv`]), so the
-//! tiles run on across chunk borders without a seam.
+//! El [`StandardMaterial`] de Bevy acepta una sola textura de color base, así
+//! que aquí los dos conjuntos se mezclan, una sola vez, en un conjunto de
+//! detalle repetible: tierra que asoma por los huecos del pasto. Su color se
+//! mantiene con poca saturación y poco contraste, para que el color del suelo
+//! por vértice (sequedad, tierra de pueblo, sombra) siga decidiendo el tono.
+//! Los mapas de normales, rugosidad y oclusión ambiental se mezclan de la misma
+//! forma. Las UV están en espacio del mundo ([`ground_uv`]), así que las
+//! baldosas siguen sin costura a través de los bordes de los chunks.
 //!
-//! Under the monte patches the ground shows leaf litter (ScatteredLeaves009,
-//! CC0 1.0): [`GroundMaterial`] extends the standard material with the
-//! litter tile ([`LitterExt`], `assets/shaders/ground_litter.wesl`), and the
-//! per-vertex weight comes from [`litter_weight`].
+//! Bajo los manchones de monte, el suelo muestra hojarasca (ScatteredLeaves009,
+//! CC0 1.0): [`GroundMaterial`] extiende el material estándar con la baldosa de
+//! hojarasca ([`LitterExt`], `assets/shaders/ground_litter.wesl`), y el peso
+//! por vértice sale de [`litter_weight`].
 //!
-//! Roads wear Ground 102 (compressed dirt, ambientCG, CC0 1.0) alone:
-//! [`road_material`], on the road surface drawn by [`crate::road`].
+//! Los caminos llevan solo Ground 102 (tierra compactada, ambientCG, CC0 1.0):
+//! [`road_material`], sobre la superficie del camino que dibuja
+//! [`crate::road`].
 
 use std::fmt;
 use std::path::Path;
@@ -32,12 +35,13 @@ use bevy::reflect::TypePath;
 use bevy::render::render_resource::{AsBindGroup, Extent3d, TextureDimension, TextureFormat};
 use bevy::shader::ShaderRef;
 
-/// Where the ground textures live, under the [`crate::AssetRoot`].
+/// Dónde están las texturas del suelo, bajo el [`crate::AssetRoot`].
 pub const GROUND_DIR: &str = "textures/ground";
-/// Meters per texture tile.
+/// Metros por baldosa de textura.
 pub const TILE: f32 = 6.0;
 
-/// A decoded binary PNM image: one (grey) or three (RGB) 8-bit channels.
+/// Una imagen PNM binaria decodificada: uno (gris) o tres (RGB) canales de 8
+/// bits.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Pnm {
     pub width: u32,
@@ -46,7 +50,7 @@ pub struct Pnm {
     pub data: Vec<u8>,
 }
 
-/// Why a PNM image could not be read.
+/// Por qué no se pudo leer una imagen PNM.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PnmError(pub String);
 
@@ -58,8 +62,8 @@ impl fmt::Display for PnmError {
 
 impl std::error::Error for PnmError {}
 
-/// Parses a binary PNM file: `P5` (grey) or `P6` (RGB), with `#` comments
-/// allowed in the header and any maxval up to 255.
+/// Interpreta un archivo PNM binario: `P5` (gris) o `P6` (RGB), con comentarios
+/// `#` permitidos en el encabezado y cualquier maxval de hasta 255.
 pub fn parse_pnm(bytes: &[u8]) -> Result<Pnm, PnmError> {
     let channels = match bytes.get(..2) {
         Some(b"P5") => 1,
@@ -69,7 +73,7 @@ pub fn parse_pnm(bytes: &[u8]) -> Result<Pnm, PnmError> {
     let mut at = 2;
     let mut fields = [0u32; 3];
     for field in &mut fields {
-        // Whitespace and comments up to the next number.
+        // Espacios en blanco y comentarios hasta el siguiente número.
         loop {
             match bytes.get(at) {
                 Some(b) if b.is_ascii_whitespace() => at += 1,
@@ -90,7 +94,7 @@ pub fn parse_pnm(bytes: &[u8]) -> Result<Pnm, PnmError> {
             .and_then(|s| s.parse().ok())
             .ok_or_else(|| PnmError("bad or missing header number".into()))?;
     }
-    // Exactly one whitespace byte ends the header.
+    // Exactamente un byte de espacio en blanco termina el encabezado.
     if !bytes.get(at).is_some_and(u8::is_ascii_whitespace) {
         return Err(PnmError("header not ended by whitespace".into()));
     }
@@ -121,14 +125,14 @@ pub fn parse_pnm(bytes: &[u8]) -> Result<Pnm, PnmError> {
     })
 }
 
-/// Reads the PNM file at `path`.
+/// Lee el archivo PNM en `path`.
 pub fn load_pnm(path: &Path) -> Result<Pnm, PnmError> {
     let bytes = std::fs::read(path)
         .map_err(|e| PnmError(format!("cannot read {}: {e}", path.display())))?;
     parse_pnm(&bytes).map_err(|e| PnmError(format!("{}: {e}", path.display())))
 }
 
-/// One ambientCG texture set at a common size.
+/// Un conjunto de texturas de ambientCG a un tamaño común.
 struct Maps {
     size: u32,
     color: Pnm,
@@ -138,7 +142,7 @@ struct Maps {
 }
 
 impl Maps {
-    /// Reads set `id` (`Ground109`, `Grass004`) from `dir`.
+    /// Lee el conjunto `id` (`Ground109`, `Grass004`) desde `dir`.
     fn load(dir: &Path, id: &str) -> Result<Self, PnmError> {
         let at = |name: &str| load_pnm(&dir.join(id).join(format!("{id}_{name}")));
         let maps = Self {
@@ -186,8 +190,8 @@ fn smoothstep(lo: f32, hi: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// The blended detail set: RGBA8 colour (sRGB), normal, and AO in red with
-/// roughness in green (linear), all `size` square.
+/// El conjunto de detalle mezclado: color RGBA8 (sRGB), normal, y AO en el rojo
+/// con la rugosidad en el verde (lineal), todos cuadrados de `size`.
 pub struct GroundDetail {
     pub size: u32,
     pub color: Vec<u8>,
@@ -195,17 +199,18 @@ pub struct GroundDetail {
     pub surface: Vec<u8>,
 }
 
-/// How far the detail colour may stray from grey, and from its mean
-/// brightness: low, so the vertex colour keeps the say.
+/// Cuánto puede apartarse el color de detalle del gris, y de su brillo medio:
+/// poco, para que el color de vértice tenga la última palabra.
 const SATURATION: f32 = 0.3;
 const CONTRAST: f32 = 0.45;
-/// Mean brightness of the detail colour (sRGB).
+/// Brillo medio del color de detalle (sRGB).
 const BRIGHTNESS: f32 = 0.9;
-/// How much of the maps' relief is kept: the ground's own slopes stay readable.
+/// Cuánto del relieve de los mapas se conserva: las pendientes propias del
+/// suelo siguen siendo legibles.
 const RELIEF: f32 = 0.6;
 
-/// Blends soil and grass: grass where its blades are bright, soil showing
-/// through the dark gaps.
+/// Mezcla tierra y pasto: pasto donde sus hojas son claras, y tierra que asoma
+/// por los huecos oscuros.
 fn blend(soil: &Maps, grass: &Maps) -> GroundDetail {
     let size = soil.size;
     let n = (size * size) as usize;
@@ -241,7 +246,7 @@ fn blend(soil: &Maps, grass: &Maps) -> GroundDetail {
             Maps::grey(&soil.roughness, i),
             Maps::grey(&grass.roughness, i),
         );
-        // Soften the occlusion as the relief is: no black pits.
+        // Se suaviza la oclusión igual que el relieve: sin pozos negros.
         surface.extend([byte(0.6 + 0.4 * ao), byte(rough.max(0.7)), 0, 255]);
     }
     GroundDetail {
@@ -252,9 +257,9 @@ fn blend(soil: &Maps, grass: &Maps) -> GroundDetail {
     }
 }
 
-/// The dirt of a road on its own: Ground 102's colour, a little greyer and
-/// flatter than the photo so the vertex colour sets the hue, with its
-/// relief, roughness and occlusion.
+/// La tierra de un camino por sí sola: el color de Ground 102, un poco más gris
+/// y plano que la foto para que el color de vértice fije el tono, con su
+/// relieve, rugosidad y oclusión.
 fn dirt(maps: &Maps) -> GroundDetail {
     let n = (maps.size * maps.size) as usize;
     let mean = maps.mean_luma();
@@ -285,17 +290,17 @@ fn dirt(maps: &Maps) -> GroundDetail {
     }
 }
 
-/// How much colour and contrast of Ground 102 the road keeps: more than the
-/// grass ground, so wheel ruts and pebbles read.
+/// Cuánto color y contraste de Ground 102 conserva el camino: más que el suelo
+/// de pasto, para que se distingan las huellas de las ruedas y las piedritas.
 const ROAD_SATURATION: f32 = 0.5;
 const ROAD_CONTRAST: f32 = 0.7;
 
-/// Reads Ground 102 (compressed dirt) from `dir`, for the roads.
+/// Lee Ground 102 (tierra compactada) desde `dir`, para los caminos.
 pub fn load_road_detail(dir: &Path) -> Result<GroundDetail, PnmError> {
     Ok(dirt(&Maps::load(dir, "Ground102")?))
 }
 
-/// Reads and blends Ground 109 (soil) and Grass 004 from `dir`.
+/// Lee y mezcla Ground 109 (tierra) y Grass 004 desde `dir`.
 pub fn load_detail(dir: &Path) -> Result<GroundDetail, PnmError> {
     let soil = Maps::load(dir, "Ground109")?;
     let grass = Maps::load(dir, "Grass004")?;
@@ -305,39 +310,43 @@ pub fn load_detail(dir: &Path) -> Result<GroundDetail, PnmError> {
     Ok(blend(&soil, &grass))
 }
 
-/// Monte coverage where the litter starts and where it is complete. The
-/// monte's own edge is already a soft noise ramp; this widens the feather.
+/// Cobertura de monte en la que empieza la hojarasca y en la que es completa.
+/// El borde propio del monte ya es una rampa suave de ruido; esto ensancha el
+/// difuminado.
 const LITTER_FROM: f32 = 0.1;
 const LITTER_FULL: f32 = 0.8;
 
-/// How much leaf litter lies at a point of the ground, in `[0, 1]`, given
-/// the `monte` coverage there ([`pampa_core::FloraSite::monte`]) and how
-/// `cleared` the ground is (0 open pampa, 1 a town's leveled ground, a road
-/// or a lagoon's mud). It is stored per vertex, in the ground colour's
-/// alpha, and the ground shader (`ground_litter.wesl`) blends the leaves in.
+/// Cuánta hojarasca hay en un punto del suelo, en `[0, 1]`, dada la cobertura
+/// de `monte` allí ([`pampa_core::FloraSite::monte`]) y qué tan despejado
+/// (`cleared`) está el suelo (0 en la pampa abierta, 1 en el suelo nivelado de
+/// un pueblo, un camino o el barro de una laguna). Se guarda por vértice, en el
+/// alfa del color del suelo, y el shader del suelo (`ground_litter.wesl`)
+/// mezcla las hojas.
 pub fn litter_weight(monte: f32, cleared: f32) -> f32 {
     smoothstep(LITTER_FROM, LITTER_FULL, monte) * (1.0 - cleared.clamp(0.0, 1.0))
 }
 
-/// The litter's colour tile (RGBA8, sRGB) and its side.
+/// La baldosa de color de la hojarasca (RGBA8, sRGB) y su lado.
 pub struct LitterTile {
     pub size: u32,
     pub color: Vec<u8>,
 }
 
-/// How much of the leaves' colour and contrast is kept: more than the
-/// grass ground, so the leaves read as brown litter, not as tinted grass.
+/// Cuánto del color y el contraste de las hojas se conserva: más que el suelo
+/// de pasto, para que las hojas se lean como hojarasca marrón y no como pasto
+/// teñido.
 const LITTER_SATURATION: f32 = 0.7;
 const LITTER_CONTRAST: f32 = 0.6;
-/// Mean brightness of the litter (sRGB): well under the ground's
-/// [`BRIGHTNESS`], so the monte floor is darker than the open pampa. The
-/// shader multiplies the ground by this tile, so it is a ratio.
+/// Brillo medio de la hojarasca (sRGB): bastante por debajo del [`BRIGHTNESS`]
+/// del suelo, para que el piso del monte sea más oscuro que la pampa abierta.
+/// El shader multiplica el suelo por esta baldosa, así que es una proporción.
 const LITTER_BRIGHTNESS: f32 = 0.6;
-/// Litter tiles per ground tile: the leaves repeat every 2 m, not 6 m.
+/// Baldosas de hojarasca por baldosa de suelo: las hojas se repiten cada 2 m,
+/// no cada 6 m.
 pub const LITTER_TILING: f32 = 3.0;
 
-/// Reads ScatteredLeaves009 (colour map only) from `dir`, mean-normalised
-/// and toned like the rest of the ground.
+/// Lee ScatteredLeaves009 (solo el mapa de color) desde `dir`, normalizado por
+/// la media y entonado como el resto del suelo.
 pub fn load_litter(dir: &Path) -> Result<LitterTile, PnmError> {
     let id = "ScatteredLeaves009";
     let color = load_pnm(&dir.join(id).join(format!("{id}_Color.ppm")))?;
@@ -363,8 +372,9 @@ pub fn load_litter(dir: &Path) -> Result<LitterTile, PnmError> {
     })
 }
 
-/// `pixels` (RGBA8, `size` square) with its full mip chain appended, each
-/// level a 2×2 box filter of the last: tiled ground must not shimmer.
+/// `pixels` (RGBA8, cuadrado de `size`) con su cadena de mips completa
+/// agregada, cada nivel un filtro de caja de 2×2 del anterior: el suelo en
+/// baldosas no debe titilar.
 fn with_mips(size: u32, pixels: Vec<u8>) -> (Vec<u8>, u32) {
     let mut data = pixels;
     let (mut level, mut side, mut levels) = (0, size as usize, 1);
@@ -414,9 +424,9 @@ fn image(size: u32, pixels: Vec<u8>, format: TextureFormat) -> Image {
     image
 }
 
-/// What the ground shader adds to the standard material: the leaf litter
-/// tile (ScatteredLeaves009, ambientCG, CC0 1.0). Without it the sampler
-/// falls back to white and the ground is left as it is.
+/// Lo que el shader del suelo agrega al material estándar: la baldosa de
+/// hojarasca (ScatteredLeaves009, ambientCG, CC0 1.0). Sin ella el sampler usa
+/// blanco por defecto y el suelo queda como está.
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
 pub struct LitterExt {
     #[texture(100)]
@@ -425,19 +435,19 @@ pub struct LitterExt {
 }
 
 impl MaterialExtension for LitterExt {
-    /// `assets/shaders/ground_litter.wesl`: the standard fragment shader,
-    /// with the ground colour darkened toward the litter by the vertex
-    /// colour's alpha ([`litter_weight`]).
+    /// `assets/shaders/ground_litter.wesl`: el fragment shader estándar, con el
+    /// color del suelo oscurecido hacia la hojarasca según el alfa del color de
+    /// vértice ([`litter_weight`]).
     fn fragment_shader() -> ShaderRef {
         "shaders/ground_litter.wesl".into()
     }
 }
 
-/// The terrain's material: [`StandardMaterial`] plus [`LitterExt`].
+/// El material del terreno: [`StandardMaterial`] más [`LitterExt`].
 pub type GroundMaterial = ExtendedMaterial<StandardMaterial, LitterExt>;
 
-/// Renders [`GroundMaterial`]. Needs a renderer, like [`crate::SkyPlugin`];
-/// without it the terrain still builds its chunks, with the assets only.
+/// Dibuja [`GroundMaterial`]. Necesita un renderer, como [`crate::SkyPlugin`];
+/// sin él el terreno igual construye sus chunks, solo con los assets.
 pub struct GroundMaterialPlugin;
 
 impl Plugin for GroundMaterialPlugin {
@@ -446,13 +456,12 @@ impl Plugin for GroundMaterialPlugin {
     }
 }
 
-/// The terrain's material: white and matte, its colour from the vertex
-/// paint. It carries the ground detail textures from ambientCG (Ground 109
-/// and Grass 004, CC0 1.0; see assets/textures/ground/CREDITS.md) when
-/// they can be read from `root`, and the leaf litter of the monte
-/// (ScatteredLeaves009, [`load_litter`]) when that can be read too;
-/// otherwise a warning is logged and the plain vertex-painted ground is
-/// drawn.
+/// El material del terreno: blanco y mate, con su color tomado de la pintura de
+/// vértices. Lleva las texturas de detalle del suelo de ambientCG (Ground 109 y
+/// Grass 004, CC0 1.0; ver assets/textures/ground/CREDITS.md) cuando se pueden
+/// leer desde `root`, y la hojarasca del monte (ScatteredLeaves009,
+/// [`load_litter`]) cuando también se puede leer; si no, se registra una
+/// advertencia y se dibuja el suelo liso pintado por vértice.
 pub fn ground_material(root: Option<&Path>, images: Option<&mut Assets<Image>>) -> GroundMaterial {
     let mut material = GroundMaterial {
         base: StandardMaterial {
@@ -491,8 +500,8 @@ pub fn ground_material(root: Option<&Path>, images: Option<&mut Assets<Image>>) 
     material
 }
 
-/// Puts `detail` on `material`: colour, normal, and the occlusion and
-/// roughness map.
+/// Pone `detail` en `material`: color, normal, y el mapa de oclusión y
+/// rugosidad.
 fn wear(material: &mut StandardMaterial, detail: GroundDetail, images: &mut Assets<Image>) {
     let size = detail.size;
     let surface = images.add(image(size, detail.surface, TextureFormat::Rgba8Unorm));
@@ -501,16 +510,17 @@ fn wear(material: &mut StandardMaterial, detail: GroundDetail, images: &mut Asse
     material.normal_map_texture =
         Some(images.add(image(size, detail.normal, TextureFormat::Rgba8Unorm)));
     material.metallic_roughness_texture = Some(surface.clone());
-    // Metallic stays 0: the surface map's blue channel is 0 too.
+    // Metallic queda en 0: el canal azul del mapa de superficie también es 0.
     material.occlusion_texture = Some(surface);
 }
 
-/// The road surface's material: Ground 102 dirt from ambientCG (CC0 1.0;
-/// see assets/textures/ground/CREDITS.md) when it can be read from `root`,
-/// tinted by the vertex colour, whose alpha feathers the road's edges into
-/// the grass. Blended over the ground, pulled toward the camera a little so
-/// it never fights the terrain under it. Without the textures a warning is
-/// logged and the plain vertex-painted road is drawn.
+/// El material de la superficie del camino: tierra Ground 102 de ambientCG (CC0
+/// 1.0; ver assets/textures/ground/CREDITS.md) cuando se puede leer desde
+/// `root`, teñida por el color de vértice, cuyo alfa difumina los bordes del
+/// camino hacia el pasto. Se mezcla sobre el suelo, acercado un poco a la
+/// cámara para que nunca compita con el terreno que tiene debajo. Sin las
+/// texturas se registra una advertencia y se dibuja el camino liso pintado por
+/// vértice.
 pub fn road_material(root: Option<&Path>, images: Option<&mut Assets<Image>>) -> StandardMaterial {
     let mut material = StandardMaterial {
         base_color: Color::WHITE,
@@ -530,14 +540,15 @@ pub fn road_material(root: Option<&Path>, images: Option<&mut Assets<Image>>) ->
     material
 }
 
-/// The ground UV of world point `p`: one tile every [`TILE`] meters, a
-/// function of the position alone, so chunks agree on shared vertices.
+/// La UV del suelo del punto del mundo `p`: una baldosa cada [`TILE`] metros,
+/// en función solo de la posición, para que los chunks coincidan en los
+/// vértices compartidos.
 pub fn ground_uv(p: Vec3) -> [f32; 2] {
     [p.x / TILE, p.z / TILE]
 }
 
-/// The tangent (with its bitangent sign in `w`) of a flat triangle with
-/// world-space UVs from [`ground_uv`].
+/// La tangente (con el signo de su bitangente en `w`) de un triángulo plano con
+/// UV en espacio del mundo de [`ground_uv`].
 pub fn face_tangent(p: [Vec3; 3], uv: [[f32; 2]; 3]) -> [f32; 4] {
     let (e1, e2) = (p[1] - p[0], p[2] - p[0]);
     let (du1, dv1) = (uv[1][0] - uv[0][0], uv[1][1] - uv[0][1]);
@@ -579,11 +590,12 @@ mod tests {
         assert_eq!((colour.width, colour.height, colour.channels), (1, 2, 3));
         assert_eq!(colour.data, vec![1, 2, 3, 4, 5, 6]);
 
-        // A smaller maxval is scaled up to 255.
+        // Un maxval menor se escala hasta 255.
         let scaled = parse_pnm(&pnm("P5\n2 1\n15\n", &[15, 0])).unwrap();
         assert_eq!(scaled.data, vec![255, 0]);
-        // Bytes past the image are ignored; a pixel value 10 (`\n`) right
-        // after the header is data, not whitespace.
+        // Se ignoran los bytes posteriores a la imagen; un valor de píxel 10
+        // (`\n`) justo después del encabezado es un dato, no un espacio en
+        // blanco.
         let tight = parse_pnm(&pnm("P5\n1 1\n255\n", &[10, 99])).unwrap();
         assert_eq!(tight.data, vec![10]);
     }
@@ -606,13 +618,14 @@ mod tests {
             chroma += c.max_element() - c.min_element();
         }
         let mean = sum / n as f32;
-        // Bright and nearly grey: the vertex colour keeps the hue.
+        // Claro y casi gris: el color de vértice conserva el tono.
         assert!(
             mean.min_element() > 0.8 && mean.max_element() < 0.97,
             "{mean:?}"
         );
         assert!(chroma / (n as f32) < 0.08, "{}", chroma / n as f32);
-        // Normals point out of the surface; AO never goes black.
+        // Las normales apuntan hacia afuera de la superficie; la AO nunca llega
+        // al negro.
         assert!(detail.normal.chunks(4).all(|p| p[2] >= 128));
         assert!(detail.surface.chunks(4).all(|p| p[0] >= 150 && p[2] == 0));
     }
@@ -642,7 +655,7 @@ mod tests {
 
     #[test]
     fn with_images_but_no_texture_files_both_materials_fall_back_to_plain() {
-        // An empty assets folder of its own.
+        // Una carpeta de assets vacía, propia.
         let root = std::env::temp_dir().join(format!("pampa-no-textures-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         let mut images = Assets::<Image>::default();
@@ -665,7 +678,7 @@ mod tests {
     fn litter_is_full_in_the_monte_none_in_the_open_and_feathers_between() {
         assert_eq!(litter_weight(0.0, 0.0), 0.0);
         assert_eq!(litter_weight(1.0, 0.0), 1.0);
-        // Feathered: it rises smoothly with the monte, never jumping.
+        // Difuminada: sube suavemente con el monte, sin saltos.
         let steps: Vec<f32> = (0..=20)
             .map(|i| litter_weight(i as f32 / 20.0, 0.0))
             .collect();
@@ -674,7 +687,8 @@ mod tests {
             "{steps:?}"
         );
         assert!((0.2..0.8).contains(&litter_weight(0.45, 0.0)));
-        // Towns, roads and mud clear it, whatever the monte says.
+        // Los pueblos, los caminos y el barro la despejan, diga lo que diga el
+        // monte.
         assert_eq!(litter_weight(1.0, 1.0), 0.0);
         assert!((litter_weight(1.0, 0.5) - 0.5).abs() < 1e-6);
     }
@@ -696,12 +710,12 @@ mod tests {
         };
         let leaves = mean(&litter.color);
         let ground = mean(&load_detail(&dir).unwrap().color);
-        // Darker than the ground detail, so the monte reads as litter, and
-        // warmer than grey: red over blue.
+        // Más oscura que el detalle del suelo, para que el monte se lea como
+        // hojarasca, y más cálida que el gris: rojo por encima de azul.
         assert!(luma(leaves) < luma(ground) - 0.1, "{leaves:?} {ground:?}");
         assert!(leaves.x > leaves.z + 0.03, "{leaves:?}");
         assert!(litter.color.chunks(4).all(|p| p[3] == 255));
-        // Missing files are an error, not a panic.
+        // Los archivos faltantes son un error, no un pánico.
         assert!(load_litter(Path::new("/nonexistent")).is_err());
     }
 
@@ -726,7 +740,7 @@ mod tests {
             "{t:?}"
         );
         assert!(t[3] == 1.0 || t[3] == -1.0);
-        // On a slope it leans with the ground and stays unit length.
+        // En una pendiente se inclina con el suelo y mantiene largo unitario.
         let slope = [
             Vec3::ZERO,
             Vec3::new(1.0, 0.5, 0.0),

@@ -1,41 +1,44 @@
-//! Placing many towns in one world: each is generated at its own `origin`,
-//! then checked against the world edge and the towns placed before it.
+//! Ubicación de muchos pueblos en un mismo mundo: cada uno se genera en su
+//! propio `origin` y después se comprueba contra el borde del mundo y contra
+//! los pueblos ubicados antes.
 
 use std::fmt;
 
 use crate::{Aabb, TownConfig, TownConfigError, TownLayout, WorldConfig};
 
-/// Why a town was left out of the world.
+/// Por qué un pueblo quedó fuera del mundo.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlacementError {
-    /// The town's own config cannot be built.
+    /// No se puede construir la configuración propia del pueblo.
     Invalid {
-        /// Position of the town in the list.
+        /// Posición del pueblo en la lista.
         index: usize,
         name: String,
         error: TownConfigError,
     },
-    /// The town, its leveled band or its railway reach past the world edge.
+    /// El pueblo, su franja nivelada o su vía férrea se salen del borde del
+    /// mundo.
     OutsideWorld {
         index: usize,
         name: String,
-        /// Farthest the town reaches from the world center along an axis.
+        /// Lo más lejos que llega el pueblo desde el centro del mundo a lo
+        /// largo de un eje.
         reach: f32,
-        /// The world's half extent.
+        /// La mitad de la extensión del mundo.
         limit: f32,
     },
-    /// The town (with its leveled band and railway) overlaps a town placed
-    /// before it.
+    /// El pueblo (con su franja nivelada y su vía férrea) se superpone con un
+    /// pueblo ubicado antes.
     OverlapsTown {
         index: usize,
         name: String,
-        /// The town already there.
+        /// El pueblo que ya estaba.
         other: String,
     },
 }
 
 impl PlacementError {
-    /// Position of the rejected town in the list.
+    /// Posición del pueblo rechazado en la lista.
     pub fn index(&self) -> usize {
         match self {
             Self::Invalid { index, .. }
@@ -44,7 +47,7 @@ impl PlacementError {
         }
     }
 
-    /// Name of the rejected town.
+    /// Nombre del pueblo rechazado.
     pub fn name(&self) -> &str {
         match self {
             Self::Invalid { name, .. }
@@ -82,10 +85,10 @@ impl std::error::Error for PlacementError {
     }
 }
 
-/// Generates every town of `configs` in `world`, in order. A town is left
-/// out (with an error naming it) when its config is invalid, when it
-/// reaches past the world edge, or when it overlaps a town placed before
-/// it. The placed towns come back in list order.
+/// Genera todos los pueblos de `configs` en `world`, en orden. Un pueblo queda
+/// fuera (con un error que lo nombra) cuando su configuración es inválida,
+/// cuando se sale del borde del mundo o cuando se superpone con un pueblo
+/// ubicado antes. Los pueblos ubicados se devuelven en el orden de la lista.
 pub fn place_towns(
     world: &WorldConfig,
     configs: &[TownConfig],
@@ -125,8 +128,8 @@ pub fn place_towns(
     (placed, errors)
 }
 
-/// Farthest the town's leveled ground or railway reaches from the world
-/// center along either axis, in meters.
+/// Lo más lejos que llegan el terreno nivelado o la vía férrea del pueblo desde
+/// el centro del mundo, sobre cualquiera de los dos ejes, en metros.
 fn reach(town: &TownLayout) -> f32 {
     std::iter::once(town.leveled())
         .chain(town.rail_corridor())
@@ -135,8 +138,8 @@ fn reach(town: &TownLayout) -> f32 {
         .fold(0.0, f32::max)
 }
 
-/// Whether two towns get in each other's way: either one's leveled ground
-/// meets the other's, or a railway runs across the other town.
+/// Si dos pueblos se estorban entre sí: el terreno nivelado de uno toca el del
+/// otro, o una vía férrea atraviesa el otro pueblo.
 fn clash(a: &TownLayout, b: &TownLayout) -> bool {
     let rails = |t: &TownLayout| t.rail_corridor().into_iter().collect::<Vec<Aabb>>();
     a.leveled().intersects(&b.leveled())
@@ -199,8 +202,8 @@ mod tests {
 
     #[test]
     fn a_railway_running_through_another_town_is_an_overlap() {
-        // A railway-less town on the line of Castex's track, east of the
-        // grid but inside the track's run-out.
+        // Un pueblo sin vía férrea sobre la línea de la vía de Castex, al este
+        // de la cuadrícula pero dentro del tramo final de la vía.
         let castex = TownLayout::castex_inspired();
         let rail = castex.railway.expect("a railway");
         let configs = [
@@ -240,7 +243,7 @@ mod tests {
             message.contains("Borde") && message.contains("world edge"),
             "{message}"
         );
-        // A smaller world rejects even the town at the center.
+        // Un mundo más chico rechaza incluso el pueblo del centro.
         let small = WorldConfig {
             half_extent: 300.0,
             chunk_size: 100.0,

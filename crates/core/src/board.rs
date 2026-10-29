@@ -1,51 +1,53 @@
-//! The timetable board of a station: every stop of every train at a town,
-//! read off the trains themselves (never typed in), earliest first.
+//! La pizarra de horarios de una estación: todas las paradas de todos los
+//! trenes en un pueblo, leídas de los propios trenes (nunca cargadas a mano),
+//! de la más temprana a la más tardía.
 
 use crate::BASE_RATE;
 use crate::{LineTrain, TimeOfDay, TownLayout, train::Run};
 
-/// What kind of service a train is.
+/// Qué tipo de servicio es un tren.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Service {
-    /// The line train, which runs the whole line.
+    /// El tren de la línea, que recorre la línea entera.
     Line,
-    /// A branch shuttle.
+    /// Una lanzadera de un ramal.
     Shuttle,
 }
 
-/// Which way a row's train goes, by town name.
+/// Hacia dónde va el tren de una fila, según el nombre del pueblo.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Bound {
-    /// The train carries on toward this town (the terminal of its run).
+    /// El tren sigue hacia este pueblo (la terminal de su recorrido).
     Towards(String),
-    /// The run ends at the board's own town; it came from this one.
+    /// El recorrido termina en el pueblo de la propia pizarra; vino desde este.
     From(String),
 }
 
-/// One stop of one train at a station.
+/// Una parada de un tren en una estación.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BoardRow {
-    /// The train's index among the world's trains.
+    /// El índice del tren entre los trenes del mundo.
     pub train: usize,
     pub service: Service,
     pub bound: Bound,
-    /// When it comes in; `None` where the run starts, so it only leaves.
+    /// Cuándo llega; `None` donde empieza el recorrido, porque ahí solo sale.
     pub arrive: Option<TimeOfDay>,
-    /// When it goes on; `None` where the run ends, so it only arrives.
+    /// Cuándo sigue viaje; `None` donde termina el recorrido, porque ahí solo
+    /// llega.
     pub depart: Option<TimeOfDay>,
 }
 
 impl BoardRow {
-    /// The time the row is listed by: when it leaves, else when it comes in.
+    /// La hora por la que se lista la fila: cuándo sale o, si no, cuándo llega.
     pub fn at(&self) -> TimeOfDay {
         self.depart.or(self.arrive).unwrap_or_default()
     }
 }
 
-/// Every stop at `town` of each of `trains` (the line train first, then the
-/// shuttles), sorted by time, with the departures taken from each train's
-/// timetable and the stop times from its run. Empty for a town no train
-/// stops at.
+/// Todas las paradas en `town` de cada uno de los `trains` (primero el tren de
+/// la línea, después las lanzaderas), ordenadas por hora, con las salidas
+/// tomadas del horario de cada tren y los tiempos de parada de su recorrido.
+/// Vacía para un pueblo donde no para ningún tren.
 pub fn station_board(trains: &[LineTrain], towns: &[TownLayout], town: usize) -> Vec<BoardRow> {
     let name = |t: usize| towns.get(t).map_or_else(String::new, |t| t.name.clone());
     let mut rows = Vec::new();
@@ -115,8 +117,9 @@ mod tests {
         let (towns, line, shuttle) = branched_trains(Timetable::default());
         let rows = station_board(&[line.clone(), shuttle.clone()], &towns, MEDIO);
         let of = |train: usize| rows.iter().filter(move |r| r.train == train);
-        // Line train: down (Oeste -> Este) at 16:00, up at 07:00; each
-        // stops here, so each has both an arrival and a departure.
+        // Tren de la línea: de bajada (Oeste -> Este) a las 16:00, de subida a
+        // las 07:00; los dos paran aquí, así que cada uno tiene una llegada y
+        // una salida.
         assert_eq!(of(0).count(), 2);
         for row in of(0) {
             assert_eq!(row.service, Service::Line);
@@ -130,7 +133,7 @@ mod tests {
         assert!(line_bounds.contains(&&line_bound(Run::Down)));
         assert!(line_bounds.contains(&&line_bound(Run::Up)));
         assert_ne!(line_bound(Run::Down), line_bound(Run::Up));
-        // Shuttle: two departures to Norte and two arrivals from it.
+        // Lanzadera: dos salidas hacia Norte y dos llegadas desde ahí.
         let leaving: Vec<_> = of(1).filter(|r| r.depart.is_some()).collect();
         let coming: Vec<_> = of(1).filter(|r| r.depart.is_none()).collect();
         assert_eq!((leaving.len(), coming.len()), (2, 2));
@@ -143,8 +146,9 @@ mod tests {
         assert!(leaving.iter().all(|r| r.arrive.is_none()));
         assert!(coming.iter().all(|r| r.bound == Bound::From(norte.clone())));
         assert!(coming.iter().all(|r| r.service == Service::Shuttle));
-        // Times come from the timetable: each shuttle departure is a listed
-        // one, and each arrival is the run's time after a listed departure.
+        // Las horas salen del horario: cada salida de la lanzadera es una de
+        // las listadas, y cada llegada es el tiempo del recorrido después de
+        // una salida listada.
         let listed: Vec<f64> = shuttle
             .timetable()
             .down
@@ -158,7 +162,8 @@ mod tests {
         for row in &coming {
             assert!(up_arrivals.contains(&row.arrive.unwrap()));
         }
-        // The line train's arrival and departure are its own stop times.
+        // La llegada y la salida del tren de la línea son sus propios tiempos
+        // de parada.
         let station = line.station_of_town(MEDIO).unwrap();
         for run in [Run::Down, Run::Up] {
             let arrivals = line.arrivals_at(run, station);
@@ -176,7 +181,8 @@ mod tests {
             end.iter()
                 .all(|r| r.train == 1 && r.service == Service::Shuttle)
         );
-        // The shuttle starts its up runs here and ends its down runs.
+        // La lanzadera empieza aquí sus recorridos de subida y termina los de
+        // bajada.
         assert_eq!(end.iter().filter(|r| r.arrive.is_none()).count(), 2);
         assert_eq!(end.iter().filter(|r| r.depart.is_none()).count(), 2);
         assert!(
@@ -187,8 +193,8 @@ mod tests {
             end.iter()
                 .any(|r| r.bound == Bound::From(towns[MEDIO].name.clone()))
         );
-        // A terminal of the line: the line train's run leaves it and the
-        // other ends there.
+        // Una terminal de la línea: el recorrido del tren de la línea sale de
+        // ahí y el otro termina ahí.
         for town in [0, 2] {
             let rows = station_board(&trains, &towns, town);
             assert_eq!(rows.len(), 2, "town {town}");
@@ -199,7 +205,7 @@ mod tests {
             assert_eq!(rows.iter().filter(|r| r.arrive.is_none()).count(), 1);
             assert_eq!(rows.iter().filter(|r| r.depart.is_none()).count(), 1);
         }
-        // A town no train stops at has an empty board.
+        // Un pueblo donde no para ningún tren tiene la pizarra vacía.
         assert!(station_board(&trains, &towns, 99).is_empty());
     }
 
@@ -235,8 +241,9 @@ mod tests {
         for train in [0, 1] {
             assert_ne!(times(&rows, train), times(&moved, train), "train {train}");
         }
-        // The line train's rows are the shifted stops themselves: the run
-        // that leaves the far end at 09:30 is at Medio 10:42 to 10:55.
+        // Las filas del tren de la línea son las propias paradas desplazadas:
+        // el recorrido que sale del otro extremo a las 09:30 está en Medio de
+        // 10:42 a 10:55.
         let shown: Vec<(String, String)> = moved
             .iter()
             .filter(|r| r.train == 0)

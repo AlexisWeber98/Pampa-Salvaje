@@ -1,12 +1,12 @@
-//! The tracks and the trodden yards, laid over the ground like the roads
-//! (see [`crate::road`]) but with no terrain cut.
+//! Las huellas y los patios pisoteados, tendidos sobre el suelo como los
+//! caminos (ver [`crate::road`]) pero sin corte de terreno.
 //!
-//! A track is a strip [`Track::HALF_WIDTH`] meters to either side of its
-//! line, sampled every [`STEP`] meters so it drapes over the drawn ground.
-//! Across it the vertex alpha draws two wheel ruts of dry mud, the grass
-//! showing through between them and beyond feathered edges. Patios and
-//! corral floors are square patches of dry ground, opaque inside and
-//! feathered at their rim.
+//! Una huella es una franja de [`Track::HALF_WIDTH`] metros a cada lado de su
+//! línea, muestreada cada [`STEP`] metros para que se apoye sobre el suelo
+//! dibujado. A lo ancho, el alfa por vertex dibuja dos surcos de rueda de barro
+//! seco, con el pasto asomando entre ellos y más allá de los bordes
+//! difuminados. Los patios y los pisos de corral son parches cuadrados de
+//! tierra seca, opacos por dentro y difuminados en el borde.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::PrimitiveTopology;
@@ -17,16 +17,16 @@ use super::materials::Surface;
 use crate::coords::world_from_ground;
 use crate::ground::face_tangent;
 
-/// How far the decals float over the drawn ground, in meters.
+/// Cuánto flotan los decals sobre el suelo dibujado, en metros.
 pub(crate) const LIFT: f32 = 0.04;
-/// Sample spacing along a track, in meters.
+/// Separación entre muestras a lo largo de una huella, en metros.
 pub(crate) const STEP: f32 = 2.0;
-/// Width of a yard's feathered rim, in meters.
+/// Ancho del borde difuminado de un patio, en metros.
 const YARD_FEATHER: f32 = 2.0;
 
-/// The track's cross-section: offset from its line (in units of
-/// [`Track::HALF_WIDTH`]) and opacity. Two ruts of bare mud, a strip of
-/// thin grass between, and feathered shoulders.
+/// El corte transversal de la huella: desplazamiento desde su línea (en
+/// unidades de [`Track::HALF_WIDTH`]) y opacidad. Dos surcos de barro pelado,
+/// una franja de pasto ralo entre ellos y banquinas difuminadas.
 const ACROSS: [(f32, f32); 8] = [
     (-1.25, 0.0),
     (-0.88, 0.85),
@@ -38,7 +38,7 @@ const ACROSS: [(f32, f32); 8] = [
     (1.25, 0.0),
 ];
 
-/// Triangles collected for one decal mesh.
+/// Triángulos reunidos para una mesh de decal.
 #[derive(Default)]
 struct Decal {
     positions: Vec<[f32; 3]>,
@@ -48,7 +48,8 @@ struct Decal {
 }
 
 impl Decal {
-    /// A quad of two triangles, corners counter-clockwise from above.
+    /// Un quad de dos triángulos, con las esquinas en sentido antihorario
+    /// vistas desde arriba.
     fn quad(&mut self, corners: [(Vec3, f32); 4], tile: f32) {
         let [a, b, c, d] = corners;
         for tri in [[a, b, c], [a, c, d]] {
@@ -79,7 +80,8 @@ impl Decal {
     }
 }
 
-/// `points` with extra samples so no piece is longer than [`STEP`].
+/// `points` con muestras extra para que ningún tramo sea más largo que
+/// [`STEP`].
 fn sampled(points: &[GroundVec2]) -> Vec<GroundVec2> {
     let mut out = Vec::new();
     for w in points.windows(2) {
@@ -92,7 +94,8 @@ fn sampled(points: &[GroundVec2]) -> Vec<GroundVec2> {
     out
 }
 
-/// One mesh (world space) for every track in `tracks`, on the `ground`.
+/// Una mesh (en espacio de mundo) para todas las huellas de `tracks`, sobre el
+/// `ground`.
 pub(crate) fn tracks_mesh(tracks: &[&Track], ground: &impl Fn(GroundVec2) -> f32) -> Option<Mesh> {
     let tile = Surface::Mud.tile();
     let mut decal = Decal::default();
@@ -101,7 +104,7 @@ pub(crate) fn tracks_mesh(tracks: &[&Track], ground: &impl Fn(GroundVec2) -> f32
         if points.len() < 2 {
             continue;
         }
-        // The across direction at each sample, mitred at the bends.
+        // La dirección transversal en cada muestra, en inglete en las curvas.
         let normal = |d: GroundVec2| {
             let len = d.length().max(1e-6);
             GroundVec2::new(-d.y / len, d.x / len)
@@ -122,7 +125,7 @@ pub(crate) fn tracks_mesh(tracks: &[&Track], ground: &impl Fn(GroundVec2) -> f32
             .collect();
         for w in rows.windows(2) {
             for j in 0..ACROSS.len() - 1 {
-                // Counter-clockwise seen from above (north is -Z).
+                // En sentido antihorario visto desde arriba (el norte es -Z).
                 decal.quad([w[0][j], w[1][j], w[1][j + 1], w[0][j + 1]], tile);
             }
         }
@@ -133,8 +136,9 @@ pub(crate) fn tracks_mesh(tracks: &[&Track], ground: &impl Fn(GroundVec2) -> f32
     })
 }
 
-/// One mesh (world space) for the trodden `yards`: opaque inside, feathered
-/// over [`YARD_FEATHER`] meters at their rim, on the `ground`.
+/// Una mesh (en espacio de mundo) para los patios pisoteados `yards`: opacos
+/// por dentro, difuminados a lo largo de [`YARD_FEATHER`] metros en su borde,
+/// sobre el `ground`.
 pub(crate) fn yards_mesh(yards: &[Aabb], ground: &impl Fn(GroundVec2) -> f32) -> Option<Mesh> {
     let tile = Surface::Yard.tile();
     let mut decal = Decal::default();
@@ -172,19 +176,20 @@ pub(crate) fn yards_mesh(yards: &[Aabb], ground: &impl Fn(GroundVec2) -> f32) ->
     })
 }
 
-/// Width of an earth walk's feathered rim, in meters.
+/// Ancho del borde difuminado de un sendero de tierra, en metros.
 const WALK_FEATHER: f32 = 2.0;
-/// Sample spacing over an earth walk, in meters.
+/// Separación entre muestras sobre un sendero de tierra, en metros.
 const WALK_STEP: f32 = 1.0;
-/// The most opaque an earth walk gets along its middle.
+/// La máxima opacidad que alcanza un sendero de tierra a lo largo de su centro.
 pub(crate) const WALK_OPACITY: f32 = 0.9;
 
-/// One mesh (world space) for the beaten-earth walks of a town: each group
-/// of strips (a block's ring) the trodden dirt of [`Surface::Yard`], opaque
-/// along the middle of each strip and feathered over [`WALK_FEATHER`] meters
-/// at its edges into the ground beside it, a few centimeters over the
-/// `ground`. Within a group the alpha is the larger of the strips', so a
-/// corner shows no seam.
+/// Una mesh (en espacio de mundo) para los senderos de tierra apisonada de un
+/// pueblo: cada grupo de franjas (el anillo de una manzana) es la tierra
+/// pisoteada de [`Surface::Yard`], opaca a lo largo del centro de cada franja y
+/// difuminada a lo largo de [`WALK_FEATHER`] metros en sus bordes hacia el
+/// suelo de al lado, unos centímetros por encima del `ground`. Dentro de un
+/// grupo el alfa es el mayor de los de las franjas, así que una esquina no
+/// muestra costura.
 pub(crate) fn walks_mesh(
     groups: &[Vec<Aabb>],
     ground: &impl Fn(GroundVec2) -> f32,
@@ -243,7 +248,8 @@ pub(crate) fn walks_mesh(
     })
 }
 
-/// Samples from `lo` to `hi` at most [`STEP`] apart, both ends included.
+/// Muestras desde `lo` hasta `hi` separadas como mucho [`STEP`], con ambos
+/// extremos incluidos.
 fn grid(lo: f32, hi: f32) -> Vec<f32> {
     let n = (((hi - lo) / STEP).ceil() as usize).max(1);
     (0..=n)
@@ -251,9 +257,9 @@ fn grid(lo: f32, hi: f32) -> Vec<f32> {
         .collect()
 }
 
-/// Turns every triangle of a ground decal to face up, whichever way its
-/// corners were wound (a track's turn decides it), and recomputes its
-/// normals.
+/// Hace que cada triángulo de un decal del suelo mire hacia arriba, sin
+/// importar en qué sentido estuvieran ordenadas sus esquinas (lo decide el giro
+/// de la huella), y vuelve a calcular sus normales.
 fn orient_up(mesh: &mut Mesh) {
     let Some(bevy::mesh::VertexAttributeValues::Float32x3(points)) =
         mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION)

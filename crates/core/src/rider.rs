@@ -1,24 +1,29 @@
-//! Kinematic rider (horse + outlaw) model.
+//! Modelo cinemático del jinete (caballo + forajido).
 
 use crate::{AnimationState, Body, Circle, Ground, Heading, StaticObstacles, Travel, Vec2, World};
 
-/// Longest step the game feeds the simulation, in seconds, so a hitch never
-/// teleports anything. [`Rider::step`] stays safe for longer steps anyway.
+/// El paso más largo que el juego le pasa a la simulación, en segundos, para
+/// que un tirón nunca teletransporte nada. De todos modos, [`Rider::step`]
+/// sigue siendo seguro con pasos más largos.
 pub const MAX_STEP: f32 = 1.0 / 20.0;
 
-/// Cap on collision sub-steps per step, so a huge `dt` cannot stall a frame.
+/// Límite de subpasos de colisión por paso, para que un `dt` enorme no pueda
+/// trabar un frame.
 const MAX_SUBSTEPS: usize = 32;
 
-/// Tuning for the kinematic rider model. Speeds in m/s, rates per second.
+/// Ajuste del modelo cinemático del jinete. Velocidades en m/s, tasas por
+/// segundo.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RiderParams {
-    /// Turn rate in radians per second at full turn input.
+    /// Velocidad de giro en radianes por segundo con la entrada de giro al
+    /// máximo.
     pub turn_rate: f32,
-    /// Forward acceleration at full throttle.
+    /// Aceleración hacia adelante con el acelerador a fondo.
     pub acceleration: f32,
-    /// Deceleration when throttling against the current motion.
+    /// Desaceleración al acelerar en contra del movimiento actual.
     pub braking: f32,
-    /// Passive deceleration with no throttle, or above the gait's top speed.
+    /// Desaceleración pasiva sin acelerar, o por encima de la velocidad máxima
+    /// de la marcha.
     pub friction: f32,
     pub walk_max: f32,
     pub gallop_max: f32,
@@ -33,72 +38,77 @@ impl Default for RiderParams {
             braking: 8.0,
             friction: 3.0,
             walk_max: 3.0,
-            // 49 km/h (user, 2026-10-29; it was 44).
+            // 49 km/h (usuario, 2026-10-29; antes era 44).
             gallop_max: 49.0 / 3.6,
             reverse_max: 1.2,
         }
     }
 }
 
-/// Player or AI intent for one simulation step.
+/// Intención del jugador o de la IA para un paso de simulación.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct RiderInput {
-    /// `-1.0..=1.0`: forward throttle, negative brakes then backs up.
+    /// `-1.0..=1.0`: acelerador hacia adelante; los valores negativos frenan y
+    /// después hacen retroceder.
     pub throttle: f32,
-    /// `-1.0..=1.0`: positive turns left (counter-clockwise).
+    /// `-1.0..=1.0`: los valores positivos giran a la izquierda (sentido
+    /// antihorario).
     pub turn: f32,
-    /// Hold to allow galloping speeds.
+    /// Mantener presionado para permitir velocidades de galope.
     pub gallop: bool,
 }
 
-/// Logical rider state.
+/// Estado lógico del jinete.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Rider {
     pub position: Vec2,
-    /// Ground height under the rider ([`World::ground_height`]: the terrain
-    /// or a platform), kept in sync as it moves.
+    /// Altura del suelo bajo el jinete ([`World::ground_height`]: el terreno o
+    /// un andén), sincronizada a medida que se mueve.
     pub height: f32,
     pub heading: Heading,
-    /// Signed speed along the heading, in m/s.
+    /// Velocidad con signo en la dirección de la orientación, en m/s.
     pub speed: f32,
     pub collider: Circle,
-    /// How high a jumping horse is above [`Self::height`], in meters; 0 on
-    /// the ground.
+    /// A qué altura está un caballo que salta por encima de [`Self::height`],
+    /// en metros; 0 en el suelo.
     pub air: f32,
-    /// Upward speed while jumping, in m/s (negative coming down); 0 on the
-    /// ground.
+    /// Velocidad hacia arriba durante el salto, en m/s (negativa al bajar); 0
+    /// en el suelo.
     pub lift: f32,
 }
 
 impl Rider {
-    /// Collision radius of a horse and rider seen from above, in meters.
+    /// Radio de colisión de un caballo con su jinete visto desde arriba, en
+    /// metros.
     pub const COLLIDER_RADIUS: f32 = 0.9;
 
-    /// Farthest the rider moves in one collision sub-step, in meters.
+    /// Lo más lejos que se mueve el jinete en un subpaso de colisión, en
+    /// metros.
     ///
-    /// A circle cannot tunnel through a box while each move is shorter than
-    /// its radius plus the box half-width; half the rider's radius keeps a
-    /// wide margin even for the thinnest obstacle (a 0.7 m tree trunk).
+    /// Un círculo no puede atravesar un rectángulo mientras cada movimiento sea
+    /// más corto que su radio más el medio ancho del rectángulo; la mitad del
+    /// radio del jinete deja un margen amplio incluso para el obstáculo más
+    /// delgado (un tronco de árbol de 0,7 m).
     pub const MAX_SUBSTEP_DISTANCE: f32 = Self::COLLIDER_RADIUS * 0.5;
 
-    /// Upward speed a horse takes off with, in m/s: the arc peaks about
-    /// 1.55 m up, above a fence's wires ([`crate::FenceLayout::HEIGHT`]).
-    /// The user asked for a 4 % higher jump than the first 5.4 m/s
-    /// (1.49 m) on 2026-10-29.
+    /// Velocidad hacia arriba con la que despega un caballo, en m/s: el arco
+    /// alcanza su punto más alto a unos 1,55 m, por encima de los alambres de
+    /// un alambrado ([`crate::FenceLayout::HEIGHT`]). El usuario pidió el
+    /// 2026-10-29 un salto un 4 % más alto que los 5,4 m/s (1,49 m) iniciales.
     pub const JUMP_SPEED: f32 = 5.51;
 
-    /// Downward acceleration in the air, in m/s².
+    /// Aceleración hacia abajo en el aire, en m/s².
     pub const GRAVITY: f32 = 9.81;
 
-    /// Share of the gallop's top speed ([`RiderParams::gallop_max`]) a
-    /// horse must be going to jump: only at full gallop (85 %, the user's
-    /// choice on 2026-10-29).
+    /// Fracción de la velocidad máxima del galope ([`RiderParams::gallop_max`])
+    /// a la que debe ir un caballo para saltar: solo a galope tendido (85 %,
+    /// elección del usuario el 2026-10-29).
     pub const FULL_GALLOP: f32 = 0.85;
 
-    /// How many collision sub-steps a step of `dt` seconds needs so that no
-    /// sub-step moves farther than [`Self::MAX_SUBSTEP_DISTANCE`].
+    /// Cuántos subpasos de colisión necesita un paso de `dt` segundos para que
+    /// ningún subpaso avance más que [`Self::MAX_SUBSTEP_DISTANCE`].
     pub fn substeps(&self, params: &RiderParams, dt: f32) -> usize {
-        // Upper bound on the speed reached during the step.
+        // Cota superior de la velocidad alcanzada durante el paso.
         let fastest = self.speed.abs() + params.acceleration.max(params.braking) * dt;
         let reach = fastest * dt;
         let n = (reach / Self::MAX_SUBSTEP_DISTANCE).ceil();
@@ -109,8 +119,8 @@ impl Rider {
         }
     }
 
-    /// A horseback rider at rest at `position`, standing on `ground`
-    /// (pass the [`World`] so platforms count).
+    /// Un jinete a caballo en reposo en `position`, parado sobre `ground`
+    /// (pasar el [`World`] para que cuenten los andenes).
     pub fn new(position: Vec2, heading: Heading, ground: &(impl Ground + ?Sized)) -> Self {
         Self {
             position,
@@ -123,11 +133,11 @@ impl Rider {
         }
     }
 
-    /// Makes a horse at full gallop ([`Self::FULL_GALLOP`] of `params`'
-    /// top speed) jump; it rises at [`Self::JUMP_SPEED`] and clears the
-    /// low obstacles it gets higher than ([`World::resolve_above`]).
-    /// Returns whether it took off: never on foot, slower, or already in
-    /// the air.
+    /// Hace saltar a un caballo a galope tendido ([`Self::FULL_GALLOP`] de la
+    /// velocidad máxima de `params`); sube a [`Self::JUMP_SPEED`] y supera los
+    /// obstáculos bajos por encima de los cuales llega
+    /// ([`World::resolve_above`]). Devuelve si despegó: nunca a pie, más
+    /// despacio o si ya está en el aire.
     pub fn jump(&mut self, params: &RiderParams) -> bool {
         let takes_off = self.travel() == Travel::Riding
             && self.speed >= Self::FULL_GALLOP * params.gallop_max
@@ -138,14 +148,14 @@ impl Rider {
         takes_off
     }
 
-    /// Whether a jump has it off the ground.
+    /// Si un salto lo tiene despegado del suelo.
     pub fn airborne(&self) -> bool {
         self.air > 0.0 || self.lift > 0.0
     }
 
-    /// How far through its jump's flight it is, `0..=1` (none on the ground):
-    /// the time since takeoff over the flight's length, so the animation
-    /// follows the same arc the physics flies.
+    /// Qué parte del vuelo de su salto lleva recorrida, `0..=1` (nada en el
+    /// suelo): el tiempo desde el despegue sobre la duración del vuelo, para
+    /// que la animación siga el mismo arco que recorre la física.
     pub fn flight(&self) -> Option<f32> {
         if !self.airborne() {
             return None;
@@ -154,9 +164,9 @@ impl Rider {
         Some((aloft / (2.0 * Self::JUMP_SPEED / Self::GRAVITY)).clamp(0.0, 1.0))
     }
 
-    /// How high above the ground it is for collision: a jump's height, or
-    /// on the ground [`StaticObstacles::ON_GROUND`] (every footprint
-    /// blocks it).
+    /// A qué altura sobre el suelo está a efectos de la colisión: la altura de
+    /// un salto o, en el suelo, [`StaticObstacles::ON_GROUND`] (toda huella lo
+    /// bloquea).
     fn clearance(&self) -> f32 {
         if self.airborne() {
             self.air
@@ -165,15 +175,15 @@ impl Rider {
         }
     }
 
-    /// The height it is at: the ground's plus any jump's.
+    /// La altura a la que está: la del suelo más la de cualquier salto.
     pub fn elevation(&self) -> f32 {
         self.height + self.air
     }
 
-    /// Advances the rider by `dt` seconds inside `world`.
+    /// Hace avanzar al jinete `dt` segundos dentro de `world`.
     ///
-    /// Non-finite turn or throttle input counts as no input, and a
-    /// non-finite or non-positive `dt` leaves the rider untouched.
+    /// Una entrada de giro o de aceleración no finita cuenta como ausencia de
+    /// entrada, y un `dt` no finito o no positivo deja al jinete sin cambios.
     pub fn step(&mut self, input: RiderInput, params: &RiderParams, world: &World, dt: f32) {
         if !(dt.is_finite() && dt > 0.0) {
             return;
@@ -183,7 +193,8 @@ impl Rider {
             turn: finite_or_zero(input.turn).clamp(-1.0, 1.0),
             gallop: input.gallop,
         };
-        // Short sub-steps so fast moves cannot skip over thin obstacles.
+        // Subpasos cortos para que los movimientos rápidos no puedan saltearse
+        // obstáculos delgados.
         let n = self.substeps(params, dt);
         let sub_dt = dt / n as f32;
         for _ in 0..n {
@@ -192,10 +203,10 @@ impl Rider {
         self.height = world.ground_height(self.position);
     }
 
-    /// One collision sub-step with already sanitized input.
+    /// Un subpaso de colisión con la entrada ya saneada.
     ///
-    /// In the air the horse holds its heading and speed (only an obstacle
-    /// stops it) and falls under [`Self::GRAVITY`], landing at 0.
+    /// En el aire el caballo mantiene su orientación y su velocidad (solo un
+    /// obstáculo lo detiene) y cae bajo [`Self::GRAVITY`], aterrizando en 0.
     fn substep(&mut self, input: RiderInput, params: &RiderParams, world: &World, dt: f32) {
         if self.airborne() {
             self.air += (self.lift - Self::GRAVITY * dt / 2.0) * dt;
@@ -218,8 +229,8 @@ impl Rider {
         }
     }
 
-    /// Pushes the rider out of every overlapping obstacle it is not jumping
-    /// over, sliding along walls.
+    /// Saca al jinete de todos los obstáculos con los que se superpone y que no
+    /// está saltando, deslizándolo a lo largo de las paredes.
     fn resolve_obstacles(&mut self, world: &World) {
         let mut normals = Vec::new();
         self.position = world.resolve_above(self.collider, self.position, self.clearance(), |n| {
@@ -230,18 +241,20 @@ impl Rider {
         }
     }
 
-    /// Removes the part of the rider's velocity that points against `normal`
-    /// (the unit direction a wall pushed the rider in), so it slides along
-    /// walls instead of sticking.
+    /// Quita la parte de la velocidad del jinete que apunta en contra de
+    /// `normal` (la dirección unitaria en la que una pared empujó al jinete),
+    /// para que se deslice a lo largo de las paredes en lugar de quedarse
+    /// pegado.
     fn block(&mut self, normal: Vec2) {
         let along_normal = self.heading.forward().dot(normal);
         if self.speed * along_normal < 0.0 {
-            // v' = v - (v.n) n, projected back onto the (unchanged) heading.
+            // v' = v - (v.n) n, proyectada de nuevo sobre la orientación (sin
+            // cambios).
             self.speed -= self.speed * along_normal * along_normal;
         }
     }
 
-    /// Where this rider stands, as an obstacle for others.
+    /// Dónde está este jinete, como obstáculo para los demás.
     pub fn body(&self) -> Body {
         Body {
             position: self.position,
@@ -249,9 +262,10 @@ impl Rider {
         }
     }
 
-    /// Moves the rider out of any of `bodies` it still overlaps (people
-    /// pinned against a wall that could not make way), stopping its motion
-    /// into them. A jumping horse stays clear of what it is jumping over.
+    /// Saca al jinete de cualquiera de los `bodies` con los que todavía se
+    /// superpone (personas atrapadas contra una pared que no pudieron
+    /// apartarse), deteniendo su movimiento hacia ellas. Un caballo que salta
+    /// se mantiene lejos de lo que está saltando.
     pub fn keep_clear_of(&mut self, world: &World, bodies: &[Body]) {
         let mut normals = Vec::new();
         let (collider, position) = (self.collider, self.position);
@@ -274,7 +288,7 @@ fn finite_or_zero(value: f32) -> f32 {
     if value.is_finite() { value } else { 0.0 }
 }
 
-/// Moves `value` toward `target` by at most `max_delta`, never overshooting.
+/// Mueve `value` hacia `target` como mucho `max_delta`, sin pasarse nunca.
 fn approach(value: f32, target: f32, max_delta: f32) -> f32 {
     if value < target {
         (value + max_delta).min(target)
@@ -289,7 +303,8 @@ fn next_speed(speed: f32, throttle: f32, gallop: bool, p: &RiderParams, dt: f32)
         if speed < 0.0 {
             approach(speed, 0.0, p.braking * throttle * dt)
         } else if speed > top {
-            // Dropping out of a gallop: ease down instead of snapping.
+            // Al salir de un galope: bajar suavemente en lugar de cambiar de
+            // golpe.
             approach(speed, top, p.friction * dt)
         } else {
             approach(speed, top, p.acceleration * throttle * dt)
@@ -337,8 +352,8 @@ mod tests {
         gallop: false,
     };
 
-    /// The default world with a fence across the way east, 1.3 m tall, its
-    /// middle at `x`.
+    /// El mundo por defecto con un alambrado de 1,3 m de alto que corta el
+    /// camino hacia el este, con su centro en `x`.
     fn fenced_at(x: f32) -> World {
         let mut world = World::default();
         let span = Aabb::from_center_size(Vec2::new(x, -2.0), Vec2::new(0.15, 40.0));
@@ -346,8 +361,8 @@ mod tests {
         world
     }
 
-    /// Rides east with `input` from (3, -2) until `x`, jumps there (when
-    /// `jump`), then keeps riding for `seconds`.
+    /// Cabalga hacia el este con `input` desde (3, -2) hasta `x`, salta ahí
+    /// (cuando `jump`) y después sigue cabalgando durante `seconds`.
     fn ride_at_fence(world: &World, input: RiderInput, x: f32, jump: bool, seconds: f32) -> Rider {
         let p = RiderParams::default();
         let mut r = Rider::new(Vec2::new(3.0, -2.0), Heading::from_radians(0.0), world);
@@ -394,7 +409,7 @@ mod tests {
         let speed = r.speed;
         assert!(r.jump(&p));
         assert!(r.airborne());
-        // One jump at a time.
+        // Un salto por vez.
         assert!(!r.jump(&p));
         let mut peak: f32 = 0.0;
         for _ in 0..(1.3 / DT) as usize {
@@ -404,7 +419,7 @@ mod tests {
             assert!((r.elevation() - r.height - r.air).abs() < 1e-6);
         }
         assert!((1.5..1.6).contains(&peak), "{peak}");
-        // Down again, on the ground, and slowing once it lands.
+        // Otra vez abajo, en el suelo, y frenando una vez que aterriza.
         assert!(!r.airborne());
         assert_eq!((r.air, r.lift), (0.0, 0.0));
         assert!(r.speed < speed);
@@ -440,7 +455,7 @@ mod tests {
         let (mut r, p, t) = rider();
         run(&mut r, GALLOP, &p, &t, 3.5);
         assert!(r.jump(&p));
-        // Slow enough to get off, if it were on the ground.
+        // Lo bastante lento como para bajarse, si estuviera en el suelo.
         r.speed = 0.8;
         let (heading, speed) = (r.heading, r.speed);
         let turn_and_brake = RiderInput {
@@ -457,7 +472,8 @@ mod tests {
     #[test]
     fn a_galloping_jump_clears_a_fence() {
         let world = fenced_at(40.0);
-        // Takeoff about where the arc peaks over the wires.
+        // Despegue más o menos donde el arco alcanza su punto más alto sobre
+        // los alambres.
         let r = ride_at_fence(&world, GALLOP, 40.0 - 6.7, true, 1.5);
         assert!(r.position.x > 42.0, "{:?}", r.position);
     }
@@ -467,7 +483,7 @@ mod tests {
         let world = fenced_at(40.0);
         let r = ride_at_fence(&world, GALLOP, 40.0 - 6.7, false, 3.0);
         assert!(r.position.x < 40.0, "no jump: {:?}", r.position);
-        // At a walk Space does nothing: the fence stops it.
+        // Al paso, Espacio no hace nada: el alambrado lo detiene.
         let mut r = ride_at_fence(&world, WALK, 40.0 - 1.65, false, 0.0);
         let p = RiderParams::default();
         assert!(!r.jump(&p));
@@ -483,7 +499,7 @@ mod tests {
         (r.air, r.lift) = (1.4, 0.5);
         r.keep_clear_of(&world, &[]);
         assert_eq!(r.position, over);
-        // On the ground the fence pushes it off as ever.
+        // En el suelo, el alambrado lo empuja hacia afuera como siempre.
         (r.air, r.lift) = (0.0, 0.0);
         r.keep_clear_of(&world, &[]);
         assert!(r.position.x < 30.0 - 0.9, "{:?}", r.position);
@@ -658,7 +674,7 @@ mod tests {
             gallop: true,
             ..Default::default()
         };
-        // A minute of gallop from 200 m short of the east edge.
+        // Un minuto de galope desde 200 m antes del borde este.
         r.position = Vec2::new(t.bounds.max.x - 200.0, 0.0);
         run(&mut r, gallop, &p, &t, 60.0);
         let edge = t.bounds.max.x - Rider::COLLIDER_RADIUS;
@@ -671,7 +687,8 @@ mod tests {
     fn slides_along_world_edge() {
         let (mut r, p, t) = rider();
         r.position = Vec2::new(t.bounds.max.x - Rider::COLLIDER_RADIUS, 0.0);
-        // Heading 30 degrees north of east: into the east edge, partly along it.
+        // Orientación 30 grados al norte del este: hacia el borde este, en parte
+        // a lo largo de él.
         r.heading = Heading::from_radians(30f32.to_radians());
         r.speed = 4.0;
         r.step(RiderInput::default(), &p, &t, DT);
@@ -759,7 +776,7 @@ mod tests {
         let mut world = World::default();
         let size = Vec2::new(2.0, 2.0) * crate::town::TREE_TRUNK_RADIUS;
         world.obstacles.push(Aabb::from_center_size(trunk, size));
-        // 40 m/s moves 2 m per max step: more than radius + half-width.
+        // 40 m/s avanza 2 m por paso máximo: más que radio + medio ancho.
         let params = RiderParams {
             gallop_max: 40.0,
             ..RiderParams::default()
@@ -782,10 +799,10 @@ mod tests {
         }
     }
 
-    /// Gallops a wandering path from `town`'s arrival point for `seconds`,
-    /// turning at `rate` radians of phase per step and checking the rider
-    /// never ends a step inside anything; returns how many steps ended
-    /// touching an obstacle.
+    /// Galopa por un recorrido errante desde el punto de llegada de `town`
+    /// durante `seconds`, girando `rate` radianes de fase por paso y
+    /// comprobando que el jinete nunca termine un paso dentro de algo; devuelve
+    /// cuántos pasos terminaron tocando un obstáculo.
     fn wander_turning(town: &crate::TownLayout, seconds: f32, rate: f32) -> usize {
         let world = World::with_town(Terrain::default(), town);
         let p = RiderParams::default();
@@ -794,7 +811,7 @@ mod tests {
         let reach = Vec2::new(1.0, 1.0) * (2.0 * Rider::COLLIDER_RADIUS + 0.2);
         let mut contacts = 0;
         for frame in 0..(seconds / DT) as usize {
-            // Wander: gallop with a slowly changing turn.
+            // Deambular: galopar con un giro que cambia lentamente.
             let turn = ((frame as f32) * rate).sin() * 0.6;
             let input = RiderInput {
                 throttle: 1.0,
@@ -824,7 +841,8 @@ mod tests {
 
     #[test]
     fn never_ends_a_step_inside_the_buildings_of_any_town() {
-        // A turn rate whose path through Castex runs into buildings.
+        // Una velocidad de giro cuyo recorrido por Castex choca contra
+        // edificios.
         let castex = wander_turning(&crate::TownLayout::castex_inspired(), 240.0, 0.003);
         assert!(castex > 0, "the wander path must actually hit buildings");
         let mut contacts = 0;

@@ -1,32 +1,35 @@
-//! The player's own body, seen from inside it by a first-person camera.
+//! El propio cuerpo del jugador, visto desde adentro por una cámara en primera
+//! persona.
 //!
-//! The game marks the player's entity [`ViewerBody`]. When a character
-//! model under it is dressed (its [`Rig`] goes in, on foot or in the
-//! saddle), [`mark_viewer_head`] does three things to it:
+//! El juego marca la entidad del jugador con [`ViewerBody`]. Cuando se prepara
+//! un modelo de personaje bajo ella (entra su [`Rig`], a pie o en la montura),
+//! [`mark_viewer_head`] le hace tres cosas:
 //!
-//! - it marks the `head` bone [`ViewerHead`]: the camera sits at
-//!   [`EYE_IN_HEAD`] in its frame;
-//! - it moves the meshes round the eyes (the hat and its band, the hair,
-//!   the eyes and eyebrows; see [`is_head_piece`]) to the render layer
-//!   [`OWN_HEAD_LAYER`] alone;
-//! - it cuts the head out of the skin ([`is_skin`]) by its skin weights
-//!   ([`split_head`]): the triangles mostly weighted to the `head` bone
-//!   and the top of the neck ([`head_share`]) go to a mesh of their own
-//!   ([`OwnHead`]), skinned by the same joints, on [`OWN_HEAD_LAYER`] too.
-//!   The cut runs round the neck inside the collar and the neckerchief.
-//!   The two halves are made once per skin asset and shared by every later
-//!   dressing; nothing is done per frame.
+//! - marca el hueso `head` con [`ViewerHead`]: la cámara se ubica en
+//!   [`EYE_IN_HEAD`] en su marco;
+//! - mueve las meshes alrededor de los ojos (el sombrero y su cinta, el pelo,
+//!   los ojos y las cejas; ver [`is_head_piece`]) solo a la capa de render
+//!   [`OWN_HEAD_LAYER`];
+//! - recorta la cabeza de la piel ([`is_skin`]) según sus pesos de skinning
+//!   ([`split_head`]): los triángulos con peso mayoritario en el hueso `head` y
+//!   la parte superior del cuello ([`head_share`]) pasan a una mesh propia
+//!   ([`OwnHead`]), con skinning de las mismas articulaciones, también en
+//!   [`OWN_HEAD_LAYER`]. El corte rodea el cuello por dentro del cuello de la
+//!   camisa y del pañuelo. Las dos mitades se hacen una vez por asset de piel y
+//!   las comparten todas las preparaciones posteriores; no se hace nada por
+//!   frame.
 //!
-//! Every other mesh of the model goes on [`OWN_BODY_LAYER`].
+//! Todas las demás meshes del modelo van en [`OWN_BODY_LAYER`].
 //!
-//! A camera that sees [`world_layers`] draws all of it; a first-person
-//! camera drops [`OWN_HEAD_LAYER`] ([`first_person_layers`]), so no piece
-//! of the face or skull can pass in front of it, however the head moves.
-//! An orbit camera pulled in right against the player drops both
-//! ([`close_layers`]), so his clothes never fill the screen. Every light
-//! (the sun and the street lamps) is on both layers too, so the whole body
-//! stays in its shadow maps and casts the sun's shadow. The arms, the hands,
-//! the collar, the reins and the horse's neck and ears stay in view.
+//! Una cámara que ve [`world_layers`] lo dibuja todo; una cámara en primera
+//! persona descarta [`OWN_HEAD_LAYER`] ([`first_person_layers`]), así que
+//! ninguna parte de la cara o del cráneo puede pasar por delante de ella, se
+//! mueva como se mueva la cabeza. Una cámara orbital acercada hasta pegarse al
+//! jugador descarta ambas ([`close_layers`]), así que su ropa nunca llena la
+//! pantalla. Cada luz (el sol y los faroles de la calle) está también en ambas
+//! capas, así que el cuerpo entero sigue en sus shadow maps y proyecta la
+//! sombra del sol. Los brazos, las manos, el cuello de la camisa, las riendas y
+//! el cuello y las orejas del caballo siguen a la vista.
 
 use std::collections::HashMap;
 
@@ -39,65 +42,68 @@ use bevy::prelude::*;
 
 use super::rig::Rig;
 
-/// The render layer of the player's own head (the face and skull, the hat,
-/// hair and eyes): hidden from a first-person camera, drawn by every other
-/// camera and lit by the sun.
+/// La capa de render de la propia cabeza del jugador (la cara y el cráneo, el
+/// sombrero, el pelo y los ojos): oculta para una cámara en primera persona,
+/// dibujada por todas las demás cámaras e iluminada por el sol.
 pub const OWN_HEAD_LAYER: usize = 1;
 
-/// The render layer of the rest of the player's own model (the body, the
-/// clothes, the hands): drawn from the eyes, hidden from an orbit camera
-/// pulled in too close, lit by the sun.
+/// La capa de render del resto del propio modelo del jugador (el cuerpo, la
+/// ropa, las manos): dibujada desde los ojos, oculta para una cámara orbital
+/// acercada demasiado, iluminada por el sol.
 pub const OWN_BODY_LAYER: usize = 2;
 
-/// The eyes in the `head` bone's frame, meters: between them and just in
-/// front, measured from the protagonist's model (its eyes' middle is
-/// 0.04 m above and 0.09 m in front of the bone, the front of the eyes
-/// 0.10 m). The bone's rest frame is the model's (+Z forward, +Y up).
+/// Los ojos en el marco del hueso `head`, en metros: entre ellos y apenas por
+/// delante, medido sobre el modelo del protagonista (el centro de sus ojos está
+/// 0.04 m por encima y 0.09 m por delante del hueso, y el frente de los ojos a
+/// 0.10 m). El marco de reposo del hueso es el del modelo (+Z hacia adelante,
+/// +Y hacia arriba).
 pub const EYE_IN_HEAD: Vec3 = Vec3::new(0.0, 0.04, 0.11);
 
-/// How much a vertex's weight on `neck_01` counts toward the head when the
-/// skin is cut ([`head_share`]). With the head's weight alone the cut runs
-/// under the jaw and leaves the neck standing up to 1.61 m, 8 cm over the
-/// collar; at 0.75 it runs round the neck at 1.50 to 1.53 m on the
-/// protagonist, inside his shirt collar (to 1.53 m) and neckerchief (to
-/// 1.56 m).
+/// Cuánto cuenta para la cabeza el peso de un vertex en `neck_01` cuando se
+/// corta la piel ([`head_share`]). Con solo el peso de la cabeza el corte pasa
+/// por debajo de la mandíbula y deja el cuello levantado hasta 1.61 m, 8 cm por
+/// encima del cuello de la camisa; con 0.75 rodea el cuello a entre 1.50 y
+/// 1.53 m en el protagonista, por dentro del cuello de su camisa (hasta 1.53 m)
+/// y de su pañuelo (hasta 1.56 m).
 pub const NECK_SHARE: f32 = 0.75;
 
-/// A triangle whose vertices' [`head_share`] averages this or more goes
-/// with the head.
+/// Un triángulo cuyos vertices tienen un [`head_share`] promedio igual o mayor
+/// que este va con la cabeza.
 pub const HEAD_DOMINANT: f32 = 0.5;
 
-/// The character the first-person camera sits in: the player.
+/// El personaje en el que se ubica la cámara en primera persona: el jugador.
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct ViewerBody;
 
-/// The `head` bone of a [`ViewerBody`]'s model.
+/// El hueso `head` del modelo de un [`ViewerBody`].
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct ViewerHead;
 
-/// The face and skull cut out of a [`ViewerBody`]'s skin ([`split_head`]).
+/// La cara y el cráneo recortados de la piel de un [`ViewerBody`]
+/// ([`split_head`]).
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct OwnHead;
 
-/// The layers a camera sees to draw everything, the player's head too.
+/// Las capas que ve una cámara para dibujar todo, también la cabeza del
+/// jugador.
 pub fn world_layers() -> RenderLayers {
     RenderLayers::from_layers(&[0, OWN_HEAD_LAYER, OWN_BODY_LAYER])
 }
 
-/// The layers a first-person camera sees: everything but the player's own
-/// head.
+/// Las capas que ve una cámara en primera persona: todo menos la propia cabeza
+/// del jugador.
 pub fn first_person_layers() -> RenderLayers {
     RenderLayers::from_layers(&[0, OWN_BODY_LAYER])
 }
 
-/// The layers an orbit camera pulled in against the player sees:
-/// everything but the player's own model.
+/// Las capas que ve una cámara orbital acercada contra el jugador: todo menos
+/// el propio modelo del jugador.
 pub fn close_layers() -> RenderLayers {
     RenderLayers::layer(0)
 }
 
-/// Whether the model mesh of `material` sits round the eyes: a hat, its
-/// band, the hair, the eyes, eyebrows and eyelashes.
+/// Si la mesh del modelo con `material` está alrededor de los ojos: un
+/// sombrero, su cinta, el pelo, los ojos, las cejas y las pestañas.
 pub fn is_head_piece(material: &str) -> bool {
     let lower = material.to_ascii_lowercase();
     ["hat", "eye", "hair", "short0", "kepi", "boina"]
@@ -105,19 +111,19 @@ pub fn is_head_piece(material: &str) -> bool {
         .any(|p| lower.starts_with(p))
 }
 
-/// The ages a MakeHuman skin material is named after.
+/// Las edades con las que se nombran los materiales de piel de MakeHuman.
 const SKIN_AGES: [&str; 3] = ["young", "middleage", "old"];
 
-/// The ethnic skins MakeHuman names its skin materials after, with the
-/// `cauasian` misspelling its middle-aged skins ship with (our
-/// `middleage_cauasian_male` models).
+/// Las pieles étnicas con las que MakeHuman nombra sus materiales de piel,
+/// incluida la errata `cauasian` con la que vienen sus pieles de mediana edad
+/// (nuestros modelos `middleage_cauasian_male`).
 const SKIN_KINDS: [&str; 4] = ["caucasian", "cauasian", "african", "asian"];
 
-/// Whether the model mesh of `material` is the skin: the one mesh the head
-/// is cut out of. MakeHuman names it after the skin, exactly
-/// `<age>_<kind>_<male|female>`, maybe with `_detailed` (like
-/// `old_caucasian_male_detailed`; see [`SKIN_AGES`] and [`SKIN_KINDS`]). The
-/// clothes keep their collars whole, whatever they are called.
+/// Si la mesh del modelo con `material` es la piel: la única mesh de la que se
+/// recorta la cabeza. MakeHuman la nombra según la piel, exactamente
+/// `<age>_<kind>_<male|female>`, quizás con `_detailed` (como
+/// `old_caucasian_male_detailed`; ver [`SKIN_AGES`] y [`SKIN_KINDS`]). La ropa
+/// conserva enteros sus cuellos, se llame como se llame.
 pub fn is_skin(material: &str) -> bool {
     let mut parts = material.split('_');
     let (Some(age), Some(kind), Some(sex)) = (parts.next(), parts.next(), parts.next()) else {
@@ -131,9 +137,10 @@ pub fn is_skin(material: &str) -> bool {
         && matches!(sex, "male" | "female")
 }
 
-/// How much of a vertex goes with the head: its weights on the head's
-/// joints, and [`NECK_SHARE`] of those on the neck's, by the share of each
-/// of the skin's joints (`shares`, in its joint order).
+/// Cuánto de un vertex va con la cabeza: sus pesos en las articulaciones de la
+/// cabeza, y [`NECK_SHARE`] de los del cuello, según la proporción de cada una
+/// de las articulaciones de la piel (`shares`, en el orden de sus
+/// articulaciones).
 pub fn head_share(joints: [u16; 4], weights: [f32; 4], shares: &[f32]) -> f32 {
     joints
         .iter()
@@ -142,9 +149,9 @@ pub fn head_share(joints: [u16; 4], weights: [f32; 4], shares: &[f32]) -> f32 {
         .sum()
 }
 
-/// Whether the triangle `triangle` of `mesh` goes with the head: its
-/// vertices' [`head_share`] by the joint `shares` averages
-/// [`HEAD_DOMINANT`] or more.
+/// Si el triángulo `triangle` de `mesh` va con la cabeza: el [`head_share`] de
+/// sus vertices según las proporciones `shares` de las articulaciones promedia
+/// [`HEAD_DOMINANT`] o más.
 pub fn head_dominant(mesh: &Mesh, triangle: [u32; 3], shares: &[f32]) -> bool {
     let (
         Some(VertexAttributeValues::Uint16x4(joints)),
@@ -166,7 +173,7 @@ pub fn head_dominant(mesh: &Mesh, triangle: [u32; 3], shares: &[f32]) -> bool {
     triangle.into_iter().map(share).sum::<f32>() / 3.0 >= HEAD_DOMINANT
 }
 
-/// The triangles of `mesh`, by vertex index.
+/// Los triángulos de `mesh`, por índice de vertex.
 pub fn triangles(mesh: &Mesh) -> Vec<[u32; 3]> {
     let indices: Vec<u32> = match mesh.indices() {
         Some(indices) => indices.iter().map(|i| i as u32).collect(),
@@ -175,10 +182,11 @@ pub fn triangles(mesh: &Mesh) -> Vec<[u32; 3]> {
     indices.as_chunks::<3>().0.to_vec()
 }
 
-/// Cuts `mesh` (a skinned skin) in two by [`head_dominant`] over its skin's
-/// joint `shares`: the rest of the body and the head, each a copy of every
-/// vertex with its own triangles, so both keep the same skinning. `None`
-/// if nothing goes with the head.
+/// Corta `mesh` (una piel con skinning) en dos según [`head_dominant`] sobre
+/// las proporciones `shares` de las articulaciones de su piel: el resto del
+/// cuerpo y la cabeza, cada una con una copia de cada vertex y sus propios
+/// triángulos, así que ambas conservan el mismo skinning. `None` si nada va con
+/// la cabeza.
 pub fn split_head(mesh: &Mesh, shares: &[f32]) -> Option<(Mesh, Mesh)> {
     let (mut body, mut head) = (Vec::new(), Vec::new());
     for triangle in triangles(mesh) {
@@ -200,7 +208,7 @@ pub fn split_head(mesh: &Mesh, shares: &[f32]) -> Option<(Mesh, Mesh)> {
     Some((with(body), with(head)))
 }
 
-/// A mesh entity of a model, as [`mark_viewer_head`] reads it.
+/// Una entidad de mesh de un modelo, tal como la lee [`mark_viewer_head`].
 type ModelMesh<'a> = (
     &'a Mesh3d,
     &'a GltfMaterialName,
@@ -212,12 +220,13 @@ type ModelMesh<'a> = (
     Option<&'a VisibilityRange>,
 );
 
-/// The two halves made of each skin asset so far, by the skin's asset.
+/// Las dos mitades hechas hasta ahora de cada asset de piel, por el asset de la
+/// piel.
 #[derive(Default)]
 pub(super) struct Cuts(HashMap<AssetId<Mesh>, (Handle<Mesh>, Handle<Mesh>)>);
 
 impl Cuts {
-    /// Whether `id` is a half already cut (a scene dressed again).
+    /// Si `id` es una mitad ya cortada (una escena preparada de nuevo).
     fn is_cut(&self, id: AssetId<Mesh>) -> bool {
         self.0
             .values()
@@ -225,10 +234,10 @@ impl Cuts {
     }
 }
 
-/// Marks the head bone, moves the head pieces (and the rest to
-/// [`OWN_BODY_LAYER`]) and cuts the head out of the
-/// skin of a [`ViewerBody`]'s model the moment its [`Rig`] goes in (every
-/// time its scene is dressed).
+/// Marca el hueso de la cabeza, mueve las piezas de la cabeza (y el resto a
+/// [`OWN_BODY_LAYER`]) y recorta la cabeza de la piel del modelo de un
+/// [`ViewerBody`] en el momento en que entra su [`Rig`] (cada vez que se
+/// prepara su escena).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn mark_viewer_head(
     rigged: On<Insert<Rig>>,
@@ -254,16 +263,17 @@ pub(super) fn mark_viewer_head(
     let (head, neck) = (named("head"), named("neck_01"));
     if let Some(head) = head {
         commands.entity(head).try_insert(ViewerHead);
-        // One head per body: the model dressed last. Another one still
-        // under it (an old model while it is swapped out) is unmarked.
+        // Una cabeza por cuerpo: el último modelo preparado. A otro que todavía
+        // esté debajo (un modelo viejo mientras se reemplaza) se le quita la
+        // marca.
         for old in &marked {
             if old != head && parents.iter_ancestors(old).any(|a| a == viewer) {
                 commands.entity(old).try_remove::<ViewerHead>();
             }
         }
     }
-    // Each joint's share in the head: the head and anything under it
-    // wholly, the neck in part.
+    // La proporción de cada articulación en la cabeza: la cabeza y todo lo que
+    // cuelga de ella por completo, el cuello en parte.
     let share = |joint: Entity| {
         let under_head =
             head.is_some_and(|h| joint == h || parents.iter_ancestors(joint).any(|a| a == h));
@@ -338,8 +348,8 @@ pub(super) fn mark_viewer_head(
 mod tests {
     use super::*;
 
-    /// A dressed-looking model under `owner`: a `head` bone and a hat, a
-    /// face and a poncho, then its rig put in.
+    /// Un modelo con aspecto de preparado bajo `owner`: un hueso `head` y un
+    /// sombrero, una cara y un poncho, y después se le pone su rig.
     fn dress(app: &mut App, owner: Entity) -> (Entity, Entity, Entity, Entity) {
         let world = app.world_mut();
         let root = world.spawn(ChildOf(owner)).id();
@@ -371,7 +381,8 @@ mod tests {
     #[test]
     fn only_the_viewers_head_and_hat_leave_the_world_layer() {
         let mut app = app();
-        // The player, carried by a horse: the model is a few levels down.
+        // El jugador, llevado por un caballo: el modelo está unos niveles más
+        // abajo.
         let player = app.world_mut().spawn(ViewerBody).id();
         let horse = app.world_mut().spawn(ChildOf(player)).id();
         let (head, hat, face, poncho) = dress(&mut app, horse);
@@ -388,7 +399,7 @@ mod tests {
                 "the body's layer"
             );
         }
-        // Somebody else's model keeps everything on the world layer.
+        // El modelo de otro conserva todo en la capa del mundo.
         let stranger = app.world_mut().spawn_empty().id();
         let (head, hat, _, _) = dress(&mut app, stranger);
         assert!(app.world().get::<ViewerHead>(head).is_none());
@@ -433,7 +444,7 @@ mod tests {
         let mut app = app();
         let player = app.world_mut().spawn(ViewerBody).id();
         let (old, ..) = dress(&mut app, player);
-        // The new model dressed while the old one is still there.
+        // El modelo nuevo se prepara mientras el viejo todavía está.
         let horse = app.world_mut().spawn(ChildOf(player)).id();
         let (new, ..) = dress(&mut app, horse);
         let world = app.world();
@@ -442,7 +453,7 @@ mod tests {
             "the new model's head"
         );
         assert!(world.get::<ViewerHead>(old).is_none(), "one head per body");
-        // The old model dressed again takes it back: the last one dressed.
+        // El modelo viejo preparado de nuevo la recupera: el último preparado.
         let old_model = world.get::<ChildOf>(old).unwrap().parent();
         let rig = world.get::<Rig>(old_model).unwrap().clone();
         app.world_mut().entity_mut(old_model).insert(rig);
@@ -450,7 +461,7 @@ mod tests {
         let world = app.world();
         assert!(world.get::<ViewerHead>(old).is_some());
         assert!(world.get::<ViewerHead>(new).is_none());
-        // Another body's head is not touched.
+        // La cabeza de otro cuerpo no se toca.
         let other = app.world_mut().spawn(ViewerBody).id();
         let (theirs, ..) = dress(&mut app, other);
         let world = app.world();
@@ -458,7 +469,8 @@ mod tests {
         assert!(world.get::<ViewerHead>(old).is_some());
     }
 
-    /// The material names of a shipped character model, from its glTF.
+    /// Los nombres de material de un modelo de personaje incluido, a partir de
+    /// su glTF.
     fn material_names(gltf: &str) -> Vec<String> {
         let start = gltf.find("\"materials\"").expect("a materials list");
         let open = start + gltf[start..].find('[').unwrap();
@@ -509,8 +521,8 @@ mod tests {
         ] {
             assert!(is_skin(skin), "{skin}");
         }
-        // Only the exact name: a garment named after a sex or the skin is
-        // not the skin.
+        // Solo el nombre exacto: una prenda nombrada según un sexo o la piel no
+        // es la piel.
         for kept in [
             "male_shirt",
             "female_shawl",
@@ -526,13 +538,13 @@ mod tests {
         }
     }
 
-    // --- with the shipped protagonist, horse and clips -----------------------
+    // --- con el protagonista, el caballo y los clips incluidos ---------------
 
     use crate::character::horse::tests::named;
     use crate::character::rider::tests::seated_every;
     use crate::character::{CharacterVisual, Coat, FigureKind};
 
-    /// Everything under `under`, itself included.
+    /// Todo lo que está bajo `under`, incluido él mismo.
     fn under(world: &World, under: Entity) -> Vec<Entity> {
         let mut all = Vec::new();
         let mut stack = vec![under];
@@ -543,7 +555,8 @@ mod tests {
         all
     }
 
-    /// Each of `skin`'s joints' share in the head, worked out afresh.
+    /// La proporción en la cabeza de cada una de las articulaciones de `skin`,
+    /// calculada de nuevo.
     fn shares(world: &World, model: Entity, skin: &SkinnedMesh) -> Vec<f32> {
         let head = under(world, named(world, model, "head"));
         let neck = named(world, model, "neck_01");
@@ -561,8 +574,8 @@ mod tests {
             .collect()
     }
 
-    /// Puts the rider model's rig in again, as when its scene is dressed;
-    /// returns the model.
+    /// Vuelve a ponerle el rig al modelo del jinete, como cuando se prepara su
+    /// escena; devuelve el modelo.
     fn dress_again(app: &mut App, me: Entity) -> Entity {
         let world = app.world_mut();
         let carrier = world.get::<Children>(me).unwrap()[0];
@@ -573,8 +586,9 @@ mod tests {
         model
     }
 
-    /// One skin mesh of a model: its entity and layers, its triangles, how
-    /// many of them are head-dominant, and its highest vertex used, at rest.
+    /// Una mesh de piel de un modelo: su entidad y sus capas, sus triángulos,
+    /// cuántos de ellos son de dominio de la cabeza y su vertex usado más alto,
+    /// en reposo.
     #[derive(Debug, Clone)]
     struct Skin {
         entity: Entity,
@@ -584,7 +598,7 @@ mod tests {
         top: f32,
     }
 
-    /// The model's skin meshes (the body and its cut head).
+    /// Las meshes de piel del modelo (el cuerpo y su cabeza recortada).
     fn skins(app: &App, model: Entity) -> Vec<Skin> {
         let world = app.world();
         let meshes = world.resource::<Assets<Mesh>>();
@@ -627,7 +641,7 @@ mod tests {
             .collect()
     }
 
-    /// The highest point of the model's mesh of `material`, at rest.
+    /// El punto más alto de la mesh del modelo con `material`, en reposo.
     fn top_of(app: &App, model: Entity, material: &str) -> f32 {
         let world = app.world();
         let meshes = world.resource::<Assets<Mesh>>();
@@ -675,14 +689,15 @@ mod tests {
         assert_eq!(head.triangles, head.heads, "only head-dominant triangles");
         assert!(head.triangles > 500, "the face and the skull: {head:?}");
         assert!(app.world().get::<OwnHead>(head.entity).is_some());
-        // The neck left on the body ends inside the collar and neckerchief.
+        // El cuello que queda en el cuerpo termina dentro del cuello de la
+        // camisa y del pañuelo.
         let collar = top_of(&app, model, "shirt").max(top_of(&app, model, "neckerchief"));
         assert!(
             body.top <= collar + 0.005,
             "neck to {:.3} m, collar to {collar:.3} m",
             body.top
         );
-        // Dressed again: cut once, not twice.
+        // Preparado de nuevo: se corta una vez, no dos.
         let model = dress_again(&mut app, me);
         let again = skins(&app, model);
         assert_eq!(again.len(), 2, "{again:?}");

@@ -1,10 +1,11 @@
-//! Pure minimap drawing: the world-to-map mapping, the static town layer and
-//! the live markers, all as plain RGBA8 pixel buffers (no Bevy assets).
+//! El dibujo puro del minimapa: la correspondencia de mundo a mapa, la capa
+//! estática del pueblo y los marcadores en vivo, todo como buffers de píxeles
+//! RGBA8 simples (sin assets de Bevy).
 //!
-//! The map is north-up and frames the town plus a margin rather than the
-//! whole 600 m patch, so streets stay legible at a small size; anything
-//! outside (the player out on the pampa, the train far down the line) is
-//! clamped to the edge or left off.
+//! El mapa tiene el norte arriba y encuadra el pueblo más un margen en lugar de
+//! toda la parcela de 600 m, para que las calles sigan siendo legibles a un
+//! tamaño pequeño; lo que queda afuera (el jugador en plena pampa, el tren
+//! lejos sobre la línea) se fija en el borde o se deja afuera.
 
 use bevy::math::Vec2;
 use pampa_core::{
@@ -15,26 +16,29 @@ use pampa_core::{
 use crate::lettering::{self, Face};
 use crate::terrain::hash2;
 
-/// Meters of open ground shown around the town's extent.
+/// Metros de campo abierto que se muestran alrededor de la extensión del
+/// pueblo.
 pub const MARGIN: f32 = 30.0;
-/// Half the side of the field frame, in meters: 640 m across, 2 m a pixel
-/// on the 320-pixel map, about the scale of a big town's frame, so an
-/// estancia's compound reads at a glance.
+/// La mitad del lado del encuadre de campo, en metros: 640 m de lado, 2 m por
+/// píxel en el mapa de 320 píxeles, más o menos la escala del encuadre de un
+/// pueblo grande, para que el casco de una estancia se entienda de un vistazo.
 pub const FIELD_HALF_EXTENT: f32 = 320.0;
-/// Inset, in pixels, that clamped markers keep from the map edge.
+/// Margen, en píxeles, que los marcadores fijados mantienen respecto del borde
+/// del mapa.
 pub const EDGE: f32 = 6.0;
 
-/// A square, north-up window onto the ground plane, `size_px` pixels wide.
+/// Una ventana cuadrada, con el norte arriba, sobre el plano del suelo, de
+/// `size_px` píxeles de ancho.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MapFrame {
     pub center: GroundVec2,
-    /// Half the side of the framed square, in meters.
+    /// La mitad del lado del cuadrado encuadrado, en metros.
     pub half_extent: f32,
     pub size_px: usize,
 }
 
 impl MapFrame {
-    /// The town's extent plus [`MARGIN`], squared up around its center.
+    /// La extensión del pueblo más [`MARGIN`], cuadrada alrededor de su centro.
     pub fn for_town(town: &TownLayout, size_px: usize) -> Self {
         let extent = town.extent();
         let size = extent.size();
@@ -45,7 +49,8 @@ impl MapFrame {
         }
     }
 
-    /// The field frame: [`FIELD_HALF_EXTENT`] around `center` (the rider).
+    /// El encuadre de campo: [`FIELD_HALF_EXTENT`] alrededor de `center` (el
+    /// jinete).
     pub fn field(center: GroundVec2, size_px: usize) -> Self {
         Self {
             center,
@@ -54,7 +59,7 @@ impl MapFrame {
         }
     }
 
-    /// The ground square it shows.
+    /// El cuadrado del suelo que muestra.
     pub fn shown(&self) -> Aabb {
         let side = 2.0 * self.half_extent;
         Aabb::from_center_size(self.center, GroundVec2::new(side, side))
@@ -64,8 +69,8 @@ impl MapFrame {
         2.0 * self.half_extent / self.size_px as f32
     }
 
-    /// Map pixel position of a ground point: `(0, 0)` is the north-west
-    /// corner, `x` grows east and `y` grows south.
+    /// La posición en píxeles del mapa de un punto del suelo: `(0, 0)` es la
+    /// esquina noroeste, `x` crece hacia el este e `y` crece hacia el sur.
     pub fn to_map(&self, p: GroundVec2) -> Vec2 {
         let scale = self.size_px as f32 / (2.0 * self.half_extent);
         Vec2::new(
@@ -74,14 +79,14 @@ impl MapFrame {
         )
     }
 
-    /// Whether a ground point falls on the map.
+    /// Si un punto del suelo cae dentro del mapa.
     pub fn contains(&self, p: GroundVec2) -> bool {
         (p.x - self.center.x).abs() <= self.half_extent
             && (p.y - self.center.y).abs() <= self.half_extent
     }
 
-    /// [`Self::to_map`], pulled in to [`EDGE`] pixels from the border when it
-    /// falls outside. Also says whether the point was on the map.
+    /// [`Self::to_map`], llevado hasta [`EDGE`] píxeles del borde cuando cae
+    /// afuera. También indica si el punto estaba en el mapa.
     pub fn to_map_clamped(&self, p: GroundVec2) -> (Vec2, bool) {
         let m = self.to_map(p);
         if self.contains(p) {
@@ -91,7 +96,8 @@ impl MapFrame {
         (Vec2::new(m.x.clamp(EDGE, far), m.y.clamp(EDGE, far)), false)
     }
 
-    /// Map-pixel rectangle `(min, max)` covering a ground box.
+    /// El rectángulo en píxeles del mapa `(min, max)` que cubre una caja del
+    /// suelo.
     pub fn rect(&self, area: &pampa_core::Aabb) -> (Vec2, Vec2) {
         let a = self.to_map(GroundVec2::new(area.min.x, area.max.y));
         let b = self.to_map(GroundVec2::new(area.max.x, area.min.y));
@@ -99,7 +105,7 @@ impl MapFrame {
     }
 }
 
-/// An RGBA8 sRGB pixel buffer, row by row from the top.
+/// Un buffer de píxeles RGBA8 sRGB, fila por fila desde arriba.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Canvas {
     pub size: usize,
@@ -107,7 +113,7 @@ pub struct Canvas {
 }
 
 impl Canvas {
-    /// A transparent square canvas.
+    /// Un lienzo cuadrado transparente.
     pub fn new(size: usize) -> Self {
         Self {
             size,
@@ -125,7 +131,7 @@ impl Canvas {
         ]
     }
 
-    /// Sets one pixel; out-of-range coordinates are ignored.
+    /// Fija un píxel; las coordenadas fuera de rango se ignoran.
     pub fn set(&mut self, x: i32, y: i32, color: [u8; 4]) {
         if x < 0 || y < 0 || x as usize >= self.size || y as usize >= self.size {
             return;
@@ -134,8 +140,8 @@ impl Canvas {
         self.pixels[i..i + 4].copy_from_slice(&color);
     }
 
-    /// Blends `color` over the pixel at `(x, y)` by `alpha` (0..=255); off
-    /// the canvas does nothing.
+    /// Mezcla `color` sobre el píxel en `(x, y)` según `alpha` (0..=255); fuera
+    /// del lienzo no hace nada.
     pub fn blend(&mut self, x: i32, y: i32, color: [u8; 4], alpha: u8) {
         if x < 0 || y < 0 || x as usize >= self.size || y as usize >= self.size {
             return;
@@ -150,7 +156,8 @@ impl Canvas {
             (dst_a + (u32::from(color[3]) - dst_a.min(u32::from(color[3]))) * a / 255) as u8;
     }
 
-    /// Fills the pixels whose centers fall inside `[min, max)` (map pixels).
+    /// Rellena los píxeles cuyos centros caen dentro de `[min, max)` (píxeles
+    /// del mapa).
     pub fn fill_rect(&mut self, min: Vec2, max: Vec2, color: [u8; 4]) {
         let (x0, y0) = ((min.x - 0.5).ceil() as i32, (min.y - 0.5).ceil() as i32);
         let (x1, y1) = ((max.x - 0.5).ceil() as i32, (max.y - 0.5).ceil() as i32);
@@ -161,13 +168,13 @@ impl Canvas {
         }
     }
 
-    /// Makes every pixel transparent.
+    /// Vuelve transparentes todos los píxeles.
     pub fn clear(&mut self) {
         self.pixels.fill(0);
     }
 }
 
-/// Paper-map palette.
+/// Paleta de mapa de papel.
 pub mod palette {
     pub const PAPER: [u8; 4] = [226, 210, 172, 255];
     pub const PAPER_EDGE: [u8; 4] = [196, 174, 130, 255];
@@ -178,59 +185,62 @@ pub mod palette {
     pub const SHED: [u8; 4] = [128, 124, 116, 255];
     pub const WATER: [u8; 4] = [92, 124, 140, 255];
     pub const RAIL: [u8; 4] = [62, 50, 42, 255];
-    /// Dirt roads: a warm brown, darker than the streets, lighter than the
-    /// rail.
+    /// Caminos de tierra: un marrón cálido, más oscuro que las calles y más
+    /// claro que el riel.
     pub const ROAD: [u8; 4] = [168, 124, 76, 255];
     pub const INK: [u8; 4] = [40, 30, 24, 255];
     pub const PLAYER: [u8; 4] = [196, 40, 28, 255];
     pub const WALKER: [u8; 4] = [48, 40, 96, 255];
     pub const TRAIN: [u8; 4] = [28, 26, 26, 255];
     pub const TARGET: [u8; 4] = [232, 176, 32, 255];
-    /// Trees: one dark green dot each.
+    /// Árboles: un punto verde oscuro cada uno.
     pub const TREE: [u8; 4] = [96, 110, 60, 255];
-    /// A settlement's huellas: a pale dirt line, lighter than the roads.
+    /// Las huellas de un asentamiento: una línea de tierra pálida, más clara
+    /// que los caminos.
     pub const TRACK: [u8; 4] = [186, 152, 104, 255];
-    /// Corral rails: a dark wood outline.
+    /// Travesaños de corral: un contorno de madera oscura.
     pub const CORRAL: [u8; 4] = [104, 78, 50, 255];
-    /// Haystacks.
+    /// Parvas.
     pub const HAY: [u8; 4] = [194, 172, 92, 255];
 }
 
-/// What a layer shows beyond its town: the railway line's links, the
-/// roads' straight pieces, and the settlements and roadside wrecks, each
-/// painted where it crosses the frame.
+/// Lo que muestra una capa más allá de su pueblo: los tramos de la línea del
+/// ferrocarril, las piezas rectas de los caminos, y los asentamientos y los
+/// restos abandonados al costado del camino, cada uno pintado donde cruza el
+/// encuadre.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Overlay<'a> {
     pub links: &'a [Railway],
     pub roads: &'a [(GroundVec2, GroundVec2)],
     pub settlements: &'a [Settlement],
     pub wrecks: &'a [RoadsideWreck],
-    /// Lagoons, painted as water under everything else.
+    /// Lagunas, pintadas como agua por debajo de todo lo demás.
     pub lagoons: &'a [Lagoon],
-    /// Platforms that belong to no town's buildings (the bays'), painted
-    /// like the towns' platforms.
+    /// Andenes que no pertenecen a los edificios de ningún pueblo (los de las
+    /// vías muertas), pintados como los andenes de los pueblos.
     pub platforms: &'a [Aabb],
 }
 
-/// The color of a platform.
+/// El color de un andén.
 const PLATFORM: [u8; 4] = [184, 174, 152, 255];
 
-/// Pixel size of place initials and the title on the map (a capital stands
-/// about 14 px tall, as the old 7-row bitmap did at 2x).
+/// El tamaño en píxeles de las iniciales de los lugares y del título en el mapa
+/// (una mayúscula mide unos 14 px de alto, como lo hacía el viejo bitmap de 7
+/// filas a 2x).
 pub const LABEL_PX: f32 = 21.0;
-/// Pixel size of the small lettering: the compass letters and a title too
-/// long for [`LABEL_PX`].
+/// El tamaño en píxeles de las letras pequeñas: las letras de la rosa de los
+/// vientos y un título demasiado largo para [`LABEL_PX`].
 pub const SMALL_LABEL_PX: f32 = 11.0;
 
-/// Paints the town once: paper, streets, plaza, railway, the railway line's
-/// `links` where they cross the frame, buildings colored by kind and each
-/// named place's initial over it.
+/// Pinta el pueblo una vez: el papel, las calles, la plaza, el ferrocarril, los
+/// tramos `links` de la línea del ferrocarril donde cruzan el encuadre, los
+/// edificios coloreados por tipo y la inicial de cada lugar con nombre encima.
 pub fn rasterize_town(town: &TownLayout, links: &[Railway], frame: &MapFrame) -> Canvas {
     rasterize_town_with_roads(town, links, &[], frame)
 }
 
-/// [`rasterize_town`], with the dirt `roads` (straight pieces of their
-/// centerlines) painted under the railway where they cross the frame.
+/// [`rasterize_town`], con los caminos de tierra `roads` (piezas rectas de sus
+/// ejes) pintados bajo el ferrocarril donde cruzan el encuadre.
 pub fn rasterize_town_with_roads(
     town: &TownLayout,
     links: &[Railway],
@@ -245,8 +255,9 @@ pub fn rasterize_town_with_roads(
     rasterize_town_over(town, &overlay, frame)
 }
 
-/// [`rasterize_town_with_roads`], with everything of `overlay` that
-/// crosses the frame: settlements just outside the town show on its map.
+/// [`rasterize_town_with_roads`], con todo lo de `overlay` que cruza el
+/// encuadre: los asentamientos que quedan justo fuera del pueblo se ven en su
+/// mapa.
 pub fn rasterize_town_over(town: &TownLayout, overlay: &Overlay, frame: &MapFrame) -> Canvas {
     let mut map = paper(frame.size_px);
     paint_town_ground(&mut map, town, frame);
@@ -265,15 +276,16 @@ pub fn rasterize_town_over(town: &TownLayout, overlay: &Overlay, frame: &MapFram
         let text = place_initial(place.kind).to_string();
         label(&mut map, &text, frame.to_map(place.center()));
     }
-    // North marker in the north-west corner, the town's name along the top.
+    // La marca del norte en la esquina noroeste, y el nombre del pueblo a lo
+    // largo del borde superior.
     label(&mut map, "N", Vec2::new(16.0, 18.0));
     title(&mut map, &town.name);
     map
 }
 
-/// The field layer: open country round the rider, with the roads, the
-/// railway, the settlements and any of `towns` reaching into the frame
-/// (streets and buildings, without labels or a title).
+/// La capa de campo: campo abierto alrededor del jinete, con los caminos, el
+/// ferrocarril, los asentamientos y cualquiera de los `towns` que entre en el
+/// encuadre (calles y edificios, sin etiquetas ni título).
 pub fn rasterize_field(towns: &[TownLayout], overlay: &Overlay, frame: &MapFrame) -> Canvas {
     let mut map = paper(frame.size_px);
     let shown = frame.shown();
@@ -295,8 +307,8 @@ pub fn rasterize_field(towns: &[TownLayout], overlay: &Overlay, frame: &MapFrame
             );
         }
     }
-    // No sleeper ticks out here: at 2 m a pixel, shrunk onto the panel,
-    // they read as a dashed line.
+    // Aquí no hay marcas de durmientes: a 2 m por píxel, reducidas sobre el
+    // panel, parecen una línea discontinua.
     paint_rails(&mut map, &[], overlay.links, frame, false);
     paint_settlements(&mut map, overlay, frame);
     for town in &near {
@@ -307,7 +319,7 @@ pub fn rasterize_field(towns: &[TownLayout], overlay: &Overlay, frame: &MapFrame
     map
 }
 
-/// Aged paper, darker toward the edge.
+/// Papel envejecido, más oscuro hacia el borde.
 fn paper(size: usize) -> Canvas {
     let mut map = Canvas::new(size);
     let border = 5;
@@ -333,7 +345,7 @@ fn paper(size: usize) -> Canvas {
     map
 }
 
-/// A town's streets, plazas and trees.
+/// Las calles, las plazas y los árboles de un pueblo.
 fn paint_town_ground(map: &mut Canvas, town: &TownLayout, frame: &MapFrame) {
     for street in &town.streets {
         let (a, b) = frame.rect(street);
@@ -349,7 +361,7 @@ fn paint_town_ground(map: &mut Canvas, town: &TownLayout, frame: &MapFrame) {
     }
 }
 
-/// A town's buildings, colored by kind.
+/// Los edificios de un pueblo, coloreados por tipo.
 fn paint_town_buildings(map: &mut Canvas, town: &TownLayout, frame: &MapFrame) {
     for building in &town.buildings {
         let color = match building.kind {
@@ -368,7 +380,8 @@ fn paint_town_buildings(map: &mut Canvas, town: &TownLayout, frame: &MapFrame) {
     }
 }
 
-/// The overlay's own platforms (the bays'), where they cross the frame.
+/// Los andenes propios de la superposición (los de las vías muertas), donde
+/// cruzan el encuadre.
 fn paint_platforms(map: &mut Canvas, overlay: &Overlay, frame: &MapFrame) {
     for platform in overlay.platforms {
         let (a, b) = frame.rect(platform);
@@ -376,8 +389,8 @@ fn paint_platforms(map: &mut Canvas, overlay: &Overlay, frame: &MapFrame) {
     }
 }
 
-/// The roads, then the settlements' huellas, cut to the frame: under the
-/// railway and every building.
+/// Los caminos, y después las huellas de los asentamientos, recortados al
+/// encuadre: por debajo del ferrocarril y de todos los edificios.
 fn paint_overlay_under(map: &mut Canvas, overlay: &Overlay, frame: &MapFrame) {
     let shown = frame.shown();
     let px = frame.meters_per_px();
@@ -388,7 +401,8 @@ fn paint_overlay_under(map: &mut Canvas, overlay: &Overlay, frame: &MapFrame) {
     for &(a, b) in overlay.roads {
         ground_line(map, frame, (a, b), half, palette::ROAD);
     }
-    // Thin: a pixel wide on the field frame, at most two on a town's.
+    // Delgada: un píxel de ancho en el encuadre de campo, como mucho dos en el
+    // de un pueblo.
     let half = (Track::HALF_WIDTH / px).clamp(0.5, 1.0);
     for settlement in overlay.settlements {
         if !settlement.bounds.intersects(&shown) {
@@ -402,8 +416,8 @@ fn paint_overlay_under(map: &mut Canvas, overlay: &Overlay, frame: &MapFrame) {
     }
 }
 
-/// A lagoon's water, pixel by pixel over its box where it crosses the
-/// frame: a pixel is water when its center is.
+/// El agua de una laguna, píxel por píxel sobre su caja donde cruza el
+/// encuadre: un píxel es agua cuando su centro lo es.
 fn paint_lagoon(map: &mut Canvas, lagoon: &Lagoon, frame: &MapFrame) {
     let shown = frame.shown();
     let water = lagoon.bounds();
@@ -429,8 +443,8 @@ fn paint_lagoon(map: &mut Canvas, lagoon: &Lagoon, frame: &MapFrame) {
     }
 }
 
-/// A straight ground line from `a` to `b`, cut to the frame, `half` map
-/// pixels to either side.
+/// Una línea recta del suelo desde `a` hasta `b`, recortada al encuadre, de
+/// `half` píxeles del mapa a cada lado.
 fn ground_line(
     map: &mut Canvas,
     frame: &MapFrame,
@@ -452,8 +466,9 @@ fn ground_line(
     }
 }
 
-/// Railway: each town's track, then the links of the railway line, cut to
-/// the frame (they run for kilometers); with sleeper ticks when `ties`.
+/// El ferrocarril: la vía de cada pueblo, y después los tramos de la línea del
+/// ferrocarril, recortados al encuadre (recorren kilómetros); con marcas de
+/// durmientes cuando `ties`.
 fn paint_rails(
     map: &mut Canvas,
     towns: &[TownLayout],
@@ -474,8 +489,9 @@ fn paint_rails(
     }
 }
 
-/// The map color of a settlement structure filled over its footprint;
-/// `None` for corrals (drawn as an outline) and trees (a dot).
+/// El color en el mapa de una estructura de asentamiento rellena sobre su
+/// huella de edificio; `None` para los corrales (dibujados como contorno) y los
+/// árboles (un punto).
 pub fn structure_color(kind: StructureKind) -> Option<[u8; 4]> {
     Some(match kind {
         StructureKind::MainHouse(_) | StructureKind::WorkerHouse(_) => palette::HOUSE,
@@ -490,8 +506,9 @@ pub fn structure_color(kind: StructureKind) -> Option<[u8; 4]> {
     })
 }
 
-/// The settlements reaching into the frame: footprints by kind, corrals
-/// as rail outlines, trees as dots; then the roadside wrecks.
+/// Los asentamientos que entran en el encuadre: huellas de edificio por tipo,
+/// corrales como contornos de travesaños, árboles como puntos; y después los
+/// restos abandonados al costado del camino.
 fn paint_settlements(map: &mut Canvas, overlay: &Overlay, frame: &MapFrame) {
     let shown = frame.shown();
     for settlement in overlay.settlements {
@@ -519,7 +536,7 @@ fn paint_settlements(map: &mut Canvas, overlay: &Overlay, frame: &MapFrame) {
     }
 }
 
-/// A one-pixel outline of the map rectangle `[min, max)`.
+/// Un contorno de un píxel del rectángulo del mapa `[min, max)`.
 fn outline(map: &mut Canvas, min: Vec2, max: Vec2, color: [u8; 4]) {
     map.fill_rect(min, Vec2::new(max.x, min.y + 1.0), color);
     map.fill_rect(Vec2::new(min.x, max.y - 1.0), max, color);
@@ -527,18 +544,20 @@ fn outline(map: &mut Canvas, min: Vec2, max: Vec2, color: [u8; 4]) {
     map.fill_rect(Vec2::new(max.x - 1.0, min.y), max, color);
 }
 
-/// A track from map pixel `s` to `e`: an unbroken dark line two pixels
-/// wide, with sleeper ticks across it every third pixel when `ties`, both
-/// oriented to the track's main direction.
+/// Una vía desde el píxel del mapa `s` hasta `e`: una línea oscura continua de
+/// dos píxeles de ancho, con marcas de durmientes que la cruzan cada tres
+/// píxeles cuando `ties`, ambas orientadas según la dirección principal de la
+/// vía.
 fn track_line(map: &mut Canvas, s: Vec2, e: Vec2, ties: bool) {
-    // Half sizes of a line dot and a tick, oriented to the track.
+    // Semitamaños de un punto de la línea y de una marca, orientados según la
+    // vía.
     let east_west = (e.x - s.x).abs() >= (e.y - s.y).abs();
     let (line, tick) = if east_west {
         (Vec2::new(0.5, 1.0), Vec2::new(0.5, 2.0))
     } else {
         (Vec2::new(1.0, 0.5), Vec2::new(2.0, 0.5))
     };
-    // Half-pixel steps: no column or row is ever skipped.
+    // Pasos de medio píxel: nunca se saltea ninguna columna ni fila.
     let steps = (s.distance(e) * 2.0).ceil() as usize;
     for k in 0..=steps {
         let p = s.lerp(e, k as f32 / steps.max(1) as f32);
@@ -549,8 +568,8 @@ fn track_line(map: &mut Canvas, s: Vec2, e: Vec2, ties: bool) {
     }
 }
 
-/// Writes the town's name, in capitals, centered along the top edge; at
-/// [`SMALL_LABEL_PX`] when it is too long for the map.
+/// Escribe el nombre del pueblo, en mayúsculas, centrado a lo largo del borde
+/// superior; a [`SMALL_LABEL_PX`] cuando es demasiado largo para el mapa.
 fn title(map: &mut Canvas, name: &str) {
     let text = name.to_uppercase();
     let size = map.size as f32;
@@ -559,23 +578,24 @@ fn title(map: &mut Canvas, name: &str) {
     label_scaled(map, &text, Vec2::new(size / 2.0, 18.0), px);
 }
 
-/// Writes `text` in ink at [`LABEL_PX`], centered on `center`, over a
-/// one-pixel paper halo so it reads on top of buildings.
+/// Escribe `text` con tinta a [`LABEL_PX`], centrado en `center`, sobre un halo
+/// de papel de un píxel para que se lea encima de los edificios.
 fn label(map: &mut Canvas, text: &str, center: Vec2) {
     label_scaled(map, text, center, LABEL_PX);
 }
 
-/// Coverage at which a pixel earns a paper halo around it.
+/// La cobertura a partir de la cual un píxel recibe un halo de papel alrededor.
 const HALO_COVERAGE: u8 = 96;
 
-/// [`label`] at `px` pixels: the letters' ink bounds are centered on
-/// `center`, a paper halo goes under every well-covered pixel, and the ink
-/// blends over it by coverage.
+/// [`label`] a `px` píxeles: los límites de la tinta de las letras se centran
+/// en `center`, un halo de papel va debajo de cada píxel bien cubierto, y la
+/// tinta se mezcla encima según la cobertura.
 fn label_scaled(map: &mut Canvas, text: &str, center: Vec2, px: f32) {
     let extent = lettering::measure(text, Face::Body, px);
     let Some(ink) = extent.ink else { return };
     let coverage = lettering::rasterize(text, Face::Body, px);
-    // The coverage's origin is the pen origin; ink bounds are relative to it.
+    // El origen de la cobertura es el origen de la pluma; los límites de la
+    // tinta son relativos a él.
     let left = (center.x - (ink.min_x + ink.max_x) / 2.0).round() as i32;
     let top = (center.y - (ink.min_y + ink.max_y) / 2.0).round() as i32;
     coverage.for_each(|x, y, a| {
@@ -593,20 +613,21 @@ fn label_scaled(map: &mut Canvas, text: &str, center: Vec2, px: f32) {
     });
 }
 
-/// Radius of the compass rose's ring, in map pixels.
+/// Radio del anillo de la rosa de los vientos, en píxeles del mapa.
 pub const COMPASS_RADIUS: f32 = 17.0;
 
-/// Where the compass rose stands: the map's bottom-left corner, clear of
-/// the title along the top.
+/// Dónde está la rosa de los vientos: la esquina inferior izquierda del mapa,
+/// lejos del título a lo largo del borde superior.
 pub fn compass_center(size_px: usize) -> Vec2 {
     let inset = COMPASS_RADIUS + 8.0;
     Vec2::new(inset, size_px as f32 - inset)
 }
 
-/// The compass rose's four letters, N, E, S and O (oeste), each with the
-/// unit direction it points in, in map pixels, taken from `frame` itself:
-/// the map's own way of showing world north (ground `+y`), east, south and
-/// west, so a map that turned would turn its rose with it.
+/// Las cuatro letras de la rosa de los vientos, N, E, S y O (oeste), cada una
+/// con la dirección unitaria hacia la que apunta, en píxeles del mapa, tomada
+/// del propio `frame`: la forma propia del mapa de mostrar el norte del mundo
+/// (`+y` del suelo), el este, el sur y el oeste, así que un mapa que girara
+/// giraría su rosa con él.
 pub fn compass_marks(frame: &MapFrame) -> [(char, Vec2); 4] {
     let toward = |d: GroundVec2| {
         let step = d * frame.half_extent.max(1.0);
@@ -620,9 +641,9 @@ pub fn compass_marks(frame: &MapFrame) -> [(char, Vec2); 4] {
     ]
 }
 
-/// Draws the compass rose at [`compass_center`]: a paper disc in an ink
-/// ring, a red needle toward north, and the letters of
-/// [`compass_marks`] inside the ring.
+/// Dibuja la rosa de los vientos en [`compass_center`]: un disco de papel en un
+/// anillo de tinta, una aguja roja hacia el norte y las letras de
+/// [`compass_marks`] dentro del anillo.
 pub fn draw_compass(canvas: &mut Canvas, frame: &MapFrame) {
     let c = compass_center(canvas.size);
     let r = COMPASS_RADIUS;
@@ -639,7 +660,7 @@ pub fn draw_compass(canvas: &mut Canvas, frame: &MapFrame) {
         }
     }
     let marks = compass_marks(frame);
-    // A short red needle from the middle toward north.
+    // Una aguja roja corta desde el centro hacia el norte.
     let north = marks[0].1;
     for k in 1..=5 {
         let p = c + north * k as f32;
@@ -655,26 +676,26 @@ pub fn draw_compass(canvas: &mut Canvas, frame: &MapFrame) {
     }
 }
 
-/// The map letter of a place: the initial of its sign name.
+/// La letra en el mapa de un lugar: la inicial del nombre de su cartel.
 pub fn place_initial(kind: PlaceKind) -> char {
     kind.name().chars().next().unwrap_or(' ')
 }
 
-/// Live things to mark on the map this frame.
+/// Las cosas en vivo que se marcan en el mapa en este frame.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Markers {
     pub player: Option<(GroundVec2, Heading)>,
     pub walkers: Vec<GroundVec2>,
     pub cars: Vec<PlacedCar>,
-    /// Where the errand sends the player, if anywhere.
+    /// Adónde envía el mandado al jugador, si a algún lado.
     pub target: Option<GroundVec2>,
 }
 
-/// Clears `canvas` and draws the markers: train cars as dark bars, walkers
-/// as dots (skipped off the map), the errand target as a gold diamond and
-/// the player as an arrow along its heading. The target and the player are
-/// clamped to the edge when outside, so they point the way. Returns the
-/// player's marker position, if any.
+/// Limpia `canvas` y dibuja los marcadores: los vagones del tren como barras
+/// oscuras, los peatones como puntos (omitidos fuera del mapa), el destino del
+/// mandado como un rombo dorado y el jugador como una flecha según su rumbo. El
+/// destino y el jugador se fijan en el borde cuando están afuera, así que
+/// señalan el camino. Devuelve la posición del marcador del jugador, si la hay.
 pub fn draw_markers(canvas: &mut Canvas, frame: &MapFrame, markers: &Markers) -> Option<Vec2> {
     canvas.clear();
     draw_compass(canvas, frame);
@@ -706,7 +727,8 @@ pub fn draw_markers(canvas: &mut Canvas, frame: &MapFrame, markers: &Markers) ->
     Some(at)
 }
 
-/// A filled square of `2 * radius + 1` pixels around the pixel holding `p`.
+/// Un cuadrado relleno de `2 * radius + 1` píxeles alrededor del píxel que
+/// contiene `p`.
 fn square(canvas: &mut Canvas, p: Vec2, radius: i32, color: [u8; 4]) {
     let (cx, cy) = (p.x.floor() as i32, p.y.floor() as i32);
     for y in cy - radius..=cy + radius {
@@ -716,7 +738,8 @@ fn square(canvas: &mut Canvas, p: Vec2, radius: i32, color: [u8; 4]) {
     }
 }
 
-/// The errand target: a gold diamond outlined in ink, centered on `at`.
+/// El destino del mandado: un rombo dorado con contorno de tinta, centrado en
+/// `at`.
 fn diamond(canvas: &mut Canvas, at: Vec2) {
     let (cx, cy) = (at.x.floor() as i32, at.y.floor() as i32);
     let r = 5;
@@ -732,10 +755,11 @@ fn diamond(canvas: &mut Canvas, at: Vec2) {
     }
 }
 
-/// The player's arrow: a red triangle outlined in ink, tip along `heading`.
+/// La flecha del jugador: un triángulo rojo con contorno de tinta, con la punta
+/// según `heading`.
 fn arrow(canvas: &mut Canvas, at: Vec2, heading: Heading) {
     let f = heading.forward();
-    // Map y grows south.
+    // La y del mapa crece hacia el sur.
     let ahead = Vec2::new(f.x, -f.y);
     let side = Vec2::new(-ahead.y, ahead.x);
     let tip = at + ahead * 8.0;
@@ -822,7 +846,8 @@ pub(crate) mod tests {
             frame.to_map(GroundVec2::new(10.0, 20.0)),
             Vec2::new(100.0, 100.0)
         ));
-        // North-west corner at the top left, south-east at the bottom right.
+        // La esquina noroeste arriba a la izquierda, la sudeste abajo a la
+        // derecha.
         assert!(close(
             frame.to_map(GroundVec2::new(-90.0, 120.0)),
             Vec2::ZERO
@@ -831,7 +856,7 @@ pub(crate) mod tests {
             frame.to_map(GroundVec2::new(110.0, -80.0)),
             Vec2::new(200.0, 200.0)
         ));
-        // East is right, north is up.
+        // El este está a la derecha, el norte arriba.
         assert!(close(
             frame.to_map(GroundVec2::new(15.0, 30.0)),
             Vec2::new(105.0, 90.0)
@@ -873,8 +898,8 @@ pub(crate) mod tests {
         let station = t.station_plaza.expect("a station plaza");
         let spot = GroundVec2::new(station.min.x + 2.0, station.min.y + 6.0);
         assert_eq!(at(spot)[..3], palette::PLAZA[..3]);
-        // Where the inner streets crossed, the merged plaza is lawn, not road;
-        // off the central path and monument.
+        // Donde se cruzaban las calles interiores, la plaza fusionada es
+        // césped, no calle; fuera del sendero central y del monumento.
         let c = t.plaza.center();
         let former_street = GroundVec2::new(c.x + 12.0, c.y + 3.5);
         assert_eq!(at(former_street)[..3], palette::PLAZA[..3]);
@@ -885,8 +910,9 @@ pub(crate) mod tests {
         let t = town();
         let frame = MapFrame::for_town(&t, 320);
         let tip = t.railway.unwrap().end;
-        // A link leaving the east tip westward, slowly climbing north over
-        // the open ground beyond the town's track, and one far away.
+        // Un tramo que sale de la punta este hacia el oeste, subiendo
+        // lentamente hacia el norte sobre el campo abierto más allá de la vía
+        // del pueblo, y uno muy lejos.
         let link = Railway {
             start: tip,
             end: GroundVec2::new(-600.0, tip.y + 36.0),
@@ -901,7 +927,7 @@ pub(crate) mod tests {
             let f = (x - link.start.x) / (link.end.x - link.start.x);
             link.start + (link.end - link.start) * f
         };
-        // Both east of the title along the top edge.
+        // Ambos al este del título, a lo largo del borde superior.
         let (middle, east) = (on_link(100.0), on_link(150.0));
         assert!(frame.contains(middle) && frame.contains(east));
         assert!(middle.y > t.extent().max.y + 5.0, "{middle:?}");
@@ -914,7 +940,7 @@ pub(crate) mod tests {
         let with = rasterize_town(&t, &[link, far], &frame);
         assert_eq!(at(&with, middle)[..3], palette::RAIL[..3]);
         assert_eq!(at(&with, east)[..3], palette::RAIL[..3]);
-        // The far link leaves the map as it was.
+        // El tramo lejano deja el mapa como estaba.
         assert_eq!(rasterize_town(&t, &[far], &frame), without);
     }
 
@@ -922,8 +948,8 @@ pub(crate) mod tests {
     fn roads_are_painted_in_dirt_cut_to_the_frame_under_the_rail() {
         let t = town();
         let frame = MapFrame::for_town(&t, 320);
-        // A road leaving the grid's south-west corner diagonally, out of
-        // the frame, and one far away.
+        // Un camino que sale en diagonal de la esquina sudoeste de la
+        // cuadrícula, fuera del encuadre, y uno muy lejos.
         let grid = t.grid();
         let from = grid.min - GroundVec2::new(5.0, 5.0);
         let road = (from, from - GroundVec2::new(400.0, 300.0));
@@ -965,20 +991,20 @@ pub(crate) mod tests {
             let m = frame.to_map(p);
             map.get(m.x as usize, m.y as usize)
         };
-        // A point on a street but off the plaza and buildings.
+        // Un punto sobre una calle pero fuera de la plaza y de los edificios.
         let street = t.streets[0];
         let on_street = GroundVec2::new(street.center().x, t.grid().min.y + 3.0);
         assert_eq!(at(on_street)[..3], palette::STREET[..3]);
-        // Plaza: a spot between its trees and the central label.
+        // Plaza: un lugar entre sus árboles y la etiqueta central.
         let plaza = t.plaza;
         assert_eq!(
             at(GroundVec2::new(plaza.min.x + 2.0, plaza.min.y + 6.0))[..3],
             palette::PLAZA[..3]
         );
-        // The railway line is drawn where it crosses the frame.
+        // La línea del ferrocarril se dibuja donde cruza el encuadre.
         let rail = GroundVec2::new(frame.center.x + 100.0, t.railway.unwrap().start.y);
         assert_eq!(at(rail)[..3], palette::RAIL[..3]);
-        // A house is painted as a house.
+        // Una casa se pinta como una casa.
         let house = t
             .buildings
             .iter()
@@ -986,7 +1012,7 @@ pub(crate) mod tests {
             .unwrap();
         let corner = GroundVec2::new(house.footprint.min.x + 1.0, house.footprint.min.y + 1.0);
         assert_eq!(at(corner)[..3], palette::HOUSE[..3]);
-        // Every place carries its initial in ink, inside the map.
+        // Cada lugar lleva su inicial con tinta, dentro del mapa.
         for place in t.places() {
             let c = frame.to_map(place.center());
             assert!(c.x > 0.0 && c.y > 0.0 && c.x < 320.0 && c.y < 320.0);
@@ -1002,13 +1028,14 @@ pub(crate) mod tests {
         assert_eq!(place_initial(PlaceKind::Plaza), 'P');
     }
 
-    /// True for a pixel that is mostly ink: lettering strokes are thin, so
-    /// few of them reach full coverage.
+    /// Verdadero para un píxel que es mayormente tinta: los trazos de las
+    /// letras son delgados, así que pocos llegan a la cobertura completa.
     fn dark(px: [u8; 4]) -> bool {
         px[0] < 110 && px[1] < 100 && px[2] < 100
     }
 
-    /// Ink, halo and blended pixels of `canvas`, which was filled with `ground`.
+    /// Los píxeles de tinta, de halo y mezclados de `canvas`, que se rellenó
+    /// con `ground`.
     fn tally(canvas: &Canvas, ground: [u8; 4]) -> (usize, usize, usize) {
         let (mut ink, mut halo, mut blended) = (0, 0, 0);
         for y in 0..canvas.size {
@@ -1026,7 +1053,8 @@ pub(crate) mod tests {
         (ink, halo, blended)
     }
 
-    /// Bounds `(min_x, min_y, max_x, max_y)` of the pixels that are not `ground`.
+    /// Los límites `(min_x, min_y, max_x, max_y)` de los píxeles que no son
+    /// `ground`.
     fn bounds(canvas: &Canvas, ground: [u8; 4]) -> (usize, usize, usize, usize) {
         let mut b = (usize::MAX, usize::MAX, 0, 0);
         for y in 0..canvas.size {
@@ -1057,9 +1085,9 @@ pub(crate) mod tests {
         let (cx, cy) = ((x0 + x1) as f32 / 2.0, (y0 + y1) as f32 / 2.0);
         assert!((cx - 100.0).abs() <= 3.0, "centered x {cx}");
         assert!((cy - 100.0).abs() <= 3.0, "centered y {cy}");
-        // The halo reaches out on every side of the lettering, past the
-        // well-covered ink. Only the faint antialiased edge of a serif,
-        // which earns no halo, may lie up to two pixels beyond it.
+        // El halo se extiende a cada lado de las letras, más allá de la tinta
+        // bien cubierta. Solo el borde tenue con antialiasing de una serifa,
+        // que no recibe halo, puede quedar hasta dos píxeles más allá.
         let row_has_paper = |y: usize| (x0..=x1).any(|x| canvas.get(x, y) == palette::PAPER);
         let col_has_paper = |x: usize| (y0..=y1).any(|y| canvas.get(x, y) == palette::PAPER);
         let near = |edge: usize, inward: isize, has: &dyn Fn(usize) -> bool| {
@@ -1073,7 +1101,7 @@ pub(crate) mod tests {
             near(x0, 1, &col_has_paper) && near(x1, -1, &col_has_paper),
             "halo left and right"
         );
-        // About the old bitmap height: 7 rows at 2x, plus the halo.
+        // Más o menos la altura del viejo bitmap: 7 filas a 2x, más el halo.
         let h = y1 - y0 + 1;
         assert!((12..=24).contains(&h), "height {h}");
     }
@@ -1103,11 +1131,11 @@ pub(crate) mod tests {
         let (a0, a1, a2, a3) = bounds(&short, palette::PAPER);
         let (b0, b1, b2, b3) = bounds(&long, palette::PAPER);
         assert!(a2 - a0 > 20 && b2 - b0 > 20);
-        // The long name is narrower than the map less a margin, and its
-        // letters are smaller than the short name's.
+        // El nombre largo es más angosto que el mapa menos un margen, y sus
+        // letras son más pequeñas que las del nombre corto.
         assert!(b2 - b0 < 320 - 48, "long title width {}", b2 - b0 + 1);
         assert!(b3 - b1 < a3 - a1, "long {} short {}", b3 - b1, a3 - a1);
-        // Both are centered along the top.
+        // Ambos quedan centrados a lo largo del borde superior.
         assert!((((a0 + a2) as f32 / 2.0) - 160.0).abs() <= 3.0);
         assert!((((b0 + b2) as f32 / 2.0) - 160.0).abs() <= 3.0);
         assert!(a1 < 30 && b1 < 30, "along the top edge");
@@ -1130,13 +1158,13 @@ pub(crate) mod tests {
         let at = draw_markers(&mut canvas, &frame, &markers).unwrap();
         assert!(close(at, frame.to_map(position)));
         assert!(opaque_near(&canvas, at, 2) > 0);
-        // More of the arrow lies ahead (up, for north) than behind.
+        // Hay más flecha por delante (arriba, para el norte) que por detrás.
         let (above, below) = (
             opaque_near(&canvas, at - Vec2::new(0.0, 5.0), 1),
             opaque_near(&canvas, at + Vec2::new(0.0, 5.0), 1),
         );
         assert!(above > below, "above {above} below {below}");
-        // Turned east, the tip points right.
+        // Girada hacia el este, la punta apunta a la derecha.
         let east = Markers {
             player: Some((position, Heading::from_radians(0.0))),
             ..Markers::default()
@@ -1145,7 +1173,7 @@ pub(crate) mod tests {
         let right = opaque_near(&canvas, at + Vec2::new(5.0, 0.0), 1);
         let left = opaque_near(&canvas, at - Vec2::new(5.0, 0.0), 1);
         assert!(right > left, "right {right} left {left}");
-        // Redrawing clears the previous frame.
+        // Volver a dibujar limpia el frame anterior.
         assert_eq!(opaque_near(&canvas, at - Vec2::new(0.0, 7.0), 0), 0);
     }
 
@@ -1193,7 +1221,7 @@ pub(crate) mod tests {
             0,
             "cars off the rails are not drawn"
         );
-        // Off-map walkers leave the corner alone.
+        // Los peatones fuera del mapa dejan la esquina sin tocar.
         assert_eq!(canvas.get(199, 0)[3], 0);
     }
 
@@ -1212,7 +1240,8 @@ pub(crate) mod tests {
                 .iter()
                 .all(|&c| crate::lettering::supports(crate::lettering::Face::Body, c))
         );
-        // N points where ground +y lands on the map: up (map y grows south).
+        // La N apunta adonde cae el +y del suelo en el mapa: arriba (la y del
+        // mapa crece hacia el sur).
         let north =
             frame.to_map(frame.center + GroundVec2::new(0.0, 10.0)) - frame.to_map(frame.center);
         assert!(close(marks[0].1, north.normalize()), "{:?}", marks[0]);
@@ -1221,7 +1250,7 @@ pub(crate) mod tests {
         assert!(close(marks[2].1, Vec2::new(0.0, 1.0)));
         assert!(close(marks[3].1, Vec2::new(-1.0, 0.0)), "oeste is left");
 
-        // Drawn into the marker layer, every frame, in its corner.
+        // Se dibuja en la capa de marcadores, en cada frame, en su esquina.
         let mut canvas = Canvas::new(320);
         draw_markers(&mut canvas, &frame, &Markers::default());
         let c = compass_center(320);
@@ -1230,8 +1259,8 @@ pub(crate) mod tests {
             palette::INK,
             "the ring"
         );
-        // Each letter has ink inside the ring on its own side, and the
-        // north needle is red, above the middle.
+        // Cada letra tiene tinta dentro del anillo de su propio lado, y la
+        // aguja del norte es roja, por encima del centro.
         for (_, d) in marks {
             let at = c + d * (COMPASS_RADIUS * 0.6);
             let ink = (-3..=3)
@@ -1258,13 +1287,13 @@ pub(crate) mod tests {
             canvas.get(c.x as usize, (c.y + 3.0) as usize),
             palette::PAPER
         );
-        // Away from the corner the layer stays clear.
+        // Lejos de la esquina la capa queda limpia.
         assert_eq!(canvas.get(160, 160)[3], 0);
     }
 
-    /// A small farm round `hub`: a house to the north, a galpón to the
-    /// east, a tank to the west, a corral to the south, a eucalyptus to the
-    /// north-west, and a huella coming in from the west.
+    /// Una pequeña chacra alrededor de `hub`: una casa al norte, un galpón al
+    /// este, un tanque al oeste, un corral al sur, un eucalipto al noroeste y
+    /// una huella que llega desde el oeste.
     pub(crate) fn farm(hub: GroundVec2) -> Settlement {
         use pampa_core::{HouseStyle, SettlementKind, Side, Structure};
         let at = |dx: f32, dy: f32, size: (f32, f32), kind| Structure {
@@ -1346,12 +1375,13 @@ pub(crate) mod tests {
             palette::TREE
         );
         assert_eq!(at(wrecks[0].at), palette::SHED, "roadside wreck");
-        // The huella, a pale dirt line, thin: a pixel to either side of it
-        // is paper.
+        // La huella, una línea de tierra pálida, delgada: un píxel a cada lado
+        // de ella es papel.
         let on_track = hub + GroundVec2::new(-90.0, -10.0);
         assert_eq!(at(on_track), palette::TRACK);
         assert_ne!(at(on_track + GroundVec2::new(0.0, 4.0)), palette::TRACK);
-        // The corral: its rails outlined, its pen left open ground.
+        // El corral: sus travesaños en contorno, y su encierro como campo
+        // abierto.
         let corral = of(StructureKind::Corral).footprint;
         let (a, b) = frame.rect(&corral);
         let (x0, y0) = ((a.x - 0.5).ceil() as usize, (a.y - 0.5).ceil() as usize);
@@ -1362,7 +1392,7 @@ pub(crate) mod tests {
             map.get(middle.x as usize, middle.y as usize),
             palette::CORRAL
         );
-        // A settlement off the frame leaves the map as it was.
+        // Un asentamiento fuera del encuadre deja el mapa como estaba.
         let far = [farm(hub + GroundVec2::new(5000.0, 0.0))];
         let away = Overlay {
             settlements: &far,
@@ -1381,8 +1411,8 @@ pub(crate) mod tests {
             plain,
             "the town frame is as before"
         );
-        // A farm whose house stands in the frame's south-east corner, off
-        // the town's extent.
+        // Una chacra cuya casa está en la esquina sudeste del encuadre, fuera
+        // de la extensión del pueblo.
         let h = frame.half_extent - 12.0;
         let house = frame.center + GroundVec2::new(h, -h);
         assert!(!t.extent().contains_point(house));
@@ -1437,7 +1467,8 @@ pub(crate) mod tests {
                     && (y as usize) < map.size
                     && map.get(x as usize, y as usize) == palette::RAIL
             };
-            // No gap: every point along the line is on a rail pixel.
+            // Sin huecos: cada punto a lo largo de la línea está sobre un píxel
+            // de riel.
             let steps = (s.distance(e) * 4.0) as usize;
             for k in steps / 20..steps * 19 / 20 {
                 let p = s.lerp(e, k as f32 / steps as f32);
@@ -1446,8 +1477,9 @@ pub(crate) mod tests {
                     "{degrees}°: a gap at {p:?}"
                 );
             }
-            // Even: across its main direction the line is as wide in every
-            // row or column, no tick thickening it into dashes.
+            // Pareja: a lo ancho de su dirección principal la línea tiene el
+            // mismo ancho en cada fila o columna, sin marcas que la engrosen en
+            // guiones.
             let east_west = (e.x - s.x).abs() >= (e.y - s.y).abs();
             let mut widths = std::collections::BTreeSet::new();
             for k in 1..20 {
@@ -1481,11 +1513,11 @@ pub(crate) mod tests {
             size_px: 200,
         };
         let mut canvas = Canvas::new(200);
-        // No target, no marker.
+        // Sin destino, sin marcador.
         draw_markers(&mut canvas, &frame, &Markers::default());
         assert_eq!(count(&canvas, palette::TARGET), 0);
 
-        // On the map: right where it is.
+        // En el mapa: justo donde está.
         let near = GroundVec2::new(30.0, -40.0);
         let markers = Markers {
             target: Some(near),
@@ -1497,8 +1529,8 @@ pub(crate) mod tests {
         assert!(count(&canvas, palette::TARGET) > 8);
         assert!(count(&canvas, palette::INK) > 8, "outlined in ink");
 
-        // Far off to the north-west (another town): pinned to the edge on
-        // that side, like the player's arrow.
+        // Muy lejos hacia el noroeste (otro pueblo): fijado en el borde de ese
+        // lado, como la flecha del jugador.
         let far = GroundVec2::new(-2500.0, 900.0);
         let markers = Markers {
             target: Some(far),
@@ -1511,7 +1543,7 @@ pub(crate) mod tests {
         assert_eq!(canvas.get(pin.x as usize, pin.y as usize), palette::TARGET);
         assert_eq!(canvas.get(100, 100)[3], 0, "nothing left in the middle");
 
-        // The player's arrow is drawn over the target.
+        // La flecha del jugador se dibuja encima del destino.
         let markers = Markers {
             target: Some(near),
             player: Some((near, Heading::from_radians(0.0))),
@@ -1538,8 +1570,8 @@ pub(crate) mod tests {
             .find(|b| b.kind == BuildingKind::PoliceStation)
             .unwrap()
             .footprint;
-        // Landmark-colored pixels over the police station's footprint: the
-        // building before, ordinary lots (or open ground) now.
+        // Píxeles del color de los hitos sobre la huella de edificio de la
+        // comisaría: el edificio antes, ahora lotes comunes (o campo abierto).
         let (lo, hi) = frame.rect(&police);
         let landmark = |t: &TownLayout| {
             let map = rasterize_town(t, &[], &frame);
@@ -1582,7 +1614,7 @@ pub(crate) mod tests {
         for p in lagoon.ring(32, 6.0) {
             assert_ne!(pixel(p), palette::WATER, "{p:?}");
         }
-        // Off the frame it leaves the map as it was.
+        // Fuera del encuadre deja el mapa como estaba.
         let mut far = lagoon;
         far.center += GroundVec2::new(3000.0, 0.0);
         let away = [far];
@@ -1607,7 +1639,7 @@ pub(crate) mod tests {
         let map = rasterize_field(&[], &overlay, &frame);
         let m = frame.to_map(platform.center());
         assert_eq!(map.get(m.x as usize, m.y as usize), [184, 174, 152, 255]);
-        // Off the frame it leaves the map as it was.
+        // Fuera del encuadre deja el mapa como estaba.
         let far = [Aabb::from_center_size(
             GroundVec2::new(9000.0, 0.0),
             GroundVec2::new(30.0, 8.0),

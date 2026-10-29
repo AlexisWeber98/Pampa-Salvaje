@@ -1,23 +1,24 @@
-//! The first errand, played: the player gets off the morning train at the
-//! first town on foot (the opening, see [`crate::ride`]), talks to Don Hidalgo in the plaza, takes his horse
-//! from the general store and rides to report to comisario Farach in the
-//! town the dialogue file names (`police_town`).
+//! El primer encargo, en juego: el jugador se baja a pie del tren de la mañana
+//! en el primer pueblo (la apertura, ver [`crate::ride`]), habla con Don
+//! Hidalgo en la plaza, toma su caballo del almacén de ramos generales y
+//! cabalga para presentarse ante el comisario Farach en el pueblo que nombra el
+//! archivo de diálogo (`police_town`).
 //!
-//! Once taken, the horse is the player's: F while stopped or at a slow walk
-//! gets off, leaving it tied loosely where it stands ([`LooseHorse`]), and F
-//! beside it gets back on. Neither moves the errand on.
+//! Una vez tomado, el caballo es del jugador: F detenido o al paso lento lo
+//! hace bajar y lo deja atado flojo donde está ([`LooseHorse`]), y F junto a él
+//! lo hace volver a subir. Ninguna de las dos cosas hace avanzar el encargo.
 //!
-//! Taking Don Hidalgo's horse unlocks riding ([`crate::abilities`]): from
-//! then on F beside any other horse ([`Mountable`]: tied in a town, or
-//! standing free) gets on it, and the one ridden before stays standing
-//! where it was left. Before that, only Don Hidalgo's horse lets him on.
+//! Tomar el caballo de Don Hidalgo desbloquea la monta ([`crate::abilities`]):
+//! desde entonces F junto a cualquier otro caballo ([`Mountable`]: atado en un
+//! pueblo, o parado suelto) lo hace subir, y el que montaba antes queda parado
+//! donde lo dejó. Antes de eso, solo el caballo de Don Hidalgo lo deja subir.
 //!
-//! `pampa-core` owns the rules ([`Errand`]): who stands where, the stages
-//! and what is in range. This module reads the interact key
-//! ([`INTERACT_KEY`]), plays the lines from `assets/dialogue/errand.ron` as
-//! speech bubbles ([`Say`]), one every bubble lifetime, puts the player in
-//! the saddle, and keeps the HUD objective ([`HudObjective`]) and the
-//! minimap target ([`MapTarget`]) in step with the errand.
+//! `pampa-core` es dueño de las reglas ([`Errand`]): quién está dónde, las
+//! etapas y qué está al alcance. Este módulo lee la tecla de interacción
+//! ([`INTERACT_KEY`]), reproduce las líneas de `assets/dialogue/errand.ron`
+//! como globos de diálogo ([`Say`]), una por cada duración de globo, pone al
+//! jugador en la montura, y mantiene el objetivo del HUD ([`HudObjective`]) y
+//! el objetivo del minimapa ([`MapTarget`]) al ritmo del encargo.
 
 use bevy::prelude::*;
 use pampa_content::{ERRAND_FILE, ErrandLines, asset_path, load_errand_or_builtin};
@@ -35,53 +36,54 @@ use crate::abilities::{PlayerAbilities, Unlocked, announce_unlocks, unlock_on_mo
 use crate::life::{Cast, LedAway, StandingNpc, TetheredHorse};
 use crate::player::{DrivePlayer, GameWorld, Player, RiddenCoat, player_visual_on};
 
-/// The one context key: talk, mount, or get off. (E orbits the camera, M
-/// toggles the map, Esc quits.)
+/// La única tecla de contexto: hablar, montar o bajarse. (E orbita la cámara, M
+/// alterna el mapa, Esc sale).
 pub const INTERACT_KEY: KeyCode = KeyCode::KeyF;
 
-/// The horse the player got off, tied loosely where they left it; `None`
-/// while riding it (or before taking it).
+/// El caballo del que se bajó el jugador, atado flojo donde lo dejó; `None`
+/// mientras lo monta (o antes de tomarlo).
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
 pub struct LooseHorse(pub Option<pampa_core::TetheredHorse>);
 
-/// The entity drawing the [`LooseHorse`].
+/// La entidad que dibuja el [`LooseHorse`].
 #[derive(Component, Debug, Clone, Copy)]
 pub struct LeftHorse;
 
-/// A standing horse the player may get on (once riding is unlocked, see
-/// [`PlayerAbilities`]): tied in a town, left loose, or standing free. Its
-/// footprint is an obstacle of the [`GameWorld`] while it stands.
+/// Un caballo parado al que el jugador puede subir (una vez desbloqueada la
+/// monta, ver [`PlayerAbilities`]): atado en un pueblo, dejado suelto, o parado
+/// libre. Su huella en planta es un obstáculo del [`GameWorld`] mientras está
+/// parado.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct Mountable(pub pampa_core::TetheredHorse);
 
-/// The errand underway.
+/// El encargo en curso.
 #[derive(Resource, Debug, Clone, PartialEq)]
 pub struct ErrandRun(pub Errand);
 
-/// The errand's lines.
+/// Las líneas del encargo.
 #[derive(Resource, Debug, Clone, PartialEq)]
 pub struct ErrandDialogue(pub ErrandLines);
 
-/// The errand moved on (each event is written once).
+/// El encargo avanzó (cada evento se escribe una sola vez).
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ErrandProgress(pub ErrandEvent);
 
-/// Who says a line.
+/// Quién dice una línea.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Speaker {
     Npc(Npc),
     Player,
 }
 
-/// Lines being said one after the other, each shown for a bubble's
-/// lifetime.
+/// Líneas que se dicen una tras otra, cada una mostrada durante la duración de
+/// un globo.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Talk {
     pub speaker: Speaker,
     pub lines: Vec<String>,
-    /// Index of the next line to say.
+    /// Índice de la próxima línea a decir.
     pub next: usize,
-    /// Seconds until the next line.
+    /// Segundos hasta la próxima línea.
     pub wait: f32,
 }
 
@@ -96,16 +98,16 @@ impl Talk {
     }
 }
 
-/// The conversation playing, if any. A new one replaces it.
+/// La conversación en curso, si la hay. Una nueva la reemplaza.
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct Conversation(pub Option<Talk>);
 
-/// The errand of a world of `towns`, given the first town: Don Hidalgo in
-/// its plaza, Farach (with Bairoletto at his side) in the town named `police_town` (the dialogue's
-/// [`ErrandLines::police_town`]; the nearest other town with a police
-/// station when it has none). Their footprints are added to `world` as
-/// obstacles. `None` (no errand) without a second town with a police
-/// station.
+/// El encargo de un mundo de `towns`, dado el primer pueblo: Don Hidalgo en su
+/// plaza, Farach (con Bairoletto a su lado) en el pueblo llamado `police_town`
+/// (el [`ErrandLines::police_town`] del diálogo; el otro pueblo más cercano con
+/// comisaría cuando ese no tiene una). Sus huellas en planta se agregan a
+/// `world` como obstáculos. `None` (sin encargo) si no hay un segundo pueblo
+/// con comisaría.
 pub fn plan(
     towns: &[TownLayout],
     world: &mut World,
@@ -158,16 +160,17 @@ impl Plugin for ErrandPlugin {
     }
 }
 
-/// What reading the dialogue file found, logged at startup (the game reads
-/// it before logging is up, to plan the errand).
+/// Lo que encontró la lectura del archivo de diálogo, registrado en el log al
+/// inicio (el juego lo lee antes de que el log esté listo, para planificar el
+/// encargo).
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct DialogueReport {
     pub info: Vec<String>,
     pub warnings: Vec<String>,
 }
 
-/// Reads `assets/dialogue/errand.ron`, falling back to the built-in lines,
-/// with what to log about it.
+/// Lee `assets/dialogue/errand.ron` y recurre a las líneas incorporadas si
+/// falla, con lo que hay que registrar al respecto.
 pub fn read_dialogue() -> (ErrandDialogue, DialogueReport) {
     let path = asset_path(ERRAND_FILE);
     let (lines, error) = load_errand_or_builtin(&path);
@@ -189,8 +192,8 @@ pub fn read_dialogue() -> (ErrandDialogue, DialogueReport) {
     (ErrandDialogue(lines), report)
 }
 
-/// Logs the [`DialogueReport`], reading the dialogue first unless the lines
-/// were already provided.
+/// Registra el [`DialogueReport`] en el log, leyendo primero el diálogo salvo
+/// que las líneas ya se hayan proporcionado.
 fn load_dialogue(
     mut commands: Commands,
     existing: Option<Res<ErrandDialogue>>,
@@ -208,7 +211,7 @@ fn load_dialogue(
     report.warnings.iter().for_each(|line| warn!("{line}"));
 }
 
-/// What [`interact`] changes when the player mounts or gets off.
+/// Lo que [`interact`] cambia cuando el jugador monta o se baja.
 type MountState<'w> = (
     ResMut<'w, GameWorld>,
     ResMut<'w, LedAway>,
@@ -217,7 +220,7 @@ type MountState<'w> = (
     Res<'w, PlayerAbilities>,
 );
 
-/// A standing horse as [`interact`] sees it.
+/// Un caballo parado tal como lo ve [`interact`].
 type StandingHorse = (
     Entity,
     &'static Mountable,
@@ -227,8 +230,8 @@ type StandingHorse = (
     Has<LeftHorse>,
 );
 
-/// The coat of a standing horse: a saddled one's visual, or a corral
-/// horse's (drawn as fauna).
+/// El pelaje de un caballo parado: el visual de uno ensillado, o el de un
+/// caballo de corral (dibujado como fauna).
 fn standing_coat(visual: Option<&CharacterVisual>, animal: Option<&Animal>) -> Option<Coat> {
     match (visual, animal) {
         (Some(CharacterVisual::Horse(coat)), _) | (_, Some(Animal::Horse(coat))) => Some(*coat),
@@ -236,17 +239,18 @@ fn standing_coat(visual: Option<&CharacterVisual>, animal: Option<&Animal>) -> O
     }
 }
 
-/// The horses [`interact`] may change: those tied in the towns, the one
-/// the player left tied loosely, and every standing horse.
+/// Los caballos que [`interact`] puede cambiar: los atados en los pueblos, el
+/// que el jugador dejó atado flojo, y cada caballo parado.
 type Horses<'w, 's> = (
     Query<'w, 's, (Entity, &'static TetheredHorse)>,
     Query<'w, 's, Entity, With<LeftHorse>>,
     Query<'w, 's, StandingHorse>,
 );
 
-/// The interact key: talks to whoever is in range and due, or mounts Don
-/// Hidalgo's horse; with nothing else to do, gets off the horse or back on,
-/// or (once riding is unlocked) onto any other horse in reach.
+/// La tecla de interacción: habla con quien esté al alcance y le corresponda, o
+/// monta el caballo de Don Hidalgo; sin nada más que hacer, baja del caballo o
+/// vuelve a subir, o (una vez desbloqueada la monta) sube a cualquier otro
+/// caballo al alcance.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn interact(
     mut commands: Commands,
@@ -305,8 +309,9 @@ pub(crate) fn interact(
         }
         ErrandEvent::MountedHorse => {
             let (town, horse) = errand.0.horse();
-            // Led away for the rest of the session: the tied horse and its
-            // footprint go, and the player rides it from where it stood.
+            // Se lo llevan por el resto de la sesión: el caballo atado y su
+            // huella en planta desaparecen, y el jugador lo monta desde donde
+            // estaba.
             saddle.world.obstacles.remove(&horse.footprint);
             saddle.led_away.0.insert(town);
             for (entity, tied) in &horses {
@@ -320,21 +325,21 @@ pub(crate) fn interact(
     }
 }
 
-/// What getting on and off the horse changes.
+/// Lo que cambia al subir y bajar del caballo.
 struct Saddle<'a, 'w, 's> {
     commands: &'a mut Commands<'w, 's>,
     world: &'a mut World,
     loose: &'a mut LooseHorse,
     led_away: &'a mut LedAway,
-    /// The coat of the horse ridden.
+    /// El pelaje del caballo montado.
     coat: &'a mut Coat,
-    /// The entities drawing the loose horse.
+    /// Las entidades que dibujan el caballo suelto.
     left: Vec<Entity>,
 }
 
 impl Saddle<'_, '_, '_> {
-    /// Puts `rider` (entity `me`) in the saddle of `horse`, where it
-    /// stands, with the mounted visual.
+    /// Pone a `rider` (la entidad `me`) en la montura de `horse`, donde está
+    /// parado, con el visual de montado.
     fn ride(
         &mut self,
         me: Entity,
@@ -344,15 +349,16 @@ impl Saddle<'_, '_, '_> {
     ) {
         *rider = rider.mount(horse, &*self.world);
         transform.translation = world_from_ground(rider.position, rider.height);
-        // A new visual: render drops the figure and draws the rider.
+        // Un visual nuevo: render descarta la figura y dibuja al jinete.
         self.commands
             .entity(me)
             .insert(player_visual_on(rider.travel(), *self.coat));
     }
 
-    /// Gets off the horse when riding slowly enough, leaving it tied
-    /// loosely (a still horse and an obstacle), or gets back on it from
-    /// within [`Errand::MOUNT_RANGE`]. `false` if it did neither.
+    /// Se baja del caballo cuando cabalga lo bastante lento y lo deja atado
+    /// flojo (un caballo quieto y un obstáculo), o vuelve a subir a él desde
+    /// dentro de [`Errand::MOUNT_RANGE`]. `false` si no hizo ninguna de las dos
+    /// cosas.
     fn swap(&mut self, me: Entity, rider: &mut Rider, transform: &mut Transform) -> bool {
         match (rider.travel(), self.loose.0) {
             (Travel::Riding, _) => {
@@ -395,10 +401,10 @@ impl Saddle<'_, '_, '_> {
         }
     }
 
-    /// Gets on the nearest of `horses` within [`Errand::MOUNT_RANGE`] of
-    /// the player on foot: its footprint goes, a horse tied in a town is
-    /// led away for good, and a loose horse left before stays standing
-    /// (no longer the loose one).
+    /// Sube al más cercano de los `horses` dentro de [`Errand::MOUNT_RANGE`]
+    /// del jugador a pie: su huella en planta desaparece, un caballo atado en
+    /// un pueblo se lo llevan para siempre, y un caballo suelto dejado antes
+    /// queda parado (ya no es el suelto).
     fn take<'h>(
         &mut self,
         me: Entity,
@@ -441,7 +447,7 @@ impl Saddle<'_, '_, '_> {
         if let Some(town) = town {
             self.led_away.0.insert(town);
         }
-        // Whichever horse was left loose stays where it stands.
+        // El caballo que haya quedado suelto queda donde está parado.
         self.loose.0 = None;
         for &e in &self.left {
             self.commands.entity(e).remove::<LeftHorse>();
@@ -454,8 +460,8 @@ impl Saddle<'_, '_, '_> {
     }
 }
 
-/// Says the conversation's lines one after the other, each for a bubble's
-/// lifetime, above whoever speaks (if they are around).
+/// Dice las líneas de la conversación una tras otra, cada una durante la
+/// duración de un globo, sobre quien habla (si está cerca).
 fn converse(
     time: Res<Time>,
     mut conversation: ResMut<Conversation>,
@@ -485,8 +491,8 @@ fn converse(
     }
 }
 
-/// Puts [`Talking`] on whoever's lines are on screen and takes it off
-/// everyone else: standing, they talk with their hands.
+/// Pone [`Talking`] a quien tenga sus líneas en pantalla y se lo quita a todos
+/// los demás: parados, hablan con las manos.
 fn mark_speakers(
     mut commands: Commands,
     conversation: Res<Conversation>,
@@ -510,7 +516,7 @@ fn mark_speakers(
     }
 }
 
-/// Keeps the HUD objective and the minimap target on the current stage.
+/// Mantiene el objetivo del HUD y el objetivo del minimapa en la etapa actual.
 fn show_progress(
     errand: Option<Res<ErrandRun>>,
     mut objective: ResMut<HudObjective>,
@@ -530,7 +536,7 @@ mod tests {
     use pampa_render::character::{FigureBody, FigureJoint, FigurePart, HorseBody, HorseModel};
     use pampa_render::{CharacterVisual, CharacterVisualPlugin, Coat, FigureKind, WorldTowns};
 
-    /// Every line said, by whom.
+    /// Cada línea dicha, y por quién.
     #[derive(Resource, Default)]
     struct Said(Vec<(Entity, String)>);
 
@@ -554,9 +560,9 @@ mod tests {
         lines
     }
 
-    /// The game's opening in the shipped world (aboard the morning train
-    /// from Pico pulling into Monte Nievas), with every line and errand
-    /// event logged. Frames last 50 ms.
+    /// La apertura del juego en el mundo incluido (a bordo del tren de la
+    /// mañana desde Pico entrando a Monte Nievas), con cada línea y cada evento
+    /// del encargo registrados. Los frames duran 50 ms.
     fn shipped_app() -> App {
         let mut app = crate::ride::testing::shipped_app();
         app.init_resource::<Said>()
@@ -578,8 +584,9 @@ mod tests {
         p.rider.speed = 0.0;
     }
 
-    /// Horse bodies, figure bodies, figure joints, figure parts and horse
-    /// models drawn under `who`, and meshes that are no figure part.
+    /// Cuerpos de caballo, cuerpos de figura, articulaciones de figura, partes
+    /// de figura y modelos de caballo dibujados bajo `who`, y meshes que no son
+    /// parte de ninguna figura.
     fn drawn_under(app: &mut App, who: Entity) -> [usize; 6] {
         let mut under = Vec::new();
         let mut stack = vec![who];
@@ -629,9 +636,9 @@ mod tests {
         teleport(&mut app, beside(&e.horse().1));
         press_f(&mut app);
         assert_eq!(player(&mut app).1.rider.travel(), Travel::Riding);
-        // One horse with the clerk in its saddle, and nothing else: no
-        // clerk on foot left, nothing rigid. (This app loads no models: the
-        // horse and its rider wait for theirs, drawing nothing.)
+        // Un caballo con el empleado en su montura, y nada más: no queda ningún
+        // empleado a pie, nada rígido. (Esta app no carga modelos: el caballo y
+        // su jinete esperan los suyos sin dibujar nada).
         let [horses, bodies, joints, parts, models, other] = drawn_under(&mut app, me);
         assert_eq!(
             (horses, bodies, joints, parts, models, other),
@@ -653,12 +660,12 @@ mod tests {
                 .all(|b| b.kind != FigureKind::Protagonist),
             "no clerk on foot"
         );
-        // The tied horse he took is gone from the store too.
+        // El caballo atado que tomó tampoco está ya en el almacén.
         let mut tied = app.world_mut().query::<&TetheredHorse>();
         assert!(tied.iter(app.world()).all(|h| h.0 != e.horse().0));
     }
 
-    /// Presses the interact key for exactly one frame.
+    /// Presiona la tecla de interacción durante exactamente un frame.
     fn press_f(app: &mut App) {
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
@@ -693,7 +700,7 @@ mod tests {
             .collect()
     }
 
-    /// Lets every line of a conversation play out.
+    /// Deja que se reproduzcan todas las líneas de una conversación.
     fn wait_for_lines(app: &mut App, lines: usize) {
         let frames = ((lines as f32 + 1.0) * LIFETIME / 0.05).ceil() as usize;
         for _ in 0..frames {
@@ -730,16 +737,16 @@ mod tests {
     fn the_whole_errand_from_the_train_to_the_comisaria() {
         let mut app = shipped_app();
         let lines = shipped_lines();
-        // Off the morning train at Monte Nievas.
+        // Bajado del tren de la mañana en Monte Nievas.
         arrive(&mut app);
         let e = errand(&app);
         let hidalgo = e.standing(Npc::Hidalgo).position;
         let (horse_town, horse) = e.horse();
         let farach = e.standing(Npc::Farach).position;
 
-        // On foot on top of the Monte Nievas platform, beside the dwelling
-        // train's coaches, facing town; standing still leaves the player
-        // where they are.
+        // A pie, arriba del andén de Monte Nievas, junto a los coches del tren
+        // detenido, mirando al pueblo; quedarse quieto deja al jugador donde
+        // está.
         let (start, facing) = {
             let (_, p) = player(&mut app);
             (p.rider.position, p.rider.heading)
@@ -756,7 +763,7 @@ mod tests {
             "{:?}",
             p.rider.position
         );
-        // Up on the platform's top, not on the ground beside it.
+        // Arriba, sobre el andén, no en el suelo junto a él.
         let world = app.world().resource::<GameWorld>().0.clone();
         assert_eq!(p.rider.height, world.ground_height(start));
         assert!(p.rider.height > world.terrain.height(start.x, start.y) + 0.5);
@@ -767,20 +774,20 @@ mod tests {
         );
         assert_eq!(app.world().resource::<MapTarget>().0, Some(hidalgo));
 
-        // Nothing to do out on the road into town.
+        // Nada que hacer en el camino de entrada al pueblo.
         teleport(&mut app, town.arrival().0);
         press_f(&mut app);
         assert_eq!(errand(&app).stage(), ErrandStage::MeetHidalgo);
         assert!(app.world().resource::<Said>().0.is_empty());
 
-        // Not his horse yet.
+        // Todavía no es su caballo.
         teleport(&mut app, beside(&horse));
         press_f(&mut app);
         assert_eq!(errand(&app).stage(), ErrandStage::MeetHidalgo);
         assert_eq!(said_by(&app, me), lines.not_your_horse[..1]);
         assert_eq!(player(&mut app).1.rider.travel(), Travel::OnFoot);
 
-        // Don Hidalgo in the plaza tells the whole story, line by line.
+        // Don Hidalgo, en la plaza, cuenta toda la historia, línea por línea.
         teleport(
             &mut app,
             hidalgo + e.standing(Npc::Hidalgo).heading.forward() * 2.0,
@@ -796,8 +803,8 @@ mod tests {
         press_f(&mut app);
         assert_eq!(said_by(&app, don).len(), lines.hidalgo.len(), "said once");
 
-        // Mount his horse: the player becomes the rider, the tied horse
-        // and its footprint are gone.
+        // Montar su caballo: el jugador pasa a ser el jinete; el caballo atado
+        // y su huella en planta desaparecen.
         teleport(&mut app, beside(&horse));
         press_f(&mut app);
         assert_eq!(errand(&app).stage(), ErrandStage::ReportToFarach);
@@ -833,8 +840,8 @@ mod tests {
                 .ends_with("Farach en Eduardo Castex")
         );
 
-        // Ride to Castex and report, without getting off.
-        // 2.5 m in front of him, out on the street.
+        // Cabalgar hasta Castex y presentarse, sin bajarse.
+        // A 2.5 m frente a él, en la calle.
         teleport(
             &mut app,
             farach + e.standing(Npc::Farach).heading.forward() * 2.5,
@@ -847,7 +854,7 @@ mod tests {
         assert_eq!(objective(&app), None);
         assert_eq!(app.world().resource::<MapTarget>().0, None);
 
-        // Each step happened once.
+        // Cada paso ocurrió una sola vez.
         press_f(&mut app);
         assert_eq!(
             app.world().resource::<Progress>().0,
@@ -859,7 +866,7 @@ mod tests {
         );
     }
 
-    /// The loose horse's logic and its drawn entities.
+    /// La lógica del caballo suelto y sus entidades dibujadas.
     fn loose(app: &mut App) -> (Option<pampa_core::TetheredHorse>, Vec<CharacterVisual>) {
         let horse = app.world().resource::<LooseHorse>().0;
         let mut q = app
@@ -887,7 +894,7 @@ mod tests {
                 .is_some_and(|o| o.contains("Eduardo Castex"))
         );
 
-        // Not while riding on.
+        // No mientras sigue cabalgando.
         app.world_mut()
             .query::<&mut Player>()
             .single_mut(app.world_mut())
@@ -898,7 +905,7 @@ mod tests {
         assert_eq!(player(&mut app).1.rider.travel(), Travel::Riding);
         assert_eq!(loose(&mut app), (None, vec![]));
 
-        // Stopped: off, on foot beside the horse, which stays tied loosely.
+        // Detenido: se baja, a pie junto al caballo, que queda atado flojo.
         let farach = e.standing(Npc::Farach);
         let street = farach.position + farach.heading.forward() * 12.0;
         teleport(&mut app, street);
@@ -923,11 +930,11 @@ mod tests {
                 .contains(&horse.footprint)
         );
         assert!(p.rider.position.distance(horse.position) <= Errand::MOUNT_RANGE);
-        // The errand did not move: still to report, nothing to take.
+        // El encargo no avanzó: falta presentarse, nada que tomar.
         assert_eq!(errand(&app).stage(), ErrandStage::ReportToFarach);
         assert_eq!(objective(&app), report);
 
-        // F beside it: back in the saddle, the loose horse gone.
+        // F junto a él: de vuelta en la montura, el caballo suelto desaparece.
         press_f(&mut app);
         let (_, p) = player(&mut app);
         assert_eq!(p.rider.travel(), Travel::Riding);
@@ -941,7 +948,8 @@ mod tests {
                 .contains(&horse.footprint)
         );
 
-        // Off again, report on foot, and ride on after the errand.
+        // Bajarse otra vez, presentarse a pie, y seguir cabalgando después del
+        // encargo.
         press_f(&mut app);
         assert_eq!(player(&mut app).1.rider.travel(), Travel::OnFoot);
         teleport(&mut app, farach.position + farach.heading.forward() * 2.5);
@@ -975,7 +983,8 @@ mod tests {
                 .has(Ability::Ride)
         };
         assert!(!ride(&app));
-        // A horse tied in a town of neither Don Hidalgo nor Farach.
+        // Un caballo atado en un pueblo que no es ni el de Don Hidalgo ni el de
+        // Farach.
         let other = {
             let towns = &app.world().resource::<WorldTowns>().0;
             let police = e.standing(Npc::Farach).town;
@@ -988,7 +997,7 @@ mod tests {
         press_f(&mut app);
         assert_eq!(player(&mut app).1.rider.travel(), Travel::OnFoot, "not yet");
 
-        // Don Hidalgo's horse: riding unlocks, with a notice.
+        // El caballo de Don Hidalgo: se desbloquea la monta, con un aviso.
         let hidalgo = e.standing(Npc::Hidalgo);
         teleport(&mut app, hidalgo.position + hidalgo.heading.forward() * 2.0);
         press_f(&mut app);
@@ -1007,13 +1016,14 @@ mod tests {
             Abilities::all(),
             "only riding"
         );
-        // Off where he took it: it stays tied loosely.
+        // Se baja donde lo tomó: queda atado flojo.
         press_f(&mut app);
         let (left, _) = loose(&mut app);
         let left = left.expect("left loose");
 
-        // Now the other town's horse lets him on, in its own coat, and is
-        // led away for good; Don Hidalgo's stays standing where he left it.
+        // Ahora el caballo del otro pueblo lo deja subir, con su propio pelaje,
+        // y se lo llevan para siempre; el de Don Hidalgo queda parado donde lo
+        // dejó.
         teleport(&mut app, beside(&other.1));
         press_f(&mut app);
         let (_, p) = player(&mut app);
@@ -1040,8 +1050,8 @@ mod tests {
         let mut standing = app.world_mut().query::<&Mountable>();
         assert!(standing.iter(app.world()).any(|m| m.0 == left));
 
-        // Off this one, back to Don Hidalgo's bayo (the former loose horse
-        // is any other standing horse now).
+        // Se baja de este y vuelve al bayo de Don Hidalgo (el antiguo caballo
+        // suelto ahora es un caballo parado cualquiera).
         press_f(&mut app);
         teleport(&mut app, left.position + left.heading.forward() * 2.0);
         press_f(&mut app);
@@ -1049,8 +1059,8 @@ mod tests {
         assert_eq!(app.world().resource::<RiddenCoat>().0, Coat::HIDALGO);
     }
 
-    /// 2.5 m ahead of the tied horse along the street: clear of the horse
-    /// and its rail, within reach.
+    /// A 2.5 m delante del caballo atado a lo largo de la calle: apartado del
+    /// caballo y de su palenque, al alcance.
     fn beside(horse: &pampa_core::TetheredHorse) -> GroundVec2 {
         horse.position + horse.heading.forward() * 2.5
     }
@@ -1077,7 +1087,8 @@ mod tests {
         assert_eq!(loaded.towns[hidalgo.town].name, "Monte Nievas");
         assert_eq!(loaded.towns[farach.town].name, lines.police_town);
         assert_eq!(run.0.police_name(), "Eduardo Castex");
-        // As the story says: no comisaría in Monte Nievas, one in Castex.
+        // Como dice la historia: no hay comisaría en Monte Nievas, hay una en
+        // Castex.
         let comisarias = |t: &TownLayout| {
             t.places()
                 .iter()
@@ -1087,7 +1098,7 @@ mod tests {
         assert_eq!(comisarias(&loaded.towns[hidalgo.town]), 0);
         assert_eq!(loaded.towns[hidalgo.town].police_door(), None);
         assert_eq!(comisarias(&loaded.towns[farach.town]), 1);
-        // Hidalgo, Farach and Bairoletto at his side, clear of Castex.
+        // Hidalgo, Farach y Bairoletto a su lado, apartados de Castex.
         assert_eq!(world.obstacles.len(), before + 3);
         assert_eq!(cast.0, vec![(Npc::Hidalgo, hidalgo), (Npc::Farach, farach)]);
         let bairoletto = run.0.bairoletto();
@@ -1107,7 +1118,7 @@ mod tests {
         app.update();
         let dialogue = app.world().resource::<ErrandDialogue>();
         assert!(!dialogue.0.hidalgo.is_empty());
-        // Without an errand there is no objective and no target.
+        // Sin encargo no hay objetivo ni destino.
         assert_eq!(app.world().resource::<HudObjective>().0, None);
         assert_eq!(app.world().resource::<MapTarget>().0, None);
     }
@@ -1119,7 +1130,7 @@ mod tests {
         let mut app =
             crate::ride::testing::shipped_app_at(Some(GameClock::at(TimeOfDay::hm(12, 0))));
         app.update();
-        // Out on the open pampa, clear of the platform.
+        // En plena pampa, lejos del andén.
         teleport(&mut app, GroundVec2::new(100.0, -200.0));
         app.update();
         let at = player(&mut app).1.rider.position + GroundVec2::new(0.0, 2.0);
@@ -1132,7 +1143,7 @@ mod tests {
                 AnimalPose::default(),
             ))
             .id();
-        // Not his to ride yet.
+        // Todavía no le corresponde montarlo.
         press_f(&mut app);
         assert_eq!(player(&mut app).1.rider.travel(), Travel::OnFoot);
         app.world_mut().resource_mut::<PlayerAbilities>().0 = Abilities::all();

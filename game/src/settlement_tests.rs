@@ -1,4 +1,5 @@
-//! The game's wiring of the rural settlements: model slot fits.
+//! La conexión del juego con los asentamientos rurales: los ajustes de las
+//! ranuras de modelo.
 
 use super::*;
 use pampa_core::StructureKind;
@@ -15,7 +16,7 @@ fn the_shipped_slot_fits_reach_the_renderer() {
     for slot in slots.0.keys() {
         assert!(StructureKind::SLOTS.contains(&slot.as_str()), "{slot}");
     }
-    // A broken file fits nothing and says so; a missing one fits nothing.
+    // Un archivo roto no ajusta nada y lo informa; uno ausente no ajusta nada.
     let dir = std::env::temp_dir().join(format!("pampa-salvaje-slots-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let broken = dir.join("slots.ron");

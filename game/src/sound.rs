@@ -1,36 +1,38 @@
-//! The player's sound settings: a general volume and the music's, set in
-//! the menus' Sonido screen and kept between runs in `settings.ron` under
-//! the user's config directory (`$XDG_CONFIG_HOME/pampa-salvaje`,
-//! `~/.config/pampa-salvaje`, or `%APPDATA%\pampa-salvaje` on Windows).
-//! The directory was `pampa-seca` until the game was renamed (2026-10-28,
-//! before any release); that old file is not read.
+//! La configuración de sonido del jugador: un volumen general y el de la
+//! música, que se ajustan en la pantalla Sonido de los menús y se guardan entre
+//! ejecuciones en `settings.ron`, en el directorio de configuración del usuario
+//! (`$XDG_CONFIG_HOME/pampa-salvaje`, `~/.config/pampa-salvaje`, o
+//! `%APPDATA%\pampa-salvaje` en Windows). El directorio era `pampa-seca` hasta
+//! que se renombró el juego (2026-10-28, antes de cualquier lanzamiento); ese
+//! archivo viejo no se lee.
 //!
-//! Each volume is a step from 0 to [`MAX_STEP`]. What the ear hears grows
-//! with the square of the amplitude's step, so [`SoundSettings::music_gain`]
-//! squares the product of the two: step 4 of 10 plays at 16 % amplitude.
-//! Ambient sounds and effects get their own volumes when they come.
+//! Cada volumen es un paso de 0 a [`MAX_STEP`]. Lo que percibe el oído crece
+//! con el cuadrado del paso de la amplitud, así que
+//! [`SoundSettings::music_gain`] eleva al cuadrado el producto de ambos: el
+//! paso 4 de 10 suena al 16 % de amplitud. Los sonidos ambientales y los
+//! efectos tendrán sus propios volúmenes cuando lleguen.
 
 use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-/// The loudest step of a volume.
+/// El paso más fuerte de un volumen.
 pub const MAX_STEP: u8 = 10;
 
-/// The volumes, in steps of a tenth.
+/// Los volúmenes, en pasos de un décimo.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SoundSettings {
-    /// Everything the game plays.
+    /// Todo lo que reproduce el juego.
     pub general: u8,
-    /// The menus' music.
+    /// La música de los menús.
     pub music: u8,
 }
 
 impl Default for SoundSettings {
-    /// Full general volume, the music well under it (it was too loud at
-    /// full, user 2026-10-28).
+    /// Volumen general al máximo y la música bastante por debajo (al máximo
+    /// sonaba demasiado fuerte, usuario 2026-10-28).
     fn default() -> Self {
         SoundSettings {
             general: MAX_STEP,
@@ -40,14 +42,14 @@ impl Default for SoundSettings {
 }
 
 impl SoundSettings {
-    /// The music's amplitude, from 0 to 1.
+    /// La amplitud de la música, de 0 a 1.
     pub fn music_gain(&self) -> f32 {
         let loudness = fraction(self.general) * fraction(self.music);
         loudness * loudness
     }
 
-    /// The settings in `path`, or the defaults when it is missing or
-    /// unreadable (the error is returned for the log).
+    /// La configuración de `path`, o los valores por defecto cuando falta o no
+    /// se puede leer (el error se devuelve para el log).
     pub fn load(path: &Path) -> (Self, Option<String>) {
         let text = match std::fs::read_to_string(path) {
             Ok(text) => text,
@@ -62,9 +64,10 @@ impl SoundSettings {
         }
     }
 
-    /// Writes the settings to `path`, making its directory. The text goes
-    /// to a temporary file beside it first and is renamed over `path`, so a
-    /// crash or a full disk mid-write never leaves a truncated file.
+    /// Escribe la configuración en `path` y crea su directorio. Primero el
+    /// texto va a un archivo temporal a su lado, que luego se renombra sobre
+    /// `path`, así que un cuelgue o un disco lleno a mitad de escritura nunca
+    /// dejan un archivo truncado.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
@@ -74,9 +77,9 @@ impl SoundSettings {
         let mut temporary = path.as_os_str().to_owned();
         temporary.push(".tmp");
         let temporary = PathBuf::from(temporary);
-        // Written and flushed to disk before the rename, so a power cut never
-        // leaves an empty file behind the new name; any failure on the way
-        // removes the temporary file.
+        // Se escribe y se vuelca a disco antes de renombrar, para que un corte
+        // de luz nunca deje un archivo vacío con el nombre nuevo; cualquier
+        // fallo en el camino elimina el archivo temporal.
         let written = (|| {
             use std::io::Write;
             let mut file = std::fs::File::create(&temporary)?;
@@ -102,7 +105,8 @@ fn fraction(step: u8) -> f32 {
     f32::from(step.min(MAX_STEP)) / f32::from(MAX_STEP)
 }
 
-/// Where the settings live for this user, if a config directory is known.
+/// Dónde está la configuración de este usuario, si se conoce un directorio de
+/// configuración.
 pub fn settings_path() -> Option<PathBuf> {
     let base = if cfg!(windows) {
         std::env::var_os("APPDATA").map(PathBuf::from)
@@ -119,7 +123,8 @@ pub fn settings_path() -> Option<PathBuf> {
 mod tests {
     use super::*;
 
-    /// A fresh directory under the system temp dir, removed on drop.
+    /// Un directorio nuevo bajo el directorio temporal del sistema, que se
+    /// elimina al soltarlo.
     struct Scratch(PathBuf);
 
     impl Scratch {
@@ -191,7 +196,8 @@ mod tests {
     #[test]
     fn a_failed_save_leaves_no_temporary_file_behind() {
         let scratch = Scratch::new("failed");
-        // A non-empty directory where the file should go: the rename fails.
+        // Un directorio no vacío donde debería ir el archivo: el renombrado
+        // falla.
         let path = scratch.0.join("settings.ron");
         std::fs::create_dir_all(path.join("in-the-way")).expect("dir");
         assert!(SoundSettings::default().save(&path).is_err());

@@ -1,36 +1,40 @@
-//! The clip driver: plays the shared animation clips ([`clips`](super::clips))
-//! on each MakeHuman model (see [`model`](super::model)), with the head's
-//! glance on top.
+//! El controlador de clips: reproduce los clips de animación compartidos
+//! ([`clips`](super::clips)) en cada modelo de MakeHuman (ver
+//! [`model`](super::model)), con la mirada de la cabeza por encima.
 //!
-//! The figure stays the carrier: its body turns to the heading, carrying
-//! the model, and [`update_figures`](super::figure) still keeps its hidden
-//! joints posed for `models off`. The model's own clips now move the body:
+//! La figura sigue siendo el portador: su cuerpo gira hacia el rumbo, llevando
+//! el modelo, y [`update_figures`](super::figure) sigue manteniendo en pose sus
+//! articulaciones ocultas para `models off`. Ahora son los propios clips del
+//! modelo los que mueven el cuerpo:
 //!
-//! - [`drive_rigs`], before the animation systems, picks and weighs the
-//!   clips. Standing, a person plays their idle ([`idle_for`]); moving,
-//!   the idle fades into the walk, the jog and the sprint by ground speed
-//!   ([`locomotion`]), each walking clip paced to that speed
-//!   ([`stride_rate`]), over the model's legs against the clips'
-//!   ([`model_stride`]), so the feet keep still on the ground; backing
-//!   up, the walking clips play backward at the same pace; turning on the
-//!   spot, the walk plays at the small pace of [`stepping_speed`]. The weights
-//!   ease toward their targets, and every clip starts at the person's own
-//!   seeded point ([`phase_offset`]). The model also undoes the carrier's
-//!   stride bob: the clips bob the pelvis themselves.
-//! - [`fit_rigs`], after them, fits the clip to the model: the clips were
-//!   made on the protagonist, so the pelvis's moves are scaled by this
-//!   model's legs and set about its own rest ([`fit_pelvis`]); then the
-//!   neck and head turn by the figure's glance, half each, on top of the
-//!   clip ([`glance_turn`]); a model in a long skirt has its upper arms
-//!   turned out a little ([`arm_out`]).
+//! - [`drive_rigs`], antes de los sistemas de animación, elige y pondera los
+//!   clips. Parada, una persona reproduce su espera ([`idle_for`]); en
+//!   movimiento, la espera se funde con la caminata, el trote y la carrera
+//!   según la velocidad sobre el suelo ([`locomotion`]), con cada clip de
+//!   caminata ajustado a esa velocidad ([`stride_rate`]), según las piernas del
+//!   modelo en relación con las de los clips ([`model_stride`]), para que los
+//!   pies se queden quietos sobre el suelo; al retroceder, los clips de
+//!   caminata se reproducen hacia atrás al mismo ritmo; al girar en el lugar,
+//!   la caminata se reproduce al ritmo corto de [`stepping_speed`]. Los pesos
+//!   se acercan suavemente a sus objetivos, y cada clip empieza en el propio
+//!   punto con semilla de la persona ([`phase_offset`]). El modelo también
+//!   deshace el rebote de la zancada del portador: los clips ya hacen rebotar
+//!   la pelvis por su cuenta.
+//! - [`fit_rigs`], después de ellos, ajusta el clip al modelo: los clips se
+//!   hicieron sobre el protagonista, así que los movimientos de la pelvis se
+//!   escalan según las piernas de este modelo y se aplican alrededor de su
+//!   propio reposo ([`fit_pelvis`]); después el cuello y la cabeza giran según
+//!   la mirada de la figura, la mitad cada uno, por encima del clip
+//!   ([`glance_turn`]); un modelo con pollera larga tiene los brazos un poco
+//!   separados ([`arm_out`]).
 //!
-//! A rider (see [`rider`](super::rider)) plays only the seated clip
-//! ([`SEATED`]): a clip at no weight still sets the bones only it animates.
+//! Un jinete (ver [`rider`](super::rider)) reproduce solo el clip de sentado
+//! ([`SEATED`]): un clip con peso cero igual fija los huesos que solo él anima.
 //!
-//! A model out of view (none of its meshes drawn) or farther than
-//! [`FREEZE_FAR`](crate::fauna::FREEZE_FAR) from the camera loses its graph,
-//! as the livestock do: its bones keep their last pose. The protagonist,
-//! only ever the player, never freezes.
+//! Un modelo fuera de la vista (ninguna de sus meshes dibujada) o más lejos que
+//! [`FREEZE_FAR`](crate::fauna::FREEZE_FAR) de la cámara pierde su grafo, igual
+//! que el ganado: sus huesos conservan su última pose. El protagonista, que
+//! siempre es el jugador, nunca se congela.
 
 use bevy::animation::{AnimatedBy, AnimationTargetId};
 use bevy::prelude::*;
@@ -47,12 +51,13 @@ use super::townsfolk::{SKIRT_ARMS_OUT, arm_out};
 use super::visual::VisualPose;
 use crate::fauna::livestock::{any_in_view, frozen, view_eye};
 
-/// How fast the clips' weights ease toward their targets, per second.
+/// Qué tan rápido se acercan los pesos de los clips a sus objetivos, por
+/// segundo.
 pub const BLEND_RATE: f32 = 6.0;
 
-/// The clips a model on foot may play: the idles and the strides. Each
-/// starts once the clips have loaded and keeps running; only its weight
-/// changes.
+/// Los clips que puede reproducir un modelo a pie: las esperas y las zancadas.
+/// Cada uno empieza cuando los clips terminaron de cargar y sigue corriendo;
+/// solo cambia su peso.
 pub const PLAYED: [Clip; 6] = [
     Clip::Idle,
     Clip::IdleTalk,
@@ -62,50 +67,51 @@ pub const PLAYED: [Clip; 6] = [
     Clip::Sprint,
 ];
 
-/// The clip a rider sits its horse with (see [`rider`](super::rider)),
-/// the only one it plays: a clip at no weight still sets the bones only it
-/// animates.
+/// El clip con el que un jinete se sienta en su caballo (ver
+/// [`rider`](super::rider)), el único que reproduce: un clip con peso cero
+/// igual fija los huesos que solo él anima.
 pub const SEATED: Clip = Clip::Drive;
 
-/// The clips a model plays: a rider's, or those of a person on foot.
+/// Los clips que reproduce un modelo: los de un jinete, o los de una persona a
+/// pie.
 pub fn played(riding: bool) -> &'static [Clip] {
     if riding { &[SEATED] } else { &PLAYED }
 }
 
-/// Marks a person whose lines are on screen: standing, they talk with
-/// their hands (see [`idle_for`]). The game puts it on the speaker.
+/// Marca a una persona cuyas líneas están en pantalla: parada, habla con las
+/// manos (ver [`idle_for`]). El juego se lo pone a quien habla.
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct Talking;
 
-/// A character model's skeleton and clip state, found when its scene
-/// spawns; on the model's root.
+/// El esqueleto y el estado de clips de un modelo de personaje, ubicados cuando
+/// se crea su escena; en la raíz del modelo.
 #[derive(Component, Debug, Clone)]
 pub struct Rig {
-    /// The `Root` node: it has the animation player, and every bone under
-    /// it is a target of the clips.
+    /// El nodo `Root`: tiene el reproductor de animación, y cada hueso que
+    /// cuelga de él es un objetivo de los clips.
     pub player: Entity,
-    /// The pelvis, its rest place under `Root`, and this model's leg
-    /// length (hip to ankle), meters.
+    /// La pelvis, su lugar de reposo bajo `Root`, y el largo de las piernas de
+    /// este modelo (de la cadera al tobillo), en metros.
     pub pelvis: Option<(Entity, Vec3, f32)>,
-    /// The neck and the head, each with its parent's rest orientation in
-    /// the body frame.
+    /// El cuello y la cabeza, cada uno con la orientación de reposo de su padre
+    /// en el marco del cuerpo.
     pub look: [Option<(Entity, Quat)>; 2],
-    /// A model in a long skirt: its left and right upper arms, each with
-    /// its parent's rest orientation in the body frame, turned out by
-    /// [`SKIRT_ARMS_OUT`] on top of the clips.
+    /// Un modelo con pollera larga: sus brazos izquierdo y derecho, cada uno
+    /// con la orientación de reposo de su padre en el marco del cuerpo,
+    /// separados [`SKIRT_ARMS_OUT`] por encima de los clips.
     pub arms: [Option<(Entity, Quat)>; 2],
-    /// Every mesh of the model: it is in view while any of them is drawn.
+    /// Todas las meshes del modelo: está a la vista mientras se dibuje alguna.
     pub probes: Vec<Entity>,
-    /// Whether the bones keep their last pose (see [`frozen`]).
+    /// Si los huesos conservan su última pose (ver [`frozen`]).
     pub frozen: bool,
-    /// Each clip's weight now, in [`Clip::ALL`] order.
+    /// El peso actual de cada clip, en el orden de [`Clip::ALL`].
     pub weights: [f32; Clip::COUNT],
-    /// Whether its clips are playing.
+    /// Si sus clips se están reproduciendo.
     pub started: bool,
 }
 
 impl Rig {
-    /// A model's rig, its clips played by `player`.
+    /// El rig de un modelo, con sus clips reproducidos por `player`.
     pub fn new(player: Entity) -> Self {
         Self {
             player,
@@ -120,14 +126,16 @@ impl Rig {
     }
 }
 
-/// The name path of a bone from `Root`, as the clips' file names its
-/// targets: the [`AnimationTargetId`] the clips animate it by.
+/// La ruta de nombres de un hueso desde `Root`, tal como el archivo de los
+/// clips nombra sus objetivos: el [`AnimationTargetId`] con el que lo animan
+/// los clips.
 pub fn target_id(path: &[Name]) -> AnimationTargetId {
     AnimationTargetId::from_names(path.iter())
 }
 
-/// Makes `root` (the model's `Root` node) the clips' player and every node
-/// under it, by its name path from `Root`, one of their targets.
+/// Convierte `root` (el nodo `Root` del modelo) en el reproductor de los clips
+/// y a cada nodo bajo él, según su ruta de nombres desde `Root`, en uno de sus
+/// objetivos.
 pub(super) fn bind_targets(
     commands: &mut Commands,
     root: Entity,
@@ -150,15 +158,15 @@ pub(super) fn bind_targets(
     commands.entity(root).try_insert(AnimationPlayer::default());
 }
 
-/// The weight each clip should have for a rider: only [`SEATED`].
+/// El peso que debe tener cada clip para un jinete: solo [`SEATED`].
 pub fn seated_targets() -> [f32; Clip::COUNT] {
     let mut out = [0.0; Clip::COUNT];
     out[SEATED.index()] = 1.0;
     out
 }
 
-/// The weight each clip should have, in [`Clip::ALL`] order: a person of
-/// `kind` moving at `speed` (m/s), maybe `talking`.
+/// El peso que debe tener cada clip, en el orden de [`Clip::ALL`]: una persona
+/// de tipo `kind` que se mueve a `speed` (m/s), quizás `talking`.
 pub fn targets(kind: FigureKind, talking: bool, speed: f32) -> [f32; Clip::COUNT] {
     let mut out = [0.0; Clip::COUNT];
     let [idle, strides @ ..] = locomotion(speed);
@@ -169,7 +177,7 @@ pub fn targets(kind: FigureKind, talking: bool, speed: f32) -> [f32; Clip::COUNT
     out
 }
 
-/// `weights` eased toward `targets` over `dt` seconds.
+/// `weights` acercados suavemente a `targets` a lo largo de `dt` segundos.
 pub fn ease(weights: &mut [f32; Clip::COUNT], targets: &[f32; Clip::COUNT], dt: f32) {
     let k = 1.0 - (-BLEND_RATE * dt).exp();
     for (w, t) in weights.iter_mut().zip(targets) {
@@ -177,16 +185,17 @@ pub fn ease(weights: &mut [f32; Clip::COUNT], targets: &[f32; Clip::COUNT], dt: 
     }
 }
 
-/// Where a model's pelvis goes for a clip's `clip` place (made on the
-/// `reference` skeleton): its moves from the reference's rest, scaled by
-/// this model's `leg` over the reference's, about this model's `rest`.
+/// A dónde va la pelvis de un modelo para el lugar `clip` de un clip (hecho
+/// sobre el esqueleto `reference`): sus movimientos desde el reposo de la
+/// referencia, escalados por la `leg` de este modelo en relación con la de la
+/// referencia, alrededor del `rest` de este modelo.
 pub fn fit_pelvis(clip: Vec3, reference: Reference, rest: Vec3, leg: f32) -> Vec3 {
     rest + (clip - reference.pelvis) * (leg / reference.leg)
 }
 
-/// How long a model's steps are against the clips' own (their
-/// reference skeleton's): its legs' length over the reference's, 1 when
-/// either is unknown.
+/// Qué tan largos son los pasos de un modelo en relación con los de los clips
+/// (los de su esqueleto de referencia): el largo de sus piernas dividido por el
+/// de la referencia, 1 cuando alguno es desconocido.
 pub fn model_stride(pelvis: Option<(Entity, Vec3, f32)>, reference: Option<Reference>) -> f32 {
     match (pelvis, reference) {
         (Some((_, _, leg)), Some(r)) if leg > 0.0 && r.leg > 0.0 => leg / r.leg,
@@ -194,16 +203,18 @@ pub fn model_stride(pelvis: Option<(Entity, Vec3, f32)>, reference: Option<Refer
     }
 }
 
-/// The local rotation `local` of a neck or head bone, turned by `turn`
-/// (radians, about the body's up) in the body frame; `frame` is its
-/// parent's rest orientation in the body frame.
+/// La rotación local `local` de un hueso del cuello o de la cabeza, girada
+/// `turn` (radianes, alrededor del eje vertical del cuerpo) en el marco del
+/// cuerpo; `frame` es la orientación de reposo de su padre en el marco del
+/// cuerpo.
 pub fn glance_turn(local: Quat, frame: Quat, turn: f32) -> Quat {
     (frame.inverse() * Quat::from_rotation_y(turn) * frame * local).normalize()
 }
 
-/// How fast `clip` plays for a person moving at `speed` m/s: paced by
-/// the speed's size ([`playback_rate`]), and backward when backing up if
-/// the clip travels. An idle always plays forward.
+/// Qué tan rápido se reproduce `clip` para una persona que se mueve a `speed`
+/// m/s: al ritmo de la magnitud de la velocidad ([`playback_rate`]), y hacia
+/// atrás al retroceder si el clip avanza. Una espera siempre se reproduce hacia
+/// adelante.
 pub fn stride_rate(clip: Clip, speed: f32) -> f32 {
     let rate = playback_rate(clip, speed.abs());
     if speed < 0.0 && clip.ground_speed().is_some() {
@@ -213,9 +224,9 @@ pub fn stride_rate(clip: Clip, speed: f32) -> f32 {
     }
 }
 
-/// The ground speed a person steps at, negative backing up: none while
-/// standing, but the small pace of a turn on the spot
-/// ([`stepping_speed`]).
+/// La velocidad sobre el suelo a la que da pasos una persona, negativa al
+/// retroceder: ninguna estando parada, salvo el ritmo corto de un giro en el
+/// lugar ([`stepping_speed`]).
 fn moving(pose: &VisualPose) -> f32 {
     let speed = if pose.animation == AnimationState::Idle {
         0.0
@@ -225,7 +236,7 @@ fn moving(pose: &VisualPose) -> f32 {
     stepping_speed(speed, pose.turn, TURN_STEP_RADIUS)
 }
 
-/// What [`drive_rigs`] reads of a model.
+/// Lo que [`drive_rigs`] lee de un modelo.
 type ModelRig = (
     &'static ChildOf,
     &'static mut Rig,
@@ -234,8 +245,9 @@ type ModelRig = (
     Option<&'static Riding>,
 );
 
-/// Who a model is and what it plays: on foot, its figure's kind and seed,
-/// and its weights by speed and speech; in the saddle, its rider's, seated.
+/// Quién es un modelo y qué reproduce: a pie, el tipo y la semilla de su
+/// figura, y sus pesos según la velocidad y el habla; en la montura, los de su
+/// jinete, sentado.
 fn who(
     riding: Option<&Riding>,
     figure: Option<(&FigureBody, f32, bool)>,
@@ -252,8 +264,9 @@ fn who(
     }
 }
 
-/// Weighs and paces each model's clips (see the module notes), and freezes
-/// a model out of view or far off, except the protagonist's.
+/// Pondera y marca el ritmo de los clips de cada modelo (ver las notas del
+/// módulo), y congela un modelo fuera de la vista o lejano, salvo el del
+/// protagonista.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn drive_rigs(
     mut commands: Commands,
@@ -274,7 +287,8 @@ pub(super) fn drive_rigs(
             .get(child_of.parent())
             .ok()
             .map(|(body, carried, person)| {
-                // The clips bob the pelvis: undo the carrier's bob.
+                // Los clips hacen rebotar la pelvis: se deshace el rebote del
+                // portador.
                 transform.set_if_neq(
                     model_transform().with_translation(Vec3::Y * -carried.translation.y),
                 );
@@ -287,7 +301,7 @@ pub(super) fn drive_rigs(
             continue;
         };
         let distance = eye.map_or(0.0, |e| e.distance(at.translation()));
-        // Visibility is only known with a camera drawing.
+        // La visibilidad solo se conoce con una cámara dibujando.
         let in_view =
             eye.is_none() || any_in_view(&rig.probes, |p| seen.get(p).is_ok_and(|v| v.get()));
         let freeze = kind != FigureKind::Protagonist && frozen(rig.frozen, distance, in_view);
@@ -336,9 +350,9 @@ pub(super) fn drive_rigs(
             rig.started = true;
         }
         ease(&mut rig.weights, &goal, dt);
-        // The clips step as the protagonist's legs do: a person with
-        // shorter legs takes shorter steps, so plays them faster to keep
-        // the feet still on the ground.
+        // Los clips dan los pasos que dan las piernas del protagonista: una
+        // persona con las piernas más cortas da pasos más cortos, así que los
+        // reproduce más rápido para mantener los pies quietos sobre el suelo.
         let stride = model_stride(rig.pelvis, clips.reference);
         for &clip in played(riding.is_some()) {
             if let Some(active) = player.animation_mut(clips.node(clip)) {
@@ -350,8 +364,8 @@ pub(super) fn drive_rigs(
     }
 }
 
-/// Fits each playing model's clips to it: its pelvis by its own legs, and
-/// its head turned by its figure's glance.
+/// Ajusta a cada modelo que se reproduce sus clips: su pelvis según sus propias
+/// piernas y su cabeza girada según la mirada de su figura.
 pub(super) fn fit_rigs(
     clips: Option<Res<CharacterClips>>,
     bodies: Query<&FigureBody>,
@@ -389,9 +403,9 @@ pub(super) fn fit_rigs(
     }
 }
 
-/// The rest orientation in the body frame of the space `entity` hangs in:
-/// its ancestors' rotations, up to and including the model's `root`
-/// (turned to the body's front).
+/// La orientación de reposo en el marco del cuerpo del espacio del que cuelga
+/// `entity`: las rotaciones de sus ancestros, hasta la `root` del modelo
+/// inclusive (girada hacia el frente del cuerpo).
 pub(super) fn rest_frame(
     entity: Entity,
     root: Entity,
@@ -448,14 +462,15 @@ mod tests {
             Clip::Jog
         ));
         assert!(only(targets(FigureKind::Farach, false, 9.0), Clip::Sprint));
-        // Between a walk and a jog, both; standing still, Farach's idle
-        // fades as he sets off.
+        // Entre una caminata y un trote, ambos; parado, la espera de Farach se
+        // desvanece cuando arranca.
         let between = targets(FigureKind::Farach, false, (JOG_BAND.0 + JOG_BAND.1) / 2.0);
         assert!(between[Clip::Walk.index()] > 0.4 && between[Clip::Jog.index()] > 0.4);
         let setting_off = targets(FigureKind::Farach, false, 0.3);
         assert!(setting_off[Clip::IdleFoldArms.index()] > 0.3);
         assert!(setting_off[Clip::Walk.index()] > 0.3);
-        // A blend adds up, and weighs only clips the driver plays.
+        // Una mezcla suma uno, y pondera solo los clips que reproduce el
+        // controlador.
         for w in [between, setting_off] {
             assert!((w.iter().sum::<f32>() - 1.0).abs() < 1e-5);
             for clip in Clip::ALL {
@@ -519,10 +534,10 @@ mod tests {
         assert!(glance_turn(local, frame, 0.0).angle_between(local) < 1e-5);
     }
 
-    /// The character plugin without assets, with stand-in clips, and a
-    /// model under each of `people`'s figures by hand: its rig's player,
-    /// and two meshes (a hat, then the body). Returns each person's kind,
-    /// rig and meshes.
+    /// El plugin de personajes sin assets, con clips sustitutos y un modelo
+    /// puesto a mano bajo la figura de cada una de las `people`: el reproductor
+    /// de su rig y dos meshes (un sombrero y después el cuerpo). Devuelve el
+    /// tipo, el rig y las meshes de cada persona.
     fn stand_ins(people: &[FigureKind]) -> (App, Vec<(FigureKind, Entity, [Entity; 2])>) {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, TransformPlugin))
@@ -587,13 +602,14 @@ mod tests {
             .world_mut()
             .spawn((Camera3d::default(), Transform::from_xyz(0.0, 1.6, 4.0)))
             .id();
-        // The camera's place reaches the driver a frame late.
+        // La posición de la cámara llega al controlador con un frame de
+        // retraso.
         app.update();
         app.update();
         for &(_, rig, _) in &rigs {
             assert!(!frozen_now(&app, rig));
         }
-        // Far off: Don Hidalgo freezes; the protagonist carries on.
+        // Lejos: Don Hidalgo se congela; el protagonista sigue.
         let far = |app: &mut App, z: f32| {
             app.world_mut()
                 .get_mut::<Transform>(camera)
@@ -611,12 +627,13 @@ mod tests {
                 "{kind:?}"
             );
         }
-        // Near again: it plays again.
+        // Cerca otra vez: vuelve a reproducir.
         far(&mut app, 4.0);
         for &(_, rig, _) in &rigs {
             assert!(!frozen_now(&app, rig));
         }
-        // Its hat culled, its body drawn: still in view.
+        // Su sombrero descartado por culling, su cuerpo dibujado: sigue a la
+        // vista.
         for &(_, _, [hat, _]) in &rigs {
             app.world_mut()
                 .entity_mut(hat)
@@ -626,7 +643,8 @@ mod tests {
         for &(_, rig, _) in &rigs {
             assert!(!frozen_now(&app, rig));
         }
-        // Nothing of it drawn: out of view, frozen, but the protagonist.
+        // No se dibuja nada de él: fuera de la vista, congelado, salvo el
+        // protagonista.
         for &(_, _, [_, body]) in &rigs {
             app.world_mut()
                 .entity_mut(body)
@@ -670,11 +688,12 @@ mod tests {
         assert!(bobbed, "the carrier bobs while walking");
     }
 
-    // --- with the shipped models and clips ----------------------------------
+    // --- con los modelos y los clips incluidos ------------------------------
 
-    /// The character plugin with the asset server and the animation plugin,
-    /// and `people` a meter apart along +X, posed `animation` at `speed`;
-    /// returns once every model plays its clips, each rig with its kind.
+    /// El plugin de personajes con el servidor de assets y el plugin de
+    /// animación, y las `people` separadas un metro a lo largo de +X, en la
+    /// pose `animation` a `speed`; vuelve cuando cada modelo reproduce sus
+    /// clips, cada rig con su tipo.
     fn playing(
         people: &[FigureKind],
         animation: AnimationState,
@@ -725,7 +744,8 @@ mod tests {
         panic!("the models never played");
     }
 
-    /// Poses everyone in `app` `animation` at `speed` from the next frame.
+    /// Pone a todos en `app` en la pose `animation` a `speed` a partir del
+    /// frame siguiente.
     fn repose(app: &mut App, animation: AnimationState, speed: f32) {
         use crate::character::VisualPose;
         let world = app.world_mut();
@@ -742,7 +762,7 @@ mod tests {
         }
     }
 
-    /// The entity named `name` under the model `rig`.
+    /// La entidad llamada `name` bajo el modelo `rig`.
     fn bone(world: &World, rig: Entity, name: &str) -> Entity {
         let children = |e: Entity| world.get::<Children>(e).into_iter().flatten().copied();
         let mut stack: Vec<Entity> = children(rig).collect();
@@ -764,7 +784,7 @@ mod tests {
         let (mut app, rigs) = playing(&[FigureKind::Protagonist], AnimationState::Walk, 1.5);
         let rig = rigs[0].1;
         let world = app.world_mut();
-        // Every bone the clips animate is a bone of the model.
+        // Cada hueso que animan los clips es un hueso del modelo.
         let mut ids = world.query::<&AnimationTargetId>();
         let model: std::collections::HashSet<AnimationTargetId> =
             ids.iter(world).copied().collect();
@@ -776,7 +796,7 @@ mod tests {
         let animated: Vec<&AnimationTargetId> = walk.curves().keys().collect();
         assert_eq!(animated.len(), 52);
         assert!(animated.iter().all(|id| model.contains(id)));
-        // And they move them: the thigh swings through the stride.
+        // Y los mueven: el muslo se balancea a lo largo de la zancada.
         let thigh = bone(world, rig, "thigh_l");
         let mut turns = Vec::new();
         for _ in 0..30 {
@@ -790,7 +810,8 @@ mod tests {
         assert!(swing > 0.5, "{swing}");
     }
 
-    /// Each 50 ms frame's balls of the feet, world places, for `frames`.
+    /// Las almohadillas de los pies en cada frame de 50 ms, en posiciones del
+    /// mundo, durante `frames`.
     fn balls(app: &mut App, rig: Entity, frames: usize) -> Vec<[Vec3; 2]> {
         let ends = ["ball_l", "ball_r"].map(|n| bone(app.world(), rig, n));
         (0..frames)
@@ -801,8 +822,8 @@ mod tests {
             .collect()
     }
 
-    /// How fast the planted foot (the lower ball, on the ground) slides
-    /// back on average, m/s.
+    /// Qué tan rápido se desliza hacia atrás en promedio el pie apoyado (la
+    /// almohadilla más baja, sobre el suelo), en m/s.
     fn slide(frames: &[[Vec3; 2]]) -> f32 {
         let ground = frames
             .iter()
@@ -824,9 +845,10 @@ mod tests {
 
     #[test]
     fn a_planted_foot_slides_at_the_ground_speed_walking_jogging_and_backing_up() {
-        // In place, the planted foot moves back under the body as fast as
-        // the body goes forward: on the ground it keeps still. Backing, it
-        // moves forward as fast as the body goes back: no moonwalk.
+        // En el lugar, el pie apoyado se mueve hacia atrás bajo el cuerpo tan
+        // rápido como el cuerpo avanza: sobre el suelo se queda quieto. Al
+        // retroceder, se mueve hacia adelante tan rápido como el cuerpo
+        // retrocede: sin moonwalk.
         let (mut app, rigs) = playing(&[FigureKind::Protagonist], AnimationState::Walk, 1.6);
         for (animation, speed) in [
             (AnimationState::Walk, 1.6),
@@ -862,15 +884,16 @@ mod tests {
                 .fold(f32::MAX, f32::min);
             lowest.push((kind, low));
         }
-        // Each model's balls of the feet rest about 2.4 cm up; a pelvis
-        // set where the protagonist's is would lift Don Hidalgo's 2.5 cm.
+        // Las almohadillas de los pies de cada modelo descansan unos 2.4 cm por
+        // encima; una pelvis puesta donde está la del protagonista levantaría
+        // la de Don Hidalgo 2.5 cm.
         for &(kind, low) in &lowest {
             assert!((low - 0.024).abs() < 0.012, "{kind:?}: {low}");
         }
         let (_, farach) = *rigs.iter().find(|(k, _)| *k == FigureKind::Farach).unwrap();
         let rig = app.world().get::<Rig>(farach).unwrap();
         assert!(rig.weights[Clip::IdleFoldArms.index()] > 0.99);
-        // His hands are crossed over his chest: each on the other side.
+        // Sus manos están cruzadas sobre el pecho: cada una del otro lado.
         let world = app.world();
         let body = world.get::<ChildOf>(farach).unwrap().parent();
         let to_body = world
@@ -880,7 +903,7 @@ mod tests {
             .inverse();
         let side = |name: &str| to_body.transform_point3(at(world, bone(world, farach, name)));
         let (left, right) = (side("hand_l"), side("hand_r"));
-        // The body's left is -Z.
+        // La izquierda del cuerpo es -Z.
         assert!(left.z > right.z, "{left} {right}");
         assert!(left.y > 1.1 && right.y > 1.1, "{left} {right}");
     }
@@ -909,12 +932,12 @@ mod tests {
                 .speed();
             (weight, rate)
         };
-        // Standing, not turning: idle, the walk at no weight.
+        // Parado, sin girar: espera, con la caminata en peso cero.
         for _ in 0..10 {
             app.update();
         }
         assert!(state(&mut app).0 < 1e-3);
-        // Standing, turning (logic still says Idle at no speed).
+        // Parado y girando (la lógica igual dice Idle sin velocidad).
         app.world_mut().entity_mut(person).insert(VisualPose {
             animation: AnimationState::Idle,
             speed: 0.0,
@@ -927,7 +950,7 @@ mod tests {
         let (weight, rate) = state(&mut app);
         assert!(weight > 0.2 && weight < 0.95, "{weight}");
         assert!(rate > 0.0 && rate <= 0.6, "{rate}");
-        // Released: back to the idle.
+        // Liberado: de vuelta a la espera.
         app.world_mut()
             .entity_mut(person)
             .insert(VisualPose::default());
@@ -949,7 +972,7 @@ mod tests {
         let weight =
             |app: &App, clip: Clip| app.world().get::<Rig>(rig).unwrap().weights[clip.index()];
         assert!(weight(&app, Clip::Idle) > 0.99 && weight(&app, Clip::IdleTalk) < 0.01);
-        // The game marks the speaker on its character entity.
+        // El juego marca a quien habla en su entidad de personaje.
         app.world_mut().entity_mut(person).insert(Talking);
         for _ in 0..30 {
             app.update();
@@ -976,7 +999,8 @@ mod tests {
             bone(app.world(), rig, "head"),
             bone(app.world(), rig, "spine_03"),
         );
-        // The head's turn about the body's up, from the chest's.
+        // El giro de la cabeza alrededor del eje vertical del cuerpo, a partir
+        // del del pecho.
         let yaw = |app: &App| {
             let world = app.world();
             let turn = |e: Entity| {
@@ -996,7 +1020,7 @@ mod tests {
         };
         let mut aside = 0.0f32;
         let mut ahead = Vec::new();
-        // Fifteen seconds: a glance aside and back.
+        // Quince segundos: una mirada hacia un costado y de vuelta.
         for _ in 0..300 {
             app.update();
             let glance = app.world().get::<FigureBody>(body).unwrap().glance;
@@ -1007,21 +1031,22 @@ mod tests {
             }
         }
         assert!(ahead.len() > 100, "{}", ahead.len());
-        // Looking ahead it is where it was each time: nothing builds up.
+        // Mirando al frente está donde estaba cada vez: nada se acumula.
         let (lo, hi) = ahead
             .iter()
             .fold((f32::MAX, f32::MIN), |(l, h), y| (l.min(*y), h.max(*y)));
         assert!(hi - lo < 0.1, "looking ahead from {lo} to {hi}");
-        // A glance turns it, never past the glance's reach (0.55 rad).
+        // Una mirada la gira, nunca más allá del alcance de la mirada (0.55
+        // rad).
         assert!(aside > 0.15 && aside < 0.65, "{aside}");
     }
 
     #[test]
     fn walking_knees_bend_smoothly_never_lock_or_twist_round_the_loop() {
         use crate::character::VisualPose;
-        // The protagonist at his 1.6 m/s, a peón and a woman at a
-        // townsperson's 1.4, at 60 frames a second for a whole loop and
-        // more, through its wrap.
+        // El protagonista a su 1.6 m/s, un peón y una mujer al 1.4 de un
+        // vecino, a 60 frames por segundo durante un ciclo completo y algo más,
+        // pasando por su vuelta al inicio.
         let walkers = [
             (FigureKind::Protagonist, 1.6),
             (FigureKind::townsfolk(1), 1.4),
@@ -1093,8 +1118,8 @@ mod tests {
                     let (h, n, a) = (at(world, *hip), at(world, *knee), at(world, *ankle));
                     let (thigh, shin) = ((n - h).normalize(), (a - n).normalize());
                     bends[k] = thigh.angle_between(shin).to_degrees();
-                    // Bent back, never forward: the shin turns from the
-                    // thigh away from the body's front.
+                    // Doblada hacia atrás, nunca hacia adelante: la canilla
+                    // gira desde el muslo alejándose del frente del cuerpo.
                     let ahead = thigh.cross(shin).dot(thigh.cross(forward));
                     if ahead > 0.0 && bends[k] > 1.0 {
                         bends[k] = -bends[k];
@@ -1152,7 +1177,8 @@ mod tests {
     #[test]
     fn the_women_keep_their_legs_in_their_skirts_and_their_hands_out_of_them() {
         use crate::character::townsfolk::tests::skirt_pokes;
-        // The countrywoman in a headscarf and the young townswoman in a bun.
+        // La campesina con pañuelo en la cabeza y la joven del pueblo con
+        // rodete.
         let women = [FigureKind::townsfolk(3), FigureKind::townsfolk(4)];
         let (mut app, rigs) = playing(&women, AnimationState::Idle, 0.0);
         for &(_, rig) in &rigs {
@@ -1175,7 +1201,8 @@ mod tests {
                     app.world_mut().entity_mut(person).insert(Talking);
                 }
             }
-            // Into the clip (the talk eases in), then two seconds of it.
+            // Hasta entrar en el clip (la charla entra de forma gradual), y
+            // después dos segundos de él.
             for _ in 0..30 {
                 app.update();
             }
@@ -1202,14 +1229,15 @@ mod tests {
     fn townsfolk_wear_their_outfits_in_tinted_cloth_shared_by_whoever_wears_the_same() {
         use crate::character::townsfolk::{TintCache, tint};
         use bevy::gltf::GltfMaterialName;
-        // Every outfit once, and two people dressed alike.
+        // Cada atuendo una vez, y dos personas vestidas igual.
         let mut looks: Vec<u8> = (0..5).collect();
         looks.push(3);
         let crowd: Vec<FigureKind> = looks.iter().map(|&l| FigureKind::townsfolk(l)).collect();
         let (mut app, rigs) = playing(&crowd, AnimationState::Idle, 0.0);
         app.update();
         let world = app.world_mut();
-        // Each person's look and their clothes: (material name, material).
+        // El aspecto de cada persona y su ropa: (nombre del material,
+        // material).
         type Cloth = Vec<(String, AssetId<StandardMaterial>)>;
         let mut worn: Vec<(u8, Cloth)> = Vec::new();
         for &(kind, rig) in &rigs {
@@ -1243,7 +1271,8 @@ mod tests {
             cloth.sort();
             worn.push((look, cloth));
         }
-        // The same look, the same materials (the very same copies).
+        // El mismo aspecto, los mismos materiales (exactamente las mismas
+        // copias).
         let alike: Vec<&Vec<_>> = worn
             .iter()
             .filter(|(l, _)| *l == 3)
@@ -1251,8 +1280,8 @@ mod tests {
             .collect();
         assert_eq!(alike.len(), 2);
         assert_eq!(alike[0], alike[1]);
-        // Each tinted copy is worn, and shared: fewer copies than tinted
-        // pieces of clothing in the crowd.
+        // Cada copia teñida se usa, y se comparte: menos copias que prendas
+        // teñidas en la multitud.
         let copies = world.resource::<TintCache>().len();
         let mut handles = std::collections::HashSet::new();
         let mut pieces = 0;
@@ -1273,15 +1302,17 @@ mod tests {
         assert!(worn.iter().all(|(_, c)| c.len() >= 5));
     }
 
-    /// P4: the CPU cost of a full plaza, headless: the 31 townsfolk General
-    /// Pico has, each in their look's model, and the protagonist, all within
-    /// the freeze range and in view (nothing frozen), two in three walking.
-    /// Prints, per frame, the whole update with them against the same app
-    /// without them (the clips' weighing, Bevy's animation, the pelvis fit
-    /// and glance, the carriers' posing and the transforms), the skinning's
-    /// preparation (each skinned mesh's joint matrices, as the renderer's
-    /// extraction computes them), and the triangles drawn. Run it in
-    /// release: `cargo test -p pampa-render --release --lib plaza -- --ignored --nocapture`.
+    /// P4: el costo de CPU de una plaza llena, headless: los 31 vecinos que
+    /// tiene General Pico, cada uno con el modelo de su aspecto, y el
+    /// protagonista, todos dentro del rango de congelamiento y a la vista (nada
+    /// congelado), dos de cada tres caminando. Imprime, por frame, la
+    /// actualización completa con ellos comparada con la misma app sin ellos
+    /// (la ponderación de los clips, la animación de Bevy, el ajuste de la
+    /// pelvis y la mirada, la pose de los portadores y los transforms), la
+    /// preparación del skinning (las matrices de articulación de cada mesh con
+    /// skinning, tal como las calcula la extracción del renderizador) y los
+    /// triángulos dibujados. Se ejecuta en release:
+    /// `cargo test -p pampa-render --release --lib plaza -- --ignored --nocapture`.
     #[test]
     #[ignore = "a measurement, not a check"]
     fn plaza_bench() {
@@ -1292,7 +1323,8 @@ mod tests {
             .chain((0..31).map(FigureKind::townsfolk))
             .collect();
         let (mut app, rigs) = playing(&people, AnimationState::Walk, 1.6);
-        // Two in three walk, the rest stand; spread over the plaza.
+        // Dos de cada tres caminan y el resto está parado; repartidos por la
+        // plaza.
         let persons: Vec<Entity> = app
             .world_mut()
             .query_filtered::<Entity, With<CharacterVisual>>()
@@ -1317,9 +1349,9 @@ mod tests {
             start.elapsed().as_secs_f64() * 1e3 / frames as f64
         };
         let with = time(&mut app, FRAMES);
-        // The figures' rigid parts, hidden under the models, kept for
-        // `models off`: what they cost (their transforms, worked out every
-        // frame under the moving body).
+        // Las piezas rígidas de las figuras, ocultas bajo los modelos, que se
+        // conservan para `models off`: lo que cuestan (sus transforms,
+        // calculados en cada frame bajo el cuerpo en movimiento).
         let parts: Vec<Entity> = app
             .world_mut()
             .query_filtered::<Entity, With<crate::character::FigurePart>>()
@@ -1330,7 +1362,8 @@ mod tests {
             app.world_mut().entity_mut(part).despawn();
         }
         let bare = time(&mut app, FRAMES);
-        // The skinning's preparation: every joint's matrix, every frame.
+        // La preparación del skinning: la matriz de cada articulación, en cada
+        // frame.
         let world = app.world_mut();
         let mut skins = world.query::<&SkinnedMesh>();
         let skins: Vec<SkinnedMesh> = skins.iter(world).cloned().collect();
@@ -1358,7 +1391,7 @@ mod tests {
         }
         let prep = start.elapsed().as_secs_f64() * 1e3 / FRAMES as f64;
         std::hint::black_box(sink);
-        // Triangles drawn: every mesh under every model.
+        // Triángulos dibujados: cada mesh bajo cada modelo.
         let mut triangles = 0usize;
         let mut q = world.query::<(&Mesh3d, &ChildOf)>();
         let drawn: Vec<(Mesh3d, Entity)> = q
@@ -1384,7 +1417,7 @@ mod tests {
                 triangles += m.indices().map_or(0, |i| i.len() / 3);
             }
         }
-        // The same app without anyone.
+        // La misma app sin nadie.
         for person in persons {
             app.world_mut().entity_mut(person).despawn();
         }
@@ -1414,7 +1447,7 @@ mod tests {
             (AnimationState::Gallop, 5.0),
         ] {
             repose(&mut app, animation, speed);
-            // Into the clip, then a second and a half of it.
+            // Hasta entrar en el clip, y después un segundo y medio de él.
             for _ in 0..30 {
                 app.update();
             }

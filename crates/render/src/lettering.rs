@@ -1,19 +1,23 @@
-//! CPU lettering with the game's TrueType faces.
+//! Rotulado en CPU con las tipografías TrueType del juego.
 //!
-//! The world textures (signs, bubbles, the minimap) are painted on the CPU,
-//! where Bevy's text pipeline cannot reach. This module lays out one line of
-//! text with `ab_glyph`, using the same font files the UI loads through
-//! [`crate::typeface`], and hands back antialiased coverage to plot.
+//! Las texturas del mundo (carteles, globos de diálogo, el minimapa) se pintan
+//! en la CPU, adonde no llega el pipeline de texto de Bevy. Este módulo dispone
+//! una línea de texto con `ab_glyph`, usando los mismos archivos de fuente que
+//! carga la UI a través de [`crate::typeface`], y devuelve la cobertura con
+//! antialiasing para trazar.
 
 use std::sync::LazyLock;
 
 use ab_glyph::{Font, FontRef, PxScale, ScaleFont, point};
 
-/// Rye, embedded. Same file as [`crate::typeface::DISPLAY_FONT`] under `assets/`.
+/// Rye, embebida. El mismo archivo que [`crate::typeface::DISPLAY_FONT`] bajo
+/// `assets/`.
 const DISPLAY_BYTES: &[u8] = include_bytes!("../../../assets/fonts/rye/Rye-Regular.ttf");
-/// IM Fell English roman, embedded. Same file as [`crate::typeface::BODY_FONT`].
+/// IM Fell English redonda, embebida. El mismo archivo que
+/// [`crate::typeface::BODY_FONT`].
 const BODY_BYTES: &[u8] = include_bytes!("../../../assets/fonts/im_fell_english/IMFeENrm28P.ttf");
-/// IM Fell English italic, embedded. Same file as [`crate::typeface::ITALIC_FONT`].
+/// IM Fell English cursiva, embebida. El mismo archivo que
+/// [`crate::typeface::ITALIC_FONT`].
 const ITALIC_BYTES: &[u8] = include_bytes!("../../../assets/fonts/im_fell_english/IMFeENit28P.ttf");
 
 static DISPLAY: LazyLock<FontRef<'static>> = LazyLock::new(|| parse(bytes(Face::Display)));
@@ -24,14 +28,16 @@ fn parse(bytes: &'static [u8]) -> FontRef<'static> {
     FontRef::try_from_slice(bytes).expect("the shipped typefaces are valid TrueType")
 }
 
-/// The faces of the game, named after their role in [`crate::typeface`].
+/// Las tipografías del juego, nombradas según su función en
+/// [`crate::typeface`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Face {
-    /// Rye, for signs painted on wood (`typeface::DISPLAY_FONT`).
+    /// Rye, para carteles pintados sobre madera (`typeface::DISPLAY_FONT`).
     Display,
-    /// IM Fell English roman, for body text (`typeface::BODY_FONT`).
+    /// IM Fell English redonda, para el texto de cuerpo
+    /// (`typeface::BODY_FONT`).
     Body,
-    /// IM Fell English italic (`typeface::ITALIC_FONT`).
+    /// IM Fell English cursiva (`typeface::ITALIC_FONT`).
     Italic,
 }
 
@@ -51,7 +57,8 @@ fn font(face: Face) -> &'static FontRef<'static> {
     }
 }
 
-/// Inked bounds of a line, in pixels from the pen origin; `y` grows down from the top of the line.
+/// Límites entintados de una línea, en píxeles desde el origen de la pluma; `y`
+/// crece hacia abajo desde la parte superior de la línea.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Ink {
     pub min_x: f32,
@@ -60,44 +67,48 @@ pub struct Ink {
     pub max_y: f32,
 }
 
-/// Size of one laid out line.
+/// Tamaño de una línea ya dispuesta.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Extent {
-    /// Advance width in pixels, rounded up (what a caller centers or boxes).
+    /// Ancho de avance en píxeles, redondeado hacia arriba (lo que quien llama
+    /// centra o encuadra).
     pub width: u32,
-    /// Pixels from the top of the line to the baseline.
+    /// Píxeles desde la parte superior de la línea hasta la línea de base.
     pub ascent: u32,
-    /// Pixels from the baseline to the bottom of the line.
+    /// Píxeles desde la línea de base hasta la parte inferior de la línea.
     pub descent: u32,
-    /// Bounds of the actual coverage, `None` for blank text.
+    /// Límites de la cobertura real, `None` para texto en blanco.
     pub ink: Option<Ink>,
 }
 
-/// Antialiased coverage of one line.
+/// Cobertura con antialiasing de una línea.
 ///
-/// `width`, `height` and `baseline` describe the line's box: its advance
-/// width by its ascent plus descent. The canvas behind it is grown to hold
-/// all the ink, so a glyph that overhangs its advance (the italic f's
-/// swash, the roman Q's tail, a j's hook) is kept, not clipped.
+/// `width`, `height` y `baseline` describen la caja de la línea: su ancho de
+/// avance por su ascendente más su descendente. El lienzo que hay detrás crece
+/// para contener toda la tinta, así que un glifo que sobresale de su avance (el
+/// adorno de la f cursiva, la cola de la Q redonda, el gancho de una j) se
+/// conserva, no se recorta.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Coverage {
-    /// Advance width in pixels: what a caller centers or boxes.
+    /// Ancho de avance en píxeles: lo que quien llama centra o encuadra.
     pub width: u32,
-    /// Line height in pixels: ascent plus descent.
+    /// Alto de línea en píxeles: ascendente más descendente.
     pub height: u32,
-    /// Row of the baseline (the line's ascent).
+    /// Fila de la línea de base (el ascendente de la línea).
     pub baseline: u32,
-    /// The canvas's width, the line box plus any overhang on either side.
+    /// El ancho del lienzo: la caja de la línea más cualquier saliente a cada
+    /// lado.
     canvas_width: u32,
-    /// Canvas columns left of the line box, and rows above it.
+    /// Columnas del lienzo a la izquierda de la caja de la línea, y filas por
+    /// encima de ella.
     left: u32,
     top: u32,
-    /// Coverage `0..=255` per canvas pixel, row-major.
+    /// Cobertura `0..=255` por píxel del lienzo, por filas.
     alpha: Vec<u8>,
 }
 
 impl Coverage {
-    /// No ink at all, in an empty box.
+    /// Nada de tinta, en una caja vacía.
     fn empty() -> Self {
         Coverage {
             width: 0,
@@ -110,10 +121,11 @@ impl Coverage {
         }
     }
 
-    /// Calls `f(x, y, alpha)` for every pixel with coverage, `x` and `y`
-    /// from the top-left of the line box (the pen origin at the top of the
-    /// line). Ink overhanging the box comes with negative coordinates or
-    /// ones at or past `width` and `height`.
+    /// Llama a `f(x, y, alpha)` para cada píxel con cobertura, con `x` e `y`
+    /// medidos desde la esquina superior izquierda de la caja de la línea (el
+    /// origen de la pluma en la parte superior de la línea). La tinta que
+    /// sobresale de la caja llega con coordenadas negativas o con valores
+    /// iguales o mayores que `width` y `height`.
     pub fn for_each(&self, mut f: impl FnMut(i32, i32, u8)) {
         if self.canvas_width == 0 {
             return;
@@ -129,30 +141,32 @@ impl Coverage {
     }
 }
 
-/// The largest size lettered, in pixels: a bigger request is lettered at
-/// this size, so no line's canvas can grow without bound.
+/// El tamaño máximo de rotulado, en píxeles: un pedido mayor se rotula a este
+/// tamaño, así que el lienzo de ninguna línea puede crecer sin límite.
 pub const MAX_PX: f32 = 512.0;
 
-/// `px` as a size to letter at: `None` when it is not a finite, positive
-/// number; capped at [`MAX_PX`].
+/// `px` como tamaño de rotulado: `None` cuando no es un número finito y
+/// positivo; limitado a [`MAX_PX`].
 fn size(px: f32) -> Option<f32> {
     (px.is_finite() && px > 0.0).then(|| px.min(MAX_PX))
 }
 
-/// True when `face` has a real glyph for `c`; whitespace always counts.
+/// Verdadero cuando `face` tiene un glifo real para `c`; los espacios en blanco
+/// siempre cuentan.
 pub fn supports(face: Face, c: char) -> bool {
     c.is_whitespace() || font(face).glyph_id(c).0 != 0
 }
 
-/// One positioned glyph: its id and pen x.
+/// Un glifo posicionado: su id y la x de la pluma.
 fn layout(text: &str, face: Face, px: f32) -> (Vec<(ab_glyph::GlyphId, f32)>, f32) {
     let scaled = font(face).as_scaled(PxScale::from(px));
     let mut pen = 0.0;
     let mut prev = None;
     let mut glyphs = Vec::new();
-    // Control characters (a stray newline or tab) take no room and draw
-    // nothing; a character the face lacks draws its .notdef box (callers
-    // check `supports` on their text when it loads).
+    // Los caracteres de control (un salto de línea o tabulación sueltos) no
+    // ocupan lugar ni dibujan nada; un carácter que le falta a la tipografía
+    // dibuja su caja .notdef (quienes llaman verifican `supports` sobre su
+    // texto cuando se carga).
     for c in text.chars().filter(|c| !c.is_control()) {
         let id = scaled.glyph_id(c);
         if let Some(p) = prev {
@@ -173,8 +187,8 @@ fn metrics(face: Face, px: f32) -> (u32, u32) {
     )
 }
 
-/// Measures one line of `text` in `face` at `px` pixels, kerning included.
-/// A size that is not a finite, positive number measures nothing.
+/// Mide una línea de `text` en `face` a `px` píxeles, con kerning incluido. Un
+/// tamaño que no sea un número finito y positivo no mide nada.
 pub fn measure(text: &str, face: Face, px: f32) -> Extent {
     let Some(px) = size(px) else {
         return Extent {
@@ -217,9 +231,9 @@ pub fn measure(text: &str, face: Face, px: f32) -> Extent {
     }
 }
 
-/// Rasterizes one line of `text` in `face` at `px` pixels: the line box of
-/// [`measure`], grown to hold every glyph's whole ink. A size that is not a
-/// finite, positive number letters nothing.
+/// Rasteriza una línea de `text` en `face` a `px` píxeles: la caja de línea de
+/// [`measure`], agrandada para contener toda la tinta de cada glifo. Un tamaño
+/// que no sea un número finito y positivo no rotula nada.
 pub fn rasterize(text: &str, face: Face, px: f32) -> Coverage {
     let Some(px) = size(px) else {
         return Coverage::empty();
@@ -227,7 +241,7 @@ pub fn rasterize(text: &str, face: Face, px: f32) -> Coverage {
     let scaled = font(face).as_scaled(PxScale::from(px));
     let e = measure(text, face, px);
     let (width, height) = (e.width, e.ascent + e.descent);
-    // How far the ink reaches past each side of the line box.
+    // Cuánto sobresale la tinta de cada lado de la caja de la línea.
     let past = |inner: f32, outer: f32| (inner - outer).ceil().max(0.0) as u32;
     let (left, top, right, bottom) = e.ink.map_or((0, 0, 0, 0), |i| {
         (
@@ -354,7 +368,7 @@ mod tests {
 
     #[test]
     fn kerning_narrows_a_pair() {
-        // The italic face kerns V against A by about -12 px at 100 px.
+        // La cursiva aplica un kerning de unos -12 px entre V y A a 100 px.
         let apart =
             measure("V", Face::Italic, 100.0).width + measure("A", Face::Italic, 100.0).width;
         let pair = measure("VA", Face::Italic, 100.0).width;
@@ -365,7 +379,7 @@ mod tests {
     fn rasterized_text_has_ink_inside_its_measured_bounds() {
         for face in FACES {
             let cov = rasterize("Hola", face, 24.0);
-            // The ink stays inside its measured bounds, overhang included.
+            // La tinta queda dentro de sus límites medidos, saliente incluido.
             let ink = measure("Hola", face, 24.0).ink.expect("ink");
             let mut n = 0;
             cov.for_each(|x, y, a| {
@@ -389,7 +403,8 @@ mod tests {
     fn descenders_reach_below_the_baseline() {
         let ag = rasterize("Ag", Face::Body, 40.0);
         let ab = rasterize("AB", Face::Body, 40.0);
-        // A descender drops well below the baseline; capitals only overshoot it by a row.
+        // Un descendente baja bastante por debajo de la línea de base; las
+        // mayúsculas solo la sobrepasan por una fila.
         assert!(ink_rows(&ag).iter().any(|&y| y >= ag.baseline as i32 + 5));
         assert!(ink_rows(&ab).iter().all(|&y| y <= ab.baseline as i32));
     }
@@ -417,7 +432,8 @@ mod tests {
         }
     }
 
-    /// The leftmost and rightmost inked columns, from the pen origin.
+    /// Las columnas entintadas de más a la izquierda y más a la derecha, desde
+    /// el origen de la pluma.
     fn ink_columns(cov: &Coverage) -> (i64, i64) {
         let (mut lo, mut hi) = (i64::MAX, i64::MIN);
         cov.for_each(|x, _, _| {
@@ -429,8 +445,8 @@ mod tests {
 
     #[test]
     fn ink_overhanging_the_advance_box_is_kept() {
-        // The italic f swings well left of its pen origin; the roman Q's
-        // tail runs far past its advance.
+        // La f cursiva se extiende bastante a la izquierda del origen de su
+        // pluma; la cola de la Q redonda llega mucho más allá de su avance.
         let f = rasterize("f", Face::Italic, 100.0);
         let f_ink = measure("f", Face::Italic, 100.0).ink.expect("ink");
         let (lo, _) = ink_columns(&f);

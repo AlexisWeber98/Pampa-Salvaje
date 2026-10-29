@@ -1,26 +1,29 @@
-//! Which towns are near enough to the player to be drawn and simulated.
+//! Qué pueblos están lo bastante cerca del jugador como para dibujarlos y
+//! simularlos.
 //!
-//! Every town's footprints stay in the logic [`crate::World`] (they are
-//! cheap); only drawing and the crowd simulation follow the player. A town
-//! becomes active within `margin` meters of its extent and goes inactive
-//! only past `margin + hysteresis`, so riding along the edge does not
-//! rebuild it every frame.
+//! Las huellas de todos los pueblos se quedan en el [`crate::World`] lógico
+//! (son baratas); solo el dibujo y la simulación de la multitud siguen al
+//! jugador. Un pueblo se activa a menos de `margin` metros de su extensión y se
+//! desactiva recién más allá de `margin + hysteresis`, para que andar a caballo
+//! por el borde no lo reconstruya en cada frame.
 
 use crate::{TownLayout, Vec2};
 
-/// What changed in one update, as town indices in ascending order.
+/// Lo que cambió en una actualización, como índices de pueblos en orden
+/// ascendente.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ActivationChange {
     pub activated: Vec<usize>,
     pub deactivated: Vec<usize>,
 }
 
-/// The active towns, and the rule for changing them.
+/// Los pueblos activos y la regla para cambiarlos.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TownActivation {
-    /// Distance from a town's extent within which it activates, in meters.
+    /// Distancia desde la extensión de un pueblo dentro de la cual se activa,
+    /// en metros.
     pub margin: f32,
-    /// Extra distance before an active town deactivates, in meters.
+    /// Distancia extra antes de que un pueblo activo se desactive, en metros.
     pub hysteresis: f32,
     active: Vec<bool>,
 }
@@ -32,13 +35,14 @@ impl Default for TownActivation {
 }
 
 impl TownActivation {
-    /// Activate within 600 m of a town: well past the fog, so a town is
-    /// built before it can be seen, railway run-out included.
+    /// Se activa a menos de 600 m de un pueblo: bastante más allá de la niebla,
+    /// así que un pueblo se construye antes de que se pueda ver, incluido el
+    /// tramo final de la vía férrea.
     pub const DEFAULT_MARGIN: f32 = 600.0;
-    /// Keep a town until 150 m past the margin.
+    /// Conserva un pueblo hasta 150 m más allá del margen.
     pub const DEFAULT_HYSTERESIS: f32 = 150.0;
 
-    /// No town active yet.
+    /// Todavía no hay ningún pueblo activo.
     pub fn new(margin: f32, hysteresis: f32) -> Self {
         Self {
             margin,
@@ -47,7 +51,7 @@ impl TownActivation {
         }
     }
 
-    /// Activates the towns near `focus` and deactivates the far ones.
+    /// Activa los pueblos cercanos a `focus` y desactiva los lejanos.
     pub fn update(&mut self, towns: &[TownLayout], focus: Vec2) -> ActivationChange {
         let mut change = ActivationChange::default();
         for index in towns.len()..self.active.len() {
@@ -71,12 +75,12 @@ impl TownActivation {
         change
     }
 
-    /// Whether town `index` is active.
+    /// Si el pueblo `index` está activo.
     pub fn is_active(&self, index: usize) -> bool {
         self.active.get(index).copied().unwrap_or(false)
     }
 
-    /// Indices of the active towns, ascending.
+    /// Índices de los pueblos activos, en orden ascendente.
     pub fn active(&self) -> impl Iterator<Item = usize> + '_ {
         self.active
             .iter()
@@ -85,13 +89,14 @@ impl TownActivation {
     }
 }
 
-/// Distance from `p` to the nearest point of `town`'s extent (0 inside).
+/// Distancia desde `p` hasta el punto más cercano de la extensión de `town` (0
+/// si está adentro).
 pub fn distance_to_town(town: &TownLayout, p: Vec2) -> f32 {
     town.extent().closest_point(p).distance(p)
 }
 
-/// Index of the town whose extent is nearest `p`; ties go to the earlier
-/// town. `None` without towns.
+/// Índice del pueblo cuya extensión está más cerca de `p`; en caso de empate
+/// gana el pueblo anterior. `None` si no hay pueblos.
 pub fn nearest_town(towns: &[TownLayout], p: Vec2) -> Option<usize> {
     let mut best: Option<(usize, f32)> = None;
     for (index, town) in towns.iter().enumerate() {
@@ -131,18 +136,18 @@ mod tests {
         assert_eq!(change.activated, vec![0]);
         assert!(change.deactivated.is_empty());
         assert!(a.is_active(0) && !a.is_active(1));
-        // Nothing changes while standing still.
+        // Nada cambia mientras se está quieto.
         assert_eq!(a.update(&towns, Vec2::ZERO), ActivationChange::default());
 
         let east = towns[0].extent().max.x;
-        // Past the margin but inside the hysteresis: still active.
+        // Pasado el margen pero dentro de la histéresis: sigue activo.
         let change = a.update(&towns, Vec2::new(east + 700.0, 0.0));
         assert!(change.deactivated.is_empty() && a.is_active(0));
-        // Past both: gone.
+        // Pasado ambos: desaparece.
         let change = a.update(&towns, Vec2::new(east + 800.0, 0.0));
         assert_eq!(change.deactivated, vec![0]);
         assert_eq!(a.active().count(), 0);
-        // Back inside the margin: active again.
+        // De nuevo dentro del margen: activo otra vez.
         let change = a.update(&towns, Vec2::new(east + 550.0, 0.0));
         assert_eq!(change.activated, vec![0]);
     }

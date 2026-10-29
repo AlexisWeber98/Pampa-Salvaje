@@ -1,7 +1,7 @@
-//! Per-entity character visuals. Logic hands over a [`VisualPose`]; render
-//! decides how it looks: people on foot (see [`figure`](super::figure) and
-//! [`model`](super::model)), saddled horses (see [`horse`](super::horse))
-//! and a rider in the saddle (see [`rider`](super::rider)).
+//! Los visuales de personaje por entidad. La lógica entrega una [`VisualPose`];
+//! render decide cómo se ve: personas a pie (ver [`figure`](super::figure) y
+//! [`model`](super::model)), caballos ensillados (ver [`horse`](super::horse))
+//! y un jinete en la montura (ver [`rider`](super::rider)).
 
 use bevy::app::AnimationSystems;
 use bevy::camera::visibility::VisibilitySystems;
@@ -23,52 +23,54 @@ use super::tack::{dress_tack, stretch_straps};
 use super::townsfolk::TintCache;
 use super::viewer::mark_viewer_head;
 
-/// How a character is drawn. Swappable per entity without touching logic:
-/// inserting a new value replaces whatever was drawn before.
+/// Cómo se dibuja un personaje. Se puede cambiar por entidad sin tocar la
+/// lógica: insertar un valor nuevo reemplaza lo que se dibujaba antes.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 #[require(VisualPose, Transform, Visibility)]
 pub enum CharacterVisual {
-    /// A low-poly 3D person on foot.
+    /// Una persona 3D low-poly a pie.
     Figure(FigureKind),
-    /// A saddled horse with nobody on it, like the one tied at a store.
-    /// (The untacked horses loose in the corrals are fauna: see
+    /// Un caballo ensillado sin nadie encima, como el que está atado en un
+    /// almacén. (Los caballos sin aperos sueltos en los corrales son fauna: ver
     /// [`Animal::Horse`](crate::fauna::Animal::Horse).)
     Horse(Coat),
-    /// A person riding a saddled horse; the pose is the horse's. Only a
-    /// rider with a model ([`model_name`](super::model::model_name)) is
-    /// drawn on it.
+    /// Una persona montada en un caballo ensillado; la pose es la del caballo.
+    /// Solo se dibuja encima un jinete con modelo
+    /// ([`model_name`](super::model::model_name)).
     Mounted { rider: FigureKind, coat: Coat },
 }
 
-/// The child entity a [`CharacterVisual`] draws with (a figure's or a
-/// horse's body, and a rider on the horse). It and everything under it go
-/// when the visual changes.
+/// La entidad hija con la que dibuja un [`CharacterVisual`] (el cuerpo de una
+/// figura o de un caballo, y un jinete sobre el caballo). Ella y todo lo que
+/// cuelga de ella se eliminan cuando cambia el visual.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct VisualPart;
 
-/// Logic state the visual needs, copied from `pampa-core` each frame by the game.
+/// El estado de la lógica que necesita el visual, copiado de `pampa-core` en
+/// cada frame por el juego.
 ///
-/// The entity's `Transform` must carry translation only (no rotation): the
-/// continuous heading lives here, not in the transform.
+/// El `Transform` de la entidad debe llevar solo traslación (sin rotación): el
+/// rumbo continuo vive aquí, no en el transform.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Default)]
 pub struct VisualPose {
     pub heading: Heading,
     pub animation: AnimationState,
-    /// Ground speed in m/s, negative backing up; render paces the gait
-    /// with its size and plays the stride backward by its sign.
+    /// Velocidad sobre el suelo en m/s, negativa al retroceder; render marca el
+    /// paso del andar según su magnitud y reproduce la zancada hacia atrás
+    /// según su signo.
     pub speed: f32,
-    /// Yaw rate in rad/s (positive to the left) the body actually turned
-    /// this frame, 0 when not turning; standing still, render steps in
-    /// place by its size.
+    /// Velocidad de giro en rad/s (positiva hacia la izquierda) que el cuerpo
+    /// giró realmente en este frame, 0 cuando no gira; parado, render da pasos
+    /// en el lugar según su magnitud.
     pub turn: f32,
-    /// How far through a jump's flight a mounted rider is, `0..=1` (none on
-    /// the ground, and always none for people on foot): the saddled horse
-    /// plays its jump clip along it, tucked at the top and stretching out
-    /// to land.
+    /// Qué tan avanzado está el vuelo de un salto de un jinete montado, `0..=1`
+    /// (nada en el suelo, y siempre nada para las personas a pie): el caballo
+    /// ensillado reproduce su clip de salto a lo largo de este valor, recogido
+    /// arriba y estirándose para aterrizar.
     pub flight: Option<f32>,
 }
 
-/// Draws entities carrying a [`CharacterVisual`].
+/// Dibuja las entidades que llevan un [`CharacterVisual`].
 pub struct CharacterVisualPlugin;
 
 impl Plugin for CharacterVisualPlugin {
@@ -124,7 +126,7 @@ fn load_kits(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
     commands.insert_resource(Palette::default());
 }
 
-/// The kit and asset stores [`attach_visuals`] draws with.
+/// El kit y los almacenes de assets con los que dibuja [`attach_visuals`].
 type Kits<'a> = (
     ResMut<'a, FigureKit>,
     ResMut<'a, Palette>,
@@ -132,7 +134,8 @@ type Kits<'a> = (
     ResMut<'a, Assets<Image>>,
 );
 
-/// Draws new and changed visuals, dropping whatever drew the old one.
+/// Dibuja los visuales nuevos y los cambiados, descartando lo que dibujaba el
+/// anterior.
 fn attach_visuals(
     mut commands: Commands,
     (mut people, mut palette, mut materials, mut images): Kits,
@@ -146,7 +149,7 @@ fn attach_visuals(
                 commands.entity(child).despawn();
             }
         }
-        // Per-entity start so a crowd does not step in unison.
+        // Inicio por entidad para que una multitud no camine al unísono.
         let phase = (entity.index_u32() as f32 * 0.37).fract();
         let body = match *visual {
             CharacterVisual::Figure(kind) => {
@@ -164,7 +167,7 @@ fn attach_visuals(
                 body
             }
             CharacterVisual::Horse(coat) => spawn_horse(&mut commands, entity, coat, None),
-            // The rider is seated once the horse's scene spawns.
+            // El jinete se sienta en cuanto aparece la escena del caballo.
             CharacterVisual::Mounted { rider, coat } => {
                 spawn_horse(&mut commands, entity, coat, Some(rider))
             }
@@ -180,7 +183,8 @@ mod tests {
     use std::f32::consts::PI;
     use std::time::Duration;
 
-    /// The whole plugin, headless, with stand-in asset stores and a camera.
+    /// El plugin completo, headless, con almacenes de assets sustitutos y una
+    /// cámara.
     fn plugin_app() -> App {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
@@ -224,8 +228,8 @@ mod tests {
         assert!(count::<With<FigurePart>>(&mut app) >= 18);
         assert_eq!(count::<With<HorseBody>>(&mut app), 0);
 
-        // Mount: the new visual replaces the figure the same frame, with a
-        // horse body waiting for its model and nothing rigid.
+        // Montar: el nuevo visual reemplaza a la figura en el mismo frame, con
+        // un cuerpo de caballo esperando su modelo y nada rígido.
         app.world_mut()
             .entity_mut(me)
             .insert(CharacterVisual::Mounted {
@@ -242,13 +246,13 @@ mod tests {
         assert!(body.never_freezes(), "the player's horse");
         let model = app.world().get::<Children>(horse).unwrap()[0];
         assert!(app.world().get::<HorseModel>(model).is_some());
-        // No horse file in this app: it waits, drawing nothing.
+        // No hay archivo de caballo en esta app: espera, sin dibujar nada.
         assert!(app.world().get::<HorsePending>(model).is_some());
         assert_eq!(count::<With<FigureBody>>(&mut app), 0, "no rigid rider");
         assert_eq!(count::<With<FigureJoint>>(&mut app), 0);
         assert_eq!(count::<With<Mesh3d>>(&mut app), 0);
 
-        // Dismount: back to the figure, nothing of the horse left.
+        // Desmontar: vuelve a la figura, sin que quede nada del caballo.
         app.world_mut()
             .entity_mut(me)
             .insert(CharacterVisual::Figure(FigureKind::Protagonist));
@@ -324,7 +328,8 @@ mod tests {
         let mut handles = app.world_mut().query::<&Mesh3d>();
         let distinct: std::collections::HashSet<_> =
             handles.iter(app.world()).map(|m| m.0.id()).collect();
-        // Twenty people drawn with no more meshes than one person's parts.
+        // Veinte personas dibujadas con no más meshes que las partes de una
+        // sola persona.
         let one_person: std::collections::HashSet<_> =
             super::super::figure::figure_parts(FigureKind::Townsfolk(2))
                 .iter()
@@ -350,8 +355,8 @@ mod tests {
                 },
             ))
             .id();
-        // The starting phase depends on the entity, so sample more than one
-        // whole gait cycle: 24 frames of 50 ms at about 1.08 cycles/s.
+        // La fase inicial depende de la entidad, así que se muestrea más de un
+        // ciclo completo de andar: 24 frames de 50 ms a unos 1.08 ciclos/s.
         let frames = 24;
         let cycles = frames as f32 * 0.05 * pampa_core::pose::cadence(AnimationState::Walk, 1.4);
         assert!(cycles >= 1.0, "{cycles}");
@@ -371,8 +376,8 @@ mod tests {
             assert!(left * right <= 1e-6, "opposite phase");
             swings.push(left);
         }
-        // Over a whole cycle each leg reaches close to its full swing both
-        // ways, wherever the cycle started.
+        // A lo largo de un ciclo completo cada pierna llega cerca de su
+        // recorrido completo en ambos sentidos, empiece donde empiece el ciclo.
         let full = pampa_core::pose::pose(AnimationState::Walk, 0.25).hip[0];
         let (high, low) = swings
             .iter()
@@ -381,7 +386,7 @@ mod tests {
             high > 0.9 * full && low < -0.9 * full,
             "{high} {low} of {full}"
         );
-        // Facing west: the body turned half round.
+        // Mirando al oeste: el cuerpo giró media vuelta.
         let mut bodies = app
             .world_mut()
             .query::<(&FigureBody, &Transform, &ChildOf)>();

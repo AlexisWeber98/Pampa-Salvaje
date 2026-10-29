@@ -11,15 +11,16 @@ use pampa_core::{
 use std::f32::consts::{PI, TAU};
 use std::time::Duration;
 
-/// Triangles of each car, as built (see the budget test).
+/// Los triángulos de cada vagón, tal como se construyen (ver el test del
+/// presupuesto).
 const LOCO_TRIANGLES: usize = 14844;
 const COACH_TRIANGLES: usize = 14328;
 const BOXCAR_TRIANGLES: usize = 6588;
 const HOPPER_TRIANGLES: usize = 6432;
 const TANK_TRIANGLES: usize = 12048;
 
-/// Castex, Monte Nievas and Pico as `assets/world/towns.ron` lays them
-/// out, and the line train through them.
+/// Castex, Monte Nievas y Pico tal como los dispone `assets/world/towns.ron`, y
+/// el tren de la línea que pasa por ellos.
 pub(crate) fn line_train() -> (Vec<TownLayout>, LineTrain) {
     let world = WorldConfig {
         half_extent: WorldConfig::MAX_HALF_EXTENT,
@@ -42,8 +43,8 @@ pub(crate) fn line_train() -> (Vec<TownLayout>, LineTrain) {
         density: None,
         townsfolk: None,
     };
-    // Monte Nievas, and the others at their real offsets from it
-    // (east, north, in meters) scaled 1:7 and rounded to the meter.
+    // Monte Nievas, y los demás a sus distancias reales desde él (este, norte,
+    // en metros) escaladas 1:7 y redondeadas al metro.
     let nievas = (-2450.0, -1950.0);
     let at = |east: f32, north: f32| {
         (
@@ -83,9 +84,10 @@ fn app_with_train(game_seconds: f64, focus: GroundVec2) -> App {
     app
 }
 
-/// A second, shorter train (a shuttle's tank engine, coach and boxcar) over the
-/// same line, leaving `down` and `up` (hours of the day), so it keeps to
-/// its own timetable apart from the line train.
+/// Un segundo tren, más corto (la locomotora tanque, el coche y el furgón de
+/// una lanzadera), sobre la misma línea, que sale a las `down` y a las `up`
+/// (horas del día), así que sigue su propio horario aparte del tren de la
+/// línea.
 pub(crate) fn shuttle(line: &LineTrain, towns: &[TownLayout], down: u32, up: u32) -> LineTrain {
     let cars = [
         (CarKind::TankEngine, 12.0),
@@ -104,8 +106,9 @@ pub(crate) fn shuttle(line: &LineTrain, towns: &[TownLayout], down: u32, up: u32
         .expect("a shuttle on the line")
 }
 
-/// An app with the line train and the shuttle (leaving Castex at
-/// 22:00, Pico at 23:00, so parked at Castex all day) at `game_seconds`.
+/// Una app con el tren de la línea y la lanzadera (que sale de Castex a las
+/// 22:00 y de Pico a las 23:00, así que está detenida en Castex todo el día) en
+/// `game_seconds`.
 fn app_with_two_trains(game_seconds: f64, focus: GroundVec2) -> App {
     let (towns, mut line) = line_train();
     let mut shuttle = shuttle(&line, &towns, 22, 23);
@@ -122,7 +125,8 @@ fn app_with_two_trains(game_seconds: f64, focus: GroundVec2) -> App {
     app
 }
 
-/// Every car entity's (train, car) pair with its transform and visibility.
+/// El par (tren, vagón) de cada entidad de vagón con su transform y su
+/// visibilidad.
 fn all_cars(app: &mut App) -> Vec<(usize, usize, Transform, Visibility)> {
     let mut query = app
         .world_mut()
@@ -149,7 +153,7 @@ fn cars(app: &mut App) -> Vec<(usize, Transform, Visibility)> {
 
 #[test]
 fn cars_near_the_focus_follow_logic_along_the_curves() {
-    // Two minutes out of Monte Nievas, on the way to Pico.
+    // Dos minutos después de salir de Monte Nievas, rumbo a Pico.
     let (_, probe) = line_train();
     let (_, depart) = probe.stop_times(pampa_core::Run::Down, 1).unwrap();
     let at = 7.0 * 3600.0 + (depart + 120.0) * BASE_RATE;
@@ -171,7 +175,7 @@ fn cars_near_the_focus_follow_logic_along_the_curves() {
         assert_eq!(*visibility, Visibility::Inherited);
         let at = t.translation;
         assert!((at.x - p.center.x).abs() < 1e-3 && (at.z + p.center.y).abs() < 1e-3);
-        // Local +X points along the car's ground heading.
+        // El +X local apunta a lo largo del rumbo del vagón sobre el suelo.
         let forward = t.rotation * Vec3::X;
         let flat = GroundVec2::new(forward.x, -forward.z);
         let flat = flat * (1.0 / flat.length());
@@ -183,10 +187,10 @@ fn cars_near_the_focus_follow_logic_along_the_curves() {
     }
 }
 
-/// One drawn mesh of a car, in the car's frame.
+/// Una mesh dibujada de un vagón, en el marco del vagón.
 struct Drawn {
     material: Handle<StandardMaterial>,
-    /// Inside a coach's shell ([`CoachInterior`]).
+    /// Dentro de la carcasa de un coche ([`CoachInterior`]).
     interior: bool,
     points: Vec<Vec3>,
     normals: Vec<Vec3>,
@@ -202,8 +206,8 @@ impl Drawn {
     }
 }
 
-/// Every mesh under car `index` (the smoke puffs apart), the transforms of
-/// the parts between it and the car applied.
+/// Cada mesh bajo el vagón `index` (salvo las bocanadas de humo), con los
+/// transforms de las piezas entre ella y el vagón aplicados.
 fn drawn(app: &mut App, index: usize) -> Vec<Drawn> {
     let mut roots = app.world_mut().query::<(Entity, &TrainCar)>();
     let root = roots
@@ -264,18 +268,18 @@ fn drawn(app: &mut App, index: usize) -> Vec<Drawn> {
     out
 }
 
-/// The kit's handle of `mat`, of the app that spawned a train.
+/// El handle del kit para `mat`, de la app que creó un tren.
 fn material(app: &App, mat: Mat) -> Handle<StandardMaterial> {
     app.world().resource::<CarKit>().0.material(mat)
 }
 
-/// Where the ray from `from` along `dir` (unit) meets any triangle of
-/// `parts`, as the materials of what it meets.
+/// Dónde encuentra el rayo desde `from` en la dirección `dir` (unitaria) a
+/// algún triángulo de `parts`, como los materiales de lo que encuentra.
 fn ray_hits(parts: &[Drawn], from: Vec3, dir: Vec3, reach: f32) -> Vec<Handle<StandardMaterial>> {
     let mut hits = Vec::new();
     for part in parts {
         for [a, b, c] in part.triangles() {
-            // Moeller-Trumbore, both faces.
+            // Moeller-Trumbore, ambas caras.
             let (e1, e2) = (b - a, c - a);
             let p = dir.cross(e2);
             let det = e1.dot(p);
@@ -325,7 +329,8 @@ fn each_car_is_drawn_as_tall_as_core_says() {
     }
 }
 
-/// An app whose train 0 is the branch shuttle (tank engine, coach, boxcar).
+/// Una app cuyo tren 0 es la lanzadera del ramal (locomotora tanque, coche,
+/// furgón).
 fn app_with_shuttle() -> App {
     let (towns, line) = line_train();
     let mut shuttle = shuttle(&line, &towns, 22, 23);
@@ -347,7 +352,8 @@ fn the_tank_engine_is_a_2_6_2_with_its_own_tanks_and_bunker_and_no_tender() {
     let mut app = app_with_shuttle();
     let (index, length) = first(&app, CarKind::TankEngine);
     assert_eq!(index, 0, "it hauls the shuttle");
-    // Two leading, six coupled and two trailing wheels, and the four rods.
+    // Dos ruedas delanteras, seis acopladas y dos traseras, y las cuatro
+    // bielas.
     let root = {
         let mut q = app.world_mut().query::<(Entity, &TrainCar)>();
         q.iter(app.world())
@@ -367,8 +373,8 @@ fn the_tank_engine_is_a_2_6_2_with_its_own_tanks_and_bunker_and_no_tender() {
         .filter(|&&e| app.world().get::<TrainRod>(e).is_some())
         .count();
     assert_eq!(rods, 4);
-    // As high as core says, and no longer than its length over the buffers
-    // (the tender engine's wheels, tender and all, take 14 m).
+    // Tan alta como dice core, y no más larga que su longitud entre topes (las
+    // ruedas de la locomotora con ténder, ténder incluido, ocupan 14 m).
     let parts = drawn(&mut app, index);
     let points = || parts.iter().flat_map(|d| d.points.iter());
     let top = points().map(|p| p.y).fold(f32::MIN, f32::max);
@@ -383,8 +389,9 @@ fn the_tank_engine_is_a_2_6_2_with_its_own_tanks_and_bunker_and_no_tender() {
         low < -length / 2.0 + 0.7 && high > length / 2.0 - 0.7,
         "{low} {high}"
     );
-    // Black plate, brass fittings, tread plate, and coal in the bunker;
-    // the tanks ride beside the boiler, over the drivers' tops.
+    // Chapa negra, accesorios de bronce, chapa antideslizante y carbón en la
+    // carbonera; los tanques van junto a la caldera, por encima de las ruedas
+    // motrices.
     for mat in [
         Mat::BLACK,
         Mat::BRASS,
@@ -403,7 +410,7 @@ fn the_tank_engine_is_a_2_6_2_with_its_own_tanks_and_bunker_and_no_tender() {
         .filter(|p| p.z.abs() > 1.25 && p.y > 1.8 && p.y < 3.0 && p.x > -0.5 && p.x < 3.3)
         .count();
     assert!(tank_sides > 20, "side tanks: {tank_sides}");
-    // The coal sits behind the cab, at the rear.
+    // El carbón queda detrás de la cabina, en la parte trasera.
     let coal = material(&app, Mat::Coal);
     let (coal_x, n) = parts
         .iter()
@@ -415,7 +422,7 @@ fn the_tank_engine_is_a_2_6_2_with_its_own_tanks_and_bunker_and_no_tender() {
         "bunker coal at {}",
         coal_x / n as f32
     );
-    // The triangle budget, a quarter's slack either way.
+    // El presupuesto de triángulos, con un margen de un cuarto hacia cada lado.
     let tris = triangles(&mut app, index);
     println!("TankEngine: {tris} triangles");
     let documented = TANK_TRIANGLES as f32;
@@ -436,8 +443,8 @@ fn coaches_are_hollow_with_glazed_windows_and_benches_inside() {
     let mid_y = (CoachBody::SILL + CoachBody::LINTEL) / 2.0;
     for &x in &windows {
         for side in [-1.0f32, 1.0] {
-            // From the aisle straight out through the window: only the
-            // clear pane is in the way (it has two faces).
+            // Desde el pasillo, directo hacia afuera por la ventana: solo el
+            // vidrio transparente está en el camino (tiene dos caras).
             let hits = ray_hits(
                 &parts,
                 Vec3::new(x, mid_y, 0.0),
@@ -451,7 +458,8 @@ fn coaches_are_hollow_with_glazed_windows_and_benches_inside() {
             );
         }
     }
-    // The wall beside a window, below the sill, is boarded, not open.
+    // La pared junto a una ventana, por debajo del alféizar, está entablada, no
+    // abierta.
     let hits = ray_hits(
         &parts,
         Vec3::new(windows[0], CoachBody::SILL - 0.3, 0.0),
@@ -459,8 +467,8 @@ fn coaches_are_hollow_with_glazed_windows_and_benches_inside() {
         3.0,
     );
     assert!(hits.contains(&material(&app, Mat::MAROON)));
-    // Benches: leather cushions, two seats and two backs per bench, four
-    // benches to a bay.
+    // Bancos: almohadones de cuero, dos asientos y dos respaldos por banco,
+    // cuatro bancos por compartimento.
     let leather = material(&app, Mat::Leather);
     let cushions = parts
         .iter()
@@ -469,7 +477,8 @@ fn coaches_are_hollow_with_glazed_windows_and_benches_inside() {
         .sum::<usize>();
     assert!(cushions > 0);
     assert_eq!(cushions, 4 * windows.len() * bench_cushion_triangles());
-    // From a window seat the way out of the window is clear, glass only.
+    // Desde un asiento junto a la ventana, la salida por la ventana está libre:
+    // solo vidrio.
     for side in [-1.0, 1.0] {
         let (along, across, eye) = CoachBody::window_seat(length, side);
         assert!(windows.iter().any(|&x| (along - x).abs() < open / 2.0));
@@ -484,7 +493,7 @@ fn coaches_are_hollow_with_glazed_windows_and_benches_inside() {
             !hits.is_empty() && hits.iter().all(|m| *m == glass),
             "{side}"
         );
-        // And nothing hangs within arm's reach of the seated eye.
+        // Y nada cuelga al alcance de la mano del ojo sentado.
         let eye = Vec3::new(along, eye, across);
         for part in parts.iter().filter(|d| d.interior) {
             assert!(part.points.iter().all(|p| p.distance(eye) > 0.15));
@@ -492,7 +501,8 @@ fn coaches_are_hollow_with_glazed_windows_and_benches_inside() {
     }
 }
 
-/// The triangles of one seat cushion or back cushion, as built.
+/// Los triángulos de un almohadón de asiento o de respaldo, tal como se
+/// construyen.
 fn bench_cushion_triangles() -> usize {
     let (seat, back, ..) = super::coach::bench_shapes();
     seat.triangles() + back.triangles()
@@ -513,14 +523,15 @@ fn the_ridden_coachs_inside_keeps_within_the_coach_body() {
             count += 1;
             assert!(p.x.abs() <= inner / 2.0 + 1e-3, "{p}");
             assert!(p.z.abs() <= reach + 1e-3, "{p}");
-            // Floor slab under the floor, ceiling slab over the ceiling.
+            // La losa del piso bajo el piso, la losa del cielorraso sobre el
+            // cielorraso.
             assert!(p.y >= CoachBody::FLOOR - 0.1 - 1e-3, "{p}");
             assert!(p.y <= CoachBody::CEILING + 0.08 + 1e-3, "{p}");
         }
     }
     assert!(count > 500);
-    // Panelling and floor, ceiling and cream beading, brass racks and
-    // lamps, glowing globes, leather seats, the runner.
+    // Revestimiento y piso, cielorraso y molduras color crema, portaequipajes y
+    // faroles de bronce, globos encendidos, asientos de cuero, la alfombra.
     for mat in [
         Mat::VARNISH,
         Mat::Cream,
@@ -531,7 +542,8 @@ fn the_ridden_coachs_inside_keeps_within_the_coach_body() {
     ] {
         assert!(materials.contains(&material(&app, mat).id()), "{mat:?}");
     }
-    // The shell is not inside: the outer skin reaches the car's full width.
+    // La carcasa no está adentro: el revestimiento exterior llega a todo el
+    // ancho del vagón.
     let skin = material(&app, Mat::MAROON);
     let widest = parts
         .iter()
@@ -539,8 +551,8 @@ fn the_ridden_coachs_inside_keeps_within_the_coach_body() {
         .flat_map(|d| d.points.iter().map(|p| p.z.abs()))
         .fold(0.0, f32::max);
     assert!((widest - CoachBody::HALF_WIDTH).abs() < 0.02, "{widest}");
-    // The floor top is CoachBody::FLOOR and the ceiling's underside its
-    // CEILING.
+    // La parte superior del piso es CoachBody::FLOOR y la cara inferior del
+    // cielorraso, su CEILING.
     let varnish = material(&app, Mat::VARNISH);
     let (mut floor, mut ceiling) = (f32::MIN, f32::MAX);
     for part in parts.iter().filter(|d| d.interior && d.material == varnish) {
@@ -578,14 +590,16 @@ fn wheels_stand_on_the_rails_a_gauge_apart() {
             .iter()
             .map(|p| t.transform_point(Vec3::from(*p)).y)
             .fold(f32::MAX, f32::min);
-        // The flange reaches 3 cm under the rail top; the tread is on it.
+        // La pestaña llega 3 cm por debajo de la cara superior del riel; la
+        // banda de rodadura se apoya en él.
         assert!((low + 0.03).abs() < 2e-3, "{:?}: lowest {low}", car.index);
         assert!((t.translation.y - wheel.radius).abs() < 1e-5);
-        // 0.86 m either side of the middle: the rails' heads at 0.838.
+        // 0.86 m a cada lado del centro: las cabezas de los rieles en 0.838.
         assert!((t.translation.z.abs() - 0.86).abs() < 1e-5);
         checked += 1;
     }
-    // Per car: a locomotive and tender's 12, coaches 8 each, freight 8.
+    // Por vagón: 12 para una locomotora con ténder, 8 para cada coche, 8 para
+    // los de carga.
     let expected: usize = train
         .cars()
         .iter()
@@ -631,7 +645,7 @@ fn materials_go_where_the_period_train_wears_them() {
     }
     let hopper = on(&mut app, CarKind::Hopper);
     assert!(hopper(Mat::STEEL) && hopper(Mat::BLACK));
-    // The painted steel is the towns' own surface, wearing a scan.
+    // El acero pintado es la superficie propia de los pueblos, con un escaneo.
     assert_eq!(Mat::BLACK, Mat::Surface(Surface::Livery(Livery::Black)));
 }
 
@@ -653,18 +667,18 @@ fn textures_tile_in_meters_whatever_the_part() {
         {
             let _ = i;
             if part.material == maroon && n.z.abs() > 0.99 {
-                // A side wall: (u, v) = (x, y) in meters.
+                // Una pared lateral: (u, v) = (x, y) en metros.
                 assert!((uv[0] - p.x).abs() < 1e-4 && (uv[1] - p.y).abs() < 1e-4);
                 sides += 1;
             }
             if part.interior && part.material == varnish && n.y > 0.99 && (p.y - 1.3).abs() < 1e-3 {
-                // The floor: (x, z).
+                // El piso: (x, z).
                 assert!((uv[0] - p.x).abs() < 1e-4 && (uv[1] - p.z).abs() < 1e-4);
             }
         }
     }
     assert!(sides > 100);
-    // The boxcar's boards run upright: (u, v) = (y, x).
+    // Las tablas del furgón van verticales: (u, v) = (y, x).
     let (index, _) = first(&app, CarKind::Boxcar);
     let oxide = material(&app, Mat::OXIDE);
     let mut upright = 0;
@@ -680,14 +694,15 @@ fn textures_tile_in_meters_whatever_the_part() {
         }
     }
     assert!(upright > 0);
-    // A lathe turning's `u` runs round it in meters: 0.2 m radius, 1.26 m.
+    // La `u` de un torneado da la vuelta en metros: radio de 0.2 m, 1.26 m.
     let rim = Shape::lathe(&[(0.0, 0.2), (1.0, 0.2)], 16);
     let u = rim.uvs.iter().map(|uv| uv[0]).fold(f32::MIN, f32::max);
     assert!((u - std::f32::consts::TAU * 0.2).abs() < 1e-4);
     let _ = length;
 }
 
-/// Triangles drawn for car `index`, over every mesh under it.
+/// Los triángulos dibujados para el vagón `index`, sobre todas las meshes que
+/// tiene debajo.
 fn triangles(app: &mut App, index: usize) -> usize {
     let mut q = app.world_mut().query::<(Entity, &TrainCar)>();
     let root = q
@@ -717,11 +732,11 @@ fn every_car_stays_within_its_triangle_budget() {
     for (index, car) in train.cars().iter().enumerate() {
         let tris = triangles(&mut app, index);
         println!("{:?}: {tris} triangles", car.kind);
-        // The counts of the rounded, spoked, textured train (T5, 2026-10-27;
-        // the boxy train's were 2156, 2348, 1124 and 1100): a locomotive and
-        // tender of lathe turnings and 20 spoked wheels, a coach with its
-        // furnished inside and eight plate wheels, freight cars of framed
-        // boards. A quarter's slack either way.
+        // Las cantidades del tren redondeado, con rayos y texturizado (T5,
+        // 2026-10-27; las del tren cuadrado eran 2156, 2348, 1124 y 1100): una
+        // locomotora con ténder de torneados y 20 ruedas de rayos, un coche con
+        // su interior amueblado y ocho ruedas de disco, vagones de carga de
+        // tablas con bastidor. Un margen de un cuarto hacia cada lado.
         let documented = match car.kind {
             CarKind::Locomotive => LOCO_TRIANGLES,
             CarKind::TankEngine => TANK_TRIANGLES,
@@ -753,7 +768,8 @@ fn the_rods_swing_round_with_the_cranks() {
     assert!(
         (at(std::f32::consts::FRAC_PI_2) - rod.base - Vec3::new(0.0, 0.3, 0.0)).length() < 1e-5
     );
-    // A side rod stays level; a main rod tilts with the crank.
+    // Una biela de acoplamiento se mantiene horizontal; una biela motriz se
+    // inclina con la manivela.
     assert_eq!(
         rod_pose(&TrainRod { phase: 1.0, ..rod }, Vec3::ONE).rotation,
         Quat::IDENTITY
@@ -769,8 +785,9 @@ fn the_rods_swing_round_with_the_cranks() {
             .angle_between(Quat::IDENTITY)
             > 0.01
     );
-    // In the app, the rods turn with the drivers as the train runs: by
-    // the distance rolled over the drivers' radius, in their sense.
+    // En la app, las bielas giran con las ruedas motrices a medida que avanza
+    // el tren: según la distancia recorrida sobre el radio de las motrices, en
+    // su sentido.
     let mut app = running_app();
     let speed = app
         .world()
@@ -785,8 +802,9 @@ fn the_rods_swing_round_with_the_cranks() {
         let mut q = app.world_mut().query::<&TrainRod>();
         q.iter(app.world()).copied().collect::<Vec<_>>()
     };
-    // A driver's crank angle in the car's side plane: where its local
-    // +X (a point on the rim) has turned to about the car's Z axis.
+    // El ángulo de la manivela de una rueda motriz en el plano lateral del
+    // vagón: hacia dónde giró su +X local (un punto de la llanta) alrededor del
+    // eje Z del vagón.
     let drivers = |app: &mut App| {
         let mut q = app.world_mut().query::<(&TrainWheel, &Transform)>();
         q.iter(app.world())
@@ -805,7 +823,8 @@ fn the_rods_swing_round_with_the_cranks() {
     assert!(turned > 0.05, "a measurable turn: {turned}");
     let wrap = |a: f32| (a + PI).rem_euclid(TAU) - PI;
     for (before, after) in drivers_before.iter().zip(drivers(&mut app)) {
-        // Rolling toward +X, a driver's front goes down: clockwise.
+        // Rodando hacia +X, el frente de una rueda motriz baja: sentido
+        // horario.
         assert!(
             (wrap(after - before) + turned).abs() < 1e-3,
             "driver {before} -> {after}, turned {turned}"
@@ -832,19 +851,19 @@ fn smoke_puffs_from_the_chimney_only_while_the_train_moves() {
             .map(|(p, t, v)| (*p, *t, *v))
             .collect::<Vec<_>>()
     };
-    // Parked overnight: no smoke.
+    // Detenido durante la noche: sin humo.
     let mut app = app_with_train(3600.0, GroundVec2::ZERO);
     app.update();
     app.update();
     let parked = puffs(&mut app);
     assert_eq!(parked.len(), 4);
     assert!(parked.iter().all(|p| p.2 == Visibility::Hidden));
-    // Every puff leaves from the top of the chimney's cap.
+    // Cada bocanada sale desde la parte superior del remate de la chimenea.
     let chimney = parked[0].0.chimney;
     assert!(parked.iter().all(|p| p.0.chimney == chimney));
     assert_eq!((chimney.x, chimney.y, chimney.z), (5.7, 4.55, 0.0));
-    // The chimney's brass cap ends exactly there: its highest point over
-    // the chimney, and nothing of the engine is higher.
+    // El remate de bronce de la chimenea termina exactamente ahí: su punto más
+    // alto sobre la chimenea, y nada de la locomotora está más alto.
     let parts = drawn(&mut app, 0);
     let over: Vec<f32> = parts
         .iter()
@@ -854,7 +873,7 @@ fn smoke_puffs_from_the_chimney_only_while_the_train_moves() {
         .collect();
     let top = over.iter().copied().fold(f32::MIN, f32::max);
     assert!((top - chimney.y).abs() < 1e-4, "{top}");
-    // Under way: shown, rising from the chimney, cycling round.
+    // En marcha: visible, subiendo desde la chimenea, en ciclo.
     let mut app = running_app();
     app.update();
     let mut wrapped = false;
@@ -875,8 +894,8 @@ fn smoke_puffs_from_the_chimney_only_while_the_train_moves() {
     assert!(wrapped, "puffs start again from the chimney");
 }
 
-/// The train under way out of Monte Nievas toward Castex, near the
-/// focus, with each frame a fixed twentieth of a second.
+/// El tren en marcha saliendo de Monte Nievas hacia Castex, cerca del foco, con
+/// cada frame de una vigésima de segundo fija.
 fn running_app() -> App {
     let (_, probe) = line_train();
     let (_, depart) = probe.stop_times(pampa_core::Run::Up, 1).unwrap();
@@ -889,14 +908,14 @@ fn running_app() -> App {
 
 #[test]
 fn cars_far_from_the_focus_are_hidden() {
-    // Overnight at Pico, with the focus at Castex.
+    // De noche en Pico, con el foco en Castex.
     let mut app = app_with_train(3600.0, GroundVec2::new(-4250.0, -2721.0));
     app.update();
     app.update();
     let drawn = cars(&mut app);
     assert_eq!(drawn.len(), 8);
     assert!(drawn.iter().all(|c| c.2 == Visibility::Hidden));
-    // No train, no cars.
+    // Sin tren, sin vagones.
     let mut empty = App::new();
     empty
         .add_plugins(MinimalPlugins)
@@ -916,7 +935,8 @@ fn every_train_gets_its_own_cars() {
     let of = |train: usize| drawn.iter().filter(|c| c.0 == train).count();
     assert_eq!((of(0), of(1)), (8, 3), "the line train and the shuttle");
     assert_eq!(drawn.len(), 11);
-    // The shuttle's cars are its own consist, locomotive first.
+    // Los vagones de la lanzadera son su propia formación, con la locomotora
+    // primero.
     let trains = app.world().resource::<WorldTrains>().clone();
     assert_eq!(trains.0[1].cars().len(), 3);
     let mut roots = app.world_mut().query::<(Entity, &TrainCar)>();
@@ -932,7 +952,7 @@ fn every_train_gets_its_own_cars() {
             .any(|e| app.world().get::<TrainRod>(e).is_some_and(|r| r.train == 1)),
         "the shuttle's locomotive has its rods"
     );
-    // Parts of the second train carry its index.
+    // Las piezas del segundo tren llevan su índice.
     let mut parts = app.world_mut().query::<&TrainWheel>();
     let mut mine = |t: usize| parts.iter(app.world()).filter(|w| w.train == t).count();
     let (line, shuttle) = (mine(0), mine(1));
@@ -941,8 +961,8 @@ fn every_train_gets_its_own_cars() {
 
 #[test]
 fn each_car_follows_its_own_train() {
-    // Overnight: the line train at Pico, the shuttle at Castex; the
-    // focus at Castex, so only the shuttle's cars are near.
+    // De noche: el tren de la línea en Pico, la lanzadera en Castex; el foco en
+    // Castex, así que solo los vagones de la lanzadera están cerca.
     let mut app = app_with_two_trains(3600.0, GroundVec2::ZERO);
     let castex = app.world().resource::<WorldTrains>().0[1].placed_cars()[1].center;
     app.insert_resource(StreamFocus(castex));
@@ -960,7 +980,7 @@ fn each_car_follows_its_own_train() {
             assert_eq!(*visibility, Visibility::Hidden, "line car {index} far away");
         }
     }
-    // And the other way round: at Pico only the line train is near.
+    // Y al revés: en Pico solo el tren de la línea está cerca.
     let pico = trains.0[0].placed_cars()[0].center;
     app.insert_resource(StreamFocus(pico));
     app.update();
@@ -976,8 +996,8 @@ fn each_car_follows_its_own_train() {
 
 #[test]
 fn each_train_rolls_its_own_wheels_and_smokes_for_itself() {
-    // The line train runs out of Monte Nievas; the shuttle, leaving at
-    // 22:00, is parked at Castex.
+    // El tren de la línea sale de Monte Nievas; la lanzadera, que sale a las
+    // 22:00, está detenida en Castex.
     let (_, probe) = line_train();
     let (_, depart) = probe.stop_times(pampa_core::Run::Up, 1).unwrap();
     let at = 7.0 * 3600.0 + (depart + 30.0) * BASE_RATE;
@@ -1014,7 +1034,7 @@ fn each_train_rolls_its_own_wheels_and_smokes_for_itself() {
         assert_eq!(a != b, *train == 0, "train {train}'s wheels");
     }
     assert!(after.iter().any(|w| w.0 == 1), "the shuttle has wheels");
-    // The rods swing with their own train's drivers only.
+    // Las bielas giran solo con las ruedas motrices de su propio tren.
     let phases = |app: &mut App| {
         let mut q = app.world_mut().query::<&TrainRod>();
         q.iter(app.world())
@@ -1028,7 +1048,8 @@ fn each_train_rolls_its_own_wheels_and_smokes_for_itself() {
     for ((train, a), (_, b)) in rods.iter().zip(&swung) {
         assert_eq!(a != b, *train == 0, "train {train}'s rods");
     }
-    // Smoke: the line train's puffs show, the parked shuttle's do not.
+    // Humo: se ven las bocanadas del tren de la línea, no las de la lanzadera
+    // detenida.
     let (line, shuttle) = (puffs(&mut app, 0), puffs(&mut app, 1));
     assert_eq!((line.len(), shuttle.len()), (4, 4));
     assert!(line.iter().all(|v| *v == Visibility::Inherited));
@@ -1037,10 +1058,11 @@ fn each_train_rolls_its_own_wheels_and_smokes_for_itself() {
 
 #[test]
 fn nothing_of_a_car_at_platform_height_reaches_the_platform_edge() {
-    // A platform's top stands 0.9 m over the ground, so 0.4 m over the
-    // rail tops (the car frame's zero); its edge is 1.65 m from the
-    // track's middle. Every fitting at or under that height (steps,
-    // buffers, cylinders, plates, splashers, wheels) must clear it by 5 cm.
+    // La parte superior de un andén está 0.9 m por encima del suelo, es decir,
+    // 0.4 m por encima de la cara superior de los rieles (el cero del marco del
+    // vagón); su borde está a 1.65 m del centro de la vía. Cada accesorio a esa
+    // altura o por debajo (estribos, topes, cilindros, chapas, guardarruedas,
+    // ruedas) debe librarlo por 5 cm.
     const PLATFORM_TOP_IN_CAR_FRAME: f32 = 0.4;
     const CLEAR_HALF_WIDTH: f32 = 1.60;
     let mut app = app_with_cars();

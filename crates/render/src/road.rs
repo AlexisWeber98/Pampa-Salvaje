@@ -1,21 +1,23 @@
-//! Dirt roads, level crossings and signposts, streamed with the terrain
-//! chunks like the railway line between towns.
+//! Caminos de tierra, pasos a nivel y postes indicadores, cargados por
+//! streaming junto con los chunks de terreno, como la línea ferroviaria entre
+//! pueblos.
 //!
-//! `pampa-core` decides where every road runs ([`RoadNetwork`], carried by
-//! the terrain, which is cut along it). When a terrain chunk is built, the
-//! parts of the roads inside it are laid as one surface mesh, its child,
-//! with the level crossings and signposts standing in it; they go when the
-//! chunk goes.
+//! `pampa-core` decide por dónde corre cada camino ([`RoadNetwork`], que lleva
+//! el terreno, recortado a lo largo de él). Cuando se construye un chunk de
+//! terreno, las partes de los caminos que caen en él se tienden como una malla
+//! de superficie, hija suya, con los pasos a nivel y los postes indicadores
+//! ubicados en él; se van cuando se va el chunk.
 //!
-//! The surface wears Ground 102 compressed dirt from ambientCG (CC0 1.0;
-//! see assets/textures/ground/CREDITS.md, loaded by
-//! [`crate::ground::road_material`]). Its edges are feathered by vertex
-//! alpha into the ground, which is worn to earth under them (see
-//! [`crate::terrain`]). A level crossing gets timber planks between and
-//! beside the rails, ramps up to them, and a St Andrew's cross on a post
-//! on either side; a signpost is a wooden post with an arrow board per
-//! town, lettered in the sign face. Signs and signposts are
-//! [`ThinOccluder`]s: they fade when they hide the rider.
+//! La superficie lleva tierra compactada Ground 102 de ambientCG (CC0 1.0; ver
+//! assets/textures/ground/CREDITS.md, cargada por
+//! [`crate::ground::road_material`]). Sus bordes se difuminan hacia el suelo
+//! mediante el alfa de vértice, y el suelo bajo ellos está gastado hasta la
+//! tierra (ver [`crate::terrain`]). Un paso a nivel recibe tablones de madera
+//! entre los rieles y junto a ellos, rampas que suben hasta ellos y una Cruz de
+//! San Andrés sobre un poste a cada lado; un poste indicador es un poste de
+//! madera con una tabla en flecha por pueblo, rotulada en la tipografía de los
+//! carteles. Los carteles y los postes indicadores son [`ThinOccluder`]s: se
+//! desvanecen cuando tapan al jinete.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::PrimitiveTopology;
@@ -32,23 +34,24 @@ use crate::terrain::{
     ChunkDetail, ChunkStreaming, TerrainChunk, WorldChunks, WorldTerrain, mesh_height,
 };
 
-/// A chunk's share of the road surface.
+/// La parte de la superficie de camino de un chunk.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RoadSurface;
 
-/// A plank, ramp, post or board of a level crossing.
+/// Un tablón, rampa, poste o tabla de un paso a nivel.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CrossingPart;
 
-/// A post or board of a road signpost.
+/// Un poste o tabla de un poste indicador de camino.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SignpostPart;
 
-/// Marks a chunk whose roads were laid (even when none runs through it).
+/// Marca un chunk cuyos caminos ya se tendieron (aunque no pase ninguno por
+/// él).
 #[derive(Component, Debug, Clone, Copy)]
 struct RoadLaid;
 
-/// Meshes and materials shared by every road piece.
+/// Mallas y materiales compartidos por todas las piezas de camino.
 #[derive(Resource, Debug, Clone)]
 struct RoadKit {
     surface: Handle<StandardMaterial>,
@@ -58,8 +61,8 @@ struct RoadKit {
     black: Handle<StandardMaterial>,
 }
 
-/// Lays the roads of the [`WorldTerrain`] on terrain chunks as they are
-/// built. Needs the [`crate::TerrainPlugin`].
+/// Tiende los caminos del [`WorldTerrain`] sobre los chunks de terreno a medida
+/// que se construyen. Necesita el [`crate::TerrainPlugin`].
 pub struct RoadPlugin;
 
 impl Plugin for RoadPlugin {
@@ -67,7 +70,7 @@ impl Plugin for RoadPlugin {
         app.init_resource::<WorldTerrain>()
             .init_resource::<WorldChunks>()
             .add_systems(Startup, setup_kit)
-            // Right after streaming, like the track and the flora.
+            // Justo después del streaming, como la vía y la flora.
             .add_systems(
                 PostUpdate,
                 lay_roads
@@ -101,15 +104,16 @@ fn setup_kit(
     });
 }
 
-/// Asset stores the roads' pieces are added to.
+/// Almacenes de assets a los que se agregan las piezas de los caminos.
 type RoadAssets<'a> = (
     ResMut<'a, Assets<Mesh>>,
     ResMut<'a, Assets<StandardMaterial>>,
     Option<ResMut<'a, Assets<Image>>>,
 );
 
-/// Lays the roads inside each newly built chunk as its children. A chunk
-/// that vanishes before the commands apply simply gets none.
+/// Tiende como hijos de cada chunk recién construido los caminos que caen en
+/// él. Un chunk que desaparece antes de que se apliquen los comandos
+/// simplemente no recibe ninguno.
 fn lay_roads(
     mut commands: Commands,
     (terrain, world, detail): (
@@ -148,7 +152,8 @@ fn lay_roads(
             let signs = crossing.sign_spots();
             let posted = signs_posted(crossing, roads.crossings());
             for (white, transform) in crossing_pieces(crossing, &ground, posted) {
-                // The signs fade out of the camera's way; planks lie flat.
+                // Los carteles se desvanecen cuando estorban a la cámara; los
+                // tablones quedan planos.
                 let at = GroundVec2::new(transform.translation.x, -transform.translation.z);
                 let fade = signs
                     .into_iter()
@@ -206,14 +211,14 @@ fn lay_roads(
     }
 }
 
-/// Whether the point `p` (a crossing or a signpost) is drawn by chunk
-/// `coord`: chunks own their west and south borders, not their east and
-/// north ones, so a point on a border is drawn once.
+/// Si el punto `p` (un paso a nivel o un poste indicador) lo dibuja el chunk
+/// `coord`: los chunks son dueños de sus bordes oeste y sur, no de los de este
+/// y norte, así que un punto sobre un borde se dibuja una sola vez.
 fn owns(coord: ChunkCoord, size: f32, p: GroundVec2) -> bool {
     ChunkCoord::containing(p, size) == coord
 }
 
-/// One entity to spawn under a chunk, and its fade shape if it has one.
+/// Una entidad a crear bajo un chunk, y su forma de fundido si la tiene.
 type RoadBundle = (
     Mesh3d,
     MeshMaterial3d<StandardMaterial>,
@@ -236,24 +241,27 @@ enum Paint {
     Black,
 }
 
-/// How far the surface floats over the drawn ground, in meters.
+/// Cuánto flota la superficie sobre el suelo dibujado, en metros.
 const LIFT: f32 = 0.05;
-/// Width of the feathered band along each edge of the road, in meters,
-/// half inside the road and half beyond its edge.
+/// Ancho de la franja difuminada a lo largo de cada borde del camino, en
+/// metros, mitad dentro del camino y mitad más allá de su borde.
 const FEATHER: f32 = 1.6;
-/// The road's dirt tint (sRGB), over the near-white Ground 102 detail.
+/// El tinte de tierra del camino (sRGB), sobre el detalle casi blanco de
+/// Ground 102.
 const DIRT: [f32; 3] = [0.70, 0.60, 0.46];
 
-/// One surface mesh for every road `part` of a chunk: a strip along each
-/// part, opaque across the road and feathered to transparent past its
-/// edges, laid on the `ground`. `None` when there is no part.
+/// Una malla de superficie para todas las partes `part` de camino de un chunk:
+/// una tira a lo largo de cada parte, opaca a lo ancho del camino y difuminada
+/// hasta transparente más allá de sus bordes, tendida sobre `ground`. `None`
+/// cuando no hay ninguna parte.
 ///
-/// At a level crossing the strip is the packed-earth approach: it lies on
-/// the same profile riders climb ([`RoadNetwork::crossing_rise`]), rising
-/// on the road's axis to the crossing's deck (about 1 in 10 at most), its
-/// feathered edges sloping down to the ground on either side, so it shows
-/// no wall and no gap under it. Near a crossing the strip is sampled every
-/// [`RAMP_STEP`] meters to follow the rise.
+/// En un paso a nivel la tira es el acceso de tierra apisonada: se apoya sobre
+/// el mismo perfil que suben los jinetes ([`RoadNetwork::crossing_rise`]),
+/// subiendo sobre el eje del camino hasta la plataforma del paso (como mucho
+/// alrededor de 1 en 10), con sus bordes difuminados bajando hasta el suelo a
+/// cada lado, así que no muestra ninguna pared ni ningún hueco debajo. Cerca de
+/// un paso a nivel la tira se muestrea cada [`RAMP_STEP`] metros para seguir la
+/// subida.
 pub(crate) fn surface_mesh(
     parts: &[Vec<RoadPoint>],
     ground: &impl Fn(GroundVec2) -> f32,
@@ -273,9 +281,9 @@ pub(crate) fn surface_mesh(
         let row = |p: &RoadPoint| {
             across.map(|(offset, alpha)| {
                 let g = p.at + p.normal * offset;
-                // On the crossing's approach, the profile bodies stand on
-                // (its feathered edges down on the ground), a centimeter
-                // under the planks.
+                // En el acceso al paso, el perfil sobre el que se apoyan los
+                // cuerpos (con sus bordes difuminados abajo, sobre el suelo),
+                // un centímetro por debajo de los tablones.
                 let lift = LIFT.max(roads.crossing_rise(g) - 0.01);
                 (
                     world_from_ground(g, ground(g) + lift),
@@ -287,7 +295,7 @@ pub(crate) fn surface_mesh(
         for w in rows.windows(2) {
             for k in 0..across.len() - 1 {
                 let (r0, r1, l1, l0) = (w[0][k], w[1][k], w[1][k + 1], w[0][k + 1]);
-                // Counter-clockwise seen from above.
+                // En sentido antihorario visto desde arriba.
                 for tri in [[r0, r1, l1], [r0, l1, l0]] {
                     let points = tri.map(|(v, _)| v);
                     let uv = points.map(ground_uv);
@@ -314,11 +322,12 @@ pub(crate) fn surface_mesh(
     Some(mesh)
 }
 
-/// Spacing of the strip's samples along a crossing's approach, meters.
+/// Separación entre las muestras de la tira a lo largo del acceso a un paso a
+/// nivel, en metros.
 const RAMP_STEP: f32 = 0.5;
 
-/// `part` with extra points every [`RAMP_STEP`] meters wherever the road
-/// rises to a level crossing, so the strip follows the rise smoothly.
+/// `part` con puntos extra cada [`RAMP_STEP`] metros dondequiera que el camino
+/// sube hacia un paso a nivel, para que la tira siga la subida con suavidad.
 fn near_crossings(part: &[RoadPoint], roads: &RoadNetwork) -> Vec<RoadPoint> {
     let reach = RoadNetwork::CROSSING_DECK + RoadNetwork::CROSSING_RAMP + 1.0;
     let mut out = Vec::with_capacity(part.len());
@@ -347,17 +356,18 @@ fn near_crossings(part: &[RoadPoint], roads: &RoadNetwork) -> Vec<RoadPoint> {
     out
 }
 
-/// Top of the rails above the ground, in meters (see `crate::railbed`).
+/// Cara superior de los rieles sobre el suelo, en metros (ver
+/// `crate::railbed`).
 use crate::railbed::RAIL_TOP;
-/// Plank width and thickness, in meters.
+/// Ancho y espesor de los tablones, en metros.
 const PLANK: Vec2 = Vec2::new(0.24, 0.1);
-/// Plank centers across the track, from its centerline, in meters: five
-/// between the rails (1.676 m apart, a flangeway gap inside each rail) and
-/// two outside each rail, a strip of about half a meter.
+/// Centros de los tablones a lo ancho de la vía, desde su eje, en metros: cinco
+/// entre los rieles (separados 1.676 m, con un canal para la pestaña dentro de
+/// cada riel) y dos por fuera de cada riel, una franja de cerca de medio metro.
 const PLANKS: [f32; 9] = [-1.24, -1.0, -0.54, -0.27, 0.0, 0.27, 0.54, 1.0, 1.24];
 
-/// A box from world point `from` to `to` (its top edge's middle line),
-/// `width` across and `thickness` deep.
+/// Una caja desde el punto del mundo `from` hasta `to` (la línea media de su
+/// arista superior), de `width` de ancho y `thickness` de espesor.
 fn slab(from: Vec3, to: Vec3, width: f32, thickness: f32) -> Option<Transform> {
     let d = to - from;
     let len = d.length();
@@ -369,20 +379,22 @@ fn slab(from: Vec3, to: Vec3, width: f32, thickness: f32) -> Option<Transform> {
     })
 }
 
-/// The yaw that turns a box's local X onto ground direction `d`.
+/// El giro que lleva el X local de una caja a la dirección del suelo `d`.
 fn yaw(d: GroundVec2) -> Quat {
     Quat::from_rotation_y(d.y.atan2(d.x))
 }
 
-/// How far apart two crossings of one road may be (meters) for the road to
-/// count as crossing one stretch of track, with one pair of signs.
+/// Qué tan separados pueden estar (en metros) dos pasos a nivel de un mismo
+/// camino para que se considere que el camino cruza un solo tramo de vía, con
+/// un único par de carteles.
 const SHARED_SIGNS: f32 = 20.0;
 
-/// Which of `crossing`'s two signs (the one on the approach from behind the
-/// road's direction, then the one ahead) stand: a road that crosses two
-/// tracks side by side (a station's track and its bay) is signed once on
-/// each side of both, not at every track, so a crossing that has another
-/// of the same road further out on a side leaves that side's sign to it.
+/// Cuáles de los dos carteles de `crossing` se levantan (primero el del acceso
+/// desde atrás según el sentido del camino, luego el de adelante): un camino
+/// que cruza dos vías lado a lado (la vía de una estación y su vía muerta) se
+/// señaliza una vez a cada lado de ambas, no en cada vía, así que un paso a
+/// nivel que tiene otro del mismo camino más afuera en un lado le deja el
+/// cartel de ese lado a ese otro.
 fn signs_posted<'a>(
     crossing: &LevelCrossing,
     all: impl Iterator<Item = &'a LevelCrossing>,
@@ -405,12 +417,13 @@ fn signs_posted<'a>(
     posted
 }
 
-/// The planks and the two St Andrew's crosses of `crossing`, each a unit
-/// cube with its transform, standing on `height`: the drawn ground, like
-/// the road surface, so nothing floats over it or sinks into it. The planks
-/// lie flush with the rail heads, between the rails and in a strip of about
-/// half a meter outside each, exactly the road's width along the track. The
-/// road itself rises to them (see [`surface_mesh`]): no timber ramps.
+/// Los tablones y las dos Cruces de San Andrés de `crossing`, cada uno un cubo
+/// unitario con su transformación, apoyados sobre `height`: el suelo dibujado,
+/// como la superficie del camino, para que nada flote sobre él ni se hunda en
+/// él. Los tablones quedan al ras de las cabezas de los rieles, entre los
+/// rieles y en una franja de cerca de medio metro por fuera de cada uno,
+/// exactamente del ancho del camino a lo largo de la vía. El camino mismo sube
+/// hasta ellos (ver [`surface_mesh`]): sin rampas de madera.
 fn crossing_pieces(
     crossing: &LevelCrossing,
     height: &impl Fn(GroundVec2) -> f32,
@@ -418,7 +431,7 @@ fn crossing_pieces(
 ) -> Vec<(Paint, Transform)> {
     let rail = crossing.rail;
     let across = GroundVec2::new(-rail.y, rail.x);
-    // The planks span the road where it crosses, measured along the track.
+    // Los tablones cubren el camino donde cruza, medidos a lo largo de la vía.
     let span = RoadNetwork::WIDTH / crossing.angle().sin().max(0.3);
     let mut pieces = Vec::new();
     for offset in PLANKS {
@@ -443,13 +456,14 @@ fn crossing_pieces(
     pieces
 }
 
-/// A St Andrew's cross on its post at ground point `at`, its face turned
-/// toward ground direction `facing` (the traffic it warns).
+/// Una Cruz de San Andrés sobre su poste en el punto del suelo `at`, con el
+/// frente girado hacia la dirección del suelo `facing` (el tránsito al que
+/// advierte).
 fn cross_sign(at: GroundVec2, facing: GroundVec2, ground: f32) -> Vec<(Paint, Transform)> {
     let post_height = 3.0;
     let post = Transform::from_translation(world_from_ground(at, ground + post_height / 2.0))
         .with_scale(Vec3::new(0.12, post_height, 0.12));
-    // Local X across the traffic, local Z toward it.
+    // X local a lo ancho del tránsito, Z local hacia él.
     let turn = yaw(GroundVec2::new(facing.y, -facing.x));
     let center = world_from_ground(at, ground + post_height - 0.55) + turn * Vec3::Z * 0.08;
     let mut pieces = vec![(Paint::Timber, post)];
@@ -471,16 +485,16 @@ fn cross_sign(at: GroundVec2, facing: GroundVec2, ground: f32) -> Vec<(Paint, Tr
     pieces
 }
 
-/// Height of a signpost and the size of its arrow boards, in meters.
+/// Altura de un poste indicador y tamaño de sus tablas en flecha, en metros.
 const POST_HEIGHT: f32 = 2.5;
 const BOARD_WIDTH: f32 = 1.7;
 const BOARD_HEIGHT: f32 = 0.34;
 
 type Asset3d = (Handle<Mesh>, Handle<StandardMaterial>, Transform);
 
-/// The post and arrow boards of a signpost, its foot on the drawn
-/// `ground` height: each board points along its road, out from the post,
-/// and reads from both faces.
+/// El poste y las tablas en flecha de un poste indicador, con su pie a la
+/// altura del suelo dibujado `ground`: cada tabla apunta a lo largo de su
+/// camino, hacia afuera del poste, y se lee desde ambas caras.
 fn signpost_pieces(
     post: &Signpost,
     ground: f32,
@@ -504,7 +518,7 @@ fn signpost_pieces(
         let turn = yaw(board.toward);
         let center = world_from_ground(post.at, ground + POST_HEIGHT - 0.3 - i as f32 * 0.45)
             + turn * Vec3::X * (w / 2.0);
-        // The plank, with a pointed tip in the arrow's direction.
+        // La tabla, con una punta aguzada en la dirección de la flecha.
         pieces.push((
             kit.cube.clone(),
             kit.timber.clone(),
@@ -562,7 +576,8 @@ mod tests {
     };
     use std::sync::Arc;
 
-    /// Two railway towns 3 km apart on one row, their line and roads.
+    /// Dos pueblos ferroviarios a 3 km de distancia en una misma fila, su línea
+    /// y sus caminos.
     fn world() -> (WorldConfig, Vec<TownLayout>, Terrain) {
         let config = WorldConfig::default();
         let town = |name: &str, x: f32, seed| TownConfig {
@@ -637,7 +652,7 @@ mod tests {
     fn road_chunks_get_their_surface_crossing_and_signposts_and_drop_them() {
         let (config, towns, terrain) = world();
         let roads = terrain.roads.clone().unwrap();
-        // At the west town's rural track, by its level crossing.
+        // En la huella rural del pueblo del oeste, junto a su paso a nivel.
         let crossing = roads
             .crossings()
             .find(|c| towns[0].leveled().contains_point(c.at))
@@ -648,7 +663,8 @@ mod tests {
         app.update();
         let surfaces = chunk_of::<RoadSurface>(&mut app);
         assert!(surfaces.contains(&config.chunk_of(crossing.at)));
-        // Every chunk with a road part has exactly one surface; no other.
+        // Cada chunk con una parte de camino tiene exactamente una superficie;
+        // ningún otro.
         let mut loaded = app.world_mut().query::<&TerrainChunk>();
         let loaded: Vec<ChunkCoord> = loaded.iter(app.world()).map(|c| c.0).collect();
         for c in &loaded {
@@ -656,7 +672,7 @@ mod tests {
             let n = surfaces.iter().filter(|s| *s == c).count();
             assert_eq!(n, usize::from(has), "{c:?}");
         }
-        // Planks and two signs on posts, in the crossing's chunk.
+        // Tablones y dos carteles sobre postes, en el chunk del paso a nivel.
         let parts = chunk_of::<CrossingPart>(&mut app);
         assert_eq!(
             parts
@@ -665,7 +681,8 @@ mod tests {
                 .count(),
             PLANKS.len() + 2 * 5
         );
-        // Ride to a signpost: its chunk gets it, post, plank, tip and faces.
+        // Se cabalga hasta un poste indicador: su chunk lo recibe, con poste,
+        // tabla, punta y caras.
         let post = roads.signposts[0].at;
         app.insert_resource(StreamFocus(post));
         for _ in 0..20 {
@@ -685,7 +702,7 @@ mod tests {
             .iter(app.world())
             .count();
         assert_eq!(fading, count::<SignpostPart>(&mut app));
-        // Ride far away: the chunks go with their roads.
+        // Se cabalga lejos: los chunks se van con sus caminos.
         app.insert_resource(StreamFocus(GroundVec2::new(-3500.0, 3500.0)));
         for _ in 0..40 {
             app.update();
@@ -717,14 +734,15 @@ mod tests {
             let g = GroundVec2::new(p[0], -p[2]);
             assert!((p[1] - ground(g) - LIFT).abs() < 1e-4);
             let d = roads.distance(g);
-            // Opaque on the road, clear past its edge.
+            // Opaca sobre el camino, transparente más allá de su borde.
             if c[3] == 1.0 {
                 assert!(d < RoadNetwork::HALF_WIDTH);
             } else {
                 assert!(d > RoadNetwork::HALF_WIDTH);
             }
         }
-        // Normals point up: the strip is wound counter-clockwise from above.
+        // Las normales apuntan hacia arriba: la tira se enrolla en sentido
+        // antihorario vista desde arriba.
         let Some(bevy::mesh::VertexAttributeValues::Float32x3(normals)) =
             mesh.attribute(Mesh::ATTRIBUTE_NORMAL)
         else {
@@ -767,7 +785,8 @@ mod tests {
         }
     }
 
-    /// Drives the app until the chunk under `at` has its road pieces.
+    /// Hace avanzar la app hasta que el chunk bajo `at` tiene sus piezas de
+    /// camino.
     fn laid_at(at: GroundVec2) -> (App, Terrain, f32) {
         let (config, _, terrain) = world();
         let mut app = app(at);
@@ -783,7 +802,7 @@ mod tests {
         let roads = terrain.roads.clone().unwrap();
         let crossing = *roads.crossings().next().unwrap();
         let (mut app, terrain, size) = laid_at(crossing.at);
-        // The test app's chunk meshes have 8 quads a side.
+        // Las mallas de chunk de la app de prueba tienen 8 quads por lado.
         let drawn = |p: GroundVec2| mesh_height(&terrain, p, size, 8);
         let mut q = app
             .world_mut()
@@ -792,8 +811,9 @@ mod tests {
         let planks: Vec<&Transform> = parts.iter().filter(|t| t.scale.z == PLANK.x).collect();
         assert_eq!(planks.len(), PLANKS.len());
         for t in planks {
-            // Both ends of the plank's top edge (it is straight; the drawn
-            // ground may bend between them where its triangles meet).
+            // Ambos extremos de la arista superior del tablón (es recta; el
+            // suelo dibujado puede doblarse entre ellos donde se juntan sus
+            // triángulos).
             let mid = t.translation + t.rotation * Vec3::Y * (t.scale.y / 2.0);
             for end in [-1.0, 1.0] {
                 let p = mid + t.rotation * Vec3::X * (end * t.scale.x / 2.0);
@@ -801,7 +821,7 @@ mod tests {
                 assert!((top - (RAIL_TOP - 0.02)).abs() < 1e-3, "{top}");
             }
         }
-        // The crosses' posts stand on the drawn ground.
+        // Los postes de las cruces se apoyan sobre el suelo dibujado.
         let posts: Vec<&Transform> = parts.iter().filter(|t| t.scale.y == 3.0).collect();
         assert_eq!(posts.len(), 2);
         for t in posts {
@@ -821,8 +841,8 @@ mod tests {
         assert!((foot - mesh_height(&terrain, post, size, 8)).abs() < 1e-3);
     }
 
-    /// Every vertex of the surface mesh of the chunk holding `crossing`,
-    /// with its alpha.
+    /// Cada vértice de la malla de superficie del chunk que contiene
+    /// `crossing`, con su alfa.
     fn crossing_surface(crossing: &LevelCrossing, terrain: &Terrain) -> Vec<(Vec3, f32)> {
         let size = WorldConfig::default().chunk_size;
         let roads = terrain.roads.as_deref().unwrap();
@@ -860,8 +880,8 @@ mod tests {
                 let g = GroundVec2::new(v.x, -v.z);
                 let rel = g - crossing.at;
                 let lift = v.y - ground(g);
-                // Never above the planks; raised only on the road itself,
-                // centered on its axis.
+                // Nunca por encima de los tablones; elevada solo sobre el
+                // camino mismo, centrada en su eje.
                 assert!(lift <= RAIL_TOP - 0.02 + 1e-3, "{lift}");
                 if lift > LIFT + 0.01 {
                     raised += 1;
@@ -873,9 +893,9 @@ mod tests {
                 }
             }
             assert!(raised > 20, "{raised}");
-            // Along each edge of the opaque road: from the ground to the
-            // deck, no steeper than 1:8, with no gap, right up to the
-            // crossing on both sides.
+            // A lo largo de cada borde del camino opaco: desde el suelo hasta
+            // la plataforma, sin superar una pendiente de 1:8, sin huecos,
+            // hasta el paso a nivel de ambos lados.
             for edge in [-1.0, 1.0] {
                 let mut axis: Vec<(f32, f32)> = surface
                     .iter()
@@ -920,7 +940,7 @@ mod tests {
         let span = RoadNetwork::WIDTH / crossing.angle().sin();
         for (_, t) in &pieces {
             let g = GroundVec2::new(t.translation.x, -t.translation.z);
-            // The crosses on their posts are the only tall parts.
+            // Las cruces sobre sus postes son las únicas partes altas.
             if t.scale.y >= 0.17 || t.scale.x >= 1.2 {
                 continue;
             }
@@ -935,17 +955,18 @@ mod tests {
         assert_eq!(planks.len(), PLANKS.len());
         for t in planks {
             let g = GroundVec2::new(t.translation.x, -t.translation.z);
-            // As long as the road is wide, measured along the track (the
-            // plank follows the ground's gentle slope).
+            // Tan largo como ancho es el camino, medido a lo largo de la vía
+            // (el tablón sigue la suave pendiente del suelo).
             assert!((t.scale.x - span).abs() < 0.05, "{}", t.scale.x);
             let off = (g - crossing.at).dot(across).abs() + PLANK.x / 2.0;
             assert!(off <= 1.4, "{off}");
         }
-        // Planks between and just outside the rails (1.676 m apart): a
-        // strip of about half a meter outside each.
+        // Tablones entre los rieles y justo por fuera de ellos (separados
+        // 1.676 m): una franja de cerca de medio metro por fuera de cada uno.
         let outer = PLANKS.iter().fold(0.0_f32, |m, p| m.max(p.abs())) + PLANK.x / 2.0;
         assert!((0.4..=0.6).contains(&(outer - 1.676 / 2.0)), "{outer}");
-        // Only the planks and the two crosses on posts: no timber ramps.
+        // Solo los tablones y las dos cruces sobre postes: sin rampas de
+        // madera.
         assert_eq!(pieces.len(), PLANKS.len() + 2 * 5);
     }
 
@@ -969,7 +990,7 @@ mod tests {
                 .any(|c| c.sign_spots().iter().any(|s| s.distance(g) < 1.0))
         };
         let (signs, planks): (Vec<_>, Vec<_>) = parts.iter().partition(|(t, _)| near(t));
-        // Each cross: its post and two black and two white arms.
+        // Cada cruz: su poste y dos brazos negros y dos blancos.
         assert_eq!(signs.len() % 10, 0);
         assert!(!signs.is_empty());
         assert!(
@@ -1003,7 +1024,8 @@ mod tests {
                 assert!(layout.height_m <= BOARD_HEIGHT + 1e-4);
             }
         }
-        // The shipped names, as signposts would print them.
+        // Los nombres que trae el juego, como los imprimirían los postes
+        // indicadores.
         for name in ["Eduardo Castex", "Monte Nievas", "General Pico"] {
             let text = pampa_core::road::board_text(name, 2349.0);
             assert!(
@@ -1033,15 +1055,15 @@ mod tests {
             let g = GroundVec2::new(t.translation.x, -t.translation.z);
             let top = t.translation.y + PLANK.y / 2.0 - terrain.height(g.x, g.y);
             assert!((top - (RAIL_TOP - 0.02)).abs() < 0.05, "{top}");
-            // Long enough to carry the whole road across.
+            // Lo bastante largo para llevar el camino entero de un lado a otro.
             assert!(t.scale.x >= RoadNetwork::WIDTH);
         }
         let whites = pieces.iter().filter(|(p, _)| *p == Paint::White).count();
         assert_eq!(whites, 4);
     }
 
-    /// A crossing of a road heading east over a track heading north, `x`
-    /// meters along the road.
+    /// Un paso a nivel de un camino que va hacia el este sobre una vía que va
+    /// hacia el norte, a `x` metros a lo largo del camino.
     fn crossing_at(x: f32) -> LevelCrossing {
         LevelCrossing {
             at: GroundVec2::new(x, 0.0),
@@ -1053,14 +1075,15 @@ mod tests {
 
     #[test]
     fn a_road_over_two_tracks_side_by_side_is_signed_once_on_each_side() {
-        // A station's track and its bay, 4.5 m apart: four signs became two.
+        // La vía de una estación y su vía muerta, a 4.5 m: cuatro carteles
+        // pasaron a ser dos.
         let (a, b) = (crossing_at(100.0), crossing_at(104.5));
         let both = [a, b];
         let posted: Vec<[bool; 2]> = both.iter().map(|c| signs_posted(c, both.iter())).collect();
-        // The first keeps the sign before it, the second the one after it.
+        // El primero conserva el cartel anterior a él, el segundo el posterior.
         assert_eq!(posted, [[true, false], [false, true]]);
-        // A lone crossing keeps both; a crossing of another road, far off
-        // or square to this one, does not take its signs.
+        // Un paso a nivel solitario conserva ambos; un paso a nivel de otro
+        // camino, lejano o perpendicular a este, no se queda con sus carteles.
         assert_eq!(signs_posted(&a, [a].iter()), [true, true]);
         let far = crossing_at(160.0);
         assert_eq!(signs_posted(&a, [a, far].iter()), [true, true]);
@@ -1084,7 +1107,7 @@ mod tests {
                 .count()
         };
         for c in roads.crossings() {
-            // The crossings of this stretch of road, side by side.
+            // Los pasos a nivel de este tramo de camino, lado a lado.
             let group = roads
                 .crossings()
                 .filter(|o| o.road.dot(c.road).abs() > 0.9 && o.at.distance(c.at) <= SHARED_SIGNS);
@@ -1101,8 +1124,8 @@ mod tests {
         for (paint, t) in crossing_pieces(crossing, &height, [false; 2]) {
             assert_eq!(paint, Paint::Timber);
             let g = GroundVec2::new(t.translation.x, -t.translation.z);
-            // The rails' heads are 0.50 over the ground; the planks 2 cm
-            // under them, between and beside the rails.
+            // Las cabezas de los rieles están a 0.50 sobre el suelo; los
+            // tablones, 2 cm por debajo, entre los rieles y junto a ellos.
             let top = t.translation.y + t.scale.y / 2.0 - height(g);
             assert!((top - 0.50).abs() < 0.05, "{top}");
         }

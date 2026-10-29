@@ -1,37 +1,40 @@
-//! The line train drawn from the `pampa-core` [`LineTrain`]: a British-built
-//! steam locomotive with its tender, varnished wooden passenger coaches,
-//! boarded boxcars and steel grain hoppers, riding the rails and following
-//! the ground and the curves. About 1919, on the broad gauge of the
-//! Ferrocarril Oeste.
+//! El tren de la línea, dibujado a partir del [`LineTrain`] de `pampa-core`:
+//! una locomotora a vapor de fabricación británica con su ténder, coches de
+//! pasajeros de madera barnizada, vagones cerrados de tablas y tolvas de acero
+//! para cereal, que corren sobre los rieles y siguen el suelo y las curvas.
+//! Hacia 1919, sobre la trocha ancha del Ferrocarril Oeste.
 //!
-//! Logic owns where every car is; this module only decides how each
-//! [`CarKind`] looks. The train crosses the open pampa between towns, so
-//! its cars hang off no town: one set of car entities lives for the whole
-//! game, and each car is shown only while it is within
-//! [`TRAIN_DRAW_RADIUS`] of the [`StreamFocus`]. Hidden cars cost no draw
-//! calls, and nothing is spawned or despawned as the train comes and goes.
+//! La lógica decide dónde está cada vagón; este módulo solo decide cómo se ve
+//! cada [`CarKind`]. El tren cruza la pampa abierta entre pueblos, así que sus
+//! vagones no cuelgan de ningún pueblo: un único conjunto de entidades de vagón
+//! vive durante todo el juego, y cada vagón se muestra solo mientras está
+//! dentro de [`TRAIN_DRAW_RADIUS`] del [`StreamFocus`]. Los vagones ocultos no
+//! cuestan draw calls, y no se crea ni se elimina nada cuando el tren va y
+//! viene.
 //!
-//! Every car is built from [`shape`]s: rounded lathe turnings (boiler,
-//! chimney, domes, buffers, lamps, wheel hubs), profile prisms (the curved
-//! roofs, the tender's flanks, rods, seat cushions) and boxes, all with
-//! smooth normals and UVs in meters. The shapes of one material are merged
-//! into one mesh per car; only the wheels, the rods and the smoke puffs are
-//! entities of their own, as they move. The materials are the shared
-//! [`FacadeMaterials`] of the towns: the tread plate, rust and planks scans
-//! under a black, dark red, maroon, varnish or oxide tint ([`Livery`]),
-//! bronze for the brass, galvanised iron for the roofs.
+//! Cada vagón se construye a partir de [`shape`]s: piezas redondeadas de torno
+//! (caldera, chimenea, domos, topes, faroles, cubos de rueda), prismas de
+//! perfil (los techos curvos, los costados del ténder, las bielas, los
+//! almohadones de los asientos) y cajas, todas con normales suaves y UV en
+//! metros. Las formas de un mismo material se fusionan en una malla por vagón;
+//! solo las ruedas, las bielas y las bocanadas de humo son entidades propias,
+//! porque se mueven. Los materiales son los [`FacadeMaterials`] compartidos de
+//! los pueblos: los escaneos de chapa estriada, óxido y tablones bajo un tinte
+//! negro, rojo oscuro, granate, barniz u óxido ([`Livery`]), bronce para el
+//! latón, hierro galvanizado para los techos.
 //!
-//! The passenger coaches are hollow, laid out by [`CoachBody`] so the seat
-//! view looks out of an actual window: panelled and ceilinged in varnished
-//! wood, with lined doors, upholstered benches with backs, luggage racks
-//! over the windows, oil lamps, a planked floor and glazed droplights.
+//! Los coches de pasajeros son huecos, dispuestos por [`CoachBody`] para que la
+//! vista desde el asiento mire a través de una ventana real: con paneles y
+//! cielorraso de madera barnizada, puertas con filetes, bancos tapizados con
+//! respaldo, portaequipajes sobre las ventanas, faroles de aceite, un piso de
+//! tablones y ventanillas de guillotina vidriadas.
 //!
-//! - `kit`: the materials and the wheel meshes.
-//! - `builder`: a car's merged parts and its common underframe.
-//! - `wheels`: spoked and plate wheels, bogies.
-//! - `loco`: the locomotive and tender.
-//! - `coach`: the passenger coach, outside and in.
-//! - `freight`: the boxcar and the hopper.
+//! - `kit`: los materiales y las mallas de las ruedas.
+//! - `builder`: las piezas fusionadas de un vagón y su bastidor común.
+//! - `wheels`: ruedas de rayos y de disco, bogies.
+//! - `loco`: la locomotora y el ténder.
+//! - `coach`: el coche de pasajeros, por fuera y por dentro.
+//! - `freight`: el vagón cerrado y la tolva.
 
 mod builder;
 mod coach;
@@ -54,29 +57,30 @@ use crate::terrain::{StreamFocus, WorldTerrain};
 use builder::CarBuilder;
 use kit::Kit;
 
-/// train, so a world with no line is simply empty; the index into it is a
-/// train's identity ([`TrainCar::train`], the game's `Ride`). Logic state:
-/// the game advances them, render only reads them.
+/// tren, así que un mundo sin línea simplemente está vacío; el índice dentro de
+/// ella es la identidad de un tren ([`TrainCar::train`], el `Ride` del juego).
+/// Estado lógico: el juego los hace avanzar y render solo los lee.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct WorldTrains(pub Vec<LineTrain>);
 
 impl WorldTrains {
-    /// The line train, the first of them.
+    /// El tren de la línea, el primero de ellos.
     pub fn line(&self) -> Option<&LineTrain> {
         self.0.first()
     }
 
-    /// Every car of every train, as the logic world's moving obstacles.
+    /// Todos los vagones de todos los trenes, como obstáculos móviles del mundo
+    /// lógico.
     pub fn obstacles(&self) -> Vec<SideObstacle> {
         self.0.iter().flat_map(LineTrain::obstacles).collect()
     }
 }
 
-/// Cars farther than this from the [`StreamFocus`] are hidden, in meters:
-/// the terrain's guaranteed reach, well past the fog.
+/// Los vagones a más de esta distancia del [`StreamFocus`] se ocultan, en
+/// metros: el alcance garantizado del terreno, bastante más allá de la niebla.
 pub const TRAIN_DRAW_RADIUS: f32 = 400.0;
 
-/// Draws the line train's cars near the player every frame.
+/// Dibuja en cada frame los vagones del tren de la línea cercanos al jugador.
 pub struct TrainPlugin;
 
 impl Plugin for TrainPlugin {
@@ -91,30 +95,32 @@ impl Plugin for TrainPlugin {
     }
 }
 
-/// Root of one drawn car: local +X points the way the train travels.
+/// Raíz de un vagón dibujado: el +X local apunta en el sentido en que viaja el
+/// tren.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct TrainCar {
-    /// Index of the train in [`WorldTrains`].
+    /// Índice del tren en [`WorldTrains`].
     pub train: usize,
-    /// Index into the consist, front first.
+    /// Índice dentro de la formación, empezando por el frente.
     pub index: usize,
 }
 
-/// A wheel turning about its local Y axis (the axle), with its radius.
+/// Una rueda que gira alrededor de su eje Y local (el eje), con su radio.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct TrainWheel {
-    /// Index of the train in [`WorldTrains`].
+    /// Índice del tren en [`WorldTrains`].
     pub train: usize,
     pub radius: f32,
 }
 
-/// A side or main rod, swung round by the drivers' cranks: its place at
-/// rest (`base`), the crank's throw, the drivers' radius, its quartering
-/// `phase`, and how long it is (a main rod tilts as it swings; zero for a
-/// side rod, which only translates).
+/// Una biela de acoplamiento o motriz, que giran las manivelas de las ruedas
+/// motrices: su lugar en reposo (`base`), el radio de la manivela, el radio de
+/// las ruedas motrices, su desfase `phase` y su largo (una biela motriz se
+/// inclina al girar; cero para una biela de acoplamiento, que solo se
+/// traslada).
 #[derive(Component, Debug, Clone, Copy)]
 pub struct TrainRod {
-    /// Index of the train in [`WorldTrains`].
+    /// Índice del tren en [`WorldTrains`].
     pub train: usize,
     pub base: Vec3,
     pub crank: f32,
@@ -123,36 +129,38 @@ pub struct TrainRod {
     pub length: f32,
 }
 
-/// One puff of chimney smoke, cycling upward while the train moves:
-/// `phase` in `[0, 1)` from leaving the chimney to fading out, and the
-/// chimney's mouth it leaves from, in the car's frame.
+/// Una bocanada de humo de la chimenea, que sube en ciclos mientras el tren se
+/// mueve: `phase` en `[0, 1)` desde que sale de la chimenea hasta que se
+/// desvanece, y la boca de la chimenea de la que sale, en el marco del vagón.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct SmokePuff {
-    /// Index of the train in [`WorldTrains`].
+    /// Índice del tren en [`WorldTrains`].
     pub train: usize,
     pub phase: f32,
     pub chimney: Vec3,
 }
 
-/// Marks the meshes inside a coach's shell: panelling, floor, ceiling,
-/// seats, racks and lamps.
+/// Marca las mallas del interior de la carrocería de un coche: paneles, piso,
+/// cielorraso, asientos, portaequipajes y faroles.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct CoachInterior;
 
-/// Real seconds a smoke puff takes to rise and fade.
+/// Segundos reales que tarda una bocanada de humo en subir y desvanecerse.
 const PUFF_SECONDS: f32 = 1.6;
 
-/// Radius of the locomotive's coupled drivers, which the rods turn with.
+/// Radio de las ruedas motrices acopladas de la locomotora, con las que giran
+/// las bielas.
 const DRIVER_RADIUS: f32 = 0.85;
 
-/// Height of the rail tops above the ground (see the town's railway).
+/// Altura de la cara superior de los rieles sobre el suelo (ver el ferrocarril
+/// del pueblo).
 const RAIL_TOP: f32 = LineTrain::RAIL_TOP;
 
-/// The shared car kit, made on first use.
+/// El kit compartido de los vagones, creado la primera vez que se usa.
 #[derive(Resource)]
 struct CarKit(Kit);
 
-/// What the car kit is made from.
+/// De qué se hace el kit de los vagones.
 type KitAssets<'w> = (
     ResMut<'w, Assets<Mesh>>,
     ResMut<'w, Assets<StandardMaterial>>,
@@ -173,7 +181,8 @@ fn spawn_cars(
         Some(kit) => kit.0.clone(),
         None => {
             let (meshes, materials, surfaces) = &mut assets;
-            // Headless apps have no towns' materials: plain colours then.
+            // Las apps headless no tienen los materiales de los pueblos:
+            // entonces se usan colores lisos.
             let surfaces = surfaces
                 .as_deref()
                 .cloned()
@@ -207,9 +216,9 @@ fn spawn_cars(
     }
 }
 
-/// Where a car stands: on the rails over the ground under its two ends,
-/// local +X along its heading (ground y is Bevy -Z), pitched with the
-/// ground.
+/// Dónde está un vagón: sobre los rieles por encima del suelo bajo sus dos
+/// extremos, con el +X local a lo largo de su rumbo (la y del suelo es -Z en
+/// Bevy), inclinado según el suelo.
 pub fn car_transform(p: &PlacedCar, terrain: &Terrain) -> Transform {
     let half = p.direction * (p.length / 2.0);
     let ground = |q: pampa_core::Vec2| terrain.height(q.x, q.y) + RAIL_TOP;
@@ -220,8 +229,8 @@ pub fn car_transform(p: &PlacedCar, terrain: &Terrain) -> Transform {
         .with_rotation(Quat::from_rotation_y(yaw) * Quat::from_rotation_z(pitch))
 }
 
-/// Puts every car near the focus where logic says, on the rails over the
-/// ground and turned along the track, and hides the others.
+/// Pone cada vagón cercano al foco donde dice la lógica, sobre los rieles por
+/// encima del suelo y girado a lo largo de la vía, y oculta los demás.
 fn place_cars(
     trains: Res<WorldTrains>,
     terrain: Res<WorldTerrain>,
@@ -250,15 +259,15 @@ fn place_cars(
     }
 }
 
-/// Rolls the wheels with the train's speed, and swings the rods round
-/// with the drivers.
+/// Hace rodar las ruedas con la velocidad del tren y gira las bielas junto con
+/// las ruedas motrices.
 fn turn_wheels(
     time: Res<Time>,
     trains: Res<WorldTrains>,
     mut wheels: Query<(&TrainWheel, &mut Transform), Without<TrainRod>>,
     mut rods: Query<(&mut TrainRod, &mut Transform), Without<TrainWheel>>,
 ) {
-    // How far each train rolled this frame.
+    // Cuánto rodó cada tren en este frame.
     let rolled: Vec<f32> = trains
         .0
         .iter()
@@ -269,8 +278,8 @@ fn turn_wheels(
         if distance == 0.0 {
             continue;
         }
-        // The wheel's axle is its local Y; rolling forward turns it clockwise
-        // seen from the car's right side.
+        // El eje de la rueda es su Y local; rodar hacia adelante la gira en
+        // sentido horario vista desde el lado derecho del vagón.
         transform.rotate_local_y(-distance / wheel.radius);
     }
     for (mut rod, mut transform) in &mut rods {
@@ -278,17 +287,17 @@ fn turn_wheels(
         if distance == 0.0 {
             continue;
         }
-        // Clockwise too: a crank pin at the front ([`rod_pose`]'s phase 0)
-        // goes down as the drivers roll forward.
+        // También en sentido horario: un muñón de manivela al frente (fase 0 de
+        // [`rod_pose`]) baja cuando las ruedas motrices ruedan hacia adelante.
         rod.phase = (rod.phase - distance / rod.radius).rem_euclid(std::f32::consts::TAU);
         *transform = rod_pose(&rod, transform.scale);
     }
 }
 
-/// Where a rod is at its crank angle, counted from the front (+X) toward
-/// the top (+Y): a side rod circles with the crank
-/// pins; a main rod's back end does, its front end slides with the
-/// crosshead, so it moves half as far and tilts.
+/// Dónde está una biela según el ángulo de su manivela, contado desde el frente
+/// (+X) hacia arriba (+Y): una biela de acoplamiento da vueltas con los muñones
+/// de manivela; el extremo trasero de una biela motriz también, pero su extremo
+/// delantero se desliza con la cruceta, así que se mueve la mitad y se inclina.
 pub fn rod_pose(rod: &TrainRod, scale: Vec3) -> Transform {
     let (sin, cos) = rod.phase.sin_cos();
     let (along, up) = (cos * rod.crank, sin * rod.crank);
@@ -305,8 +314,9 @@ pub fn rod_pose(rod: &TrainRod, scale: Vec3) -> Transform {
         .with_scale(scale)
 }
 
-/// Chimney smoke while the train moves: each puff rises, drifts back and
-/// swells from the chimney, then starts again; hidden at a standstill.
+/// Humo de la chimenea mientras el tren se mueve: cada bocanada sube, se
+/// desplaza hacia atrás y se hincha desde la chimenea, y luego vuelve a
+/// empezar; se oculta con el tren detenido.
 fn puff_smoke(
     time: Res<Time>,
     trains: Res<WorldTrains>,

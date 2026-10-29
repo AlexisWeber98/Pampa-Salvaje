@@ -1,12 +1,14 @@
-//! The dressing of a 1919 Italianate pampa front, on any [`Wall`]: a
-//! plinth broken at the doors, chamfered pilasters with bases and capitals,
-//! a moulded cornice, a parapet with pedestals, balustrades, urns and a
-//! pediment, framed and hooded openings with wooden doors, iron grilles, round
-//! arches, and the galería over the sidewalk.
+//! La ornamentación de un frente pampeano italianizante de 1919, sobre
+//! cualquier [`Wall`]: un zócalo interrumpido en las puertas, pilastras
+//! ochavadas con basas y capiteles, una cornisa moldurada, un parapeto con
+//! pedestales, balaustradas, macetones y un frontón, aberturas enmarcadas y con
+//! guardapolvo con puertas de madera, rejas de hierro, arcos de medio punto y
+//! la galería sobre la vereda.
 //!
-//! Every piece stands at most [`PROUD`] meters out of the wall it dresses,
-//! so a wall set that far in from a footprint keeps its whole front inside
-//! it (the galería apart, which reaches over the sidewalk).
+//! Cada pieza sobresale como mucho [`PROUD`] metros de la pared que orna, así
+//! que una pared retirada esa distancia de una huella de edificio mantiene todo
+//! su frente dentro de ella (salvo la galería, que se extiende sobre la
+//! vereda).
 
 use bevy::prelude::*;
 
@@ -14,21 +16,21 @@ use super::materials::Surface;
 use super::shape::Shape;
 use super::walls::{Opening, Wall, Walls, slab};
 
-/// How far the dressing stands proud of a wall at most, meters.
+/// Cuánto sobresale como mucho la ornamentación de una pared, en metros.
 pub const PROUD: f32 = 0.1;
 
-/// The bevel on the vertical edges of piers and pilasters, meters.
+/// El chaflán en las aristas verticales de pilares y pilastras, en metros.
 pub const CHAMFER: f32 = 0.04;
 
-/// The world box between two points given in wall terms (`along`,
+/// La caja del mundo entre dos puntos dados en términos de pared (`along`,
 /// `inward`, `y`).
 fn wall_box(wall: &Wall, lo: (f32, f32, f32), hi: (f32, f32, f32)) -> (Vec3, Vec3) {
     let (p, q) = (wall.at(lo.0, lo.1, lo.2), wall.at(hi.0, hi.1, hi.2));
     (p.min(q), p.max(q))
 }
 
-/// The plinth (zócalo) along `wall`, `height` tall and `out` proud, broken
-/// at its doors.
+/// El zócalo a lo largo de `wall`, de `height` de alto y sobresaliendo `out`,
+/// interrumpido en sus puertas.
 pub(crate) fn plinth(
     shape: &mut Shape,
     surface: Surface,
@@ -53,8 +55,9 @@ pub(crate) fn plinth(
     }
 }
 
-/// A chamfered pilaster on `wall`, `width` wide round `at` meters along it,
-/// `out` proud, from `y0` to `y1`, with a base up to `base` and a capital.
+/// Una pilastra ochavada sobre `wall`, de `width` de ancho alrededor de `at`
+/// metros a lo largo de ella, sobresaliendo `out`, desde `y0` hasta `y1`, con
+/// una basa hasta `base` y un capitel.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn pilaster(
     shape: &mut Shape,
@@ -68,7 +71,7 @@ pub(crate) fn pilaster(
     let half = width / 2.0;
     let (min, max) = wall_box(wall, (at - half, -out + 0.02, y0), (at + half, 0.02, y1));
     shape.chamfered(surface, min, max, CHAMFER);
-    // The base and the capital stand a little wider and prouder.
+    // La basa y el capitel son un poco más anchos y sobresalen más.
     let (bout, bhalf) = (out.min(PROUD), half + 0.05);
     let (min, max) = wall_box(wall, (at - bhalf, -bout, y0), (at + bhalf, 0.02, base));
     shape.chamfered(surface, min, max, CHAMFER);
@@ -76,8 +79,9 @@ pub(crate) fn pilaster(
     shape.block(surface, min, max);
 }
 
-/// A square chamfered pier on each corner of `walls`, `size` wide, its
-/// outer faces `out` proud of the walls, from `y0` to `y1`.
+/// Un pilar cuadrado ochavado en cada esquina de `walls`, de `size` de ancho,
+/// con sus caras exteriores sobresaliendo `out` de las paredes, desde `y0`
+/// hasta `y1`.
 pub(crate) fn corner_piers(
     shape: &mut Shape,
     surface: Surface,
@@ -95,8 +99,9 @@ pub(crate) fn corner_piers(
     }
 }
 
-/// The moulded cornice round `walls` at the top of their `height`: an
-/// architrave, a frieze and a corona stepping out to [`PROUD`].
+/// La cornisa moldurada alrededor de `walls` en lo alto de su `height`: un
+/// arquitrabe, un friso y una corona que sobresalen escalonados hasta
+/// [`PROUD`].
 pub(crate) fn cornice(shape: &mut Shape, surface: Surface, walls: &Walls) {
     let h = walls.height;
     for (out, y0, y1) in [
@@ -109,19 +114,19 @@ pub(crate) fn cornice(shape: &mut Shape, surface: Surface, walls: &Walls) {
     }
 }
 
-/// What tops a front's parapet between its pedestals.
+/// Lo que remata el parapeto de un frente entre sus pedestales.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Crown {
-    /// A solid wall (behind a sign, or plain).
+    /// Una pared maciza (detrás de un cartel, o lisa).
     Solid,
-    /// Turned balusters between a base and a top rail.
+    /// Balaustres torneados entre una base y un pasamanos.
     Balustrade,
 }
 
-/// A parapet `height` tall over `walls` with a coping on it: `crown` on
-/// the front between pedestals over the front's `pillars` (meters along
-/// it), and solid on the sides and the back when `all_round` (else the
-/// front alone stands up, hiding a roof behind it).
+/// Un parapeto de `height` de alto sobre `walls` con una albardilla encima:
+/// `crown` en el frente entre los pedestales sobre los `pillars` del frente
+/// (metros a lo largo de él), y macizo en los laterales y atrás cuando
+/// `all_round` (si no, solo se levanta el frente, ocultando un techo detrás).
 pub(crate) fn parapet(
     shape: &mut Shape,
     surface: Surface,
@@ -153,7 +158,7 @@ pub(crate) fn parapet(
         );
         shape.block(surface, min, max);
     }
-    // The front between the pedestals (and out to the ends).
+    // El frente entre los pedestales (y hasta los extremos).
     let mut from = 0.0;
     for to in posts
         .iter()
@@ -167,8 +172,8 @@ pub(crate) fn parapet(
     }
 }
 
-/// The solid parapet over the sides and the back of `walls`, from `h` to
-/// `top` and `t` thick, with its coping.
+/// El parapeto macizo sobre los laterales y la parte trasera de `walls`, desde
+/// `h` hasta `top` y de `t` de grosor, con su albardilla.
 fn sides_and_back(
     shape: &mut Shape,
     surface: Surface,
@@ -196,7 +201,8 @@ fn sides_and_back(
     }
 }
 
-/// One bay of the front parapet, `a..b` along `front`, from `y0` to `top`.
+/// Un tramo del parapeto del frente, `a..b` a lo largo de `front`, desde `y0`
+/// hasta `top`.
 fn front_bay(
     shape: &mut Shape,
     surface: Surface,
@@ -237,7 +243,7 @@ fn front_bay(
     }
 }
 
-/// A turned baluster `height` tall standing on `foot`.
+/// Un balaustre torneado de `height` de alto apoyado en `foot`.
 pub(crate) fn baluster(shape: &mut Shape, surface: Surface, foot: Vec3, height: f32) {
     let l = height;
     shape.lathe(
@@ -248,7 +254,7 @@ pub(crate) fn baluster(shape: &mut Shape, surface: Surface, foot: Vec3, height: 
     );
 }
 
-/// An urn (macetón) on top of a pedestal at `foot`.
+/// Un macetón sobre un pedestal en `foot`.
 pub(crate) fn urn(shape: &mut Shape, surface: Surface, foot: Vec3) {
     shape.lathe(
         surface,
@@ -265,9 +271,9 @@ pub(crate) fn urn(shape: &mut Shape, surface: Surface, foot: Vec3) {
     );
 }
 
-/// A triangular pediment `x0..x1` wide on top of `base`, rising `rise`,
-/// its face at `z` (local, facing `+Z`) and `depth` deep, with raking
-/// cornices along its slopes.
+/// Un frontón triangular de `x0..x1` de ancho sobre `base`, que sube `rise`,
+/// con su cara en `z` (local, mirando hacia `+Z`) y `depth` de profundidad, con
+/// cornisas inclinadas a lo largo de sus pendientes.
 pub(crate) fn pediment(
     shape: &mut Shape,
     surface: Surface,
@@ -288,7 +294,7 @@ pub(crate) fn pediment(
     shape.face(surface, &[r + back, l + back, apex + back]);
     shape.face(surface, &[r, r + back, apex + back, apex]);
     shape.face(surface, &[l + back, l, apex, apex + back]);
-    // The raking cornices, standing out over the face.
+    // Las cornisas inclinadas, sobresaliendo sobre la cara.
     let lift = Vec3::new(0.0, 0.06, -depth / 2.0 + 0.04);
     let thick = depth + 0.08;
     for (from, to) in [(l, apex), (r, apex)] {
@@ -307,8 +313,9 @@ pub(crate) fn pediment(
     );
 }
 
-/// A moulded frame round opening `o` of `wall`: jambs and a head standing
-/// a little proud, and a hood cornice over it when `hood`.
+/// Un marco moldurado alrededor de la abertura `o` de `wall`: jambas y un
+/// dintel que sobresalen un poco, y una cornisa de guardapolvo encima cuando
+/// `hood`.
 pub(crate) fn surround(shape: &mut Shape, surface: Surface, wall: &Wall, o: &Opening, hood: bool) {
     let (a, b) = o.span();
     let (w, out) = (0.11, 0.035);
@@ -337,8 +344,8 @@ pub(crate) fn surround(shape: &mut Shape, surface: Surface, wall: &Wall, o: &Ope
     }
 }
 
-/// Two plank leaves shut in door `o` of `wall`, set back in its reveal,
-/// with a glazed transom over them when `transom`.
+/// Dos hojas de tablones cerradas en la puerta `o` de `wall`, retiradas en su
+/// vano, con una banderola vidriada encima cuando `transom`.
 pub(crate) fn door_leaves(shape: &mut Shape, wall: &Wall, o: &Opening, transom: bool) {
     let (a, b) = o.span();
     let t = wall.thickness;
@@ -368,7 +375,8 @@ pub(crate) fn door_leaves(shape: &mut Shape, wall: &Wall, o: &Opening, transom: 
     }
 }
 
-/// Iron bars (a grille) across window `o` of `wall`, just inside its face.
+/// Barrotes de hierro (una reja) que cruzan la ventana `o` de `wall`, justo por
+/// dentro de su cara.
 pub(crate) fn grille(shape: &mut Shape, wall: &Wall, o: &Opening) {
     let (a, b) = o.span();
     let n = ((b - a) / 0.13).floor().max(2.0) as usize;
@@ -391,9 +399,9 @@ pub(crate) fn grille(shape: &mut Shape, wall: &Wall, o: &Opening) {
     }
 }
 
-/// The round head of opening `o` in `wall`: the wall filled in between
-/// its square top and a half circle springing `o.width / 2` below it, and
-/// a moulded archivolt round the curve in `trim`.
+/// El remate de medio punto de la abertura `o` en `wall`: la pared rellena
+/// entre su parte superior recta y un semicírculo que arranca `o.width / 2` por
+/// debajo, y una arquivolta moldurada alrededor de la curva en `trim`.
 pub(crate) fn arch(
     shape: &mut Shape,
     (surface, trim): (Surface, Surface),
@@ -413,7 +421,8 @@ pub(crate) fn arch(
         let ((u0, v0), (u1, v1)) = (arc(k), arc(k + 1));
         let (u0, u1) = (u0.clamp(a, b), u1.clamp(a, b));
         let p = |u: f32, inward: f32, y: f32| wall.at(u, inward, y);
-        // Face, soffit and back, wound outward along the wall's `out`.
+        // Cara, intradós y dorso, orientados hacia afuera según el `out` de la
+        // pared.
         let face = [
             p(u0, 0.0, v0),
             p(u1, 0.0, v1),
@@ -435,7 +444,8 @@ pub(crate) fn arch(
         for mut quad in [face, soffit, back] {
             let n = (quad[1] - quad[0]).cross(quad[2] - quad[0]);
             let centre = quad.iter().sum::<Vec3>() / 4.0;
-            // The soffit faces the arch's centre, down into the opening.
+            // El intradós mira hacia el centro del arco, hacia abajo dentro de
+            // la abertura.
             let want = if quad == soffit {
                 wall.at(o.at, depth / 2.0, spring) - centre
             } else if quad == back {
@@ -457,19 +467,20 @@ pub(crate) fn arch(
     }
 }
 
-/// How a galería's posts are made.
+/// Cómo están hechos los postes de una galería.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Posts {
-    /// Turned cast iron with a capital and scrolled brackets.
+    /// Hierro fundido torneado con capitel y ménsulas con volutas.
     Iron,
-    /// Square timber with knee braces.
+    /// Madera escuadrada con riostras en escuadra.
     Timber,
 }
 
-/// A galería over the sidewalk in front of `front` (a front wall, its
-/// outer face where it starts), `depth` deep: a corrugated `roof` sloping
-/// from `high` at the wall down to `low` at its posts, a fascia board along
-/// its edge and a row of `posts` about every three meters.
+/// Una galería sobre la vereda delante de `front` (una pared de frente, con su
+/// cara exterior donde empieza), de `depth` de profundidad: un techo acanalado
+/// `roof` que baja desde `high` en la pared hasta `low` en sus postes, una
+/// tabla de frente a lo largo de su borde y una fila de `posts` cada unos tres
+/// metros.
 pub(crate) fn gallery(
     shape: &mut Shape,
     roof: Surface,
@@ -503,7 +514,8 @@ pub(crate) fn gallery(
             }
             Posts::Timber => shape.beam(Surface::Planks, foot, foot.with_y(top), 0.16),
         }
-        // Brackets from the post up to the fascia beam, along the front.
+        // Ménsulas desde el poste hasta la viga de frente, a lo largo del
+        // frente.
         let reach = 0.5;
         for side in [-1.0, 1.0] {
             let along = (at + side * reach).clamp(0.0, len);
@@ -517,7 +529,7 @@ pub(crate) fn gallery(
             shape.beam(s, foot.with_y(top - 0.55), front.at(along, -edge, top), t);
         }
     }
-    // The beam on the posts, the fascia over it, and the sheet.
+    // La viga sobre los postes, la tabla de frente encima y la chapa.
     let (min, max) = wall_box(
         front,
         (0.0, -edge - 0.09, top),
@@ -538,7 +550,8 @@ pub(crate) fn gallery(
         Transform::from_translation((min + max) / 2.0).with_scale(max - min),
         true,
     );
-    // The sheet, built along local X then turned onto the wall.
+    // La chapa, construida a lo largo del X local y después girada sobre la
+    // pared.
     let mut sheet = Shape::default();
     slab(
         &mut sheet,
@@ -553,8 +566,8 @@ pub(crate) fn gallery(
     shape.merge(sheet, Transform::from_translation(mid).with_rotation(turn));
 }
 
-/// A four-sided spire (or pyramid roof) on a square `size` wide at `base`,
-/// its tip `height` over it.
+/// Una aguja de cuatro lados (o un techo piramidal) sobre un cuadrado de `size`
+/// de ancho en `base`, con la punta `height` por encima.
 pub(crate) fn spire(shape: &mut Shape, surface: Surface, centre: Vec3, size: f32, height: f32) {
     let h = size / 2.0;
     let c = [

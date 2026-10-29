@@ -1,8 +1,9 @@
-//! Collision shapes owned by logic, never derived from sprite pixels.
+//! Formas de colisión que pertenecen a la lógica, nunca derivadas de los
+//! píxeles de los sprites.
 
 use crate::math::Vec2;
 
-/// A circle on the ground plane (a vertical capsule seen from above).
+/// Un círculo en el plano del suelo (una cápsula vertical vista desde arriba).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Circle {
     pub radius: f32,
@@ -13,8 +14,8 @@ impl Circle {
         Self { radius }
     }
 
-    /// Smallest displacement that moves this circle at `center` out of `aabb`,
-    /// or `None` if they do not overlap.
+    /// El desplazamiento más chico que saca de `aabb` a este círculo ubicado en
+    /// `center`, o `None` si no se superponen.
     pub fn push_out(self, center: Vec2, aabb: &Aabb) -> Option<Vec2> {
         let closest = aabb.closest_point(center);
         let offset = center - closest;
@@ -25,7 +26,7 @@ impl Circle {
         if distance > 0.0 {
             return Some(offset * ((self.radius - distance) / distance));
         }
-        // Center inside the box: leave through the nearest edge.
+        // Centro dentro del rectángulo: sale por el borde más cercano.
         let exits = [
             (center.x - aabb.min.x, Vec2::new(-1.0, 0.0)),
             (aabb.max.x - center.x, Vec2::new(1.0, 0.0)),
@@ -39,9 +40,10 @@ impl Circle {
         Some(normal * (depth + self.radius))
     }
 
-    /// Smallest displacement that moves this circle at `center` clear of
-    /// `body`, or `None` if they do not overlap. Coincident centers part
-    /// along `+x`, so the result stays deterministic.
+    /// El desplazamiento más chico que aleja a este círculo ubicado en `center`
+    /// de `body`, o `None` si no se superponen. Los centros que coinciden se
+    /// separan a lo largo de `+x`, para que el resultado siga siendo
+    /// determinista.
     pub fn push_out_of_body(self, center: Vec2, body: &Body) -> Option<Vec2> {
         let offset = center - body.position;
         let distance = offset.length();
@@ -55,35 +57,36 @@ impl Circle {
         }
     }
 
-    /// Whether this circle at `a` overlaps `other` at `b`.
+    /// Si este círculo en `a` se superpone con `other` en `b`.
     pub fn overlaps(self, a: Vec2, other: Circle, b: Vec2) -> bool {
         a.distance(b) < self.radius + other.radius
     }
 }
 
-/// Another character standing somewhere: a circle at a position.
+/// Otro personaje parado en algún lugar: un círculo en una posición.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Body {
     pub position: Vec2,
     pub collider: Circle,
 }
 
-/// A moving box that shoves circles sideways, along `across`, out to the side
-/// of its center line they are on: a train car pushing riders off its track
-/// instead of carrying them along in front of it.
+/// Un rectángulo en movimiento que empuja los círculos de costado, a lo largo
+/// de `across`, hacia el lado de su línea central en el que estén: un vagón de
+/// tren que saca a los jinetes de su vía en lugar de llevarlos por delante.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SideObstacle {
     pub footprint: Aabb,
-    /// Unit direction across the obstacle (across the track).
+    /// Dirección unitaria transversal al obstáculo (transversal a la vía).
     pub across: Vec2,
 }
 
 impl SideObstacle {
-    /// Displacement that moves a `circle` at `center` clear of this box along
-    /// `across`, or `None` if they do not overlap.
+    /// Desplazamiento que aleja a un `circle` ubicado en `center` de este
+    /// rectángulo a lo largo de `across`, o `None` si no se superponen.
     pub fn push_out(&self, circle: Circle, center: Vec2) -> Option<Vec2> {
         circle.push_out(center, &self.footprint)?;
-        // Signed distance from the box's center line, and its half-width.
+        // Distancia con signo desde la línea central del rectángulo, y su medio
+        // ancho.
         let offset = (center - self.footprint.center()).dot(self.across);
         let size = self.footprint.size();
         let half = (self.across.x.abs() * size.x + self.across.y.abs() * size.y) / 2.0;
@@ -92,7 +95,8 @@ impl SideObstacle {
     }
 }
 
-/// Axis-aligned box on the ground plane: a static obstacle footprint.
+/// Rectángulo alineado con los ejes en el plano del suelo: la huella de un
+/// obstáculo estático.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Aabb {
     pub min: Vec2,
@@ -104,7 +108,8 @@ impl Aabb {
         Self { min, max }
     }
 
-    /// Box of `size` (width along `x`, depth along `y`) centered on `center`.
+    /// Rectángulo de tamaño `size` (ancho sobre `x`, profundidad sobre `y`)
+    /// centrado en `center`.
     pub fn from_center_size(center: Vec2, size: Vec2) -> Self {
         let half = size * 0.5;
         Self::new(center - half, center + half)
@@ -118,7 +123,8 @@ impl Aabb {
         self.max - self.min
     }
 
-    /// Whether the two boxes share interior area (touching edges do not count).
+    /// Si los dos rectángulos comparten área interior (los bordes que se tocan
+    /// no cuentan).
     pub fn intersects(&self, other: &Aabb) -> bool {
         self.min.x < other.max.x
             && other.min.x < self.max.x
@@ -126,7 +132,8 @@ impl Aabb {
             && other.min.y < self.max.y
     }
 
-    /// Whether `other` lies fully inside this box (edges included).
+    /// Si `other` está completamente dentro de este rectángulo (bordes
+    /// incluidos).
     pub fn contains(&self, other: &Aabb) -> bool {
         self.min.x <= other.min.x
             && self.min.y <= other.min.y
@@ -138,7 +145,7 @@ impl Aabb {
         (self.min.x..=self.max.x).contains(&p.x) && (self.min.y..=self.max.y).contains(&p.y)
     }
 
-    /// Point of this box closest to `p`.
+    /// El punto de este rectángulo más cercano a `p`.
     pub fn closest_point(&self, p: Vec2) -> Vec2 {
         Vec2::new(
             p.x.clamp(self.min.x, self.max.x),
@@ -146,11 +153,12 @@ impl Aabb {
         )
     }
 
-    /// Where the segment from `from` to `to` crosses this box, as fractions
-    /// `(enter, exit)` of the way along it, clipped to `0..=1`; `None` if it
-    /// misses. A segment starting inside enters at `0`.
+    /// Dónde cruza este rectángulo el segmento que va de `from` a `to`, como
+    /// fracciones `(enter, exit)` del recorrido, recortadas a `0..=1`; `None`
+    /// si no lo toca. Un segmento que empieza adentro entra en `0`.
     pub fn segment_overlap(&self, from: Vec2, to: Vec2) -> Option<(f32, f32)> {
-        // Slab method: intersect the parameter ranges inside each axis band.
+        // Método de las franjas (slab): intersecta los rangos del parámetro
+        // dentro de la franja de cada eje.
         let d = to - from;
         let mut enter = 0.0_f32;
         let mut exit = 1.0_f32;
@@ -174,7 +182,7 @@ impl Aabb {
         Some((enter, exit))
     }
 
-    /// The box grown by `margin` on every side.
+    /// El rectángulo agrandado `margin` en cada lado.
     pub fn expanded(&self, margin: f32) -> Self {
         Self::new(
             self.min - Vec2::new(margin, margin),
@@ -211,17 +219,17 @@ mod tests {
     #[test]
     fn segment_overlap_reports_entry_and_exit_fractions() {
         let b = unit_box();
-        // Straight through along x, from 2 m west to 2 m east.
+        // Directo a lo largo de x, desde 2 m al oeste hasta 2 m al este.
         let (enter, exit) = b
             .segment_overlap(Vec2::new(-2.0, 1.0), Vec2::new(6.0, 1.0))
             .unwrap();
         assert!((enter - 0.25).abs() < 1e-6 && (exit - 0.75).abs() < 1e-6);
-        // Reversed direction swaps which face is entered.
+        // La dirección invertida cambia por qué cara se entra.
         let (enter, exit) = b
             .segment_overlap(Vec2::new(6.0, 1.0), Vec2::new(-2.0, 1.0))
             .unwrap();
         assert!((enter - 0.25).abs() < 1e-6 && (exit - 0.75).abs() < 1e-6);
-        // Diagonal through a corner region.
+        // En diagonal a través de la zona de una esquina.
         let (enter, _) = b
             .segment_overlap(Vec2::new(-1.0, -1.0), Vec2::new(1.0, 1.0))
             .unwrap();
@@ -231,18 +239,19 @@ mod tests {
     #[test]
     fn segment_overlap_clips_to_the_segment() {
         let b = unit_box();
-        // Starts inside: enters at 0.
+        // Empieza adentro: entra en 0.
         let (enter, exit) = b
             .segment_overlap(Vec2::new(2.0, 1.0), Vec2::new(8.0, 1.0))
             .unwrap();
         assert_eq!(enter, 0.0);
         assert!((exit - 2.0 / 6.0).abs() < 1e-6);
-        // Ends inside: exits at 1.
+        // Termina adentro: sale en 1.
         let (_, exit) = b
             .segment_overlap(Vec2::new(-2.0, 1.0), Vec2::new(1.0, 1.0))
             .unwrap();
         assert_eq!(exit, 1.0);
-        // Fully inside, and a degenerate point segment inside.
+        // Completamente adentro, y un segmento degenerado de un solo punto
+        // adentro.
         assert_eq!(
             b.segment_overlap(Vec2::new(1.0, 1.0), Vec2::new(3.0, 1.5)),
             Some((0.0, 1.0))
@@ -256,7 +265,7 @@ mod tests {
     #[test]
     fn segment_overlap_misses() {
         let b = unit_box();
-        // Stops short, passes beside, runs parallel outside, point outside.
+        // Se detiene antes, pasa al lado, va paralelo por afuera, punto afuera.
         assert_eq!(
             b.segment_overlap(Vec2::new(-3.0, 1.0), Vec2::new(-1.0, 1.0)),
             None
@@ -276,7 +285,8 @@ mod tests {
     }
 
     fn car() -> SideObstacle {
-        // A 10 m car along x, 3 m wide, centered on the origin.
+        // Un vagón de 10 m a lo largo de x, de 3 m de ancho, centrado en el
+        // origen.
         SideObstacle {
             footprint: Aabb::from_center_size(Vec2::ZERO, Vec2::new(10.0, 3.0)),
             across: Vec2::new(0.0, 1.0),
@@ -287,13 +297,14 @@ mod tests {
     fn side_obstacle_pushes_across_to_the_side_the_circle_is_on() {
         let c = Circle::new(1.0);
         assert_eq!(car().push_out(c, Vec2::new(0.0, 3.0)), None);
-        // North half: out to the north face plus the radius.
+        // Mitad norte: hasta la cara norte más el radio.
         let push = car().push_out(c, Vec2::new(2.0, 0.5)).unwrap();
         assert!(close(push, Vec2::new(0.0, 2.0)), "{push:?}");
-        // South of the box, overlapping its south face.
+        // Al sur del rectángulo, superpuesto con su cara sur.
         let push = car().push_out(c, Vec2::new(-3.0, -2.0)).unwrap();
         assert!(close(push, Vec2::new(0.0, -0.5)), "{push:?}");
-        // Right in front of the car's end: shoved sideways, never forward.
+        // Justo delante del extremo del vagón: empujado de costado, nunca hacia
+        // adelante.
         let push = car().push_out(c, Vec2::new(5.5, -0.1)).unwrap();
         assert!(push.x == 0.0 && push.y < 0.0, "{push:?}");
     }
@@ -311,7 +322,7 @@ mod tests {
         assert!(close(push, Vec2::new(-0.2, 0.0)), "{push:?}");
         let push = c.push_out_of_body(Vec2::new(1.0, 0.6), &walker).unwrap();
         assert!(close(push, Vec2::new(0.0, 0.6)), "{push:?}");
-        // Right on top of each other: apart along +x.
+        // Exactamente uno encima del otro: se separan a lo largo de +x.
         let push = c.push_out_of_body(walker.position, &walker).unwrap();
         assert!(close(push, Vec2::new(1.2, 0.0)), "{push:?}");
     }
@@ -329,7 +340,7 @@ mod tests {
         let c = Circle::new(1.0);
         assert_eq!(c.push_out(Vec2::new(-1.5, 1.0), &unit_box()), None);
         assert_eq!(c.push_out(Vec2::new(-1.0, 1.0), &unit_box()), None);
-        // Near a corner but outside the rounded corner region.
+        // Cerca de una esquina pero fuera de la zona redondeada de la esquina.
         assert_eq!(c.push_out(Vec2::new(-0.8, -0.8), &unit_box()), None);
     }
 
@@ -355,10 +366,10 @@ mod tests {
     #[test]
     fn center_inside_box_exits_through_the_closest_edge() {
         let c = Circle::new(1.0);
-        // Closest to the bottom edge (y = 0).
+        // Más cerca del borde inferior (y = 0).
         let push = c.push_out(Vec2::new(1.5, 0.4), &unit_box()).unwrap();
         assert!(close(push, Vec2::new(0.0, -1.4)), "{push:?}");
-        // Closest to the right edge (x = 4).
+        // Más cerca del borde derecho (x = 4).
         let push = c.push_out(Vec2::new(3.8, 1.0), &unit_box()).unwrap();
         assert!(close(push, Vec2::new(1.2, 0.0)), "{push:?}");
     }

@@ -1,18 +1,19 @@
-//! Kerosene street lamps (faroles): where they stand in the towns and at
-//! the estancias.
+//! Faroles de querosén: dónde están en los pueblos y en las estancias.
 //!
-//! In 1919 a small pampa town had no electric street lighting: a lamplighter
-//! lit kerosene faroles on cast-iron or timber posts at dusk. Each town gets
-//! a few round its plazas, a pair at every street exit a road leaves by, and
-//! one at street corners: at every corner (intersection) of a big town, at
-//! every other one, in a checkerboard, in a small town. An estancia gets one
-//! at either end of its casco's gallery and one by its track just inside the
-//! gate.
+//! En 1919, un pequeño pueblo de la pampa no tenía alumbrado público eléctrico:
+//! un farolero encendía al anochecer faroles de querosén sobre postes de hierro
+//! fundido o de madera. Cada pueblo tiene unos pocos alrededor de sus plazas,
+//! un par en cada salida de calle por la que sale un camino, y uno en las
+//! esquinas: en todas las esquinas (intersecciones) de un pueblo grande y en
+//! una de cada dos, en damero, en un pueblo chico. Una estancia tiene uno en
+//! cada extremo de la galería de su casco y uno junto a su huella, justo
+//! después de la tranquera.
 //!
-//! Placement is deterministic and keeps every post off the driving lanes
-//! (a corner lamp stands at the curb), the doors, the store verandas, the
-//! plaza paths and monument, the railway and its yard, the roads and the
-//! settlement tracks, and finally off every static obstacle of the world.
+//! La ubicación es determinista y mantiene cada poste fuera de los carriles de
+//! circulación (un farol de esquina está en el cordón), de las puertas, de las
+//! galerías de los comercios, de los senderos y el monumento de la plaza, de la
+//! vía férrea y su playa, de los caminos y de las huellas de los asentamientos
+//! y, por último, de todo obstáculo estático del mundo.
 
 use crate::rng::Rng;
 use crate::road::segment_distance;
@@ -22,45 +23,46 @@ use crate::{
     Vec2, plaza_monument, plaza_paths,
 };
 
-/// Where a lamp stands, for counting and for the drawing's choices.
+/// Dónde está un farol, para contarlos y para las decisiones del dibujo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LampSite {
-    /// Round a plaza: by a path's mouth, or by the monument.
+    /// Alrededor de una plaza: junto a la entrada de un sendero, o junto al
+    /// monumento.
     Plaza,
-    /// Beside a road where it leaves the street grid.
+    /// Al costado de un camino, donde sale de la cuadrícula de calles.
     Entrance,
-    /// At the curb of a street corner.
+    /// En el cordón de una esquina.
     Corner,
-    /// At an end of an estancia's gallery.
+    /// En un extremo de la galería de una estancia.
     Homestead,
-    /// By an estancia's track, just inside its gate.
+    /// Junto a la huella de una estancia, justo después de su tranquera.
     Gate,
 }
 
-/// One kerosene street lamp: a post with a glass lantern on top.
+/// Un farol de querosén: un poste con una linterna de vidrio arriba.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StreetLamp {
-    /// The foot of the post.
+    /// La base del poste.
     pub at: Vec2,
     pub site: LampSite,
 }
 
 impl StreetLamp {
-    /// Side of the post's square collision footprint, in meters.
+    /// Lado de la huella de colisión cuadrada del poste, en metros.
     pub const POST: f32 = 0.24;
-    /// Height of the lamp, finial included, in meters.
+    /// Altura del farol, remate incluido, en metros.
     pub const HEIGHT: f32 = 3.35;
-    /// Height of the middle of the lantern's glass, where the flame burns.
+    /// Altura del centro del vidrio de la linterna, donde arde la llama.
     pub const FLAME: f32 = 2.8;
 
-    /// Its static obstacle: the post.
+    /// Su obstáculo estático: el poste.
     pub fn obstacle(&self) -> Aabb {
         Aabb::from_center_size(self.at, Vec2::new(Self::POST, Self::POST))
     }
 }
 
-/// Every street lamp of the world: per town and per settlement, in the
-/// order of the world's towns and of [`SettlementLayout::settlements`].
+/// Todos los faroles del mundo: por pueblo y por asentamiento, en el orden de
+/// los pueblos del mundo y de [`SettlementLayout::settlements`].
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct StreetLamps {
     pub towns: Vec<Vec<StreetLamp>>,
@@ -68,34 +70,40 @@ pub struct StreetLamps {
 }
 
 impl StreetLamps {
-    /// How far a corner lamp stands in from both street edges, meters: at
-    /// the curb, clear of the driving lane.
+    /// A qué distancia hacia adentro de ambos bordes de la calle está un farol
+    /// de esquina, en metros: en el cordón, fuera del carril de circulación.
     pub const CURB: f32 = 0.7;
-    /// Least clear ground round a post, in meters.
+    /// Espacio libre mínimo alrededor de un poste, en metros.
     pub const CLEARANCE: f32 = 0.5;
-    /// How far out of a road's exit from the grid the entrance pair stands.
+    /// A qué distancia fuera de la salida de un camino desde la cuadrícula está
+    /// el par de la entrada.
     pub const ENTRANCE_OUT: f32 = 1.5;
-    /// How far to either side of a road's centerline the entrance pair
-    /// stands: off the road's edge.
+    /// A qué distancia a cada lado de la línea central de un camino está el par
+    /// de la entrada: fuera del borde del camino.
     pub const ENTRANCE_SIDE: f32 = RoadNetwork::HALF_WIDTH + 1.0;
-    /// How far inside a plaza's edge its lamps stand, meters.
+    /// A qué distancia hacia adentro del borde de una plaza están sus faroles,
+    /// en metros.
     pub const PLAZA_INSET: f32 = 1.0;
-    /// Gap between a plaza lamp and the path it stands beside, meters.
+    /// Separación entre un farol de plaza y el sendero junto al que está, en
+    /// metros.
     pub const PATH_GAP: f32 = 0.7;
-    /// Keep-out in front of a door: this far out of the facade...
+    /// Zona prohibida frente a una puerta: esta distancia hacia afuera de la
+    /// fachada...
     pub const DOOR_REACH: f32 = 4.0;
-    /// ...and this far to either side of its middle, in meters.
+    /// ...y esta distancia a cada lado de su centro, en metros.
     pub const DOOR_HALF_WIDTH: f32 = 1.8;
-    /// Least distance between two lamps, in meters.
+    /// Distancia mínima entre dos faroles, en metros.
     pub const SPACING: f32 = 3.0;
-    /// How far out of the casco's front its pair stands, meters.
+    /// A qué distancia hacia afuera del frente del casco está su par, en
+    /// metros.
     pub const GALLERY_OUT: f32 = 1.2;
-    /// Least gap between a lamp and a track's rut, meters.
+    /// Separación mínima entre un farol y el surco de una huella, en metros.
     pub const TRACK_GAP: f32 = 0.8;
 
-    /// The lamps of every town of `towns` (with the `roads` leaving them)
-    /// and of every estancia of `settlements`, kept off every box of
-    /// `obstacles` (the world's static obstacles, lamps not yet among them).
+    /// Los faroles de cada pueblo de `towns` (con los `roads` que salen de
+    /// ellos) y de cada estancia de `settlements`, fuera de todos los
+    /// rectángulos de `obstacles` (los obstáculos estáticos del mundo, que
+    /// todavía no incluyen los faroles).
     pub fn place(
         towns: &[TownLayout],
         roads: &RoadNetwork,
@@ -120,26 +128,26 @@ impl StreetLamps {
         }
     }
 
-    /// Every lamp's post, as a static obstacle.
+    /// El poste de cada farol, como obstáculo estático.
     pub fn obstacles(&self) -> impl Iterator<Item = Aabb> + '_ {
         self.all().map(StreetLamp::obstacle)
     }
 
-    /// Every lamp, towns first.
+    /// Todos los faroles, primero los de los pueblos.
     pub fn all(&self) -> impl Iterator<Item = &StreetLamp> + '_ {
         self.towns.iter().chain(&self.settlements).flatten()
     }
 
-    /// How many lamps there are.
+    /// Cuántos faroles hay.
     pub fn count(&self) -> usize {
         self.all().count()
     }
 }
 
-/// The lamps of `town`, the `index`-th of the world's towns (the one
-/// `roads` name by that index): round its plazas, at its road exits and at
-/// its street corners, each clear of the town's keep-outs and of the
-/// others.
+/// Los faroles de `town`, el pueblo número `index` del mundo (el que `roads`
+/// nombra con ese índice): alrededor de sus plazas, en sus salidas de caminos y
+/// en sus esquinas, cada uno fuera de las zonas prohibidas del pueblo y lejos
+/// de los demás.
 pub fn town_lamps(town: &TownLayout, index: usize, roads: &RoadNetwork) -> Vec<StreetLamp> {
     let mut keep = keep_outs(town);
     keep.extend(town.obstacles());
@@ -155,9 +163,9 @@ pub fn town_lamps(town: &TownLayout, index: usize, roads: &RoadNetwork) -> Vec<S
     lighter.lamps
 }
 
-/// The lamps of settlement `s`: an estancia's pair at either end of its
-/// casco's gallery and one by its track just inside the gate; none for the
-/// poorer kinds.
+/// Los faroles del asentamiento `s`: el par de una estancia en cada extremo de
+/// la galería de su casco y uno junto a su huella, justo después de la
+/// tranquera; ninguno para los tipos más pobres.
 pub fn settlement_lamps(s: &Settlement) -> Vec<StreetLamp> {
     if s.kind != SettlementKind::Ranch {
         return Vec::new();
@@ -195,9 +203,9 @@ pub fn settlement_lamps(s: &Settlement) -> Vec<StreetLamp> {
     lighter.lamps
 }
 
-/// Puts lamps up one by one, each only where it fits.
+/// Coloca los faroles de a uno, cada uno solo donde entra.
 struct Lamplighter<'a> {
-    /// Boxes no post may come near.
+    /// Rectángulos a los que ningún poste puede acercarse.
     keep: Vec<Aabb>,
     roads: Option<&'a RoadNetwork>,
     tracks: &'a [Track],
@@ -205,8 +213,9 @@ struct Lamplighter<'a> {
 }
 
 impl Lamplighter<'_> {
-    /// Whether a post at `at` keeps its clearance from every keep-out,
-    /// road and track, and its spacing from the lamps already up.
+    /// Si un poste en `at` mantiene su espacio libre respecto de toda zona
+    /// prohibida, camino y huella, y su separación respecto de los faroles ya
+    /// colocados.
     fn fits(&self, at: Vec2) -> bool {
         let reach = StreetLamp {
             at,
@@ -231,7 +240,7 @@ impl Lamplighter<'_> {
                 .all(|l| l.at.distance(at) >= StreetLamps::SPACING)
     }
 
-    /// Puts a lamp up at `at` if it fits; whether it did.
+    /// Coloca un farol en `at` si entra; devuelve si lo hizo.
     fn put(&mut self, at: Vec2, site: LampSite) -> bool {
         let fits = self.fits(at);
         if fits {
@@ -241,7 +250,8 @@ impl Lamplighter<'_> {
     }
 }
 
-/// The middle of the facade of `footprint` facing `n`, and half its width.
+/// El centro de la fachada de `footprint` que mira hacia `n`, y la mitad de su
+/// ancho.
 fn facade(footprint: Aabb, n: Vec2) -> (Vec2, f32) {
     let (c, half) = (footprint.center(), footprint.size() * 0.5);
     let across = Vec2::new(-n.y, n.x);
@@ -256,7 +266,7 @@ fn unit(v: Vec2) -> Option<Vec2> {
     (length > 1e-6).then(|| v * (1.0 / length))
 }
 
-/// The four ways out of a box, east, north, west and south.
+/// Las cuatro salidas de un rectángulo: este, norte, oeste y sur.
 const SIDES: [Vec2; 4] = [
     Vec2::new(1.0, 0.0),
     Vec2::new(0.0, 1.0),
@@ -264,27 +274,28 @@ const SIDES: [Vec2; 4] = [
     Vec2::new(0.0, -1.0),
 ];
 
-/// How generously a town is lit, from its size (user playtest, 2026-10-23:
-/// small plazas had too many lamps).
+/// Qué tan generosamente está iluminado un pueblo, según su tamaño (prueba de
+/// juego del usuario, 2026-10-23: las plazas chicas tenían demasiados faroles).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LampTier {
-    /// A village or halt of at most [`LampTier::VERY_SMALL_BLOCKS`] blocks
-    /// (Metileo): two plaza lamps, corners only round the plaza and by the
-    /// station.
+    /// Un pueblito o un apeadero de como mucho [`LampTier::VERY_SMALL_BLOCKS`]
+    /// manzanas (Metileo): dos faroles de plaza, y esquinas solo alrededor de
+    /// la plaza y junto a la estación.
     VerySmall,
-    /// A small town ([`TownSize::Small`]): four plaza lamps, every other
-    /// corner.
+    /// Un pueblo chico ([`TownSize::Small`]): cuatro faroles de plaza, una
+    /// esquina de cada dos.
     Small,
-    /// A big town: four lamps by each plaza's paths, four more round the
-    /// main monument, every corner.
+    /// Un pueblo grande: cuatro faroles junto a los senderos de cada plaza,
+    /// cuatro más alrededor del monumento principal, todas las esquinas.
     Big,
 }
 
 impl LampTier {
-    /// Most blocks of a very small town: the smallest grid, 3 x 3.
+    /// Máximo de manzanas de un pueblo muy chico: la cuadrícula más chica, de
+    /// 3 x 3.
     pub const VERY_SMALL_BLOCKS: usize = 9;
 
-    /// The tier of `town`.
+    /// La categoría de `town`.
     pub fn of(town: &TownLayout) -> Self {
         let (w, h) = town.blocks();
         match town.size {
@@ -295,8 +306,8 @@ impl LampTier {
     }
 }
 
-/// The unit axis from `from` toward `to` the most: east, north, west or
-/// south.
+/// El eje unitario que más apunta desde `from` hacia `to`: este, norte, oeste o
+/// sur.
 fn axis_toward(from: Vec2, to: Vec2) -> Vec2 {
     let d = to - from;
     SIDES
@@ -305,7 +316,7 @@ fn axis_toward(from: Vec2, to: Vec2) -> Vec2 {
         .unwrap_or(SIDES[1])
 }
 
-/// The town's station's middle, if it has one.
+/// El centro de la estación del pueblo, si tiene una.
 fn station(town: &TownLayout) -> Option<Vec2> {
     town.buildings
         .iter()
@@ -313,11 +324,11 @@ fn station(town: &TownLayout) -> Option<Vec2> {
         .map(|b| b.footprint.center())
 }
 
-/// Round the plazas, by [`LampTier`]: one by each path's mouth, on the
-/// right-hand side as one walks in (a very small town only at the two
-/// mouths on the path toward its station, or north-south without one); in
-/// a big town four more round the main plaza's monument, one in each bed
-/// corner.
+/// Alrededor de las plazas, según [`LampTier`]: uno junto a la entrada de cada
+/// sendero, del lado derecho al entrar caminando (en un pueblo muy chico, solo
+/// en las dos entradas del sendero que va hacia su estación, o en las de
+/// norte-sur si no tiene); en un pueblo grande, cuatro más alrededor del
+/// monumento de la plaza principal, uno en cada esquina del cantero.
 fn plaza_lamps(town: &TownLayout, lighter: &mut Lamplighter) {
     let tier = LampTier::of(town);
     let beside = PLAZA_PATH_WIDTH.max(PLAZA_MONUMENT) / 2.0 + StreetLamps::PATH_GAP;
@@ -341,8 +352,9 @@ fn plaza_lamps(town: &TownLayout, lighter: &mut Lamplighter) {
     }
 }
 
-/// A pair at every exit of the grid a road (not a street across the
-/// railway) leaves `town` by, one to either side of the road just outside.
+/// Un par en cada salida de la cuadrícula por la que un camino (no una calle
+/// que cruza la vía férrea) sale de `town`, uno a cada lado del camino, justo
+/// afuera.
 fn entrance_lamps(town: &TownLayout, index: usize, roads: &RoadNetwork, lighter: &mut Lamplighter) {
     let grid = town.grid();
     let mut exits: Vec<crate::RoadEnd> = Vec::new();
@@ -367,11 +379,11 @@ fn entrance_lamps(town: &TownLayout, index: usize, roads: &RoadNetwork, lighter:
     }
 }
 
-/// One lamp at the curb of a street corner: at every corner of a big town,
-/// at every other one (a checkerboard) in a small town, and in a very small
-/// one only at the plaza's corners and the two corners nearest the station.
-/// The seeded corner of the four comes first; the next one is tried when it
-/// does not fit.
+/// Un farol en el cordón de una esquina: en todas las esquinas de un pueblo
+/// grande, en una de cada dos (en damero) en un pueblo chico y, en uno muy
+/// chico, solo en las esquinas de la plaza y en las dos esquinas más cercanas a
+/// la estación. La esquina elegida por la semilla entre las cuatro se prueba
+/// primero; si no entra, se prueba la siguiente.
 fn corner_lamps(town: &TownLayout, lighter: &mut Lamplighter) {
     let on_street = |p: Vec2| town.streets.iter().any(|s| s.contains_point(p));
     let lines = |across: fn(&Aabb) -> bool, key: fn(Vec2) -> f32| {
@@ -399,7 +411,8 @@ fn corner_lamps(town: &TownLayout, lighter: &mut Lamplighter) {
         .flat_map(|&y| xs.iter().map(move |&x| Vec2::new(x, y)))
         .filter(|&p| on_street(p))
         .collect();
-    // A very small town's: round its plaza, and the two nearest its station.
+    // Los de un pueblo muy chico: alrededor de su plaza y las dos más cercanas
+    // a su estación.
     let by_plaza = town.plaza.expanded(width + 0.1);
     let mut by_station = crossings.clone();
     if let Some(s) = station(town) {
@@ -439,7 +452,7 @@ fn corner_lamps(town: &TownLayout, lighter: &mut Lamplighter) {
     }
 }
 
-/// Whether `p` lies on the edge of `grid`, within half a meter.
+/// Si `p` está en el borde de `grid`, con una tolerancia de medio metro.
 fn on_edge(grid: Aabb, p: Vec2) -> bool {
     let d = [
         p.x - grid.min.x,
@@ -450,7 +463,7 @@ fn on_edge(grid: Aabb, p: Vec2) -> bool {
     d.iter().all(|&d| d > -0.5) && d.iter().any(|d| d.abs() < 0.5)
 }
 
-/// The box between two corners `a` and `b`, in any order.
+/// El rectángulo entre dos esquinas `a` y `b`, en cualquier orden.
 fn between(a: Vec2, b: Vec2) -> Aabb {
     Aabb::new(
         Vec2::new(a.x.min(b.x), a.y.min(b.y)),
@@ -458,9 +471,10 @@ fn between(a: Vec2, b: Vec2) -> Aabb {
     )
 }
 
-/// What a town's lamps keep off besides its obstacles: the ground in front
-/// of every door, every store's veranda, the platforms and their canopies,
-/// the railway and its yard, and every plaza's paths and monument.
+/// Aquello de lo que se mantienen lejos los faroles de un pueblo además de sus
+/// obstáculos: el terreno frente a cada puerta, la galería de cada comercio,
+/// los andenes y sus techos, la vía férrea y su playa, y los senderos y el
+/// monumento de cada plaza.
 fn keep_outs(town: &TownLayout) -> Vec<Aabb> {
     let mut keep = Vec::new();
     for b in &town.buildings {
@@ -512,8 +526,8 @@ mod tests {
         lamps.iter().copied().filter(|l| l.site == site).collect()
     }
 
-    /// Street intersections of `town`: where a north-south street crosses
-    /// an east-west one.
+    /// Intersecciones de calles de `town`: donde una calle norte-sur cruza una
+    /// este-oeste.
     fn intersections(town: &TownLayout) -> Vec<Vec2> {
         let on = |p: Vec2| town.streets.iter().any(|s| s.contains_point(p));
         let mut xs: Vec<f32> = town
@@ -552,9 +566,11 @@ mod tests {
                 .count();
             println!("{} ({tier:?}): {main} lamps in the main plaza", town.name);
             match tier {
-                // One by each path's mouth, none round the monument.
+                // Uno junto a la entrada de cada sendero, ninguno alrededor del
+                // monumento.
                 LampTier::Small => assert_eq!(main, 4, "{}", town.name),
-                // Four more round the monument; four in the station plaza.
+                // Cuatro más alrededor del monumento; cuatro en la plaza de la
+                // estación.
                 LampTier::Big => {
                     assert_eq!(main, 8, "{}", town.name);
                     let station = town.station_plaza.expect("a big town's station plaza");
@@ -574,7 +590,8 @@ mod tests {
         assert!(tiers.contains(&LampTier::Small) && tiers.contains(&LampTier::Big));
     }
 
-    /// Metileo as `assets/world/towns.ron` ships it: a 3 x 3 halt.
+    /// Metileo tal como lo distribuye `assets/world/towns.ron`: un apeadero de
+    /// 3 x 3.
     fn metileo() -> TownLayout {
         TownLayout::generate(&crate::TownConfig {
             name: "Metileo".into(),
@@ -603,7 +620,8 @@ mod tests {
         let lamps = town_lamps(&town, 0, &RoadNetwork::new(Vec::new(), &[]));
         let plaza = of(&lamps, LampSite::Plaza);
         assert_eq!(plaza.len(), 2, "{plaza:?}");
-        // At the two mouths of the path toward the station: on one line.
+        // En las dos entradas del sendero hacia la estación: sobre una misma
+        // línea.
         let c = town.plaza.center();
         let station = station(&town).unwrap();
         let axis = axis_toward(c, station);
@@ -660,7 +678,7 @@ mod tests {
         let mut tiers = 0;
         for (town, lamps) in towns.iter().zip(&lamps) {
             let corners = intersections(town);
-            // Inside the square where the two streets cross.
+            // Dentro del cuadrado donde se cruzan las dos calles.
             let half = town
                 .streets
                 .iter()
@@ -690,8 +708,8 @@ mod tests {
                 }
                 TownSize::Big | TownSize::VeryBig => {
                     tiers |= 2;
-                    // A corner whose four curbs are all taken (a yard, a
-                    // veranda, a door) goes without.
+                    // Una esquina cuyos cuatro cordones están todos ocupados
+                    // (una playa, una galería, una puerta) se queda sin farol.
                     assert!(share >= 0.9, "{}: {share}", town.name);
                 }
             }
@@ -718,7 +736,7 @@ mod tests {
                 for o in &obstacles {
                     assert!(!post.intersects(o), "{} {lamp:?} on {o:?}", town.name);
                 }
-                // On a street only at its curb, never in the lane.
+                // En una calle, solo en su cordón, nunca en el carril.
                 for s in town.streets.iter().filter(|s| s.contains_point(lamp.at)) {
                     let (lo, hi) = (lamp.at - s.min, s.max - lamp.at);
                     let edge = if s.size().x > s.size().y {
@@ -749,8 +767,9 @@ mod tests {
 
     #[test]
     fn palenques_cost_a_town_no_lamp() {
-        // The lamps keep off every obstacle: a palenque on a lamp's spot
-        // would drop it. The same town without its palenques lights the same.
+        // Los faroles se mantienen lejos de todo obstáculo: un palenque en el
+        // lugar de un farol lo eliminaría. El mismo pueblo sin sus palenques
+        // queda iluminado igual.
         let (towns, roads, lamps) = shipped();
         let mut with_posts = 0;
         for (k, (town, lit)) in towns.iter().zip(&lamps).enumerate() {
@@ -764,8 +783,9 @@ mod tests {
 
     #[test]
     fn shade_trees_cost_a_town_no_lamp() {
-        // Trees keep off the lamps' spots (the crossings, the plaza edge, the
-        // doors): the same town without its trees lights the same.
+        // Los árboles se mantienen lejos de los lugares de los faroles (los
+        // cruces, el borde de la plaza, las puertas): el mismo pueblo sin sus
+        // árboles queda iluminado igual.
         let (towns, roads, lamps) = shipped();
         let mut with_trees = 0;
         for (k, (town, lit)) in towns.iter().zip(&lamps).enumerate() {
@@ -773,7 +793,7 @@ mod tests {
             bare.shade_trees.clear();
             with_trees += town.shade_trees.len();
             assert_eq!(&town_lamps(&bare, k, &roads), lit, "{}", town.name);
-            // And a post and a trunk keep a hand's breadth apart.
+            // Y un poste y un tronco quedan a un palmo de distancia.
             for lamp in lit {
                 for tree in &town.shade_trees {
                     let gap = lamp.at.distance(tree.at);
@@ -828,8 +848,8 @@ mod tests {
         );
     }
 
-    /// The cells of a `step` grid over `area` someone of `radius` reaches
-    /// on foot from `from`, kept off `blocked`.
+    /// Las celdas de una grilla de paso `step` sobre `area` a las que alguien
+    /// de radio `radius` llega a pie desde `from`, sin pasar por `blocked`.
     fn reachable(area: Aabb, blocked: &[Aabb], radius: f32, from: Vec2) -> Vec<Vec2> {
         let step = 0.25;
         let (w, h) = (
@@ -870,8 +890,8 @@ mod tests {
 
     #[test]
     fn plaza_furniture_keeps_every_plaza_lamp_and_the_paths_walkable() {
-        // The shipped towns with all their lamps, and the sample towns
-        // (a village among them) with their plaza lamps.
+        // Los pueblos distribuidos con todos sus faroles, y los pueblos de
+        // ejemplo (entre ellos un pueblito) con sus faroles de plaza.
         let (shipped, _, lamps) = shipped();
         let samples = crate::town::tests::sample_towns();
         let plaza_only = samples.iter().map(|t| {
@@ -894,8 +914,8 @@ mod tests {
         let mut tiers = std::collections::HashSet::new();
         for (town, lamps) in &towns {
             tiers.insert(LampTier::of(town));
-            // Every plaza lamp still stands where it stood before the
-            // furniture: by each mouth, and round a city's monument.
+            // Cada farol de plaza sigue donde estaba antes del mobiliario:
+            // junto a cada entrada, y alrededor del monumento de una ciudad.
             let plaza = of(lamps, LampSite::Plaza);
             let main = plaza
                 .iter()
@@ -907,7 +927,7 @@ mod tests {
                 LampTier::Big => 8,
             };
             assert_eq!(main, want, "{}", town.name);
-            // And clear of every obstacle, the furniture's included.
+            // Y lejos de todo obstáculo, incluido el del mobiliario.
             let obstacles = town.obstacles();
             for l in &plaza {
                 let reach = l.obstacle().expanded(StreetLamps::CLEARANCE);
@@ -917,9 +937,10 @@ mod tests {
             blocked.extend(lamps.iter().map(StreetLamp::obstacle));
             for (k, f) in town.plaza_furniture().into_iter().enumerate() {
                 let (c, half) = (f.area.center(), f.area.size() * 0.5);
-                // A walker and a rider, from one path's mouth just outside
-                // the plaza, reach the other three and walk round the
-                // monument; the walker reaches the plaza's meeting spot.
+                // Un peatón y un jinete, desde la entrada de un sendero justo
+                // afuera de la plaza, llegan a las otras tres y rodean el
+                // monumento caminando; el peatón llega al punto de encuentro de
+                // la plaza.
                 let mouths: Vec<Vec2> = SIDES
                     .iter()
                     .map(|&n| c + n * (n.x.abs() * half.x + n.y.abs() * half.y + 0.5))

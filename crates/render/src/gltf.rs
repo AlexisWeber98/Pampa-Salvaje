@@ -1,11 +1,12 @@
-//! glTF models: third-party scenes that keep their PBR materials.
+//! Modelos glTF: escenas de terceros que conservan sus materiales PBR.
 //!
-//! Unlike the OBJ vegetation, which is parsed and baked by hand at startup,
-//! a glTF file goes through Bevy's `AssetServer`: it loads in the background
-//! and its first scene is spawned under an entity with [`scene_at`]. The
-//! asset server must read from the game's [`AssetRoot`]; build its plugin
-//! with [`asset_plugin`]. A missing file logs a warning and loads nothing,
-//! so the caller can draw a procedural stand-in instead.
+//! A diferencia de la vegetación OBJ, que se interpreta y se hornea a mano al
+//! inicio, un archivo glTF pasa por el `AssetServer` de Bevy: se carga en
+//! segundo plano y su primera escena se crea bajo una entidad con [`scene_at`].
+//! El servidor de assets debe leer desde el [`AssetRoot`] del juego; su plugin
+//! se construye con [`asset_plugin`]. Un archivo faltante registra una
+//! advertencia y no carga nada, para que quien llama pueda dibujar en su lugar
+//! un sustituto procedural.
 
 use bevy::asset::RecursiveDependencyLoadState;
 use bevy::gltf::GltfAssetLabel;
@@ -14,11 +15,12 @@ use bevy::world_serialization::{WorldAsset, WorldAssetRoot};
 
 use crate::AssetRoot;
 
-/// Where the glTF models live, under the [`AssetRoot`].
+/// Dónde están los modelos glTF, bajo el [`AssetRoot`].
 pub const MODEL_DIR: &str = "models";
 
-/// The asset plugin reading from `root`, so glTF paths are relative to the
-/// same `assets/` folder the hand-loaded models and textures use.
+/// El plugin de assets que lee desde `root`, para que las rutas glTF sean
+/// relativas a la misma carpeta `assets/` que usan los modelos y texturas
+/// cargados a mano.
 pub fn asset_plugin(root: &AssetRoot) -> AssetPlugin {
     AssetPlugin {
         file_path: root.0.to_string_lossy().into_owned(),
@@ -26,12 +28,12 @@ pub fn asset_plugin(root: &AssetRoot) -> AssetPlugin {
     }
 }
 
-/// Starts loading the first scene of the glTF (or GLB) file at `path`,
-/// relative to the [`AssetRoot`] (for example `models/test/triangle.gltf`).
+/// Empieza a cargar la primera escena del archivo glTF (o GLB) en `path`,
+/// relativa al [`AssetRoot`] (por ejemplo `models/test/triangle.gltf`).
 ///
-/// Without a root, when the file is missing, or when `path` is not a plain
-/// relative path inside the root (absolute, or with `..`), it logs a
-/// warning and returns `None`, so the caller draws its stand-in.
+/// Sin raíz, cuando falta el archivo, o cuando `path` no es una ruta relativa
+/// simple dentro de la raíz (absoluta, o con `..`), registra una advertencia y
+/// devuelve `None`, para que quien llama dibuje su sustituto.
 pub fn load_scene(
     server: &AssetServer,
     root: Option<&AssetRoot>,
@@ -56,8 +58,8 @@ pub fn load_scene(
     Some(server.load(GltfAssetLabel::Scene(0).from_asset(path.to_owned())))
 }
 
-/// Whether `path` is relative and stays inside the folder it is joined to:
-/// only plain names, no root, prefix, `.` or `..`.
+/// Si `path` es relativa y se mantiene dentro de la carpeta a la que se une:
+/// solo nombres simples, sin raíz, prefijo, `.` ni `..`.
 pub fn is_inside(path: &str) -> bool {
     use std::path::Component;
     let path = std::path::Path::new(path);
@@ -66,8 +68,8 @@ pub fn is_inside(path: &str) -> bool {
         && path.components().all(|c| matches!(c, Component::Normal(_)))
 }
 
-/// How far a model's scene, with its meshes, materials and textures, has
-/// loaded.
+/// Cuánto se ha cargado de la escena de un modelo, con sus mallas, materiales y
+/// texturas.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelState {
     Loading,
@@ -75,8 +77,9 @@ pub enum ModelState {
     Failed,
 }
 
-/// The load state of `scene` and everything it depends on. A failed model
-/// logs its error once from the asset server; callers keep its stand-in.
+/// El estado de carga de `scene` y de todo aquello de lo que depende. Un modelo
+/// que falla registra su error una vez desde el servidor de assets; quienes
+/// llaman conservan su sustituto.
 pub fn model_state(server: &AssetServer, scene: &Handle<WorldAsset>) -> ModelState {
     match server.recursive_dependency_load_state(scene) {
         RecursiveDependencyLoadState::Loaded => ModelState::Ready,
@@ -87,8 +90,8 @@ pub fn model_state(server: &AssetServer, scene: &Handle<WorldAsset>) -> ModelSta
     }
 }
 
-/// The components that spawn `scene` at `transform`. The scene's entities
-/// appear as children once it has loaded.
+/// Los componentes que crean `scene` en `transform`. Las entidades de la escena
+/// aparecen como hijas una vez que se ha cargado.
 pub fn scene_at(scene: Handle<WorldAsset>, transform: Transform) -> impl Bundle {
     (WorldAssetRoot(scene), transform)
 }
@@ -105,12 +108,12 @@ pub(crate) mod tests {
         AssetRoot(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets"))
     }
 
-    /// A headless app with just enough to load glTF files and spawn scenes.
+    /// Una app headless con lo justo para cargar archivos glTF y crear escenas.
     fn app() -> App {
         app_at(&root())
     }
 
-    /// A headless glTF app reading from `root`, finished.
+    /// Una app glTF headless que lee desde `root`, ya finalizada.
     pub(crate) fn app_at(root: &AssetRoot) -> App {
         let mut app = unfinished_app(root);
         app.finish();
@@ -118,9 +121,9 @@ pub(crate) mod tests {
         app
     }
 
-    /// A headless glTF app reading from `root`: loads models with their
-    /// materials and textures, and spawns their scenes. Add plugins, then
-    /// finish it.
+    /// Una app glTF headless que lee desde `root`: carga modelos con sus
+    /// materiales y texturas, y crea sus escenas. Se agregan plugins y luego se
+    /// finaliza.
     pub(crate) fn unfinished_app(root: &AssetRoot) -> App {
         let mut app = App::new();
         app.add_plugins((
@@ -132,8 +135,8 @@ pub(crate) mod tests {
         .init_asset::<Mesh>()
         .init_asset::<Image>()
         .init_asset::<StandardMaterial>()
-        // What the image plugin registers once the GPU says which
-        // compressed formats it takes: none are needed here.
+        // Lo que registra el plugin de imágenes una vez que la GPU dice qué
+        // formatos comprimidos acepta: aquí no hace falta ninguno.
         .register_asset_loader(bevy::image::ImageLoader::new(
             bevy::image::CompressedImageFormats::NONE,
         ))
@@ -147,8 +150,9 @@ pub(crate) mod tests {
         app
     }
 
-    /// What the `PbrPlugin` (not in these headless apps) does for glTF: a
-    /// `StandardMaterial` per glTF material, on every spawned primitive.
+    /// Lo que hace el `PbrPlugin` (que no está en estas apps headless) para
+    /// glTF: un `StandardMaterial` por cada material glTF, en cada primitiva
+    /// creada.
     #[derive(Default, Clone)]
     struct PbrMaterials;
 
@@ -186,7 +190,8 @@ pub(crate) mod tests {
         }
     }
 
-    /// Updates `app` until `scene` stops loading; panics after 10 s.
+    /// Actualiza `app` hasta que `scene` deja de cargar; entra en pánico a los
+    /// 10 s.
     pub(crate) fn settle(app: &mut App, scene: &Handle<WorldAsset>) -> ModelState {
         for _ in 0..2000 {
             app.update();
@@ -224,7 +229,7 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(mesh.count_vertices(), 3);
 
-        // Spawned, the scene hangs its triangle under the placed entity.
+        // Ya creada, la escena cuelga su triángulo bajo la entidad colocada.
         let placed = app
             .world_mut()
             .spawn(scene_at(scene, Transform::from_xyz(1.0, 2.0, 3.0)))
@@ -236,7 +241,8 @@ pub(crate) mod tests {
         assert!(world.entity(placed).get::<Children>().is_some());
     }
 
-    /// Updates `app` until `gltf` is in its assets; panics after 10 s.
+    /// Actualiza `app` hasta que `gltf` está en sus assets; entra en pánico a
+    /// los 10 s.
     fn settle_gltf(app: &mut App, gltf: &Handle<Gltf>) {
         for _ in 0..2000 {
             app.update();
@@ -254,7 +260,8 @@ pub(crate) mod tests {
         let server = app.world().resource::<AssetServer>();
         assert!(load_scene(server, Some(&root()), "models/test/missing.glb").is_none());
         assert!(load_scene(server, None, TRIANGLE).is_none());
-        // The triangle exists, but only a plain path inside the root loads.
+        // El triángulo existe, pero solo se carga una ruta simple dentro de la
+        // raíz.
         for path in [
             "../assets/models/test/triangle.gltf",
             "models/../models/test/triangle.gltf",
@@ -272,7 +279,7 @@ pub(crate) mod tests {
         assert!(is_inside(TRIANGLE));
     }
 
-    /// A scratch assets folder for one test, removed when dropped.
+    /// Una carpeta de assets provisoria para un test, que se borra al soltarla.
     pub(crate) struct Scratch(pub std::path::PathBuf);
 
     impl Scratch {
@@ -284,7 +291,7 @@ pub(crate) mod tests {
             Self(dir)
         }
 
-        /// Writes `text` at `path` inside the folder.
+        /// Escribe `text` en `path` dentro de la carpeta.
         pub(crate) fn write(&self, path: &str, text: &str) {
             let file = self.0.join(path);
             std::fs::create_dir_all(file.parent().unwrap()).unwrap();
@@ -310,8 +317,8 @@ pub(crate) mod tests {
         assert_eq!(settle(&mut app, &scene), ModelState::Failed);
     }
 
-    /// Every glTF the game ships: the Poly Haven props and the filled
-    /// model slots.
+    /// Todos los glTF que trae el juego: los objetos de Poly Haven y las
+    /// ranuras de modelo ya ocupadas.
     fn shipped_models() -> Vec<String> {
         let mut found = Vec::new();
         for dir in ["models/props/polyhaven", "models/third-party"] {
@@ -338,7 +345,7 @@ pub(crate) mod tests {
     #[test]
     fn every_shipped_model_loads_with_its_textures() {
         let models = shipped_models();
-        // 5 Poly Haven props, the windpump and the wrecked wagon.
+        // 5 objetos de Poly Haven, el molino de viento y la carreta destrozada.
         assert!(models.len() >= 7, "{models:?}");
         let mut app = app();
         let server = app.world().resource::<AssetServer>().clone();

@@ -1,13 +1,16 @@
-//! The passenger coach: a wooden British-built carriage in maroon with
-//! cream lining, an arched roof with a clerestory, end platforms with
-//! gates and steps, and a hollow, period interior laid out by [`CoachBody`].
+//! El coche de pasajeros: un coche de madera de fabricación británica en
+//! granate con filetes color crema, un techo abovedado con linterna,
+//! plataformas en los extremos con portezuelas y estribos, y un interior hueco
+//! de época dispuesto por [`CoachBody`].
 //!
-//! Outside: panelled maroon boards, glazed windows in varnished frames, a
-//! cream belt line and eaves lining, the roof of painted canvas, tread-plate
-//! steps and brass hand rails. Inside: varnished panelling with beading,
-//! planked floor and an aisle runner, a lined ceiling with ribs and oil
-//! lamps, upholstered benches with backs facing each other in a bay at each
-//! window, luggage racks of brass over the windows, and lined end doors.
+//! Por fuera: tablas granate con paneles, ventanas vidriadas en marcos
+//! barnizados, una línea de cintura y un filete de alero color crema, el techo
+//! de lona pintada, estribos de chapa antideslizante y pasamanos de bronce. Por
+//! dentro: revestimiento barnizado con molduras, piso de tablones y una
+//! alfombra de pasillo, un cielorraso forrado con costillas y faroles de
+//! aceite, bancos tapizados con los respaldos enfrentados en un compartimento
+//! junto a cada ventana, portaequipajes de bronce sobre las ventanas y puertas
+//! de los extremos forradas.
 
 use std::f32::consts::PI;
 
@@ -19,9 +22,9 @@ use super::builder::CarBuilder;
 use super::kit::Mat;
 use super::shape::{Grain, Shape, rounded_rect};
 
-/// Outer half-width of the roof, over the eaves.
+/// Semiancho exterior del techo, sobre los aleros.
 const EAVES: f32 = 1.5;
-/// Height of the roof's crown over the clerestory.
+/// Altura de la cumbrera del techo sobre la linterna.
 pub const CROWN: f32 = 4.16;
 
 impl CarBuilder<'_, '_> {
@@ -34,7 +37,8 @@ impl CarBuilder<'_, '_> {
         self.coach_inside(length);
     }
 
-    /// Side walls with their window openings, the end walls with doors.
+    /// Las paredes laterales con sus aberturas de ventana, y las de los
+    /// extremos con puertas.
     fn coach_shell(&mut self, length: f32) {
         let (floor, ceiling, wall) = (CoachBody::FLOOR, CoachBody::CEILING, CoachBody::WALL);
         let (sill, lintel) = (CoachBody::SILL, CoachBody::LINTEL);
@@ -60,8 +64,9 @@ impl CarBuilder<'_, '_> {
                 let (x, w) = band(pier[0], pier[1]);
                 self.boxed(Mat::MAROON, Vec3::new(x, y, z), Vec3::new(w, h, wall));
             }
-            // Cream lining: the belt under the windows, the eaves, a beading
-            // each side of every pier, and the varnished sash frames.
+            // Filetes color crema: la cintura bajo las ventanas, los aleros,
+            // una moldura a cada lado de cada pilar y los marcos barnizados de
+            // las hojas.
             for y in [sill - 0.06, sill + 0.0, ceiling - 0.1] {
                 self.boxed(
                     Mat::Cream,
@@ -85,7 +90,8 @@ impl CarBuilder<'_, '_> {
                         Vec3::new(0.07, h, 0.03),
                     );
                 }
-                // Glass, with a sash rail across it and a brass catch.
+                // Vidrio, con un travesaño de hoja que lo cruza y un pestillo
+                // de bronce.
                 self.boxed(Mat::Glass, Vec3::new(x, y, z), Vec3::new(open, h, 0.012));
                 self.boxed(
                     Mat::VARNISH,
@@ -98,8 +104,8 @@ impl CarBuilder<'_, '_> {
                     Vec3::new(0.08, 0.03, 0.02),
                 );
             }
-            // A step board along the foot of the body, and a brass grab
-            // rail at each end beside the door.
+            // Una tabla de estribo a lo largo del pie de la caja, y un
+            // pasamanos de bronce en cada extremo junto a la puerta.
             for end in [-1.0, 1.0] {
                 self.bar(
                     Mat::BRASS,
@@ -117,7 +123,7 @@ impl CarBuilder<'_, '_> {
                 );
             }
         }
-        // End walls, each with a door in the middle.
+        // Las paredes de los extremos, cada una con una puerta en el centro.
         let door = 0.9;
         for end in [-1.0, 1.0] {
             let x = end * (inner / 2.0 - wall / 2.0);
@@ -132,7 +138,8 @@ impl CarBuilder<'_, '_> {
             }
             let (y, h) = band(floor + 2.0, ceiling);
             self.boxed(Mat::MAROON, Vec3::new(x, y, 0.0), Vec3::new(wall, h, door));
-            // The door leaf: varnished, panelled, with a glazed top.
+            // La hoja de la puerta: barnizada, con paneles, con la parte
+            // superior vidriada.
             let outer = end * (inner / 2.0 + 0.012);
             let (y, h) = band(floor, floor + 2.0);
             self.boxed(
@@ -160,11 +167,11 @@ impl CarBuilder<'_, '_> {
         }
     }
 
-    /// The arched roof with its clerestory.
+    /// El techo abovedado con su linterna.
     fn coach_roof(&mut self, length: f32) {
         let eave = CoachBody::CEILING + 0.08;
-        // The roof: a flat underside at the eaves, the arch rising to a
-        // low crown.
+        // El techo: una cara inferior plana en los aleros, con el arco subiendo
+        // hasta una cumbrera baja.
         let arch = |half: f32, base: f32, rise: f32, count: usize| -> Vec<Vec2> {
             (0..=count)
                 .map(|i| {
@@ -179,8 +186,9 @@ impl CarBuilder<'_, '_> {
             Mat::Canvas,
             Shape::along_x(&roof, -reach, reach, true, true),
         );
-        // The clerestory: a raised lantern along the middle with upright
-        // sides, a rounded top, and a dark glazed strip each side.
+        // La linterna: un lucernario elevado a lo largo del centro con
+        // laterales verticales, la parte superior redondeada y una franja
+        // vidriada oscura a cada lado.
         let (low, shoulder) = (eave + 0.1, eave + 0.22);
         let mut lantern = vec![Vec2::new(0.62, low)];
         lantern.extend(arch(0.62, shoulder, CROWN - shoulder, 8));
@@ -198,7 +206,7 @@ impl CarBuilder<'_, '_> {
                 x += 0.62;
             }
         }
-        // Rain strips along the eaves.
+        // Goterones a lo largo de los aleros.
         for side in [-1.0, 1.0] {
             self.boxed(
                 Mat::BLACK,
@@ -208,19 +216,21 @@ impl CarBuilder<'_, '_> {
         }
     }
 
-    /// The end platforms: floor, gates and steps.
+    /// Las plataformas de los extremos: piso, portezuelas y estribos.
     fn coach_platforms(&mut self, length: f32) {
         let floor = CoachBody::FLOOR;
         let inner = length - 2.0 * CoachBody::END_INSET;
         for end in [-1.0, 1.0] {
             let x = end * (length / 2.0 - 0.28);
-            // The platform's tread plate, carried on the buffer beam.
+            // La chapa antideslizante de la plataforma, apoyada sobre el
+            // testero.
             self.boxed(
                 Mat::TREAD,
                 Vec3::new(x, floor - 0.03, 0.0),
                 Vec3::new(0.5, 0.06, 2.5),
             );
-            // Gates: a brass rail either side of the door, on posts.
+            // Portezuelas: una baranda de bronce a cada lado de la puerta,
+            // sobre postes.
             for side in [-1.0, 1.0] {
                 let gate = end * (length / 2.0 - 0.1);
                 let span = (0.5, 1.3);
@@ -244,7 +254,8 @@ impl CarBuilder<'_, '_> {
                         0.02,
                     );
                 }
-                // Steps down at the corner, of tread plate on hangers.
+                // Estribos que bajan en la esquina, de chapa antideslizante
+                // sobre colgantes.
                 for (y, dx) in [(0.82, 0.0), (0.58, -end * 0.02)] {
                     self.boxed(
                         Mat::TREAD,
@@ -258,7 +269,7 @@ impl CarBuilder<'_, '_> {
                     Vec3::new(0.05, 0.7, 0.04),
                 );
             }
-            // A tail lamp bracket on the end wall.
+            // Un soporte de farol de cola en la pared del extremo.
             self.boxed(
                 Mat::BLACK,
                 Vec3::new(end * (inner / 2.0 + 0.05), floor + 2.3, 0.0),
@@ -272,7 +283,7 @@ impl CarBuilder<'_, '_> {
         }
     }
 
-    /// Everything inside the shell.
+    /// Todo lo que está dentro de la carcasa.
     fn coach_inside(&mut self, length: f32) {
         let (floor, ceiling, wall) = (CoachBody::FLOOR, CoachBody::CEILING, CoachBody::WALL);
         let (sill, lintel) = (CoachBody::SILL, CoachBody::LINTEL);
@@ -280,7 +291,7 @@ impl CarBuilder<'_, '_> {
         let reach = CoachBody::HALF_WIDTH - wall;
         let (windows, open) = CoachBody::windows(length);
         let pitch = (length - 3.0) / windows.len() as f32;
-        // The planked floor, an aisle runner and the lined ceiling.
+        // El piso de tablones, una alfombra de pasillo y el cielorraso forrado.
         self.inside_box(
             Mat::VARNISH,
             Vec3::new(0.0, floor - 0.05, 0.0),
@@ -296,7 +307,8 @@ impl CarBuilder<'_, '_> {
             Vec3::new(0.0, ceiling + 0.04, 0.0),
             Vec3::new(inner, 0.08, 2.0 * reach),
         );
-        // Ribs across the ceiling over each pier, and a beading down it.
+        // Costillas que cruzan el cielorraso sobre cada pilar, y una moldura a
+        // lo largo.
         for x in std::iter::once(-inner / 2.0 + 0.5)
             .chain(windows.iter().map(|x| x + pitch / 2.0))
             .take(windows.len() + 1)
@@ -314,7 +326,7 @@ impl CarBuilder<'_, '_> {
                 Vec3::new(inner, 0.016, 0.03),
             );
         }
-        // Wall panelling under the windows and over them, with beading.
+        // Revestimiento de pared bajo las ventanas y sobre ellas, con molduras.
         let mut edges = vec![-inner / 2.0];
         for &x in &windows {
             edges.extend([x - open / 2.0, x + open / 2.0]);
@@ -331,14 +343,14 @@ impl CarBuilder<'_, '_> {
                     Vec3::new(inner - 0.04, h, 0.024),
                 );
             }
-            // The piers between the windows, panelled.
+            // Los pilares entre las ventanas, con paneles.
             let (y, h) = band(sill, lintel);
             for pier in edges.chunks(2) {
                 let (x, w) = band(pier[0], pier[1]);
                 self.inside_box(Mat::VARNISH, Vec3::new(x, y, z), Vec3::new(w, h, 0.024));
             }
-            // Raised-panel beading under each window, and the window's
-            // varnished reveal and sill board.
+            // Molduras de panel en relieve bajo cada ventana, y el derrame
+            // barnizado y el alféizar de la ventana.
             for &x in &windows {
                 let (cy, ch) = band(floor + 0.12, sill - 0.12);
                 let panel = open + 0.3;
@@ -372,7 +384,8 @@ impl CarBuilder<'_, '_> {
                 }
             }
         }
-        // End walls inside: varnished with a lined door, a framed map.
+        // Las paredes de los extremos por dentro: barnizadas, con una puerta
+        // forrada y un mapa enmarcado.
         let door = 0.9;
         for end in [-1.0, 1.0] {
             let x = end * (inner / 2.0 - wall - 0.012);
@@ -406,7 +419,7 @@ impl CarBuilder<'_, '_> {
                 Vec3::new(leaf - end * 0.02, floor + 1.0, 0.33),
                 Vec3::new(0.03, 0.05, 0.12),
             );
-            // A framed route map beside the door.
+            // Un mapa del recorrido enmarcado junto a la puerta.
             self.inside_box(
                 Mat::BRASS,
                 Vec3::new(x - end * 0.02, floor + 1.7, 0.95),
@@ -418,15 +431,16 @@ impl CarBuilder<'_, '_> {
                 Vec3::new(0.006, 0.38, 0.58),
             );
         }
-        // Benches: a seat and a back at each end of each bay, both sides of
-        // the aisle.
+        // Bancos: un asiento y un respaldo en cada extremo de cada
+        // compartimento, a ambos lados del pasillo.
         let (seat, back_cushion, frame, end_panel) = bench_shapes();
         for &x in &windows {
             for facing in [-1.0, 1.0] {
                 let back = x - facing * (pitch / 2.0 - 0.1);
                 let at = back + facing * 0.25;
                 for side in [-1.0, 1.0] {
-                    // Built for the right-hand side facing +X; mirrored.
+                    // Construido para el lado derecho mirando hacia +X;
+                    // espejado.
                     let turn = Quat::from_rotation_y(if facing > 0.0 { 0.0 } else { PI });
                     let mirror = if side > 0.0 { 1.0 } else { -1.0 };
                     let place = |shape: &Shape| {
@@ -443,7 +457,7 @@ impl CarBuilder<'_, '_> {
                 }
             }
         }
-        // Luggage racks of brass over each side's windows.
+        // Portaequipajes de bronce sobre las ventanas de cada lado.
         for side in [-1.0, 1.0] {
             let rail = side * (reach - 0.3);
             let wall_rail = side * (reach - 0.03);
@@ -464,7 +478,8 @@ impl CarBuilder<'_, '_> {
             );
             let mut x = x0;
             while x <= x1 + 1e-3 {
-                // A bracket from the wall to the rail, and a cord of the net.
+                // Un soporte desde la pared hasta la barra, y una cuerda de la
+                // red.
                 self.inside(
                     Mat::BRASS,
                     super::builder::bar_shape(
@@ -486,7 +501,8 @@ impl CarBuilder<'_, '_> {
                 x += 0.6;
             }
         }
-        // Oil lamps under the ceiling, brass cups under a glowing globe.
+        // Faroles de aceite bajo el cielorraso, copas de bronce bajo un globo
+        // encendido.
         for x in [-length / 4.0, 0.0, length / 4.0] {
             let cup = [
                 (0.0, 0.0),
@@ -515,22 +531,25 @@ impl CarBuilder<'_, '_> {
     }
 }
 
-/// How far down the side the wall's skirt reaches, over the rail tops.
+/// Hasta dónde baja el faldón de la pared por el costado, sobre la cara
+/// superior de los rieles.
 const DECK_SIDE: f32 = 1.12;
 
-/// The right-hand bench facing +X, in meters about the bench's seat middle
-/// (the car builder places it): the seat cushion, the back cushion, the
-/// varnished frame and the end panel at the aisle.
+/// El banco del lado derecho mirando hacia +X, en metros alrededor del centro
+/// del asiento del banco (lo coloca el constructor del vagón): el almohadón del
+/// asiento, el almohadón del respaldo, el armazón barnizado y el panel lateral
+/// junto al pasillo.
 pub(super) fn bench_shapes() -> (Shape, Shape, Shape, Shape) {
     let floor = CoachBody::FLOOR;
     let reach = CoachBody::HALF_WIDTH - CoachBody::WALL;
     let (z0, z1) = (0.34, reach - 0.02);
     let width = z1 - z0;
     let mid = (z0 + z1) / 2.0;
-    // Seat cushion: 0.5 deep, 0.1 thick, rounded.
+    // Almohadón del asiento: 0.5 de profundidad, 0.1 de grosor, redondeado.
     let cushion = Shape::along_z(&rounded_rect(0.5, 0.1, 0.04, 3), z0, z1, true, true)
         .translated(Vec3::new(0.0, floor + 0.43, 0.0));
-    // The back leans away from the bay's middle (toward -X) a little.
+    // El respaldo se inclina un poco alejándose del centro del compartimento
+    // (hacia -X).
     let back = Shape::along_z(&rounded_rect(0.1, 0.62, 0.04, 3), z0, z1, true, true).transformed(
         Transform::from_xyz(-0.27, floor + 0.78, 0.0).with_rotation(Quat::from_rotation_z(0.16)),
     );
@@ -539,7 +558,7 @@ pub(super) fn bench_shapes() -> (Shape, Shape, Shape, Shape) {
         Vec3::new(0.46, 0.38, width - 0.04),
         Grain::Along,
     );
-    // The back's board behind its cushion and a top rail.
+    // La tabla del respaldo detrás de su almohadón y un travesaño superior.
     frame.append(
         &Shape::cuboid(
             Vec3::new(-0.0, floor + 0.78, mid),
@@ -556,7 +575,8 @@ pub(super) fn bench_shapes() -> (Shape, Shape, Shape, Shape) {
     (cushion, back, frame, end_panel)
 }
 
-/// `shape` mirrored across the plane Z = 0, windings kept.
+/// `shape` espejada respecto del plano Z = 0, conservando el sentido de los
+/// triángulos.
 fn mirror_z(shape: &Shape) -> Shape {
     let mut out = shape.clone();
     for p in &mut out.positions {
@@ -565,7 +585,7 @@ fn mirror_z(shape: &Shape) -> Shape {
     for n in &mut out.normals {
         n[2] = -n[2];
     }
-    // The triangles' windings flip with the mirror.
+    // El sentido de los triángulos se invierte con el espejado.
     for t in out.indices.chunks_mut(3) {
         t.swap(1, 2);
     }

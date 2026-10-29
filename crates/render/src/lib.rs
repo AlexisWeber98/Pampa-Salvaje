@@ -1,7 +1,7 @@
-//! Bevy plugins that draw the Pampa Salvaje world.
+//! Plugins de Bevy que dibujan el mundo de Pampa Salvaje.
 //!
-//! Everything here reads logic state from `pampa-core` and turns it into
-//! pixels. Nothing here feeds back into game rules.
+//! Todo lo que hay aquí lee el estado lógico de `pampa-core` y lo convierte en
+//! píxeles. Nada de esto retroalimenta las reglas del juego.
 
 use std::path::PathBuf;
 
@@ -74,8 +74,8 @@ pub use train::{TRAIN_DRAW_RADIUS, TrainCar, TrainPlugin, TrainWheel, WorldTrain
 pub use tree::{Species, TreeKit, TreePlugin};
 pub use typeface::{TypefacePlugin, Typefaces};
 
-/// The game's `assets/` folder. Vegetation models and ground textures are
-/// read from it at startup. Without it, or when a file is missing, their
-/// procedural stand-ins are drawn instead.
+/// La carpeta `assets/` del juego. De ella se leen al inicio los modelos de
+/// vegetación y las texturas del suelo. Sin ella, o cuando falta un archivo, se
+/// dibujan en su lugar sus sustitutos procedurales.
 #[derive(Resource, Debug, Clone)]
 pub struct AssetRoot(pub PathBuf);

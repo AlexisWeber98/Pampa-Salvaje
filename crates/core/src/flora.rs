@@ -1,13 +1,14 @@
-//! Native flora of the open pampa between towns: grass tufts (paja and
-//! flechilla), caldén and chañar trees (with the algarrobo, tala and
-//! espinillo among them, and the town trees that escaped into the field),
-//! scattered and in small groves and in the dense monte patches, an ombú
-//! beside some settlements, and the shrubs (piquillín, jarilla and chañar
-//! thickets) of the understory.
+//! Flora nativa de la pampa abierta entre los pueblos: matas de pasto (paja y
+//! flechilla), caldenes y chañares (con el algarrobo, el tala y el espinillo
+//! entre ellos, y los árboles de los pueblos que se escaparon al campo),
+//! dispersos, en pequeñas isletas y en las manchas densas de monte, un ombú
+//! junto a algunos asentamientos, y los arbustos (piquillín, jarilla y
+//! chañarales) del sotobosque.
 //!
-//! Placement is pure and deterministic: each chunk's flora is seeded by its
-//! coordinate, so render can rebuild any chunk at any time and logic can
-//! list every tree of the world once, at load, for collision.
+//! La ubicación es pura y determinista: la flora de cada chunk tiene como
+//! semilla su coordenada, así que el render puede reconstruir cualquier chunk
+//! en cualquier momento y la lógica puede listar todos los árboles del mundo
+//! una sola vez, al cargar, para la colisión.
 
 use crate::rng::Rng;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -18,55 +19,57 @@ use crate::{
     SettlementLayout, Terrain, Vec2, WorldConfig,
 };
 
-/// A native tree of the caldenal.
+/// Un árbol nativo del caldenal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Species {
-    /// *Prosopis caldenia*: 6–9 m, a dark rough trunk and a broad umbrella
-    /// crown.
+    /// *Prosopis caldenia*: 6–9 m, un tronco oscuro y áspero y una copa amplia
+    /// en forma de sombrilla.
     Calden,
-    /// *Geoffroea decorticans*: 3–5 m. It grows in dense thickets
-    /// (chañarales), so it is drawn and collides as one.
+    /// *Geoffroea decorticans*: 3–5 m. Crece en matorrales densos (chañarales),
+    /// así que se dibuja y colisiona como uno solo.
     Chanar,
-    /// *Prosopis flexuosa*: a low, wide, often multi-stem companion of the
-    /// caldén in the monte.
+    /// *Prosopis flexuosa*: un compañero bajo, ancho y a menudo de varios
+    /// troncos del caldén en el monte.
     Algarrobo,
-    /// *Celtis tala*: a rare edge tree, zigzag branches under an irregular
-    /// round crown.
+    /// *Celtis tala*: un árbol de borde poco común, con ramas en zigzag bajo
+    /// una copa redonda irregular.
     Tala,
-    /// *Vachellia caven*: a rare small tree with a rounded crown, on open,
-    /// disturbed ground.
+    /// *Vachellia caven*: un árbol chico poco común, de copa redondeada, en
+    /// terreno abierto y alterado.
     Espinillo,
-    /// *Phytolacca dioica*: a huge buttressed trunk under a broad dense
-    /// dome. Planted beside settlements only, never in the open field.
+    /// *Phytolacca dioica*: un tronco enorme con contrafuertes bajo una cúpula
+    /// amplia y densa. Se planta solo junto a los asentamientos, nunca en campo
+    /// abierto.
     Ombu,
-    /// The towns' paraíso, escaped into the field along roads and round
-    /// settlements.
+    /// El paraíso de los pueblos, escapado al campo a lo largo de los caminos y
+    /// alrededor de los asentamientos.
     Paraiso,
-    /// The towns' olmo, escaped like the paraíso.
+    /// El olmo de los pueblos, escapado como el paraíso.
     Olmo,
-    /// The towns' eucalipto, escaped like the paraíso.
+    /// El eucalipto de los pueblos, escapado como el paraíso.
     Eucalipto,
-    /// The towns' aromo, escaped like the paraíso.
+    /// El aromo de los pueblos, escapado como el paraíso.
     Aromo,
 }
 
-/// How far along its life a tree is: it decides the size and the girth.
+/// En qué etapa de su vida está un árbol: decide el tamaño y el grosor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Age {
-    /// A seedling's first years: a slim stem and a small crown.
+    /// Los primeros años de un renuevo: un tallo delgado y una copa chica.
     Sapling,
-    /// A young tree, still growing.
+    /// Un árbol joven, todavía en crecimiento.
     Young,
-    /// A full-grown tree: most of the stand.
+    /// Un árbol adulto: la mayor parte del monte.
     Mature,
-    /// A rare old giant: tall, thick-trunked and broad-crowned.
+    /// Un gigante viejo poco común: alto, de tronco grueso y copa amplia.
     Old,
 }
 
-/// The most recent chunks' natives, kept across calls so the chunks of a
-/// stream (and the extras of each) reuse each other's: oldest out first,
-/// at most `cap` chunks. A clone starts empty, and the cache never takes
-/// part in comparing two sites.
+/// Los árboles nativos de los chunks más recientes, conservados entre llamadas
+/// para que los chunks de un streaming (y los extras de cada uno) reutilicen
+/// los de los demás: sale primero el más viejo, como mucho `cap` chunks. Un
+/// clon empieza vacío, y la caché nunca participa en la comparación de dos
+/// sitios.
 struct NativeCache {
     cap: usize,
     inner: Mutex<NativeCacheInner>,
@@ -74,15 +77,16 @@ struct NativeCache {
 
 #[derive(Default)]
 struct NativeCacheInner {
-    /// The natives by chunk and by whether the stands were redistributed
-    /// (the one switch of a site that changes them after it is built).
+    /// Los árboles nativos por chunk y según si los montes se redistribuyeron
+    /// (el único ajuste de un sitio que los cambia después de construido).
     map: HashMap<(ChunkCoord, bool), Arc<[Tree]>>,
     order: VecDeque<(ChunkCoord, bool)>,
 }
 
 impl NativeCache {
-    /// Chunks kept by default: the radius-3 scene is 49 chunks, and a pass
-    /// over the whole world, row by row, needs about five rows of 120.
+    /// Chunks que se conservan por defecto: la escena de radio 3 son 49 chunks,
+    /// y una pasada por todo el mundo, fila por fila, necesita unas cinco filas
+    /// de 120.
     const DEFAULT_CAP: usize = 1024;
 
     fn new(cap: usize) -> Self {
@@ -112,8 +116,8 @@ impl NativeCache {
         if let Some(hit) = self.lock().map.get(&key) {
             return hit.clone();
         }
-        // Worked out outside the lock; two threads may both do it, and the
-        // trees are the same.
+        // Se calcula fuera del lock; dos hilos pueden hacerlo los dos, y los
+        // árboles son los mismos.
         let trees: Arc<[Tree]> = work().into();
         let mut inner = self.lock();
         if inner.map.insert(key, trees.clone()).is_none() {
@@ -146,73 +150,77 @@ impl std::fmt::Debug for NativeCache {
     }
 }
 
-/// One tree on the ground plane.
+/// Un árbol en el plano del suelo.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Tree {
     pub at: Vec2,
     pub species: Species,
     pub age: Age,
-    /// Height to the top of the crown, in meters.
+    /// Altura hasta lo alto de la copa, en metros.
     pub height: f32,
-    /// How wide the crown and trunk stand against the height's scale
-    /// (1 is as modelled): a broad tree or a narrow one.
+    /// Qué tan anchos son la copa y el tronco respecto de la escala de la
+    /// altura (1 es como está modelado): un árbol ancho o uno angosto.
     pub width: f32,
-    /// Turn about the vertical, in radians.
+    /// Giro alrededor de la vertical, en radianes.
     pub yaw: f32,
-    /// Seeded look: 32 random bits (render picks the form, the leaf and
-    /// bark tint and whether a caldén is a snag from its bytes).
+    /// Aspecto con semilla: 32 bits aleatorios (el render elige con sus bytes
+    /// la forma, el tono de las hojas y la corteza, y si un caldén es un árbol
+    /// seco).
     pub variant: u32,
 }
 
-/// A kind of native shrub.
+/// Un tipo de arbusto nativo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ShrubKind {
-    /// Piquillín (*Condalia microphylla*): a dense thorny shrub of tiny dark
-    /// leaves, the understory of the monte.
+    /// Piquillín (*Condalia microphylla*): un arbusto espinoso y denso de hojas
+    /// oscuras diminutas, el sotobosque del monte.
     Piquillin,
-    /// Jarilla (*Larrea divaricata*): a resinous yellow-green shrub of many
-    /// upright stems, on open dry ground.
+    /// Jarilla (*Larrea divaricata*): un arbusto resinoso verde amarillento de
+    /// muchos tallos erguidos, en terreno abierto y seco.
     Jarilla,
-    /// Fachinal: a thicket of chañar suckers, along the groves' edges.
+    /// Fachinal: un matorral de rebrotes de chañar, a lo largo de los bordes de
+    /// las isletas.
     Fachinal,
 }
 
-/// One shrub on the ground plane. Not an obstacle: a rider rides through
-/// it (user decision, 2026-10-27).
+/// Un arbusto en el plano del suelo. No es un obstáculo: un jinete pasa a
+/// través de él (decisión del usuario, 2026-10-27).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Shrub {
     pub at: Vec2,
     pub kind: ShrubKind,
-    /// Height to the top, in meters.
+    /// Altura hasta lo alto, en metros.
     pub height: f32,
-    /// How wide it stands against the height's scale (1 is as modelled).
+    /// Qué tan ancho es respecto de la escala de la altura (1 es como está
+    /// modelado).
     pub width: f32,
-    /// Turn about the vertical, in radians.
+    /// Giro alrededor de la vertical, en radianes.
     pub yaw: f32,
-    /// Seeded look: 32 random bits (render picks the form and the tints).
+    /// Aspecto con semilla: 32 bits aleatorios (el render elige la forma y los
+    /// tonos).
     pub variant: u32,
 }
 
-/// A kind of grass tuft.
+/// Un tipo de mata de pasto.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TuftKind {
-    /// Paja: tall coarse bunch grass.
+    /// Paja: pasto en mata alto y áspero.
     Paja,
-    /// Flechilla: low, fine, pale needle grass.
+    /// Flechilla: pasto de aguja bajo, fino y pálido.
     Flechilla,
 }
 
-/// One grass tuft. Tufts are not obstacles.
+/// Una mata de pasto. Las matas no son obstáculos.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Tuft {
     pub at: Vec2,
     pub kind: TuftKind,
-    /// Height, in meters.
+    /// Altura, en metros.
     pub size: f32,
     pub yaw: f32,
 }
 
-/// The flora of one chunk.
+/// La flora de un chunk.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ChunkFlora {
     pub trees: Vec<Tree>,
@@ -220,201 +228,235 @@ pub struct ChunkFlora {
     pub shrubs: Vec<Shrub>,
 }
 
-/// Where flora may grow: the world, its towns' leveled ground, the
-/// railway line and the roads.
+/// Dónde puede crecer la flora: el mundo, el terreno nivelado de sus pueblos,
+/// la línea del ferrocarril y los caminos.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FloraSite {
     config: WorldConfig,
     flat_areas: Vec<FlatArea>,
-    /// The lagoons: grass stops at their wet mud, trees a little farther.
+    /// Las lagunas: el pasto se detiene en su barro húmedo, los árboles un poco
+    /// más lejos.
     lagoons: Vec<Lagoon>,
     rail: Vec<(Vec2, Vec2)>,
     roads: Option<Arc<RoadNetwork>>,
-    /// The chunks a road may reach the extras of: every chunk whose box,
-    /// grown by [`Self::ESCAPE_ROAD_REACH`], meets the bounds of a road
-    /// piece. The others have no escaped tree by a road.
+    /// Los chunks hasta cuyos extras puede llegar un camino: cada chunk cuyo
+    /// rectángulo, agrandado en [`Self::ESCAPE_ROAD_REACH`], toca los límites
+    /// de un tramo de camino. Los demás no tienen ningún árbol escapado junto a
+    /// un camino.
     road_chunks: HashSet<ChunkCoord>,
-    /// The natives of the latest chunks, shared by the calls on this site.
+    /// Los árboles nativos de los últimos chunks, compartidos por las llamadas
+    /// sobre este sitio.
     natives: NativeCache,
-    /// The surveyed fence lines: `x` of the north–south ones, `y` of the
-    /// east–west ones.
+    /// Las líneas de alambrado relevadas: `x` de las norte–sur, `y` de las
+    /// este–oeste.
     fences: (Vec<f32>, Vec<f32>),
-    /// The settlements' footprints, patios and tracks.
+    /// Las huellas de edificio, los patios y las huellas de tierra de los
+    /// asentamientos.
     settlements: Option<Arc<KeepOut>>,
-    /// The hubs of every settlement: the land round a casco, a puesto, a
-    /// chacra or a rancho is cleared for orchard, animals and crops, so the
-    /// monte keeps a little back from it
+    /// Los centros de todos los asentamientos: la tierra alrededor de un casco,
+    /// un puesto, una chacra o un rancho se desmonta para huerta, animales y
+    /// cultivos, así que el monte se mantiene un poco alejado
     /// ([`Self::rural`]).
     worked: Vec<Vec2>,
-    /// Whether [`Self::rural`] scales the stands (always, outside the
-    /// tests that look at a stand's own shape).
+    /// Si [`Self::rural`] escala los montes (siempre, salvo en las pruebas que
+    /// miran la forma propia de un monte).
     redistribute: bool,
     seed: u32,
 }
 
 impl FloraSite {
-    /// Most trees one chunk plants: the monte's. The groves, as dense as they
-    /// always were, stop at [`Self::GROVE_BUDGET`]. The budgets count the
-    /// trees planted: [`Self::TREE_KEEP`] of them stay, so a chunk holds at
-    /// most about a half of these.
+    /// El máximo de árboles que planta un chunk: los del monte. Las isletas,
+    /// tan densas como siempre, se detienen en [`Self::GROVE_BUDGET`]. Los
+    /// presupuestos cuentan los árboles plantados: se quedan
+    /// [`Self::TREE_KEEP`] de ellos, así que un chunk contiene como mucho
+    /// alrededor de la mitad de estos.
     pub const TREE_BUDGET: usize = 160;
-    /// Most trees a chunk's groves and scattered trees add to it.
+    /// El máximo de árboles que le agregan a un chunk sus isletas y sus árboles
+    /// dispersos.
     pub const GROVE_BUDGET: usize = 90;
-    /// Most tufts one chunk holds.
+    /// El máximo de matas que contiene un chunk.
     pub const TUFT_BUDGET: usize = 600;
-    /// Least distance from a tree's trunk to the track centerline, in
-    /// meters: a caldén's crown stays clear of the cars.
+    /// Distancia mínima desde el tronco de un árbol hasta la línea central de
+    /// la vía, en metros: la copa de un caldén se mantiene lejos de los
+    /// vagones.
     pub const TREE_RAIL_MARGIN: f32 = 12.0;
-    /// Least distance from a tuft to the track centerline, in meters: off
-    /// the ballast.
+    /// Distancia mínima desde una mata hasta la línea central de la vía, en
+    /// metros: fuera del balasto.
     pub const TUFT_RAIL_MARGIN: f32 = 3.5;
-    /// Least distance from a tree's trunk to a road's centerline, in
-    /// meters: the road, a verge and the crown's overhang stay clear.
+    /// Distancia mínima desde el tronco de un árbol hasta la línea central de
+    /// un camino, en metros: el camino, una banquina y el vuelo de la copa
+    /// quedan libres.
     pub const TREE_ROAD_MARGIN: f32 = RoadNetwork::HALF_WIDTH + 6.0;
-    /// Least distance from a tuft to a road's centerline, in meters.
+    /// Distancia mínima desde una mata hasta la línea central de un camino, en
+    /// metros.
     pub const TUFT_ROAD_MARGIN: f32 = RoadNetwork::HALF_WIDTH + 0.5;
-    /// Least distance from a tree's trunk to a surveyed fence line, in
-    /// meters: no fence runs through a trunk.
+    /// Distancia mínima desde el tronco de un árbol hasta una línea de
+    /// alambrado relevada, en metros: ningún alambrado atraviesa un tronco.
     pub const TREE_FENCE_MARGIN: f32 = 1.5;
-    /// Least distance from a tree to the world's edge, in meters.
+    /// Distancia mínima desde un árbol hasta el borde del mundo, en metros.
     pub const TREE_EDGE_MARGIN: f32 = 10.0;
-    /// Least distance from a tree to a lagoon's waterline, in meters.
+    /// Distancia mínima desde un árbol hasta la línea del agua de una laguna,
+    /// en metros.
     pub const TREE_LAGOON_MARGIN: f32 = 12.0;
-    /// Least distance from a tree to a town's leveled band, in meters.
+    /// Distancia mínima desde un árbol hasta la franja nivelada de un pueblo,
+    /// en metros.
     pub const TREE_TOWN_MARGIN: f32 = 6.0;
-    /// Least distance from a tree's trunk to a settlement's footprints,
-    /// patio and tracks, in meters: crowns stay off roofs and ruts.
+    /// Distancia mínima desde el tronco de un árbol hasta las huellas de
+    /// edificio, el patio y las huellas de tierra de un asentamiento, en
+    /// metros: las copas se mantienen lejos de los techos y de los surcos.
     pub const TREE_SETTLEMENT_MARGIN: f32 = 4.0;
-    /// Least distance from a tuft, stone or shrub to a settlement's
-    /// footprints, patio and tracks, in meters.
+    /// Distancia mínima desde una mata, una piedra o un arbusto hasta las
+    /// huellas de edificio, el patio y las huellas de tierra de un
+    /// asentamiento, en metros.
     pub const TUFT_SETTLEMENT_MARGIN: f32 = 0.3;
-    /// Most shrubs one chunk holds.
+    /// El máximo de arbustos que contiene un chunk.
     pub const SHRUB_BUDGET: usize = 300;
-    /// Least distance from a shrub to the track centerline, in meters.
+    /// Distancia mínima desde un arbusto hasta la línea central de la vía, en
+    /// metros.
     pub const SHRUB_RAIL_MARGIN: f32 = 6.0;
-    /// Least distance from a shrub to a road's centerline, in meters.
+    /// Distancia mínima desde un arbusto hasta la línea central de un camino,
+    /// en metros.
     pub const SHRUB_ROAD_MARGIN: f32 = RoadNetwork::HALF_WIDTH + 1.5;
-    /// Least distance from a shrub to a town's leveled band, in meters.
+    /// Distancia mínima desde un arbusto hasta la franja nivelada de un pueblo,
+    /// en metros.
     pub const SHRUB_TOWN_MARGIN: f32 = 2.0;
-    /// Least distance from a shrub to a lagoon's waterline, in meters.
+    /// Distancia mínima desde un arbusto hasta la línea del agua de una laguna,
+    /// en metros.
     pub const SHRUB_LAGOON_MARGIN: f32 = 4.0;
-    /// Least distance from a shrub to a settlement's footprints, patio and
-    /// tracks, in meters.
+    /// Distancia mínima desde un arbusto hasta las huellas de edificio, el
+    /// patio y las huellas de tierra de un asentamiento, en metros.
     pub const SHRUB_SETTLEMENT_MARGIN: f32 = 1.5;
-    /// Least distance from a shrub to the world's edge, in meters.
+    /// Distancia mínima desde un arbusto hasta el borde del mundo, en metros.
     pub const SHRUB_EDGE_MARGIN: f32 = 3.0;
-    /// Least distance between two shrubs, in meters: the stands keep lanes
-    /// a rider can pick through, wider than the rider's collider.
+    /// Distancia mínima entre dos arbustos, en metros: los matorrales dejan
+    /// pasillos por los que un jinete puede abrirse camino, más anchos que el
+    /// collider del jinete.
     pub const SHRUB_SPACING: f32 = 1.9;
-    /// Clear ground between a shrub and a tree's trunk, in meters.
+    /// Espacio libre entre un arbusto y el tronco de un árbol, en metros.
     const SHRUB_TRUNK_GAP: f32 = 0.6;
-    /// How near a chunk's border a shrub must stand for the trees of the
-    /// chunk across it to be checked, in meters. It must cover the farthest
-    /// a trunk keeps a shrub off: the stoutest trunk, the stoutest shrub
-    /// and [`Self::SHRUB_TRUNK_GAP`] (a test holds it to that).
+    /// Qué tan cerca del borde de un chunk debe estar un arbusto para que se
+    /// comprueben los árboles del chunk del otro lado, en metros. Debe cubrir
+    /// la mayor distancia a la que un tronco aleja a un arbusto: el tronco más
+    /// grueso, el arbusto más grueso y [`Self::SHRUB_TRUNK_GAP`] (una prueba lo
+    /// exige).
     const SHRUB_BORDER: f32 = 2.0;
-    /// The share of the planted trees that stay (user, 2026-10-27: "sacale
-    /// un 20% al total", then "sacale otro 30%": 0.8 x 0.7, then "un 10% más de árboles":
-    /// 0.56 x 1.1): monte, groves
-    /// and lone trees thinned alike. Shrubs are not thinned.
+    /// La proporción de los árboles plantados que se quedan (usuario, 2026-10-27:
+    /// "sacale un 20% al total", después "sacale otro 30%": 0,8 x 0,7, y después "un
+    /// 10% más de árboles": 0,56 x 1,1): monte, isletas y árboles solitarios se ralean
+    /// por igual. Los arbustos no se ralean.
     pub const TREE_KEEP: f32 = 0.616;
-    /// Within this far of a town's leveled ground (meters) the monte and the
-    /// groves keep [`Self::TOWN_NEAR_SHARE`] of their density.
+    /// A esta distancia o menos del terreno nivelado de un pueblo (en metros),
+    /// el monte y las isletas conservan [`Self::TOWN_NEAR_SHARE`] de su
+    /// densidad.
     pub const TOWN_NEAR: f32 = 1500.0;
-    /// The share of its density the land right round a town keeps.
+    /// La proporción de su densidad que conserva la tierra justo alrededor de
+    /// un pueblo.
     pub const TOWN_NEAR_SHARE: f32 = 0.12;
-    /// From this far (meters) the density is the plain one; past it it
-    /// grows to [`Self::FAR_BOOST`].
+    /// Desde esta distancia (en metros) la densidad es la normal; más allá
+    /// crece hasta [`Self::FAR_BOOST`].
     pub const TOWN_FULL: f32 = 3000.0;
-    /// How far (meters) the open country is from a town when it is as dense
-    /// as it gets.
+    /// A qué distancia de un pueblo (en metros) está el campo abierto cuando
+    /// alcanza su máxima densidad.
     pub const FAR_FULL: f32 = 9000.0;
-    /// How many times denser than the plain density the far country is.
+    /// Cuántas veces más denso que la densidad normal es el campo lejano.
     pub const FAR_BOOST: f32 = 1.6;
-    /// How far (noise units) the far country's monte and grove edges drop
-    /// per unit of [`Self::rural`] over 1.
+    /// Cuánto bajan (en unidades de ruido) los bordes del monte y de las
+    /// isletas del campo lejano por cada unidad de [`Self::rural`] por encima
+    /// de 1.
     const FAR_WIDEN: f32 = 0.12;
-    /// The share of its density the land at a settlement's hub
-    /// keeps.
+    /// La proporción de su densidad que conserva la tierra en el centro de un
+    /// asentamiento.
     pub const WORKED_SHARE: f32 = 0.3;
-    /// Within this far of a settlement's hub (meters) the land
-    /// is worked.
+    /// A esta distancia o menos del centro de un asentamiento (en metros) la
+    /// tierra está trabajada.
     pub const WORKED_NEAR: f32 = 120.0;
-    /// From this far (meters) the land round a casco is as dense as any.
+    /// Desde esta distancia (en metros) la tierra alrededor de un casco es tan
+    /// densa como cualquier otra.
     pub const WORKED_FULL: f32 = 500.0;
-    /// Tree candidates tried per chunk of [`Self::REFERENCE_CHUNK`] meters.
+    /// Candidatos a árbol que se prueban por chunk de [`Self::REFERENCE_CHUNK`]
+    /// metros.
     const TREE_CANDIDATES: f32 = 800.0;
-    /// Shrub candidates tried per chunk of [`Self::REFERENCE_CHUNK`] meters.
+    /// Candidatos a arbusto que se prueban por chunk de
+    /// [`Self::REFERENCE_CHUNK`] metros.
     const SHRUB_CANDIDATES: f32 = 500.0;
-    /// Tuft candidates tried per chunk of [`Self::REFERENCE_CHUNK`] meters.
+    /// Candidatos a mata que se prueban por chunk de [`Self::REFERENCE_CHUNK`]
+    /// metros.
     const TUFT_CANDIDATES: f32 = 600.0;
-    /// The chunk side the candidate counts are tuned for, in meters.
+    /// El lado de chunk para el que están ajustadas las cantidades de
+    /// candidatos, en metros.
     const REFERENCE_CHUNK: f32 = 200.0;
-    /// Chance that a candidate on open pampa becomes a lone tree.
+    /// Probabilidad de que un candidato en la pampa abierta se convierta en un
+    /// árbol solitario.
     const LONE_TREE: f32 = 0.0012;
-    /// Extra chance inside a grove (scaled by the mask).
+    /// Probabilidad extra dentro de una isleta (escalada por la máscara).
     const GROVE_TREE: f32 = 0.4;
-    /// The part of a grove's chance that holds between its clumps: its
-    /// trees gather in clumps with clearings between them.
+    /// La parte de la probabilidad de una isleta que se mantiene entre sus
+    /// grupos: sus árboles se juntan en grupos con claros entre ellos.
     const CLUMP_FLOOR: f32 = 0.02;
-    /// How much likelier a candidate is in the middle of a knot (see
-    /// [`Self::knot`]) than outside every one: the trees seed their
-    /// neighbours, so a stand gathers in clumps with gaps between.
+    /// Cuánto más probable es un candidato en el medio de un nudo (ver
+    /// [`Self::knot`]) que fuera de todos: los árboles siembran a sus vecinos,
+    /// así que un monte se agrupa en matas con huecos entre ellas.
     const KNOT_BOOST: f32 = 6.0;
-    /// Chance that a candidate in the heart of a monte patch becomes a tree.
+    /// Probabilidad de que un candidato en el corazón de una mancha de monte se
+    /// convierta en un árbol.
     const MONTE_TREE: f32 = 0.2;
-    /// The part of the monte's chance that holds between its knots: the
-    /// monte is dense throughout, with glades.
+    /// La parte de la probabilidad del monte que se mantiene entre sus nudos:
+    /// el monte es denso en toda su extensión, con claros.
     const MONTE_FLOOR: f32 = 0.4;
-    /// Cumulative share of the trees that are saplings, young, and mature
-    /// (the rest are old giants), on open ground and in the heart of the
-    /// monte: the monte is a young, regrowing stand.
+    /// Proporción acumulada de los árboles que son renuevos, jóvenes y adultos
+    /// (el resto son gigantes viejos), en terreno abierto y en el corazón del
+    /// monte: el monte es un bosque joven que está rebrotando.
     const AGE_SHARES: [f32; 3] = [0.07, 0.21, 0.965];
     const MONTE_AGE_SHARES: [f32; 3] = [0.22, 0.50, 0.97];
 
-    /// Chance, per candidate spot at a settlement's best ring, of an ombú
-    /// ([`Self::ombu_zone`]).
+    /// Probabilidad, por lugar candidato en el mejor anillo de un asentamiento,
+    /// de un ombú ([`Self::ombu_zone`]).
     const OMBU_TREE: f32 = 0.0025;
-    /// Chance, per candidate spot by a road or a settlement, of an escaped
-    /// town tree on top of the field's own trees ([`Self::escape`]): the
-    /// seedlings of the plantings, left to grow.
+    /// Probabilidad, por lugar candidato junto a un camino o un asentamiento,
+    /// de un árbol de pueblo escapado además de los árboles propios del campo
+    /// ([`Self::escape`]): los renuevos de las plantaciones, que se dejaron
+    /// crecer.
     const ESCAPED_TREE: f32 = 0.03;
-    /// Share of the monte's trees that are algarrobos (a companion of the
-    /// caldén), at the monte's heart.
+    /// Proporción de los árboles del monte que son algarrobos (un compañero del
+    /// caldén), en el corazón del monte.
     const ALGARROBO_SHARE: f32 = 0.12;
-    /// Share of the trees that are tala, and of those that are espinillo, on
-    /// the fringes of the groves and the monte (a fraction of it, see
-    /// [`Self::EDGE_FLOOR`], elsewhere).
+    /// Proporción de los árboles que son talas, y de los que son espinillos, en
+    /// los bordes de las isletas y del monte (en otros lugares, una fracción de
+    /// eso; ver [`Self::EDGE_FLOOR`]).
     const EDGE_SHARE: f32 = 0.04;
-    /// The part of [`Self::EDGE_SHARE`] that tala and espinillo keep off the
-    /// fringes: a few stand alone on open or disturbed ground.
+    /// La parte de [`Self::EDGE_SHARE`] que conservan el tala y el espinillo
+    /// fuera de los bordes: unos pocos crecen solos en terreno abierto o
+    /// alterado.
     const EDGE_FLOOR: f32 = 0.3;
-    /// Share of the trees that are town species in the open field, and
-    /// where [`Self::escape`] is 1 (by a road or a settlement).
+    /// Proporción de los árboles que son especies de pueblo en el campo
+    /// abierto, y donde [`Self::escape`] vale 1 (junto a un camino o un
+    /// asentamiento).
     const TOWN_SHARE_OPEN: f32 = 0.004;
     const TOWN_SHARE_NEAR: f32 = 0.09;
-    /// How the escaped town trees divide among paraíso, olmo, eucalipto and
-    /// aromo.
+    /// Cómo se reparten los árboles de pueblo escapados entre paraíso, olmo,
+    /// eucalipto y aromo.
     const TOWN_MIX: [f32; 4] = [0.35, 0.15, 0.30, 0.20];
-    /// Cumulative share of the ombúes that are young and mature (the rest
-    /// are old): they are planted trees, none a sapling.
+    /// Proporción acumulada de los ombúes que son jóvenes y adultos (el resto
+    /// son viejos): son árboles plantados, ninguno es un renuevo.
     const OMBU_AGE_SHARES: [f32; 3] = [0.0, 0.2, 0.8];
 
-    /// How far from a settlement's hub an ombú may be planted, in meters:
-    /// beside the casco, the puesto or the rancho, never in the open field.
+    /// A qué distancia del centro de un asentamiento se puede plantar un ombú,
+    /// en metros: al lado del casco, el puesto o el rancho, nunca en campo
+    /// abierto.
     pub const OMBU_REACH: f32 = 140.0;
-    /// Roads are lined with escaped town trees (paraíso, olmo, eucalipto,
-    /// aromo) out to this distance from their centerline, in meters.
+    /// Los caminos están bordeados de árboles de pueblo escapados (paraíso,
+    /// olmo, eucalipto, aromo) hasta esta distancia de su línea central, en
+    /// metros.
     pub const ESCAPE_ROAD_REACH: f32 = 60.0;
-    /// Round a settlement's hub the escaped town trees thin out between
-    /// [`Self::ESCAPE_HUB_NEAR`] and this distance, in meters.
+    /// Alrededor del centro de un asentamiento, los árboles de pueblo escapados
+    /// se ralean entre [`Self::ESCAPE_HUB_NEAR`] y esta distancia, en metros.
     pub const ESCAPE_HUB_FAR: f32 = 260.0;
-    /// See [`Self::ESCAPE_HUB_FAR`].
+    /// Ver [`Self::ESCAPE_HUB_FAR`].
     pub const ESCAPE_HUB_NEAR: f32 = 60.0;
 
-    /// The flora of `config`'s world over `terrain` (already leveled for its
-    /// towns, with its roads laid), kept off the `line`'s track and the
-    /// roads.
+    /// La flora del mundo de `config` sobre `terrain` (ya nivelado para sus
+    /// pueblos, con sus caminos trazados), fuera de la vía de `line` y de los
+    /// caminos.
     pub fn new(config: WorldConfig, terrain: &Terrain, line: &RailLine) -> Self {
         let size = config.chunk_size;
         let mut road_chunks = HashSet::new();
@@ -444,10 +486,10 @@ impl FloraSite {
         }
     }
 
-    /// This flora, also kept off every piece of the train's whole `path`
-    /// ([`crate::RailLine::full_path`]): the links and each town's own
-    /// straight track with its run-outs past the town, which
-    /// [`Self::new`]'s links alone leave out.
+    /// Esta flora, además fuera de cada tramo de todo el `path` del tren
+    /// ([`crate::RailLine::full_path`]): los enlaces y la vía recta propia de
+    /// cada pueblo con sus tramos finales más allá del pueblo, que los enlaces
+    /// de [`Self::new`] por sí solos dejan fuera.
     pub fn with_track(mut self, path: &LinePath) -> Self {
         self.rail
             .extend(path.points().windows(2).map(|w| (w[0], w[1])));
@@ -455,37 +497,38 @@ impl FloraSite {
         self
     }
 
-    /// Whether `p` is at least `margin` from every piece of track this
-    /// flora keeps off (see [`Self::with_track`]): the one keep-out the
-    /// terrain's stones and shrubs share with the trees and tufts.
+    /// Si `p` está al menos a `margin` de cada tramo de vía del que se mantiene
+    /// lejos esta flora (ver [`Self::with_track`]): la única zona prohibida que
+    /// las piedras y los arbustos del terreno comparten con los árboles y las
+    /// matas.
     pub fn off_track(&self, p: Vec2, margin: f32) -> bool {
         rail_distance(&self.rail, p) >= margin
     }
 
-    /// Whether a tuft, stone or shrub may grow at `p`: clear of every
-    /// lagoon's water and the narrow wet mud along it
-    /// ([`Lagoon::MUD_BAND`]). The reeds are drawn on their own.
+    /// Si una mata, una piedra o un arbusto puede crecer en `p`: lejos del agua
+    /// de toda laguna y del angosto barro húmedo a lo largo de ella
+    /// ([`Lagoon::MUD_BAND`]). Los juncos se dibujan por separado.
     pub fn off_lagoons(&self, p: Vec2) -> bool {
         self.lagoons.iter().all(|l| !l.is_bare(p))
     }
 
-    /// Whether a tree may stand at `p`: [`Self::TREE_LAGOON_MARGIN`] past
-    /// every lagoon's waterline.
+    /// Si un árbol puede estar en `p`: a [`Self::TREE_LAGOON_MARGIN`] más allá
+    /// de la línea del agua de toda laguna.
     fn tree_off_lagoons(&self, p: Vec2) -> bool {
         self.lagoons
             .iter()
             .all(|l| l.offshore(p) >= Self::TREE_LAGOON_MARGIN)
     }
 
-    /// This flora, with trees kept off the surveyed lines of `fences`.
+    /// Esta flora, con los árboles fuera de las líneas relevadas de `fences`.
     pub fn with_fences(mut self, fences: &FenceLayout) -> Self {
         self.fences = fences.surveyed.clone();
         self.natives.clear();
         self
     }
 
-    /// This flora, also kept off every settlement of `settlements`: its
-    /// footprints, its patio and its tracks.
+    /// Esta flora, además fuera de todo asentamiento de `settlements`: sus
+    /// huellas de edificio, su patio y sus huellas de tierra.
     pub fn with_settlements(mut self, settlements: &SettlementLayout) -> Self {
         self.settlements = Some(settlements.keep_out.clone());
         self.worked = settlements.settlements.iter().map(|s| s.hub).collect();
@@ -493,24 +536,24 @@ impl FloraSite {
         self
     }
 
-    /// Whether `p` is more than `margin` meters (at most
-    /// [`KeepOut::MAX_MARGIN`]) from every settlement this flora keeps off
-    /// (see [`Self::with_settlements`]): an indexed, cheap check the
-    /// terrain's stones and shrubs share with the trees and tufts.
+    /// Si `p` está a más de `margin` metros (como mucho
+    /// [`KeepOut::MAX_MARGIN`]) de todo asentamiento del que se mantiene lejos
+    /// esta flora (ver [`Self::with_settlements`]): una comprobación indexada y
+    /// barata que las piedras y los arbustos del terreno comparten con los
+    /// árboles y las matas.
     pub fn off_settlements(&self, p: Vec2, margin: f32) -> bool {
         self.settlements
             .as_ref()
             .is_none_or(|k| k.is_clear(p, margin))
     }
 
-    /// The world this flora grows in.
+    /// El mundo en el que crece esta flora.
     pub fn config(&self) -> WorldConfig {
         self.config
     }
 
-    /// The trees, tufts and shrubs of chunk `coord`, seeded by its
-    /// coordinate.
-    /// Chunks outside the world grow nothing.
+    /// Los árboles, las matas y los arbustos del chunk `coord`, con su
+    /// coordenada como semilla. Los chunks fuera del mundo no tienen nada.
     pub fn chunk(&self, coord: ChunkCoord) -> ChunkFlora {
         if !self.config.has_chunk(coord) {
             return ChunkFlora::default();
@@ -526,7 +569,7 @@ impl FloraSite {
         }
     }
 
-    /// The shrubs of chunk `coord` (cheaper than [`Self::chunk`]).
+    /// Los arbustos del chunk `coord` (más barato que [`Self::chunk`]).
     pub fn shrubs(&self, coord: ChunkCoord) -> Vec<Shrub> {
         if !self.config.has_chunk(coord) {
             return Vec::new();
@@ -536,7 +579,7 @@ impl FloraSite {
         self.chunk_shrubs(coord, &rail, &trees)
     }
 
-    /// The trees of chunk `coord` (cheaper than [`Self::chunk`]).
+    /// Los árboles del chunk `coord` (más barato que [`Self::chunk`]).
     pub fn trees(&self, coord: ChunkCoord) -> Vec<Tree> {
         if !self.config.has_chunk(coord) {
             return Vec::new();
@@ -544,7 +587,7 @@ impl FloraSite {
         self.thinned(self.chunk_trees(coord, &self.rail_near(coord)))
     }
 
-    /// The pieces of track near chunk `coord`.
+    /// Los tramos de vía cercanos al chunk `coord`.
     fn rail_near(&self, coord: ChunkCoord) -> Vec<(Vec2, Vec2)> {
         let area = coord.bounds(self.config.chunk_size);
         let reach = area.expanded(Self::TREE_RAIL_MARGIN);
@@ -555,8 +598,8 @@ impl FloraSite {
             .collect()
     }
 
-    /// Every tree of the world, chunk by chunk: the same trees
-    /// [`Self::chunk`] gives.
+    /// Todos los árboles del mundo, chunk por chunk: los mismos árboles que da
+    /// [`Self::chunk`].
     pub fn all_trees(&self) -> Vec<Tree> {
         let size = self.config.chunk_size;
         let bounds = self.config.bounds();
@@ -571,8 +614,8 @@ impl FloraSite {
         trees
     }
 
-    /// Every shrub of the world, chunk by chunk: the same shrubs
-    /// [`Self::chunk`] gives.
+    /// Todos los arbustos del mundo, chunk por chunk: los mismos arbustos que
+    /// da [`Self::chunk`].
     pub fn all_shrubs(&self) -> Vec<Shrub> {
         let size = self.config.chunk_size;
         let bounds = self.config.bounds();
@@ -587,9 +630,9 @@ impl FloraSite {
         shrubs
     }
 
-    /// Every tree and every shrub of the world, chunk by chunk: the same
-    /// ones [`Self::all_trees`] and [`Self::all_shrubs`] give, each chunk's
-    /// trees worked out once for both.
+    /// Todos los árboles y todos los arbustos del mundo, chunk por chunk: los
+    /// mismos que dan [`Self::all_trees`] y [`Self::all_shrubs`], calculando
+    /// los árboles de cada chunk una sola vez para ambos.
     pub fn all_plants(&self) -> (Vec<Tree>, Vec<Shrub>) {
         let size = self.config.chunk_size;
         let bounds = self.config.bounds();
@@ -608,22 +651,24 @@ impl FloraSite {
         (trees, shrubs)
     }
 
-    /// How strongly the grove mask favors trees at `p`, in `[0, 1]`:
-    /// low-frequency noise, so trees gather in small groves (isletas).
+    /// Con cuánta fuerza la máscara de isletas favorece los árboles en `p`, en
+    /// `[0, 1]`: ruido de baja frecuencia, para que los árboles se agrupen en
+    /// pequeñas isletas.
     pub fn grove(&self, p: Vec2) -> f32 {
         self.grove_wide(p, 0.0)
     }
 
-    /// [`Self::grove`] with its edges `widen` lower, so the groves cover
-    /// more ground (the far country, [`Self::rural`]).
+    /// [`Self::grove`] con sus bordes bajados en `widen`, para que las isletas
+    /// cubran más terreno (el campo lejano, [`Self::rural`]).
     fn grove_wide(&self, p: Vec2, widen: f32) -> f32 {
         let n =
             (value_noise(self.seed, p, 170.0) + 0.3 * value_noise(self.seed ^ 0x51, p, 65.0)) / 1.3;
         smoothstep(0.56 - widen, 0.84 - widen, n)
     }
 
-    /// How strongly trees gather at `p`, in `[0, 1]`: noise over a few
-    /// tens of meters, so a grove breaks into clumps with clearings.
+    /// Con cuánta fuerza se agrupan los árboles en `p`, en `[0, 1]`: ruido
+    /// sobre unas pocas decenas de metros, para que una isleta se divida en
+    /// grupos con claros.
     pub fn clump(&self, p: Vec2) -> f32 {
         let n = (value_noise(self.seed ^ 0xc1a7, p, 44.0)
             + 0.5 * value_noise(self.seed ^ 0x9d, p, 20.0))
@@ -631,10 +676,10 @@ impl FloraSite {
         smoothstep(0.5, 0.6, n)
     }
 
-    /// How strongly trees seed their neighbours at `p`, in `[0, 1]`: noise
-    /// over a few meters, so a stand gathers in knots of trees with gaps
-    /// between. It is a field of the world, not of a chunk, so the knots
-    /// run across the chunk borders.
+    /// Con cuánta fuerza siembran los árboles a sus vecinos en `p`, en `[0,
+    /// 1]`: ruido sobre unos pocos metros, para que un monte se agrupe en nudos
+    /// de árboles con huecos entre ellos. Es un campo del mundo, no de un
+    /// chunk, así que los nudos atraviesan los bordes de los chunks.
     pub fn knot(&self, p: Vec2) -> f32 {
         let n = (value_noise(self.seed ^ 0x6b07, p, 17.0)
             + 0.6 * value_noise(self.seed ^ 0x3c1, p, 8.0))
@@ -642,16 +687,16 @@ impl FloraSite {
         smoothstep(0.42, 0.62, n)
     }
 
-    /// How much of a monte (a dense caldenal, bosque) `p` lies in, in
-    /// `[0, 1]`: world-scale noise, so the patches are a few hundred meters
-    /// across and run over the chunk borders. Between them the pampa is open
-    /// grass with its scattered trees and groves.
+    /// Qué parte de un monte (un caldenal denso, bosque) hay en `p`, en `[0,
+    /// 1]`: ruido a escala del mundo, para que las manchas midan unos cientos
+    /// de metros y atraviesen los bordes de los chunks. Entre ellas, la pampa
+    /// es pasto abierto con sus árboles dispersos y sus isletas.
     pub fn monte(&self, p: Vec2) -> f32 {
         self.monte_wide(p, 0.0)
     }
 
-    /// [`Self::monte`] with its edges `widen` lower, so the patches cover
-    /// more ground (the far country, [`Self::rural`]).
+    /// [`Self::monte`] con sus bordes bajados en `widen`, para que las manchas
+    /// cubran más terreno (el campo lejano, [`Self::rural`]).
     fn monte_wide(&self, p: Vec2, widen: f32) -> f32 {
         let n = (value_noise(self.seed ^ 0x30e7, p, 480.0)
             + 0.35 * value_noise(self.seed ^ 0x30e8, p, 170.0))
@@ -659,34 +704,35 @@ impl FloraSite {
         smoothstep(0.585 - widen, 0.685 - widen, n)
     }
 
-    /// How dry the grass is at `p`, in `[0, 1]`: 0 is grey-green, 1 dry
-    /// yellow. Low-frequency and continuous.
+    /// Qué tan seco está el pasto en `p`, en `[0, 1]`: 0 es verde grisáceo, 1
+    /// amarillo seco. De baja frecuencia y continuo.
     pub fn dryness(&self, p: Vec2) -> f32 {
         dryness_of(self.seed, p)
     }
 
-    /// The trees that stay out of `planted`.
+    /// Los árboles de `planted` que se quedan.
     fn thinned(&self, mut planted: Vec<Tree>) -> Vec<Tree> {
         planted.retain(|t| self.kept(t.at));
         planted
     }
 
-    /// How much of its monte, groves and lone trees the land at `p` keeps,
-    /// by how far it lies from a town and from a casco (user, 2026-10-27:
-    /// "cerca de los poblados no suele haber mucho monte, pero suele haber
-    /// en el campo"). A smooth field of the world, so it runs over the chunk
-    /// borders like the masks it scales: [`Self::TOWN_NEAR_SHARE`] within
-    /// [`Self::TOWN_NEAR`] of a town's leveled ground, easing up to 1 at
-    /// [`Self::TOWN_FULL`] and on to [`Self::FAR_BOOST`] at
-    /// [`Self::FAR_FULL`] (the share the towns' surroundings lose goes to
-    /// the open country); and [`Self::WORKED_SHARE`] at a settlement's
-    /// hub, back to 1 at [`Self::WORKED_FULL`].
+    /// Cuánto de su monte, sus isletas y sus árboles solitarios conserva la
+    /// tierra en `p`, según qué tan lejos está de un pueblo y de un casco
+    /// (usuario, 2026-10-27: "cerca de los poblados no suele haber mucho monte,
+    /// pero suele haber en el campo"). Un campo suave del mundo, así que
+    /// atraviesa los bordes de los chunks como las máscaras que escala:
+    /// [`Self::TOWN_NEAR_SHARE`] a [`Self::TOWN_NEAR`] o menos del terreno
+    /// nivelado de un pueblo, subiendo suavemente hasta 1 en
+    /// [`Self::TOWN_FULL`] y hasta [`Self::FAR_BOOST`] en [`Self::FAR_FULL`]
+    /// (la proporción que pierden los alrededores de los pueblos pasa al campo
+    /// abierto); y [`Self::WORKED_SHARE`] en el centro de un asentamiento,
+    /// volviendo a 1 en [`Self::WORKED_FULL`].
     pub fn rural(&self, p: Vec2) -> f32 {
         self.rural_by(p, self.hub_distance(p))
     }
 
-    /// Distance from `p` to the nearest settlement hub, in meters (infinite
-    /// without settlements).
+    /// Distancia desde `p` hasta el centro de asentamiento más cercano, en
+    /// metros (infinita si no hay asentamientos).
     fn hub_distance(&self, p: Vec2) -> f32 {
         self.worked
             .iter()
@@ -694,8 +740,7 @@ impl FloraSite {
             .fold(f32::MAX, f32::min)
     }
 
-    /// [`Self::rural`], given the distance to the nearest hub already worked
-    /// out.
+    /// [`Self::rural`], con la distancia al centro más cercano ya calculada.
     fn rural_by(&self, p: Vec2, casco: f32) -> f32 {
         if !self.redistribute {
             return 1.0;
@@ -713,20 +758,21 @@ impl FloraSite {
         by_town * by_casco
     }
 
-    /// How much of an ombú's ground `p` is, in `[0, 1]`, `hub` meters from
-    /// the nearest settlement's hub: a ring beside the casco, the puesto or
-    /// the rancho (outside the patio and the yard, kept clear of trees),
-    /// gone at [`Self::OMBU_REACH`]. It is 0 past that, so no ombú grows in
-    /// the open field.
+    /// Qué parte del terreno de un ombú es `p`, en `[0, 1]`, a `hub` metros del
+    /// centro del asentamiento más cercano: un anillo al lado del casco, el
+    /// puesto o el rancho (fuera del patio y del terreno de alrededor, que se
+    /// mantienen libres de árboles), que desaparece en [`Self::OMBU_REACH`].
+    /// Más allá vale 0, así que ningún ombú crece en campo abierto.
     fn ombu_zone(hub: f32) -> f32 {
         smoothstep(20.0, 45.0, hub)
             * (1.0 - smoothstep(0.6 * Self::OMBU_REACH, Self::OMBU_REACH, hub))
     }
 
-    /// How much escaped town trees favour `p`, in `[0, 1]`: 1 by a road
-    /// (past the margin the trees keep off it) and round a settlement's hub,
-    /// easing out to 0 at [`Self::ESCAPE_ROAD_REACH`] from the road and
-    /// [`Self::ESCAPE_HUB_FAR`] from a hub; 0 in the open field.
+    /// Cuánto favorecen a `p` los árboles de pueblo escapados, en `[0, 1]`: 1
+    /// junto a un camino (pasando el margen que los árboles mantienen respecto
+    /// de él) y alrededor del centro de un asentamiento, bajando suavemente
+    /// hasta 0 a [`Self::ESCAPE_ROAD_REACH`] del camino y a
+    /// [`Self::ESCAPE_HUB_FAR`] de un centro; 0 en campo abierto.
     pub fn escape(&self, p: Vec2) -> f32 {
         self.escape_by(p, self.hub_distance(p))
     }
@@ -743,12 +789,13 @@ impl FloraSite {
         by_hub.max(by_road)
     }
 
-    /// The species of a field tree at a spot of the given `grove`, `monte`
-    /// and `fringe` masks and `escape` share, from `roll`, a uniform `[0, 1)`
-    /// draw. The caldén and the chañar are most of the field; the algarrobo
-    /// comes with the caldén in the monte, the tala and the espinillo are a
-    /// few on the edges and open ground, and the town species are rarer
-    /// still, and commoner by roads and settlements.
+    /// La especie de un árbol de campo en un lugar con las máscaras `grove`,
+    /// `monte` y `fringe` dadas y la proporción `escape`, a partir de `roll`,
+    /// un valor uniforme en `[0, 1)`. El caldén y el chañar son la mayor parte
+    /// del campo; el algarrobo acompaña al caldén en el monte, el tala y el
+    /// espinillo son unos pocos en los bordes y en terreno abierto, y las
+    /// especies de pueblo son todavía más raras, y más comunes junto a caminos
+    /// y asentamientos.
     fn species_at(roll: f32, grove: f32, monte: f32, fringe: f32, escape: f32) -> Species {
         let edge = Self::EDGE_SHARE * (Self::EDGE_FLOOR + (1.0 - Self::EDGE_FLOOR) * fringe);
         let bands = [
@@ -768,8 +815,8 @@ impl FloraSite {
             return Self::town_species(at / town);
         }
         let rest = (at - town) / (1.0 - town - bands.iter().map(|b| b.1).sum::<f32>());
-        // Caldenes rule the groves' cores; chañares fill their edges and
-        // the open ground, and the understory of the monte.
+        // Los caldenes dominan el núcleo de las isletas; los chañares llenan
+        // sus bordes y el terreno abierto, y el sotobosque del monte.
         let edge = 4.0 * grove * (1.0 - grove);
         let calden = (0.3 + 0.45 * grove - 0.2 * edge + 0.3 * monte).clamp(0.1, 0.9);
         if rest < calden {
@@ -779,7 +826,8 @@ impl FloraSite {
         }
     }
 
-    /// The town species a `roll` in `[0, 1)` picks, by [`Self::TOWN_MIX`].
+    /// La especie de pueblo que elige un `roll` en `[0, 1)`, según
+    /// [`Self::TOWN_MIX`].
     fn town_species(roll: f32) -> Species {
         let mut at = roll;
         for (species, share) in [
@@ -799,25 +847,26 @@ impl FloraSite {
         Species::Aromo
     }
 
-    /// Whether the tree planted at `at` stays: [`Self::TREE_KEEP`] of them
-    /// do, chosen by the spot alone, so the same trees go whichever chunk
-    /// asks and the thinning is even over the monte, the groves and the
-    /// lone trees alike. A thinned tree still holds its ground while the
-    /// stand is planted (its neighbours keep their distance), so the stand
-    /// keeps its clumps and clearings and only has gaps in it.
+    /// Si el árbol plantado en `at` se queda: lo hacen [`Self::TREE_KEEP`] de
+    /// ellos, elegidos solo por el lugar, así que se van los mismos árboles sea
+    /// cual sea el chunk que pregunte y el raleo es parejo en el monte, las
+    /// isletas y los árboles solitarios por igual. Un árbol raleado igual ocupa
+    /// su lugar mientras se planta el monte (sus vecinos mantienen la
+    /// distancia), así que el monte conserva sus grupos y claros y solo queda
+    /// con huecos.
     fn kept(&self, at: Vec2) -> bool {
         Rng::new(self.seed ^ at.x.to_bits(), at.y.to_bits()).unit() < Self::TREE_KEEP
     }
 
-    /// The trees of chunk `coord` before the thinning, spaced apart within
-    /// it and from the trees of its neighbours: where a tree stands too close to one of an
-    /// earlier neighbour (the row below, or the chunk to the west), the
-    /// later chunk's tree gives way. Each chunk is still decided on its own
-    /// (the same trees every time, in any order), from the neighbours'
-    /// trees before they gave way to theirs.
+    /// Los árboles del chunk `coord` antes del raleo, separados entre sí dentro de él y
+    /// respecto de los árboles de sus vecinos: donde un árbol queda demasiado cerca de uno
+    /// de un vecino anterior (la fila de abajo, o el chunk del oeste), cede el árbol del
+    /// chunk posterior. Cada chunk se sigue decidiendo por separado (siempre los mismos
+    /// árboles, en cualquier orden), a partir de los árboles de los vecinos antes de que
+    /// cedieran ante los suyos.
     ///
-    /// These are what the shrubs and tufts keep clear of, so they stay as
-    /// they were when the trees were thinned.
+    /// Son aquellos de los que se mantienen lejos los arbustos y las matas, así que quedan
+    /// como estaban cuando se ralearon los árboles.
     fn chunk_trees(&self, coord: ChunkCoord, rail: &[(Vec2, Vec2)]) -> Vec<Tree> {
         let size = self.config.chunk_size;
         debug_assert_eq!(rail, self.rail_near(coord));
@@ -830,9 +879,10 @@ impl FloraSite {
             if !self.config.has_chunk(earlier) || !(natives.iter().chain(&extras).any(near)) {
                 continue;
             }
-            // The natives give way to the earlier natives only, so the
-            // extras never displace one; the extras give way to the earlier
-            // extras (and keep clear of every native by their own draw).
+            // Los nativos ceden solo ante los nativos anteriores, así que los
+            // extras nunca desplazan a uno; los extras ceden ante los extras
+            // anteriores (y se mantienen lejos de todos los nativos según su
+            // propio sorteo).
             let rail = self.rail_near(earlier);
             let theirs = self.cached_natives(earlier);
             natives.retain(|t| {
@@ -851,8 +901,8 @@ impl FloraSite {
         natives
     }
 
-    /// The trees scattered over chunk `coord` (the field's own and the
-    /// extras), spaced apart within it.
+    /// Los árboles distribuidos sobre el chunk `coord` (los propios del campo y
+    /// los extras), separados entre sí dentro de él.
     fn scattered_trees(&self, coord: ChunkCoord, rail: &[(Vec2, Vec2)]) -> Vec<Tree> {
         let mut trees = self.native_trees(coord, rail);
         let extras = self.extra_trees(coord, rail, &trees);
@@ -860,8 +910,8 @@ impl FloraSite {
         trees
     }
 
-    /// [`Self::native_trees`] of chunk `coord` over its own rail, from the
-    /// cache when it holds them.
+    /// [`Self::native_trees`] del chunk `coord` sobre su propio riel, desde la
+    /// caché cuando los tiene.
     fn cached_natives(&self, coord: ChunkCoord) -> Arc<[Tree]> {
         self.natives.get_or_insert((coord, self.redistribute), || {
             self.native_trees(coord, &self.rail_near(coord))
@@ -874,9 +924,10 @@ impl FloraSite {
         self
     }
 
-    /// The field's own trees of chunk `coord` (the monte, the groves and the
-    /// lone trees), spaced apart within it. Nothing else is drawn here, so
-    /// they stand as they always did, whatever [`Self::extra_trees`] adds.
+    /// Los árboles propios del campo del chunk `coord` (el monte, las isletas y
+    /// los árboles solitarios), separados entre sí dentro de él. Aquí no se
+    /// sortea nada más, así que quedan como siempre estuvieron, agregue lo que
+    /// agregue [`Self::extra_trees`].
     fn native_trees(&self, coord: ChunkCoord, rail: &[(Vec2, Vec2)]) -> Vec<Tree> {
         let size = self.config.chunk_size;
         let min = coord.min(size);
@@ -892,19 +943,20 @@ impl FloraSite {
             if trees.len() >= Self::TREE_BUDGET {
                 break;
             }
-            // Thin near the towns and the cascos (the chance scales down),
-            // wider far out (the patches and groves spread: the stands are
-            // as dense as they can be already, so more of them, not
-            // denser); the lone trees keep a little more than the stands.
+            // Ralos cerca de los pueblos y de los cascos (la probabilidad se
+            // reduce), y más extendidos lejos (las manchas y las isletas se
+            // expanden: los montes ya son tan densos como pueden, así que hay
+            // más, no más densos); los árboles solitarios conservan un poco más
+            // que los montes.
             let hub = self.hub_distance(at);
             let rural = self.rural_by(at, hub);
             let widen = Self::FAR_WIDEN * (rural - 1.0).max(0.0);
             let grove = self.grove_wide(at, widen);
             let monte = self.monte_wide(at, widen);
-            // The grove's chance gathers in clumps, and trees seed their
-            // neighbours in knots; the monte is dense throughout, with
-            // glades. Both are fields of the world, so a clump runs on over
-            // a chunk border.
+            // La probabilidad de la isleta se agrupa en grupos, y los árboles
+            // siembran a sus vecinos en nudos; el monte es denso en toda su
+            // extensión, con claros. Ambos son campos del mundo, así que un
+            // grupo sigue más allá del borde de un chunk.
             let knot = self.knot(at);
             let gather = Self::CLUMP_FLOOR + (1.0 - Self::CLUMP_FLOOR) * self.clump(at);
             let seeding = 1.0 + (Self::KNOT_BOOST - 1.0) * knot;
@@ -918,7 +970,8 @@ impl FloraSite {
             let species = if pick >= chance {
                 continue;
             } else if trees.len() >= Self::GROVE_BUDGET && monte_chance <= grove_chance {
-                // A grove stops at its budget; only the monte goes on past it.
+                // Una isleta se detiene en su presupuesto; solo el monte sigue
+                // más allá.
                 continue;
             } else {
                 let fringe = Self::fringe_of(grove, monte);
@@ -936,8 +989,9 @@ impl FloraSite {
         trees
     }
 
-    /// The tree of `species` that grows at `at`, in a spot of the given
-    /// `monte` mask, from the age, height, yaw and width `rolls`.
+    /// El árbol de especie `species` que crece en `at`, en un lugar con la
+    /// máscara `monte` dada, a partir de los valores aleatorios `rolls` de
+    /// edad, altura, giro y ancho.
     fn grow(at: Vec2, species: Species, monte: f32, rolls: [f32; 4], variant: u32) -> Tree {
         let [age_roll, height_roll, yaw, width_roll] = rolls;
         let shares = [0, 1, 2].map(|i| {
@@ -954,10 +1008,10 @@ impl FloraSite {
             None => Age::Old,
         };
         let (lo, hi) = age.height_range(species);
-        // An old giant stands broad; the rest a little narrow or wide.
+        // Un gigante viejo es ancho; el resto, un poco angosto o ancho.
         let width = match age {
-            // An ombú's trunk is the collider's widest: it stays modest
-            // across, whatever its age.
+            // El tronco de un ombú es el más ancho para el collider: se
+            // mantiene moderado de ancho, sea cual sea su edad.
             _ if species == Species::Ombu => 0.95 + 0.2 * width_roll,
             Age::Old => 1.15 + 0.25 * width_roll,
             _ => 0.82 + 0.36 * width_roll,
@@ -973,34 +1027,37 @@ impl FloraSite {
         }
     }
 
-    /// The trees that come on top of the field's own in chunk `coord`: an
-    /// ombú beside a settlement, and the town trees that escaped by the
-    /// roads and settlements. They are planted after the natives, spaced
-    /// from them (and from those of the neighbouring chunks, before these
-    /// give way to theirs), so they never take a native's place. Each is
-    /// drawn from a hash of its spot with its own salt, so the same spot
-    /// gives the same tree whichever chunk asks.
+    /// Los árboles que se suman a los propios del campo en el chunk `coord`: un
+    /// ombú al lado de un asentamiento, y los árboles de pueblo que se
+    /// escaparon por los caminos y los asentamientos. Se plantan después de los
+    /// nativos, separados de ellos (y de los de los chunks vecinos, antes de
+    /// que estos cedan ante los suyos), así que nunca ocupan el lugar de un
+    /// nativo. Cada uno se sortea a partir de un hash de su lugar con su propia
+    /// sal, así que el mismo lugar da el mismo árbol sea cual sea el chunk que
+    /// pregunte.
     ///
-    /// The `natives` of the chunk are given. The extras are not scaled by
-    /// [`Self::rural`] (the land the towns clear of monte is where the
-    /// planted trees stand) and are not capped by [`Self::GROVE_BUDGET`]
-    /// (that stops groves); they stop at [`Self::TREE_BUDGET`] with the
-    /// natives, and [`Self::thinned`] thins them like every other tree.
+    /// Se reciben los `natives` del chunk. Los extras no se escalan con
+    /// [`Self::rural`] (la tierra que los pueblos desmontan es donde están los
+    /// árboles plantados) ni se limitan con [`Self::GROVE_BUDGET`] (que detiene
+    /// las isletas); se detienen en [`Self::TREE_BUDGET`] junto con los
+    /// nativos, y [`Self::thinned`] los ralea como a cualquier otro árbol.
     fn extra_trees(&self, coord: ChunkCoord, rail: &[(Vec2, Vec2)], natives: &[Tree]) -> Vec<Tree> {
         const SALT: u32 = 0x0e57_7a11;
         let size = self.config.chunk_size;
         let min = coord.min(size);
         let mut rng = Rng::new(coord.seed(self.seed), 3);
         let mut extras: Vec<Tree> = Vec::new();
-        // No hub reaches the chunk: past both reaches the hubs favour
-        // nothing, so the per-spot distance is not worked out.
+        // Ningún centro llega hasta el chunk: más allá de ambos alcances los
+        // centros no favorecen nada, así que no se calcula la distancia por
+        // lugar.
         let reach = Self::OMBU_REACH.max(Self::ESCAPE_HUB_FAR);
         let hub_free = self.worked.iter().all(|h| {
             let b = coord.bounds(size);
             let nearest = Vec2::new(h.x.clamp(b.min.x, b.max.x), h.y.clamp(b.min.y, b.max.y));
             nearest.distance(*h) > reach
         });
-        // Nor a road within the escaped trees' reach of the chunk.
+        // Tampoco hay un camino al alcance de los árboles escapados desde el
+        // chunk.
         let road_free = !self.road_chunks.contains(&coord);
         if hub_free && road_free {
             return extras;
@@ -1037,8 +1094,8 @@ impl FloraSite {
             {
                 continue;
             }
-            // Clear of the neighbouring chunks' natives too, as they stand
-            // before giving way: a superset of what is planted there.
+            // Lejos también de los nativos de los chunks vecinos, tal como
+            // están antes de ceder: un superconjunto de lo que se planta ahí.
             let mut clear = true;
             for (dx, dy) in [
                 (-1, -1),
@@ -1093,7 +1150,8 @@ impl FloraSite {
             if !open {
                 continue;
             }
-            // Paja gathers where the grass is greener; flechilla on dry ground.
+            // La paja se agrupa donde el pasto es más verde; la flechilla, en
+            // terreno seco.
             let kind = if kind_roll < 0.25 + 0.4 * (1.0 - self.dryness(at)) {
                 TuftKind::Paja
             } else {
@@ -1110,9 +1168,9 @@ impl FloraSite {
         tufts
     }
 
-    /// How strongly shrubs gather at `p`, in `[0, 1]`: noise over a few
-    /// tens of meters, so the brush grows in thickets with open ground
-    /// between.
+    /// Con cuánta fuerza se agrupan los arbustos en `p`, en `[0, 1]`: ruido
+    /// sobre unas pocas decenas de metros, para que el matorral crezca en matas
+    /// espesas con terreno abierto entre ellas.
     fn thicket(&self, p: Vec2) -> f32 {
         let n = (value_noise(self.seed ^ 0x7a1c, p, 30.0)
             + 0.5 * value_noise(self.seed ^ 0x7a1d, p, 11.0))
@@ -1120,27 +1178,29 @@ impl FloraSite {
         smoothstep(0.38, 0.62, n)
     }
 
-    /// How much `p` lies on the fringe of a grove or of a monte, in
-    /// `[0, 1]`: 1 half way out of one, 0 in the open or at a core.
+    /// Cuánto está `p` en el borde de una isleta o de un monte, en `[0, 1]`: 1
+    /// a mitad de camino hacia afuera de uno, 0 en terreno abierto o en un
+    /// núcleo.
     pub fn fringe(&self, p: Vec2) -> f32 {
         Self::fringe_of(self.grove(p), self.monte(p))
     }
 
-    /// [`Self::fringe`] from the grove and monte masks already worked out.
+    /// [`Self::fringe`] a partir de las máscaras de isleta y monte ya
+    /// calculadas.
     fn fringe_of(grove: f32, monte: f32) -> f32 {
         (4.0 * grove * (1.0 - grove)).max(4.0 * monte * (1.0 - monte))
     }
 
-    /// The share of each shrub kind (piquillín, jarilla, fachinal) at `p`,
-    /// summing to 1: piquillín makes the monte's understory, jarilla holds
-    /// the open dry ground, and the fachinal's chañar suckers fringe the
-    /// groves and the monte.
+    /// La proporción de cada tipo de arbusto (piquillín, jarilla, fachinal) en
+    /// `p`, que suma 1: el piquillín forma el sotobosque del monte, la jarilla
+    /// ocupa el terreno abierto y seco, y los rebrotes de chañar del fachinal
+    /// bordean las isletas y el monte.
     pub fn shrub_shares(&self, p: Vec2) -> [f32; 3] {
         self.shares_of(p, self.monte(p), self.fringe(p))
     }
 
-    /// [`Self::shrub_shares`] from the monte and fringe masks already
-    /// worked out.
+    /// [`Self::shrub_shares`] a partir de las máscaras de monte y de borde ya
+    /// calculadas.
     fn shares_of(&self, p: Vec2, monte: f32, fringe: f32) -> [f32; 3] {
         let dry = self.dryness(p);
         let weights = [
@@ -1152,19 +1212,20 @@ impl FloraSite {
         weights.map(|w| w / total)
     }
 
-    /// The shrubs of chunk `coord`, given its `trees`: densest in the monte
-    /// and along the fringes of groves and monte, sparse in the open. Kept
-    /// off everything the trees keep off (a little closer), off the trunks
-    /// of the trees (those of the neighbouring chunks too) and apart from
-    /// each other within the chunk.
+    /// Los arbustos del chunk `coord`, dados sus `trees`: más densos en el
+    /// monte y a lo largo de los bordes de las isletas y del monte, escasos en
+    /// terreno abierto. Se mantienen lejos de todo aquello de lo que se
+    /// mantienen lejos los árboles (un poco más cerca), de los troncos de los
+    /// árboles (también los de los chunks vecinos) y separados entre sí dentro
+    /// del chunk.
     fn chunk_shrubs(&self, coord: ChunkCoord, rail: &[(Vec2, Vec2)], trees: &[Tree]) -> Vec<Shrub> {
         let size = self.config.chunk_size;
         let min = coord.min(size);
         let mut rng = Rng::new(coord.seed(self.seed), 2);
         let candidates = self.scaled(Self::SHRUB_CANDIDATES);
         let mut shrubs: Vec<Shrub> = Vec::new();
-        // The trees of the chunks around, fetched when a shrub stands near
-        // the border they share.
+        // Los árboles de los chunks de alrededor, que se buscan cuando un
+        // arbusto está cerca del borde que comparten.
         let mut neighbours: Vec<((i32, i32), Vec<Tree>)> = Vec::new();
         const BORDER: f32 = FloraSite::SHRUB_BORDER;
         for _ in 0..candidates {
@@ -1198,7 +1259,8 @@ impl FloraSite {
                 yaw: yaw * std::f32::consts::TAU,
                 variant,
             };
-            // Cheap first: other shrubs, which are few near the candidate.
+            // Primero lo barato: los otros arbustos, que son pocos cerca del
+            // candidato.
             if shrubs
                 .iter()
                 .any(|o| o.at.distance(at) < Self::SHRUB_SPACING)
@@ -1229,9 +1291,10 @@ impl FloraSite {
                 let at_index = match neighbours.iter().position(|(k, _)| *k == key) {
                     Some(i) => i,
                     None => {
-                        // Before the neighbour's trees give way to its own
-                        // neighbours': a superset of its trees, so a shrub
-                        // keeps clear of every one, and a lot cheaper.
+                        // Antes de que los árboles del vecino cedan ante los de
+                        // sus propios vecinos: un superconjunto de sus árboles,
+                        // así que un arbusto se mantiene lejos de todos ellos,
+                        // y mucho más barato.
                         let other = ChunkCoord::new(key.0, key.1);
                         let trees = if self.config.has_chunk(other) {
                             self.scattered_trees(other, &self.rail_near(other))
@@ -1251,9 +1314,9 @@ impl FloraSite {
         shrubs
     }
 
-    /// Whether a shrub may stand at `p`: inside the world, clear of every
-    /// town's band, of the track, of the roads, of the fence lines, of the
-    /// lagoons and of the settlements.
+    /// Si un arbusto puede estar en `p`: dentro del mundo, lejos de la franja
+    /// de todo pueblo, de la vía, de los caminos, de las líneas de alambrado,
+    /// de las lagunas y de los asentamientos.
     fn shrub_room(&self, p: Vec2, rail: &[(Vec2, Vec2)]) -> bool {
         let bounds = self.config.bounds();
         let m = Self::SHRUB_EDGE_MARGIN;
@@ -1276,9 +1339,9 @@ impl FloraSite {
             && self.off_settlements(p, Self::SHRUB_SETTLEMENT_MARGIN)
     }
 
-    /// Whether a tree may stand at `p`: inside the world, clear of every
-    /// town's band, of the track, of the roads, of the fence lines and of
-    /// the settlements.
+    /// Si un árbol puede estar en `p`: dentro del mundo, lejos de la franja de
+    /// todo pueblo, de la vía, de los caminos, de las líneas de alambrado y de
+    /// los asentamientos.
     fn tree_room(&self, p: Vec2, rail: &[(Vec2, Vec2)]) -> bool {
         let bounds = self.config.bounds();
         let m = Self::TREE_EDGE_MARGIN;
@@ -1298,8 +1361,8 @@ impl FloraSite {
             && self.off_settlements(p, Self::TREE_SETTLEMENT_MARGIN)
     }
 
-    /// Whether `p` is at least [`Self::TREE_FENCE_MARGIN`] from every
-    /// surveyed fence line.
+    /// Si `p` está al menos a [`Self::TREE_FENCE_MARGIN`] de toda línea de
+    /// alambrado relevada.
     fn off_fences(&self, p: Vec2) -> bool {
         let clear = |lines: &[f32], v: f32| {
             let i = lines.partition_point(|&l| l < v);
@@ -1312,14 +1375,14 @@ impl FloraSite {
         clear(&self.fences.0, p.x) && clear(&self.fences.1, p.y)
     }
 
-    /// Whether `p` is at least `margin` meters from every road.
+    /// Si `p` está al menos a `margin` metros de todo camino.
     fn off_road(&self, p: Vec2, margin: f32) -> bool {
         self.roads
             .as_ref()
             .is_none_or(|r| r.near(p, margin).is_none_or(|d| d >= margin))
     }
 
-    /// `per_reference` candidates scaled to this world's chunk area.
+    /// `per_reference` candidatos escalados al área de chunk de este mundo.
     fn scaled(&self, per_reference: f32) -> usize {
         let ratio = self.config.chunk_size / Self::REFERENCE_CHUNK;
         (per_reference * ratio * ratio).round() as usize
@@ -1327,12 +1390,12 @@ impl FloraSite {
 }
 
 impl Age {
-    /// Every age, youngest first.
+    /// Todas las edades, de la más joven a la más vieja.
     pub const ALL: [Age; 4] = [Self::Sapling, Self::Young, Self::Mature, Self::Old];
 
-    /// How much thicker than its height says the trunk of a caldén grows:
-    /// a sapling's stem and a mature trunk are stouter by a tenth or so, an
-    /// old giant's by four tenths.
+    /// Cuánto más grueso de lo que indica su altura crece el tronco de un
+    /// caldén: el tallo de un renuevo y un tronco adulto son alrededor de una
+    /// décima más robustos, y el de un gigante viejo, cuatro décimas.
     pub fn girth(self) -> f32 {
         match self {
             Self::Sapling => 1.3,
@@ -1341,19 +1404,19 @@ impl Age {
         }
     }
 
-    /// Lowest and highest height of a `species` of this age, in meters.
+    /// Altura mínima y máxima de una especie `species` de esta edad, en metros.
     pub fn height_range(self, species: Species) -> (f32, f32) {
-        // Sapling, young, mature and old, in that order.
+        // Renuevo, joven, adulto y viejo, en ese orden.
         let [sapling, young, mature, old] = match species {
             Species::Calden => [(2.0, 3.5), (3.5, 6.0), (6.0, 9.0), (10.0, 12.0)],
             Species::Chanar => [(1.5, 2.8), (2.8, 3.8), (3.8, 5.0), (5.0, 6.5)],
-            // Low and wide: 4-8 m.
+            // Bajo y ancho: 4-8 m.
             Species::Algarrobo => [(1.8, 3.0), (3.0, 4.5), (4.5, 6.5), (6.5, 8.0)],
-            // A low shrubby tree of 4-9 m.
+            // Un árbol bajo y arbustivo de 4-9 m.
             Species::Tala => [(1.5, 2.5), (2.5, 4.0), (4.0, 6.5), (6.5, 8.5)],
-            // Up to 5 m.
+            // Hasta 5 m.
             Species::Espinillo => [(1.2, 2.0), (2.0, 3.0), (3.0, 4.2), (4.2, 5.0)],
-            // 12-18 m when old; it is planted as a young tree at the least.
+            // 12-18 m cuando es viejo; como mínimo se planta como árbol joven.
             Species::Ombu => [(5.0, 6.0), (6.0, 10.0), (10.0, 13.0), (13.0, 16.0)],
             Species::Paraiso => [(2.0, 4.0), (4.0, 7.0), (7.0, 10.0), (10.0, 12.0)],
             Species::Olmo => [(3.0, 5.0), (5.0, 9.0), (9.0, 14.0), (14.0, 18.0)],
@@ -1370,7 +1433,7 @@ impl Age {
 }
 
 impl Species {
-    /// Lowest and highest tree of any age, in meters.
+    /// El árbol más bajo y el más alto de cualquier edad, en metros.
     pub fn height_range(self) -> (f32, f32) {
         let (lo, _) = Age::Sapling.height_range(self);
         let (_, hi) = Age::Old.height_range(self);
@@ -1379,12 +1442,12 @@ impl Species {
 }
 
 impl ShrubKind {
-    /// Every kind of shrub.
+    /// Todos los tipos de arbusto.
     pub const ALL: [ShrubKind; 3] = [Self::Piquillin, Self::Jarilla, Self::Fachinal];
 
-    /// Lowest and highest shrub of this kind, in meters: the piquillín
-    /// grows 0.8-2 m, up to 3 m; the jarilla 1-3 m; the fachinal's suckers a
-    /// little higher than the chañar's saplings.
+    /// El arbusto más bajo y el más alto de este tipo, en metros: el piquillín
+    /// crece 0,8-2 m, hasta 3 m; la jarilla 1-3 m; los rebrotes del fachinal,
+    /// un poco más altos que los renuevos del chañar.
     pub fn height_range(self) -> (f32, f32) {
         match self {
             Self::Piquillin => (1.0, 3.0),
@@ -1395,9 +1458,9 @@ impl ShrubKind {
 }
 
 impl Shrub {
-    /// The dense stem core at the ground, in meters.
-    /// Thorny piquillín and a thicket's suckers are stouter than the
-    /// jarilla's slim stems.
+    /// El núcleo denso de tallos a nivel del suelo, en metros. El piquillín
+    /// espinoso y los rebrotes de un matorral son más robustos que los tallos
+    /// delgados de la jarilla.
     pub fn trunk_radius(&self) -> f32 {
         self.height
             * match self.kind {
@@ -1407,7 +1470,7 @@ impl Shrub {
             }
     }
 
-    /// Radius of the shrub seen from above, in meters.
+    /// Radio del arbusto visto desde arriba, en metros.
     pub fn crown_radius(&self) -> f32 {
         let base = match self.kind {
             ShrubKind::Piquillin => 0.5,
@@ -1417,8 +1480,8 @@ impl Shrub {
         base * self.width * self.height
     }
 
-    /// The stem core's footprint, a square as wide as the core. The world
-    /// does not plant it: shrubs never block.
+    /// La huella del núcleo de tallos, un cuadrado tan ancho como el núcleo. El
+    /// mundo no la planta: los arbustos nunca bloquean.
     pub fn obstacle(&self) -> Aabb {
         let side = 2.0 * self.trunk_radius();
         Aabb::from_center_size(self.at, Vec2::new(side, side))
@@ -1426,7 +1489,7 @@ impl Shrub {
 }
 
 impl TuftKind {
-    /// Lowest and highest tuft, in meters.
+    /// La mata más baja y la más alta, en metros.
     pub fn size_range(self) -> (f32, f32) {
         match self {
             Self::Paja => (0.5, 0.9),
@@ -1436,8 +1499,8 @@ impl TuftKind {
 }
 
 impl Tree {
-    /// Trunk radius at the ground, in meters. A chañar's is its thicket's
-    /// dense stem core, which no rider pushes through.
+    /// Radio del tronco a nivel del suelo, en metros. El de un chañar es el
+    /// núcleo denso de tallos de su matorral, que ningún jinete atraviesa.
     pub fn trunk_radius(&self) -> f32 {
         match self.species {
             Species::Calden => 0.035 * self.age.girth() * self.height,
@@ -1445,7 +1508,7 @@ impl Tree {
             Species::Algarrobo => 0.07 * self.height,
             Species::Tala => 0.07 * self.height,
             Species::Espinillo => 0.09 * self.height,
-            // A huge buttressed trunk.
+            // Un tronco enorme con contrafuertes.
             Species::Ombu => 0.1 * self.height,
             Species::Paraiso => 0.055 * self.height,
             Species::Olmo => 0.05 * self.height,
@@ -1454,7 +1517,7 @@ impl Tree {
         }
     }
 
-    /// Radius of the crown seen from above, in meters.
+    /// Radio de la copa vista desde arriba, en metros.
     pub fn crown_radius(&self) -> f32 {
         let base = match self.species {
             Species::Calden => 0.55,
@@ -1471,18 +1534,18 @@ impl Tree {
         base * self.width * self.height
     }
 
-    /// The trunk's footprint, a square as wide as the trunk: a static
-    /// obstacle.
+    /// La huella del tronco, un cuadrado tan ancho como el tronco: un obstáculo
+    /// estático.
     pub fn obstacle(&self) -> Aabb {
         let side = 2.0 * self.trunk_radius();
         Aabb::from_center_size(self.at, Vec2::new(side, side))
     }
 
-    /// The largest [`Self::spacing`] of any tree, in meters.
+    /// El mayor [`Self::spacing`] de cualquier árbol, en metros.
     const MAX_SPACING: f32 = 8.0;
 
-    /// Least distance to another tree's trunk, in meters: a bigger tree
-    /// takes more room, a sapling can stand in the shade of an old one.
+    /// Distancia mínima hasta el tronco de otro árbol, en metros: un árbol más
+    /// grande ocupa más lugar, un renuevo puede estar a la sombra de uno viejo.
     fn spacing(&self) -> f32 {
         match self.species {
             Species::Calden | Species::Algarrobo => 1.6 + 0.3 * self.height,
@@ -1497,9 +1560,9 @@ impl Tree {
     }
 }
 
-/// How dry the grass of `terrain` is at `p`, in `[0, 1]`: the same as
-/// [`FloraSite::dryness`] for a site over that terrain. Render tints the
-/// ground with it.
+/// Qué tan seco está el pasto de `terrain` en `p`, en `[0, 1]`: lo mismo que
+/// [`FloraSite::dryness`] para un sitio sobre ese terreno. El render tiñe el
+/// suelo con esto.
 pub fn grass_dryness(terrain: &Terrain, p: Vec2) -> f32 {
     dryness_of(terrain.seed ^ FLORA_SEED, p)
 }
@@ -1510,17 +1573,17 @@ fn dryness_of(seed: u32, p: Vec2) -> f32 {
     smoothstep(0.3, 0.7, n)
 }
 
-/// Mixed into the terrain seed for every flora stream.
+/// Se mezcla con la semilla del terreno para todos los flujos de flora.
 const FLORA_SEED: u32 = 0xf10a_2a11;
 
-/// Distance from `p` to the flat core of `area` (0 inside it).
+/// Distancia desde `p` hasta el núcleo plano de `area` (0 adentro).
 fn outside(area: &FlatArea, p: Vec2) -> f32 {
     let dx = ((p.x - area.center.x).abs() - area.half_extents.x).max(0.0);
     let dy = ((p.y - area.center.y).abs() - area.half_extents.y).max(0.0);
     dx.hypot(dy)
 }
 
-/// Distance from `p` to the nearest of the `rail` segments.
+/// Distancia desde `p` hasta el más cercano de los segmentos de `rail`.
 fn rail_distance(rail: &[(Vec2, Vec2)], p: Vec2) -> f32 {
     rail.iter()
         .map(|&(a, b)| segment_distance(p, a, b))
@@ -1532,7 +1595,8 @@ fn smoothstep(lo: f32, hi: f32, v: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// Smooth value noise in `[0, 1]` with lattice cells `cell` meters wide.
+/// Ruido de valores suave en `[0, 1]` con celdas de grilla de `cell` metros de
+/// ancho.
 fn value_noise(seed: u32, p: Vec2, cell: f32) -> f32 {
     let (x, y) = (p.x / cell, p.y / cell);
     let (i, j) = (x.floor(), y.floor());
@@ -1549,7 +1613,7 @@ fn fade(t: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// Distance from `p` to the segment `a`–`b`.
+/// Distancia desde `p` hasta el segmento `a`–`b`.
 fn segment_distance(p: Vec2, a: Vec2, b: Vec2) -> f32 {
     let d = b - a;
     let span = d.dot(d);
@@ -1565,7 +1629,8 @@ pub(crate) mod tests {
     use super::*;
     use crate::{Circle, Heading, Rider, RiderInput, RiderParams, TownConfig, World, place_towns};
 
-    /// Two railway towns 3.6 km apart and the line between them.
+    /// Dos pueblos con ferrocarril a 3,6 km de distancia y la línea entre
+    /// ellos.
     fn site() -> (World, RailLine, FloraSite) {
         let configs = [
             TownConfig::castex(),
@@ -1582,14 +1647,15 @@ pub(crate) mod tests {
         let (line, errors) = RailLine::build(None, &towns, world.bounds);
         assert!(errors.is_empty(), "{errors:?}");
         assert_eq!(line.links.len(), 1);
-        // The stands as they are in themselves, not scaled by the distance
-        // to the towns (see `redistributed`).
+        // Los montes tal como son en sí mismos, sin escalar según la distancia
+        // a los pueblos (ver `redistributed`).
         let mut flora = FloraSite::new(config, &world.terrain, &line);
         flora.redistribute = false;
         (world, line, flora)
     }
 
-    /// [`site`]'s flora with the monte scaled by the distance to the towns.
+    /// La flora de [`site`] con el monte escalado según la distancia a los
+    /// pueblos.
     fn redistributed() -> (World, RailLine, FloraSite) {
         let (world, line, mut flora) = site();
         flora.redistribute = true;
@@ -1602,7 +1668,7 @@ pub(crate) mod tests {
             .fold(f32::INFINITY, f32::min)
     }
 
-    /// A block of chunks between the two towns, across the line.
+    /// Un bloque de chunks entre los dos pueblos, a ambos lados de la línea.
     fn between() -> Vec<ChunkCoord> {
         (0..14)
             .flat_map(|x| (-11..1).map(move |y| ChunkCoord::new(x, y)))
@@ -1652,15 +1718,15 @@ pub(crate) mod tests {
             }
         }
         assert!(near_borders > 0, "no pair close across a border to check");
-        // Still deterministic, chunk by chunk.
+        // Sigue siendo determinista, chunk por chunk.
         for c in between().into_iter().step_by(7) {
             assert_eq!(flora.trees(c), flora.trees(c));
             assert_eq!(flora.trees(c), flora.chunk(c).trees);
         }
     }
 
-    /// Every tree of a broad block between the towns and of a grove-rich
-    /// block to the south-west.
+    /// Todos los árboles de un bloque amplio entre los pueblos y de un bloque
+    /// rico en isletas al sudoeste.
     fn sample(flora: &FloraSite) -> Vec<Tree> {
         between()
             .into_iter()
@@ -1682,13 +1748,13 @@ pub(crate) mod tests {
             chanar.len()
         );
         for t in &trees {
-            // Each tree's height belongs to its age class.
+            // La altura de cada árbol corresponde a su clase de edad.
             let (lo, hi) = t.age.height_range(t.species);
             assert!((lo..=hi).contains(&t.height), "{t:?}");
             let (lo, hi) = t.species.height_range();
             assert!((lo..=hi).contains(&t.height), "{t:?}");
         }
-        // The mature trees keep the documented sizes.
+        // Los árboles adultos conservan los tamaños documentados.
         let mature = |ts: &[&Tree], lo: f32, hi: f32| {
             ts.iter()
                 .filter(|t| t.age == Age::Mature)
@@ -1696,8 +1762,8 @@ pub(crate) mod tests {
         };
         assert!(mature(&calden, 6.0, 9.0));
         assert!(mature(&chanar, 3.8, 5.0));
-        // A chañar is drawn as a dense thicket: its obstacle is the thicket's
-        // stem core, wider than a single trunk.
+        // Un chañar se dibuja como un matorral denso: su obstáculo es el núcleo
+        // de tallos del matorral, más ancho que un solo tronco.
         assert!(
             chanar
                 .iter()
@@ -1706,9 +1772,10 @@ pub(crate) mod tests {
         assert!(
             trees
                 .iter()
-                // (A giant eucalipto's trunk, the stoutest here, is under a meter.
-                // The ombú, whose old trunk is 1.6 m, is left out: this site has
-                // no settlement, so none grows here.)
+                // (El tronco de un eucalipto gigante, el más robusto aquí, mide
+                // menos de un metro. El ombú, cuyo tronco viejo mide 1,6 m, queda
+                // fuera: este sitio no tiene asentamientos, así que aquí no crece
+                // ninguno.)
                 .filter(|t| t.species != Species::Ombu)
                 .all(|t| t.trunk_radius() > 0.05 && t.trunk_radius() < 1.0)
         );
@@ -1717,7 +1784,7 @@ pub(crate) mod tests {
     #[test]
     fn trees_come_in_age_classes_and_their_collision_grows_with_them() {
         let (_, _, flora) = site();
-        // Off the monte, which grows a younger stand (see
+        // Fuera del monte, que tiene un bosque más joven (ver
         // `the_monte_is_a_young_stand_with_a_chanar_understory`).
         let trees: Vec<Tree> = sample(&flora)
             .into_iter()
@@ -1737,10 +1804,10 @@ pub(crate) mod tests {
             assert!((0.04..=0.09).contains(&share(Age::Sapling)), "{species:?}");
             assert!((0.10..=0.20).contains(&share(Age::Young)), "{species:?}");
             assert!((0.70..=0.85).contains(&share(Age::Mature)), "{species:?}");
-            // Old giants are rare, but there are some.
+            // Los gigantes viejos son raros, pero hay algunos.
             assert!((0.025..=0.04).contains(&share(Age::Old)), "{species:?}");
-            // A bigger class stands taller, is wider-trunked and takes more
-            // room, on average and without overlap of the extremes.
+            // Una clase mayor es más alta, tiene el tronco más ancho y ocupa
+            // más lugar, en promedio y sin superposición de los extremos.
             let mean = |age: Age, f: fn(&Tree) -> f32| {
                 let v: Vec<f32> = own.iter().filter(|t| t.age == age).map(|t| f(t)).collect();
                 v.iter().sum::<f32>() / v.len() as f32
@@ -1755,8 +1822,9 @@ pub(crate) mod tests {
                 }
             }
         }
-        // A caldén giant is 10-12 m with a trunk thicker than any mature
-        // tree's and a crown wider than any mature tree's.
+        // Un caldén gigante mide 10-12 m, con un tronco más grueso que el de
+        // cualquier árbol adulto y una copa más ancha que la de cualquier árbol
+        // adulto.
         let calden = |age: Age| {
             trees
                 .iter()
@@ -1771,20 +1839,21 @@ pub(crate) mod tests {
         );
         assert!(min(Age::Old, |t| t.crown_radius()) > max(Age::Mature, |t| t.crown_radius()));
         assert!(max(Age::Sapling, |t| t.height) <= 3.5);
-        // Each tree's width is its own, modest, and the giants stand broad.
+        // El ancho de cada árbol es propio y moderado, y los gigantes son
+        // anchos.
         for t in &trees {
             assert!((0.8..=1.4).contains(&t.width), "{t:?}");
         }
         let widths: std::collections::HashSet<u32> =
             trees.iter().map(|t| t.width.to_bits()).collect();
         assert!(widths.len() > trees.len() / 2, "{}", widths.len());
-        // Every tree still has its own yaw and seed.
+        // Cada árbol sigue teniendo su propio giro y su propia semilla.
         let looks: std::collections::HashSet<u32> = trees.iter().map(|t| t.variant).collect();
         assert!(looks.len() > trees.len() * 9 / 10);
     }
 
-    /// Distance from each tree whose grove mask is over `grove` to its
-    /// nearest neighbour.
+    /// Distancia desde cada árbol cuya máscara de isleta supera `grove` hasta
+    /// su vecino más cercano.
     fn grove_neighbour_gaps(flora: &FloraSite, trees: &[Tree], grove: f32) -> Vec<f32> {
         trees
             .iter()
@@ -1815,8 +1884,9 @@ pub(crate) mod tests {
             "grove gaps: mean {mean:.1} m, cv {:.2}, {close:.2} close",
             sd / mean
         );
-        // Counts in 24 m quadrats over the groves: a random scatter has a
-        // variance equal to its mean (an index of 1), an even one far less.
+        // Conteos en cuadrantes de 24 m sobre las isletas: una distribución
+        // aleatoria tiene una varianza igual a su media (un índice de 1), y una
+        // pareja, mucho menor.
         let mut counts = Vec::new();
         for qx in -158..8 {
             for qy in 25..158 {
@@ -1840,12 +1910,14 @@ pub(crate) mod tests {
             qvar / qmean
         );
         assert!(q > 100.0, "{q}");
-        // The even groves had 0.97; clumps with gaps are well over it.
+        // Las isletas parejas daban 0,97; los grupos con huecos quedan bien por
+        // encima.
         assert!(qvar / qmean > 1.6, "dispersion {}", qvar / qmean);
-        // The nearest-neighbour spread (cv) of an even stand sits under a
-        // random one's 0.52 (the even groves had 0.43).
+        // La dispersión de los vecinos más cercanos (cv) de un monte parejo
+        // queda por debajo del 0,52 de uno aleatorio (las isletas parejas daban
+        // 0,43).
         assert!(sd / mean > 0.5, "cv {}", sd / mean);
-        // Many trees stand close.
+        // Muchos árboles están cerca entre sí.
         assert!(close > 0.3, "{close}");
     }
 
@@ -1858,7 +1930,8 @@ pub(crate) mod tests {
             .filter(|t| (0.15..0.85).contains(&flora.grove(t.at)))
             .collect();
         let core: Vec<&Tree> = trees.iter().filter(|t| flora.grove(t.at) >= 0.85).collect();
-        // Among the two main trees: the other species are a few in the hundred.
+        // Entre los dos árboles principales: las otras especies son unas pocas
+        // por cada cien.
         let share = |ts: &[&Tree]| {
             let main: Vec<&&Tree> = ts
                 .iter()
@@ -1874,8 +1947,8 @@ pub(crate) mod tests {
             core.len()
         );
         assert!(edge.len() > 500 && core.len() > 500);
-        // Old: about 0.48 at the edges. Chañares fill the edges, and the
-        // caldenes keep the cores.
+        // Antes: alrededor de 0,48 en los bordes. Los chañares llenan los
+        // bordes y los caldenes conservan los núcleos.
         assert!(share(&edge) > 0.6, "{}", share(&edge));
         assert!(share(&edge) > share(&core) + 0.2);
     }
@@ -1885,7 +1958,8 @@ pub(crate) mod tests {
         let (world, line, flora) = site();
         let bounds = world.bounds;
         let mut chunks = between();
-        // Around both towns, and along the world's west and south edges.
+        // Alrededor de los dos pueblos, y a lo largo de los bordes oeste y sur
+        // del mundo.
         chunks.extend((-4..4).flat_map(|x| (-4..4).map(move |y| ChunkCoord::new(x, y))));
         chunks.extend((11..19).flat_map(|x| (-14..-6).map(move |y| ChunkCoord::new(x, y))));
         chunks.extend((-20..-17).flat_map(|x| (-20..-10).map(move |y| ChunkCoord::new(x, y))));
@@ -1924,12 +1998,12 @@ pub(crate) mod tests {
             }
         }
         assert!(trees > 50 && tufts > 5000, "{trees} {tufts}");
-        // Chunks wholly outside the world grow nothing.
+        // Los chunks completamente fuera del mundo no tienen nada.
         assert_eq!(flora.chunk(ChunkCoord::new(-21, 0)), ChunkFlora::default());
         assert_eq!(flora.chunk(ChunkCoord::new(0, 20)), ChunkFlora::default());
     }
 
-    /// Pearson correlation of two equally long series.
+    /// Correlación de Pearson de dos series de igual longitud.
     fn correlation(a: &[f32], b: &[f32]) -> f32 {
         let n = a.len() as f32;
         let (ma, mb) = (a.iter().sum::<f32>() / n, b.iter().sum::<f32>() / n);
@@ -1944,16 +2018,17 @@ pub(crate) mod tests {
         let (_, _, flora) = site();
         let trees = sample(&flora);
         let size = WorldConfig::default().chunk_size;
-        // Trees in the 12 m wide, 20 m long strip from `x` along `y`.
+        // Árboles en la franja de 12 m de ancho y 20 m de largo desde `x` a lo
+        // largo de `y`.
         let strip = |x: f32, y: f32| {
             trees
                 .iter()
                 .filter(|t| (x..x + 12.0).contains(&t.at.x) && (y..y + 20.0).contains(&t.at.y))
                 .count() as f32
         };
-        // Down every vertical chunk border of the grove-rich block, pair
-        // the strips either side of it, and as a control two neighbouring
-        // strips well inside one chunk.
+        // Por cada borde vertical de chunk del bloque rico en isletas, se
+        // emparejan las franjas a cada lado de él y, como control, dos franjas
+        // vecinas bien dentro de un mismo chunk.
         let (mut across, mut across_to, mut within, mut within_to) =
             (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         for k in -18..0 {
@@ -1966,8 +2041,8 @@ pub(crate) mod tests {
                 within_to.push(strip(seam + 50.0, y));
             }
         }
-        // The fields themselves run on through a border: no jump between
-        // two points a tenth of a meter apart either side of one.
+        // Los propios campos continúan a través de un borde: no hay saltos
+        // entre dos puntos a una décima de metro a cada lado de uno.
         for k in -18..0 {
             for j in 0..200 {
                 let p = Vec2::new(k as f32 * size, -1900.0 + j as f32 * 19.3);
@@ -1986,20 +2061,20 @@ pub(crate) mod tests {
         let inside = correlation(&within, &within_to);
         println!("strip correlation: across a border {cross:.2}, within a chunk {inside:.2}");
         assert!(inside > 0.3, "no clumping to speak of: {inside}");
-        // A border does not cut the clumps: the two sides agree about as well
-        // as two strips of one chunk do.
+        // Un borde no corta los grupos: los dos lados coinciden más o menos
+        // tanto como dos franjas de un mismo chunk.
         assert!(cross > 0.85 * inside, "across {cross}, within {inside}");
     }
 
-    /// Every chunk of the default world.
+    /// Todos los chunks del mundo por defecto.
     fn world_chunks() -> Vec<ChunkCoord> {
         (-20..20)
             .flat_map(|x| (-20..20).map(move |y| ChunkCoord::new(x, y)))
             .collect()
     }
 
-    /// The lowest, the mean and the highest of `field` over a 5 by 5 grid in
-    /// chunk `c`.
+    /// El mínimo, la media y el máximo de `field` sobre una grilla de 5 por 5
+    /// en el chunk `c`.
     fn chunk_range(c: ChunkCoord, field: impl Fn(Vec2) -> f32) -> (f32, f32, f32) {
         let b = c.bounds(WorldConfig::default().chunk_size);
         let step = (b.max - b.min) * 0.25;
@@ -2020,11 +2095,11 @@ pub(crate) mod tests {
             let p = Vec2::new(k as f32 * 7.3 - 1800.0, k as f32 * -3.1 + 400.0);
             let m = flora.monte(p);
             assert!((0.0..=1.0).contains(&m));
-            // Continuous across any chunk border too.
+            // También continuo a través de cualquier borde de chunk.
             assert!((m - flora.monte(p + Vec2::new(1.0, 0.0))).abs() < 0.05);
             assert!((m - flora.monte(p + Vec2::new(0.0, 1.0))).abs() < 0.05);
         }
-        // Walk the world's rows every 100 m, sampling every 20 m.
+        // Recorrer las filas del mundo cada 100 m, muestreando cada 20 m.
         let (mut inside, mut total) = (0, 0);
         let mut runs: Vec<f32> = Vec::new();
         for row in -19..19 {
@@ -2051,9 +2126,9 @@ pub(crate) mod tests {
             "monte: {share:.3} of the world, {} crossings of mean {mean:.0} m, widest {widest:.0} m",
             runs.len()
         );
-        // A good part of the pampa, but not most of it.
+        // Una buena parte de la pampa, pero no la mayor parte.
         assert!((0.21..0.25).contains(&share), "{share}");
-        // Patches a few hundred meters across, the biggest a good deal more.
+        // Manchas de unos cientos de metros, las más grandes bastante más.
         assert!((150.0..600.0).contains(&mean), "{mean}");
         assert!(widest >= 400.0, "{widest}");
     }
@@ -2071,7 +2146,7 @@ pub(crate) mod tests {
             let n = flora.trees(c).len() as f32;
             if monte.1 > 0.8 {
                 peak = peak.max(n);
-                // Where a grove does not add to it.
+                // Donde una isleta no se suma.
                 if grove.2 < 0.3 {
                     inside.push(n);
                 }
@@ -2094,20 +2169,20 @@ pub(crate) mod tests {
             open.len()
         );
         assert!(inside.len() >= 10 && groves.len() >= 10 && open.len() >= 50);
-        // Dense, within the per-chunk budget, and many times the open pampa's
-        // few scattered trees (the groves, a smaller thing, already fill the
-        // budget). The counts are the trees that stay after the thinning
-        // ([`FloraSite::TREE_KEEP`]), so the budgets are caps of the planted
-        // trees and are not reached.
+        // Denso, dentro del presupuesto por chunk, y muchas veces los pocos
+        // árboles dispersos de la pampa abierta (las isletas, algo más chico,
+        // ya llenan el presupuesto). Los conteos son los árboles que quedan
+        // después del raleo ([`FloraSite::TREE_KEEP`]), así que los
+        // presupuestos son límites de los árboles plantados y no se alcanzan.
         assert!(mean(&inside) >= 40.0, "{}", mean(&inside));
         assert!(peak <= FloraSite::TREE_BUDGET as f32);
-        // The groves keep their old budget; only the monte goes past what a
-        // grove keeps (the budget thinned).
+        // Las isletas conservan su antiguo presupuesto; solo el monte supera lo
+        // que conserva una isleta (el presupuesto raleado).
         assert!(grove_peak <= FloraSite::GROVE_BUDGET as f32, "{grove_peak}");
         let grove_kept = FloraSite::GROVE_BUDGET as f32 * FloraSite::TREE_KEEP;
         assert!(peak > grove_kept, "{peak}");
         assert!(mean(&inside) >= 6.0 * mean(&open));
-        // Without clearings: even the lightest monte chunk is a stand.
+        // Sin claros: hasta el chunk de monte más liviano es un bosque.
         let lightest = inside.iter().copied().fold(f32::MAX, f32::min);
         assert!(lightest >= 20.0, "{lightest}");
     }
@@ -2143,18 +2218,18 @@ pub(crate) mod tests {
             share(&open, chanar)
         );
         assert!(heart.len() > 1000 && open.len() > 500);
-        // Mixed ages: many saplings and young trees, but mature ones and the
-        // odd old giant too.
+        // Edades mezcladas: muchos renuevos y árboles jóvenes, pero también
+        // adultos y algún gigante viejo.
         assert!(share(&heart, young) > 0.45, "{}", share(&heart, young));
         assert!(share(&heart, young) > share(&open, young) + 0.2);
         assert!(share(&heart, |t| t.age == Age::Sapling) > 0.2);
         assert!(share(&heart, |t| t.age == Age::Mature) > 0.42);
         assert!(share(&heart, giant) > 0.02);
-        // Caldenes make the canopy and chañares the understory.
+        // Los caldenes forman el dosel y los chañares el sotobosque.
         assert!((0.2..0.5).contains(&share(&heart, chanar)));
     }
 
-    /// Every shrub of the default world, with its chunk.
+    /// Todos los arbustos del mundo por defecto, con su chunk.
     fn world_shrubs(flora: &FloraSite) -> Vec<(ChunkCoord, Shrub)> {
         world_chunks()
             .into_iter()
@@ -2176,7 +2251,7 @@ pub(crate) mod tests {
             assert!(own.iter().all(|s| bounds.contains_point(s.at)));
             most = most.max(own.len());
         }
-        // The thickest chunks reach the budget; neighbours differ.
+        // Los chunks más densos alcanzan el presupuesto; los vecinos difieren.
         assert!(most >= 100, "{most}");
         assert_ne!(
             flora.shrubs(ChunkCoord::new(5, -4)),
@@ -2216,7 +2291,8 @@ pub(crate) mod tests {
         assert!(mean(&monte) >= 40.0, "{}", mean(&monte));
         assert!(mean(&monte) >= 10.0 * mean(&open));
         assert!(mean(&fringe) >= 3.0 * mean(&open));
-        // The open pampa is not bare of brush: a lone shrub here and there.
+        // La pampa abierta no está pelada de matorral: un arbusto solitario
+        // aquí y allá.
         assert!(mean(&open) > 1.0, "{}", mean(&open));
     }
 
@@ -2237,8 +2313,8 @@ pub(crate) mod tests {
         println!(
             "shares (piquillín, jarilla, fachinal): monte {monte:.2?}, fringe {fringe:.2?}, open dry {open:.2?}"
         );
-        // Piquillín is the monte's understory, the fachinal rims the groves,
-        // jarilla holds the open dry ground.
+        // El piquillín es el sotobosque del monte, el fachinal bordea las
+        // isletas y la jarilla ocupa el terreno abierto y seco.
         assert!(monte[0] > 0.7 && monte[1] < 0.05, "{monte:?}");
         assert!(fringe[2] > 0.5 && fringe[2] > fringe[0], "{fringe:?}");
         assert!(
@@ -2250,7 +2326,7 @@ pub(crate) mod tests {
                 assert!(zone[kind] >= 0.0);
             }
         }
-        // The shares sum to one everywhere.
+        // Las proporciones suman uno en todas partes.
         for k in 0..200 {
             let p = Vec2::new(k as f32 * 17.0 - 1700.0, k as f32 * -11.0 + 900.0);
             let total: f32 = flora.shrub_shares(p).iter().sum();
@@ -2273,7 +2349,7 @@ pub(crate) mod tests {
                 assert!(s.crown_radius() > s.trunk_radius());
             }
         }
-        // Every shrub has its own turn and seed.
+        // Cada arbusto tiene su propio giro y su propia semilla.
         let looks: std::collections::HashSet<u32> = shrubs.iter().map(|s| s.variant).collect();
         assert!(looks.len() > shrubs.len() * 99 / 100);
     }
@@ -2285,7 +2361,7 @@ pub(crate) mod tests {
         let mut chunks = between();
         chunks.extend((-4..4).flat_map(|x| (-4..4).map(move |y| ChunkCoord::new(x, y))));
         chunks.extend((-20..-17).flat_map(|x| (-20..-10).map(move |y| ChunkCoord::new(x, y))));
-        // The monte and the groves of the south-west, thick with both.
+        // El monte y las isletas del sudoeste, llenos de ambos.
         chunks.extend((-19..1).flat_map(|x| (3..19).map(move |y| ChunkCoord::new(x, y))));
         let trees: Vec<Tree> = chunks.iter().flat_map(|&c| flora.trees(c)).collect();
         let (mut count, mut near_border) = (0, 0);
@@ -2314,8 +2390,8 @@ pub(crate) mod tests {
                         .push_y
                         .is_none()
                 );
-                // Off every trunk, those of the neighbouring chunks too, and
-                // with room for the rider to pass between.
+                // Lejos de todo tronco, también de los de los chunks vecinos, y
+                // con lugar para que el jinete pase entre ellos.
                 for t in &trees {
                     assert!(
                         t.at.distance(s.at)
@@ -2339,7 +2415,8 @@ pub(crate) mod tests {
 
     #[test]
     fn the_shrub_border_covers_the_farthest_a_trunk_keeps_a_shrub_off() {
-        // The stoutest tree trunk over every species and age, at its tallest.
+        // El tronco de árbol más robusto entre todas las especies y edades, en
+        // su altura máxima.
         let trunk = [Species::Calden, Species::Chanar]
             .iter()
             .flat_map(|&species| Age::ALL.iter().map(move |&age| (species, age)))
@@ -2404,7 +2481,7 @@ pub(crate) mod tests {
                     roads.distance(s.at) >= FloraSite::SHRUB_ROAD_MARGIN,
                     "{s:?}"
                 );
-                // Lanes between the shrubs of a chunk.
+                // Pasillos entre los arbustos de un chunk.
                 assert!(
                     own[i + 1..]
                         .iter()
@@ -2446,13 +2523,14 @@ pub(crate) mod tests {
         let before = world.obstacles.len();
         let planted = world.plant(&flora);
         let shrubs = world_shrubs(&flora);
-        // Only the trees are planted: shrubs (and grass) never block.
+        // Solo se plantan los árboles: los arbustos (y el pasto) nunca
+        // bloquean.
         assert_eq!(planted, flora.all_trees().len());
         assert_eq!(world.obstacles.len(), before + planted);
         for (_, s) in shrubs.iter().step_by(97) {
             assert!(!world.obstacles.contains(&s.obstacle()), "{s:?}");
         }
-        // A tall piquillín with nothing planted in the lane west of it.
+        // Un piquillín alto sin nada plantado en el pasillo al oeste.
         let lane = |s: &Shrub| Aabb::new(s.at - Vec2::new(1.0, 3.0), s.at + Vec2::new(11.0, 3.0));
         let shrub = shrubs
             .iter()
@@ -2463,8 +2541,8 @@ pub(crate) mod tests {
                     && world.obstacles.near(lane(s)).is_empty()
             })
             .expect("a tall piquillín in the open");
-        // Ride at its core from 10 m east, heading west, at a gallop: the
-        // rider goes straight through it.
+        // Cabalgar hacia su núcleo desde 10 m al este, hacia el oeste, al
+        // galope: el jinete lo atraviesa de largo.
         let mut rider = Rider::new(
             shrub.at + Vec2::new(10.0, 0.0),
             Heading::from_radians(std::f32::consts::PI),
@@ -2488,7 +2566,7 @@ pub(crate) mod tests {
     #[test]
     fn a_planted_chunk_stops_a_rider_at_its_tree_not_its_shrub_and_unplanting_frees_it() {
         let (mut world, _, flora) = site();
-        // A chunk with both kinds of plant.
+        // Un chunk con los dos tipos de planta.
         let coord = between()
             .into_iter()
             .find(|&c| {
@@ -2502,8 +2580,8 @@ pub(crate) mod tests {
         let before = world.obstacles.len();
         let trees = flora.trees(coord);
         assert_eq!(world.plant_chunk(&flora, coord), trees.len());
-        // Streamed, not permanent: the permanent list is untouched, and
-        // only trees are in the layer.
+        // Cargado por streaming, no permanente: la lista permanente no se toca,
+        // y en la capa solo hay árboles.
         assert_eq!(world.obstacles.len(), before);
         assert_eq!(world.obstacles.streamed_len(), trees.len());
         let params = RiderParams::default();
@@ -2514,7 +2592,8 @@ pub(crate) mod tests {
         };
         let radius = Circle::new(Rider::COLLIDER_RADIUS).radius;
         let calden = *trees.iter().find(|t| t.species == Species::Calden).unwrap();
-        // Ride at the trunk from 10 m east, heading west, at a gallop.
+        // Cabalgar hacia el tronco desde 10 m al este, hacia el oeste, al
+        // galope.
         let mut rider = Rider::new(
             calden.at + Vec2::new(10.0, 0.0),
             Heading::from_radians(std::f32::consts::PI),
@@ -2529,7 +2608,7 @@ pub(crate) mod tests {
             assert!(gap >= radius - 1e-3, "inside the tree");
         }
         assert!(rider.position.x > calden.at.x - 0.5, "{:?}", rider.position);
-        // A shrub of the same chunk does not stop a rider.
+        // Un arbusto del mismo chunk no detiene a un jinete.
         let shrub = flora
             .shrubs(coord)
             .into_iter()
@@ -2547,7 +2626,7 @@ pub(crate) mod tests {
             rider.step(input, &params, &world, 1.0 / 60.0);
         }
         assert!(rider.position.x < shrub.at.x - 1.0, "{:?}", rider.position);
-        // Unplanted, the tree's ground is free again.
+        // Sin plantar, el terreno del árbol vuelve a estar libre.
         assert!(world.unplant_chunk(coord));
         assert!(!world.unplant_chunk(coord));
         assert_eq!(world.obstacles.streamed_len(), 0);
@@ -2569,18 +2648,19 @@ pub(crate) mod tests {
         let first = world.plant_chunk(&flora, coord);
         let area = coord.bounds(world.config.chunk_size).expanded(20.0);
         let seen: Vec<Aabb> = world.obstacles.near(area).into_iter().copied().collect();
-        // Replacing, not stacking: a second plant gives the same set.
+        // Reemplazar, no apilar: una segunda plantación da el mismo conjunto.
         assert_eq!(world.plant_chunk(&flora, coord), first);
         assert_eq!(world.obstacles.streamed_len(), first);
         let again: Vec<Aabb> = world.obstacles.near(area).into_iter().copied().collect();
         assert_eq!(seen, again);
-        // Dropped and brought back, the same footprints.
+        // Descartadas y vueltas a cargar, las mismas huellas.
         world.unplant_chunk(coord);
         assert!(world.obstacles.near(area).is_empty());
         world.plant_chunk(&flora, coord);
         let back: Vec<Aabb> = world.obstacles.near(area).into_iter().copied().collect();
         assert_eq!(seen, back);
-        // Every chunk of the world, streamed, is what planting the world adds.
+        // Todos los chunks del mundo, cargados por streaming, son lo que agrega
+        // plantar el mundo.
         let mut all = World::default();
         all.plant(&flora);
         let mut streamed = World::default();
@@ -2592,7 +2672,7 @@ pub(crate) mod tests {
         assert_eq!(streamed.obstacles.streamed_len(), all.obstacles.len());
     }
 
-    /// Every chunk of the world: its trees before the thinning, and after.
+    /// Todos los chunks del mundo: sus árboles antes del raleo y después.
     fn planted_and_kept(flora: &FloraSite) -> Vec<(ChunkCoord, Vec<Tree>, Vec<Tree>)> {
         let size = flora.config.chunk_size;
         let bounds = flora.config.bounds();
@@ -2611,12 +2691,14 @@ pub(crate) mod tests {
     fn about_half_the_trees_stay_evenly_over_monte_groves_and_lone_trees() {
         let (_, _, flora) = site();
         let all = planted_and_kept(&flora);
-        // The share that stays in each kind of ground: the monte, the
-        // groves, the open pampa's lone trees (planted, kept).
+        // La proporción que queda en cada tipo de terreno: el monte, las
+        // isletas, los árboles solitarios de la pampa abierta (plantados,
+        // conservados).
         let mut kinds = [(0.0_f32, 0.0_f32); 3];
         let (mut planted, mut kept) = (0.0_f32, 0.0_f32);
         for (c, before, after) in &all {
-            // The kept trees are exactly the planted ones that stay.
+            // Los árboles conservados son exactamente los plantados que se
+            // quedan.
             assert!(after.iter().all(|t| before.contains(t)));
             assert!(after.len() <= before.len());
             let (monte, grove) = (
@@ -2645,7 +2727,8 @@ pub(crate) mod tests {
         assert!((share - 0.616).abs() < 0.01, "{share}");
         assert_eq!(FloraSite::TREE_KEEP, 0.616);
         for (kind, (before, after)) in kinds.iter().enumerate() {
-            // Within three standard deviations of a fair 0.616 share.
+            // Dentro de tres desviaciones estándar de una proporción justa de
+            // 0,616.
             let slack = 3.0 * (0.2365 / before).sqrt();
             assert!(*before > 50.0, "kind {kind}: {before}");
             assert!(
@@ -2678,13 +2761,15 @@ pub(crate) mod tests {
         let n = counts.len() as f32;
         let mean = counts.iter().sum::<f32>() / n;
         let variance = counts.iter().map(|c| (c - mean).powi(2)).sum::<f32>() / n;
-        // A uniform (Poisson) scatter has variance equal to its mean.
+        // Una distribución uniforme (Poisson) tiene una varianza igual a su
+        // media.
         assert!(mean > 2.0, "mean {mean}");
         assert!(variance > 4.0 * mean, "variance {variance}, mean {mean}");
-        // Some chunks are open pampa, some hold a grove.
+        // Algunos chunks son pampa abierta, otros contienen una isleta.
         assert!(counts.iter().any(|&c| c <= 2.0));
         assert!(counts.iter().any(|&c| c >= 25.0));
-        // The mask is smooth: no jump between two points a meter apart.
+        // La máscara es suave: no hay saltos entre dos puntos a un metro de
+        // distancia.
         for k in 0..500 {
             let p = Vec2::new(k as f32 * 7.3 - 1800.0, k as f32 * -3.1 + 400.0);
             let g = flora.grove(p);
@@ -2715,10 +2800,11 @@ pub(crate) mod tests {
         let before = world.obstacles.len();
         let planted = world.plant(&flora);
         let all = flora.all_trees();
-        // Every tree's trunk is an obstacle.
+        // El tronco de cada árbol es un obstáculo.
         assert_eq!(planted, all.len());
         assert_eq!(world.obstacles.len(), before + planted);
-        // Every chunk's trees are in the world's list, chunk or not loaded.
+        // Los árboles de cada chunk están en la lista del mundo, esté el chunk
+        // cargado o no.
         for c in between() {
             for tree in flora.chunk(c).trees {
                 assert!(all.contains(&tree), "{tree:?}");
@@ -2729,7 +2815,8 @@ pub(crate) mod tests {
             .iter()
             .find(|t| t.species == Species::Calden)
             .expect("a caldén");
-        // Ride at the trunk from 10 m east, heading west, at a gallop.
+        // Cabalgar hacia el tronco desde 10 m al este, hacia el oeste, al
+        // galope.
         let start = calden.at + Vec2::new(10.0, 0.0);
         let mut rider = Rider::new(start, Heading::from_radians(std::f32::consts::PI), &world);
         let input = RiderInput {
@@ -2751,7 +2838,7 @@ pub(crate) mod tests {
                 rider.position
             );
         }
-        // It stopped against the trunk rather than passing it.
+        // Se detuvo contra el tronco en lugar de pasarlo.
         assert!(rider.position.x > calden.at.x, "{:?}", rider.position);
     }
 
@@ -2767,7 +2854,7 @@ pub(crate) mod tests {
         let path = line.full_path(&towns);
         let flora = FloraSite::new(config, &world.terrain, &line).with_track(&path);
         let gap = |p: Vec2| p.distance(path.at(path.project(p)));
-        // Every chunk the path crosses, sampled every 20 m.
+        // Cada chunk que cruza el recorrido, muestreado cada 20 m.
         let mut chunks: Vec<ChunkCoord> = (0..=(path.length() / 20.0) as usize)
             .map(|k| config.chunk_of(path.at(k as f32 * 20.0)))
             .collect();
@@ -2777,7 +2864,7 @@ pub(crate) mod tests {
         for c in chunks {
             let f = flora.chunk(c);
             for t in &f.trees {
-                // The trunk and the crown stay clear of the cars.
+                // El tronco y la copa se mantienen lejos de los vagones.
                 let g = gap(t.at);
                 assert!(
                     g >= FloraSite::TREE_RAIL_MARGIN - 1e-3,
@@ -2789,7 +2876,7 @@ pub(crate) mod tests {
                 assert!(gap(t.at) >= FloraSite::TUFT_RAIL_MARGIN - 1e-3, "{t:?}");
                 tufts += 1;
             }
-            // A shrub's stem core never blocks the line either.
+            // El núcleo de tallos de un arbusto tampoco bloquea nunca la línea.
             for sh in &f.shrubs {
                 assert!(gap(sh.at) >= FloraSite::SHRUB_RAIL_MARGIN - 1e-3, "{sh:?}");
                 shrubs += 1;
@@ -2799,7 +2886,7 @@ pub(crate) mod tests {
             trees > 20 && tufts > 1000 && shrubs > 100,
             "{trees} {tufts} {shrubs}"
         );
-        // The margin clears a car's half width with room for a crown.
+        // El margen cubre el medio ancho de un vagón con lugar para una copa.
         const { assert!(FloraSite::TREE_RAIL_MARGIN > crate::LineTrain::WIDTH / 2.0 + 6.0) };
     }
 
@@ -2868,11 +2955,12 @@ pub(crate) mod tests {
                 }
             }
         }
-        // The bank is grassed right down to the mud.
+        // La barranca tiene pasto hasta el barro.
         assert!(near > 100, "{near}");
     }
 
-    /// Distance from `p` to the nearest town's leveled core, in meters.
+    /// Distancia desde `p` hasta el núcleo nivelado del pueblo más cercano, en
+    /// metros.
     fn town_distance(world: &World, p: Vec2) -> f32 {
         world
             .terrain
@@ -2884,12 +2972,12 @@ pub(crate) mod tests {
 
     #[test]
     fn the_monte_keeps_back_from_the_towns_and_the_world_total_holds() {
-        // The shipped towns in the biggest world (2026-10-27, before the
-        // redistribution, 0.56 kept): 190,919 trees, 28.4 a chunk within
-        // 1.5 km of a town and 26.3 beyond 3 km. After "un 10% mas de
-        // arboles grandes y zonas boscosas" (0.616 kept, older stands, a
-        // wider monte): 218,995 trees, 6.0 a chunk near, 35.4 far. The 2-town `site()` world
-        // is too small to give the far country the room to make up for it.
+        // Los pueblos distribuidos en el mundo más grande (2026-10-27, antes de la
+        // redistribución, con 0,56 conservado): 190.919 árboles, 28,4 por chunk a menos de
+        // 1,5 km de un pueblo y 26,3 más allá de 3 km. Después de "un 10% mas de arboles
+        // grandes y zonas boscosas" (0,616 conservado, montes más viejos, un monte más
+        // amplio): 218.995 árboles, 6,0 por chunk cerca, 35,4 lejos. El mundo de 2 pueblos
+        // de `site()` es demasiado chico para darle al campo lejano lugar para compensarlo.
         let (towns, line, roads) = crate::road::tests::shipped_roads();
         let config = WorldConfig {
             half_extent: WorldConfig::MAX_HALF_EXTENT,
@@ -2927,7 +3015,8 @@ pub(crate) mod tests {
         assert!(density(near) < 0.4 * density(far), "{near:?} {far:?}");
         let held = total as f32 / 218_995.0;
         assert!((0.95..=1.05).contains(&held), "{total} trees: {held}");
-        // The boost spreads the stands wider; a chunk's budget stays far off.
+        // El aumento extiende más los montes; el presupuesto de un chunk queda
+        // lejos.
         assert!(peak < FloraSite::TREE_BUDGET, "{peak}");
     }
 
@@ -2937,11 +3026,12 @@ pub(crate) mod tests {
         let (flora, trees, hubs) = shipped();
         assert_eq!(flora.worked.len(), hubs.len());
         let away = |p: Vec2| hubs.iter().map(|h| h.distance(p)).fold(f32::MAX, f32::min);
-        // Trees and ground by distance to the nearest hub: the ring a casco
-        // clears, and the field round it.
+        // Árboles y terreno según la distancia al centro más cercano: el anillo
+        // que desmonta un casco y el campo a su alrededor.
         let (mut ring, mut field) = ((0.0_f32, 0.0_f32), (0.0_f32, 0.0_f32));
-        // The monte, groves and lone trees `rural` thins: not the ombú and the
-        // escaped town trees, which a settlement draws in.
+        // El monte, las isletas y los árboles solitarios que ralea `rural`: no
+        // el ombú ni los árboles de pueblo escapados, que atrae un
+        // asentamiento.
         let native = |t: &Tree| !is_town(t.species) && t.species != Species::Ombu;
         for t in trees.iter().filter(|t| native(t)) {
             match away(t.at) {
@@ -2975,10 +3065,11 @@ pub(crate) mod tests {
     fn the_rural_share_is_smooth_across_chunk_borders_and_follows_the_distance() {
         let (world, _, flora) = redistributed();
         let area = world.terrain.flat_areas[0];
-        // West of the town, away from the other.
+        // Al oeste del pueblo, lejos del otro.
         let west = area.center.x - area.half_extents.x;
         let at = |d: f32| flora.rural(Vec2::new(west - d, area.center.y));
-        // Right by the town, past its near ring, on to the far country.
+        // Desde el borde del pueblo, pasando su anillo cercano, hasta el campo
+        // lejano.
         assert!(
             (at(10.0) - FloraSite::TOWN_NEAR_SHARE).abs() < 0.02,
             "{}",
@@ -2991,16 +3082,17 @@ pub(crate) mod tests {
         );
         assert!(at(100.0) < 0.2 && at(2000.0) > at(1000.0) && at(2900.0) > 0.8);
         assert!((at(FloraSite::FAR_FULL) - FloraSite::FAR_BOOST).abs() < 0.01);
-        // Continuous: no step in 1 m anywhere along the line, over every
-        // chunk border it crosses.
+        // Continuo: no hay escalones en 1 m en ningún punto de la línea, a
+        // través de cada borde de chunk que cruza.
         let mut last = at(0.0);
         for k in 1..8000 {
             let now = at(k as f32);
             assert!((now - last).abs() < 0.01, "{k} m: {last} to {now}");
             last = now;
         }
-        // The same share whichever site asks (it is a function of the spot,
-        // not of any state): a second site, built apart, agrees.
+        // La misma proporción sea cual sea el sitio que pregunte (es una
+        // función del lugar, no de ningún estado): un segundo sitio, construido
+        // por separado, coincide.
         let p = Vec2::new(west - 1234.5, area.center.y + 321.0);
         let (_, _, other) = redistributed();
         assert_eq!(flora.rural(p), other.rural(p));
@@ -3010,7 +3102,7 @@ pub(crate) mod tests {
     fn redistributed_trees_keep_their_spacing_across_chunk_borders_and_are_the_same_whichever_chunk_asks()
      {
         let (world, _, flora) = redistributed();
-        // Chunks straddling the ramp out of the town (1.5 to 3 km).
+        // Chunks que están sobre la rampa de salida del pueblo (de 1,5 a 3 km).
         let area = world.terrain.flat_areas[0];
         let size = world.config.chunk_size;
         let from = world.config.chunk_of(Vec2::new(
@@ -3038,9 +3130,10 @@ pub(crate) mod tests {
         }
     }
 
-    /// The shipped world's flora (towns, roads, fences and settlements as the
-    /// game lays them) with every tree it plants, and the settlements' hubs.
-    /// Built once for the tests that count species over the whole world.
+    /// La flora del mundo distribuido (pueblos, caminos, alambrados y
+    /// asentamientos tal como los coloca el juego) con todos los árboles que
+    /// planta, y los centros de los asentamientos. Se construye una sola vez
+    /// para las pruebas que cuentan especies en todo el mundo.
     pub(crate) fn shipped() -> &'static (FloraSite, Vec<Tree>, Vec<Vec2>) {
         static SHIPPED: std::sync::OnceLock<(FloraSite, Vec<Tree>, Vec<Vec2>)> =
             std::sync::OnceLock::new();
@@ -3098,18 +3191,21 @@ pub(crate) mod tests {
             assert!(share(s) > 0.0005, "{s:?}");
         }
         let calden = share(Species::Calden);
-        // The caldén still rules the field; the algarrobo is a modest
-        // companion; tala and espinillo are a small share, well below it.
+        // El caldén sigue dominando el campo; el algarrobo es un compañero
+        // modesto; el tala y el espinillo son una proporción chica, bastante
+        // por debajo.
         assert!(calden > 0.4, "{calden}");
         assert!((0.04..=0.12).contains(&share(Species::Algarrobo)));
         for s in [Species::Tala, Species::Espinillo] {
             assert!((0.01..=0.045).contains(&share(s)), "{s:?} {}", share(s));
             assert!(share(s) < 0.15 * calden, "{s:?}");
         }
-        // The escaped town trees are a few in the thousand, below every native
-        // companion: nearly all of them by a road or a settlement.
+        // Los árboles de pueblo escapados son unos pocos por cada mil, por
+        // debajo de todo compañero nativo: casi todos junto a un camino o un
+        // asentamiento.
         assert!((0.006..=0.04).contains(&town), "{town}");
-        // The ombú is rare: about one a settlement in a world of 200,000 trees.
+        // El ombú es raro: más o menos uno por asentamiento en un mundo de
+        // 200.000 árboles.
         let ombu = trees.iter().filter(|t| t.species == Species::Ombu).count();
         assert!((8..=60).contains(&ombu), "{ombu}");
     }
@@ -3130,7 +3226,7 @@ pub(crate) mod tests {
                 away(t.at)
             );
         }
-        // And it is not every settlement's: some have none.
+        // Y no lo tiene cada asentamiento: algunos no tienen ninguno.
         let with: usize = hubs
             .iter()
             .filter(|h| {
@@ -3141,7 +3237,7 @@ pub(crate) mod tests {
             .count();
         println!("{with} of {} settlements have an ombú", hubs.len());
         assert!(with * 10 >= hubs.len() * 2 && with < hubs.len(), "{with}");
-        // No site without settlements ever plants one.
+        // Un sitio sin asentamientos nunca planta uno.
         let (_, _, open) = site();
         assert!(sample(&open).iter().all(|t| t.species != Species::Ombu));
     }
@@ -3188,7 +3284,7 @@ pub(crate) mod tests {
                 apart = (apart.0 + town, apart.1 + 1.0);
             }
         }
-        // Per tree standing there, and per hectare of ground.
+        // Por árbol que hay ahí, y por hectárea de terreno.
         let (by_share, open_share) = (by.0 / by.1, apart.0 / apart.1);
         println!(
             "town share of trees: by {by_share:.4} ({}), open {open_share:.4} ({})",
@@ -3226,9 +3322,9 @@ pub(crate) mod tests {
             for c in flora.config.chunks_near(*hub, 3) {
                 let rail = flora.rail_near(c);
                 let planted = flora.chunk_trees(c, &rail);
-                // The field's own trees of the chunk, giving way only to its
-                // earlier neighbours' own trees (as they did before there
-                // were extras), all stand in what is planted.
+                // Los árboles propios del campo del chunk, que ceden solo ante
+                // los árboles propios de sus vecinos anteriores (como lo hacían
+                // antes de que hubiera extras), están todos entre lo plantado.
                 let mut native = flora.native_trees(c, &rail);
                 for (dx, dy) in [(-1, -1), (0, -1), (1, -1), (-1, 0)] {
                     let earlier = ChunkCoord::new(c.x + dx, c.y + dy);
@@ -3249,7 +3345,8 @@ pub(crate) mod tests {
                         t.at
                     );
                 }
-                // Planted side by side: no two stand closer than their spacing.
+                // Plantados uno al lado del otro: ninguno está más cerca que su
+                // separación.
                 for (i, a) in planted.iter().enumerate() {
                     for b in &planted[i + 1..] {
                         assert!(
@@ -3301,8 +3398,8 @@ pub(crate) mod tests {
                     yaw: 0.0,
                     variant: 0,
                 };
-                // The widest spacing any tree asks is what neighbouring
-                // chunks look for.
+                // La mayor separación que pide cualquier árbol es lo que buscan
+                // los chunks vecinos.
                 assert!(
                     tree(hi).spacing() <= Tree::MAX_SPACING,
                     "{species:?} {age:?}"
@@ -3310,7 +3407,8 @@ pub(crate) mod tests {
                 assert!(tree(hi).trunk_radius() < tree(hi).crown_radius());
             }
         }
-        // The ombú's trunk is the stoutest of all, the espinillo the lowest tree.
+        // El tronco del ombú es el más robusto de todos; el espinillo, el árbol
+        // más bajo.
         let trunk = |s: Species| {
             Tree {
                 at: Vec2::ZERO,
@@ -3330,10 +3428,10 @@ pub(crate) mod tests {
         assert!(Species::Ombu.height_range().1 >= 15.0);
     }
 
-    /// A hash of every tree [`FloraSite::chunk_trees`] plants in the chunks
-    /// round the shipped hubs and in a sparse sweep of the open field. It
-    /// was taken with the straightforward per-neighbour recomputation, so
-    /// any shortcut in the extras' path must keep it.
+    /// Un hash de todos los árboles que [`FloraSite::chunk_trees`] planta en
+    /// los chunks alrededor de los centros distribuidos y en un barrido
+    /// disperso del campo abierto. Se tomó con el recálculo directo por vecino,
+    /// así que cualquier atajo en el camino de los extras debe conservarlo.
     #[test]
     fn the_planted_trees_of_the_shipped_world_keep_their_golden_hash() {
         let (flora, _, hubs) = shipped();
@@ -3371,8 +3469,9 @@ pub(crate) mod tests {
         assert_eq!((count, hash), (12028, 0x85d0_b8bb_c3da_7e5e));
     }
 
-    /// Streaming chunks through a small cache, the first again once it has
-    /// pushed them out, plants what a site with nothing cached plants.
+    /// Cargar chunks por streaming a través de una caché chica, y el primero de
+    /// nuevo una vez que los desplazó, planta lo mismo que un sitio sin nada en
+    /// caché.
     #[test]
     fn the_native_cache_plants_what_a_fresh_site_plants_even_after_eviction() {
         let (flora, _, hubs) = shipped();

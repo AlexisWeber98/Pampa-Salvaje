@@ -1,16 +1,18 @@
-//! The plaza trees' meshes: a tapered trunk and limbs of bark, and leaf
-//! cards hung at the branch tips, seeded per species and variant.
+//! Las meshes de los árboles de la plaza: un tronco que se afina y ramas de
+//! corteza, y tarjetas de hojas colgadas en las puntas de las ramas, con
+//! semilla por especie y variante.
 //!
-//! A tree is two meshes, bark and leaves, built once per variant at
-//! startup and shared by every tree of that variant (each placed with its
-//! own yaw and scale). The trunk, the limbs and the twigs are open tubes
-//! of a few sides with smooth radial normals and UVs that repeat the bark
-//! every [`Form::bark_tile`] meters, a whole number of times round each
-//! tube so its seam does not show. A card is one sprig of the species'
-//! leaf atlas (a quarter of it, see `tools/leaf_atlas.py`), hung on a
-//! tip by the sprig's base and bent down a little under its own weight.
-//! Its normals lean out from the crown's middle, so the crown shades as
-//! one mass rather than as scattered flat cards.
+//! Un árbol son dos meshes, corteza y hojas, construidas una vez por variante
+//! al iniciar y compartidas por todos los árboles de esa variante (cada uno
+//! colocado con su propia guiñada y escala). El tronco, las ramas y las ramitas
+//! son tubos abiertos de pocos lados con normales radiales suavizadas y UVs que
+//! repiten la corteza cada [`Form::bark_tile`] metros, un número entero de
+//! veces alrededor de cada tubo para que no se vea su costura. Una tarjeta es
+//! un ramito del atlas de hojas de la especie (un cuarto de él, ver
+//! `tools/leaf_atlas.py`), colgado de una punta por la base del ramito y
+//! doblado un poco hacia abajo por su propio peso. Sus normales se inclinan
+//! hacia afuera desde el centro de la copa, así que la copa se sombrea como una
+//! sola masa y no como tarjetas planas dispersas.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
@@ -19,75 +21,84 @@ use bevy::prelude::*;
 use super::Species;
 use crate::ground::face_tangent;
 
-/// Where a sprig grows from in its quarter of the leaf atlas, as a
-/// fraction of the quarter's height up from its bottom edge
-/// (`leaf_atlas.py`'s `BASE`: 32 of 512 texels).
+/// Desde dónde crece un ramito en su cuarto del atlas de hojas, como fracción
+/// de la altura del cuarto desde su borde inferior (el `BASE` de
+/// `leaf_atlas.py`: 32 de 512 texels).
 pub const SPRIG_BASE: f32 = 32.0 / 512.0;
 
-/// The shape of a species: its trunk, limbs and leaf cards, laid out from
-/// [`Form::height`].
+/// La forma de una especie: su tronco, sus ramas y sus tarjetas de hojas,
+/// dispuestos a partir de [`Form::height`].
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Form {
-    /// Height the limbs are laid out for, meters (min, max): a scale for
-    /// the fork, the limbs' length and the leader, not the built tree's
-    /// height. That is measured from the geometry into
-    /// [`TreeMesh::height`] and comes out lower where the limbs lean out
-    /// (the aromo's is about 4.6 m against a layout height of 6.5–7.5).
+    /// La altura para la que se disponen las ramas, en metros (mín, máx): una
+    /// escala para la horqueta, el largo de las ramas y el eje central, no la
+    /// altura del árbol construido. Esa se mide a partir de la geometría en
+    /// [`TreeMesh::height`] y sale más baja donde las ramas se inclinan hacia
+    /// afuera (la del aromo es de unos 4.6 m frente a una altura de disposición
+    /// de 6.5–7.5).
     pub height: (f32, f32),
-    /// Where the limbs part from the trunk, a fraction of the height.
+    /// Dónde se separan las ramas del tronco, como fracción de la altura.
     pub fork: f32,
-    /// The trunk's radius at the ground, meters.
+    /// El radio del tronco a ras del suelo, en metros.
     pub trunk_radius: f32,
-    /// Limbs (min, max).
+    /// Ramas (mín, máx).
     pub limbs: (u32, u32),
-    /// A limb's lean from upright, degrees (min, max).
+    /// La inclinación de una rama respecto de la vertical, en grados (mín,
+    /// máx).
     pub tilt: (f32, f32),
-    /// A limb's length, a fraction of the height.
+    /// El largo de una rama, como fracción de la altura.
     pub reach: f32,
-    /// How far a limb's outer half bends up (or down, below zero), a
-    /// fraction of its length.
+    /// Cuánto se curva hacia arriba (o hacia abajo, por debajo de cero) la
+    /// mitad exterior de una rama, como fracción de su largo.
     pub rise: f32,
-    /// Twigs off each limb.
+    /// Ramitas de cada rama.
     pub twigs: u32,
-    /// The trunk goes on up through the limbs to the top (eucalipto).
+    /// El tronco sigue hacia arriba a través de las ramas hasta la cima
+    /// (eucalipto).
     pub leader: bool,
-    /// Leaf cards on the whole tree.
+    /// Tarjetas de hojas en todo el árbol.
     pub cards: u32,
-    /// A card's side, meters.
+    /// El lado de una tarjeta, en metros.
     pub card: f32,
-    /// 0: cards reach out and up from their branch; 1: they hang
-    /// straight down.
+    /// 0: las tarjetas se extienden hacia afuera y hacia arriba desde su rama;
+    /// 1: cuelgan derecho hacia abajo.
     pub hang: f32,
-    /// How far a card's tip bends down, a fraction of its side.
+    /// Cuánto se dobla hacia abajo la punta de una tarjeta, como fracción de su
+    /// lado.
     pub sag: f32,
-    /// How far the cards scatter round their branch, a fraction of a card.
+    /// Cuánto se dispersan las tarjetas alrededor de su rama, como fracción de
+    /// una tarjeta.
     pub scatter: f32,
-    /// Meters per bark repeat, round the tube and along it.
+    /// Metros por repetición de la corteza, alrededor del tubo y a lo largo de
+    /// él.
     pub bark_tile: Vec2,
-    /// How far the trunk leans, a fraction of the height (a low fork leans
-    /// less, see [`grow`]).
+    /// Cuánto se inclina el tronco, como fracción de la altura (una horqueta
+    /// baja se inclina menos, ver [`grow`]).
     pub lean: f32,
-    /// How much a prevailing wind shapes the crown: 0 is even all round;
-    /// 1 has the lee limbs well longer and flatter than the windward ones,
-    /// the trunk leaning with them.
+    /// Cuánto da forma a la copa un viento predominante: 0 es pareja todo
+    /// alrededor; 1 tiene las ramas de sotavento bastante más largas y más
+    /// planas que las de barlovento, con el tronco inclinado con ellas.
     pub wind: f32,
-    /// Share of the leaf cards hung in dense clumps at the branch tips
-    /// instead of scattered along the branches.
+    /// La proporción de las tarjetas de hojas colgadas en grupos densos en las
+    /// puntas de las ramas en lugar de dispersas a lo largo de ellas.
     pub clump: f32,
-    /// A shrub: its stems taper to fine tips and carry fine twigs, where a
-    /// tree's limbs end at a twig's girth whatever the trunk's radius.
+    /// Un arbusto: sus tallos se afinan hasta puntas finas y llevan ramitas
+    /// finas, mientras que las ramas de un árbol terminan con el grosor de una
+    /// ramita, sea cual sea el radio del tronco.
     pub shrub: bool,
-    /// Buttress roots flaring from the trunk to the ground (the ombú's).
+    /// Raíces tablares que se abren desde el tronco hasta el suelo (las del
+    /// ombú).
     pub buttress: u32,
-    /// How far a limb's middle zigzags off its line, a fraction of its
-    /// length (the tala's).
+    /// Cuánto zigzaguea el centro de una rama fuera de su línea, como fracción
+    /// de su largo (las del tala).
     pub kink: f32,
 }
 
 impl Species {
-    /// Its shape trimmed for a street: a trunk bare to about 3 m, then a
-    /// fuller crown held close to the trunk (limbs part about 3.3 m up and
-    /// lean little), with the species' own bark, leaves and bearing.
+    /// Su forma podada para una calle: un tronco desnudo hasta unos 3 m, y
+    /// después una copa más llena pegada al tronco (las ramas se separan a unos
+    /// 3.3 m de altura y se inclinan poco), con la corteza, las hojas y el
+    /// porte propios de la especie.
     pub(crate) fn street_form(self) -> Form {
         let form = self.form();
         let (tilt, reach) = match self {
@@ -111,9 +122,9 @@ impl Species {
         }
     }
 
-    /// Its shape: the paraíso's round umbrella, the olmo's tall vase, the
-    /// eucalipto's tall open crown of hanging leaves, the aromo's low
-    /// feathery one.
+    /// Su forma: la sombrilla redonda del paraíso, el florero alto del olmo, la
+    /// copa alta y abierta de hojas colgantes del eucalipto, la copa baja y
+    /// plumosa del aromo.
     pub(crate) fn form(self) -> Form {
         match self {
             Self::Paraiso => Form {
@@ -154,7 +165,7 @@ impl Species {
                 hang: 0.15,
                 sag: 0.15,
                 scatter: 0.3,
-                // Bark001 is twice as tall as it is wide.
+                // Bark001 es el doble de alto que de ancho.
                 bark_tile: Vec2::new(0.8, 1.6),
                 lean: 0.04,
                 wind: 0.0,
@@ -209,12 +220,12 @@ impl Species {
                 buttress: 0,
                 kink: 0.0,
             },
-            // The caldén: a short thick trunk forking low into near
-            // horizontal limbs, a broad flat umbrella wider than it is
-            // tall, of small fine leaves, hung in dense clumps. Its trunk
-            // stays within what `pampa_core::Tree::trunk_radius` plants
-            // (0.035 of the height). This is the classic form; see
-            // [`Self::variant_form`] for the rest.
+            // El caldén: un tronco corto y grueso que se bifurca bajo en ramas
+            // casi horizontales, una sombrilla ancha y plana, más ancha que
+            // alta, de hojas pequeñas y finas, colgadas en grupos densos. Su
+            // tronco queda dentro de lo que planta
+            // `pampa_core::Tree::trunk_radius` (0.035 de la altura). Esta es la
+            // forma clásica; ver [`Self::variant_form`] para el resto.
             Self::Calden => Form {
                 height: (6.0, 7.0),
                 fork: 0.25,
@@ -230,7 +241,8 @@ impl Species {
                 hang: 0.2,
                 sag: 0.2,
                 scatter: 0.3,
-                // Coarse, so the furrows survive the mipmaps at a distance.
+                // Gruesa, para que los surcos sobrevivan a los mipmaps a
+                // distancia.
                 bark_tile: Vec2::new(1.2, 1.8),
                 lean: 0.04,
                 wind: 0.0,
@@ -239,8 +251,9 @@ impl Species {
                 buttress: 0,
                 kink: 0.0,
             },
-            // The chañar: several slim stems fanning from one low stool,
-            // twiggy, with an irregular crown of small leaves in clumps.
+            // El chañar: varios tallos delgados que se abren en abanico desde
+            // una sola cepa baja, con muchas ramitas, y una copa irregular de
+            // hojas pequeñas en grupos.
             Self::Chanar => Form {
                 height: (3.4, 4.2),
                 fork: 0.08,
@@ -264,8 +277,8 @@ impl Species {
                 buttress: 0,
                 kink: 0.0,
             },
-            // The piquillín: a dense thorny shrub, many fine stems from the
-            // ground under a mass of tiny leaves.
+            // El piquillín: un arbusto espinoso denso, con muchos tallos finos
+            // desde el suelo bajo una masa de hojas diminutas.
             Self::Piquillin => Form {
                 height: (1.4, 1.7),
                 fork: 0.05,
@@ -289,7 +302,7 @@ impl Species {
                 buttress: 0,
                 kink: 0.0,
             },
-            // The jarilla: many upright, slender stems, sparse and resinous.
+            // La jarilla: muchos tallos erguidos y delgados, ralos y resinosos.
             Self::Jarilla => Form {
                 height: (1.2, 1.5),
                 fork: 0.04,
@@ -313,7 +326,7 @@ impl Species {
                 buttress: 0,
                 kink: 0.0,
             },
-            // The fachinal: chañar suckers, a thicket of slim stems.
+            // El fachinal: retoños de chañar, una maraña de tallos delgados.
             Self::Fachinal => Form {
                 height: (1.8, 2.1),
                 fork: 0.06,
@@ -337,11 +350,12 @@ impl Species {
                 buttress: 0,
                 kink: 0.0,
             },
-            // The Lombardy poplar: a short bole, then a bundle of limbs
-            // swept almost straight up into a column about a fifth as wide
-            // as it is tall, small leaves all along them. Its trunk stays
-            // within what `pampa_core::Structure::trunk_radius` collides
-            // for a poplar (0.012 of the height).
+            // El álamo de Lombardía: un fuste corto, y después un haz de ramas
+            // levantadas casi verticales formando una columna de alrededor de
+            // un quinto de ancho respecto de su altura, con hojas pequeñas a lo
+            // largo de ellas. Su tronco queda dentro del radio con el que
+            // colisiona `pampa_core::Structure::trunk_radius` para un álamo
+            // (0.012 de la altura).
             Self::Alamo => Form {
                 height: (14.0, 16.0),
                 fork: 0.08,
@@ -365,9 +379,9 @@ impl Species {
                 buttress: 0,
                 kink: 0.0,
             },
-            // The algarrobo: a low, wide, often multi-stem tree, several
-            // stout stems from near the ground under a broad crown of fine
-            // pendulous leaves.
+            // El algarrobo: un árbol bajo y ancho, a menudo de varios tallos,
+            // con varios tallos robustos desde cerca del suelo bajo una copa
+            // ancha de hojas finas y colgantes.
             Self::Algarrobo => Form {
                 height: (5.0, 6.0),
                 fork: 0.16,
@@ -391,8 +405,8 @@ impl Species {
                 buttress: 0,
                 kink: 0.0,
             },
-            // The tala: a short trunk and crooked, zigzag branches, dense
-            // with twigs, under an irregular round crown of small leaves.
+            // El tala: un tronco corto y ramas torcidas en zigzag, con muchas
+            // ramitas, bajo una copa redonda e irregular de hojas pequeñas.
             Self::Tala => Form {
                 height: (4.5, 5.5),
                 fork: 0.16,
@@ -416,8 +430,8 @@ impl Species {
                 buttress: 0,
                 kink: 0.22,
             },
-            // The espinillo: a small tree, a short stem under a rounded
-            // crown of tiny leaves.
+            // El espinillo: un árbol pequeño, con un tallo corto bajo una copa
+            // redondeada de hojas diminutas.
             Self::Espinillo => Form {
                 height: (3.4, 4.2),
                 fork: 0.2,
@@ -441,10 +455,11 @@ impl Species {
                 buttress: 0,
                 kink: 0.05,
             },
-            // The ombú: a huge swollen trunk with buttress roots, a short
-            // bole, then a few massive limbs under a broad dense dome. Its
-            // roots stay within what `pampa_core::Tree::trunk_radius`
-            // collides for it (a tenth of the height).
+            // El ombú: un tronco enorme y abultado con raíces tablares, un
+            // fuste corto, y después unas pocas ramas macizas bajo una cúpula
+            // ancha y densa. Sus raíces quedan dentro del radio con el que
+            // colisiona `pampa_core::Tree::trunk_radius` para él (un décimo de
+            // la altura).
             Self::Ombu => Form {
                 height: (9.0, 10.0),
                 fork: 0.28,
@@ -471,21 +486,23 @@ impl Species {
         }
     }
 
-    /// Its shape for variant `seed`. The caldén has [`crate::tree::CALDEN_LIVE`]
-    /// live forms (a classic umbrella, a low multi-stem, a leaning tree, a
-    /// lopsided wind-shaped crown, a tall narrow one, a broad flat one, a
-    /// dense round one, a high fork and a windswept leaning one), then three
-    /// snags (sparse, dead, and a broken stub); the chañar has
-    /// [`crate::tree::CHANAR_VARIANTS`] forms. Every other species has its
-    /// [`Self::form`] for every seed.
+    /// Su forma para la variante `seed`. El caldén tiene
+    /// [`crate::tree::CALDEN_LIVE`] formas vivas (una sombrilla clásica, uno
+    /// bajo de varios tallos, un árbol inclinado, una copa asimétrica formada
+    /// por el viento, uno alto y angosto, uno ancho y plano, uno redondo y
+    /// denso, una horqueta alta y uno inclinado y azotado por el viento), y
+    /// después tres secos (ralo, muerto y un tocón quebrado); el chañar tiene
+    /// [`crate::tree::CHANAR_VARIANTS`] formas. Todas las demás especies tienen
+    /// su [`Self::form`] para cualquier semilla.
     pub(crate) fn variant_form(self, seed: u32) -> Form {
         let form = self.form();
         let v = seed as usize;
         match self {
             Self::Calden => match v {
-                // Classic: single trunk, an even umbrella.
+                // Clásico: un solo tronco, una sombrilla pareja.
                 0 => form,
-                // Low-forked multi-stem: many stout limbs from near the ground.
+                // De varios tallos con horqueta baja: muchas ramas robustas
+                // desde cerca del suelo.
                 1 => Form {
                     fork: 0.12,
                     limbs: (7, 8),
@@ -496,7 +513,8 @@ impl Species {
                     clump: 0.7,
                     ..form
                 },
-                // Leaning: the whole tree tilts, the crown hangs to one side.
+                // Inclinado: todo el árbol se ladea y la copa cuelga hacia un
+                // lado.
                 2 => Form {
                     fork: 0.3,
                     lean: 0.17,
@@ -504,7 +522,8 @@ impl Species {
                     reach: 0.4,
                     ..form
                 },
-                // Lopsided: wind-shaped, long low limbs to the lee side.
+                // Asimétrico: formado por el viento, con ramas largas y bajas
+                // hacia el lado de sotavento.
                 3 => Form {
                     fork: 0.22,
                     tilt: (55.0, 72.0),
@@ -513,7 +532,7 @@ impl Species {
                     lean: 0.09,
                     ..form
                 },
-                // Tall and narrow: a high fork under steep limbs.
+                // Alto y angosto: una horqueta alta bajo ramas empinadas.
                 4 => Form {
                     height: (7.5, 8.5),
                     fork: 0.42,
@@ -525,7 +544,7 @@ impl Species {
                     card: 1.2,
                     ..form
                 },
-                // Broad and flat: long near-horizontal limbs, a low crown.
+                // Ancho y plano: ramas largas casi horizontales, una copa baja.
                 5 => Form {
                     height: (4.8, 5.6),
                     fork: 0.4,
@@ -538,7 +557,7 @@ impl Species {
                     clump: 0.6,
                     ..form
                 },
-                // Dense and round: a compact crown packed with leaves.
+                // Denso y redondo: una copa compacta llena de hojas.
                 6 => Form {
                     fork: 0.4,
                     limbs: (7, 8),
@@ -551,7 +570,8 @@ impl Species {
                     clump: 0.85,
                     ..form
                 },
-                // High fork: few thick limbs far up a tall trunk.
+                // Horqueta alta: pocas ramas gruesas en lo alto de un tronco
+                // alto.
                 7 => Form {
                     height: (6.8, 7.6),
                     fork: 0.46,
@@ -562,7 +582,8 @@ impl Species {
                     cards: 170,
                     ..form
                 },
-                // Windswept: leaning hard, the crown streaming downwind.
+                // Azotado por el viento: muy inclinado, con la copa extendida a
+                // favor del viento.
                 8 => Form {
                     fork: 0.36,
                     tilt: (50.0, 70.0),
@@ -572,14 +593,15 @@ impl Species {
                     lean: 0.14,
                     ..form
                 },
-                // Sparse: a thinned crown.
+                // Ralo: una copa raleada.
                 9 => Form {
                     limbs: (5, 6),
                     cards: 60,
                     clump: 0.3,
                     ..form
                 },
-                // Dead: bare, twisted limbs reaching up, a last few leaves.
+                // Muerto: ramas desnudas y retorcidas que se elevan, con unas
+                // últimas hojas.
                 10 => Form {
                     limbs: (4, 5),
                     tilt: (35.0, 60.0),
@@ -590,7 +612,8 @@ impl Species {
                     clump: 0.0,
                     ..form
                 },
-                // A broken stub: the top gone, short limbs, a trace of leaves.
+                // Un tocón quebrado: sin la parte superior, con ramas cortas y
+                // un rastro de hojas.
                 _ => Form {
                     height: (3.8, 4.6),
                     trunk_radius: 0.12,
@@ -606,29 +629,29 @@ impl Species {
                 },
             },
             Self::Chanar => match v {
-                // The classic fan of stems.
+                // El abanico clásico de tallos.
                 0 => form,
-                // Tall and slender.
+                // Alto y delgado.
                 1 => Form {
                     height: (4.2, 4.8),
                     tilt: (8.0, 18.0),
                     reach: 0.55,
                     ..form
                 },
-                // Low and spreading.
+                // Bajo y extendido.
                 2 => Form {
                     height: (2.8, 3.2),
                     tilt: (35.0, 55.0),
                     reach: 0.95,
                     ..form
                 },
-                // Leaning.
+                // Inclinado.
                 3 => Form {
                     lean: 0.12,
                     fork: 0.22,
                     ..form
                 },
-                // A dense thicket.
+                // Una maraña densa.
                 4 => Form {
                     limbs: (7, 8),
                     cards: 150,
@@ -637,7 +660,7 @@ impl Species {
                     scatter: 0.35,
                     ..form
                 },
-                // Wind-shaped.
+                // Formado por el viento.
                 _ => Form {
                     wind: 0.8,
                     lean: 0.1,
@@ -645,8 +668,8 @@ impl Species {
                     ..form
                 },
             },
-            // The shrubs: the plain form, a low spreading one, a tall dense
-            // one, the seed turning the stems of each.
+            // Los arbustos: la forma simple, una baja y extendida, una alta y
+            // densa, con la semilla girando los tallos de cada una.
             Self::Piquillin | Self::Jarilla | Self::Fachinal => match v % 3 {
                 0 => form,
                 1 => Form {
@@ -663,9 +686,11 @@ impl Species {
                 },
             },
             Self::Algarrobo => match v {
-                // The classic: a few stems fanning from low down.
+                // El clásico: unos pocos tallos que se abren en abanico desde
+                // abajo.
                 0 => form,
-                // A single stout trunk forking low, a broad crown.
+                // Un solo tronco robusto que se bifurca bajo, con una copa
+                // ancha.
                 1 => Form {
                     fork: 0.22,
                     limbs: (5, 6),
@@ -674,14 +699,14 @@ impl Species {
                     trunk_radius: 0.2,
                     ..form
                 },
-                // Crooked: the whole tree leans.
+                // Torcido: todo el árbol se inclina.
                 2 => Form {
                     fork: 0.16,
                     lean: 0.13,
                     cards: 120,
                     ..form
                 },
-                // A taller vase of steep stems.
+                // Un florero más alto de tallos empinados.
                 3 => Form {
                     height: (6.5, 7.5),
                     tilt: (14.0, 26.0),
@@ -689,7 +714,7 @@ impl Species {
                     cards: 170,
                     ..form
                 },
-                // Low and very wide.
+                // Bajo y muy ancho.
                 _ => Form {
                     height: (3.6, 4.2),
                     limbs: (5, 6),
@@ -702,7 +727,7 @@ impl Species {
             },
             Self::Tala => match v {
                 0 => form,
-                // Low and shrubby, spreading.
+                // Bajo, achaparrado y extendido.
                 1 => Form {
                     height: (3.2, 3.8),
                     tilt: (50.0, 70.0),
@@ -710,7 +735,7 @@ impl Species {
                     cards: 110,
                     ..form
                 },
-                // Taller and more upright.
+                // Más alto y más erguido.
                 2 => Form {
                     height: (6.0, 7.0),
                     tilt: (18.0, 32.0),
@@ -719,14 +744,14 @@ impl Species {
                     cards: 170,
                     ..form
                 },
-                // Leaning, wind-bent.
+                // Inclinado, doblado por el viento.
                 3 => Form {
                     lean: 0.1,
                     tilt: (45.0, 70.0),
                     reach: 0.65,
                     ..form
                 },
-                // A dense, compact round crown.
+                // Una copa redonda, densa y compacta.
                 _ => Form {
                     reach: 0.4,
                     twigs: 6,
@@ -739,7 +764,7 @@ impl Species {
             },
             Self::Espinillo => match v {
                 0 => form,
-                // A low spreading shrub-tree.
+                // Un arbolito bajo y extendido.
                 1 => Form {
                     height: (2.6, 3.0),
                     fork: 0.16,
@@ -748,7 +773,7 @@ impl Species {
                     cards: 110,
                     ..form
                 },
-                // A taller single stem.
+                // Un solo tallo más alto.
                 2 => Form {
                     height: (4.4, 5.0),
                     fork: 0.3,
@@ -757,13 +782,13 @@ impl Species {
                     cards: 130,
                     ..form
                 },
-                // Leaning.
+                // Inclinado.
                 3 => Form {
                     lean: 0.18,
                     fork: 0.25,
                     ..form
                 },
-                // Dense and round.
+                // Denso y redondo.
                 _ => Form {
                     limbs: (5, 6),
                     cards: 190,
@@ -774,7 +799,7 @@ impl Species {
             },
             Self::Ombu => match v {
                 0 => form,
-                // Broader and flatter.
+                // Más ancho y más plano.
                 1 => Form {
                     fork: 0.3,
                     tilt: (55.0, 68.0),
@@ -782,7 +807,7 @@ impl Species {
                     cards: 160,
                     ..form
                 },
-                // A taller dome on a longer bole.
+                // Una cúpula más alta sobre un fuste más largo.
                 2 => Form {
                     height: (10.0, 11.0),
                     fork: 0.34,
@@ -790,7 +815,7 @@ impl Species {
                     reach: 0.36,
                     ..form
                 },
-                // Leaning, with few massive limbs.
+                // Inclinado, con pocas ramas macizas.
                 _ => Form {
                     fork: 0.3,
                     limbs: (4, 5),
@@ -805,15 +830,15 @@ impl Species {
     }
 }
 
-/// Dense clumps of leaves a crown hangs ([`Form::clump`]).
+/// Los grupos densos de hojas que cuelga una copa ([`Form::clump`]).
 const CLUMPS: usize = 9;
 
-/// Sides of the trunk, of a limb and of a twig.
+/// Los lados del tronco, de una rama y de una ramita.
 const TRUNK_SIDES: u32 = 8;
 const LIMB_SIDES: u32 = 6;
 const TWIG_SIDES: u32 = 3;
 
-/// One mesh's vertices, before it becomes a [`Mesh`].
+/// Los vertices de una mesh, antes de convertirse en una [`Mesh`].
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct Buffers {
     pub positions: Vec<Vec3>,
@@ -835,13 +860,14 @@ impl Buffers {
         (self.positions.len() - 1) as u32
     }
 
-    /// Two triangles over corners `a b c d`, counter-clockwise.
+    /// Dos triángulos sobre las esquinas `a b c d`, en sentido antihorario.
     fn quad(&mut self, [a, b, c, d]: [u32; 4]) {
         self.indices.extend([a, b, c, a, c, d]);
     }
 
-    /// Per-vertex tangents for the normal maps: each triangle's UV tangent,
-    /// summed round its vertices and squared against their normals.
+    /// Tangentes por vertex para los normal maps: la tangente UV de cada
+    /// triángulo, sumada alrededor de sus vertices y ortogonalizada respecto de
+    /// sus normales.
     pub fn tangents(&self) -> Vec<[f32; 4]> {
         let mut sum = vec![Vec3::ZERO; self.positions.len()];
         let mut sign = vec![0.0f32; self.positions.len()];
@@ -892,20 +918,21 @@ impl Buffers {
     }
 }
 
-/// One built tree: its bark and its leaves, standing at the origin.
+/// Un árbol construido: su corteza y sus hojas, parado en el origen.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct TreeMesh {
     pub bark: Buffers,
     pub leaves: Buffers,
-    /// Its top, meters over the ground.
+    /// Su cima, en metros sobre el suelo.
     pub height: f32,
-    /// How far its leaves reach from the trunk's axis, meters.
+    /// Hasta dónde llegan sus hojas desde el eje del tronco, en metros.
     pub crown_radius: f32,
-    /// How low its lowest leaf hangs over the ground, meters.
+    /// Qué tan bajo cuelga su hoja más baja sobre el suelo, en metros.
     pub crown_base: f32,
 }
 
-/// A small seeded generator (SplitMix64): the same seed, the same tree.
+/// Un pequeño generador con semilla (SplitMix64): la misma semilla, el mismo
+/// árbol.
 struct Rng(u64);
 
 impl Rng {
@@ -926,7 +953,7 @@ impl Rng {
         lo + (hi - lo) * self.unit()
     }
 
-    /// A point in the unit ball.
+    /// Un punto en la bola unitaria.
     fn ball(&mut self) -> Vec3 {
         loop {
             let p = Vec3::new(self.unit(), self.unit(), self.unit()) * 2.0 - 1.0;
@@ -937,13 +964,14 @@ impl Rng {
     }
 }
 
-/// A horizontal unit vector `angle` radians round from +X.
+/// Un vector unitario horizontal a `angle` radianes de +X.
 fn heading(angle: f32) -> Vec3 {
     Vec3::new(angle.cos(), 0.0, angle.sin())
 }
 
-/// An open tube through `points` with `radii`, `sides` round, its bark
-/// repeating every `tile` meters (round, along).
+/// Un tubo abierto a través de `points` con radios `radii`, con `sides` lados
+/// alrededor y su corteza repitiéndose cada `tile` metros (alrededor, a lo
+/// largo).
 fn tube(out: &mut Buffers, points: &[Vec3], radii: &[f32], sides: u32, tile: Vec2) {
     let wraps = (std::f32::consts::TAU * radii[0] / tile.x).round().max(1.0);
     let mut side = Vec3::ZERO;
@@ -952,7 +980,8 @@ fn tube(out: &mut Buffers, points: &[Vec3], radii: &[f32], sides: u32, tile: Vec
     for (i, (&p, &r)) in points.iter().zip(radii).enumerate() {
         let ahead = points[(i + 1).min(points.len() - 1)] - points[i.saturating_sub(1)];
         let dir = ahead.normalize_or(Vec3::Y);
-        // Carry the ring's start round the bends, so the tube never twists.
+        // Arrastrar el inicio del anillo a lo largo de las curvas, para que el
+        // tubo nunca se retuerza.
         side = (side - dir * dir.dot(side)).normalize_or(dir.any_orthonormal_vector());
         let up = dir.cross(side);
         if i > 0 {
@@ -973,39 +1002,44 @@ fn tube(out: &mut Buffers, points: &[Vec3], radii: &[f32], sides: u32, tile: Vec
     }
     for pair in rings.windows(2) {
         for k in 0..sides as usize {
-            // Counter-clockwise seen from outside: up the tube, then round.
+            // En sentido antihorario visto desde afuera: subiendo por el tubo,
+            // y después alrededor.
             out.quad([pair[0][k], pair[0][k + 1], pair[1][k + 1], pair[1][k]]);
         }
     }
 }
 
-/// A leafy stretch of branch: the outer half of a limb, a twig, the top
-/// of a leader. Cards hang along it, more of them toward its end.
+/// Un tramo de rama con hojas: la mitad exterior de una rama, una ramita, la
+/// parte superior de un eje central. Las tarjetas cuelgan a lo largo de él, más
+/// hacia su extremo.
 struct Leafy {
     from: Vec3,
     to: Vec3,
 }
 
-/// Builds variant `seed` of `species`.
+/// Construye la variante `seed` de `species`.
 pub(crate) fn tree(species: Species, seed: u32) -> TreeMesh {
     grow(species.variant_form(seed), Rng::new(species, seed))
 }
 
-/// Builds variant `seed` of `species` trimmed for a street ([`Species::street_form`]).
+/// Construye la variante `seed` de `species` podada para una calle
+/// ([`Species::street_form`]).
 pub(crate) fn street_tree(species: Species, seed: u32) -> TreeMesh {
     grow(species.street_form(), Rng::new(species, seed ^ 0x57ee))
 }
 
-/// Grows a tree of `form`, drawing its randomness from `rng`.
+/// Hace crecer un árbol de forma `form`, tomando su aleatoriedad de `rng`.
 fn grow(form: Form, mut rng: Rng) -> TreeMesh {
     let height = rng.range(form.height);
     let mut bark = Buffers::default();
     let mut leafy = Vec::new();
     let r0 = form.trunk_radius;
-    // A low fork leans less: the trunk is short, and a lean of 4% of the
-    // height would tilt it far over (every town tree forks above 0.2).
+    // Una horqueta baja se inclina menos: el tronco es corto, y una inclinación
+    // del 4% de la altura lo ladearía mucho (todos los árboles del pueblo se
+    // bifurcan por encima de 0.2).
     let lean_angle = rng.range((0.0, std::f32::consts::TAU));
-    // A windswept tree leans, and its limbs stream, the same way.
+    // Un árbol azotado por el viento se inclina, y sus ramas se extienden, en
+    // el mismo sentido.
     let wind_angle = if form.wind > 0.0 {
         rng.range((0.0, std::f32::consts::TAU))
     } else {
@@ -1013,7 +1047,7 @@ fn grow(form: Form, mut rng: Rng) -> TreeMesh {
     };
     let lean = heading(wind_angle) * form.lean * height * (form.fork * 5.0).min(1.0);
     let fork = form.fork * height;
-    // The trunk, flared a little at the foot, leaning a little.
+    // El tronco, un poco ensanchado al pie, un poco inclinado.
     let top = if form.leader { 0.92 * height } else { fork };
     let steps = if form.leader { 4 } else { 2 };
     let trunk: Vec<Vec3> = (0..=steps)
@@ -1033,8 +1067,9 @@ fn grow(form: Form, mut rng: Rng) -> TreeMesh {
         })
         .collect();
     tube(&mut bark, &trunk, &radii, TRUNK_SIDES, form.bark_tile);
-    // Buttress roots: from the swollen trunk out and down into the ground,
-    // inside the foot's collider (a root's tube reaches 1.2 trunk radii).
+    // Raíces tablares: desde el tronco abultado hacia afuera y hacia abajo,
+    // dentro del suelo, dentro del collider del pie (el tubo de una raíz llega
+    // a 1.2 radios del tronco).
     for k in 0..form.buttress {
         let out = heading(
             std::f32::consts::TAU * (k as f32 + rng.range((-0.15, 0.15))) / form.buttress as f32,
@@ -1071,12 +1106,13 @@ fn grow(form: Form, mut rng: Rng) -> TreeMesh {
         let around =
             turn0 + std::f32::consts::TAU * (i as f32 + rng.range((-0.2, 0.2))) / limbs as f32;
         let out = heading(around);
-        // Downwind (1) the limbs run long and low, upwind (-1) short and
-        // steep.
+        // A favor del viento (1) las ramas son largas y bajas; en contra (-1),
+        // cortas y empinadas.
         let lee = (around - wind_angle).cos() * form.wind;
         let tilt = (rng.range(form.tilt) + 12.0 * lee).to_radians();
         let length = form.reach * height * rng.range((0.85, 1.1)) * (1.0 + 0.55 * lee);
-        // Limbs part round the fork; a leader's climb its upper half.
+        // Las ramas se separan alrededor de la horqueta; el ascenso de un eje
+        // central, en su mitad superior.
         let h = if form.leader {
             fork + (top - fork) * 0.8 * (i as f32 + rng.unit()) / limbs as f32
         } else {
@@ -1085,14 +1121,16 @@ fn grow(form: Form, mut rng: Rng) -> TreeMesh {
         let start = on_trunk(h);
         let dir = out * tilt.sin() + Vec3::Y * tilt.cos();
         let end_dir = (dir + Vec3::Y * form.rise * 2.0).normalize();
-        // A zigzag limb bows off its line one way, then back the other.
+        // Una rama en zigzag se arquea fuera de su línea hacia un lado, y
+        // después vuelve hacia el otro.
         let zig = heading(around + std::f32::consts::FRAC_PI_2)
             * (form.kink * length * if i % 2 == 0 { 1.0 } else { -1.0 });
         let mid = start + dir * length * 0.5 + zig;
         let end = mid + end_dir * length * 0.5 - zig * 2.0;
         let width = (r0 * 0.55).min(r0 * 0.5 + 0.03);
-        // A shrub's stems taper to a fine tip, a tree's limbs to a twig's
-        // girth (by [`Form::shrub`], not by how thin the trunk is).
+        // Los tallos de un arbusto se afinan hasta una punta fina; las ramas de
+        // un árbol, hasta el grosor de una ramita (según [`Form::shrub`], no
+        // según qué tan delgado sea el tronco).
         let (tip, twig_radii) = if form.shrub {
             (width * 0.3, [0.012, 0.005])
         } else {
@@ -1156,16 +1194,16 @@ fn grow(form: Form, mut rng: Rng) -> TreeMesh {
     }
 }
 
-/// The leaf cards: [`Form::cards`] of them along the `leafy` stretches,
-/// each one sprig of the atlas.
+/// Las tarjetas de hojas: [`Form::cards`] de ellas a lo largo de los tramos
+/// `leafy`, cada una un ramito del atlas.
 fn cards(form: &Form, leafy: &[Leafy], rng: &mut Rng) -> Buffers {
     let mut out = Buffers::default();
     let ends = leafy.iter().map(|l| l.to).sum::<Vec3>() / leafy.len() as f32;
-    // The crown's middle: under its ends, at its own height.
+    // El centro de la copa: debajo de sus extremos, a su propia altura.
     let centre = Vec3::new(0.0, ends.y * 0.9, 0.0);
     let total: f32 = leafy.iter().map(|l| l.from.distance(l.to)).sum();
     let side = form.card;
-    // A stretch by its length.
+    // Un tramo según su largo.
     let pick_stretch = |rng: &mut Rng| {
         let mut pick = rng.unit() * total;
         leafy
@@ -1176,7 +1214,7 @@ fn cards(form: &Form, leafy: &[Leafy], rng: &mut Rng) -> Buffers {
             })
             .unwrap_or(&leafy[leafy.len() - 1])
     };
-    // Where the dense clumps hang: toward the ends of the stretches.
+    // Dónde cuelgan los grupos densos: hacia los extremos de los tramos.
     let clumps: Vec<Vec3> = if form.clump > 0.0 {
         (0..CLUMPS)
             .map(|_| {
@@ -1189,15 +1227,15 @@ fn cards(form: &Form, leafy: &[Leafy], rng: &mut Rng) -> Buffers {
     };
     for _ in 0..form.cards {
         let (at, dir) = if !clumps.is_empty() && rng.unit() < form.clump {
-            // A clump's card: within a card's reach of its centre, so the
-            // leaves overlap into one mass.
+            // La tarjeta de un grupo: dentro del alcance de una tarjeta desde
+            // su centro, para que las hojas se superpongan en una sola masa.
             let c = clumps[(rng.unit() * CLUMPS as f32) as usize % CLUMPS];
             (
                 c + rng.ball() * side * 1.3,
                 (c - centre).normalize_or(Vec3::Y),
             )
         } else {
-            // A spot on a stretch, mostly toward its end.
+            // Un lugar sobre un tramo, mayormente hacia su extremo.
             let stretch = pick_stretch(rng);
             let t = 0.2 + 0.8 * rng.unit().sqrt();
             (
@@ -1207,8 +1245,8 @@ fn cards(form: &Form, leafy: &[Leafy], rng: &mut Rng) -> Buffers {
         };
         let outward = (at - centre).normalize_or(dir);
         {
-            // Which way the sprig grows from its base: out along the
-            // branch and away from the crown, or hanging.
+            // Hacia dónde crece el ramito desde su base: hacia afuera a lo
+            // largo de la rama y lejos de la copa, o colgando.
             let reach = (dir + outward + rng.ball() * 0.9 + Vec3::Y * 0.3).normalize_or(Vec3::Y);
             let up = reach.lerp(Vec3::NEG_Y, form.hang).normalize_or(Vec3::NEG_Y);
             let right = up
@@ -1226,7 +1264,8 @@ fn cards(form: &Form, leafy: &[Leafy], rng: &mut Rng) -> Buffers {
                     let across = s as f32 - 0.5;
                     let p = bottom + right * across * side + up * t * side
                         - Vec3::Y * form.sag * side * t * t;
-                    // Lean the normal out from the crown's middle.
+                    // Inclinar la normal hacia afuera desde el centro de la
+                    // copa.
                     let facing = if face.dot(p - centre) < 0.0 {
                         -face
                     } else {
@@ -1287,13 +1326,13 @@ mod tests {
         for (species, v, t) in all() {
             for p in t.bark.positions.iter().filter(|p| p.y < 0.5) {
                 let r = Vec2::new(p.x, p.z).length();
-                // As wide as a plaza ever draws it.
+                // Tan ancho como lo dibuja cualquier plaza.
                 assert!(
                     r * crate::town::TREE_SCALE_MAX <= pampa_core::town::TREE_TRUNK_RADIUS,
                     "{species:?} {v}: {r}"
                 );
             }
-            // And the bark reaches the ground.
+            // Y la corteza llega al suelo.
             let foot = t.bark.positions.iter().map(|p| p.y).fold(1.0, f32::min);
             assert!(foot.abs() < 0.02, "{species:?} {v}: {foot}");
         }
@@ -1309,19 +1348,19 @@ mod tests {
         for s in Species::ALL {
             println!("{s:?}: {:.1} m tall, {:.1} m wide", h(s), w(s));
         }
-        // The eucalipto towers over the rest; the aromo is the lowest.
+        // El eucalipto sobresale por encima del resto; el aromo es el más bajo.
         for s in [Species::Paraiso, Species::Olmo, Species::Aromo] {
             assert!(h(Species::Eucalipto) > h(s) + 2.0, "{s:?}");
             if s != Species::Aromo {
                 assert!(h(s) > h(Species::Aromo) + 1.0, "{s:?}");
             }
         }
-        // The paraíso's umbrella is wider than it is tall; the olmo's vase
-        // and the eucalipto are taller than wide.
+        // La sombrilla del paraíso es más ancha que alta; el florero del olmo y
+        // el eucalipto son más altos que anchos.
         assert!(w(Species::Paraiso) > h(Species::Paraiso));
         assert!(h(Species::Olmo) > w(Species::Olmo));
         assert!(h(Species::Eucalipto) > 1.5 * w(Species::Eucalipto));
-        // The olmo is a vase: its leaves spread wider up high than low.
+        // El olmo es un florero: sus hojas se extienden más arriba que abajo.
         let t = tree(Species::Olmo, 0);
         let spread = |lo: f32, hi: f32| {
             t.leaves
@@ -1332,7 +1371,8 @@ mod tests {
                 .fold(0.0, f32::max)
         };
         assert!(spread(0.7, 1.0) > spread(0.3, 0.55), "a vase");
-        // The eucalipto's cards hang: most sprigs point down.
+        // Las tarjetas del eucalipto cuelgan: la mayoría de los ramitos apuntan
+        // hacia abajo.
         let t = tree(Species::Eucalipto, 0);
         let down = t
             .leaves
@@ -1378,10 +1418,10 @@ mod tests {
                 assert!((u0..=u0 + 0.5).contains(&uv[0]), "{card:?}");
                 assert!((v0..=v0 + 0.5).contains(&uv[1]), "{card:?}");
             }
-            // The tip row samples the top of the quarter.
+            // La fila de la punta muestrea la parte superior del cuarto.
             assert_eq!(card[4][1], v0);
         }
-        // Every quarter is used.
+        // Se usan todos los cuartos.
         let quarters: std::collections::HashSet<_> = t
             .leaves
             .uvs
@@ -1400,8 +1440,8 @@ mod tests {
                 assert!((t3.length() - 1.0).abs() < 1e-3, "{species:?} {v}");
                 assert!(t3.dot(*n).abs() < 1e-3, "{species:?} {v}");
             }
-            // A tube's seam: the last vertex of each ring sits on the
-            // first with a whole number of repeats between.
+            // La costura de un tubo: el último vertex de cada anillo coincide
+            // con el primero, con un número entero de repeticiones entre ellos.
             let u_max = b.uvs.iter().map(|uv| uv[0]).fold(0.0, f32::max);
             assert_eq!(u_max, u_max.round(), "{species:?} {v}");
         }
@@ -1418,11 +1458,11 @@ mod tests {
         species != Species::Calden || (v as usize) < crate::tree::CALDEN_LIVE
     }
 
-    /// What tells a form's silhouette apart: its height, its crown's width,
-    /// how far the crown's middle sits off the trunk, how low it hangs
-    /// (a fraction of the height), how much leaf it carries and how far
-    /// the bark spreads in the lower half, a fraction of the height
-    /// (stems fanning from the ground against a single trunk).
+    /// Lo que distingue la silueta de una forma: su altura, el ancho de su
+    /// copa, cuánto se aparta el centro de la copa del tronco, qué tan bajo
+    /// cuelga (como fracción de la altura), cuántas hojas lleva y cuánto se
+    /// extiende la corteza en la mitad inferior, como fracción de la altura
+    /// (tallos que se abren en abanico desde el suelo frente a un solo tronco).
     fn outline(t: &TreeMesh) -> [f32; 6] {
         let p = &t.leaves.positions;
         let middle = p.iter().map(|p| Vec2::new(p.x, p.z)).sum::<Vec2>() / p.len() as f32;
@@ -1488,7 +1528,8 @@ mod tests {
             for (v, o) in &forms {
                 println!("{species:?} {v}: {o:.2?}");
             }
-            // At least 8 live caldén forms, 4 ombú ones and 5 of each other.
+            // Al menos 8 formas vivas de caldén, 4 de ombú y 5 de cada una de
+            // las demás.
             let least = match species {
                 Species::Calden => 8,
                 Species::Ombu => 4,
@@ -1497,11 +1538,13 @@ mod tests {
             assert!(forms.len() >= least, "{species:?}");
             for (i, (a, oa)) in forms.iter().enumerate() {
                 for (b, ob) in &forms[i + 1..] {
-                    // Clearly apart in some trait: over a fifth of it
-                    // (the lean over a tenth of the height).
+                    // Claramente distintas en algún rasgo: por más de un quinto
+                    // de él (la inclinación, por más de un décimo de la
+                    // altura).
                     let apart = (0..6).any(|k| {
-                        // The lean and the bark's spread, a tenth of the
-                        // height or less; the rest, a fifth of the larger.
+                        // La inclinación y la extensión de la corteza, un
+                        // décimo de la altura o menos; el resto, un quinto del
+                        // mayor.
                         let scale = match k {
                             2 => 0.1 * oa[0],
                             3 | 5 => 0.04,
@@ -1513,8 +1556,9 @@ mod tests {
                 }
             }
         }
-        // Some are leaning or lopsided (the crown's middle well off the
-        // trunk), some tall and narrow, some broad and flat.
+        // Algunas están inclinadas o son asimétricas (el centro de la copa bien
+        // apartado del tronco), algunas son altas y angostas, algunas anchas y
+        // planas.
         let calden: Vec<[f32; 6]> = (0..crate::tree::CALDEN_LIVE as u32)
             .map(|v| outline(&tree(Species::Calden, v)))
             .collect();
@@ -1522,8 +1566,8 @@ mod tests {
         assert!(calden.iter().filter(|o| o[2] > 0.1 * o[0]).count() >= 3);
         assert!(calden.iter().any(|o| ratio(o) < 1.0), "a tall narrow form");
         assert!(calden.iter().any(|o| ratio(o) > 2.2), "a broad flat form");
-        // The wind-shaped forms (3 and 8) stand lopsided, well off their
-        // trunks; the classic umbrella sits over its own.
+        // Las formas moldeadas por el viento (3 y 8) quedan asimétricas, bien
+        // apartadas de sus troncos; la sombrilla clásica queda sobre el suyo.
         for v in [3, 8] {
             assert!(
                 calden[v][2] > 0.25 * calden[v][0],
@@ -1532,9 +1576,9 @@ mod tests {
             );
         }
         assert!(calden[0][2] < 0.15 * calden[0][0], "{:?}", calden[0]);
-        // No live crown dips into the ground.
+        // Ninguna copa viva se mete en el suelo.
         assert!(calden.iter().all(|o| o[3] > -0.06), "{calden:?}");
-        // The snags are low on leaves, and a stub stands short.
+        // Los árboles secos tienen pocas hojas, y un tocón queda bajo.
         let stub = tree(Species::Calden, 11);
         let live_height = calden.iter().map(|o| o[0]).fold(f32::MAX, f32::min);
         assert!(stub.height < live_height);
@@ -1544,26 +1588,26 @@ mod tests {
     fn field_trunks_stand_within_the_collision_core_plants_for_them() {
         use pampa_core::flora::Age;
         use pampa_core::{Species as Core, Tree, Vec2 as Ground};
-        // The town species that escaped into the field stand within their
-        // core radius too.
+        // Las especies del pueblo que se escaparon al campo también quedan
+        // dentro de su radio de core.
         let town = Species::ALL
             .iter()
             .flat_map(|&s| (0..s.variants() as u32).map(move |v| (s, v, tree(s, v))));
         for (species, v, t) in field().into_iter().chain(town) {
             let core = crate::flora::core_species(species);
             for age in Age::ALL {
-                // An ombú is never planted a sapling.
+                // Un ombú nunca se planta como renoval.
                 if core == Core::Ombu && age == Age::Sapling {
                     continue;
                 }
-                // Only a mature caldén is ever a snag.
+                // Solo un caldén maduro llega a estar seco.
                 if !live(species, v) && age != Age::Mature {
                     continue;
                 }
                 let (lo, hi) = age.height_range(core);
-                // The widest the age is planted.
+                // El más ancho al que se planta la edad.
                 let width = match (core, age) {
-                    // An ombú's width stays modest at every age.
+                    // El ancho de un ombú se mantiene modesto a cualquier edad.
                     (Core::Ombu, _) => 1.15,
                     (_, Age::Old) => 1.4,
                     _ => 1.18,
@@ -1579,8 +1623,9 @@ mod tests {
                         variant: 0,
                     };
                     let scale = h / t.height;
-                    // Every bark vertex in the first fifth of a meter above
-                    // the ground (a sapling's limbs part half a meter up).
+                    // Cada vertex de corteza en el primer quinto de metro sobre
+                    // el suelo (las ramas de un renoval se separan a medio
+                    // metro de altura).
                     for p in t.bark.positions.iter().filter(|p| p.y * scale < 0.2) {
                         let r = Vec2::new(p.x, p.z).length() * scale * width;
                         assert!(
@@ -1592,7 +1637,7 @@ mod tests {
                 }
             }
             let foot = t.bark.positions.iter().map(|p| p.y).fold(1.0, f32::min);
-            // A leaning trunk tilts its first ring a little under the ground.
+            // Un tronco inclinado ladea su primer anillo un poco bajo el suelo.
             assert!(foot.abs() < 0.06, "{species:?} {v}: {foot}");
         }
     }
@@ -1605,7 +1650,7 @@ mod tests {
             all.iter().sum::<f32>() / all.len() as f32
         };
         let calden = Species::Calden;
-        // Wider than tall on the whole, and its leaves hang from low branches.
+        // Más ancho que alto en conjunto, y sus hojas cuelgan de ramas bajas.
         let (h, w) = (
             mean(calden, |t| t.height),
             mean(calden, |t| 2.0 * t.crown_radius),
@@ -1613,17 +1658,17 @@ mod tests {
         println!("caldén {h:.1} x {w:.1}");
         assert!(w > 1.15 * h, "{w} wide, {h} tall");
         assert!(mean(calden, |t| t.crown_base / t.height) < 0.45);
-        // Small leaves, no coarser than the aromo's feathery ones, and
-        // smaller still on the chañar.
-        // (The ombú's big glossy leaves are the one exception.)
+        // Hojas pequeñas, no más gruesas que las plumosas del aromo, y todavía
+        // más pequeñas en el chañar.
+        // (Las hojas grandes y brillantes del ombú son la única excepción.)
         for s in Species::FIELD.into_iter().filter(|&s| s != Species::Ombu) {
             assert!(s.form().card <= Species::Aromo.form().card, "{s:?}");
         }
         assert!(Species::Chanar.form().card < 0.6 * Species::Calden.form().card);
         let leaves = |s| mean(s, |t| t.leaves.triangles() as f32);
         assert!(leaves(Species::Chanar) < 0.8 * leaves(calden));
-        // The chañar is a small tree of several stems: they fan out
-        // low, well past the width of the stool they rise from.
+        // El chañar es un árbol pequeño de varios tallos: se abren en abanico
+        // abajo, bastante más allá del ancho de la cepa de la que salen.
         for v in 0..Species::Chanar.variants() as u32 {
             let t = tree(Species::Chanar, v);
             let spread = |lo: f32, hi: f32| {
@@ -1635,8 +1680,9 @@ mod tests {
                     .fold(0.0, f32::max)
             };
             assert!(spread(0.35, 0.6) > 2.0 * spread(0.0, 0.05).max(0.05), "{v}");
-            // Several stems already stand apart a third of the way up:
-            // bark well off the axis, round at least three of eight sectors.
+            // Varios tallos ya están separados a un tercio de la altura:
+            // corteza bien apartada del eje, en al menos tres de ocho sectores
+            // alrededor.
             let mut sectors = [false; 8];
             for p in t.bark.positions.iter() {
                 let off = Vec2::new(p.x, p.z);
@@ -1650,7 +1696,7 @@ mod tests {
             let stems = sectors.iter().filter(|&&s| s).count();
             assert!(stems >= 3, "{v}: bark on {stems} sectors");
         }
-        // The last caldén variants are dead or sparse: few leaves.
+        // Las últimas variantes del caldén están muertas o ralas: pocas hojas.
         let full = leaves(calden);
         for v in crate::tree::CALDEN_LIVE as u32..calden.variants() as u32 {
             let t = tree(calden, v);
@@ -1681,10 +1727,10 @@ mod tests {
 
     #[test]
     fn field_bark_repeats_coarsely_so_its_furrows_survive_the_mipmaps() {
-        // The first field forms tiled the bark every 0.5 x 0.9 m (the
-        // caldén) and 0.5 x 0.8 m (the chañar): too fine to read from a
-        // distance. A repeat now spans over a meter round and about
-        // 1.5 m along, and the town trees keep theirs.
+        // Las primeras formas de campo repetían la corteza cada 0.5 x 0.9 m (el
+        // caldén) y 0.5 x 0.8 m (el chañar): demasiado fino para leerse a la
+        // distancia. Ahora una repetición abarca más de un metro alrededor y
+        // unos 1.5 m a lo largo, y los árboles del pueblo conservan la suya.
         for species in Species::FIELD {
             for v in 0..species.variants() as u32 {
                 let tile = species.variant_form(v).bark_tile;
@@ -1693,8 +1739,9 @@ mod tests {
         }
         assert_eq!(Species::Paraiso.form().bark_tile, Vec2::ONE);
         assert_eq!(Species::Olmo.form().bark_tile, Vec2::new(0.8, 1.6));
-        // The whole repeat wraps once round a caldén's trunk, and a
-        // trunk's bark stretches over less than a repeat and a half along.
+        // La repetición completa da una vuelta alrededor del tronco de un
+        // caldén, y la corteza de un tronco se estira a lo largo de menos de
+        // una repetición y media.
         let t = tree(Species::Calden, 0);
         let foot: Vec<[f32; 2]> = t
             .bark
@@ -1710,8 +1757,8 @@ mod tests {
         assert!(along < 2.5, "{along}");
     }
 
-    /// Share of the crown's area (seen from the side, over cells within
-    /// reach of a card) that a leaf covers.
+    /// La proporción del área de la copa (vista de costado, sobre las celdas al
+    /// alcance de una tarjeta) que cubre una hoja.
     fn crown_cover(t: &TreeMesh) -> f32 {
         let cell = 0.12;
         let tris: Vec<[Vec2; 3]> = t
@@ -1741,7 +1788,7 @@ mod tests {
             let mut x = lo.x;
             while x < hi.x {
                 let q = Vec2::new(x, y);
-                // The zone: near the leaves, not out in the sky.
+                // La zona: cerca de las hojas, no afuera en el cielo.
                 if centres.iter().any(|c| c.distance(q) < 0.9) {
                     zone += 1;
                     covered += usize::from(tris.iter().any(|t| inside(q, *t)));
@@ -1755,8 +1802,8 @@ mod tests {
 
     #[test]
     fn live_crowns_are_denser_than_the_first_field_crowns_with_fewer_holes() {
-        // The first F1 caldén: 150 cards of 0.9 m scattered along the
-        // branches.
+        // El primer caldén de F1: 150 tarjetas de 0.9 m dispersas a lo largo de
+        // las ramas.
         let old = Form {
             cards: 150,
             card: 0.9,
@@ -1776,7 +1823,7 @@ mod tests {
         println!("crown cover: old {old:.2}, new {mean:.2} {new:.2?}");
         assert!(mean > old + 0.08, "{mean} against {old}");
         assert!(new.iter().all(|&c| c > old), "{new:?}");
-        // Most of a live crown is leaf.
+        // La mayor parte de una copa viva es hoja.
         assert!(new.iter().filter(|&&c| c > 0.6).count() >= 5, "{new:?}");
     }
 
@@ -1785,12 +1832,12 @@ mod tests {
         for species in Species::ALL {
             let f = species.form();
             assert_eq!((f.lean, f.wind, f.clump), (0.04, 0.0, 0.0), "{species:?}");
-            // Every variant of a town species is its one form.
+            // Cada variante de una especie del pueblo es su única forma.
             assert_eq!(species.variant_form(2).height, f.height);
         }
     }
 
-    /// Total area of a bark mesh: a thinner limb has less of it.
+    /// El área total de una mesh de corteza: una rama más delgada tiene menos.
     fn bark_area(t: &TreeMesh) -> f32 {
         let b = &t.bark;
         b.indices
@@ -1804,9 +1851,10 @@ mod tests {
 
     #[test]
     fn only_a_shrub_form_gets_fine_stem_tips_whatever_its_trunk() {
-        // A thin-trunked tree (a chañar's form at 4 cm) and the same form
-        // marked a shrub, grown from the same seed: the shrub's stems end
-        // finer, the tree's limbs keep a twig's girth.
+        // Un árbol de tronco delgado (una forma de chañar a 4 cm) y la misma
+        // forma marcada como arbusto, crecidos con la misma semilla: los tallos
+        // del arbusto terminan más finos y las ramas del árbol conservan el
+        // grosor de una ramita.
         let thin = Form {
             trunk_radius: 0.04,
             ..Species::Chanar.form()
@@ -1821,7 +1869,8 @@ mod tests {
             tree_area > shrub_area * 1.05,
             "tree {tree_area} vs shrub {shrub_area}"
         );
-        // A real shrub keeps its fine tips: unmarked, it would grow thicker.
+        // Un arbusto real conserva sus puntas finas: sin marcar, crecería más
+        // grueso.
         let piquillin = Species::Piquillin.form();
         let fine = bark_area(&grow(piquillin, Rng::new(Species::Piquillin, 0)));
         let plain = Form {
@@ -1840,7 +1889,7 @@ mod tests {
                 assert_eq!(species.variant_form(v).shrub, shrub, "{species:?} {v}");
             }
             assert_eq!(species.form().shrub, shrub, "{species:?}");
-            // A street form keeps its species' shrubness.
+            // Una forma de calle conserva el carácter de arbusto de su especie.
             assert_eq!(species.street_form().shrub, shrub, "{species:?}");
         }
     }
@@ -1860,9 +1909,10 @@ mod tests {
                 "{species:?} {v}: {tris} triangles, {:.2} m high, {:.2} m reach",
                 t.height, t.crown_radius
             );
-            // Cheap, so a thicket of them stays within the frame: 200-500.
+            // Barato, para que una maraña de ellos entre en el frame: 200-500.
             assert!((200..=500).contains(&tris), "{species:?} {v}: {tris}");
-            // Low: far under any tree, and wider than the stems' foot.
+            // Bajo: muy por debajo de cualquier árbol, y más ancho que el pie
+            // de los tallos.
             assert!(
                 (0.9..3.0).contains(&t.height),
                 "{species:?} {v}: {}",
@@ -1872,8 +1922,8 @@ mod tests {
                 t.crown_radius > 0.4 && t.crown_radius < 2.2,
                 "{species:?} {v}"
             );
-            // Many stems from the ground, not one trunk: the leaves hang
-            // low.
+            // Muchos tallos desde el suelo, no un solo tronco: las hojas
+            // cuelgan bajas.
             assert!(t.crown_base < 0.7 * t.height, "{species:?} {v}");
             assert!(!t.leaves.positions.is_empty() && !t.bark.positions.is_empty());
         }
@@ -1885,15 +1935,15 @@ mod tests {
             let built: Vec<TreeMesh> = (0..species.variants() as u32)
                 .map(|v| tree(species, v))
                 .collect();
-            // The same seed builds the same shrub.
+            // La misma semilla construye el mismo arbusto.
             assert_eq!(built[2], tree(species, 2), "{species:?}");
             for (i, a) in built.iter().enumerate() {
                 for b in &built[i + 1..] {
                     assert_ne!(a.bark.positions, b.bark.positions, "{species:?}");
                 }
             }
-            // The three shapes differ in height: low and spreading, plain,
-            // and tall and dense.
+            // Las tres formas difieren en altura: baja y extendida, simple, y
+            // alta y densa.
             let (plain, low, tall) = (&built[0], &built[1], &built[2]);
             assert!(
                 low.height < plain.height && plain.height < tall.height,
@@ -1908,8 +1958,9 @@ mod tests {
             let v: Vec<f32> = (0..s.variants() as u32).map(|v| f(&tree(s, v))).collect();
             v.iter().sum::<f32>() / v.len() as f32
         };
-        // Jarilla: upright stems, so narrow for its height; piquillín a
-        // broad dense mass of tiny leaves; fachinal the tallest.
+        // Jarilla: tallos erguidos, así que es angosta para su altura; el
+        // piquillín, una masa ancha y densa de hojas diminutas; el fachinal, el
+        // más alto.
         let narrow = |s| mean(s, |t| t.crown_radius / t.height);
         assert!(narrow(Species::Jarilla) < narrow(Species::Piquillin));
         assert!(mean(Species::Fachinal, |t| t.height) > mean(Species::Piquillin, |t| t.height));
@@ -1921,16 +1972,18 @@ mod tests {
             let t = tree(Species::Alamo, v);
             let tris = t.bark.triangles() + t.leaves.triangles();
             assert!((200..=1200).contains(&tris), "variant {v}: {tris}");
-            // A Lombardy poplar's column: at least 3.5 times as tall as wide,
-            // where the eucalipto is about 1.5 times.
+            // La columna de un álamo de Lombardía: al menos 3.5 veces más alta
+            // que ancha, mientras que el eucalipto lo es alrededor de
+            // 1.5 veces.
             assert!(
                 t.height >= 3.5 * 2.0 * t.crown_radius,
                 "variant {v}: {} m tall, {} m wide",
                 t.height,
                 2.0 * t.crown_radius
             );
-            // Leaves from the middle of the limbs right up to the top, the
-            // lower bole bare as in a self-pruned windbreak row.
+            // Hojas desde el centro de las ramas hasta la cima, con el fuste
+            // inferior desnudo como en una cortina rompevientos que se poda
+            // sola.
             assert!(
                 t.crown_base < 0.55 * t.height,
                 "variant {v}: {}",
@@ -1951,19 +2004,20 @@ mod tests {
                 .filter(|p| p.y < 0.5)
                 .map(|p| Vec2::new(p.x, p.z).length())
                 .fold(0.0, f32::max);
-            // Core's radius for a poplar of this height, at any scale of it.
+            // El radio de core para un álamo de esta altura, a cualquier
+            // escala.
             let core = 0.012 * t.height;
             assert!(foot <= core, "variant {v}: bark {foot}, core {core}");
         }
     }
 
-    /// The mean of `f` over a species' forms.
+    /// La media de `f` sobre las formas de una especie.
     fn mean_of(s: Species, f: impl Fn(&TreeMesh) -> f32) -> f32 {
         let all: Vec<f32> = (0..s.variants() as u32).map(|v| f(&tree(s, v))).collect();
         all.iter().sum::<f32>() / all.len() as f32
     }
 
-    /// Farthest bark from the axis below height `y`, meters.
+    /// La corteza más lejana del eje por debajo de la altura `y`, en metros.
     fn foot(t: &TreeMesh, y: f32) -> f32 {
         t.bark
             .positions
@@ -1997,17 +2051,18 @@ mod tests {
         );
         println!("algarrobo {h:.1} x {w:.1}");
         assert!(h < 6.0 && w > 1.6 * h, "{h} tall, {w} wide");
-        // Several stems fan out from low down, past the stool they rise from.
+        // Varios tallos se abren en abanico desde abajo, más allá de la cepa de
+        // la que salen.
         let spread = mean_of(Species::Algarrobo, |t| foot(t, 0.5 * t.height) / t.height);
         assert!(spread > 0.25, "{spread}");
-        // Lower than the caldén's neighbours it grows among.
+        // Más bajo que los caldenes vecinos entre los que crece.
         assert!(h < mean_of(Species::Calden, |t| t.height) + 1.0);
     }
 
     #[test]
     fn the_tala_zigzags_into_an_irregular_round_crown() {
-        // Its limbs bow off their line and back; without that the same seed
-        // grows straight limbs.
+        // Sus ramas se arquean fuera de su línea y vuelven; sin eso la misma
+        // semilla hace crecer ramas rectas.
         let form = Species::Tala.form();
         assert!(form.kink >= 0.15);
         for other in Species::EVERY.into_iter().filter(|&s| s != Species::Tala) {
@@ -2016,7 +2071,7 @@ mod tests {
         let zig = grow(form, Rng::new(Species::Tala, 0));
         let straight = grow(Form { kink: 0.0, ..form }, Rng::new(Species::Tala, 0));
         assert_ne!(zig.bark, straight.bark);
-        // The limbs' zigzag shifts the bark's reach off the trunk.
+        // El zigzag de las ramas aparta del tronco el alcance de la corteza.
         let reach = |t: &TreeMesh| foot(t, f32::MAX);
         assert!(
             reach(&zig) > 1.02 * reach(&straight),
@@ -2024,8 +2079,8 @@ mod tests {
             reach(&zig),
             reach(&straight)
         );
-        // An irregular crown: the middle of the leaves stands off the trunk
-        // in some forms, and no form is a column.
+        // Una copa irregular: el centro de las hojas se aparta del tronco en
+        // algunas formas, y ninguna forma es una columna.
         let (w, h) = (
             mean_of(Species::Tala, |t| 2.0 * t.crown_radius),
             mean_of(Species::Tala, |t| t.height),
@@ -2050,8 +2105,9 @@ mod tests {
         assert!(Species::Espinillo.variants() >= 5);
         for v in 0..Species::Espinillo.variants() as u32 {
             let t = tree(Species::Espinillo, v);
-            // A small tree under 5 m, its crown about as wide as it is tall
-            // or a little wider: round, not a column or a flat umbrella.
+            // Un árbol pequeño de menos de 5 m, con la copa más o menos tan
+            // ancha como alta o un poco más ancha: redonda, ni una columna ni
+            // una sombrilla plana.
             let ratio = 2.0 * t.crown_radius / t.height;
             assert!(
                 t.height < 5.0 && (0.8..2.4).contains(&ratio),
@@ -2070,7 +2126,7 @@ mod tests {
         }
         for v in 0..Species::Ombu.variants() as u32 {
             let t = tree(Species::Ombu, v);
-            // The roots flare past the trunk at the foot.
+            // Las raíces se abren más allá del tronco al pie.
             let plain = grow(
                 Form {
                     buttress: 0,
@@ -2080,7 +2136,8 @@ mod tests {
             );
             let (roots, trunk) = (foot(&t, 0.3), foot(&plain, 0.3));
             assert!(roots > 1.08 * trunk, "{v}: {roots} against {trunk}");
-            // A huge trunk: stouter against its height than any other tree's.
+            // Un tronco enorme: más robusto en relación con su altura que el de
+            // cualquier otro árbol.
             for other in [Species::Calden, Species::Eucalipto, Species::Algarrobo] {
                 let o = tree(other, 0);
                 assert!(
@@ -2088,7 +2145,7 @@ mod tests {
                     "{v} against {other:?}"
                 );
             }
-            // A broad dome of big leaves, dense.
+            // Una cúpula ancha de hojas grandes, densa.
             assert!(t.crown_radius * 2.0 > 1.2 * t.height, "{v}");
             assert!(t.leaves.triangles() >= 560, "{v}");
         }

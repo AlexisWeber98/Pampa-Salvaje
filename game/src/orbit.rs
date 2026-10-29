@@ -1,36 +1,38 @@
-//! Orbit math for the third-person camera, kept free of Bevy so it can be
-//! tested on its own.
+//! Matemática de órbita para la cámara en tercera persona, libre de Bevy para
+//! poder probarla por separado.
 //!
-//! The camera circles the rider on a sphere: `yaw` is the ground-plane
-//! angle from the rider to the camera (radians, counter-clockwise from
-//! east, like `Heading`), `pitch` its elevation above the horizon and
-//! `distance` the sphere's radius. Yaw goes all the way around; pitch and
-//! distance stay within limits. After a while without camera input, the
-//! camera eases back behind a moving rider.
+//! La cámara gira alrededor del jinete sobre una esfera: `yaw` es el ángulo en
+//! el plano del suelo desde el jinete hasta la cámara (radianes, en sentido
+//! antihorario desde el este, como `Heading`), `pitch` su elevación sobre el
+//! horizonte y `distance` el radio de la esfera. El yaw da la vuelta completa;
+//! el pitch y la distancia se mantienen dentro de límites. Tras un rato sin
+//! entrada de cámara, la cámara vuelve suavemente detrás de un jinete en
+//! movimiento.
 
 use pampa_core::Vec2;
 use std::f32::consts::{PI, TAU};
 
-/// Tuning for [`Orbit`].
+/// Ajuste para [`Orbit`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OrbitParams {
-    /// Radians of orbit per pixel of mouse motion.
+    /// Radianes de órbita por píxel de movimiento del mouse.
     pub mouse_sensitivity: f32,
-    /// Radians per second of orbit while Q or E is held.
+    /// Radianes por segundo de órbita mientras se mantiene Q o E.
     pub key_rate: f32,
-    /// Meters of zoom per wheel line.
+    /// Metros de zoom por línea de rueda.
     pub zoom_step: f32,
     pub min_distance: f32,
     pub max_distance: f32,
-    /// Lowest elevation above the horizon, in radians.
+    /// Elevación más baja sobre el horizonte, en radianes.
     pub min_pitch: f32,
-    /// Highest elevation above the horizon, in radians.
+    /// Elevación más alta sobre el horizonte, en radianes.
     pub max_pitch: f32,
-    /// Seconds without camera input before the camera recenters.
+    /// Segundos sin entrada de cámara antes de que la cámara se recentre.
     pub recenter_delay: f32,
-    /// Rider ground speed (m/s, absolute) needed to recenter.
+    /// Velocidad del jinete sobre el suelo (m/s, absoluta) necesaria para
+    /// recentrar.
     pub recenter_min_speed: f32,
-    /// Exponential rate of the recenter ease (higher = quicker).
+    /// Tasa exponencial de la transición de recentrado (más alta = más rápida).
     pub recenter_rate: f32,
 }
 
@@ -51,45 +53,46 @@ impl Default for OrbitParams {
     }
 }
 
-/// Camera input for one frame.
+/// Entrada de cámara para un frame.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct OrbitInput {
-    /// Mouse motion in pixels: `x` right, `y` down.
+    /// Movimiento del mouse en píxeles: `x` a la derecha, `y` hacia abajo.
     pub look: (f32, f32),
-    /// `-1.0..=1.0`: positive orbits like moving the mouse right (E).
+    /// `-1.0..=1.0`: positivo orbita como mover el mouse a la derecha (E).
     pub keys: f32,
-    /// Wheel lines: positive zooms in.
+    /// Líneas de rueda: positivo acerca el zoom.
     pub zoom: f32,
 }
 
 impl OrbitInput {
-    /// Whether the player touched the camera this frame.
+    /// Si el jugador tocó la cámara en este frame.
     pub fn is_active(&self) -> bool {
         self.look != (0.0, 0.0) || self.keys != 0.0 || self.zoom != 0.0
     }
 }
 
-/// Where the camera sits on its orbit around the rider.
+/// Dónde está la cámara en su órbita alrededor del jinete.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Orbit {
-    /// Ground angle from the rider to the camera, wrapped to `[0, TAU)`.
+    /// Ángulo en el suelo desde el jinete hasta la cámara, ajustado a
+    /// `[0, TAU)`.
     pub yaw: f32,
-    /// Elevation above the horizon, in radians.
+    /// Elevación sobre el horizonte, en radianes.
     pub pitch: f32,
-    /// Distance from the look-at point, in meters.
+    /// Distancia desde el punto observado, en metros.
     pub distance: f32,
-    /// Seconds since the last camera input.
+    /// Segundos desde la última entrada de cámara.
     pub idle: f32,
 }
 
 impl Orbit {
-    /// Default elevation: a little above the rider's head.
+    /// Elevación por defecto: un poco por encima de la cabeza del jinete.
     pub const DEFAULT_PITCH: f32 = 0.26;
-    /// Default distance from the look-at point, in meters.
+    /// Distancia por defecto desde el punto observado, en metros.
     pub const DEFAULT_DISTANCE: f32 = 9.5;
 
-    /// Right behind a rider facing `heading` (radians), at the default
-    /// pitch and distance.
+    /// Justo detrás de un jinete que mira hacia `heading` (radianes), con el
+    /// pitch y la distancia por defecto.
     pub fn behind(heading: f32) -> Self {
         Self {
             yaw: wrap(heading + PI),
@@ -99,9 +102,9 @@ impl Orbit {
         }
     }
 
-    /// Applies one frame of `input` and, after enough idle time, eases the
-    /// camera behind a rider facing `heading` that moves at `speed`.
-    /// Non-finite input or `dt` counts as none.
+    /// Aplica un frame de `input` y, tras suficiente tiempo inactivo, lleva
+    /// suavemente la cámara detrás de un jinete que mira hacia `heading` y se
+    /// mueve a `speed`. Una entrada o un `dt` no finitos cuentan como ninguno.
     pub fn update(
         &mut self,
         input: OrbitInput,
@@ -120,8 +123,9 @@ impl Orbit {
         };
         if input.is_active() {
             self.idle = 0.0;
-            // Mouse right (or E) swings the view right: the camera goes
-            // clockwise around the rider, seen from above.
+            // El mouse a la derecha (o E) gira la vista a la derecha: la cámara
+            // se mueve en sentido horario alrededor del jinete, vista desde
+            // arriba.
             let turn = input.look.0 * params.mouse_sensitivity + input.keys * params.key_rate * dt;
             self.yaw = wrap(self.yaw - turn);
             self.pitch = (self.pitch + input.look.1 * params.mouse_sensitivity)
@@ -139,8 +143,8 @@ impl Orbit {
         }
     }
 
-    /// Camera position relative to the look-at point: the ground-plane
-    /// offset and the height above it.
+    /// Posición de la cámara relativa al punto observado: el desplazamiento en
+    /// el plano del suelo y la altura sobre él.
     pub fn offset(&self) -> (Vec2, f32) {
         let (sin_yaw, cos_yaw) = self.yaw.sin_cos();
         let (sin_pitch, cos_pitch) = self.pitch.sin_cos();
@@ -152,10 +156,11 @@ impl Orbit {
     }
 }
 
-/// `angle` wrapped to `[0, TAU)`.
+/// `angle` ajustado a `[0, TAU)`.
 fn wrap(angle: f32) -> f32 {
     let wrapped = angle.rem_euclid(TAU);
-    // `rem_euclid` can round up to exactly TAU for tiny negative inputs.
+    // `rem_euclid` puede redondear hasta exactamente TAU con entradas negativas
+    // diminutas.
     if wrapped >= TAU { 0.0 } else { wrapped }
 }
 
@@ -163,7 +168,7 @@ fn finite_or_zero(value: f32) -> f32 {
     if value.is_finite() { value } else { 0.0 }
 }
 
-/// Signed shortest angle from `from` to `to`, in `(-PI, PI]`.
+/// Ángulo más corto con signo de `from` a `to`, en `(-PI, PI]`.
 pub fn angle_between(from: f32, to: f32) -> f32 {
     let d = (to - from).rem_euclid(TAU);
     if d > PI { d - TAU } else { d }
@@ -190,7 +195,7 @@ mod tests {
     fn starts_behind_the_rider() {
         let orbit = Orbit::behind(FRAC_PI_2);
         let (ground, height) = orbit.offset();
-        // Rider faces north: the camera is south of it, above the ground.
+        // El jinete mira al norte: la cámara está al sur de él, sobre el suelo.
         assert!(ground.x.abs() < 1e-4 && ground.y < 0.0, "{ground:?}");
         assert!(height > 0.0);
         let length = (ground.length().powi(2) + height * height).sqrt();
@@ -203,7 +208,8 @@ mod tests {
         let mut orbit = Orbit::behind(0.0);
         let start = orbit.offset().0;
         let mut quadrants = [false; 4];
-        // One full turn in many small mouse moves to the right.
+        // Una vuelta completa en muchos pequeños movimientos del mouse a la
+        // derecha.
         let pixels = TAU / p.mouse_sensitivity;
         let frames = 240;
         for _ in 0..frames {
@@ -221,8 +227,8 @@ mod tests {
             orbit.offset().0.distance(start) < 1e-2,
             "back where it began"
         );
-        // Moving the mouse right swings the view right: the camera goes
-        // clockwise (seen from above) around the rider.
+        // Mover el mouse a la derecha gira la vista a la derecha: la cámara se
+        // mueve en sentido horario (vista desde arriba) alrededor del jinete.
         let mut right = Orbit::behind(0.0);
         right.update(
             OrbitInput {
@@ -296,7 +302,7 @@ mod tests {
         let p = params();
         let heading = 1.0;
         let mut orbit = Orbit::behind(heading);
-        orbit.yaw = heading + FRAC_PI_2; // Looking at the rider's side.
+        orbit.yaw = heading + FRAC_PI_2; // Mirando el costado del jinete.
         let side = orbit.yaw;
         idle_for(&mut orbit, heading, 5.0, p.recenter_delay - 0.2);
         assert_eq!(orbit.yaw, side, "waits before recentering");
@@ -342,7 +348,8 @@ mod tests {
     #[test]
     fn recenters_the_short_way_across_the_seam() {
         let p = params();
-        // Behind is just below TAU; the camera starts just above zero.
+        // Detrás queda justo debajo de TAU; la cámara empieza justo por encima
+        // de cero.
         let heading = PI - 0.1;
         let mut orbit = Orbit::behind(heading);
         orbit.yaw = 0.3;

@@ -1,5 +1,5 @@
-//! Wild animals: hares, tero flocks, soaring raptors and ducks (see
-//! [`super`]). None of them is an obstacle.
+//! Animales silvestres: liebres, bandadas de teros, aves rapaces que planean y
+//! patos (ver [`super`]). Ninguno de ellos es un obstáculo.
 
 use std::f32::consts::{PI, TAU};
 
@@ -7,47 +7,50 @@ use super::turn_toward;
 use crate::rng::Rng;
 use crate::{Aabb, Heading, Lagoon, Vec2};
 
-/// What a hare is doing.
+/// Lo que está haciendo una liebre.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HareState {
-    /// Sitting up in the grass.
+    /// Sentada en el pasto.
     Sit,
-    /// A few slow hops on.
+    /// Unos pocos saltos lentos.
     Hop,
-    /// Bolting from a rider.
+    /// Huyendo a toda velocidad de un jinete.
     Flee,
 }
 
-/// A liebre in the open grass.
+/// Una liebre en el pasto abierto.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Hare {
     pub position: Vec2,
     pub heading: Heading,
     pub state: HareState,
     pub speed: f32,
-    /// Meters run since it was seeded: render paces its bounds with it.
+    /// Metros recorridos desde que se sembró: el render marca el ritmo de sus
+    /// saltos con esto.
     pub travel: f32,
-    /// The chunk it was seeded in: it never leaves it, so it streams with it.
+    /// El chunk en el que se sembró: nunca sale de él, así que se carga por
+    /// streaming junto con él.
     pub home: Aabb,
     timer: f32,
     rng: Rng,
 }
 
 impl Hare {
-    /// A rider closer than this sets it running, meters.
+    /// Un jinete más cerca que esto la hace salir corriendo, en metros.
     pub const ALARM: f32 = 22.0;
-    /// It calms down this far from the rider, meters.
+    /// Se calma a esta distancia del jinete, en metros.
     pub const SAFE: f32 = 50.0;
-    /// Bolting speed, m/s.
+    /// Velocidad de huida, en m/s.
     pub const RUN: f32 = 11.0;
-    /// Hopping speed, m/s.
+    /// Velocidad a los saltos, en m/s.
     pub const HOP: f32 = 1.2;
 
-    /// Headings tried, in order, when the way ahead is closed: ever wider
-    /// turns either way, then straight back.
+    /// Orientaciones que se prueban, en orden, cuando el camino hacia adelante
+    /// está cerrado: giros cada vez más amplios hacia uno y otro lado y,
+    /// después, media vuelta.
     const DETOURS: [f32; 8] = [0.0, 0.8, -0.8, 1.6, -1.6, 2.4, -2.4, PI];
 
-    /// A hare sitting at `position`, kept inside `home`.
+    /// Una liebre sentada en `position`, que se mantiene dentro de `home`.
     pub fn new(position: Vec2, home: Aabb, seed: u32) -> Self {
         let mut rng = Rng::new(seed, 0x11a5);
         Self {
@@ -62,7 +65,7 @@ impl Hare {
         }
     }
 
-    /// How high it is off the ground mid-bound, meters.
+    /// A qué altura del suelo está en medio de un salto, en metros.
     pub fn lift(&self) -> f32 {
         let stride = if self.state == HareState::Flee {
             2.2
@@ -80,9 +83,9 @@ impl Hare {
         }
     }
 
-    /// Advances `dt` seconds with a rider at `threat`, only ever onto
-    /// ground `open` allows inside its home: where the way ahead is closed
-    /// it swerves, or turns back.
+    /// Avanza `dt` segundos con un jinete en `threat`, pisando solo terreno que
+    /// `open` permite dentro de su hogar: donde el camino hacia adelante está
+    /// cerrado, se desvía o da media vuelta.
     pub fn step(&mut self, dt: f32, threat: Option<Vec2>, open: impl Fn(Vec2) -> bool) {
         self.timer -= dt;
         let away = threat.map(|t| (self.position - t, self.position.distance(t)));
@@ -105,7 +108,8 @@ impl Hare {
             _ => {}
         }
         if self.state == HareState::Flee {
-            // Zigzags as it runs: a jink every so often, always away.
+            // Zigzaguea mientras corre: un quiebre cada tanto, siempre
+            // alejándose.
             if let Some((dir, _)) = away {
                 let jink = (self.travel * 0.35).sin() * 0.6;
                 let off = turn_toward(self.heading, dir) + jink;
@@ -127,7 +131,7 @@ impl Hare {
                 self.position = next;
                 self.travel += step;
             }
-            // Cornered: it crouches where it is.
+            // Acorralada: se agazapa donde está.
             None => self.settle(),
         }
     }
@@ -139,44 +143,47 @@ impl Hare {
     }
 }
 
-/// What a tero flock is doing.
+/// Lo que está haciendo una bandada de teros.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FlockState {
-    /// On the ground, pecking.
+    /// En el suelo, picoteando.
     Ground,
-    /// In the air from `from` to `to`, `t` of the way (`0..1`).
+    /// En el aire de `from` a `to`, a `t` del recorrido (`0..1`).
     Flight { from: Vec2, to: Vec2, t: f32 },
 }
 
-/// A few teros on the ground that take off together when approached.
+/// Unos pocos teros en el suelo que levantan vuelo juntos cuando alguien se
+/// acerca.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Flock {
-    /// Where the flock stands (or flies over).
+    /// Dónde está parada la bandada (o sobre dónde vuela).
     pub center: Vec2,
     pub state: FlockState,
-    /// Each bird's place round the center.
+    /// El lugar de cada pájaro alrededor del centro.
     offsets: Vec<Vec2>,
-    /// The chunk it was seeded in: it always lands inside it.
+    /// El chunk en el que se sembró: siempre aterriza dentro de él.
     pub home: Aabb,
-    /// Seconds since seeded, for pecking and flapping.
+    /// Segundos desde que se sembró, para picotear y aletear.
     pub clock: f32,
     rng: Rng,
 }
 
 impl Flock {
-    /// A rider closer than this puts them up, meters.
+    /// Un jinete más cerca que esto los hace levantar vuelo, en metros.
     pub const ALARM: f32 = 18.0;
-    /// Flight speed, m/s.
+    /// Velocidad de vuelo, en m/s.
     pub const SPEED: f32 = 9.0;
-    /// Height of the arc's top, meters.
+    /// Altura del punto más alto del arco, en metros.
     pub const ARC: f32 = 7.0;
-    /// Shortest and longest flight, meters.
+    /// Vuelo más corto y más largo, en metros.
     pub const FLIGHT: (f32, f32) = (40.0, 70.0);
 
-    /// Landing spots tried before the flock circles back to where it rose.
+    /// Lugares de aterrizaje que se prueban antes de que la bandada vuelva en
+    /// círculo al lugar donde levantó vuelo.
     const LANDING_TRIES: usize = 8;
 
-    /// `count` teros on the ground at `center`, kept inside `home`.
+    /// `count` teros en el suelo en `center`, que se mantienen dentro de
+    /// `home`.
     pub fn new(center: Vec2, home: Aabb, count: usize, seed: u32) -> Self {
         let mut rng = Rng::new(seed, 0x7e40);
         let offsets = (0..count)
@@ -192,12 +199,12 @@ impl Flock {
         }
     }
 
-    /// Whether it is in the air.
+    /// Si está en el aire.
     pub fn flying(&self) -> bool {
         matches!(self.state, FlockState::Flight { .. })
     }
 
-    /// Each bird's ground position and height above the ground.
+    /// La posición sobre el suelo de cada pájaro y su altura sobre el suelo.
     pub fn birds(&self) -> impl Iterator<Item = (Vec2, f32)> + '_ {
         let height = match self.state {
             FlockState::Ground => 0.0,
@@ -206,7 +213,8 @@ impl Flock {
         self.offsets.iter().map(move |&o| (self.center + o, height))
     }
 
-    /// Which way the birds face: along the flight, or a seeded way.
+    /// Hacia dónde miran los pájaros: en la dirección del vuelo, o en una
+    /// dirección sembrada.
     pub fn heading(&self) -> Heading {
         match self.state {
             FlockState::Flight { from, to, .. } => {
@@ -217,9 +225,10 @@ impl Flock {
         }
     }
 
-    /// Advances `dt` seconds with a rider at `threat`: takes off away from
-    /// it, flies a low arc and lands on ground `open` allows inside its home
-    /// (or circles back to where it rose when no spot ahead will do).
+    /// Avanza `dt` segundos con un jinete en `threat`: levanta vuelo alejándose
+    /// de él, vuela en un arco bajo y aterriza en terreno que `open` permite
+    /// dentro de su hogar (o vuelve en círculo al lugar donde levantó vuelo
+    /// cuando ningún lugar más adelante sirve).
     pub fn step(&mut self, dt: f32, threat: Option<Vec2>, open: impl Fn(Vec2) -> bool) {
         self.clock = crate::tick_clock(self.clock, dt);
         match self.state {
@@ -233,7 +242,8 @@ impl Flock {
                 let ahead = away.y.atan2(away.x);
                 let to = (0..Self::LANDING_TRIES)
                     .map(|k| {
-                        // Ever wider of straight away from the rider.
+                        // Cada vez más desviado de la dirección opuesta al
+                        // jinete.
                         let spread = 0.6 + 0.3 * k as f32;
                         let angle = ahead + self.rng.range(-spread, spread);
                         let reach = self.rng.range(Self::FLIGHT.0, Self::FLIGHT.1);
@@ -244,7 +254,8 @@ impl Flock {
                 self.state = FlockState::Flight { from, to, t: 0.0 };
             }
             FlockState::Flight { from, to, t } => {
-                // At least the shortest flight's time, even circling back.
+                // Al menos el tiempo del vuelo más corto, aunque vuelva en
+                // círculo.
                 let t = t + dt * Self::SPEED / from.distance(to).max(Self::FLIGHT.0);
                 if t >= 1.0 {
                     self.center = to;
@@ -258,16 +269,16 @@ impl Flock {
     }
 }
 
-/// A chimango or carancho circling slowly overhead.
+/// Un chimango o un carancho que vuela en círculos lentos en lo alto.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Raptor {
-    /// The middle of its circle.
+    /// El centro de su círculo.
     pub center: Vec2,
     pub radius: f32,
     pub altitude: f32,
-    /// Radians round the circle.
+    /// Radianes recorridos en el círculo.
     pub angle: f32,
-    /// Radians per second (negative: clockwise).
+    /// Radianes por segundo (negativo: sentido horario).
     pub rate: f32,
 }
 
@@ -275,7 +286,7 @@ impl Raptor {
     pub fn new(center: Vec2, seed: u32) -> Self {
         let mut rng = Rng::new(seed, 0xca7a);
         let radius = rng.range(30.0, 60.0);
-        // About 7 m/s round the circle, either way.
+        // Alrededor de 7 m/s por el círculo, en cualquiera de los dos sentidos.
         let rate = 7.0 / radius * if rng.unit() < 0.5 { 1.0 } else { -1.0 };
         Self {
             center,
@@ -290,39 +301,40 @@ impl Raptor {
         self.angle = (self.angle + self.rate * dt).rem_euclid(TAU);
     }
 
-    /// Where it is over the ground.
+    /// Dónde está sobre el suelo.
     pub fn position(&self) -> Vec2 {
         self.center + Vec2::new(self.angle.cos(), self.angle.sin()) * self.radius
     }
 
-    /// Facing along the circle.
+    /// Mirando a lo largo del círculo.
     pub fn heading(&self) -> Heading {
         Heading::from_radians(self.angle + PI / 2.0 * self.rate.signum())
     }
 
-    /// Its bank into the turn, radians (positive: left wing down).
+    /// Su inclinación hacia el giro, en radianes (positivo: ala izquierda hacia
+    /// abajo).
     pub fn bank(&self) -> f32 {
         0.35 * self.rate.signum()
     }
 }
 
-/// A duck paddling on a lagoon.
+/// Un pato que nada en una laguna.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Duck {
-    /// Its raft's middle, where it streams from.
+    /// El centro de su grupo, desde donde se carga por streaming.
     pub home: Vec2,
     pub position: Vec2,
     pub heading: Heading,
-    /// Index into the site's lagoons.
+    /// Índice dentro de las lagunas del sitio.
     pub lagoon: usize,
     target: Vec2,
     rng: Rng,
 }
 
 impl Duck {
-    /// A rider closer than this makes it paddle off, meters.
+    /// Un jinete más cerca que esto lo hace alejarse nadando, en metros.
     pub const ALARM: f32 = 15.0;
-    /// Paddling speeds, calm and hurried, m/s.
+    /// Velocidades de nado, tranquila y apurada, en m/s.
     pub const PADDLE: (f32, f32) = (0.3, 1.5);
 
     pub fn new(home: Vec2, position: Vec2, lagoon: usize, seed: u32) -> Self {
@@ -337,8 +349,9 @@ impl Duck {
         }
     }
 
-    /// Advances `dt` seconds on `lagoon` with a rider at `threat`: drifts
-    /// round its raft, paddling off from riders, and never leaves deep water.
+    /// Avanza `dt` segundos en `lagoon` con un jinete en `threat`: deriva
+    /// alrededor de su grupo, se aleja nadando de los jinetes y nunca sale del
+    /// agua profunda.
     pub fn step(&mut self, dt: f32, lagoon: &Lagoon, threat: Option<Vec2>) {
         let alarmed = threat.filter(|t| t.distance(self.position) < Self::ALARM);
         if let Some(rider) = alarmed {
@@ -360,7 +373,7 @@ impl Duck {
         if lagoon.is_deep(next) {
             self.position = next;
         } else {
-            // Turn back to the raft rather than climb out.
+            // Volver hacia el grupo en lugar de salir del agua.
             self.target = self.home;
         }
     }
@@ -436,7 +449,7 @@ mod tests {
         let home = Aabb::new(Vec2::new(100.0, -60.0), Vec2::new(200.0, 60.0));
         for seed in 0..20 {
             let mut hare = Hare::new(Vec2::new(125.0, 5.0 * seed as f32 - 50.0), home, seed);
-            // The rider comes from the east: away is into the water.
+            // El jinete viene del este: alejarse es meterse en el agua.
             let rider = hare.position + Vec2::new(12.0, 0.0);
             for _ in 0..300 {
                 hare.step(0.1, Some(rider), open);
@@ -450,11 +463,13 @@ mod tests {
     fn teros_only_ever_land_on_open_ground_at_home() {
         let start = Vec2::new(0.0, 0.0);
         let home = Aabb::from_center_size(start, Vec2::new(200.0, 200.0));
-        // Everything east of the flock is closed (a road, say).
+        // Todo lo que está al este de la bandada está cerrado (un camino, por
+        // ejemplo).
         let open = |p: Vec2| p.x <= 5.0;
         for seed in 0..40 {
             let mut flock = Flock::new(start, home, 4, seed);
-            // The rider comes from the west: away is east, closed.
+            // El jinete viene del oeste: alejarse es ir al este, que está
+            // cerrado.
             let rider = start - Vec2::new(10.0, 0.0);
             for _ in 0..600 {
                 flock.step(0.1, Some(rider), open);
@@ -463,7 +478,7 @@ mod tests {
                 }
             }
         }
-        // Nowhere to go: it circles back to where it rose.
+        // No hay adónde ir: vuelve en círculo al lugar donde levantó vuelo.
         let mut flock = Flock::new(start, home, 4, 1);
         flock.step(0.1, Some(start + Vec2::new(5.0, 0.0)), |p| p == start);
         assert!(flock.flying());

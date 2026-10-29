@@ -1,29 +1,30 @@
-//! The permanent way: the ballast bed, the sleepers and the rails of every
-//! track, built as continuous meshes along the track's path.
+//! La vía permanente: el lecho de balasto, los durmientes y los rieles de cada
+//! vía, construidos como mallas continuas a lo largo del recorrido de la vía.
 //!
-//! A [`Track`] is a centerline (a town's straight track, a link's curved
-//! path or a bay and its turnout) and [`Parts`] sweeps three things along
-//! it: a trapezoid ballast bed whose shoulders follow the terrain, a flat-
-//! bottom rail profile (foot, web, head) for each rail, and the sleepers,
-//! every [`SLEEPER_SPACING`] meters of the whole track. Everything has
-//! world-scale UVs, so the textures keep their size whatever the length of
-//! the piece (the sets are credited in [`crate::facade`]).
+//! Un [`Track`] es un eje (la vía recta de un pueblo, el recorrido curvo de un
+//! enlace, o una vía muerta y su desvío) y [`Parts`] barre tres cosas a lo
+//! largo de él: un lecho de balasto trapezoidal cuyos hombros siguen el
+//! terreno, un perfil de riel de patín plano (patín, alma, cabeza) para cada
+//! riel, y los durmientes, cada [`SLEEPER_SPACING`] metros de toda la vía. Todo
+//! tiene UV a escala del mundo, así que las texturas conservan su tamaño sea
+//! cual sea el largo de la pieza (los conjuntos se acreditan en
+//! [`crate::facade`]).
 //!
-//! Every height is a function of the ground position alone, so tracks that
-//! meet agree without sharing anything:
+//! Cada altura es función solo de la posición en el suelo, así que las vías que
+//! se encuentran coinciden sin compartir nada:
 //!
-//! - where two tracks run close (a bay beside the station track, the
-//!   turnout, a branch parting from the line), a track keeps below the
-//!   ones before it in the [`TrackNet`] by a few millimeters and follows
-//!   their heights while it is near, so the beds read as one surface and
-//!   nothing fights;
-//! - the sleepers of the later track stop where the earlier one's timbers
-//!   end, so none lies across another, and the later track's rails stay on
-//!   timber: beyond the earlier timbers, its sleepers are cut short on
-//!   that side only.
+//! - donde dos vías corren cerca (una vía muerta junto a la vía de la estación,
+//!   el desvío, un ramal que se separa de la línea), una vía se mantiene unos
+//!   milímetros por debajo de las anteriores en el [`TrackNet`] y sigue sus
+//!   alturas mientras está cerca, así que los lechos se leen como una sola
+//!   superficie y nada compite;
+//! - los durmientes de la vía posterior se detienen donde terminan las maderas
+//!   de la anterior, así que ninguno queda atravesado sobre otro, y los rieles
+//!   de la vía posterior siguen apoyados en madera: más allá de las maderas
+//!   anteriores, sus durmientes se acortan solo de ese lado.
 //!
-//! The rails' tops stand [`RAIL_TOP`] above the ground, where the trains'
-//! wheels run (`LineTrain::RAIL_TOP`).
+//! La cara superior de los rieles queda a [`RAIL_TOP`] sobre el suelo, donde
+//! ruedan las ruedas de los trenes (`LineTrain::RAIL_TOP`).
 
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
@@ -34,50 +35,53 @@ use crate::coords::world_from_ground;
 use crate::facade::Surface;
 use crate::ground::face_tangent;
 
-/// Top of the rails above the ground, in meters.
+/// Cara superior de los rieles sobre el suelo, en metros.
 pub(crate) const RAIL_TOP: f32 = 0.5;
-/// Height of the rail profile, in meters (a flat-bottom 60 kg rail is about
-/// 14 cm tall).
+/// Altura del perfil del riel, en metros (un riel de patín plano de 60 kg mide
+/// unos 14 cm de alto).
 const RAIL_HEIGHT: f32 = 0.14;
-/// Height of a rail's foot above the ground: the sleepers' top.
+/// Altura del patín de un riel sobre el suelo: la cara superior de los
+/// durmientes.
 const RAIL_FOOT: f32 = RAIL_TOP - RAIL_HEIGHT;
-/// Height of the ballast's flat top above the ground, in meters.
+/// Altura de la parte superior plana del balasto sobre el suelo, en metros.
 const BALLAST_TOP: f32 = 0.30;
-/// Half the width of the ballast's top, in meters.
+/// La mitad del ancho de la parte superior del balasto, en metros.
 const BALLAST_TOP_HALF: f32 = 1.4;
-/// Half the width of the ballast at the ground, in meters.
+/// La mitad del ancho del balasto a nivel del suelo, en metros.
 const BALLAST_FOOT_HALF: f32 = 1.9;
-/// How far under the ground the ballast's shoulders end, in meters.
+/// Cuánto por debajo del suelo terminan los hombros del balasto, en metros.
 const BALLAST_SINK: f32 = 0.05;
-/// Distance between sleepers along the track, in meters. The old 1.2 m
-/// left them looking sparse beside a 1.676 m gauge; broad-gauge track
-/// lays them 0.6 to 0.7 m apart.
+/// Distancia entre durmientes a lo largo de la vía, en metros. Los 1.2 m de
+/// antes los hacían ver ralos junto a una trocha de 1.676 m; la vía de trocha
+/// ancha los coloca separados de 0.6 a 0.7 m.
 pub(crate) const SLEEPER_SPACING: f32 = 0.65;
-/// Length, width and thickness of a sleeper, in meters.
+/// Largo, ancho y espesor de un durmiente, en metros.
 pub(crate) const SLEEPER: Vec3 = Vec3::new(2.7, 0.25, 0.12);
-/// Distance between the samples a bed and its rails are cut at along a
-/// straight stretch, in meters. Curves are made of short pieces already:
-/// each joint is a sample too.
+/// Distancia entre las muestras en las que se cortan un lecho y sus rieles a lo
+/// largo de un tramo recto, en metros. Las curvas ya están hechas de piezas
+/// cortas: cada unión también es una muestra.
 const STEP: f32 = 2.0;
-/// How much lower than the one before it a track lies where they overlap,
-/// in meters: the depth buffer settles the overlap, nothing fights.
+/// Cuánto más abajo que la anterior queda una vía donde se superponen, en
+/// metros: el depth buffer resuelve la superposición y nada compite.
 const UNDER: f32 = 0.004;
-/// Tracks nearer than this (center to center, meters) lie [`UNDER`] below
-/// the earlier one.
+/// Las vías más cercanas que esto (de centro a centro, en metros) quedan
+/// [`UNDER`] por debajo de la anterior.
 const OVERLAP: f32 = 3.0;
-/// A track follows the earlier tracks' height within this distance of
-/// them, and its own beyond [`BLEND_FAR`], with a smooth blend between.
+/// Una vía sigue la altura de las vías anteriores dentro de esta distancia de
+/// ellas, y la suya propia más allá de [`BLEND_FAR`], con una mezcla suave
+/// entre ambas.
 const BLEND_NEAR: f32 = 1.5;
 const BLEND_FAR: f32 = 4.5;
-/// How far from an earlier track's center its sleepers' ends are kept
-/// clear of, in meters: its timbers' half length and a hand's breadth.
+/// A qué distancia del centro de una vía anterior se mantienen alejados los
+/// extremos de sus durmientes, en metros: la mitad del largo de sus maderas más
+/// un palmo.
 const TIMBER_CLEAR: f32 = SLEEPER.x / 2.0 + 0.05;
-/// Shortest sleeper stub worth laying, in meters.
+/// El trozo de durmiente más corto que vale la pena colocar, en metros.
 const STUB_MIN: f32 = 0.35;
 
-/// The rail's profile, in (across, up) from the rail's center and the foot's
-/// bottom, counter-clockwise: the foot's top, the web, the head's underside,
-/// its side and its top.
+/// El perfil del riel, en (a lo ancho, hacia arriba) desde el centro del riel y
+/// la base del patín, en sentido antihorario: la parte superior del patín, el
+/// alma, la parte inferior de la cabeza, su costado y su parte superior.
 const RAIL_PROFILE: [(f32, f32); 10] = [
     (0.07, 0.02),
     (0.02, 0.05),
@@ -90,11 +94,12 @@ const RAIL_PROFILE: [(f32, f32); 10] = [
     (-0.02, 0.05),
     (-0.07, 0.02),
 ];
-/// The profile's edges (index of the point they start at) that make the
-/// rail's head, its running band: the side, the top and the other side.
+/// Las aristas del perfil (índice del punto en el que empiezan) que forman la
+/// cabeza del riel, su banda de rodadura: el costado, la parte superior y el
+/// otro costado.
 const HEAD_EDGES: [usize; 3] = [3, 4, 5];
 
-/// `v` scaled to length one, or `fallback` when it has none.
+/// `v` escalado a largo uno, o `fallback` cuando no tiene largo.
 fn unit(v: GroundVec2, fallback: GroundVec2) -> GroundVec2 {
     let len = v.length();
     if len > 1e-6 {
@@ -104,18 +109,18 @@ fn unit(v: GroundVec2, fallback: GroundVec2) -> GroundVec2 {
     }
 }
 
-/// A track's centerline on the ground.
+/// El eje de una vía sobre el suelo.
 #[derive(Debug, Clone)]
 pub(crate) struct Track {
     points: Vec<GroundVec2>,
-    /// Distance along the track to each point.
+    /// Distancia a lo largo de la vía hasta cada punto.
     arcs: Vec<f32>,
-    /// Distance between the rails, in meters.
+    /// Distancia entre los rieles, en metros.
     pub gauge: f32,
 }
 
 impl Track {
-    /// The track through `points` (zero-length pieces dropped).
+    /// La vía que pasa por `points` (se descartan las piezas de largo cero).
     pub fn new(points: &[GroundVec2], gauge: f32) -> Self {
         let mut kept: Vec<GroundVec2> = Vec::with_capacity(points.len());
         for &p in points {
@@ -134,12 +139,12 @@ impl Track {
         }
     }
 
-    /// A town's straight track.
+    /// La vía recta de un pueblo.
     pub fn straight(rail: Railway) -> Self {
         Self::new(&[rail.start, rail.end], rail.gauge)
     }
 
-    /// Length of the track, in meters.
+    /// Largo de la vía, en metros.
     pub fn length(&self) -> f32 {
         self.arcs.last().copied().unwrap_or(0.0)
     }
@@ -148,7 +153,7 @@ impl Track {
         self.points.len().saturating_sub(1)
     }
 
-    /// Unit direction of piece `i`.
+    /// Dirección unitaria de la pieza `i`.
     fn dir(&self, i: usize) -> GroundVec2 {
         unit(
             self.points[i + 1] - self.points[i],
@@ -156,8 +161,8 @@ impl Track {
         )
     }
 
-    /// The point `s` meters along the track and the direction of the piece
-    /// it lies on.
+    /// El punto a `s` metros a lo largo de la vía y la dirección de la pieza en
+    /// la que cae.
     pub fn at(&self, s: f32) -> (GroundVec2, GroundVec2) {
         let i = self
             .arcs
@@ -169,8 +174,8 @@ impl Track {
         (a + (b - a) * ((s - self.arcs[i]) / len), self.dir(i))
     }
 
-    /// How far `p` is from the track, and where along it the nearest point
-    /// lies.
+    /// A qué distancia está `p` de la vía, y en qué lugar de ella cae el punto
+    /// más cercano.
     pub fn nearest(&self, p: GroundVec2) -> (f32, f32) {
         let mut best = (f32::MAX, 0.0);
         for i in 0..self.pieces() {
@@ -195,15 +200,15 @@ impl Track {
     }
 }
 
-/// Every track that can lie near another, in the order they take
-/// precedence: the towns' straight tracks, then the links of the line and
-/// of its branches, then the bays. A town draws its own track (see
-/// `crate::town`); the net lays the rest, chunk by chunk, and knows the
-/// town tracks only to keep clear of them.
+/// Cada vía que puede quedar cerca de otra, en orden de precedencia: las vías
+/// rectas de los pueblos, luego los enlaces de la línea y de sus ramales, y
+/// luego las vías muertas. Cada pueblo dibuja su propia vía (ver
+/// `crate::town`); la red tiende el resto, chunk por chunk, y conoce las vías
+/// de los pueblos solo para mantenerse alejada de ellas.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TrackNet {
     tracks: Vec<Track>,
-    /// How many of the tracks (the first ones) are towns' own.
+    /// Cuántas de las vías (las primeras) son propias de los pueblos.
     towns: usize,
 }
 
@@ -230,7 +235,7 @@ impl TrackNet {
         Self { tracks, towns }
     }
 
-    /// The tracks before track `i` that come near it.
+    /// Las vías anteriores a la vía `i` que se le acercan.
     fn earlier(&self, i: usize) -> Vec<&Track> {
         let near = self.tracks[i]
             .bounds()
@@ -241,7 +246,8 @@ impl TrackNet {
             .collect()
     }
 
-    /// The meshes of the links and bays inside `area` (a terrain chunk).
+    /// Las mallas de los enlaces y vías muertas dentro de `area` (un chunk de
+    /// terreno).
     pub fn lay_in(&self, area: Aabb, terrain: &Terrain) -> Parts {
         let mut parts = Parts::default();
         let reach = area.expanded(BALLAST_FOOT_HALF);
@@ -255,7 +261,7 @@ impl TrackNet {
     }
 }
 
-/// The vertices of one mesh while it is built: flat-shaded quads.
+/// Los vértices de una malla mientras se construye: quads con sombreado plano.
 #[derive(Default, Debug, Clone)]
 struct Buf {
     positions: Vec<[f32; 3]>,
@@ -266,7 +272,7 @@ struct Buf {
 }
 
 impl Buf {
-    /// A quad whose corners go around it, turned to face `outward`.
+    /// Un quad cuyas esquinas lo recorren, girado para mirar hacia `outward`.
     fn quad(&mut self, mut c: [Vec3; 4], mut uv: [[f32; 2]; 4], outward: Vec3) {
         let n = (c[2] - c[0]).cross(c[3] - c[1]);
         if n.length_squared() < 1e-12 {
@@ -304,9 +310,9 @@ impl Buf {
     }
 }
 
-/// One cut across a track: where, which way it runs and how much to widen
-/// what is laid across it (at a joint of two pieces the cut follows the
-/// bisector).
+/// Un corte transversal de una vía: dónde, hacia dónde corre y cuánto ensanchar
+/// lo que se coloca atravesado (en la unión de dos piezas el corte sigue la
+/// bisectriz).
 #[derive(Debug, Clone, Copy)]
 struct Ring {
     s: f32,
@@ -325,7 +331,7 @@ impl Ring {
         }
     }
 
-    /// The ring at a joint between pieces heading `before` and `after`.
+    /// El anillo en una unión entre piezas con rumbo `before` y `after`.
     fn joint(s: f32, pos: GroundVec2, before: GroundVec2, after: GroundVec2) -> Self {
         let dir = unit(before + after, before);
         Self {
@@ -336,28 +342,30 @@ impl Ring {
         }
     }
 
-    /// The ground point `across` meters to the left of the ring's center.
+    /// El punto del suelo a `across` metros a la izquierda del centro del
+    /// anillo.
     fn at(&self, across: f32) -> GroundVec2 {
         self.pos + GroundVec2::new(-self.dir.y, self.dir.x) * (across * self.widen)
     }
 }
 
-/// A ring with the height of the track's center under it, in meters.
+/// Un anillo con la altura del centro de la vía debajo de él, en metros.
 #[derive(Debug, Clone, Copy)]
 struct Station {
     ring: Ring,
     base: f32,
 }
 
-/// The heights of a track among the earlier tracks near it.
+/// Las alturas de una vía entre las vías anteriores cercanas a ella.
 struct Heights<'a> {
     terrain: &'a Terrain,
     earlier: &'a [&'a Track],
 }
 
 impl Heights<'_> {
-    /// The ground height under the track's center at `p`, drawn toward the
-    /// earlier tracks' near them, and how far under them the track lies.
+    /// La altura del suelo bajo el centro de la vía en `p`, acercada a la de
+    /// las vías anteriores cerca de ellas, y cuánto por debajo de ellas queda
+    /// la vía.
     fn at(&self, p: GroundVec2) -> f32 {
         let mut h = self.terrain.height(p.x, p.y);
         let mut under = 0.0;
@@ -377,13 +385,15 @@ impl Heights<'_> {
     }
 }
 
-/// The cuts across `track` inside `clip` (all of it without one), in runs
-/// of consecutive pieces: one at each end, one at each joint and one every
-/// [`STEP`] meters between. A run stops where the track leaves the area.
+/// Los cortes transversales de `track` dentro de `clip` (toda la vía si no hay
+/// recorte), en tramos de piezas consecutivas: uno en cada extremo, uno en cada
+/// unión y uno cada [`STEP`] metros entre medio. Un tramo se detiene donde la
+/// vía sale del área.
 fn runs(track: &Track, clip: Option<Aabb>) -> Vec<Vec<Ring>> {
     let mut out: Vec<Vec<Ring>> = Vec::new();
     let mut open: Vec<Ring> = Vec::new();
-    // Whether the open run ends at the joint the next piece starts from.
+    // Si el tramo abierto termina en la unión desde la que empieza la pieza
+    // siguiente.
     let mut at_joint = false;
     let pieces = track.pieces();
     for i in 0..pieces {
@@ -429,7 +439,7 @@ fn runs(track: &Track, clip: Option<Aabb>) -> Vec<Vec<Ring>> {
     out
 }
 
-/// The meshes of one or more tracks, one per surface.
+/// Las mallas de una o más vías, una por superficie.
 #[derive(Default, Debug, Clone)]
 pub(crate) struct Parts {
     ballast: Buf,
@@ -439,8 +449,8 @@ pub(crate) struct Parts {
 }
 
 impl Parts {
-    /// Lays `track` inside `clip` (all of it without one) among the
-    /// `earlier` tracks near it.
+    /// Tiende `track` dentro de `clip` (toda la vía si no hay recorte) entre
+    /// las vías anteriores `earlier` cercanas a ella.
     pub fn add(
         &mut self,
         track: &Track,
@@ -467,14 +477,15 @@ impl Parts {
         }
     }
 
-    /// The ballast: a trapezoid swept along the stations, its top flat
-    /// across at the center's height and its shoulders running down to the
-    /// ground on either side.
+    /// El balasto: un trapecio barrido a lo largo de las estaciones de corte,
+    /// con su parte superior plana a lo ancho a la altura del centro y sus
+    /// hombros bajando hasta el suelo a cada lado.
     fn bed(&mut self, stations: &[Station], terrain: &Terrain) {
         let tile = Surface::Ballast.tile();
-        // Right foot, right top, left top, left foot: the profile's points
-        // by how far across (left positive) they are, with the arc across
-        // the profile for `v`.
+        // Pie derecho, borde superior derecho, borde superior izquierdo, pie
+        // izquierdo: los puntos del perfil según cuán lejos están a lo ancho
+        // (positivo a la izquierda), con el arco a lo ancho del perfil para
+        // `v`.
         let shoulder = (BALLAST_FOOT_HALF - BALLAST_TOP_HALF).hypot(BALLAST_TOP + BALLAST_SINK);
         let across = [
             BALLAST_FOOT_HALF,
@@ -503,7 +514,8 @@ impl Parts {
                     |st: &Station, j: usize| (point(st, j), [st.ring.s / tile, arc[j] / tile]);
                 let (p0, p1) = (corner(&w[0], k), corner(&w[0], k + 1));
                 let (p2, p3) = (corner(&w[1], k + 1), corner(&w[1], k));
-                // The middle face looks up; the shoulders look out and up.
+                // La cara del medio mira hacia arriba; los hombros miran hacia
+                // afuera y hacia arriba.
                 let outward = match k {
                     0 => Vec3::new(0.0, 1.0, 0.0) + (p0.0 - p1.0).with_y(0.0).normalize_or_zero(),
                     1 => Vec3::Y,
@@ -515,12 +527,13 @@ impl Parts {
         }
     }
 
-    /// One rail, `across` meters to the left of the center: the profile
-    /// swept along the stations, the head apart from the foot and web.
+    /// Un riel, a `across` metros a la izquierda del centro: el perfil barrido
+    /// a lo largo de las estaciones de corte, con la cabeza separada del patín
+    /// y el alma.
     fn rails(&mut self, stations: &[Station], across: f32) {
         let tile = Surface::RailSteel.tile();
-        // The profile's arc, for `v`, and a different part of the scan for
-        // each rail.
+        // El arco del perfil, para `v`, y una parte distinta del escaneo para
+        // cada riel.
         let mut arc = vec![across.signum() * 0.37];
         for w in RAIL_PROFILE.windows(2) {
             let d = (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1);
@@ -545,7 +558,8 @@ impl Parts {
                     uv(&w[1], k + 1),
                     uv(&w[1], k),
                 ];
-                // Outward is the edge's normal in the profile's plane.
+                // Hacia afuera es la normal de la arista en el plano del
+                // perfil.
                 let (a, b) = (RAIL_PROFILE[k], RAIL_PROFILE[k + 1]);
                 let (du, dl) = (b.1 - a.1, b.0 - a.0);
                 let left = Vec3::new(-w[0].ring.dir.y, 0.0, -w[0].ring.dir.x);
@@ -560,8 +574,8 @@ impl Parts {
         }
     }
 
-    /// The sleepers of `track` from `s0` to `s1` (`s1` itself only when it
-    /// is the track's end), cut short where an earlier track's timbers lie.
+    /// Los durmientes de `track` desde `s0` hasta `s1` (`s1` mismo solo cuando
+    /// es el final de la vía), acortados donde hay maderas de una vía anterior.
     fn sleepers(&mut self, track: &Track, (s0, s1, last): (f32, f32, bool), heights: &Heights) {
         let count = (track.length() / SLEEPER_SPACING) as usize;
         let first = (s0 / SLEEPER_SPACING - 0.5).ceil().max(0.0) as usize;
@@ -583,8 +597,8 @@ impl Parts {
         }
     }
 
-    /// One sleeper: a box `length` long across the track at `mid`, its top
-    /// at `top`, with the grain along its length.
+    /// Un durmiente: una caja de `length` de largo atravesada sobre la vía en
+    /// `mid`, con su parte superior en `top` y la veta a lo largo.
     fn sleeper(&mut self, mid: GroundVec2, dir: GroundVec2, length: f32, top: f32, seed: u32) {
         let tile = Surface::Sleeper.tile();
         let left = GroundVec2::new(-dir.y, dir.x);
@@ -592,7 +606,7 @@ impl Parts {
         let corner = |l: f32, w: f32, up: f32| {
             world_from_ground(mid + left * l + dir * w, top - SLEEPER.z * (1.0 - up))
         };
-        // Each sleeper shows another part of the scan.
+        // Cada durmiente muestra otra parte del escaneo.
         let h = seed.wrapping_mul(0x9e37_79b9) ^ 0x85eb_ca6b;
         let (ou, ov) = ((h & 0xff) as f32 / 256.0, ((h >> 8) & 0xff) as f32 / 256.0);
         let uv = |a: f32, b: f32| [a / tile + ou, b / tile + ov];
@@ -602,7 +616,7 @@ impl Parts {
         let ww = |w: f32| w + hw;
         let left3 = Vec3::new(-dir.y, 0.0, -dir.x);
         let along3 = Vec3::new(dir.x, 0.0, -dir.y);
-        // The top, the two long sides and the two ends.
+        // La parte superior, los dos costados largos y los dos extremos.
         self.sleepers.quad(
             [
                 corner(-hl, -hw, 1.0),
@@ -654,7 +668,7 @@ impl Parts {
         }
     }
 
-    /// One mesh per surface, the ones with something in them.
+    /// Una malla por superficie, las que tienen algo.
     pub fn into_meshes(self) -> Vec<(Surface, Mesh)> {
         [
             (Surface::Ballast, self.ballast),
@@ -667,7 +681,7 @@ impl Parts {
         .collect()
     }
 
-    /// Triangles laid so far.
+    /// Triángulos colocados hasta ahora.
     #[cfg(test)]
     pub fn triangles(&self) -> usize {
         [&self.ballast, &self.sleepers, &self.rail, &self.head]
@@ -677,10 +691,11 @@ impl Parts {
     }
 }
 
-/// The stretches (as `(from, to)` meters to the left of `c`, along a
-/// sleeper's axis) of a sleeper at `c` that keep [`TIMBER_CLEAR`] from
-/// every earlier track's center, ends of at least [`STUB_MIN`] only. A
-/// sleeper clear of them all is one stretch from end to end.
+/// Los trechos (como metros `(from, to)` a la izquierda de `c`, a lo largo del
+/// eje de un durmiente) de un durmiente en `c` que se mantienen a
+/// [`TIMBER_CLEAR`] del centro de cada vía anterior, solo con extremos de al
+/// menos [`STUB_MIN`]. Un durmiente alejado de todas ellas es un único trecho
+/// de punta a punta.
 fn stubs(c: GroundVec2, left: GroundVec2, earlier: &[&Track]) -> Vec<(f32, f32)> {
     let half = SLEEPER.x / 2.0;
     let near = earlier.iter().any(|t| t.nearest(c).0 < TIMBER_CLEAR + half);
@@ -716,19 +731,19 @@ fn stubs(c: GroundVec2, left: GroundVec2, earlier: &[&Track]) -> Vec<(f32, f32)>
 mod tests {
     use super::*;
 
-    /// A track along `points`, 1.676 m gauge.
+    /// Una vía a lo largo de `points`, con trocha de 1.676 m.
     fn track(points: &[(f32, f32)]) -> Track {
         let points: Vec<GroundVec2> = points.iter().map(|&(x, y)| GroundVec2::new(x, y)).collect();
         Track::new(&points, 1.676)
     }
 
-    /// A straight track east from (0, 0), `length` meters long.
+    /// Una vía recta hacia el este desde (0, 0), de `length` metros de largo.
     fn straight(length: f32) -> Track {
         track(&[(0.0, 0.0), (length, 0.0)])
     }
 
-    /// `track`'s turn to the left by `turn` radians over `length` meters
-    /// from (0, 0) heading east, as 2-degree pieces.
+    /// El giro de `track` hacia la izquierda en `turn` radianes a lo largo de
+    /// `length` metros desde (0, 0) con rumbo este, en piezas de 2 grados.
     fn arc(length: f32, turn: f32) -> Track {
         let pieces = (turn.abs() / 0.035).ceil().max(1.0) as usize;
         let (mut p, mut heading) = (GroundVec2::new(0.0, 0.0), 0.0_f32);
@@ -742,7 +757,7 @@ mod tests {
         Track::new(&points, 1.676)
     }
 
-    /// Ground point of a world position.
+    /// Punto del suelo de una posición del mundo.
     fn ground(v: [f32; 3]) -> GroundVec2 {
         GroundVec2::new(v[0], -v[2])
     }
@@ -764,7 +779,7 @@ mod tests {
 
     #[test]
     fn the_ballast_follows_a_curved_path_and_the_bumpy_ground() {
-        // Natural ground, a curve to the left: nothing is flattened.
+        // Suelo natural, una curva a la izquierda: no se aplana nada.
         let terrain = Terrain::default();
         let track = arc(120.0, 0.25);
         let parts = lay(&track, &terrain);
@@ -772,12 +787,13 @@ mod tests {
         for &v in &parts.ballast.positions {
             let g = ground(v);
             let (d, s) = track.nearest(g);
-            // A vertex is on the top's edge or the shoulder's foot.
+            // Un vértice está en el borde de la parte superior o en el pie del
+            // hombro.
             let top = (d - 1.4).abs() < 0.02;
             let foot = (d - 1.9).abs() < 0.02;
             assert!(top || foot, "{d} m from the path");
             if foot {
-                // The shoulders end 5 cm under the ground itself.
+                // Los hombros terminan 5 cm por debajo del suelo mismo.
                 let ground = terrain.height(g.x, g.y);
                 assert!(
                     (v[1] - (ground - 0.05)).abs() < 1e-3,
@@ -785,7 +801,8 @@ mod tests {
                     v[1]
                 );
             } else {
-                // The top is level across at 30 cm over the center's ground.
+                // La parte superior está nivelada a lo ancho, 30 cm por encima
+                // del suelo del centro.
                 let c = track.at(s).0;
                 let base = terrain.height(c.x, c.y);
                 assert!((v[1] - (base + 0.30)).abs() < 0.03, "{} vs {base}", v[1]);
@@ -796,7 +813,8 @@ mod tests {
     #[test]
     fn every_triangle_faces_the_way_its_normal_says_and_none_is_degenerate() {
         let terrain = Terrain::default();
-        // Right and left curves, so the winding is tried both ways.
+        // Curvas a la derecha y a la izquierda, para probar el sentido de
+        // enrollado en ambos casos.
         for turn in [0.3, -0.3] {
             let parts = lay(&arc(100.0, turn), &terrain);
             let all = [
@@ -814,7 +832,8 @@ mod tests {
                     let stored = Vec3::from_array(buf.normals[t[0] as usize]);
                     assert!(n.normalize().dot(stored) > 0.99, "inverted triangle");
                     if is_ballast {
-                        // Every face of the bed looks up, never down.
+                        // Cada cara del lecho mira hacia arriba, nunca hacia
+                        // abajo.
                         assert!(stored.y > 0.3, "{stored:?}");
                     }
                 }
@@ -830,9 +849,10 @@ mod tests {
             let us: Vec<f32> = parts.ballast.uvs.iter().map(|uv| uv[0]).collect();
             let span = us.iter().copied().fold(f32::MIN, f32::max)
                 - us.iter().copied().fold(f32::MAX, f32::min);
-            // One repeat every 2 m.
+            // Una repetición cada 2 m.
             assert!((span - length / 2.0).abs() < 1e-3, "{span}");
-            // Across: the top (2.8 m) and the two shoulders (0.61 m each), per 2 m.
+            // A lo ancho: la parte superior (2.8 m) y los dos hombros (0.61 m
+            // cada uno), cada 2 m.
             let vs: Vec<f32> = parts.ballast.uvs.iter().map(|uv| uv[1]).collect();
             let across = vs.iter().copied().fold(f32::MIN, f32::max)
                 - vs.iter().copied().fold(f32::MAX, f32::min);
@@ -840,8 +860,8 @@ mod tests {
         }
     }
 
-    /// The sleepers laid: (center, long axis, length, width), read from
-    /// each sleeper's top face (the first quad of its 20 vertices).
+    /// Los durmientes colocados: (centro, eje largo, largo, ancho), leídos de
+    /// la cara superior de cada durmiente (el primer quad de sus 20 vértices).
     fn sleepers_of(parts: &Parts) -> Vec<(GroundVec2, GroundVec2, f32, f32)> {
         parts
             .sleepers
@@ -897,8 +917,8 @@ mod tests {
         }
         assert_eq!(sleepers_of(&cut).len(), 230);
         assert_eq!(sleepers_of(&cut).len(), (150.0_f32 / 0.65) as usize);
-        // The ballast and the rails are cut at the borders: the same
-        // triangles, plus those of the extra samples there.
+        // El balasto y los rieles se cortan en los bordes: los mismos
+        // triángulos, más los de las muestras extra que hay allí.
         assert!(cut.triangles() >= whole && cut.triangles() < whole + 2 * 40);
     }
 
@@ -913,7 +933,7 @@ mod tests {
             .map(|v| v[1])
             .fold(f32::MIN, f32::max);
         assert!((top - (3.0 + 0.5)).abs() < 1e-3, "{top}");
-        // The foot sits on the sleepers (3.36), under the head.
+        // El patín se apoya sobre los durmientes (3.36), debajo de la cabeza.
         let low = parts
             .rail
             .positions
@@ -921,7 +941,8 @@ mod tests {
             .map(|v| v[1])
             .fold(f32::MAX, f32::min);
         assert!(low > 3.0 + 0.36, "{low}");
-        // The rails' centers: the mean of each head's ground side.
+        // Los centros de los rieles: la media del lado de cada cabeza que da al
+        // suelo.
         let mean = |sign: f32| {
             let ys: Vec<f32> = parts
                 .head
@@ -936,8 +957,8 @@ mod tests {
         assert!((mean(-1.0) + 0.838).abs() < 2e-3, "{}", mean(-1.0));
     }
 
-    /// Whether two sleepers (center, axis, length, width) touch, by the
-    /// separating axis theorem.
+    /// Si dos durmientes (centro, eje, largo, ancho) se tocan, según el teorema
+    /// del eje separador.
     fn touch(a: (GroundVec2, GroundVec2, f32, f32), b: (GroundVec2, GroundVec2, f32, f32)) -> bool {
         let axes = [
             a.1,
@@ -955,8 +976,9 @@ mod tests {
         })
     }
 
-    /// A line and a bay-like track leaving it tangentially: two arcs of
-    /// 150 m turning 0.2 rad out and back, ending 4.5 m beside it.
+    /// Una línea y una vía similar a una vía muerta que sale de ella en forma
+    /// tangente: dos arcos de 150 m que giran 0.2 rad hacia afuera y de vuelta,
+    /// y terminan a 4.5 m de ella.
     fn turnout() -> (Track, Track) {
         let line = straight(200.0);
         let mut points = vec![GroundVec2::new(0.0, 0.0)];
@@ -977,7 +999,7 @@ mod tests {
         both.add(&line, &[], None, &terrain);
         both.add(&branch, &[&line], None, &terrain);
         let sleepers = sleepers_of(&both);
-        // The branch alone has more: its first ones are cut or dropped.
+        // El ramal solo tiene más: sus primeros se cortan o se descartan.
         let alone = sleepers_of(&lay(&branch, &terrain)).len();
         let only_line = sleepers_of(&lay(&line, &terrain)).len();
         assert!(sleepers.len() < alone + only_line, "cuts nothing");
@@ -997,8 +1019,8 @@ mod tests {
         both.add(&line, &[], None, &terrain);
         both.add(&branch, &[&line], None, &terrain);
         let timbers = sleepers_of(&both);
-        // Every point of the branch's two rails, every half meter, lies on
-        // some sleeper's footprint (a hair of margin).
+        // Cada punto de los dos rieles del ramal, cada medio metro, cae sobre
+        // la huella de algún durmiente (con un pelo de margen).
         let mut s = 1.0;
         while s < branch.length() - 1.0 {
             let (c, dir) = branch.at(s);
@@ -1034,14 +1056,14 @@ mod tests {
             .fold(f32::MAX, f32::min);
         assert!((high - 3.30).abs() < 1e-3, "{high}");
         assert!((high - low - 0.004).abs() < 1e-4, "{high} vs {low}");
-        // Its sleepers are all dropped: it lies on the line's.
+        // Todos sus durmientes se descartan: se apoya sobre los de la línea.
         assert_eq!(sleepers_of(&both).len(), 153);
     }
 
     #[test]
     fn a_kilometer_of_track_stays_inside_its_triangle_budget() {
         let parts = lay(&straight(1000.0), &flat(3.0));
-        // About 3 triangles a meter of bed, 18 of rail and 15 of sleepers.
+        // Unos 3 triángulos por metro de lecho, 18 de riel y 15 de durmientes.
         let per_meter = parts.triangles() as f32 / 1000.0;
         assert!(per_meter < 40.0, "{per_meter} triangles a meter");
         println!(

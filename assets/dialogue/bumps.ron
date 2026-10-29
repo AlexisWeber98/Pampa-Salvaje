@@ -1,7 +1,7 @@
-// What townsfolk say when the rider bumps into them.
-// See README.md in this folder for the rules (characters, length).
+// Lo que dicen los vecinos cuando el jinete los choca. Ver README.md en esta
+// carpeta para las reglas (caracteres, longitud).
 (
-    // Shoved at a walking pace: annoyed, but mild.
+    // Empujado al paso: molesto, pero sin exagerar.
     walk: [
         "¡Eh, mirá por dónde andás!",
         "¡Cuidado con el caballo, che!",
@@ -15,7 +15,7 @@
         "¡Ay! ¡Mi alpargata!",
         "¡Qué vergüenza, empujar así!",
     ],
-    // Run into at a gallop: scared and angry.
+    // Atropellado al galope: asustado y enojado.
     gallop: [
         "¡Casi me pisa el pingo, che!",
         "¡Más despacio, que no es carrera!",

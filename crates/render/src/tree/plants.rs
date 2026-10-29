@@ -1,12 +1,13 @@
-//! Yard shrubs and flower beds: little low-poly plants for the yards of the
-//! towns and the settlements.
+//! Arbustos y canteros de patio: pequeñas plantas low-poly para los patios de
+//! los pueblos y de los asentamientos.
 //!
-//! A shrub is a few lumpy leaf masses (once-subdivided icospheres), a flower bed a mound of earth with a green
-//! tuft and about ten octahedral blossoms. Each is one mesh with vertex
-//! colours and flat shading, so one white material paints them all.
-//! [`VARIANTS`] seeded shapes of each are built once into the shared
-//! [`PlantKit`], and every plant is a variant turned about the vertical.
-//! They are scenery: no obstacles.
+//! Un arbusto son unas pocas masas de hojas irregulares (icosferas subdivididas
+//! una vez); un cantero, un montículo de tierra con una mata verde y unas diez
+//! flores octaédricas. Cada uno es una sola mesh con colores por vertex y
+//! sombreado plano, así que un único material blanco los pinta a todos. Se
+//! construyen una vez [`VARIANTS`] formas con semilla de cada uno en el
+//! [`PlantKit`] compartido, y cada planta es una variante girada alrededor de
+//! la vertical. Son decorado: no son obstáculos.
 
 use std::collections::HashMap;
 
@@ -14,10 +15,10 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::PrimitiveTopology;
 use bevy::prelude::*;
 
-/// Seeded shapes built of each plant.
+/// Formas con semilla que se construyen de cada planta.
 pub const VARIANTS: u32 = 3;
 
-/// The blossoms' colours (sRGB): red, yellow, white, violet and orange.
+/// Los colores de las flores (sRGB): rojo, amarillo, blanco, violeta y naranja.
 const BLOSSOMS: [[f32; 3]; 5] = [
     [0.85, 0.15, 0.12],
     [0.95, 0.80, 0.15],
@@ -25,12 +26,12 @@ const BLOSSOMS: [[f32; 3]; 5] = [
     [0.60, 0.30, 0.70],
     [0.95, 0.50, 0.15],
 ];
-/// The leaves' colours, light and dark.
+/// Los colores de las hojas, claro y oscuro.
 const GREENS: [[f32; 3]; 2] = [[0.22, 0.34, 0.14], [0.30, 0.40, 0.18]];
-/// The flower bed's earth.
+/// La tierra del cantero.
 const SOIL: [f32; 3] = [0.28, 0.19, 0.12];
 
-/// Deterministic `[0, 1)` for a seed and an index.
+/// Un valor determinista en `[0, 1)` para una semilla y un índice.
 fn unit(seed: u32, i: u32) -> f32 {
     let mut x = seed
         .wrapping_mul(0x9e37_79b9)
@@ -44,8 +45,8 @@ fn unit(seed: u32, i: u32) -> f32 {
     (x >> 8) as f32 / (1u32 << 24) as f32
 }
 
-/// A once-subdivided icosahedron on the unit sphere: 42 points, 80
-/// counter-clockwise triangles.
+/// Un icosaedro subdividido una vez sobre la esfera unitaria: 42 puntos, 80
+/// triángulos en sentido antihorario.
 fn icosphere() -> (Vec<Vec3>, Vec<[u32; 3]>) {
     let t = (1.0 + 5.0_f32.sqrt()) / 2.0;
     let mut points: Vec<Vec3> = [
@@ -103,8 +104,8 @@ fn icosphere() -> (Vec<Vec3>, Vec<[u32; 3]>) {
     (points, split)
 }
 
-/// One lump of a plant: an ellipsoid (or an octahedron) of `radii` at
-/// `center`, lumpy by `seed`.
+/// Un bulto de una planta: un elipsoide (o un octaedro) de radios `radii` en
+/// `center`, irregular según `seed`.
 struct Blob {
     center: Vec3,
     radii: Vec3,
@@ -113,7 +114,7 @@ struct Blob {
     octahedron: bool,
 }
 
-/// The six points and eight faces of an octahedron on the unit sphere.
+/// Los seis puntos y las ocho caras de un octaedro sobre la esfera unitaria.
 fn octahedron() -> (Vec<Vec3>, Vec<[u32; 3]>) {
     let points = vec![
         Vec3::X,
@@ -136,7 +137,7 @@ fn octahedron() -> (Vec<Vec3>, Vec<[u32; 3]>) {
     (points, faces)
 }
 
-/// The mesh of `blobs`: flat-shaded, a little darker low down.
+/// La mesh de `blobs`: con sombreado plano, un poco más oscura abajo.
 fn build(blobs: &[Blob]) -> Mesh {
     let (sphere, faces) = icosphere();
     let (cone, cone_faces) = octahedron();
@@ -179,8 +180,8 @@ fn build(blobs: &[Blob]) -> Mesh {
     mesh
 }
 
-/// Shrub `variant`: four lumpy masses about a meter tall, within 0.6 m of
-/// its middle.
+/// Arbusto `variant`: cuatro masas irregulares de alrededor de un metro de
+/// alto, dentro de 0.6 m de su centro.
 pub fn shrub(variant: u32) -> Mesh {
     let seed = variant.wrapping_mul(7919) ^ 0x5b3d;
     let r = |i: u32| unit(seed, i);
@@ -205,8 +206,8 @@ pub fn shrub(variant: u32) -> Mesh {
     build(&blobs)
 }
 
-/// Flower bed `variant`: a mound of earth, a tuft of leaves and ten
-/// blossoms, within 0.7 m of its middle and a third of a meter high.
+/// Cantero `variant`: un montículo de tierra, una mata de hojas y diez flores,
+/// dentro de 0.7 m de su centro y de un tercio de metro de alto.
 pub fn flower_bed(variant: u32) -> Mesh {
     let seed = variant.wrapping_mul(104_729) ^ 0xf10e;
     let r = |i: u32| unit(seed, i);
@@ -245,18 +246,18 @@ pub fn flower_bed(variant: u32) -> Mesh {
     build(&blobs)
 }
 
-/// The shared plant meshes and their one material, built at startup with
-/// the [`crate::tree::TreeKit`].
+/// Las meshes de plantas compartidas y su único material, construidos al
+/// iniciar junto con el [`crate::tree::TreeKit`].
 #[derive(Debug, Clone)]
 pub struct PlantKit {
     pub shrubs: Vec<Handle<Mesh>>,
     pub flowers: Vec<Handle<Mesh>>,
-    /// White with vertex colours: every plant's paint.
+    /// Blanco con colores por vertex: la pintura de todas las plantas.
     pub material: Handle<StandardMaterial>,
 }
 
 impl PlantKit {
-    /// Adds the meshes and the material to `meshes` and `materials`.
+    /// Agrega las meshes y el material a `meshes` y `materials`.
     pub(crate) fn build(
         meshes: &mut Assets<Mesh>,
         materials: &mut Assets<StandardMaterial>,
@@ -306,13 +307,13 @@ mod tests {
         for v in 0..VARIANTS {
             let mesh = shrub(v);
             let (around, lo, hi) = reach(&mesh);
-            // Core gives a shrub 0.6 m to either side.
+            // Core le da a un arbusto 0.6 m a cada lado.
             assert!((0.35..=0.6).contains(&around), "shrub {v}: {around}");
             assert!(
                 lo >= 0.0 && (0.6..=1.0).contains(&hi),
                 "shrub {v}: {lo}..{hi}"
             );
-            // Four masses of 80 faces.
+            // Cuatro masas de 80 caras.
             assert_eq!(triangles(&mesh), 320, "shrub {v}");
             shapes.push(points(&mesh));
         }
@@ -324,14 +325,14 @@ mod tests {
         for v in 0..VARIANTS {
             let mesh = flower_bed(v);
             let (around, lo, hi) = reach(&mesh);
-            // Core gives a bed 0.7 m to either side; low, under 0.4 m, its
-            // earth sunk a few centimeters into the ground.
+            // Core le da a un cantero 0.7 m a cada lado; bajo, por debajo de
+            // 0.4 m, con la tierra hundida unos centímetros en el suelo.
             assert!((0.5..=0.7).contains(&around), "bed {v}: {around}");
             assert!(
                 lo >= -0.1 && (0.2..=0.4).contains(&hi),
                 "bed {v}: {lo}..{hi}"
             );
-            // Soil and tuft (80 faces each) and ten blossoms of eight.
+            // Tierra y mata (80 caras cada una) y diez flores de ocho.
             assert_eq!(triangles(&mesh), 2 * 80 + 10 * 8, "bed {v}");
         }
         let colors: std::collections::HashSet<[u32; 3]> = (0..VARIANTS)
@@ -342,7 +343,8 @@ mod tests {
                 else {
                     panic!()
                 };
-                // The brightest of each blossom's top vertices: its own color.
+                // El más brillante de los vertices superiores de cada flor: su
+                // propio color.
                 c.iter()
                     .filter(|c| c[0] > 0.5 || c[1] > 0.5)
                     .map(|c| {

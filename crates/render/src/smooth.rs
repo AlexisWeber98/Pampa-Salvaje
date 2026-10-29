@@ -1,29 +1,33 @@
-//! Smooth vertex normals with hard creases kept, for imported meshes that
-//! arrive with one normal per face (the vegetation OBJs).
+//! Normales de vértice suaves que conservan los pliegues marcados, para mallas
+//! importadas que llegan con una normal por cara (los OBJ de vegetación).
 //!
-//! The same algorithm as `tools/glbtrim.py` uses for the GLB animals. Vertices
-//! are welded by position, for the normals only: every vertex keeps its own
-//! colour and UV, so the seams between materials stay where they were.
-//! Around each welded point, faces that share an edge bending less than the
-//! threshold join one smooth group, as a modeller's auto smooth does; a
-//! corner takes its own face's group, averaged by corner angle. Joining
-//! through shared edges rather than against one reference face lets a coarse
-//! cone or cylinder smooth all the way round while a box edge stays sharp.
+//! Es el mismo algoritmo que usa `tools/glbtrim.py` para los animales GLB. Los
+//! vértices se sueldan por posición, solo para las normales: cada vértice
+//! conserva su propio color y UV, así que las costuras entre materiales quedan
+//! donde estaban. Alrededor de cada punto soldado, las caras que comparten una
+//! arista que se dobla menos que el umbral se unen en un mismo grupo suave,
+//! como hace el auto smooth de un modelador; una esquina toma el grupo de su
+//! propia cara, promediado por ángulo de esquina. Unir a través de aristas
+//! compartidas, en lugar de compararlas contra una cara de referencia, permite
+//! que un cono o cilindro tosco se suavice en toda su vuelta mientras la arista
+//! de una caja sigue marcada.
 //!
-//! It runs once, when a model is baked; the output is deterministic and has
-//! exactly one normal per input vertex.
+//! Se ejecuta una sola vez, cuando se hornea un modelo; el resultado es
+//! determinista y tiene exactamente una normal por vértice de entrada.
 
 use std::collections::HashMap;
 
 use bevy::math::Vec3;
 
-/// Smooth normals for a non-indexed triangle list (`positions` in triplets,
-/// counter-clockwise faces), one per vertex. Faces sharing an edge that bends
-/// by less than `max_angle_degrees` blend; sharper edges stay creased. A
-/// corner of a zero-area face takes the average around its point, or +Y.
+/// Normales suaves para una lista de triángulos sin índices (`positions` en
+/// tripletes, caras en sentido antihorario), una por vértice. Las caras que
+/// comparten una arista que se dobla menos de `max_angle_degrees` se mezclan;
+/// las aristas más agudas siguen marcadas. Una esquina de una cara de área cero
+/// toma el promedio alrededor de su punto, o +Y.
 pub fn smooth_normals(positions: &[[f32; 3]], max_angle_degrees: f32) -> Vec<[f32; 3]> {
     let limit = max_angle_degrees.to_radians().cos();
-    // Weld ids by exact position (+0 and -0 alike), in first-seen order.
+    // Ids de soldadura por posición exacta (+0 y -0 por igual), en orden de
+    // aparición.
     let mut ids = HashMap::new();
     let weld: Vec<usize> = positions
         .iter()
@@ -43,8 +47,8 @@ pub fn smooth_normals(positions: &[[f32; 3]], max_angle_degrees: f32) -> Vec<[f3
         })
         .collect();
 
-    // Around each welded point: its faces and their corner angles, and each
-    // vertex's slot in its point's fan.
+    // Alrededor de cada punto soldado: sus caras y sus ángulos de esquina, y la
+    // ranura de cada vértice en el abanico de su punto.
     let mut fans: Vec<Vec<(usize, f32)>> = vec![Vec::new(); ids.len()];
     let mut slot = vec![None; positions.len()];
     for (f, normal) in normals.iter().enumerate() {
@@ -60,8 +64,9 @@ pub fn smooth_normals(positions: &[[f32; 3]], max_angle_degrees: f32) -> Vec<[f3
         }
     }
 
-    // Faces around a point that share an edge bending less than the limit
-    // join one group (union-find over the fan's slots).
+    // Las caras alrededor de un punto que comparten una arista que se dobla
+    // menos que el límite se unen en un grupo (union-find sobre las ranuras del
+    // abanico).
     let groups: Vec<Vec<usize>> = fans
         .iter()
         .enumerate()
@@ -75,8 +80,8 @@ pub fn smooth_normals(positions: &[[f32; 3]], max_angle_degrees: f32) -> Vec<[f3
                 }
                 i
             }
-            // (the edge's other welded point, slot), sorted so slots on the
-            // same edge sit together.
+            // (el otro punto soldado de la arista, ranura), ordenado para que
+            // las ranuras de la misma arista queden juntas.
             let mut edges: Vec<(usize, usize)> = fan
                 .iter()
                 .enumerate()
@@ -130,12 +135,14 @@ mod tests {
         Vec3::from_array(p)
     }
 
-    /// Two triangles meeting along x = 0 with a ridge bending `bend` degrees
-    /// in total, as a triangle list of 6 vertices.
+    /// Dos triángulos que se juntan a lo largo de x = 0 con una cresta que se
+    /// dobla `bend` grados en total, como una lista de triángulos de 6
+    /// vértices.
     fn ridge(bend: f32) -> Vec<[f32; 3]> {
         let half = (bend / 2.0).to_radians();
         let (dy, dx) = (half.sin(), half.cos());
-        // Left face rises to the ridge at x = 0, right face falls from it.
+        // La cara izquierda sube hasta la cresta en x = 0, la derecha baja
+        // desde ella.
         vec![
             [-dx, -dy, 0.0],
             [0.0, 0.0, 1.0],
@@ -151,13 +158,14 @@ mod tests {
         let p = ridge(30.0);
         let n = smooth_normals(&p, 45.0);
         assert_eq!(n.len(), p.len(), "one normal per vertex");
-        // Both corners on the shared edge point straight up, and match.
+        // Las dos esquinas sobre la arista compartida apuntan derecho hacia
+        // arriba y coinciden.
         for (a, b) in [(1, 3), (2, 5)] {
             assert_eq!(p[a], p[b]);
             assert!((v(n[a]) - v(n[b])).length() < 1e-6, "{n:?}");
             assert!(v(n[a]).dot(Vec3::Y) > 0.9999, "{:?}", n[a]);
         }
-        // The outer corners keep their own face's normal.
+        // Las esquinas exteriores conservan la normal de su propia cara.
         assert!(v(n[0]).dot(Vec3::Y) < 0.99);
         for x in &n {
             assert!((v(*x).length() - 1.0).abs() < 1e-5);
@@ -175,8 +183,9 @@ mod tests {
         assert!(v(n[1]).dot(v(n[3])) < 0.8, "the crease stays: {n:?}");
     }
 
-    /// A cone of `sides` facets round with its apex up: every facet meets the
-    /// apex, so the two facets across the cone bend far apart.
+    /// Un cono de `sides` facetas alrededor con el vértice superior hacia
+    /// arriba: cada faceta toca el vértice, así que las dos facetas opuestas
+    /// del cono quedan muy dobladas entre sí.
     fn cone(sides: u32) -> Vec<[f32; 3]> {
         let ring = |k: u32| {
             let a = std::f32::consts::TAU * k as f32 / sides as f32;
@@ -190,14 +199,16 @@ mod tests {
     #[test]
     fn a_coarse_cone_smooths_all_the_way_round_through_shared_edges() {
         let p = cone(8);
-        // Neighbouring facets bend about 32 degrees; facets across the apex
-        // bend about 90. Joining by shared edges still makes one group.
+        // Las facetas vecinas se doblan unos 32 grados; las facetas opuestas a
+        // través del vértice superior, unos 90. Unir por aristas compartidas
+        // igual forma un solo grupo.
         let n = smooth_normals(&p, 45.0);
         let apex: Vec<Vec3> = (0..8).map(|k| v(n[3 * k + 2])).collect();
         for a in &apex {
             assert!(a.dot(Vec3::Y) > 0.9999, "apex normal {a:?}");
         }
-        // Ring corners shared by two facets match, and lean outward.
+        // Las esquinas del anillo compartidas por dos facetas coinciden y se
+        // inclinan hacia afuera.
         for k in 0..8 {
             let here = v(n[3 * k + 1]);
             let next = v(n[3 * ((k + 1) % 8)]);
@@ -209,17 +220,18 @@ mod tests {
 
     #[test]
     fn a_box_keeps_its_edges_hard_and_a_seam_does_not_split_a_flat_face() {
-        // Two faces of a unit box meeting at 90 degrees, the top split
-        // in two triangles whose shared diagonal is a flat seam.
+        // Dos caras de una caja unitaria que se juntan a 90 grados, con la tapa
+        // dividida en dos triángulos cuya diagonal compartida es una costura
+        // plana.
         let p = vec![
-            // Top, y = 1.
+            // Tapa, y = 1.
             [0.0, 1.0, 0.0],
             [1.0, 1.0, 0.0],
             [1.0, 1.0, -1.0],
             [0.0, 1.0, 0.0],
             [1.0, 1.0, -1.0],
             [0.0, 1.0, -1.0],
-            // Front, z = 0.
+            // Frente, z = 0.
             [0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0],
             [1.0, 1.0, 0.0],

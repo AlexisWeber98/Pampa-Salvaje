@@ -1,65 +1,70 @@
-//! The sky's geometry, as pure functions of the game clock: the moon's age,
-//! phase and position, and how the star field turns over the pampa
-//! (about 36.5 degrees south).
+//! La geometría del cielo, como funciones puras del reloj del juego: la edad,
+//! la fase y la posición de la luna, y cómo gira el campo de estrellas sobre la
+//! pampa (a unos 36.5 grados sur).
 //!
-//! World space is Bevy's: east is +X, up is +Y, north is -Z.
+//! El espacio de mundo es el de Bevy: el este es +X, arriba es +Y, el norte es
+//! -Z.
 
 use bevy::math::{Vec3, Vec4};
 use std::f32::consts::TAU;
 
-/// Days from one new moon to the next.
+/// Días de una luna nueva a la siguiente.
 pub const SYNODIC_DAYS: f32 = 29.53;
-/// The moon's age on the first game day at midnight: a waxing gibbous.
+/// La edad de la luna en el primer día de juego a medianoche: gibosa creciente.
 pub const FIRST_MOON_AGE: f32 = 9.0;
-/// The pampa's latitude, in degrees south.
+/// La latitud de la pampa, en grados sur.
 pub const LATITUDE_SOUTH: f32 = 36.5;
-/// The sun's height at noon in radians; the moon's path shares it.
+/// La altura del sol al mediodía en radianes; la trayectoria de la luna la
+/// comparte.
 const PATH_NOON_ELEVATION: f32 = 1.13;
-/// Sidereal days per solar day.
+/// Días siderales por día solar.
 const SIDEREAL_RATE: f64 = 1.002_737_909;
-/// Turns of the star field at game midnight of day 0, set so that the
-/// Southern Cross (Acrux) crosses the meridian at 21:00 on the first day.
+/// Vueltas del campo de estrellas a la medianoche de juego del día 0, ajustadas
+/// para que la Cruz del Sur (Acrux) cruce el meridiano a las 21:00 del primer
+/// día.
 const STAR_OFFSET: f64 = 0.8911;
-/// Lowest height the moonlight is lifted to, in radians, so the night stays
-/// readable while the disc is under the horizon.
+/// La altura mínima a la que se eleva la luz de la luna, en radianes, para que
+/// la noche siga siendo legible mientras el disco está bajo el horizonte.
 pub const MOONLIGHT_FLOOR: f32 = 0.3;
 
-/// The moon's age in days at `elapsed_days` game days since day 0 began.
+/// La edad de la luna en días a `elapsed_days` días de juego desde que empezó
+/// el día 0.
 pub fn moon_age(elapsed_days: f64) -> f32 {
     (f64::from(FIRST_MOON_AGE) + elapsed_days).rem_euclid(f64::from(SYNODIC_DAYS)) as f32
 }
 
-/// The lit fraction of the moon's disc: `0` new, `1` full.
+/// La fracción iluminada del disco lunar: `0` nueva, `1` llena.
 pub fn moon_illumination(age: f32) -> f32 {
     0.5 * (1.0 - (TAU * age / SYNODIC_DAYS).cos())
 }
 
-/// A point on the circle the sun and moon follow, `hours` on a 24 h clock:
-/// east at 07:00, the northern sky at 13:00, west at 19:00, under the ground
-/// at night. Continuous through the whole turn.
+/// Un punto del círculo que siguen el sol y la luna, a `hours` en un reloj de
+/// 24 h: al este a las 07:00, en el cielo del norte a las 13:00, al oeste a las
+/// 19:00, bajo el suelo de noche. Continuo a lo largo de toda la vuelta.
 pub fn sky_path(hours: f32) -> Vec3 {
     let h = TAU * (hours - 13.0) / 24.0;
     let noon = Vec3::new(0.0, PATH_NOON_ELEVATION.sin(), -PATH_NOON_ELEVATION.cos());
     (Vec3::X * -h.sin() + noon * h.cos()).normalize()
 }
 
-/// Where the moon is at `hour`: it trails the sun by `age / 29.53` of a day,
-/// so a new moon rides with the sun and a full moon opposes it.
+/// Dónde está la luna a la hora `hour`: va detrás del sol `age / 29.53` de un
+/// día, así que una luna nueva acompaña al sol y una luna llena está opuesta a
+/// él.
 pub fn moon_dir(hour: f32, age: f32) -> Vec3 {
     sky_path(hour - 24.0 * age / SYNODIC_DAYS)
 }
 
-/// The direction from the moon toward its light, for drawing the phase: the
-/// sun lies behind the moon at new, behind the viewer at full, and to the
-/// west of it while it waxes (east while it wanes).
+/// La dirección desde la luna hacia su luz, para dibujar la fase: el sol queda
+/// detrás de la luna en luna nueva, detrás del observador en luna llena, y al
+/// oeste de ella mientras crece (al este mientras mengua).
 pub fn moon_light_dir(moon: Vec3, age: f32) -> Vec3 {
     let phase = TAU * age / SYNODIC_DAYS;
     let west = (-Vec3::X - moon * (-Vec3::X).dot(moon)).normalize_or(Vec3::Z);
     (moon * phase.cos() + west * phase.sin()).normalize()
 }
 
-/// The direction the night light comes from: the moon, raised to at least
-/// [`MOONLIGHT_FLOOR`] when it is below that.
+/// La dirección de la que viene la luz nocturna: la luna, elevada al menos
+/// hasta [`MOONLIGHT_FLOOR`] cuando está por debajo.
 pub fn moonlight_dir(moon: Vec3) -> Vec3 {
     let floor = MOONLIGHT_FLOOR.sin();
     if moon.y >= floor {
@@ -69,11 +74,11 @@ pub fn moonlight_dir(moon: Vec3) -> Vec3 {
     (flat * MOONLIGHT_FLOOR.cos() + Vec3::Y * floor).normalize()
 }
 
-/// The star field's frame at `elapsed_days`: three rows taking a world
-/// direction to celestial coordinates (x toward right ascension 0, y toward
-/// 6 h, z toward the north celestial pole, which lies under the northern
-/// horizon). The sky turns once per sidereal day: stars rise in the east and
-/// set in the west.
+/// El marco del campo de estrellas en `elapsed_days`: tres filas que llevan una
+/// dirección del mundo a coordenadas celestes (x hacia la ascensión recta 0, y
+/// hacia las 6 h, z hacia el polo celeste norte, que queda bajo el horizonte
+/// norte). El cielo da una vuelta por día sideral: las estrellas salen por el
+/// este y se ponen por el oeste.
 pub fn star_frame(elapsed_days: f64) -> [Vec4; 3] {
     let theta = TAU * (elapsed_days * SIDEREAL_RATE + STAR_OFFSET).rem_euclid(1.0) as f32;
     let lat = LATITUDE_SOUTH.to_radians();
@@ -85,7 +90,7 @@ pub fn star_frame(elapsed_days: f64) -> [Vec4; 3] {
     [x.extend(0.0), y.extend(0.0), pole.extend(0.0)]
 }
 
-/// Applies a [`star_frame`] to a world direction.
+/// Aplica un [`star_frame`] a una dirección del mundo.
 pub fn to_celestial(frame: &[Vec4; 3], dir: Vec3) -> Vec3 {
     Vec3::new(
         frame[0].truncate().dot(dir),
@@ -94,19 +99,19 @@ pub fn to_celestial(frame: &[Vec4; 3], dir: Vec3) -> Vec3 {
     )
 }
 
-/// Rows of the J2000 equatorial to galactic rotation: x toward the galactic
-/// centre, y toward longitude 90, z toward the north galactic pole.
+/// Filas de la rotación de ecuatoriales J2000 a galácticas: x hacia el centro
+/// galáctico, y hacia la longitud 90, z hacia el polo galáctico norte.
 const GALACTIC_FROM_EQUATORIAL: [Vec3; 3] = [
     Vec3::new(-0.054_875_56, -0.873_437_1, -0.483_835),
     Vec3::new(0.494_109_43, -0.444_829_6, 0.746_982_2),
     Vec3::new(-0.867_666_1, -0.198_076_4, 0.455_983_8),
 ];
 
-/// The star map's frame at `elapsed_days`: three rows taking a world
-/// direction to galactic coordinates (x toward the galactic centre, y toward
-/// longitude 90, z toward the north galactic pole), which is how the star
-/// map texture is laid out. It is [`star_frame`] followed by the fixed
-/// equatorial to galactic rotation.
+/// El marco del mapa de estrellas en `elapsed_days`: tres filas que llevan una
+/// dirección del mundo a coordenadas galácticas (x hacia el centro galáctico, y
+/// hacia la longitud 90, z hacia el polo galáctico norte), que es como está
+/// dispuesta la textura del mapa de estrellas. Es [`star_frame`] seguido de la
+/// rotación fija de ecuatoriales a galácticas.
 pub fn galactic_frame(elapsed_days: f64) -> [Vec4; 3] {
     let f = star_frame(elapsed_days);
     let row = |g: Vec3| {
@@ -119,16 +124,16 @@ pub fn galactic_frame(elapsed_days: f64) -> [Vec4; 3] {
     ]
 }
 
-/// The galactic longitude and latitude, in degrees, of the world direction
-/// `dir` under `frame` (a [`galactic_frame`]); longitude in `[0, 360)`.
+/// La longitud y la latitud galácticas, en grados, de la dirección del mundo
+/// `dir` bajo `frame` (un [`galactic_frame`]); la longitud en `[0, 360)`.
 pub fn galactic_coords(frame: &[Vec4; 3], dir: Vec3) -> (f32, f32) {
     let g = to_celestial(frame, dir);
     let l = g.y.atan2(g.x).to_degrees().rem_euclid(360.0);
     (l, g.z.clamp(-1.0, 1.0).asin().to_degrees())
 }
 
-/// The world direction of a star at right ascension `ra` and declination
-/// `dec` (degrees) in the frame of `frame`.
+/// La dirección del mundo de una estrella con ascensión recta `ra` y
+/// declinación `dec` (en grados) en el marco `frame`.
 pub fn star_dir(frame: &[Vec4; 3], ra: f32, dec: f32) -> Vec3 {
     let (ra, dec) = (ra.to_radians(), dec.to_radians());
     let c = Vec3::new(dec.cos() * ra.cos(), dec.cos() * ra.sin(), dec.sin());
@@ -178,10 +183,11 @@ mod tests {
     #[test]
     fn the_lit_side_follows_the_phase() {
         let moon = Vec3::new(0.0, 0.5, -0.8).normalize();
-        // Full: lit from the viewer's side. New: from behind the moon.
+        // Llena: iluminada desde el lado del observador. Nueva: desde detrás de
+        // la luna.
         assert!(moon_light_dir(moon, SYNODIC_DAYS / 2.0).dot(-moon) > 0.99);
         assert!(moon_light_dir(moon, 0.01).dot(moon) > 0.99);
-        // Waxing: lit from the west (-X), waning from the east.
+        // Creciente: iluminada desde el oeste (-X); menguante, desde el este.
         assert!(moon_light_dir(moon, 7.38).x < -0.9);
         assert!(moon_light_dir(moon, 22.1).x > 0.9);
     }
@@ -208,7 +214,7 @@ mod tests {
 
     #[test]
     fn stars_rise_in_the_east_and_set_in_the_west() {
-        // A star on the celestial equator crosses the northern sky.
+        // Una estrella sobre el ecuador celeste cruza el cielo del norte.
         let at = |days: f64| star_dir(&star_frame(days), 100.0, 0.0);
         let mut last = at(0.0);
         let mut crossed_up = false;
@@ -238,8 +244,8 @@ mod tests {
     #[test]
     fn the_galactic_frame_puts_known_objects_at_their_galactic_coordinates() {
         let frame = galactic_frame(0.4);
-        // The south celestial pole is at l 302.9, b -27.1; the Large
-        // Magellanic Cloud at l 280.5, b -32.9.
+        // El polo celeste sur está en l 302.9, b -27.1; la Gran Nube de
+        // Magallanes, en l 280.5, b -32.9.
         let pole = star_dir(&star_frame(0.4), 0.0, -90.0);
         let (l, b) = galactic_coords(&frame, pole);
         assert!(
@@ -252,7 +258,7 @@ mod tests {
             (l - 280.47).abs() < 0.05 && (b + 32.89).abs() < 0.05,
             "{l} {b}"
         );
-        // Fomalhaut, far from both: l 20.49, b -64.91.
+        // Fomalhaut, lejos de ambos: l 20.49, b -64.91.
         let fomalhaut = star_dir(&star_frame(0.4), 344.41, -29.62);
         let (l, b) = galactic_coords(&frame, fomalhaut);
         assert!(
@@ -267,8 +273,8 @@ mod tests {
             |days: f64| to_celestial(&galactic_frame(days), Vec3::new(0.3, 0.7, -0.4).normalize());
         assert!(at(0.2).distance(at(0.3)) > 0.1, "an hour and a half later");
         assert!(at(0.2).distance(at(0.2 + 1.0 / 1.002_737_909)) < 1e-3);
-        // Seen from the pampa the galactic centre rises in the east and
-        // sets in the west, once a day.
+        // Visto desde la pampa, el centro galáctico sale por el este y se pone
+        // por el oeste, una vez por día.
         let gc = |days: f64| {
             let f = galactic_frame(days);
             Vec3::new(f[0].x, f[1].x, f[2].x)

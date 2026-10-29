@@ -1,13 +1,13 @@
-//! Character drawing. Every person on foot is a skinned MakeHuman model that
-//! plays retargeted animation clips (see [`model`], [`clips`] and [`rig`]):
-//! the protagonist, the errand's people and the townsfolk, five outfits
-//! tinted per person ([`townsfolk`]). The low-poly rigid figures
-//! ([`figure`], [`finish`]) stay as their hidden carriers and as `models
-//! off` (and a model that fails to load). Saddled
-//! horses are Quaternius' animated horse in a recado and bridle ([`horse`],
-//! [`tack`]), with a model rider on top ([`rider`]). Each entity's visual
-//! is swappable (on foot, mounted, a horse tied up). The player's own
-//! head is marked for the first-person camera ([`viewer`]).
+//! Dibujo de los personajes. Cada persona a pie es un modelo de MakeHuman con
+//! skinning que reproduce clips de animación retargeteados (ver [`model`],
+//! [`clips`] y [`rig`]): el protagonista, la gente de los mandados y los
+//! vecinos, con cinco atuendos teñidos por persona ([`townsfolk`]). Las figuras
+//! rígidas low-poly ([`figure`], [`finish`]) quedan como sus portadores ocultos
+//! y como `models off` (y cuando un modelo no carga). Los caballos ensillados
+//! son el caballo animado de Quaternius con recado y brida ([`horse`],
+//! [`tack`]), con un jinete modelo encima ([`rider`]). El visual de cada
+//! entidad es intercambiable (a pie, montado, un caballo atado). La cabeza del
+//! propio jugador se marca para la cámara en primera persona ([`viewer`]).
 
 pub mod clips;
 #[cfg(test)]

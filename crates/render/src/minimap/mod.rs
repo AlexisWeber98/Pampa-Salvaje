@@ -1,33 +1,36 @@
-//! Minimap in the top-right corner: the town nearest the player (by
-//! distance to its extent) drawn from `pampa-core` data, north-up, titled
-//! with its name, with live markers for the player, the walkers and the
-//! line train's cars inside the map, and the errand's target ([`MapTarget`])
-//! pinned to the edge while it is off the map. A compass rose (N, E, S, O)
-//! in the bottom-left corner shows the map's orientation: the map is
-//! north-up, so the rose stays put and the player's arrow shows the heading.
+//! El minimapa en la esquina superior derecha: el pueblo más cercano al jugador
+//! (por distancia a su extensión) dibujado a partir de los datos de
+//! `pampa-core`, con el norte arriba, titulado con su nombre, con marcadores en
+//! vivo para el jugador, los peatones y los vagones del tren de la línea dentro
+//! del mapa, y el destino del mandado ([`MapTarget`]) fijado en el borde
+//! mientras está fuera del mapa. Una rosa de los vientos (N, E, S, O) en la
+//! esquina inferior izquierda muestra la orientación del mapa: el mapa tiene el
+//! norte arriba, así que la rosa queda fija y la flecha del jugador muestra el
+//! rumbo.
 //!
-//! Out in the country the map leaves the town for a field frame: a fixed
-//! scale square ([`raster::FIELD_HALF_EXTENT`]) round the rider, with the
-//! roads, the railway, the settlements (footprints by kind, corral
-//! outlines, huellas, trees) and the roadside wrecks. A town's frame also
-//! shows any settlement reaching into it. The switch, with hysteresis so
-//! the map does not flicker on the boundary ([`next_mode`]):
+//! En el campo, el mapa deja el pueblo por un encuadre de campo: un cuadrado de
+//! escala fija ([`raster::FIELD_HALF_EXTENT`]) alrededor del jinete, con los
+//! caminos, el ferrocarril, los asentamientos (huellas de edificio por tipo,
+//! contornos de corrales, huellas, árboles) y los restos abandonados al costado
+//! del camino. El encuadre de un pueblo también muestra cualquier asentamiento
+//! que entre en él. El cambio, con histéresis para que el mapa no parpadee en
+//! el límite ([`next_mode`]):
 //!
-//! - town → field when the rider is more than [`FIELD_ENTER`] meters from
-//!   the nearest town's extent, or within [`SETTLEMENT_ENTER`] meters of a
-//!   settlement's bounds;
-//! - field → town when the rider is within [`TOWN_ENTER`] meters of a
-//!   town's extent and more than [`SETTLEMENT_LEAVE`] meters from every
-//!   settlement.
+//! - de pueblo a campo cuando el jinete está a más de [`FIELD_ENTER`] metros de
+//!   la extensión del pueblo más cercano, o a menos de [`SETTLEMENT_ENTER`]
+//!   metros de los límites de un asentamiento;
+//! - de campo a pueblo cuando el jinete está a menos de [`TOWN_ENTER`] metros
+//!   de la extensión de un pueblo y a más de [`SETTLEMENT_LEAVE`] metros de
+//!   todos los asentamientos.
 //!
-//! Each town's layer is rasterized once, the first time it is shown, and
-//! kept per town (one image per town: bounded). The field layer is one more
-//! image, repainted in place only when the frame is entered or the rider has
-//! ridden [`FIELD_RECENTER`] meters from its center (well inside its edge),
-//! never per frame. A second, transparent image of the same size is redrawn
-//! every frame with the markers only. Both are UI image nodes stacked inside
-//! a framed panel. `M` toggles between the corner map and an enlarged,
-//! centered one.
+//! La capa de cada pueblo se rasteriza una vez, la primera vez que se muestra,
+//! y se guarda por pueblo (una imagen por pueblo: acotado). La capa de campo es
+//! una imagen más, que se vuelve a pintar en el lugar solo cuando se entra en
+//! el encuadre o cuando el jinete se alejó [`FIELD_RECENTER`] metros de su
+//! centro (bien dentro de su borde), nunca por frame. Una segunda imagen
+//! transparente del mismo tamaño se redibuja en cada frame solo con los
+//! marcadores. Ambas son nodos de imagen de UI apilados dentro de un panel con
+//! marco. `M` alterna entre el mapa de la esquina y uno ampliado y centrado.
 
 pub mod raster;
 
@@ -51,45 +54,49 @@ use raster::{
     Canvas, MapFrame, Markers, Overlay, draw_markers, palette, rasterize_field, rasterize_town_over,
 };
 
-/// Side of the map images, in pixels.
+/// Lado de las imágenes del mapa, en píxeles.
 pub const MAP_PX: usize = 320;
-/// Side of the corner map on screen, in logical pixels.
+/// Lado del mapa de la esquina en pantalla, en píxeles lógicos.
 pub const SMALL_SIZE: Val = Val::Px(220.0);
-/// Side of the enlarged map, as a share of the window's smaller side.
+/// Lado del mapa ampliado, como proporción del lado menor de la ventana.
 pub const LARGE_SIZE: Val = Val::VMin(80.0);
-/// Key that toggles the enlarged map.
+/// Tecla que alterna el mapa ampliado.
 pub const TOGGLE_KEY: KeyCode = KeyCode::KeyM;
-/// Meters from the nearest town's extent past which the map leaves the
-/// town for the field frame. A town's frame shows its extent plus
-/// [`raster::MARGIN`] all round, so the rider is always on the shown map,
-/// at least 10 m inside its edge, with the rails and roads round them:
-/// never pinned to the edge of a town map that leaves out the track they
-/// stand on.
+/// Metros desde la extensión del pueblo más cercano a partir de los cuales el
+/// mapa deja el pueblo por el encuadre de campo. El encuadre de un pueblo
+/// muestra su extensión más [`raster::MARGIN`] alrededor, así que el jinete
+/// siempre está en el mapa mostrado, al menos 10 m dentro de su borde, con los
+/// rieles y caminos de alrededor: nunca fijado en el borde de un mapa de pueblo
+/// que deja afuera la vía sobre la que está.
 pub const FIELD_ENTER: f32 = raster::MARGIN - 10.0;
-/// Meters from a town's extent within which the field frame gives way to
-/// the town's: 15 m of hysteresis under [`FIELD_ENTER`].
+/// Metros desde la extensión de un pueblo dentro de los cuales el encuadre de
+/// campo da paso al del pueblo: 15 m de histéresis por debajo de
+/// [`FIELD_ENTER`].
 pub const TOWN_ENTER: f32 = FIELD_ENTER - 15.0;
-/// Meters from a settlement's bounds within which the map shows the field.
+/// Metros desde los límites de un asentamiento dentro de los cuales el mapa
+/// muestra el campo.
 pub const SETTLEMENT_ENTER: f32 = 20.0;
-/// Meters from every settlement's bounds the rider must be for the map to
-/// go back to a town.
+/// Metros desde los límites de todos los asentamientos a los que debe estar el
+/// jinete para que el mapa vuelva a un pueblo.
 pub const SETTLEMENT_LEAVE: f32 = 50.0;
-/// Meters the rider may ride from the field frame's center before it is
-/// repainted round them: the arrow stays 240 m inside the edge.
+/// Metros que el jinete puede alejarse del centro del encuadre de campo antes
+/// de que se vuelva a pintar a su alrededor: la flecha queda 240 m dentro del
+/// borde.
 pub const FIELD_RECENTER: f32 = 80.0;
 
-/// Which frame the map shows.
+/// Qué encuadre muestra el mapa.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MapMode {
-    /// The nearest town's frame ([`Minimap::town`]).
+    /// El encuadre del pueblo más cercano ([`Minimap::town`]).
     Town,
-    /// The field frame round the rider.
+    /// El encuadre de campo alrededor del jinete.
     Field,
 }
 
-/// The frame to show after `current`, for a rider `town` meters from the
-/// nearest town's extent and `settlement` meters from the nearest
-/// settlement's bounds (infinite without any). See the module docs.
+/// El encuadre a mostrar después de `current`, para un jinete a `town` metros
+/// de la extensión del pueblo más cercano y a `settlement` metros de los
+/// límites del asentamiento más cercano (infinito si no hay ninguno). Ver la
+/// documentación del módulo.
 pub fn next_mode(current: MapMode, town: f32, settlement: f32) -> MapMode {
     match current {
         MapMode::Town if town > FIELD_ENTER || settlement < SETTLEMENT_ENTER => MapMode::Field,
@@ -98,8 +105,8 @@ pub fn next_mode(current: MapMode, town: f32, settlement: f32) -> MapMode {
     }
 }
 
-/// Distance from `p` to the nearest settlement's bounds (0 inside);
-/// infinite without settlements.
+/// Distancia desde `p` hasta los límites del asentamiento más cercano (0 si
+/// está adentro); infinita si no hay asentamientos.
 fn settlement_distance(settlements: Option<&SettlementLayout>, p: GroundVec2) -> f32 {
     settlements
         .into_iter()
@@ -108,60 +115,61 @@ fn settlement_distance(settlements: Option<&SettlementLayout>, p: GroundVec2) ->
         .fold(f32::INFINITY, f32::min)
 }
 
-/// What an entity shows as on the minimap. Its ground position comes from
-/// its `Transform`; the player's heading from its [`VisualPose`].
+/// Cómo se muestra una entidad en el minimapa. Su posición en el suelo viene de
+/// su `Transform`; el rumbo del jugador, de su [`VisualPose`].
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MapIcon {
     Player,
     Walker,
 }
 
-/// Where the errand sends the player, marked on the map (pinned to the
-/// edge when outside it); `None` hides the marker. The game keeps it up to
-/// date.
+/// Adónde envía el mandado al jugador, marcado en el mapa (fijado en el borde
+/// cuando está fuera de él); `None` oculta el marcador. El juego lo mantiene
+/// actualizado.
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
 pub struct MapTarget(pub Option<GroundVec2>);
 
-/// Minimap state: the town shown and its framing, the marker layer and
-/// whether it is enlarged.
+/// El estado del minimapa: el pueblo mostrado y su encuadre, la capa de
+/// marcadores y si está ampliado.
 #[derive(Resource, Debug)]
 pub struct Minimap {
-    /// Which frame is shown.
+    /// Qué encuadre se muestra.
     pub mode: MapMode,
-    /// Index of the town shown (or last shown, in the field), in
+    /// Índice del pueblo mostrado (o el último mostrado, en el campo), en
     /// [`WorldTowns`].
     pub town: usize,
     pub frame: MapFrame,
     pub enlarged: bool,
-    /// Where the player's arrow was drawn last frame, in map pixels.
+    /// Dónde se dibujó la flecha del jugador en el frame anterior, en píxeles
+    /// del mapa.
     pub player_px: Option<Vec2>,
-    /// Where the target was drawn last frame, in map pixels, and whether it
-    /// was on the map (otherwise it is pinned to the edge).
+    /// Dónde se dibujó el destino en el frame anterior, en píxeles del mapa, y
+    /// si estaba en el mapa (si no, está fijado en el borde).
     pub target_px: Option<(Vec2, bool)>,
     markers: Handle<Image>,
     canvas: Canvas,
-    /// Each shown town's layer, by town index.
+    /// La capa de cada pueblo mostrado, por índice de pueblo.
     bases: HashMap<usize, Handle<Image>>,
-    /// The field layer, repainted in place.
+    /// La capa de campo, que se vuelve a pintar en el lugar.
     field: Option<Handle<Image>>,
-    /// How many times the field layer has been painted.
+    /// Cuántas veces se pintó la capa de campo.
     pub field_paints: usize,
 }
 
-/// The image node showing the town layer.
+/// El nodo de imagen que muestra la capa del pueblo.
 #[derive(Component, Debug)]
 pub struct MinimapBase;
 
-/// Full-window layout node that places the map panel.
+/// El nodo de layout de ventana completa que ubica el panel del mapa.
 #[derive(Component, Debug)]
 pub struct MinimapRoot;
 
-/// The framed map panel.
+/// El panel del mapa con marco.
 #[derive(Component, Debug)]
 pub struct MinimapPanel;
 
-/// Draws the nearest of the [`WorldTowns`] as a minimap. Without towns it
-/// draws nothing.
+/// Dibuja el más cercano de los [`WorldTowns`] como minimapa. Sin pueblos no
+/// dibuja nada.
 pub struct MinimapPlugin;
 
 impl Plugin for MinimapPlugin {
@@ -182,28 +190,30 @@ fn map_image(pixels: Vec<u8>) -> Image {
         TextureDimension::D2,
         pixels,
         TextureFormat::Rgba8UnormSrgb,
-        // Kept on the CPU too: the marker layer is rewritten every frame.
+        // También se guarda en la CPU: la capa de marcadores se reescribe en
+        // cada frame.
         RenderAssetUsages::default(),
     );
     image.sampler = ImageSampler::linear();
     image
 }
 
-/// The railway line's links, as the short straight pieces their curves are
-/// drawn with, painted on every town's layer where they cross its frame.
+/// Los tramos de la línea del ferrocarril, como las piezas rectas cortas con
+/// las que se dibujan sus curvas, pintados en la capa de cada pueblo donde
+/// cruzan su encuadre.
 fn links(rail: Option<&WorldRail>) -> Vec<Railway> {
     rail.map(|r| r.0.segments().collect()).unwrap_or_default()
 }
 
-/// The bays' platforms, painted on every town's layer where they cross its
-/// frame.
+/// Los andenes de las vías muertas, pintados en la capa de cada pueblo donde
+/// cruzan su encuadre.
 fn bay_platforms(rail: Option<&WorldRail>) -> Vec<pampa_core::Aabb> {
     rail.map(|r| r.0.bays.iter().map(|b| b.platform.footprint).collect())
         .unwrap_or_default()
 }
 
-/// The roads' straight pieces, painted on every town's layer where they
-/// cross its frame.
+/// Las piezas rectas de los caminos, pintadas en la capa de cada pueblo donde
+/// cruzan su encuadre.
 fn roads(terrain: Option<&WorldTerrain>) -> Vec<(GroundVec2, GroundVec2)> {
     terrain
         .and_then(|t| t.0.roads.as_deref())
@@ -211,13 +221,13 @@ fn roads(terrain: Option<&WorldTerrain>) -> Vec<(GroundVec2, GroundVec2)> {
         .unwrap_or_default()
 }
 
-/// The lagoons, carried by the terrain.
+/// Las lagunas, que lleva el terreno.
 fn lagoons(terrain: Option<&WorldTerrain>) -> Vec<Lagoon> {
     terrain.map(|t| t.0.lagoons.clone()).unwrap_or_default()
 }
 
-/// What a layer shows beyond the town: the railway line's links, the
-/// roads and the lagoons.
+/// Lo que muestra una capa más allá del pueblo: los tramos de la línea del
+/// ferrocarril, los caminos y las lagunas.
 type Lines = (
     Vec<Railway>,
     Vec<(GroundVec2, GroundVec2)>,
@@ -225,7 +235,7 @@ type Lines = (
     Vec<pampa_core::Aabb>,
 );
 
-/// The [`Overlay`] of `lines` and the world's settlements.
+/// El [`Overlay`] de `lines` y los asentamientos del mundo.
 fn overlay<'a>(lines: &'a Lines, settlements: Option<&'a SettlementLayout>) -> Overlay<'a> {
     Overlay {
         links: &lines.0,
@@ -241,7 +251,7 @@ fn rgba(c: [u8; 4]) -> Color {
     Color::srgba_u8(c[0], c[1], c[2], c[3])
 }
 
-/// Where the map starts and what it draws beyond the town.
+/// Dónde empieza el mapa y qué dibuja más allá del pueblo.
 type MapSources<'a> = (
     Option<Res<'a, StreamFocus>>,
     Option<Res<'a, WorldRail>>,
@@ -311,8 +321,8 @@ fn spawn_minimap(
     });
 }
 
-/// Layout of the full-window root: the panel in the top-right corner, or
-/// centered when enlarged.
+/// El layout de la raíz de ventana completa: el panel en la esquina superior
+/// derecha, o centrado cuando está ampliado.
 fn root_node(enlarged: bool) -> Node {
     let (justify, align) = if enlarged {
         (JustifyContent::Center, AlignItems::Center)
@@ -330,7 +340,7 @@ fn root_node(enlarged: bool) -> Node {
     }
 }
 
-/// The framed square panel, small or enlarged.
+/// El panel cuadrado con marco, pequeño o ampliado.
 fn panel_node(enlarged: bool) -> Node {
     let side = if enlarged { LARGE_SIZE } else { SMALL_SIZE };
     Node {
@@ -362,12 +372,12 @@ fn toggle_minimap(
     }
 }
 
-/// Ground-plane position of a world-space translation.
+/// La posición en el plano del suelo de una traslación en espacio de mundo.
 fn ground_of(translation: Vec3) -> GroundVec2 {
     GroundVec2::new(translation.x, -translation.z)
 }
 
-/// Switches the map to town `index`, rasterizing its layer the first time.
+/// Cambia el mapa al pueblo `index`, rasterizando su capa la primera vez.
 fn show_town(
     minimap: &mut Minimap,
     (towns, overlay): (&WorldTowns, &Overlay),
@@ -392,8 +402,8 @@ fn show_town(
     }
 }
 
-/// Switches the map to the field frame round `at`, repainting the one
-/// field layer in place (adding it the first time).
+/// Cambia el mapa al encuadre de campo alrededor de `at`, volviendo a pintar en
+/// el lugar la única capa de campo (agregándola la primera vez).
 fn show_field(
     minimap: &mut Minimap,
     (towns, overlay): (&WorldTowns, &Overlay),
@@ -419,8 +429,8 @@ fn show_field(
     }
 }
 
-/// What the minimap reads of the world: towns, trains, the railway line,
-/// the roads (carried by the terrain) and the settlements.
+/// Lo que el minimapa lee del mundo: pueblos, trenes, la línea del ferrocarril,
+/// los caminos (que lleva el terreno) y los asentamientos.
 type WorldLayers<'a> = (
     Option<Res<'a, WorldTowns>>,
     Option<Res<'a, WorldTrains>>,
@@ -448,15 +458,15 @@ fn update_markers(
         && let Some(nearest) = nearest_town(&towns.0, at)
     {
         let layout = settlements.as_deref().map(|s| &s.0);
-        // `nearest_town` ranks towns by the distance to their extent, the
-        // same measure the mode reads, never by their centres.
+        // `nearest_town` ordena los pueblos por la distancia a su extensión, la
+        // misma medida que lee el modo, nunca por sus centros.
         let mode = next_mode(
             minimap.mode,
             distance_to_town(&towns.0[nearest], at),
             settlement_distance(layout, at),
         );
-        // Only a change of frame, or a rider far from the field frame's
-        // center, repaints a layer.
+        // Solo un cambio de encuadre, o un jinete lejos del centro del encuadre
+        // de campo, vuelve a pintar una capa.
         let repaint = match mode {
             MapMode::Town => minimap.mode != MapMode::Town || nearest != minimap.town,
             MapMode::Field => {
@@ -482,8 +492,8 @@ fn update_markers(
             }
         }
     }
-    // The line train runs between towns: the markers draw only the cars
-    // inside the shown town's frame.
+    // El tren de la línea va entre pueblos: los marcadores dibujan solo los
+    // vagones dentro del encuadre del pueblo mostrado.
     let mut markers = Markers {
         cars: trains
             .as_ref()
@@ -551,7 +561,7 @@ mod tests {
         assert!(app.world().resource::<Minimap>().enlarged);
         assert_eq!(panel_width(&mut app), LARGE_SIZE);
 
-        // Holding the key does not flicker.
+        // Mantener apretada la tecla no hace parpadear.
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .clear();
@@ -581,7 +591,7 @@ mod tests {
         let data = images.get(&handle).unwrap().data.as_ref().unwrap();
         let i = (at.y as usize * MAP_PX + at.x as usize) * 4;
         assert_eq!(data[i + 3], 255, "arrow drawn into the image");
-        // Base layer and marker layer.
+        // Capa base y capa de marcadores.
         assert_eq!(images.len(), 2);
     }
 
@@ -615,7 +625,7 @@ mod tests {
         };
         let castex_base = base(&mut app);
 
-        // Near the far town, it takes over with its frame.
+        // Cerca del pueblo lejano, toma el control con su encuadre.
         let near_far = far.extent().max + GroundVec2::new(10.0, 10.0);
         app.world_mut()
             .get_mut::<Transform>(player)
@@ -628,7 +638,7 @@ mod tests {
         let far_base = base(&mut app);
         assert_ne!(far_base, castex_base);
 
-        // Back home: the cached layer is reused, no new image.
+        // De vuelta en casa: se reutiliza la capa guardada, sin imagen nueva.
         let images = app.world().resource::<Assets<Image>>().len();
         app.world_mut()
             .get_mut::<Transform>(player)
@@ -642,8 +652,9 @@ mod tests {
 
     #[test]
     fn the_mode_follows_the_nearest_town_by_extent_not_by_centre() {
-        // A small town (listed first) whose centre is nearer the rider, and
-        // a big one whose edge is nearer: the big town is the near one.
+        // Un pueblo pequeño (listado primero) cuyo centro está más cerca del
+        // jinete, y uno grande cuyo borde está más cerca: el pueblo grande es
+        // el cercano.
         let big = TownLayout::generate(&TownConfig {
             name: "Grande".into(),
             blocks: (8, 4),
@@ -661,8 +672,8 @@ mod tests {
         };
         let probe = TownLayout::generate(&small_config).unwrap().extent();
         let (be, half) = (big.extent(), (probe.max.x - probe.min.x) / 2.0);
-        // Just east of the big town's edge: inside TOWN_ENTER of it, and
-        // more than FIELD_ENTER from the small town's edge.
+        // Justo al este del borde del pueblo grande: dentro de su TOWN_ENTER, y
+        // a más de FIELD_ENTER del borde del pueblo pequeño.
         let rider = GroundVec2::new(be.max.x + TOWN_ENTER / 2.0, be.center().y);
         let small_center = rider + GroundVec2::new(FIELD_ENTER + 20.0 + half, 0.0);
         let small = TownLayout::generate(&TownConfig {
@@ -693,7 +704,7 @@ mod tests {
         let mut app = headless_app();
         app.update();
         assert_eq!(app.world().resource::<Minimap>().target_px, None);
-        // Another town, far to the west: pinned to the west edge.
+        // Otro pueblo, lejos hacia el oeste: fijado en el borde oeste.
         let far = GroundVec2::new(-3000.0, 0.0);
         app.insert_resource(MapTarget(Some(far)));
         app.update();
@@ -709,14 +720,14 @@ mod tests {
         };
         let i = (at.y as usize * MAP_PX + at.x as usize) * 4;
         assert_eq!(data[i..i + 4], palette::TARGET);
-        // Inside the shown town: drawn where it is.
+        // Dentro del pueblo mostrado: se dibuja donde está.
         let near = app.world().resource::<WorldTowns>().0[0].plaza.center();
         app.insert_resource(MapTarget(Some(near)));
         app.update();
         let minimap = app.world().resource::<Minimap>();
         let (at, on_map) = minimap.target_px.unwrap();
         assert!(on_map && at.distance(minimap.frame.to_map(near)) < 1e-3);
-        // Errand done: no marker.
+        // Mandado cumplido: sin marcador.
         app.insert_resource(MapTarget(None));
         app.update();
         assert_eq!(app.world().resource::<Minimap>().target_px, None);
@@ -737,7 +748,7 @@ mod tests {
     fn marks_the_line_train_cars_in_the_shown_town() {
         use pampa_core::{BASE_RATE, Run};
         let (towns, mut train) = crate::train::tests::line_train();
-        // Dwelling at Monte Nievas (town 0) on the morning run.
+        // En parada en Monte Nievas (pueblo 0) en el servicio de la mañana.
         let (arrive, _) = train.stop_times(Run::Up, 1).unwrap();
         train.advance(0.0, 7.0 * 3600.0 + (arrive + 5.0) * BASE_RATE, BASE_RATE);
         let mut app = App::new();
@@ -774,8 +785,9 @@ mod tests {
     fn marks_the_cars_of_every_train_in_the_shown_town() {
         use pampa_core::{BASE_RATE, Run};
         let (towns, line) = crate::train::tests::line_train();
-        // A shuttle leaving Pico at 08:00, an hour behind the line train:
-        // dwelling at Monte Nievas when the line train is long gone.
+        // Una lanzadera que sale de Pico a las 08:00, una hora detrás del tren
+        // de la línea: en parada en Monte Nievas cuando el tren de la línea ya
+        // se fue hace rato.
         let shuttle = crate::train::tests::shuttle(&line, &towns, 22, 8);
         let mut shuttle = shuttle;
         let (arrive, _) = shuttle.stop_times(Run::Up, 1).unwrap();
@@ -823,20 +835,21 @@ mod tests {
     fn next_mode_switches_with_hysteresis() {
         use MapMode::{Field, Town};
         let far = f32::INFINITY;
-        // In town until past FIELD_ENTER, in the field until within
-        // TOWN_ENTER: the band between keeps whichever frame is shown.
+        // En el pueblo hasta pasar FIELD_ENTER, en el campo hasta estar dentro
+        // de TOWN_ENTER: la franja intermedia conserva el encuadre que se
+        // muestre.
         let between = (TOWN_ENTER + FIELD_ENTER) / 2.0;
         assert_eq!(next_mode(Town, 0.0, far), Town);
         assert_eq!(next_mode(Town, between, far), Town);
         assert_eq!(next_mode(Town, FIELD_ENTER + 1.0, far), Field);
         assert_eq!(next_mode(Field, between, far), Field);
         assert_eq!(next_mode(Field, TOWN_ENTER - 1.0, far), Town);
-        // Near a settlement it is the field, even close to a town, until
-        // the rider is well clear of it.
+        // Cerca de un asentamiento es el campo, incluso cerca de un pueblo,
+        // hasta que el jinete se aleja bien de él.
         assert_eq!(next_mode(Town, 0.0, SETTLEMENT_ENTER - 1.0), Field);
         assert_eq!(next_mode(Field, 0.0, 30.0), Field);
         assert_eq!(next_mode(Field, 0.0, SETTLEMENT_LEAVE + 1.0), Town);
-        // A town's map is left before the rider rides off it.
+        // Se deja el mapa de un pueblo antes de que el jinete salga de él.
         const { assert!(TOWN_ENTER > 0.0 && FIELD_ENTER < raster::MARGIN) };
     }
 
@@ -872,13 +885,14 @@ mod tests {
         let town_base = base_image(&mut app);
         assert_eq!(app.world().resource::<Minimap>().mode, MapMode::Town);
 
-        // Between the thresholds, still the town.
+        // Entre los umbrales, sigue siendo el pueblo.
         let between = (TOWN_ENTER + FIELD_ENTER) / 2.0;
         move_to(&mut app, player, east(between));
         assert_eq!(app.world().resource::<Minimap>().mode, MapMode::Town);
         assert_eq!(app.world().resource::<Minimap>().frame, town_frame);
 
-        // Past the town's margin: the field frame round the rider.
+        // Pasado el margen del pueblo: el encuadre de campo alrededor del
+        // jinete.
         let out = FIELD_ENTER + 5.0;
         move_to(&mut app, player, east(out));
         let minimap = app.world().resource::<Minimap>();
@@ -889,11 +903,12 @@ mod tests {
         assert!(at.distance(Vec2::splat(MAP_PX as f32 / 2.0)) < 1e-3);
         assert_ne!(base_image(&mut app), town_base);
 
-        // Back between the thresholds: still the field.
+        // De vuelta entre los umbrales: sigue siendo el campo.
         move_to(&mut app, player, east(between));
         assert_eq!(app.world().resource::<Minimap>().mode, MapMode::Field);
 
-        // Close in: the town frame as before, its cached layer reused.
+        // Cerca: el encuadre del pueblo como antes, con su capa guardada
+        // reutilizada.
         let images = app.world().resource::<Assets<Image>>().len();
         move_to(&mut app, player, east(TOWN_ENTER - 1.0));
         let minimap = app.world().resource::<Minimap>();
@@ -906,8 +921,9 @@ mod tests {
     #[test]
     fn a_rider_on_the_rails_just_outside_a_town_sees_them_under_the_arrow() {
         let (_, towns, line) = crate::rail::tests::two_towns();
-        // A point on the line, a few tens of meters out of the first town:
-        // past its frame's margin, well short of the old field threshold.
+        // Un punto sobre la línea, a unas decenas de metros del primer pueblo:
+        // pasado el margen de su encuadre, bastante antes del viejo umbral de
+        // campo.
         let path = line.full_path(&towns);
         let on_rails = (0..path.length() as usize)
             .map(|d| path.at(d as f32))
@@ -928,7 +944,7 @@ mod tests {
             Transform::from_translation(crate::world_from_ground(on_rails, 0.0)),
         ));
         app.update();
-        // The very first paint shows the rider on the map, on the rails.
+        // La primera pintura muestra al jinete en el mapa, sobre los rieles.
         let minimap = app.world().resource::<Minimap>();
         assert!(
             minimap.frame.contains(on_rails),
@@ -966,7 +982,8 @@ mod tests {
         let field = base_image(&mut app);
         let images = app.world().resource::<Assets<Image>>().len();
         assert_eq!(app.world().resource::<Minimap>().field_paints, 1);
-        // Riding about inside FIELD_RECENTER: no repaint, the arrow moves.
+        // Moviéndose dentro de FIELD_RECENTER: sin volver a pintar, la flecha
+        // se mueve.
         for step in 1..=8 {
             let p = start + GroundVec2::new(9.0 * step as f32, 0.0);
             move_to(&mut app, player, p);
@@ -976,7 +993,8 @@ mod tests {
             let at = minimap.player_px.unwrap();
             assert!(at.distance(minimap.frame.to_map(p)) < 1e-3);
         }
-        // Past it: repainted once, round the rider, in the same image.
+        // Pasado ese límite: se vuelve a pintar una vez, alrededor del jinete,
+        // en la misma imagen.
         let far = start + GroundVec2::new(FIELD_RECENTER + 5.0, 0.0);
         move_to(&mut app, player, far);
         let minimap = app.world().resource::<Minimap>();

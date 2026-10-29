@@ -1,19 +1,22 @@
-//! Kerosene street lamps (faroles): a cast-iron post with a glass lantern
-//! on top, at the places `pampa-core` puts them ([`StreetLamps`]).
+//! Faroles de kerosén: un poste de hierro fundido con un farol de vidrio
+//! arriba, en los lugares donde los pone `pampa-core` ([`StreetLamps`]).
 //!
-//! - **Drawing**: two shared meshes, the iron (post, ladder bar, lantern
-//!   seat, roof and finial) and the glass, under two shared materials, so
-//!   every lamp of the world is two batched draws. A town's lamps hang off
-//!   its [`TownRoot`] and stream with it; an estancia's off the terrain
-//!   chunk that owns its hub, within the settlements' shared
-//!   [`VisibilityRange`]s (no new range: Bevy never frees one). The post
-//!   fades out of the camera's way like a fence post ([`ThinOccluder`]).
-//! - **Glow**: the glass's emissive follows the game clock: off by day,
-//!   fading in at dusk and out at dawn ([`lamp_glow`]). One shared
-//!   material, so one asset change lights every lamp.
-//! - **Light**: no lamp owns a light. A pool of [`LAMP_LIGHTS`] shadowless
-//!   point lights moves to the lamps nearest the camera each frame while
-//!   they glow; by day the pool is hidden, so no light is drawn at all.
+//! - **Dibujo**: dos mallas compartidas, el hierro (poste, barra de escalera,
+//!   asiento del farol, techo y remate) y el vidrio, con dos materiales
+//!   compartidos, así que todos los faroles del mundo son dos draws agrupados.
+//!   Los faroles de un pueblo cuelgan de su [`TownRoot`] y se cargan por
+//!   streaming con él; los de una estancia, del chunk de terreno dueño de su
+//!   centro, dentro de los [`VisibilityRange`] compartidos de los asentamientos
+//!   (ningún rango nuevo: Bevy nunca libera uno). El poste se desvanece cuando
+//!   estorba a la cámara, como un poste de alambrado ([`ThinOccluder`]).
+//! - **Brillo**: el emisivo del vidrio sigue el reloj del juego: apagado de
+//!   día, se enciende de a poco al anochecer y se apaga al amanecer
+//!   ([`lamp_glow`]). Es un único material compartido, así que un solo cambio
+//!   de asset enciende todos los faroles.
+//! - **Luz**: ningún farol tiene luz propia. Un conjunto de [`LAMP_LIGHTS`]
+//!   luces puntuales sin sombra se mueve en cada frame a los faroles más
+//!   cercanos a la cámara mientras brillan; de día el conjunto se oculta, así
+//!   que no se dibuja ninguna luz.
 
 use bevy::camera::visibility::VisibilityRange;
 use bevy::prelude::*;
@@ -31,52 +34,56 @@ use crate::terrain::{
 };
 use crate::town::TownRoot;
 
-/// Every street lamp of the world. Insert before the plugin runs; without
-/// it none is drawn.
+/// Todos los faroles del mundo. Se insertan antes de que corra el plugin; sin
+/// ellos no se dibuja ninguno.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct WorldLamps(pub StreetLamps);
 
-/// A lamp's post (the iron mesh).
+/// El poste de un farol (la malla de hierro).
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct LampPost;
 
-/// A lamp's glass, with where its flame burns in world space: where a pool
-/// light goes when this lamp is among the nearest.
+/// El vidrio de un farol, con el lugar del espacio del mundo donde arde su
+/// llama: adonde va una luz del conjunto cuando este farol está entre los más
+/// cercanos.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct LampGlass {
     pub flame: Vec3,
 }
 
-/// One light of the pool lighting the nearest lamps.
+/// Una luz del conjunto que ilumina los faroles más cercanos.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct LampLight;
 
-/// How many real point lights the lamps share: the nearest this many to
-/// the camera are lit at night; the rest only glow.
+/// Cuántas luces puntuales reales comparten los faroles: esta cantidad de los
+/// más cercanos a la cámara se iluminan de noche; el resto solo brilla.
 pub const LAMP_LIGHTS: usize = 8;
-/// How far a lamp's light reaches, in meters.
+/// Hasta dónde llega la luz de un farol, en metros.
 pub const LAMP_LIGHT_RANGE: f32 = 12.0;
-/// A lit lamp's light at full glow, in lumens (raised from 30,000 after a
-/// night playtest found the streets too dim).
+/// La luz de un farol encendido a pleno brillo, en lúmenes (subida desde 30.000
+/// después de que una prueba de juego nocturna encontró las calles demasiado
+/// oscuras).
 pub const LAMP_LUMENS: f32 = 75_000.0;
-/// The warm, yellow-orange light of a kerosene flame.
+/// La luz cálida, amarillo anaranjada, de una llama de kerosén.
 pub const KEROSENE: Color = Color::srgb(1.0, 0.72, 0.40);
-/// The glass's emissive at full glow (linear): bright enough to read far
-/// down a dark street.
+/// El emisivo del vidrio a pleno brillo (lineal): lo bastante intenso para
+/// distinguirse desde lejos en una calle oscura.
 const GLASS_GLOW: LinearRgba = LinearRgba::rgb(6.0, 3.6, 1.3);
-/// Most triangles one lamp may draw, iron and glass together.
+/// Cantidad máxima de triángulos que puede dibujar un farol, hierro y vidrio
+/// juntos.
 pub const LAMP_TRIANGLE_BUDGET: usize = 96;
 
-/// How lit the lamps are at `hour` (hours since midnight): 0 by day, 1 at
-/// night, fading in as the sun sets and out as it rises.
+/// Qué tan encendidos están los faroles a la hora `hour` (horas desde la
+/// medianoche): 0 de día, 1 de noche, encendiéndose a medida que se pone el sol
+/// y apagándose cuando sale.
 pub fn lamp_glow(hour: f32) -> f32 {
     let elevation = sky_at(hour).elevation;
     let t = ((elevation + 0.06) / (0.10 + 0.06)).clamp(0.0, 1.0);
     1.0 - t * t * (3.0 - 2.0 * t)
 }
 
-/// Indices of the (at most) `n` points of `flames` nearest `from`, nearest
-/// first.
+/// Índices de los (como máximo) `n` puntos de `flames` más cercanos a `from`,
+/// primero los más cercanos.
 pub fn nearest(from: Vec3, flames: &[Vec3], n: usize) -> Vec<usize> {
     let mut order: Vec<usize> = (0..flames.len()).collect();
     order.sort_by(|&a, &b| {
@@ -88,13 +95,13 @@ pub fn nearest(from: Vec3, flames: &[Vec3], n: usize) -> Vec<usize> {
     order
 }
 
-/// The lamp's two meshes in its own space (foot of the post at the
-/// origin): the iron, then the glass.
+/// Las dos mallas del farol en su propio espacio (el pie del poste en el
+/// origen): el hierro y luego el vidrio.
 fn lamp_shapes() -> (Shape, Shape) {
     let mut iron = Shape::default();
     let s = Surface::Steel;
-    // A fluted base, the shaft, a ladder bar for the lamplighter and the
-    // seat the lantern stands on.
+    // Una base acanalada, el fuste, una barra de escalera para el farolero y el
+    // asiento sobre el que se apoya el farol.
     iron.block(s, Vec3::new(-0.13, 0.0, -0.13), Vec3::new(0.13, 0.45, 0.13));
     iron.block(
         s,
@@ -112,7 +119,7 @@ fn lamp_shapes() -> (Shape, Shape) {
         Transform::from_xyz(0.0, 2.575, 0.0).with_scale(Vec3::new(0.34, 0.05, 0.34)),
         true,
     );
-    // A pyramid roof over the glass and a finial.
+    // Un techo piramidal sobre el vidrio y un remate.
     let (eave, apex) = (3.0, 3.22);
     let r = 0.22;
     let corners = [
@@ -131,8 +138,9 @@ fn lamp_shapes() -> (Shape, Shape) {
         Vec3::new(-0.03, apex - 0.02, -0.03),
         Vec3::new(0.03, StreetLamp::HEIGHT, 0.03),
     );
-    // The glass box between the seat and the roof. Its buffer's surface
-    // only scales its UVs: the glass wears the lamps' own glowing material.
+    // La caja de vidrio entre el asiento y el techo. La superficie de su búfer
+    // solo escala sus UV: el vidrio lleva el propio material luminoso de los
+    // faroles.
     let mut glass = Shape::default();
     glass.block(
         Surface::Recess,
@@ -142,20 +150,20 @@ fn lamp_shapes() -> (Shape, Shape) {
     (iron, glass)
 }
 
-/// Triangles one lamp draws, iron and glass.
+/// Triángulos que dibuja un farol, hierro y vidrio.
 pub fn lamp_triangles() -> usize {
     let (iron, glass) = lamp_shapes();
     iron.triangles() + glass.triangles()
 }
 
-/// The meshes and materials every lamp shares.
+/// Las mallas y materiales que comparten todos los faroles.
 #[derive(Resource, Debug, Clone)]
 pub struct LampKit {
     pub iron_mesh: Handle<Mesh>,
     pub glass_mesh: Handle<Mesh>,
-    /// Dark painted cast iron.
+    /// Hierro fundido pintado de oscuro.
     pub iron: Handle<StandardMaterial>,
-    /// The lantern's glass, glowing with the clock.
+    /// El vidrio del farol, que brilla según el reloj.
     pub glass: Handle<StandardMaterial>,
 }
 
@@ -190,10 +198,11 @@ fn setup_kit(
             ..default()
         }),
     });
-    // The light pool, hidden until the lamps glow. On every layer the
-    // player's own model is drawn on, as the sun is: a light's layers pick
-    // the cameras it shines for and the meshes in its shadow maps, so the
-    // player stays in them however a camera hides his head or body.
+    // El conjunto de luces, oculto hasta que los faroles brillan. En cada capa
+    // en la que se dibuja el propio modelo del jugador, como el sol: las capas
+    // de una luz eligen las cámaras para las que brilla y las mallas de sus
+    // mapas de sombra, así que el jugador sigue en ellas aunque una cámara
+    // oculte su cabeza o su cuerpo.
     for _ in 0..LAMP_LIGHTS {
         commands.spawn((
             Name::new("Lamp light"),
@@ -214,9 +223,9 @@ fn setup_kit(
     }
 }
 
-/// Spawns one lamp at ground point `at`, standing on `ground`, as a child
-/// of `parent`; `range` is the post's and the glass's, when drawn within
-/// shared ranges.
+/// Crea un farol en el punto del suelo `at`, apoyado sobre `ground`, como hijo
+/// de `parent`; `range` es el del poste y el del vidrio, cuando se dibujan
+/// dentro de rangos compartidos.
 fn spawn_lamp(
     commands: &mut Commands,
     kit: &LampKit,
@@ -251,9 +260,10 @@ fn spawn_lamp(
     }
 }
 
-/// Draws the [`WorldLamps`] with the towns and settlements they belong to,
-/// glowing and lit by night. Needs the [`crate::TownPlugin`] for town
-/// lamps and the [`crate::TerrainPlugin`] for estancia lamps.
+/// Dibuja los [`WorldLamps`] con los pueblos y asentamientos a los que
+/// pertenecen, brillando e iluminados de noche. Necesita el
+/// [`crate::TownPlugin`] para los faroles de pueblo y el
+/// [`crate::TerrainPlugin`] para los de estancia.
 pub struct LampPlugin;
 
 impl Plugin for LampPlugin {
@@ -277,7 +287,7 @@ impl Plugin for LampPlugin {
     }
 }
 
-/// Puts up the lamps of every town drawn this frame, under its root.
+/// Levanta los faroles de cada pueblo dibujado en este frame, bajo su raíz.
 fn light_towns(
     mut commands: Commands,
     kit: Option<Res<LampKit>>,
@@ -305,13 +315,14 @@ fn light_towns(
     }
 }
 
-/// Marks a chunk whose estancia lamps are up.
+/// Marca un chunk cuyos faroles de estancia ya están levantados.
 #[derive(Component)]
 struct LampsLaid;
 
-/// Puts up the lamps of the settlements each new chunk owns (its hub lies
-/// in it), on the drawn ground, within the settlements' shared ranges: the
-/// post the props', the glass the buildings', so it shines from afar.
+/// Levanta los faroles de los asentamientos de los que es dueño cada chunk
+/// nuevo (su centro cae en él), sobre el suelo dibujado y dentro de los rangos
+/// compartidos de los asentamientos: el poste en el de los objetos, el vidrio
+/// en el de los edificios, para que brille desde lejos.
 fn light_estancias(
     mut commands: Commands,
     kit: Option<Res<LampKit>>,
@@ -356,8 +367,8 @@ fn light_estancias(
     }
 }
 
-/// Sets the glass's glow from the clock, touching the shared material only
-/// when the glow has changed.
+/// Fija el brillo del vidrio según el reloj, tocando el material compartido
+/// solo cuando el brillo cambió.
 fn glow_lamps(
     clock: Option<Res<WorldClock>>,
     kit: Option<Res<LampKit>>,
@@ -377,8 +388,8 @@ fn glow_lamps(
     }
 }
 
-/// Moves the light pool to the lamps nearest the camera (the stream focus
-/// without one) while they glow; hides it by day.
+/// Mueve el conjunto de luces a los faroles más cercanos a la cámara (al foco
+/// del streaming si no hay cámara) mientras brillan; lo oculta de día.
 fn light_nearest(
     clock: Option<Res<WorldClock>>,
     focus: Res<StreamFocus>,
@@ -428,7 +439,7 @@ mod tests {
         println!("a lamp draws {n} triangles");
         assert!(n <= LAMP_TRIANGLE_BUDGET, "{n}");
         let (iron, glass) = lamp_shapes();
-        // One mesh each.
+        // Una malla cada uno.
         assert_eq!(iron.into_meshes().len(), 1);
         assert_eq!(glass.into_meshes().len(), 1);
     }
@@ -439,7 +450,7 @@ mod tests {
         assert_eq!(lamp_glow(8.0), 0.0);
         assert_eq!(lamp_glow(23.0), 1.0);
         assert_eq!(lamp_glow(3.0), 1.0);
-        // Dusk passes through every shade: no sudden switch.
+        // El anochecer pasa por todos los matices: no hay un cambio brusco.
         let dusk: Vec<f32> = (0..=60)
             .map(|m| lamp_glow(19.0 + m as f32 / 60.0))
             .collect();
@@ -483,7 +494,7 @@ mod tests {
         materials.get(&kit.glass).unwrap().emissive
     }
 
-    /// A row of 20 bare glasses along x, 7 m apart.
+    /// Una fila de 20 vidrios sueltos a lo largo de x, separados 7 m.
     fn row(app: &mut App) -> Vec<Vec3> {
         let flames: Vec<Vec3> = (0..20)
             .map(|k| Vec3::new(k as f32 * 7.0, 2.8, 0.0))
@@ -515,7 +526,8 @@ mod tests {
         for (light, layers) in q.iter(app.world()) {
             assert!(!light.shadow_maps_enabled && !light.contact_shadows_enabled);
             assert_eq!(light.range, LAMP_LIGHT_RANGE);
-            // Every layer the player's model is drawn on, the world's too.
+            // Cada capa en la que se dibuja el modelo del jugador, también la
+            // del mundo.
             let layers = layers.cloned().unwrap_or_default();
             for layer in [0, OWN_HEAD_LAYER, OWN_BODY_LAYER] {
                 assert!(
@@ -526,7 +538,7 @@ mod tests {
         }
         assert!(glass_glow(&app).red > 1.0);
 
-        // Riding on, the pool follows.
+        // Al seguir cabalgando, el conjunto lo acompaña.
         app.world_mut().resource_mut::<StreamFocus>().0 = GroundVec2::new(0.0, 0.0);
         app.update();
         let lights = lit(&mut app);
@@ -587,7 +599,7 @@ mod tests {
         assert_eq!(glasses.len(), placed.len());
         assert!(glasses.iter().all(|g| g.1 == glasses[0].1 && !g.2));
         assert_ne!(posts[0].1, glasses[0].1);
-        // Each lamp's flame burns over its foot, up in the lantern.
+        // La llama de cada farol arde sobre su pie, arriba en el farol.
         let terrain = &app.world().resource::<WorldTerrain>().0;
         for lamp in &placed {
             let foot = world_from_ground(lamp.at, terrain.height(lamp.at.x, lamp.at.y));
@@ -599,8 +611,8 @@ mod tests {
         }
     }
 
-    /// An estancia round `hub`: its casco to the north, facing the hub,
-    /// and its track in from the west.
+    /// Una estancia alrededor de `hub`: su casco al norte, mirando hacia el
+    /// centro, y su huella de entrada desde el oeste.
     fn estancia(hub: GroundVec2) -> Settlement {
         let casco = Structure {
             kind: StructureKind::MainHouse(HouseStyle::GalleryHouse),

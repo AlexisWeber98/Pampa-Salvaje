@@ -1,25 +1,27 @@
-//! Test-only CPU skinning: every mesh drawn in a world, posed as the GPU
-//! would pose it, for the clearance checks and the offline previews.
+//! Skinning en CPU solo para tests: cada mesh dibujada en un mundo, en la pose
+//! que le daría la GPU, para los chequeos de holgura y las vistas previas
+//! offline.
 
 use bevy::mesh::VertexAttributeValues;
 use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
 use bevy::prelude::*;
 
-/// One drawn mesh in world space.
+/// Una mesh dibujada en espacio de mundo.
 #[derive(Debug, Clone)]
 pub struct Drawn {
     pub entity: Entity,
-    /// Its glTF material's name, or else its own.
+    /// El nombre de su material glTF o, si no tiene, el de la propia mesh.
     pub name: String,
     pub positions: Vec<Vec3>,
     pub triangles: Vec<[u32; 3]>,
-    /// Linear RGB per vertex: the material's colour times the mesh's.
+    /// RGB lineal por vertex: el color del material por el de la mesh.
     pub colors: Vec<[f32; 3]>,
-    /// Each vertex's strongest joint (none for a mesh not skinned).
+    /// La articulación más fuerte de cada vertex (ninguna en una mesh sin
+    /// skinning).
     pub strongest: Vec<Option<Entity>>,
 }
 
-/// Every visible mesh under `root` (or in the world), skinned or placed.
+/// Cada mesh visible bajo `root` (o en el mundo), con skinning o colocada.
 pub fn drawn(world: &mut World, root: Option<Entity>) -> Vec<Drawn> {
     let mut query = world.query::<(
         Entity,
@@ -30,8 +32,8 @@ pub fn drawn(world: &mut World, root: Option<Entity>) -> Vec<Drawn> {
         Option<&Name>,
         Option<&bevy::gltf::GltfMaterialName>,
     )>();
-    // Hidden by itself or an ancestor (the headless apps have no
-    // visibility systems to work it out).
+    // Oculta por sí misma o por un ancestro (las apps headless no tienen
+    // sistemas de visibilidad que lo calculen).
     let hidden = |world: &World, e: Entity| {
         let mut at = e;
         loop {
@@ -147,9 +149,9 @@ pub fn drawn(world: &mut World, root: Option<Entity>) -> Vec<Drawn> {
     out
 }
 
-/// Writes `drawn` as text for the offline preview renderer: a `m name`
-/// line per mesh, then `v x y z r g b` lines and `f a b c` lines (0-based
-/// within the mesh).
+/// Escribe `drawn` como texto para el renderizador de vistas previas offline:
+/// una línea `m name` por mesh, después líneas `v x y z r g b` y líneas `f a b
+/// c` (con base 0 dentro de la mesh).
 pub fn write(path: &std::path::Path, drawn: &[Drawn]) {
     use std::fmt::Write as _;
     let mut text = String::new();

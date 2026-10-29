@@ -1,31 +1,33 @@
-//! The 1919 recado and rawhide bridle on the model horse (see
+//! El recado y la brida de cuero crudo de 1919 sobre el caballo modelo (ver
 //! [`horse`](super::horse)).
 //!
-//! Every layer fits the horse it is put on: it is wrapped round the horse's
-//! own surface at rest, then skinned to the horse's bones with the weights
-//! of the skin under it, so it bends with the barrel through every clip and
-//! never cuts into it.
+//! Cada capa se ajusta al caballo sobre el que se pone: se envuelve alrededor
+//! de la propia superficie del caballo en reposo, y después recibe skinning a
+//! los huesos del caballo con los pesos de la piel que tiene debajo, así que se
+//! dobla con el costillar en todos los clips y nunca se mete en él.
 //!
-//! - **Shells** ([`Shell`]): the sudadera, the carona, the two bastos, the
-//!   sheepskin pellón and the cincha round the barrel, and the bridle's
-//!   crownpiece, noseband and cheekpieces round the head. Each is a grid of
-//!   rays cast out from an axis inside the body ([`Axis`]); where a ray
-//!   first leaves the body the layer's inner face lies a little outside it
-//!   ([`Offset`]), its outer face a thickness further. The vertices take the
-//!   blended weights of the triangle each ray hit ([`RestHorse::cast`]).
-//! - **Rings**: the bit, a small iron ring at each corner of the mouth,
-//!   skinned like the shells.
-//! - **Straps** ([`Strap`]): the reins (from the bit back past the jowl
-//!   and along the neck to the rider's hands, or to the pommel on a horse
-//!   without one) and the
-//!   stirrup leathers (from the saddle to the stirrups) are straight pieces
-//!   between two points on different bones, stretched after the transforms
-//!   are worked out each frame ([`stretch_straps`]).
-//! - **Stirrups**: on a horse without a rider they hang from the saddle; a
-//!   seated rider's feet carry them (see [`rider`](super::rider)).
+//! - **Carcasas** ([`Shell`]): la sudadera, la carona, los dos bastos, el
+//!   pellón de cuero de oveja y la cincha alrededor del costillar, y la
+//!   testera, la muserola y las quijeras de la brida alrededor de la cabeza.
+//!   Cada una es una cuadrícula de rayos lanzados desde un eje dentro del
+//!   cuerpo ([`Axis`]); donde un rayo sale por primera vez del cuerpo, la cara
+//!   interior de la capa queda un poco por fuera ([`Offset`]), y su cara
+//!   exterior, un grosor más allá. Los vertices toman los pesos mezclados del
+//!   triángulo que tocó cada rayo ([`RestHorse::cast`]).
+//! - **Argollas**: el freno, una pequeña argolla de hierro en cada comisura de
+//!   la boca, con skinning como las carcasas.
+//! - **Correas** ([`Strap`]): las riendas (desde el freno hacia atrás, por
+//!   detrás de la quijada y a lo largo del cuello hasta las manos del jinete, o
+//!   hasta la cabezada en un caballo sin jinete) y las aciones (desde la
+//!   montura hasta los estribos) son piezas rectas entre dos puntos sobre
+//!   huesos distintos, estiradas en cada frame después de que se calculan los
+//!   transforms ([`stretch_straps`]).
+//! - **Estribos**: en un caballo sin jinete cuelgan de la montura; los pies de
+//!   un jinete sentado los llevan (ver [`rider`](super::rider)).
 //!
-//! The shells and rings are built once, from the first horse dressed, and
-//! shared by every horse ([`TackKit`]); each horse only spawns entities.
+//! Las carcasas y las argollas se construyen una sola vez, a partir del primer
+//! caballo preparado, y las comparten todos los caballos ([`TackKit`]); cada
+//! caballo solo crea entidades.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::ecs::system::SystemParam;
@@ -42,20 +44,20 @@ use super::finish::{Finish, Palette};
 use super::horse::{HorseModel, rest_affine, transform_of};
 use super::model::model_range;
 
-/// A piece of the recado or the bridle.
+/// Una pieza del recado o de la brida.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HorsePiece {
-    /// The woven blanket under the saddle.
+    /// La manta tejida bajo la montura.
     Sudadera,
-    /// The leather layer over it.
+    /// La capa de cuero que va encima.
     Carona,
-    /// The two padded rolls the rider sits between.
+    /// Los dos rollos acolchados entre los que se sienta el jinete.
     Basto,
-    /// The sheepskin on top, where the rider sits.
+    /// El cuero de oveja de arriba, donde se sienta el jinete.
     Pellon,
-    /// The rawhide girth round the belly.
+    /// La cincha de cuero crudo alrededor de la panza.
     Cincha,
-    /// The rawhide headstall: crownpiece, noseband and cheekpieces.
+    /// La cabezada de cuero crudo: testera, muserola y quijeras.
     Headstall,
     Bit,
     Rein,
@@ -63,7 +65,7 @@ pub enum HorsePiece {
     Stirrup,
 }
 
-/// A woven jerga, rust red with use.
+/// Una jerga tejida, de un rojo óxido por el uso.
 const JERGA: Rgb = [124, 56, 42];
 const CARONA: Rgb = [88, 60, 40];
 const BASTO: Rgb = [64, 44, 30];
@@ -72,7 +74,7 @@ const RAWHIDE: Rgb = [166, 140, 104];
 const IRON: Rgb = [70, 68, 66];
 
 impl HorsePiece {
-    /// Its colour and what it is made of.
+    /// Su color y de qué está hecha.
     pub fn look(self) -> (Rgb, Finish) {
         match self {
             Self::Sudadera => (JERGA, Finish::Wool),
@@ -85,7 +87,8 @@ impl HorsePiece {
     }
 }
 
-/// The joints and weights a vertex is skinned with (four, summing to one).
+/// Las articulaciones y los pesos con los que un vertex recibe skinning
+/// (cuatro, que suman uno).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Skin {
     pub joints: [u16; 4],
@@ -93,7 +96,7 @@ pub struct Skin {
 }
 
 impl Skin {
-    /// The four heaviest of `pairs` (joint, weight), normalised.
+    /// Los cuatro más pesados de `pairs` (articulación, peso), normalizados.
     fn heaviest(pairs: &[(u16, f32)]) -> Self {
         let mut merged: Vec<(u16, f32)> = Vec::with_capacity(pairs.len());
         for &(j, w) in pairs {
@@ -116,7 +119,7 @@ impl Skin {
     }
 }
 
-/// Where a ray first left the horse.
+/// Dónde salió por primera vez un rayo del caballo.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Hit {
     pub point: Vec3,
@@ -124,8 +127,9 @@ pub struct Hit {
     pub skin: Skin,
 }
 
-/// The horse's skin at rest in its body frame (meters, +X its front, +Y
-/// up, +Z its right, hooves at 0): what the tack is fitted to.
+/// La piel del caballo en reposo en el marco de su cuerpo (en metros, +X su
+/// frente, +Y hacia arriba, +Z su derecha, los vasos en 0): aquello a lo que se
+/// ajustan los aperos.
 #[derive(Debug, Clone, Default)]
 pub struct RestHorse {
     positions: Vec<Vec3>,
@@ -134,7 +138,7 @@ pub struct RestHorse {
 }
 
 impl RestHorse {
-    /// A surface from its vertices (with their skins) and triangles.
+    /// Una superficie a partir de sus vertices (con sus skins) y triángulos.
     pub fn new(positions: Vec<Vec3>, skins: Vec<Skin>, triangles: Vec<[u32; 3]>) -> Self {
         Self {
             positions,
@@ -143,9 +147,10 @@ impl RestHorse {
         }
     }
 
-    /// Adds one skinned primitive of the model, posed at rest by `skin`
-    /// (each joint's body-frame matrix times its inverse bind pose).
-    /// `false` if it lacks positions, joints, weights or indices.
+    /// Agrega una primitiva con skinning del modelo, en la pose de reposo dada
+    /// por `skin` (la matriz en el marco del cuerpo de cada articulación por su
+    /// pose de bind inversa). `false` si le faltan posiciones, articulaciones,
+    /// pesos o índices.
     pub fn add(&mut self, mesh: &Mesh, skin: &[Affine3A]) -> bool {
         let (
             Some(VertexAttributeValues::Float32x3(positions)),
@@ -180,9 +185,10 @@ impl RestHorse {
         true
     }
 
-    /// Where a ray from `origin` along `dir` (unit) first leaves the body,
-    /// with the weights of the triangle there, blended by where it hit.
-    /// Rays start inside the body, so the first surface met is its skin.
+    /// Dónde sale por primera vez del cuerpo un rayo desde `origin` en la
+    /// dirección `dir` (unitaria), con los pesos del triángulo de ese punto,
+    /// mezclados según dónde tocó. Los rayos empiezan dentro del cuerpo, así
+    /// que la primera superficie que encuentran es su piel.
     pub fn cast(&self, origin: Vec3, dir: Vec3) -> Option<Hit> {
         let mut best: Option<(f32, usize, f32, f32)> = None;
         for (k, t) in self.triangles.iter().enumerate() {
@@ -226,28 +232,30 @@ impl RestHorse {
     }
 }
 
-/// A line inside the body that a piece is wrapped round: rays leave it at
-/// right angles, at angle `theta` from `up` toward `up × along`... that is,
-/// toward the horse's right for positive angles.
+/// Una línea dentro del cuerpo alrededor de la cual se envuelve una pieza: los
+/// rayos salen de ella en ángulo recto, con un ángulo `theta` desde `up` hacia
+/// `up × along`... es decir, hacia la derecha del caballo para los ángulos
+/// positivos.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Axis {
     pub origin: Vec3,
-    /// Unit, along the axis.
+    /// Unitario, a lo largo del eje.
     pub along: Vec3,
-    /// Unit, at right angles to `along`: where angle 0 points.
+    /// Unitario, en ángulo recto con `along`: hacia donde apunta el ángulo 0.
     pub up: Vec3,
 }
 
 impl Axis {
-    /// The barrel's: along the back, 1.14 m up (its middle at the girth).
+    /// El del costillar: a lo largo del lomo, a 1.14 m de altura (con su centro
+    /// en la cinchera).
     pub const BARREL: Self = Self {
         origin: Vec3::new(0.0, 1.14, 0.0),
         along: Vec3::X,
         up: Vec3::Y,
     };
 
-    /// The head's: from behind the poll down its length to the muzzle;
-    /// angle 0 is the forehead.
+    /// El de la cabeza: desde detrás de la nuca, a lo largo de ella, hasta el
+    /// hocico; el ángulo 0 es la frente.
     pub fn head() -> Self {
         let along = Vec3::new(0.755, -0.656, 0.0).normalize();
         Self {
@@ -257,7 +265,8 @@ impl Axis {
         }
     }
 
-    /// The ray `t` meters along the axis, leaving it at angle `theta`.
+    /// El rayo a `t` metros a lo largo del eje, saliendo de él con el ángulo
+    /// `theta`.
     pub fn ray(&self, t: f32, theta: f32) -> (Vec3, Vec3) {
         let side = self.along.cross(self.up);
         (
@@ -267,8 +276,9 @@ impl Axis {
     }
 }
 
-/// How far a layer's inner face stands off the body, meters: `top` within
-/// `flat` radians of angle 0, easing to `edge` by `flat + fade`.
+/// Cuánto se separa del cuerpo la cara interior de una capa, en metros: `top`
+/// dentro de `flat` radianes del ángulo 0, pasando suavemente a `edge` hasta
+/// `flat + fade`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Offset {
     pub top: f32,
@@ -294,9 +304,10 @@ impl Offset {
     }
 }
 
-/// A layer wrapped round the body: `along` the axis (meters) and `around`
-/// it (radians), standing off by `offset`, `thickness` deep, its outer face
-/// roughened by `shag` (a share of the thickness) like a sheepskin.
+/// Una capa envuelta alrededor del cuerpo: `along` a lo largo del eje (en
+/// metros) y `around` alrededor de él (en radianes), separada por `offset`, de
+/// `thickness` de espesor, con la cara exterior rugosa según `shag` (una
+/// fracción del espesor) como un cuero de oveja.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Shell {
     pub piece: HorsePiece,
@@ -306,12 +317,12 @@ pub struct Shell {
     pub offset: Offset,
     pub thickness: f32,
     pub shag: f32,
-    /// Grid cells along and around.
+    /// Celdas de la cuadrícula a lo largo y alrededor.
     pub cells: (usize, usize),
 }
 
-/// A skinned mesh in the body frame: positions, skins and triangles, before
-/// it becomes a [`Mesh`] ([`skinned_mesh`]).
+/// Una mesh con skinning en el marco del cuerpo: posiciones, skins y
+/// triángulos, antes de convertirse en una [`Mesh`] ([`skinned_mesh`]).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TackMesh {
     pub positions: Vec<Vec3>,
@@ -321,8 +332,8 @@ pub struct TackMesh {
 }
 
 impl Shell {
-    /// The layer fitted to `horse`, and how many of its rays missed it
-    /// (those vertices stand off the axis by the nearest hit's distance).
+    /// La capa ajustada a `horse`, y cuántos de sus rayos no lo tocaron (esos
+    /// vertices se separan del eje a la distancia del impacto más cercano).
     pub fn fit(&self, horse: &RestHorse) -> (TackMesh, usize) {
         let (along, around) = self.cells;
         let row = around + 1;
@@ -355,7 +366,7 @@ impl Shell {
         for (face, depth) in [(0, 1.0), (1, 0.0)] {
             for (n, (hit, dir, theta)) in inner.iter().enumerate() {
                 let (i, k) = (n / row, n % row);
-                // Tufts on the outer face only, the same every time.
+                // Mechones solo en la cara exterior, siempre iguales.
                 let tuft = if face == 0 {
                     ((i * 7 + k * 13) % 5) as f32 / 4.0
                 } else {
@@ -389,7 +400,7 @@ impl Shell {
                 tris.extend([[a, c, b], [b, c, d]]);
             }
         }
-        // The two ends and the two side edges close the shell.
+        // Los dos extremos y los dos bordes laterales cierran la carcasa.
         for k in 0..around {
             let (o, o1, n, n1) = (at(0, 0, k), at(0, 0, k + 1), at(1, 0, k), at(1, 0, k + 1));
             tris.extend([[o, n, o1], [o1, n, n1]]);
@@ -416,8 +427,9 @@ impl Shell {
     }
 }
 
-/// A small ring standing on the body at `hit`, facing out along `dir`:
-/// `radius` across, its bar `bar` thick. Skinned as the skin under it.
+/// Una pequeña argolla apoyada sobre el cuerpo en `hit`, mirando hacia afuera
+/// según `dir`: de `radius` de diámetro, con su barra de `bar` de grosor. Con
+/// skinning como la piel que tiene debajo.
 fn ring_on(hit: &Hit, dir: Vec3, radius: f32, bar: f32, lift: f32) -> TackMesh {
     let unit = ring();
     let rotation = Quat::from_rotation_arc(Vec3::Z, dir);
@@ -439,8 +451,8 @@ fn ring_on(hit: &Hit, dir: Vec3, radius: f32, bar: f32, lift: f32) -> TackMesh {
     mesh
 }
 
-/// The unit iron ring: 1 m across in its XY plane (facing +Z), its bar
-/// 0.15 m thick.
+/// La argolla de hierro unitaria: de 1 m de diámetro en su plano XY (mirando
+/// hacia +Z), con su barra de 0.15 m de grosor.
 pub fn ring() -> Mesh {
     Torus::new(0.35, 0.5)
         .mesh()
@@ -450,13 +462,14 @@ pub fn ring() -> Mesh {
         .rotated_by(Quat::from_rotation_x(FRAC_PI_2))
 }
 
-/// The unit strap: 1 m long along +Y, centered, 1 m across.
+/// La correa unitaria: de 1 m de largo a lo largo de +Y, centrada, de 1 m de
+/// ancho.
 pub fn strap() -> Mesh {
     Cylinder::new(0.5, 1.0).mesh().resolution(5).build()
 }
 
-/// `mesh` as a skinned [`Mesh`] with flat normals: its joint indices are
-/// into the horse's skin joints.
+/// `mesh` como una [`Mesh`] con skinning y normales planas: sus índices de
+/// articulación apuntan a las articulaciones de la piel del caballo.
 pub fn skinned_mesh(mesh: &TackMesh) -> Mesh {
     let mut indices = Vec::with_capacity(mesh.triangles.len() * 3);
     for t in &mesh.triangles {
@@ -487,9 +500,9 @@ pub fn skinned_mesh(mesh: &TackMesh) -> Mesh {
     .with_computed_flat_normals()
 }
 
-/// The barrel's layers, back to front and inside out: the sudadera, the
-/// carona, the bastos either side of the spine, the pellón over them, and
-/// the cincha in front of them, round the girth.
+/// Las capas del costillar, de atrás hacia adelante y de adentro hacia afuera:
+/// la sudadera, la carona, los bastos a cada lado de la columna, el pellón
+/// encima de ellos y la cincha delante de ellos, alrededor de la cinchera.
 pub fn saddle() -> [Shell; 6] {
     let barrel = Axis::BARREL;
     let layer = |piece, along, span: f32, offset, thickness, shag, cells| Shell {
@@ -579,9 +592,10 @@ pub fn saddle() -> [Shell; 6] {
     ]
 }
 
-/// The headstall: the crownpiece over the poll behind the ears and down
-/// to the cheeks (not round the throat: below it the head runs into the
-/// neck), the noseband, and a cheekpiece down each side to the bit.
+/// La cabezada: la testera sobre la nuca detrás de las orejas y bajando hasta
+/// las mejillas (no alrededor del cuello: por debajo de ella la cabeza se junta
+/// con el cuello), la muserola y una quijera bajando por cada lado hasta el
+/// freno.
 pub fn bridle() -> [Shell; 4] {
     let head = Axis::head();
     let band = |along, around| Shell {
@@ -609,15 +623,15 @@ pub fn bridle() -> [Shell; 4] {
     ]
 }
 
-/// The ray from inside the muzzle out to the corner of the mouth on side
-/// `s` (-1 left, 1 right), where a bit ring sits. The head is a little to
-/// the right of the spine (its middle 1.6 cm over).
+/// El rayo desde dentro del hocico hacia la comisura de la boca del lado `s`
+/// (-1 izquierda, 1 derecha), donde va una argolla del freno. La cabeza está un
+/// poco a la derecha de la columna (su centro, 1.6 cm desplazado).
 pub fn bit_ray(s: f32) -> (Vec3, Vec3) {
     (Vec3::new(1.33, 1.48, 0.016), Vec3::Z * s)
 }
 
-/// The ray from inside the neck out to its side, a hand below the crest,
-/// on side `s`: the reins lie along the neck there.
+/// El rayo desde dentro del cuello hacia su costado, un palmo por debajo de la
+/// crin, del lado `s`: ahí las riendas se apoyan a lo largo del cuello.
 pub fn neck_ray(s: f32) -> (Vec3, Vec3) {
     (
         Vec3::new(0.7, 1.45, 0.0),
@@ -625,9 +639,9 @@ pub fn neck_ray(s: f32) -> (Vec3, Vec3) {
     )
 }
 
-/// The ray from inside the head out to the jowl on side `s`, where the
-/// rein turns back from the bit toward the rider's hands, clear of the
-/// cheek.
+/// El rayo desde dentro de la cabeza hacia la quijada del lado `s`, donde la
+/// rienda vuelve desde el freno hacia las manos del jinete, sin tocar la
+/// mejilla.
 pub fn jowl_ray(s: f32) -> (Vec3, Vec3) {
     (
         Vec3::new(1.12, 1.62, 0.015),
@@ -635,32 +649,34 @@ pub fn jowl_ray(s: f32) -> (Vec3, Vec3) {
     )
 }
 
-/// The points on the rest horse (body frame) the straps and the rider are
-/// hung from, worked out from its surface.
+/// Los puntos del caballo en reposo (marco del cuerpo) de los que cuelgan las
+/// correas y el jinete, calculados a partir de su superficie.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Fittings {
-    /// The bit's rings, left then right (on the head).
+    /// Las argollas del freno, primero la izquierda y después la derecha (en la
+    /// cabeza).
     pub bit: [Vec3; 2],
-    /// Where the reins pass the jowls, from the bit back (on the head).
+    /// Por dónde pasan las riendas junto a las quijadas, desde el freno hacia
+    /// atrás (en la cabeza).
     pub jowl: [Vec3; 2],
-    /// Where they lie along the neck (on its middle bone).
+    /// Dónde se apoyan a lo largo del cuello (en su hueso central).
     pub neck: [Vec3; 2],
-    /// Where the reins rest on a horse without a rider: on the pommel.
+    /// Dónde descansan las riendas en un caballo sin jinete: en la cabezada.
     pub pommel: [Vec3; 2],
-    /// Where the stirrup leathers come out from under the pellón.
+    /// Dónde salen las aciones por debajo del pellón.
     pub leather: [Vec3; 2],
-    /// Where a stirrup hangs with nobody's foot in it (its ring's middle).
+    /// Dónde cuelga un estribo sin ningún pie dentro (el centro de su argolla).
     pub hanging: [Vec3; 2],
-    /// The top of the pellón, where the rider sits.
+    /// La parte superior del pellón, donde se sienta el jinete.
     pub seat: Vec3,
 }
 
-/// How far behind the girth the rider sits: the lowest point of the back,
-/// between the withers and the croup.
+/// Cuánto detrás de la cinchera se sienta el jinete: el punto más bajo del
+/// lomo, entre la cruz y la grupa.
 pub const SEAT_X: f32 = -0.02;
 
 impl Fittings {
-    /// The fittings on `horse`, or `None` if it is not shaped like one.
+    /// Los accesorios sobre `horse`, o `None` si no tiene forma de caballo.
     pub fn find(horse: &RestHorse) -> Option<Self> {
         let barrel = Axis::BARREL;
         let pellon = saddle()[4];
@@ -680,7 +696,7 @@ impl Fittings {
         let pommel = side(&|s| top(0.2, s * 0.3, 0.01))?;
         let leather = side(&|s| top(0.08, s * 1.0, 0.012))?;
         let seat = top(SEAT_X, 0.0, 0.0)?;
-        // Straight down from the leather, clear of the barrel below.
+        // Directo hacia abajo desde la ación, sin tocar el costillar de abajo.
         let hanging = side(&|s| {
             let (origin, dir) = barrel.ray(0.08, s * FRAC_PI_2);
             let flank = horse.cast(origin, dir)?;
@@ -698,8 +714,8 @@ impl Fittings {
     }
 }
 
-/// Every shell and ring of the tack fitted to `horse`, and the rays that
-/// missed it.
+/// Cada carcasa y argolla de los aperos ajustada a `horse`, y los rayos que no
+/// lo tocaron.
 pub fn fit_tack(horse: &RestHorse) -> (Vec<(HorsePiece, TackMesh)>, usize) {
     let mut out = Vec::new();
     let mut misses = 0;
@@ -718,60 +734,64 @@ pub fn fit_tack(horse: &RestHorse) -> (Vec<(HorsePiece, TackMesh)>, usize) {
     (out, misses)
 }
 
-/// The tack built once and shared by every horse.
+/// Los aperos construidos una vez y compartidos por todos los caballos.
 #[derive(Debug, Clone)]
 pub struct TackKit {
-    /// Each skinned shell and ring with its material.
+    /// Cada carcasa y argolla con skinning con su material.
     pub pieces: Vec<(HorsePiece, Handle<Mesh>, Handle<StandardMaterial>)>,
-    /// The tack's own inverse bind poses: each horse joint's body-frame
-    /// rest, inverted (its vertices are in the body frame).
+    /// Las poses de bind inversas propias de los aperos: el reposo en el marco
+    /// del cuerpo de cada articulación del caballo, invertido (sus vertices
+    /// están en el marco del cuerpo).
     pub bindposes: Handle<SkinnedMeshInverseBindposes>,
     pub strap: Handle<Mesh>,
     pub ring: Handle<Mesh>,
     pub fittings: Fittings,
 }
 
-/// The size of a stirrup: across, tall, and its bar's depth.
+/// El tamaño de un estribo: ancho, alto y la profundidad de su barra.
 pub const STIRRUP: Vec3 = Vec3::new(0.13, 0.16, 0.012 / 0.15);
 
-/// How thick the reins and the stirrup leathers are, meters.
+/// Qué tan gruesas son las riendas y las aciones, en metros.
 pub const REIN: f32 = 0.014;
 pub const LEATHER: f32 = 0.03;
 
-/// A straight piece of tack between two points that move apart: each end
-/// is a point in an entity's own space. Stretched by [`stretch_straps`].
+/// Una pieza recta de los aperos entre dos puntos que se separan: cada extremo
+/// es un punto en el espacio propio de una entidad. La estira
+/// [`stretch_straps`].
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct Strap {
     pub ends: [(Entity, Vec3); 2],
-    /// Across, meters.
+    /// Ancho, en metros.
     pub width: f32,
 }
 
-/// A horse's tack, as a rider takes it up: the straps run to the rider's
-/// hand and the stirrups go on its feet; it sits on the torso bone at the
-/// seat. On the horse's body.
+/// Los aperos de un caballo, tal como los toma un jinete: las correas van hasta
+/// la mano del jinete y los estribos van en sus pies; se apoya sobre el hueso
+/// del torso en el asiento. En el cuerpo del caballo.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct Tack {
-    /// The reins' last stretch (from the neck), left then right.
+    /// El último tramo de las riendas (desde el cuello), primero la izquierda y
+    /// después la derecha.
     pub reins: [Entity; 2],
-    /// The stirrups, left then right.
+    /// Los estribos, primero el izquierdo y después el derecho.
     pub stirrups: [Entity; 2],
-    /// The horse's `Torso` and `Head` bones.
+    /// Los huesos `Torso` y `Head` del caballo.
     pub torso: Entity,
     pub head: Entity,
-    /// The top of the pellón (body frame), and the torso's rest placement.
+    /// La parte superior del pellón (marco del cuerpo), y la ubicación de
+    /// reposo del torso.
     pub seat: Vec3,
     pub torso_rest: Affine3A,
-    /// The middle of the bit's rings, on the head.
+    /// El centro de las argollas del freno, en la cabeza.
     pub bit: Vec3,
 }
 
-/// The bones the tack and the rider hang from.
+/// Los huesos de los que cuelgan los aperos y el jinete.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HorseBone {
-    /// The middle of the back, under the saddle.
+    /// El centro del lomo, bajo la montura.
     Torso,
-    /// The middle of the neck.
+    /// El centro del cuello.
     Neck2,
     Head,
 }
@@ -786,8 +806,9 @@ impl HorseBone {
     }
 }
 
-/// What the tack is fitted to on a horse's scene: its nodes' names and
-/// rests, and each skinned primitive with its material.
+/// Aquello a lo que se ajustan los aperos en la escena de un caballo: los
+/// nombres y los reposos de sus nodos, y cada primitiva con skinning con su
+/// material.
 #[derive(SystemParam)]
 pub(super) struct TackScene<'w, 's> {
     names: Query<'w, 's, &'static Name>,
@@ -805,7 +826,7 @@ pub(super) struct TackScene<'w, 's> {
     >,
 }
 
-/// The stores the tack is built from.
+/// Los almacenes a partir de los que se construyen los aperos.
 #[derive(SystemParam)]
 pub(super) struct TackStores<'w> {
     materials: ResMut<'w, Assets<StandardMaterial>>,
@@ -815,23 +836,23 @@ pub(super) struct TackStores<'w> {
     palette: ResMut<'w, Palette>,
 }
 
-/// The tack kit, its bones' rest placements converted: the fittings in
-/// their bones' own spaces.
+/// El kit de aperos, con las ubicaciones de reposo de sus huesos convertidas:
+/// los accesorios en los espacios propios de sus huesos.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LocalFittings {
-    /// On the head.
+    /// En la cabeza.
     pub bit: [Vec3; 2],
     pub jowl: [Vec3; 2],
-    /// On `Neck2`.
+    /// En `Neck2`.
     pub neck: [Vec3; 2],
-    /// On the torso, like the rest.
+    /// En el torso, como el resto.
     pub pommel: [Vec3; 2],
     pub leather: [Vec3; 2],
     pub hanging: [Transform; 2],
 }
 
-/// The fittings in the bones' spaces, from their rest placements `rest`
-/// (the torso's, the neck's and the head's).
+/// Los accesorios en los espacios de los huesos, a partir de sus ubicaciones de
+/// reposo `rest` (la del torso, la del cuello y la de la cabeza).
 pub fn local_fittings(f: &Fittings, rest: [Affine3A; 3]) -> LocalFittings {
     let [torso, neck, head] = rest.map(|a| a.inverse());
     let on = |a: Affine3A, p: [Vec3; 2]| p.map(|p| a.transform_point3(p));
@@ -855,8 +876,8 @@ pub fn local_fittings(f: &Fittings, rest: [Affine3A; 3]) -> LocalFittings {
     }
 }
 
-/// The kit as one horse puts it on: the shared meshes, its fittings and
-/// the torso's rest (a rider is seated from it).
+/// El kit tal como lo pone un caballo: las meshes compartidas, sus accesorios y
+/// el reposo del torso (desde el que se sienta un jinete).
 #[derive(Debug, Clone)]
 pub struct HorseTack {
     pub kit: TackKit,
@@ -864,10 +885,10 @@ pub struct HorseTack {
     pub torso: Affine3A,
 }
 
-/// Builds the tack kit from a horse's scene under `root`: its rest skin in
-/// the body frame, the shells fitted to it, and the inverse bind poses
-/// that put body-frame vertices on its joints. `None` if the model lacks
-/// its skin or bones.
+/// Construye el kit de aperos a partir de la escena de un caballo bajo `root`:
+/// su piel en reposo en el marco del cuerpo, las carcasas ajustadas a ella y
+/// las poses de bind inversas que llevan los vertices del marco del cuerpo a
+/// sus articulaciones. `None` si al modelo le falta su piel o sus huesos.
 fn build_tack(
     scene: &TackScene,
     stores: &mut TackStores,
@@ -890,7 +911,7 @@ fn build_tack(
         let Ok((_, mesh, name)) = scene.skins.get(entity) else {
             continue;
         };
-        // The eyes stand off the face; the tack goes round them.
+        // Los ojos sobresalen de la cara; los aperos los rodean.
         if name.is_some_and(|n| n.0.starts_with("Eye")) {
             continue;
         }
@@ -943,12 +964,12 @@ fn build_tack(
     })
 }
 
-/// Puts the tack on a horse model the moment its scene spawns (see the
-/// module notes). The kit is built from the first horse dressed. A scene
-/// spawned again (its asset reloaded) has the old tack taken off once the
-/// new scene has been checked (any rider went with the old bones); if it is
-/// not whole, the horse is left without a [`Tack`], never one pointing at
-/// despawned entities.
+/// Pone los aperos en un modelo de caballo en el momento en que se crea su
+/// escena (ver las notas del módulo). El kit se construye a partir del primer
+/// caballo preparado. A una escena creada de nuevo (con su asset recargado) se
+/// le quitan los aperos viejos una vez que se verificó la escena nueva
+/// (cualquier jinete se fue con los huesos viejos); si no está completa, el
+/// caballo queda sin [`Tack`], nunca con uno que apunte a entidades eliminadas.
 pub(super) fn dress_tack(
     ready: On<WorldInstanceReady>,
     mut commands: Commands,
@@ -963,8 +984,8 @@ pub(super) fn dress_tack(
         return;
     };
     let carrier = child_of.parent();
-    // The skin of the body, its joints and their bind poses, and the bones
-    // the straps hang from: all checked before anything is taken off.
+    // La piel del cuerpo, sus articulaciones y sus poses de bind, y los huesos
+    // de los que cuelgan las correas: todo verificado antes de quitar nada.
     let skin = scene.children.iter_descendants(root).find_map(|e| {
         let (skin, _, name) = scene.skins.get(e).ok()?;
         name.is_some_and(|n| n.0 == "Main").then(|| skin.clone())
@@ -985,7 +1006,7 @@ pub(super) fn dress_tack(
             commands.entity(child).try_despawn();
         }
     }
-    // The stirrups hang from the old torso, if it is still there.
+    // Los estribos cuelgan del torso viejo, si todavía está.
     for stirrup in worn.get(carrier).map(|t| t.stirrups).into_iter().flatten() {
         commands.entity(stirrup).try_despawn();
     }
@@ -1018,9 +1039,9 @@ pub(super) fn dress_tack(
     );
 }
 
-/// Puts the shared tack on the horse `carrier`: the skinned shells on its
-/// `skin`'s joints, the stirrups hanging from the torso and the straps (in
-/// order torso, neck, head: `bones`).
+/// Pone los aperos compartidos en el caballo `carrier`: las carcasas con
+/// skinning en las articulaciones de su `skin`, los estribos colgando del torso
+/// y las correas (en el orden torso, cuello, cabeza: `bones`).
 fn put_on_tack(
     commands: &mut Commands,
     stores: &mut TackStores,
@@ -1130,7 +1151,8 @@ fn put_on_tack(
     });
 }
 
-/// The world placement of a strap from `a` to `b`, `width` across.
+/// La ubicación en el mundo de una correa desde `a` hasta `b`, de `width` de
+/// ancho.
 pub fn strap_between(a: Vec3, b: Vec3, width: f32) -> GlobalTransform {
     let along = b - a;
     let rotation = Quat::from_rotation_arc(Vec3::Y, along.normalize_or(Vec3::Y));
@@ -1141,10 +1163,10 @@ pub fn strap_between(a: Vec3, b: Vec3, width: f32) -> GlobalTransform {
     })
 }
 
-/// Stretches every strap between its two ends, once the transforms are
-/// worked out: it is drawn this frame where its ends are this frame. A
-/// strap whose end is gone (its bone despawned) is hidden until both
-/// ends are found again.
+/// Estira cada correa entre sus dos extremos, una vez calculados los
+/// transforms: se dibuja en este frame donde están sus extremos en este frame.
+/// Una correa cuyo extremo ya no está (su hueso se eliminó) queda oculta hasta
+/// que se vuelvan a encontrar ambos extremos.
 pub(super) fn stretch_straps(
     mut straps: Query<(
         &Strap,
@@ -1175,7 +1197,7 @@ pub(super) fn stretch_straps(
     }
 }
 
-/// The material of `piece`.
+/// El material de `piece`.
 pub fn material(
     piece: HorsePiece,
     palette: &mut Palette,
@@ -1190,10 +1212,11 @@ pub fn material(
 pub(crate) mod tests {
     use super::*;
 
-    /// A stand-in horse: a closed tube along +X round the barrel's axis
-    /// (radius 0.28, from -0.8 to 0.8 m), its skin turning from joint 0 at
-    /// the back to joint 1 at the front, a head-like tube round the head's
-    /// axis on joint 2 and a neck on joint 3.
+    /// Un caballo sustituto: un tubo cerrado a lo largo de +X alrededor del eje
+    /// del costillar (radio 0.28, de -0.8 a 0.8 m), con su piel pasando de la
+    /// articulación 0 atrás a la articulación 1 adelante, un tubo con forma de
+    /// cabeza alrededor del eje de la cabeza en la articulación 2 y un cuello
+    /// en la articulación 3.
     pub(crate) fn tube_horse() -> RestHorse {
         let mut positions = Vec::new();
         let mut skins = Vec::new();
@@ -1250,15 +1273,15 @@ pub(crate) mod tests {
         let horse = tube_horse();
         let (origin, dir) = Axis::BARREL.ray(0.4, 0.0);
         let hit = horse.cast(origin, dir).unwrap();
-        // The polygon's flat between corners sits a little inside the
-        // circle it is built on.
+        // El tramo plano del polígono entre esquinas queda un poco dentro del
+        // círculo sobre el que se construye.
         assert!((hit.distance - 0.28).abs() < 0.01, "{hit:?}");
         assert!((hit.point.x - 0.4).abs() < 1e-4);
-        // A quarter of the way from the front: 75% the front joint.
+        // A un cuarto del camino desde adelante: 75% la articulación delantera.
         let front = hit.skin.joints.iter().position(|j| *j == 1).unwrap();
         assert!((hit.skin.weights[front] - 0.75).abs() < 0.02, "{hit:?}");
         assert!((hit.skin.weights.iter().sum::<f32>() - 1.0).abs() < 1e-5);
-        // Outside the body, a ray away from it meets nothing.
+        // Fuera del cuerpo, un rayo que se aleja de él no encuentra nada.
         assert!(horse.cast(Vec3::new(0.0, 3.0, 0.0), Vec3::Y).is_none());
     }
 
@@ -1280,10 +1303,11 @@ pub(crate) mod tests {
                 off(inner)
             );
             assert!((outer.distance(inner) - shell.thickness).abs() < 1e-4);
-            // Inside and out share the skin under them.
+            // Adentro y afuera comparten la piel que tienen debajo.
             assert_eq!(mesh.skins[k], mesh.skins[face + k]);
         }
-        // The front edge follows the front joint more than the back one.
+        // El borde delantero sigue más a la articulación delantera que a la
+        // trasera.
         let weight_of = |s: &Skin, j: u16| {
             s.joints
                 .iter()
@@ -1309,8 +1333,8 @@ pub(crate) mod tests {
             let (mesh, _) = shell.fit(&horse);
             let (along, around) = shell.cells;
             let face = (along + 1) * (around + 1);
-            // The outer face's highest point and the inner face's, over
-            // the spine.
+            // El punto más alto de la cara exterior y el de la cara interior,
+            // sobre la columna.
             let top = |range: std::ops::Range<usize>| {
                 mesh.positions[range]
                     .iter()
@@ -1328,7 +1352,7 @@ pub(crate) mod tests {
             "{sudadera} {carona_in} {carona} {pellon_in}"
         );
         assert!(pellon - pellon_in > 0.03, "a thick sheepskin");
-        // The bastos lie between the carona and the pellón.
+        // Los bastos quedan entre la carona y el pellón.
         for basto in saddle().iter().filter(|s| s.piece == HorsePiece::Basto) {
             let (mesh, _) = basto.fit(&horse);
             let high = mesh.positions.iter().map(|p| p.y).fold(f32::MIN, f32::max);
@@ -1341,7 +1365,7 @@ pub(crate) mod tests {
         let horse = tube_horse();
         let f = Fittings::find(&horse).unwrap();
         for s in 0..2 {
-            // Left is -Z.
+            // La izquierda es -Z.
             let sign = if s == 0 { -1.0 } else { 1.0 };
             for p in [f.pommel[s], f.leather[s], f.hanging[s]] {
                 assert!(p.z * sign > 0.0, "{s}: {p}");
@@ -1366,7 +1390,7 @@ pub(crate) mod tests {
         assert!((scale.x - 0.02).abs() < 1e-6 && (scale.z - 0.02).abs() < 1e-6);
     }
 
-    // --- with the shipped horse ----------------------------------------------
+    // --- con el caballo incluido ---------------------------------------------
 
     use crate::character::cpu;
     use crate::character::horse::tests::saddled;
@@ -1375,8 +1399,8 @@ pub(crate) mod tests {
     use bevy::mesh::skinning::SkinnedMesh;
     use bevy::platform::collections::HashMap;
 
-    /// The signed distance from `p` to the nearest of `triangles` (over
-    /// `positions`), positive on the side its winding faces.
+    /// La distancia con signo desde `p` hasta el más cercano de los `triangles`
+    /// (sobre `positions`), positiva del lado hacia el que mira su orden.
     pub(crate) fn signed_distance(p: Vec3, positions: &[Vec3], triangles: &[[u32; 3]]) -> f32 {
         let mut best = (f32::MAX, 0.0);
         for t in triangles {
@@ -1391,7 +1415,7 @@ pub(crate) mod tests {
         best.0.sqrt() * best.1
     }
 
-    /// The closest point to `p` on the triangle `a b c` (Ericson).
+    /// El punto más cercano a `p` sobre el triángulo `a b c` (Ericson).
     pub(crate) fn closest_on_triangle(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
         let (ab, ac, ap) = (b - a, c - a, p - a);
         let (d1, d2) = (ab.dot(ap), ac.dot(ap));
@@ -1424,7 +1448,7 @@ pub(crate) mod tests {
         a + ab * (vb * denom) + ac * (vc * denom)
     }
 
-    /// Whether the segment `a b` passes through any of `triangles`.
+    /// Si el segmento `a b` atraviesa alguno de los `triangles`.
     pub(crate) fn crosses(a: Vec3, b: Vec3, positions: &[Vec3], triangles: &[[u32; 3]]) -> bool {
         let dir = b - a;
         triangles.iter().any(|t| {
@@ -1444,8 +1468,8 @@ pub(crate) mod tests {
         })
     }
 
-    /// The horse's skin (its body's materials, not its mane or eyes) in
-    /// `drawn`: positions and triangles, merged.
+    /// La piel del caballo (los materiales de su cuerpo, no su crin ni sus
+    /// ojos) en `drawn`: posiciones y triángulos, fusionados.
     pub(crate) fn horse_skin(drawn: &[cpu::Drawn]) -> (Vec<Vec3>, Vec<[u32; 3]>) {
         let mut positions = Vec::new();
         let mut triangles = Vec::new();
@@ -1459,8 +1483,9 @@ pub(crate) mod tests {
         (positions, triangles)
     }
 
-    /// `triangles` (over `positions`) bucketed by 10 cm cells, to find the
-    /// nearest one to a point only among those within 10 cm of it.
+    /// Los `triangles` (sobre `positions`) agrupados en celdas de 10 cm, para
+    /// buscar el más cercano a un punto solo entre los que están a menos de
+    /// 10 cm de él.
     struct Near<'a> {
         positions: &'a [Vec3],
         triangles: &'a [[u32; 3]],
@@ -1491,8 +1516,8 @@ pub(crate) mod tests {
             }
         }
 
-        /// [`signed_distance`] from `p` to the triangles, if the nearest
-        /// lies within 10 cm of it.
+        /// [`signed_distance`] desde `p` hasta los triángulos, si el más
+        /// cercano está a menos de 10 cm de él.
         fn signed_distance(&self, p: Vec3) -> Option<f32> {
             let at = (p / Self::CELL).floor().as_ivec3();
             let mut near: Vec<[u32; 3]> = Vec::new();
@@ -1512,10 +1537,10 @@ pub(crate) mod tests {
         }
     }
 
-    /// The worst clearances over `frames` frames of `app`'s saddled horse
-    /// under `me`, within 10 cm of its skin: how far the tack's shells stand
-    /// off it (negative: inside it), how far the rider's model does, and
-    /// the straps that cut through the skin.
+    /// Las peores holguras a lo largo de `frames` frames del caballo ensillado
+    /// de `app` bajo `me`, a menos de 10 cm de su piel: cuánto se separan de
+    /// ella las carcasas de los aperos (negativo: dentro de ella), cuánto se
+    /// separa el modelo del jinete, y las correas que atraviesan la piel.
     pub(crate) fn clearances(app: &mut App, me: Entity, frames: usize) -> (f32, f32, Vec<String>) {
         let shells = [
             "Sudadera",
@@ -1554,9 +1579,9 @@ pub(crate) mod tests {
                     continue;
                 }
                 for p in d.positions.iter().step_by(3) {
-                    // The nearest triangle's side only tells inside from
-                    // outside near the skin (far off, a thin ear's back
-                    // can be nearest).
+                    // El lado del triángulo más cercano solo distingue adentro
+                    // de afuera cerca de la piel (lejos, el dorso de una oreja
+                    // delgada puede ser el más cercano).
                     let Some(s) = near.signed_distance(*p) else {
                         continue;
                     };
@@ -1589,8 +1614,9 @@ pub(crate) mod tests {
     fn a_saddled_horse_wears_its_tack_on_its_own_joints() {
         let (mut app, _) = saddled(CharacterVisual::Horse(Coat::Bayo), 0.0);
         let world = app.world_mut();
-        // Every piece of the recado and the bridle, each skinned on the
-        // horse's own joints (the skin's), in the props' range.
+        // Cada pieza del recado y de la brida, cada una con skinning en las
+        // propias articulaciones del caballo (las de la piel), en el rango de
+        // los accesorios.
         let props = crate::settlement::ranges()[1].clone();
         let mut pieces = world.query::<(
             &HorsePiece,
@@ -1635,8 +1661,8 @@ pub(crate) mod tests {
         }
     }
 
-    /// Every entity `app`'s horse under `me` has a [`Tack`] for exists; the
-    /// tack, if any.
+    /// Si existe cada entidad para la que el caballo de `app` bajo `me` tiene
+    /// un [`Tack`]; los aperos, si los hay.
     fn whole_tack(app: &mut App, me: Entity) -> Option<Tack> {
         let world = app.world();
         let carrier = world.get::<Children>(me).unwrap()[0];
@@ -1667,14 +1693,14 @@ pub(crate) mod tests {
             entity: root,
             instance_id: **world.get::<WorldInstance>(root).unwrap(),
         };
-        // Whole: dressed again, once.
+        // Completo: preparado de nuevo, una vez.
         let event = ready(world);
         world.trigger(event);
         app.update();
         assert!(whole_tack(&mut app, me).is_some());
         assert_eq!(count(&mut app, HorsePiece::Stirrup), 2);
         assert_eq!(count(&mut app, HorsePiece::Rein), 6);
-        // Without its torso bone: no tack, and none half there.
+        // Sin su hueso del torso: sin aperos, y ninguno a medias.
         let world = app.world_mut();
         let torso = world
             .query::<(Entity, &Name)>()
@@ -1744,8 +1770,8 @@ pub(crate) mod tests {
             coat: Coat::Bayo,
         };
         let (mut app, me) = seated(rider, 0.0);
-        // Standing, walking, the stretched walk and the top speed: over a
-        // whole stride or more each.
+        // Parado, caminando, la caminata estirada y la velocidad máxima: a lo
+        // largo de una zancada completa o más cada uno.
         for (speed, frames) in [(0.0, 8), (1.5, 24), (4.5, 12), (12.2, 12)] {
             for _ in 0..30 {
                 ride(&mut app, me, speed);
@@ -1770,8 +1796,8 @@ pub(crate) mod tests {
     fn a_tied_horse_keeps_its_tack_and_reins_clear_through_every_idle() {
         let (mut app, me) = saddled(CharacterVisual::Horse(Coat::Overo), 0.0);
         let carrier = app.world().get::<Children>(me).unwrap()[0];
-        // Each idle in turn: a seed that picks it for the next few seconds,
-        // then once it has faded in.
+        // Cada espera por turno: una semilla que la elige para los próximos
+        // segundos, y después una vez que entró por completo.
         for idle in TIED_IDLES {
             let clock = app.world().resource::<Time>().elapsed_secs();
             let mut body = app.world().get::<HorseBody>(carrier).unwrap().clone();
@@ -1800,8 +1826,8 @@ pub(crate) mod tests {
             assert!(tack > 0.002, "{idle:?}: {tack}");
             assert!(cuts.is_empty(), "{idle:?}: {cuts:?}");
         }
-        // Nobody rides it: the stirrups hang from the saddle, the reins
-        // rest on the pommel.
+        // Nadie lo monta: los estribos cuelgan de la montura y las riendas
+        // descansan en la cabezada.
         let tack = *app.world().get::<Tack>(carrier).unwrap();
         for s in 0..2 {
             let hung = app
