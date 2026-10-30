@@ -94,6 +94,8 @@ See `assets/models/third-party/3td-starter-pack/CREDITS.md` for details.
 | Asset | Author / source | Licence | Where | Changes |
 |---|---|---|---|---|
 | Cow, Bull, Horse (animated) | Quaternius, poly.pizza (https://poly.pizza/m/26zM1outCr, https://poly.pizza/m/a8PIIYwF7r, https://poly.pizza/m/qvTrSG9pZF) | CC0 1.0 | `assets/models/fauna/quaternius/` | Trimmed with `tools/glbtrim.py` to seven clips (the duplicate `AnimalArmature` clips, Attack, Death and the standing Jump dropped, with the data only they used) and given smooth normals; scaled, turned and recoloured per coat in the game |
+| Fox (animated) | Quaternius, poly.pizza (https://poly.pizza/m/Bc97C66HKi) | CC0 1.0 | `assets/models/fauna/quaternius/fox.glb` | Trimmed with `tools/glbtrim.py` to seven clips and given smooth normals; scaled, turned and tinted as a grey pampas fox (zorro) in the game |
+| Cat and Eagle from Animal Pack Vol.2 (animated) | Quaternius, OpenGameArt (https://opengameart.org/content/animated-animales-low-poly) | CC0 1.0 | `assets/models/fauna/quaternius/cat.glb`, `eagle.glb` | Converted from FBX with `tools/fbx2glb.py` (Blender), turned to face +Z, the eagle decimated to 2,400 triangles with a still `Glide` clip added; trimmed with `tools/glbtrim.py` (cat: `Idle`, `Walk`; eagle: `Glide`, `Flap`); in the game the cat is the gato montés, the puma and the yaguareté and the eagle the chimango and the carancho, each in its own size and colours |
 
 See `assets/models/fauna/quaternius/CREDITS.md` for details.
 

@@ -1,15 +1,18 @@
-//! Los animales de la pampa (primera versión): ganado que pasta dentro de los
-//! campos alambrados, caballos sueltos en los corrales, liebres en el pasto
-//! abierto, teros en el suelo, chimangos planeando en lo alto y patos en las
-//! lagunas.
+//! Los animales de la pampa de 1919: ganado que pasta dentro de los campos
+//! alambrados, caballos sueltos en los corrales, liebres en el pasto abierto,
+//! teros en el suelo, chimangos y caranchos planeando en lo alto, patos y
+//! nutrias en las lagunas, y la fauna silvestre de suelo: zorros, ñandúes,
+//! mulitas, peludos, vizcachas y, en el monte, gatos monteses, pumas y muy rara
+//! vez un yaguareté.
 //!
 //! [`FaunaSite`] siembra dónde viven, de forma determinista a partir de la
 //! semilla del terreno: un rodeo en algunos de los campos alambrados
 //! ([`Herd`]), caballos en cada corral ([`TetheredHorse`]s parados adentro), y
-//! liebres, bandadas de teros y aves rapaces por chunk ([`Hare`], [`Flock`],
-//! [`Raptor`]), y grupos de patos por laguna ([`Duck`]). El juego hace aparecer
-//! lo que hay en los chunks alrededor del jugador, del más cercano al más
-//! lejano, hasta [`caps`], y hace avanzar a cada animal; el render los dibuja.
+//! liebres, bandadas de teros, aves rapaces y animales de suelo por chunk
+//! ([`Hare`], [`Flock`], [`Raptor`], [`Critter`]), y grupos de patos y nutrias
+//! por laguna ([`Duck`]). El juego hace aparecer lo que hay en los chunks
+//! alrededor del jugador, del más cercano al más lejano, hasta [`caps`], y hace
+//! avanzar a cada animal; el render los dibuja.
 //!
 //! Un rodeo vive en un *potrero*: un rectángulo dentro de una celda alambrada
 //! del relevamiento, a [`FaunaSite::FENCE_MARGIN`] de su alambre, con cada uno
@@ -18,11 +21,13 @@
 //! potrero es convexo, así que una vaca que deambula por cualquier parte de él
 //! nunca cruza un camino ni un alambrado.
 
+mod critter;
 mod herd;
 mod wild;
 
+pub use critter::{Critter, CritterKind, CritterState, Profile};
 pub use herd::{Cow, CowCoat, CowState, Herd};
-pub use wild::{Duck, Flock, FlockState, Hare, HareState, Raptor};
+pub use wild::{Duck, Flock, FlockState, Hare, HareState, Raptor, RaptorKind};
 
 use std::f32::consts::TAU;
 use std::sync::Arc;
@@ -44,6 +49,15 @@ pub mod caps {
     pub const TEROS: usize = 36;
     pub const RAPTORS: usize = 4;
     pub const DUCKS: usize = 32;
+    /// Los zorros (modelos animados).
+    pub const ZORROS: usize = 3;
+    pub const NANDUS: usize = 10;
+    /// Mulitas y peludos juntos.
+    pub const ARMADILLOS: usize = 4;
+    pub const VIZCACHAS: usize = 12;
+    /// Gatos monteses, pumas y yaguaretés juntos (modelos animados).
+    pub const FELINES: usize = 3;
+    pub const NUTRIAS: usize = 6;
 }
 
 /// Dónde viven los animales (ver la documentación del módulo).
@@ -59,6 +73,7 @@ pub struct FaunaSite {
     /// Según el centro del asentamiento: los caballos parados en sus corrales.
     horses: Vec<(Vec2, TetheredHorse)>,
     ducks: Vec<Duck>,
+    nutrias: Vec<Duck>,
     seed: u32,
 }
 
@@ -94,6 +109,12 @@ impl FaunaSite {
     /// Probabilidad de que un chimango o un carancho vuele en círculos sobre un
     /// chunk.
     pub const RAPTOR_CHANCE: f32 = 0.12;
+    /// Desde cuánto monte (`FloraSite::monte`) un lugar es monte para los
+    /// felinos.
+    pub const MONTE: f32 = 0.5;
+    /// Por debajo de cuánto monte un lugar es campo abierto para los ñandúes y
+    /// las vizcachas.
+    pub const OPEN: f32 = 0.2;
 
     /// La fauna del mundo de `config`: `terrain` (nivelado, con sus caminos y
     /// lagunas), sus `fences` y `settlements`, y el recorrido completo de la
@@ -115,6 +136,7 @@ impl FaunaSite {
             herds: Vec::new(),
             horses: Vec::new(),
             ducks: Vec::new(),
+            nutrias: Vec::new(),
             seed: terrain.seed ^ FAUNA_SEED,
         };
         site.herds = site.seed_herds(fences);
@@ -129,6 +151,7 @@ impl FaunaSite {
             })
             .collect();
         site.ducks = site.seed_ducks();
+        site.nutrias = site.seed_nutrias();
         site
     }
 
@@ -216,6 +239,72 @@ impl FaunaSite {
         let center =
             coord.center(size) + Vec2::new(rng.range(-0.3, 0.3), rng.range(-0.3, 0.3)) * size;
         vec![Raptor::new(center, rng.next())]
+    }
+
+    /// Las nutrias cuyo lugar de origen está en el chunk `coord`: nadan en las
+    /// lagunas igual que los patos (la misma simulación, [`Duck`]).
+    pub fn nutrias_in(&self, coord: ChunkCoord) -> Vec<Duck> {
+        let size = self.config.chunk_size;
+        self.nutrias
+            .iter()
+            .filter(|d| ChunkCoord::containing(d.home, size) == coord)
+            .cloned()
+            .collect()
+    }
+
+    /// Los animales silvestres de suelo del chunk `coord` ([`CritterKind`]),
+    /// cada especie con su propia semilla, sobre pasto abierto
+    /// ([`Self::grazeable`]) y en su hábitat según `monte`, qué parte de un
+    /// monte hay en un punto (`0..=1`, `FloraSite::monte`): los felinos solo
+    /// en el monte, los ñandúes y las vizcachas solo fuera de él, el resto en
+    /// cualquier parte. Los ñandúes andan en grupos y las vizcachas en
+    /// colonias alrededor de su vizcachera.
+    pub fn critters_in(&self, coord: ChunkCoord, monte: impl Fn(Vec2) -> f32) -> Vec<Critter> {
+        let mut out = Vec::new();
+        if !self.config.has_chunk(coord) {
+            return out;
+        }
+        let home = self.home(coord);
+        for kind in CritterKind::ALL {
+            let mut rng = self.chunk_rng(coord, critter_seed_kind(kind));
+            if rng.unit() >= critter_chance(kind) {
+                continue;
+            }
+            let fits = |p: Vec2| {
+                let m = monte(p);
+                match kind {
+                    k if k.feline() => m >= Self::MONTE,
+                    CritterKind::Nandu | CritterKind::Vizcacha => m < Self::OPEN,
+                    _ => true,
+                }
+            };
+            let spot = (0..8)
+                .map(|_| {
+                    Vec2::new(
+                        rng.range(home.min.x, home.max.x),
+                        rng.range(home.min.y, home.max.y),
+                    )
+                })
+                .find(|&p| self.grazeable(p) && fits(p));
+            let Some(at) = spot else { continue };
+            let (count, den) = match kind {
+                CritterKind::Nandu => (3 + rng.below(4), None),
+                CritterKind::Vizcacha => (3 + rng.below(4), Some(at)),
+                _ => (1, None),
+            };
+            for k in 0..count {
+                let p = if k == 0 {
+                    at
+                } else {
+                    at + Vec2::new(rng.range(-6.0, 6.0), rng.range(-6.0, 6.0))
+                };
+                let seed = rng.next();
+                if home.contains_point(p) && self.grazeable(p) && fits(p) {
+                    out.push(Critter::new(kind, p, home, den, seed));
+                }
+            }
+        }
+        out
     }
 
     /// El terreno del chunk `coord`: el hogar del que no se alejan sus animales
@@ -359,9 +448,55 @@ impl FaunaSite {
         ducks
     }
 
+    /// Una o dos nutrias por laguna (tres en las grandes), cerca de la orilla
+    /// pero en agua profunda.
+    fn seed_nutrias(&self) -> Vec<Duck> {
+        let mut nutrias = Vec::new();
+        for (l, lagoon) in self.lagoons.iter().enumerate() {
+            let mut rng = Rng::new(self.seed ^ 0x0b17, l as u32);
+            let count = ((lagoon.radii.x * lagoon.radii.y) / 20_000.0).clamp(1.0, 3.0) as usize;
+            for _ in 0..count + rng.below(2) {
+                let angle = rng.unit() * TAU;
+                let r = lagoon.shore_radius(angle) * rng.range(0.55, 0.8);
+                let at = lagoon.center + Vec2::new(angle.cos(), angle.sin()) * r;
+                if lagoon.is_deep(at) {
+                    nutrias.push(Duck::new(at, at, l, rng.next()));
+                }
+            }
+        }
+        nutrias
+    }
+
     /// Las lagunas en las que nadan los patos, por índice.
     pub fn lagoons(&self) -> &[Lagoon] {
         &self.lagoons
+    }
+}
+
+/// El tipo con el que [`FaunaSite::critters_in`] siembra a cada especie: el
+/// suyo propio, distinto de los de las liebres (1), los teros (2) y las rapaces
+/// (3), así que agregar una especie no mueve a ninguna otra.
+fn critter_seed_kind(kind: CritterKind) -> u32 {
+    4 + CritterKind::ALL
+        .iter()
+        .position(|&k| k == kind)
+        .unwrap_or(0) as u32
+}
+
+/// Probabilidad de que una especie (o un grupo, o una colonia) viva en un
+/// chunk, antes de buscarle un lugar en su hábitat: los felinos solo
+/// aparecen donde el chunk tiene monte, así que en la práctica son más raros.
+/// El yaguareté es un avistamiento excepcional.
+fn critter_chance(kind: CritterKind) -> f32 {
+    match kind {
+        CritterKind::Zorro => 0.1,
+        CritterKind::Nandu => 0.05,
+        CritterKind::Mulita => 0.07,
+        CritterKind::Peludo => 0.07,
+        CritterKind::Vizcacha => 0.06,
+        CritterKind::GatoMontes => 0.25,
+        CritterKind::Puma => 0.08,
+        CritterKind::Yaguarete => 0.01,
     }
 }
 
@@ -525,6 +660,17 @@ mod tests {
         }
         assert!(!wet.ducks.is_empty(), "ducks on the new lagoon");
         assert!(wet.ducks.iter().all(|d| lagoon.is_water(d.position)));
+        // Y nutrias, en agua profunda, cada una cargada con un solo chunk.
+        assert!(!wet.nutrias.is_empty(), "nutrias on the new lagoon");
+        assert!(wet.nutrias.iter().all(|n| lagoon.is_deep(n.position)));
+        let size = wet.config.chunk_size;
+        let chunks: std::collections::BTreeSet<_> = wet
+            .nutrias
+            .iter()
+            .map(|n| ChunkCoord::containing(n.home, size))
+            .collect();
+        let streamed: usize = chunks.iter().map(|&c| wet.nutrias_in(c).len()).sum();
+        assert_eq!(streamed, wet.nutrias.len());
     }
 
     #[test]
@@ -598,6 +744,63 @@ mod tests {
             hares > 0 && flocks > 0 && raptors > 0,
             "{hares} {flocks} {raptors}"
         );
+    }
+
+    #[test]
+    fn wild_ground_animals_keep_to_their_habitat_and_the_yaguarete_is_rarest() {
+        let site = site();
+        let (world, _, line, ..) = settled();
+        let flora = crate::FloraSite::new(world.config, &world.terrain, line);
+        let config = site.config;
+        let reach = (config.half_extent / config.chunk_size).ceil() as i32;
+        let mut seen = std::collections::HashMap::<CritterKind, usize>::new();
+        for coord in config.chunks_near(Vec2::ZERO, reach) {
+            let critters = site.critters_in(coord, |p| flora.monte(p));
+            assert_eq!(
+                critters,
+                site.critters_in(coord, |p| flora.monte(p)),
+                "deterministic"
+            );
+            let home = coord.bounds(config.chunk_size);
+            for c in &critters {
+                assert!(site.grazeable(c.position) && home.contains_point(c.position));
+                let monte = flora.monte(c.position);
+                match c.kind {
+                    k if k.feline() => assert!(monte >= FaunaSite::MONTE, "{c:?}"),
+                    CritterKind::Nandu | CritterKind::Vizcacha => {
+                        assert!(monte < FaunaSite::OPEN, "{c:?}")
+                    }
+                    _ => {}
+                }
+                assert_eq!(c.den.is_some(), c.kind == CritterKind::Vizcacha);
+                *seen.entry(c.kind).or_default() += 1;
+            }
+            // Sin monte no hay felinos.
+            assert!(
+                site.critters_in(coord, |_| 0.0)
+                    .iter()
+                    .all(|c| !c.kind.feline())
+            );
+        }
+        println!("wild ground animals: {seen:?}");
+        let n = |k| seen.get(&k).copied().unwrap_or(0);
+        for kind in CritterKind::ALL {
+            if kind != CritterKind::Yaguarete {
+                assert!(n(kind) > 0, "{kind:?} lives somewhere");
+            }
+        }
+        assert!(n(CritterKind::Yaguarete) * 3 <= n(CritterKind::Puma).max(1));
+        assert!(n(CritterKind::Puma) < n(CritterKind::GatoMontes));
+    }
+
+    #[test]
+    fn raptors_are_chimangos_and_caranchos() {
+        let site = site();
+        let mut kinds = std::collections::HashSet::new();
+        for coord in ChunkCoord::new(0, 0).within(12) {
+            kinds.extend(site.raptors_in(coord).iter().map(|r| r.kind));
+        }
+        assert_eq!(kinds.len(), 2, "{kinds:?}");
     }
 
     #[test]

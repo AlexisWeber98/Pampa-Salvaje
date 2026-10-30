@@ -1,22 +1,28 @@
-//! Vacunos y caballos de corral: los modelos low-poly animados de Quaternius
-//! (CC0, de poly.pizza; con crédito en
+//! Vacunos, caballos de corral, zorros, felinos y rapaces: los modelos low-poly
+//! animados de Quaternius (CC0; con crédito en
 //! `assets/models/fauna/quaternius/CREDITS.md` y en el `CREDITS.md` de la
-//! raíz), recortados a siete clips por `tools/glbtrim.py`.
+//! raíz). Los de poly.pizza (vaca, toro, caballo, zorro) recortados a siete
+//! clips por `tools/glbtrim.py`; el gato y el águila del Animal Pack Vol.2,
+//! convertidos con `tools/fbx2glb.py` (Blender) y recortados igual: el gato
+//! con su espera y su caminata, el águila (diezmada) con su planeo y su
+//! aleteo ([`Species::animation`]). El gato hace de gato montés, de puma y de
+//! yaguareté, y el águila de chimango y de carancho, en sus tamaños y colores.
 //!
 //! Cada [`Species`] se carga una vez al iniciar ([`LivestockModels`]): su
-//! escena glTF, sus clips y un [`AnimationGraph`] compartido. Una vaca, un toro
-//! o un caballo [`Animal`] recibe un hijo [`LivestockModel`] que crea la escena
-//! compartida una vez que terminó de cargar. El hijo lleva la escala de la
-//! especie (la exportación está a unas 3 unidades por metro) y gira el modelo
-//! (que mira hacia +Z) hacia el rumbo del animal (+X es su frente). Cuando la
-//! escena está lista:
+//! escena glTF, sus clips y un [`AnimationGraph`] compartido. Un [`Animal`]
+//! de modelo recibe un hijo [`LivestockModel`] que crea la escena compartida
+//! una vez que terminó de cargar. El hijo lleva la escala de la especie y gira
+//! el modelo (que mira hacia +Z) hacia el rumbo del animal (+X es su frente).
+//! Cuando la escena está lista:
 //!
-//! - sus meshes reciben el rango compartido de los accesorios de los
-//!   asentamientos (sin un `VisibilityRange` nuevo);
+//! - sus meshes reciben el rango compartido de su animal ([`Animal::range`]:
+//!   el de los accesorios de los asentamientos, el de los edificios para las
+//!   rapaces que planean en lo alto; sin un `VisibilityRange` nuevo);
 //! - sus materiales se cambian por copias teñidas con el pelaje del animal,
 //!   creadas una vez por pelaje y material y compartidas por todos los animales
-//!   que lo llevan ([`paint`]); las manchas de las vacas overas y los pelajes
-//!   de los caballos son colores por vertex en una copia de la mesh del cuerpo
+//!   que lo llevan ([`paint`]); las manchas de las vacas overas, del gato
+//!   montés y del yaguareté y los pelajes de los caballos son colores por
+//!   vertex en una copia de la mesh del cuerpo
 //!   por pelaje, compartida de la misma forma;
 //! - su reproductor de animación recibe el grafo de la especie.
 //!
@@ -80,17 +86,56 @@ pub enum Species {
     Cow,
     Bull,
     Horse,
+    /// El zorro gris pampeano: el zorro de Quaternius.
+    Fox,
+    /// Los tres felinos comparten el gato del Animal Pack Vol.2 de Quaternius,
+    /// en tres tamaños y pelajes.
+    GatoMontes,
+    Puma,
+    Yaguarete,
+    /// Las dos rapaces comparten el águila del mismo pack, teñida.
+    Chimango,
+    Carancho,
+}
+
+/// Cómo quedaron las meshes de un modelo según quién lo exportó.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Export {
+    /// FBX2glTF (los modelos de poly.pizza): Z hacia arriba, a 1/100 de una
+    /// unidad del modelo, bajo un nodo que gira -90° alrededor de X y escala
+    /// por 100; el modelo mira hacia +Z.
+    Fbx2Gltf,
+    /// `tools/fbx2glb.py` (Blender): Y hacia arriba, en unidades del modelo,
+    /// mirando hacia +Z.
+    Blender,
 }
 
 impl Species {
-    pub const ALL: [Self; 3] = [Self::Cow, Self::Bull, Self::Horse];
+    pub const ALL: [Self; 9] = [
+        Self::Cow,
+        Self::Bull,
+        Self::Horse,
+        Self::Fox,
+        Self::GatoMontes,
+        Self::Puma,
+        Self::Yaguarete,
+        Self::Chimango,
+        Self::Carancho,
+    ];
 
-    /// La especie con la que se dibuja `animal`, si es ganado.
+    /// La especie con la que se dibuja `animal`, si se dibuja a partir de un
+    /// modelo.
     pub fn of(animal: Animal) -> Option<Self> {
         match animal {
             Animal::Cow(_) => Some(Self::Cow),
             Animal::Bull(_) => Some(Self::Bull),
             Animal::Horse(_) => Some(Self::Horse),
+            Animal::Zorro => Some(Self::Fox),
+            Animal::GatoMontes => Some(Self::GatoMontes),
+            Animal::Puma => Some(Self::Puma),
+            Animal::Yaguarete => Some(Self::Yaguarete),
+            Animal::Chimango => Some(Self::Chimango),
+            Animal::Carancho => Some(Self::Carancho),
             _ => None,
         }
     }
@@ -101,28 +146,94 @@ impl Species {
             Self::Cow => "cow",
             Self::Bull => "bull",
             Self::Horse => "horse",
+            Self::Fox => "fox",
+            Self::GatoMontes | Self::Puma | Self::Yaguarete => "cat",
+            Self::Chimango | Self::Carancho => "eagle",
         };
         format!("{LIVESTOCK_DIR}/{name}.glb")
     }
 
-    /// Altura a la cruz en las unidades propias del modelo: la parte superior
-    /// del lomo por encima de las patas delanteras, medida sobre las meshes
-    /// exportadas.
+    /// Quién exportó su modelo.
+    pub const fn export(self) -> Export {
+        match self {
+            Self::Cow | Self::Bull | Self::Horse | Self::Fox => Export::Fbx2Gltf,
+            _ => Export::Blender,
+        }
+    }
+
+    /// Si es un ave (su medida es la envergadura, y vuela).
+    pub const fn bird(self) -> bool {
+        matches!(self, Self::Chimango | Self::Carancho)
+    }
+
+    /// Los clips del archivo, en orden: los siete del ganado, o los pocos que
+    /// traen el gato (espera y caminata) y el águila (planeo y aleteo).
+    pub fn clip_names(self) -> &'static [&'static str] {
+        match self {
+            Self::Cow | Self::Bull | Self::Horse => &[
+                "Idle",
+                "Idle_2",
+                "Idle_Headlow",
+                "Eating",
+                "Walk",
+                "Gallop",
+                "Gallop_Jump",
+            ],
+            Self::Fox => &[
+                "Idle",
+                "Idle_2",
+                "Idle_2_HeadLow",
+                "Eating",
+                "Walk",
+                "Gallop",
+                "Gallop_Jump",
+            ],
+            Self::GatoMontes | Self::Puma | Self::Yaguarete => &["Idle", "Walk"],
+            Self::Chimango | Self::Carancho => &["Glide", "Flap"],
+        }
+    }
+
+    /// El índice de animación glTF que reproduce `clip`: el mismo en los
+    /// modelos de siete clips; en el gato, la espera o la caminata (que también
+    /// hace de galope); en el águila, el planeo o el aleteo (el "galope" de un
+    /// ave).
+    pub fn animation(self, clip: Clip) -> usize {
+        if self.clip_names().len() == CLIP_COUNT {
+            return clip.index();
+        }
+        usize::from(matches!(clip, Clip::Walk | Clip::Gallop | Clip::GallopJump))
+    }
+
+    /// Su medida de referencia en las unidades propias del modelo, medida
+    /// sobre las meshes exportadas: la altura a la cruz de un cuadrúpedo (la
+    /// parte superior del lomo por encima de las patas delanteras), la
+    /// envergadura de un ave.
     pub const fn model_withers(self) -> f32 {
         match self {
             Self::Cow | Self::Bull => 4.4,
             Self::Horse => 3.6,
+            Self::Fox => 2.35,
+            Self::GatoMontes | Self::Puma | Self::Yaguarete => 2.8,
+            Self::Chimango | Self::Carancho => 12.47,
         }
     }
 
-    /// Altura a la cruz en el juego, en metros: como los vacunos y los caballos
+    /// La misma medida en el juego, en metros: como los vacunos y los caballos
     /// criollos procedurales a los que reemplazan (una vaca 1.4 m, un caballo
-    /// 1.5 m), con el toro un poco más grande.
+    /// 1.5 m), con el toro un poco más grande; un zorro gris de 0.38 m a la
+    /// cruz, un gato montés de 0.28 m, un puma de 0.7 m y un yaguareté de
+    /// 0.75 m; un chimango de 0.9 m de envergadura y un carancho de 1.25 m.
     pub const fn withers(self) -> f32 {
         match self {
             Self::Cow => 1.4,
             Self::Bull => 1.55,
             Self::Horse => 1.5,
+            Self::Fox => 0.38,
+            Self::GatoMontes => 0.28,
+            Self::Puma => 0.7,
+            Self::Yaguarete => 0.75,
+            Self::Chimango => 0.9,
+            Self::Carancho => 1.25,
         }
     }
 
@@ -131,19 +242,37 @@ impl Species {
         self.withers() / self.model_withers()
     }
 
-    /// La velocidad sobre el suelo que muestra su clip `Walk`, en m/s.
+    /// La velocidad sobre el suelo que muestra su clip `Walk`, en m/s. Las del
+    /// zorro y el gato son el deslizamiento medio hacia atrás de las patas
+    /// apoyadas, medido aproximadamente sobre los clips (unas 2.5 y 1.5
+    /// unidades del modelo por segundo).
     pub fn walk_speed(self) -> f32 {
         match self {
             Self::Cow | Self::Bull => 1.0,
             Self::Horse => HORSE_WALK_SPEED,
+            Self::Fox => 2.5 * self.scale(),
+            Self::GatoMontes | Self::Puma | Self::Yaguarete => 1.5 * self.scale(),
+            Self::Chimango | Self::Carancho => 1.0,
         }
     }
 
-    /// La velocidad sobre el suelo que muestra su clip `Gallop`, en m/s.
+    /// La velocidad sobre el suelo que muestra su clip `Gallop`, en m/s: el del
+    /// zorro, unas 9 unidades por segundo; el gato galopa con su caminata.
     pub fn gallop_speed(self) -> f32 {
         match self {
             Self::Cow | Self::Bull => 6.0,
             Self::Horse => HORSE_GALLOP_SPEED,
+            Self::Fox => 9.0 * self.scale(),
+            _ => self.walk_speed(),
+        }
+    }
+
+    /// Lo más rápido que se reproduce su galope respecto de cómo se creó: los
+    /// animales chicos dan pasos más rápidos que lo que muestran sus clips.
+    pub const fn max_pace(self) -> f32 {
+        match self {
+            Self::Cow | Self::Bull | Self::Horse => 1.6,
+            _ => 2.5,
         }
     }
 
@@ -208,6 +337,9 @@ pub(crate) fn mix(seed: u32, salt: u32) -> u32 {
     h ^ (h >> 12)
 }
 
+/// Segundos que aletea una rapaz cada vez, entre sus planeos.
+pub const FLAP_SECONDS: f32 = 2.0;
+
 /// Segundos que un caballo de corral mantiene una espera antes de la siguiente.
 pub(crate) const HORSE_IDLE: f32 = 14.0;
 
@@ -217,6 +349,21 @@ pub(crate) const HORSE_IDLE: f32 = 14.0;
 pub fn clip_for(animal: Animal, pose: &AnimalPose, seed: u32, clock: f32) -> Clip {
     let idles = [Clip::Idle, Clip::Idle2, Clip::IdleHeadlow];
     match pose.gait {
+        // Las rapaces planean y, cada tanto, aletean un par de segundos: el
+        // chimango más seguido que el carancho.
+        Gait::Glide | Gait::Fly if matches!(animal, Animal::Chimango | Animal::Carancho) => {
+            let period = if animal == Animal::Chimango {
+                9.0
+            } else {
+                14.0
+            };
+            let t = (clock.max(0.0) + (seed % 97) as f32).rem_euclid(period);
+            if pose.gait == Gait::Fly || t < FLAP_SECONDS {
+                Clip::Gallop
+            } else {
+                Clip::Idle
+            }
+        }
         Gait::Graze => Clip::Eating,
         Gait::Walk if pose.speed > GALLOP_SPEED => Clip::Gallop,
         Gait::Walk => Clip::Walk,
@@ -234,8 +381,9 @@ pub fn clip_for(animal: Animal, pose: &AnimalPose, seed: u32, clock: f32) -> Cli
 /// como se creó.
 pub fn clip_speed(clip: Clip, species: Species, ground: f32) -> f32 {
     match clip {
+        _ if species.bird() => 1.0,
         Clip::Walk => (ground / species.walk_speed()).clamp(0.4, 2.0),
-        Clip::Gallop => (ground / species.gallop_speed()).clamp(0.6, 1.6),
+        Clip::Gallop => (ground / species.gallop_speed()).clamp(0.6, species.max_pace()),
         _ => 1.0,
     }
 }
@@ -281,13 +429,15 @@ pub fn model_transform(species: Species, heading: Heading) -> Transform {
         .with_scale(Vec3::splat(species.scale()))
 }
 
-/// Un vertex de la mesh exportada (Z hacia arriba, alrededor de 1/100 de una
-/// unidad del modelo) en el marco del cuerpo del animal parado, en metros: +X
+/// Un vertex de la mesh exportada (ver [`Export`]) en el marco del cuerpo del animal parado, en metros: +X
 /// su frente, +Y hacia arriba, +Z su lado derecho.
 pub fn body_point(species: Species, raw: Vec3) -> Vec3 {
-    // El nodo de la mesh gira -90° alrededor de X y escala por 100: de Z hacia
-    // arriba a Y hacia arriba.
-    let scene = Vec3::new(raw.x, raw.z, -raw.y) * 100.0;
+    let scene = match species.export() {
+        // El nodo de la mesh gira -90° alrededor de X y escala por 100: de Z
+        // hacia arriba a Y hacia arriba.
+        Export::Fbx2Gltf => Vec3::new(raw.x, raw.z, -raw.y) * 100.0,
+        Export::Blender => raw,
+    };
     // Después el modelo gira para mirar hacia +X.
     Vec3::new(scene.z, scene.y, -scene.x) * species.scale()
 }
@@ -337,8 +487,49 @@ pub fn paint(animal: Animal, material: &str) -> Paint {
             "Hooves" => rgb(coat.hoof()),
             _ => Paint::Keep,
         },
+        // El zorro gris: el cuerpo canoso en lugar del rojizo del modelo.
+        Animal::Zorro => match material {
+            "Main" => rgb([124, 112, 96]),
+            "Main_Light" => rgb([200, 188, 164]),
+            _ => Paint::Keep,
+        },
+        Animal::GatoMontes | Animal::Puma | Animal::Yaguarete => match (animal, material) {
+            (Animal::Puma, "Grey") => rgb([170, 128, 82]),
+            (_, "Grey") => Paint::Vertex,
+            (Animal::GatoMontes, "White") => rgb([204, 200, 188]),
+            (_, "White") => rgb([226, 214, 192]),
+            (_, "Pink") => rgb([62, 48, 40]),
+            _ => Paint::Keep,
+        },
+        Animal::Chimango => match material {
+            "Wings" => rgb([118, 86, 56]),
+            "Head" => rgb([196, 168, 124]),
+            "Beak" => rgb([196, 186, 156]),
+            "Claws" => rgb([160, 148, 112]),
+            _ => Paint::Keep,
+        },
+        // Oscuro, con el cuello claro, la cara rojo anaranjada y las patas
+        // amarillas.
+        Animal::Carancho => match material {
+            "Wings" => rgb([40, 32, 26]),
+            "Head" => rgb([228, 218, 194]),
+            "Beak" => rgb([214, 92, 40]),
+            "Claws" => rgb([214, 182, 60]),
+            _ => Paint::Keep,
+        },
         _ => Paint::Keep,
     }
+}
+
+/// Si el punto `p` del cuerpo de un felino (en metros, marco del cuerpo) cae
+/// en una mancha negra, para un animal de `withers` metros a la cruz: manchas
+/// chicas y redondas a partir de ondas cruzadas, del mismo tamaño relativo en
+/// el gato montés y en el yaguareté (cuyas rosetas aproximan).
+pub fn feline_spot(p: Vec3, withers: f32) -> bool {
+    let q = p / withers.max(1e-3);
+    let wave = (q.x * 23.0 + 0.4).sin() * (q.y * 19.0 + q.z * 17.0 + 1.3).sin()
+        + 0.7 * (q.x * 31.0 - q.z * 27.0 + 2.1).sin() * (q.y * 29.0 + 0.6).cos();
+    wave > 0.75
 }
 
 /// Si el punto `p` del cuerpo de un overo (en metros, marco del cuerpo) cae en
@@ -357,6 +548,14 @@ pub fn overo_black(p: Vec3) -> bool {
 pub fn coat_color_at(animal: Animal, p: Vec3, normal: Vec3) -> [f32; 4] {
     let srgb = match animal {
         Animal::Horse(coat) => coat.color_at(p, normal),
+        Animal::GatoMontes | Animal::Yaguarete => {
+            let withers = Species::of(animal).map_or(1.0, Species::withers);
+            match (animal, feline_spot(p, withers)) {
+                (_, true) => [24, 20, 18],
+                (Animal::GatoMontes, _) => [150, 144, 126],
+                _ => [200, 150, 72],
+            }
+        }
         _ if overo_black(p) => [26, 24, 22],
         _ => [230, 226, 216],
     };
@@ -383,7 +582,7 @@ pub struct SpeciesModel {
 /// Los modelos de ganado encontrados al iniciar, por [`Species`] (`None` cuando
 /// falta el archivo: esa especie no se dibuja).
 #[derive(Resource, Debug, Clone, Default)]
-pub struct LivestockModels(pub [Option<SpeciesModel>; 3]);
+pub struct LivestockModels(pub [Option<SpeciesModel>; Species::ALL.len()]);
 
 impl LivestockModels {
     pub fn get(&self, species: Species) -> Option<&SpeciesModel> {
@@ -427,7 +626,7 @@ pub struct LivestockRig {
     pub frozen: bool,
 }
 
-/// Empieza a cargar los tres modelos y construye el grafo de cada uno. Sin un
+/// Empieza a cargar los modelos y construye el grafo de cada uno. Sin un
 /// servidor de assets, una raíz o el plugin de animación (tests, una app vacía)
 /// no carga ninguno.
 pub(super) fn load_livestock(
@@ -448,9 +647,14 @@ pub(super) fn load_livestock(
             continue;
         };
         let file = server.load(path.clone());
+        // Un clip por cada [`Clip`], aunque el archivo traiga menos (ver
+        // [`Species::animation`]).
         let clips: Vec<Handle<AnimationClip>> = Clip::ALL
             .iter()
-            .map(|c| server.load(GltfAssetLabel::Animation(c.index()).from_asset(path.clone())))
+            .map(|&c| {
+                let index = species.animation(c);
+                server.load(GltfAssetLabel::Animation(index).from_asset(path.clone()))
+            })
             .collect();
         let (graph, nodes) = AnimationGraph::from_clips(clips.iter().cloned());
         models.0[species.index()] = Some(SpeciesModel {
@@ -464,7 +668,7 @@ pub(super) fn load_livestock(
     commands.insert_resource(models);
 }
 
-/// Cuelga un modelo bajo cada vaca, toro y caballo de corral nuevo.
+/// Cuelga un modelo bajo cada animal nuevo que se dibuja a partir de uno.
 pub(super) fn attach_livestock(
     mut commands: Commands,
     models: Option<Res<LivestockModels>>,
@@ -592,7 +796,7 @@ pub(crate) fn dress_meshes(
     children: &Query<&Children>,
     parts: &Query<ModelPart>,
 ) -> (Option<Entity>, Vec<Entity>) {
-    let range = crate::settlement::ranges()[1].clone();
+    let range = animal.range();
     let mut player = None;
     let mut probes = Vec::new();
     for entity in children.iter_descendants(root) {
@@ -820,6 +1024,86 @@ mod tests {
     }
 
     #[test]
+    fn felines_walk_for_every_gait_and_raptors_glide_with_a_few_flaps() {
+        for species in [Species::GatoMontes, Species::Puma, Species::Yaguarete] {
+            assert_eq!(species.animation(Clip::Gallop), 1, "the walk, sped up");
+            assert_eq!(species.animation(Clip::Idle2), 0);
+            let fast = clip_speed(Clip::Gallop, species, 5.0);
+            assert!(fast > 1.6 && fast <= species.max_pace(), "{fast}");
+        }
+        assert_eq!(
+            Species::Fox.animation(Clip::IdleHeadlow),
+            Clip::IdleHeadlow.index()
+        );
+        for raptor in [Animal::Chimango, Animal::Carancho] {
+            let gliding = standing(Gait::Glide, 0.0);
+            let clips: Vec<Clip> = (0..400)
+                .map(|k| clip_for(raptor, &gliding, 5, k as f32 * 0.1))
+                .collect();
+            let flaps = clips.iter().filter(|&&c| c == Clip::Gallop).count();
+            // Mayormente planea; aletea un par de segundos de cada tanto.
+            assert!((20..=120).contains(&flaps), "{raptor:?}: {flaps}");
+            assert!(
+                clips
+                    .iter()
+                    .all(|&c| matches!(c, Clip::Idle | Clip::Gallop))
+            );
+            let species = Species::of(raptor).unwrap();
+            assert_eq!(species.animation(Clip::Gallop), 1, "Flap");
+            assert_eq!(clip_speed(Clip::Gallop, species, 0.0), 1.0);
+        }
+        // El ganado sigue galopando a lo sumo a 1.6 veces su clip.
+        assert_eq!(clip_speed(Clip::Gallop, Species::Cow, 50.0), 1.6);
+    }
+
+    #[test]
+    fn wild_coats_tint_per_species_and_spotted_cats_are_spotted() {
+        let flat = |animal, material| match paint(animal, material) {
+            Paint::Flat(c) => c.to_srgba(),
+            other => panic!("{animal:?} {material}: {other:?}"),
+        };
+        let puma = flat(Animal::Puma, "Grey");
+        assert!(puma.red > puma.blue * 1.6, "a tawny puma: {puma:?}");
+        assert_eq!(paint(Animal::GatoMontes, "Grey"), Paint::Vertex);
+        assert_eq!(paint(Animal::Yaguarete, "Grey"), Paint::Vertex);
+        let zorro = flat(Animal::Zorro, "Main");
+        assert!(zorro.red - zorro.blue < 0.15, "a grey fox: {zorro:?}");
+        let (chimango, carancho) = (
+            flat(Animal::Chimango, "Wings"),
+            flat(Animal::Carancho, "Wings"),
+        );
+        assert!(carancho.red < chimango.red * 0.5, "a dark carancho");
+        let face = flat(Animal::Carancho, "Beak");
+        assert!(face.red > face.green * 2.0, "a red-orange face");
+        for animal in [Animal::GatoMontes, Animal::Yaguarete] {
+            let withers = Species::of(animal).unwrap().withers();
+            let mut spots = 0;
+            let mut all = 0;
+            for i in 0..40 {
+                for j in 0..10 {
+                    let p = Vec3::new(i as f32 * 0.03 - 0.6, 0.5 + j as f32 * 0.03, 0.1) * withers;
+                    let c = coat_color_at(animal, p, Vec3::Z);
+                    all += 1;
+                    spots += usize::from(c[0] < 0.02);
+                }
+            }
+            let share = spots as f32 / all as f32;
+            assert!((0.08..0.4).contains(&share), "{animal:?}: {share}");
+        }
+        // El fondo del pelaje, fuera de las manchas.
+        let ground = |animal: Animal| {
+            let withers = Species::of(animal).unwrap().withers();
+            let p = (0..100)
+                .map(|k| Vec3::new(k as f32 * 0.01, 0.6, 0.0) * withers)
+                .find(|&p| !feline_spot(p, withers))
+                .unwrap();
+            coat_color_at(animal, p, Vec3::Z)
+        };
+        let (yellow, grey) = (ground(Animal::Yaguarete), ground(Animal::GatoMontes));
+        assert!(yellow[0] > yellow[2] * 3.0 && grey[0] < grey[2] * 1.5);
+    }
+
+    #[test]
     fn walking_clips_are_paced_to_the_ground_speed_and_seeded_apart() {
         let slow = clip_speed(Clip::Walk, Species::Cow, 0.5);
         let shy = clip_speed(Clip::Walk, Species::Cow, 1.3);
@@ -905,6 +1189,12 @@ mod tests {
             let withers = t.scale.y * species.model_withers();
             assert!((withers - species.withers()).abs() < 1e-4);
         }
+        // Un gato montés chico, un puma y un yaguareté grandes; el carancho
+        // más grande que el chimango.
+        assert!(Species::GatoMontes.withers() < 0.35);
+        assert!(Species::Puma.withers() > 2.0 * Species::GatoMontes.withers());
+        assert!(Species::Yaguarete.withers() >= Species::Puma.withers());
+        assert!(Species::Carancho.withers() > Species::Chimango.withers());
         assert!(Species::Bull.withers() > Species::Cow.withers());
         assert!((1.3..1.5).contains(&Species::Cow.withers()));
         assert!((1.4..1.6).contains(&Species::Horse.withers()));
@@ -987,7 +1277,7 @@ mod tests {
         }
     }
 
-    /// Los tres modelos incluidos, cargados en modo headless.
+    /// Los modelos incluidos, cargados en modo headless.
     fn loaded() -> (App, Vec<Handle<bevy::gltf::Gltf>>) {
         let mut app = unfinished_app(&root());
         app.init_asset::<bevy::mesh::skinning::SkinnedMeshInverseBindposes>()
@@ -1014,7 +1304,7 @@ mod tests {
     }
 
     #[test]
-    fn the_three_models_load_skinned_with_their_clips_at_life_size() {
+    fn every_model_loads_skinned_with_its_clips_at_life_size() {
         let (app, handles) = loaded();
         let world = app.world();
         for (species, handle) in Species::ALL.into_iter().zip(handles) {
@@ -1024,14 +1314,12 @@ mod tests {
                 .unwrap();
             // Los clips que reproduce el juego, en el orden en que los
             // reproduce.
-            assert_eq!(gltf.animations.len(), Clip::ALL.len(), "{species:?}");
+            let names = species.clip_names();
+            assert_eq!(gltf.animations.len(), names.len(), "{species:?}");
             for clip in Clip::ALL {
-                let named = &gltf.named_animations[clip.name()];
-                assert_eq!(
-                    *named,
-                    gltf.animations[clip.index()],
-                    "{species:?} {clip:?}"
-                );
+                let index = species.animation(clip);
+                let named = &gltf.named_animations[names[index]];
+                assert_eq!(*named, gltf.animations[index], "{species:?} {clip:?}");
                 let clip = world
                     .resource::<Assets<AnimationClip>>()
                     .get(named)
@@ -1045,11 +1333,16 @@ mod tests {
                 .unwrap();
             let joints = match species {
                 Species::Horse => 50,
-                _ => 42,
+                Species::Fox => 51,
+                Species::GatoMontes | Species::Puma | Species::Yaguarete => 34,
+                Species::Chimango | Species::Carancho => 30,
+                Species::Cow | Species::Bull => 42,
             };
             assert_eq!(skin.joints.len(), joints, "{species:?}");
-            // Su cuerpo está a tamaño real en el marco del cuerpo.
-            let mut top = 0.0f32;
+            // Su cuerpo está a tamaño real en el marco del cuerpo: la altura del
+            // lomo entre la grupa y la mitad del largo (sin la cabeza, el
+            // cuello ni la cola), o la envergadura de un ave.
+            let mut points = Vec::new();
             let mut triangles = 0;
             let mut names: Vec<&str> = gltf.named_materials.keys().map(|k| &**k).collect();
             names.sort();
@@ -1068,18 +1361,36 @@ mod tests {
                 else {
                     panic!("positions")
                 };
-                for p in p {
-                    let b = body_point(species, Vec3::from(*p));
-                    // El lomo, detrás de la cabeza y el cuello.
-                    if b.x < 0.2 {
-                        top = top.max(b.y);
-                    }
-                }
+                points.extend(p.iter().map(|p| body_point(species, Vec3::from(*p))));
             }
+            let (lo, hi) = points.iter().fold((f32::MAX, f32::MIN), |(lo, hi), b| {
+                (lo.min(b.x), hi.max(b.x))
+            });
+            let quarter = (hi - lo) / 4.0;
+            let top = if species.bird() {
+                let span = |f: fn(f32, f32) -> f32, from| points.iter().map(|b| b.z).fold(from, f);
+                span(f32::max, f32::MIN) - span(f32::min, f32::MAX)
+            } else {
+                points
+                    .iter()
+                    .filter(|b| (lo + quarter..lo + 2.0 * quarter).contains(&b.x))
+                    .map(|b| b.y)
+                    .fold(0.0, f32::max)
+            };
             println!("{species:?}: {triangles} triangles, back {top:.2} m, materials {names:?}");
             assert!(triangles <= 2_500, "{species:?}: {triangles}");
-            for material in ["Main", "Main_Light", "Muzzle", "Hooves"] {
-                assert!(names.contains(&material), "{species:?}: {names:?}");
+            let materials: &[&str] = match species {
+                Species::Cow | Species::Bull | Species::Horse => {
+                    &["Main", "Main_Light", "Muzzle", "Hooves"]
+                }
+                Species::Fox => &["Main", "Main_Light"],
+                Species::GatoMontes | Species::Puma | Species::Yaguarete => {
+                    &["Grey", "White", "Pink"]
+                }
+                Species::Chimango | Species::Carancho => &["Wings", "Head", "Beak", "Claws"],
+            };
+            for material in materials {
+                assert!(names.contains(material), "{species:?}: {names:?}");
             }
             let want = species.withers();
             assert!(

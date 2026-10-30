@@ -48,14 +48,29 @@ pub enum Animal {
     Hare,
     /// Un tero (avefría sureña).
     Tero,
-    /// Un chimango o carancho.
-    Raptor,
+    /// Las dos rapaces que planean en lo alto (modelos, ver [`livestock`]).
+    Chimango,
+    Carancho,
     Duck,
+    /// El zorro gris (modelo).
+    Zorro,
+    Nandu,
+    /// Los dos armadillos: la mulita, chica y oscura, y el peludo, más grande
+    /// y pardo.
+    Mulita,
+    Peludo,
+    Vizcacha,
+    /// Los felinos del monte (modelos).
+    GatoMontes,
+    Puma,
+    Yaguarete,
+    Nutria,
 }
 
 impl Animal {
     /// Si se dibuja a partir de un modelo animado (ver [`livestock`]) en lugar
-    /// de piezas rígidas.
+    /// de piezas rígidas: el ganado, los caballos, el zorro, los felinos y las
+    /// rapaces.
     pub fn is_livestock(self) -> bool {
         Species::of(self).is_some()
     }
@@ -142,24 +157,38 @@ pub enum Paint {
     HareBrown,
     BirdGrey,
     BirdRed,
-    RaptorBrown,
     DuckBrown,
     DuckGreen,
     Bill,
+    NanduGrey,
+    MulitaShell,
+    PeludoShell,
+    /// La piel rosada grisácea de la cara y las patas de los armadillos.
+    ArmadilloSkin,
+    VizcachaGrey,
+    NutriaBrown,
+    /// Los incisivos anaranjados de la nutria.
+    Incisor,
 }
 
 impl Paint {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 16] = [
         Self::White,
         Self::Black,
         Self::Horn,
         Self::HareBrown,
         Self::BirdGrey,
         Self::BirdRed,
-        Self::RaptorBrown,
         Self::DuckBrown,
         Self::DuckGreen,
         Self::Bill,
+        Self::NanduGrey,
+        Self::MulitaShell,
+        Self::PeludoShell,
+        Self::ArmadilloSkin,
+        Self::VizcachaGrey,
+        Self::NutriaBrown,
+        Self::Incisor,
     ];
 
     fn color(self) -> Color {
@@ -170,10 +199,16 @@ impl Paint {
             Self::HareBrown => [0.42, 0.33, 0.22],
             Self::BirdGrey => [0.5, 0.48, 0.44],
             Self::BirdRed => [0.62, 0.18, 0.14],
-            Self::RaptorBrown => [0.33, 0.24, 0.15],
             Self::DuckBrown => [0.36, 0.28, 0.18],
             Self::DuckGreen => [0.08, 0.2, 0.12],
             Self::Bill => [0.55, 0.45, 0.12],
+            Self::NanduGrey => [0.5, 0.47, 0.41],
+            Self::MulitaShell => [0.3, 0.26, 0.22],
+            Self::PeludoShell => [0.42, 0.33, 0.23],
+            Self::ArmadilloSkin => [0.62, 0.52, 0.45],
+            Self::VizcachaGrey => [0.48, 0.47, 0.44],
+            Self::NutriaBrown => [0.3, 0.22, 0.15],
+            Self::Incisor => [0.82, 0.46, 0.12],
         };
         Color::srgb(r, g, b)
     }
@@ -233,31 +268,55 @@ impl Animal {
     pub fn joints(self) -> Vec<(Joint, Vec3)> {
         let v = Vec3::new;
         match self {
-            // Se dibuja a partir de un modelo (ver `livestock`).
-            Self::Cow(_) | Self::Bull(_) | Self::Horse(_) => Vec::new(),
+            Self::Nandu => vec![
+                (Joint::Head, v(0.28, 1.0, 0.0)),
+                (Joint::Leg(0), v(0.0, 0.85, -0.1)),
+                (Joint::Leg(1), v(0.0, 0.85, 0.1)),
+            ],
+            Self::Mulita | Self::Peludo => {
+                let s = self.armadillo_scale();
+                [
+                    (Joint::Head, v(0.15, 0.09, 0.0)),
+                    (Joint::Leg(0), v(0.08, 0.07, -0.07)),
+                    (Joint::Leg(1), v(0.08, 0.07, 0.07)),
+                    (Joint::Leg(2), v(-0.08, 0.07, -0.07)),
+                    (Joint::Leg(3), v(-0.08, 0.07, 0.07)),
+                    (Joint::Tail, v(-0.16, 0.08, 0.0)),
+                ]
+                .map(|(j, p)| (j, p * s))
+                .to_vec()
+            }
+            Self::Vizcacha => vec![
+                (Joint::Head, v(0.22, 0.3, 0.0)),
+                (Joint::Leg(0), v(0.14, 0.15, 0.0)),
+                (Joint::Leg(2), v(-0.12, 0.18, 0.0)),
+                (Joint::Tail, v(-0.24, 0.2, 0.0)),
+            ],
+            Self::Nutria => vec![
+                (Joint::Head, v(0.26, 0.05, 0.0)),
+                (Joint::Tail, v(-0.26, 0.0, 0.0)),
+            ],
             Self::Hare => vec![
                 (Joint::Head, v(0.18, 0.27, 0.0)),
                 (Joint::Leg(0), v(0.12, 0.14, 0.0)),
                 (Joint::Leg(2), v(-0.12, 0.14, 0.0)),
             ],
-            Self::Tero | Self::Raptor => {
-                let s = self.bird_scale();
-                [
-                    (Joint::Head, v(0.13, 0.3, 0.0)),
-                    (Joint::Leg(0), v(0.0, 0.15, -0.03)),
-                    (Joint::Leg(1), v(0.0, 0.15, 0.03)),
-                    (Joint::Wing(0), v(0.02, 0.25, -0.06)),
-                    (Joint::Wing(1), v(0.02, 0.25, 0.06)),
-                ]
-                .map(|(j, p)| (j, p * s))
-                .to_vec()
-            }
+            Self::Tero => vec![
+                (Joint::Head, v(0.13, 0.3, 0.0)),
+                (Joint::Leg(0), v(0.0, 0.15, -0.03)),
+                (Joint::Leg(1), v(0.0, 0.15, 0.03)),
+                (Joint::Wing(0), v(0.02, 0.25, -0.06)),
+                (Joint::Wing(1), v(0.02, 0.25, 0.06)),
+            ],
             Self::Duck => vec![(Joint::Head, v(0.15, 0.15, 0.0))],
+            // Se dibuja a partir de un modelo (ver `livestock`).
+            _ => Vec::new(),
         }
     }
 
-    fn bird_scale(self) -> f32 {
-        if self == Self::Raptor { 2.4 } else { 1.0 }
+    /// Cuánto más grande que una mulita es el animal (el peludo).
+    fn armadillo_scale(self) -> f32 {
+        if self == Self::Peludo { 1.35 } else { 1.0 }
     }
 
     /// Todas las piezas rígidas.
@@ -275,7 +334,6 @@ impl Animal {
         use Paint as P;
         use Shape as S;
         match self {
-            Self::Cow(_) | Self::Bull(_) | Self::Horse(_) => {}
             Self::Hare => {
                 add(
                     None,
@@ -331,17 +389,8 @@ impl Animal {
                     [0.14, 0.04, 0.1],
                 );
             }
-            Self::Tero | Self::Raptor => {
-                let raptor = self == Self::Raptor;
-                let (back, belly, wing, legs) = if raptor {
-                    (P::RaptorBrown, P::Horn, P::RaptorBrown, P::Bill)
-                } else {
-                    (P::BirdGrey, P::Black, P::BirdGrey, P::BirdRed)
-                };
-                let s = self.bird_scale();
-                let mut add = |joint, shape, paint, at: [f32; 3], size: [f32; 3]| {
-                    add(joint, shape, paint, at.map(|c| c * s), size.map(|c| c * s));
-                };
+            Self::Tero => {
+                let (back, belly, wing, legs) = (P::BirdGrey, P::Black, P::BirdGrey, P::BirdRed);
                 add(None, S::Ball, back, [0.0, 0.24, 0.0], [0.3, 0.14, 0.13]);
                 add(None, S::Ball, belly, [0.07, 0.21, 0.0], [0.13, 0.1, 0.11]);
                 add(
@@ -411,6 +460,236 @@ impl Animal {
                     [0.07, 0.02, 0.04],
                 );
             }
+            Self::Nandu => {
+                // Cuerpo de plumas sueltas sobre patas largas, cuello largo y
+                // cabeza chica.
+                add(
+                    None,
+                    S::Ball,
+                    P::NanduGrey,
+                    [0.0, 0.98, 0.0],
+                    [0.7, 0.48, 0.46],
+                );
+                add(
+                    None,
+                    S::Ball,
+                    P::NanduGrey,
+                    [-0.3, 0.92, 0.0],
+                    [0.3, 0.3, 0.36],
+                );
+                let head = Some(Joint::Head);
+                add(
+                    head,
+                    S::Rod,
+                    P::BirdGrey,
+                    [0.04, 0.24, 0.0],
+                    [0.07, 0.5, 0.07],
+                );
+                add(head, S::Rod, P::Black, [0.02, 0.06, 0.0], [0.1, 0.14, 0.1]);
+                add(
+                    head,
+                    S::Ball,
+                    P::BirdGrey,
+                    [0.08, 0.5, 0.0],
+                    [0.12, 0.08, 0.08],
+                );
+                add(
+                    head,
+                    S::Block,
+                    P::Horn,
+                    [0.16, 0.49, 0.0],
+                    [0.07, 0.02, 0.03],
+                );
+                for k in 0..2 {
+                    let leg = Some(Joint::Leg(k));
+                    add(leg, S::Rod, P::Horn, [0.0, -0.42, 0.0], [0.05, 0.85, 0.05]);
+                    add(
+                        leg,
+                        S::Block,
+                        P::Horn,
+                        [0.05, -0.84, 0.0],
+                        [0.14, 0.02, 0.06],
+                    );
+                }
+            }
+            Self::Mulita | Self::Peludo => {
+                let shell = if self == Self::Mulita {
+                    P::MulitaShell
+                } else {
+                    P::PeludoShell
+                };
+                let s = self.armadillo_scale();
+                let mut add = |joint, shape, paint, at: [f32; 3], size: [f32; 3]| {
+                    add(joint, shape, paint, at.map(|c| c * s), size.map(|c| c * s));
+                };
+                // El caparazón, con sus bandas, y la coraza de la cabeza.
+                add(None, S::Ball, shell, [0.0, 0.11, 0.0], [0.34, 0.17, 0.2]);
+                for x in [-0.03, 0.03] {
+                    add(
+                        None,
+                        S::Block,
+                        P::Black,
+                        [x, 0.19, 0.0],
+                        [0.012, 0.02, 0.15],
+                    );
+                }
+                let head = Some(Joint::Head);
+                add(
+                    head,
+                    S::Ball,
+                    P::ArmadilloSkin,
+                    [0.05, -0.02, 0.0],
+                    [0.13, 0.06, 0.06],
+                );
+                add(head, S::Ball, shell, [0.02, 0.01, 0.0], [0.08, 0.04, 0.06]);
+                for z in [-0.02, 0.02] {
+                    add(
+                        head,
+                        S::Block,
+                        P::ArmadilloSkin,
+                        [-0.01, 0.04, z],
+                        [0.015, 0.04, 0.015],
+                    );
+                }
+                add(
+                    Some(Joint::Tail),
+                    S::Ball,
+                    shell,
+                    [-0.08, -0.03, 0.0],
+                    [0.18, 0.03, 0.03],
+                );
+                for k in 0..4 {
+                    let leg = Some(Joint::Leg(k));
+                    add(
+                        leg,
+                        S::Block,
+                        P::ArmadilloSkin,
+                        [0.0, -0.04, 0.0],
+                        [0.03, 0.07, 0.03],
+                    );
+                }
+            }
+            Self::Vizcacha => {
+                // Gris, con la cara blanca cruzada por una franja negra.
+                add(
+                    None,
+                    S::Ball,
+                    P::VizcachaGrey,
+                    [0.0, 0.22, 0.0],
+                    [0.42, 0.28, 0.26],
+                );
+                add(
+                    None,
+                    S::Block,
+                    P::White,
+                    [0.06, 0.12, 0.0],
+                    [0.2, 0.04, 0.16],
+                );
+                let head = Some(Joint::Head);
+                add(
+                    head,
+                    S::Ball,
+                    P::VizcachaGrey,
+                    [0.05, 0.0, 0.0],
+                    [0.17, 0.14, 0.15],
+                );
+                add(
+                    head,
+                    S::Block,
+                    P::White,
+                    [0.11, -0.02, 0.0],
+                    [0.05, 0.06, 0.12],
+                );
+                add(
+                    head,
+                    S::Block,
+                    P::Black,
+                    [0.1, 0.02, 0.0],
+                    [0.05, 0.03, 0.155],
+                );
+                for z in [-0.04, 0.04] {
+                    add(
+                        head,
+                        S::Block,
+                        P::VizcachaGrey,
+                        [0.0, 0.08, z],
+                        [0.04, 0.07, 0.015],
+                    );
+                }
+                add(
+                    Some(Joint::Tail),
+                    S::Ball,
+                    P::Black,
+                    [-0.06, 0.0, 0.0],
+                    [0.14, 0.05, 0.05],
+                );
+                add(
+                    Some(Joint::Leg(0)),
+                    S::Block,
+                    P::VizcachaGrey,
+                    [0.0, -0.07, 0.0],
+                    [0.04, 0.14, 0.1],
+                );
+                let hind = Some(Joint::Leg(2));
+                add(
+                    hind,
+                    S::Ball,
+                    P::VizcachaGrey,
+                    [0.0, 0.0, 0.0],
+                    [0.18, 0.16, 0.24],
+                );
+                add(
+                    hind,
+                    S::Block,
+                    P::VizcachaGrey,
+                    [0.05, -0.15, 0.0],
+                    [0.15, 0.04, 0.12],
+                );
+            }
+            Self::Nutria => {
+                // Casi sumergida: el lomo, la cabeza con sus incisivos
+                // anaranjados y la cola.
+                add(
+                    None,
+                    S::Ball,
+                    P::NutriaBrown,
+                    [0.0, 0.02, 0.0],
+                    [0.5, 0.18, 0.26],
+                );
+                let head = Some(Joint::Head);
+                add(
+                    head,
+                    S::Ball,
+                    P::NutriaBrown,
+                    [0.04, 0.0, 0.0],
+                    [0.16, 0.11, 0.12],
+                );
+                add(
+                    head,
+                    S::Block,
+                    P::Incisor,
+                    [0.12, -0.03, 0.0],
+                    [0.015, 0.03, 0.03],
+                );
+                for z in [-0.04, 0.04] {
+                    add(
+                        head,
+                        S::Block,
+                        P::NutriaBrown,
+                        [-0.01, 0.06, z],
+                        [0.03, 0.03, 0.02],
+                    );
+                }
+                add(
+                    Some(Joint::Tail),
+                    S::Block,
+                    P::Black,
+                    [-0.14, -0.02, 0.0],
+                    [0.3, 0.04, 0.05],
+                );
+            }
+            // Se dibuja a partir de un modelo (ver `livestock`).
+            _ => {}
         }
         parts
     }
@@ -418,7 +697,7 @@ impl Animal {
     /// El rango compartido dentro del cual se dibujan sus mallas.
     pub fn range(self) -> VisibilityRange {
         let [buildings, props, _] = crate::settlement::ranges();
-        if self == Self::Raptor {
+        if matches!(self, Self::Chimango | Self::Carancho) {
             buildings
         } else {
             props
@@ -529,6 +808,9 @@ fn attach_animals(
 fn strides_per_meter(animal: Animal) -> f32 {
     match animal {
         Animal::Hare => 0.6,
+        Animal::Vizcacha => 1.0,
+        Animal::Nandu => 0.8,
+        Animal::Mulita | Animal::Peludo => 4.0,
         _ => 2.0,
     }
 }
@@ -587,7 +869,9 @@ pub fn joint_pose(
     match joint {
         Joint::Head => {
             let angle = match gait {
-                Gait::Graze if animal == Animal::Tero => -0.9 * (clock * 1.7).sin().max(0.0),
+                Gait::Graze if matches!(animal, Animal::Tero | Animal::Nandu) => {
+                    -0.9 * (clock * 1.7).sin().max(0.0)
+                }
                 Gait::Graze => -1.0 + 0.08 * (clock * 2.0).sin(),
                 Gait::Walk => -0.25 + 0.08 * (2.0 * phase).sin(),
                 Gait::Swim => 0.06 * (clock * 1.3).sin(),
@@ -604,8 +888,11 @@ pub fn joint_pose(
             }
             // Las patas de un ave, por turnos; el salto de una liebre: los
             // pares juntos.
+            // El trote de un armadillo: los pares en diagonal juntos.
             let offset = match (animal, k) {
-                (Animal::Hare, k) => (k / 2) as f32 * std::f32::consts::PI,
+                (Animal::Hare | Animal::Vizcacha, k) => (k / 2) as f32 * std::f32::consts::PI,
+                (Animal::Mulita | Animal::Peludo, 0 | 3) => 0.0,
+                (Animal::Mulita | Animal::Peludo, _) => std::f32::consts::PI,
                 (_, 0) => 0.0,
                 _ => std::f32::consts::PI,
             };
@@ -634,10 +921,19 @@ mod tests {
     use super::*;
 
     /// Las especies dibujadas a partir de piezas rígidas.
-    const RIGID: [Animal; 4] = [Animal::Hare, Animal::Tero, Animal::Raptor, Animal::Duck];
+    const RIGID: [Animal; 8] = [
+        Animal::Hare,
+        Animal::Tero,
+        Animal::Duck,
+        Animal::Nandu,
+        Animal::Mulita,
+        Animal::Peludo,
+        Animal::Vizcacha,
+        Animal::Nutria,
+    ];
 
     /// Las especies dibujadas a partir de modelos.
-    const LIVESTOCK: [Animal; 7] = [
+    const LIVESTOCK: [Animal; 13] = [
         Animal::Cow(CowCoat::Hereford),
         Animal::Cow(CowCoat::Angus),
         Animal::Cow(CowCoat::Overo),
@@ -645,6 +941,12 @@ mod tests {
         Animal::Horse(Coat::Zaino),
         Animal::Horse(Coat::Overo),
         Animal::Horse(Coat::Bayo),
+        Animal::Zorro,
+        Animal::GatoMontes,
+        Animal::Puma,
+        Animal::Yaguarete,
+        Animal::Chimango,
+        Animal::Carancho,
     ];
 
     fn triangles(animal: Animal) -> usize {
@@ -660,7 +962,7 @@ mod tests {
         for animal in RIGID {
             let (tris, parts) = (triangles(animal), animal.parts().len());
             let budget = match animal {
-                Animal::Duck => 300,
+                Animal::Duck | Animal::Nutria => 300,
                 _ => 500,
             };
             println!("{animal:?}: {tris} triangles, {parts} parts");
@@ -718,7 +1020,11 @@ mod tests {
                 ranges.push(range);
             }
         }
-        assert_eq!(ranges.len(), 2, "props' and buildings'");
+        assert_eq!(ranges.len(), 1, "props'");
+        // Las rapaces, en lo alto, se ven hasta el rango de los edificios.
+        for raptor in [Animal::Chimango, Animal::Carancho] {
+            assert!(raptor.range() == shared[0]);
+        }
         // Cada vaca, toro y caballo espera su modelo (aquí no se carga
         // ninguno).
         let mut models = app.world_mut().query::<(&LivestockModel, &ChildOf)>();
@@ -739,5 +1045,10 @@ mod tests {
         let up = joint_pose(Animal::Tero, Gait::Fly, Joint::Wing(1), FRAC_PI_2, 0.0).0;
         let down = joint_pose(Animal::Tero, Gait::Fly, Joint::Wing(1), -FRAC_PI_2, 0.0).0;
         assert!(up.angle_between(down) > 1.5, "wings beat");
+        // Un armadillo trota: las patas en diagonal juntas, las de un mismo
+        // lado alternadas.
+        let leg = |k| angle(joint_pose(Animal::Peludo, Gait::Walk, Joint::Leg(k), 1.0, 0.0).0);
+        assert!((leg(0) - leg(3)).abs() < 1e-6 && (leg(1) - leg(2)).abs() < 1e-6);
+        assert!(leg(0) * leg(2) < 0.0, "a trot");
     }
 }

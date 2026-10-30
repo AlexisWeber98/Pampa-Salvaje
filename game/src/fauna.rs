@@ -4,7 +4,8 @@
 //! replanifica cada vez que el jugador entra en otro chunk, para que los chunks
 //! más cercanos ocupen el lugar primero), los hace avanzar con el jugador como
 //! la amenaza que esquivan, y copia su estado en las entidades que dibuja
-//! render ([`Animal`]).
+//! render ([`Animal`]). Los felinos se siembran solo en el monte de la flora
+//! del mundo ([`WorldFlora`]); sin flora no hay felinos.
 //!
 //! El ganado es un cuerpo blando: el jugador se mantiene apartado de él y lo
 //! aparta al caminar. Los caballos que están en los corrales son [`Mountable`]
@@ -17,10 +18,10 @@ use std::collections::{BTreeMap, HashSet};
 use bevy::prelude::*;
 use pampa_core::fauna::caps;
 use pampa_core::{
-    ChunkCoord, CowState, Duck, FaunaSite, Flock, Hare, HareState, Herd, MAX_STEP, Raptor,
-    TetheredHorse, Vec2 as GroundVec2,
+    ChunkCoord, CowState, Critter, CritterKind, CritterState, Duck, FaunaSite, Flock, Hare,
+    HareState, Herd, MAX_STEP, Raptor, RaptorKind, TetheredHorse, Vec2 as GroundVec2,
 };
-use pampa_render::{Animal, AnimalPose, AnimalSeed, Coat, Gait, world_from_ground};
+use pampa_render::{Animal, AnimalPose, AnimalSeed, Coat, Gait, WorldFlora, world_from_ground};
 
 use crate::errand::Mountable;
 use crate::player::{DrivePlayer, GameWorld, Player, drive_player};
@@ -46,28 +47,76 @@ struct ChunkFauna {
     flocks: Vec<(Flock, Vec<Entity>)>,
     raptors: Vec<(Raptor, Entity)>,
     ducks: Vec<(Duck, Entity)>,
+    critters: Vec<(Critter, Entity)>,
+    nutrias: Vec<(Duck, Entity)>,
     /// Cuáles de los animales sembrados del chunk contiene (ver [`Picks`]).
     picks: Picks,
 }
 
 /// Cuáles de los animales sembrados de un chunk se dibujan, por tipo en el
-/// orden de [`Fauna::counts`]: las manadas por id, los caballos de corral por
+/// orden de [`Fauna::all_counts`]: las manadas por id, los caballos de corral por
 /// su huella en planta ([`horse_key`]), el resto por su lugar en la lista
 /// sembrada del chunk. Dos planes con las mismas selecciones contienen
 /// exactamente los mismos animales.
-type Picks = [Vec<u64>; 6];
+type Picks = [Vec<u64>; KINDS];
+
+/// Cuántos tipos de animales se cuentan (ver [`Fauna::all_counts`]).
+pub const KINDS: usize = 12;
+
+/// El lugar de los animales de suelo de `kind` en [`Fauna::all_counts`]: zorros,
+/// ñandúes, armadillos, vizcachas y felinos.
+fn critter_slot(kind: CritterKind) -> usize {
+    match kind {
+        CritterKind::Zorro => 6,
+        CritterKind::Nandu => 7,
+        CritterKind::Mulita | CritterKind::Peludo => 8,
+        CritterKind::Vizcacha => 9,
+        CritterKind::GatoMontes | CritterKind::Puma | CritterKind::Yaguarete => 10,
+    }
+}
+
+/// Cómo se dibuja un animal de suelo de `kind`.
+fn critter_animal(kind: CritterKind) -> Animal {
+    match kind {
+        CritterKind::Zorro => Animal::Zorro,
+        CritterKind::Nandu => Animal::Nandu,
+        CritterKind::Mulita => Animal::Mulita,
+        CritterKind::Peludo => Animal::Peludo,
+        CritterKind::Vizcacha => Animal::Vizcacha,
+        CritterKind::GatoMontes => Animal::GatoMontes,
+        CritterKind::Puma => Animal::Puma,
+        CritterKind::Yaguarete => Animal::Yaguarete,
+    }
+}
+
+/// Una semilla estable a partir de un lugar sembrado, para desincronizar los
+/// clips de los animales de modelo.
+fn spot_seed(p: GroundVec2) -> u32 {
+    p.x.to_bits() ^ p.y.to_bits().rotate_left(16)
+}
 
 impl ChunkFauna {
-    /// Vacas, caballos, liebres, teros, rapaces y patos.
-    fn counts(&self) -> [usize; 6] {
-        [
+    /// Vacas, caballos, liebres, teros, rapaces, patos, zorros, ñandúes,
+    /// armadillos, vizcachas, felinos y nutrias.
+    fn counts(&self) -> [usize; KINDS] {
+        let mut counts = [
             self.herds.iter().map(|h| h.0.cows.len()).sum(),
             self.horses.len(),
             self.hares.len(),
             self.flocks.iter().map(|f| f.1.len()).sum(),
             self.raptors.len(),
             self.ducks.len(),
-        ]
+            0,
+            0,
+            0,
+            0,
+            0,
+            self.nutrias.len(),
+        ];
+        for (critter, _) in &self.critters {
+            counts[critter_slot(critter.kind)] += 1;
+        }
+        counts
     }
 
     fn entities(&self) -> impl Iterator<Item = Entity> + '_ {
@@ -79,6 +128,8 @@ impl ChunkFauna {
             .chain(self.hares.iter().map(|h| h.1))
             .chain(self.raptors.iter().map(|r| r.1))
             .chain(self.ducks.iter().map(|d| d.1))
+            .chain(self.critters.iter().map(|c| c.1))
+            .chain(self.nutrias.iter().map(|n| n.1))
     }
 }
 
@@ -93,9 +144,12 @@ pub struct Fauna {
 }
 
 impl Fauna {
-    /// Vacas, caballos, liebres, teros, rapaces y patos vivos ahora.
-    pub fn counts(&self) -> [usize; 6] {
-        self.chunks.values().fold([0; 6], |mut sum, c| {
+    /// Vacas, caballos, liebres, teros, rapaces, patos, zorros, ñandúes,
+    /// armadillos (mulitas y peludos), vizcachas, felinos (gatos monteses,
+    /// pumas y yaguaretés) y nutrias vivos ahora (lo que muestra el comando
+    /// `fauna` de la consola).
+    pub fn all_counts(&self) -> [usize; KINDS] {
+        self.chunks.values().fold([0; KINDS], |mut sum, c| {
             for (s, n) in sum.iter_mut().zip(c.counts()) {
                 *s += n;
             }
@@ -104,19 +158,25 @@ impl Fauna {
     }
 }
 
-/// El máximo de cada tipo, en el orden de [`Fauna::counts`].
-pub const CAPS: [usize; 6] = [
+/// El máximo de cada tipo, en el orden de [`Fauna::all_counts`].
+pub const CAPS: [usize; KINDS] = [
     caps::COWS,
     caps::HORSES,
     caps::HARES,
     caps::TEROS,
     caps::RAPTORS,
     caps::DUCKS,
+    caps::ZORROS,
+    caps::NANDUS,
+    caps::ARMADILLOS,
+    caps::VIZCACHAS,
+    caps::FELINES,
+    caps::NUTRIAS,
 ];
 
 /// Los límites vigentes: [`CAPS`] salvo que un test los baje.
 #[derive(Resource, Debug, Clone, Copy, PartialEq)]
-pub struct FaunaCaps(pub [usize; 6]);
+pub struct FaunaCaps(pub [usize; KINDS]);
 
 impl Default for FaunaCaps {
     fn default() -> Self {
@@ -154,6 +214,14 @@ impl Plugin for FaunaPlugin {
 type Players<'w, 's> =
     Query<'w, 's, (&'static mut Player, &'static mut Transform), Without<OnTrain>>;
 
+/// Lo que limita el plan de [`stream_fauna`]: los caballos todavía parados en
+/// sus corrales, los topes y el monte de la flora.
+type Limits<'w, 's> = (
+    Query<'w, 's, (), With<Mountable>>,
+    Res<'w, FaunaCaps>,
+    Option<Res<'w, WorldFlora>>,
+);
+
 /// Replanifica los animales alrededor del jugador cada vez que entra en otro
 /// chunk: los chunks dentro de [`RADIUS`], los más cercanos primero, toman cada
 /// uno lo que de lo suyo todavía entra bajo los [`CAPS`]. Un chunk cargado cuya
@@ -166,7 +234,7 @@ fn stream_fauna(
     mut fauna: ResMut<Fauna>,
     mut world: ResMut<GameWorld>,
     players: Query<&Player>,
-    (standing, caps): (Query<(), With<Mountable>>, Res<FaunaCaps>),
+    (standing, caps, flora): Limits,
 ) {
     let (Some(site), Ok(player)) = (site, players.single()) else {
         return;
@@ -194,8 +262,12 @@ fn stream_fauna(
     wanted.sort_by_key(|c| c.distance_squared(center));
     let mut room = caps.0;
     let mut plan = BTreeMap::new();
+    let monte = |p| flora.as_ref().map_or(0.0, |f| f.0.monte(p));
     for &coord in &wanted {
-        plan.insert(coord, select(&site.0, coord, &mut room, &fauna.taken));
+        plan.insert(
+            coord,
+            select(&site.0, coord, &mut room, &fauna.taken, monte),
+        );
     }
     let stale: Vec<ChunkCoord> = fauna
         .chunks
@@ -229,16 +301,20 @@ struct Share {
     flocks: Vec<Flock>,
     raptors: Vec<Raptor>,
     ducks: Vec<Duck>,
+    critters: Vec<Critter>,
+    nutrias: Vec<Duck>,
     picks: Picks,
 }
 
 /// Los animales de `coord` que entran en el lugar `room` que queda bajo los
-/// límites (solo manadas y bandadas enteras), sin los caballos `taken`.
+/// límites (solo manadas y bandadas enteras), sin los caballos `taken`, con
+/// `monte` la parte de monte de cada lugar (`FloraSite::monte`).
 fn select(
     site: &FaunaSite,
     coord: ChunkCoord,
-    room: &mut [usize; 6],
+    room: &mut [usize; KINDS],
     taken: &HashSet<(u32, u32)>,
+    monte: impl Fn(GroundVec2) -> f32,
 ) -> Share {
     /// Los `items` que entran en `room`, en orden, con sus selecciones.
     fn fits<T>(
@@ -269,7 +345,30 @@ fn select(
         .filter(|h| !taken.contains(&horse_key(h)))
         .collect();
     let mut picks = Picks::default();
-    let [cows, horses, hares, teros, raptors, ducks] = &mut picks;
+    // Cada animal de suelo entra si queda lugar para su tipo.
+    let mut critters = Vec::new();
+    for (k, critter) in site.critters_in(coord, monte).into_iter().enumerate() {
+        let slot = critter_slot(critter.kind);
+        if room[slot] > 0 {
+            room[slot] -= 1;
+            picks[slot].push(k as u64);
+            critters.push(critter);
+        }
+    }
+    let [
+        cows,
+        horses,
+        hares,
+        teros,
+        raptors,
+        ducks,
+        _,
+        _,
+        _,
+        _,
+        _,
+        nutrias,
+    ] = &mut picks;
     let herd_id = |_: usize, h: &Herd| u64::from(h.id);
     let herds = fits(
         site.herds_in(coord),
@@ -293,6 +392,8 @@ fn select(
         ),
         raptors: fits(site.raptors_in(coord), |_| 1, index, &mut room[4], raptors),
         ducks: fits(site.ducks_in(coord), |_| 1, index, &mut room[5], ducks),
+        critters,
+        nutrias: fits(site.nutrias_in(coord), |_| 1, index, &mut room[11], nutrias),
         picks,
     }
 }
@@ -300,7 +401,7 @@ fn select(
 /// Crea las entidades que dibujan la parte `share` de un chunk; sus caballos de
 /// corral quedan como obstáculos.
 fn spawn_share(commands: &mut Commands, share: Share, world: &mut GameWorld) -> ChunkFauna {
-    // Solo los modelos del ganado leen la semilla (sus esperas y
+    // Solo los animales de modelo leen la semilla (sus esperas y
     // desplazamientos).
     let mut spawn = |animal: Animal, seed: u32| {
         commands
@@ -335,10 +436,23 @@ fn spawn_share(commands: &mut Commands, share: Share, world: &mut GameWorld) -> 
         chunk.flocks.push((flock, birds));
     }
     for raptor in share.raptors {
-        chunk.raptors.push((raptor, spawn(Animal::Raptor, 0)));
+        let animal = match raptor.kind {
+            RaptorKind::Chimango => Animal::Chimango,
+            RaptorKind::Carancho => Animal::Carancho,
+        };
+        let seed = spot_seed(raptor.center);
+        chunk.raptors.push((raptor, spawn(animal, seed)));
     }
     for duck in share.ducks {
         chunk.ducks.push((duck, spawn(Animal::Duck, 0)));
+    }
+    for critter in share.critters {
+        let seed = spot_seed(critter.position);
+        let entity = spawn(critter_animal(critter.kind), seed);
+        chunk.critters.push((critter, entity));
+    }
+    for nutria in share.nutrias {
+        chunk.nutrias.push((nutria, spawn(Animal::Nutria, 0)));
     }
     for horse in share.horses {
         world.0.obstacles.push(horse.footprint);
@@ -383,8 +497,9 @@ fn step_fauna(
                 bodies.extend(herd.bodies());
             }
         }
-        // Las liebres corren y los teros se posan solo sobre pasto abierto (ver
-        // `FaunaSite::grazeable`), dentro de su propio chunk.
+        // Las liebres y los animales de suelo corren y los teros se posan solo
+        // sobre pasto abierto (ver `FaunaSite::grazeable`), dentro de su propio
+        // chunk.
         let open = |p| site.0.grazeable(p);
         chunk
             .hares
@@ -394,8 +509,12 @@ fn step_fauna(
             .flocks
             .iter_mut()
             .for_each(|f| f.0.step(dt, threat, open));
+        chunk
+            .critters
+            .iter_mut()
+            .for_each(|c| c.0.step(dt, threat, open));
         chunk.raptors.iter_mut().for_each(|r| r.0.step(dt));
-        for (duck, _) in &mut chunk.ducks {
+        for (duck, _) in chunk.ducks.iter_mut().chain(&mut chunk.nutrias) {
             if let Some(lagoon) = site.0.lagoons().get(duck.lagoon) {
                 duck.step(dt, lagoon, threat);
             }
@@ -484,7 +603,23 @@ fn place_fauna(
             };
             put(*e, world_from_ground(p, ground(p) + raptor.altitude), pose);
         }
-        for (duck, e) in &chunk.ducks {
+        for (critter, e) in &chunk.critters {
+            let gait = match critter.state {
+                CritterState::Rest if critter.kind == CritterKind::Nandu => Gait::Graze,
+                CritterState::Rest | CritterState::Den => Gait::Stand,
+                CritterState::Walk => Gait::Walk,
+                CritterState::Flee => Gait::Run,
+            };
+            let pose = AnimalPose {
+                heading: critter.heading,
+                gait,
+                speed: critter.speed,
+                bank: 0.0,
+            };
+            let p = critter.position;
+            put(*e, world_from_ground(p, ground(p) + critter.lift()), pose);
+        }
+        for (duck, e) in chunk.ducks.iter().chain(&chunk.nutrias) {
             let level = site.0.lagoons().get(duck.lagoon).map_or(0.0, |l| l.level);
             let pose = AnimalPose {
                 heading: duck.heading,
@@ -515,6 +650,7 @@ mod tests {
             )))
             .insert_resource(GameWorld(laid.world.clone()))
             .insert_resource(WorldFauna(laid.fauna.clone()))
+            .insert_resource(WorldFlora(laid.flora.clone()))
             .add_plugins(FaunaPlugin);
         let rider = Rider::on_foot(at, pampa_core::Heading::default(), &laid.world);
         app.world_mut()
@@ -561,9 +697,10 @@ mod tests {
         }
         for (name, at) in spots {
             moved(&mut app, at);
-            let counts = app.world().resource::<Fauna>().counts();
+            let counts = app.world().resource::<Fauna>().all_counts();
             println!(
-                "fauna near {name} {at:?}: {counts:?} (cows, horses, hares, teros, raptors, ducks)"
+                "fauna near {name} {at:?}: {counts:?} (cows, horses, hares, teros, raptors, ducks, \
+                 zorros, ñandúes, armadillos, vizcachas, felines, nutrias)"
             );
             for (n, cap) in counts.iter().zip(CAPS) {
                 assert!(*n <= cap, "{counts:?} over {CAPS:?}");
@@ -576,17 +713,78 @@ mod tests {
                 .filter(|a| matches!(a, Animal::Horse(_)))
                 .count();
             assert_eq!(drawn, counts.iter().sum::<usize>());
+            // Cada tipo vivo se dibuja como su especie.
+            let animals: Vec<Animal> = app
+                .world_mut()
+                .query::<&Animal>()
+                .iter(app.world())
+                .copied()
+                .collect();
+            let of = |kinds: &[Animal]| animals.iter().filter(|a| kinds.contains(a)).count();
+            assert_eq!(of(&[Animal::Zorro]), counts[6]);
+            assert_eq!(of(&[Animal::Nandu]), counts[7]);
+            assert_eq!(of(&[Animal::Mulita, Animal::Peludo]), counts[8]);
+            assert_eq!(of(&[Animal::Vizcacha]), counts[9]);
+            assert_eq!(of(&[Animal::Nutria]), counts[11]);
+            assert_eq!(of(&[Animal::Chimango, Animal::Carancho]), counts[4]);
             assert_eq!(horses, counts[1], "corral horses are fauna");
             match name {
                 "herds" => assert!(counts[0] > 0),
-                "lagoon" => assert!(counts[5] > 0, "ducks on the lagoon"),
+                "lagoon" => assert!(counts[5] > 0 && counts[11] > 0, "ducks and nutrias"),
                 _ => assert!(counts[1] > 0, "horses in the corral"),
             }
         }
         // Lejos, no queda nada de lo que estaba cargado antes.
         moved(&mut app, GroundVec2::new(8000.0, 8000.0));
-        let counts = app.world().resource::<Fauna>().counts();
+        let counts = app.world().resource::<Fauna>().all_counts();
         assert_eq!(counts[0..2], [0, 0], "{counts:?}");
+    }
+
+    #[test]
+    fn wild_ground_animals_stream_in_their_habitat_and_felines_only_in_the_monte() {
+        let laid = crate::shipped_world::laid();
+        let (mut app, site) = app(GroundVec2::ZERO);
+        let config = site.config();
+        let monte = |p| laid.flora.monte(p);
+        let reach = (config.half_extent / config.chunk_size) as i32;
+        // El chunk con un felino más cercano al centro del mundo.
+        let den = config
+            .chunks_near(GroundVec2::ZERO, reach)
+            .into_iter()
+            .find(|&c| site.critters_in(c, monte).iter().any(|k| k.kind.feline()))
+            .expect("a feline in some monte");
+        moved(&mut app, den.center(config.chunk_size));
+        let counts = app.world().resource::<Fauna>().all_counts();
+        println!("fauna near the monte {den:?}: {counts:?}");
+        for (n, cap) in counts.iter().zip(CAPS) {
+            assert!(*n <= cap, "{counts:?} over {CAPS:?}");
+        }
+        assert!(counts[10] > 0, "a feline");
+        let drawn: Vec<Animal> = app
+            .world_mut()
+            .query::<&Animal>()
+            .iter(app.world())
+            .copied()
+            .collect();
+        let of = |kinds: &[Animal]| drawn.iter().filter(|a| kinds.contains(a)).count();
+        let felines = [Animal::GatoMontes, Animal::Puma, Animal::Yaguarete];
+        assert_eq!(of(&felines), counts[10]);
+        // Cada animal de suelo vivo está sobre pasto abierto, y los felinos en
+        // el monte.
+        let fauna = app.world().resource::<Fauna>();
+        for chunk in fauna.chunks.values() {
+            for (critter, _) in &chunk.critters {
+                assert!(site.grazeable(critter.position));
+                if critter.kind.feline() {
+                    assert!(monte(critter.position) >= FaunaSite::MONTE);
+                }
+            }
+        }
+        // Sin flora no hay monte, ni felinos.
+        app.world_mut().remove_resource::<WorldFlora>();
+        moved(&mut app, GroundVec2::new(8000.0, 8000.0));
+        moved(&mut app, den.center(config.chunk_size));
+        assert_eq!(app.world().resource::<Fauna>().all_counts()[10], 0);
     }
 
     #[test]

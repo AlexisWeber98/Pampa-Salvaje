@@ -55,7 +55,8 @@ pub use clock::{BASE_RATE, DAY_REAL_SECONDS, DAY_SECONDS, GameClock, TimeOfDay};
 pub use collision::{Aabb, Body, Circle, SideObstacle};
 pub use errand::{Errand, ErrandEvent, ErrandStage, Interaction, Npc, Standing};
 pub use fauna::{
-    Cow, CowCoat, CowState, Duck, FaunaSite, Flock, FlockState, Hare, HareState, Herd, Raptor,
+    Cow, CowCoat, CowState, Critter, CritterKind, CritterState, Duck, FaunaSite, Flock, FlockState,
+    Hare, HareState, Herd, Raptor, RaptorKind,
 };
 pub use fence::{FenceLayout, FenceRun, Frontage, Gate, Opening, OpeningKind};
 pub use flora::{ChunkFlora, FloraSite, Shrub, ShrubKind, Species, Tree, Tuft, TuftKind};

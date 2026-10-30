@@ -489,10 +489,27 @@ fn run_entered(
         let rider = &mut player.rider;
         match command {
             Command::Help => HELP.iter().for_each(|h| console.print(*h)),
-            Command::Fauna => match fauna.as_deref().map(crate::fauna::Fauna::counts) {
-                Some([cows, horses, hares, teros, raptors, ducks]) => console.print(format!(
+            Command::Fauna => match fauna.as_deref().map(crate::fauna::Fauna::all_counts) {
+                Some(
+                    [
+                        cows,
+                        horses,
+                        hares,
+                        teros,
+                        raptors,
+                        ducks,
+                        foxes,
+                        rheas,
+                        armadillos,
+                        vizcachas,
+                        cats,
+                        coypus,
+                    ],
+                ) => console.print(format!(
                     "cows {cows}, horses {horses}, hares {hares}, teros {teros}, \
-                     raptors {raptors}, ducks {ducks}"
+                     raptors {raptors}, ducks {ducks}, foxes {foxes}, rheas {rheas}, \
+                     armadillos {armadillos}, vizcachas {vizcachas}, cats {cats}, \
+                     coypus {coypus}"
                 )),
                 None => console.print("no fauna"),
             },

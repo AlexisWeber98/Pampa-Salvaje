@@ -199,6 +199,37 @@ También recalcula normales de vértice suaves, porque las exportaciones tienen 
 - Alrededor de cada punto soldado, las caras que comparten una arista que se dobla menos que el ángulo forman un grupo suave, como el auto smooth. Cada vértice recibe las normales de cara de su grupo, ponderadas por el ángulo de la esquina, así que los bordes de los cascos y las puntas de las orejas y los cuernos quedan definidos.
 - Solo cambian los bytes de NORMAL: la cantidad de vértices, las posiciones, las UV, los colores y el tamaño del archivo quedan iguales.
 
+El zorro de poly.pizza (`fox.glb`) se recorta igual, con su propio nombre para la espera con la cabeza baja:
+
+```sh
+python3 -I tools/glbtrim.py ~/Downloads/quaternius/fox/fox.glb \
+  assets/models/fauna/quaternius/fox.glb \
+  --keep Idle Idle_2 Idle_2_HeadLow Eating Walk Gallop Gallop_Jump
+```
+
+## `fbx2glb.py`: de FBX animado a GLB, con Blender
+
+Convierte un FBX animado (el gato y el águila del Animal Pack Vol.2 de Quaternius, que solo trae Blend, FBX y OBJ) en un GLB que el juego carga como los demás modelos de fauna. Es un script de Blender (probado con Blender 5.2), sin tests propios: los tests de `pampa_render::fauna::livestock` comprueban lo que produce. Hay que ejecutarlo headless con `--factory-startup` (sin scripts del archivo), desde fuera de la carpeta que tiene la entrada, y después pasar el resultado por `glbtrim.py`, que ordena los clips y suaviza las normales:
+
+```sh
+blender -b --factory-startup --python tools/fbx2glb.py -- Cat.fbx cat_raw.glb \
+  --turn -90 --rename Walking=Walk
+python3 -I tools/glbtrim.py cat_raw.glb assets/models/fauna/quaternius/cat.glb --keep Idle Walk
+
+blender -b --factory-startup --python tools/fbx2glb.py -- Eagle.fbx eagle_raw.glb \
+  --turn 180 --triangles 2400 --rename Flying=Flap Idle=Perch --rest-clip Glide
+python3 -I tools/glbtrim.py eagle_raw.glb assets/models/fauna/quaternius/eagle.glb --keep Glide Flap
+```
+
+| Opción | Significado |
+|---|---|
+| `--turn DEGREES` | gira el modelo entero alrededor del eje vertical (respecto del origen) y lo aplica, para que mire hacia +Z en glTF como los modelos de FBX2glTF |
+| `--triangles N` | diezma cada mesh hasta unos N triángulos (colapso), antes de que la armadura la deforme |
+| `--rename OLD=NEW` | renombra clips; los nombres `…\|CLIP` de las acciones ya quedan como `CLIP` |
+| `--rest-clip NAME` | agrega un clip quieto de la pose de reposo (las alas abiertas del águila, que está modelada planeando) |
+
+El GLB sale con Y hacia arriba, en unidades del modelo, con skins, cada acción como un clip y materiales lisos (el juego los tiñe por especie).
+
 ## `retarget.py`: clips de animación para los personajes de MakeHuman
 
 Adapta (retargeting) las Universal Animation Library 1 y 2 de Quaternius, CC0 (sus GLB de Godot), al esqueleto `game_engine` de MakeHuman, y escribe los clips que reproduce el juego en un único GLB de animación compartido. Usa la biblioteca estándar de Python 3, más numpy para el paso de despeje del pecho (`--model`), como `mh2gltf.py`. Lee los GLB a través del lector acotado de `glbtrim.py`, trata cada entrada como datos no confiables (sin URIs externas, cada índice, nombre y número comprobados, solo samplers LINEAR y huesos sin escala) y escribe los mismos bytes para las mismas entradas. Hay que ejecutarlo aislado:
