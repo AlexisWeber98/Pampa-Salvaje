@@ -5,9 +5,9 @@
 //! opcionalmente, un [`AnimalSeed`] (su identidad estable); su `Transform`
 //! lleva solo la traslación, sobre el suelo, el agua o en el aire.
 //!
-//! - El ganado (vacas y toros) y los caballos del corral son modelos glTF
-//!   animados con skinning cuyos clips siguen el estado de la fauna (ver
-//!   [`livestock`]).
+//! - El ganado (vacas y toros), los caballos del corral, el zorro, los
+//!   felinos, las rapaces y el ñandú son modelos glTF animados con skinning
+//!   cuyos clips siguen el estado de la fauna (ver [`livestock`]).
 //! - Los animales silvestres pequeños se dibujan como las figuras de los
 //!   vecinos: piezas rígidas low-poly colgadas de unas pocas articulaciones,
 //!   así que la animación solo gira articulaciones (las patas se balancean, las
@@ -54,6 +54,7 @@ pub enum Animal {
     Duck,
     /// El zorro gris (modelo).
     Zorro,
+    /// El ñandú (modelo propio, ver [`livestock`]).
     Nandu,
     /// Los dos armadillos: la mulita, chica y oscura, y el peludo, más grande
     /// y pardo.
@@ -69,8 +70,8 @@ pub enum Animal {
 
 impl Animal {
     /// Si se dibuja a partir de un modelo animado (ver [`livestock`]) en lugar
-    /// de piezas rígidas: el ganado, los caballos, el zorro, los felinos y las
-    /// rapaces.
+    /// de piezas rígidas: el ganado, los caballos, el zorro, los felinos, las
+    /// rapaces y el ñandú.
     pub fn is_livestock(self) -> bool {
         Species::of(self).is_some()
     }
@@ -160,7 +161,6 @@ pub enum Paint {
     DuckBrown,
     DuckGreen,
     Bill,
-    NanduGrey,
     MulitaShell,
     PeludoShell,
     /// La piel rosada grisácea de la cara y las patas de los armadillos.
@@ -172,7 +172,7 @@ pub enum Paint {
 }
 
 impl Paint {
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 15] = [
         Self::White,
         Self::Black,
         Self::Horn,
@@ -182,7 +182,6 @@ impl Paint {
         Self::DuckBrown,
         Self::DuckGreen,
         Self::Bill,
-        Self::NanduGrey,
         Self::MulitaShell,
         Self::PeludoShell,
         Self::ArmadilloSkin,
@@ -202,7 +201,6 @@ impl Paint {
             Self::DuckBrown => [0.36, 0.28, 0.18],
             Self::DuckGreen => [0.08, 0.2, 0.12],
             Self::Bill => [0.55, 0.45, 0.12],
-            Self::NanduGrey => [0.5, 0.47, 0.41],
             Self::MulitaShell => [0.3, 0.26, 0.22],
             Self::PeludoShell => [0.42, 0.33, 0.23],
             Self::ArmadilloSkin => [0.62, 0.52, 0.45],
@@ -268,11 +266,6 @@ impl Animal {
     pub fn joints(self) -> Vec<(Joint, Vec3)> {
         let v = Vec3::new;
         match self {
-            Self::Nandu => vec![
-                (Joint::Head, v(0.28, 1.0, 0.0)),
-                (Joint::Leg(0), v(0.0, 0.85, -0.1)),
-                (Joint::Leg(1), v(0.0, 0.85, 0.1)),
-            ],
             Self::Mulita | Self::Peludo => {
                 let s = self.armadillo_scale();
                 [
@@ -459,58 +452,6 @@ impl Animal {
                     [0.07, 0.03, 0.0],
                     [0.07, 0.02, 0.04],
                 );
-            }
-            Self::Nandu => {
-                // Cuerpo de plumas sueltas sobre patas largas, cuello largo y
-                // cabeza chica.
-                add(
-                    None,
-                    S::Ball,
-                    P::NanduGrey,
-                    [0.0, 0.98, 0.0],
-                    [0.7, 0.48, 0.46],
-                );
-                add(
-                    None,
-                    S::Ball,
-                    P::NanduGrey,
-                    [-0.3, 0.92, 0.0],
-                    [0.3, 0.3, 0.36],
-                );
-                let head = Some(Joint::Head);
-                add(
-                    head,
-                    S::Rod,
-                    P::BirdGrey,
-                    [0.04, 0.24, 0.0],
-                    [0.07, 0.5, 0.07],
-                );
-                add(head, S::Rod, P::Black, [0.02, 0.06, 0.0], [0.1, 0.14, 0.1]);
-                add(
-                    head,
-                    S::Ball,
-                    P::BirdGrey,
-                    [0.08, 0.5, 0.0],
-                    [0.12, 0.08, 0.08],
-                );
-                add(
-                    head,
-                    S::Block,
-                    P::Horn,
-                    [0.16, 0.49, 0.0],
-                    [0.07, 0.02, 0.03],
-                );
-                for k in 0..2 {
-                    let leg = Some(Joint::Leg(k));
-                    add(leg, S::Rod, P::Horn, [0.0, -0.42, 0.0], [0.05, 0.85, 0.05]);
-                    add(
-                        leg,
-                        S::Block,
-                        P::Horn,
-                        [0.05, -0.84, 0.0],
-                        [0.14, 0.02, 0.06],
-                    );
-                }
             }
             Self::Mulita | Self::Peludo => {
                 let shell = if self == Self::Mulita {
@@ -809,7 +750,6 @@ fn strides_per_meter(animal: Animal) -> f32 {
     match animal {
         Animal::Hare => 0.6,
         Animal::Vizcacha => 1.0,
-        Animal::Nandu => 0.8,
         Animal::Mulita | Animal::Peludo => 4.0,
         _ => 2.0,
     }
@@ -869,9 +809,7 @@ pub fn joint_pose(
     match joint {
         Joint::Head => {
             let angle = match gait {
-                Gait::Graze if matches!(animal, Animal::Tero | Animal::Nandu) => {
-                    -0.9 * (clock * 1.7).sin().max(0.0)
-                }
+                Gait::Graze if animal == Animal::Tero => -0.9 * (clock * 1.7).sin().max(0.0),
                 Gait::Graze => -1.0 + 0.08 * (clock * 2.0).sin(),
                 Gait::Walk => -0.25 + 0.08 * (2.0 * phase).sin(),
                 Gait::Swim => 0.06 * (clock * 1.3).sin(),
@@ -921,11 +859,10 @@ mod tests {
     use super::*;
 
     /// Las especies dibujadas a partir de piezas rígidas.
-    const RIGID: [Animal; 8] = [
+    const RIGID: [Animal; 7] = [
         Animal::Hare,
         Animal::Tero,
         Animal::Duck,
-        Animal::Nandu,
         Animal::Mulita,
         Animal::Peludo,
         Animal::Vizcacha,
@@ -933,7 +870,7 @@ mod tests {
     ];
 
     /// Las especies dibujadas a partir de modelos.
-    const LIVESTOCK: [Animal; 13] = [
+    const LIVESTOCK: [Animal; 14] = [
         Animal::Cow(CowCoat::Hereford),
         Animal::Cow(CowCoat::Angus),
         Animal::Cow(CowCoat::Overo),
@@ -947,6 +884,7 @@ mod tests {
         Animal::Yaguarete,
         Animal::Chimango,
         Animal::Carancho,
+        Animal::Nandu,
     ];
 
     fn triangles(animal: Animal) -> usize {

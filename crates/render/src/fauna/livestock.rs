@@ -7,6 +7,12 @@
 //! con su espera y su caminata, el águila (diezmada) con su planeo y su
 //! aleteo ([`Species::animation`]). El gato hace de gato montés, de puma y de
 //! yaguareté, y el águila de chimango y de carancho, en sus tamaños y colores.
+//! El ñandú es un modelo propio, modelado, con rig y animado por script en
+//! Blender (`tools/rhea.py`, en `assets/models/fauna/own/`): un cuerpo
+//! continuo con su plumaje horneado de una escultura densa en mapas KTX2
+//! (color, normal map y ORM, [`Skin`]), tarjetas de plumas sueltas con alpha
+//! test que solo se dibujan cerca ([`DETAIL_FAR`]), y sus propios clips
+//! (esperas, pastoreo, caminata y carrera).
 //!
 //! Cada [`Species`] se carga una vez al iniciar ([`LivestockModels`]): su
 //! escena glTF, sus clips y un [`AnimationGraph`] compartido. Un [`Animal`]
@@ -49,10 +55,89 @@ use pampa_core::{CowCoat, Heading};
 use super::{Animal, AnimalPose, AnimalSeed, Gait};
 
 use crate::AssetRoot;
+use crate::facade::materials::{MAPS, load_map_with};
 use crate::gltf::{self, ModelState};
+use crate::tree::materials::{LEAF_CUTOFF, clamped};
+use bevy::image::CompressedImageFormatSupport;
 
-/// Dónde viven los modelos de animales, bajo el [`AssetRoot`].
+/// Dónde viven los modelos de animales de Quaternius, bajo el [`AssetRoot`].
 pub const LIVESTOCK_DIR: &str = "models/fauna/quaternius";
+/// Dónde viven los modelos propios, hechos con los scripts de Blender de
+/// `tools/` (el ñandú, `tools/rhea.py`), bajo el [`AssetRoot`].
+pub const OWN_DIR: &str = "models/fauna/own";
+
+/// Hasta esta distancia de la cámara se dibujan las tarjetas de detalle de un
+/// modelo que las tiene (las plumas sueltas del ñandú), en metros; más lejos solo queda el cuerpo,
+/// cuyo plumaje horneado ya muestra lo que se ve a esa distancia. Vuelven
+/// dentro de [`DETAIL_NEAR`].
+pub const DETAIL_FAR: f32 = 40.0;
+/// Dentro de esta distancia vuelven las tarjetas, en metros: un poco más
+/// cerca que [`DETAIL_FAR`], para que no parpadeen en el borde.
+pub const DETAIL_NEAR: f32 = 35.0;
+
+/// Si se dibujan las tarjetas de plumas de un animal a `distance` de la
+/// cámara, sabiendo si se dibujaban (`was`).
+pub fn detail_shown(was: bool, distance: f32) -> bool {
+    distance < if was { DETAIL_FAR } else { DETAIL_NEAR }
+}
+
+/// Los mapas KTX2 que viste un material de un modelo propio: un conjunto de
+/// [`OWN_DIR`] hecho por `tools/textures_to_ktx2.sh` como los de los edificios
+/// (color, normal map y ORM). `masked`: tarjetas con alpha test, con la
+/// opacidad en el alfa del color (con los mips que conservan la cobertura,
+/// como las hojas de los árboles). `detail`: tarjetas que solo se dibujan
+/// cerca ([`DETAIL_FAR`]), como las plumas sueltas del ñandú.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Skin {
+    pub set: &'static str,
+    pub masked: bool,
+    pub detail: bool,
+}
+
+/// Los conjuntos de mapas de los modelos propios.
+pub const SKIN_SETS: [&str; 2] = ["rhea_body", "rhea_feathers"];
+
+/// La ruta del mapa `name` del conjunto `set`, bajo el [`AssetRoot`].
+pub fn skin_path(set: &str, name: &str) -> String {
+    format!("{OWN_DIR}/{set}/{name}.ktx2")
+}
+
+/// Los mapas en carga de un conjunto.
+#[derive(Debug, Clone)]
+pub struct SkinMaps {
+    pub color: Handle<Image>,
+    pub normal: Handle<Image>,
+    pub orm: Handle<Image>,
+}
+
+/// `base` vestido con `skin`: sus mapas sobre blanco, con alpha test y por
+/// ambos lados si son tarjetas. Sin los mapas, el cuerpo conserva su color
+/// liso y las tarjetas no se dibujan (`None`).
+pub fn skinned(
+    base: &StandardMaterial,
+    skin: Skin,
+    maps: Option<SkinMaps>,
+) -> Option<StandardMaterial> {
+    let Some(maps) = maps else {
+        return (!skin.masked).then(|| base.clone());
+    };
+    let mut m = base.clone();
+    m.base_color = Color::WHITE;
+    m.base_color_texture = Some(maps.color);
+    m.normal_map_texture = Some(maps.normal);
+    m.metallic_roughness_texture = Some(maps.orm.clone());
+    m.occlusion_texture = Some(maps.orm);
+    m.metallic = 0.0;
+    m.perceptual_roughness = 1.0;
+    m.reflectance = 0.3;
+    if skin.masked {
+        m.alpha_mode = AlphaMode::Mask(LEAF_CUTOFF);
+        // Por ambos lados: como en las hojas de los árboles, las dos caras
+        // miran hacia afuera del cuerpo.
+        m.cull_mode = None;
+    }
+    Some(m)
+}
 
 /// Más allá de esta distancia de la cámara la animación de un animal se congela
 /// en su pose actual, en metros; vuelve a reproducirse una vez que regresa
@@ -96,6 +181,9 @@ pub enum Species {
     /// Las dos rapaces comparten el águila del mismo pack, teñida.
     Chimango,
     Carancho,
+    /// El ñandú: un modelo propio (`tools/rhea.py`), vestido con sus mapas
+    /// ([`Species::skin`]).
+    Nandu,
 }
 
 /// Cómo quedaron las meshes de un modelo según quién lo exportó.
@@ -111,7 +199,7 @@ pub enum Export {
 }
 
 impl Species {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Cow,
         Self::Bull,
         Self::Horse,
@@ -121,6 +209,7 @@ impl Species {
         Self::Yaguarete,
         Self::Chimango,
         Self::Carancho,
+        Self::Nandu,
     ];
 
     /// La especie con la que se dibuja `animal`, si se dibuja a partir de un
@@ -136,6 +225,7 @@ impl Species {
             Animal::Yaguarete => Some(Self::Yaguarete),
             Animal::Chimango => Some(Self::Chimango),
             Animal::Carancho => Some(Self::Carancho),
+            Animal::Nandu => Some(Self::Nandu),
             _ => None,
         }
     }
@@ -149,6 +239,7 @@ impl Species {
             Self::Fox => "fox",
             Self::GatoMontes | Self::Puma | Self::Yaguarete => "cat",
             Self::Chimango | Self::Carancho => "eagle",
+            Self::Nandu => return format!("{OWN_DIR}/rhea.glb"),
         };
         format!("{LIVESTOCK_DIR}/{name}.glb")
     }
@@ -167,7 +258,8 @@ impl Species {
     }
 
     /// Los clips del archivo, en orden: los siete del ganado, o los pocos que
-    /// traen el gato (espera y caminata) y el águila (planeo y aleteo).
+    /// traen el gato (espera y caminata), el águila (planeo y aleteo) y el
+    /// ñandú (dos esperas, el pastoreo, la caminata y la carrera).
     pub fn clip_names(self) -> &'static [&'static str] {
         match self {
             Self::Cow | Self::Bull | Self::Horse => &[
@@ -190,14 +282,40 @@ impl Species {
             ],
             Self::GatoMontes | Self::Puma | Self::Yaguarete => &["Idle", "Walk"],
             Self::Chimango | Self::Carancho => &["Glide", "Flap"],
+            Self::Nandu => &["Idle", "Idle_Look", "Graze", "Walk", "Run"],
         }
+    }
+
+    /// Los mapas que viste su material `material`, si los tiene: el cuerpo
+    /// del ñandú y sus tarjetas de plumas.
+    pub fn skin(self, material: &str) -> Option<Skin> {
+        let (set, masked, detail) = match (self, material) {
+            (Self::Nandu, "Body") => ("rhea_body", false, false),
+            (Self::Nandu, "Feathers") => ("rhea_feathers", true, true),
+            _ => return None,
+        };
+        Some(Skin {
+            set,
+            masked,
+            detail,
+        })
     }
 
     /// El índice de animación glTF que reproduce `clip`: el mismo en los
     /// modelos de siete clips; en el gato, la espera o la caminata (que también
     /// hace de galope); en el águila, el planeo o el aleteo (el "galope" de un
-    /// ave).
+    /// ave); en el ñandú, la espera con la cabeza baja y el comer son su
+    /// pastoreo, y el galope su carrera.
     pub fn animation(self, clip: Clip) -> usize {
+        if self == Self::Nandu {
+            return match clip {
+                Clip::Idle => 0,
+                Clip::Idle2 => 1,
+                Clip::IdleHeadlow | Clip::Eating => 2,
+                Clip::Walk => 3,
+                Clip::Gallop | Clip::GallopJump => 4,
+            };
+        }
         if self.clip_names().len() == CLIP_COUNT {
             return clip.index();
         }
@@ -215,6 +333,8 @@ impl Species {
             Self::Fox => 2.35,
             Self::GatoMontes | Self::Puma | Self::Yaguarete => 2.8,
             Self::Chimango | Self::Carancho => 12.47,
+            // Sobre el plumaje del lomo; la cabeza llega a 1.58.
+            Self::Nandu => 1.18,
         }
     }
 
@@ -222,7 +342,8 @@ impl Species {
     /// criollos procedurales a los que reemplazan (una vaca 1.4 m, un caballo
     /// 1.5 m), con el toro un poco más grande; un zorro gris de 0.38 m a la
     /// cruz, un gato montés de 0.28 m, un puma de 0.7 m y un yaguareté de
-    /// 0.75 m; un chimango de 0.9 m de envergadura y un carancho de 1.25 m.
+    /// 0.75 m; un chimango de 0.9 m de envergadura y un carancho de 1.25 m; un
+    /// ñandú de 1.1 m sobre el plumaje del lomo (la cabeza a 1.5 m).
     pub const fn withers(self) -> f32 {
         match self {
             Self::Cow => 1.4,
@@ -234,6 +355,7 @@ impl Species {
             Self::Yaguarete => 0.75,
             Self::Chimango => 0.9,
             Self::Carancho => 1.25,
+            Self::Nandu => 1.1,
         }
     }
 
@@ -245,7 +367,8 @@ impl Species {
     /// La velocidad sobre el suelo que muestra su clip `Walk`, en m/s. Las del
     /// zorro y el gato son el deslizamiento medio hacia atrás de las patas
     /// apoyadas, medido aproximadamente sobre los clips (unas 2.5 y 1.5
-    /// unidades del modelo por segundo).
+    /// unidades del modelo por segundo); la del ñandú, la que construye
+    /// `tools/rhea.py` (0.88 unidades por segundo).
     pub fn walk_speed(self) -> f32 {
         match self {
             Self::Cow | Self::Bull => 1.0,
@@ -253,16 +376,20 @@ impl Species {
             Self::Fox => 2.5 * self.scale(),
             Self::GatoMontes | Self::Puma | Self::Yaguarete => 1.5 * self.scale(),
             Self::Chimango | Self::Carancho => 1.0,
+            Self::Nandu => 0.88 * self.scale(),
         }
     }
 
     /// La velocidad sobre el suelo que muestra su clip `Gallop`, en m/s: el del
-    /// zorro, unas 9 unidades por segundo; el gato galopa con su caminata.
+    /// zorro, unas 9 unidades por segundo; la carrera del ñandú, 7.23 (la
+    /// zancada de 0.85 apoyada el 28 % de un ciclo de 0.42 s); el gato galopa
+    /// con su caminata.
     pub fn gallop_speed(self) -> f32 {
         match self {
             Self::Cow | Self::Bull => 6.0,
             Self::Horse => HORSE_GALLOP_SPEED,
             Self::Fox => 9.0 * self.scale(),
+            Self::Nandu => 7.23 * self.scale(),
             _ => self.walk_speed(),
         }
     }
@@ -596,6 +723,8 @@ impl LivestockModels {
 pub struct CoatCache {
     materials: HashMap<(AssetId<StandardMaterial>, Animal), Handle<StandardMaterial>>,
     meshes: HashMap<(AssetId<Mesh>, Animal), Handle<Mesh>>,
+    /// Los mapas de cada conjunto de [`SKIN_SETS`] que se encontró.
+    skins: HashMap<&'static str, SkinMaps>,
 }
 
 impl CoatCache {
@@ -624,6 +753,9 @@ pub struct LivestockRig {
     pub probes: Vec<Entity>,
     pub clip: Option<Clip>,
     pub frozen: bool,
+    /// Sus tarjetas de plumas, que solo se dibujan cerca ([`detail_shown`]).
+    pub detail: Vec<Entity>,
+    pub detail_shown: bool,
 }
 
 /// Empieza a cargar los modelos y construye el grafo de cada uno. Sin un
@@ -634,12 +766,29 @@ pub(super) fn load_livestock(
     server: Option<Res<AssetServer>>,
     root: Option<Res<AssetRoot>>,
     graphs: Option<ResMut<Assets<AnimationGraph>>>,
+    support: Option<Res<CompressedImageFormatSupport>>,
 ) {
-    commands.init_resource::<CoatCache>();
     let (Some(server), Some(root), Some(mut graphs)) = (server, root, graphs) else {
+        commands.init_resource::<CoatCache>();
         commands.insert_resource(LivestockModels::default());
         return;
     };
+    // Los mapas de los modelos propios, cuando están todos sus archivos y la
+    // GPU tiene formatos comprimidos (los KTX2 se transcodifican a uno).
+    let mut cache = CoatCache::default();
+    if support.as_ref().is_none_or(|s| !s.0.is_empty()) {
+        for set in SKIN_SETS {
+            let paths = MAPS.map(|(name, srgb)| (skin_path(set, name), srgb));
+            if let Some((missing, _)) = paths.iter().find(|(p, _)| !root.0.join(p).is_file()) {
+                warn!("fauna maps {missing} not found; drawing plain colour");
+                continue;
+            }
+            let [color, normal, orm] =
+                paths.map(|(path, srgb)| load_map_with(&server, &path, srgb, clamped()));
+            cache.skins.insert(set, SkinMaps { color, normal, orm });
+        }
+    }
+    commands.insert_resource(cache);
     let mut models = LivestockModels::default();
     for species in Species::ALL {
         let path = species.path();
@@ -746,6 +895,18 @@ pub(super) fn dress_livestock(
     ) else {
         return;
     };
+    // Sus tarjetas de plumas, cuando tiene y se dibujan (ver [`skinned`]).
+    let detail = children
+        .iter_descendants(root)
+        .filter(|&e| {
+            parts.get(e).is_ok_and(|(mesh, _, name, _)| {
+                mesh.is_some()
+                    && name
+                        .and_then(|n| model.species.skin(&n.0))
+                        .is_some_and(|s| s.detail && cache.skins.contains_key(s.set))
+            })
+        })
+        .collect();
     let (player, probes) = dress_meshes(
         &mut commands,
         (&mut cache, &mut materials, &mut meshes),
@@ -764,6 +925,8 @@ pub(super) fn dress_livestock(
             probes,
             clip: None,
             frozen: false,
+            detail,
+            detail_shown: true,
         });
     }
 }
@@ -810,7 +973,10 @@ pub(crate) fn dress_meshes(
         let mut part = commands.entity(entity);
         part.try_insert(range.clone());
         let paint = name.map_or(Paint::Keep, |n| paint(animal, &n.0));
-        if paint == Paint::Hidden {
+        let skin = name.and_then(|n| species.skin(&n.0));
+        let maps = skin.and_then(|s| cache.skins.get(s.set).cloned());
+        // Las tarjetas de plumas sin sus mapas serían rectángulos lisos.
+        if paint == Paint::Hidden || skin.is_some_and(|s| s.masked) && maps.is_none() {
             part.try_insert(Visibility::Hidden);
             continue;
         }
@@ -821,14 +987,18 @@ pub(crate) fn dress_meshes(
                 .entry((material.0.id(), animal))
                 .or_insert_with(|| {
                     let mut m = materials.get(&material.0).cloned().unwrap_or_default();
+                    // El brillo metálico de la exportación parece plástico.
+                    m.metallic = 0.0;
+                    m.perceptual_roughness = 0.9;
+                    if let Some(worn) = skin.and_then(|s| skinned(&m, s, maps)) {
+                        m = worn;
+                    }
+                    // Después de los mapas: el color liso los tiñe.
                     match paint {
                         Paint::Flat(color) => m.base_color = color,
                         Paint::Vertex => m.base_color = Color::WHITE,
                         Paint::Keep | Paint::Hidden => {}
                     }
-                    // El brillo metálico de la exportación parece plástico.
-                    m.metallic = 0.0;
-                    m.perceptual_roughness = 0.9;
                     materials.add(m)
                 })
                 .clone();
@@ -920,6 +1090,20 @@ pub(super) fn drive_livestock(
         // La visibilidad solo se conoce con una cámara dibujando.
         let in_view =
             eye.is_none() || any_in_view(&rig.probes, |p| seen.get(p).is_ok_and(|v| v.get()));
+        if !rig.detail.is_empty() {
+            let shown = detail_shown(rig.detail_shown, distance);
+            if shown != rig.detail_shown {
+                rig.detail_shown = shown;
+                let visibility = if shown {
+                    Visibility::Inherited
+                } else {
+                    Visibility::Hidden
+                };
+                for &card in &rig.detail {
+                    commands.entity(card).try_insert(visibility);
+                }
+            }
+        }
         let freeze = frozen(rig.frozen, distance, in_view);
         if freeze != rig.frozen {
             rig.frozen = freeze;
@@ -1054,6 +1238,63 @@ mod tests {
         }
         // El ganado sigue galopando a lo sumo a 1.6 veces su clip.
         assert_eq!(clip_speed(Clip::Gallop, Species::Cow, 50.0), 1.6);
+    }
+
+    #[test]
+    fn the_nandu_plays_its_own_graze_walk_and_run() {
+        let species = Species::of(Animal::Nandu).expect("a model");
+        let clip = |c| species.clip_names()[species.animation(c)];
+        assert_eq!(clip(Clip::Idle), "Idle");
+        assert_eq!(clip(Clip::Idle2), "Idle_Look");
+        assert_eq!(clip(Clip::Eating), "Graze");
+        assert_eq!(clip(Clip::Walk), "Walk");
+        assert_eq!(clip(Clip::Gallop), "Run");
+        // Huye a 13 m/s sin que su carrera llegue al tope de velocidad.
+        let pace = clip_speed(Clip::Gallop, species, 13.0);
+        assert!(pace > 1.0 && pace < species.max_pace(), "{pace}");
+    }
+
+    #[test]
+    fn the_nandu_wears_its_feather_maps_and_alpha_tested_cards() {
+        let body = Species::Nandu.skin("Body").expect("body maps");
+        let cards = Species::Nandu.skin("Feathers").expect("feather maps");
+        assert!(!body.masked && cards.masked);
+        assert_eq!(Species::Cow.skin("Main"), None);
+        for skin in [body, cards] {
+            for (name, _) in crate::facade::materials::MAPS {
+                let path = root().0.join(skin_path(skin.set, name));
+                assert!(path.is_file(), "{}", path.display());
+            }
+        }
+        let maps = || SkinMaps {
+            color: Handle::default(),
+            normal: Handle::default(),
+            orm: Handle::default(),
+        };
+        let base = StandardMaterial::default();
+        let worn = skinned(&base, cards, Some(maps())).expect("drawn");
+        assert_eq!(worn.alpha_mode, AlphaMode::Mask(LEAF_CUTOFF));
+        assert_eq!(worn.cull_mode, None);
+        assert!(!worn.double_sided, "both faces look out of the body");
+        assert!(worn.base_color_texture.is_some() && worn.normal_map_texture.is_some());
+        let worn = skinned(&base, body, Some(maps())).expect("drawn");
+        assert_eq!(worn.alpha_mode, AlphaMode::Opaque);
+        assert_eq!(worn.base_color, Color::WHITE);
+        // Sin sus mapas el cuerpo conserva su color liso y las tarjetas no se
+        // dibujan.
+        assert!(skinned(&base, body, None).is_some_and(|m| m.base_color == base.base_color));
+        assert!(skinned(&base, cards, None).is_none());
+    }
+
+    #[test]
+    fn feather_cards_draw_only_near_the_camera() {
+        assert!(detail_shown(false, 10.0));
+        assert!(
+            !detail_shown(false, DETAIL_FAR - 1.0),
+            "not until well inside"
+        );
+        assert!(detail_shown(true, DETAIL_FAR - 1.0));
+        assert!(!detail_shown(true, DETAIL_FAR + 1.0));
     }
 
     #[test]
@@ -1337,6 +1578,7 @@ mod tests {
                 Species::GatoMontes | Species::Puma | Species::Yaguarete => 34,
                 Species::Chimango | Species::Carancho => 30,
                 Species::Cow | Species::Bull => 42,
+                Species::Nandu => 20,
             };
             assert_eq!(skin.joints.len(), joints, "{species:?}");
             // Su cuerpo está a tamaño real en el marco del cuerpo: la altura del
@@ -1378,7 +1620,20 @@ mod tests {
                     .fold(0.0, f32::max)
             };
             println!("{species:?}: {triangles} triangles, back {top:.2} m, materials {names:?}");
-            assert!(triangles <= 2_500, "{species:?}: {triangles}");
+            let budget = match species {
+                Species::Nandu => 6_500,
+                _ => 2_500,
+            };
+            assert!(triangles <= budget, "{species:?}: {triangles}");
+            if species == Species::Nandu {
+                // Sus mapas necesitan UV y tangentes en cada primitiva.
+                let m = world.resource::<Assets<Mesh>>();
+                for primitive in &mesh.primitives {
+                    let p = m.get(&primitive.mesh).unwrap();
+                    assert!(p.attribute(Mesh::ATTRIBUTE_UV_0).is_some());
+                    assert!(p.attribute(Mesh::ATTRIBUTE_TANGENT).is_some());
+                }
+            }
             let materials: &[&str] = match species {
                 Species::Cow | Species::Bull | Species::Horse => {
                     &["Main", "Main_Light", "Muzzle", "Hooves"]
@@ -1388,6 +1643,7 @@ mod tests {
                     &["Grey", "White", "Pink"]
                 }
                 Species::Chimango | Species::Carancho => &["Wings", "Head", "Beak", "Claws"],
+                Species::Nandu => &["Body", "Feathers"],
             };
             for material in materials {
                 assert!(names.contains(material), "{species:?}: {names:?}");
@@ -1424,6 +1680,46 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         panic!("the models never spawned");
+    }
+
+    #[test]
+    fn a_nandu_drops_its_feather_cards_far_off() {
+        let mut app = fauna_app();
+        app.world_mut().spawn((Animal::Nandu, AnimalSeed(3)));
+        until_rigged(&mut app, 1);
+        app.update();
+        let world = app.world_mut();
+        let rig = world
+            .query::<&LivestockRig>()
+            .single(world)
+            .unwrap()
+            .clone();
+        assert!(!rig.detail.is_empty(), "its feather cards");
+        let mut cards = Vec::new();
+        for &card in &rig.detail {
+            let material = world.get::<MeshMaterial3d<StandardMaterial>>(card).unwrap();
+            let m = world
+                .resource::<Assets<StandardMaterial>>()
+                .get(&material.0)
+                .unwrap();
+            assert_eq!(m.alpha_mode, AlphaMode::Mask(LEAF_CUTOFF));
+            cards.push(card);
+        }
+        let shown = |world: &World| {
+            cards
+                .iter()
+                .all(|&c| world.get::<Visibility>(c) != Some(&Visibility::Hidden))
+        };
+        let camera = world
+            .spawn((Camera3d::default(), Transform::from_xyz(0.0, 2.0, 8.0)))
+            .id();
+        app.update();
+        assert!(shown(app.world()), "near");
+        let far = Transform::from_xyz(0.0, 2.0, DETAIL_FAR + 10.0);
+        app.world_mut().entity_mut(camera).insert(far);
+        app.update();
+        app.update();
+        assert!(!shown(app.world()), "far");
     }
 
     #[test]
