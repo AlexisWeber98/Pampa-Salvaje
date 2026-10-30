@@ -19,7 +19,7 @@ use super::model::{
 };
 use super::rider::{carry_stirrups, pose_riders, seat_riders, spawn_riders};
 use super::rig::{drive_rigs, fit_rigs};
-use super::tack::{dress_tack, stretch_straps};
+use super::tack::{PendingTack, TackBuilt, dress_pending, dress_tack, load_recado, stretch_straps};
 use super::townsfolk::TintCache;
 use super::viewer::mark_viewer_head;
 
@@ -77,9 +77,16 @@ impl Plugin for CharacterVisualPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CharacterModelsShown>()
             .init_resource::<TintCache>()
+            .init_resource::<PendingTack>()
+            .init_resource::<TackBuilt>()
             .add_systems(
                 Startup,
-                (load_kits, load_character_models, load_character_clips),
+                (
+                    load_kits,
+                    load_character_models,
+                    load_character_clips,
+                    load_recado,
+                ),
             )
             .add_systems(
                 Update,
@@ -87,6 +94,7 @@ impl Plugin for CharacterVisualPlugin {
                     toggle_character_models,
                     swap_in_character_models,
                     swap_in_horses,
+                    dress_pending,
                     spawn_riders,
                     seat_riders,
                     read_reference,

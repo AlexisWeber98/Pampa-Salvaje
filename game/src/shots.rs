@@ -23,9 +23,11 @@
 //! de asentamiento (por defecto 90).
 //!
 //! **Capturas a caballo.** Una línea que termina en un andar ([`Gait`]:
-//! `walk`, `gallop`, `jump` o `stop`) monta al jugador y lo hace andar así
-//! mientras dura la captura: mantiene `W` (más `Shift` al galope y al saltar;
-//! `stop` suelta todo y el caballo frena) y, en `jump`, aprieta `Space` en su
+//! `walk`, `gallop`, `jump`, `stop` o `tied`) monta al jugador y lo hace andar
+//! así mientras dura la captura: mantiene `W` (más `Shift` al galope y al
+//! saltar; `stop` suelta todo y el caballo frena; `tied`, además, deja en
+//! `@X,Y,GRADOS` el caballo ensillado sin jinete, para mirar los aperos) y,
+//! en `jump`, aprieta `Space` en su
 //! primer frame (el salto solo sale a galope
 //! tendido: conviene que lo precedan unas capturas `gallop`). Sus ojo y
 //! objetivo se miden desde el jugador: `x` hacia adelante, `y` hacia su
@@ -67,6 +69,9 @@ pub enum Gait {
     Jump,
     /// Suelta todas las teclas: el caballo frena hasta parar.
     Stop,
+    /// Como `stop`, pero al montar en `@X,Y,GRADOS` deja el caballo ensillado
+    /// sin jinete, atado, para ver los aperos enteros.
+    Tied,
 }
 
 /// Una captura a caballo: su andar, y dónde montar antes (punto y rumbo en
@@ -105,6 +110,7 @@ pub fn parse_shots(text: &str) -> Result<Vec<Shot>, String> {
             Some(&"gallop") => Some(Gait::Gallop),
             Some(&"jump") => Some(Gait::Jump),
             Some(&"stop") => Some(Gait::Stop),
+            Some(&"tied") => Some(Gait::Tied),
             _ => None,
         };
         let (mut mount, mut coat) = (None, None);
@@ -133,7 +139,7 @@ pub fn parse_shots(text: &str) -> Result<Vec<Shot>, String> {
         }
         if words.len() != 7 && words.len() != 8 {
             return Err(at(
-                "want `name ex ey eh tx ty th [HH:MM] [@X,Y,DEG] [walk|gallop|jump]`",
+                "want `name ex ey eh tx ty th [HH:MM] [@X,Y,DEG] [walk|gallop|jump|stop|tied]`",
             ));
         }
         let mut num = [0.0_f32; 6];
@@ -311,21 +317,24 @@ fn ride_shot(
         let heading = pampa_core::Heading::from_radians(degrees.to_radians());
         player.rider = pampa_core::Rider::new(spot, heading, &world.0);
         transform.translation = world_from_ground(spot, player.rider.height);
-        let visual = match ride.coat {
-            Some(coat) => player_visual_on(pampa_core::Travel::Riding, coat),
-            None => player_visual(pampa_core::Travel::Riding),
+        let visual = match (ride.gait, ride.coat) {
+            (Gait::Tied, coat) => {
+                pampa_render::CharacterVisual::Horse(coat.unwrap_or(pampa_render::Coat::Bayo))
+            }
+            (_, Some(coat)) => player_visual_on(pampa_core::Travel::Riding, coat),
+            (_, None) => player_visual(pampa_core::Travel::Riding),
         };
         commands
             .entity(me)
             .remove::<OnTrain>()
             .insert((Visibility::Inherited, visual));
     }
-    if ride.gait == Gait::Stop {
+    if matches!(ride.gait, Gait::Stop | Gait::Tied) {
         keys.release(KeyCode::KeyW);
     } else {
         keys.press(KeyCode::KeyW);
     }
-    if matches!(ride.gait, Gait::Walk | Gait::Stop) {
+    if matches!(ride.gait, Gait::Walk | Gait::Stop | Gait::Tied) {
         keys.release(KeyCode::ShiftLeft);
     } else {
         keys.press(KeyCode::ShiftLeft);
@@ -481,6 +490,15 @@ mod tests {
         // Sin andar no es a caballo, y un punto de montar mal escrito se
         // informa.
         assert_eq!(parse_shots("a 1 2 3 4 5 6").unwrap()[0].ride, None);
+        let tied = parse_shots("still 1 2 3 4 5 6 @1,2,90,overo tied").unwrap();
+        assert_eq!(
+            tied[0].ride,
+            Some(Ride {
+                gait: Gait::Tied,
+                mount: Some((GroundVec2::new(1.0, 2.0), 90.0)),
+                coat: Some(pampa_render::Coat::Overo),
+            })
+        );
         let error = parse_shots("a 1 2 3 4 5 6 @1,2 walk").unwrap_err();
         assert!(error.starts_with("line 1"), "{error}");
     }

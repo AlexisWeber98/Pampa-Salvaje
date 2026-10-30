@@ -332,3 +332,39 @@ Los pasos, todos deterministas:
    - **Salto:** las manos despegan primero; las patas traseras apoyan bajo la panza (`JUMP_PLANT`), empujan mientras sus vasos se deslizan hacia atrás a la velocidad del galope y dejan el suelo estiradas (ahí empieza el vuelo del juego, 0.41 s). En lo alto las manos van plegadas y las patas traseras flexionadas y arrastradas por detrás de las babillas, nunca bajo la panza. Las manos se despliegan recién en el último décimo del vuelo (`JUMP_REACH`), primero la de atrás (la derecha, con mano de galope izquierda), que apoya cuando el vuelo termina con el cuerpo todavía inclinado hacia adelante; las patas traseras siguen atrás y apoyan después, en el galope que retoma con las manos apoyadas (`GALLOP_LANDING` en el juego). Un `tail_lift` positivo aleja la cola de las patas traseras.
 
 Costo para la iGPU Renoir: 11.944 triángulos por caballo (7.200 del cuerpo, 4.296 de pelo con alpha test, 448 de los ojos), dos conjuntos de mapas de 1024² (la luminancia con el tono del lomo, el vientre y manchones suaves, los surcos oscurecidos por la oclusión al 60 %, el pelo en vetas y la rugosidad entre 0.45 y 0.9 a lo largo del pelo; como el ñandú, unos 8 MB de video entre los dos con sus mips, compartidos por todos los caballos). En el juego (`Species::skin`), `horse_body` viste `Main` (por los colores por vertex del pelaje) y las partes de un solo color (`Main_Dark`, `Main_Light`, `Muzzle`, `Hooves`, por su color), y `horse_hair` viste `Hair` con alpha test, por ambos lados con la normal del dorso invertida y teñido con la crin del pelaje; las tarjetas de pelo se dibujan a cualquier distancia. Una corrida completa tarda unos 4 minutos en la CPU.
+
+## `tack.py`: los mapas del recado criollo
+
+`tack.py` pinta con numpy (sin Blender ni imágenes de terceros) cuatro de los conjuntos de mapas de los aperos del caballo ensillado (`pampa_render::character::tack`), en `assets/models/tack/` (los otros dos los hace `recado.py`):
+
+```sh
+python3 -I tools/tack.py assets/models/tack
+FORCE=1 sh tools/textures_to_ktx2.sh assets/models/tack/*/
+```
+
+| Conjunto | Tamaño | Qué viste |
+| --- | --- | --- |
+| `tack_blankets` | 1024² | la bajera (mitad izquierda: jerga de rayas) y la matra (mitad derecha: guarda escalonada en rojo, índigo y crudo, rayas adelante y atrás y los flecos de la urdimbre en la opacidad) |
+| `tack_leather` | 512² | la suela de la carona (doble línea labrada a fuego con puntos estampados y canto bruñido), los bastos y las aciones |
+| `tack_rawhide` | 512² | el cuero crudo: la trenza redonda de cuatro tientos (riendas y cabezada), una tira lisa (cinchón y látigo) y la cincha de tientos con su panel tejido |
+| `tack_iron` | 256² | el hierro forjado del freno, las argollas y los estribos, martillado y con óxido |
+
+También pinta el carpincho y la lana que `recado.py` hornea en su atlas. Cada conjunto lleva `color.jpg`, `normal_gl.jpg`, `roughness.jpg` y `ao.jpg` (más `opacity.jpg` las mantas), las fuentes editables que `textures_to_ktx2.sh` convierte. El ruido tiene semilla, así que la salida es la misma en cada corrida. Costo: unos 6,6 MB de video entre los cuatro con sus mips (BC7, un byte por texel), compartidos por todos los caballos. Tests: `python3 -I -B -m unittest discover -s tools -p test_tack.py`.
+
+## `recado.py`: el recado y la brida modelados en Blender
+
+`recado.py` modela sobre el caballo propio en reposo (`assets/models/fauna/own/horse.glb`) las piezas del recado que necesitan volumen y la brida, y les da skinning a su rig:
+
+```sh
+blender -b --factory-startup --python tools/recado.py -- assets/models/tack/recado.glb \
+  --textures assets/models/tack [--preview /tmp/recado]
+FORCE=1 sh tools/textures_to_ktx2.sh assets/models/tack/tack_recado assets/models/tack/tack_wool
+```
+
+- **Los bastos**: dos rollos de suela sobre la carona, a cada lado de la columna, con su costura y sus puntas planas labradas, que asoman adelante y atrás del cojinillo.
+- **El cojinillo**: un cuero de oveja sobre ellos, con la lana espesa sobre el asiento y más fina hacia el ruedo, que cae adelante, atrás y por los costados, con bultos en su superficie y los rizos en sus mapas; mechones anchos con alpha test, ondulados y deshilachados en la punta, se apoyan sobre la lana y cuelgan del ruedo en grupos al azar.
+- **El sobrepuesto**: de carpincho, sobre la lana aplastada del medio: el asiento (su marca `Mark_Seat`).
+- **La cabezada**: testera, frontalera, quijeras, muserola, fiador y barbada, tiras planas apoyadas sobre la piel de la cabeza siguiendo los puntos del cráneo (nuca, orejas, ojos, quijada, comisuras).
+- **El freno**: el bocado cruza la boca entre las comisuras (las encuentra por los pesos de los labios), las piernas curvas de hierro se apoyan contra los labios, con su ojo arriba y la argolla de las riendas abajo (`Mark_ReinL`, `Mark_ReinR`).
+
+Cada pieza toma los pesos de la piel que tiene debajo, sin los de los controles de IK. Las del lomo (los bastos, el cojinillo, el sobrepuesto y los mechones) solo con los huesos del tronco (`Body`, `Torso`, `Torso2`, `Torso3`): la piel de la cruz lleva pesos de la crin del cuello y la de los costados de las patas, que levantarían piezas a 10 cm de la piel; los bastos y el sobrepuesto, rígidos (los mismos pesos en todos sus vertices). La testera va con la cabeza y lo alto del cuello como la piel de la nuca (sin orejas ni crin); la frontalera, solo con la cabeza. Después el script reproduce cada clip que juega un caballo ensillado (no `Eating`: los ensillados no pastan) y aparta de la piel lo justo cada vertex al que la piel en movimiento se le acercó a menos de 3,5 mm; cada canto de una tira se apoya sobre la piel, así que la tira se dobla con la cabeza. El atlas `tack_recado` (1024²: el cojinillo, los bastos y el sobrepuesto sobre sus propias UV) y los mechones `tack_wool` (512², con opacidad) se pintan con numpy, con las funciones de `tack.py`. `--preview DIR` hace PNG del recado sobre el caballo. Costo: 6.730 triángulos (1.088 de los bastos, 1.840 del cojinillo, 608 del sobrepuesto, 750 de mechones, 1.400 de la cabezada y 1.044 del freno) y unos 5,2 MB de video entre sus dos conjuntos. Tests (sin Blender): `python3 -I -B -m unittest discover -s tools -p test_recado.py`.

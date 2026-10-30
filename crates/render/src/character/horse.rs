@@ -1146,7 +1146,14 @@ pub(crate) mod tests {
     /// [`saddled`], con frames de `ms` milisegundos.
     pub(crate) fn saddled_every(visual: CharacterVisual, speed: f32, ms: u64) -> (App, Entity) {
         use crate::gltf::tests::{root, unfinished_app};
+        use bevy::image::{CompressedImageFormatSupport, CompressedImageFormats, ImageLoader};
         let mut app = unfinished_app(&root());
+        // Una GPU que acepta BC7, como la de escritorio: los mapas UASTC de los
+        // aperos se transcodifican a él (sin ningún formato comprimido, el
+        // cargador de Bevy 0.20 hace panic en lugar de usar una alternativa).
+        let formats = CompressedImageFormats::BC;
+        app.register_asset_loader(ImageLoader::new(formats))
+            .insert_resource(CompressedImageFormatSupport(formats));
         app.init_asset::<SkinnedMeshInverseBindposes>()
             .add_plugins(bevy::animation::AnimationPlugin)
             .insert_resource(root())

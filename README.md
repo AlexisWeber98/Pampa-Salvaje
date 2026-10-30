@@ -478,16 +478,30 @@ cabezada de 1919, atados o montados
   dorsal oscura). El caballo de Don Hidalgo, el que monta el jugador, es bayo;
   el caballo atado en cada uno de los demás almacenes recibe un pelaje con la
   semilla de su pueblo.
-- **Los aperos** corresponden a la Argentina rural de 1919: un recado (una
-  sudadera tejida, una carona de cuero, los dos bastos y un pellón de cuero de
-  oveja encima, una cincha de cuero crudo), aciones y estribos de hierro, y una
-  cabezada de cuero crudo (testera, bozal, quijeras, argollas del freno) con
-  riendas. Cada capa se envuelve sobre la piel propia del caballo en reposo y
-  recibe skinning a sus huesos con los pesos de la piel que tiene debajo, así
-  que se dobla con el barril del caballo en cada clip y nunca se mete en él.
-  Los estribos de un caballo atado cuelgan y sus riendas descansan sobre la
-  cabeza del recado; los pies de un jinete llevan los estribos y las riendas
-  corren a lo largo del cuello hasta la mano izquierda del jinete.
+- **Los aperos** son el recado criollo de un peón de estancia de La Pampa en
+  1919, capa por capa como lo describen los viajeros del siglo XIX: una bajera
+  (jerga tejida de rayas), una matra de telar indio con su guarda escalonada
+  en rojo, índigo y crudo y los flecos en sus puntas, una carona de suela
+  labrada a fuego, una cincha de tientos con su panel tejido, sus argollas y
+  el látigo, y un cinchón de cuero crudo que envuelve todo. Encima, modelados
+  en Blender (`tools/recado.py`, `assets/models/tack/recado.glb`): los dos
+  bastos de suela con su costura y sus puntas labradas, que asoman adelante y
+  atrás; el cojinillo, un cuero de oveja de lana larga y rizada que cae por
+  los costados con mechones desparejos; y el sobrepuesto de carpincho, el
+  asiento, sobre los dos rollos. La brida, también modelada sobre la cabeza
+  del caballo: la cabezada de cuero crudo trenzado (testera detrás de las
+  orejas, frontalera, quijeras por detrás de los ojos, muserola y fiador), el
+  freno de piernas curvas contra los labios con su bocado y su barbada, y
+  riendas trenzadas que cuelgan en curva. Estribos criollos de hierro,
+  pequeños y triangulares. Todo se dobla con el caballo en cada clip: las
+  carcasas se envuelven sobre su piel en reposo y el recado modelado lleva
+  los pesos de la piel que tiene debajo. Sus mapas son KTX2 (`tools/tack.py` y
+  `tools/recado.py`, unos 11,8 MB de video); los aperos de un caballo dibujan
+  unos 11.000 triángulos. Las piezas del lomo van solo con el tronco, así que
+  se quedan en su lugar cuando el caballo baja la cabeza. Los estribos de un caballo atado cuelgan y sus
+  riendas descansan sobre el cojinillo; los pies de un jinete llevan los
+  estribos y las riendas corren a lo largo del cuello hasta la mano izquierda
+  del jinete.
 - **Andares:** la espera de los clips, luego la caminata al ritmo de la
   velocidad sobre el suelo y estirada hasta unos 4.5 m/s (no hay clip de
   trote), luego el galope. La caminata y el galope cambian de golpe, con el
