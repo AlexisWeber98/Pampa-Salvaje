@@ -1,8 +1,11 @@
 # Credits: Quaternius animals
 
-The game's cattle, corral horses, foxes, wild cats and raptors are
+The game's cattle, foxes, wild cats and raptors are
 animated low-poly models by Quaternius, released under CC0 1.0 (public
 domain dedication, https://creativecommons.org/publicdomain/zero/1.0/).
+The horse is no longer used: since 2026-10-30 the game uses its own
+Blender horse (`tools/horse.py`, `assets/models/fauna/own/horse.glb`).
+`horse.glb` stays here only as the reference for the rig replica.
 The cow, bull and horse were downloaded from poly.pizza on 2026-10-23;
 the fox from poly.pizza and the Animal Pack Vol.2 from OpenGameArt on
 2026-10-29.

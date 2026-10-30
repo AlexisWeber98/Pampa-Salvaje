@@ -4,7 +4,7 @@
 //! vecinos, con cinco atuendos teñidos por persona ([`townsfolk`]). Las figuras
 //! rígidas low-poly ([`figure`], [`finish`]) quedan como sus portadores ocultos
 //! y como `models off` (y cuando un modelo no carga). Los caballos ensillados
-//! son el caballo animado de Quaternius con recado y brida ([`horse`],
+//! son el caballo criollo propio, modelado en Blender (`tools/horse.py`), con recado y brida ([`horse`],
 //! [`tack`]), con un jinete modelo encima ([`rider`]). El visual de cada
 //! entidad es intercambiable (a pie, montado, un caballo atado). La cabeza del
 //! propio jugador se marca para la cámara en primera persona ([`viewer`]).

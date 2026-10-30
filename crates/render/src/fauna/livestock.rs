@@ -1,7 +1,6 @@
-//! Vacunos, caballos de corral, zorros, felinos y rapaces: los modelos low-poly
-//! animados de Quaternius (CC0; con crédito en
-//! `assets/models/fauna/quaternius/CREDITS.md` y en el `CREDITS.md` de la
-//! raíz). Los de poly.pizza (vaca, toro, caballo, zorro) recortados a siete
+//! Vacunos, zorros, felinos y rapaces: los modelos low-poly animados de
+//! Quaternius (CC0; con crédito en `assets/models/fauna/quaternius/CREDITS.md`
+//! y en el `CREDITS.md` de la raíz). Los de poly.pizza (vaca, toro, zorro) recortados a siete
 //! clips por `tools/glbtrim.py`; el gato y el águila del Animal Pack Vol.2,
 //! convertidos con `tools/fbx2glb.py` (Blender) y recortados igual: el gato
 //! con su espera y su caminata, el águila (diezmada) con su planeo y su
@@ -12,7 +11,11 @@
 //! continuo con su plumaje horneado de una escultura densa en mapas KTX2
 //! (color, normal map y ORM, [`Skin`]), tarjetas de plumas sueltas con alpha
 //! test que solo se dibujan cerca ([`DETAIL_FAR`]), y sus propios clips
-//! (esperas, pastoreo, caminata y carrera).
+//! (esperas, pastoreo, caminata y carrera). El caballo criollo (los de corral
+//! y los ensillados) también es propio (`tools/horse.py`): su rig copia el de
+//! Quaternius, con su piel vestida con mapas KTX2 que multiplican los colores
+//! del pelaje y su crin, su copete y su cola en tarjetas con alpha test que se
+//! dibujan a cualquier distancia.
 //!
 //! Cada [`Species`] se carga una vez al iniciar ([`LivestockModels`]): su
 //! escena glTF, sus clips y un [`AnimationGraph`] compartido. Un [`Animal`]
@@ -63,7 +66,8 @@ use bevy::image::CompressedImageFormatSupport;
 /// Dónde viven los modelos de animales de Quaternius, bajo el [`AssetRoot`].
 pub const LIVESTOCK_DIR: &str = "models/fauna/quaternius";
 /// Dónde viven los modelos propios, hechos con los scripts de Blender de
-/// `tools/` (el ñandú, `tools/rhea.py`), bajo el [`AssetRoot`].
+/// `tools/` (el ñandú, `tools/rhea.py`; el caballo, `tools/horse.py`), bajo el
+/// [`AssetRoot`].
 pub const OWN_DIR: &str = "models/fauna/own";
 
 /// Hasta esta distancia de la cámara se dibujan las tarjetas de detalle de un
@@ -86,16 +90,22 @@ pub fn detail_shown(was: bool, distance: f32) -> bool {
 /// (color, normal map y ORM). `masked`: tarjetas con alpha test, con la
 /// opacidad en el alfa del color (con los mips que conservan la cobertura,
 /// como las hojas de los árboles). `detail`: tarjetas que solo se dibujan
-/// cerca ([`DETAIL_FAR`]), como las plumas sueltas del ñandú.
+/// cerca ([`DETAIL_FAR`]), como las plumas sueltas del ñandú; la crin y la
+/// cola del caballo, en cambio, son su silueta y se dibujan siempre.
+/// `strands`: el dorso de cada tarjeta se ilumina con la normal invertida,
+/// como un mechón de pelo visto a través (la crin del caballo, que cae del
+/// lado derecho, vista desde la izquierda); sin eso, las dos caras miran hacia
+/// afuera del cuerpo (las plumas del ñandú).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Skin {
     pub set: &'static str,
     pub masked: bool,
     pub detail: bool,
+    pub strands: bool,
 }
 
 /// Los conjuntos de mapas de los modelos propios.
-pub const SKIN_SETS: [&str; 2] = ["rhea_body", "rhea_feathers"];
+pub const SKIN_SETS: [&str; 4] = ["rhea_body", "rhea_feathers", "horse_body", "horse_hair"];
 
 /// La ruta del mapa `name` del conjunto `set`, bajo el [`AssetRoot`].
 pub fn skin_path(set: &str, name: &str) -> String {
@@ -132,9 +142,11 @@ pub fn skinned(
     m.reflectance = 0.3;
     if skin.masked {
         m.alpha_mode = AlphaMode::Mask(LEAF_CUTOFF);
-        // Por ambos lados: como en las hojas de los árboles, las dos caras
-        // miran hacia afuera del cuerpo.
+        // Por ambos lados; el dorso invierte su normal solo en los mechones
+        // (en las plumas, como en las hojas de los árboles, las dos caras
+        // miran hacia afuera del cuerpo).
         m.cull_mode = None;
+        m.double_sided = skin.strands;
     }
     Some(m)
 }
@@ -156,14 +168,16 @@ pub const GALLOP_SPEED: f32 = 2.5;
 const BLEND: Duration = Duration::from_millis(300);
 
 /// La velocidad sobre el suelo que muestra el clip `Walk` del caballo a tamaño
-/// real, en m/s: el deslizamiento medio hacia atrás de cada vaso mientras está
-/// a menos de 1.5 cm de su punto más bajo, a lo largo de todo el ciclo
-/// (1.17 s). El clip es irregular: los vasos traseros se deslizan hacia atrás a
-/// unos 1.4 m/s y los delanteros a unos 0.85.
-pub const HORSE_WALK_SPEED: f32 = 1.25;
-/// Lo mismo para su clip `Gallop` (0.58 s, unos 2.3 m por zancada): los vasos
-/// traseros a unos 4.4 m/s y los delanteros a entre 2.6 y 4.1.
-pub const HORSE_GALLOP_SPEED: f32 = 3.94;
+/// real, en m/s: el deslizamiento medio hacia atrás de la punta de cada vaso
+/// (`FF.*_end`, `FFB.*_end`) mientras está a menos de 1.5 cm de su punto más
+/// bajo, a lo largo de todo el ciclo (1.17 s), promediado entre los cuatro: los
+/// delanteros a 1.24 m/s y los traseros a 1.23 (el caballo propio,
+/// `tools/horse.py`; el de Quaternius mostraba 1.09 por este método).
+pub const HORSE_WALK_SPEED: f32 = 1.23;
+/// Lo mismo para su clip `Gallop` (0.58 s, unos 4.15 m por zancada): los vasos
+/// delanteros a unos 7.14 m/s y los traseros a unos 7.06 (el de Quaternius,
+/// 3.94).
+pub const HORSE_GALLOP_SPEED: f32 = 7.10;
 
 /// Los animales que se dibujan a partir de un modelo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -235,7 +249,7 @@ impl Species {
         let name = match self {
             Self::Cow => "cow",
             Self::Bull => "bull",
-            Self::Horse => "horse",
+            Self::Horse => return format!("{OWN_DIR}/horse.glb"),
             Self::Fox => "fox",
             Self::GatoMontes | Self::Puma | Self::Yaguarete => "cat",
             Self::Chimango | Self::Carancho => "eagle",
@@ -247,7 +261,7 @@ impl Species {
     /// Quién exportó su modelo.
     pub const fn export(self) -> Export {
         match self {
-            Self::Cow | Self::Bull | Self::Horse | Self::Fox => Export::Fbx2Gltf,
+            Self::Cow | Self::Bull | Self::Fox => Export::Fbx2Gltf,
             _ => Export::Blender,
         }
     }
@@ -287,17 +301,26 @@ impl Species {
     }
 
     /// Los mapas que viste su material `material`, si los tiene: el cuerpo
-    /// del ñandú y sus tarjetas de plumas.
+    /// del ñandú y sus tarjetas de plumas; la piel del caballo (`Main`, cuyos
+    /// mapas neutros multiplican los colores por vertex del pelaje, y las
+    /// partes de un solo color, que los multiplican por el suyo: los cabos, la
+    /// frente, el interior del hocico y los vasos) y su crin, su copete y su
+    /// cola (`Hair`, teñidos con el color de la crin del pelaje).
     pub fn skin(self, material: &str) -> Option<Skin> {
-        let (set, masked, detail) = match (self, material) {
-            (Self::Nandu, "Body") => ("rhea_body", false, false),
-            (Self::Nandu, "Feathers") => ("rhea_feathers", true, true),
+        let (set, masked, detail, strands) = match (self, material) {
+            (Self::Nandu, "Body") => ("rhea_body", false, false, false),
+            (Self::Nandu, "Feathers") => ("rhea_feathers", true, true, false),
+            (Self::Horse, "Main" | "Main_Dark" | "Main_Light" | "Muzzle" | "Hooves") => {
+                ("horse_body", false, false, false)
+            }
+            (Self::Horse, "Hair") => ("horse_hair", true, false, true),
             _ => return None,
         };
         Some(Skin {
             set,
             masked,
             detail,
+            strands,
         })
     }
 
@@ -329,7 +352,8 @@ impl Species {
     pub const fn model_withers(self) -> f32 {
         match self {
             Self::Cow | Self::Bull => 4.4,
-            Self::Horse => 3.6,
+            // El caballo propio está en metros.
+            Self::Horse => 1.5,
             Self::Fox => 2.35,
             Self::GatoMontes | Self::Puma | Self::Yaguarete => 2.8,
             Self::Chimango | Self::Carancho => 12.47,
@@ -612,6 +636,8 @@ pub fn paint(animal: Animal, material: &str) -> Paint {
             "Main_Dark" => rgb(coat.points()),
             "Main_Light" => rgb(coat.head()),
             "Hooves" => rgb(coat.hoof()),
+            // La piel desnuda de los ollares y de la boca.
+            "Muzzle" => rgb([48, 42, 38]),
             _ => Paint::Keep,
         },
         // El zorro gris: el cuerpo canoso en lugar del rojizo del modelo.
@@ -993,7 +1019,8 @@ pub(crate) fn dress_meshes(
                     if let Some(worn) = skin.and_then(|s| skinned(&m, s, maps)) {
                         m = worn;
                     }
-                    // Después de los mapas: el color liso los tiñe.
+                    // Después de los mapas: el color liso tiñe los suyos (la
+                    // crin del caballo).
                     match paint {
                         Paint::Flat(color) => m.base_color = color,
                         Paint::Vertex => m.base_color = Color::WHITE,
@@ -1573,7 +1600,9 @@ mod tests {
                 .get(&gltf.skins[0])
                 .unwrap();
             let joints = match species {
-                Species::Horse => 50,
+                // Los 50 de Quaternius más la crin, el copete, la cola y la
+                // cara.
+                Species::Horse => 62,
                 Species::Fox => 51,
                 Species::GatoMontes | Species::Puma | Species::Yaguarete => 34,
                 Species::Chimango | Species::Carancho => 30,
@@ -1622,10 +1651,11 @@ mod tests {
             println!("{species:?}: {triangles} triangles, back {top:.2} m, materials {names:?}");
             let budget = match species {
                 Species::Nandu => 6_500,
+                Species::Horse => 12_500,
                 _ => 2_500,
             };
             assert!(triangles <= budget, "{species:?}: {triangles}");
-            if species == Species::Nandu {
+            if matches!(species, Species::Nandu | Species::Horse) {
                 // Sus mapas necesitan UV y tangentes en cada primitiva.
                 let m = world.resource::<Assets<Mesh>>();
                 for primitive in &mesh.primitives {
@@ -1635,9 +1665,17 @@ mod tests {
                 }
             }
             let materials: &[&str] = match species {
-                Species::Cow | Species::Bull | Species::Horse => {
-                    &["Main", "Main_Light", "Muzzle", "Hooves"]
-                }
+                Species::Cow | Species::Bull => &["Main", "Main_Light", "Muzzle", "Hooves"],
+                Species::Horse => &[
+                    "Main",
+                    "Hair",
+                    "Main_Dark",
+                    "Main_Light",
+                    "Muzzle",
+                    "Hooves",
+                    "Eye_Black",
+                    "Eye_White",
+                ],
                 Species::Fox => &["Main", "Main_Light"],
                 Species::GatoMontes | Species::Puma | Species::Yaguarete => {
                     &["Grey", "White", "Pink"]
@@ -1720,6 +1758,72 @@ mod tests {
         app.update();
         app.update();
         assert!(!shown(app.world()), "far");
+    }
+
+    #[test]
+    fn a_corral_horse_wears_its_coat_maps_and_a_mane_tinted_hair_mask_at_any_distance() {
+        let mut app = fauna_app();
+        let coat = Coat::Tordillo;
+        app.world_mut().spawn((Animal::Horse(coat), AnimalSeed(3)));
+        until_rigged(&mut app, 1);
+        app.update();
+        let world = app.world_mut();
+        let rig = world
+            .query::<&LivestockRig>()
+            .single(world)
+            .unwrap()
+            .clone();
+        // La crin y la cola son su silueta: no se quitan de lejos.
+        assert!(rig.detail.is_empty(), "{:?}", rig.detail);
+        let mane = coat.mane();
+        let mut seen = Vec::new();
+        let mut parts = world.query::<(
+            &Mesh3d,
+            &MeshMaterial3d<StandardMaterial>,
+            &GltfMaterialName,
+        )>();
+        for (mesh, material, name) in parts.iter(world) {
+            let m = world
+                .resource::<Assets<StandardMaterial>>()
+                .get(&material.0)
+                .unwrap();
+            let coloured = world
+                .resource::<Assets<Mesh>>()
+                .get(&mesh.0)
+                .unwrap()
+                .attribute(Mesh::ATTRIBUTE_COLOR)
+                .is_some();
+            match name.0.as_str() {
+                "Main" => {
+                    assert!(m.base_color_texture.is_some() && m.normal_map_texture.is_some());
+                    assert_eq!(m.base_color, Color::WHITE);
+                    assert_eq!(m.alpha_mode, AlphaMode::Opaque);
+                    assert!(coloured, "the coat in its vertex colours");
+                }
+                "Hair" => {
+                    assert!(m.base_color_texture.is_some());
+                    assert_eq!(m.alpha_mode, AlphaMode::Mask(LEAF_CUTOFF));
+                    assert_eq!(m.cull_mode, None);
+                    assert!(m.double_sided, "the backs of the strands lit");
+                    assert_eq!(
+                        m.base_color,
+                        Color::srgb_u8(mane[0], mane[1], mane[2]),
+                        "tinted with the mane"
+                    );
+                    assert!(!coloured);
+                }
+                // Las partes de un solo color, con los mismos mapas.
+                "Main_Dark" | "Main_Light" | "Muzzle" | "Hooves" => {
+                    assert!(m.base_color_texture.is_some(), "{}", name.0);
+                    assert_eq!(m.alpha_mode, AlphaMode::Opaque);
+                    assert_ne!(m.base_color, Color::WHITE, "{}", name.0);
+                    assert!(!coloured);
+                }
+                _ => assert!(m.base_color_texture.is_none(), "{}", name.0),
+            }
+            seen.push(name.0.clone());
+        }
+        assert!(seen.contains(&"Main".to_string()) && seen.contains(&"Hair".to_string()));
     }
 
     #[test]

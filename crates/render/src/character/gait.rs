@@ -9,19 +9,20 @@
 //!   desvanece, plegando las patas. Cada una de esas propiedades se devuelve
 //!   suavemente hacia su reposo según el peso de los clips que no la animan
 //!   ([`PARTIAL`]).
-//! - **Un galope más largo.** El galope de Quaternius tiene una zancada corta
-//!   (unos 2.3 m por ciclo): reproducido lo bastante rápido como para no
-//!   deslizarse a galope tendido, parece frenético. Al galope, el recorrido de
-//!   cada pata alrededor de su propia media ([`GALLOP_MEANS`]) se estira por
+//! - **Un galope más largo, si hace falta.** Al galope, el recorrido de cada
+//!   pata alrededor de su propia media ([`GALLOP_MEANS`]) se estira por
 //!   [`STRIDE`], así que el clip cubre más terreno por ciclo y se reproduce más
-//!   lento.
+//!   lento. El galope de Quaternius lo necesitaba (unos 2.3 m por ciclo:
+//!   reproducido lo bastante rápido como para no deslizarse a galope tendido,
+//!   parecía frenético); el del caballo propio ya da unos 4.15 m por ciclo, así
+//!   que no se estira.
 //! - **Un cuerpo que se flexiona** ([`articulation`]), sincronizado con el
 //!   ciclo del galope: la grupa baja cuando las patas traseras llegan bajo la
 //!   panza y sube en el impulso, el lomo se arquea y se estira en contra, así
 //!   que la cruz cabecea en sentido opuesto, el cuello bombea contra el tercio
 //!   anterior y la cabeza se estabiliza, la cadera rola y gira un poco con la
-//!   mano de galope, y la cola sigue con retraso. La caminata se deja como
-//!   está.
+//!   mano de galope (la cola la mueve el propio clip). La caminata se deja
+//!   como está.
 //! - **Los vasos se quedan en las patas, por encima del suelo.** Una pata cuyo
 //!   extremo queda bajo el suelo por una mezcla o por el estiramiento se pliega
 //!   en la rodilla o el corvejón lo justo ([`lift_legs`]). Los vasos del modelo
@@ -35,8 +36,9 @@
 //!   objetivos de IK de los vasos), ya que la entidad ya vuela el arco de la
 //!   física. Además del clip, las patas traseras impulsan al caballo,
 //!   estirándose hacia atrás y hacia abajo al dejar el suelo ([`push`],
-//!   [`PUSH`]), y las manos se recogen un poco más en lo alto ([`tuck`],
-//!   [`TUCK`]), con cada vaso devuelto al extremo de su pata.
+//!   [`PUSH`]); el ajuste puede recoger además las manos en lo alto
+//!   ([`tuck`], [`TUCK`]), pero el clip del caballo propio ya las recoge, así
+//!   que está en cero. Cada vaso vuelve al extremo de su pata.
 //!
 //! Todo es determinista, se calcula de nuevo en cada frame a partir de la pose
 //! de los clips, y no reserva memoria.
@@ -55,39 +57,17 @@ pub enum Property {
 
 /// Las propiedades que no anima cada clip, con los clips que sí lo hacen (el
 /// bit `k` para [`Clip::ALL`]`[k]`), tal como las tiene `horse.glb`; todas las
-/// demás propiedades animadas están en todos los clips.
-pub const PARTIAL: [(&str, Property, u8); 26] = [
-    ("Back", Property::Rotation, 0b0010000),
-    ("Back", Property::Translation, 0b1110000),
-    ("BackShoulder.L", Property::Translation, 0b1100010),
-    ("BackShoulder.R", Property::Translation, 0b1100000),
-    ("Ear2.L", Property::Rotation, 0b1101111),
-    ("Ear2.R", Property::Rotation, 0b1101111),
-    ("Ear3.L", Property::Rotation, 0b1100100),
-    ("Ear3.R", Property::Rotation, 0b1100100),
-    ("Ear4.L", Property::Rotation, 0b1110000),
-    ("Ear4.R", Property::Rotation, 0b1110000),
-    ("FrontShoulder.L", Property::Translation, 0b1111101),
-    ("FrontShoulder.R", Property::Translation, 0b1110000),
-    ("IKBackLeg.L", Property::Rotation, 0b1110000),
-    ("IKBackLeg.L", Property::Translation, 0b1110010),
-    ("IKBackLeg.R", Property::Rotation, 0b1110100),
-    ("IKBackLeg.R", Property::Translation, 0b1110100),
-    ("IKFrontLeg.L", Property::Rotation, 0b1110100),
-    ("IKFrontLeg.L", Property::Translation, 0b1111101),
-    ("IKFrontLeg.R", Property::Rotation, 0b1110000),
-    ("IKFrontLeg.R", Property::Translation, 0b1110000),
-    ("Neck3", Property::Rotation, 0b1110011),
-    ("PoleTarget.L", Property::Translation, 0b1000000),
-    ("PoleTarget.R", Property::Translation, 0b1000000),
-    ("Tail2", Property::Rotation, 0b1100000),
-    ("Torso2", Property::Rotation, 0b0010000),
-    ("Torso3", Property::Rotation, 0b0001000),
-];
+/// demás propiedades animadas están en todos los clips. El caballo propio
+/// (`tools/horse.py`) anima cada hueso en cada clip, así que no hay ninguna (el
+/// de Quaternius tenía 26); el test `the_partial_table_is_the_files` las lee del
+/// archivo.
+pub const PARTIAL: [(&str, Property, u8); 0] = [];
 
 /// Los huesos que ningún clip gira pero que gira [`fit_horse`]: se devuelven
-/// primero al reposo en cada frame, o los giros se acumularían.
-pub const UNANIMATED: [&str; 2] = ["Torso", "Tail1"];
+/// primero al reposo en cada frame, o los giros se acumularían. Ninguno en el
+/// caballo propio, cuyos clips fijan cada hueso en cada frame (en el de
+/// Quaternius, `Torso` y `Tail1`).
+pub const UNANIMATED: [&str; 0] = [];
 
 /// La parte de una propiedad `mask` (ver [`PARTIAL`]) que animan los clips que
 /// se reproducen con `weights`: el resto queda en reposo.
@@ -111,22 +91,28 @@ pub fn complete_blend(property: Property, rest: &Transform, value: &mut Transfor
     }
 }
 
-/// Cuánto más larga es la zancada del galope que la del clip.
-pub const STRIDE: f32 = 1.4;
+/// Cuánto más larga es la zancada del galope que la del clip: nada. El clip
+/// del caballo propio (`tools/horse.py`) ya muestra 7.12 m/s en 0.58 s (unos
+/// 4.15 m por zancada), lo que mostraba el de Quaternius estirado 1.4 veces; el
+/// galope tendido (12.2 m/s) se reproduce al mismo ritmo que antes, unas 2.9
+/// zancadas por segundo.
+pub const STRIDE: f32 = 1.0;
 
 /// El giro medio de cada hueso superior de pata que se balancea a lo largo del
-/// ciclo del galope (su propia rotación local, medida en `horse.glb`): la
-/// zancada se estira alrededor de él. Las partes inferiores de las patas se
-/// pliegan como las pliega el clip.
+/// ciclo del galope (su propia rotación local, `[x, y, z, w]`, medida en
+/// `horse.glb`: el promedio normalizado de las claves del clip, con el signo
+/// alineado): la zancada se estira alrededor de él. Las partes inferiores de
+/// las patas se pliegan como las pliega el clip. `BackShoulder.*` no se mueve en
+/// el galope del caballo propio.
 pub const GALLOP_MEANS: [(&str, [f32; 4]); 8] = [
-    ("FrontUpperLeg.L", [0.72688, 0.63446, 0.17364, 0.1974]),
-    ("FrontUpperLeg.R", [0.72373, -0.63646, -0.17442, 0.20176]),
-    ("BackShoulder.L", [-0.68568, -0.56806, -0.27013, 0.3663]),
-    ("BackShoulder.R", [0.69222, -0.5585, -0.25075, -0.38215]),
-    ("BackLeg.L", [0.73969, 0.63967, 0.12762, 0.16553]),
-    ("BackLeg.R", [0.73885, -0.64136, -0.12789, 0.16247]),
-    ("BackUpperLeg.L", [0.65989, -0.00073, 0.04062, 0.75027]),
-    ("BackUpperLeg.R", [0.64587, 0.00303, -0.0341, 0.76268]),
+    ("FrontUpperLeg.L", [0.71549, 0.62746, 0.20254, 0.23095]),
+    ("FrontUpperLeg.R", [0.7146, -0.62668, -0.20494, 0.2337]),
+    ("BackShoulder.L", [-0.61181, -0.55903, -0.38261, 0.4084]),
+    ("BackShoulder.R", [-0.6118, 0.55903, 0.3826, 0.40841]),
+    ("BackLeg.L", [0.7177, 0.66242, 0.14551, 0.15787]),
+    ("BackLeg.R", [0.71722, -0.66192, -0.14763, 0.1602]),
+    ("BackUpperLeg.L", [0.61759, -0.00002, -0.00088, 0.7865]),
+    ("BackUpperLeg.R", [0.61024, 0.00003, 0.00077, 0.79222]),
 ];
 
 /// `rotation` balanceada `k` veces más lejos de `mean`.
@@ -139,16 +125,22 @@ pub fn stretch(rotation: Quat, mean: Quat, k: f32) -> Quat {
     (mean * Quat::from_axis_angle(axis, angle * k)).normalize()
 }
 
-/// En qué punto del ciclo del galope (`0..1`) las patas traseras llegan más
-/// lejos bajo la panza y apoya la trasera izquierda: ahí la grupa está más
-/// baja.
-pub const GATHER: f32 = 0.57;
+/// En qué punto del ciclo del galope (`0..1`) la grupa está más baja respecto
+/// de la cruz en el propio clip: la flexión se suma en fase con la suya.
+/// Medido en `horse.glb` como el punto en que la línea de `Tail1` a `Neck1`
+/// cabecea más hacia arriba (0.75; en el de Quaternius, 0.57, que coincidía con
+/// la trasera izquierda más adelante). Fuera de fase, la flexión desliza los
+/// vasos apoyados: en 0.11 (la trasera izquierda más adelante) se deslizan más
+/// de 0.5 m/s.
+pub const GATHER: f32 = 0.75;
 
 /// El movimiento propio del cuerpo al galope, en radianes, en la fase `phase`
 /// de su ciclo (`0..1`): cabeceos alrededor del eje lateral del cuerpo
 /// (positivos con la nariz o el extremo delantero hacia arriba) del tercio
 /// posterior (`Back`), de cada hueso del lomo, del cuello y de la cabeza, el
-/// rolido y el giro de la cadera, y la elevación de la cola.
+/// rolido y el giro de la cadera. La cola la mueve el propio clip (levantada,
+/// en curva y con una onda por tranco): girarla además desde el maslo
+/// arrastraba la piel de las nalgas.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Articulation {
     pub back: f32,
@@ -157,17 +149,17 @@ pub struct Articulation {
     pub head: f32,
     pub roll: f32,
     pub yaw: f32,
-    pub tail: f32,
 }
 
-/// El cabeceo de la grupa hacia cada lado al galope, en radianes (unos 7°).
+/// El cabeceo de la grupa hacia cada lado al galope, en radianes (unos 7°),
+/// además del propio del clip: su `Torso` cabecea unos 11° de punta a punta
+/// (el de Quaternius, 12.6°), así que la flexión se mantiene.
 pub const CROUP: f32 = 0.12;
 
 /// La [`Articulation`] en la fase `phase` del galope. El tercio posterior es el
 /// que más cabecea; los huesos del lomo se doblan en contra, cada uno un poco
 /// más hacia la cruz, así que el tercio anterior cabecea en sentido opuesto; el
-/// cuello bombea contra el tercio anterior y la cabeza deshace la mitad; la
-/// cola va un quinto de ciclo atrasada.
+/// cuello bombea contra el tercio anterior y la cabeza deshace la mitad.
 pub fn articulation(phase: f32) -> Articulation {
     use std::f32::consts::TAU;
     let gather = (TAU * (phase - GATHER)).cos();
@@ -181,7 +173,6 @@ pub fn articulation(phase: f32) -> Articulation {
         head: -0.5 * neck,
         roll: 0.04 * lead,
         yaw: 0.03 * lead,
-        tail: 0.25 * (TAU * (phase - GATHER - 0.2)).cos(),
     }
 }
 
@@ -517,8 +508,10 @@ fn level_flight(bones: &HorseBones, transforms: &mut Query<&mut Transform>, jump
 
 /// El impulso de las patas traseras al despegar, en radianes: cada muslo
 /// balanceado hacia atrás en la cadera y cada corvejón abierto, así que los
-/// vasos se estiran hacia atrás y hacia abajo al dejar el suelo (el clip tiene
-/// el impulso, pero demasiado corto para que se note).
+/// vasos se estiran hacia atrás y hacia abajo al dejar el suelo. El clip del
+/// caballo propio despega con las patas traseras todavía cerca del suelo (de
+/// la babilla al vaso, 0.97 m al empezar el vuelo), así que el ajuste las
+/// termina de estirar.
 pub const PUSH: (f32, f32) = (0.3, 0.45);
 
 /// El vuelo (`0..=1`) en el que el impulso ya terminó: a partir de ahí el clip
@@ -526,9 +519,12 @@ pub const PUSH: (f32, f32) = (0.3, 0.45);
 pub const PUSH_END: f32 = 0.25;
 
 /// El recogido extra de las manos en lo alto del salto, en radianes: cada
-/// antebrazo levantado hacia adelante en el codo y cada rodilla plegada, un
-/// poco más de lo que lo hace el clip.
-pub const TUCK: (f32, f32) = (0.15, 0.4);
+/// antebrazo levantado hacia adelante en el codo y cada rodilla plegada, más
+/// de lo que lo hace el clip. Ninguno: el clip del caballo propio ya recoge
+/// las manos a 0.32–0.40 m de los codos en lo alto (el de Quaternius las dejaba
+/// a unos 0.72 m y se recogían 0.15 y 0.4 rad más); recogerlas otra vez
+/// aplasta la piel de la rodilla.
+pub const TUCK: (f32, f32) = (0.0, 0.0);
 
 /// Cuánto impulso de las patas traseras (`0..1`) hay en la fracción `flight`
 /// (`0..=1`) de un salto: todo cuando el caballo deja el suelo, y se desvanece
@@ -656,7 +652,6 @@ pub fn fit_horse(
     }
     turn_in_body(bones, transforms, &spine[..5], B::Neck1, pitch(a.neck));
     turn_in_body(bones, transforms, &spine, B::Head, pitch(a.head));
-    turn_in_body(bones, transforms, &spine[..2], B::Tail1, pitch(-a.tail));
     // El recorrido de cada pata estirado, mientras su extremo siga por encima
     // del suelo.
     let k = 1.0 + (STRIDE - 1.0) * gallop;
@@ -737,52 +732,34 @@ mod tests {
 
     #[test]
     fn the_partial_table_is_the_files() {
+        use crate::fauna::livestock::Species;
         use crate::gltf::tests::root;
-        let data = std::fs::read(root().0.join("models/fauna/quaternius/horse.glb")).unwrap();
-        let len = u32::from_le_bytes(data[12..16].try_into().unwrap()) as usize;
-        let json = String::from_utf8(data[20..20 + len].to_vec()).unwrap();
-        // Nombres de nodo en el orden del archivo, y los pares (nodo, ruta) de
-        // cada animación.
-        let names: Vec<&str> = {
-            // La lista de nodos de nivel superior es la última clave del
-            // archivo.
-            let nodes = &json[json.rfind("\"nodes\":[").unwrap()..];
-            nodes
-                .match_indices("\"name\":\"")
-                .map(|(i, m)| {
-                    let s = &nodes[i + m.len()..];
-                    &s[..s.find('"').unwrap()]
-                })
-                .collect()
-        };
-        let animations = &json[json.find("\"animations\":[").unwrap()..];
+        use bevy::gltf::gltf::{self, animation::Property as Path};
+        let data = std::fs::read(root().0.join(Species::Horse.path())).unwrap();
+        let file = gltf::Gltf::from_slice(&data).unwrap();
+        // Las propiedades (nodo, ruta) de cada clip, en el orden de
+        // [`Clip::ALL`].
         let mut found: std::collections::BTreeMap<(String, &str), u8> = Default::default();
         for (k, clip) in Clip::ALL.iter().enumerate() {
-            let start = animations
-                .find(&format!("{{\"name\":\"{}\",\"channels\":[", clip.name()))
+            let animation = file
+                .animations()
+                .find(|a| a.name() == Some(clip.name()))
                 .unwrap();
-            let end = animations[start..].find("],\"samplers\"").unwrap() + start;
-            let channels = &animations[start..end];
-            for (i, _) in channels.match_indices("\"node\":") {
-                let rest = &channels[i + 7..];
-                let node: usize = rest[..rest.find(|c: char| !c.is_ascii_digit()).unwrap()]
-                    .parse()
-                    .unwrap();
-                let path = &rest[..rest.find('}').unwrap()];
-                let path = if path.contains("rotation") {
-                    "rotation"
-                } else if path.contains("translation") {
-                    "translation"
-                } else {
-                    continue;
+            for channel in animation.channels() {
+                let path = match channel.target().property() {
+                    Path::Rotation => "rotation",
+                    Path::Translation => "translation",
+                    _ => continue,
                 };
-                *found.entry((names[node].to_string(), path)).or_default() |= 1 << k;
+                let node = channel.target().node().name().unwrap().to_string();
+                *found.entry((node, path)).or_default() |= 1 << k;
             }
         }
+        let every = (1 << Clip::ALL.len()) - 1;
         let partial: Vec<(String, &str, u8)> = found
-            .into_iter()
-            .filter(|(_, m)| *m != (1 << Clip::ALL.len()) - 1)
-            .map(|((n, p), m)| (n, p, m))
+            .iter()
+            .filter(|(_, m)| **m != every)
+            .map(|((n, p), m)| (n.clone(), *p, *m))
             .collect();
         let table: Vec<(String, &str, u8)> = PARTIAL
             .iter()
@@ -796,6 +773,30 @@ mod tests {
             })
             .collect();
         assert_eq!(partial, table);
+        // Cada hueso que gira [`fit_horse`] lo giran todos los clips o
+        // ninguno ([`UNANIMATED`]), o su giro se completa ([`PARTIAL`]): si
+        // no, sus giros se acumularían frame a frame.
+        let turned = [
+            Bone::Back,
+            Bone::Torso,
+            Bone::Torso2,
+            Bone::Torso3,
+            Bone::Neck1,
+            Bone::Head,
+            Bone::Tail1,
+        ]
+        .into_iter()
+        .chain((0..4).flat_map(|l| [Bone::UpperLeg(l), Bone::Leg(l), Bone::LowerLeg(l)]))
+        .map(Bone::name);
+        for name in turned {
+            let mask = found.get(&(name.clone(), "rotation")).copied().unwrap_or(0);
+            let unanimated = UNANIMATED.contains(&name.as_str());
+            assert_eq!(mask == 0, unanimated, "{name}: {mask:#b}");
+            let listed = PARTIAL
+                .iter()
+                .any(|(n, p, _)| *n == name && *p == Property::Rotation);
+            assert!(mask == 0 || mask == every || listed, "{name}: {mask:#b}");
+        }
     }
 
     #[test]
@@ -901,7 +902,7 @@ mod tests {
                 low = (a.back, phase);
             }
             let again = articulation(phase + 1.0);
-            assert!((a.back - again.back).abs() < 1e-5 && (a.tail - again.tail).abs() < 1e-5);
+            assert!((a.back - again.back).abs() < 1e-5 && (a.roll - again.roll).abs() < 1e-5);
         }
         // La grupa está en su punto más bajo (el extremo delantero del tercio
         // posterior más arriba) cuando las patas traseras se juntan bajo la

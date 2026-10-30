@@ -624,18 +624,20 @@ pub fn bridle() -> [Shell; 4] {
 }
 
 /// El rayo desde dentro del hocico hacia la comisura de la boca del lado `s`
-/// (-1 izquierda, 1 derecha), donde va una argolla del freno. La cabeza está un
-/// poco a la derecha de la columna (su centro, 1.6 cm desplazado).
+/// (-1 izquierda, 1 derecha), donde va una argolla del freno. La cabeza está
+/// centrada en la columna (la de Quaternius estaba 1.6 cm a la derecha).
 pub fn bit_ray(s: f32) -> (Vec3, Vec3) {
-    (Vec3::new(1.33, 1.48, 0.016), Vec3::Z * s)
+    (Vec3::new(1.33, 1.48, 0.0), Vec3::Z * s)
 }
 
 /// El rayo desde dentro del cuello hacia su costado, un palmo por debajo de la
-/// crin, del lado `s`: ahí las riendas se apoyan a lo largo del cuello.
+/// crin, del lado `s`: ahí las riendas se apoyan a lo largo del cuello. Bastante
+/// de costado para que la rienda desde la quijada no atraviese la parte alta
+/// del cuello, más llena en el caballo propio que en el de Quaternius.
 pub fn neck_ray(s: f32) -> (Vec3, Vec3) {
     (
         Vec3::new(0.7, 1.45, 0.0),
-        Vec3::new(0.0, 1.0, 0.55 * s).normalize(),
+        Vec3::new(0.0, 1.0, 0.75 * s).normalize(),
     )
 }
 
@@ -644,7 +646,7 @@ pub fn neck_ray(s: f32) -> (Vec3, Vec3) {
 /// mejilla.
 pub fn jowl_ray(s: f32) -> (Vec3, Vec3) {
     (
-        Vec3::new(1.12, 1.62, 0.015),
+        Vec3::new(1.12, 1.62, 0.0),
         Vec3::new(0.0, -0.2, s).normalize(),
     )
 }
