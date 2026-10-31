@@ -21,8 +21,9 @@
 //!   panza y sube en el impulso, el lomo se arquea y se estira en contra, así
 //!   que la cruz cabecea en sentido opuesto, el cuello bombea contra el tercio
 //!   anterior y la cabeza se estabiliza, la cadera rola y gira un poco con la
-//!   mano de galope (la cola la mueve el propio clip). La caminata se deja
-//!   como está.
+//!   mano de galope (la cola la mueve el propio clip). Las paletas se
+//!   deslizan por el pecho para que la flexión no hunda la cruz sobre una
+//!   mano apoyada ([`sling`]). La caminata se deja como está.
 //! - **Los vasos se quedan en las patas, por encima del suelo.** Una pata cuyo
 //!   extremo queda bajo el suelo por una mezcla o por el estiramiento se pliega
 //!   en la rodilla o el corvejón lo justo ([`lift_legs`]). Los vasos del modelo
@@ -105,14 +106,14 @@ pub const STRIDE: f32 = 1.0;
 /// las patas se pliegan como las pliega el clip. `BackShoulder.*` no se mueve en
 /// el galope del caballo propio.
 pub const GALLOP_MEANS: [(&str, [f32; 4]); 8] = [
-    ("FrontUpperLeg.L", [0.71549, 0.62746, 0.20254, 0.23095]),
-    ("FrontUpperLeg.R", [0.7146, -0.62668, -0.20494, 0.2337]),
+    ("FrontUpperLeg.L", [0.698, 0.61212, 0.24503, 0.27941]),
+    ("FrontUpperLeg.R", [0.70058, -0.61438, -0.23931, 0.27288]),
     ("BackShoulder.L", [-0.61181, -0.55903, -0.38261, 0.4084]),
     ("BackShoulder.R", [-0.6118, 0.55903, 0.3826, 0.40841]),
-    ("BackLeg.L", [0.7177, 0.66242, 0.14551, 0.15787]),
-    ("BackLeg.R", [0.71722, -0.66192, -0.14763, 0.1602]),
-    ("BackUpperLeg.L", [0.61759, -0.00002, -0.00088, 0.7865]),
-    ("BackUpperLeg.R", [0.61024, 0.00003, 0.00077, 0.79222]),
+    ("BackLeg.L", [0.70581, 0.65043, 0.19003, 0.20657]),
+    ("BackLeg.R", [0.70529, -0.64991, -0.19169, 0.2084]),
+    ("BackUpperLeg.L", [0.57694, -0.00004, -0.00027, 0.81679]),
+    ("BackUpperLeg.R", [0.57729, 0.00004, 0.00028, 0.81654]),
 ];
 
 /// `rotation` balanceada `k` veces más lejos de `mean`.
@@ -125,14 +126,20 @@ pub fn stretch(rotation: Quat, mean: Quat, k: f32) -> Quat {
     (mean * Quat::from_axis_angle(axis, angle * k)).normalize()
 }
 
-/// En qué punto del ciclo del galope (`0..1`) la grupa está más baja respecto
-/// de la cruz en el propio clip: la flexión se suma en fase con la suya.
-/// Medido en `horse.glb` como el punto en que la línea de `Tail1` a `Neck1`
-/// cabecea más hacia arriba (0.75; en el de Quaternius, 0.57, que coincidía con
-/// la trasera izquierda más adelante). Fuera de fase, la flexión desliza los
-/// vasos apoyados: en 0.11 (la trasera izquierda más adelante) se deslizan más
-/// de 0.5 m/s.
-pub const GATHER: f32 = 0.75;
+/// En qué punto del ciclo del galope (`0..1`) la flexión baja más la grupa
+/// respecto de la cruz: a mitad del apoyo de las traseras, bajo la panza (la
+/// derecha apoya de 0 a 0.33 y la izquierda de 0.12 a 0.45), donde el
+/// cabeceo de la grupa casi no mueve los vasos apoyados. El propio clip la
+/// baja más justo antes (en 0, cuando apoya la trasera derecha, medido como el
+/// punto en que la línea de `Tail1` a `Neck1` cabecea más hacia arriba), así
+/// que las dos juntas bajan la grupa mientras las traseras se apoyan; el clip
+/// no dobla el lomo (`tools/horse.py` `gallop`), la flexión lo hace. Medido como la fase en que la
+/// mediana del deslizamiento de los vasos apoyados entre ritmos (8, 12.2 y
+/// 19.4 m/s) es la misma: en 0.22 la velocidad que muestran va de 7.16 a 7.22
+/// m/s; en 0.12 o 0.3 se deslizan más de 0.4 m/s y en 0.75 (la del galope
+/// anterior, cuando la grupa del clip bajaba ahí) los vasos parecen ir a 8.3
+/// m/s a 19.4 m/s.
+pub const GATHER: f32 = 0.22;
 
 /// El movimiento propio del cuerpo al galope, en radianes, en la fase `phase`
 /// de su ciclo (`0..1`): cabeceos alrededor del eje lateral del cuerpo
@@ -593,6 +600,52 @@ fn push_and_tuck(
     reattach(bones, transforms, before);
 }
 
+/// Hasta qué altura sobre su apoyo (en metros) una mano cuenta como apoyada
+/// para [`sling`]: del todo en el suelo, nada a esta altura.
+pub const SLING_FADE: f32 = 0.08;
+
+/// Dónde está cada codo (la cabeza de `FrontUpperLeg`) en el espacio del
+/// armature, y a qué altura sobre su apoyo está el extremo de esa mano.
+fn fore_elbows(bones: &HorseBones, transforms: &Query<&mut Transform>) -> [(Vec3, f32); 2] {
+    std::array::from_fn(|leg| {
+        let chain = Bone::chain(leg);
+        let elbow = Vec3::from(placed(bones, &chain[..6], transforms).translation);
+        let end = placed(bones, &chain, transforms);
+        let height = bones
+            .armature
+            .transform_point3(Vec3::from(end.translation))
+            .y
+            - bones.standing[leg];
+        (elbow, height)
+    })
+}
+
+/// El tórax cuelga entre las paletas (L55): cuando la flexión del cuerpo
+/// ([`articulation`]) sube o baja la cruz sobre una mano apoyada, la paleta se
+/// desliza por el pecho lo mismo en sentido contrario (`FrontShoulder.*` se
+/// traslada en el marco del cuerpo, solo en vertical, así que los vasos
+/// apoyados no se deslizan), y el codo queda a la altura que le dio el clip.
+/// Sin esto, la cruz que baja hundía el vaso en el suelo y [`lift_legs`] lo
+/// sacaba doblando la rodilla bajo el peso: la mano parecía dislocada. En el
+/// aire (a [`SLING_FADE`] del apoyo) la mano sigue a la flexión como antes.
+fn sling(bones: &HorseBones, transforms: &mut Query<&mut Transform>, before: &[(Vec3, f32); 2]) {
+    let up = turn(&bones.armature).inverse() * Vec3::Y;
+    let after = fore_elbows(bones, transforms);
+    for leg in 0..2 {
+        let (was, height) = before[leg];
+        let standing = 1.0 - (height / SLING_FADE).clamp(0.0, 1.0);
+        let rise = (was - after[leg].0).dot(up) * standing;
+        if rise.abs() < 1e-6 {
+            continue;
+        }
+        let chain = Bone::chain(leg);
+        let parent = turn(&placed(bones, &chain[..4], transforms));
+        if let Ok(mut t) = transforms.get_mut(bones.bones[Bone::Shoulder(leg).index()]) {
+            t.translation += parent.inverse() * (up * rise);
+        }
+    }
+}
+
 /// Ajusta la pose de un caballo para `weights` (en el orden de [`Clip::ALL`])
 /// en la fase `phase` del ciclo del galope y en la fracción `flight` de un
 /// salto (nada en el suelo): ver las notas del módulo.
@@ -646,12 +699,14 @@ pub fn fit_horse(
     let hips = Quat::from_rotation_y(a.yaw * gallop)
         * Quat::from_rotation_x(a.roll * gallop)
         * pitch(a.back);
+    let elbows = fore_elbows(bones, transforms);
     turn_in_body(bones, transforms, &spine[..1], B::Back, hips);
     for (k, bone) in [B::Torso, B::Torso2, B::Torso3].into_iter().enumerate() {
         turn_in_body(bones, transforms, &spine[..2 + k], bone, pitch(a.torso[k]));
     }
     turn_in_body(bones, transforms, &spine[..5], B::Neck1, pitch(a.neck));
     turn_in_body(bones, transforms, &spine, B::Head, pitch(a.head));
+    sling(bones, transforms, &elbows);
     // El recorrido de cada pata estirado, mientras su extremo siga por encima
     // del suelo.
     let k = 1.0 + (STRIDE - 1.0) * gallop;

@@ -11,7 +11,10 @@ materials (``Main``, ``Hair``, ``Main_Dark``, ``Muzzle``, ``Hooves``,
 ``Main_Light``, ``Eye_Black``, ``Eye_White``); its armature
 ``AnimalArmature`` copies the Quaternius rig (the same 50 joint names,
 parents and rest axes, and the same ``_end`` leaf nodes) and adds bones for
-the mane, the forelock, a longer tail and the face; and the clips ``Idle``,
+the mane, the forelock, a longer tail and the face, and six muscle helpers
+(``MUSCLES``: the quarters, the gaskins and the shoulders) that every clip
+thickens and shifts with the flexion of their joints (``muscle_shape``);
+and the clips ``Idle``,
 ``Idle_2``, ``Idle_Headlow``, ``Eating``, ``Walk``, ``Gallop`` and
 ``Gallop_Jump`` with the original's lengths (the exporter sorts them by
 name: ``tools/glbtrim.py --keep`` puts them back in this order). Life size:
@@ -180,6 +183,36 @@ EXTRA = MANE + [
     ("Nostril.L", "Head", tuple(at(0.47, -0.02, 0.03)), tuple(at(0.48, -0.02, 0.07))),
     ("Nostril.R", "Head", tuple(at(0.47, -0.02, -0.03)), tuple(at(0.48, -0.02, -0.07))),
 ]
+
+# Muscle helpers: leaf bones that change the shape of a muscle mass with the
+# flexion of its joint (``muscle_shape``), so the skin does not only follow
+# the bones. Each takes over part of its parent's weight round the muscle
+# (``weight_muscles``), so at rest and unscaled it moves exactly as before.
+# Name, parent, head (the mass's core, which the scale is about), tail
+# (along the muscle), and the region it takes: centre and radii, the least
+# distance from the midline (``side``) and the bones it takes the weight of
+# (``steal``, the parent by default).
+MUSCLES = []
+for _s, _x in (("L", 1.0), ("R", -1.0)):
+    MUSCLES += [
+        # The quarter: the hamstrings and the biceps of the thigh behind the
+        # femur, from the point of the buttock down to the stifle.
+        dict(name=f"Quarter.{_s}", parent=f"BackLeg.{_s}", head=(_x * 0.10, 0.64, 1.02), tail=(_x * 0.12, 0.70, 0.80),
+             centre=(_x * 0.17, 0.66, 1.04), radii=(0.14, 0.24, 0.22), side=0.08,
+             steal=[f"BackLeg.{_s}", f"BackUpperLeg.{_s}", "Tail2", "Tail3", "Tail4"]),
+        # The gaskin: the second thigh behind the tibia.
+        dict(name=f"Gaskin.{_s}", parent=f"BackUpperLeg.{_s}", head=(_x * 0.175, 0.57, 0.75), tail=(_x * 0.175, 0.70, 0.62),
+             centre=(_x * 0.175, 0.62, 0.74), radii=(0.12, 0.17, 0.17)),
+        # The shoulder: the muscles over the shoulder blade and the triceps
+        # above the elbow. Their skin rides the shoulder blade (the stub
+        # that slides as the foreleg reaches), taken from the upper foreleg
+        # and the chest.
+        dict(name=f"Scapula.{_s}", parent=f"FrontShoulder.{_s}", head=(_x * 0.10, -0.49, 1.10), tail=(_x * 0.10, -0.42, 0.90),
+             centre=(_x * 0.17, -0.50, 1.10), radii=(0.15, 0.20, 0.25),
+             steal=[f"FrontUpperLeg.{_s}", "Torso2"]),
+    ]
+MUSCLE_NAMES = [m["name"] for m in MUSCLES]
+EXTRA += [(m["name"], m["parent"], m["head"], m["tail"]) for m in MUSCLES]
 
 
 def bone_table():
@@ -927,7 +960,7 @@ def tail_spots(sdf):
 
 NOT_SKIN = {"Body", "PoleTarget.L", "PoleTarget.R", "PoleTargetBack.L", "PoleTargetBack.R",
             "Mane1", "Mane2", "Mane3", "Mane4", "Forelock", "Tail5", "Tail6", "Tail7", "Tail8", "Tail9",
-            "FrontShoulder.L", "FrontShoulder.R", "BackShoulder.L", "BackShoulder.R", "Torso"}
+            "FrontShoulder.L", "FrontShoulder.R", "BackShoulder.L", "BackShoulder.R", "Torso"} | set(MUSCLE_NAMES)
 TAIL_CHAIN = ["Tail2", "Tail3", "Tail4", "Tail5", "Tail6", "Tail7", "Tail8", "Tail9"]
 
 
@@ -947,6 +980,53 @@ def skin(body, arm):
         b.use_deform = True
     elbows(body)
     hinds(body, arm)
+    weight_muscles(body)
+
+
+def weight_muscles(body):
+    """Each muscle helper (``MUSCLES``) takes over, on the skin inside its
+    region (an ellipsoid, fading over its outer third and toward the
+    midline, on its own side only), the weight of its parent bone, all of it at the core: unscaled
+    it moves exactly as the parent did, so the rest and the plain clips
+    deform as before. The quarter also takes the weight the heat bind gave
+    the tail's first bones on the buttock and the tibia's above the stifle
+    (``steal``): the mass follows the femur, not the lifted tail."""
+    groups = {g.name: g for g in body.vertex_groups}
+    for m in MUSCLES:
+        sources = [groups[n] for n in m.get("steal", [m["parent"]]) if n in groups]
+        helper = groups.get(m["name"]) or body.vertex_groups.new(name=m["name"])
+        groups[m["name"]] = helper
+        c, r = Vector(m["centre"]), m["radii"]
+        for v in body.data.vertices:
+            p = v.co
+            # Fading in over 6 cm from the midline cut, so no seam shows
+            # where the helper's skin meets the tail's.
+            lateral = smooth((p.x * math.copysign(1.0, c.x) - m.get("side", 0.04)) / 0.06)
+            d = math.sqrt(sum(((p[i] - c[i]) / r[i]) ** 2 for i in range(3)))
+            inside = smooth((1.0 - d) / 0.35) * lateral
+            if inside <= 0.0:
+                continue
+            total = 0.0
+            for g in sources:
+                try:
+                    w = g.weight(v.index)
+                except RuntimeError:
+                    continue
+                moved = w * inside
+                # Wholly moved at the core, so a vertex keeps its four bones.
+                if w - moved < 0.02:
+                    g.remove([v.index])
+                    moved = w
+                else:
+                    g.add([v.index], w - moved, "REPLACE")
+                total += moved
+            if total > 1e-4:
+                helper.add([v.index], total, "REPLACE")
+    bpy.ops.object.select_all(action="DESELECT")
+    body.select_set(True)
+    bpy.context.view_layer.objects.active = body
+    bpy.ops.object.vertex_group_limit_total(group_select_mode="ALL", limit=4)
+    bpy.ops.object.vertex_group_normalize_all(lock_active=False)
 
 
 def elbows(body):
@@ -1603,7 +1683,7 @@ def shots_for(actions):
     by_name = {a.name: a for a in actions}
     frames = {
         "Walk": ((0, 14, 28, 42), "tordillo"),
-        "Gallop": ((0, 7, 14, 21), "zaino"),
+        "Gallop": (tuple(range(0, 28, 2)), "zaino"),
         "Gallop_Jump": ((10, 24, 40, 60), "overo"),
         "Eating": ((0, 140), "bayo"),
         "Idle": ((0, 60, 120), "alazan"),
@@ -1613,6 +1693,11 @@ def shots_for(actions):
     if "Gallop" in by_name:
         for f in (7, 14, 21):
             shots.append((f"gallop_elbow_{f:03}.png", "zaino", by_name["Gallop"], f, (1.7, -1.7, 1.0), (0.1, -0.4, 0.9), 45))
+        # The muscles at work: the quarters and the shoulder through the
+        # stride, close.
+        for f in range(0, 28, 4):
+            shots.append((f"gallop_quarters_{f:03}.png", "alazan", by_name["Gallop"], f, (2.3, 1.2, 1.05), (0.0, 0.45, 0.85), 45))
+            shots.append((f"gallop_shoulder_{f:03}.png", "alazan", by_name["Gallop"], f, (2.3, -1.6, 1.1), (0.0, -0.5, 0.9), 45))
     for name, (fs, coat) in frames.items():
         if name in by_name:
             for f in fs:
@@ -1658,6 +1743,91 @@ MOVED = {"Body", "IKFrontLeg.L", "IKFrontLeg.R", "IKBackLeg.L", "IKBackLeg.R",
 NECK = ("Neck1", "Neck2", "Neck3", "Head")
 MUZZLE = at(0.50, -0.07)
 LEGS = ("LF", "RF", "LH", "RH")
+
+
+def _clamp01(x):
+    return max(0.0, min(1.0, x))
+
+
+def _swing(d, fwd, up):
+    """How far ``d`` points forward of straight down, in degrees, in the
+    plane of ``fwd`` and ``up``."""
+    return math.degrees(math.atan2(d.dot(fwd), -d.dot(up)))
+
+
+def _frame(pose, bone):
+    r = pose.posed(bone).to_3x3() @ pose.rest(bone).to_3x3().inverted()
+    return r @ Vector((0, -1, 0)), r @ Vector((0, 0, 1))
+
+
+def flexions(pose, side):
+    """The joints that drive the muscles of one side: the femur's swing
+    forward of its rest (degrees, in the hindquarters' frame), the hock's
+    angle and the foreleg's swing forward, elbow to fetlock (in the
+    chest's frame: the forearm itself stays near upright through the
+    stance, while the whole leg sweeps back under the pushing triceps)."""
+    fwd, up = _frame(pose, "Back")
+    hip = pose.posed(f"BackLeg.{side}").translation
+    stifle = pose.posed(f"BackUpperLeg.{side}").translation
+    hock = pose.posed(f"BackLowerLeg.{side}").translation
+    fet = end_point(pose, f"BackLowerLeg.{side}", f"BackLowerLeg.{side}_end")
+    f_fwd, f_up = _frame(pose, "Torso2")
+    elbow = pose.posed(f"FrontUpperLeg.{side}").translation
+    hoof = end_point(pose, f"FrontLowerLeg.{side}", f"FrontLowerLeg.{side}_end")
+    return dict(femur=_swing(stifle - hip, fwd, up), hock=math.degrees((stifle - hock).angle(fet - hock)),
+                foreleg=_swing(hoof - elbow, f_fwd, f_up))
+
+
+REST_FLEXIONS = {}
+
+
+def muscle_shape(pose, arm):
+    """Each muscle helper's scale (across, along, across its bone) and its
+    shift (armature space) in ``pose``, from the flexion of its joint
+    against the rest pose (``REST_FLEXIONS``), as in the user's gallop
+    references (L43): the quarter rounds and bulges as the hind leg comes
+    forward under the belly (a little as it drives back too), the gaskin
+    bunches as the hock opens to push, and the shoulder's mass rides
+    forward and up with the shoulder blade as the foreleg reaches and the
+    triceps bunches as the leg stands and pushes back. A contracting muscle
+    shortens along its bone as much as it thickens across."""
+    if arm.name not in REST_FLEXIONS:
+        rest = rig.Pose(arm)
+        REST_FLEXIONS[arm.name] = {s: flexions(rest, s) for s in ("L", "R")}
+    out = {}
+    for side in ("L", "R"):
+        now, rest = flexions(pose, side), REST_FLEXIONS[arm.name][side]
+        femur = now["femur"] - rest["femur"]
+        quarter = 0.18 * ease(_clamp01(femur / 25.0)) + 0.07 * ease(_clamp01(-femur / 25.0))
+        gaskin = 0.20 * ease(_clamp01((now["hock"] - rest["hock"]) / 18.0))
+        fore = now["foreleg"] - rest["foreleg"]
+        reach, push = ease(_clamp01(fore / 40.0)), ease(_clamp01(-fore / 18.0))
+        triceps = 0.18 * push + 0.06 * reach
+        fwd, up = _frame(pose, "Torso2")
+        shift = fwd * (0.045 * reach - 0.02 * push) + up * 0.02 * reach
+        for name, bulge, move in ((f"Quarter.{side}", quarter, None), (f"Gaskin.{side}", gaskin, None),
+                                  (f"Scapula.{side}", triceps, shift)):
+            out[name] = (Vector((1.0 + bulge, 1.0 - 0.5 * bulge, 1.0 + bulge)), move or Vector())
+    return out
+
+
+class Pose(rig.Pose):
+    """``rig.Pose`` that also shapes the muscle helpers (``muscle_shape``)
+    from the pose's joints when it is keyed: their shift and scale, so
+    every clip moves the muscles with its own flexion."""
+
+    def apply(self, frame, root):
+        shapes = muscle_shape(self, self.arm)
+        for name, (scale, move) in shapes.items():
+            parent = self.arm.data.bones[name].parent.name
+            carried = self.posed(parent) @ self.rest(parent).inverted() @ self.rest(name)
+            self.world[name] = Matrix.Translation(move) @ carried @ Matrix.Diagonal(scale.to_4d())
+        roots = {root} if isinstance(root, str) else set(root)
+        super().apply(frame, roots | set(shapes))
+        for name, (scale, _) in shapes.items():
+            pb = self.arm.pose.bones[name]
+            pb.scale = scale
+            pb.keyframe_insert("scale", frame=frame)
 
 
 def wave(t, cycles=1.0, phase=0.0):
@@ -1738,18 +1908,45 @@ def end_point(pose, bone, end):
     return m @ END_REST[end]
 
 
-def pose_leg(pose, body, leg, fetlock, toe_up, slide=0.0, hip=0.5):
+SHORT = {}  # per leg, the most a standing hoof fell short of its mark
+
+
+# How straight a standing foreleg is held by the thoracic sling (``sling``
+# in ``pose_leg``): the elbow this part of the leg's full length from the
+# fetlock (a knee of about 160 degrees), and the most the chest may sink
+# or rise between the shoulder blades for it, in metres.
+SLING_REACH, SLING_MOST = 0.985, 0.09
+
+
+def pose_leg(pose, body, leg, fetlock, toe_up, slide=0.0, hip=0.5, sling=0.0):
     """Reaches ``fetlock`` (world) with ``leg``; the hoof hangs from the IK
     bone there, its toe ``toe_up`` degrees up. ``slide`` moves the shoulder
     blade (fore) or the pelvis side (hind) forward by that many metres, in
     the body's frame; ``hip`` is how much of the reach the hind thigh
-    takes."""
+    takes. ``sling`` (0 to 1, fores only) moves the shoulder blade up or
+    down the chest, as the thoracic sling lets the trunk sink between the
+    shoulders under load, so a standing foreleg stays nearly straight
+    (``SLING_REACH``) whatever the body's own rise and pitch: a weight-
+    bearing knee never buckles."""
     b = leg_bones(leg)
     rb = body.to_3x3()
     lateral = rb @ X
     fwd = rb @ Vector((0, -1, 0))
     if slide:
         pose.move(b["stub"], fwd * slide)
+    if sling and leg[1] == "F":
+        up = rb @ Z
+        elbow = pose.posed(b["chain"][0]).translation
+        knee = child_point(pose, b["chain"][0], b["chain"][1])
+        full = (knee - elbow).length + (end_point(pose, b["chain"][1], b["end"]) - knee).length
+        # The rise h along ``up`` that puts the elbow SLING_REACH x full from
+        # the fetlock: |d + h up| = r, d = elbow - fetlock.
+        d, r = elbow - Vector(fetlock), SLING_REACH * full
+        bq = d.dot(up)
+        disc = bq * bq - (d.length_squared - r * r)
+        if disc >= 0.0:
+            h = -bq + math.sqrt(disc)
+            pose.move(b["stub"], up * sling * max(-SLING_MOST, min(SLING_MOST, h)))
     chain = b["chain"]
     fetlock = Vector(fetlock)
     if len(chain) == 3:
@@ -1858,7 +2055,7 @@ def stand_legs(pose, body, offsets=None, rests=None):
 
 def standing(arm, body, neck=(0, 0, 0, 0), yaw=0.0, t=0.0, ears=((0, 0), (0, 0)), jaw=0.0, grind=0.0,
              lip=0.0, offsets=None, rests=None, tail=(6.0, 0.0), tail_lift=0.0, flex=0.0, nostrils=0.0):
-    pose = rig.Pose(arm)
+    pose = Pose(arm)
     pose.carry("Body", body)
     if flex:
         pose.turn("Torso2", rot(body.to_3x3() @ X, flex))
@@ -1957,18 +2154,35 @@ def graze_bend(arm, height=0.04):
 WALK_NOD = 3.0
 WALK = dict(seconds=56 / 48, duty=0.60, sweep=0.875, phase=dict(LH=0.0, LF=0.25, RH=0.5, RF=0.75),
             lift=(0.14, 0.10), fold=(85.0, 60.0), centre=dict(F=-0.03, H=-0.06), strike=8.0, breakover=40.0)
-GALLOP = dict(seconds=28 / 48, duty=0.24, sweep=1.02, phase=dict(RH=0.0, LH=0.12, RF=0.40, LF=0.52),
-              lift=(0.32, 0.18), fold=(100.0, 60.0), centre=dict(F=-0.06, H=-0.10), strike=10.0, breakover=50.0)
+# The gallop's duty factor and stance sweep are (fore, hind): the hinds land
+# far under the belly and drive back to full extension (the user's
+# references, L43), so they sweep further and stand longer at the same
+# ground speed. ``reach``: how far (m) the fore hooves swing out beyond
+# where they land before they come back to it (the lead fore reaching
+# nearly straight); ``hip``: how much of each hind leg's reach its thigh
+# takes in the stance (``hip_swing``: at the middle of the swing);
+# ``hind_lead``: by what part of the swing a hind hoof is forward
+# over its landing; ``hind_peak``: the hind fetlock is highest early in
+# the swing (the exponent of its arc), folded up behind after the push.
+GALLOP = dict(seconds=28 / 48, duty=(0.24, 0.24 * 1.36 / 1.02), sweep=(1.02, 1.36), phase=dict(RH=0.0, LH=0.12, RF=0.40, LF=0.52),
+              lift=(0.46, 0.18), fold=(60.0, 55.0), centre=dict(F=-0.12, H=-0.19), strike=10.0, breakover=50.0,
+              reach=0.10, hip=0.62, hip_swing=0.75, hind_lead=0.75, hind_peak=0.5, fore_peak=1.6, sling=1.0)
+
+
+def per_leg(gait, key, leg):
+    """``gait[key]`` for ``leg``: one value, or (fore, hind)."""
+    v = gait[key]
+    return v[0 if leg[1] == "F" else 1] if isinstance(v, tuple) else v
 
 
 def ground_speed(gait):
-    return gait["sweep"] / (gait["duty"] * gait["seconds"])
+    return per_leg(gait, "sweep", "LF") / (per_leg(gait, "duty", "LF") * gait["seconds"])
 
 
 def stride(gait, leg, t):
     """The fetlock and the hoof roll of ``leg`` at phase ``t``."""
     q = (t - gait["phase"][leg]) % 1.0
-    duty, half = gait["duty"], gait["sweep"] / 2
+    duty, half = per_leg(gait, "duty", leg), per_leg(gait, "sweep", leg) / 2
     c = gait["centre"][leg[1]]
     strike, breakover = gait["strike"], gait["breakover"]
     if q < duty:
@@ -1981,14 +2195,19 @@ def stride(gait, leg, t):
     fore = leg[1] == "F"
     lift = gait["lift"][0 if fore else 1]
     fold = gait["fold"][0 if fore else 1]
-    y = a.y + (b.y - a.y) * ease(s)
-    z = a.z + (b.z - a.z) * s + lift * math.sin(math.pi * s ** (0.8 if fore else 1.0)) ** 0.9
+    # A galloping hind comes forward early, its hoof ahead of the hock and
+    # under the belly by three quarters of the swing (``hind_lead``).
+    y = a.y + (b.y - a.y) * ease(s if fore else min(1.0, s / gait.get("hind_lead", 1.0)))
+    if fore:
+        # Out beyond the landing and back onto it (the swing's retraction).
+        y -= gait.get("reach", 0.0) * ease((s - 0.45) / 0.35) * (1 - ease((s - 0.82) / 0.18))
+    z = a.z + (b.z - a.z) * s + lift * math.sin(math.pi * s ** (gait.get("fore_peak", 0.8) if fore else gait.get("hind_peak", 1.0))) ** 0.9
     toe = -breakover + (strike + breakover) * ease(s) - fold * math.sin(math.pi * min(1.0, s * 1.15)) ** 1.3
     return Vector((a.x, y, z)), toe
 
 
 def locomotion(arm, t, gait, body, neck, slide, flex=0.0, hair=None, ears=((10, 0), (10, 0)), yaw=0.0):
-    pose = rig.Pose(arm)
+    pose = Pose(arm)
     pose.carry("Body", body)
     if flex:
         pose.turn("Torso2", rot(body.to_3x3() @ X, flex))
@@ -2000,8 +2219,21 @@ def locomotion(arm, t, gait, body, neck, slide, flex=0.0, hair=None, ears=((10, 
         q = (t - gait["phase"][leg]) % 1.0
         # The shoulder blade and the pelvis follow the leg: forward as it
         # reaches, back as it pushes.
-        s = (q / gait["duty"]) if q < gait["duty"] else 1 - (q - gait["duty"]) / (1 - gait["duty"])
-        pose_leg(pose, body, leg, f, toe, slide=slide * (1 - 2 * ease(s)) * (1.0 if leg[1] == "F" else 0.5), hip=gait.get("hip", 0.55))
+        duty = per_leg(gait, "duty", leg)
+        s = (q / duty) if q < duty else 1 - (q - duty) / (1 - duty)
+        # In the swing the thigh takes more of the reach, so the stifle
+        # comes forward and the hock flexes no further than a right angle.
+        hip = gait.get("hip", 0.55)
+        if q >= duty:
+            hip += (gait.get("hip_swing", hip) - hip) * math.sin(math.pi * (q - duty) / (1 - duty))
+        # Held straight by the sling while it stands, eased in and out over
+        # the first and last tenth of the stance.
+        sling = gait.get("sling", 0.0) * (ease(q / duty / 0.1) * ease((1 - q / duty) / 0.1) if q < duty else 0.0)
+        actual = pose_leg(pose, body, leg, f, toe, slide=slide * (1 - 2 * ease(s)) * (1.0 if leg[1] == "F" else 0.5), hip=hip,
+                          sling=sling)
+        if q < duty:
+            # How far a standing hoof falls short of its mark (beyond reach).
+            SHORT[leg] = max(SHORT.get(leg, 0.0), (actual - f).length)
     return pose
 
 
@@ -2020,20 +2252,31 @@ def walk(arm, t):
 
 
 def gallop(arm, t):
-    # Transverse gallop on the left lead: the hinds land, then the fores,
-    # then the body sails. The back rounds as the hinds reach under and
-    # stretches as the fores pull; the neck pumps; the mane and the tail
-    # stream behind. The body rocks about 11 degrees from end to end over a
-    # stride (a real gallop rocks 10 to 15), which the rider's loose arm
-    # follows (``rider.rs`` ``FREE_SWING``).
-    body = body_matrix(lift=-0.05 + 0.05 * wave(t, 1, 0.1), nose_down=5.5 * wave(t, 1, -0.05))
-    flex = 5.0 * wave(t, 1, 0.15)
-    pump = 7.0 * wave(t, 1, 0.55)
+    # Transverse gallop on the left lead (the user's references, L42-L43):
+    # the hinds land far under the belly with the croup low (the body most
+    # nose up as the right hind lands), drive back to full extension, then
+    # the fores land, the lead fore reaching nearly straight, and the body
+    # sails with the legs gathered under it. The neck rises over the hinds
+    # and falls over the fores; the mane and the tail stream behind. The
+    # body rocks about 11 degrees from end to end over a stride (a real
+    # gallop rocks 10 to 15), which the rider's loose arm follows
+    # (``rider.rs`` ``FREE_SWING``). The back rounds in the game, in phase
+    # with the hinds' stance (``gait.rs`` ``GATHER``); the clip bends it 2
+    # degrees the other way there, so the rigid bastos stay on the back
+    # (bending it with the game, they rocked off 3.3 cm at 2 degrees; with
+    # none, 2.3 cm; with this, 1.7 cm).
+    # Nose up 5.5 degrees as the hinds land (the croup low), but only 2.5
+    # nose down over the fores: more drops the chest onto the standing
+    # forelegs.
+    pitch = wave(t, 1, -0.25)
+    body = body_matrix(lift=-0.05 + 0.05 * wave(t, 1, 0.1), nose_down=(5.5 if pitch < 0 else 2.5) * pitch)
+    pump = 7.0 * wave(t, 1, 0.08)
     neck = (6.0 + pump, -2.0 + 0.4 * pump, -2.0, -6.0 - 0.6 * pump)
     # The tail carried up at the dock and streaming back in a curve, a wave
     # running down it each stride (Muybridge, The Horse in Motion).
     hair = dict(mane=10.0, mane_lift=-12.0, forelock=10.0, tail=(12.0, 0.0), tail_lift=50.0, lag=0.09, cycles=1.0,
-                tail_curve=8.0, tail_whip=7.0)
+                tail_curve=8.0, tail_whip=9.5)
+    flex = -2.0 * wave(t, 1, 0.15)
     return locomotion(arm, t, GALLOP, body, neck, slide=0.09, flex=flex, hair=hair, ears=((22, 5), (22, 5)))
 
 
@@ -2045,6 +2288,10 @@ JUMP_SECONDS = 70 / 48
 # same frames of 35: the right hind a little ahead of the left, both after
 # the fores have started to lift (8.5).
 JUMP_PLANT = {"RH": (7.0, 10.6), "LH": (7.5, 11.0)}
+# Where (m from rest, ahead negative) the hinds plant for the take-off: less
+# far under the belly than the gallop's landing, so they leave the ground
+# stretched back to about their full length.
+JUMP_HIND_FROM = -0.61
 # When each fore unfolds for the landing, in the same frames: only in the
 # last tenth of the game's flight (frames 25-27.6, flight 0.9 to 1.0; the
 # game's arc falls 1.55 m), so the hoof reaches the ground as the body
@@ -2076,7 +2323,7 @@ def gallop_jump(arm, t):
     neck = jump_key(t, [(0, (6.0, -2.0, -2.0, -6.0)), (6, (12.0, 0.0, -2.0, -4.0)), (10, (-6.0, -4.0, 0.0, 4.0)),
                         (18, (-12.0, -6.0, 0.0, 8.0)), (26, (10.0, 2.0, 0.0, -6.0)), (30, (2.0, -2.0, -2.0, -4.0)), (35, (6.0, -2.0, -2.0, -6.0))])
     flex = jump_key(t, [(0, 0.0), (6, 8.0), (9, -6.0), (14, 4.0), (24, -4.0), (30, 6.0), (35, 0.0)])
-    pose = rig.Pose(arm)
+    pose = Pose(arm)
     pose.carry("Body", body)
     pose.turn("Torso2", rot(body.to_3x3() @ X, flex))
     pose_neck(pose, body, neck)
@@ -2124,7 +2371,7 @@ def gallop_jump(arm, t):
             # Planted from ``on`` to ``off``, sliding back from under the
             # belly; the toe breaks over as the hoof leaves.
             pushed = min(max(frame - on, 0.0), off - on) * JUMP_SECONDS / 35
-            y = GALLOP["centre"]["H"] - GALLOP["sweep"] / 2 + ground_speed(GALLOP) * pushed
+            y = JUMP_HIND_FROM + ground_speed(GALLOP) * pushed
             toe_push = -GALLOP["breakover"] * ease((frame - (off - 1.5)) / 1.5)
             planted = hoof_place(leg, y, toe_push)
             hold = ease((frame - (on - 2.5)) / 2.5) * (1 - ease(frame - 25.5))
@@ -2171,9 +2418,14 @@ def clips(arm):
         rig.bake_clip(arm, "Idle_Headlow", 160 / 48, idle_headlow, MOVED),
         rig.bake_clip(arm, "Eating", 288 / 48, eating, MOVED),
         rig.bake_clip(arm, "Walk", WALK["seconds"], walk, MOVED),
+    ]
+    SHORT.clear()
+    made += [
         rig.bake_clip(arm, "Gallop", GALLOP["seconds"], gallop, MOVED),
         rig.bake_clip(arm, "Gallop_Jump", JUMP_SECONDS, gallop_jump, MOVED),
     ]
+    print(f"horse: in the gallop the standing hooves fall short of their marks by at most "
+          f"{ {k: round(v, 3) for k, v in sorted(SHORT.items())} } m")
     for a, seconds in ((made[4], WALK["seconds"]), (made[5], GALLOP["seconds"])):
         speed, lows = measure(arm, a, seconds)
         print(f"horse: {a.name} {seconds:.3f} s: hooves slide back at {speed:.2f} m/s; lowest IK hooves {[round(z, 3) for z in lows]}")

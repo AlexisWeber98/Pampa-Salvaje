@@ -240,7 +240,7 @@ pub const WALK_BAND: (f32, f32) = (0.05, 0.6);
 /// galope, y uno que galopa vuelve a la caminata: alrededor de
 /// [`HorseGait::TROT_MAX`] (6.5 m/s), donde la lógica deja de trotar y galopa,
 /// y nunca por debajo de lo que el galope muestra a su ritmo mínimo
-/// ([`GALLOP_RATE`]: 0.85 × 7.45 = 6.33 m/s). La lógica camina hasta 3 m/s y
+/// ([`GALLOP_RATE`]: 0.85 × 7.20 = 6.12 m/s). La lógica camina hasta 3 m/s y
 /// trota entre 3 y 6.5; sin clip de trote todavía, en esa franja la caminata
 /// va a su ritmo más rápido ([`RATE`]) y los vasos se deslizan hacia atrás lo
 /// que le falta. El andar cambia de golpe (y los pesos se funden rápido,
@@ -265,7 +265,7 @@ pub const RATE: (f32, f32) = (0.3, 2.44);
 /// 9.5 m/s, 2.1 a 12.5; Witte et al. 2006: 2.3 a 18), así que por debajo de
 /// unos 1.45 por segundo (0.85) parece un galope en cámara lenta: ahí ya
 /// camina ([`GALLOP_FROM`]). Más rápido que el doble parece frenético, así que
-/// por encima de unos 14.9 m/s sus vasos se deslizan un poco.
+/// por encima de unos 14.4 m/s sus vasos se deslizan un poco.
 pub const GALLOP_RATE: (f32, f32) = (0.85, 2.0);
 
 /// La velocidad sobre el suelo que muestran los vasos del galope con su zancada
@@ -273,9 +273,9 @@ pub const GALLOP_RATE: (f32, f32) = (0.85, 2.0);
 /// propio clip
 /// ([`HORSE_GALLOP_SPEED`](crate::fauna::livestock::HORSE_GALLOP_SPEED)): la
 /// mediana del deslizamiento de las puntas de los vasos apoyados en el juego,
-/// dividida por el ritmo, con la flexión del cuerpo: 7.45 m/s a 8, 12.2 y
-/// 19.4 m/s (el clip solo, sin flexión, 7.26).
-pub const GALLOP_SPEED: f32 = 7.45;
+/// dividida por el ritmo, con la flexión del cuerpo: 7.19, 7.20 y 7.21 m/s a 8,
+/// 12.2 y 19.4 m/s (con el galope anterior a los videos del usuario, 7.45).
+pub const GALLOP_SPEED: f32 = 7.20;
 
 /// El peso de cada clip, en el orden de [`Clip::ALL`], para un caballo parado
 /// con `idle` o que se mueve a `speed` m/s con `stride` (la caminata o el
@@ -402,8 +402,9 @@ impl HorseRig {
 pub const WALK_FROM_GALLOP: f32 = WALK_PLANT - GALLOP_PLANT;
 
 /// En qué punto de su ciclo (`0..1`) apoya la mano izquierda, la de galope, en
-/// el galope: la punta de su vaso (`FF.L_end`) apoya en 0.556.
-pub const GALLOP_PLANT: f32 = 0.556;
+/// el galope: la punta de su vaso (`FF.L_end`) apoya en 0.532 (0.556 antes de
+/// que la mano se estirara más adelante, contra los videos del usuario).
+pub const GALLOP_PLANT: f32 = 0.532;
 
 /// En qué punto de su ciclo (`0..1`) apoya la mano izquierda en la caminata:
 /// la punta de su vaso (`FF.L_end`) apoya en 0.333.
@@ -440,10 +441,10 @@ pub const JUMP_FLIGHT: (f32, f32) = (0.41, 1.15);
 
 /// En qué punto de su ciclo (`0..1`) retoma el galope al aterrizar de un salto:
 /// recién apoyada la mano de galope (la izquierda, que en el clip apoya en
-/// 0.556), con las patas traseras todavía atrás, que entonces avanzan bajo el
+/// 0.532), con las patas traseras todavía atrás, que entonces avanzan bajo el
 /// cuerpo y apoyan después de las manos, como en las láminas de saltos de
 /// Muybridge (*Animal Locomotion*, 1887, lám. 639).
-pub const GALLOP_LANDING: f32 = 0.56;
+pub const GALLOP_LANDING: f32 = 0.54;
 
 /// Cuántos segundos del clip se alarga el impulso del despegue: el clip empieza
 /// lento (a alrededor de un tercio de su ritmo) en el impulso de las patas
@@ -2041,6 +2042,326 @@ pub(crate) mod tests {
         // corvejón; eran el 3.2 %).
         assert!(thinnest > 0.95, "the gaskin thins to x{thinnest}");
         assert!(crushed * 40 <= thigh.len(), "{crushed} of {}", thigh.len());
+    }
+
+    #[test]
+    fn the_gallop_engages_the_hinds_under_the_belly_folds_the_knees_and_reaches_far() {
+        // Los videos del usuario (L42–L43): las traseras se apoyan muy por
+        // debajo de la panza y se estiran del todo hacia atrás al impulsar;
+        // en el vuelo la rodilla delantera se pliega con el antebrazo casi
+        // horizontal; la mano que guía se estira casi recta muy adelante.
+        // Y nunca "dislocada" (L55): la caña de una mano en el aire cuelga
+        // hacia abajo, nunca plegada plana hacia atrás bajo el antebrazo, y
+        // la rodilla de una mano apoyada no se dobla bajo el peso.
+        let (mut app, me) = saddled_every(CharacterVisual::Horse(Coat::Bayo), 12.2, 10);
+        let carrier = app.world().get::<Children>(me).unwrap()[0];
+        for _ in 0..60 {
+            ride(&mut app, me, 12.2);
+        }
+        let (mut under, mut back, mut reach) = (f32::MIN, f32::MAX, f32::MIN);
+        let (mut knee, mut forearm, mut cannon, mut standing) =
+            (f32::MAX, f32::MAX, f32::MAX, f32::MAX);
+        for _ in 0..70 {
+            ride(&mut app, me, 12.2);
+            for s in ["L", "R"] {
+                let at = |n: &str| in_body(&app, carrier, &format!("{n}.{s}"));
+                // Adelante de la articulación de la cadera (+X), y el ángulo de
+                // la pata por delante de la vertical.
+                let (hip, fetlock) = (at("BackLeg"), at("IKBackLeg"));
+                under = under.max(fetlock.x - hip.x);
+                back = back.min((fetlock.x - hip.x).atan2(hip.y - fetlock.y).to_degrees());
+                let [elbow, k, fore] = ["FrontUpperLeg", "FrontLowerLeg", "IKFrontLeg"].map(at);
+                reach = reach.max(fore.x - elbow.x);
+                let bend = (elbow - k).angle_between(fore - k).to_degrees();
+                knee = knee.min(bend);
+                let d = k - elbow;
+                forearm = forearm.min((-d.y).atan2(d.x.abs()).to_degrees());
+                // Cuánto baja la caña desde la rodilla, hacia donde apunte.
+                let c = fore - k;
+                cannon = cannon.min((-c.y).atan2(c.x.abs()).to_degrees());
+                // Apoyada: el menudillo a su altura de parado (0.164 m).
+                if fore.y < 0.18 {
+                    standing = standing.min(bend);
+                }
+            }
+        }
+        println!(
+            "hind fetlock up to {under:.2} m ahead of the hip, back to {back:.1}°; knee folds to \
+             {knee:.1}°, forearm {forearm:.1}° below horizontal, cannon at least {cannon:.1}° \
+             below; standing knee at least {standing:.1}°; fore fetlock {reach:.2} m ahead"
+        );
+        // Antes de los videos: 0.38 m, -25°, 58°, 24° y 0.43 m; la primera
+        // vuelta contra ellos plegaba la caña a 8° de la horizontal y doblaba
+        // la rodilla apoyada a 110°.
+        assert!(under > 0.5, "the hinds reach {under} m under the belly");
+        assert!(back < -27.0, "the hinds push back to {back}°");
+        assert!(knee < 75.0, "the fore knee folds to {knee}°");
+        assert!(
+            forearm < 18.0,
+            "the forearm rises to {forearm}° below horizontal"
+        );
+        assert!(
+            cannon > 22.0,
+            "a swinging cannon folds back to {cannon}° below horizontal"
+        );
+        assert!(
+            standing > 125.0,
+            "a standing fore knee bends to {standing}°"
+        );
+        assert!(reach > 0.5, "the lead fore reaches {reach} m");
+    }
+
+    /// El clip `Gallop` de `horse.glb` tal como está grabado, sin nada de lo
+    /// que el juego le suma: cinemática directa de los nodos del archivo en
+    /// un instante de su ciclo.
+    struct RawGallop {
+        parents: Vec<Option<usize>>,
+        rest: Vec<(Vec3, Quat, Vec3)>,
+        names: Vec<String>,
+        /// Por nodo, las claves de su rotación y de su traslación.
+        rotations: Vec<Option<(Vec<f32>, Vec<Quat>)>>,
+        translations: Vec<Option<(Vec<f32>, Vec<Vec3>)>>,
+        duration: f32,
+    }
+
+    impl RawGallop {
+        fn load() -> Self {
+            use crate::fauna::livestock::Species;
+            use crate::gltf::tests::root;
+            use bevy::gltf::gltf::{self, animation::util::ReadOutputs};
+            let data = std::fs::read(root().0.join(Species::Horse.path())).unwrap();
+            let file = gltf::Gltf::from_slice(&data).unwrap();
+            let blob = file.blob.as_deref();
+            let n = file.nodes().count();
+            let mut parents = vec![None; n];
+            let (mut rest, mut names) = (Vec::with_capacity(n), Vec::with_capacity(n));
+            for node in file.nodes() {
+                for c in node.children() {
+                    parents[c.index()] = Some(node.index());
+                }
+                let (t, r, s) = node.transform().decomposed();
+                rest.push((Vec3::from(t), Quat::from_array(r), Vec3::from(s)));
+                names.push(node.name().unwrap_or_default().to_string());
+            }
+            let (mut rotations, mut translations) = (vec![None; n], vec![None; n]);
+            let mut duration = 0.0f32;
+            let gallop = file
+                .animations()
+                .find(|a| a.name() == Some(Clip::Gallop.name()))
+                .unwrap();
+            for channel in gallop.channels() {
+                let reader = channel.reader(|_| blob);
+                let times: Vec<f32> = reader.read_inputs().unwrap().collect();
+                duration = duration.max(*times.last().unwrap());
+                let k = channel.target().node().index();
+                match reader.read_outputs().unwrap() {
+                    ReadOutputs::Rotations(r) => {
+                        let q = r.into_f32().map(Quat::from_array).collect();
+                        rotations[k] = Some((times, q));
+                    }
+                    ReadOutputs::Translations(t) => {
+                        translations[k] = Some((times, t.map(Vec3::from).collect()));
+                    }
+                    _ => {}
+                }
+            }
+            Self {
+                parents,
+                rest,
+                names,
+                rotations,
+                translations,
+                duration,
+            }
+        }
+
+        /// Dónde están `names` en la fase `phase` (`0..1`) del ciclo.
+        fn at<const N: usize>(&self, phase: f32, names: [&str; N]) -> [Vec3; N] {
+            let t = phase.rem_euclid(1.0) * self.duration;
+            fn key<T: Copy>(keys: &(Vec<f32>, Vec<T>), t: f32, mix: impl Fn(T, T, f32) -> T) -> T {
+                let (times, values) = keys;
+                let i = times.partition_point(|&x| x <= t).clamp(1, times.len() - 1);
+                let s = ((t - times[i - 1]) / (times[i] - times[i - 1]).max(1e-6)).clamp(0.0, 1.0);
+                mix(values[i - 1], values[i], s)
+            }
+            let local = |k: usize| {
+                let (mut tr, mut ro, sc) = self.rest[k];
+                if let Some(keys) = &self.rotations[k] {
+                    ro = key(keys, t, |a, b, s| a.slerp(b, s));
+                }
+                if let Some(keys) = &self.translations[k] {
+                    tr = key(keys, t, |a, b, s| a.lerp(b, s));
+                }
+                Mat4::from_scale_rotation_translation(sc, ro, tr)
+            };
+            names.map(|name| {
+                let mut k = self.names.iter().position(|n| n == name).unwrap();
+                let mut m = local(k);
+                while let Some(p) = self.parents[k] {
+                    m = local(p) * m;
+                    k = p;
+                }
+                m.transform_point3(Vec3::ZERO)
+            })
+        }
+    }
+
+    /// La rodilla de una mano (entre el antebrazo y la caña) y su menudillo
+    /// (entre la caña y el vaso, hasta la punta), en grados, a partir de
+    /// [codo, rodilla, menudillo, punta del vaso].
+    fn fore_joints([elbow, knee, fetlock, toe]: [Vec3; 4]) -> (f32, f32) {
+        (
+            (elbow - knee).angle_between(fetlock - knee).to_degrees(),
+            (knee - fetlock).angle_between(toe - fetlock).to_degrees(),
+        )
+    }
+
+    #[test]
+    fn in_game_the_galloping_fore_knees_and_fetlocks_bend_as_the_clip_bends_them() {
+        // L55: en el juego las manos parecían "dislocadas" en el galope.
+        // Lo que el juego suma al clip (la flexión del cuerpo, el estiramiento,
+        // el plegado de las patas que bajan del suelo, los vasos devueltos al
+        // extremo de su pata) no debe doblar la rodilla ni el menudillo de una
+        // mano más allá de como los dobla el propio clip en ese punto de su
+        // ciclo.
+        let raw = RawGallop::load();
+        let (mut app, me) = saddled_every(CharacterVisual::Horse(Coat::Bayo), 12.2, 10);
+        let carrier = app.world().get::<Children>(me).unwrap()[0];
+        for _ in 0..60 {
+            ride(&mut app, me, 12.2);
+        }
+        let node = app
+            .world()
+            .resource::<LivestockModels>()
+            .get(Species::Horse)
+            .unwrap()
+            .nodes[Clip::Gallop.index()];
+        let mut worst = (0.0f32, String::new());
+        for _ in 0..70 {
+            ride(&mut app, me, 12.2);
+            let (player, _) = rig_of(&mut app);
+            let world = app.world_mut();
+            let duration = world
+                .query::<&HorseRig>()
+                .iter(world)
+                .next()
+                .unwrap()
+                .durations[Clip::Gallop.index()];
+            let phase = world
+                .get::<AnimationPlayer>(player)
+                .unwrap()
+                .animation(node)
+                .unwrap()
+                .seek_time()
+                / duration;
+            for s in ["L", "R"] {
+                let names = [
+                    format!("FrontUpperLeg.{s}"),
+                    format!("FrontLowerLeg.{s}"),
+                    format!("FrontLowerLeg.{s}_end"),
+                    format!("FF.{s}_end"),
+                ];
+                let game = fore_joints(names.clone().map(|n| in_body(&app, carrier, &n)));
+                let clip = fore_joints(raw.at(phase, names.each_ref().map(|n| n.as_str())));
+                for (what, g, c) in [("knee", game.0, clip.0), ("fetlock", game.1, clip.1)] {
+                    let off = (g - c).abs();
+                    if off > worst.0 {
+                        worst = (
+                            off,
+                            format!("{s} {what} at {phase:.3}: game {g:.1}°, clip {c:.1}°"),
+                        );
+                    }
+                }
+            }
+        }
+        println!("worst: {:.1}° ({})", worst.0, worst.1);
+        assert!(worst.0 < 8.0, "{}", worst.1);
+    }
+
+    #[test]
+    fn the_quarter_the_gaskin_and_the_shoulder_change_shape_through_the_gallop() {
+        // Los músculos no solo siguen a los huesos (`tools/horse.py`
+        // `MUSCLES`): cada uno se engrosa con la flexión de su articulación a
+        // lo largo del galope, y su piel se aleja de su eje cuando se engrosa
+        // (medido en el marco del hueso, así que su movimiento rígido no
+        // cuenta).
+        let (mut app, me) = saddled_every(CharacterVisual::Horse(Coat::Bayo), 12.2, 10);
+        let carrier = app.world().get::<Children>(me).unwrap()[0];
+        for _ in 0..60 {
+            ride(&mut app, me, 12.2);
+        }
+        let muscles = [
+            "Quarter.L",
+            "Gaskin.L",
+            "Scapula.L",
+            "Quarter.R",
+            "Gaskin.R",
+            "Scapula.R",
+        ];
+        // Por músculo: (su grosor, la distancia media de su piel) en el más
+        // flojo y en el más contraído, y cuántos vertices mueve.
+        let mut slack = [(f32::MAX, 0.0f32); 6];
+        let mut bunched = [(f32::MIN, 0.0f32); 6];
+        let mut skin = [0usize; 6];
+        for _ in 0..70 {
+            ride(&mut app, me, 12.2);
+            let drawn = cpu::drawn(app.world_mut(), Some(me));
+            let main = drawn.iter().find(|d| d.name == "Main").unwrap();
+            let world = app.world();
+            for (k, name) in muscles.iter().enumerate() {
+                let bone = named(world, carrier, name);
+                let (scale, along, centre) = world
+                    .get::<GlobalTransform>(bone)
+                    .unwrap()
+                    .to_scale_rotation_translation();
+                // Lo lejos que está del eje del músculo, a lo ancho.
+                let mine: Vec<f32> = main
+                    .positions
+                    .iter()
+                    .zip(&main.strongest)
+                    .filter(|(_, j)| **j == Some(bone))
+                    .map(|(p, _)| {
+                        let q = along.inverse() * (*p - centre);
+                        q.x.hypot(q.z)
+                    })
+                    .collect();
+                skin[k] = mine.len();
+                let mean = mine.iter().sum::<f32>() / mine.len().max(1) as f32;
+                let thick = scale.x / scale.y;
+                if thick < slack[k].0 {
+                    slack[k] = (thick, mean);
+                }
+                if thick > bunched[k].0 {
+                    bunched[k] = (thick, mean);
+                }
+            }
+        }
+        for (k, name) in muscles.iter().enumerate() {
+            println!(
+                "{name}: {} vertices; thickness x{:.3}, its skin x{:.3} from slack to bunched",
+                skin[k],
+                bunched[k].0 / slack[k].0,
+                bunched[k].1 / slack[k].1
+            );
+        }
+        for (k, name) in muscles.iter().enumerate() {
+            assert!(skin[k] > 5, "{name} moves {} vertices", skin[k]);
+            // Al menos un 10 % más grueso respecto de su largo, y su piel más
+            // afuera (la de la paleta, también movida por la mano que barre
+            // debajo, que tiene la mayor parte de su peso, apenas: x1.04).
+            assert!(
+                bunched[k].0 / slack[k].0 > 1.1,
+                "{name}: {:?} {:?}",
+                slack[k],
+                bunched[k]
+            );
+            assert!(
+                bunched[k].1 > slack[k].1 * 1.02,
+                "{name}: {:?} {:?}",
+                slack[k],
+                bunched[k]
+            );
+        }
     }
 
     /// Cuántos grados por delante de la vertical va la cara de un caballo (la

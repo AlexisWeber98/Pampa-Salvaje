@@ -1600,9 +1600,9 @@ mod tests {
                 .get(&gltf.skins[0])
                 .unwrap();
             let joints = match species {
-                // Los 50 de Quaternius más la crin, el copete, la cola y la
-                // cara.
-                Species::Horse => 62,
+                // Los 50 de Quaternius más la crin, el copete, la cola, la
+                // cara y los seis músculos (`tools/horse.py` `MUSCLES`).
+                Species::Horse => 68,
                 Species::Fox => 51,
                 Species::GatoMontes | Species::Puma | Species::Yaguarete => 34,
                 Species::Chimango | Species::Carancho => 30,
