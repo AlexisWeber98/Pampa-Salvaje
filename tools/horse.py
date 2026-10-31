@@ -48,6 +48,7 @@ hooves with a flat sole. The skeleton is the Quaternius horse's at
 
 import math
 import os
+import re
 import sys
 
 import bpy
@@ -196,10 +197,10 @@ MUSCLES = []
 for _s, _x in (("L", 1.0), ("R", -1.0)):
     MUSCLES += [
         # The quarter: the hamstrings and the biceps of the thigh behind the
-        # femur, from the point of the buttock down to the stifle.
+        # femur, from the point of the buttock down toward the stifle.
         dict(name=f"Quarter.{_s}", parent=f"BackLeg.{_s}", head=(_x * 0.10, 0.64, 1.02), tail=(_x * 0.12, 0.70, 0.80),
              centre=(_x * 0.17, 0.66, 1.04), radii=(0.14, 0.24, 0.22), side=0.08,
-             steal=[f"BackLeg.{_s}", f"BackUpperLeg.{_s}", "Tail2", "Tail3", "Tail4"]),
+             steal=[f"BackLeg.{_s}", "Tail2", "Tail3", "Tail4"]),
         # The gaskin: the second thigh behind the tibia.
         dict(name=f"Gaskin.{_s}", parent=f"BackUpperLeg.{_s}", head=(_x * 0.175, 0.57, 0.75), tail=(_x * 0.175, 0.70, 0.62),
              centre=(_x * 0.175, 0.62, 0.74), radii=(0.12, 0.17, 0.17)),
@@ -823,7 +824,72 @@ def plain_materials():
 
 HAIR_COLUMNS = 8
 THICK = (0, 1, 2, 3, 4, 5)  # full locks: the mane and the tail
+MANE_COLUMNS = THICK
 WISPY = (6, 7)  # thin, see-through locks: the forelock, lashes, ears
+
+
+def lock_atlas(columns, size, seed=3, locks=4, strands=34):
+    """The full locks of the mane and the tail: each column holds ``locks``
+    separate locks of ``strands`` fine strands each, overlapping at the
+    root and parting toward the tip, so the neck and the light show between
+    them. A lock has its own tone (lighter or darker) and its strands vary
+    strongly within it, darker where they part and toward the root (the
+    shade of the hair above); so a card reads as hair, not as a painted
+    sheet. Returns neutral luminance, opacity, normal (OpenGL) and
+    roughness arrays, rows bottom up, as ``animal_rig.hair_atlas``."""
+    import numpy as np
+
+    rng = np.random.default_rng(seed)
+    h, w = size, size // columns
+    lum = np.zeros((h, size), np.float32)
+    alpha = np.zeros((h, size), np.float32)
+    height = np.zeros((h, size), np.float32)
+    ys, xs = np.mgrid[0:h, 0:w].astype(np.float32)
+    v = ys / (h - 1)  # 0 at the root (top row), 1 at the tip
+    u = xs / (w - 1)
+    for c in range(columns):
+        col_l = np.zeros((h, w), np.float32)
+        col_a = np.zeros((h, w), np.float32)
+        col_h = np.zeros((h, w), np.float32)
+        centres = (np.arange(locks) + 0.5) / locks + rng.uniform(-0.04, 0.04, locks)
+        for k in range(locks):
+            tone = rng.uniform(0.72, 1.08)
+            reach = rng.uniform(0.78, 0.99)
+            drift = rng.uniform(-0.08, 0.08)
+            # The lock's own centre line: from its root, parting from its
+            # neighbours (toward the column's middle it narrows) and waving.
+            phase, freq = rng.uniform(0, 6.3), rng.uniform(1.5, 3.0)
+            spine = centres[k] + drift * v ** 1.5 + 0.02 * np.sin(freq * v * 6.28 + phase) * v
+            half = (0.6 / locks) * (1.0 - 0.75 * v ** 1.2)  # half width, in the column
+            for _ in range(strands):
+                off = rng.uniform(-1.0, 1.0)
+                length = reach * rng.uniform(0.6, 1.0) ** 0.5
+                path = spine + off * half * rng.uniform(0.7, 1.0) + rng.uniform(-0.01, 0.01) * v
+                width = rng.uniform(0.9, 1.8) / w * (1.0 - 0.5 * np.clip(v / length, 0, 1))
+                dist = np.abs(u - path) / width
+                on = (dist < 1.0) & (v < length)
+                fade = np.clip((length - v) / 0.06, 0, 1)
+                # Lighter strands on top, darker ones under them; darker at
+                # the root and where the lock parts (its edges).
+                shade = 1.18 * tone * rng.uniform(0.55, 1.05) * (0.62 + 0.38 * np.clip(v * 2.5, 0, 1)) * (1.0 - 0.25 * abs(off) ** 2)
+                hgt = np.where(on, (1.0 - dist * dist) * fade * (0.6 + 0.4 * (1 - abs(off))), 0.0)
+                take = hgt > col_h
+                col_h = np.where(take, hgt, col_h)
+                col_l = np.where(take, shade * (0.8 + 0.2 * (1 - dist)), col_l)
+                col_a = np.maximum(col_a, np.where(on & (fade > 0.3), 1.0, 0.0))
+        sl = slice(c * w, (c + 1) * w)
+        lum[:, sl] = col_l
+        alpha[:, sl] = col_a
+        height[:, sl] = col_h
+    lum, alpha, height = lum[::-1], alpha[::-1], height[::-1]
+    gy, gx = np.gradient(height)
+    n = np.stack([-gx * 2.0, -gy * 0.5, np.ones_like(gx)], axis=-1)
+    n /= np.linalg.norm(n, axis=-1, keepdims=True)
+    normal = n * 0.5 + 0.5
+    mean = lum[alpha > 0.5].mean() if (alpha > 0.5).any() else 0.8
+    lum = np.where(alpha > 0.5, lum, mean)
+    rough = np.full((h, size, 3), 0.62, np.float32)
+    return np.repeat(lum[..., None], 3, axis=-1), np.repeat(alpha[..., None], 3, axis=-1), normal, rough
 
 
 def jitter(i, salt):
@@ -851,6 +917,10 @@ def fall(sdf, root, start, length, gap, steps=6, gravity=(0.0, 0.0, -1.0), stiff
     return pts, outs
 
 
+MANE_TWIST = 35.0  # degrees a mane lock turns at most about its length
+MANE_LEFT = 0.25  # how much of their bone's turn the locks on the left side take
+
+
 def mane_spots(sdf):
     """The mane: a criollo's full mane in three overlapping layers of locks
     along the crest, falling over the right side of the neck (-X) with a
@@ -876,10 +946,16 @@ def mane_spots(sdf):
             else:
                 start = Vector((side * (0.9 - 0.2 * layer), 0.2, 0.3 + 0.2 * layer))
                 stiff = 0.22 + 0.1 * layer
-            pts, outs = fall(sdf, root, start, length, 0.006 + 0.01 * layer, steps=5, gravity=(side * 0.15, 0.22, -1.0), stiff=stiff)
+            pts, outs = fall(sdf, root, start, length, 0.008 + 0.016 * layer, steps=5, gravity=(side * 0.15, 0.22, -1.0), stiff=stiff)
+            # Each lock turns about its own length toward the tip, so the
+            # locks catch the light each its own way instead of lying flat
+            # on the neck as one sheet.
+            twist = MANE_TWIST * (2.0 * jitter(i, layer + 13) - 1.0)
+            outs = [rot((pts[min(j + 1, 5)] - pts[max(j - 1, 0)]).normalized(), twist * j / 5) @ o for j, o in enumerate(outs)]
             width = 0.07 + 0.03 * jitter(i, layer + 5)
             bone = min(MANE, key=lambda b: abs(b[2][1] - root.y))[0]
-            strands.append((pts, [width * (1.0 - 0.4 * j / 5) for j in range(6)], outs, (i + layer) % len(THICK), bone))
+            strands.append((pts, [width * (1.0 - 0.4 * j / 5) for j in range(6)], outs, MANE_COLUMNS[(i + layer) % len(MANE_COLUMNS)], bone,
+                            1.0 if side < 0 else MANE_LEFT))
     return strands
 
 
@@ -980,7 +1056,9 @@ def skin(body, arm):
         b.use_deform = True
     elbows(body)
     hinds(body, arm)
+    pelvis(body, arm)
     weight_muscles(body)
+    smooth_folds(body)
 
 
 def weight_muscles(body):
@@ -989,8 +1067,11 @@ def weight_muscles(body):
     midline, on its own side only), the weight of its parent bone, all of it at the core: unscaled
     it moves exactly as the parent did, so the rest and the plain clips
     deform as before. The quarter also takes the weight the heat bind gave
-    the tail's first bones on the buttock and the tibia's above the stifle
-    (``steal``): the mass follows the femur, not the lifted tail."""
+    the tail's first bones on the buttock (``steal``): the mass follows the
+    femur, not the lifted tail. (It no longer takes the tibia's above the
+    stifle: that split the skin behind the stifle between the femur and the
+    tibia along one line, and the skin crushed there as the hind leg came
+    forward.)"""
     groups = {g.name: g for g in body.vertex_groups}
     for m in MUSCLES:
         sources = [groups[n] for n in m.get("steal", [m["parent"]]) if n in groups]
@@ -1136,10 +1217,91 @@ def hinds(body, arm):
     bpy.ops.object.vertex_group_normalize_all(lock_active=False)
 
 
+PELVIS_REACH = 0.10  # m above and in front of the hip joint over which the femur lets go
+FOLDS = [((0.20, 0.30, 1.33), 0.20, 8), ((0.24, 0.66, 0.88), 0.22, 20)]  # (centre on the left, radius, smoothing passes)
+
+
+def pelvis(body, arm):
+    """The point of the hip is the pelvis: it does not follow the femur.
+    Heat weights leak the femur (``BackLeg``) up to it, so when the hind leg
+    comes forward late in the swing that skin sinks into a pit (3.7 cm
+    before this). In front of and above each hip joint the femur's weight
+    goes to the hindquarters (``Back``), wholly ``PELVIS_REACH`` past the
+    joint (``smooth_folds`` then smooths the weights round it)."""
+    groups = {g.name: g for g in body.vertex_groups}
+    back = groups["Back"]
+    for side, sx in (("L", 1.0), ("R", -1.0)):
+        hip = arm.data.bones[f"BackLeg.{side}"].head_local
+        femur = groups[f"BackLeg.{side}"]
+        for v in body.data.vertices:
+            p = v.co
+            if p.x * sx < 0.03:
+                continue
+            k = smooth((p.z - hip.z) / PELVIS_REACH) * smooth((hip.y - p.y) / PELVIS_REACH)
+            if k <= 0.0:
+                continue
+            try:
+                w = femur.weight(v.index)
+            except RuntimeError:
+                continue
+            femur.add([v.index], w * (1.0 - k), "REPLACE")
+            back.add([v.index], w * k, "ADD")
+    bpy.ops.object.select_all(action="DESELECT")
+    body.select_set(True)
+    bpy.context.view_layer.objects.active = body
+    bpy.ops.object.vertex_group_normalize_all(lock_active=False)
+
+
+def smooth_folds(body):
+    """Smooths every bone's weight (the muscle helpers' too) round the
+    point of the hip and over the fold behind the stifle (``FOLDS``: centre
+    on the left, radius, passes), so the skin there folds over a hand's
+    width rather than crushing a few triangles between the quarter and the
+    gaskin. Each pass moves a vertex's weights halfway to its neighbours'
+    mean, wholly at the centre and less toward the radius, so no new edge
+    shows where the smoothing stops."""
+    import numpy as np
+
+    me = body.data
+    n = len(me.vertices)
+    names = [g.name for g in body.vertex_groups]
+    w = np.zeros((n, len(names)), np.float64)
+    for v in me.vertices:
+        for g in v.groups:
+            w[v.index, g.group] = g.weight
+    co = np.array([v.co[:] for v in me.vertices])
+    nb = [[] for _ in range(n)]
+    for e in me.edges:
+        a, b = e.vertices
+        nb[a].append(b)
+        nb[b].append(a)
+    for c, r, passes in FOLDS:
+        mask = np.zeros(n)
+        for sx in (1, -1):
+            d = np.linalg.norm(co - np.array((sx * c[0], c[1], c[2])), axis=1)
+            mask = np.maximum(mask, np.clip(1.0 - d / r, 0.0, 1.0))
+        mask = mask * mask * (3 - 2 * mask)
+        idx = np.nonzero(mask > 0)[0]
+        for _ in range(passes):
+            mean = np.array([w[nb[i]].mean(0) if nb[i] else w[i] for i in idx])
+            w[idx] += 0.5 * mask[idx, None] * (mean - w[idx])
+    for i in np.nonzero(np.any(w > 0, axis=1))[0]:
+        top = np.argsort(-w[i])[:4]
+        total = w[i, top].sum()
+        for k in range(len(names)):
+            if w[i, k] > 0 and k not in top:
+                body.vertex_groups[k].remove([int(i)])
+        for k in top:
+            if w[i, k] > 1e-4:
+                body.vertex_groups[k].add([int(i)], float(w[i, k] / total), "REPLACE")
+            elif w[i, k] > 0:
+                body.vertex_groups[k].remove([int(i)])
+
+
 def weight_hair(cards, arm, kinds):
     """Mane and forelock cards hang from their bone more toward the tip;
     tail cards follow the tail chain by height. ``kinds`` per card: the
-    bone name, or "tail"."""
+    bone name and how much of it the tip takes, or "tail"."""
     import bmesh as bm_
 
     groups = {g.name: g for g in cards.vertex_groups}
@@ -1180,10 +1342,11 @@ def weight_hair(cards, arm, kinds):
             else:
                 group(chain[i][0]).add([v.index], 1.0, "REPLACE")
         else:
-            w = 0.9 * f ** 0.8
+            bone, give = kind
+            w = 0.9 * f ** 0.8 * give
             for g in v.groups:
                 g.weight *= 1.0 - w
-            group(kind).add([v.index], w, "ADD")
+            group(bone).add([v.index], w, "ADD")
 
 
 # ---------------------------------------------------------------------------
@@ -1193,8 +1356,8 @@ def weight_hair(cards, arm, kinds):
 COATS = {
     "zaino": dict(body=(78, 50, 34), mane=(34, 28, 24), points=(44, 32, 26), head=None, hoof=(38, 32, 28)),
     "tordillo": dict(body=(118, 118, 114), mane=(206, 202, 194), points=(92, 92, 90), head=(150, 150, 146), hoof=(78, 68, 58)),
-    "overo": dict(body=(142, 84, 48), mane=(118, 72, 44), points=(142, 84, 48), head=None, hoof=(78, 68, 58)),
-    "alazan": dict(body=(154, 80, 42), mane=(176, 104, 58), points=(132, 70, 38), head=None, hoof=(38, 32, 28)),
+    "overo": dict(body=(142, 84, 48), mane=(88, 50, 30), points=(142, 84, 48), head=None, hoof=(78, 68, 58)),
+    "alazan": dict(body=(154, 80, 42), mane=(214, 150, 92), points=(132, 70, 38), head=None, hoof=(38, 32, 28)),
     "bayo": dict(body=(198, 162, 104), mane=(34, 28, 24), points=(40, 32, 26), head=None, hoof=(38, 32, 28)),
 }
 OVERO_BLOBS = [
@@ -1291,7 +1454,62 @@ def game_mesh(sculpt_obj):
     body = rig.decimated_copy(mid, "Horse", budget=BODY_TRIS, keep="Coarse")
     bpy.data.objects.remove(mid)
     body.vertex_groups.clear()
+    print(f"horse: {flip_slivers(body)} sliver triangles flipped")
     return body
+
+
+SLIVER = 0.06  # a triangle's least height over its longest edge, below which it is a sliver
+
+
+def _height(a, b, c):
+    """A triangle's least height over its longest edge."""
+    longest = max((a - b).length, (b - c).length, (c - a).length)
+    return (b - a).cross(c - a).length / max(longest, 1e-9) ** 2
+
+
+def flip_slivers(body):
+    """The decimation leaves a few slivers: a vertex all but on the
+    opposite edge of its triangle. Bent the least, a sliver flips over and
+    shows as a dark notch (one at the point of the hip, late in the hind
+    swing). Each sliver's longest edge is turned to join the two other
+    corners when that makes both triangles fuller. The vertices stay where
+    they are. Returns how many were turned."""
+    import bmesh
+
+    bm = bmesh.new()
+    bm.from_mesh(body.data)
+    turned = 0
+    for _ in range(3):
+        bm.faces.ensure_lookup_table()
+        todo = []
+        for f in bm.faces:
+            a, b, c = (v.co for v in f.verts)
+            if len(f.verts) != 3 or _height(a, b, c) >= SLIVER:
+                continue
+            e = max(f.edges, key=lambda e: e.calc_length())
+            if len(e.link_faces) != 2:
+                continue
+            f1, f2 = e.link_faces
+            p, q = e.verts[0].co, e.verts[1].co
+            c1 = next(v.co for v in f1.verts if v not in e.verts)
+            c2 = next(v.co for v in f2.verts if v not in e.verts)
+            now = min(_height(p, q, c1), _height(p, q, c2))
+            after = min(_height(c1, c2, p), _height(c1, c2, q))
+            # Only when the new edge crosses the old one (the quad is
+            # convex), so the surface does not fold.
+            n1 = (q - p).cross(c1 - p)
+            convex = (c2 - c1).cross(p - c1).dot(n1) * (c2 - c1).cross(q - c1).dot(n1) < 0
+            if after > 2.0 * now and convex:
+                todo.append(e)
+        todo = list(dict.fromkeys(todo))
+        if not todo:
+            break
+        done = bmesh.ops.rotate_edges(bm, edges=todo, use_ccw=False)
+        turned += len(done["edges"])
+    bm.to_mesh(body.data)
+    bm.free()
+    body.data.update()
+    return turned
 
 
 class Clock:
@@ -1359,7 +1577,7 @@ def build(draft, textures=None):
     import numpy as np
 
     size_h = 512 if draft else 1024
-    thick = rig.hair_atlas(HAIR_COLUMNS, size_h, seed=3, strands=120, clump=0.7, clumps=5)
+    thick = lock_atlas(HAIR_COLUMNS, size_h, seed=3)
     wispy = rig.hair_atlas(HAIR_COLUMNS, size_h, seed=4, strands=22, clump=0.85, clumps=3)
     w = size_h // HAIR_COLUMNS
     h_lum, h_alpha, h_normal, h_rough = (np.concatenate([a[:, : len(THICK) * w], b[:, len(THICK) * w :]], axis=1) for a, b in zip(thick, wispy))
@@ -1385,7 +1603,7 @@ def build(draft, textures=None):
         rig.join(body, eye)
     groups = [mane_spots(sdf) + forelock_spots(sdf), lash_spots(sdf), ear_hair_spots(sdf)]
     tail = tail_spots(sdf)
-    for strands, kinds in [(g, [s[4] for s in g]) for g in groups] + [(tail, ["tail"] * len(tail))]:
+    for strands, kinds in [(g, [(s[4], s[5] if len(s) > 5 else 1.0) for s in g]) for g in groups] + [(tail, ["tail"] * len(tail))]:
         cards = rig.strand_cards("HairCards", [s[:4] for s in strands], HAIR_COLUMNS)
         cards.data.materials.append(bpy.data.materials["Hair"])
         rig.transfer_weights(body, cards, arm)
@@ -1657,6 +1875,7 @@ def parse(argv):
     parser.add_argument("--reference", default=None, metavar="GLB")
     parser.add_argument("--draft", action="store_true")
     parser.add_argument("--no-clips", action="store_true")
+    parser.add_argument("--shots", default=None, metavar="REGEX")
     return parser.parse_args(argv)
 
 
@@ -1698,6 +1917,14 @@ def shots_for(actions):
         for f in range(0, 28, 4):
             shots.append((f"gallop_quarters_{f:03}.png", "alazan", by_name["Gallop"], f, (2.3, 1.2, 1.05), (0.0, 0.45, 0.85), 45))
             shots.append((f"gallop_shoulder_{f:03}.png", "alazan", by_name["Gallop"], f, (2.3, -1.6, 1.1), (0.0, -0.5, 0.9), 45))
+        # The point of the hip through the hind swing, and the mane in the
+        # wind of the gallop from both sides, on a light and a dark mane.
+        for f in range(0, 28, 2):
+            shots.append((f"gallop_hip_{f:03}.png", "alazan", by_name["Gallop"], f, (1.9, 0.2, 1.45), (0.0, 0.42, 1.12), 50))
+        for f in (0, 7, 14, 21):
+            for coat in ("alazan", "bayo"):
+                shots.append((f"gallop_mane_{coat}_{f:03}.png", coat, by_name["Gallop"], f, (-2.3, -0.9, 1.75), (0.0, -0.75, 1.55), 50))
+                shots.append((f"gallop_mane_left_{coat}_{f:03}.png", coat, by_name["Gallop"], f, (2.3, -0.9, 1.75), (0.0, -0.75, 1.55), 50))
     for name, (fs, coat) in frames.items():
         if name in by_name:
             for f in fs:
@@ -1713,7 +1940,10 @@ def main():
     reference = load_reference(args.reference) if args.reference else None
     tack_report(mesh, reference[1] if reference else None)
     if args.preview:
-        render_shots(args.preview, arm, mesh, images, shots_for(actions), reference)
+        shots = shots_for(actions)
+        if args.shots:
+            shots = [s for s in shots if re.search(args.shots, s[0])]
+        render_shots(args.preview, arm, mesh, images, shots, reference)
     if reference:
         for o in reference[0]:
             bpy.data.objects.remove(o)
@@ -2011,10 +2241,20 @@ def pose_face(pose, ears=((0, 0), (0, 0)), jaw=0.0, grind=0.0, lip=0.0, nostrils
         pose.turn(f"Nostril.{side}", rot(along, sx * nostrils))
 
 
+# The mane in the wind of the gallop: lifted off the neck and trailing back,
+# degrees (``pose_hair``).
+MANE_GALLOP_LIFT = -32.0
+MANE_GALLOP_BACK = 16.0
+
+
 def pose_hair(pose, mane=0.0, mane_lift=0.0, forelock=0.0, tail=(0.0, 0.0), tail_lift=0.0, lag=0.0, t=0.0, cycles=1.0,
-              tail_curve=0.0, tail_whip=0.0):
+              tail_curve=0.0, tail_whip=0.0, mane_back=0.0, mane_lag=0.08):
     """Secondary motion: the mane swings ``mane`` degrees out from the
-    neck (``mane_lift`` up, in the wind of a gallop), the forelock
+    neck in a wave running back along the crest (``mane_lag`` cycles per
+    bone), ``mane_lift`` out and up off the neck (negative: the locks that
+    fall on the right side lift away from it; the few on the left are
+    weighted to their bone much less, ``MANE_LEFT``) and ``mane_back``
+    trailing back toward the withers (both in the wind of a gallop), the forelock
     ``forelock`` degrees, the tail ``tail`` (sideways amplitude, phase)
     down the chain with ``lag`` cycles per bone. The dock is lifted
     ``tail_lift`` degrees (back and up, over its first two bones); each
@@ -2025,8 +2265,9 @@ def pose_hair(pose, mane=0.0, mane_lift=0.0, forelock=0.0, tail=(0.0, 0.0), tail
     for k, name in enumerate(("Mane1", "Mane2", "Mane3", "Mane4")):
         parent = pose.posed(name).to_3x3() @ pose.rest(name).to_3x3().inverted()
         along = parent @ Vector((0, -1, 0.6)).normalized()
-        swing = mane * wave(t, cycles, -0.08 * k) + mane_lift
-        pose.turn(name, rot(along, swing))
+        swing = mane * wave(t, cycles, -mane_lag * k) + mane_lift
+        lat = parent @ X
+        pose.turn(name, rot(along, swing) @ rot(lat, mane_back * (0.8 + 0.4 * wave(t, cycles, 0.2 - mane_lag * k))))
     lat, up, along = head_axes(pose)
     pose.turn("Forelock", rot(lat, forelock * wave(t, cycles, -0.1)))
     amp, phase = tail
@@ -2273,8 +2514,11 @@ def gallop(arm, t):
     pump = 7.0 * wave(t, 1, 0.08)
     neck = (6.0 + pump, -2.0 + 0.4 * pump, -2.0, -6.0 - 0.6 * pump)
     # The tail carried up at the dock and streaming back in a curve, a wave
-    # running down it each stride (Muybridge, The Horse in Motion).
-    hair = dict(mane=10.0, mane_lift=-12.0, forelock=10.0, tail=(12.0, 0.0), tail_lift=50.0, lag=0.09, cycles=1.0,
+    # running down it each stride (Muybridge, The Horse in Motion). The
+    # mane flies: lifted off the neck in separate locks, trailing back and
+    # rippling back along the crest each stride (with -12 degrees and no
+    # trail it lay 2.9 cm off the neck on average, a flat sheet in game).
+    hair = dict(mane=12.0, mane_lift=MANE_GALLOP_LIFT, mane_back=MANE_GALLOP_BACK, mane_lag=0.15, forelock=10.0, tail=(12.0, 0.0), tail_lift=50.0, lag=0.09, cycles=1.0,
                 tail_curve=8.0, tail_whip=9.5)
     flex = -2.0 * wave(t, 1, 0.15)
     return locomotion(arm, t, GALLOP, body, neck, slide=0.09, flex=flex, hair=hair, ears=((22, 5), (22, 5)))
@@ -2328,7 +2572,8 @@ def gallop_jump(arm, t):
     pose.turn("Torso2", rot(body.to_3x3() @ X, flex))
     pose_neck(pose, body, neck)
     pose_face(pose, ((10, 0), (10, 0)))
-    pose_hair(pose, mane=8.0, mane_lift=jump_key(t, [(0, -10.0), (12, 10.0), (20, -18.0), (35, -10.0)]), forelock=8.0,
+    pose_hair(pose, mane=8.0, mane_lift=jump_key(t, [(0, MANE_GALLOP_LIFT), (12, -6.0), (20, -30.0), (35, MANE_GALLOP_LIFT)]),
+              mane_back=jump_key(t, [(0, MANE_GALLOP_BACK), (12, 6.0), (20, MANE_GALLOP_BACK), (35, MANE_GALLOP_BACK)]), forelock=8.0,
               tail=(10.0, 0.0), tail_lift=jump_key(t, [(0, 50.0), (12, 50.0), (22, 60.0), (35, 50.0)]), lag=0.06, t=t, cycles=2.0,
               tail_curve=4.0, tail_whip=6.0)
     # Legs: before the take-off and after the landing they follow the

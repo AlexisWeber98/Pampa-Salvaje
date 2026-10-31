@@ -72,7 +72,7 @@ pub enum Coat {
     Tordillo,
     /// Bayo con grandes manchas blancas.
     Overo,
-    /// Alazán, con la crin y la cola un poco más claras.
+    /// Alazán, con la crin y la cola más claras, rubias.
     Alazan,
     /// Bayo: amarillo arena con la crin, la cola y la parte baja de las patas
     /// negras, y una raya oscura a lo largo del lomo.
@@ -110,12 +110,16 @@ impl Coat {
         }
     }
 
+    /// La crin y la cola: negras en el zaino y el bayo, blanquecinas en el
+    /// tordillo, rubias en el alazán y más oscuras que el pelaje en el overo;
+    /// siempre apartadas del pelaje, para que la crin no se pierda contra el
+    /// cuello. Tiñe el mapa neutro de las tarjetas de pelo (`horse_hair`).
     pub(crate) fn mane(self) -> Rgb {
         match self {
             Self::Zaino | Self::Bayo => [34, 28, 24],
             Self::Tordillo => [206, 202, 194],
-            Self::Overo => [118, 72, 44],
-            Self::Alazan => [176, 104, 58],
+            Self::Overo => [88, 50, 30],
+            Self::Alazan => [214, 150, 92],
         }
     }
 
@@ -967,6 +971,20 @@ pub(crate) mod tests {
             let (top, belly) = (side(&|n| n.y > 0.8), side(&|n| n.y < -0.6));
             assert!(spread > 0.15, "{coat:?}: a flat coat ({spread})");
             assert!(top < belly * 0.88, "{coat:?}: topline {top}, belly {belly}");
+        }
+    }
+
+    #[test]
+    fn every_mane_stands_apart_from_its_coat() {
+        // La crin no se pierde contra el cuello: más oscura o más clara que
+        // el pelaje, según el pelaje (negra en el zaino y el bayo, blanca en
+        // el tordillo, rubia en el alazán, oscura en el overo), en al menos
+        // un tercio de la luminancia del más claro de los dos. La crin del
+        // alazán (176, 104, 58) se fundía con el cuello al galope (L55).
+        for coat in Coat::ALL {
+            let (mane, body) = (luma(coat.mane()), luma(coat.body()));
+            let apart = (mane - body).abs() / mane.max(body);
+            assert!(apart > 1.0 / 3.0, "{coat:?}: mane {mane}, coat {body}");
         }
     }
 
@@ -2042,6 +2060,74 @@ pub(crate) mod tests {
         // corvejón; eran el 3.2 %).
         assert!(thinnest > 0.95, "the gaskin thins to x{thinnest}");
         assert!(crushed * 40 <= thigh.len(), "{crushed} of {}", thigh.len());
+    }
+
+    /// Las tarjetas de la crin (en reposo, sobre el cuello, entre la cruz y
+    /// la nuca) y lo lejos que quedan, en promedio, de la piel del cuerpo a lo
+    /// largo de `frames` cuadros a `speed`.
+    fn mane_off_the_neck(speed: f32, frames: usize) -> f32 {
+        let (mut app, me) = saddled_every(CharacterVisual::Horse(Coat::Alazan), 0.0, 10);
+        let carrier = app.world().get::<Children>(me).unwrap()[0];
+        let to_body = |app: &App| {
+            app.world()
+                .get::<GlobalTransform>(carrier)
+                .unwrap()
+                .affine()
+                .inverse()
+        };
+        let hair = |app: &mut App| {
+            let body = to_body(app);
+            let drawn = cpu::drawn(app.world_mut(), Some(me));
+            let pick = |name: &str| {
+                drawn
+                    .iter()
+                    .find(|d| d.name == name)
+                    .unwrap()
+                    .positions
+                    .iter()
+                    .map(|&p| body.transform_point3(p))
+                    .collect::<Vec<Vec3>>()
+            };
+            (pick("Hair"), pick("Main"))
+        };
+        let (rest, _) = hair(&mut app);
+        let mane: Vec<usize> = (0..rest.len())
+            .filter(|&i| (0.42..0.98).contains(&rest[i].x) && rest[i].y > 1.3)
+            .collect();
+        assert!(mane.len() > 1000, "{}", mane.len());
+        for _ in 0..60 {
+            ride(&mut app, me, speed);
+        }
+        let mut sum = 0.0;
+        for _ in 0..frames {
+            ride(&mut app, me, speed);
+            let (hair, skin) = hair(&mut app);
+            sum += mane
+                .iter()
+                .map(|&i| {
+                    skin.iter()
+                        .map(|p| p.distance_squared(hair[i]))
+                        .fold(f32::MAX, f32::min)
+                        .sqrt()
+                })
+                .sum::<f32>()
+                / mane.len() as f32;
+        }
+        sum / frames as f32
+    }
+
+    #[test]
+    fn at_the_gallop_the_mane_flies_off_the_neck() {
+        // Al galope la crin vuela en mechones apartados del cuello, no
+        // pegada a él como una lámina (L55, L58): sus vertices quedan en
+        // promedio a más de 4.8 cm del vertex más cercano de la piel, y un
+        // cuarto más lejos que al paso (eran 3.7 cm al galope y 3.3 al paso;
+        // ahora 5.5 y 4.0).
+        let walk = mane_off_the_neck(HORSE_WALK_SPEED, 20);
+        let gallop = mane_off_the_neck(12.2, 20);
+        println!("mane off the neck: walking {walk:.3} m, galloping {gallop:.3} m");
+        assert!(gallop > 0.048, "{gallop}");
+        assert!(gallop > 1.25 * walk, "walking {walk}, galloping {gallop}");
     }
 
     #[test]

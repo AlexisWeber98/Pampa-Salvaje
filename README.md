@@ -474,8 +474,10 @@ cabezada de 1919, atados o montados
   caballo, así que los patrones recorren el cuerpo: **zaino** (marrón oscuro
   liso), **tordillo** (gris con manchas más claras), **overo** (castaño con
   grandes manchas blancas y calzado, algo de blanco visto desde cualquier
-  lado), **alazán** y **bayo** (arena con crin, cola y patas negras y una raya
-  dorsal oscura). El caballo de Don Hidalgo, el que monta el jugador, es bayo;
+  lado, con la crin más oscura), **alazán** (con la crin y la cola rubias) y
+  **bayo** (arena con crin, cola y patas negras y una raya dorsal oscura). La
+  crin siempre se aparta del color del pelaje, y al galope vuela en mechones
+  separados, levantada del cuello y hacia atrás. El caballo de Don Hidalgo, el que monta el jugador, es bayo;
   el caballo atado en cada uno de los demás almacenes recibe un pelaje con la
   semilla de su pueblo.
 - **Los aperos** son el recado criollo de un peón de estancia de La Pampa en
