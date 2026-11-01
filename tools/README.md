@@ -183,12 +183,9 @@ Una entrada incorrecta recibe un error de una línea. Cualquier otra excepción 
 Conserva solo los clips de animación nombrados de un GLB autocontenido y descarta los accessors, las vistas de buffer y los datos binarios que nada más usa. Los nodos, las meshes, los skins y los materiales conservan sus índices, así que la escena no cambia. Usa solo la biblioteca estándar de Python 3, trata la entrada como datos no confiables (tamaños acotados, cada índice comprobado, sin URIs externas) y escribe los mismos bytes para la misma entrada. Hay que ejecutarlo aislado:
 
 ```sh
-for pair in "cow_a cow" "bull bull" "horse_a horse"; do
-  set -- $pair
-  python3 -I tools/glbtrim.py ~/Downloads/quaternius/$1.glb \
-    assets/models/fauna/quaternius/$2.glb \
-    --keep Idle Idle_2 Idle_Headlow Eating Walk Gallop Gallop_Jump
-done
+python3 -I tools/glbtrim.py ~/Downloads/quaternius/horse_a.glb \
+  assets/models/fauna/quaternius/horse.glb \
+  --keep Idle Idle_2 Idle_Headlow Eating Walk Gallop Gallop_Jump
 ```
 
 Los clips se escriben en el orden de `--keep`, del que depende el juego (`pampa_render::fauna::Clip`). Imprime el tamaño antes y después, los triángulos, las articulaciones y los clips conservados.
@@ -198,14 +195,6 @@ También recalcula normales de vértice suaves, porque las exportaciones tienen 
 - Solo para las normales, los vértices se sueldan por posición exacta y `JOINTS_0`/`WEIGHTS_0` iguales, así que nada se suaviza entre skinnings distintos. La soldadura abarca todas las primitivas de una mesh, así que no se ve ninguna costura donde se encuentran dos materiales.
 - Alrededor de cada punto soldado, las caras que comparten una arista que se dobla menos que el ángulo forman un grupo suave, como el auto smooth. Cada vértice recibe las normales de cara de su grupo, ponderadas por el ángulo de la esquina, así que los bordes de los cascos y las puntas de las orejas y los cuernos quedan definidos.
 - Solo cambian los bytes de NORMAL: la cantidad de vértices, las posiciones, las UV, los colores y el tamaño del archivo quedan iguales.
-
-El zorro de poly.pizza (`fox.glb`) se recorta igual, con su propio nombre para la espera con la cabeza baja:
-
-```sh
-python3 -I tools/glbtrim.py ~/Downloads/quaternius/fox/fox.glb \
-  assets/models/fauna/quaternius/fox.glb \
-  --keep Idle Idle_2 Idle_2_HeadLow Eating Walk Gallop Gallop_Jump
-```
 
 ## `fbx2glb.py`: de FBX animado a GLB, con Blender
 
@@ -334,6 +323,73 @@ Los pasos, todos deterministas:
    - **Salto:** las manos despegan primero; las patas traseras apoyan bajo la panza (`JUMP_PLANT`), empujan mientras sus vasos se deslizan hacia atrás a la velocidad del galope y dejan el suelo estiradas (ahí empieza el vuelo del juego, 0.41 s). En lo alto las manos van plegadas y las patas traseras flexionadas y arrastradas por detrás de las babillas, nunca bajo la panza. Las manos se despliegan recién en el último décimo del vuelo (`JUMP_REACH`), primero la de atrás (la derecha, con mano de galope izquierda), que apoya cuando el vuelo termina con el cuerpo todavía inclinado hacia adelante; las patas traseras siguen atrás y apoyan después, en el galope que retoma con las manos apoyadas (`GALLOP_LANDING` en el juego). Un `tail_lift` positivo aleja la cola de las patas traseras.
 
 Costo para la iGPU Renoir: 11.944 triángulos por caballo (7.200 del cuerpo, 4.296 de pelo con alpha test, 448 de los ojos), dos conjuntos de mapas de 1024² (la luminancia con el tono del lomo, el vientre y manchones suaves, los surcos oscurecidos por la oclusión al 60 %, el pelo en vetas y la rugosidad entre 0.45 y 0.9 a lo largo del pelo; como el ñandú, unos 8 MB de video entre los dos con sus mips, compartidos por todos los caballos). En el juego (`Species::skin`), `horse_body` viste `Main` (por los colores por vertex del pelaje) y las partes de un solo color (`Main_Dark`, `Main_Light`, `Muzzle`, `Hooves`, por su color), y `horse_hair` viste `Hair` con alpha test, por ambos lados con la normal del dorso invertida y teñido con la crin del pelaje; las tarjetas de pelo se dibujan a cualquier distancia. Una corrida completa tarda unos 4 minutos en la CPU.
+
+## `cattle.py`: la vaca y el toro modelados en Blender
+
+`cattle.py` modela, arma, pinta y anima la vaca y el toro de la estancia de 1919 por script en Blender (probado con Blender 5.2), al piso de calidad de la v13. Es el caballo con anatomía bovina: `animal_rig.Steps` ejecuta `horse.py` sin su `main()` y le reemplaza los nombres (el esqueleto, la escultura, las regiones del pelaje, el tono, los pesos, las tarjetas de pelo, la cara de la cabeza, los planes de marcha y las funciones de los clips), así que la escultura horneada, la IK de las patas, las marchas, los músculos y las vistas previas son los mismos pasos que los del caballo. Son la vaca y el toro del juego (la v6, aprobada el 2026-10-31), en `assets/models/fauna/own/`; reemplazan a la vaca y el toro de Quaternius, que se borraron. Para volver a generarlos (unos 6 minutos cada uno en la CPU):
+
+```sh
+O=assets/models/fauna/own
+blender -b --factory-startup --python tools/cattle.py -- cow_raw.glb \
+  --textures $O [--preview /tmp/cow]
+blender -b --factory-startup --python tools/cattle.py -- bull_raw.glb --bull \
+  --textures $O [--preview /tmp/bull]
+FORCE=1 sh tools/textures_to_ktx2.sh $O/cow_body $O/bull_body $O/cattle_hair
+# Cada pelaje, como el color de un conjunto (el normal map y la rugosidad
+# solo completan el conjunto que pide el script).
+for set in cow_body bull_body; do
+  for coat in hereford angus roan overo; do
+    t=$(mktemp -d)
+    cp $O/$set/$coat.jpg $t/color.jpg
+    cp $O/$set/normal_gl.jpg $O/$set/roughness.jpg $t/
+    sh tools/textures_to_ktx2.sh $t && mv $t/color.ktx2 $O/$set/$coat.ktx2
+    rm -r $t
+  done
+done
+for a in cow bull; do
+  python3 -I tools/glbtrim.py ${a}_raw.glb $O/$a.glb \
+    --keep Idle Idle_2 Idle_Headlow Eating Walk Gallop Gallop_Jump --smooth-angle 0
+done
+```
+
+Las constantes del juego medidas sobre el modelo (`CATTLE_WALK_SPEED`, `CATTLE_GALLOP_SPEED`, `COW_WITHERS`, `BULL_WITHERS` en `crates/render/src/fauna/livestock.rs`) dicen en su documentación cómo se midieron: si cambia el modelo o un clip, hay que volver a medirlas.
+
+| Opción | Significado |
+|---|---|
+| `--bull` | el toro: el mismo esqueleto, con giba de músculo sobre el cuello, papada más honda, antebrazos y cabeza más gruesos, cuernos cortos y gruesos, prepucio con su mechón y escroto (el juego lo dibuja más grande, `Species::withers`) |
+| `--textures DIR` | escribe las fuentes JPG de `DIR/cow_body` o `DIR/bull_body` (color, normal_gl, roughness, ao, y el mapa de color de cada pelaje: `hereford`, `angus` y `overo` de 1024², `roan` de 2048²) y `DIR/cattle_hair` (color, normal_gl, roughness, opacity) |
+| `--preview DIR` | renderiza PNG con Eevee: de costado y de tres cuartos en los cuatro pelajes (`COATS`, con los mapas de cada pelaje como en el juego), primeros planos de la cabeza, el ojo, el pelo, las patas, las pezuñas, la ubre y la cola, cuadros de los siete clips y la malla liviana sola en cada pelaje (`light_*`) |
+| `--draft`, `--no-clips`, `--shots REGEX` | como en `horse.py` |
+
+Razas y pelajes: hacia 1919 el criollo pampeano ya estaba absorbido por cruza en las razas británicas. El Shorthorn (el "Durham", base del rodeo argentino y del comercio de carne enfriada; colorado, rosillo o blanco), el Hereford (colorado con la cara, la cruz, el pecho, la línea de abajo, las patas y la borla blancos, con cuernos) y el Aberdeen Angus (negro y mocho, sin cuernos), con algún overo cruza criolla. `color_at` pinta los cuatro (`hereford`, `angus`, `roan` y `overo`, con las manchas de `overo_black`) en el marco del cuerpo, con bordes ondulados. **Mapas de pelaje.** En lugar de portar a Rust `color_at`, `warp` y `unwarp`, `bake_coats` hornea cada pelaje en un mapa de color del cuerpo: Cycles hornea el punto y la normal del modelo en cada texel de las UV (`bake_geometry`), `coat_pixels` evalúa ahí el pelaje (el del rosillo, con su mapa de pelos de 2048², `bake_roan`, blanco donde el pelo es blanco, que a media distancia se lee gris) y lo multiplica por la luminancia neutra como el juego (en luz lineal). Así los bordes del blanco del Hereford quedan tan nítidos como el mapa, y no como los colores por vértice de unos 6.000 triángulos. En el juego, `Main` se dibuja con el mapa de su pelaje (`Paint::Map`) y las partes de un solo color multiplican la luminancia neutra por su color (`paint`, con los valores de `COATS`). El modelo tiene un solo juego de cuernos: el juego oculta `Horns` en el Angus, y como son superficies aparte, la nuca queda entera.
+
+Anatomía: un vacuno de carne de 1919, bajo y macizo como en las fotos de referencia: la anatomía se diseña sobre un marco más alto y `warp` acorta las patas (entre los menudillos y la panza cada altura se comprime al 80 %, y todo lo de arriba baja 10 cm), así el cuerpo, la cabeza y las pezuñas conservan su forma; los pelajes leen cada punto con `unwarp`, y el puerto a Rust debe hacer lo mismo. Costillar hondo y ancho, línea dorsal recta, puntas de anca e isquiones marcados, papada y pecho, cola larga hasta los corvejones con la borla por debajo, frente ancha y chata con la nuca entre los cuernos, orejas horizontales, ojos salientes, morro ancho y húmedo, patas gruesas de vacuno de carne y pezuñas hendidas (dos pezuñas de unos 10 cm por pata, con la hendidura, la punta inclinada, los talones, la corona donde empieza el pelo y las dos pezuñas accesorias en punta detrás del menudillo), y ubre con cuatro pezones, de piel lampiña (rosada o pigmentada según el pelaje, nunca del color del pelo, con un borde suave hacia la panza). Los cuernos son piezas aparte: todas sus caras, y solo ellas, son `Horns`. Las caminatas apoyan las manos con el cabestrillo torácico y dentro de su alcance (a lo sumo 2 mm de falta en la caminata, 1 cm en el galope). El rig conserva los nombres y la jerarquía del cuadrúpedo de Quaternius (`Body`, `Back`, `Torso`–`Torso3`, `Neck1`–`Neck3`, `Head`, las patas, `Tail1`–`Tail7` y los huesos IK con sus hojas `_end`) y agrega las orejas (`Ear1.L/R`), `Jaw`, `LipUpper`, `Nostril.L/R`, `Tail8` y `Tail9`, los seis músculos del caballo, la papada (`Dewlap`) y la ubre (`Udder`; en el toro `Scrotum`): 58 huesos. Los clips son los siete del original con sus largos: rumiar (la mandíbula de costado, una vez por segundo), las orejas, la cola que espanta moscas, mirar atrás descansando una pata, dormitar con la cabeza baja, pastar arrancando cada bocado, la caminata lateral (1.04 m/s medidos en los vasos) con la cabeza que cabecea y la papada y la ubre que se balancean, el galope (5.62 m/s, dos zancadas y algo por segundo) con la cabeza baja y la cola levantada, y en `Gallop_Jump` una corcoveada (el juego no lo reproduce en los vacunos). Materiales: `Main` (todo el pelaje, con el mapa de su pelaje), `Main_Light` (la piel de la ubre), `Muzzle` (el morro pelado y la boca), `Hooves`, `Horns`, `Hair`, `Eye_Black` y `Eye_White`.
+
+Costo: vaca 8.192 triángulos (cuerpo unos 5.900, cuernos, pelo con alpha test y ojos), toro 8.792; la malla liviana (`light_mesh`, `Cow_LOD`: la piel sola diezmada a 1.400 triángulos, con sus UV y los pesos interpolados de la completa) que el juego dibuja desde los 40 m (`LIGHT_FROM`, fundida con dithering). Video: un conjunto de mapas de 1024² por cuerpo y uno compartido de pelo (unos 12 MB entre los tres con sus mips) y los mapas de pelaje (tres de 1024² y el rosillo de 2048² por cuerpo: unos 20 MB entre los ocho, BC7 con mips). Tests sin Blender (`test_cattle.py`): los pelajes, sus mapas y las velocidades de las marchas.
+
+## `fox.py`: el zorro gris pampeano modelado en Blender
+
+`fox.py` modela, arma, pinta y anima el zorro gris pampeano (*Lycalopex gymnocercus*) por script en Blender (probado con Blender 5.2), al piso de calidad de la v13. Como la vaca, es el caballo con otra anatomía: `animal_rig.Steps` ejecuta `horse.py` sin su `main()` y le reemplaza los nombres (el esqueleto, la escultura, la pintura de la escultura, los pesos, las tarjetas de pelo, la cara de la cabeza, los planes de marcha y las funciones de los clips). Es el zorro del juego (la v5, aprobada el 2026-11-01), en `assets/models/fauna/own/`; reemplaza al zorro de Quaternius, que se borró. En el juego (`Species::Fox`) sus materiales `Main` y `Hair` se dibujan con sus mapas tal como están (`Paint::Keep`), y sus velocidades (`FOX_WALK_SPEED`, `FOX_GALLOP_SPEED`) y su cruz (`FOX_WITHERS`, 0.38 m) son las medidas de este modelo. Para volver a generarlo (unos 4 minutos en la CPU):
+
+```sh
+blender -b --factory-startup --python tools/fox.py -- fox_raw.glb \
+  --textures assets/models/fauna/own [--preview /tmp/fox]
+FORCE=1 sh tools/textures_to_ktx2.sh assets/models/fauna/own/fox_body assets/models/fauna/own/fox_hair
+python3 -I tools/glbtrim.py fox_raw.glb assets/models/fauna/own/fox.glb \
+  --keep Idle Idle_2 Idle_Headlow Eating Walk Gallop Gallop_Jump --smooth-angle 0
+```
+
+| Opción | Significado |
+|---|---|
+| `--textures DIR` | escribe las fuentes JPG de `DIR/fox_body` (color, normal_gl, roughness, ao) y `DIR/fox_hair` (color, normal_gl, roughness, opacity) |
+| `--preview DIR` | renderiza PNG con Eevee: de costado (los dos lados), de tres cuartos de frente y de atrás, de frente, primeros planos de la cabeza (tres vistas), el ojo, el pelaje, la cola, las manos y las patas traseras, y cuadros de los siete clips |
+| `--draft`, `--no-clips`, `--shots REGEX` | como en `horse.py` |
+
+**Pelaje.** El zorro tiene un solo pelaje, así que se pinta sobre la escultura (`coat_at`) y se hornea en el mapa de color del cuerpo: el juego dibuja `Main` y `Hair` con sus mapas tal como están (sin `paint` ni colores por vértice). Lomo y flancos canosos con una línea más oscura sobre el espinazo; cabeza leonada rojiza con el hocico gris, los costados del hocico y la barbilla oscuros, y una línea oscura del ojo al hocico; mejillas y garganta blancas, el pecho crema y algo canoso entre las manos, con el borde del blanco irregular (`_wobble`), sin tarjetas encima; orejas grandes, rojizas por detrás y blancas por dentro; panza y cara interna de las patas crema; patas leonadas rojizas por fuera, con una mancha oscura detrás de cada garrón; cola tupida gris, más oscura arriba, con la mancha de la glándula y la punta negra. El canoso viene del pelo: el material de la escultura dibuja pelos finos agrupados en mechones según su caída (`hair_direction`) y, donde el pelaje es canoso, el moteado agutí de los pelos de guarda (banda clara y punta negra, cada pelo con la suya). Las tarjetas (`fur_atlas`) son mechones de pelos finos de su propio largo y su propio color (gris en la raíz, banda clara y punta negra desplazadas al azar, un tercio de borra corta y clara debajo); cada mechón toma la columna del atlas que corresponde al pelaje debajo de él (`card_column`).
+
+Anatomía: 0.38 m a la cruz, cola de 0.37 m llevada hacia atrás y abajo en diagonal, en un cepillo tupido; patas finas sobre manos digitígradas (cuatro dedos con sus almohadillas y uñas, la almohadilla principal atrás, el espolón alto en las manos), tronco compacto de pecho hondo y angosto pero chato por delante (de costado la garganta baja casi recta a las manos, el pecho apenas delante de los codos y no más bajo que ellos: `TRUNK`, `BRISKET`, `chest_front`, `chest_bottom`; el babero blanco es solo color) y panza recogida (la anatomía se diseña larga y `warp` acorta el tronco entre la cruz y la cadera y el cuello sobre los hombros; el pelaje y las regiones de la piel leen cada punto con `unwarp`), dedos separados por surcos, hocico largo y fino, orejas de 7 cm, anchas en la base y ahuecadas por delante. Las manos y patas paradas usan el cabestrillo torácico (`stand_legs`): al bajar la cabeza al suelo el pecho se hunde entre las paletas y las manos quedan casi verticales. Las tarjetas: la gorguera de las mejillas, los pelos largos de la nuca, la cruz y el espinazo, el "pantalón" detrás de los muslos (que sigue al fémur), el fleco de la panza, los codos, los pelos blancos dentro de las orejas, los bigotes negros y unos 400 mechones de la cola, cada uno de su largo, ancho y ángulo (ninguno bajo la raíz, donde quedarían colgando detrás del muslo). El rig conserva los nombres y la jerarquía del cuadrúpedo de Quaternius (los del zorro que dibuja hoy el juego) con dos huesos por oreja (`Ear1`, `Ear2`), `Jaw` y nueve de cola: 49 huesos. Pesos: calor (con el zorro escalado cuatro veces para el solucionador), la cola y las orejas atadas a sus propias cadenas (`tail_only`, `ears_only`) y los codos como en el caballo. Clips (los siete del ganado, en ese orden después de `glbtrim.py --keep`): atento girando la cabeza y las orejas, mirar atrás y olfatear el aire, rastrear con la nariz en el suelo, comer desgarrando y masticando, la caminata lateral (0.54 m/s medidos como el juego) y el galope rotatorio con el lomo que se flexiona, las orejas atrás y la cola tendida (4.21 m/s), y en `Gallop_Jump` el salto sobre el ratón (el juego no lo reproduce en los animales silvestres). Materiales: `Main`, `Hair`, `Eye_Black` y `Eye_Iris` (ámbar, pupila ovalada vertical).
+
+Costo: 12.524 triángulos (el cuerpo unos 5.200, las tarjetas con alpha test y los ojos). Video: un conjunto de mapas de 1024² para el cuerpo y uno de pelo. Tests sin Blender (`test_fox.py`): el pelaje, los colores de los pelos de las tarjetas, el perfil del pecho, las velocidades de las marchas y el esqueleto.
 
 ## `tack.py`: los mapas del recado criollo
 

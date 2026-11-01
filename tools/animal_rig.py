@@ -1180,3 +1180,53 @@ def sdf_capped_cone(a, b, ra, rb, rounding=0.0):
 
     big = max(ra, rb) + rounding
     return fn, np.minimum(a, b) - big, np.maximum(a, b) + big
+
+
+# ---------------------------------------------------------------------------
+# Reusing another species' steps.
+
+
+class Steps:
+    """The steps of another species' script, to build a related animal with
+    them: the cattle reuse the horse's (``tools/horse.py``: the same
+    quadruped rig, the analytic leg IK, the gaits, the hair cards, the
+    detail bake and the previews) with their own anatomy.
+
+    The script runs in a namespace of its own without its last statement,
+    ``main()`` (its command line); ``use(name=value, ...)`` replaces its
+    names there, so every step that reads them (its constants, or the
+    functions it calls) works on the new animal from then on. ``prefix``
+    replaces the script's own prefix (``"horse:"``) in what it prints."""
+
+    def __init__(self, path, prefix=None):
+        path = os.path.abspath(path)
+        with open(path, encoding="utf-8") as f:
+            source = f.read()
+        body, last = source.rstrip().rsplit("\n", 1)
+        if last.strip() != "main()":
+            raise SystemExit(f"animal_rig: {path} does not end with main()")
+        own = os.path.splitext(os.path.basename(path))[0] + ":"
+        ns = {"__name__": os.path.splitext(os.path.basename(path))[0], "__file__": path}
+        if prefix:
+            import builtins
+
+            def say(*args, **kwargs):
+                args = [a.replace(own, prefix, 1) if isinstance(a, str) else a for a in args]
+                builtins.print(*args, **kwargs)
+
+            ns["print"] = say
+        exec(compile(body + "\n", path, "exec"), ns)
+        self.__dict__["_ns"] = ns
+
+    def use(self, **names):
+        """Replaces (or adds) ``names`` in the script's namespace."""
+        self._ns.update(names)
+
+    def __getattr__(self, name):
+        try:
+            return self._ns[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+    def __setattr__(self, name, value):
+        self._ns[name] = value
