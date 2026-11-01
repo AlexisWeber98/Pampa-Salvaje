@@ -19,7 +19,8 @@
 //!
 //! Cada malla se dibuja dentro de los rangos compartidos de los asentamientos
 //! (los animales de suelo, el de los objetos; las aves que planean, el de los
-//! edificios): ningún `VisibilityRange` nuevo.
+//! edificios); los vacunos lo reparten entre su malla completa, cerca, y su
+//! malla liviana, lejos ([`livestock::light_range`]).
 
 pub mod livestock;
 
@@ -870,10 +871,11 @@ mod tests {
     ];
 
     /// Las especies dibujadas a partir de modelos.
-    const LIVESTOCK: [Animal; 14] = [
+    const LIVESTOCK: [Animal; 15] = [
         Animal::Cow(CowCoat::Hereford),
         Animal::Cow(CowCoat::Angus),
         Animal::Cow(CowCoat::Overo),
+        Animal::Cow(CowCoat::Roan),
         Animal::Bull(CowCoat::Hereford),
         Animal::Horse(Coat::Zaino),
         Animal::Horse(Coat::Overo),

@@ -592,7 +592,11 @@ mod tests {
             .iter()
             .flat_map(|h| h.cows.iter().map(|c| c.coat))
             .collect();
-        assert_eq!(coats.len(), 3, "every coat grazes somewhere");
+        assert_eq!(
+            coats.len(),
+            CowCoat::ALL.len(),
+            "every coat grazes somewhere"
+        );
     }
 
     #[test]
