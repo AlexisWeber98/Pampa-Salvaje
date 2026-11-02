@@ -1234,7 +1234,15 @@ pub(crate) mod tests {
             // Quieto durante 40 frames (al menos 200 ms de tiempo real, sin
             // importar qué tan cargada esté la máquina): un archivo que llegara
             // más tarde volvería a crear la escena en medio de una medición.
-            if held.1 >= QUIET && world.resource::<Settled>().0 >= QUIET {
+            // Y sin aperos a medio vestir: el recado modelado puede llegar
+            // después de que el caballo reproduce (con muchos mapas cargando a
+            // la vez), y los tests de los aperos leerían un recado sin armar.
+            // Un caballo que no lleva aperos nunca deja ninguno pendiente.
+            let tack_dressed = world
+                .resource::<crate::character::tack::PendingTack>()
+                .0
+                .is_empty();
+            if held.1 >= QUIET && world.resource::<Settled>().0 >= QUIET && tack_dressed {
                 return (app, me);
             }
             std::thread::sleep(std::time::Duration::from_millis(5));

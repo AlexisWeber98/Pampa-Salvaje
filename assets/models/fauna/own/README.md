@@ -1,7 +1,8 @@
 # Modelos propios de fauna
 
-Modelos hechos para el juego, sin assets de terceros: no necesitan crédito.
-Se generan con los scripts de Blender de `tools/` (ver `tools/README.md`).
+Modelos hechos para el juego, sin modelos de terceros. Los mapas del cuerpo
+de los felinos llevan, en la cara, una fotografía proyectada que sí necesita
+crédito (ver abajo y el `CREDITS.md` de la raíz). Se generan con los scripts de Blender de `tools/` (ver `tools/README.md`).
 
 | Archivo | Contenido | Script |
 |---|---|---|
@@ -17,3 +18,16 @@ Se generan con los scripts de Blender de `tools/` (ver `tools/README.md`).
 | `fox.glb` | zorro gris pampeano (*Lycalopex gymnocercus*): mesh con skinning (12.524 triángulos), rig de 49 huesos, materiales `Main`, `Hair`, `Eye_Black` y `Eye_Iris`, siete clips | `tools/fox.py`, después `tools/glbtrim.py` |
 | `fox_body/` | mapas de la piel horneados de la escultura, con el pelaje ya pintado (color, normal map, rugosidad, oclusión): fuentes JPG y KTX2 | `tools/fox.py --textures`, después `tools/textures_to_ktx2.sh` |
 | `fox_hair/` | atlas de mechones de pelo con sus propios colores (canosos, crema, leonados, oscuros y negros) y su opacidad: fuentes JPG y KTX2 | ídem |
+| `gato.glb`, `puma.glb`, `yagua.glb` | gato montés (*Leopardus geoffroyi*), puma (*Puma concolor*) y yaguareté (*Panthera onca*): mesh con skinning (11.618, 11.326 y 11.414 triángulos) más su malla liviana (`GatoMontes_LOD`, `Puma_LOD`, `Yaguarete_LOD`, 1.000) para cuando están lejos, rig de 49 huesos, materiales `Main`, `Hair`, `Eye_Black` y `Eye_Iris`, siete clips | `tools/felid.py --species gato\|puma\|yagua`, después `tools/glbtrim.py` |
+| `gato_body/`, `puma_body/`, `yagua_body/` | mapas de la piel horneados de la escultura, con el pelaje ya pintado y la cara de una fotografía (color, normal map, rugosidad, oclusión): fuentes JPG y KTX2 | `tools/felid.py --textures --faces`, después `tools/textures_to_ktx2.sh` |
+| `gato_hair/`, `puma_hair/`, `yagua_hair/` | atlas de mechones de pelo con sus propios colores y su opacidad: fuentes JPG y KTX2 | `tools/felid.py --textures`, después `tools/textures_to_ktx2.sh` |
+
+## Créditos de las fotografías de las caras
+
+Cada foto se proyectó sobre la cabeza en el mapa de color del cuerpo (`tools/felid.py --faces`: ajustada a los puntos de referencia de la cabeza, sin su propia luz, con el color igualado al del pelaje y mezclada con el pelaje procedural).
+
+| Mapa | Foto | Autor | Licencia |
+|---|---|---|---|
+| `puma_body/` | [Cougar (17575969543)](https://commons.wikimedia.org/wiki/File:Cougar_(17575969543).jpg), Wikimedia Commons | Pete G | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/) |
+| `yagua_body/` | [Jaguar, Tennōji Zoo (33686534416)](https://commons.wikimedia.org/wiki/File:Jaguar,_Tenn%C5%8Dji_Zoo_(33686534416).jpg), Wikimedia Commons | Jin Kemoole | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/) |
+| `gato_body/` | [Leopardus geoffroyi, foto 235096757](https://www.inaturalist.org/photos/235096757), iNaturalist | Ben Costamagna | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |

@@ -300,15 +300,19 @@ impl FaunaSite {
                 };
                 let seed = rng.next();
                 if home.contains_point(p) && self.grazeable(p) && fits(p) {
-                    out.push(Critter::new(kind, p, home, den, seed));
+                    // Su territorio se centra donde se sembró el grupo.
+                    let roam = 2.0 * kind.profile().roam;
+                    let range = Aabb::from_center_size(at, Vec2::new(roam, roam));
+                    out.push(Critter::new(kind, p, range, den, seed));
                 }
             }
         }
         out
     }
 
-    /// El terreno del chunk `coord`: el hogar del que no se alejan sus animales
-    /// silvestres.
+    /// El terreno del chunk `coord`: el hogar del que no se alejan sus liebres
+    /// y sus teros (los animales de suelo tienen su propio territorio,
+    /// [`Profile::roam`]).
     fn home(&self, coord: ChunkCoord) -> Aabb {
         coord.bounds(self.config.chunk_size)
     }
@@ -768,6 +772,14 @@ mod tests {
             let home = coord.bounds(config.chunk_size);
             for c in &critters {
                 assert!(site.grazeable(c.position) && home.contains_point(c.position));
+                // Su territorio es de su especie, no el chunk.
+                let roam = c.kind.profile().roam;
+                let size = c.home.max - c.home.min;
+                assert!(
+                    (size - Vec2::new(2.0 * roam, 2.0 * roam)).length() < 1e-2,
+                    "{c:?}"
+                );
+                assert!(c.home.contains_point(c.position));
                 let monte = flora.monte(c.position);
                 match c.kind {
                     k if k.feline() => assert!(monte >= FaunaSite::MONTE, "{c:?}"),

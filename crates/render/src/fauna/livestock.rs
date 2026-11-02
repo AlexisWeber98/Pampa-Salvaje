@@ -1,10 +1,9 @@
-//! Felinos y rapaces: los modelos low-poly animados de
-//! Quaternius (CC0; con crédito en `assets/models/fauna/quaternius/CREDITS.md`
-//! y en el `CREDITS.md` de la raíz): el gato y el águila del Animal Pack Vol.2,
-//! convertidos con `tools/fbx2glb.py` (Blender) y recortados igual: el gato
-//! con su espera y su caminata, el águila (diezmada) con su planeo y su
-//! aleteo ([`Species::animation`]). El gato hace de gato montés, de puma y de
-//! yaguareté, y el águila de chimango y de carancho, en sus tamaños y colores.
+//! Rapaces: el modelo low-poly animado de Quaternius (CC0; con crédito en
+//! `assets/models/fauna/quaternius/CREDITS.md` y en el `CREDITS.md` de la
+//! raíz): el águila del Animal Pack Vol.2, convertida con `tools/fbx2glb.py`
+//! (Blender), diezmada y recortada con su planeo y su aleteo
+//! ([`Species::animation`]); hace de chimango y de carancho, en sus tamaños y
+//! colores.
 //! El ñandú es un modelo propio, modelado, con rig y animado por script en
 //! Blender (`tools/rhea.py`, en `assets/models/fauna/own/`): un cuerpo
 //! continuo con su plumaje horneado de una escultura densa en mapas KTX2
@@ -21,7 +20,11 @@
 //! traen una liviana para las tropas lejanas ([`light_range`]). El zorro gris
 //! pampeano también es propio (`tools/fox.py`): su único pelaje viene horneado
 //! en el mapa de color de su cuerpo y su pelo en el de sus tarjetas, así que
-//! sus materiales se dibujan con sus mapas tal como están.
+//! sus materiales se dibujan con sus mapas tal como están. Los tres felinos
+//! (el gato montés, el puma y el yaguareté) son propios igual
+//! (`tools/felid.py`, una anatomía y un rig de gato para las tres especies):
+//! cada uno con su pelaje y la cara de una foto horneados en el mapa de su
+//! cuerpo, y una malla liviana para cuando están lejos, como los vacunos.
 //!
 //! Cada [`Species`] se carga una vez al iniciar ([`LivestockModels`]): su
 //! escena glTF, sus clips y un [`AnimationGraph`] compartido. Un [`Animal`]
@@ -37,10 +40,9 @@
 //!   final del rango, fundidas con dithering ([`light_range`]);
 //! - sus materiales se cambian por copias teñidas con el pelaje del animal,
 //!   creadas una vez por pelaje y material y compartidas por todos los animales
-//!   que lo llevan ([`paint`]); las manchas del gato
-//!   montés y del yaguareté y los pelajes de los caballos son colores por
-//!   vertex en una copia de la mesh del cuerpo
-//!   por pelaje, compartida de la misma forma;
+//!   que lo llevan ([`paint`]); los pelajes de los caballos son colores por
+//!   vertex en una copia de la mesh del cuerpo por pelaje, compartida de la
+//!   misma forma;
 //! - su reproductor de animación recibe el grafo de la especie.
 //!
 //! En cada frame [`clip_for`] elige el clip a partir del estado de la fauna
@@ -76,7 +78,8 @@ use bevy::image::CompressedImageFormatSupport;
 pub const LIVESTOCK_DIR: &str = "models/fauna/quaternius";
 /// Dónde viven los modelos propios, hechos con los scripts de Blender de
 /// `tools/` (el ñandú, `tools/rhea.py`; el caballo, `tools/horse.py`; la vaca
-/// y el toro, `tools/cattle.py`), bajo el [`AssetRoot`].
+/// y el toro, `tools/cattle.py`; el zorro, `tools/fox.py`; los felinos,
+/// `tools/felid.py`), bajo el [`AssetRoot`].
 pub const OWN_DIR: &str = "models/fauna/own";
 
 /// Hasta esta distancia de la cámara se dibujan las tarjetas de detalle de un
@@ -95,7 +98,8 @@ pub fn detail_shown(was: bool, distance: f32) -> bool {
 }
 
 /// El sufijo del nombre de la malla liviana de un modelo (`Cow_LOD`, de
-/// `tools/cattle.py`): la piel sola, diezmada, sin tarjetas de pelo ni ojos.
+/// `tools/cattle.py`; `Puma_LOD` y los de los otros felinos, de
+/// `tools/felid.py`): la piel sola, diezmada, sin tarjetas de pelo ni ojos.
 pub const LIGHT_SUFFIX: &str = "_LOD";
 /// Desde esta distancia de la cámara un modelo con malla liviana dibuja la
 /// liviana en lugar de la completa, en metros (una vaca de 1.4 m mide ahí
@@ -143,7 +147,7 @@ pub struct Skin {
 }
 
 /// Los conjuntos de mapas de los modelos propios.
-pub const SKIN_SETS: [&str; 9] = [
+pub const SKIN_SETS: [&str; 15] = [
     "rhea_body",
     "rhea_feathers",
     "horse_body",
@@ -153,6 +157,12 @@ pub const SKIN_SETS: [&str; 9] = [
     "cattle_hair",
     "fox_body",
     "fox_hair",
+    "gato_body",
+    "gato_hair",
+    "puma_body",
+    "puma_hair",
+    "yagua_body",
+    "yagua_hair",
 ];
 
 /// La ruta del mapa `name` del conjunto `set`, bajo el [`AssetRoot`].
@@ -271,6 +281,40 @@ pub const FOX_GALLOP_SPEED: f32 = 4.21;
 /// de la vaca sobre la mesh exportada.
 pub const FOX_WITHERS: f32 = 0.38;
 
+/// La velocidad sobre el suelo que muestra el clip `Walk` del gato montés
+/// propio (`tools/felid.py`), en metros del modelo por segundo, medida como la
+/// del caballo sobre el modelo exportado: el deslizamiento medio hacia atrás
+/// de las puntas de las manos y las patas (`FF.*_end`, `FFB.*_end`) mientras
+/// están cerca de su punto más bajo (1.5 cm en el puma, escalados al tamaño de
+/// cada felino: 0.63 cm en el gato montés), a lo largo del ciclo. El juego la
+/// escala con la especie ([`Species::scale`]).
+pub const GATO_WALK_SPEED: f32 = 0.53;
+/// Lo mismo para su clip `Gallop`, un galope rotatorio.
+pub const GATO_GALLOP_SPEED: f32 = 5.36;
+/// La altura a la cruz del gato montés propio, en metros del modelo, medida
+/// como la de la vaca sobre la mesh exportada.
+pub const GATO_WITHERS: f32 = 0.28;
+/// Lo más rápido que se reproduce el galope del gato montés respecto de cómo
+/// se creó ([`Species::max_pace`]): la frecuencia del tranco crece al achicarse
+/// el cuerpo, así que un gato de 4 kg da muchos más trancos por segundo que un
+/// puma. Con este tope su clip alcanza
+/// su velocidad de huida (45 km/h) sin que las manos se deslicen.
+pub const GATO_GALLOP_RATE: f32 = 2.4;
+/// La velocidad del clip `Walk` del puma propio, medida como la del gato
+/// montés ([`GATO_WALK_SPEED`]).
+pub const PUMA_WALK_SPEED: f32 = 0.80;
+/// Lo mismo para su clip `Gallop`.
+pub const PUMA_GALLOP_SPEED: f32 = 11.05;
+/// La altura a la cruz del puma propio, medida como la del gato montés.
+pub const PUMA_WITHERS: f32 = 0.68;
+/// La velocidad del clip `Walk` del yaguareté propio, medida como la del gato
+/// montés ([`GATO_WALK_SPEED`]).
+pub const YAGUA_WALK_SPEED: f32 = 0.73;
+/// Lo mismo para su clip `Gallop`.
+pub const YAGUA_GALLOP_SPEED: f32 = 10.80;
+/// La altura a la cruz del yaguareté propio, medida como la del gato montés.
+pub const YAGUA_WITHERS: f32 = 0.75;
+
 /// Los animales que se dibujan a partir de un modelo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Species {
@@ -280,8 +324,9 @@ pub enum Species {
     /// El zorro gris pampeano: un modelo propio (`tools/fox.py`), vestido con
     /// sus mapas ([`Species::skin`]).
     Fox,
-    /// Los tres felinos comparten el gato del Animal Pack Vol.2 de Quaternius,
-    /// en tres tamaños y pelajes.
+    /// Los tres felinos: modelos propios (`tools/felid.py`, una anatomía de
+    /// gato llevada a cada especie), vestidos con sus mapas
+    /// ([`Species::skin`]).
     GatoMontes,
     Puma,
     Yaguarete,
@@ -332,7 +377,9 @@ impl Species {
             Self::Bull => return format!("{OWN_DIR}/bull.glb"),
             Self::Horse => return format!("{OWN_DIR}/horse.glb"),
             Self::Fox => return format!("{OWN_DIR}/fox.glb"),
-            Self::GatoMontes | Self::Puma | Self::Yaguarete => "cat",
+            Self::GatoMontes => return format!("{OWN_DIR}/gato.glb"),
+            Self::Puma => return format!("{OWN_DIR}/puma.glb"),
+            Self::Yaguarete => return format!("{OWN_DIR}/yagua.glb"),
             Self::Chimango | Self::Carancho => "eagle",
             Self::Nandu => return format!("{OWN_DIR}/rhea.glb"),
         };
@@ -345,11 +392,17 @@ impl Species {
     }
 
     /// Los clips del archivo, en orden: los siete del ganado, o los pocos que
-    /// traen el gato (espera y caminata), el águila (planeo y aleteo) y el
-    /// ñandú (dos esperas, el pastoreo, la caminata y la carrera).
+    /// traen el águila (planeo y aleteo) y el ñandú (dos esperas, el
+    /// pastoreo, la caminata y la carrera).
     pub fn clip_names(self) -> &'static [&'static str] {
         match self {
-            Self::Cow | Self::Bull | Self::Horse | Self::Fox => &[
+            Self::Cow
+            | Self::Bull
+            | Self::Horse
+            | Self::Fox
+            | Self::GatoMontes
+            | Self::Puma
+            | Self::Yaguarete => &[
                 "Idle",
                 "Idle_2",
                 "Idle_Headlow",
@@ -358,7 +411,6 @@ impl Species {
                 "Gallop",
                 "Gallop_Jump",
             ],
-            Self::GatoMontes | Self::Puma | Self::Yaguarete => &["Idle", "Walk"],
             Self::Chimango | Self::Carancho => &["Glide", "Flap"],
             Self::Nandu => &["Idle", "Idle_Look", "Graze", "Walk", "Run"],
         }
@@ -373,7 +425,8 @@ impl Species {
     /// la vaca y del toro (`Main`, que además cambia su color por el mapa de
     /// su pelaje, [`Paint::Map`]) y sus partes de un solo color (la ubre, el
     /// morro, las pezuñas y los cuernos), y la borla de la cola, los rulos de
-    /// la nuca, los flecos de las orejas y las pestañas (`Hair`).
+    /// la nuca, los flecos de las orejas y las pestañas (`Hair`); el cuerpo
+    /// del zorro y de cada felino (`Main`) y sus mechones de pelo (`Hair`).
     pub fn skin(self, material: &str) -> Option<Skin> {
         let (set, masked, detail, strands) = match (self, material) {
             (Self::Nandu, "Body") => ("rhea_body", false, false, false),
@@ -391,6 +444,12 @@ impl Species {
             (Self::Cow | Self::Bull, "Hair") => ("cattle_hair", true, false, true),
             (Self::Fox, "Main") => ("fox_body", false, false, false),
             (Self::Fox, "Hair") => ("fox_hair", true, false, true),
+            (Self::GatoMontes, "Main") => ("gato_body", false, false, false),
+            (Self::GatoMontes, "Hair") => ("gato_hair", true, false, true),
+            (Self::Puma, "Main") => ("puma_body", false, false, false),
+            (Self::Puma, "Hair") => ("puma_hair", true, false, true),
+            (Self::Yaguarete, "Main") => ("yagua_body", false, false, false),
+            (Self::Yaguarete, "Hair") => ("yagua_hair", true, false, true),
             _ => return None,
         };
         Some(Skin {
@@ -402,9 +461,8 @@ impl Species {
     }
 
     /// El índice de animación glTF que reproduce `clip`: el mismo en los
-    /// modelos de siete clips; en el gato, la espera o la caminata (que también
-    /// hace de galope); en el águila, el planeo o el aleteo (el "galope" de un
-    /// ave); en el ñandú, la espera con la cabeza baja y el comer son su
+    /// modelos de siete clips; en el águila, el planeo o el aleteo (el
+    /// "galope" de un ave); en el ñandú, la espera con la cabeza baja y el comer son su
     /// pastoreo, y el galope su carrera.
     pub fn animation(self, clip: Clip) -> usize {
         if self == Self::Nandu {
@@ -433,7 +491,9 @@ impl Species {
             Self::Bull => BULL_WITHERS,
             Self::Horse => 1.5,
             Self::Fox => FOX_WITHERS,
-            Self::GatoMontes | Self::Puma | Self::Yaguarete => 2.8,
+            Self::GatoMontes => GATO_WITHERS,
+            Self::Puma => PUMA_WITHERS,
+            Self::Yaguarete => YAGUA_WITHERS,
             Self::Chimango | Self::Carancho => 12.47,
             // Sobre el plumaje del lomo; la cabeza llega a 1.58.
             Self::Nandu => 1.18,
@@ -466,31 +526,35 @@ impl Species {
         self.withers() / self.model_withers()
     }
 
-    /// La velocidad sobre el suelo que muestra su clip `Walk`, en m/s. Las del
-    /// zorro y el gato son el deslizamiento medio hacia atrás de las patas
-    /// apoyadas, medido aproximadamente sobre los clips (unas 2.5 y 1.5
-    /// unidades del modelo por segundo); la del ñandú, la que construye
-    /// `tools/rhea.py` (0.88 unidades por segundo).
+    /// La velocidad sobre el suelo que muestra su clip `Walk`, en m/s: las de
+    /// los modelos propios, medidas sobre sus clips ([`FOX_WALK_SPEED`],
+    /// [`GATO_WALK_SPEED`] y las demás), escaladas a su tamaño; la del ñandú,
+    /// la que construye `tools/rhea.py` (0.88 unidades por segundo).
     pub fn walk_speed(self) -> f32 {
         match self {
             Self::Cow | Self::Bull => CATTLE_WALK_SPEED * self.scale(),
             Self::Horse => HORSE_WALK_SPEED,
             Self::Fox => FOX_WALK_SPEED * self.scale(),
-            Self::GatoMontes | Self::Puma | Self::Yaguarete => 1.5 * self.scale(),
+            Self::GatoMontes => GATO_WALK_SPEED * self.scale(),
+            Self::Puma => PUMA_WALK_SPEED * self.scale(),
+            Self::Yaguarete => YAGUA_WALK_SPEED * self.scale(),
             Self::Chimango | Self::Carancho => 1.0,
             Self::Nandu => 0.88 * self.scale(),
         }
     }
 
-    /// La velocidad sobre el suelo que muestra su clip `Gallop`, en m/s: el del
-    /// zorro, unas 9 unidades por segundo; la carrera del ñandú, 7.23 (la
-    /// zancada de 0.85 apoyada el 28 % de un ciclo de 0.42 s); el gato galopa
-    /// con su caminata.
+    /// La velocidad sobre el suelo que muestra su clip `Gallop`, en m/s: las de
+    /// los modelos propios, medidas sobre sus clips; la carrera del ñandú,
+    /// 7.23 (la zancada de 0.85 apoyada el 28 % de un ciclo de 0.42 s); las
+    /// rapaces, su aleteo.
     pub fn gallop_speed(self) -> f32 {
         match self {
             Self::Cow | Self::Bull => CATTLE_GALLOP_SPEED * self.scale(),
             Self::Horse => HORSE_GALLOP_SPEED,
             Self::Fox => FOX_GALLOP_SPEED * self.scale(),
+            Self::GatoMontes => GATO_GALLOP_SPEED * self.scale(),
+            Self::Puma => PUMA_GALLOP_SPEED * self.scale(),
+            Self::Yaguarete => YAGUA_GALLOP_SPEED * self.scale(),
             Self::Nandu => 7.23 * self.scale(),
             _ => self.walk_speed(),
         }
@@ -498,9 +562,16 @@ impl Species {
 
     /// Lo más rápido que se reproduce su galope respecto de cómo se creó: los
     /// animales chicos dan pasos más rápidos que lo que muestran sus clips.
+    /// El puma y el yaguareté, como el galope del caballo
+    /// ([`GALLOP_RATE`](crate::character::horse::GALLOP_RATE)), a lo sumo el
+    /// doble: su pique ya alarga la zancada, así que a su velocidad de huida
+    /// lo reproducen 1.76 y 1.58 veces más rápido. El gato montés, más
+    /// rápido ([`GATO_GALLOP_RATE`]).
     pub const fn max_pace(self) -> f32 {
         match self {
             Self::Cow | Self::Bull | Self::Horse => 1.6,
+            Self::Puma | Self::Yaguarete => crate::character::horse::GALLOP_RATE.1,
+            Self::GatoMontes => GATO_GALLOP_RATE,
             _ => 2.5,
         }
     }
@@ -759,17 +830,10 @@ pub fn paint(animal: Animal, material: &str) -> Paint {
             "Muzzle" => rgb([48, 42, 38]),
             _ => Paint::Keep,
         },
-        // El zorro gris: su único pelaje está horneado en los mapas de su
-        // cuerpo y de su pelo (`tools/fox.py`), que se dibujan tal como están.
-        Animal::Zorro => Paint::Keep,
-        Animal::GatoMontes | Animal::Puma | Animal::Yaguarete => match (animal, material) {
-            (Animal::Puma, "Grey") => rgb([170, 128, 82]),
-            (_, "Grey") => Paint::Vertex,
-            (Animal::GatoMontes, "White") => rgb([204, 200, 188]),
-            (_, "White") => rgb([226, 214, 192]),
-            (_, "Pink") => rgb([62, 48, 40]),
-            _ => Paint::Keep,
-        },
+        // El zorro gris y los felinos: su único pelaje está horneado en los
+        // mapas de su cuerpo y de su pelo (`tools/fox.py`, `tools/felid.py`),
+        // que se dibujan tal como están.
+        Animal::Zorro | Animal::GatoMontes | Animal::Puma | Animal::Yaguarete => Paint::Keep,
         Animal::Chimango => match material {
             "Wings" => rgb([118, 86, 56]),
             "Head" => rgb([196, 168, 124]),
@@ -790,31 +854,12 @@ pub fn paint(animal: Animal, material: &str) -> Paint {
     }
 }
 
-/// Si el punto `p` del cuerpo de un felino (en metros, marco del cuerpo) cae
-/// en una mancha negra, para un animal de `withers` metros a la cruz: manchas
-/// chicas y redondas a partir de ondas cruzadas, del mismo tamaño relativo en
-/// el gato montés y en el yaguareté (cuyas rosetas aproximan).
-pub fn feline_spot(p: Vec3, withers: f32) -> bool {
-    let q = p / withers.max(1e-3);
-    let wave = (q.x * 23.0 + 0.4).sin() * (q.y * 19.0 + q.z * 17.0 + 1.3).sin()
-        + 0.7 * (q.x * 31.0 - q.z * 27.0 + 2.1).sin() * (q.y * 29.0 + 0.6).cos();
-    wave > 0.75
-}
-
 /// El color por vertex del cuerpo de `animal` en `p` (en metros, marco del
 /// cuerpo), mirando hacia `normal`, como RGBA lineal. Solo para los materiales
 /// [`Paint::Vertex`].
 pub fn coat_color_at(animal: Animal, p: Vec3, normal: Vec3) -> [f32; 4] {
     let srgb = match animal {
         Animal::Horse(coat) => coat.color_at(p, normal),
-        Animal::GatoMontes | Animal::Yaguarete => {
-            let withers = Species::of(animal).map_or(1.0, Species::withers);
-            match (animal, feline_spot(p, withers)) {
-                (_, true) => [24, 20, 18],
-                (Animal::GatoMontes, _) => [150, 144, 126],
-                _ => [200, 150, 72],
-            }
-        }
         // Los demás no tienen materiales por vertex.
         _ => [255, 255, 255],
     };
@@ -1324,6 +1369,7 @@ mod tests {
     use crate::character::Coat;
     use crate::gltf::tests::{root, settle, unfinished_app};
     use bevy::camera::visibility::VisibilityRange;
+    use pampa_core::fauna::CritterKind;
 
     fn standing(gait: Gait, speed: f32) -> AnimalPose {
         AnimalPose {
@@ -1381,12 +1427,37 @@ mod tests {
     }
 
     #[test]
-    fn felines_walk_for_every_gait_and_raptors_glide_with_a_few_flaps() {
+    fn felines_gallop_with_their_own_clip_and_raptors_glide_with_a_few_flaps() {
         for species in [Species::GatoMontes, Species::Puma, Species::Yaguarete] {
-            assert_eq!(species.animation(Clip::Gallop), 1, "the walk, sped up");
-            assert_eq!(species.animation(Clip::Idle2), 0);
-            let fast = clip_speed(Clip::Gallop, species, 5.0);
-            assert!(fast > 1.6 && fast <= species.max_pace(), "{fast}");
+            let clip = |c| species.clip_names()[species.animation(c)];
+            assert_eq!(clip(Clip::Gallop), "Gallop", "{species:?}");
+            assert_eq!(clip(Clip::Walk), "Walk", "{species:?}");
+            assert_eq!(clip(Clip::Idle2), "Idle_2", "{species:?}");
+        }
+        // Huyen a su velocidad de pique con el galope dentro de su tope (las
+        // manos no se deslizan): el puma y el yaguareté, con la zancada larga
+        // de su pique, a menos de 1.8 veces lo que se creó; el gato montés,
+        // chico, con más trancos por segundo.
+        for (species, kind) in [
+            (Species::GatoMontes, CritterKind::GatoMontes),
+            (Species::Puma, CritterKind::Puma),
+            (Species::Yaguarete, CritterKind::Yaguarete),
+        ] {
+            let run = kind.profile().run;
+            let rate = run / species.gallop_speed();
+            println!("{species:?}: gallop at {run:.1} m/s plays {rate:.2} times as made");
+            assert_eq!(clip_speed(Clip::Gallop, species, run), rate);
+            assert!(rate <= species.max_pace(), "{species:?}: {rate}");
+            assert!(
+                species == Species::GatoMontes || rate < 1.8,
+                "{species:?}: {rate}"
+            );
+            // Después del pique, a su velocidad de crucero, el galope sigue
+            // ajustado al suelo, sin llegar al piso de la velocidad.
+            let cruise = kind.profile().cruise;
+            let slow = cruise / species.gallop_speed();
+            println!("{species:?}: cruise at {cruise:.1} m/s plays {slow:.2} times as made");
+            assert_eq!(clip_speed(Clip::Gallop, species, cruise), slow);
         }
         assert_eq!(
             Species::Fox.animation(Clip::IdleHeadlow),
@@ -1484,24 +1555,29 @@ mod tests {
     }
 
     #[test]
-    fn wild_coats_tint_per_species_and_spotted_cats_are_spotted() {
+    fn wild_coats_tint_per_species_and_own_coats_wear_their_maps() {
         let flat = |animal, material| match paint(animal, material) {
             Paint::Flat(c) => c.to_srgba(),
             other => panic!("{animal:?} {material}: {other:?}"),
         };
-        let puma = flat(Animal::Puma, "Grey");
-        assert!(puma.red > puma.blue * 1.6, "a tawny puma: {puma:?}");
-        assert_eq!(paint(Animal::GatoMontes, "Grey"), Paint::Vertex);
-        assert_eq!(paint(Animal::Yaguarete, "Grey"), Paint::Vertex);
-        // El zorro gris lleva su pelaje en sus mapas: sus materiales no se
-        // tiñen, y los mapas de su cuerpo y de su pelo están en disco.
-        for material in ["Main", "Hair"] {
-            assert_eq!(paint(Animal::Zorro, material), Paint::Keep);
-            let skin = Species::Fox.skin(material).expect("fox maps");
-            assert_eq!(skin.masked, material == "Hair");
-            for (name, _) in crate::facade::materials::MAPS {
-                let path = root().0.join(skin_path(skin.set, name));
-                assert!(path.is_file(), "{}", path.display());
+        // El zorro gris y los felinos llevan su pelaje en sus mapas: sus
+        // materiales no se tiñen, y los mapas de su cuerpo y de su pelo están
+        // en disco.
+        for animal in [
+            Animal::Zorro,
+            Animal::GatoMontes,
+            Animal::Puma,
+            Animal::Yaguarete,
+        ] {
+            let species = Species::of(animal).unwrap();
+            for material in ["Main", "Hair"] {
+                assert_eq!(paint(animal, material), Paint::Keep, "{animal:?}");
+                let skin = species.skin(material).expect("own maps");
+                assert_eq!(skin.masked, material == "Hair");
+                for (name, _) in crate::facade::materials::MAPS {
+                    let path = root().0.join(skin_path(skin.set, name));
+                    assert!(path.is_file(), "{}", path.display());
+                }
             }
         }
         let (chimango, carancho) = (
@@ -1511,32 +1587,6 @@ mod tests {
         assert!(carancho.red < chimango.red * 0.5, "a dark carancho");
         let face = flat(Animal::Carancho, "Beak");
         assert!(face.red > face.green * 2.0, "a red-orange face");
-        for animal in [Animal::GatoMontes, Animal::Yaguarete] {
-            let withers = Species::of(animal).unwrap().withers();
-            let mut spots = 0;
-            let mut all = 0;
-            for i in 0..40 {
-                for j in 0..10 {
-                    let p = Vec3::new(i as f32 * 0.03 - 0.6, 0.5 + j as f32 * 0.03, 0.1) * withers;
-                    let c = coat_color_at(animal, p, Vec3::Z);
-                    all += 1;
-                    spots += usize::from(c[0] < 0.02);
-                }
-            }
-            let share = spots as f32 / all as f32;
-            assert!((0.08..0.4).contains(&share), "{animal:?}: {share}");
-        }
-        // El fondo del pelaje, fuera de las manchas.
-        let ground = |animal: Animal| {
-            let withers = Species::of(animal).unwrap().withers();
-            let p = (0..100)
-                .map(|k| Vec3::new(k as f32 * 0.01, 0.6, 0.0) * withers)
-                .find(|&p| !feline_spot(p, withers))
-                .unwrap();
-            coat_color_at(animal, p, Vec3::Z)
-        };
-        let (yellow, grey) = (ground(Animal::Yaguarete), ground(Animal::GatoMontes));
-        assert!(yellow[0] > yellow[2] * 3.0 && grey[0] < grey[2] * 1.5);
     }
 
     #[test]
@@ -1766,9 +1816,8 @@ mod tests {
                 // cara y los seis músculos (`tools/horse.py` `MUSCLES`).
                 Species::Horse => 68,
                 // Los nombres de Quaternius con dos huesos por oreja, la
-                // mandíbula y nueve de cola (`tools/fox.py`).
-                Species::Fox => 49,
-                Species::GatoMontes | Species::Puma | Species::Yaguarete => 34,
+                // mandíbula y nueve de cola (`tools/fox.py`, `tools/felid.py`).
+                Species::Fox | Species::GatoMontes | Species::Puma | Species::Yaguarete => 49,
                 Species::Chimango | Species::Carancho => 30,
                 // Los 50 de Quaternius menos los que no tiene un vacuno,
                 // más las orejas, la cara, la cola, la papada, la ubre (el
@@ -1821,7 +1870,10 @@ mod tests {
                     .map(|b| b.y)
                     .fold(0.0, f32::max)
             };
-            println!("{species:?}: {triangles} triangles, back {top:.2} m, materials {names:?}");
+            println!(
+                "{species:?}: {triangles} triangles, back {top:.2} m ({:.4} model), materials {names:?}",
+                top / species.scale()
+            );
             let budget = match species {
                 Species::Nandu => 6_500,
                 Species::Horse => 12_500,
@@ -1829,6 +1881,9 @@ mod tests {
                 Species::Cow | Species::Bull => 9_000,
                 // 12.524: el cuerpo unos 5.200, las tarjetas de pelo y los ojos.
                 Species::Fox => 13_000,
+                // Gato montés 11.618, puma 11.326, yaguareté 11.414: el cuerpo, las
+                // tarjetas de pelo y los ojos (más la malla liviana, aparte).
+                Species::GatoMontes | Species::Puma | Species::Yaguarete => 12_000,
                 _ => 2_500,
             };
             assert!(triangles <= budget, "{species:?}: {triangles}");
@@ -1843,9 +1898,17 @@ mod tests {
                         .unwrap()
                 })
                 .collect::<Vec<_>>();
-            if matches!(species, Species::Cow | Species::Bull) {
-                // Una malla liviana para las tropas lejanas: la piel sola, con
-                // los materiales del cuerpo, unas seis veces más liviana.
+            if matches!(
+                species,
+                Species::Cow
+                    | Species::Bull
+                    | Species::GatoMontes
+                    | Species::Puma
+                    | Species::Yaguarete
+            ) {
+                // Una malla liviana para las tropas y los felinos lejanos: la
+                // piel sola, con los materiales del cuerpo, unas seis veces
+                // más liviana o más.
                 let [light] = light[..] else {
                     panic!("{species:?}: {} light meshes", light.len())
                 };
@@ -1867,7 +1930,14 @@ mod tests {
             }
             if matches!(
                 species,
-                Species::Nandu | Species::Horse | Species::Cow | Species::Bull | Species::Fox
+                Species::Nandu
+                    | Species::Horse
+                    | Species::Cow
+                    | Species::Bull
+                    | Species::Fox
+                    | Species::GatoMontes
+                    | Species::Puma
+                    | Species::Yaguarete
             ) {
                 // Sus mapas necesitan UV y tangentes en cada primitiva.
                 let m = world.resource::<Assets<Mesh>>();
@@ -1891,9 +1961,8 @@ mod tests {
                     "Eye_Black",
                     "Eye_White",
                 ],
-                Species::Fox => &["Main", "Hair", "Eye_Black", "Eye_Iris"],
-                Species::GatoMontes | Species::Puma | Species::Yaguarete => {
-                    &["Grey", "White", "Pink"]
+                Species::Fox | Species::GatoMontes | Species::Puma | Species::Yaguarete => {
+                    &["Main", "Hair", "Eye_Black", "Eye_Iris"]
                 }
                 Species::Chimango | Species::Carancho => &["Wings", "Head", "Beak", "Claws"],
                 Species::Nandu => &["Body", "Feathers"],

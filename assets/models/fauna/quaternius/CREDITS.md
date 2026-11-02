@@ -1,6 +1,6 @@
 # Credits: Quaternius animals
 
-The game's wild cats and raptors are
+The game's raptors are
 animated low-poly models by Quaternius, released under CC0 1.0 (public
 domain dedication, https://creativecommons.org/publicdomain/zero/1.0/).
 The horse is no longer used: since 2026-10-30 the game uses its own
@@ -11,6 +11,10 @@ Blender cattle (`tools/cattle.py`, `assets/models/fauna/own/cow.glb` and
 `bull.glb`), whose rig follows the horse replica.
 The Quaternius fox was removed on 2026-11-01 as well: the game uses its own
 Blender gray pampas fox (`tools/fox.py`, `assets/models/fauna/own/fox.glb`).
+The Quaternius cat is not drawn any more since 2026-11-02: the gato montés,
+the puma and the yaguareté are the game's own Blender felids (`tools/felid.py`,
+`assets/models/fauna/own/gato.glb`, `puma.glb` and `yagua.glb`). `cat.glb`
+stays here.
 The horse was downloaded from poly.pizza on 2026-10-23;
 the Animal Pack Vol.2 from OpenGameArt on
 2026-10-29.
@@ -54,6 +58,6 @@ the downloaded archives are not in the repository.
 
 In the game (`crates/render/src/fauna/livestock.rs`) they are scaled from
 the export's units to life size, turned to the animals' headings and
-recoloured: the cat as a small grey spotted gato montés, a large tawny puma and a
-large spotted yaguareté, and the eagle as a slim brown chimango and a
-larger dark carancho with a pale neck and a red-orange face.
+recoloured: the eagle as a slim brown chimango and a larger dark carancho
+with a pale neck and a red-orange face. The cat was drawn as the gato
+montés, the puma and the yaguareté until 2026-11-02.

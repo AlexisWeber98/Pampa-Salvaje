@@ -137,7 +137,7 @@ impl Hare {
 /// Orientaciones que se prueban, en orden, cuando el camino hacia adelante está
 /// cerrado: giros cada vez más amplios hacia uno y otro lado y, después, media
 /// vuelta.
-const DETOURS: [f32; 8] = [0.0, 0.8, -0.8, 1.6, -1.6, 2.4, -2.4, PI];
+pub(super) const DETOURS: [f32; 8] = [0.0, 0.8, -0.8, 1.6, -1.6, 2.4, -2.4, PI];
 
 /// El rumbo y el lugar del próximo paso de `step` metros desde `position`
 /// mirando hacia `heading`, sobre terreno que `open` permite dentro de `home`:

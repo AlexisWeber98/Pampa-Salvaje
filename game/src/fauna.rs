@@ -5,7 +5,8 @@
 //! más cercanos ocupen el lugar primero), los hace avanzar con el jugador como
 //! la amenaza que esquivan, y copia su estado en las entidades que dibuja
 //! render ([`Animal`]). Los felinos se siembran solo en el monte de la flora
-//! del mundo ([`WorldFlora`]); sin flora no hay felinos.
+//! del mundo ([`WorldFlora`]) y, si salen de él, vuelven antes de dos horas de
+//! juego (`Critter::step_in`); sin flora no hay felinos.
 //!
 //! El ganado es un cuerpo blando: el jugador se mantiene apartado de él y lo
 //! aparta al caminar. Los caballos que están en los corrales son [`Mountable`]
@@ -144,6 +145,15 @@ pub struct Fauna {
 }
 
 impl Fauna {
+    /// Los animales silvestres de suelo que se dibujan ahora, con su especie y
+    /// dónde están.
+    pub fn critters(&self) -> impl Iterator<Item = (CritterKind, GroundVec2)> + '_ {
+        self.chunks
+            .values()
+            .flat_map(|c| &c.critters)
+            .map(|(k, _)| (k.kind, k.position))
+    }
+
     /// Vacas, caballos, liebres, teros, rapaces, patos, zorros, ñandúes,
     /// armadillos (mulitas y peludos), vizcachas, felinos (gatos monteses,
     /// pumas y yaguaretés) y nutrias vivos ahora (lo que muestra el comando
@@ -484,6 +494,7 @@ fn step_fauna(
     mut fauna: ResMut<Fauna>,
     world: Res<GameWorld>,
     mut players: Players,
+    flora: Option<Res<WorldFlora>>,
 ) {
     let Some(site) = site else { return };
     let dt = time.delta_secs().min(MAX_STEP);
@@ -509,10 +520,18 @@ fn step_fauna(
             .flocks
             .iter_mut()
             .for_each(|f| f.0.step(dt, threat, open));
-        chunk
-            .critters
-            .iter_mut()
-            .for_each(|c| c.0.step(dt, threat, open));
+        // Los felinos pueden salir del monte, pero vuelven a él (ver
+        // `Critter::step_in`).
+        chunk.critters.iter_mut().for_each(|c| {
+            let feline = c.0.kind.feline();
+            let monte = |p| {
+                !feline
+                    || flora
+                        .as_ref()
+                        .is_none_or(|f| f.0.monte(p) >= FaunaSite::MONTE)
+            };
+            c.0.step_in(dt, threat, open, monte)
+        });
         chunk.raptors.iter_mut().for_each(|r| r.0.step(dt));
         for (duck, _) in chunk.ducks.iter_mut().chain(&mut chunk.nutrias) {
             if let Some(lagoon) = site.0.lagoons().get(duck.lagoon) {
