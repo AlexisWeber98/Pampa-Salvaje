@@ -94,6 +94,16 @@ fn masonry_fronts_stay_inside_their_footprints() {
         let (half_w, half_d) = (size.x / 2.0 + 1e-3, size.y / 2.0 + 1e-3);
         let h = lot.building.height;
         for (surface, p) in points(&shape) {
+            // La tierra juntada al pie de las paredes es un decal tendido
+            // sobre el suelo, no algo con lo que se choque ni que tape un
+            // cartel: se aleja de la pared hasta FOOT_GRIME.
+            if surface == Surface::Grime && p.y < 0.1 {
+                assert!(
+                    p.x.abs() <= half_w + FOOT_GRIME && p.z.abs() <= half_d + FOOT_GRIME,
+                    "{surface:?} at {p}"
+                );
+                continue;
+            }
             let over_street = p.z > half_d;
             if lot.building.kind == BuildingKind::GeneralStore && over_street {
                 // La galería: bajo la cornisa, dentro de la galería de core.
@@ -425,12 +435,183 @@ fn the_station_has_a_pedimented_pavilion_on_both_fronts() {
 }
 
 #[test]
+fn the_civic_buildings_are_kept_better_than_the_pulperia_and_the_outskirts() {
+    // De la semilla, solo los bits altos mueven el desgaste dentro de su
+    // rango: se prueban sus extremos.
+    let range = |lot: Lot| {
+        let wears: Vec<f32> = [0, 50 << 16, 100 << 16]
+            .into_iter()
+            .map(|v| wear(&Lot { variant: v, ..lot }).expect("a weathering building"))
+            .collect();
+        (wears[0], wears[2])
+    };
+    let size = (12.0, 12.0, 5.0);
+    let bank = range(lot(BuildingKind::Bank, size, 0));
+    let hall = range(lot(BuildingKind::TownHall, size, 0));
+    let church = range(lot(BuildingKind::Church, size, 0));
+    let police = range(lot(BuildingKind::PoliceStation, size, 0));
+    let pulperia = range(Lot {
+        store: StoreStyle::Pulperia,
+        ..lot(BuildingKind::GeneralStore, size, 0)
+    });
+    let outskirts = range(Lot {
+        outskirts: true,
+        ..lot(BuildingKind::House, size, 0)
+    });
+    for kept in [bank, hall] {
+        for worn in [church, police] {
+            assert!(kept.1 < worn.0, "{kept:?} vs {worn:?}");
+        }
+    }
+    for worn in [church, police] {
+        for older in [pulperia, outskirts] {
+            assert!(worn.1 < older.0, "{worn:?} vs {older:?}");
+        }
+    }
+    // Ninguno es una ruina.
+    assert!(pulperia.1 <= 1.0 && outskirts.1 <= 1.0);
+    for iron in [BuildingKind::WaterTank, BuildingKind::Windmill] {
+        assert_eq!(wear(&lot(iron, size, 0)), None);
+    }
+}
+
+#[test]
+fn every_building_type_wears_its_own_finish_and_weathers() {
+    let shape = |lot: Lot| building(&lot).expect("a building");
+    let has = |shape: &Shape, surface: Surface| shape.surfaces().any(|s| s == surface);
+    for (kind, size, wall) in [
+        (BuildingKind::Bank, BANK, Surface::Ashlar),
+        (
+            BuildingKind::TownHall,
+            TOWN_HALL,
+            Surface::Render(Paint::Ochre),
+        ),
+        (
+            BuildingKind::Church,
+            (12.0, 22.0, 7.0),
+            Surface::Render(Paint::LimeWhite),
+        ),
+        (
+            BuildingKind::PoliceStation,
+            (14.0, 12.0, 4.5),
+            Surface::LimeBrick,
+        ),
+        (
+            BuildingKind::Station,
+            (24.0, 9.0, 5.0),
+            Surface::StationBrick,
+        ),
+    ] {
+        let s = shape(lot(kind, size, 3));
+        assert!(has(&s, wall), "{kind:?} in {wall:?}");
+        // Sobre un zócalo de cemento manchado, y gastado.
+        assert!(has(&s, Surface::Plinth), "{kind:?}");
+        let meshes = s.into_meshes();
+        assert!(
+            meshes
+                .iter()
+                .all(|(_, m)| crate::facade::materials::weathers(m)),
+            "{kind:?}"
+        );
+    }
+    // Una pulpería de cal vieja, de las que caen en ella.
+    let pulperias: Vec<Shape> = (0..6)
+        .map(|v| {
+            shape(Lot {
+                store: StoreStyle::Pulperia,
+                ..lot(BuildingKind::GeneralStore, (16.0, 14.0, 5.0), v)
+            })
+        })
+        .collect();
+    assert!(pulperias.iter().any(|s| has(s, Surface::OldLime)));
+    // Persianas y puertas pintadas en los frentes del pueblo; la madera al
+    // natural en la estación.
+    let police = shape(lot(BuildingKind::PoliceStation, (14.0, 12.0, 4.5), 3));
+    assert!(has(&police, Surface::Shutter) && !has(&police, Surface::Planks));
+    let station = shape(lot(BuildingKind::Station, (24.0, 9.0, 5.0), 0));
+    assert!(!has(&station, Surface::Shutter));
+}
+
+#[test]
+fn every_front_door_has_a_threshold_and_every_window_a_vent() {
+    let police = building(&lot(BuildingKind::PoliceStation, (14.0, 12.0, 4.5), 3)).unwrap();
+    // El frente mira a +Z; su cara está a `d / 2 - PROUD`.
+    let face = 12.0 / 2.0 - PROUD;
+    let low = |surface: Surface, top: f32| -> Vec<Vec3> {
+        police
+            .points(surface)
+            .into_iter()
+            .filter(|p| p.z > face + 0.03 && p.y <= top + 1e-4)
+            .collect()
+    };
+    let step = low(Surface::Plinth, THRESHOLD.1);
+    assert!(
+        step.iter().any(|p| (p.z - face - THRESHOLD.0).abs() < 1e-4),
+        "a threshold out in front of the door"
+    );
+    let vents = low(Surface::RailSteel, 0.33);
+    assert!(
+        vents.iter().any(|p| (p.z - face - VENT_OUT).abs() < 1e-4),
+        "a vent proud of the plinth"
+    );
+}
+
+#[test]
+fn the_outskirts_have_wooden_ranchos_casillas_and_mud_and_straw_ranchos() {
+    let outskirts: Vec<Shape> = street()
+        .into_iter()
+        .filter(|lot| lot.outskirts)
+        .map(|lot| building(&lot).unwrap())
+        .collect();
+    for wall in [Surface::Weatherboard, Surface::MudStraw] {
+        let n = outskirts
+            .iter()
+            .filter(|s| s.surfaces().any(|x| x == wall))
+            .count();
+        assert!(n >= 1, "{wall:?}");
+    }
+    // Una casilla: paredes y techo de chapa, sin revoque ni ladrillo.
+    let casillas = outskirts
+        .iter()
+        .filter(|s| {
+            let all: Vec<Surface> = s.surfaces().collect();
+            all.contains(&Surface::Barnwood)
+                && !all.iter().any(|x| {
+                    matches!(
+                        x,
+                        Surface::Adobe
+                            | Surface::Whitewash
+                            | Surface::WashedBrick
+                            | Surface::OldLime
+                            | Surface::Weatherboard
+                            | Surface::MudStraw
+                    )
+                })
+        })
+        .count();
+    assert!(casillas >= 1);
+    // Siguen siendo pocos: la mayoría de las afueras sigue de adobe o cal.
+    let adobe = outskirts
+        .iter()
+        .filter(|s| s.surfaces().any(|x| x == Surface::Adobe))
+        .count();
+    assert!(
+        adobe > outskirts.len() / 5,
+        "{adobe} of {}",
+        outskirts.len()
+    );
+}
+
+#[test]
 fn town_buildings_keep_to_their_triangle_budgets() {
     for lot in street() {
         let tris = building(&lot).unwrap().triangles();
         let budget = match lot.building.kind {
             BuildingKind::Church => 2000..=6000,
-            BuildingKind::GeneralStore | BuildingKind::PoliceStation => 1500..=5000,
+            // Con persianas de tablillas, rejillas de hierro, puertas de
+            // tableros y la mugre en decals: 5.5k la comisaría al escribir
+            // esto.
+            BuildingKind::GeneralStore | BuildingKind::PoliceStation => 1500..=7000,
             // Almohadillado, dentículos, arcos y balaustrada: dos o tres por
             // pueblo, 4.3k al escribir esto.
             BuildingKind::Bank => 3000..=7000,
@@ -450,9 +631,9 @@ fn town_buildings_keep_to_their_triangle_budgets() {
     // La estación y su marquesina (ocho columnas torneadas, un faldón de
     // rombos, dos frentes ornamentados): un hito, construido una vez por
     // pueblo, así que más costoso que un almacén; 7.2k al momento de escribir
-    // esto.
+    // esto; 10.1k con sus puertas de tableros, rejillas y chorreados.
     let tris = station_shape().triangles();
-    assert!((3000..=8000).contains(&tris), "station: {tris} triangles");
+    assert!((3000..=11000).contains(&tris), "station: {tris} triangles");
 }
 
 #[test]

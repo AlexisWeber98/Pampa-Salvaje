@@ -24,8 +24,8 @@ use bevy::prelude::*;
 use pampa_core::{HouseStyle, Structure, StructureKind};
 
 use super::materials::Surface;
-use super::shape::Shape;
-use crate::facade::walls::{Walls, barn, chimney, gable_roof, lean_to, parapet_roof, slab, spread};
+use super::shape::{Shape, Weather};
+use crate::facade::walls::{Walls, barn, chimney, lean_to, parapet_roof, slab, spread};
 
 /// El tamaño de `structure` en su propio espacio: ancho a lo largo de su frente
 /// y profundidad hacia afuera de él.
@@ -57,9 +57,63 @@ pub(crate) fn building(structure: &Structure, drop: f32) -> Shape {
             v,
             1,
         ),
-        _ => {}
+        _ => return shape,
     }
+    let wear = wear(structure);
+    shape.weather(Weather {
+        wear,
+        damp: damp(structure),
+    });
+    shape.fade(Surface::Grime, 0.6 + 0.4 * wear);
     shape
+}
+
+/// Cuánta humedad le sube del suelo a la casa `structure`, de 0 a 1, o 0 si no
+/// le sube: a casi todos los ranchos, a muchas casas de peones y a pocos
+/// cascos, unas seis de cada diez casas del campo; a los galpones de chapa,
+/// nunca.
+pub(crate) fn damp(structure: &Structure) -> f32 {
+    let chance = match structure.kind {
+        StructureKind::MainHouse(HouseStyle::GalleryHouse) => 0.3,
+        StructureKind::MainHouse(HouseStyle::BrickParapet) => 0.45,
+        StructureKind::WorkerHouse(HouseStyle::BrickParapet | HouseStyle::GalleryHouse) => 0.55,
+        StructureKind::MainHouse(_) | StructureKind::WorkerHouse(_) => 0.65,
+        _ => 0.0,
+    };
+    let roll = |shift: u32| {
+        ((structure.variant.rotate_right(shift) ^ 0x5bd1_e995).wrapping_mul(0x2c1b_3c6d) >> 16)
+            as f32
+            / 65_536.0
+    };
+    if roll(7) < chance {
+        0.25 + 0.75 * roll(13)
+    } else {
+        0.0
+    }
+}
+
+/// Cuán gastada está la casa o el galpón `structure`, de 0 a 1
+/// ([`Shape::weather`]): el casco de una estancia se blanquea seguido; la casa
+/// de una chacra, menos; las casas de los peones, los ranchos de adobe y los
+/// galpones, casi nunca.
+pub(crate) fn wear(structure: &Structure) -> f32 {
+    let jitter = ((structure.variant >> 16) % 101) as f32 / 100.0;
+    match structure.kind {
+        StructureKind::MainHouse(HouseStyle::GalleryHouse) => 0.3 + 0.25 * jitter,
+        StructureKind::MainHouse(HouseStyle::BrickParapet) => 0.4 + 0.3 * jitter,
+        StructureKind::WorkerHouse(HouseStyle::BrickParapet | HouseStyle::GalleryHouse) => {
+            0.55 + 0.35 * jitter
+        }
+        // Los ranchos de madera y de barro y las casillas: tablas grises, chapa
+        // oxidada, barro gastado.
+        StructureKind::MainHouse(
+            HouseStyle::Planks | HouseStyle::Casilla | HouseStyle::MudStraw,
+        )
+        | StructureKind::WorkerHouse(
+            HouseStyle::Planks | HouseStyle::Casilla | HouseStyle::MudStraw,
+        ) => 0.75 + 0.25 * jitter,
+        _ => 0.6 + 0.4 * jitter,
+    }
 }
 
 fn house(
@@ -114,15 +168,16 @@ fn house(
                 walls.side(east).build(shape, Surface::Adobe, &[], v);
             }
             if style == HouseStyle::AdobeThatch {
-                // Paja empinada, gruesa y baja sobre las paredes.
+                // Paja empinada, gruesa y baja sobre las paredes, hundida en
+                // el medio, con su rollo de barro en la cumbrera.
                 let rise = walls.depth() / 2.0 * 0.95;
-                gable_roof(
+                super::ranchos::thatch_roof(
                     shape,
-                    (Surface::Thatch, Surface::Adobe),
                     &walls,
-                    rise,
-                    inset,
-                    0.3,
+                    (rise, inset, 0.3),
+                    0.1,
+                    (Surface::Adobe, Surface::Adobe),
+                    (v % 9973) as f32,
                 );
             } else {
                 lean_to(
@@ -176,6 +231,9 @@ fn house(
             chimney(shape, Vec3::new(walls.x0 + 1.2, h, walls.z0 + 1.0), h + 1.6);
         }
         HouseStyle::GalleryHouse => homestead(shape, (w, d, h), drop, v),
+        HouseStyle::Planks => super::ranchos::wooden(shape, (w, d, h), drop, v),
+        HouseStyle::Casilla => super::ranchos::casilla(shape, (w, d, h), drop, v),
+        HouseStyle::MudStraw => super::ranchos::mud_straw(shape, (w, d, h), drop, v),
     }
 }
 

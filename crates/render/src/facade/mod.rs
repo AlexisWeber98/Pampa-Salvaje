@@ -12,6 +12,7 @@
 //! centro, dentro de un [`Shape`] que termina como una mesh por cada
 //! [`Surface`] que lleva.
 
+pub(crate) mod grime;
 pub mod italianate;
 pub mod materials;
 pub(crate) mod palenque;
@@ -20,17 +21,22 @@ pub mod shape;
 pub(crate) mod town_buildings;
 pub mod walls;
 
-pub use materials::{FacadeMaterials, Livery, Surface};
+pub use materials::{BuildingMaterial, FacadeMaterials, Livery, Surface, Weathering};
 
 use bevy::prelude::*;
 
-/// Construye los [`FacadeMaterials`] compartidos al iniciar. Los plugins de
+/// Construye los [`FacadeMaterials`] compartidos al iniciar, con sus versiones
+/// gastadas para los edificios ([`BuildingMaterial`]). Los plugins de
 /// asentamientos y de pueblos lo agregan los dos cuando todavía no está.
 pub struct FacadePlugin;
 
 impl Plugin for FacadePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, materials::setup_materials);
+        materials::register_weathering(app);
+        app.add_systems(
+            Startup,
+            (materials::setup_materials, materials::setup_weathering).chain(),
+        );
     }
 }
 

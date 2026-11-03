@@ -46,6 +46,17 @@ Cada carpeta de atlas recibe `color.jpg`, `opacity.jpg`, `normal_gl.jpg` y `roug
 
 `python3 -I tools/leaf_atlas.py --mips RGBA.png OUT.dds` (que ejecuta `textures_to_ktx2.sh`) escribe la cadena de mips de una imagen RGBA como un DDS RGBA con mipmaps, que basisu codifica nivel por nivel. Los mips comunes promedian el alfa de una hoja delgada con el fondo transparente que la rodea, por debajo del umbral de alpha test de 0.5 del juego, así que las copas lejanas se ralean. En cambio, el alfa de cada nivel se reasigna para que dibuje la misma proporción de texels que dibuja el atlas a tamaño completo (siguiendo los mips que conservan la cobertura de Castaño), manteniéndose a 8 pasos del umbral por la compresión en bloques. Un test desempaqueta los atlas incluidos a BC7 y comprueba cada nivel de 8 x 8 texels o más. Tests: `python3 -I -B -m unittest discover -s tools -p test_leaf_atlas.py`.
 
+## `building_straw.py`: la paja del barro de los ranchos
+
+Las paredes de un rancho de barro y paja de 1919 (chorizo o quincha) son barro amasado con paja picada, así que se ven tallos dorados cortos por toda la superficie seca y cuarteada, echados casi siempre a lo largo de las capas. Ningún escaneo libre muestra eso, así que el script dibuja la paja sobre un escaneo de barro seco y cuarteado (`clay_block_wall` de Poly Haven, CC0, guardado como `scan_color.jpg`): tallos con semilla de 4 a 14 cm sobre el tile de 2 m del escaneo, a menos de 35 grados de la horizontal, cada uno un tallo dorado opacado por el barro sobre una línea de sombra tenue, medio hundido (en parte transparente y en uno a tres pedazos a lo largo de su línea). Los tallos que cruzan un borde se dibujan otra vez desde el borde opuesto, así que el color sigue repitiéndose sin costura.
+
+```sh
+python3 -I tools/building_straw.py assets/textures/buildings/mud_straw [--seed N] [--count N]
+FORCE=1 sh tools/textures_to_ktx2.sh assets/textures/buildings/mud_straw/
+```
+
+Escribe `color.jpg` en la carpeta del conjunto, al lado de `normal_gl.jpg`, `roughness.jpg` y `ao.jpg` del escaneo, que quedan como están. La salida es reproducible con la misma semilla y la misma versión de ImageMagick. Necesita ImageMagick 7 (`magick`); solo la biblioteca estándar. Tests: `python3 -I -B -m unittest discover -s tools -p test_building_straw.py`.
+
 ## `dae2gltf.py`: de COLLADA a glTF
 
 Convierte un modelo COLLADA (`.dae`) en una ranura de modelo glTF 2.0 (ver `assets/models/third-party/README.md`). Usa solo la biblioteca estándar de Python 3. Hay que ejecutarlo aislado, para que no se importe nada que esté junto a la entrada o en la carpeta actual:

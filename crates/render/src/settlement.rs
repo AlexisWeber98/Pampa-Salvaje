@@ -43,6 +43,7 @@
 
 pub mod buildings;
 pub mod props;
+pub mod ranchos;
 pub mod slots;
 pub mod track;
 pub mod yard;
@@ -80,6 +81,7 @@ use crate::terrain::{
 };
 use crate::town::WindmillRotor;
 use crate::tree::Species as TreeSpecies;
+use materials::BuildingMaterial;
 use shape::Shape;
 use slots::SceneDress;
 
@@ -238,6 +240,11 @@ enum Tag {
 enum Look {
     Mesh(Handle<Mesh>, Handle<StandardMaterial>),
     Built(Mesh, Handle<StandardMaterial>),
+    /// Una pared de casa o de galpón con su desgaste (ver
+    /// [`crate::facade::Weathering`]), recién construida.
+    Weathered(Mesh, Handle<BuildingMaterial>),
+    /// La misma, ya agregada a las mallas.
+    WeatheredMesh(Handle<Mesh>, Handle<BuildingMaterial>),
     Scene {
         scene: Handle<WorldAsset>,
         ready: bool,
@@ -544,8 +551,13 @@ impl Painter<'_> {
                        fade: Option<ThinOccluder>,
                        rotor: Option<WindmillRotor>| {
             for (surface, mesh) in shape.into_meshes() {
+                let look = if materials::weathers(&mesh) {
+                    Look::Weathered(mesh, self.surfaces.weathered(surface))
+                } else {
+                    Look::Built(mesh, self.surfaces.get(surface))
+                };
                 out.push(Piece {
-                    look: Look::Built(mesh, self.surfaces.get(surface)),
+                    look,
                     transform,
                     range: Some(ranges()[range].clone()),
                     fade,
@@ -941,6 +953,10 @@ fn spawn_pieces(chunk: &mut EntityCommands, pieces: Vec<Piece>, meshes: &mut Ass
                 look: Look::Mesh(meshes.add(mesh), material),
                 ..p
             },
+            Look::Weathered(mesh, material) => Piece {
+                look: Look::WeatheredMesh(meshes.add(mesh), material),
+                ..p
+            },
             _ => p,
         })
         .collect();
@@ -952,7 +968,10 @@ fn spawn_pieces(chunk: &mut EntityCommands, pieces: Vec<Piece>, meshes: &mut Ass
                     Look::Mesh(mesh, material) => {
                         part.insert((Mesh3d(mesh), MeshMaterial3d(material)));
                     }
-                    Look::Built(..) => unreachable!("added above"),
+                    Look::WeatheredMesh(mesh, material) => {
+                        part.insert((Mesh3d(mesh), MeshMaterial3d(material)));
+                    }
+                    Look::Built(..) | Look::Weathered(..) => unreachable!("added above"),
                     Look::Scene {
                         scene,
                         ready,
