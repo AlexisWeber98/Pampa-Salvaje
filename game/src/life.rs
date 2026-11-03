@@ -22,8 +22,8 @@ use std::collections::BTreeSet;
 
 use bevy::prelude::*;
 use pampa_core::{
-    BASE_RATE, GameClock, LineTrain, MAX_STEP, Npc, RailLine, Ride, Run, Standing, Timetable,
-    TownLayout, TownRiders, Townsfolk, Travel, opening,
+    BASE_RATE, GameClock, LineTrain, MAX_STEP, Npc, Parked, RailLine, Ride, Run, Standing,
+    Timetable, TownLayout, TownRiders, Townsfolk, Travel, opening,
 };
 use pampa_render::{
     ActiveTowns, CharacterVisual, Coat, FigureKind, MapIcon, Rolled, VehicleVisual, VisualPose,
@@ -113,6 +113,32 @@ impl Horsemen {
                 .collect(),
         )
     }
+}
+
+/// Los vehículos estacionados de cada pueblo, por índice de pueblo
+/// ([`pampa_core::parked_in`]): quietos, con sus animales, y obstáculos para
+/// el jugador, los peatones y los jinetes.
+#[derive(Resource, Debug, Clone, Default)]
+pub struct ParkedVehicles(pub Vec<Vec<Parked>>);
+
+impl ParkedVehicles {
+    pub fn for_towns(towns: &[TownLayout]) -> Self {
+        Self(towns.iter().map(pampa_core::parked_in).collect())
+    }
+
+    /// Lo que ocupan los de `town`.
+    pub fn bodies(&self, town: usize) -> Vec<pampa_core::Body> {
+        self.0
+            .get(town)
+            .map_or_else(Vec::new, |p| p.iter().flat_map(Parked::bodies).collect())
+    }
+}
+
+/// Entidad que dibuja el vehículo estacionado `index` del pueblo `town`.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParkedVehicle {
+    pub town: usize,
+    pub index: usize,
 }
 
 /// Entidad que dibuja al jinete (o al sulky) `index` de los del pueblo `town`.
@@ -246,6 +272,7 @@ type TownInputs<'a> = (
     Res<'a, Cast>,
     Res<'a, LedAway>,
     Option<Res<'a, Horsemen>>,
+    Option<Res<'a, ParkedVehicles>>,
 );
 
 /// Todos los que viven en un pueblo: peatones, el caballo atado y las personas
@@ -258,13 +285,14 @@ type Residents<'a> = (
     Option<&'a StandingNpc>,
     Option<&'a Bystander>,
     Option<&'a Horseman>,
+    Option<&'a ParkedVehicle>,
 );
 
 /// Crea a la gente y el caballo atado de los pueblos que acaban de activarse, y
 /// elimina los de los pueblos que quedaron atrás.
 fn populate_towns(
     mut commands: Commands,
-    (crowds, towns, active, cast, led_away, horsemen): TownInputs,
+    (crowds, towns, active, cast, led_away, horsemen, parked): TownInputs,
     world: Res<GameWorld>,
     mut populated: ResMut<Populated>,
     residents: Query<Residents>,
@@ -273,14 +301,15 @@ fn populate_towns(
         return;
     };
     let wanted: BTreeSet<usize> = live_towns(&crowds, active.as_deref()).into_iter().collect();
-    for (entity, walker, horse, palenque, npc, bystander, horseman) in &residents {
+    for (entity, walker, horse, palenque, npc, bystander, horseman, vehicle) in &residents {
         let town = walker
             .map(|w| w.town)
             .or(horse.map(|h| h.0))
             .or(palenque.map(|p| p.town))
             .or(npc.map(|n| n.town))
             .or(bystander.map(|b| b.town))
-            .or(horseman.map(|h| h.town));
+            .or(horseman.map(|h| h.town))
+            .or(vehicle.map(|v| v.town));
         if town.is_some_and(|t| !wanted.contains(&t)) {
             commands.entity(entity).despawn();
         }
@@ -293,6 +322,9 @@ fn populate_towns(
         spawn_walkers(&mut commands, &crowds.0[town], town, &world);
         if let Some(riders) = horsemen.as_ref().and_then(|h| h.0.get(town)) {
             spawn_horsemen(&mut commands, riders, town, &world);
+        }
+        if let Some(vehicles) = parked.as_ref().and_then(|p| p.0.get(town)) {
+            spawn_parked(&mut commands, vehicles, town, &world);
         }
         if let Some(layout) = towns.as_ref().and_then(|t| t.0.get(town))
             && !led_away.0.contains(&town)
@@ -368,6 +400,30 @@ fn spawn_walkers(commands: &mut Commands, crowd: &Townsfolk, town: usize, world:
                 flight: None,
             },
             Transform::from_translation(world_from_ground(person.position, height)),
+        ));
+    }
+}
+
+/// Los vehículos estacionados de `town`, quietos con sus animales y su
+/// conductor sentado, salvo los que esperan solos ([`Parked::driven`]).
+fn spawn_parked(commands: &mut Commands, vehicles: &[Parked], town: usize, world: &GameWorld) {
+    for (index, p) in vehicles.iter().enumerate() {
+        let height = world.0.ground_height(p.position);
+        let visual = VehicleVisual::seeded(p.vehicle, (p.seed >> 24) as u8, p.seed);
+        commands.spawn((
+            Name::new(format!("Parked {:?} {town}.{index}", p.vehicle)),
+            ParkedVehicle { town, index },
+            if p.driven() {
+                visual
+            } else {
+                visual.driverless()
+            },
+            VisualPose {
+                heading: p.heading,
+                ..default()
+            },
+            Rolled(0.0),
+            Transform::from_translation(world_from_ground(p.position, height)),
         ));
     }
 }
@@ -500,7 +556,7 @@ fn walk_crowds(
     time: Res<Time>,
     crowds: Option<ResMut<Crowds>>,
     horsemen: Option<ResMut<Horsemen>>,
-    active: Option<Res<ActiveTowns>>,
+    (active, parked): (Option<Res<ActiveTowns>>, Option<Res<ParkedVehicles>>),
     world: Res<GameWorld>,
     players: Query<&Player>,
 ) {
@@ -512,8 +568,9 @@ fn walk_crowds(
     let dt = time.delta_secs().min(MAX_STEP);
     for town in live_towns(&crowds, active.as_deref()) {
         let mut obstacles = player.clone();
+        obstacles.extend(parked.as_ref().map_or_else(Vec::new, |p| p.bodies(town)));
         if let Some(riders) = horsemen.as_mut().and_then(|h| h.0.get_mut(town)) {
-            let mut around = player.clone();
+            let mut around = obstacles.clone();
             around.extend(crowds.0[town].bodies());
             riders.step_around(&world.0, &around, dt);
             obstacles.extend(riders.bodies());
@@ -537,7 +594,7 @@ pub struct Shoved {
 /// le abre paso sin quejarse a alguien que va a pie.
 pub(crate) fn jostle_crowd(
     crowds: Option<ResMut<Crowds>>,
-    horsemen: Option<Res<Horsemen>>,
+    (horsemen, parked): (Option<Res<Horsemen>>, Option<Res<ParkedVehicles>>),
     active: Option<Res<ActiveTowns>>,
     world: Res<GameWorld>,
     mut players: Query<(&mut Player, &mut Transform), Without<OnTrain>>,
@@ -569,6 +626,8 @@ pub(crate) fn jostle_crowd(
             if let Some(riders) = horsemen.as_ref().and_then(|h| h.0.get(town)) {
                 bodies.extend(riders.bodies());
             }
+            // Ni los vehículos estacionados.
+            bodies.extend(parked.as_ref().map_or_else(Vec::new, |p| p.bodies(town)));
         }
         rider.keep_clear_of(&world.0, &bodies);
         transform.translation = world_from_ground(rider.position, rider.elevation());
@@ -679,6 +738,7 @@ mod tests {
             .init_resource::<ButtonInput<KeyCode>>()
             .insert_resource(Crowds(crowds))
             .insert_resource(Horsemen::for_towns(&towns))
+            .insert_resource(ParkedVehicles::for_towns(&towns))
             .insert_resource(WorldClock::default())
             .insert_resource(WorldTrains::default())
             .insert_resource(WorldTowns(towns))
@@ -1050,6 +1110,62 @@ mod tests {
         small.update();
         let mut none = small.world_mut().query::<&PalenqueHorse>();
         assert_eq!(none.iter(small.world()).count(), 0);
+    }
+
+    #[test]
+    fn a_towns_parked_vehicles_stand_with_it_block_the_player_and_leave_with_it() {
+        let city = TownLayout::generate(&pampa_core::TownConfig {
+            name: pampa_core::TownConfig::TOWN_HALL_TOWN.into(),
+            blocks: (8, 8),
+            ..pampa_core::TownConfig::castex()
+        })
+        .unwrap();
+        let mut app = app_with(vec![city.clone()], 3);
+        app.update();
+        let parked = app.world().resource::<ParkedVehicles>().0[0].clone();
+        assert!(parked.iter().any(|p| p.vehicle == Vehicle::FordT));
+        let world = app.world().resource::<GameWorld>().0.clone();
+        let mut query = app
+            .world_mut()
+            .query::<(&ParkedVehicle, &Transform, &VehicleVisual, &VisualPose)>();
+        let found: Vec<_> = query
+            .iter(app.world())
+            .map(|(p, t, v, pose)| (*p, *t, *v, *pose))
+            .collect();
+        assert_eq!(found.len(), parked.len());
+        for (k, transform, visual, pose) in found {
+            let p = parked[k.index];
+            assert_eq!(visual.vehicle, p.vehicle);
+            assert_eq!(visual.driver.is_some(), p.vehicle != Vehicle::FordT);
+            assert_eq!(pose.heading, p.heading);
+            assert_eq!(
+                transform.translation,
+                world_from_ground(p.position, world.ground_height(p.position))
+            );
+        }
+        // El jugador, metido en el medio de uno, queda afuera.
+        let at = parked[0].position;
+        {
+            let mut q = app.world_mut().query::<&mut Player>();
+            let mut player = q.single_mut(app.world_mut()).unwrap();
+            player.rider.position = at;
+        }
+        app.update();
+        let mut q = app.world_mut().query::<&Player>();
+        let now = q.single(app.world()).unwrap().rider.position;
+        assert!(
+            parked[0]
+                .bodies()
+                .iter()
+                .all(|b| b.position.distance(now) >= b.collider.radius - 1e-3),
+            "{now:?}"
+        );
+        let mut activation = TownActivation::default();
+        activation.update(&[city], Vec2::new(1.0e6, 1.0e6));
+        app.insert_resource(ActiveTowns(activation));
+        app.update();
+        let mut left = app.world_mut().query::<&ParkedVehicle>();
+        assert_eq!(left.iter(app.world()).count(), 0);
     }
 
     #[test]

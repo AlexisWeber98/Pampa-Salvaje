@@ -467,3 +467,29 @@ FORCE=1 sh tools/textures_to_ktx2.sh assets/models/tack/tack_recado assets/model
 
 Cada pieza toma los pesos de la piel que tiene debajo, sin los de los controles de IK. Las del lomo (los bastos, el cojinillo, el sobrepuesto y los mechones) solo con los huesos del tronco (`Body`, `Torso`, `Torso2`, `Torso3`): la piel de la cruz lleva pesos de la crin del cuello y la de los costados de las patas, que levantarían piezas a 10 cm de la piel; los bastos y el sobrepuesto, rígidos (los mismos pesos en todos sus vertices). La testera va con la cabeza y lo alto del cuello como la piel de la nuca (sin orejas ni crin); la frontalera, solo con la cabeza. Después el script reproduce cada clip que juega un caballo ensillado (no `Eating`: los ensillados no pastan) y aparta de la piel lo justo cada vertex al que la piel en movimiento se le acercó a menos de 3,5 mm; cada canto de una tira se apoya sobre la piel, así que la tira se dobla con la cabeza. El atlas `tack_recado` (1024²: el cojinillo, los bastos y el sobrepuesto sobre sus propias UV) y los mechones `tack_wool` (512², con opacidad) se pintan con numpy, con las funciones de `tack.py`. `--preview DIR` hace PNG del recado sobre el caballo. Costo: 6.730 triángulos (1.088 de los bastos, 1.840 del cojinillo, 608 del sobrepuesto, 750 de mechones, 1.400 de la cabezada y 1.044 del freno) y unos 5,2 MB de video entre sus dos conjuntos. Tests (sin Blender): `python3 -I -B -m unittest discover -s tools -p test_recado.py`.
 
+## `vehicle.py` y los vehículos: sulky, carretón, carreta y Ford T modelados en Blender
+
+`vehicle.py` es el kit de los vehículos de 1919: geometría en Python puro (`Mesh`, `sweep`, `lathe`, `surface`, `thick` y `wheel`, una rueda de época con su maza torneada y zunchada, rayos ovalados escalonados y con plato, pina y llanta de hierro o cubierta de goma), los conjuntos de mapas pintados con numpy sobre el ruido de `tack.py` (madera curtida a la intemperie con vetas, rajaduras y nudos; pintura de carruajes negra, roja, verde y amarilla, saltada hasta la madera y sucia; hierro, cuero crudo, caña tacuara, cuero negro de arneses con costuras, bronce y goma), y los pasos de Blender que arman el GLB y renderizan las vistas previas. Cada cara lleva su material y sus UV en metros (la veta a lo largo de la pieza), y cada vértice un tinte de tierra del camino (más cerca del suelo en la caja, hacia la llanta en las ruedas) que el GLB guarda como colores por vértice.
+
+```sh
+python3 -I tools/vehicle.py assets/textures/vehicles
+FORCE=1 sh tools/textures_to_ktx2.sh assets/textures/vehicles/*/
+V=assets/models/vehicles
+blender -b --factory-startup --python tools/vehicle_harness.py -- $V [--preview DIR]
+for v in sulky carreton carreta ford_t; do
+  blender -b --factory-startup --python tools/$v.py -- $V/$v.glb [--preview DIR/$v.png]
+done
+blender -b --factory-startup --python tools/cattle.py -- $V/ox.glb --ox --textures $V
+FORCE=1 sh tools/textures_to_ktx2.sh $V/ox_body/ $V/ox_hair/   # y hosco/overo.jpg con basisu -srgb
+```
+
+- `sulky.py`: el sulky americano de un caballo: ruedas de 1,40 m con catorce rayos, eje arqueado, dos elásticos elípticos, asiento de caja con almohadón capitoneado y respaldo de cuero, varas de hickory, apoyapiés de listones, guardabarros de cuero, guardabarros sobre las ruedas, estribo y látigo; tiros y riendas.
+- `carreton.py`: el carro de cuatro ruedas de las chacras y los almacenes, dos caballos a los lados de la lanza: ruedas de 1,00 y 1,32 m, quinta rueda, caja verde de tres tablas, asiento de elásticos, freno de palanca, balancines y cuatro riendas.
+- `carreta.py`: la carreta pampeana de bueyes: ruedas de 2,20 m sin llanta de hierro, maza enorme, eje de madera, pértigo hasta el barzón del yugo, paredes de caña entre estacas, techo de cueros cosidos sobre arcos, la picana colgada y un balde de cuero.
+- `ford_t.py`: el Ford T touring 1915 del intendente de General Pico: radiador y faroles de bronce, capó con persianas, parabrisas, tapizado capitoneado, capota levantada, guardabarros y estribos, volante a la izquierda.
+- `vehicle_harness.py`: la guarnición de cuero negro ajustada a la piel del caballo propio (pechera, sillín con pasarriendas y portavaras, barriguera, retranca, cabezada con anteojeras y bocado) y el yugo de cabeza de la carreta con sus coyundas y el barzón. Cada pieza es `<pieza>@<hueso>` en el espacio de bind del animal; el juego la cuelga del hueso por su matriz de bind inversa, así que sigue cada clip.
+- `cattle.py --ox`: el buey de la yunta, un novillo criollo: el esqueleto y la masa del toro sin cogote ni escroto, cuernos largos en lira y los pelajes hosco y overo, con sus mapas en `assets/models/vehicles/ox_body` y `ox_hair` (la vaca y el toro no cambian).
+
+Cada GLB tiene el nodo `Body` y un vacío por rueda (`Wheel.L`/`Wheel.R`, o `Wheel.FL`/`FR`/`RL`/`RR`) en su maza, cada uno con su malla y su malla liviana `_LOD` (30 %), y los marcadores `Seat` y `Animal.N`. El origen es el suelo bajo los animales (en el Ford T, entre los ejes), mirando hacia -Y. Unos 14 500 triángulos el sulky, 20 400 el carretón, 17 900 la carreta y 26 100 el Ford T; 8 500 la guarnición y 2 600 el yugo. `--preview` renderiza con Cycles una hoja de vistas (lado, 3/4 de frente y 3/4 de atrás) con el caballo y el buey propios caminando con sus mapas del juego.
+
+Tests: `python3 -I -B -m unittest discover -s tools -p test_vehicle.py` (los marcadores y los radios que lee el juego, las ruedas apoyadas en el suelo, los materiales y los mapas).

@@ -26,14 +26,31 @@ izquierda como se circulaba entonces: seis en una ciudad, tres en un pueblo
 grande, dos en uno chico y uno solo en una aldea. Por la calzada andan también
 sulkies (dos ruedas altas, un asiento y dos varas a los costados de un
 caballo): dos en una ciudad, uno en cada pueblo y ninguno en una aldea. Frenan
-ante quien se les cruza, y el jugador no puede atravesarlos. Por cada camino
-entre dos pueblos viajan dos jinetes, uno desde cada punta, al paso o al trote,
-y un carro de cuatro ruedas con barandas de listones, tirado al paso por dos
-caballos a los lados de la lanza: llegan al otro pueblo, descansan un rato en
-la entrada y emprenden la vuelta. Al que se les planta en el camino lo pasan
-por el costado, y antes de un paso a nivel esperan a que pase el tren. Los
-carros y los sulkies están hechos de madera de forma procedural, con un vecino
-sentado en el pescante y las ruedas girando con lo que avanzan.
+ante quien se les cruza, y el jugador no puede atravesarlos. Además, cada
+pueblo tiene vehículos estacionados con sus animales junto al palenque del
+almacén o de otro edificio (`pampa_core::parked_in`): uno o dos en una ciudad,
+uno en un pueblo y, muy de vez en cuando, uno en una aldea; son carretones o
+sulkies, nunca una carreta de bueyes, y frente a la puerta de la Intendencia de
+General Pico, contra el cordón y por la mano izquierda (como se circulaba hasta
+1945), está estacionado el Ford T del intendente, sin nadie al volante. Por cada camino entre dos pueblos
+viajan dos jinetes, uno desde cada punta, al paso o al trote, que llegan al
+otro pueblo, descansan un rato en la entrada y emprenden la vuelta; y un
+vehículo de viaje (`pampa_core::Route`), un carretón (el carro de carga de
+1919, tres de cada cinco) o un sulky (el de la gente), que va de una estancia,
+una pulpería o un almacén de ramos generales a otra parada por la red de
+caminos, se detiene un rato en cada pueblo de paso y, al llegar, descansa y
+emprende la vuelta. Pasa de la salida de un camino a la del siguiente a través
+del pueblo solo cuando el jugador está a más de 250 m. Una sola carreta de
+bueyes, rara, sale de una estancia por su huella hacia un pueblo. Al que se les
+planta en el camino lo pasan por el costado, y antes de un paso a nivel esperan
+a que pase el tren. Los vehículos son modelos propios hechos en Blender por
+script (`tools/sulky.py`, `tools/carreton.py`, `tools/carreta.py`,
+`tools/ford_t.py`, con madera, pintura, hierro, cuero, caña y bronce pintados
+por `tools/vehicle.py`): las ruedas giran con lo que avanzan, los caballos de
+tiro (el caballo criollo propio) llevan pechera, sillín, retranca y cabezada
+con anteojeras (`tools/vehicle_harness.py`), y los bueyes (`tools/cattle.py
+--ox`, novillos criollos de cuernos largos) andan al paso del vehículo bajo el
+yugo atado a los cuernos. Un vecino va sentado en el pescante.
 
 Las calles están sombreadas como en la pampa húmeda. Las calles de un pueblo
 miden 12 m de ancho (las de General Pico 13 m, las de la aldea Metileo también)
@@ -124,6 +141,14 @@ frente a la vía, y un techo sobre el andén apoyado en columnas de hierro
 fundido, con una cenefa y un lambrequín de madera calada. Los almacenes y las
 comisarías se reparten por cada pueblo en lugar de agruparse alrededor de su
 plaza, y General Pico tiene un almacén y una comisaría a cada lado de su línea.
+
+Cada ciudad tiene dos bancos (el Banco de la Nación Argentina y el Banco Español
+del Río de la Plata, uno a cada lado de la vía en General Pico), cada pueblo uno
+(el Banco de la Nación) y las aldeas ninguno. General Pico tiene además su
+Intendencia Municipal frente a la plaza: dos plantas, un pabellón central con el
+reloj municipal en el frontón y el mástil de la bandera. Bancos e intendencia
+son frentes académicos de la época hechos con el kit de fachadas, con su nombre
+en el friso o en el ático, palenque, árboles y su lugar en el minimapa.
 
 Un minimapa con estilo de papel en la esquina superior derecha muestra el
 pueblo más cercano con el norte hacia arriba, titulado con su nombre: calles,

@@ -74,6 +74,14 @@ except ImportError:  # outside Blender: only the coats and the plans (tests)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
+# ``--ox``: the working ox of a carreta's team, a castrated criollo steer:
+# the bull's frame and mass without its crest or scrotum (the sheath
+# stays), long lyre horns, and the criollo coat (``ox_coats``). Its maps go to
+# ``DIR/ox_body`` and ``DIR/ox_hair``, so the cow's and the bull's stay as
+# they are.
+OX = "--ox" in sys.argv
+BULL = "--bull" in sys.argv or OX
+
 # ---------------------------------------------------------------------------
 # The head's frame: from the top of the poll down the face to the muzzle.
 # ``at(t, u, s)`` is ``t`` metres along it, ``u`` up from it (toward the
@@ -174,6 +182,24 @@ COATS = {
     "overo": dict(body=(230, 226, 216), white=None, hair=(26, 24, 22), muzzle=(44, 38, 34), skin=(60, 52, 48),
                   hoof=(40, 34, 30), horns=(222, 206, 170)),
 }
+
+if OX:
+    # The working oxen's criollo coats: the hosco colorado (red-brown with
+    # the head, the neck and the legs gone dark, ``hosco_dark``) and the
+    # criollo overo.
+    COATS = {
+        "hosco": dict(body=(118, 58, 28), white=(44, 28, 20), hair=(40, 26, 18), muzzle=(40, 32, 28), skin=(70, 50, 42),
+                      hoof=(40, 34, 30), horns=(214, 196, 158)),
+        "overo": COATS["overo"],
+    }
+
+
+def hosco_dark(q):
+    """How dark the hosco coat goes at ``q``: the head and the throat, fading
+    down the neck, and the lower legs."""
+    head = smooth((-0.95 - q[1]) / 0.18)
+    legs = smooth((0.48 - q[2]) / 0.12)
+    return max(head, legs * 0.85)
 
 
 # The cow's udder (Blender metres): the attachment under the belly and the
@@ -286,6 +312,8 @@ def coat_at(coat, q, m, roan=None):
         hair = mix(body, c["white"], hereford_white(q, m))
     elif coat == "roan":
         hair = mix(body, c["white"], roan_white(q, m) if roan is None else roan)
+    elif coat == "hosco":
+        hair = mix(body, c["white"], hosco_dark(q))
     elif coat == "overo":
         t, u, s = head_coords(q)
         black = q[2] < 0.42 or q[1] < -1.0 and q[2] > 0.9 and t > -0.02 or overo_black(p)
@@ -444,7 +472,16 @@ HORNS = {
             [0.040, 0.034, 0.029, 0.022, 0.014, 0.004]),
     "bull": ([(0.06, -1.27, 1.285), (0.14, -1.28, 1.30), (0.21, -1.31, 1.315), (0.25, -1.36, 1.335), (0.255, -1.405, 1.36)],
              [0.055, 0.050, 0.040, 0.026, 0.006]),
+    # The criollo ox's long lyre horns: out, forward, then up.
+    "ox": ([(0.06, -1.27, 1.285), (0.16, -1.285, 1.305), (0.27, -1.31, 1.34), (0.355, -1.35, 1.40), (0.40, -1.37, 1.48),
+            (0.405, -1.355, 1.565)],
+           [0.050, 0.046, 0.038, 0.029, 0.018, 0.005]),
 }
+
+
+def horn_key():
+    return "ox" if OX else "bull" if BULL else "cow"
+
 
 
 # ---------------------------------------------------------------------------
@@ -458,7 +495,6 @@ if bpy is not None:
 
     H = rig.Steps(os.path.join(HERE, "horse.py"), prefix="cattle:")
 
-BULL = "--bull" in sys.argv
 
 
 def at(t, u=0.0, s=0.0):
@@ -660,19 +696,21 @@ def trunk(sdf):
     sdf.add(T([(0, -0.40, 1.33), (0, -0.70, 1.29), (0, -0.98, 1.27), (0, -1.16, 1.28)],
               [(0.08, 0.05), (0.075, 0.05), (0.065, 0.045), (0.06, 0.04)]), 0.08)  # top of the neck
     if BULL:
-        # The crest: a hump of muscle over the neck and the withers.
-        sdf.add(E((0, -0.82, 1.32), (0.17, 0.34, 0.17), rot_x(-8)), 0.13)
-        sdf.add(E((0, -0.56, 1.38), (0.14, 0.26, 0.10)), 0.11)
-        sdf.add(E((0, -1.02, 1.24), (0.13, 0.16, 0.12), rot_x(-20)), 0.10)  # the crest up to the poll
+        if not OX:
+            # The crest: a hump of muscle over the neck and the withers.
+            sdf.add(E((0, -0.82, 1.32), (0.17, 0.34, 0.17), rot_x(-8)), 0.13)
+            sdf.add(E((0, -0.56, 1.38), (0.14, 0.26, 0.10)), 0.11)
+            sdf.add(E((0, -1.02, 1.24), (0.13, 0.16, 0.12), rot_x(-20)), 0.10)  # the crest up to the poll
         # The sheath with its opening, and the scrotum between the hinds.
         sdf.add(R((0, 0.10, 0.64), (0, -0.10, 0.55), 0.045, 0.034), 0.06)
         sdf.carve(E((0, -0.115, 0.545), (0.01, 0.012, 0.01)), 0.004)
+    if BULL and not OX:
         # (30 % smaller than a first try, at the user's request.)
         sdf.add(R((0, 0.62, 0.70), (0, 0.632, 0.56), 0.034, 0.053), 0.035)
         for sx in (1, -1):
             sdf.add(E((sx * 0.025, 0.632, 0.535), (0.035, 0.039, 0.053)), 0.025)
         sdf.groove([(0, 0.628, 0.59), (0, 0.632, 0.52), (0, 0.63, 0.485)], (0, 1, 0), 0.008, 0.003, 0.005)
-    else:
+    elif not BULL:
         # The udder: four quarters under the body between the thighs, each
         # with its teat, and the navel.
         sdf.add(E(*UDDER[0]), 0.10)
@@ -747,7 +785,7 @@ def horns_sculpt(voxel):
     """The horns: surfaces of their own (not fused to the head), so the game
     can hide them (a polled Angus) and leave the poll whole. One per side
     (``Sdf.to_mesh`` keeps a field's largest piece)."""
-    path, radii = HORNS["bull" if BULL else "cow"]
+    path, radii = HORNS[horn_key()]
     out = []
     for sx in (1, -1):
         lo, hi = (-0.36, -1.56, 1.18), (0.36, -1.18, 1.52)
@@ -775,7 +813,7 @@ def merge(into, parts):
 
 def horn_distance(p):
     """How far ``p`` is from a horn's axis, less its radius there."""
-    path, radii = HORNS["bull" if BULL else "cow"]
+    path, radii = HORNS[horn_key()]
     best = 1.0
     x = abs(p[0])
     for (a, ra), (b, rb) in zip(zip(path, radii), zip(path[1:], radii[1:])):
@@ -789,7 +827,7 @@ def horn_distance(p):
 
 def horn_tip(p):
     """0 at a horn's base to 1 at its tip."""
-    path, _ = HORNS["bull" if BULL else "cow"]
+    path, _ = HORNS[horn_key()]
     q = Vector((abs(p[0]), p[1], p[2]))
     total = sum((Vector(b) - Vector(a)).length for a, b in zip(path, path[1:]))
     best, along, run = None, 0.0, 0.0
@@ -1541,6 +1579,7 @@ def parse(argv):
     parser = argparse.ArgumentParser(prog="cattle.py")
     parser.add_argument("output")
     parser.add_argument("--bull", action="store_true")
+    parser.add_argument("--ox", action="store_true")
     parser.add_argument("--preview", default=None, metavar="DIR")
     parser.add_argument("--textures", default=None, metavar="DIR")
     parser.add_argument("--draft", action="store_true")
@@ -1815,12 +1854,12 @@ def main():
     light = light_mesh(mesh, arm)
     light.hide_render = True
     if args.textures:
-        animal = "bull" if BULL else "cow"
+        animal = "ox" if OX else "bull" if BULL else "cow"
         for folder, maps in (
             (f"{animal}_body", (("color", images["colour"]), ("normal_gl", images["normal"]), ("roughness", images["rough"]),
                                 ("ao", bpy.data.images["horse_body_ao"]))
              + tuple((coat, img) for coat, img in images["coats"].items())),
-            ("cattle_hair", (("color", images["hair"]["color"]), ("normal_gl", images["hair"]["normal"]),
+            ("ox_hair" if OX else "cattle_hair", (("color", images["hair"]["color"]), ("normal_gl", images["hair"]["normal"]),
                              ("roughness", images["hair"]["rough"]), ("opacity", images["hair"]["opacity"]))),
         ):
             for name, img in maps:

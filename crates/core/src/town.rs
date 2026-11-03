@@ -4115,7 +4115,7 @@ pub(crate) mod tests {
 
     /// General Pico tal como lo distribuye `assets/world/towns.ron`, salvo su
     /// lugar en el mundo.
-    fn general_pico() -> TownConfig {
+    pub(crate) fn general_pico() -> TownConfig {
         TownConfig {
             name: TownConfig::TOWN_HALL_TOWN.into(),
             blocks: (8, 8),

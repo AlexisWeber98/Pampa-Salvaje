@@ -258,6 +258,7 @@ fn main() {
     let (dialogue, dialogue_report) = errand::read_dialogue();
     let errand = errand::plan(&loaded.towns, &mut world, &dialogue.0.police_town);
     let crowds = life::Crowds::for_towns(&loaded.towns);
+    let estancias = travellers::estancias(&settlements);
     // La apertura: el jugador viaja en el tren de la mañana desde Pico, sentado
     // en un coche mientras entra al primer pueblo, y allí se baja a pie. Sin
     // tren, empieza a pie en el camino de entrada al primer pueblo.
@@ -290,12 +291,13 @@ fn main() {
     .insert_resource(StreamFocus(position))
     .insert_resource(crowds)
     .insert_resource(life::Horsemen::for_towns(&loaded.towns))
+    .insert_resource(life::ParkedVehicles::for_towns(&loaded.towns))
     .insert_resource(WorldClock(clock))
     .insert_resource(WorldTrains(trains))
     .insert_resource(WorldTowns(loaded.towns))
     // La línea del ferrocarril entre pueblos, colocada chunk por chunk.
     .insert_resource(WorldRail(loaded.line))
-    .insert_resource(travellers::RoadTravellers::of(&world))
+    .insert_resource(travellers::RoadTravellers::of(&world, &estancias))
     .insert_resource(player::GameWorld(world))
     .insert_resource(player::PlayerSpawn {
         position,

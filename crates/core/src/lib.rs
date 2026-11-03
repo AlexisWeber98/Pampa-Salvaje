@@ -104,6 +104,6 @@ pub use train::{
     SHUTTLE_MARGIN, Station, Timetable, TimetableError, shuttle_timetable,
 };
 pub use travellers::{Traveller, Travellers};
-pub use vehicles::Vehicle;
+pub use vehicles::{Parked, VILLAGE_CHANCE, Vehicle, parked_count, parked_in};
 pub use walker::Travel;
 pub use world::{Ground, World, WorldBounds};

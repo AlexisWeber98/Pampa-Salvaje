@@ -30,17 +30,29 @@ const HYSTERESIS: f32 = 100.0;
 pub struct RoadTravellers(pub Travellers);
 
 impl RoadTravellers {
-    /// Los viajeros de los caminos de `world` (ninguno sin caminos).
-    pub fn of(world: &pampa_core::World) -> Self {
+    /// Los viajeros de los caminos de `world` (ninguno sin caminos), con las
+    /// entradas de `estancias` como paradas de los vehículos.
+    pub fn of(world: &pampa_core::World, estancias: &[pampa_core::Vec2]) -> Self {
         Self(
             world
                 .terrain
                 .roads
                 .as_deref()
-                .map(|roads| Travellers::on(roads, TRAVELLERS_SEED))
+                .map(|roads| Travellers::on(roads, estancias, TRAVELLERS_SEED))
                 .unwrap_or_default(),
         )
     }
+}
+
+/// La entrada de cada estancia de `settlements`: el principio de su huella,
+/// justo dentro de la tranquera.
+pub fn estancias(settlements: &pampa_core::SettlementLayout) -> Vec<pampa_core::Vec2> {
+    settlements
+        .settlements
+        .iter()
+        .filter(|s| s.kind == pampa_core::SettlementKind::Ranch)
+        .filter_map(|s| s.trunk().segments().next().map(|(a, _)| a))
+        .collect()
 }
 
 /// Entidad que dibuja al viajero `.0` de [`RoadTravellers`].
@@ -208,7 +220,7 @@ mod tests {
 
     fn app_near_traveller() -> (App, Vec2) {
         let world = crate::shipped_world::laid().world.clone();
-        let travellers = RoadTravellers::of(&world);
+        let travellers = RoadTravellers::of(&world, &[]);
         // Parado en el campo, a 20 m del primer viajero.
         let near = travellers.0.riders[0].position + Vec2::new(0.0, 20.0);
         let mut app = App::new();
