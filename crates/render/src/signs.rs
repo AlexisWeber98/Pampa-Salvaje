@@ -14,6 +14,7 @@ use pampa_core::{
 };
 
 use crate::coords::world_from_ground;
+use crate::facade::town_buildings::{BANK_FRIEZE, TOWN_HALL_ATTIC};
 use crate::lettering::{self, Extent, Face};
 use crate::terrain::{WorldTerrain, hash2};
 use crate::town::{TownRoot, WorldTowns};
@@ -143,6 +144,21 @@ impl BoardStyle {
                 frame: [62, 44, 30],
                 ink: [236, 224, 196],
                 grain: true,
+            },
+            // Letras de bronce sobre el friso gris símil piedra.
+            PlaceKind::Bank => Self {
+                board: [176, 170, 156],
+                frame: [138, 132, 120],
+                ink: [74, 56, 30],
+                grain: false,
+            },
+            // Letras oscuras sobre el ático ocre de la intendencia, con su
+            // moldura blanca.
+            PlaceKind::TownHall => Self {
+                board: [204, 170, 116],
+                frame: [226, 220, 204],
+                ink: [52, 40, 28],
+                grain: false,
             },
         }
     }
@@ -484,6 +500,17 @@ fn mount_height(town: &TownLayout, kind: PlaceKind, sign: &Sign) -> (f32, f32) {
         PlaceKind::Church => (4.2, 1.2),
         PlaceKind::Station => (3.8, 1.6),
         PlaceKind::Plaza => (1.2, 1.0),
+        // En el friso liso bajo la cornisa.
+        PlaceKind::Bank => {
+            let (low, high) = BANK_FRIEZE;
+            let h = wall(BuildingKind::Bank);
+            (h - (low + high) / 2.0, low - high - 0.15)
+        }
+        // En el ático del pabellón central, sobre la cornisa.
+        PlaceKind::TownHall => (
+            wall(BuildingKind::TownHall) + TOWN_HALL_ATTIC / 2.0 + 0.04,
+            TOWN_HALL_ATTIC - 0.3,
+        ),
     }
 }
 

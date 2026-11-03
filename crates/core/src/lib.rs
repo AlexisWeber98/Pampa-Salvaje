@@ -40,8 +40,11 @@ pub mod road;
 pub mod settlement;
 pub mod terrain;
 pub mod town;
+pub mod town_riders;
 pub mod townsfolk;
 pub mod train;
+pub mod travellers;
+pub mod vehicles;
 pub mod walker;
 pub mod world;
 
@@ -55,7 +58,8 @@ pub use clock::{BASE_RATE, DAY_REAL_SECONDS, DAY_SECONDS, GameClock, TimeOfDay};
 pub use collision::{Aabb, Body, Circle, SideObstacle};
 pub use errand::{Errand, ErrandEvent, ErrandStage, Interaction, Npc, Standing};
 pub use fauna::{
-    Cow, CowCoat, CowState, Duck, FaunaSite, Flock, FlockState, Hare, HareState, Herd, Raptor,
+    Cow, CowCoat, CowState, Critter, CritterKind, CritterState, Duck, FaunaSite, Flock, FlockState,
+    Hare, HareState, Herd, Raptor, RaptorKind,
 };
 pub use fence::{FenceLayout, FenceRun, Frontage, Gate, Opening, OpeningKind};
 pub use flora::{ChunkFlora, FloraSite, Shrub, ShrubKind, Species, Tree, Tuft, TuftKind};
@@ -66,8 +70,8 @@ pub use math::Vec2;
 pub use obstacles::StaticObstacles;
 pub use placement::{PlacementError, place_towns};
 pub use places::{
-    Place, PlaceKind, STATION_WALL_INSET, Sign, SignMount, StoreStyle, TIMETABLE_BOARD_HEIGHT,
-    TIMETABLE_BOARD_WIDTH, station_bays,
+    BANK_NAMES, Place, PlaceKind, STATION_WALL_INSET, Sign, SignMount, StoreStyle,
+    TIMETABLE_BOARD_HEIGHT, TIMETABLE_BOARD_WIDTH, station_bays,
 };
 pub use pose::{HorseGait, JointAngles, MOTION_CLOCK_PERIOD, tick_clock};
 pub use rail::{
@@ -93,10 +97,13 @@ pub use town::{
     PLAZA_PATH_WIDTH, PlazaPlacement, Railway, RailwayConfig, Side, TetheredHorse, TownConfig,
     TownConfigError, TownLayout, TownSize, plaza_monument, plaza_paths,
 };
-pub use townsfolk::{StreetGraph, Townsfolk, Townsperson};
+pub use town_riders::{TownRider, TownRiders};
+pub use townsfolk::{Sidewalks, StreetGraph, Townsfolk, Townsperson};
 pub use train::{
     Car, CarKind, CoachBody, LinePhase, LineTrain, LineTrainState, MAX_STOP_MISS, PlacedCar, Run,
     SHUTTLE_MARGIN, Station, Timetable, TimetableError, shuttle_timetable,
 };
+pub use travellers::{Traveller, Travellers};
+pub use vehicles::{Parked, VILLAGE_CHANCE, Vehicle, parked_count, parked_in};
 pub use walker::Travel;
 pub use world::{Ground, World, WorldBounds};

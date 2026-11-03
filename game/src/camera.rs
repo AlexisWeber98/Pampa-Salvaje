@@ -28,8 +28,13 @@
 //! ojos del jugador ([`crate::first_person`]): este módulo sigue ubicando la
 //! cámara de órbita por debajo (sin hacerla orbitar, y sin línea de visión que
 //! desvanecer), y la primera persona mueve la cámara desde allí hasta los ojos.
+//!
+//! La consola de depuración puede soltar la cámara para que vuele libre
+//! ([`free_cam`]): mientras vuela, ni la órbita, ni la primera persona, ni la
+//! cabeza del jugador la mueven.
 
 use bevy::camera::visibility::VisibilitySystems;
+use bevy::input::InputSystems;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::light::SimulationLightSystems;
 use bevy::prelude::*;
@@ -52,6 +57,9 @@ use crate::first_person::{
 use crate::orbit::{Orbit, OrbitInput, OrbitParams};
 use crate::player::{DrivePlayer, GameWorld, Player};
 use crate::ride::{OnTrain, Trip, TripPhase};
+
+#[path = "free_cam.rs"]
+pub mod free_cam;
 
 /// Distancia de órbita que toma la cámara alrededor del coche, en metros: lo
 /// bastante lejos para encuadrar el coche y el campo de adelante.
@@ -656,10 +664,19 @@ pub struct FollowCameraPlugin;
 impl Plugin for FollowCameraPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CameraOccluders>()
+            .init_resource::<free_cam::FreeCam>()
             .init_resource::<CameraTuning>()
             .init_resource::<CameraInput>()
+            .init_resource::<free_cam::HiddenKeys>()
             .add_systems(Startup, spawn_camera)
             .add_systems(Update, grab_cursor)
+            .add_systems(
+                PreUpdate,
+                free_cam::hide_keys
+                    .after(InputSystems)
+                    .after(crate::menu::MenuKeys),
+            )
+            .add_systems(Last, free_cam::restore_keys)
             .init_resource::<RideView>()
             .init_resource::<SeatLook>()
             .init_resource::<HudHint>()
@@ -674,9 +691,10 @@ impl Plugin for FollowCameraPlugin {
                 (
                     gather_camera_input,
                     cycle_view,
-                    toggle_view,
-                    turn_to_view,
-                    follow_player,
+                    toggle_view.run_if(free_cam::following),
+                    turn_to_view.run_if(free_cam::following),
+                    free_cam::fly,
+                    follow_player.run_if(free_cam::following),
                 )
                     .chain()
                     .after(DrivePlayer),
@@ -684,6 +702,7 @@ impl Plugin for FollowCameraPlugin {
             .add_systems(
                 PostUpdate,
                 place_first_person
+                    .run_if(free_cam::following)
                     .after(TransformSystems::Propagate)
                     .before(VisibilitySystems::UpdateFrusta)
                     .before(SimulationLightSystems::AssignLightsToClusters)

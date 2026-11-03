@@ -15,16 +15,32 @@ pub enum PlaceKind {
     Church,
     Station,
     Plaza,
+    /// Una sucursal de banco: la primera de cada pueblo es la del Banco de la
+    /// Nación ([`BANK_NAMES`]).
+    Bank,
+    /// La intendencia municipal de General Pico.
+    TownHall,
 }
+
+/// Los nombres pintados en los bancos de un pueblo, en orden: el Banco de la
+/// Nación Argentina, el banco del Estado con sucursales en los pueblos
+/// ferroviarios de la pampa, y en una ciudad también el Banco Español del Río
+/// de la Plata, el mayor banco privado de la época.
+pub const BANK_NAMES: [&str; 2] = [
+    "BANCO DE LA NACIÓN ARGENTINA",
+    "BANCO ESPAÑOL DEL RÍO DE LA PLATA",
+];
 
 impl PlaceKind {
     /// Todos los tipos de punto de referencia, en un orden estable.
-    pub const ALL: [PlaceKind; 5] = [
+    pub const ALL: [PlaceKind; 7] = [
         PlaceKind::GeneralStore,
         PlaceKind::PoliceStation,
         PlaceKind::Church,
         PlaceKind::Station,
         PlaceKind::Plaza,
+        PlaceKind::Bank,
+        PlaceKind::TownHall,
     ];
 
     /// El nombre diegético pintado en su cartel (en español, en mayúsculas),
@@ -38,6 +54,8 @@ impl PlaceKind {
             PlaceKind::Church => "IGLESIA",
             PlaceKind::Station => "ESTACIÓN",
             PlaceKind::Plaza => "PLAZA",
+            PlaceKind::Bank => BANK_NAMES[0],
+            PlaceKind::TownHall => "INTENDENCIA MUNICIPAL",
         }
     }
 }
@@ -196,6 +214,20 @@ impl TownLayout {
                 .plazas()
                 .map(|plaza| (plaza, vec![plaza_sign(plaza)]))
                 .collect(),
+            PlaceKind::Bank | PlaceKind::TownHall => {
+                // El del banco, en su friso; el de la intendencia, en el ático
+                // de su pabellón central (el render, `facade::town_buildings`).
+                let (wanted, width) = if kind == PlaceKind::Bank {
+                    (BuildingKind::Bank, 10.0)
+                } else {
+                    (BuildingKind::TownHall, 7.0)
+                };
+                self.buildings
+                    .iter()
+                    .filter(|b| b.kind == wanted)
+                    .map(|b| (b.footprint, vec![facade_sign(b.footprint, b.front, width)]))
+                    .collect()
+            }
         };
         let name = match kind {
             PlaceKind::Station => format!("{} {}", kind.name(), self.name.to_uppercase()),
@@ -204,9 +236,14 @@ impl TownLayout {
         };
         areas
             .into_iter()
-            .map(|(footprint, signs)| Place {
+            .enumerate()
+            .map(|(k, (footprint, signs))| Place {
                 kind,
-                name: name.clone(),
+                // El segundo banco de una ciudad es otro banco.
+                name: match kind {
+                    PlaceKind::Bank => BANK_NAMES[k.min(BANK_NAMES.len() - 1)].to_string(),
+                    _ => name.clone(),
+                },
                 footprint,
                 signs,
             })
@@ -487,6 +524,8 @@ mod tests {
                         PlaceKind::Church => 1,
                         PlaceKind::Station => usize::from(c.railway.is_some()),
                         PlaceKind::Plaza => t.plazas().count(),
+                        PlaceKind::Bank => all(&t, BuildingKind::Bank),
+                        PlaceKind::TownHall => all(&t, BuildingKind::TownHall),
                     };
                     std::iter::repeat_n(k, n)
                 })
@@ -499,7 +538,8 @@ mod tests {
                     PlaceKind::GeneralStore => StoreStyle::of(t.size).sign(),
                     kind => kind.name(),
                 };
-                assert!(p.name.starts_with(sign), "{}", p.name);
+                let bank = p.kind == PlaceKind::Bank && BANK_NAMES.contains(&p.name.as_str());
+                assert!(bank || p.name.starts_with(sign), "{}", p.name);
                 // La iglesia no lleva cartel (usuario, 2026-10-28): su
                 // campanario dice lo que es.
                 assert_eq!(
@@ -541,6 +581,30 @@ mod tests {
             place(&town(), PlaceKind::Station).unwrap().name,
             "ESTACIÓN EDUARDO CASTEX"
         );
+    }
+
+    #[test]
+    fn a_city_names_its_two_banks_a_town_its_one_and_pico_its_intendencia() {
+        let pico = TownLayout::generate(&crate::TownConfig {
+            name: crate::TownConfig::TOWN_HALL_TOWN.into(),
+            blocks: (8, 8),
+            ..crate::TownConfig::castex()
+        })
+        .unwrap();
+        let named = |t: &TownLayout, kind: PlaceKind| -> Vec<String> {
+            t.places()
+                .into_iter()
+                .filter(|p| p.kind == kind)
+                .map(|p| {
+                    assert_eq!(p.signs.len(), 1, "{}: one sign over the door", p.name);
+                    p.name
+                })
+                .collect()
+        };
+        assert_eq!(named(&pico, PlaceKind::Bank), BANK_NAMES);
+        assert_eq!(named(&pico, PlaceKind::TownHall), ["INTENDENCIA MUNICIPAL"]);
+        assert_eq!(named(&town(), PlaceKind::Bank), [BANK_NAMES[0]]);
+        assert!(named(&town(), PlaceKind::TownHall).is_empty());
     }
 
     #[test]

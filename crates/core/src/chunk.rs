@@ -137,6 +137,10 @@ impl WorldConfig {
     pub const DEFAULT_HALF_EXTENT: f32 = 4000.0;
     /// Chunks de 200 m.
     pub const DEFAULT_CHUNK_SIZE: f32 = 200.0;
+    /// Quads a lo largo de cada lado de un chunk en la malla del suelo que se
+    /// dibuja (5 m en un chunk de 200 m): [`crate::World::ground_height`] sigue
+    /// esa malla ([`crate::terrain::mesh_height`]).
+    pub const GROUND_RESOLUTION: u32 = 40;
     /// Lo más lejos que puede llegar un mundo desde el origen: 8,4 km, lugar
     /// para la línea a escala 1:7 más un 5 %. Las posiciones son `f32`, que
     /// resuelven alrededor de un milímetro en cualquier punto por debajo de

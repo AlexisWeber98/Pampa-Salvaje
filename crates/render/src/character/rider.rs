@@ -75,7 +75,8 @@ use super::tack::{STIRRUP, Strap, Tack};
 /// del hueso `Torso` del caballo.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct Riding {
-    /// El cuerpo del caballo.
+    /// El cuerpo del caballo, o el asiento de un vehículo (sin caballo
+    /// ensillado debajo: ver [`pose_riders`]).
     pub horse: Entity,
     pub kind: FigureKind,
     pub seed: u32,
@@ -98,16 +99,17 @@ pub fn seat_transform(seat: Vec3) -> Affine3A {
 }
 
 /// Adónde van los tobillos, primero el izquierdo y después el derecho, desde la
-/// pelvis (espacio del jinete): en los estribos, 0.3 m hacia afuera a cada lado
-/// (el costillar está a 0.23 m de la columna en su parte más ancha, y las botas
-/// deben librar los faldones), 10 cm adelante, con las suelas de las botas unos
-/// 12 cm por debajo de la panza.
-pub const ANKLES: [Vec3; 2] = [Vec3::new(0.32, -0.69, 0.1), Vec3::new(-0.32, -0.69, 0.1)];
+/// pelvis (espacio del jinete): en los estribos, 0.37 m hacia afuera a cada
+/// lado (el costillar está a 0.23 m de la columna en su parte más ancha, y las
+/// piernas abrazan el recado: los bastos y el cojinillo, medidos con
+/// `tack::tests::seat_clearances`), 10 cm adelante, con las suelas de las botas
+/// unos 12 cm por debajo de la panza.
+pub const ANKLES: [Vec3; 2] = [Vec3::new(0.37, -0.69, 0.1), Vec3::new(-0.37, -0.69, 0.1)];
 
 /// Adónde van los tobillos en medio asiento: los estribos acortados un palmo
 /// (las aciones siguen a los pies) y los talones bajo las caderas, así que las
 /// rodillas se doblan unos 110°.
-pub const GALLOP_ANKLES: [Vec3; 2] = [Vec3::new(0.31, -0.6, 0.02), Vec3::new(-0.31, -0.6, 0.02)];
+pub const GALLOP_ANKLES: [Vec3; 2] = [Vec3::new(0.36, -0.6, 0.02), Vec3::new(-0.36, -0.6, 0.02)];
 
 /// Adónde va la muñeca de la mano de las riendas (la izquierda: un gaucho monta
 /// con una sola mano, con ambas riendas en ella): delante de la cabezada, un
@@ -216,8 +218,8 @@ pub const HAT_PACE: f32 = 0.4;
 pub const GLANCE_MAX: f32 = 0.55;
 
 /// Hacia dónde se doblan las rodillas, primero la izquierda y después la
-/// derecha: hacia adelante y hacia afuera alrededor del costillar.
-pub const KNEE_POLE: [Vec3; 2] = [Vec3::new(0.6, -0.1, 1.0), Vec3::new(-0.6, -0.1, 1.0)];
+/// derecha: hacia adelante y tan afuera como adelante, alrededor del recado.
+pub const KNEE_POLE: [Vec3; 2] = [Vec3::new(1.0, -0.1, 1.0), Vec3::new(-1.0, -0.1, 1.0)];
 
 /// Hacia dónde se doblan los codos: hacia abajo, hacia afuera y hacia atrás (el
 /// codo de las riendas bien afuera, sobre el extremo colgante del poncho).
@@ -671,6 +673,18 @@ pub fn saddle_attitude(tilt: Quat) -> (f32, f32) {
     )
 }
 
+/// Sienta al conductor de un vehículo (ver [`vehicle`](crate::vehicle)): su
+/// pelvis en el origen del modelo, puesto sobre el asiento como un jinete
+/// ([`seat_transform`]).
+fn sit_on_bench(transforms: &mut Bones, seated: &Seated) {
+    let Some(root) = transforms.get(seated.bone(Bone::Root)).ok().copied() else {
+        return;
+    };
+    if let Ok(mut pelvis) = transforms.get_mut(seated.bone(Bone::Pelvis)) {
+        pelvis.translation = root.rotation.inverse() * -root.translation;
+    }
+}
+
 /// Ajusta cada jinete que se reproduce a su caballo (ver las notas del módulo),
 /// después de que los clips lo pusieron en pose (a él y al caballo) y antes de
 /// que se calculen los transforms.
@@ -695,6 +709,9 @@ pub(super) fn pose_riders(
         // En pose a partir de aquí: se dibuja.
         shown.set_if_neq(Visibility::Inherited);
         let Ok((horse, saddle)) = horses.get(riding.horse) else {
+            // En el pescante de un vehículo: la pelvis en el origen del
+            // modelo, sobre el asiento, y el resto como lo pone el clip.
+            sit_on_bench(&mut transforms, seated);
             continue;
         };
         let (Some(seat), Some(root)) = (
@@ -1851,7 +1868,16 @@ pub(crate) mod tests {
     /// de la montura.
     fn free_arm(app: &mut App, me: Entity, frames: usize) -> (Vec<f32>, Vec<Vec3>, f32, f32) {
         let carrier = app.world().get::<Children>(me).unwrap()[0];
-        let saddle = ["Sudadera", "Carona", "Basto", "Pellon"];
+        let saddle = [
+            "Bajera",
+            "Matra",
+            "Carona",
+            "Basto",
+            "Pellon",
+            "Vellon",
+            "Sobrepuesto",
+            "Cinchon",
+        ];
         let (mut elbow, mut places) = (Vec::new(), Vec::new());
         let (mut skin_gap, mut saddle_gap) = (f32::MAX, f32::MAX);
         for k in 0..frames {
@@ -1958,7 +1984,7 @@ pub(crate) mod tests {
                 world.query::<&HorseModel>().iter(world).count(),
             )
         };
-        assert_eq!(count(&mut app), (22, 1, 1));
+        assert_eq!(count(&mut app), (32, 1, 1));
         app.world_mut()
             .entity_mut(me)
             .insert(CharacterVisual::Figure(FigureKind::Protagonist));
@@ -1979,7 +2005,7 @@ pub(crate) mod tests {
             }
         }
         app.update();
-        assert_eq!(count(&mut app), (22, 1, 1));
+        assert_eq!(count(&mut app), (32, 1, 1));
         let world = app.world_mut();
         let (riding, seated) = world.query::<(&Riding, &Seated)>().single(world).unwrap();
         let (horse, hand) = (

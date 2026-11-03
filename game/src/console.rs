@@ -14,6 +14,9 @@
 //!   `lake` (la laguna más cercana), `ranch` (la estancia más cercana) o
 //!   `ranch castex` / `ranch pico` (la más cercana a ese pueblo);
 //! - `goto herd`: el potrero de la manada más cercana;
+//! - `goto gato` / `goto puma` / `goto yaguarete`: a [`FELINE_GAP`] metros del
+//!   felino de esa especie más cercano, mirándolo (a pie o a caballo, como
+//!   estaba);
 //! - `goto X Y`: un punto, en metros del juego;
 //! - `horse`: un caballo ensillado junto al jugador;
 //! - `turbo on` / `turbo off`: el caballo del jugador galopa a hasta
@@ -26,7 +29,14 @@
 //!   rígidas ([`CharacterModelsShown`]; solo esta consola los desactiva);
 //! - `time HH` / `time HH:MM`: adelanta el reloj hasta esa hora;
 //! - `view fp` / `view tp`: mira desde los ojos del jugador o desde la órbita
-//!   ([`ViewMode`]), como `V` fuera del tren;
+//!   ([`ViewMode`]), como `V` fuera del tren, y suelta la cámara libre;
+//! - `view free`: la cámara vuela libre ([`FreeCam`]): WASD la mueve, el mouse
+//!   mira, Espacio y Ctrl suben y bajan, Shift va más rápido, la rueda hace
+//!   zoom. El jugador se queda donde estaba, y los animales siguen reaccionando
+//!   a él, no a la cámara;
+//! - `zoom N`: en la vista libre, el zoom exacto (`zoom 2` ve el doble de
+//!   cerca, `zoom 1` vuelve al normal), entre x1 y
+//!   x[`MAX_ZOOM`](crate::camera::free_cam::MAX_ZOOM);
 //! - `help`: la lista.
 //!
 //! `goto` pone al jugador (y al caballo, si cabalga) en el terreno despejado
@@ -39,16 +49,17 @@ use bevy::input::InputSystems;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::prelude::*;
 use pampa_core::{
-    Circle, FaunaSite, Rider, RiderParams, SettlementKind, SettlementLayout, TetheredHorse,
-    TimeOfDay, TownLayout, Travel, Vec2 as GroundVec2, World,
+    Circle, CritterKind, FaunaSite, Heading, Rider, RiderParams, SettlementKind, SettlementLayout,
+    TetheredHorse, TimeOfDay, TownLayout, Travel, Vec2 as GroundVec2, World,
 };
 use pampa_render::hud::{LINE_PX, ink_font, panel_colors};
 use pampa_render::{
     CharacterModelsShown, CharacterVisual, Coat, StreamFocus, Typefaces, VisualPose, WorldClock,
-    WorldSettlements, WorldTowns, world_from_ground,
+    WorldFlora, WorldSettlements, WorldTowns, world_from_ground,
 };
 
 use crate::abilities::{PlayerAbilities, Unlocked};
+use crate::camera::free_cam::FreeCam;
 use crate::errand::Mountable;
 use crate::first_person::ViewMode;
 use crate::player::{DrivePlayer, GameWorld, Player, PlayerTuning};
@@ -65,9 +76,10 @@ const TURBO_ACCELERATION: f32 = 10.0;
 const SEARCH: f32 = 300.0;
 
 /// Lo que la consola enumera con `help`.
-pub const HELP: [&str; 10] = [
+pub const HELP: [&str; 13] = [
     "goto lake, pico, castex, nievas, metileo, caleufu",
     "goto ranch, ranch castex, ranch pico, herd",
+    "goto gato, puma, yaguarete: face the nearest",
     "goto X Y: a point in meters",
     "horse: a saddled horse alongside",
     "fauna: the animals nearby",
@@ -76,6 +88,8 @@ pub const HELP: [&str; 10] = [
     "time HH or HH:MM: move the clock on",
     "turbo on, off: gallop at 70 kmh",
     "view fp, tp: first or third person",
+    "view free: fly, WASD mouse Space Ctrl Shift",
+    "zoom N: x2, x4 in view free, 1 resets",
 ];
 
 /// Si las teclas de este frame abren (o cierran) la consola: Ctrl+Shift+F12.
@@ -102,6 +116,10 @@ pub enum Command {
     Turbo(bool),
     /// Mira desde los ojos del jugador (`true`) o desde la órbita.
     View(bool),
+    /// Suelta la cámara para que vuele ([`FreeCam`]).
+    FreeView,
+    /// Fija el zoom de la cámara libre (1 = el campo de visión normal).
+    Zoom(f32),
     Help,
 }
 
@@ -114,6 +132,8 @@ pub enum Destination {
     Lake,
     /// El potrero de la manada más cercana al jugador.
     Herd,
+    /// Frente al animal de esa especie más cercano al jugador.
+    Critter(CritterKind),
     /// La estancia más cercana al jugador, o al pueblo nombrado.
     Ranch(Option<String>),
     /// Un punto, en metros del juego.
@@ -137,7 +157,13 @@ pub fn parse(line: &str) -> Result<Command, String> {
         ["turbo"] => Err("usage: turbo on, turbo off".into()),
         ["view", "fp"] => Ok(Command::View(true)),
         ["view", "tp"] => Ok(Command::View(false)),
-        ["view", ..] => Err("usage: view fp, view tp".into()),
+        ["view", "free"] => Ok(Command::FreeView),
+        ["view", ..] => Err("usage: view fp, view tp, view free".into()),
+        ["zoom"] => Err("usage: zoom N, as in zoom 2".into()),
+        ["zoom", n] => match n.parse::<f32>() {
+            Ok(zoom) if zoom.is_finite() && zoom > 0.0 => Ok(Command::Zoom(zoom)),
+            _ => Err(format!("not a zoom: {n}")),
+        },
         ["time"] => Err("usage: time HH, or time HH:MM".into()),
         ["time", time] => time_of_day(time)
             .map(Command::Time)
@@ -147,6 +173,9 @@ pub fn parse(line: &str) -> Result<Command, String> {
         ["goto", "herd"] => Ok(Command::Goto(Destination::Herd)),
         ["goto", "ranch"] => Ok(Command::Goto(Destination::Ranch(None))),
         ["goto", "ranch", town] => Ok(Command::Goto(Destination::Ranch(Some(town.to_string())))),
+        ["goto", word] if feline(word).is_some() => {
+            Ok(Command::Goto(Destination::Critter(feline(word).unwrap())))
+        }
         ["goto", place] => Ok(Command::Goto(Destination::Named(place.to_string()))),
         ["goto", x, y] => match (x.parse::<f32>(), y.parse::<f32>()) {
             (Ok(x), Ok(y)) if x.is_finite() && y.is_finite() => {
@@ -164,6 +193,26 @@ fn time_of_day(word: &str) -> Option<TimeOfDay> {
     let (h, m) = word.split_once(':').unwrap_or((word, "0"));
     let (h, m) = (h.parse::<u32>().ok()?, m.parse::<u32>().ok()?);
     (h < 24 && m < 60).then(|| TimeOfDay::hm(h, m))
+}
+
+/// El felino que nombra `word` (`gato`, `puma`, `yaguarete`, con acentos
+/// opcionales).
+fn feline(word: &str) -> Option<CritterKind> {
+    match plain(word).as_str() {
+        "gato" => Some(CritterKind::GatoMontes),
+        "puma" => Some(CritterKind::Puma),
+        "yaguarete" => Some(CritterKind::Yaguarete),
+        _ => None,
+    }
+}
+
+/// Cómo se escribe `kind` en la consola.
+fn feline_word(kind: CritterKind) -> &'static str {
+    match kind {
+        CritterKind::GatoMontes => "gato",
+        CritterKind::Puma => "puma",
+        _ => "yaguarete",
+    }
 }
 
 /// Si una palabra de `name` es `word`, sin distinguir mayúsculas ni acentos
@@ -222,6 +271,7 @@ fn aim(
         // Las manadas viven en la fauna, no aquí: `run_entered` primero
         // convierte esto en el punto del potrero.
         Destination::Herd => Err("no herds".to_string()),
+        Destination::Critter(_) => Err("no such animal".to_string()),
         Destination::Ranch(None) => nearest_ranch(&|p| p.distance(from)),
         Destination::Ranch(Some(word)) => {
             let band = town(towns, word)
@@ -287,6 +337,37 @@ fn nearest_herd(site: &FaunaSite, from: GroundVec2) -> Option<GroundVec2> {
         .iter()
         .map(|h| h.pasture.center())
         .min_by(|a, b| a.distance(from).total_cmp(&b.distance(from)))
+}
+
+/// A cuántos metros de un felino deja al jugador `goto gato|puma|yaguarete`:
+/// dentro de su alarma, así que se lo ve arrancar a huir.
+pub const FELINE_GAP: f32 = 15.0;
+
+/// Dónde está el animal de `kind` más cercano a `from`: entre los que ya se
+/// dibujan (`live`, que deambulan), o si no hay ninguno, donde se siembra en
+/// todo el mundo (`site`, con `monte` la parte de monte de cada lugar).
+fn nearest_critter(
+    kind: CritterKind,
+    live: impl Iterator<Item = (CritterKind, GroundVec2)>,
+    site: &FaunaSite,
+    monte: impl Fn(GroundVec2) -> f32,
+    from: GroundVec2,
+) -> Option<GroundVec2> {
+    let nearest = |places: &mut dyn Iterator<Item = GroundVec2>| {
+        places.min_by(|a, b| a.distance(from).total_cmp(&b.distance(from)))
+    };
+    nearest(&mut live.filter(|(k, _)| *k == kind).map(|(_, p)| p)).or_else(|| {
+        let config = site.config();
+        let reach = (config.half_extent / config.chunk_size) as i32;
+        nearest(
+            &mut config
+                .chunks_near(from, reach)
+                .into_iter()
+                .flat_map(|c| site.critters_in(c, &monte))
+                .filter(|k| k.kind == kind)
+                .map(|k| k.position),
+        )
+    })
 }
 
 /// Dónde pone al jugador `goto destination`: el terreno despejado y seco más
@@ -440,11 +521,14 @@ type Places<'w> = (
     ResMut<'w, StreamFocus>,
 );
 
-/// Lo que un comando lee de la fauna, y la vista que puede cambiar.
+/// Lo que un comando lee de la fauna, y las vistas que puede cambiar.
 type Watched<'w> = (
     Option<Res<'w, crate::fauna::Fauna>>,
-    Option<Res<'w, crate::fauna::WorldFauna>>,
-    Option<ResMut<'w, ViewMode>>,
+    (
+        Option<Res<'w, crate::fauna::WorldFauna>>,
+        Option<Res<'w, WorldFlora>>,
+    ),
+    (Option<ResMut<'w, ViewMode>>, Option<ResMut<'w, FreeCam>>),
 );
 
 /// Ejecuta las líneas ingresadas e imprime lo que hizo cada una.
@@ -463,7 +547,7 @@ fn run_entered(
         Option<ResMut<CharacterModelsShown>>,
         Option<ResMut<PlayerTuning>>,
     ),
-    (fauna, site, mut view): Watched,
+    (fauna, (site, flora), (mut view, mut free)): Watched,
 ) {
     // Solo se toca cuando hay líneas para ejecutar: un cambio en cada frame
     // volvería a rotular el panel en cada frame, eliminando sus líneas antes de
@@ -489,10 +573,27 @@ fn run_entered(
         let rider = &mut player.rider;
         match command {
             Command::Help => HELP.iter().for_each(|h| console.print(*h)),
-            Command::Fauna => match fauna.as_deref().map(crate::fauna::Fauna::counts) {
-                Some([cows, horses, hares, teros, raptors, ducks]) => console.print(format!(
+            Command::Fauna => match fauna.as_deref().map(crate::fauna::Fauna::all_counts) {
+                Some(
+                    [
+                        cows,
+                        horses,
+                        hares,
+                        teros,
+                        raptors,
+                        ducks,
+                        foxes,
+                        rheas,
+                        armadillos,
+                        vizcachas,
+                        cats,
+                        coypus,
+                    ],
+                ) => console.print(format!(
                     "cows {cows}, horses {horses}, hares {hares}, teros {teros}, \
-                     raptors {raptors}, ducks {ducks}"
+                     raptors {raptors}, ducks {ducks}, foxes {foxes}, rheas {rheas}, \
+                     armadillos {armadillos}, vizcachas {vizcachas}, cats {cats}, \
+                     coypus {coypus}"
                 )),
                 None => console.print("no fauna"),
             },
@@ -518,8 +619,27 @@ fn run_entered(
                 }
                 None => console.print("no horse tuning"),
             },
+            Command::FreeView => match free.as_deref_mut() {
+                Some(free) => {
+                    free.on = true;
+                    console.print("view free: WASD flies, wheel zooms");
+                }
+                None => console.print("no camera"),
+            },
+            Command::Zoom(zoom) => match free.as_deref_mut() {
+                Some(free) if free.on => {
+                    free.zoom = FreeCam::clamp_zoom(zoom);
+                    console.print(format!("zoom x{}", free.zoom));
+                }
+                Some(_) => console.print("zoom: only in view free"),
+                None => console.print("no camera"),
+            },
             Command::View(first) => match view.as_deref_mut() {
                 Some(view) => {
+                    // Volver al jugador suelta la cámara libre.
+                    if let Some(free) = free.as_deref_mut() {
+                        free.on = false;
+                    }
                     *view = if first {
                         ViewMode::FirstPerson
                     } else {
@@ -549,7 +669,29 @@ fn run_entered(
             },
             Command::Goto(_) if aboard => console.print("not on the train: get off first"),
             Command::Goto(destination) => {
+                // El animal que hay que mirar al llegar, y cómo se llama.
+                let mut facing = None;
                 let destination = match destination {
+                    Destination::Critter(kind) => {
+                        let found = site.as_deref().and_then(|s| {
+                            let live = fauna.as_deref().into_iter().flat_map(|f| f.critters());
+                            let monte = |p| flora.as_deref().map_or(0.0, |f| f.0.monte(p));
+                            nearest_critter(kind, live, &s.0, monte, rider.position)
+                        });
+                        let Some(animal) = found else {
+                            console.print(format!("no {}", feline_word(kind)));
+                            continue;
+                        };
+                        // Del lado por el que viene el jugador.
+                        let back = rider.position - animal;
+                        let back = if back.length() > 0.1 {
+                            back * (1.0 / back.length())
+                        } else {
+                            GroundVec2::new(-1.0, 0.0)
+                        };
+                        facing = Some((animal, kind));
+                        Destination::Point(animal + back * FELINE_GAP)
+                    }
                     Destination::Herd => match site
                         .as_deref()
                         .and_then(|s| nearest_herd(&s.0, rider.position))
@@ -566,9 +708,22 @@ fn run_entered(
                 let layout = settlements.as_ref().map(|s| &s.0);
                 match resolve(&destination, towns, &world.0, layout, rider.position) {
                     Ok(to) => {
+                        if let Some((animal, _)) = facing {
+                            let to_animal = animal - to;
+                            rider.heading = Heading::from_radians(to_animal.y.atan2(to_animal.x));
+                        }
                         teleport(rider, &mut transform, to, &world.0);
                         focus.0 = to;
-                        console.print(format!("at {:.0} {:.0}", to.x, to.y));
+                        console.print(match facing {
+                            Some((animal, kind)) => format!(
+                                "at {:.0} {:.0}, a {} {:.0} m ahead",
+                                to.x,
+                                to.y,
+                                feline_word(kind),
+                                animal.distance(to)
+                            ),
+                            None => format!("at {:.0} {:.0}", to.x, to.y),
+                        });
                     }
                     Err(error) => console.print(error),
                 }
@@ -679,6 +834,7 @@ fn draw_panel(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::camera::free_cam::MAX_ZOOM;
     use crate::ride::testing::shipped_app_at;
     use pampa_core::{Ability, GameClock, TimeOfDay};
 
@@ -700,6 +856,17 @@ mod tests {
         assert!(parse("time night").is_err());
         assert_eq!(parse("goto Lake"), Ok(Command::Goto(Destination::Lake)));
         assert_eq!(parse("goto herd"), Ok(Command::Goto(Destination::Herd)));
+        for (word, kind) in [
+            ("gato", CritterKind::GatoMontes),
+            ("Puma", CritterKind::Puma),
+            ("yaguarete", CritterKind::Yaguarete),
+            ("yaguareté", CritterKind::Yaguarete),
+        ] {
+            assert_eq!(
+                parse(&format!("goto {word}")),
+                Ok(Command::Goto(Destination::Critter(kind)))
+            );
+        }
         assert_eq!(parse("Turbo ON"), Ok(Command::Turbo(true)));
         assert_eq!(parse("turbo off"), Ok(Command::Turbo(false)));
         assert!(parse("turbo").unwrap_err().contains("usage"));
@@ -707,6 +874,7 @@ mod tests {
         assert_eq!(parse("view tp"), Ok(Command::View(false)));
         assert!(parse("view").unwrap_err().contains("usage"));
         assert!(parse("view side").unwrap_err().contains("usage"));
+        assert_eq!(parse("View Free"), Ok(Command::FreeView));
         assert!((turbo(true).gallop_max * 3.6 - TURBO_KMH).abs() < 1e-3);
         assert_eq!(turbo(false), RiderParams::default());
         for place in ["arocena", "pico", "castex", "nievas", "metileo", "caleufu"] {
@@ -729,6 +897,21 @@ mod tests {
                 -120.5, 300.0
             ))))
         );
+    }
+
+    #[test]
+    fn zoom_takes_a_positive_factor() {
+        assert_eq!(parse("zoom 2"), Ok(Command::Zoom(2.0)));
+        assert_eq!(parse("Zoom 1.5"), Ok(Command::Zoom(1.5)));
+        assert!(parse("zoom").unwrap_err().contains("usage"));
+        for bad in ["0", "-2", "x2", "inf", "nan"] {
+            assert!(
+                parse(&format!("zoom {bad}"))
+                    .unwrap_err()
+                    .contains("not a zoom"),
+                "{bad}"
+            );
+        }
     }
 
     #[test]
@@ -770,6 +953,11 @@ mod tests {
             "view fp: from the eyes once off the train".into(),
             "view tp: the orbit".into(),
             "no camera".into(),
+            parse("zoom").unwrap_err(),
+            parse("zoom x").unwrap_err(),
+            "view free: WASD flies, wheel zooms".into(),
+            "zoom x2.5".into(),
+            "zoom: only in view free".into(),
         ]);
         for line in lines {
             let missing: Vec<char> = line
@@ -913,6 +1101,42 @@ mod tests {
     }
 
     #[test]
+    fn view_free_lets_the_camera_fly_and_zoom_until_view_tp() {
+        let mut app = app();
+        app.init_resource::<ViewMode>().init_resource::<FreeCam>();
+        enter(&mut app, "zoom 2");
+        assert_eq!(last_line(&app), "zoom: only in view free");
+        enter(&mut app, "view free");
+        assert!(app.world().resource::<FreeCam>().on);
+        assert_eq!(last_line(&app), "view free: WASD flies, wheel zooms");
+        enter(&mut app, "zoom 4");
+        assert_eq!(app.world().resource::<FreeCam>().zoom, 4.0);
+        assert_eq!(last_line(&app), "zoom x4");
+        enter(&mut app, "zoom 50");
+        assert_eq!(app.world().resource::<FreeCam>().zoom, MAX_ZOOM);
+        enter(&mut app, "view tp");
+        assert!(!app.world().resource::<FreeCam>().on);
+        assert_eq!(*app.world().resource::<ViewMode>(), ViewMode::ThirdPerson);
+        enter(&mut app, "view free");
+        enter(&mut app, "view fp");
+        assert!(!app.world().resource::<FreeCam>().on);
+        assert_eq!(*app.world().resource::<ViewMode>(), ViewMode::FirstPerson);
+    }
+
+    #[test]
+    fn view_fp_and_tp_still_switch_without_flying() {
+        let mut app = app();
+        app.init_resource::<ViewMode>().init_resource::<FreeCam>();
+        enter(&mut app, "view fp");
+        assert_eq!(*app.world().resource::<ViewMode>(), ViewMode::FirstPerson);
+        assert_eq!(last_line(&app), "view fp: from the eyes");
+        enter(&mut app, "view tp");
+        assert_eq!(*app.world().resource::<ViewMode>(), ViewMode::ThirdPerson);
+        assert_eq!(last_line(&app), "view tp: the orbit");
+        assert_eq!(*app.world().resource::<FreeCam>(), FreeCam::default());
+    }
+
+    #[test]
     fn models_turns_the_makehuman_people_on_and_off() {
         let mut app = app();
         enter(&mut app, "models on");
@@ -980,6 +1204,73 @@ mod tests {
         enter(&mut app, "goto rosario");
         assert_eq!(rider(&mut app).position, at.position);
         assert!(last_line(&app).contains("rosario"));
+    }
+
+    #[test]
+    fn goto_a_feline_stands_the_player_a_few_metres_from_one_facing_it() {
+        let mut app = app();
+        let laid = crate::shipped_world::laid();
+        app.insert_resource(crate::fauna::WorldFauna(laid.fauna.clone()))
+            .insert_resource(pampa_render::WorldFlora(laid.flora.clone()));
+        let config = laid.fauna.config();
+        let reach = (config.half_extent / config.chunk_size) as i32;
+        let seeded: Vec<_> = config
+            .chunks_near(GroundVec2::ZERO, reach)
+            .into_iter()
+            .flat_map(|c| laid.fauna.critters_in(c, |p| laid.flora.monte(p)))
+            .collect();
+        for (word, kind) in [
+            ("puma", CritterKind::Puma),
+            ("gato", CritterKind::GatoMontes),
+            ("yaguarete", CritterKind::Yaguarete),
+        ] {
+            enter(&mut app, &format!("goto {word}"));
+            let at = rider(&mut app);
+            let animal = seeded
+                .iter()
+                .filter(|k| k.kind == kind)
+                .map(|k| k.position)
+                .min_by(|a, b| a.distance(at.position).total_cmp(&b.distance(at.position)))
+                .expect("a seeded feline");
+            let gap = animal.distance(at.position);
+            assert!((8.0..=20.0).contains(&gap), "{kind:?} {gap} m away");
+            let to = (animal - at.position) * (1.0 / gap);
+            assert!(at.heading.forward().dot(to) > 0.95, "{kind:?} ahead");
+            assert!(last_line(&app).contains(word), "{}", last_line(&app));
+            assert_eq!(app.world().resource::<StreamFocus>().0, at.position);
+        }
+    }
+
+    #[test]
+    fn goto_a_feline_finds_one_drawn_in_front_of_the_player() {
+        let mut app = app();
+        let laid = crate::shipped_world::laid();
+        app.insert_resource(crate::fauna::WorldFauna(laid.fauna.clone()))
+            .insert_resource(pampa_render::WorldFlora(laid.flora.clone()))
+            .add_plugins(crate::fauna::FaunaPlugin);
+        app.update();
+        for (word, kind) in [
+            ("puma", CritterKind::Puma),
+            ("gato", CritterKind::GatoMontes),
+            ("yaguarete", CritterKind::Yaguarete),
+        ] {
+            enter(&mut app, &format!("goto {word}"));
+            for _ in 0..5 {
+                app.update();
+            }
+            let at = rider(&mut app).position;
+            let fauna = app.world().resource::<crate::fauna::Fauna>();
+            let near = fauna
+                .critters()
+                .filter(|&(k, _)| k == kind)
+                .map(|(_, p)| p.distance(at))
+                .fold(f32::MAX, f32::min);
+            assert!(
+                near < 30.0,
+                "{kind:?}: the nearest drawn one is {near} m away ({})",
+                last_line(&app)
+            );
+        }
     }
 
     #[test]

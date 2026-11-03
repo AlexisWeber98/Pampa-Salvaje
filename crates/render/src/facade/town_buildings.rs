@@ -17,6 +17,9 @@
 //!   sobre postes de madera.
 //! - La comisaría: encalada, con ventanas enrejadas, un parapeto con
 //!   balaustrada y un frontón, y su mástil.
+//! - El banco y la intendencia: frentes académicos con almohadillado, órdenes
+//!   de pilastras, arcos de medio punto con clave, balaustrada y frontón (ver
+//!   [`civic`]).
 //! - La iglesia: un frente con frontón y un campanario con un cuerpo de
 //!   campanas de arcos de medio punto bajo una aguja de zinc.
 //! - La estación: un frente de ladrillo al estilo del FCO con pilastras de
@@ -120,6 +123,8 @@ pub fn building(lot: &Lot) -> Option<Shape> {
         BuildingKind::PoliceStation => police(&mut shape, (w, d, h), v),
         BuildingKind::Church => church(&mut shape, (w, d, h), v),
         BuildingKind::Station => station(&mut shape, (w, d, h), v),
+        BuildingKind::Bank => civic::bank(&mut shape, (w, d, h), v),
+        BuildingKind::TownHall => civic::town_hall(&mut shape, (w, d, h), v),
         BuildingKind::Shed | BuildingKind::GrainStore => {
             let iron = if v & 1 == 0 {
                 Surface::OldIron
@@ -210,17 +215,7 @@ fn italianate(shape: &mut Shape, walls: &Walls, f: &Front, v: u32) {
     // abiertas.
     front.build(shape, f.wall, &openings, u32::MAX);
     dress(shape, &front, &openings, f);
-    let back_n = (f.bays / 2).max(1);
-    let back = spread(len, back_n, &[0], (1.0, f.door.1.min(2.4)), f.window);
-    walls.back().build(shape, f.wall, &back, v);
-    plinth(shape, f.plinth, &walls.back(), &back, 0.6, 0.04);
-    for east in [true, false] {
-        let side = walls.side(east);
-        let n = (side.length / 4.5) as usize;
-        let windows = spread(side.length, n, &[], (0.0, 0.0), f.window);
-        side.build(shape, f.wall, &windows, v);
-        plinth(shape, f.plinth, &side, &windows, 0.6, 0.04);
-    }
+    back_and_sides(shape, walls, f, v);
     plinth(shape, f.plinth, &front, &openings, 0.6, 0.05);
     let capital = h - 0.55;
     for k in 1..f.bays {
@@ -275,6 +270,24 @@ fn italianate(shape: &mut Shape, walls: &Walls, f: &Front, v: u32) {
     match f.roof {
         Roof::Flat => flat_roof(shape, walls),
         Roof::Iron(iron) => iron_behind(shape, (iron, f.wall), walls, f.parapet),
+    }
+}
+
+/// El fondo de `walls`, con una puerta y unas pocas ventanas, y sus laterales
+/// con una ventana cada 4,5 m, todos sobre su zócalo, en las superficies y con
+/// las aberturas de `f`.
+fn back_and_sides(shape: &mut Shape, walls: &Walls, f: &Front, v: u32) {
+    let len = walls.front().length;
+    let back_n = (f.bays / 2).max(1);
+    let back = spread(len, back_n, &[0], (1.0, f.door.1.min(2.4)), f.window);
+    walls.back().build(shape, f.wall, &back, v);
+    plinth(shape, f.plinth, &walls.back(), &back, 0.6, 0.04);
+    for east in [true, false] {
+        let side = walls.side(east);
+        let n = (side.length / 4.5) as usize;
+        let windows = spread(side.length, n, &[], (0.0, 0.0), f.window);
+        side.build(shape, f.wall, &windows, v);
+        plinth(shape, f.plinth, &side, &windows, 0.6, 0.04);
     }
 }
 
@@ -1020,6 +1033,10 @@ fn column(height: f32) -> Vec<(f32, f32)> {
         (0.2, top),
     ]
 }
+
+mod civic;
+
+pub use civic::{BANK_FRIEZE, TOWN_HALL_ATTIC};
 
 #[cfg(test)]
 mod tests;

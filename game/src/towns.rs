@@ -338,7 +338,8 @@ mod tests {
         world.lay_roads(loaded.roads.clone());
         let collider = pampa_core::Circle::new(pampa_core::Rider::COLLIDER_RADIUS);
         for (a, b) in &streets {
-            let deck = world.ground_height(Vec2::new(a.x, y)) - world.terrain.height(a.x, y);
+            let deck = world.ground_height(Vec2::new(a.x, y))
+                - world.bare_ground_height(Vec2::new(a.x, y));
             assert!(
                 (deck - pampa_core::RoadNetwork::CROSSING_RISE).abs() < 0.05,
                 "{deck}"
@@ -1492,7 +1493,7 @@ mod tests {
                     // Termina en el andén de la vía muerta, a su altura.
                     let end = *route.last().unwrap();
                     assert!(bay.platform.footprint.contains_point(end), "{end:?}");
-                    let rise = world.ground_height(end) - world.terrain.height(end.x, end.y);
+                    let rise = world.ground_height(end) - world.bare_ground_height(end);
                     assert!((rise - Floor::PLATFORM_HEIGHT).abs() < 1e-3, "{rise}");
                     // Y de vuelta, en el otro sentido, igual de despejado.
                     for p in route.iter().rev() {

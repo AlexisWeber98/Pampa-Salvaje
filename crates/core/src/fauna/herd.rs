@@ -15,18 +15,22 @@ pub enum CowCoat {
     Angus,
     /// Overo: blanco con manchas negras.
     Overo,
+    /// Shorthorn (Durham) rosillo: pelos colorados y blancos mezclados, que
+    /// de lejos se ven grises.
+    Roan,
 }
 
 impl CowCoat {
-    pub const ALL: [Self; 3] = [Self::Hereford, Self::Angus, Self::Overo];
+    pub const ALL: [Self; 4] = [Self::Hereford, Self::Angus, Self::Overo, Self::Roan];
 
     /// La raza de un rodeo: sobre todo Hereford, después Angus y algunos
-    /// overos.
+    /// overos y rosillos.
     fn seeded(rng: &mut Rng) -> Self {
         match rng.unit() {
-            u if u < 0.45 => Self::Hereford,
-            u if u < 0.8 => Self::Angus,
-            _ => Self::Overo,
+            u if u < 0.38 => Self::Hereford,
+            u if u < 0.68 => Self::Angus,
+            u if u < 0.85 => Self::Overo,
+            _ => Self::Roan,
         }
     }
 }
@@ -365,6 +369,23 @@ mod tests {
         h.step(0.1, None, &trees);
         let c = h.cows[0].position;
         assert!(tree.closest_point(c).distance(c) >= Herd::RADIUS - 1e-3);
+    }
+
+    #[test]
+    fn herds_are_mostly_hereford_and_angus_with_some_overos_and_roans() {
+        let pasture = Aabb::new(Vec2::new(100.0, 100.0), Vec2::new(200.0, 180.0));
+        let mut count = [0usize; CowCoat::ALL.len()];
+        for seed in 0..400 {
+            for cow in Herd::new(seed, pasture, 8, seed * 3).cows {
+                count[CowCoat::ALL.iter().position(|&c| c == cow.coat).unwrap()] += 1;
+            }
+        }
+        let share =
+            |coat| count[CowCoat::ALL.iter().position(|&c| c == coat).unwrap()] as f32 / 3200.0;
+        let [hereford, angus, overo, roan] = CowCoat::ALL.map(share);
+        assert!(hereford > angus && angus > overo, "{count:?}");
+        assert!((0.08..0.22).contains(&roan), "{count:?}");
+        assert!((0.08..0.25).contains(&overo), "{count:?}");
     }
 
     #[test]

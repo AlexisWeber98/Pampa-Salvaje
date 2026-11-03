@@ -301,9 +301,13 @@ pub(super) fn drive_rigs(
             continue;
         };
         let distance = eye.map_or(0.0, |e| e.distance(at.translation()));
-        // La visibilidad solo se conoce con una cámara dibujando.
-        let in_view =
-            eye.is_none() || any_in_view(&rig.probes, |p| seen.get(p).is_ok_and(|v| v.get()));
+        // La visibilidad solo se conoce con una cámara dibujando. Un jinete
+        // está oculto hasta su primera pose en la montura: tomarlo por fuera de
+        // la vista lo congelaría sin pose, oculto para siempre.
+        let waiting_seat = riding.is_some() && !rig.started;
+        let in_view = eye.is_none()
+            || waiting_seat
+            || any_in_view(&rig.probes, |p| seen.get(p).is_ok_and(|v| v.get()));
         let freeze = kind != FigureKind::Protagonist && frozen(rig.frozen, distance, in_view);
         let Some(clips) = clips.as_deref() else {
             rig.frozen = freeze;
@@ -658,6 +662,33 @@ mod tests {
                 "{kind:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_hidden_rider_waiting_for_its_first_pose_does_not_freeze() {
+        let (mut app, rigs) = stand_ins(&[FigureKind::townsfolk(0)]);
+        let (_, rig, meshes) = rigs[0];
+        app.world_mut()
+            .spawn((Camera3d::default(), Transform::from_xyz(0.0, 1.6, 4.0)));
+        // Un vecino montado: oculto (nada de él se dibuja) hasta su primera
+        // pose en la montura.
+        app.world_mut().entity_mut(rig).insert(Riding {
+            horse: Entity::PLACEHOLDER,
+            kind: FigureKind::townsfolk(0),
+            seed: 0,
+        });
+        for mesh in meshes {
+            app.world_mut()
+                .entity_mut(mesh)
+                .insert(ViewVisibility::HIDDEN);
+        }
+        app.update();
+        app.update();
+        assert!(!frozen_now(&app, rig), "hidden forever");
+        // Ya en pose, fuera de la vista se congela como cualquier otro.
+        app.world_mut().get_mut::<Rig>(rig).unwrap().started = true;
+        app.update();
+        assert!(frozen_now(&app, rig));
     }
 
     #[test]

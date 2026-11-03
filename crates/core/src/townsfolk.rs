@@ -4,6 +4,11 @@
 //! intersección de calles hasta una vecina, se detiene ahí un momento y después
 //! elige la siguiente al azar (evitando dar media vuelta cuando puede). Las
 //! personas chocan con los mismos obstáculos estáticos que el jinete.
+//!
+//! En un pueblo con veredas ([`Sidewalks`]) la gente camina por ellas, de
+//! esquina a esquina de cada cuadra, y cruza la calle solo en las esquinas: la
+//! calzada queda para los caballos. Sin veredas camina cerca de la línea
+//! central de la calle.
 
 use crate::rng::Rng;
 use crate::{Aabb, AnimationState, Body, Circle, Heading, TownLayout, Vec2, World};
@@ -16,6 +21,25 @@ pub struct StreetGraph {
     /// Para cada nodo, los índices de los nodos que están a una cuadra por una
     /// calle.
     pub links: Vec<Vec<usize>>,
+    /// Las veredas por las que camina la gente, si el pueblo las tiene.
+    pub sidewalks: Option<Sidewalks>,
+}
+
+/// Las veredas de un pueblo, como las recorre la gente.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Sidewalks {
+    /// Distancia de la línea por la que camina la gente en una vereda a la
+    /// línea central de su calle, en metros.
+    pub offset: f32,
+    /// Las franjas de vereda ([`TownLayout::sidewalks`]).
+    pub areas: Vec<Aabb>,
+}
+
+impl Sidewalks {
+    /// Si `p` está sobre alguna vereda.
+    pub fn contains(&self, p: Vec2) -> bool {
+        self.areas.iter().any(|a| a.contains_point(p))
+    }
 }
 
 impl StreetGraph {
@@ -70,7 +94,24 @@ impl StreetGraph {
                 }
             }
         }
-        Self { nodes, links }
+        // Todas las calles de un pueblo tienen el mismo ancho.
+        let width = town
+            .streets
+            .iter()
+            .map(|s| s.size().x.min(s.size().y))
+            .min_by(f32::total_cmp);
+        let sidewalks = match width {
+            Some(width) if !town.sidewalks().is_empty() => Some(Sidewalks {
+                offset: width / 2.0 - FROM_FACADE,
+                areas: town.sidewalks().iter().map(|w| w.area).collect(),
+            }),
+            _ => None,
+        };
+        Self {
+            nodes,
+            links,
+            sidewalks,
+        }
     }
 }
 
@@ -85,11 +126,17 @@ pub struct Townsperson {
     /// Variación de apariencia; el render decide cómo se ve cada valor.
     pub look: u8,
     walk_speed: f32,
-    /// Desplazamiento fijo respecto de la línea central de las calles, para que
-    /// la gente no camine en fila.
+    /// Desplazamiento fijo respecto de la línea central de las calles (o del
+    /// medio de la vereda), para que la gente no camine en fila.
     lane: Vec2,
     from: usize,
     to: usize,
+    /// De qué lado de la cuadra camina por la vereda: `1.0` a la izquierda de
+    /// `from`→`to`, `-1.0` a la derecha.
+    side: f32,
+    /// Si va hacia la esquina donde empieza su cuadra (cruzando la calle, o
+    /// doblando la esquina) en lugar de hacia la del final.
+    to_corner: bool,
     /// Segundos que le quedan parado en el punto de paso actual.
     pause: f32,
     /// Segundos que lleva casi sin avanzar hacia el objetivo.
@@ -205,6 +252,26 @@ impl Townsfolk {
 /// mantiene a la gente lejos del palenque y de cualquier otra cosa que haya en
 /// el borde de la calle.
 const MAX_LANE: f32 = 0.7;
+/// A qué distancia de la fachada camina la gente por la vereda, en metros: en
+/// la franja libre entre los faroles de esquina ([`crate::StreetLamps::CURB`])
+/// y la fila de árboles de frente y faroles
+/// ([`crate::town::ShadeTree::FRONT_OUT`]).
+pub const FROM_FACADE: f32 = 1.35;
+/// Desplazamiento máximo respecto de [`FROM_FACADE`], en metros.
+const MAX_WALK_LANE: f32 = 0.15;
+/// Aire que la gente deja entre ella y un tronco o un poste, en metros.
+const CLEAR: f32 = 0.05;
+// Con su radio, la gente pasa lejos de los troncos de 0,7 m de la fila de
+// árboles...
+const _: () = assert!(
+    FROM_FACADE + MAX_WALK_LANE + Townsperson::COLLIDER_RADIUS
+        <= crate::town::ShadeTree::FRONT_OUT - 0.35 - CLEAR
+);
+// ...y de los postes de los faroles de esquina, también al doblar en ellas.
+const _: () = assert!(
+    FROM_FACADE - MAX_WALK_LANE - Townsperson::COLLIDER_RADIUS
+        >= crate::StreetLamps::CURB + crate::StreetLamp::POST / 2.0 + CLEAR
+);
 /// Rango de la pausa en cada intersección, en segundos.
 const PAUSE: (f32, f32) = (0.5, 4.0);
 /// Rango de ritmos de caminata, en m/s.
@@ -229,7 +296,34 @@ impl Townsperson {
             rng.range(-MAX_LANE, MAX_LANE),
         );
         let (a, b) = (graph.nodes[from], graph.nodes[to]);
-        let position = a + (b - a) * rng.range(0.1, 0.9) + lane;
+        let mut side = if rng.unit() < 0.5 { 1.0 } else { -1.0 };
+        let along = rng.range(0.1, 0.9);
+        let mut position = a + (b - a) * along + lane;
+        if let Some(walks) = &graph.sidewalks
+            && from != to
+        {
+            let lane = Vec2::new(rng.range(-MAX_WALK_LANE, MAX_WALK_LANE), 0.0);
+            let at = |side: f32| {
+                let (start, end) = corners(graph, walks, from, to, side, lane.x);
+                start + (end - start) * along
+            };
+            // La cuadra de un lado del borde del pueblo no tiene vereda.
+            if !walks.contains(at(side)) {
+                side = -side;
+            }
+            position = at(side);
+            return Self::new(position, (a, b), lane, (from, to, side), rng);
+        }
+        Self::new(position, (a, b), lane, (from, to, side), rng)
+    }
+
+    fn new(
+        position: Vec2,
+        (a, b): (Vec2, Vec2),
+        lane: Vec2,
+        (from, to, side): (usize, usize, f32),
+        mut rng: Rng,
+    ) -> Self {
         Self {
             position,
             heading: Heading::from_radians((b.y - a.y).atan2(b.x - a.x)),
@@ -240,6 +334,8 @@ impl Townsperson {
             lane,
             from,
             to,
+            side,
+            to_corner: false,
             pause: 0.0,
             stuck: 0.0,
             rng,
@@ -252,14 +348,23 @@ impl Townsperson {
             self.speed = 0.0;
             return;
         }
-        let target = graph.nodes[self.to] + self.lane;
+        let target = self.target(graph);
         let offset = target - self.position;
         let distance = offset.length();
         let stride = self.walk_speed * dt;
         let start = self.position;
         if distance <= stride {
             self.position = target;
-            self.arrive(graph);
+            if self.to_corner {
+                // En la esquina: mira ya hacia el final de la cuadra.
+                self.to_corner = false;
+                let ahead = self.target(graph) - self.position;
+                if ahead.length() > 1e-4 {
+                    self.heading = Heading::from_radians(ahead.y.atan2(ahead.x));
+                }
+            } else {
+                self.arrive(graph);
+            }
         } else {
             let direction = offset * (1.0 / distance);
             self.heading = Heading::from_radians(direction.y.atan2(direction.x));
@@ -273,15 +378,34 @@ impl Townsperson {
             self.stuck += dt;
             if self.stuck > GIVE_UP {
                 std::mem::swap(&mut self.from, &mut self.to);
+                // La misma vereda, vista en el otro sentido.
+                self.side = -self.side;
+                self.to_corner = false;
                 self.stuck = 0.0;
+                self.heading = self.heading.rotated(std::f32::consts::PI);
             }
         } else {
             self.stuck = 0.0;
         }
     }
 
+    /// Hacia dónde camina: la intersección `to` (sin veredas), o la esquina
+    /// de su cuadra por la vereda.
+    fn target(&self, graph: &StreetGraph) -> Vec2 {
+        match &graph.sidewalks {
+            Some(walks) if self.from != self.to => {
+                let (start, end) =
+                    corners(graph, walks, self.from, self.to, self.side, self.lane.x);
+                if self.to_corner { start } else { end }
+            }
+            _ => graph.nodes[self.to] + self.lane,
+        }
+    }
+
     /// Llegó a `to`: elige la siguiente intersección y se queda quieta un
-    /// momento.
+    /// momento. Por la vereda, sigue desde la esquina de la cuadra siguiente
+    /// más cercana, sin cruzar nunca en diagonal: dobla la esquina o cruza una
+    /// sola calle.
     fn arrive(&mut self, graph: &StreetGraph) {
         let came_from = self.from;
         self.from = self.to;
@@ -294,9 +418,41 @@ impl Townsperson {
         } else {
             choices[self.rng.below(choices.len())]
         };
+        if let Some(walks) = &graph.sidewalks
+            && self.from != self.to
+        {
+            let start = |side| corners(graph, walks, self.from, self.to, side, self.lane.x).0;
+            let rank = |side: f32| {
+                let at = start(side);
+                (!walks.contains(at), at.distance(self.position))
+            };
+            let (left, right) = (rank(1.0), rank(-1.0));
+            // Primero una esquina sobre la vereda, después la más cercana.
+            self.side = if right < left { -1.0 } else { 1.0 };
+            self.to_corner = true;
+        }
         self.pause = self.rng.range(PAUSE.0, PAUSE.1);
         self.speed = 0.0;
     }
+}
+
+/// Las esquinas de la cuadra `from`→`to` sobre la vereda del lado `side`: la
+/// del principio y la del final, a `lane` metros del medio de la vereda.
+fn corners(
+    graph: &StreetGraph,
+    walks: &Sidewalks,
+    from: usize,
+    to: usize,
+    side: f32,
+    lane: f32,
+) -> (Vec2, Vec2) {
+    let (a, b) = (graph.nodes[from], graph.nodes[to]);
+    let along = b - a;
+    let dir = along * (1.0 / along.length().max(1e-6));
+    let left = Vec2::new(-dir.y, dir.x);
+    let d = walks.offset + lane;
+    let out = left * (side * d);
+    (a + dir * d + out, b - dir * d + out)
 }
 
 #[cfg(test)]
@@ -491,6 +647,67 @@ mod tests {
     }
 
     #[test]
+    fn people_walk_the_sidewalks_and_cross_only_at_the_corners() {
+        for town in sample_towns() {
+            let mut world = World::with_town(Terrain::default(), &town);
+            // Con los faroles que pone el juego, los de esquina incluidos.
+            let lamps = crate::StreetLamps::place(
+                std::slice::from_ref(&town),
+                &crate::RoadNetwork::default(),
+                &crate::SettlementLayout::default(),
+                &world.obstacles,
+            );
+            world.obstacles.extend(lamps.obstacles());
+            let mut folk = Townsfolk::new(&town, 30, 3);
+            let walks = folk.graph.sidewalks.clone().expect("a paved town");
+            let half = town.streets[0].size().x.min(town.streets[0].size().y) / 2.0;
+            let (mut on, mut all) = (0, 0);
+            run(&mut folk, &world, 120.0, |folk| {
+                for p in &folk.people {
+                    all += 1;
+                    if walks.contains(p.position) {
+                        on += 1;
+                        // Por la franja libre: no roza los árboles ni los
+                        // faroles de la vereda.
+                        let around = Aabb::new(
+                            p.position - Vec2::new(1.0, 1.0),
+                            p.position + Vec2::new(1.0, 1.0),
+                        );
+                        for o in world.obstacles.near(around) {
+                            let gap = p.position.distance(o.closest_point(p.position));
+                            assert!(
+                                gap > p.collider.radius + 0.05,
+                                "{}: {p:?} brushes {o:?}",
+                                town.name
+                            );
+                        }
+                        continue;
+                    }
+                    // Fuera de la vereda solo para cruzar, en una esquina, o en
+                    // una cuadra sin vereda de ningún lado (la que cruza la
+                    // franja de la vía).
+                    let corner = folk.graph.nodes.iter().any(|n| {
+                        (p.position.x - n.x).abs() <= half && (p.position.y - n.y).abs() <= half
+                    });
+                    let bare = [1.0, -1.0].into_iter().all(|side| {
+                        let (a, b) = corners(&folk.graph, &walks, p.from, p.to, side, 0.0);
+                        !walks.contains((a + b) * 0.5)
+                    });
+                    assert!(
+                        corner || bare,
+                        "{}: {p:?} in the roadway mid-block",
+                        town.name
+                    );
+                    // Nadie se traba contra los árboles ni los faroles.
+                    assert!(p.stuck < 1.0, "{}: {p:?} stuck", town.name);
+                }
+            });
+            let share = on as f32 / all as f32;
+            assert!(share > 0.85, "{}: only {share} on the sidewalks", town.name);
+        }
+    }
+
+    #[test]
     fn heading_follows_the_walk_and_bad_dt_is_a_no_op() {
         let (town, world) = town();
         let mut folk = Townsfolk::new(&town, 4, 5);
@@ -501,10 +718,10 @@ mod tests {
         }
         run(&mut folk, &world, 20.0, |folk| {
             for p in &folk.people {
-                let to = folk.graph.nodes[p.next_waypoint()] + p.lane - p.position;
+                let to = p.target(&folk.graph) - p.position;
                 let distance = to.length();
                 if p.animation() == AnimationState::Walk && distance > 0.5 {
-                    // Mirando hacia la siguiente intersección (continuo, sin
+                    // Mirando hacia la siguiente esquina (continuo, sin
                     // ajustar a pasos fijos).
                     let facing = p.heading.forward().dot(to * (1.0 / distance));
                     assert!(facing > 0.99, "{p:?} faces away ({facing})");
@@ -561,6 +778,7 @@ mod tests {
                 Vec2::new(500.0, 500.0),
             ],
             links: vec![vec![1], vec![0], vec![]],
+            sidewalks: None,
         };
         let world = World::default();
         let mut folk = Townsfolk::from_graph(graph, 24, 3);
@@ -589,7 +807,7 @@ mod tests {
         // Un jinete quieto en el camino de cada persona, de a una por vez.
         for i in 0..4 {
             let p = &folk.people[i];
-            let ahead = folk.graph.nodes[p.next_waypoint()] - p.position;
+            let ahead = p.target(&folk.graph) - p.position;
             let rider = Body {
                 position: p.position + ahead * 0.5,
                 collider: Circle::new(0.9),
@@ -647,6 +865,7 @@ mod tests {
         let graph = StreetGraph {
             nodes: vec![Vec2::ZERO],
             links: vec![vec![]],
+            sidewalks: None,
         };
         let world = World::default();
         let mut folk = Townsfolk::from_graph(graph, 3, 1);
@@ -671,6 +890,7 @@ mod tests {
         let graph = StreetGraph {
             nodes: vec![Vec2::new(0.0, -0.3)],
             links: vec![vec![]],
+            sidewalks: None,
         };
         let mut folk = Townsfolk::from_graph(graph, 1, 1);
         folk.people[0].position = Vec2::new(0.0, -0.3);

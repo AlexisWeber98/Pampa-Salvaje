@@ -54,8 +54,14 @@ fn street() -> Vec<Lot> {
     }
     lots.push(lot(BuildingKind::PoliceStation, (14.0, 12.0, 4.5), 3));
     lots.push(lot(BuildingKind::Church, (12.0, 22.0, 7.0), 5));
+    lots.push(lot(BuildingKind::Bank, BANK, 4));
+    lots.push(lot(BuildingKind::TownHall, TOWN_HALL, 6));
     lots
 }
+
+/// Un banco y la intendencia a sus tamaños de core en una manzana de 40 m.
+const BANK: (f32, f32, f32) = (12.0, 16.0, 6.2);
+const TOWN_HALL: (f32, f32, f32) = (20.0, 16.0, 8.0);
 
 /// Los edificios del cuadro de la estación y los galpones del pueblo, a sus
 /// tamaños de core: la estación, unos cuantos galpones de chapa y los dos
@@ -192,6 +198,48 @@ fn a_store_parapet_stands_solid_behind_its_sign() {
             }
         }
     }
+}
+
+#[test]
+fn a_bank_and_the_intendencia_stand_solid_behind_their_signs() {
+    // `signs` pinta el nombre del banco en su friso, de 10 m de ancho, y el de
+    // la intendencia en el ático de su pabellón, de 7 m: detrás de cada cartel
+    // hay pared, no una abertura.
+    for (kind, (w, d, h), width, (y0, y1)) in [
+        (
+            BuildingKind::Bank,
+            BANK,
+            10.0,
+            (
+                h_of(BANK) - BANK_FRIEZE.0 + 0.1,
+                h_of(BANK) - BANK_FRIEZE.1 - 0.1,
+            ),
+        ),
+        (
+            BuildingKind::TownHall,
+            TOWN_HALL,
+            7.0,
+            (
+                h_of(TOWN_HALL) + 0.2,
+                h_of(TOWN_HALL) + TOWN_HALL_ATTIC - 0.1,
+            ),
+        ),
+    ] {
+        let shape = building(&lot(kind, (w, d, h), 1)).unwrap();
+        for k in 0..=20 {
+            let x = -width / 2.0 + width * k as f32 / 20.0;
+            for y in [y0, (y0 + y1) / 2.0, y1] {
+                assert!(
+                    front_covers(&shape, d / 2.0, (x, y), 0.3),
+                    "{kind:?}: nothing behind the sign at ({x}, {y})"
+                );
+            }
+        }
+    }
+}
+
+fn h_of((_, _, h): (f32, f32, f32)) -> f32 {
+    h
 }
 
 #[test]
@@ -383,6 +431,11 @@ fn town_buildings_keep_to_their_triangle_budgets() {
         let budget = match lot.building.kind {
             BuildingKind::Church => 2000..=6000,
             BuildingKind::GeneralStore | BuildingKind::PoliceStation => 1500..=5000,
+            // Almohadillado, dentículos, arcos y balaustrada: dos o tres por
+            // pueblo, 4.3k al escribir esto.
+            BuildingKind::Bank => 3000..=7000,
+            // Una sola en el mundo, con su pabellón y su reloj: 7.4k.
+            BuildingKind::TownHall => 5000..=10000,
             _ if lot.outskirts => 100..=4000,
             _ => 800..=4000,
         };

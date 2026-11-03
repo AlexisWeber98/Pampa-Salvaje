@@ -21,7 +21,36 @@ El pueblo está vivo: los vecinos deambulan por las calles entre las esquinas
 frente al almacén de ramos generales (y una ciudad ata algunos más en los
 palenques de su comisaría, su iglesia y su estación), y el jugador se abre paso
 entre la gente apartando a empujones a los peatones, mientras los peatones lo
-esquivan.
+esquivan. Algunos vecinos recorren las calles a caballo, al paso, por la mano
+izquierda como se circulaba entonces: seis en una ciudad, tres en un pueblo
+grande, dos en uno chico y uno solo en una aldea. Por la calzada andan también
+sulkies (dos ruedas altas, un asiento y dos varas a los costados de un
+caballo): dos en una ciudad, uno en cada pueblo y ninguno en una aldea. Frenan
+ante quien se les cruza, y el jugador no puede atravesarlos. Además, cada
+pueblo tiene vehículos estacionados con sus animales junto al palenque del
+almacén o de otro edificio (`pampa_core::parked_in`): uno o dos en una ciudad,
+uno en un pueblo y, muy de vez en cuando, uno en una aldea; son carretones o
+sulkies, nunca una carreta de bueyes, y frente a la puerta de la Intendencia de
+General Pico, contra el cordón y por la mano izquierda (como se circulaba hasta
+1945), está estacionado el Ford T del intendente, sin nadie al volante. Por cada camino entre dos pueblos
+viajan dos jinetes, uno desde cada punta, al paso o al trote, que llegan al
+otro pueblo, descansan un rato en la entrada y emprenden la vuelta; y un
+vehículo de viaje (`pampa_core::Route`), un carretón (el carro de carga de
+1919, tres de cada cinco) o un sulky (el de la gente), que va de una estancia,
+una pulpería o un almacén de ramos generales a otra parada por la red de
+caminos, se detiene un rato en cada pueblo de paso y, al llegar, descansa y
+emprende la vuelta. Pasa de la salida de un camino a la del siguiente a través
+del pueblo solo cuando el jugador está a más de 250 m. Una sola carreta de
+bueyes, rara, sale de una estancia por su huella hacia un pueblo. Al que se les
+planta en el camino lo pasan por el costado, y antes de un paso a nivel esperan
+a que pase el tren. Los vehículos son modelos propios hechos en Blender por
+script (`tools/sulky.py`, `tools/carreton.py`, `tools/carreta.py`,
+`tools/ford_t.py`, con madera, pintura, hierro, cuero, caña y bronce pintados
+por `tools/vehicle.py`): las ruedas giran con lo que avanzan, los caballos de
+tiro (el caballo criollo propio) llevan pechera, sillín, retranca y cabezada
+con anteojeras (`tools/vehicle_harness.py`), y los bueyes (`tools/cattle.py
+--ox`, novillos criollos de cuernos largos) andan al paso del vehículo bajo el
+yugo atado a los cuernos. Un vecino va sentado en el pescante.
 
 Las calles están sombreadas como en la pampa húmeda. Las calles de un pueblo
 miden 12 m de ancho (las de General Pico 13 m, las de la aldea Metileo también)
@@ -112,6 +141,14 @@ frente a la vía, y un techo sobre el andén apoyado en columnas de hierro
 fundido, con una cenefa y un lambrequín de madera calada. Los almacenes y las
 comisarías se reparten por cada pueblo en lugar de agruparse alrededor de su
 plaza, y General Pico tiene un almacén y una comisaría a cada lado de su línea.
+
+Cada ciudad tiene dos bancos (el Banco de la Nación Argentina y el Banco Español
+del Río de la Plata, uno a cada lado de la vía en General Pico), cada pueblo uno
+(el Banco de la Nación) y las aldeas ninguno. General Pico tiene además su
+Intendencia Municipal frente a la plaza: dos plantas, un pabellón central con el
+reloj municipal en el frontón y el mástil de la bandera. Bancos e intendencia
+son frentes académicos de la época hechos con el kit de fachadas, con su nombre
+en el friso o en el ático, palenque, árboles y su lugar en el minimapa.
 
 Un minimapa con estilo de papel en la esquina superior derecha muestra el
 pueblo más cercano con el norte hacia arriba, titulado con su nombre: calles,
@@ -245,7 +282,7 @@ caballo de Don Hidalgo lo deja subir. Montar es la primera de las habilidades
 del jugador (`pampa_core::Abilities`); el lazo, las armas y los autos quedan
 para más adelante.
 
-A caballo a galope tendido (al menos el 85 % de la velocidad máxima del galope, 49 km/h), `Space` salta (`Rider::jump`). En el aire el caballo mantiene su línea y su velocidad, y pasa por encima de todo obstáculo bajo mientras está más alto que ese obstáculo. Los alambrados miden 1.3 m, y un objeto de un asentamiento es tan alto como su estructura. Todo lo demás cuenta como sin límite de altura (`StaticObstacles::push_low`, `World::resolve_above`). En el aire el caballo reproduce el clip `Gallop_Jump` de Quaternius (patas recogidas, cuerpo cabeceando), ajustado en cada frame a `Rider::flight` (la proporción del vuelo transcurrida) para que la pose siga el arco de la física y no el suyo propio; la subida propia del clip se le quita al cuerpo. Por encima del clip, las patas traseras impulsan visiblemente al caballo en el despegue y las delanteras se recogen un poco más en lo alto, mientras el jinete se inclina hacia adelante desde la cadera con la mano de las riendas a lo largo del cuello, y luego se endereza y absorbe el aterrizaje con las rodillas y la cadera.
+A caballo a galope tendido (al menos el 85 % de la velocidad máxima del galope, 49 km/h), `Space` salta (`Rider::jump`). En el aire el caballo mantiene su línea y su velocidad, y pasa por encima de todo obstáculo bajo mientras está más alto que ese obstáculo. Los alambrados miden 1.3 m, y un objeto de un asentamiento es tan alto como su estructura. Todo lo demás cuenta como sin límite de altura (`StaticObstacles::push_low`, `World::resolve_above`). En el aire el caballo reproduce su clip `Gallop_Jump` (`tools/horse.py`: las manos despegan primero, las patas traseras apoyan bajo la panza, empujan y salen estiradas hacia atrás; como en las láminas de saltos de Muybridge, en lo alto las manos van plegadas y las patas traseras flexionadas por detrás, las manos se despliegan solo al final del descenso, primero la de atrás, y las patas traseras apoyan después, cuando el galope retoma con las manos apoyadas; la cola sale levantada hacia atrás; el cuerpo cabecea), ajustado en cada frame a `Rider::flight` (la proporción del vuelo transcurrida) para que la pose siga el arco de la física y no el suyo propio; la subida propia del clip se le quita al cuerpo. Mientras tanto el jinete se inclina hacia adelante desde la cadera con la mano de las riendas a lo largo del cuello, y luego se endereza y absorbe el aterrizaje con las rodillas y la cadera.
 
 A pie, el jugador camina a 1.6 m/s (unos 5.8 km/h) y trota con `Shift` a 18 km/h, con las mismas teclas, la misma colisión y un cuerpo del tamaño de una persona.
 La gente le abre paso sin quejarse a alguien que va a pie; solo el caballo los
@@ -373,7 +410,7 @@ El escalón más bajo del monumento, los bancos y la reja son obstáculos. Los s
 
 Los árboles de las plazas son los árboles de las plazas pampeanas de 1919: el paraguas redondo de hojas pinnadas del paraíso, el alto jarrón del olmo, el alto eucalipto con sus hojas colgantes y el aromo, bajo y plumoso. Cada plaza planta una especie, elegida con la semilla del pueblo, y una plaza de la estación planta otra. Un árbol es un tronco de corteza que se angosta, con ramas y ramitas, que lleva tarjetas de hojas con alpha test (entre unos 720 y 960 triángulos). Cada especie tiene tres variantes con semilla, construidas una sola vez y compartidas por todos los árboles de plaza, giradas y escaladas un poco por árbol, así que los pueblos suman en total cuatro materiales de corteza y cuatro de hojas. Los árboles se desvanecen para no tapar la cámara, como los árboles de los asentamientos. Las texturas de corteza y de hojas son conjuntos CC0 de ambientCG: `tools/leaf_atlas.py` dispone las hojas escaneadas en atlas de ramitas (la hoja pinnada del paraíso se compone a partir de folíolos sueltos), y `tools/textures_to_ktx2.sh` empaqueta la opacidad de cada atlas en el alfa de su color (ver `assets/textures/trees/CREDITS.md`).
 
-**Fauna** (primera pasada, `pampa_core::fauna`, dibujada por `pampa_render::fauna`, cargada por streaming por el módulo `fauna` del juego). Manadas de ganado Hereford, Aberdeen Angus y overo pastan dentro de algunos campos alambrados. Cada manada se mantiene en un potrero apartado de los caminos, los pueblos, las lagunas, el ferrocarril y los asentamientos. Las vacas caminan despacio, pastan con la cabeza baja y se quedan paradas; no se echan. Una manada de 10 cabezas o más lleva un toro de su raza. Se alejan caminando cuando un jinete se acerca, y bloquean al jinete como cuerpos blandos. Caballos sin aperos están en los corrales de las chacras y las estancias, con pelajes criollos, a ratos en espera, a ratos pastando. Una vez desbloqueada la monta, cualquiera de ellos se puede montar. Las liebres se sientan y saltan en el pasto abierto y huyen de un jinete. Los teros levantan vuelo en un arco bajo y se posan más adelante. Los chimangos dan vueltas en lo alto, y los patos nadan en la Laguna La Arocena. Las vacas, los toros y los caballos de corral son modelos animados CC0 de Quaternius (`assets/models/fauna/quaternius/`, recortados con `tools/glbtrim.py`). Se tiñen según el pelaje a partir de copias de materiales compartidas, y sus clips siguen la simulación: comer, esperar, caminar al ritmo de la velocidad sobre el suelo, galopar. Más allá de 120 m, o fuera de la vista, un animal se congela en su pose. Los animales más pequeños son unas pocas partes rígidas low-poly que comparten 4 meshes y 10 materiales, animadas solo cerca de la cámara. Los animales se cargan solo en los chunks a menos de dos del chunk del jugador, los más cercanos primero, con límites estrictos por especie (`pampa_core::fauna::caps`). En las compilaciones de depuración, el comando `fauna` de la consola cuenta lo que hay cerca.
+**Fauna** (`pampa_core::fauna`, dibujada por `pampa_render::fauna`, cargada por streaming por el módulo `fauna` del juego). Manadas de ganado Hereford, Aberdeen Angus, overo y Shorthorn rosillo pastan dentro de algunos campos alambrados. Cada manada se mantiene en un potrero apartado de los caminos, los pueblos, las lagunas, el ferrocarril y los asentamientos. Las vacas caminan despacio, pastan con la cabeza baja y se quedan paradas; no se echan. Una manada de 10 cabezas o más lleva un toro de su raza. Se alejan caminando cuando un jinete se acerca, y bloquean al jinete como cuerpos blandos. Caballos sin aperos están en los corrales de las chacras y las estancias, con pelajes criollos, a ratos en espera, a ratos pastando. Una vez desbloqueada la monta, cualquiera de ellos se puede montar. Las liebres se sientan y saltan en el pasto abierto y huyen de un jinete. Los teros levantan vuelo en un arco bajo y se posan más adelante. Chimangos y caranchos dan vueltas en lo alto, planeando con un par de aletazos de vez en cuando, y los patos y las nutrias nadan en la Laguna La Arocena. La fauna silvestre de suelo de 1919 se siembra por chunk, cada especie con su propia semilla: zorros grises en cualquier pasto abierto; ñandúes en grupos de 3 a 6 y vizcachas en colonias alrededor de su vizcachera, solo en campo abierto fuera del monte; mulitas y peludos, lentos; y, solo en el monte de caldén, gatos monteses, pumas y, como avistamiento excepcional, un yaguareté (en la región se extinguió entre 1903 y 1925). Todos descansan, recorren su territorio (más grande cuanto más grande es su territorio real: unos 1.000 m de lado el puma, 160 m el peludo) y huyen de un jinete a su manera, mirando adelante para doblar a tiempo ante un camino o el borde de su territorio; los felinos pueden salir del monte a deambular o huyendo, pero vuelven a él antes de dos horas de juego: el ñandú muy rápido y en línea recta, los armadillos despacio, los felinos a la carrera, a sus velocidades de pique (el gato montés a 45 km/h, el puma a 72 y el yaguareté a 65), que aguantan poco: después de 100, 300 y 150 m aflojan a un galope de 25, 40 y 36 km/h; todos arrancan acelerando y giran de a poco, sin volverse de golpe; la vizcacha corre a su vizcachera, se mete adentro y sale cuando el jinete se fue. El zorro y los felinos saltan los alambrados en vez de esquivarlos: despegan con el alambre bajo lo más alto de un arco que sube lo justo para que su cuerpo, con las patas recogidas, lo pase por 10 cm (1.34 a 1.47 m, de algo más de un segundo en el aire), largo y bajo en carrera (hasta 5.5 m el zorro y el gato montés, 8 m el yaguareté y 11 m el puma, conservando al menos el 70 % de su crucero), bordean un alambre que no pueden saltar (pegado a su paso o en una esquina), caen del otro lado y, huyendo, cruzan un camino alambrado (alambrado, camino, alambrado), que nunca cruzan deambulando; en el aire reproducen su propio clip de salto de alambrado (`Fence_Leap`, hecho sobre videos de un puma salvaje saltando un alambrado y de un puma a toda carrera): sale del galope sin agazaparse, sube casi chato con las manos estiradas, en lo alto el lomo largo y las patas traseras estiradas atrás, baja de nariz con las manos buscando el suelo y la cola de contrapeso, y vuelve al galope; dura su vuelo, a casi la velocidad con que se creó. Los demás no saltan: pasan entre los hilos de los alambrados de los campos y siguen esquivando los caminos. Las rapaces son un modelo animado CC0 de Quaternius (`assets/models/fauna/quaternius/`): el águila del Animal Pack Vol.2 convertida con `tools/fbx2glb.py` (Blender) y diezmada a 2.400 triángulos, que hace de chimango (esbelto, pardo) y de carancho (oscuro, cuello claro, cara rojo anaranjada). El ñandú es un modelo propio, modelado, con rig y animado por script en Blender (`tools/rhea.py`, `assets/models/fauna/own/`): un cuerpo de 5.200 triángulos con el plumaje horneado de una escultura densa en mapas KTX2 (color, normal map y ORM), 324 tarjetas de plumas sueltas con alpha test que solo se dibujan a menos de 40 m, y sus clips de espera, pastoreo (picoteando), caminata (con el cabeceo de las aves) y carrera (con el plumaje sacudiéndose). El caballo criollo (los de corral y los ensillados) también es un modelo propio (`tools/horse.py`): 11.944 triángulos (un cuerpo de 7.200 con el pelo corto, los músculos y los vasos horneados en mapas KTX2 que multiplican el color del pelaje, 4.296 de tarjetas de crin, copete y cola con alpha test, siempre a la vista, y 448 de los ojos), un rig que copia el de Quaternius con huesos extra para la crin, la cola y la cara, y para los músculos del cuarto, el gaskin y la paleta, que se engrosan con la flexión de su articulación, y sus siete clips (esperas, comer, caminata, galope y salto; el galope, rehecho contra videos de caballos reales: las patas traseras muy por debajo de la panza, las rodillas delanteras plegadas apretadas en el vuelo y la mano de galope estirada). La vaca y el toro también son modelos propios (`tools/cattle.py`), con el rig del caballo: 8.192 y 8.792 triángulos, un mapa de color horneado por pelaje sobre los mapas KTX2 de la piel, y una malla liviana de 1.400 triángulos que reemplaza a la completa a partir de los 40 m para las manadas lejanas. El zorro gris pampeano también es un modelo propio (`tools/fox.py`), con el rig del caballo: 12.524 triángulos (un cuerpo de unos 5.200 con su único pelaje, canoso, horneado en el mapa de color de la piel, y mechones de pelo con alpha test en la cola tupida, la gorguera, el lomo y las orejas), 49 huesos y sus siete clips (esperas atentas, rastrear con la nariz en el suelo, comer, caminata, galope rotatorio y el salto sobre el ratón) y el salto de alambrado de los felinos. El gato montés, el puma y el yaguareté también son modelos propios (`tools/felid.py`, una anatomía y un rig de gato para las tres especies): unos 11.300 a 11.600 triángulos, su pelaje (gris ante con manchas negras, leonado liso, dorado con rosetas) horneado en el mapa de color de la piel con la cara de una fotografía real (CC BY, con crédito en `CREDITS.md`), una malla liviana de 1.000 triángulos desde los 40 m, 49 huesos y sus ocho clips, con un galope de pique de zancada larga y el salto de un alambrado. La mulita, el peludo, la vizcacha y la nutria son figuras procedurales. Se tiñen según el pelaje a partir de copias de materiales compartidas, y sus clips siguen la simulación: comer, esperar, caminar al ritmo de la velocidad sobre el suelo, galopar. Más allá de 120 m, o fuera de la vista, un animal se congela en su pose. Los animales más pequeños son unas pocas partes rígidas low-poly que comparten 4 meshes y 15 materiales, animadas solo cerca de la cámara. Los animales se cargan solo en los chunks a menos de dos del chunk del jugador (un animal de suelo a menos de dos chunks y medio del jugador sigue vivo aunque su chunk se vaya o se vuelva a sembrar, su lugar bajo los límites va primero y no se siembra otro igual mientras tanto), los más cercanos primero, con límites estrictos por especie (`pampa_core::fauna::caps`: por ejemplo 3 zorros, 10 ñandúes, 4 armadillos, 12 vizcachas, 3 felinos, 6 nutrias y 4 rapaces). En las compilaciones de depuración, el comando `fauna` de la consola cuenta el ganado, los caballos, las liebres, los teros, las rapaces y los patos que hay cerca (las especies nuevas todavía no: ver `Fauna::all_counts`).
 
 Un tipo de estructura con una ranura de modelo (el molino, la carreta abandonada, la carreta, el pozo y otros) dibuja un modelo glTF de `assets/models/third-party/<slot>/` cuando hay uno, ajustado por `slots.ron`, y si no, su mesh procedural; ver `assets/models/third-party/README.md`. El molino y la carreta abandonada son modelos del 3TD Starter Pack (CC0) convertidos desde COLLADA con `tools/dae2gltf.py`, un script de Python de la biblioteca estándar con sus propios tests (`python3 -I -B -m unittest discover -s tools`; ver `tools/README.md`). Las texturas de paja las genera `assets/textures/buildings/thatch/generate.sh`, cuyo `--check-signs` prueba la convención OpenGL del normal map sobre rampas conocidas. Las texturas de los edificios se distribuyen como KTX2 comprimido para la GPU junto a sus fuentes JPG: `tools/textures_to_ktx2.sh` codifica cada conjunto a UASTC con mipmaps incorporados y empaqueta la oclusión, la rugosidad y la metalicidad en un único mapa `orm`, y Bevy los transcodifica al cargar al formato de bloques de la GPU (BC7 en escritorio), un cuarto de la memoria de video que ocupaba RGBA8 (ver `tools/README.md`).
 
@@ -464,8 +501,9 @@ acentos (un pañuelo rojo, una faja, botones de bronce).
   oscuro con botones de bronce, un cinturón de cuero, pantalones oscuros y
   botas.
 
-Los caballos ensillados son el caballo animado CC0 de Quaternius, el modelo de
-los caballos de corral, de alrededor de 1.5 m a la cruz, con un recado y una
+Los caballos ensillados son el caballo criollo propio, modelado en Blender
+(`tools/horse.py`, `assets/models/fauna/own/horse.glb`, 11.944 triángulos), el
+modelo de los caballos de corral, de 1.5 m a la cruz, con un recado y una
 cabezada de 1919, atados o montados
 (`pampa_render::character::{horse, tack, gait, rider}`):
 
@@ -473,20 +511,36 @@ cabezada de 1919, atados o montados
   caballo, así que los patrones recorren el cuerpo: **zaino** (marrón oscuro
   liso), **tordillo** (gris con manchas más claras), **overo** (castaño con
   grandes manchas blancas y calzado, algo de blanco visto desde cualquier
-  lado), **alazán** y **bayo** (arena con crin, cola y patas negras y una raya
-  dorsal oscura). El caballo de Don Hidalgo, el que monta el jugador, es bayo;
+  lado, con la crin más oscura), **alazán** (con la crin y la cola rubias) y
+  **bayo** (arena con crin, cola y patas negras y una raya dorsal oscura). La
+  crin siempre se aparta del color del pelaje, y al galope vuela en mechones
+  separados, levantada del cuello y hacia atrás. El caballo de Don Hidalgo, el que monta el jugador, es bayo;
   el caballo atado en cada uno de los demás almacenes recibe un pelaje con la
   semilla de su pueblo.
-- **Los aperos** corresponden a la Argentina rural de 1919: un recado (una
-  sudadera tejida, una carona de cuero, los dos bastos y un pellón de cuero de
-  oveja encima, una cincha de cuero crudo), aciones y estribos de hierro, y una
-  cabezada de cuero crudo (testera, bozal, quijeras, argollas del freno) con
-  riendas. Cada capa se envuelve sobre la piel propia del caballo en reposo y
-  recibe skinning a sus huesos con los pesos de la piel que tiene debajo, así
-  que se dobla con el barril del caballo en cada clip y nunca se mete en él.
-  Los estribos de un caballo atado cuelgan y sus riendas descansan sobre la
-  cabeza del recado; los pies de un jinete llevan los estribos y las riendas
-  corren a lo largo del cuello hasta la mano izquierda del jinete.
+- **Los aperos** son el recado criollo de un peón de estancia de La Pampa en
+  1919, capa por capa como lo describen los viajeros del siglo XIX: una bajera
+  (jerga tejida de rayas), una matra de telar indio con su guarda escalonada
+  en rojo, índigo y crudo y los flecos en sus puntas, una carona de suela
+  labrada a fuego, una cincha de tientos con su panel tejido, sus argollas y
+  el látigo, y un cinchón de cuero crudo que envuelve todo. Encima, modelados
+  en Blender (`tools/recado.py`, `assets/models/tack/recado.glb`): los dos
+  bastos de suela con su costura y sus puntas labradas, que asoman adelante y
+  atrás; el cojinillo, un cuero de oveja de lana larga y rizada que cae por
+  los costados con mechones desparejos; y el sobrepuesto de carpincho, el
+  asiento, sobre los dos rollos. La brida, también modelada sobre la cabeza
+  del caballo: la cabezada de cuero crudo trenzado (testera detrás de las
+  orejas, frontalera, quijeras por detrás de los ojos, muserola y fiador), el
+  freno de piernas curvas contra los labios con su bocado y su barbada, y
+  riendas trenzadas que cuelgan en curva. Estribos criollos de hierro,
+  pequeños y triangulares. Todo se dobla con el caballo en cada clip: las
+  carcasas se envuelven sobre su piel en reposo y el recado modelado lleva
+  los pesos de la piel que tiene debajo. Sus mapas son KTX2 (`tools/tack.py` y
+  `tools/recado.py`, unos 11,8 MB de video); los aperos de un caballo dibujan
+  unos 11.000 triángulos. Las piezas del lomo van solo con el tronco, así que
+  se quedan en su lugar cuando el caballo baja la cabeza. Los estribos de un caballo atado cuelgan y sus
+  riendas descansan sobre el cojinillo; los pies de un jinete llevan los
+  estribos y las riendas corren a lo largo del cuello hasta la mano izquierda
+  del jinete.
 - **Andares:** la espera de los clips, luego la caminata al ritmo de la
   velocidad sobre el suelo y estirada hasta unos 4.5 m/s (no hay clip de
   trote), luego el galope. La caminata y el galope cambian de golpe, con el
@@ -676,6 +730,7 @@ abierta el juego no recibe ninguna tecla.
 | `goto ranch` | Ir al patio de la estancia más cercana |
 | `goto ranch castex` / `goto ranch pico` | Ir a la estancia más cercana a ese pueblo |
 | `goto herd` | Ir al potrero de la manada de ganado más cercana |
+| `goto gato` / `puma` / `yaguarete` | Ponerse a 15 m del felino de esa especie más cercano, mirándolo (a pie o a caballo, como estaba): está dentro de su alarma, así que se lo ve arrancar a huir |
 | `goto X Y` | Ir a un punto, en metros del juego |
 | `horse` | Poner un caballo ensillado junto al jugador (montable una vez desbloqueada la monta) |
 | `turbo on` / `turbo off` | Dejar que el caballo del jugador galope a hasta 70 km/h, para recorrer el mapa rápido, o volver a lo normal |

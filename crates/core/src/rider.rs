@@ -518,7 +518,7 @@ mod tests {
     fn new_rider_rests_on_terrain() {
         let (r, p, t) = rider();
         assert_eq!(r.speed, 0.0);
-        assert_eq!(r.height, t.terrain.height(3.0, -2.0));
+        assert_eq!(r.height, t.bare_ground_height(Vec2::new(3.0, -2.0)));
         assert_eq!(r.animation(&p), AnimationState::Idle);
     }
 
@@ -634,7 +634,7 @@ mod tests {
             gallop: true,
         };
         run(&mut r, gallop, &p, &t, 3.0);
-        assert_eq!(r.height, t.terrain.height(r.position.x, r.position.y));
+        assert_eq!(r.height, t.bare_ground_height(r.position));
     }
 
     #[test]
@@ -680,7 +680,7 @@ mod tests {
         let edge = t.bounds.max.x - Rider::COLLIDER_RADIUS;
         assert!((r.position.x - edge).abs() < 1e-3, "x = {}", r.position.x);
         assert!(r.speed.abs() < 1e-3, "head-on wall stops the rider");
-        assert_eq!(r.height, t.terrain.height(r.position.x, r.position.y));
+        assert_eq!(r.height, t.bare_ground_height(r.position));
     }
 
     #[test]

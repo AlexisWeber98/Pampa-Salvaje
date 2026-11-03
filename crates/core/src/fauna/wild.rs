@@ -1,5 +1,6 @@
-//! Animales silvestres: liebres, bandadas de teros, aves rapaces que planean y
-//! patos (ver [`super`]). Ninguno de ellos es un obstáculo.
+//! Animales silvestres: liebres, bandadas de teros, aves rapaces que planean
+//! (chimangos y caranchos) y patos, cuya simulación comparten las nutrias (ver
+//! [`super`]). Ninguno de ellos es un obstáculo.
 
 use std::f32::consts::{PI, TAU};
 
@@ -44,11 +45,6 @@ impl Hare {
     pub const RUN: f32 = 11.0;
     /// Velocidad a los saltos, en m/s.
     pub const HOP: f32 = 1.2;
-
-    /// Orientaciones que se prueban, en orden, cuando el camino hacia adelante
-    /// está cerrado: giros cada vez más amplios hacia uno y otro lado y,
-    /// después, media vuelta.
-    const DETOURS: [f32; 8] = [0.0, 0.8, -0.8, 1.6, -1.6, 2.4, -2.4, PI];
 
     /// Una liebre sentada en `position`, que se mantiene dentro de `home`.
     pub fn new(position: Vec2, home: Aabb, seed: u32) -> Self {
@@ -120,12 +116,7 @@ impl Hare {
         if step <= 0.0 {
             return;
         }
-        let way = Self::DETOURS.iter().find_map(|&turn| {
-            let heading = self.heading.rotated(turn);
-            let next = self.position + heading.forward() * step;
-            (self.home.contains_point(next) && open(next)).then_some((heading, next))
-        });
-        match way {
+        match detour(self.position, self.heading, step, self.home, open) {
             Some((heading, next)) => {
                 self.heading = heading;
                 self.position = next;
@@ -141,6 +132,29 @@ impl Hare {
         self.speed = 0.0;
         self.timer = self.rng.range(3.0, 10.0);
     }
+}
+
+/// Orientaciones que se prueban, en orden, cuando el camino hacia adelante está
+/// cerrado: giros cada vez más amplios hacia uno y otro lado y, después, media
+/// vuelta.
+pub(super) const DETOURS: [f32; 8] = [0.0, 0.8, -0.8, 1.6, -1.6, 2.4, -2.4, PI];
+
+/// El rumbo y el lugar del próximo paso de `step` metros desde `position`
+/// mirando hacia `heading`, sobre terreno que `open` permite dentro de `home`:
+/// derecho si se puede, si no el primer desvío de [`DETOURS`] que sirve;
+/// `None` si ninguno sirve (acorralado).
+pub(super) fn detour(
+    position: Vec2,
+    heading: Heading,
+    step: f32,
+    home: Aabb,
+    open: impl Fn(Vec2) -> bool,
+) -> Option<(Heading, Vec2)> {
+    DETOURS.iter().find_map(|&turn| {
+        let heading = heading.rotated(turn);
+        let next = position + heading.forward() * step;
+        (home.contains_point(next) && open(next)).then_some((heading, next))
+    })
 }
 
 /// Lo que está haciendo una bandada de teros.
@@ -269,9 +283,21 @@ impl Flock {
     }
 }
 
+/// Qué ave rapaz es.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RaptorKind {
+    /// El chimango (*Milvago chimango*): esbelto, pardo y ocráceo, el más
+    /// común.
+    Chimango,
+    /// El carancho (*Caracara plancus*): más grande, oscuro, con el cuello
+    /// claro y la cara rojo anaranjada.
+    Carancho,
+}
+
 /// Un chimango o un carancho que vuela en círculos lentos en lo alto.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Raptor {
+    pub kind: RaptorKind,
     /// El centro de su círculo.
     pub center: Vec2,
     pub radius: f32,
@@ -283,16 +309,29 @@ pub struct Raptor {
 }
 
 impl Raptor {
+    /// Proporción de las rapaces que son chimangos; el resto, caranchos.
+    pub const CHIMANGO_SHARE: f32 = 0.6;
+
     pub fn new(center: Vec2, seed: u32) -> Self {
         let mut rng = Rng::new(seed, 0xca7a);
         let radius = rng.range(30.0, 60.0);
         // Alrededor de 7 m/s por el círculo, en cualquiera de los dos sentidos.
         let rate = 7.0 / radius * if rng.unit() < 0.5 { 1.0 } else { -1.0 };
+        let altitude = rng.range(30.0, 55.0);
+        let angle = rng.unit() * TAU;
+        // Sorteada al final, así que el círculo de cada rapaz no cambió al
+        // separar las dos especies.
+        let kind = if rng.unit() < Self::CHIMANGO_SHARE {
+            RaptorKind::Chimango
+        } else {
+            RaptorKind::Carancho
+        };
         Self {
+            kind,
             center,
             radius,
-            altitude: rng.range(30.0, 55.0),
-            angle: rng.unit() * TAU,
+            altitude,
+            angle,
             rate,
         }
     }

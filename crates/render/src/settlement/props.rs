@@ -526,8 +526,9 @@ pub(crate) fn cart(structure: &Structure) -> Shape {
     shape
 }
 
-/// Una rueda de rayos alrededor de `hub` (eje a lo largo de `Z`).
-fn wheel(shape: &mut Shape, hub: Vec3, radius: f32) {
+/// Una rueda de rayos alrededor de `hub` (eje a lo largo de `Z`); también la
+/// de los vehículos ([`crate::vehicle`]).
+pub(crate) fn wheel(shape: &mut Shape, hub: Vec3, radius: f32) {
     let rim = 20;
     for k in 0..rim {
         let (a, b) = (
