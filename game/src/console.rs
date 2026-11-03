@@ -29,7 +29,14 @@
 //!   rígidas ([`CharacterModelsShown`]; solo esta consola los desactiva);
 //! - `time HH` / `time HH:MM`: adelanta el reloj hasta esa hora;
 //! - `view fp` / `view tp`: mira desde los ojos del jugador o desde la órbita
-//!   ([`ViewMode`]), como `V` fuera del tren;
+//!   ([`ViewMode`]), como `V` fuera del tren, y suelta la cámara libre;
+//! - `view free`: la cámara vuela libre ([`FreeCam`]): WASD la mueve, el mouse
+//!   mira, Espacio y Ctrl suben y bajan, Shift va más rápido, la rueda hace
+//!   zoom. El jugador se queda donde estaba, y los animales siguen reaccionando
+//!   a él, no a la cámara;
+//! - `zoom N`: en la vista libre, el zoom exacto (`zoom 2` ve el doble de
+//!   cerca, `zoom 1` vuelve al normal), entre x1 y
+//!   x[`MAX_ZOOM`](crate::camera::free_cam::MAX_ZOOM);
 //! - `help`: la lista.
 //!
 //! `goto` pone al jugador (y al caballo, si cabalga) en el terreno despejado
@@ -52,6 +59,7 @@ use pampa_render::{
 };
 
 use crate::abilities::{PlayerAbilities, Unlocked};
+use crate::camera::free_cam::FreeCam;
 use crate::errand::Mountable;
 use crate::first_person::ViewMode;
 use crate::player::{DrivePlayer, GameWorld, Player, PlayerTuning};
@@ -68,7 +76,7 @@ const TURBO_ACCELERATION: f32 = 10.0;
 const SEARCH: f32 = 300.0;
 
 /// Lo que la consola enumera con `help`.
-pub const HELP: [&str; 11] = [
+pub const HELP: [&str; 13] = [
     "goto lake, pico, castex, nievas, metileo, caleufu",
     "goto ranch, ranch castex, ranch pico, herd",
     "goto gato, puma, yaguarete: face the nearest",
@@ -80,6 +88,8 @@ pub const HELP: [&str; 11] = [
     "time HH or HH:MM: move the clock on",
     "turbo on, off: gallop at 70 kmh",
     "view fp, tp: first or third person",
+    "view free: fly, WASD mouse Space Ctrl Shift",
+    "zoom N: x2, x4 in view free, 1 resets",
 ];
 
 /// Si las teclas de este frame abren (o cierran) la consola: Ctrl+Shift+F12.
@@ -106,6 +116,10 @@ pub enum Command {
     Turbo(bool),
     /// Mira desde los ojos del jugador (`true`) o desde la órbita.
     View(bool),
+    /// Suelta la cámara para que vuele ([`FreeCam`]).
+    FreeView,
+    /// Fija el zoom de la cámara libre (1 = el campo de visión normal).
+    Zoom(f32),
     Help,
 }
 
@@ -143,7 +157,13 @@ pub fn parse(line: &str) -> Result<Command, String> {
         ["turbo"] => Err("usage: turbo on, turbo off".into()),
         ["view", "fp"] => Ok(Command::View(true)),
         ["view", "tp"] => Ok(Command::View(false)),
-        ["view", ..] => Err("usage: view fp, view tp".into()),
+        ["view", "free"] => Ok(Command::FreeView),
+        ["view", ..] => Err("usage: view fp, view tp, view free".into()),
+        ["zoom"] => Err("usage: zoom N, as in zoom 2".into()),
+        ["zoom", n] => match n.parse::<f32>() {
+            Ok(zoom) if zoom.is_finite() && zoom > 0.0 => Ok(Command::Zoom(zoom)),
+            _ => Err(format!("not a zoom: {n}")),
+        },
         ["time"] => Err("usage: time HH, or time HH:MM".into()),
         ["time", time] => time_of_day(time)
             .map(Command::Time)
@@ -501,14 +521,14 @@ type Places<'w> = (
     ResMut<'w, StreamFocus>,
 );
 
-/// Lo que un comando lee de la fauna, y la vista que puede cambiar.
+/// Lo que un comando lee de la fauna, y las vistas que puede cambiar.
 type Watched<'w> = (
     Option<Res<'w, crate::fauna::Fauna>>,
     (
         Option<Res<'w, crate::fauna::WorldFauna>>,
         Option<Res<'w, WorldFlora>>,
     ),
-    Option<ResMut<'w, ViewMode>>,
+    (Option<ResMut<'w, ViewMode>>, Option<ResMut<'w, FreeCam>>),
 );
 
 /// Ejecuta las líneas ingresadas e imprime lo que hizo cada una.
@@ -527,7 +547,7 @@ fn run_entered(
         Option<ResMut<CharacterModelsShown>>,
         Option<ResMut<PlayerTuning>>,
     ),
-    (fauna, (site, flora), mut view): Watched,
+    (fauna, (site, flora), (mut view, mut free)): Watched,
 ) {
     // Solo se toca cuando hay líneas para ejecutar: un cambio en cada frame
     // volvería a rotular el panel en cada frame, eliminando sus líneas antes de
@@ -599,8 +619,27 @@ fn run_entered(
                 }
                 None => console.print("no horse tuning"),
             },
+            Command::FreeView => match free.as_deref_mut() {
+                Some(free) => {
+                    free.on = true;
+                    console.print("view free: WASD flies, wheel zooms");
+                }
+                None => console.print("no camera"),
+            },
+            Command::Zoom(zoom) => match free.as_deref_mut() {
+                Some(free) if free.on => {
+                    free.zoom = FreeCam::clamp_zoom(zoom);
+                    console.print(format!("zoom x{}", free.zoom));
+                }
+                Some(_) => console.print("zoom: only in view free"),
+                None => console.print("no camera"),
+            },
             Command::View(first) => match view.as_deref_mut() {
                 Some(view) => {
+                    // Volver al jugador suelta la cámara libre.
+                    if let Some(free) = free.as_deref_mut() {
+                        free.on = false;
+                    }
                     *view = if first {
                         ViewMode::FirstPerson
                     } else {
@@ -795,6 +834,7 @@ fn draw_panel(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::camera::free_cam::MAX_ZOOM;
     use crate::ride::testing::shipped_app_at;
     use pampa_core::{Ability, GameClock, TimeOfDay};
 
@@ -834,6 +874,7 @@ mod tests {
         assert_eq!(parse("view tp"), Ok(Command::View(false)));
         assert!(parse("view").unwrap_err().contains("usage"));
         assert!(parse("view side").unwrap_err().contains("usage"));
+        assert_eq!(parse("View Free"), Ok(Command::FreeView));
         assert!((turbo(true).gallop_max * 3.6 - TURBO_KMH).abs() < 1e-3);
         assert_eq!(turbo(false), RiderParams::default());
         for place in ["arocena", "pico", "castex", "nievas", "metileo", "caleufu"] {
@@ -856,6 +897,21 @@ mod tests {
                 -120.5, 300.0
             ))))
         );
+    }
+
+    #[test]
+    fn zoom_takes_a_positive_factor() {
+        assert_eq!(parse("zoom 2"), Ok(Command::Zoom(2.0)));
+        assert_eq!(parse("Zoom 1.5"), Ok(Command::Zoom(1.5)));
+        assert!(parse("zoom").unwrap_err().contains("usage"));
+        for bad in ["0", "-2", "x2", "inf", "nan"] {
+            assert!(
+                parse(&format!("zoom {bad}"))
+                    .unwrap_err()
+                    .contains("not a zoom"),
+                "{bad}"
+            );
+        }
     }
 
     #[test]
@@ -897,6 +953,11 @@ mod tests {
             "view fp: from the eyes once off the train".into(),
             "view tp: the orbit".into(),
             "no camera".into(),
+            parse("zoom").unwrap_err(),
+            parse("zoom x").unwrap_err(),
+            "view free: WASD flies, wheel zooms".into(),
+            "zoom x2.5".into(),
+            "zoom: only in view free".into(),
         ]);
         for line in lines {
             let missing: Vec<char> = line
@@ -1037,6 +1098,42 @@ mod tests {
         enter(&mut app, "view tp");
         assert_eq!(*app.world().resource::<ViewMode>(), ViewMode::ThirdPerson);
         assert_eq!(last_line(&app), "view tp: the orbit");
+    }
+
+    #[test]
+    fn view_free_lets_the_camera_fly_and_zoom_until_view_tp() {
+        let mut app = app();
+        app.init_resource::<ViewMode>().init_resource::<FreeCam>();
+        enter(&mut app, "zoom 2");
+        assert_eq!(last_line(&app), "zoom: only in view free");
+        enter(&mut app, "view free");
+        assert!(app.world().resource::<FreeCam>().on);
+        assert_eq!(last_line(&app), "view free: WASD flies, wheel zooms");
+        enter(&mut app, "zoom 4");
+        assert_eq!(app.world().resource::<FreeCam>().zoom, 4.0);
+        assert_eq!(last_line(&app), "zoom x4");
+        enter(&mut app, "zoom 50");
+        assert_eq!(app.world().resource::<FreeCam>().zoom, MAX_ZOOM);
+        enter(&mut app, "view tp");
+        assert!(!app.world().resource::<FreeCam>().on);
+        assert_eq!(*app.world().resource::<ViewMode>(), ViewMode::ThirdPerson);
+        enter(&mut app, "view free");
+        enter(&mut app, "view fp");
+        assert!(!app.world().resource::<FreeCam>().on);
+        assert_eq!(*app.world().resource::<ViewMode>(), ViewMode::FirstPerson);
+    }
+
+    #[test]
+    fn view_fp_and_tp_still_switch_without_flying() {
+        let mut app = app();
+        app.init_resource::<ViewMode>().init_resource::<FreeCam>();
+        enter(&mut app, "view fp");
+        assert_eq!(*app.world().resource::<ViewMode>(), ViewMode::FirstPerson);
+        assert_eq!(last_line(&app), "view fp: from the eyes");
+        enter(&mut app, "view tp");
+        assert_eq!(*app.world().resource::<ViewMode>(), ViewMode::ThirdPerson);
+        assert_eq!(last_line(&app), "view tp: the orbit");
+        assert_eq!(*app.world().resource::<FreeCam>(), FreeCam::default());
     }
 
     #[test]
