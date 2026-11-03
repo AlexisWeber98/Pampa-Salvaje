@@ -331,6 +331,71 @@ class Gaits(unittest.TestCase):
             self.assertLess(kmh / 3.6 / gallop, pace, name)
             self.assertTrue(2.5 <= 1.0 / F.GALLOP["seconds"] <= 3.5, name)
 
+    def test_the_walk_is_the_footages_lateral_sequence(self):
+        # T4h3, the Patagonia puma's walk (the gato montés its size) and the
+        # Iguazú jaguar's: a stride of 1.03 and 1.0 s; each hind lands, then
+        # its own fore 0.20 and 0.22 of the stride later (LH, LF, RH, RF);
+        # a fore stands 0.70 and 0.64 of the stride, a hind a little less;
+        # and the hind lands in the print its fore has just left (or, the
+        # yaguareté, half a paw behind it, never crouched under the belly).
+        for name, seconds, lateral, duty in (("gato", 0.66, 0.20, 0.70), ("puma", 1.03, 0.20, 0.70),
+                                             ("yagua", 1.00, 0.22, 0.64)):
+            F.configure(name)
+            falls = F.footfalls(F.WALK)
+            self.assertAlmostEqual(F.WALK["seconds"], seconds, delta=0.02, msg=name)
+            order = sorted(falls, key=lambda leg: falls[leg]["down"])
+            self.assertEqual(order, ["LH", "LF", "RH", "RF"], name)
+            for side in "LR":
+                hind, fore = falls[side + "H"], falls[side + "F"]
+                self.assertAlmostEqual(fore["down"] - hind["down"], lateral, delta=0.02, msg=name)
+                self.assertAlmostEqual(fore["duty"], duty, delta=0.02, msg=name)
+                self.assertTrue(duty - 0.06 <= hind["duty"] < fore["duty"], (name, hind["duty"]))
+                # The fore has left before its hind lands a stride on.
+                self.assertLess(fore["down"] + fore["duty"], hind["down"] + 1.0, name)
+                behind = hind["print"] - hind["stride"] - fore["print"]
+                self.assertTrue(-0.02 * F.SP["S"] < behind < 0.06 * F.SP["S"], (name, behind))
+            # The hinds stand no further under the belly than 5 % of the size.
+            self.assertGreater(F.WALK["centre"]["H"], -0.05 * F.SP["S"], name)
+
+
+def check_fence_leap(case, M):
+    """The fence leap (``Fence_Leap``) keyed to the puma over the wire,
+    taken out of the gallop (shared by the fox's tests)."""
+    # A second in the air, about the game's flight (``Leap::flight``,
+    # 1.0-1.1 s), so the game plays it near 1x.
+    case.assertAlmostEqual(M.FENCE_LEAP_AIR, 1.0)
+    case.assertAlmostEqual(M.leap_u(M.FENCE_LEAP_FRAMES[0] / M.FENCE_LEAP_FRAMES[2]), 0.0)
+    case.assertAlmostEqual(M.leap_u(M.FENCE_LEAP_FRAMES[1] / M.FENCE_LEAP_FRAMES[2]), 1.0)
+    off, top, down = M.leap_pose(0.0), M.leap_pose(0.45), M.leap_pose(1.0)
+    # The hinds push off the ground, the fores already up; the body rises
+    # nearly flat, never rearing as in a pounce.
+    case.assertEqual((off["hind"][3], off["fore"][3]), (1.0, 0.0))
+    case.assertTrue(-12.0 <= min(M.leap_pose(u)["pitch"] for u in (0.0, 0.1, 0.2, 0.3)) < 0.0)
+    # At the top the back is long: the hinds trail straight back, the
+    # forearms reach forward, the tail is out.
+    case.assertGreater(top["hind"][0], 0.35)
+    case.assertLess(top["fore"][0], -0.25)
+    case.assertLess(top["flex"], -10.0)
+    # Nose down on the way down, the forepaws on the ground at the end with
+    # the hinds still folded up behind, then the hinds land.
+    case.assertTrue(15.0 <= down["pitch"] <= 25.0, down["pitch"])
+    case.assertEqual((down["fore"][3], down["hind"][3]), (1.0, 0.0))
+    case.assertGreater(down["hind"][1], 0.2)
+    case.assertEqual(M.leap_pose(1.33)["hind"][3], 1.0)
+    # No gather or crouch: out of the stride it never sinks lower than in
+    # the gallop (``gallop``: 0.04 at most), nor stops; it loops smoothly.
+    case.assertGreaterEqual(min(M.leap_pose(u / 10)["lift"] for u in range(-2, 16)), -0.045)
+    period = M.FENCE_LEAP_SECONDS / M.FENCE_LEAP_AIR
+    for u in (-0.1, 0.3, 1.25):
+        a, b = M.leap_pose(u), M.leap_pose(u + period)
+        case.assertAlmostEqual(a["pitch"], b["pitch"])
+        case.assertAlmostEqual(a["fore"][1], b["fore"][1])
+
+
+class Leap(unittest.TestCase):
+    def test_the_fence_leap_is_a_flat_bound_out_of_the_gallop_over_a_second(self):
+        check_fence_leap(self, F)
+
 
 class Skeleton(unittest.TestCase):
     def tearDown(self):

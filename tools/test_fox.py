@@ -102,6 +102,15 @@ class Gaits(unittest.TestCase):
         self.assertTrue(3.5 < gallop < 6.0 and 7.0 / gallop < 2.5, gallop)
 
 
+class Leap(unittest.TestCase):
+    def test_the_fence_leap_is_a_flat_bound_out_of_the_gallop_over_a_second(self):
+        # The cats' keys at the fox's size (``LEAP_SIZE``).
+        from test_felid import check_fence_leap
+
+        check_fence_leap(self, F)
+        self.assertTrue(0.5 < F.LEAP_SIZE < 0.65)
+
+
 class Skeleton(unittest.TestCase):
     def test_the_rig_keeps_the_quaternius_names_parents_first_and_unique(self):
         names = F.joint_names()

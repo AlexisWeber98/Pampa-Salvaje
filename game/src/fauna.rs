@@ -7,7 +7,9 @@
 //! la amenaza que esquivan, y copia su estado en las entidades que dibuja
 //! render ([`Animal`]). Los felinos se siembran solo en el monte de la flora
 //! del mundo ([`WorldFlora`]) y, si salen de él, vuelven antes de dos horas de
-//! juego (`Critter::step_in`); sin flora no hay felinos.
+//! juego (`Critter::step_in`); sin flora no hay felinos. Los animales de
+//! suelo pisan el pasto abierto del mundo, con sus caminos y los alambrados
+//! que el zorro y los felinos saltan ([`Wilds`]).
 //!
 //! El ganado es un cuerpo blando: el jugador se mantiene apartado de él y lo
 //! aparta al caminar. Los caballos que están en los corrales son [`Mountable`]
@@ -18,10 +20,11 @@
 use std::collections::{BTreeMap, HashSet};
 
 use bevy::prelude::*;
+use pampa_core::fauna::Land;
 use pampa_core::fauna::caps;
 use pampa_core::{
-    ChunkCoord, CowState, Critter, CritterKind, CritterState, Duck, FaunaSite, Flock, Hare,
-    HareState, Herd, MAX_STEP, Raptor, RaptorKind, TetheredHorse, Vec2 as GroundVec2,
+    Aabb, ChunkCoord, CowState, Critter, CritterKind, CritterState, Duck, FaunaSite, FenceLayout,
+    Flock, Hare, HareState, Herd, MAX_STEP, Raptor, RaptorKind, TetheredHorse, Vec2 as GroundVec2, World,
 };
 use pampa_render::{Animal, AnimalPose, AnimalSeed, Coat, Gait, WorldFlora, world_from_ground};
 
@@ -557,6 +560,50 @@ fn spawn_share(commands: &mut Commands, share: Share, world: &mut GameWorld) -> 
 
 /// Hace avanzar a cada animal vivo con el jugador como amenaza, y mantiene al
 /// jugador apartado del ganado.
+/// El terreno de los animales de suelo: el pasto abierto de la fauna, la
+/// franja de sus caminos y los alambrados del mundo (sus obstáculos bajos, de
+/// [`FenceLayout::HEIGHT`] o menos, incluidas las tranqueras cerradas).
+struct Wilds<'a> {
+    site: &'a FaunaSite,
+    world: &'a World,
+}
+
+impl Land for Wilds<'_> {
+    fn open(&self, p: GroundVec2) -> bool {
+        self.site.grazeable(p)
+    }
+
+    fn road(&self, p: GroundVec2) -> bool {
+        self.site.road_strip(p)
+    }
+
+    fn wire(&self, from: GroundVec2, to: GroundVec2) -> Option<f32> {
+        let area = Aabb::new(
+            GroundVec2::new(from.x.min(to.x), from.y.min(to.y)),
+            GroundVec2::new(from.x.max(to.x), from.y.max(to.y)),
+        );
+        let obstacles = &self.world.obstacles;
+        let tall = obstacles.near_above(area, FenceLayout::HEIGHT);
+        obstacles
+            .near(area)
+            .into_iter()
+            .filter(|o| !tall.iter().any(|t| std::ptr::eq(*t, *o)))
+            .filter_map(|o| o.segment_overlap(from, to).map(|(enter, _)| enter))
+            .min_by(f32::total_cmp)
+    }
+}
+
+/// Cómo se dibuja lo que está haciendo un animal de suelo.
+fn critter_gait(critter: &Critter) -> Gait {
+    match critter.state {
+        _ if critter.airborne() => Gait::Leap,
+        CritterState::Rest if critter.kind == CritterKind::Nandu => Gait::Graze,
+        CritterState::Rest | CritterState::Den => Gait::Stand,
+        CritterState::Walk => Gait::Walk,
+        CritterState::Flee => Gait::Run,
+    }
+}
+
 fn step_fauna(
     time: Res<Time>,
     site: Option<Res<WorldFauna>>,
@@ -591,7 +638,12 @@ fn step_fauna(
             .iter_mut()
             .for_each(|f| f.0.step(dt, threat, open));
         // Los felinos pueden salir del monte, pero vuelven a él (ver
-        // `Critter::step_in`).
+        // `Critter::step_in`); el zorro y los felinos saltan los alambrados y,
+        // huyendo, cruzan los caminos (`Critter::step_on`).
+        let land = Wilds {
+            site: &site.0,
+            world: &world.0,
+        };
         chunk.critters.iter_mut().for_each(|c| {
             let feline = c.0.kind.feline();
             let monte = |p| {
@@ -600,7 +652,7 @@ fn step_fauna(
                         .as_ref()
                         .is_none_or(|f| f.0.monte(p) >= FaunaSite::MONTE)
             };
-            c.0.step_in(dt, threat, open, monte)
+            c.0.step_on(dt, threat, &land, monte)
         });
         chunk.raptors.iter_mut().for_each(|r| r.0.step(dt));
         for (duck, _) in chunk.ducks.iter_mut().chain(&mut chunk.nutrias) {
@@ -693,15 +745,9 @@ fn place_fauna(
             put(*e, world_from_ground(p, ground(p) + raptor.altitude), pose);
         }
         for (critter, e) in &chunk.critters {
-            let gait = match critter.state {
-                CritterState::Rest if critter.kind == CritterKind::Nandu => Gait::Graze,
-                CritterState::Rest | CritterState::Den => Gait::Stand,
-                CritterState::Walk => Gait::Walk,
-                CritterState::Flee => Gait::Run,
-            };
             let pose = AnimalPose {
                 heading: critter.heading,
-                gait,
+                gait: critter_gait(critter),
                 speed: critter.speed,
                 bank: 0.0,
             };
@@ -774,6 +820,57 @@ mod tests {
         }
         app.update();
         app.update();
+    }
+
+    #[test]
+    fn a_chased_puma_jumps_a_field_fence_of_the_shipped_world_and_is_drawn_leaping() {
+        let laid = crate::shipped_world::laid();
+        let land = Wilds {
+            site: &laid.fauna,
+            world: &laid.world,
+        };
+        // Un tramo de alambrado de la cuadrícula con pasto abierto a los dos
+        // lados.
+        let (mid, across) = laid
+            .fences
+            .runs
+            .iter()
+            .filter(|r| !r.roadside)
+            .flat_map(|r| r.spans())
+            .find_map(|(a, b)| {
+                let along = (b - a) * (1.0 / a.distance(b));
+                let across = GroundVec2::new(-along.y, along.x);
+                let mid = (a + b) * 0.5;
+                (-30..=30)
+                    .all(|k| land.open(mid + across * k as f32))
+                    .then_some((mid, across))
+            })
+            .expect("a field fence in open country");
+        // Lo ve a través, no a lo largo.
+        let at = land.wire(mid - across * 2.0, mid + across * 2.0);
+        assert!(at.is_some_and(|f| (f - 0.5).abs() < 0.1), "{at:?}");
+        assert_eq!(land.wire(mid + across, mid + across * 3.0), None);
+        // Un jinete corre al puma contra el alambrado.
+        let home = Aabb::new(
+            mid - GroundVec2::new(500.0, 500.0),
+            mid + GroundVec2::new(500.0, 500.0),
+        );
+        let mut puma = Critter::new(CritterKind::Puma, mid - across * 25.0, home, None, 1);
+        let side = |c: &Critter| (c.position - mid).dot(across);
+        let mut leaped = false;
+        for _ in 0..200 {
+            let rider = puma.position - across * 15.0;
+            let before = side(&puma);
+            puma.step_on(0.05, Some(rider), &land, |_| true);
+            if before < 0.0 && side(&puma) >= 0.0 {
+                // Lo más bajo de su cuerpo, con las patas recogidas.
+                let tuck = CritterKind::Puma.leap().unwrap().tuck;
+                assert!(puma.lift() + tuck > FenceLayout::HEIGHT, "over the wire");
+            }
+            leaped |= critter_gait(&puma) == Gait::Leap;
+            assert_eq!(critter_gait(&puma) == Gait::Leap, puma.airborne());
+        }
+        assert!(leaped && side(&puma) > 10.0, "{}", side(&puma));
     }
 
     #[test]

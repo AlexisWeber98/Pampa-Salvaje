@@ -2,7 +2,9 @@
 //! ñandúes, mulitas, peludos, vizcachas, gatos monteses, pumas y, muy rara vez,
 //! un yaguareté. Cada uno descansa, deambula un poco y huye de un jinete según
 //! su especie ([`CritterKind::profile`]); la vizcacha corre a su vizcachera y
-//! se mete adentro. Ninguno es un obstáculo.
+//! se mete adentro. Ninguno es un obstáculo. Los que saltan ([`Leap`]: el
+//! zorro y los felinos) pasan los alambrados por arriba en vez de esquivarlos
+//! y, huyendo, cruzan un camino alambrado ([`Land`]).
 
 use std::f32::consts::TAU;
 
@@ -129,9 +131,144 @@ impl CritterKind {
         }
     }
 
+    /// Cómo salta un alambrado, si lo salta: el zorro y los felinos, que
+    /// pasan por encima de uno de 1.3 m sin esfuerzo (un puma salta varios
+    /// metros de alto). El arco sube lo justo para que ninguna parte de su
+    /// cuerpo pase el alambre a menos de [`Leap::SPARE`] ([`Leap::tuck`],
+    /// medido en Blender sobre su clip `Fence_Leap`, un bote largo y chato:
+    /// -0.015 m el zorro, 0.011 el gato montés, 0.11 el puma y 0.074 el
+    /// yaguareté; arcos de 1.47, 1.45, 1.34 y 1.38 m). El largo es lo que
+    /// recorre en el aire a su velocidad, entre un salto casi parado y uno
+    /// en carrera, largo y bajo, de unos 5.5 m el zorro y el gato montés, 8 m
+    /// el yaguareté y 11 m el puma (lo que avanzan en el aire a su crucero y
+    /// a su pique: con el vuelo más largo de este clip, el zorro a 5 m perdía
+    /// más del 30 % de su crucero y el puma a 10 m caía, en una esquina, más
+    /// allá de donde había mirado). Los armadillos, las vizcachas y los
+    /// ñandúes pasan entre los hilos o los esquivan.
+    pub const fn leap(self) -> Option<Leap> {
+        let (length, tuck) = match self {
+            Self::Zorro => ((2.0, 5.5), -0.015),
+            Self::GatoMontes => ((2.0, 5.5), 0.011),
+            Self::Puma => ((3.0, 11.0), 0.11),
+            Self::Yaguarete => ((3.0, 8.0), 0.074),
+            _ => return None,
+        };
+        // El alambre pasa, como muy temprano, en `CLEAR` del arco.
+        let rise = 4.0 * Leap::CLEAR * (1.0 - Leap::CLEAR);
+        let height = (crate::FenceLayout::HEIGHT + Leap::SPARE - tuck) / rise;
+        Some(Leap {
+            height,
+            length,
+            tuck,
+        })
+    }
+
     /// Si es un felino del monte.
     pub const fn feline(self) -> bool {
         matches!(self, Self::GatoMontes | Self::Puma | Self::Yaguarete)
+    }
+}
+
+/// Cómo salta una especie ([`CritterKind::leap`]): un arco de tiro
+/// parabólico, con el alambre siempre debajo de su punto más alto.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Leap {
+    /// Lo más alto que suben sus pies, en metros sobre el suelo.
+    pub height: f32,
+    /// El salto más corto (parado) y el más largo (en carrera), en metros.
+    pub length: (f32, f32),
+    /// Lo más bajo que pasa su cuerpo sobre el alambre respecto de la altura
+    /// de sus pies (el origen del modelo) cuando el animal cruza el alambre,
+    /// en metros, resumido para la regla del arco: si `lift() + tuck` pasa
+    /// el alambre por [`Leap::SPARE`] con el alambre en [`Leap::CLEAR`] del
+    /// salto, la parte más baja del cuerpo lo pasa por lo menos por eso en
+    /// todos sus saltos. No es una medida de una pose sino de todo el cruce: reproduciendo el
+    /// clip `Fence_Leap` en Blender sobre el arco del juego, cada parte del
+    /// cuerpo (las manos estiradas adelante, la cabeza, la panza, las patas
+    /// traseras y la cola) pasa sobre el alambre en su momento, más arriba o
+    /// más abajo en el arco; la peor, en los saltos que da (de
+    /// `length.0` a `length.1`, el alambre en la mitad del salto, o desde
+    /// `CLEAR` en los saltos de la mitad más larga), es la que vale. Puede
+    /// ser negativa: lo que pasa más bajo lo hace antes o después de lo más
+    /// alto del arco.
+    pub tuck: f32,
+}
+
+impl Leap {
+    /// Lo más temprano del salto en que puede pasar el alambre, como fracción
+    /// de su largo: ahí el arco ya subió el 96 % de su altura.
+    pub const CLEAR: f32 = 0.4;
+    /// Lo que ocupa un alambrado a lo ancho, con margen (un tramo en diagonal
+    /// ocupa más que su espesor), en metros: más allá, otro alambre es otro
+    /// alambrado, y no cae encima de uno.
+    pub const WIRE: f32 = 0.5;
+    /// Lo que le sobra por encima del alambre a lo más bajo de su cuerpo, en
+    /// metros.
+    pub const SPARE: f32 = 0.1;
+
+    /// Cuántos segundos pasa en el aire: lo que tarda en subir a
+    /// [`Self::height`] y volver a caer.
+    pub fn flight(&self) -> f32 {
+        2.0 * (2.0 * self.height / crate::Rider::GRAVITY).sqrt()
+    }
+
+    /// Cuánto salta corriendo a `speed` m/s, en metros: lo que avanza en el
+    /// aire, entre [`Self::length`].
+    pub fn reach(&self, speed: f32) -> f32 {
+        (speed * self.flight()).clamp(self.length.0, self.length.1)
+    }
+
+    /// Lo más rápido que avanza en el aire, en m/s: llega al alambre frenando
+    /// hasta acá.
+    pub fn top(&self) -> f32 {
+        self.length.1 / self.flight()
+    }
+}
+
+/// Lo que un animal de suelo sabe del terreno que pisa ([`Critter::step_on`]).
+pub trait Land {
+    /// Si puede pisar `p` (pasto abierto).
+    fn open(&self, p: Vec2) -> bool;
+
+    /// Si `p` es la franja de un camino, entre sus alambrados: cerrada para
+    /// el que deambula, pero el que salta alambrados la cruza huyendo.
+    fn road(&self, p: Vec2) -> bool {
+        let _ = p;
+        false
+    }
+
+    /// Dónde cruza el tramo de `from` a `to` el primer alambre (o tranquera
+    /// cerrada), como fracción del tramo; `None` si no cruza ninguno.
+    fn wire(&self, from: Vec2, to: Vec2) -> Option<f32> {
+        let _ = (from, to);
+        None
+    }
+}
+
+/// Un terreno sin caminos ni alambrados: abierto donde lo dice su función.
+struct Open<F>(F);
+
+impl<F: Fn(Vec2) -> bool> Land for Open<F> {
+    fn open(&self, p: Vec2) -> bool {
+        (self.0)(p)
+    }
+}
+
+/// Un salto en curso.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Flight {
+    from: Vec2,
+    to: Vec2,
+    height: f32,
+    /// Los segundos que dura y los que lleva en el aire.
+    time: f32,
+    spent: f32,
+}
+
+impl Flight {
+    /// Qué parte del salto lleva, de 0 a 1.
+    fn progress(&self) -> f32 {
+        (self.spent / self.time).min(1.0)
     }
 }
 
@@ -168,6 +305,8 @@ pub struct Critter {
     out: f32,
     /// Donde estuvo en su hábitat por última vez: ahí vuelve.
     haven: Vec2,
+    /// El salto en el que está en el aire.
+    flight: Option<Flight>,
     timer: f32,
     rng: Rng,
 }
@@ -220,18 +359,29 @@ impl Critter {
             fled: 0.0,
             out: 0.0,
             haven: position,
+            flight: None,
             timer: rng.range(1.0, 8.0),
             rng,
         }
     }
 
-    /// A qué altura del suelo está, en metros: bajo tierra dentro de su cueva.
+    /// A qué altura del suelo está, en metros: bajo tierra dentro de su cueva,
+    /// en el aire sobre el arco de un salto.
     pub fn lift(&self) -> f32 {
+        if let Some(f) = self.flight {
+            let u = f.progress();
+            return 4.0 * f.height * u * (1.0 - u);
+        }
         if self.state == CritterState::Den {
             -Self::DEN_DEPTH
         } else {
             0.0
         }
+    }
+
+    /// Si está en el aire, saltando un alambrado.
+    pub fn airborne(&self) -> bool {
+        self.flight.is_some()
     }
 
     /// Avanza `dt` segundos con un jinete en `threat`, pisando solo terreno que
@@ -256,6 +406,24 @@ impl Critter {
         open: impl Fn(Vec2) -> bool,
         habitat: impl Fn(Vec2) -> bool,
     ) {
+        self.step_on(dt, threat, &Open(open), habitat)
+    }
+
+    /// Como [`Self::step_in`], sobre `land`, con sus caminos y alambrados. El
+    /// que no salta ([`CritterKind::leap`]) pisa solo lo abierto y no ve los
+    /// alambres (pasa entre los hilos). El que salta nunca los atraviesa:
+    /// cuando uno le queda a medio salto por delante, despega y lo pasa por
+    /// arriba con el alambre bajo lo más alto del arco, si del otro lado
+    /// puede pisar; huyendo frena antes hasta su velocidad en el aire
+    /// ([`Leap::top`]) y cruza la franja de un camino ([`Land::road`]), por
+    /// la que nunca deambula (salvo para salir de ella si quedó adentro).
+    pub fn step_on(
+        &mut self,
+        dt: f32,
+        threat: Option<Vec2>,
+        land: &impl Land,
+        habitat: impl Fn(Vec2) -> bool,
+    ) {
         let profile = self.kind.profile();
         self.timer -= dt;
         if habitat(self.position) {
@@ -263,6 +431,11 @@ impl Critter {
             self.haven = self.position;
         } else {
             self.out += dt;
+        }
+        // En el aire sigue su arco sin mirar al jinete.
+        if self.flight.is_some() {
+            self.fly(dt);
+            return;
         }
         let homing = self.out >= Self::STRAY * 0.5;
         let away = threat.map(|t| (self.position - t, self.position.distance(t)));
@@ -350,18 +523,47 @@ impl Critter {
             }
             _ => (self.heading, Self::FLEE_TURN, false),
         };
+        // Lo que puede pisar: el pasto abierto y, si salta alambrados, la
+        // franja de un camino cuando huye o para salir de ella.
+        let leap = self.kind.leap();
+        let crossing =
+            leap.is_some() && (self.state == CritterState::Flee || !land.open(self.position));
+        let open = |p| land.open(p) || (crossing && land.road(p));
         // Mira un trecho adelante: si por ahí el paso está cerrado, empieza a
         // doblar desde antes en vez de pegar el volantazo contra el borde.
         // Cuanto más rápido corre, más lejos mira: lo que avanza en `LOOK` más
         // lo que le lleva doblar a esa velocidad; parado, un par de metros.
         let reach = (self.speed * Self::LOOK + self.speed * self.speed / Self::GRIP).max(2.0);
+        // El que salta no encara un alambre que no puede saltar: tan cerca que
+        // no le da para un salto a su velocidad (corriendo pegado a él, por
+        // ejemplo) o con la caída del otro lado cerrada o sobre otro alambre
+        // (una esquina); lo bordea hasta poder saltarlo o alejarse.
+        let jumpable = |h: Heading| {
+            let Some(leap) = leap else {
+                return true;
+            };
+            let span = leap.reach(self.speed);
+            let ahead = h.forward();
+            let far = reach.max(span);
+            let Some(at) = land.wire(self.position, self.position + ahead * far) else {
+                return true;
+            };
+            if at * far < Leap::CLEAR * span {
+                return false;
+            }
+            let over = self.position + ahead * (at * far);
+            let to = over + ahead * (span * 0.5);
+            self.home.contains_point(to)
+                && open(to)
+                && land.wire(over + ahead * Leap::WIRE, to).is_none()
+        };
         let way = [reach, reach * 0.5, reach * 0.25]
             .into_iter()
             .find_map(|far| {
                 DETOURS
                     .iter()
                     .map(|&t| goal.rotated(t))
-                    .find(|&h| self.clear(h, far, &open))
+                    .find(|&h| self.clear(h, far, open) && jumpable(h))
             });
         let Some(way) = way else {
             // Acorralado: se queda quieto donde está.
@@ -382,12 +584,28 @@ impl Critter {
                 profile.run
             };
             let corner = (Self::GRIP * Self::LOOK / off.abs().max(1e-3)).max(profile.walk);
-            let brake = if corner < want.min(self.speed) {
+            let mut brake = if corner < want.min(self.speed) {
                 want = corner;
                 Self::BRAKE
             } else {
                 Self::EASE
             };
+            // Frena antes de un alambrado hasta lo que avanza en el aire, para
+            // llegar a despegar a esa velocidad.
+            // Mira hacia donde va y hacia donde está doblando.
+            let wire = [self.heading, way]
+                .into_iter()
+                .filter_map(|h| land.wire(self.position, self.position + h.forward() * reach))
+                .min_by(f32::total_cmp);
+            if let Some((leap, at)) = leap.zip(wire) {
+                // Con un paso de margen, para no despegar todavía frenando.
+                let room = (at * reach - leap.length.1 * 0.5 - self.speed * dt).max(0.0);
+                let fence = (leap.top() * leap.top() + 2.0 * Self::BRAKE * room).sqrt();
+                if fence < want {
+                    want = fence;
+                    brake = Self::BRAKE;
+                }
+            }
             self.speed = if self.speed < want {
                 (self.speed + Self::ACCEL * dt).min(want)
             } else {
@@ -405,7 +623,41 @@ impl Critter {
         if step <= 0.0 {
             return;
         }
-        let next = self.position + self.heading.forward() * step;
+        let forward = self.heading.forward();
+        if let Some(leap) = leap {
+            // Un alambre a medio salto por delante: despega con el alambre
+            // cerca de la mitad del salto (alargándolo si viene más rápido de
+            // lo que avanzaría en el aire, sin dejar el alambre fuera de la
+            // parte alta del arco), si del otro lado puede pisar; si no, el
+            // alambre lo frena como un borde.
+            let far = leap.reach(self.speed) * 0.5 + step;
+            if let Some(at) = land.wire(self.position, self.position + forward * far) {
+                let near = (at * far).max(0.25);
+                let time = leap.flight();
+                let length = (self.speed * time).clamp(2.0 * near, near / Leap::CLEAR);
+                let to = self.position + forward * length;
+                let past = self.position + forward * (at * far + Leap::WIRE).min(length);
+                if self.home.contains_point(to) && open(to) && land.wire(past, to).is_none() {
+                    self.speed = length / time;
+                    self.flight = Some(Flight {
+                        from: self.position,
+                        to,
+                        height: leap.height,
+                        time,
+                        spent: 0.0,
+                    });
+                    self.fly(dt);
+                    return;
+                }
+                if at * far <= step {
+                    if self.state == CritterState::Flee {
+                        self.speed = 0.0;
+                    }
+                    return;
+                }
+            }
+        }
+        let next = self.position + forward * step;
         if self.home.contains_point(next) && open(next) {
             self.fled += step;
             self.position = next;
@@ -413,6 +665,25 @@ impl Critter {
             // Se topó con el borde sin terminar de doblar: frena en seco y
             // pivotea ahí mismo hasta encarar el paso abierto.
             self.speed = 0.0;
+        }
+    }
+
+    /// Avanza `dt` segundos por el arco de su salto; al caer sigue andando o
+    /// huyendo desde donde cayó.
+    fn fly(&mut self, dt: f32) {
+        let Some(flight) = self.flight.as_mut() else {
+            return;
+        };
+        flight.spent += dt;
+        let u = flight.progress();
+        let next = flight.from + (flight.to - flight.from) * u;
+        self.fled += next.distance(self.position);
+        self.position = next;
+        if u >= 1.0 {
+            self.flight = None;
+            if self.state == CritterState::Walk {
+                self.speed = self.kind.profile().walk;
+            }
         }
     }
 
@@ -712,6 +983,222 @@ mod tests {
         for _ in 0..5000 {
             vizcacha.step(0.1, None, |_| true);
             assert!(vizcacha.position.distance(den) < Critter::DEN_RANGE + 5.0);
+        }
+    }
+
+    /// Pasto con alambrados en las líneas `x` y `y` de `wires` y, entre
+    /// `road.0` y `road.1` de `x`, la franja de un camino.
+    struct Fenced {
+        wires: Vec<f32>,
+        rows: Vec<f32>,
+        road: Option<(f32, f32)>,
+    }
+
+    impl Land for Fenced {
+        fn open(&self, p: Vec2) -> bool {
+            !self.road(p)
+        }
+
+        fn road(&self, p: Vec2) -> bool {
+            self.road.is_some_and(|(a, b)| p.x >= a && p.x <= b)
+        }
+
+        fn wire(&self, from: Vec2, to: Vec2) -> Option<f32> {
+            let cross = |a: f32, b: f32, w: f32| {
+                ((a - w) * (b - w) <= 0.0 && a != b).then(|| (w - a) / (b - a))
+            };
+            self.wires
+                .iter()
+                .map(|&w| cross(from.x, to.x, w))
+                .chain(self.rows.iter().map(|&w| cross(from.y, to.y, w)))
+                .flatten()
+                .min_by(f32::total_cmp)
+        }
+    }
+
+    /// Avanza `animal` un paso y comprueba que, si cruzó un alambre de
+    /// `land`, lo hizo en el aire por encima de él.
+    fn step_over(animal: &mut Critter, dt: f32, rider: Option<Vec2>, land: &Fenced) -> bool {
+        let (at, lift) = (animal.position, animal.lift());
+        animal.step_on(dt, rider, land, |_| true);
+        let crossed = land.wire(at, animal.position).is_some();
+        if crossed {
+            // Lo más bajo de su cuerpo, con las patas recogidas.
+            let low = lift.min(animal.lift()) + animal.kind.leap().map_or(0.0, |l| l.tuck);
+            assert!(
+                low > crate::FenceLayout::HEIGHT,
+                "{:?} crossed a wire {low} m up",
+                animal.kind
+            );
+        }
+        crossed
+    }
+
+    #[test]
+    fn leapers_jump_wire_fences_in_an_arc_and_never_go_through_them() {
+        let leapers = [
+            CritterKind::Zorro,
+            CritterKind::GatoMontes,
+            CritterKind::Puma,
+            CritterKind::Yaguarete,
+        ];
+        for kind in CritterKind::ALL {
+            assert_eq!(kind.leap().is_some(), leapers.contains(&kind), "{kind:?}");
+        }
+        // Una cuadrícula de potreros de 40 m.
+        let lines: Vec<f32> = (-50..50).map(|k| k as f32 * 40.0 + 20.0).collect();
+        let land = Fenced {
+            wires: lines.clone(),
+            rows: lines,
+            road: None,
+        };
+        let big = Aabb::from_center_size(Vec2::ZERO, Vec2::new(4000.0, 4000.0));
+        let dt = 0.05;
+        for kind in leapers {
+            let profile = kind.profile();
+            let mut animal = Critter::new(kind, Vec2::ZERO, big, None, 3);
+            let mut rider = Vec2::new(-profile.alarm * 0.5, 0.0);
+            let (mut jumps, mut top, mut stuck) = (0, 0.0_f32, 0.0);
+            // Huye de un jinete que lo persigue, y después anda solo.
+            for k in 0..4000 {
+                let chased = k < 1200;
+                let before = (animal.state, animal.speed);
+                let (heading, at) = (animal.heading, animal.position);
+                jumps += usize::from(step_over(&mut animal, dt, chased.then_some(rider), &land));
+                // Ni volantazos ni trabado contra un alambrado.
+                let turned = turn_toward(heading, animal.heading.forward()).abs();
+                assert!(
+                    turned <= Critter::FLEE_TURN * dt + 1e-4,
+                    "{kind:?} turned {turned}"
+                );
+                stuck = if animal.state == CritterState::Flee && animal.position == at {
+                    stuck + dt
+                } else {
+                    0.0
+                };
+                assert!(stuck < 0.6, "{kind:?} stuck {stuck} s at a fence");
+                top = top.max(animal.lift());
+                // Llega al alambrado frenando, sin perder velocidad de golpe (a
+                // lo sumo lo que frena en dos pasos, si dobla hacia el alambre
+                // ya encima de él).
+                if before.0 == CritterState::Flee && animal.state == CritterState::Flee {
+                    assert!(
+                        before.1 - animal.speed <= 2.0 * Critter::BRAKE * dt,
+                        "{kind:?} dropped from {} to {} m/s",
+                        before.1,
+                        animal.speed
+                    );
+                }
+                let to = animal.position - rider;
+                if chased && to.length() > 0.0 {
+                    rider = animal.position - to * (profile.alarm * 0.5 / to.length());
+                }
+            }
+            assert!(jumps >= 3, "{kind:?} jumped {jumps} fences");
+            let leap = kind.leap().unwrap();
+            assert!((top - leap.height).abs() < 0.05, "{kind:?} rose {top} m");
+            // Pasa el alambre por un palmo, no por un metro: un globo no.
+            let spare = top + leap.tuck - crate::FenceLayout::HEIGHT;
+            assert!(
+                (Leap::SPARE..0.2).contains(&spare),
+                "{kind:?} clears the wire by {spare} m"
+            );
+            assert!(!animal.airborne() || animal.lift() > 0.0);
+        }
+        // El puma salta más largo que el gato montés, y todos pasan
+        // alrededor de un segundo en el aire, lo que tarda en caer de un
+        // metro y pico.
+        let leap = |k: CritterKind| k.leap().unwrap();
+        assert!(leap(CritterKind::Puma).length.1 > leap(CritterKind::GatoMontes).length.1);
+        for kind in leapers {
+            let t = leap(kind).flight();
+            assert!((0.9..1.1).contains(&t), "{kind:?} flies {t} s");
+        }
+    }
+
+    #[test]
+    fn a_fleeing_leaper_keeps_most_of_its_cruise_over_a_fence() {
+        let big = Aabb::from_center_size(Vec2::ZERO, Vec2::new(4000.0, 4000.0));
+        let dt = 0.02;
+        for kind in [
+            CritterKind::Zorro,
+            CritterKind::GatoMontes,
+            CritterKind::Puma,
+            CritterKind::Yaguarete,
+        ] {
+            let profile = kind.profile();
+            // Un alambrado bien pasado su pique, cuando ya va a su crucero.
+            let wire = if profile.sprint.is_finite() {
+                profile.sprint + 80.0
+            } else {
+                100.0
+            };
+            let land = Fenced {
+                wires: vec![wire],
+                rows: Vec::new(),
+                road: None,
+            };
+            let mut animal = Critter::new(kind, Vec2::ZERO, big, None, 2);
+            let mut rider = Vec2::new(-profile.alarm * 0.5, 0.0);
+            let (mut approach, mut air) = (0.0, None);
+            for _ in 0..3000 {
+                let was = animal.airborne();
+                step_over(&mut animal, dt, Some(rider), &land);
+                if animal.position.x < wire - 30.0 {
+                    approach = animal.speed;
+                }
+                if animal.airborne() && !was && air.is_none() {
+                    air = Some(animal.speed);
+                }
+                rider = animal.position - Vec2::new(profile.alarm * 0.5, 0.0);
+            }
+            let air = air.expect("jumped");
+            // Conserva al menos el 70 % de su crucero.
+            assert!(
+                air >= 0.7 * approach,
+                "{kind:?} leapt at {air} m/s after running at {approach}"
+            );
+        }
+    }
+
+    #[test]
+    fn fleeing_leapers_cross_a_fenced_road_and_the_others_keep_off_it() {
+        // Un camino de norte a sur: su franja de 29 m entre `x` 20 y 49, con
+        // un alambrado a cada lado, a 8.5 m de su eje.
+        let land = Fenced {
+            wires: vec![26.0, 43.0],
+            rows: Vec::new(),
+            road: Some((20.0, 49.0)),
+        };
+        let big = Aabb::from_center_size(Vec2::ZERO, Vec2::new(4000.0, 4000.0));
+        let dt = 0.05;
+        for kind in CritterKind::ALL {
+            let profile = kind.profile();
+            let mut animal = Critter::new(kind, Vec2::ZERO, big, None, 5);
+            // Primero anda solo; después un jinete lo corre hacia el camino.
+            for _ in 0..1200 {
+                step_over(&mut animal, dt, None, &land);
+                assert!(
+                    land.open(animal.position),
+                    "{kind:?} wandered onto the road"
+                );
+            }
+            let mut rider = animal.position - Vec2::new(profile.alarm * 0.5, 0.0);
+            for _ in 0..1200 {
+                step_over(&mut animal, dt, Some(rider), &land);
+                if kind.leap().is_none() {
+                    assert!(land.open(animal.position), "{kind:?} ran onto the road");
+                }
+                let to = animal.position - rider;
+                rider = animal.position - to * (profile.alarm * 0.5 / to.length());
+            }
+            if kind.leap().is_some() {
+                assert!(
+                    animal.position.x > 49.0,
+                    "{kind:?} stopped at {:?}",
+                    animal.position
+                );
+            }
         }
     }
 

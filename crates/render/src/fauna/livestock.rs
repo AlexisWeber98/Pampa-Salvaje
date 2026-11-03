@@ -64,6 +64,7 @@ use bevy::gltf::{GltfAssetLabel, GltfMaterialName, GltfMeshName};
 use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldAssetRoot, WorldInstanceReady};
+use pampa_core::fauna::{CritterKind, Leap};
 use pampa_core::{CowCoat, Heading};
 
 use super::{Animal, AnimalPose, AnimalSeed, Gait};
@@ -238,6 +239,25 @@ pub const GALLOP_SPEED: f32 = 2.5;
 
 /// Fundido entre dos clips.
 const BLEND: Duration = Duration::from_millis(300);
+/// Fundido hacia el salto: más corto, porque el vuelo dura alrededor de un
+/// segundo ([`Leap::flight`]).
+const LEAP_BLEND: Duration = Duration::from_millis(120);
+
+/// Cuánto dura el clip `Gallop_Jump` del zorro y de los felinos (un brinco
+/// sobre una presa, `tools/fox.py` y `tools/felid.py`, `POUNCE_SECONDS`), en
+/// segundos.
+pub const POUNCE_SECONDS: f32 = 64.0 / 48.0;
+/// Cuánto dura el clip `Fence_Leap` del zorro y de los felinos (el salto de
+/// un alambrado, `tools/fox.py` y `tools/felid.py`, `FENCE_LEAP_FRAMES`), en
+/// segundos: 84 cuadros a 48 por segundo.
+pub const FENCE_LEAP_SECONDS: f32 = 84.0 / 48.0;
+/// Las fracciones del clip `Fence_Leap` entre las que salta: desde el
+/// impulso de las patas (el cuadro 10) hasta que las manos tocan el suelo (el
+/// 58), un segundo justo. Un salto en el juego empieza en la primera y, a
+/// [`clip_speed`], llega a la segunda al caer. Lo bajo que pasa el cuerpo
+/// sobre el alambre en este tramo es lo que resume [`Leap::tuck`]: si cambia
+/// el clip, se vuelve a medir.
+pub const LEAP_CLIP: (f32, f32) = (10.0 / 84.0, 58.0 / 84.0);
 
 /// La velocidad sobre el suelo que muestra el clip `Walk` del caballo a tamaño
 /// real, en m/s: el deslizamiento medio hacia atrás de la punta de cada vaso
@@ -391,18 +411,23 @@ impl Species {
         matches!(self, Self::Chimango | Self::Carancho)
     }
 
-    /// Los clips del archivo, en orden: los siete del ganado, o los pocos que
-    /// traen el águila (planeo y aleteo) y el ñandú (dos esperas, el
+    /// Los clips del archivo, en orden: los siete del ganado (el zorro y los
+    /// felinos, además, el salto de un alambrado, `Fence_Leap`), o los pocos
+    /// que traen el águila (planeo y aleteo) y el ñandú (dos esperas, el
     /// pastoreo, la caminata y la carrera).
     pub fn clip_names(self) -> &'static [&'static str] {
         match self {
-            Self::Cow
-            | Self::Bull
-            | Self::Horse
-            | Self::Fox
-            | Self::GatoMontes
-            | Self::Puma
-            | Self::Yaguarete => &[
+            Self::Fox | Self::GatoMontes | Self::Puma | Self::Yaguarete => &[
+                "Idle",
+                "Idle_2",
+                "Idle_Headlow",
+                "Eating",
+                "Walk",
+                "Gallop",
+                "Gallop_Jump",
+                "Fence_Leap",
+            ],
+            Self::Cow | Self::Bull | Self::Horse => &[
                 "Idle",
                 "Idle_2",
                 "Idle_Headlow",
@@ -461,7 +486,8 @@ impl Species {
     }
 
     /// El índice de animación glTF que reproduce `clip`: el mismo en los
-    /// modelos de siete clips; en el águila, el planeo o el aleteo (el
+    /// modelos de siete clips o más (los que no saltan alambrados no tienen
+    /// `Fence_Leap`: su lugar lo toma `Gallop_Jump`, que nunca lo pide); en el águila, el planeo o el aleteo (el
     /// "galope" de un ave); en el ñandú, la espera con la cabeza baja y el comer son su
     /// pastoreo, y el galope su carrera.
     pub fn animation(self, clip: Clip) -> usize {
@@ -471,13 +497,21 @@ impl Species {
                 Clip::Idle2 => 1,
                 Clip::IdleHeadlow | Clip::Eating => 2,
                 Clip::Walk => 3,
-                Clip::Gallop | Clip::GallopJump => 4,
+                Clip::Gallop | Clip::GallopJump | Clip::FenceLeap => 4,
             };
         }
-        if self.clip_names().len() == CLIP_COUNT {
-            return clip.index();
+        let count = self.clip_names().len();
+        if count >= CLIP_COUNT {
+            return if clip.index() < count {
+                clip.index()
+            } else {
+                Clip::GallopJump.index()
+            };
         }
-        usize::from(matches!(clip, Clip::Walk | Clip::Gallop | Clip::GallopJump))
+        usize::from(matches!(
+            clip,
+            Clip::Walk | Clip::Gallop | Clip::GallopJump | Clip::FenceLeap
+        ))
     }
 
     /// Su medida de referencia en las unidades propias del modelo, medida
@@ -560,6 +594,19 @@ impl Species {
         }
     }
 
+    /// Cómo salta un alambrado ([`CritterKind::leap`]): el zorro y los
+    /// felinos.
+    pub const fn leap(self) -> Option<Leap> {
+        let kind = match self {
+            Self::Fox => CritterKind::Zorro,
+            Self::GatoMontes => CritterKind::GatoMontes,
+            Self::Puma => CritterKind::Puma,
+            Self::Yaguarete => CritterKind::Yaguarete,
+            _ => return None,
+        };
+        kind.leap()
+    }
+
     /// Lo más rápido que se reproduce su galope respecto de cómo se creó: los
     /// animales chicos dan pasos más rápidos que lo que muestran sus clips.
     /// El puma y el yaguareté, como el galope del caballo
@@ -591,13 +638,20 @@ pub enum Clip {
     Eating,
     Walk,
     Gallop,
-    /// El salto en el aire (patas recogidas, cuerpo cabeceando): solo lo
-    /// reproduce un caballo montado en vuelo, así que todos los demás animales
+    /// El salto en el aire (patas recogidas, cuerpo cabeceando): lo
+    /// reproduce un caballo montado en vuelo; en el zorro y los felinos es un
+    /// brinco sobre una presa, que el juego todavía no reproduce; los demás
     /// lo mantienen con peso cero.
     GallopJump,
+    /// El salto de un alambrado del zorro y de los felinos ([`Gait::Leap`]),
+    /// un bote largo y chato que sale del galope y vuelve a él. Solo lo
+    /// traen sus modelos: no está en [`Clip::ALL`], los siete que comparten
+    /// todos (y que el caballo mezcla por peso).
+    FenceLeap,
 }
 
-/// Cuántos clips contiene cada modelo (la longitud de [`Clip::ALL`]).
+/// Cuántos clips contienen todos los modelos de ganado (la longitud de
+/// [`Clip::ALL`]).
 pub const CLIP_COUNT: usize = 7;
 
 impl Clip {
@@ -611,6 +665,19 @@ impl Clip {
         Self::GallopJump,
     ];
 
+    /// Los que se cargan de cada modelo, en el orden de sus nodos en el grafo
+    /// ([`SpeciesModel::nodes`]): [`Clip::ALL`] y el salto de un alambrado.
+    pub const LOADED: [Self; CLIP_COUNT + 1] = [
+        Self::Idle,
+        Self::Idle2,
+        Self::IdleHeadlow,
+        Self::Eating,
+        Self::Walk,
+        Self::Gallop,
+        Self::GallopJump,
+        Self::FenceLeap,
+    ];
+
     /// El nombre del clip en el archivo glTF.
     pub fn name(self) -> &'static str {
         match self {
@@ -621,6 +688,7 @@ impl Clip {
             Self::Walk => "Walk",
             Self::Gallop => "Gallop",
             Self::GallopJump => "Gallop_Jump",
+            Self::FenceLeap => "Fence_Leap",
         }
     }
 
@@ -668,6 +736,7 @@ pub fn clip_for(animal: Animal, pose: &AnimalPose, seed: u32, clock: f32) -> Cli
         Gait::Walk if pose.speed > GALLOP_SPEED => Clip::Gallop,
         Gait::Walk => Clip::Walk,
         Gait::Run => Clip::Gallop,
+        Gait::Leap => Clip::FenceLeap,
         _ if matches!(animal, Animal::Horse(_)) => {
             let turn = ((clock.max(0.0) + (seed % 97) as f32) / HORSE_IDLE) as u32;
             [Clip::Idle, Clip::Idle2, Clip::IdleHeadlow, Clip::Eating][mix(seed, turn) as usize % 4]
@@ -677,13 +746,18 @@ pub fn clip_for(animal: Animal, pose: &AnimalPose, seed: u32, clock: f32) -> Cli
 }
 
 /// La velocidad de reproducción de `clip` para un animal de `species` que se
-/// mueve a `ground` m/s: la caminata y el galope ajustados a ella, el resto tal
-/// como se creó.
+/// mueve a `ground` m/s: la caminata y el galope ajustados a ella; el salto de
+/// un alambrado ([`Species::leap`]), para que la parte del clip en el aire
+/// ([`LEAP_CLIP`], un segundo) dure su vuelo: cerca de como se creó (entre
+/// 0.9 y 1 vez); el resto tal como se creó.
 pub fn clip_speed(clip: Clip, species: Species, ground: f32) -> f32 {
-    match clip {
+    match (clip, species.leap()) {
         _ if species.bird() => 1.0,
-        Clip::Walk => (ground / species.walk_speed()).clamp(0.4, 2.0),
-        Clip::Gallop => (ground / species.gallop_speed()).clamp(0.6, species.max_pace()),
+        (Clip::Walk, _) => (ground / species.walk_speed()).clamp(0.4, 2.0),
+        (Clip::Gallop, _) => (ground / species.gallop_speed()).clamp(0.6, species.max_pace()),
+        (Clip::FenceLeap, Some(leap)) => {
+            (LEAP_CLIP.1 - LEAP_CLIP.0) * FENCE_LEAP_SECONDS / leap.flight()
+        }
         _ => 1.0,
     }
 }
@@ -879,7 +953,7 @@ pub struct SpeciesModel {
     pub scene: Handle<WorldAsset>,
     pub clips: Vec<Handle<AnimationClip>>,
     pub graph: Handle<AnimationGraph>,
-    /// El nodo del grafo de cada [`Clip`], en el orden de [`Clip::ALL`].
+    /// El nodo del grafo de cada [`Clip`], en el orden de [`Clip::LOADED`].
     pub nodes: Vec<AnimationNodeIndex>,
 }
 
@@ -985,7 +1059,7 @@ pub(super) fn load_livestock(
         let file = server.load(path.clone());
         // Un clip por cada [`Clip`], aunque el archivo traiga menos (ver
         // [`Species::animation`]).
-        let clips: Vec<Handle<AnimationClip>> = Clip::ALL
+        let clips: Vec<Handle<AnimationClip>> = Clip::LOADED
             .iter()
             .map(|&c| {
                 let index = species.animation(c);
@@ -1351,10 +1425,17 @@ pub(super) fn drive_livestock(
                 .as_ref()
                 .and_then(|c| c.get(&species.clips[clip.index()]))
                 .map_or(0.0, AnimationClip::duration);
-            transitions
-                .play(&mut player, node, blend)
-                .repeat()
-                .seek_to(start_offset(seed, clip) * duration);
+            if clip == Clip::FenceLeap {
+                // Un salto se ve una vez, desde el impulso.
+                transitions
+                    .play(&mut player, node, blend.min(LEAP_BLEND))
+                    .seek_to(LEAP_CLIP.0 * duration);
+            } else {
+                transitions
+                    .play(&mut player, node, blend)
+                    .repeat()
+                    .seek_to(start_offset(seed, clip) * duration);
+            }
             rig.clip = Some(clip);
         }
         if let Some(active) = player.animation_mut(node) {
@@ -1482,6 +1563,40 @@ mod tests {
         }
         // El ganado sigue galopando a lo sumo a 1.6 veces su clip.
         assert_eq!(clip_speed(Clip::Gallop, Species::Cow, 50.0), 1.6);
+    }
+
+    #[test]
+    fn leapers_play_their_jump_over_the_whole_flight() {
+        let leapers = [
+            (Animal::Zorro, CritterKind::Zorro),
+            (Animal::GatoMontes, CritterKind::GatoMontes),
+            (Animal::Puma, CritterKind::Puma),
+            (Animal::Yaguarete, CritterKind::Yaguarete),
+        ];
+        for (animal, kind) in leapers {
+            let species = Species::of(animal).unwrap();
+            let clip = clip_for(animal, &standing(Gait::Leap, 5.0), 3, 0.0);
+            assert_eq!(clip, Clip::FenceLeap, "{animal:?}");
+            assert_eq!(species.clip_names()[species.animation(clip)], "Fence_Leap");
+            // Del impulso a las manos en el suelo, en lo que dura su vuelo,
+            // sea cual sea su velocidad, cerca de como se creó.
+            let flight = kind.leap().unwrap().flight();
+            let rate = clip_speed(clip, species, 5.0);
+            assert_eq!(rate, clip_speed(clip, species, 15.0));
+            let air = (LEAP_CLIP.1 - LEAP_CLIP.0) * FENCE_LEAP_SECONDS / rate;
+            assert!(
+                (air - flight).abs() < 1e-4,
+                "{animal:?}: {air} s for {flight} s"
+            );
+            assert!((0.88..=1.05).contains(&rate), "{animal:?}: {rate}");
+            println!("{animal:?}: the leap plays {rate:.2} times as made");
+        }
+        // Los demás no saltan: su clip sigue tal como se creó, y el brinco
+        // queda para su presa.
+        assert_eq!(Species::Nandu.leap(), None);
+        assert_eq!(clip_speed(Clip::GallopJump, Species::Horse, 5.0), 1.0);
+        assert_eq!(clip_speed(Clip::GallopJump, Species::Puma, 5.0), 1.0);
+        assert_eq!(Species::Horse.animation(Clip::FenceLeap), 6);
     }
 
     #[test]
@@ -1796,7 +1911,7 @@ mod tests {
             // reproduce.
             let names = species.clip_names();
             assert_eq!(gltf.animations.len(), names.len(), "{species:?}");
-            for clip in Clip::ALL {
+            for clip in Clip::LOADED {
                 let index = species.animation(clip);
                 let named = &gltf.named_animations[names[index]];
                 assert_eq!(*named, gltf.animations[index], "{species:?} {clip:?}");
@@ -1805,6 +1920,22 @@ mod tests {
                     .get(named)
                     .unwrap();
                 assert!(clip.duration() > 0.3, "{species:?}");
+            }
+            // El brinco y el salto de un alambrado del zorro y de los felinos
+            // duran lo que se supone al reproducirlos.
+            if species.leap().is_some() {
+                for (name, seconds) in [
+                    ("Gallop_Jump", POUNCE_SECONDS),
+                    ("Fence_Leap", FENCE_LEAP_SECONDS),
+                ] {
+                    let jump = &gltf.named_animations[name];
+                    let jump = world.resource::<Assets<AnimationClip>>().get(jump).unwrap();
+                    assert!(
+                        (jump.duration() - seconds).abs() < 0.03,
+                        "{species:?} {name}: {}",
+                        jump.duration()
+                    );
+                }
             }
             assert_eq!(gltf.skins.len(), 1);
             let skin = world
@@ -2002,6 +2133,58 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         panic!("the models never spawned");
+    }
+
+    #[test]
+    fn a_leaping_puma_fades_into_its_jump_once_from_the_take_off() {
+        let mut app = fauna_app();
+        let running = AnimalPose {
+            gait: Gait::Run,
+            speed: 10.0,
+            ..default()
+        };
+        let puma = app
+            .world_mut()
+            .spawn((Animal::Puma, running, AnimalSeed(3), Transform::default()))
+            .id();
+        until_rigged(&mut app, 1);
+        app.update();
+        app.world_mut().get_mut::<AnimalPose>(puma).unwrap().gait = Gait::Leap;
+        app.update();
+        let world = app.world_mut();
+        let rig = world
+            .query::<&LivestockRig>()
+            .single(world)
+            .unwrap()
+            .clone();
+        assert_eq!(rig.clip, Some(Clip::FenceLeap));
+        let models = world.resource::<LivestockModels>();
+        let model = models.get(Species::Puma).unwrap();
+        let (jump, gallop) = (
+            model.nodes[Clip::FenceLeap.index()],
+            model.nodes[Clip::Gallop.index()],
+        );
+        let player = world.get::<AnimationPlayer>(rig.player).unwrap();
+        let active = player.animation(jump).expect("the jump plays");
+        // Una sola vez, desde el impulso, estirado sobre el vuelo.
+        assert_eq!(
+            active.repeat_mode(),
+            bevy::animation::RepeatAnimation::Never
+        );
+        let start = LEAP_CLIP.0 * FENCE_LEAP_SECONDS;
+        assert!(
+            (active.seek_time() - start).abs() < 0.1,
+            "{} s",
+            active.seek_time()
+        );
+        assert_eq!(
+            active.speed(),
+            clip_speed(Clip::FenceLeap, Species::Puma, 10.0)
+        );
+        // El galope se funde en vez de cortarse.
+        assert!(player.animation(gallop).is_some(), "the gallop fades out");
+        let transitions = world.get::<AnimationTransitions>(rig.player).unwrap();
+        assert_eq!(transitions.get_main_animation(), Some(jump));
     }
 
     #[test]

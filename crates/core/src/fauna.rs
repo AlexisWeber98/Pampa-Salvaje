@@ -25,7 +25,7 @@ mod critter;
 mod herd;
 mod wild;
 
-pub use critter::{Critter, CritterKind, CritterState, Profile};
+pub use critter::{Critter, CritterKind, CritterState, Land, Leap, Profile};
 pub use herd::{Cow, CowCoat, CowState, Herd};
 pub use wild::{Duck, Flock, FlockState, Hare, HareState, Raptor, RaptorKind};
 
@@ -346,25 +346,40 @@ impl FaunaSite {
     /// camino (más allá de su alambrado al costado del camino), pueblo, orilla
     /// de laguna, la vía férrea y todo asentamiento.
     pub fn grazeable(&self, p: Vec2) -> bool {
+        !self.near_road(p) && self.wild(p)
+    }
+
+    /// Si `p` está en la franja de un camino ([`Self::ROAD_MARGIN`]: el
+    /// camino, sus banquinas y sus alambrados) y lejos de todo lo demás que
+    /// [`Self::grazeable`] deja afuera: por ahí cruzan huyendo los animales
+    /// que saltan alambrados ([`Land::road`]).
+    pub fn road_strip(&self, p: Vec2) -> bool {
+        self.near_road(p) && self.wild(p)
+    }
+
+    fn near_road(&self, p: Vec2) -> bool {
+        // El margen queda bien dentro del alcance del índice de caminos.
+        self.roads
+            .as_ref()
+            .is_some_and(|r| r.near(p, Self::ROAD_MARGIN).is_some())
+    }
+
+    /// Si `p` está dentro del mundo y lejos de pueblos, lagunas, la vía
+    /// férrea y asentamientos (todo lo de [`Self::grazeable`] salvo los
+    /// caminos).
+    fn wild(&self, p: Vec2) -> bool {
         let inner = self.config.bounds();
         if p.x.abs() > inner.max.x - 20.0 || p.y.abs() > inner.max.y - 20.0 {
             return false;
         }
-        // El margen queda bien dentro del alcance del índice de caminos.
-        let off_roads = self
-            .roads
-            .as_ref()
-            .is_none_or(|r| r.near(p, Self::ROAD_MARGIN).is_none());
-        off_roads
-            && self.flat_areas.iter().all(|a| {
-                let dx = ((p.x - a.center.x).abs() - a.half_extents.x).max(0.0);
-                let dy = ((p.y - a.center.y).abs() - a.half_extents.y).max(0.0);
-                dx.hypot(dy) >= a.falloff + Self::TOWN_MARGIN
-            })
-            && self
-                .lagoons
-                .iter()
-                .all(|l| l.offshore(p) >= Lagoon::BANK + Lagoon::MARGIN)
+        self.flat_areas.iter().all(|a| {
+            let dx = ((p.x - a.center.x).abs() - a.half_extents.x).max(0.0);
+            let dy = ((p.y - a.center.y).abs() - a.half_extents.y).max(0.0);
+            dx.hypot(dy) >= a.falloff + Self::TOWN_MARGIN
+        }) && self
+            .lagoons
+            .iter()
+            .all(|l| l.offshore(p) >= Lagoon::BANK + Lagoon::MARGIN)
             && self
                 .rail
                 .iter()
@@ -752,6 +767,19 @@ mod tests {
             hares > 0 && flocks > 0 && raptors > 0,
             "{hares} {flocks} {raptors}"
         );
+    }
+
+    #[test]
+    fn roads_through_open_country_are_a_road_strip_not_pasture() {
+        let site = site();
+        let roads = site.roads.as_ref().expect("roads");
+        let mut strip = 0;
+        for (a, b) in roads.segments() {
+            let mid = (a + b) * 0.5;
+            assert!(!site.grazeable(mid));
+            strip += usize::from(site.road_strip(mid));
+        }
+        assert!(strip > 0, "some road runs through the open pampa");
     }
 
     #[test]

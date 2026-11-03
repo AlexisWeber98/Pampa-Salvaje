@@ -17,8 +17,9 @@ the tail, the IK bones and their ``_end`` leaves: the names of the
 Quaternius fox the game draws today) with two bones per ear, the jaw and
 nine for the tail; and the seven clips ``Idle``, ``Idle_2``,
 ``Idle_Headlow``, ``Eating``, ``Walk``, ``Gallop`` and ``Gallop_Jump`` (a
-mouse pounce: the game plays it for no wild animal) as the cattle's (the
-exporter sorts them by name: ``tools/glbtrim.py --keep`` puts them back in
+mouse pounce: the game does not play it yet) as the cattle's, and an
+eighth, ``Fence_Leap`` (the cats' leap over a wire fence; the exporter
+sorts them by name: ``tools/glbtrim.py --keep`` puts them back in
 this order). Life size: 0.38 m over the withers with the pads at the
 origin, facing -Y (glTF +Z).
 
@@ -1640,6 +1641,123 @@ def gallop_jump(arm, t):
     return pose
 
 
+# The fence leap (``Fence_Leap``), as the cats' (``tools/felid.py``: the
+# same keys, at the fox's size), keyed to a wild puma bounding over a low
+# wire fence (a video, every frame at 30 fps) and Muybridge's mastiff
+# jumping a hurdle (1887), taken out of the gallop: no gather or crouch,
+# the body flatter and longer than the walking puma's, more stretched at
+# the top.
+# Out of the last stride (the hinds under the belly, the fores
+# lifting), the take-off (the hinds driving back off the ground, the
+# forelegs stretched forward, the body rising nearly flat, the chest up
+# some 6 degrees), the long flat bound over the wire (the back long, the
+# forearms forward, the hinds trailing straight back, the tail out), the
+# descent nose down (the forelegs reaching down for the ground, the hinds
+# folding up behind, the tail up as a counterweight), the forepaws
+# landing, then the hinds under the belly and on into the
+# gallop. The game plays it once from the take-off and lifts the body on
+# its own arc (``Leap::lift`` in the core): the clip keeps the body near
+# its height and only pitches it, so the forepaws touch down where the arc
+# ends. In 48 fps frames: the take-off, the forepaws down, the end; 1 s in
+# the air, about the game's flight, so the game plays it at about 1x.
+FENCE_LEAP_FRAMES = (10, 58, 84)
+FENCE_LEAP_SECONDS = FENCE_LEAP_FRAMES[2] / 48
+FENCE_LEAP_AIR = (FENCE_LEAP_FRAMES[1] - FENCE_LEAP_FRAMES[0]) / 48
+
+# The keys, by the share of the flight ``u`` (0 the take-off, 1 the
+# forepaws down; before and after, on the ground): the body nose down
+# (degrees), its lift and the spine's flex (rounded positive); each fore
+# and hind paw's shift from its rest in the body's frame (along, up; layout
+# metres), its toe (degrees up) and how much it is held on the ground; the
+# tail lifted (degrees) and the neck (``pose_neck``). The last key is the
+# first one again: the clip loops in Blender, never in the game.
+LEAP_KEYS = (
+    # u     pitch  lift   flex   fore (dy, dz, toe, ground)   hind (dy, dz, toe, ground)   tail  neck
+    (-0.21, 2.0, -0.04, 6.0, (0.12, 0.06, -30.0, 0.3), (-0.16, 0.00, -10.0, 1.0), 15.0, (-4.0, -2.0, 0.0, 6.0)),
+    (0.00, -6.0, 0.02, -10.0, (-0.20, 0.22, -80.0, 0.0), (0.28, 0.00, -30.0, 1.0), 22.0, (2.0, 0.0, 0.0, 4.0)),
+    (0.20, -6.0, 0.04, -14.0, (-0.28, 0.27, -80.0, 0.0), (0.42, 0.06, -40.0, 0.0), 30.0, (0.0, -1.0, 0.0, 4.0)),
+    (0.45, 0.0, 0.04, -16.0, (-0.30, 0.24, -60.0, 0.0), (0.44, 0.10, -50.0, 0.0), 42.0, (-2.0, -2.0, 0.0, 4.0)),
+    (0.75, 12.0, 0.03, -6.0, (-0.24, 0.06, -10.0, 0.0), (0.22, 0.22, -70.0, 0.0), 60.0, (-6.0, -2.0, 0.0, 4.0)),
+    (1.00, 18.0, 0.00, 0.0, (-0.14, 0.02, 0.0, 1.0), (0.10, 0.26, -70.0, 0.0), 65.0, (-6.0, -2.0, 0.0, 4.0)),
+    (1.18, 8.0, -0.04, 6.0, (0.10, 0.00, 10.0, 1.0), (-0.06, 0.14, -40.0, 0.0), 40.0, (-6.0, -2.0, 0.0, 6.0)),
+    (1.33, 2.0, -0.04, 8.0, (0.14, 0.10, -40.0, 0.0), (-0.18, 0.00, -10.0, 1.0), 20.0, (-4.0, -2.0, 0.0, 6.0)),
+)
+
+
+def _flat(key):
+    return [key[0], *key[1:4], *key[4], *key[5], key[6], *key[7]]
+
+
+def _unflat(v):
+    return dict(pitch=v[1], lift=v[2], flex=v[3], fore=tuple(v[4:8]), hind=tuple(v[8:12]), tail=v[12], neck=tuple(v[13:17]))
+
+
+def leap_u(t):
+    """The share of the flight at the clip's phase ``t`` (0 to 1)."""
+    return (t * FENCE_LEAP_SECONDS - FENCE_LEAP_FRAMES[0] / 48) / FENCE_LEAP_AIR
+
+
+def leap_pose(u, keys=LEAP_KEYS):
+    """The keys at ``u``, through a smooth curve (a Hermite spline whose
+    tangents run from key to key) that loops: past the last key it heads
+    back to the first one, a period of ``FENCE_LEAP_SECONDS`` later."""
+    period = FENCE_LEAP_SECONDS / FENCE_LEAP_AIR
+    rows = [_flat(k) for k in keys]
+    n = len(rows)
+    u0 = rows[0][0]
+    u = u0 + (u - u0) % period
+
+    def row(i):
+        r = list(rows[i % n])
+        r[0] += period * (i // n)
+        return r
+
+    i = max(k for k in range(n) if rows[k][0] <= u)
+    a, b = row(i), row(i + 1)
+    before, after = row(i - 1), row(i + 2)
+    h = b[0] - a[0]
+    s = (u - a[0]) / h
+    h00, h10, h01, h11 = 2 * s**3 - 3 * s**2 + 1, s**3 - 2 * s**2 + s, -2 * s**3 + 3 * s**2, s**3 - s**2
+    out = [u]
+    for k in range(1, len(a)):
+        ma = (b[k] - before[k]) / (b[0] - before[0]) * h
+        mb = (after[k] - a[k]) / (after[0] - a[0]) * h
+        out.append(h00 * a[k] + h10 * ma + h01 * b[k] + h11 * mb)
+    v = _unflat(out)
+    # The ground holds are a share: no overshoot past 0 or 1.
+    v["fore"] = v["fore"][:3] + (min(1.0, max(0.0, v["fore"][3])),)
+    v["hind"] = v["hind"][:3] + (min(1.0, max(0.0, v["hind"][3])),)
+    return v
+
+
+# The fox's size against the cats' layout (a puma's), for the keys.
+LEAP_SIZE = 0.57
+
+
+def fence_leap(arm, t):
+    # See ``LEAP_KEYS``. The ears laid back, the brush streaming as in the
+    # gallop and lifted a little on the way down.
+    s = LEAP_SIZE
+    k = leap_pose(leap_u(t))
+    body = body_matrix(lift=k["lift"] * s, nose_down=k["pitch"])
+    pose = H.Pose(arm)
+    pose.carry("Body", body)
+    pose.turn("Torso2", H.rot(body.to_3x3() @ H.X, k["flex"]))
+    H.pose_neck(pose, body, k["neck"])
+    pose_face(pose, ((30, 8), (30, 8)))
+    pose_hair(pose, tail=(4.0, 0.0), tail_lift=0.6 * k["tail"], lag=0.06, t=t, tail_curve=-1.0, tail_whip=4.0)
+    for leg in H.LEGS:
+        dy, dz, toe, ground = k["fore" if leg[1] == "F" else "hind"]
+        # A hair apart, the two sides: the right a little behind.
+        lag = 0.012 * s if leg[0] == "R" else 0.0
+        f = body @ (H.fetlock_rest(leg) + Vector((0.0, (dy + lag) * s, dz * s)))
+        rest_z = H.hoof_place(leg, 0.0, 0.0).z
+        f.z = max(rest_z, f.z + (rest_z - f.z) * ground)
+        H.pose_leg(pose, body, leg, f, toe, slide=0.06 * s * min(1.0, max(0.0, -dy / 0.2)) if leg[1] == "F" else 0.0,
+                   hip=0.6, sling=ground if leg[1] == "F" else 0.0)
+    return pose
+
+
 def clips(arm):
     global GRAZE_BEND
     GRAZE_BEND = H.graze_bend(arm, height=0.012)
@@ -1660,6 +1778,7 @@ def clips(arm):
     print(f"fox: in the gallop the standing paws fall short of their marks by at most "
           f"{ {k: round(v, 4) for k, v in sorted(H.SHORT.items())} } m")
     made.append(rig.bake_clip(arm, "Gallop_Jump", POUNCE_SECONDS, gallop_jump, H.MOVED))
+    made.append(rig.bake_clip(arm, "Fence_Leap", FENCE_LEAP_SECONDS, fence_leap, H.MOVED))
     for a, seconds in ((made[4], WALK["seconds"]), (made[5], GALLOP["seconds"])):
         speed, lows = H.measure(arm, a, seconds)
         print(f"fox: {a.name} {seconds:.3f} s: paws slide back at {speed:.2f} m/s; lowest IK bones {[round(z, 4) for z in lows]}")
@@ -1733,6 +1852,7 @@ def shots_for(actions):
         "Walk": (tuple(range(0, 35, 5)), ),
         "Gallop": (tuple(range(0, 16, 2)), ),
         "Gallop_Jump": ((0, 12, 18, 24, 30, 36, 44), ),
+        "Fence_Leap": ((0, 10, 18, 26, 34, 42, 50, 58, 66, 74), ),
         "Eating": ((0, 60, 140, 240), ),
         "Idle": ((0, 50, 100), ),
         "Idle_2": ((40, 110), ),
