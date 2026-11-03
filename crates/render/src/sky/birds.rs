@@ -1,11 +1,15 @@
 //! Pájaros en el cielo: chimangos planeando en círculos de día, bandadas de
-//! palomas y teros que cruzan, y bandadas que van a dormir al anochecer;
-//! ninguno de noche.
+//! palomas y teros que cruzan, y bandadas de palomas que van a dormir al
+//! anochecer; ninguno de noche.
 //!
-//! Cada pájaro es una entidad con una mesh de silueta oscura y sin iluminación
-//! que alterna entre unos pocos frames de aleteo (7 meshes pequeñas
-//! compartidas, un material), así que como mucho [`MAX_BIRDS`] draw calls y
-//! unos 250 triángulos. Sus trayectorias son analíticas: un círculo, o una
+//! Las palomas (dos bandadas que cruzan, una de torcazas y una de
+//! picazuroes, y las tres que van a dormir, dos de torcazas y una de
+//! picazuroes) son los modelos propios de la torcaza y del picazuró, a tamaño
+//! real, con skinning y su clip de aleteo y planeo ([`pigeons`]). Los
+//! chimangos, la bandada de teros que cruza y las palomas cuyo modelo falta
+//! son una mesh de silueta oscura y sin iluminación que alterna entre unos
+//! pocos frames de aleteo (7 meshes pequeñas compartidas, un material, unos
+//! 250 triángulos). Sus trayectorias son analíticas: un círculo, o una
 //! línea recta con un lugar en una V. Cada uno se envuelve en un cuadrado
 //! [`TORUS`] alrededor de la cámara, así que siempre hay pájaros cerca sin
 //! simular ninguno, y cada uno vuela al menos [`MIN_ABOVE_CAMERA`] metros por
@@ -15,12 +19,15 @@
 //! a la vista cuando se cierra su compuerta se oculta después de [`GATE_GRACE`]
 //! segundos, así que ninguno vuela toda la noche.
 
+pub mod pigeons;
+
 use super::main_camera;
 use crate::atmosphere::{SUNRISE, SUNSET, WorldClock};
 use bevy::asset::RenderAssetUsages;
 use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
+use pigeons::{Modelled, Pigeon, PigeonModel3d, PigeonModels, PigeonPending};
 
 /// La mayor cantidad de pájaros que llega a haber.
 pub const MAX_BIRDS: usize = 48;
@@ -42,15 +49,20 @@ pub const FLAP_FRAMES: usize = 6;
 /// El rumbo de todas las bandadas que van a dormir (hacia el sudeste), como
 /// `(x, z)`, de longitud unitaria.
 pub const ROOST_HEADING: Vec2 = Vec2::new(0.8, 0.6);
+/// Aleteos por segundo de las siluetas de las bandadas que cruzan y de las que
+/// van a dormir; el clip de un modelo se acelera o se frena en la misma
+/// proporción que el aleteo de su pájaro ([`clip_speed`]).
+const CROSS_FLAP_HZ: f32 = 5.5;
+const ROOST_FLAP_HZ: f32 = 4.0;
 
 /// Qué tipo de vuelo tiene un pájaro.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Group {
     /// Un chimango planeando en círculos amplios sobre las térmicas del día.
     Soarer,
-    /// Una bandada de palomas o teros que cruza de día.
+    /// Una bandada de palomas o de teros que cruza de día.
     Crosser,
-    /// Una bandada que vuela baja hacia el dormidero al anochecer.
+    /// Una bandada de palomas que vuela baja hacia el dormidero al anochecer.
     Roost,
 }
 
@@ -82,6 +94,8 @@ pub struct BirdSpec {
     pub flap_hz: f32,
     /// Desfase dentro del círculo o del ciclo de aleteo, en vueltas.
     pub phase: f32,
+    /// La paloma que es; `None` en los que planean y en los teros.
+    pub pigeon: Option<Pigeon>,
 }
 
 /// Si los pájaros de `group` andan afuera a la hora `hour`.
@@ -112,7 +126,7 @@ fn between(seed: u32, k: u32, lo: f32, hi: f32) -> f32 {
     lo + (hi - lo) * unit(seed, k)
 }
 
-fn flock(specs: &mut Vec<BirdSpec>, group: Group, seed: u32, size: usize) {
+fn flock(specs: &mut Vec<BirdSpec>, group: Group, seed: u32, size: usize, pigeon: Option<Pigeon>) {
     let angle = if group == Group::Roost {
         ROOST_HEADING.to_angle()
     } else {
@@ -127,13 +141,13 @@ fn flock(specs: &mut Vec<BirdSpec>, group: Group, seed: u32, size: usize) {
         (
             between(seed, 4, 11.0, 13.0),
             between(seed, 5, 35.0, 70.0),
-            4.0,
+            ROOST_FLAP_HZ,
         )
     } else {
         (
             between(seed, 4, 12.0, 15.0),
             between(seed, 5, 50.0, 110.0),
-            5.5,
+            CROSS_FLAP_HZ,
         )
     };
     for i in 0..size {
@@ -154,13 +168,15 @@ fn flock(specs: &mut Vec<BirdSpec>, group: Group, seed: u32, size: usize) {
             scale: 1.4,
             flap_hz: flap_hz * (1.0 + 0.04 * wobble(3)),
             phase: unit(seed, 100 + i as u32),
+            pigeon,
         });
     }
 }
 
 /// Todos los pájaros que puede haber: seis chimangos planeando, tres bandadas
-/// de siete que cruzan y tres bandadas de seis que van a dormir. La misma lista
-/// en cada ejecución.
+/// de siete que cruzan (torcazas, picazuroes y teros) y tres bandadas de seis
+/// palomas que van a dormir (dos de torcazas y una de picazuroes). La misma
+/// lista en cada ejecución.
 pub fn bird_specs() -> Vec<BirdSpec> {
     let mut specs = Vec::with_capacity(MAX_BIRDS);
     for i in 0..6u32 {
@@ -181,13 +197,17 @@ pub fn bird_specs() -> Vec<BirdSpec> {
             scale: 1.7,
             flap_hz: 0.0,
             phase: unit(seed, 6),
+            pigeon: None,
         });
     }
-    for i in 0..3 {
-        flock(&mut specs, Group::Crosser, 2000 + i, 7);
+    // Las que cruzan: torcazas, picazuroes y teros (en silueta).
+    let crossers = [Some(Pigeon::Torcaza), Some(Pigeon::Picazuro), None];
+    for (i, pigeon) in (0..).zip(crossers) {
+        flock(&mut specs, Group::Crosser, 2000 + i, 7, pigeon);
     }
-    for i in 0..3 {
-        flock(&mut specs, Group::Roost, 3000 + i, 6);
+    let roosts = [Pigeon::Torcaza, Pigeon::Torcaza, Pigeon::Picazuro];
+    for (i, pigeon) in (0..).zip(roosts) {
+        flock(&mut specs, Group::Roost, 3000 + i, 6, Some(pigeon));
     }
     specs
 }
@@ -247,6 +267,17 @@ pub fn frame_at(spec: &BirdSpec, seconds: f32) -> usize {
     }
     let turns = (spec.phase + spec.flap_hz * seconds).rem_euclid(1.0);
     ((turns * FLAP_FRAMES as f32) as usize).min(FLAP_FRAMES - 1)
+}
+
+/// La velocidad a la que una paloma reproduce su clip: la proporción entre su
+/// aleteo y el de su bandada, así que cada una bate apenas distinto.
+pub fn clip_speed(spec: &BirdSpec) -> f32 {
+    let nominal = if spec.group == Group::Roost {
+        ROOST_FLAP_HZ
+    } else {
+        CROSS_FLAP_HZ
+    };
+    spec.flap_hz / nominal
 }
 
 /// Si un pájaro se muestra a continuación: la compuerta decide mientras la
@@ -317,8 +348,9 @@ pub struct BirdsPlugin;
 
 impl Plugin for BirdsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_birds)
-            .add_systems(Update, fly_birds);
+        app.add_systems(Startup, (pigeons::load_pigeons, spawn_birds).chain())
+            .add_systems(Update, (pigeons::swap_in_pigeons, fly_birds))
+            .add_observer(pigeons::dress_pigeon);
     }
 }
 
@@ -326,6 +358,7 @@ fn spawn_birds(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    models: Option<Res<PigeonModels>>,
 ) {
     let flap = |k: usize| {
         let turn = k as f32 / FLAP_FRAMES as f32 * std::f32::consts::TAU;
@@ -343,30 +376,63 @@ fn spawn_birds(
         ..default()
     });
     for (index, spec) in bird_specs().into_iter().enumerate() {
-        commands.spawn((
+        let mut bird = commands.spawn((
             Name::new("Bird"),
             Bird {
                 index,
                 settled: false,
                 closed_for: 0.0,
             },
-            Mesh3d(frames[frame_at(&spec, 0.0)].clone()),
-            MeshMaterial3d(material.clone()),
             Transform::from_scale(Vec3::splat(spec.scale)),
             Visibility::Hidden,
             NotShadowCaster,
             NotShadowReceiver,
         ));
+        let model = spec
+            .pigeon
+            .and_then(|p| models.as_ref().and_then(|m| m.get(p)).map(|m| (p, m)));
+        if let Some((pigeon, model)) = model {
+            // El modelo vuela hacia +Z (glTF); el pájaro mira hacia -Z.
+            let root = bird.id();
+            bird.insert((Modelled, Transform::IDENTITY));
+            commands.spawn((
+                Name::new("Pigeon model"),
+                PigeonModel3d {
+                    pigeon,
+                    phase: spec.phase,
+                    speed: clip_speed(&spec),
+                },
+                PigeonPending(model.scene.clone()),
+                Transform::from_rotation(Quat::from_rotation_y(std::f32::consts::PI)),
+                Visibility::default(),
+                ChildOf(root),
+            ));
+        } else {
+            bird.insert((
+                Mesh3d(frames[frame_at(&spec, 0.0)].clone()),
+                MeshMaterial3d(material.clone()),
+            ));
+        }
     }
     commands.insert_resource(BirdKit { frames, material });
 }
+
+/// Lo que [`fly_birds`] mueve de cada pájaro: su mesh de silueta, si no
+/// tiene modelo.
+type Flying = (
+    &'static mut Bird,
+    &'static mut Transform,
+    &'static mut Visibility,
+    Option<&'static mut Mesh3d>,
+    Has<Modelled>,
+);
 
 fn fly_birds(
     clock: Option<Res<WorldClock>>,
     time: Res<Time<Real>>,
     kit: Option<Res<BirdKit>>,
     cameras: Query<(&GlobalTransform, &Camera), With<Camera3d>>,
-    mut birds: Query<(&mut Bird, &mut Transform, &mut Visibility, &mut Mesh3d)>,
+    mut birds: Query<Flying>,
 ) {
     let Some(kit) = kit else {
         return;
@@ -376,7 +442,7 @@ fn fly_birds(
     let seconds = time.elapsed_secs();
     let dt = time.delta_secs();
     let specs = bird_specs();
-    for (mut bird, mut transform, mut visibility, mut mesh) in &mut birds {
+    for (mut bird, mut transform, mut visibility, mesh, modelled) in &mut birds {
         let spec = &specs[bird.index];
         let (position, heading, bank) = bird_pose(spec, seconds, camera);
         let distance = position.distance(camera);
@@ -400,13 +466,17 @@ fn fly_birds(
         if !show {
             continue;
         }
+        // Un modelo va a tamaño real; una silueta, a su escala.
+        let scale = if modelled { 1.0 } else { spec.scale };
         *transform = Transform::from_translation(position)
             .looking_to(heading, Vec3::Y)
-            .with_scale(Vec3::splat(spec.scale));
+            .with_scale(Vec3::splat(scale));
         transform.rotate_local_z(bank);
-        let frame = &kit.frames[frame_at(spec, seconds)];
-        if mesh.0 != *frame {
-            mesh.0 = frame.clone();
+        if let Some(mut mesh) = mesh {
+            let frame = &kit.frames[frame_at(spec, seconds)];
+            if mesh.0 != *frame {
+                mesh.0 = frame.clone();
+            }
         }
     }
 }
@@ -619,6 +689,125 @@ mod tests {
         };
         assert!(top(&flat).abs() < 1e-6);
         assert!(top(&up) > 0.3);
+    }
+
+    #[test]
+    fn the_flocks_are_torcazas_picazuros_and_teros() {
+        let specs = bird_specs();
+        for spec in specs.iter().filter(|s| s.group != Group::Crosser) {
+            assert_eq!(spec.pigeon.is_none(), spec.group == Group::Soarer);
+        }
+        // Una especie por bandada.
+        for a in &specs {
+            for b in specs.iter().filter(|b| b.anchor == a.anchor) {
+                assert_eq!(a.pigeon, b.pigeon);
+            }
+        }
+        let count = |p| specs.iter().filter(|s| s.pigeon == Some(p)).count();
+        assert_eq!(count(Pigeon::Torcaza), 19);
+        assert_eq!(count(Pigeon::Picazuro), 13);
+    }
+
+    #[test]
+    fn the_teros_still_cross_by_day_as_silhouettes() {
+        let teros = |specs: &[BirdSpec]| {
+            specs
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| s.group == Group::Crosser && s.pigeon.is_none())
+                .map(|(i, _)| i)
+                .collect::<Vec<_>>()
+        };
+        let specs = bird_specs();
+        assert_eq!(teros(&specs).len(), 7, "one flock of seven");
+        assert!(gate_open(Group::Crosser, 10.0));
+        // Con los modelos de las palomas cargados, siguen siendo siluetas.
+        let mut app = models_app();
+        let world = app.world_mut();
+        let mut q = world.query::<(&Bird, Option<&Mesh3d>, Has<Modelled>)>();
+        for (bird, mesh, modelled) in q.iter(world) {
+            if teros(&specs).contains(&bird.index) {
+                assert!(mesh.is_some() && !modelled, "tero {}", bird.index);
+            }
+        }
+    }
+
+    #[test]
+    fn pigeons_fly_their_own_models_at_life_size_staggered_and_light_far_off() {
+        use bevy::camera::visibility::VisibilityRange;
+        use bevy::gltf::GltfMeshName;
+        let mut app = models_app();
+        let pigeons = bird_specs().iter().filter(|s| s.pigeon.is_some()).count();
+        let world = app.world_mut();
+        let mut players = world.query::<&AnimationPlayer>();
+        // Cada paloma reproduce su clip desde su propio punto.
+        let mut starts: Vec<f32> = players
+            .iter(world)
+            .map(|p| p.playing_animations().next().unwrap().1.seek_time())
+            .collect();
+        assert_eq!(starts.len(), pigeons, "every pigeon is rigged");
+        // Repartidas por el clip (`FlapGlide` dura casi un segundo), no
+        // apenas corridas por sus ritmos distintos.
+        starts.sort_by(f32::total_cmp);
+        assert!(
+            starts[pigeons - 1] - starts[0] > 0.5,
+            "staggered: {starts:?}"
+        );
+        // La malla completa cerca y la liviana desde LIGHT_FROM.
+        let mut meshes = world.query::<(&GltfMeshName, &VisibilityRange)>();
+        let (mut full, mut light) = (0, 0);
+        for (name, range) in meshes.iter(world) {
+            if name.0.ends_with("_LOD") {
+                assert_eq!(range.start_margin.end, pigeons::LIGHT_FROM);
+                light += 1;
+            } else {
+                assert_eq!(range.end_margin.end, pigeons::LIGHT_FROM);
+                full += 1;
+            }
+        }
+        assert!(full >= pigeons && light >= pigeons, "{full} {light}");
+        // Desde abajo el vientre se lee con su color: el cuerpo deja pasar
+        // la luz del sol como las plumas de vuelo.
+        let mut parts = world.query::<(
+            &bevy::gltf::GltfMaterialName,
+            &MeshMaterial3d<StandardMaterial>,
+        )>();
+        let assets = world.resource::<Assets<StandardMaterial>>();
+        let lit: Vec<f32> = parts
+            .iter(world)
+            .filter(|(n, _)| n.0 == "Main")
+            .map(|(_, m)| assets.get(&m.0).unwrap().diffuse_transmission)
+            .collect();
+        assert!(!lit.is_empty());
+        assert!(lit.iter().all(|t| *t > 0.0), "{lit:?}");
+        // A tamaño real: el modelo no hereda la escala de la silueta.
+        let mut birds = world.query_filtered::<&Transform, With<Modelled>>();
+        assert_eq!(birds.iter(world).count(), pigeons);
+        assert!(birds.iter(world).all(|t| t.scale == Vec3::ONE));
+    }
+
+    /// El plugin con los modelos de las palomas incluidos, headless, a
+    /// mediodía, actualizado hasta que cada paloma tiene su rig.
+    fn models_app() -> App {
+        use crate::gltf::tests::{root, unfinished_app};
+        let mut app = unfinished_app(&root());
+        app.init_asset::<bevy::mesh::skinning::SkinnedMeshInverseBindposes>()
+            .add_plugins(bevy::animation::AnimationPlugin)
+            .insert_resource(root())
+            .insert_resource(WorldClock(GameClock::at(TimeOfDay::hm(13, 0))))
+            .add_plugins(BirdsPlugin);
+        app.finish();
+        app.cleanup();
+        let pigeons = bird_specs().iter().filter(|s| s.pigeon.is_some()).count();
+        let mut players = app.world_mut().query::<&AnimationPlayer>();
+        for _ in 0..2000 {
+            app.update();
+            if players.iter(app.world()).count() == pigeons {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        app
     }
 
     fn app_at(hour: u32) -> App {

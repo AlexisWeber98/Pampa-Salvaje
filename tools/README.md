@@ -470,6 +470,36 @@ En el juego sus materiales `Main` y `Feathers` se dibujan con sus mapas tal como
 
 Sin `--scans` ni `--faces`, el atlas y la cabeza salen pintados. Los píxeles reales que se usan están acreditados en `CREDITS.md`. Tests sin Blender: `test_raptor.py`.
 
+## `pigeon.py`: la torcaza y el picazuró modelados en Blender
+
+`pigeon.py` modela, arma, pinta y anima las dos palomas de la pampa por script en Blender: la torcaza (*Zenaida auriculata*), la de las grandes bandadas que cruzan el cielo, y el picazuró (*Patagioenas picazuro*). Reusa lo de `raptor.py` importándolo: la anatomía, el motor del plumaje, la proyección de la cara, las tarjetas de plumas, el pesado y las vistas previas. Cada paloma se registra ahí como una especie más (`install`), y las funciones de `raptor.py` que cambian para una paloma (las primarias, la punta del pico, los puntos de la cara, el ajuste de la foto, las patas, las cobertoras primarias) atienden a `pigeon.py` solo mientras hay una paloma configurada, así que las rapaces no cambian. Lo propio de las palomas: el cuerpo de pecho lleno, la cabeza chica y redonda, el pico fino con su opérculo (`sculpt`, `bill_sculpt`), el ala en punta (`PRIMARY_LENGTHS`), el plumaje de cada especie y el atlas cortado de los escaneos. Usa el mismo esqueleto (`RaptorArmature`) y los clips `Flap`, `Glide` y `FlapGlide` (tres aletazos, las alas se detienen a media bajada en un planeo y salen de él con una subida rápida, como las bandadas). En vuelo las patas van recogidas contra el vientre, metidas en las plumas (`leg_joints`); las manchas negras de las cobertoras internas de la torcaza van en celdas propias del atlas (`SPOTS`, `spot`), así se ven desde arriba, y las cobertoras del picazuró llevan su borde claro (`_fringed`). Son las palomas de las bandadas del cielo del juego (`crates/render/src/sky/birds/pigeons.rs`), en `assets/models/fauna/own/` (`torcaza.glb`, `picazuro.glb`): a tamaño real, la malla liviana (`Torcaza_LOD`, `Picazuro_LOD`, unos 945 triángulos) desde los 40 m, que en las bandadas es casi siempre, y `FlapGlide` en bucle, cada paloma desde su propio punto del clip. Una corrida por especie (unos 2 minutos en la CPU cada una); los mapas se hornean a 2048² y el juego los lleva a 1024², como los de las rapaces:
+
+```sh
+blender -b --factory-startup --python tools/pigeon.py -- torcaza_raw.glb \
+  --species torcaza --scans PLUMAS --faces FOTOS --textures TEX [--preview /tmp/torcaza]
+O=assets/models/fauna/own
+for set in torcaza_body torcaza_feathers; do
+  mkdir -p $O/$set
+  for f in TEX/$set/*.jpg; do magick $f -filter Lanczos -resize 1024x1024 -quality 92 $O/$set/$(basename $f); done
+done
+FORCE=1 sh tools/textures_to_ktx2.sh $O/torcaza_body $O/torcaza_feathers
+python3 -I tools/glbtrim.py torcaza_raw.glb $O/torcaza.glb \
+  --keep Flap Glide FlapGlide --smooth-angle 0
+```
+
+Las tarjetas de plumas y el cuerpo dejan pasar algo de la luz del sol (`FEATHER_TRANSMISSION`, como las rapaces), así que desde abajo se lee el pecho rosado de la torcaza y no una silueta parda. Los teros de la tercera bandada que cruza siguen en silueta. Costo en el juego: 32 palomas (una bandada de torcazas y una de picazuroes que cruzan de día; dos de torcazas y una de picazuroes entre las que van a dormir), cada una con su reproductor de animación de 23 huesos; con 39 palomas a la vista a 30-40 m (la medición, antes de devolver los teros), unos 0,5 ms más por cuadro que las siluetas (medido sin vsync, L7 de `odd/tasks/pigeons.md`). Video: dos conjuntos de mapas de 1024² por especie.
+
+| Opción | Significado |
+|---|---|
+| `--scans DIR` | toma de `DIR` las láminas del Feather Atlas (`SCANS`, dominio público): las de la paloma de luto (*Zenaida macroura*) para la torcaza y las de la paloma de cola barrada (*Patagioenas fasciata*) para el picazuró. Las láminas sobre fondo negro se recortan del negro y de la grilla y se pasan al azul del atlas (`on_blue`, `erase_grid`), así las corta el mismo código que en `raptor.py`. El plan de cada especie (`plan`) dice qué pluma escaneada va en cada celda, entera (`scan`) o solo su grano de luminancia bajo el color pintado (`grain`: la cola y las cobertoras del picazuró) |
+| `--faces DIR` | proyecta sobre la cabeza la foto de costado de la especie (`FACE_PHOTOS`, archivos en `DIR`), anclada en el ojo (`face_mapping`: el ojo de la foto sobre el del modelo, a la escala del iris, girada según los otros puntos), y toma el color del iris |
+| `--textures DIR` | escribe las fuentes JPG de `DIR/<especie>_body` y `DIR/<especie>_feathers` |
+| `--preview DIR`, `--shots REGEX`, `--draft`, `--no-clips` | como en `raptor.py` |
+
+**Aleteo.** La alometría de Pennycuick da 8,2 Hz para una paloma mensajera, pero con acelerómetros se midieron 5,5 Hz volando sola y 6,6 Hz volando de a dos (Taylor y otros, 2018, bioRxiv 10.1101/492090). `wingbeat` calibra la alometría con el valor de a dos (`WINGBEAT_REFERENCE`): las del cielo vuelan en bandada. Da 8,8 Hz para la torcaza y 7,0 Hz para el picazuró.
+
+Sin `--scans` ni `--faces`, el atlas y la cabeza salen pintados. Los píxeles reales que se usan están acreditados en `CREDITS.md`. Las medidas y las revisiones están en `odd/tasks/pigeons.md`. Tests sin Blender: `test_pigeon.py`.
+
 ## `tack.py`: los mapas del recado criollo
 
 `tack.py` pinta con numpy (sin Blender ni imágenes de terceros) cuatro de los conjuntos de mapas de los aperos del caballo ensillado (`pampa_render::character::tack`), en `assets/models/tack/` (los otros dos los hace `recado.py`):
