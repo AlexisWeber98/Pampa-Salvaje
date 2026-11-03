@@ -431,6 +431,34 @@ Las fotos proyectadas (Wikimedia Commons o iNaturalist, solo CC0, dominio públi
 
 Costo: gato montés 11.618 triángulos, puma 11.326 y yaguareté 11.414 (el cuerpo, las tarjetas de pelo con alpha test y los ojos), 49 huesos; más una malla liviana de 1.000 triángulos cada uno (`light_mesh`, `GatoMontes_LOD`, `Puma_LOD`, `Yaguarete_LOD`: la piel sola diezmada, con sus UV y los pesos de la completa) que el juego dibuja desde los 40 m, como la de los vacunos. Video: por especie un conjunto de mapas de 1024² para el cuerpo y uno de pelo. Las medidas de cada versión están en el registro de la tarea (`odd/tasks/pampa-fauna.md`). Tests sin Blender (`test_felid.py`): el tamaño de cada especie, las proporciones de la cabeza (el ancho del ojo contra el del cráneo y el alto de la oreja contra el de la cabeza, `head_ratios`, contra las medidas sobre las fotos de frente, `HEAD_RATIOS`), el yaguareté más macizo que el puma, el largo de sus patas contra las fotos de costado (`leg_ratio`, `LEG_RATIO_TARGET`), `warp` y `unwarp`, el perfil del pecho, del lomo y de la panza, los pelajes (el puma liso, las manchas densas del gato montés y las rosetas del yaguareté, los anillos y las líneas de las mejillas, las panzas claras, el puma sin línea oscura detrás del ojo, las manchas del cuello del yaguareté que se achican de a poco hacia la cara), las fotos de las caras (sus licencias y créditos, cada punto de referencia en su píxel, la cara cubierta, el borde de la mezcla sin saltos, nada de foto en la mejilla de canto), la parte del mapa que toma la cabeza, los pelos de las tarjetas, las velocidades de las marchas, las claves del salto de un alambrado (un segundo en el aire, el despegue casi chato, en lo alto las patas traseras estiradas atrás, al caer la nariz abajo y las manos en el suelo antes que las patas, sin agazaparse) y el esqueleto.
 
+## `raptor.py`: el chimango y el carancho modelados en Blender
+
+`raptor.py` modela, arma, pinta y anima las dos rapaces de la pampa por script en Blender: el chimango (*Milvago chimango*) y el carancho (*Caracara plancus*), con una sola anatomía y un solo rig de halcón (`SPECIES`, `RAPTOR_BONES`) y los clips `Glide`, `Bank_L`, `Bank_R` y `Flap`. El docstring del script describe la malla, los materiales y los clips; las medidas y las revisiones de cada versión están en `odd/tasks/pampa-fauna.md` (T4j). Son las rapaces del juego (`Species::Chimango`, `Species::Carancho`), en `assets/models/fauna/own/` (`chimango.glb`, `carancho.glb`); reemplazan al águila de Quaternius, que ya no se dibuja (`eagle.glb` sigue en el repositorio). Una corrida por especie (unos 5 minutos en la CPU cada una; `PLUMAS` y `FOTOS` son las carpetas con los archivos de `SCANS` y `FACE_PHOTOS`); los mapas se hornean a 2048² y el juego los lleva a 1024², como los de los demás animales (las rapaces vuelan a 30 m o más de la cámara, donde 2048² no agrega nada visible):
+
+```sh
+blender -b --factory-startup --python tools/raptor.py -- chimango_raw.glb \
+  --species chimango --scans PLUMAS --faces FOTOS --textures TEX [--preview /tmp/chimango]
+O=assets/models/fauna/own
+for set in chimango_body chimango_feathers; do
+  mkdir -p $O/$set
+  for f in TEX/$set/*.jpg; do magick $f -filter Lanczos -resize 1024x1024 -quality 92 $O/$set/$(basename $f); done
+done
+FORCE=1 sh tools/textures_to_ktx2.sh $O/chimango_body $O/chimango_feathers
+python3 -I tools/glbtrim.py chimango_raw.glb $O/chimango.glb \
+  --keep Glide Flap Bank_L Bank_R --smooth-angle 0
+```
+
+En el juego sus materiales `Main` y `Feathers` se dibujan con sus mapas tal como están; las tarjetas de plumas, de dos capas (el dorso y el revés de cada pluma), solo de frente y con algo de la luz del sol que las atraviesa (`FEATHER_TRANSMISSION`: sin eso, la cara de abajo, que mira al suelo, solo recibe luz ambiente y desde el suelo el plumaje se ve como una silueta parda pareja). El planeo es `Glide`; dando vueltas, como siempre vuelan, `Bank_L` o `Bank_R` según hacia dónde giran (`AnimalPose::bank`); cada tanto, un par de segundos de `Flap`. Su escala sale de la envergadura medida sobre la mesh exportada (`CHIMANGO_SPAN` 0,895 m, `CARANCHO_SPAN` 1,253 m). Costo: chimango 12.540 triángulos y carancho 17.852 (el cuerpo, las tarjetas de plumas y los ojos), 23 huesos; más una malla liviana de 946 triángulos (`light_mesh`, `Chimango_LOD`, `Carancho_LOD`: la piel diezmada a `LIGHT_BODY` y las remeras y la cola, `light_feathers`, en tarjetas rectas de raíz a punta) que el juego dibuja desde los 40 m, que en las rapaces es casi siempre.
+
+| Opción | Significado |
+|---|---|
+| `--scans DIR` | toma de `DIR` las láminas de plumas del Feather Atlas (`SCANS`: un carancho norteño, *Caracara cheriway*, dominio público). Las del carancho se recortan en sus plumas y reemplazan las celdas pintadas del atlas: remeras, cola, cobertoras y escapulares. El chimango no tiene escaneos libres: sus celdas siguen pintadas y toman solo el grano de luminancia de las secundarias de esas láminas (`use="grain"`, `GRAIN_PLAN`), con sus propios colores |
+| `--faces DIR` | proyecta sobre la cabeza la foto de costado de la especie (`FACE_PHOTOS`, archivos en `DIR`). El carancho toma la foto con sus colores. El chimango solo toma el detalle de luminancia (`match="detail"`) sobre los colores pintados, con el borde difuminado (`rim`) |
+| `--textures DIR` | escribe las fuentes JPG de `DIR/<especie>_body` y `DIR/<especie>_feathers` |
+| `--preview DIR`, `--shots REGEX`, `--draft`, `--no-clips` | como en `felid.py`; las vistas `light_*` muestran la malla liviana sola |
+
+Sin `--scans` ni `--faces`, el atlas y la cabeza salen pintados. Los píxeles reales que se usan están acreditados en `CREDITS.md`. Tests sin Blender: `test_raptor.py`.
+
 ## `tack.py`: los mapas del recado criollo
 
 `tack.py` pinta con numpy (sin Blender ni imágenes de terceros) cuatro de los conjuntos de mapas de los aperos del caballo ensillado (`pampa_render::character::tack`), en `assets/models/tack/` (los otros dos los hace `recado.py`):
