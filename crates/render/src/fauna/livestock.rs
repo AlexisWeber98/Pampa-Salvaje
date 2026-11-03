@@ -1,9 +1,10 @@
-//! Rapaces: el modelo low-poly animado de Quaternius (CC0; con crédito en
-//! `assets/models/fauna/quaternius/CREDITS.md` y en el `CREDITS.md` de la
-//! raíz): el águila del Animal Pack Vol.2, convertida con `tools/fbx2glb.py`
-//! (Blender), diezmada y recortada con su planeo y su aleteo
-//! ([`Species::animation`]); hace de chimango y de carancho, en sus tamaños y
-//! colores.
+//! Las rapaces, el chimango y el carancho, son modelos propios
+//! (`tools/raptor.py`, una anatomía y un rig de halcón para las dos): su
+//! plumaje y la cara de una foto horneados en los mapas de su cuerpo, las
+//! plumas de vuelo, la cola y las cobijas en tarjetas con alpha test sobre un
+//! atlas (el del carancho, con plumas escaneadas), sus clips de planeo, de
+//! giro inclinado a cada lado y de aleteo, y una malla liviana para cuando
+//! están lejos, que es casi siempre.
 //! El ñandú es un modelo propio, modelado, con rig y animado por script en
 //! Blender (`tools/rhea.py`, en `assets/models/fauna/own/`): un cuerpo
 //! continuo con su plumaje horneado de una escultura densa en mapas KTX2
@@ -24,7 +25,8 @@
 //! (el gato montés, el puma y el yaguareté) son propios igual
 //! (`tools/felid.py`, una anatomía y un rig de gato para las tres especies):
 //! cada uno con su pelaje y la cara de una foto horneados en el mapa de su
-//! cuerpo, y una malla liviana para cuando están lejos, como los vacunos.
+//! cuerpo, y una malla liviana para cuando están lejos, como los vacunos y
+//! las rapaces.
 //!
 //! Cada [`Species`] se carga una vez al iniciar ([`LivestockModels`]): su
 //! escena glTF, sus clips y un [`AnimationGraph`] compartido. Un [`Animal`]
@@ -80,7 +82,7 @@ pub const LIVESTOCK_DIR: &str = "models/fauna/quaternius";
 /// Dónde viven los modelos propios, hechos con los scripts de Blender de
 /// `tools/` (el ñandú, `tools/rhea.py`; el caballo, `tools/horse.py`; la vaca
 /// y el toro, `tools/cattle.py`; el zorro, `tools/fox.py`; los felinos,
-/// `tools/felid.py`), bajo el [`AssetRoot`].
+/// `tools/felid.py`; las rapaces, `tools/raptor.py`), bajo el [`AssetRoot`].
 pub const OWN_DIR: &str = "models/fauna/own";
 
 /// Hasta esta distancia de la cámara se dibujan las tarjetas de detalle de un
@@ -100,7 +102,9 @@ pub fn detail_shown(was: bool, distance: f32) -> bool {
 
 /// El sufijo del nombre de la malla liviana de un modelo (`Cow_LOD`, de
 /// `tools/cattle.py`; `Puma_LOD` y los de los otros felinos, de
-/// `tools/felid.py`): la piel sola, diezmada, sin tarjetas de pelo ni ojos.
+/// `tools/felid.py`): la piel sola, diezmada, sin tarjetas de pelo ni ojos;
+/// `Chimango_LOD` y `Carancho_LOD`, de `tools/raptor.py`, conservan además
+/// las plumas de vuelo y de la cola, que son su silueta, en tarjetas rectas.
 pub const LIGHT_SUFFIX: &str = "_LOD";
 /// Desde esta distancia de la cámara un modelo con malla liviana dibuja la
 /// liviana en lugar de la completa, en metros (una vaca de 1.4 m mide ahí
@@ -138,17 +142,31 @@ pub fn light_range(range: &VisibilityRange, light: bool) -> VisibilityRange {
 /// `strands`: el dorso de cada tarjeta se ilumina con la normal invertida,
 /// como un mechón de pelo visto a través (la crin del caballo, que cae del
 /// lado derecho, vista desde la izquierda); sin eso, las dos caras miran hacia
-/// afuera del cuerpo (las plumas del ñandú).
+/// afuera del cuerpo (las plumas del ñandú). `layered`: cada tarjeta trae
+/// dos capas, una por cara, cada una con su dibujo (las plumas de las
+/// rapaces: el dorso y el revés de cada pluma), así que solo se dibuja la
+/// cara de adelante de cada capa.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Skin {
     pub set: &'static str,
     pub masked: bool,
     pub detail: bool,
     pub strands: bool,
+    pub layered: bool,
 }
 
+/// Cuánta luz difusa dejan pasar las plumas de las rapaces (las tarjetas de
+/// dos capas, [`Skin::layered`]): una pluma de vuelo es una lámina delgada que
+/// el sol atraviesa, así que, vista desde abajo contra el cielo, la cara de
+/// abajo de cada pluma se ilumina con la luz que la cruza (la ventana blanca
+/// del carancho, su cola blanca, las alas claras del chimango). Sin esto, esa
+/// cara, que mira al suelo, solo recibe la luz ambiente y todo el plumaje se
+/// lee como una silueta parda pareja. Menos de 0.5: la cara que mira al sol
+/// sigue más clara que la de atrás.
+pub const FEATHER_TRANSMISSION: f32 = 0.45;
+
 /// Los conjuntos de mapas de los modelos propios.
-pub const SKIN_SETS: [&str; 15] = [
+pub const SKIN_SETS: [&str; 19] = [
     "rhea_body",
     "rhea_feathers",
     "horse_body",
@@ -164,6 +182,10 @@ pub const SKIN_SETS: [&str; 15] = [
     "puma_hair",
     "yagua_body",
     "yagua_hair",
+    "chimango_body",
+    "chimango_feathers",
+    "carancho_body",
+    "carancho_feathers",
 ];
 
 /// La ruta del mapa `name` del conjunto `set`, bajo el [`AssetRoot`].
@@ -217,9 +239,16 @@ pub fn skinned(
         m.alpha_mode = AlphaMode::Mask(LEAF_CUTOFF);
         // Por ambos lados; el dorso invierte su normal solo en los mechones
         // (en las plumas, como en las hojas de los árboles, las dos caras
-        // miran hacia afuera del cuerpo).
-        m.cull_mode = None;
+        // miran hacia afuera del cuerpo). Las tarjetas de dos capas
+        // dibujan solo la cara de adelante de cada una: la de atrás quedaría
+        // a 0.35 mm de la otra capa, peleando con ella.
+        m.cull_mode = skin
+            .layered
+            .then_some(bevy::render::render_resource::Face::Back);
         m.double_sided = skin.strands;
+        if skin.layered {
+            m.diffuse_transmission = FEATHER_TRANSMISSION;
+        }
     }
     Some(m)
 }
@@ -335,6 +364,14 @@ pub const YAGUA_GALLOP_SPEED: f32 = 10.80;
 /// La altura a la cruz del yaguareté propio, medida como la del gato montés.
 pub const YAGUA_WITHERS: f32 = 0.75;
 
+/// La envergadura del chimango propio (`tools/raptor.py`), en metros del
+/// modelo: de punta a punta de las primarias más largas, por sus raquis, con
+/// las alas extendidas en su pose de reposo (la que informa el script). La
+/// mesh exportada mide 0.912 m contando el ancho de las barbas en la punta.
+pub const CHIMANGO_SPAN: f32 = 0.895;
+/// Lo mismo en el carancho propio (su mesh, 1.278 m).
+pub const CARANCHO_SPAN: f32 = 1.253;
+
 /// Los animales que se dibujan a partir de un modelo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Species {
@@ -350,7 +387,9 @@ pub enum Species {
     GatoMontes,
     Puma,
     Yaguarete,
-    /// Las dos rapaces comparten el águila del mismo pack, teñida.
+    /// Las dos rapaces: modelos propios (`tools/raptor.py`, una anatomía de
+    /// halcón llevada a cada especie), vestidos con sus mapas
+    /// ([`Species::skin`]).
     Chimango,
     Carancho,
     /// El ñandú: un modelo propio (`tools/rhea.py`), vestido con sus mapas
@@ -400,10 +439,11 @@ impl Species {
             Self::GatoMontes => return format!("{OWN_DIR}/gato.glb"),
             Self::Puma => return format!("{OWN_DIR}/puma.glb"),
             Self::Yaguarete => return format!("{OWN_DIR}/yagua.glb"),
-            Self::Chimango | Self::Carancho => "eagle",
-            Self::Nandu => return format!("{OWN_DIR}/rhea.glb"),
+            Self::Chimango => "chimango",
+            Self::Carancho => "carancho",
+            Self::Nandu => "rhea",
         };
-        format!("{LIVESTOCK_DIR}/{name}.glb")
+        format!("{OWN_DIR}/{name}.glb")
     }
 
     /// Si es un ave (su medida es la envergadura, y vuela).
@@ -413,7 +453,8 @@ impl Species {
 
     /// Los clips del archivo, en orden: los siete del ganado (el zorro y los
     /// felinos, además, el salto de un alambrado, `Fence_Leap`), o los pocos
-    /// que traen el águila (planeo y aleteo) y el ñandú (dos esperas, el
+    /// que traen las rapaces (el planeo, el aleteo y el planeo en un giro
+    /// inclinado a la izquierda y a la derecha) y el ñandú (dos esperas, el
     /// pastoreo, la caminata y la carrera).
     pub fn clip_names(self) -> &'static [&'static str] {
         match self {
@@ -436,7 +477,7 @@ impl Species {
                 "Gallop",
                 "Gallop_Jump",
             ],
-            Self::Chimango | Self::Carancho => &["Glide", "Flap"],
+            Self::Chimango | Self::Carancho => &["Glide", "Flap", "Bank_L", "Bank_R"],
             Self::Nandu => &["Idle", "Idle_Look", "Graze", "Walk", "Run"],
         }
     }
@@ -451,7 +492,9 @@ impl Species {
     /// su pelaje, [`Paint::Map`]) y sus partes de un solo color (la ubre, el
     /// morro, las pezuñas y los cuernos), y la borla de la cola, los rulos de
     /// la nuca, los flecos de las orejas y las pestañas (`Hair`); el cuerpo
-    /// del zorro y de cada felino (`Main`) y sus mechones de pelo (`Hair`).
+    /// del zorro y de cada felino (`Main`) y sus mechones de pelo (`Hair`);
+    /// el cuerpo de cada rapaz (`Main`) y sus plumas (`Feathers`, dos capas
+    /// por tarjeta).
     pub fn skin(self, material: &str) -> Option<Skin> {
         let (set, masked, detail, strands) = match (self, material) {
             (Self::Nandu, "Body") => ("rhea_body", false, false, false),
@@ -475,6 +518,10 @@ impl Species {
             (Self::Puma, "Hair") => ("puma_hair", true, false, true),
             (Self::Yaguarete, "Main") => ("yagua_body", false, false, false),
             (Self::Yaguarete, "Hair") => ("yagua_hair", true, false, true),
+            (Self::Chimango, "Main") => ("chimango_body", false, false, false),
+            (Self::Chimango, "Feathers") => ("chimango_feathers", true, false, false),
+            (Self::Carancho, "Main") => ("carancho_body", false, false, false),
+            (Self::Carancho, "Feathers") => ("carancho_feathers", true, false, false),
             _ => return None,
         };
         Some(Skin {
@@ -482,36 +529,41 @@ impl Species {
             masked,
             detail,
             strands,
+            layered: self.bird(),
         })
     }
 
     /// El índice de animación glTF que reproduce `clip`: el mismo en los
     /// modelos de siete clips o más (los que no saltan alambrados no tienen
-    /// `Fence_Leap`: su lugar lo toma `Gallop_Jump`, que nunca lo pide); en el águila, el planeo o el aleteo (el
-    /// "galope" de un ave); en el ñandú, la espera con la cabeza baja y el comer son su
-    /// pastoreo, y el galope su carrera.
+    /// `Fence_Leap` ni los giros: su lugar lo toma `Gallop_Jump`, que nunca
+    /// los pide); en las rapaces, las esperas son su planeo, la marcha su
+    /// aleteo (el "galope" de un ave) y los giros los suyos; en el ñandú, la
+    /// espera con la cabeza baja y el comer son su pastoreo, el galope su
+    /// carrera y los giros su espera.
     pub fn animation(self, clip: Clip) -> usize {
         if self == Self::Nandu {
             return match clip {
-                Clip::Idle => 0,
+                Clip::Idle | Clip::BankLeft | Clip::BankRight => 0,
                 Clip::Idle2 => 1,
                 Clip::IdleHeadlow | Clip::Eating => 2,
                 Clip::Walk => 3,
                 Clip::Gallop | Clip::GallopJump | Clip::FenceLeap => 4,
             };
         }
-        let count = self.clip_names().len();
-        if count >= CLIP_COUNT {
-            return if clip.index() < count {
-                clip.index()
-            } else {
-                Clip::GallopJump.index()
+        if self.bird() {
+            return match clip {
+                Clip::Idle | Clip::Idle2 | Clip::IdleHeadlow | Clip::Eating => 0,
+                Clip::Walk | Clip::Gallop | Clip::GallopJump | Clip::FenceLeap => 1,
+                Clip::BankLeft => 2,
+                Clip::BankRight => 3,
             };
         }
-        usize::from(matches!(
-            clip,
-            Clip::Walk | Clip::Gallop | Clip::GallopJump | Clip::FenceLeap
-        ))
+        let count = self.clip_names().len();
+        if clip.index() < count {
+            clip.index()
+        } else {
+            Clip::GallopJump.index()
+        }
     }
 
     /// Su medida de referencia en las unidades propias del modelo, medida
@@ -528,7 +580,8 @@ impl Species {
             Self::GatoMontes => GATO_WITHERS,
             Self::Puma => PUMA_WITHERS,
             Self::Yaguarete => YAGUA_WITHERS,
-            Self::Chimango | Self::Carancho => 12.47,
+            Self::Chimango => CHIMANGO_SPAN,
+            Self::Carancho => CARANCHO_SPAN,
             // Sobre el plumaje del lomo; la cabeza llega a 1.58.
             Self::Nandu => 1.18,
         }
@@ -648,6 +701,12 @@ pub enum Clip {
     /// traen sus modelos: no está en [`Clip::ALL`], los siete que comparten
     /// todos (y que el caballo mezcla por peso).
     FenceLeap,
+    /// El planeo de una rapaz en un giro, inclinada hacia la izquierda (el
+    /// ala izquierda abajo) o hacia la derecha, con la cabeza nivelada:
+    /// `Bank_L` y `Bank_R` de `tools/raptor.py`, 24 grados. Solo los traen
+    /// las rapaces.
+    BankLeft,
+    BankRight,
 }
 
 /// Cuántos clips contienen todos los modelos de ganado (la longitud de
@@ -666,8 +725,9 @@ impl Clip {
     ];
 
     /// Los que se cargan de cada modelo, en el orden de sus nodos en el grafo
-    /// ([`SpeciesModel::nodes`]): [`Clip::ALL`] y el salto de un alambrado.
-    pub const LOADED: [Self; CLIP_COUNT + 1] = [
+    /// ([`SpeciesModel::nodes`]): [`Clip::ALL`], el salto de un alambrado y
+    /// los giros de las rapaces.
+    pub const LOADED: [Self; CLIP_COUNT + 3] = [
         Self::Idle,
         Self::Idle2,
         Self::IdleHeadlow,
@@ -676,6 +736,8 @@ impl Clip {
         Self::Gallop,
         Self::GallopJump,
         Self::FenceLeap,
+        Self::BankLeft,
+        Self::BankRight,
     ];
 
     /// El nombre del clip en el archivo glTF.
@@ -689,6 +751,8 @@ impl Clip {
             Self::Gallop => "Gallop",
             Self::GallopJump => "Gallop_Jump",
             Self::FenceLeap => "Fence_Leap",
+            Self::BankLeft => "Bank_L",
+            Self::BankRight => "Bank_R",
         }
     }
 
@@ -717,8 +781,9 @@ pub(crate) const HORSE_IDLE: f32 = 14.0;
 pub fn clip_for(animal: Animal, pose: &AnimalPose, seed: u32, clock: f32) -> Clip {
     let idles = [Clip::Idle, Clip::Idle2, Clip::IdleHeadlow];
     match pose.gait {
-        // Las rapaces planean y, cada tanto, aletean un par de segundos: el
-        // chimango más seguido que el carancho.
+        // Las rapaces planean (inclinadas hacia el lado al que giran, si
+        // giran) y, cada tanto, aletean un par de segundos: el chimango más
+        // seguido que el carancho.
         Gait::Glide | Gait::Fly if matches!(animal, Animal::Chimango | Animal::Carancho) => {
             let period = if animal == Animal::Chimango {
                 9.0
@@ -728,6 +793,10 @@ pub fn clip_for(animal: Animal, pose: &AnimalPose, seed: u32, clock: f32) -> Cli
             let t = (clock.max(0.0) + (seed % 97) as f32).rem_euclid(period);
             if pose.gait == Gait::Fly || t < FLAP_SECONDS {
                 Clip::Gallop
+            } else if pose.bank > 0.0 {
+                Clip::BankLeft
+            } else if pose.bank < 0.0 {
+                Clip::BankRight
             } else {
                 Clip::Idle
             }
@@ -907,26 +976,10 @@ pub fn paint(animal: Animal, material: &str) -> Paint {
             "Muzzle" => rgb([48, 42, 38]),
             _ => Paint::Keep,
         },
-        // El zorro gris y los felinos: su único pelaje está horneado en los
-        // mapas de su cuerpo y de su pelo (`tools/fox.py`, `tools/felid.py`),
-        // que se dibujan tal como están.
-        Animal::Zorro | Animal::GatoMontes | Animal::Puma | Animal::Yaguarete => Paint::Keep,
-        Animal::Chimango => match material {
-            "Wings" => rgb([118, 86, 56]),
-            "Head" => rgb([196, 168, 124]),
-            "Beak" => rgb([196, 186, 156]),
-            "Claws" => rgb([160, 148, 112]),
-            _ => Paint::Keep,
-        },
-        // Oscuro, con el cuello claro, la cara rojo anaranjada y las patas
-        // amarillas.
-        Animal::Carancho => match material {
-            "Wings" => rgb([40, 32, 26]),
-            "Head" => rgb([228, 218, 194]),
-            "Beak" => rgb([214, 92, 40]),
-            "Claws" => rgb([214, 182, 60]),
-            _ => Paint::Keep,
-        },
+        // El zorro gris, los felinos y las rapaces: su único pelaje (o
+        // plumaje) está horneado en los mapas de su cuerpo y de su pelo o sus
+        // plumas (`tools/fox.py`, `tools/felid.py`, `tools/raptor.py`), que
+        // se dibujan tal como están.
         _ => Paint::Keep,
     }
 }
@@ -1548,20 +1601,29 @@ mod tests {
             Clip::IdleHeadlow.index()
         );
         for raptor in [Animal::Chimango, Animal::Carancho] {
-            let gliding = standing(Gait::Glide, 0.0);
-            let clips: Vec<Clip> = (0..400)
-                .map(|k| clip_for(raptor, &gliding, 5, k as f32 * 0.1))
-                .collect();
-            let flaps = clips.iter().filter(|&&c| c == Clip::Gallop).count();
-            // Mayormente planea; aletea un par de segundos de cada tanto.
-            assert!((20..=120).contains(&flaps), "{raptor:?}: {flaps}");
-            assert!(
-                clips
-                    .iter()
-                    .all(|&c| matches!(c, Clip::Idle | Clip::Gallop))
-            );
             let species = Species::of(raptor).unwrap();
-            assert_eq!(species.animation(Clip::Gallop), 1, "Flap");
+            let clip = |c| species.clip_names()[species.animation(c)];
+            // Planea derecho, o inclinada hacia el lado al que gira (el ala
+            // izquierda abajo si `bank` es positivo).
+            for (bank, glide, name) in [
+                (0.0, Clip::Idle, "Glide"),
+                (0.35, Clip::BankLeft, "Bank_L"),
+                (-0.35, Clip::BankRight, "Bank_R"),
+            ] {
+                let gliding = AnimalPose {
+                    bank,
+                    ..standing(Gait::Glide, 0.0)
+                };
+                let clips: Vec<Clip> = (0..400)
+                    .map(|k| clip_for(raptor, &gliding, 5, k as f32 * 0.1))
+                    .collect();
+                let flaps = clips.iter().filter(|&&c| c == Clip::Gallop).count();
+                // Mayormente planea; aletea un par de segundos de cada tanto.
+                assert!((20..=120).contains(&flaps), "{raptor:?}: {flaps}");
+                assert!(clips.iter().all(|&c| c == glide || c == Clip::Gallop));
+                assert_eq!(clip(glide), name, "{raptor:?}");
+            }
+            assert_eq!(clip(Clip::Gallop), "Flap", "{raptor:?}");
             assert_eq!(clip_speed(Clip::Gallop, species, 0.0), 1.0);
         }
         // El ganado sigue galopando a lo sumo a 1.6 veces su clip.
@@ -1638,6 +1700,16 @@ mod tests {
         assert_eq!(worn.cull_mode, None);
         assert!(!worn.double_sided, "both faces look out of the body");
         assert!(worn.base_color_texture.is_some() && worn.normal_map_texture.is_some());
+        // Las plumas de dos capas de las rapaces: cada capa, solo de frente.
+        let layered = Species::Chimango.skin("Feathers").expect("feather maps");
+        let worn_layered = skinned(&base, layered, Some(maps())).expect("drawn");
+        assert_eq!(
+            worn_layered.cull_mode,
+            Some(bevy::render::render_resource::Face::Back)
+        );
+        // Y el sol las atraviesa: su cara de abajo no queda a oscuras.
+        assert_eq!(worn_layered.diffuse_transmission, FEATHER_TRANSMISSION);
+        assert_eq!(worn.diffuse_transmission, 0.0, "the nandu's are opaque");
         let worn = skinned(&base, body, Some(maps())).expect("drawn");
         assert_eq!(worn.alpha_mode, AlphaMode::Opaque);
         assert_eq!(worn.base_color, Color::WHITE);
@@ -1673,11 +1745,7 @@ mod tests {
     }
 
     #[test]
-    fn wild_coats_tint_per_species_and_own_coats_wear_their_maps() {
-        let flat = |animal, material| match paint(animal, material) {
-            Paint::Flat(c) => c.to_srgba(),
-            other => panic!("{animal:?} {material}: {other:?}"),
-        };
+    fn wild_coats_wear_their_own_maps() {
         // El zorro gris y los felinos llevan su pelaje en sus mapas: sus
         // materiales no se tiñen, y los mapas de su cuerpo y de su pelo están
         // en disco.
@@ -1698,13 +1766,21 @@ mod tests {
                 }
             }
         }
-        let (chimango, carancho) = (
-            flat(Animal::Chimango, "Wings"),
-            flat(Animal::Carancho, "Wings"),
-        );
-        assert!(carancho.red < chimango.red * 0.5, "a dark carancho");
-        let face = flat(Animal::Carancho, "Beak");
-        assert!(face.red > face.green * 2.0, "a red-orange face");
+        // Las rapaces, igual: su plumaje está en los mapas de su cuerpo y
+        // de sus plumas, de dos capas.
+        for animal in [Animal::Chimango, Animal::Carancho] {
+            let species = Species::of(animal).unwrap();
+            for material in ["Main", "Feathers"] {
+                assert_eq!(paint(animal, material), Paint::Keep, "{animal:?}");
+                let skin = species.skin(material).expect("own maps");
+                assert_eq!(skin.masked, material == "Feathers");
+                assert!(skin.layered && !skin.detail, "{animal:?}");
+                for (name, _) in crate::facade::materials::MAPS {
+                    let path = root().0.join(skin_path(skin.set, name));
+                    assert!(path.is_file(), "{}", path.display());
+                }
+            }
+        }
     }
 
     #[test]
@@ -1962,7 +2038,8 @@ mod tests {
                 // Los nombres de Quaternius con dos huesos por oreja, la
                 // mandíbula y nueve de cola (`tools/fox.py`, `tools/felid.py`).
                 Species::Fox | Species::GatoMontes | Species::Puma | Species::Yaguarete => 49,
-                Species::Chimango | Species::Carancho => 30,
+                // `RAPTOR_BONES` (`tools/raptor.py`).
+                Species::Chimango | Species::Carancho => 23,
                 // Los 50 de Quaternius menos los que no tiene un vacuno,
                 // más las orejas, la cara, la cola, la papada, la ubre (el
                 // escroto) y los seis músculos (`tools/cattle.py`).
@@ -2028,7 +2105,10 @@ mod tests {
                 // Gato montés 11.618, puma 11.326, yaguareté 11.414: el cuerpo, las
                 // tarjetas de pelo y los ojos (más la malla liviana, aparte).
                 Species::GatoMontes | Species::Puma | Species::Yaguarete => 12_000,
-                _ => 2_500,
+                // Chimango 12.540, carancho 17.852 (su copete): el cuerpo, las
+                // tarjetas de plumas y los ojos (más la malla liviana, aparte).
+                Species::Chimango => 13_000,
+                Species::Carancho => 18_500,
             };
             assert!(triangles <= budget, "{species:?}: {triangles}");
             let light = gltf
@@ -2049,10 +2129,14 @@ mod tests {
                     | Species::GatoMontes
                     | Species::Puma
                     | Species::Yaguarete
+                    | Species::Chimango
+                    | Species::Carancho
             ) {
-                // Una malla liviana para las tropas y los felinos lejanos: la
-                // piel sola, con los materiales del cuerpo, unas seis veces
-                // más liviana o más.
+                // Una malla liviana para las tropas, los felinos y las rapaces
+                // lejanos: la piel sola (en las rapaces, más sus plumas de
+                // vuelo y de la cola), con los materiales del cuerpo, unas
+                // seis veces más liviana o más; la de las rapaces, que casi
+                // siempre se ven así, más de diez.
                 let [light] = light[..] else {
                     panic!("{species:?}: {} light meshes", light.len())
                 };
@@ -2068,7 +2152,7 @@ mod tests {
                 }
                 println!("{species:?}: light mesh {light_triangles} triangles");
                 assert!(light_triangles <= 1_500, "{species:?}: {light_triangles}");
-                assert!(light_triangles * 5 < triangles);
+                assert!(light_triangles * if species.bird() { 10 } else { 5 } < triangles);
             } else {
                 assert!(light.is_empty(), "{species:?}");
             }
@@ -2082,6 +2166,8 @@ mod tests {
                     | Species::GatoMontes
                     | Species::Puma
                     | Species::Yaguarete
+                    | Species::Chimango
+                    | Species::Carancho
             ) {
                 // Sus mapas necesitan UV y tangentes en cada primitiva.
                 let m = world.resource::<Assets<Mesh>>();
@@ -2108,7 +2194,9 @@ mod tests {
                 Species::Fox | Species::GatoMontes | Species::Puma | Species::Yaguarete => {
                     &["Main", "Hair", "Eye_Black", "Eye_Iris"]
                 }
-                Species::Chimango | Species::Carancho => &["Wings", "Head", "Beak", "Claws"],
+                Species::Chimango | Species::Carancho => {
+                    &["Main", "Feathers", "Eye_Black", "Eye_Iris"]
+                }
                 Species::Nandu => &["Body", "Feathers"],
             };
             for material in materials {

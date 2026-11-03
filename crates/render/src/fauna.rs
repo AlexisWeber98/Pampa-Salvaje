@@ -19,8 +19,9 @@
 //!
 //! Cada malla se dibuja dentro de los rangos compartidos de los asentamientos
 //! (los animales de suelo, el de los objetos; las aves que planean, el de los
-//! edificios); los vacunos lo reparten entre su malla completa, cerca, y su
-//! malla liviana, lejos ([`livestock::light_range`]).
+//! edificios); los vacunos, los felinos y las rapaces lo reparten entre su
+//! malla completa, cerca, y su malla liviana, lejos
+//! ([`livestock::light_range`]).
 
 pub mod livestock;
 
@@ -49,7 +50,9 @@ pub enum Animal {
     Hare,
     /// Un tero (avefría sureña).
     Tero,
-    /// Las dos rapaces que planean en lo alto (modelos, ver [`livestock`]).
+    /// Las dos rapaces que planean en lo alto, en círculos (modelos propios,
+    /// ver [`livestock`]; se inclinan hacia el giro con
+    /// [`AnimalPose::bank`]).
     Chimango,
     Carancho,
     Duck,
