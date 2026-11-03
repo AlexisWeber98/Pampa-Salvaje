@@ -94,6 +94,8 @@ pub enum Gait {
     Walk,
     /// Huyendo a toda carrera o saltando rápido.
     Run,
+    /// En el aire, saltando un alambrado (el zorro y los felinos).
+    Leap,
     /// Aleteando.
     Fly,
     /// Planeando con las alas quietas.
@@ -110,6 +112,9 @@ pub struct AnimalPose {
     pub speed: f32,
     /// Alabeo al girar, en radianes (positivo: ala izquierda hacia abajo).
     pub bank: f32,
+    /// Cabeceo con la pendiente del suelo a lo largo del rumbo, en radianes
+    /// (positivo: cuesta arriba, el hocico hacia arriba).
+    pub pitch: f32,
 }
 
 /// Más allá de esta distancia de la cámara, las articulaciones de un animal
@@ -771,8 +776,9 @@ fn animate_animals(
         let Ok((&animal, pose, at)) = animals.get(child_of.parent()) else {
             continue;
         };
-        transform.rotation =
-            Quat::from_rotation_y(pose.heading.radians()) * Quat::from_rotation_x(-pose.bank);
+        transform.rotation = Quat::from_rotation_y(pose.heading.radians())
+            * Quat::from_rotation_z(pose.pitch)
+            * Quat::from_rotation_x(-pose.bank);
         if eye.is_some_and(|e| e.distance(at.translation()) > ANIMATE_FAR) {
             continue;
         }

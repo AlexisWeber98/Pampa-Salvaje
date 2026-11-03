@@ -797,10 +797,13 @@ pub fn any_in_view(probes: &[Entity], visible: impl Fn(Entity) -> bool) -> bool 
 }
 
 /// El transform del modelo bajo su animal: girado de mirar hacia +Z al
-/// `heading` (+X es el frente del cuerpo) y escalado a tamaño real.
-pub fn model_transform(species: Species, heading: Heading) -> Transform {
-    Transform::from_rotation(Quat::from_rotation_y(heading.radians() + FRAC_PI_2))
-        .with_scale(Vec3::splat(species.scale()))
+/// `heading` (+X es el frente del cuerpo), cabeceado `pitch` radianes con la
+/// pendiente (positivo: el hocico hacia arriba) y escalado a tamaño real.
+pub fn model_transform(species: Species, heading: Heading, pitch: f32) -> Transform {
+    let turn = Quat::from_rotation_y(heading.radians())
+        * Quat::from_rotation_z(pitch)
+        * Quat::from_rotation_y(FRAC_PI_2);
+    Transform::from_rotation(turn).with_scale(Vec3::splat(species.scale()))
 }
 
 /// Un vertex de la mesh exportada en el marco del cuerpo del animal parado,
@@ -1091,7 +1094,7 @@ pub(super) fn attach_livestock(
         let mut model = commands.spawn((
             Name::new("Livestock model"),
             LivestockModel { species },
-            model_transform(species, pose.heading),
+            model_transform(species, pose.heading, pose.pitch),
             Visibility::default(),
             ChildOf(entity),
         ));
@@ -1372,7 +1375,7 @@ pub(super) fn drive_livestock(
             continue;
         };
         // Solo cuando se movió: un animal quieto deja intacto su subárbol.
-        transform.set_if_neq(model_transform(model.species, pose.heading));
+        transform.set_if_neq(model_transform(model.species, pose.heading, pose.pitch));
         let (Some(mut rig), Some(species)) =
             (rig, models.as_ref().and_then(|m| m.get(model.species)))
         else {
@@ -1782,11 +1785,21 @@ mod tests {
     fn models_are_scaled_to_life_and_turned_to_the_heading() {
         let heading = Heading::from_radians(0.7);
         for species in Species::ALL {
-            let t = model_transform(species, heading);
+            let t = model_transform(species, heading, 0.0);
             // El frente del modelo (+Z) apunta a lo largo del rumbo del cuerpo.
             let front = (t.rotation * Vec3::Z).normalize();
             let along = Quat::from_rotation_y(heading.radians()) * Vec3::X;
             assert!(front.distance(along) < 1e-5, "{species:?}: {front}");
+            // Cuesta arriba levanta el hocico con la pendiente, sin ladearse.
+            let t = model_transform(species, heading, 0.2);
+            let front = t.rotation * Vec3::Z;
+            assert!(
+                (front.y - 0.2f32.sin()).abs() < 1e-5,
+                "{species:?}: {front}"
+            );
+            let flat = Vec3::new(front.x, 0.0, front.z).normalize();
+            assert!(flat.distance(along) < 1e-5, "{species:?}: {front}");
+            assert!((t.rotation * Vec3::X).y.abs() < 1e-5, "level across");
             let withers = t.scale.y * species.model_withers();
             assert!((withers - species.withers()).abs() < 1e-4);
         }

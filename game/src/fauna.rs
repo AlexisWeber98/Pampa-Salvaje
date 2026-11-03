@@ -24,7 +24,8 @@ use pampa_core::fauna::Land;
 use pampa_core::fauna::caps;
 use pampa_core::{
     Aabb, ChunkCoord, CowState, Critter, CritterKind, CritterState, Duck, FaunaSite, FenceLayout,
-    Flock, Hare, HareState, Herd, MAX_STEP, Raptor, RaptorKind, TetheredHorse, Vec2 as GroundVec2, World,
+    Flock, Hare, HareState, Heading, Herd, MAX_STEP, Raptor, RaptorKind, TetheredHorse,
+    Vec2 as GroundVec2, World,
 };
 use pampa_render::{Animal, AnimalPose, AnimalSeed, Coat, Gait, WorldFlora, world_from_ground};
 
@@ -547,6 +548,7 @@ fn spawn_share(commands: &mut Commands, share: Share, world: &mut GameWorld) -> 
                 Animal::Horse(Coat::seeded(key)),
                 AnimalPose {
                     heading: horse.heading,
+                    pitch: slope_pitch(&world.0, horse.position, horse.heading),
                     ..default()
                 },
                 AnimalSeed(key),
@@ -602,6 +604,20 @@ fn critter_gait(critter: &Critter) -> Gait {
         CritterState::Walk => Gait::Walk,
         CritterState::Flee => Gait::Run,
     }
+}
+
+/// Cuánto se mide adelante y atrás de un animal la pendiente con la que
+/// cabecea, en metros.
+const SLOPE_REACH: f32 = 0.5;
+
+/// El cabeceo de un animal parado en `p` mirando hacia `heading`: la pendiente
+/// del suelo a lo largo de su rumbo, en radianes (positivo: cuesta arriba). Con
+/// el cuerpo inclinado así, las patas de adelante y de atrás pisan el suelo en
+/// vez de hundirse cuesta arriba y flotar cuesta abajo.
+fn slope_pitch(world: &World, p: GroundVec2, heading: Heading) -> f32 {
+    let f = heading.forward() * SLOPE_REACH;
+    let rise = world.ground_height(p + f) - world.ground_height(p - f);
+    (rise / (2.0 * SLOPE_REACH)).atan()
 }
 
 fn step_fauna(
@@ -676,6 +692,7 @@ fn place_fauna(
 ) {
     let Some(site) = site else { return };
     let ground = |p: GroundVec2| world.0.ground_height(p);
+    let lean = |p: GroundVec2, heading: Heading| slope_pitch(&world.0, p, heading);
     let mut put = |e: Entity, at: Vec3, pose: AnimalPose| {
         if let Ok((mut transform, mut drawn)) = drawn.get_mut(e) {
             transform.translation = at;
@@ -695,6 +712,7 @@ fn place_fauna(
                     gait,
                     speed: cow.speed,
                     bank: 0.0,
+                    pitch: lean(cow.position, cow.heading),
                 };
                 put(
                     e,
@@ -714,6 +732,7 @@ fn place_fauna(
                 gait,
                 speed: hare.speed,
                 bank: 0.0,
+                pitch: lean(hare.position, hare.heading),
             };
             let at = world_from_ground(hare.position, ground(hare.position) + hare.lift());
             put(*e, at, pose);
@@ -730,6 +749,7 @@ fn place_fauna(
                     gait,
                     speed: 0.0,
                     bank: 0.0,
+                    pitch: 0.0,
                 };
                 put(e, world_from_ground(p, ground(p) + lift), pose);
             }
@@ -741,6 +761,7 @@ fn place_fauna(
                 gait: Gait::Glide,
                 speed: 0.0,
                 bank: raptor.bank(),
+                pitch: 0.0,
             };
             put(*e, world_from_ground(p, ground(p) + raptor.altitude), pose);
         }
@@ -750,6 +771,7 @@ fn place_fauna(
                 gait: critter_gait(critter),
                 speed: critter.speed,
                 bank: 0.0,
+                pitch: lean(critter.position, critter.heading),
             };
             let p = critter.position;
             put(*e, world_from_ground(p, ground(p) + critter.lift()), pose);
@@ -761,6 +783,7 @@ fn place_fauna(
                 gait: Gait::Swim,
                 speed: 0.0,
                 bank: 0.0,
+                pitch: 0.0,
             };
             put(*e, world_from_ground(duck.position, level), pose);
         }
@@ -871,6 +894,66 @@ mod tests {
             assert_eq!(critter_gait(&puma) == Gait::Leap, puma.airborne());
         }
         assert!(leaped && side(&puma) > 10.0, "{}", side(&puma));
+    }
+
+    #[test]
+    fn a_feline_on_a_slope_leans_with_the_ground_along_its_heading() {
+        let laid = crate::shipped_world::laid();
+        let (mut app, site) = app(GroundVec2::ZERO);
+        let world = &laid.world;
+        let config = site.config();
+        let size = config.chunk_size;
+        let reach = (config.half_extent / size) as i32;
+        let den = config
+            .chunks_near(GroundVec2::ZERO, reach)
+            .into_iter()
+            .find(|&c| {
+                site.critters_in(c, |p| laid.flora.monte(p))
+                    .iter()
+                    .any(|k| k.kind.feline())
+            })
+            .expect("a feline in some monte");
+        moved(&mut app, den.center(size));
+        // La pendiente del suelo a lo largo de `heading`, de medio metro atrás
+        // a medio metro adelante.
+        let rise = |p: GroundVec2, heading: pampa_core::Heading| {
+            let f = heading.forward() * 0.5;
+            world.ground_height(p + f) - world.ground_height(p - f)
+        };
+        let east = pampa_core::Heading::default();
+        let slope = (0..4000)
+            .map(|k| {
+                den.center(size) + GroundVec2::new((k % 63) as f32 * 1.3, (k / 63) as f32 * 1.1)
+            })
+            .find(|&p| rise(p, east) > 0.06)
+            .expect("a slope up to the east");
+        let entity = {
+            let mut fauna = app.world_mut().resource_mut::<Fauna>();
+            let (cat, e) = feline_from(&mut fauna, den);
+            cat.position = slope;
+            cat.heading = east;
+            cat.speed = 0.0;
+            *e
+        };
+        app.update();
+        let fauna = app.world().resource::<Fauna>();
+        let cat = fauna
+            .chunks
+            .get(&den)
+            .into_iter()
+            .flat_map(|c| c.critters.iter())
+            .chain(fauna.strays.critters.iter())
+            .find(|(_, e)| *e == entity)
+            .map(|(c, _)| c.clone())
+            .unwrap();
+        let pose = *app.world().get::<AnimalPose>(entity).unwrap();
+        let want = rise(cat.position, cat.heading).atan();
+        assert!(want.abs() > 0.02, "still on the slope: {want}");
+        assert!(
+            (pose.pitch - want).abs() < 1e-4,
+            "leans {} with a slope of {want}",
+            pose.pitch
+        );
     }
 
     #[test]

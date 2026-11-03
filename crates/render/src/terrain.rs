@@ -32,6 +32,7 @@ use bevy::prelude::*;
 use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 use pampa_core::flora::grass_dryness;
+pub(crate) use pampa_core::terrain::{chunk_corner, mesh_height};
 use pampa_core::{ChunkCoord, FloraSite, RoadNetwork, Terrain, Vec2 as GroundVec2, WorldConfig};
 
 use crate::AssetRoot;
@@ -93,7 +94,7 @@ impl Default for TerrainPlugin {
         Self {
             radius: 3,
             budget: 1,
-            resolution: 40,
+            resolution: WorldConfig::GROUND_RESOLUTION,
         }
     }
 }
@@ -425,54 +426,6 @@ fn spawn_model_prop(
 const PROP_FAR: f32 = 160.0;
 const PROP_FADE: f32 = 15.0;
 
-/// La esquina de suelo `(i, j)` de un chunk dividido en `resolution` quads por
-/// lado. La última esquina es la primera del chunk siguiente, calculada de la
-/// misma forma, así que los vecinos comparten exactamente sus vértices de
-/// borde.
-fn chunk_corner(coord: ChunkCoord, size: f32, resolution: u32, i: u32, j: u32) -> GroundVec2 {
-    let axis = |c: i32, k: u32| {
-        let (lo, hi) = (c as f32 * size, (c + 1) as f32 * size);
-        if k == 0 {
-            lo
-        } else if k == resolution {
-            hi
-        } else {
-            lo + (hi - lo) * (k as f32 / resolution as f32)
-        }
-    };
-    GroundVec2::new(axis(coord.x, i), axis(coord.y, j))
-}
-
-/// Altura del suelo dibujado en el punto del suelo `p`: el terreno muestreado
-/// en las esquinas de la grilla del chunk, dividido en los mismos dos
-/// triángulos por quad que [`build_chunk_mesh`]. Lo que se apoya plano sobre el
-/// suelo (la superficie del camino) sigue esto, no el terreno lógico más fino,
-/// para que la malla nunca lo atraviese.
-pub(crate) fn mesh_height(terrain: &Terrain, p: GroundVec2, size: f32, resolution: u32) -> f32 {
-    let coord = ChunkCoord::containing(p, size);
-    let min = coord.min(size);
-    let quad = size / resolution as f32;
-    let fx = ((p.x - min.x) / quad).clamp(0.0, resolution as f32);
-    let fy = ((p.y - min.y) / quad).clamp(0.0, resolution as f32);
-    let (i, j) = (
-        (fx.floor() as u32).min(resolution - 1),
-        (fy.floor() as u32).min(resolution - 1),
-    );
-    let (u, v) = (fx - i as f32, fy - j as f32);
-    let h = |i: u32, j: u32| {
-        let c = chunk_corner(coord, size, resolution, i, j);
-        terrain.height(c.x, c.y)
-    };
-    let (a, c) = (h(i, j), h(i + 1, j + 1));
-    // Triángulos (a, b, c) por debajo de la diagonal a–c y (a, c, d) por encima
-    // de ella.
-    if u >= v {
-        a + (h(i + 1, j) - a) * (u - v) + (c - a) * v
-    } else {
-        a + (h(i, j + 1) - a) * (v - u) + (c - a) * u
-    }
-}
-
 /// La normal suave y la tangente del normal map (con el signo de la bitangente
 /// en `w`) del suelo donde sube `dx` metros por metro hacia el este y `dy` por
 /// metro hacia el norte. La tangente sigue la U en espacio del mundo de
@@ -736,7 +689,7 @@ fn chunk_props(
 mod tests {
     use super::*;
     use crate::ground::face_tangent;
-    use pampa_core::{FlatArea, TownLayout};
+    use pampa_core::{FlatArea, TownLayout, World};
 
     fn app(focus: GroundVec2) -> App {
         let mut app = App::new();
@@ -1178,6 +1131,30 @@ mod tests {
             panic!("tangents")
         };
         (p, n, t)
+    }
+
+    #[test]
+    fn the_logical_ground_is_the_drawn_mesh_everywhere_on_it() {
+        // Quien anda sobre el suelo (jinetes, gente, animales) se para en
+        // `World::ground_height`: tiene que ser la malla que se ve, también en
+        // el medio de cada triángulo, para no hundirse en ella ni flotar.
+        let world = World::open(Terrain::default());
+        let size = world.config.chunk_size;
+        let resolution = TerrainPlugin::default().resolution;
+        let mut worst = 0.0f32;
+        for coord in [ChunkCoord::new(0, 0), ChunkCoord::new(-3, 2)] {
+            let mesh = build_chunk_mesh(&world.terrain, coord, size, resolution, None);
+            let (p, ..) = vectors(&mesh);
+            let indices: Vec<usize> = mesh.indices().unwrap().iter().collect();
+            for tri in indices.chunks(3).step_by(7) {
+                let [a, b, c] = [tri[0], tri[1], tri[2]].map(|i| Vec3::from(p[i]));
+                for at in [a, (a + b) * 0.5, (a + b + c) / 3.0] {
+                    let ground = GroundVec2::new(at.x, -at.z);
+                    worst = worst.max((world.ground_height(ground) - at.y).abs());
+                }
+            }
+        }
+        assert!(worst < 1e-3, "the logical ground is {worst} m off the mesh");
     }
 
     #[test]

@@ -1242,6 +1242,38 @@ mod tests {
     }
 
     #[test]
+    fn goto_a_feline_finds_one_drawn_in_front_of_the_player() {
+        let mut app = app();
+        let laid = crate::shipped_world::laid();
+        app.insert_resource(crate::fauna::WorldFauna(laid.fauna.clone()))
+            .insert_resource(pampa_render::WorldFlora(laid.flora.clone()))
+            .add_plugins(crate::fauna::FaunaPlugin);
+        app.update();
+        for (word, kind) in [
+            ("puma", CritterKind::Puma),
+            ("gato", CritterKind::GatoMontes),
+            ("yaguarete", CritterKind::Yaguarete),
+        ] {
+            enter(&mut app, &format!("goto {word}"));
+            for _ in 0..5 {
+                app.update();
+            }
+            let at = rider(&mut app).position;
+            let fauna = app.world().resource::<crate::fauna::Fauna>();
+            let near = fauna
+                .critters()
+                .filter(|&(k, _)| k == kind)
+                .map(|(_, p)| p.distance(at))
+                .fold(f32::MAX, f32::min);
+            assert!(
+                near < 30.0,
+                "{kind:?}: the nearest drawn one is {near} m away ({})",
+                last_line(&app)
+            );
+        }
+    }
+
+    #[test]
     fn time_moves_the_clock_on_to_nightfall() {
         let mut app = app();
         let before = app.world().resource::<WorldClock>().0.day();

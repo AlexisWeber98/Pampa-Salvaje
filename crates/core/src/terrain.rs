@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use crate::{Lagoon, RoadNetwork, Vec2};
+use crate::{ChunkCoord, Lagoon, RoadNetwork, Vec2};
 
 /// Pampa de ondulación suave: unas pocas octavas de senos sumadas. Determinista
 /// para cada semilla.
@@ -190,6 +190,54 @@ fn hash(mut v: u32) -> u32 {
 /// Los 8 bits bajos de `v` llevados a `[0, 1)`.
 fn unit(v: u32) -> f32 {
     (v & 0xff) as f32 / 256.0
+}
+
+/// La esquina de suelo `(i, j)` de un chunk dividido en `resolution` quads por
+/// lado. La última esquina es la primera del chunk siguiente, calculada de la
+/// misma forma, así que los vecinos comparten exactamente sus vértices de
+/// borde.
+pub fn chunk_corner(coord: ChunkCoord, size: f32, resolution: u32, i: u32, j: u32) -> Vec2 {
+    let axis = |c: i32, k: u32| {
+        let (lo, hi) = (c as f32 * size, (c + 1) as f32 * size);
+        if k == 0 {
+            lo
+        } else if k == resolution {
+            hi
+        } else {
+            lo + (hi - lo) * (k as f32 / resolution as f32)
+        }
+    };
+    Vec2::new(axis(coord.x, i), axis(coord.y, j))
+}
+
+/// Altura del suelo dibujado en el punto del suelo `p`: el terreno muestreado
+/// en las esquinas de la grilla del chunk, dividido en los mismos dos
+/// triángulos por quad que la malla del suelo de render. Lo que se apoya plano sobre el
+/// suelo (la superficie del camino) sigue esto, no el terreno lógico más fino,
+/// para que la malla nunca lo atraviese.
+pub fn mesh_height(terrain: &Terrain, p: Vec2, size: f32, resolution: u32) -> f32 {
+    let coord = ChunkCoord::containing(p, size);
+    let min = coord.min(size);
+    let quad = size / resolution as f32;
+    let fx = ((p.x - min.x) / quad).clamp(0.0, resolution as f32);
+    let fy = ((p.y - min.y) / quad).clamp(0.0, resolution as f32);
+    let (i, j) = (
+        (fx.floor() as u32).min(resolution - 1),
+        (fy.floor() as u32).min(resolution - 1),
+    );
+    let (u, v) = (fx - i as f32, fy - j as f32);
+    let h = |i: u32, j: u32| {
+        let c = chunk_corner(coord, size, resolution, i, j);
+        terrain.height(c.x, c.y)
+    };
+    let (a, c) = (h(i, j), h(i + 1, j + 1));
+    // Triángulos (a, b, c) por debajo de la diagonal a–c y (a, c, d) por encima
+    // de ella.
+    if u >= v {
+        a + (h(i + 1, j) - a) * (u - v) + (c - a) * v
+    } else {
+        a + (h(i, j + 1) - a) * (v - u) + (c - a) * u
+    }
 }
 
 #[cfg(test)]

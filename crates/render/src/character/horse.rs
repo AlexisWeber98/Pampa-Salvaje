@@ -474,7 +474,7 @@ pub fn jump_time(flight: f32) -> f32 {
 /// para mirar hacia +X y escalada a tamaño real (la escala de los caballos de
 /// corral).
 pub fn model_transform() -> Transform {
-    livestock::model_transform(Species::Horse, Heading::default())
+    livestock::model_transform(Species::Horse, Heading::default(), 0.0)
 }
 
 /// Crea un caballo ensillado con el pelaje `coat` (montado por `rider`) bajo

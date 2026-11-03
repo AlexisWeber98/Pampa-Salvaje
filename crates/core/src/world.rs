@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use crate::obstacles::around;
+use crate::terrain::mesh_height;
 use crate::{
     Body, ChunkCoord, Circle, FenceLayout, Floor, FloraSite, RailLine, RoadNetwork,
     SettlementLayout, SideObstacle, StaticObstacles, Terrain, TownLayout, Vec2, WorldConfig,
@@ -116,7 +117,8 @@ impl World {
     }
 
     /// Altura de la superficie sobre la que se apoyan los cuerpos en `p`: el
-    /// terreno, elevado por el piso más alto que haya ahí (un andén o su
+    /// terreno tal como se dibuja (la malla de [`mesh_height`], que se separa
+    /// hasta 10 cm del ruido de [`Terrain::height`] entre sus vértices), elevado por el piso más alto que haya ahí (un andén o su
     /// rampa), o por el acceso y la plataforma de un paso a nivel
     /// ([`RoadNetwork::crossing_rise`]). Todo lo que se coloca sobre el suelo
     /// (jinetes, personas, caballos, el piso de la cámara) usa esto.
@@ -131,7 +133,14 @@ impl World {
             .iter()
             .filter_map(|f| f.rise_at(p))
             .fold(crossing, f32::max);
-        self.terrain.height(p.x, p.y) + rise
+        self.bare_ground_height(p) + rise
+    }
+
+    /// Altura del terreno tal como se dibuja en `p`, sin andenes ni pasos a
+    /// nivel encima: la base de [`Self::ground_height`].
+    pub fn bare_ground_height(&self, p: Vec2) -> f32 {
+        let size = self.config.chunk_size;
+        mesh_height(&self.terrain, p, size, WorldConfig::GROUND_RESOLUTION)
     }
 
     /// Terreno abierto en el mundo por defecto, sin nada construido encima.
@@ -581,7 +590,7 @@ mod tests {
         // El suelo sobre él es su parte superior, a 0,9 m de altura, y está
         // nivelado al costado.
         let on = bay.footprint.center();
-        let rise = |p: Vec2| world.ground_height(p) - world.terrain.height(p.x, p.y);
+        let rise = |p: Vec2| world.ground_height(p) - world.bare_ground_height(p);
         assert!((rise(on) - 0.9).abs() < 1e-5, "{}", rise(on));
         assert_eq!(rise(on + Vec2::new(0.0, 20.0)), 0.0);
     }
@@ -914,7 +923,7 @@ mod tests {
     #[test]
     fn the_road_climbs_gently_onto_each_crossing_deck_and_down_again() {
         let (world, roads, _) = roaded_world();
-        let raised = |p: Vec2| world.ground_height(p) - world.terrain.height(p.x, p.y);
+        let raised = |p: Vec2| world.ground_height(p) - world.bare_ground_height(p);
         for c in roads.crossings() {
             let mut last: Option<f32> = None;
             for k in -60..=60 {
@@ -940,11 +949,7 @@ mod tests {
             // es el del terreno (y el terreno debajo de la vía está intacto).
             for s in [-9.0, -6.0, 6.0, 9.0] {
                 let p = c.at + c.rail * s;
-                assert_eq!(
-                    world.ground_height(p),
-                    world.terrain.height(p.x, p.y),
-                    "{s}"
-                );
+                assert_eq!(world.ground_height(p), world.bare_ground_height(p), "{s}");
             }
         }
     }
