@@ -67,8 +67,8 @@ pub use math::Vec2;
 pub use obstacles::StaticObstacles;
 pub use placement::{PlacementError, place_towns};
 pub use places::{
-    Place, PlaceKind, STATION_WALL_INSET, Sign, SignMount, StoreStyle, TIMETABLE_BOARD_HEIGHT,
-    TIMETABLE_BOARD_WIDTH, station_bays,
+    BANK_NAMES, Place, PlaceKind, STATION_WALL_INSET, Sign, SignMount, StoreStyle,
+    TIMETABLE_BOARD_HEIGHT, TIMETABLE_BOARD_WIDTH, station_bays,
 };
 pub use pose::{HorseGait, JointAngles, MOTION_CLOCK_PERIOD, tick_clock};
 pub use rail::{

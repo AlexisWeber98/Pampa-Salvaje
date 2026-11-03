@@ -2,7 +2,8 @@
 //! y los hace avanzar; este módulo los trae por streaming con los chunks dentro
 //! de [`RADIUS`] del jugador, los más cercanos primero y hasta los [`caps`] (se
 //! replanifica cada vez que el jugador entra en otro chunk, para que los chunks
-//! más cercanos ocupen el lugar primero), los hace avanzar con el jugador como
+//! más cercanos ocupen el lugar primero; un animal de suelo cerca del jugador
+//! sobrevive a su chunk, ver `Fauna::strays`), los hace avanzar con el jugador como
 //! la amenaza que esquivan, y copia su estado en las entidades que dibuja
 //! render ([`Animal`]). Los felinos se siembran solo en el monte de la flora
 //! del mundo ([`WorldFlora`]) y, si salen de él, vuelven antes de dos horas de
@@ -30,6 +31,10 @@ use crate::ride::OnTrain;
 
 /// Chunks, contados desde el del jugador, que tienen animales vivos.
 pub const RADIUS: i32 = 2;
+
+/// Hasta cuántos chunks del jugador sigue vivo un animal de suelo cuyo chunk se
+/// fue (ver `Fauna::strays`).
+pub const STRAY_REACH: f32 = RADIUS as f32 + 0.5;
 /// Las manadas a más de esta distancia del jugador no se comprueban contra el
 /// jinete, en metros.
 const BODY_REACH: f32 = 40.0;
@@ -49,6 +54,8 @@ struct ChunkFauna {
     raptors: Vec<(Raptor, Entity)>,
     ducks: Vec<(Duck, Entity)>,
     critters: Vec<(Critter, Entity)>,
+    /// El lugar de cada animal de `critters` en la lista sembrada de su chunk.
+    critter_ids: Vec<u64>,
     nutrias: Vec<(Duck, Entity)>,
     /// Cuáles de los animales sembrados del chunk contiene (ver [`Picks`]).
     picks: Picks,
@@ -139,6 +146,12 @@ impl ChunkFauna {
 pub struct Fauna {
     center: Option<ChunkCoord>,
     chunks: BTreeMap<ChunkCoord, ChunkFauna>,
+    /// Los animales de suelo que andan cerca del jugador (ver [`STRAY_REACH`]),
+    /// con el chunk del que vienen en `stray_from`: sobreviven a su chunk, su
+    /// lugar bajo los límites va primero y no se vuelven a sembrar mientras
+    /// tanto; lejos, vuelven a su chunk si sigue cargado.
+    strays: ChunkFauna,
+    stray_from: Vec<ChunkCoord>,
     /// Caballos de corral que tomó el jugador, por la esquina de su huella en
     /// planta.
     taken: HashSet<(u32, u32)>,
@@ -150,6 +163,7 @@ impl Fauna {
     pub fn critters(&self) -> impl Iterator<Item = (CritterKind, GroundVec2)> + '_ {
         self.chunks
             .values()
+            .chain([&self.strays])
             .flat_map(|c| &c.critters)
             .map(|(k, _)| (k.kind, k.position))
     }
@@ -159,7 +173,8 @@ impl Fauna {
     /// pumas y yaguaretés) y nutrias vivos ahora (lo que muestra el comando
     /// `fauna` de la consola).
     pub fn all_counts(&self) -> [usize; KINDS] {
-        self.chunks.values().fold([0; KINDS], |mut sum, c| {
+        let all = self.chunks.values().chain([&self.strays]);
+        all.fold([0; KINDS], |mut sum, c| {
             for (s, n) in sum.iter_mut().zip(c.counts()) {
                 *s += n;
             }
@@ -270,13 +285,57 @@ fn stream_fauna(
     fauna.center = Some(center);
     let mut wanted = config.chunks_near(player.rider.position, RADIUS);
     wanted.sort_by_key(|c| c.distance_squared(center));
+    // Todo animal de suelo que anda cerca del jugador queda suelto: sobrevive
+    // a su chunk y su lugar bajo los límites va antes que el de nadie. Uno
+    // suelto que quedó lejos vuelve a su chunk si sigue cargado, si no se va.
+    let here = player.rider.position;
+    let reach = STRAY_REACH * config.chunk_size;
+    let strays = std::mem::take(&mut fauna.strays.critters);
+    let from = std::mem::take(&mut fauna.stray_from);
+    let ids = std::mem::take(&mut fauna.strays.critter_ids);
+    for ((stray, e), (from, id)) in strays.into_iter().zip(from.into_iter().zip(ids)) {
+        if stray.position.distance(here) <= reach {
+            fauna.strays.critters.push((stray, e));
+            fauna.strays.critter_ids.push(id);
+            fauna.stray_from.push(from);
+        } else if let Some(chunk) = fauna.chunks.get_mut(&from) {
+            chunk.critters.push((stray, e));
+            chunk.critter_ids.push(id);
+        } else {
+            commands.entity(e).despawn();
+        }
+    }
+    for (&coord, chunk) in fauna.chunks.iter_mut() {
+        let critters = std::mem::take(&mut chunk.critters);
+        let ids = std::mem::take(&mut chunk.critter_ids);
+        for ((critter, e), id) in critters.into_iter().zip(ids) {
+            if critter.position.distance(here) <= reach {
+                fauna.strays.critters.push((critter, e));
+                fauna.strays.critter_ids.push(id);
+                fauna.stray_from.push(coord);
+            } else {
+                chunk.critters.push((critter, e));
+                chunk.critter_ids.push(id);
+            }
+        }
+    }
     let mut room = caps.0;
+    for (stray, _) in &fauna.strays.critters {
+        let slot = critter_slot(stray.kind);
+        room[slot] = room[slot].saturating_sub(1);
+    }
+    let loose: HashSet<(ChunkCoord, u64)> = fauna
+        .stray_from
+        .iter()
+        .copied()
+        .zip(fauna.strays.critter_ids.iter().copied())
+        .collect();
     let mut plan = BTreeMap::new();
     let monte = |p| flora.as_ref().map_or(0.0, |f| f.0.monte(p));
     for &coord in &wanted {
         plan.insert(
             coord,
-            select(&site.0, coord, &mut room, &fauna.taken, monte),
+            select(&site.0, coord, &mut room, &fauna.taken, &loose, monte),
         );
     }
     let stale: Vec<ChunkCoord> = fauna
@@ -312,18 +371,21 @@ struct Share {
     raptors: Vec<Raptor>,
     ducks: Vec<Duck>,
     critters: Vec<Critter>,
+    critter_ids: Vec<u64>,
     nutrias: Vec<Duck>,
     picks: Picks,
 }
 
 /// Los animales de `coord` que entran en el lugar `room` que queda bajo los
-/// límites (solo manadas y bandadas enteras), sin los caballos `taken`, con
+/// límites (solo manadas y bandadas enteras), sin los caballos `taken` ni los
+/// animales de suelo sueltos `loose` (ver `Fauna::strays`), con
 /// `monte` la parte de monte de cada lugar (`FloraSite::monte`).
 fn select(
     site: &FaunaSite,
     coord: ChunkCoord,
     room: &mut [usize; KINDS],
     taken: &HashSet<(u32, u32)>,
+    loose: &HashSet<(ChunkCoord, u64)>,
     monte: impl Fn(GroundVec2) -> f32,
 ) -> Share {
     /// Los `items` que entran en `room`, en orden, con sus selecciones.
@@ -355,14 +417,19 @@ fn select(
         .filter(|h| !taken.contains(&horse_key(h)))
         .collect();
     let mut picks = Picks::default();
-    // Cada animal de suelo entra si queda lugar para su tipo.
-    let mut critters = Vec::new();
+    // Cada animal de suelo entra si queda lugar para su tipo; uno que anda
+    // suelto (`loose`, ya contado) sigue en la selección pero no se vuelve a
+    // sembrar.
+    let (mut critters, mut critter_ids) = (Vec::new(), Vec::new());
     for (k, critter) in site.critters_in(coord, monte).into_iter().enumerate() {
         let slot = critter_slot(critter.kind);
-        if room[slot] > 0 {
+        if loose.contains(&(coord, k as u64)) {
+            picks[slot].push(k as u64);
+        } else if room[slot] > 0 {
             room[slot] -= 1;
             picks[slot].push(k as u64);
             critters.push(critter);
+            critter_ids.push(k as u64);
         }
     }
     let [
@@ -403,6 +470,7 @@ fn select(
         raptors: fits(site.raptors_in(coord), |_| 1, index, &mut room[4], raptors),
         ducks: fits(site.ducks_in(coord), |_| 1, index, &mut room[5], ducks),
         critters,
+        critter_ids,
         nutrias: fits(site.nutrias_in(coord), |_| 1, index, &mut room[11], nutrias),
         picks,
     }
@@ -456,10 +524,11 @@ fn spawn_share(commands: &mut Commands, share: Share, world: &mut GameWorld) -> 
     for duck in share.ducks {
         chunk.ducks.push((duck, spawn(Animal::Duck, 0)));
     }
-    for critter in share.critters {
+    for (critter, id) in share.critters.into_iter().zip(share.critter_ids) {
         let seed = spot_seed(critter.position);
         let entity = spawn(critter_animal(critter.kind), seed);
         chunk.critters.push((critter, entity));
+        chunk.critter_ids.push(id);
     }
     for nutria in share.nutrias {
         chunk.nutrias.push((nutria, spawn(Animal::Nutria, 0)));
@@ -501,7 +570,8 @@ fn step_fauna(
     let mut player = players.single_mut().ok();
     let threat = player.as_ref().map(|(p, _)| p.rider.position);
     let mut bodies = Vec::new();
-    for chunk in fauna.chunks.values_mut() {
+    let fauna = &mut *fauna;
+    for chunk in fauna.chunks.values_mut().chain([&mut fauna.strays]) {
         for (herd, _) in &mut chunk.herds {
             herd.step(dt, threat, &world.0.obstacles);
             if threat.is_some_and(|t| herd.center().distance(t) < BODY_REACH) {
@@ -560,7 +630,7 @@ fn place_fauna(
             *drawn = pose;
         }
     };
-    for chunk in fauna.chunks.values() {
+    for chunk in fauna.chunks.values().chain([&fauna.strays]) {
         for (herd, entities) in &chunk.herds {
             for (cow, &e) in herd.cows.iter().zip(entities) {
                 let gait = match cow.state {
@@ -678,6 +748,24 @@ mod tests {
         (app, site)
     }
 
+    /// El primer felino sembrado en `den`, en la lista de su chunk o suelto.
+    fn feline_from(fauna: &mut Fauna, den: ChunkCoord) -> &mut (Critter, Entity) {
+        let Fauna {
+            chunks,
+            strays,
+            stray_from,
+            ..
+        } = fauna;
+        let loose = strays.critters.iter_mut().zip(stray_from.iter());
+        chunks
+            .get_mut(&den)
+            .into_iter()
+            .flat_map(|c| c.critters.iter_mut())
+            .chain(loose.filter(|(_, f)| **f == den).map(|(c, _)| c))
+            .find(|(c, _)| c.kind.feline())
+            .expect("a feline from that chunk")
+    }
+
     fn moved(app: &mut App, to: GroundVec2) {
         let world: World = app.world().resource::<GameWorld>().0.clone();
         let mut q = app.world_mut().query::<&mut Player>();
@@ -757,6 +845,98 @@ mod tests {
         moved(&mut app, GroundVec2::new(8000.0, 8000.0));
         let counts = app.world().resource::<Fauna>().all_counts();
         assert_eq!(counts[0..2], [0, 0], "{counts:?}");
+    }
+
+    #[test]
+    fn a_wild_animal_led_out_of_its_chunk_range_stays_with_the_player_and_is_not_reseeded() {
+        let laid = crate::shipped_world::laid();
+        let (mut app, site) = app(GroundVec2::ZERO);
+        let config = site.config();
+        let size = config.chunk_size;
+        let reach = (config.half_extent / size) as i32;
+        let monte = |p| laid.flora.monte(p);
+        let den = config
+            .chunks_near(GroundVec2::ZERO, reach)
+            .into_iter()
+            .find(|&c| {
+                config.has_chunk(ChunkCoord::new(c.x + RADIUS + 1, c.y))
+                    && site.critters_in(c, monte).iter().any(|k| k.kind.feline())
+            })
+            .expect("a feline in some monte");
+        moved(&mut app, den.center(size));
+        // El jugador lo persigue: el felino va adelante, lejos de su chunk.
+        let far = ChunkCoord::new(den.x + RADIUS + 1, den.y).center(size);
+        let ahead = far + GroundVec2::new(15.0, 0.0);
+        let (kind, seed, entity) = {
+            let mut fauna = app.world_mut().resource_mut::<Fauna>();
+            let (cat, e) = feline_from(&mut fauna, den);
+            let seed = cat.position;
+            cat.position = ahead;
+            (cat.kind, seed, *e)
+        };
+        let near = |app: &App, at: GroundVec2| {
+            let fauna = app.world().resource::<Fauna>();
+            fauna
+                .critters()
+                .filter(|&(k, p)| k == kind && p.distance(at) < 1.0)
+                .count()
+        };
+        moved(&mut app, far);
+        assert!(!app.world().resource::<Fauna>().chunks.contains_key(&den));
+        assert_eq!(near(&app, ahead), 1, "still with the player");
+        assert!(app.world().get_entity(entity).is_ok(), "still drawn");
+        // De vuelta a un chunk desde el que su chunk se carga otra vez: no
+        // aparece un segundo igual en su lugar de nacimiento.
+        moved(
+            &mut app,
+            ChunkCoord::new(den.x + RADIUS, den.y).center(size),
+        );
+        assert!(app.world().resource::<Fauna>().chunks.contains_key(&den));
+        assert_eq!(near(&app, ahead), 1, "still with the player");
+        assert_eq!(near(&app, seed), 0, "not reseeded while alive");
+    }
+
+    #[test]
+    fn a_wild_animal_near_the_player_keeps_its_place_when_a_nearer_chunk_wants_it() {
+        let laid = crate::shipped_world::laid();
+        let (mut app, site) = app(GroundVec2::ZERO);
+        let config = site.config();
+        let size = config.chunk_size;
+        let reach = (config.half_extent / size) as i32;
+        let monte = |p| laid.flora.monte(p);
+        // Dos chunks cercanos con un felino cada uno, y lugar para uno solo.
+        let dens: Vec<ChunkCoord> = config
+            .chunks_near(GroundVec2::ZERO, reach)
+            .into_iter()
+            .filter(|&c| site.critters_in(c, monte).iter().any(|k| k.kind.feline()))
+            .collect();
+        let (den, other) = dens
+            .iter()
+            .flat_map(|&a| dens.iter().map(move |&b| (a, b)))
+            .find(|(a, b)| a != b && a.distance_squared(*b) <= i64::from(RADIUS).pow(2))
+            .expect("two felines near each other");
+        let mut caps = CAPS;
+        caps[10] = 1;
+        app.insert_resource(FaunaCaps(caps));
+        moved(&mut app, den.center(size));
+        // El jugador lo persigue hasta el otro chunk, que ahora queda más
+        // cerca y se quedaría con el único lugar.
+        let there = other.center(size);
+        let ahead = there + GroundVec2::new(15.0, 0.0);
+        let kind = {
+            let mut fauna = app.world_mut().resource_mut::<Fauna>();
+            let (cat, _) = feline_from(&mut fauna, den);
+            cat.position = ahead;
+            cat.kind
+        };
+        moved(&mut app, there);
+        let fauna = app.world().resource::<Fauna>();
+        let with_player = fauna
+            .critters()
+            .filter(|&(k, p)| k == kind && p.distance(ahead) < 1.0)
+            .count();
+        assert_eq!(with_player, 1, "still with the player");
+        assert_eq!(fauna.all_counts()[10], 1, "under the cap");
     }
 
     #[test]

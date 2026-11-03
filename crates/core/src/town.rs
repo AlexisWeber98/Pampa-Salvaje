@@ -35,6 +35,12 @@ pub enum BuildingKind {
     PoliceStation,
     Church,
     Station,
+    /// Una sucursal de banco de frente académico: dos en una ciudad, una en un
+    /// pueblo, ninguna en una aldea ([`Paving::banks`]).
+    Bank,
+    /// La intendencia municipal, frente a la plaza principal; solo la tiene
+    /// [`TownConfig::TOWN_HALL_TOWN`].
+    TownHall,
     /// Plataforma elevada entre la estación y la vía.
     Platform,
     /// Galpón de chapa ondulada.
@@ -125,6 +131,19 @@ impl Paving {
             _ if blocks.0 * blocks.1 <= Self::VILLAGE_MAX => Self::None,
             TownSize::Small => Self::Plaza,
             TownSize::Big | TownSize::VeryBig => Self::Everywhere,
+        }
+    }
+
+    /// Cuántos bancos tiene un asentamiento con este pavimento (usuario,
+    /// 2026-11-02: "agregar banco en ciudades, uno en pueblos ninguno en
+    /// aldeas"): dos en una ciudad, el Banco de la Nación y un banco privado,
+    /// uno a cada lado de una línea que la atraviesa; uno en un pueblo; ninguno
+    /// en una aldea.
+    pub fn banks(self) -> usize {
+        match self {
+            Self::None => 0,
+            Self::Plaza => 1,
+            Self::Everywhere => 2,
         }
     }
 }
@@ -394,8 +413,9 @@ pub struct HitchingPost {
 
 /// Un palenque frente a un punto de referencia además del propio
 /// [`HitchingPost`] del almacén de ramos generales: los otros almacenes, las
-/// comisarías, la iglesia y la estación. Una ciudad ata un caballo a algunos de
-/// ellos ([`Palenque::MAX_HORSES`]); un pueblo o un pueblito los deja vacíos.
+/// comisarías, la iglesia, la estación, los bancos y la intendencia. Una ciudad
+/// ata un caballo a algunos de ellos ([`Palenque::MAX_HORSES`]); un pueblo o un
+/// pueblito los deja vacíos.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Palenque {
     /// El edificio frente al que está: un índice dentro de
@@ -671,6 +691,9 @@ impl TownConfig {
     pub const MIN_RAILWAY_OFFSET: f32 = 24.0;
     /// El máximo de personas que un pueblo puede pedir en `townsfolk`.
     pub const MAX_TOWNSFOLK: usize = 200;
+    /// El único pueblo con intendencia municipal (usuario, 2026-11-02:
+    /// "agregar intendencia en General Pico").
+    pub const TOWN_HALL_TOWN: &'static str = "General Pico";
 
     /// Pueblo inspirado en Eduardo Castex: 4 x 5 manzanas de 40 m (4 de este a
     /// oeste, 5 de norte a sur), calles de 12 m, vía férrea 24 m al norte de la
@@ -709,6 +732,16 @@ impl TownConfig {
     pub fn police_count(&self) -> usize {
         self.police_stations
             .unwrap_or_else(|| self.size().police_stations())
+    }
+
+    /// Cuántos bancos tiene el pueblo, según su pavimento ([`Paving::banks`]).
+    pub fn bank_count(&self) -> usize {
+        Paving::of(self.blocks).banks()
+    }
+
+    /// Si el pueblo tiene intendencia: solo [`Self::TOWN_HALL_TOWN`].
+    pub fn has_town_hall(&self) -> bool {
+        self.name == Self::TOWN_HALL_TOWN
     }
 
     /// Cuántas personas caminan por el pueblo: el reemplazo, o la multitud de
@@ -939,7 +972,8 @@ pub struct TownLayout {
     /// Palenque frente al (primer) almacén de ramos generales.
     pub hitching_post: HitchingPost,
     /// Los demás palenques: frente a los demás almacenes de ramos generales,
-    /// las comisarías, la iglesia y la estación ([`Palenque`]).
+    /// las comisarías, la iglesia, la estación, los bancos y la intendencia
+    /// ([`Palenque`]).
     pub palenques: Vec<Palenque>,
     /// La semilla de la configuración, que también se usa para la multitud del
     /// pueblo.
@@ -1212,7 +1246,12 @@ impl TownLayout {
         let extent = grid.extent(config.railway);
 
         let police = config.police_count();
-        let (landmarks, station) = place_landmarks(&grid, main, size, police, config.railway);
+        let civic = Institutions {
+            banks: config.bank_count(),
+            town_hall: config.has_town_hall(),
+        };
+        let (landmarks, station) =
+            place_landmarks(&grid, main, size, police, config.railway, civic);
         let mut reserved: Vec<(usize, usize)> = landmarks.iter().map(|l| l.block).collect();
         reserved.extend(main.blocks());
         reserved.extend(station.map(|s| s.block));
@@ -2033,7 +2072,10 @@ const LANDMARK_PREFERENCES: [(BuildingKind, [Side; 4]); 3] = [
 /// estación de un pueblo más grande. Los devuelve como el almacén de ramos
 /// generales principal, la iglesia y la primera comisaría (salvo que
 /// `police_count` sea cero), y después el resto: el almacén de la estación de
-/// un pueblo más grande, las demás comisarías y cualquier almacén extra.
+/// un pueblo más grande, las demás comisarías, cualquier almacén extra, la
+/// intendencia de `civic` (mirando hacia la plaza, como la iglesia) y sus
+/// bancos (dispersos como las comisarías, fuera de las manzanas de los
+/// molinos).
 ///
 /// La iglesia mira hacia la plaza principal desde la primera manzana vecina
 /// libre según sus preferencias (ver [`LANDMARK_PREFERENCES`]). Después vienen
@@ -2046,6 +2088,7 @@ fn place_landmarks(
     size: TownSize,
     police_count: usize,
     railway: Option<RailwayConfig>,
+    civic: Institutions,
 ) -> (Vec<Landmark>, Option<StationPlaza>) {
     let [store, church, police] = LANDMARK_PREFERENCES;
     let none = |_: (usize, usize)| false;
@@ -2074,8 +2117,65 @@ fn place_landmarks(
             rest.push(landmark);
         }
     }
+    // La intendencia y los bancos llegan al final, sin mover nada de lo
+    // anterior: ni los demás puntos de referencia ni las manzanas de los
+    // molinos, que se calculan sin ellos.
+    let mut taken: Vec<(usize, usize)> = placed.iter().map(|l| l.block).collect();
+    taken.extend(plaza.blocks());
+    taken.extend(&reserved);
+    let mut reserved = reserved;
+    reserved.extend(windmill_blocks(grid, &taken));
+    if civic.town_hall {
+        let taken =
+            |b: (usize, usize)| reserved.contains(&b) || placed.iter().any(|l| l.block == b);
+        let hall = place_landmark(
+            grid,
+            plaza,
+            BuildingKind::TownHall,
+            &TOWN_HALL_SIDES,
+            &taken,
+        );
+        placed.push(hall);
+        rest.push(hall);
+    }
+    let station_blocks = station.iter().map(|s| s.block).collect::<Vec<_>>();
+    for _ in 0..civic.banks {
+        // Lejos de los demás edificios cívicos antes que el molino: en un
+        // pueblo chico sin otra manzana a esa distancia, el banco ocupa la de
+        // un molino.
+        let spaced = |l: &Landmark| {
+            placed.iter().all(|p| {
+                let apart = blocks_apart(p.block, l.block);
+                apart >= CIVIC_SPACING
+                    && (p.kind != l.kind || apart >= same_kind_spacing(grid.cols, grid.rows))
+            })
+        };
+        let bank = Some(disperse(
+            grid,
+            plaza,
+            BuildingKind::Bank,
+            &placed,
+            &reserved,
+        ))
+        .filter(spaced)
+        .unwrap_or_else(|| disperse(grid, plaza, BuildingKind::Bank, &placed, &station_blocks));
+        placed.push(bank);
+        rest.push(bank);
+    }
     first.extend(rest);
     (first, station)
+}
+
+/// Desde qué lado de la plaza principal prefiere mirarla la intendencia, en
+/// orden: enfrente de la iglesia, que tiene el norte.
+const TOWN_HALL_SIDES: [Side; 4] = [Side::South, Side::East, Side::West, Side::North];
+
+/// Los edificios cívicos que un pueblo agrega después de sus puntos de
+/// referencia de siempre: cuántos bancos y si tiene intendencia.
+#[derive(Debug, Clone, Copy)]
+struct Institutions {
+    banks: usize,
+    town_hall: bool,
 }
 
 /// Manzanas entre dos edificios cívicos, como mínimo: nunca uno al lado del
@@ -2376,6 +2476,10 @@ fn landmark_shape(kind: BuildingKind) -> (f32, f32, f32, f32) {
     match kind {
         BuildingKind::GeneralStore => (12.0, 28.0, 14.0, 5.0),
         BuildingKind::PoliceStation => (13.0, 27.0, 12.0, 4.5),
+        // Banco: un frente de 12 m, alto y profundo, con su salón de atención.
+        BuildingKind::Bank => (14.0, 26.0, 16.0, 6.2),
+        // Intendencia: el frente más ancho del pueblo, de dos plantas.
+        BuildingKind::TownHall => (10.0, 30.0, 16.0, 8.0),
         // Iglesia: nave profunda detrás de un frente angosto.
         _ => (14.0, 26.0, 22.0, 7.0),
     }
@@ -2684,7 +2788,7 @@ fn tied_post(
 impl TownLayout {
     /// Los palenques del pueblo: uno frente a cada almacén de ramos generales
     /// salvo el primero (cuyo palenque es [`Self::hitching_post`]), comisaría,
-    /// iglesia y estación que tenga lugar para uno, en el orden de los
+    /// iglesia, estación, banco e intendencia que tenga lugar para uno, en el orden de los
     /// edificios. Una ciudad ata un caballo a una mitad de ellos elegida por
     /// semilla, como mucho [`Palenque::MAX_HORSES`].
     fn place_palenques(&self) -> Vec<Palenque> {
@@ -2734,6 +2838,8 @@ impl TownLayout {
                     | BuildingKind::PoliceStation
                     | BuildingKind::Church
                     | BuildingKind::Station
+                    | BuildingKind::Bank
+                    | BuildingKind::TownHall
             );
             if !wanted || Some(k) == first_store {
                 continue;
@@ -3181,12 +3287,13 @@ impl TownLayout {
             }
         };
 
-        // Junto a la iglesia, las comisarías y la estación de una ciudad.
+        // Junto a la iglesia, las comisarías, la estación, los bancos y la
+        // intendencia de una ciudad.
         if city {
             for (k, b) in self.buildings.iter().enumerate() {
                 let trees = match b.kind {
-                    BuildingKind::Church | BuildingKind::Station => 2,
-                    BuildingKind::PoliceStation => 1,
+                    BuildingKind::Church | BuildingKind::Station | BuildingKind::TownHall => 2,
+                    BuildingKind::PoliceStation | BuildingKind::Bank => 1,
                     _ => continue,
                 };
                 let around = b.footprint.expanded(ShadeTree::LANDMARK_REACH);
@@ -3940,6 +4047,139 @@ pub(crate) mod tests {
         // también mantiene separados su almacén, su comisaría y su iglesia.
         let t = TownLayout::castex_inspired();
         assert_eq!(civic(&t).len(), 3);
+    }
+
+    /// General Pico tal como lo distribuye `assets/world/towns.ron`, salvo su
+    /// lugar en el mundo.
+    fn general_pico() -> TownConfig {
+        TownConfig {
+            name: TownConfig::TOWN_HALL_TOWN.into(),
+            blocks: (8, 8),
+            street_width: 13.0,
+            railway: Some(RailwayConfig {
+                side: Side::North,
+                offset: 24.0,
+                through: true,
+            }),
+            seed: 13,
+            townsfolk: Some(31),
+            ..TownConfig::castex()
+        }
+    }
+
+    /// Metileo tal como lo distribuye `assets/world/towns.ron`: una aldea.
+    fn metileo() -> TownConfig {
+        TownConfig {
+            name: "Metileo".into(),
+            blocks: (3, 3),
+            seed: 19,
+            police_stations: Some(0),
+            density: Some(0.3),
+            ..TownConfig::castex()
+        }
+    }
+
+    /// Los pueblos de ejemplo y los distribuidos de pavimento `paving`.
+    fn towns_paved(paving: Paving) -> Vec<TownConfig> {
+        let mut configs = sample_configs();
+        configs.extend(small_configs());
+        configs.extend([general_pico(), metileo()]);
+        let configs: Vec<TownConfig> = configs
+            .into_iter()
+            .filter(|c| Paving::of(c.blocks) == paving)
+            .collect();
+        assert!(!configs.is_empty(), "{paving:?}");
+        configs
+    }
+
+    #[test]
+    fn a_city_has_two_banks_one_on_each_side_of_its_line() {
+        for c in towns_paved(Paving::Everywhere) {
+            let t = TownLayout::generate(&c).unwrap();
+            assert_eq!(count(&t, BuildingKind::Bank), 2, "{}", c.name);
+        }
+        let t = TownLayout::generate(&general_pico()).unwrap();
+        let y = t.railway.unwrap().start.y;
+        let north: Vec<bool> = all(&t, BuildingKind::Bank)
+            .iter()
+            .map(|b| b.footprint.center().y > y)
+            .collect();
+        assert_ne!(north[0], north[1], "both banks on one side");
+    }
+
+    #[test]
+    fn a_town_has_one_bank() {
+        for c in towns_paved(Paving::Plaza) {
+            let t = TownLayout::generate(&c).unwrap();
+            assert_eq!(count(&t, BuildingKind::Bank), 1, "{}", c.name);
+        }
+    }
+
+    #[test]
+    fn a_village_has_no_bank() {
+        for c in towns_paved(Paving::None) {
+            let t = TownLayout::generate(&c).unwrap();
+            assert_eq!(count(&t, BuildingKind::Bank), 0, "{}", c.name);
+        }
+    }
+
+    #[test]
+    fn only_general_pico_has_the_intendencia_facing_its_plaza() {
+        let c = general_pico();
+        let t = TownLayout::generate(&c).unwrap();
+        let halls = all(&t, BuildingKind::TownHall);
+        assert_eq!(halls.len(), 1);
+        let hall = halls[0];
+        assert_faces(&t, hall, t.plaza, c.street_width);
+        // Del otro lado de la calle, no a manzanas de distancia.
+        assert!(
+            hall.footprint
+                .expanded(c.street_width + 0.01)
+                .intersects(&t.plaza),
+            "{hall:?} not across the street from {:?}",
+            t.plaza
+        );
+        // Ningún otro pueblo, ni siquiera uno igual con otro nombre.
+        let mut others = sample_configs();
+        others.extend(small_configs());
+        others.push(metileo());
+        for c in others {
+            let t = TownLayout::generate(&c).unwrap();
+            assert_eq!(count(&t, BuildingKind::TownHall), 0, "{}", c.name);
+        }
+    }
+
+    #[test]
+    fn banks_keep_clear_of_the_other_civic_buildings() {
+        // Como los demás edificios cívicos, en los mismos pueblos que
+        // `civic_buildings_are_spread_over_every_town`: nunca uno al lado de
+        // otro.
+        let mut configs = small_configs();
+        configs.extend(
+            sample_configs()
+                .into_iter()
+                .filter(|c| c.size() != TownSize::Small),
+        );
+        configs.push(general_pico());
+        for c in configs {
+            let t = TownLayout::generate(&c).unwrap();
+            let pitch = c.block_size + c.street_width;
+            let mut others = civic(&t);
+            others.extend(all(&t, BuildingKind::TownHall));
+            for bank in all(&t, BuildingKind::Bank) {
+                for other in others.iter().chain(&all(&t, BuildingKind::Bank)) {
+                    if std::ptr::eq(bank, *other) {
+                        continue;
+                    }
+                    let d = bank.footprint.center() - other.footprint.center();
+                    assert!(
+                        d.x.abs().max(d.y.abs()) > pitch,
+                        "{}: {bank:?} by {other:?}",
+                        c.name
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -5006,19 +5246,21 @@ pub(crate) mod tests {
         // borde a 1,65 m de ella, antes 4 m); los dos pueblos sin tren no
         // cambian. Los once se volvieron a fijar cuando la iglesia perdió su
         // cartel (2026-10-28): los carteles de los lugares forman parte de la
-        // huella digital.
+        // huella digital. Diez se volvieron a fijar cuando cada pueblo recibió
+        // su banco (2026-11-02): su manzana deja de tener casas; Tres, una
+        // aldea, no cambia.
         let pinned = [
-            0x724c_91c9_470f_e41f,
-            0xddf4_88db_9aca_9d42,
-            0xabf1_d06d_e5fe_009f,
-            0x1967_ad10_c15d_9323,
+            0xbd5c_a792_8123_334c,
+            0x375c_3e68_f134_1024,
+            0x7661_0465_87c8_e36d,
+            0x9ae4_22ce_389c_9bee,
             0x4d89_5840_612f_7b5e,
-            0x13b1_8853_df0f_ebac,
-            0x365f_dd8c_2dfa_515e,
-            0x1aae_2a35_d655_4343,
-            0x22e7_02d3_ccc3_bbdf,
-            0x4d1c_69a6_fa5a_47b4,
-            0x8854_fa05_02dd_27b9,
+            0xec1d_b647_4e8a_e8f5,
+            0x827d_0fc8_ed44_6625,
+            0x1bf5_0523_a5ba_8526,
+            0xfa7e_dbf1_1241_c8b3,
+            0x6539_591a_c794_baad,
+            0x9d3d_1086_0de3_d91b,
         ];
         let configs = small_configs();
         assert_eq!(configs.len(), pinned.len());
@@ -5630,6 +5872,8 @@ pub(crate) mod tests {
                 | BuildingKind::PoliceStation
                 | BuildingKind::Church
                 | BuildingKind::Station
+                | BuildingKind::Bank
+                | BuildingKind::TownHall
         ) && Some(k) != first_store
     }
 

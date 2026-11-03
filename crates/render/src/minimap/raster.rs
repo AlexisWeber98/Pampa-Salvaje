@@ -369,7 +369,9 @@ fn paint_town_buildings(map: &mut Canvas, town: &TownLayout, frame: &MapFrame) {
             BuildingKind::GeneralStore
             | BuildingKind::PoliceStation
             | BuildingKind::Church
-            | BuildingKind::Station => palette::LANDMARK,
+            | BuildingKind::Station
+            | BuildingKind::Bank
+            | BuildingKind::TownHall => palette::LANDMARK,
             BuildingKind::Platform => PLATFORM,
             BuildingKind::Shed | BuildingKind::GrainStore => palette::SHED,
             BuildingKind::WaterTank => palette::WATER,
@@ -1572,19 +1574,51 @@ pub(crate) mod tests {
             .footprint;
         // Píxeles del color de los hitos sobre la huella de edificio de la
         // comisaría: el edificio antes, ahora lotes comunes (o campo abierto).
+        // El banco del pueblo puede tomar la manzana que deja libre: sus
+        // píxeles no cuentan.
         let (lo, hi) = frame.rect(&police);
         let landmark = |t: &TownLayout| {
             let map = rasterize_town(t, &[], &frame);
+            let banks: Vec<_> = t
+                .buildings
+                .iter()
+                .filter(|b| b.kind == BuildingKind::Bank)
+                .map(|b| frame.rect(&b.footprint.expanded(1.0)))
+                .collect();
             let mut n = 0;
             for y in lo.y.ceil() as usize..hi.y.floor() as usize {
                 for x in lo.x.ceil() as usize..hi.x.floor() as usize {
-                    n += usize::from(map.get(x, y) == palette::LANDMARK);
+                    let (fx, fy) = (x as f32, y as f32);
+                    let bank = banks
+                        .iter()
+                        .any(|(a, b)| fx >= a.x && fx <= b.x && fy >= a.y && fy <= b.y);
+                    n += usize::from(map.get(x, y) == palette::LANDMARK && !bank);
                 }
             }
             n
         };
         assert!(landmark(&with) > 20, "{}", landmark(&with));
         assert_eq!(landmark(&without), 0);
+    }
+
+    #[test]
+    fn a_bank_is_mapped_as_a_landmark() {
+        let t = town();
+        let frame = MapFrame::for_town(&t, 320);
+        let map = rasterize_town(&t, &[], &frame);
+        let bank = t
+            .buildings
+            .iter()
+            .find(|b| b.kind == BuildingKind::Bank)
+            .unwrap();
+        let (lo, hi) = frame.rect(&bank.footprint);
+        let mut n = 0;
+        for y in lo.y.ceil() as usize..hi.y.floor() as usize {
+            for x in lo.x.ceil() as usize..hi.x.floor() as usize {
+                n += usize::from(map.get(x, y) == palette::LANDMARK);
+            }
+        }
+        assert!(n > 20, "{n}");
     }
 
     #[test]
