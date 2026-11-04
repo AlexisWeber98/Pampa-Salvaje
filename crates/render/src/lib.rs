@@ -22,6 +22,7 @@ pub mod ground;
 pub mod hud;
 pub mod lagoon;
 pub mod lamps;
+pub mod lawn;
 pub mod lettering;
 pub mod meadow;
 pub mod minimap;

@@ -107,7 +107,7 @@ impl Plugin for TownPlugin {
     fn build(&self, app: &mut App) {
         crate::facade::ensure_plugin(app);
         crate::tree::ensure_plugin(app);
-        app.add_plugins(crate::street::StreetWearPlugin)
+        app.add_plugins((crate::street::StreetWearPlugin, crate::lawn::LawnPlugin))
             .init_resource::<WorldTowns>()
             .init_resource::<ActiveTowns>()
             .init_resource::<StreamFocus>()
@@ -2323,6 +2323,29 @@ mod tests {
     /// El punto del suelo bajo una posición del mundo.
     fn ground_of(p: Vec3) -> GroundVec2 {
         GroundVec2::new(p.x, -p.z)
+    }
+
+    #[test]
+    fn every_plaza_gets_one_grass_lawn_sharing_the_ground_material() {
+        let mut app = app();
+        app.update();
+        let active = roots(&mut app);
+        let towns = app.world().resource::<WorldTowns>().0.clone();
+        let plazas: usize = active.iter().map(|&i| towns[i].plazas().count()).sum();
+        assert!(plazas > 0);
+        let mut q = app.world_mut().query_filtered::<
+            &MeshMaterial3d<crate::ground::GroundMaterial>,
+            With<crate::lawn::PlazaLawn>,
+        >();
+        let lawns: Vec<_> = q.iter(app.world()).map(|m| m.id()).collect();
+        assert_eq!(lawns.len(), plazas);
+        assert_eq!(
+            lawns.iter().collect::<HashSet<_>>().len(),
+            1,
+            "one shared material"
+        );
+        app.update();
+        assert_eq!(count::<With<crate::lawn::PlazaLawn>>(&mut app), plazas);
     }
 
     #[test]

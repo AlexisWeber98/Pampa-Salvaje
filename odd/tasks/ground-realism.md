@@ -16,7 +16,7 @@ Order follows the weakest elements found in the map (L2). Each task is one work 
 - T2 [S1, S3] Grass and gramilla: denser tufts near the camera, a short gramilla carpet, wind sway in the vertex stage. Route: inline. Status: done, uncommitted. Near paja tufts and wind are in; the gramilla cards were dropped by the user's choice (L9), so the carpet stays in the ground shader. Evidence: L8, L9.
 - T3 [S1, S3] Caminos: wheel ruts, crown and verge irregularity, dry cracked mud and hoof-churned patches in the road shader and strip mesh. Route: inline. Status: done, uncommitted (the user stages and commits). Evidence: L10.
 - T4 [S1, S3] Town streets: earth streets with ruts, worn centre, irregular edges, shallow dry hollows; replace the flat 3 cm boxes with ground-following surfaces. Route: inline. Status: done, uncommitted. The towns are levelled, so the boxes stay as the base and a worn layer goes on top (L12). Evidence: L12.
-- T5 [S1, S3] Sidewalks, curbs and plazas: real grass on the plaza lawn, worn and broken brick, chipped curbs, plaza paths with edge wear. Route: inline. Status: pending.
+- T5 [S1, S3] Sidewalks, curbs and plazas: real grass on the plaza lawn, worn and broken brick, chipped curbs, plaza paths with edge wear. Route: inline (mapping by a read-only explorer, L13). Status: T5a (lawn) done, uncommitted; T5b (chipped curbs) and T5c (worn and broken brick, path edge wear) pending.
 - T6 [S1, S3] Dust and splashes at footsteps: footfall events from people, horses, carts and cars; own lightweight particle system (no new dependency); dust on dry earth, splashes on mud and lagoon edges; short-lived prints. Route: inline. Status: pending.
 
 ## Log
@@ -114,3 +114,13 @@ Order follows the weakest elements found in the map (L2). Each task is one work 
     - every street of the active towns is worn once, with one material per width (sabotages: no `Added` filter, no cache).
   - Shots in Monte Nievas and General Pico: the wheel ruts run in the carriageway between the curbs.
   - Also asked by the user: test windows open on Hyprland workspace 5. The game sets app_id `pampa-shots` when PAMPA_SHOTS is set (`shots::APP_ID`), and `~/.config/hypr/windows.lua` has `w("^pampa-shots$", { workspace = "5 silent", render_unfocused = true })`. Without `render_unfocused`, half the captures came out black.
+- L13 (2026-11-04) The user merged feat/ground-realism into main as PR #58 (merge commit). The branch was fast-forwarded to 8572603; work continues on the same branch. T5:
+  - Explorer map: sidewalks, curbs and plaza paths are `Shape::block` boxes with the plain `FacadeMaterials` StandardMaterial (no weathering, shape-local UVs), batched one mesh per surface per sidewalk ring. The lawn was an olive `Palette.plaza` cube with its top at `LAWN_TOP`.
+  - Tests pin `MeshMaterial3d<StandardMaterial>` for sidewalks and plazas, and 20 curb meshes for Castex.
+  - Native review of 866ad02 (the deleted Ground109/Grass004 PNM and ground_litter.wesl) cannot run: lens_context_budget_exceeded, because the budget is bytes and the deleted PPM text images are large. Checked by hand instead: nothing references the deleted files, and the suite is green.
+  - T5a done: `crates/render/src/lawn.rs` `LawnPlugin`, added by TownPlugin. On each new `TownRoot`, every plaza gets a flat quad 2 mm above the lawn slab, using one shared `GroundMaterial` (the 2K grass layers through ground.wesl). The vertex paint is `LAWN` green sRGB (0.42, 0.48, 0.25) with litter 0, and UV_1 cover is 0.
+  - Tests:
+    - the quad covers the plaza at LAWN_TOP + 2 mm, is green with no litter, has no cover and faces up (sabotage: litter 1);
+    - every plaza of the active towns gets exactly one lawn sharing one material, and is not re-sown (sabotage: no `Added`).
+  - Shots: the Monte Nievas and Pico plazas show photographed green grass with relief and a rare bare patch.
+  - Checks: suite green except the known flaky rider test (it passes alone), clippy clean.
