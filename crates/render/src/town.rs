@@ -905,6 +905,11 @@ fn sidewalk(shape: &mut Shape, walk: &Sidewalk, origin: Vec3, ground: f32) {
             origin,
             paving,
         );
+        // Donde faltan ladrillos asoma la tierra que los asentaba.
+        let earth = (ground, SIDEWALK_TOP - 0.02, SIDEWALK_TOP + GAP_LIFT);
+        for gap in brick_gaps(floor) {
+            ground_box(shape, Surface::Mud, (gap.min, gap.max), origin, earth);
+        }
     }
     let first = walk.curbs.first().copied();
     for (k, &side) in walk.curbs.iter().enumerate() {
@@ -929,6 +934,45 @@ fn sidewalk(shape: &mut Shape, walk: &Sidewalk, origin: Vec3, ground: f32) {
             ground_box(shape, Surface::Stucco, (stone.min, stone.max), origin, curb);
         }
     }
+}
+
+/// Cuánto asoma la tierra de un hueco de ladrillos sobre la vereda, en metros:
+/// lo justo para no pelear con el pavimento.
+const GAP_LIFT: f32 = 0.002;
+/// Huecos de ladrillos faltantes por metro cuadrado de vereda.
+const GAPS_PER_M2: f32 = 0.06;
+/// El lado más corto y el más largo de un hueco, en metros.
+const GAP_SIZE: (f32, f32) = (0.18, 0.6);
+
+/// Los huecos de ladrillos faltantes o rotos de la vereda de piso `floor`,
+/// donde asoma la tierra: unos [`GAPS_PER_M2`] por metro cuadrado, de
+/// [`GAP_SIZE`] por lado, adentro del piso. Salen de un hash de la posición,
+/// así que una vereda se ve siempre igual.
+fn brick_gaps(floor: Aabb) -> Vec<Aabb> {
+    let size = floor.size();
+    let count = (size.x * size.y * GAPS_PER_M2).round() as usize;
+    let (short, long) = GAP_SIZE;
+    (0..count)
+        .filter_map(|i| {
+            let k = i as f32;
+            let roll = |salt: f32| {
+                hash2(
+                    floor.min.x * 0.13 + k * 7.31 + salt,
+                    floor.min.y * 0.17 + k * 3.97 - salt,
+                )
+            };
+            let half = GroundVec2::new(
+                short + (long - short) * roll(1.1),
+                short + (long - short) * roll(2.3) * 0.6,
+            ) * 0.5;
+            let room = size - half * 2.0;
+            if room.x <= 0.0 || room.y <= 0.0 {
+                return None;
+            }
+            let centre = floor.min + half + GroundVec2::new(room.x * roll(3.7), room.y * roll(5.9));
+            Some(Aabb::new(centre - half, centre + half))
+        })
+        .collect()
 }
 
 /// Una piedra de cordón: su planta y la altura de su cara superior sobre el
@@ -2189,6 +2233,8 @@ mod tests {
             assert!(range == &ranges()[0], "a range of its own");
             if material.id() == facade.get(Surface::Paving).id() {
                 brick += 1;
+            } else if material.id() == facade.get(Surface::Mud).id() {
+                // La tierra que asoma donde faltan ladrillos.
             } else {
                 assert_eq!(material.id(), facade.get(Surface::Stucco).id());
                 curbs += 1;
@@ -2231,17 +2277,18 @@ mod tests {
         };
         let drawn = towns_to_draw();
         let (village, town, city) = (&drawn[0].0, &drawn[1].0, &drawn[2].0);
-        // Una ciudad: ladrillo y cordones, sin tierra. Un pueblo: ladrillo
-        // alrededor de la plaza, tierra en el resto, cordones en ambos. Una
-        // aldea: tierra y cordones, sin ladrillo.
+        // Una ciudad: ladrillo (con tierra donde faltan ladrillos) y
+        // cordones, sin veredas de tierra. Un pueblo: ladrillo alrededor de la
+        // plaza, tierra en el resto, cordones en ambos. Una aldea: tierra y
+        // cordones, sin ladrillo.
         assert_eq!(
             surfaces(city, Walk::Brick),
-            HashSet::from([Surface::Paving, Surface::Stucco])
+            HashSet::from([Surface::Paving, Surface::Mud, Surface::Stucco])
         );
         assert!(surfaces(city, Walk::Earth).is_empty());
         assert_eq!(
             surfaces(town, Walk::Brick),
-            HashSet::from([Surface::Paving, Surface::Stucco])
+            HashSet::from([Surface::Paving, Surface::Mud, Surface::Stucco])
         );
         // Las veredas de tierra dibujan un cordón y nada de pavimento.
         assert_eq!(
@@ -2424,6 +2471,41 @@ mod tests {
     /// El punto del suelo bajo una posición del mundo.
     fn ground_of(p: Vec3) -> GroundVec2 {
         GroundVec2::new(p.x, -p.z)
+    }
+
+    #[test]
+    fn a_brick_walk_misses_a_few_bricks_inside_its_floor() {
+        let floor = Aabb::new(GroundVec2::new(100.0, 40.0), GroundVec2::new(160.0, 43.35));
+        let gaps = brick_gaps(floor);
+        let area = floor.size().x * floor.size().y;
+        let expected = (area * GAPS_PER_M2).round() as usize;
+        assert!(
+            gaps.len() + 2 >= expected && gaps.len() <= expected,
+            "{} gaps",
+            gaps.len()
+        );
+        assert!(gaps.len() >= 8);
+        for g in &gaps {
+            let s = g.size();
+            assert!(floor.contains(g), "{g:?} off the floor");
+            assert!(
+                s.x >= GAP_SIZE.0 - 1e-4 && s.x <= GAP_SIZE.1 + 1e-4,
+                "{s:?}"
+            );
+            assert!(
+                s.y >= GAP_SIZE.0 * 0.6 - 1e-4 && s.y <= GAP_SIZE.1 + 1e-4,
+                "{s:?}"
+            );
+        }
+        // Repartidos, no amontonados en una punta.
+        let xs: Vec<f32> = gaps.iter().map(|g| g.center().x).collect();
+        let span = xs.iter().copied().fold(f32::MIN, f32::max)
+            - xs.iter().copied().fold(f32::MAX, f32::min);
+        assert!(span > floor.size().x * 0.5, "{span}");
+        assert_eq!(gaps, brick_gaps(floor));
+        // Una franja angosta no tiene donde: ninguno.
+        let thin = Aabb::new(GroundVec2::new(0.0, 0.0), GroundVec2::new(30.0, 0.1));
+        assert!(brick_gaps(thin).is_empty());
     }
 
     #[test]

@@ -16,7 +16,7 @@ Order follows the weakest elements found in the map (L2). Each task is one work 
 - T2 [S1, S3] Grass and gramilla: denser tufts near the camera, a short gramilla carpet, wind sway in the vertex stage. Route: inline. Status: done, uncommitted. Near paja tufts and wind are in; the gramilla cards were dropped by the user's choice (L9), so the carpet stays in the ground shader. Evidence: L8, L9.
 - T3 [S1, S3] Caminos: wheel ruts, crown and verge irregularity, dry cracked mud and hoof-churned patches in the road shader and strip mesh. Route: inline. Status: done, uncommitted (the user stages and commits). Evidence: L10.
 - T4 [S1, S3] Town streets: earth streets with ruts, worn centre, irregular edges, shallow dry hollows; replace the flat 3 cm boxes with ground-following surfaces. Route: inline. Status: done, uncommitted. The towns are levelled, so the boxes stay as the base and a worn layer goes on top (L12). Evidence: L12.
-- T5 [S1, S3] Sidewalks, curbs and plazas: real grass on the plaza lawn, worn and broken brick, chipped curbs, plaza paths with edge wear. Route: inline (mapping by a read-only explorer, L13). Status: T5a (lawn) done in 605c4b3, reviewed; T5b (chipped curbs) done, uncommitted; T5c (worn and broken brick, path edge wear) pending.
+- T5 [S1, S3] Sidewalks, curbs and plazas: real grass on the plaza lawn, worn and broken brick, chipped curbs, plaza paths with edge wear. Route: inline (mapping by a read-only explorer, L13). Status: T5a (lawn) done in 605c4b3, reviewed; T5b (chipped curbs) done in 1c676d7, reviewed; T5c (broken brick) done, uncommitted; plaza path edge wear not done (pending).
 - T6 [S1, S3] Dust and splashes at footsteps: footfall events from people, horses, carts and cars; own lightweight particle system (no new dependency); dust on dry earth, splashes on mud and lagoon edges; short-lived prints. Route: inline. Status: pending.
 
 ## Log
@@ -132,3 +132,10 @@ Order follows the weakest elements found in the map (L2). Each task is one work 
   - Test: the stones cover the curb end to end, keep their heights in range, number about one per metre with joints, include settled and chipped stones, and come out the same every time (sabotages: no chips, no joints). The first version let chips drop below the brick walk (5.6 cm); the test caught it.
   - Shots in General Pico: joints and lower chipped ends read along the curb.
   - Checks: suite green except the known flaky rider and tack tests, which pass alone. Clippy clean.
+- L15 (2026-11-04) The user committed T5b (1c676d7). Native review: approved and acknowledged; 5 suggestions (chip length literal, last-stone comment, test threshold coupling, ambiguous "quedan raros", short-curb branches untested) left for the polish task. T5c, inline in town.rs:
+  - `brick_gaps(floor)` adds missing-brick patches: about 0.06 per m², 18 to 60 cm by 11 to 60 cm, inside the brick walk floor, from a position hash. They are drawn as `Surface::Mud` boxes 2 mm proud of the paving.
+  - Brick walks now draw {Paving, Mud, Stucco}. Requested change: the pinned tests `the_three_tiers_pave_as_the_rule_says` and `a_town_paves_its_plaza…` were updated to allow Mud.
+  - Test: the gap count follows the density, the gaps sit inside the floor, have sizes in range and are spread, nothing fits a thin strip, and the result is deterministic (sabotage: density 0).
+  - Shots in Pico: the first version with Earth (dirt_path) read as pale tiles stuck on top. Mud (brown_mud_dry) reads as earth-filled holes.
+  - Not done: plaza path edge wear (grass thinning where the lawn meets the paths).
+  - Checks: suite green except the known flaky rider test (it passes alone), clippy clean.
