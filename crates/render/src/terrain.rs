@@ -157,6 +157,7 @@ fn setup_kit(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut grounds: ResMut<Assets<GroundMaterial>>,
     mut images: Option<ResMut<Assets<Image>>>,
+    server: Option<Res<AssetServer>>,
 ) {
     commands.insert_resource(TerrainKit {
         // Los colores de vértice llevan la paleta; el material queda blanco y
@@ -164,6 +165,7 @@ fn setup_kit(
         ground: grounds.add(ground_material(
             root.as_deref().map(|r| r.0.as_path()),
             images.as_deref_mut(),
+            server.as_deref(),
         )),
         rock_mesh: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
         shrub_mesh: meshes.add(
@@ -486,6 +488,7 @@ fn build_chunk_mesh(
     let mut uvs = Vec::with_capacity(corners);
     let mut normals = Vec::with_capacity(corners);
     let mut tangents = Vec::with_capacity(corners);
+    let mut covers = Vec::with_capacity(corners);
     for j in 0..side {
         for i in 0..side {
             let ground = chunk_corner(coord, size, resolution, i, j);
@@ -495,6 +498,7 @@ fn build_chunk_mesh(
             let (normal, tangent) = slope_frame(dx, dy);
             positions.push(p.to_array());
             colors.push(ground_color(terrain, flora, ground));
+            covers.push(ground_cover(terrain, ground));
             uvs.push(ground_uv(p));
             normals.push(normal);
             tangents.push(tangent);
@@ -520,6 +524,7 @@ fn build_chunk_mesh(
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
     .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
     .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_1, covers)
     .with_inserted_attribute(Mesh::ATTRIBUTE_TANGENT, tangents)
     .with_inserted_indices(Indices::U32(indices))
 }
@@ -560,20 +565,16 @@ fn palette_range() -> ([f32; 3], [f32; 3]) {
 /// suelo de los pueblos, más oscuro en pendientes y hondonadas. Función solo de
 /// la posición, así que los chunks vecinos coinciden en sus vértices
 /// compartidos.
-fn ground_color(terrain: &Terrain, flora: Option<&FloraSite>, g: GroundVec2) -> [f32; 4] {
+fn ground_color(
+    terrain: &Terrain,
+    flora: Option<&FloraSite>,
+    g: GroundVec2,
+) -> [f32; 4] {
     let grass = GREEN_GRASS.lerp(DRY_GRASS, grass_dryness(terrain, g));
-    let town = terrain
-        .flat_areas
-        .iter()
-        .map(|a| a.weight(g))
-        .fold(0.0, f32::max);
+    let town = town_weight(terrain, g);
     let rgb = grass.lerp(TOWN_GROUND, town);
     // Tierra gastada a lo largo de los caminos, bajo sus bordes difuminados.
-    let worn = terrain.roads.as_ref().map_or(0.0, |r| {
-        let reach = RoadNetwork::HALF_WIDTH + ROAD_VERGE;
-        r.near(g, reach)
-            .map_or(0.0, |d| 1.0 - smoothstep(RoadNetwork::HALF_WIDTH, reach, d))
-    });
+    let worn = road_wear(terrain, g);
     let rgb = rgb.lerp(ROAD_EARTH, 0.6 * worn);
     let wet = lagoon_wetness(terrain, g);
     let rgb = rgb.lerp(LAGOON_MUD, wet);
@@ -591,6 +592,35 @@ fn ground_color(terrain: &Terrain, flora: Option<&FloraSite>, g: GroundVec2) -> 
     let mut color = LinearRgba::from(Color::srgb(rgb.x, rgb.y, rgb.z)).to_f32_array();
     color[3] = litter;
     color
+}
+
+/// Cuánto pesa el suelo nivelado de un pueblo en `g`, de 0 a 1.
+fn town_weight(terrain: &Terrain, g: GroundVec2) -> f32 {
+    terrain
+        .flat_areas
+        .iter()
+        .map(|a| a.weight(g))
+        .fold(0.0, f32::max)
+}
+
+/// Cuánto desgaste de camino hay en `g`, de 0 (lejos) a 1 (en el camino),
+/// difuminado a lo largo de [`ROAD_VERGE`] más allá de su borde.
+fn road_wear(terrain: &Terrain, g: GroundVec2) -> f32 {
+    terrain.roads.as_ref().map_or(0.0, |r| {
+        let reach = RoadNetwork::HALF_WIDTH + ROAD_VERGE;
+        r.near(g, reach)
+            .map_or(0.0, |d| 1.0 - smoothstep(RoadNetwork::HALF_WIDTH, reach, d))
+    })
+}
+
+/// El segundo UV del suelo en `g`, para el shader del suelo
+/// (`assets/shaders/ground.wesl`): cuánto está despejado (el suelo de un
+/// pueblo, la banquina gastada de un camino, el barro de una laguna: ahí la
+/// tierra asoma entre el pasto) y cuánto está húmedo, ambos de 0 a 1.
+fn ground_cover(terrain: &Terrain, g: GroundVec2) -> [f32; 2] {
+    let wet = lagoon_wetness(terrain, g);
+    let cleared = town_weight(terrain, g).max(road_wear(terrain, g)).max(wet);
+    [cleared, wet]
 }
 
 /// Qué tan húmedo está el suelo en `g`, de 0 (pasto seco) a 1 (barro): húmedo
@@ -975,7 +1005,7 @@ mod tests {
         }
     }
     #[test]
-    fn the_ground_material_wears_the_ambientcg_textures_or_falls_back() {
+    fn the_ground_material_wears_the_leaf_litter_or_falls_back() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
         let material = |root: std::path::PathBuf| {
             let mut app = app(GroundVec2::new(30.0, 30.0));
@@ -988,27 +1018,25 @@ mod tests {
             let id = q.iter(app.world()).next().expect("a chunk").0.id();
             let materials = app.world().resource::<Assets<GroundMaterial>>();
             let ground = materials.get(id).unwrap().clone();
-            let (m, litter) = (ground.base, ground.extension.litter);
             let images = app.world().resource::<Assets<Image>>();
-            let sizes: Vec<u32> = [&m.base_color_texture, &m.normal_map_texture, &litter]
-                .into_iter()
-                .flatten()
-                .map(|h| images.get(h).unwrap().texture_descriptor.mip_level_count)
-                .collect();
-            (m, sizes)
+            let mips = ground
+                .extension
+                .litter
+                .as_ref()
+                .map(|h| images.get(h).unwrap().texture_descriptor.mip_level_count);
+            (ground, mips)
         };
         let (textured, mips) = material(root.clone());
-        assert_eq!(mips.len(), 3, "colour, normal and leaf litter: {mips:?}");
-        assert!(textured.base_color_texture.is_some());
-        assert!(textured.normal_map_texture.is_some());
-        assert!(textured.occlusion_texture.is_some());
-        assert!(textured.metallic_roughness_texture.is_some());
-        assert_eq!(textured.metallic, 0.0);
-        assert!(mips.iter().all(|&m| m == 10), "512 px down to 1: {mips:?}");
+        assert_eq!(mips, Some(10), "512 px of leaves down to 1");
+        // El suelo sale de las capas del shader, no de los mapas estándar; sin
+        // servidor de assets no se cargan y el shader dibuja el suelo liso.
+        assert!(textured.base.base_color_texture.is_none());
+        assert_eq!(textured.base.metallic, 0.0);
+        assert_eq!(textured.extension.layers, Vec4::ZERO);
         // Archivos faltantes: suelo liso pintado por vértice, sin pánico.
         let (plain, none) = material(root.join("nowhere"));
-        assert!(none.is_empty(), "no textures, no litter: {none:?}");
-        assert!(plain.base_color_texture.is_none() && plain.normal_map_texture.is_none());
+        assert!(none.is_none(), "no leaf litter");
+        assert!(plain.base.base_color_texture.is_none());
     }
 
     /// Un punto en lo profundo de un manchón de monte de la flora del mundo por
@@ -1072,6 +1100,57 @@ mod tests {
         // La franja de caída la vuelve a difuminar.
         let rim = heart + GroundVec2::new(70.0, 0.0);
         assert!((0.0..1.0).contains(&alpha(&town, rim)) && alpha(&town, rim) > 0.0);
+    }
+
+    #[test]
+    fn the_second_uv_clears_towns_and_lagoon_mud_and_wets_only_the_mud() {
+        use bevy::mesh::VertexAttributeValues as V;
+        let centre = GroundVec2::new(100.0, 100.0);
+        let town = Terrain::default().with_flat_area(FlatArea {
+            center: centre,
+            half_extents: GroundVec2::new(40.0, 40.0),
+            falloff: 60.0,
+            height: 0.0,
+        });
+        assert_eq!(ground_cover(&town, centre), [1.0, 0.0]);
+        // La pampa abierta, lejos del pueblo: pasto, ni despejado ni húmedo.
+        assert_eq!(
+            ground_cover(&town, GroundVec2::new(900.0, 900.0)),
+            [0.0, 0.0]
+        );
+        let rim = ground_cover(&town, centre + GroundVec2::new(70.0, 0.0))[0];
+        assert!(rim > 0.0 && rim < 1.0, "{rim}");
+
+        let config = pampa_core::LagoonConfig {
+            name: "Laguna".into(),
+            center: GroundVec2::new(3401.0, 841.0),
+            size: GroundVec2::new(215.0, 145.0),
+            seed: 5,
+        };
+        let lagoon = pampa_core::Lagoon::new(&config, &Terrain::default());
+        let wet = Terrain::default().with_lagoon(lagoon.clone());
+        for p in lagoon.ring(16, -1.0) {
+            assert_eq!(ground_cover(&wet, p), [1.0, 1.0]);
+        }
+
+        // La malla lo lleva por vértice, igual en los bordes que comparten los
+        // chunks.
+        let covers = |c: ChunkCoord| {
+            let mesh = build_chunk_mesh(&town, c, 200.0, 8, None);
+            let Some(V::Float32x2(cover)) = mesh.attribute(Mesh::ATTRIBUTE_UV_1).cloned() else {
+                panic!("second uvs")
+            };
+            assert_eq!(cover.len(), 81);
+            cover
+        };
+        let (left, right) = (
+            covers(ChunkCoord { x: 0, y: 0 }),
+            covers(ChunkCoord { x: 1, y: 0 }),
+        );
+        for j in 0..9 {
+            assert_eq!(left[j * 9 + 8], right[j * 9], "row {j}");
+        }
+        assert!(left.iter().any(|c| c[0] == 1.0));
     }
 
     #[test]

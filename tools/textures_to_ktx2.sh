@@ -12,7 +12,10 @@
 #   normal_gl.ktx2  linear OpenGL (+Y) normal map, in basisu's normal-map mode
 #   orm.ktx2        linear, packed for Bevy: R = ambient occlusion (white
 #                   without ao.jpg), G = roughness, B = metallic (white: the
-#                   material's own `metallic` scales it per surface)
+#                   material's own `metallic` scales it per surface); with
+#                   an optional `height.jpg` (ground sets, which are never
+#                   metallic), B is that height instead, for the ground
+#                   shader's height blend
 #
 # All three are UASTC LDR 4x4 with their mip chain baked in (sRGB-correct
 # filtering for colour, linear for the rest; a leaf colour's mips come from
@@ -66,7 +69,7 @@ scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 
 # Packs the ORM map of set SET into PNG OUTPUT: AO (or white) in red,
-# roughness in green, white in blue. Each source gives its red channel as
+# roughness in green, height.jpg (or white) in blue. Each source gives its red channel as
 # is (a greyscale JPEG and an RGB one with equal channels agree), and
 # `-set colorspace sRGB` only labels the channels for `-combine`: the values
 # are copied untouched.
@@ -78,9 +81,14 @@ pack_orm() { # SET OUTPUT
     else
         magick -size "$size" xc:white -channel R -separate +channel "$scratch/ao.miff"
     fi
+    if [ -f "$set_dir/height.jpg" ]; then
+        magick "$set_dir/height.jpg" -channel R -separate +channel "$scratch/blue.miff"
+    else
+        magick -size "$size" xc:white -channel R -separate +channel "$scratch/blue.miff"
+    fi
     magick "$scratch/ao.miff" \
         \( "$set_dir/roughness.jpg" -channel R -separate +channel \) \
-        \( -size "$size" xc:white -channel R -separate +channel \) \
+        "$scratch/blue.miff" \
         -set colorspace sRGB -combine -depth 8 "PNG24:$dest"
 }
 
@@ -157,14 +165,16 @@ if [ "$1" = "--check-orm" ]; then
         encode "$scratch/orm.png" "$scratch/orm.ktx2" -linear
         near ORM "$(bc7_rgba "$scratch/orm.ktx2")" "$2"
     }
-    mkdir "$scratch/with" "$scratch/without"
-    for set_dir in "$scratch/with" "$scratch/without"; do
+    mkdir "$scratch/with" "$scratch/without" "$scratch/height"
+    for set_dir in "$scratch/with" "$scratch/without" "$scratch/height"; do
         magick -size 8x8 xc:'gray(25%)' "$set_dir/roughness.jpg"
     done
     magick -size 8x8 xc:'gray(80%)' "$scratch/with/ao.jpg"
+    magick -size 8x8 xc:'gray(40%)' "$scratch/height/height.jpg"
     expect "$scratch/with" "204,64,255"
     expect "$scratch/without" "255,64,255"
-    echo "ORM map: AO in red, roughness in green, white in blue"
+    expect "$scratch/height" "255,64,102"
+    echo "ORM map: AO in red, roughness in green, white (or height) in blue"
     exit 0
 fi
 
