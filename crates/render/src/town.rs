@@ -2241,13 +2241,14 @@ mod tests {
             (&MeshMaterial3d<StandardMaterial>, &VisibilityRange),
             With<TownSidewalk>,
         >();
-        let (mut brick, mut curbs) = (0, 0);
+        let (mut brick, mut curbs, mut gaps) = (0, 0, 0);
         for (material, range) in q.iter(app.world()) {
             assert!(range == &ranges()[0], "a range of its own");
             if material.id() == facade.get(Surface::Paving).id() {
                 brick += 1;
             } else if material.id() == facade.get(Surface::Mud).id() {
                 // La tierra que asoma donde faltan ladrillos.
+                gaps += 1;
             } else {
                 assert_eq!(material.id(), facade.get(Surface::Stucco).id());
                 curbs += 1;
@@ -2257,6 +2258,8 @@ mod tests {
         // manzana de la plaza, y una malla de cordón para él y para los anillos
         // de cada una de las otras 19 manzanas.
         assert_eq!(brick, 1, "brick sidewalk meshes");
+        // Solo el anillo de ladrillo tiene huecos.
+        assert_eq!(gaps, brick, "missing-brick earth meshes");
         assert_eq!(curbs, 20, "curb meshes");
         // Las veredas de tierra dentro de esos 19 anillos: un único decal
         // difuminado de patio.

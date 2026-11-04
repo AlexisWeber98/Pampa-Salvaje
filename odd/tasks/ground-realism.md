@@ -160,3 +160,10 @@ Order follows the weakest elements found in the map (L2). Each task is one work 
     - `noise` and `noise_d` stay separate, since `noise_d` costs more and fbm does not need gradients.
     - Unchanged: the T4 z-fight margin (no flicker seen up to about 40 m), the duplicated card fan in grass.rs and meadow.rs, and the RoadMaterial init_resource pattern.
   - Checks: workspace suite fully green, clippy clean. Shots of the pampa, road, street and lawn compile and look unchanged.
+- L17 (2026-11-04) The user committed T7 (0bb8030). Native review approved and acknowledged; follow-ups fixed and staged:
+  - Two comments I got wrong: the flutter is about 0.8 Hz (5.1 rad/s), not "a few times a second", and the swell is about 110 m crest to crest, not 130.
+  - `shots` error messages use `VAR`.
+  - A const assert that `MIN_HALF == 1.5`.
+  - The paving test now counts Mud meshes (one per brick ring).
+  - The meadow's camera choice is now `viewing_eye`, with a test (active camera of highest order; none if no camera is active), proven by sabotage.
+  - Checks: suite fully green, clippy clean.

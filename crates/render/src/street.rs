@@ -37,6 +37,8 @@ const _: () = assert!(WEAR_LIFT[1] > WEAR_LIFT[0]);
 /// La calzada más angosta que se gasta, de medio ancho en metros: la de la
 /// calle más angosta ([`TownConfig::MIN_STREET_WIDTH`]) entre sus veredas.
 const MIN_HALF: f32 = 0.5 * TownConfig::MIN_STREET_WIDTH - Sidewalk::WIDTH;
+// Una calzada de 3 m entre dos veredas, como pide core.
+const _: () = assert!(MIN_HALF == 1.5);
 
 /// Si `street` corre de norte a sur (más larga en `y`); si no, de este a
 /// oeste.

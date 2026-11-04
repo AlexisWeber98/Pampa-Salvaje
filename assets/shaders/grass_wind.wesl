@@ -38,10 +38,12 @@ const GUST_SPEED: f32 = 6.0;
 // over about 70 m across the wind.
 const GUST_WAVE: f32 = 0.21;
 const GUST_BEND: vec2<f32> = vec2<f32>(1.3, 0.09);
-// The swell under them: some 130 m long, rising and falling every 18 s.
+// The swell under them: some 110 m from crest to crest, rising and falling
+// every 18 s.
 const SWELL_WAVE: vec2<f32> = vec2<f32>(0.047, 0.031);
 const SWELL_RATE: f32 = 0.35;
-// The flutter on top: a few times a second, a tenth of a gust.
+// The flutter on top: about 0.8 times a second (5.1 rad/s), a tenth of a
+// gust.
 const FLUTTER_RATE: f32 = 5.1;
 const FLUTTER_WAVE: f32 = 0.6;
 const FLUTTER: f32 = 0.12;

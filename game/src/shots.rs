@@ -192,10 +192,10 @@ impl ShotsPlugin {
     pub fn from_env() -> Option<Tour> {
         let file = std::env::var_os(VAR)?;
         let text = std::fs::read_to_string(&file)
-            .map_err(|e| error!("PAMPA_SHOTS {file:?}: {e}"))
+            .map_err(|e| error!("{VAR} {file:?}: {e}"))
             .ok()?;
         let shots = parse_shots(&text)
-            .map_err(|e| error!("PAMPA_SHOTS {file:?}: {e}"))
+            .map_err(|e| error!("{VAR} {file:?}: {e}"))
             .ok()?;
         let dir = std::env::var_os("PAMPA_SHOTS_DIR").map_or_else(|| "shots".into(), PathBuf::from);
         let wait = std::env::var("PAMPA_SHOTS_WAIT")

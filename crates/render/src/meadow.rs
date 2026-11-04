@@ -250,6 +250,17 @@ pub fn cell_grass(
     cards.mesh()
 }
 
+/// Dónde está la cámara que se ve, la misma que mide el hundimiento del
+/// shader: la activa de mayor orden. `None` sin ninguna activa.
+fn viewing_eye<'a>(
+    cameras: impl Iterator<Item = (&'a GlobalTransform, &'a Camera)>,
+) -> Option<Vec3> {
+    cameras
+        .filter(|(_, c)| c.is_active)
+        .max_by_key(|(_, c)| c.order)
+        .map(|(t, _)| t.translation())
+}
+
 /// Arma las celdas que entraron en [`NEAR`] (las más cercanas primero, hasta
 /// [`NEW_PER_FRAME`]) y borra las que salieron.
 #[allow(clippy::too_many_arguments)]
@@ -267,14 +278,7 @@ fn tend_meadow(
     let (Some(kit), Some(flora), Some(detail)) = (kit, flora, detail) else {
         return;
     };
-    // La cámara que se ve (la activa de mayor orden), la misma que mide el
-    // hundimiento del shader.
-    let Some(eye) = camera
-        .iter()
-        .filter(|(_, c)| c.is_active)
-        .max_by_key(|(_, c)| c.order)
-        .map(|(t, _)| t.translation())
-    else {
+    let Some(eye) = viewing_eye(camera.iter()) else {
         return;
     };
     let eye = GroundVec2::new(eye.x, -eye.z);
@@ -408,6 +412,21 @@ mod tests {
         let site = site();
         let outside = cell_of(WorldConfig::default().bounds().min) - IVec2::ONE;
         assert!(cell_grass(outside, &site, &ground, Vec3::ZERO).is_none());
+    }
+
+    #[test]
+    fn the_grass_follows_the_active_camera_of_highest_order() {
+        let at = |x: f32| GlobalTransform::from_translation(Vec3::new(x, 2.0, 0.0));
+        let camera = |order: isize, is_active: bool| Camera {
+            order,
+            is_active,
+            ..default()
+        };
+        let (a, b, c) = (at(1.0), at(2.0), at(3.0));
+        let (ca, cb, cc) = (camera(0, true), camera(2, true), camera(5, false));
+        let eye = viewing_eye([(&a, &ca), (&b, &cb), (&c, &cc)].into_iter());
+        assert_eq!(eye, Some(b.translation()), "the inactive one is skipped");
+        assert_eq!(viewing_eye([(&c, &cc)].into_iter()), None);
     }
 
     #[test]
