@@ -13,7 +13,7 @@
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
-use pampa_core::{Aabb, Terrain};
+use pampa_core::Aabb;
 
 use crate::AssetRoot;
 use crate::coords::world_from_ground;
@@ -55,6 +55,8 @@ fn setup_lawn(
     server: Option<Res<AssetServer>>,
     mut materials: ResMut<Assets<GroundMaterial>>,
 ) {
+    // Sin imágenes: sin la baldosa de hojarasca del monte, que el césped no
+    // lleva.
     let material = ground_material(
         root.as_deref().map(|r| r.0.as_path()),
         None,
@@ -64,11 +66,11 @@ fn setup_lawn(
 }
 
 /// La capa de pasto del césped `plaza`: un quad a [`LAWN_LIFT`] sobre la losa,
-/// con sus posiciones relativas a `origin`, pintado de [`LAWN`] como pintura de
+/// con sus posiciones relativas a `origin`, el punto del suelo en el medio de
+/// la plaza (el pueblo está nivelado), pintado de [`LAWN`] como pintura de
 /// suelo (sin hojarasca) y sin suelo despejado ni húmedo.
-pub fn lawn_mesh(plaza: Aabb, terrain: &Terrain, origin: Vec3) -> Mesh {
-    let centre = plaza.center();
-    let top = terrain.height(centre.x, centre.y) + LAWN_TOP + LAWN_LIFT;
+pub fn lawn_mesh(plaza: Aabb, origin: Vec3) -> Mesh {
+    let top = origin.y + LAWN_TOP + LAWN_LIFT;
     let corners = [
         plaza.min,
         pampa_core::Vec2::new(plaza.max.x, plaza.min.y),
@@ -118,9 +120,10 @@ fn sow_lawns(
             let centre = plaza.center();
             let origin = world_from_ground(centre, terrain.0.height(centre.x, centre.y));
             commands.spawn((
-                Mesh3d(meshes.add(lawn_mesh(plaza, &terrain.0, origin))),
+                Mesh3d(meshes.add(lawn_mesh(plaza, origin))),
                 MeshMaterial3d(kit.0.clone()),
                 Transform::from_translation(origin),
+                // El rango de los edificios del pueblo, como la losa del césped.
                 ranges()[0].clone(),
                 PlazaLawn,
                 ChildOf(root),
@@ -132,7 +135,7 @@ fn sow_lawns(
 #[cfg(test)]
 mod tests {
     use bevy::mesh::VertexAttributeValues;
-    use pampa_core::Vec2 as GroundVec2;
+    use pampa_core::{Terrain, Vec2 as GroundVec2};
 
     use super::*;
 
@@ -145,7 +148,7 @@ mod tests {
         };
         let c = plaza.center();
         let origin = world_from_ground(c, terrain.height(c.x, c.y));
-        let mut mesh = lawn_mesh(plaza, &terrain, origin);
+        let mut mesh = lawn_mesh(plaza, origin);
         let Some(VertexAttributeValues::Float32x3(points)) =
             mesh.attribute(Mesh::ATTRIBUTE_POSITION).cloned()
         else {

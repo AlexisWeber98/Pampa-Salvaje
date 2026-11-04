@@ -17,6 +17,7 @@ Order follows the weakest elements found in the map (L2). Each task is one work 
 - T3 [S1, S3] Caminos: wheel ruts, crown and verge irregularity, dry cracked mud and hoof-churned patches in the road shader and strip mesh. Route: inline. Status: done, uncommitted (the user stages and commits). Evidence: L10.
 - T4 [S1, S3] Town streets: earth streets with ruts, worn centre, irregular edges, shallow dry hollows; replace the flat 3 cm boxes with ground-following surfaces. Route: inline. Status: done, uncommitted. The towns are levelled, so the boxes stay as the base and a worn layer goes on top (L12). Evidence: L12.
 - T5 [S1, S3] Sidewalks, curbs and plazas: real grass on the plaza lawn, worn and broken brick, chipped curbs, plaza paths with edge wear. Route: inline (mapping by a read-only explorer, L13). Status: T5a (lawn) done in 605c4b3, reviewed; T5b (chipped curbs) done in 1c676d7, reviewed; T5c (broken brick) done, uncommitted; plaza path edge wear not done (pending).
+- T7 [S1] Polish: the advisory findings of the native reviews of T1 to T5. Route: inline. Status: done, uncommitted. Evidence: L16.
 - T6 [S1, S3] Dust and splashes at footsteps: footfall events from people, horses, carts and cars; own lightweight particle system (no new dependency); dust on dry earth, splashes on mud and lagoon edges; short-lived prints. Route: inline. Status: pending.
 
 ## Log
@@ -139,3 +140,23 @@ Order follows the weakest elements found in the map (L2). Each task is one work 
   - Shots in Pico: the first version with Earth (dirt_path) read as pale tiles stuck on top. Mud (brown_mud_dry) reads as earth-filled holes.
   - Not done: plaza path edge wear (grass thinning where the lawn meets the paths).
   - Checks: suite green except the known flaky rider test (it passes alone), clippy clean.
+- L16 (2026-11-04) The user committed T5c (5a2d7c8): native review approved and acknowledged; its findings are folded into this polish. User: "vamos con pulido acumulado". T7, inline:
+  - T5c: the gap formula disagreed with its doc and test. It now uses `GAP_LENGTH` (0.18–0.6) and `GAP_WIDTH` (0.18–0.43), plus a named `GAP_DEPTH`; overlaps are documented (same earth, same height). The L15 sizes were wrong: they are 18–60 by 18–43 cm.
+  - T5b: named `CHIP_LENGTH`, and a const assert that `CHIP_DROP.0 > STONE_SETTLE` (the chipped test relies on it). Fixed the last-stone comment. New test cases: a curb shorter than half a stone (one flush stone), and a sweep of lengths keeping every stone between half a stone and one and a half.
+  - T4: `MIN_HALF` is now derived (`0.5 * MIN_STREET_WIDTH - Sidewalk::WIDTH`); `runs_north_south` and `carriageway_half` share the orientation and width. `wear_mesh(street, origin)` takes the height from origin, with the lift inside. The town test keys materials with `carriageway_half`. Comments on the range.
+  - T5a: `lawn_mesh(plaza, origin)` (no repeated height), and comments on the range and on the `None` images.
+  - T2:
+    - The meadow follows the active Camera3d of highest order.
+    - Tint and brightness use independent rolls.
+    - `CARD_VARIANTS` replaces the literal 4 and the 2x2 atlas is commented.
+    - The wind shader's constants are named (gust 30 m/70 m, swell 130 m/18 s, flutter, calm).
+    - The prepass comment now says all prepasses stay still and a depth prepass would need a matching shader.
+  - T1: ground.wesl names `SEAM`/`SEAM_BAND`, `BLEND_EDGE`, `HUMMOCK_BIG`/`HUMMOCK_SMALL` (the hollow divisor is derived) and `DRY_RATIO`, cross-referenced to terrain.rs `GREEN_GRASS`/`DRY_GRASS` (red over green, linear: 0.81 and 1.30, checked). The `Layer` doc is fixed.
+  - Left out on purpose:
+    - Layers switch on before their KTX2 finish loading. A failed load samples a default texture rather than falling back to plain ground; fixing it needs a load-state system.
+    - No WGSL compile test, because wesl imports need Bevy's processor.
+    - No `tend_meadow` app test.
+    - FloraPlugin still needs GrassMaterialPlugin.
+    - `noise` and `noise_d` stay separate, since `noise_d` costs more and fbm does not need gradients.
+    - Unchanged: the T4 z-fight margin (no flicker seen up to about 40 m), the duplicated card fan in grass.rs and meadow.rs, and the RoadMaterial init_resource pattern.
+  - Checks: workspace suite fully green, clippy clean. Shots of the pampa, road, street and lawn compile and look unchanged.

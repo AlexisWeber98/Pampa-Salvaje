@@ -18,7 +18,7 @@ use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use pampa_core::town::Sidewalk;
-use pampa_core::{Aabb, Terrain, Vec2 as GroundVec2};
+use pampa_core::{Aabb, TownConfig, Vec2 as GroundVec2};
 
 use crate::AssetRoot;
 use crate::coords::world_from_ground;
@@ -35,8 +35,22 @@ pub const WEAR_LIFT: [f32; 2] = [0.003, 0.006];
 const _: () = assert!(WEAR_LIFT[1] > WEAR_LIFT[0]);
 
 /// La calzada más angosta que se gasta, de medio ancho en metros: la de la
-/// calle más angosta ([`pampa_core::TownConfig::MIN_STREET_WIDTH`]).
-const MIN_HALF: f32 = 1.5;
+/// calle más angosta ([`TownConfig::MIN_STREET_WIDTH`]) entre sus veredas.
+const MIN_HALF: f32 = 0.5 * TownConfig::MIN_STREET_WIDTH - Sidewalk::WIDTH;
+
+/// Si `street` corre de norte a sur (más larga en `y`); si no, de este a
+/// oeste.
+fn runs_north_south(street: Aabb) -> bool {
+    street.max.y - street.min.y > street.max.x - street.min.x
+}
+
+/// El medio ancho de la calzada de `street`, entre sus dos veredas de
+/// [`Sidewalk::WIDTH`], al menos [`MIN_HALF`]: de ahí mide el shader sus
+/// carriles, y hay un material por cada uno.
+pub fn carriageway_half(street: Aabb) -> f32 {
+    let size = street.max - street.min;
+    (0.5 * size.x.min(size.y) - Sidewalk::WIDTH).max(MIN_HALF)
+}
 
 /// Una capa gastada de calle, hija de la raíz de su pueblo.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,22 +94,23 @@ fn setup_wear(
     });
 }
 
-/// La capa gastada de `street`: un quad a `lift` sobre la calzada, con sus
-/// posiciones relativas a `origin`. Su segundo UV es la distancia de costado
+/// La capa gastada de `street`: un quad a [`WEAR_LIFT`] sobre la calzada (más
+/// alto si corre de norte a sur), con sus posiciones relativas a `origin`, el
+/// punto del suelo en el medio de la calle (el pueblo está nivelado). Su segundo UV es la distancia de costado
 /// al eje de la calle y la distancia a lo largo de ella, en metros, como el
 /// de la superficie de un camino. Devuelve la malla y el medio ancho de la
 /// calzada, entre las veredas (que cubren la capa a cada lado).
-pub fn wear_mesh(street: Aabb, terrain: &Terrain, origin: Vec3, lift: f32) -> (Mesh, f32) {
-    let size = street.max - street.min;
+pub fn wear_mesh(street: Aabb, origin: Vec3) -> (Mesh, f32) {
     let centre = street.center();
+    let north_south = runs_north_south(street);
     // A lo largo del lado largo; de costado, hacia el norte o el oeste.
-    let (along, across) = if size.x >= size.y {
-        (GroundVec2::new(1.0, 0.0), GroundVec2::new(0.0, 1.0))
-    } else {
+    let (along, across) = if north_south {
         (GroundVec2::new(0.0, 1.0), GroundVec2::new(-1.0, 0.0))
+    } else {
+        (GroundVec2::new(1.0, 0.0), GroundVec2::new(0.0, 1.0))
     };
-    let half = (0.5 * size.x.min(size.y) - Sidewalk::WIDTH).max(MIN_HALF);
-    let top = terrain.height(centre.x, centre.y) + STREET_TOP + lift;
+    let half = carriageway_half(street);
+    let top = origin.y + STREET_TOP + WEAR_LIFT[usize::from(north_south)];
     let corners = [
         street.min,
         GroundVec2::new(street.max.x, street.min.y),
@@ -146,11 +161,9 @@ fn wear_streets(
             continue;
         };
         for street in &town.streets {
-            let size = street.max - street.min;
-            let lift = WEAR_LIFT[usize::from(size.y > size.x)];
             let centre = street.center();
             let origin = world_from_ground(centre, terrain.0.height(centre.x, centre.y));
-            let (mesh, half) = wear_mesh(*street, &terrain.0, origin, lift);
+            let (mesh, half) = wear_mesh(*street, origin);
             let key = (half * 100.0).round() as u32;
             let kit = &mut *kit;
             let material = kit
@@ -166,6 +179,7 @@ fn wear_streets(
                 Mesh3d(meshes.add(mesh)),
                 MeshMaterial3d(material),
                 Transform::from_translation(origin),
+                // El rango de los edificios del pueblo, como su calzada.
                 ranges()[0].clone(),
                 NotShadowCaster,
                 StreetWear,
@@ -178,6 +192,7 @@ fn wear_streets(
 #[cfg(test)]
 mod tests {
     use bevy::mesh::VertexAttributeValues;
+    use pampa_core::Terrain;
 
     use super::*;
 
@@ -220,7 +235,7 @@ mod tests {
         for (street, expected_half, lift) in cases {
             let c = street.center();
             let origin = world_from_ground(c, terrain.height(c.x, c.y));
-            let (mesh, half) = wear_mesh(street, &terrain, origin, WEAR_LIFT[lift]);
+            let (mesh, half) = wear_mesh(street, origin);
             assert_eq!(half, expected_half);
             let at = points(&mesh);
             let lanes = floats2(&mesh, Mesh::ATTRIBUTE_UV_1);
@@ -255,7 +270,7 @@ mod tests {
             min: GroundVec2::new(0.0, 0.0),
             max: GroundVec2::new(50.0, 14.0),
         };
-        let (mut mesh, _) = wear_mesh(street, &Terrain::default(), Vec3::ZERO, WEAR_LIFT[0]);
+        let (mut mesh, _) = wear_mesh(street, Vec3::ZERO);
         mesh.compute_normals();
         let Some(VertexAttributeValues::Float32x3(normals)) =
             mesh.attribute(Mesh::ATTRIBUTE_NORMAL)

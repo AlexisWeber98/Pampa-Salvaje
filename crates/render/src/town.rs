@@ -906,7 +906,7 @@ fn sidewalk(shape: &mut Shape, walk: &Sidewalk, origin: Vec3, ground: f32) {
             paving,
         );
         // Donde faltan ladrillos asoma la tierra que los asentaba.
-        let earth = (ground, SIDEWALK_TOP - 0.02, SIDEWALK_TOP + GAP_LIFT);
+        let earth = (ground, SIDEWALK_TOP - GAP_DEPTH, SIDEWALK_TOP + GAP_LIFT);
         for gap in brick_gaps(floor) {
             ground_box(shape, Surface::Mud, (gap.min, gap.max), origin, earth);
         }
@@ -941,17 +941,23 @@ fn sidewalk(shape: &mut Shape, walk: &Sidewalk, origin: Vec3, ground: f32) {
 const GAP_LIFT: f32 = 0.002;
 /// Huecos de ladrillos faltantes por metro cuadrado de vereda.
 const GAPS_PER_M2: f32 = 0.06;
-/// El lado más corto y el más largo de un hueco, en metros.
-const GAP_SIZE: (f32, f32) = (0.18, 0.6);
+/// Hasta qué profundidad bajo la vereda llega la tierra de un hueco, en metros.
+const GAP_DEPTH: f32 = 0.02;
+/// El largo (en `x`) más corto y el más largo de un hueco, en metros.
+const GAP_LENGTH: (f32, f32) = (0.18, 0.6);
+/// El ancho (en `y`) más corto y el más largo de un hueco, en metros: más
+/// angosto que largo, como unos pocos ladrillos sueltos de una hilada.
+const GAP_WIDTH: (f32, f32) = (0.18, 0.43);
 
 /// Los huecos de ladrillos faltantes o rotos de la vereda de piso `floor`,
 /// donde asoma la tierra: unos [`GAPS_PER_M2`] por metro cuadrado, de
-/// [`GAP_SIZE`] por lado, adentro del piso. Salen de un hash de la posición,
+/// [`GAP_LENGTH`] por [`GAP_WIDTH`], adentro del piso. Pueden superponerse:
+/// son la misma tierra a la misma altura, así que se funden en un hueco más
+/// grande. Salen de un hash de la posición,
 /// así que una vereda se ve siempre igual.
 fn brick_gaps(floor: Aabb) -> Vec<Aabb> {
     let size = floor.size();
     let count = (size.x * size.y * GAPS_PER_M2).round() as usize;
-    let (short, long) = GAP_SIZE;
     (0..count)
         .filter_map(|i| {
             let k = i as f32;
@@ -961,9 +967,10 @@ fn brick_gaps(floor: Aabb) -> Vec<Aabb> {
                     floor.min.y * 0.17 + k * 3.97 - salt,
                 )
             };
+            let between = |(lo, hi): (f32, f32), t: f32| lo + (hi - lo) * t;
             let half = GroundVec2::new(
-                short + (long - short) * roll(1.1),
-                short + (long - short) * roll(2.3) * 0.6,
+                between(GAP_LENGTH, roll(1.1)),
+                between(GAP_WIDTH, roll(2.3)),
             ) * 0.5;
             let room = size - half * 2.0;
             if room.x <= 0.0 || room.y <= 0.0 {
@@ -994,6 +1001,10 @@ const STONE_SETTLE: f32 = 0.008;
 const CHIPPED_SHARE: f32 = 0.14;
 /// Cuánto más baja queda una punta rota, en metros.
 const CHIP_DROP: (f32, f32) = (0.01, 0.022);
+/// El largo de la punta rota, en metros.
+const CHIP_LENGTH: (f32, f32) = (0.08, 0.18);
+// Una punta rota queda siempre más baja que cualquier piedra asentada.
+const _: () = assert!(CHIP_DROP.0 > STONE_SETTLE);
 // Una punta rota nunca baja de la vereda de ladrillo.
 const _: () = assert!(CURB_TOP - STONE_SETTLE - CHIP_DROP.1 >= SIDEWALK_TOP - 1e-6);
 
@@ -1026,7 +1037,9 @@ fn curb_stones(lo: GroundVec2, hi: GroundVec2) -> Vec<CurbStone> {
     while end - at > 1e-3 {
         let (short, long) = STONE_LENGTH;
         let mut next = at + short + (long - short) * roll(at, 1.3);
-        // Sin un pedacito suelto al final: la última piedra se estira.
+        // Si después de esta queda menos de media piedra, esta se estira
+        // hasta el final; si no, la última sale con lo que quede (al menos
+        // media piedra).
         if end - next < short / 2.0 {
             next = end;
         }
@@ -1045,9 +1058,9 @@ fn curb_stones(lo: GroundVec2, hi: GroundVec2) -> Vec<CurbStone> {
             CURB_TOP - STONE_SETTLE * roll(at, 7.1)
         };
         if !first && roll(at, 4.7) < CHIPPED_SHARE {
-            // La punta rota: el último tramo de la piedra, uno o dos
-            // centímetros más bajo, nunca por debajo de la vereda.
-            let chip = 0.08 + 0.1 * roll(at, 9.9);
+            // La punta rota: el último tramo de la piedra, entre
+            // [`CHIP_DROP`] más bajo, nunca por debajo de la vereda.
+            let chip = CHIP_LENGTH.0 + (CHIP_LENGTH.1 - CHIP_LENGTH.0) * roll(at, 9.9);
             let drop = CHIP_DROP.0 + (CHIP_DROP.1 - CHIP_DROP.0) * roll(at, 2.2);
             let (m0, m1) = span(a, b - chip);
             let (c0, c1) = span(b - chip, b);
@@ -2489,11 +2502,11 @@ mod tests {
             let s = g.size();
             assert!(floor.contains(g), "{g:?} off the floor");
             assert!(
-                s.x >= GAP_SIZE.0 - 1e-4 && s.x <= GAP_SIZE.1 + 1e-4,
+                s.x >= GAP_LENGTH.0 - 1e-4 && s.x <= GAP_LENGTH.1 + 1e-4,
                 "{s:?}"
             );
             assert!(
-                s.y >= GAP_SIZE.0 * 0.6 - 1e-4 && s.y <= GAP_SIZE.1 + 1e-4,
+                s.y >= GAP_WIDTH.0 - 1e-4 && s.y <= GAP_WIDTH.1 + 1e-4,
                 "{s:?}"
             );
         }
@@ -2558,6 +2571,40 @@ mod tests {
             // Siempre igual.
             assert_eq!(stones, curb_stones(lo, hi));
         }
+        // Un cordón más corto que media piedra: una sola, entera y a ras.
+        let lo = GroundVec2::new(0.0, 0.0);
+        let short = curb_stones(lo, GroundVec2::new(0.3, CURB_WIDTH));
+        assert_eq!(short.len(), 1);
+        assert_eq!(
+            (short[0].min.x, short[0].max.x, short[0].top),
+            (0.0, 0.3, CURB_TOP)
+        );
+        // Ninguna piedra, en ningún largo, sale más corta que media piedra
+        // (salvo una punta rota) ni más larga que una y media.
+        for tenths in 5..80 {
+            let long = tenths as f32 * 0.1 + 0.037;
+            let stones = curb_stones(lo, GroundVec2::new(long, CURB_WIDTH));
+            assert_eq!(stones.last().unwrap().max.x, long);
+            let mut pieces = stones.iter().peekable();
+            while let Some(s) = pieces.next() {
+                // Una piedra con su punta rota son dos piezas seguidas sin junta.
+                let mut end = s.max.x;
+                if let Some(n) = pieces.peek()
+                    && n.min.x == end
+                {
+                    end = n.max.x;
+                    pieces.next();
+                }
+                let length = end - s.min.x;
+                if long > STONE_LENGTH.0 / 2.0 {
+                    assert!(
+                        length >= STONE_LENGTH.0 / 2.0 - STONE_JOINT,
+                        "{long} m: {length}"
+                    );
+                }
+                assert!(length <= STONE_LENGTH.1 * 1.5, "{long} m: {length}");
+            }
+        }
     }
 
     #[test]
@@ -2600,7 +2647,7 @@ mod tests {
         let widths: HashSet<u32> = active
             .iter()
             .flat_map(|&i| towns[i].streets.iter())
-            .map(|s| ((s.max.x - s.min.x).min(s.max.y - s.min.y) * 100.0).round() as u32)
+            .map(|s| (crate::street::carriageway_half(*s) * 100.0).round() as u32)
             .collect();
         assert_eq!(worn.iter().collect::<HashSet<_>>().len(), widths.len());
         // Un segundo frame no vuelve a gastarlas.
