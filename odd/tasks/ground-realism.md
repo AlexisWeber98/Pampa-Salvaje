@@ -18,7 +18,7 @@ Order follows the weakest elements found in the map (L2). Each task is one work 
 - T4 [S1, S3] Town streets: earth streets with ruts, worn centre, irregular edges, shallow dry hollows; replace the flat 3 cm boxes with ground-following surfaces. Route: inline. Status: done, uncommitted. The towns are levelled, so the boxes stay as the base and a worn layer goes on top (L12). Evidence: L12.
 - T5 [S1, S3] Sidewalks, curbs and plazas: real grass on the plaza lawn, worn and broken brick, chipped curbs, plaza paths with edge wear. Route: inline (mapping by a read-only explorer, L13). Status: T5a (lawn) done in 605c4b3, reviewed; T5b (chipped curbs) done in 1c676d7, reviewed; T5c (broken brick) done, uncommitted; plaza path edge wear not done (pending).
 - T7 [S1] Polish: the advisory findings of the native reviews of T1 to T5. Route: inline. Status: done, uncommitted. Evidence: L16.
-- T6 [S1, S3] Dust and splashes at footsteps: footfall events from people, horses, carts and cars; own lightweight particle system (no new dependency); dust on dry earth, splashes on mud and lagoon edges; short-lived prints. Route: inline. Status: pending.
+- T6 [S1, S3] Dust and splashes at footsteps: footfall events from people, horses, carts and cars; own lightweight particle system (no new dependency); dust on dry earth, splashes on mud and lagoon edges; short-lived prints. Split (L18): T6a = particle pool + ground classifier + emitters for hooves, wheels and people (route: delegated, context-backstop writer reason); T6b = short-lived prints (pending). T6a done (L20), staged for the user's commit; finished inline.
 
 ## Log
 
@@ -167,3 +167,30 @@ Order follows the weakest elements found in the map (L2). Each task is one work 
   - The paving test now counts Mud meshes (one per brick ring).
   - The meadow's camera choice is now `viewing_eye`, with a test (active camera of highest order; none if no camera is active), proven by sabotage.
   - Checks: suite fully green, clippy clean.
+- L18 (2026-11-04) The user committed the follow-ups (dc15a96). Native review approved and acknowledged; its GAP_WIDTH doc remark is fixed in the working tree. User: "T6". An explorer mapped the hooks:
+  - Hooves: `HorseBones` bones plus `standing` (PLANTED 0.015 m); a detector belongs after Propagate, like `carry_stirrups`, skipping frozen rigs. This covers draught horses too.
+  - People: `FigureBody.phase` with footfalls near 0 and 0.5.
+  - Vehicles: `VehicleWheel` radius, `OfVehicle`, `VisualPose.speed`, `Rolled`.
+  - Surface: `WorldTerrain` roads, lagoons and flat areas; `lagoon_wetness`; `WorldTowns` sidewalks, plazas and streets; `FloraSite::dryness`.
+  - The only particle-like precedent is the train's `SmokePuff` pool. There is no weather state.
+  - Routed T6a to one bounded writer under the parent-context backstop.
+- L19 (2026-11-04) User: "anota el proximo hito como prioridad en todo.md lo haremos en otra sesion" (note the next milestone as the priority in todo.md; we will do it in another session). The T6a writer was stopped after its first milestone:
+  - `crates/render/src/dust.rs` is written: footing classifier, puff pool, emitters for hooves, wheels and feet; 11 unit tests pass.
+  - It is wired in (`pub mod dust`, `DustPlugin` in lib.rs and game/src/main.rs) and `cargo check -p game` is clean.
+  - Not done yet: sabotage proofs, riding shots (road, town street, lagoon edge), Renoir frame cost, README, this log's T6a entry, full suite and clippy, native review.
+  - The working tree also holds the GAP_WIDTH doc fix in town.rs (from the dc15a96 review) and small changes the writer made in terrain.rs; check them on resume.
+- L20 (2026-11-04) User: "seguimos con lo prioritario en todo.md" (go on with the priority in todo.md). T6a finished inline:
+  - Removed the writer's TEMPDBG logs. The emitters work in game: hooves on roads and streets (Dust 1.0), wheels, feet on earth walks (0.6), water and mud at the lagoon edge.
+  - Riding shots: the lagoon splashes read. On the street the first dust was nearly invisible, the same colour as the earth. It is now lighter and greyer than the soil (DUST_TINT 0.92, 0.86, 0.76; GRASS_TINT 0.80, 0.77, 0.69), and opacity rose to (0.45 + 0.5 dust)(0.65 + 0.35 s). The dust now trails behind the hooves.
+  - Sabotage: all 11 tests fail when their rule is broken. `stepped` survived its sabotage: its wrap handling was redundant, because a step that wraps crosses phase 0, which is itself a footfall. It is now `floor(2 was) != floor(2 now)`, and that version fails under sabotage (round instead of floor).
+  - Renoir frame cost: dev build, no vsync, a gallop down a Monte Nievas street, 300-frame windows after warm-up. Off: median 11.7 to 13.3 ms. On: 12.0 to 13.2 ms. The cost is within noise, under 0.3 ms. The diagnostics were temporary and are reverted.
+  - README: a paragraph on dust after the street and lawn paragraph.
+  - Checks: workspace suite fully green (core 217, content 32, game 508, render 626), clippy clean. rustfmt was run on dust.rs and the lib.rs export order. core/flora.rs is unformatted at the base and was left alone.
+  - Not done: native review (it runs at the user's commit), T6b prints, plaza path edge wear, the lagoon mud band.
+- L21 (2026-11-04) User: "noo, pero es una exageración la cantidad de polvo, la idea es que se vea real no parezca un un tren a vapor" (no, the amount of dust is exaggerated; it should look real, not like a steam train). Toned down:
+  - DUST_PER_KICK 3 to 1.5, RISE 0.12 to 0.04.
+  - Start size (0.12 + 0.08 r), end size (0.35 + 0.6 s): at most about 1.2 m at a gallop, where it was 2.9 m.
+  - Up speed (0.1 + 0.35 s), back push (0.3 + 0.9 s), life (0.8 + 1.0 s), at most about 2.3 s.
+  - Opacity (0.25 + 0.35 dust)(0.6 + 0.4 s).
+  - The tint goes back toward the earth (DUST_TINT 0.86, 0.78, 0.66).
+  - Street shots: low, small tufts at the hooves that settle quickly. The 11 dust tests still pass, and the README is updated.

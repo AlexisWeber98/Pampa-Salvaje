@@ -11,6 +11,7 @@ pub mod atmosphere;
 pub mod bubble;
 pub mod character;
 pub mod coords;
+pub mod dust;
 pub mod facade;
 pub mod fade;
 pub mod fauna;
@@ -50,6 +51,7 @@ pub use character::{
     OWN_HEAD_LAYER, TOWNSFOLK_LOOKS, Talking, ViewerBody, ViewerHead, VisualPose,
 };
 pub use coords::world_from_ground;
+pub use dust::DustPlugin;
 pub use facade::{FacadeMaterials, Livery, Surface};
 pub use fade::{FadeLayer, FadePlugin, ScreenFade};
 pub use fauna::{ANIMATE_FAR, Animal, AnimalPose, AnimalSeed, FaunaKit, FaunaPlugin, Gait};

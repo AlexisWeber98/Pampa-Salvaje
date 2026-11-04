@@ -945,8 +945,8 @@ const GAPS_PER_M2: f32 = 0.06;
 const GAP_DEPTH: f32 = 0.02;
 /// El largo (en `x`) más corto y el más largo de un hueco, en metros.
 const GAP_LENGTH: (f32, f32) = (0.18, 0.6);
-/// El ancho (en `y`) más corto y el más largo de un hueco, en metros: más
-/// angosto que largo, como unos pocos ladrillos sueltos de una hilada.
+/// El ancho (en `y`) más corto y el más largo de un hueco, en metros: en
+/// promedio más angosto que largo, aunque cada lado sale de su propia tirada.
 const GAP_WIDTH: (f32, f32) = (0.18, 0.43);
 
 /// Los huecos de ladrillos faltantes o rotos de la vereda de piso `floor`,

@@ -591,7 +591,7 @@ fn ground_color(terrain: &Terrain, flora: Option<&FloraSite>, g: GroundVec2) -> 
 }
 
 /// Cuánto pesa el suelo nivelado de un pueblo en `g`, de 0 a 1.
-fn town_weight(terrain: &Terrain, g: GroundVec2) -> f32 {
+pub(crate) fn town_weight(terrain: &Terrain, g: GroundVec2) -> f32 {
     terrain
         .flat_areas
         .iter()
@@ -601,7 +601,7 @@ fn town_weight(terrain: &Terrain, g: GroundVec2) -> f32 {
 
 /// Cuánto desgaste de camino hay en `g`, de 0 (lejos) a 1 (en el camino),
 /// difuminado a lo largo de [`ROAD_VERGE`] más allá de su borde.
-fn road_wear(terrain: &Terrain, g: GroundVec2) -> f32 {
+pub(crate) fn road_wear(terrain: &Terrain, g: GroundVec2) -> f32 {
     terrain.roads.as_ref().map_or(0.0, |r| {
         let reach = RoadNetwork::HALF_WIDTH + ROAD_VERGE;
         r.near(g, reach)
