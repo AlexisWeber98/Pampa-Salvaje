@@ -15,7 +15,7 @@ Order follows the weakest elements found in the map (L2). Each task is one work 
 - T1 [S1, S2, S3] Pampa ground and earth: 2K PBR layers (grass, bare soil) blended by height in the ground shader instead of one CPU-blended 512² tile; anti-tiling (noise-picked offsets plus macro variation); micro-relief through the normal. Route: inline (no writer reason). Status: done, uncommitted; optimised to about +2–3 ms on the Renoir (L6, L7). Evidence: L3, L7.
 - T2 [S1, S3] Grass and gramilla: denser tufts near the camera, a short gramilla carpet, wind sway in the vertex stage. Route: inline. Status: done, uncommitted. Near paja tufts and wind are in; the gramilla cards were dropped by the user's choice (L9), so the carpet stays in the ground shader. Evidence: L8, L9.
 - T3 [S1, S3] Caminos: wheel ruts, crown and verge irregularity, dry cracked mud and hoof-churned patches in the road shader and strip mesh. Route: inline. Status: done, uncommitted (the user stages and commits). Evidence: L10.
-- T4 [S1, S3] Town streets: earth streets with ruts, worn centre, irregular edges, shallow dry hollows; replace the flat 3 cm boxes with ground-following surfaces. Route: inline. Status: pending.
+- T4 [S1, S3] Town streets: earth streets with ruts, worn centre, irregular edges, shallow dry hollows; replace the flat 3 cm boxes with ground-following surfaces. Route: inline. Status: done, uncommitted. The towns are levelled, so the boxes stay as the base and a worn layer goes on top (L12). Evidence: L12.
 - T5 [S1, S3] Sidewalks, curbs and plazas: real grass on the plaza lawn, worn and broken brick, chipped curbs, plaza paths with edge wear. Route: inline. Status: pending.
 - T6 [S1, S3] Dust and splashes at footsteps: footfall events from people, horses, carts and cars; own lightweight particle system (no new dependency); dust on dry earth, splashes on mud and lagoon edges; short-lived prints. Route: inline. Status: pending.
 
@@ -102,3 +102,15 @@ Order follows the weakest elements found in the map (L2). Each task is one work 
   - `LAYERS[1]` is now the named `SOIL_LAYER`.
   - Not changed: `Assets<RoadMaterial>` is still created with `init_resource` in RoadPlugin, the same pattern as GroundMaterial in TerrainPlugin.
   - Checks: suite green, clippy clean, road shots unchanged.
+- L12 (2026-11-04) user: "bueno segumos T4" (go on with T4). Before that, the native review per commit used detached worktrees: 80b2489 and c4ec058 were approved and acknowledged; their findings are advisory and left for a later polish task. T4, inline:
+  - `crates/render/src/street.rs` (`StreetWearPlugin`, added by TownPlugin): on each new `TownRoot`, every street gets an opaque `RoadMaterial` quad 3 mm (E-W) or 6 mm (N-S) above the 3 cm earth box, so crossings never z-fight.
+    - UV_1 = (across from the axis, along).
+    - The half width is the carriageway's: the street minus two `Sidewalk::WIDTH` 3.5 m walks, at least 1.5 m. Before this fix the lanes fell under the sidewalks.
+    - One material per half width, cached.
+  - `road.wesl` lanes now sit at 0.477 × the half width (1.55 m on the road, unchanged).
+  - Tests, each proven by sabotage:
+    - the quad covers the street, sits on the levelled height, and measures across from the axis with the carriageway half width (sabotage: no sidewalk subtraction);
+    - it faces up (this caught a CW winding bug);
+    - every street of the active towns is worn once, with one material per width (sabotages: no `Added` filter, no cache).
+  - Shots in Monte Nievas and General Pico: the wheel ruts run in the carriageway between the curbs.
+  - Also asked by the user: test windows open on Hyprland workspace 5. The game sets app_id `pampa-shots` when PAMPA_SHOTS is set (`shots::APP_ID`), and `~/.config/hypr/windows.lua` has `w("^pampa-shots$", { workspace = "5 silent", render_unfocused = true })`. Without `render_unfocused`, half the captures came out black.

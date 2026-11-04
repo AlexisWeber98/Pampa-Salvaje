@@ -5,7 +5,9 @@
 // centre line (positive to the left) and the distance along the road, in
 // metres. From it:
 // - Two cart lanes, one each way, each a pair of wheel ruts 1.56 m apart that
-//   wander a little along the road and run deeper in some stretches. The ruts
+//   wander a little along the road and run deeper in some stretches. The
+//   lanes sit at the same fraction of the half width on a country road and
+//   on a wide town street (`shape.x`), so one shader wears both. The ruts
 //   are compacted (darker, smoother) and tilt the normal down their walls.
 // - Between the ruts of a lane, where the horses walk, the earth is churned
 //   into small clods.
@@ -36,8 +38,9 @@ import bevy_pbr::render::{
 @group(constants::MATERIAL_BIND_GROUP) @binding(104) var<uniform> layers: vec4<f32>;
 // x: half the road's width (`RoadNetwork::HALF_WIDTH`), in metres.
 @group(constants::MATERIAL_BIND_GROUP) @binding(105) var<uniform> shape: vec4<f32>;
-// Where each lane runs, from the centre line, and half a cart's gauge.
-const LANE: f32 = 1.55;
+// Where each lane runs, as a fraction of the half width from the centre line
+// (1.55 m on a 6.5 m road), and half a cart's gauge in metres.
+const LANE: f32 = 0.477;
 const GAUGE: f32 = 0.78;
 // A rut's half width and depth, and the crown's rise, in metres.
 const RUT_WIDTH: f32 = 0.16;
@@ -150,8 +153,8 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 
     // The two lanes, each wandering on its own, its ruts deeper in some
     // stretches than others.
-    let left = LANE + 0.22 * (noise(vec2<f32>(along * 0.031, 3.7)) - 0.5) * 2.0;
-    let right = -LANE + 0.22 * (noise(vec2<f32>(along * 0.029, 9.1)) - 0.5) * 2.0;
+    let left = LANE * half + 0.22 * (noise(vec2<f32>(along * 0.031, 3.7)) - 0.5) * 2.0;
+    let right = -LANE * half + 0.22 * (noise(vec2<f32>(along * 0.029, 9.1)) - 0.5) * 2.0;
     let deep_left = RUT_DEPTH * mix(0.35, 1.3, noise(vec2<f32>(along * 0.07, 1.3)));
     let deep_right = RUT_DEPTH * mix(0.35, 1.3, noise(vec2<f32>(along * 0.07, 5.9)));
     let ruts = array<vec2<f32>, 4>(

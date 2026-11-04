@@ -254,7 +254,7 @@ const LIFT: f32 = 0.05;
 const FEATHER: f32 = 1.6;
 /// El tinte de tierra del camino (sRGB), sobre el detalle casi blanco de
 /// Ground 102.
-const DIRT: [f32; 3] = [0.70, 0.60, 0.46];
+pub(crate) const DIRT: [f32; 3] = [0.70, 0.60, 0.46];
 
 /// Una malla de superficie para todas las partes `part` de camino de un chunk:
 /// una tira a lo largo de cada parte, opaca a lo ancho del camino y difuminada

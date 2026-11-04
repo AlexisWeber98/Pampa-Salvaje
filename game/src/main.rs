@@ -318,6 +318,10 @@ fn main() {
             .set(WindowPlugin {
                 primary_window: Some(Window {
                     title: "Pampa Salvaje".into(),
+                    // El recorrido de capturas (`shots`) abre su ventana con un
+                    // app_id propio, para que el gestor de ventanas pueda
+                    // mandarla aparte (ver `shots`).
+                    name: std::env::var_os("PAMPA_SHOTS").map(|_| shots::APP_ID.into()),
                     ..default()
                 }),
                 ..default()

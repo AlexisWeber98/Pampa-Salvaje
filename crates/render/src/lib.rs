@@ -34,6 +34,7 @@ pub mod signs;
 pub mod sky;
 pub mod smooth;
 pub mod streaming;
+pub mod street;
 pub mod terrain;
 pub mod town;
 pub mod train;

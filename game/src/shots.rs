@@ -48,6 +48,12 @@
 
 use std::path::PathBuf;
 
+/// El app_id (Wayland) o la clase (X11) de la ventana del juego durante un
+/// recorrido, para que el gestor de ventanas pueda mandarla a otro escritorio
+/// sin tocar la ventana de una partida normal. En Hyprland:
+/// `w("^pampa-shots$", { workspace = "5 silent" })`.
+pub const APP_ID: &str = "pampa-shots";
+
 use bevy::asset::LoadState;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
