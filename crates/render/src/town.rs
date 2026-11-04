@@ -107,7 +107,8 @@ impl Plugin for TownPlugin {
     fn build(&self, app: &mut App) {
         crate::facade::ensure_plugin(app);
         crate::tree::ensure_plugin(app);
-        app.init_resource::<WorldTowns>()
+        app.add_plugins(crate::street::StreetWearPlugin)
+            .init_resource::<WorldTowns>()
             .init_resource::<ActiveTowns>()
             .init_resource::<StreamFocus>()
             .init_resource::<WorldTerrain>()
@@ -2322,6 +2323,31 @@ mod tests {
     /// El punto del suelo bajo una posición del mundo.
     fn ground_of(p: Vec3) -> GroundVec2 {
         GroundVec2::new(p.x, -p.z)
+    }
+
+    #[test]
+    fn every_street_of_a_town_gets_worn_with_one_material_per_width() {
+        let mut app = app();
+        app.update();
+        let active = roots(&mut app);
+        assert!(!active.is_empty());
+        let towns = app.world().resource::<WorldTowns>().0.clone();
+        let streets: usize = active.iter().map(|&i| towns[i].streets.len()).sum();
+        let mut q = app.world_mut().query_filtered::<
+            &MeshMaterial3d<crate::ground::RoadMaterial>,
+            With<crate::street::StreetWear>,
+        >();
+        let worn: Vec<_> = q.iter(app.world()).map(|m| m.id()).collect();
+        assert_eq!(worn.len(), streets);
+        let widths: HashSet<u32> = active
+            .iter()
+            .flat_map(|&i| towns[i].streets.iter())
+            .map(|s| ((s.max.x - s.min.x).min(s.max.y - s.min.y) * 100.0).round() as u32)
+            .collect();
+        assert_eq!(worn.iter().collect::<HashSet<_>>().len(), widths.len());
+        // Un segundo frame no vuelve a gastarlas.
+        app.update();
+        assert_eq!(count::<With<crate::street::StreetWear>>(&mut app), streets);
     }
 
     #[test]

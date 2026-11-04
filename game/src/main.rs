@@ -318,6 +318,10 @@ fn main() {
             .set(WindowPlugin {
                 primary_window: Some(Window {
                     title: "Pampa Salvaje".into(),
+                    // El recorrido de capturas (`shots`) abre su ventana con un
+                    // app_id propio, para que el gestor de ventanas pueda
+                    // mandarla aparte (ver `shots`).
+                    name: std::env::var_os("PAMPA_SHOTS").map(|_| shots::APP_ID.into()),
                     ..default()
                 }),
                 ..default()
@@ -352,6 +356,10 @@ fn main() {
     .add_plugins(plant_collision::PlantCollisionPlugin)
     // El material del suelo: el estándar más la hojarasca del monte.
     .add_plugins(pampa_render::ground::GroundMaterialPlugin)
+    // El material de las matas de pasto: el estándar mecido por el viento.
+    .add_plugins(pampa_render::grass::GrassMaterialPlugin)
+    // La gramilla y el pasto bajo alrededor de la cámara.
+    .add_plugins(pampa_render::meadow::MeadowPlugin)
     // La bóveda del cielo (sol, luna, estrellas, nubes) y los pájaros que
     // vuelan en ella.
     .add_plugins(pampa_render::SkyPlugin)

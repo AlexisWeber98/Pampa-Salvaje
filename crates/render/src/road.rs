@@ -10,9 +10,13 @@
 //!
 //! La superficie lleva tierra compactada Ground 102 de ambientCG (CC0 1.0; ver
 //! assets/textures/ground/CREDITS.md, cargada por
-//! [`crate::ground::road_material`]). Sus bordes se difuminan hacia el suelo
-//! mediante el alfa de vértice, y el suelo bajo ellos está gastado hasta la
-//! tierra (ver [`crate::terrain`]). Un paso a nivel recibe tablones de madera
+//! [`crate::ground::road_material`]). El shader del camino
+//! (`assets/shaders/road.wesl`) le marca dos carriles de huellas de ruedas
+//! que serpentean, el pisoteo de los cascos entre ellas, un lomo central con
+//! algo de pasto y parches de barro seco agrietado, y difumina sus bordes
+//! hacia el suelo con un contorno irregular; para eso la malla lleva en su
+//! segundo UV la distancia de costado al eje y a lo largo del camino. El suelo
+//! bajo los bordes está gastado hasta la tierra (ver [`crate::terrain`]). Un paso a nivel recibe tablones de madera
 //! entre los rieles y junto a ellos, rampas que suben hasta ellos y una Cruz de
 //! San Andrés sobre un poste a cada lado; un poste indicador es un poste de
 //! madera con una tabla en flecha por pueblo, rotulada en la tipografía de los
@@ -28,7 +32,7 @@ use pampa_core::{ChunkCoord, LevelCrossing, RoadNetwork, RoadPoint, Signpost, Ve
 use crate::AssetRoot;
 use crate::coords::world_from_ground;
 use crate::flora::ThinOccluder;
-use crate::ground::{face_tangent, ground_uv, road_material};
+use crate::ground::{RoadMaterial, face_tangent, ground_uv, road_material};
 use crate::signs::{BoardStyle, board_image, layout_board};
 use crate::terrain::{
     ChunkDetail, ChunkStreaming, TerrainChunk, WorldChunks, WorldTerrain, mesh_height,
@@ -54,7 +58,7 @@ struct RoadLaid;
 /// Mallas y materiales compartidos por todas las piezas de camino.
 #[derive(Resource, Debug, Clone)]
 struct RoadKit {
-    surface: Handle<StandardMaterial>,
+    surface: Handle<RoadMaterial>,
     cube: Handle<Mesh>,
     timber: Handle<StandardMaterial>,
     white: Handle<StandardMaterial>,
@@ -69,6 +73,7 @@ impl Plugin for RoadPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<WorldTerrain>()
             .init_resource::<WorldChunks>()
+            .init_resource::<Assets<RoadMaterial>>()
             .add_systems(Startup, setup_kit)
             // Justo después del streaming, como la vía y la flora.
             .add_systems(
@@ -83,8 +88,10 @@ impl Plugin for RoadPlugin {
 fn setup_kit(
     mut commands: Commands,
     root: Option<Res<AssetRoot>>,
+    server: Option<Res<AssetServer>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut surfaces: ResMut<Assets<RoadMaterial>>,
     mut images: Option<ResMut<Assets<Image>>>,
 ) {
     let plain = |r: f32, g: f32, b: f32, roughness: f32| StandardMaterial {
@@ -93,9 +100,10 @@ fn setup_kit(
         ..default()
     };
     commands.insert_resource(RoadKit {
-        surface: materials.add(road_material(
+        surface: surfaces.add(road_material(
             root.as_deref().map(|r| r.0.as_path()),
             images.as_deref_mut(),
+            server.as_deref(),
         )),
         cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
         timber: materials.add(plain(0.40, 0.31, 0.22, 0.92)),
@@ -139,15 +147,12 @@ fn lay_roads(
         let area = coord.0.bounds(size);
         let mut pieces: Vec<RoadBundle> = Vec::new();
         let ground = |p: GroundVec2| mesh_height(terrain, p, size, detail.resolution);
-        if let Some(mesh) = surface_mesh(&roads.parts_in(area), &ground, roads) {
-            pieces.push((
+        let surface = surface_mesh(&roads.parts_in(area), &ground, roads).map(|mesh| {
+            (
                 Mesh3d(meshes.add(mesh)),
                 MeshMaterial3d(kit.surface.clone()),
-                Transform::default(),
-                Piece::Surface,
-                None,
-            ));
-        }
+            )
+        });
         for crossing in roads.crossings().filter(|c| owns(coord.0, size, c.at)) {
             let signs = crossing.sign_spots();
             let posted = signs_posted(crossing, roads.crossings());
@@ -190,18 +195,20 @@ fn lay_roads(
                 ));
             }
         }
-        if pieces.is_empty() {
+        if pieces.is_empty() && surface.is_none() {
             continue;
         }
         laid.queue_silenced(move |mut chunk: EntityWorldMut| {
             chunk.with_children(|road| {
+                if let Some((mesh, material)) = surface {
+                    road.spawn((mesh, material, Transform::default(), RoadSurface));
+                }
                 for (mesh, material, transform, piece, fade) in pieces {
                     let mut part = road.spawn((mesh, material, transform));
                     if let Some(fade) = fade {
                         part.insert(fade);
                     }
                     match piece {
-                        Piece::Surface => part.insert(RoadSurface),
                         Piece::Crossing => part.insert(CrossingPart),
                         Piece::Signpost => part.insert(SignpostPart),
                     };
@@ -229,7 +236,6 @@ type RoadBundle = (
 
 #[derive(Clone, Copy)]
 enum Piece {
-    Surface,
     Crossing,
     Signpost,
 }
@@ -248,12 +254,15 @@ const LIFT: f32 = 0.05;
 const FEATHER: f32 = 1.6;
 /// El tinte de tierra del camino (sRGB), sobre el detalle casi blanco de
 /// Ground 102.
-const DIRT: [f32; 3] = [0.70, 0.60, 0.46];
+pub(crate) const DIRT: [f32; 3] = [0.70, 0.60, 0.46];
 
 /// Una malla de superficie para todas las partes `part` de camino de un chunk:
 /// una tira a lo largo de cada parte, opaca a lo ancho del camino y difuminada
-/// hasta transparente más allá de sus bordes, tendida sobre `ground`. `None`
-/// cuando no hay ninguna parte.
+/// hasta transparente más allá de sus bordes (el alfa de vértice, dentro del
+/// cual el shader hace serpentear el borde), tendida sobre `ground`. Su
+/// segundo UV es la distancia con signo desde el eje (positiva a la izquierda)
+/// y la distancia a lo largo del camino, ambas en metros, para el shader del
+/// camino. `None` cuando no hay ninguna parte.
 ///
 /// En un paso a nivel la tira es el acceso de tierra apisonada: se apoya sobre
 /// el mismo perfil que suben los jinetes ([`RoadNetwork::crossing_rise`]),
@@ -275,8 +284,8 @@ pub(crate) fn surface_mesh(
         (half + FEATHER / 2.0, 0.0),
     ];
     let tint = LinearRgba::from(Color::srgb(DIRT[0], DIRT[1], DIRT[2]));
-    let (mut positions, mut colors, mut uvs, mut tangents) =
-        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut positions, mut colors, mut uvs, mut tangents, mut lanes) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     for part in parts.iter().filter(|p| p.len() > 1) {
         let row = |p: &RoadPoint| {
             across.map(|(offset, alpha)| {
@@ -288,6 +297,7 @@ pub(crate) fn surface_mesh(
                 (
                     world_from_ground(g, ground(g) + lift),
                     [tint.red, tint.green, tint.blue, alpha],
+                    [offset, p.along],
                 )
             })
         };
@@ -297,10 +307,11 @@ pub(crate) fn surface_mesh(
                 let (r0, r1, l1, l0) = (w[0][k], w[1][k], w[1][k + 1], w[0][k + 1]);
                 // En sentido antihorario visto desde arriba.
                 for tri in [[r0, r1, l1], [r0, l1, l0]] {
-                    let points = tri.map(|(v, _)| v);
+                    let points = tri.map(|(v, _, _)| v);
                     let uv = points.map(ground_uv);
                     positions.extend(points.map(|v| v.to_array()));
-                    colors.extend(tri.map(|(_, c)| c));
+                    colors.extend(tri.map(|(_, c, _)| c));
+                    lanes.extend(tri.map(|(_, _, l)| l));
                     tangents.extend([face_tangent(points, uv); 3]);
                     uvs.extend(uv);
                 }
@@ -317,6 +328,7 @@ pub(crate) fn surface_mesh(
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
     .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
     .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_1, lanes)
     .with_inserted_attribute(Mesh::ATTRIBUTE_TANGENT, tangents);
     mesh.compute_normals();
     Some(mesh)
@@ -730,9 +742,27 @@ mod tests {
         else {
             panic!("colours")
         };
-        for (p, c) in points.iter().zip(colors) {
+        let Some(bevy::mesh::VertexAttributeValues::Float32x2(lanes)) =
+            mesh.attribute(Mesh::ATTRIBUTE_UV_1)
+        else {
+            panic!("lanes")
+        };
+        assert_eq!(lanes.len(), points.len());
+        for ((p, c), lane) in points.iter().zip(colors).zip(lanes) {
             let g = GroundVec2::new(p[0], -p[2]);
             assert!((p[1] - ground(g) - LIFT).abs() < 1e-4);
+            // El shader sabe a qué distancia del eje está cada vértice, y por
+            // qué lado: a la izquierda (la normal del camino) es positiva.
+            assert!((lane[0].abs() - roads.distance(g)).abs() < 0.05, "{lane:?}");
+            let side = roads
+                .parts_in(area)
+                .iter()
+                .flatten()
+                .map(|q| (q.at.distance(g), q))
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .map(|(_, q)| (g - q.at).dot(q.normal))
+                .unwrap();
+            assert!(side * lane[0] >= -1e-3, "{lane:?} on the {side} side");
             let d = roads.distance(g);
             // Opaca sobre el camino, transparente más allá de su borde.
             if c[3] == 1.0 {

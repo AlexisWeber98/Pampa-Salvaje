@@ -50,7 +50,7 @@ use pampa_core::{FloraSite, Shrub, ShrubKind, Species, Tree, Tuft, TuftKind, Vec
 use crate::AssetRoot;
 use crate::character::finish::Finish;
 use crate::coords::world_from_ground;
-use crate::grass::{CARD_VARIANTS, GRASS_TINTS, GrassCards, load_maps};
+use crate::grass::{CARD_VARIANTS, GRASS_TINTS, GrassCards, GrassMaterial, load_maps};
 use crate::obj::{self, MaterialColors, ObjGroup, ObjModel};
 use crate::smooth::smooth_normals;
 use crate::terrain::{ChunkStreaming, TerrainChunk, WorldTerrain};
@@ -95,6 +95,7 @@ impl Plugin for FloraPlugin {
     fn build(&self, app: &mut App) {
         tree::ensure_plugin(app);
         app.init_resource::<WorldTerrain>()
+            .init_resource::<Assets<GrassMaterial>>()
             .add_systems(Startup, (load_vegetation.in_set(VegetationLoad), setup_kit))
             // Justo después del streaming, como la vía: los chunks nuevos
             // reciben su flora en el frame en que aparecen, antes de que se
@@ -986,6 +987,7 @@ fn setup_kit(
     support: Option<Res<CompressedImageFormatSupport>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut grass: ResMut<Assets<GrassMaterial>>,
 ) {
     commands.insert_resource(FloraKit {
         calden_trunk: meshes.add(calden_trunk()),
@@ -997,7 +999,7 @@ fn setup_kit(
         cards: GrassCards::new(
             load_maps(root.as_deref(), server.as_deref(), support.as_deref()),
             &mut meshes,
-            &mut materials,
+            &mut grass,
         ),
     });
 }
@@ -1022,14 +1024,28 @@ enum Plant {
     Accent,
 }
 
+/// El material de una parte: el estándar, o el de pasto mecido por el viento
+/// (las tarjetas de las matas).
+#[derive(Clone, Debug, PartialEq)]
+enum Paint {
+    Standard(Handle<StandardMaterial>),
+    Grass(Handle<GrassMaterial>),
+}
+
+impl From<Handle<StandardMaterial>> for Paint {
+    fn from(material: Handle<StandardMaterial>) -> Self {
+        Self::Standard(material)
+    }
+}
+
+impl From<Handle<GrassMaterial>> for Paint {
+    fn from(material: Handle<GrassMaterial>) -> Self {
+        Self::Grass(material)
+    }
+}
+
 /// Una entidad a crear bajo un chunk.
-type Part = (
-    Mesh3d,
-    MeshMaterial3d<StandardMaterial>,
-    Transform,
-    VisibilityRange,
-    Plant,
-);
+type Part = (Mesh3d, Paint, Transform, VisibilityRange, Plant);
 
 /// Lo que necesita el dibujo de la flora de un chunk.
 struct Painter<'a> {
@@ -1212,18 +1228,12 @@ impl Painter<'_> {
 
 fn part(
     mesh: Handle<Mesh>,
-    material: Handle<StandardMaterial>,
+    material: impl Into<Paint>,
     transform: Transform,
     range: VisibilityRange,
     plant: Plant,
 ) -> Part {
-    (
-        Mesh3d(mesh),
-        MeshMaterial3d(material),
-        transform,
-        range,
-        plant,
-    )
+    (Mesh3d(mesh), material.into(), transform, range, plant)
 }
 
 /// Hace crecer la flora de cada chunk construido desde la última ejecución. Un
@@ -1269,7 +1279,11 @@ fn grow_flora(
         grown_chunk.queue_silenced(move |mut chunk: EntityWorldMut| {
             chunk.with_children(|children| {
                 for (mesh, material, transform, range, plant) in parts {
-                    let mut part = children.spawn((mesh, material, transform, range));
+                    let mut part = children.spawn((mesh, transform, range));
+                    match material {
+                        Paint::Standard(m) => part.insert(MeshMaterial3d(m)),
+                        Paint::Grass(m) => part.insert(MeshMaterial3d(m)),
+                    };
                     match plant {
                         Plant::Tree(species) => part.insert(TreePart(species)),
                         Plant::Tuft(kind) => part.insert(GrassTuft(kind)),
@@ -1415,7 +1429,7 @@ fn icosphere() -> (Vec<Vec3>, Vec<usize>) {
 }
 
 /// Un `[0, 1)` determinista a partir de una semilla y un índice.
-fn jitter(seed: u32, i: u32) -> f32 {
+pub(crate) fn jitter(seed: u32, i: u32) -> f32 {
     let mut v = seed ^ i.wrapping_mul(0x9e37_79b9);
     v ^= v >> 16;
     v = v.wrapping_mul(0x7feb_352d);
@@ -2513,7 +2527,7 @@ mod tests {
         // Las matas se tiñen de verde grisáceo a amarillo seco.
         let mut q = with
             .world_mut()
-            .query_filtered::<&MeshMaterial3d<StandardMaterial>, With<GrassTuft>>();
+            .query_filtered::<&MeshMaterial3d<GrassMaterial>, With<GrassTuft>>();
         assert!(distinct(q.iter(with.world()).map(|m| m.id())) >= 3);
 
         // Sin carpeta de assets, o con un archivo faltante: los árboles del kit
@@ -2775,7 +2789,7 @@ mod tests {
         let mut app = app_with(grove_chunk(), Some(assets()), 1, 4);
         app.update();
         let meshes = app.world().resource::<Assets<Mesh>>();
-        let materials = app.world().resource::<Assets<StandardMaterial>>();
+        let materials = app.world().resource::<Assets<GrassMaterial>>();
         let mut grass = 0;
         for models in [true, false] {
             for (tuft, parts) in painted_tufts(&app, models) {
@@ -2786,7 +2800,10 @@ mod tests {
                 assert_eq!(parts.len(), 1, "{tuft:?}");
                 let (mesh, material) = (&parts[0].0, &parts[0].1);
                 assert_eq!(triangles(meshes.get(&mesh.0).unwrap()), 6, "{tuft:?}");
-                let material = materials.get(&material.0).unwrap();
+                let Paint::Grass(material) = material else {
+                    panic!("{tuft:?}: cards sway in the wind");
+                };
+                let material = &materials.get(material).unwrap().base;
                 assert!(matches!(material.alpha_mode, AlphaMode::Mask(_)));
                 assert!(matches!(parts[0].4, Plant::Tuft(kind) if kind == tuft.kind));
             }
