@@ -194,3 +194,12 @@ Order follows the weakest elements found in the map (L2). Each task is one work 
   - Opacity (0.25 + 0.35 dust)(0.6 + 0.4 s).
   - The tint goes back toward the earth (DUST_TINT 0.86, 0.78, 0.66).
   - Street shots: low, small tufts at the hooves that settle quickly. The 11 dust tests still pass, and the README is updated.
+- L22 (2026-11-04) The user committed T6a (8a6db8b). Native review (base dc15a96, readability and reliability) approved and acknowledged, with 7 advisories. The stop hook offered a selectorless START over 605c4b3..HEAD; I did not run it, because those commits were already reviewed one by one. User: "pulido" (polish). T8, inline in dust.rs:
+  - R3-002, spurious dust: `hoof_step(planted, height)` forgets the hoof state while a rig is frozen, not started or beyond EMIT_RADIUS, and re-seeds it without kicking. `Hooves` is now `Option<[bool; 4]>`. Test: a horse back in view does not kick with a hoof that landed unseen (sabotage: keep the stale state).
+  - R2 salt overlap: each particle has `DRAWS` = 10 draws, and `scatter` documents that it uses two. No draw sets two properties.
+  - R2 mud wetness: the splash count scales with Mud wetness (water counts as fully wet). The mud test asserts that wetter mud splashes more (sabotage: drop the factor).
+  - R2 tint: the 1.6 factor is now `EARTH_TINT_DUST` = 0.7 (same blend).
+  - R2 rolled_kick doc fixed.
+  - R3-003: `stir_dust` takes `Option<Res<WorldTerrain>>`; without terrain the kicks are dropped.
+  - R3-001: no App-level system tests, per the lean-tests rule. The one gate with a real bug is now pure and tested.
+  - Checks: 12 dust tests, clippy clean, workspace suite green except the two known flaky tests (rider half seat, tack back pieces), which pass alone. The street shot is unchanged.

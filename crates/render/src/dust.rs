@@ -89,8 +89,11 @@ const MUD_WET: f32 = 0.35;
 
 /// Bocanadas de polvo por pisada con toda la fuerza y todo el polvo.
 const DUST_PER_KICK: f32 = 1.5;
-/// Gotas por salpicadura, sin fuerza y con toda.
+/// Gotas por salpicadura en el barro más mojado o en el agua, sin fuerza y
+/// con toda; el barro menos mojado salpica en proporción a su humedad.
 const DROPS: [f32; 2] = [3.0, 9.0];
+/// Cuántas tiradas al azar tiene cada partícula de una pisada.
+const DRAWS: u32 = 10;
 
 /// Freno del aire sobre el empuje inicial de una bocanada de polvo, en 1/s.
 const DRAG: f32 = 2.5;
@@ -108,6 +111,10 @@ const FADE_IN: f32 = 0.08;
 const DUST_TINT: Vec3 = Vec3::new(0.86, 0.78, 0.66);
 /// El polvo del pasto: más gris y oscuro que el de la tierra.
 const GRASS_TINT: Vec3 = Vec3::new(0.74, 0.70, 0.61);
+/// El polvo del suelo (de 0 a 1) desde el que una bocanada tiene el color de
+/// la tierra; entre el pasto verde y esto, pasa del color del pasto al de la
+/// tierra.
+const EARTH_TINT_DUST: f32 = 0.7;
 /// El barro mojado de la orilla de una laguna.
 const MUD_TINT: Vec3 = Vec3::new(0.20, 0.16, 0.11);
 /// El agua turbia de una laguna pampeana.
@@ -323,7 +330,9 @@ pub fn plume(kick: &Kick, footing: Footing, salt: u32) -> Vec<Puff> {
     let size = kick.source.size();
     let s = kick.strength.clamp(0.0, 1.0);
     let r = |i: u32| jitter(salt, i);
-    // Un desvío horizontal al azar de hasta `reach` metros.
+    // Un desvío horizontal al azar de hasta `reach` metros; usa dos tiradas,
+    // `i` e `i + 1`. Cada partícula tiene [`DRAWS`] tiradas propias, desde
+    // `k`, y ninguna se usa para dos cosas.
     let scatter = |i: u32, reach: f32| {
         let (sin, cos) = (r(i) * std::f32::consts::TAU).sin_cos();
         Vec3::new(cos, 0.0, sin) * reach * r(i + 1).sqrt()
@@ -334,11 +343,12 @@ pub fn plume(kick: &Kick, footing: Footing, salt: u32) -> Vec<Puff> {
             if kick.source == Source::Foot && dust < FOOT_DUST {
                 return Vec::new();
             }
-            let tint = GRASS_TINT.lerp(DUST_TINT, ((dust - GRASS_DUST[0]) * 1.6).clamp(0.0, 1.0));
+            let earth = (dust - GRASS_DUST[0]) / (EARTH_TINT_DUST - GRASS_DUST[0]);
+            let tint = GRASS_TINT.lerp(DUST_TINT, earth.clamp(0.0, 1.0));
             let count = (dust * s * size * DUST_PER_KICK + r(0)).floor() as u32;
             (0..count)
                 .map(|n| {
-                    let k = 10 + n * 8;
+                    let k = DRAWS * (n + 1);
                     let start = (0.12 + 0.08 * r(k)) * size;
                     let back = -kick.travel * (0.3 + 0.9 * s) * (0.5 + r(k + 1));
                     let up = Vec3::Y * (0.1 + 0.35 * s) * (0.5 + r(k + 2));
@@ -348,9 +358,9 @@ pub fn plume(kick: &Kick, footing: Footing, salt: u32) -> Vec<Puff> {
                         velocity: back + up + scatter(k + 5, 0.3 * s),
                         age: 0.0,
                         life: (0.8 + 1.0 * s) * (0.7 + 0.6 * r(k + 7)),
-                        size: [start, (0.35 + 0.6 * s) * size * (0.7 + 0.6 * r(k + 4))],
+                        size: [start, (0.35 + 0.6 * s) * size * (0.7 + 0.6 * r(k + 8))],
                         opacity: (0.25 + 0.35 * dust) * (0.6 + 0.4 * s),
-                        tint: tint * (0.92 + 0.16 * r(k + 6)),
+                        tint: tint * (0.92 + 0.16 * r(k + 9)),
                     }
                 })
                 .collect()
@@ -359,21 +369,26 @@ pub fn plume(kick: &Kick, footing: Footing, salt: u32) -> Vec<Puff> {
         Footing::Mud(_) | Footing::Water => {
             let water = footing == Footing::Water;
             let tint = if water { WATER_TINT } else { MUD_TINT };
-            let count = (DROPS[0] + (DROPS[1] - DROPS[0]) * s * size + r(0)).floor() as u32;
+            // El barro más mojado salpica más; el agua, como el barro más mojado.
+            let wet = match footing {
+                Footing::Mud(wet) => wet.clamp(0.0, 1.0),
+                _ => 1.0,
+            };
+            let count = ((DROPS[0] + (DROPS[1] - DROPS[0]) * s * size) * wet + r(0)).floor() as u32;
             let mut puffs: Vec<Puff> = (0..count)
                 .map(|n| {
-                    let k = 10 + n * 8;
+                    let k = DRAWS * (n + 1);
                     let out = scatter(k, 1.0).normalize_or_zero() * (0.4 + 1.4 * s) * r(k + 2)
                         - kick.travel * 0.6 * s;
                     Puff {
                         motion: Motion::Drop,
                         from: kick.at + scatter(k + 3, 0.12 * size) + Vec3::Y * 0.04,
-                        velocity: out + Vec3::Y * (1.0 + 2.2 * s) * (0.5 + r(k + 4)),
+                        velocity: out + Vec3::Y * (1.0 + 2.2 * s) * (0.5 + r(k + 5)),
                         age: 0.0,
-                        life: 0.35 + 0.35 * r(k + 5),
-                        size: [(0.04 + 0.05 * r(k + 6)) * size; 2],
+                        life: 0.35 + 0.35 * r(k + 6),
+                        size: [(0.04 + 0.05 * r(k + 7)) * size; 2],
                         opacity: if water { 0.55 } else { 0.95 },
-                        tint: tint * (0.85 + 0.3 * r(k + 7)),
+                        tint: tint * (0.85 + 0.3 * r(k + 8)),
                     }
                 })
                 .collect();
@@ -415,6 +430,26 @@ pub fn touchdowns(planted: &mut [bool; 4], height: [f32; 4]) -> [bool; 4] {
     touched
 }
 
+/// Las pisadas de un caballo en este frame: `height` como en [`touchdowns`],
+/// o `None` mientras no patea (congelado, sin empezar o lejos de la cámara).
+/// Mientras no patea se olvida `planted`, y la primera vez que vuelve a
+/// patear lo siembra sin pisar: un vaso que bajó a la vista no es una pisada.
+pub fn hoof_step(planted: &mut Option<[bool; 4]>, height: Option<[f32; 4]>) -> [bool; 4] {
+    match (height, planted.as_mut()) {
+        (None, _) => {
+            *planted = None;
+            [false; 4]
+        }
+        (Some(height), None) => {
+            let mut seeded = [false; 4];
+            touchdowns(&mut seeded, height);
+            *planted = Some(seeded);
+            [false; 4]
+        }
+        (Some(height), Some(planted)) => touchdowns(planted, height),
+    }
+}
+
 /// Si el andar de una persona pasó por una pisada entre la fase `was` y `now`
 /// (en ciclos, con vuelta en 1): pisa en la fase 0 y en la 0.5, hacia adelante
 /// o hacia atrás. Basta con ver si cambió de medio ciclo: un paso que da la
@@ -423,9 +458,10 @@ pub fn stepped(was: f32, now: f32) -> bool {
     (was * 2.0).floor() != (now * 2.0).floor()
 }
 
-/// Cuántos metros rodó una rueda desde su última bocanada, y si patea ahora:
-/// cada [`WHEEL_SPACING`] metros; un salto mayor que [`WHEEL_JUMP`] reinicia
-/// la cuenta sin patear. Devuelve lo rodado de la última bocanada y si patea.
+/// Si una rueda patea ahora, con `last` lo que llevaba rodado su vehículo en
+/// su última bocanada y `rolled` lo que lleva rodado ahora: patea cada
+/// [`WHEEL_SPACING`] metros; un salto mayor que [`WHEEL_JUMP`] reinicia la
+/// cuenta sin patear. Devuelve el nuevo `last` y si patea.
 pub fn rolled_kick(last: f32, rolled: f32) -> (f32, bool) {
     let d = (rolled - last).abs();
     if d > WHEEL_JUMP {
@@ -449,9 +485,10 @@ struct DustPuff {
 }
 
 /// Si los vasos de un caballo están apoyados, en el orden de
-/// [`LEGS`](crate::character::gait::LEGS); en la raíz de su modelo.
+/// [`LEGS`](crate::character::gait::LEGS), o `None` mientras no patea (ver
+/// [`hoof_step`]); en la raíz de su modelo.
 #[derive(Component, Debug, Clone, Copy)]
-struct Hooves([bool; 4]);
+struct Hooves(Option<[bool; 4]>);
 
 /// La fase del andar de una persona en el frame anterior; en su cuerpo.
 #[derive(Component, Debug, Clone, Copy)]
@@ -580,7 +617,7 @@ fn dust_image(salt: f32) -> Image {
 #[allow(clippy::too_many_arguments)]
 fn stir_dust(
     time: Res<Time>,
-    terrain: Res<WorldTerrain>,
+    terrain: Option<Res<WorldTerrain>>,
     towns: Option<Res<WorldTowns>>,
     mut kicks: ResMut<Kicks>,
     pool: Res<DustPool>,
@@ -596,10 +633,12 @@ fn stir_dust(
         .collect();
     let towns: &[TownLayout] = towns.as_deref().map_or(&[], |t| &t.0);
     let pending = std::mem::take(&mut kicks.pending);
-    for kick in &pending {
+    // Sin terreno todavía no hay suelo que pisar: las pisadas se pierden.
+    let ground = terrain.as_deref().map(|t| &t.0);
+    for (kick, terrain) in pending.iter().filter_map(|k| Some((k, ground?))) {
         kicks.count = kicks.count.wrapping_add(1);
         let g = GroundVec2::new(kick.at.x, -kick.at.z);
-        let born = plume(kick, footing(&terrain.0, towns, g), kicks.count);
+        let born = plume(kick, footing(terrain, towns, g), kicks.count);
         for puff in born {
             let slot = recycle(&spent);
             spent[slot] = 0.0;
@@ -660,31 +699,29 @@ fn kick_hooves(
 ) {
     let eye = view_eye(cameras);
     for (entity, rig, bones, root, child_of, hooves) in &mut rigs {
-        if rig.frozen || !rig.started || !near_eye(eye, root.translation()) {
+        let Some(mut hooves) = hooves else {
+            commands.entity(entity).insert(Hooves(None));
             continue;
-        }
+        };
         let Ok((body, body_at)) = bodies.get(child_of.parent()) else {
             continue;
         };
-        let into_body = root.affine().inverse();
-        let Ok(ends) = globals
+        let kicking = !rig.frozen && rig.started && near_eye(eye, root.translation());
+        let ends = globals
             .get_many(std::array::from_fn::<_, 4, _>(|leg| {
                 bones.bones[Bone::End(leg).index()]
             }))
             .map(|e| e.map(GlobalTransform::translation))
-        else {
-            continue;
-        };
-        let height: [f32; 4] = std::array::from_fn(|leg| {
-            into_body.transform_point3(ends[leg]).y - bones.standing[leg]
+            .ok()
+            .filter(|_| kicking);
+        let into_body = root.affine().inverse();
+        let height = ends.map(|ends| {
+            std::array::from_fn(|leg| into_body.transform_point3(ends[leg]).y - bones.standing[leg])
         });
-        let Some(mut hooves) = hooves else {
-            let mut planted = [false; 4];
-            touchdowns(&mut planted, height);
-            commands.entity(entity).insert(Hooves(planted));
+        let touched = hoof_step(&mut hooves.0, height);
+        let Some(ends) = ends else {
             continue;
         };
-        let touched = touchdowns(&mut hooves.0, height);
         if body.flight.is_some() {
             continue;
         }
@@ -930,6 +967,18 @@ mod tests {
         let dust = plume(&kick(Source::Hoof, 1.0), Footing::Dust(1.0), 3);
         assert!(dust.iter().all(|p| p.motion == Motion::Cloud));
         assert!(plume(&kick(Source::Foot, 1.0), Footing::Mud(1.0), 3).is_empty());
+        // El barro más mojado salpica más.
+        let splash = |wet: f32| -> usize {
+            (0..64)
+                .map(|salt| plume(&kick(Source::Hoof, 1.0), Footing::Mud(wet), salt).len())
+                .sum()
+        };
+        assert!(
+            splash(1.0) > splash(MUD_WET) * 2,
+            "{} vs {}",
+            splash(1.0),
+            splash(MUD_WET)
+        );
     }
 
     #[test]
@@ -977,6 +1026,21 @@ mod tests {
         // Levantado del todo, vuelve a pisar.
         touchdowns(&mut planted, [0.2, 0.2, 0.3, 0.3]);
         assert_eq!(touchdowns(&mut planted, [0.0; 4]), [true, true, true, true]);
+    }
+
+    #[test]
+    fn a_horse_back_in_view_does_not_kick_with_a_hoof_that_landed_unseen() {
+        let (up, down) = ([0.3; 4], [0.0; 4]);
+        let mut planted = None;
+        // Recién visto, con los vasos abajo: se siembra sin pisar.
+        assert_eq!(hoof_step(&mut planted, Some(down)), [false; 4]);
+        hoof_step(&mut planted, Some(up));
+        // Se aleja con los vasos en el aire y vuelve con ellos abajo.
+        assert_eq!(hoof_step(&mut planted, None), [false; 4]);
+        assert_eq!(hoof_step(&mut planted, Some(down)), [false; 4]);
+        // Ya a la vista, la próxima pisada cuenta.
+        hoof_step(&mut planted, Some(up));
+        assert_eq!(hoof_step(&mut planted, Some(down)), [true; 4]);
     }
 
     #[test]
