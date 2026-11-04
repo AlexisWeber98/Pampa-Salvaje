@@ -1,8 +1,9 @@
 # Modelos propios de fauna
 
 Modelos hechos para el juego, sin modelos de terceros. Los mapas del cuerpo
-de los felinos llevan, en la cara, una fotografía proyectada que sí necesita
-crédito (ver abajo y el `CREDITS.md` de la raíz). Se generan con los scripts de Blender de `tools/` (ver `tools/README.md`).
+de los felinos y de las rapaces llevan, en la cara, una fotografía proyectada
+que sí necesita crédito, y el atlas de plumas del carancho, plumas escaneadas
+de dominio público (ver abajo y el `CREDITS.md` de la raíz). Se generan con los scripts de Blender de `tools/` (ver `tools/README.md`).
 
 | Archivo | Contenido | Script |
 |---|---|---|
@@ -21,6 +22,12 @@ crédito (ver abajo y el `CREDITS.md` de la raíz). Se generan con los scripts d
 | `gato.glb`, `puma.glb`, `yagua.glb` | gato montés (*Leopardus geoffroyi*), puma (*Puma concolor*) y yaguareté (*Panthera onca*): mesh con skinning (11.618, 11.326 y 11.414 triángulos) más su malla liviana (`GatoMontes_LOD`, `Puma_LOD`, `Yaguarete_LOD`, 1.000) para cuando están lejos, rig de 49 huesos, materiales `Main`, `Hair`, `Eye_Black` y `Eye_Iris`, siete clips | `tools/felid.py --species gato\|puma\|yagua`, después `tools/glbtrim.py` |
 | `gato_body/`, `puma_body/`, `yagua_body/` | mapas de la piel horneados de la escultura, con el pelaje ya pintado y la cara de una fotografía (color, normal map, rugosidad, oclusión): fuentes JPG y KTX2 | `tools/felid.py --textures --faces`, después `tools/textures_to_ktx2.sh` |
 | `gato_hair/`, `puma_hair/`, `yagua_hair/` | atlas de mechones de pelo con sus propios colores y su opacidad: fuentes JPG y KTX2 | `tools/felid.py --textures`, después `tools/textures_to_ktx2.sh` |
+| `chimango.glb`, `carancho.glb` | chimango (*Milvago chimango*) y carancho (*Caracara plancus*): mesh con skinning (12.540 y 17.852 triángulos) más su malla liviana (`Chimango_LOD`, `Carancho_LOD`, 946 cada una: la piel diezmada y las plumas de vuelo y de la cola en tarjetas rectas) para cuando están lejos, rig de 23 huesos, materiales `Main`, `Feathers`, `Eye_Black` y `Eye_Iris`, cuatro clips (`Glide`, `Flap`, `Bank_L`, `Bank_R`) | `tools/raptor.py --species chimango\|carancho`, después `tools/glbtrim.py` |
+| `chimango_body/`, `carancho_body/` | mapas del cuerpo horneados de la escultura, con el plumaje ya pintado y la cara de una fotografía (color, normal map, rugosidad, oclusión), reducidos de 2048² a 1024²: fuentes JPG y KTX2 | `tools/raptor.py --textures --scans --faces`, después `tools/textures_to_ktx2.sh` |
+| `chimango_feathers/`, `carancho_feathers/` | atlas de plumas (remeras, cola, cobijas, escapulares y el copete del carancho) con su opacidad, el del carancho de plumas escaneadas, reducidos de 2048² a 1024²: fuentes JPG y KTX2 | ídem |
+| `torcaza.glb`, `picazuro.glb` | torcaza (*Zenaida auriculata*) y picazuró (*Patagioenas picazuro*): mesh con skinning (12.040 y 12.440 triángulos) más su malla liviana (unos 945 triángulos), con el rig de 23 huesos de las rapaces y los clips `Flap`, `Glide` y `FlapGlide`; vuelan en las bandadas del cielo (`crates/render/src/sky/birds.rs`) | `tools/pigeon.py` |
+| `torcaza_body/`, `picazuro_body/` | mapas del cuerpo con el plumaje pintado y la cara de una fotografía, reducidos de 2048² a 1024²: fuentes JPG y KTX2 | `tools/pigeon.py --textures` |
+| `torcaza_feathers/`, `picazuro_feathers/` | atlas de plumas con su opacidad, de plumas escaneadas, reducidos de 2048² a 1024²: fuentes JPG y KTX2 | ídem |
 
 ## Créditos de las fotografías de las caras
 
@@ -31,3 +38,7 @@ Cada foto se proyectó sobre la cabeza en el mapa de color del cuerpo (`tools/fe
 | `puma_body/` | [Cougar (17575969543)](https://commons.wikimedia.org/wiki/File:Cougar_(17575969543).jpg), Wikimedia Commons | Pete G | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/) |
 | `yagua_body/` | [Jaguar, Tennōji Zoo (33686534416)](https://commons.wikimedia.org/wiki/File:Jaguar,_Tenn%C5%8Dji_Zoo_(33686534416).jpg), Wikimedia Commons | Jin Kemoole | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/) |
 | `gato_body/` | [Leopardus geoffroyi, foto 235096757](https://www.inaturalist.org/photos/235096757), iNaturalist | Ben Costamagna | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+
+Las fotos de las caras de las rapaces y las plumas escaneadas (`tools/raptor.py --faces --scans`) están acreditadas en la sección "Raptor feather scans and face photographs" del `CREDITS.md` de la raíz: `chimango_body/` (iNaturalist, Hugo Hulsberg, CC0), `carancho_body/` (Wikimedia Commons, Riverbanks Outdoor Store / B A Bowen Photography, CC BY 2.0) y `carancho_feathers/` y `chimango_feathers/` (The Feather Atlas, U.S. Fish and Wildlife Service, dominio público).
+
+Las fotos de las caras de las palomas y las plumas escaneadas (`tools/pigeon.py --faces --scans`) están acreditadas en la sección "Pigeon" del `CREDITS.md` de la raíz: `torcaza_body/` (Wikimedia Commons, Enrique González, CC BY 4.0), `picazuro_body/` (Wikimedia Commons, dfaulder, CC BY 2.0) y `torcaza_feathers/` y `picazuro_feathers/` (The Feather Atlas, U.S. Fish and Wildlife Service, dominio público: Mourning Dove y Band-tailed Pigeon).

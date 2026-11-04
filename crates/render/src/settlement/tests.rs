@@ -1136,7 +1136,7 @@ fn every_set_ships_its_three_ktx2_maps_as_bc7_with_baked_mips() {
         .into_iter()
         .flat_map(|set| materials::MAPS.map(|(name, srgb)| (materials::map_path(set, name), srgb)))
         .collect();
-    assert_eq!(paths.len(), 20 * 3);
+    assert_eq!(paths.len(), 29 * 3);
     let (app, handles) = load_shipped(&paths);
     let images = app.world().resource::<Assets<Image>>();
     for (handle, (path, srgb)) in handles.iter().zip(&paths) {
@@ -1282,4 +1282,94 @@ fn a_yard_plant_that_would_land_on_a_track_a_structure_the_patio_or_outside_is_l
         GroundVec2::new(10.0, 10.0),
     );
     assert!(left_out(&outside), "a plant outside the settlement");
+}
+
+#[test]
+fn about_six_in_ten_country_houses_rise_damp_and_no_galpon() {
+    // Variantes como las de core: enteros con semilla, bien mezclados.
+    let structure = |kind: StructureKind, k: u32| Structure {
+        kind,
+        footprint: Aabb::from_center_size(GroundVec2::ZERO, GroundVec2::new(8.0, 5.0)),
+        height: 2.6,
+        front: pampa_core::Side::South,
+        variant: k.wrapping_mul(0x9e37_79b9).rotate_left(13) ^ k,
+    };
+    let share = |kind: StructureKind| {
+        let damp = (0..1000)
+            .filter(|&k| buildings::damp(&structure(kind, k)) > 0.0)
+            .count();
+        damp as f32 / 1000.0
+    };
+    use StructureKind::{MainHouse, WorkerHouse};
+    let rancho = share(MainHouse(HouseStyle::AdobeThatch));
+    let casco = share(MainHouse(HouseStyle::GalleryHouse));
+    assert!(casco < rancho, "{casco} vs {rancho}");
+    assert_eq!(share(StructureKind::Barn), 0.0);
+    // Los ranchos y puestos son la mayoría de las casas del campo.
+    let mix = [
+        (MainHouse(HouseStyle::AdobeThatch), 4.0),
+        (MainHouse(HouseStyle::AdobeIron), 3.0),
+        (MainHouse(HouseStyle::BrickParapet), 1.0),
+        (MainHouse(HouseStyle::GalleryHouse), 0.5),
+        (WorkerHouse(HouseStyle::AdobeIron), 1.0),
+        (WorkerHouse(HouseStyle::BrickParapet), 1.0),
+    ];
+    let total: f32 = mix.iter().map(|(_, w)| w).sum();
+    let overall = mix.iter().map(|&(kind, w)| share(kind) * w).sum::<f32>() / total;
+    println!("rancho {rancho}, casco {casco}, overall {overall}");
+    // El usuario: "la humedad en el 60 % de las construcciones".
+    assert!((0.5..=0.7).contains(&overall), "{overall}");
+}
+
+#[test]
+fn each_humble_house_wears_its_own_walls_roof_and_frame() {
+    use StructureKind::MainHouse;
+    let house = |style: HouseStyle| {
+        let structure = Structure {
+            kind: MainHouse(style),
+            footprint: Aabb::from_center_size(GroundVec2::ZERO, GroundVec2::new(8.0, 5.0)),
+            height: 2.6,
+            front: pampa_core::Side::South,
+            variant: 0,
+        };
+        buildings::building(&structure, 0.3)
+    };
+    let has = |shape: &Shape, s: Surface| shape.surfaces().any(|x| x == s);
+    for (style, wall, roof) in [
+        (HouseStyle::Planks, Surface::Weatherboard, Surface::OldIron),
+        (HouseStyle::Casilla, Surface::OldIron, Surface::OldIron),
+        (HouseStyle::MudStraw, Surface::MudStraw, Surface::Thatch),
+    ] {
+        let shape = house(style);
+        assert!(has(&shape, wall) && has(&shape, roof), "{style:?}");
+        // El armazón o los horcones de madera rústica, y postigos y puerta
+        // de madera gris que nunca se pintó.
+        for part in [Surface::Sleeper, Surface::Barnwood] {
+            assert!(has(&shape, part), "{style:?} without {part:?}");
+        }
+        assert!(
+            !has(&shape, Surface::Door) && !has(&shape, Surface::Planks),
+            "{style:?}"
+        );
+    }
+    // El rancho de madera tiene vidrios; el de barro y paja, un vano sin
+    // vidrio.
+    assert!(has(&house(HouseStyle::Planks), Surface::Glass));
+    let mud = house(HouseStyle::MudStraw);
+    assert!(!has(&mud, Surface::Glass));
+    // Su paja termina en un canto que cuelga debajo del alero, y una cumbrera
+    // de barro la sella por encima de la paja.
+    let thatch = mud.points(Surface::Thatch);
+    let top = thatch.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+    let ridge = mud
+        .points(Surface::MudStraw)
+        .iter()
+        .map(|p| p.y)
+        .fold(f32::MIN, f32::max);
+    assert!(ridge > top, "{ridge} over {top}");
+    // La casilla es chica: no ocupa toda su huella.
+    let casilla = house(HouseStyle::Casilla).points(Surface::OldIron);
+    let width = casilla.iter().map(|p| p.x).fold(f32::MIN, f32::max)
+        - casilla.iter().map(|p| p.x).fold(f32::MAX, f32::min);
+    assert!(width <= 4.0 + 2.0 * 0.25 + 0.01, "{width}");
 }

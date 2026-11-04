@@ -46,6 +46,17 @@ Cada carpeta de atlas recibe `color.jpg`, `opacity.jpg`, `normal_gl.jpg` y `roug
 
 `python3 -I tools/leaf_atlas.py --mips RGBA.png OUT.dds` (que ejecuta `textures_to_ktx2.sh`) escribe la cadena de mips de una imagen RGBA como un DDS RGBA con mipmaps, que basisu codifica nivel por nivel. Los mips comunes promedian el alfa de una hoja delgada con el fondo transparente que la rodea, por debajo del umbral de alpha test de 0.5 del juego, así que las copas lejanas se ralean. En cambio, el alfa de cada nivel se reasigna para que dibuje la misma proporción de texels que dibuja el atlas a tamaño completo (siguiendo los mips que conservan la cobertura de Castaño), manteniéndose a 8 pasos del umbral por la compresión en bloques. Un test desempaqueta los atlas incluidos a BC7 y comprueba cada nivel de 8 x 8 texels o más. Tests: `python3 -I -B -m unittest discover -s tools -p test_leaf_atlas.py`.
 
+## `building_straw.py`: la paja del barro de los ranchos
+
+Las paredes de un rancho de barro y paja de 1919 (chorizo o quincha) son barro amasado con paja picada, así que se ven tallos dorados cortos por toda la superficie seca y cuarteada, echados casi siempre a lo largo de las capas. Ningún escaneo libre muestra eso, así que el script dibuja la paja sobre un escaneo de barro seco y cuarteado (`clay_block_wall` de Poly Haven, CC0, guardado como `scan_color.jpg`): tallos con semilla de 4 a 14 cm sobre el tile de 2 m del escaneo, a menos de 35 grados de la horizontal, cada uno un tallo dorado opacado por el barro sobre una línea de sombra tenue, medio hundido (en parte transparente y en uno a tres pedazos a lo largo de su línea). Los tallos que cruzan un borde se dibujan otra vez desde el borde opuesto, así que el color sigue repitiéndose sin costura.
+
+```sh
+python3 -I tools/building_straw.py assets/textures/buildings/mud_straw [--seed N] [--count N]
+FORCE=1 sh tools/textures_to_ktx2.sh assets/textures/buildings/mud_straw/
+```
+
+Escribe `color.jpg` en la carpeta del conjunto, al lado de `normal_gl.jpg`, `roughness.jpg` y `ao.jpg` del escaneo, que quedan como están. La salida es reproducible con la misma semilla y la misma versión de ImageMagick. Necesita ImageMagick 7 (`magick`); solo la biblioteca estándar. Tests: `python3 -I -B -m unittest discover -s tools -p test_building_straw.py`.
+
 ## `dae2gltf.py`: de COLLADA a glTF
 
 Convierte un modelo COLLADA (`.dae`) en una ranura de modelo glTF 2.0 (ver `assets/models/third-party/README.md`). Usa solo la biblioteca estándar de Python 3. Hay que ejecutarlo aislado, para que no se importe nada que esté junto a la entrada o en la carpeta actual:
@@ -430,6 +441,64 @@ Las fotos proyectadas (Wikimedia Commons o iNaturalist, solo CC0, dominio públi
 **Velocidades.** El juego hace huir a los felinos a sus velocidades de pique en km/h (`CritterKind::profile`: el gato montés a 45, el puma a 72 y el yaguareté a 65). Ese pique dura poco (`Profile::sprint`: 100, 300 y 150 m); después aflojan a un galope de crucero (`Profile::cruise`: 25, 40 y 36 km/h), que el juego reproduce a entre 0.87 y 1.30 veces lo que se creó, por encima del piso de 0.6. Para que el galope no se vea solo reproducido tres o cuatro veces más rápido, el clip es un pique de zancada larga (`SPECIES`, `gallop`: segundos del ciclo, velocidad y parte apoyada) y el juego lo acelera poco: a la velocidad de huida, el puma a 1.76 veces lo que se creó, el yaguareté a 1.67 (a lo sumo el doble, como el caballo) y el gato montés, que da más trancos por segundo por ser chico, a 2.33 veces (su tope, `GATO_GALLOP_RATE`, 2.4). Las velocidades se miden sobre el GLB exportado como las del caballo (el deslizamiento medio hacia atrás de las puntas de las manos y las patas apoyadas, a menos de 1.5 cm de su punto más bajo, con ese umbral escalado al tamaño de la especie).
 
 Costo: gato montés 11.618 triángulos, puma 11.326 y yaguareté 11.414 (el cuerpo, las tarjetas de pelo con alpha test y los ojos), 49 huesos; más una malla liviana de 1.000 triángulos cada uno (`light_mesh`, `GatoMontes_LOD`, `Puma_LOD`, `Yaguarete_LOD`: la piel sola diezmada, con sus UV y los pesos de la completa) que el juego dibuja desde los 40 m, como la de los vacunos. Video: por especie un conjunto de mapas de 1024² para el cuerpo y uno de pelo. Las medidas de cada versión están en el registro de la tarea (`odd/tasks/pampa-fauna.md`). Tests sin Blender (`test_felid.py`): el tamaño de cada especie, las proporciones de la cabeza (el ancho del ojo contra el del cráneo y el alto de la oreja contra el de la cabeza, `head_ratios`, contra las medidas sobre las fotos de frente, `HEAD_RATIOS`), el yaguareté más macizo que el puma, el largo de sus patas contra las fotos de costado (`leg_ratio`, `LEG_RATIO_TARGET`), `warp` y `unwarp`, el perfil del pecho, del lomo y de la panza, los pelajes (el puma liso, las manchas densas del gato montés y las rosetas del yaguareté, los anillos y las líneas de las mejillas, las panzas claras, el puma sin línea oscura detrás del ojo, las manchas del cuello del yaguareté que se achican de a poco hacia la cara), las fotos de las caras (sus licencias y créditos, cada punto de referencia en su píxel, la cara cubierta, el borde de la mezcla sin saltos, nada de foto en la mejilla de canto), la parte del mapa que toma la cabeza, los pelos de las tarjetas, las velocidades de las marchas, las claves del salto de un alambrado (un segundo en el aire, el despegue casi chato, en lo alto las patas traseras estiradas atrás, al caer la nariz abajo y las manos en el suelo antes que las patas, sin agazaparse) y el esqueleto.
+
+## `raptor.py`: el chimango y el carancho modelados en Blender
+
+`raptor.py` modela, arma, pinta y anima las dos rapaces de la pampa por script en Blender: el chimango (*Milvago chimango*) y el carancho (*Caracara plancus*), con una sola anatomía y un solo rig de halcón (`SPECIES`, `RAPTOR_BONES`) y los clips `Glide`, `Bank_L`, `Bank_R` y `Flap`. El docstring del script describe la malla, los materiales y los clips; las medidas y las revisiones de cada versión están en `odd/tasks/pampa-fauna.md` (T4j). Son las rapaces del juego (`Species::Chimango`, `Species::Carancho`), en `assets/models/fauna/own/` (`chimango.glb`, `carancho.glb`); reemplazan al águila de Quaternius, que ya no se dibuja (`eagle.glb` sigue en el repositorio). Una corrida por especie (unos 5 minutos en la CPU cada una; `PLUMAS` y `FOTOS` son las carpetas con los archivos de `SCANS` y `FACE_PHOTOS`); los mapas se hornean a 2048² y el juego los lleva a 1024², como los de los demás animales (las rapaces vuelan a 30 m o más de la cámara, donde 2048² no agrega nada visible):
+
+```sh
+blender -b --factory-startup --python tools/raptor.py -- chimango_raw.glb \
+  --species chimango --scans PLUMAS --faces FOTOS --textures TEX [--preview /tmp/chimango]
+O=assets/models/fauna/own
+for set in chimango_body chimango_feathers; do
+  mkdir -p $O/$set
+  for f in TEX/$set/*.jpg; do magick $f -filter Lanczos -resize 1024x1024 -quality 92 $O/$set/$(basename $f); done
+done
+FORCE=1 sh tools/textures_to_ktx2.sh $O/chimango_body $O/chimango_feathers
+python3 -I tools/glbtrim.py chimango_raw.glb $O/chimango.glb \
+  --keep Glide Flap Bank_L Bank_R --smooth-angle 0
+```
+
+En el juego sus materiales `Main` y `Feathers` se dibujan con sus mapas tal como están; las tarjetas de plumas, de dos capas (el dorso y el revés de cada pluma), solo de frente y con algo de la luz del sol que las atraviesa (`FEATHER_TRANSMISSION`: sin eso, la cara de abajo, que mira al suelo, solo recibe luz ambiente y desde el suelo el plumaje se ve como una silueta parda pareja). El planeo es `Glide`; dando vueltas, como siempre vuelan, `Bank_L` o `Bank_R` según hacia dónde giran (`AnimalPose::bank`); cada tanto, un par de segundos de `Flap`. Su escala sale de la envergadura medida sobre la mesh exportada (`CHIMANGO_SPAN` 0,895 m, `CARANCHO_SPAN` 1,253 m). Costo: chimango 12.540 triángulos y carancho 17.852 (el cuerpo, las tarjetas de plumas y los ojos), 23 huesos; más una malla liviana de 946 triángulos (`light_mesh`, `Chimango_LOD`, `Carancho_LOD`: la piel diezmada a `LIGHT_BODY` y las remeras y la cola, `light_feathers`, en tarjetas rectas de raíz a punta) que el juego dibuja desde los 40 m, que en las rapaces es casi siempre.
+
+| Opción | Significado |
+|---|---|
+| `--scans DIR` | toma de `DIR` las láminas de plumas del Feather Atlas (`SCANS`: un carancho norteño, *Caracara cheriway*, dominio público). Las del carancho se recortan en sus plumas y reemplazan las celdas pintadas del atlas: remeras, cola, cobertoras y escapulares. El chimango no tiene escaneos libres: sus celdas siguen pintadas y toman solo el grano de luminancia de las secundarias de esas láminas (`use="grain"`, `GRAIN_PLAN`), con sus propios colores |
+| `--faces DIR` | proyecta sobre la cabeza la foto de costado de la especie (`FACE_PHOTOS`, archivos en `DIR`). El carancho toma la foto con sus colores. El chimango solo toma el detalle de luminancia (`match="detail"`) sobre los colores pintados, con el borde difuminado (`rim`) |
+| `--textures DIR` | escribe las fuentes JPG de `DIR/<especie>_body` y `DIR/<especie>_feathers` |
+| `--preview DIR`, `--shots REGEX`, `--draft`, `--no-clips` | como en `felid.py`; las vistas `light_*` muestran la malla liviana sola |
+
+Sin `--scans` ni `--faces`, el atlas y la cabeza salen pintados. Los píxeles reales que se usan están acreditados en `CREDITS.md`. Tests sin Blender: `test_raptor.py`.
+
+## `pigeon.py`: la torcaza y el picazuró modelados en Blender
+
+`pigeon.py` modela, arma, pinta y anima las dos palomas de la pampa por script en Blender: la torcaza (*Zenaida auriculata*), la de las grandes bandadas que cruzan el cielo, y el picazuró (*Patagioenas picazuro*). Reusa lo de `raptor.py` importándolo: la anatomía, el motor del plumaje, la proyección de la cara, las tarjetas de plumas, el pesado y las vistas previas. Cada paloma se registra ahí como una especie más (`install`), y las funciones de `raptor.py` que cambian para una paloma (las primarias, la punta del pico, los puntos de la cara, el ajuste de la foto, las patas, las cobertoras primarias) atienden a `pigeon.py` solo mientras hay una paloma configurada, así que las rapaces no cambian. Lo propio de las palomas: el cuerpo de pecho lleno, la cabeza chica y redonda, el pico fino con su opérculo (`sculpt`, `bill_sculpt`), el ala en punta (`PRIMARY_LENGTHS`), el plumaje de cada especie y el atlas cortado de los escaneos. Usa el mismo esqueleto (`RaptorArmature`) y los clips `Flap`, `Glide` y `FlapGlide` (tres aletazos, las alas se detienen a media bajada en un planeo y salen de él con una subida rápida, como las bandadas). En vuelo las patas van recogidas contra el vientre, metidas en las plumas (`leg_joints`); las manchas negras de las cobertoras internas de la torcaza van en celdas propias del atlas (`SPOTS`, `spot`), así se ven desde arriba, y las cobertoras del picazuró llevan su borde claro (`_fringed`). Son las palomas de las bandadas del cielo del juego (`crates/render/src/sky/birds/pigeons.rs`), en `assets/models/fauna/own/` (`torcaza.glb`, `picazuro.glb`): a tamaño real, la malla liviana (`Torcaza_LOD`, `Picazuro_LOD`, unos 945 triángulos) desde los 40 m, que en las bandadas es casi siempre, y `FlapGlide` en bucle, cada paloma desde su propio punto del clip. Una corrida por especie (unos 2 minutos en la CPU cada una); los mapas se hornean a 2048² y el juego los lleva a 1024², como los de las rapaces:
+
+```sh
+blender -b --factory-startup --python tools/pigeon.py -- torcaza_raw.glb \
+  --species torcaza --scans PLUMAS --faces FOTOS --textures TEX [--preview /tmp/torcaza]
+O=assets/models/fauna/own
+for set in torcaza_body torcaza_feathers; do
+  mkdir -p $O/$set
+  for f in TEX/$set/*.jpg; do magick $f -filter Lanczos -resize 1024x1024 -quality 92 $O/$set/$(basename $f); done
+done
+FORCE=1 sh tools/textures_to_ktx2.sh $O/torcaza_body $O/torcaza_feathers
+python3 -I tools/glbtrim.py torcaza_raw.glb $O/torcaza.glb \
+  --keep Flap Glide FlapGlide --smooth-angle 0
+```
+
+Las tarjetas de plumas y el cuerpo dejan pasar algo de la luz del sol (`FEATHER_TRANSMISSION`, como las rapaces), así que desde abajo se lee el pecho rosado de la torcaza y no una silueta parda. Los teros de la tercera bandada que cruza siguen en silueta. Costo en el juego: 32 palomas (una bandada de torcazas y una de picazuroes que cruzan de día; dos de torcazas y una de picazuroes entre las que van a dormir), cada una con su reproductor de animación de 23 huesos; con 39 palomas a la vista a 30-40 m (la medición, antes de devolver los teros), unos 0,5 ms más por cuadro que las siluetas (medido sin vsync, L7 de `odd/tasks/pigeons.md`). Video: dos conjuntos de mapas de 1024² por especie.
+
+| Opción | Significado |
+|---|---|
+| `--scans DIR` | toma de `DIR` las láminas del Feather Atlas (`SCANS`, dominio público): las de la paloma de luto (*Zenaida macroura*) para la torcaza y las de la paloma de cola barrada (*Patagioenas fasciata*) para el picazuró. Las láminas sobre fondo negro se recortan del negro y de la grilla y se pasan al azul del atlas (`on_blue`, `erase_grid`), así las corta el mismo código que en `raptor.py`. El plan de cada especie (`plan`) dice qué pluma escaneada va en cada celda, entera (`scan`) o solo su grano de luminancia bajo el color pintado (`grain`: la cola y las cobertoras del picazuró) |
+| `--faces DIR` | proyecta sobre la cabeza la foto de costado de la especie (`FACE_PHOTOS`, archivos en `DIR`), anclada en el ojo (`face_mapping`: el ojo de la foto sobre el del modelo, a la escala del iris, girada según los otros puntos), y toma el color del iris |
+| `--textures DIR` | escribe las fuentes JPG de `DIR/<especie>_body` y `DIR/<especie>_feathers` |
+| `--preview DIR`, `--shots REGEX`, `--draft`, `--no-clips` | como en `raptor.py` |
+
+**Aleteo.** La alometría de Pennycuick da 8,2 Hz para una paloma mensajera, pero con acelerómetros se midieron 5,5 Hz volando sola y 6,6 Hz volando de a dos (Taylor y otros, 2018, bioRxiv 10.1101/492090). `wingbeat` calibra la alometría con el valor de a dos (`WINGBEAT_REFERENCE`): las del cielo vuelan en bandada. Da 8,8 Hz para la torcaza y 7,0 Hz para el picazuró.
+
+Sin `--scans` ni `--faces`, el atlas y la cabeza salen pintados. Los píxeles reales que se usan están acreditados en `CREDITS.md`. Las medidas y las revisiones están en `odd/tasks/pigeons.md`. Tests sin Blender: `test_pigeon.py`.
 
 ## `tack.py`: los mapas del recado criollo
 

@@ -47,7 +47,10 @@ use bevy::image::{
     CompressedImageFormatSupport, ImageAddressMode, ImageFilterMode, ImageLoaderSettings,
     ImageSampler, ImageSamplerDescriptor,
 };
+use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
+use bevy::render::render_resource::AsBindGroup;
+use bevy::shader::ShaderRef;
 
 use crate::AssetRoot;
 
@@ -126,6 +129,51 @@ pub enum Surface {
     /// El acero y las tablas del material rodante, un escaneo bajo varias
     /// pinturas (ver [`Livery`]).
     Livery(Livery),
+    /// Revoque símil piedra con sus juntas rehundidas (`concrete_wall_004`,
+    /// Poly Haven), elevado a una piedra gris cálida: los frentes de los
+    /// bancos.
+    Ashlar,
+    /// Revoque fino de cal con juntas de paño (`plastered_wall_02`, Poly
+    /// Haven) en una [`Paint`]: la intendencia en ocre y la iglesia en blanco
+    /// cal.
+    Render(Paint),
+    /// Ladrillo bajo una lechada de cal gastada que deja ver las hiladas
+    /// (`painted_worn_brick`, Poly Haven): la comisaría.
+    LimeBrick,
+    /// Un encalado viejo, cuarteado, que salta a escamas
+    /// (`preconcrete_wall_001`, Poly Haven): las pulperías y los ranchos más
+    /// pobres de las afueras.
+    OldLime,
+    /// Ladrillo rojo de máquina con juntas grises (`red_brick_03`, Poly
+    /// Haven): la estación del FCO.
+    StationBrick,
+    /// Revoque de cemento del zócalo, manchado (`concrete_wall_008`, Poly
+    /// Haven).
+    Plinth,
+    /// Tablas pintadas de verde que se descascaran (`green_rough_planks`, Poly
+    /// Haven): las persianas y las puertas del pueblo.
+    Shutter,
+    /// La mugre que el tiempo junta en un edificio, sin textura: un decal
+    /// mezclado según el color y el alfa de sus vértices (los chorreados bajo
+    /// las salientes, la tierra contra el pie de las paredes; ver
+    /// [`super::grime`]).
+    Grime,
+    /// Vidrio de ventana: oscuro, liso y apenas reflejante, sin textura.
+    Glass,
+    /// Madera de puerta pintada de marrón y gastada (`rough_wood`, teñida, de
+    /// veta continua y sin juntas de tablas): las puertas de tableros y los
+    /// marcos de las ventanas del pueblo.
+    Door,
+    /// Tablas solapadas, viejas y sin pintar (`brown_planks_04`, Poly Haven):
+    /// las paredes del rancho de madera.
+    Weatherboard,
+    /// Barro seco y cuarteado amasado con paja (`mud_straw`: `clay_block_wall`
+    /// de Poly Haven con la paja de `tools/building_straw.py`): las paredes del
+    /// rancho de barro y paja.
+    MudStraw,
+    /// Madera rústica que nunca se pintó, gris de sol (`rough_wood`, teñida
+    /// clara): los postigos y las puertas de los ranchos y las casillas.
+    Barnwood,
 }
 
 /// Con qué está pintado el tren. Cada una es un escaneo bajo un tinte: la chapa
@@ -214,6 +262,13 @@ const BAND_SCAN: [f32; 3] = [0.227, 0.158, 0.092];
 const PAVING_SCAN: [f32; 3] = [0.115, 0.081, 0.058];
 const DIRT_PATH_SCAN: [f32; 3] = [0.126, 0.086, 0.049];
 const GRAVEL_SCAN: [f32; 3] = [0.193, 0.099, 0.051];
+const ASHLAR_SCAN: [f32; 3] = [0.181, 0.171, 0.126];
+const RENDER_SCAN: [f32; 3] = [0.494, 0.440, 0.368];
+const LIME_BRICK_SCAN: [f32; 3] = [0.409, 0.341, 0.189];
+const OLD_LIME_SCAN: [f32; 3] = [0.473, 0.340, 0.233];
+const STATION_BRICK_SCAN: [f32; 3] = [0.155, 0.0997, 0.0832];
+const PLINTH_SCAN: [f32; 3] = [0.266, 0.237, 0.162];
+const WEATHERBOARD_SCAN: [f32; 3] = [0.221, 0.170, 0.141];
 
 /// Lo máximo que un material [`Look::Lifted`] puede multiplicar su escaneo, en
 /// cualquier canal. Las elevaciones incluidas quedan por debajo y no llevan
@@ -237,7 +292,7 @@ pub fn lift(scan: [f32; 3], target: [f32; 3]) -> [f32; 3] {
 
 impl Surface {
     /// Todas las superficies, en orden.
-    pub const ALL: [Surface; 36] = [
+    pub const ALL: [Surface; 50] = [
         Surface::Adobe,
         Surface::Whitewash,
         Surface::Brick,
@@ -274,6 +329,20 @@ impl Surface {
         Surface::Livery(Livery::Maroon),
         Surface::Livery(Livery::Varnish),
         Surface::Livery(Livery::Oxide),
+        Surface::Ashlar,
+        Surface::Render(Paint::Ochre),
+        Surface::Render(Paint::LimeWhite),
+        Surface::LimeBrick,
+        Surface::OldLime,
+        Surface::StationBrick,
+        Surface::Plinth,
+        Surface::Shutter,
+        Surface::Grime,
+        Surface::Glass,
+        Surface::Door,
+        Surface::Weatherboard,
+        Surface::MudStraw,
+        Surface::Barnwood,
     ];
 
     /// El conjunto de texturas que lleva, si tiene uno.
@@ -301,7 +370,19 @@ impl Surface {
             Self::Livery(Livery::Tread) => "metal_plate",
             Self::Livery(Livery::Black | Livery::BufferRed) => "rust_coarse_01",
             Self::Livery(Livery::Maroon | Livery::Varnish | Livery::Oxide) => "brown_planks_05",
-            Self::Recess | Self::Steel | Self::Sheet | Self::Water => return None,
+            Self::Door | Self::Barnwood => "rough_wood",
+            Self::Weatherboard => "brown_planks_04",
+            Self::MudStraw => "mud_straw",
+            Self::Ashlar => "concrete_wall_004",
+            Self::Render(_) => "plastered_wall_02",
+            Self::LimeBrick => "painted_worn_brick",
+            Self::OldLime => "preconcrete_wall_001",
+            Self::StationBrick => "red_brick_03",
+            Self::Plinth => "concrete_wall_008",
+            Self::Shutter => "green_rough_planks",
+            Self::Recess | Self::Steel | Self::Sheet | Self::Water | Self::Grime | Self::Glass => {
+                return None;
+            }
         })
     }
 
@@ -337,7 +418,25 @@ impl Surface {
             // Una placa mide menos de un metro de ancho: el escaneo se repite
             // unas dos veces sobre ella.
             Self::Bronze => 0.5,
-            Self::Recess | Self::Steel | Self::Sheet | Self::Water => 1.0,
+            // Los tamaños reales de los escaneos de Poly Haven: sillares de
+            // unos 0,5 m de alto, paños de revoque de algo más de 2 m, hiladas
+            // de ladrillo de 7,5 cm. El zócalo y el encalado viejo, un poco
+            // más finos, para que sus manchas y escamas no se vean enormes, y
+            // las tablas de las persianas, de unos 12 cm.
+            Self::Ashlar => 2.0,
+            Self::Render(_) => 2.2,
+            Self::LimeBrick => 1.8,
+            Self::OldLime => 3.0,
+            Self::StationBrick => 1.0,
+            Self::Plinth => 2.0,
+            Self::Shutter => 0.6,
+            Self::Recess | Self::Steel | Self::Sheet | Self::Water | Self::Grime | Self::Glass => {
+                1.0
+            }
+            Self::Door | Self::Barnwood => 1.0,
+            // Tablas de unos 17 cm, y el barro a su tamaño real.
+            Self::Weatherboard => 1.0,
+            Self::MudStraw => 2.0,
         };
         Vec2::splat(tile)
     }
@@ -380,6 +479,22 @@ impl Surface {
             Self::Livery(Livery::Maroon) => Look::Tint([0.61, 0.20, 0.21]),
             Self::Livery(Livery::Varnish) => Look::Tint([0.68, 0.43, 0.28]),
             Self::Livery(Livery::Oxide) => Look::Tint([0.75, 0.37, 0.29]),
+            // Una piedra gris cálida, como el revoque símil piedra de 1919.
+            Self::Ashlar => lifted(ASHLAR_SCAN, [0.70, 0.68, 0.58]),
+            Self::Render(paint) => lifted(RENDER_SCAN, paint.albedo()),
+            // Cal sobre ladrillo, apenas amarillenta.
+            Self::LimeBrick => lifted(LIME_BRICK_SCAN, [0.82, 0.79, 0.71]),
+            Self::OldLime => lifted(OLD_LIME_SCAN, [0.80, 0.75, 0.66]),
+            Self::StationBrick => lifted(STATION_BRICK_SCAN, [0.48, 0.33, 0.28]),
+            Self::Plinth => lifted(PLINTH_SCAN, [0.58, 0.56, 0.52]),
+            // Un verde de persiana empolvado.
+            Self::Shutter => Look::Tint([0.92, 0.92, 0.88]),
+            // Tablas que el sol de la pampa curtió a un gris plateado.
+            Self::Weatherboard => lifted(WEATHERBOARD_SCAN, [0.50, 0.48, 0.45]),
+            // Un marrón de puerta, pintado y gastado sobre la madera gris.
+            Self::Door => Look::Tint([0.62, 0.42, 0.28]),
+            // Gris de sol, apenas tostado.
+            Self::Barnwood => Look::Tint([0.95, 0.92, 0.86]),
             _ => Look::Tint([1.0, 1.0, 1.0]),
         }
     }
@@ -429,7 +544,21 @@ impl Surface {
             Self::Livery(Livery::Maroon) => (0.36, 0.10, 0.09),
             Self::Livery(Livery::Varnish) => (0.40, 0.24, 0.13),
             Self::Livery(Livery::Oxide) => (0.45, 0.20, 0.14),
+            Self::Shutter => (0.30, 0.40, 0.33),
+            // Blanco: el color lo ponen sus vértices.
+            Self::Grime => (1.0, 1.0, 1.0),
+            Self::Glass => (0.035, 0.045, 0.05),
+            Self::Door => (0.30, 0.20, 0.13),
+            Self::Barnwood => (0.42, 0.40, 0.36),
+            Self::MudStraw => (0.52, 0.40, 0.26),
             Self::Painted(_)
+            | Self::Ashlar
+            | Self::Render(_)
+            | Self::LimeBrick
+            | Self::OldLime
+            | Self::StationBrick
+            | Self::Plinth
+            | Self::Weatherboard
             | Self::WashedBrick
             | Self::PatchedBrick
             | Self::Band
@@ -465,22 +594,112 @@ impl Surface {
             Self::Livery(Livery::Varnish) => (0.7, 0.0, 0.5),
             Self::Livery(Livery::Oxide) => (1.0, 0.0, 0.3),
             Self::Water => (0.08, 0.0, 0.5),
+            Self::Glass => (0.06, 0.0, 0.5),
             Self::Recess => (1.0, 0.0, 0.1),
             _ => (1.0, 0.0, 0.3),
+        }
+    }
+
+    /// Cuánto la ensucia el tiempo sobre un edificio ([`Weathering`]): las
+    /// salpicaduras de barro al pie, la humedad que sube del suelo con su borde
+    /// de salitre (donde el edificio la tiene), el pie oscurecido donde la
+    /// pared toca la tierra y el polvo que se asienta sobre las cornisas y los
+    /// alféizares, cada uno de 0 a 1. El revoque y el adobe, porosos, lo toman
+    /// todo; el ladrillo cocido chupa menos humedad; la madera no chupa
+    /// humedad; la chapa solo se salpica al pie; el vidrio, el hierro y el
+    /// agua quedan como están.
+    pub fn weathering(self) -> [f32; 4] {
+        match self {
+            Self::Adobe
+            | Self::Whitewash
+            | Self::Lime
+            | Self::Stucco
+            | Self::Painted(_)
+            | Self::WashedBrick
+            | Self::PatchedBrick
+            | Self::Band
+            | Self::Ashlar
+            | Self::Render(_)
+            | Self::LimeBrick
+            | Self::OldLime
+            | Self::Plinth
+            | Self::MudStraw => [1.0, 1.0, 1.0, 1.0],
+            Self::Brick | Self::StationBrick => [0.8, 0.6, 0.6, 1.0],
+            Self::Planks | Self::Shutter | Self::Door | Self::Weatherboard | Self::Barnwood => {
+                [0.7, 0.0, 0.4, 0.6]
+            }
+            // La chapa no chupa humedad ni junta polvo en el techo, pero el
+            // barro también le salpica el pie.
+            Self::OldIron | Self::Galvanised => [0.8, 0.0, 0.6, 0.0],
+            _ => [0.0; 4],
+        }
+    }
+
+    /// Cuánto rompe el shader del desgaste la repetición de su escaneo, de 0 a
+    /// 1: una variación lenta de su tono, parches de un tono más fresco (barro
+    /// nuevo sobre el viejo) y bultos que tuercen la luz. Fuerte en el barro y
+    /// la paja, hechos a mano; suave en el adobe, los revoques y las tablas;
+    /// nada en lo demás. El cuarto valor no se usa.
+    pub fn breakup(self) -> [f32; 4] {
+        match self {
+            Self::MudStraw => [1.0, 1.0, 1.0, 0.0],
+            Self::Thatch => [0.8, 0.0, 0.7, 0.0],
+            Self::Adobe => [0.6, 0.5, 0.5, 0.0],
+            Self::Weatherboard | Self::OldLime | Self::Whitewash | Self::Lime => {
+                [0.35, 0.0, 0.0, 0.0]
+            }
+            Self::Painted(_) | Self::Render(_) | Self::Stucco | Self::Plinth => {
+                [0.2, 0.0, 0.0, 0.0]
+            }
+            _ => [0.0; 4],
         }
     }
 
     /// Los decals tendidos sobre el suelo se mezclan con él según el alfa por
     /// vertex.
     fn blended(self) -> bool {
-        matches!(self, Self::Mud | Self::Yard)
+        matches!(self, Self::Mud | Self::Yard | Self::Grime)
     }
 }
 
-/// Un material compartido por [`Surface`].
+/// El desgaste de los edificios, sobre el [`StandardMaterial`] de su
+/// superficie: `assets/shaders/building_weathering.wesl` ensucia el color de la
+/// pared según dónde está cada punto. Lo que pone la superficie son las cuatro
+/// intensidades de [`Surface::weathering`]; lo que pone cada edificio, en su
+/// segunda UV ([`Shape::weather`](super::shape::Shape::weather)), es la altura
+/// de cada vértice sobre el suelo, cuán gastado está el edificio y cuánta
+/// humedad le sube.
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone, Default)]
+pub struct Weathering {
+    /// Salpicaduras, humedad, pie oscuro y polvo, de 0 a 1.
+    #[uniform(100)]
+    pub amounts: Vec4,
+    /// Cuánto se rompe la repetición del escaneo ([`Surface::breakup`]).
+    #[uniform(101)]
+    pub breakup: Vec4,
+}
+
+impl MaterialExtension for Weathering {
+    fn fragment_shader() -> ShaderRef {
+        WEATHERING_SHADER.into()
+    }
+}
+
+/// El shader de [`Weathering`], bajo la raíz de assets.
+pub const WEATHERING_SHADER: &str = "shaders/building_weathering.wesl";
+
+/// El material de una pieza de edificio: el de su superficie más su
+/// [`Weathering`]. Solo lo llevan las meshes con la segunda UV del desgaste.
+pub type BuildingMaterial = ExtendedMaterial<StandardMaterial, Weathering>;
+
+/// Un material compartido por [`Surface`], y su versión gastada para los
+/// edificios.
 #[derive(Resource, Debug, Clone)]
 pub struct FacadeMaterials {
     materials: Vec<(Surface, Handle<StandardMaterial>)>,
+    /// Vacío hasta que [`setup_weathering`] lo llena (y en las apps que solo
+    /// piden [`Self::plain`]).
+    weathered: Vec<(Surface, Handle<BuildingMaterial>)>,
 }
 
 impl FacadeMaterials {
@@ -493,6 +712,26 @@ impl FacadeMaterials {
             .expect("every surface has a material")
     }
 
+    /// El material gastado de `surface`, para una mesh de edificio que lleva la
+    /// segunda UV del desgaste.
+    pub fn weathered(&self, surface: Surface) -> Handle<BuildingMaterial> {
+        self.weathered
+            .iter()
+            .find(|(s, _)| *s == surface)
+            .map(|(_, m)| m.clone())
+            .expect("the weathered materials are built at startup")
+    }
+
+    /// Pone en `entity` el material de `surface` que le toca a `mesh`: el
+    /// gastado si la mesh lleva la segunda UV del desgaste, si no el liso.
+    pub fn insert(&self, entity: &mut EntityCommands, surface: Surface, mesh: &Mesh) {
+        if weathers(mesh) {
+            entity.insert(MeshMaterial3d(self.weathered(surface)));
+        } else {
+            entity.insert(MeshMaterial3d(self.get(surface)));
+        }
+    }
+
     /// Materiales de color liso para una app sin servidor de assets (tests
     /// headless): cada superficie en su color sin textura.
     pub(crate) fn plain(materials: &mut Assets<StandardMaterial>) -> Self {
@@ -500,8 +739,57 @@ impl FacadeMaterials {
             .iter()
             .map(|&surface| (surface, materials.add(material(surface, None))))
             .collect();
-        Self { materials }
+        Self {
+            materials,
+            weathered: Vec::new(),
+        }
     }
+}
+
+/// Si `mesh` lleva el desgaste de un edificio: su segunda UV.
+pub fn weathers(mesh: &Mesh) -> bool {
+    mesh.attribute(Mesh::ATTRIBUTE_UV_1).is_some()
+}
+
+/// Registra [`BuildingMaterial`]: su `MaterialPlugin` cuando hay un renderer, o
+/// solo sus assets en una app headless.
+pub(crate) fn register_weathering(app: &mut App) {
+    if app.world().contains_resource::<Assets<BuildingMaterial>>() {
+        return;
+    }
+    if app.get_sub_app(bevy::render::RenderApp).is_some() {
+        app.add_plugins(MaterialPlugin::<BuildingMaterial>::default());
+    } else {
+        app.init_resource::<Assets<BuildingMaterial>>();
+    }
+}
+
+/// Construye los materiales gastados de [`FacadeMaterials`] sobre sus
+/// materiales lisos, después de [`setup_materials`]: comparten los mapas.
+pub(crate) fn setup_weathering(
+    mut surfaces: ResMut<FacadeMaterials>,
+    standard: Res<Assets<StandardMaterial>>,
+    mut weathered: ResMut<Assets<BuildingMaterial>>,
+) {
+    let built = surfaces
+        .materials
+        .iter()
+        .map(|(surface, handle)| {
+            let base = standard
+                .get(handle)
+                .cloned()
+                .unwrap_or_else(|| material(*surface, None));
+            let extension = Weathering {
+                amounts: Vec4::from_array(surface.weathering()),
+                breakup: Vec4::from_array(surface.breakup()),
+            };
+            (
+                *surface,
+                weathered.add(BuildingMaterial { base, extension }),
+            )
+        })
+        .collect();
+    surfaces.weathered = built;
 }
 
 /// Construye los materiales compartidos, empezando la carga de texturas cuando
@@ -547,7 +835,10 @@ pub(crate) fn setup_materials(
             Surface::ALL.len()
         );
     }
-    commands.insert_resource(FacadeMaterials { materials: built });
+    commands.insert_resource(FacadeMaterials {
+        materials: built,
+        weathered: Vec::new(),
+    });
 }
 
 /// Los archivos de un conjunto de texturas, bajo `TEXTURE_DIR/<set>/`: color
@@ -704,8 +995,10 @@ mod tests {
             );
         }
         assert_eq!(
-            lifted, 11,
-            "five paints, two bricks, the band, the paving, the earth and the ballast"
+            lifted, 19,
+            "five paints, two bricks, the band, the paving, the earth, the ballast, \
+             the ashlar, two renders, the lime brick, the old lime, the station brick, \
+             the plinth and the weatherboards"
         );
     }
 
@@ -857,6 +1150,49 @@ mod tests {
         // La madera pintada no tiene metal; el esmalte sobre acero tiene algo.
         assert_eq!(Surface::Livery(Livery::Maroon).pbr().1, 0.0);
         assert!(Surface::Livery(Livery::Black).pbr().1 > 0.2);
+    }
+
+    #[test]
+    fn a_weathered_material_is_its_surfaces_material_with_its_weathering() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::asset::AssetPlugin::default()))
+            .init_asset::<StandardMaterial>()
+            .add_plugins(super::super::FacadePlugin);
+        app.update();
+        let surfaces = app.world().resource::<FacadeMaterials>();
+        let standard = app.world().resource::<Assets<StandardMaterial>>();
+        let weathered = app.world().resource::<Assets<BuildingMaterial>>();
+        for surface in Surface::ALL {
+            let base = standard.get(&surfaces.get(surface)).unwrap();
+            let worn = weathered.get(&surfaces.weathered(surface)).unwrap();
+            assert_eq!(worn.base.base_color, base.base_color, "{surface:?}");
+            assert_eq!(worn.base.alpha_mode, base.alpha_mode, "{surface:?}");
+            assert_eq!(
+                worn.extension.amounts,
+                Vec4::from_array(surface.weathering()),
+                "{surface:?}"
+            );
+            assert_eq!(
+                worn.extension.breakup,
+                Vec4::from_array(surface.breakup()),
+                "{surface:?}"
+            );
+        }
+        // Las paredes porosas chupan humedad; el ladrillo cocido, menos; la
+        // madera solo se salpica.
+        assert_eq!(Surface::Plinth.weathering()[1], 1.0);
+        assert!(Surface::StationBrick.weathering()[1] < 1.0);
+        assert_eq!(Surface::Shutter.weathering()[1], 0.0);
+        assert!(Surface::Shutter.weathering()[0] > 0.0);
+        for metal in [Surface::Steel, Surface::Water, Surface::Glass] {
+            assert_eq!(metal.weathering(), [0.0; 4], "{metal:?}");
+        }
+        // La chapa se salpica al pie, pero no chupa humedad ni junta polvo
+        // en los techos.
+        for iron in [Surface::OldIron, Surface::Galvanised] {
+            let [splash, damp, _, dust] = iron.weathering();
+            assert!(splash > 0.0 && damp == 0.0 && dust == 0.0, "{iron:?}");
+        }
     }
 
     #[test]

@@ -60,6 +60,16 @@ pub enum HouseStyle {
     /// El casco italianizante de una estancia con una galería a lo largo del
     /// frente.
     GalleryHouse,
+    /// Un rancho de madera: tablas solapadas sobre un armazón de postes, bajo
+    /// un techo de chapa a dos aguas.
+    Planks,
+    /// Una casilla: una pieza chica de chapa acanalada sobre un armazón de
+    /// madera, bajo un techo de chapa a un agua, como las de los peones y del
+    /// ferrocarril.
+    Casilla,
+    /// Un rancho de barro y paja: paredes bajas de barro amasado con paja
+    /// entre horcones de madera, bajo un techo de paja.
+    MudStraw,
 }
 
 /// Un edificio o elemento decorativo de un asentamiento.
@@ -977,12 +987,25 @@ impl<'a> Compound<'a> {
         }
     }
 
+    /// Uno de `styles` según sus probabilidades acumuladas (el último se queda
+    /// con el resto), con una sola tirada, como [`Self::chance`].
+    fn style(&mut self, styles: &[(f32, HouseStyle)]) -> HouseStyle {
+        let u = self.rng.unit();
+        styles
+            .iter()
+            .find(|(upto, _)| u < *upto)
+            .or(styles.last())
+            .map(|&(_, style)| style)
+            .expect("at least one style")
+    }
+
     fn hut(&mut self) -> bool {
-        let style = if self.chance(0.65) {
-            HouseStyle::AdobeThatch
-        } else {
-            HouseStyle::AdobeIron
-        };
+        let style = self.style(&[
+            (0.35, HouseStyle::AdobeThatch),
+            (0.55, HouseStyle::AdobeIron),
+            (0.8, HouseStyle::MudStraw),
+            (1.0, HouseStyle::Planks),
+        ]);
         let house = self.part(
             StructureKind::MainHouse(style),
             (8.0, 10.0),
@@ -1004,11 +1027,12 @@ impl<'a> Compound<'a> {
     }
 
     fn outpost(&mut self) -> bool {
-        let style = if self.chance(0.5) {
-            HouseStyle::AdobeThatch
-        } else {
-            HouseStyle::AdobeIron
-        };
+        let style = self.style(&[
+            (0.3, HouseStyle::AdobeThatch),
+            (0.45, HouseStyle::AdobeIron),
+            (0.7, HouseStyle::Casilla),
+            (1.0, HouseStyle::MudStraw),
+        ]);
         let hut = self.part(StructureKind::MainHouse(style), (6.0, 8.0), (4.0, 5.0), 2.5);
         if self.place(hut, self.ahead(9.0, 14.0, 0.8)).is_none() {
             return false;
@@ -1047,11 +1071,12 @@ impl<'a> Compound<'a> {
         }
         self.corral((18.0, 26.0), self.round(30.0, 50.0));
         if self.chance(0.35) {
-            let style = if self.chance(0.5) {
-                HouseStyle::AdobeIron
-            } else {
-                HouseStyle::AdobeThatch
-            };
+            let style = self.style(&[
+                (0.3, HouseStyle::AdobeIron),
+                (0.5, HouseStyle::AdobeThatch),
+                (0.75, HouseStyle::Planks),
+                (1.0, HouseStyle::Casilla),
+            ]);
             let worker = self.part(
                 StructureKind::WorkerHouse(style),
                 (8.0, 10.0),
@@ -1095,11 +1120,11 @@ impl<'a> Compound<'a> {
         let turn = self.rng.range(0.0, TAU);
         let mut built = 0;
         for k in 0..houses {
-            let style = if self.chance(0.6) {
-                HouseStyle::AdobeIron
-            } else {
-                HouseStyle::BrickParapet
-            };
+            let style = self.style(&[
+                (0.45, HouseStyle::AdobeIron),
+                (0.75, HouseStyle::BrickParapet),
+                (1.0, HouseStyle::Casilla),
+            ]);
             let house = self.part(
                 StructureKind::WorkerHouse(style),
                 (9.0, 12.0),
@@ -2129,7 +2154,10 @@ pub(crate) mod tests {
                 SettlementKind::Hut => {
                     assert!(matches!(
                         style,
-                        HouseStyle::AdobeThatch | HouseStyle::AdobeIron
+                        HouseStyle::AdobeThatch
+                            | HouseStyle::AdobeIron
+                            | HouseStyle::MudStraw
+                            | HouseStyle::Planks
                     ));
                     assert_eq!(n(Barn) + n(Windpump), 0, "{s:?}");
                 }
@@ -2160,6 +2188,28 @@ pub(crate) mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn the_countryside_has_wooden_ranchos_casillas_and_mud_and_straw_ranchos() {
+        let (_, _, _, _, layout) = settled();
+        let mut styles: HashMap<HouseStyle, usize> = HashMap::new();
+        for st in layout.settlements.iter().flat_map(|s| &s.structures) {
+            if let StructureKind::MainHouse(style) | StructureKind::WorkerHouse(style) = st.kind {
+                *styles.entry(style).or_default() += 1;
+            }
+        }
+        println!("{styles:?}");
+        for style in [
+            HouseStyle::Planks,
+            HouseStyle::Casilla,
+            HouseStyle::MudStraw,
+        ] {
+            assert!(
+                styles.get(&style).is_some_and(|&n| n > 0),
+                "{style:?}: {styles:?}"
+            );
         }
     }
 

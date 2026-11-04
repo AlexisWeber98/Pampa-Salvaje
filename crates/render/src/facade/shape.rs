@@ -5,7 +5,8 @@
 //! termina como una mesh por cada superficie que lleva. Las caras llevan
 //! normales planas, UVs escaladas al mundo (una repetición de la textura cada
 //! [`Surface::tiles`] metros, sea cual sea el tamaño de la pieza) y tangentes
-//! para los normal maps.
+//! para los normal maps. Un edificio, además, lleva su desgaste
+//! ([`Shape::weather`]) en una segunda UV.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
@@ -21,14 +22,59 @@ struct Buffers {
     normals: Vec<[f32; 3]>,
     uvs: Vec<[f32; 2]>,
     tangents: Vec<[f32; 4]>,
+    /// Colores por vértice, solo hasta el último que se pintó
+    /// ([`Shape::faded`]); los demás son blancos.
+    colors: Vec<[f32; 4]>,
     indices: Vec<u32>,
+}
+
+impl Buffers {
+    /// Los colores por vértice, completados en blanco hasta el último vértice.
+    fn padded_colors(&mut self) -> &mut Vec<[f32; 4]> {
+        self.colors.resize(self.positions.len(), [1.0; 4]);
+        &mut self.colors
+    }
 }
 
 /// Las meshes de una estructura, una por superficie, en el espacio propio de la
 /// estructura.
-#[derive(Default, Debug, Clone)]
+/// Cómo ensucia el tiempo un edificio: cuán gastado está, de 0 (recién
+/// revocado) a 1 (décadas sin mano de cal), y cuánta humedad le sube del
+/// suelo, de 0 (nada: la mayoría) a 1 (un cimiento empapado).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Weather {
+    pub wear: f32,
+    pub damp: f32,
+}
+
+impl Weather {
+    /// La segunda coordenada de la segunda UV: el desgaste en centésimos en la
+    /// parte entera y la humedad en la fraccionaria. `front` la reduce a la
+    /// mitad en las caras que miran a la calle, más secas que el fondo.
+    pub fn packed(self, front: bool) -> f32 {
+        let damp = if front { self.damp * 0.5 } else { self.damp };
+        (self.wear * 100.0).round() + damp.clamp(0.0, 0.999)
+    }
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct Shape {
     parts: Vec<(Surface, Buffers)>,
+    /// Cuán gastado está el edificio, de 0 (recién revocado) a 1 (décadas sin
+    /// mano de cal), si se ensucia con el tiempo.
+    wear: Option<Weather>,
+    /// Qué parte de los chorreados se dibuja ([`Self::set_streaks`]).
+    streaks: f32,
+    /// Si las ventanas llevan persianas de tablillas en lugar de postigos de
+    /// tablas ([`Self::set_louvred`]).
+    louvred: bool,
+    /// Si los postigos y las puertas que construye
+    /// [`super::walls::Wall::build`] son de madera rústica
+    /// ([`Self::set_rustic`]).
+    rustic: bool,
+    /// Si las ventanas que construye [`super::walls::Wall::build`] llevan
+    /// vidrio ([`Self::set_glazed`]).
+    glazed: bool,
 }
 
 /// Las caras del cubo unitario, con las esquinas en sentido antihorario vistas
@@ -84,7 +130,144 @@ fn planar_uv(p: Vec3, n: Vec3, tile: Vec2) -> [f32; 2] {
     [p.dot(u) / tile.x, -p.dot(v) / tile.y]
 }
 
+impl Default for Shape {
+    fn default() -> Self {
+        Self {
+            parts: Vec::new(),
+            wear: None,
+            streaks: 1.0,
+            louvred: false,
+            rustic: false,
+            glazed: true,
+        }
+    }
+}
+
 impl Shape {
+    /// Marca la forma como un edificio que el tiempo ensucia: sus meshes
+    /// llevan, en la segunda UV, la altura de cada vértice sobre el suelo (el
+    /// `y` propio de la estructura) y su [`Weather`] empaquetado
+    /// ([`Weather::packed`]; las caras que miran al frente, `+Z`, con la mitad
+    /// de la humedad), y se dibujan con el
+    /// [`BuildingMaterial`](super::materials::BuildingMaterial) de su
+    /// superficie.
+    pub fn weather(&mut self, weather: Weather) {
+        self.wear = Some(Weather {
+            wear: weather.wear.clamp(0.0, 1.0),
+            damp: weather.damp.clamp(0.0, 1.0),
+        });
+    }
+
+    /// Qué parte de los chorreados de [`super::grime::streaks`] se dibuja, de 0
+    /// (ninguno) a 1 (todos, lo que vale por omisión): no todas las casas
+    /// chorrean bajo cada alféizar.
+    pub fn set_streaks(&mut self, share: f32) {
+        self.streaks = share;
+    }
+
+    /// Qué parte de los chorreados se dibuja.
+    pub fn streaks(&self) -> f32 {
+        self.streaks
+    }
+
+    /// Si las ventanas que se construyan después llevan persianas de tablillas
+    /// con su bastidor ([`super::walls::Wall::build`]), como los frentes del
+    /// pueblo, o postigos de tablas.
+    pub fn set_louvred(&mut self, louvred: bool) {
+        self.louvred = louvred;
+    }
+
+    /// Si las ventanas llevan persianas de tablillas.
+    pub fn louvred(&self) -> bool {
+        self.louvred
+    }
+
+    /// Si los postigos y las puertas que se construyan después son de madera
+    /// rústica gris, curtida por el sol y nunca pintada, como los de un rancho
+    /// o una casilla, en lugar de tablas pintadas.
+    pub fn set_rustic(&mut self, rustic: bool) {
+        self.rustic = rustic;
+    }
+
+    /// Si las ventanas que se construyan después llevan vidrio (con su cruz de
+    /// madera) o son un vano chico sin vidrio, con un solo postigo de tabla,
+    /// como las de un rancho de barro y paja.
+    pub fn set_glazed(&mut self, glazed: bool) {
+        self.glazed = glazed;
+    }
+
+    /// Si las ventanas llevan vidrio.
+    pub fn glazed(&self) -> bool {
+        self.glazed
+    }
+
+    /// La madera de los postigos de tablas: [`Surface::Planks`], o
+    /// [`Surface::Barnwood`] si es rústica.
+    pub fn shutter_wood(&self) -> Surface {
+        if self.rustic {
+            Surface::Barnwood
+        } else {
+            Surface::Planks
+        }
+    }
+
+    /// La madera de las puertas de tablas: pintada ([`Surface::Door`]), o
+    /// [`Surface::Barnwood`] si es rústica.
+    pub fn door_wood(&self) -> Surface {
+        if self.rustic {
+            Surface::Barnwood
+        } else {
+            Surface::Door
+        }
+    }
+
+    /// Un quad como [`Self::face`] con un color RGBA en cada esquina: un decal
+    /// mezclado según el alfa de sus vértices.
+    pub fn faded(&mut self, surface: Surface, corners: &[Vec3; 4], colors: [[f32; 4]; 4]) {
+        self.face(surface, corners);
+        let b = self.buffers(surface);
+        let n = b.positions.len();
+        let painted = b.padded_colors();
+        painted[n - 4..].copy_from_slice(&colors);
+    }
+
+    /// Multiplica el alfa de los vértices de `surface` por `k`.
+    pub fn fade(&mut self, surface: Surface, k: f32) {
+        for (s, b) in &mut self.parts {
+            if *s == surface {
+                for c in b.padded_colors() {
+                    c[3] *= k;
+                }
+            }
+        }
+    }
+
+    /// Pasa todo lo de `from` a `to`: por ejemplo, las tablas de un frente del
+    /// pueblo a sus persianas pintadas.
+    pub fn recolour(&mut self, from: Surface, to: Surface) {
+        let Some(k) = self.parts.iter().position(|(s, _)| *s == from) else {
+            return;
+        };
+        let (_, part) = self.parts.remove(k);
+        let tile = (from.tiles(), to.tiles());
+        let b = self.buffers(to);
+        let base = b.positions.len() as u32;
+        if !part.colors.is_empty() {
+            b.padded_colors();
+            b.colors.extend(part.colors);
+        }
+        b.positions.extend(part.positions);
+        b.normals.extend(part.normals);
+        // Las UVs a la escala del mundo de la superficie nueva.
+        b.uvs.extend(
+            part.uvs
+                .iter()
+                .map(|[u, v]| [u * tile.0.x / tile.1.x, v * tile.0.y / tile.1.y]),
+        );
+        b.tangents.extend(part.tangents);
+        b.indices.extend(part.indices.iter().map(|i| base + i));
+    }
+
     fn buffers(&mut self, surface: Surface) -> &mut Buffers {
         let k = match self.parts.iter().position(|(s, _)| *s == surface) {
             Some(k) => k,
@@ -198,6 +381,10 @@ impl Shape {
         for (surface, part) in other.parts {
             let b = self.buffers(surface);
             let base = b.positions.len() as u32;
+            if !part.colors.is_empty() {
+                b.padded_colors();
+                b.colors.extend(part.colors);
+            }
             for k in 0..part.positions.len() {
                 let p = m.transform_point3(Vec3::from_array(part.positions[k]));
                 let n = transform.rotation * Vec3::from_array(part.normals[k]);
@@ -398,8 +585,16 @@ impl Shape {
         self.parts
             .into_iter()
             .filter(|(_, b)| !b.indices.is_empty())
-            .map(|(surface, b)| {
-                let mesh = Mesh::new(
+            .map(|(surface, mut b)| {
+                let colors = (!b.colors.is_empty()).then(|| b.padded_colors().clone());
+                let weather = self.wear.map(|weather| {
+                    b.positions
+                        .iter()
+                        .zip(&b.normals)
+                        .map(|(p, n)| [p[1], weather.packed(n[2] > 0.7)])
+                        .collect::<Vec<[f32; 2]>>()
+                });
+                let mut mesh = Mesh::new(
                     PrimitiveTopology::TriangleList,
                     RenderAssetUsages::RENDER_WORLD,
                 )
@@ -408,6 +603,12 @@ impl Shape {
                 .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, b.uvs)
                 .with_inserted_attribute(Mesh::ATTRIBUTE_TANGENT, b.tangents)
                 .with_inserted_indices(Indices::U32(b.indices));
+                if let Some(weather) = weather {
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, weather);
+                }
+                if let Some(colors) = colors {
+                    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+                }
                 (surface, mesh)
             })
             .collect()
@@ -417,6 +618,8 @@ impl Shape {
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+
+    use bevy::mesh::VertexAttributeValues;
 
     use super::*;
 
@@ -495,6 +698,69 @@ mod tests {
                 assert!(p.cmpge(min - 1e-5).all() && p.cmple(max + 1e-5).all());
             }
         }
+    }
+
+    #[test]
+    fn a_weathered_shape_carries_each_height_and_its_wear_in_the_second_uv() {
+        let mut plain = Shape::default();
+        plain.block(
+            Surface::Whitewash,
+            Vec3::new(0.0, -0.3, 0.0),
+            Vec3::new(2.0, 3.0, 0.4),
+        );
+        let mut worn = plain.clone();
+        let weather = Weather {
+            wear: 0.4,
+            damp: 0.6,
+        };
+        worn.weather(weather);
+        let mesh = |shape: Shape| shape.into_meshes().remove(0).1;
+        assert!(mesh(plain).attribute(Mesh::ATTRIBUTE_UV_1).is_none());
+        let worn = mesh(worn);
+        let Some(VertexAttributeValues::Float32x3(positions)) =
+            worn.attribute(Mesh::ATTRIBUTE_POSITION)
+        else {
+            panic!("positions");
+        };
+        let Some(VertexAttributeValues::Float32x3(normals)) =
+            worn.attribute(Mesh::ATTRIBUTE_NORMAL)
+        else {
+            panic!("normals");
+        };
+        let Some(VertexAttributeValues::Float32x2(packed)) = worn.attribute(Mesh::ATTRIBUTE_UV_1)
+        else {
+            panic!("the second UV");
+        };
+        assert_eq!(positions.len(), packed.len());
+        for ((p, n), w) in positions.iter().zip(normals).zip(packed) {
+            assert_eq!(w[0], p[1]);
+            // El desgaste en la parte entera, la humedad en la fracción: la
+            // mitad en la cara del frente.
+            assert_eq!(w[1].floor(), 40.0);
+            let damp = if n[2] > 0.7 { 0.3 } else { 0.6 };
+            assert!((w[1].fract() - damp).abs() < 1e-4, "{n:?}: {}", w[1]);
+        }
+    }
+
+    #[test]
+    fn recolouring_moves_every_face_and_keeps_the_texture_to_world_scale() {
+        let mut shape = Shape::default();
+        shape.block(Surface::Planks, Vec3::ZERO, Vec3::new(1.2, 2.0, 0.05));
+        shape.block(Surface::Brick, Vec3::new(2.0, 0.0, 0.0), Vec3::splat(3.0));
+        let planks = shape.vertices(Surface::Planks);
+        shape.recolour(Surface::Planks, Surface::Shutter);
+        assert!(shape.vertices(Surface::Planks).is_empty());
+        let shutter = shape.vertices(Surface::Shutter);
+        assert_eq!(shutter.len(), planks.len());
+        let (from, to) = (Surface::Planks.tiles(), Surface::Shutter.tiles());
+        for ((p0, n0, uv0), (p1, n1, uv1)) in planks.iter().zip(&shutter) {
+            assert_eq!((p0, n0), (p1, n1));
+            // Un metro de pared cubre lo mismo del escaneo nuevo que un tile
+            // a su escala.
+            assert!((uv1.x * to.x - uv0.x * from.x).abs() < 1e-5);
+            assert!((uv1.y * to.y - uv0.y * from.y).abs() < 1e-5);
+        }
+        assert!(!shape.vertices(Surface::Brick).is_empty());
     }
 
     #[test]

@@ -344,33 +344,162 @@ pub(crate) fn surround(shape: &mut Shape, surface: Surface, wall: &Wall, o: &Ope
     }
 }
 
-/// Dos hojas de tablones cerradas en la puerta `o` de `wall`, retiradas en su
-/// vano, con una banderola vidriada encima cuando `transom`.
+/// Dos hojas de tableros cerradas en la puerta `o` de `wall`, retiradas en su
+/// vano, con una banderola vidriada encima cuando `transom`: cada hoja, un
+/// bastidor de largueros y travesaños de madera pintada y gastada
+/// ([`Surface::Door`]) con tableros en relieve hundidos entre ellos.
 pub(crate) fn door_leaves(shape: &mut Shape, wall: &Wall, o: &Opening, transom: bool) {
     let (a, b) = o.span();
     let t = wall.thickness;
     let top = if transom { o.top - 0.5 } else { o.top };
     let m = (a + b) / 2.0;
     for (l0, l1) in [(a, m - 0.015), (m + 0.015, b)] {
-        wall.piece(
-            shape,
-            Surface::Planks,
-            (l0, t * 0.45, o.bottom),
-            (l1, t * 0.5, top),
-        );
+        panelled_leaf(shape, wall, (l0, l1), (o.bottom, top));
     }
     if transom {
         wall.piece(
             shape,
-            Surface::Planks,
+            Surface::Door,
             (a, t * 0.44, top),
             (b, t * 0.5, top + 0.08),
         );
+        // El vidrio de la banderola, con un parante en el medio.
         wall.piece(
             shape,
-            Surface::Recess,
-            (a, t * 0.46, top + 0.08),
+            Surface::Glass,
+            (a, t * 0.47, top + 0.08),
             (b, t * 0.48, o.top),
+        );
+        wall.piece(
+            shape,
+            Surface::Door,
+            (m - 0.02, t * 0.45, top + 0.08),
+            (m + 0.02, t * 0.47, o.top),
+        );
+    }
+}
+
+/// Una hoja de puerta de tableros de `x.0` a `x.1` a lo largo de `wall` y de
+/// `y.0` a `y.1` de alto: largueros, un zócalo alto, un travesaño de cerradura
+/// y uno de arriba, y entre ellos dos tableros en relieve de 2 cm, hundidos
+/// 4 cm detrás del bastidor.
+fn panelled_leaf(shape: &mut Shape, wall: &Wall, (x0, x1): (f32, f32), (y0, y1): (f32, f32)) {
+    let t = wall.thickness;
+    let (face, panel, back) = (t * 0.38, t * 0.46, t * 0.5);
+    let stile = ((x1 - x0) * 0.16).clamp(0.07, 0.11);
+    let height = y1 - y0;
+    // El fondo, detrás de todo.
+    wall.piece(shape, Surface::Door, (x0, panel, y0), (x1, back, y1));
+    wall.piece(
+        shape,
+        Surface::Door,
+        (x0, face, y0),
+        (x0 + stile, panel, y1),
+    );
+    wall.piece(
+        shape,
+        Surface::Door,
+        (x1 - stile, face, y0),
+        (x1, panel, y1),
+    );
+    let lock = y0 + height * 0.42;
+    let rails = [
+        (y0, y0 + (height * 0.11).max(0.18)),
+        (lock - 0.06, lock + 0.06),
+        (y1 - 0.11, y1),
+    ];
+    for (r0, r1) in rails {
+        wall.piece(
+            shape,
+            Surface::Door,
+            (x0 + stile, face, r0),
+            (x1 - stile, panel, r1),
+        );
+    }
+    // Los tableros: en relieve sobre el fondo, a 3 cm del bastidor.
+    for (p0, p1) in [(rails[0].1, rails[1].0), (rails[1].1, rails[2].0)] {
+        if p1 - p0 > 0.1 {
+            wall.piece(
+                shape,
+                Surface::Door,
+                (x0 + stile + 0.03, panel - 0.02, p0 + 0.03),
+                (x1 - stile - 0.03, panel, p1 - 0.03),
+            );
+        }
+    }
+}
+
+/// Vidriera de la abertura de medio punto `o` de `wall` (un vano con [`arch`]):
+/// el vidrio, apenas reflejante, en un marco de madera, con un parante en el
+/// medio que sube hasta la clave, travesaños cada medio metro y uno en el
+/// arranque del arco.
+pub(crate) fn glazed_arch(shape: &mut Shape, wall: &Wall, o: &Opening) {
+    let (a, b) = o.span();
+    let t = wall.thickness;
+    let r = o.width / 2.0;
+    let spring = o.top - r;
+    let (glass, bars) = (t * 0.45, t * 0.42);
+    // El vidrio: el rectángulo y el semicírculo en abanico.
+    let p = |u: f32, inward: f32, y: f32| wall.at(u, inward, y);
+    shape.face(
+        Surface::Glass,
+        &[
+            p(a, glass, o.bottom),
+            p(b, glass, o.bottom),
+            p(b, glass, spring),
+            p(a, glass, spring),
+        ],
+    );
+    let n = 10;
+    for k in 0..n {
+        let angle = |k: usize| std::f32::consts::PI * k as f32 / n as f32;
+        let at = |k: usize| (o.at + r * angle(k).cos(), spring + r * angle(k).sin());
+        let ((u0, v0), (u1, v1)) = (at(k), at(k + 1));
+        shape.face(
+            Surface::Glass,
+            &[p(o.at, glass, spring), p(u0, glass, v0), p(u1, glass, v1)],
+        );
+    }
+    // El marco, los parantes y los travesaños.
+    let frame = 0.05;
+    wall.piece(
+        shape,
+        Surface::Door,
+        (a, bars, o.bottom),
+        (a + frame, glass, spring),
+    );
+    wall.piece(
+        shape,
+        Surface::Door,
+        (b - frame, bars, o.bottom),
+        (b, glass, spring),
+    );
+    wall.piece(
+        shape,
+        Surface::Door,
+        (a, bars, o.bottom),
+        (b, glass, o.bottom + frame),
+    );
+    wall.piece(
+        shape,
+        Surface::Door,
+        (a, bars, spring - 0.02),
+        (b, glass, spring + 0.02),
+    );
+    wall.piece(
+        shape,
+        Surface::Door,
+        (o.at - 0.018, bars, o.bottom),
+        (o.at + 0.018, glass, o.top - 0.02),
+    );
+    let rows = ((spring - o.bottom) / 0.5).floor() as usize;
+    for k in 1..rows.max(1) {
+        let y = o.bottom + (spring - o.bottom) * k as f32 / rows as f32;
+        wall.piece(
+            shape,
+            Surface::Door,
+            (a, bars, y - 0.015),
+            (b, glass, y + 0.015),
         );
     }
 }

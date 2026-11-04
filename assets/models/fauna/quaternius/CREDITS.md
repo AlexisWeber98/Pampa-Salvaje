@@ -58,6 +58,8 @@ the downloaded archives are not in the repository.
 
 In the game (`crates/render/src/fauna/livestock.rs`) they are scaled from
 the export's units to life size, turned to the animals' headings and
-recoloured: the eagle as a slim brown chimango and a larger dark carancho
-with a pale neck and a red-orange face. The cat was drawn as the gato
-montés, the puma and the yaguareté until 2026-11-02.
+recoloured. The eagle was drawn as the chimango and the carancho (a slim
+brown chimango, and a larger dark carancho with a pale neck and a red-orange
+face) until 2026-11-03, when the own models in `assets/models/fauna/own/`
+replaced it. The cat was drawn as the gato montés, the puma and the
+yaguareté until 2026-11-02.

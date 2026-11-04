@@ -41,16 +41,17 @@ use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 use bevy::prelude::*;
 use pampa_core::{Building, BuildingKind, Canopy, Side, StoreStyle, Structure, StructureKind};
 
+use super::grime;
 use super::italianate::{
-    CHAMFER, Crown, PROUD, Posts, arch, corner_piers, cornice, door_leaves, gallery, grille,
-    parapet, pediment, pilaster, plinth, spire, surround, urn,
+    CHAMFER, Crown, PROUD, Posts, arch, corner_piers, cornice, door_leaves, gallery, glazed_arch,
+    grille, parapet, pediment, pilaster, plinth, spire, surround, urn,
 };
 use super::materials::{Paint, Surface};
-use super::shape::Shape;
+use super::shape::{Shape, Weather};
 use super::walls::{
     BARN_REACH, Opening, Wall, Walls, barn, chimney, flat_roof, gable_roof, lean_to, spread, wedge,
 };
-use crate::settlement::props;
+use crate::settlement::{props, ranchos};
 
 /// Cuánto bajan las paredes bajo el suelo en el centro de un edificio, en
 /// metros.
@@ -117,6 +118,9 @@ pub fn building(lot: &Lot) -> Option<Shape> {
     let (w, d, h) = (size.x, size.y, lot.building.height);
     let v = lot.variant;
     let mut shape = Shape::default();
+    // Persianas de tablillas en los frentes de la calle.
+    shape.set_louvred(paints_its_joinery(lot));
+    shape.set_streaks(streaks(lot));
     match lot.building.kind {
         BuildingKind::House => house(&mut shape, (w, d, h), v, lot.outskirts),
         BuildingKind::GeneralStore => store(&mut shape, (w, d, h), v, lot.store, lot.veranda),
@@ -149,7 +153,111 @@ pub fn building(lot: &Lot) -> Option<Shape> {
         }
         BuildingKind::Platform => return None,
     }
+    if let Some(wear) = wear(lot) {
+        shape.weather(Weather {
+            wear,
+            damp: damp(lot),
+        });
+        // La mugre de las formas, tan espesa como gastado está el edificio.
+        shape.fade(Surface::Grime, 0.6 + 0.4 * wear);
+    }
+    if paints_its_joinery(lot) {
+        shape.recolour(Surface::Planks, Surface::Shutter);
+    }
     Some(shape)
+}
+
+/// Cuán gastado está el edificio de `lot`, de 0 a 1 ([`Shape::weather`]), o
+/// `None` para el tanque y el molino, de chapa y hierro. En 1919 el pueblo
+/// tiene de diez a treinta años: el banco y la intendencia están recién
+/// revocados y bien cuidados; la iglesia, la comisaría y la estación, algo
+/// menos; las casas, según quién viva en ellas, y las de las afueras y la
+/// pulpería son las más gastadas.
+pub(crate) fn wear(lot: &Lot) -> Option<f32> {
+    // Una fracción con semilla, de 0 a 1, de los bits altos de la variante.
+    let jitter = ((lot.variant >> 16) % 101) as f32 / 100.0;
+    let wear = match lot.building.kind {
+        BuildingKind::Bank | BuildingKind::TownHall => 0.12 + 0.1 * jitter,
+        BuildingKind::Church | BuildingKind::PoliceStation => 0.3 + 0.15 * jitter,
+        BuildingKind::Station => 0.4 + 0.15 * jitter,
+        BuildingKind::GeneralStore if lot.store == StoreStyle::GeneralStore => 0.35 + 0.2 * jitter,
+        BuildingKind::GeneralStore => 0.7 + 0.25 * jitter,
+        BuildingKind::House if lot.outskirts => 0.6 + 0.4 * jitter,
+        BuildingKind::House => 0.2 + 0.5 * jitter,
+        BuildingKind::Shed | BuildingKind::GrainStore => 0.5 + 0.3 * jitter,
+        BuildingKind::WaterTank | BuildingKind::Windmill | BuildingKind::Platform => {
+            return None;
+        }
+    };
+    Some(wear)
+}
+
+/// Un número de 0 a 1 de los bits de la variante de `lot` desde `shift`,
+/// independiente de los que eligen su aspecto.
+fn roll(lot: &Lot, shift: u32) -> f32 {
+    ((lot.variant.rotate_right(shift) ^ 0x5bd1_e995).wrapping_mul(0x2c1b_3c6d) >> 16) as f32
+        / 65_536.0
+}
+
+/// Cuánta humedad le sube del suelo al edificio de `lot`, de 0 a 1, o 0 si no
+/// le sube: a unas seis de cada diez construcciones del pueblo. Casi siempre a
+/// las casas viejas de las afueras y a la pulpería, más a las casas cuanto más
+/// gastadas, a algunos edificios públicos, y nunca al banco ni a la
+/// intendencia, que se cuidan. Donde la hay, va de apenas una sombra a una
+/// marca franca.
+pub(crate) fn damp(lot: &Lot) -> f32 {
+    let wear = wear(lot).unwrap_or(0.0);
+    let chance = match lot.building.kind {
+        BuildingKind::Bank | BuildingKind::TownHall => 0.0,
+        BuildingKind::Church | BuildingKind::PoliceStation | BuildingKind::Station => 0.4,
+        BuildingKind::GeneralStore if lot.store == StoreStyle::GeneralStore => 0.45,
+        BuildingKind::GeneralStore => 0.9,
+        BuildingKind::House if lot.outskirts => 0.85,
+        // Las casas: pocas de las recién pintadas, casi todas las más
+        // gastadas.
+        BuildingKind::House => 0.1 + (wear - 0.2).max(0.0) * 1.4,
+        _ => 0.0,
+    };
+    if roll(lot, 7) < chance {
+        0.25 + 0.75 * roll(lot, 13)
+    } else {
+        0.0
+    }
+}
+
+/// Qué parte de las salientes del edificio de `lot` chorrea
+/// ([`Shape::set_streaks`]): ninguna en el banco y la intendencia, y en los
+/// demás más cuanto más gastado está, nunca todas.
+pub(crate) fn streaks(lot: &Lot) -> f32 {
+    match lot.building.kind {
+        BuildingKind::Bank | BuildingKind::TownHall => 0.0,
+        _ => {
+            let wear = wear(lot).unwrap_or(0.0);
+            (0.15 + 0.6 * wear) * (0.5 + roll(lot, 21))
+        }
+    }
+    .min(0.9)
+}
+
+/// Si el edificio de `lot` lleva persianas pintadas de verde
+/// ([`Surface::Shutter`], de tablillas en el frente) y no postigos de tablas
+/// al natural: los frentes de
+/// mampostería del pueblo, salvo una de cada cuatro casas y los ranchos de las
+/// afueras. La estación, los galpones y los depósitos conservan su madera.
+pub(crate) fn paints_its_joinery(lot: &Lot) -> bool {
+    let v = lot.variant;
+    match lot.building.kind {
+        BuildingKind::House => {
+            let cottage = lot.outskirts && v % 20 < 13;
+            !cottage && !(v >> 14).is_multiple_of(4)
+        }
+        BuildingKind::GeneralStore
+        | BuildingKind::PoliceStation
+        | BuildingKind::Church
+        | BuildingKind::Bank
+        | BuildingKind::TownHall => true,
+        _ => false,
+    }
 }
 
 /// Dónde gira la rueda de un molino en su propio espacio, y su guiñada.
@@ -215,7 +323,13 @@ fn italianate(shape: &mut Shape, walls: &Walls, f: &Front, v: u32) {
     // abiertas.
     front.build(shape, f.wall, &openings, u32::MAX);
     dress(shape, &front, &openings, f);
+    // Postigos de tablas atrás y a los costados.
+    let louvred = shape.louvred();
+    shape.set_louvred(false);
     back_and_sides(shape, walls, f, v);
+    shape.set_louvred(louvred);
+    cornice_streaks(shape, &front, &openings, h, v);
+    foot(shape, walls);
     plinth(shape, f.plinth, &front, &openings, 0.6, 0.05);
     let capital = h - 0.55;
     for k in 1..f.bays {
@@ -291,9 +405,34 @@ fn back_and_sides(shape: &mut Shape, walls: &Walls, f: &Front, v: u32) {
     }
 }
 
-/// Marcos, hojas, rejas y guardapolvos en las `openings` de `wall`.
+/// Marcos, hojas, rejas y guardapolvos en las `openings` de `wall`, el umbral
+/// de piedra de cada puerta a nivel de la vereda y, bajo cada ventana, la
+/// rejilla de hierro fundido que ventila el piso de tablas por el zócalo.
 fn dress(shape: &mut Shape, wall: &Wall, openings: &[Opening], f: &Front) {
     for o in openings {
+        let (a, b) = o.span();
+        if o.door && o.bottom <= 0.01 {
+            // Asoma del zócalo y entra hasta las hojas.
+            wall.piece(
+                shape,
+                Surface::Plinth,
+                (a - 0.08, -THRESHOLD.0, -0.05),
+                (b + 0.08, wall.thickness * 0.45, THRESHOLD.1),
+            );
+        } else if !o.door {
+            // Lo que chorrea del alféizar.
+            grime::streaks(
+                shape,
+                wall,
+                (a, b),
+                o.bottom - 0.09,
+                0.35,
+                (0.25, 0.8),
+                wall.start.x * 3.1 + wall.start.z + o.at,
+                grime::STREAK,
+            );
+            vent(shape, wall, (a + b) / 2.0);
+        }
         if o.door {
             door_leaves(shape, wall, o, f.transom);
             surround(shape, f.trim, wall, o, false);
@@ -305,6 +444,105 @@ fn dress(shape: &mut Shape, wall: &Wall, openings: &[Opening], f: &Front) {
         }
     }
 }
+
+/// A qué altura sobre el suelo se tiende la tierra al pie del frente: sobre
+/// el ladrillo de la vereda (6 cm), sin tocarlo.
+const FRONT_GROUND: f32 = 0.075;
+
+/// A qué altura se tiende la del fondo y los costados, sobre el patio.
+const BACK_GROUND: f32 = 0.025;
+
+/// Cuánto se aleja de la pared la tierra juntada a su pie, en metros.
+const FOOT_GRIME: f32 = 0.35;
+
+/// La tierra juntada al pie de las cuatro paredes de `walls`.
+pub(super) fn foot(shape: &mut Shape, walls: &Walls) {
+    grime::apron(
+        shape,
+        (walls.x0, walls.x1, walls.z0, walls.z1),
+        (FRONT_GROUND, BACK_GROUND),
+        FOOT_GRIME,
+    );
+}
+
+/// Chorreados bajo la cornisa del frente `wall` de alto `h`, en los paños
+/// entre las `openings` (nunca delante de una abertura).
+fn cornice_streaks(shape: &mut Shape, wall: &Wall, openings: &[Opening], h: f32, v: u32) {
+    let mut spans = Vec::new();
+    let mut from = 0.3;
+    let mut sorted = openings.to_vec();
+    sorted.sort_by(|a, b| a.at.total_cmp(&b.at));
+    for o in &sorted {
+        let (a, b) = o.span();
+        spans.push((from, a - 0.12));
+        from = b + 0.12;
+    }
+    spans.push((from, wall.length - 0.3));
+    let seed = (v % 9973) as f32;
+    for (a, b) in spans.into_iter().filter(|(a, b)| b - a > 0.25) {
+        grime::streaks(
+            shape,
+            wall,
+            (a, b),
+            h - 0.35,
+            0.8,
+            (0.7, 2.0),
+            seed + a,
+            grime::STREAK,
+        );
+    }
+}
+
+/// La rejilla de hierro fundido, oxidado, que ventila el piso de tablas por
+/// el zócalo bajo una ventana, centrada `at` metros a lo largo de `wall`: un
+/// marco, barrotes y un travesaño delante de un hueco oscuro.
+fn vent(shape: &mut Shape, wall: &Wall, at: f32) {
+    let (x0, x1, y0, y1) = (at - 0.14, at + 0.14, 0.17, 0.33);
+    // La cara del zócalo está 5 cm afuera de la de la pared.
+    let face = -0.05;
+    let iron = Surface::RailSteel;
+    wall.piece(
+        shape,
+        Surface::Recess,
+        (x0, face - 0.001, y0),
+        (x1, face, y1),
+    );
+    let (frame, out) = (0.022, -VENT_OUT);
+    for (lo, hi) in [
+        ((x0, out, y0), (x1, face, y0 + frame)),
+        ((x0, out, y1 - frame), (x1, face, y1)),
+        ((x0, out, y0 + frame), (x0 + frame, face, y1 - frame)),
+        ((x1 - frame, out, y0 + frame), (x1, face, y1 - frame)),
+    ] {
+        wall.piece(shape, iron, lo, hi);
+    }
+    let mid = (y0 + y1) / 2.0;
+    wall.piece(
+        shape,
+        iron,
+        (x0 + frame, out + 0.004, mid - 0.006),
+        (x1 - frame, face, mid + 0.006),
+    );
+    let bars = 5;
+    let step = (x1 - x0 - 2.0 * frame) / (bars + 1) as f32;
+    for k in 1..=bars {
+        let x = x0 + frame + step * k as f32;
+        wall.piece(
+            shape,
+            iron,
+            (x - 0.006, out + 0.006, y0 + frame),
+            (x + 0.006, face, y1 - frame),
+        );
+    }
+}
+
+/// Cuánto asoma el umbral de una puerta de la cara de su pared, y su alto
+/// sobre el suelo, en metros: dentro del retiro [`PROUD`].
+const THRESHOLD: (f32, f32) = (0.08, 0.12);
+
+/// Cuánto asoma la rejilla de ventilación de la cara de su pared, apenas más
+/// que el zócalo (5 cm).
+const VENT_OUT: f32 = 0.065;
 
 /// Un techo acanalado oculto detrás de un parapeto de `parapet` de alto en el
 /// frente, que cae desde justo debajo de su albardilla hasta más allá de la
@@ -403,19 +641,30 @@ pub(crate) fn house_finish(v: u32) -> (Surface, Surface, Surface) {
     let stucco_trim = v & 0x20 != 0;
     match wall {
         // Molduras blancas en un frente de color, grises en uno blanco.
+        // Los zócalos de los frentes blancos y de ladrillo, de revoque de
+        // cemento manchado.
         Surface::Painted(Paint::LimeWhite) => (wall, Surface::Stucco, Surface::Band),
         Surface::Painted(_) => (wall, Surface::Whitewash, Surface::Band),
-        Surface::Brick if stucco_trim => (wall, Surface::Stucco, Surface::Stucco),
+        Surface::Brick if stucco_trim => (wall, Surface::Stucco, Surface::Plinth),
         Surface::WashedBrick if stucco_trim => (wall, Surface::Whitewash, Surface::Band),
-        Surface::PatchedBrick => (wall, Surface::Stucco, Surface::Stucco),
-        _ => (wall, Surface::Whitewash, Surface::Stucco),
+        Surface::PatchedBrick => (wall, Surface::Stucco, Surface::Plinth),
+        _ => (wall, Surface::Whitewash, Surface::Plinth),
     }
 }
 
 /// Un rancho de las afueras: paredes gruesas de adobe o encaladas, retiradas
 /// bajo un techo de chapa acanalada, una puerta y una o dos ventanas, y una
-/// chimenea.
+/// chimenea; o, de vez en cuando, un rancho de madera, una casilla de chapa o
+/// un rancho de barro y paja ([`ranchos`]).
 fn cottage(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
+    // Uno de cada ocho es de madera, otro una casilla de chapa y otro de
+    // barro y paja.
+    match (v >> 8) % 8 {
+        5 => return ranchos::wooden(shape, (w, d, h), DROP, v),
+        6 => return ranchos::casilla(shape, (w, d, h), DROP, v),
+        7 => return ranchos::mud_straw(shape, (w, d, h), DROP, v),
+        _ => {}
+    }
     let inset = 0.4;
     let walls = Walls {
         x0: -w / 2.0 + inset,
@@ -426,10 +675,12 @@ fn cottage(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
         height: (h - 0.6).max(2.8),
         drop: DROP,
     };
-    // Adobe o encalado; uno de cada cuatro ranchos encalados es de ladrillo.
+    // Adobe o encalado; uno de cada cuatro ranchos encalados es de ladrillo,
+    // y la mitad del resto lleva una cal vieja que salta a escamas.
     let wall = match (v & 1, (v >> 4) % 4) {
         (0, _) => Surface::Adobe,
         (_, 0) => Surface::WashedBrick,
+        (_, 1) => Surface::OldLime,
         _ => Surface::Whitewash,
     };
     let len = walls.width();
@@ -469,6 +720,7 @@ fn cottage(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
         Vec3::new(walls.x1 - 1.0, walls.height, walls.z0 + 0.8),
         top,
     );
+    foot(shape, &walls);
 }
 
 /// El almacén de ramos generales, o la pulpería de un pueblo pequeño, con su
@@ -490,11 +742,11 @@ fn store(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32, style: StoreStyl
         (true, _) => Surface::Painted(Paint::GreyBlue),
         (false, 0 | 1) => Surface::Lime,
         (false, 2) => Surface::PatchedBrick,
-        (false, _) => Surface::Whitewash,
+        (false, _) => Surface::OldLime,
     };
     let plinth = match wall {
         Surface::Painted(_) | Surface::WashedBrick => Surface::Band,
-        _ => Surface::Stucco,
+        _ => Surface::Plinth,
     };
     let f = Front {
         wall,
@@ -540,9 +792,10 @@ fn police(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
     let walls = masonry((w, d, h), 0.45);
     let bays = (((walls.width() / 2.9) as usize).clamp(3, 7)) | 1;
     let f = Front {
-        wall: Surface::Whitewash,
+        // Cal sobre ladrillo, con molduras encaladas.
+        wall: Surface::LimeBrick,
         trim: Surface::Whitewash,
-        plinth: Surface::Stucco,
+        plinth: Surface::Plinth,
         bays,
         doors: vec![bays / 2],
         // Lo bastante bajo para el cartel sobre la puerta.
@@ -576,6 +829,10 @@ fn police(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
     );
 }
 
+/// La pared y las molduras de la iglesia: revoque fino a la cal con sus
+/// juntas de paño, molduras encaladas.
+const CHURCH: (Surface, Surface) = (Surface::Render(Paint::LimeWhite), Surface::Whitewash);
+
 /// Cuánto sobresale el campanario de la iglesia del frente de su nave, en
 /// metros.
 const TOWER_OUT: f32 = 0.7;
@@ -587,7 +844,7 @@ fn church(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
     // edificio.
     let mut walls = masonry((w, d, h), 0.6);
     walls.z1 -= TOWER_OUT;
-    let (wall, trim) = (Surface::Whitewash, Surface::Whitewash);
+    let (wall, trim) = CHURCH;
     let tower = 4.0_f32.min(walls.width() - 2.0);
     let len = walls.width();
     // El frente de la nave: una ventana de arco a cada lado del campanario.
@@ -609,10 +866,11 @@ fn church(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
     front.build(shape, wall, &front_openings, u32::MAX);
     for o in &front_openings {
         arch(shape, (wall, trim), &front, o);
+        glazed_arch(shape, &front, o);
     }
-    plinth(shape, Surface::Stucco, &front, &front_openings, 0.7, 0.05);
+    plinth(shape, Surface::Plinth, &front, &front_openings, 0.7, 0.05);
     walls.back().build(shape, wall, &[], 0);
-    plinth(shape, Surface::Stucco, &walls.back(), &[], 0.7, 0.04);
+    plinth(shape, Surface::Plinth, &walls.back(), &[], 0.7, 0.04);
     for east in [true, false] {
         let side = walls.side(east);
         let n = ((side.length / 4.0) as usize).max(1);
@@ -629,8 +887,9 @@ fn church(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
         side.build(shape, wall, &windows, u32::MAX);
         for o in &windows {
             arch(shape, (wall, trim), &side, o);
+            glazed_arch(shape, &side, o);
         }
-        plinth(shape, Surface::Stucco, &side, &windows, 0.7, 0.04);
+        plinth(shape, Surface::Plinth, &side, &windows, 0.7, 0.04);
         // Pilastras de contrafuerte entre las ventanas.
         for k in 0..=n {
             let at = (side.length * k as f32 / n as f32).clamp(0.3, side.length - 0.3);
@@ -674,6 +933,7 @@ fn church(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
         0.3,
     );
     bell_tower(shape, &walls, tower, rise + 0.5, v);
+    foot(shape, &walls);
 }
 
 /// El campanario de la iglesia, de `size` de lado, que sobresale [`TOWER_OUT`]
@@ -681,7 +941,7 @@ fn church(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
 /// puerta bajo un arco de medio punto, un cuerpo de campanas de arcos de medio
 /// punto, un tambor y una aguja de zinc con una cruz de hierro.
 fn bell_tower(shape: &mut Shape, nave: &Walls, size: f32, over: f32, _v: u32) {
-    let (wall, trim) = (Surface::Whitewash, Surface::Whitewash);
+    let (wall, trim) = CHURCH;
     let h = nave.height;
     let front = nave.z1 + TOWER_OUT;
     let shaft = Walls {
@@ -701,10 +961,11 @@ fn bell_tower(shape: &mut Shape, nave: &Walls, size: f32, over: f32, _v: u32) {
         door: true,
     };
     shaft.front().build(shape, wall, &[door], u32::MAX);
+    foot(shape, &shaft);
     let square = Opening { top: 2.6, ..door };
     door_leaves(shape, &shaft.front(), &square, false);
     arch(shape, (wall, trim), &shaft.front(), &door);
-    plinth(shape, Surface::Stucco, &shaft.front(), &[door], 0.7, PROUD);
+    plinth(shape, Surface::Plinth, &shaft.front(), &[door], 0.7, PROUD);
     for east in [true, false] {
         shaft.side(east).build(shape, wall, &[], 0);
     }
@@ -824,7 +1085,7 @@ fn station(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
     // justo por fuera, siguen siendo correctos.
     gable_roof(
         shape,
-        (Surface::Galvanised, Surface::Brick),
+        (Surface::Galvanised, Surface::StationBrick),
         &walls,
         2.2,
         0.05,
@@ -833,15 +1094,16 @@ fn station(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
     chimney(shape, Vec3::new(walls.x0 + 2.0, h, 0.0), h + 2.4);
     chimney(shape, Vec3::new(walls.x1 - 2.0, h, 0.0), h + 2.4);
     canopy(shape, (w, d));
+    foot(shape, &walls);
 }
 
 /// Las aberturas y los ornamentos de las paredes largas de una estación.
 fn station_front(walls: &Walls) -> Front {
     let bays = pampa_core::station_bays(walls.width());
     Front {
-        wall: Surface::Brick,
+        wall: Surface::StationBrick,
         trim: Surface::Stucco,
-        plinth: Surface::Stucco,
+        plinth: Surface::Plinth,
         bays,
         doors: (0..bays).filter(|k| k % 2 == 1).collect(),
         door: (1.3, 2.8),

@@ -1445,13 +1445,10 @@ fn spawn_built(
     for b in built {
         let range = &ranges[b.range];
         for (surface, mesh) in b.meshes {
-            let mut e = commands.spawn((
-                Mesh3d(meshes.add(mesh)),
-                MeshMaterial3d(surfaces.get(surface)),
-                b.transform,
-                range.clone(),
-                ChildOf(root),
-            ));
+            // Los edificios, gastados; la plaza, lisa.
+            let mut e = commands.spawn((b.transform, range.clone(), ChildOf(root)));
+            surfaces.insert(&mut e, surface, &mesh);
+            e.insert(Mesh3d(meshes.add(mesh)));
             match b.part {
                 Part::Building(index) => e.insert(TownBuilding(index)),
                 Part::Plaza(index) => e.insert(TownPlaza(index)),
@@ -1589,28 +1586,88 @@ mod tests {
     }
 
     #[test]
+    fn about_six_in_ten_town_buildings_rise_damp_never_the_bank_or_the_intendencia() {
+        let terrain = Terrain::default();
+        let pico = TownLayout::generate(&TownConfig {
+            name: "General Pico".into(),
+            blocks: (8, 8),
+            ..TownConfig::castex()
+        })
+        .unwrap();
+        let village = TownLayout::generate(&TownConfig {
+            name: "Aldea".into(),
+            blocks: (3, 3),
+            seed: 5,
+            ..TownConfig::castex()
+        })
+        .unwrap();
+        let (mut damp, mut walls, mut civic) = (0, 0, 0);
+        for town in [TownLayout::castex_inspired(), pico, village] {
+            for job in lots(&town, &terrain) {
+                let kind = job.lot.building.kind;
+                // Las paredes de mampostería; los galpones son de chapa.
+                if town_buildings::wear(&job.lot).is_none()
+                    || matches!(kind, BuildingKind::Shed | BuildingKind::GrainStore)
+                {
+                    continue;
+                }
+                let d = town_buildings::damp(&job.lot);
+                if matches!(kind, BuildingKind::Bank | BuildingKind::TownHall) {
+                    assert_eq!(d, 0.0, "{kind:?}");
+                    civic += 1;
+                }
+                walls += 1;
+                damp += usize::from(d > 0.0);
+            }
+        }
+        assert!(civic >= 3, "the towns have their banks and the intendencia");
+        let share = damp as f32 / walls as f32;
+        println!("{damp} of {walls} buildings rise damp ({share:.2})");
+        // El usuario: "la humedad en el 60 % de las construcciones".
+        assert!((0.5..=0.7).contains(&share), "{share}");
+    }
+
+    #[test]
     fn each_building_is_one_mesh_per_surface_with_the_shared_materials() {
         let mut app = app();
         app.update();
         let town = app.world().resource::<WorldTowns>().0[0].clone();
         let facade = app.world().resource::<FacadeMaterials>().clone();
-        let shared: HashSet<AssetId<StandardMaterial>> =
-            Surface::ALL.iter().map(|&s| facade.get(s).id()).collect();
-        let mut q = app
-            .world_mut()
-            .query::<(&TownBuilding, &MeshMaterial3d<StandardMaterial>, &ChildOf)>();
+        // Las casas, el comercio, los edificios públicos y los galpones llevan
+        // los materiales gastados; el tanque y el molino, los lisos.
+        let shared: HashSet<bevy::asset::UntypedAssetId> = Surface::ALL
+            .iter()
+            .flat_map(|&s| {
+                [
+                    facade.get(s).id().untyped(),
+                    facade.weathered(s).id().untyped(),
+                ]
+            })
+            .collect();
         let wheels: HashSet<Entity> = app
             .world_mut()
             .query_filtered::<Entity, With<WindmillRotor>>()
             .iter(app.world())
             .collect();
-        let mut per: Vec<Vec<AssetId<StandardMaterial>>> = vec![Vec::new(); town.buildings.len()];
-        for (b, m, parent) in q.iter(app.world()) {
+        let mut per: Vec<Vec<bevy::asset::UntypedAssetId>> = vec![Vec::new(); town.buildings.len()];
+        let mut plain = app
+            .world_mut()
+            .query::<(&TownBuilding, &MeshMaterial3d<StandardMaterial>, &ChildOf)>();
+        let mut weathered: Vec<usize> = Vec::new();
+        for (b, m, parent) in plain.iter(app.world()) {
             // La rueda de un molino de viento es su propia malla por
             // superficie.
             if !wheels.contains(&parent.parent()) {
-                per[b.0].push(m.id());
+                per[b.0].push(m.id().untyped());
             }
+        }
+        let mut worn = app.world_mut().query::<(
+            &TownBuilding,
+            &MeshMaterial3d<crate::facade::BuildingMaterial>,
+        )>();
+        for (b, m) in worn.iter(app.world()) {
+            per[b.0].push(m.id().untyped());
+            weathered.push(b.0);
         }
         for (k, (building, materials)) in town.buildings.iter().zip(&per).enumerate() {
             if building.kind == BuildingKind::Platform {
@@ -1618,6 +1675,16 @@ mod tests {
                 continue;
             }
             assert!(!materials.is_empty(), "building {k} ({:?})", building.kind);
+            let props = matches!(
+                building.kind,
+                BuildingKind::Windmill | BuildingKind::WaterTank
+            );
+            assert_eq!(
+                weathered.contains(&k),
+                !props,
+                "building {k} ({:?}) weathers unless it is iron",
+                building.kind
+            );
             assert!(materials.iter().all(|m| shared.contains(m)));
             let distinct: HashSet<_> = materials.iter().collect();
             assert_eq!(

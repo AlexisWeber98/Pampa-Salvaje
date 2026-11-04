@@ -80,6 +80,114 @@ impl Wall {
         }
     }
 
+    /// Una puerta de tablas cerrada en el vano de `x.0` a `x.1` y de `y.0` a
+    /// `y.1`: la hoja de madera pintada y gastada ([`Surface::Door`], o la
+    /// rústica de [`Shape::door_wood`]), tres
+    /// travesaños y dos riostras en diagonal entre ellos, como las de un
+    /// rancho o una casa humilde.
+    fn ledged_door(&self, shape: &mut Shape, (x0, x1): (f32, f32), (y0, y1): (f32, f32)) {
+        let t = self.thickness;
+        let (leaf, ledge) = (t * 0.45, t * 0.45 - 0.03);
+        let wood = shape.door_wood();
+        self.piece(shape, wood, (x0, leaf, y0), (x1, t * 0.5, y1));
+        let rails = [y0 + 0.25, (y0 + y1) / 2.0, y1 - 0.25];
+        for y in rails {
+            self.piece(
+                shape,
+                wood,
+                (x0 + 0.04, ledge, y - 0.05),
+                (x1 - 0.04, leaf, y + 0.05),
+            );
+        }
+        let mid = ledge + 0.012;
+        for pair in rails.windows(2) {
+            shape.beam(
+                wood,
+                self.at(x0 + 0.08, mid, pair[0] + 0.05),
+                self.at(x1 - 0.08, mid, pair[1] - 0.05),
+                0.045,
+            );
+        }
+    }
+
+    /// El marco de madera alrededor del vano de una puerta, de `x.0` a `x.1` y
+    /// de `y.0` a `y.1`, apenas saliente de la cara de la pared.
+    fn casing(&self, shape: &mut Shape, (x0, x1): (f32, f32), (y0, y1): (f32, f32)) {
+        let (w, out) = (0.07, -0.025);
+        let wood = shape.door_wood();
+        self.piece(shape, wood, (x0 - w, out, y0), (x0, 0.0, y1 + w));
+        self.piece(shape, wood, (x1, out, y0), (x1 + w, 0.0, y1 + w));
+        self.piece(shape, wood, (x0, out, y1), (x1, 0.0, y1 + w));
+    }
+
+    /// Una hoja de persiana abierta contra la cara de la pared, de `x.0` a
+    /// `x.1` a lo largo de ella y de `y.0` a `y.1` de alto: un bastidor de dos
+    /// largueros y tres travesaños, y entre ellos tablillas inclinadas que
+    /// dejan ver la sombra de la pared entre una y otra. En el canto `outer`
+    /// la pintura se gastó hasta la madera gris.
+    fn persiana(&self, shape: &mut Shape, x: (f32, f32), y: (f32, f32), outer: f32) {
+        const STILE: f32 = 0.055;
+        const EDGE: f32 = 0.012;
+        let ((x0, x1), (y0, y1)) = (x, y);
+        let (front, back) = (-0.05, -0.01);
+        // El canto gastado y los largueros.
+        let worn = if outer <= x0 {
+            (x0, x0 + EDGE)
+        } else {
+            (x1 - EDGE, x1)
+        };
+        self.piece(
+            shape,
+            Surface::Sleeper,
+            (worn.0, front, y0),
+            (worn.1, back, y1),
+        );
+        let (s0, s1) = (x0.max(worn.1.min(x0 + EDGE)), x1.min(worn.0.max(x1 - EDGE)));
+        self.piece(
+            shape,
+            Surface::Planks,
+            (s0, front, y0),
+            (s0 + STILE, back, y1),
+        );
+        self.piece(
+            shape,
+            Surface::Planks,
+            (s1 - STILE, front, y0),
+            (s1, back, y1),
+        );
+        let (i0, i1) = (s0 + STILE, s1 - STILE);
+        // Travesaños abajo, en el medio y arriba.
+        let mid = (y0 + y1) / 2.0;
+        let rails = [(y0, y0 + 0.09), (mid - 0.03, mid + 0.03), (y1 - 0.07, y1)];
+        for (r0, r1) in rails {
+            self.piece(shape, Surface::Planks, (i0, front, r0), (i1, back, r1));
+        }
+        // La sombra detrás de las tablillas.
+        self.piece(
+            shape,
+            Surface::Recess,
+            (i0, back - 0.004, y0),
+            (i1, back, y1),
+        );
+        // Las tablillas, cada una inclinada con su canto de arriba hacia la
+        // pared, entre cada par de travesaños.
+        const PITCH: f32 = 0.065;
+        for (from, to) in [(rails[0].1, rails[1].0), (rails[1].1, rails[2].0)] {
+            let n = ((to - from) / PITCH).floor() as usize;
+            for k in 0..n {
+                let low = from + k as f32 * PITCH + 0.004;
+                let high = low + PITCH - 0.002;
+                let corners = [
+                    self.at(i0, front + 0.004, low),
+                    self.at(i1, front + 0.004, low),
+                    self.at(i1, back - 0.006, high),
+                    self.at(i0, back - 0.006, high),
+                ];
+                shape.face(Surface::Planks, &corners);
+            }
+        }
+    }
+
     /// La pared en `surface` con `openings` dejadas en ella: pilares entre
     /// ellas, un dintel encima y un alféizar debajo de cada una, un hueco
     /// oscuro adentro, una puerta de tablones (cerrada salvo que `open`) o una
@@ -108,15 +216,15 @@ impl Wall {
                 (b, t * 0.75, o.top),
             );
             if o.door {
-                // Tablones sobre un marco; unas pocas puertas, según la
-                // semilla, quedan abiertas.
+                // Una puerta de tablas con travesaños y riostras en su marco;
+                // unas pocas, según la semilla, quedan abiertas.
                 if (open >> (k % 16)) & 1 == 0 {
-                    self.piece(
-                        shape,
-                        Surface::Planks,
-                        (a, t * 0.45, o.bottom),
-                        (b, t * 0.5, o.top),
-                    );
+                    self.ledged_door(shape, (a, b), (o.bottom, o.top));
+                }
+                // Los frentes del pueblo, con todas sus puertas abiertas aquí,
+                // ponen sus propias hojas y su marco moldurado.
+                if open != u32::MAX {
+                    self.casing(shape, (a, b), (o.bottom, o.top));
                 }
             } else {
                 // El alféizar sobresale, y los postigos quedan abiertos hacia
@@ -127,21 +235,60 @@ impl Wall {
                     (a - 0.05, -0.06, o.bottom - 0.08),
                     (b + 0.05, 0.0, o.bottom),
                 );
-                let leaf = o.width / 2.0;
-                for (l0, l1) in [(a - leaf - 0.02, a - 0.02), (b + 0.02, b + leaf + 0.02)] {
+                let (y0, y1) = (o.bottom + 0.02, o.top - 0.02);
+                if !shape.glazed() {
+                    // Un vano chico sin vidrio: un solo postigo de tabla
+                    // abierto contra la pared, y la oscuridad de adentro.
+                    let wood = shape.shutter_wood();
                     self.piece(
                         shape,
-                        Surface::Planks,
-                        (l0, -0.05, o.bottom + 0.02),
-                        (l1, -0.01, o.top - 0.02),
+                        wood,
+                        (b + 0.02, -0.05, y0),
+                        (b + o.width + 0.02, -0.01, y1),
                     );
+                    self.piece(
+                        shape,
+                        Surface::Recess,
+                        (a, t * 0.3, o.bottom),
+                        (b, t * 0.32, o.top),
+                    );
+                    from = b;
+                    continue;
                 }
-                // Una hoja vidriada en el vano, oscura.
+                let leaf = o.width / 2.0;
+                for (l0, l1) in [(a - leaf - 0.02, a - 0.02), (b + 0.02, b + leaf + 0.02)] {
+                    if shape.louvred() {
+                        // La hoja exterior, la más alejada del vano, gastada en
+                        // su canto.
+                        let outer = if l1 < a { l0 } else { l1 };
+                        self.persiana(shape, (l0, l1), (y0, y1), outer);
+                    } else {
+                        let wood = shape.shutter_wood();
+                        self.piece(shape, wood, (l0, -0.05, y0), (l1, -0.01, y1));
+                    }
+                }
+                // Una hoja vidriada en el vano, oscura y apenas reflejante,
+                // con su cruz de madera.
                 self.piece(
                     shape,
-                    Surface::Recess,
+                    Surface::Glass,
                     (a, t * 0.3, o.bottom),
                     (b, t * 0.32, o.top),
+                );
+                let m = (a + b) / 2.0;
+                let cross = o.bottom + (o.top - o.bottom) * 0.55;
+                let wood = shape.shutter_wood();
+                self.piece(
+                    shape,
+                    wood,
+                    (m - 0.02, t * 0.27, o.bottom),
+                    (m + 0.02, t * 0.3, o.top),
+                );
+                self.piece(
+                    shape,
+                    wood,
+                    (a, t * 0.27, cross - 0.02),
+                    (b, t * 0.3, cross + 0.02),
                 );
             }
             from = b;

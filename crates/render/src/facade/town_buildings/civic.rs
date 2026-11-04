@@ -15,7 +15,7 @@ use super::super::italianate::{
 use super::super::materials::{Paint, Surface};
 use super::super::shape::Shape;
 use super::super::walls::{Opening, Wall, Walls, flat_roof, ring};
-use super::{DROP, Front, Roof, back_and_sides, masonry};
+use super::{DROP, Front, Roof, back_and_sides, foot, masonry};
 
 /// Altura de la franja lisa del friso de un banco, bajo su cornisa, en la que
 /// `signs` pinta su nombre: de `h - BANK_FRIEZE.0` a `h - BANK_FRIEZE.1`.
@@ -96,7 +96,7 @@ fn dentils(shape: &mut Shape, surface: Surface, wall: &Wall, (a, b): (f32, f32),
 /// azotea plana.
 pub(super) fn bank(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
     let walls = masonry((w, d, h), 0.55);
-    let (wall, trim) = (Surface::Stucco, Surface::Whitewash);
+    let (wall, trim) = (Surface::Ashlar, Surface::Whitewash);
     let front = walls.front();
     let len = front.length;
     let bays = ((len / 3.4) as usize).clamp(3, 5) | 1;
@@ -138,7 +138,7 @@ pub(super) fn bank(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
     let f = Front {
         wall,
         trim,
-        plinth: wall,
+        plinth: Surface::Plinth,
         bays,
         doors: vec![bays / 2],
         door: (1.9, top),
@@ -153,7 +153,7 @@ pub(super) fn bank(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
         transom: true,
     };
     back_and_sides(shape, &walls, &f, v);
-    plinth(shape, wall, &front, &openings, 0.95, 0.09);
+    plinth(shape, Surface::Plinth, &front, &openings, 0.95, 0.09);
     // El orden gigante: pilastras de la base a la cornisa entre los vanos.
     let capital = h - 0.55;
     let pillars: Vec<f32> = (1..bays).map(|k| len * k as f32 / bays as f32).collect();
@@ -197,6 +197,7 @@ pub(super) fn bank(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
         walls.thickness * 0.6,
     );
     flat_roof(shape, &walls);
+    foot(shape, &walls);
 }
 
 /// La intendencia municipal: el frente más ancho y alto del pueblo, de dos
@@ -213,9 +214,9 @@ pub(super) fn town_hall(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
     let mut walls = masonry((w, d, h), 0.55);
     walls.z1 -= out;
     let (wall, trim, base) = (
-        Surface::Painted(Paint::Ochre),
+        Surface::Render(Paint::Ochre),
         Surface::Whitewash,
-        Surface::Stucco,
+        Surface::Plinth,
     );
     let floor = (h * 0.5).max(3.8);
     let front = walls.front();
@@ -357,6 +358,7 @@ pub(super) fn town_hall(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
         &[(0.0, 0.0), (0.1, 0.08), (0.1, 0.14), (0.0, 0.24)],
         8,
     );
+    super::foot(shape, &walls);
 }
 
 /// El pabellón central de la intendencia, de `p0` a `p1` a lo largo del frente
