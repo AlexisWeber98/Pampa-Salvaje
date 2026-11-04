@@ -19,13 +19,21 @@
 //! [`crate::flora`] limita a unos pocos escalones con semilla. Sin servidor de
 //! assets, raíz de assets, formato de textura comprimida o los archivos, las
 //! tarjetas se dibujan en un color liso del mismo aspecto.
+//!
+//! El viento las mece en el vertex shader (`assets/shaders/grass_wind.wesl`,
+//! [`GrassWind`]): la punta de cada tarjeta se inclina a favor del viento, con
+//! ráfagas que recorren el campo. El segundo UV de cada vértice dice cuánto se
+//! mueve (ver [`SWAY`]).
 
 use std::path::Path;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::CompressedImageFormatSupport;
 use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
+use bevy::render::render_resource::AsBindGroup;
+use bevy::shader::ShaderRef;
 use pampa_core::TuftKind;
 
 use crate::AssetRoot;
@@ -40,6 +48,56 @@ pub const CARD_VARIANTS: usize = 4;
 pub const GRASS_TINTS: usize = 4;
 /// Quads con los que se construye una mata.
 pub const CARDS_PER_TUFT: usize = 3;
+
+/// El segundo UV de un vértice de pasto: `x`, cuánto se mueve con el viento
+/// (0 en la base, 1 en la punta); `y`, su altura sobre la base en unidades de
+/// la malla, que el shader pasa a metros con la escala de la entidad. Este es
+/// el atributo.
+pub const SWAY: bevy::mesh::MeshVertexAttribute = Mesh::ATTRIBUTE_UV_1;
+
+/// El viento por defecto: sopla hacia el noreste (el pampero viene del
+/// suroeste), con fuerza moderada. `x`, `y`: su rumbo en el plano del mundo
+/// (`x` este, `y` el `z` del mundo); `z`: cuánto se inclina la punta, como
+/// fracción de su altura, en una ráfaga plena; `w`: a cuántos metros de la
+/// cámara el pasto ya se hundió en el suelo (0: nunca; ver
+/// [`crate::meadow`]).
+pub const WIND: Vec4 = Vec4::new(0.70710677, -0.70710677, 0.22, 0.0);
+
+/// Lo que el shader de viento agrega al material estándar de las tarjetas.
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
+pub struct GrassWind {
+    /// Ver [`WIND`].
+    #[uniform(100)]
+    pub wind: Vec4,
+}
+
+impl Default for GrassWind {
+    fn default() -> Self {
+        Self { wind: WIND }
+    }
+}
+
+impl MaterialExtension for GrassWind {
+    /// `assets/shaders/grass_wind.wesl`: el vertex shader estándar, con la
+    /// punta de cada tarjeta mecida por el viento.
+    fn vertex_shader() -> ShaderRef {
+        "shaders/grass_wind.wesl".into()
+    }
+}
+
+/// El material de las tarjetas de pasto: [`StandardMaterial`] más
+/// [`GrassWind`].
+pub type GrassMaterial = ExtendedMaterial<StandardMaterial, GrassWind>;
+
+/// Dibuja [`GrassMaterial`]. Necesita un renderer; sin él las matas igual se
+/// construyen, solo con los assets.
+pub struct GrassMaterialPlugin;
+
+impl Plugin for GrassMaterialPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(MaterialPlugin::<GrassMaterial>::default());
+    }
+}
 
 /// Índice de `kind` en las tablas por tipo.
 fn slot(kind: TuftKind) -> usize {
@@ -99,6 +157,7 @@ pub fn card_mesh(kind: TuftKind, variant: usize) -> Mesh {
     // Todas las normales apuntan derecho hacia arriba: una mata se ilumina como
     // el suelo que tiene debajo, por delante y por detrás por igual.
     let normals = vec![[0.0, 1.0, 0.0]; positions.len()];
+    let sway: Vec<[f32; 2]> = positions.iter().map(|p| [p[1], p[1]]).collect();
     Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::RENDER_WORLD,
@@ -106,7 +165,18 @@ pub fn card_mesh(kind: TuftKind, variant: usize) -> Mesh {
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
     .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+    .with_inserted_attribute(SWAY, sway)
     .with_inserted_indices(Indices::U32(indices))
+}
+
+/// El tinte de `kind` (sRGB) en `k`, de 0 (verde grisáceo) a 1 (amarillo
+/// seco).
+pub fn tint_rgb(kind: TuftKind, k: f32) -> Vec3 {
+    let (from, to) = match kind {
+        TuftKind::Paja => (Vec3::new(0.80, 0.82, 0.68), Vec3::new(1.0, 0.95, 0.82)),
+        TuftKind::Flechilla => (Vec3::new(0.80, 0.88, 0.62), Vec3::new(1.0, 0.88, 0.44)),
+    };
+    from.lerp(to, k.clamp(0.0, 1.0))
 }
 
 /// El tinte `tint` de `kind` (sRGB), de verde grisáceo a amarillo seco.
@@ -114,12 +184,7 @@ pub fn card_mesh(kind: TuftKind, variant: usize) -> Mesh {
 /// la flechilla se lleva hacia la paleta verde seca que tenían las matas
 /// anteriores.
 fn tint_color(kind: TuftKind, tint: usize) -> Color {
-    let k = tint as f32 / (GRASS_TINTS - 1) as f32;
-    let (from, to) = match kind {
-        TuftKind::Paja => (Vec3::new(0.80, 0.82, 0.68), Vec3::new(1.0, 0.95, 0.82)),
-        TuftKind::Flechilla => (Vec3::new(0.80, 0.88, 0.62), Vec3::new(1.0, 0.88, 0.44)),
-    };
-    let c = from.lerp(to, k);
+    let c = tint_rgb(kind, tint as f32 / (GRASS_TINTS - 1) as f32);
     Color::srgb(c.x, c.y, c.z)
 }
 
@@ -136,14 +201,20 @@ fn plain_color(kind: TuftKind, tint: usize) -> Color {
 
 /// El material de tarjeta de `kind` en el tinte `tint`, con `map` cuando se
 /// está cargando: probado por alfa y dibujado por ambas caras, como las
-/// tarjetas de hojas.
-pub fn card_material(kind: TuftKind, tint: usize, map: Option<Handle<Image>>) -> StandardMaterial {
-    StandardMaterial {
-        base_color: if map.is_some() {
-            tint_color(kind, tint)
-        } else {
-            plain_color(kind, tint)
-        },
+/// tarjetas de hojas, y mecido por el viento.
+pub fn card_material(kind: TuftKind, tint: usize, map: Option<Handle<Image>>) -> GrassMaterial {
+    let base_color = if map.is_some() {
+        tint_color(kind, tint)
+    } else {
+        plain_color(kind, tint)
+    };
+    swaying(base_color, map)
+}
+
+/// Una tarjeta de pasto en `base_color`, con `map`, mecida por el viento.
+pub fn swaying(base_color: Color, map: Option<Handle<Image>>) -> GrassMaterial {
+    let base = StandardMaterial {
+        base_color,
         base_color_texture: map,
         perceptual_roughness: 1.0,
         metallic: 0.0,
@@ -154,6 +225,10 @@ pub fn card_material(kind: TuftKind, tint: usize, map: Option<Handle<Image>>) ->
         // caras.
         double_sided: false,
         ..default()
+    };
+    GrassMaterial {
+        base,
+        extension: GrassWind::default(),
     }
 }
 
@@ -163,7 +238,7 @@ pub struct GrassCards {
     /// Por tipo, luego por forma.
     meshes: Vec<Handle<Mesh>>,
     /// Por tipo, luego por tinte.
-    materials: Vec<Handle<StandardMaterial>>,
+    materials: Vec<Handle<GrassMaterial>>,
 }
 
 impl GrassCards {
@@ -172,7 +247,7 @@ impl GrassCards {
     pub fn new(
         maps: [Option<Handle<Image>>; 2],
         meshes: &mut Assets<Mesh>,
-        materials: &mut Assets<StandardMaterial>,
+        materials: &mut Assets<GrassMaterial>,
     ) -> Self {
         let kinds = [TuftKind::Paja, TuftKind::Flechilla];
         Self {
@@ -196,7 +271,7 @@ impl GrassCards {
         kind: TuftKind,
         variant: usize,
         tint: usize,
-    ) -> (Handle<Mesh>, Handle<StandardMaterial>) {
+    ) -> (Handle<Mesh>, Handle<GrassMaterial>) {
         (
             self.meshes[slot(kind) * CARD_VARIANTS + variant.min(CARD_VARIANTS - 1)].clone(),
             self.materials[slot(kind) * GRASS_TINTS + tint.min(GRASS_TINTS - 1)].clone(),
@@ -258,6 +333,14 @@ mod tests {
                 let lowest = at.iter().map(|p| p[1]).fold(f32::MAX, f32::min);
                 let highest = at.iter().map(|p| p[1]).fold(f32::MIN, f32::max);
                 assert_eq!((lowest, highest), (0.0, 1.0));
+                // La punta se mece y la base queda plantada.
+                let sway = floats(&mesh, SWAY);
+                assert_eq!(sway.len(), at.len());
+                assert!(
+                    at.iter()
+                        .zip(&sway)
+                        .all(|(p, s)| s[0] == p[1] && s[1] == p[1])
+                );
                 // Las tarjetas se abren en abanico en planos distintos: no es
                 // un único quad plano.
                 assert!(at.iter().any(|p| p[0].abs() > 0.1));
@@ -306,7 +389,7 @@ mod tests {
         let map = Handle::<Image>::default();
         for kind in KINDS {
             for tint in 0..GRASS_TINTS {
-                let m = card_material(kind, tint, Some(map.clone()));
+                let m = card_material(kind, tint, Some(map.clone())).base;
                 assert_eq!(m.alpha_mode, AlphaMode::Mask(LEAF_CUTOFF));
                 assert_eq!(m.cull_mode, None, "drawn from both sides");
                 assert!(!m.double_sided, "no normal flip on the back");
@@ -314,13 +397,17 @@ mod tests {
             }
             // Sin el mapa: las mismas tarjetas en un color liso, todavía
             // recortadas.
-            let plain = card_material(kind, 0, None);
+            let plain = card_material(kind, 0, None).base;
             assert!(plain.base_color_texture.is_none());
             assert_eq!(plain.alpha_mode, AlphaMode::Mask(LEAF_CUTOFF));
         }
         // De seco a verde: los tintes difieren.
         let tints: Vec<Color> = (0..GRASS_TINTS)
-            .map(|t| card_material(TuftKind::Flechilla, t, Some(map.clone())).base_color)
+            .map(|t| {
+                card_material(TuftKind::Flechilla, t, Some(map.clone()))
+                    .base
+                    .base_color
+            })
             .collect();
         for (i, a) in tints.iter().enumerate() {
             assert!(tints[i + 1..].iter().all(|b| a != b));
@@ -341,7 +428,12 @@ mod tests {
             for tint in 0..GRASS_TINTS {
                 let worn = |kind| {
                     let (_, material) = cards.card(kind, variant, tint);
-                    materials.get(&material).unwrap().base_color_texture.clone()
+                    materials
+                        .get(&material)
+                        .unwrap()
+                        .base
+                        .base_color_texture
+                        .clone()
                 };
                 assert_eq!(worn(TuftKind::Paja), Some(dry.clone()));
                 assert_eq!(worn(TuftKind::Flechilla), Some(green.clone()));

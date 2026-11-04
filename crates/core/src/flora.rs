@@ -512,6 +512,29 @@ impl FloraSite {
         self.lagoons.iter().all(|l| !l.is_bare(p))
     }
 
+    /// Si el pasto crece en `p`: el mismo suelo abierto que el de las matas
+    /// (dentro del mundo, fuera de pueblos, lagunas, vía, caminos y
+    /// asentamientos), sin la prueba de los troncos.
+    pub fn grassland(&self, p: Vec2) -> bool {
+        self.grass_grows(p, &self.rail)
+    }
+
+    /// [`Self::grassland`] contra los tramos de vía `rail` (los de un chunk,
+    /// o todos).
+    fn grass_grows(&self, p: Vec2, rail: &[(Vec2, Vec2)]) -> bool {
+        let bounds = self.config.bounds();
+        let inside = p.x - bounds.min.x >= 0.5
+            && bounds.max.x - p.x >= 0.5
+            && p.y - bounds.min.y >= 0.5
+            && bounds.max.y - p.y >= 0.5;
+        inside
+            && self.flat_areas.iter().all(|a| a.weight(p) == 0.0)
+            && self.off_lagoons(p)
+            && rail_distance(rail, p) >= Self::TUFT_RAIL_MARGIN
+            && self.off_road(p, Self::TUFT_ROAD_MARGIN)
+            && self.off_settlements(p, Self::TUFT_SETTLEMENT_MARGIN)
+    }
+
     /// Si un árbol puede estar en `p`: a [`Self::TREE_LAGOON_MARGIN`] más allá
     /// de la línea del agua de toda laguna.
     fn tree_off_lagoons(&self, p: Vec2) -> bool {
@@ -1126,7 +1149,6 @@ impl FloraSite {
         let min = coord.min(size);
         let mut rng = Rng::new(coord.seed(self.seed), 1);
         let candidates = self.scaled(Self::TUFT_CANDIDATES);
-        let bounds = self.config.bounds();
         let mut tufts = Vec::new();
         for _ in 0..candidates {
             let at = min + Vec2::new(rng.unit() * size, rng.unit() * size);
@@ -1134,16 +1156,7 @@ impl FloraSite {
             if tufts.len() >= Self::TUFT_BUDGET {
                 break;
             }
-            let inside = at.x - bounds.min.x >= 0.5
-                && bounds.max.x - at.x >= 0.5
-                && at.y - bounds.min.y >= 0.5
-                && bounds.max.y - at.y >= 0.5;
-            let open = inside
-                && self.flat_areas.iter().all(|a| a.weight(at) == 0.0)
-                && self.off_lagoons(at)
-                && rail_distance(rail, at) >= Self::TUFT_RAIL_MARGIN
-                && self.off_road(at, Self::TUFT_ROAD_MARGIN)
-                && self.off_settlements(at, Self::TUFT_SETTLEMENT_MARGIN)
+            let open = self.grass_grows(at, rail)
                 && trees
                     .iter()
                     .all(|t| t.at.distance(at) > t.trunk_radius() + 0.4);
@@ -1673,6 +1686,18 @@ pub(crate) mod tests {
         (0..14)
             .flat_map(|x| (-11..1).map(move |y| ChunkCoord::new(x, y)))
             .collect()
+    }
+
+    #[test]
+    fn grassland_is_where_the_tufts_grow_and_not_on_the_track_or_in_town() {
+        let (world, line, flora) = site();
+        let tufts: Vec<Tuft> = between().into_iter().flat_map(|c| flora.chunk(c).tufts).collect();
+        assert!(!tufts.is_empty());
+        assert!(tufts.iter().all(|t| flora.grassland(t.at)));
+        let mid = line.segments().nth(3).map(|s| (s.start + s.end) * 0.5).unwrap();
+        assert!(!flora.grassland(mid), "on the track at {mid:?}");
+        assert!(!flora.grassland(Vec2::new(3000.0, -2000.0)), "in town");
+        assert!(!flora.grassland(world.bounds.min), "on the world's edge");
     }
 
     #[test]
