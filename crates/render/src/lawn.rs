@@ -25,8 +25,9 @@ use crate::town::{StreamTowns, TownRoot, WorldTowns};
 
 /// Cuánto sube la capa de pasto sobre la losa del césped, en metros.
 pub const LAWN_LIFT: f32 = 0.002;
-/// El verde del césped (sRGB), la pintura que el shader del suelo lee como
-/// pasto verde, sin los manchones de la pampa seca.
+/// El verde del césped (sRGB): la pintura que el shader del suelo lee como
+/// pasto verde, así que los manchones pelados quedan raros (los de la pampa
+/// crecen con la sequedad).
 pub const LAWN: [f32; 3] = [0.42, 0.48, 0.25];
 
 /// La capa de pasto del césped de una plaza, hija de la raíz de su pueblo.

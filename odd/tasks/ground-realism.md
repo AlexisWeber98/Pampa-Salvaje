@@ -16,7 +16,7 @@ Order follows the weakest elements found in the map (L2). Each task is one work 
 - T2 [S1, S3] Grass and gramilla: denser tufts near the camera, a short gramilla carpet, wind sway in the vertex stage. Route: inline. Status: done, uncommitted. Near paja tufts and wind are in; the gramilla cards were dropped by the user's choice (L9), so the carpet stays in the ground shader. Evidence: L8, L9.
 - T3 [S1, S3] Caminos: wheel ruts, crown and verge irregularity, dry cracked mud and hoof-churned patches in the road shader and strip mesh. Route: inline. Status: done, uncommitted (the user stages and commits). Evidence: L10.
 - T4 [S1, S3] Town streets: earth streets with ruts, worn centre, irregular edges, shallow dry hollows; replace the flat 3 cm boxes with ground-following surfaces. Route: inline. Status: done, uncommitted. The towns are levelled, so the boxes stay as the base and a worn layer goes on top (L12). Evidence: L12.
-- T5 [S1, S3] Sidewalks, curbs and plazas: real grass on the plaza lawn, worn and broken brick, chipped curbs, plaza paths with edge wear. Route: inline (mapping by a read-only explorer, L13). Status: T5a (lawn) done, uncommitted; T5b (chipped curbs) and T5c (worn and broken brick, path edge wear) pending.
+- T5 [S1, S3] Sidewalks, curbs and plazas: real grass on the plaza lawn, worn and broken brick, chipped curbs, plaza paths with edge wear. Route: inline (mapping by a read-only explorer, L13). Status: T5a (lawn) done in 605c4b3, reviewed; T5b (chipped curbs) done, uncommitted; T5c (worn and broken brick, path edge wear) pending.
 - T6 [S1, S3] Dust and splashes at footsteps: footfall events from people, horses, carts and cars; own lightweight particle system (no new dependency); dust on dry earth, splashes on mud and lagoon edges; short-lived prints. Route: inline. Status: pending.
 
 ## Log
@@ -124,3 +124,11 @@ Order follows the weakest elements found in the map (L2). Each task is one work 
     - every plaza of the active towns gets exactly one lawn sharing one material, and is not re-sown (sabotage: no `Added`).
   - Shots: the Monte Nievas and Pico plazas show photographed green grass with relief and a rare bare patch.
   - Checks: suite green except the known flaky rider test (it passes alone), clippy clean.
+- L14 (2026-11-04) The user committed T5a (605c4b3). After the merge, the selectorless native review offered only that commit: approved and acknowledged, with 5 readability suggestions. The fixed one: the lawn doc contradicted itself about bare patches. T5b, inline in `crates/render/src/town.rs`:
+  - `curb_stones(lo, hi)` turns each curb into a row of stones, 0.9 to 1.25 m long with 6 mm joints, each settled up to 8 mm below `CURB_TOP`.
+  - About 1 in 7 stones has a chipped end, 8 to 18 cm long and 1 to 2.2 cm lower. A const assert keeps chips above `SIDEWALK_TOP`.
+  - The first stone of each curb is flush at `CURB_TOP`. The layout comes from a position hash.
+  - Same Stucco surface and the same one mesh per ring, so the existing sidewalk tests hold.
+  - Test: the stones cover the curb end to end, keep their heights in range, number about one per metre with joints, include settled and chipped stones, and come out the same every time (sabotages: no chips, no joints). The first version let chips drop below the brick walk (5.6 cm); the test caught it.
+  - Shots in General Pico: joints and lower chipped ends read along the curb.
+  - Checks: suite green except the known flaky rider and tack tests, which pass alone. Clippy clean.

@@ -924,9 +924,110 @@ fn sidewalk(shape: &mut Shape, walk: &Sidewalk, origin: Vec3, ground: f32) {
                 None => {}
             }
         }
-        let curb = (ground, SIDEWALK_FOOT, CURB_TOP);
-        ground_box(shape, Surface::Stucco, (lo, hi), origin, curb);
+        for stone in curb_stones(lo, hi) {
+            let curb = (ground, SIDEWALK_FOOT, stone.top);
+            ground_box(shape, Surface::Stucco, (stone.min, stone.max), origin, curb);
+        }
     }
+}
+
+/// Una piedra de cordón: su planta y la altura de su cara superior sobre el
+/// suelo.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct CurbStone {
+    min: GroundVec2,
+    max: GroundVec2,
+    top: f32,
+}
+
+/// El largo más corto y el más largo de una piedra de cordón, en metros.
+const STONE_LENGTH: (f32, f32) = (0.9, 1.25);
+/// La junta entre dos piedras, en metros.
+const STONE_JOINT: f32 = 0.006;
+/// Cuánto puede quedar más baja una piedra asentada, en metros.
+const STONE_SETTLE: f32 = 0.008;
+/// Qué parte de las piedras tiene una punta despostillada.
+const CHIPPED_SHARE: f32 = 0.14;
+/// Cuánto más baja queda una punta rota, en metros.
+const CHIP_DROP: (f32, f32) = (0.01, 0.022);
+// Una punta rota nunca baja de la vereda de ladrillo.
+const _: () = assert!(CURB_TOP - STONE_SETTLE - CHIP_DROP.1 >= SIDEWALK_TOP - 1e-6);
+
+/// Las piedras de un cordón que cubre la planta `lo`–`hi` (alargada a lo largo
+/// de un eje): una fila de piedras de [`STONE_LENGTH`] con juntas de
+/// [`STONE_JOINT`], cada una asentada hasta [`STONE_SETTLE`] por debajo de
+/// [`CURB_TOP`] y alrededor de una de cada siete con una punta rota más baja.
+/// La primera de cada cordón queda entera y a ras de [`CURB_TOP`]. Todo sale de
+/// un hash de la posición, así que un pueblo se ve siempre igual.
+fn curb_stones(lo: GroundVec2, hi: GroundVec2) -> Vec<CurbStone> {
+    let along_x = hi.x - lo.x >= hi.y - lo.y;
+    let (start, end) = if along_x { (lo.x, hi.x) } else { (lo.y, hi.y) };
+    let span = |a: f32, b: f32| {
+        if along_x {
+            (GroundVec2::new(a, lo.y), GroundVec2::new(b, hi.y))
+        } else {
+            (GroundVec2::new(lo.x, a), GroundVec2::new(hi.x, b))
+        }
+    };
+    let roll = |at: f32, salt: f32| {
+        let p = if along_x {
+            GroundVec2::new(at, lo.y)
+        } else {
+            GroundVec2::new(lo.x, at)
+        };
+        hash2(p.x * 0.37 + salt, p.y * 0.41 - salt)
+    };
+    let mut stones = Vec::new();
+    let mut at = start;
+    while end - at > 1e-3 {
+        let (short, long) = STONE_LENGTH;
+        let mut next = at + short + (long - short) * roll(at, 1.3);
+        // Sin un pedacito suelto al final: la última piedra se estira.
+        if end - next < short / 2.0 {
+            next = end;
+        }
+        let first = stones.is_empty();
+        let (a, b) = (
+            if first { at } else { at + STONE_JOINT / 2.0 },
+            if next >= end {
+                end
+            } else {
+                next - STONE_JOINT / 2.0
+            },
+        );
+        let top = if first {
+            CURB_TOP
+        } else {
+            CURB_TOP - STONE_SETTLE * roll(at, 7.1)
+        };
+        if !first && roll(at, 4.7) < CHIPPED_SHARE {
+            // La punta rota: el último tramo de la piedra, uno o dos
+            // centímetros más bajo, nunca por debajo de la vereda.
+            let chip = 0.08 + 0.1 * roll(at, 9.9);
+            let drop = CHIP_DROP.0 + (CHIP_DROP.1 - CHIP_DROP.0) * roll(at, 2.2);
+            let (m0, m1) = span(a, b - chip);
+            let (c0, c1) = span(b - chip, b);
+            stones.push(CurbStone {
+                min: m0,
+                max: m1,
+                top,
+            });
+            stones.push(CurbStone {
+                min: c0,
+                max: c1,
+                top: top - drop,
+            });
+        } else {
+            let (s0, s1) = span(a, b);
+            stones.push(CurbStone {
+                min: s0,
+                max: s1,
+                top,
+            });
+        }
+        at = next;
+    }
+    stones
 }
 
 /// Espesor de la losa de una rampa, en metros.
@@ -2323,6 +2424,58 @@ mod tests {
     /// El punto del suelo bajo una posición del mundo.
     fn ground_of(p: Vec3) -> GroundVec2 {
         GroundVec2::new(p.x, -p.z)
+    }
+
+    #[test]
+    fn a_curb_is_a_row_of_settled_stones_with_joints_and_a_few_chipped_ends() {
+        // Un cordón este-oeste de 60 m y uno norte-sur de 37,3 m.
+        for (lo, hi) in [
+            (
+                GroundVec2::new(10.0, 5.0),
+                GroundVec2::new(70.0, 5.0 + CURB_WIDTH),
+            ),
+            (
+                GroundVec2::new(-3.0, -20.0),
+                GroundVec2::new(-3.0 + CURB_WIDTH, 17.3),
+            ),
+        ] {
+            let stones = curb_stones(lo, hi);
+            let long = (hi.x - lo.x).max(hi.y - lo.y);
+            let along = |p: GroundVec2| if hi.x - lo.x > hi.y - lo.y { p.x } else { p.y };
+            // Cubre el cordón de punta a punta, sin pasarse.
+            assert_eq!(along(stones[0].min), along(lo));
+            assert_eq!(along(stones.last().unwrap().max), along(hi));
+            for s in &stones {
+                assert!(along(s.min) >= along(lo) && along(s.max) <= along(hi) + 1e-4);
+                assert!((SIDEWALK_TOP..=CURB_TOP).contains(&s.top), "{s:?}");
+            }
+            // Una piedra por metro, más o menos, con juntas entre ellas.
+            let whole: Vec<&CurbStone> = stones
+                .iter()
+                .filter(|s| along(s.max) - along(s.min) > 0.3)
+                .collect();
+            let per_metre = whole.len() as f32 / long;
+            assert!((0.7..1.15).contains(&per_metre), "{per_metre}");
+            let gaps = stones
+                .windows(2)
+                .filter(|w| along(w[1].min) - along(w[0].max) > STONE_JOINT / 2.0)
+                .count();
+            assert!(gaps >= whole.len() - 1, "{gaps} joints");
+            // A ras en la primera, más bajas algunas, y algunas puntas rotas.
+            assert_eq!(stones[0].top, CURB_TOP);
+            assert!(
+                stones
+                    .iter()
+                    .any(|s| s.top < CURB_TOP - 1e-4 && s.top > CURB_TOP - STONE_SETTLE - 1e-4)
+            );
+            let chipped = stones
+                .iter()
+                .filter(|s| s.top < CURB_TOP - STONE_SETTLE - 5e-4)
+                .count();
+            assert!(chipped >= 1, "no chipped stone in {long} m");
+            // Siempre igual.
+            assert_eq!(stones, curb_stones(lo, hi));
+        }
     }
 
     #[test]
