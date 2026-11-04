@@ -14,7 +14,7 @@ Order follows the weakest elements found in the map (L2). Each task is one work 
 
 - T1 [S1, S2, S3] Pampa ground and earth: 2K PBR layers (grass, bare soil) blended by height in the ground shader instead of one CPU-blended 512² tile; anti-tiling (noise-picked offsets plus macro variation); micro-relief through the normal. Route: inline (no writer reason). Status: done, uncommitted; optimised to about +2–3 ms on the Renoir (L6, L7). Evidence: L3, L7.
 - T2 [S1, S3] Grass and gramilla: denser tufts near the camera, a short gramilla carpet, wind sway in the vertex stage. Route: inline. Status: done, uncommitted. Near paja tufts and wind are in; the gramilla cards were dropped by the user's choice (L9), so the carpet stays in the ground shader. Evidence: L8, L9.
-- T3 [S1, S3] Caminos: wheel ruts, crown and verge irregularity, dry cracked mud and hoof-churned patches in the road shader and strip mesh. Route: inline. Status: pending.
+- T3 [S1, S3] Caminos: wheel ruts, crown and verge irregularity, dry cracked mud and hoof-churned patches in the road shader and strip mesh. Route: inline. Status: done, uncommitted (the user stages and commits). Evidence: L10.
 - T4 [S1, S3] Town streets: earth streets with ruts, worn centre, irregular edges, shallow dry hollows; replace the flat 3 cm boxes with ground-following surfaces. Route: inline. Status: pending.
 - T5 [S1, S3] Sidewalks, curbs and plazas: real grass on the plaza lawn, worn and broken brick, chipped curbs, plaza paths with edge wear. Route: inline. Status: pending.
 - T6 [S1, S3] Dust and splashes at footsteps: footfall events from people, horses, carts and cars; own lightweight particle system (no new dependency); dust on dry earth, splashes on mud and lagoon edges; short-lived prints. Route: inline. Status: pending.
@@ -77,3 +77,28 @@ Order follows the weakest elements found in the map (L2). Each task is one work 
   - Checks: workspace suite fully green (core, content, game, render 607), clippy clean. README updated (ground layers, near grass, wind).
   - Open: near tufts can stand on the shader's bare soil blots, which the CPU does not know about.
   - Next: T3 (caminos).
+- L10 (2026-11-04) user: "si" (go with T3). The user committed T1+T2 as c5544d3. Native review of that range failed with `lens_context_budget_exceeded` (30 files, 1954 lines from 9ef9d03); STATUS keeps offering that same candidate, and the user owns the next step (split the commits, or disable review for the clone). T3, inline:
+  - `RoadExt`/`RoadMaterial` (`ground.rs`) extend the road's StandardMaterial with `assets/shaders/road.wesl` and the ground's dry_mud_field_001 KTX2 maps. `road_material` now takes the asset server. `GroundMaterialPlugin` also registers `RoadMaterial`.
+  - `surface_mesh` adds UV_1 = (signed distance across, positive to the road's normal; distance along the road).
+  - Shader:
+    - two wandering cart lanes of wheel ruts (gauge 1.56 m), deeper in some stretches, compacted and tilting the normal through Mikkelsen's surface gradient of `across`;
+    - churned clods on the hoof path;
+    - a crown and crown or verge grass;
+    - cracked mud in low patches and puddled ruts;
+    - a wandering alpha edge;
+    - fine detail fading at 30 to 50 m.
+  - Tests:
+    - the surface's UV_1 matches the distance and side of the axis; proven by sabotage (flipped sign);
+    - with a server the road loads the mud layer; proven by sabotage (wrong layer);
+    - without files it draws without mud.
+  - Shots on the road at (-3053,-2197) and (-1336,-1499): the ruts and the edge read well, and so does the mud grain.
+  - Open: the crown grass is subtle; a hard dark band at the road's foot in the side view looks like the cut's shading and is probably pre-existing (not compared against the base).
+  - Frame cost not measured: the strip is a small part of the screen.
+  - Checks: workspace suite green, clippy clean, README updated.
+- L11 (2026-11-04) The user split c5544d3 into 80b2489 (T1 ground) and c4ec058 (T2 grass). T3 got a native review: lenses readability and reliability, granted by the user, approved, acknowledged (lineage review-b1c3172fc5b52182). The review raised 6 advisory findings. The user said "si corrija ahora", so these were fixed:
+  - `pow(x, 2.0)` with a negative base, undefined in WGSL (possible NaN on other GPUs), is now `bell(x)` = exp(-x*x).
+  - The shader's wandering edge alpha is now multiplied by the mesh's feather instead of replacing it.
+  - The half width is a uniform (`RoadExt::shape.x` = `RoadNetwork::HALF_WIDTH`, test proven by sabotage) instead of a hard-coded 3.25.
+  - `LAYERS[1]` is now the named `SOIL_LAYER`.
+  - Not changed: `Assets<RoadMaterial>` is still created with `init_resource` in RoadPlugin, the same pattern as GroundMaterial in TerrainPlugin.
+  - Checks: suite green, clippy clean, road shots unchanged.

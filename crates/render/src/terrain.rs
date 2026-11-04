@@ -565,11 +565,7 @@ fn palette_range() -> ([f32; 3], [f32; 3]) {
 /// suelo de los pueblos, más oscuro en pendientes y hondonadas. Función solo de
 /// la posición, así que los chunks vecinos coinciden en sus vértices
 /// compartidos.
-fn ground_color(
-    terrain: &Terrain,
-    flora: Option<&FloraSite>,
-    g: GroundVec2,
-) -> [f32; 4] {
+fn ground_color(terrain: &Terrain, flora: Option<&FloraSite>, g: GroundVec2) -> [f32; 4] {
     let grass = GREEN_GRASS.lerp(DRY_GRASS, grass_dryness(terrain, g));
     let town = town_weight(terrain, g);
     let rgb = grass.lerp(TOWN_GROUND, town);

@@ -30,6 +30,7 @@ use bevy::prelude::*;
 use bevy::reflect::TypePath;
 use bevy::render::render_resource::{AsBindGroup, Extent3d, TextureDimension, TextureFormat};
 use bevy::shader::ShaderRef;
+use pampa_core::RoadNetwork;
 
 use crate::facade::materials::{MAPS, load_map};
 
@@ -362,7 +363,10 @@ fn image(size: u32, pixels: Vec<u8>, format: TextureFormat) -> Image {
 
 /// Las capas del suelo, bajo [`GROUND_DIR`]: pasto (grass_ground) y tierra
 /// pelada (dry_mud_field_001), de Poly Haven, CC0 1.0.
-pub const LAYERS: [&str; 2] = ["grass_ground", "dry_mud_field_001"];
+pub const LAYERS: [&str; 2] = ["grass_ground", SOIL_LAYER];
+/// La capa de tierra pelada de [`LAYERS`], que el camino también usa para su
+/// barro agrietado.
+pub const SOIL_LAYER: &str = "dry_mud_field_001";
 
 /// Lo que el shader del suelo (`assets/shaders/ground.wesl`) agrega al material
 /// estándar: la baldosa de hojarasca (ScatteredLeaves009, ambientCG, CC0 1.0) y
@@ -404,13 +408,16 @@ impl MaterialExtension for GroundExt {
 /// El material del terreno: [`StandardMaterial`] más [`GroundExt`].
 pub type GroundMaterial = ExtendedMaterial<StandardMaterial, GroundExt>;
 
-/// Dibuja [`GroundMaterial`]. Necesita un renderer, como [`crate::SkyPlugin`];
+/// Dibuja [`GroundMaterial`] y [`RoadMaterial`]. Necesita un renderer, como [`crate::SkyPlugin`];
 /// sin él el terreno igual construye sus chunks, solo con los assets.
 pub struct GroundMaterialPlugin;
 
 impl Plugin for GroundMaterialPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(MaterialPlugin::<GroundMaterial>::default());
+        app.add_plugins((
+            MaterialPlugin::<GroundMaterial>::default(),
+            MaterialPlugin::<RoadMaterial>::default(),
+        ));
     }
 }
 
@@ -489,14 +496,66 @@ fn wear(material: &mut StandardMaterial, detail: GroundDetail, images: &mut Asse
     material.occlusion_texture = Some(surface);
 }
 
+/// Lo que el shader del camino (`assets/shaders/road.wesl`) agrega al
+/// material estándar: el barro seco agrietado de `dry_mud_field_001` (la capa
+/// de tierra del suelo, [`LAYERS`]) para los bajos resecos del camino. Sin él
+/// (`layers.x` en 0) el shader dibuja huellas, lomo y bordes igual, sin los
+/// parches agrietados.
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
+pub struct RoadExt {
+    #[texture(100)]
+    #[sampler(101)]
+    pub mud_color: Option<Handle<Image>>,
+    #[texture(102)]
+    pub mud_normal: Option<Handle<Image>>,
+    #[texture(103)]
+    pub mud_orm: Option<Handle<Image>>,
+    /// `x`: 1 cuando el barro está cargado.
+    #[uniform(104)]
+    pub layers: Vec4,
+    /// `x`: la mitad del ancho del camino ([`RoadNetwork::HALF_WIDTH`]), de
+    /// la que el shader mide sus carriles, su lomo y su borde.
+    #[uniform(105)]
+    pub shape: Vec4,
+}
+
+impl Default for RoadExt {
+    fn default() -> Self {
+        Self {
+            mud_color: None,
+            mud_normal: None,
+            mud_orm: None,
+            layers: Vec4::ZERO,
+            shape: Vec4::new(RoadNetwork::HALF_WIDTH, 0.0, 0.0, 0.0),
+        }
+    }
+}
+
+impl MaterialExtension for RoadExt {
+    /// `assets/shaders/road.wesl`: el fragment shader estándar, con las
+    /// huellas, el lomo, el pisoteo, el barro agrietado y el borde irregular.
+    fn fragment_shader() -> ShaderRef {
+        "shaders/road.wesl".into()
+    }
+}
+
+/// El material de la superficie del camino: [`StandardMaterial`] más
+/// [`RoadExt`].
+pub type RoadMaterial = ExtendedMaterial<StandardMaterial, RoadExt>;
+
 /// El material de la superficie del camino: tierra Ground 102 de ambientCG (CC0
 /// 1.0; ver assets/textures/ground/CREDITS.md) cuando se puede leer desde
-/// `root`, teñida por el color de vértice, cuyo alfa difumina los bordes del
-/// camino hacia el pasto. Se mezcla sobre el suelo, acercado un poco a la
-/// cámara para que nunca compita con el terreno que tiene debajo. Sin las
-/// texturas se registra una advertencia y se dibuja el camino liso pintado por
-/// vértice.
-pub fn road_material(root: Option<&Path>, images: Option<&mut Assets<Image>>) -> StandardMaterial {
+/// `root`, teñida por el color de vértice, con el barro agrietado de
+/// [`RoadExt`] cuando sus KTX2 están bajo `root` y hay un `server` que los
+/// cargue. El shader difumina los bordes del camino hacia el pasto. Se mezcla
+/// sobre el suelo, acercado un poco a la cámara para que nunca compita con el
+/// terreno que tiene debajo. Sin las texturas se registra una advertencia y se
+/// dibuja el camino liso pintado por vértice.
+pub fn road_material(
+    root: Option<&Path>,
+    images: Option<&mut Assets<Image>>,
+    server: Option<&AssetServer>,
+) -> RoadMaterial {
     let mut material = StandardMaterial {
         base_color: Color::WHITE,
         perceptual_roughness: 1.0,
@@ -505,14 +564,36 @@ pub fn road_material(root: Option<&Path>, images: Option<&mut Assets<Image>>) ->
         depth_bias: 2.0,
         ..default()
     };
-    let (Some(root), Some(images)) = (root, images) else {
-        return material;
+    let mut extension = RoadExt::default();
+    let Some(root) = root else {
+        return RoadMaterial {
+            base: material,
+            extension,
+        };
     };
-    match load_road_detail(&root.join(GROUND_DIR)) {
-        Ok(detail) => wear(&mut material, detail, images),
-        Err(error) => warn!("road texture not loaded ({error}); drawing plain dirt"),
+    if let Some(images) = images {
+        match load_road_detail(&root.join(GROUND_DIR)) {
+            Ok(detail) => wear(&mut material, detail, images),
+            Err(error) => warn!("road texture not loaded ({error}); drawing plain dirt"),
+        }
     }
-    material
+    let path = |map: &str| format!("{GROUND_DIR}/{SOIL_LAYER}/{map}.ktx2");
+    if let Some(server) = server
+        && MAPS.iter().all(|(map, _)| root.join(path(map)).is_file())
+    {
+        let [color, normal, orm] = MAPS.map(|(map, srgb)| load_map(server, &path(map), srgb));
+        extension = RoadExt {
+            mud_color: Some(color),
+            mud_normal: Some(normal),
+            mud_orm: Some(orm),
+            layers: Vec4::X,
+            ..extension
+        };
+    }
+    RoadMaterial {
+        base: material,
+        extension,
+    }
 }
 
 /// La UV del suelo del punto del mundo `p`: una baldosa cada [`TILE`] metros,
@@ -613,6 +694,15 @@ mod tests {
         );
         // Sin imágenes no hay hojarasca, pero las capas igual se cargan.
         assert!(ground.litter.is_none());
+        // El camino reseca sus bajos con la misma capa de barro.
+        let road = road_material(Some(&root), None, Some(&server)).extension;
+        assert_eq!(road.layers, Vec4::X);
+        // El shader mide carriles y bordes desde el ancho de core.
+        assert_eq!(road.shape.x, RoadNetwork::HALF_WIDTH);
+        let mud: Vec<String> = [&road.mud_color, &road.mud_normal, &road.mud_orm]
+            .map(|h| h.as_ref().unwrap().path().unwrap().to_string())
+            .to_vec();
+        assert_eq!(mud, paths[3..]);
     }
 
     #[test]
@@ -632,7 +722,7 @@ mod tests {
         assert!((0.75..0.97).contains(&mean), "{mean}");
         assert!(grain > 0.03, "{grain}");
         assert!(dirt.normal.chunks(4).all(|p| p[2] >= 128));
-        let missing = road_material(Some(Path::new("/nonexistent")), None);
+        let missing = road_material(Some(Path::new("/nonexistent")), None, None).base;
         assert_eq!(missing.alpha_mode, AlphaMode::Blend);
         assert!(missing.base_color_texture.is_none());
     }
@@ -653,7 +743,14 @@ mod tests {
             assert_eq!(ground.layers, Vec4::ZERO, "the shader draws plain ground");
         }
         let ground = ground_material(Some(&root), Some(&mut images), None).base;
-        let road = road_material(Some(&root), Some(&mut images));
+        let road_ext = road_material(Some(&root), Some(&mut images), Some(&server)).extension;
+        assert!(road_ext.mud_color.is_none());
+        assert_eq!(
+            road_ext.layers,
+            Vec4::ZERO,
+            "the road draws without its cracked mud"
+        );
+        let road = road_material(Some(&root), Some(&mut images), None).base;
         std::fs::remove_dir(&root).unwrap();
         for material in [&ground, &road] {
             assert!(material.base_color_texture.is_none());
