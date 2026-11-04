@@ -7,6 +7,9 @@ Objective: maximum realism on every ground surface (pampa ground, caminos, stree
 - S1. todo.md (user, verbatim): "máximo realismo y detalle atmósfera, en caminos, calles, veredas, plazas, pastos y gramillas, tierra, texturas y relieves, irregularidades, polvo y/o salpicaduras en pizadas donde (o si) corresponda".
 - S2. todo.md standing instruction (user, verbatim): "descargar modelos renderizados de terceros de libre uso siempre que sea posible, con el mayor detalle posible mientras sea soportado por el hardware actual, de no ser posible utilartexturas (descargables o ya disponibles)". Free CC0/CC-BY assets only, credited in the root CREDITS.md and next to the asset; never Sketchfab.
 - S3. Quality floor (standing user rule, 2026-10-30): the v13 rhea level of detail is the minimum for everything visual. Must hold on the Renoir iGPU; report frame cost.
+- S4. User, 2026-11-04 (verbatim): "las motas de pastos se "crean" o "crecen" a medida que voy avanzando en el juego y mueren muy rápido son de muy corto alcance, se crean muy cerca del usuario y mueren muy cerca del usuario".
+- S5. User, 2026-11-04 (verbatim): "ahora hay demasiada tierra, en los pueblos, aldeas  y ciudades, ahora todo es tierra". The reference is a Red Dead Redemption 2 town: grass between houses and earth only on the paths.
+- S6. User, 2026-11-04 (verbatim): "veo una baja en la calídad en las texturans y relieves, en la imagen muestra el camino/calle/vereda y los alrededores de la estacion de tren, este último tiene mejor calidad que le primero".
 
 ## Tasks
 
@@ -19,6 +22,9 @@ Order follows the weakest elements found in the map (L2). Each task is one work 
 - T5 [S1, S3] Sidewalks, curbs and plazas: real grass on the plaza lawn, worn and broken brick, chipped curbs, plaza paths with edge wear. Route: inline (mapping by a read-only explorer, L13). Status: T5a (lawn) done in 605c4b3, reviewed; T5b (chipped curbs) done in 1c676d7, reviewed; T5c (broken brick) done, uncommitted; plaza path edge wear not done (pending).
 - T7 [S1] Polish: the advisory findings of the native reviews of T1 to T5. Route: inline. Status: done, uncommitted. Evidence: L16.
 - T6 [S1, S3] Dust and splashes at footsteps: footfall events from people, horses, carts and cars; own lightweight particle system (no new dependency); dust on dry earth, splashes on mud and lagoon edges; short-lived prints. Split (L18): T6a = particle pool + ground classifier + emitters for hooves, wheels and people (route: delegated, context-backstop writer reason); T6b = short-lived prints (pending). T6a done (L20), staged for the user's commit; finished inline.
+- T9 [S4, S3] Near grass range: tufts reach farther from the camera and are built ahead of it, so they neither pop in nor die close to the rider. Route: inline. Status: done, uncommitted (L25).
+- T10 [S5] Town grass: towns, villages and cities keep grass between houses; earth only on streets, yards and worn ground. Route: inline. Status: done, uncommitted (L25); tall tufts in town lots wait for the user's realism reference.
+- T11 [S6, S2] Road and street texture quality: replace the 512 px Ground102 base (about 85 px/m) with a high-resolution earth set, at least as sharp as the station yard. Route: inline. Status: done, uncommitted (L25, L26).
 
 ## Log
 
@@ -203,3 +209,19 @@ Order follows the weakest elements found in the map (L2). Each task is one work 
   - R3-003: `stir_dust` takes `Option<Res<WorldTerrain>>`; without terrain the kicks are dropped.
   - R3-001: no App-level system tests, per the lean-tests rule. The one gate with a real bug is now pure and tested.
   - Checks: 12 dust tests, clippy clean, workspace suite green except the two known flaky tests (rider half seat, tack back pieces), which pass alone. The street shot is unchanged.
+- L23 (2026-11-04) The user committed T8 (77ded70). Native review (base 8a6db8b, readability and reliability) approved and acknowledged. The stop hook again offered the accumulated 605c4b3..HEAD START; not run. Follow-ups staged:
+  - R2-002: `stir_dust` uses a plain `if let Some(world)` around the kick loop.
+  - R2-001: the `hoof_step` doc says a frame without the bones also counts as not kicking. This is harmless: the horse re-seeds without kicking.
+  - R3-002: the blend is effectively unchanged. GRASS_DUST[0] is 0.08, so 1 / (0.7 - 0.08) = 1.613 against the old 1.6.
+  - R3-001: not done (lean tests).
+  - Checks: 12 dust tests, clippy clean, fmt clean.
+
+- L24 (2026-11-04) User (verbatim): "mandale, y otra cosa cuando puedas, las motas de pastos se "crean" o "crecen" a medida que voy avanzando en el juego y mueren muy rápido son de muy corto alcance, se crean muy cerca del usuario y mueren muy cerca del usuario, ahora hay demasiada tierra, en los pueblos, aldeas  y ciudades, ahora todo es tierra además veo una baja en la calídad en las texturans y relieves, en la imagen muestra el camino/calle/vereda y los alrededores de la estacion de tren, este último tiene mejor calidad que le primerodespues te paso una imagen del nivel de realismo que buscamos en suelos, atmosferas y matorrales pastosos". With it came a street-and-station screenshot and an RDR2 town reference.
+  - Causes found: meadow `NEAR` is 22 m and builds 6 cells per frame; the town flat area is painted TOWN_GROUND with the grass layer cleared; the road and street base is Ground102 at 512 px over 6 m, while the station yard is dry_ground_01 1K over about 2 m.
+  - New tasks T9 to T11, before T6b.
+- L25 (2026-11-04) T9 to T11, inline:
+  - T9: meadow `NEAR` 22 → 50 m, and `SINK` in grass_wind.wesl 8 → 12 m. The tufts sink from 38 to 50 m, so the rider never sees them grow or die. The README grass text is updated.
+  - T10: the town ground keeps the grass layer, worn by `TOWN_WEAR` = 0.25 (the first try, 0.45, still read as bare earth in the shots). The renamed terrain test pins it (sabotage at 0.45). Tall tufts in town lots are not done.
+  - T11: user (verbatim): "si" (permission to download Poly Haven dry_ground_01 2K). `RoadExt` gains `dirt_*` maps (bindings 106–108, `layers.y`). road.wesl samples them in world space and tones them as `dirt()` did for Ground102: saturation 0.5, contrast 0.7, brightness 0.79, relief 0.6. The ORM's blue channel holds height, so the maps cannot go on the standard material: Bevy would read that height as metallic. Ground102 is baked only as a fallback. Tests updated and sabotaged twice (rc=101). Shots: sharp, but dry_ground_01 is cracked earth everywhere, so the street read as a dry lakebed.
+  - Found, not caused by T11: a dark band with straight edges on the road side at (-3053,-2197) at noon. It is still there with the 2K branch off. Pending.
+- L26 (2026-11-04) User (verbatim): "si" (permission to download Poly Haven dirt 2K instead). `ROAD_LAYER` = "dirt" (the plaza paths' scan): `DIRT_TILE` 2 m, `DIRT_LUMA` 0.091. Shots: the street and the road read as compacted earth with sharp grit, with cracks only in the mud patches. The `assets/textures/ground/dry_ground_01/` folder is unused (2K KTX2 plus JPG sources); rm was denied, so the user deletes it. The JPG sources in `dirt/` are not kept either. Checks: ground tests 9/9, render suite 626/627 (only the known flaky rider half-seat failed, and it passes alone), clippy clean, fmt clean on the changed files (flora.rs has a committed fmt diff). README street line fixed: Surface::Earth is `dirt_path`.

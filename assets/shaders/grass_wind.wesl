@@ -31,7 +31,7 @@ import bevy_pbr::render::{
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> wind: vec4<f32>;
 
 // Over how many metres before `wind.w` the tips sink.
-const SINK: f32 = 8.0;
+const SINK: f32 = 12.0;
 // How fast the gusts roll downwind, in metres a second.
 const GUST_SPEED: f32 = 6.0;
 // Gusts: about 30 m from one crest to the next downwind, their fronts bent

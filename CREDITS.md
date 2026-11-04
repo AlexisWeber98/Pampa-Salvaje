@@ -9,7 +9,8 @@ Pampa Salvaje is mostly built procedurally in code. These are the third-party as
 | Scattered Leaves 009 | ambientCG (https://ambientcg.com/view?id=ScatteredLeaves009) | CC0 1.0 | `assets/textures/ground/ScatteredLeaves009/` | Colour map only, converted to a 512×512 PNM; the leaf litter under the monte, toned darker and browner in the game and blended in by the ground shader |
 | Grass Ground | Charlotte Baglioni, Poly Haven (https://polyhaven.com/a/grass_ground) | CC0 1.0 | `assets/textures/ground/grass_ground/` | 2K maps renamed, height packed in the ORM; the pampa's grass layer, toned by the vertex colour in the ground shader |
 | Dry Mud Field 001 | Rob Tuytel, Rico Cilliers, Poly Haven (https://polyhaven.com/a/dry_mud_field_001) | CC0 1.0 | `assets/textures/ground/dry_mud_field_001/` | 2K maps renamed, height packed in the ORM; bare loess in pampa blots, towns, road verges and lagoon mud |
-| Ground 102 | ambientCG (https://ambientcg.com/view?id=Ground102) | CC0 1.0 | `assets/textures/ground/Ground102/` | Converted to 512×512 PNM; the dirt roads' surface, tinted and feathered at the edges in the game |
+| Dirt | Charlotte Baglioni, Poly Haven (https://polyhaven.com/a/dirt) | CC0 1.0 | `assets/textures/ground/dirt/` | 2K maps renamed, height packed in the ORM (downloaded 2026-11-04); the compacted earth of dirt roads and town streets, 2 m a tile, toned by the vertex colour in the road shader |
+| Ground 102 | ambientCG (https://ambientcg.com/view?id=Ground102) | CC0 1.0 | `assets/textures/ground/Ground102/` | Converted to 512×512 PNM; the dirt roads' surface when the 2K Dirt maps are missing, tinted and feathered at the edges in the game |
 
 The ambientCG maps were converted to 512×512 PPM/PGM for loading; the Poly Haven layers are KTX2. See `assets/textures/ground/CREDITS.md` for details.
 

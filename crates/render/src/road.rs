@@ -8,7 +8,7 @@
 //! de superficie, hija suya, con los pasos a nivel y los postes indicadores
 //! ubicados en él; se van cuando se va el chunk.
 //!
-//! La superficie lleva tierra compactada Ground 102 de ambientCG (CC0 1.0; ver
+//! La superficie lleva tierra apisonada en 2K (dirt, Poly Haven, CC0 1.0; ver
 //! assets/textures/ground/CREDITS.md, cargada por
 //! [`crate::ground::road_material`]). El shader del camino
 //! (`assets/shaders/road.wesl`) le marca dos carriles de huellas de ruedas
@@ -252,8 +252,8 @@ const LIFT: f32 = 0.05;
 /// Ancho de la franja difuminada a lo largo de cada borde del camino, en
 /// metros, mitad dentro del camino y mitad más allá de su borde.
 const FEATHER: f32 = 1.6;
-/// El tinte de tierra del camino (sRGB), sobre el detalle casi blanco de
-/// Ground 102.
+/// El tinte de tierra del camino (sRGB), sobre el detalle casi blanco de la
+/// tierra apisonada.
 pub(crate) const DIRT: [f32; 3] = [0.70, 0.60, 0.46];
 
 /// Una malla de superficie para todas las partes `part` de camino de un chunk:

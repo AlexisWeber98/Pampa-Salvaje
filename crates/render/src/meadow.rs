@@ -36,8 +36,10 @@ use crate::terrain::{ChunkDetail, WorldChunks, WorldTerrain, mesh_height};
 /// Lado de una celda, en metros.
 pub const CELL: f32 = 4.0;
 /// Hasta dónde llega el pasto cercano desde la cámara, en metros: ahí ya se
-/// hundió en el suelo.
-pub const NEAR: f32 = 22.0;
+/// hundió en el suelo. Lejos, para que no se lo vea crecer ni hundirse cerca
+/// del jinete; las matas son tan livianas (seis triángulos) que alcanzan
+/// pocos miles.
+pub const NEAR: f32 = 50.0;
 /// Matas por metro cuadrado en pampa abierta.
 pub const DENSITY: f32 = 0.45;
 /// La altura más baja y la más alta de una mata, en metros.

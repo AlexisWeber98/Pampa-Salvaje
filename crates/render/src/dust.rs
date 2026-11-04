@@ -431,7 +431,8 @@ pub fn touchdowns(planted: &mut [bool; 4], height: [f32; 4]) -> [bool; 4] {
 }
 
 /// Las pisadas de un caballo en este frame: `height` como en [`touchdowns`],
-/// o `None` mientras no patea (congelado, sin empezar o lejos de la cámara).
+/// o `None` mientras no patea (congelado, sin empezar, lejos de la cámara, o
+/// sin sus huesos a mano en este frame).
 /// Mientras no patea se olvida `planted`, y la primera vez que vuelve a
 /// patear lo siembra sin pisar: un vaso que bajó a la vista no es una pisada.
 pub fn hoof_step(planted: &mut Option<[bool; 4]>, height: Option<[f32; 4]>) -> [bool; 4] {
@@ -634,17 +635,18 @@ fn stir_dust(
     let towns: &[TownLayout] = towns.as_deref().map_or(&[], |t| &t.0);
     let pending = std::mem::take(&mut kicks.pending);
     // Sin terreno todavía no hay suelo que pisar: las pisadas se pierden.
-    let ground = terrain.as_deref().map(|t| &t.0);
-    for (kick, terrain) in pending.iter().filter_map(|k| Some((k, ground?))) {
-        kicks.count = kicks.count.wrapping_add(1);
-        let g = GroundVec2::new(kick.at.x, -kick.at.z);
-        let born = plume(kick, footing(terrain, towns, g), kicks.count);
-        for puff in born {
-            let slot = recycle(&spent);
-            spent[slot] = 0.0;
-            if let Ok((mut p, ..)) = puffs.get_mut(pool.0[slot]) {
-                // Recién nacida: su paso de este frame la mueve.
-                p.puff = Puff { age: -dt, ..puff };
+    if let Some(world) = terrain.as_deref() {
+        for kick in &pending {
+            kicks.count = kicks.count.wrapping_add(1);
+            let g = GroundVec2::new(kick.at.x, -kick.at.z);
+            let born = plume(kick, footing(&world.0, towns, g), kicks.count);
+            for puff in born {
+                let slot = recycle(&spent);
+                spent[slot] = 0.0;
+                if let Ok((mut p, ..)) = puffs.get_mut(pool.0[slot]) {
+                    // Recién nacida: su paso de este frame la mueve.
+                    p.puff = Puff { age: -dt, ..puff };
+                }
             }
         }
     }
