@@ -12,8 +12,11 @@
 //   `SINK` metres before `wind.w` metres from the eye, so the near carpet
 //   ends without a dithered edge.
 //
-// Only the main pass sways: shadows keep the still cards, a few centimetres
-// off at most.
+// Only the main pass sways: every prepass (shadows, and depth, normal or
+// motion-vector prepasses) keeps the still cards. Shadows are off by a few
+// centimetres at most. The game's camera has no depth prepass; adding one
+// (for SSAO, TAA or deferred) would need a matching prepass vertex shader,
+// or the swaying cards would fail the depth test against their still copy.
 
 import bevy_pbr::render::{
     mesh_functions,
@@ -27,20 +30,36 @@ import bevy_pbr::render::{
 // w: where the grass has sunk to the ground, in metres from the eye (0: never).
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> wind: vec4<f32>;
 
-// Over how many metres before `wind.w` the tips sink.
-const SINK: f32 = 8.0;
+// Over how many metres before `wind.w` the tips sink. `wind.w` is the near
+// grass's reach (`meadow::NEAR`), so they sink from `NEAR - SINK` on.
+const SINK: f32 = 12.0;
 // How fast the gusts roll downwind, in metres a second.
 const GUST_SPEED: f32 = 6.0;
+// Gusts: about 30 m from one crest to the next downwind, their fronts bent
+// over about 70 m across the wind.
+const GUST_WAVE: f32 = 0.21;
+const GUST_BEND: vec2<f32> = vec2<f32>(1.3, 0.09);
+// The swell under them: some 110 m from crest to crest, rising and falling
+// every 18 s.
+const SWELL_WAVE: vec2<f32> = vec2<f32>(0.047, 0.031);
+const SWELL_RATE: f32 = 0.35;
+// The flutter on top: about 0.8 times a second (5.1 rad/s), a tenth of a
+// gust.
+const FLUTTER_RATE: f32 = 5.1;
+const FLUTTER_WAVE: f32 = 0.6;
+const FLUTTER: f32 = 0.12;
+// The lean between gusts, as a share of a full gust.
+const CALM: f32 = 0.35;
 
 // How far a tip at `p` (world x, z) leans at time `t`, as a fraction of its
 // height.
 fn lean(p: vec2<f32>, t: f32) -> f32 {
     let along = dot(p, wind.xy);
     let across = dot(p, vec2<f32>(-wind.y, wind.x));
-    let gust = 0.5 + 0.5 * sin((along - t * GUST_SPEED) * 0.21 + 1.3 * sin(across * 0.09));
-    let swell = 0.5 + 0.5 * sin(along * 0.047 + across * 0.031 - t * 0.35);
-    let flutter = 0.12 * sin(t * 5.1 + (along + across) * 0.6);
-    return wind.z * (0.35 + 0.65 * gust * mix(0.6, 1.0, swell) + flutter);
+    let gust = 0.5 + 0.5 * sin((along - t * GUST_SPEED) * GUST_WAVE + GUST_BEND.x * sin(across * GUST_BEND.y));
+    let swell = 0.5 + 0.5 * sin(along * SWELL_WAVE.x + across * SWELL_WAVE.y - t * SWELL_RATE);
+    let flutter = FLUTTER * sin(t * FLUTTER_RATE + (along + across) * FLUTTER_WAVE);
+    return wind.z * (CALM + (1.0 - CALM) * gust * mix(0.6, 1.0, swell) + flutter);
 }
 
 @vertex

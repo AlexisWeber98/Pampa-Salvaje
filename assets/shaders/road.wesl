@@ -1,5 +1,8 @@
-// The road surface's fragment shader: Bevy's standard one (Ground 102 earth,
-// tinted by the vertex colour) worn into a country road of 1919.
+// The road surface's fragment shader: Bevy's standard one (trodden earth,
+// tinted by the vertex colour) worn into a country road of 1919. The earth is
+// Poly Haven's dirt at 2K (compacted earth and grit, the plaza paths' scan),
+// sampled here in world space; without it, the standard material's 512 px
+// Ground 102 stays.
 //
 // The mesh's second UV is (across, along): the signed distance from the
 // centre line (positive to the left) and the distance along the road, in
@@ -25,19 +28,24 @@
 import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
     pbr_fragment::pbr_input_from_standard_material,
-    pbr_functions::{alpha_discard, apply_pbr_lighting, calculate_tbn_mikktspace, main_pass_post_lighting_processing},
+    pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing},
     pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
     mesh_view_bindings::view,
 };
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var mud_color: texture_2d<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(101) var mud_sampler: sampler;
+// The mud maps' repeating sampler, which the earth maps share (the earth only
+// loads with the mud).
+@group(constants::MATERIAL_BIND_GROUP) @binding(101) var layer_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(102) var mud_normal: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(103) var mud_orm: texture_2d<f32>;
-// x: 1 when the mud maps are loaded.
+// x: 1 when the mud maps are loaded; y: 1 when the earth maps are.
 @group(constants::MATERIAL_BIND_GROUP) @binding(104) var<uniform> layers: vec4<f32>;
 // x: half the road's width (`RoadNetwork::HALF_WIDTH`), in metres.
 @group(constants::MATERIAL_BIND_GROUP) @binding(105) var<uniform> shape: vec4<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(106) var dirt_color: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(107) var dirt_normal: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(108) var dirt_orm: texture_2d<f32>;
 // Where each lane runs, as a fraction of the half width from the centre line
 // (1.55 m on a 6.5 m road), and half a cart's gauge in metres.
 const LANE: f32 = 0.477;
@@ -49,6 +57,18 @@ const CROWN: f32 = 0.06;
 // Metres a tile of the mud scan covers, and its mean linear luma.
 const MUD_TILE: f32 = 3.0;
 const MUD_LUMA: f32 = 0.109;
+// Metres a tile of the earth scan covers (as on the plaza paths), its mean linear
+// luma, and how it is toned: the share of its own hue and contrast it keeps,
+// its mean brightness under the vertex tint, and the share of its relief.
+const DIRT_TILE: f32 = 2.0;
+const DIRT_LUMA: f32 = 0.091;
+const DIRT_SATURATION: f32 = 0.5;
+const DIRT_CONTRAST: f32 = 0.7;
+const DIRT_BRIGHTNESS: f32 = 0.79;
+const DIRT_RELIEF: f32 = 0.6;
+// The earth's roughness floor, and the occlusion its darkest crevice keeps.
+const DIRT_ROUGHNESS_MIN: f32 = 0.75;
+const DIRT_OCCLUSION_MIN: f32 = 0.6;
 // Dry grass on the crown and the verges (linear).
 const GRASS: vec3<f32> = vec3<f32>(0.21, 0.19, 0.09);
 // Where the fine detail fades out, in metres from the eye.
@@ -104,6 +124,15 @@ fn decode(n: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(xy, sqrt(max(1.0 - dot(xy, xy), 0.0)));
 }
 
+// The tangent frame of the world-space layer UVs (`p / tile`, u along +X and
+// v along +Z) on a surface of normal `n`, as the terrain's `face_tangent` builds
+// it, whatever way the mesh's own UVs run. On a wall facing X, along +Z.
+fn world_tbn(n: vec3<f32>) -> mat3x3<f32> {
+    let axis = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 0.0, 1.0), abs(n.x) > 0.99);
+    let t = normalize(axis - n * dot(n, axis));
+    return mat3x3<f32>(t, cross(t, n), n);
+}
+
 // A bell of unit height and width: `exp(-x²)`. Squared by hand, since `pow`
 // is undefined for a negative base in WGSL.
 fn bell(x: f32) -> f32 {
@@ -140,6 +169,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let mud_uv = p / MUD_TILE;
     let mud_dx = dpdx(mud_uv);
     let mud_dy = dpdy(mud_uv);
+    let dirt_uv = p / DIRT_TILE;
+    let dirt_dx = dpdx(dirt_uv);
+    let dirt_dy = dpdy(dirt_uv);
     let n0 = normalize(pbr_input.world_normal);
     let r1 = cross(dpy, n0);
     let r2 = cross(n0, dpx);
@@ -180,6 +212,21 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let clods = noise_d(p * 4.3 + 2.1);
 
     var color = pbr_input.material.base_color.rgb;
+    var rough = pbr_input.material.perceptual_roughness;
+    // Ground 102's own relief, already mapped by the standard material, unless
+    // the 2K earth replaces it.
+    var n = pbr_input.N;
+    if (layers.y > 0.0) {
+        let c = textureSampleGrad(dirt_color, layer_sampler, dirt_uv, dirt_dx, dirt_dy).rgb;
+        let orm = textureSampleGrad(dirt_orm, layer_sampler, dirt_uv, dirt_dx, dirt_dy).rgb;
+        let y = max(dot(c, LUMA), 1e-4);
+        let grain = mix(vec3<f32>(y), c, DIRT_SATURATION) / DIRT_LUMA;
+        color *= DIRT_BRIGHTNESS * max(vec3<f32>(1.0) + (grain - 1.0) * DIRT_CONTRAST, vec3<f32>(0.0));
+        rough = max(orm.g, DIRT_ROUGHNESS_MIN);
+        pbr_input.diffuse_occlusion *= vec3<f32>(mix(DIRT_OCCLUSION_MIN, 1.0, orm.r));
+        let d = decode(textureSampleGrad(dirt_normal, layer_sampler, dirt_uv, dirt_dx, dirt_dy).rgb);
+        n = normalize(world_tbn(n0) * vec3<f32>(d.xy * DIRT_RELIEF, max(d.z, 0.05)));
+    }
     color *= mix(1.0, 0.8, worn);
     color *= 1.0 - 0.16 * hooves * smoothstep(0.45, 0.8, clods.x) * fade;
 
@@ -191,27 +238,22 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let shade = dot(color, LUMA) / max(dot(GRASS, LUMA), 1e-4);
     color = mix(color, GRASS * clamp(shade, 0.6, 1.4), 0.75 * grassy);
 
-    var roughness = mix(pbr_input.material.perceptual_roughness, 0.72, worn);
-    // Ground 102's own relief, already mapped by the standard material.
-    var n = pbr_input.N;
+    var roughness = mix(rough, 0.72, worn);
 
     // Dry cracked mud in the low patches, and in the ruts where water stood.
     let low = smoothstep(0.58, 0.7, fbm(p * 0.045 + 13.0));
     let puddled = worn * smoothstep(0.5, 0.62, fbm(p * 0.11 + 5.0));
     let mud = max(low, puddled) * layers.x * (1.0 - grassy);
     if (mud > 0.0) {
-        let c = textureSampleGrad(mud_color, mud_sampler, mud_uv, mud_dx, mud_dy).rgb;
-        let orm = textureSampleGrad(mud_orm, mud_sampler, mud_uv, mud_dx, mud_dy).rgb;
+        let c = textureSampleGrad(mud_color, layer_sampler, mud_uv, mud_dx, mud_dy).rgb;
+        let orm = textureSampleGrad(mud_orm, layer_sampler, mud_uv, mud_dx, mud_dy).rgb;
         let y = max(dot(c, LUMA), 1e-4);
         let cracked = color * (mix(vec3<f32>(y), c, 0.4) / y) * pow(y / MUD_LUMA, 1.15);
         color = mix(color, cracked, mud);
         roughness = mix(roughness, orm.g, mud);
         pbr_input.diffuse_occlusion *= vec3<f32>(mix(1.0, orm.r, mud));
-        @if(VERTEX_TANGENTS) {
-            let tbn = calculate_tbn_mikktspace(pbr_input.world_normal, in.world_tangent);
-            let mud_n = tbn * decode(textureSampleGrad(mud_normal, mud_sampler, mud_uv, mud_dx, mud_dy).rgb);
-            n = normalize(mix(n, mud_n, mud * fade));
-        }
+        let mud_n = world_tbn(n0) * decode(textureSampleGrad(mud_normal, layer_sampler, mud_uv, mud_dx, mud_dy).rgb);
+        n = normalize(mix(n, mud_n, mud * fade));
     }
 
     // The ruts' walls and the crown tilt the normal across the road; the clods

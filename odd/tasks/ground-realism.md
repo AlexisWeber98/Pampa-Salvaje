@@ -7,6 +7,9 @@ Objective: maximum realism on every ground surface (pampa ground, caminos, stree
 - S1. todo.md (user, verbatim): "máximo realismo y detalle atmósfera, en caminos, calles, veredas, plazas, pastos y gramillas, tierra, texturas y relieves, irregularidades, polvo y/o salpicaduras en pizadas donde (o si) corresponda".
 - S2. todo.md standing instruction (user, verbatim): "descargar modelos renderizados de terceros de libre uso siempre que sea posible, con el mayor detalle posible mientras sea soportado por el hardware actual, de no ser posible utilartexturas (descargables o ya disponibles)". Free CC0/CC-BY assets only, credited in the root CREDITS.md and next to the asset; never Sketchfab.
 - S3. Quality floor (standing user rule, 2026-10-30): the v13 rhea level of detail is the minimum for everything visual. Must hold on the Renoir iGPU; report frame cost.
+- S4. User, 2026-11-04 (verbatim): "las motas de pastos se "crean" o "crecen" a medida que voy avanzando en el juego y mueren muy rápido son de muy corto alcance, se crean muy cerca del usuario y mueren muy cerca del usuario".
+- S5. User, 2026-11-04 (verbatim): "ahora hay demasiada tierra, en los pueblos, aldeas  y ciudades, ahora todo es tierra". The reference is a Red Dead Redemption 2 town: grass between houses and earth only on the paths.
+- S6. User, 2026-11-04 (verbatim): "veo una baja en la calídad en las texturans y relieves, en la imagen muestra el camino/calle/vereda y los alrededores de la estacion de tren, este último tiene mejor calidad que le primero".
 
 ## Tasks
 
@@ -16,8 +19,12 @@ Order follows the weakest elements found in the map (L2). Each task is one work 
 - T2 [S1, S3] Grass and gramilla: denser tufts near the camera, a short gramilla carpet, wind sway in the vertex stage. Route: inline. Status: done, uncommitted. Near paja tufts and wind are in; the gramilla cards were dropped by the user's choice (L9), so the carpet stays in the ground shader. Evidence: L8, L9.
 - T3 [S1, S3] Caminos: wheel ruts, crown and verge irregularity, dry cracked mud and hoof-churned patches in the road shader and strip mesh. Route: inline. Status: done, uncommitted (the user stages and commits). Evidence: L10.
 - T4 [S1, S3] Town streets: earth streets with ruts, worn centre, irregular edges, shallow dry hollows; replace the flat 3 cm boxes with ground-following surfaces. Route: inline. Status: done, uncommitted. The towns are levelled, so the boxes stay as the base and a worn layer goes on top (L12). Evidence: L12.
-- T5 [S1, S3] Sidewalks, curbs and plazas: real grass on the plaza lawn, worn and broken brick, chipped curbs, plaza paths with edge wear. Route: inline. Status: pending.
-- T6 [S1, S3] Dust and splashes at footsteps: footfall events from people, horses, carts and cars; own lightweight particle system (no new dependency); dust on dry earth, splashes on mud and lagoon edges; short-lived prints. Route: inline. Status: pending.
+- T5 [S1, S3] Sidewalks, curbs and plazas: real grass on the plaza lawn, worn and broken brick, chipped curbs, plaza paths with edge wear. Route: inline (mapping by a read-only explorer, L13). Status: T5a (lawn) done in 605c4b3, reviewed; T5b (chipped curbs) done in 1c676d7, reviewed; T5c (broken brick) done, uncommitted; plaza path edge wear not done (pending).
+- T7 [S1] Polish: the advisory findings of the native reviews of T1 to T5. Route: inline. Status: done, uncommitted. Evidence: L16.
+- T6 [S1, S3] Dust and splashes at footsteps: footfall events from people, horses, carts and cars; own lightweight particle system (no new dependency); dust on dry earth, splashes on mud and lagoon edges; short-lived prints. Split (L18): T6a = particle pool + ground classifier + emitters for hooves, wheels and people (route: delegated, context-backstop writer reason); T6b = short-lived prints (pending). T6a done (L20), staged for the user's commit; finished inline.
+- T9 [S4, S3] Near grass range: tufts reach farther from the camera and are built ahead of it, so they neither pop in nor die close to the rider. Route: inline. Status: done, uncommitted (L25).
+- T10 [S5] Town grass: towns, villages and cities keep grass between houses; earth only on streets, yards and worn ground. Route: inline. Status: done, uncommitted (L25); tall tufts in town lots wait for the user's realism reference.
+- T11 [S6, S2] Road and street texture quality: replace the 512 px Ground102 base (about 85 px/m) with a high-resolution earth set, at least as sharp as the station yard. Route: inline. Status: done, uncommitted (L25, L26).
 
 ## Log
 
@@ -114,3 +121,131 @@ Order follows the weakest elements found in the map (L2). Each task is one work 
     - every street of the active towns is worn once, with one material per width (sabotages: no `Added` filter, no cache).
   - Shots in Monte Nievas and General Pico: the wheel ruts run in the carriageway between the curbs.
   - Also asked by the user: test windows open on Hyprland workspace 5. The game sets app_id `pampa-shots` when PAMPA_SHOTS is set (`shots::APP_ID`), and `~/.config/hypr/windows.lua` has `w("^pampa-shots$", { workspace = "5 silent", render_unfocused = true })`. Without `render_unfocused`, half the captures came out black.
+- L13 (2026-11-04) The user merged feat/ground-realism into main as PR #58 (merge commit). The branch was fast-forwarded to 8572603; work continues on the same branch. T5:
+  - Explorer map: sidewalks, curbs and plaza paths are `Shape::block` boxes with the plain `FacadeMaterials` StandardMaterial (no weathering, shape-local UVs), batched one mesh per surface per sidewalk ring. The lawn was an olive `Palette.plaza` cube with its top at `LAWN_TOP`.
+  - Tests pin `MeshMaterial3d<StandardMaterial>` for sidewalks and plazas, and 20 curb meshes for Castex.
+  - Native review of 866ad02 (the deleted Ground109/Grass004 PNM and ground_litter.wesl) cannot run: lens_context_budget_exceeded, because the budget is bytes and the deleted PPM text images are large. Checked by hand instead: nothing references the deleted files, and the suite is green.
+  - T5a done: `crates/render/src/lawn.rs` `LawnPlugin`, added by TownPlugin. On each new `TownRoot`, every plaza gets a flat quad 2 mm above the lawn slab, using one shared `GroundMaterial` (the 2K grass layers through ground.wesl). The vertex paint is `LAWN` green sRGB (0.42, 0.48, 0.25) with litter 0, and UV_1 cover is 0.
+  - Tests:
+    - the quad covers the plaza at LAWN_TOP + 2 mm, is green with no litter, has no cover and faces up (sabotage: litter 1);
+    - every plaza of the active towns gets exactly one lawn sharing one material, and is not re-sown (sabotage: no `Added`).
+  - Shots: the Monte Nievas and Pico plazas show photographed green grass with relief and a rare bare patch.
+  - Checks: suite green except the known flaky rider test (it passes alone), clippy clean.
+- L14 (2026-11-04) The user committed T5a (605c4b3). After the merge, the selectorless native review offered only that commit: approved and acknowledged, with 5 readability suggestions. The fixed one: the lawn doc contradicted itself about bare patches. T5b, inline in `crates/render/src/town.rs`:
+  - `curb_stones(lo, hi)` turns each curb into a row of stones, 0.9 to 1.25 m long with 6 mm joints, each settled up to 8 mm below `CURB_TOP`.
+  - About 1 in 7 stones has a chipped end, 8 to 18 cm long and 1 to 2.2 cm lower. A const assert keeps chips above `SIDEWALK_TOP`.
+  - The first stone of each curb is flush at `CURB_TOP`. The layout comes from a position hash.
+  - Same Stucco surface and the same one mesh per ring, so the existing sidewalk tests hold.
+  - Test: the stones cover the curb end to end, keep their heights in range, number about one per metre with joints, include settled and chipped stones, and come out the same every time (sabotages: no chips, no joints). The first version let chips drop below the brick walk (5.6 cm); the test caught it.
+  - Shots in General Pico: joints and lower chipped ends read along the curb.
+  - Checks: suite green except the known flaky rider and tack tests, which pass alone. Clippy clean.
+- L15 (2026-11-04) The user committed T5b (1c676d7). Native review: approved and acknowledged; 5 suggestions (chip length literal, last-stone comment, test threshold coupling, ambiguous "quedan raros", short-curb branches untested) left for the polish task. T5c, inline in town.rs:
+  - `brick_gaps(floor)` adds missing-brick patches: about 0.06 per m², 18 to 60 cm by 11 to 60 cm, inside the brick walk floor, from a position hash. They are drawn as `Surface::Mud` boxes 2 mm proud of the paving.
+  - Brick walks now draw {Paving, Mud, Stucco}. Requested change: the pinned tests `the_three_tiers_pave_as_the_rule_says` and `a_town_paves_its_plaza…` were updated to allow Mud.
+  - Test: the gap count follows the density, the gaps sit inside the floor, have sizes in range and are spread, nothing fits a thin strip, and the result is deterministic (sabotage: density 0).
+  - Shots in Pico: the first version with Earth (dirt_path) read as pale tiles stuck on top. Mud (brown_mud_dry) reads as earth-filled holes.
+  - Not done: plaza path edge wear (grass thinning where the lawn meets the paths).
+  - Checks: suite green except the known flaky rider test (it passes alone), clippy clean.
+- L16 (2026-11-04) The user committed T5c (5a2d7c8): native review approved and acknowledged; its findings are folded into this polish. User: "vamos con pulido acumulado". T7, inline:
+  - T5c: the gap formula disagreed with its doc and test. It now uses `GAP_LENGTH` (0.18–0.6) and `GAP_WIDTH` (0.18–0.43), plus a named `GAP_DEPTH`; overlaps are documented (same earth, same height). The L15 sizes were wrong: they are 18–60 by 18–43 cm.
+  - T5b: named `CHIP_LENGTH`, and a const assert that `CHIP_DROP.0 > STONE_SETTLE` (the chipped test relies on it). Fixed the last-stone comment. New test cases: a curb shorter than half a stone (one flush stone), and a sweep of lengths keeping every stone between half a stone and one and a half.
+  - T4: `MIN_HALF` is now derived (`0.5 * MIN_STREET_WIDTH - Sidewalk::WIDTH`); `runs_north_south` and `carriageway_half` share the orientation and width. `wear_mesh(street, origin)` takes the height from origin, with the lift inside. The town test keys materials with `carriageway_half`. Comments on the range.
+  - T5a: `lawn_mesh(plaza, origin)` (no repeated height), and comments on the range and on the `None` images.
+  - T2:
+    - The meadow follows the active Camera3d of highest order.
+    - Tint and brightness use independent rolls.
+    - `CARD_VARIANTS` replaces the literal 4 and the 2x2 atlas is commented.
+    - The wind shader's constants are named (gust 30 m/70 m, swell 130 m/18 s, flutter, calm).
+    - The prepass comment now says all prepasses stay still and a depth prepass would need a matching shader.
+  - T1: ground.wesl names `SEAM`/`SEAM_BAND`, `BLEND_EDGE`, `HUMMOCK_BIG`/`HUMMOCK_SMALL` (the hollow divisor is derived) and `DRY_RATIO`, cross-referenced to terrain.rs `GREEN_GRASS`/`DRY_GRASS` (red over green, linear: 0.81 and 1.30, checked). The `Layer` doc is fixed.
+  - Left out on purpose:
+    - Layers switch on before their KTX2 finish loading. A failed load samples a default texture rather than falling back to plain ground; fixing it needs a load-state system.
+    - No WGSL compile test, because wesl imports need Bevy's processor.
+    - No `tend_meadow` app test.
+    - FloraPlugin still needs GrassMaterialPlugin.
+    - `noise` and `noise_d` stay separate, since `noise_d` costs more and fbm does not need gradients.
+    - Unchanged: the T4 z-fight margin (no flicker seen up to about 40 m), the duplicated card fan in grass.rs and meadow.rs, and the RoadMaterial init_resource pattern.
+  - Checks: workspace suite fully green, clippy clean. Shots of the pampa, road, street and lawn compile and look unchanged.
+- L17 (2026-11-04) The user committed T7 (0bb8030). Native review approved and acknowledged; follow-ups fixed and staged:
+  - Two comments I got wrong: the flutter is about 0.8 Hz (5.1 rad/s), not "a few times a second", and the swell is about 110 m crest to crest, not 130.
+  - `shots` error messages use `VAR`.
+  - A const assert that `MIN_HALF == 1.5`.
+  - The paving test now counts Mud meshes (one per brick ring).
+  - The meadow's camera choice is now `viewing_eye`, with a test (active camera of highest order; none if no camera is active), proven by sabotage.
+  - Checks: suite fully green, clippy clean.
+- L18 (2026-11-04) The user committed the follow-ups (dc15a96). Native review approved and acknowledged; its GAP_WIDTH doc remark is fixed in the working tree. User: "T6". An explorer mapped the hooks:
+  - Hooves: `HorseBones` bones plus `standing` (PLANTED 0.015 m); a detector belongs after Propagate, like `carry_stirrups`, skipping frozen rigs. This covers draught horses too.
+  - People: `FigureBody.phase` with footfalls near 0 and 0.5.
+  - Vehicles: `VehicleWheel` radius, `OfVehicle`, `VisualPose.speed`, `Rolled`.
+  - Surface: `WorldTerrain` roads, lagoons and flat areas; `lagoon_wetness`; `WorldTowns` sidewalks, plazas and streets; `FloraSite::dryness`.
+  - The only particle-like precedent is the train's `SmokePuff` pool. There is no weather state.
+  - Routed T6a to one bounded writer under the parent-context backstop.
+- L19 (2026-11-04) User: "anota el proximo hito como prioridad en todo.md lo haremos en otra sesion" (note the next milestone as the priority in todo.md; we will do it in another session). The T6a writer was stopped after its first milestone:
+  - `crates/render/src/dust.rs` is written: footing classifier, puff pool, emitters for hooves, wheels and feet; 11 unit tests pass.
+  - It is wired in (`pub mod dust`, `DustPlugin` in lib.rs and game/src/main.rs) and `cargo check -p game` is clean.
+  - Not done yet: sabotage proofs, riding shots (road, town street, lagoon edge), Renoir frame cost, README, this log's T6a entry, full suite and clippy, native review.
+  - The working tree also holds the GAP_WIDTH doc fix in town.rs (from the dc15a96 review) and small changes the writer made in terrain.rs; check them on resume.
+- L20 (2026-11-04) User: "seguimos con lo prioritario en todo.md" (go on with the priority in todo.md). T6a finished inline:
+  - Removed the writer's TEMPDBG logs. The emitters work in game: hooves on roads and streets (Dust 1.0), wheels, feet on earth walks (0.6), water and mud at the lagoon edge.
+  - Riding shots: the lagoon splashes read. On the street the first dust was nearly invisible, the same colour as the earth. It is now lighter and greyer than the soil (DUST_TINT 0.92, 0.86, 0.76; GRASS_TINT 0.80, 0.77, 0.69), and opacity rose to (0.45 + 0.5 dust)(0.65 + 0.35 s). The dust now trails behind the hooves.
+  - Sabotage: all 11 tests fail when their rule is broken. `stepped` survived its sabotage: its wrap handling was redundant, because a step that wraps crosses phase 0, which is itself a footfall. It is now `floor(2 was) != floor(2 now)`, and that version fails under sabotage (round instead of floor).
+  - Renoir frame cost: dev build, no vsync, a gallop down a Monte Nievas street, 300-frame windows after warm-up. Off: median 11.7 to 13.3 ms. On: 12.0 to 13.2 ms. The cost is within noise, under 0.3 ms. The diagnostics were temporary and are reverted.
+  - README: a paragraph on dust after the street and lawn paragraph.
+  - Checks: workspace suite fully green (core 217, content 32, game 508, render 626), clippy clean. rustfmt was run on dust.rs and the lib.rs export order. core/flora.rs is unformatted at the base and was left alone.
+  - Not done: native review (it runs at the user's commit), T6b prints, plaza path edge wear, the lagoon mud band.
+- L21 (2026-11-04) User: "noo, pero es una exageración la cantidad de polvo, la idea es que se vea real no parezca un un tren a vapor" (no, the amount of dust is exaggerated; it should look real, not like a steam train). Toned down:
+  - DUST_PER_KICK 3 to 1.5, RISE 0.12 to 0.04.
+  - Start size (0.12 + 0.08 r), end size (0.35 + 0.6 s): at most about 1.2 m at a gallop, where it was 2.9 m.
+  - Up speed (0.1 + 0.35 s), back push (0.3 + 0.9 s), life (0.8 + 1.0 s), at most about 2.3 s.
+  - Opacity (0.25 + 0.35 dust)(0.6 + 0.4 s).
+  - The tint goes back toward the earth (DUST_TINT 0.86, 0.78, 0.66).
+  - Street shots: low, small tufts at the hooves that settle quickly. The 11 dust tests still pass, and the README is updated.
+- L22 (2026-11-04) The user committed T6a (8a6db8b). Native review (base dc15a96, readability and reliability) approved and acknowledged, with 7 advisories. The stop hook offered a selectorless START over 605c4b3..HEAD; I did not run it, because those commits were already reviewed one by one. User: "pulido" (polish). T8, inline in dust.rs:
+  - R3-002, spurious dust: `hoof_step(planted, height)` forgets the hoof state while a rig is frozen, not started or beyond EMIT_RADIUS, and re-seeds it without kicking. `Hooves` is now `Option<[bool; 4]>`. Test: a horse back in view does not kick with a hoof that landed unseen (sabotage: keep the stale state).
+  - R2 salt overlap: each particle has `DRAWS` = 10 draws, and `scatter` documents that it uses two. No draw sets two properties.
+  - R2 mud wetness: the splash count scales with Mud wetness (water counts as fully wet). The mud test asserts that wetter mud splashes more (sabotage: drop the factor).
+  - R2 tint: the 1.6 factor is now `EARTH_TINT_DUST` = 0.7 (same blend).
+  - R2 rolled_kick doc fixed.
+  - R3-003: `stir_dust` takes `Option<Res<WorldTerrain>>`; without terrain the kicks are dropped.
+  - R3-001: no App-level system tests, per the lean-tests rule. The one gate with a real bug is now pure and tested.
+  - Checks: 12 dust tests, clippy clean, workspace suite green except the two known flaky tests (rider half seat, tack back pieces), which pass alone. The street shot is unchanged.
+- L23 (2026-11-04) The user committed T8 (77ded70). Native review (base 8a6db8b, readability and reliability) approved and acknowledged. The stop hook again offered the accumulated 605c4b3..HEAD START; not run. Follow-ups staged:
+  - R2-002: `stir_dust` uses a plain `if let Some(world)` around the kick loop.
+  - R2-001: the `hoof_step` doc says a frame without the bones also counts as not kicking. This is harmless: the horse re-seeds without kicking.
+  - R3-002: the blend is effectively unchanged. GRASS_DUST[0] is 0.08, so 1 / (0.7 - 0.08) = 1.613 against the old 1.6.
+  - R3-001: not done (lean tests).
+  - Checks: 12 dust tests, clippy clean, fmt clean.
+
+- L24 (2026-11-04) User (verbatim): "mandale, y otra cosa cuando puedas, las motas de pastos se "crean" o "crecen" a medida que voy avanzando en el juego y mueren muy rápido son de muy corto alcance, se crean muy cerca del usuario y mueren muy cerca del usuario, ahora hay demasiada tierra, en los pueblos, aldeas  y ciudades, ahora todo es tierra además veo una baja en la calídad en las texturans y relieves, en la imagen muestra el camino/calle/vereda y los alrededores de la estacion de tren, este último tiene mejor calidad que le primerodespues te paso una imagen del nivel de realismo que buscamos en suelos, atmosferas y matorrales pastosos". With it came a street-and-station screenshot and an RDR2 town reference.
+  - Causes found: meadow `NEAR` is 22 m and builds 6 cells per frame; the town flat area is painted TOWN_GROUND with the grass layer cleared; the road and street base is Ground102 at 512 px over 6 m, while the station yard is dry_ground_01 1K over about 2 m.
+  - New tasks T9 to T11, before T6b.
+- L25 (2026-11-04) T9 to T11, inline:
+  - T9: meadow `NEAR` 22 → 50 m, and `SINK` in grass_wind.wesl 8 → 12 m. The tufts sink from 38 to 50 m, so the rider never sees them grow or die. The README grass text is updated.
+  - T10: the town ground keeps the grass layer, worn by `TOWN_WEAR` = 0.25 (the first try, 0.45, still read as bare earth in the shots). The renamed terrain test pins it (sabotage at 0.45). Tall tufts in town lots are not done.
+  - T11: user (verbatim): "si" (permission to download Poly Haven dry_ground_01 2K). `RoadExt` gains `dirt_*` maps (bindings 106–108, `layers.y`). road.wesl samples them in world space and tones them as `dirt()` did for Ground102: saturation 0.5, contrast 0.7, brightness 0.79, relief 0.6. The ORM's blue channel holds height, so the maps cannot go on the standard material: Bevy would read that height as metallic. Ground102 is baked only as a fallback. Tests updated and sabotaged twice (rc=101). Shots: sharp, but dry_ground_01 is cracked earth everywhere, so the street read as a dry lakebed.
+  - Found, not caused by T11: a dark band with straight edges on the road side at (-3053,-2197) at noon. It is still there with the 2K branch off. Pending.
+- L26 (2026-11-04) User (verbatim): "si" (permission to download Poly Haven dirt 2K instead). `ROAD_LAYER` = "dirt" (the plaza paths' scan): `DIRT_TILE` 2 m, `DIRT_LUMA` 0.091. Shots: the street and the road read as compacted earth with sharp grit, with cracks only in the mud patches. The `assets/textures/ground/dry_ground_01/` folder is unused (2K KTX2 plus JPG sources); rm was denied, so the user deletes it. The JPG sources in `dirt/` are not kept either. Checks: ground tests 9/9, render suite 626/627 (only the known flaky rider half-seat failed, and it passes alone), clippy clean, fmt clean on the changed files (flora.rs has a committed fmt diff). README street line fixed: Surface::Earth is `dirt_path`.
+- L27 (2026-11-04) The user committed T9 to T11 (49d9237). Native review (base 77ded70, committed-only, readability and reliability, lineage review-dec5a0cc562a0caf) approved and acknowledged, with 6 advisories:
+  - R2-001: the earth layer borrows `mud_sampler`. Rename it to a shared layer sampler.
+  - R2-002: name the roughness floor 0.75 and the occlusion remap.
+  - R2-003: the `DIRT` and road.rs docs no longer mention the Ground102 fallback.
+  - R2-004: cross-reference `NEAR` and `SINK`.
+  - R3-001: the dirt normal is decoded in the mesh's MikkTSpace frame while it is sampled in world XZ, so curved or diagonal roads get rotated relief. Use the world-space frame.
+  - R3-002: no test covers the soil-present, dirt-missing fallback.
+  The stop hook offered the accumulated 605c4b3..HEAD START again; not run.
+- L28 (2026-11-04) User: "primero pulimos asi no se nos hace una bola de nieve" (polish first, so it doesn't snowball). T12, the polish of the L27 advisories, done inline:
+  - R2-001: `mud_sampler` is renamed `layer_sampler` and documented as shared. The earth loads only when the mud ships, because the earth samples through the mud images' repeating sampler.
+  - R2-002: added `DIRT_ROUGHNESS_MIN` and `DIRT_OCCLUSION_MIN`.
+  - R2-003: the road.rs module doc names the Ground102 fallback, and the `DIRT` doc points to `DIRT_BRIGHTNESS`.
+  - R2-004: `NEAR` and `SINK` now point to each other.
+  - R3-001: `world_tbn` builds the world-space frame (u along +X, v along +Z, as `face_tangent`). The earth normal and the mud normal both use it, so they no longer depend on the mesh tangents. The mud had the same defect from T3.
+  - R3-002: new test `without_both_2k_layers_the_road_keeps_ground_102` (mud only, earth only). Sabotaged twice: earth loaded without mud, and no fallback (rc=101 both).
+  - Checks: shots of the street and the road render correctly; ground tests 10/10; render suite 628/628; clippy clean; fmt clean except the committed flora.rs diff.
+- L29 (2026-11-04) The user committed T12 (0aca382). Native review (base 49d9237, readability and reliability, lineage review-2485f263e12279cb) approved and acknowledged, with 4 suggestions:
+  - R2-001 done: the NEAR and SINK cross-references name the relation (`NEAR - SINK`) instead of copying values.
+  - R3-001 done: `world_tbn` falls back to +Z on a wall facing X. The street shot is unchanged.
+  - R3-002 not done: the world frame is the deliberate fix of L27 R3-001, and `n0` is the geometric normal. There is no shader test harness, so the shots are the check.
+  - R3-003 not done (lean tests): the temp folder leaks only when the test itself fails.
+  The stop hook again offered the accumulated 605c4b3..HEAD START; not run.
+- L30 (2026-11-04) User: "si" (go on with the dark band beside roads, L25). Cause: the road surface mesh cast shadows. The shadow pass ignores its alpha, so the whole strip, feathered edges included, shadowed the ground beside it. It showed only at the rider's grazing view; top-down shots at 09:00, 12:00 and 16:00 showed nothing, and it stayed with the road's alpha at 0. The street wear layer already had `NotShadowCaster`. Fix: the road surface spawns with `NotShadowCaster`. `road_chunks_get_their_surface_crossing_and_signposts_and_drop_them` asserts it (sabotage: drop the component, rc=101). Shots: the band is gone at walk and gallop.
+- L31 (2026-11-04) The user committed e023230 and 684949f. Native review (base 0aca382, reliability, lineage review-2bf6199ad31b6c6f) approved and acknowledged, with 1 suggestion: R3-001, the hard +X→+Z switch in `world_tbn` at |n.x| > 0.99 could seam on a curved bank. Not done: roads and streets are near-horizontal, so the branch is a NaN guard that real road input never reaches.

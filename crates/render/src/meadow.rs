@@ -30,14 +30,17 @@ use pampa_core::{FloraSite, TuftKind, Vec2 as GroundVec2};
 use crate::AssetRoot;
 use crate::coords::world_from_ground;
 use crate::flora::{WorldFlora, jitter};
-use crate::grass::{GrassMaterial, SWAY, load_maps, swaying, tint_rgb};
+use crate::grass::{CARD_VARIANTS, GrassMaterial, SWAY, load_maps, swaying, tint_rgb};
 use crate::terrain::{ChunkDetail, WorldChunks, WorldTerrain, mesh_height};
 
 /// Lado de una celda, en metros.
 pub const CELL: f32 = 4.0;
 /// Hasta dónde llega el pasto cercano desde la cámara, en metros: ahí ya se
-/// hundió en el suelo.
-pub const NEAR: f32 = 22.0;
+/// hundió en el suelo. Lejos, para que no se lo vea crecer ni hundirse cerca
+/// del jinete; las matas son tan livianas (seis triángulos) que alcanzan
+/// pocos miles. Las puntas se hunden en los últimos `SINK` metros (en
+/// `assets/shaders/grass_wind.wesl`): desde `NEAR - SINK`.
+pub const NEAR: f32 = 50.0;
 /// Matas por metro cuadrado en pampa abierta.
 pub const DENSITY: f32 = 0.45;
 /// La altura más baja y la más alta de una mata, en metros.
@@ -150,6 +153,8 @@ impl Cards {
         normal: Vec3,
     ) {
         let (count, width) = (CARDS, 1.2 * height);
+        // La celda de la macolla en la grilla de 2x2 del atlas
+        // ([`CARD_VARIANTS`]).
         let (u0, v0) = ((variant % 2) as f32 * 0.5, (variant / 2) as f32 * 0.5);
         let at = base - self.origin;
         for card in 0..count {
@@ -193,11 +198,11 @@ impl Cards {
     }
 }
 
-/// El color lineal de una mata en `p`: el tinte de su sequedad, con un poco
-/// de variación de una a otra.
-fn card_color(site: &FloraSite, p: GroundVec2, roll: f32) -> [f32; 4] {
-    let dry = site.dryness(p) + (roll - 0.5) * 0.35;
-    let c = tint_rgb(TuftKind::Paja, dry) * (0.88 + 0.24 * jitter(roll.to_bits(), 3));
+/// El color lineal de una mata en `p`: el tinte de su sequedad, corrido por
+/// `tint`, y su brillo, por `light` (dos tiradas independientes en `[0, 1)`).
+fn card_color(site: &FloraSite, p: GroundVec2, tint: f32, light: f32) -> [f32; 4] {
+    let dry = site.dryness(p) + (tint - 0.5) * 0.35;
+    let c = tint_rgb(TuftKind::Paja, dry) * (0.88 + 0.24 * light);
     Color::srgb(c.x, c.y, c.z).to_linear().to_f32_array()
 }
 
@@ -221,7 +226,8 @@ pub fn cell_grass(
     let mut cards = Cards::new(origin);
     for _ in 0..(DENSITY * CELL * CELL).round() as usize {
         let p = corner + GroundVec2::new(roll() * CELL, roll() * CELL);
-        let (keep, size, yaw, variant, tint) = (roll(), roll(), roll(), roll(), roll());
+        let (keep, size, yaw, variant, tint, light) =
+            (roll(), roll(), roll(), roll(), roll(), roll());
         // Bajo el monte la hojarasca le gana al pasto.
         if keep > 1.0 - 0.7 * site.monte(p) || !site.grassland(p) {
             continue;
@@ -234,17 +240,28 @@ pub fn cell_grass(
         let dy = ground(p + GroundVec2::new(0.0, e)) - ground(p - GroundVec2::new(0.0, e));
         let normal = Vec3::new(-dx, 2.0 * e, dy).normalize();
         let height = HEIGHT.0 + (HEIGHT.1 - HEIGHT.0) * size;
-        let color = card_color(site, p, tint);
+        let color = card_color(site, p, tint, light);
         cards.tuft(
             base,
             height,
             yaw * std::f32::consts::TAU,
-            (variant * 4.0) as usize,
+            (variant * CARD_VARIANTS as f32) as usize,
             color,
             normal,
         );
     }
     cards.mesh()
+}
+
+/// Dónde está la cámara que se ve, la misma que mide el hundimiento del
+/// shader: la activa de mayor orden. `None` sin ninguna activa.
+fn viewing_eye<'a>(
+    cameras: impl Iterator<Item = (&'a GlobalTransform, &'a Camera)>,
+) -> Option<Vec3> {
+    cameras
+        .filter(|(_, c)| c.is_active)
+        .max_by_key(|(_, c)| c.order)
+        .map(|(t, _)| t.translation())
 }
 
 /// Arma las celdas que entraron en [`NEAR`] (las más cercanas primero, hasta
@@ -258,13 +275,13 @@ fn tend_meadow(
     terrain: Res<WorldTerrain>,
     world: Res<WorldChunks>,
     detail: Option<Res<ChunkDetail>>,
-    camera: Query<&GlobalTransform, With<Camera3d>>,
+    camera: Query<(&GlobalTransform, &Camera), With<Camera3d>>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     let (Some(kit), Some(flora), Some(detail)) = (kit, flora, detail) else {
         return;
     };
-    let Some(eye) = camera.iter().next().map(|t| t.translation()) else {
+    let Some(eye) = viewing_eye(camera.iter()) else {
         return;
     };
     let eye = GroundVec2::new(eye.x, -eye.z);
@@ -398,6 +415,21 @@ mod tests {
         let site = site();
         let outside = cell_of(WorldConfig::default().bounds().min) - IVec2::ONE;
         assert!(cell_grass(outside, &site, &ground, Vec3::ZERO).is_none());
+    }
+
+    #[test]
+    fn the_grass_follows_the_active_camera_of_highest_order() {
+        let at = |x: f32| GlobalTransform::from_translation(Vec3::new(x, 2.0, 0.0));
+        let camera = |order: isize, is_active: bool| Camera {
+            order,
+            is_active,
+            ..default()
+        };
+        let (a, b, c) = (at(1.0), at(2.0), at(3.0));
+        let (ca, cb, cc) = (camera(0, true), camera(2, true), camera(5, false));
+        let eye = viewing_eye([(&a, &ca), (&b, &cb), (&c, &cc)].into_iter());
+        assert_eq!(eye, Some(b.translation()), "the inactive one is skipped");
+        assert_eq!(viewing_eye([(&c, &cc)].into_iter()), None);
     }
 
     #[test]

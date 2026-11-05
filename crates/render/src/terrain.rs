@@ -533,9 +533,13 @@ fn build_chunk_mesh(
 const GREEN_GRASS: Vec3 = Vec3::new(0.49, 0.54, 0.38);
 /// Pasto amarillo seco (sRGB).
 const DRY_GRASS: Vec3 = Vec3::new(0.71, 0.63, 0.40);
-/// Tierra pisoteada del suelo nivelado de un pueblo (sRGB): lisa, para que las
-/// calles y los edificios se lean sobre ella.
+/// Tierra pisoteada del suelo nivelado de un pueblo (sRGB).
 const TOWN_GROUND: Vec3 = Vec3::new(0.60, 0.53, 0.40);
+/// Cuánto gastado está el pasto del suelo nivelado de un pueblo, de 0 a 1:
+/// entre las casas sigue habiendo pasto, pisoteado y con calvas de tierra; la
+/// tierra pelada queda para las calles, las veredas de tierra y los patios,
+/// que tienen sus propias mallas.
+const TOWN_WEAR: f32 = 0.25;
 /// Tierra gastada junto a un camino (sRGB), y hasta dónde llega el desgaste más
 /// allá del borde del camino, en metros.
 const ROAD_EARTH: Vec3 = Vec3::new(0.60, 0.52, 0.39);
@@ -561,14 +565,14 @@ fn palette_range() -> ([f32; 3], [f32; 3]) {
 }
 
 /// Color del suelo en el punto del suelo `g`: de verde grisáceo a amarillo seco
-/// según un ruido de baja frecuencia ([`grass_dryness`]), tierra lisa en el
-/// suelo de los pueblos, más oscuro en pendientes y hondonadas. Función solo de
+/// según un ruido de baja frecuencia ([`grass_dryness`]), pasto pisoteado en
+/// el suelo de los pueblos, más oscuro en pendientes y hondonadas. Función solo de
 /// la posición, así que los chunks vecinos coinciden en sus vértices
 /// compartidos.
 fn ground_color(terrain: &Terrain, flora: Option<&FloraSite>, g: GroundVec2) -> [f32; 4] {
     let grass = GREEN_GRASS.lerp(DRY_GRASS, grass_dryness(terrain, g));
     let town = town_weight(terrain, g);
-    let rgb = grass.lerp(TOWN_GROUND, town);
+    let rgb = grass.lerp(TOWN_GROUND, TOWN_WEAR * town);
     // Tierra gastada a lo largo de los caminos, bajo sus bordes difuminados.
     let worn = road_wear(terrain, g);
     let rgb = rgb.lerp(ROAD_EARTH, 0.6 * worn);
@@ -591,7 +595,7 @@ fn ground_color(terrain: &Terrain, flora: Option<&FloraSite>, g: GroundVec2) -> 
 }
 
 /// Cuánto pesa el suelo nivelado de un pueblo en `g`, de 0 a 1.
-fn town_weight(terrain: &Terrain, g: GroundVec2) -> f32 {
+pub(crate) fn town_weight(terrain: &Terrain, g: GroundVec2) -> f32 {
     terrain
         .flat_areas
         .iter()
@@ -601,7 +605,7 @@ fn town_weight(terrain: &Terrain, g: GroundVec2) -> f32 {
 
 /// Cuánto desgaste de camino hay en `g`, de 0 (lejos) a 1 (en el camino),
 /// difuminado a lo largo de [`ROAD_VERGE`] más allá de su borde.
-fn road_wear(terrain: &Terrain, g: GroundVec2) -> f32 {
+pub(crate) fn road_wear(terrain: &Terrain, g: GroundVec2) -> f32 {
     terrain.roads.as_ref().map_or(0.0, |r| {
         let reach = RoadNetwork::HALF_WIDTH + ROAD_VERGE;
         r.near(g, reach)
@@ -610,12 +614,14 @@ fn road_wear(terrain: &Terrain, g: GroundVec2) -> f32 {
 }
 
 /// El segundo UV del suelo en `g`, para el shader del suelo
-/// (`assets/shaders/ground.wesl`): cuánto está despejado (el suelo de un
-/// pueblo, la banquina gastada de un camino, el barro de una laguna: ahí la
-/// tierra asoma entre el pasto) y cuánto está húmedo, ambos de 0 a 1.
+/// (`assets/shaders/ground.wesl`): cuánto está despejado (el suelo pisoteado
+/// de un pueblo, en parte; la banquina gastada de un camino y el barro de una
+/// laguna, del todo: ahí la tierra asoma entre el pasto) y cuánto está húmedo,
+/// ambos de 0 a 1.
 fn ground_cover(terrain: &Terrain, g: GroundVec2) -> [f32; 2] {
     let wet = lagoon_wetness(terrain, g);
-    let cleared = town_weight(terrain, g).max(road_wear(terrain, g)).max(wet);
+    let town = TOWN_WEAR * town_weight(terrain, g);
+    let cleared = town.max(road_wear(terrain, g)).max(wet);
     [cleared, wet]
 }
 
@@ -1099,7 +1105,7 @@ mod tests {
     }
 
     #[test]
-    fn the_second_uv_clears_towns_and_lagoon_mud_and_wets_only_the_mud() {
+    fn the_second_uv_wears_towns_in_part_clears_lagoon_mud_and_wets_only_the_mud() {
         use bevy::mesh::VertexAttributeValues as V;
         let centre = GroundVec2::new(100.0, 100.0);
         let town = Terrain::default().with_flat_area(FlatArea {
@@ -1108,14 +1114,15 @@ mod tests {
             falloff: 60.0,
             height: 0.0,
         });
-        assert_eq!(ground_cover(&town, centre), [1.0, 0.0]);
+        // El pueblo: pasto pisoteado, despejado solo en parte.
+        assert_eq!(ground_cover(&town, centre), [TOWN_WEAR, 0.0]);
         // La pampa abierta, lejos del pueblo: pasto, ni despejado ni húmedo.
         assert_eq!(
             ground_cover(&town, GroundVec2::new(900.0, 900.0)),
             [0.0, 0.0]
         );
         let rim = ground_cover(&town, centre + GroundVec2::new(70.0, 0.0))[0];
-        assert!(rim > 0.0 && rim < 1.0, "{rim}");
+        assert!(rim > 0.0 && rim < TOWN_WEAR, "{rim}");
 
         let config = pampa_core::LagoonConfig {
             name: "Laguna".into(),
@@ -1146,7 +1153,7 @@ mod tests {
         for j in 0..9 {
             assert_eq!(left[j * 9 + 8], right[j * 9], "row {j}");
         }
-        assert!(left.iter().any(|c| c[0] == 1.0));
+        assert!(left.iter().any(|c| c[0] == TOWN_WEAR));
     }
 
     #[test]

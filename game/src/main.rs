@@ -321,7 +321,7 @@ fn main() {
                     // El recorrido de capturas (`shots`) abre su ventana con un
                     // app_id propio, para que el gestor de ventanas pueda
                     // mandarla aparte (ver `shots`).
-                    name: std::env::var_os("PAMPA_SHOTS").map(|_| shots::APP_ID.into()),
+                    name: shots::enabled().then(|| shots::APP_ID.into()),
                     ..default()
                 }),
                 ..default()
@@ -367,6 +367,8 @@ fn main() {
     .add_plugins((pampa_render::FaunaPlugin, fauna::FaunaPlugin))
     // El agua y los juncos de las lagunas.
     .add_plugins(LagoonPlugin)
+    // El polvo y las salpicaduras que levantan vasos, ruedas y pies.
+    .add_plugins(pampa_render::DustPlugin)
     // El encargo, y el reloj y el objetivo en la esquina.
     .add_plugins((errand::ErrandPlugin, timetable::TimetablePlugin, HudPlugin))
     // Subir, viajar, omitir y esperar el tren, con un fundido para tapar los

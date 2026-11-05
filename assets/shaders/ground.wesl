@@ -64,8 +64,23 @@ const GRASS_HEIGHT: vec2<f32> = vec2<f32>(0.34, 0.15);
 const SOIL_HEIGHT: vec2<f32> = vec2<f32>(0.42, 0.25);
 // Bare loess of the open pampa (linear), lit by the vertex colour's own shade.
 const EARTH: vec3<f32> = vec3<f32>(0.27, 0.225, 0.165);
-// The linear luma of the mid grass tone, against which that shade is read.
+// The linear luma of the mid grass tone, against which that shade is read
+// (between `GREEN_GRASS` and `DRY_GRASS` in `crates/render/src/terrain.rs`).
 const GRASS_REFERENCE: f32 = 0.28;
+// The vertex paint's red over green, from the green pampa to the dry one
+// (`GREEN_GRASS` and `DRY_GRASS` in terrain.rs, linear): how dry the grass is.
+const DRY_RATIO: vec2<f32> = vec2<f32>(0.81, 1.30);
+// Half the width of the edge between grass and soil, in the blend's units.
+const BLEND_EDGE: f32 = 0.2;
+// The seam between a layer's two offsets: where it crosses (`SEAM.x` to
+// `SEAM.y` of the patch fraction), and the band outside it where one offset
+// alone is read. The crossing's own shift (a tenth of the colours'
+// difference) stays inside that band for scan colours.
+const SEAM: vec2<f32> = vec2<f32>(0.3, 0.7);
+const SEAM_BAND: f32 = 0.05;
+// The hummocks' two scales: amplitude in metres and frequency per metre.
+const HUMMOCK_BIG: vec2<f32> = vec2<f32>(0.035, 0.8);
+const HUMMOCK_SMALL: vec2<f32> = vec2<f32>(0.012, 2.6);
 // Where the normal maps and hummocks fade out, in metres from the eye.
 const DETAIL_NEAR: f32 = 30.0;
 const DETAIL_FAR: f32 = 45.0;
@@ -130,11 +145,11 @@ fn fbm(p: vec2<f32>) -> f32 {
 // The hummocks, a few centimetres over half a metre to a metre and a half:
 // (height in metres, its slope).
 fn hummocks(p: vec2<f32>) -> vec3<f32> {
-    let big = noise_d(p * 0.8 + 3.7);
-    let small = noise_d(p * 2.6 + 11.3);
+    let big = noise_d(p * HUMMOCK_BIG.y + 3.7);
+    let small = noise_d(p * HUMMOCK_SMALL.y + 11.3);
     return vec3<f32>(
-        0.035 * big.x + 0.012 * small.x,
-        0.035 * 0.8 * big.yz + 0.012 * 2.6 * small.yz,
+        HUMMOCK_BIG.x * big.x + HUMMOCK_SMALL.x * small.x,
+        HUMMOCK_BIG.x * HUMMOCK_BIG.y * big.yz + HUMMOCK_SMALL.x * HUMMOCK_SMALL.y * small.yz,
     );
 }
 
@@ -156,7 +171,8 @@ fn patch_at(p: vec2<f32>, seed: f32) -> Patch {
     );
 }
 
-// One layer, sampled at both offsets and blended.
+// What a layer gives at one point: sampled at one offset, blended across a
+// seam, or a placeholder for a layer that is not read (`no_layer`).
 struct Layer {
     color: vec3<f32>,
     // Tangent-space normal.
@@ -204,16 +220,16 @@ fn layer(
     at: Patch,
     detail: bool,
 ) -> Layer {
-    if (at.f < 0.25) {
+    if (at.f < SEAM.x - SEAM_BAND) {
         return sample_layer(color_map, normal_map, orm_map, uv + at.a, ddx, ddy, detail);
     }
-    if (at.f > 0.75) {
+    if (at.f > SEAM.y + SEAM_BAND) {
         return sample_layer(color_map, normal_map, orm_map, uv + at.b, ddx, ddy, detail);
     }
     let a = sample_layer(color_map, normal_map, orm_map, uv + at.a, ddx, ddy, detail);
     let b = sample_layer(color_map, normal_map, orm_map, uv + at.b, ddx, ddy, detail);
     // Cross where the two samples look most alike, not on a straight line.
-    let w = smoothstep(0.3, 0.7, at.f - 0.1 * dot(a.color - b.color, vec3<f32>(1.0)));
+    let w = smoothstep(SEAM.x, SEAM.y, at.f - 0.1 * dot(a.color - b.color, vec3<f32>(1.0)));
     return Layer(
         mix(a.color, b.color, w),
         normalize(mix(a.normal, b.normal, w)),
@@ -271,7 +287,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 
         // Dry grass is yellower: its red over green rises from about 0.8
         // (green pampa) to 1.3 (dry).
-        let dry = clamp((paint.r / max(paint.g, 1e-3) - 0.81) / 0.49, 0.0, 1.0);
+        let dry = clamp((paint.r / max(paint.g, 1e-3) - DRY_RATIO.x) / (DRY_RATIO.y - DRY_RATIO.x), 0.0, 1.0);
         // Bare blots in the open pampa, a few metres across.
         let blots = fbm(p * 0.33 + 7.0);
         let open = smoothstep(0.66 - 0.1 * dry, 0.8 - 0.1 * dry, blots);
@@ -287,17 +303,17 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         let edge = (mask - 0.5) * 2.0;
         var grass = no_layer(GRASS_HEIGHT.x);
         var soil = no_layer(SOIL_HEIGHT.x);
-        if (edge < 0.2 + HEIGHT_PUSH) {
+        if (edge < BLEND_EDGE + HEIGHT_PUSH) {
             grass = layer(grass_color, grass_normal, grass_orm, grass_uv, grass_dx, grass_dy, patch_at(p, 0.0), detail);
         }
-        if (edge > -0.2 - HEIGHT_PUSH) {
+        if (edge > -BLEND_EDGE - HEIGHT_PUSH) {
             soil = layer(soil_color, soil_normal, soil_orm, soil_uv, soil_dx, soil_dy, patch_at(p, 5.3), detail);
         }
         // Meet by height: each scan's height, normalised, pushes its layer.
         let hg = (grass.height - GRASS_HEIGHT.x) / GRASS_HEIGHT.y;
         let hs = (soil.height - SOIL_HEIGHT.x) / SOIL_HEIGHT.y;
         let push = clamp(0.3 * (hs - hg), -HEIGHT_PUSH, HEIGHT_PUSH);
-        let s = smoothstep(-0.2, 0.2, edge + push);
+        let s = smoothstep(-BLEND_EDGE, BLEND_EDGE, edge + push);
 
         let shade = sqrt(clamp(dot(paint, LUMA) / GRASS_REFERENCE, 0.4, 1.6));
         let earth = mix(EARTH * shade, paint, cleared);
@@ -316,7 +332,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         var hollow = 0.5;
         if (detail) {
             let hummock = hummocks(p);
-            hollow = mix(0.5, clamp(hummock.x / 0.047, 0.0, 1.0), fade);
+            hollow = mix(0.5, clamp(hummock.x / (HUMMOCK_BIG.x + HUMMOCK_SMALL.x), 0.0, 1.0), fade);
             let normal = normalize(mix(FLAT, mix(grass.normal, soil.normal, s), fade));
             @if(VERTEX_TANGENTS) {
                 let tbn = calculate_tbn_mikktspace(pbr_input.world_normal, in.world_tangent);

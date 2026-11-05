@@ -54,6 +54,14 @@ use std::path::PathBuf;
 /// `w("^pampa-shots$", { workspace = "5 silent" })`.
 pub const APP_ID: &str = "pampa-shots";
 
+/// La variable de entorno que nombra la lista de capturas del recorrido.
+pub const VAR: &str = "PAMPA_SHOTS";
+
+/// Si esta corrida es un recorrido de capturas.
+pub fn enabled() -> bool {
+    std::env::var_os(VAR).is_some()
+}
+
 use bevy::asset::LoadState;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
@@ -182,12 +190,12 @@ impl ShotsPlugin {
     /// El plugin, cuando `PAMPA_SHOTS` nombra una lista de capturas legible y
     /// válida.
     pub fn from_env() -> Option<Tour> {
-        let file = std::env::var_os("PAMPA_SHOTS")?;
+        let file = std::env::var_os(VAR)?;
         let text = std::fs::read_to_string(&file)
-            .map_err(|e| error!("PAMPA_SHOTS {file:?}: {e}"))
+            .map_err(|e| error!("{VAR} {file:?}: {e}"))
             .ok()?;
         let shots = parse_shots(&text)
-            .map_err(|e| error!("PAMPA_SHOTS {file:?}: {e}"))
+            .map_err(|e| error!("{VAR} {file:?}: {e}"))
             .ok()?;
         let dir = std::env::var_os("PAMPA_SHOTS_DIR").map_or_else(|| "shots".into(), PathBuf::from);
         let wait = std::env::var("PAMPA_SHOTS_WAIT")
