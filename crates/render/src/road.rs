@@ -25,6 +25,7 @@
 //! desvanecen cuando tapan al jinete.
 
 use bevy::asset::RenderAssetUsages;
+use bevy::light::NotShadowCaster;
 use bevy::mesh::PrimitiveTopology;
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
@@ -202,7 +203,15 @@ fn lay_roads(
         laid.queue_silenced(move |mut chunk: EntityWorldMut| {
             chunk.with_children(|road| {
                 if let Some((mesh, material)) = surface {
-                    road.spawn((mesh, material, Transform::default(), RoadSurface));
+                    // Una capa sobre el suelo: no hace sombra, que la pasada
+                    // de sombras no ve su borde difuminado.
+                    road.spawn((
+                        mesh,
+                        material,
+                        Transform::default(),
+                        NotShadowCaster,
+                        RoadSurface,
+                    ));
                 }
                 for (mesh, material, transform, piece, fade) in pieces {
                     let mut part = road.spawn((mesh, material, transform));
@@ -677,6 +686,12 @@ mod tests {
         app.update();
         let surfaces = chunk_of::<RoadSurface>(&mut app);
         assert!(surfaces.contains(&config.chunk_of(crossing.at)));
+        // Una capa sobre el suelo no hace sombra: la pasada de sombras no ve
+        // su alfa y la proyectaría entera.
+        let mut casting = app
+            .world_mut()
+            .query_filtered::<(), (With<RoadSurface>, Without<NotShadowCaster>)>();
+        assert_eq!(casting.iter(app.world()).count(), 0);
         // Cada chunk con una parte de camino tiene exactamente una superficie;
         // ningún otro.
         let mut loaded = app.world_mut().query::<&TerrainChunk>();
