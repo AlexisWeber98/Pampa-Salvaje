@@ -592,6 +592,8 @@ mod tests {
             building: b,
             variant: variant(i, &b.footprint),
             outskirts: edge < OUTSKIRTS,
+            // Solo elige entre ranchos simples, que no tienen pretil.
+            by_rail: false,
             store: StoreStyle::of(town.size),
             veranda: town.hitching_post.veranda,
         };

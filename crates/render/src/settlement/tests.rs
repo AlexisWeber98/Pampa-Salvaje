@@ -1136,7 +1136,7 @@ fn every_set_ships_its_three_ktx2_maps_as_bc7_with_baked_mips() {
         .into_iter()
         .flat_map(|set| materials::MAPS.map(|(name, srgb)| (materials::map_path(set, name), srgb)))
         .collect();
-    assert_eq!(paths.len(), 29 * 3);
+    assert_eq!(paths.len(), 30 * 3);
     let (app, handles) = load_shipped(&paths);
     let images = app.world().resource::<Assets<Image>>();
     for (handle, (path, srgb)) in handles.iter().zip(&paths) {
@@ -1338,7 +1338,11 @@ fn each_humble_house_wears_its_own_walls_roof_and_frame() {
     for (style, wall, roof) in [
         (HouseStyle::Planks, Surface::Weatherboard, Surface::OldIron),
         (HouseStyle::Casilla, Surface::OldIron, Surface::OldIron),
-        (HouseStyle::MudStraw, Surface::MudStraw, Surface::Thatch),
+        (
+            HouseStyle::MudStraw,
+            Surface::MudStraw,
+            Surface::StrawThatch,
+        ),
     ] {
         let shape = house(style);
         assert!(has(&shape, wall) && has(&shape, roof), "{style:?}");
@@ -1359,7 +1363,7 @@ fn each_humble_house_wears_its_own_walls_roof_and_frame() {
     assert!(!has(&mud, Surface::Glass));
     // Su paja termina en un canto que cuelga debajo del alero, y una cumbrera
     // de barro la sella por encima de la paja.
-    let thatch = mud.points(Surface::Thatch);
+    let thatch = mud.points(Surface::StrawThatch);
     let top = thatch.iter().map(|p| p.y).fold(f32::MIN, f32::max);
     let ridge = mud
         .points(Surface::MudStraw)

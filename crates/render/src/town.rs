@@ -1476,6 +1476,9 @@ fn lots(town: &TownLayout, terrain: &Terrain) -> Vec<Job> {
                     building,
                     variant: variant(index, &building.footprint),
                     outskirts: edge < OUTSKIRTS,
+                    by_rail: town
+                        .railway
+                        .is_some_and(|r| r.distance(c) < town_buildings::CASILLA_REACH),
                     store,
                     veranda: town.hitching_post.veranda,
                 },

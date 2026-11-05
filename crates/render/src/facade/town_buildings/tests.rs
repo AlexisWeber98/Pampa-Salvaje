@@ -15,6 +15,7 @@ fn lot(kind: BuildingKind, (w, d, h): (f32, f32, f32), variant: u32) -> Lot {
         },
         variant,
         outskirts: false,
+        by_rail: false,
         store: StoreStyle::GeneralStore,
         veranda: 3.0,
     }
@@ -41,6 +42,7 @@ fn street() -> Vec<Lot> {
         ));
         lots.push(Lot {
             outskirts: true,
+            by_rail: true,
             ..lot(BuildingKind::House, (8.0, 8.5, 3.6), v)
         });
     }
@@ -556,12 +558,65 @@ fn every_front_door_has_a_threshold_and_every_window_a_vent() {
     );
 }
 
+/// Una casilla: paredes y techo de chapa, sin revoque ni ladrillo.
+fn casilla(shape: &Shape) -> bool {
+    let all: Vec<Surface> = shape.surfaces().collect();
+    all.contains(&Surface::Barnwood)
+        && !all.iter().any(|x| {
+            matches!(
+                x,
+                Surface::Adobe
+                    | Surface::Whitewash
+                    | Surface::WashedBrick
+                    | Surface::OldLime
+                    | Surface::Weatherboard
+                    | Surface::MudStraw
+            )
+        })
+}
+
+#[test]
+fn the_outskirts_have_casillas_only_by_the_railway_and_few_wooden_ranchos() {
+    // La mitad lejos de la vía.
+    let outskirts: Vec<(Lot, Shape)> = (0..200u32)
+        .map(|i| {
+            let v = i.wrapping_mul(0x9e37_79b9) ^ i;
+            let lot = Lot {
+                outskirts: true,
+                by_rail: i % 2 == 0,
+                ..lot(BuildingKind::House, (8.0, 8.5, 3.6), v)
+            };
+            (lot, building(&lot).unwrap())
+        })
+        .collect();
+    for (lot, shape) in &outskirts {
+        assert!(lot.by_rail || !casilla(shape), "{lot:?}");
+    }
+    let wooden = outskirts
+        .iter()
+        .filter(|(_, s)| s.surfaces().any(|x| x == Surface::Weatherboard))
+        .count();
+    assert!(
+        wooden * 10 <= outskirts.len(),
+        "{wooden} of {}",
+        outskirts.len()
+    );
+}
+
 #[test]
 fn the_outskirts_have_wooden_ranchos_casillas_and_mud_and_straw_ranchos() {
-    let outskirts: Vec<Shape> = street()
-        .into_iter()
-        .filter(|lot| lot.outskirts)
-        .map(|lot| building(&lot).unwrap())
+    // Los ranchos de madera son raros: hacen falta más semillas que en
+    // `street`. Todos junto a la vía, para que también haya casillas.
+    let outskirts: Vec<Shape> = (0..200u32)
+        .map(|v| {
+            let v = v.wrapping_mul(0x9e37_79b9) ^ v;
+            building(&Lot {
+                outskirts: true,
+                by_rail: true,
+                ..lot(BuildingKind::House, (8.0, 8.5, 3.6), v)
+            })
+            .unwrap()
+        })
         .collect();
     for wall in [Surface::Weatherboard, Surface::MudStraw] {
         let n = outskirts
@@ -570,25 +625,7 @@ fn the_outskirts_have_wooden_ranchos_casillas_and_mud_and_straw_ranchos() {
             .count();
         assert!(n >= 1, "{wall:?}");
     }
-    // Una casilla: paredes y techo de chapa, sin revoque ni ladrillo.
-    let casillas = outskirts
-        .iter()
-        .filter(|s| {
-            let all: Vec<Surface> = s.surfaces().collect();
-            all.contains(&Surface::Barnwood)
-                && !all.iter().any(|x| {
-                    matches!(
-                        x,
-                        Surface::Adobe
-                            | Surface::Whitewash
-                            | Surface::WashedBrick
-                            | Surface::OldLime
-                            | Surface::Weatherboard
-                            | Surface::MudStraw
-                    )
-                })
-        })
-        .count();
+    let casillas = outskirts.iter().filter(|s| casilla(s)).count();
     assert!(casillas >= 1);
     // Siguen siendo pocos: la mayoría de las afueras sigue de adobe o cal.
     let adobe = outskirts
