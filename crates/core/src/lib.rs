@@ -59,7 +59,8 @@ pub use collision::{Aabb, Body, Circle, SideObstacle};
 pub use errand::{Errand, ErrandEvent, ErrandStage, Interaction, Npc, Standing};
 pub use fauna::{
     Cow, CowCoat, CowState, Critter, CritterKind, CritterState, Duck, FaunaSite, Flock, FlockState,
-    Hare, HareState, Herd, Raptor, RaptorKind,
+    Hare, HareState, Herd, Patch, Perch, Raptor, RaptorKind, Sparrow, SparrowClip, SparrowGroup,
+    SparrowKind, Spot,
 };
 pub use fence::{FenceLayout, FenceRun, Frontage, Gate, Opening, OpeningKind};
 pub use flora::{ChunkFlora, FloraSite, Shrub, ShrubKind, Species, Tree, Tuft, TuftKind};

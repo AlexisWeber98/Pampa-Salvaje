@@ -255,7 +255,7 @@ pub(crate) fn paints_its_joinery(lot: &Lot) -> bool {
     let v = lot.variant;
     match lot.building.kind {
         BuildingKind::House => {
-            let cottage = lot.outskirts && v % 20 < 13;
+            let cottage = is_cottage(lot.outskirts, v);
             !cottage && !(v >> 14).is_multiple_of(4)
         }
         BuildingKind::GeneralStore
@@ -586,10 +586,16 @@ fn iron_behind(shape: &mut Shape, (roof, gable): (Surface, Surface), walls: &Wal
     );
 }
 
+/// Si una casa de variante `v` es un rancho simple (sin pretil): 13 de cada
+/// 20 en las afueras; las demás son italianizantes, con su pretil.
+pub(crate) fn is_cottage(outskirts: bool, v: u32) -> bool {
+    outskirts && v % 20 < 13
+}
+
 /// Una casa: italianizante en el pueblo, casi siempre un rancho simple en las
 /// afueras.
 fn house(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32, lot: &Lot) {
-    if lot.outskirts && v % 20 < 13 {
+    if is_cottage(lot.outskirts, v) {
         return cottage(shape, (w, d, h), v, lot.by_rail);
     }
     let (wall, trim, plinth) = house_finish(v);

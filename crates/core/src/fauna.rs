@@ -23,10 +23,12 @@
 
 mod critter;
 mod herd;
+pub mod sparrow;
 mod wild;
 
 pub use critter::{Critter, CritterKind, CritterState, Land, Leap, Profile};
 pub use herd::{Cow, CowCoat, CowState, Herd};
+pub use sparrow::{Patch, Perch, Sparrow, SparrowClip, SparrowGroup, SparrowKind, Spot};
 pub use wild::{Duck, Flock, FlockState, Hare, HareState, Raptor, RaptorKind};
 
 use std::f32::consts::TAU;

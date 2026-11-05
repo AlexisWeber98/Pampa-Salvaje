@@ -365,6 +365,9 @@ fn main() {
     .add_plugins(pampa_render::SkyPlugin)
     // Ganado, caballos de corral, liebres y aves alrededor del jugador.
     .add_plugins((pampa_render::FaunaPlugin, fauna::FaunaPlugin))
+    // Los gorriones de los pueblos y los chingolos de los alambrados, cerca
+    // del jugador.
+    .add_plugins(pampa_render::SparrowPlugin)
     // El agua y los juncos de las lagunas.
     .add_plugins(LagoonPlugin)
     // El polvo y las salpicaduras que levantan vasos, ruedas y pies.
