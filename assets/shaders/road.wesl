@@ -126,9 +126,10 @@ fn decode(n: vec3<f32>) -> vec3<f32> {
 
 // The tangent frame of the world-space layer UVs (`p / tile`, u along +X and
 // v along +Z) on a surface of normal `n`, as the terrain's `face_tangent` builds
-// it, whatever way the mesh's own UVs run.
+// it, whatever way the mesh's own UVs run. On a wall facing X, along +Z.
 fn world_tbn(n: vec3<f32>) -> mat3x3<f32> {
-    let t = normalize(vec3<f32>(1.0, 0.0, 0.0) - n * n.x);
+    let axis = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 0.0, 1.0), abs(n.x) > 0.99);
+    let t = normalize(axis - n * dot(n, axis));
     return mat3x3<f32>(t, cross(t, n), n);
 }
 

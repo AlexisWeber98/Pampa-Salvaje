@@ -241,3 +241,9 @@ Order follows the weakest elements found in the map (L2). Each task is one work 
   - R3-001: `world_tbn` builds the world-space frame (u along +X, v along +Z, as `face_tangent`). The earth normal and the mud normal both use it, so they no longer depend on the mesh tangents. The mud had the same defect from T3.
   - R3-002: new test `without_both_2k_layers_the_road_keeps_ground_102` (mud only, earth only). Sabotaged twice: earth loaded without mud, and no fallback (rc=101 both).
   - Checks: shots of the street and the road render correctly; ground tests 10/10; render suite 628/628; clippy clean; fmt clean except the committed flora.rs diff.
+- L29 (2026-11-04) The user committed T12 (0aca382). Native review (base 49d9237, readability and reliability, lineage review-2485f263e12279cb) approved and acknowledged, with 4 suggestions:
+  - R2-001 done: the NEAR and SINK cross-references name the relation (`NEAR - SINK`) instead of copying values.
+  - R3-001 done: `world_tbn` falls back to +Z on a wall facing X. The street shot is unchanged.
+  - R3-002 not done: the world frame is the deliberate fix of L27 R3-001, and `n0` is the geometric normal. There is no shader test harness, so the shots are the check.
+  - R3-003 not done (lean tests): the temp folder leaks only when the test itself fails.
+  The stop hook again offered the accumulated 605c4b3..HEAD START; not run.
