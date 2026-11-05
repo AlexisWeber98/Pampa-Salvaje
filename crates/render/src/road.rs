@@ -10,7 +10,8 @@
 //!
 //! La superficie lleva tierra apisonada en 2K (dirt, Poly Haven, CC0 1.0; ver
 //! assets/textures/ground/CREDITS.md, cargada por
-//! [`crate::ground::road_material`]). El shader del camino
+//! [`crate::ground::road_material`]; sin ella, Ground 102 de ambientCG, de
+//! 512 px). El shader del camino
 //! (`assets/shaders/road.wesl`) le marca dos carriles de huellas de ruedas
 //! que serpentean, el pisoteo de los cascos entre ellas, un lomo central con
 //! algo de pasto y parches de barro seco agrietado, y difumina sus bordes
@@ -252,8 +253,9 @@ const LIFT: f32 = 0.05;
 /// Ancho de la franja difuminada a lo largo de cada borde del camino, en
 /// metros, mitad dentro del camino y mitad más allá de su borde.
 const FEATHER: f32 = 1.6;
-/// El tinte de tierra del camino (sRGB), sobre el detalle casi blanco de la
-/// tierra apisonada.
+/// El tinte de tierra del camino (sRGB), sobre el detalle claro de la tierra
+/// apisonada: su brillo medio es `DIRT_BRIGHTNESS` en `road.wesl`, o el casi
+/// blanco de Ground 102 si falta la capa en 2K.
 pub(crate) const DIRT: [f32; 3] = [0.70, 0.60, 0.46];
 
 /// Una malla de superficie para todas las partes `part` de camino de un chunk:

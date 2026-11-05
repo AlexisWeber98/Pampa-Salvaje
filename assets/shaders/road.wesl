@@ -28,13 +28,15 @@
 import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
     pbr_fragment::pbr_input_from_standard_material,
-    pbr_functions::{alpha_discard, apply_pbr_lighting, calculate_tbn_mikktspace, main_pass_post_lighting_processing},
+    pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing},
     pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
     mesh_view_bindings::view,
 };
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var mud_color: texture_2d<f32>;
-@group(constants::MATERIAL_BIND_GROUP) @binding(101) var mud_sampler: sampler;
+// The mud maps' repeating sampler, which the earth maps share (the earth only
+// loads with the mud).
+@group(constants::MATERIAL_BIND_GROUP) @binding(101) var layer_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(102) var mud_normal: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(103) var mud_orm: texture_2d<f32>;
 // x: 1 when the mud maps are loaded; y: 1 when the earth maps are.
@@ -64,6 +66,9 @@ const DIRT_SATURATION: f32 = 0.5;
 const DIRT_CONTRAST: f32 = 0.7;
 const DIRT_BRIGHTNESS: f32 = 0.79;
 const DIRT_RELIEF: f32 = 0.6;
+// The earth's roughness floor, and the occlusion its darkest crevice keeps.
+const DIRT_ROUGHNESS_MIN: f32 = 0.75;
+const DIRT_OCCLUSION_MIN: f32 = 0.6;
 // Dry grass on the crown and the verges (linear).
 const GRASS: vec3<f32> = vec3<f32>(0.21, 0.19, 0.09);
 // Where the fine detail fades out, in metres from the eye.
@@ -117,6 +122,14 @@ fn fbm(p: vec2<f32>) -> f32 {
 fn decode(n: vec3<f32>) -> vec3<f32> {
     let xy = n.xy * 2.0 - 1.0;
     return vec3<f32>(xy, sqrt(max(1.0 - dot(xy, xy), 0.0)));
+}
+
+// The tangent frame of the world-space layer UVs (`p / tile`, u along +X and
+// v along +Z) on a surface of normal `n`, as the terrain's `face_tangent` builds
+// it, whatever way the mesh's own UVs run.
+fn world_tbn(n: vec3<f32>) -> mat3x3<f32> {
+    let t = normalize(vec3<f32>(1.0, 0.0, 0.0) - n * n.x);
+    return mat3x3<f32>(t, cross(t, n), n);
 }
 
 // A bell of unit height and width: `exp(-x²)`. Squared by hand, since `pow`
@@ -203,18 +216,15 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // the 2K earth replaces it.
     var n = pbr_input.N;
     if (layers.y > 0.0) {
-        let c = textureSampleGrad(dirt_color, mud_sampler, dirt_uv, dirt_dx, dirt_dy).rgb;
-        let orm = textureSampleGrad(dirt_orm, mud_sampler, dirt_uv, dirt_dx, dirt_dy).rgb;
+        let c = textureSampleGrad(dirt_color, layer_sampler, dirt_uv, dirt_dx, dirt_dy).rgb;
+        let orm = textureSampleGrad(dirt_orm, layer_sampler, dirt_uv, dirt_dx, dirt_dy).rgb;
         let y = max(dot(c, LUMA), 1e-4);
         let grain = mix(vec3<f32>(y), c, DIRT_SATURATION) / DIRT_LUMA;
         color *= DIRT_BRIGHTNESS * max(vec3<f32>(1.0) + (grain - 1.0) * DIRT_CONTRAST, vec3<f32>(0.0));
-        rough = max(orm.g, 0.75);
-        pbr_input.diffuse_occlusion *= vec3<f32>(0.6 + 0.4 * orm.r);
-        @if(VERTEX_TANGENTS) {
-            let tbn = calculate_tbn_mikktspace(pbr_input.world_normal, in.world_tangent);
-            let d = decode(textureSampleGrad(dirt_normal, mud_sampler, dirt_uv, dirt_dx, dirt_dy).rgb);
-            n = normalize(tbn * vec3<f32>(d.xy * DIRT_RELIEF, max(d.z, 0.05)));
-        }
+        rough = max(orm.g, DIRT_ROUGHNESS_MIN);
+        pbr_input.diffuse_occlusion *= vec3<f32>(mix(DIRT_OCCLUSION_MIN, 1.0, orm.r));
+        let d = decode(textureSampleGrad(dirt_normal, layer_sampler, dirt_uv, dirt_dx, dirt_dy).rgb);
+        n = normalize(world_tbn(n0) * vec3<f32>(d.xy * DIRT_RELIEF, max(d.z, 0.05)));
     }
     color *= mix(1.0, 0.8, worn);
     color *= 1.0 - 0.16 * hooves * smoothstep(0.45, 0.8, clods.x) * fade;
@@ -234,18 +244,15 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let puddled = worn * smoothstep(0.5, 0.62, fbm(p * 0.11 + 5.0));
     let mud = max(low, puddled) * layers.x * (1.0 - grassy);
     if (mud > 0.0) {
-        let c = textureSampleGrad(mud_color, mud_sampler, mud_uv, mud_dx, mud_dy).rgb;
-        let orm = textureSampleGrad(mud_orm, mud_sampler, mud_uv, mud_dx, mud_dy).rgb;
+        let c = textureSampleGrad(mud_color, layer_sampler, mud_uv, mud_dx, mud_dy).rgb;
+        let orm = textureSampleGrad(mud_orm, layer_sampler, mud_uv, mud_dx, mud_dy).rgb;
         let y = max(dot(c, LUMA), 1e-4);
         let cracked = color * (mix(vec3<f32>(y), c, 0.4) / y) * pow(y / MUD_LUMA, 1.15);
         color = mix(color, cracked, mud);
         roughness = mix(roughness, orm.g, mud);
         pbr_input.diffuse_occlusion *= vec3<f32>(mix(1.0, orm.r, mud));
-        @if(VERTEX_TANGENTS) {
-            let tbn = calculate_tbn_mikktspace(pbr_input.world_normal, in.world_tangent);
-            let mud_n = tbn * decode(textureSampleGrad(mud_normal, mud_sampler, mud_uv, mud_dx, mud_dy).rgb);
-            n = normalize(mix(n, mud_n, mud * fade));
-        }
+        let mud_n = world_tbn(n0) * decode(textureSampleGrad(mud_normal, layer_sampler, mud_uv, mud_dx, mud_dy).rgb);
+        n = normalize(mix(n, mud_n, mud * fade));
     }
 
     // The ruts' walls and the crown tilt the normal across the road; the clods

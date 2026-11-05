@@ -30,7 +30,8 @@ import bevy_pbr::render::{
 // w: where the grass has sunk to the ground, in metres from the eye (0: never).
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> wind: vec4<f32>;
 
-// Over how many metres before `wind.w` the tips sink.
+// Over how many metres before `wind.w` the tips sink. `wind.w` is the near
+// grass's reach (`meadow::NEAR`, 50 m), so they sink from 38 m on.
 const SINK: f32 = 12.0;
 // How fast the gusts roll downwind, in metres a second.
 const GUST_SPEED: f32 = 6.0;

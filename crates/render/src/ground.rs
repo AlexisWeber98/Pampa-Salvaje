@@ -599,7 +599,8 @@ pub fn road_material(
                 load(server, SOIL_LAYER);
             extension.layers.x = 1.0;
         }
-        if shipped(ROAD_LAYER) {
+        // La tierra comparte el sampler (que repite) de las imágenes del barro.
+        if shipped(SOIL_LAYER) && shipped(ROAD_LAYER) {
             [
                 extension.dirt_color,
                 extension.dirt_normal,
@@ -803,6 +804,47 @@ mod tests {
         }
         assert_eq!(road.alpha_mode, AlphaMode::Blend);
         assert_eq!(images.len(), 0, "no half-made textures");
+    }
+
+    #[test]
+    fn without_both_2k_layers_the_road_keeps_ground_102() {
+        let shipped = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets")
+            .join(GROUND_DIR);
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::asset::AssetPlugin::default()))
+            .init_asset::<Image>();
+        let server = app.world().resource::<AssetServer>().clone();
+        // Una carpeta de assets propia con Ground 102 y una sola de las capas
+        // en 2K: la tierra sin el barro, cuyo sampler comparte, tampoco va.
+        for (only, mud) in [(SOIL_LAYER, 1.0), (ROAD_LAYER, 0.0)] {
+            let root =
+                std::env::temp_dir().join(format!("pampa-one-layer-{}-{only}", std::process::id()));
+            let dir = root.join(GROUND_DIR);
+            std::fs::create_dir_all(dir.join("Ground102")).unwrap();
+            for entry in std::fs::read_dir(shipped.join("Ground102")).unwrap() {
+                let from = entry.unwrap().path();
+                std::fs::copy(&from, dir.join("Ground102").join(from.file_name().unwrap()))
+                    .unwrap();
+            }
+            std::fs::create_dir_all(dir.join(only)).unwrap();
+            for (map, _) in MAPS {
+                std::fs::write(dir.join(only).join(format!("{map}.ktx2")), []).unwrap();
+            }
+            let mut images = Assets::<Image>::default();
+            let road = road_material(Some(&root), Some(&mut images), Some(&server));
+            std::fs::remove_dir_all(&root).unwrap();
+            assert_eq!(
+                road.extension.layers,
+                Vec4::new(mud, 0.0, 0.0, 0.0),
+                "{only}"
+            );
+            assert!(road.extension.dirt_color.is_none(), "{only}");
+            assert!(
+                road.base.base_color_texture.is_some(),
+                "{only}: Ground 102 is baked"
+            );
+        }
     }
 
     #[test]

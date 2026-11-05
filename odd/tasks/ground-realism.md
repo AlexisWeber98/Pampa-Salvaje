@@ -225,3 +225,19 @@ Order follows the weakest elements found in the map (L2). Each task is one work 
   - T11: user (verbatim): "si" (permission to download Poly Haven dry_ground_01 2K). `RoadExt` gains `dirt_*` maps (bindings 106–108, `layers.y`). road.wesl samples them in world space and tones them as `dirt()` did for Ground102: saturation 0.5, contrast 0.7, brightness 0.79, relief 0.6. The ORM's blue channel holds height, so the maps cannot go on the standard material: Bevy would read that height as metallic. Ground102 is baked only as a fallback. Tests updated and sabotaged twice (rc=101). Shots: sharp, but dry_ground_01 is cracked earth everywhere, so the street read as a dry lakebed.
   - Found, not caused by T11: a dark band with straight edges on the road side at (-3053,-2197) at noon. It is still there with the 2K branch off. Pending.
 - L26 (2026-11-04) User (verbatim): "si" (permission to download Poly Haven dirt 2K instead). `ROAD_LAYER` = "dirt" (the plaza paths' scan): `DIRT_TILE` 2 m, `DIRT_LUMA` 0.091. Shots: the street and the road read as compacted earth with sharp grit, with cracks only in the mud patches. The `assets/textures/ground/dry_ground_01/` folder is unused (2K KTX2 plus JPG sources); rm was denied, so the user deletes it. The JPG sources in `dirt/` are not kept either. Checks: ground tests 9/9, render suite 626/627 (only the known flaky rider half-seat failed, and it passes alone), clippy clean, fmt clean on the changed files (flora.rs has a committed fmt diff). README street line fixed: Surface::Earth is `dirt_path`.
+- L27 (2026-11-04) The user committed T9 to T11 (49d9237). Native review (base 77ded70, committed-only, readability and reliability, lineage review-dec5a0cc562a0caf) approved and acknowledged, with 6 advisories:
+  - R2-001: the earth layer borrows `mud_sampler`. Rename it to a shared layer sampler.
+  - R2-002: name the roughness floor 0.75 and the occlusion remap.
+  - R2-003: the `DIRT` and road.rs docs no longer mention the Ground102 fallback.
+  - R2-004: cross-reference `NEAR` and `SINK`.
+  - R3-001: the dirt normal is decoded in the mesh's MikkTSpace frame while it is sampled in world XZ, so curved or diagonal roads get rotated relief. Use the world-space frame.
+  - R3-002: no test covers the soil-present, dirt-missing fallback.
+  The stop hook offered the accumulated 605c4b3..HEAD START again; not run.
+- L28 (2026-11-04) User: "primero pulimos asi no se nos hace una bola de nieve" (polish first, so it doesn't snowball). T12, the polish of the L27 advisories, done inline:
+  - R2-001: `mud_sampler` is renamed `layer_sampler` and documented as shared. The earth loads only when the mud ships, because the earth samples through the mud images' repeating sampler.
+  - R2-002: added `DIRT_ROUGHNESS_MIN` and `DIRT_OCCLUSION_MIN`.
+  - R2-003: the road.rs module doc names the Ground102 fallback, and the `DIRT` doc points to `DIRT_BRIGHTNESS`.
+  - R2-004: `NEAR` and `SINK` now point to each other.
+  - R3-001: `world_tbn` builds the world-space frame (u along +X, v along +Z, as `face_tangent`). The earth normal and the mud normal both use it, so they no longer depend on the mesh tangents. The mud had the same defect from T3.
+  - R3-002: new test `without_both_2k_layers_the_road_keeps_ground_102` (mud only, earth only). Sabotaged twice: earth loaded without mud, and no fallback (rc=101 both).
+  - Checks: shots of the street and the road render correctly; ground tests 10/10; render suite 628/628; clippy clean; fmt clean except the committed flora.rs diff.

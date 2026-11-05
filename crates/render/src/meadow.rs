@@ -38,7 +38,8 @@ pub const CELL: f32 = 4.0;
 /// Hasta dónde llega el pasto cercano desde la cámara, en metros: ahí ya se
 /// hundió en el suelo. Lejos, para que no se lo vea crecer ni hundirse cerca
 /// del jinete; las matas son tan livianas (seis triángulos) que alcanzan
-/// pocos miles.
+/// pocos miles. Las puntas se hunden en los últimos `SINK` metros (12, en
+/// `assets/shaders/grass_wind.wesl`): desde los 38 m.
 pub const NEAR: f32 = 50.0;
 /// Matas por metro cuadrado en pampa abierta.
 pub const DENSITY: f32 = 0.45;
