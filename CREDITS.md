@@ -43,9 +43,9 @@ The ambientCG maps were converted to 512×512 PPM/PGM for loading; the Poly Have
 | Concrete Wall 008 | Dario Barresi, Charlotte Baglioni, Poly Haven (https://polyhaven.com/a/concrete_wall_008) | CC0 1.0 | `assets/textures/buildings/concrete_wall_008/` | 1K maps renamed; the stained cement plinths (zócalos) |
 | Green Rough Planks | Rob Tuytel, Poly Haven (https://polyhaven.com/a/green_rough_planks) | CC0 1.0 | `assets/textures/buildings/green_rough_planks/` | 1K maps renamed; the green persianas and shutters of the town fronts |
 | Brown Planks 04 | Rob Tuytel, Poly Haven (https://polyhaven.com/a/brown_planks_04) | CC0 1.0 | `assets/textures/buildings/brown_planks_04/` | 1K maps renamed; the weatherboards of the ranchos de madera |
-| Clay Block Wall | Amal Kumar, Poly Haven (https://polyhaven.com/a/clay_block_wall) | CC0 1.0 | `assets/textures/buildings/mud_straw/` | 1K maps renamed; its colour kept as `scan_color.jpg`, with chopped straw drawn into it by `tools/building_straw.py` (own work, CC0) for `color.jpg`; the walls of the ranchos de barro y paja |
+| Clay Plaster | Amal Kumar, Poly Haven (https://polyhaven.com/a/clay_plaster) | CC0 1.0 | `assets/textures/buildings/mud_straw/` | The `clay_plaster/` maps copied (since 2026-11-05; before, Clay Block Wall, whose block grid repeated on every wall); its colour kept as `scan_color.jpg`, with chopped straw drawn into it by `tools/building_straw.py` (own work, CC0) for `color.jpg`; the walls of the ranchos de barro y paja, cracked in the shader |
 
-The `thatch/` set next to them is our own work. The game loads every set as KTX2 (UASTC, mips baked) made from those JPGs by `tools/textures_to_ktx2.sh`; the JPG sources are kept unchanged. See `assets/textures/buildings/CREDITS.md` for details.
+The `thatch/` and `straw_thatch/` sets next to them are our own work (`straw_thatch/`, the long-straw roofs of the ranchos de barro y paja, is drawn by `python3 -I tools/building_straw.py --thatch`). The game loads every set as KTX2 (UASTC, mips baked) made from those JPGs by `tools/textures_to_ktx2.sh`; the JPG sources are kept unchanged. See `assets/textures/buildings/CREDITS.md` for details.
 
 | Asset | Author / source | Licence | Where | Changes |
 |---|---|---|---|---|

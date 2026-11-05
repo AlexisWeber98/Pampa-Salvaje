@@ -46,14 +46,18 @@ Cada carpeta de atlas recibe `color.jpg`, `opacity.jpg`, `normal_gl.jpg` y `roug
 
 `python3 -I tools/leaf_atlas.py --mips RGBA.png OUT.dds` (que ejecuta `textures_to_ktx2.sh`) escribe la cadena de mips de una imagen RGBA como un DDS RGBA con mipmaps, que basisu codifica nivel por nivel. Los mips comunes promedian el alfa de una hoja delgada con el fondo transparente que la rodea, por debajo del umbral de alpha test de 0.5 del juego, así que las copas lejanas se ralean. En cambio, el alfa de cada nivel se reasigna para que dibuje la misma proporción de texels que dibuja el atlas a tamaño completo (siguiendo los mips que conservan la cobertura de Castaño), manteniéndose a 8 pasos del umbral por la compresión en bloques. Un test desempaqueta los atlas incluidos a BC7 y comprueba cada nivel de 8 x 8 texels o más. Tests: `python3 -I -B -m unittest discover -s tools -p test_leaf_atlas.py`.
 
-## `building_straw.py`: la paja del barro de los ranchos
+## `building_straw.py`: la paja de los ranchos de barro y paja
 
-Las paredes de un rancho de barro y paja de 1919 (chorizo o quincha) son barro amasado con paja picada, así que se ven tallos dorados cortos por toda la superficie seca y cuarteada, echados casi siempre a lo largo de las capas. Ningún escaneo libre muestra eso, así que el script dibuja la paja sobre un escaneo de barro seco y cuarteado (`clay_block_wall` de Poly Haven, CC0, guardado como `scan_color.jpg`): tallos con semilla de 4 a 14 cm sobre el tile de 2 m del escaneo, a menos de 35 grados de la horizontal, cada uno un tallo dorado opacado por el barro sobre una línea de sombra tenue, medio hundido (en parte transparente y en uno a tres pedazos a lo largo de su línea). Los tallos que cruzan un borde se dibujan otra vez desde el borde opuesto, así que el color sigue repitiéndose sin costura.
+Las paredes de un rancho de barro y paja de 1919 (chorizo o quincha) son barro amasado con paja picada, así que se ven tallos dorados cortos por toda la superficie seca y cuarteada, echados casi siempre a lo largo de las capas. Ningún escaneo libre muestra eso, así que el script dibuja la paja sobre un escaneo de revoque de barro hecho a mano (`clay_plaster` de Poly Haven, CC0, guardado como `scan_color.jpg`; las grietas las pone el shader del juego, distintas en cada pared): tallos con semilla de 4 a 14 cm sobre el tile de 2 m del escaneo, a menos de 35 grados de la horizontal, cada uno un tallo dorado opacado por el barro sobre una línea de sombra tenue, medio hundido (en parte transparente y en uno a tres pedazos a lo largo de su línea). Los tallos que cruzan un borde se dibujan otra vez desde el borde opuesto, así que el color sigue repitiéndose sin costura.
 
 ```sh
 python3 -I tools/building_straw.py assets/textures/buildings/mud_straw [--seed N] [--count N]
 FORCE=1 sh tools/textures_to_ktx2.sh assets/textures/buildings/mud_straw/
+python3 -I tools/building_straw.py --thatch assets/textures/buildings/straw_thatch [--seed N] [--count N]
+FORCE=1 sh tools/textures_to_ktx2.sh assets/textures/buildings/straw_thatch/
 ```
+
+Con `--thatch` dibuja en cambio, desde cero, el conjunto de la paja larga del techo de esos ranchos (`straw_thatch`, la superficie `StrawThatch`): 9000 tallos con semilla (por omisión) de 12 a 42 cm sobre un tile de 1 m, a menos de 6 grados de la línea de la caída, capa sobre capa, cada uno un tallo curtido entre gris y dorado con su sombra oscura y un canto claro; las capas de arriba, más claras y más altas. Escribe `color.jpg`, `normal_gl.jpg` (OpenGL, a partir de la altura de los tallos, con el mismo paso de Sobel que `thatch/generate.sh`; necesita un ImageMagick 7 con HDRI), `roughness.jpg` y `ao.jpg`.
 
 Escribe `color.jpg` en la carpeta del conjunto, al lado de `normal_gl.jpg`, `roughness.jpg` y `ao.jpg` del escaneo, que quedan como están. La salida es reproducible con la misma semilla y la misma versión de ImageMagick. Necesita ImageMagick 7 (`magick`); solo la biblioteca estándar. Tests: `python3 -I -B -m unittest discover -s tools -p test_building_straw.py`.
 

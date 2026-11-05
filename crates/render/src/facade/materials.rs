@@ -167,13 +167,19 @@ pub enum Surface {
     /// Tablas solapadas, viejas y sin pintar (`brown_planks_04`, Poly Haven):
     /// las paredes del rancho de madera.
     Weatherboard,
-    /// Barro seco y cuarteado amasado con paja (`mud_straw`: `clay_block_wall`
-    /// de Poly Haven con la paja de `tools/building_straw.py`): las paredes del
-    /// rancho de barro y paja.
+    /// Barro amasado con paja (`mud_straw`: el revoque de barro
+    /// `clay_plaster` de Poly Haven con la paja de
+    /// `tools/building_straw.py`), cuarteado por el shader del desgaste
+    /// ([`Surface::breakup`]): las paredes del rancho de barro y paja.
     MudStraw,
     /// Madera rústica que nunca se pintó, gris de sol (`rough_wood`, teñida
     /// clara): los postigos y las puertas de los ranchos y las casillas.
     Barnwood,
+    /// Paja larga de techar, tendida en hiladas, con cada tallo a la vista
+    /// (`straw_thatch`, dibujada por `tools/building_straw.py --thatch`): el
+    /// techo del rancho de barro y paja. Las parvas, los ranchos de adobe y
+    /// la carga de los vagones siguen con [`Surface::Thatch`].
+    StrawThatch,
 }
 
 /// Con qué está pintado el tren. Cada una es un escaneo bajo un tinte: la chapa
@@ -292,7 +298,7 @@ pub fn lift(scan: [f32; 3], target: [f32; 3]) -> [f32; 3] {
 
 impl Surface {
     /// Todas las superficies, en orden.
-    pub const ALL: [Surface; 50] = [
+    pub const ALL: [Surface; 51] = [
         Surface::Adobe,
         Surface::Whitewash,
         Surface::Brick,
@@ -343,6 +349,7 @@ impl Surface {
         Surface::Weatherboard,
         Surface::MudStraw,
         Surface::Barnwood,
+        Surface::StrawThatch,
     ];
 
     /// El conjunto de texturas que lleva, si tiene uno.
@@ -373,6 +380,7 @@ impl Surface {
             Self::Door | Self::Barnwood => "rough_wood",
             Self::Weatherboard => "brown_planks_04",
             Self::MudStraw => "mud_straw",
+            Self::StrawThatch => "straw_thatch",
             Self::Ashlar => "concrete_wall_004",
             Self::Render(_) => "plastered_wall_02",
             Self::LimeBrick => "painted_worn_brick",
@@ -437,6 +445,8 @@ impl Surface {
             // Tablas de unos 17 cm, y el barro a su tamaño real.
             Self::Weatherboard => 1.0,
             Self::MudStraw => 2.0,
+            // Tallos de 12 a 42 cm, a su tamaño real.
+            Self::StrawThatch => 1.0,
         };
         Vec2::splat(tile)
     }
@@ -551,6 +561,7 @@ impl Surface {
             Self::Door => (0.30, 0.20, 0.13),
             Self::Barnwood => (0.42, 0.40, 0.36),
             Self::MudStraw => (0.52, 0.40, 0.26),
+            Self::StrawThatch => (0.50, 0.44, 0.34),
             Self::Painted(_)
             | Self::Ashlar
             | Self::Render(_)
@@ -639,10 +650,15 @@ impl Surface {
     /// 1: una variación lenta de su tono, parches de un tono más fresco (barro
     /// nuevo sobre el viejo) y bultos que tuercen la luz. Fuerte en el barro y
     /// la paja, hechos a mano; suave en el adobe, los revoques y las tablas;
-    /// nada en lo demás. El cuarto valor no se usa.
+    /// nada en lo demás. El cuarto, solo en el barro y paja: cuánto lo
+    /// cuartea el shader con su propia red de grietas de retracción, distinta
+    /// en cada pared porque se arma en el espacio del mundo, y lo gasta como
+    /// lo gastaban los años (el pie lavado y picado por la lluvia, parches
+    /// donde se cayó la última mano de barro).
     pub fn breakup(self) -> [f32; 4] {
         match self {
-            Self::MudStraw => [1.0, 1.0, 1.0, 0.0],
+            Self::MudStraw => [1.0, 1.0, 1.0, 1.0],
+            Self::StrawThatch => [1.0, 0.0, 0.5, 0.0],
             Self::Thatch => [0.8, 0.0, 0.7, 0.0],
             Self::Adobe => [0.6, 0.5, 0.5, 0.0],
             Self::Weatherboard | Self::OldLime | Self::Whitewash | Self::Lime => {
