@@ -1444,7 +1444,7 @@ fn platform(b: &mut Builder, building: &Building) {
 
 /// Qué tan adentro del borde de la grilla de calles cuenta una casa como de las
 /// afueras, en metros: más o menos una manzana.
-const OUTSKIRTS: f32 = 50.0;
+pub(crate) const OUTSKIRTS: f32 = 50.0;
 
 /// Un edificio del pueblo por construir, con el lugar donde se ubica.
 #[derive(Debug, Clone, Copy)]
@@ -1486,7 +1486,7 @@ fn lots(town: &TownLayout, terrain: &Terrain) -> Vec<Job> {
 }
 
 /// Una semilla bien mezclada a partir del índice y la huella de un edificio.
-fn variant(index: usize, footprint: &Aabb) -> u32 {
+pub(crate) fn variant(index: usize, footprint: &Aabb) -> u32 {
     let mut v = (index as u32).wrapping_mul(0x9e37_79b9)
         ^ (footprint.min.x.to_bits()).wrapping_mul(0x85eb_ca6b)
         ^ (footprint.min.y.to_bits()).wrapping_mul(0xc2b2_ae35);

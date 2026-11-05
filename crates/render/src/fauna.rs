@@ -8,6 +8,8 @@
 //! - El ganado (vacas y toros), los caballos del corral, el zorro, los
 //!   felinos, las rapaces y el ñandú son modelos glTF animados con skinning
 //!   cuyos clips siguen el estado de la fauna (ver [`livestock`]).
+//! - Los gorriones y los chingolos son modelos propios con su propio plugin,
+//!   que los trae por streaming alrededor del jugador ([`sparrow`]).
 //! - Los animales silvestres pequeños se dibujan como las figuras de los
 //!   vecinos: piezas rígidas low-poly colgadas de unas pocas articulaciones,
 //!   así que la animación solo gira articulaciones (las patas se balancean, las
@@ -24,6 +26,7 @@
 //! ([`livestock::light_range`]).
 
 pub mod livestock;
+pub mod sparrow;
 
 pub use livestock::{
     Clip, FREEZE_FAR, LivestockModel, LivestockModels, LivestockRig, RESUME_NEAR, Species,

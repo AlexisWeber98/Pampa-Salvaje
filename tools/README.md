@@ -500,6 +500,26 @@ Las tarjetas de plumas y el cuerpo dejan pasar algo de la luz del sol (`FEATHER_
 
 Sin `--scans` ni `--faces`, el atlas y la cabeza salen pintados. Los píxeles reales que se usan están acreditados en `CREDITS.md`. Las medidas y las revisiones están en `odd/tasks/pigeons.md`. Tests sin Blender: `test_pigeon.py`.
 
+## `sparrow.py`: the gorrión and the chingolo modelled in Blender
+
+`sparrow.py` models, rigs, paints and animates the pampa's two sparrows by script in Blender: the house sparrow (gorrión, *Passer domesticus*, adult male) of the towns' streets and roofs, and the rufous-collared sparrow (chingolo, *Zonotrichia capensis*) of the field edges and fences. Like `pigeon.py` it reuses `raptor.py` (layout, plumage engine, feather cards, skinning, light mesh, previews) and `pigeon.py`'s scan cutter and atlas painter: each sparrow is registered as one more species (`install`), and the `raptor.py` functions a sparrow changes (`remiges`, `bill_tip`, `leg_joints`, `eye_look`, `feather_set`, `bone_table`, `card_points`, `coverts`, `face_landmarks`, `face_mapping`, `photo_weight`, `plumage`) dispatch to `sparrow.py` only while a sparrow is configured, so raptors and pigeons are unchanged. Its own parts: a passerine wing of nine primaries, six secondaries and three tertials; a short conical seed-eater's bill (`bill_sculpt`); a plump body and round head (`sculpt`); standing legs with their toes and claws, visible (`leg_joints`, `leg_sculpt`, `fix_toe_weights`); the chingolo's raised crest (cards fanned out to their sides of the crown); the plumage of each species: soft, grey-buff underparts (`strands`, `_downy`: each feather's barbs, frayed tips and shadowed partings, the scaled relief lowered by `plumage`), the mantle's black-centred feathers edged rufous and buff (`_mantle`), the gorrión's ragged black throat patch (`_bib`), broad chestnut band and white cheek, the chingolo's muted, textured rufous collar. The folded wing's coverts lie tangent to the flank (`flank_normal`) with a small irregularity per card, so the median coverts' white tips (the gorrión's wing bar) lie over the greater coverts; the tertials' dark centres step in on the outer vane. The mesh carries two wings a side: the spread flight wing on the `Shoulder` chain and a folded wing laid along the flank on two extra bones, `Fold.L` / `Fold.R` (`fold_wing`); each clip shows one and collapses the other by scaling its bone (`HIDDEN`). Clips at 60 fps: `Flap` (three beats, legs tucked), `FlapBound` (four beats and a 0.12 s bound with the wings folded), `Hop` (one two-footed hop in place: the game moves the bird over `hop_airborne()`), `Peck` (the body tips forward about the hips on planted feet, the femur held as standing: `ground_leg`) and `Idle`. The ground clips stand the toes on z = 0 (`stand_height()` under the body's centre); the flight clips keep the body's centre at the origin. Phase 1: preview sheets only, not in the game yet. One run per species (about 3 minutes on the CPU, under 5 GB):
+
+```sh
+blender -b --factory-startup --python tools/sparrow.py -- gorrion_raw.glb \
+  --species gorrion --scans FEATHERS --faces FACES --textures TEX [--preview /tmp/gorrion]
+```
+
+| Option | Meaning |
+|---|---|
+| `--scans DIR` | takes the Feather Atlas sheets (`SCANS`, public domain) from `DIR`: the House Sparrow's tail for the gorrión, the White-crowned Sparrow's (*Zonotrichia leucophrys*) tail for the chingolo, and the White-crowned Sparrow's primaries and secondaries as the luminance grain under both species' painted wings. A one-pixel slit the grid leaves in the House Sparrow's tail sheet is closed before cutting (`close_gaps`) |
+| `--faces DIR` | projects the species' face photograph (`FACE_PHOTOS`, CC BY: an adult male house sparrow's, a Buenos Aires chingolo's; the originals) from `DIR` onto the head, as the pigeons': anchored on the eye (`face_mapping`, `pigeon.face_mapping` on the sparrow's landmarks), kept off the bill and off the photo's sky or foliage (`face_background`); the iris takes the photo's colour |
+| `--textures DIR` | writes the JPG sources to `DIR/<species>_body` and `DIR/<species>_feathers` |
+| `--preview DIR`, `--shots REGEX`, `--draft`, `--no-clips` | as in `raptor.py`; the ground shots render over a ground plane |
+
+**Wingbeat.** Pennycuick's allometry as it stands (no measured value for either species was found): 17.0 Hz for the gorrión, 17.9 Hz for the chingolo.
+
+The scans, the two face photographs and the reference photographs (looked at only) are credited in `CREDITS.md`. Measurements and reviews are in `odd/tasks/pigeons.md` (T3). Tests without Blender: `test_sparrow.py`.
+
 ## `tack.py`: los mapas del recado criollo
 
 `tack.py` pinta con numpy (sin Blender ni imágenes de terceros) cuatro de los conjuntos de mapas de los aperos del caballo ensillado (`pampa_render::character::tack`), en `assets/models/tack/` (los otros dos los hace `recado.py`):
