@@ -18,6 +18,9 @@
 //   mark and patches of pale salt where it dries out, more on the shaded
 //   south-facing walls;
 // - dust: the loess of the pampa settles on sills, cornices and ledges.
+// A mud-and-straw wall (the surface's `breakup.w`) also gets its own network
+// of shrinkage and settlement cracks, a rain-washed foot and patches where the
+// last coat of mud fell off (`mud_cracks`).
 // Rain streaks under sills and cornices are decals, not this shader
 // (`crates/render/src/facade/grime.rs`). The noise is in world space, so every
 // building and every stretch of wall gets its own pattern. Meshes without the
@@ -100,6 +103,78 @@ fn along_wall(p: vec3<f32>, n: vec3<f32>) -> f32 {
 // The height of the lumps of a hand-packed surface at (`along`, `h`).
 fn lumps(along: f32, h: f32) -> f32 {
     return fbm(vec2<f32>(along * 2.2, h * 2.2) + 23.0) + 0.4 * noise(vec2<f32>(along * 7.0, h * 7.0));
+}
+
+// The distance from `q` to the nearest border between the cells of a jittered
+// grid (Inigo Quilez's Voronoi borders), and a hash of the nearest cell.
+fn borders(q: vec2<f32>) -> vec2<f32> {
+    let cell = floor(q);
+    let f = fract(q);
+    var nearest = vec2<f32>(0.0);
+    var to_nearest = vec2<f32>(8.0);
+    var best = 8.0;
+    for (var j = -1; j <= 1; j++) {
+        for (var i = -1; i <= 1; i++) {
+            let g = vec2<f32>(f32(i), f32(j));
+            let o = vec2<f32>(hash(cell + g), hash(cell + g + 19.7)) * 0.8 + 0.1;
+            let r = g + o - f;
+            let d = dot(r, r);
+            if (d < best) {
+                best = d;
+                to_nearest = r;
+                nearest = cell + g;
+            }
+        }
+    }
+    var border = 8.0;
+    for (var j = -2; j <= 2; j++) {
+        for (var i = -2; i <= 2; i++) {
+            let g = nearest - cell + vec2<f32>(f32(i), f32(j));
+            let o = vec2<f32>(hash(cell + g), hash(cell + g + 19.7)) * 0.8 + 0.1;
+            let r = g + o - f;
+            let gap = r - to_nearest;
+            if (dot(gap, gap) > 1e-5) {
+                border = min(border, dot(0.5 * (to_nearest + r), normalize(gap)));
+            }
+        }
+    }
+    return vec2<f32>(border, hash(nearest + 5.1));
+}
+
+// A hand-packed mud-and-straw wall as the years left it, at `along` metres
+// along the wall and `h` over the ground; `seed` moves the pattern for each
+// building. Returns how dark the point is (0 none, 1 an open crack) in x,
+// and the slope of that darkening along the wall and up it (for the normal)
+// in y and z, and the wear (eroded, pitted mud) in w.
+//
+// Two crack networks, both in world space so no two walls share one: the
+// fine shrinkage cracks of the drying mud, polygons of 15 to 40 cm, only
+// along some of their borders and wider where the wall dried faster; and a
+// few long settlement cracks that wander up the wall. The foot is washed
+// and pitted by the rain bounced off the yard, and here and there the last
+// coat of mud has fallen off in a patch.
+fn mud_cracks(along: f32, h: f32, seed: f32) -> vec4<f32> {
+    let p = vec2<f32>(along, h) + vec2<f32>(seed, seed * 0.37);
+    let warp = vec2<f32>(fbm(p * 1.7 + 3.0), fbm(p * 1.7 + 9.0)) - 0.5;
+    // Fine shrinkage cracks, a little taller than wide.
+    let fine = borders((p + warp * 0.18) * vec2<f32>(4.2, 3.4));
+    // Most of the wall stays whole: the cracks open where it dried fast,
+    // more on some walls than on others.
+    let density = 0.55 + 0.15 * (noise(p * 0.15 + seed) - 0.5);
+    let open_fine = smoothstep(density, density + 0.12, fbm(p * 1.1 + 13.0));
+    let width = mix(0.006, 0.022, noise(p * 3.0 + 1.0)) * open_fine;
+    let fine_crack = (1.0 - smoothstep(width * 0.3, width, fine.x)) * open_fine;
+    // Long settlement cracks: a coarse grid stretched up the wall.
+    let coarse = borders((p + warp * 0.5) * vec2<f32>(0.9, 0.35));
+    let long_open = smoothstep(0.6, 0.72, fbm(p * vec2<f32>(0.6, 0.25) + 41.0));
+    let long_width = mix(0.008, 0.02, noise(p * 2.0 + 7.0));
+    let long_crack = (1.0 - smoothstep(long_width * 0.3, long_width, coarse.x)) * long_open;
+    let crack = max(fine_crack, long_crack);
+    // Rain-washed, pitted foot, and patches where the last coat fell off.
+    let foot = (1.0 - smoothstep(0.15, 0.55 + 0.25 * noise(p * vec2<f32>(1.5, 0.0)), h));
+    let spall = smoothstep(0.62, 0.7, fbm(p * 1.1 + 27.0));
+    let wear = max(foot * mix(0.4, 1.0, noise(p * 9.0)), spall);
+    return vec4<f32>(crack, fine.y, coarse.y, wear);
 }
 
 // What the weathering does to a point: a multiplier on its colour (rgb), and
@@ -197,6 +272,30 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
             let d_up = (lumps(along, h + e) - lumps(along, h - e)) / (2.0 * e);
             let side = normalize(vec3<f32>(-n.z, 0.0, n.x) + vec3<f32>(1e-4, 0.0, 0.0));
             pbr_input.N = normalize(pbr_input.N - (side * d_along + vec3<f32>(0.0, 1.0, 0.0) * d_up) * 0.07 * breakup.z);
+        }
+        // The mud-and-straw wall's own cracks and wear (breakup.w).
+        if (breakup.w > 0.0) {
+            // The noise runs in world space, so every wall has its own
+            // pattern; each building's wear and damp shift it further.
+            let seed = fract(in.uv_b.y * 7.31) * 97.0;
+            let m = mud_cracks(along, in.uv_b.x, seed);
+            let wall_face = 1.0 - smoothstep(0.3, 0.6, abs(n.y));
+            let crack = m.x * breakup.w * wall_face;
+            // Open cracks are deep and dark; the eroded mud is darker and
+            // browner where the straw-bound inner coat shows.
+            color *= mix(vec3<f32>(1.0), vec3<f32>(0.42, 0.36, 0.3), crack);
+            color *= mix(vec3<f32>(1.0), vec3<f32>(0.86, 0.8, 0.72), m.w * breakup.w * wall_face);
+            if (breakup.z > 0.0) {
+                // The cracks bend the light at their lips: tilt the normal
+                // into them, and pit the worn mud.
+                let e = 0.01;
+                let ca = mud_cracks(along + e, in.uv_b.x, seed).x - m.x;
+                let cu = mud_cracks(along, in.uv_b.x + e, seed).x - m.x;
+                let side = normalize(vec3<f32>(-n.z, 0.0, n.x) + vec3<f32>(1e-4, 0.0, 0.0));
+                let pits = noise(vec2<f32>(along, in.uv_b.x) * 40.0) - 0.5;
+                pbr_input.N = normalize(pbr_input.N + (side * ca + vec3<f32>(0.0, 1.0, 0.0) * cu) * 2.0 * wall_face
+                    + side * pits * 0.25 * m.w * wall_face);
+            }
         }
         color = mix(color, SALT, w.salt);
         color = mix(color, DUST, w.dust);

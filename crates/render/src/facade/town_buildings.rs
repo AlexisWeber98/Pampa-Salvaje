@@ -62,6 +62,11 @@ pub const DROP: f32 = 0.3;
 /// apoyan las columnas de la marquesina.
 pub const PLATFORM_TOP: f32 = 0.9;
 
+/// Hasta qué distancia de la vía, en metros, un rancho de las afueras puede
+/// ser una casilla de chapa: en 1919 eran casas del ferrocarril y de sus
+/// cuadrillas.
+pub const CASILLA_REACH: f32 = 100.0;
+
 /// De qué depende el aspecto de un edificio del pueblo además de su
 /// [`Building`] de core.
 #[derive(Debug, Clone, Copy)]
@@ -71,6 +76,8 @@ pub struct Lot {
     pub variant: u32,
     /// En las manzanas exteriores del pueblo, donde las casas son más simples.
     pub outskirts: bool,
+    /// A menos de [`CASILLA_REACH`] de la vía: solo ahí hay casillas de chapa.
+    pub by_rail: bool,
     /// Qué es el almacén de ramos generales del pueblo.
     pub store: StoreStyle,
     /// Qué profundidad tiene la galería del almacén de ramos generales (la
@@ -122,7 +129,7 @@ pub fn building(lot: &Lot) -> Option<Shape> {
     shape.set_louvred(paints_its_joinery(lot));
     shape.set_streaks(streaks(lot));
     match lot.building.kind {
-        BuildingKind::House => house(&mut shape, (w, d, h), v, lot.outskirts),
+        BuildingKind::House => house(&mut shape, (w, d, h), v, lot),
         BuildingKind::GeneralStore => store(&mut shape, (w, d, h), v, lot.store, lot.veranda),
         BuildingKind::PoliceStation => police(&mut shape, (w, d, h), v),
         BuildingKind::Church => church(&mut shape, (w, d, h), v),
@@ -581,9 +588,9 @@ fn iron_behind(shape: &mut Shape, (roof, gable): (Surface, Surface), walls: &Wal
 
 /// Una casa: italianizante en el pueblo, casi siempre un rancho simple en las
 /// afueras.
-fn house(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32, outskirts: bool) {
-    if outskirts && v % 20 < 13 {
-        return cottage(shape, (w, d, h), v);
+fn house(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32, lot: &Lot) {
+    if lot.outskirts && v % 20 < 13 {
+        return cottage(shape, (w, d, h), v, lot.by_rail);
     }
     let (wall, trim, plinth) = house_finish(v);
     let walls = masonry((w, d, h), 0.4);
@@ -654,14 +661,14 @@ pub(crate) fn house_finish(v: u32) -> (Surface, Surface, Surface) {
 
 /// Un rancho de las afueras: paredes gruesas de adobe o encaladas, retiradas
 /// bajo un techo de chapa acanalada, una puerta y una o dos ventanas, y una
-/// chimenea; o, de vez en cuando, un rancho de madera, una casilla de chapa o
-/// un rancho de barro y paja ([`ranchos`]).
-fn cottage(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
-    // Uno de cada ocho es de madera, otro una casilla de chapa y otro de
-    // barro y paja.
+/// chimenea; o, de vez en cuando, un rancho de madera, una casilla de chapa
+/// (solo `by_rail`) o un rancho de barro y paja ([`ranchos`]).
+fn cottage(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32, by_rail: bool) {
+    // Uno de cada veinte es de madera, uno de cada ocho junto a la vía una
+    // casilla de chapa y uno de cada ocho de barro y paja.
     match (v >> 8) % 8 {
-        5 => return ranchos::wooden(shape, (w, d, h), DROP, v),
-        6 => return ranchos::casilla(shape, (w, d, h), DROP, v),
+        5 if (v >> 16) % 5 < 2 => return ranchos::wooden(shape, (w, d, h), DROP, v),
+        6 if by_rail => return ranchos::casilla(shape, (w, d, h), DROP, v),
         7 => return ranchos::mud_straw(shape, (w, d, h), DROP, v),
         _ => {}
     }

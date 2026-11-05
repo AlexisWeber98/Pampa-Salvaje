@@ -444,6 +444,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_shipped_countryside_has_a_few_casillas_and_wooden_ranchos() {
+        use pampa_core::{HouseStyle, StructureKind};
+        let laid = shipped_world::laid();
+        let mut styles = std::collections::HashMap::<HouseStyle, usize>::new();
+        for st in laid
+            .settlements
+            .settlements
+            .iter()
+            .flat_map(|s| &s.structures)
+        {
+            if let StructureKind::MainHouse(style) | StructureKind::WorkerHouse(style) = st.kind {
+                *styles.entry(style).or_default() += 1;
+            }
+        }
+        // Casillas solo junto a la vía y ranchos de madera raros: pocas, pero
+        // las hay.
+        let houses: usize = styles.values().sum();
+        let casillas = styles.get(&HouseStyle::Casilla).copied().unwrap_or(0);
+        assert!(casillas > 0 && casillas * 10 <= houses, "{styles:?}");
+        let planks = styles.get(&HouseStyle::Planks).copied().unwrap_or(0);
+        assert!(planks * 10 <= houses, "{styles:?}");
+    }
+
+    #[test]
     fn the_shipped_world_is_settled_solid_and_seen_round_with_a_few_wrecks_off_its_roads() {
         let laid = shipped_world::laid();
         let settlements = &laid.settlements;

@@ -270,6 +270,10 @@ impl Settlement {
     /// Distancia mínima desde una huella de edificio hasta la línea central de
     /// la vía, en metros.
     pub const RAIL_CLEARANCE: f32 = 40.0;
+    /// Hasta qué distancia de la vía, desde su centro, un asentamiento levanta
+    /// casillas de chapa: en 1919 eran casas del ferrocarril y de sus
+    /// cuadrillas, no del campo abierto.
+    pub const CASILLA_REACH: f32 = 300.0;
     /// Distancia mínima desde una huella de edificio o una huella de tierra
     /// hasta la franja nivelada de un pueblo.
     pub const TOWN_CLEARANCE: f32 = 60.0;
@@ -708,7 +712,8 @@ impl Site<'_> {
                 (pick_kind(&mut rng, near_town), SettlementLayout::HUB_TRIES)
             }
         };
-        let reach = cell.expanded(Settlement::RAIL_CLEARANCE + 1.0);
+        // Hasta donde la vía aparta las huellas o deja levantar casillas.
+        let reach = cell.expanded(Settlement::RAIL_CLEARANCE.max(Settlement::CASILLA_REACH) + 1.0);
         let ground = Ground {
             roads,
             rails: self
@@ -987,6 +992,15 @@ impl<'a> Compound<'a> {
         }
     }
 
+    /// Si la vía pasa a [`Settlement::CASILLA_REACH`] del centro: solo ahí se
+    /// levantan casillas de chapa.
+    fn by_rail(&self) -> bool {
+        self.ground
+            .rails
+            .iter()
+            .any(|&(a, b)| segment_distance(self.hub, a, b) < Settlement::CASILLA_REACH)
+    }
+
     /// Uno de `styles` según sus probabilidades acumuladas (el último se queda
     /// con el resto), con una sola tirada, como [`Self::chance`].
     fn style(&mut self, styles: &[(f32, HouseStyle)]) -> HouseStyle {
@@ -1002,8 +1016,8 @@ impl<'a> Compound<'a> {
     fn hut(&mut self) -> bool {
         let style = self.style(&[
             (0.35, HouseStyle::AdobeThatch),
-            (0.55, HouseStyle::AdobeIron),
-            (0.8, HouseStyle::MudStraw),
+            (0.6, HouseStyle::AdobeIron),
+            (0.95, HouseStyle::MudStraw),
             (1.0, HouseStyle::Planks),
         ]);
         let house = self.part(
@@ -1027,12 +1041,20 @@ impl<'a> Compound<'a> {
     }
 
     fn outpost(&mut self) -> bool {
-        let style = self.style(&[
-            (0.3, HouseStyle::AdobeThatch),
-            (0.45, HouseStyle::AdobeIron),
-            (0.7, HouseStyle::Casilla),
-            (1.0, HouseStyle::MudStraw),
-        ]);
+        let style = if self.by_rail() {
+            self.style(&[
+                (0.3, HouseStyle::AdobeThatch),
+                (0.45, HouseStyle::AdobeIron),
+                (0.7, HouseStyle::Casilla),
+                (1.0, HouseStyle::MudStraw),
+            ])
+        } else {
+            self.style(&[
+                (0.4, HouseStyle::AdobeThatch),
+                (0.6, HouseStyle::AdobeIron),
+                (1.0, HouseStyle::MudStraw),
+            ])
+        };
         let hut = self.part(StructureKind::MainHouse(style), (6.0, 8.0), (4.0, 5.0), 2.5);
         if self.place(hut, self.ahead(9.0, 14.0, 0.8)).is_none() {
             return false;
@@ -1071,12 +1093,20 @@ impl<'a> Compound<'a> {
         }
         self.corral((18.0, 26.0), self.round(30.0, 50.0));
         if self.chance(0.35) {
-            let style = self.style(&[
-                (0.3, HouseStyle::AdobeIron),
-                (0.5, HouseStyle::AdobeThatch),
-                (0.75, HouseStyle::Planks),
-                (1.0, HouseStyle::Casilla),
-            ]);
+            let style = if self.by_rail() {
+                self.style(&[
+                    (0.3, HouseStyle::AdobeIron),
+                    (0.5, HouseStyle::AdobeThatch),
+                    (0.55, HouseStyle::Planks),
+                    (1.0, HouseStyle::Casilla),
+                ])
+            } else {
+                self.style(&[
+                    (0.45, HouseStyle::AdobeIron),
+                    (0.95, HouseStyle::AdobeThatch),
+                    (1.0, HouseStyle::Planks),
+                ])
+            };
             let worker = self.part(
                 StructureKind::WorkerHouse(style),
                 (8.0, 10.0),
@@ -1120,11 +1150,18 @@ impl<'a> Compound<'a> {
         let turn = self.rng.range(0.0, TAU);
         let mut built = 0;
         for k in 0..houses {
-            let style = self.style(&[
-                (0.45, HouseStyle::AdobeIron),
-                (0.75, HouseStyle::BrickParapet),
-                (1.0, HouseStyle::Casilla),
-            ]);
+            let style = if self.by_rail() {
+                self.style(&[
+                    (0.45, HouseStyle::AdobeIron),
+                    (0.75, HouseStyle::BrickParapet),
+                    (1.0, HouseStyle::Casilla),
+                ])
+            } else {
+                self.style(&[
+                    (0.6, HouseStyle::AdobeIron),
+                    (1.0, HouseStyle::BrickParapet),
+                ])
+            };
             let house = self.part(
                 StructureKind::WorkerHouse(style),
                 (9.0, 12.0),
@@ -2192,7 +2229,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_countryside_has_wooden_ranchos_casillas_and_mud_and_straw_ranchos() {
+    fn the_countryside_has_casillas_and_mud_and_straw_ranchos() {
         let (_, _, _, _, layout) = settled();
         let mut styles: HashMap<HouseStyle, usize> = HashMap::new();
         for st in layout.settlements.iter().flat_map(|s| &s.structures) {
@@ -2200,16 +2237,48 @@ pub(crate) mod tests {
                 *styles.entry(style).or_default() += 1;
             }
         }
-        println!("{styles:?}");
-        for style in [
-            HouseStyle::Planks,
-            HouseStyle::Casilla,
-            HouseStyle::MudStraw,
-        ] {
+        // Los ranchos de madera son raros: este mundo chico no tiene ninguno
+        // (ver `the_shipped_countryside_has_a_few_casillas_and_wooden_ranchos`
+        // en el juego).
+        for style in [HouseStyle::Casilla, HouseStyle::MudStraw] {
             assert!(
                 styles.get(&style).is_some_and(|&n| n > 0),
                 "{style:?}: {styles:?}"
             );
+        }
+    }
+
+    #[test]
+    fn casillas_stand_only_by_the_railway() {
+        let (_, towns, line, _, layout) = settled();
+        let rails: Vec<(Vec2, Vec2)> = line
+            .segments()
+            .map(|s| (s.start, s.end))
+            .chain(line.track_paths(towns).iter().flat_map(|path| {
+                path.points()
+                    .windows(2)
+                    .map(|w| (w[0], w[1]))
+                    .collect::<Vec<_>>()
+            }))
+            .collect();
+        let casilla = |st: &Structure| {
+            matches!(
+                st.kind,
+                StructureKind::MainHouse(HouseStyle::Casilla)
+                    | StructureKind::WorkerHouse(HouseStyle::Casilla)
+            )
+        };
+        // El centro de cada asentamiento con casillas está junto a la vía.
+        for s in layout
+            .settlements
+            .iter()
+            .filter(|s| s.structures.iter().any(casilla))
+        {
+            let gap = rails
+                .iter()
+                .map(|&(a, b)| segment_distance(s.hub, a, b))
+                .fold(f32::INFINITY, f32::min);
+            assert!(gap < Settlement::CASILLA_REACH, "{gap} m: {s:?}");
         }
     }
 

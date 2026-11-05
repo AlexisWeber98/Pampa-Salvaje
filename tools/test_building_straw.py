@@ -36,5 +36,33 @@ class Stalks(unittest.TestCase):
         self.assertIn((-10.0, -5.0, 20.0, 8.0, 2.0, (1, 2, 3), 0.5), copies)
 
 
+class Thatch(unittest.TestCase):
+    def test_the_thatch_stalks_lie_down_the_slope_layer_over_layer(self):
+        stalks = B.thatch_stalks(7, 400)
+        self.assertEqual(len(stalks), 400)
+        for x0, y0, x1, y1, width, _, height in stalks:
+            length = math.hypot(x1 - x0, y1 - y0)
+            self.assertGreaterEqual(length, B.THATCH_LENGTH[0] - 1e-6)
+            self.assertLessEqual(length, B.THATCH_LENGTH[1] + 1e-6)
+            # Down the slope: the image's vertical.
+            tilt = math.degrees(math.atan2(abs(x1 - x0), abs(y1 - y0)))
+            self.assertLessEqual(tilt, B.THATCH_TILT + 1e-6)
+            self.assertGreater(width, 0.0)
+            self.assertTrue(0.0 < height < 1.0)
+        # The later stalks lie over the earlier ones, and are lighter.
+        first, last = stalks[:40], stalks[-40:]
+        mean = lambda xs: sum(xs) / len(xs)  # noqa: E731
+        self.assertLess(mean([s[6] for s in first]) + 0.5, mean([s[6] for s in last]))
+        self.assertLess(mean([sum(s[5]) for s in first]), mean([sum(s[5]) for s in last]))
+        self.assertEqual(stalks, B.thatch_stalks(7, 400))
+
+    def test_each_thatch_stalk_is_drawn_with_its_shadow_and_lit_edge(self):
+        stalks = B.thatch_stalks(3, 5)
+        colour = B.thatch_mvg(stalks).count("line ")
+        height = B.thatch_mvg(stalks, height=True).count("line ")
+        self.assertEqual(colour, 3 * 5)
+        self.assertEqual(height, 2 * 5)
+
+
 if __name__ == "__main__":
     unittest.main()
