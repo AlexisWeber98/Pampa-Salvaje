@@ -368,6 +368,13 @@ pub struct Railway {
     pub gauge: f32,
 }
 
+impl Railway {
+    /// Distancia desde `p` hasta la línea central de la vía, en metros.
+    pub fn distance(&self, p: Vec2) -> f32 {
+        crate::road::segment_distance(p, self.start, self.end)
+    }
+}
+
 /// Un caballo ensillado atado frente a un edificio: nunca se mueve.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TetheredHorse {
