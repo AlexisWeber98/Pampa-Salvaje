@@ -544,9 +544,12 @@ const TOWN_WEAR: f32 = 0.25;
 /// allá del borde del camino, en metros.
 const ROAD_EARTH: Vec3 = Vec3::new(0.60, 0.52, 0.39);
 const ROAD_VERGE: f32 = 4.0;
-/// Tierra húmeda del fondo y la orilla de una laguna (sRGB): llega solo
-/// [`pampa_core::Lagoon::MUD_BAND`] barranca arriba, y luego vuelve el pasto.
+/// Tierra húmeda del fondo y la orilla de una laguna (sRGB): llega hasta el
+/// borde de su franja de barro ([`pampa_core::Lagoon::mud_width`]) barranca
+/// arriba, y luego vuelve el pasto.
 const LAGOON_MUD: Vec3 = Vec3::new(0.36, 0.33, 0.25);
+/// El barro de la orilla ya seco, en el borde de la franja: más claro y gris.
+const DRY_MUD: Vec3 = Vec3::new(0.55, 0.50, 0.41);
 /// El sombreado más oscuro que pueden darle al suelo las pendientes y las
 /// hondonadas.
 const SHADE_MIN: f32 = 0.82;
@@ -554,7 +557,14 @@ const SHADE_MIN: f32 = 0.82;
 /// El color lineal más oscuro y el más claro que puede tomar el suelo.
 #[cfg(test)]
 fn palette_range() -> ([f32; 3], [f32; 3]) {
-    let colors = [GREEN_GRASS, DRY_GRASS, TOWN_GROUND, ROAD_EARTH, LAGOON_MUD];
+    let colors = [
+        GREEN_GRASS,
+        DRY_GRASS,
+        TOWN_GROUND,
+        ROAD_EARTH,
+        LAGOON_MUD,
+        DRY_MUD,
+    ];
     let lo = colors.iter().fold(Vec3::ONE, |a, c| a.min(*c)) * SHADE_MIN;
     let hi = colors.iter().fold(Vec3::ZERO, |a, c| a.max(*c));
     let linear = |v: Vec3| {
@@ -576,12 +586,15 @@ fn ground_color(terrain: &Terrain, flora: Option<&FloraSite>, g: GroundVec2) -> 
     // Tierra gastada a lo largo de los caminos, bajo sus bordes difuminados.
     let worn = road_wear(terrain, g);
     let rgb = rgb.lerp(ROAD_EARTH, 0.6 * worn);
+    // El barro de una laguna: seco y claro en el borde de su franja, mojado y
+    // oscuro junto al agua.
+    let mud = lagoon_mud(terrain, g);
     let wet = lagoon_wetness(terrain, g);
-    let rgb = rgb.lerp(LAGOON_MUD, wet);
+    let rgb = rgb.lerp(DRY_MUD.lerp(LAGOON_MUD, wet), mud);
     // Hojarasca bajo el monte (el alfa): nada sin la flora, y nada en suelo
     // despejado, en la banquina gastada del camino ni en el barro de una
     // laguna.
-    let litter = flora.map_or(0.0, |f| litter_weight(f.monte(g), town.max(worn).max(wet)));
+    let litter = flora.map_or(0.0, |f| litter_weight(f.monte(g), town.max(worn).max(mud)));
     let e = 0.75;
     let dx = terrain.height(g.x + e, g.y) - terrain.height(g.x - e, g.y);
     let dy = terrain.height(g.x, g.y + e) - terrain.height(g.x, g.y - e);
@@ -621,19 +634,34 @@ pub(crate) fn road_wear(terrain: &Terrain, g: GroundVec2) -> f32 {
 fn ground_cover(terrain: &Terrain, g: GroundVec2) -> [f32; 2] {
     let wet = lagoon_wetness(terrain, g);
     let town = TOWN_WEAR * town_weight(terrain, g);
-    let cleared = town.max(road_wear(terrain, g)).max(wet);
+    let cleared = town.max(road_wear(terrain, g)).max(lagoon_mud(terrain, g));
     [cleared, wet]
 }
 
+/// Desde qué fracción de su ancho ([`pampa_core::Lagoon::mud`]) el barro de
+/// una laguna empieza a dar paso al pasto.
+const MUD_EDGE: f32 = 0.8;
+
+/// Cuánto barro pelado hay en `g`, de 0 (pasto) a 1: toda la franja de barro
+/// de una laguna, que se funde con el pasto en su último tramo.
+fn lagoon_mud(terrain: &Terrain, g: GroundVec2) -> f32 {
+    terrain
+        .lagoons
+        .iter()
+        .filter(|l| l.touches(g))
+        .map(|l| 1.0 - smoothstep(MUD_EDGE, 1.0, l.mud(g)))
+        .fold(0.0, f32::max)
+}
+
 /// Qué tan húmedo está el suelo en `g`, de 0 (pasto seco) a 1 (barro): húmedo
-/// bajo el agua de una laguna, secándose a lo largo de su angosta franja de
-/// barro barranca arriba.
+/// bajo el agua de una laguna, secándose a lo largo de su franja de barro
+/// barranca arriba.
 pub(crate) fn lagoon_wetness(terrain: &Terrain, g: GroundVec2) -> f32 {
     terrain
         .lagoons
         .iter()
         .filter(|l| l.touches(g))
-        .map(|l| 1.0 - smoothstep(0.0, pampa_core::Lagoon::MUD_BAND, l.offshore(g)))
+        .map(|l| 1.0 - smoothstep(0.0, 1.0, l.mud(g)))
         .fold(0.0, f32::max)
 }
 
@@ -1380,7 +1408,7 @@ mod tests {
     }
 
     #[test]
-    fn only_a_narrow_band_of_mud_rings_a_lagoon() {
+    fn a_band_of_bare_mud_rings_a_lagoon_drying_toward_the_grass() {
         let config = pampa_core::LagoonConfig {
             name: "Laguna".into(),
             center: GroundVec2::new(3401.0, 841.0),
@@ -1394,6 +1422,15 @@ mod tests {
         }
         for p in lagoon.ring(64, pampa_core::Lagoon::MUD_BAND + 0.1) {
             assert_eq!(lagoon_wetness(&terrain, p), 0.0, "{p:?}");
+        }
+        // A media franja el barro sigue pelado y ya se está secando.
+        for k in 0..64 {
+            let a = k as f32 * std::f32::consts::TAU / 64.0;
+            let off = lagoon.shore_radius(a) + lagoon.mud_width(a) * 0.5;
+            let p = lagoon.center + GroundVec2::new(a.cos(), a.sin()) * off;
+            let [cleared, wet] = ground_cover(&terrain, p);
+            assert_eq!(cleared, 1.0, "{p:?}");
+            assert!(0.3 < wet && wet < 0.7, "{p:?} {wet}");
         }
         // Más allá del barro vuelven las piedras y las matas.
         let keep = lagoon.keep_out();

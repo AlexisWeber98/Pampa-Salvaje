@@ -73,6 +73,9 @@ const FOOT_FULL: f32 = 5.0;
 /// El polvo mínimo del suelo para que un pie lo levante (de 0 a 1): la gente
 /// solo levanta polvo en la tierra suelta, no en el pasto.
 const FOOT_DUST: f32 = 0.5;
+/// Desde qué fuerza (de 0 a 1, ver [`FOOT_FULL`]) un pie salpica en el barro
+/// o el agua: quien corre salpica, quien camina no.
+const FOOT_SPLASH: f32 = 0.5;
 /// Separación lateral entre los dos pies de una persona, en metros.
 const FOOT_SPREAD: f32 = 0.11;
 
@@ -371,7 +374,9 @@ pub fn plume(kick: &Kick, footing: Footing, salt: u32) -> Vec<Puff> {
                 })
                 .collect()
         }
-        Footing::Mud(_) | Footing::Water if kick.source == Source::Foot => Vec::new(),
+        Footing::Mud(_) | Footing::Water if kick.source == Source::Foot && s < FOOT_SPLASH => {
+            Vec::new()
+        }
         Footing::Mud(_) | Footing::Water => {
             let water = footing == Footing::Water;
             let tint = if water { WATER_TINT } else { MUD_TINT };
@@ -985,7 +990,11 @@ mod tests {
         assert!(drops.iter().filter(|p| p.motion == Motion::Drop).count() >= DROPS[0] as usize);
         let dust = plume(&kick(Source::Hoof, 1.0), Footing::Dust(1.0), 3);
         assert!(dust.iter().all(|p| p.motion == Motion::Cloud));
-        assert!(plume(&kick(Source::Foot, 1.0), Footing::Mud(1.0), 3).is_empty());
+        // Una persona que camina no salpica; una que corre, sí.
+        assert!(plume(&kick(Source::Foot, 0.3), Footing::Mud(1.0), 3).is_empty());
+        let run = plume(&kick(Source::Foot, 1.0), Footing::Mud(1.0), 3);
+        assert!(run.iter().any(|p| p.motion == Motion::Drop));
+        assert!(!plume(&kick(Source::Foot, 1.0), Footing::Water, 3).is_empty());
         // El barro más mojado salpica más.
         let splash = |wet: f32| -> usize {
             (0..64)

@@ -118,9 +118,12 @@ impl Lagoon {
     /// Exponente de la superelipse de la orilla: 2 es una elipse; un valor más
     /// alto es más cuadrado, con esquinas suavemente redondeadas.
     const SQUARENESS: f32 = 5.0;
-    /// Ancho del barro húmedo a lo largo de la línea del agua, en metros: más
-    /// allá vuelve a crecer el pasto ([`Self::is_bare`]).
-    pub const MUD_BAND: f32 = 3.0;
+    /// Ancho más angosto y más ancho del barro pelado a lo largo de la línea
+    /// del agua, en metros: la seca dejó una playa de barro que se ensancha y
+    /// se angosta a lo largo de la orilla ([`Self::mud_width`]); más allá
+    /// vuelve a crecer el pasto ([`Self::is_bare`]).
+    pub const MUD_MIN: f32 = 5.0;
+    pub const MUD_BAND: f32 = 12.0;
 
     /// La laguna que describe `config`, con su agua justo por debajo del punto
     /// natural más bajo de su barranca en `terrain`.
@@ -185,7 +188,24 @@ impl Lagoon {
     /// Si `p` está en el agua o en el barro húmedo pelado justo por encima de
     /// ella, donde no crece pasto.
     pub fn is_bare(&self, p: Vec2) -> bool {
-        self.offshore(p) < Self::MUD_BAND
+        self.mud(p) < 1.0
+    }
+
+    /// El ancho del barro pelado en `angle` (radianes desde el este), de
+    /// [`Self::MUD_MIN`] a [`Self::MUD_BAND`] metros: dos ondas lentas a lo
+    /// largo de la orilla, sembradas con las fases de su ondulación.
+    pub fn mud_width(&self, angle: f32) -> f32 {
+        let (a, b) = (self.wobble[0].1, self.wobble[1].1);
+        let w = 0.5 + 0.3 * (2.0 * angle + a).sin() + 0.2 * (5.0 * angle + b).sin();
+        Self::MUD_MIN + (Self::MUD_BAND - Self::MUD_MIN) * w
+    }
+
+    /// Qué tan adentro del barro está `p`: 0 en la línea del agua y 1 donde
+    /// vuelve el pasto ([`Self::mud_width`]); negativo en el agua, más de 1
+    /// en el pasto.
+    pub fn mud(&self, p: Vec2) -> f32 {
+        let d = p - self.center;
+        self.offshore(p) / self.mud_width(d.y.atan2(d.x))
     }
 
     /// A qué distancia más allá de la orilla está `p`, en metros, sobre la
@@ -425,15 +445,23 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn only_a_narrow_band_of_mud_is_bare() {
+    fn a_band_of_mud_that_widens_and_narrows_along_the_shore_is_bare() {
         let (_, lagoon) = arocena();
-        for p in lagoon.ring(64, Lagoon::MUD_BAND - 0.5) {
-            assert!(lagoon.is_bare(p));
+        let angles = (0..64).map(|k| k as f32 * TAU / 64.0);
+        let widths: Vec<f32> = angles.clone().map(|a| lagoon.mud_width(a)).collect();
+        for (a, w) in angles.zip(&widths) {
+            let at = |off: f32| {
+                lagoon.center + Vec2::new(a.cos(), a.sin()) * (lagoon.shore_radius(a) + off)
+            };
+            assert!(lagoon.is_bare(at(w - 0.5)), "{a} {w}");
+            assert!(!lagoon.is_bare(at(w + 0.5)), "{a} {w}");
+            assert!((lagoon.mud(at(w * 0.5)) - 0.5).abs() < 0.01);
         }
-        for p in lagoon.ring(64, Lagoon::MUD_BAND + 0.5) {
-            assert!(!lagoon.is_bare(p));
-        }
-        const { assert!(Lagoon::MUD_BAND <= 5.0) };
+        let (lo, hi) = widths
+            .iter()
+            .fold((f32::MAX, 0.0f32), |(lo, hi), &w| (lo.min(w), hi.max(w)));
+        assert!(lo >= Lagoon::MUD_MIN && hi <= Lagoon::MUD_BAND, "{lo} {hi}");
+        assert!(hi - lo > 3.0, "{lo} {hi}");
     }
 
     #[test]

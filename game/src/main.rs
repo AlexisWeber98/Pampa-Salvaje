@@ -700,7 +700,10 @@ mod tests {
             .iter()
             .map(|&p| lagoon.offshore(p))
             .fold(f32::MAX, f32::min);
-        assert!(end > pampa_core::Lagoon::MUD_BAND && end < 15.0, "{end}");
+        assert!(
+            end > pampa_core::Lagoon::MUD_BAND && end < pampa_core::Lagoon::MUD_BAND + 12.0,
+            "{end}"
+        );
         // Un jinete lo recorre de punta a punta: ningún alambrado, tranquera,
         // asentamiento, árbol ni cartel indicador está sobre él.
         // Los árboles se plantan a medida que un jinete se acerca (ver

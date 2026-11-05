@@ -506,8 +506,8 @@ impl FloraSite {
     }
 
     /// Si una mata, una piedra o un arbusto puede crecer en `p`: lejos del agua
-    /// de toda laguna y del angosto barro húmedo a lo largo de ella
-    /// ([`Lagoon::MUD_BAND`]). Los juncos se dibujan por separado.
+    /// de toda laguna y del barro pelado a lo largo de ella
+    /// ([`Lagoon::is_bare`]). Los juncos se dibujan por separado.
     pub fn off_lagoons(&self, p: Vec2) -> bool {
         self.lagoons.iter().all(|l| !l.is_bare(p))
     }

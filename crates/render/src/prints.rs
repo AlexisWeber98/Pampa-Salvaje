@@ -26,7 +26,7 @@ use pampa_core::{Terrain, TownLayout, Vec2 as GroundVec2};
 
 use crate::dust::{Footing, Kick, Kicks, Source, StirDust, WHEEL_SPACING, footing, recycle};
 use crate::flora::jitter;
-use crate::terrain::{WorldTerrain, hash2};
+use crate::terrain::{ChunkDetail, WorldChunks, WorldTerrain, hash2, mesh_height};
 use crate::town::WorldTowns;
 
 /// Cuántas huellas hay en total: más de las que deja un minuto de galope por
@@ -430,6 +430,8 @@ fn relief(source: Source) -> (Image, Image) {
 fn press_prints(
     time: Res<Time>,
     terrain: Option<Res<WorldTerrain>>,
+    chunks: Res<WorldChunks>,
+    detail: Option<Res<ChunkDetail>>,
     towns: Option<Res<WorldTowns>>,
     kicks: Res<Kicks>,
     pool: Res<PrintPool>,
@@ -467,7 +469,16 @@ fn press_prints(
                 Source::Wheel => 0.0,
                 _ => (jitter(pressed.0, 0) - 0.5) * 0.3,
             };
-            *transform = lay(kick, yaw, |x, y| world.height(x, y));
+            // Sobre el suelo tal como se dibuja: en la barranca de una laguna
+            // la malla queda unos centímetros por encima del terreno lógico,
+            // y taparía la huella.
+            *transform = lay(kick, yaw, |x, y| {
+                let p = GroundVec2::new(x, y);
+                match &detail {
+                    Some(d) => mesh_height(world, p, chunks.0.chunk_size, d.resolution),
+                    None => world.height(x, y),
+                }
+            });
             *print = Print {
                 source: kick.source,
                 depth: 0.65 + 0.35 * kick.strength.clamp(0.0, 1.0),
