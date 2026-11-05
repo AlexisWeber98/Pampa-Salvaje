@@ -542,7 +542,7 @@ const TOWN_GROUND: Vec3 = Vec3::new(0.60, 0.53, 0.40);
 const TOWN_WEAR: f32 = 0.25;
 /// Tierra gastada junto a un camino (sRGB), y hasta dónde llega el desgaste más
 /// allá del borde del camino, en metros.
-const ROAD_EARTH: Vec3 = Vec3::new(0.60, 0.52, 0.39);
+pub(crate) const ROAD_EARTH: Vec3 = Vec3::new(0.60, 0.52, 0.39);
 const ROAD_VERGE: f32 = 4.0;
 /// Tierra húmeda del fondo y la orilla de una laguna (sRGB): llega hasta el
 /// borde de su franja de barro ([`pampa_core::Lagoon::mud_width`]) barranca
