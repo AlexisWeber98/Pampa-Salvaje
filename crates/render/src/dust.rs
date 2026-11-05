@@ -20,7 +20,8 @@
 //!
 //! El polvo sube, se hincha, deriva con el viento del pasto
 //! ([`crate::grass::WIND`]) y se desvanece; una salpicadura son gotas rápidas,
-//! bajas y oscuras que caen enseguida.
+//! bajas y oscuras que caen enseguida. En el barro, las mismas pisadas dejan
+//! sus huellas ([`crate::prints`]).
 
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::VisibilitySystems;
@@ -57,7 +58,7 @@ const TOUCH: f32 = PLANTED;
 const LIFT: f32 = 0.06;
 
 /// Metros que rueda una rueda entre dos bocanadas.
-const WHEEL_SPACING: f32 = 1.4;
+pub(crate) const WHEEL_SPACING: f32 = 1.4;
 /// Un salto de lo rodado mayor que esto (en metros) es un vehículo que
 /// apareció o se movió de golpe, no una rueda que rodó: no patea.
 const WHEEL_JUMP: f32 = 6.0;
@@ -232,6 +233,11 @@ impl Kicks {
     /// Agrega una pisada.
     pub fn push(&mut self, kick: Kick) {
         self.pending.push(kick);
+    }
+
+    /// Las pisadas de este frame que todavía no se gastaron en polvo.
+    pub fn pending(&self) -> &[Kick] {
+        &self.pending
     }
 }
 
@@ -500,6 +506,11 @@ struct Stride(f32);
 #[derive(Component, Debug, Clone, Copy)]
 struct Track(f32);
 
+/// Donde [`Kicks`] se gastan en polvo: quien lea las pisadas del frame va
+/// antes.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct StirDust;
+
 /// Polvo y salpicaduras en las pisadas (ver el módulo).
 pub struct DustPlugin;
 
@@ -507,8 +518,14 @@ impl Plugin for DustPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Kicks>()
             .init_resource::<DustPool>()
+            .add_plugins(crate::prints::PrintsPlugin)
             .add_systems(Startup, spawn_pool)
-            .add_systems(PostUpdate, stir_dust.before(TransformSystems::Propagate))
+            .add_systems(
+                PostUpdate,
+                stir_dust
+                    .in_set(StirDust)
+                    .before(TransformSystems::Propagate),
+            )
             .add_systems(
                 PostUpdate,
                 (kick_hooves, kick_wheels, kick_feet)
