@@ -403,6 +403,10 @@ class Units(unittest.TestCase):
         def select(self, names=None, arms=False, kind=None):
             return self.points if names != {"head"} else self.points[:3000]
 
+        def rise(self, points, out, names):
+            """No triangles to probe: nothing is lifted."""
+            return np.full(len(points), np.nan)
+
         def surface(self, x, y, names, kind=None, back=False):
             """The trunk's surface along z, or None off it."""
             if abs(x) >= 1 or not 10 <= y <= 15.5:
@@ -495,10 +499,10 @@ class Units(unittest.TestCase):
         body = Arm()
         # A strip hanging down through the arm, 0.1 off its bone, and the
         # same strip on the chest by the armpit (in from the shoulder by
-        # more than 0.7, though within the clearance of the arm's surface).
+        # more than 0.8, though within the clearance of the arm's surface).
         ys = np.linspace(7.0, 10.5, 15)
         through = np.stack([np.full(15, 2.1), ys, np.zeros(15)], axis=1)
-        chest = np.stack([np.full(15, 1.28), ys, np.zeros(15)], axis=1)
+        chest = np.stack([np.full(15, 1.18), ys, np.zeros(15)], axis=1)
         coords = np.vstack([through, chest])
         tris = [(k, k + 1, k + 15) for k in range(14)]
         piece = mh2gltf.made("poncho", mh2gltf.plain("poncho", [1, 1, 1]), coords, tris, "spine_03", body.rig)
@@ -555,6 +559,109 @@ class Units(unittest.TestCase):
         self.assertGreater(top[1], 15.0)
         self.assertLess(coords[:, 1].min(), 10.5 - 0.5)  # its ends hang below the hip joint
         self.assertTrue(coords[:, 2].max() > 1.0 and coords[:, 2].min() < -1.0)
+
+    def test_the_poncho_lies_over_the_body_across_its_whole_width(self):
+        # A stand-in dressed trunk (decimeters): an oval column 1.8 wide
+        # and 1 deep from y = 8, its top a ridge rising from the shoulders
+        # (y 15) to the neck (15.8), and a chest bulging 0.3 out in front
+        # off the poncho's middle line: what the flat band used to cut.
+        class Rig:
+            order = ["Root", "spine_02", "upperarm_l", "lowerarm_l", "thigh_r", "head"]
+
+        rest = {n: np.identity(4) for n in Rig.order}
+        rest["upperarm_l"][:3, 3] = [1.5, 14.5, 0.0]
+        rest["lowerarm_l"][:3, 3] = [1.6, 12.0, 0.0]
+        rest["thigh_r"][:3, 3] = [-0.8, 9.5, 0.0]
+        a = np.linspace(-np.pi, np.pi, 49)[:-1]
+        x, z = 1.8 * np.sin(a), np.cos(a)
+        top = 15.0 + 0.8 * (1 - np.abs(x) / 1.8)
+        rows = np.linspace(0.0, 1.0, 25)
+        chest = 0.3 * np.exp(-((x - 0.2) / 0.4) ** 2) * (z > 0)
+        coords = np.array([[x[k], 8.0 + r * (top[k] - 8.0), z[k] * (1 + chest[k] * np.exp(-((8.0 + r * (top[k] - 8.0) - 13.0) / 0.8) ** 2))]
+                           for r in rows for k in range(len(a))])
+        n = len(a)
+        tris = [t for i in range(len(rows) - 1) for k in range(n)
+                for t in ((i * n + k, i * n + (k + 1) % n, (i + 1) * n + (k + 1) % n), (i * n + k, (i + 1) * n + (k + 1) % n, (i + 1) * n + k))]
+        # The ridge: each front top vertex to its back twin.
+        last = (len(rows) - 1) * n
+        twin = {k: int(np.argmin(np.abs(x - x[k]) + 10 * (z * z[k] > 0))) for k in range(n)}
+        tris += [(last + k, last + (k + 1) % n, last + twin[k]) for k in range(n)]
+        w = np.zeros((len(coords), len(Rig.order)))
+        w[:, 1] = 1.0
+        trunk = mh2gltf.Piece("skin", "proxy", None, coords, [tuple((v, 0) for v in t) for t in tris], w, np.zeros((1, 2)))
+        body = mh2gltf.Body(Rig(), rest, [trunk])
+        pc, ptris, _ = mh2gltf.make_poncho(body, {"side": [1]}, mh2gltf.SEGMENTS)
+        # No body vertex is inside the poncho (rays along +x cross its
+        # closed surface an odd number of times from inside).
+        v = pc[np.array(ptris)]
+        e1, e2 = v[:, 1] - v[:, 0], v[:, 2] - v[:, 0]
+        d = np.array([1.0, 1e-3, 2e-3])
+        h = np.cross(d, e2)
+        det = (e1 * h).sum(axis=1)
+        s = coords[:, None, :] - v[None, :, 0]
+        q = np.cross(s, e1[None])
+        u, vv, t = (s * h).sum(axis=2) / det, (q @ d) / det, (q * e2).sum(axis=2) / det
+        crossings = ((u >= 0) & (vv >= 0) & (u + vv <= 1) & (t > 0)).sum(axis=1)
+        self.assertEqual(int((crossings % 2).sum()), 0, "body vertices inside the poncho")
+        top = pc[np.argmax(pc[:, 1])]
+        self.assertGreater(top[0], 0.0)  # still over the left shoulder
+
+    def test_fabrics_replace_the_cloth_with_grey_square_maps_and_their_normals(self):
+        def png16(img):
+            """A 16-bit RGB PNG of a uint16 (h, w, 3) array."""
+            raw = b"".join(b"\0" + row.astype(">u2").tobytes() for row in img)
+
+            def chunk(kind, body):
+                return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF)
+
+            h, w, _ = img.shape
+            return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 16, 2, 0, 0, 0))
+                    + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+        rng = np.random.default_rng(3)
+        for asset, colour, normal in mh2gltf.FABRICS.values():
+            os.makedirs(os.path.join(self.tmp.name, "fabrics", asset), exist_ok=True)
+            self.write(f"fabrics/{asset}/{colour}", png16(rng.integers(0, 65536, (9, 8, 3), dtype=np.uint16)))
+            self.write(f"fabrics/{asset}/{normal}", mh2gltf.png_encode(np.full((8, 8, 3), [128, 128, 255], np.uint8)))
+
+        class Rig:
+            order, name = ["Root"], "rig"
+            bones, children = {"Root": {"parent": None}}, {"Root": []}
+
+        def written(fabrics):
+            out = os.path.join(self.tmp.name, "out" if fabrics else "plain")
+            character = mh2gltf.Character()
+            character.name = "c"
+            coords = np.array([[0.0, 0, 0], [1, 0, 0], [0, 1, 0]])
+            pieces = [mh2gltf.Piece(k, "piece", mh2gltf.plain(k, [0.5, 0.4, 0.3], pattern=pattern), coords,
+                                    [((0, 0), (1, 1), (2, 2))], np.ones((3, 1)), np.eye(3)[:, :2])
+                      for k, pattern in (("shirt", "cotton"), ("poncho", "poncho"))]
+            args = mh2gltf.argparse.Namespace(out=out, name="model", max_texture=1024, max_small_texture=512,
+                                              no_normal_maps=False, fabrics=fabrics)
+            with redirect_stdout(io.StringIO()):
+                mh2gltf.write(args, character, Rig(), {"Root": np.identity(4)}, pieces, [])
+            g = json.load(open(os.path.join(out, "model.gltf")))
+
+            def image(ref):
+                uri = g["images"][g["textures"][ref["index"]]["source"]]["uri"]
+                return uri, mh2gltf.png_decode(os.path.join(out, uri))
+
+            return [(m["name"], image(m["pbrMetallicRoughness"]["baseColorTexture"]),
+                     image(m["normalTexture"]) if "normalTexture" in m else None) for m in g["materials"]]
+
+        (shirt, (uri, img), normal), (_, (puri, pimg), pnormal) = written(os.path.join(self.tmp.name, "fabrics"))
+        self.assertEqual((shirt, uri, img.shape), ("shirt", "textures/cotton.png", (8, 8, 3)))  # made square
+        np.testing.assert_array_equal(img[..., 0], img[..., 1])  # grey, for the colour to tint
+        self.assertEqual(normal[0], "textures/cotton_nor.png")
+        self.assertEqual(normal[1].shape, (8, 8, 3))
+        self.assertEqual((puri, pimg.shape, pnormal), ("textures/poncho.png", (64, 64, 3), None))  # the poncho's own
+        # Without them, cloth()'s small texture and no normal map, as before.
+        (_, (uri, img), normal), _ = written(None)
+        self.assertEqual((uri, normal), ("textures/cotton.png", None))
+        np.testing.assert_array_equal(img, mh2gltf.cloth("cotton"))
+        os.remove(os.path.join(self.tmp.name, "fabrics", "brown_leather", "brown_leather_nor_gl_2k.png"))
+        with self.assertRaises(mh2gltf.ConvertError):
+            mh2gltf.fabric_files(os.path.join(self.tmp.name, "fabrics"))
 
     def test_a_hat_has_a_flat_crown_and_a_flat_brim(self):
         n = mh2gltf.SEGMENTS

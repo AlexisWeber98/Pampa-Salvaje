@@ -1578,6 +1578,25 @@ class Body:
         z = (a[:, 2] + u * (b[:, 2] - a[:, 2]) + v * (c[:, 2] - a[:, 2]))[hit]
         return float(z.min() if back else z.max())
 
+    def rise(self, points, out, names):
+        """How far along ``out`` from each point the outermost of the
+        triangles of those joints lies on the line through it along
+        ``out`` (negative: behind the point), or NaN where it misses them."""
+        ok = np.array([n in names for n in self.rig.order])[self.face_joint]
+        t = self.faces[ok]
+        a, e1, e2 = t[:, 0], t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]
+        h = np.cross(out, e2)
+        det = (e1 * h).sum(axis=1)
+        good = np.abs(det) > 1e-12
+        inv = np.where(good, 1.0 / np.where(good, det, 1.0), 0.0)
+        s = points[:, None, :] - a[None]
+        u = (s * h[None]).sum(axis=2) * inv
+        q = np.cross(s, e1[None])
+        v = (q @ out) * inv
+        depth = (q * e2[None]).sum(axis=2) * inv
+        hit = good & (u >= 0) & (v >= 0) & (u + v <= 1)
+        return np.where(hit.any(axis=1), np.where(hit, depth, -np.inf).max(axis=1), np.nan)
+
     def at(self, name):
         return self.rest[name][:3, 3]
 
@@ -1748,6 +1767,42 @@ ARM_SHARE = 0.9
 ARM_REACH = 1.5
 
 
+def arm_capsule(body, side):
+    """An upper arm's capsule: its joint, the shoulder joint, a function
+    of points giving their place along it (0 at the shoulder, 1 at the
+    elbow), nearest point on it and distance from it, and its radius (the
+    dressed arm's round its middle); None without one."""
+    upper, lower = f"upperarm_{side}", f"lowerarm_{side}"
+    if upper not in body.rig.order or lower not in body.rig.order:
+        return None
+    a, b = body.at(upper), body.at(lower)
+    along = b - a
+    arm = body.select({upper})
+    if not len(arm) or not along.any():
+        return None
+
+    def place(p):
+        t = (p - a) @ along / (along @ along)
+        near = a + np.clip(t, 0.0, 1.0)[:, None] * along
+        return t, near, np.linalg.norm(p - near, axis=1)
+
+    t, _, d = place(arm)
+    middle = (t > 0.3) & (t < 0.7)
+    if not middle.any():
+        return None
+    return upper, a, place, float(np.median(d[middle]))
+
+
+def arm_side(coords, a, t):
+    """Of points at places t along an upper arm from shoulder joint a:
+    those out from the shoulder joint (within 8 cm of it, where the arm
+    comes as it reaches forward for the reins: the chest in front stays as
+    it is), and of those, the ones along it, a little past the elbow too
+    (the poncho's end hangs by it)."""
+    outer = np.abs(coords[:, 0]) >= abs(a[0]) - 0.8
+    return outer, (t >= 0.0) & (t <= 1.2) & outer
+
+
 def clear_arms(piece, body, sides=("l", "r")):
     """``piece`` kept off the upper arms and over the shoulders: every
     vertex within ``ARM_CLEARANCE`` of an upper arm's surface (a capsule
@@ -1756,36 +1811,17 @@ def clear_arms(piece, body, sides=("l", "r")):
     up to ``ARM_SHARE`` of the upper arm's weight, fading over
     ``ARM_REACH``, so the folded poncho rides on the deltoid as the arm
     swings under it instead of going through it. Only what lies out from
-    the shoulder joint moves (the chest is left as it was). Pieces near no
-    arm are unchanged."""
+    the shoulder joint (``arm_side``) moves (the chest is left as it was).
+    Pieces near no arm are unchanged."""
     order = list(body.rig.order)
     coords, weights = piece.coords.copy(), piece.weights.copy()
     for side in sides:
-        upper, lower = f"upperarm_{side}", f"lowerarm_{side}"
-        if upper not in order or lower not in order:
+        capsule = arm_capsule(body, side)
+        if capsule is None:
             continue
-        a, b = body.at(upper), body.at(lower)
-        along = b - a
-        arm = body.select({upper})
-        if not len(arm) or not along.any():
-            continue
-
-        def place(p):
-            t = (p - a) @ along / (along @ along)
-            near = a + np.clip(t, 0.0, 1.0)[:, None] * along
-            return t, near, np.linalg.norm(p - near, axis=1)
-
-        t, _, d = place(arm)
-        middle = (t > 0.3) & (t < 0.7)
-        if not middle.any():
-            continue
-        radius = float(np.median(d[middle]))
+        upper, a, place, radius = capsule
         t, near, d = place(coords)
-        # Past the elbow a little too (the poncho's end hangs by it), and
-        # only out from the shoulder joint (within 7 cm of it):
-        # the chest in front stays as it is.
-        outer = np.abs(coords[:, 0]) >= abs(a[0]) - 0.7
-        on = (t >= 0.0) & (t <= 1.2) & outer
+        outer, on = arm_side(coords, a, t)
         push = on & (d < radius + ARM_CLEARANCE) & (d > 1e-9)
         coords[push] = near[push] + (coords[push] - near[push]) * ((radius + ARM_CLEARANCE) / d[push])[:, None]
         d = np.where(push, radius + ARM_CLEARANCE, d)
@@ -2186,13 +2222,37 @@ def make_shawl_ends(body, settings, steps=10, across=7):
     return out
 
 
+# How far the poncho's underside is kept above the dressed body under it
+# (decimeters), and how many lines across its width find that body.
+PONCHO_CLEARANCE = 0.05
+PONCHO_PROBES = 17
+PONCHO_TURN = 12.0
+
+
 def make_poncho(body, settings, n, sides=8):
     """A poncho folded long and laid along diagonal(): a flat oval section
     ``width`` across and ``thick`` deep, its two ends hanging ``hang``
     below the hip, front and back, a little wider, closed at the ends. Its
-    UVs run round the section (v), so the woven stripes run along it."""
+    UVs run round the section (v), so the woven stripes run along it.
+
+    diagonal() finds the body only along the poncho's middle; across its
+    width the chest, the shoulder's slope up to the neck and the hip
+    rise above that. So each section is probed across its width
+    (``PONCHO_PROBES`` lines along its outward direction, against the
+    trunk without the neck), and each place across it is lifted until its
+    underside clears the highest body under it and its neighbouring
+    places by ``PONCHO_CLEARANCE``."""
     k = "poncho"
     path, out, across, _ = diagonal(body, setting(settings, k, "side"))
+    # Round the shoulder in more sections: one every PONCHO_TURN degrees
+    # the outward direction turns (lifted onto the shoulder below).
+    fine_path, fine_out = [path[:1]], [out[:1]]
+    for p0, p1, o0, o1 in zip(path, path[1:], out, out[1:]):
+        steps = max(1, math.ceil(math.degrees(math.acos(np.clip(o0 @ o1, -1.0, 1.0))) / PONCHO_TURN))
+        t = (np.arange(1, steps + 1) / steps)[:, None]
+        fine_path.append(p0 + t * (p1 - p0))
+        fine_out.append(np.array([normalize(o) for o in o0 + t * (o1 - o0)]))
+    path, out = np.vstack(fine_path), np.vstack(fine_out)
     width, thick, hang = (setting(settings, k, x) for x in ("width", "thick", "hang"))
     steps = np.linspace(1 / 3, 1.0, 3)[:, None]
     down = np.array([0.0, -1.0, 0.0])
@@ -2204,10 +2264,52 @@ def make_poncho(body, settings, n, sides=8):
     # One more vertex than sides round each section: the first again, at
     # the far edge of the texture, so its seam does not squeeze it.
     a = (np.arange(sides + 1) / sides + 0.75) * 2 * math.pi
+    # What it lies on: the trunk and the upper arms under the shoulder, not
+    # the neck (the neckerchief is round it).
+    under = {nm for nm in body.rig.order if (not ARM_JOINTS.match(nm) or nm.startswith("upperarm_"))
+             and nm not in ("head", "neck_01")}
+    probes = np.linspace(-1.0, 1.0, PONCHO_PROBES)
+    # Each place across (cos(a)) lies over the probes from its neighbours'.
+    place = np.round(np.cos(a), 9)
+    span = np.unique(place)
+    reach = {c: (span[max(k - 1, 0)], span[min(k + 1, len(span) - 1)]) for k, c in enumerate(span)}
+    lift = np.zeros((len(path), sides + 1))
+    for r, (p, o, w) in enumerate(zip(path, out, spread)):
+        h = body.rise(p + np.outer(probes, across * width * w / 2), o, under)
+        for i, c in enumerate(place):
+            lo, hi = reach[c]
+            near = h[(probes >= lo - 1e-9) & (probes <= hi + 1e-9)]
+            near = near[~np.isnan(near)]
+            if len(near):
+                lift[r, i] = max(0.0, near.max() + PONCHO_CLEARANCE)
+    # And out of the upper arm's capsule that clear_arms() keeps it off,
+    # each place across lifted as one, so clear_arms() finds nothing to
+    # push (pushing single vertices out crumples the band at the shoulder).
+    flat = (path[:, None, :] + np.cos(a)[None, :, None] * (spread[:, None, None] * across * width / 2)
+            + ((1 + np.sin(a)) * thick / 2)[None, :, None] * out[:, None, :])
+    for side in ("l", "r"):
+        capsule = arm_capsule(body, side)
+        if capsule is None:
+            continue
+        _, shoulder, where, radius = capsule
+        need = np.full(lift.shape, np.nan)
+        for step in np.arange(0, 101) * 0.01:
+            q = (flat + (lift + step)[..., None] * out[:, None, :]).reshape(-1, 3)
+            t, _, d = where(q)
+            outer, _ = arm_side(q, shoulder, t)
+            # Where clear_arms() gives it the arm's weight too: as the arm
+            # turns, the shoulder's top comes under the arm's capsule.
+            on = outer & (t >= -0.2) & (t <= 1.2)
+            clear = ~(on & (d < radius + ARM_CLEARANCE + 0.01)).reshape(lift.shape)
+            need = np.where(np.isnan(need) & clear, step, need)
+        need = np.nan_to_num(need, nan=1.0)
+        for c in span:
+            lift[:, place == c] += need[:, place == c].max(axis=1, keepdims=True)
     rows, texco = [], []
-    for p, o, w in zip(path, out, spread):
-        rows.append(p + np.outer(np.cos(a), across * width * w / 2) + np.outer(1 + np.sin(a), o * thick / 2))
+    for p, o, w, up in zip(path, out, spread, lift):
+        rows.append(p + np.outer(np.cos(a), across * width * w / 2) + np.outer(1 + np.sin(a), o * thick / 2) + np.outer(up, o))
         texco += [[0.0, i / sides] for i in range(sides + 1)]
+    path = path + out * lift[:, :1]
     coords = np.vstack(rows + [path[0] + out[0] * thick / 2, path[-1] + out[-1] * thick / 2])
     texco += [[0.0, 0.5], [0.0, 0.5]]
     m = sides + 1
@@ -2415,6 +2517,7 @@ BODY, ARM, HEAD = 0, 1, 2
 STATION_JOINTS = (None, "foot", "calf", "thigh", "spine_02", "upperarm", "neck_01", "head")
 RIM_INSET = 0.005  # a garment's rims reach down to this above the skin
 CLOTH_TILE = 6.0  # the cloth textures repeat this often across the skin's UVs
+FABRIC_TILE = 3.0  # the --fabrics textures, likewise (see FABRICS)
 # Each garment's cloth texture and its offset out from the skin (decimeters),
 # piecewise linear in the station on the trunk and legs, and in the reach
 # on the arms (None: no sleeves).
@@ -2593,12 +2696,12 @@ def head_cut(f, kind, g):
     return covered, offset
 
 
-def shell(figure, label, kind, material, selected, kept, offset):
+def shell(figure, label, kind, material, selected, kept, offset, tile=CLOTH_TILE):
     """A garment's mesh: the kept skin faces pushed out along the normals
     by ``offset``, and a rim down to the skin along every edge where the
     selection ends (on a kept face), so no end is see-through. Every
     vertex keeps the weights of the skin vertex it comes from, and its UV,
-    tiled CLOTH_TILE times for the cloth texture."""
+    tiled ``tile`` times for the cloth texture."""
     f = figure
     faces = f.faces
     edges = {}
@@ -2637,19 +2740,20 @@ def shell(figure, label, kind, material, selected, kept, offset):
     v = np.array([s for s, _ in source], np.int64)
     push = np.array([offset[s] if inset in (None, "rim") else inset for s, inset in source])
     coords = f.coords[v] + f.normals[v] * push[:, None]
-    pc = Piece(label, kind, material, coords, tris, f.weights[v].copy(), f.texco * CLOTH_TILE)
+    pc = Piece(label, kind, material, coords, tris, f.weights[v].copy(), f.texco * tile)
     pc.source = v
     return pc
 
 
-def dress(character, figure, rig):
+def dress(character, figure, rig, tile=CLOTH_TILE):
     """The garments cut from the body, from the .mhm's garment pieces
     (GARMENT_CUTS): each covers the skin faces whose vertices it all
     covers, pushed out by its offset. Where garments overlap,
     the face goes to the one that sits furthest out (the shirt under the
     waistcoat, the trousers tucked into the boots) and the others leave it
-    out. Returns the garment pieces (and their skirts) and the skin
-    triangles they cover, as sorted vertex triples, to hide."""
+    out. The cloth texture repeats ``tile`` times across the skin's UVs.
+    Returns the garment pieces (and their skirts) and the skin triangles
+    they cover, as sorted vertex triples, to hide."""
     cuts = []
     for kind, settings in character.pieces:
         if kind in GARMENT_CUTS:
@@ -2670,7 +2774,7 @@ def dress(character, figure, rig):
         material = plain(kind, setting(settings, kind, "color"), ROUGHNESS[texture], pattern=texture)
         kept = selections[i] & (owner == i)
         if kept.any():
-            out.append(shell(figure, kind, kind, material, selections[i], kept, offset))
+            out.append(shell(figure, kind, kind, material, selections[i], kept, offset, tile))
     points = np.vstack([figure.coords[figure.limb == BODY]] + [pc.coords[figure.limb[pc.source] == BODY] for pc in out])
     for kind, settings, *_ in cuts:
         if kind in GARMENT_CUTS and setting(settings, kind, "skirt") > 0:
@@ -2998,6 +3102,54 @@ def cloth(name, size=64):
     return np.repeat(grey[..., None], 3, axis=2)
 
 
+# Poly Haven fabrics (CC0, https://polyhaven.com) that ``--fabrics DIR``
+# puts in place of cloth()'s cotton, wool and leather: each one's colour
+# map, made grey and tinted by the garment's colour as cloth()'s are, and
+# its OpenGL normal map, as downloaded at 2K into DIR/<asset>/.
+FABRICS = {
+    "cotton": ("rough_linen", "rough_linen_diff_2k.png", "rough_linen_nor_gl_2k.png"),
+    "wool": ("poly_wool_herringbone", "poly_wool_herringbone_diff_2k.png", "poly_wool_herringbone_nor_gl_2k.png"),
+    "leather": ("brown_leather", "brown_leather_albedo_2k.png", "brown_leather_nor_gl_2k.png"),
+}
+
+
+def fabric_files(folder):
+    """{pattern: (colour map, normal map)} of the FABRICS in ``folder``."""
+    folder = os.path.realpath(os.path.expanduser(folder))
+    out = {}
+    for pattern, (asset, colour, normal) in FABRICS.items():
+        paths = tuple(os.path.join(folder, asset, name) for name in (colour, normal))
+        for path in paths:
+            if not os.path.isfile(path) or not inside(path, folder):
+                raise ConvertError(f"--fabrics: no {asset}/{os.path.basename(path)} in {folder}")
+        out[pattern] = paths
+    return out
+
+
+def squared(img, normal_map=False):
+    """A tiling texture resampled to a square of its shorter side (Poly
+    Haven's scans are not all square: 2048x2091), linearly and wrapping
+    round its edges, so it still tiles. A normal map's normals are
+    renormalized."""
+    h, w, c = img.shape
+    side = min(h, w)
+    x = img.astype(np.float64)
+    for ax, n in ((0, h), (1, w)):
+        if n == side:
+            continue
+        at = (np.arange(side) + 0.5) * n / side - 0.5
+        lo = np.floor(at).astype(np.int64)
+        shape = [1, 1, 1]
+        shape[ax] = side
+        f = (at - lo).reshape(shape)
+        x = np.take(x, lo % n, axis=ax) * (1 - f) + np.take(x, (lo + 1) % n, axis=ax) * f
+    if normal_map and c >= 3:
+        v = x[..., :3] / 127.5 - 1.0
+        v /= np.maximum(np.linalg.norm(v, axis=-1, keepdims=True), 1e-9)
+        x[..., :3] = (v + 1.0) * 127.5
+    return np.clip(np.rint(x), 0, 255).astype(np.uint8)
+
+
 # --- conversion -----------------------------------------------------------------
 
 
@@ -3102,7 +3254,7 @@ def convert(args):
     # body, which hides the skin under them; then the generated pieces
     # fitted to the dressed body.
     rest = pose_arms(rig, rest, pieces)
-    garments, covered = dress(character, Figure(rig, rest, skin), rig)
+    garments, covered = dress(character, Figure(rig, rest, skin), rig, FABRIC_TILE if args.fabrics else CLOTH_TILE)
     if covered:
         before = len(skin.triangles)
         skin.triangles = [t for t in skin.triangles if tuple(sorted(v for v, _ in t)) not in covered]
@@ -3250,12 +3402,15 @@ def write(args, character, rig, rest, pieces, report):
     })
 
     images, prims, totals, texture_notes = {}, [], [], []
+    fabrics = fabric_files(args.fabrics) if args.fabrics else {}
 
-    def texture(path, normal_map, limit, grey=False, pattern=None):
+    def texture(path, normal_map, limit, grey=False, pattern=None, fabric=None):
+        """A texture of a file, of a cloth() pattern, or of a fabric's file
+        (named ``fabric``, made square)."""
         key = (path, normal_map, grey, pattern)
         if key in images:
             return images[key]
-        stem = pattern or os.path.splitext(os.path.basename(path))[0]
+        stem = fabric or pattern or os.path.splitext(os.path.basename(path))[0]
         name = re.sub(r"[^A-Za-z0-9._-]", "_", stem) + ".png"
         taken = {img["uri"] for img in gltf["images"]}
         n = 2
@@ -3263,6 +3418,8 @@ def write(args, character, rig, rest, pieces, report):
             name = f"{stem}_{n}.png"
             n += 1
         img = cloth(pattern) if pattern else png_decode(path)
+        if fabric:
+            img = squared(img, normal_map)
         if grey:
             img = greyscale(img)
         before = img.shape
@@ -3285,13 +3442,18 @@ def write(args, character, rig, rest, pieces, report):
         limit = args.max_texture if pc.large else args.max_small_texture
         factor = [linear(c) for c in m.color[:3]] + [m.color[3]]
         pbr = {"baseColorFactor": [round(c, 6) for c in factor], "metallicFactor": round(m.metallic, 3), "roughnessFactor": round(m.roughness, 3)}
+        fabric = None if m.diffuse else fabrics.get(m.pattern)
         if m.diffuse:
             pbr["baseColorTexture"] = {"index": texture(m.diffuse, False, limit, m.greyscale)}
+        elif fabric:
+            pbr["baseColorTexture"] = {"index": texture(fabric[0], False, limit, True, fabric=m.pattern)}
         elif m.pattern:
             pbr["baseColorTexture"] = {"index": texture(None, False, limit, pattern=m.pattern)}
         entry = {"name": m.name, "pbrMetallicRoughness": pbr}
         if m.normal and not args.no_normal_maps:
             entry["normalTexture"] = {"index": texture(m.normal, True, args.max_small_texture)}
+        elif fabric and not args.no_normal_maps:
+            entry["normalTexture"] = {"index": texture(fabric[1], True, args.max_small_texture, fabric=m.pattern + "_nor")}
         if m.transparent:
             entry["alphaMode"] = "MASK"
             entry["alphaCutoff"] = 0.5
@@ -3539,6 +3701,7 @@ def main(argv=None):
     parser.add_argument("--max-small-texture", type=int, default=512, help="largest side of other textures and normal maps (default 512)")
     parser.add_argument("--keep-hair-under-hats", action="store_true", help="keep the hair above a hat's brim (hidden by default)")
     parser.add_argument("--no-normal-maps", action="store_true", help="leave the normal maps out")
+    parser.add_argument("--fabrics", metavar="DIR", help="Poly Haven fabrics (rough_linen, poly_wool_herringbone, brown_leather at 2K, in DIR/<name>/) for the cotton, wool and leather cloth")
     parser.add_argument("--check", metavar="GLTF", help="only validate a written glTF file")
     args = parser.parse_args(argv)
     try:
@@ -3552,6 +3715,8 @@ def main(argv=None):
             parser.error("--name must be a plain file name")
         if not (16 <= args.max_texture <= 4096 and 16 <= args.max_small_texture <= 4096):
             parser.error("texture limits must be 16..4096")
+        if args.fabrics:
+            fabric_files(args.fabrics)
         return convert(args)
     except (ConvertError, ValueError, KeyError, OSError) as e:
         # Refusals, unparsable numbers or JSON (ValueError), a missing key in
