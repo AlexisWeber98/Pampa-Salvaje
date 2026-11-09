@@ -15,9 +15,12 @@ Sources:
   (CC0, by Quaternius);
 - the Universal Animation Library 2 GLB, with Unreal names (CC0, by
   Quaternius);
-- one trial of the CMU Graphics Lab Motion Capture Database as BVH (free
-  for any use), for the run: a real runner, where the pack's jog leaps
-  5.7 m a cycle. See ``BvhSource``.
+- for the run and the sprint, BVHs with the CMU Graphics Lab Motion
+  Capture Database's joint names (see ``BvhSource``): ``run_cycle.bvh``
+  and ``sprint_cycle.bvh``, keyed from real runners' measurements by
+  ``tools/run_cycle.py`` (the pack's jog leaps
+  5.7 m a cycle, and every captured runner tried crouched, minced or held
+  the hands at the chest).
 
 The two packs share one rest skeleton, a T-pose. The target is a character built by
 ``tools/mh2gltf.py``: its ``Root`` node and the ``game_engine`` bones under
@@ -91,8 +94,8 @@ CLIPS = [
     ("idle_talk", "ual1", "Idle_Talking_Loop", True, False),
     ("walk", "ual1", "Walk_Loop", True, True),
     ("walk_formal", "ual1", "Walk_Formal_Loop", True, True),
-    ("jog", "cmu", "16_46", True, True),
-    ("sprint", "ual1", "Sprint_Loop", True, True),
+    ("jog", "cmu", "run_cycle", True, True),
+    ("sprint", "sprint", "sprint_cycle", True, True),
     ("sit_idle", "ual1", "Sitting_Idle_Loop", True, False),
     ("drive", "ual1", "Driving_Loop", True, False),
     ("interact", "ual1", "Interact", False, False),
@@ -127,6 +130,13 @@ STANCE = 1.3
 STAGGER = 0.12
 KNEE_KEEP = 0.35
 ARM_OUT = 10.0
+# The calmed arms also hang at ease (see ``Retargeter.hang_arms``): the packs'
+# idles hold the upper arms 8 to 29 degrees back of hanging, the elbows bent
+# 28 to 44 and the clavicles turned 25 to 37 degrees off rest, the shoulder
+# blades pinched (it showed on a bare torso). The clavicles rest; each upper
+# arm's mean pitch is brought to ``HANG[0]`` degrees (forward of hanging) and
+# each elbow's mean bend to ``HANG[1]``, keeping ``HANG[2]`` of their sway.
+HANG = (-2.0, 15.0, 0.5)
 
 
 # The walks stood up from the pack's crouched game walk into an easy 1919
@@ -138,6 +148,9 @@ ARM_OUT = 10.0
 # elbows' bend from least to most (degrees; the pack holds the shoulders
 # 6 cm back and the elbows bent 32 to 41).
 UPRIGHT = ("walk",)
+# How far out from hanging (seen from the front) the stood-up walk's arms
+# hang, degrees: they hung at the MakeHuman rest's 11.4, held out.
+WALK_OUT = 5.0
 STRIDE = 1.15
 KNEE_EASE = 19.0
 KNEE_KEEP_WALK = 0.3
@@ -154,7 +167,7 @@ SWING_SMOOTH = 2
 CONTACT_LIFT = 0.02
 LEAN = 2.0
 ARM_SWING = (-10.0, 14.0)
-ELBOW = (10.0, 25.0)
+ELBOW = (18.0, 35.0)
 
 
 # The clips that bring the hands to the chest, and how far in front of
@@ -173,12 +186,13 @@ CLEAR_EVERY = 5
 CLEARANCE = 0.015
 REACH_STEP = 0.005
 REACH_MAX = 0.2
-# The runs whose swinging hands cross in front of the chest: a slim
-# runner's, captured, that sink 12 to 27 cm into the men's waistcoats. Both
+# The runs whose swinging hands come in front of the chest: a slim
+# runner's hands can sink into the men's waistcoats and Hidalgo's frock
+# coat (CMU 16_46's by 3 to 23 cm). Both
 # upper arms swing out from the body by the least multiple of
 # ``SPREAD_STEP`` (degrees) that clears every ``--model`` (see
 # ``Retargeter.spread_out``); the forearms and hands keep their swing.
-SPREAD = ("jog",)
+SPREAD = ("jog", "sprint")
 SPREAD_STEP = 1.0
 SPREAD_MAX = 30.0
 
@@ -194,6 +208,9 @@ MAX_JOINTS = 128
 MAX_BVH_FRAMES = 20000
 BVH_KEY_STEP = 4
 CYCLE = (0.5, 0.95)
+# The least speed (m/s) a cycle's hips must cover: a trial that starts or
+# ends standing would otherwise loop its stillness, whose ends match best.
+CYCLE_PACE = 2.0
 # How much a meter of the hips' height counts against a radian of joint
 # turn when the cycle's ends are compared.
 CYCLE_RISE = 10.0
@@ -386,7 +403,7 @@ def qpow(q, f):
     if q[3] < 0.0:
         q = tuple(-c for c in q)
     angle = 2.0 * math.acos(min(1.0, q[3]))
-    if angle < 1e-9:
+    if angle < 1e-9 or length(q[:3]) < 1e-12:
         return (0.0, 0.0, 0.0, 1.0)
     return qaxis_angle(q[:3], angle * f)
 
@@ -628,7 +645,7 @@ class Source:
 
 class BvhSource:
     """One CMU motion-capture trial, read from BVH: its skeleton and its one
-    clip, named after the file's trial (``16_46``), held as one loop.
+    clip, named after the file (``run_cycle``), held as one loop.
 
     The BVH's joints rest unturned, at their offsets (in ``BVH_UNIT``,
     turned into meters), each turned by its rotation channels in their
@@ -639,7 +656,8 @@ class BvhSource:
     floor is the pelvis's move.
 
     A trial is a straight run of a second or so, not a loop. Its clip is
-    the stride cycle (``CYCLE``) whose last pose is nearest its first, every
+    the stride cycle (``CYCLE``), running (``CYCLE_PACE``), whose last pose
+    is nearest its first, every
     ``BVH_KEY_STEP``th frame of it: the gap left between its ends is spread
     along it, each joint turning its share of the way, so the last key is
     the first; the run is turned to head along +Z and held in place over
@@ -788,6 +806,9 @@ class BvhSource:
         for a in range(len(poses)):
             for b in range(a + shortest, min(a + longest, len(poses) - 1) + 1, step):
                 (ra, ta), (rb, tb) = poses[a], poses[b]
+                moved = sub(tb[self.root], ta[self.root])
+                if math.hypot(moved[0], moved[2]) < CYCLE_PACE * (b - a) * dt:
+                    continue
                 gap = sum(qangle(ra[j], rb[j]) for j in moving)
                 gap += CYCLE_RISE * abs(ta[self.root][1] - tb[self.root][1])
                 if best is None or gap < best[0]:
@@ -972,6 +993,43 @@ class Retargeter:
             local = self._calm_arms(local, place)
         return local, place
 
+    def hang_arms(self, keys):
+        """`keys` (time, local rotations, pelvis world place) with the arms
+        at ease (see ``HANG``): the clavicles at rest, each upper arm's
+        pitch (forward of hanging, seen from the side) and each elbow's bend
+        moved to their ease about the clip's mean, keeping a share of their
+        sway; how far out the arm hangs, and the hand under the forearm, are
+        kept."""
+        tk = self.target
+        if any(f"{b}_{s}" not in tk.index for b in ("clavicle", "upperarm", "lowerarm", "hand") for s in "lr"):
+            return keys
+        pitch_mean, share = math.radians(HANG[0]), HANG[2]
+        keys = [(t, self.relax_shoulders(local, place), place) for t, local, place in keys]
+
+        def measure(local, place, s):
+            pos = self.posed_world(local, place)[1]
+            sh, el, ha = (pos[tk.find(f"{b}_{s}")] for b in ("upperarm", "lowerarm", "hand"))
+            u = unit(sub(el, sh))
+            return math.atan2(u[2], -u[1]), angle_between(sub(el, sh), sub(ha, el))
+
+        out = [(t, dict(local), place) for t, local, place in keys]
+        for s, side in (("l", 1.0), ("r", -1.0)):
+            upper, lower = tk.find(f"upperarm_{s}"), tk.find(f"lowerarm_{s}")
+            seen = [measure(local, place, s)[0] for _, local, place in out]
+            mp = sum(seen) / len(seen)
+            for (_, local, place), p in zip(out, seen):
+                rot, pos = self.posed_world(local, place)
+                u = unit(sub(pos[lower], pos[upper]))
+                want = pitch_mean + (p - mp) * share
+                # The same angle out from hanging (seen from the front), the
+                # new one forward (seen from the side).
+                spread = math.atan2(side * u[0], -u[1])
+                goal = (side * math.tan(spread), -1.0, math.tan(want))
+                world = qnorm(qmul(qarc(u, unit(goal)), rot[upper]))
+                local[upper] = qnorm(qmul(qinv(rot[tk.parent[upper]]), world))
+        out, _ = self.bend_elbows(out, HANG[1], share)
+        return out
+
     def _calm_legs(self, local, place):
         tk = self.target
         f = tk.find
@@ -1087,6 +1145,53 @@ class Retargeter:
             local[upper] = qnorm(qmul(qinv(clavicle_w), rot[upper]))
         return local
 
+    def relax_shoulders(self, local, place):
+        """`local` with both clavicles at the target's rest, each upper arm
+        keeping its turn in the world: the shoulders drop out of a shrug
+        and the arms hang from them as they swung."""
+        tk = self.target
+        rot, _ = self.posed_world(local, place)
+        local = dict(local)
+        for s in "lr":
+            if f"clavicle_{s}" not in tk.index or f"upperarm_{s}" not in tk.index:
+                continue
+            clavicle, upper = tk.find(f"clavicle_{s}"), tk.find(f"upperarm_{s}")
+            local[clavicle] = tk.rest_r[clavicle]
+            rested = qnorm(qmul(rot[tk.parent[clavicle]], local[clavicle]))
+            local[upper] = qnorm(qmul(qinv(rested), rot[upper]))
+        return local
+
+    def bend_elbows(self, keys, mean, share):
+        """`keys` (time, local rotations, pelvis world place) with each
+        elbow's bend moved to centre on `mean` degrees, keeping `share` of
+        its sway about the clip's own mean: each forearm turned about the
+        elbow's hinge, the hand keeping its turn under it; and how far the
+        elbows opened on average, degrees."""
+        tk = self.target
+        out = [(t, dict(local), place) for t, local, place in keys]
+        opened = []
+        for s in "lr":
+            if any(f"{b}_{s}" not in tk.index for b in ("upperarm", "lowerarm", "hand")):
+                continue
+            upper, lower, hand = (tk.find(f"{b}_{s}") for b in ("upperarm", "lowerarm", "hand"))
+
+            def bend(local, place):
+                pos = self.posed_world(local, place)[1]
+                return angle_between(sub(pos[lower], pos[upper]), sub(pos[hand], pos[lower]))
+
+            seen = [bend(local, place) for _, local, place in out]
+            own = sum(seen) / len(seen)
+            for (_, local, place), b in zip(out, seen):
+                rot, pos = self.posed_world(local, place)
+                hinge = cross(sub(pos[lower], pos[upper]), sub(pos[hand], pos[lower]))
+                if length(hinge) < 1e-9:
+                    continue
+                opening = b - (math.radians(mean) + (b - own) * share)
+                fore = qnorm(qmul(qaxis_angle(hinge, -opening), rot[lower]))
+                local[lower] = qnorm(qmul(qinv(rot[upper]), fore))
+            opened.append(math.degrees(own) - mean)
+        return out, (sum(opened) / len(opened) if opened else 0.0)
+
     def spread_out(self, local, place, angle):
         """`local` with both upper arms swung `angle` degrees out from the
         body, about its front (+z) at the shoulder; the forearms and hands
@@ -1138,8 +1243,9 @@ class Retargeter:
         `clearance` (a ``Clearance``), the arms come forward until they
         clear its models' chests; `upright`, a walk is stood up and its
         stride lengthened (see ``upright``), and its speed measured on the
-        result; with a `spread` (a ``Clearance``), the upper arms swing out
-        until the hands clear its models' chests (see ``SPREAD``)."""
+        result; with a `spread` (a ``Clearance``), the upper arms
+        swing out until the hands clear its models' chests (see
+        ``SPREAD``)."""
         times, rots, trans = self.source.frames(name)
         sk = self.source.skeleton
         posed = [sk.world(r, t) for r, t in zip(rots, trans)]
@@ -1158,6 +1264,8 @@ class Retargeter:
             if calm:
                 local, place = self.calm(local, place, calm)
             raw.append((t - start, local, place))
+        if "arms" in calm:
+            raw = self.hang_arms(raw)
         if upright:
             raw = self.upright(raw)
         keys = []
@@ -1402,6 +1510,9 @@ class Retargeter:
         upper, lower = f(f"upperarm_{s}"), f(f"lowerarm_{s}")
         rest_r, rest_p = self.t_rest_r, self.t_rest_p
         hang = unit(sub(rest_p[lower], rest_p[upper]))
+        # The rest's pitch, but hanging only ``WALK_OUT`` out.
+        side = 1.0 if s == "l" else -1.0
+        hang = unit((side * math.tan(math.radians(WALK_OUT)), -1.0, hang[2] / -hang[1]))
         want = qrot(qaxis_angle((1.0, 0.0, 0.0), -swing), hang)
         rot, pos = self.posed_world(local, place)
         have = unit(sub(pos[lower], pos[upper]))
@@ -1709,7 +1820,7 @@ def build(sources, target, clips=CLIPS, clearance=None):
         clear = clearance.for_clip(game) if clearance is not None and game in CLEAR else None
         spread = clearance.for_clip(game) if clearance is not None and game in SPREAD else None
         keys, measures = rt.clip(
-            name, loop, locomotion, CALM.get(game, ()), clear, upright=game in UPRIGHT, spread=spread
+            name, loop, locomotion, CALM.get(game, ()), clear, upright=game in UPRIGHT, spread=spread,
         )
         times = put([(t,) for t, _, _ in keys], "SCALAR", minmax=True)
         samplers, channels = [], []
@@ -1783,7 +1894,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--ual1", required=True, help="UAL1 AnimationLibrary_Godot_Standard.glb")
     parser.add_argument("--ual2", required=True, help="UAL2 UAL2_Standard.glb")
-    parser.add_argument("--cmu", required=True, help="the CMU run trial, 16_46.bvh")
+    parser.add_argument("--cmu", required=True, help="the run: run_cycle.bvh, from tools/run_cycle.py (CMU joint names)")
+    parser.add_argument("--sprint", required=True, help="the sprint: sprint_cycle.bvh, from tools/run_cycle.py --gait sprint")
     parser.add_argument("--target", required=True, help="a character's model.gltf (its skeleton)")
     parser.add_argument("-o", "--output", required=True, help="the animation GLB to write")
     parser.add_argument(
@@ -1806,6 +1918,9 @@ def main(argv=None):
             "cmu": BvhSource(
                 read_file(args.cmu, glbtrim.MAX_INPUT_BYTES), os.path.splitext(os.path.basename(args.cmu))[0]
             ),
+            "sprint": BvhSource(
+                read_file(args.sprint, glbtrim.MAX_INPUT_BYTES), os.path.splitext(os.path.basename(args.sprint))[0]
+            ),
         }
         target = read_target(read_file(args.target, MAX_TARGET_BYTES))
         clearance = Clearance(sorted(args.model), sorted(args.talker)) if args.model or args.talker else None
@@ -1826,6 +1941,8 @@ def main(argv=None):
             extra = f"  {measures['ground_speed']:.3f} m/s, stride {measures['stride']:.3f} m"
         if "reach" in measures:
             extra += f"  arms {100 * measures['reach']:.1f} cm forward to clear the chests"
+        if "elbows" in measures:
+            extra += f"  elbows {measures['elbows']:.0f} degrees open"
         if "spread" in measures:
             extra += f"  arms {measures['spread']:.0f} degrees out to clear the chests"
         print(f"  {game:<15} {kind} {name:<20} {duration:6.3f} s {count:4d} keys{extra}")

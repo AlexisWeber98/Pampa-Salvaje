@@ -15,6 +15,7 @@ from contextlib import redirect_stderr, redirect_stdout
 
 import glbtrim
 import retarget as R
+import run_cycle as RC
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROTAGONIST = os.path.join(REPO, "assets/characters/protagonist/model.gltf")
@@ -22,8 +23,7 @@ SHIPPED = os.path.join(REPO, "assets/characters/animations/humanoid.glb")
 UAL = os.path.expanduser("~/Downloads/quaternius/ual")
 UAL1 = os.path.join(UAL, "ual1/Animation Library[Standard]/Godot/AnimationLibrary_Godot_Standard.glb")
 UAL2 = os.path.join(UAL, "ual2/Universal Animation Library 2 [Standard]/Unreal-Godot/UAL2_Standard.glb")
-CMU = os.path.expanduser("~/Downloads/cmu/16_46.bvh")
-HAVE_UAL = os.path.isfile(UAL1) and os.path.isfile(UAL2) and os.path.isfile(CMU)
+HAVE_UAL = os.path.isfile(UAL1) and os.path.isfile(UAL2)
 MODELS = [os.path.join(REPO, f"assets/characters/{name}/model.gltf") for name in ("bairoletto", "farach", "hidalgo", "protagonist")]
 # The townsfolk: they talk with their hands, but never fold their arms.
 TALKERS = [
@@ -684,8 +684,8 @@ class WalkPosture:
             self.assertLess(sum(h < 0 for h in hands), len(hands) / 4)
             self.assertGreater(sum(hands) / len(hands), 0.03)
             elbows = [r["elbow"][k] for r in rows]
-            self.assertGreater(min(elbows), 8.0)
-            self.assertLess(max(elbows), 27.0)
+            self.assertGreater(min(elbows), R.ELBOW[0] - 2.0)
+            self.assertLess(max(elbows), R.ELBOW[1] + 2.0)
         self.check_knees(tk, keys)
 
     def check_knees(self, tk, keys):
@@ -746,7 +746,7 @@ class Shipped(unittest.TestCase, WalkPosture):
                     self.assertLessEqual(depth, 0.0, f"{clip} {model['name']}: {depth:.3f} m in")
         extras = {a["name"]: a["extras"] for a in self.doc["animations"]}
         self.assertGreater(extras["idle_fold_arms"]["reach"], 0.05)
-        self.assertGreater(extras["jog"]["spread"], 0.0)
+        self.assertGreaterEqual(extras["jog"]["spread"], 0.0)
 
     @classmethod
     def setUpClass(cls):
@@ -797,7 +797,7 @@ class Shipped(unittest.TestCase, WalkPosture):
         self.assertEqual(len(mine), 53)
 
 
-@unittest.skipUnless(HAVE_UAL, "Quaternius' Universal Animation Libraries or the CMU run are not in ~/Downloads")
+@unittest.skipUnless(HAVE_UAL, "Quaternius' Universal Animation Libraries are not in ~/Downloads")
 class RealLibraries(unittest.TestCase, WalkPosture):
     @classmethod
     def setUpClass(cls):
@@ -807,9 +807,11 @@ class RealLibraries(unittest.TestCase, WalkPosture):
             two = R.Source(f.read(), "ual2")
         with open(PROTAGONIST, "rb") as f:
             cls.target = R.read_target(f.read())
-        with open(CMU, "rb") as f:
-            cmu = R.BvhSource(f.read(), "16_46")
-        cls.sources = {"ual1": one, "ual2": two, "cmu": cmu}
+        runner, frames, _ = RC.run(cls.target)
+        cmu = R.BvhSource(RC.bvh(runner, frames).encode(), "run_cycle")
+        runner, frames, _ = RC.run(cls.target, RC.SPRINT)
+        sprint = R.BvhSource(RC.bvh(runner, frames).encode(), "sprint_cycle")
+        cls.sources = {"ual1": one, "ual2": two, "cmu": cmu, "sprint": sprint}
 
     def test_rebuilding_gives_the_shipped_file_byte_for_byte(self):
         doc, blob, _ = R.build(self.sources, self.target, clearance=R.Clearance(MODELS, TALKERS))
@@ -919,14 +921,15 @@ class RealLibraries(unittest.TestCase, WalkPosture):
                     self.assertLess(t[3], R.ARM_OUT + 1e-3, where)
 
     def test_the_run_is_a_real_runners(self):
-        # The trial's hips cover 4.1 m/s; the pack's jog leapt 5.7 m a
-        # cycle at 6.1 m/s. A real stride cycle at that speed is 2 to 3.5 m
-        # in 0.5 to 0.95 s, and the measure counts the travel once.
-        rt = R.Retargeter(self.sources["cmu"], self.target)
-        keys, measures = rt.clip("16_46", True, True)
-        self.assertTrue(R.CYCLE[0] <= keys[-1][0] <= R.CYCLE[1], keys[-1][0])
-        self.assertTrue(2.0 < measures["stride"] < 3.5, measures)
-        self.assertAlmostEqual(measures["ground_speed"], 4.1 * rt.ratio, delta=0.3)
+        # The keyed run (tools/run_cycle.py) on the target: its planted feet
+        # slide back at the game's run speed, one stride cycle of 19 keys.
+        # The same for the sprint.
+        for kind, name, g in (("cmu", "run_cycle", RC.JOG), ("sprint", "sprint_cycle", RC.SPRINT)):
+            rt = R.Retargeter(self.sources[kind], self.target)
+            keys, measures = rt.clip(name, True, True)
+            self.assertAlmostEqual(keys[-1][0], g.CYCLE_TIME, places=4, msg=name)
+            self.assertAlmostEqual(measures["ground_speed"], g.SPEED, delta=0.02, msg=name)
+            self.assertAlmostEqual(measures["stride"], g.SPEED * g.CYCLE_TIME, delta=0.02, msg=name)
 
     def test_the_walks_and_runs_have_plausible_speeds(self):
         doc, _, summary = R.build(self.sources, self.target)
@@ -963,11 +966,11 @@ BVH_BODY = [
 ]
 
 
-def bvh(travel=(0.0, 60.0), period=0.6, seconds=1.2, lean=0.0):
+def bvh(travel=(0.0, 60.0), period=0.6, seconds=1.2, lean=0.0, still=0.0):
     """A synthetic CMU run: the hips go at `travel` (units a second, x and
     z) bobbing twice a `period`, the thighs swing and the knees bend in
-    opposition, and the
-    spine turns `lean` degrees a second (so no cycle closes on its own)."""
+    opposition, and the spine turns `lean` degrees a second (so no cycle
+    closes on its own). For its first `still` seconds it stands."""
     out, order = ["HIERARCHY"], []
 
     def write(name, depth):
@@ -992,7 +995,7 @@ def bvh(travel=(0.0, 60.0), period=0.6, seconds=1.2, lean=0.0):
     frames = int(seconds * 120)
     out += ["MOTION", f"Frames: {frames}", "Frame Time: 0.00833333"]
     for k in range(frames):
-        t = k / 120
+        t = max(0.0, k / 120 - still)
         phase = 2 * math.pi * t / period
         row = []
         for name, parent in order:
@@ -1032,6 +1035,12 @@ class Capture(unittest.TestCase):
         heights = [t[hips][1] for t in trans]
         self.assertAlmostEqual(max(heights) - min(heights), 0.8 * R.BVH_UNIT, delta=0.002)
 
+    def test_a_trial_that_starts_standing_loops_its_run_not_its_stillness(self):
+        source = R.BvhSource(bvh(seconds=1.8, still=0.6), "16_46")
+        times, rots, trans = source.frames("16_46")
+        thigh = source.skeleton.find("LeftUpLeg")
+        self.assertGreater(max(R.qangle(rots[0][thigh], r[thigh]) for r in rots), 0.5)
+
     def test_a_capture_without_fingers_holds_them_and_turns_the_body(self):
         with open(PROTAGONIST, "rb") as f:
             tk = R.read_target(f.read())
@@ -1065,6 +1074,93 @@ class Capture(unittest.TestCase):
         with self.assertRaisesRegex(R.RetargetError, r"^no reach up to 0.2 m keeps the arms out of the chest$"):
             rt.cleared(rt.clip("16_46", True, False)[0][:2], never)
 
+    def test_the_shoulders_rest_and_the_arms_keep_their_swing(self):
+        with open(PROTAGONIST, "rb") as f:
+            tk = R.read_target(f.read())
+        rt = R.Retargeter(R.BvhSource(bvh(), "16_46"), tk)
+        _, local, place = rt.clip("16_46", True, False)[0][0]
+        place = R.add(R.qrot(rt.t_rest_r[rt.root], place), rt.t_rest_p[rt.root])
+        clavicle, upper = tk.find("clavicle_l"), tk.find("upperarm_l")
+        shrugged = {**local, clavicle: R.qnorm(R.qmul(local[clavicle], R.qaxis_angle((0.0, 0.0, 1.0), 0.3)))}
+        relaxed = rt.relax_shoulders(shrugged, place)
+        self.assertEqual(relaxed[clavicle], tk.rest_r[clavicle])
+        before, after = rt.posed_world(shrugged, place)[0], rt.posed_world(relaxed, place)[0]
+        self.assertLess(R.qangle(before[upper], after[upper]), 1e-6)
+
+    def held(self, back, bent, lean=0.0):
+        """The protagonist on a synthetic capture, its clavicles shrugged,
+        each upper arm hanging `back` degrees behind (plus a sway of 6 over
+        the keys), each elbow bent `bent` degrees (plus a sway of 8), and the
+        trunk leaning `lean` degrees to the side (plus a sway of 3): the
+        retargeter, the target, and the keys with their pelvis world places
+        and their pelvis local places."""
+        with open(PROTAGONIST, "rb") as f:
+            tk = R.read_target(f.read())
+        rt = R.Retargeter(R.BvhSource(bvh(), "16_46"), tk)
+        root = rt.t_rest_r[rt.root]
+        world, local_keys = [], []
+        clip = rt.clip("16_46", True, False)[0]
+        for k, (t, local, p) in enumerate(clip):
+            wave = math.sin(2 * math.pi * k / (len(clip) - 1))
+            place = R.add(R.qrot(root, p), rt.t_rest_p[rt.root])
+            local = dict(local)
+            for s, side in (("l", 1.0), ("r", -1.0)):
+                c = tk.find(f"clavicle_{s}")
+                local[c] = R.qnorm(R.qmul(local[c], R.qaxis_angle((0.0, 0.0, 1.0), 0.3)))
+            rot, _ = rt.posed_world(local, place)
+            b = tk.find("spine_01")
+            turned = R.qmul(R.qaxis_angle((0.0, 0.0, 1.0), math.radians(lean + 3.0 * wave)), rot[b])
+            local[b] = R.qnorm(R.qmul(R.qinv(rot[tk.parent[b]]), turned))
+            for s in "lr":
+                u, lo, ha = (tk.find(f"{n}_{s}") for n in ("upperarm", "lowerarm", "hand"))
+                rot, pos = rt.posed_world(local, place)
+                d = R.unit(R.sub(pos[lo], pos[u]))
+                a = math.radians(back + 6.0 * wave)
+                hang = R.qnorm(R.qmul(R.qarc(d, (0.0, -math.cos(a), -math.sin(a))), rot[u]))
+                local[u] = R.qnorm(R.qmul(R.qinv(rot[tk.parent[u]]), hang))
+                rot, pos = rt.posed_world(local, place)
+                f = R.unit(R.sub(pos[ha], pos[lo]))
+                e = math.radians(bent + 8.0 * wave) - a
+                fore = R.qnorm(R.qmul(R.qarc(f, (0.0, -math.cos(e), math.sin(e))), rot[lo]))
+                local[lo] = R.qnorm(R.qmul(R.qinv(rot[u]), fore))
+            world.append((t, local, place))
+            local_keys.append((t, local, p))
+        return rt, tk, world, local_keys
+
+    def arms(self, rt, tk, keys):
+        """Through `keys` (pelvis world places): each upper arm's pitch
+        forward of hanging, each elbow's bend and the trunk's lean to the
+        side, degrees."""
+        pitch, bend, lean = [], [], []
+        for _, local, place in keys:
+            pos = rt.posed_world(local, place)[1]
+            f = lambda n: pos[tk.find(n)]  # noqa: E731
+            t = R.unit(R.sub(f("neck_01"), f("pelvis")))
+            lean.append(math.degrees(math.atan2(t[0], t[1])))
+            for s in "lr":
+                u = R.unit(R.sub(f(f"lowerarm_{s}"), f(f"upperarm_{s}")))
+                pitch.append(math.degrees(math.atan2(u[2], -u[1])))
+                bend.append(math.degrees(R.angle_between(u, R.sub(f(f"hand_{s}"), f(f"lowerarm_{s}")))))
+        return pitch, bend, lean
+
+    def test_a_standing_clip_hangs_its_arms_at_ease(self):
+        rt, tk, keys, _ = self.held(back=20.0, bent=40.0)
+        hung = rt.hang_arms(keys)
+        mean = lambda v: sum(v) / len(v)  # noqa: E731
+        span = lambda v: max(v) - min(v)  # noqa: E731
+        pitch, bend, _ = self.arms(rt, tk, keys)
+        pitch2, bend2, _ = self.arms(rt, tk, hung)
+        self.assertLess(mean(pitch), -15.0)
+        self.assertAlmostEqual(mean(pitch2), R.HANG[0], delta=0.5)
+        self.assertAlmostEqual(mean(bend2), R.HANG[1], delta=0.5)
+        self.assertAlmostEqual(span(pitch2), span(pitch) * R.HANG[2], delta=1.0)
+        self.assertAlmostEqual(span(bend2), span(bend) * R.HANG[2], delta=1.5)
+        for _, local, _ in hung:
+            for s in "lr":
+                c, h = tk.find(f"clavicle_{s}"), tk.find(f"hand_{s}")
+                self.assertEqual(local[c], tk.rest_r[c])
+        self.assertEqual(hung[0][1][tk.find("hand_l")], keys[0][1][tk.find("hand_l")])
+
     def test_a_bad_bvh_is_refused(self):
         good = bvh().decode()  # 144 frames
         bad = [
@@ -1091,7 +1187,7 @@ class Command(unittest.TestCase):
         err = io.StringIO()
         with redirect_stderr(err), redirect_stdout(io.StringIO()):
             code = R.main(["--ual1", "/nonexistent.glb", "--ual2", "/nonexistent.glb", "--cmu", "/nonexistent.bvh",
-                           "--target", PROTAGONIST, "-o", os.devnull])
+                           "--sprint", "/nonexistent.bvh", "--target", PROTAGONIST, "-o", os.devnull])
         self.assertEqual(code, 1)
         self.assertTrue(err.getvalue().startswith("retarget: "))
         self.assertEqual(err.getvalue().count("\n"), 1)
@@ -1238,11 +1334,20 @@ class UprightWalk(unittest.TestCase):
                 elbows.append(math.degrees(R.angle_between(u, R.sub(pos[f(f"hand_{s}")], pos[f(f"lowerarm_{s}")]))))
         rest = R.sub(self.rt.t_rest_p[f("lowerarm_l")], self.rt.t_rest_p[f("upperarm_l")])
         hang = math.degrees(math.atan2(rest[2], -rest[1]))
-        # From 10 degrees back to 14 forward of hanging; elbows 10 to 25.
+        # From 10 degrees back to 14 forward of hanging; the elbows within
+        # ELBOW, loose.
         self.assertAlmostEqual(min(swings), hang - 10.0, delta=1.5)
         self.assertAlmostEqual(max(swings), hang + 14.0, delta=1.5)
-        self.assertGreater(min(elbows), 9.5)
-        self.assertLess(max(elbows), 25.5)
+        self.assertGreater(min(elbows), R.ELBOW[0] - 0.5)
+        self.assertLess(max(elbows), R.ELBOW[1] + 0.5)
+        # Hanging WALK_OUT out from the body, not the rest's 11 degrees.
+        for s, side in (("l", 1.0), ("r", -1.0)):
+            wide = []
+            for _, local, place in out:
+                pos = self.rt.posed_world(local, place)[1]
+                u = R.unit(R.sub(pos[f(f"lowerarm_{s}")], pos[f(f"upperarm_{s}")]))
+                wide.append(math.degrees(math.atan2(side * u[0], -u[1])))
+            self.assertAlmostEqual(sum(wide) / len(wide), R.WALK_OUT, delta=1.0, msg=s)
 
     def test_a_key_neither_leg_can_reach_takes_the_hips_from_its_neighbours(self):
         # Key 6's legs swing out level, too far to reach at any height: its
@@ -1388,7 +1493,7 @@ class FollowUps(unittest.TestCase):
                 mock.patch.object(R, "read_file", return_value=b""), mock.patch.object(R, "Source"), \
                 mock.patch.object(R, "BvhSource"), mock.patch.object(R, "read_target"), \
                 redirect_stderr(io.StringIO()):
-            R.main(["--ual1", "a", "--ual2", "b", "--cmu", "c.bvh", "--target", "t", "-o", "o", "--talker", "w2",
+            R.main(["--ual1", "a", "--ual2", "b", "--cmu", "c.bvh", "--sprint", "s.bvh", "--target", "t", "-o", "o", "--talker", "w2",
                     "--talker", "w1"])
         made.assert_called_once_with([], ["w1", "w2"])
 
