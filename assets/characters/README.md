@@ -45,6 +45,13 @@ python3 -I tools/mh2gltf.py assets/characters/farach/farach.mhm -o assets/charac
 python3 -I tools/mh2gltf.py --check assets/characters/farach/model.gltf
 ```
 
+El protagonista es la excepción: su cuerpo es el `Sports_Male_01` de Rocketbox ya puesto en el esqueleto `game_engine` (en `~/Documents/pampa-prototipos/protagonista_rocketbox/`, fuera del repositorio), y `tools/dress.py` lo viste con las líneas `piece` de `protagonist.mhm`, con el mismo código de prendas, y telas de Poly Haven (ver `tools/README.md`):
+
+```sh
+python3 -I tools/dress.py ~/Documents/pampa-prototipos/protagonista_rocketbox/protagonista.gltf \
+    assets/characters/protagonist/protagonist.mhm -o assets/characters/protagonist --fabrics ~/Downloads/polyhaven
+```
+
 La salida es determinista. Una textura que un cambio ya no usa queda en `textures/` hasta que se la borre: cada archivo allí debería estar nombrado por su `model.gltf`.
 
 ## Escribir un .mhm
