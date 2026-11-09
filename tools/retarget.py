@@ -9,12 +9,17 @@ The inputs are treated as untrusted data: they are parsed (with
 ``glbtrim``'s bounded GLB reader), never executed, and every index, name
 and number is checked. See tools/README.md.
 
-Sources (CC0, by Quaternius):
+Sources:
 
-- the Universal Animation Library 1 GLB, with Rigify ``DEF-*`` bone names;
-- the Universal Animation Library 2 GLB, with Unreal names.
+- the Universal Animation Library 1 GLB, with Rigify ``DEF-*`` bone names
+  (CC0, by Quaternius);
+- the Universal Animation Library 2 GLB, with Unreal names (CC0, by
+  Quaternius);
+- one trial of the CMU Graphics Lab Motion Capture Database as BVH (free
+  for any use), for the run: a real runner, where the pack's jog leaps
+  5.7 m a cycle. See ``BvhSource``.
 
-Both share one rest skeleton, a T-pose. The target is a character built by
+The two packs share one rest skeleton, a T-pose. The target is a character built by
 ``tools/mh2gltf.py``: its ``Root`` node and the ``game_engine`` bones under
 it, resting with the arms down.
 
@@ -86,7 +91,7 @@ CLIPS = [
     ("idle_talk", "ual1", "Idle_Talking_Loop", True, False),
     ("walk", "ual1", "Walk_Loop", True, True),
     ("walk_formal", "ual1", "Walk_Formal_Loop", True, True),
-    ("jog", "ual1", "Jog_Fwd_Loop", True, True),
+    ("jog", "cmu", "16_46", True, True),
     ("sprint", "ual1", "Sprint_Loop", True, True),
     ("sit_idle", "ual1", "Sitting_Idle_Loop", True, False),
     ("drive", "ual1", "Driving_Loop", True, False),
@@ -168,6 +173,34 @@ CLEAR_EVERY = 5
 CLEARANCE = 0.015
 REACH_STEP = 0.005
 REACH_MAX = 0.2
+# The runs whose swinging hands cross in front of the chest: a slim
+# runner's, captured, that sink 12 to 27 cm into the men's waistcoats. Both
+# upper arms swing out from the body by the least multiple of
+# ``SPREAD_STEP`` (degrees) that clears every ``--model`` (see
+# ``Retargeter.spread_out``); the forearms and hands keep their swing.
+SPREAD = ("jog",)
+SPREAD_STEP = 1.0
+SPREAD_MAX = 30.0
+
+
+# A CMU trial (see ``BvhSource``): its length unit, meters (the database's
+# ASF files measure in 1/0.45 inch); the most joints and frames read; every
+# how many of its 120 frames a second one is kept (30 a second, as the
+# packs' clips); and how long a run's stride cycle (two steps) may last,
+# seconds. The loop is the cycle within the trial whose last pose is nearest
+# its first.
+BVH_UNIT = 0.0254 / 0.45
+MAX_JOINTS = 128
+MAX_BVH_FRAMES = 20000
+BVH_KEY_STEP = 4
+CYCLE = (0.5, 0.95)
+# How much a meter of the hips' height counts against a radian of joint
+# turn when the cycle's ends are compared.
+CYCLE_RISE = 10.0
+# Whose fingers a capture without them holds (see ``Retargeter.held``): the
+# pack's walk's first key, loosely curled; held flat at the MakeHuman rest,
+# the running hands showed open, splayed palms.
+HANDS = ("ual1", "Walk_Loop")
 
 
 class RetargetError(Exception):
@@ -232,7 +265,31 @@ def ual2_map():
     return out
 
 
-MAPS = {"ual1": ual1_map, "ual2": ual2_map}
+def cmu_map():
+    """game_engine bone name -> CMU BVH joint name, for the body only: the
+    capture has no fingers, so they hold their rest under the hand (see
+    ``BvhSource``). Its ``Neck`` sits on ``Spine1``, so the neck is its
+    ``Neck1``; the hip roots have no game_engine bone."""
+
+    def side(stem):
+        return lambda s: f"{'Left' if s == 'l' else 'Right'}{stem}"
+
+    return _body_map(
+        ["Hips", "LowerBack", "Spine", "Spine1"],
+        "Neck1",
+        "Head",
+        side("Shoulder"),
+        side("Arm"),
+        side("ForeArm"),
+        side("Hand"),
+        side("UpLeg"),
+        side("Leg"),
+        side("Foot"),
+        side("ToeBase"),
+    )
+
+
+MAPS = {"ual1": ual1_map, "ual2": ual2_map, "cmu": cmu_map}
 
 
 def chain():
@@ -322,6 +379,16 @@ def qlerp_sign(prev, q):
     if prev is not None and sum(a * b for a, b in zip(prev, q)) < 0.0:
         return tuple(-c for c in q)
     return q
+
+
+def qpow(q, f):
+    """`f` of the way along unit rotation `q`, by the shorter way round."""
+    if q[3] < 0.0:
+        q = tuple(-c for c in q)
+    angle = 2.0 * math.acos(min(1.0, q[3]))
+    if angle < 1e-9:
+        return (0.0, 0.0, 0.0, 1.0)
+    return qaxis_angle(q[:3], angle * f)
 
 
 def cross(a, b):
@@ -495,6 +562,9 @@ def leg_length(skeleton, calf, foot):
 class Source:
     """A UAL GLB: its skeleton and its clips, sampled per frame."""
 
+    # Its map names every target bone (see ``BvhSource.partial``).
+    partial = False
+
     def __init__(self, data, kind):
         self.doc, self.binary = glbtrim.read_glb(data)
         glbtrim.check_buffers(self.doc, self.binary)
@@ -556,6 +626,196 @@ class Source:
         return times, rots, trans
 
 
+class BvhSource:
+    """One CMU motion-capture trial, read from BVH: its skeleton and its one
+    clip, named after the file's trial (``16_46``), held as one loop.
+
+    The BVH's joints rest unturned, at their offsets (in ``BVH_UNIT``,
+    turned into meters), each turned by its rotation channels in their
+    order; the capture is Y-up, facing +Z with its left at +X, as the
+    packs. Each joint's ``End Site`` is a node of its own, ``<joint>_end``,
+    so a chain's last bone points at it. The hips rest at their standing
+    height over the lowest joint, so the capture's own height above the
+    floor is the pelvis's move.
+
+    A trial is a straight run of a second or so, not a loop. Its clip is
+    the stride cycle (``CYCLE``) whose last pose is nearest its first, every
+    ``BVH_KEY_STEP``th frame of it: the gap left between its ends is spread
+    along it, each joint turning its share of the way, so the last key is
+    the first; the run is turned to head along +Z and held in place over
+    the origin, as the packs' loops are, so its planted foot slides back at
+    the run's speed (see ``ground_speed``).
+
+    The capture has no fingers and its hands are stiff: its map leaves the
+    fingers out (``partial``), and they hold the target's rest under the
+    hand."""
+
+    partial = True
+
+    def __init__(self, data, name):
+        self.kind = "cmu"
+        self.name = name
+        self.map = cmu_map()
+        try:
+            tokens = data.decode("ascii").split()
+        except UnicodeDecodeError:
+            raise RetargetError("BVH is not ASCII text") from None
+        self._tokens, self._at = tokens, 0
+        self._nodes = []  # [name, parent, offset, channels]
+        self._expect("HIERARCHY")
+        self._expect("ROOT")
+        self._joint(None)
+        self._expect("MOTION")
+        self._expect("Frames:")
+        count = self._number()
+        self._expect("Frame")
+        self._expect("Time:")
+        self.frame_time = self._number()
+        if count != int(count) or not 2 <= count <= MAX_BVH_FRAMES:
+            raise RetargetError(f"BVH has {count} frames")
+        if not 0.0 < self.frame_time < 1.0:
+            raise RetargetError("BVH frame time out of range")
+        width = sum(len(n[3]) for n in self._nodes)
+        values = [self._number() for _ in range(int(count) * width)]
+        if self._at != len(tokens):
+            raise RetargetError("BVH has data after its frames")
+        self._values = [values[k * width : (k + 1) * width] for k in range(int(count))]
+        low = 0.0
+        place = []
+        for name, parent, offset, _ in self._nodes:
+            at = offset if parent is None else add(place[parent], offset)
+            place.append(at)
+            low = min(low, at[1])
+        nodes = []
+        for k, (name, parent, offset, _) in enumerate(self._nodes):
+            node = {"name": name, "translation": list(offset if parent is not None else (0.0, -low, 0.0))}
+            children = [c for c, n in enumerate(self._nodes) if n[1] == k]
+            if children:
+                node["children"] = children
+            nodes.append(node)
+        self.skeleton = Skeleton({"nodes": nodes})
+        self.root = 0
+
+    def _expect(self, word):
+        if self._at >= len(self._tokens) or self._tokens[self._at] != word:
+            raise RetargetError(f"BVH: expected {word!r}")
+        self._at += 1
+
+    def _word(self):
+        if self._at >= len(self._tokens):
+            raise RetargetError("BVH ends early")
+        self._at += 1
+        return self._tokens[self._at - 1]
+
+    def _number(self):
+        word = self._word()
+        try:
+            v = float(word)
+        except ValueError:
+            raise RetargetError(f"BVH: {word[:20]!r} is not a number") from None
+        if not math.isfinite(v):
+            raise RetargetError("BVH holds a non-finite number")
+        return v
+
+    def _joint(self, parent, end=False):
+        name = f"{self._nodes[parent][0]}_end" if end else self._word()
+        if not 0 < len(name) <= 128 or len(self._nodes) >= MAX_JOINTS:
+            raise RetargetError("BVH has a bad joint name or too many joints")
+        self._expect("{")
+        self._expect("OFFSET")
+        offset = tuple(self._number() * BVH_UNIT for _ in range(3))
+        channels = []
+        if not end:
+            self._expect("CHANNELS")
+            n = self._number()
+            if n not in (3.0, 6.0) or (n == 6.0) != (parent is None):
+                raise RetargetError(f"BVH joint {name!r}: 6 channels for the root, 3 for the rest")
+            for _ in range(int(n)):
+                c = self._word()
+                if c not in ("Xposition", "Yposition", "Zposition", "Xrotation", "Yrotation", "Zrotation"):
+                    raise RetargetError(f"BVH joint {name!r}: unknown channel {c[:20]!r}")
+                channels.append(c)
+        k = len(self._nodes)
+        self._nodes.append([name, parent, offset, channels])
+        while True:
+            word = self._word()
+            if word == "}":
+                return
+            if end:
+                raise RetargetError("BVH: an End Site has children")
+            if word == "JOINT":
+                self._joint(k)
+            elif word == "End":
+                self._expect("Site")
+                self._joint(k, end=True)
+            else:
+                raise RetargetError(f"BVH: unexpected {word[:20]!r}")
+
+    def _pose(self, row):
+        """One frame's local rotations and translations, by node index."""
+        sk = self.skeleton
+        rots, trans = list(sk.rest_r), list(sk.rest_t)
+        at = 0
+        for k, (_, parent, offset, channels) in enumerate(self._nodes):
+            r = (0.0, 0.0, 0.0, 1.0)
+            moved = [0.0, 0.0, 0.0]
+            for c in channels:
+                v = row[at]
+                at += 1
+                axis = "XYZ".index(c[0])
+                if c.endswith("rotation"):
+                    a = [0.0, 0.0, 0.0]
+                    a[axis] = 1.0
+                    r = qmul(r, qaxis_angle(a, math.radians(v)))
+                else:
+                    moved[axis] = v * BVH_UNIT
+            rots[k] = qnorm(r)
+            if parent is None:
+                trans[k] = add(offset, tuple(moved))
+        return rots, trans
+
+    def frames(self, clip):
+        """The trial's loop (see the class): key times and, per key, each
+        node's local rotation and translation."""
+        if clip != self.name:
+            raise RetargetError(f"cmu has no clip {clip!r}; this trial is {self.name!r}")
+        poses = [self._pose(row) for row in self._values]
+        moving = sorted({self.skeleton.find(self.map[b]) for b in self.map})
+        dt, step = self.frame_time, BVH_KEY_STEP
+        shortest = math.ceil(CYCLE[0] / dt / step) * step
+        longest = int(CYCLE[1] / dt)
+        best = None
+        for a in range(len(poses)):
+            for b in range(a + shortest, min(a + longest, len(poses) - 1) + 1, step):
+                (ra, ta), (rb, tb) = poses[a], poses[b]
+                gap = sum(qangle(ra[j], rb[j]) for j in moving)
+                gap += CYCLE_RISE * abs(ta[self.root][1] - tb[self.root][1])
+                if best is None or gap < best[0]:
+                    best = (gap, a, b)
+        if best is None:
+            raise RetargetError(f"BVH trial {self.name!r} is shorter than a stride cycle")
+        _, a, b = best
+        (ra, ta), (rb, tb) = poses[a], poses[b]
+        close = [qmul(ra[j], qinv(rb[j])) for j in range(len(ra))]
+        rise = ta[self.root][1] - tb[self.root][1]
+        travel = sub(tb[self.root], ta[self.root])
+        heading = qaxis_angle(Y, -math.atan2(travel[0], travel[2]))
+        start = qrot(heading, ta[self.root])
+        times, rots, trans = [], [], []
+        for k in range(a, b + 1, step):
+            f = (k - a) / (b - a)
+            r, t = poses[k]
+            r = [qnorm(qmul(qpow(close[j], f), r[j])) for j in range(len(r))]
+            r[self.root] = qnorm(qmul(heading, r[self.root]))
+            t = list(t)
+            root = qrot(heading, add(t[self.root], (-travel[0] * f, rise * f, -travel[2] * f)))
+            t[self.root] = (root[0] - start[0], root[1], root[2] - start[2])
+            times.append((k - a) * dt)
+            rots.append(r)
+            trans.append(t)
+        return times, rots, trans
+
+
 # --- the target --------------------------------------------------------------
 
 
@@ -582,9 +842,12 @@ class Retargeter:
         self.root = tk.find("Root")
         self.bones = [k for k in tk.order if self._under_root(k) and k != self.root]
         missing = [tk.names[k] for k in self.bones if tk.names[k] not in source.map]
-        if missing:
+        if missing and not source.partial:
             raise RetargetError(f"target bones with no {source.kind} name: {missing}")
-        self.src = {k: sk.find(source.map[tk.names[k]]) for k in self.bones}
+        # A bone its source leaves out holds its rest under its parent, or
+        # the local rotation `held` gives it (see ``HANDS``).
+        self.src = {k: sk.find(source.map[tk.names[k]]) for k in self.bones if tk.names[k] in source.map}
+        self.held = {}
         self.s_rest_r, self.s_rest_p = sk.world()
         self.t_rest_r, self.t_rest_p = tk.world()
         self.reference = self._reference()
@@ -606,6 +869,8 @@ class Retargeter:
         ref = {}
         tk = self.target
         for k in self.bones:
+            if k not in self.src:
+                continue
             s = self.src[k]
             p = tk.parent[k]
             if p == self.root:
@@ -629,16 +894,31 @@ class Retargeter:
         has one, else along the bone's +Y. The next joint, not the axis: a
         game_engine bone's child can sit well off its +Y (``spine_03``'s
         neck is 16 degrees forward of it), and the joints' places are what
-        the body's shape follows."""
+        the body's shape follows.
+
+        A ``partial`` source's joints rest unturned, so their +Y says
+        nothing: where the next joint of the chain is not mapped (the hand,
+        whose fingers are left out) or there is none (the head, the balls
+        of the feet), its bone points at its own first child, or that
+        child's first child where it sits on the joint (the hand's
+        ``FingerBase``)."""
         tk, sk = self.target, self.source.skeleton
-        child = CHAIN.get(tk.names[k])
-        if child is None or child not in tk.index:
-            return Y, Y
-        c = tk.find(child)
-        cs = self.src[c]
         s = self.src[k]
-        have = qrot(qinv(self.s_rest_r[s]), sub(self.s_rest_p[cs], self.s_rest_p[s]))
-        want = qrot(qinv(self.t_rest_r[k]), sub(self.t_rest_p[c], self.t_rest_p[k]))
+        child = CHAIN.get(tk.names[k])
+        c = tk.find(child) if child is not None and child in tk.index else None
+        if c is not None and c in self.src:
+            have = qrot(qinv(self.s_rest_r[s]), sub(self.s_rest_p[self.src[c]], self.s_rest_p[s]))
+        elif self.source.partial and sk.children[s]:
+            at = sk.children[s][0]
+            while length(sub(self.s_rest_p[at], self.s_rest_p[s])) < 1e-6 and sk.children[at]:
+                at = sk.children[at][0]
+            have = qrot(qinv(self.s_rest_r[s]), sub(self.s_rest_p[at], self.s_rest_p[s]))
+        else:
+            return Y, Y
+        if c is not None:
+            want = qrot(qinv(self.t_rest_r[k]), sub(self.t_rest_p[c], self.t_rest_p[k]))
+        else:
+            want = Y
         return have, want
 
     def pose(self, s_rot, s_pos):
@@ -648,6 +928,10 @@ class Retargeter:
         world = {self.root: self.t_rest_r[self.root]}
         local = {}
         for k in self.bones:
+            if k not in self.src:
+                local[k] = self.held.get(k, tk.rest_r[k])
+                world[k] = qnorm(qmul(world[tk.parent[k]], local[k]))
+                continue
             s = self.src[k]
             turn = qmul(s_rot[s], qinv(self.reference[k]))
             world[k] = qnorm(qmul(turn, self.t_rest_r[k]))
@@ -803,37 +1087,59 @@ class Retargeter:
             local[upper] = qnorm(qmul(qinv(clavicle_w), rot[upper]))
         return local
 
-    def cleared(self, keys, clearance):
-        """`keys` with the arms brought forward by the least distance that
-        keeps the forearms and hands of every `clearance` model in front of
-        its chest at every key, and that distance. Each distance is first
-        tried on every ``CLEAR_EVERY``-th key, which rules most out
-        cheaply, then on them all."""
+    def spread_out(self, local, place, angle):
+        """`local` with both upper arms swung `angle` degrees out from the
+        body, about its front (+z) at the shoulder; the forearms and hands
+        keep their turn under them, so the swing stays as it was, only
+        wider."""
+        if not angle:
+            return local
+        tk = self.target
+        rot, _ = self.posed_world(local, place)
+        local = dict(local)
+        for s, sign in (("l", 1.0), ("r", -1.0)):
+            if f"upperarm_{s}" not in tk.index:
+                continue
+            upper = tk.find(f"upperarm_{s}")
+            out = qmul(qaxis_angle((0.0, 0.0, 1.0), math.radians(sign * angle)), rot[upper])
+            local[upper] = qnorm(qmul(qinv(rot[tk.parent[upper]]), out))
+        return local
+
+    def cleared(self, keys, clearance, move=None, step=REACH_STEP, most=REACH_MAX, what=("reach", "m")):
+        """`keys` with the arms moved by the least multiple of `step` (up to
+        `most`) that keeps the forearms and hands of every `clearance` model
+        in front of its chest at every key, and that amount. The move is
+        ``reach_out`` (meters forward) unless another is given, as
+        ``spread_out`` (degrees out). Each amount is first tried on every
+        ``CLEAR_EVERY``-th key, which rules most out cheaply, then on them
+        all."""
+        move = move or self.reach_out
         tk = self.target
         root = self.t_rest_r[self.root]
         places = [add(qrot(root, p), self.t_rest_p[self.root]) for _, _, p in keys]
-        steps = int(round(REACH_MAX / REACH_STEP))
+        steps = int(round(most / step))
 
-        def clear(ahead, sample):
-            poses = [(self.reach_out(keys[k][1], places[k], ahead), keys[k][2]) for k in sample]
+        def clear(amount, sample):
+            poses = [(move(keys[k][1], places[k], amount), keys[k][2]) for k in sample]
             return clearance.clear(tk, poses)
 
-        for step in range(steps + 1):
-            ahead = step * REACH_STEP
-            if clear(ahead, range(0, len(keys), CLEAR_EVERY)) and clear(ahead, range(len(keys))):
+        for k in range(steps + 1):
+            amount = k * step
+            if clear(amount, range(0, len(keys), CLEAR_EVERY)) and clear(amount, range(len(keys))):
                 break
         else:
-            raise RetargetError(f"no reach up to {REACH_MAX} m keeps the arms out of the chest")
-        moved = [(t, self.reach_out(local, place, ahead), p) for (t, local, p), place in zip(keys, places)]
-        return moved, ahead
+            raise RetargetError(f"no {what[0]} up to {most} {what[1]} keeps the arms out of the chest")
+        moved = [(t, move(local, place, amount), p) for (t, local, p), place in zip(keys, places)]
+        return moved, amount
 
-    def clip(self, name, loop, locomotion, calm=(), clearance=None, upright=False):
+    def clip(self, name, loop, locomotion, calm=(), clearance=None, upright=False, spread=None):
         """One clip retargeted: key times, per-key local rotations by node,
         per-key pelvis local translations, and its measures. With a
         `clearance` (a ``Clearance``), the arms come forward until they
         clear its models' chests; `upright`, a walk is stood up and its
         stride lengthened (see ``upright``), and its speed measured on the
-        result."""
+        result; with a `spread` (a ``Clearance``), the upper arms swing out
+        until the hands clear its models' chests (see ``SPREAD``)."""
         times, rots, trans = self.source.frames(name)
         sk = self.source.skeleton
         posed = [sk.world(r, t) for r, t in zip(rots, trans)]
@@ -869,7 +1175,10 @@ class Retargeter:
         if clearance is not None:
             keys, ahead = self.cleared(keys, clearance)
             measures["reach"] = round(ahead, 4)
-        return keys, {k: measures[k] for k in ("reach", "ground_speed", "stride") if k in measures}
+        if spread is not None:
+            keys, angle = self.cleared(keys, spread, self.spread_out, SPREAD_STEP, SPREAD_MAX, ("spread", "degrees"))
+            measures["spread"] = round(angle, 4)
+        return keys, {k: measures[k] for k in ("reach", "spread", "ground_speed", "stride") if k in measures}
 
     def target_ground_speed(self, keys):
         """How fast a planted foot of the *target* slides back, m/s at the
@@ -1148,7 +1457,7 @@ class Clearance:
             raise RetargetError(f"--model needs numpy: {e}") from None
         self.np = np
         self.models = []
-        for path, clips in [(p, CLEAR) for p in paths] + [(p, TALK) for p in talkers]:
+        for path, clips in [(p, CLEAR + SPREAD) for p in paths] + [(p, TALK) for p in talkers]:
             try:
                 self.models.append(self._read(path))
                 self.models[-1]["clips"] = clips
@@ -1344,6 +1653,11 @@ def build(sources, target, clips=CLIPS, clearance=None):
     a `clearance`, the ``CLEAR`` clips' arms are brought clear of its
     models' chests."""
     retargeters = {kind: Retargeter(src, target) for kind, src in sources.items()}
+    for rt in retargeters.values():
+        if rt.source.partial:
+            kind, clip = HANDS
+            first = retargeters[kind].clip(clip, True, False)[0][0][1]
+            rt.held = {k: first[k] for k in rt.bones if k not in rt.src}
     tk = target
     root = tk.find("Root")
     order = []
@@ -1393,7 +1707,10 @@ def build(sources, target, clips=CLIPS, clearance=None):
     for game, kind, name, loop, locomotion in clips:
         rt = retargeters[kind]
         clear = clearance.for_clip(game) if clearance is not None and game in CLEAR else None
-        keys, measures = rt.clip(name, loop, locomotion, CALM.get(game, ()), clear, upright=game in UPRIGHT)
+        spread = clearance.for_clip(game) if clearance is not None and game in SPREAD else None
+        keys, measures = rt.clip(
+            name, loop, locomotion, CALM.get(game, ()), clear, upright=game in UPRIGHT, spread=spread
+        )
         times = put([(t,) for t, _, _ in keys], "SCALAR", minmax=True)
         samplers, channels = [], []
         for k in sorted(rt.bones, key=lambda b: out_index[b]):
@@ -1466,6 +1783,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--ual1", required=True, help="UAL1 AnimationLibrary_Godot_Standard.glb")
     parser.add_argument("--ual2", required=True, help="UAL2 UAL2_Standard.glb")
+    parser.add_argument("--cmu", required=True, help="the CMU run trial, 16_46.bvh")
     parser.add_argument("--target", required=True, help="a character's model.gltf (its skeleton)")
     parser.add_argument("-o", "--output", required=True, help="the animation GLB to write")
     parser.add_argument(
@@ -1485,6 +1803,9 @@ def main(argv=None):
         sources = {
             "ual1": Source(read_file(args.ual1, glbtrim.MAX_INPUT_BYTES), "ual1"),
             "ual2": Source(read_file(args.ual2, glbtrim.MAX_INPUT_BYTES), "ual2"),
+            "cmu": BvhSource(
+                read_file(args.cmu, glbtrim.MAX_INPUT_BYTES), os.path.splitext(os.path.basename(args.cmu))[0]
+            ),
         }
         target = read_target(read_file(args.target, MAX_TARGET_BYTES))
         clearance = Clearance(sorted(args.model), sorted(args.talker)) if args.model or args.talker else None
@@ -1505,6 +1826,8 @@ def main(argv=None):
             extra = f"  {measures['ground_speed']:.3f} m/s, stride {measures['stride']:.3f} m"
         if "reach" in measures:
             extra += f"  arms {100 * measures['reach']:.1f} cm forward to clear the chests"
+        if "spread" in measures:
+            extra += f"  arms {measures['spread']:.0f} degrees out to clear the chests"
         print(f"  {game:<15} {kind} {name:<20} {duration:6.3f} s {count:4d} keys{extra}")
     return 0
 

@@ -4,7 +4,7 @@ Personas de MakeHuman con skinning. Cada carpeta contiene el `.mhm` fuente de un
 
 El juego carga `protagonist`, `hidalgo`, `farach`, `bairoletto` y los cinco atuendos de los vecinos, `townsfolk_paisano`, `townsfolk_peon`, `townsfolk_volga`, `townsfolk_headscarf` y `townsfolk_bun` (`crates/render/src/character/model.rs`), cada uno una sola vez, y los dibuja por defecto; el `models off` de la consola de depuración trae de vuelta las viejas figuras rígidas. Un vecino lleva el atuendo de su aspecto (`look % 5`); el resto del aspecto elige, para cada prenda, uno de cuatro colores apagados, el primero el propio del modelo (`crates/render/src/character/townsfolk.rs`). Un material teñido es una copia que se hace una sola vez por (material, color) y que comparten todos los que lo usan. Las dos mujeres llevan polleras largas: el juego les mantiene los brazos 0.14 rad hacia afuera, para que las manos descansen sobre la pollera en lugar de hundirse en ella. El protagonista usa su modelo a pie y en la montura: allí se sienta sobre el hueso `Torso` del caballo y reproduce el clip sentado `drive`, con las piernas dobladas hacia los estribos y la mano hacia las riendas mediante un pequeño IK, con resortes para la holgura de su asiento, columna, cabeza y manos (`crates/render/src/character/rider.rs`). `models off` solo se aplica a las personas a pie. El conversor mantiene el poncho del protagonista apartado de su brazo izquierdo (`clear_arms` en `tools/mh2gltf.py`), así que queda sobre el hombro cuando el brazo se mueve.
 
-Se mueven con clips de animación, todos en un único archivo compartido, `animations/humanoid.glb`: las Universal Animation Library 1 y 2 de Quaternius, CC0, adaptadas (retargeting) al esqueleto `game_engine` con `tools/retarget.py`. El controlador de clips (`crates/render/src/character/rig.rs`, con `clips.rs`) funciona así:
+Se mueven con clips de animación, todos en un único archivo compartido, `animations/humanoid.glb`: las Universal Animation Library 1 y 2 de Quaternius, CC0, y para el trote un corredor real de la base de captura de movimiento de CMU, adaptadas (retargeting) al esqueleto `game_engine` con `tools/retarget.py`. El controlador de clips (`crates/render/src/character/rig.rs`, con `clips.rs`) funciona así:
 
 - la espera se funde con la caminata, el trote y la carrera según la velocidad sobre el suelo;
 - cada clip de caminata se ajusta al ritmo de la velocidad sobre el suelo, según las piernas de la persona frente a las del protagonista, para que los pies queden quietos sobre el suelo y las personas más bajas den pasos más cortos y rápidos;
@@ -18,12 +18,13 @@ Los clips encuentran los huesos por la ruta de sus nombres desde `Root` (`Root/p
 
 ## Reconstruir los clips
 
-Se necesitan los dos paquetes (ver [CREDITS.md](CREDITS.md); no están en el repositorio). Ejecutar, desde la raíz del repositorio:
+Se necesitan los dos paquetes y la prueba 16_46 de CMU (ver [CREDITS.md](CREDITS.md); no están en el repositorio). Ejecutar, desde la raíz del repositorio:
 
 ```sh
 python3 -I tools/retarget.py \
   --ual1 "PATH/Animation Library[Standard]/Godot/AnimationLibrary_Godot_Standard.glb" \
   --ual2 "PATH/Universal Animation Library 2 [Standard]/Unreal-Godot/UAL2_Standard.glb" \
+  --cmu PATH/16_46.bvh \
   --target assets/characters/protagonist/model.gltf \
   --model assets/characters/protagonist/model.gltf --model assets/characters/hidalgo/model.gltf \
   --model assets/characters/farach/model.gltf --model assets/characters/bairoletto/model.gltf \

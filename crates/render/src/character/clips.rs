@@ -1,6 +1,7 @@
 //! Los clips de animación de la gente: la Universal Animation Library de
-//! Quaternius (CC0) retargeteada al esqueleto `game_engine` por
-//! `tools/retarget.py`, en un único archivo compartido,
+//! Quaternius (CC0) y, para el trote, la carrera de un corredor real de la
+//! base de captura de movimiento de CMU, retargeteadas al esqueleto
+//! `game_engine` por `tools/retarget.py`, en un único archivo compartido,
 //! `assets/characters/animations/humanoid.glb` (ver
 //! `assets/characters/README.md`; con crédito en `assets/characters/CREDITS.md`
 //! y en el `CREDITS.md` de la raíz).
@@ -119,7 +120,7 @@ impl Clip {
         match self {
             Self::Walk => Some(1.2709),
             Self::WalkFormal => Some(1.0964),
-            Self::Jog => Some(6.1488),
+            Self::Jog => Some(4.1713),
             Self::Sprint => Some(9.2842),
             Self::WalkCarry => Some(0.6968),
             _ => None,
@@ -352,7 +353,7 @@ mod tests {
         let walk = Clip::Walk.ground_speed().unwrap();
         assert!((playback_rate(Clip::Walk, walk) - 1.0).abs() < 1e-6);
         assert!((playback_rate(Clip::Walk, 1.6) - 1.6 / walk).abs() < 1e-5);
-        assert!((playback_rate(Clip::Jog, 5.0) - 5.0 / 6.1488).abs() < 1e-5);
+        assert!((playback_rate(Clip::Jog, 5.0) - 5.0 / 4.1713).abs() < 1e-5);
         assert_eq!(playback_rate(Clip::Walk, 0.0), RATE.0, "clamped");
         assert_eq!(playback_rate(Clip::Walk, 40.0), RATE.1, "clamped");
         assert_eq!(
