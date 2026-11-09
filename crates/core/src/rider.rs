@@ -27,6 +27,9 @@ pub struct RiderParams {
     pub friction: f32,
     pub walk_max: f32,
     pub gallop_max: f32,
+    /// Tope del sprint ([`RiderInput::sprint`]); donde no hay una marcha más
+    /// rápida (a caballo), igual a `gallop_max`, y nunca cuenta menos que él.
+    pub sprint_max: f32,
     pub reverse_max: f32,
 }
 
@@ -40,6 +43,7 @@ impl Default for RiderParams {
             walk_max: 3.0,
             // 49 km/h (usuario, 2026-10-29; antes era 44).
             gallop_max: 49.0 / 3.6,
+            sprint_max: 49.0 / 3.6,
             reverse_max: 1.2,
         }
     }
@@ -56,6 +60,8 @@ pub struct RiderInput {
     pub turn: f32,
     /// Mantener presionado para permitir velocidades de galope.
     pub gallop: bool,
+    /// Pedir el sprint ([`RiderParams::sprint_max`]), por encima del galope.
+    pub sprint: bool,
 }
 
 /// Estado lógico del jinete.
@@ -192,6 +198,7 @@ impl Rider {
             throttle: finite_or_zero(input.throttle).clamp(-1.0, 1.0),
             turn: finite_or_zero(input.turn).clamp(-1.0, 1.0),
             gallop: input.gallop,
+            sprint: input.sprint,
         };
         // Subpasos cortos para que los movimientos rápidos no puedan saltearse
         // obstáculos delgados.
@@ -217,7 +224,14 @@ impl Rider {
             }
         } else {
             self.heading = self.heading.rotated(input.turn * params.turn_rate * dt);
-            self.speed = next_speed(self.speed, input.throttle, input.gallop, params, dt);
+            self.speed = next_speed(
+                self.speed,
+                input.throttle,
+                input.gallop,
+                input.sprint,
+                params,
+                dt,
+            );
         }
         self.position += self.heading.forward() * (self.speed * dt);
 
@@ -297,8 +311,23 @@ fn approach(value: f32, target: f32, max_delta: f32) -> f32 {
     }
 }
 
-fn next_speed(speed: f32, throttle: f32, gallop: bool, p: &RiderParams, dt: f32) -> f32 {
-    let top = if gallop { p.gallop_max } else { p.walk_max };
+fn next_speed(
+    speed: f32,
+    throttle: f32,
+    gallop: bool,
+    sprint: bool,
+    p: &RiderParams,
+    dt: f32,
+) -> f32 {
+    // El sprint nunca baja del galope (un caballo con `turbo` galopa más
+    // rápido que su `sprint_max`).
+    let top = if sprint {
+        p.sprint_max.max(p.gallop_max)
+    } else if gallop {
+        p.gallop_max
+    } else {
+        p.walk_max
+    };
     if throttle > 0.0 {
         if speed < 0.0 {
             approach(speed, 0.0, p.braking * throttle * dt)
@@ -345,11 +374,13 @@ mod tests {
         throttle: 1.0,
         turn: 0.0,
         gallop: true,
+        sprint: false,
     };
     const WALK: RiderInput = RiderInput {
         throttle: 1.0,
         turn: 0.0,
         gallop: false,
+        sprint: false,
     };
 
     /// El mundo por defecto con un alambrado de 1,3 m de alto que corta el
@@ -462,6 +493,7 @@ mod tests {
             throttle: -1.0,
             turn: 1.0,
             gallop: false,
+            sprint: false,
         };
         r.step(turn_and_brake, &p, &t, DT);
         assert!(r.airborne());
@@ -632,6 +664,7 @@ mod tests {
             throttle: 1.0,
             turn: 0.3,
             gallop: true,
+            sprint: false,
         };
         run(&mut r, gallop, &p, &t, 3.0);
         assert_eq!(r.height, t.bare_ground_height(r.position));
@@ -644,6 +677,7 @@ mod tests {
             throttle: 50.0,
             turn: 50.0,
             gallop: false,
+            sprint: false,
         };
         r.step(wild, &p, &t, DT);
         assert!(r.speed <= p.acceleration * DT + 1e-6);
@@ -659,6 +693,7 @@ mod tests {
             throttle: 1.0,
             turn: 1.0,
             gallop: true,
+            sprint: false,
         };
         for dt in [-DT, 0.0] {
             r.step(input, &p, &t, dt);
@@ -817,6 +852,7 @@ mod tests {
                 throttle: 1.0,
                 turn,
                 gallop: true,
+                sprint: false,
             };
             r.step(input, &p, &world, DT);
             for o in world

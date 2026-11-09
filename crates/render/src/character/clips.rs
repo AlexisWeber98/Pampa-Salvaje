@@ -120,8 +120,8 @@ impl Clip {
         match self {
             Self::Walk => Some(1.2709),
             Self::WalkFormal => Some(1.0964),
-            Self::Jog => Some(4.1713),
-            Self::Sprint => Some(9.2842),
+            Self::Jog => Some(5.436),
+            Self::Sprint => Some(8.154),
             Self::WalkCarry => Some(0.6968),
             _ => None,
         }
@@ -130,11 +130,13 @@ impl Clip {
 
 /// Las velocidades sobre el suelo (m/s) entre las que un clip de locomoción se
 /// funde con el siguiente: de parado a caminando, de caminando a trotando, de
-/// trotando a corriendo. El jugador camina a 1.6 m/s y trota a 5; los vecinos
-/// caminan a entre 1.25 y 1.5.
+/// trotando a corriendo. El jugador camina a 1.6 m/s, trota a 5 y sprinta a
+/// 7.5; los vecinos caminan a entre 1.25 y 1.5. El trote y el sprint del
+/// jugador quedan fuera de la franja del sprint: dos zancadas mezcladas se
+/// desfasan y las piernas se traban.
 pub const WALK_BAND: (f32, f32) = (0.05, 0.6);
 pub const JOG_BAND: (f32, f32) = (2.4, 3.4);
-pub const SPRINT_BAND: (f32, f32) = (6.5, 8.0);
+pub const SPRINT_BAND: (f32, f32) = (5.4, 7.0);
 
 /// Cuánto más lento o más rápido que lo grabado puede reproducirse un clip de
 /// caminata.
@@ -353,7 +355,7 @@ mod tests {
         let walk = Clip::Walk.ground_speed().unwrap();
         assert!((playback_rate(Clip::Walk, walk) - 1.0).abs() < 1e-6);
         assert!((playback_rate(Clip::Walk, 1.6) - 1.6 / walk).abs() < 1e-5);
-        assert!((playback_rate(Clip::Jog, 5.0) - 5.0 / 4.1713).abs() < 1e-5);
+        assert!((playback_rate(Clip::Jog, 4.0) - 4.0 / 5.436).abs() < 1e-5);
         assert_eq!(playback_rate(Clip::Walk, 0.0), RATE.0, "clamped");
         assert_eq!(playback_rate(Clip::Walk, 40.0), RATE.1, "clamped");
         assert_eq!(
@@ -380,6 +382,16 @@ mod tests {
         // 1.26 veces (los pies siguen quietos: el ritmo es el de la velocidad).
         assert_eq!(pampa_core::RiderParams::on_foot().walk_max, 1.6);
         assert!(playback_rate(Clip::Walk, 1.6) <= 1.27);
+    }
+
+    #[test]
+    fn the_player_jogs_and_sprints_on_one_clip_each() {
+        // Dos clips de zancada mezclados se reproducen cada uno a su ritmo y se
+        // desfasan: las piernas se trababan cada tanto. Al trote y al sprint
+        // del jugador suena un solo clip; solo se funden al acelerar o frenar.
+        let foot = pampa_core::RiderParams::on_foot();
+        assert_eq!(locomotion(foot.gallop_max), [0.0, 0.0, 1.0, 0.0]);
+        assert_eq!(locomotion(foot.sprint_max), [0.0, 0.0, 0.0, 1.0]);
     }
 
     #[test]

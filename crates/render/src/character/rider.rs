@@ -127,6 +127,27 @@ pub const THIGH_HAND: Vec3 = Vec3::new(-0.2, 0.08, 0.1);
 /// Adónde va, de vez en cuando, estando quieto: al ala del sombrero.
 pub const HAT_HAND: Vec3 = Vec3::new(-0.1, 0.62, 0.16);
 
+/// Dónde están los hombros del protagonista de MakeHuman sentado, izquierdo y
+/// derecho, en el espacio del jinete, y cuánto mide su brazo del hombro a la
+/// muñeca, en metros: el cuerpo sobre el que se midieron los destinos de las
+/// manos. Cada jinete los lleva a sus propios hombros y a su largo de brazo
+/// ([`fit_hand`]), así que un cuerpo de otras proporciones (los hombros más
+/// altos, los brazos más largos) no cruza el brazo por el pecho ni lo estira
+/// rígido.
+pub const REF_SHOULDERS: [Vec3; 2] = [
+    Vec3::new(0.16240013, 0.45665276, -0.13270737),
+    Vec3::new(-0.14283384, 0.46715158, -0.15927213),
+];
+pub const REF_ARM: f32 = 0.51243;
+
+/// Un destino de la mano medido sobre el protagonista ([`REF_SHOULDERS`],
+/// [`REF_ARM`]) llevado al jinete cuyo hombro sentado está en `shoulder` y
+/// cuyo brazo mide `arm`: el mismo camino desde el hombro, a la escala de su
+/// brazo.
+pub fn fit_hand(target: Vec3, side: usize, (shoulder, arm): (Vec3, f32)) -> Vec3 {
+    shoulder + (target - REF_SHOULDERS[side]) * (arm / REF_ARM)
+}
+
 /// Cuánto se balancea como máximo la mano libre desde su reposo, en metros.
 pub const FREE_REACH: f32 = 0.12;
 
@@ -604,6 +625,11 @@ pub struct RiderMotion {
     pub free: [Spring; 3],
     /// El encogimiento de los hombros.
     pub shrug: Spring,
+    /// Cada brazo, izquierdo y derecho, tal como se sentó: dónde está su hombro
+    /// en el espacio del jinete y cuánto mide hasta la muñeca. Las manos van a
+    /// sus destinos medidos sobre el protagonista ([`REF_SHOULDERS`],
+    /// [`REF_ARM`]) llevados a estos hombros y a este largo.
+    pub arms: [Option<(Vec3, f32)>; 2],
     /// Qué tan plegado hacia adelante está sobre un salto (`0..1`), acercándose
     /// suavemente.
     pub fold: Spring,
@@ -953,8 +979,19 @@ pub(super) fn pose_riders(
                 continue;
             };
             let shoulder = chest.then(&clavicle);
+            let (Some(upper), Some(lower), Some(wrist)) = (
+                get(&transforms, Bone::UpperArm(s)),
+                get(&transforms, Bone::LowerArm(s)),
+                get(&transforms, Bone::Hand(s)),
+            ) else {
+                continue;
+            };
+            let fit = *m.arms[s].get_or_insert((
+                shoulder.then(&upper).translation,
+                lower.translation.length() + wrist.translation.length(),
+            ));
             let arm = [Bone::UpperArm(s), Bone::LowerArm(s), Bone::Hand(s)].map(|b| seated.bone(b));
-            reach(&mut transforms, shoulder, arm, hands[s], ELBOW_POLE[s]);
+            reach(&mut transforms, shoulder, arm, fit_hand(hands[s], s, fit), ELBOW_POLE[s]);
         }
     }
 }

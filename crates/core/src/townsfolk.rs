@@ -831,6 +831,7 @@ mod tests {
             throttle: 1.0,
             gallop: true,
             turn: 0.3,
+            sprint: false,
         };
         // Empieza justo encima de la primera persona.
         let at = folk.people[0].position;

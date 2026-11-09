@@ -900,6 +900,7 @@ mod tests {
                     throttle: 1.0,
                     turn: (turn * 3.0).clamp(-1.0, 1.0),
                     gallop: true,
+                    sprint: false,
                 };
                 rider.step(input, &params, &world, 1.0 / 60.0);
                 passed |= (rider.position - crossing.at).dot(crossing.road) > 10.0;

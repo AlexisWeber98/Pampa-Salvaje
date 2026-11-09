@@ -105,6 +105,7 @@ impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PlayerTuning>()
             .init_resource::<FootTuning>()
+            .init_resource::<SprintTaps>()
             .init_resource::<GameWorld>()
             .init_resource::<PlayerSpawn>()
             .init_resource::<StreamFocus>()
@@ -159,8 +160,35 @@ pub(crate) fn follow_player(players: Query<&Player>, mut focus: ResMut<StreamFoc
 /// a pie, no hace nada.
 pub const JUMP_KEY: KeyCode = KeyCode::Space;
 
+/// Cuánto puede tardar la segunda presión de Shift tras la primera para que
+/// el doble toque empiece el sprint, en segundos.
+pub const SPRINT_TAP_WINDOW: f32 = 0.35;
+
+/// El sprint de a pie: mantener Shift corre; tocarlo y volver a apretarlo
+/// enseguida (un doble toque), manteniéndolo, sprinta hasta que se suelta.
+#[derive(Resource, Debug, Default, Clone, Copy, PartialEq)]
+pub struct SprintTaps {
+    /// Cuándo se apretó Shift por última vez, en segundos desde el inicio.
+    last: Option<f32>,
+    /// Si el doble toque sigue apretado.
+    sprinting: bool,
+}
+
+impl SprintTaps {
+    /// Registra el estado de Shift en `now` (`pressed`, recién apretado en
+    /// este frame; `held`, apretado) y dice si se sprinta.
+    pub fn update(&mut self, pressed: bool, held: bool, now: f32) -> bool {
+        if pressed {
+            self.sprinting = self.last.is_some_and(|t| now - t <= SPRINT_TAP_WINDOW);
+            self.last = Some(now);
+        }
+        self.sprinting &= held;
+        self.sprinting
+    }
+}
+
 /// Traduce las teclas presionadas a intención lógica: W/S acelerador, A/D giro,
-/// Shift galope.
+/// Shift galope (el sprint lo agrega [`SprintTaps`]).
 pub fn read_input(keys: &ButtonInput<KeyCode>) -> RiderInput {
     let axis = |positive: KeyCode, negative: KeyCode| {
         f32::from(u8::from(keys.pressed(positive))) - f32::from(u8::from(keys.pressed(negative)))
@@ -169,17 +197,27 @@ pub fn read_input(keys: &ButtonInput<KeyCode>) -> RiderInput {
         throttle: axis(KeyCode::KeyW, KeyCode::KeyS),
         turn: axis(KeyCode::KeyA, KeyCode::KeyD),
         gallop: keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]),
+        sprint: false,
     }
 }
 
 pub(crate) fn drive_player(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
+    mut taps: ResMut<SprintTaps>,
     (tuning, foot): (Res<PlayerTuning>, Res<FootTuning>),
     world: Res<GameWorld>,
     mut players: Query<(&mut Player, &mut Transform, &mut VisualPose), Without<OnTrain>>,
 ) {
-    let input = read_input(&keys);
+    let shift = [KeyCode::ShiftLeft, KeyCode::ShiftRight];
+    let input = RiderInput {
+        sprint: taps.update(
+            keys.any_just_pressed(shift),
+            keys.any_pressed(shift),
+            time.elapsed_secs(),
+        ),
+        ..read_input(&keys)
+    };
     let dt = time.delta_secs().min(MAX_STEP);
     for (mut player, mut transform, mut pose) in &mut players {
         let rider = &mut player.rider;
@@ -502,9 +540,72 @@ mod tests {
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(KeyCode::ShiftLeft);
+        // Mantenido: sin el plugin de entrada, `just_pressed` se borra a mano,
+        // o cada frame contaría como otra presión (ver [`SprintTaps`]).
         for _ in 0..80 {
             app.update();
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .clear();
         }
+        assert!((player_rider(&mut app).speed - foot.gallop_max).abs() < 1e-4);
+    }
+
+    /// Toca Shift una vez: presionada un frame, suelta el siguiente (sin el
+    /// plugin de entrada, `just_pressed` se borra a mano).
+    fn tap_shift(app: &mut App) {
+        for press in [true, false] {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            if press {
+                keys.press(KeyCode::ShiftLeft);
+            } else {
+                keys.release(KeyCode::ShiftLeft);
+            }
+            app.update();
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .clear();
+        }
+    }
+
+    #[test]
+    fn double_tapping_and_holding_shift_on_foot_sprints_until_it_is_let_go() {
+        // Mantener Shift corre; tocarlo y volver a apretarlo enseguida,
+        // manteniéndolo, sprinta; al soltarlo se vuelve a caminar.
+        let mut app = headless_app(Duration::from_millis(50));
+        app.insert_resource(PlayerSpawn {
+            travel: Travel::OnFoot,
+            ..PlayerSpawn::default()
+        });
+        app.update();
+        let foot = app.world().resource::<FootTuning>().0;
+        let hold = |app: &mut App, frames: usize| {
+            for _ in 0..frames {
+                app.update();
+                app.world_mut()
+                    .resource_mut::<ButtonInput<KeyCode>>()
+                    .clear();
+            }
+        };
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyW);
+        tap_shift(&mut app);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::ShiftLeft);
+        hold(&mut app, 80);
+        assert!((player_rider(&mut app).speed - foot.sprint_max).abs() < 1e-4);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(KeyCode::ShiftLeft);
+        hold(&mut app, 80);
+        assert!((player_rider(&mut app).speed - foot.walk_max).abs() < 1e-4);
+        // Apretado de nuevo, sin el doble toque, corre.
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::ShiftLeft);
+        hold(&mut app, 80);
         assert!((player_rider(&mut app).speed - foot.gallop_max).abs() < 1e-4);
     }
 

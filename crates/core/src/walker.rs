@@ -3,8 +3,8 @@
 //! A pie, el jugador se mueve con el mismo modelo cinemático que el jinete
 //! ([`Rider`]): la misma entrada (W/S para acelerar, A/D para girar, Shift para
 //! ir más rápido), la misma colisión y el mismo mundo. Solo cambian el ajuste
-//! ([`RiderParams::on_foot`]: una caminata de 1,6 m/s y un trote de 18 km/h) y
-//! el cuerpo (un collider del tamaño de una persona).
+//! ([`RiderParams::on_foot`]: una caminata de 1,6 m/s, un trote de 18 km/h y
+//! un sprint de 27 km/h) y el cuerpo (un collider del tamaño de una persona).
 
 use crate::{Circle, Ground, Heading, Rider, RiderParams, TetheredHorse, Vec2, World};
 
@@ -86,8 +86,8 @@ impl Rider {
 impl RiderParams {
     /// Ritmo de caminata de 1,6 m/s (5,8 km/h: un paso enérgico por la calle en
     /// 1919, un poco más rápido que los 1,25 a 1,5 de los vecinos), trote
-    /// (Shift) de 18 km/h; una persona gira y se detiene más rápido que un
-    /// caballo.
+    /// (Shift) de 18 km/h y sprint (doble toque de Shift) de 27 km/h; una persona gira
+    /// y se detiene más rápido que un caballo.
     pub fn on_foot() -> Self {
         Self {
             turn_rate: 2.6,
@@ -99,6 +99,9 @@ impl RiderParams {
             walk_max: 1.6,
             // 18 km/h, trotando con Shift.
             gallop_max: 18.0 / 3.6,
+            // 27 km/h, el pique de un hombre en forma, con un doble toque de
+            // Shift mantenido (el clip `sprint` es de 7,5 m/s).
+            sprint_max: 7.5,
             reverse_max: 1.0,
         }
     }
@@ -157,6 +160,36 @@ mod tests {
         // Más lento que un caballo a cualquiera de los dos ritmos.
         let horse = RiderParams::default();
         assert!(p.walk_max < horse.walk_max && p.gallop_max < horse.gallop_max / 2.0);
+    }
+
+    #[test]
+    fn sprints_at_27_kmh_and_a_sprint_never_slows_a_faster_gallop() {
+        let (mut r, p, world) = walker();
+        let sprint = RiderInput {
+            throttle: 1.0,
+            sprint: true,
+            ..Default::default()
+        };
+        run(&mut r, sprint, &p, &world, 4.0);
+        assert!((r.speed - 7.5).abs() < 1e-4, "sprint {}", r.speed);
+        // Un caballo (con `turbo`, más rápido que su `sprint_max`) sigue a su
+        // galope aunque se pida el sprint.
+        let fast = RiderParams {
+            gallop_max: 40.0,
+            ..RiderParams::default()
+        };
+        let mut horse = Rider::new(Vec2::new(5.0, 5.0), Heading::from_radians(0.0), &world);
+        run(
+            &mut horse,
+            RiderInput {
+                gallop: true,
+                ..sprint
+            },
+            &fast,
+            &world,
+            20.0,
+        );
+        assert!((horse.speed - 40.0).abs() < 1e-3, "horse {}", horse.speed);
     }
 
     #[test]

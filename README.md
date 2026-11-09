@@ -284,7 +284,7 @@ para más adelante.
 
 A caballo a galope tendido (al menos el 85 % de la velocidad máxima del galope, 49 km/h), `Space` salta (`Rider::jump`). En el aire el caballo mantiene su línea y su velocidad, y pasa por encima de todo obstáculo bajo mientras está más alto que ese obstáculo. Los alambrados miden 1.3 m, y un objeto de un asentamiento es tan alto como su estructura. Todo lo demás cuenta como sin límite de altura (`StaticObstacles::push_low`, `World::resolve_above`). En el aire el caballo reproduce su clip `Gallop_Jump` (`tools/horse.py`: las manos despegan primero, las patas traseras apoyan bajo la panza, empujan y salen estiradas hacia atrás; como en las láminas de saltos de Muybridge, en lo alto las manos van plegadas y las patas traseras flexionadas por detrás, las manos se despliegan solo al final del descenso, primero la de atrás, y las patas traseras apoyan después, cuando el galope retoma con las manos apoyadas; la cola sale levantada hacia atrás; el cuerpo cabecea), ajustado en cada frame a `Rider::flight` (la proporción del vuelo transcurrida) para que la pose siga el arco de la física y no el suyo propio; la subida propia del clip se le quita al cuerpo. Mientras tanto el jinete se inclina hacia adelante desde la cadera con la mano de las riendas a lo largo del cuello, y luego se endereza y absorbe el aterrizaje con las rodillas y la cadera.
 
-A pie, el jugador camina a 1.6 m/s (unos 5.8 km/h) y trota con `Shift` a 18 km/h, con las mismas teclas, la misma colisión y un cuerpo del tamaño de una persona.
+A pie, el jugador camina a 1.6 m/s (unos 5.8 km/h), corre manteniendo `Shift` a 18 km/h y sprinta a 27 km/h con un doble toque de `Shift` mantenido (tocarlo y volver a apretarlo enseguida, sin soltarlo; al soltarlo vuelve a caminar), con las mismas teclas, la misma colisión y un cuerpo del tamaño de una persona.
 La gente le abre paso sin quejarse a alguien que va a pie; solo el caballo los
 hace hablar.
 
@@ -715,6 +715,7 @@ El juego abre en una pantalla de título. A la izquierda, un cartel de "Se busca
 | `W` / `S` | Caminar o cabalgar hacia adelante / frenar y retroceder |
 | `A` / `D` | Girar a la izquierda / a la derecha |
 | `Shift` (mantener) | Trotar a pie, galopar a caballo |
+| `Shift` (doble toque y mantener) | Sprintar a pie |
 | `F` | Interactuar: hablar con alguien, montar o bajarse de un caballo, subir o bajarse del tren en la puerta de un coche, o esperar el tren cerca del centro de un andén |
 | `Space` | A caballo a galope tendido: saltar. Más lento, no hace nada. El arco llega a unos 1.55 m de altura, así que pasa por encima de un alambrado (1.3 m) y de los objetos bajos de un asentamiento (bebedero, brocal de pozo, palenque). Los árboles, los edificios, los corrales, los tanques, las carretas, las personas y los animales siguen estorbando. A bordo del tren: saltar a la siguiente parada |
 | `V` | Fuera del tren: alternar la vista en primera persona desde los ojos del jugador. A bordo del tren: recorrer las vistas (asiento junto a la ventanilla, alrededor del coche, el tren entero) |

@@ -888,7 +888,7 @@ mod tests {
         ] {
             repose(&mut app, animation, speed);
             balls(&mut app, rigs[0].1, 30);
-            let frames = balls(&mut app, rigs[0].1, 120);
+            let frames = balls(&mut app, rigs[0].1, 240);
             let slid = slide(&frames);
             assert!(
                 (slid / speed - 1.0).abs() < 0.12,
