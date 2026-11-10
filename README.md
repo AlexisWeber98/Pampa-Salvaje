@@ -91,7 +91,9 @@ empieza a media mañana, a plena luz del día, a bordo del tren de la mañana
 desde General Pico: el protagonista, un ex empleado de ferretería de Pico,
 viaja en él hasta Monte Nievas. La hora del día (`HH:MM`) se muestra en la
 esquina superior izquierda, rotulada con la tipografía del juego (IM Fell
-English) sobre un panel de papel, con el objetivo actual debajo y, mientras se
+English) sobre un panel de papel, con la plata del protagonista debajo, escrita
+como entonces ("$ 1,50"; empieza sin un peso, `pampa_core::Money`), el objetivo
+actual debajo de ella y, mientras se
 viaja en el tren, la siguiente estación y su hora de llegada (por ejemplo
 "Próxima: Eduardo Castex, 11:46").
 
@@ -246,23 +248,40 @@ probada sin el juego.
 ### El primer encargo
 
 El jugador llega a pie. Arriba del andén de Monte Nievas, junto a los coches
-del tren de la mañana, el objetivo dice "Buscá a Don Hidalgo en la plaza". Don
-Hidalgo está en la plaza; hay que presionar `F` a menos de unos 3 m para
-hablar. Monte Nievas no tiene comisaría, así que él manda al jugador a
-presentarse ante el comisario Elías Farach en la comisaría de Castex, y le
-presta su caballo, el que está atado en el almacén de ramos generales. El
-pueblo de Farach no está fijo en el código: lo nombra `police_town` en
-`assets/dialogue/errand.ron` (Eduardo Castex; sin él, o cuando ese pueblo no
-tiene comisaría, el otro pueblo más cercano que tenga una), y la línea del
-objetivo también lo nombra. Sus líneas se reproducen una tras otra en globos
-de diálogo, unos segundos cada una. El caballo no es del jugador antes de esa
-charla ("Este caballo no es mío."); después, `F` a menos de unos 3 m del
-caballo lo monta: el caballo atado se lo llevan por el resto de la sesión y el
-jugador cabalga desde donde estaba. Farach está parado en la calle frente a la
-puerta de la comisaría de Castex; `F` a menos de unos 4 m, montado o no, hace
-que el jugador se presente ante él y termina el encargo. La línea del objetivo
-y el destino del minimapa siguen cada paso (Hidalgo, el caballo, luego Farach)
-y desaparecen una vez terminado el encargo.
+del tren de la mañana, el objetivo dice "Buscá a Don Hidalgo en la plaza". La
+historia son datos: los actos 2 y 3 de `historia`, paso a paso, en
+`assets/dialogue/errand.ron` (`pampa_core::Step`). Cada paso pide algo al
+jugador (hablar con alguien, tomar el caballo), lo dice la línea del objetivo y
+el destino del minimapa, y al cumplirlo reproduce su escena: líneas de quien
+hable y acciones narradas (le dan plata, recibe o entrega algo). Los actos
+siguientes se agregan como pasos nuevos.
+
+Don Hidalgo está en la plaza; hay que presionar `F` a menos de unos 3 m para
+hablar. Le dice a Lisandro que "en estos pagos quien manda es Farach, el
+comisario de Castex", le da una carta de presentación de su puño y letra para
+el comisario y tres pesos (por si lo hacen esperar o le piden coima), y como el
+tren ya se fue le presta su caballo, el que está atado en el almacén de ramos
+generales. El pueblo de Farach no está fijo en el código: lo nombra
+`police_town` en el mismo archivo (Eduardo Castex; sin él, o cuando ese pueblo
+no tiene comisaría, el otro pueblo más cercano que tenga una), y la línea del
+objetivo también lo nombra. Las líneas se reproducen una tras otra como
+subtítulos de película, abajo y al centro de la pantalla, con el nombre de quien
+habla en ocre delante ("Don Hidalgo: ..."), cada una el tiempo de leerla (dos
+segundos más 15 caracteres por segundo, entre 3 y 9 segundos;
+`pampa_render::subtitle`). Las quejas de los vecinos siguen en globos. Mientras
+dura una escena el jugador no maneja (las teclas no lo mueven y `F` no hace
+nada) y la cámara deja la órbita: encuadra a los dos desde atrás del hombro de
+Lisandro, mirando a quien tiene enfrente; al terminar vuelve detrás del
+jugador. El caballo no es del jugador antes de esa charla ("Este caballo no es
+mío."); después, `F` a menos de unos 3 m del caballo lo monta: el caballo atado
+se lo llevan por el resto de la sesión y el jugador cabalga desde donde estaba.
+
+Farach está parado en la calle frente a la puerta de la comisaría de Castex;
+`F` a menos de unos 4 m, montado o no, empieza el acto 3, palabra por palabra:
+Lisandro y Farach hablan por turnos, Lisandro le entrega el sobre (la carta ya
+no está en sus manos: Farach se queda con los papeles) y Farach lo lee en voz
+alta. Con su última línea la historia llega a su último paso, y la línea del
+objetivo y el destino del minimapa desaparecen.
 
 Una vez tomado, el caballo es del jugador. `F` detenido o al paso lento (hasta
 1 m/s) lo hace bajar: el jugador queda parado junto al caballo, a su izquierda
@@ -525,7 +544,7 @@ cabezada de 1919, atados o montados
   lado, con la crin más oscura), **alazán** (con la crin y la cola rubias) y
   **bayo** (arena con crin, cola y patas negras y una raya dorsal oscura). La
   crin siempre se aparta del color del pelaje, y al galope vuela en mechones
-  separados, levantada del cuello y hacia atrás. El caballo de Don Hidalgo, el que monta el jugador, es bayo;
+  separados, levantada del cuello y hacia atrás. El caballo de Don Hidalgo, el que monta el jugador, es alazán;
   el caballo atado en cada uno de los demás almacenes recibe un pelaje con la
   semilla de su pueblo.
 - **Los aperos** son el recado criollo de un peón de estancia de La Pampa en

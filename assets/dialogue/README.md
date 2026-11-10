@@ -50,14 +50,18 @@ Valen para todos los archivos de esta carpeta.
 - **Voz.** Español, voz rural rioplatense de 1920–1930 (`vos`/`usted`,
   `che`, `pingo`, `paisano`...). Mantenerla respetuosa: sin insultos
   ofensivos.
-- **Longitud.** Como máximo **40 caracteres** por línea (cada letra acentuada
-  cuenta como un carácter). Las líneas se dibujan en un pequeño globo de
-  diálogo.
+- **Longitud.** Las quejas se dibujan en un pequeño globo de diálogo: como
+  máximo **40 caracteres** por línea (cada letra acentuada cuenta como un
+  carácter). Las líneas de la historia se muestran como subtítulos: como
+  máximo **100 caracteres**, así cada una queda en pantalla todo el tiempo de
+  leerla.
 - **Caracteres.** Las líneas se dibujan con la tipografía propia del juego (IM
   Fell English), que tiene:
   - las letras `A`–`Z` y `a`–`z`, los dígitos `0`–`9`;
   - `Á É Í Ó Ú Ñ Ü` y `á é í ó ú ñ ü`;
-  - el espacio y `. , : ; - ' " ! ? ¡ ¿ ( ) % $ /`.
+  - `à è ì ò ù` y otras letras latinas acentuadas;
+  - el espacio y `. , : ; - ' " ! ? ¡ ¿ ( ) % $ /`, y también `’` y `…`
+    como en `historia`.
 
   Lo que le falta a la tipografía (emoji, otros alfabetos...) no se dibuja.
   Los tests rechazan esos caracteres en el archivo incluido, y el juego
@@ -65,42 +69,71 @@ Valen para todos los archivos de esta carpeta.
 - **Sin grupos vacíos ni líneas en blanco.** Cada grupo necesita al menos una
   línea.
 
-## `errand.ron`: el primer encargo
+## `errand.ron`: la historia del capítulo 1
+
+La historia, paso a paso (actos 2 y 3 de `historia`):
 
 ```ron
 (
-    // Don Hidalgo, cuando el jugador le habla en la plaza.
-    hidalgo: [
-        "Acá en Monte Nievas no hay comisaría.",
-        "Preséntese en la comisaría de Castex.",
-    ],
-    // El jugador, junto al caballo de Don Hidalgo antes de hablar con él.
+    police_town: "Eduardo Castex",
     not_your_horse: [
         "Este caballo no es mío.",
     ],
-    // El comisario Farach, cuando el jugador se presenta a su puerta.
-    farach: [
-        "¡Buenas! ¿Lo manda Don Hidalgo?",
+    steps: [
+        (
+            goal: Talk(Hidalgo),
+            objective: "Buscá a Don Hidalgo en la plaza",
+            scene: [
+                Say(Hidalgo, "Tome, le escribí una carta pa’l comisario."),
+                Receive(Letter),
+                Earn(pesos: 2),
+            ],
+        ),
+        (
+            goal: TakeHorse,
+            objective: "Tomá el caballo de Don Hidalgo",
+        ),
+        (
+            goal: Talk(Farach),
+            objective: "Presentate al comisario Farach en {town}",
+            scene: [
+                Say(Lisandro, "Buenas, Comisario, le traigo unos papeles que me envió mi tío pa’ uste’"),
+                Say(Farach, "¿y vos quien sos?"),
+                HandOver(Letter),
+            ],
+        ),
     ],
 )
 ```
 
-- Cada lista es una secuencia breve que se dice **en orden**, una línea tras
-  otra en un globo de diálogo, unos segundos cada una (`F` la inicia; se
-  reproduce sola).
-- `hidalgo` se dice una vez, cuando el jugador habla por primera vez con Don
-  Hidalgo. Debe contarle la historia al jugador: Monte Nievas no tiene
-  comisaría, hay que presentarse ante el comisario Elías Farach en la
-  comisaría de Castex, y tomar el caballo atado en el almacén de ramos
-  generales (los tests comprueban que nombre la comisaría, Castex, Farach, el
-  caballo y el almacén).
-- `not_your_horse` lo dice el jugador sobre su propia cabeza cuando intenta
-  usar el caballo antes de hablar con Don Hidalgo.
-- `farach` se dice una vez, cuando el jugador se presenta; con eso el encargo
-  termina.
+- `steps` son los pasos, **en orden**; hay uno pendiente a la vez y cada uno se
+  cumple una sola vez. Los actos siguientes se agregan como pasos nuevos al
+  final.
+- `goal` es lo que pide el paso: `Talk(Hidalgo)` o `Talk(Farach)` (hablarle con
+  `F`, al alcance), o `TakeHorse` (montar el caballo de Don Hidalgo, que desde
+  entonces es del jugador y le enseña a montar).
+- `objective` es la línea del objetivo del HUD mientras el paso está pendiente
+  (como máximo 48 caracteres); `{town}` se reemplaza por `police_town`. El
+  minimapa marca a quien hay que hablarle o al caballo.
+- `scene` es lo que sucede al cumplir el paso (puede faltar). Mientras dura, el
+  jugador no maneja y la cámara encuadra a los dos que hablan:
+  - `Say(quién, "texto")`: una línea como subtítulo, con el nombre de quien la
+    dice, el tiempo de leerla. `quién` es `Lisandro` (el jugador), `Hidalgo` o
+    `Farach`.
+  - `Earn(pesos: 2, centavos: 50)`: le dan plata (los centavos pueden faltar);
+    el HUD la muestra.
+  - `Receive(Letter)` y `HandOver(Letter)`: recibe o entrega la carta de
+    presentación de Don Hidalgo. Lo entregado no vuelve.
+  Las acciones suceden al instante, entre una línea y la siguiente.
+- Lo que `historia` cita se copia palabra por palabra; lo narrado se vuelve
+  acciones. Una línea larga se corta en varias `Say` seguidas del mismo
+  personaje, por las comas, sin cambiar ninguna palabra.
+- `not_your_horse` lo dice el jugador cuando intenta usar el caballo antes de
+  que Don Hidalgo se lo preste (no detiene al jugador).
+- `police_town` es el pueblo de la comisaría, por su nombre en
+  `world/towns.ron`.
 - Las reglas de arriba (voz, longitud, caracteres, sin listas vacías ni líneas
-  en blanco) también valen aquí. La tipografía tiene comillas dobles, `;` y
-  paréntesis, así que se pueden usar.
+  en blanco) también valen aquí.
 
 ## Cuando algo está mal
 
