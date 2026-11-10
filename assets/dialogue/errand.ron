@@ -1,30 +1,59 @@
-// El primer encargo: Don Hidalgo, en la plaza de Monte Nievas, manda al jugador
-// a ver al comisario Elías Farach en la comisaría de Castex. Ver README.md en
-// esta carpeta para las reglas (caracteres, longitud).
+// La historia del capítulo 1, paso a paso (actos 2 y 3 de `historia`): Don
+// Hidalgo, en la plaza de Monte Nievas, manda al jugador a ver al comisario
+// Elías Farach en la comisaría de Castex. Ver README.md en esta carpeta para
+// las reglas (pasos, escenas, caracteres, longitud).
 (
-    // Don Hidalgo, cuando el jugador le habla en la plaza. Una línea tras otra,
-    // unos segundos cada una.
-    hidalgo: [
-        "¡Buenas! Usted es el que llegó en tren.",
-        "Acá en Monte Nievas no hay comisaría.",
-        "Preséntese en la comisaría de Castex.",
-        "Lo espera el comisario Elías Farach.",
-        "Llévese mi caballo, el del almacén.",
-        "Castex queda al oeste, siguiendo la vía.",
-    ],
-    // El jugador, junto al caballo de Don Hidalgo antes de hablar con él.
+    // El pueblo a cuya comisaría la historia envía al jugador, por su nombre en
+    // world/towns.ron (los objetivos lo nombran con {town}). Sin él, o cuando
+    // ese pueblo no tiene comisaría, el otro pueblo más cercano que tenga una.
+    police_town: "Eduardo Castex",
+    // El jugador, junto al caballo de Don Hidalgo antes de que se lo preste.
     not_your_horse: [
         "Este caballo no es mío.",
     ],
-    // El comisario Farach, cuando el jugador se presenta a su puerta.
-    farach: [
-        "¡Buenas! ¿Lo manda Don Hidalgo?",
-        "Soy Elías Farach, el comisario.",
-        "Bienvenido a Castex, paisano.",
-        "Quédese cerca, que trabajo no falta.",
+    // Los pasos, en orden. Cada uno pide algo al jugador (`goal`), lo dice el
+    // objetivo del HUD (`objective`) y, al cumplirlo, reproduce su escena
+    // (`scene`): líneas `Say(quién, "texto")` y acciones narradas.
+    steps: [
+        // Acto 2. Las líneas de Don Hidalgo son un borrador: `historia` narra
+        // lo que dice sin citarlo.
+        (
+            goal: Talk(Hidalgo),
+            objective: "Buscá a Don Hidalgo en la plaza",
+            scene: [
+                Say(Hidalgo, "¡Lisandro, m’hijo! Bienvenido a Monte Nievas."),
+                Say(Hidalgo, "Escúcheme bien: en estos pagos quien manda es Farach, el comisario de Castex."),
+                Say(Hidalgo, "Acá en Monte Nievas no hay comisaría, así que va a tener que presentarse ante él."),
+                Say(Hidalgo, "Tome, le escribí de mi puño y letra una carta de presentación pa’l comisario."),
+                Receive(Letter),
+                Say(Hidalgo, "Y llévese estos tres pesos, por si lo hacen esperar o le piden algo pa’ atenderlo."),
+                Earn(pesos: 3),
+                Say(Hidalgo, "El tren ya se fue, m’hijo. Lleve mi caballo, el alazán atado en el almacén."),
+            ],
+        ),
+        (
+            goal: TakeHorse,
+            objective: "Tomá el caballo de Don Hidalgo",
+        ),
+        // Acto 3, palabra por palabra.
+        (
+            goal: Talk(Farach),
+            objective: "Presentate al comisario Farach en {town}",
+            scene: [
+                Say(Lisandro, "Buenas, Comisario, le traigo unos papeles que me envió mi tío pa’ uste’"),
+                Say(Farach, "¿y vos quien sos?"),
+                Say(Lisandro, "Soy el sobrino de Don Hidalgo, llegué hoy mismo al pueblo."),
+                Say(Farach, "Ah el viejo cascarrabias ese, si ya se… a ver pasame tus papeles."),
+                // Le entrega el sobre. Farach lee en voz alta, y se queda con
+                // los papeles.
+                HandOver(Letter),
+                Say(Farach, "Lisandro Benjamin Andrada, nacido en General Pico, desempleado, zoncera, zoncera…"),
+                Say(Farach, "Bueno Pibe, te aviso que en esta ciudad mando yo,"),
+                Say(Farach, "así que si no queres tener problema no te hagas el guapo y no andès holgazaneando,"),
+                Say(Farach, "que a los vagos como vos los tengo cortitos."),
+                Say(Farach, "Quedate cerca que a la noche te devuelvo tus papeles firmados."),
+            ],
+        ),
+        // Los actos siguientes se agregan aquí como pasos nuevos.
     ],
-    // El pueblo a cuya comisaría el encargo envía al jugador, por su nombre en
-    // world/towns.ron (el objetivo del HUD también lo nombra). Sin él, o cuando
-    // ese pueblo no tiene comisaría, el otro pueblo más cercano que tenga una.
-    police_town: "Eduardo Castex",
 )

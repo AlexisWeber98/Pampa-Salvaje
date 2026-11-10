@@ -25,9 +25,11 @@ pub mod fauna;
 pub mod fence;
 pub mod flora;
 pub mod heading;
+pub mod items;
 pub mod lagoon;
 pub mod lamps;
 pub mod math;
+pub mod money;
 pub mod obstacles;
 pub mod placement;
 pub mod places;
@@ -38,6 +40,7 @@ pub mod rider;
 mod rng;
 pub mod road;
 pub mod settlement;
+pub mod story;
 pub mod terrain;
 pub mod town;
 pub mod town_riders;
@@ -56,7 +59,7 @@ pub use bumps::{BumpEvent, BumpSeverity, BumpTracker, LinePicker};
 pub use chunk::{ChunkCoord, WorldConfig, WorldConfigError};
 pub use clock::{BASE_RATE, DAY_REAL_SECONDS, DAY_SECONDS, GameClock, TimeOfDay};
 pub use collision::{Aabb, Body, Circle, SideObstacle};
-pub use errand::{Errand, ErrandEvent, ErrandStage, Interaction, Npc, Standing};
+pub use errand::{Errand, ErrandEvent, ErrandStage, Interaction, Npc, PROTAGONIST, Standing};
 pub use fauna::{
     Cow, CowCoat, CowState, Critter, CritterKind, CritterState, Duck, FaunaSite, Flock, FlockState,
     Hare, HareState, Herd, Patch, Perch, Raptor, RaptorKind, Sparrow, SparrowClip, SparrowGroup,
@@ -65,9 +68,11 @@ pub use fauna::{
 pub use fence::{FenceLayout, FenceRun, Frontage, Gate, Opening, OpeningKind};
 pub use flora::{ChunkFlora, FloraSite, Shrub, ShrubKind, Species, Tree, Tuft, TuftKind};
 pub use heading::Heading;
+pub use items::{Item, Items};
 pub use lagoon::{Lagoon, LagoonConfig, LagoonError, place_lagoons};
 pub use lamps::{LampSite, LampTier, StreetLamp, StreetLamps};
 pub use math::Vec2;
+pub use money::Money;
 pub use obstacles::StaticObstacles;
 pub use placement::{PlacementError, place_towns};
 pub use places::{
@@ -92,6 +97,7 @@ pub use settlement::{
     HouseStyle, KeepOut, RoadsideWreck, Settlement, SettlementKind, SettlementLayout, Structure,
     StructureKind, Track,
 };
+pub use story::{Action, Beat, Goal, Speaker, Step};
 pub use terrain::{FlatArea, Terrain};
 pub use town::{
     Building, BuildingKind, Canopy, Floor, HitchingPost, PLAZA_MONUMENT, PLAZA_PATH_CLEARANCE,

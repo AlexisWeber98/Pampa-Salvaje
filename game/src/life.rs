@@ -1282,16 +1282,16 @@ mod tests {
             .unwrap()
             .1
             .town;
-        assert_eq!(tethered_coat(&towns[hidalgo], &cast, hidalgo), Coat::Bayo);
+        assert_eq!(tethered_coat(&towns[hidalgo], &cast, hidalgo), Coat::HIDALGO);
         let empty = Cast::default();
         // Incluso donde la semilla propia del pueblo daría otro pelaje: el
         // pueblo de Don Hidalgo ata a su bayo, no al caballo sembrado.
         let mut his = towns[hidalgo].clone();
         his.seed = (0..)
-            .find(|&seed| Coat::seeded(seed ^ 0x4f52_5345) != Coat::Bayo)
+            .find(|&seed| Coat::seeded(seed ^ 0x4f52_5345) != Coat::HIDALGO)
             .unwrap();
-        assert_ne!(tethered_coat(&his, &empty, hidalgo), Coat::Bayo);
-        assert_eq!(tethered_coat(&his, &cast, hidalgo), Coat::Bayo);
+        assert_ne!(tethered_coat(&his, &empty, hidalgo), Coat::HIDALGO);
+        assert_eq!(tethered_coat(&his, &cast, hidalgo), Coat::HIDALGO);
         let mut town = TownLayout::castex_inspired();
         let mut coats = std::collections::HashSet::new();
         for seed in 0..40 {

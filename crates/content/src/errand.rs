@@ -1,35 +1,40 @@
-//! Las líneas del encargo: lo que dicen Don Hidalgo y el comisario Farach, y lo
-//! que dice el jugador ante un caballo que todavía no es suyo. Se leen de
-//! `assets/dialogue/errand.ron` y se validan como las líneas de los choques.
+//! La historia del capítulo 1 como pasos ([`Step`]): qué pide cada uno al
+//! jugador, el objetivo que muestra el HUD y la escena que se reproduce al
+//! cumplirlo (líneas de quien hable y acciones narradas). También lo que dice
+//! el jugador ante un caballo que todavía no es suyo, y el pueblo de la
+//! comisaría. Se leen de `assets/dialogue/errand.ron`.
 
 use std::path::Path;
 
+use pampa_core::{Action, Beat, Goal, Item, Money, Npc, Speaker, Step};
 use serde::Deserialize;
 
-use crate::{ContentError, check_pools, unsupported_in};
+use crate::ContentError;
 
-/// Dónde están las líneas del encargo, relativo a la carpeta de assets.
+/// Dónde está la historia, relativo a la carpeta de assets.
 pub const ERRAND_FILE: &str = "dialogue/errand.ron";
 
-/// Lo que se dice durante el encargo; cada una es una breve secuencia de líneas
-/// que se muestran una tras otra.
-///
-/// Los campos desconocidos del archivo se ignoran, como en el archivo de
-/// choques.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+/// Línea más larga de la historia, en caracteres. Se muestra como subtítulo,
+/// no en un globo, así que puede ser más larga que [`crate::MAX_LINE_CHARS`];
+/// con este largo cada línea queda en pantalla todo el tiempo de leerla sin
+/// pasar el máximo de un subtítulo (9 s).
+pub const STORY_LINE_CHARS: usize = 100;
+
+/// Objetivo más largo, en caracteres, con el pueblo de la comisaría ya puesto:
+/// una línea del HUD.
+pub const OBJECTIVE_CHARS: usize = 48;
+
+/// La historia del encargo, ya interpretada.
+#[derive(Debug, Clone, PartialEq)]
 pub struct ErrandLines {
-    /// Don Hidalgo, en la plaza: manda al jugador a ver a Farach y le presta el
-    /// caballo.
-    pub hidalgo: Vec<String>,
-    /// El jugador, junto al caballo de Don Hidalgo antes de hablar con él.
+    /// El jugador, junto al caballo de Don Hidalgo antes de que se lo preste.
     pub not_your_horse: Vec<String>,
-    /// El comisario Farach, cuando el jugador se presenta.
-    pub farach: Vec<String>,
-    /// El pueblo a cuyo comisario el encargo envía al jugador, por nombre (el
+    /// El pueblo a cuyo comisario la historia envía al jugador, por nombre (el
     /// otro pueblo más cercano con comisaría cuando ese pueblo no tiene una).
     /// Por defecto, [`DEFAULT_POLICE_TOWN`].
-    #[serde(default = "default_police_town")]
     pub police_town: String,
+    /// Los pasos de la historia, en orden.
+    pub steps: Vec<Step>,
 }
 
 /// El pueblo de la comisaría del encargo cuando el archivo no nombra uno.
@@ -39,15 +44,125 @@ fn default_police_town() -> String {
     DEFAULT_POLICE_TOWN.to_string()
 }
 
+/// El archivo tal como se escribe. Los campos desconocidos se ignoran, como en
+/// el archivo de choques.
+#[derive(Deserialize)]
+struct File {
+    not_your_horse: Vec<String>,
+    #[serde(default = "default_police_town")]
+    police_town: String,
+    steps: Vec<StepFile>,
+}
+
+#[derive(Deserialize)]
+struct StepFile {
+    goal: GoalFile,
+    objective: String,
+    #[serde(default)]
+    scene: Vec<BeatFile>,
+}
+
+#[derive(Deserialize)]
+enum NpcFile {
+    Hidalgo,
+    Farach,
+}
+
+impl From<NpcFile> for Npc {
+    fn from(npc: NpcFile) -> Self {
+        match npc {
+            NpcFile::Hidalgo => Npc::Hidalgo,
+            NpcFile::Farach => Npc::Farach,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+enum GoalFile {
+    Talk(NpcFile),
+    TakeHorse,
+}
+
+/// Quién dice una línea: el protagonista por su nombre, o un personaje.
+#[derive(Deserialize)]
+enum Who {
+    Lisandro,
+    Hidalgo,
+    Farach,
+}
+
+#[derive(Deserialize)]
+enum ItemFile {
+    Letter,
+}
+
+#[derive(Deserialize)]
+enum BeatFile {
+    Say(Who, String),
+    Earn {
+        #[serde(default)]
+        pesos: u32,
+        #[serde(default)]
+        centavos: u32,
+    },
+    Receive(ItemFile),
+    HandOver(ItemFile),
+}
+
+fn item(item: ItemFile) -> Item {
+    match item {
+        ItemFile::Letter => Item::Letter,
+    }
+}
+
+impl From<StepFile> for Step {
+    fn from(step: StepFile) -> Self {
+        let goal = match step.goal {
+            GoalFile::Talk(npc) => Goal::Talk(npc.into()),
+            GoalFile::TakeHorse => Goal::TakeHorse,
+        };
+        let scene = step
+            .scene
+            .into_iter()
+            .map(|beat| match beat {
+                BeatFile::Say(who, text) => Beat::Line {
+                    speaker: match who {
+                        Who::Lisandro => Speaker::Protagonist,
+                        Who::Hidalgo => Speaker::Npc(Npc::Hidalgo),
+                        Who::Farach => Speaker::Npc(Npc::Farach),
+                    },
+                    text,
+                },
+                // Los centavos de más se validan después (ver `validate`).
+                BeatFile::Earn { pesos, centavos } => Beat::Act(Action::Earn(Money(
+                    pesos.saturating_mul(100).saturating_add(centavos),
+                ))),
+                BeatFile::Receive(i) => Beat::Act(Action::Receive(item(i))),
+                BeatFile::HandOver(i) => Beat::Act(Action::HandOver(item(i))),
+            })
+            .collect();
+        Self {
+            goal,
+            objective: step.objective,
+            scene,
+        }
+    }
+}
+
 impl ErrandLines {
-    /// Interpreta y valida el texto RON de un archivo de encargo.
+    /// Interpreta y valida el texto RON de un archivo de historia.
     pub fn parse(text: &str) -> Result<Self, ContentError> {
-        let lines: Self = ron::from_str(text).map_err(ContentError::Parse)?;
+        let file: File = ron::from_str(text).map_err(ContentError::Parse)?;
+        let lines = Self {
+            not_your_horse: file.not_your_horse,
+            police_town: file.police_town,
+            steps: file.steps.into_iter().map(Step::from).collect(),
+        };
         lines.validate()?;
         Ok(lines)
     }
 
-    /// Lee, interpreta y valida el archivo de encargo en `path`.
+    /// Lee, interpreta y valida el archivo de historia en `path`.
     pub fn load(path: &Path) -> Result<Self, ContentError> {
         let text = std::fs::read_to_string(path).map_err(|source| ContentError::Io {
             path: path.to_path_buf(),
@@ -56,48 +171,140 @@ impl ErrandLines {
         Self::parse(&text)
     }
 
-    /// Las líneas compiladas en el juego, que se usan cuando el archivo falta o
-    /// no es válido.
+    /// La historia compilada en el juego, que se usa cuando el archivo falta o
+    /// no es válido: los mismos pasos, con menos líneas.
     pub fn builtin() -> Self {
-        let own = |lines: &[&str]| lines.iter().map(|l| l.to_string()).collect();
+        let say = |npc, text: &str| Beat::Line {
+            speaker: Speaker::Npc(npc),
+            text: text.into(),
+        };
         Self {
-            hidalgo: own(&[
-                "Acá en Monte Nievas no hay comisaría.",
-                "Preséntese en la comisaría de Castex.",
-                "Lo espera el comisario Elías Farach.",
-                "Llévese mi caballo, el del almacén.",
-            ]),
-            not_your_horse: own(&["Este caballo no es mío."]),
-            farach: own(&["¿Lo manda Don Hidalgo?", "Bienvenido a Castex."]),
+            not_your_horse: vec!["Este caballo no es mío.".into()],
             police_town: default_police_town(),
+            steps: vec![
+                Step {
+                    goal: Goal::Talk(Npc::Hidalgo),
+                    objective: "Buscá a Don Hidalgo en la plaza".into(),
+                    scene: vec![
+                        say(
+                            Npc::Hidalgo,
+                            "En estos pagos quien manda es Farach, el comisario de Castex.",
+                        ),
+                        say(Npc::Hidalgo, "Llévele esta carta y tome mi caballo."),
+                        Beat::Act(Action::Receive(Item::Letter)),
+                        Beat::Act(Action::Earn(Money::new(3, 0))),
+                    ],
+                },
+                Step {
+                    goal: Goal::TakeHorse,
+                    objective: "Tomá el caballo de Don Hidalgo".into(),
+                    scene: vec![],
+                },
+                Step {
+                    goal: Goal::Talk(Npc::Farach),
+                    objective: "Presentate al comisario Farach en {town}".into(),
+                    scene: vec![
+                        Beat::Act(Action::HandOver(Item::Letter)),
+                        say(
+                            Npc::Farach,
+                            "Quedate cerca que a la noche te devuelvo tus papeles firmados.",
+                        ),
+                    ],
+                },
+            ],
         }
     }
 
-    /// Comprueba que cada secuencia tenga líneas, y que cada línea (y el nombre
-    /// del pueblo de la comisaría) no esté en blanco y tenga como máximo
-    /// [`crate::MAX_LINE_CHARS`] caracteres.
+    /// Comprueba que haya pasos y que `not_your_horse` tenga líneas; que
+    /// ninguna línea, objetivo ni el nombre del pueblo esté en blanco; que
+    /// cada línea tenga como máximo [`STORY_LINE_CHARS`] caracteres y cada
+    /// objetivo (con el pueblo puesto) como máximo [`OBJECTIVE_CHARS`]; y que
+    /// la plata dada tenga menos de 100 centavos sueltos.
     pub fn validate(&self) -> Result<(), ContentError> {
-        check_pools(&self.pools())
+        let fail = |part: String, reason: String| Err(ContentError::Story { part, reason });
+        if self.police_town.trim().is_empty() {
+            return fail("police_town".into(), "is blank".into());
+        }
+        if self.not_your_horse.is_empty() {
+            return fail("not_your_horse".into(), "has no lines".into());
+        }
+        if self.steps.is_empty() {
+            return fail("steps".into(), "has no steps".into());
+        }
+        for (index, line) in self.not_your_horse.iter().enumerate() {
+            check_line(line)
+                .or_else(|reason| fail(format!("not_your_horse line {index}"), reason))?;
+        }
+        for (s, step) in self.steps.iter().enumerate() {
+            let objective = step.objective_in(&self.police_town);
+            let chars = objective.chars().count();
+            if objective.trim().is_empty() {
+                return fail(format!("step {s} objective"), "is blank".into());
+            }
+            if chars > OBJECTIVE_CHARS {
+                return fail(
+                    format!("step {s} objective"),
+                    format!("has {chars} characters (max {OBJECTIVE_CHARS})"),
+                );
+            }
+            for (b, beat) in step.scene.iter().enumerate() {
+                let part = || format!("step {s} beat {b}");
+                match beat {
+                    Beat::Line { text, .. } => {
+                        check_line(text).or_else(|reason| fail(part(), reason))?
+                    }
+                    Beat::Act(Action::Earn(amount)) if amount.0 == 0 => {
+                        return fail(part(), "earns nothing".into());
+                    }
+                    Beat::Act(_) => {}
+                }
+            }
+        }
+        Ok(())
     }
 
-    /// Cada carácter distinto de cualquier línea que `supported` rechaza, en
-    /// orden de primera aparición.
+    /// Cada carácter distinto de cualquier texto que se muestra (líneas,
+    /// objetivos y el nombre del pueblo) que `supported` rechaza, en orden de
+    /// primera aparición.
     pub fn unsupported_chars(&self, supported: impl Fn(char) -> bool) -> Vec<char> {
-        unsupported_in(&self.pools(), supported)
+        let mut found = Vec::new();
+        for c in self.texts().flat_map(str::chars) {
+            if !supported(c) && !found.contains(&c) {
+                found.push(c);
+            }
+        }
+        found
     }
 
-    /// Cada secuencia con el nombre que tiene en el archivo.
-    fn pools(&self) -> [(&'static str, &[String]); 4] {
-        [
-            ("hidalgo", &self.hidalgo),
-            ("not_your_horse", &self.not_your_horse),
-            ("farach", &self.farach),
-            ("police_town", std::slice::from_ref(&self.police_town)),
-        ]
+    /// Cada texto que se muestra, en orden.
+    fn texts(&self) -> impl Iterator<Item = &str> {
+        let steps = self.steps.iter().flat_map(|step| {
+            std::iter::once(step.objective.as_str()).chain(step.scene.iter().filter_map(|beat| {
+                match beat {
+                    Beat::Line { text, .. } => Some(text.as_str()),
+                    Beat::Act(_) => None,
+                }
+            }))
+        });
+        std::iter::once(self.police_town.as_str())
+            .chain(self.not_your_horse.iter().map(String::as_str))
+            .chain(steps)
     }
 }
 
-/// Carga el archivo de encargo en `path` y recurre a [`ErrandLines::builtin`]
+/// Por qué una línea no se puede mostrar, si no se puede.
+fn check_line(line: &str) -> Result<(), String> {
+    let chars = line.chars().count();
+    if line.trim().is_empty() {
+        Err("is blank".into())
+    } else if chars > STORY_LINE_CHARS {
+        Err(format!("has {chars} characters (max {STORY_LINE_CHARS})"))
+    } else {
+        Ok(())
+    }
+}
+
+/// Carga el archivo de historia en `path` y recurre a [`ErrandLines::builtin`]
 /// si falla. El error, si lo hay, se devuelve para que quien llama pueda
 /// registrarlo.
 pub fn load_errand_or_builtin(path: &Path) -> (ErrandLines, Option<ContentError>) {
@@ -110,59 +317,73 @@ pub fn load_errand_or_builtin(path: &Path) -> (ErrandLines, Option<ContentError>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{MAX_LINE_CHARS, asset_path};
+    use crate::asset_path;
 
     const SHIPPED: &str = include_str!("../../../assets/dialogue/errand.ron");
 
-    fn every_line(lines: &ErrandLines) -> impl Iterator<Item = &String> {
-        lines
-            .hidalgo
+    /// Las líneas de la escena de `step`, con el nombre de quien las dice.
+    fn lines_of(step: &Step) -> Vec<(&'static str, &str)> {
+        step.scene
             .iter()
-            .chain(&lines.not_your_horse)
-            .chain(&lines.farach)
+            .filter_map(|beat| match beat {
+                Beat::Line { speaker, text } => Some((speaker.name(), text.as_str())),
+                Beat::Act(_) => None,
+            })
+            .collect()
     }
 
+    /// Un archivo mínimo con `steps` como pasos.
+    fn file(steps: &str) -> String {
+        format!(r#"(not_your_horse: ["b"], steps: [{steps}])"#)
+    }
+
+    const STEP: &str = r#"(goal: Talk(Hidalgo), objective: "o", scene: [Say(Hidalgo, "a")])"#;
+
     #[test]
-    fn the_shipped_file_tells_the_errand_in_short_lines() {
+    fn the_shipped_file_tells_acts_two_and_three_in_order() {
         let lines = ErrandLines::parse(SHIPPED).expect("shipped errand.ron is valid");
-        assert!(
-            (3..=8).contains(&lines.hidalgo.len()),
-            "{:?}",
-            lines.hidalgo
+        let goals: Vec<Goal> = lines.steps.iter().map(|s| s.goal).collect();
+        assert_eq!(
+            goals,
+            [
+                Goal::Talk(Npc::Hidalgo),
+                Goal::TakeHorse,
+                Goal::Talk(Npc::Farach)
+            ]
         );
-        assert!((2..=6).contains(&lines.farach.len()), "{:?}", lines.farach);
-        assert!(!lines.not_your_horse.is_empty());
-        for line in every_line(&lines) {
-            assert!(line.chars().count() <= MAX_LINE_CHARS, "{line}");
-            assert_eq!(line.trim(), line, "no stray spaces: {line:?}");
-            for banned in ['"', ';', '(', ')'] {
-                assert!(!line.contains(banned), "{line}");
-            }
-        }
-        // La historia: no hay policía en Monte Nievas; hay que presentarse ante
-        // Farach en la comisaría de Castex, en el caballo de Don Hidalgo, del
-        // almacén de ramos generales.
-        let hidalgo = lines.hidalgo.join(" ");
-        for needed in ["comisaría", "Castex", "Farach", "caballo", "almacén"] {
-            assert!(hidalgo.contains(needed), "Hidalgo never says {needed}");
-        }
-        assert!(lines.farach.join(" ").contains("Hidalgo"));
         assert_eq!(lines.police_town, "Eduardo Castex");
+        assert!(!lines.not_your_horse.is_empty());
+        // Acto 2: no hay policía en Monte Nievas; quien manda es Farach, en la
+        // comisaría de Castex; el caballo de Don Hidalgo está en el almacén.
+        let hidalgo = lines_of(&lines.steps[0]);
+        assert!(hidalgo.iter().all(|(who, _)| *who == "Don Hidalgo"));
+        let said: String = hidalgo
+            .iter()
+            .map(|(_, t)| *t)
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(said.contains("en estos pagos quien manda es Farach, el comisario de Castex"));
+        for needed in ["comisaría", "caballo", "almacén", "carta"] {
+            assert!(said.contains(needed), "Hidalgo never says {needed}");
+        }
+        assert!(lines.steps[1].scene.is_empty());
+        for line in lines.texts() {
+            assert_eq!(line.trim(), line, "no stray spaces: {line:?}");
+        }
     }
 
     #[test]
     fn the_police_town_defaults_when_the_file_does_not_name_it() {
-        let lines = ErrandLines::parse(r#"(hidalgo: ["a"], not_your_horse: ["b"], farach: ["c"])"#)
-            .unwrap();
+        let lines = ErrandLines::parse(&file(STEP)).unwrap();
         assert_eq!(lines.police_town, DEFAULT_POLICE_TOWN);
-        let named = ErrandLines::parse(
-            r#"(hidalgo: ["a"], not_your_horse: ["b"], farach: ["c"], police_town: "General Pico")"#,
-        )
+        let named = ErrandLines::parse(&format!(
+            r#"(police_town: "General Pico", not_your_horse: ["b"], steps: [{STEP}])"#
+        ))
         .unwrap();
         assert_eq!(named.police_town, "General Pico");
-        let blank = ErrandLines::parse(
-            r#"(hidalgo: ["a"], not_your_horse: ["b"], farach: ["c"], police_town: " ")"#,
-        )
+        let blank = ErrandLines::parse(&format!(
+            r#"(police_town: " ", not_your_horse: ["b"], steps: [{STEP}])"#
+        ))
         .expect_err("a blank town");
         assert!(blank.to_string().contains("police_town"), "{blank}");
     }
@@ -177,26 +398,69 @@ mod tests {
     }
 
     #[test]
+    fn a_step_reads_its_goal_objective_lines_and_actions() {
+        let lines = ErrandLines::parse(&file(
+            r#"(goal: Talk(Farach), objective: "Ver a Farach en {town}", scene: [
+                Say(Lisandro, "Buenas"), Say(Farach, "¿Y vos?"), Receive(Letter),
+                Earn(pesos: 2, centavos: 50), HandOver(Letter)]),
+               (goal: TakeHorse, objective: "Caballo")"#,
+        ))
+        .unwrap();
+        let step = &lines.steps[0];
+        assert_eq!(step.goal, Goal::Talk(Npc::Farach));
+        assert_eq!(step.objective_in("Castex"), "Ver a Farach en Castex");
+        assert_eq!(
+            lines_of(step),
+            [("Lisandro", "Buenas"), ("Farach", "¿Y vos?")]
+        );
+        assert_eq!(
+            step.scene[2..],
+            [
+                Beat::Act(Action::Receive(Item::Letter)),
+                Beat::Act(Action::Earn(Money::new(2, 50))),
+                Beat::Act(Action::HandOver(Item::Letter)),
+            ]
+        );
+        assert_eq!(lines.steps[1].goal, Goal::TakeHorse);
+        assert!(lines.steps[1].scene.is_empty());
+    }
+
+    #[test]
     fn invalid_content_is_rejected() {
-        let long = "x".repeat(MAX_LINE_CHARS + 1);
-        let ok = "y".repeat(MAX_LINE_CHARS);
-        let file = |h: &str, n: &str, f: &str| {
-            format!("(hidalgo: [{h}], not_your_horse: [{n}], farach: [{f}])")
+        let long = "x".repeat(STORY_LINE_CHARS + 1);
+        let ok = "y".repeat(STORY_LINE_CHARS);
+        let say = |text: &str| {
+            file(&format!(
+                r#"(goal: TakeHorse, objective: "o", scene: [Say(Lisandro, "{text}")])"#
+            ))
         };
-        assert!(ErrandLines::parse(&file(&format!("\"{ok}\""), "\"b\"", "\"c\"")).is_ok());
+        assert!(ErrandLines::parse(&say(&ok)).is_ok());
         let cases = [
-            (file("", "\"b\"", "\"c\""), "`hidalgo` has no lines"),
-            (file("\"a\"", "", "\"c\""), "`not_your_horse` has no lines"),
-            (file("\"a\"", "\"b\"", ""), "`farach` has no lines"),
+            (file(""), "has no steps"),
             (
-                file("\"a\"", "\"b\"", "\"c\", \" \""),
-                "line 1 of `farach` is blank",
+                format!(r#"(not_your_horse: [], steps: [{STEP}])"#),
+                "`not_your_horse`: has no lines",
+            ),
+            (say(" "), "`step 0 beat 0`: is blank"),
+            (say(&long), "has 101 characters (max 100)"),
+            (
+                file(r#"(goal: TakeHorse, objective: "")"#),
+                "`step 0 objective`: is blank",
             ),
             (
-                file(&format!("\"a\", \"{long}\""), "\"b\"", "\"c\""),
-                "41 characters",
+                file(
+                    r#"(goal: TakeHorse, objective: "Presentate al comisario Farach en {town} ya")"#,
+                ),
+                "characters (max 48)",
             ),
-            ("(hidalgo: [\"a\"])".to_string(), "invalid RON"),
+            (
+                file(r#"(goal: TakeHorse, objective: "o", scene: [Earn()])"#),
+                "earns nothing",
+            ),
+            (
+                file(r#"(goal: Talk(Lisandro), objective: "o")"#),
+                "invalid RON",
+            ),
             (String::new(), "invalid RON"),
         ];
         for (text, message) in cases {
@@ -206,27 +470,29 @@ mod tests {
     }
 
     #[test]
-    fn missing_or_broken_files_fall_back_to_the_builtin_lines() {
+    fn missing_or_broken_files_fall_back_to_the_builtin_story() {
         let builtin = ErrandLines::builtin();
-        builtin.validate().expect("builtin lines are valid");
+        builtin.validate().expect("the builtin story is valid");
         let (lines, error) = load_errand_or_builtin(Path::new("no/such/dir/errand.ron"));
         assert_eq!(lines, builtin);
         assert!(matches!(error, Some(ContentError::Io { .. })));
         let (lines, error) = load_errand_or_builtin(&asset_path(crate::BUMPS_FILE));
-        assert_eq!(lines, builtin, "a bumps file is not an errand file");
+        assert_eq!(lines, builtin, "a bumps file is not a story file");
         assert!(matches!(error, Some(ContentError::Parse(_))));
     }
 
     #[test]
     fn reports_characters_outside_a_supported_set() {
-        let lines =
-            ErrandLines::parse(r#"(hidalgo: ["ab#"], not_your_horse: ["a"], farach: ["~b#"])"#)
-                .unwrap();
+        let lines = ErrandLines::parse(
+            r##"(not_your_horse: ["a"], steps: [(goal: TakeHorse, objective: "o~",
+                scene: [Say(Farach, "ab#")])])"##,
+        )
+        .unwrap();
         assert_eq!(
             // El nombre del pueblo de la comisaría por defecto tiene un
             // espacio.
             lines.unsupported_chars(|c| c.is_ascii_alphabetic() || c == ' '),
-            ['#', '~']
+            ['~', '#']
         );
         assert!(lines.unsupported_chars(|_| true).is_empty());
     }

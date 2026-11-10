@@ -89,7 +89,7 @@ impl Coat {
     ];
 
     /// El caballo de Don Hidalgo, el que monta el jugador.
-    pub const HIDALGO: Self = Self::Bayo;
+    pub const HIDALGO: Self = Self::Alazan;
 
     /// Un pelaje elegido de forma determinista a partir de `seed`.
     pub fn seeded(seed: u32) -> Self {
@@ -1055,8 +1055,8 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn coats_are_seeded_deterministically_and_hidalgo_rides_a_bayo() {
-        assert_eq!(Coat::HIDALGO, Coat::Bayo);
+    fn coats_are_seeded_deterministically_and_hidalgo_rides_an_alazan() {
+        assert_eq!(Coat::HIDALGO, Coat::Alazan);
         for seed in 0..50 {
             assert_eq!(Coat::seeded(seed), Coat::seeded(seed));
         }

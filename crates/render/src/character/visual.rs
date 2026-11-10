@@ -253,7 +253,7 @@ mod tests {
         assert_eq!(children.len(), 1, "one horse-and-rider visual");
         let horse = children[0];
         let body = app.world().get::<HorseBody>(horse).unwrap();
-        assert_eq!(body.coat, Coat::Bayo);
+        assert_eq!(body.coat, Coat::HIDALGO);
         assert_eq!(body.rider, Some(FigureKind::Protagonist));
         assert!(body.never_freezes(), "the player's horse");
         let model = app.world().get::<Children>(horse).unwrap()[0];

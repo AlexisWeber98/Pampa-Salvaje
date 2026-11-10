@@ -3,12 +3,12 @@
 //! comisaría de otro pueblo, y le presta el caballo atado en el almacén de
 //! ramos generales para el viaje.
 //!
-//! Reglas puras: dónde está cada personaje, las etapas en orden y qué
-//! interacción está al alcance. Cada etapa es una variante de [`ErrandStage`],
-//! así que un encargo nunca puede estar a la vez en "habló con Hidalgo" y "no
-//! habló", y cada transición ocurre una sola vez: solo sucede desde la etapa
-//! anterior a ella.
+//! Reglas puras: dónde está cada personaje, los pasos de la historia en orden
+//! ([`Step`], escritos como datos por el guion) y qué interacción está al
+//! alcance. Hay un solo paso pendiente a la vez, y cada paso se cumple una
+//! sola vez: solo su objetivo lo hace avanzar al siguiente.
 
+use crate::story::{Beat, Goal, Step};
 use crate::{Aabb, Heading, TetheredHorse, TownLayout, Vec2};
 
 /// Quién participa en el encargo.
@@ -19,6 +19,19 @@ pub enum Npc {
     /// El comisario Elías Farach, en la puerta de su comisaría.
     Farach,
 }
+
+impl Npc {
+    /// El nombre con que lo rotula un subtítulo.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Hidalgo => "Don Hidalgo",
+            Self::Farach => "Farach",
+        }
+    }
+}
+
+/// El nombre del protagonista, con que lo rotula un subtítulo.
+pub const PROTAGONIST: &str = "Lisandro";
 
 /// Dónde está un personaje del encargo, de forma permanente.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -37,63 +50,62 @@ impl Standing {
     }
 }
 
-/// Qué tan avanzado está el encargo.
+/// Qué pide el paso actual de la historia (ver [`Goal`]), o que la historia
+/// terminó.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ErrandStage {
-    /// Encontrar a Don Hidalgo en la plaza y hablar con él.
-    MeetHidalgo,
-    /// Tomar el caballo de Don Hidalgo, atado en el almacén de ramos generales.
+    /// Hablar con alguien.
+    Talk(Npc),
+    /// Montar el caballo de Don Hidalgo.
     TakeHorse,
-    /// Cabalgar hasta el otro pueblo y presentarse ante el comisario Farach.
-    ReportToFarach,
-    /// Presentado: no queda nada por hacer.
+    /// No queda ningún paso: el gancho para los actos siguientes, que se
+    /// agregan como pasos en el archivo de la historia.
     Done,
 }
 
+#[allow(non_upper_case_globals)]
 impl ErrandStage {
-    /// El objetivo de una línea que se muestra en pantalla para esta etapa, en
-    /// español, para un encargo ante el comisario de `police_town`; `None` una
-    /// vez terminado.
-    pub fn objective(self, police_town: &str) -> Option<String> {
-        match self {
-            Self::MeetHidalgo => Some("Buscá a Don Hidalgo en la plaza".into()),
-            Self::TakeHorse => Some("Tomá el caballo de Don Hidalgo".into()),
-            Self::ReportToFarach => {
-                Some(format!("Presentate al comisario Farach en {police_town}"))
-            }
-            Self::Done => None,
+    /// El primer paso del capítulo 1: buscar a Don Hidalgo en la plaza.
+    pub const MeetHidalgo: Self = Self::Talk(Npc::Hidalgo);
+}
+
+impl From<Option<Goal>> for ErrandStage {
+    fn from(goal: Option<Goal>) -> Self {
+        match goal {
+            Some(Goal::Talk(npc)) => Self::Talk(npc),
+            Some(Goal::TakeHorse) => Self::TakeHorse,
+            None => Self::Done,
         }
     }
 }
 
-/// Algo que hizo avanzar el encargo. Cada uno ocurre como mucho una vez.
+/// Algo que hizo avanzar el encargo: se cumplió el objetivo de un paso.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ErrandEvent {
-    /// Habló con Don Hidalgo: mandó al jugador a ver a Farach y le prestó el
-    /// caballo.
-    TalkedToHidalgo,
-    /// Montó el caballo de Don Hidalgo.
+    /// Habló con alguien.
+    Talked(Npc),
+    /// Montó el caballo de Don Hidalgo: desde entonces es del jugador.
     MountedHorse,
-    /// Se presentó ante el comisario Farach: el encargo está terminado.
-    ReportedToFarach,
 }
 
 /// Lo que hizo apretar la tecla de interacción.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Interaction {
-    /// El encargo avanzó.
+    /// El encargo avanzó un paso (su escena está en [`Errand::last_scene`]).
     Event(ErrandEvent),
-    /// Junto al caballo de Don Hidalgo antes de hablar con él: no le
+    /// Junto al caballo de Don Hidalgo antes de que lo preste: no le
     /// corresponde al jugador llevárselo.
     NotYourHorse,
     /// No hay nada al alcance con lo que interactuar.
     Nothing,
 }
 
-/// El encargo: quién está dónde, el caballo y la etapa actual.
+/// El encargo: quién está dónde, el caballo y los pasos de la historia.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Errand {
-    stage: ErrandStage,
+    steps: Vec<Step>,
+    /// Índice del paso pendiente; `steps.len()` una vez terminada la historia.
+    at: usize,
     hidalgo: Standing,
     farach: Standing,
     /// Pueblo del caballo, y el caballo.
@@ -121,6 +133,8 @@ impl Errand {
     /// en su almacén de ramos generales) hasta el pueblo `police` (Farach en la
     /// puerta de su primera comisaría). `None` si falta alguno de los pueblos,
     /// si son el mismo pueblo o si `police` no tiene comisaría.
+    ///
+    /// Empieza sin pasos (terminado); [`Self::with_story`] le da la historia.
     pub fn new(towns: &[TownLayout], giver: usize, police: usize) -> Option<Self> {
         if giver == police {
             return None;
@@ -129,7 +143,8 @@ impl Errand {
         let (door, facing) = away.police_door()?;
         let (spot, heading) = home.plaza_spot();
         Some(Self {
-            stage: ErrandStage::MeetHidalgo,
+            steps: Vec::new(),
+            at: 0,
             hidalgo: Standing {
                 town: giver,
                 position: spot,
@@ -143,6 +158,15 @@ impl Errand {
             horse: (giver, home.hitching_post.horse),
             police_name: away.name.clone(),
         })
+    }
+
+    /// El encargo con los pasos `steps`, desde el primero.
+    pub fn with_story(self, steps: Vec<Step>) -> Self {
+        Self {
+            steps,
+            at: 0,
+            ..self
+        }
     }
 
     /// El pueblo al que un encargo desde el pueblo `giver` manda al jugador: el
@@ -170,8 +194,26 @@ impl Errand {
             .map(|(i, _)| i)
     }
 
+    /// Qué pide el paso pendiente.
     pub fn stage(&self) -> ErrandStage {
-        self.stage
+        self.goal().into()
+    }
+
+    /// El paso pendiente; `None` una vez terminada la historia.
+    pub fn step(&self) -> Option<&Step> {
+        self.steps.get(self.at)
+    }
+
+    fn goal(&self) -> Option<Goal> {
+        self.step().map(|s| s.goal)
+    }
+
+    /// La escena del último paso cumplido (vacía antes del primero).
+    pub fn last_scene(&self) -> &[Beat] {
+        self.at
+            .checked_sub(1)
+            .and_then(|i| self.steps.get(i))
+            .map_or(&[], |s| &s.scene)
     }
 
     /// Nombre del pueblo al que el encargo manda al jugador, el de Farach.
@@ -179,9 +221,10 @@ impl Errand {
         &self.police_name
     }
 
-    /// El objetivo de la etapa actual (ver [`ErrandStage::objective`]).
+    /// El objetivo del paso pendiente, con el pueblo de la comisaría en lugar
+    /// de `{town}`; `None` una vez terminada la historia.
     pub fn objective(&self) -> Option<String> {
-        self.stage.objective(&self.police_name)
+        self.step().map(|s| s.objective_in(&self.police_name))
     }
 
     /// Dónde está `npc`.
@@ -209,14 +252,12 @@ impl Errand {
         self.horse
     }
 
-    /// Adónde manda al jugador la etapa actual: a Don Hidalgo, después a su
-    /// caballo y después a Farach; `None` una vez terminado.
+    /// Adónde manda al jugador el paso pendiente: a quien tiene que hablarle o
+    /// al caballo; `None` una vez terminada la historia.
     pub fn target(&self) -> Option<Vec2> {
-        match self.stage {
-            ErrandStage::MeetHidalgo => Some(self.hidalgo.position),
-            ErrandStage::TakeHorse => Some(self.horse.1.position),
-            ErrandStage::ReportToFarach => Some(self.farach.position),
-            ErrandStage::Done => None,
+        match self.goal()? {
+            Goal::Talk(npc) => Some(self.standing(npc).position),
+            Goal::TakeHorse => Some(self.horse.1.position),
         }
     }
 
@@ -230,75 +271,67 @@ impl Errand {
         ]
     }
 
-    /// Habla con `npc` desde `at`: solo si está al alcance, y solo en la etapa
-    /// que lo espera.
-    pub fn talk(&mut self, npc: Npc, at: Vec2) -> Option<ErrandEvent> {
-        let (due, range, next, event) = match npc {
-            Npc::Hidalgo => (
-                ErrandStage::MeetHidalgo,
-                Self::TALK_RANGE,
-                ErrandStage::TakeHorse,
-                ErrandEvent::TalkedToHidalgo,
-            ),
-            Npc::Farach => (
-                ErrandStage::ReportToFarach,
-                Self::REPORT_RANGE,
-                ErrandStage::Done,
-                ErrandEvent::ReportedToFarach,
-            ),
-        };
-        let near = at.distance(self.standing(npc).position) <= range;
-        self.advance(due, near, next, event)
+    /// Hasta dónde se le puede hablar a `npc`, en metros: a Farach también
+    /// desde la montura.
+    pub fn talk_range(npc: Npc) -> f32 {
+        match npc {
+            Npc::Hidalgo => Self::TALK_RANGE,
+            Npc::Farach => Self::REPORT_RANGE,
+        }
     }
 
-    /// Monta el caballo desde `at`: solo si está al alcance, y solo una vez que
-    /// Don Hidalgo lo prestó.
+    /// Habla con `npc` desde `at`: solo si está al alcance, y solo si el paso
+    /// pendiente lo pide.
+    pub fn talk(&mut self, npc: Npc, at: Vec2) -> Option<ErrandEvent> {
+        let near = at.distance(self.standing(npc).position) <= Self::talk_range(npc);
+        self.advance(Goal::Talk(npc), near, ErrandEvent::Talked(npc))
+    }
+
+    /// Monta el caballo desde `at`: solo si está al alcance, y solo si el paso
+    /// pendiente lo pide (Don Hidalgo ya lo prestó).
     pub fn mount(&mut self, at: Vec2) -> Option<ErrandEvent> {
         let near = self.near_horse(at);
-        self.advance(
-            ErrandStage::TakeHorse,
-            near,
-            ErrandStage::ReportToFarach,
-            ErrandEvent::MountedHorse,
-        )
+        self.advance(Goal::TakeHorse, near, ErrandEvent::MountedHorse)
     }
 
     /// Aprieta la tecla de interacción en `at`: habla o monta, lo que esté al
     /// alcance y corresponda.
     pub fn interact(&mut self, at: Vec2) -> Interaction {
-        let event = match self.stage {
-            ErrandStage::MeetHidalgo => self.talk(Npc::Hidalgo, at),
-            ErrandStage::TakeHorse => self.mount(at),
-            ErrandStage::ReportToFarach => self.talk(Npc::Farach, at),
-            ErrandStage::Done => None,
+        let event = match self.goal() {
+            Some(Goal::Talk(npc)) => self.talk(npc, at),
+            Some(Goal::TakeHorse) => self.mount(at),
+            None => None,
         };
         match event {
             Some(event) => Interaction::Event(event),
-            None if self.stage == ErrandStage::MeetHidalgo && self.near_horse(at) => {
+            None if self.horse_still_lent_later() && self.near_horse(at) => {
                 Interaction::NotYourHorse
             }
             None => Interaction::Nothing,
         }
     }
 
+    /// Si algún paso que todavía no llegó (no el pendiente) pide tomar el
+    /// caballo: hasta entonces no es del jugador.
+    fn horse_still_lent_later(&self) -> bool {
+        self.steps
+            .iter()
+            .skip(self.at + 1)
+            .any(|s| s.goal == Goal::TakeHorse)
+    }
+
     fn near_horse(&self, at: Vec2) -> bool {
         at.distance(self.horse.1.position) <= Self::MOUNT_RANGE
     }
 
-    /// Pasa de la etapa `due` a `next` cuando `near`, informando `event`; desde
-    /// cualquier otra etapa no pasa nada, así que cada evento ocurre una sola
-    /// vez.
-    fn advance(
-        &mut self,
-        due: ErrandStage,
-        near: bool,
-        next: ErrandStage,
-        event: ErrandEvent,
-    ) -> Option<ErrandEvent> {
-        if self.stage != due || !near {
+    /// Pasa al paso siguiente cuando el pendiente pide `due` y `near`,
+    /// informando `event`; si no, no pasa nada, así que cada paso se cumple una
+    /// sola vez.
+    fn advance(&mut self, due: Goal, near: bool, event: ErrandEvent) -> Option<ErrandEvent> {
+        if self.goal() != Some(due) || !near {
             return None;
         }
-        self.stage = next;
+        self.at += 1;
         Some(event)
     }
 }
@@ -328,9 +361,41 @@ mod tests {
         vec![giver, police]
     }
 
+    /// La historia del capítulo 1 en pocas palabras: hablar con Hidalgo (que
+    /// dice algo y da plata), tomar su caballo y presentarse ante Farach.
+    fn story() -> Vec<Step> {
+        use crate::story::{Action, Speaker};
+        let line = |npc, text: &str| Beat::Line {
+            speaker: Speaker::Npc(npc),
+            text: text.into(),
+        };
+        vec![
+            Step {
+                goal: Goal::Talk(Npc::Hidalgo),
+                objective: "Buscá a Don Hidalgo".into(),
+                scene: vec![
+                    line(Npc::Hidalgo, "Hola"),
+                    Beat::Act(Action::Earn(crate::Money::new(2, 0))),
+                ],
+            },
+            Step {
+                goal: Goal::TakeHorse,
+                objective: "Tomá el caballo".into(),
+                scene: vec![],
+            },
+            Step {
+                goal: Goal::Talk(Npc::Farach),
+                objective: "Presentate al comisario Farach en {town}".into(),
+                scene: vec![line(Npc::Farach, "Buenas")],
+            },
+        ]
+    }
+
     fn errand() -> (Vec<TownLayout>, Errand) {
         let towns = towns();
-        let errand = Errand::new(&towns, 0, 1).expect("a valid errand");
+        let errand = Errand::new(&towns, 0, 1)
+            .expect("a valid errand")
+            .with_story(story());
         (towns, errand)
     }
 
@@ -450,7 +515,7 @@ mod tests {
 
         assert_eq!(
             e.talk(Npc::Hidalgo, east(hidalgo, 2.5)),
-            Some(ErrandEvent::TalkedToHidalgo)
+            Some(ErrandEvent::Talked(Npc::Hidalgo))
         );
         assert_eq!(e.stage(), ErrandStage::TakeHorse);
         assert_eq!(e.target(), Some(horse));
@@ -458,13 +523,13 @@ mod tests {
         assert_eq!(e.talk(Npc::Farach, farach), None);
 
         assert_eq!(e.mount(east(horse, 2.0)), Some(ErrandEvent::MountedHorse));
-        assert_eq!(e.stage(), ErrandStage::ReportToFarach);
+        assert_eq!(e.stage(), ErrandStage::Talk(Npc::Farach));
         assert_eq!(e.target(), Some(farach));
         assert_eq!(e.mount(horse), None, "only once");
 
         assert_eq!(
             e.talk(Npc::Farach, east(farach, 3.5)),
-            Some(ErrandEvent::ReportedToFarach)
+            Some(ErrandEvent::Talked(Npc::Farach))
         );
         assert_eq!(e.stage(), ErrandStage::Done);
         assert_eq!(e.target(), None);
@@ -497,7 +562,7 @@ mod tests {
             e.talk(Npc::Farach, east(farach, Errand::REPORT_RANGE + 0.1)),
             None
         );
-        assert_eq!(e.stage(), ErrandStage::ReportToFarach);
+        assert_eq!(e.stage(), ErrandStage::Talk(Npc::Farach));
         assert!(
             e.talk(Npc::Farach, east(farach, Errand::REPORT_RANGE - 0.1))
                 .is_some()
@@ -519,7 +584,7 @@ mod tests {
         assert_eq!(e.stage(), ErrandStage::MeetHidalgo);
         assert_eq!(
             e.interact(hidalgo),
-            Interaction::Event(ErrandEvent::TalkedToHidalgo)
+            Interaction::Event(ErrandEvent::Talked(Npc::Hidalgo))
         );
         assert_eq!(e.interact(hidalgo), Interaction::Nothing);
         assert_eq!(
@@ -529,34 +594,36 @@ mod tests {
         assert_eq!(e.interact(horse), Interaction::Nothing);
         assert_eq!(
             e.interact(farach),
-            Interaction::Event(ErrandEvent::ReportedToFarach)
+            Interaction::Event(ErrandEvent::Talked(Npc::Farach))
         );
         assert_eq!(e.interact(farach), Interaction::Nothing);
         assert_eq!(e.stage(), ErrandStage::Done);
     }
 
     #[test]
-    fn every_stage_but_the_last_has_a_short_spanish_objective() {
-        use ErrandStage::*;
-        let town = "Eduardo Castex";
-        for stage in [MeetHidalgo, TakeHorse, ReportToFarach] {
-            let text = stage.objective(town).expect("an objective");
-            assert!(
-                !text.trim().is_empty() && text.chars().count() <= 48,
-                "{text}"
-            );
-        }
-        assert!(MeetHidalgo.objective(town).unwrap().contains("Hidalgo"));
-        assert!(TakeHorse.objective(town).unwrap().contains("caballo"));
-        assert!(ReportToFarach.objective(town).unwrap().contains("Farach"));
-        assert_eq!(Done.objective(town), None);
+    fn each_step_plays_its_own_scene_and_without_steps_there_is_nothing_to_do() {
+        let (towns, mut e) = errand();
+        assert_eq!(e.last_scene(), &[]);
+        let hidalgo = e.standing(Npc::Hidalgo).position;
+        e.talk(Npc::Hidalgo, hidalgo);
+        assert_eq!(e.last_scene(), &story()[0].scene[..]);
+        e.mount(e.horse().1.position);
+        assert_eq!(e.last_scene(), &[], "taking the horse has no scene");
+        e.talk(Npc::Farach, e.standing(Npc::Farach).position);
+        assert_eq!(e.last_scene(), &story()[2].scene[..]);
+        assert_eq!((e.step(), e.objective()), (None, None));
+
+        let mut bare = Errand::new(&towns, 0, 1).unwrap();
+        assert_eq!(bare.stage(), ErrandStage::Done);
+        assert_eq!(bare.interact(hidalgo), Interaction::Nothing);
+        assert_eq!(bare.interact(bare.horse().1.position), Interaction::Nothing);
     }
 
     #[test]
     fn the_report_objective_names_the_errands_own_police_town() {
         let mut towns = towns();
         towns[1].name = "General Pico".into();
-        let mut e = Errand::new(&towns, 0, 1).unwrap();
+        let mut e = Errand::new(&towns, 0, 1).unwrap().with_story(story());
         assert_eq!(e.police_name(), "General Pico");
         assert!(e.objective().unwrap().contains("Hidalgo"));
         let hidalgo = e.standing(Npc::Hidalgo).position;

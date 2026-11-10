@@ -24,6 +24,7 @@ mod settlement_tests;
 mod timetable;
 mod towns;
 mod travellers;
+mod wallet;
 
 use bevy::prelude::*;
 use pampa_content::{SLOTS_FILE, TOWNS_FILE, asset_path, load_model_slots};
@@ -372,8 +373,13 @@ fn main() {
     .add_plugins(LagoonPlugin)
     // El polvo y las salpicaduras que levantan vasos, ruedas y pies.
     .add_plugins(pampa_render::DustPlugin)
-    // El encargo, y el reloj y el objetivo en la esquina.
-    .add_plugins((errand::ErrandPlugin, timetable::TimetablePlugin, HudPlugin))
+    // El encargo, el reloj y el objetivo en la esquina, y los subtítulos.
+    .add_plugins((
+        errand::ErrandPlugin,
+        timetable::TimetablePlugin,
+        HudPlugin,
+        pampa_render::SubtitlePlugin,
+    ))
     // Subir, viajar, omitir y esperar el tren, con un fundido para tapar los
     // saltos en el tiempo.
     .add_plugins((ride::RidePlugin, FadePlugin))

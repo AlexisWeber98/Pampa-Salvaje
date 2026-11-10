@@ -23,7 +23,10 @@ pub mod errand;
 pub mod slots;
 pub mod towns;
 
-pub use errand::{DEFAULT_POLICE_TOWN, ERRAND_FILE, ErrandLines, load_errand_or_builtin};
+pub use errand::{
+    DEFAULT_POLICE_TOWN, ERRAND_FILE, ErrandLines, OBJECTIVE_CHARS, STORY_LINE_CHARS,
+    load_errand_or_builtin,
+};
 pub use slots::{ModelSlots, SLOTS_FILE, SlotFit, SlotRotor, load_model_slots};
 pub use towns::{TOWNS_FILE, WorldContent, load_towns, load_towns_or_builtin, parse_towns};
 
@@ -203,6 +206,9 @@ pub enum ContentError {
     /// desconocida, o un número está fuera de rango. No se usa ningún ajuste de
     /// ranuras.
     Slot { slot: String, reason: &'static str },
+    /// Una parte del archivo de la historia no se puede usar (ver
+    /// [`ErrandLines::validate`]).
+    Story { part: String, reason: String },
 }
 
 impl fmt::Display for ContentError {
@@ -225,6 +231,7 @@ impl fmt::Display for ContentError {
                  using its size's crowd"
             ),
             Self::Slot { slot, reason } => write!(f, "model slot `{slot}`: {reason}"),
+            Self::Story { part, reason } => write!(f, "story `{part}`: {reason}"),
         }
     }
 }

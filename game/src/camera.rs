@@ -29,6 +29,11 @@
 //! cámara de órbita por debajo (sin hacerla orbitar, y sin línea de visión que
 //! desvanecer), y la primera persona mueve la cámara desde allí hasta los ojos.
 //!
+//! Mientras se reproduce una escena de la historia ([`SceneShot`]), la cámara
+//! deja la órbita y encuadra a los dos que hablan desde atrás del hombro del
+//! jugador, mirando a quien tiene enfrente ([`scene_view`]); al terminar
+//! vuelve a ubicarse detrás del jugador.
+//!
 //! La consola de depuración puede soltar la cámara para que vuele libre
 //! ([`free_cam`]): mientras vuela, ni la órbita, ni la primera persona, ni la
 //! cabeza del jugador la mueven.
@@ -159,6 +164,30 @@ pub fn train_view(cars: &[PlacedCar], terrain: &Terrain) -> Option<(Vec3, Vec3)>
     let spot = middle + right * (span * 0.55 + 15.0);
     let look = world_from_ground(middle, ground(middle) + 2.5);
     Some((world_from_ground(spot, ground(spot) + 9.0), look))
+}
+
+/// Dónde está, en el suelo, quien habla con el jugador durante una escena de
+/// la historia; `None` fuera de una escena. Lo fija [`crate::errand`].
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
+pub struct SceneShot(pub Option<GroundVec2>);
+
+/// Cuánto detrás del hombro del jugador se ubica la cámara de una escena, en
+/// metros.
+pub const SCENE_BACK: f32 = 2.4;
+/// Cuánto a la derecha del jugador se ubica la cámara de una escena, en
+/// metros.
+pub const SCENE_SIDE: f32 = 0.9;
+
+/// La cámara de una escena entre `me` y `other` (los puntos a la altura del
+/// pecho): detrás del hombro derecho de `me`, mirando hacia `other`, con los
+/// dos en cuadro. Devuelve (dónde, adónde mira).
+pub fn scene_view(me: Vec3, other: Vec3) -> (Vec3, Vec3) {
+    let toward = Vec3::new(other.x - me.x, 0.0, other.z - me.z)
+        .try_normalize()
+        .unwrap_or(Vec3::NEG_Z);
+    let right = toward.cross(Vec3::Y);
+    let spot = me - toward * SCENE_BACK + right * SCENE_SIDE + Vec3::Y * 0.3;
+    (spot, me.lerp(other, 0.6))
 }
 
 /// Cómo sigue la cámara al jinete.
@@ -844,6 +873,7 @@ fn follow_player(
     (towns, settlements): (Option<Res<WorldTowns>>, Option<Res<WorldSettlements>>),
     player: Single<(&Player, Option<&OnTrain>)>,
     (view, mut look, mode): RideCamera,
+    shot: Option<Res<SceneShot>>,
     (mut was, mut trunks, mut solid): (
         Local<Option<RideView>>,
         Local<TrunkCache>,
@@ -909,6 +939,21 @@ fn follow_player(
         Travel::Riding => follow.look_height,
     };
     let target = feet + Vec3::Y * look_height;
+    // Una escena: encuadre fijo de los dos, sin entrar en ningún edificio; al
+    // terminar, la cámara vuelve a saltar detrás del jugador.
+    if let Some(other) = shot.and_then(|s| s.0) {
+        let them = world_from_ground(other, world.0.ground_height(other))
+            + Vec3::Y * follow.on_foot_look_height;
+        let (spot, at) = scene_view(target, them);
+        let clear = clear_reach(at, spot, occluders.0.iter()).min(1.0);
+        transform.translation = at.lerp(spot, clear);
+        transform.look_at(at, Vec3::Y);
+        rig.0 = None;
+        if let Some(mut sight) = sight {
+            sight.0 = None;
+        }
+        return;
+    }
     // Desde los ojos, la entrada de cámara gira la cabeza, no la órbita.
     let first = *mode == ViewMode::FirstPerson;
     let input = if first {
@@ -1090,6 +1135,50 @@ mod tests {
         let at = camera(&mut app).translation;
         assert!(at.distance(expected) < 1e-4, "{at} vs {expected}");
         assert!(at.z > focus.z, "south of a rider facing north");
+    }
+
+    #[test]
+    fn a_scene_frames_the_two_speakers_and_then_the_camera_returns_behind_the_rider() {
+        let mut app = headless_app(
+            World::default(),
+            north_at(26.0, -161.0),
+            CameraOccluders::default(),
+        );
+        app.update();
+        let r = rider(&mut app);
+        // La órbita, girada a un costado antes de la escena.
+        set_yaw(&mut app, Orbit::behind(r.heading.radians()).yaw + FRAC_PI_2);
+        // Quien habla con él, a 3 m al este; el jinete mira al norte.
+        let other = r.position + GroundVec2::new(3.0, 0.0);
+        app.insert_resource(SceneShot(Some(other)));
+        app.update();
+        let shot = camera(&mut app);
+        let me = world_from_ground(r.position, r.height);
+        let flat = |v: Vec3| Vec3::new(v.x, 0.0, v.z).normalize();
+        let east = flat(world_from_ground(other, 0.0) - world_from_ground(r.position, 0.0));
+        // Detrás de su hombro, mirando hacia el otro.
+        assert!(
+            flat(*shot.forward()).dot(east) > 0.9,
+            "{:?}",
+            shot.forward()
+        );
+        let behind = flat(shot.translation - me).dot(east);
+        assert!(behind < -0.5, "{behind}");
+        assert!(shot.translation.distance(me) < 4.0, "{}", shot.translation);
+        // Se queda quieta mientras dura la escena.
+        app.update();
+        assert!(camera(&mut app).translation.distance(shot.translation) < 1e-4);
+
+        // Terminada la escena: otra vez detrás del jinete, que mira al norte,
+        // no donde había quedado la órbita.
+        app.insert_resource(SceneShot(None));
+        app.update();
+        let follow = FollowCamera::default();
+        let focus = me + Vec3::Y * follow.look_height;
+        let world = app.world().resource::<GameWorld>().0.clone();
+        let expected = follow.desired(focus, &Orbit::behind(r.heading.radians()), &world);
+        let at = camera(&mut app).translation;
+        assert!(at.distance(expected) < 1e-3, "{at} vs {expected}");
     }
 
     #[test]

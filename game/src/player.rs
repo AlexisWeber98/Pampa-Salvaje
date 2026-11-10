@@ -99,6 +99,12 @@ impl Default for RiddenCoat {
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DrivePlayer;
 
+/// Si el jugador no maneja al protagonista: mientras se reproduce una escena de
+/// la historia (ver [`crate::errand`]) las teclas no lo mueven, y un caballo en
+/// marcha se detiene solo.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ControlLock(pub bool);
+
 pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
@@ -109,6 +115,7 @@ impl Plugin for PlayerPlugin {
             .init_resource::<GameWorld>()
             .init_resource::<PlayerSpawn>()
             .init_resource::<StreamFocus>()
+            .init_resource::<ControlLock>()
             .add_systems(Startup, spawn_player)
             .add_systems(
                 Update,
@@ -207,16 +214,22 @@ pub(crate) fn drive_player(
     mut taps: ResMut<SprintTaps>,
     (tuning, foot): (Res<PlayerTuning>, Res<FootTuning>),
     world: Res<GameWorld>,
+    lock: Res<ControlLock>,
     mut players: Query<(&mut Player, &mut Transform, &mut VisualPose), Without<OnTrain>>,
 ) {
     let shift = [KeyCode::ShiftLeft, KeyCode::ShiftRight];
-    let input = RiderInput {
-        sprint: taps.update(
-            keys.any_just_pressed(shift),
-            keys.any_pressed(shift),
-            time.elapsed_secs(),
-        ),
-        ..read_input(&keys)
+    let sprint = taps.update(
+        keys.any_just_pressed(shift),
+        keys.any_pressed(shift),
+        time.elapsed_secs(),
+    );
+    let input = if lock.0 {
+        RiderInput::default()
+    } else {
+        RiderInput {
+            sprint,
+            ..read_input(&keys)
+        }
     };
     let dt = time.delta_secs().min(MAX_STEP);
     for (mut player, mut transform, mut pose) in &mut players {
@@ -226,7 +239,7 @@ pub(crate) fn drive_player(
             Travel::Riding => &tuning.0,
         };
         let before = rider.heading;
-        if keys.just_pressed(JUMP_KEY) {
+        if keys.just_pressed(JUMP_KEY) && !lock.0 {
             rider.jump(params);
         }
         rider.step(input, params, &world.0, dt);
@@ -621,7 +634,7 @@ mod tests {
             *q.single(app.world()).unwrap(),
             CharacterVisual::Mounted {
                 rider: FigureKind::Protagonist,
-                coat: Coat::Bayo,
+                coat: Coat::HIDALGO,
             }
         );
     }

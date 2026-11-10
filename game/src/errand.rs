@@ -13,28 +13,36 @@
 //! pueblo, o parado suelto) lo hace subir, y el que montaba antes queda parado
 //! donde lo dejó. Antes de eso, solo el caballo de Don Hidalgo lo deja subir.
 //!
-//! `pampa-core` es dueño de las reglas ([`Errand`]): quién está dónde, las
-//! etapas y qué está al alcance. Este módulo lee la tecla de interacción
-//! ([`INTERACT_KEY`]), reproduce las líneas de `assets/dialogue/errand.ron`
-//! como globos de diálogo ([`Say`]), una por cada duración de globo, pone al
-//! jugador en la montura, y mantiene el objetivo del HUD ([`HudObjective`]) y
-//! el objetivo del minimapa ([`MapTarget`]) al ritmo del encargo.
+//! `pampa-core` es dueño de las reglas ([`Errand`]): quién está dónde, los
+//! pasos de la historia y qué está al alcance. Los pasos son datos, en
+//! `assets/dialogue/errand.ron` (actos 2 y 3 de `historia`). Este módulo lee
+//! la tecla de interacción ([`INTERACT_KEY`]), reproduce la escena de cada
+//! paso cumplido: sus líneas como subtítulos ([`Subtitle`]) con el nombre de
+//! quien habla, cada una el tiempo de leerla, y sus acciones narradas (la
+//! plata de [`PlayerWallet`], las cosas de [`PlayerItems`]). Mientras dura una
+//! escena el jugador no maneja ([`ControlLock`]) y la cámara encuadra a los
+//! dos que hablan ([`SceneShot`]). También pone al jugador en la montura, y
+//! mantiene el objetivo del HUD ([`HudObjective`]) y el objetivo del minimapa
+//! ([`MapTarget`]) al ritmo del encargo.
 
 use bevy::prelude::*;
 use pampa_content::{ERRAND_FILE, ErrandLines, asset_path, load_errand_or_builtin};
 use pampa_core::{
-    Ability, Errand, ErrandEvent, Interaction, MAX_STEP, Npc, Rider, TownLayout, Travel, World,
+    Ability, Beat, Errand, ErrandEvent, Interaction, MAX_STEP, Npc, Rider, Speaker, TownLayout,
+    Travel, World,
 };
-use pampa_render::bubble::LIFETIME;
 use pampa_render::lettering::{self, Face};
+use pampa_render::subtitle;
 use pampa_render::{
-    Animal, CharacterVisual, Coat, FigureKind, HudObjective, MapTarget, Say, Talking, VisualPose,
-    world_from_ground,
+    Animal, CharacterVisual, Coat, FigureKind, HudObjective, MapTarget, Say, Subtitle,
+    SubtitleLine, Talking, VisualPose, world_from_ground,
 };
 
 use crate::abilities::{PlayerAbilities, Unlocked, announce_unlocks, unlock_on_mount};
+use crate::camera::SceneShot;
 use crate::life::{Cast, LedAway, StandingNpc, TetheredHorse};
-use crate::player::{DrivePlayer, GameWorld, Player, RiddenCoat, player_visual_on};
+use crate::player::{ControlLock, DrivePlayer, GameWorld, Player, RiddenCoat, player_visual_on};
+use crate::wallet::{PlayerItems, PlayerWallet};
 
 /// La única tecla de contexto: hablar, montar o bajarse. (E orbita la cámara, M
 /// alterna el mapa, Esc sale).
@@ -68,33 +76,54 @@ pub struct ErrandDialogue(pub ErrandLines);
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ErrandProgress(pub ErrandEvent);
 
-/// Quién dice una línea.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Speaker {
-    Npc(Npc),
-    Player,
-}
-
-/// Líneas que se dicen una tras otra, cada una mostrada durante la duración de
-/// un globo.
+/// Una escena o un comentario: líneas que se dicen una tras otra, cada una en
+/// pantalla el tiempo de leerla ([`subtitle::duration`]), y acciones narradas
+/// que suceden en su lugar, al instante.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Talk {
-    pub speaker: Speaker,
-    pub lines: Vec<String>,
-    /// Índice de la próxima línea a decir.
+    pub beats: Vec<Beat>,
+    /// Índice del próximo momento.
     pub next: usize,
-    /// Segundos hasta la próxima línea.
+    /// Segundos hasta el próximo momento.
     pub wait: f32,
+    /// Quién dice la línea en pantalla.
+    pub speaker: Option<Speaker>,
+    /// Con quién es la escena: mientras dura, el jugador no maneja y la cámara
+    /// los encuadra. `None` para un comentario suelto del jugador.
+    pub partner: Option<Npc>,
 }
 
 impl Talk {
-    fn new(speaker: Speaker, lines: Vec<String>) -> Self {
+    /// La escena `beats` con `partner`.
+    pub fn scene(partner: Npc, beats: &[Beat]) -> Self {
         Self {
-            speaker,
-            lines,
+            partner: Some(partner),
+            ..Self::remark(beats.to_vec())
+        }
+    }
+
+    /// Un comentario suelto: el jugador sigue manejando.
+    fn remark(beats: Vec<Beat>) -> Self {
+        Self {
+            beats,
             next: 0,
             wait: 0.0,
+            speaker: None,
+            partner: None,
         }
+    }
+
+    /// Las `lines` dichas por el protagonista, como comentario suelto.
+    fn said_by_me(lines: &[String]) -> Self {
+        Self::remark(
+            lines
+                .iter()
+                .map(|text| Beat::Line {
+                    speaker: Speaker::Protagonist,
+                    text: text.clone(),
+                })
+                .collect(),
+        )
     }
 }
 
@@ -134,7 +163,13 @@ impl Plugin for ErrandPlugin {
             .add_message::<ErrandProgress>()
             .add_message::<Unlocked>()
             .init_resource::<Conversation>()
+            .init_resource::<Subtitle>()
             .init_resource::<HudObjective>()
+            .init_resource::<pampa_render::HudMoney>()
+            .init_resource::<PlayerWallet>()
+            .init_resource::<PlayerItems>()
+            .init_resource::<ControlLock>()
+            .init_resource::<SceneShot>()
             .init_resource::<MapTarget>()
             .init_resource::<LedAway>()
             .init_resource::<LooseHorse>()
@@ -143,14 +178,16 @@ impl Plugin for ErrandPlugin {
             .init_resource::<RiddenCoat>()
             .init_resource::<pampa_render::HudAnnouncement>()
             .init_resource::<crate::ride::AnnounceTimer>()
-            .add_systems(Startup, load_dialogue)
+            .add_systems(Startup, (load_dialogue, tell_story).chain())
             .add_systems(
                 Update,
                 (
                     interact,
                     converse,
+                    frame_scene,
                     mark_speakers,
                     show_progress,
+                    crate::wallet::show_money,
                     unlock_on_mount,
                     announce_unlocks,
                 )
@@ -211,6 +248,14 @@ fn load_dialogue(
     report.warnings.iter().for_each(|line| warn!("{line}"));
 }
 
+/// Le da al encargo los pasos de la historia del archivo de diálogo, desde el
+/// primero.
+fn tell_story(errand: Option<ResMut<ErrandRun>>, dialogue: Option<Res<ErrandDialogue>>) {
+    if let (Some(mut errand), Some(dialogue)) = (errand, dialogue) {
+        errand.0 = errand.0.clone().with_story(dialogue.0.steps.clone());
+    }
+}
+
 /// Lo que [`interact`] cambia cuando el jugador monta o se baja.
 type MountState<'w> = (
     ResMut<'w, GameWorld>,
@@ -263,7 +308,9 @@ pub(crate) fn interact(
     (horses, left, standing): Horses,
     mut progress: MessageWriter<ErrandProgress>,
 ) {
-    if !keys.is_some_and(|k| k.just_pressed(INTERACT_KEY)) {
+    // Durante una escena la tecla no hace nada.
+    let in_scene = conversation.0.as_ref().is_some_and(|t| t.partner.is_some());
+    if in_scene || !keys.is_some_and(|k| k.just_pressed(INTERACT_KEY)) {
         return;
     }
     let Ok((me, mut player, mut transform)) = players.single_mut() else {
@@ -294,18 +341,15 @@ pub(crate) fn interact(
             return;
         }
         Interaction::NotYourHorse => {
-            conversation.0 = Some(Talk::new(Speaker::Player, lines.not_your_horse.clone()));
+            conversation.0 = Some(Talk::said_by_me(&lines.not_your_horse));
             return;
         }
         Interaction::Event(event) => event,
     };
     progress.write(ErrandProgress(event));
     match event {
-        ErrandEvent::TalkedToHidalgo => {
-            conversation.0 = Some(Talk::new(Speaker::Npc(Npc::Hidalgo), lines.hidalgo.clone()));
-        }
-        ErrandEvent::ReportedToFarach => {
-            conversation.0 = Some(Talk::new(Speaker::Npc(Npc::Farach), lines.farach.clone()));
+        ErrandEvent::Talked(npc) => {
+            conversation.0 = Some(Talk::scene(npc, errand.0.last_scene()));
         }
         ErrandEvent::MountedHorse => {
             let (town, horse) = errand.0.horse();
@@ -460,14 +504,15 @@ impl Saddle<'_, '_, '_> {
     }
 }
 
-/// Dice las líneas de la conversación una tras otra, cada una durante la
-/// duración de un globo, sobre quien habla (si está cerca).
+/// Reproduce la conversación: muestra sus líneas una tras otra como
+/// subtítulos, cada una el tiempo de leerla, aplica sus acciones a la plata y a
+/// las cosas del protagonista al llegar a ellas, y borra el subtítulo cuando
+/// termina.
 fn converse(
     time: Res<Time>,
     mut conversation: ResMut<Conversation>,
-    players: Query<Entity, With<Player>>,
-    npcs: Query<(Entity, &StandingNpc)>,
-    mut say: MessageWriter<Say>,
+    mut subtitle: ResMut<Subtitle>,
+    (mut wallet, mut items): (ResMut<PlayerWallet>, ResMut<PlayerItems>),
 ) {
     let Some(talk) = conversation.0.as_mut() else {
         return;
@@ -476,19 +521,42 @@ fn converse(
     if talk.wait > 0.0 {
         return;
     }
-    let Some(line) = talk.lines.get(talk.next).cloned() else {
-        conversation.0 = None;
-        return;
-    };
-    talk.next += 1;
-    talk.wait = LIFETIME;
-    let speaker = match talk.speaker {
-        Speaker::Player => players.iter().next(),
-        Speaker::Npc(npc) => npcs.iter().find(|(_, n)| n.npc == npc).map(|(e, _)| e),
-    };
-    if let Some(speaker) = speaker {
-        say.write(Say { speaker, line });
+    loop {
+        let Some(beat) = talk.beats.get(talk.next).cloned() else {
+            conversation.0 = None;
+            subtitle.0 = None;
+            return;
+        };
+        talk.next += 1;
+        match beat {
+            Beat::Act(action) => action.apply(&mut wallet.0, &mut items.0),
+            Beat::Line { speaker, text } => {
+                talk.wait = subtitle::duration(&text);
+                talk.speaker = Some(speaker);
+                subtitle.0 = Some(SubtitleLine {
+                    speaker: speaker.name().to_string(),
+                    text,
+                });
+                return;
+            }
+        }
     }
+}
+
+/// Mientras se reproduce una escena, el jugador no maneja y la cámara encuadra
+/// a quien habla con él; fuera de una escena, todo vuelve a la normalidad.
+fn frame_scene(
+    conversation: Res<Conversation>,
+    errand: Option<Res<ErrandRun>>,
+    mut lock: ResMut<ControlLock>,
+    mut shot: ResMut<SceneShot>,
+) {
+    let partner = conversation.0.as_ref().and_then(|t| t.partner);
+    let at = partner
+        .zip(errand)
+        .map(|(npc, errand)| errand.0.standing(npc).position);
+    lock.set_if_neq(ControlLock(partner.is_some()));
+    shot.set_if_neq(SceneShot(at));
 }
 
 /// Pone [`Talking`] a quien tenga sus líneas en pantalla y se lo quita a todos
@@ -500,10 +568,14 @@ fn mark_speakers(
     npcs: Query<(Entity, &StandingNpc)>,
     talking: Query<Entity, With<Talking>>,
 ) {
-    let speaker = conversation.0.as_ref().and_then(|talk| match talk.speaker {
-        Speaker::Player => players.iter().next(),
-        Speaker::Npc(npc) => npcs.iter().find(|(_, n)| n.npc == npc).map(|(e, _)| e),
-    });
+    let speaker = conversation
+        .0
+        .as_ref()
+        .and_then(|talk| talk.speaker)
+        .and_then(|speaker| match speaker {
+            Speaker::Protagonist => players.iter().next(),
+            Speaker::Npc(npc) => npcs.iter().find(|(_, n)| n.npc == npc).map(|(e, _)| e),
+        });
     for entity in &talking {
         if Some(entity) != speaker {
             commands.entity(entity).remove::<Talking>();
@@ -532,25 +604,28 @@ mod tests {
     use super::*;
     use crate::ride::testing::arrive;
     use pampa_core::Vec2 as GroundVec2;
-    use pampa_core::{ErrandStage, Terrain, Travel};
+    use pampa_core::{ErrandStage, Item, Money, Terrain, Travel};
     use pampa_render::character::{FigureBody, FigureJoint, FigurePart, HorseBody, HorseModel};
     use pampa_render::{CharacterVisual, CharacterVisualPlugin, Coat, FigureKind, WorldTowns};
 
-    /// Cada línea dicha, y por quién.
+    /// Cada subtítulo mostrado, en orden.
     #[derive(Resource, Default)]
-    struct Said(Vec<(Entity, String)>);
+    struct Said(Vec<SubtitleLine>);
 
     #[derive(Resource, Default)]
     struct Progress(Vec<ErrandEvent>);
 
     fn log(
-        mut says: MessageReader<Say>,
+        subtitle: Res<Subtitle>,
         mut progress: MessageReader<ErrandProgress>,
         mut said: ResMut<Said>,
         mut events: ResMut<Progress>,
     ) {
-        said.0
-            .extend(says.read().map(|s| (s.speaker, s.line.clone())));
+        if subtitle.is_changed()
+            && let Some(line) = &subtitle.0
+        {
+            said.0.push(line.clone());
+        }
         events.0.extend(progress.read().map(|p| p.0));
     }
 
@@ -633,6 +708,7 @@ mod tests {
             e.standing(Npc::Hidalgo).position + e.standing(Npc::Hidalgo).heading.forward() * 2.0,
         );
         press_f(&mut app);
+        wait_for_scene(&mut app, 0);
         teleport(&mut app, beside(&e.horse().1));
         press_f(&mut app);
         assert_eq!(player(&mut app).1.rider.travel(), Travel::Riding);
@@ -647,7 +723,7 @@ mod tests {
         let children: Vec<Entity> = app.world().get::<Children>(me).unwrap().to_vec();
         assert_eq!(children.len(), 1, "only the horse and its rider");
         let horse = app.world().get::<HorseBody>(children[0]).unwrap();
-        assert_eq!(horse.coat, Coat::Bayo, "Don Hidalgo's bayo");
+        assert_eq!(horse.coat, Coat::Alazan, "Don Hidalgo's alazán");
         assert_eq!(
             horse.rider,
             Some(FigureKind::Protagonist),
@@ -692,27 +768,58 @@ mod tests {
         app.world().resource::<HudObjective>().0.clone()
     }
 
-    fn said_by(app: &App, speaker: Entity) -> Vec<String> {
+    /// Las líneas mostradas como subtítulo con el nombre de `speaker`.
+    fn said_by(app: &App, speaker: &str) -> Vec<String> {
         let said = &app.world().resource::<Said>().0;
         said.iter()
-            .filter(|(e, _)| *e == speaker)
-            .map(|(_, l)| l.clone())
+            .filter(|l| l.speaker == speaker)
+            .map(|l| l.text.clone())
             .collect()
     }
 
-    /// Deja que se reproduzcan todas las líneas de una conversación.
-    fn wait_for_lines(app: &mut App, lines: usize) {
-        let frames = ((lines as f32 + 1.0) * LIFETIME / 0.05).ceil() as usize;
+    /// Las líneas de la escena del paso `step` de la historia incluida, con el
+    /// nombre de quien las dice.
+    fn scene_lines(step: usize) -> Vec<(String, String)> {
+        shipped_lines().steps[step]
+            .scene
+            .iter()
+            .filter_map(|beat| match beat {
+                Beat::Line { speaker, text } => Some((speaker.name().to_string(), text.clone())),
+                Beat::Act(_) => None,
+            })
+            .collect()
+    }
+
+    /// Cada subtítulo mostrado, como (nombre, texto).
+    fn said(app: &App) -> Vec<(String, String)> {
+        let said = &app.world().resource::<Said>().0;
+        said.iter()
+            .map(|l| (l.speaker.clone(), l.text.clone()))
+            .collect()
+    }
+
+    /// Deja que se reproduzca toda la escena del paso `step` de la historia
+    /// incluida, y comprueba que el subtítulo se borró al terminar.
+    fn wait_for_scene(app: &mut App, step: usize) {
+        let lines: Vec<String> = scene_lines(step).into_iter().map(|(_, t)| t).collect();
+        wait_for_lines(app, &lines);
+    }
+
+    /// Deja que se reproduzcan todas las `lines` de una conversación, y
+    /// comprueba que el subtítulo se borró al terminar.
+    fn wait_for_lines(app: &mut App, lines: &[String]) {
+        let seconds: f32 = lines.iter().map(|l| subtitle::duration(l)).sum();
+        let frames = ((seconds + 1.0) / 0.05).ceil() as usize;
         for _ in 0..frames {
             app.update();
         }
         assert_eq!(app.world().resource::<Conversation>().0, None);
+        assert_eq!(app.world().resource::<Subtitle>().0, None);
     }
 
     #[test]
     fn whoever_speaks_talks_with_their_hands_until_their_lines_end() {
         let mut app = shipped_app();
-        let lines = shipped_lines();
         arrive(&mut app);
         let e = errand(&app);
         let talking = |app: &mut App| {
@@ -728,7 +835,7 @@ mod tests {
         app.update();
         let don = npc_entity(&mut app, Npc::Hidalgo);
         assert_eq!(talking(&mut app), vec![don]);
-        wait_for_lines(&mut app, lines.hidalgo.len());
+        wait_for_scene(&mut app, 0);
         app.update();
         assert_eq!(talking(&mut app), vec![]);
     }
@@ -737,8 +844,15 @@ mod tests {
     fn the_whole_errand_from_the_train_to_the_comisaria() {
         let mut app = shipped_app();
         let lines = shipped_lines();
-        // Bajado del tren de la mañana en Monte Nievas.
+        // Bajado del tren de la mañana en Monte Nievas, sin un peso a la vista.
         arrive(&mut app);
+        assert_eq!(
+            app.world()
+                .resource::<pampa_render::HudMoney>()
+                .0
+                .as_deref(),
+            Some("$ 0,00")
+        );
         let e = errand(&app);
         let hidalgo = e.standing(Npc::Hidalgo).position;
         let (horse_town, horse) = e.horse();
@@ -784,8 +898,9 @@ mod tests {
         teleport(&mut app, beside(&horse));
         press_f(&mut app);
         assert_eq!(errand(&app).stage(), ErrandStage::MeetHidalgo);
-        assert_eq!(said_by(&app, me), lines.not_your_horse[..1]);
+        assert_eq!(said_by(&app, "Lisandro"), lines.not_your_horse[..1]);
         assert_eq!(player(&mut app).1.rider.travel(), Travel::OnFoot);
+        wait_for_lines(&mut app, &lines.not_your_horse);
 
         // Don Hidalgo, en la plaza, cuenta toda la historia, línea por línea.
         teleport(
@@ -797,17 +912,21 @@ mod tests {
         assert_eq!(objective(&app), errand(&app).objective());
         assert!(objective(&app).unwrap().contains("caballo"));
         assert_eq!(app.world().resource::<MapTarget>().0, Some(horse.position));
-        wait_for_lines(&mut app, lines.hidalgo.len());
-        let don = npc_entity(&mut app, Npc::Hidalgo);
-        assert_eq!(said_by(&app, don), lines.hidalgo);
+        wait_for_scene(&mut app, 0);
+        let hidalgos: Vec<String> = scene_lines(0).into_iter().map(|(_, t)| t).collect();
+        assert_eq!(said_by(&app, "Don Hidalgo"), hidalgos);
         press_f(&mut app);
-        assert_eq!(said_by(&app, don).len(), lines.hidalgo.len(), "said once");
+        assert_eq!(
+            said_by(&app, "Don Hidalgo").len(),
+            hidalgos.len(),
+            "said once"
+        );
 
         // Montar su caballo: el jugador pasa a ser el jinete; el caballo atado
         // y su huella en planta desaparecen.
         teleport(&mut app, beside(&horse));
         press_f(&mut app);
-        assert_eq!(errand(&app).stage(), ErrandStage::ReportToFarach);
+        assert_eq!(errand(&app).stage(), ErrandStage::Talk(Npc::Farach));
         let (_, p) = player(&mut app);
         assert_eq!(p.rider.travel(), Travel::Riding);
         assert_eq!(
@@ -819,7 +938,7 @@ mod tests {
             visual,
             CharacterVisual::Mounted {
                 rider: FigureKind::Protagonist,
-                coat: Coat::Bayo,
+                coat: Coat::HIDALGO,
             }
         );
         assert!(
@@ -848,9 +967,8 @@ mod tests {
         );
         press_f(&mut app);
         assert_eq!(errand(&app).stage(), ErrandStage::Done);
-        wait_for_lines(&mut app, lines.farach.len());
-        let comisario = npc_entity(&mut app, Npc::Farach);
-        assert_eq!(said_by(&app, comisario), lines.farach);
+        wait_for_scene(&mut app, 2);
+        assert!(said(&app).ends_with(&scene_lines(2)));
         assert_eq!(objective(&app), None);
         assert_eq!(app.world().resource::<MapTarget>().0, None);
 
@@ -859,11 +977,161 @@ mod tests {
         assert_eq!(
             app.world().resource::<Progress>().0,
             [
-                ErrandEvent::TalkedToHidalgo,
+                ErrandEvent::Talked(Npc::Hidalgo),
                 ErrandEvent::MountedHorse,
-                ErrandEvent::ReportedToFarach
+                ErrandEvent::Talked(Npc::Farach)
             ]
         );
+    }
+
+    /// Lleva la historia hasta frente a Farach: habla con Don Hidalgo, espera
+    /// su escena y monta su caballo.
+    fn ride_to_farach(app: &mut App) {
+        arrive(app);
+        let e = errand(app);
+        let hidalgo = e.standing(Npc::Hidalgo);
+        teleport(app, hidalgo.position + hidalgo.heading.forward() * 2.0);
+        press_f(app);
+        wait_for_scene(app, 0);
+        teleport(app, beside(&e.horse().1));
+        press_f(app);
+        let farach = e.standing(Npc::Farach);
+        teleport(app, farach.position + farach.heading.forward() * 2.5);
+    }
+
+    fn wallet(app: &App) -> Money {
+        app.world().resource::<PlayerWallet>().0
+    }
+
+    fn has_letter(app: &App) -> bool {
+        app.world().resource::<PlayerItems>().0.has(Item::Letter)
+    }
+
+    #[test]
+    fn don_hidalgo_hands_over_three_pesos_and_his_letter() {
+        let mut app = shipped_app();
+        arrive(&mut app);
+        assert_eq!((wallet(&app), has_letter(&app)), (Money::ZERO, false));
+        let hidalgo = errand(&app).standing(Npc::Hidalgo);
+        teleport(&mut app, hidalgo.position + hidalgo.heading.forward() * 2.0);
+        press_f(&mut app);
+        wait_for_scene(&mut app, 0);
+        assert_eq!(wallet(&app), Money::new(3, 0));
+        assert!(has_letter(&app));
+        assert_eq!(
+            app.world()
+                .resource::<pampa_render::HudMoney>()
+                .0
+                .as_deref(),
+            Some("$ 3,00")
+        );
+    }
+
+    #[test]
+    fn at_the_comisaria_lisandro_and_farach_speak_act_three_word_for_word() {
+        let mut app = shipped_app();
+        ride_to_farach(&mut app);
+        let before = said(&app).len();
+        press_f(&mut app);
+        wait_for_scene(&mut app, 2);
+        let all = said(&app);
+        let lines: Vec<(&str, &str)> = all[before..]
+            .iter()
+            .map(|(who, text)| (who.as_str(), text.as_str()))
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                (
+                    "Lisandro",
+                    "Buenas, Comisario, le traigo unos papeles que me envió mi tío pa’ uste’"
+                ),
+                ("Farach", "¿y vos quien sos?"),
+                (
+                    "Lisandro",
+                    "Soy el sobrino de Don Hidalgo, llegué hoy mismo al pueblo."
+                ),
+                (
+                    "Farach",
+                    "Ah el viejo cascarrabias ese, si ya se… a ver pasame tus papeles."
+                ),
+                (
+                    "Farach",
+                    "Lisandro Benjamin Andrada, nacido en General Pico, desempleado, zoncera, zoncera…"
+                ),
+                (
+                    "Farach",
+                    "Bueno Pibe, te aviso que en esta ciudad mando yo,"
+                ),
+                (
+                    "Farach",
+                    "así que si no queres tener problema no te hagas el guapo y no andès holgazaneando,"
+                ),
+                ("Farach", "que a los vagos como vos los tengo cortitos."),
+                (
+                    "Farach",
+                    "Quedate cerca que a la noche te devuelvo tus papeles firmados."
+                ),
+            ]
+        );
+        // La historia llegó a su último paso: el gancho del acto 4.
+        assert_eq!(errand(&app).stage(), ErrandStage::Done);
+    }
+
+    #[test]
+    fn farach_keeps_the_letter_once_it_is_handed_over() {
+        let mut app = shipped_app();
+        ride_to_farach(&mut app);
+        assert!(has_letter(&app));
+        press_f(&mut app);
+        // Las dos primeras líneas: todavía la lleva.
+        let lines = scene_lines(2);
+        let first: Vec<String> = lines[..2].iter().map(|(_, t)| t.clone()).collect();
+        let seconds: f32 = first.iter().map(|l| subtitle::duration(l)).sum();
+        for _ in 0..((seconds - 0.5) / 0.05) as usize {
+            app.update();
+        }
+        assert!(has_letter(&app), "not yet handed over");
+        wait_for_scene(&mut app, 2);
+        assert!(!has_letter(&app));
+        assert_eq!(wallet(&app), Money::new(3, 0), "the money stays");
+    }
+
+    #[test]
+    fn a_scene_holds_the_player_still_and_frames_the_speaker_until_it_ends() {
+        let mut app = shipped_app();
+        arrive(&mut app);
+        let hidalgo = errand(&app).standing(Npc::Hidalgo);
+        let shot = |app: &App| app.world().resource::<SceneShot>().0;
+        assert_eq!(shot(&app), None);
+        teleport(&mut app, hidalgo.position + hidalgo.heading.forward() * 2.0);
+        press_f(&mut app);
+        app.update();
+        assert_eq!(shot(&app), Some(hidalgo.position));
+        // W no lo mueve mientras habla Don Hidalgo.
+        let at = player(&mut app).1.rider.position;
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyW);
+        for _ in 0..20 {
+            app.update();
+        }
+        assert!(player(&mut app).1.rider.position.distance(at) < 1e-3);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(KeyCode::KeyW);
+        wait_for_scene(&mut app, 0);
+        app.update();
+        assert_eq!(shot(&app), None);
+        // Terminada la escena, W vuelve a moverlo.
+        let at = player(&mut app).1.rider.position;
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyW);
+        for _ in 0..20 {
+            app.update();
+        }
+        assert!(player(&mut app).1.rider.position.distance(at) > 0.5);
     }
 
     /// La lógica del caballo suelto y sus entidades dibujadas.
@@ -883,6 +1151,7 @@ mod tests {
         let hidalgo = e.standing(Npc::Hidalgo);
         teleport(&mut app, hidalgo.position + hidalgo.heading.forward() * 2.0);
         press_f(&mut app);
+        wait_for_scene(&mut app, 0);
         teleport(&mut app, beside(&e.horse().1));
         press_f(&mut app);
         let (me, p) = player(&mut app);
@@ -921,7 +1190,7 @@ mod tests {
         let (horse, drawn) = loose(&mut app);
         let horse = horse.expect("a loose horse");
         assert_eq!((horse.position, horse.heading), (at.position, at.heading));
-        assert_eq!(drawn, vec![CharacterVisual::Horse(Coat::Bayo)]);
+        assert_eq!(drawn, vec![CharacterVisual::Horse(Coat::HIDALGO)]);
         assert!(
             app.world()
                 .resource::<GameWorld>()
@@ -931,7 +1200,7 @@ mod tests {
         );
         assert!(p.rider.position.distance(horse.position) <= Errand::MOUNT_RANGE);
         // El encargo no avanzó: falta presentarse, nada que tomar.
-        assert_eq!(errand(&app).stage(), ErrandStage::ReportToFarach);
+        assert_eq!(errand(&app).stage(), ErrandStage::Talk(Npc::Farach));
         assert_eq!(objective(&app), report);
 
         // F junto a él: de vuelta en la montura, el caballo suelto desaparece.
@@ -955,6 +1224,7 @@ mod tests {
         teleport(&mut app, farach.position + farach.heading.forward() * 2.5);
         press_f(&mut app);
         assert_eq!(errand(&app).stage(), ErrandStage::Done);
+        wait_for_scene(&mut app, 2);
         let (horse, _) = loose(&mut app);
         let horse = horse.unwrap();
         teleport(&mut app, horse.position + horse.heading.forward() * 2.0);
@@ -963,9 +1233,9 @@ mod tests {
         assert_eq!(
             app.world().resource::<Progress>().0,
             [
-                ErrandEvent::TalkedToHidalgo,
+                ErrandEvent::Talked(Npc::Hidalgo),
                 ErrandEvent::MountedHorse,
-                ErrandEvent::ReportedToFarach
+                ErrandEvent::Talked(Npc::Farach)
             ]
         );
     }
@@ -1001,6 +1271,7 @@ mod tests {
         let hidalgo = e.standing(Npc::Hidalgo);
         teleport(&mut app, hidalgo.position + hidalgo.heading.forward() * 2.0);
         press_f(&mut app);
+        wait_for_scene(&mut app, 0);
         teleport(&mut app, beside(&e.horse().1));
         press_f(&mut app);
         assert!(ride(&app));
@@ -1050,7 +1321,7 @@ mod tests {
         let mut standing = app.world_mut().query::<&Mountable>();
         assert!(standing.iter(app.world()).any(|m| m.0 == left));
 
-        // Se baja de este y vuelve al bayo de Don Hidalgo (el antiguo caballo
+        // Se baja de este y vuelve al alazán de Don Hidalgo (el antiguo caballo
         // suelto ahora es un caballo parado cualquiera).
         press_f(&mut app);
         teleport(&mut app, left.position + left.heading.forward() * 2.0);
@@ -1117,7 +1388,7 @@ mod tests {
         app.add_plugins(MinimalPlugins).add_plugins(ErrandPlugin);
         app.update();
         let dialogue = app.world().resource::<ErrandDialogue>();
-        assert!(!dialogue.0.hidalgo.is_empty());
+        assert!(!dialogue.0.steps.is_empty());
         // Sin encargo no hay objetivo ni destino.
         assert_eq!(app.world().resource::<HudObjective>().0, None);
         assert_eq!(app.world().resource::<MapTarget>().0, None);

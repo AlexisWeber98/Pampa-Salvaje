@@ -38,6 +38,7 @@ pub mod sky;
 pub mod smooth;
 pub mod streaming;
 pub mod street;
+pub mod subtitle;
 pub mod terrain;
 pub mod town;
 pub mod train;
@@ -62,7 +63,8 @@ pub use flora::{
     Faded, FloraAccent, FloraPlugin, GrassTuft, SightLine, ThinFadePlugin, ThinOccluder, TreePart,
     VegetationModels, WorldFlora,
 };
-pub use hud::{HudAnnouncement, HudHint, HudObjective, HudPlugin, HudRide};
+pub use hud::{HudAnnouncement, HudHint, HudMoney, HudObjective, HudPlugin, HudRide};
+pub use subtitle::{Subtitle, SubtitleLine, SubtitlePlugin};
 pub use lagoon::{LagoonPlugin, LagoonReeds, LagoonWater};
 pub use lamps::{LampGlass, LampLight, LampPlugin, LampPost, WorldLamps};
 pub use minimap::{MapIcon, MapTarget, MinimapPlugin};
