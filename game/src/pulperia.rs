@@ -1,7 +1,8 @@
 //! Las pulperías abren y cierran ([`pampa_core::pulperia::is_open`]). De día
 //! la puerta del medio queda abierta y se entra caminando, sin ninguna tecla.
 //! De noche se cierra en cuanto el jugador no está adentro ni en el umbral, y
-//! su hueco pasa a ser una pared en la colisión del mundo. Parado frente a la
+//! su hueco pasa a ser una pared en la colisión del mundo, y render cierra sus
+//! hojas ([`PulperiaShut`], por pueblo). Parado frente a la
 //! puerta cerrada, F golpea y el pulpero contesta desde adentro, como
 //! subtítulo.
 //!
@@ -17,7 +18,7 @@ use pampa_core::pulperia::{Interior, is_open};
 use pampa_core::{Aabb, Travel, Vec2 as GroundVec2};
 use pampa_render::hud::{LINE_PX, ink_font, panel_colors};
 use pampa_render::subtitle::duration;
-use pampa_render::{Subtitle, SubtitleLine, Typefaces, WorldClock, WorldTowns};
+use pampa_render::{PulperiaShut, Subtitle, SubtitleLine, Typefaces, WorldClock, WorldTowns};
 
 use crate::errand::{FClaims, INTERACT_KEY};
 use crate::player::{ControlLock, GameWorld, Player};
@@ -44,13 +45,23 @@ struct KnockPrompt;
 
 /// La puerta de cada pulpería, y si está cerrada en la colisión del mundo.
 #[derive(Resource, Debug, Default)]
-pub struct PulperiaDoors(pub Vec<(Interior, bool)>);
+pub struct PulperiaDoors(pub Vec<PulperiaDoor>);
+
+/// La puerta de la pulpería del pueblo `town` (su índice en [`WorldTowns`]).
+#[derive(Debug, Clone)]
+pub struct PulperiaDoor {
+    pub town: usize,
+    pub inside: Interior,
+    /// Si está cerrada en la colisión del mundo y en [`PulperiaShut`].
+    pub shut: bool,
+}
 
 pub struct PulperiaPlugin;
 
 impl Plugin for PulperiaPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PulperiaDoors>()
+            .init_resource::<PulperiaShut>()
             .init_resource::<Subtitle>()
             .init_resource::<KnockHint>()
             .init_resource::<Typefaces>()
@@ -67,44 +78,56 @@ impl Plugin for PulperiaPlugin {
 }
 
 /// Cierra la puerta de cada pulpería de noche, cuando el jugador no queda
-/// adentro, y la abre de día.
+/// adentro, y la abre de día: en la colisión del mundo y, por pueblo, en
+/// [`PulperiaShut`], que render sigue para mover las hojas.
 fn shut_at_night(
     clock: Option<Res<WorldClock>>,
     towns: Option<Res<WorldTowns>>,
     world: Option<ResMut<GameWorld>>,
     players: Query<&Player>,
-    mut doors: ResMut<PulperiaDoors>,
+    (mut doors, mut shared): (ResMut<PulperiaDoors>, ResMut<PulperiaShut>),
 ) {
     let (Some(towns), Some(mut world)) = (towns, world) else {
         return;
     };
     if towns.is_changed() {
-        for (inside, shut) in doors.0.drain(..) {
-            if shut {
-                world.0.obstacles.remove(&inside.doorway());
+        for door in doors.0.drain(..) {
+            if door.shut {
+                world.0.obstacles.remove(&door.inside.doorway());
             }
+        }
+        if !shared.0.is_empty() {
+            shared.0.clear();
         }
         doors.0 = towns
             .0
             .iter()
-            .filter_map(|t| t.pulperia())
-            .map(|(_, inside)| (inside, false))
+            .enumerate()
+            .filter_map(|(town, t)| {
+                t.pulperia().map(|(_, inside)| PulperiaDoor {
+                    town,
+                    inside,
+                    shut: false,
+                })
+            })
             .collect();
     }
     let night = clock.is_some_and(|c| !is_open(c.0.time_of_day()));
     let at = players.single().ok().map(|p| p.rider.position);
-    for (inside, shut) in &mut doors.0 {
-        let want = night && !at.is_some_and(|p| inside.holds(p));
-        if want == *shut {
+    for door in &mut doors.0 {
+        let want = night && !at.is_some_and(|p| door.inside.holds(p));
+        if want == door.shut {
             continue;
         }
-        let doorway: Aabb = inside.doorway();
+        let doorway: Aabb = door.inside.doorway();
         if want {
             world.0.obstacles.push(doorway);
+            shared.0.insert(door.town);
         } else {
             world.0.obstacles.remove(&doorway);
+            shared.0.remove(&door.town);
         }
-        *shut = want;
+        door.shut = want;
     }
 }
 
@@ -112,8 +135,8 @@ fn shut_at_night(
 /// el jugador adentro o en el umbral la puerta nunca está cerrada, así que
 /// solo se golpea desde la vereda.
 fn shut_door_at(doors: &PulperiaDoors, at: GroundVec2) -> Option<&Interior> {
-    doors.0.iter().find_map(|(inside, shut)| {
-        (*shut && at.distance(inside.door.center) <= KNOCK_RANGE).then_some(inside)
+    doors.0.iter().find_map(|door| {
+        (door.shut && at.distance(door.inside.door.center) <= KNOCK_RANGE).then_some(&door.inside)
     })
 }
 
@@ -235,7 +258,7 @@ mod tests {
     }
 
     fn shut(app: &App) -> bool {
-        app.world().resource::<PulperiaDoors>().0[0].1
+        app.world().resource::<PulperiaDoors>().0[0].shut
     }
 
     /// Si un cuerpo de persona parado en el umbral queda donde está.
@@ -286,7 +309,7 @@ mod tests {
         let (mut app, _) = app(5.0, TimeOfDay::hm(23, 0));
         assert!(!shut(&app), "the last customer is still in");
         // Sale a la vereda: ahora sí cierra.
-        let door = app.world().resource::<PulperiaDoors>().0[0].0.door;
+        let door = app.world().resource::<PulperiaDoors>().0[0].inside.door;
         let out = door.center + door.outward * 3.0;
         let mut q = app.world_mut().query::<&mut Player>();
         q.single_mut(app.world_mut()).unwrap().rider.position = out;
@@ -372,6 +395,30 @@ mod tests {
         assert_eq!(said(&app), None);
         app.update();
         assert_eq!(hint_shown(&mut app), None, "F is the horse's");
+    }
+
+    #[test]
+    fn the_shut_doors_are_shared_with_render_by_town() {
+        // Un pueblo grande sin pulpería primero: la de Castex es la puerta 0
+        // pero el pueblo 1.
+        let pico = TownLayout::generate(&pampa_core::town::TownConfig {
+            name: "General Pico".into(),
+            blocks: (8, 8),
+            origin: GroundVec2::new(3000.0, 0.0),
+            ..pampa_core::town::TownConfig::castex()
+        })
+        .unwrap();
+        assert!(pico.pulperia().is_none());
+        let (mut app, _) = app(-3.0, TimeOfDay::hm(12, 0));
+        let castex = app.world().resource::<WorldTowns>().0[0].clone();
+        app.insert_resource(WorldTowns(vec![pico, castex]));
+        app.update();
+        let shut = |app: &App| app.world().resource::<PulperiaShut>().0.clone();
+        assert!(shut(&app).is_empty(), "open by day");
+        set_time(&mut app, TimeOfDay::hm(23, 0));
+        assert_eq!(shut(&app), [1].into());
+        set_time(&mut app, TimeOfDay::hm(7, 0));
+        assert!(shut(&app).is_empty(), "open again in the morning");
     }
 
     fn app_far() -> (App, Interior) {

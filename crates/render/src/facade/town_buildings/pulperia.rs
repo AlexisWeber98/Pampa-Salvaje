@@ -8,14 +8,21 @@
 //! Cada mueble está donde core lo pone ([`Interior::of`]), así que la sala
 //! dibujada y la que choca no se separan nunca. Es una forma aparte, sin el
 //! desgaste del edificio: town la suma a las mallas de la pulpería.
+//!
+//! Lo que cambia mientras se juega va aparte, porque las mallas del edificio
+//! se construyen una sola vez fuera del hilo principal: las dos hojas de la
+//! puerta del medio ([`leaves`]), que se abren de día y se cierran de noche,
+//! y el tubo de vidrio del farol, que brilla con su llama ([`lamp_chimney`],
+//! [`lamp_flame`]). Las mueve y las enciende [`crate::pulperia`].
 
 use bevy::prelude::*;
 use pampa_core::pulperia::{FurnitureKind, Interior};
 use pampa_core::{Aabb, BuildingKind, StoreStyle};
 
+use super::super::italianate::{FANLIGHT, leaf_spans, panelled_leaf};
 use super::super::materials::{Livery, Surface};
-use super::super::shape::Shape;
-use super::{Lot, yaw};
+use super::super::shape::{Shape, Weather};
+use super::{Lot, damp, paints_its_joinery, store_middle_door, streaks, wear, yaw};
 use crate::coords::world_from_ground;
 
 /// A qué altura sobre la base del edificio está el piso de ladrillo de la
@@ -84,6 +91,79 @@ fn room(lot: &Lot) -> Option<Interior> {
 fn lamp_at(lot: &Lot, room: &Interior) -> Vec3 {
     let (x, z) = local_rect(lot, room.floor).center();
     Vec3::new(x, room.ceiling - CEILING_BELOW - LAMP_DROP, z)
+}
+
+/// Dónde arde la mecha del farol de la pulpería de `lot`, en el espacio
+/// propio del edificio, o `None` si `lot` no es una pulpería.
+pub(crate) fn lamp_flame(lot: &Lot) -> Option<Vec3> {
+    room(lot).map(|room| lamp_at(lot, &room))
+}
+
+/// Una hoja de la puerta del medio de la pulpería, cerrada, en el espacio
+/// propio del edificio, y cómo gira para abrirse.
+pub(crate) struct Leaf {
+    /// La hoja de tableros, gastada como el resto del frente.
+    pub shape: Shape,
+    pub hinge: Hinge,
+}
+
+/// Cómo gira una hoja de puerta sobre sus bisagras.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Hinge {
+    /// La arista de atrás de la hoja junto a su jamba, al pie, en el espacio
+    /// propio del edificio.
+    pub at: Vec3,
+    /// Cuánto gira para abrirse del todo, en radianes alrededor de `+Y`: un
+    /// cuarto de vuelta hacia adentro de la sala.
+    pub swing: f32,
+}
+
+impl Hinge {
+    /// Cómo se mueve la hoja cerrada cuando está abierta en la fracción
+    /// `open` (0, cerrada en su vano; 1, abierta de canto contra el derrame
+    /// de su jamba), en el espacio propio del edificio.
+    pub fn pose(&self, open: f32) -> Transform {
+        let turn = Quat::from_rotation_y(self.swing * open.clamp(0.0, 1.0));
+        Transform::from_translation(self.at - turn * self.at).with_rotation(turn)
+    }
+}
+
+/// Las dos hojas de tableros de la puerta del medio de la pulpería de `lot`,
+/// cerradas, o `None` si `lot` no es una pulpería. Son las mismas que las de
+/// las otras puertas del frente ([`panelled_leaf`]) y cubren el vano desde el
+/// umbral hasta la banderola fija, con el mismo desgaste que el edificio. Se
+/// abren hacia adentro: la de la jamba izquierda (`-X`) gira hacia `+Y` y la
+/// de la derecha al revés, hasta quedar de canto contra su jamba.
+pub(crate) fn leaves(lot: &Lot) -> Option<[Leaf; 2]> {
+    room(lot)?;
+    let (front, door) = store_middle_door(lot);
+    let top = door.top - FANLIGHT;
+    // El dorso de la hoja, donde van las bisagras (ver `panelled_leaf`).
+    let back = front.thickness * 0.5;
+    let [left, right] = leaf_spans(&door);
+    let leaf = |span: (f32, f32), jamb: f32, swing: f32| {
+        let mut shape = Shape::default();
+        shape.set_louvred(paints_its_joinery(lot));
+        shape.set_streaks(streaks(lot));
+        panelled_leaf(&mut shape, &front, span, (door.bottom, top));
+        if let Some(wear) = wear(lot) {
+            shape.weather(Weather {
+                wear,
+                damp: damp(lot),
+            });
+        }
+        Leaf {
+            shape,
+            hinge: Hinge {
+                at: front.at(jamb, back, 0.0),
+                swing,
+            },
+        }
+    };
+    Some([
+        leaf(left, left.0, std::f32::consts::FRAC_PI_2),
+        leaf(right, right.1, -std::f32::consts::FRAC_PI_2),
+    ])
 }
 
 /// El rectángulo `a` de core (en el suelo del mundo) en el espacio propio del
@@ -516,8 +596,9 @@ fn bench(shape: &mut Shape, r: Rect, top: f32) {
 const LAMP_DROP: f32 = 1.4;
 
 /// El farol de querosén que cuelga del cielorraso a `ceiling` con la mecha
-/// en `flame`: el depósito de bronce, el tubo de vidrio, la pantalla de
-/// lata enlozada de blanco por dentro y la varilla que lo cuelga.
+/// en `flame`: el depósito de bronce, la pantalla de lata enlozada de blanco
+/// por dentro y la varilla que lo cuelga. El tubo de vidrio que rodea la
+/// llama es [`lamp_chimney`].
 fn kerosene_lamp(shape: &mut Shape, flame: Vec3, ceiling: f32) {
     // La base del depósito, debajo de la mecha.
     let base = flame - Vec3::Y * 0.13;
@@ -536,18 +617,7 @@ fn kerosene_lamp(shape: &mut Shape, flame: Vec3, ceiling: f32) {
         ],
         12,
     );
-    shape.lathe(
-        Surface::Glass,
-        place,
-        &[
-            (0.03, 0.125),
-            (0.045, 0.17),
-            (0.045, 0.21),
-            (0.025, 0.3),
-            (0.025, 0.36),
-        ],
-        12,
-    );
+    // El tubo de vidrio va aparte, con su propio brillo ([`lamp_chimney`]).
     // La pantalla: lata por fuera, enlozado blanco por dentro.
     shape.lathe(
         Surface::Sheet,
@@ -578,4 +648,24 @@ fn kerosene_lamp(shape: &mut Shape, flame: Vec3, ceiling: f32) {
         Vec3::new(base.x, ceiling, base.z),
         0.012,
     );
+}
+
+/// El tubo de vidrio del farol alrededor de su llama, con la mecha en el
+/// origen: se dibuja aparte del resto de la sala porque brilla según el
+/// reloj, en el material propio de los faroles de las pulperías.
+pub(crate) fn lamp_chimney() -> Shape {
+    let mut shape = Shape::default();
+    shape.lathe(
+        Surface::Glass,
+        Transform::from_translation(-Vec3::Y * 0.13),
+        &[
+            (0.03, 0.125),
+            (0.045, 0.17),
+            (0.045, 0.21),
+            (0.025, 0.3),
+            (0.025, 0.36),
+        ],
+        12,
+    );
+    shape
 }

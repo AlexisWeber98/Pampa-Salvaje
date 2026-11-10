@@ -29,6 +29,7 @@ pub mod meadow;
 pub mod minimap;
 pub mod obj;
 pub mod prints;
+pub mod pulperia;
 pub mod rail;
 mod railbed;
 pub mod road;
@@ -68,6 +69,7 @@ pub use subtitle::{Subtitle, SubtitleLine, SubtitlePlugin};
 pub use lagoon::{LagoonPlugin, LagoonReeds, LagoonWater};
 pub use lamps::{LampGlass, LampLight, LampPlugin, LampPost, WorldLamps};
 pub use minimap::{MapIcon, MapTarget, MinimapPlugin};
+pub use pulperia::{IndoorDim, PulperiaRenderPlugin, PulperiaShut};
 pub use rail::{LineTrack, RailPlugin, WorldRail};
 pub use road::{CrossingPart, RoadPlugin, RoadSurface, SignpostPart};
 pub use settlement::{

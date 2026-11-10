@@ -15,6 +15,7 @@
 //! (cada cámara cuenta sus propios [`FilterFrames`]); la luz filtrada se queda.
 
 use crate::atmosphere::{EnvironmentShare, Sky, WorldClock, clock_days, sky_with_moon};
+use crate::pulperia::IndoorDim;
 use crate::sky::astro;
 use bevy::asset::RenderAssetUsages;
 use bevy::light::{EnvironmentMapLight, GeneratedEnvironmentMapLight};
@@ -380,19 +381,26 @@ fn settle_filter(
 }
 
 /// Mantiene la intensidad de la luz de entorno en el presupuesto ambiental del
-/// reloj.
+/// reloj, bajada mientras la cámara está dentro de una pulpería
+/// ([`IndoorDim`]). Mientras la penumbra entra o sale se escribe en cada
+/// frame, para que termine justo en su valor.
 fn follow_exposure(
     clock: Option<Res<WorldClock>>,
     env: Option<Res<SkyEnvironment>>,
     share: Res<EnvironmentShare>,
+    dim: Option<Res<IndoorDim>>,
     mut lights: Query<&mut EnvironmentMapLight, With<SkyEnvironmentLight>>,
 ) {
     let (Some(clock), Some(env)) = (clock, env) else {
         return;
     };
-    let intensity = environment_intensity(&current_sky(&clock), share.0, env.mean_luma);
+    let easing = dim
+        .as_ref()
+        .is_some_and(|d| d.is_changed() && !d.is_added());
+    let indoors = dim.map_or(1.0, |d| d.factor());
+    let intensity = environment_intensity(&current_sky(&clock), share.0, env.mean_luma) * indoors;
     for mut light in &mut lights {
-        if exposure_drifted(light.intensity, intensity) {
+        if easing || exposure_drifted(light.intensity, intensity) {
             light.intensity = intensity;
         }
     }
@@ -817,5 +825,41 @@ mod tests {
             generated.intensity
         );
         assert!((light.intensity - want).abs() < 1.0, "{}", light.intensity);
+    }
+
+    #[test]
+    fn inside_a_pulperia_the_environment_light_dims_and_outside_it_is_untouched() {
+        let mut app = app_at(1);
+        app.init_resource::<IndoorDim>();
+        let camera = app.world_mut().spawn(Camera3d::default()).id();
+        app.update();
+        give_filtered_light(&mut app, camera);
+        app.update();
+        let want = {
+            let env = app.world().resource::<SkyEnvironment>();
+            let clock = app.world().resource::<WorldClock>();
+            environment_intensity(&current_sky(clock), ENVIRONMENT_SHARE, env.mean_luma)
+        };
+        let light = |app: &App| {
+            app.world()
+                .get::<EnvironmentMapLight>(camera)
+                .unwrap()
+                .intensity
+        };
+        assert_eq!(light(&app), want, "outside, as ever");
+        app.insert_resource(IndoorDim { inside: 0.5 });
+        app.update();
+        app.world_mut().resource_mut::<IndoorDim>().inside = 1.0;
+        app.update();
+        // Una cuarta parte de la luz.
+        let factor = 0.25;
+        assert!(
+            (light(&app) - want * factor).abs() < 1e-3 * want,
+            "{}",
+            light(&app)
+        );
+        app.world_mut().resource_mut::<IndoorDim>().inside = 0.0;
+        app.update();
+        assert_eq!(light(&app), want, "back to the very same light");
     }
 }

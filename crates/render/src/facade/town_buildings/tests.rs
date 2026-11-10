@@ -1016,3 +1016,90 @@ fn only_a_pulperia_has_an_interior() {
         );
     }
 }
+
+/// La caja que encierra `points`.
+fn bounds(points: &[Vec3]) -> (Vec3, Vec3) {
+    points.iter().fold(
+        (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)),
+        |(lo, hi), p| (lo.min(*p), hi.max(*p)),
+    )
+}
+
+#[test]
+fn the_pulperias_leaves_close_its_middle_door_like_the_others_and_swing_clear_of_it() {
+    use super::super::italianate::FANLIGHT;
+    // Un frente de 16 m: la puerta del medio, de 1,3 m, en `x = 0`.
+    let face = 14.0 / 2.0 - PROUD;
+    let back = 0.45 * 0.5;
+    let top = (5.0f32 - 1.3).min(3.4) - FANLIGHT;
+    for v in 0..6 {
+        let lot = pulperia_lot((16.0, 14.0), Side::South, v);
+        let general = building(&Lot {
+            store: StoreStyle::GeneralStore,
+            ..lot
+        })
+        .unwrap();
+        let doors = general.points(Surface::Door);
+        let leaves = leaves(&lot).expect("a pulpería has its leaves");
+        let mut shut = Vec::new();
+        for leaf in &leaves {
+            let points = leaf.shape.points(Surface::Door);
+            assert!(!points.is_empty());
+            // Las mismas hojas que las de un almacén en esa puerta.
+            for p in &points {
+                assert!(
+                    doors.iter().any(|q| q.distance(*p) < 1e-4),
+                    "{v}: {p} is not a door leaf"
+                );
+            }
+            shut.extend(points);
+        }
+        // Cerradas, de jamba a jamba y del umbral a la banderola.
+        let (lo, hi) = bounds(&shut);
+        assert!(
+            (lo.x + 0.65).abs() < 1e-3 && (hi.x - 0.65).abs() < 1e-3,
+            "{v}"
+        );
+        assert!(lo.y.abs() < 1e-3 && (hi.y - top).abs() < 1e-3, "{v}");
+        // Abiertas, de canto contra sus jambas, del lado de la sala.
+        for leaf in &leaves {
+            let pose = leaf.hinge.pose(1.0);
+            for p in leaf.shape.points(Surface::Door) {
+                let q = pose.transform_point(p);
+                assert!(q.x.abs() > 0.65 - 0.07, "{v}: open leaf in the door at {q}");
+                assert!(
+                    q.z < face - back + 1e-3 && q.z > face - back - 0.7,
+                    "{v}: open leaf at {q}"
+                );
+            }
+        }
+    }
+    let store = lot(BuildingKind::GeneralStore, (16.0, 14.0, 5.0), 1);
+    assert!(leaves(&store).is_none(), "a general store keeps its leaves");
+}
+
+#[test]
+fn the_lamps_flame_burns_on_its_brass_font_inside_its_glass_chimney() {
+    for front in [Side::South, Side::East] {
+        let lot = pulperia_lot((16.0, 14.0), front, 2);
+        let flame = lamp_flame(&lot).expect("a pulpería has its lamp");
+        let room = interior(&lot).unwrap();
+        let near = |p: &Vec3| Vec2::new(p.x - flame.x, p.z - flame.z).length() < 0.1;
+        let font: Vec<Vec3> = room
+            .points(Surface::Bronze)
+            .into_iter()
+            .filter(|p| near(p) && p.y > flame.y - 0.3)
+            .collect();
+        assert!(!font.is_empty(), "{front:?}: the font under the flame");
+        let (_, hi) = bounds(&font);
+        assert!(
+            (hi.y - flame.y).abs() < 0.01,
+            "{front:?}: the wick at {}",
+            hi.y
+        );
+        let tube = lamp_chimney().points(Surface::Glass);
+        let (lo, hi) = bounds(&tube);
+        assert!(lo.y < 0.0 && hi.y > 0.1 && lo.x > -0.05 && hi.x < 0.05);
+    }
+    assert!(lamp_flame(&lot(BuildingKind::GeneralStore, (16.0, 14.0, 5.0), 1)).is_none());
+}

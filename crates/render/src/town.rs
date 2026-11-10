@@ -69,8 +69,9 @@ use pampa_core::{
 use crate::coords::world_from_ground;
 use crate::facade::palenque;
 use crate::facade::shape::Shape;
-use crate::facade::town_buildings::{self, Lot};
+use crate::facade::town_buildings::{self, Hinge, Lot};
 use crate::facade::{FacadeMaterials, Surface};
+use crate::pulperia::{PulperiaLamp, PulperiaLeaf};
 use crate::rail::TrackKit;
 use crate::railbed::{Parts, Track};
 use crate::settlement::{props, ranges};
@@ -107,6 +108,7 @@ impl Plugin for TownPlugin {
     fn build(&self, app: &mut App) {
         crate::facade::ensure_plugin(app);
         crate::tree::ensure_plugin(app);
+        crate::pulperia::ensure_plugin(app);
         app.add_plugins((crate::street::StreetWearPlugin, crate::lawn::LawnPlugin))
             .init_resource::<WorldTowns>()
             .init_resource::<ActiveTowns>()
@@ -384,7 +386,14 @@ fn stream_towns(
             commands.entity(root).insert(PendingBuildings(task));
         } else {
             let built = build_lots(&lots, &plazas);
-            spawn_built(&mut commands, root, built, &shapes, &surfaces, &mut meshes);
+            spawn_built(
+                &mut commands,
+                (root, index),
+                built,
+                &shapes,
+                &surfaces,
+                &mut meshes,
+            );
         }
     }
     *first_fill_laid = true;
@@ -393,17 +402,24 @@ fn stream_towns(
 /// Crea los edificios de cada pueblo cuya construcción terminó.
 fn land_buildings(
     mut commands: Commands,
-    mut pending: Query<(Entity, &mut PendingBuildings)>,
+    mut pending: Query<(Entity, &TownRoot, &mut PendingBuildings)>,
     (shapes, surfaces): (Option<Res<Shapes>>, Option<Res<FacadeMaterials>>),
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     let (Some(shapes), Some(surfaces)) = (shapes, surfaces) else {
         return;
     };
-    for (root, mut build) in &mut pending {
+    for (root, town, mut build) in &mut pending {
         if let Some(built) = check_ready(&mut build.0) {
             commands.entity(root).remove::<PendingBuildings>();
-            spawn_built(&mut commands, root, built, &shapes, &surfaces, &mut meshes);
+            spawn_built(
+                &mut commands,
+                (root, town.0),
+                built,
+                &shapes,
+                &surfaces,
+                &mut meshes,
+            );
         }
     }
 }
@@ -1536,13 +1552,34 @@ fn plaza_jobs(town: &TownLayout, terrain: &Terrain) -> Vec<PlazaJob> {
 
 /// Una pieza construida (un edificio o la parte de una plaza que corresponde a
 /// un rango): sus mallas en su propio espacio, dónde se ubica, el índice de su
-/// rango compartido y la rueda de un molino de viento.
+/// rango compartido, la rueda de un molino de viento y lo que se mueve o se
+/// enciende en una pulpería.
 struct Built {
     part: Part,
     transform: Transform,
     meshes: Vec<(Surface, Mesh)>,
     range: usize,
     rotor: Option<(Transform, WindmillRotor)>,
+    pulperia: Option<PulperiaParts>,
+}
+
+/// Lo de una pulpería que va en entidades propias porque cambia mientras se
+/// juega ([`crate::pulperia`]): las dos hojas de su puerta del medio, cada una
+/// con sus mallas cerradas en el espacio propio del edificio, y dónde arde la
+/// mecha de su farol en ese mismo espacio.
+struct PulperiaParts {
+    leaves: Vec<(Hinge, Vec<(Surface, Mesh)>)>,
+    flame: Vec3,
+}
+
+/// Las partes de pulpería de `lot`, o `None` si no es una pulpería.
+fn pulperia_parts(lot: &Lot) -> Option<PulperiaParts> {
+    let flame = town_buildings::lamp_flame(lot)?;
+    let leaves = town_buildings::leaves(lot)?
+        .into_iter()
+        .map(|leaf| (leaf.hinge, leaf.shape.into_meshes()))
+        .collect();
+    Some(PulperiaParts { leaves, flame })
 }
 
 /// Construye las mallas de cada trabajo y luego las de cada plaza: sus
@@ -1560,6 +1597,7 @@ fn build_lots(jobs: &[Job], plazas: &[PlazaJob]) -> Vec<Built> {
                 meshes: shape.into_meshes(),
                 range,
                 rotor: None,
+                pulperia: None,
             })
     });
     jobs.iter()
@@ -1593,16 +1631,18 @@ fn build_lots(jobs: &[Job], plazas: &[PlazaJob]) -> Vec<Built> {
                 meshes,
                 range,
                 rotor,
+                pulperia: pulperia_parts(&job.lot),
             })
         })
         .chain(plazas)
         .collect()
 }
 
-/// Crea `built` bajo `root`: una entidad por edificio y superficie.
+/// Crea `built` bajo `root`, la raíz del pueblo `town`: una entidad por
+/// edificio y superficie, más las hojas y el farol de su pulpería.
 fn spawn_built(
     commands: &mut Commands,
-    root: Entity,
+    (root, town): (Entity, usize),
     built: Vec<Built>,
     shapes: &Shapes,
     surfaces: &FacadeMaterials,
@@ -1620,6 +1660,17 @@ fn spawn_built(
                 Part::Building(index) => e.insert(TownBuilding(index)),
                 Part::Plaza(index) => e.insert(TownPlaza(index)),
             };
+        }
+        if let Some(parts) = b.pulperia {
+            spawn_pulperia(
+                commands,
+                (root, town),
+                b.transform,
+                parts,
+                range,
+                surfaces,
+                meshes,
+            );
         }
         let (Some((transform, rotor)), Part::Building(index)) = (b.rotor, b.part) else {
             continue;
@@ -1645,6 +1696,47 @@ fn spawn_built(
                     ChildOf(wheel),
                 ));
             }
+        }
+    }
+}
+
+/// Crea bajo `root` las hojas y el farol de la pulpería del pueblo `town`,
+/// ubicada en `building`: cada hoja, un pivote abierto de día con sus mallas
+/// gastadas, y el farol, en el lugar de su llama.
+fn spawn_pulperia(
+    commands: &mut Commands,
+    (root, town): (Entity, usize),
+    building: Transform,
+    parts: PulperiaParts,
+    range: &VisibilityRange,
+    surfaces: &FacadeMaterials,
+    meshes: &mut Assets<Mesh>,
+) {
+    let flame = building.transform_point(parts.flame);
+    commands.spawn((
+        Name::new("Pulperia lamp"),
+        PulperiaLamp { town, flame },
+        Transform::from_translation(flame),
+        Visibility::default(),
+        range.clone(),
+        ChildOf(root),
+    ));
+    for (hinge, leaf) in parts.leaves {
+        let pivot = PulperiaLeaf::new(town, building, hinge);
+        let transform = pivot.transform();
+        let pivot = commands
+            .spawn((
+                Name::new("Pulperia door leaf"),
+                pivot,
+                transform,
+                Visibility::default(),
+                ChildOf(root),
+            ))
+            .id();
+        for (surface, mesh) in leaf {
+            let mut e = commands.spawn((Transform::IDENTITY, range.clone(), ChildOf(pivot)));
+            surfaces.insert(&mut e, surface, &mesh);
+            e.insert(Mesh3d(meshes.add(mesh)));
         }
     }
 }
@@ -1779,6 +1871,32 @@ mod tests {
                     .any(|(s, m)| *s == Surface::Paving && !weathers(m));
                 assert_eq!(room, pulperia, "{}", town.name);
                 assert_eq!(meshes.iter().any(|(_, m)| !weathers(m)), pulperia);
+            }
+        }
+    }
+
+    #[test]
+    fn only_a_pulperia_is_built_with_its_leaves_and_lamp() {
+        let terrain = Terrain::default();
+        let small = TownLayout::generate(&TownConfig::castex()).unwrap();
+        let big = TownLayout::generate(&TownConfig {
+            name: "General Pico".into(),
+            blocks: (8, 8),
+            ..TownConfig::castex()
+        })
+        .unwrap();
+        for (town, pulperia) in [(small, true), (big, false)] {
+            let built = build_lots(&lots(&town, &terrain), &[]);
+            let parts: Vec<&PulperiaParts> =
+                built.iter().filter_map(|b| b.pulperia.as_ref()).collect();
+            assert_eq!(parts.len(), usize::from(pulperia), "{}", town.name);
+            for p in parts {
+                assert_eq!(p.leaves.len(), 2);
+                assert!(
+                    p.leaves
+                        .iter()
+                        .all(|(_, m)| m.iter().all(|(_, m)| crate::facade::materials::weathers(m)))
+                );
             }
         }
     }

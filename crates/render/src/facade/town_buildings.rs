@@ -758,10 +758,7 @@ fn cottage(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32, by_rail: bool)
 /// El almacén de ramos generales, o la pulpería de un pueblo pequeño, con su
 /// galería.
 fn store(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32, style: StoreStyle, veranda: f32) {
-    let walls = masonry((w, d, h), 0.45);
-    let bays = (((walls.width() / 3.2) as usize).clamp(3, 7)) | 1;
-    // Puertas en el centro y en un vano de por medio, vidrieras entre ellas.
-    let doors: Vec<usize> = (0..bays).filter(|k| k % 2 == (bays / 2) % 2).collect();
+    let (walls, bays, doors) = store_front((w, d, h));
     let general = style == StoreStyle::GeneralStore;
     // Un almacén es de ladrillo, blanqueado a la cal o pintado de ocre o de
     // gris azulado; una pulpería, encalada, blanqueada a la cal o de ladrillo
@@ -787,7 +784,7 @@ fn store(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32, style: StoreStyl
         plinth,
         bays,
         doors,
-        door: (1.3, (h - 1.3).min(3.4)),
+        door: store_door(h),
         window: (1.3, 0.7, (h - 1.3).min(3.4)),
         // Alto y macizo: de él cuelga el cartel del almacén.
         parapet: 2.3,
@@ -820,6 +817,32 @@ fn store(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32, style: StoreStyl
     let high = h - 0.7;
     let depth = veranda + PROUD;
     gallery(shape, roof, posts, &over, depth, (high, high - 0.3 * depth));
+}
+
+/// Las paredes del almacén de `w` por `d` y `h` de alto, cuántos vanos tiene
+/// su frente y en cuáles van puertas: en el del medio y en uno de por medio,
+/// con vidrieras entre ellas.
+fn store_front((w, d, h): (f32, f32, f32)) -> (Walls, usize, Vec<usize>) {
+    let walls = masonry((w, d, h), 0.45);
+    let bays = (((walls.width() / 3.2) as usize).clamp(3, 7)) | 1;
+    let doors: Vec<usize> = (0..bays).filter(|k| k % 2 == (bays / 2) % 2).collect();
+    (walls, bays, doors)
+}
+
+/// El ancho y el alto de las puertas del almacén de `h` de alto.
+fn store_door(h: f32) -> (f32, f32) {
+    (1.3, (h - 1.3).min(3.4))
+}
+
+/// La pared del frente del almacén de `lot` y su puerta del medio, la que en
+/// la pulpería queda como paso abierto.
+fn store_middle_door(lot: &Lot) -> (Wall, Opening) {
+    let size = lot.size();
+    let h = lot.building.height;
+    let (walls, bays, doors) = store_front((size.x, size.y, h));
+    let front = walls.front();
+    let door = spread(front.length, bays, &doors, store_door(h), (0.0, 0.0, 0.0))[bays / 2];
+    (front, door)
 }
 
 /// La comisaría: encalada, enrejada, con balaustrada, con su mástil.
@@ -1341,7 +1364,7 @@ mod civic;
 mod pulperia;
 
 pub use civic::{BANK_FRIEZE, TOWN_HALL_ATTIC};
-pub(crate) use pulperia::interior;
+pub(crate) use pulperia::{Hinge, interior, lamp_chimney, lamp_flame, leaves};
 
 #[cfg(test)]
 mod tests;

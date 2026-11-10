@@ -349,24 +349,34 @@ pub(crate) fn surround(shape: &mut Shape, surface: Surface, wall: &Wall, o: &Ope
 /// bastidor de largueros y travesaños de madera pintada y gastada
 /// ([`Surface::Door`]) con tableros en relieve hundidos entre ellos.
 pub(crate) fn door_leaves(shape: &mut Shape, wall: &Wall, o: &Opening, transom: bool) {
-    let (a, b) = o.span();
-    let top = if transom { o.top - 0.5 } else { o.top };
-    let m = (a + b) / 2.0;
-    for (l0, l1) in [(a, m - 0.015), (m + 0.015, b)] {
-        panelled_leaf(shape, wall, (l0, l1), (o.bottom, top));
+    let top = if transom { o.top - FANLIGHT } else { o.top };
+    for span in leaf_spans(o) {
+        panelled_leaf(shape, wall, span, (o.bottom, top));
     }
     if transom {
         fanlight(shape, wall, o);
     }
 }
 
-/// La banderola fija de la puerta `o` de `wall`: los 50 cm de arriba del
-/// vano, un travesaño y un vidrio con un parante en el medio. Queda también
-/// sobre un paso abierto, que no lleva hojas.
+/// Lo que ocupa la banderola fija arriba del vano de una puerta, en metros.
+pub(crate) const FANLIGHT: f32 = 0.5;
+
+/// De dónde a dónde va cada una de las dos hojas de la puerta `o`, en metros
+/// a lo largo de su pared: la de la jamba de `a` y la de la jamba de `b`, con
+/// una rendija en el medio.
+pub(crate) fn leaf_spans(o: &Opening) -> [(f32, f32); 2] {
+    let (a, b) = o.span();
+    let m = (a + b) / 2.0;
+    [(a, m - 0.015), (m + 0.015, b)]
+}
+
+/// La banderola fija de la puerta `o` de `wall`: los [`FANLIGHT`] de arriba
+/// del vano, un travesaño y un vidrio con un parante en el medio. Queda
+/// también sobre un paso abierto, que no lleva hojas.
 pub(crate) fn fanlight(shape: &mut Shape, wall: &Wall, o: &Opening) {
     let (a, b) = o.span();
     let t = wall.thickness;
-    let top = o.top - 0.5;
+    let top = o.top - FANLIGHT;
     let m = (a + b) / 2.0;
     wall.piece(
         shape,
@@ -393,7 +403,12 @@ pub(crate) fn fanlight(shape: &mut Shape, wall: &Wall, o: &Opening) {
 /// `y.0` a `y.1` de alto: largueros, un zócalo alto, un travesaño de cerradura
 /// y uno de arriba, y entre ellos dos tableros en relieve de 2 cm, hundidos
 /// 4 cm detrás del bastidor.
-fn panelled_leaf(shape: &mut Shape, wall: &Wall, (x0, x1): (f32, f32), (y0, y1): (f32, f32)) {
+pub(crate) fn panelled_leaf(
+    shape: &mut Shape,
+    wall: &Wall,
+    (x0, x1): (f32, f32),
+    (y0, y1): (f32, f32),
+) {
     let t = wall.thickness;
     let (face, panel, back) = (t * 0.38, t * 0.46, t * 0.5);
     let stile = ((x1 - x0) * 0.16).clamp(0.07, 0.11);
