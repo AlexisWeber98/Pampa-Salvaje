@@ -18,9 +18,10 @@
 //! [`TownLayout::obstacles`]: crate::town::TownLayout::obstacles
 //! [`TownLayout::colliders`]: crate::town::TownLayout::colliders
 
+use crate::clock::TimeOfDay;
 use crate::places::side_normal;
 use crate::town::Building;
-use crate::{Aabb, Heading, Vec2};
+use crate::{Aabb, Heading, Rider, Vec2};
 
 /// Cuánto queda la cara de afuera de las paredes hacia adentro de la huella,
 /// en metros (el `PROUD` del render).
@@ -49,6 +50,19 @@ const BENCH: (f32, f32) = (1.6, 0.35);
 const BENCH_GAP: f32 = 0.1;
 /// Dónde se sienta cada uno sobre un banco, a cada lado de su centro.
 const SEAT_OFFSET: f32 = 0.4;
+
+/// A qué hora abre la pulpería: desde entonces la puerta del medio queda
+/// abierta (supuesto, a revisar).
+pub const OPENS_AT: f32 = 6.0;
+/// A qué hora cierra: desde entonces la puerta se cierra en cuanto no queda
+/// nadie adentro (supuesto, a revisar).
+pub const CLOSES_AT: f32 = 22.0;
+
+/// Si la pulpería atiende a la hora `time`: entre [`OPENS_AT`] y
+/// [`CLOSES_AT`].
+pub fn is_open(time: TimeOfDay) -> bool {
+    (OPENS_AT..CLOSES_AT).contains(&time.hour())
+}
 
 /// La puerta abierta de la pulpería, en el medio del frente.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -217,6 +231,16 @@ impl Interior {
         )
     }
 
+    /// Si una persona parada en `at` está adentro o en el umbral: con ella ahí
+    /// la puerta no se cierra, para no dejarla encerrada.
+    pub fn holds(&self, at: Vec2) -> bool {
+        self.floor.contains_point(at)
+            || self
+                .doorway()
+                .expanded(Rider::PERSON_RADIUS)
+                .contains_point(at)
+    }
+
     /// Con qué chocan las personas adentro: las paredes y los muebles.
     pub fn obstacles(&self) -> impl Iterator<Item = Aabb> + '_ {
         self.walls
@@ -373,6 +397,29 @@ mod tests {
             }
             assert_eq!(inside.seats.len(), 12);
         }
+    }
+
+    #[test]
+    fn it_attends_from_six_in_the_morning_to_ten_at_night() {
+        let open = |h, m| is_open(TimeOfDay::hm(h, m));
+        assert!(!open(5, 59));
+        assert!(open(6, 0));
+        assert!(open(21, 59));
+        assert!(!open(22, 0));
+        assert!(!open(0, 0));
+    }
+
+    #[test]
+    fn someone_inside_or_in_the_doorway_is_held_and_someone_outside_is_not() {
+        let t = castex();
+        let (_, inside) = t.pulperia().unwrap();
+        let door = inside.door;
+        let at = |v: f32| door.center - door.outward * v;
+        assert!(inside.holds(at(5.0)), "inside");
+        assert!(inside.holds(at(WALL / 2.0)), "in the doorway");
+        // Afuera, pegado al umbral: el cuerpo todavía toca el hueco.
+        assert!(inside.holds(at(-0.2)));
+        assert!(!inside.holds(at(-1.0)), "on the sidewalk");
     }
 
     #[test]

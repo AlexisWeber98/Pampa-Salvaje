@@ -350,33 +350,43 @@ pub(crate) fn surround(shape: &mut Shape, surface: Surface, wall: &Wall, o: &Ope
 /// ([`Surface::Door`]) con tableros en relieve hundidos entre ellos.
 pub(crate) fn door_leaves(shape: &mut Shape, wall: &Wall, o: &Opening, transom: bool) {
     let (a, b) = o.span();
-    let t = wall.thickness;
     let top = if transom { o.top - 0.5 } else { o.top };
     let m = (a + b) / 2.0;
     for (l0, l1) in [(a, m - 0.015), (m + 0.015, b)] {
         panelled_leaf(shape, wall, (l0, l1), (o.bottom, top));
     }
     if transom {
-        wall.piece(
-            shape,
-            Surface::Door,
-            (a, t * 0.44, top),
-            (b, t * 0.5, top + 0.08),
-        );
-        // El vidrio de la banderola, con un parante en el medio.
-        wall.piece(
-            shape,
-            Surface::Glass,
-            (a, t * 0.47, top + 0.08),
-            (b, t * 0.48, o.top),
-        );
-        wall.piece(
-            shape,
-            Surface::Door,
-            (m - 0.02, t * 0.45, top + 0.08),
-            (m + 0.02, t * 0.47, o.top),
-        );
+        fanlight(shape, wall, o);
     }
+}
+
+/// La banderola fija de la puerta `o` de `wall`: los 50 cm de arriba del
+/// vano, un travesaño y un vidrio con un parante en el medio. Queda también
+/// sobre un paso abierto, que no lleva hojas.
+pub(crate) fn fanlight(shape: &mut Shape, wall: &Wall, o: &Opening) {
+    let (a, b) = o.span();
+    let t = wall.thickness;
+    let top = o.top - 0.5;
+    let m = (a + b) / 2.0;
+    wall.piece(
+        shape,
+        Surface::Door,
+        (a, t * 0.44, top),
+        (b, t * 0.5, top + 0.08),
+    );
+    // El vidrio de la banderola, con un parante en el medio.
+    wall.piece(
+        shape,
+        Surface::Glass,
+        (a, t * 0.47, top + 0.08),
+        (b, t * 0.48, o.top),
+    );
+    wall.piece(
+        shape,
+        Surface::Door,
+        (m - 0.02, t * 0.45, top + 0.08),
+        (m + 0.02, t * 0.47, o.top),
+    );
 }
 
 /// Una hoja de puerta de tableros de `x.0` a `x.1` a lo largo de `wall` y de

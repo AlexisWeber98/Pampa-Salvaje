@@ -18,6 +18,7 @@ mod menu;
 mod orbit;
 mod plant_collision;
 mod player;
+mod pulperia;
 mod ride;
 #[cfg(test)]
 mod settlement_tests;
@@ -377,6 +378,7 @@ fn main() {
     .add_plugins((
         errand::ErrandPlugin,
         timetable::TimetablePlugin,
+        pulperia::PulperiaPlugin,
         HudPlugin,
         pampa_render::SubtitlePlugin,
     ))

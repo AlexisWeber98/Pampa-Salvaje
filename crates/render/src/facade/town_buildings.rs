@@ -14,7 +14,8 @@
 //! - El almacén de ramos generales: un parapeto alto y macizo detrás de su
 //!   cartel y una galería sobre la vereda con postes de hierro fundido; la
 //!   pulpería de un pueblo pequeño es encalada, con rejas y bajo una galería
-//!   sobre postes de madera.
+//!   sobre postes de madera, y su puerta del medio es un paso abierto a la
+//!   sala amueblada que core recorre ([`interior`], sin desgaste).
 //! - La comisaría: encalada, con ventanas enrejadas, un parapeto con
 //!   balaustrada y un frontón, y su mástil.
 //! - El banco y la intendencia: frentes académicos con almohadillado, órdenes
@@ -43,8 +44,8 @@ use pampa_core::{Building, BuildingKind, Canopy, Side, StoreStyle, Structure, St
 
 use super::grime;
 use super::italianate::{
-    CHAMFER, Crown, PROUD, Posts, arch, corner_piers, cornice, door_leaves, gallery, glazed_arch,
-    grille, parapet, pediment, pilaster, plinth, spire, surround, urn,
+    CHAMFER, Crown, PROUD, Posts, arch, corner_piers, cornice, door_leaves, fanlight, gallery,
+    glazed_arch, grille, parapet, pediment, pilaster, plinth, spire, surround, urn,
 };
 use super::materials::{Paint, Surface};
 use super::shape::{Shape, Weather};
@@ -317,6 +318,10 @@ struct Front {
     grilles: bool,
     hoods: bool,
     transom: bool,
+    /// La puerta del medio (el vano `bays / 2`) es un paso abierto, sin
+    /// hueco oscuro ni hojas: la de la pulpería, por donde se entra a su sala
+    /// ([`interior`]).
+    open_middle: bool,
 }
 
 /// Construye `f` sobre `walls`: las paredes con sus aberturas, el zócalo, los
@@ -325,7 +330,12 @@ fn italianate(shape: &mut Shape, walls: &Walls, f: &Front, v: u32) {
     let (h, t) = (walls.height, walls.thickness);
     let front = walls.front();
     let len = front.length;
-    let openings = spread(len, f.bays, &f.doors, f.door, f.window);
+    let mut openings = spread(len, f.bays, &f.doors, f.door, f.window);
+    if f.open_middle {
+        let middle = &mut openings[f.bays / 2];
+        debug_assert!(middle.door, "the open middle is a door");
+        middle.open = true;
+    }
     // Cada puerta recibe sus propias hojas abajo, así que la pared las deja
     // abiertas.
     front.build(shape, f.wall, &openings, u32::MAX);
@@ -419,12 +429,14 @@ fn dress(shape: &mut Shape, wall: &Wall, openings: &[Opening], f: &Front) {
     for o in openings {
         let (a, b) = o.span();
         if o.door && o.bottom <= 0.01 {
-            // Asoma del zócalo y entra hasta las hojas.
+            // Asoma del zócalo y entra hasta las hojas, o, en un paso
+            // abierto, atraviesa la pared hasta el piso de adentro.
+            let inward = if o.open { 1.0 } else { 0.45 };
             wall.piece(
                 shape,
                 Surface::Plinth,
                 (a - 0.08, -THRESHOLD.0, -0.05),
-                (b + 0.08, wall.thickness * 0.45, THRESHOLD.1),
+                (b + 0.08, wall.thickness * inward, THRESHOLD.1),
             );
         } else if !o.door {
             // Lo que chorrea del alféizar.
@@ -440,7 +452,13 @@ fn dress(shape: &mut Shape, wall: &Wall, openings: &[Opening], f: &Front) {
             );
             vent(shape, wall, (a + b) / 2.0);
         }
-        if o.door {
+        if o.open {
+            // Un paso abierto: sin hojas, con su banderola fija.
+            if f.transom {
+                fanlight(shape, wall, o);
+            }
+            surround(shape, f.trim, wall, o, false);
+        } else if o.door {
             door_leaves(shape, wall, o, f.transom);
             surround(shape, f.trim, wall, o, false);
         } else {
@@ -628,6 +646,7 @@ fn house(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32, lot: &Lot) {
         grilles: v & 0x2000 != 0,
         hoods: v & 0x4000 != 0,
         transom: true,
+        open_middle: false,
     };
     italianate(shape, &walls, &f, v);
 }
@@ -783,6 +802,9 @@ fn store(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32, style: StoreStyl
         grilles: !general,
         hoods: general,
         transom: true,
+        // Se entra a la pulpería por la puerta del medio, que core deja
+        // abierta (`pampa_core::pulperia::Interior::door`).
+        open_middle: !general,
     };
     italianate(shape, &walls, &f, v);
     let (roof, posts) = if general {
@@ -822,6 +844,7 @@ fn police(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
         grilles: true,
         hoods: false,
         transom: true,
+        open_middle: false,
     };
     italianate(shape, &walls, &f, v);
     // El mástil sobre la azotea plana, junto a una esquina del frente, con su
@@ -872,6 +895,7 @@ fn church(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
                 top: (h - 1.4).min(5.0),
                 // Vidriada, sin postigos: construida como una puerta abierta.
                 door: true,
+                open: false,
             });
         }
     }
@@ -895,6 +919,7 @@ fn church(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
                 top: (h - 1.2).min(5.4),
                 // Vidriada, sin postigos: construida como una puerta abierta.
                 door: true,
+                open: false,
             })
             .collect();
         side.build(shape, wall, &windows, u32::MAX);
@@ -972,6 +997,7 @@ fn bell_tower(shape: &mut Shape, nave: &Walls, size: f32, over: f32, _v: u32) {
         bottom: 0.0,
         top: 3.4,
         door: true,
+        open: false,
     };
     shaft.front().build(shape, wall, &[door], u32::MAX);
     foot(shape, &shaft);
@@ -1011,6 +1037,7 @@ fn bell_tower(shape: &mut Shape, nave: &Walls, size: f32, over: f32, _v: u32) {
         top: 3.0,
         // Abierto, sin postigos: construido como una puerta que queda abierta.
         door: true,
+        open: false,
     };
     for face in [
         belfry.front(),
@@ -1129,6 +1156,7 @@ fn station_front(walls: &Walls) -> Front {
         grilles: false,
         hoods: true,
         transom: true,
+        open_middle: false,
     }
 }
 
@@ -1310,8 +1338,10 @@ fn column(height: f32) -> Vec<(f32, f32)> {
 }
 
 mod civic;
+mod pulperia;
 
 pub use civic::{BANK_FRIEZE, TOWN_HALL_ATTIC};
+pub(crate) use pulperia::interior;
 
 #[cfg(test)]
 mod tests;

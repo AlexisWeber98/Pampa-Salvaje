@@ -113,6 +113,7 @@ pub(super) fn bank(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
                 // Vidriadas, sin postigos: construidas como puertas abiertas
                 // (las hojas de la puerta van aparte).
                 door: true,
+                open: false,
             }
         })
         .collect();
@@ -151,6 +152,7 @@ pub(super) fn bank(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
         grilles: true,
         hoods: false,
         transom: true,
+        open_middle: false,
     };
     back_and_sides(shape, &walls, &f, v);
     plinth(shape, Surface::Plinth, &front, &openings, 0.95, 0.09);
@@ -251,6 +253,7 @@ pub(super) fn town_hall(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
                 bottom: 0.9,
                 top: ground_top,
                 door: true,
+                open: false,
             });
             high.push(Opening {
                 at,
@@ -258,6 +261,7 @@ pub(super) fn town_hall(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
                 bottom: 0.75,
                 top: h - floor - 1.0,
                 door: true,
+                open: false,
             });
         }
     }
@@ -315,6 +319,7 @@ pub(super) fn town_hall(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32) {
         grilles: true,
         hoods: true,
         transom: true,
+        open_middle: false,
     };
     back_and_sides(shape, &walls, &f, v);
     plinth(shape, base, &lower, &ground, 0.9, 0.08);
@@ -396,6 +401,7 @@ fn pavilion(
         bottom: 0.0,
         top: floor - 0.35,
         door: true,
+        open: false,
     };
     lower.build(shape, base, &[door], u32::MAX);
     arch(shape, (base, trim), &lower, &door);
@@ -408,6 +414,7 @@ fn pavilion(
         bottom: 0.15,
         top: h - floor - 0.8,
         door: true,
+        open: false,
     };
     upper.build(shape, wall, &[balcony], u32::MAX);
     arch(shape, (wall, trim), &upper, &balcony);

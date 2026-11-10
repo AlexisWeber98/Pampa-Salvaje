@@ -23,6 +23,9 @@ pub(crate) struct Opening {
     pub bottom: f32,
     pub top: f32,
     pub door: bool,
+    /// Un paso abierto hacia adentro, sin el hueco oscuro detrás ni hojas:
+    /// se ve la sala a través de él (la puerta del medio de la pulpería).
+    pub open: bool,
 }
 
 impl Opening {
@@ -208,17 +211,20 @@ impl Wall {
             if o.bottom > -drop + 0.01 {
                 self.piece(shape, surface, (a, 0.0, -drop), (b, t, o.bottom));
             }
-            // El interior oscuro, visto a través de la abertura.
-            self.piece(
-                shape,
-                Surface::Recess,
-                (a, t * 0.7, o.bottom),
-                (b, t * 0.75, o.top),
-            );
+            // El interior oscuro, visto a través de la abertura, salvo en un
+            // paso abierto, que deja ver la sala.
+            if !o.open {
+                self.piece(
+                    shape,
+                    Surface::Recess,
+                    (a, t * 0.7, o.bottom),
+                    (b, t * 0.75, o.top),
+                );
+            }
             if o.door {
                 // Una puerta de tablas con travesaños y riostras en su marco;
                 // unas pocas, según la semilla, quedan abiertas.
-                if (open >> (k % 16)) & 1 == 0 {
+                if !o.open && (open >> (k % 16)) & 1 == 0 {
                     self.ledged_door(shape, (a, b), (o.bottom, o.top));
                 }
                 // Los frentes del pueblo, con todas sus puertas abiertas aquí,
@@ -381,6 +387,7 @@ pub(crate) fn spread(
                     bottom: 0.0,
                     top: door.1,
                     door: true,
+                    open: false,
                 }
             } else {
                 Opening {
@@ -389,6 +396,7 @@ pub(crate) fn spread(
                     bottom: window.1,
                     top: window.2,
                     door: false,
+                    open: false,
                 }
             }
         })
@@ -683,6 +691,7 @@ pub(crate) fn barn(
             bottom: 0.0,
             top: (h - 0.8).min(4.0),
             door: true,
+            open: false,
         })
         .collect();
     // Un portón grande está casi siempre cerrado; uno de cada tres queda
@@ -752,6 +761,7 @@ mod tests {
             bottom: 0.0,
             top: 2.2,
             door: true,
+            open: false,
         };
         // Portón abierto (bit 0 activado): nada de la pared rellena el vano.
         wall.build(&mut shape, Surface::Whitewash, &[door], 1);

@@ -1582,10 +1582,15 @@ fn build_lots(jobs: &[Job], plazas: &[PlazaJob]) -> Vec<Built> {
                 BuildingKind::Windmill | BuildingKind::WaterTank => 1,
                 _ => 0,
             };
+            // La sala de una pulpería, sin el desgaste de sus paredes.
+            let mut meshes = shape.into_meshes();
+            if let Some(room) = town_buildings::interior(&job.lot) {
+                meshes.extend(room.into_meshes());
+            }
             Some(Built {
                 part: Part::Building(job.index),
                 transform,
-                meshes: shape.into_meshes(),
+                meshes,
                 range,
                 rotor,
             })
@@ -1745,6 +1750,37 @@ mod tests {
             app.update();
         }
         assert_eq!(count::<With<Mesh3d>>(&mut app), 0);
+    }
+
+    #[test]
+    fn a_pulperia_is_built_with_its_room_and_the_room_does_not_weather() {
+        use crate::facade::materials::weathers;
+        let terrain = Terrain::default();
+        let small = TownLayout::generate(&TownConfig::castex()).unwrap();
+        let big = TownLayout::generate(&TownConfig {
+            name: "General Pico".into(),
+            blocks: (8, 8),
+            ..TownConfig::castex()
+        })
+        .unwrap();
+        for (town, pulperia) in [(small, true), (big, false)] {
+            let jobs: Vec<Job> = lots(&town, &terrain)
+                .into_iter()
+                .filter(|j| j.lot.building.kind == BuildingKind::GeneralStore)
+                .collect();
+            let built = build_lots(&jobs, &[]);
+            assert!(!built.is_empty(), "{}", town.name);
+            for b in built {
+                let meshes = &b.meshes;
+                assert!(meshes.iter().any(|(_, m)| weathers(m)), "worn walls");
+                // El piso de ladrillo de la sala, liso: lo único sin desgaste.
+                let room = meshes
+                    .iter()
+                    .any(|(s, m)| *s == Surface::Paving && !weathers(m));
+                assert_eq!(room, pulperia, "{}", town.name);
+                assert_eq!(meshes.iter().any(|(_, m)| !weathers(m)), pulperia);
+            }
+        }
     }
 
     #[test]

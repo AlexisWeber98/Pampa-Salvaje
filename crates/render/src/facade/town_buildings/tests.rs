@@ -1,5 +1,6 @@
 use pampa_core::{Aabb, Vec2 as GroundVec2};
 
+use super::pulperia::ROOM_FLOOR;
 use super::*;
 
 /// Un lote para un edificio de tipo `kind`, de `w` a lo largo de su frente, `d`
@@ -643,6 +644,17 @@ fn the_outskirts_have_wooden_ranchos_casillas_and_mud_and_straw_ranchos() {
 fn town_buildings_keep_to_their_triangle_budgets() {
     for lot in street() {
         let tris = building(&lot).unwrap().triangles();
+        if lot.store == StoreStyle::Pulperia && lot.building.kind == BuildingKind::GeneralStore {
+            // Su sala amueblada, aparte: mostrador con reja, estantes con
+            // botellas, tres mesas, seis bancos, dos barriles y el farol;
+            // 7.2k a 8.7k al escribir esto, casi la mitad en botellas.
+            let room = interior(&lot).map_or(0, |s| s.triangles());
+            assert!(
+                (4000..=10000).contains(&room),
+                "pulpería {:#x}: {room} triangles inside",
+                lot.variant
+            );
+        }
         let budget = match lot.building.kind {
             BuildingKind::Church => 2000..=6000,
             // Con persianas de tablillas, rejillas de hierro, puertas de
@@ -827,5 +839,180 @@ fn preview_town_street() {
             }
         }
         std::fs::write(dir.join(format!("{name}.txt")), text).expect("preview written");
+    }
+}
+
+/// Si hay algo de `surface` en el vano de la puerta del frente centrada en `x`
+/// (con la cara del frente en `face`): entre sus jambas, a la altura de una
+/// persona (bajo la banderola) y dentro del espesor de la pared.
+fn fills_door(shape: &Shape, surface: Surface, x: f32, face: f32) -> bool {
+    shape.points(surface).iter().any(|p| {
+        (p.x - x).abs() < 0.66 && p.y > -0.01 && p.y < 2.5 && p.z < face + 0.05 && p.z > face - 0.46
+    })
+}
+
+#[test]
+fn the_pulperias_middle_door_stands_open_and_every_other_door_keeps_its_leaves() {
+    // Un frente de 16 m: cinco vanos, puertas en el 0, el 2 y el 4.
+    let face = 14.0 / 2.0 - PROUD;
+    let side = (16.0 - 2.0 * PROUD) * 2.0 / 5.0;
+    for v in 0..6 {
+        for store in [StoreStyle::GeneralStore, StoreStyle::Pulperia] {
+            let shape = building(&Lot {
+                store,
+                ..lot(BuildingKind::GeneralStore, (16.0, 14.0, 5.0), v)
+            })
+            .unwrap();
+            let open = store == StoreStyle::Pulperia;
+            for surface in [Surface::Recess, Surface::Door] {
+                assert_eq!(
+                    fills_door(&shape, surface, 0.0, face),
+                    !open,
+                    "{store:?} {v}: {surface:?} in the middle door"
+                );
+                for x in [-side, side] {
+                    assert!(
+                        fills_door(&shape, surface, x, face),
+                        "{store:?} {v}: {surface:?} in the door at {x}"
+                    );
+                }
+            }
+            // El umbral de piedra sigue en su lugar.
+            assert!(
+                shape.points(Surface::Plinth).iter().any(|p| p.x.abs() < 0.8
+                    && p.y <= THRESHOLD.1 + 1e-4
+                    && (p.z - face - THRESHOLD.0).abs() < 1e-4),
+                "{store:?} {v}: the middle threshold"
+            );
+        }
+    }
+}
+
+/// Una pulpería de `w` por `d` mirando a `front`, con la semilla `v`.
+fn pulperia_lot((w, d): (f32, f32), front: Side, v: u32) -> Lot {
+    let size = match front {
+        Side::North | Side::South => GroundVec2::new(w, d),
+        Side::East | Side::West => GroundVec2::new(d, w),
+    };
+    let mut lot = Lot {
+        store: StoreStyle::Pulperia,
+        ..lot(BuildingKind::GeneralStore, (w, d, 5.0), v)
+    };
+    lot.building.footprint = Aabb::from_center_size(GroundVec2::ZERO, size);
+    lot.building.front = front;
+    lot
+}
+
+/// La madera con la que se hacen los muebles de la pulpería.
+const FURNITURE_WOOD: [Surface; 4] = [
+    Surface::Door,
+    Surface::Planks,
+    Surface::Sleeper,
+    Surface::Barnwood,
+];
+
+#[test]
+fn a_pulperia_is_furnished_where_core_puts_its_furniture() {
+    use pampa_core::pulperia::{FurnitureKind, Interior};
+    for (w, d) in [(16.0, 14.0), (14.0, 14.0), (20.0, 16.0)] {
+        // Mirando al sur, el `+Z` propio es el sur: el norte de core (`+y`)
+        // queda en `-Z`.
+        let lot = pulperia_lot((w, d), Side::South, 3);
+        let room = Interior::of(&lot.building);
+        let inside = interior(&lot).expect("a pulpería is furnished");
+        let local = |a: Aabb| (Vec2::new(a.min.x, -a.max.y), Vec2::new(a.max.x, -a.min.y));
+        let (lo, hi) = local(room.floor);
+        // Todo queda en la sala, entre las caras de adentro de las paredes y
+        // bajo el techo.
+        for (surface, p) in points(&inside) {
+            assert!(
+                p.x >= lo.x - 1e-3
+                    && p.x <= hi.x + 1e-3
+                    && p.z >= lo.y - 1e-3
+                    && p.z <= hi.y + 1e-3,
+                "{surface:?} at {p} outside the room"
+            );
+            assert!(
+                p.y >= 0.0 && p.y <= lot.building.height,
+                "{surface:?} at {p}"
+            );
+        }
+        let wood: Vec<Vec3> = FURNITURE_WOOD
+            .iter()
+            .flat_map(|&s| inside.points(s))
+            .collect();
+        let mut kinds = Vec::new();
+        for f in &room.furniture {
+            let (lo, hi) = local(f.footprint);
+            let over = |p: &&Vec3| {
+                p.x > lo.x - 0.02 && p.x < hi.x + 0.02 && p.z > lo.y - 0.02 && p.z < hi.y + 0.02
+            };
+            // Su tabla de arriba, a la altura que core le da.
+            assert!(
+                wood.iter()
+                    .filter(over)
+                    .any(|p| (p.y - ROOM_FLOOR - f.height).abs() < 0.03),
+                "{w}x{d}: no top for {f:?}"
+            );
+            // Y de ese mueble, nada de madera más arriba (la reja del
+            // mostrador es de hierro y las botellas, de vidrio).
+            if f.kind != FurnitureKind::Shelves {
+                let top = wood.iter().filter(over).map(|p| p.y).fold(0.0f32, f32::max);
+                if top > ROOM_FLOOR + f.height + 0.03 {
+                    // Solo puede ser el cielorraso, sobre todo.
+                    assert!(
+                        top > lot.building.height - 0.5,
+                        "{w}x{d}: {f:?} reaches {top}"
+                    );
+                }
+            }
+            kinds.push(f.kind);
+        }
+        // La reja del mostrador sube del mostrador hacia el techo.
+        let counter = room
+            .furniture
+            .iter()
+            .find(|f| f.kind == FurnitureKind::Counter)
+            .unwrap();
+        let (clo, chi) = local(counter.footprint);
+        assert!(
+            inside.points(Surface::Steel).iter().any(|p| p.x > clo.x
+                && p.x < chi.x
+                && p.z > clo.y
+                && p.z < chi.y
+                && p.y > 2.5),
+            "{w}x{d}: the grille over the counter"
+        );
+        assert!(inside.surfaces().any(|s| s == Surface::Glass), "bottles");
+        assert!(kinds.contains(&FurnitureKind::Barrel));
+    }
+}
+
+#[test]
+fn a_pulperia_is_the_same_room_whichever_way_it_faces() {
+    let south = interior(&pulperia_lot((16.0, 14.0), Side::South, 1)).unwrap();
+    for front in [Side::North, Side::East, Side::West] {
+        let turned = interior(&pulperia_lot((16.0, 14.0), front, 1)).unwrap();
+        for surface in south.surfaces() {
+            let (a, b) = (south.points(surface), turned.points(surface));
+            assert_eq!(a.len(), b.len(), "{front:?} {surface:?}");
+            for (p, q) in a.iter().zip(&b) {
+                assert!(p.distance(*q) < 1e-3, "{front:?} {surface:?}: {p} vs {q}");
+            }
+        }
+    }
+}
+
+#[test]
+fn only_a_pulperia_has_an_interior() {
+    for lot in street().into_iter().chain(yard()) {
+        let pulperia =
+            lot.building.kind == BuildingKind::GeneralStore && lot.store == StoreStyle::Pulperia;
+        assert_eq!(
+            interior(&lot).is_some(),
+            pulperia,
+            "{:?}",
+            lot.building.kind
+        );
     }
 }

@@ -292,6 +292,45 @@ type Horses<'w, 's> = (
     Query<'w, 's, StandingHorse>,
 );
 
+/// Si la persona del encargo al alcance de `at` toma la F.
+pub(crate) fn errand_wants_f(errand: &Errand, at: pampa_core::Vec2) -> bool {
+    errand.clone().interact(at) != Interaction::Nothing
+}
+
+/// Lo que reclama la F antes que un cartel o una puerta: la persona del
+/// encargo, o un caballo al alcance que el jugador puede montar.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct FClaims<'w, 's> {
+    errand: Option<Res<'w, ErrandRun>>,
+    loose: Option<Res<'w, LooseHorse>>,
+    abilities: Option<Res<'w, PlayerAbilities>>,
+    horses: Query<'w, 's, &'static Mountable>,
+}
+
+impl FClaims<'_, '_> {
+    /// Si alguno de ellos toma la F de un jugador parado en `at`.
+    pub(crate) fn taken(&self, at: pampa_core::Vec2) -> bool {
+        let horse_in_reach = self
+            .loose
+            .as_ref()
+            .and_then(|l| l.0)
+            .is_some_and(|h| at.distance(h.position) <= Errand::MOUNT_RANGE)
+            || self
+                .abilities
+                .as_ref()
+                .is_some_and(|a| a.0.has(Ability::Ride))
+                && self
+                    .horses
+                    .iter()
+                    .any(|h| at.distance(h.0.position) <= Errand::MOUNT_RANGE);
+        horse_in_reach
+            || self
+                .errand
+                .as_ref()
+                .is_some_and(|e| errand_wants_f(&e.0, at))
+    }
+}
+
 /// La tecla de interacción: habla con quien esté al alcance y le corresponda, o
 /// monta el caballo de Don Hidalgo; sin nada más que hacer, baja del caballo o
 /// vuelve a subir, o (una vez desbloqueada la monta) sube a cualquier otro
