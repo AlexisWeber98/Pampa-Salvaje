@@ -65,7 +65,7 @@ impl Default for FootTuning {
 }
 
 /// Cómo se dibuja al jugador según cómo se desplaza (`travel`): el empleado a
-/// pie, o el empleado en la montura del bayo de Don Hidalgo, el primer caballo
+/// pie, o el empleado en la montura del alazán de Don Hidalgo, el primer caballo
 /// que monta.
 pub fn player_visual(travel: Travel) -> CharacterVisual {
     player_visual_on(travel, Coat::HIDALGO)
@@ -84,7 +84,7 @@ pub fn player_visual_on(travel: Travel, coat: Coat) -> CharacterVisual {
 }
 
 /// El pelaje del caballo que monta el jugador (o que montó por última vez): el
-/// bayo de Don Hidalgo hasta que monte otro.
+/// alazán de Don Hidalgo hasta que monte otro.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RiddenCoat(pub Coat);
 

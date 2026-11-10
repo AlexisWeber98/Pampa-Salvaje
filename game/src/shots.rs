@@ -94,7 +94,7 @@ pub enum Gait {
 pub struct Ride {
     pub gait: Gait,
     pub mount: Option<(GroundVec2, f32)>,
-    /// El pelaje del caballo que se monta (por defecto, el bayo de Hidalgo).
+    /// El pelaje del caballo que se monta (por defecto, el alazán de Hidalgo).
     pub coat: Option<pampa_render::Coat>,
 }
 
@@ -333,7 +333,7 @@ fn ride_shot(
         transform.translation = world_from_ground(spot, player.rider.height);
         let visual = match (ride.gait, ride.coat) {
             (Gait::Tied, coat) => {
-                pampa_render::CharacterVisual::Horse(coat.unwrap_or(pampa_render::Coat::Bayo))
+                pampa_render::CharacterVisual::Horse(coat.unwrap_or(pampa_render::Coat::HIDALGO))
             }
             (_, Some(coat)) => player_visual_on(pampa_core::Travel::Riding, coat),
             (_, None) => player_visual(pampa_core::Travel::Riding),

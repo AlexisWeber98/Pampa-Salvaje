@@ -770,7 +770,7 @@ mod tests {
         assert_eq!(town.name, "General Alvear");
         assert_eq!(town.streets.len(), 4 + 5);
         let world = World::with_towns(loaded.world, Terrain::default(), &loaded.towns);
-        assert_eq!(world.obstacles, town.obstacles());
+        assert_eq!(world.obstacles, town.colliders());
         let (spawn, _) = town.arrival();
         assert!(world.obstacles.iter().all(|o| !o.contains_point(spawn)));
         // La estación está junto al ferrocarril, dentro de su extensión, para

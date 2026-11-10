@@ -341,10 +341,26 @@ impl CameraOccluders {
     /// sobre el suelo la mantiene por encima.
     pub fn from_town(town: &TownLayout, terrain: &Terrain) -> Self {
         let ground = |p: GroundVec2| terrain.height(p.x, p.y);
+        let pulperia = town.pulperia();
+        // La pulpería se camina por adentro: una columna por pared y una losa
+        // en su cielorraso, en lugar de una columna sobre toda su huella.
+        let inside = pulperia.iter().flat_map(|(store, inside)| {
+            let g = ground(store.footprint.center());
+            let walls = inside
+                .walls
+                .iter()
+                .map(move |w| Occluder::column(*w, g, g + inside.ceiling + ROOF_ALLOWANCE));
+            walls.chain(std::iter::once(Occluder {
+                footprint: store.footprint,
+                bottom: g + inside.ceiling,
+                top: g + inside.ceiling + ROOF_ALLOWANCE,
+            }))
+        });
         let buildings = town
             .buildings
             .iter()
             .filter(|b| b.kind != BuildingKind::Platform)
+            .filter(|b| pulperia.as_ref().is_none_or(|(store, _)| b != store))
             .map(|b| {
                 // Su collider: las paredes de un galpón, no sus aleros, bajo
                 // los cuales puede pararse el jugador.
@@ -361,8 +377,26 @@ impl CameraOccluders {
                 top: g + c.top(),
             }
         });
-        Self(buildings.chain(canopies).collect())
+        Self(buildings.chain(inside).chain(canopies).collect())
     }
+}
+
+/// La puerta de la pulpería sobre cuyo piso está parado `at`, tapada para la
+/// cámara: adentro, la cámara se queda en la sala en lugar de salir a la calle
+/// por el hueco. Afuera o en el umbral no hay ninguna, así que al cruzarlo la
+/// cámara nunca arranca dentro de un oclusor.
+fn room_door(towns: Option<&WorldTowns>, at: GroundVec2, world: &World) -> Option<Occluder> {
+    let town = towns?.0.iter().find(|t| t.extent().contains_point(at))?;
+    let (store, inside) = town.pulperia()?;
+    if !inside.floor.contains_point(at) {
+        return None;
+    }
+    let g = world.ground_height(store.footprint.center());
+    Some(Occluder::column(
+        inside.doorway(),
+        g,
+        g + inside.ceiling + ROOF_ALLOWANCE,
+    ))
 }
 
 /// Los vagones de los trenes cerca de `near` (el jinete) como columnas desde el
@@ -945,7 +979,8 @@ fn follow_player(
         let them = world_from_ground(other, world.0.ground_height(other))
             + Vec3::Y * follow.on_foot_look_height;
         let (spot, at) = scene_view(target, them);
-        let clear = clear_reach(at, spot, occluders.0.iter()).min(1.0);
+        let door = room_door(towns.as_deref(), rider.position, &world.0);
+        let clear = clear_reach(at, spot, occluders.0.iter().chain(&door)).min(1.0);
         transform.translation = at.lerp(spot, clear);
         transform.look_at(at, Vec3::Y);
         rig.0 = None;
@@ -1015,8 +1050,13 @@ fn follow_player(
         });
         trunks.extend(solid.along(world.0.config, target, desired));
     }
-    let allowed = clear_reach(target, desired, occluders.0.iter().chain(&cars))
-        .min(trunk_reach(target, desired, &trunks));
+    let door = room_door(towns.as_deref(), rider.position, &world.0);
+    let allowed = clear_reach(
+        target,
+        desired,
+        occluders.0.iter().chain(&cars).chain(&door),
+    )
+    .min(trunk_reach(target, desired, &trunks));
     reach.0 = if snapped {
         allowed
     } else {
@@ -1097,6 +1137,14 @@ mod tests {
         let mut rig = query.single_mut(app.world_mut()).unwrap();
         if let Some((orbit, _)) = rig.0.as_mut() {
             orbit.yaw = yaw;
+        }
+    }
+
+    fn set_pitch(app: &mut App, pitch: f32) {
+        let mut query = app.world_mut().query::<&mut CameraRig>();
+        let mut rig = query.single_mut(app.world_mut()).unwrap();
+        if let Some((orbit, _)) = rig.0.as_mut() {
+            orbit.pitch = pitch;
         }
     }
 
@@ -1757,6 +1805,41 @@ mod tests {
         );
     }
 
+    #[test]
+    fn inside_the_pulperia_the_camera_stays_in_the_room_behind_the_player() {
+        let town = TownLayout::castex_inspired();
+        let (store, inside) = town.pulperia().expect("a small town");
+        let (store, door) = (store.footprint, inside.door);
+        let world = World::with_town(Terrain::default(), &town);
+        let occluders = CameraOccluders::from_town(&town, &world.terrain);
+        // En el paso de la puerta, 6 m adentro, mirando al fondo.
+        let into = GroundVec2::new(-door.outward.x, -door.outward.y);
+        let spawn = PlayerSpawn {
+            position: door.center + into * 6.0,
+            heading: Heading::from_radians(into.y.atan2(into.x)),
+            travel: pampa_core::Travel::OnFoot,
+        };
+        let mut app = headless_app(world, spawn, occluders.clone());
+        app.insert_resource(WorldTowns(vec![town.clone()]));
+        for frame in 0..60 {
+            // A mitad de camino, la órbita mirando desde lo más alto: el
+            // cielorraso la baja.
+            if frame >= 30 {
+                set_pitch(&mut app, crate::orbit::OrbitParams::default().max_pitch);
+            }
+            app.update();
+            let cam = camera(&mut app).translation;
+            let (_, head) = rig(&mut app);
+            assert!(
+                cam.distance(head) >= 1.2,
+                "frame {frame}: camera {cam} on the player's head {head}"
+            );
+            assert_outside(&occluders.0, cam, &format!("frame {frame}"));
+            assert!(store.contains_point(ground(cam)), "frame {frame}: {cam}");
+            assert!(cam.y < inside.ceiling, "frame {frame}: {cam}");
+        }
+    }
+
     /// El collider de cada edificio de `town`.
     fn world_colliders(town: &TownLayout) -> Vec<Aabb> {
         town.buildings
@@ -1835,9 +1918,12 @@ mod tests {
                 .iter()
                 .all(|o| o.footprint != platform.footprint)
         );
+        // La pulpería: una columna por pared y su cielorraso, no una por
+        // edificio.
+        let pulperia = town.pulperia().map_or(0, |(_, inside)| inside.walls.len());
         assert_eq!(
             occluders.0.len(),
-            town.buildings.len() - 1 + town.canopies().len()
+            town.buildings.len() - 1 + town.canopies().len() + pulperia
         );
         let (position, heading) = town.platform_spot().unwrap();
         let top = world.ground_height(position);

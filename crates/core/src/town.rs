@@ -1573,6 +1573,36 @@ impl TownLayout {
             .collect()
     }
 
+    /// La pulpería del pueblo, si es un pueblo chico
+    /// ([`crate::places::StoreStyle::Pulperia`]), con su interior.
+    pub fn pulperia(&self) -> Option<(&Building, crate::pulperia::Interior)> {
+        if crate::places::StoreStyle::of(self.size) != crate::places::StoreStyle::Pulperia {
+            return None;
+        }
+        let store = self
+            .buildings
+            .iter()
+            .find(|b| b.kind == BuildingKind::GeneralStore)?;
+        Some((store, crate::pulperia::Interior::of(store)))
+    }
+
+    /// Con qué chocan de verdad las personas, los caballos y la cámara: los
+    /// [`Self::obstacles`], salvo que la huella de la pulpería se cambia por sus
+    /// paredes, con el hueco de la puerta, y sus muebles. Ubicar cosas
+    /// alrededor sigue usando [`Self::obstacles`], con la huella entera.
+    pub fn colliders(&self) -> Vec<Aabb> {
+        let mut out = self.obstacles();
+        if let Some((store, inside)) = self.pulperia() {
+            // Los edificios van primero en los obstáculos: la primera caja
+            // igual a su huella es la suya.
+            if let Some(i) = out.iter().position(|o| *o == store.collider()) {
+                out.remove(i);
+            }
+            out.extend(inside.obstacles());
+        }
+        out
+    }
+
     /// Dónde empieza un jinete que llega desde la pampa abierta: en el camino
     /// principal fuera de la cuadrícula, del lado opuesto a la vía férrea,
     /// mirando hacia el pueblo.

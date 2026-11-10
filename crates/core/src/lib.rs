@@ -34,6 +34,7 @@ pub mod obstacles;
 pub mod placement;
 pub mod places;
 pub mod pose;
+pub mod pulperia;
 pub mod rail;
 pub mod ride;
 pub mod rider;

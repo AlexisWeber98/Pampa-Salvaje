@@ -459,7 +459,7 @@ fn spawn_horsemen(commands: &mut Commands, riders: &TownRiders, town: usize, wor
     }
 }
 
-/// El pelaje del caballo atado en el almacén de `town`: el bayo de Don Hidalgo
+/// El pelaje del caballo atado en el almacén de `town`: el alazán de Don Hidalgo
 /// en su pueblo (el caballo que presta); si no, uno sembrado a partir del
 /// pueblo.
 pub fn tethered_coat(layout: &TownLayout, cast: &Cast, town: usize) -> Coat {
@@ -1272,7 +1272,7 @@ mod tests {
     }
 
     #[test]
-    fn don_hidalgos_horse_is_the_bayo_and_other_towns_seed_theirs() {
+    fn don_hidalgos_horse_is_the_alazan_and_other_towns_seed_theirs() {
         let towns = vec![TownLayout::castex_inspired(), TownLayout::castex_inspired()];
         let cast = cast_of(&towns);
         let hidalgo = cast
@@ -1282,10 +1282,13 @@ mod tests {
             .unwrap()
             .1
             .town;
-        assert_eq!(tethered_coat(&towns[hidalgo], &cast, hidalgo), Coat::HIDALGO);
+        assert_eq!(
+            tethered_coat(&towns[hidalgo], &cast, hidalgo),
+            Coat::HIDALGO
+        );
         let empty = Cast::default();
         // Incluso donde la semilla propia del pueblo daría otro pelaje: el
-        // pueblo de Don Hidalgo ata a su bayo, no al caballo sembrado.
+        // pueblo de Don Hidalgo ata a su alazán, no al caballo sembrado.
         let mut his = towns[hidalgo].clone();
         his.seed = (0..)
             .find(|&seed| Coat::seeded(seed ^ 0x4f52_5345) != Coat::HIDALGO)
