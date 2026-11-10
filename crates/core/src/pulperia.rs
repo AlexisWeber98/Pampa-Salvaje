@@ -20,6 +20,7 @@
 
 use crate::clock::TimeOfDay;
 use crate::places::side_normal;
+use crate::rng::Rng;
 use crate::town::Building;
 use crate::{Aabb, Heading, Rider, Vec2};
 
@@ -50,6 +51,14 @@ const BENCH: (f32, f32) = (1.6, 0.35);
 const BENCH_GAP: f32 = 0.1;
 /// Dónde se sienta cada uno sobre un banco, a cada lado de su centro.
 const SEAT_OFFSET: f32 = 0.4;
+/// La altura de los bancos, en metros: la parte de arriba del asiento sobre el
+/// piso de ladrillo.
+pub const BENCH_HEIGHT: f32 = 0.45;
+/// Cuánto queda el piso de ladrillo por encima del suelo del lote, en metros
+/// (el render lo dibuja ahí).
+pub const FLOOR_RISE: f32 = 0.05;
+/// Cuántos parroquianos hay sentados, como mínimo y como máximo.
+const PATRONS: (u32, u32) = (2, 5);
 
 /// A qué hora abre la pulpería: desde entonces la puerta del medio queda
 /// abierta (supuesto, a revisar).
@@ -101,6 +110,14 @@ pub struct Furniture {
 pub struct Seat {
     pub position: Vec2,
     pub facing: Heading,
+}
+
+/// Alguien sentado a una mesa de la pulpería: en el asiento `seat` del
+/// interior, con el aspecto de vecino `look`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Patron {
+    pub seat: usize,
+    pub look: u8,
 }
 
 /// El interior de una pulpería.
@@ -194,7 +211,7 @@ impl Interior {
                 put(
                     FurnitureKind::Bench,
                     (u - bu, u + bu, bv - bh, bv + bh),
-                    0.45,
+                    BENCH_HEIGHT,
                 );
                 // Mirando hacia la mesa: hacia adentro desde el banco de
                 // adelante, hacia la calle desde el de atrás.
@@ -239,6 +256,27 @@ impl Interior {
                 .doorway()
                 .expanded(Rider::PERSON_RADIUS)
                 .contains_point(at)
+    }
+
+    /// Los parroquianos sentados a las mesas de una pulpería con semilla
+    /// `seed`: entre dos y cinco, cada uno en un asiento distinto
+    /// ([`Self::seats`]), con su aspecto de vecino.
+    pub fn patrons(&self, seed: u32) -> Vec<Patron> {
+        let mut rng = Rng::new(seed, 0);
+        let mut free: Vec<usize> = (0..self.seats.len()).collect();
+        let count = PATRONS.0 + rng.next() % (PATRONS.1 - PATRONS.0 + 1);
+        let mut out = Vec::new();
+        for _ in 0..count {
+            if free.is_empty() {
+                break;
+            }
+            let seat = free.swap_remove(rng.next() as usize % free.len());
+            out.push(Patron {
+                seat,
+                look: (rng.next() >> 24) as u8,
+            });
+        }
+        out
     }
 
     /// Con qué chocan las personas adentro: las paredes y los muebles.

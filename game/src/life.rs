@@ -23,7 +23,7 @@ use std::collections::BTreeSet;
 use bevy::prelude::*;
 use pampa_core::{
     BASE_RATE, GameClock, LineTrain, MAX_STEP, Npc, Parked, RailLine, Ride, Run, Standing,
-    Timetable, TownLayout, TownRiders, Townsfolk, Travel, opening,
+    Timetable, TownLayout, TownRiders, Townsfolk, Travel, opening, pulperia,
 };
 use pampa_render::{
     ActiveTowns, CharacterVisual, Coat, FigureKind, MapIcon, Rolled, VehicleVisual, VisualPose,
@@ -187,6 +187,18 @@ pub struct Bystander {
     pub town: usize,
 }
 
+/// Un parroquiano sentado a una mesa de la pulpería del pueblo `town`, en el
+/// asiento `seat` de su interior ([`pampa_core::pulperia::Interior::seats`]).
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Patron {
+    pub town: usize,
+    pub seat: usize,
+}
+
+/// Se mezcla con la semilla de la gente de cada pueblo para sentar a los
+/// parroquianos de su pulpería.
+const PATRONS_SEED: u32 = 0x7061_7472;
+
 /// Pueblos cuyo caballo atado se llevaron en esta sesión: no se vuelve a atar
 /// allí.
 #[derive(Resource, Debug, Clone, Default, PartialEq, Eq)]
@@ -286,6 +298,7 @@ type Residents<'a> = (
     Option<&'a Bystander>,
     Option<&'a Horseman>,
     Option<&'a ParkedVehicle>,
+    Option<&'a Patron>,
 );
 
 /// Crea a la gente y el caballo atado de los pueblos que acaban de activarse, y
@@ -301,7 +314,7 @@ fn populate_towns(
         return;
     };
     let wanted: BTreeSet<usize> = live_towns(&crowds, active.as_deref()).into_iter().collect();
-    for (entity, walker, horse, palenque, npc, bystander, horseman, vehicle) in &residents {
+    for (entity, walker, horse, palenque, npc, bystander, horseman, vehicle, patron) in &residents {
         let town = walker
             .map(|w| w.town)
             .or(horse.map(|h| h.0))
@@ -309,7 +322,8 @@ fn populate_towns(
             .or(npc.map(|n| n.town))
             .or(bystander.map(|b| b.town))
             .or(horseman.map(|h| h.town))
-            .or(vehicle.map(|v| v.town));
+            .or(vehicle.map(|v| v.town))
+            .or(patron.map(|p| p.town));
         if town.is_some_and(|t| !wanted.contains(&t)) {
             commands.entity(entity).despawn();
         }
@@ -326,6 +340,9 @@ fn populate_towns(
         if let Some(vehicles) = parked.as_ref().and_then(|p| p.0.get(town)) {
             spawn_parked(&mut commands, vehicles, town, &world);
         }
+        if let Some(layout) = towns.as_ref().and_then(|t| t.0.get(town)) {
+            spawn_patrons(&mut commands, layout, town, &world);
+        }
         if let Some(layout) = towns.as_ref().and_then(|t| t.0.get(town))
             && !led_away.0.contains(&town)
         {
@@ -339,6 +356,37 @@ fn populate_towns(
         for &(kind, standing) in cast.1.iter().filter(|(_, s)| s.town == town) {
             spawn_bystander(&mut commands, kind, standing, &world);
         }
+    }
+}
+
+/// Los parroquianos de la pulpería de `layout`, si tiene una: sentados en los
+/// bancos, mirando hacia su mesa. El banco ya es un obstáculo, así que no
+/// necesitan cuerpo.
+fn spawn_patrons(commands: &mut Commands, layout: &TownLayout, town: usize, world: &GameWorld) {
+    let Some((store, inside)) = layout.pulperia() else {
+        return;
+    };
+    // El piso de ladrillo, a la altura con la que el render dibuja la sala.
+    let middle = store.footprint.center();
+    let floor = world.0.terrain.height(middle.x, middle.y) + pulperia::FLOOR_RISE;
+    for patron in inside.patrons(crowd_seed(layout.seed) ^ PATRONS_SEED) {
+        let seat = inside.seats[patron.seat];
+        commands.spawn((
+            Name::new(format!("Patron {town}.{}", patron.seat)),
+            Patron {
+                town,
+                seat: patron.seat,
+            },
+            CharacterVisual::Seated(FigureKind::townsfolk(patron.look)),
+            VisualPose {
+                heading: seat.facing,
+                ..default()
+            },
+            Transform::from_translation(world_from_ground(
+                seat.position,
+                floor + pulperia::BENCH_HEIGHT,
+            )),
+        ));
     }
 }
 
@@ -1239,6 +1287,46 @@ mod tests {
         app.insert_resource(ActiveTowns(activation));
         app.update();
         let mut left = app.world_mut().query::<&Horseman>();
+        assert_eq!(left.iter(app.world()).count(), 0);
+    }
+
+    #[test]
+    fn patrons_sit_on_the_pulperia_benches_facing_their_tables_and_leave_with_the_town() {
+        let mut app = town_app();
+        app.update();
+        let town = app.world().resource::<WorldTowns>().0[0].clone();
+        let (store, inside) = town.pulperia().expect("Castex has a pulpería");
+        let world = app.world().resource::<GameWorld>().0.clone();
+        let middle = store.footprint.center();
+        let floor = world.terrain.height(middle.x, middle.y) + pampa_core::pulperia::FLOOR_RISE;
+        let mut query = app
+            .world_mut()
+            .query::<(&Patron, &Transform, &VisualPose, &CharacterVisual)>();
+        let found: Vec<_> = query
+            .iter(app.world())
+            .map(|(p, t, v, c)| (*p, *t, *v, *c))
+            .collect();
+        assert!((2..=5).contains(&found.len()), "{} patrons", found.len());
+        let seats: BTreeSet<usize> = found.iter().map(|(p, ..)| p.seat).collect();
+        assert_eq!(seats.len(), found.len(), "one patron per seat");
+        for (patron, transform, pose, visual) in found {
+            assert_eq!(patron.town, 0);
+            let seat = inside.seats[patron.seat];
+            assert_eq!(
+                transform.translation,
+                world_from_ground(seat.position, floor + pampa_core::pulperia::BENCH_HEIGHT)
+            );
+            assert_eq!(pose.heading, seat.facing);
+            assert!(
+                matches!(visual, CharacterVisual::Seated(FigureKind::Townsfolk(_))),
+                "{visual:?}"
+            );
+        }
+        let mut activation = TownActivation::default();
+        activation.update(&[town], Vec2::new(1.0e6, 1.0e6));
+        app.insert_resource(ActiveTowns(activation));
+        app.update();
+        let mut left = app.world_mut().query::<&Patron>();
         assert_eq!(left.iter(app.world()).count(), 0);
     }
 

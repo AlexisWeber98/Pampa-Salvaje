@@ -27,8 +27,9 @@ use crate::coords::world_from_ground;
 
 /// A qué altura sobre la base del edificio está el piso de ladrillo de la
 /// sala, en metros: apenas sobre la vereda y bajo el umbral. Las alturas de
-/// los muebles de core se miden desde aquí.
-pub(crate) const ROOM_FLOOR: f32 = 0.05;
+/// los muebles de core se miden desde aquí. Es el de core, donde el juego
+/// sienta a los parroquianos.
+pub(crate) const ROOM_FLOOR: f32 = pampa_core::pulperia::FLOOR_RISE;
 
 /// Cuánto más bajo que la pared queda el cielorraso, en metros.
 const CEILING_BELOW: f32 = 0.1;

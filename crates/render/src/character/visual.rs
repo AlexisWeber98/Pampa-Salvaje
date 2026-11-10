@@ -10,14 +10,16 @@ use bevy::transform::TransformSystems;
 use pampa_core::{AnimationState, Heading};
 
 use super::clips::{load_character_clips, read_reference};
-use super::figure::{FigureKind, FigureKit, spawn_figure, update_figures};
+use super::figure::{FigureKind, FigureKit, body_rotation, spawn_figure, update_figures};
 use super::finish::Palette;
 use super::horse::{Coat, dress_horse, drive_horses, fit_horses, spawn_horse, swap_in_horses};
 use super::model::{
-    CharacterModels, CharacterModelsShown, attach_model, dress_character, load_character_models,
-    swap_in_character_models, toggle_character_models,
+    CharacterModel, CharacterModels, CharacterModelsShown, ModelPending, attach_model,
+    dress_character, load_character_models, swap_in_character_models, toggle_character_models,
 };
-use super::rider::{carry_stirrups, pose_riders, seat_riders, spawn_riders};
+use super::rider::{
+    OnBench, Riding, carry_stirrups, pose_riders, seat_riders, seat_transform, spawn_riders,
+};
 use super::rig::{drive_rigs, fit_rigs};
 use super::tack::{PendingTack, TackBuilt, dress_pending, dress_tack, load_recado, stretch_straps};
 use super::townsfolk::TintCache;
@@ -41,6 +43,12 @@ pub enum CharacterVisual {
     /// Solo se dibuja encima un jinete con modelo
     /// ([`model_name`](super::model::model_name)).
     Mounted { rider: FigureKind, coat: Coat },
+    /// Una persona sentada en un banco, quieta, con las manos en el regazo: el
+    /// `Transform` de la entidad es la parte de arriba del asiento, con el piso
+    /// [`BENCH_HEIGHT`](super::rider::BENCH_HEIGHT) más abajo, y el rumbo de su
+    /// [`VisualPose`], hacia dónde mira. Solo se dibuja con modelo
+    /// ([`model_name`](super::model::model_name)), como un conductor.
+    Seated(FigureKind),
 }
 
 /// La entidad hija con la que dibuja un [`CharacterVisual`] (el cuerpo de una
@@ -150,11 +158,14 @@ type Kits<'a> = (
 fn attach_visuals(
     mut commands: Commands,
     (mut people, mut palette, mut materials, mut images): Kits,
-    changed: Query<(Entity, &CharacterVisual, Option<&Children>), Changed<CharacterVisual>>,
+    changed: Query<
+        (Entity, &CharacterVisual, &VisualPose, Option<&Children>),
+        Changed<CharacterVisual>,
+    >,
     parts: Query<(), With<VisualPart>>,
     (models, shown): (Option<Res<CharacterModels>>, Res<CharacterModelsShown>),
 ) {
-    for (entity, visual, children) in &changed {
+    for (entity, visual, pose, children) in &changed {
         for &child in children.into_iter().flatten() {
             if parts.contains(child) {
                 commands.entity(child).despawn();
@@ -183,9 +194,51 @@ fn attach_visuals(
             CharacterVisual::Mounted { rider, coat } => {
                 spawn_horse(&mut commands, entity, coat, Some(rider), true)
             }
+            CharacterVisual::Seated(kind) => {
+                spawn_sitter(&mut commands, models.as_deref(), entity, kind, pose.heading)
+            }
         };
         commands.entity(body).insert(VisualPart);
     }
+}
+
+/// El asiento de una persona sentada, girado hacia su rumbo, y su modelo sobre
+/// él, como el conductor de un vehículo (ver [`vehicle`](crate::vehicle)): un
+/// [`Riding`] sin caballo debajo, que [`pose_riders`] sienta con la pelvis
+/// sobre el asiento.
+fn spawn_sitter(
+    commands: &mut Commands,
+    models: Option<&CharacterModels>,
+    entity: Entity,
+    kind: FigureKind,
+    heading: Heading,
+) -> Entity {
+    let seat = commands
+        .spawn((
+            Name::new("Bench seat"),
+            Transform::from_rotation(body_rotation(heading)),
+            Visibility::default(),
+            ChildOf(entity),
+        ))
+        .id();
+    if let Some(scene) = models.and_then(|m| m.of(kind)).cloned() {
+        commands.spawn((
+            Name::new("Seated model"),
+            CharacterModel,
+            ModelPending(scene),
+            Riding {
+                horse: seat,
+                kind,
+                seed: entity.index_u32(),
+            },
+            OnBench,
+            Transform::from_matrix(Mat4::from(seat_transform(Vec3::ZERO))),
+            // Se dibuja una vez sentado: su escena se crea parada en reposo.
+            Visibility::Hidden,
+            ChildOf(seat),
+        ));
+    }
+    seat
 }
 
 #[cfg(test)]
@@ -405,5 +458,101 @@ mod tests {
         let (_, body, parent) = bodies.single(app.world()).unwrap();
         assert_eq!(parent.parent(), me);
         assert!((body.rotation * Vec3::X).distance(Vec3::NEG_X) < 1e-4);
+    }
+
+    #[test]
+    fn a_seated_townsperson_sits_on_the_bench_facing_ahead_with_hands_in_the_lap() {
+        use super::super::horse::tests::named;
+        use super::super::rider::{PELVIS_RISE, Seated};
+        use super::super::{Rig, model::CharacterModels};
+        use crate::gltf::tests::{root, unfinished_app};
+        let mut app = unfinished_app(&root());
+        app.init_asset::<bevy::mesh::skinning::SkinnedMeshInverseBindposes>()
+            .add_plugins(bevy::animation::AnimationPlugin)
+            .insert_resource(root())
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+                50,
+            )))
+            .add_plugins((crate::fauna::FaunaPlugin, CharacterVisualPlugin));
+        app.finish();
+        app.cleanup();
+        // Una cámara mirando hacia otro lado: quien se sienta, oculto hasta su
+        // primera pose, no se congela por estar fuera de la vista.
+        app.world_mut().spawn((
+            Camera3d::default(),
+            Transform::from_xyz(0.0, 2.0, 30.0).looking_at(Vec3::new(0.0, 2.0, 60.0), Vec3::Y),
+        ));
+        app.update();
+        assert!(app.world().get_resource::<CharacterModels>().is_some());
+        // La parte de arriba de un banco a 0.45 m del piso, mirando al noroeste.
+        let heading = Heading::from_radians(2.2);
+        let bench = Vec3::new(3.0, 0.5, -2.0);
+        let me = app
+            .world_mut()
+            .spawn((
+                CharacterVisual::Seated(FigureKind::townsfolk(3)),
+                VisualPose {
+                    heading,
+                    ..default()
+                },
+                Transform::from_translation(bench),
+            ))
+            .id();
+        let mut posed = None;
+        for _ in 0..3000 {
+            app.update();
+            let world = app.world_mut();
+            posed = world
+                .query::<(Entity, &Rig, &Seated, &Visibility)>()
+                .iter(world)
+                .find(|(_, r, _, v)| r.started && **v == Visibility::Inherited)
+                .map(|(e, ..)| e);
+            if posed.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let model = posed.expect("the townsperson never sat");
+        for _ in 0..10 {
+            app.update();
+        }
+        let world = app.world_mut();
+        let riding = *world.get::<Riding>(model).unwrap();
+        assert_eq!(riding.kind, FigureKind::townsfolk(3));
+        let seat = world.get::<ChildOf>(riding.horse).unwrap().parent();
+        assert_eq!(seat, me, "the seat hangs from the sitter's entity");
+        let at = |world: &World, bone: &str| {
+            let e = named(world, model, bone);
+            world.get::<GlobalTransform>(e).unwrap().translation()
+        };
+        let pelvis = at(world, "pelvis");
+        assert!(
+            pelvis.distance(bench + Vec3::Y * PELVIS_RISE) < 0.02,
+            "pelvis at {pelvis} over the bench at {bench}"
+        );
+        let ahead = body_rotation(heading) * Vec3::X;
+        let floor = bench.y - super::super::rider::BENCH_HEIGHT;
+        let flat = |v: Vec3| Vec3::new(v.x, 0.0, v.z);
+        for side in ["l", "r"] {
+            // Las suelas en el piso, delante del banco, sin atravesarlo.
+            let (foot, ball) = (
+                at(world, &format!("foot_{side}")),
+                at(world, &format!("ball_{side}")),
+            );
+            assert!(
+                (0.0..0.05).contains(&(ball.y - floor)) && foot.y - floor > 0.04,
+                "{side} foot at {:.3}, ball at {:.3} over the floor",
+                foot.y - floor,
+                ball.y - floor
+            );
+            assert!(flat(ball - pelvis).dot(ahead) > 0.3, "{side} foot ahead");
+            // Las manos descansan sobre los muslos, no adelante en las riendas.
+            let hand = at(world, &format!("hand_{side}"));
+            let (up, out) = (hand.y - pelvis.y, flat(hand - pelvis).dot(ahead));
+            assert!(
+                (0.0..0.3).contains(&up) && (-0.1..0.25).contains(&out),
+                "{side} hand {up:.3} up and {out:.3} ahead of the pelvis"
+            );
+        }
     }
 }
