@@ -6,7 +6,7 @@
 //! lleva solo la traslación, sobre el suelo, el agua o en el aire.
 //!
 //! - El ganado (vacas y toros), los caballos del corral, el zorro, los
-//!   felinos, las rapaces y el ñandú son modelos glTF animados con skinning
+//!   felinos, las rapaces, el ñandú y la liebre son modelos glTF animados con skinning
 //!   cuyos clips siguen el estado de la fauna (ver [`livestock`]).
 //! - Los gorriones y los chingolos son modelos propios con su propio plugin,
 //!   que los trae por streaming alrededor del jugador ([`sparrow`]).
@@ -50,6 +50,7 @@ pub enum Animal {
     Bull(CowCoat),
     /// Un caballo suelto parado en un corral.
     Horse(Coat),
+    /// La liebre europea (modelo propio, ver [`livestock`]).
     Hare,
     /// Un tero (avefría sureña).
     Tero,
@@ -78,7 +79,7 @@ pub enum Animal {
 impl Animal {
     /// Si se dibuja a partir de un modelo animado (ver [`livestock`]) en lugar
     /// de piezas rígidas: el ganado, los caballos, el zorro, los felinos, las
-    /// rapaces y el ñandú.
+    /// rapaces, el ñandú y la liebre.
     pub fn is_livestock(self) -> bool {
         Species::of(self).is_some()
     }
@@ -131,7 +132,7 @@ pub const ANIMATE_FAR: f32 = 80.0;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Joint {
     Head,
-    /// Patas: los pares delantero y trasero de una liebre son `Leg(0)` y
+    /// Patas: los pares delantero y trasero de una vizcacha son `Leg(0)` y
     /// `Leg(2)`; las dos de un ave, `Leg(0)` y `Leg(1)`.
     Leg(u8),
     Tail,
@@ -167,7 +168,6 @@ pub enum Paint {
     White,
     Black,
     Horn,
-    HareBrown,
     BirdGrey,
     BirdRed,
     DuckBrown,
@@ -184,11 +184,10 @@ pub enum Paint {
 }
 
 impl Paint {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 14] = [
         Self::White,
         Self::Black,
         Self::Horn,
-        Self::HareBrown,
         Self::BirdGrey,
         Self::BirdRed,
         Self::DuckBrown,
@@ -207,7 +206,6 @@ impl Paint {
             Self::White => [0.82, 0.8, 0.74],
             Self::Black => [0.05, 0.045, 0.04],
             Self::Horn => [0.72, 0.66, 0.52],
-            Self::HareBrown => [0.42, 0.33, 0.22],
             Self::BirdGrey => [0.5, 0.48, 0.44],
             Self::BirdRed => [0.62, 0.18, 0.14],
             Self::DuckBrown => [0.36, 0.28, 0.18],
@@ -301,11 +299,6 @@ impl Animal {
                 (Joint::Head, v(0.26, 0.05, 0.0)),
                 (Joint::Tail, v(-0.26, 0.0, 0.0)),
             ],
-            Self::Hare => vec![
-                (Joint::Head, v(0.18, 0.27, 0.0)),
-                (Joint::Leg(0), v(0.12, 0.14, 0.0)),
-                (Joint::Leg(2), v(-0.12, 0.14, 0.0)),
-            ],
             Self::Tero => vec![
                 (Joint::Head, v(0.13, 0.3, 0.0)),
                 (Joint::Leg(0), v(0.0, 0.15, -0.03)),
@@ -339,61 +332,6 @@ impl Animal {
         use Paint as P;
         use Shape as S;
         match self {
-            Self::Hare => {
-                add(
-                    None,
-                    S::Ball,
-                    P::HareBrown,
-                    [0.0, 0.2, 0.0],
-                    [0.42, 0.24, 0.22],
-                );
-                add(
-                    None,
-                    S::Ball,
-                    P::White,
-                    [-0.21, 0.22, 0.0],
-                    [0.07, 0.07, 0.07],
-                );
-                let head = Some(Joint::Head);
-                add(
-                    head,
-                    S::Ball,
-                    P::HareBrown,
-                    [0.06, 0.0, 0.0],
-                    [0.15, 0.13, 0.12],
-                );
-                for z in [-0.03, 0.03] {
-                    add(
-                        head,
-                        S::Block,
-                        P::HareBrown,
-                        [-0.01, 0.13, z],
-                        [0.04, 0.2, 0.03],
-                    );
-                }
-                add(
-                    Some(Joint::Leg(0)),
-                    S::Block,
-                    P::HareBrown,
-                    [0.0, -0.07, 0.0],
-                    [0.04, 0.14, 0.1],
-                );
-                let hind = Some(Joint::Leg(2));
-                add(
-                    hind,
-                    S::Ball,
-                    P::HareBrown,
-                    [0.0, 0.0, 0.0],
-                    [0.18, 0.15, 0.2],
-                );
-                add(
-                    hind,
-                    S::Block,
-                    P::HareBrown,
-                    [0.04, -0.12, 0.0],
-                    [0.14, 0.04, 0.1],
-                );
-            }
             Self::Tero => {
                 let (back, belly, wing, legs) = (P::BirdGrey, P::Black, P::BirdGrey, P::BirdRed);
                 add(None, S::Ball, back, [0.0, 0.24, 0.0], [0.3, 0.14, 0.13]);
@@ -760,7 +698,6 @@ fn attach_animals(
 /// Cuántos ciclos de zancada equivalen a un metro, por animal.
 fn strides_per_meter(animal: Animal) -> f32 {
     match animal {
-        Animal::Hare => 0.6,
         Animal::Vizcacha => 1.0,
         Animal::Mulita | Animal::Peludo => 4.0,
         _ => 2.0,
@@ -837,11 +774,11 @@ pub fn joint_pose(
             if !moving {
                 return (Quat::IDENTITY, Vec3::ZERO);
             }
-            // Las patas de un ave, por turnos; el salto de una liebre: los
+            // Las patas de un ave, por turnos; el salto de una vizcacha: los
             // pares juntos.
             // El trote de un armadillo: los pares en diagonal juntos.
             let offset = match (animal, k) {
-                (Animal::Hare | Animal::Vizcacha, k) => (k / 2) as f32 * std::f32::consts::PI,
+                (Animal::Vizcacha, k) => (k / 2) as f32 * std::f32::consts::PI,
                 (Animal::Mulita | Animal::Peludo, 0 | 3) => 0.0,
                 (Animal::Mulita | Animal::Peludo, _) => std::f32::consts::PI,
                 (_, 0) => 0.0,
@@ -872,8 +809,7 @@ mod tests {
     use super::*;
 
     /// Las especies dibujadas a partir de piezas rígidas.
-    const RIGID: [Animal; 7] = [
-        Animal::Hare,
+    const RIGID: [Animal; 6] = [
         Animal::Tero,
         Animal::Duck,
         Animal::Mulita,
@@ -883,7 +819,7 @@ mod tests {
     ];
 
     /// Las especies dibujadas a partir de modelos.
-    const LIVESTOCK: [Animal; 15] = [
+    const LIVESTOCK: [Animal; 16] = [
         Animal::Cow(CowCoat::Hereford),
         Animal::Cow(CowCoat::Angus),
         Animal::Cow(CowCoat::Overo),
@@ -899,6 +835,7 @@ mod tests {
         Animal::Chimango,
         Animal::Carancho,
         Animal::Nandu,
+        Animal::Hare,
     ];
 
     fn triangles(animal: Animal) -> usize {
@@ -984,15 +921,15 @@ mod tests {
     }
 
     #[test]
-    fn birds_peck_and_flap_and_hares_bound() {
+    fn birds_peck_and_flap_and_vizcachas_bound() {
         let angle = |q: Quat| q.to_euler(EulerRot::ZYX).0;
         let (head, _) = joint_pose(Animal::Tero, Gait::Graze, Joint::Head, 0.0, 0.9);
         assert!(angle(head) < -0.5, "pecking");
         let a = joint_pose(Animal::Tero, Gait::Walk, Joint::Leg(0), 1.0, 0.0).0;
         let b = joint_pose(Animal::Tero, Gait::Walk, Joint::Leg(1), 1.0, 0.0).0;
         assert!(angle(a) * angle(b) < 0.0, "legs step in turn");
-        let fore = joint_pose(Animal::Hare, Gait::Run, Joint::Leg(0), 1.0, 0.0).0;
-        let hind = joint_pose(Animal::Hare, Gait::Run, Joint::Leg(2), 1.0, 0.0).0;
+        let fore = joint_pose(Animal::Vizcacha, Gait::Run, Joint::Leg(0), 1.0, 0.0).0;
+        let hind = joint_pose(Animal::Vizcacha, Gait::Run, Joint::Leg(2), 1.0, 0.0).0;
         assert!(angle(fore) * angle(hind) < 0.0, "a bound");
         let up = joint_pose(Animal::Tero, Gait::Fly, Joint::Wing(1), FRAC_PI_2, 0.0).0;
         let down = joint_pose(Animal::Tero, Gait::Fly, Joint::Wing(1), -FRAC_PI_2, 0.0).0;

@@ -26,7 +26,10 @@
 //! (`tools/felid.py`, una anatomía y un rig de gato para las tres especies):
 //! cada uno con su pelaje y la cara de una foto horneados en el mapa de su
 //! cuerpo, y una malla liviana para cuando están lejos, como los vacunos y
-//! las rapaces.
+//! las rapaces. La liebre europea también es propia (`tools/hare.py`, por los
+//! pasos del zorro): su pelaje, con el pelo de una foto, horneado en el mapa de
+//! su cuerpo, sus mechones en tarjetas, sus clips (sentada, los saltos lentos
+//! y la huida) y una malla liviana para cuando está lejos.
 //!
 //! Cada [`Species`] se carga una vez al iniciar ([`LivestockModels`]): su
 //! escena glTF, sus clips y un [`AnimationGraph`] compartido. Un [`Animal`]
@@ -82,7 +85,8 @@ pub const LIVESTOCK_DIR: &str = "models/fauna/quaternius";
 /// Dónde viven los modelos propios, hechos con los scripts de Blender de
 /// `tools/` (el ñandú, `tools/rhea.py`; el caballo, `tools/horse.py`; la vaca
 /// y el toro, `tools/cattle.py`; el zorro, `tools/fox.py`; los felinos,
-/// `tools/felid.py`; las rapaces, `tools/raptor.py`), bajo el [`AssetRoot`].
+/// `tools/felid.py`; las rapaces, `tools/raptor.py`; la liebre,
+/// `tools/hare.py`), bajo el [`AssetRoot`].
 pub const OWN_DIR: &str = "models/fauna/own";
 
 /// Hasta esta distancia de la cámara se dibujan las tarjetas de detalle de un
@@ -166,7 +170,7 @@ pub struct Skin {
 pub const FEATHER_TRANSMISSION: f32 = 0.45;
 
 /// Los conjuntos de mapas de los modelos propios.
-pub const SKIN_SETS: [&str; 19] = [
+pub const SKIN_SETS: [&str; 21] = [
     "rhea_body",
     "rhea_feathers",
     "horse_body",
@@ -186,6 +190,8 @@ pub const SKIN_SETS: [&str; 19] = [
     "chimango_feathers",
     "carancho_body",
     "carancho_feathers",
+    "hare_body",
+    "hare_hair",
 ];
 
 /// La ruta del mapa `name` del conjunto `set`, bajo el [`AssetRoot`].
@@ -364,6 +370,21 @@ pub const YAGUA_GALLOP_SPEED: f32 = 10.80;
 /// La altura a la cruz del yaguareté propio, medida como la del gato montés.
 pub const YAGUA_WITHERS: f32 = 0.75;
 
+/// La velocidad sobre el suelo que muestra el clip `Walk` de la liebre propia
+/// (`tools/hare.py`, los saltos lentos), en metros del modelo por segundo:
+/// cuánto avanza el cuerpo mientras las manos y las patas están quietas en el
+/// suelo (a menos de 1 mm de su punto más bajo), medido por el script sobre el
+/// clip horneado a 96 cuadros por segundo (`stance_speed`). Es la de sus
+/// saltos en la simulación (`pampa_core::Hare::HOP`), así que se reproduce
+/// tal como se creó.
+pub const HARE_WALK_SPEED: f32 = 1.20;
+/// Lo mismo para su clip `Gallop`, la huida: la de `pampa_core::Hare::RUN`.
+pub const HARE_GALLOP_SPEED: f32 = 11.00;
+/// La altura del lomo de la liebre propia, en metros del modelo, medida como
+/// la de los demás modelos sobre la mesh exportada (lo más alto del lomo en el
+/// segundo cuarto de su largo desde atrás), con las patas en el origen.
+pub const HARE_WITHERS: f32 = 0.35;
+
 /// La envergadura del chimango propio (`tools/raptor.py`), en metros del
 /// modelo: de punta a punta de las primarias más largas, por sus raquis, con
 /// las alas extendidas en su pose de reposo (la que informa el script). La
@@ -395,10 +416,13 @@ pub enum Species {
     /// El ñandú: un modelo propio (`tools/rhea.py`), vestido con sus mapas
     /// ([`Species::skin`]).
     Nandu,
+    /// La liebre europea: un modelo propio (`tools/hare.py`, por los pasos del
+    /// zorro), vestido con sus mapas ([`Species::skin`]).
+    Hare,
 }
 
 impl Species {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Cow,
         Self::Bull,
         Self::Horse,
@@ -409,6 +433,7 @@ impl Species {
         Self::Chimango,
         Self::Carancho,
         Self::Nandu,
+        Self::Hare,
     ];
 
     /// La especie con la que se dibuja `animal`, si se dibuja a partir de un
@@ -425,6 +450,7 @@ impl Species {
             Animal::Chimango => Some(Self::Chimango),
             Animal::Carancho => Some(Self::Carancho),
             Animal::Nandu => Some(Self::Nandu),
+            Animal::Hare => Some(Self::Hare),
             _ => None,
         }
     }
@@ -442,6 +468,7 @@ impl Species {
             Self::Chimango => "chimango",
             Self::Carancho => "carancho",
             Self::Nandu => "rhea",
+            Self::Hare => "hare",
         };
         format!("{OWN_DIR}/{name}.glb")
     }
@@ -468,7 +495,7 @@ impl Species {
                 "Gallop_Jump",
                 "Fence_Leap",
             ],
-            Self::Cow | Self::Bull | Self::Horse => &[
+            Self::Cow | Self::Bull | Self::Horse | Self::Hare => &[
                 "Idle",
                 "Idle_2",
                 "Idle_Headlow",
@@ -522,6 +549,8 @@ impl Species {
             (Self::Chimango, "Feathers") => ("chimango_feathers", true, false, false),
             (Self::Carancho, "Main") => ("carancho_body", false, false, false),
             (Self::Carancho, "Feathers") => ("carancho_feathers", true, false, false),
+            (Self::Hare, "Main") => ("hare_body", false, false, false),
+            (Self::Hare, "Hair") => ("hare_hair", true, false, true),
             _ => return None,
         };
         Some(Skin {
@@ -584,6 +613,7 @@ impl Species {
             Self::Carancho => CARANCHO_SPAN,
             // Sobre el plumaje del lomo; la cabeza llega a 1.58.
             Self::Nandu => 1.18,
+            Self::Hare => HARE_WITHERS,
         }
     }
 
@@ -592,7 +622,9 @@ impl Species {
     /// 1.5 m), con el toro un poco más grande; un zorro gris de 0.38 m a la
     /// cruz, un gato montés de 0.28 m, un puma de 0.7 m y un yaguareté de
     /// 0.75 m; un chimango de 0.9 m de envergadura y un carancho de 1.25 m; un
-    /// ñandú de 1.1 m sobre el plumaje del lomo (la cabeza a 1.5 m).
+    /// ñandú de 1.1 m sobre el plumaje del lomo (la cabeza a 1.5 m); la liebre,
+    /// a tamaño real (la de `tools/hare.py`, medida sobre fotos y la
+    /// bibliografía).
     pub const fn withers(self) -> f32 {
         match self {
             Self::Cow => 1.4,
@@ -605,6 +637,7 @@ impl Species {
             Self::Chimango => 0.9,
             Self::Carancho => 1.25,
             Self::Nandu => 1.1,
+            Self::Hare => HARE_WITHERS,
         }
     }
 
@@ -627,6 +660,7 @@ impl Species {
             Self::Yaguarete => YAGUA_WALK_SPEED * self.scale(),
             Self::Chimango | Self::Carancho => 1.0,
             Self::Nandu => 0.88 * self.scale(),
+            Self::Hare => HARE_WALK_SPEED * self.scale(),
         }
     }
 
@@ -643,6 +677,7 @@ impl Species {
             Self::Puma => PUMA_GALLOP_SPEED * self.scale(),
             Self::Yaguarete => YAGUA_GALLOP_SPEED * self.scale(),
             Self::Nandu => 7.23 * self.scale(),
+            Self::Hare => HARE_GALLOP_SPEED * self.scale(),
             _ => self.walk_speed(),
         }
     }
@@ -775,9 +810,25 @@ pub const FLAP_SECONDS: f32 = 2.0;
 /// Segundos que un caballo de corral mantiene una espera antes de la siguiente.
 pub(crate) const HORSE_IDLE: f32 = 14.0;
 
+/// Segundos que una liebre sentada mantiene una espera antes de la siguiente.
+pub const HARE_IDLE: f32 = 8.0;
+
+/// La espera de una liebre sentada en su turno `turn`: casi siempre la
+/// sentada alerta con las orejas paradas (`Idle`), que es lo que la hace leer
+/// como liebre a la distancia; a veces se lava la cara (`Idle_Headlow`) y de
+/// vez en cuando se agazapa en su cama con las orejas acostadas (`Idle_2`).
+fn hare_sit(seed: u32, turn: u32) -> Clip {
+    match mix(seed, 0x4a7e ^ turn) % 20 {
+        0..=1 => Clip::Idle2,
+        2..=4 => Clip::IdleHeadlow,
+        _ => Clip::Idle,
+    }
+}
+
 /// El clip que reproduce `animal` para `pose`. Los animales parados eligen una
 /// de las esperas según su `seed`; los caballos de corral, que nunca se mueven,
-/// cambian de espera (o pastan) cada [`HORSE_IDLE`] segundos de `clock`.
+/// cambian de espera (o pastan) cada [`HORSE_IDLE`] segundos de `clock`, y las
+/// liebres sentadas cada [`HARE_IDLE`] ([`hare_sit`]).
 pub fn clip_for(animal: Animal, pose: &AnimalPose, seed: u32, clock: f32) -> Clip {
     let idles = [Clip::Idle, Clip::Idle2, Clip::IdleHeadlow];
     match pose.gait {
@@ -806,6 +857,10 @@ pub fn clip_for(animal: Animal, pose: &AnimalPose, seed: u32, clock: f32) -> Cli
         Gait::Walk => Clip::Walk,
         Gait::Run => Clip::Gallop,
         Gait::Leap => Clip::FenceLeap,
+        _ if animal == Animal::Hare => {
+            let turn = ((clock.max(0.0) + (seed % 97) as f32) / HARE_IDLE) as u32;
+            hare_sit(seed, turn)
+        }
         _ if matches!(animal, Animal::Horse(_)) => {
             let turn = ((clock.max(0.0) + (seed % 97) as f32) / HORSE_IDLE) as u32;
             [Clip::Idle, Clip::Idle2, Clip::IdleHeadlow, Clip::Eating][mix(seed, turn) as usize % 4]
@@ -976,10 +1031,10 @@ pub fn paint(animal: Animal, material: &str) -> Paint {
             "Muzzle" => rgb([48, 42, 38]),
             _ => Paint::Keep,
         },
-        // El zorro gris, los felinos y las rapaces: su único pelaje (o
-        // plumaje) está horneado en los mapas de su cuerpo y de su pelo o sus
-        // plumas (`tools/fox.py`, `tools/felid.py`, `tools/raptor.py`), que
-        // se dibujan tal como están.
+        // El zorro gris, los felinos, las rapaces y la liebre: su único pelaje
+        // (o plumaje) está horneado en los mapas de su cuerpo y de su pelo o
+        // sus plumas (`tools/fox.py`, `tools/felid.py`, `tools/raptor.py`,
+        // `tools/hare.py`), que se dibujan tal como están.
         _ => Paint::Keep,
     }
 }
@@ -1679,6 +1734,55 @@ mod tests {
     }
 
     #[test]
+    fn the_hare_sits_hops_and_flees_with_its_own_clips_as_made() {
+        let species = Species::of(Animal::Hare).expect("a model");
+        let name = |gait, speed, seed| {
+            let clip = clip_for(Animal::Hare, &standing(gait, speed), seed, 0.0);
+            (species.clip_names()[species.animation(clip)], clip)
+        };
+        // Sentada (`HareState::Sit`): casi siempre alerta con las orejas
+        // paradas; a veces se lava la cara y de vez en cuando se agazapa en su
+        // cama, cambiando cada tanto, de forma determinista.
+        let mut count = HashMap::new();
+        let mut changing = 0;
+        for seed in 0..50 {
+            let mut seen = std::collections::HashSet::new();
+            for k in 0..20 {
+                let clock = k as f32 * HARE_IDLE;
+                let sit = clip_for(Animal::Hare, &standing(Gait::Stand, 0.0), seed, clock);
+                assert_eq!(
+                    sit,
+                    clip_for(Animal::Hare, &standing(Gait::Stand, 0.0), seed, clock)
+                );
+                *count
+                    .entry(species.clip_names()[species.animation(sit)])
+                    .or_insert(0) += 1;
+                seen.insert(sit);
+            }
+            changing += usize::from(seen.len() > 1);
+        }
+        assert!(changing >= 40, "only {changing} of 50 hares change pose");
+        println!("hare: sits {count:?} of 1000");
+        assert!(count["Idle"] >= 650, "{count:?}");
+        assert!((40..=160).contains(&count["Idle_2"]), "{count:?}");
+        assert!((80..=220).contains(&count["Idle_Headlow"]), "{count:?}");
+        // Los saltos lentos (`Hop`) y la huida (`Flee`), a las velocidades de
+        // la simulación: sus clips tal como se crearon, sin que las patas se
+        // deslicen.
+        for (gait, speed, want) in [
+            (Gait::Walk, pampa_core::Hare::HOP, "Walk"),
+            (Gait::Run, pampa_core::Hare::RUN, "Gallop"),
+        ] {
+            let (got, clip) = name(gait, speed, 3);
+            assert_eq!(got, want);
+            let rate = clip_speed(clip, species, speed);
+            println!("hare: {want} at {speed} m/s plays {rate:.3} times as made");
+            assert!((0.95..=1.05).contains(&rate), "{want}: {rate}");
+        }
+        assert_eq!(species.leap(), None, "it does not jump fences");
+    }
+
+    #[test]
     fn the_nandu_wears_its_feather_maps_and_alpha_tested_cards() {
         let body = Species::Nandu.skin("Body").expect("body maps");
         let cards = Species::Nandu.skin("Feathers").expect("feather maps");
@@ -1754,6 +1858,7 @@ mod tests {
             Animal::GatoMontes,
             Animal::Puma,
             Animal::Yaguarete,
+            Animal::Hare,
         ] {
             let species = Species::of(animal).unwrap();
             for material in ["Main", "Hair"] {
@@ -2008,7 +2113,9 @@ mod tests {
                     .resource::<Assets<AnimationClip>>()
                     .get(named)
                     .unwrap();
-                assert!(clip.duration() > 0.3, "{species:?}");
+                // La huida de la liebre da 4 trancos por segundo (0.25 s).
+                let shortest = if species == Species::Hare { 0.2 } else { 0.3 };
+                assert!(clip.duration() > shortest, "{species:?}");
             }
             // El brinco y el salto de un alambrado del zorro y de los felinos
             // duran lo que se supone al reproducirlos.
@@ -2045,6 +2152,9 @@ mod tests {
                 // escroto) y los seis músculos (`tools/cattle.py`).
                 Species::Cow | Species::Bull => 58,
                 Species::Nandu => 20,
+                // Los nombres de Quaternius, dos huesos por oreja, la
+                // mandíbula y tres de cola (`tools/hare.py`).
+                Species::Hare => 43,
             };
             assert_eq!(skin.joints.len(), joints, "{species:?}");
             // Su cuerpo está a tamaño real en el marco del cuerpo: la altura del
@@ -2109,6 +2219,9 @@ mod tests {
                 // tarjetas de plumas y los ojos (más la malla liviana, aparte).
                 Species::Chimango => 13_000,
                 Species::Carancho => 18_500,
+                // 9.324: el cuerpo unos 4.600, las tarjetas de pelo y los ojos
+                // (más la malla liviana, aparte).
+                Species::Hare => 9_500,
             };
             assert!(triangles <= budget, "{species:?}: {triangles}");
             let light = gltf
@@ -2131,6 +2244,7 @@ mod tests {
                     | Species::Yaguarete
                     | Species::Chimango
                     | Species::Carancho
+                    | Species::Hare
             ) {
                 // Una malla liviana para las tropas, los felinos y las rapaces
                 // lejanos: la piel sola (en las rapaces, más sus plumas de
@@ -2168,6 +2282,7 @@ mod tests {
                     | Species::Yaguarete
                     | Species::Chimango
                     | Species::Carancho
+                    | Species::Hare
             ) {
                 // Sus mapas necesitan UV y tangentes en cada primitiva.
                 let m = world.resource::<Assets<Mesh>>();
@@ -2191,9 +2306,11 @@ mod tests {
                     "Eye_Black",
                     "Eye_White",
                 ],
-                Species::Fox | Species::GatoMontes | Species::Puma | Species::Yaguarete => {
-                    &["Main", "Hair", "Eye_Black", "Eye_Iris"]
-                }
+                Species::Fox
+                | Species::GatoMontes
+                | Species::Puma
+                | Species::Yaguarete
+                | Species::Hare => &["Main", "Hair", "Eye_Black", "Eye_Iris"],
                 Species::Chimango | Species::Carancho => {
                     &["Main", "Feathers", "Eye_Black", "Eye_Iris"]
                 }

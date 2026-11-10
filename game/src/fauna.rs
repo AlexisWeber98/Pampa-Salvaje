@@ -734,8 +734,12 @@ fn place_fauna(
                 bank: 0.0,
                 pitch: lean(hare.position, hare.heading),
             };
-            let at = world_from_ground(hare.position, ground(hare.position) + hare.lift());
-            put(*e, at, pose);
+            // Sobre el suelo: sus clips ya levantan el cuerpo en cada salto.
+            put(
+                *e,
+                world_from_ground(hare.position, ground(hare.position)),
+                pose,
+            );
         }
         for (flock, entities) in &chunk.flocks {
             let gait = if flock.flying() {

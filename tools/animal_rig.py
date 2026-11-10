@@ -1205,6 +1205,9 @@ class Steps:
         body, last = source.rstrip().rsplit("\n", 1)
         if last.strip() != "main()":
             raise SystemExit(f"animal_rig: {path} does not end with main()")
+        head, guard = body.rstrip().rsplit("\n", 1)
+        if guard.startswith("if ") and guard.rstrip().endswith(":"):
+            body = head  # ``if ... __name__ == "__main__":`` over the last ``main()`` (``tools/fox.py``): dropped with it
         own = os.path.splitext(os.path.basename(path))[0] + ":"
         ns = {"__name__": os.path.splitext(os.path.basename(path))[0], "__file__": path}
         if prefix:
