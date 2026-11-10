@@ -2,3 +2,5 @@
 **/*.rs.bk
 .claude/
 __pycache__/
+historia
+mecánicas

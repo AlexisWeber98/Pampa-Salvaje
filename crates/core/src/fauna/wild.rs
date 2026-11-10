@@ -26,8 +26,9 @@ pub struct Hare {
     pub heading: Heading,
     pub state: HareState,
     pub speed: f32,
-    /// Metros recorridos desde que se sembró: el render marca el ritmo de sus
-    /// saltos con esto.
+    /// Metros recorridos desde que se sembró: marca el ritmo de sus quiebres
+    /// al huir. Sus saltos, con su altura, están en los clips del modelo
+    /// (`tools/hare.py`).
     pub travel: f32,
     /// El chunk en el que se sembró: nunca sale de él, así que se carga por
     /// streaming junto con él.
@@ -58,24 +59,6 @@ impl Hare {
             home,
             timer: rng.range(1.0, 6.0),
             rng,
-        }
-    }
-
-    /// A qué altura del suelo está en medio de un salto, en metros.
-    pub fn lift(&self) -> f32 {
-        let stride = if self.state == HareState::Flee {
-            2.2
-        } else {
-            0.5
-        };
-        let height = if self.state == HareState::Flee {
-            0.35
-        } else {
-            0.12
-        };
-        match self.state {
-            HareState::Sit => 0.0,
-            _ => (self.travel / stride * PI).sin().abs() * height,
         }
     }
 
@@ -442,7 +425,6 @@ mod tests {
             if hare.state != HareState::Flee {
                 break;
             }
-            assert!(hare.lift() >= 0.0 && hare.lift() <= 0.4);
         }
         assert_eq!(hare.state, HareState::Sit, "calmed down");
         assert!(fled >= Hare::SAFE, "{fled}");
