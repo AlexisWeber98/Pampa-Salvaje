@@ -1418,7 +1418,7 @@ mod tests {
             [
                 (
                     "Lisandro",
-                    "Buenas, Comisario, le traigo unos papeles que me envió mi tío pa’ uste’"
+                    "Buenas, Comisario, le traigo unos papeles que me envió mi tío pa’ usté’"
                 ),
                 ("Farach", "¿y vos quien sos?"),
                 (
@@ -1435,11 +1435,11 @@ mod tests {
                 ),
                 (
                     "Farach",
-                    "Bueno Pibe, te aviso que en esta ciudad mando yo,"
+                    "Bueno Pibe, te aviso que en estos pagos mando yo,"
                 ),
                 (
                     "Farach",
-                    "así que si no queres tener problema no te hagas el guapo y no andès holgazaneando,"
+                    "así que si no queres tener problema no te hagas el guapo y no andés holgazaneando,"
                 ),
                 ("Farach", "que a los vagos como vos los tengo cortitos."),
                 (
@@ -1520,8 +1520,8 @@ mod tests {
                     "Bairoletto",
                     "¿Queres ganarte unos pesos? Necesito transporte para esta noche."
                 ),
-                ("Lisandro", "si ¿hasta donde necesita ir?"),
-                ("Bairoletto", "A la noche te digo ¿Cómo te llamas?"),
+                ("Lisandro", "si, ¿hasta donde necesita ir?"),
+                ("Bairoletto", "A la noche te digo, ¿Cómo te llamas?"),
                 ("Lisandro", "Lisandro."),
                 (
                     "Bairoletto",

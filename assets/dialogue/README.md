@@ -97,7 +97,7 @@ La historia, paso a paso (actos 2 a 4 de `historia`), y el encuentro del acto 5:
             goal: Talk(Farach),
             objective: "Presentate al comisario Farach en {town}",
             scene: [
-                Say(Lisandro, "Buenas, Comisario, le traigo unos papeles que me envió mi tío pa’ uste’"),
+                Say(Lisandro, "Buenas, Comisario, le traigo unos papeles que me envió mi tío pa’ usté’"),
                 Say(Farach, "¿y vos quien sos?"),
                 HandOver(Letter),
             ],

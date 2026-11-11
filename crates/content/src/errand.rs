@@ -466,8 +466,8 @@ mod tests {
                     "Bairoletto",
                     "¿Queres ganarte unos pesos? Necesito transporte para esta noche."
                 ),
-                ("Lisandro", "si ¿hasta donde necesita ir?"),
-                ("Bairoletto", "A la noche te digo ¿Cómo te llamas?"),
+                ("Lisandro", "si, ¿hasta donde necesita ir?"),
+                ("Bairoletto", "A la noche te digo, ¿Cómo te llamas?"),
                 ("Lisandro", "Lisandro."),
                 (
                     "Bairoletto",
