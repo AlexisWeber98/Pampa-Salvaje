@@ -315,6 +315,9 @@ impl Settlement {
     /// Metros entre los pares de la alameda de una estancia, plantada como
     /// cortina rompevientos (de 4 a 6 m).
     pub const POPLAR_SPACING: f32 = 6.0;
+    /// Cuánto puede doblar la entrada de una estancia después de su tranquera,
+    /// en radianes (30°): la alameda la bordea como una cortina pareja.
+    pub const LANE_BEND: f32 = 0.52;
     /// A qué distancia de la línea central del tronco está cada fila de la
     /// alameda.
     pub const POPLAR_OFFSET: f32 = 5.0;
@@ -356,6 +359,10 @@ pub struct SettlementLayout {
     /// camino y su alambrado: unos pocos en todo el mapa (ver
     /// [`Self::ROADSIDE_WRECKS`]).
     pub roadside: Vec<RoadsideWreck>,
+    /// Huellas de campo: desde cada tranquera sin asentamiento detrás, una
+    /// huella que entra en el potrero por donde pasan las carretas y el
+    /// ganado, y se pierde en el pasto (ver [`Self::GATE_TRACK`]).
+    pub gate_tracks: Vec<Track>,
 }
 
 /// Un carro abandonado en la banquina de un camino, a lo largo del camino.
@@ -428,8 +435,17 @@ impl RoadsideWreck {
 
 impl SettlementLayout {
     /// Proporción de tranqueras abiertas (hacia un campo sin poblar) que llevan
-    /// a un asentamiento cerca de un pueblo, y lejos de uno.
-    pub const SETTLED: (f32, f32) = (0.6, 0.45);
+    /// a un asentamiento cerca de un pueblo, y lejos de uno. Con los caminos
+    /// vecinales casi todo campo tiene tranqueras, así que es baja: el campo
+    /// sigue poco poblado.
+    pub const SETTLED: (f32, f32) = (0.1, 0.03);
+    /// Proporción de tranqueras abiertas a [`Self::RAIL_GATE_REACH`] o menos de
+    /// la vía que llevan a un asentamiento: las cuadrillas del ferrocarril
+    /// vivían junto a la vía, en sus casillas de chapa.
+    pub const SETTLED_BY_RAIL: f32 = 0.3;
+    /// Hasta qué distancia de la vía una tranquera cuenta como junto a ella,
+    /// en metros.
+    pub const RAIL_GATE_REACH: f32 = 250.0;
     /// Distancia desde la franja nivelada de un pueblo dentro de la cual una
     /// tranquera cuenta como cercana al pueblo (ahí se agrupan las chacras), en
     /// metros.
@@ -446,6 +462,9 @@ impl SettlementLayout {
     /// Distancia desde la tranquera hasta el final del primer tramo recto del
     /// tronco, en metros.
     const ENTRY: f32 = 12.0;
+    /// Largo mínimo y máximo de una huella de campo más allá de su primer
+    /// tramo recto, en metros.
+    pub const GATE_TRACK: (f32, f32) = (40.0, 160.0);
     /// Máximo de carros abandonados en las banquinas de los caminos, en todo el
     /// mapa.
     pub const ROADSIDE_WRECKS: usize = 5;
@@ -562,6 +581,13 @@ impl SettlementLayout {
             site.settle_gate(index, rng, None, &mut placed, &town_gap);
         }
         let settlements = placed.settlements;
+        let gate_tracks: Vec<Track> = (0..fences.gates.len())
+            .filter(|&index| settlements.iter().all(|s| s.gate as usize != index))
+            .filter_map(|index| {
+                let rng = Rng::new(terrain.seed ^ GATE_TRACK_SEED, index as u32);
+                site.gate_track(index, rng)
+            })
+            .collect();
         let roadside = site.roadside_wrecks(terrain.seed, &settlements);
         let mut keep_out = KeepOut::default();
         for wreck in &roadside {
@@ -572,10 +598,11 @@ impl SettlementLayout {
             for st in &s.structures {
                 keep_out.push(Shape::Area(st.footprint));
             }
-            for h in &s.tracks {
-                for (a, b) in h.segments() {
-                    keep_out.push(Shape::Strip(a, b, Track::HALF_WIDTH));
-                }
+        }
+        let tracks = settlements.iter().flat_map(|s| s.tracks.iter());
+        for h in tracks.chain(&gate_tracks) {
+            for (a, b) in h.segments() {
+                keep_out.push(Shape::Strip(a, b, Track::HALF_WIDTH));
             }
         }
         Self {
@@ -583,6 +610,7 @@ impl SettlementLayout {
             keep_out: Arc::new(keep_out),
             unplaced_ranches,
             roadside,
+            gate_tracks,
         }
     }
 
@@ -633,6 +661,16 @@ impl SettlementLayout {
         self.settlements
             .iter()
             .filter(move |s| s.bounds.intersects(&area))
+    }
+
+    /// Las huellas de campo que empiezan en `area` (bordes oeste y sur
+    /// incluidos, este y norte excluidos), cada una con su índice en
+    /// [`Self::gate_tracks`].
+    pub fn gate_tracks_in(&self, area: Aabb) -> impl Iterator<Item = (usize, &Track)> + '_ {
+        self.gate_tracks.iter().enumerate().filter(move |(_, t)| {
+            let p = t.points[0];
+            p.x >= area.min.x && p.x < area.max.x && p.y >= area.min.y && p.y < area.max.y
+        })
     }
 
     /// Las huellas de los asentamientos que contiene [`Self::in_area`].
@@ -693,7 +731,8 @@ impl Site<'_> {
         let Some(cell) = self.fences.field_of(probe) else {
             return false;
         };
-        let key = (cell.min.x.to_bits(), cell.min.y.to_bits());
+        // Un solo casco por campo: la clave es su dueño.
+        let key = (self.fences.owner_of(probe).unwrap_or(u32::MAX), 0);
         if placed.used.contains(&key) {
             return false;
         }
@@ -701,7 +740,12 @@ impl Site<'_> {
             Some(forced) => forced,
             None => {
                 let near_town = town_gap(gate.at) < SettlementLayout::NEAR_TOWN;
-                let chance = if near_town {
+                let by_rail = self.rails.iter().any(|&(a, b)| {
+                    segment_distance(gate.at, a, b) < SettlementLayout::RAIL_GATE_REACH
+                });
+                let chance = if by_rail {
+                    SettlementLayout::SETTLED_BY_RAIL
+                } else if near_town {
                     SettlementLayout::SETTLED.0
                 } else {
                     SettlementLayout::SETTLED.1
@@ -709,27 +753,10 @@ impl Site<'_> {
                 if rng.unit() >= chance {
                     return false;
                 }
-                (pick_kind(&mut rng, near_town), SettlementLayout::HUB_TRIES)
+                (pick_kind(&mut rng, near_town, by_rail), SettlementLayout::HUB_TRIES)
             }
         };
-        // Hasta donde la vía aparta las huellas o deja levantar casillas.
-        let reach = cell.expanded(Settlement::RAIL_CLEARANCE.max(Settlement::CASILLA_REACH) + 1.0);
-        let ground = Ground {
-            roads,
-            rails: self
-                .rails
-                .iter()
-                .copied()
-                .filter(|&(a, b)| reach.segment_overlap(a, b).is_some())
-                .collect(),
-            bands: self
-                .bands
-                .iter()
-                .copied()
-                .filter(|b| b.intersects(&reach))
-                .collect(),
-            cell,
-        };
+        let ground = self.ground_of(cell);
         let start = gate.at + into * 0.5;
         let entry = gate.at + into * SettlementLayout::ENTRY;
         if !ground.track_ok(start, entry, Some(gate.at)) {
@@ -770,6 +797,65 @@ impl Site<'_> {
         }
         false
     }
+
+    /// Lo que aparta las huellas y las casillas dentro del potrero `cell`.
+    fn ground_of(&self, cell: Aabb) -> Ground<'_> {
+        // Hasta donde la vía aparta las huellas o deja levantar casillas.
+        let reach = cell.expanded(Settlement::RAIL_CLEARANCE.max(Settlement::CASILLA_REACH) + 1.0);
+        Ground {
+            roads: self.terrain.roads.as_deref(),
+            rails: self
+                .rails
+                .iter()
+                .copied()
+                .filter(|&(a, b)| reach.segment_overlap(a, b).is_some())
+                .collect(),
+            bands: self
+                .bands
+                .iter()
+                .copied()
+                .filter(|b| b.intersects(&reach))
+                .collect(),
+            cell,
+        }
+    }
+
+    /// La huella de campo de la tranquera `index`: el mismo primer tramo recto
+    /// que el tronco de un asentamiento, y después dos tramos que se desvían
+    /// un poco hacia adentro del potrero, acortados hasta que entran en él
+    /// lejos de sus alambrados. `None` en un descampado, donde no hay potrero.
+    fn gate_track(&self, index: usize, mut rng: Rng) -> Option<Track> {
+        let gate = &self.fences.gates[index];
+        let into = field_side(self.terrain.roads.as_deref(), gate.at, gate.along);
+        let probe = gate.at + into * 3.0;
+        if self.fences.is_descampado(probe) {
+            return None;
+        }
+        let ground = self.ground_of(self.fences.field_of(probe)?);
+        let start = gate.at + into * 0.5;
+        let entry = gate.at + into * SettlementLayout::ENTRY;
+        if !ground.track_ok(start, entry, Some(gate.at)) {
+            return None;
+        }
+        let turn = |v: Vec2, a: f32| {
+            let (s, c) = a.sin_cos();
+            Vec2::new(v.x * c - v.y * s, v.x * s + v.y * c)
+        };
+        let first = turn(into, rng.range(-0.35, 0.35));
+        let second = turn(first, rng.range(-0.3, 0.3));
+        let (lo, hi) = SettlementLayout::GATE_TRACK;
+        let length = rng.range(lo, hi);
+        let mut points = vec![start, entry];
+        for share in [1.0, 0.6, 0.35] {
+            let mid = entry + first * (length * share * 0.5);
+            let end = mid + second * (length * share * 0.5);
+            if ground.track_ok(entry, mid, None) && ground.track_ok(mid, end, None) {
+                points.extend([mid, end]);
+                break;
+            }
+        }
+        Some(Track { points })
+    }
 }
 
 impl SettlementKind {
@@ -797,10 +883,14 @@ impl SettlementKind {
 
 /// El tipo de un asentamiento nuevo: chacras cerca de los pueblos, puestos y
 /// ranchos dispersos, estancias poco frecuentes.
-fn pick_kind(rng: &mut Rng, near_town: bool) -> SettlementKind {
+/// Junto a la vía (`by_rail`), sobre todo los puestos de las cuadrillas del
+/// ferrocarril, con sus casillas.
+fn pick_kind(rng: &mut Rng, near_town: bool, by_rail: bool) -> SettlementKind {
     use SettlementKind::*;
     let roll = rng.unit();
-    let odds: [(SettlementKind, f32); 4] = if near_town {
+    let odds: [(SettlementKind, f32); 4] = if by_rail {
+        [(Outpost, 0.6), (Hut, 0.25), (Farm, 0.15), (Ranch, 0.0)]
+    } else if near_town {
         [(Farm, 0.55), (Hut, 0.3), (Outpost, 0.1), (Ranch, 0.05)]
     } else {
         [(Hut, 0.35), (Outpost, 0.35), (Farm, 0.2), (Ranch, 0.1)]
@@ -1041,13 +1131,10 @@ impl<'a> Compound<'a> {
     }
 
     fn outpost(&mut self) -> bool {
+        // Junto a la vía, un puesto es de una cuadrilla del ferrocarril: una
+        // casilla de chapa.
         let style = if self.by_rail() {
-            self.style(&[
-                (0.3, HouseStyle::AdobeThatch),
-                (0.45, HouseStyle::AdobeIron),
-                (0.7, HouseStyle::Casilla),
-                (1.0, HouseStyle::MudStraw),
-            ])
+            HouseStyle::Casilla
         } else {
             self.style(&[
                 (0.4, HouseStyle::AdobeThatch),
@@ -1131,6 +1218,14 @@ impl<'a> Compound<'a> {
     }
 
     fn ranch(&mut self) -> bool {
+        // La entrada arbolada de una estancia es recta: el tronco no dobla más
+        // de [`Settlement::LANE_BEND`] después de la tranquera.
+        let [gate, bend, hub] = [0, 1, 2].map(|k| self.tracks[0].points[k]);
+        let first = (bend - gate) * (1.0 / gate.distance(bend).max(1e-6));
+        let second = (hub - bend) * (1.0 / bend.distance(hub).max(1e-6));
+        if first.dot(second) < Settlement::LANE_BEND.cos() {
+            return false;
+        }
         let homestead = self.part(
             StructureKind::MainHouse(HouseStyle::GalleryHouse),
             (22.0, 30.0),
@@ -1143,7 +1238,9 @@ impl<'a> Compound<'a> {
         let homestead = self.structures[casco].footprint;
         // Primero, para que las casas de peones y sus huellas se mantengan
         // lejos de la alameda en lugar de ocupar su lugar.
-        self.poplar_row();
+        if !self.poplar_row() {
+            return false;
+        }
         // Las casas de peones, cada una en su propio sector alrededor del
         // patio.
         let houses = 2 + self.rng.below(3);
@@ -1232,7 +1329,10 @@ impl<'a> Compound<'a> {
     /// [`Self::thin_trees`] no los toca: conserva uno de cada dos árboles de
     /// los demás en el orden de plantación, lo que talaría un lado o
     /// desalinearía los pares.
-    fn poplar_row(&mut self) {
+    /// Devuelve si la alameda quedó como cortina: su primer par junto a la
+    /// tranquera, al menos cuatro pares y como mucho un par salteado (la
+    /// curva); si no, la estancia busca otro centro.
+    fn poplar_row(&mut self) -> bool {
         let [gate, bend, hub] = [
             self.tracks[0].points[0],
             self.tracks[0].points[1],
@@ -1241,6 +1341,7 @@ impl<'a> Compound<'a> {
         let last = bend.distance(hub);
         let total = last + gate.distance(bend);
         let mut along = total - Settlement::POPLAR_GATE_INSET;
+        let (mut pairs, mut missing, mut first) = (0, 0, true);
         while along >= 20.0 {
             let (from, to, back) = if along <= last {
                 (hub, bend, along)
@@ -1262,8 +1363,17 @@ impl<'a> Compound<'a> {
                 self.structures.truncate(before + 1);
                 self.structures.pop();
             }
+            if planted == 2 {
+                pairs += 1;
+            } else if first {
+                return false;
+            } else {
+                missing += 1;
+            }
+            first = false;
             along -= Settlement::POPLAR_SPACING;
         }
+        pairs >= 4 && missing <= 1
     }
 
     /// Un monte de eucaliptos al lado del casco: una grilla con variación
@@ -1747,6 +1857,8 @@ fn cell_of(p: Vec2) -> (i32, i32) {
 
 /// Se mezcla con la semilla del terreno para los asentamientos.
 const SETTLEMENT_SEED: u32 = 0x5e77_1e05;
+/// Se mezcla con la semilla del terreno para las huellas de campo.
+const GATE_TRACK_SEED: u32 = 0x9a7e_7a0c;
 /// Se mezcla con la semilla del terreno para las estancias forzadas.
 const RANCH_SEED: u32 = 0x7a2c_4e11;
 /// Se mezcla con la semilla del terreno para los carros abandonados al costado
@@ -2171,6 +2283,37 @@ pub(crate) mod tests {
                 .count();
             assert!(houses >= 1 && main == 1, "{s:?}");
         }
+    }
+
+    #[test]
+    fn a_track_leads_into_the_field_from_every_gate_without_a_settlement() {
+        let (_, _, _, fences, layout) = settled();
+        let settled_gates: Vec<usize> = layout.settlements.iter().map(|s| s.gate as usize).collect();
+        let mut long = 0;
+        for (index, gate) in fences.gates.iter().enumerate() {
+            let starts = |t: &&Track| (t.points[0] - gate.at).length() < 0.6;
+            let found: Vec<&Track> = layout.gate_tracks.iter().filter(starts).collect();
+            if settled_gates.contains(&index) {
+                assert!(found.is_empty(), "gate {index} has a settlement and a field track");
+                continue;
+            }
+            let Some(track) = found.first() else {
+                continue;
+            };
+            assert_eq!(found.len(), 1, "gate {index}");
+            // Dentro de su potrero, sin cruzar un alambrado.
+            let field = fences.field_of(track.points[1]).unwrap();
+            assert!(track.points.iter().all(|&p| field.contains_point(p)), "{track:?}");
+            if track.points.len() > 2 {
+                long += 1;
+                let reach = track.points[0].distance(*track.points.last().unwrap());
+                assert!(reach > SettlementLayout::ENTRY + 10.0, "{track:?}");
+            }
+        }
+        let free = fences.gates.len() - settled_gates.len();
+        println!("{} field tracks for {free} gates, {long} long", layout.gate_tracks.len());
+        assert!(layout.gate_tracks.len() * 10 >= free * 7, "{}", layout.gate_tracks.len());
+        assert!(long * 2 > layout.gate_tracks.len(), "{long}");
     }
 
     #[test]

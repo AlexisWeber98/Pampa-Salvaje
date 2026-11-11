@@ -1377,3 +1377,23 @@ fn each_humble_house_wears_its_own_walls_roof_and_frame() {
         - casilla.iter().map(|p| p.x).fold(f32::MAX, f32::min);
     assert!(width <= 4.0 + 2.0 * 0.25 + 0.01, "{width}");
 }
+
+#[test]
+fn a_field_track_is_drawn_in_the_chunk_where_it_starts() {
+    let mut app = app(GroundVec2::new(100.0, 100.0));
+    let mut layout = SettlementLayout::default();
+    layout.gate_tracks.push(Track {
+        points: vec![GroundVec2::new(20.0, 50.0), GroundVec2::new(20.0, 62.0), GroundVec2::new(30.0, 120.0)],
+    });
+    app.insert_resource(WorldSettlements(layout));
+    for _ in 0..10 {
+        app.update();
+    }
+    let field = app
+        .world_mut()
+        .query::<&TrackSurface>()
+        .iter(app.world())
+        .filter(|t| t.0 == TrackSurface::FIELD)
+        .count();
+    assert_eq!(field, 1);
+}

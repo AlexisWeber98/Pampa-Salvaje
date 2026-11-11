@@ -9,7 +9,7 @@ use std::path::Path;
 use bevy::prelude::*;
 use pampa_content::load_towns_or_builtin;
 use pampa_core::{
-    Lagoon, PlaceKind, RailLine, RoadNetwork, Terrain, TownLayout, WorldConfig, place_lagoons,
+    Lagoon, PlaceKind, RailLine, RoadNetwork, Survey, Terrain, TownLayout, WorldConfig, place_lagoons,
     place_towns,
 };
 use pampa_render::lettering::{self, Face};
@@ -77,6 +77,13 @@ pub fn load_world(path: &Path) -> LoadedWorld {
     warnings.extend(left_out.iter().map(|e| format!("towns: {e}")));
     // Un camino público hasta cada laguna desde el pueblo más cercano.
     let (roads, left_out) = roads.with_lagoons(&towns, &line, world.bounds(), &lagoons);
+    warnings.extend(left_out.iter().map(|e| format!("towns: {e}")));
+    // Los caminos vecinales sobre la mensura: todo campo tiene salida a un
+    // camino.
+    let seed = Terrain::default().seed;
+    let survey = Survey::new(world, seed);
+    let (roads, left_out) =
+        roads.with_vecinales(&survey, seed, &towns, &line, world.bounds(), &lagoons);
     warnings.extend(left_out.iter().map(|e| format!("towns: {e}")));
     // Los senderos desde los andenes de las vías muertas hasta el cruce del
     // camino junto a la estación.

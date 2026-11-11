@@ -99,6 +99,10 @@ impl StreetLamps {
     pub const GALLERY_OUT: f32 = 1.2;
     /// Separación mínima entre un farol y el surco de una huella, en metros.
     pub const TRACK_GAP: f32 = 0.8;
+    /// A qué distancia hacia adentro del comienzo de la huella de una
+    /// estancia está el farol de su tranquera, en metros: lejos del alambrado
+    /// del camino aunque la tranquera sea simple (4,5 m de ancho).
+    pub const GATE_IN: f32 = 1.5;
 
     /// Los faroles de cada pueblo de `towns` (con los `roads` que salen de
     /// ellos) y de cada estancia de `settlements`, fuera de todos los
@@ -194,7 +198,7 @@ pub fn settlement_lamps(s: &Settlement) -> Vec<StreetLamp> {
     {
         let across = Vec2::new(-along.y, along.x);
         for side in [1.0, -1.0] {
-            let at = a + along * 0.5 + across * (side * (Track::HALF_WIDTH + 1.2));
+            let at = a + along * StreetLamps::GATE_IN + across * (side * (Track::HALF_WIDTH + 1.2));
             if lighter.put(at, LampSite::Gate) {
                 break;
             }

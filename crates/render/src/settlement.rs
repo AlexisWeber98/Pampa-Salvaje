@@ -122,6 +122,13 @@ pub struct YardPlantPart(pub u32);
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TrackSurface(pub u32);
 
+impl TrackSurface {
+    /// El asentamiento de las huellas de campo de un chunk (las de
+    /// [`SettlementLayout::gate_tracks`] que empiezan en él), que no son de
+    /// ningún asentamiento.
+    pub const FIELD: u32 = u32::MAX;
+}
+
 /// Los pisos del patio y del corral de un asentamiento, una malla de decal.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct YardSurface(pub u32);
@@ -757,6 +764,8 @@ fn owns(coord: ChunkCoord, size: f32, settlement: &Settlement) -> bool {
 struct ChunkShare {
     settlements: Vec<(u32, Settlement)>,
     wrecks: Vec<(u32, RoadsideWreck)>,
+    /// Las huellas de campo que empiezan en el chunk.
+    gate_tracks: Vec<Track>,
 }
 
 impl ChunkShare {
@@ -776,11 +785,15 @@ impl ChunkShare {
                 .filter(|(_, w)| ChunkCoord::containing(w.at, size) == coord)
                 .map(|(k, w)| (k as u32, *w))
                 .collect(),
+            gate_tracks: layout
+                .gate_tracks_in(coord.bounds(size))
+                .map(|(_, t)| t.clone())
+                .collect(),
         }
     }
 
     fn is_empty(&self) -> bool {
-        self.settlements.is_empty() && self.wrecks.is_empty()
+        self.settlements.is_empty() && self.wrecks.is_empty() && self.gate_tracks.is_empty()
     }
 }
 
@@ -793,6 +806,10 @@ fn chunk_pieces(painter: &Painter, share: &ChunkShare) -> Vec<Piece> {
         .collect();
     for (k, wreck) in &share.wrecks {
         pieces.extend(painter.roadside(*k, wreck));
+    }
+    let field: Vec<&Track> = share.gate_tracks.iter().collect();
+    if let Some(mesh) = track::tracks_mesh(&field, &painter.ground) {
+        pieces.push(painter.decal(mesh, Surface::Mud, Tag::Tracks(TrackSurface::FIELD)));
     }
     pieces
 }

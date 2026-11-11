@@ -250,6 +250,8 @@ pub struct FloraSite {
     /// Las líneas de alambrado relevadas: `x` de las norte–sur, `y` de las
     /// este–oeste.
     fences: (Vec<f32>, Vec<f32>),
+    /// Los potreros de tierra fiscal (`FenceLayout::fiscal`), ordenados.
+    fiscal: Vec<(usize, usize)>,
     /// Las huellas de edificio, los patios y las huellas de tierra de los
     /// asentamientos.
     settlements: Option<Arc<KeepOut>>,
@@ -364,6 +366,17 @@ impl FloraSite {
     /// isletas del campo lejano por cada unidad de [`Self::rural`] por encima
     /// de 1.
     const FAR_WIDEN: f32 = 0.12;
+    /// Cuánto bajan (en unidades de ruido) los bordes del monte y de las
+    /// isletas en la tierra fiscal, que nadie desmontó: más monte y más
+    /// bosquecitos que en los potreros alambrados.
+    const FISCAL_WIDEN: f32 = 0.1;
+    /// Cuántas veces más probable es un árbol de isleta en la tierra fiscal:
+    /// sus isletas son bosquecitos de árboles juntos.
+    const FISCAL_GROVE: f32 = 2.5;
+    /// Proporción acumulada de renuevos, jóvenes y adultos en el corazón de un
+    /// bosquecito de la tierra fiscal: casi todos adultos o gigantes viejos,
+    /// así que se alzan sobre el monte bajo.
+    const STAND_AGE_SHARES: [f32; 3] = [0.02, 0.07, 0.6];
     /// La proporción de su densidad que conserva la tierra en el centro de un
     /// asentamiento.
     pub const WORKED_SHARE: f32 = 0.3;
@@ -479,6 +492,7 @@ impl FloraSite {
             road_chunks,
             natives: NativeCache::new(NativeCache::DEFAULT_CAP),
             fences: (Vec::new(), Vec::new()),
+            fiscal: Vec::new(),
             settlements: None,
             worked: Vec::new(),
             redistribute: true,
@@ -546,6 +560,7 @@ impl FloraSite {
     /// Esta flora, con los árboles fuera de las líneas relevadas de `fences`.
     pub fn with_fences(mut self, fences: &FenceLayout) -> Self {
         self.fences = fences.surveyed.clone();
+        self.fiscal = fences.fiscal.clone();
         self.natives.clear();
         self
     }
@@ -678,7 +693,13 @@ impl FloraSite {
     /// `[0, 1]`: ruido de baja frecuencia, para que los árboles se agrupen en
     /// pequeñas isletas.
     pub fn grove(&self, p: Vec2) -> f32 {
-        self.grove_wide(p, 0.0)
+        self.grove_wide(p, self.fiscal_widen(p))
+    }
+
+    /// Cuánto se ensanchan el monte y las isletas en `p` por estar en tierra
+    /// fiscal: [`Self::FISCAL_WIDEN`] ahí, 0 en los potreros alambrados.
+    fn fiscal_widen(&self, p: Vec2) -> f32 {
+        if self.is_fiscal(p) { Self::FISCAL_WIDEN } else { 0.0 }
     }
 
     /// [`Self::grove`] con sus bordes bajados en `widen`, para que las isletas
@@ -715,7 +736,7 @@ impl FloraSite {
     /// de metros y atraviesen los bordes de los chunks. Entre ellas, la pampa
     /// es pasto abierto con sus árboles dispersos y sus isletas.
     pub fn monte(&self, p: Vec2) -> f32 {
-        self.monte_wide(p, 0.0)
+        self.monte_wide(p, self.fiscal_widen(p))
     }
 
     /// [`Self::monte`] con sus bordes bajados en `widen`, para que las manchas
@@ -973,7 +994,8 @@ impl FloraSite {
             // que los montes.
             let hub = self.hub_distance(at);
             let rural = self.rural_by(at, hub);
-            let widen = Self::FAR_WIDEN * (rural - 1.0).max(0.0);
+            let wild = if self.is_fiscal(at) { 1.0 } else { 0.0 };
+            let widen = Self::FAR_WIDEN * (rural - 1.0).max(0.0) + Self::FISCAL_WIDEN * wild;
             let grove = self.grove_wide(at, widen);
             let monte = self.monte_wide(at, widen);
             // La probabilidad de la isleta se agrupa en grupos, y los árboles
@@ -983,7 +1005,11 @@ impl FloraSite {
             let knot = self.knot(at);
             let gather = Self::CLUMP_FLOOR + (1.0 - Self::CLUMP_FLOOR) * self.clump(at);
             let seeding = 1.0 + (Self::KNOT_BOOST - 1.0) * knot;
-            let grove_chance = Self::GROVE_TREE * grove * gather * seeding;
+            let grove_chance = Self::GROVE_TREE
+                * grove
+                * gather
+                * seeding
+                * (1.0 + (Self::FISCAL_GROVE - 1.0) * wild);
             let monte_chance =
                 Self::MONTE_TREE * monte * (Self::MONTE_FLOOR + (1.0 - Self::MONTE_FLOOR) * knot);
             let thin = rural.min(1.0);
@@ -1001,7 +1027,8 @@ impl FloraSite {
                 Self::species_at(species_roll, grove, monte, fringe, escape)
             };
             let rolls = [age_roll, height_roll, yaw, width_roll];
-            let tree = Self::grow(at, species, monte, rolls, variant);
+            let stand = wild * grove * (1.0 - monte);
+            let tree = Self::grow(at, species, monte, stand, rolls, variant);
             let spaced = trees
                 .iter()
                 .all(|t| t.at.distance(at) >= t.spacing().max(tree.spacing()));
@@ -1013,15 +1040,25 @@ impl FloraSite {
     }
 
     /// El árbol de especie `species` que crece en `at`, en un lugar con la
-    /// máscara `monte` dada, a partir de los valores aleatorios `rolls` de
-    /// edad, altura, giro y ancho.
-    fn grow(at: Vec2, species: Species, monte: f32, rolls: [f32; 4], variant: u32) -> Tree {
+    /// máscara `monte` dada y la parte `stand` de un bosquecito de la tierra
+    /// fiscal, a partir de los valores aleatorios `rolls` de edad, altura, giro
+    /// y ancho.
+    fn grow(
+        at: Vec2,
+        species: Species,
+        monte: f32,
+        stand: f32,
+        rolls: [f32; 4],
+        variant: u32,
+    ) -> Tree {
         let [age_roll, height_roll, yaw, width_roll] = rolls;
         let shares = [0, 1, 2].map(|i| {
             if species == Species::Ombu {
                 Self::OMBU_AGE_SHARES[i]
             } else {
-                Self::AGE_SHARES[i] + (Self::MONTE_AGE_SHARES[i] - Self::AGE_SHARES[i]) * monte
+                let base = Self::AGE_SHARES[i]
+                    + (Self::MONTE_AGE_SHARES[i] - Self::AGE_SHARES[i]) * monte;
+                base + (Self::STAND_AGE_SHARES[i] - base) * stand
             }
         });
         let age = match shares.iter().position(|&c| age_roll < c) {
@@ -1111,7 +1148,7 @@ impl FloraSite {
                 Self::town_species(draw.unit())
             };
             let rolls = [draw.unit(), draw.unit(), draw.unit(), draw.unit()];
-            let tree = Self::grow(at, species, self.monte(at), rolls, draw.next());
+            let tree = Self::grow(at, species, self.monte(at), 0.0, rolls, draw.next());
             let apart = |t: &Tree| t.at.distance(at) >= t.spacing().max(tree.spacing());
             if !extras.iter().all(apart) || !natives.iter().all(apart) || !self.tree_room(at, rail)
             {
@@ -1377,15 +1414,35 @@ impl FloraSite {
     /// Si `p` está al menos a [`Self::TREE_FENCE_MARGIN`] de toda línea de
     /// alambrado relevada.
     fn off_fences(&self, p: Vec2) -> bool {
-        let clear = |lines: &[f32], v: f32| {
+        // Una línea entre dos potreros fiscales no tiene alambrado.
+        let fiscal = |q: Vec2| self.is_fiscal(q);
+        let m = Self::TREE_FENCE_MARGIN;
+        let clear = |lines: &[f32], v: f32, across: Vec2| {
             let i = lines.partition_point(|&l| l < v);
             [i.checked_sub(1), Some(i)]
                 .into_iter()
                 .flatten()
                 .filter_map(|i| lines.get(i))
-                .all(|l| (l - v).abs() >= Self::TREE_FENCE_MARGIN)
+                .all(|l| (l - v).abs() >= m)
+                || (fiscal(p + across) && fiscal(p - across))
         };
-        clear(&self.fences.0, p.x) && clear(&self.fences.1, p.y)
+        clear(&self.fences.0, p.x, Vec2::new(m, 0.0))
+            && clear(&self.fences.1, p.y, Vec2::new(0.0, m))
+    }
+
+    /// Si `p` está en un potrero de tierra fiscal (ver
+    /// [`FenceLayout::fiscal`]).
+    fn is_fiscal(&self, p: Vec2) -> bool {
+        if self.fiscal.is_empty() {
+            return false;
+        }
+        let index = |lines: &[f32], v: f32| {
+            let k = lines.partition_point(|&l| l <= v);
+            (k > 0 && k < lines.len()).then(|| k - 1)
+        };
+        index(&self.fences.0, p.x)
+            .zip(index(&self.fences.1, p.y))
+            .is_some_and(|c| self.fiscal.binary_search(&c).is_ok())
     }
 
     /// Si `p` está al menos a `margin` metros de todo camino.
@@ -1610,7 +1667,7 @@ fn smoothstep(lo: f32, hi: f32, v: f32) -> f32 {
 
 /// Ruido de valores suave en `[0, 1]` con celdas de grilla de `cell` metros de
 /// ancho.
-fn value_noise(seed: u32, p: Vec2, cell: f32) -> f32 {
+pub(crate) fn value_noise(seed: u32, p: Vec2, cell: f32) -> f32 {
     let (x, y) = (p.x / cell, p.y / cell);
     let (i, j) = (x.floor(), y.floor());
     let (fx, fy) = (fade(x - i), fade(y - j));
@@ -3193,6 +3250,37 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn fiscal_land_grows_more_monte_and_groves_of_tall_trees() {
+        let (flora, trees, _) = shipped();
+        let (_, _, _, fences, _) = crate::settlement::tests::settled();
+        // Árboles, árboles de isleta fuera del monte (con su altura sumada) y
+        // hectáreas, en la tierra fiscal y en el resto de los potreros.
+        let mut count = [(0usize, 0usize, 0.0f32, 0.0f32); 2];
+        for t in trees {
+            if fences.field_of(t.at).is_some() {
+                let c = &mut count[usize::from(fences.is_fiscal(t.at))];
+                c.0 += 1;
+                if flora.grove(t.at) > 0.5 && flora.monte(t.at) < 0.1 {
+                    c.1 += 1;
+                    c.2 += t.height;
+                }
+            }
+        }
+        let (xs, ys) = &fences.surveyed;
+        for i in 0..xs.len() - 1 {
+            for j in 0..ys.len() - 1 {
+                let fiscal = fences.fiscal.binary_search(&(i, j)).is_ok();
+                count[usize::from(fiscal)].3 += (xs[i + 1] - xs[i]) * (ys[j + 1] - ys[j]) / 1e4;
+            }
+        }
+        let density = count.map(|(n, _, _, ha)| n as f32 / ha);
+        let grove = count.map(|(_, n, height, _)| height / n as f32);
+        println!("trees per ha {density:?}, grove tree height {grove:?}");
+        assert!(density[1] > 1.5 * density[0], "{density:?}");
+        assert!(grove[1] > 1.15 * grove[0], "{grove:?}");
+    }
+
+    #[test]
     fn the_new_species_keep_their_shares_of_the_shipped_world() {
         let (_, trees, hubs) = shipped();
         assert!(trees.len() > 100_000 && !hubs.is_empty(), "{}", trees.len());
@@ -3239,7 +3327,7 @@ pub(crate) mod tests {
         // El ombú es raro: más o menos uno por asentamiento en un mundo de
         // 200.000 árboles.
         let ombu = trees.iter().filter(|t| t.species == Species::Ombu).count();
-        assert!((8..=60).contains(&ombu), "{ombu}");
+        assert!((hubs.len() / 2..=hubs.len() * 2).contains(&ombu), "{ombu} for {}", hubs.len());
     }
 
     #[test]
@@ -3498,7 +3586,7 @@ pub(crate) mod tests {
                 count += 1;
             }
         }
-        assert_eq!((count, hash), (12028, 0x85d0_b8bb_c3da_7e5e));
+        assert_eq!((count, hash), (60250, 0xde91_b5d4_177b_5063));
     }
 
     /// Cargar chunks por streaming a través de una caché chica, y el primero de

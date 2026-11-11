@@ -768,8 +768,22 @@ mod tests {
             }
         }
         // Un alambrado a cada lado, como a lo largo de todo camino, fuera del
-        // pueblo y fuera de la ribera de la laguna.
+        // pueblo, fuera de la ribera de la laguna y fuera de la tierra sin
+        // alambrar (descampados y tierra fiscal), donde corre a campo abierto.
         let half = pampa_core::RoadNetwork::HALF_WIDTH;
+        let side = pampa_core::FenceLayout::ROADSIDE;
+        let open = road
+            .path
+            .windows(2)
+            .filter(|w| {
+                let d = w[1] - w[0];
+                let across = pampa_core::Vec2::new(-d.y, d.x) * (1.0 / d.length().max(1e-6));
+                let mid = (w[0] + w[1]) * 0.5;
+                laid.fences.is_descampado(mid + across * side)
+                    && laid.fences.is_descampado(mid - across * side)
+            })
+            .count();
+        let open_share = open as f32 / (road.path.len() - 1) as f32;
         let fenced = laid
             .fences
             .obstacles()
@@ -781,7 +795,11 @@ mod tests {
                 })
             })
             .count();
-        assert!(fenced > 50, "{fenced} fence spans along the road");
+        println!("{fenced} fence spans, {open_share} of the road in open land");
+        assert!(
+            fenced > 50 || open_share > 0.6,
+            "{fenced} fence spans along the road, {open_share} in open land"
+        );
     }
 
     #[test]

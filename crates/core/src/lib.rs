@@ -68,7 +68,7 @@ pub use fauna::{
     Hare, HareState, Herd, Patch, Perch, Raptor, RaptorKind, Sparrow, SparrowClip, SparrowGroup,
     SparrowKind, Spot,
 };
-pub use fence::{FenceLayout, FenceRun, Frontage, Gate, Opening, OpeningKind};
+pub use fence::{FenceLayout, FenceRun, Frontage, Gate, Opening, OpeningKind, Survey};
 pub use flora::{ChunkFlora, FloraSite, Shrub, ShrubKind, Species, Tree, Tuft, TuftKind};
 pub use heading::Heading;
 pub use items::{Category as ItemCategory, Item, Items};

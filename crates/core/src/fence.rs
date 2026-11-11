@@ -15,9 +15,18 @@
 //! cuadrícula se detiene en un alambrado al costado del camino y se une a él en
 //! un poste esquinero. Cada tramo de alambrado al costado del camino entre dos
 //! esquinas es el frente de un campo sobre el camino, y tiene una o dos
-//! tranqueras abiertas hacia el campo. Las líneas de la cuadrícula tienen
-//! aberturas cada 300–500 m (usuario, "Alambrados con huecos", 2026-10-22): una
-//! tranquera de campo abierta o un tramo roto.
+//! tranqueras abiertas hacia el campo. Una de cada tres líneas es un camino
+//! vecinal ([`Survey::vecinales`]) y los potreros se agrupan en campos de un
+//! mismo dueño ([`FenceLayout::owners`]) que dan todos a un camino (usuario,
+//! 2026-11-11). Dentro de un campo, sus líneas tienen aberturas cada 300–500 m
+//! (usuario, "Alambrados con huecos", 2026-10-22): una tranquera de campo
+//! abierta o un tramo roto; el alambrado medianero entre dos dueños queda
+//! entero.
+//!
+//! No toda la tierra está alambrada: uno de cada diez potreros sueltos es un
+//! descampado, y la tierra fiscal ([`FenceLayout::fiscal`], usuario,
+//! 2026-11-11) viene en manchas de varios potreros sin alambrar, así que se
+//! cruza a campo traviesa. A lo largo de ellos el camino no tiene alambrado.
 //!
 //! Los postes están a [`FenceLayout::POST_SPACING`] metros como mucho entre sí,
 //! con [`FenceLayout::WIRES`] alambres entre ellos. Cada tramo es un obstáculo
@@ -104,8 +113,10 @@ pub struct FenceLayout {
     /// Tranqueras de campo y tramos rotos a lo largo de los alambrados de la
     /// cuadrícula.
     pub openings: Vec<Opening>,
-    /// Cada tramo alambrado de la cuadrícula antes de que se abrieran sus
-    /// aberturas: su id y su longitud en metros.
+    /// Cada tramo alambrado de la cuadrícula dentro de un campo (entre dos
+    /// potreros del mismo dueño) antes de que se abrieran sus aberturas: su id
+    /// y su longitud en metros. El alambrado medianero entre dos dueños no
+    /// tiene aberturas.
     pub stretches: Vec<(u32, f32)>,
     /// Por dónde corren las líneas norte–sur (su `x`) y las este–oeste (su
     /// `y`), estén alambradas ahí o no.
@@ -114,6 +125,14 @@ pub struct FenceLayout {
     /// abandonados), como `(i, j)`: entre la línea norte–sur número `i` y la
     /// siguiente, y entre la línea este–oeste número `j` y la siguiente.
     pub descampados: Vec<(usize, usize)>,
+    /// Los potreros de tierra fiscal (tierra pública sin mensurar ni
+    /// alambrar), un subconjunto ordenado de [`Self::descampados`]: vienen en
+    /// manchas de varios potreros juntos, así que se cruzan a campo traviesa.
+    pub fiscal: Vec<(usize, usize)>,
+    /// El dueño de cada potrero, `i * (ys - 1) + j` para el potrero `(i, j)`:
+    /// los potreros de un mismo dueño forman un campo, que da a un camino. Las
+    /// tranqueras entre potreros solo unen potreros de un mismo campo.
+    pub owners: Vec<u32>,
 }
 
 /// Qué es un tramo de una línea de la cuadrícula.
@@ -222,6 +241,18 @@ impl FenceLayout {
     pub const OPEN_GATES: f32 = 0.6;
     /// Proporción de potreros que quedan sin alambrar (descampados).
     pub const DESCAMPADOS: f32 = 0.1;
+    /// Ancho de las celdas del ruido que reparte la tierra fiscal, en metros:
+    /// varias veces un potrero, para que la tierra fiscal venga en manchas de
+    /// varios potreros juntos.
+    pub const FISCAL_SCALE: f32 = 2400.0;
+    /// Un potrero es tierra fiscal donde el ruido de [`Self::FISCAL_SCALE`]
+    /// en su centro supera este umbral.
+    pub const FISCAL_THRESHOLD: f32 = 0.66;
+    /// Cuántos potreros tiene como mucho un campo de un mismo dueño.
+    pub const PROPERTY_CELLS: usize = 6;
+    /// Probabilidad de que dos campos vecinos sin un camino entre ellos se
+    /// junten en uno (mientras no pasen de [`Self::PROPERTY_CELLS`]).
+    pub const PROPERTY_MERGE: f32 = 0.5;
     /// Distancia mínima desde una línea de alambrado hasta el borde del mundo,
     /// en metros.
     pub const EDGE_MARGIN: f32 = 10.0;
@@ -238,21 +269,8 @@ impl FenceLayout {
         towns: &[TownLayout],
         line: &RailLine,
     ) -> Self {
-        let bounds = config.bounds();
-        let lo = bounds.min + Vec2::new(Self::EDGE_MARGIN, Self::EDGE_MARGIN);
-        let hi = bounds.max - Vec2::new(Self::EDGE_MARGIN, Self::EDGE_MARGIN);
-        let mut rng = Rng::new(terrain.seed ^ FENCE_SEED, 0);
-        let mut survey = |from: f32, to: f32| {
-            let mut at = from + rng.range(0.0, Self::FIELD.1);
-            let mut lines = Vec::new();
-            while at < to {
-                lines.push(at);
-                at += rng.range(Self::FIELD.0, Self::FIELD.1);
-            }
-            lines
-        };
-        let xs = survey(lo.x, hi.x);
-        let ys = survey(lo.y, hi.y);
+        let (lo, hi) = Survey::area(config);
+        let Survey { xs, ys } = Survey::new(config, terrain.seed);
         let rails: Vec<(Vec2, Vec2)> = line
             .segments()
             .map(|s| (s.start, s.end))
@@ -269,16 +287,45 @@ impl FenceLayout {
             .map(|t| t.leveled().expanded(Self::TOWN_MARGIN))
             .chain(terrain.lagoons.iter().map(|l| l.keep_out()))
             .collect();
-        let descampados = (0..xs.len().saturating_sub(1))
-            .flat_map(|i| (0..ys.len().saturating_sub(1)).map(move |j| (i, j)))
+        let owners = properties(&xs, &ys, terrain.roads.as_deref(), terrain.seed);
+        let ny = ys.len().saturating_sub(1);
+        let cells: Vec<(usize, usize)> = (0..xs.len().saturating_sub(1))
+            .flat_map(|i| (0..ny).map(move |j| (i, j)))
+            .collect();
+        // La tierra fiscal y los descampados son campos enteros, así que
+        // siempre dan a un camino.
+        let mut middles: std::collections::BTreeMap<u32, (Vec2, f32)> = Default::default();
+        for &(i, j) in &cells {
+            let middle = Vec2::new(xs[i] + xs[i + 1], ys[j] + ys[j + 1]) * 0.5;
+            let m = middles.entry(owners[i * ny + j]).or_insert((Vec2::ZERO, 0.0));
+            m.0 = m.0 + middle;
+            m.1 += 1.0;
+        }
+        let fiscal_owner = |o: u32| {
+            let (sum, n) = middles[&o];
+            fiscal_noise(terrain.seed, sum * (1.0 / n)) > Self::FISCAL_THRESHOLD
+        };
+        let abandoned = |o: u32| {
+            Rng::new(terrain.seed ^ FENCE_SEED ^ 0xdeca, o).unit() < Self::DESCAMPADOS
+        };
+        let fiscal: Vec<(usize, usize)> = cells
+            .iter()
+            .copied()
+            .filter(|&(i, j)| fiscal_owner(owners[i * ny + j]))
+            .collect();
+        let descampados = cells
+            .iter()
+            .copied()
             .filter(|&(i, j)| {
-                Rng::new(terrain.seed ^ FENCE_SEED ^ 0xdeca, (i * 4099 + j) as u32).unit()
-                    < Self::DESCAMPADOS
+                let o = owners[i * ny + j];
+                fiscal_owner(o) || abandoned(o)
             })
             .collect();
         let mut layout = Self {
             surveyed: (xs.clone(), ys.clone()),
             descampados,
+            fiscal,
+            owners,
             ..Self::default()
         };
         let site = Site {
@@ -303,6 +350,7 @@ impl FenceLayout {
         for side in &mut sides {
             layout.cut_frontages(side);
         }
+        layout.close_dead_ends(&site);
         layout.keep_fields_reachable(&site);
         layout
     }
@@ -338,6 +386,19 @@ impl FenceLayout {
     pub fn is_descampado(&self, p: Vec2) -> bool {
         self.cell_of(p)
             .is_some_and(|c| self.descampados.binary_search(&c).is_ok())
+    }
+
+    /// El dueño del potrero en el que está `p` (ver [`Self::owners`]).
+    pub fn owner_of(&self, p: Vec2) -> Option<u32> {
+        let (i, j) = self.cell_of(p)?;
+        let ny = self.surveyed.1.len() - 1;
+        self.owners.get(i * ny + j).copied()
+    }
+
+    /// Si `p` está en un potrero de tierra fiscal.
+    pub fn is_fiscal(&self, p: Vec2) -> bool {
+        self.cell_of(p)
+            .is_some_and(|c| self.fiscal.binary_search(&c).is_ok())
     }
 
     /// Si el tramo de la cuadrícula de `a` a `b` está entre dos potreros sin
@@ -380,10 +441,9 @@ impl FenceLayout {
                     || near_rails
                         .iter()
                         .any(|&(r0, r1)| segments_distance(a, b, r0, r1) < Self::RAIL_MARGIN);
+                // Cada 2,5 m: la curva de un empalme no se mete entre muestras.
                 let on_road = site.terrain.roads.as_ref().is_some_and(|roads| {
-                    [a, (a + b) * 0.5, b]
-                        .iter()
-                        .any(|&p| roads.near(p, road_reach).is_some())
+                    (0..=4).any(|k| roads.near(a + (b - a) * (k as f32 / 4.0), road_reach).is_some())
                 });
                 if blocked || self.between_descampados(a, b) {
                     Span::Blocked
@@ -411,6 +471,7 @@ impl FenceLayout {
                 let from = post(first);
                 if let Some(corner) =
                     join(sides, from, from - along * (3.0 * Self::POST_SPACING), site)
+                        .or_else(|| dead_end(from, along * -1.0, site))
                 {
                     posts.insert(0, corner);
                 }
@@ -419,6 +480,7 @@ impl FenceLayout {
                 let from = post(k);
                 if let Some(corner) =
                     join(sides, from, from + along * (3.0 * Self::POST_SPACING), site)
+                        .or_else(|| dead_end(from, along, site))
                 {
                     posts.push(corner);
                 }
@@ -443,7 +505,28 @@ impl FenceLayout {
                 .copied()
                 .filter(|&c| c > 1.0 && c < total - 1.0),
         );
+        // También donde cruza una línea de la mensura sin unirse a él (junto
+        // a la tierra sin alambrar), para que cada frente sea de un solo
+        // potrero.
+        for (i, w) in side.line.windows(2).enumerate() {
+            for (lines, a, b) in [
+                (&self.surveyed.0, w[0].x, w[1].x),
+                (&self.surveyed.1, w[0].y, w[1].y),
+            ] {
+                let (lo, hi) = (a.min(b), a.max(b));
+                let first = lines.partition_point(|&l| l <= lo);
+                for &l in lines[first..].iter().take_while(|&&l| l < hi) {
+                    let t = (l - a) / (b - a);
+                    let arc = side.arcs[i] + (side.arcs[i + 1] - side.arcs[i]) * t;
+                    let near_corner = bounds.iter().any(|&c| (c - arc).abs() < 2.0);
+                    if arc > 1.0 && arc < total - 1.0 && !near_corner {
+                        bounds.push(arc);
+                    }
+                }
+            }
+        }
         bounds.push(total);
+        bounds.sort_by(f32::total_cmp);
         let mut fenced: Vec<(f32, f32)> = Vec::new();
         for w in bounds.windows(2) {
             let (from, to) = (w[0], w[1]);
@@ -549,14 +632,27 @@ impl FenceLayout {
     fn cut_openings(&mut self, kind: &mut [Span], start: Vec2, along: Vec2) {
         let post = |k: usize| start + along * (k as f32 * Self::POST_SPACING);
         let spacing = Self::POST_SPACING;
+        // El dueño de cada lado del tramo `k`: las aberturas solo van dentro
+        // de un campo; el alambrado medianero entre dos dueños queda entero.
+        let across = Vec2::new(-along.y, along.x);
+        let sides = |k: usize| {
+            let mid = (post(k) + post(k + 1)) * 0.5;
+            (self.owner_of(mid + across), self.owner_of(mid - across))
+        };
+        let inside: Vec<Option<(Option<u32>, Option<u32>)>> = (0..kind.len())
+            .map(|k| {
+                let (a, b) = sides(k);
+                (kind[k] == Span::Fenced && a == b).then_some((a, b))
+            })
+            .collect();
         let mut k = 0;
         while k < kind.len() {
-            if kind[k] != Span::Fenced {
+            let Some(owner) = inside[k] else {
                 k += 1;
                 continue;
-            }
+            };
             let first = k;
-            while k < kind.len() && kind[k] == Span::Fenced {
+            while k < kind.len() && inside[k] == Some(owner) {
                 k += 1;
             }
             let id = self.stretches.len() as u32;
@@ -645,22 +741,198 @@ impl FenceLayout {
     /// tramo de su lado más largo.
     fn keep_fields_reachable(&mut self, site: &Site) {
         let (xs, ys) = self.surveyed.clone();
-        for i in 0..xs.len().saturating_sub(1) {
-            for j in 0..ys.len().saturating_sub(1) {
-                let cell = Aabb::new(Vec2::new(xs[i], ys[j]), Vec2::new(xs[i + 1], ys[j + 1]));
-                if self.reachable(cell, site) {
-                    continue;
+        let (nx, ny) = (xs.len().saturating_sub(1), ys.len().saturating_sub(1));
+        let cell = |k: usize| {
+            let (i, j) = (k / ny, k % ny);
+            Aabb::new(Vec2::new(xs[i], ys[j]), Vec2::new(xs[i + 1], ys[j + 1]))
+        };
+        let neighbours = |k: usize| {
+            let (i, j) = (k / ny, k % ny);
+            [
+                (i + 1 < nx).then(|| k + ny),
+                (i > 0).then(|| k - ny),
+                (j + 1 < ny).then(|| k + 1),
+                (j > 0).then(|| k - 1),
+            ]
+            .into_iter()
+            .flatten()
+        };
+        // Qué bordes entre potreros del mismo campo se pueden cruzar.
+        let mut passable = std::collections::BTreeSet::new();
+        for k in 0..nx * ny {
+            for n in neighbours(k).filter(|&n| n > k && self.owners[n] == self.owners[k]) {
+                if self.edge_passable(cell(k), cell(n), site) {
+                    passable.insert((k, n));
                 }
-                if let Some(o) = self.openings.iter_mut().find(|o| {
-                    matches!(o.kind, OpeningKind::FieldGate { open: false, .. })
-                        && on_edge(cell, o.at)
-                }) {
-                    if let OpeningKind::FieldGate { open, .. } = &mut o.kind {
-                        *open = true;
+            }
+        }
+        let mut tried = std::collections::BTreeSet::new();
+        loop {
+            // Los potreros a los que se llega desde una tranquera abierta del
+            // camino (o un frente sin alambrar), por bordes transitables.
+            let mut reached: Vec<bool> = (0..nx * ny)
+                .map(|k| {
+                    let c = cell(k);
+                    self.is_descampado(c.center())
+                        || self.gates.iter().any(|g| g.open && c.contains_point(g.at))
+                })
+                .collect();
+            let mut stack: Vec<usize> = (0..nx * ny).filter(|&k| reached[k]).collect();
+            while let Some(k) = stack.pop() {
+                for n in neighbours(k) {
+                    if !reached[n] && passable.contains(&(k.min(n), k.max(n))) {
+                        reached[n] = true;
+                        stack.push(n);
                     }
+                }
+            }
+            // Un potrero sin salida junto a uno de su campo que la tiene.
+            let fix = (0..nx * ny).find_map(|k| {
+                (!reached[k])
+                    .then(|| {
+                        neighbours(k).find(|&n| {
+                            reached[n]
+                                && self.owners[n] == self.owners[k]
+                                && !tried.contains(&(k.min(n), k.max(n)))
+                        })
+                    })
+                    .flatten()
+                    .map(|n| (k, n))
+            });
+            let Some((k, n)) = fix else {
+                // Un campo sin ninguna tranquera abierta al camino: como
+                // antes, una entrada por cualquier borde.
+                for k in (0..nx * ny).filter(|&k| !reached[k]) {
+                    let c = cell(k);
+                    if self.reachable(c, site) {
+                        continue;
+                    }
+                    if !self.open_gate_on(c, None) {
+                        self.break_edge(c, site, None);
+                    }
+                }
+                return;
+            };
+            let edge = (k.min(n), k.max(n));
+            tried.insert(edge);
+            if self.open_gate_on(cell(k), Some(cell(n))) || self.break_edge(cell(k), site, Some(cell(n))) {
+                passable.insert(edge);
+            }
+        }
+    }
+
+    /// Abre una tranquera de campo cerrada sobre un borde de `cell` (sobre el
+    /// que comparte con `other`, si se indica). Devuelve si abrió una.
+    fn open_gate_on(&mut self, cell: Aabb, other: Option<Aabb>) -> bool {
+        let Some(o) = self.openings.iter_mut().find(|o| {
+            matches!(o.kind, OpeningKind::FieldGate { open: false, .. })
+                && on_edge(cell, o.at)
+                && other.is_none_or(|other| on_edge(other, o.at))
+        }) else {
+            return false;
+        };
+        if let OpeningKind::FieldGate { open, .. } = &mut o.kind {
+            *open = true;
+        }
+        true
+    }
+
+    /// Si se puede pasar entre los potreros vecinos `a` y `b` por su borde
+    /// compartido: una abertura que no es una tranquera cerrada, o un tramo
+    /// sin alambrar lejos de los caminos.
+    fn edge_passable(&self, a: Aabb, b: Aabb, site: &Site) -> bool {
+        let opening = self.openings.iter().any(|o| {
+            !matches!(o.kind, OpeningKind::FieldGate { open: false, .. })
+                && on_edge(a, o.at)
+                && on_edge(b, o.at)
+        });
+        if opening {
+            return true;
+        }
+        // El borde compartido: la intersección de los dos rectángulos.
+        let lo = Vec2::new(a.min.x.max(b.min.x), a.min.y.max(b.min.y));
+        let hi = Vec2::new(a.max.x.min(b.max.x), a.max.y.min(b.max.y));
+        let near_road = |p: Vec2| {
+            site.terrain
+                .roads
+                .as_ref()
+                .is_some_and(|r| r.near(p, Self::ROADSIDE + 1.0).is_some())
+        };
+        [0.25, 0.5, 0.75].iter().any(|&t| {
+            let p = lo + (hi - lo) * t;
+            !self.fenced_at(p) && !near_road(p)
+        })
+    }
+
+    /// Cierra la punta de cada camino vecinal que termina sin empalmar con
+    /// otro (junto a la vía o donde corría pegado a otro camino): una calle
+    /// cortada, con un alambrado de cierre a [`Self::ROADSIDE`] más allá de la
+    /// punta, entre los dos alambrados del costado, y una tranquera abierta
+    /// hacia cada uno de los dos campos de atrás. La línea de la mensura que
+    /// sigue se engancha en el medio del cierre (ver [`dead_end`]).
+    fn close_dead_ends(&mut self, site: &Site) {
+        let Some(roads) = site.terrain.roads.clone() else {
+            return;
+        };
+        let r = Self::ROADSIDE;
+        for road in roads.roads.iter().filter(|r| r.kind == crate::RoadKind::Vecinal) {
+            for end in road.ends {
+                let out = end.out;
+                let middle = end.at + out * r;
+                let n = Vec2::new(-out.y, out.x);
+                let corners = [middle + n * r, middle - n * r];
+                let inside = |p: Vec2| {
+                    p.x >= site.lo.x && p.x <= site.hi.x && p.y >= site.lo.y && p.y <= site.hi.y
+                };
+                let near_rail = |p: Vec2| {
+                    site.rails.iter().any(|&(a, b)| {
+                        crate::road::segment_distance(p, a, b) < Self::RAIL_MARGIN
+                    })
+                };
+                // Una punta que empalma con otro camino, o que llega a un
+                // pueblo, a una laguna, a la vía o al borde del mundo, queda
+                // como está.
+                let open = corners.iter().chain([&middle]).any(|&p| {
+                    !inside(p)
+                        || near_rail(p)
+                        || site.bands.iter().any(|b| b.contains_point(p))
+                        || roads.near(p, r - 0.05).is_some()
+                });
+                if open {
                     continue;
                 }
-                self.break_edge(cell, site);
+                for (side, corner) in [1.0_f32, -1.0].into_iter().zip(corners) {
+                    let half = n * side;
+                    // Del lado de un campo sin alambrar no hay cierre.
+                    let spans = [middle + half, (middle + half * 6.5 + corner) * 0.5, corner - out * (r / 2.0)];
+                    if spans.iter().any(|&p| self.is_descampado(p)) {
+                        continue;
+                    }
+                    let (from, to) = (middle + half * 2.0, middle + half * 6.5);
+                    let id = self.frontages.len() as u32;
+                    self.frontages.push(Frontage {
+                        start: middle,
+                        end: corner,
+                        length: r,
+                        fenced: true,
+                    });
+                    self.gates.push(Gate {
+                        at: (from + to) * 0.5,
+                        along: half,
+                        width: to.distance(from),
+                        double: false,
+                        open: true,
+                        frontage: id,
+                    });
+                    self.runs.push(FenceRun {
+                        posts: vec![middle, from],
+                        roadside: true,
+                    });
+                    self.runs.push(FenceRun {
+                        posts: vec![to, corner, corner - out * r],
+                        roadside: true,
+                    });
+                }
             }
         }
     }
@@ -730,7 +1002,7 @@ impl FenceLayout {
 
     /// Deja roto un tramo en el borde más largo de `cell` que tenga un tramo
     /// entero bien lejos de sus esquinas y de los caminos.
-    fn break_edge(&mut self, cell: Aabb, site: &Site) {
+    fn break_edge(&mut self, cell: Aabb, site: &Site, other: Option<Aabb>) -> bool {
         let middle = cell.center();
         let off_road = |p: Vec2| {
             site.terrain
@@ -750,7 +1022,14 @@ impl FenceLayout {
                     Vec2::new(cell.max.x, cell.min.y),
                 ];
                 let off_corners = corners.iter().all(|c| c.distance(mid) >= BREAK_CORNER);
-                if whole && on_edge(cell, a) && on_edge(cell, b) && off_road(mid) && off_corners {
+                let shared = other.is_none_or(|o| on_edge(o, a) && on_edge(o, b));
+                if whole
+                    && on_edge(cell, a)
+                    && on_edge(cell, b)
+                    && shared
+                    && off_road(mid)
+                    && off_corners
+                {
                     let d = mid.distance(middle);
                     if best.is_none_or(|(bd, _, _)| d < bd) {
                         best = Some((d, r, k));
@@ -759,7 +1038,7 @@ impl FenceLayout {
             }
         }
         let Some((_, r, k)) = best else {
-            return;
+            return false;
         };
         let run = self.runs[r].clone();
         let (a, b) = (run.posts[k], run.posts[k + 1]);
@@ -781,6 +1060,7 @@ impl FenceLayout {
             kind: OpeningKind::Broken,
             stretch: u32::MAX,
         });
+        true
     }
 
     /// Las partes de cada recorrido dentro de `area` (un chunk del terreno):
@@ -872,7 +1152,7 @@ fn roadsides(roads: &RoadNetwork, site: &Site) -> Vec<Roadside> {
             .iter()
             .any(|&(a, b)| crate::road::segment_distance(p, a, b) < FenceLayout::RAIL_MARGIN)
     };
-    for road in &roads.roads {
+    for (r, road) in roads.roads.iter().enumerate() {
         let traced = trace(&road.path, FenceLayout::TRACE);
         for side in [-1.0_f32, 1.0] {
             let mut line: Vec<Vec2> = Vec::new();
@@ -890,7 +1170,10 @@ fn roadsides(roads: &RoadNetwork, site: &Site) -> Vec<Roadside> {
                     && q.y <= site.hi.y
                     && !site.bands.iter().any(|b| b.contains_point(q))
                     && !near_rail(q)
-                    && roads.near(q, FenceLayout::ROADSIDE - 0.05).is_none();
+                    && roads.near(q, FenceLayout::ROADSIDE - 0.05).is_none()
+                    // Un margen más con los otros caminos: en un cruce en
+                    // diagonal, el tramo entre dos postes no corta la esquina.
+                    && roads.near_other(q, FenceLayout::ROADSIDE + 1.0, r).is_none();
                 if ok {
                     line.push(q);
                 } else {
@@ -979,6 +1262,24 @@ fn join(sides: &mut [Roadside], from: Vec2, to: Vec2, site: &Site) -> Option<Vec
     Some(corner)
 }
 
+/// Donde una línea de la mensura que sigue a lo largo de un camino vecinal
+/// más allá de su punta se engancha en el cierre de la calle cortada
+/// ([`FenceLayout::close_dead_ends`]): desde `from`, hacia atrás por `back`
+/// (hacia la punta), a [`FenceLayout::ROADSIDE`] de ella. `None` si la línea no
+/// sigue a un camino que termina ahí.
+fn dead_end(from: Vec2, back: Vec2, site: &Site) -> Option<Vec2> {
+    let roads = site.terrain.roads.as_ref()?;
+    let gap = roads.distance(from);
+    let tip = from + back * gap;
+    // La punta está sobre la línea, justo detrás de `from`.
+    let on_line = roads.near(tip, 0.5).is_some() && gap < 3.0 * FenceLayout::POST_SPACING;
+    let corner = from + back * (gap - FenceLayout::ROADSIDE);
+    // Nunca más cerca de un camino que su alambrado del costado (junto al
+    // empalme en ángulo de otra calle, por ejemplo).
+    let clear = roads.near(corner, FenceLayout::ROADSIDE - 0.05).is_none();
+    (on_line && clear).then_some(corner)
+}
+
 /// `posts` con postes agregados donde dos estén más separados que
 /// [`FenceLayout::POST_SPACING`].
 fn densify(posts: &[Vec2]) -> Vec<Vec2> {
@@ -1054,6 +1355,191 @@ fn segments_distance(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> f32 {
 
 /// Se mezcla con la semilla del terreno para el relevamiento.
 const FENCE_SEED: u32 = 0xa1a3_b4ad;
+/// Los dueños de los potreros de la mensura `xs`–`ys` (ver
+/// [`FenceLayout::owners`]): cada potrero que da a un camino de `roads` empieza
+/// un campo; cada potrero interior se suma al campo de un vecino (de a capas,
+/// desde los caminos); después algunos campos vecinos que no separa un camino
+/// se juntan, hasta [`FenceLayout::PROPERTY_CELLS`] potreros.
+fn properties(xs: &[f32], ys: &[f32], roads: Option<&RoadNetwork>, seed: u32) -> Vec<u32> {
+    let (nx, ny) = (xs.len().saturating_sub(1), ys.len().saturating_sub(1));
+    let reach = FenceLayout::ROADSIDE + 2.0;
+    let near_road = |a: Vec2, b: Vec2| {
+        let n = (a.distance(b) / 20.0).ceil().max(1.0) as usize;
+        roads.is_some_and(|r| {
+            (0..=n).any(|k| r.near(a + (b - a) * (k as f32 / n as f32), reach).is_some())
+        })
+    };
+    let corner = |i: usize, j: usize| Vec2::new(xs[i], ys[j]);
+    // El borde compartido entre `(i, j)` y su vecino del este o del norte.
+    let east = |i: usize, j: usize| (corner(i + 1, j), corner(i + 1, j + 1));
+    let north = |i: usize, j: usize| (corner(i, j + 1), corner(i + 1, j + 1));
+    let fronts = |i: usize, j: usize| {
+        let edges = [
+            (corner(i, j), corner(i + 1, j)),
+            east(i, j),
+            north(i, j),
+            (corner(i, j), corner(i, j + 1)),
+        ];
+        edges.iter().any(|&(a, b)| near_road(a, b))
+    };
+    const NONE: u32 = u32::MAX;
+    let mut owner = vec![NONE; nx * ny];
+    let mut frontier = Vec::new();
+    for i in 0..nx {
+        for j in 0..ny {
+            if fronts(i, j) {
+                owner[i * ny + j] = (i * ny + j) as u32;
+                frontier.push((i, j));
+            }
+        }
+    }
+    let neighbours = |i: usize, j: usize| {
+        [
+            (i + 1 < nx).then(|| (i + 1, j)),
+            (i > 0).then(|| (i - 1, j)),
+            (j + 1 < ny).then(|| (i, j + 1)),
+            (j > 0).then(|| (i, j - 1)),
+        ]
+        .into_iter()
+        .flatten()
+    };
+    // Los interiores, de a capas desde los campos que dan al camino.
+    while !frontier.is_empty() {
+        let mut next = Vec::new();
+        for &(i, j) in &frontier {
+            for (a, b) in neighbours(i, j) {
+                if owner[a * ny + b] == NONE {
+                    owner[a * ny + b] = owner[i * ny + j];
+                    next.push((a, b));
+                }
+            }
+        }
+        frontier = next;
+    }
+    // Un mundo sin caminos: cada potrero es su propio campo.
+    for (k, o) in owner.iter_mut().enumerate() {
+        if *o == NONE {
+            *o = k as u32;
+        }
+    }
+    // Juntar campos vecinos, de a pares en un orden con semilla.
+    let mut root: Vec<u32> = (0..(nx * ny) as u32).collect();
+    let find = |root: &mut Vec<u32>, mut k: u32| {
+        while root[k as usize] != k {
+            root[k as usize] = root[root[k as usize] as usize];
+            k = root[k as usize];
+        }
+        k
+    };
+    let mut size = vec![0usize; nx * ny];
+    for &o in &owner {
+        size[o as usize] += 1;
+    }
+    let mut rng = Rng::new(seed ^ PROPERTY_SEED, 0);
+    let mut pairs: Vec<((usize, usize), (usize, usize))> = Vec::new();
+    for i in 0..nx {
+        for j in 0..ny {
+            if i + 1 < nx {
+                pairs.push(((i, j), (i + 1, j)));
+            }
+            if j + 1 < ny {
+                pairs.push(((i, j), (i, j + 1)));
+            }
+        }
+    }
+    for k in (1..pairs.len()).rev() {
+        let pick = (rng.unit() * (k + 1) as f32) as usize % (k + 1);
+        pairs.swap(k, pick);
+    }
+    for ((i, j), (a, b)) in pairs {
+        let (p, q) = (owner[i * ny + j], owner[a * ny + b]);
+        let (p, q) = (find(&mut root, p), find(&mut root, q));
+        if p == q || size[p as usize] + size[q as usize] > FenceLayout::PROPERTY_CELLS {
+            continue;
+        }
+        let edge = if a > i { east(i, j) } else { north(i, j) };
+        if near_road(edge.0, edge.1) || rng.unit() >= FenceLayout::PROPERTY_MERGE {
+            continue;
+        }
+        root[q as usize] = p;
+        size[p as usize] += size[q as usize];
+    }
+    owner.iter().map(|&o| find(&mut root, o)).collect()
+}
+
+/// Se mezcla con la semilla del terreno para juntar potreros en campos.
+const PROPERTY_SEED: u32 = 0x9e0c_a3f1;
+
+/// Se mezcla con la semilla del terreno para elegir los caminos vecinales.
+const VECINAL_SEED: u32 = 0x7ec1_4a15;
+
+/// La mensura: las líneas norte–sur (su `x`) y este–oeste (su `y`) que dividen
+/// la tierra en potreros. Depende solo de la semilla del terreno y del tamaño
+/// del mundo, así que se conoce antes que los caminos: algunas de sus líneas
+/// son caminos vecinales ([`Self::vecinales`]).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Survey {
+    pub xs: Vec<f32>,
+    pub ys: Vec<f32>,
+}
+
+impl Survey {
+    /// Cada cuántas líneas de la mensura corre un camino vecinal, en cada
+    /// dirección: unos 1,6 km entre caminos, así que de cada manzana de 3 x 3
+    /// potreros solo el del medio no da a un camino.
+    pub const VECINAL_EVERY: usize = 3;
+
+    /// La mensura del mundo de `config` con la semilla de terreno `seed`.
+    pub fn new(config: WorldConfig, seed: u32) -> Self {
+        let (lo, hi) = Self::area(config);
+        let mut rng = Rng::new(seed ^ FENCE_SEED, 0);
+        let mut survey = |from: f32, to: f32| {
+            let mut at = from + rng.range(0.0, FenceLayout::FIELD.1);
+            let mut lines = Vec::new();
+            while at < to {
+                lines.push(at);
+                at += rng.range(FenceLayout::FIELD.0, FenceLayout::FIELD.1);
+            }
+            lines
+        };
+        let xs = survey(lo.x, hi.x);
+        let ys = survey(lo.y, hi.y);
+        Self { xs, ys }
+    }
+
+    /// Las esquinas del área mensurada: el mundo menos
+    /// [`FenceLayout::EDGE_MARGIN`].
+    pub fn area(config: WorldConfig) -> (Vec2, Vec2) {
+        let bounds = config.bounds();
+        let margin = Vec2::new(FenceLayout::EDGE_MARGIN, FenceLayout::EDGE_MARGIN);
+        (bounds.min + margin, bounds.max - margin)
+    }
+
+    /// Los índices de las líneas norte–sur y este–oeste que son caminos
+    /// vecinales: una de cada [`Self::VECINAL_EVERY`], desde un desfase con
+    /// semilla.
+    pub fn vecinales(&self, seed: u32) -> (Vec<usize>, Vec<usize>) {
+        let mut rng = Rng::new(seed ^ VECINAL_SEED, 0);
+        let every = Self::VECINAL_EVERY;
+        let mut pick = |n: usize| {
+            let first = (rng.unit() * every as f32) as usize % every;
+            (first..n).step_by(every).collect::<Vec<_>>()
+        };
+        let xs = pick(self.xs.len());
+        let ys = pick(self.ys.len());
+        (xs, ys)
+    }
+}
+
+/// El ruido que reparte la tierra fiscal en `p`, en `[0, 1]`: una octava de
+/// [`FenceLayout::FISCAL_SCALE`] y otra más fina, para que las manchas no
+/// sigan la grilla del ruido.
+fn fiscal_noise(seed: u32, p: Vec2) -> f32 {
+    let scale = FenceLayout::FISCAL_SCALE;
+    (crate::flora::value_noise(seed ^ 0xf15c_a1, p, scale)
+        + 0.4 * crate::flora::value_noise(seed ^ 0xf15c_a2, p, scale * 0.4))
+        / 1.4
+}
 
 #[cfg(test)]
 pub(crate) mod tests {
@@ -1074,6 +1560,11 @@ pub(crate) mod tests {
         static FENCED: std::sync::LazyLock<(World, Vec<TownLayout>, RailLine, FenceLayout)> =
             std::sync::LazyLock::new(|| {
                 let (towns, line, roads) = crate::road::tests::shipped_roads();
+                let seed = Terrain::default().seed;
+                let survey = Survey::new(config(), seed);
+                let (roads, errors) =
+                    roads.with_vecinales(&survey, seed, &towns, &line, config().bounds(), &[]);
+                assert!(errors.is_empty(), "{errors:?}");
                 let mut world = World::with_towns(config(), Terrain::default(), &towns);
                 world.lay_roads(roads);
                 let fences = FenceLayout::build(config(), &world.terrain, &towns, &line);
@@ -1345,6 +1836,11 @@ pub(crate) mod tests {
                     let gap = roads.distance(p) - crate::RoadNetwork::HALF_WIDTH;
                     assert!(gap >= 5.0 - 1e-3, "{p:?}: {gap}");
                 }
+                // Un tramo de alambrado mide 10 m o menos: solo puede cruzar
+                // un camino que pase cerca de su punto medio.
+                if roads.near((a + b) * 0.5, a.distance(b) / 2.0 + 1.0).is_none() {
+                    continue;
+                }
                 for (r0, r1) in roads.segments() {
                     assert!(
                         crate::road::intersect(a, b, r0, r1).is_none(),
@@ -1354,7 +1850,9 @@ pub(crate) mod tests {
             }
         }
         let c = Circle::new(Rider::COLLIDER_RADIUS);
-        for (_, p, _) in along_roads(&roads, 1.0) {
+        // Cada 2 m: un alambrado que cruzara el camino ya lo detecta la
+        // intersección de arriba.
+        for (_, p, _) in along_roads(&roads, 2.0) {
             assert_eq!(world.resolve(c, p, |_| ()), p, "blocked at {p:?}");
         }
         // Los carteles indicadores y las señales de los pasos a nivel quedan
@@ -1390,7 +1888,7 @@ pub(crate) mod tests {
             .flat_map(|r| r.spans().collect::<Vec<_>>())
             .collect();
         let (mut checked, mut fenced) = (0, 0);
-        for (_, p, normal) in along_roads(&roads, 20.0) {
+        for (road, p, normal) in along_roads(&roads, 20.0) {
             for side in [-1.0, 1.0] {
                 let q = p + normal * (side * FenceLayout::ROADSIDE);
                 let free = towns.iter().any(|t| {
@@ -1411,11 +1909,22 @@ pub(crate) mod tests {
                     .gates
                     .iter()
                     .any(|g| g.at.distance(q) < g.width / 2.0 + 1.0);
-                assert!(on_fence || at_gate, "no fence beside the road at {q:?}");
+                // Donde se cruzan dos caminos, el alambrado de uno termina
+                // contra el del otro.
+                let at_junction = || {
+                    roads.roads.iter().enumerate().any(|(k, r)| {
+                        k != road
+                            && r.path.windows(2).any(|w| {
+                                crate::road::segment_distance(q, w[0], w[1])
+                                    < FenceLayout::ROADSIDE + 12.0
+                            })
+                    })
+                };
+                assert!(on_fence || at_gate || at_junction(), "no fence beside the road at {q:?}");
                 fenced += 1;
             }
         }
-        assert!(checked > 500, "{checked}");
+        assert!(checked > 400, "{checked}");
         assert_eq!(fenced, checked);
     }
 
@@ -1446,8 +1955,12 @@ pub(crate) mod tests {
         for gate in fences.gates.iter().filter(|g| g.open) {
             // En el alambrado al costado del camino, paralela al camino,
             // abierta.
+            // (o, en el cierre de una calle cortada, a algo más de la punta).
             let gap = roads.distance(gate.at);
-            assert!((gap - FenceLayout::ROADSIDE).abs() < 0.5, "{gate:?}: {gap}");
+            assert!(
+                (FenceLayout::ROADSIDE - 0.5..FenceLayout::ROADSIDE + 1.5).contains(&gap),
+                "{gate:?}: {gap}"
+            );
             // Libre de lado a lado en su abertura, salvo por los rectángulos de
             // los propios postes en sus extremos.
             for k in 2..=8 {
@@ -1577,7 +2090,9 @@ pub(crate) mod tests {
             .count();
         let n = fences.openings.len();
         println!("openings: {n}, field gates {gates}, broken {}", n - gates);
-        assert!(n > 500, "{n}");
+        // Muchas líneas son caminos vecinales y las medianeras no tienen
+        // aberturas.
+        assert!(n > 200, "{n}");
         assert!(gates * 3 > n && gates * 3 < 2 * n, "{gates} of {n}");
         let _ = world;
     }
@@ -1632,16 +2147,21 @@ pub(crate) mod tests {
     #[test]
     fn about_four_in_ten_field_gates_are_closed_and_a_closed_gate_blocks() {
         let (world, _, _, fences) = fenced();
-        let road_gates = fences.gates.iter().map(|g| g.open);
-        let grid_gates = fences.openings.iter().filter_map(|o| match o.kind {
-            OpeningKind::FieldGate { open, .. } => Some(open),
-            OpeningKind::Broken => None,
-        });
-        let all: Vec<bool> = road_gates.chain(grid_gates).collect();
+        // Las tranqueras entre potreros de un campo; las del camino tienen al
+        // menos una abierta por frente (ver
+        // `every_field_on_a_road_has_an_open_gate_into_it`).
+        let all: Vec<bool> = fences
+            .openings
+            .iter()
+            .filter_map(|o| match o.kind {
+                OpeningKind::FieldGate { open, .. } => Some(open),
+                OpeningKind::Broken => None,
+            })
+            .collect();
         let closed = all.iter().filter(|o| !**o).count();
         println!("field gates {}, closed {closed}", all.len());
         let share = closed as f32 / all.len() as f32;
-        assert!((0.3..0.48).contains(&share), "{share}");
+        assert!((0.25..0.48).contains(&share), "{share}");
         // Cabalgar en perpendicular hacia una tranquera cerrada de la
         // cuadrícula: se detiene en la línea de la tranquera.
         let o = fences
@@ -1668,15 +2188,38 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn about_one_paddock_in_ten_is_unfenced() {
+    fn scattered_paddocks_and_patches_of_fiscal_land_are_unfenced() {
         // Siempre igual: `the_land_is_surveyed_...` reconstruye toda la
         // distribución, descampados incluidos.
         let (_, _, _, fences) = fenced();
         let cells = fences.cells();
-        let open = fences.descampados.len();
-        let share = open as f32 / cells as f32;
-        println!("descampados {open} of {cells}");
+        let fiscal = &fences.fiscal;
+        assert!(fiscal.iter().all(|c| fences.descampados.contains(c)));
+        // Fuera de la tierra fiscal, uno de cada diez potreros sueltos.
+        let scattered = fences.descampados.len() - fiscal.len();
+        let share = scattered as f32 / (cells - fiscal.len()) as f32;
+        let fiscal_share = fiscal.len() as f32 / cells as f32;
+        // La mancha fiscal más grande, de potreros vecinos por un lado.
+        let mut largest = 0;
+        let mut seen = std::collections::BTreeSet::new();
+        for &start in fiscal {
+            let mut patch = vec![start];
+            let mut size = 0;
+            while let Some(c) = patch.pop() {
+                if !seen.insert(c) {
+                    continue;
+                }
+                size += 1;
+                let (i, j) = c;
+                let next = [(i + 1, j), (i.wrapping_sub(1), j), (i, j + 1), (i, j.wrapping_sub(1))];
+                patch.extend(next.into_iter().filter(|n| fiscal.binary_search(n).is_ok()));
+            }
+            largest = largest.max(size);
+        }
+        println!("scattered {scattered}, fiscal {} of {cells}, largest patch {largest}", fiscal.len());
         assert!((0.07..0.13).contains(&share), "{share}");
+        assert!((0.15..0.35).contains(&fiscal_share), "{fiscal_share}");
+        assert!(largest >= 6, "{largest}");
         // Ningún alambrado al costado del camino corre a lo largo de un
         // descampado.
         for run in fences.runs.iter().filter(|r| r.roadside) {
@@ -1789,6 +2332,186 @@ pub(crate) mod tests {
         assert!(checked >= 10, "{checked}");
     }
 
+    /// Los potreros `(i, j)` en los que cae algún frente sobre un camino.
+    fn on_a_road(fences: &FenceLayout) -> std::collections::BTreeSet<(usize, usize)> {
+        let mut cells = std::collections::BTreeSet::new();
+        for f in &fences.frontages {
+            for t in [0.1f32, 0.3, 0.5, 0.7, 0.9] {
+                if let Some(c) = fences.cell_of(f.start + (f.end - f.start) * t) {
+                    cells.insert(c);
+                }
+            }
+        }
+        cells
+    }
+
+    #[test]
+    fn every_field_has_a_way_out_to_a_road_without_crossing_a_neighbour() {
+        let (_, _, _, fences) = fenced();
+        let (xs, ys) = &fences.surveyed;
+        let (nx, ny) = (xs.len() - 1, ys.len() - 1);
+        let roadside = on_a_road(&fences);
+        println!("{} of {} paddocks front a road", roadside.len(), nx * ny);
+        assert!(roadside.len() * 10 >= nx * ny * 8, "{}", roadside.len());
+        // Todo campo da a un camino.
+        let fronting: std::collections::BTreeSet<u32> =
+            roadside.iter().map(|&(i, j)| fences.owners[i * ny + j]).collect();
+        let owners: std::collections::BTreeSet<u32> = fences.owners.iter().copied().collect();
+        let landlocked: Vec<&u32> = owners.difference(&fronting).collect();
+        assert!(landlocked.is_empty(), "{} fields front no road", landlocked.len());
+        // Ninguna abertura une dos dueños.
+        for o in &fences.openings {
+            let across = Vec2::new(-o.along.y, o.along.x);
+            assert_eq!(
+                fences.owner_of(o.at + across),
+                fences.owner_of(o.at - across),
+                "an opening into a neighbour's field at {:?}",
+                o.at
+            );
+        }
+        // Desde una tranquera abierta del camino (o un frente sin alambrar)
+        // se llega a cada potrero por aberturas dentro de su campo.
+        let cell = |k: usize| {
+            let (i, j) = (k / ny, k % ny);
+            Aabb::new(Vec2::new(xs[i], ys[j]), Vec2::new(xs[i + 1], ys[j + 1]))
+        };
+        let mut reached: Vec<bool> = (0..nx * ny)
+            .map(|k| {
+                let c = cell(k);
+                fences.is_descampado(c.center())
+                    || fences.gates.iter().any(|g| g.open && c.contains_point(g.at))
+            })
+            .collect();
+        let mut stack: Vec<usize> = (0..nx * ny).filter(|&k| reached[k]).collect();
+        while let Some(k) = stack.pop() {
+            let (i, j) = (k / ny, k % ny);
+            let next = [
+                (i + 1 < nx).then(|| k + ny),
+                (i > 0).then(|| k - ny),
+                (j + 1 < ny).then(|| k + 1),
+                (j > 0).then(|| k - 1),
+            ];
+            for n in next.into_iter().flatten() {
+                let through = fences.owners[n] == fences.owners[k]
+                    && fences.openings.iter().any(|o| {
+                        !matches!(o.kind, OpeningKind::FieldGate { open: false, .. })
+                            && on_edge(cell(k), o.at)
+                            && on_edge(cell(n), o.at)
+                    });
+                if !reached[n] && through {
+                    reached[n] = true;
+                    stack.push(n);
+                }
+            }
+        }
+        let stuck: Vec<usize> = (0..nx * ny).filter(|&k| !reached[k]).collect();
+        println!("{} paddocks without a way out", stuck.len());
+        assert!(stuck.len() * 100 <= nx * ny, "{} paddocks without a way out", stuck.len());
+        // Cada mancha de tierra fiscal toca un camino, sin alambrado de ese
+        // lado.
+        let mut seen = std::collections::BTreeSet::new();
+        for &start in &fences.fiscal {
+            let mut patch = vec![start];
+            let mut touches = false;
+            let mut any = false;
+            while let Some(c) = patch.pop() {
+                if !seen.insert(c) {
+                    continue;
+                }
+                any = true;
+                touches |= roadside.contains(&c);
+                let (i, j) = c;
+                let next = [(i + 1, j), (i.wrapping_sub(1), j), (i, j + 1), (i, j.wrapping_sub(1))];
+                patch.extend(next.into_iter().filter(|n| fences.fiscal.binary_search(n).is_ok()));
+            }
+            assert!(!any || touches, "fiscal land around {start:?} has no road");
+        }
+    }
+
+    #[test]
+    fn caminos_vecinales_run_straight_along_survey_lines() {
+        let (world, _, _, fences) = fenced();
+        let roads = world.terrain.roads.as_ref().unwrap();
+        let (xs, ys) = &fences.surveyed;
+        let vecinales: Vec<&crate::Road> = roads
+            .roads
+            .iter()
+            .filter(|r| r.kind == crate::RoadKind::Vecinal)
+            .collect();
+        assert!(vecinales.len() > 10, "{}", vecinales.len());
+        for r in vecinales {
+            let (a, b) = (r.path[0], *r.path.last().unwrap());
+            // Salvo el empalme suavizado de cada punta con otro camino.
+            let line: Vec<Vec2> = r
+                .path
+                .iter()
+                .copied()
+                .filter(|&q| q.distance(a) > 50.0 && q.distance(b) > 50.0)
+                .collect();
+            let on_x = xs.iter().any(|&x| line.iter().all(|p| (p.x - x).abs() < 1e-3));
+            let on_y = ys.iter().any(|&y| line.iter().all(|p| (p.y - y).abs() < 1e-3));
+            assert!(on_x || on_y, "{a:?}–{b:?}");
+            assert!(a.distance(b) >= crate::RoadNetwork::VECINAL_MIN, "{a:?}–{b:?}");
+        }
+    }
+
+    #[test]
+    fn every_camino_vecinal_has_a_way_on_at_each_end() {
+        let (world, towns, _, fences) = fenced();
+        let roads = world.terrain.roads.as_ref().unwrap();
+        let config = config();
+        let (lo, hi) = Survey::area(config);
+        let (mut joined, mut closed) = (0, 0);
+        for (i, road) in roads.roads.iter().enumerate() {
+            if road.kind != crate::RoadKind::Vecinal {
+                continue;
+            }
+            for end in road.ends {
+                let p = end.at;
+                // La distancia a los demás caminos.
+                let other = roads
+                    .roads
+                    .iter()
+                    .enumerate()
+                    .filter(|(k, _)| *k != i)
+                    .flat_map(|(_, r)| r.path.windows(2).map(|w| (w[0], w[1])).collect::<Vec<_>>())
+                    .map(|(a, b)| crate::road::segment_distance(p, a, b))
+                    .fold(f32::INFINITY, f32::min);
+                let town = towns
+                    .iter()
+                    .any(|t| t.leveled().closest_point(p).distance(p) < crate::RoadNetwork::CUT_REACH + 2.0);
+                let edge = p.x - lo.x < 30.0 || hi.x - p.x < 30.0 || p.y - lo.y < 30.0 || hi.y - p.y < 30.0;
+                // Ninguna punta muere a unos metros de otro camino.
+                assert!(other < 0.5 || other > 60.0, "{p:?} stops {other} m short of a road");
+                if other < 0.5 {
+                    joined += 1;
+                    continue;
+                }
+                if town || edge {
+                    continue;
+                }
+                // Una calle cortada: una tranquera abierta hacia cada lado,
+                // en el cierre más allá de la punta.
+                let middle = p + end.out * FenceLayout::ROADSIDE;
+                let n = Vec2::new(-end.out.y, end.out.x) * (FenceLayout::ROADSIDE / 2.0);
+                // Del lado de un campo sin alambrar no hay cierre.
+                let expected = [middle + n, middle - n]
+                    .iter()
+                    .filter(|&&q| !fences.is_descampado(q))
+                    .count();
+                let gates = fences
+                    .gates
+                    .iter()
+                    .filter(|g| g.open && g.at.distance(middle) < FenceLayout::ROADSIDE)
+                    .count();
+                assert_eq!(gates, expected, "the dead end at {p:?} is not closed");
+                closed += usize::from(expected > 0);
+            }
+        }
+        println!("vecinal ends: {joined} joined, {closed} closed");
+        assert!(joined > 0 && closed > 0, "{joined} {closed}");
+    }
+
     #[test]
     fn trees_keep_off_the_fence_lines() {
         let (world, _, line, fences) = fenced();
@@ -1803,11 +2526,15 @@ pub(crate) mod tests {
             .flat_map(|c| flora.trees(c))
             .collect();
         assert!(trees.len() > 200, "{}", trees.len());
+        // Una línea entre dos potreros fiscales no tiene alambrado.
+        let m = FloraSite::TREE_FENCE_MARGIN;
+        let unfenced = |p: Vec2| {
+            [Vec2::new(m, 0.0), Vec2::new(0.0, m)]
+                .into_iter()
+                .any(|d| fences.is_fiscal(p + d) && fences.is_fiscal(p - d))
+        };
         for t in &trees {
-            assert!(
-                fences.line_distance(t.at) >= FloraSite::TREE_FENCE_MARGIN,
-                "{t:?}"
-            );
+            assert!(fences.line_distance(t.at) >= m || unfenced(t.at), "{t:?}");
         }
     }
 }
