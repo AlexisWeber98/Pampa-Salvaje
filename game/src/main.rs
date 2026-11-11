@@ -35,9 +35,9 @@ use pampa_core::{
 use pampa_render::{
     AssetRoot, AtmospherePlugin, CharacterVisualPlugin, FadePlugin, FencePlugin, FloraPlugin,
     HudPlugin, LagoonPlugin, LampPlugin, MinimapPlugin, RailPlugin, RoadPlugin, SettlementPlugin,
-    SignPlugin, SpeechBubblePlugin, StreamFocus, TerrainPlugin, ThinFadePlugin, TownPlugin,
-    TrainPlugin, VehiclePlugin, WorldChunks, WorldClock, WorldFences, WorldFlora, WorldLamps,
-    WorldRail, WorldSettlements, WorldTerrain, WorldTowns, WorldTrains,
+    SignPlugin, SpeechBubblePlugin, StallPlugin, StreamFocus, TerrainPlugin, ThinFadePlugin,
+    TownPlugin, TrainPlugin, VehiclePlugin, WorldChunks, WorldClock, WorldFences, WorldFlora,
+    WorldLamps, WorldRail, WorldSettlements, WorldTerrain, WorldTowns, WorldTrains,
 };
 
 /// Los ajustes de los modelos de terceros en las ranuras de modelo
@@ -331,7 +331,7 @@ fn main() {
             .set(pampa_render::gltf::asset_plugin(&root)),
         TerrainPlugin::default(),
         FloraPlugin,
-        TownPlugin,
+        (TownPlugin, StallPlugin),
         RailPlugin,
         SignPlugin,
         MinimapPlugin,

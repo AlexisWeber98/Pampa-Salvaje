@@ -71,7 +71,7 @@ Valen para todos los archivos de esta carpeta.
 
 ## `errand.ron`: la historia del capítulo 1
 
-La historia, paso a paso (actos 2 y 3 de `historia`):
+La historia, paso a paso (actos 2 a 4 de `historia`), y el encuentro del acto 5:
 
 ```ron
 (
@@ -103,31 +103,47 @@ La historia, paso a paso (actos 2 y 3 de `historia`):
             ],
         ),
     ],
+    amadeo: [
+        Say(Amadeo, "No se haga problema joven, tome, llévese un pedazo,"),
+        Receive(Cheese),
+    ],
 )
 ```
 
 - `steps` son los pasos, **en orden**; hay uno pendiente a la vez y cada uno se
   cumple una sola vez. Los actos siguientes se agregan como pasos nuevos al
   final.
-- `goal` es lo que pide el paso: `Talk(Hidalgo)` o `Talk(Farach)` (hablarle con
-  `F`, al alcance), o `TakeHorse` (montar el caballo de Don Hidalgo, que desde
+- `goal` es lo que pide el paso: `Talk(Hidalgo)`, `Talk(Farach)` o
+  `Talk(Bairoletto)` (hablarle con `F`, al alcance; la escena de Bairoletto
+  empieza sola cuando el jugador llega a pie por la vereda a la puerta abierta
+  de La Colonia: entra tímido, mira el lugar, Bairoletto lo llama y va hasta su
+  mesa), o `TakeHorse` (montar el caballo de Don Hidalgo, que desde
   entonces es del jugador y le enseña a montar).
 - `objective` es la línea del objetivo del HUD mientras el paso está pendiente
   (como máximo 48 caracteres); `{town}` se reemplaza por `police_town`. El
-  minimapa marca a quien hay que hablarle o al caballo.
+  minimapa marca a quien hay que hablarle o al caballo. Puede faltar: un paso
+  sin `objective` es un paso sin aviso, sin línea en el HUD ni marca en el
+  minimapa. Escrito, no puede estar en blanco.
 - `scene` es lo que sucede al cumplir el paso (puede faltar). Mientras dura, el
   jugador no maneja y la cámara encuadra a los dos que hablan:
   - `Say(quién, "texto")`: una línea como subtítulo, con el nombre de quien la
-    dice, el tiempo de leerla. `quién` es `Lisandro` (el jugador), `Hidalgo` o
-    `Farach`.
+    dice, el tiempo de leerla. `quién` es `Lisandro` (el jugador), `Hidalgo`,
+    `Farach`, `Bairoletto` o `Amadeo`.
   - `Earn(pesos: 2, centavos: 50)`: le dan plata (los centavos pueden faltar);
     el HUD la muestra.
-  - `Receive(Letter)` y `HandOver(Letter)`: recibe o entrega la carta de
-    presentación de Don Hidalgo. Lo entregado no vuelve.
+  - `Receive(…)` y `HandOver(…)`: recibe o entrega algo: `Letter`, la carta
+    de presentación de Don Hidalgo, o `Cheese`, el pedazo de queso del Viejo
+    Amadeo. Lo entregado no vuelve. No se ve en la mano: solo se lleva.
   Las acciones suceden al instante, entre una línea y la siguiente.
 - Lo que `historia` cita se copia palabra por palabra; lo narrado se vuelve
   acciones. Una línea larga se corta en varias `Say` seguidas del mismo
-  personaje, por las comas, sin cambiar ninguna palabra.
+  personaje, en un punto o una coma, sin cambiar ninguna palabra.
+- `amadeo` es la escena del encuentro con el Viejo Amadeo (puede faltar: sin
+  ella no hay encuentro). No es un paso: sucede una sola vez, la primera vez que
+  el jugador pasa a menos de 8 m de su puesto, a pie o montado, en cualquier
+  momento del juego, y no mueve la historia; Lisandro se le acerca solo antes
+  de la primera línea. Sus líneas se validan como las de los pasos. Ningún paso
+  puede pedir `Talk(Amadeo)`.
 - `not_your_horse` lo dice el jugador cuando intenta usar el caballo antes de
   que Don Hidalgo se lo preste (no detiene al jugador).
 - `police_town` es el pueblo de la comisaría, por su nombre en

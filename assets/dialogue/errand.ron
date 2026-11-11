@@ -1,4 +1,4 @@
-// La historia del capítulo 1, paso a paso (actos 2 y 3 de `historia`): Don
+// La historia del capítulo 1, paso a paso (actos 2 a 5 de `historia`): Don
 // Hidalgo, en la plaza de Monte Nievas, manda al jugador a ver al comisario
 // Elías Farach en la comisaría de Castex. Ver README.md en esta carpeta para
 // las reglas (pasos, escenas, caracteres, longitud).
@@ -13,7 +13,8 @@
     ],
     // Los pasos, en orden. Cada uno pide algo al jugador (`goal`), lo dice el
     // objetivo del HUD (`objective`) y, al cumplirlo, reproduce su escena
-    // (`scene`): líneas `Say(quién, "texto")` y acciones narradas.
+    // (`scene`): líneas `Say(quién, "texto")` y acciones narradas. La historia
+    // termina después del último.
     steps: [
         // Acto 2. Las líneas de Don Hidalgo son un borrador: `historia` narra
         // lo que dice sin citarlo.
@@ -56,7 +57,11 @@
         ),
         // Acto 4, palabra por palabra: Bairoletto espera sentado a una mesa
         // de la pulpería de Castex, "La colonia", golpeado, tomando algo.
-        // Después se levanta y se va, y el jugador queda libre hasta la noche.
+        // Empieza solo cuando el jugador llega a pie por la vereda a la puerta
+        // abierta: Lisandro entra tímido, se detiene a mirar el lugar,
+        // Bairoletto lo ve y lo llama con su primera línea, y Lisandro va hasta
+        // su mesa. Después se levanta y se va, y el jugador queda libre hasta
+        // la noche.
         (
             goal: Talk(Bairoletto),
             objective: "Andá a la pulpería La Colonia",
@@ -71,5 +76,24 @@
             ],
         ),
         // Los actos siguientes se agregan aquí como pasos nuevos.
+    ],
+    // Acto 5, palabra por palabra: "Al hacer una cuadra, un puestero, viejo,
+    // vendiendo quesos." No es un paso de la historia: el Viejo Amadeo llama
+    // al jugador la primera vez que pasa junto a su puesto, en la vereda, a una
+    // cuadra de La Colonia, en cualquier momento del juego (antes, durante o
+    // después del encargo), una sola vez. Sin aviso (sin objetivo ni destino
+    // en el mapa). Lisandro se le acerca, y después esta escena. Las dos
+    // líneas largas van cortadas en dos, sin cambiar ninguna palabra.
+    amadeo: [
+        Say(Amadeo, "¡Aparcero! Venga, acérquese, ¿Es nuevo en el pueblo?"),
+        Say(Amadeo, "¿Le gustaría probar el mejor queso de todo el pago?"),
+        Say(Lisandro, "Buenas, ¿los hace uste’?"),
+        Say(Amadeo, "Me extraña m’hijo, ¡pero claro! Leche sacada de mis propias vacas, ordeñadas con estas mismas manos."),
+        Say(Lisandro, "Se ven muy buenos, pero mejor otro día señor, ando medio corto de plata."),
+        // Entregándole un pedazo de queso.
+        Say(Amadeo, "No se haga problema joven, tome, llévese un pedazo,"),
+        Receive(Cheese),
+        Say(Amadeo, "y si le gusta vuelva cuando quiera que aquí voy a estar."),
+        Say(Lisandro, "Le agradezco mucho señor."),
     ],
 )

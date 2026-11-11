@@ -181,16 +181,22 @@ pub struct StandingNpc {
 
 /// Las personas del encargo, creadas con sus pueblos: las que están paradas,
 /// y dónde; luego las que esperan sentadas en la pulpería de su pueblo
-/// ([`AtTable`]: Bairoletto), hasta que se levantan y se van.
+/// ([`AtTable`]: Bairoletto), hasta que se levantan y se van; y los puestos de
+/// la vereda (el de quesos del Viejo Amadeo).
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
-pub struct Cast(pub Vec<(Npc, Standing)>, pub Vec<AtTable>);
+pub struct Cast(pub Vec<(Npc, Standing)>, pub Vec<AtTable>, pub Vec<Stall>);
+
+/// Un puesto de la vereda del pueblo `.0`, que dibuja render
+/// ([`CheeseStall`]); viene y va con su pueblo.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StallTown(pub usize);
 
 impl Cast {
-    /// Las personas de `errand`: Don Hidalgo y Farach parados, y Bairoletto
-    /// sentado en su asiento de la pulpería (o parado junto a Farach si ese
-    /// pueblo no tiene pulpería).
+    /// Las personas de `errand`: Don Hidalgo, Farach y el Viejo Amadeo
+    /// (detrás de su puesto) parados, y Bairoletto sentado en su asiento de la
+    /// pulpería (o parado junto a Farach si ese pueblo no tiene pulpería).
     pub fn of(errand: &Errand) -> Self {
-        let mut standing: Vec<(Npc, Standing)> = [Npc::Hidalgo, Npc::Farach]
+        let mut standing: Vec<(Npc, Standing)> = [Npc::Hidalgo, Npc::Farach, Npc::Amadeo]
             .map(|npc| (npc, errand.standing(npc)))
             .to_vec();
         let him = errand.standing(Npc::Bairoletto);
@@ -205,7 +211,7 @@ impl Cast {
                 Vec::new()
             }
         };
-        Self(standing, seated)
+        Self(standing, seated, vec![errand.stall()])
     }
 }
 
@@ -273,6 +279,9 @@ pub fn npc_figure(npc: Npc) -> FigureKind {
         Npc::Hidalgo => FigureKind::Hidalgo,
         Npc::Farach => FigureKind::Farach,
         Npc::Bairoletto => FigureKind::Bairoletto,
+        // Un vecino de siempre: el paisano de boina, camisa clara, bombacha
+        // oscura y faja roja, sin modelo propio.
+        Npc::Amadeo => FigureKind::Townsfolk(0),
     }
 }
 
@@ -369,6 +378,7 @@ type Residents<'a> = (
     Option<&'a Horseman>,
     Option<&'a ParkedVehicle>,
     Option<&'a Patron>,
+    Option<&'a StallTown>,
 );
 
 /// Crea a la gente y el caballo atado de los pueblos que acaban de activarse, y
@@ -384,7 +394,9 @@ fn populate_towns(
         return;
     };
     let wanted: BTreeSet<usize> = live_towns(&crowds, active.as_deref()).into_iter().collect();
-    for (entity, walker, horse, palenque, npc, leaving, horseman, vehicle, patron) in &residents {
+    for (entity, walker, horse, palenque, npc, leaving, horseman, vehicle, patron, stall) in
+        &residents
+    {
         let town = walker
             .map(|w| w.town)
             .or(horse.map(|h| h.0))
@@ -393,7 +405,8 @@ fn populate_towns(
             .or(leaving.map(|l| l.town))
             .or(horseman.map(|h| h.town))
             .or(vehicle.map(|v| v.town))
-            .or(patron.map(|p| p.town));
+            .or(patron.map(|p| p.town))
+            .or(stall.map(|s| s.0));
         if town.is_some_and(|t| !wanted.contains(&t)) {
             commands.entity(entity).despawn();
         }
@@ -419,6 +432,16 @@ fn populate_towns(
         }
         for &(npc, standing) in cast.0.iter().filter(|(_, s)| s.town == town) {
             spawn_standing_npc(&mut commands, npc, standing, &world);
+        }
+        for stall in cast.2.iter().filter(|s| s.town == town) {
+            let height = world.0.ground_height(stall.position);
+            commands.spawn((
+                Name::new("Cheese stall"),
+                StallTown(town),
+                CheeseStall,
+                Transform::from_translation(world_from_ground(stall.position, height))
+                    .with_rotation(Quat::from_rotation_y(stall.facing.radians())),
+            ));
         }
         let pulperia = towns.as_ref().and_then(|t| t.0.get(town)?.pulperia());
         if let Some((store, inside)) = pulperia {
@@ -1660,8 +1683,11 @@ mod tests {
             (spot.x, spot.y)
         );
 
-        // En el pueblo lejano: Hidalgo ya no está, el comisario está parado
-        // allí.
+        // El puesto de quesos no está en este pueblo.
+        assert!(stalls(&mut app).is_empty());
+
+        // En el pueblo lejano: Hidalgo ya no está, el comisario y el Viejo
+        // Amadeo (un paisano, detrás de su puesto) están parados allí.
         app.world_mut()
             .resource_mut::<ActiveTowns>()
             .0
@@ -1674,12 +1700,42 @@ mod tests {
             [
                 (Npc::Farach, CharacterVisual::Figure(FigureKind::Farach)),
                 (
+                    Npc::Amadeo,
+                    CharacterVisual::Figure(FigureKind::Townsfolk(0))
+                ),
+                (
                     Npc::Bairoletto,
                     CharacterVisual::Seated(FigureKind::Bairoletto)
                 )
             ]
         );
         assert!(there.iter().all(|(n, ..)| n.town == 1));
+        // Su puesto, apoyado en el suelo, con la mesa entre él y la vereda.
+        let stall = cast.2[0];
+        let world = app.world().resource::<GameWorld>().0.clone();
+        let height = world.ground_height(stall.position);
+        assert_eq!(
+            stalls(&mut app),
+            [(
+                StallTown(1),
+                Transform::from_translation(world_from_ground(stall.position, height))
+                    .with_rotation(Quat::from_rotation_y(stall.facing.radians()))
+            )]
+        );
+        // Y se va con su pueblo.
+        app.world_mut()
+            .resource_mut::<ActiveTowns>()
+            .0
+            .update(&towns, Vec2::ZERO);
+        app.update();
+        assert!(stalls(&mut app).is_empty());
+    }
+
+    fn stalls(app: &mut App) -> Vec<(StallTown, Transform)> {
+        let mut q = app
+            .world_mut()
+            .query_filtered::<(&StallTown, &Transform), With<CheeseStall>>();
+        q.iter(app.world()).map(|(s, t)| (*s, *t)).collect()
     }
 
     #[test]
@@ -1700,6 +1756,7 @@ mod tests {
                     town: 0,
                     seat: taken,
                 }],
+                vec![],
             ))
             .insert_resource(WorldClock(GameClock::at(time)));
             app.update();

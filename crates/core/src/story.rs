@@ -6,7 +6,8 @@
 //!
 //! Los pasos los escribe el guion (`assets/dialogue/errand.ron`); estas son
 //! solo las piezas y sus reglas. El orden y el avance los lleva
-//! [`crate::Errand`].
+//! [`crate::Errand`]: van en orden. Un encuentro fuera de la historia (el
+//! Viejo Amadeo) no es un paso: es solo una escena ([`crate::Errand::hail`]).
 
 use crate::errand::{Npc, PROTAGONIST};
 use crate::{Item, Items, Money};
@@ -76,16 +77,18 @@ pub enum Goal {
 pub struct Step {
     pub goal: Goal,
     /// El objetivo de una línea del HUD mientras el paso está pendiente. `{town}`
-    /// se reemplaza por el pueblo de la comisaría del encargo.
-    pub objective: String,
+    /// se reemplaza por el pueblo de la comisaría del encargo. `None` para un
+    /// paso sin aviso: ni objetivo en el HUD ni destino en el mapa.
+    pub objective: Option<String>,
     /// Lo que sucede al cumplirlo; vacío si no sucede nada.
     pub scene: Vec<Beat>,
 }
 
 impl Step {
-    /// El objetivo con `{town}` reemplazado por `town`.
-    pub fn objective_in(&self, town: &str) -> String {
-        self.objective.replace("{town}", town)
+    /// El objetivo con `{town}` reemplazado por `town`; `None` para un paso sin
+    /// aviso.
+    pub fn objective_in(&self, town: &str) -> Option<String> {
+        self.objective.as_ref().map(|o| o.replace("{town}", town))
     }
 }
 

@@ -10,6 +10,46 @@ pub enum Item {
     /// La carta de presentación que Don Hidalgo escribió de su puño y letra
     /// para el comisario Farach.
     Letter,
+    /// Un pedazo del queso del Viejo Amadeo, regalado en su puesto.
+    Cheese,
+}
+
+impl Item {
+    /// El nombre con que se muestra en el inventario.
+    pub fn name(self) -> &'static str {
+        match self {
+            Item::Letter => "Carta de presentación",
+            Item::Cheese => "Queso",
+        }
+    }
+
+    /// La categoría del inventario donde se guarda.
+    pub fn category(self) -> Category {
+        match self {
+            Item::Letter => Category::Quest,
+            Item::Cheese => Category::Food,
+        }
+    }
+}
+
+/// Una categoría del inventario, en el orden del documento `mecánicas`
+/// (sección 10). Por ahora solo las que tienen algo que llevar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Category {
+    /// Alimentos: el queso del Viejo Amadeo.
+    Food,
+    /// Objetos de misión: la carta de Don Hidalgo.
+    Quest,
+}
+
+impl Category {
+    /// El título con que se muestra en el inventario.
+    pub fn name(self) -> &'static str {
+        match self {
+            Category::Food => "Alimentos",
+            Category::Quest => "Objetos de misión",
+        }
+    }
 }
 
 /// Las cosas que lleva el protagonista, cada una como mucho una vez.

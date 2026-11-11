@@ -1,7 +1,8 @@
 //! La historia del capítulo 1 como pasos ([`Step`]): qué pide cada uno al
 //! jugador, el objetivo que muestra el HUD y la escena que se reproduce al
-//! cumplirlo (líneas de quien hable y acciones narradas). También lo que dice
-//! el jugador ante un caballo que todavía no es suyo, y el pueblo de la
+//! cumplirlo (líneas de quien hable y acciones narradas). También el encuentro
+//! con el Viejo Amadeo, fuera de la historia (una escena sola), lo que dice el
+//! jugador ante un caballo que todavía no es suyo, y el pueblo de la
 //! comisaría. Se leen de `assets/dialogue/errand.ron`.
 
 use std::path::Path;
@@ -35,6 +36,10 @@ pub struct ErrandLines {
     pub police_town: String,
     /// Los pasos de la historia, en orden.
     pub steps: Vec<Step>,
+    /// La escena del encuentro con el Viejo Amadeo, que sucede una sola vez,
+    /// la primera vez que el jugador pasa por su puesto, fuera de la historia
+    /// (ver `pampa_core::Errand::hail`). Vacía: no hay encuentro.
+    pub amadeo: Vec<Beat>,
 }
 
 /// El pueblo de la comisaría del encargo cuando el archivo no nombra uno.
@@ -52,14 +57,24 @@ struct File {
     #[serde(default = "default_police_town")]
     police_town: String,
     steps: Vec<StepFile>,
+    #[serde(default)]
+    amadeo: Vec<BeatFile>,
 }
 
 #[derive(Deserialize)]
 struct StepFile {
     goal: GoalFile,
-    objective: String,
+    /// Puede faltar: un paso sin aviso (ver [`Step::objective`]). Escrito, es
+    /// un texto, sin `Some(...)`.
+    #[serde(default, deserialize_with = "written")]
+    objective: Option<String>,
     #[serde(default)]
     scene: Vec<BeatFile>,
+}
+
+/// Un campo opcional que, cuando está escrito, es el valor mismo.
+fn written<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    String::deserialize(d).map(Some)
 }
 
 #[derive(Deserialize)]
@@ -67,6 +82,7 @@ enum NpcFile {
     Hidalgo,
     Farach,
     Bairoletto,
+    Amadeo,
 }
 
 impl From<NpcFile> for Npc {
@@ -75,6 +91,7 @@ impl From<NpcFile> for Npc {
             NpcFile::Hidalgo => Npc::Hidalgo,
             NpcFile::Farach => Npc::Farach,
             NpcFile::Bairoletto => Npc::Bairoletto,
+            NpcFile::Amadeo => Npc::Amadeo,
         }
     }
 }
@@ -92,11 +109,13 @@ enum Who {
     Hidalgo,
     Farach,
     Bairoletto,
+    Amadeo,
 }
 
 #[derive(Deserialize)]
 enum ItemFile {
     Letter,
+    Cheese,
 }
 
 #[derive(Deserialize)]
@@ -115,6 +134,30 @@ enum BeatFile {
 fn item(item: ItemFile) -> Item {
     match item {
         ItemFile::Letter => Item::Letter,
+        ItemFile::Cheese => Item::Cheese,
+    }
+}
+
+impl From<BeatFile> for Beat {
+    fn from(beat: BeatFile) -> Self {
+        match beat {
+            BeatFile::Say(who, text) => Beat::Line {
+                speaker: match who {
+                    Who::Lisandro => Speaker::Protagonist,
+                    Who::Hidalgo => Speaker::Npc(Npc::Hidalgo),
+                    Who::Farach => Speaker::Npc(Npc::Farach),
+                    Who::Bairoletto => Speaker::Npc(Npc::Bairoletto),
+                    Who::Amadeo => Speaker::Npc(Npc::Amadeo),
+                },
+                text,
+            },
+            // Los centavos de más se validan después (ver `validate`).
+            BeatFile::Earn { pesos, centavos } => Beat::Act(Action::Earn(Money(
+                pesos.saturating_mul(100).saturating_add(centavos),
+            ))),
+            BeatFile::Receive(i) => Beat::Act(Action::Receive(item(i))),
+            BeatFile::HandOver(i) => Beat::Act(Action::HandOver(item(i))),
+        }
     }
 }
 
@@ -124,31 +167,10 @@ impl From<StepFile> for Step {
             GoalFile::Talk(npc) => Goal::Talk(npc.into()),
             GoalFile::TakeHorse => Goal::TakeHorse,
         };
-        let scene = step
-            .scene
-            .into_iter()
-            .map(|beat| match beat {
-                BeatFile::Say(who, text) => Beat::Line {
-                    speaker: match who {
-                        Who::Lisandro => Speaker::Protagonist,
-                        Who::Hidalgo => Speaker::Npc(Npc::Hidalgo),
-                        Who::Farach => Speaker::Npc(Npc::Farach),
-                        Who::Bairoletto => Speaker::Npc(Npc::Bairoletto),
-                    },
-                    text,
-                },
-                // Los centavos de más se validan después (ver `validate`).
-                BeatFile::Earn { pesos, centavos } => Beat::Act(Action::Earn(Money(
-                    pesos.saturating_mul(100).saturating_add(centavos),
-                ))),
-                BeatFile::Receive(i) => Beat::Act(Action::Receive(item(i))),
-                BeatFile::HandOver(i) => Beat::Act(Action::HandOver(item(i))),
-            })
-            .collect();
         Self {
             goal,
             objective: step.objective,
-            scene,
+            scene: step.scene.into_iter().map(Beat::from).collect(),
         }
     }
 }
@@ -161,6 +183,7 @@ impl ErrandLines {
             not_your_horse: file.not_your_horse,
             police_town: file.police_town,
             steps: file.steps.into_iter().map(Step::from).collect(),
+            amadeo: file.amadeo.into_iter().map(Beat::from).collect(),
         };
         lines.validate()?;
         Ok(lines)
@@ -188,7 +211,7 @@ impl ErrandLines {
             steps: vec![
                 Step {
                     goal: Goal::Talk(Npc::Hidalgo),
-                    objective: "Buscá a Don Hidalgo en la plaza".into(),
+                    objective: Some("Buscá a Don Hidalgo en la plaza".into()),
                     scene: vec![
                         say(
                             Npc::Hidalgo,
@@ -201,12 +224,12 @@ impl ErrandLines {
                 },
                 Step {
                     goal: Goal::TakeHorse,
-                    objective: "Tomá el caballo de Don Hidalgo".into(),
+                    objective: Some("Tomá el caballo de Don Hidalgo".into()),
                     scene: vec![],
                 },
                 Step {
                     goal: Goal::Talk(Npc::Farach),
-                    objective: "Presentate al comisario Farach en {town}".into(),
+                    objective: Some("Presentate al comisario Farach en {town}".into()),
                     scene: vec![
                         Beat::Act(Action::HandOver(Item::Letter)),
                         say(
@@ -217,7 +240,7 @@ impl ErrandLines {
                 },
                 Step {
                     goal: Goal::Talk(Npc::Bairoletto),
-                    objective: "Andá a la pulpería La Colonia".into(),
+                    objective: Some("Andá a la pulpería La Colonia".into()),
                     scene: vec![
                         say(
                             Npc::Bairoletto,
@@ -230,14 +253,29 @@ impl ErrandLines {
                     ],
                 },
             ],
+            amadeo: vec![
+                say(
+                    Npc::Amadeo,
+                    "¡Aparcero! Venga, acérquese, ¿Es nuevo en el pueblo?",
+                ),
+                say(
+                    Npc::Amadeo,
+                    "No se haga problema joven, tome, llévese un pedazo,",
+                ),
+                Beat::Act(Action::Receive(Item::Cheese)),
+            ],
         }
     }
 
     /// Comprueba que haya pasos y que `not_your_horse` tenga líneas; que
-    /// ninguna línea, objetivo ni el nombre del pueblo esté en blanco; que
+    /// ninguna línea, objetivo escrito ni el nombre del pueblo esté en blanco
+    /// (un paso sin objetivo es un paso sin aviso); que
     /// cada línea tenga como máximo [`STORY_LINE_CHARS`] caracteres y cada
-    /// objetivo (con el pueblo puesto) como máximo [`OBJECTIVE_CHARS`]; y que
-    /// la plata dada tenga menos de 100 centavos sueltos.
+    /// objetivo (con el pueblo puesto) como máximo [`OBJECTIVE_CHARS`]; que
+    /// la plata dada tenga menos de 100 centavos sueltos; y que ningún paso
+    /// pida hablar con el Viejo Amadeo (su encuentro no es un paso, y nunca se
+    /// cumpliría). La escena del Viejo Amadeo se valida igual que las de los
+    /// pasos.
     pub fn validate(&self) -> Result<(), ContentError> {
         let fail = |part: String, reason: String| Err(ContentError::Story { part, reason });
         if self.police_town.trim().is_empty() {
@@ -254,7 +292,16 @@ impl ErrandLines {
                 .or_else(|reason| fail(format!("not_your_horse line {index}"), reason))?;
         }
         for (s, step) in self.steps.iter().enumerate() {
-            let objective = step.objective_in(&self.police_town);
+            if step.goal == Goal::Talk(Npc::Amadeo) {
+                return fail(
+                    format!("step {s} goal"),
+                    "Amadeo is an encounter (`amadeo`), not a step".into(),
+                );
+            }
+            let Some(objective) = step.objective_in(&self.police_town) else {
+                check_scene(&format!("step {s}"), &step.scene)?;
+                continue;
+            };
             let chars = objective.chars().count();
             if objective.trim().is_empty() {
                 return fail(format!("step {s} objective"), "is blank".into());
@@ -265,20 +312,9 @@ impl ErrandLines {
                     format!("has {chars} characters (max {OBJECTIVE_CHARS})"),
                 );
             }
-            for (b, beat) in step.scene.iter().enumerate() {
-                let part = || format!("step {s} beat {b}");
-                match beat {
-                    Beat::Line { text, .. } => {
-                        check_line(text).or_else(|reason| fail(part(), reason))?
-                    }
-                    Beat::Act(Action::Earn(amount)) if amount.0 == 0 => {
-                        return fail(part(), "earns nothing".into());
-                    }
-                    Beat::Act(_) => {}
-                }
-            }
+            check_scene(&format!("step {s}"), &step.scene)?;
         }
-        Ok(())
+        check_scene("amadeo", &self.amadeo)
     }
 
     /// Cada carácter distinto de cualquier texto que se muestra (líneas,
@@ -297,17 +333,44 @@ impl ErrandLines {
     /// Cada texto que se muestra, en orden.
     fn texts(&self) -> impl Iterator<Item = &str> {
         let steps = self.steps.iter().flat_map(|step| {
-            std::iter::once(step.objective.as_str()).chain(step.scene.iter().filter_map(|beat| {
-                match beat {
+            step.objective
+                .as_deref()
+                .into_iter()
+                .chain(step.scene.iter().filter_map(|beat| match beat {
                     Beat::Line { text, .. } => Some(text.as_str()),
                     Beat::Act(_) => None,
-                }
-            }))
+                }))
+        });
+        let amadeo = self.amadeo.iter().filter_map(|beat| match beat {
+            Beat::Line { text, .. } => Some(text.as_str()),
+            Beat::Act(_) => None,
         });
         std::iter::once(self.police_town.as_str())
             .chain(self.not_your_horse.iter().map(String::as_str))
             .chain(steps)
+            .chain(amadeo)
     }
+}
+
+/// Comprueba la escena `scene` (de `part`, para el error): cada línea se puede
+/// mostrar y ninguna paga nada.
+fn check_scene(part: &str, scene: &[Beat]) -> Result<(), ContentError> {
+    for (b, beat) in scene.iter().enumerate() {
+        let fail = |reason: String| {
+            Err(ContentError::Story {
+                part: format!("{part} beat {b}"),
+                reason,
+            })
+        };
+        match beat {
+            Beat::Line { text, .. } => check_line(text).or_else(fail)?,
+            Beat::Act(Action::Earn(amount)) if amount.0 == 0 => {
+                return fail("earns nothing".into());
+            }
+            Beat::Act(_) => {}
+        }
+    }
+    Ok(())
 }
 
 /// Por qué una línea no se puede mostrar, si no se puede.
@@ -358,7 +421,7 @@ mod tests {
     const STEP: &str = r#"(goal: Talk(Hidalgo), objective: "o", scene: [Say(Hidalgo, "a")])"#;
 
     #[test]
-    fn the_shipped_file_tells_acts_two_to_four_in_order() {
+    fn the_shipped_file_tells_acts_two_to_four_in_order_and_amadeo_apart() {
         let lines = ErrandLines::parse(SHIPPED).expect("shipped errand.ron is valid");
         let goals: Vec<Goal> = lines.steps.iter().map(|s| s.goal).collect();
         assert_eq!(
@@ -367,7 +430,7 @@ mod tests {
                 Goal::Talk(Npc::Hidalgo),
                 Goal::TakeHorse,
                 Goal::Talk(Npc::Farach),
-                Goal::Talk(Npc::Bairoletto)
+                Goal::Talk(Npc::Bairoletto),
             ]
         );
         assert_eq!(lines.police_town, "Eduardo Castex");
@@ -388,8 +451,8 @@ mod tests {
         assert!(lines.steps[1].scene.is_empty());
         // Acto 4, palabra por palabra, en la pulpería de Castex.
         assert_eq!(
-            lines.steps[3].objective_in(&lines.police_town),
-            "Andá a la pulpería La Colonia"
+            lines.steps[3].objective_in(&lines.police_town).as_deref(),
+            Some("Andá a la pulpería La Colonia")
         );
         assert_eq!(
             lines_of(&lines.steps[3]),
@@ -413,6 +476,49 @@ mod tests {
             ]
         );
         assert_eq!(lines.steps[3].scene.len(), 7, "only lines");
+        // Acto 5, palabra por palabra, fuera de la historia (no es un paso): el
+        // Viejo Amadeo llama al jugador desde su puesto y le regala un pedazo
+        // de queso. Las dos líneas largas, cortadas sin cambiar ninguna
+        // palabra.
+        let amadeo = Step {
+            goal: Goal::Talk(Npc::Amadeo),
+            objective: None,
+            scene: lines.amadeo.clone(),
+        };
+        assert_eq!(
+            lines_of(&amadeo),
+            [
+                (
+                    "Viejo Amadeo",
+                    "¡Aparcero! Venga, acérquese, ¿Es nuevo en el pueblo?"
+                ),
+                (
+                    "Viejo Amadeo",
+                    "¿Le gustaría probar el mejor queso de todo el pago?"
+                ),
+                ("Lisandro", "Buenas, ¿los hace uste’?"),
+                (
+                    "Viejo Amadeo",
+                    "Me extraña m’hijo, ¡pero claro! Leche sacada de mis propias vacas, ordeñadas con estas mismas manos."
+                ),
+                (
+                    "Lisandro",
+                    "Se ven muy buenos, pero mejor otro día señor, ando medio corto de plata."
+                ),
+                (
+                    "Viejo Amadeo",
+                    "No se haga problema joven, tome, llévese un pedazo,"
+                ),
+                (
+                    "Viejo Amadeo",
+                    "y si le gusta vuelva cuando quiera que aquí voy a estar."
+                ),
+                ("Lisandro", "Le agradezco mucho señor."),
+            ]
+        );
+        // Le da el queso al decir "tome, llévese un pedazo".
+        assert_eq!(amadeo.scene.len(), 9);
+        assert_eq!(amadeo.scene[6], Beat::Act(Action::Receive(Item::Cheese)));
         for line in lines.texts() {
             assert_eq!(line.trim(), line, "no stray spaces: {line:?}");
         }
@@ -454,7 +560,10 @@ mod tests {
         .unwrap();
         let step = &lines.steps[0];
         assert_eq!(step.goal, Goal::Talk(Npc::Farach));
-        assert_eq!(step.objective_in("Castex"), "Ver a Farach en Castex");
+        assert_eq!(
+            step.objective_in("Castex").as_deref(),
+            Some("Ver a Farach en Castex")
+        );
         assert_eq!(
             lines_of(step),
             [("Lisandro", "Buenas"), ("Farach", "¿Y vos?")]
@@ -469,6 +578,30 @@ mod tests {
         );
         assert_eq!(lines.steps[1].goal, Goal::TakeHorse);
         assert!(lines.steps[1].scene.is_empty());
+    }
+
+    #[test]
+    fn a_step_without_objective_has_no_hud_line() {
+        // Ya no es el del Viejo Amadeo (S18: su encuentro no es un paso), pero
+        // un paso sin aviso sigue siendo posible.
+        let lines = ErrandLines::parse(&file(
+            r#"(goal: Talk(Farach), scene: [Say(Farach, "¿Y vos?"), Receive(Cheese)])"#,
+        ))
+        .unwrap();
+        let step = &lines.steps[0];
+        assert_eq!(
+            (step.goal, step.objective_in("Castex")),
+            (Goal::Talk(Npc::Farach), None)
+        );
+        assert_eq!(lines_of(step), [("Farach", "¿Y vos?")]);
+        assert_eq!(step.scene[1], Beat::Act(Action::Receive(Item::Cheese)));
+        // Su escena se valida igual.
+        let error = ErrandLines::parse(&file(r#"(goal: Talk(Farach), scene: [Say(Farach, " ")])"#))
+            .expect_err("a blank line");
+        assert!(
+            error.to_string().contains("`step 0 beat 0`: is blank"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -506,6 +639,14 @@ mod tests {
             (
                 file(r#"(goal: Talk(Lisandro), objective: "o")"#),
                 "invalid RON",
+            ),
+            (
+                file(r#"(goal: Talk(Amadeo), scene: [Say(Amadeo, "a")])"#),
+                "`step 0 goal`: Amadeo is an encounter",
+            ),
+            (
+                format!(r#"(not_your_horse: ["b"], steps: [{STEP}], amadeo: [Say(Amadeo, " ")])"#),
+                "`amadeo beat 0`: is blank",
             ),
             (String::new(), "invalid RON"),
         ];

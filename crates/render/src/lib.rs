@@ -37,6 +37,7 @@ pub mod settlement;
 pub mod signs;
 pub mod sky;
 pub mod smooth;
+pub mod stall;
 pub mod streaming;
 pub mod street;
 pub mod subtitle;
@@ -76,9 +77,11 @@ pub use settlement::{
     ModelRotor, ModelSlots, SettlementPart, SettlementPlugin, SlotFit, SlotRotor, TrackSurface,
     WorldSettlements, YardPart, YardProp, YardSurface,
 };
+pub use subtitle::{Subtitle, SubtitleLine, SubtitlePlugin};
 
 pub use signs::{SignPlugin, Signboard, TIMETABLE_BOARD_TEXT, TimetableBoard};
 pub use sky::SkyPlugin;
+pub use stall::{CheeseStall, StallPlugin};
 pub use streaming::{StreamingPlan, StreamingSet};
 pub use terrain::{StreamFocus, TerrainChunk, TerrainPlugin, WorldChunks, WorldTerrain};
 pub use town::{ActiveTowns, StreamTowns, TownPlugin, TownRoot, WindmillRotor, WorldTowns};

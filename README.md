@@ -250,7 +250,7 @@ probada sin el juego.
 
 El jugador llega a pie. Arriba del andén de Monte Nievas, junto a los coches
 del tren de la mañana, el objetivo dice "Buscá a Don Hidalgo en la plaza". La
-historia son datos: los actos 2 a 4 de `historia`, paso a paso, en
+historia son datos: los actos 2 a 5 de `historia`, paso a paso, en
 `assets/dialogue/errand.ron` (`pampa_core::Step`). Cada paso pide algo al
 jugador (hablar con alguien, tomar el caballo), lo dice la línea del objetivo y
 el destino del minimapa, y al cumplirlo reproduce su escena: líneas de quien
@@ -290,16 +290,68 @@ alta. Enseguida sigue el acto 4: el objetivo dice "Andá a la pulpería La
 Colonia" y el minimapa marca a Bairoletto, que ya no está en la puerta de la
 comisaría. Espera sentado, solo, en una de las mesas de adelante de la pulpería
 de Castex (cuyo cartel dice "LA COLONIA"), mirando hacia la puerta; de día los
-dos parroquianos se sientan en otra mesa, y ninguno ocupa nunca su asiento. Se
-le habla con `F` desde adentro, a menos de unos 4,5 m (desde el paso que viene
-de la puerta alcanza); de noche, con la pulpería cerrada, espera adentro hasta
-que abra. La escena es el acto 4 palabra por palabra; como habla sentado, no
-gesticula. Con su última línea se levanta, pasa por encima del banco, sale por
-la puerta del medio y se aleja por la vereda hasta perderse de vista
-(`Leaving` en `game/src/life.rs`), y no vuelve aunque el pueblo se descargue y
-se vuelva a cargar. La historia llega entonces a su último paso: la línea del
-objetivo y el destino del minimapa desaparecen, y el jugador queda libre hasta
-la noche.
+dos parroquianos se sientan en otra mesa, y ninguno ocupa nunca su asiento. La
+escena empieza sola, como una cinemática: cuando el jugador llega a pie por la
+vereda a la puerta abierta (a unos 2 m del punto de la vereda frente a ella),
+el control se bloquea, la cámara encuadra a Bairoletto y Lisandro entra solo,
+tímido: camina despacio (0,8 m/s), con el ciclo de caminata y chocando como
+siempre (`WalkPath` en `game/src/player.rs`), derecho por la puerta, se detiene
+unos 2 m adentro y durante 3 s recorre el lugar con la mirada, girando la
+cabeza a un lado y al otro. Entonces Bairoletto, que ve que no es de ahí, lo
+llama con su primera línea ("Che pibe, ese caballo que está afuera…¿Es
+tuyo?"), y Lisandro va hasta la cabecera de su mesa, del lado del paso, donde
+Bairoletto lo mira girando apenas la cabeza; la escena sigue cuando llega.
+Montado no empieza; de noche, con la pulpería cerrada, espera adentro hasta que
+abra. También se le puede hablar con `F` desde adentro, a menos de unos 4,5 m:
+después de su primera línea Lisandro va igual hasta la cabecera de la mesa. La
+escena es el acto 4 palabra por palabra; como habla sentado, no gesticula. Con su última línea se para del banco en 1,2 s (`Rising` en
+`pampa_render::character::rider`: el modelo pasa del clip sentado a la espera
+de pie, la pelvis sube pareja hasta la altura de sus propias piernas y los
+pies quedan en el piso), gira de a poco hacia su camino, pasa por encima del
+banco, sale caminando con el ciclo de caminata por la puerta del medio,
+pisando el piso de ladrillo adentro y el suelo afuera, y se aleja por la
+vereda; en el último segundo y medio de su camino se difumina hasta
+desaparecer (`Leaving` en `game/src/life.rs`; `Fading` en
+`pampa_render::character`, que le da sus propias copias de los materiales,
+así nadie más de su aspecto se vuelve transparente). No vuelve
+aunque el pueblo se descargue y se vuelva a cargar. La línea del objetivo y el
+destino del minimapa desaparecen, el jugador queda libre hasta la noche, y la
+historia termina ahí.
+
+El acto 5 no es un paso de la historia sino un encuentro: "Al hacer una cuadra,
+un puestero, viejo, vendiendo quesos." Sucede una sola vez, la primera vez que
+el jugador pasa por el puesto, en cualquier momento del juego (antes de hablar
+con Don Hidalgo, durante el encargo o después), y no mueve la historia. A una
+cuadra de la puerta de La Colonia (unos 52 m), a media cuadra y
+sobre la mitad de la vereda del lado del cordón, el Viejo Amadeo atiende su
+puesto: una mesa de caballetes de tablas gastadas con hormas de queso, una cuña
+cortada, tres salamines (uno empezado, con el corte a la vista), dos panes de
+campo y un cajón abajo (`pampa_render::stall`), que estorba el paso como
+cualquier obstáculo. Él está parado del lado de la vereda por el que pasa la
+gente, con la mesa entre él y el cordón, mirando hacia la calle, con la ropa
+de un paisano del pueblo. Ni el HUD ni el minimapa
+lo anuncian: cuando el jugador pasa a menos de 8 m (alcanza a un jinete que va
+por la mitad de la calle), Amadeo lo llama sin que apriete nada; quien va por
+otro lado no lo encuentra. El control se bloquea y Lisandro se le acerca solo
+antes de la primera línea: a pie, hasta su lado, sobre la vereda; montado, el
+caballo deja el galope sin tirones, derecho, hasta el tranco, vuelve y se para
+en la calle frente al puesto, a 2 m del cordón (`Errand::hail` y
+`Errand::place_to_talk` en `pampa_core`). La escena es el acto 5 palabra por palabra
+(las dos líneas más largas, cortadas en dos subtítulos); al decir "tome,
+llévese un pedazo" le da el queso, que Lisandro lleva como llevaba la carta,
+sin que se vea en su mano. Amadeo se queda en su puesto, mirando otra vez a la
+calle, y no vuelve a llamarlo.
+
+`I` abre y cierra el inventario (`game/src/inventory.rs`,
+`pampa_render::inventory`): una hoja del papel y la tinta del HUD montada en
+una tapa de cuero, en el centro de la pantalla, mientras el juego sigue andando
+detrás. Lo que lleva Lisandro va agrupado por las categorías del documento
+`mecánicas` (`pampa_core::ItemCategory`): "Alimentos" (el queso) y "Objetos de
+misión" (la carta de presentación), cada cosa con su dibujo (una cuña de queso,
+un sobre lacrado, grabados pintados en el código) y su nombre; una categoría
+vacía no aparece. Debajo, la plata, escrita igual que en el HUD ("$ 3,00"),
+junto a dos pesos de plata. Abierto, el panel sigue lo que Lisandro recibe y
+entrega. Durante una escena la `I` no hace nada.
 
 Una vez tomado, el caballo es del jugador. `F` detenido o al paso lento (hasta
 1 m/s) lo hace bajar: el jugador queda parado junto al caballo, a su izquierda

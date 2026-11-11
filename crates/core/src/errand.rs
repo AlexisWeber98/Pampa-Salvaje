@@ -2,17 +2,20 @@
 //! del tren, lo manda a presentarse ante el comisario Elías Farach en la
 //! comisaría de otro pueblo, y le presta el caballo atado en el almacén de
 //! ramos generales para el viaje. En ese pueblo, Bairoletto espera sentado en
-//! la pulpería.
+//! la pulpería, y a una cuadra de ella el Viejo Amadeo vende quesos en su
+//! puesto de la vereda ([`Stall`]).
 //!
 //! Reglas puras: dónde está cada personaje, los pasos de la historia en orden
 //! ([`Step`], escritos como datos por el guion) y qué interacción está al
-//! alcance. Hay un solo paso pendiente a la vez, y cada paso se cumple una
-//! sola vez: solo su objetivo lo hace avanzar al siguiente.
+//! alcance. Hay un solo paso pendiente a la vez, y cada paso se cumple una sola
+//! vez: solo su objetivo lo hace avanzar. El Viejo Amadeo no es un paso: lo
+//! encuentra el jugador una sola vez, la primera vez que pasa por su puesto, en
+//! cualquier momento del juego ([`Errand::hail`]).
 
 use crate::pulperia::Door;
 use crate::pulperia::FurnitureKind;
 use crate::story::{Beat, Goal, Step};
-use crate::{Aabb, Heading, TetheredHorse, TownLayout, Vec2};
+use crate::{Aabb, Heading, Side, TetheredHorse, TownLayout, Travel, Vec2};
 
 /// Quién participa en el encargo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -24,6 +27,10 @@ pub enum Npc {
     /// Juan Bautista Bairoletto, "el Tano": sentado a una mesa de la pulpería
     /// del pueblo de Farach, golpeado, tomando algo.
     Bairoletto,
+    /// El Viejo Amadeo, un puestero que vende quesos en la vereda, a una cuadra
+    /// de esa pulpería: llama al jugador la primera vez que pasa cerca de su
+    /// puesto, fuera de la historia.
+    Amadeo,
 }
 
 impl Npc {
@@ -33,6 +40,7 @@ impl Npc {
             Self::Hidalgo => "Don Hidalgo",
             Self::Farach => "Farach",
             Self::Bairoletto => "Bairoletto",
+            Self::Amadeo => "Viejo Amadeo",
         }
     }
 }
@@ -54,6 +62,40 @@ impl Standing {
     pub fn footprint(&self) -> Aabb {
         let side = Errand::PERSON_FOOTPRINT;
         Aabb::from_center_size(self.position, Vec2::new(side, side))
+    }
+}
+
+/// El puesto de quesos del Viejo Amadeo: una mesa de caballetes sobre la
+/// mitad de la vereda del lado del cordón, con él parado detrás, del lado por
+/// el que pasa la gente, mirando hacia la calle por encima de la mesa.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Stall {
+    /// Índice del pueblo en el que está.
+    pub town: usize,
+    /// El centro de la mesa.
+    pub position: Vec2,
+    /// Hacia dónde mira el puestero, a través de la mesa: el eje corto de la
+    /// mesa, siempre a lo largo de un eje del mundo.
+    pub facing: Heading,
+}
+
+impl Stall {
+    /// Largo de la mesa, a lo largo de la vereda, en metros.
+    pub const LENGTH: f32 = 1.8;
+    /// Ancho de la mesa, a lo ancho de la vereda, en metros.
+    pub const DEPTH: f32 = 0.8;
+    /// Alto de la tabla de la mesa sobre el suelo, en metros.
+    pub const HEIGHT: f32 = 0.8;
+
+    /// La huella de colisión de la mesa.
+    pub fn footprint(&self) -> Aabb {
+        let f = self.facing.forward();
+        let size = if f.x.abs() > f.y.abs() {
+            Vec2::new(Self::DEPTH, Self::LENGTH)
+        } else {
+            Vec2::new(Self::LENGTH, Self::DEPTH)
+        };
+        Aabb::from_center_size(self.position, size)
     }
 }
 
@@ -107,12 +149,26 @@ pub enum Interaction {
     Nothing,
 }
 
+/// La última escena que se jugó: la de un paso de la historia, o el encuentro
+/// con el Viejo Amadeo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Played {
+    Step(usize),
+    Amadeo,
+}
+
 /// El encargo: quién está dónde, el caballo y los pasos de la historia.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Errand {
     steps: Vec<Step>,
-    /// Índice del paso pendiente; `steps.len()` una vez terminada la historia.
-    at: usize,
+    /// Qué pasos ya se cumplieron, uno por paso (siempre los primeros).
+    done: Vec<bool>,
+    /// La última escena jugada.
+    last: Option<Played>,
+    /// La escena del encuentro con el Viejo Amadeo (vacía: no hay encuentro),
+    /// y si ya sucedió.
+    amadeo_scene: Vec<Beat>,
+    met_amadeo: bool,
     hidalgo: Standing,
     farach: Standing,
     bairoletto: Standing,
@@ -130,6 +186,9 @@ pub struct Errand {
     horse: (usize, TetheredHorse),
     /// Nombre del pueblo en el que está Farach.
     police_name: String,
+    /// El puesto del Viejo Amadeo, y él detrás.
+    stall: Stall,
+    amadeo: Standing,
 }
 
 impl Errand {
@@ -194,8 +253,10 @@ impl Errand {
     /// El encargo desde el pueblo `giver` (Don Hidalgo en su plaza, su caballo
     /// en su almacén de ramos generales) hasta el pueblo `police` (Farach en la
     /// puerta de su primera comisaría, Bairoletto sentado en su pulpería, en
-    /// [`crate::pulperia::Interior::front_seat`]). `None` si falta alguno de los pueblos,
-    /// si son el mismo pueblo o si `police` no tiene comisaría.
+    /// [`crate::pulperia::Interior::front_seat`], y el Viejo Amadeo en su puesto,
+    /// a una cuadra de la pulpería: ver [`Self::stall`]). `None` si falta alguno
+    /// de los pueblos, si son el mismo pueblo o si `police` no tiene comisaría
+    /// (o veredas).
     ///
     /// Empieza sin pasos (terminado); [`Self::with_story`] le da la historia.
     pub fn new(towns: &[TownLayout], giver: usize, police: usize) -> Option<Self> {
@@ -210,7 +271,12 @@ impl Errand {
             position: door,
             heading: facing,
         };
-        let (bairoletto, bairoletto_seat, bairoletto_room) = match away.pulperia() {
+        let from = away
+            .pulperia()
+            .map_or(door, |(_, inside)| inside.door.center);
+        let (stall, amadeo) = cheese_stall(away, police, from)?;
+        let (bairoletto, bairoletto_seat, bairoletto_room, bairoletto_entry) = match away.pulperia()
+        {
             Some((_, inside)) => {
                 let seat = inside.front_seat();
                 let at = inside.seats[seat];
@@ -219,7 +285,12 @@ impl Errand {
                     position: at.position,
                     heading: at.facing,
                 };
-                (standing, Some(seat), Some(inside.floor))
+                (
+                    standing,
+                    Some(seat),
+                    Some(inside.floor),
+                    Some((inside.door, beside_table(&inside, seat))),
+                )
             }
             None => {
                 let forward = facing.forward();
@@ -228,12 +299,15 @@ impl Errand {
                     position: door + left * Self::BAIROLETTO_GAP,
                     ..farach
                 };
-                (standing, None, None)
+                (standing, None, None, None)
             }
         };
         Some(Self {
             steps: Vec::new(),
-            at: 0,
+            done: Vec::new(),
+            last: None,
+            amadeo_scene: Vec::new(),
+            met_amadeo: false,
             hidalgo: Standing {
                 town: giver,
                 position: spot,
@@ -246,14 +320,27 @@ impl Errand {
             bairoletto_entry,
             horse: (giver, home.hitching_post.horse),
             police_name: away.name.clone(),
+            stall,
+            amadeo,
         })
     }
 
     /// El encargo con los pasos `steps`, desde el primero.
     pub fn with_story(self, steps: Vec<Step>) -> Self {
         Self {
+            done: vec![false; steps.len()],
+            last: None,
             steps,
-            at: 0,
+            ..self
+        }
+    }
+
+    /// El encargo con `scene` como el encuentro con el Viejo Amadeo, todavía
+    /// sin suceder ([`Self::hail`]). Sin escena, no hay encuentro.
+    pub fn with_amadeo(self, scene: Vec<Beat>) -> Self {
+        Self {
+            amadeo_scene: scene,
+            met_amadeo: false,
             ..self
         }
     }
@@ -285,24 +372,27 @@ impl Errand {
 
     /// Qué pide el paso pendiente.
     pub fn stage(&self) -> ErrandStage {
-        self.goal().into()
+        self.step().map(|s| s.goal).into()
     }
 
     /// El paso pendiente; `None` una vez terminada la historia.
     pub fn step(&self) -> Option<&Step> {
-        self.steps.get(self.at)
+        self.pending().map(|i| &self.steps[i])
     }
 
-    fn goal(&self) -> Option<Goal> {
-        self.step().map(|s| s.goal)
+    /// El índice del paso pendiente: el primero sin cumplir.
+    fn pending(&self) -> Option<usize> {
+        self.done.iter().position(|d| !d)
     }
 
-    /// La escena del último paso cumplido (vacía antes del primero).
+    /// La escena jugada por última vez: la del último paso cumplido o la del
+    /// encuentro con el Viejo Amadeo (vacía antes de la primera).
     pub fn last_scene(&self) -> &[Beat] {
-        self.at
-            .checked_sub(1)
-            .and_then(|i| self.steps.get(i))
-            .map_or(&[], |s| &s.scene)
+        match self.last {
+            Some(Played::Step(i)) => self.steps.get(i).map_or(&[], |s| &s.scene),
+            Some(Played::Amadeo) => &self.amadeo_scene,
+            None => &[],
+        }
     }
 
     /// Nombre del pueblo al que el encargo manda al jugador, el de Farach.
@@ -310,10 +400,11 @@ impl Errand {
         &self.police_name
     }
 
-    /// El objetivo del paso pendiente, con el pueblo de la comisaría en lugar
-    /// de `{town}`; `None` una vez terminada la historia.
+    /// El objetivo del paso pendiente, con el pueblo de la comisaría
+    /// en lugar de `{town}`; `None` una vez terminada la historia o mientras
+    /// ese paso es sin aviso.
     pub fn objective(&self) -> Option<String> {
-        self.step().map(|s| s.objective_in(&self.police_name))
+        self.step()?.objective_in(&self.police_name)
     }
 
     /// Dónde está `npc`.
@@ -322,7 +413,16 @@ impl Errand {
             Npc::Hidalgo => self.hidalgo,
             Npc::Farach => self.farach,
             Npc::Bairoletto => self.bairoletto,
+            Npc::Amadeo => self.amadeo,
         }
+    }
+
+    /// El puesto de quesos del Viejo Amadeo: en una vereda del pueblo de
+    /// Farach, a media cuadra, sobre la mitad del lado del cordón, a unos
+    /// [`Self::STALL_DISTANCE`] de la puerta de la pulpería (o de la comisaría,
+    /// si ese pueblo no tiene pulpería), apartado de todo obstáculo del pueblo.
+    pub fn stall(&self) -> Stall {
+        self.stall
     }
 
     /// El asiento de Bairoletto en la pulpería del pueblo de Farach; `None` si
@@ -331,11 +431,16 @@ impl Errand {
         self.bairoletto_seat
     }
 
-    /// Si ya se cumplió un paso que pedía hablar con `npc`.
+    /// Si ya se cumplió un paso que pedía hablar con `npc` (con el Viejo
+    /// Amadeo: si ya sucedió su encuentro).
     pub fn talked_to(&self, npc: Npc) -> bool {
-        self.steps[..self.at.min(self.steps.len())]
+        if npc == Npc::Amadeo {
+            return self.met_amadeo;
+        }
+        self.steps
             .iter()
-            .any(|s| s.goal == Goal::Talk(npc))
+            .zip(&self.done)
+            .any(|(s, &done)| done && s.goal == Goal::Talk(npc))
     }
 
     /// El caballo que presta Don Hidalgo, y su pueblo.
@@ -343,20 +448,28 @@ impl Errand {
         self.horse
     }
 
-    /// Adónde manda al jugador el paso pendiente: a quien tiene que hablarle o
-    /// al caballo; `None` una vez terminada la historia.
+    /// Adónde manda al jugador el paso pendiente: a quien tiene que
+    /// hablarle o al caballo; `None` una vez terminada la historia o mientras
+    /// ese paso es sin aviso.
     pub fn target(&self) -> Option<Vec2> {
-        match self.goal()? {
+        let step = self.step()?;
+        step.objective.as_ref()?;
+        match step.goal {
             Goal::Talk(npc) => Some(self.standing(npc).position),
             Goal::TakeHorse => Some(self.horse.1.position),
         }
     }
 
-    /// Huellas de colisión de las personas que están paradas en el encargo:
-    /// Hidalgo y Farach. Bairoletto no tiene: sentado, su banco ya es un
-    /// obstáculo, y después se va.
-    pub fn obstacles(&self) -> [Aabb; 2] {
-        [self.hidalgo.footprint(), self.farach.footprint()]
+    /// Huellas de colisión de las personas que están paradas en el encargo
+    /// (Hidalgo, Farach y el Viejo Amadeo) y del puesto de quesos. Bairoletto
+    /// no tiene: sentado, su banco ya es un obstáculo, y después se va.
+    pub fn obstacles(&self) -> [Aabb; 4] {
+        [
+            self.hidalgo.footprint(),
+            self.farach.footprint(),
+            self.amadeo.footprint(),
+            self.stall.footprint(),
+        ]
     }
 
     /// Hasta dónde se le puede hablar a `npc`, en metros: a Farach también
@@ -366,36 +479,112 @@ impl Errand {
             Npc::Hidalgo => Self::TALK_RANGE,
             Npc::Farach => Self::REPORT_RANGE,
             Npc::Bairoletto => Self::SEATED_TALK_RANGE,
+            Npc::Amadeo => Self::HAIL_RANGE,
         }
+    }
+
+    /// El jugador pasa por `at`, a pie o montado (`travel`): la primera vez
+    /// que está a menos de [`Self::HAIL_RANGE`] del Viejo Amadeo, en cualquier
+    /// momento del juego (sea cual sea el paso pendiente), Amadeo lo llama, y
+    /// el camino por el que Lisandro se le acerca: hasta su lugar para hablar
+    /// ([`Self::place_to_talk`]). Al llegar, [`Self::talk`] juega el
+    /// encuentro. Nadie más llama al jugador, y Amadeo una sola vez.
+    pub fn hail(&self, at: Vec2, travel: Travel) -> Option<Vec<Vec2>> {
+        let him = self.amadeo.position;
+        let due = !self.met_amadeo && !self.amadeo_scene.is_empty();
+        (due && at.distance(him) <= Self::HAIL_RANGE)
+            .then(|| self.place_to_talk(Npc::Amadeo, at, travel))
+            .flatten()
+            .map(|spot| vec![spot])
+    }
+
+    /// Dónde se para Lisandro, viniendo desde `from` a pie o montado
+    /// (`travel`), para hablar con `npc` de frente y con naturalidad, cuando
+    /// importa: junto a la cabecera de la mesa de Bairoletto sentado, del lado
+    /// del paso que viene de la puerta (él lo ve girando la cabeza menos de
+    /// [`Self::GAZE_MAX`]); junto al Viejo Amadeo, sobre la vereda, del lado
+    /// por el que llega, a pie; o en la calle frente a su puesto, a
+    /// [`Self::FROM_CURB`] del cordón, montado. `None` para quien está parado
+    /// en otro lado (se le habla desde donde se esté: se da vuelta él).
+    pub fn place_to_talk(&self, npc: Npc, from: Vec2, travel: Travel) -> Option<Vec2> {
+        match npc {
+            Npc::Bairoletto => self.bairoletto_entry.map(|(_, beside)| beside),
+            Npc::Amadeo => {
+                let street = self.stall.facing.forward();
+                Some(match travel {
+                    Travel::Riding => {
+                        self.stall.position + street * (TABLE_FROM_CURB + Self::FROM_CURB)
+                    }
+                    Travel::OnFoot => {
+                        let along = Vec2::new(-street.y, street.x);
+                        let him = self.amadeo.position;
+                        let side = if (from - him).dot(along) < 0.0 {
+                            -1.0
+                        } else {
+                            1.0
+                        };
+                        him + along * (side * Self::BESIDE_VENDOR)
+                    }
+                })
+            }
+            Npc::Hidalgo | Npc::Farach => None,
+        }
+    }
+
+    /// El jugador llega a `at`: si el paso pendiente pide hablar con
+    /// Bairoletto, sentado en su pulpería, y `at` está en la vereda frente a
+    /// la puerta (a menos de [`Self::DOOR_RANGE`] del punto a [`Self::PORCH`]
+    /// de ella), el camino por el que Lisandro entra solo, tímido: ese punto
+    /// de la vereda, y después derecho por la puerta hasta
+    /// [`Self::ENTRY_DEPTH`] adentro, por piso libre, donde se detiene a mirar
+    /// el lugar. Desde ahí [`Self::talk`] lo alcanza (Bairoletto lo ve y lo
+    /// llama), y después va hasta su mesa ([`Self::place_to_talk`]). Si la
+    /// puerta está abierta y si va a pie lo decide quien llama.
+    pub fn walk_in(&self, at: Vec2) -> Option<Vec<Vec2>> {
+        let (door, _) = self.bairoletto_entry?;
+        let porch = door.center + door.outward * Self::PORCH;
+        let inside = door.center - door.outward * Self::ENTRY_DEPTH;
+        let near = at.distance(porch) <= Self::DOOR_RANGE;
+        let due = self.stage() == ErrandStage::Talk(Npc::Bairoletto);
+        (near && due).then(|| vec![porch, inside])
     }
 
     /// Habla con `npc` desde `at`: solo si está al alcance (a Bairoletto
     /// sentado, desde adentro de la pulpería), y solo si el paso pendiente lo
-    /// pide.
+    /// pide; o, con el Viejo Amadeo, si su encuentro todavía no sucedió.
     pub fn talk(&mut self, npc: Npc, at: Vec2) -> Option<ErrandEvent> {
         let inside = match (npc, self.bairoletto_room) {
             (Npc::Bairoletto, Some(room)) => room.contains_point(at),
             _ => true,
         };
         let near = inside && at.distance(self.standing(npc).position) <= Self::talk_range(npc);
+        if npc == Npc::Amadeo {
+            let due = !self.met_amadeo && !self.amadeo_scene.is_empty();
+            if !(due && near) {
+                return None;
+            }
+            self.met_amadeo = true;
+            self.last = Some(Played::Amadeo);
+            return Some(ErrandEvent::Talked(npc));
+        }
         self.advance(Goal::Talk(npc), near, ErrandEvent::Talked(npc))
     }
 
-    /// Monta el caballo desde `at`: solo si está al alcance, y solo si el paso
+    /// Monta el caballo desde `at`: solo si está al alcance, y solo si un paso
     /// pendiente lo pide (Don Hidalgo ya lo prestó).
     pub fn mount(&mut self, at: Vec2) -> Option<ErrandEvent> {
         let near = self.near_horse(at);
         self.advance(Goal::TakeHorse, near, ErrandEvent::MountedHorse)
     }
 
-    /// Aprieta la tecla de interacción en `at`: habla o monta, lo que esté al
-    /// alcance y corresponda.
+    /// Aprieta la tecla de interacción en `at`: habla o monta, lo que pida el
+    /// paso pendiente y esté al alcance. Al Viejo Amadeo no: él llama antes
+    /// ([`Self::hail`]).
     pub fn interact(&mut self, at: Vec2) -> Interaction {
-        let event = match self.goal() {
-            Some(Goal::Talk(npc)) => self.talk(npc, at),
-            Some(Goal::TakeHorse) => self.mount(at),
-            None => None,
-        };
+        let event = self.step().map(|s| s.goal).and_then(|goal| match goal {
+            Goal::Talk(npc) => self.talk(npc, at),
+            Goal::TakeHorse => self.mount(at),
+        });
         match event {
             Some(event) => Interaction::Event(event),
             None if self.horse_still_lent_later() && self.near_horse(at) => {
@@ -408,24 +597,24 @@ impl Errand {
     /// Si algún paso que todavía no llegó (no el pendiente) pide tomar el
     /// caballo: hasta entonces no es del jugador.
     fn horse_still_lent_later(&self) -> bool {
-        self.steps
-            .iter()
-            .skip(self.at + 1)
-            .any(|s| s.goal == Goal::TakeHorse)
+        let pending = self.pending();
+        (0..self.steps.len())
+            .any(|i| !self.done[i] && pending != Some(i) && self.steps[i].goal == Goal::TakeHorse)
     }
 
     fn near_horse(&self, at: Vec2) -> bool {
         at.distance(self.horse.1.position) <= Self::MOUNT_RANGE
     }
 
-    /// Pasa al paso siguiente cuando el pendiente pide `due` y `near`,
-    /// informando `event`; si no, no pasa nada, así que cada paso se cumple una
-    /// sola vez.
+    /// Cumple el paso pendiente si pide `due` y `near`, informando `event`;
+    /// si no, no pasa nada, así que cada paso se cumple una sola vez.
     fn advance(&mut self, due: Goal, near: bool, event: ErrandEvent) -> Option<ErrandEvent> {
-        if self.goal() != Some(due) || !near {
+        if !near {
             return None;
         }
-        self.at += 1;
+        let i = self.pending().filter(|&i| self.steps[i].goal == due)?;
+        self.done[i] = true;
+        self.last = Some(Played::Step(i));
         Some(event)
     }
 }
@@ -552,7 +741,7 @@ mod tests {
         vec![
             Step {
                 goal: Goal::Talk(Npc::Hidalgo),
-                objective: "Buscá a Don Hidalgo".into(),
+                objective: Some("Buscá a Don Hidalgo".into()),
                 scene: vec![
                     line(Npc::Hidalgo, "Hola"),
                     Beat::Act(Action::Earn(crate::Money::new(2, 0))),
@@ -560,12 +749,12 @@ mod tests {
             },
             Step {
                 goal: Goal::TakeHorse,
-                objective: "Tomá el caballo".into(),
+                objective: Some("Tomá el caballo".into()),
                 scene: vec![],
             },
             Step {
                 goal: Goal::Talk(Npc::Farach),
-                objective: "Presentate al comisario Farach en {town}".into(),
+                objective: Some("Presentate al comisario Farach en {town}".into()),
                 scene: vec![line(Npc::Farach, "Buenas")],
             },
         ]
@@ -616,7 +805,8 @@ mod tests {
     #[test]
     fn people_standing_in_the_errand_are_clear_of_their_towns() {
         let (towns, e) = errand();
-        let people = [Npc::Hidalgo, Npc::Farach].map(|npc| (format!("{npc:?}"), e.standing(npc)));
+        let people = [Npc::Hidalgo, Npc::Farach, Npc::Amadeo]
+            .map(|npc| (format!("{npc:?}"), e.standing(npc)));
         for (npc, s) in people {
             let footprint = s.footprint();
             for o in towns[s.town].obstacles() {
@@ -649,12 +839,200 @@ mod tests {
         assert!(e.obstacles().iter().all(|o| *o != him));
     }
 
+    /// Si `stall` y el Viejo Amadeo están en una vereda de su pueblo, a media
+    /// cuadra, a algo más de un metro de todo obstáculo, con la mesa sobre la
+    /// mitad del cordón y él del lado de adentro, mirando hacia la calle;
+    /// devuelve la distancia de la mesa a `from`.
+    fn assert_stall_on_a_sidewalk(town: &TownLayout, e: &Errand, from: Vec2) -> f32 {
+        let stall = e.stall();
+        let him = e.standing(Npc::Amadeo);
+        assert_eq!(stall.town, him.town);
+        let table = stall.footprint();
+        let walk = town
+            .sidewalks()
+            .iter()
+            .find(|w| w.area.contains(&table))
+            .expect("the stall stands on a sidewalk");
+        assert!(
+            walk.area.contains(&him.footprint()),
+            "{him:?} off its sidewalk"
+        );
+        // A media cuadra: lejos de las esquinas (y de sus faroles).
+        let size = walk.area.size();
+        let (along, ends) = if size.x > size.y {
+            (table.center().x, (walk.area.min.x, walk.area.max.x))
+        } else {
+            (table.center().y, (walk.area.min.y, walk.area.max.y))
+        };
+        assert!(
+            along - ends.0 > 12.0 && ends.1 - along > 12.0,
+            "{along} in {ends:?}"
+        );
+        // Del lado de la vereda por el que pasa la gente, mirando hacia la
+        // calle, con la mesa entre él y el cordón, sobre la mitad del cordón.
+        let street = crate::places::side_normal(walk.curbs[0]);
+        assert!(
+            him.heading.forward().dot(street) > 0.99,
+            "{him:?} faces the street"
+        );
+        let toward = table.center() - him.position;
+        assert!(
+            toward.dot(street) > Stall::DEPTH / 2.0,
+            "the table between him and the curb: {him:?} {table:?}"
+        );
+        assert_eq!(stall.facing, him.heading);
+        let from_middle = |p: Vec2| (p - walk.area.center()).dot(street);
+        assert!(from_middle(table.center()) > 0.0, "the curb half");
+        for o in town.obstacles() {
+            assert!(
+                !o.intersects(&table.expanded(1.0)),
+                "the stall too close to {o:?}"
+            );
+            assert!(
+                o.closest_point(him.position).distance(him.position) > 1.0,
+                "Amadeo too close to {o:?}"
+            );
+        }
+        // Son obstáculos del encargo.
+        assert!(e.obstacles().contains(&table));
+        assert!(e.obstacles().contains(&him.footprint()));
+        table.center().distance(from)
+    }
+
+    #[test]
+    fn amadeos_cheese_stall_stands_on_a_sidewalk_a_block_from_la_colonia() {
+        let (towns, e) = errand();
+        let (_, inside) = towns[1].pulperia().unwrap();
+        assert_eq!(e.stall().town, 1);
+        let far = assert_stall_on_a_sidewalk(&towns[1], &e, inside.door.center);
+        assert!((40.0..=64.0).contains(&far), "{far} m from the door");
+        assert_eq!(Npc::Amadeo.name(), "Viejo Amadeo");
+        // Un árbol justo ahí: el puesto se corre adonde no estorbe.
+        let mut shaded = towns.clone();
+        shaded[1].trees.push(e.stall().position);
+        let moved = Errand::new(&shaded, 0, 1).unwrap();
+        assert_ne!(moved.stall(), e.stall());
+        assert_stall_on_a_sidewalk(&shaded[1], &moved, inside.door.center);
+        // Sin pulpería, a una cuadra de la comisaría.
+        let mut plain = towns.clone();
+        plain[1]
+            .buildings
+            .retain(|b| b.kind != crate::BuildingKind::GeneralStore);
+        let e = Errand::new(&plain, 0, 1).unwrap();
+        let (door, _) = plain[1].police_door().unwrap();
+        let far = assert_stall_on_a_sidewalk(&plain[1], &e, door);
+        assert!((40.0..=64.0).contains(&far), "{far} m from the comisaría");
+    }
+
+    /// El encuentro con el Viejo Amadeo, en pocas palabras: le da el queso.
+    fn cheese() -> Vec<Beat> {
+        vec![Beat::Act(crate::story::Action::Receive(
+            crate::Item::Cheese,
+        ))]
+    }
+
+    /// El ángulo, en radianes, entre hacia dónde mira alguien parado o
+    /// sentado en `from` (`heading`) y `to`.
+    fn turn_to(from: Vec2, heading: Heading, to: Vec2) -> f32 {
+        let toward = to - from;
+        let cos = heading.forward().dot(toward) / toward.length();
+        cos.clamp(-1.0, 1.0).acos()
+    }
+
+    #[test]
+    fn amadeo_hails_the_first_time_the_player_passes_at_any_point_and_never_again() {
+        let (_, e) = errand();
+        let him = e.standing(Npc::Amadeo).position;
+        // Un jinete al galope por la mitad de la calle (Amadeo está a 1,5 m
+        // del cordón; la calle tiene 12 m) pasa a su alcance.
+        const { assert!(Errand::HAIL_RANGE >= 7.5) };
+        let near = east(him, Errand::HAIL_RANGE - 0.2);
+        let far = east(him, Errand::HAIL_RANGE + 0.2);
+        // Sin escena no hay encuentro.
+        assert_eq!(e.hail(near, Travel::OnFoot), None);
+        // Antes de que empiece el encargo, aun sin ningún paso que lo pida.
+        let mut e = e.with_amadeo(cheese());
+        assert_eq!(e.hail(far, Travel::Riding), None);
+        let way = e.hail(near, Travel::Riding).expect("he hails");
+        assert!(
+            !e.talked_to(Npc::Amadeo),
+            "not yet: Lisandro comes up first"
+        );
+        let spot = *way.last().unwrap();
+        assert_eq!(
+            e.talk(Npc::Amadeo, spot),
+            Some(ErrandEvent::Talked(Npc::Amadeo))
+        );
+        assert_eq!(e.last_scene(), &cheese()[..]);
+        assert!(e.talked_to(Npc::Amadeo));
+        // La historia no se movió, ni tiene objetivo ni destino de él.
+        assert_eq!(e.stage(), ErrandStage::MeetHidalgo);
+        assert_eq!(e.target(), Some(e.standing(Npc::Hidalgo).position));
+        // Una sola vez, ni llamando ni con F.
+        assert_eq!(e.hail(near, Travel::OnFoot), None);
+        assert_eq!(e.talk(Npc::Amadeo, spot), None);
+        assert_eq!(e.interact(spot), Interaction::Nothing);
+        // La historia sigue como siempre, y termina sin él.
+        let mut e = e.with_story(story());
+        let hidalgo = e.standing(Npc::Hidalgo).position;
+        assert_eq!(
+            e.interact(hidalgo),
+            Interaction::Event(ErrandEvent::Talked(Npc::Hidalgo))
+        );
+        // Ya avanzada la historia, también llama.
+        let (_, later) = errand();
+        let mut later = later.with_story(story()).with_amadeo(cheese());
+        later.talk(Npc::Hidalgo, hidalgo).unwrap();
+        assert!(later.hail(near, Travel::OnFoot).is_some());
+    }
+
+    #[test]
+    fn lisandro_comes_up_to_amadeo_mounted_in_the_street_or_on_foot_beside_him() {
+        let (towns, e) = errand();
+        let e = e.with_amadeo(cheese());
+        let him = e.standing(Npc::Amadeo);
+        let street = him.heading.forward();
+        let along = Vec2::new(-street.y, street.x);
+        let mut obstacles = towns[him.town].obstacles();
+        obstacles.extend(e.obstacles());
+        for (travel, radius) in [
+            (Travel::Riding, crate::Rider::COLLIDER_RADIUS),
+            (Travel::OnFoot, crate::Rider::PERSON_RADIUS),
+        ] {
+            for side in [-1.0, 1.0] {
+                let from = him.position + along * (side * 6.0) + street * 3.0;
+                let way = e.hail(from, travel).expect("in range");
+                let spot = *way.last().unwrap();
+                let apart = spot.distance(him.position);
+                assert!((1.0..=4.0).contains(&apart), "{travel:?}: {apart} m");
+                assert!(apart <= Errand::talk_range(Npc::Amadeo));
+                for o in &obstacles {
+                    let gap = o.closest_point(spot).distance(spot);
+                    assert!(gap >= radius, "{travel:?} {spot:?} by {o:?}");
+                }
+                let out = (spot - him.position).dot(street);
+                match travel {
+                    // En la calle, frente al puesto, la mesa entre los dos.
+                    Travel::Riding => {
+                        assert!(out > 2.5, "{out}");
+                        assert!((spot - him.position).dot(along).abs() < 0.1);
+                    }
+                    // En la vereda, a su lado, del lado por el que llega.
+                    Travel::OnFoot => {
+                        assert!(out.abs() < 0.1, "{out}");
+                        assert!((spot - him.position).dot(along) * side > 1.0);
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn bairoletto_is_spoken_to_from_the_aisle_but_not_through_the_wall() {
         let (towns, e) = errand();
         let mut e = e.with_story(vec![Step {
             goal: Goal::Talk(Npc::Bairoletto),
-            objective: "Andá a la pulpería".into(),
+            objective: Some("Andá a la pulpería".into()),
             scene: vec![],
         }]);
         let (_, inside) = towns[1].pulperia().unwrap();

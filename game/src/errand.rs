@@ -1321,11 +1321,28 @@ mod tests {
         let aisle = inside.way_out(e.bairoletto_seat().unwrap())[2];
         teleport(&mut app, aisle);
         press_f(&mut app);
+        // Con el acto 4 la historia termina (S18: el Viejo Amadeo no es un
+        // paso).
         assert_eq!(errand(&app).stage(), ErrandStage::Done);
         wait_for_scene(&mut app, 3);
         assert!(said(&app).ends_with(&scene_lines(3)));
         assert_eq!(objective(&app), None);
         assert_eq!(app.world().resource::<MapTarget>().0, None);
+
+        // El Viejo Amadeo lo llama al pasar, aunque la historia ya terminó:
+        // Lisandro se le acerca y se encuentran.
+        let amadeo = e.standing(Npc::Amadeo);
+        teleport(&mut app, amadeo.position - amadeo.heading.forward() * 1.0);
+        for _ in 0..(APPROACH_SECONDS / 0.05) as usize {
+            if app.world().resource::<Conversation>().0.is_some() {
+                break;
+            }
+            app.update();
+        }
+        let lines: Vec<String> = amadeo_lines().into_iter().map(|(_, t)| t).collect();
+        wait_for_lines(&mut app, &lines);
+        assert!(said(&app).ends_with(&amadeo_lines()));
+        assert_eq!(errand(&app).stage(), ErrandStage::Done);
 
         // Cada paso ocurrió una sola vez.
         press_f(&mut app);
@@ -1335,7 +1352,8 @@ mod tests {
                 ErrandEvent::Talked(Npc::Hidalgo),
                 ErrandEvent::MountedHorse,
                 ErrandEvent::Talked(Npc::Farach),
-                ErrandEvent::Talked(Npc::Bairoletto)
+                ErrandEvent::Talked(Npc::Bairoletto),
+                ErrandEvent::Talked(Npc::Amadeo)
             ]
         );
     }
@@ -2318,10 +2336,21 @@ mod tests {
         assert_eq!(comisarias(&loaded.towns[hidalgo.town]), 0);
         assert_eq!(loaded.towns[hidalgo.town].police_door(), None);
         assert_eq!(comisarias(&loaded.towns[farach.town]), 1);
-        // Hidalgo y Farach parados, apartados de Castex; Bairoletto sentado
-        // en la pulpería de Castex, sobre su banco.
-        assert_eq!(world.obstacles.len(), before + 2);
-        assert_eq!(cast.0, vec![(Npc::Hidalgo, hidalgo), (Npc::Farach, farach)]);
+        // Hidalgo, Farach y el Viejo Amadeo parados, apartados de Castex, y el
+        // puesto de quesos; Bairoletto sentado en la pulpería de Castex, sobre
+        // su banco.
+        assert_eq!(world.obstacles.len(), before + 4);
+        let amadeo = run.0.standing(Npc::Amadeo);
+        assert_eq!(amadeo.town, farach.town);
+        assert_eq!(
+            cast.0,
+            vec![
+                (Npc::Hidalgo, hidalgo),
+                (Npc::Farach, farach),
+                (Npc::Amadeo, amadeo)
+            ]
+        );
+        assert_eq!(cast.2, vec![run.0.stall()]);
         assert_eq!(
             cast.1,
             vec![crate::life::AtTable {

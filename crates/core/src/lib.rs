@@ -60,7 +60,9 @@ pub use bumps::{BumpEvent, BumpSeverity, BumpTracker, LinePicker};
 pub use chunk::{ChunkCoord, WorldConfig, WorldConfigError};
 pub use clock::{BASE_RATE, DAY_REAL_SECONDS, DAY_SECONDS, GameClock, TimeOfDay};
 pub use collision::{Aabb, Body, Circle, SideObstacle};
-pub use errand::{Errand, ErrandEvent, ErrandStage, Interaction, Npc, PROTAGONIST, Standing};
+pub use errand::{
+    Errand, ErrandEvent, ErrandStage, Interaction, Npc, PROTAGONIST, Stall, Standing,
+};
 pub use fauna::{
     Cow, CowCoat, CowState, Critter, CritterKind, CritterState, Duck, FaunaSite, Flock, FlockState,
     Hare, HareState, Herd, Patch, Perch, Raptor, RaptorKind, Sparrow, SparrowClip, SparrowGroup,
