@@ -29,6 +29,11 @@
 //! cámara de órbita por debajo (sin hacerla orbitar, y sin línea de visión que
 //! desvanecer), y la primera persona mueve la cámara desde allí hasta los ojos.
 //!
+//! Mientras se reproduce una escena de la historia ([`SceneShot`]), la cámara
+//! deja la órbita y encuadra a los dos que hablan desde atrás del hombro del
+//! jugador, mirando a quien tiene enfrente ([`scene_view`]); al terminar
+//! vuelve a ubicarse detrás del jugador.
+//!
 //! La consola de depuración puede soltar la cámara para que vuele libre
 //! ([`free_cam`]): mientras vuela, ni la órbita, ni la primera persona, ni la
 //! cabeza del jugador la mueven.
@@ -159,6 +164,30 @@ pub fn train_view(cars: &[PlacedCar], terrain: &Terrain) -> Option<(Vec3, Vec3)>
     let spot = middle + right * (span * 0.55 + 15.0);
     let look = world_from_ground(middle, ground(middle) + 2.5);
     Some((world_from_ground(spot, ground(spot) + 9.0), look))
+}
+
+/// Dónde está, en el suelo, quien habla con el jugador durante una escena de
+/// la historia; `None` fuera de una escena. Lo fija [`crate::errand`].
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
+pub struct SceneShot(pub Option<GroundVec2>);
+
+/// Cuánto detrás del hombro del jugador se ubica la cámara de una escena, en
+/// metros.
+pub const SCENE_BACK: f32 = 2.4;
+/// Cuánto a la derecha del jugador se ubica la cámara de una escena, en
+/// metros.
+pub const SCENE_SIDE: f32 = 0.9;
+
+/// La cámara de una escena entre `me` y `other` (los puntos a la altura del
+/// pecho): detrás del hombro derecho de `me`, mirando hacia `other`, con los
+/// dos en cuadro. Devuelve (dónde, adónde mira).
+pub fn scene_view(me: Vec3, other: Vec3) -> (Vec3, Vec3) {
+    let toward = Vec3::new(other.x - me.x, 0.0, other.z - me.z)
+        .try_normalize()
+        .unwrap_or(Vec3::NEG_Z);
+    let right = toward.cross(Vec3::Y);
+    let spot = me - toward * SCENE_BACK + right * SCENE_SIDE + Vec3::Y * 0.3;
+    (spot, me.lerp(other, 0.6))
 }
 
 /// Cómo sigue la cámara al jinete.
@@ -312,10 +341,26 @@ impl CameraOccluders {
     /// sobre el suelo la mantiene por encima.
     pub fn from_town(town: &TownLayout, terrain: &Terrain) -> Self {
         let ground = |p: GroundVec2| terrain.height(p.x, p.y);
+        let pulperia = town.pulperia();
+        // La pulpería se camina por adentro: una columna por pared y una losa
+        // en su cielorraso, en lugar de una columna sobre toda su huella.
+        let inside = pulperia.iter().flat_map(|(store, inside)| {
+            let g = ground(store.footprint.center());
+            let walls = inside
+                .walls
+                .iter()
+                .map(move |w| Occluder::column(*w, g, g + inside.ceiling + ROOF_ALLOWANCE));
+            walls.chain(std::iter::once(Occluder {
+                footprint: store.footprint,
+                bottom: g + inside.ceiling,
+                top: g + inside.ceiling + ROOF_ALLOWANCE,
+            }))
+        });
         let buildings = town
             .buildings
             .iter()
             .filter(|b| b.kind != BuildingKind::Platform)
+            .filter(|b| pulperia.as_ref().is_none_or(|(store, _)| b != store))
             .map(|b| {
                 // Su collider: las paredes de un galpón, no sus aleros, bajo
                 // los cuales puede pararse el jugador.
@@ -332,8 +377,26 @@ impl CameraOccluders {
                 top: g + c.top(),
             }
         });
-        Self(buildings.chain(canopies).collect())
+        Self(buildings.chain(inside).chain(canopies).collect())
     }
+}
+
+/// La puerta de la pulpería sobre cuyo piso está parado `at`, tapada para la
+/// cámara: adentro, la cámara se queda en la sala en lugar de salir a la calle
+/// por el hueco. Afuera o en el umbral no hay ninguna, así que al cruzarlo la
+/// cámara nunca arranca dentro de un oclusor.
+fn room_door(towns: Option<&WorldTowns>, at: GroundVec2, world: &World) -> Option<Occluder> {
+    let town = towns?.0.iter().find(|t| t.extent().contains_point(at))?;
+    let (store, inside) = town.pulperia()?;
+    if !inside.floor.contains_point(at) {
+        return None;
+    }
+    let g = world.ground_height(store.footprint.center());
+    Some(Occluder::column(
+        inside.doorway(),
+        g,
+        g + inside.ceiling + ROOF_ALLOWANCE,
+    ))
 }
 
 /// Los vagones de los trenes cerca de `near` (el jinete) como columnas desde el
@@ -844,6 +907,7 @@ fn follow_player(
     (towns, settlements): (Option<Res<WorldTowns>>, Option<Res<WorldSettlements>>),
     player: Single<(&Player, Option<&OnTrain>)>,
     (view, mut look, mode): RideCamera,
+    shot: Option<Res<SceneShot>>,
     (mut was, mut trunks, mut solid): (
         Local<Option<RideView>>,
         Local<TrunkCache>,
@@ -909,6 +973,22 @@ fn follow_player(
         Travel::Riding => follow.look_height,
     };
     let target = feet + Vec3::Y * look_height;
+    // Una escena: encuadre fijo de los dos, sin entrar en ningún edificio; al
+    // terminar, la cámara vuelve a saltar detrás del jugador.
+    if let Some(other) = shot.and_then(|s| s.0) {
+        let them = world_from_ground(other, world.0.ground_height(other))
+            + Vec3::Y * follow.on_foot_look_height;
+        let (spot, at) = scene_view(target, them);
+        let door = room_door(towns.as_deref(), rider.position, &world.0);
+        let clear = clear_reach(at, spot, occluders.0.iter().chain(&door)).min(1.0);
+        transform.translation = at.lerp(spot, clear);
+        transform.look_at(at, Vec3::Y);
+        rig.0 = None;
+        if let Some(mut sight) = sight {
+            sight.0 = None;
+        }
+        return;
+    }
     // Desde los ojos, la entrada de cámara gira la cabeza, no la órbita.
     let first = *mode == ViewMode::FirstPerson;
     let input = if first {
@@ -970,8 +1050,13 @@ fn follow_player(
         });
         trunks.extend(solid.along(world.0.config, target, desired));
     }
-    let allowed = clear_reach(target, desired, occluders.0.iter().chain(&cars))
-        .min(trunk_reach(target, desired, &trunks));
+    let door = room_door(towns.as_deref(), rider.position, &world.0);
+    let allowed = clear_reach(
+        target,
+        desired,
+        occluders.0.iter().chain(&cars).chain(&door),
+    )
+    .min(trunk_reach(target, desired, &trunks));
     reach.0 = if snapped {
         allowed
     } else {
@@ -1055,6 +1140,14 @@ mod tests {
         }
     }
 
+    fn set_pitch(app: &mut App, pitch: f32) {
+        let mut query = app.world_mut().query::<&mut CameraRig>();
+        let mut rig = query.single_mut(app.world_mut()).unwrap();
+        if let Some((orbit, _)) = rig.0.as_mut() {
+            orbit.pitch = pitch;
+        }
+    }
+
     fn rider(app: &mut App) -> pampa_core::Rider {
         let mut query = app.world_mut().query::<&Player>();
         query.single(app.world()).unwrap().rider
@@ -1090,6 +1183,50 @@ mod tests {
         let at = camera(&mut app).translation;
         assert!(at.distance(expected) < 1e-4, "{at} vs {expected}");
         assert!(at.z > focus.z, "south of a rider facing north");
+    }
+
+    #[test]
+    fn a_scene_frames_the_two_speakers_and_then_the_camera_returns_behind_the_rider() {
+        let mut app = headless_app(
+            World::default(),
+            north_at(26.0, -161.0),
+            CameraOccluders::default(),
+        );
+        app.update();
+        let r = rider(&mut app);
+        // La órbita, girada a un costado antes de la escena.
+        set_yaw(&mut app, Orbit::behind(r.heading.radians()).yaw + FRAC_PI_2);
+        // Quien habla con él, a 3 m al este; el jinete mira al norte.
+        let other = r.position + GroundVec2::new(3.0, 0.0);
+        app.insert_resource(SceneShot(Some(other)));
+        app.update();
+        let shot = camera(&mut app);
+        let me = world_from_ground(r.position, r.height);
+        let flat = |v: Vec3| Vec3::new(v.x, 0.0, v.z).normalize();
+        let east = flat(world_from_ground(other, 0.0) - world_from_ground(r.position, 0.0));
+        // Detrás de su hombro, mirando hacia el otro.
+        assert!(
+            flat(*shot.forward()).dot(east) > 0.9,
+            "{:?}",
+            shot.forward()
+        );
+        let behind = flat(shot.translation - me).dot(east);
+        assert!(behind < -0.5, "{behind}");
+        assert!(shot.translation.distance(me) < 4.0, "{}", shot.translation);
+        // Se queda quieta mientras dura la escena.
+        app.update();
+        assert!(camera(&mut app).translation.distance(shot.translation) < 1e-4);
+
+        // Terminada la escena: otra vez detrás del jinete, que mira al norte,
+        // no donde había quedado la órbita.
+        app.insert_resource(SceneShot(None));
+        app.update();
+        let follow = FollowCamera::default();
+        let focus = me + Vec3::Y * follow.look_height;
+        let world = app.world().resource::<GameWorld>().0.clone();
+        let expected = follow.desired(focus, &Orbit::behind(r.heading.radians()), &world);
+        let at = camera(&mut app).translation;
+        assert!(at.distance(expected) < 1e-3, "{at} vs {expected}");
     }
 
     #[test]
@@ -1668,6 +1805,41 @@ mod tests {
         );
     }
 
+    #[test]
+    fn inside_the_pulperia_the_camera_stays_in_the_room_behind_the_player() {
+        let town = TownLayout::castex_inspired();
+        let (store, inside) = town.pulperia().expect("a small town");
+        let (store, door) = (store.footprint, inside.door);
+        let world = World::with_town(Terrain::default(), &town);
+        let occluders = CameraOccluders::from_town(&town, &world.terrain);
+        // En el paso de la puerta, 6 m adentro, mirando al fondo.
+        let into = GroundVec2::new(-door.outward.x, -door.outward.y);
+        let spawn = PlayerSpawn {
+            position: door.center + into * 6.0,
+            heading: Heading::from_radians(into.y.atan2(into.x)),
+            travel: pampa_core::Travel::OnFoot,
+        };
+        let mut app = headless_app(world, spawn, occluders.clone());
+        app.insert_resource(WorldTowns(vec![town.clone()]));
+        for frame in 0..60 {
+            // A mitad de camino, la órbita mirando desde lo más alto: el
+            // cielorraso la baja.
+            if frame >= 30 {
+                set_pitch(&mut app, crate::orbit::OrbitParams::default().max_pitch);
+            }
+            app.update();
+            let cam = camera(&mut app).translation;
+            let (_, head) = rig(&mut app);
+            assert!(
+                cam.distance(head) >= 1.2,
+                "frame {frame}: camera {cam} on the player's head {head}"
+            );
+            assert_outside(&occluders.0, cam, &format!("frame {frame}"));
+            assert!(store.contains_point(ground(cam)), "frame {frame}: {cam}");
+            assert!(cam.y < inside.ceiling, "frame {frame}: {cam}");
+        }
+    }
+
     /// El collider de cada edificio de `town`.
     fn world_colliders(town: &TownLayout) -> Vec<Aabb> {
         town.buildings
@@ -1746,9 +1918,12 @@ mod tests {
                 .iter()
                 .all(|o| o.footprint != platform.footprint)
         );
+        // La pulpería: una columna por pared y su cielorraso, no una por
+        // edificio.
+        let pulperia = town.pulperia().map_or(0, |(_, inside)| inside.walls.len());
         assert_eq!(
             occluders.0.len(),
-            town.buildings.len() - 1 + town.canopies().len()
+            town.buildings.len() - 1 + town.canopies().len() + pulperia
         );
         let (position, heading) = town.platform_spot().unwrap();
         let top = world.ground_height(position);

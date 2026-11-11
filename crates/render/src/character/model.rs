@@ -295,6 +295,13 @@ pub(super) fn dress_character(
         }
         let mut rig = Rig::new(skeleton);
         rig.probes = probes;
+        let at = |name: &str| named(name).and_then(|e| transforms.get(e).ok().map(|t| (e, t)));
+        if let (Some((pelvis, rest)), Some((_, knee)), Some((_, ankle))) =
+            (at("pelvis"), at("calf_l"), at("foot_l"))
+        {
+            let leg = knee.translation.length() + ankle.translation.length();
+            rig.pelvis = Some((pelvis, rest.translation, leg));
+        }
         if riding {
             let rest = |e: Entity| rest_affine(e, root, &parents, &transforms);
             match Seated::find(root, named, rest) {
@@ -312,13 +319,6 @@ pub(super) fn dress_character(
             }
             commands.entity(root).try_insert(rig);
             return;
-        }
-        let at = |name: &str| named(name).and_then(|e| transforms.get(e).ok().map(|t| (e, t)));
-        if let (Some((pelvis, rest)), Some((_, knee)), Some((_, ankle))) =
-            (at("pelvis"), at("calf_l"), at("foot_l"))
-        {
-            let leg = knee.translation.length() + ankle.translation.length();
-            rig.pelvis = Some((pelvis, rest.translation, leg));
         }
         for (k, name) in ["neck_01", "head"].into_iter().enumerate() {
             rig.look[k] = named(name).map(|e| (e, rest_frame(e, root, &parents, &transforms)));

@@ -4,7 +4,9 @@
 //! tarde puede montar un caballo; a pie y a caballo se mueve con el mismo
 //! modelo del core ([`Rider`]); el cuerpo y el ajuste los distinguen
 //! ([`Rider::travel`]). A bordo del tren ([`OnTrain`]) lo mueve, en cambio, el
-//! viaje.
+//! viaje. En una escena, con las teclas bloqueadas ([`ControlLock`]), puede
+//! caminar (o cabalgar) solo por un camino y volverse hacia alguien
+//! ([`WalkPath`]), con el mismo paso del core.
 
 use bevy::prelude::*;
 use pampa_core::{
@@ -65,7 +67,7 @@ impl Default for FootTuning {
 }
 
 /// Cómo se dibuja al jugador según cómo se desplaza (`travel`): el empleado a
-/// pie, o el empleado en la montura del bayo de Don Hidalgo, el primer caballo
+/// pie, o el empleado en la montura del alazán de Don Hidalgo, el primer caballo
 /// que monta.
 pub fn player_visual(travel: Travel) -> CharacterVisual {
     player_visual_on(travel, Coat::HIDALGO)
@@ -84,7 +86,7 @@ pub fn player_visual_on(travel: Travel, coat: Coat) -> CharacterVisual {
 }
 
 /// El pelaje del caballo que monta el jugador (o que montó por última vez): el
-/// bayo de Don Hidalgo hasta que monte otro.
+/// alazán de Don Hidalgo hasta que monte otro.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RiddenCoat(pub Coat);
 
@@ -99,6 +101,115 @@ impl Default for RiddenCoat {
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DrivePlayer;
 
+/// Si el jugador no maneja al protagonista: mientras se reproduce una escena de
+/// la historia (ver [`crate::errand`]) las teclas no lo mueven, y un caballo en
+/// marcha se detiene solo.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ControlLock(pub bool);
+
+/// Un camino que el protagonista recorre solo, al paso, mientras las teclas
+/// están bloqueadas ([`ControlLock`]): gira hacia el próximo punto y va hacia
+/// él con el mismo paso del core que las teclas (choca, pisa y anda como
+/// siempre), y lo quita al llegar. A pie camina; montado, el caballo deja la
+/// marcha que traía y frena solo (sin tirones: el roce del core) hasta el
+/// tranco, y frena del todo al llegar. Sin puntos, se vuelve en el lugar hacia
+/// `face`, si lo hay; si no, no hace nada.
+#[derive(Resource, Debug, Clone, Default, PartialEq)]
+pub struct WalkPath {
+    pub points: Vec<GroundVec2>,
+    /// Más despacio que el paso de la marcha, en m/s (entrar tímido a un
+    /// lugar); `None`, al paso.
+    pub pace: Option<f32>,
+    /// Hacia dónde se vuelve cuando no camina: hacia quien le habla.
+    pub face: Option<GroundVec2>,
+}
+
+impl WalkPath {
+    /// El camino por `points`, al paso.
+    pub fn along(points: Vec<GroundVec2>) -> Self {
+        Self {
+            points,
+            ..default()
+        }
+    }
+
+    /// Si todavía tiene puntos que recorrer.
+    pub fn walking(&self) -> bool {
+        !self.points.is_empty()
+    }
+}
+
+/// A qué distancia de un punto de [`WalkPath`] se lo da por alcanzado, en
+/// metros.
+const ARRIVED: f32 = 0.2;
+
+/// Hasta qué velocidad se da por llegado al último punto de [`WalkPath`], en
+/// m/s: un caballo que pasa de largo al galope frena y vuelve.
+const ARRIVAL_SPEED: f32 = 1.0;
+
+/// Cuánto puede apartarse el rumbo de `face` en [`WalkPath`] para darse por
+/// vuelto hacia él, en radianes.
+const FACING: f32 = 0.05;
+
+/// Cuánto puede apartarse el rumbo del próximo punto de [`WalkPath`] para
+/// seguir caminando, en radianes; más, gira en el lugar.
+const ON_COURSE: f32 = 0.6;
+
+/// La intención que lleva a `rider` por `path`, quitando los puntos ya
+/// alcanzados: girar hacia el próximo (todo lo que alcanza en `dt` con
+/// `params`) y andar si ya lo tiene casi enfrente, sin pasar del paso (ni de
+/// `pace`) y frenando a tiempo para detenerse en el último; sin puntos,
+/// volverse en el lugar hacia `face`.
+fn walk_along(path: &mut WalkPath, rider: &Rider, params: &RiderParams, dt: f32) -> RiderInput {
+    let points = &mut path.points;
+    while points.first().is_some_and(|to| {
+        rider.position.distance(*to) <= ARRIVED
+            && (points.len() > 1 || rider.speed.abs() <= ARRIVAL_SPEED)
+    }) {
+        points.remove(0);
+    }
+    let Some(&to) = points.first().or(path.face.as_ref()) else {
+        return RiderInput::default();
+    };
+    let toward = to - rider.position;
+    let goal = toward.y.atan2(toward.x);
+    let delta = (goal - rider.heading.radians() + std::f32::consts::PI)
+        .rem_euclid(std::f32::consts::TAU)
+        - std::f32::consts::PI;
+    let reach = (params.turn_rate * dt).max(f32::EPSILON);
+    let turn = (delta / reach).clamp(-1.0, 1.0);
+    if points.is_empty() && rider.speed.abs() <= ARRIVAL_SPEED {
+        // Solo se vuelve hacia quien le habla.
+        let turn = if delta.abs() < FACING { 0.0 } else { turn };
+        return RiderInput { turn, ..default() };
+    }
+    // Lo que queda hasta el último punto, y la velocidad desde la que el roce
+    // lo detiene justo ahí.
+    let left: f32 = std::iter::once(rider.position)
+        .chain(points.iter().copied())
+        .collect::<Vec<_>>()
+        .windows(2)
+        .map(|w| w[0].distance(w[1]))
+        .sum();
+    if rider.speed > params.walk_max + ARRIVAL_SPEED / 2.0 {
+        // Más rápido que el paso (al galope, corriendo): primero lo deja, sin
+        // tirones y derecho, sin doblar de golpe; después vuelve.
+        return RiderInput::default();
+    }
+    let stopping = (2.0 * params.friction * left).sqrt();
+    let top = path.pace.unwrap_or(params.walk_max).min(stopping);
+    let on_course = delta.abs() < ON_COURSE;
+    RiderInput {
+        throttle: if on_course && rider.speed < top {
+            1.0
+        } else {
+            0.0
+        },
+        turn,
+        ..default()
+    }
+}
+
 pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
@@ -109,6 +220,8 @@ impl Plugin for PlayerPlugin {
             .init_resource::<GameWorld>()
             .init_resource::<PlayerSpawn>()
             .init_resource::<StreamFocus>()
+            .init_resource::<ControlLock>()
+            .init_resource::<WalkPath>()
             .add_systems(Startup, spawn_player)
             .add_systems(
                 Update,
@@ -207,16 +320,22 @@ pub(crate) fn drive_player(
     mut taps: ResMut<SprintTaps>,
     (tuning, foot): (Res<PlayerTuning>, Res<FootTuning>),
     world: Res<GameWorld>,
+    (lock, mut path): (Res<ControlLock>, Option<ResMut<WalkPath>>),
     mut players: Query<(&mut Player, &mut Transform, &mut VisualPose), Without<OnTrain>>,
 ) {
     let shift = [KeyCode::ShiftLeft, KeyCode::ShiftRight];
-    let input = RiderInput {
-        sprint: taps.update(
-            keys.any_just_pressed(shift),
-            keys.any_pressed(shift),
-            time.elapsed_secs(),
-        ),
-        ..read_input(&keys)
+    let sprint = taps.update(
+        keys.any_just_pressed(shift),
+        keys.any_pressed(shift),
+        time.elapsed_secs(),
+    );
+    let input = if lock.0 {
+        RiderInput::default()
+    } else {
+        RiderInput {
+            sprint,
+            ..read_input(&keys)
+        }
     };
     let dt = time.delta_secs().min(MAX_STEP);
     for (mut player, mut transform, mut pose) in &mut players {
@@ -226,9 +345,15 @@ pub(crate) fn drive_player(
             Travel::Riding => &tuning.0,
         };
         let before = rider.heading;
-        if keys.just_pressed(JUMP_KEY) {
+        if keys.just_pressed(JUMP_KEY) && !lock.0 {
             rider.jump(params);
         }
+        let input = match path.as_deref_mut() {
+            Some(path) if lock.0 && (path.walking() || path.face.is_some()) => {
+                walk_along(path, rider, params, dt)
+            }
+            _ => input,
+        };
         rider.step(input, params, &world.0, dt);
         transform.translation = world_from_ground(rider.position, rider.elevation());
         *pose = VisualPose {
@@ -621,7 +746,7 @@ mod tests {
             *q.single(app.world()).unwrap(),
             CharacterVisual::Mounted {
                 rider: FigureKind::Protagonist,
-                coat: Coat::Bayo,
+                coat: Coat::HIDALGO,
             }
         );
     }

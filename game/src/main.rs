@@ -13,17 +13,20 @@ mod console;
 mod errand;
 mod fauna;
 mod first_person;
+mod inventory;
 mod life;
 mod menu;
 mod orbit;
 mod plant_collision;
 mod player;
+mod pulperia;
 mod ride;
 #[cfg(test)]
 mod settlement_tests;
 mod timetable;
 mod towns;
 mod travellers;
+mod wallet;
 
 use bevy::prelude::*;
 use pampa_content::{SLOTS_FILE, TOWNS_FILE, asset_path, load_model_slots};
@@ -33,9 +36,9 @@ use pampa_core::{
 use pampa_render::{
     AssetRoot, AtmospherePlugin, CharacterVisualPlugin, FadePlugin, FencePlugin, FloraPlugin,
     HudPlugin, LagoonPlugin, LampPlugin, MinimapPlugin, RailPlugin, RoadPlugin, SettlementPlugin,
-    SignPlugin, SpeechBubblePlugin, StreamFocus, TerrainPlugin, ThinFadePlugin, TownPlugin,
-    TrainPlugin, VehiclePlugin, WorldChunks, WorldClock, WorldFences, WorldFlora, WorldLamps,
-    WorldRail, WorldSettlements, WorldTerrain, WorldTowns, WorldTrains,
+    SignPlugin, SpeechBubblePlugin, StallPlugin, StreamFocus, TerrainPlugin, ThinFadePlugin,
+    TownPlugin, TrainPlugin, VehiclePlugin, WorldChunks, WorldClock, WorldFences, WorldFlora,
+    WorldLamps, WorldRail, WorldSettlements, WorldTerrain, WorldTowns, WorldTrains,
 };
 
 /// Los ajustes de los modelos de terceros en las ranuras de modelo
@@ -329,7 +332,7 @@ fn main() {
             .set(pampa_render::gltf::asset_plugin(&root)),
         TerrainPlugin::default(),
         FloraPlugin,
-        TownPlugin,
+        (TownPlugin, StallPlugin),
         RailPlugin,
         SignPlugin,
         MinimapPlugin,
@@ -372,8 +375,16 @@ fn main() {
     .add_plugins(LagoonPlugin)
     // El polvo y las salpicaduras que levantan vasos, ruedas y pies.
     .add_plugins(pampa_render::DustPlugin)
-    // El encargo, y el reloj y el objetivo en la esquina.
-    .add_plugins((errand::ErrandPlugin, timetable::TimetablePlugin, HudPlugin))
+    // El encargo, el reloj y el objetivo en la esquina, los subtítulos y el
+    // inventario de la I.
+    .add_plugins((
+        errand::ErrandPlugin,
+        inventory::InventoryPlugin,
+        timetable::TimetablePlugin,
+        pulperia::PulperiaPlugin,
+        HudPlugin,
+        pampa_render::SubtitlePlugin,
+    ))
     // Subir, viajar, omitir y esperar el tren, con un fundido para tapar los
     // saltos en el tiempo.
     .add_plugins((ride::RidePlugin, FadePlugin))

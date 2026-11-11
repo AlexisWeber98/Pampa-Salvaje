@@ -12,6 +12,7 @@
 pub mod clips;
 #[cfg(test)]
 pub(crate) mod cpu;
+pub mod fade;
 pub mod figure;
 pub mod finish;
 pub mod gait;
@@ -25,11 +26,12 @@ pub mod viewer;
 pub mod visual;
 
 pub use clips::CharacterClips;
+pub use fade::Fading;
 pub use figure::{FigureBody, FigureJoint, FigureKind, FigurePart, TOWNSFOLK_LOOKS};
 pub use horse::{Coat, HorseBody, HorseModel, HorseRig};
 pub use model::{CharacterModel, CharacterModels, CharacterModelsShown};
-pub use rider::{RiderMotion, Riding, Saddle, Seated};
-pub use rig::{Rig, Talking};
+pub use rider::{RiderMotion, Riding, Rising, Saddle, Seated};
+pub use rig::{GAZE_MAX, Gaze, Rig, Talking};
 pub use tack::{HorsePiece, Strap, Tack};
 pub use townsfolk::TintCache;
 pub use viewer::{EYE_IN_HEAD, OWN_HEAD_LAYER, ViewerBody, ViewerHead};

@@ -211,10 +211,12 @@ mod tests {
         assert_eq!(links, [(1, 0), (0, 2), (2, 3), (2, 4)]);
         assert_eq!(loaded.line.branches.len(), 1);
         assert_eq!(loaded.line.branches[0].towns, [2, 4]);
-        // Los almacenes de los pueblos pequeños son pulperías; los de Pico,
-        // almacenes de ramos generales.
+        // Los almacenes de los pueblos pequeños son pulperías (la de Castex,
+        // "La Colonia"); los de Pico, almacenes de ramos generales.
         for town in &loaded.towns {
-            let expected = if town.size == TownSize::Small {
+            let expected = if town.name == "Eduardo Castex" {
+                "LA COLONIA"
+            } else if town.size == TownSize::Small {
                 "PULPERÍA"
             } else {
                 "ALMACÉN DE RAMOS GENERALES"
@@ -770,7 +772,7 @@ mod tests {
         assert_eq!(town.name, "General Alvear");
         assert_eq!(town.streets.len(), 4 + 5);
         let world = World::with_towns(loaded.world, Terrain::default(), &loaded.towns);
-        assert_eq!(world.obstacles, town.obstacles());
+        assert_eq!(world.obstacles, town.colliders());
         let (spawn, _) = town.arrival();
         assert!(world.obstacles.iter().all(|o| !o.contains_point(spawn)));
         // La estación está junto al ferrocarril, dentro de su extensión, para

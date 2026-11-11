@@ -1345,7 +1345,7 @@ pub(super) fn spawn_figure(
 /// personaje, con su andar al ritmo de la velocidad.
 pub(super) fn update_figures(
     time: Res<Time>,
-    poses: Query<&super::VisualPose>,
+    poses: Query<(&super::VisualPose, Option<&super::rig::Gaze>)>,
     mut bodies: Query<(&ChildOf, &mut FigureBody, &mut Transform), Without<FigureJoint>>,
     mut joints: Query<(&FigureJoint, &mut Transform), Without<FigureBody>>,
 ) {
@@ -1354,7 +1354,7 @@ pub(super) fn update_figures(
         // Con vuelta, sin saltos: un juego que queda corriendo mantiene un
         // reloj preciso.
         body.clock = pampa_core::tick_clock(body.clock, dt);
-        let Ok(visual) = poses.get(child_of.parent()) else {
+        let Ok((visual, gaze)) = poses.get(child_of.parent()) else {
             continue;
         };
         let idle = visual.animation == AnimationState::Idle;
@@ -1364,8 +1364,12 @@ pub(super) fn update_figures(
         transform.translation.y = angles.bob;
         // La gente parada mira a su alrededor de vez en cuando; el giro entra y
         // sale de forma gradual, así que al empezar a caminar vuelve a mirar al
-        // frente con suavidad.
-        let target = if idle {
+        // frente con suavidad. Quien mira algo ([`Gaze`](super::rig::Gaze))
+        // gira la cabeza hacia eso, sin pasarse de lo natural.
+        let max = super::rig::GAZE_MAX;
+        let target = if let Some(gaze) = gaze {
+            gaze.0.clamp(-max, max)
+        } else if idle {
             pose::glance(body.seed, body.clock)
         } else {
             0.0

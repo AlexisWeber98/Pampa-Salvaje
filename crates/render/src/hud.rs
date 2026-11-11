@@ -1,11 +1,13 @@
 //! HUD en la esquina superior izquierda: el reloj del juego (`HH:MM`), debajo
-//! el objetivo actual en una línea y, mientras el jugador viaja en el tren, la
-//! próxima estación y su hora de llegada.
+//! la plata del protagonista ("$ 1,50"), el objetivo actual en una línea y,
+//! mientras el jugador viaja en el tren, la próxima estación y su hora de
+//! llegada.
 //!
 //! Todos son [`Text`] de UI rotulados en IM Fell English ([`Typefaces`]), tinta
 //! sobre el mismo panel de papel que el minimapa, y se reescriben solo cuando
 //! cambia su texto (el reloj, una vez por minuto de juego). El reloj viene de
-//! [`WorldClock`]; el juego fija el objetivo mediante [`HudObjective`], la
+//! [`WorldClock`]; el juego fija la plata mediante [`HudMoney`], el objetivo
+//! mediante [`HudObjective`], la
 //! línea del viaje mediante [`HudRide`], y una pista de tecla debajo de ella
 //! mediante [`HudHint`] (la vista del viaje, "V: vista - ventana", en cursiva).
 //!
@@ -28,7 +30,16 @@ pub const LINE_PX: f32 = 20.0;
 /// Tamaño de fuente del anuncio, en píxeles lógicos.
 pub const ANNOUNCEMENT_PX: f32 = 28.0;
 
-/// El objetivo de una línea debajo del reloj; `None` lo oculta.
+/// La plata del protagonista, ya escrita ("$ 1,50"), debajo del reloj; `None`
+/// la oculta.
+#[derive(Resource, Debug, Clone, Default, PartialEq)]
+pub struct HudMoney(pub Option<String>);
+
+/// El nodo de texto que rotula la plata.
+#[derive(Component, Debug)]
+pub struct HudMoneyLine;
+
+/// El objetivo de una línea debajo de la plata; `None` lo oculta.
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct HudObjective(pub Option<String>);
 
@@ -63,6 +74,8 @@ pub struct HudAnnouncementLine;
 pub struct Hud {
     /// El reloj tal como se dibuja, `HH:MM`; vacío sin un [`WorldClock`].
     pub clock: String,
+    /// La plata tal como se dibuja, si la hay.
+    pub money: Option<String>,
     /// El objetivo tal como se dibuja, si lo hay.
     pub objective: Option<String>,
     /// La línea del viaje tal como se dibuja, si la hay.
@@ -92,12 +105,16 @@ impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Hud>()
             .init_resource::<Typefaces>()
+            .init_resource::<HudMoney>()
             .init_resource::<HudObjective>()
             .init_resource::<HudRide>()
             .init_resource::<HudAnnouncement>()
             .init_resource::<HudHint>()
             .add_systems(Startup, (spawn_hud, spawn_announcement))
-            .add_systems(PostUpdate, (update_hud, update_announcement, update_hint));
+            .add_systems(
+                PostUpdate,
+                (update_hud, update_money, update_announcement, update_hint),
+            );
     }
 }
 
@@ -164,11 +181,28 @@ fn spawn_hud(mut commands: Commands, faces: Res<Typefaces>) {
             ))
             .with_children(|panel| {
                 panel.spawn((HudClock, line(&faces.body, CLOCK_PX)));
+                panel.spawn((HudMoneyLine, line(&faces.body, LINE_PX)));
                 panel.spawn((HudObjectiveLine, line(&faces.body, LINE_PX)));
                 panel.spawn((HudRideLine, line(&faces.body, LINE_PX)));
                 panel.spawn((HudHintLine, line(&faces.italic, LINE_PX)));
             });
         });
+}
+
+/// Reescribe la plata cuando su texto cambió.
+fn update_money(
+    money: Res<HudMoney>,
+    mut hud: ResMut<Hud>,
+    mut lines: Query<Line, With<HudMoneyLine>>,
+) {
+    if money.0 == hud.money {
+        return;
+    }
+    let text = money.0.clone().unwrap_or_default();
+    for (mut line, mut node) in &mut lines {
+        set_line(&text, &mut line, &mut node);
+    }
+    hud.money = money.0.clone();
 }
 
 /// Reescribe la pista de tecla cuando su texto cambió.
@@ -306,7 +340,7 @@ mod tests {
     use super::*;
     use crate::lettering::{self, Face};
     use bevy::asset::uuid_handle;
-    use pampa_core::{ErrandStage, GameClock, TimeOfDay};
+    use pampa_core::{GameClock, TimeOfDay};
 
     fn body() -> Handle<Font> {
         uuid_handle!("00000000-0000-0000-0000-000000000001")
@@ -376,13 +410,32 @@ mod tests {
     }
 
     #[test]
+    fn shows_the_money_under_the_clock_as_it_changes() {
+        let mut app = app();
+        app.update();
+        assert_eq!(line_of::<HudMoneyLine>(&mut app).1, Display::None);
+        let shown = pampa_core::Money::new(1, 50).to_string();
+        app.insert_resource(HudMoney(Some(shown.clone())));
+        app.update();
+        let (text, display, font, color) = line_of::<HudMoneyLine>(&mut app);
+        assert_eq!(text, "$ 1,50");
+        assert_eq!(display, Display::Flex);
+        assert_eq!(font, lettered(body(), 20.0));
+        assert_eq!(color, rgba(palette::INK));
+        for c in "$ 0123456789,".chars() {
+            assert!(lettering::supports(Face::Body, c), "{c}");
+        }
+        app.insert_resource(HudMoney(Some(pampa_core::Money::new(3, 0).to_string())));
+        app.update();
+        assert_eq!(line_of::<HudMoneyLine>(&mut app).0, "$ 3,00");
+    }
+
+    #[test]
     fn shows_the_objective_line_only_while_there_is_one() {
         let mut app = app();
         app.update();
         assert_eq!(line_of::<HudObjectiveLine>(&mut app).1, Display::None);
-        let text = ErrandStage::MeetHidalgo
-            .objective("Eduardo Castex")
-            .unwrap();
+        let text = "Buscá a Don Hidalgo en la plaza".to_string();
         app.insert_resource(HudObjective(Some(text.clone())));
         app.update();
         assert_eq!(app.world().resource::<Hud>().objective, Some(text.clone()));
@@ -397,22 +450,10 @@ mod tests {
         assert_eq!(line_of::<HudObjectiveLine>(&mut app).1, Display::None);
     }
 
+    /// Los objetivos vienen del archivo de la historia: el juego comprueba sus
+    /// caracteres (ver `game::errand`).
     #[test]
-    fn every_objective_and_clock_reading_uses_only_characters_the_typeface_draws() {
-        use ErrandStage::*;
-        let towns = ["Eduardo Castex", "Monte Nievas", "General Pico"];
-        for (stage, town) in [MeetHidalgo, TakeHorse, ReportToFarach, Done]
-            .into_iter()
-            .flat_map(|stage| towns.map(|town| (stage, town)))
-        {
-            if let Some(text) = stage.objective(town) {
-                let bad: Vec<char> = text
-                    .chars()
-                    .filter(|&c| !lettering::supports(Face::Body, c))
-                    .collect();
-                assert!(bad.is_empty(), "{text}: {bad:?}");
-            }
-        }
+    fn every_clock_reading_uses_only_characters_the_typeface_draws() {
         for c in "0123456789:".chars() {
             assert!(lettering::supports(Face::Body, c), "{c}");
         }

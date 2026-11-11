@@ -9,6 +9,7 @@
 //! necesita ningún cambio.
 
 use crate::character::viewer::world_layers;
+use crate::pulperia::IndoorDim;
 use crate::sky::astro;
 use bevy::light::{CascadeShadowConfig, CascadeShadowConfigBuilder, EnvironmentMapLight};
 use bevy::prelude::*;
@@ -315,9 +316,10 @@ fn spawn_sun(mut commands: Commands) {
 }
 
 /// Ilumina el mundo según la hora del reloj: el sol (o la luna), la luz
-/// ambiente, el color de fondo y el color de la niebla de cada cámara.
+/// ambiente, el color de fondo y el color de la niebla de cada cámara. Con la
+/// cámara dentro de una pulpería la luz ambiente baja ([`IndoorDim`]).
 fn follow_the_clock(
-    clock: Option<Res<WorldClock>>,
+    (clock, dim): (Option<Res<WorldClock>>, Option<Res<IndoorDim>>),
     mut sun: Query<(&mut DirectionalLight, &mut Transform), With<Sun>>,
     mut ambient: ResMut<GlobalAmbientLight>,
     environment: Option<Res<EnvironmentShare>>,
@@ -343,7 +345,8 @@ fn follow_the_clock(
     let share = environment
         .filter(|_| in_effect)
         .map_or(0.0, |share| share.0);
-    ambient.brightness = sky.ambient_brightness * (1.0 - share);
+    let indoors = dim.map_or(1.0, |d| d.factor());
+    ambient.brightness = sky.ambient_brightness * (1.0 - share) * indoors;
     clear.0 = sky.haze;
     for mut fog in &mut fogs {
         *fog = haze_fog(&sky);

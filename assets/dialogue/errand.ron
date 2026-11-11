@@ -1,30 +1,99 @@
-// El primer encargo: Don Hidalgo, en la plaza de Monte Nievas, manda al jugador
-// a ver al comisario Elías Farach en la comisaría de Castex. Ver README.md en
-// esta carpeta para las reglas (caracteres, longitud).
+// La historia del capítulo 1, paso a paso (actos 2 a 5 de `historia`): Don
+// Hidalgo, en la plaza de Monte Nievas, manda al jugador a ver al comisario
+// Elías Farach en la comisaría de Castex. Ver README.md en esta carpeta para
+// las reglas (pasos, escenas, caracteres, longitud).
 (
-    // Don Hidalgo, cuando el jugador le habla en la plaza. Una línea tras otra,
-    // unos segundos cada una.
-    hidalgo: [
-        "¡Buenas! Usted es el que llegó en tren.",
-        "Acá en Monte Nievas no hay comisaría.",
-        "Preséntese en la comisaría de Castex.",
-        "Lo espera el comisario Elías Farach.",
-        "Llévese mi caballo, el del almacén.",
-        "Castex queda al oeste, siguiendo la vía.",
-    ],
-    // El jugador, junto al caballo de Don Hidalgo antes de hablar con él.
+    // El pueblo a cuya comisaría la historia envía al jugador, por su nombre en
+    // world/towns.ron (los objetivos lo nombran con {town}). Sin él, o cuando
+    // ese pueblo no tiene comisaría, el otro pueblo más cercano que tenga una.
+    police_town: "Eduardo Castex",
+    // El jugador, junto al caballo de Don Hidalgo antes de que se lo preste.
     not_your_horse: [
         "Este caballo no es mío.",
     ],
-    // El comisario Farach, cuando el jugador se presenta a su puerta.
-    farach: [
-        "¡Buenas! ¿Lo manda Don Hidalgo?",
-        "Soy Elías Farach, el comisario.",
-        "Bienvenido a Castex, paisano.",
-        "Quédese cerca, que trabajo no falta.",
+    // Los pasos, en orden. Cada uno pide algo al jugador (`goal`), lo dice el
+    // objetivo del HUD (`objective`) y, al cumplirlo, reproduce su escena
+    // (`scene`): líneas `Say(quién, "texto")` y acciones narradas. La historia
+    // termina después del último.
+    steps: [
+        // Acto 2. Las líneas de Don Hidalgo son un borrador: `historia` narra
+        // lo que dice sin citarlo.
+        (
+            goal: Talk(Hidalgo),
+            objective: "Buscá a Don Hidalgo en la plaza",
+            scene: [
+                Say(Hidalgo, "¡Lisandro, m’hijo! Bienvenido a Monte Nievas."),
+                Say(Hidalgo, "Escúcheme bien: en estos pagos quien manda es Farach, el comisario de Castex."),
+                Say(Hidalgo, "Acá en Monte Nievas no hay comisaría, así que va a tener que presentarse ante él."),
+                Say(Hidalgo, "Tome, le escribí de mi puño y letra una carta de presentación pa’l comisario."),
+                Receive(Letter),
+                Say(Hidalgo, "Y llévese estos tres pesos, por si lo hacen esperar o le piden algo pa’ atenderlo."),
+                Earn(pesos: 3),
+                Say(Hidalgo, "El tren ya se fue, m’hijo. Lleve mi caballo, el alazán atado en el almacén."),
+            ],
+        ),
+        (
+            goal: TakeHorse,
+            objective: "Tomá el caballo de Don Hidalgo",
+        ),
+        // Acto 3, palabra por palabra.
+        (
+            goal: Talk(Farach),
+            objective: "Presentate al comisario Farach en {town}",
+            scene: [
+                Say(Lisandro, "Buenas, Comisario, le traigo unos papeles que me envió mi tío pa’ usté’"),
+                Say(Farach, "¿y vos quien sos?"),
+                Say(Lisandro, "Soy el sobrino de Don Hidalgo, llegué hoy mismo al pueblo."),
+                Say(Farach, "Ah el viejo cascarrabias ese, si ya se… a ver pasame tus papeles."),
+                // Le entrega el sobre. Farach lee en voz alta, y se queda con
+                // los papeles.
+                HandOver(Letter),
+                Say(Farach, "Lisandro Benjamin Andrada, nacido en General Pico, desempleado, zoncera, zoncera…"),
+                Say(Farach, "Bueno Pibe, te aviso que en estos pagos mando yo,"),
+                Say(Farach, "así que si no queres tener problema no te hagas el guapo y no andés holgazaneando,"),
+                Say(Farach, "que a los vagos como vos los tengo cortitos."),
+                Say(Farach, "Quedate cerca que a la noche te devuelvo tus papeles firmados."),
+            ],
+        ),
+        // Acto 4, palabra por palabra: Bairoletto espera sentado a una mesa
+        // de la pulpería de Castex, "La colonia", golpeado, tomando algo.
+        // Empieza solo cuando el jugador llega a pie por la vereda a la puerta
+        // abierta: Lisandro entra tímido, se detiene a mirar el lugar,
+        // Bairoletto lo ve y lo llama con su primera línea, y Lisandro va hasta
+        // su mesa. Después se levanta y se va, y el jugador queda libre hasta
+        // la noche.
+        (
+            goal: Talk(Bairoletto),
+            objective: "Andá a la pulpería La Colonia",
+            scene: [
+                Say(Bairoletto, "Che pibe, ese caballo que está afuera… ¿Es tuyo?"),
+                Say(Lisandro, "Si, es de mi tìo."),
+                Say(Bairoletto, "¿Queres ganarte unos pesos? Necesito transporte para esta noche."),
+                Say(Lisandro, "si, ¿hasta donde necesita ir?"),
+                Say(Bairoletto, "A la noche te digo, ¿Cómo te llamas?"),
+                Say(Lisandro, "Lisandro."),
+                Say(Bairoletto, "Yo soy Bairoletto, pero me dicen Tano. Nos vemos a la noche en esta pulpería."),
+            ],
+        ),
+        // Los actos siguientes se agregan aquí como pasos nuevos.
     ],
-    // El pueblo a cuya comisaría el encargo envía al jugador, por su nombre en
-    // world/towns.ron (el objetivo del HUD también lo nombra). Sin él, o cuando
-    // ese pueblo no tiene comisaría, el otro pueblo más cercano que tenga una.
-    police_town: "Eduardo Castex",
+    // Acto 5, palabra por palabra: "Al hacer una cuadra, un puestero, viejo,
+    // vendiendo quesos." No es un paso de la historia: el Viejo Amadeo llama
+    // al jugador la primera vez que pasa junto a su puesto, en la vereda, a una
+    // cuadra de La Colonia, en cualquier momento del juego (antes, durante o
+    // después del encargo), una sola vez. Sin aviso (sin objetivo ni destino
+    // en el mapa). Lisandro se le acerca, y después esta escena. Las dos
+    // líneas largas van cortadas en dos, sin cambiar ninguna palabra.
+    amadeo: [
+        Say(Amadeo, "¡Aparcero! Venga, acérquese, ¿Es nuevo en el pueblo?"),
+        Say(Amadeo, "¿Le gustaría probar el mejor queso de todo el pago?"),
+        Say(Lisandro, "Buenas, ¿los hace uste’?"),
+        Say(Amadeo, "Me extraña m’hijo, ¡pero claro! Leche sacada de mis propias vacas, ordeñadas con estas mismas manos."),
+        Say(Lisandro, "Se ven muy buenos, pero mejor otro día señor, ando medio corto de plata."),
+        // Entregándole un pedazo de queso.
+        Say(Amadeo, "No se haga problema joven, tome, llévese un pedazo,"),
+        Receive(Cheese),
+        Say(Amadeo, "y si le gusta vuelva cuando quiera que aquí voy a estar."),
+        Say(Lisandro, "Le agradezco mucho señor."),
+    ],
 )

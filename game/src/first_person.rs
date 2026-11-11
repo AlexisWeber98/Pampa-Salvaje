@@ -44,7 +44,7 @@ use pampa_core::{Heading, Travel};
 use pampa_render::character::viewer::{close_layers, first_person_layers, world_layers};
 use pampa_render::{CloseShadows, EYE_IN_HEAD, ViewerHead, VisualPose};
 
-use crate::camera::{CameraInput, CameraRig, CameraTuning, FollowCamera, VIEW_KEY};
+use crate::camera::{CameraInput, CameraRig, CameraTuning, FollowCamera, SceneShot, VIEW_KEY};
 use crate::orbit::{OrbitInput, OrbitParams, angle_between};
 use crate::player::Player;
 use crate::ride::OnTrain;
@@ -374,7 +374,7 @@ type Heads<'w, 's> = (
 /// ([`BodyTooClose`]). No reserva memoria.
 pub(crate) fn place_first_person(
     time: Res<Time>,
-    (mode, look): (Res<ViewMode>, Res<FirstPersonLook>),
+    (mode, look, shot): (Res<ViewMode>, Res<FirstPersonLook>, Option<Res<SceneShot>>),
     (mut blend, mut eye, mut shadows, mut too_close): FirstPersonState,
     player: Single<(Entity, &Player, &Transform, Has<OnTrain>), Without<FollowCamera>>,
     (heads, parents): Heads,
@@ -392,7 +392,10 @@ pub(crate) fn place_first_person(
     let (me, player, feet, aboard) = player.into_inner();
     let (mut transform, mut global, mut projection, mut layers) = camera.into_inner();
     let dt = time.delta_secs();
-    let first = *mode == ViewMode::FirstPerson && !aboard;
+    // Una escena tiene su propio encuadre ([`SceneShot`]): los ojos lo
+    // dejan mientras dura y vuelven al terminar.
+    let scene = shot.is_some_and(|s| s.0.is_some());
+    let first = *mode == ViewMode::FirstPerson && !aboard && !scene;
     if aboard {
         blend.0 = 0.0;
     } else if *was_aboard && first {
@@ -644,6 +647,42 @@ mod tests {
         assert!(sees_own_head(&layers), "the head drawn from the orbit");
         assert_eq!(fov_near(&lens), fov_near(&PerspectiveProjection::default()));
         assert!(!app.world().resource::<CloseShadows>().0);
+    }
+
+    #[test]
+    fn a_scene_leaves_the_eyes_for_its_shot_and_then_returns_to_them() {
+        let mut app = app(Travel::OnFoot);
+        app.insert_resource(ViewMode::FirstPerson);
+        frames(&mut app, 25);
+        let eyes = feet(&mut app) + Vec3::Y * FOOT_EYE_HEIGHT;
+        assert!(camera(&mut app).0.translation.distance(eyes) < 1e-3);
+        // Quien habla, a 3 m al este de un jugador que mira al norte.
+        let other = rider(&mut app).position + GroundVec2::new(3.0, 0.0);
+        app.insert_resource(SceneShot(Some(other)));
+        frames(&mut app, 25);
+        let (shot, layers, _) = camera(&mut app);
+        assert!(
+            shot.translation.distance(eyes) > 1.0,
+            "{}",
+            shot.translation
+        );
+        let east = (world_from_ground(other, 0.0)
+            - world_from_ground(rider(&mut app).position, 0.0))
+        .normalize();
+        let ahead = Vec3::new(shot.forward().x, 0.0, shot.forward().z).normalize();
+        assert!(
+            ahead.dot(east) > 0.9,
+            "facing the speaker: {}",
+            shot.forward()
+        );
+        assert!(sees_own_head(&layers), "the player is in the shot");
+        // El modo elegido sigue siendo la primera persona: al terminar, de
+        // vuelta a los ojos.
+        app.insert_resource(SceneShot(None));
+        frames(&mut app, 25);
+        assert_eq!(*app.world().resource::<ViewMode>(), ViewMode::FirstPerson);
+        let at = camera(&mut app).0.translation;
+        assert!(at.distance(eyes) < 1e-3, "{at} vs {eyes}");
     }
 
     #[test]

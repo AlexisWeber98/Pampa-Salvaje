@@ -89,6 +89,22 @@ impl StoreStyle {
     }
 }
 
+/// Las pulperías con nombre propio, por pueblo: el nombre del pueblo y lo que
+/// dice el cartel de su pulpería en lugar de "PULPERÍA" (acto 4 de
+/// `historia`: la pulpería de Castex, "La colonia").
+pub const NAMED_PULPERIAS: &[(&str, &str)] = &[("Eduardo Castex", "LA COLONIA")];
+
+/// Lo que dice el cartel del comercio del pueblo `town` de tamaño `size`: el
+/// nombre propio de su pulpería ([`NAMED_PULPERIAS`]) o, si no tiene, el de
+/// su [`StoreStyle`].
+pub fn store_sign(size: TownSize, town: &str) -> &'static str {
+    let style = StoreStyle::of(size);
+    NAMED_PULPERIAS
+        .iter()
+        .find(|(name, _)| style == StoreStyle::Pulperia && *name == town)
+        .map_or_else(|| style.sign(), |(_, sign)| sign)
+}
+
 /// Cómo se sostiene un cartel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SignMount {
@@ -231,7 +247,7 @@ impl TownLayout {
         };
         let name = match kind {
             PlaceKind::Station => format!("{} {}", kind.name(), self.name.to_uppercase()),
-            PlaceKind::GeneralStore => StoreStyle::of(self.size).sign().to_string(),
+            PlaceKind::GeneralStore => store_sign(self.size, &self.name).to_string(),
             _ => kind.name().to_string(),
         };
         areas
@@ -535,7 +551,7 @@ mod tests {
                 assert!(!p.name.trim().is_empty());
                 assert_eq!(p.name, p.name.to_uppercase(), "{}", p.name);
                 let sign = match p.kind {
-                    PlaceKind::GeneralStore => StoreStyle::of(t.size).sign(),
+                    PlaceKind::GeneralStore => store_sign(t.size, &t.name),
                     kind => kind.name(),
                 };
                 let bank = p.kind == PlaceKind::Bank && BANK_NAMES.contains(&p.name.as_str());
@@ -560,9 +576,11 @@ mod tests {
         }
         // El comercio de un pueblo chico es una pulpería; el de un pueblo
         // grande, un almacén de ramos generales.
-        assert_eq!(town().size, crate::TownSize::Small);
+        let mut small = town();
+        small.name = "Metileo".into();
+        assert_eq!(small.size, crate::TownSize::Small);
         assert_eq!(
-            place(&town(), PlaceKind::GeneralStore).unwrap().name,
+            place(&small, PlaceKind::GeneralStore).unwrap().name,
             "PULPERÍA"
         );
         let big = TownLayout::generate(&crate::TownConfig {
@@ -581,6 +599,24 @@ mod tests {
             place(&town(), PlaceKind::Station).unwrap().name,
             "ESTACIÓN EDUARDO CASTEX"
         );
+    }
+
+    #[test]
+    fn the_castex_pulperia_is_la_colonia_and_every_other_store_keeps_its_sign() {
+        let store = |t: &TownLayout| place(t, PlaceKind::GeneralStore).unwrap().name;
+        let castex = town();
+        assert_eq!(castex.name, "Eduardo Castex");
+        assert_eq!(store(&castex), "LA COLONIA");
+        for name in ["Monte Nievas", "Metileo", "Caleufú"] {
+            let mut other = castex.clone();
+            other.name = name.into();
+            assert_eq!(store(&other), "PULPERÍA", "{name}");
+        }
+        // Un Castex grande no tendría pulpería: su almacén sigue siendo de
+        // ramos generales.
+        let mut big = castex.clone();
+        big.size = crate::TownSize::Big;
+        assert_eq!(store(&big), "ALMACÉN DE RAMOS GENERALES");
     }
 
     #[test]

@@ -15,15 +15,11 @@
 
 use bevy::prelude::*;
 use pampa_core::places::side_normal;
-use pampa_core::{
-    Ability, BoardRow, Bound, Errand, Interaction, Service, TownLayout, Travel, Vec2 as GroundVec2,
-    station_board,
-};
+use pampa_core::{BoardRow, Bound, Service, TownLayout, Travel, Vec2 as GroundVec2, station_board};
 use pampa_render::hud::{LINE_PX, ink_font, panel_colors};
 use pampa_render::{ScreenFade, Typefaces, WorldTowns, WorldTrains};
 
-use crate::abilities::PlayerAbilities;
-use crate::errand::{ErrandRun, INTERACT_KEY, LooseHorse, Mountable};
+use crate::errand::{FClaims, INTERACT_KEY};
 use crate::player::Player;
 use crate::ride::OnTrain;
 
@@ -94,10 +90,6 @@ pub fn board_in_reach(
 }
 
 /// Si el encargo tiene a alguien o algo con qué actuar en `at` al pulsar F.
-fn errand_wants_f(errand: &Errand, at: GroundVec2) -> bool {
-    errand.clone().interact(at) != Interaction::Nothing
-}
-
 /// Una fila del tablero tal como la rotula el panel, en español.
 pub fn row_text(row: &BoardRow) -> String {
     let service = match row.service {
@@ -140,10 +132,8 @@ fn read_board(
     keys: Option<ResMut<ButtonInput<KeyCode>>>,
     towns: Option<Res<WorldTowns>>,
     trains: Option<Res<WorldTrains>>,
-    errand: Option<Res<ErrandRun>>,
     fade: Option<Res<ScreenFade>>,
-    (loose, abilities): (Option<Res<LooseHorse>>, Option<Res<PlayerAbilities>>),
-    horses: Query<&Mountable>,
+    claims: FClaims,
     players: Query<(&Player, Option<&OnTrain>)>,
     mut state: ResMut<Timetables>,
 ) {
@@ -201,15 +191,7 @@ fn read_board(
     };
     // La F es para el encargo, o para un caballo, cuando alguno está al
     // alcance.
-    let at = rider.position;
-    let horse_in_reach = loose
-        .and_then(|l| l.0)
-        .is_some_and(|h| at.distance(h.position) <= Errand::MOUNT_RANGE)
-        || abilities.is_some_and(|a| a.0.has(Ability::Ride))
-            && horses
-                .iter()
-                .any(|h| at.distance(h.0.position) <= Errand::MOUNT_RANGE);
-    if horse_in_reach || errand.is_some_and(|e| errand_wants_f(&e.0, at)) {
+    if claims.taken(rider.position) {
         return;
     }
     state.open = Some(town);
@@ -316,6 +298,7 @@ fn draw_ui(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::errand::{ErrandRun, LooseHorse, errand_wants_f};
     use crate::ride::testing::{press, shipped_app_at};
     use pampa_core::{GameClock, Heading, Npc, TetheredHorse, TimeOfDay};
     use pampa_render::lettering::{self, Face};

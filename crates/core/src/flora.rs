@@ -1691,10 +1691,17 @@ pub(crate) mod tests {
     #[test]
     fn grassland_is_where_the_tufts_grow_and_not_on_the_track_or_in_town() {
         let (world, line, flora) = site();
-        let tufts: Vec<Tuft> = between().into_iter().flat_map(|c| flora.chunk(c).tufts).collect();
+        let tufts: Vec<Tuft> = between()
+            .into_iter()
+            .flat_map(|c| flora.chunk(c).tufts)
+            .collect();
         assert!(!tufts.is_empty());
         assert!(tufts.iter().all(|t| flora.grassland(t.at)));
-        let mid = line.segments().nth(3).map(|s| (s.start + s.end) * 0.5).unwrap();
+        let mid = line
+            .segments()
+            .nth(3)
+            .map(|s| (s.start + s.end) * 0.5)
+            .unwrap();
         assert!(!flora.grassland(mid), "on the track at {mid:?}");
         assert!(!flora.grassland(Vec2::new(3000.0, -2000.0)), "in town");
         assert!(!flora.grassland(world.bounds.min), "on the world's edge");

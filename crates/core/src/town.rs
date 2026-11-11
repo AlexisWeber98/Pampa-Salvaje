@@ -1573,6 +1573,36 @@ impl TownLayout {
             .collect()
     }
 
+    /// La pulpería del pueblo, si es un pueblo chico
+    /// ([`crate::places::StoreStyle::Pulperia`]), con su interior.
+    pub fn pulperia(&self) -> Option<(&Building, crate::pulperia::Interior)> {
+        if crate::places::StoreStyle::of(self.size) != crate::places::StoreStyle::Pulperia {
+            return None;
+        }
+        let store = self
+            .buildings
+            .iter()
+            .find(|b| b.kind == BuildingKind::GeneralStore)?;
+        Some((store, crate::pulperia::Interior::of(store)))
+    }
+
+    /// Con qué chocan de verdad las personas, los caballos y la cámara: los
+    /// [`Self::obstacles`], salvo que la huella de la pulpería se cambia por sus
+    /// paredes, con el hueco de la puerta, y sus muebles. Ubicar cosas
+    /// alrededor sigue usando [`Self::obstacles`], con la huella entera.
+    pub fn colliders(&self) -> Vec<Aabb> {
+        let mut out = self.obstacles();
+        if let Some((store, inside)) = self.pulperia() {
+            // Los edificios van primero en los obstáculos: la primera caja
+            // igual a su huella es la suya.
+            if let Some(i) = out.iter().position(|o| *o == store.collider()) {
+                out.remove(i);
+            }
+            out.extend(inside.obstacles());
+        }
+        out
+    }
+
     /// Dónde empieza un jinete que llega desde la pampa abierta: en el camino
     /// principal fuera de la cuadrícula, del lado opuesto a la vía férrea,
     /// mirando hacia el pueblo.
@@ -5319,11 +5349,14 @@ pub(crate) mod tests {
         // cartel (2026-10-28): los carteles de los lugares forman parte de la
         // huella digital. Diez se volvieron a fijar cuando cada pueblo recibió
         // su banco (2026-11-02): su manzana deja de tener casas; Tres, una
-        // aldea, no cambia.
+        // aldea, no cambia. Los dos Eduardo Castex se volvieron a fijar
+        // cuando su pulpería pasó a llamarse "LA COLONIA" (2026-11-10, acto
+        // 4): el cartel forma parte de la huella digital; los demás no
+        // cambian.
         let pinned = [
             0xbd5c_a792_8123_334c,
-            0x375c_3e68_f134_1024,
-            0x7661_0465_87c8_e36d,
+            0x35e8_cd03_36f4_474f,
+            0x0ee2_dc82_373e_6dac,
             0x9ae4_22ce_389c_9bee,
             0x4d89_5840_612f_7b5e,
             0xec1d_b647_4e8a_e8f5,

@@ -65,10 +65,11 @@ use std::f32::consts::FRAC_PI_2;
 use bevy::math::Affine3A;
 use bevy::prelude::*;
 
+use super::clips::CharacterClips;
 use super::figure::FigureKind;
 use super::horse::{HorseBody, HorseModel, transform_of};
 use super::model::{CharacterModel, CharacterModels, ModelPending};
-use super::rig::Rig;
+use super::rig::{GAZE_MAX, Gaze, Rig, fit_pelvis};
 use super::tack::{STIRRUP, Strap, Tack};
 
 /// El modelo de un jinete, sentado en un caballo: en la raíz del modelo, hijo
@@ -81,6 +82,21 @@ pub struct Riding {
     pub kind: FigureKind,
     pub seed: u32,
 }
+
+/// Marca a un [`Riding`] sentado en un banco, sin riendas: reproduce
+/// [`AT_REST`](super::rig::AT_REST), con las manos en el regazo, en vez del
+/// clip de las riendas.
+#[derive(Component, Debug, Clone, Copy, Default)]
+pub struct OnBench;
+
+/// A qué altura del piso está la parte de arriba de un banco ([`OnBench`]): el
+/// de una mesa de pulpería. Las piernas bajan hasta que las suelas apoyan en
+/// ese piso.
+pub const BENCH_HEIGHT: f32 = pampa_core::pulperia::BENCH_HEIGHT;
+
+/// Hacia dónde se doblan las rodillas de alguien sentado en un banco, primero
+/// la izquierda y después la derecha: hacia adelante y apenas hacia afuera.
+pub const BENCH_KNEE_POLE: [Vec3; 2] = [Vec3::new(0.2, 0.3, 1.0), Vec3::new(-0.2, 0.3, 1.0)];
 
 /// A qué altura por encima de la parte superior del pellón está la articulación
 /// de la pelvis del jinete: el fondillo de los pantalones del protagonista está
@@ -429,6 +445,9 @@ pub struct Seated {
     /// izquierdo y después el derecho: su piso bajo la almohadilla del pie y su
     /// argolla atravesada.
     pub stirrups: [Transform; 2],
+    /// A qué altura sobre la suela está el hueso de la almohadilla de cada pie
+    /// (`ball`), primero el izquierdo, medido parado en reposo.
+    pub ball_rise: [f32; 2],
 }
 
 impl Seated {
@@ -451,6 +470,7 @@ impl Seated {
         let seated = Self {
             bones,
             stirrups: [Transform::IDENTITY; 2],
+            ball_rise: [0.0; 2],
         };
         // En el espacio propio del modelo, parado en reposo.
         let to_model = rest(root).inverse();
@@ -465,7 +485,13 @@ impl Seated {
             let ring = Affine3A::from_scale_rotation_translation(STIRRUP, Quat::IDENTITY, tread);
             transform_of(foot.inverse() * ring)
         });
-        Some(Self { stirrups, ..seated })
+        // Parado en reposo, el origen del modelo está en el piso.
+        let ball_rise = [0, 1].map(|s| at(Bone::Ball(s)).translation.y);
+        Some(Self {
+            stirrups,
+            ball_rise,
+            ..seated
+        })
     }
 }
 
@@ -650,7 +676,15 @@ pub struct RiderMotion {
     pub still: f32,
     pub clock: f32,
     pub primed: bool,
+    /// Cuánto gira la cabeza una persona sentada en un banco hacia lo que
+    /// mira ([`Gaze`]), acercándose suavemente.
+    pub gaze: Spring,
 }
+
+/// Qué tan rápido gira la cabeza una persona sentada hacia lo que mira
+/// ([`Gaze`]): la frecuencia angular de su resorte (se asienta en algo menos
+/// de un segundo).
+pub const GAZE_EASE: f32 = 6.0;
 
 /// Lo que un jinete lee de su caballo: las cadenas desde la raíz del modelo
 /// hasta su `Torso` y su `Head` (las ubicaciones en el marco del cuerpo de la
@@ -699,36 +733,136 @@ pub fn saddle_attitude(tilt: Quat) -> (f32, f32) {
     )
 }
 
+/// Qué tanto se paró una persona sentada en un banco
+/// ([`CharacterVisual::Seated`](super::visual::CharacterVisual::Seated)), de 0
+/// (sentada) a 1 (de pie junto al banco). Va en la entidad de la persona; el
+/// juego lo avanza. Mientras se para, su modelo pasa del clip sentado al de la
+/// espera de pie, su pelvis sube y sus pies siguen apoyados en el piso.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Default)]
+pub struct Rising(pub f32);
+
+/// A qué altura sobre la parte de arriba del banco va el origen del modelo de
+/// alguien que se paró `rise` ([`Rising`]): sentado, con la pelvis
+/// [`PELVIS_RISE`] por encima; de pie, en el piso, como una figura a pie.
+pub fn bench_lift(rise: f32) -> f32 {
+    PELVIS_RISE + (-BENCH_HEIGHT - PELVIS_RISE) * rise.clamp(0.0, 1.0)
+}
+
 /// Sienta al conductor de un vehículo (ver [`vehicle`](crate::vehicle)): su
 /// pelvis en el origen del modelo, puesto sobre el asiento como un jinete
-/// ([`seat_transform`]).
-fn sit_on_bench(transforms: &mut Bones, seated: &Seated) {
+/// ([`seat_transform`]). En un banco ([`OnBench`]) además baja los pies hasta
+/// el piso, [`BENCH_HEIGHT`] por debajo del asiento: el clip se sienta más
+/// alto, y sus pies colgarían. Al pararse (`rise`, ver [`Rising`]) la pelvis
+/// pasa de ese lugar al que le da el clip, el modelo baja con [`bench_lift`]
+/// y el piso queda donde estaba.
+fn sit_on_bench(transforms: &mut Bones, seated: &Seated, on_bench: bool, rise: f32) {
     let Some(root) = transforms.get(seated.bone(Bone::Root)).ok().copied() else {
         return;
     };
     if let Ok(mut pelvis) = transforms.get_mut(seated.bone(Bone::Pelvis)) {
-        pelvis.translation = root.rotation.inverse() * -root.translation;
+        // Dónde la pone el clip, en el espacio del modelo; sentada va en su
+        // origen. Al pararse sube pareja en el espacio del asiento, de
+        // PELVIS_RISE a la altura del clip sobre el modelo ya bajado.
+        let clip = root.translation + root.rotation * pelvis.translation;
+        let lift = bench_lift(rise);
+        let height = PELVIS_RISE + (lift + clip.y - PELVIS_RISE) * rise;
+        let target = Vec3::new(clip.x * rise, height - lift, clip.z * rise);
+        pelvis.translation = root.rotation.inverse() * (target - root.translation);
+    }
+    if !on_bench {
+        return;
+    }
+    let get = |transforms: &Bones, bone: Bone| transforms.get(seated.bone(bone)).ok().copied();
+    let root = Place {
+        rotation: root.rotation,
+        translation: root.translation,
+    };
+    let Some(pelvis) = get(transforms, Bone::Pelvis) else {
+        return;
+    };
+    let pelvis = root.then(&pelvis);
+    // El piso, en el espacio del modelo (sentado, su origen es la pelvis).
+    let floor = -(bench_lift(rise) + BENCH_HEIGHT);
+    for (s, pole) in BENCH_KNEE_POLE.into_iter().enumerate() {
+        let (Some(thigh), Some(calf), Some(foot), Some(ball)) = (
+            get(transforms, Bone::Thigh(s)),
+            get(transforms, Bone::Calf(s)),
+            get(transforms, Bone::Foot(s)),
+            get(transforms, Bone::Ball(s)),
+        ) else {
+            continue;
+        };
+        let ankle = pelvis.then(&thigh).then(&calf).then(&foot);
+        let drop = ankle.then(&ball).translation.y - (floor + seated.ball_rise[s]);
+        if drop > 0.0 {
+            let target = ankle.translation - Vec3::Y * drop;
+            let bones = [Bone::Thigh(s), Bone::Calf(s), Bone::Foot(s)].map(|b| seated.bone(b));
+            reach(transforms, pelvis, bones, target, pole);
+        }
     }
 }
+
+/// Gira el cuello y la cabeza de una persona sentada `turn` radianes alrededor
+/// del eje vertical del modelo (positivo hacia la izquierda), la mitad cada
+/// uno, por encima del clip.
+fn turn_head(transforms: &mut Bones, seated: &Seated, turn: f32) {
+    if turn.abs() < 1e-4 {
+        return;
+    }
+    let get = |transforms: &Bones, bone: Bone| transforms.get(seated.bone(bone)).ok().copied();
+    let Some(root) = get(transforms, Bone::Root) else {
+        return;
+    };
+    let mut chest = Place {
+        rotation: root.rotation,
+        translation: root.translation,
+    };
+    for bone in [Bone::Pelvis, Bone::Spine1, Bone::Spine2, Bone::Spine3] {
+        if let Some(t) = get(transforms, bone) {
+            chest = chest.then(&t);
+        }
+    }
+    let half = Quat::from_rotation_y(turn / 2.0);
+    turn_bone(transforms, chest, seated.bone(Bone::Neck), half);
+    if let Some(neck) = get(transforms, Bone::Neck) {
+        turn_bone(transforms, chest.then(&neck), seated.bone(Bone::Head), half);
+    }
+}
+
+/// Qué tanto se paró ([`Rising`]) la persona dueña del banco `seat` (el
+/// asiento cuelga de su entidad); 0 si sigue sentada.
+pub(super) fn rise_of(seat: Entity, parents: &Query<&ChildOf>, risers: &Query<&Rising>) -> f32 {
+    parents
+        .get(seat)
+        .ok()
+        .and_then(|person| risers.get(person.parent()).ok())
+        .map_or(0.0, |r| r.0.clamp(0.0, 1.0))
+}
+
+/// Lo que [`pose_riders`] lee de cada jinete o persona sentada.
+type Sitter = (
+    Entity,
+    &'static Rig,
+    &'static Riding,
+    &'static Seated,
+    &'static mut RiderMotion,
+    &'static mut Visibility,
+    Has<OnBench>,
+);
 
 /// Ajusta cada jinete que se reproduce a su caballo (ver las notas del módulo),
 /// después de que los clips lo pusieron en pose (a él y al caballo) y antes de
 /// que se calculen los transforms.
 pub(super) fn pose_riders(
     time: Res<Time>,
+    clips: Option<Res<CharacterClips>>,
     horses: Query<(&HorseBody, &Saddle)>,
-    mut riders: Query<(
-        Entity,
-        &Rig,
-        &Riding,
-        &Seated,
-        &mut RiderMotion,
-        &mut Visibility,
-    )>,
+    mut riders: Query<Sitter>,
+    (parents, risers, gazes): (Query<&ChildOf>, Query<&Rising>, Query<&Gaze>),
     mut transforms: Bones,
 ) {
     let dt = time.delta_secs();
-    for (me, rig, riding, seated, mut m, mut shown) in &mut riders {
+    for (me, rig, riding, seated, mut m, mut shown, on_bench) in &mut riders {
         if rig.frozen || !rig.started {
             continue;
         }
@@ -737,7 +871,35 @@ pub(super) fn pose_riders(
         let Ok((horse, saddle)) = horses.get(riding.horse) else {
             // En el pescante de un vehículo: la pelvis en el origen del
             // modelo, sobre el asiento, y el resto como lo pone el clip.
-            sit_on_bench(&mut transforms, seated);
+            let rise = if on_bench {
+                rise_of(riding.horse, &parents, &risers)
+            } else {
+                0.0
+            };
+            if rise > 0.0 {
+                if let Ok(mut model) = transforms.get_mut(me) {
+                    model.translation.y = bench_lift(rise);
+                }
+                // De pie, la pelvis a la altura de sus propias piernas, como
+                // la de una figura a pie (ver `fit_rigs`).
+                let reference = clips.as_deref().and_then(|c| c.reference);
+                if let (Some(reference), Some((pelvis, rest, leg))) = (reference, rig.pelvis)
+                    && let Ok(mut t) = transforms.get_mut(pelvis)
+                {
+                    t.translation = fit_pelvis(t.translation, reference, rest, leg);
+                }
+            }
+            sit_on_bench(&mut transforms, seated, on_bench, rise);
+            if on_bench {
+                // Gira la cabeza hacia lo que mira, si mira algo.
+                let want = parents
+                    .get(riding.horse)
+                    .ok()
+                    .and_then(|person| gazes.get(person.parent()).ok())
+                    .map_or(0.0, |g| g.0.clamp(-GAZE_MAX, GAZE_MAX));
+                let turn = m.gaze.step(want, GAZE_EASE, dt);
+                turn_head(&mut transforms, seated, turn);
+            }
             continue;
         };
         let (Some(seat), Some(root)) = (
@@ -991,7 +1153,13 @@ pub(super) fn pose_riders(
                 lower.translation.length() + wrist.translation.length(),
             ));
             let arm = [Bone::UpperArm(s), Bone::LowerArm(s), Bone::Hand(s)].map(|b| seated.bone(b));
-            reach(&mut transforms, shoulder, arm, fit_hand(hands[s], s, fit), ELBOW_POLE[s]);
+            reach(
+                &mut transforms,
+                shoulder,
+                arm,
+                fit_hand(hands[s], s, fit),
+                ELBOW_POLE[s],
+            );
         }
     }
 }

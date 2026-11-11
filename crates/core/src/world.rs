@@ -166,7 +166,7 @@ impl World {
         }
         let mut world = Self::new(config, terrain);
         for town in towns {
-            world.obstacles.extend(town.obstacles());
+            world.obstacles.extend(town.colliders());
             world.floors.extend(town.floors());
         }
         world
@@ -509,7 +509,7 @@ mod tests {
             assert!(world.terrain.flat_areas.contains(&area));
             let c = t.grid().center();
             assert_eq!(world.terrain.height(c.x, c.y), area.height);
-            all.extend(t.obstacles());
+            all.extend(t.colliders());
         }
         assert_eq!(world.obstacles, all);
         // Cabalgar hacia un edificio del pueblo lejano también queda bloqueado
@@ -713,7 +713,7 @@ mod tests {
             let world = World::with_town(Terrain::default(), &town);
             let area = town.flat_area(&Terrain::default());
             assert_eq!(world.terrain.flat_areas, vec![area]);
-            assert_eq!(world.obstacles, town.obstacles());
+            assert_eq!(world.obstacles, town.colliders());
             assert_eq!(world.bounds, WorldConfig::default().bounds());
         }
     }

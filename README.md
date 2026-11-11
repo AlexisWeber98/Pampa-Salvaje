@@ -91,7 +91,9 @@ empieza a media mañana, a plena luz del día, a bordo del tren de la mañana
 desde General Pico: el protagonista, un ex empleado de ferretería de Pico,
 viaja en él hasta Monte Nievas. La hora del día (`HH:MM`) se muestra en la
 esquina superior izquierda, rotulada con la tipografía del juego (IM Fell
-English) sobre un panel de papel, con el objetivo actual debajo y, mientras se
+English) sobre un panel de papel, con la plata del protagonista debajo, escrita
+como entonces ("$ 1,50"; empieza sin un peso, `pampa_core::Money`), el objetivo
+actual debajo de ella y, mientras se
 viaja en el tren, la siguiente estación y su hora de llegada (por ejemplo
 "Próxima: Eduardo Castex, 11:46").
 
@@ -127,8 +129,9 @@ pueblos y empujan a los jinetes fuera de la vía; los rieles en sí se pueden
 cruzar.
 
 Los lugares destacados llevan carteles pintados en el español de la época: el
-almacén de ramos generales ("PULPERÍA" en un pueblo pequeño, "ALMACÉN DE RAMOS
-GENERALES" en General Pico), la comisaría ("COMISARÍA"), la iglesia
+almacén de ramos generales ("PULPERÍA" en un pueblo pequeño, salvo la de
+Eduardo Castex, que se llama "LA COLONIA"; "ALMACÉN DE RAMOS GENERALES" en
+General Pico), la comisaría ("COMISARÍA"), la iglesia
 ("IGLESIA"), la estación ("ESTACIÓN EDUARDO CASTEX", en su fachada y en dos
 nomencladores al borde de la vía, uno cerca de cada extremo del andén, más allá
 de los coches, de frente a las ventanillas del tren) y la plaza. `pampa-core`
@@ -246,23 +249,109 @@ probada sin el juego.
 ### El primer encargo
 
 El jugador llega a pie. Arriba del andén de Monte Nievas, junto a los coches
-del tren de la mañana, el objetivo dice "Buscá a Don Hidalgo en la plaza". Don
-Hidalgo está en la plaza; hay que presionar `F` a menos de unos 3 m para
-hablar. Monte Nievas no tiene comisaría, así que él manda al jugador a
-presentarse ante el comisario Elías Farach en la comisaría de Castex, y le
-presta su caballo, el que está atado en el almacén de ramos generales. El
-pueblo de Farach no está fijo en el código: lo nombra `police_town` en
-`assets/dialogue/errand.ron` (Eduardo Castex; sin él, o cuando ese pueblo no
-tiene comisaría, el otro pueblo más cercano que tenga una), y la línea del
-objetivo también lo nombra. Sus líneas se reproducen una tras otra en globos
-de diálogo, unos segundos cada una. El caballo no es del jugador antes de esa
-charla ("Este caballo no es mío."); después, `F` a menos de unos 3 m del
-caballo lo monta: el caballo atado se lo llevan por el resto de la sesión y el
-jugador cabalga desde donde estaba. Farach está parado en la calle frente a la
-puerta de la comisaría de Castex; `F` a menos de unos 4 m, montado o no, hace
-que el jugador se presente ante él y termina el encargo. La línea del objetivo
-y el destino del minimapa siguen cada paso (Hidalgo, el caballo, luego Farach)
-y desaparecen una vez terminado el encargo.
+del tren de la mañana, el objetivo dice "Buscá a Don Hidalgo en la plaza". La
+historia son datos: los actos 2 a 5 de `historia`, paso a paso, en
+`assets/dialogue/errand.ron` (`pampa_core::Step`). Cada paso pide algo al
+jugador (hablar con alguien, tomar el caballo), lo dice la línea del objetivo y
+el destino del minimapa, y al cumplirlo reproduce su escena: líneas de quien
+hable y acciones narradas (le dan plata, recibe o entrega algo). Los actos
+siguientes se agregan como pasos nuevos.
+
+Don Hidalgo está en la plaza; hay que presionar `F` a menos de unos 3 m para
+hablar. Le dice a Lisandro que "en estos pagos quien manda es Farach, el
+comisario de Castex", le da una carta de presentación de su puño y letra para
+el comisario y tres pesos (por si lo hacen esperar o le piden coima), y como el
+tren ya se fue le presta su caballo, el que está atado en el almacén de ramos
+generales. El pueblo de Farach no está fijo en el código: lo nombra
+`police_town` en el mismo archivo (Eduardo Castex; sin él, o cuando ese pueblo
+no tiene comisaría, el otro pueblo más cercano que tenga una), y la línea del
+objetivo también lo nombra. Las líneas se reproducen una tras otra como
+subtítulos de película, abajo y al centro de la pantalla, con el nombre de quien
+habla en ocre delante ("Don Hidalgo: ..."), cada una el tiempo de leerla (dos
+segundos más 15 caracteres por segundo, entre 3 y 9 segundos;
+`pampa_render::subtitle`). Las quejas de los vecinos siguen en globos. Mientras
+dura una escena el jugador no maneja (las teclas no lo mueven y `F` no hace
+nada) y la cámara deja la órbita: encuadra a los dos desde atrás del hombro de
+Lisandro, mirando a quien tiene enfrente; al terminar vuelve detrás del
+jugador. Los que hablan se miran (`face_each_other` en `game/src/errand.rs`):
+si Lisandro llega de espaldas o de costado, se vuelve en el lugar hacia quien
+le habla, y quien está parado se da vuelta hacia él sin saltos (3 rad/s) y,
+terminada la escena, vuelve a como estaba; quien está sentado solo gira la
+cabeza hacia él, nunca más de unos 70° (`Gaze` en `pampa_render::character`).
+El caballo no es del jugador antes de esa charla ("Este caballo no es
+mío."); después, `F` a menos de unos 3 m del caballo lo monta: el caballo atado
+se lo llevan por el resto de la sesión y el jugador cabalga desde donde estaba.
+
+Farach está parado en la calle frente a la puerta de la comisaría de Castex;
+`F` a menos de unos 4 m, montado o no, empieza el acto 3, palabra por palabra:
+Lisandro y Farach hablan por turnos, Lisandro le entrega el sobre (la carta ya
+no está en sus manos: Farach se queda con los papeles) y Farach lo lee en voz
+alta. Enseguida sigue el acto 4: el objetivo dice "Andá a la pulpería La
+Colonia" y el minimapa marca a Bairoletto, que ya no está en la puerta de la
+comisaría. Espera sentado, solo, en una de las mesas de adelante de la pulpería
+de Castex (cuyo cartel dice "LA COLONIA"), mirando hacia la puerta; de día los
+dos parroquianos se sientan en otra mesa, y ninguno ocupa nunca su asiento. La
+escena empieza sola, como una cinemática: cuando el jugador llega a pie por la
+vereda a la puerta abierta (a unos 2 m del punto de la vereda frente a ella),
+el control se bloquea, la cámara encuadra a Bairoletto y Lisandro entra solo,
+tímido: camina despacio (0,8 m/s), con el ciclo de caminata y chocando como
+siempre (`WalkPath` en `game/src/player.rs`), derecho por la puerta, se detiene
+unos 2 m adentro y durante 3 s recorre el lugar con la mirada, girando la
+cabeza a un lado y al otro. Entonces Bairoletto, que ve que no es de ahí, lo
+llama con su primera línea ("Che pibe, ese caballo que está afuera…¿Es
+tuyo?"), y Lisandro va hasta la cabecera de su mesa, del lado del paso, donde
+Bairoletto lo mira girando apenas la cabeza; la escena sigue cuando llega.
+Montado no empieza; de noche, con la pulpería cerrada, espera adentro hasta que
+abra. También se le puede hablar con `F` desde adentro, a menos de unos 4,5 m:
+después de su primera línea Lisandro va igual hasta la cabecera de la mesa. La
+escena es el acto 4 palabra por palabra; como habla sentado, no gesticula. Con su última línea se para del banco en 1,2 s (`Rising` en
+`pampa_render::character::rider`: el modelo pasa del clip sentado a la espera
+de pie, la pelvis sube pareja hasta la altura de sus propias piernas y los
+pies quedan en el piso), gira de a poco hacia su camino, pasa por encima del
+banco, sale caminando con el ciclo de caminata por la puerta del medio,
+pisando el piso de ladrillo adentro y el suelo afuera, y se aleja por la
+vereda; en el último segundo y medio de su camino se difumina hasta
+desaparecer (`Leaving` en `game/src/life.rs`; `Fading` en
+`pampa_render::character`, que le da sus propias copias de los materiales,
+así nadie más de su aspecto se vuelve transparente). No vuelve
+aunque el pueblo se descargue y se vuelva a cargar. La línea del objetivo y el
+destino del minimapa desaparecen, el jugador queda libre hasta la noche, y la
+historia termina ahí.
+
+El acto 5 no es un paso de la historia sino un encuentro: "Al hacer una cuadra,
+un puestero, viejo, vendiendo quesos." Sucede una sola vez, la primera vez que
+el jugador pasa por el puesto, en cualquier momento del juego (antes de hablar
+con Don Hidalgo, durante el encargo o después), y no mueve la historia. A una
+cuadra de la puerta de La Colonia (unos 52 m), a media cuadra y
+sobre la mitad de la vereda del lado del cordón, el Viejo Amadeo atiende su
+puesto: una mesa de caballetes de tablas gastadas con hormas de queso, una cuña
+cortada, tres salamines (uno empezado, con el corte a la vista), dos panes de
+campo y un cajón abajo (`pampa_render::stall`), que estorba el paso como
+cualquier obstáculo. Él está parado del lado de la vereda por el que pasa la
+gente, con la mesa entre él y el cordón, mirando hacia la calle, con la ropa
+de un paisano del pueblo. Ni el HUD ni el minimapa
+lo anuncian: cuando el jugador pasa a menos de 8 m (alcanza a un jinete que va
+por la mitad de la calle), Amadeo lo llama sin que apriete nada; quien va por
+otro lado no lo encuentra. El control se bloquea y Lisandro se le acerca solo
+antes de la primera línea: a pie, hasta su lado, sobre la vereda; montado, el
+caballo deja el galope sin tirones, derecho, hasta el tranco, vuelve y se para
+en la calle frente al puesto, a 2 m del cordón (`Errand::hail` y
+`Errand::place_to_talk` en `pampa_core`). La escena es el acto 5 palabra por palabra
+(las dos líneas más largas, cortadas en dos subtítulos); al decir "tome,
+llévese un pedazo" le da el queso, que Lisandro lleva como llevaba la carta,
+sin que se vea en su mano. Amadeo se queda en su puesto, mirando otra vez a la
+calle, y no vuelve a llamarlo.
+
+`I` abre y cierra el inventario (`game/src/inventory.rs`,
+`pampa_render::inventory`): una hoja del papel y la tinta del HUD montada en
+una tapa de cuero, en el centro de la pantalla, mientras el juego sigue andando
+detrás. Lo que lleva Lisandro va agrupado por las categorías del documento
+`mecánicas` (`pampa_core::ItemCategory`): "Alimentos" (el queso) y "Objetos de
+misión" (la carta de presentación), cada cosa con su dibujo (una cuña de queso,
+un sobre lacrado, grabados pintados en el código) y su nombre; una categoría
+vacía no aparece. Debajo, la plata, escrita igual que en el HUD ("$ 3,00"),
+junto a dos pesos de plata. Abierto, el panel sigue lo que Lisandro recibe y
+entrega. Durante una escena la `I` no hace nada.
 
 Una vez tomado, el caballo es del jugador. `F` detenido o al paso lento (hasta
 1 m/s) lo hace bajar: el jugador queda parado junto al caballo, a su izquierda
@@ -398,7 +487,7 @@ Los caminos, los pasos a nivel, los carteles indicadores, los alambrados y las t
 
 Detrás de algunas tranqueras abiertas hay asentamientos rurales (`pampa_core::settlement`, dibujados por `pampa_render::settlement`): ranchos de adobe bajo paja o chapa ondulada, ranchos de barro y paja entre horcones, ranchos de madera de tablas grises, casillas de chapa, puestos con su corral y su aguada, chacras encaladas o de ladrillo con un galpón y un molino, y cascos de estancia con una galería al frente, casas de peones, corrales, una isleta de eucaliptos y una hilera de álamos. Huellas de tierra (dos surcos de ruedas) llevan desde la tranquera hasta cada puerta. Los edificios y los objetos son procedurales, con texturas PBR CC0 compartidas, un material por superficie; cada edificio, objeto, travesaño de corral y tronco de árbol es un obstáculo estático, y las casas y los galpones detienen la cámara. En algunos patios y en unas pocas banquinas se pudren carretas abandonadas, y barriles, cajones, una escalera, un balde y faroles de Poly Haven están repartidos alrededor de los galpones y los pozos.
 
-Los edificios de los pueblos se construyen con el mismo kit (`pampa_render::facade`: el constructor de meshes, los materiales con texturas compartidos, las paredes, los techos y la ornamentación italianizante) como frentes italianizantes pampeanos de 1919. Las casas están encaladas, blanqueadas a la cal, pintadas en un color apagado de 1919 (blanco cal, ocre, rosa pálido, gris azulado o terracota claro) sobre un zócalo beige, de ladrillo visto, de ladrillo bajo una pintura gastada, o de vez en cuando de ladrillo viejo que pierde su revoque, con pilares esquineros ochavados, pilastras entre los módulos, una cornisa moldurada y un parapeto (macizo o con balaustrada, algunos con urnas o un pequeño frontón) que oculta una azotea plana o un techo de chapa; en las afueras, la mayoría son casitas de adobe más sencillas o encaladas bajo chapa. El almacén de ramos generales tiene un parapeto alto detrás de su cartel y una galería sobre la vereda apoyada en postes de hierro fundido; la pulpería de un pueblo pequeño, una sobre postes de madera; la comisaría tiene ventanas con rejas, una balaustrada y su mástil; la iglesia, una nave con frontón y un campanario con una espadaña de arcos de medio punto bajo una aguja de cinc. Los galpones y los depósitos de granos son galpones de chapa ondulada, que colisionan en sus paredes (y allí detienen la cámara) mientras sus aleros llegan hasta los bordes de sus lotes, y los molinos y los tanques de agua son el molino y el tanque australiano de los asentamientos. Las veredas de ladrillo con un cordón de piedras (de unos 0.9 a 1.25 m, con juntas, asentadas a distinta altura y alguna con la punta despostillada), con algún hueco donde faltan ladrillos y asoma la tierra, siguen el tamaño del pueblo (`pampa_core::town::Paving`): a lo largo de cada frente de manzana en General Pico, solo a lo largo del borde propio de la plaza en los pueblos pequeños (Eduardo Castex, Monte Nievas, Caleufú), y ninguna en una aldea de 3 x 3 manzanas o menos (Metileo), cuyas calles siguen siendo de tierra. Sobresalen unos centímetros sobre la calle, como los senderos de la plaza, y no cambian en nada cómo camina nadie. Cada frente de mampostería se mantiene dentro de su huella en planta del core, así que los colliders y los carteles de las fachadas siguen siendo fieles. Cada edificio es una mesh por superficie; un pueblo que entra por streaming los construye en un hilo en segundo plano, y se dibujan dentro de los rangos de visibilidad compartidos de los asentamientos.
+Los edificios de los pueblos se construyen con el mismo kit (`pampa_render::facade`: el constructor de meshes, los materiales con texturas compartidos, las paredes, los techos y la ornamentación italianizante) como frentes italianizantes pampeanos de 1919. Las casas están encaladas, blanqueadas a la cal, pintadas en un color apagado de 1919 (blanco cal, ocre, rosa pálido, gris azulado o terracota claro) sobre un zócalo beige, de ladrillo visto, de ladrillo bajo una pintura gastada, o de vez en cuando de ladrillo viejo que pierde su revoque, con pilares esquineros ochavados, pilastras entre los módulos, una cornisa moldurada y un parapeto (macizo o con balaustrada, algunos con urnas o un pequeño frontón) que oculta una azotea plana o un techo de chapa; en las afueras, la mayoría son casitas de adobe más sencillas o encaladas bajo chapa. El almacén de ramos generales tiene un parapeto alto detrás de su cartel y una galería sobre la vereda apoyada en postes de hierro fundido; la pulpería de un pueblo pequeño, una sobre postes de madera; la comisaría tiene ventanas con rejas, una balaustrada y su mástil; la iglesia, una nave con frontón y un campanario con una espadaña de arcos de medio punto bajo una aguja de cinc. Los galpones y los depósitos de granos son galpones de chapa ondulada, que colisionan en sus paredes (y allí detienen la cámara) mientras sus aleros llegan hasta los bordes de sus lotes, y los molinos y los tanques de agua son el molino y el tanque australiano de los asentamientos. La pulpería de un pueblo pequeño se recorre por dentro (`pampa_core::pulperia`): se entra a pie por la puerta del medio del frente, de 1,3 m (un caballo no pasa), y adentro hay mostrador, estantes, barriles y tres mesas con sus bancos, cada uno con dos asientos. El render dibuja esa sala donde core pone cada mueble, sin el desgaste de las paredes (`crates/render/src/facade/town_buildings/pulperia.rs`): la puerta del medio es un paso con su banderola fija; adentro hay un piso de ladrillo, un cielorraso de tablas sobre tirantes, el mostrador de madera con la reja de hierro hasta el techo y su ventanilla, la estantería del fondo con botellas de vino, ginebras cuadradas, cajones y damajuanas forradas de paja, dos barriles de duelas con zunchos (uno con su canilla), las mesas y los bancos de tablón, y un farol de querosén colgado en el medio. Sus paredes y sus muebles son los colliders del mundo, mientras que todo lo que se ubica alrededor (palenques, faroles, árboles, vehículos) sigue tomando la huella entera como sólida. La cámara choca con cada pared y con el cielorraso, y con el jugador adentro trata la puerta como pared, así que no sale a la calle por el hueco. Atiende de 6 a 22 (`pampa_core::pulperia::is_open`): de día se entra caminando, sin ninguna tecla; de noche la puerta se cierra en cuanto el jugador no está adentro ni en el umbral, y queda como una pared. `F` a menos de 1,5 m de la puerta cerrada golpea (un aviso "F: golpear" lo indica), y el pulpero contesta desde adentro con un subtítulo; un caballo al alcance o la persona del encargo conservan la `F`. Las dos hojas de tableros de esa puerta son entidades propias (`pampa_render::pulperia`): de día quedan abiertas hacia adentro, de canto contra sus jambas, y de noche giran hasta cerrar el vano, siguiendo `PulperiaShut`, que el juego escribe por pueblo. El farol del medio arde todo el día, tenue de día y a pleno de noche: su tubo de vidrio brilla y una luz cálida de querosén, con sombra, se enciende en el farol de la pulpería más cercana a la cámara (a menos de 40 m). Con la cámara adentro, la sala queda en penumbra: la luz ambiente y la del entorno del cielo bajan a una cuarta parte, de a poco en medio segundo, y vuelven exactas al salir. Los parroquianos siguen la hora (`Interior::patrons`): de día, dos frente a frente en una misma mesa; desde las 18, terminada la jornada, entre cuatro y ocho; con la pulpería cerrada, nadie. Cambian solo con el jugador afuera, así que nadie aparece ni desaparece a la vista. Se sientan en los bancos mirando hacia su mesa (`Patron` en `game/src/life.rs`, `CharacterVisual::Seated` en el render): se sientan como el conductor de un vehículo, pero con las manos en el regazo (el clip `sit_idle`) y con las piernas bajadas hasta que las suelas apoyan en el piso de ladrillo, 0,45 m bajo el asiento. El banco ya es un obstáculo, así que no tienen cuerpo propio, y se van con su pueblo. Las veredas de ladrillo con un cordón de piedras (de unos 0.9 a 1.25 m, con juntas, asentadas a distinta altura y alguna con la punta despostillada), con algún hueco donde faltan ladrillos y asoma la tierra, siguen el tamaño del pueblo (`pampa_core::town::Paving`): a lo largo de cada frente de manzana en General Pico, solo a lo largo del borde propio de la plaza en los pueblos pequeños (Eduardo Castex, Monte Nievas, Caleufú), y ninguna en una aldea de 3 x 3 manzanas o menos (Metileo), cuyas calles siguen siendo de tierra. Sobresalen unos centímetros sobre la calle, como los senderos de la plaza, y no cambian en nada cómo camina nadie. Cada frente de mampostería se mantiene dentro de su huella en planta del core, así que los colliders y los carteles de las fachadas siguen siendo fieles. Cada edificio es una mesh por superficie; un pueblo que entra por streaming los construye en un hilo en segundo plano, y se dibujan dentro de los rangos de visibilidad compartidos de los asentamientos.
 
 Cada tipo de edificio tiene sus texturas propias (Poly Haven, CC0): el revoque símil piedra de los bancos, el revoque fino ocre de la intendencia y a la cal de la iglesia, el ladrillo encalado de la comisaría, la cal vieja y cuarteada de las pulperías, el ladrillo rojo de la estación, zócalos de cemento manchado y persianas verdes de tablillas con su bastidor; las puertas son de tableros o de tablas con travesaños, las ventanas tienen vidrio, y hay umbrales de piedra y rejillas de hierro oxidado en los zócalos. El tiempo ensucia cada edificio según su tipo y su estado (`assets/shaders/building_weathering.wesl`, el material `BuildingMaterial` del kit): salpicaduras de barro al pie, el pie oscuro donde la pared toca la tierra, polvo en cornisas y alféizares y, en unas seis de cada diez construcciones (nunca en el banco ni en la intendencia), humedad que sube del suelo hasta una línea irregular con su borde de salitre, más en las paredes en sombra; chorreados de lluvia bajo algunos alféizares y cornisas, óxido en la chapa y tierra juntada al pie de las paredes son decals (`pampa_render::facade::grime`). En las afueras, uno de cada ocho ranchos es de barro y paja (`pampa_render::settlement::ranchos`; la paja del barro y la del techo las dibuja `tools/building_straw.py`): techo de paja larga en hiladas con un alero grueso y desparejo, a dos aguas la mayoría, como los describen los viajeros del siglo XIX, y alrededor de uno de cada cuatro a un agua, alto sobre la pared del fondo; sus paredes de barro se agrietan distinto en cada pared. Uno de cada veinte es de madera. Las casillas de chapa eran casas del ferrocarril y de sus cuadrillas: en las afueras solo se levantan a menos de 100 m de la vía (`town_buildings::CASILLA_REACH`), y en el campo solo en asentamientos a menos de 300 m de ella (`Settlement::CASILLA_REACH`).
 
@@ -525,7 +614,7 @@ cabezada de 1919, atados o montados
   lado, con la crin más oscura), **alazán** (con la crin y la cola rubias) y
   **bayo** (arena con crin, cola y patas negras y una raya dorsal oscura). La
   crin siempre se aparta del color del pelaje, y al galope vuela en mechones
-  separados, levantada del cuello y hacia atrás. El caballo de Don Hidalgo, el que monta el jugador, es bayo;
+  separados, levantada del cuello y hacia atrás. El caballo de Don Hidalgo, el que monta el jugador, es alazán;
   el caballo atado en cada uno de los demás almacenes recibe un pelaje con la
   semilla de su pueblo.
 - **Los aperos** son el recado criollo de un peón de estancia de La Pampa en
@@ -723,6 +812,7 @@ El juego abre en una pantalla de título. A la izquierda, un cartel de "Se busca
 | `Q` / `E` | Orbitar la cámara a la izquierda / a la derecha, o girar la cabeza en primera persona |
 | Rueda del mouse | Acercar / alejar el zoom (6–25 m; no en primera persona) |
 | `M` | Alternar el minimapa ampliado |
+| `I` | Abrir / cerrar el inventario (no durante una escena) |
 | `Esc` o `Pause` | Pausa: el mundo se queda quieto y se abre el menú (Continuar, Sonido, Salir); `Esc` o `Pause` de nuevo reanuda, o vuelve desde Sonido |
 | `↑` / `↓` o `W` / `S`, luego `Enter`, `Space` o `F` | Elegir en la pantalla de título y en el menú de pausa |
 | `←` / `→` o `A` / `D` | En Sonido: bajar / subir el volumen resaltado |
@@ -772,7 +862,7 @@ sentado `drive` sobre el lomo del caballo. Son los modelos por defecto, también
 en las compilaciones de release; `models off` trae de vuelta las viejas figuras
 rígidas de las personas a pie en una compilación de depuración (los jinetes y
 los caballos ensillados ya no tienen figuras rígidas). Probar `goto castex`
-(Farach con Bairoletto a su lado) o `goto nievas` (Don Hidalgo).
+(Farach, y Bairoletto sentado en la pulpería) o `goto nievas` (Don Hidalgo).
 
 `goto` pone al jugador, y al caballo si cabalga, en el terreno despejado y
 seco más cercano al lugar, y el mundo se carga por streaming a su alrededor de

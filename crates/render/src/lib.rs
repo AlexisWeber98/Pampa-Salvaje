@@ -21,6 +21,7 @@ pub mod gltf;
 pub mod grass;
 pub mod ground;
 pub mod hud;
+pub mod inventory;
 pub mod lagoon;
 pub mod lamps;
 pub mod lawn;
@@ -29,6 +30,7 @@ pub mod meadow;
 pub mod minimap;
 pub mod obj;
 pub mod prints;
+pub mod pulperia;
 pub mod rail;
 mod railbed;
 pub mod road;
@@ -36,8 +38,10 @@ pub mod settlement;
 pub mod signs;
 pub mod sky;
 pub mod smooth;
+pub mod stall;
 pub mod streaming;
 pub mod street;
+pub mod subtitle;
 pub mod terrain;
 pub mod town;
 pub mod train;
@@ -49,7 +53,7 @@ pub use atmosphere::{AtmospherePlugin, CloseShadows, DUST_COLOR, Sky, Sun, World
 pub use bubble::{Say, SpeechBubble, SpeechBubblePlugin};
 pub use character::{
     CharacterModelsShown, CharacterVisual, CharacterVisualPlugin, Coat, EYE_IN_HEAD, FigureKind,
-    OWN_HEAD_LAYER, TOWNSFOLK_LOOKS, Talking, ViewerBody, ViewerHead, VisualPose,
+    Gaze, OWN_HEAD_LAYER, TOWNSFOLK_LOOKS, Talking, ViewerBody, ViewerHead, VisualPose,
 };
 pub use coords::world_from_ground;
 pub use dust::DustPlugin;
@@ -62,19 +66,23 @@ pub use flora::{
     Faded, FloraAccent, FloraPlugin, GrassTuft, SightLine, ThinFadePlugin, ThinOccluder, TreePart,
     VegetationModels, WorldFlora,
 };
-pub use hud::{HudAnnouncement, HudHint, HudObjective, HudPlugin, HudRide};
+pub use hud::{HudAnnouncement, HudHint, HudMoney, HudObjective, HudPlugin, HudRide};
+pub use inventory::{InventoryContents, InventoryPlugin, InventoryView};
 pub use lagoon::{LagoonPlugin, LagoonReeds, LagoonWater};
 pub use lamps::{LampGlass, LampLight, LampPlugin, LampPost, WorldLamps};
 pub use minimap::{MapIcon, MapTarget, MinimapPlugin};
+pub use pulperia::{IndoorDim, PulperiaRenderPlugin, PulperiaShut};
 pub use rail::{LineTrack, RailPlugin, WorldRail};
 pub use road::{CrossingPart, RoadPlugin, RoadSurface, SignpostPart};
 pub use settlement::{
     ModelRotor, ModelSlots, SettlementPart, SettlementPlugin, SlotFit, SlotRotor, TrackSurface,
     WorldSettlements, YardPart, YardProp, YardSurface,
 };
+pub use subtitle::{Subtitle, SubtitleLine, SubtitlePlugin};
 
 pub use signs::{SignPlugin, Signboard, TIMETABLE_BOARD_TEXT, TimetableBoard};
 pub use sky::SkyPlugin;
+pub use stall::{CheeseStall, StallPlugin};
 pub use streaming::{StreamingPlan, StreamingSet};
 pub use terrain::{StreamFocus, TerrainChunk, TerrainPlugin, WorldChunks, WorldTerrain};
 pub use town::{ActiveTowns, StreamTowns, TownPlugin, TownRoot, WindmillRotor, WorldTowns};
