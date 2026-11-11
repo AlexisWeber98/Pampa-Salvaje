@@ -794,10 +794,8 @@ mod tests {
         // Comienza el encargo.
         let errand = app.world().resource::<ErrandRun>().0.clone();
         assert_eq!(errand.stage(), ErrandStage::MeetHidalgo);
-        assert_eq!(
-            app.world().resource::<HudObjective>().0.as_deref(),
-            Some("Buscá a Don Hidalgo en la plaza")
-        );
+        assert_eq!(app.world().resource::<HudObjective>().0, errand.objective());
+        assert!(errand.objective().is_some());
     }
 
     #[test]

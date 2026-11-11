@@ -422,7 +422,12 @@ mod tests {
 
     #[test]
     fn the_shipped_file_tells_acts_two_to_four_in_order_and_amadeo_apart() {
+        // Solo la forma de la historia: los textos los escribe el autor en
+        // errand.ron y pueden cambiar sin tocar este test.
         let lines = ErrandLines::parse(SHIPPED).expect("shipped errand.ron is valid");
+        lines
+            .validate()
+            .expect("shipped errand.ron passes validation");
         let goals: Vec<Goal> = lines.steps.iter().map(|s| s.goal).collect();
         assert_eq!(
             goals,
@@ -435,90 +440,50 @@ mod tests {
         );
         assert_eq!(lines.police_town, "Eduardo Castex");
         assert!(!lines.not_your_horse.is_empty());
-        // Acto 2: no hay policía en Monte Nievas; quien manda es Farach, en la
-        // comisaría de Castex; el caballo de Don Hidalgo está en el almacén.
-        let hidalgo = lines_of(&lines.steps[0]);
-        assert!(hidalgo.iter().all(|(who, _)| *who == "Don Hidalgo"));
-        let said: String = hidalgo
-            .iter()
-            .map(|(_, t)| *t)
-            .collect::<Vec<_>>()
-            .join(" ");
-        assert!(said.contains("en estos pagos quien manda es Farach, el comisario de Castex"));
-        for needed in ["comisaría", "caballo", "almacén", "carta"] {
-            assert!(said.contains(needed), "Hidalgo never says {needed}");
-        }
-        assert!(lines.steps[1].scene.is_empty());
-        // Acto 4, palabra por palabra, en la pulpería de Castex.
+        let acts = |scene: &[Beat]| -> Vec<Action> {
+            scene
+                .iter()
+                .filter_map(|beat| match beat {
+                    Beat::Act(action) => Some(*action),
+                    Beat::Line { .. } => None,
+                })
+                .collect()
+        };
+        let speakers = |step: &Step| -> Vec<&'static str> {
+            let mut who: Vec<_> = lines_of(step).into_iter().map(|(w, _)| w).collect();
+            who.sort();
+            who.dedup();
+            who
+        };
+        // Acto 2: Don Hidalgo da la carta y tres pesos, y habla solo él.
         assert_eq!(
-            lines.steps[3].objective_in(&lines.police_town).as_deref(),
-            Some("Andá a la pulpería La Colonia")
-        );
-        assert_eq!(
-            lines_of(&lines.steps[3]),
+            acts(&lines.steps[0].scene),
             [
-                (
-                    "Bairoletto",
-                    "Che pibe, ese caballo que está afuera…¿Es tuyo?"
-                ),
-                ("Lisandro", "Si, es de mi tìo."),
-                (
-                    "Bairoletto",
-                    "¿Queres ganarte unos pesos? Necesito transporte para esta noche."
-                ),
-                ("Lisandro", "si, ¿hasta donde necesita ir?"),
-                ("Bairoletto", "A la noche te digo, ¿Cómo te llamas?"),
-                ("Lisandro", "Lisandro."),
-                (
-                    "Bairoletto",
-                    "Yo soy Bairoletto, pero me dicen Tano. Nos vemos a la noche en esta pulpería."
-                ),
+                Action::Receive(Item::Letter),
+                Action::Earn(Money::new(3, 0))
             ]
         );
-        assert_eq!(lines.steps[3].scene.len(), 7, "only lines");
-        // Acto 5, palabra por palabra, fuera de la historia (no es un paso): el
-        // Viejo Amadeo llama al jugador desde su puesto y le regala un pedazo
-        // de queso. Las dos líneas largas, cortadas sin cambiar ninguna
-        // palabra.
+        assert_eq!(speakers(&lines.steps[0]), ["Don Hidalgo"]);
+        // Tomar el caballo no tiene escena.
+        assert!(lines.steps[1].scene.is_empty());
+        // Acto 3: Farach se queda con la carta.
+        assert_eq!(
+            acts(&lines.steps[2].scene),
+            [Action::HandOver(Item::Letter)]
+        );
+        assert_eq!(speakers(&lines.steps[2]), ["Farach", "Lisandro"]);
+        // Acto 4: solo líneas, entre Bairoletto y Lisandro.
+        assert!(acts(&lines.steps[3].scene).is_empty());
+        assert_eq!(speakers(&lines.steps[3]), ["Bairoletto", "Lisandro"]);
+        // Acto 5, fuera de la historia (no es un paso): el Viejo Amadeo le
+        // regala el queso a Lisandro.
         let amadeo = Step {
             goal: Goal::Talk(Npc::Amadeo),
             objective: None,
             scene: lines.amadeo.clone(),
         };
-        assert_eq!(
-            lines_of(&amadeo),
-            [
-                (
-                    "Viejo Amadeo",
-                    "¡Aparcero! Venga, acérquese, ¿Es nuevo en el pueblo?"
-                ),
-                (
-                    "Viejo Amadeo",
-                    "¿Le gustaría probar el mejor queso de todo el pago?"
-                ),
-                ("Lisandro", "Buenas, ¿los hace uste’?"),
-                (
-                    "Viejo Amadeo",
-                    "Me extraña m’hijo, ¡pero claro! Leche sacada de mis propias vacas, ordeñadas con estas mismas manos."
-                ),
-                (
-                    "Lisandro",
-                    "Se ven muy buenos, pero mejor otro día señor, ando medio corto de plata."
-                ),
-                (
-                    "Viejo Amadeo",
-                    "No se haga problema joven, tome, llévese un pedazo,"
-                ),
-                (
-                    "Viejo Amadeo",
-                    "y si le gusta vuelva cuando quiera que aquí voy a estar."
-                ),
-                ("Lisandro", "Le agradezco mucho señor."),
-            ]
-        );
-        // Le da el queso al decir "tome, llévese un pedazo".
-        assert_eq!(amadeo.scene.len(), 9);
-        assert_eq!(amadeo.scene[6], Beat::Act(Action::Receive(Item::Cheese)));
+        assert_eq!(acts(&amadeo.scene), [Action::Receive(Item::Cheese)]);
+        assert_eq!(speakers(&amadeo), ["Lisandro", "Viejo Amadeo"]);
         for line in lines.texts() {
             assert_eq!(line.trim(), line, "no stray spaces: {line:?}");
         }

@@ -1122,6 +1122,13 @@ mod tests {
             .collect()
     }
 
+    /// El objetivo del HUD del paso `step` de la historia incluida, con el
+    /// pueblo puesto.
+    fn shipped_objective(step: usize) -> Option<String> {
+        let lines = shipped_lines();
+        lines.steps[step].objective_in(&lines.police_town)
+    }
+
     /// Cada subtítulo mostrado, como (nombre, texto).
     fn said(app: &App) -> Vec<(String, String)> {
         let said = &app.world().resource::<Said>().0;
@@ -1219,10 +1226,7 @@ mod tests {
         assert_eq!(p.rider.height, world.ground_height(start));
         assert!(p.rider.height > world.terrain.height(start.x, start.y) + 0.5);
         assert_eq!(objective(&app), e.objective());
-        assert_eq!(
-            objective(&app).as_deref(),
-            Some("Buscá a Don Hidalgo en la plaza")
-        );
+        assert_eq!(objective(&app), shipped_objective(0));
         assert_eq!(app.world().resource::<MapTarget>().0, Some(hidalgo));
 
         // Nada que hacer en el camino de entrada al pueblo.
@@ -1307,10 +1311,7 @@ mod tests {
         wait_for_scene(&mut app, 2);
         assert!(said(&app).ends_with(&scene_lines(2)));
         let tano = errand(&app).standing(Npc::Bairoletto).position;
-        assert_eq!(
-            objective(&app).as_deref(),
-            Some("Andá a la pulpería La Colonia")
-        );
+        assert_eq!(objective(&app), shipped_objective(3));
         assert_eq!(app.world().resource::<MapTarget>().0, Some(tano));
 
         // A pie, en la pulpería de enfrente: Bairoletto, y después nada más.
@@ -1408,46 +1409,9 @@ mod tests {
         let before = said(&app).len();
         press_f(&mut app);
         wait_for_scene(&mut app, 2);
-        let all = said(&app);
-        let lines: Vec<(&str, &str)> = all[before..]
-            .iter()
-            .map(|(who, text)| (who.as_str(), text.as_str()))
-            .collect();
-        assert_eq!(
-            lines,
-            [
-                (
-                    "Lisandro",
-                    "Buenas, Comisario, le traigo unos papeles que me envió mi tío pa’ usté’"
-                ),
-                ("Farach", "¿y vos quien sos?"),
-                (
-                    "Lisandro",
-                    "Soy el sobrino de Don Hidalgo, llegué hoy mismo al pueblo."
-                ),
-                (
-                    "Farach",
-                    "Ah el viejo cascarrabias ese, si ya se… a ver pasame tus papeles."
-                ),
-                (
-                    "Farach",
-                    "Lisandro Benjamin Andrada, nacido en General Pico, desempleado, zoncera, zoncera…"
-                ),
-                (
-                    "Farach",
-                    "Bueno Pibe, te aviso que en estos pagos mando yo,"
-                ),
-                (
-                    "Farach",
-                    "así que si no queres tener problema no te hagas el guapo y no andés holgazaneando,"
-                ),
-                ("Farach", "que a los vagos como vos los tengo cortitos."),
-                (
-                    "Farach",
-                    "Quedate cerca que a la noche te devuelvo tus papeles firmados."
-                ),
-            ]
-        );
+        let lines = said(&app)[before..].to_vec();
+        // Tal como está escrita en errand.ron, línea por línea.
+        assert_eq!(lines, scene_lines(2));
         // Enseguida, el acto 4: Bairoletto espera en la pulpería.
         assert_eq!(errand(&app).stage(), ErrandStage::Talk(Npc::Bairoletto));
     }
@@ -1475,10 +1439,7 @@ mod tests {
         let seat = e.bairoletto_seat().unwrap();
         // Ya no está en la puerta de la comisaría: espera sentado en su mesa,
         // y el HUD y el mapa mandan ahí.
-        assert_eq!(
-            objective(&app).as_deref(),
-            Some("Andá a la pulpería La Colonia")
-        );
+        assert_eq!(objective(&app), shipped_objective(3));
         assert_eq!(app.world().resource::<MapTarget>().0, Some(him.position));
         let tano = npc_entity(&mut app, Npc::Bairoletto);
         assert_eq!(
@@ -1503,32 +1464,8 @@ mod tests {
         app.update();
         assert_eq!(app.world().resource::<SceneShot>().0, Some(him.position));
         wait_for_scene(&mut app, 3);
-        let all = said(&app);
-        let lines: Vec<(&str, &str)> = all[before..]
-            .iter()
-            .map(|(who, text)| (who.as_str(), text.as_str()))
-            .collect();
-        assert_eq!(
-            lines,
-            [
-                (
-                    "Bairoletto",
-                    "Che pibe, ese caballo que está afuera…¿Es tuyo?"
-                ),
-                ("Lisandro", "Si, es de mi tìo."),
-                (
-                    "Bairoletto",
-                    "¿Queres ganarte unos pesos? Necesito transporte para esta noche."
-                ),
-                ("Lisandro", "si, ¿hasta donde necesita ir?"),
-                ("Bairoletto", "A la noche te digo, ¿Cómo te llamas?"),
-                ("Lisandro", "Lisandro."),
-                (
-                    "Bairoletto",
-                    "Yo soy Bairoletto, pero me dicen Tano. Nos vemos a la noche en esta pulpería."
-                ),
-            ]
-        );
+        let lines = said(&app)[before..].to_vec();
+        assert_eq!(lines, scene_lines(3));
         // Libre hasta la noche: la historia termina con el acto 4 (S18: el
         // Viejo Amadeo ya no es un paso).
         assert_eq!(errand(&app).stage(), ErrandStage::Done);

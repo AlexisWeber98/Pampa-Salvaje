@@ -159,6 +159,14 @@ aviso que nombra el problema y usa en su lugar un pequeño conjunto de líneas
 incorporadas. Ejecutar `cargo test -p pampa-content -p game` para comprobar
 los archivos (formato, longitud y caracteres) antes de jugar.
 
+Los textos de `errand.ron` se pueden cambiar sin tocar el código ni los tests:
+los tests leen las líneas de este archivo y comprueban que el juego las muestre
+tal como están escritas. Lo que sí comprueban es la forma de la historia: el
+orden de los pasos, quién habla en cada escena y qué se da o se entrega (la
+carta, la plata, el queso). Si se cambia eso, hay que cambiar también el test
+`the_shipped_file_tells_acts_two_to_four_in_order_and_amadeo_apart` de
+`crates/content/src/errand.rs`.
+
 Los campos que el juego todavía no conoce (por ejemplo, un futuro grupo por
 aspecto) se ignoran, así que se pueden agregar antes que el código que los
 usa.
