@@ -46,7 +46,7 @@ use super::clips::{
 };
 use super::figure::{FigureBody, FigureKind};
 use super::model::model_transform;
-use super::rider::{OnBench, Riding};
+use super::rider::{OnBench, Riding, Rising, rise_of};
 use super::townsfolk::{SKIRT_ARMS_OUT, arm_out};
 use super::visual::VisualPose;
 use crate::fauna::livestock::{any_in_view, frozen, view_eye};
@@ -77,10 +77,11 @@ pub const SEATED: Clip = Clip::Drive;
 pub const AT_REST: Clip = Clip::SitIdle;
 
 /// Los clips que reproduce un modelo: el de una persona sentada (`seated`, ver
-/// [`SEATED`] y [`AT_REST`]), o los de una persona a pie.
+/// [`SEATED`] y [`AT_REST`]; en un banco, también la espera de pie, a la que
+/// pasa al pararse: ver [`Rising`]), o los de una persona a pie.
 pub fn played(seated: Option<Clip>) -> &'static [Clip] {
     match seated {
-        Some(AT_REST) => &[AT_REST],
+        Some(AT_REST) => &[AT_REST, Clip::Idle],
         Some(_) => &[SEATED],
         None => &PLAYED,
     }
@@ -171,6 +172,16 @@ pub(super) fn bind_targets(
 pub fn seated_targets(clip: Clip) -> [f32; Clip::COUNT] {
     let mut out = [0.0; Clip::COUNT];
     out[clip.index()] = 1.0;
+    out
+}
+
+/// El peso que debe tener cada clip para una persona sentada en un banco que se
+/// paró `rise` ([`Rising`]): de [`AT_REST`] a la espera de pie.
+pub fn rising_targets(rise: f32) -> [f32; Clip::COUNT] {
+    let rise = rise.clamp(0.0, 1.0);
+    let mut out = [0.0; Clip::COUNT];
+    out[AT_REST.index()] = 1.0 - rise;
+    out[Clip::Idle.index()] = rise;
     out
 }
 
@@ -300,6 +311,7 @@ pub(super) fn drive_rigs(
     mut rigs: Query<ModelRig>,
     mut players: Query<&mut AnimationPlayer>,
     seen: Query<&ViewVisibility>,
+    (parents, risers): (Query<&ChildOf>, Query<&Rising>),
 ) {
     let dt = time.delta_secs();
     let eye = view_eye(cameras);
@@ -319,9 +331,17 @@ pub(super) fn drive_rigs(
                     .map_or((0.0, false), |(pose, talking)| (moving(pose), talking));
                 (body, speed, talking)
             });
-        let Some((kind, seed, speed, goal)) = who(riding, seated, figure) else {
+        let Some((kind, seed, speed, mut goal)) = who(riding, seated, figure) else {
             continue;
         };
+        // Quien se para del banco sigue su ritmo, sin el retraso de la mezcla.
+        let rise = match riding {
+            Some(r) if on_bench => rise_of(r.horse, &parents, &risers),
+            _ => 0.0,
+        };
+        if on_bench {
+            goal = rising_targets(rise);
+        }
         let distance = eye.map_or(0.0, |e| e.distance(at.translation()));
         // La visibilidad solo se conoce con una cámara dibujando. Un jinete
         // está oculto hasta su primera pose en la montura: tomarlo por fuera de
@@ -375,7 +395,11 @@ pub(super) fn drive_rigs(
             rig.weights = goal;
             rig.started = true;
         }
-        ease(&mut rig.weights, &goal, dt);
+        if on_bench {
+            rig.weights = goal;
+        } else {
+            ease(&mut rig.weights, &goal, dt);
+        }
         // Los clips dan los pasos que dan las piernas del protagonista: una
         // persona con las piernas más cortas da pasos más cortos, así que los
         // reproduce más rápido para mantener los pies quietos sobre el suelo.
@@ -391,11 +415,12 @@ pub(super) fn drive_rigs(
 }
 
 /// Ajusta a cada modelo que se reproduce sus clips: su pelvis según sus propias
-/// piernas y su cabeza girada según la mirada de su figura.
+/// piernas y su cabeza girada según la mirada de su figura. Los sentados no:
+/// su pelvis la pone [`pose_riders`](super::rider::pose_riders).
 pub(super) fn fit_rigs(
     clips: Option<Res<CharacterClips>>,
     bodies: Query<&FigureBody>,
-    rigs: Query<(&ChildOf, &Rig)>,
+    rigs: Query<(&ChildOf, &Rig), Without<Riding>>,
     mut transforms: Query<&mut Transform>,
 ) {
     let reference = clips.and_then(|c| c.reference);

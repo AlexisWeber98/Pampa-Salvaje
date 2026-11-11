@@ -2,7 +2,8 @@
 //! que caminan o cabalgan ([`Horsemen`]) por las calles, el caballo atado
 //! frente a cada almacén de ramos
 //! generales, y las personas del encargo paradas en sus pueblos o sentadas en
-//! su pulpería, hasta que se van ([`Leaving`]).
+//! su pulpería, hasta que se van ([`Leaving`]), con el puesto de quesos del
+//! Viejo Amadeo ([`StallTown`]).
 //!
 //! La lógica vive en `pampa-core`; este módulo la hace avanzar una vez por
 //! frame, antes que al jugador, deja que el jinete aparte a los peatones
@@ -23,13 +24,14 @@ use std::collections::BTreeSet;
 
 use bevy::prelude::*;
 use pampa_core::{
-    BASE_RATE, Building, Errand, GameClock, Heading, LineTrain, MAX_STEP, Npc, Parked, RailLine,
-    Ride, Run, Standing, Timetable, TownLayout, TownRiders, Townsfolk, Travel, Vec2, opening,
-    pulperia,
+    Aabb, AnimationState, BASE_RATE, Building, Errand, GameClock, Heading, LineTrain, MAX_STEP,
+    Npc, Parked, RailLine, Ride, Run, Stall, Standing, Timetable, TownLayout, TownRiders,
+    Townsfolk, Travel, Vec2, opening, pulperia,
 };
+use pampa_render::character::{Fading, Rising};
 use pampa_render::{
-    ActiveTowns, CharacterVisual, Coat, FigureKind, MapIcon, Rolled, VehicleVisual, VisualPose,
-    WorldClock, WorldTowns, WorldTrains, world_from_ground,
+    ActiveTowns, CharacterVisual, CheeseStall, Coat, FigureKind, MapIcon, Rolled, VehicleVisual,
+    VisualPose, WorldClock, WorldTowns, WorldTrains, world_from_ground,
 };
 
 use crate::player::{DrivePlayer, GameWorld, Player, drive_player};
@@ -217,19 +219,36 @@ pub struct AtTable {
     pub seat: usize,
 }
 
-/// Alguien que se levantó de la pulpería del pueblo `town` y se va caminando
-/// por `way` ([`pulperia::Interior::way_out`]) hasta perderse de vista;
-/// `next` es el índice del próximo punto. Se va también si el pueblo se
-/// descarga.
+/// Alguien que se va de la pulpería del pueblo `town`: primero se para del
+/// banco ([`Rising`], dibujado todavía sentado), y después sale caminando como
+/// `figure` por `way` ([`pulperia::Interior::way_out`]) hasta perderse de
+/// vista; `next` es el índice del próximo punto. Adentro pisa el piso de
+/// ladrillo de la sala (`room`, a la altura `floor`); afuera, el suelo. Se va
+/// también si el pueblo se descarga.
 #[derive(Component, Debug, Clone, PartialEq)]
 pub struct Leaving {
     pub town: usize,
+    pub figure: FigureKind,
     pub way: Vec<Vec2>,
     pub next: usize,
+    pub room: Aabb,
+    pub floor: f32,
 }
 
 /// El paso de quien se va de la pulpería, en m/s: un andar tranquilo.
 pub const LEAVING_PACE: f32 = 1.3;
+
+/// Cuánto tarda en difuminarse quien se va de la pulpería, al final de su
+/// camino, en segundos: sigue caminando mientras se desvanece.
+pub const FADE_SECONDS: f32 = 1.5;
+
+/// Cuánto tarda en pararse del banco quien se va de la pulpería, en segundos.
+pub const RISE_SECONDS: f32 = 1.2;
+
+/// Qué tan rápido gira hacia su camino quien se va de la pulpería, en
+/// radianes por segundo: un giro de cuarto de vuelta en algo más de medio
+/// segundo.
+pub const LEAVING_TURN_RATE: f32 = 3.0;
 
 /// Un parroquiano sentado a una mesa de la pulpería del pueblo `town`, en el
 /// asiento `seat` de su interior ([`pampa_core::pulperia::Interior::seats`]).
@@ -485,36 +504,60 @@ fn seat_patrons(
 }
 
 /// Dónde está alguien sentado en el asiento `seat` de la pulpería `store`:
-/// sobre el banco, en el piso de ladrillo a la altura con la que el render
-/// dibuja la sala.
+/// sobre el banco, en el piso de ladrillo de la sala ([`pulperia_floor`]).
 fn on_bench(store: &Building, seat: pulperia::Seat, world: &GameWorld) -> Transform {
-    let middle = store.footprint.center();
-    let floor = world.0.terrain.height(middle.x, middle.y) + pulperia::FLOOR_RISE;
     Transform::from_translation(world_from_ground(
         seat.position,
-        floor + pulperia::BENCH_HEIGHT,
+        pulperia_floor(store, world) + pulperia::BENCH_HEIGHT,
     ))
 }
 
-/// Hace caminar a quien se va de la pulpería ([`Leaving`]) por su camino, a
-/// [`LEAVING_PACE`], sobre el suelo; al final del camino desaparece. No choca
-/// con nada: su camino ya va por piso libre.
+/// La altura del piso de ladrillo de la pulpería `store`, la misma con la que
+/// el render dibuja la sala.
+pub fn pulperia_floor(store: &Building, world: &GameWorld) -> f32 {
+    let middle = store.footprint.center();
+    world.0.terrain.height(middle.x, middle.y) + pulperia::FLOOR_RISE
+}
+
+/// Hace pararse del banco a quien se va de la pulpería ([`Leaving`]), en
+/// [`RISE_SECONDS`], y después lo hace caminar por su camino con el ciclo de
+/// caminata, a [`LEAVING_PACE`], con los pies en el piso; gira hacia el camino
+/// a [`LEAVING_TURN_RATE`]. Durante los últimos [`FADE_SECONDS`] del camino se
+/// difumina ([`Fading`]), y al final se va. No choca con nada: su camino ya va
+/// por piso libre.
 fn walk_away(
     mut commands: Commands,
     time: Res<Time>,
     world: Res<GameWorld>,
-    mut leaving: Query<(Entity, &mut Leaving, &mut Transform, &mut VisualPose)>,
+    mut leaving: Query<(
+        Entity,
+        &mut Leaving,
+        &mut Transform,
+        &mut VisualPose,
+        Option<&mut Rising>,
+    )>,
 ) {
     let dt = time.delta_secs().min(MAX_STEP);
-    for (entity, mut walk, mut transform, mut pose) in &mut leaving {
+    for (entity, mut walk, mut transform, mut pose, rising) in &mut leaving {
         let mut at = Vec2::new(transform.translation.x, -transform.translation.z);
+        if let Some(mut rising) = rising {
+            rising.0 += dt / RISE_SECONDS;
+            if rising.0 < 1.0 {
+                continue;
+            }
+            // De pie junto al banco: ya es una figura a pie, y arranca.
+            commands
+                .entity(entity)
+                .remove::<Rising>()
+                .insert(CharacterVisual::Figure(walk.figure));
+        }
         let mut step = LEAVING_PACE * dt;
         while let Some(&to) = walk.way.get(walk.next) {
             let gap = at.distance(to);
             if gap > step {
                 let toward = (to - at) * (1.0 / gap);
                 at += toward * step;
-                pose.heading = Heading::from_radians(toward.y.atan2(toward.x));
+                pose.heading = turn_toward(pose.heading, toward, LEAVING_TURN_RATE * dt);
                 break;
             }
             at = to;
@@ -525,9 +568,39 @@ fn walk_away(
             commands.entity(entity).despawn();
             continue;
         }
+        let left = at.distance(walk.way[walk.next])
+            + walk.way[walk.next..]
+                .windows(2)
+                .map(|w| w[0].distance(w[1]))
+                .sum::<f32>();
+        let visible = left / (LEAVING_PACE * FADE_SECONDS);
+        if visible < 1.0 {
+            commands.entity(entity).insert(Fading(visible));
+        }
         pose.speed = LEAVING_PACE;
-        transform.translation = world_from_ground(at, world.0.ground_height(at));
+        pose.animation = AnimationState::Walk;
+        transform.translation = world_from_ground(at, walk.ground(at, &world));
     }
+}
+
+impl Leaving {
+    /// La altura del piso que pisa en `at`: el de ladrillo dentro de la sala,
+    /// el suelo afuera.
+    fn ground(&self, at: Vec2, world: &GameWorld) -> f32 {
+        if self.room.contains_point(at) {
+            self.floor
+        } else {
+            world.0.ground_height(at)
+        }
+    }
+}
+
+/// `heading` girado hacia `toward` a lo sumo `max` radianes, por el lado corto.
+fn turn_toward(heading: Heading, toward: Vec2, max: f32) -> Heading {
+    let goal = toward.y.atan2(toward.x);
+    let delta = (goal - heading.radians() + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
+        - std::f32::consts::PI;
+    heading.rotated(delta.clamp(-max, max))
 }
 
 /// Una persona del encargo parada, quieta donde la puso el encargo.

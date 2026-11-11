@@ -32,6 +32,7 @@ use pampa_core::{
     Ability, Beat, Errand, ErrandEvent, Interaction, MAX_STEP, Npc, Rider, Speaker, TownLayout,
     Travel, World,
 };
+use pampa_render::character::{GAZE_MAX, Gaze, Rising};
 use pampa_render::lettering::{self, Face};
 use pampa_render::subtitle;
 use pampa_render::{
@@ -41,8 +42,13 @@ use pampa_render::{
 
 use crate::abilities::{PlayerAbilities, Unlocked, announce_unlocks, unlock_on_mount};
 use crate::camera::SceneShot;
-use crate::life::{AtTable, Cast, Leaving, LedAway, StandingNpc, TetheredHorse, npc_figure};
-use crate::player::{ControlLock, DrivePlayer, GameWorld, Player, RiddenCoat, player_visual_on};
+use crate::life::{
+    AtTable, Cast, Leaving, LedAway, StandingNpc, TetheredHorse, npc_figure, pulperia_floor,
+};
+use crate::player::{
+    ControlLock, DrivePlayer, GameWorld, Player, RiddenCoat, WalkPath, player_visual_on,
+};
+use crate::pulperia::PulperiaDoors;
 use crate::wallet::{PlayerItems, PlayerWallet};
 
 /// La única tecla de contexto: hablar, montar o bajarse. (E orbita la cámara, M
@@ -581,7 +587,7 @@ fn converse(
 }
 
 /// Terminada su escena, quien esperaba sentado en la pulpería ([`Cast`]:
-/// Bairoletto) se levanta y se va ([`Leaving`]): sale del elenco, así que no
+/// Bairoletto) se para del banco y se va ([`Leaving`]): sale del elenco, así que no
 /// vuelve cuando su pueblo se vuelve a cargar.
 fn see_off(
     mut commands: Commands,
@@ -591,6 +597,7 @@ fn see_off(
         Option<Res<WorldTowns>>,
     ),
     cast: Option<ResMut<Cast>>,
+    world: Res<GameWorld>,
     npcs: Query<(Entity, &StandingNpc)>,
 ) {
     let (Some(errand), Some(mut cast)) = (errand, cast) else {
@@ -606,25 +613,27 @@ fn see_off(
     }
     cast.1 = waiting;
     for sitter in done {
-        let inside = towns
+        let pulperia = towns
             .as_ref()
-            .and_then(|t| t.0.get(sitter.town)?.pulperia())
-            .map(|(_, inside)| inside);
+            .and_then(|t| t.0.get(sitter.town)?.pulperia());
         for (entity, npc) in &npcs {
             if npc.npc != sitter.npc {
                 continue;
             }
             let mut him = commands.entity(entity);
-            him.remove::<StandingNpc>();
-            match &inside {
-                Some(inside) => {
+            him.remove::<(StandingNpc, Gaze)>();
+            match &pulperia {
+                Some((store, inside)) => {
                     him.insert((
                         Leaving {
                             town: sitter.town,
+                            figure: npc_figure(sitter.npc),
                             way: inside.way_out(sitter.seat),
                             next: 1,
+                            room: inside.floor,
+                            floor: pulperia_floor(store, &world),
                         },
-                        CharacterVisual::Figure(npc_figure(sitter.npc)),
+                        Rising(0.0),
                     ));
                 }
                 None => {
@@ -1268,51 +1277,112 @@ mod tests {
         assert_eq!(objective(&app), None);
         assert_eq!(app.world().resource::<MapTarget>().0, None);
 
-        // Se levanta, sale por la puerta, sigue por la vereda y desaparece.
+        // Se levanta del banco, sin moverse de su lugar.
         app.update();
         let mut standing = app.world_mut().query::<&StandingNpc>();
         assert!(standing.iter(app.world()).all(|n| n.npc != Npc::Bairoletto));
+        let on_bench = app.world().get::<Transform>(tano).unwrap().translation;
+        let mut risen = 0.0;
+        while let Some(rising) = app.world().get::<pampa_render::character::Rising>(tano) {
+            assert!(rising.0 >= risen, "{} after {risen}", rising.0);
+            risen = rising.0;
+            assert_eq!(
+                app.world().get::<CharacterVisual>(tano),
+                Some(&CharacterVisual::Seated(FigureKind::Bairoletto))
+            );
+            assert_eq!(
+                app.world().get::<Transform>(tano).unwrap().translation,
+                on_bench
+            );
+            assert!(risen < 1.0, "{risen}");
+            app.update();
+        }
+        assert!(risen > 0.9, "he stands up gradually, last at {risen}");
+        // Sale caminando por la puerta, sigue por la vereda, se difumina al
+        // final (S16: ya no desaparece de golpe) y se va.
         let walking = |app: &mut App| {
             let mut q = app.world_mut().query::<(
                 &crate::life::Leaving,
                 &CharacterVisual,
                 &Transform,
                 &VisualPose,
+                Option<&pampa_render::character::Fading>,
             )>();
             q.iter(app.world())
-                .map(|(l, v, t, p)| {
-                    (
-                        l.town,
-                        *v,
-                        GroundVec2::new(t.translation.x, -t.translation.z),
-                        p.speed,
-                    )
-                })
+                .map(|(l, v, t, p, f)| (l.town, *v, t.translation, *p, f.map(|f| f.0)))
                 .collect::<Vec<_>>()
         };
+        let (mut fading, mut seen) = (0, 1.0_f32);
+        let world = app.world().resource::<GameWorld>().0.clone();
+        let middle = store.footprint.center();
+        let floor = world.terrain.height(middle.x, middle.y) + pampa_core::pulperia::FLOOR_RISE;
         let way = inside.way_out(seat);
         let length: f32 = way.windows(2).map(|w| w[0].distance(w[1])).sum();
         let (mut out_the_door, mut gone) = (false, false);
+        let (mut was, mut facing, mut steps) = (None::<(GroundVec2, f32)>, 0, 0);
         let frames = ((length / crate::life::LEAVING_PACE + 2.0) / 0.05) as usize;
         for _ in 0..frames {
-            app.update();
             match walking(&mut app)[..] {
                 [] => {
                     gone = true;
                     break;
                 }
-                [(town, visual, at, speed)] => {
+                [(town, visual, feet, pose, fade)] => {
+                    let at = GroundVec2::new(feet.x, -feet.z);
+                    if let Some(fade) = fade {
+                        assert!(fade <= seen && fade < 1.0, "{fade} after {seen}");
+                        seen = fade;
+                        fading += 1;
+                    }
                     assert_eq!(town, him.town);
                     assert_eq!(visual, CharacterVisual::Figure(FigureKind::Bairoletto));
-                    assert!(speed > 0.5, "{speed}");
+                    // Camina con el ciclo de caminata, con los pies en el
+                    // piso: el de ladrillo adentro, el suelo afuera.
+                    assert_eq!(pose.animation, pampa_core::AnimationState::Walk);
+                    assert!(pose.speed > 0.5, "{}", pose.speed);
+                    let ground = if inside.floor.contains_point(at) {
+                        floor
+                    } else {
+                        world.ground_height(at)
+                    };
+                    assert!(
+                        (feet.y - ground).abs() < 1e-4,
+                        "{at:?}: {} over {ground}",
+                        feet.y
+                    );
                     out_the_door |= inside.doorway().contains_point(at);
+                    // Gira hacia su camino sin saltos, y camina mirando
+                    // hacia adelante.
+                    let heading = pose.heading.radians();
+                    if let Some((before, turned)) = was {
+                        use std::f32::consts::{PI, TAU};
+                        let turn = (heading - turned + PI).rem_euclid(TAU) - PI;
+                        let max = crate::life::LEAVING_TURN_RATE * 0.05 + 1e-3;
+                        assert!(turn.abs() <= max, "a turn of {turn} in one frame");
+                        if at.distance(before) > 1e-3 {
+                            steps += 1;
+                            let step = (at - before) * (1.0 / at.distance(before));
+                            let ahead = pose.heading.forward().dot(step);
+                            facing += usize::from(ahead > 0.99);
+                        }
+                    }
+                    was = Some((at, heading));
                     // Nunca atraviesa una pared de la pulpería.
                     assert!(!inside.walls.iter().any(|w| w.contains_point(at)), "{at:?}");
                 }
                 ref more => panic!("{more:?}"),
             }
+            app.update();
         }
         assert!(out_the_door && gone, "{out_the_door} {gone}");
+        // Se difumina durante el último segundo y medio, hasta casi no verse.
+        let faded = fading as f32 * 0.05;
+        assert!((1.3..=1.7).contains(&faded), "faded for {faded} s");
+        assert!(seen < 0.1, "last seen at {seen}");
+        assert!(
+            facing * 10 > steps * 9,
+            "facing ahead {facing} of {steps} steps"
+        );
         assert!(store.footprint.contains_point(way[2]));
 
         // No vuelve cuando el pueblo se descarga y se vuelve a cargar.

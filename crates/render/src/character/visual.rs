@@ -10,6 +10,7 @@ use bevy::transform::TransformSystems;
 use pampa_core::{AnimationState, Heading};
 
 use super::clips::{load_character_clips, read_reference};
+use super::fade::fade_people;
 use super::figure::{FigureKind, FigureKit, body_rotation, spawn_figure, update_figures};
 use super::finish::Palette;
 use super::horse::{Coat, dress_horse, drive_horses, fit_horses, spawn_horse, swap_in_horses};
@@ -119,6 +120,7 @@ impl Plugin for CharacterVisualPlugin {
                     .before(AnimationSystems)
                     .before(TransformSystems::Propagate),
             )
+            .add_systems(PostUpdate, fade_people.after(attach_visuals))
             .add_systems(
                 PostUpdate,
                 (fit_rigs, fit_horses, pose_riders)
@@ -403,6 +405,69 @@ mod tests {
         assert_eq!(distinct.len(), one_person.len());
     }
 
+    /// Cada material dibujado bajo `who`: su id, su alfa y su modo de alfa.
+    fn looks(app: &mut App, who: Entity) -> Vec<(AssetId<StandardMaterial>, f32, AlphaMode)> {
+        let mut under = Vec::new();
+        let mut stack = vec![who];
+        while let Some(e) = stack.pop() {
+            if let Some(children) = app.world().get::<Children>(e) {
+                stack.extend(children.iter());
+                under.extend(children.iter());
+            }
+        }
+        let materials = app.world().resource::<Assets<StandardMaterial>>();
+        let mut found: Vec<_> = under
+            .iter()
+            .filter_map(|e| app.world().get::<MeshMaterial3d<StandardMaterial>>(*e))
+            .map(|m| {
+                let material = materials.get(&m.0).unwrap();
+                (m.0.id(), material.base_color.alpha(), material.alpha_mode)
+            })
+            .collect();
+        found.sort_by_key(|(id, ..)| format!("{id:?}"));
+        found
+    }
+
+    #[test]
+    fn a_fading_person_turns_see_through_alone_and_the_others_of_its_look_stay_opaque() {
+        use super::super::fade::Fading;
+        let mut app = plugin_app();
+        let kind = CharacterVisual::Figure(FigureKind::Bairoletto);
+        let leaving = app.world_mut().spawn(kind).id();
+        let other = app.world_mut().spawn(kind).id();
+        app.update();
+        let shared = looks(&mut app, other);
+        assert!(!shared.is_empty());
+        assert_eq!(looks(&mut app, leaving), shared, "one look, shared");
+        assert!(
+            shared
+                .iter()
+                .all(|(_, a, mode)| *a == 1.0 && *mode == AlphaMode::Opaque)
+        );
+
+        // Se desvanece con sus propios materiales; el otro, igual que antes.
+        app.world_mut().entity_mut(leaving).insert(Fading(0.6));
+        app.update();
+        let faded = looks(&mut app, leaving);
+        assert_eq!(faded.len(), shared.len());
+        for (id, alpha, mode) in &faded {
+            assert!(shared.iter().all(|(s, ..)| s != id), "its own copy");
+            assert!((alpha - 0.6).abs() < 1e-4, "{alpha}");
+            assert_eq!(*mode, AlphaMode::Blend);
+        }
+        assert_eq!(looks(&mut app, other), shared);
+        // Cada vez menos visible, con las mismas copias.
+        app.world_mut().entity_mut(leaving).insert(Fading(0.2));
+        app.update();
+        let fainter = looks(&mut app, leaving);
+        assert!(fainter.iter().all(|(_, a, _)| (a - 0.2).abs() < 1e-4));
+        let ids = |l: &[(AssetId<StandardMaterial>, f32, AlphaMode)]| {
+            l.iter().map(|(id, ..)| *id).collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&fainter), ids(&faded));
+        assert_eq!(looks(&mut app, other), shared);
+    }
+
     #[test]
     fn a_walking_figure_turns_to_its_heading_and_swings_its_legs() {
         use super::super::figure::{FigureBody, FigureJoint, Joint};
@@ -484,9 +549,6 @@ mod tests {
         ));
         app.update();
         assert!(app.world().get_resource::<CharacterModels>().is_some());
-        // La parte de arriba de un banco a 0.45 m del piso, mirando al noroeste.
-        let heading = Heading::from_radians(2.2);
-        let bench = Vec3::new(3.0, 0.5, -2.0);
         let me = app
             .world_mut()
             .spawn((
@@ -516,6 +578,17 @@ mod tests {
         for _ in 0..10 {
             app.update();
         }
+        (app, me, model)
+    }
+
+    #[test]
+    fn a_seated_townsperson_sits_on_the_bench_facing_ahead_with_hands_in_the_lap() {
+        use super::super::horse::tests::named;
+        use super::super::rider::PELVIS_RISE;
+        // La parte de arriba de un banco a 0.45 m del piso, mirando al noroeste.
+        let heading = Heading::from_radians(2.2);
+        let bench = Vec3::new(3.0, 0.5, -2.0);
+        let (mut app, me, model) = seat_townsperson(heading, bench);
         let world = app.world_mut();
         let riding = *world.get::<Riding>(model).unwrap();
         assert_eq!(riding.kind, FigureKind::townsfolk(3));
@@ -554,5 +627,95 @@ mod tests {
                 "{side} hand {up:.3} up and {out:.3} ahead of the pelvis"
             );
         }
+    }
+
+    #[test]
+    fn seated_on_a_bench_he_turns_his_head_toward_what_he_looks_at_up_to_seventy_degrees() {
+        use super::super::horse::tests::named;
+        use super::super::rig::{GAZE_MAX, Gaze};
+        let (mut app, me, model) =
+            seat_townsperson(Heading::from_radians(2.2), Vec3::new(3.0, 0.5, -2.0));
+        let world = app.world_mut();
+        let camera = world
+            .query_filtered::<Entity, With<Camera3d>>()
+            .single(world)
+            .unwrap();
+        world.despawn(camera);
+        let head = |app: &mut App| {
+            let e = named(app.world(), model, "head");
+            app.world().get::<GlobalTransform>(e).unwrap().rotation()
+        };
+        // Cuánto giró la cabeza alrededor de la vertical, positivo a la
+        // izquierda, respecto de como la tenía mirando al frente.
+        let ahead = head(&mut app);
+        let turned = |app: &mut App| {
+            let now = head(app) * ahead.inverse();
+            let f = now * Vec3::X;
+            let (x, z) = (f.x, f.z);
+            (-z).atan2(x)
+        };
+        for (gaze, want) in [(0.9, 0.9), (2.8, GAZE_MAX), (-1.0, -1.0)] {
+            app.world_mut().entity_mut(me).insert(Gaze(gaze));
+            for _ in 0..40 {
+                app.update();
+            }
+            let got = turned(&mut app);
+            assert!((got - want).abs() < 0.15, "gaze {gaze}: turned {got}");
+        }
+        // Sin nada que mirar, vuelve al frente.
+        app.world_mut().entity_mut(me).remove::<Gaze>();
+        for _ in 0..40 {
+            app.update();
+        }
+        assert!(turned(&mut app).abs() < 0.15, "{}", turned(&mut app));
+    }
+
+    #[test]
+    fn standing_up_from_the_bench_the_pelvis_rises_and_the_feet_stay_on_the_floor() {
+        use super::super::horse::tests::named;
+        use super::super::rider::{BENCH_HEIGHT, PELVIS_RISE, Rising};
+        let bench = Vec3::new(3.0, 0.5, -2.0);
+        let floor = bench.y - BENCH_HEIGHT;
+        let (mut app, me, model) = seat_townsperson(Heading::from_radians(2.2), bench);
+        // Sin la cámara que mira hacia otro lado, nadie queda fuera de la vista:
+        // su modelo sigue animado.
+        let world = app.world_mut();
+        let camera = world
+            .query_filtered::<Entity, With<Camera3d>>()
+            .single(world)
+            .unwrap();
+        world.despawn(camera);
+        let mut last = bench.y + PELVIS_RISE;
+        for rise in [0.5, 1.0] {
+            app.world_mut().entity_mut(me).insert(Rising(rise));
+            for _ in 0..10 {
+                app.update();
+            }
+            let world = app.world_mut();
+            let at = |world: &World, bone: &str| {
+                let e = named(world, model, bone);
+                world.get::<GlobalTransform>(e).unwrap().translation()
+            };
+            let pelvis = at(world, "pelvis").y;
+            assert!(
+                pelvis > last + 0.02,
+                "at {rise} the pelvis at {pelvis}, before at {last}"
+            );
+            last = pelvis;
+            for side in ["l", "r"] {
+                let ball = at(world, &format!("ball_{side}")).y - floor;
+                assert!(
+                    (0.0..0.05).contains(&ball),
+                    "at {rise} the {side} ball {ball:.3} over the floor"
+                );
+            }
+        }
+        // De pie: la pelvis a la altura de una persona parada, no la de una
+        // sentada en el banco (0.58 m).
+        assert!(
+            last - floor > 0.7,
+            "standing pelvis {:.3} over the floor",
+            last - floor
+        );
     }
 }
