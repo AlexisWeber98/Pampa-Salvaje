@@ -9,6 +9,8 @@
 //! alcance. Hay un solo paso pendiente a la vez, y cada paso se cumple una
 //! sola vez: solo su objetivo lo hace avanzar al siguiente.
 
+use crate::pulperia::Door;
+use crate::pulperia::FurnitureKind;
 use crate::story::{Beat, Goal, Step};
 use crate::{Aabb, Heading, TetheredHorse, TownLayout, Vec2};
 
@@ -120,6 +122,10 @@ pub struct Errand {
     bairoletto_seat: Option<usize>,
     /// El piso de esa pulpería: se le habla a Bairoletto desde adentro.
     bairoletto_room: Option<Aabb>,
+    /// La puerta de esa pulpería, por la que entra Lisandro
+    /// ([`Self::walk_in`]), y el lugar junto a la cabecera de la mesa de
+    /// Bairoletto desde el que hablan ([`Self::place_to_talk`]).
+    bairoletto_entry: Option<(Door, Vec2)>,
     /// Pueblo del caballo, y el caballo.
     horse: (usize, TetheredHorse),
     /// Nombre del pueblo en el que está Farach.
@@ -146,6 +152,44 @@ impl Errand {
     /// junto a su banco. Además hay que estar adentro, para no hablarle a
     /// través de la pared.
     pub const SEATED_TALK_RANGE: f32 = 4.5;
+    /// Distancia máxima a la que el Viejo Amadeo llama al jugador que pasa (a
+    /// pie o montado) junto a su puesto, en metros: alcanza a un jinete que
+    /// pasa por la mitad de la calle (Amadeo está a 1,5 m del cordón y la calle
+    /// tiene 12 m), que después frena y vuelve al tranco ([`Self::hail`]).
+    pub const HAIL_RANGE: f32 = 8.0;
+    /// Cuánto entra Lisandro, desde la puerta de La Colonia, antes de
+    /// detenerse a mirar el lugar, en metros (la puerta está en la cara de
+    /// afuera de la pared, de 0,45 m).
+    pub const ENTRY_DEPTH: f32 = 2.0;
+    /// Cuánto se aparta Lisandro de la cabecera de la mesa de Bairoletto para
+    /// hablarle parado, en metros: Bairoletto lo ve girando la cabeza menos de
+    /// [`Self::GAZE_MAX`].
+    pub const BESIDE_TABLE: f32 = 0.7;
+    /// Lo más que gira la cabeza alguien sentado para mirar a quien le habla,
+    /// en radianes (unos 70°): más sería forzado, así que quien está parado se
+    /// pone donde se lo vea.
+    pub const GAZE_MAX: f32 = 1.22;
+    /// A qué distancia al costado del Viejo Amadeo, sobre la vereda, se para
+    /// Lisandro a pie para hablarle, en metros.
+    pub const BESIDE_VENDOR: f32 = 1.2;
+    /// A qué distancia del cordón, en la calle, se para el caballo de Lisandro
+    /// para hablarle a Amadeo por encima de la mesa, en metros: la cabeza del
+    /// caballo no llega al puesto.
+    pub const FROM_CURB: f32 = 2.0;
+    /// Hasta qué distancia del punto de la vereda frente a la puerta de la
+    /// pulpería de Bairoletto (a [`Self::PORCH`] de ella) entra Lisandro solo,
+    /// en metros: llegando a pie por la vereda.
+    pub const DOOR_RANGE: f32 = 2.0;
+    /// A qué distancia de la puerta, hacia la calle, empieza Lisandro a entrar
+    /// solo, en metros.
+    pub const PORCH: f32 = 1.0;
+    /// A qué distancia de la puerta de la pulpería (o de la comisaría, sin
+    /// pulpería) está el puesto del Viejo Amadeo, en metros: una cuadra de
+    /// Castex, una manzana de 40 m y una calle de 12 m.
+    pub const STALL_DISTANCE: f32 = 52.0;
+    /// Espacio libre mínimo entre el puesto (o su puestero) y cualquier
+    /// obstáculo del pueblo, en metros.
+    pub const STALL_CLEARANCE: f32 = 1.0;
 
     /// El encargo desde el pueblo `giver` (Don Hidalgo en su plaza, su caballo
     /// en su almacén de ramos generales) hasta el pueblo `police` (Farach en la
@@ -199,6 +243,7 @@ impl Errand {
             bairoletto,
             bairoletto_seat,
             bairoletto_room,
+            bairoletto_entry,
             horse: (giver, home.hitching_post.horse),
             police_name: away.name.clone(),
         })
@@ -385,6 +430,92 @@ impl Errand {
     }
 }
 
+/// A qué distancia del cordón está el centro de la mesa del puesto, en
+/// metros: a veinte centímetros del cordón.
+const TABLE_FROM_CURB: f32 = 0.2 + Stall::DEPTH / 2.0;
+
+/// El lugar junto a la cabecera de la mesa del asiento `seat` de `inside`, del
+/// lado del paso que viene de la puerta, a [`Errand::BESIDE_TABLE`] de ella y a
+/// la profundidad de la mesa: desde ahí habla parado quien llega con quien está
+/// sentado ahí.
+fn beside_table(inside: &crate::pulperia::Interior, seat: usize) -> Vec2 {
+    let door = inside.door;
+    let along = Vec2::new(-door.outward.y, door.outward.x);
+    let table = inside
+        .furniture
+        .iter()
+        .filter(|f| f.kind == FurnitureKind::Table)
+        .nth(inside.seats[seat].table)
+        .map(|f| f.footprint)
+        .expect("every seat has its table");
+    let center = table.center();
+    let size = table.size();
+    let half = (size.x * along.x.abs() + size.y * along.y.abs()) / 2.0;
+    let toward_aisle = if (center - door.center).dot(along) > 0.0 {
+        -1.0
+    } else {
+        1.0
+    };
+    center + along * (toward_aisle * (half + Errand::BESIDE_TABLE))
+}
+
+/// El puesto del Viejo Amadeo en `town` (de índice `index`) y él detrás: el
+/// lugar a media cuadra, sobre la mitad del cordón de una vereda, cuya
+/// distancia a `from` está más cerca de [`Errand::STALL_DISTANCE`], entre los
+/// que dejan a ambos a más de [`Errand::STALL_CLEARANCE`] de todo obstáculo del
+/// pueblo (o entre todos, si ninguno lo hace). Determinista; `None` solo en un
+/// pueblo sin veredas.
+fn cheese_stall(town: &TownLayout, index: usize, from: Vec2) -> Option<(Stall, Standing)> {
+    // Del cordón hacia adentro: la mesa a veinte centímetros, el puestero
+    // después, del lado por el que pasa la gente.
+    const TABLE: f32 = TABLE_FROM_CURB;
+    const VENDOR: f32 = TABLE + Stall::DEPTH / 2.0 + 0.1 + Errand::PERSON_FOOTPRINT / 2.0;
+    // Corrimientos a lo largo de la vereda desde la mitad de la cuadra.
+    const SHIFTS: [f32; 5] = [0.0, -4.0, 4.0, -8.0, 8.0];
+    let obstacles = town.obstacles();
+    let candidates = town.sidewalks().iter().flat_map(|walk| {
+        let out = match walk.curbs.first().copied().unwrap_or(Side::South) {
+            Side::North => Vec2::new(0.0, 1.0),
+            Side::South => Vec2::new(0.0, -1.0),
+            Side::East => Vec2::new(1.0, 0.0),
+            Side::West => Vec2::new(-1.0, 0.0),
+        };
+        let along = Vec2::new(out.y.abs(), out.x.abs());
+        let (c, half) = (walk.area.center(), walk.area.size() * 0.5);
+        let edge = c + out * (half.x * out.x.abs() + half.y * out.y.abs());
+        SHIFTS.into_iter().map(move |t| {
+            let vendor = edge - out * VENDOR + along * t;
+            let facing = Heading::from_radians(out.y.atan2(out.x));
+            let stall = Stall {
+                town: index,
+                position: edge - out * TABLE + along * t,
+                facing,
+            };
+            let amadeo = Standing {
+                town: index,
+                position: vendor,
+                heading: facing,
+            };
+            (stall, amadeo)
+        })
+    });
+    let clear = |(stall, amadeo): &(Stall, Standing)| {
+        let table = stall.footprint().expanded(Errand::STALL_CLEARANCE);
+        let him = amadeo.footprint().expanded(Errand::STALL_CLEARANCE);
+        obstacles
+            .iter()
+            .all(|o| !o.intersects(&table) && !o.intersects(&him))
+    };
+    let off = |(stall, _): &(Stall, Standing)| {
+        (stall.position.distance(from) - Errand::STALL_DISTANCE).abs()
+    };
+    let best =
+        |all: Vec<(Stall, Standing)>| all.into_iter().min_by(|a, b| off(a).total_cmp(&off(b)));
+    let all: Vec<_> = candidates.collect();
+    let fits: Vec<_> = all.iter().copied().filter(clear).collect();
+    best(fits).or_else(|| best(all))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -545,6 +676,75 @@ mod tests {
         );
         assert!(e.talked_to(Npc::Bairoletto));
         assert!(!e.talked_to(Npc::Farach));
+    }
+
+    #[test]
+    fn at_the_door_of_la_colonia_lisandro_walks_in_stops_inside_and_then_goes_to_the_table() {
+        let (towns, e) = errand();
+        let (_, inside) = towns[1].pulperia().unwrap();
+        let door = inside.door;
+        let along = Vec2::new(-door.outward.y, door.outward.x);
+        let seat = inside.seats[inside.front_seat()];
+        let tano = Step {
+            goal: Goal::Talk(Npc::Bairoletto),
+            objective: Some("Andá a la pulpería".into()),
+            scene: vec![],
+        };
+        let mut e = e.with_story(vec![tano.clone()]);
+        // Llegando por la vereda, a un lado de la puerta.
+        let sidewalk = door.center + door.outward * 1.5 + along * 1.0;
+        let way = e.walk_in(sidewalk).expect("walks in");
+        // Entra derecho por la puerta y se detiene unos pasos adentro.
+        let stop = *way.last().unwrap();
+        assert_eq!(way.len(), 2);
+        assert!(!inside.floor.contains_point(way[0]));
+        assert!(way[0].distance(door.center) < 1.5);
+        assert!(inside.floor.contains_point(stop));
+        let doorway = inside.doorway();
+        let clear = |from: Vec2, to: Vec2| {
+            (0..=40).all(|k| {
+                let p = from + (to - from) * (k as f32 / 40.0);
+                inside
+                    .obstacles()
+                    .all(|o| o.closest_point(p).distance(p) > crate::Rider::PERSON_RADIUS)
+            })
+        };
+        assert!(
+            (0..=20).any(|k| doorway.contains_point(way[0] + (stop - way[0]) * (k as f32 / 20.0))),
+            "{way:?} through the door"
+        );
+        assert!(clear(way[0], stop), "{way:?}");
+        // Desde ahí Bairoletto lo ve sin girar más la cabeza de lo natural,
+        // y lo alcanza.
+        assert!(turn_to(seat.position, seat.facing, stop) <= Errand::GAZE_MAX);
+        assert!(stop.distance(seat.position) <= Errand::SEATED_TALK_RANGE);
+        // Después va hasta la cabecera de su mesa, donde Bairoletto lo mira de
+        // frente, girando apenas la cabeza.
+        let beside = e
+            .place_to_talk(Npc::Bairoletto, stop, Travel::OnFoot)
+            .unwrap();
+        assert!(inside.floor.contains_point(beside));
+        assert!(clear(stop, beside), "{stop:?} to {beside:?}");
+        assert!(turn_to(seat.position, seat.facing, beside) <= Errand::GAZE_MAX);
+        assert!((0.8..=2.0).contains(&beside.distance(seat.position)));
+        // Lejos de la puerta, o ya adentro: nada.
+        assert_eq!(
+            e.walk_in(door.center + door.outward * 1.5 + along * 4.0),
+            None
+        );
+        assert_eq!(e.walk_in(stop), None);
+        // Desde donde se detiene, la escena se cumple como con F.
+        assert_eq!(
+            e.talk(Npc::Bairoletto, stop),
+            Some(ErrandEvent::Talked(Npc::Bairoletto))
+        );
+        assert_eq!(e.walk_in(sidewalk), None, "only while his step is due");
+        // Antes de su paso, tampoco.
+        let (_, early) = errand();
+        let early = early.with_story(vec![story()[0].clone(), tano]);
+        assert_eq!(early.walk_in(sidewalk), None);
+        // A los que están parados se les habla desde donde se esté.
+        assert_eq!(e.place_to_talk(Npc::Farach, stop, Travel::OnFoot), None);
     }
 
     #[test]

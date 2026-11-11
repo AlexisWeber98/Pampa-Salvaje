@@ -3,7 +3,14 @@
 //! Hidalgo en la plaza, toma su caballo del almacén de ramos generales y
 //! cabalga para presentarse ante el comisario Farach en el pueblo que nombra el
 //! archivo de diálogo (`police_town`). Enseguida, en la pulpería de ese pueblo,
-//! habla con Bairoletto, que después se levanta y se va ([`see_off`]).
+//! habla con Bairoletto, que después se levanta y se va ([`see_off`]): al
+//! llegar a pie por la vereda a la puerta abierta, Lisandro entra solo,
+//! tímido, se detiene a mirar el lugar ([`Approach`]), Bairoletto lo llama y
+//! Lisandro va hasta su mesa. Fuera de la historia, sin aviso, la primera vez
+//! que el jugador pasa por su puesto de quesos (a una cuadra de la pulpería, en
+//! cualquier momento del juego), el Viejo Amadeo lo llama ([`hail`]), Lisandro
+//! se le acerca (a caballo, frenando) y Amadeo le regala un pedazo. En cada
+//! escena los dos que hablan se miran ([`face_each_other`]).
 //!
 //! Una vez tomado, el caballo es del jugador: F detenido o al paso lento lo
 //! hace bajar y lo deja atado flojo donde está ([`LooseHorse`]), y F junto a él
@@ -16,7 +23,7 @@
 //!
 //! `pampa-core` es dueño de las reglas ([`Errand`]): quién está dónde, los
 //! pasos de la historia y qué está al alcance. Los pasos son datos, en
-//! `assets/dialogue/errand.ron` (actos 2 a 4 de `historia`). Este módulo lee
+//! `assets/dialogue/errand.ron` (actos 2 a 5 de `historia`). Este módulo lee
 //! la tecla de interacción ([`INTERACT_KEY`]), reproduce la escena de cada
 //! paso cumplido: sus líneas como subtítulos ([`Subtitle`]) con el nombre de
 //! quien habla, cada una el tiempo de leerla, y sus acciones narradas (la
@@ -29,15 +36,15 @@
 use bevy::prelude::*;
 use pampa_content::{ERRAND_FILE, ErrandLines, asset_path, load_errand_or_builtin};
 use pampa_core::{
-    Ability, Beat, Errand, ErrandEvent, Interaction, MAX_STEP, Npc, Rider, Speaker, TownLayout,
-    Travel, World,
+    Ability, Beat, Errand, ErrandEvent, Heading, Interaction, MAX_STEP, Npc, Rider, Speaker,
+    TownLayout, Travel, World,
 };
 use pampa_render::character::{GAZE_MAX, Gaze, Rising};
 use pampa_render::lettering::{self, Face};
 use pampa_render::subtitle;
 use pampa_render::{
     Animal, CharacterVisual, Coat, HudObjective, MapTarget, Say, Subtitle, SubtitleLine, Talking,
-    VisualPose, WorldTowns, world_from_ground,
+    VisualPose, WorldClock, WorldTowns, world_from_ground,
 };
 
 use crate::abilities::{PlayerAbilities, Unlocked, announce_unlocks, unlock_on_mount};
@@ -98,6 +105,13 @@ pub struct Talk {
     /// Con quién es la escena: mientras dura, el jugador no maneja y la cámara
     /// los encuadra. `None` para un comentario suelto del jugador.
     pub partner: Option<Npc>,
+    /// Adónde camina Lisandro después de la primera línea, para hablar de
+    /// frente con quien está sentado ([`Errand::place_to_talk`]); las líneas
+    /// siguientes esperan a que llegue. Vacío: habla desde donde está.
+    pub walk_to: Vec<pampa_core::Vec2>,
+    /// Cuánto lleva la escena esperando a que Lisandro llegue, en segundos:
+    /// pasado [`APPROACH_SECONDS`] (algo lo traba), sigue sin él.
+    pub waited: f32,
 }
 
 impl Talk {
@@ -109,6 +123,19 @@ impl Talk {
         }
     }
 
+    /// La escena que acaba de cumplir `errand` con `partner`, con Lisandro en
+    /// `at` (a pie o montado): si su lugar para hablar está a más de
+    /// [`WALK_UP`], va hasta ahí después de la primera línea.
+    fn met(errand: &Errand, partner: Npc, at: pampa_core::Vec2, travel: Travel) -> Self {
+        let spot = errand
+            .place_to_talk(partner, at, travel)
+            .filter(|spot| spot.distance(at) > WALK_UP);
+        Self {
+            walk_to: spot.into_iter().collect(),
+            ..Self::scene(partner, errand.last_scene())
+        }
+    }
+
     /// Un comentario suelto: el jugador sigue manejando.
     fn remark(beats: Vec<Beat>) -> Self {
         Self {
@@ -117,6 +144,8 @@ impl Talk {
             wait: 0.0,
             speaker: None,
             partner: None,
+            walk_to: Vec::new(),
+            waited: 0.0,
         }
     }
 
@@ -134,6 +163,41 @@ impl Talk {
     }
 }
 
+/// A quién se acerca Lisandro solo ([`WalkPath`]) antes de su escena: hasta
+/// Bairoletto, entrando a La Colonia; hasta el Viejo Amadeo, cuando lo llama
+/// (montado, el caballo frena y vuelve al tranco). Mientras tanto no maneja, F
+/// no hace nada y la cámara ya encuadra a quien lo espera.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
+pub struct Approach {
+    pub npc: Option<Npc>,
+    /// Cuánto le queda, al llegar, mirando el lugar antes de que lo llamen,
+    /// en segundos (ver [`LOOK_AROUND_SECONDS`]).
+    pub look_around: f32,
+}
+
+/// Cuánto se queda Lisandro mirando La Colonia al entrar, girando la cabeza a
+/// un lado y al otro, antes de que Bairoletto lo llame, en segundos.
+pub const LOOK_AROUND_SECONDS: f32 = 3.0;
+
+/// Cuánto gira la cabeza Lisandro a cada lado al mirar el lugar, en radianes.
+pub const LOOK_SWING: f32 = 0.9;
+
+/// A qué paso entra Lisandro a La Colonia, tímido, en m/s (al paso camina a
+/// 1,6).
+pub const TIMID_PACE: f32 = 0.8;
+
+/// Qué tan rápido se da vuelta hacia Lisandro quien habla con él parado, y
+/// vuelve después a como estaba, en radianes por segundo.
+pub const NPC_TURN_RATE: f32 = 3.0;
+
+/// Desde qué distancia de su lugar para hablar ([`Errand::place_to_talk`])
+/// Lisandro va hasta ahí después de la primera línea, en metros.
+pub const WALK_UP: f32 = 1.0;
+
+/// Cuánto camina solo Lisandro, como mucho, hasta quien lo espera, en
+/// segundos: si algo lo traba, deja de caminar y vuelve a manejar.
+pub const APPROACH_SECONDS: f32 = 20.0;
+
 /// La conversación en curso, si la hay. Una nueva la reemplaza.
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct Conversation(pub Option<Talk>);
@@ -142,7 +206,8 @@ pub struct Conversation(pub Option<Talk>);
 /// plaza, Farach en el pueblo llamado `police_town` (el
 /// [`ErrandLines::police_town`] del diálogo; el otro pueblo más cercano con
 /// comisaría cuando ese no tiene una) y Bairoletto sentado en la pulpería de
-/// ese pueblo. Las huellas en planta de los que están parados se agregan a
+/// ese pueblo, y el Viejo Amadeo en su puesto de quesos, a una cuadra. Las
+/// huellas en planta de los que están parados y la del puesto se agregan a
 /// `world` como obstáculos. `None` (sin encargo) si no hay un segundo pueblo
 /// con comisaría.
 pub fn plan(
@@ -172,6 +237,8 @@ impl Plugin for ErrandPlugin {
             .init_resource::<PlayerWallet>()
             .init_resource::<PlayerItems>()
             .init_resource::<ControlLock>()
+            .init_resource::<WalkPath>()
+            .init_resource::<Approach>()
             .init_resource::<SceneShot>()
             .init_resource::<MapTarget>()
             .init_resource::<LedAway>()
@@ -185,10 +252,12 @@ impl Plugin for ErrandPlugin {
             .add_systems(
                 Update,
                 (
+                    hail,
                     interact,
                     converse,
                     see_off,
                     frame_scene,
+                    face_each_other,
                     mark_speakers,
                     show_progress,
                     crate::wallet::show_money,
@@ -253,10 +322,83 @@ fn load_dialogue(
 }
 
 /// Le da al encargo los pasos de la historia del archivo de diálogo, desde el
-/// primero.
+/// primero, y el encuentro con el Viejo Amadeo.
 fn tell_story(errand: Option<ResMut<ErrandRun>>, dialogue: Option<Res<ErrandDialogue>>) {
     if let (Some(mut errand), Some(dialogue)) = (errand, dialogue) {
-        errand.0 = errand.0.clone().with_story(dialogue.0.steps.clone());
+        errand.0 = (errand.0.clone())
+            .with_story(dialogue.0.steps.clone())
+            .with_amadeo(dialogue.0.amadeo.clone());
+    }
+}
+
+/// Las escenas que empiezan sin que el jugador apriete nada. La primera vez
+/// que pasa cerca del Viejo Amadeo (a pie o montado, en cualquier momento),
+/// Amadeo lo llama ([`Errand::hail`]) y Lisandro se le acerca solo; al llegar
+/// empieza el encuentro. Al llegar a pie por la vereda a la puerta abierta de
+/// La Colonia mientras Bairoletto espera, Lisandro entra solo, despacio
+/// ([`TIMID_PACE`], [`Errand::walk_in`]), se detiene unos pasos adentro y
+/// mira el lugar ([`LOOK_AROUND_SECONDS`]); entonces Bairoletto lo ve y la
+/// escena empieza con su llamado. Cada una una sola vez.
+#[allow(clippy::too_many_arguments)]
+fn hail(
+    time: Res<Time>,
+    errand: Option<ResMut<ErrandRun>>,
+    mut conversation: ResMut<Conversation>,
+    players: Query<&Player>,
+    mut progress: MessageWriter<ErrandProgress>,
+    (mut approach, mut path, mut walked): (ResMut<Approach>, ResMut<WalkPath>, Local<f32>),
+    (clock, doors): (Option<Res<WorldClock>>, Option<Res<PulperiaDoors>>),
+) {
+    let in_scene = conversation.0.as_ref().is_some_and(|t| t.partner.is_some());
+    let (Some(mut errand), Ok(player)) = (errand, players.single()) else {
+        return;
+    };
+    if in_scene {
+        return;
+    }
+    let (at, travel) = (player.rider.position, player.rider.travel());
+    let dt = time.delta_secs().min(MAX_STEP);
+    if let Some(npc) = approach.npc {
+        // Va solo hasta que llega (o algo lo traba), y mira el lugar.
+        *walked += dt;
+        let stuck = *walked >= APPROACH_SECONDS;
+        if path.walking() && !stuck {
+            return;
+        }
+        if approach.look_around > 0.0 && !stuck {
+            approach.look_around -= dt;
+            return;
+        }
+        *path = WalkPath::default();
+        *approach = Approach::default();
+        *walked = 0.0;
+        if let Some(event) = errand.0.talk(npc, at) {
+            progress.write(ErrandProgress(event));
+            conversation.0 = Some(Talk::met(&errand.0, npc, at, travel));
+        }
+        return;
+    }
+    if let Some(way) = errand.0.hail(at, travel) {
+        *path = WalkPath::along(way);
+        approach.npc = Some(Npc::Amadeo);
+        return;
+    }
+    let town = errand.0.standing(Npc::Bairoletto).town;
+    let open = clock.is_none_or(|c| pampa_core::pulperia::is_open(c.0.time_of_day()))
+        && !doors.is_some_and(|d| d.0.iter().any(|d| d.town == town && d.shut));
+    if open
+        && travel == Travel::OnFoot
+        && let Some(way) = errand.0.walk_in(at)
+    {
+        *path = WalkPath {
+            points: way,
+            pace: Some(TIMID_PACE),
+            face: None,
+        };
+        *approach = Approach {
+            npc: Some(Npc::Bairoletto),
+            look_around: LOOK_AROUND_SECONDS,
+        };
     }
 }
 
@@ -350,9 +492,12 @@ pub(crate) fn interact(
     mut players: Query<(Entity, &mut Player, &mut Transform)>,
     (horses, left, standing): Horses,
     mut progress: MessageWriter<ErrandProgress>,
+    approach: Option<Res<Approach>>,
 ) {
-    // Durante una escena la tecla no hace nada.
-    let in_scene = conversation.0.as_ref().is_some_and(|t| t.partner.is_some());
+    // Durante una escena, o mientras Lisandro camina solo hacia ella, la
+    // tecla no hace nada.
+    let in_scene = conversation.0.as_ref().is_some_and(|t| t.partner.is_some())
+        || approach.is_some_and(|a| a.npc.is_some());
     if in_scene || !keys.is_some_and(|k| k.just_pressed(INTERACT_KEY)) {
         return;
     }
@@ -392,7 +537,8 @@ pub(crate) fn interact(
     progress.write(ErrandProgress(event));
     match event {
         ErrandEvent::Talked(npc) => {
-            conversation.0 = Some(Talk::scene(npc, errand.0.last_scene()));
+            let (at, travel) = (player.rider.position, player.rider.travel());
+            conversation.0 = Some(Talk::met(&errand.0, npc, at, travel));
         }
         ErrandEvent::MountedHorse => {
             let (town, horse) = errand.0.horse();
@@ -550,18 +696,33 @@ impl Saddle<'_, '_, '_> {
 /// Reproduce la conversación: muestra sus líneas una tras otra como
 /// subtítulos, cada una el tiempo de leerla, aplica sus acciones a la plata y a
 /// las cosas del protagonista al llegar a ellas, y borra el subtítulo cuando
-/// termina.
+/// termina. Terminada la primera línea, si Lisandro tiene que ir a su lugar
+/// para hablar ([`Talk::walk_to`]), camina hasta ahí y la escena lo espera.
 fn converse(
     time: Res<Time>,
     mut conversation: ResMut<Conversation>,
     mut subtitle: ResMut<Subtitle>,
     (mut wallet, mut items): (ResMut<PlayerWallet>, ResMut<PlayerItems>),
+    mut path: ResMut<WalkPath>,
 ) {
     let Some(talk) = conversation.0.as_mut() else {
         return;
     };
-    talk.wait -= time.delta_secs().min(MAX_STEP);
+    let dt = time.delta_secs().min(MAX_STEP);
+    if talk.partner.is_some() && path.walking() {
+        talk.waited += dt;
+        if talk.waited < APPROACH_SECONDS {
+            return;
+        }
+        path.points.clear();
+    }
+    talk.wait -= dt;
     if talk.wait > 0.0 {
+        return;
+    }
+    if talk.speaker.is_some() && !talk.walk_to.is_empty() {
+        path.points = std::mem::take(&mut talk.walk_to);
+        subtitle.0 = None;
         return;
     }
     loop {
@@ -644,20 +805,90 @@ fn see_off(
     }
 }
 
-/// Mientras se reproduce una escena, el jugador no maneja y la cámara encuadra
-/// a quien habla con él; fuera de una escena, todo vuelve a la normalidad.
+/// Mientras se reproduce una escena (o Lisandro camina solo hacia ella,
+/// [`Approach`]), el jugador no maneja y la cámara encuadra a quien habla con
+/// él; durante la escena Lisandro se vuelve hacia él ([`WalkPath::face`]).
+/// Fuera de una escena, todo vuelve a la normalidad.
 fn frame_scene(
     conversation: Res<Conversation>,
+    approach: Res<Approach>,
     errand: Option<Res<ErrandRun>>,
     mut lock: ResMut<ControlLock>,
     mut shot: ResMut<SceneShot>,
+    mut path: ResMut<WalkPath>,
 ) {
-    let partner = conversation.0.as_ref().and_then(|t| t.partner);
-    let at = partner
-        .zip(errand)
-        .map(|(npc, errand)| errand.0.standing(npc).position);
+    let talking = conversation.0.as_ref().and_then(|t| t.partner);
+    let partner = talking.or(approach.npc);
+    let errand = errand.as_ref().map(|e| &e.0);
+    let at = |npc: Option<Npc>| npc.zip(errand).map(|(n, e)| e.standing(n).position);
     lock.set_if_neq(ControlLock(partner.is_some()));
-    shot.set_if_neq(SceneShot(at));
+    shot.set_if_neq(SceneShot(at(partner)));
+    let face = at(talking);
+    if path.face != face {
+        path.face = face;
+    }
+}
+
+/// El ángulo con que hay que girar `heading` para mirar hacia `toward`, en
+/// radianes, positivo hacia la izquierda, por el camino más corto.
+fn turn_toward(heading: Heading, toward: pampa_core::Vec2) -> f32 {
+    let goal = toward.y.atan2(toward.x);
+    (goal - heading.radians() + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
+        - std::f32::consts::PI
+}
+
+/// Los que hablan se miran. Durante una escena, quien habla con Lisandro
+/// parado se da vuelta hacia él, sin saltos ([`NPC_TURN_RATE`]), y terminada
+/// vuelve a como estaba; sentado, solo gira la cabeza hacia él ([`Gaze`]),
+/// nunca más de lo natural ([`GAZE_MAX`]: para eso Lisandro va a donde lo vea,
+/// [`Talk::walk_to`]). Al entrar a La Colonia, detenido, Lisandro recorre el
+/// lugar con la mirada, a un lado y al otro ([`LOOK_AROUND_SECONDS`]).
+fn face_each_other(
+    mut commands: Commands,
+    time: Res<Time>,
+    (conversation, approach, path): (Res<Conversation>, Res<Approach>, Res<WalkPath>),
+    errand: Option<Res<ErrandRun>>,
+    players: Query<(Entity, &Player, Has<Gaze>)>,
+    mut npcs: Query<(Entity, &StandingNpc, &CharacterVisual, &mut VisualPose)>,
+) {
+    let (Some(errand), Ok((me, player, gazing))) = (errand, players.single()) else {
+        return;
+    };
+    let dt = time.delta_secs().min(MAX_STEP);
+    let partner = conversation.0.as_ref().and_then(|t| t.partner);
+    let lisandro = player.rider.position;
+    for (entity, npc, visual, mut pose) in &mut npcs {
+        let home = errand.0.standing(npc.npc);
+        let toward = lisandro - home.position;
+        let mine = partner == Some(npc.npc) && toward.length() > 1e-3;
+        if let CharacterVisual::Seated(_) = visual {
+            if mine {
+                let gaze = turn_toward(pose.heading, toward).clamp(-GAZE_MAX, GAZE_MAX);
+                commands.entity(entity).insert(Gaze(gaze));
+            } else {
+                commands.entity(entity).remove::<Gaze>();
+            }
+            continue;
+        }
+        let delta = if mine {
+            turn_toward(pose.heading, toward)
+        } else {
+            turn_toward(pose.heading, home.heading.forward())
+        };
+        let step = delta.clamp(-NPC_TURN_RATE * dt, NPC_TURN_RATE * dt);
+        if step.abs() > 1e-5 || pose.turn != 0.0 {
+            pose.heading = pose.heading.rotated(step);
+            pose.turn = if dt > 0.0 { step / dt } else { 0.0 };
+        }
+    }
+    let looking = approach.npc.is_some() && !path.walking() && approach.look_around > 0.0;
+    if looking {
+        let done = 1.0 - approach.look_around / LOOK_AROUND_SECONDS;
+        let gaze = LOOK_SWING * (std::f32::consts::TAU * done).sin();
+        commands.entity(me).insert(Gaze(gaze));
+    } else if gazing {
+        commands.entity(me).remove::<Gaze>();
+    }
 }
 
 /// Pone [`Talking`] a quien tenga sus líneas en pantalla y se lo quita a todos
@@ -910,8 +1141,13 @@ mod tests {
     /// comprueba que el subtítulo se borró al terminar.
     fn wait_for_lines(app: &mut App, lines: &[String]) {
         let seconds: f32 = lines.iter().map(|l| subtitle::duration(l)).sum();
-        let frames = ((seconds + 1.0) / 0.05).ceil() as usize;
+        // Y unos segundos más: una escena espera a que Lisandro llegue a su
+        // lugar para hablar (S18).
+        let frames = ((seconds + 6.0) / 0.05).ceil() as usize;
         for _ in 0..frames {
+            if app.world().resource::<Conversation>().0.is_none() {
+                break;
+            }
             app.update();
         }
         assert_eq!(app.world().resource::<Conversation>().0, None);
@@ -1238,8 +1474,11 @@ mod tests {
             assert_ne!(inside.seats[p.seat].table, inside.seats[seat].table);
         }
 
-        // Desde el paso que viene de la puerta, junto a su banco: la escena,
-        // con su cámara sobre él.
+        // A pie (un caballo no pasa por la puerta, y Lisandro va después
+        // hasta la cabecera de la mesa), desde el paso que viene de la puerta,
+        // junto a su banco: la escena, con su cámara sobre él.
+        press_f(&mut app);
+        assert_eq!(player(&mut app).1.rider.travel(), Travel::OnFoot);
         teleport(&mut app, inside.way_out(seat)[2]);
         let before = said(&app).len();
         press_f(&mut app);
@@ -1272,7 +1511,8 @@ mod tests {
                 ),
             ]
         );
-        // Libre hasta la noche: no queda nada que hacer.
+        // Libre hasta la noche: la historia termina con el acto 4 (S18: el
+        // Viejo Amadeo ya no es un paso).
         assert_eq!(errand(&app).stage(), ErrandStage::Done);
         assert_eq!(objective(&app), None);
         assert_eq!(app.world().resource::<MapTarget>().0, None);
@@ -1397,6 +1637,394 @@ mod tests {
         assert!(back.contains(&Npc::Farach), "the town is back: {back:?}");
         assert!(!back.contains(&Npc::Bairoletto), "{back:?}");
         assert!(walking(&mut app).is_empty());
+    }
+
+    /// Cuánto hay que girar para que alguien parado en `from` mirando hacia
+    /// `heading` mire hacia `to`, en radianes, sin signo.
+    fn off_from(from: GroundVec2, heading: pampa_core::Heading, to: GroundVec2) -> f32 {
+        turn_toward(heading, to - from).abs()
+    }
+
+    /// Cada línea mostrada desde `before`, como (nombre, texto).
+    fn said_since(app: &App, before: usize) -> Vec<(String, String)> {
+        said(app)[before..].to_vec()
+    }
+
+    /// Las líneas del encuentro con el Viejo Amadeo, con quién las dice.
+    fn amadeo_lines() -> Vec<(String, String)> {
+        shipped_lines()
+            .amadeo
+            .iter()
+            .filter_map(|beat| match beat {
+                Beat::Line { speaker, text } => Some((speaker.name().to_string(), text.clone())),
+                Beat::Act(_) => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn at_la_colonia_lisandro_walks_in_shyly_looks_around_and_bairoletto_calls_him_over() {
+        use pampa_core::{GameClock, TimeOfDay};
+        let mut app = shipped_app();
+        ride_to_farach(&mut app);
+        press_f(&mut app);
+        wait_for_scene(&mut app, 2);
+        let e = errand(&app);
+        let him = e.standing(Npc::Bairoletto);
+        let towns = app.world().resource::<WorldTowns>().0.clone();
+        let (_, inside) = towns[him.town].pulperia().unwrap();
+        let door = inside.door;
+        let along = GroundVec2::new(-door.outward.y, door.outward.x);
+        let on_sidewalk = |d: f32| door.center + door.outward * 1.5 + along * d;
+        let calm = |app: &mut App| {
+            for _ in 0..5 {
+                app.update();
+            }
+            let world = app.world();
+            assert_eq!(world.resource::<Conversation>().0, None);
+            assert_eq!(world.resource::<Approach>().npc, None);
+            assert!(!world.resource::<ControlLock>().0);
+            assert_eq!(world.resource::<SceneShot>().0, None);
+        };
+        // Montado, frente a la puerta: no empieza.
+        teleport(&mut app, on_sidewalk(1.0));
+        calm(&mut app);
+        // Se baja más allá, por la vereda; lejos de la puerta, nada.
+        teleport(&mut app, on_sidewalk(8.0));
+        press_f(&mut app);
+        assert_eq!(player(&mut app).1.rider.travel(), Travel::OnFoot);
+        teleport(&mut app, on_sidewalk(-5.0));
+        calm(&mut app);
+        // De noche la puerta está cerrada: espera a que abra.
+        let night = GameClock::at(TimeOfDay::hm(23, 0));
+        app.insert_resource(WorldClock(night));
+        teleport(&mut app, on_sidewalk(1.0));
+        calm(&mut app);
+        assert_eq!(errand(&app).stage(), ErrandStage::Talk(Npc::Bairoletto));
+
+        // De día, a pie en la puerta abierta: se bloquea el control, la
+        // cámara encuadra a Bairoletto y Lisandro entra solo, despacio.
+        app.insert_resource(WorldClock(GameClock::at(TimeOfDay::hm(12, 0))));
+        let before = said(&app).len();
+        app.update();
+        assert!(app.world().resource::<ControlLock>().0);
+        assert_eq!(app.world().resource::<SceneShot>().0, Some(him.position));
+        let (me, _) = player(&mut app);
+        let (mut walked, mut fastest) = (false, 0.0_f32);
+        for _ in 0..(APPROACH_SECONDS / 0.05) as usize {
+            if !app.world().resource::<WalkPath>().walking() {
+                break;
+            }
+            assert_eq!(said(&app).len(), before, "nobody speaks on the way");
+            assert!(app.world().resource::<ControlLock>().0);
+            assert_eq!(app.world().resource::<SceneShot>().0, Some(him.position));
+            let pose = *app.world().get::<VisualPose>(me).unwrap();
+            walked |= pose.animation == pampa_core::AnimationState::Walk && pose.speed > 0.3;
+            fastest = fastest.max(pose.speed);
+            let at = player(&mut app).1.rider.position;
+            assert!(!inside.walls.iter().any(|w| w.contains_point(at)), "{at:?}");
+            app.update();
+        }
+        assert!(walked, "he walks in with the walk cycle");
+        assert!(fastest <= TIMID_PACE + 0.1, "shyly, not at {fastest} m/s");
+        // Se detiene unos pasos adentro y mira el lugar, a un lado y al otro,
+        // sin moverse, antes de que nadie hable.
+        let stop = player(&mut app).1.rider.position;
+        assert!(inside.floor.contains_point(stop), "{stop:?}");
+        assert!(
+            (1.5..=3.0).contains(&stop.distance(door.center)),
+            "{stop:?}"
+        );
+        let (mut left, mut right, mut looked) = (false, false, 0.0);
+        for _ in 0..200 {
+            if app.world().resource::<Conversation>().0.is_some() {
+                break;
+            }
+            assert_eq!(said(&app).len(), before, "nobody speaks while he looks");
+            let gaze = app.world().get::<Gaze>(me).map_or(0.0, |g| g.0);
+            left |= gaze > 0.5;
+            right |= gaze < -0.5;
+            looked += 0.05;
+            let at = player(&mut app).1.rider.position;
+            assert!(at.distance(stop) < 0.1, "he stands still: {at:?}");
+            app.update();
+        }
+        assert!(left && right, "he looks both ways");
+        assert!(looked >= LOOK_AROUND_SECONDS - 0.2, "for {looked} s");
+        // Bairoletto lo ve y lo llama, con Lisandro todavía ahí.
+        assert_eq!(
+            said_since(&app, before),
+            [scene_lines(3)[0].clone()],
+            "first the call"
+        );
+        assert!(player(&mut app).1.rider.position.distance(stop) < 0.1);
+        assert_eq!(app.world().get::<Gaze>(me), None, "done looking around");
+        // Después va hasta la cabecera de su mesa, y la escena lo espera.
+        for _ in 0..200 {
+            if said(&app).len() > before + 1 {
+                break;
+            }
+            app.update();
+        }
+        let at = player(&mut app).1.rider.position;
+        let spot = e
+            .place_to_talk(Npc::Bairoletto, at, Travel::OnFoot)
+            .unwrap();
+        assert!(at.distance(spot) < 0.4, "{at:?} {spot:?}");
+        for _ in 0..20 {
+            app.update();
+        }
+        // Se miran: Lisandro de frente a él, Bairoletto girando la cabeza hacia
+        // él, sin pasarse de lo natural.
+        let at = player(&mut app).1.rider.position;
+        let heading = player(&mut app).1.rider.heading;
+        assert!(
+            off_from(at, heading, him.position) < 0.1,
+            "Lisandro faces him"
+        );
+        let tano = npc_entity(&mut app, Npc::Bairoletto);
+        let gaze = app
+            .world()
+            .get::<Gaze>(tano)
+            .expect("he looks at Lisandro")
+            .0;
+        let needed = turn_toward(him.heading, at - him.position);
+        assert!(needed.abs() <= GAZE_MAX, "{needed}");
+        assert!((gaze - needed).abs() < 1e-3, "{gaze} {needed}");
+        wait_for_scene(&mut app, 3);
+        assert_eq!(said_since(&app, before), scene_lines(3), "word for word");
+        assert!(errand(&app).talked_to(Npc::Bairoletto));
+        // Terminada la escena vuelve a manejar, y no vuelve a empezar.
+        calm(&mut app);
+        assert_eq!(app.world().get::<Gaze>(me), None);
+    }
+
+    #[test]
+    fn old_amadeo_hails_lisandro_once_even_before_the_errand_and_gives_him_cheese() {
+        let mut app = shipped_app();
+        arrive(&mut app);
+        let e = errand(&app);
+        assert_eq!(e.stage(), ErrandStage::MeetHidalgo);
+        let hidalgo_objective = objective(&app);
+        assert!(hidalgo_objective.is_some());
+        // Por la vereda, detrás de él (mira a la calle, por encima de la
+        // mesa): de lejos no llama a nadie.
+        let him = e.standing(Npc::Amadeo);
+        let ahead = him.heading.forward();
+        let along = GroundVec2::new(-ahead.y, ahead.x);
+        let walk = him.position - ahead * 1.0;
+        teleport(&mut app, walk + along * (Errand::HAIL_RANGE + 2.0));
+        for _ in 0..5 {
+            app.update();
+        }
+        assert_eq!(app.world().resource::<Conversation>().0, None);
+        assert_eq!(app.world().resource::<Approach>().npc, None);
+        let amadeo = npc_entity(&mut app, Npc::Amadeo);
+        assert!(!app.world().resource::<PlayerItems>().0.has(Item::Cheese));
+
+        // Al pasar cerca lo llama, antes de que empiece el encargo: el
+        // control se bloquea, la cámara lo encuadra y Lisandro se le acerca.
+        let before = said(&app).len();
+        teleport(&mut app, walk + along * 5.0);
+        app.update();
+        assert!(app.world().resource::<ControlLock>().0);
+        assert_eq!(app.world().resource::<Approach>().npc, Some(Npc::Amadeo));
+        assert_eq!(app.world().resource::<SceneShot>().0, Some(him.position));
+        let world = app.world().resource::<GameWorld>().0.clone();
+        for _ in 0..(APPROACH_SECONDS / 0.05) as usize {
+            if app.world().resource::<Conversation>().0.is_some() {
+                break;
+            }
+            let at = player(&mut app).1.rider.position;
+            assert!(
+                !world.obstacles.iter().any(|o| o.contains_point(at)),
+                "{at:?}"
+            );
+            app.update();
+        }
+        // A pie, a su lado, sobre la vereda.
+        let (_, me) = player(&mut app);
+        assert_eq!(me.rider.travel(), Travel::OnFoot);
+        let at = me.rider.position;
+        let spot = e.place_to_talk(Npc::Amadeo, at, Travel::OnFoot).unwrap();
+        assert!(at.distance(spot) < 0.4, "{at:?} {spot:?}");
+        assert!(at.distance(him.position) < 2.0);
+        // Se miran: Amadeo se da vuelta hacia él, y él hacia Amadeo.
+        for _ in 0..30 {
+            app.update();
+        }
+        let (_, me) = player(&mut app);
+        assert!(off_from(at, me.rider.heading, him.position) < 0.1);
+        let pose = *app.world().get::<VisualPose>(amadeo).unwrap();
+        assert!(off_from(him.position, pose.heading, at) < 0.1);
+        wait_for_lines(
+            &mut app,
+            &amadeo_lines()
+                .into_iter()
+                .map(|(_, t)| t)
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(said_since(&app, before), amadeo_lines(), "word for word");
+        // Lleva el queso; la historia no se movió.
+        assert!(app.world().resource::<PlayerItems>().0.has(Item::Cheese));
+        assert_eq!(errand(&app).stage(), ErrandStage::MeetHidalgo);
+        assert_eq!(objective(&app), hidalgo_objective);
+        assert!(!app.world().resource::<ControlLock>().0);
+        // Vuelve a mirar a la calle, sin saltos, y se queda en su puesto.
+        let mut was = app.world().get::<VisualPose>(amadeo).unwrap().heading;
+        for _ in 0..30 {
+            app.update();
+            let now = app.world().get::<VisualPose>(amadeo).unwrap().heading;
+            let turned = turn_toward(was, now.forward()).abs();
+            assert!(
+                turned <= NPC_TURN_RATE * 0.05 + 1e-3,
+                "{turned} in one frame"
+            );
+            was = now;
+        }
+        assert!(turn_toward(was, him.heading.forward()).abs() < 0.01);
+        assert_eq!(npc_entity(&mut app, Npc::Amadeo), amadeo);
+        // Una sola vez.
+        teleport(&mut app, walk + along * 5.0);
+        for _ in 0..10 {
+            app.update();
+        }
+        assert_eq!(app.world().resource::<Conversation>().0, None, "only once");
+        assert_eq!(app.world().resource::<Approach>().npc, None);
+        let hailed = app
+            .world()
+            .resource::<Progress>()
+            .0
+            .iter()
+            .filter(|p| **p == ErrandEvent::Talked(Npc::Amadeo))
+            .count();
+        assert_eq!(hailed, 1);
+    }
+
+    #[test]
+    fn speakers_face_each_other_even_when_lisandro_arrives_back_turned() {
+        let mut app = shipped_app();
+        arrive(&mut app);
+        let hidalgo = errand(&app).standing(Npc::Hidalgo);
+        // A su costado, de espaldas a él.
+        let ahead = hidalgo.heading.forward();
+        let side = GroundVec2::new(-ahead.y, ahead.x);
+        let at = hidalgo.position + side * 2.0;
+        teleport(&mut app, at);
+        {
+            let mut q = app.world_mut().query::<&mut Player>();
+            let mut p = q.single_mut(app.world_mut()).unwrap();
+            p.rider.heading = pampa_core::Heading::from_radians(side.y.atan2(side.x));
+        }
+        let don = npc_entity(&mut app, Npc::Hidalgo);
+        let mut was = app.world().get::<VisualPose>(don).unwrap().heading;
+        press_f(&mut app);
+        for k in 0..30 {
+            if k > 0 {
+                app.update();
+            }
+            let now = app.world().get::<VisualPose>(don).unwrap().heading;
+            let turned = turn_toward(was, now.forward()).abs();
+            assert!(
+                turned <= NPC_TURN_RATE * 0.05 + 1e-3,
+                "{turned} in one frame"
+            );
+            was = now;
+        }
+        let me = player(&mut app).1.rider;
+        assert!(me.position.distance(at) < 0.05, "he turns in place");
+        assert!(
+            off_from(at, me.heading, hidalgo.position) < 0.1,
+            "Lisandro turns"
+        );
+        assert!(off_from(hidalgo.position, was, at) < 0.1, "Hidalgo turns");
+        // Terminada la escena, Don Hidalgo vuelve a como estaba.
+        wait_for_scene(&mut app, 0);
+        for _ in 0..30 {
+            app.update();
+        }
+        let now = app.world().get::<VisualPose>(don).unwrap().heading;
+        assert!(turn_toward(now, hidalgo.heading.forward()).abs() < 0.01);
+    }
+
+    #[test]
+    fn galloping_past_amadeo_the_horse_reins_in_and_lisandro_rides_up_to_talk() {
+        let mut app = shipped_app();
+        ride_to_farach(&mut app);
+        let e = errand(&app);
+        let him = e.standing(Npc::Amadeo);
+        let street = him.heading.forward();
+        let along = GroundVec2::new(-street.y, street.x);
+        // Al galope tendido por la calle, a 3,5 m del cordón, hacia él.
+        {
+            let mut q = app.world_mut().query::<&mut Player>();
+            let mut p = q.single_mut(app.world_mut()).unwrap();
+            assert_eq!(p.rider.travel(), Travel::Riding);
+            p.rider.position = him.position + street * 5.0 - along * 30.0;
+            p.rider.heading = pampa_core::Heading::from_radians(along.y.atan2(along.x));
+            p.rider.speed = pampa_core::RiderParams::default().gallop_max;
+        }
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.press(KeyCode::KeyW);
+        keys.press(KeyCode::ShiftLeft);
+        for _ in 0..60 {
+            if app.world().resource::<ControlLock>().0 {
+                break;
+            }
+            app.update();
+        }
+        assert!(
+            app.world().resource::<ControlLock>().0,
+            "he hails the rider"
+        );
+        let hailed_at = player(&mut app).1.rider;
+        assert!(hailed_at.speed > 10.0, "at a gallop: {}", hailed_at.speed);
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.release(KeyCode::KeyW);
+        keys.release(KeyCode::ShiftLeft);
+        // Frena sin tirones, sin atravesar nada, y vuelve al tranco.
+        let friction = pampa_core::RiderParams::default().friction;
+        let world = app.world().resource::<GameWorld>().0.clone();
+        let before = said(&app).len();
+        let mut speed = hailed_at.speed;
+        for _ in 0..(APPROACH_SECONDS / 0.05) as usize {
+            if app.world().resource::<Conversation>().0.is_some() {
+                break;
+            }
+            assert_eq!(said(&app).len(), before, "nobody speaks on the way");
+            let rider = player(&mut app).1.rider;
+            assert_eq!(rider.travel(), Travel::Riding);
+            assert!(
+                speed - rider.speed <= friction * 0.05 + 1e-3,
+                "from {speed} to {} in one frame at {:?}",
+                rider.speed,
+                rider.position
+            );
+            speed = rider.speed;
+            let at = rider.position;
+            assert!(
+                !world.obstacles.iter().any(|o| o.contains_point(at)),
+                "{at:?}"
+            );
+            app.update();
+        }
+        // Llega a caballo, quieto, a una distancia de hablar, en la calle frente
+        // al puesto, y la escena empieza.
+        let rider = player(&mut app).1.rider;
+        assert_eq!(rider.travel(), Travel::Riding);
+        let apart = rider.position.distance(him.position);
+        assert!(apart <= 4.5, "{apart} m away");
+        assert!(rider.speed.abs() < 1.0, "{}", rider.speed);
+        let talk = app.world().resource::<Conversation>().0.clone();
+        assert_eq!(talk.and_then(|t| t.partner), Some(Npc::Amadeo));
+        assert!(said(&app).len() <= before + 1);
+        // Se vuelve con el caballo hacia él.
+        for _ in 0..50 {
+            app.update();
+        }
+        let rider = player(&mut app).1.rider;
+        assert!(off_from(rider.position, rider.heading, him.position) < 0.1);
+        assert!(rider.position.distance(him.position) <= 4.5);
     }
 
     #[test]

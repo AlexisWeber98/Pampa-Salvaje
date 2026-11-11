@@ -676,7 +676,15 @@ pub struct RiderMotion {
     pub still: f32,
     pub clock: f32,
     pub primed: bool,
+    /// Cuánto gira la cabeza una persona sentada en un banco hacia lo que
+    /// mira ([`Gaze`]), acercándose suavemente.
+    pub gaze: Spring,
 }
+
+/// Qué tan rápido gira la cabeza una persona sentada hacia lo que mira
+/// ([`Gaze`]): la frecuencia angular de su resorte (se asienta en algo menos
+/// de un segundo).
+pub const GAZE_EASE: f32 = 6.0;
 
 /// Lo que un jinete lee de su caballo: las cadenas desde la raíz del modelo
 /// hasta su `Torso` y su `Head` (las ubicaciones en el marco del cuerpo de la
@@ -792,6 +800,43 @@ fn sit_on_bench(transforms: &mut Bones, seated: &Seated, on_bench: bool, rise: f
             reach(transforms, pelvis, bones, target, pole);
         }
     }
+}
+
+/// Gira el cuello y la cabeza de una persona sentada `turn` radianes alrededor
+/// del eje vertical del modelo (positivo hacia la izquierda), la mitad cada
+/// uno, por encima del clip.
+fn turn_head(transforms: &mut Bones, seated: &Seated, turn: f32) {
+    if turn.abs() < 1e-4 {
+        return;
+    }
+    let get = |transforms: &Bones, bone: Bone| transforms.get(seated.bone(bone)).ok().copied();
+    let Some(root) = get(transforms, Bone::Root) else {
+        return;
+    };
+    let mut chest = Place {
+        rotation: root.rotation,
+        translation: root.translation,
+    };
+    for bone in [Bone::Pelvis, Bone::Spine1, Bone::Spine2, Bone::Spine3] {
+        if let Some(t) = get(transforms, bone) {
+            chest = chest.then(&t);
+        }
+    }
+    let half = Quat::from_rotation_y(turn / 2.0);
+    turn_bone(transforms, chest, seated.bone(Bone::Neck), half);
+    if let Some(neck) = get(transforms, Bone::Neck) {
+        turn_bone(transforms, chest.then(&neck), seated.bone(Bone::Head), half);
+    }
+}
+
+/// Qué tanto se paró ([`Rising`]) la persona dueña del banco `seat` (el
+/// asiento cuelga de su entidad); 0 si sigue sentada.
+pub(super) fn rise_of(seat: Entity, parents: &Query<&ChildOf>, risers: &Query<&Rising>) -> f32 {
+    parents
+        .get(seat)
+        .ok()
+        .and_then(|person| risers.get(person.parent()).ok())
+        .map_or(0.0, |r| r.0.clamp(0.0, 1.0))
 }
 
 /// Lo que [`pose_riders`] lee de cada jinete o persona sentada.
@@ -1108,7 +1153,13 @@ pub(super) fn pose_riders(
                 lower.translation.length() + wrist.translation.length(),
             ));
             let arm = [Bone::UpperArm(s), Bone::LowerArm(s), Bone::Hand(s)].map(|b| seated.bone(b));
-            reach(&mut transforms, shoulder, arm, fit_hand(hands[s], s, fit), ELBOW_POLE[s]);
+            reach(
+                &mut transforms,
+                shoulder,
+                arm,
+                fit_hand(hands[s], s, fit),
+                ELBOW_POLE[s],
+            );
         }
     }
 }

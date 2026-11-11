@@ -526,9 +526,47 @@ mod tests {
     }
 
     #[test]
-    fn a_seated_townsperson_sits_on_the_bench_facing_ahead_with_hands_in_the_lap() {
-        use super::super::horse::tests::named;
-        use super::super::rider::{PELVIS_RISE, Seated};
+    fn a_standing_figure_turns_its_head_toward_what_it_looks_at_never_too_far() {
+        use super::super::figure::FigureBody;
+        use super::super::rig::{GAZE_MAX, Gaze};
+        let mut app = plugin_app();
+        let me = app
+            .world_mut()
+            .spawn((
+                CharacterVisual::Figure(FigureKind::Hidalgo),
+                VisualPose::default(),
+                Gaze(0.8),
+            ))
+            .id();
+        let glance = |app: &mut App| {
+            let mut q = app.world_mut().query::<&FigureBody>();
+            q.single(app.world()).unwrap().glance
+        };
+        for _ in 0..30 {
+            app.update();
+        }
+        assert!(
+            (glance(&mut app) - 0.8).abs() < 0.02,
+            "{}",
+            glance(&mut app)
+        );
+        // Hacia atrás no: gira lo más que es natural.
+        app.world_mut().entity_mut(me).insert(Gaze(-2.5));
+        for _ in 0..30 {
+            app.update();
+        }
+        assert!(
+            (glance(&mut app) + GAZE_MAX).abs() < 0.02,
+            "{}",
+            glance(&mut app)
+        );
+    }
+
+    /// Una app con modelos y una persona del pueblo sentada en un banco cuya
+    /// parte de arriba está en `bench`, mirando hacia `heading`, ya en pose:
+    /// la app, la entidad de la persona y la de su modelo.
+    fn seat_townsperson(heading: Heading, bench: Vec3) -> (App, Entity, Entity) {
+        use super::super::rider::Seated;
         use super::super::{Rig, model::CharacterModels};
         use crate::gltf::tests::{root, unfinished_app};
         let mut app = unfinished_app(&root());

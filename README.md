@@ -273,7 +273,12 @@ segundos más 15 caracteres por segundo, entre 3 y 9 segundos;
 dura una escena el jugador no maneja (las teclas no lo mueven y `F` no hace
 nada) y la cámara deja la órbita: encuadra a los dos desde atrás del hombro de
 Lisandro, mirando a quien tiene enfrente; al terminar vuelve detrás del
-jugador. El caballo no es del jugador antes de esa charla ("Este caballo no es
+jugador. Los que hablan se miran (`face_each_other` en `game/src/errand.rs`):
+si Lisandro llega de espaldas o de costado, se vuelve en el lugar hacia quien
+le habla, y quien está parado se da vuelta hacia él sin saltos (3 rad/s) y,
+terminada la escena, vuelve a como estaba; quien está sentado solo gira la
+cabeza hacia él, nunca más de unos 70° (`Gaze` en `pampa_render::character`).
+El caballo no es del jugador antes de esa charla ("Este caballo no es
 mío."); después, `F` a menos de unos 3 m del caballo lo monta: el caballo atado
 se lo llevan por el resto de la sesión y el jugador cabalga desde donde estaba.
 

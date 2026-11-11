@@ -92,6 +92,19 @@ pub fn played(seated: Option<Clip>) -> &'static [Clip] {
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct Talking;
 
+/// Hacia dónde gira la cabeza una persona, en radianes respecto del frente de
+/// su cuerpo (positivo hacia la izquierda), en lugar de mirar a su alrededor:
+/// el juego se lo pone a quien mira a alguien (una persona sentada que mira a
+/// quien le habla, el protagonista que recorre con la mirada un lugar). Parada,
+/// la gira su figura ([`FigureBody::glance`]); sentada en un banco, el cuello
+/// y la cabeza del modelo, nunca más de [`GAZE_MAX`]. Se acerca suavemente.
+#[derive(Component, Debug, Clone, Copy, Default, PartialEq)]
+pub struct Gaze(pub f32);
+
+/// Lo más que gira la cabeza una persona por un [`Gaze`], en radianes (unos
+/// 70°): más sería forzado.
+pub const GAZE_MAX: f32 = 1.22;
+
 /// El esqueleto y el estado de clips de un modelo de personaje, ubicados cuando
 /// se crea su escena; en la raíz del modelo.
 #[derive(Component, Debug, Clone)]
