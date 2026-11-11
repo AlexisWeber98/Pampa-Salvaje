@@ -812,6 +812,7 @@ El juego abre en una pantalla de título. A la izquierda, un cartel de "Se busca
 | `Q` / `E` | Orbitar la cámara a la izquierda / a la derecha, o girar la cabeza en primera persona |
 | Rueda del mouse | Acercar / alejar el zoom (6–25 m; no en primera persona) |
 | `M` | Alternar el minimapa ampliado |
+| `I` | Abrir / cerrar el inventario (no durante una escena) |
 | `Esc` o `Pause` | Pausa: el mundo se queda quieto y se abre el menú (Continuar, Sonido, Salir); `Esc` o `Pause` de nuevo reanuda, o vuelve desde Sonido |
 | `↑` / `↓` o `W` / `S`, luego `Enter`, `Space` o `F` | Elegir en la pantalla de título y en el menú de pausa |
 | `←` / `→` o `A` / `D` | En Sonido: bajar / subir el volumen resaltado |

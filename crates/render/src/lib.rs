@@ -21,6 +21,7 @@ pub mod gltf;
 pub mod grass;
 pub mod ground;
 pub mod hud;
+pub mod inventory;
 pub mod lagoon;
 pub mod lamps;
 pub mod lawn;
@@ -66,7 +67,7 @@ pub use flora::{
     VegetationModels, WorldFlora,
 };
 pub use hud::{HudAnnouncement, HudHint, HudMoney, HudObjective, HudPlugin, HudRide};
-pub use subtitle::{Subtitle, SubtitleLine, SubtitlePlugin};
+pub use inventory::{InventoryContents, InventoryPlugin, InventoryView};
 pub use lagoon::{LagoonPlugin, LagoonReeds, LagoonWater};
 pub use lamps::{LampGlass, LampLight, LampPlugin, LampPost, WorldLamps};
 pub use minimap::{MapIcon, MapTarget, MinimapPlugin};

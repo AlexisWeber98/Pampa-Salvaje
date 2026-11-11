@@ -1,7 +1,7 @@
 //! La plata del protagonista ([`PlayerWallet`]) como estado del juego, siempre
 //! a la vista en el HUD ([`HudMoney`]) debajo del reloj. Empieza sin un peso.
-//! Junto a ella, las pocas cosas que lleva encima ([`PlayerItems`]), sin
-//! inventario a la vista.
+//! Junto a ella, las pocas cosas que lleva encima ([`PlayerItems`]); las dos
+//! se ven en el inventario de la I (`crate::inventory`).
 
 use bevy::prelude::*;
 use pampa_core::{Items, Money};

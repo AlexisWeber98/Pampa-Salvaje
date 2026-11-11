@@ -1,6 +1,6 @@
 //! Lo que lleva encima el protagonista, aparte de la plata: unas pocas cosas
-//! que la historia le da y le quita. No hay inventario a la vista; solo se
-//! lleva la cuenta de qué tiene.
+//! que la historia le da y le quita, cada una con su nombre y su categoría del
+//! inventario ([`Category`], las del documento `mecánicas`, sección 10).
 
 use std::collections::BTreeSet;
 
@@ -70,5 +70,54 @@ impl Items {
     /// Entrega `item` y dice si lo llevaba; si no lo llevaba, no pasa nada.
     pub fn hand_over(&mut self, item: Item) -> bool {
         self.0.remove(&item)
+    }
+
+    /// Lo que lleva, agrupado por [`Category`] en el orden del documento; las
+    /// categorías sin nada no aparecen.
+    pub fn by_category(&self) -> Vec<(Category, Vec<Item>)> {
+        let mut groups: Vec<(Category, Vec<Item>)> = Vec::new();
+        let mut sorted: Vec<Item> = self.0.iter().copied().collect();
+        sorted.sort_by_key(|item| item.category());
+        for item in sorted {
+            match groups.last_mut() {
+                Some((category, things)) if *category == item.category() => things.push(item),
+                _ => groups.push((item.category(), vec![item])),
+            }
+        }
+        groups
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_item_has_its_name_and_its_inventory_category() {
+        assert_eq!(Item::Cheese.name(), "Queso");
+        assert_eq!(Item::Cheese.category(), Category::Food);
+        assert_eq!(Item::Letter.name(), "Carta de presentación");
+        assert_eq!(Item::Letter.category(), Category::Quest);
+        assert_eq!(Category::Food.name(), "Alimentos");
+        assert_eq!(Category::Quest.name(), "Objetos de misión");
+    }
+
+    #[test]
+    fn items_group_by_category_in_the_design_order_without_empty_ones() {
+        let mut items = Items::default();
+        assert!(items.by_category().is_empty());
+        items.receive(Item::Letter);
+        assert_eq!(
+            items.by_category(),
+            vec![(Category::Quest, vec![Item::Letter])]
+        );
+        items.receive(Item::Cheese);
+        assert_eq!(
+            items.by_category(),
+            vec![
+                (Category::Food, vec![Item::Cheese]),
+                (Category::Quest, vec![Item::Letter]),
+            ]
+        );
     }
 }

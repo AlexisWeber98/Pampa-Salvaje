@@ -71,7 +71,7 @@ pub use fauna::{
 pub use fence::{FenceLayout, FenceRun, Frontage, Gate, Opening, OpeningKind};
 pub use flora::{ChunkFlora, FloraSite, Shrub, ShrubKind, Species, Tree, Tuft, TuftKind};
 pub use heading::Heading;
-pub use items::{Item, Items};
+pub use items::{Category as ItemCategory, Item, Items};
 pub use lagoon::{Lagoon, LagoonConfig, LagoonError, place_lagoons};
 pub use lamps::{LampSite, LampTier, StreetLamp, StreetLamps};
 pub use math::Vec2;

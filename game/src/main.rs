@@ -13,6 +13,7 @@ mod console;
 mod errand;
 mod fauna;
 mod first_person;
+mod inventory;
 mod life;
 mod menu;
 mod orbit;
@@ -374,9 +375,11 @@ fn main() {
     .add_plugins(LagoonPlugin)
     // El polvo y las salpicaduras que levantan vasos, ruedas y pies.
     .add_plugins(pampa_render::DustPlugin)
-    // El encargo, el reloj y el objetivo en la esquina, y los subtítulos.
+    // El encargo, el reloj y el objetivo en la esquina, los subtítulos y el
+    // inventario de la I.
     .add_plugins((
         errand::ErrandPlugin,
+        inventory::InventoryPlugin,
         timetable::TimetablePlugin,
         pulperia::PulperiaPlugin,
         HudPlugin,
