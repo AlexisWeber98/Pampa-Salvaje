@@ -66,6 +66,7 @@ struct StepFile {
 enum NpcFile {
     Hidalgo,
     Farach,
+    Bairoletto,
 }
 
 impl From<NpcFile> for Npc {
@@ -73,6 +74,7 @@ impl From<NpcFile> for Npc {
         match npc {
             NpcFile::Hidalgo => Npc::Hidalgo,
             NpcFile::Farach => Npc::Farach,
+            NpcFile::Bairoletto => Npc::Bairoletto,
         }
     }
 }
@@ -89,6 +91,7 @@ enum Who {
     Lisandro,
     Hidalgo,
     Farach,
+    Bairoletto,
 }
 
 #[derive(Deserialize)]
@@ -130,6 +133,7 @@ impl From<StepFile> for Step {
                         Who::Lisandro => Speaker::Protagonist,
                         Who::Hidalgo => Speaker::Npc(Npc::Hidalgo),
                         Who::Farach => Speaker::Npc(Npc::Farach),
+                        Who::Bairoletto => Speaker::Npc(Npc::Bairoletto),
                     },
                     text,
                 },
@@ -208,6 +212,20 @@ impl ErrandLines {
                         say(
                             Npc::Farach,
                             "Quedate cerca que a la noche te devuelvo tus papeles firmados.",
+                        ),
+                    ],
+                },
+                Step {
+                    goal: Goal::Talk(Npc::Bairoletto),
+                    objective: "Andá a la pulpería La Colonia".into(),
+                    scene: vec![
+                        say(
+                            Npc::Bairoletto,
+                            "¿Queres ganarte unos pesos? Necesito transporte para esta noche.",
+                        ),
+                        say(
+                            Npc::Bairoletto,
+                            "Yo soy Bairoletto, pero me dicen Tano. Nos vemos a la noche en esta pulpería.",
                         ),
                     ],
                 },
@@ -340,7 +358,7 @@ mod tests {
     const STEP: &str = r#"(goal: Talk(Hidalgo), objective: "o", scene: [Say(Hidalgo, "a")])"#;
 
     #[test]
-    fn the_shipped_file_tells_acts_two_and_three_in_order() {
+    fn the_shipped_file_tells_acts_two_to_four_in_order() {
         let lines = ErrandLines::parse(SHIPPED).expect("shipped errand.ron is valid");
         let goals: Vec<Goal> = lines.steps.iter().map(|s| s.goal).collect();
         assert_eq!(
@@ -348,7 +366,8 @@ mod tests {
             [
                 Goal::Talk(Npc::Hidalgo),
                 Goal::TakeHorse,
-                Goal::Talk(Npc::Farach)
+                Goal::Talk(Npc::Farach),
+                Goal::Talk(Npc::Bairoletto)
             ]
         );
         assert_eq!(lines.police_town, "Eduardo Castex");
@@ -367,6 +386,33 @@ mod tests {
             assert!(said.contains(needed), "Hidalgo never says {needed}");
         }
         assert!(lines.steps[1].scene.is_empty());
+        // Acto 4, palabra por palabra, en la pulpería de Castex.
+        assert_eq!(
+            lines.steps[3].objective_in(&lines.police_town),
+            "Andá a la pulpería La Colonia"
+        );
+        assert_eq!(
+            lines_of(&lines.steps[3]),
+            [
+                (
+                    "Bairoletto",
+                    "Che pibe, ese caballo que está afuera…¿Es tuyo?"
+                ),
+                ("Lisandro", "Si, es de mi tìo."),
+                (
+                    "Bairoletto",
+                    "¿Queres ganarte unos pesos? Necesito transporte para esta noche."
+                ),
+                ("Lisandro", "si ¿hasta donde necesita ir?"),
+                ("Bairoletto", "A la noche te digo ¿Cómo te llamas?"),
+                ("Lisandro", "Lisandro."),
+                (
+                    "Bairoletto",
+                    "Yo soy Bairoletto, pero me dicen Tano. Nos vemos a la noche en esta pulpería."
+                ),
+            ]
+        );
+        assert_eq!(lines.steps[3].scene.len(), 7, "only lines");
         for line in lines.texts() {
             assert_eq!(line.trim(), line, "no stray spaces: {line:?}");
         }

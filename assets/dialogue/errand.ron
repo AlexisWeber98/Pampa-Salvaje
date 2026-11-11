@@ -54,6 +54,22 @@
                 Say(Farach, "Quedate cerca que a la noche te devuelvo tus papeles firmados."),
             ],
         ),
+        // Acto 4, palabra por palabra: Bairoletto espera sentado a una mesa
+        // de la pulpería de Castex, "La colonia", golpeado, tomando algo.
+        // Después se levanta y se va, y el jugador queda libre hasta la noche.
+        (
+            goal: Talk(Bairoletto),
+            objective: "Andá a la pulpería La Colonia",
+            scene: [
+                Say(Bairoletto, "Che pibe, ese caballo que está afuera…¿Es tuyo?"),
+                Say(Lisandro, "Si, es de mi tìo."),
+                Say(Bairoletto, "¿Queres ganarte unos pesos? Necesito transporte para esta noche."),
+                Say(Lisandro, "si ¿hasta donde necesita ir?"),
+                Say(Bairoletto, "A la noche te digo ¿Cómo te llamas?"),
+                Say(Lisandro, "Lisandro."),
+                Say(Bairoletto, "Yo soy Bairoletto, pero me dicen Tano. Nos vemos a la noche en esta pulpería."),
+            ],
+        ),
         // Los actos siguientes se agregan aquí como pasos nuevos.
     ],
 )

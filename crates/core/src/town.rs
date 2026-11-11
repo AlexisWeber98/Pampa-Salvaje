@@ -5349,11 +5349,14 @@ pub(crate) mod tests {
         // cartel (2026-10-28): los carteles de los lugares forman parte de la
         // huella digital. Diez se volvieron a fijar cuando cada pueblo recibió
         // su banco (2026-11-02): su manzana deja de tener casas; Tres, una
-        // aldea, no cambia.
+        // aldea, no cambia. Los dos Eduardo Castex se volvieron a fijar
+        // cuando su pulpería pasó a llamarse "LA COLONIA" (2026-11-10, acto
+        // 4): el cartel forma parte de la huella digital; los demás no
+        // cambian.
         let pinned = [
             0xbd5c_a792_8123_334c,
-            0x375c_3e68_f134_1024,
-            0x7661_0465_87c8_e36d,
+            0x35e8_cd03_36f4_474f,
+            0x0ee2_dc82_373e_6dac,
             0x9ae4_22ce_389c_9bee,
             0x4d89_5840_612f_7b5e,
             0xec1d_b647_4e8a_e8f5,

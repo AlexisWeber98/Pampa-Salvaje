@@ -77,8 +77,8 @@ pub use money::Money;
 pub use obstacles::StaticObstacles;
 pub use placement::{PlacementError, place_towns};
 pub use places::{
-    BANK_NAMES, Place, PlaceKind, STATION_WALL_INSET, Sign, SignMount, StoreStyle,
-    TIMETABLE_BOARD_HEIGHT, TIMETABLE_BOARD_WIDTH, station_bays,
+    BANK_NAMES, NAMED_PULPERIAS, Place, PlaceKind, STATION_WALL_INSET, Sign, SignMount, StoreStyle,
+    TIMETABLE_BOARD_HEIGHT, TIMETABLE_BOARD_WIDTH, station_bays, store_sign,
 };
 pub use pose::{HorseGait, JointAngles, MOTION_CLOCK_PERIOD, tick_clock};
 pub use rail::{

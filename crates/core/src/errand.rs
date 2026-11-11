@@ -1,7 +1,8 @@
 //! El primer encargo: Don Hidalgo, en la plaza del pueblo donde el jugador baja
 //! del tren, lo manda a presentarse ante el comisario Elías Farach en la
 //! comisaría de otro pueblo, y le presta el caballo atado en el almacén de
-//! ramos generales para el viaje.
+//! ramos generales para el viaje. En ese pueblo, Bairoletto espera sentado en
+//! la pulpería.
 //!
 //! Reglas puras: dónde está cada personaje, los pasos de la historia en orden
 //! ([`Step`], escritos como datos por el guion) y qué interacción está al
@@ -18,6 +19,9 @@ pub enum Npc {
     Hidalgo,
     /// El comisario Elías Farach, en la puerta de su comisaría.
     Farach,
+    /// Juan Bautista Bairoletto, "el Tano": sentado a una mesa de la pulpería
+    /// del pueblo de Farach, golpeado, tomando algo.
+    Bairoletto,
 }
 
 impl Npc {
@@ -26,6 +30,7 @@ impl Npc {
         match self {
             Self::Hidalgo => "Don Hidalgo",
             Self::Farach => "Farach",
+            Self::Bairoletto => "Bairoletto",
         }
     }
 }
@@ -108,6 +113,13 @@ pub struct Errand {
     at: usize,
     hidalgo: Standing,
     farach: Standing,
+    bairoletto: Standing,
+    /// El asiento de Bairoletto en la pulpería del pueblo de Farach
+    /// ([`crate::pulperia::Interior::seats`]); `None` si ese pueblo no tiene
+    /// pulpería y espera parado junto a Farach.
+    bairoletto_seat: Option<usize>,
+    /// El piso de esa pulpería: se le habla a Bairoletto desde adentro.
+    bairoletto_room: Option<Aabb>,
     /// Pueblo del caballo, y el caballo.
     horse: (usize, TetheredHorse),
     /// Nombre del pueblo en el que está Farach.
@@ -126,12 +138,19 @@ impl Errand {
     pub const REPORT_RANGE: f32 = 4.0;
     /// Lado de la huella de colisión cuadrada de una persona parada, en metros.
     pub const PERSON_FOOTPRINT: f32 = 0.8;
-    /// A qué distancia a la izquierda de Farach está Bairoletto, en metros.
+    /// A qué distancia a la izquierda de Farach espera Bairoletto cuando el
+    /// pueblo de Farach no tiene pulpería, en metros.
     pub const BAIROLETTO_GAP: f32 = 1.1;
+    /// Distancia máxima a la que puede estar el jugador de Bairoletto, sentado,
+    /// para hablarle, en metros: alcanza desde el paso que viene de la puerta,
+    /// junto a su banco. Además hay que estar adentro, para no hablarle a
+    /// través de la pared.
+    pub const SEATED_TALK_RANGE: f32 = 4.5;
 
     /// El encargo desde el pueblo `giver` (Don Hidalgo en su plaza, su caballo
     /// en su almacén de ramos generales) hasta el pueblo `police` (Farach en la
-    /// puerta de su primera comisaría). `None` si falta alguno de los pueblos,
+    /// puerta de su primera comisaría, Bairoletto sentado en su pulpería, en
+    /// [`crate::pulperia::Interior::front_seat`]). `None` si falta alguno de los pueblos,
     /// si son el mismo pueblo o si `police` no tiene comisaría.
     ///
     /// Empieza sin pasos (terminado); [`Self::with_story`] le da la historia.
@@ -142,6 +161,32 @@ impl Errand {
         let (home, away) = (towns.get(giver)?, towns.get(police)?);
         let (door, facing) = away.police_door()?;
         let (spot, heading) = home.plaza_spot();
+        let farach = Standing {
+            town: police,
+            position: door,
+            heading: facing,
+        };
+        let (bairoletto, bairoletto_seat, bairoletto_room) = match away.pulperia() {
+            Some((_, inside)) => {
+                let seat = inside.front_seat();
+                let at = inside.seats[seat];
+                let standing = Standing {
+                    town: police,
+                    position: at.position,
+                    heading: at.facing,
+                };
+                (standing, Some(seat), Some(inside.floor))
+            }
+            None => {
+                let forward = facing.forward();
+                let left = Vec2::new(-forward.y, forward.x);
+                let standing = Standing {
+                    position: door + left * Self::BAIROLETTO_GAP,
+                    ..farach
+                };
+                (standing, None, None)
+            }
+        };
         Some(Self {
             steps: Vec::new(),
             at: 0,
@@ -150,11 +195,10 @@ impl Errand {
                 position: spot,
                 heading,
             },
-            farach: Standing {
-                town: police,
-                position: door,
-                heading: facing,
-            },
+            farach,
+            bairoletto,
+            bairoletto_seat,
+            bairoletto_room,
             horse: (giver, home.hitching_post.horse),
             police_name: away.name.clone(),
         })
@@ -232,19 +276,21 @@ impl Errand {
         match npc {
             Npc::Hidalgo => self.hidalgo,
             Npc::Farach => self.farach,
+            Npc::Bairoletto => self.bairoletto,
         }
     }
 
-    /// Dónde está Juan Bautista Bairoletto: a la izquierda de Farach junto a la
-    /// puerta de la comisaría, mirando hacia el mismo lado. Todavía no tiene
-    /// ningún papel en el encargo.
-    pub fn bairoletto(&self) -> Standing {
-        let forward = self.farach.heading.forward();
-        let left = Vec2::new(-forward.y, forward.x);
-        Standing {
-            position: self.farach.position + left * Self::BAIROLETTO_GAP,
-            ..self.farach
-        }
+    /// El asiento de Bairoletto en la pulpería del pueblo de Farach; `None` si
+    /// ese pueblo no tiene pulpería y Bairoletto espera parado junto a Farach.
+    pub fn bairoletto_seat(&self) -> Option<usize> {
+        self.bairoletto_seat
+    }
+
+    /// Si ya se cumplió un paso que pedía hablar con `npc`.
+    pub fn talked_to(&self, npc: Npc) -> bool {
+        self.steps[..self.at.min(self.steps.len())]
+            .iter()
+            .any(|s| s.goal == Goal::Talk(npc))
     }
 
     /// El caballo que presta Don Hidalgo, y su pueblo.
@@ -261,14 +307,11 @@ impl Errand {
         }
     }
 
-    /// Huellas de colisión de las personas que están en el encargo: Hidalgo,
-    /// Farach y Bairoletto.
-    pub fn obstacles(&self) -> [Aabb; 3] {
-        [
-            self.hidalgo.footprint(),
-            self.farach.footprint(),
-            self.bairoletto().footprint(),
-        ]
+    /// Huellas de colisión de las personas que están paradas en el encargo:
+    /// Hidalgo y Farach. Bairoletto no tiene: sentado, su banco ya es un
+    /// obstáculo, y después se va.
+    pub fn obstacles(&self) -> [Aabb; 2] {
+        [self.hidalgo.footprint(), self.farach.footprint()]
     }
 
     /// Hasta dónde se le puede hablar a `npc`, en metros: a Farach también
@@ -277,13 +320,19 @@ impl Errand {
         match npc {
             Npc::Hidalgo => Self::TALK_RANGE,
             Npc::Farach => Self::REPORT_RANGE,
+            Npc::Bairoletto => Self::SEATED_TALK_RANGE,
         }
     }
 
-    /// Habla con `npc` desde `at`: solo si está al alcance, y solo si el paso
-    /// pendiente lo pide.
+    /// Habla con `npc` desde `at`: solo si está al alcance (a Bairoletto
+    /// sentado, desde adentro de la pulpería), y solo si el paso pendiente lo
+    /// pide.
     pub fn talk(&mut self, npc: Npc, at: Vec2) -> Option<ErrandEvent> {
-        let near = at.distance(self.standing(npc).position) <= Self::talk_range(npc);
+        let inside = match (npc, self.bairoletto_room) {
+            (Npc::Bairoletto, Some(room)) => room.contains_point(at),
+            _ => true,
+        };
+        let near = inside && at.distance(self.standing(npc).position) <= Self::talk_range(npc);
         self.advance(Goal::Talk(npc), near, ErrandEvent::Talked(npc))
     }
 
@@ -437,10 +486,7 @@ mod tests {
     fn people_standing_in_the_errand_are_clear_of_their_towns() {
         let (towns, e) = errand();
         let people = [Npc::Hidalgo, Npc::Farach].map(|npc| (format!("{npc:?}"), e.standing(npc)));
-        for (npc, s) in people
-            .into_iter()
-            .chain([("Bairoletto".to_owned(), e.bairoletto())])
-        {
+        for (npc, s) in people {
             let footprint = s.footprint();
             for o in towns[s.town].obstacles() {
                 assert!(
@@ -453,17 +499,52 @@ mod tests {
     }
 
     #[test]
-    fn bairoletto_stands_beside_farach_without_touching_him() {
-        let (_, e) = errand();
-        let (farach, him) = (e.standing(Npc::Farach), e.bairoletto());
-        assert_eq!((him.town, him.heading), (farach.town, farach.heading));
-        let gap = him.position.distance(farach.position);
-        assert!((gap - Errand::BAIROLETTO_GAP).abs() < 1e-4);
-        assert!(gap > Errand::PERSON_FOOTPRINT);
-        // A su lado, no adelante ni atrás.
-        let along = (him.position - farach.position).dot(farach.heading.forward());
-        assert!(along.abs() < 1e-4);
-        assert!(e.obstacles()[2].contains_point(him.position));
+    fn bairoletto_waits_seated_at_a_front_table_of_the_police_towns_pulperia() {
+        let (towns, e) = errand();
+        let (_, inside) = towns[1].pulperia().unwrap();
+        let seat = inside.front_seat();
+        assert_eq!(e.bairoletto_seat(), Some(seat));
+        assert_eq!(
+            e.standing(Npc::Bairoletto),
+            Standing {
+                town: 1,
+                position: inside.seats[seat].position,
+                heading: inside.seats[seat].facing
+            }
+        );
+        assert_eq!(Npc::Bairoletto.name(), "Bairoletto");
+        // Sentado no estorba a nadie: el banco ya es un obstáculo.
+        let him = e.standing(Npc::Bairoletto).footprint();
+        assert!(e.obstacles().iter().all(|o| *o != him));
+    }
+
+    #[test]
+    fn bairoletto_is_spoken_to_from_the_aisle_but_not_through_the_wall() {
+        let (towns, e) = errand();
+        let mut e = e.with_story(vec![Step {
+            goal: Goal::Talk(Npc::Bairoletto),
+            objective: "Andá a la pulpería".into(),
+            scene: vec![],
+        }]);
+        let (_, inside) = towns[1].pulperia().unwrap();
+        let door = inside.door;
+        // Afuera, frente a la puerta (cerrada de noche) o contra la pared
+        // frente a él: no llega.
+        let him = e.standing(Npc::Bairoletto).position;
+        let wall = him + door.outward * ((door.center - him).dot(door.outward) + 0.4);
+        assert!(wall.distance(him) <= Errand::SEATED_TALK_RANGE);
+        for outside in [door.center + door.outward * 0.5, wall] {
+            assert_eq!(e.interact(outside), Interaction::Nothing);
+        }
+        assert!(!e.talked_to(Npc::Bairoletto));
+        // En el paso desde la puerta, junto a su banco.
+        let aisle = inside.way_out(inside.front_seat())[2];
+        assert_eq!(
+            e.interact(aisle),
+            Interaction::Event(ErrandEvent::Talked(Npc::Bairoletto))
+        );
+        assert!(e.talked_to(Npc::Bairoletto));
+        assert!(!e.talked_to(Npc::Farach));
     }
 
     #[test]

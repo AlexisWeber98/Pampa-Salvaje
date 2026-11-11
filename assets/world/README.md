@@ -324,7 +324,9 @@ tipo, para que cada mitad tenga su propio almacén y su propia comisaría.
 Cuando ninguna manzana mantiene esa separación (una cuadrícula diminuta), el
 edificio toma la más alejada de los demás.
 
-El almacén de un pueblo pequeño es una pulpería: su cartel dice "PULPERÍA". El
+El almacén de un pueblo pequeño es una pulpería: su cartel dice "PULPERÍA",
+salvo la de Eduardo Castex, que dice "LA COLONIA" (por el nombre del pueblo,
+`pampa_core::NAMED_PULPERIAS`; no es un campo del archivo). El
 de un pueblo grande o muy grande dice "ALMACÉN DE RAMOS GENERALES". (En el
 minimapa ambos se marcan con "A", y la plaza con "P").
 

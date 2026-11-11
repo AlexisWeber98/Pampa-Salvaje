@@ -57,8 +57,20 @@ pub const BENCH_HEIGHT: f32 = 0.45;
 /// Cuánto queda el piso de ladrillo por encima del suelo del lote, en metros
 /// (el render lo dibuja ahí).
 pub const FLOOR_RISE: f32 = 0.05;
-/// Cuántos parroquianos hay sentados, como mínimo y como máximo.
-const PATRONS: (u32, u32) = (2, 5);
+/// Cuánto se aleja del asiento quien se levanta, hacia atrás del banco, en
+/// metros.
+const STAND_BACK: f32 = 0.6;
+/// Hasta dónde sale a la vereda quien se va, desde la puerta, en metros.
+const SIDEWALK_OUT: f32 = 2.0;
+/// Cuánto camina por la vereda quien se va, hasta perderse de vista, en
+/// metros.
+const WALK_AWAY: f32 = 32.0;
+/// Cuántos parroquianos hay sentados al caer la tarde ([`EVENING`]), como
+/// mínimo y como máximo.
+const EVENING_PATRONS: (u32, u32) = (4, 8);
+/// Desde qué hora termina la jornada de trabajo y llega más gente (supuesto, a
+/// revisar).
+pub const EVENING: f32 = 18.0;
 
 /// A qué hora abre la pulpería: desde entonces la puerta del medio queda
 /// abierta (supuesto, a revisar).
@@ -110,6 +122,8 @@ pub struct Furniture {
 pub struct Seat {
     pub position: Vec2,
     pub facing: Heading,
+    /// La mesa a la que da, por índice.
+    pub table: usize,
 }
 
 /// Alguien sentado a una mesa de la pulpería: en el asiento `seat` del
@@ -202,7 +216,7 @@ impl Interior {
             (side, front + 6.05),
         ];
         let mut seats = Vec::new();
-        for (u, v) in tables {
+        for (table, (u, v)) in tables.into_iter().enumerate() {
             let (tu, tv) = (TABLE.0 / 2.0, TABLE.1 / 2.0);
             put(FurnitureKind::Table, (u - tu, u + tu, v - tv, v + tv), 0.75);
             for sign in [-1.0, 1.0] {
@@ -221,6 +235,7 @@ impl Interior {
                     seats.push(Seat {
                         position: frame.point(u + du, bv),
                         facing,
+                        table,
                     });
                 }
             }
@@ -259,24 +274,113 @@ impl Interior {
     }
 
     /// Los parroquianos sentados a las mesas de una pulpería con semilla
-    /// `seed`: entre dos y cinco, cada uno en un asiento distinto
-    /// ([`Self::seats`]), con su aspecto de vecino.
-    pub fn patrons(&self, seed: u32) -> Vec<Patron> {
+    /// `seed` a la hora `time`, cada uno en un asiento distinto
+    /// ([`Self::seats`]) con su aspecto de vecino, y ninguno en los asientos
+    /// `reserved`:
+    ///
+    /// - de día, dos frente a frente en una misma mesa, que no es la de un
+    ///   asiento reservado;
+    /// - desde [`EVENING`], terminada la jornada, entre cuatro y ocho;
+    /// - cerrada ([`is_open`]), nadie.
+    pub fn patrons(&self, seed: u32, time: TimeOfDay, reserved: &[usize]) -> Vec<Patron> {
+        if !is_open(time) {
+            return Vec::new();
+        }
         let mut rng = Rng::new(seed, 0);
-        let mut free: Vec<usize> = (0..self.seats.len()).collect();
-        let count = PATRONS.0 + rng.next() % (PATRONS.1 - PATRONS.0 + 1);
+        let mut patron = |seat| Patron {
+            seat,
+            look: (rng.next() >> 24) as u8,
+        };
+        if time.hour() < EVENING {
+            let tables: Vec<usize> = self
+                .seats
+                .iter()
+                .map(|s| s.table)
+                .filter(|t| !reserved.iter().any(|&r| self.seats[r].table == *t))
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            if tables.is_empty() {
+                return Vec::new();
+            }
+            let mut pick = Rng::new(seed, 1);
+            let table = tables[pick.next() as usize % tables.len()];
+            let at: Vec<usize> = (0..self.seats.len())
+                .filter(|&s| self.seats[s].table == table)
+                .collect();
+            let a = at[pick.next() as usize % at.len()];
+            // Enfrente: en el otro banco, el más cercano (no el de la diagonal).
+            let (seat, there) = (self.seats[a], |b: &usize| self.seats[*b]);
+            let across = at
+                .iter()
+                .copied()
+                .filter(|b| there(b).facing != seat.facing)
+                .min_by(|b, c| {
+                    let d = |x: &usize| there(x).position.distance(seat.position);
+                    d(b).total_cmp(&d(c))
+                });
+            return across.map_or_else(Vec::new, |b| vec![patron(a), patron(b)]);
+        }
+        let mut free: Vec<usize> = (0..self.seats.len())
+            .filter(|s| !reserved.contains(s))
+            .collect();
+        let mut pick = Rng::new(seed, 2);
+        let count = EVENING_PATRONS.0 + pick.next() % (EVENING_PATRONS.1 - EVENING_PATRONS.0 + 1);
         let mut out = Vec::new();
         for _ in 0..count {
             if free.is_empty() {
                 break;
             }
-            let seat = free.swap_remove(rng.next() as usize % free.len());
-            out.push(Patron {
-                seat,
-                look: (rng.next() >> 24) as u8,
-            });
+            let seat = free.swap_remove(pick.next() as usize % free.len());
+            out.push(patron(seat));
         }
         out
+    }
+
+    /// El asiento de una de las mesas de adelante (las más cercanas a la
+    /// puerta) que mira hacia la puerta, el más cercano al paso desde ella:
+    /// quien entra ve de frente a quien está sentado ahí.
+    pub fn front_seat(&self) -> usize {
+        let door = self.door;
+        let depth = |p: Vec2| (door.center - p).dot(door.outward);
+        let across = |p: Vec2| (p - door.center).dot(Vec2::new(-door.outward.y, door.outward.x));
+        (0..self.seats.len())
+            .filter(|&s| self.seats[s].facing.forward().dot(door.outward) > 0.0)
+            .min_by(|&a, &b| {
+                let key = |s: usize| {
+                    let seat = self.seats[s];
+                    (depth(seat.position), across(seat.position).abs())
+                };
+                let ((da, xa), (db, xb)) = (key(a), key(b));
+                // Las mesas de adelante están a la misma profundidad.
+                if (da - db).abs() > 0.5 {
+                    da.total_cmp(&db)
+                } else {
+                    xa.total_cmp(&xb)
+                }
+            })
+            .expect("every pulpería has seats facing the door")
+    }
+
+    /// El camino de quien se levanta del asiento `seat` y se va: un paso atrás
+    /// del banco, al paso que viene de la puerta, por la puerta hasta la
+    /// vereda, y a lo largo de ella hasta perderse de vista. Todo por piso
+    /// libre, salvo el primer paso, que pasa por encima del banco.
+    pub fn way_out(&self, seat: usize) -> Vec<Vec2> {
+        let door = self.door;
+        let along = Vec2::new(-door.outward.y, door.outward.x);
+        let s = self.seats[seat];
+        let up = s.position - s.facing.forward() * STAND_BACK;
+        let depth = (door.center - up).dot(door.outward);
+        let aisle = door.center - door.outward * depth;
+        let sidewalk = door.center + door.outward * SIDEWALK_OUT;
+        vec![
+            s.position,
+            up,
+            aisle,
+            sidewalk,
+            sidewalk + along * WALK_AWAY,
+        ]
     }
 
     /// Con qué chocan las personas adentro: las paredes y los muebles.
@@ -438,6 +542,56 @@ mod tests {
     }
 
     #[test]
+    fn the_front_seat_faces_the_door_and_its_way_out_crosses_free_floor_to_the_street() {
+        for t in crate::town::tests::sample_towns() {
+            let Some((_, inside)) = t.pulperia() else {
+                continue;
+            };
+            let door = inside.door;
+            let depth = |p: Vec2| (door.center - p).dot(door.outward);
+            let seat = inside.seats[inside.front_seat()];
+            // En la mesa más cercana a la puerta, mirando hacia ella.
+            let tables: Vec<Vec2> = inside
+                .furniture
+                .iter()
+                .filter(|f| f.kind == FurnitureKind::Table)
+                .map(|f| f.footprint.center())
+                .collect();
+            let nearest = tables.iter().map(|&c| depth(c)).fold(f32::MAX, f32::min);
+            assert!(
+                (depth(tables[seat.table]) - nearest).abs() < 1e-3,
+                "{}",
+                t.name
+            );
+            assert!(seat.facing.forward().dot(door.outward) > 0.99, "{}", t.name);
+
+            let way = inside.way_out(inside.front_seat());
+            assert_eq!(way[0], seat.position, "{}", t.name);
+            let end = *way.last().unwrap();
+            assert!(end.distance(door.center) > 25.0, "{}: {end:?}", t.name);
+            // Pasado el banco del que se levanta, nada en el camino: ni muebles
+            // ni paredes ni nada de la calle; y sale por el hueco de la puerta.
+            let colliders = t.colliders();
+            let mut through_door = false;
+            for pair in way[1..].windows(2) {
+                let steps = (pair[0].distance(pair[1]) / 0.1).ceil() as usize;
+                for k in 0..=steps {
+                    let p = pair[0] + (pair[1] - pair[0]) * (k as f32 / steps as f32);
+                    through_door |= inside.doorway().contains_point(p);
+                    for o in &colliders {
+                        assert!(
+                            o.closest_point(p).distance(p) >= Rider::PERSON_RADIUS,
+                            "{}: {p:?} touches {o:?}",
+                            t.name
+                        );
+                    }
+                }
+            }
+            assert!(through_door, "{}", t.name);
+        }
+    }
+
+    #[test]
     fn it_attends_from_six_in_the_morning_to_ten_at_night() {
         let open = |h, m| is_open(TimeOfDay::hm(h, m));
         assert!(!open(5, 59));
@@ -445,6 +599,42 @@ mod tests {
         assert!(open(21, 59));
         assert!(!open(22, 0));
         assert!(!open(0, 0));
+    }
+
+    #[test]
+    fn two_share_a_table_by_day_more_come_after_work_and_none_while_shut() {
+        let t = castex();
+        let (_, inside) = t.pulperia().unwrap();
+        let table = |s: usize| inside.seats[s].table;
+        for seed in 0..40 {
+            // De día, dos frente a frente en la misma mesa, lejos de un asiento
+            // reservado.
+            let day = inside.patrons(seed, TimeOfDay::hm(11, 0), &[0]);
+            assert_eq!(day.len(), 2, "seed {seed}");
+            let (a, b) = (day[0].seat, day[1].seat);
+            assert_eq!(table(a), table(b), "seed {seed}");
+            assert_ne!(table(a), table(0), "seed {seed}: the reserved table");
+            let turn = inside.seats[a].facing.radians() - inside.seats[b].facing.radians();
+            assert!(
+                (turn.abs() - std::f32::consts::PI).abs() < 1e-4,
+                "face to face"
+            );
+            // Después del trabajo, más gente, nunca en el asiento reservado.
+            let evening = inside.patrons(seed, TimeOfDay::hm(19, 30), &[0]);
+            assert!(
+                (4..=8).contains(&evening.len()),
+                "seed {seed}: {}",
+                evening.len()
+            );
+            let seats: std::collections::BTreeSet<_> = evening.iter().map(|p| p.seat).collect();
+            assert_eq!(seats.len(), evening.len(), "one per seat");
+            assert!(!seats.contains(&0));
+            // Cerrada, nadie.
+            assert!(inside.patrons(seed, TimeOfDay::hm(23, 0), &[]).is_empty());
+            assert!(inside.patrons(seed, TimeOfDay::hm(4, 0), &[]).is_empty());
+        }
+        assert_eq!(inside.patrons(3, TimeOfDay::hm(17, 59), &[]).len(), 2);
+        assert!(inside.patrons(3, TimeOfDay::hm(18, 0), &[]).len() >= 4);
     }
 
     #[test]

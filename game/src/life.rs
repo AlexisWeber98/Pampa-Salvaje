@@ -1,7 +1,8 @@
 //! La vida en el pueblo: el reloj del juego, el tren de la línea, los vecinos
 //! que caminan o cabalgan ([`Horsemen`]) por las calles, el caballo atado
 //! frente a cada almacén de ramos
-//! generales, y las personas del encargo paradas en sus pueblos.
+//! generales, y las personas del encargo paradas en sus pueblos o sentadas en
+//! su pulpería, hasta que se van ([`Leaving`]).
 //!
 //! La lógica vive en `pampa-core`; este módulo la hace avanzar una vez por
 //! frame, antes que al jugador, deja que el jinete aparte a los peatones
@@ -22,8 +23,9 @@ use std::collections::BTreeSet;
 
 use bevy::prelude::*;
 use pampa_core::{
-    BASE_RATE, GameClock, LineTrain, MAX_STEP, Npc, Parked, RailLine, Ride, Run, Standing,
-    Timetable, TownLayout, TownRiders, Townsfolk, Travel, opening, pulperia,
+    BASE_RATE, Building, Errand, GameClock, Heading, LineTrain, MAX_STEP, Npc, Parked, RailLine,
+    Ride, Run, Standing, Timetable, TownLayout, TownRiders, Townsfolk, Travel, Vec2, opening,
+    pulperia,
 };
 use pampa_render::{
     ActiveTowns, CharacterVisual, Coat, FigureKind, MapIcon, Rolled, VehicleVisual, VisualPose,
@@ -175,17 +177,59 @@ pub struct StandingNpc {
     pub npc: Npc,
 }
 
-/// Las personas del encargo y dónde están paradas, creadas con sus pueblos;
-/// luego las personas que solo están paradas allí (Bairoletto junto a Farach),
-/// con la figura con la que se dibuja cada una.
+/// Las personas del encargo, creadas con sus pueblos: las que están paradas,
+/// y dónde; luego las que esperan sentadas en la pulpería de su pueblo
+/// ([`AtTable`]: Bairoletto), hasta que se levantan y se van.
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
-pub struct Cast(pub Vec<(Npc, Standing)>, pub Vec<(FigureKind, Standing)>);
+pub struct Cast(pub Vec<(Npc, Standing)>, pub Vec<AtTable>);
 
-/// Alguien parado en el pueblo `town` que no participa en el encargo.
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Bystander {
-    pub town: usize,
+impl Cast {
+    /// Las personas de `errand`: Don Hidalgo y Farach parados, y Bairoletto
+    /// sentado en su asiento de la pulpería (o parado junto a Farach si ese
+    /// pueblo no tiene pulpería).
+    pub fn of(errand: &Errand) -> Self {
+        let mut standing: Vec<(Npc, Standing)> = [Npc::Hidalgo, Npc::Farach]
+            .map(|npc| (npc, errand.standing(npc)))
+            .to_vec();
+        let him = errand.standing(Npc::Bairoletto);
+        let seated = match errand.bairoletto_seat() {
+            Some(seat) => vec![AtTable {
+                npc: Npc::Bairoletto,
+                town: him.town,
+                seat,
+            }],
+            None => {
+                standing.push((Npc::Bairoletto, him));
+                Vec::new()
+            }
+        };
+        Self(standing, seated)
+    }
 }
+
+/// Una persona del encargo que espera sentada en el asiento `seat` de la
+/// pulpería del pueblo `town` ([`pulperia::Interior::seats`]). Ningún
+/// parroquiano ocupa su asiento, ni de día su mesa.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AtTable {
+    pub npc: Npc,
+    pub town: usize,
+    pub seat: usize,
+}
+
+/// Alguien que se levantó de la pulpería del pueblo `town` y se va caminando
+/// por `way` ([`pulperia::Interior::way_out`]) hasta perderse de vista;
+/// `next` es el índice del próximo punto. Se va también si el pueblo se
+/// descarga.
+#[derive(Component, Debug, Clone, PartialEq)]
+pub struct Leaving {
+    pub town: usize,
+    pub way: Vec<Vec2>,
+    pub next: usize,
+}
+
+/// El paso de quien se va de la pulpería, en m/s: un andar tranquilo.
+pub const LEAVING_PACE: f32 = 1.3;
 
 /// Un parroquiano sentado a una mesa de la pulpería del pueblo `town`, en el
 /// asiento `seat` de su interior ([`pampa_core::pulperia::Interior::seats`]).
@@ -209,6 +253,7 @@ pub fn npc_figure(npc: Npc) -> FigureKind {
     match npc {
         Npc::Hidalgo => FigureKind::Hidalgo,
         Npc::Farach => FigureKind::Farach,
+        Npc::Bairoletto => FigureKind::Bairoletto,
     }
 }
 
@@ -234,7 +279,13 @@ impl Plugin for TownLifePlugin {
             .add_systems(Startup, report_train)
             .add_systems(
                 Update,
-                (populate_towns, run_clock_and_train, walk_crowds)
+                (
+                    populate_towns,
+                    run_clock_and_train,
+                    seat_patrons,
+                    walk_away,
+                    walk_crowds,
+                )
                     .chain()
                     .in_set(SimulateTown),
             )
@@ -295,7 +346,7 @@ type Residents<'a> = (
     Option<&'a TetheredHorse>,
     Option<&'a PalenqueHorse>,
     Option<&'a StandingNpc>,
-    Option<&'a Bystander>,
+    Option<&'a Leaving>,
     Option<&'a Horseman>,
     Option<&'a ParkedVehicle>,
     Option<&'a Patron>,
@@ -314,13 +365,13 @@ fn populate_towns(
         return;
     };
     let wanted: BTreeSet<usize> = live_towns(&crowds, active.as_deref()).into_iter().collect();
-    for (entity, walker, horse, palenque, npc, bystander, horseman, vehicle, patron) in &residents {
+    for (entity, walker, horse, palenque, npc, leaving, horseman, vehicle, patron) in &residents {
         let town = walker
             .map(|w| w.town)
             .or(horse.map(|h| h.0))
             .or(palenque.map(|p| p.town))
             .or(npc.map(|n| n.town))
-            .or(bystander.map(|b| b.town))
+            .or(leaving.map(|l| l.town))
             .or(horseman.map(|h| h.town))
             .or(vehicle.map(|v| v.town))
             .or(patron.map(|p| p.town));
@@ -340,9 +391,6 @@ fn populate_towns(
         if let Some(vehicles) = parked.as_ref().and_then(|p| p.0.get(town)) {
             spawn_parked(&mut commands, vehicles, town, &world);
         }
-        if let Some(layout) = towns.as_ref().and_then(|t| t.0.get(town)) {
-            spawn_patrons(&mut commands, layout, town, &world);
-        }
         if let Some(layout) = towns.as_ref().and_then(|t| t.0.get(town))
             && !led_away.0.contains(&town)
         {
@@ -353,40 +401,132 @@ fn populate_towns(
         for &(npc, standing) in cast.0.iter().filter(|(_, s)| s.town == town) {
             spawn_standing_npc(&mut commands, npc, standing, &world);
         }
-        for &(kind, standing) in cast.1.iter().filter(|(_, s)| s.town == town) {
-            spawn_bystander(&mut commands, kind, standing, &world);
+        let pulperia = towns.as_ref().and_then(|t| t.0.get(town)?.pulperia());
+        if let Some((store, inside)) = pulperia {
+            for sitter in cast.1.iter().filter(|a| a.town == town) {
+                let seat = inside.seats[sitter.seat];
+                commands.spawn((
+                    Name::new(format!("{:?}", sitter.npc)),
+                    StandingNpc {
+                        town,
+                        npc: sitter.npc,
+                    },
+                    CharacterVisual::Seated(npc_figure(sitter.npc)),
+                    VisualPose {
+                        heading: seat.facing,
+                        ..default()
+                    },
+                    on_bench(store, seat, &world),
+                ));
+            }
         }
     }
 }
 
-/// Los parroquianos de la pulpería de `layout`, si tiene una: sentados en los
-/// bancos, mirando hacia su mesa. El banco ya es un obstáculo, así que no
-/// necesitan cuerpo.
-fn spawn_patrons(commands: &mut Commands, layout: &TownLayout, town: usize, world: &GameWorld) {
-    let Some((store, inside)) = layout.pulperia() else {
+/// Sienta a los parroquianos de la pulpería de cada pueblo poblado según la
+/// hora ([`pulperia::Interior::patrons`]): en los bancos, mirando hacia su
+/// mesa. El banco ya es un obstáculo, así que no necesitan cuerpo. Cambian solo
+/// con el jugador afuera, para que nadie aparezca ni desaparezca a la vista.
+fn seat_patrons(
+    mut commands: Commands,
+    (towns, clock, populated): (
+        Option<Res<WorldTowns>>,
+        Option<Res<WorldClock>>,
+        Res<Populated>,
+    ),
+    (world, cast): (Res<GameWorld>, Res<Cast>),
+    players: Query<&Player>,
+    seated: Query<(Entity, &Patron)>,
+) {
+    let (Some(towns), Some(clock)) = (towns, clock) else {
         return;
     };
-    // El piso de ladrillo, a la altura con la que el render dibuja la sala.
+    let time = clock.0.time_of_day();
+    let at = players.single().ok().map(|p| p.rider.position);
+    for &town in &populated.0 {
+        let Some(layout) = towns.0.get(town) else {
+            continue;
+        };
+        let Some((store, inside)) = layout.pulperia() else {
+            continue;
+        };
+        let reserved: Vec<usize> = cast
+            .1
+            .iter()
+            .filter(|a| a.town == town)
+            .map(|a| a.seat)
+            .collect();
+        let want = inside.patrons(crowd_seed(layout.seed) ^ PATRONS_SEED, time, &reserved);
+        let here = || seated.iter().filter(|(_, p)| p.town == town);
+        let have: BTreeSet<usize> = here().map(|(_, p)| p.seat).collect();
+        if have == want.iter().map(|p| p.seat).collect() || at.is_some_and(|p| inside.holds(p)) {
+            continue;
+        }
+        for (entity, _) in here() {
+            commands.entity(entity).despawn();
+        }
+        for patron in want {
+            let seat = inside.seats[patron.seat];
+            commands.spawn((
+                Name::new(format!("Patron {town}.{}", patron.seat)),
+                Patron {
+                    town,
+                    seat: patron.seat,
+                },
+                CharacterVisual::Seated(FigureKind::townsfolk(patron.look)),
+                VisualPose {
+                    heading: seat.facing,
+                    ..default()
+                },
+                on_bench(store, seat, &world),
+            ));
+        }
+    }
+}
+
+/// Dónde está alguien sentado en el asiento `seat` de la pulpería `store`:
+/// sobre el banco, en el piso de ladrillo a la altura con la que el render
+/// dibuja la sala.
+fn on_bench(store: &Building, seat: pulperia::Seat, world: &GameWorld) -> Transform {
     let middle = store.footprint.center();
     let floor = world.0.terrain.height(middle.x, middle.y) + pulperia::FLOOR_RISE;
-    for patron in inside.patrons(crowd_seed(layout.seed) ^ PATRONS_SEED) {
-        let seat = inside.seats[patron.seat];
-        commands.spawn((
-            Name::new(format!("Patron {town}.{}", patron.seat)),
-            Patron {
-                town,
-                seat: patron.seat,
-            },
-            CharacterVisual::Seated(FigureKind::townsfolk(patron.look)),
-            VisualPose {
-                heading: seat.facing,
-                ..default()
-            },
-            Transform::from_translation(world_from_ground(
-                seat.position,
-                floor + pulperia::BENCH_HEIGHT,
-            )),
-        ));
+    Transform::from_translation(world_from_ground(
+        seat.position,
+        floor + pulperia::BENCH_HEIGHT,
+    ))
+}
+
+/// Hace caminar a quien se va de la pulpería ([`Leaving`]) por su camino, a
+/// [`LEAVING_PACE`], sobre el suelo; al final del camino desaparece. No choca
+/// con nada: su camino ya va por piso libre.
+fn walk_away(
+    mut commands: Commands,
+    time: Res<Time>,
+    world: Res<GameWorld>,
+    mut leaving: Query<(Entity, &mut Leaving, &mut Transform, &mut VisualPose)>,
+) {
+    let dt = time.delta_secs().min(MAX_STEP);
+    for (entity, mut walk, mut transform, mut pose) in &mut leaving {
+        let mut at = Vec2::new(transform.translation.x, -transform.translation.z);
+        let mut step = LEAVING_PACE * dt;
+        while let Some(&to) = walk.way.get(walk.next) {
+            let gap = at.distance(to);
+            if gap > step {
+                let toward = (to - at) * (1.0 / gap);
+                at += toward * step;
+                pose.heading = Heading::from_radians(toward.y.atan2(toward.x));
+                break;
+            }
+            at = to;
+            step -= gap;
+            walk.next += 1;
+        }
+        if walk.next >= walk.way.len() {
+            commands.entity(entity).despawn();
+            continue;
+        }
+        pose.speed = LEAVING_PACE;
+        transform.translation = world_from_ground(at, world.0.ground_height(at));
     }
 }
 
@@ -401,29 +541,6 @@ fn spawn_standing_npc(commands: &mut Commands, npc: Npc, standing: Standing, wor
             npc,
         },
         CharacterVisual::Figure(npc_figure(npc)),
-        VisualPose {
-            heading: standing.heading,
-            ..default()
-        },
-        Transform::from_translation(world_from_ground(at, height)),
-    ));
-}
-
-/// Alguien parado, quieto junto a las personas del encargo.
-fn spawn_bystander(
-    commands: &mut Commands,
-    kind: FigureKind,
-    standing: Standing,
-    world: &GameWorld,
-) {
-    let at = standing.position;
-    let height = world.0.ground_height(at);
-    commands.spawn((
-        Name::new(format!("{kind:?}")),
-        Bystander {
-            town: standing.town,
-        },
-        CharacterVisual::Figure(kind),
         VisualPose {
             heading: standing.heading,
             ..default()
@@ -1291,25 +1408,40 @@ mod tests {
     }
 
     #[test]
-    fn patrons_sit_on_the_pulperia_benches_facing_their_tables_and_leave_with_the_town() {
+    fn patrons_sit_on_the_pulperia_benches_by_the_hour_and_leave_with_the_town() {
+        use pampa_core::{GameClock, TimeOfDay};
         let mut app = town_app();
+        let clock = |app: &mut App, h, m| {
+            app.insert_resource(WorldClock(GameClock::at(TimeOfDay::hm(h, m))));
+        };
+        let move_player = |app: &mut App, at: Vec2| {
+            let mut q = app.world_mut().query::<&mut Player>();
+            q.single_mut(app.world_mut()).unwrap().rider.position = at;
+        };
+        let patrons = |app: &mut App| {
+            let mut query = app
+                .world_mut()
+                .query::<(&Patron, &Transform, &VisualPose, &CharacterVisual)>();
+            query
+                .iter(app.world())
+                .map(|(p, t, v, c)| (*p, *t, *v, *c))
+                .collect::<Vec<_>>()
+        };
+        clock(&mut app, 11, 0);
         app.update();
         let town = app.world().resource::<WorldTowns>().0[0].clone();
         let (store, inside) = town.pulperia().expect("Castex has a pulpería");
         let world = app.world().resource::<GameWorld>().0.clone();
         let middle = store.footprint.center();
         let floor = world.terrain.height(middle.x, middle.y) + pampa_core::pulperia::FLOOR_RISE;
-        let mut query = app
-            .world_mut()
-            .query::<(&Patron, &Transform, &VisualPose, &CharacterVisual)>();
-        let found: Vec<_> = query
-            .iter(app.world())
-            .map(|(p, t, v, c)| (*p, *t, *v, *c))
-            .collect();
-        assert!((2..=5).contains(&found.len()), "{} patrons", found.len());
-        let seats: BTreeSet<usize> = found.iter().map(|(p, ..)| p.seat).collect();
-        assert_eq!(seats.len(), found.len(), "one patron per seat");
-        for (patron, transform, pose, visual) in found {
+        // De día, dos en la misma mesa, sentados en sus bancos.
+        let day = patrons(&mut app);
+        assert_eq!(day.len(), 2);
+        assert_eq!(
+            inside.seats[day[0].0.seat].table,
+            inside.seats[day[1].0.seat].table
+        );
+        for (patron, transform, pose, visual) in &day {
             assert_eq!(patron.town, 0);
             let seat = inside.seats[patron.seat];
             assert_eq!(
@@ -1322,12 +1454,35 @@ mod tests {
                 "{visual:?}"
             );
         }
+        // Con el jugador adentro nadie aparece ni desaparece, aunque caiga la
+        // tarde.
+        move_player(&mut app, inside.door.center - inside.door.outward * 1.0);
+        clock(&mut app, 19, 30);
+        for _ in 0..3 {
+            app.update();
+        }
+        let seats = |found: &[(Patron, Transform, VisualPose, CharacterVisual)]| {
+            found.iter().map(|(p, ..)| p.seat).collect::<BTreeSet<_>>()
+        };
+        assert_eq!(seats(&patrons(&mut app)), seats(&day));
+        // Afuera, después del trabajo, llega más gente.
+        move_player(&mut app, inside.door.center + inside.door.outward * 6.0);
+        app.update();
+        let evening = patrons(&mut app);
+        assert!((4..=8).contains(&evening.len()), "{}", evening.len());
+        assert_eq!(seats(&evening).len(), evening.len(), "one per seat");
+        // Cerrada, nadie.
+        clock(&mut app, 23, 0);
+        app.update();
+        assert!(patrons(&mut app).is_empty());
+        clock(&mut app, 20, 0);
+        app.update();
+        assert!(!patrons(&mut app).is_empty());
         let mut activation = TownActivation::default();
         activation.update(&[town], Vec2::new(1.0e6, 1.0e6));
         app.insert_resource(ActiveTowns(activation));
         app.update();
-        let mut left = app.world_mut().query::<&Patron>();
-        assert_eq!(left.iter(app.world()).count(), 0);
+        assert!(patrons(&mut app).is_empty());
     }
 
     #[test]
@@ -1395,13 +1550,7 @@ mod tests {
     }
 
     fn cast_of(towns: &[TownLayout]) -> Cast {
-        let errand = pampa_core::Errand::new(towns, 0, 1).unwrap();
-        Cast(
-            [Npc::Hidalgo, Npc::Farach]
-                .map(|npc| (npc, errand.standing(npc)))
-                .to_vec(),
-            vec![(FigureKind::Bairoletto, errand.bairoletto())],
-        )
+        Cast::of(&pampa_core::Errand::new(towns, 0, 1).unwrap())
     }
 
     fn standing_npcs(app: &mut App) -> Vec<(StandingNpc, CharacterVisual, Transform)> {
@@ -1446,22 +1595,74 @@ mod tests {
             .update(&towns, Vec2::new(3000.0, -2000.0));
         app.update();
         let there = standing_npcs(&mut app);
-        assert_eq!(there.len(), 1);
-        assert_eq!(there[0].0.npc, Npc::Farach);
-        assert_eq!(there[0].1, CharacterVisual::Figure(FigureKind::Farach));
-        // Bairoletto está junto a Farach, y solo allí.
-        let mut q = app
-            .world_mut()
-            .query::<(&Bystander, &CharacterVisual, &Transform)>();
-        let beside: Vec<_> = q.iter(app.world()).map(|(b, v, t)| (*b, *v, *t)).collect();
-        assert_eq!(beside.len(), 1);
-        assert_eq!(beside[0].0, Bystander { town: 1 });
-        assert_eq!(beside[0].1, CharacterVisual::Figure(FigureKind::Bairoletto));
-        let gap = beside[0].2.translation.distance(there[0].2.translation);
-        assert!(
-            (gap - pampa_core::Errand::BAIROLETTO_GAP).abs() < 0.05,
-            "{gap}"
+        let npcs: Vec<(Npc, CharacterVisual)> = there.iter().map(|(n, v, _)| (n.npc, *v)).collect();
+        assert_eq!(
+            npcs,
+            [
+                (Npc::Farach, CharacterVisual::Figure(FigureKind::Farach)),
+                (
+                    Npc::Bairoletto,
+                    CharacterVisual::Seated(FigureKind::Bairoletto)
+                )
+            ]
         );
+        assert!(there.iter().all(|(n, ..)| n.town == 1));
+    }
+
+    #[test]
+    fn who_waits_seated_in_the_pulperia_keeps_his_seat_and_by_day_his_table() {
+        use pampa_core::{GameClock, TimeOfDay};
+        let town = TownLayout::castex_inspired();
+        let (store, inside) = town.pulperia().unwrap();
+        let seed = crowd_seed(town.seed) ^ PATRONS_SEED;
+        for hour in [11, 19] {
+            let time = TimeOfDay::hm(hour, 0);
+            // Donde se sentaría alguien si él no estuviera.
+            let taken = inside.patrons(seed, time, &[])[0].seat;
+            let mut app = town_app();
+            app.insert_resource(Cast(
+                vec![],
+                vec![AtTable {
+                    npc: Npc::Bairoletto,
+                    town: 0,
+                    seat: taken,
+                }],
+            ))
+            .insert_resource(WorldClock(GameClock::at(time)));
+            app.update();
+            let mut q = app.world_mut().query::<&Patron>();
+            let patrons: Vec<Patron> = q.iter(app.world()).copied().collect();
+            assert!(!patrons.is_empty(), "{hour}");
+            for p in &patrons {
+                assert_ne!(p.seat, taken, "{hour}");
+                if hour < 18 {
+                    assert_ne!(inside.seats[p.seat].table, inside.seats[taken].table);
+                }
+            }
+            // Él, sentado en el banco como los parroquianos, mirando su mesa.
+            let him = standing_npcs(&mut app);
+            let seat = inside.seats[taken];
+            let world = app.world().resource::<GameWorld>().0.clone();
+            let middle = store.footprint.center();
+            let bench = world.terrain.height(middle.x, middle.y)
+                + pampa_core::pulperia::FLOOR_RISE
+                + pampa_core::pulperia::BENCH_HEIGHT;
+            assert_eq!(
+                him,
+                [(
+                    StandingNpc {
+                        town: 0,
+                        npc: Npc::Bairoletto
+                    },
+                    CharacterVisual::Seated(FigureKind::Bairoletto),
+                    Transform::from_translation(world_from_ground(seat.position, bench))
+                )]
+            );
+            let mut poses = app
+                .world_mut()
+                .query_filtered::<&VisualPose, With<StandingNpc>>();
+            assert_eq!(poses.single(app.world()).unwrap().heading, seat.facing);
+        }
     }
 
     #[test]

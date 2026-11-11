@@ -2,7 +2,8 @@
 //! en el primer pueblo (la apertura, ver [`crate::ride`]), habla con Don
 //! Hidalgo en la plaza, toma su caballo del almacén de ramos generales y
 //! cabalga para presentarse ante el comisario Farach en el pueblo que nombra el
-//! archivo de diálogo (`police_town`).
+//! archivo de diálogo (`police_town`). Enseguida, en la pulpería de ese pueblo,
+//! habla con Bairoletto, que después se levanta y se va ([`see_off`]).
 //!
 //! Una vez tomado, el caballo es del jugador: F detenido o al paso lento lo
 //! hace bajar y lo deja atado flojo donde está ([`LooseHorse`]), y F junto a él
@@ -15,7 +16,7 @@
 //!
 //! `pampa-core` es dueño de las reglas ([`Errand`]): quién está dónde, los
 //! pasos de la historia y qué está al alcance. Los pasos son datos, en
-//! `assets/dialogue/errand.ron` (actos 2 y 3 de `historia`). Este módulo lee
+//! `assets/dialogue/errand.ron` (actos 2 a 4 de `historia`). Este módulo lee
 //! la tecla de interacción ([`INTERACT_KEY`]), reproduce la escena de cada
 //! paso cumplido: sus líneas como subtítulos ([`Subtitle`]) con el nombre de
 //! quien habla, cada una el tiempo de leerla, y sus acciones narradas (la
@@ -34,13 +35,13 @@ use pampa_core::{
 use pampa_render::lettering::{self, Face};
 use pampa_render::subtitle;
 use pampa_render::{
-    Animal, CharacterVisual, Coat, FigureKind, HudObjective, MapTarget, Say, Subtitle,
-    SubtitleLine, Talking, VisualPose, world_from_ground,
+    Animal, CharacterVisual, Coat, HudObjective, MapTarget, Say, Subtitle, SubtitleLine, Talking,
+    VisualPose, WorldTowns, world_from_ground,
 };
 
 use crate::abilities::{PlayerAbilities, Unlocked, announce_unlocks, unlock_on_mount};
 use crate::camera::SceneShot;
-use crate::life::{Cast, LedAway, StandingNpc, TetheredHorse};
+use crate::life::{AtTable, Cast, Leaving, LedAway, StandingNpc, TetheredHorse, npc_figure};
 use crate::player::{ControlLock, DrivePlayer, GameWorld, Player, RiddenCoat, player_visual_on};
 use crate::wallet::{PlayerItems, PlayerWallet};
 
@@ -132,9 +133,10 @@ impl Talk {
 pub struct Conversation(pub Option<Talk>);
 
 /// El encargo de un mundo de `towns`, dado el primer pueblo: Don Hidalgo en su
-/// plaza, Farach (con Bairoletto a su lado) en el pueblo llamado `police_town`
-/// (el [`ErrandLines::police_town`] del diálogo; el otro pueblo más cercano con
-/// comisaría cuando ese no tiene una). Sus huellas en planta se agregan a
+/// plaza, Farach en el pueblo llamado `police_town` (el
+/// [`ErrandLines::police_town`] del diálogo; el otro pueblo más cercano con
+/// comisaría cuando ese no tiene una) y Bairoletto sentado en la pulpería de
+/// ese pueblo. Las huellas en planta de los que están parados se agregan a
 /// `world` como obstáculos. `None` (sin encargo) si no hay un segundo pueblo
 /// con comisaría.
 pub fn plan(
@@ -146,12 +148,7 @@ pub fn plan(
     let police = Errand::police_town(towns, giver, police_town)?;
     let errand = Errand::new(towns, giver, police)?;
     world.obstacles.extend(errand.obstacles());
-    let cast = Cast(
-        [Npc::Hidalgo, Npc::Farach]
-            .map(|npc| (npc, errand.standing(npc)))
-            .to_vec(),
-        vec![(FigureKind::Bairoletto, errand.bairoletto())],
-    );
+    let cast = Cast::of(&errand);
     Some((ErrandRun(errand), cast))
 }
 
@@ -184,6 +181,7 @@ impl Plugin for ErrandPlugin {
                 (
                     interact,
                     converse,
+                    see_off,
                     frame_scene,
                     mark_speakers,
                     show_progress,
@@ -577,6 +575,61 @@ fn converse(
                     text,
                 });
                 return;
+            }
+        }
+    }
+}
+
+/// Terminada su escena, quien esperaba sentado en la pulpería ([`Cast`]:
+/// Bairoletto) se levanta y se va ([`Leaving`]): sale del elenco, así que no
+/// vuelve cuando su pueblo se vuelve a cargar.
+fn see_off(
+    mut commands: Commands,
+    (errand, conversation, towns): (
+        Option<Res<ErrandRun>>,
+        Res<Conversation>,
+        Option<Res<WorldTowns>>,
+    ),
+    cast: Option<ResMut<Cast>>,
+    npcs: Query<(Entity, &StandingNpc)>,
+) {
+    let (Some(errand), Some(mut cast)) = (errand, cast) else {
+        return;
+    };
+    let partner = conversation.0.as_ref().and_then(|t| t.partner);
+    let (done, waiting): (Vec<AtTable>, Vec<AtTable>) = cast
+        .1
+        .iter()
+        .partition(|a| errand.0.talked_to(a.npc) && partner != Some(a.npc));
+    if done.is_empty() {
+        return;
+    }
+    cast.1 = waiting;
+    for sitter in done {
+        let inside = towns
+            .as_ref()
+            .and_then(|t| t.0.get(sitter.town)?.pulperia())
+            .map(|(_, inside)| inside);
+        for (entity, npc) in &npcs {
+            if npc.npc != sitter.npc {
+                continue;
+            }
+            let mut him = commands.entity(entity);
+            him.remove::<StandingNpc>();
+            match &inside {
+                Some(inside) => {
+                    him.insert((
+                        Leaving {
+                            town: sitter.town,
+                            way: inside.way_out(sitter.seat),
+                            next: 1,
+                        },
+                        CharacterVisual::Figure(npc_figure(sitter.npc)),
+                    ));
+                }
+                None => {
+                    him.despawn();
+                }
             }
         }
     }
@@ -1005,9 +1058,27 @@ mod tests {
             farach + e.standing(Npc::Farach).heading.forward() * 2.5,
         );
         press_f(&mut app);
-        assert_eq!(errand(&app).stage(), ErrandStage::Done);
+        assert_eq!(errand(&app).stage(), ErrandStage::Talk(Npc::Bairoletto));
         wait_for_scene(&mut app, 2);
         assert!(said(&app).ends_with(&scene_lines(2)));
+        let tano = errand(&app).standing(Npc::Bairoletto).position;
+        assert_eq!(
+            objective(&app).as_deref(),
+            Some("Andá a la pulpería La Colonia")
+        );
+        assert_eq!(app.world().resource::<MapTarget>().0, Some(tano));
+
+        // A pie, en la pulpería de enfrente: Bairoletto, y después nada más.
+        press_f(&mut app);
+        assert_eq!(player(&mut app).1.rider.travel(), Travel::OnFoot);
+        let castex = &app.world().resource::<WorldTowns>().0[e.standing(Npc::Bairoletto).town];
+        let (_, inside) = castex.pulperia().unwrap();
+        let aisle = inside.way_out(e.bairoletto_seat().unwrap())[2];
+        teleport(&mut app, aisle);
+        press_f(&mut app);
+        assert_eq!(errand(&app).stage(), ErrandStage::Done);
+        wait_for_scene(&mut app, 3);
+        assert!(said(&app).ends_with(&scene_lines(3)));
         assert_eq!(objective(&app), None);
         assert_eq!(app.world().resource::<MapTarget>().0, None);
 
@@ -1018,7 +1089,8 @@ mod tests {
             [
                 ErrandEvent::Talked(Npc::Hidalgo),
                 ErrandEvent::MountedHorse,
-                ErrandEvent::Talked(Npc::Farach)
+                ErrandEvent::Talked(Npc::Farach),
+                ErrandEvent::Talked(Npc::Bairoletto)
             ]
         );
     }
@@ -1113,8 +1185,148 @@ mod tests {
                 ),
             ]
         );
-        // La historia llegó a su último paso: el gancho del acto 4.
+        // Enseguida, el acto 4: Bairoletto espera en la pulpería.
+        assert_eq!(errand(&app).stage(), ErrandStage::Talk(Npc::Bairoletto));
+    }
+
+    /// El mundo incluido con el pueblo `town` activo y el resto no, como si el
+    /// jugador estuviera parado en `at`.
+    fn activate_around(app: &mut App, at: GroundVec2) {
+        let towns = app.world().resource::<WorldTowns>().0.clone();
+        let mut activation = pampa_core::TownActivation::default();
+        activation.update(&towns, at);
+        app.insert_resource(pampa_render::ActiveTowns(activation));
+    }
+
+    #[test]
+    fn in_la_colonia_bairoletto_speaks_act_four_word_for_word_then_gets_up_and_leaves() {
+        let mut app = shipped_app();
+        ride_to_farach(&mut app);
+        press_f(&mut app);
+        wait_for_scene(&mut app, 2);
+        let e = errand(&app);
+        let him = e.standing(Npc::Bairoletto);
+        let towns = app.world().resource::<WorldTowns>().0.clone();
+        let (store, inside) = towns[him.town].pulperia().expect("Castex has a pulpería");
+        assert_eq!(him.town, e.standing(Npc::Farach).town);
+        let seat = e.bairoletto_seat().unwrap();
+        // Ya no está en la puerta de la comisaría: espera sentado en su mesa,
+        // y el HUD y el mapa mandan ahí.
+        assert_eq!(
+            objective(&app).as_deref(),
+            Some("Andá a la pulpería La Colonia")
+        );
+        assert_eq!(app.world().resource::<MapTarget>().0, Some(him.position));
+        let tano = npc_entity(&mut app, Npc::Bairoletto);
+        assert_eq!(
+            app.world().get::<CharacterVisual>(tano),
+            Some(&CharacterVisual::Seated(FigureKind::Bairoletto))
+        );
+        let at = app.world().get::<Transform>(tano).unwrap().translation;
+        assert_eq!(GroundVec2::new(at.x, -at.z), inside.seats[seat].position);
+        let mut patrons = app.world_mut().query::<&crate::life::Patron>();
+        for p in patrons.iter(app.world()).filter(|p| p.town == him.town) {
+            assert_ne!(inside.seats[p.seat].table, inside.seats[seat].table);
+        }
+
+        // Desde el paso que viene de la puerta, junto a su banco: la escena,
+        // con su cámara sobre él.
+        teleport(&mut app, inside.way_out(seat)[2]);
+        let before = said(&app).len();
+        press_f(&mut app);
+        app.update();
+        assert_eq!(app.world().resource::<SceneShot>().0, Some(him.position));
+        wait_for_scene(&mut app, 3);
+        let all = said(&app);
+        let lines: Vec<(&str, &str)> = all[before..]
+            .iter()
+            .map(|(who, text)| (who.as_str(), text.as_str()))
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                (
+                    "Bairoletto",
+                    "Che pibe, ese caballo que está afuera…¿Es tuyo?"
+                ),
+                ("Lisandro", "Si, es de mi tìo."),
+                (
+                    "Bairoletto",
+                    "¿Queres ganarte unos pesos? Necesito transporte para esta noche."
+                ),
+                ("Lisandro", "si ¿hasta donde necesita ir?"),
+                ("Bairoletto", "A la noche te digo ¿Cómo te llamas?"),
+                ("Lisandro", "Lisandro."),
+                (
+                    "Bairoletto",
+                    "Yo soy Bairoletto, pero me dicen Tano. Nos vemos a la noche en esta pulpería."
+                ),
+            ]
+        );
+        // Libre hasta la noche: no queda nada que hacer.
         assert_eq!(errand(&app).stage(), ErrandStage::Done);
+        assert_eq!(objective(&app), None);
+        assert_eq!(app.world().resource::<MapTarget>().0, None);
+
+        // Se levanta, sale por la puerta, sigue por la vereda y desaparece.
+        app.update();
+        let mut standing = app.world_mut().query::<&StandingNpc>();
+        assert!(standing.iter(app.world()).all(|n| n.npc != Npc::Bairoletto));
+        let walking = |app: &mut App| {
+            let mut q = app.world_mut().query::<(
+                &crate::life::Leaving,
+                &CharacterVisual,
+                &Transform,
+                &VisualPose,
+            )>();
+            q.iter(app.world())
+                .map(|(l, v, t, p)| {
+                    (
+                        l.town,
+                        *v,
+                        GroundVec2::new(t.translation.x, -t.translation.z),
+                        p.speed,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let way = inside.way_out(seat);
+        let length: f32 = way.windows(2).map(|w| w[0].distance(w[1])).sum();
+        let (mut out_the_door, mut gone) = (false, false);
+        let frames = ((length / crate::life::LEAVING_PACE + 2.0) / 0.05) as usize;
+        for _ in 0..frames {
+            app.update();
+            match walking(&mut app)[..] {
+                [] => {
+                    gone = true;
+                    break;
+                }
+                [(town, visual, at, speed)] => {
+                    assert_eq!(town, him.town);
+                    assert_eq!(visual, CharacterVisual::Figure(FigureKind::Bairoletto));
+                    assert!(speed > 0.5, "{speed}");
+                    out_the_door |= inside.doorway().contains_point(at);
+                    // Nunca atraviesa una pared de la pulpería.
+                    assert!(!inside.walls.iter().any(|w| w.contains_point(at)), "{at:?}");
+                }
+                ref more => panic!("{more:?}"),
+            }
+        }
+        assert!(out_the_door && gone, "{out_the_door} {gone}");
+        assert!(store.footprint.contains_point(way[2]));
+
+        // No vuelve cuando el pueblo se descarga y se vuelve a cargar.
+        activate_around(&mut app, GroundVec2::new(1.0e6, 1.0e6));
+        app.update();
+        activate_around(&mut app, him.position);
+        for _ in 0..3 {
+            app.update();
+        }
+        let mut standing = app.world_mut().query::<&StandingNpc>();
+        let back: Vec<Npc> = standing.iter(app.world()).map(|n| n.npc).collect();
+        assert!(back.contains(&Npc::Farach), "the town is back: {back:?}");
+        assert!(!back.contains(&Npc::Bairoletto), "{back:?}");
+        assert!(walking(&mut app).is_empty());
     }
 
     #[test]
@@ -1262,7 +1474,7 @@ mod tests {
         assert_eq!(player(&mut app).1.rider.travel(), Travel::OnFoot);
         teleport(&mut app, farach.position + farach.heading.forward() * 2.5);
         press_f(&mut app);
-        assert_eq!(errand(&app).stage(), ErrandStage::Done);
+        assert_eq!(errand(&app).stage(), ErrandStage::Talk(Npc::Bairoletto));
         wait_for_scene(&mut app, 2);
         let (horse, _) = loose(&mut app);
         let horse = horse.unwrap();
@@ -1408,17 +1620,18 @@ mod tests {
         assert_eq!(comisarias(&loaded.towns[hidalgo.town]), 0);
         assert_eq!(loaded.towns[hidalgo.town].police_door(), None);
         assert_eq!(comisarias(&loaded.towns[farach.town]), 1);
-        // Hidalgo, Farach y Bairoletto a su lado, apartados de Castex.
-        assert_eq!(world.obstacles.len(), before + 3);
+        // Hidalgo y Farach parados, apartados de Castex; Bairoletto sentado
+        // en la pulpería de Castex, sobre su banco.
+        assert_eq!(world.obstacles.len(), before + 2);
         assert_eq!(cast.0, vec![(Npc::Hidalgo, hidalgo), (Npc::Farach, farach)]);
-        let bairoletto = run.0.bairoletto();
-        assert_eq!(cast.1, vec![(FigureKind::Bairoletto, bairoletto)]);
-        for o in loaded.towns[farach.town].obstacles() {
-            assert!(
-                !o.intersects(&bairoletto.footprint()),
-                "Bairoletto inside {o:?}"
-            );
-        }
+        assert_eq!(
+            cast.1,
+            vec![crate::life::AtTable {
+                npc: Npc::Bairoletto,
+                town: farach.town,
+                seat: run.0.bairoletto_seat().unwrap()
+            }]
+        );
     }
 
     #[test]
