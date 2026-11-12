@@ -172,7 +172,8 @@ impl Items {
 
     /// Recibe un `item` más.
     pub fn receive(&mut self, item: Item) {
-        *self.0.entry(item).or_insert(0) += 1;
+        let n = self.0.entry(item).or_insert(0);
+        *n = n.saturating_add(1);
     }
 
     /// Entrega un `item` y dice si lo llevaba; si no lo llevaba, no pasa nada.
