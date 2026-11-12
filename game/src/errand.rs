@@ -863,7 +863,7 @@ fn face_each_other(
         let home = errand.0.standing(npc.npc);
         let toward = lisandro - home.position;
         let mine = partner == Some(npc.npc) && toward.length() > 1e-3;
-        if let CharacterVisual::Seated(_) = visual {
+        if let CharacterVisual::Seated(..) = visual {
             if mine {
                 let gaze = turn_toward(pose.heading, toward).clamp(-GAZE_MAX, GAZE_MAX);
                 commands.entity(entity).insert(Gaze(gaze));
@@ -1446,7 +1446,7 @@ mod tests {
         let tano = npc_entity(&mut app, Npc::Bairoletto);
         assert_eq!(
             app.world().get::<CharacterVisual>(tano),
-            Some(&CharacterVisual::Seated(FigureKind::Bairoletto))
+            Some(&CharacterVisual::Seated(FigureKind::Bairoletto, pampa_core::pulperia::Pastime::Rest))
         );
         let at = app.world().get::<Transform>(tano).unwrap().translation;
         assert_eq!(GroundVec2::new(at.x, -at.z), inside.seats[seat].position);
@@ -1485,7 +1485,7 @@ mod tests {
             risen = rising.0;
             assert_eq!(
                 app.world().get::<CharacterVisual>(tano),
-                Some(&CharacterVisual::Seated(FigureKind::Bairoletto))
+                Some(&CharacterVisual::Seated(FigureKind::Bairoletto, pampa_core::pulperia::Pastime::Rest))
             );
             assert_eq!(
                 app.world().get::<Transform>(tano).unwrap().translation,

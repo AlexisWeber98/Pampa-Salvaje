@@ -64,6 +64,7 @@ use std::f32::consts::FRAC_PI_2;
 
 use bevy::math::Affine3A;
 use bevy::prelude::*;
+use pampa_core::pulperia::Pastime;
 
 use super::clips::CharacterClips;
 use super::figure::FigureKind;
@@ -83,11 +84,11 @@ pub struct Riding {
     pub seed: u32,
 }
 
-/// Marca a un [`Riding`] sentado en un banco, sin riendas: reproduce
-/// [`AT_REST`](super::rig::AT_REST), con las manos en el regazo, en vez del
-/// clip de las riendas.
+/// Marca a un [`Riding`] sentado en un banco, sin riendas, que pasa el rato
+/// con su [`Pastime`]: reproduce el clip de eso
+/// ([`bench_clip`](super::rig::bench_clip)) en vez del de las riendas.
 #[derive(Component, Debug, Clone, Copy, Default)]
-pub struct OnBench;
+pub struct OnBench(pub Pastime);
 
 /// A qué altura del piso está la parte de arriba de un banco ([`OnBench`]): el
 /// de una mesa de pulpería. Las piernas bajan hasta que las suelas apoyan en

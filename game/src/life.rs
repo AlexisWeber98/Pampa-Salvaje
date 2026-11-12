@@ -472,7 +472,7 @@ fn populate_towns(
                         town,
                         npc: sitter.npc,
                     },
-                    CharacterVisual::Seated(npc_figure(sitter.npc)),
+                    CharacterVisual::Seated(npc_figure(sitter.npc), pampa_core::pulperia::Pastime::Rest),
                     VisualPose {
                         heading: seat.facing,
                         ..default()
@@ -534,7 +534,7 @@ fn seat_patrons(
                     town,
                     seat: patron.seat,
                 },
-                CharacterVisual::Seated(FigureKind::townsfolk(patron.look)),
+                CharacterVisual::Seated(FigureKind::townsfolk(patron.look), patron.pastime),
                 VisualPose {
                     heading: seat.facing,
                     ..default()
@@ -1589,10 +1589,15 @@ mod tests {
                 world_from_ground(seat.position, floor + pampa_core::pulperia::BENCH_HEIGHT)
             );
             assert_eq!(pose.heading, seat.facing);
-            assert!(
-                matches!(visual, CharacterVisual::Seated(FigureKind::Townsfolk(_))),
-                "{visual:?}"
-            );
+            // Juega al truco quien se sienta a la mesa de los naipes; los
+            // demás fuman, toman o conversan.
+            use pampa_core::pulperia::Pastime;
+            let CharacterVisual::Seated(FigureKind::Townsfolk(_), pastime) = *visual else {
+                panic!("{visual:?}");
+            };
+            let at_cards = Some(seat.table) == inside.card_table;
+            assert_eq!(pastime == Pastime::Cards, at_cards, "{visual:?}");
+            assert_ne!(pastime, Pastime::Rest, "{visual:?}");
         }
         // Con el jugador adentro nadie aparece ni desaparece, aunque caiga la
         // tarde.
@@ -1793,7 +1798,7 @@ mod tests {
                 ),
                 (
                     Npc::Bairoletto,
-                    CharacterVisual::Seated(FigureKind::Bairoletto)
+                    CharacterVisual::Seated(FigureKind::Bairoletto, pampa_core::pulperia::Pastime::Rest)
                 )
             ]
         );
@@ -1872,7 +1877,7 @@ mod tests {
                         town: 0,
                         npc: Npc::Bairoletto
                     },
-                    CharacterVisual::Seated(FigureKind::Bairoletto),
+                    CharacterVisual::Seated(FigureKind::Bairoletto, pampa_core::pulperia::Pastime::Rest),
                     Transform::from_translation(world_from_ground(seat.position, bench))
                 )]
             );

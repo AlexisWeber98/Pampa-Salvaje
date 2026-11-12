@@ -84,7 +84,7 @@ pub(crate) fn interior(lot: &Lot) -> Option<Shape> {
             }
             FurnitureKind::Table => {
                 table(&mut shape, r, top);
-                table_things(&mut shape, r, top, tables, lot.variant);
+                table_things(&mut shape, r, top, tables, room.card_table, lot.variant);
                 tables += 1;
             }
             FurnitureKind::Bench => bench(&mut shape, r, top),
@@ -725,9 +725,11 @@ fn counter_things(shape: &mut Shape, r: Rect, top: f32) {
 }
 
 /// Lo que hay sobre la mesa `index` de la pulpería, sobre `r` y de `top` de
-/// alto, según la semilla `v`: vasos con una botella, o los naipes de un
-/// truco a medio jugar con los vasos de los que juegan.
-fn table_things(shape: &mut Shape, r: Rect, top: f32, index: usize, v: u32) {
+/// alto, según la semilla `v`: los naipes de un truco a medio jugar con los
+/// vasos de los que juegan si es la mesa de los naipes `cards`
+/// ([`Interior::card_table`](pampa_core::pulperia::Interior::card_table)), y
+/// si no, vasos con una botella.
+fn table_things(shape: &mut Shape, r: Rect, top: f32, index: usize, cards: Option<usize>, v: u32) {
     let (x, z) = r.center();
     let long_x = r.x1 - r.x0 > r.z1 - r.z0;
     // A lo largo de la mesa, hacia cada cabecera.
@@ -738,8 +740,9 @@ fn table_things(shape: &mut Shape, r: Rect, top: f32, index: usize, v: u32) {
             Vec3::new(x + a, top, z + t)
         }
     };
-    let cards = (index as u32 + v) % 3 == 1;
-    if cards {
+    // La mesa del truco es la que elige el interior: ahí juegan los
+    // parroquianos que se sientan a ella.
+    if cards == Some(index) {
         // El mazo, las cartas de cada mano boca abajo y las tiradas en el
         // medio, cada una un poco torcida.
         let card = |shape: &mut Shape, at: Vec3, turn: f32, back: bool| {

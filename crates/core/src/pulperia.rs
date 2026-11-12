@@ -169,11 +169,29 @@ pub struct Seat {
 }
 
 /// Alguien sentado a una mesa de la pulpería: en el asiento `seat` del
-/// interior, con el aspecto de vecino `look`.
+/// interior, con el aspecto de vecino `look`, pasando el rato con `pastime`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Patron {
     pub seat: usize,
     pub look: u8,
+    pub pastime: Pastime,
+}
+
+/// Qué hace alguien sentado a una mesa.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Pastime {
+    /// Quieto, con las manos en el regazo.
+    #[default]
+    Rest,
+    /// Juega al truco, con su mano de naipes: en la mesa de los naipes
+    /// ([`Interior::card_table`]).
+    Cards,
+    /// Fuma un cigarrillo armado.
+    Smoke,
+    /// Toma de un vaso.
+    Drink,
+    /// Conversa, con las manos.
+    Chat,
 }
 
 /// El interior de una pulpería.
@@ -184,6 +202,9 @@ pub struct Interior {
     pub walls: Vec<Aabb>,
     pub furniture: Vec<Furniture>,
     pub seats: Vec<Seat>,
+    /// La mesa donde se juega al truco, con el mazo y los naipes sobre ella,
+    /// por índice; ninguna en un almacén.
+    pub card_table: Option<usize>,
     /// El piso entre las caras de adentro de las paredes.
     pub floor: Aabb,
     /// La altura del cielorraso sobre el piso, en metros.
@@ -192,6 +213,26 @@ pub struct Interior {
     /// cara a la calle.
     pub keeper: Keeper,
 }
+
+/// La mesa de los naipes de la pulpería `store` con asientos `seats`: una de
+/// sus mesas, con semilla en su huella, para que el mismo local juegue
+/// siempre en la misma.
+fn card_table(store: &Building, seats: &[Seat]) -> Option<usize> {
+    let tables = seats.iter().map(|s| s.table).max()? + 1;
+    let c = store.footprint.center();
+    let mut rng = Rng::new(c.x.to_bits() ^ c.y.to_bits().rotate_left(16), CARD_TABLE_SALT);
+    Some(rng.next() as usize % tables)
+}
+
+/// La sal de la semilla de [`card_table`].
+const CARD_TABLE_SALT: u32 = 7;
+
+/// Qué hace, sin naipes, alguien sentado a una mesa: de cada tres, uno fuma,
+/// uno toma y uno conversa.
+const PASTIMES: [Pastime; 3] = [Pastime::Smoke, Pastime::Drink, Pastime::Chat];
+
+/// La sal de la semilla de qué hace cada parroquiano.
+const PASTIME_SALT: u32 = 3;
 
 /// Dónde está parado quien atiende un local, y hacia dónde mira.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -312,6 +353,7 @@ impl Interior {
             door,
             walls,
             furniture,
+            card_table: card_table(store, &seats),
             seats,
             floor: frame.rect(-inner, inner, front, back),
             ceiling: store.height,
@@ -422,6 +464,7 @@ impl Interior {
             floor: frame.rect(-inner, inner, front, back),
             ceiling: store.height,
             // En el medio del mostrador, frente a la puerta.
+            card_table: None,
             keeper: keeper(&frame, 0.0, counter + COUNTER_DEPTH + KEEPER_BEHIND),
         }
     }
@@ -462,9 +505,16 @@ impl Interior {
             return Vec::new();
         }
         let mut rng = Rng::new(seed, 0);
-        let mut patron = |seat| Patron {
+        let mut doing = Rng::new(seed, PASTIME_SALT);
+        let cards = self.card_table;
+        let mut patron = |seat: usize| Patron {
             seat,
             look: (rng.next() >> 24) as u8,
+            pastime: if Some(self.seats[seat].table) == cards {
+                Pastime::Cards
+            } else {
+                PASTIMES[doing.next() as usize % PASTIMES.len()]
+            },
         };
         if time.hour() < EVENING {
             let tables: Vec<usize> = self
@@ -1007,6 +1057,33 @@ mod tests {
         }
         assert_eq!(inside.patrons(3, TimeOfDay::hm(17, 59), &[]).len(), 2);
         assert!(inside.patrons(3, TimeOfDay::hm(18, 0), &[]).len() >= 4);
+    }
+
+    #[test]
+    fn whoever_sits_at_the_truco_table_plays_and_the_rest_smoke_drink_or_chat() {
+        let t = castex();
+        let (_, inside) = t.pulperia().unwrap();
+        let tables = inside.seats.iter().map(|s| s.table).max().unwrap() + 1;
+        let cards = inside.card_table.expect("a pulpería has a truco table");
+        assert!(cards < tables);
+        let mut seen = std::collections::BTreeSet::new();
+        for seed in 0..60 {
+            for time in [TimeOfDay::hm(11, 0), TimeOfDay::hm(20, 0)] {
+                for p in inside.patrons(seed, time, &[]) {
+                    let playing = inside.seats[p.seat].table == cards;
+                    assert_eq!(p.pastime == Pastime::Cards, playing, "seed {seed}: {p:?}");
+                    seen.insert(format!("{:?}", p.pastime));
+                }
+            }
+        }
+        assert_eq!(seen.len(), 4, "cards, smoke, drink and chat all come: {seen:?}");
+        // Nadie juega en el almacén: no tiene mesas.
+        let almacen = t
+            .buildings
+            .iter()
+            .find(|b| b.kind == BuildingKind::GeneralStore)
+            .expect("Castex has an almacén");
+        assert_eq!(Interior::of(almacen).card_table, None);
     }
 
     #[test]

@@ -107,6 +107,9 @@ CLIPS = [
     ("water", "ual2", "Farm_Watering", False, False),
     ("chop", "ual2", "TreeChopping_Loop", True, False),
     ("walk_carry", "ual2", "Walk_Carry_Loop", True, True),
+    ("sit_talk", "ual1", "Sitting_Talking_Loop", True, False),
+    ("sit_drink", "ual1", "Sitting_Idle_Loop", True, False),
+    ("sit_smoke", "ual1", "Sitting_Idle_Loop", True, False),
 ]
 
 
@@ -214,6 +217,36 @@ CYCLE_PACE = 2.0
 # How much a meter of the hips' height counts against a radian of joint
 # turn when the cycle's ends are compared.
 CYCLE_RISE = 10.0
+# Seated clips whose hand is brought to the mouth once a loop (a sip from a
+# glass, a puff of a cigarette): game name -> (the side whose hand moves,
+# where its wrist goes, where its fingers point there, both from the head
+# joint in meters: out to the hand's side, up, ahead; and which way the palm
+# then faces: a direction in the same axes, or None for toward the face). Neither pack has
+# such a clip (UAL2's ``Consume`` raises the hand half a meter ahead of the
+# face), so it is keyed on the base clip by two-bone IK (see
+# ``Retargeter.sip``). The base loop is played SIP_CYCLES times, so the
+# hand rests most of the time. The lips are about 3 cm below the head joint
+# and 10.5 cm ahead of it (measured on the townsfolk with a glass at them).
+# A drinker's fingers wrap the glass and point up past the lips, the palm
+# toward the middle of the body, so the glass is seen at the lips; a
+# smoker's cross the mouth to the other side, the palm toward the face, so
+# the knuckles, where the cigarette is held with its mouth end on the palm
+# side, are at the lips and the hand hides no more than the mouth.
+SIP = {
+    "sit_drink": ("r", (0.06, -0.12, 0.15), (0.0, 0.03, 0.10), (-1.0, 0.0, 0.0)),
+    "sit_smoke": ("r", (0.09, -0.08, 0.16), (-0.10, -0.03, 0.105), None),
+}
+SIP_CYCLES = 4
+# Within one loop, seconds: the hand leaves the thigh, reaches the mouth,
+# stays there, and is back on the thigh.
+SIP_TIMES = (1.0, 1.7, 3.0, 3.8)
+# How far ahead of the straight way the hand passes the chest, meters, at
+# the middle of its way.
+SIP_ARC = 0.10
+# Where the elbow points while the hand is up: out to its side and down.
+SIP_POLE = (0.5, -1.0, 0.0)
+
+
 # Whose fingers a capture without them holds (see ``Retargeter.held``): the
 # pack's walk's first key, loosely curled; held flat at the MakeHuman rest,
 # the running hands showed open, splayed palms.
@@ -426,6 +459,42 @@ def scale(a, k):
 
 def length(a):
     return math.sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2])
+
+
+def dot(a, b):
+    return sum(x * y for x, y in zip(a, b))
+
+
+def smoothstep(x):
+    x = min(1.0, max(0.0, x))
+    return x * x * (3.0 - 2.0 * x)
+
+
+def sip_share(t):
+    """How far the hand is on its way to the mouth at `t` seconds into a
+    ``SIP`` loop: 0 on the thigh, 1 at the mouth."""
+    start, up, hold, back = SIP_TIMES
+    if t <= start or t >= back:
+        return 0.0
+    if t < up:
+        return smoothstep((t - start) / (up - start))
+    if t <= hold:
+        return 1.0
+    return smoothstep((back - t) / (back - hold))
+
+
+def off_axis(v, axis):
+    """`v` without its part along `axis`."""
+    a = unit(axis)
+    return sub(v, scale(a, dot(v, a)))
+
+
+def palm_of(places, tk, side):
+    """Which way the palm of the `side` hand faces, from the knuckles of its
+    index and little fingers and its middle finger, posed at `places`."""
+    across = sub(places[tk.find(f"index_01_{side}")], places[tk.find(f"pinky_01_{side}")])
+    fingers = sub(places[tk.find(f"middle_01_{side}")], places[tk.find(f"hand_{side}")])
+    return unit(cross(across, fingers) if side == "r" else cross(fingers, across))
 
 
 def unit(a):
@@ -1288,6 +1357,78 @@ class Retargeter:
             measures["spread"] = round(angle, 4)
         return keys, {k: measures[k] for k in ("reach", "spread", "ground_speed", "stride") if k in measures}
 
+    def sip(self, keys, side, wrist, aim, palm):
+        """A ``SIP`` clip from its base loop's `keys` (time, local rotations,
+        pelvis local translation; the last key the first's): the base played
+        ``SIP_CYCLES`` times, its `side` hand brought to the mouth once by
+        ``sip_share`` (to `wrist`, its fingers toward `aim`; see ``SIP``).
+        Where the share is 0 the base pose is kept as is."""
+        n = len(keys) - 1
+        if n < 1:
+            raise RetargetError("a sip needs a looping base clip")
+        span = keys[-1][0]
+        out = []
+        for i in range(n * SIP_CYCLES + 1):
+            t = span * i / n
+            _, local, place = keys[i % n]
+            share = sip_share(t)
+            if share > 0.0:
+                local = self.hand_to_mouth(local, place, side, share, wrist, aim, palm)
+            out.append((t, local, place))
+        return out
+
+    def hand_to_mouth(self, local, place, side, share, wrist_at, aim, palm_to=None):
+        """`local` with the `side` arm posed by two-bone IK `share` of the way
+        from where the base pose holds the wrist to `wrist_at`, the hand
+        turned that share so its fingers point at `aim` (both from the head
+        joint: out to its side, up, ahead) and rolled about them so its palm
+        faces `palm_to` (in the same axes; None, the face); `place` is the
+        pelvis's local translation. At share 0 the IK gives back the base arm: the elbow's
+        bend plane slides from the base's to ``SIP_POLE``'s with the share."""
+        tk = self.target
+        rots, trans = list(tk.rest_r), list(tk.rest_t)
+        for k, q in local.items():
+            rots[k] = q
+        trans[tk.find("pelvis")] = place
+        wr, wp = tk.world(rots, trans)
+        upper, lower, hand, finger = (tk.find(f"{b}_{side}") for b in ("upperarm", "lowerarm", "hand", "middle_01"))
+        out = 1.0 if side == "l" else -1.0
+        head = wp[tk.find("head")]
+        shoulder, elbow, wrist = wp[upper], wp[lower], wp[hand]
+        mouth = add(head, (out * wrist_at[0], wrist_at[1], wrist_at[2]))
+        lips = add(head, (out * aim[0], aim[1], aim[2]))
+        goal = add(add(wrist, scale(sub(mouth, wrist), share)), (0.0, 0.0, SIP_ARC * math.sin(math.pi * share)))
+        a, b = length(sub(elbow, shoulder)), length(sub(wrist, elbow))
+        along = unit(sub(goal, shoulder))
+        d = min(max(length(sub(goal, shoulder)), abs(a - b) + 1e-4), a + b - 1e-4)
+        x = (a * a - b * b + d * d) / (2.0 * d)
+        rise = math.sqrt(max(0.0, a * a - x * x))
+        off = sub(elbow, shoulder)
+        base_pole = unit(sub(off, scale(along, dot(off, along))))
+        pole = add(scale(base_pole, 1.0 - share), scale(unit((out * SIP_POLE[0], SIP_POLE[1], SIP_POLE[2])), share))
+        pole = unit(sub(pole, scale(along, dot(pole, along))))
+        bent = add(shoulder, add(scale(along, x), scale(pole, rise)))
+        q_upper = qarc(unit(off), unit(sub(bent, shoulder)))
+        carried = add(bent, qrot(q_upper, sub(wrist, elbow)))
+        q_lower = qarc(unit(sub(carried, bent)), unit(sub(goal, bent)))
+        swing = qmul(q_lower, q_upper)
+        w_upper = qnorm(qmul(q_upper, wr[upper]))
+        w_lower = qnorm(qmul(swing, wr[lower]))
+        w_hand = qnorm(qmul(swing, wr[hand]))
+        fingers = unit(qrot(swing, sub(wp[finger], wrist)))
+        aim_turn = qmul(qpow(qarc(fingers, unit(sub(lips, goal))), share), swing)
+        w_hand = qnorm(qmul(aim_turn, wr[hand]))
+        palm = qrot(aim_turn, palm_of(wp, tk, side))
+        along = qrot(aim_turn, sub(wp[finger], wrist))
+        facing = sub(head, goal) if palm_to is None else (out * palm_to[0], palm_to[1], palm_to[2])
+        roll = qarc(unit(off_axis(palm, along)), unit(off_axis(facing, along)))
+        w_hand = qnorm(qmul(qpow(roll, share), w_hand))
+        local = dict(local)
+        local[upper] = qnorm(qmul(qinv(wr[tk.parent[upper]]), w_upper))
+        local[lower] = qnorm(qmul(qinv(w_upper), w_lower))
+        local[hand] = qnorm(qmul(qinv(w_lower), w_hand))
+        return local
+
     def target_ground_speed(self, keys):
         """How fast a planted foot of the *target* slides back, m/s at the
         target's own scale, posed by `keys` (time, local rotations, pelvis
@@ -1759,10 +1900,20 @@ def ground_speed(source, times, posed, drift):
 # --- output -----------------------------------------------------------------
 
 
-def build(sources, target, clips=CLIPS, clearance=None):
+def build(sources, target, clips=CLIPS, clearance=None, base=None):
     """The output GLB's JSON document and binary chunk, and a summary. With
     a `clearance`, the ``CLEAR`` clips' arms are brought clear of its
-    models' chests."""
+    models' chests. With a `base` (an earlier output's document and binary
+    chunk, whose clips are the first of `clips`, in order), its nodes, clips
+    and data are kept byte for byte and only the clips after them are
+    retargeted and added; `target` is then ``Skeleton`` of that document
+    (see ``main``'s ``--append``)."""
+    done = 0
+    if base is not None:
+        names = [a.get("name") for a in glbtrim.items(base[0], "animations")]
+        if names != [c[0] for c in clips[: len(names)]]:
+            raise RetargetError(f"the file to append to holds {names}, not the first of {[c[0] for c in clips]}")
+        done = len(names)
     retargeters = {kind: Retargeter(src, target) for kind, src in sources.items()}
     for rt in retargeters.values():
         if rt.source.partial:
@@ -1780,6 +1931,8 @@ def build(sources, target, clips=CLIPS, clearance=None):
 
     visit(root)
     out_index = {k: i for i, k in enumerate(order)}
+    if base is not None and order != list(range(len(order))):
+        raise RetargetError("the file to append to does not list its bones root first, as this tool writes them")
     nodes = []
     for k in order:
         node = {"name": tk.names[k]}
@@ -1793,6 +1946,12 @@ def build(sources, target, clips=CLIPS, clearance=None):
 
     blob = bytearray()
     views, accessors, animations, summary = [], [], [], []
+    if base is not None:
+        nodes = base[0]["nodes"]
+        blob.extend(base[1])
+        views.extend(base[0].get("bufferViews", []))
+        accessors.extend(base[0].get("accessors", []))
+        animations.extend(base[0]["animations"])
 
     def put(values, kind, minmax=False):
         fmt = "<" + "f" * len(values[0])
@@ -1815,13 +1974,17 @@ def build(sources, target, clips=CLIPS, clearance=None):
         return len(accessors) - 1
 
     pelvis = tk.find("pelvis")
-    for game, kind, name, loop, locomotion in clips:
+    for game, kind, name, loop, locomotion in clips[done:]:
+        if kind not in retargeters:
+            raise RetargetError(f"clip {game!r} needs the {kind} source, which was not given")
         rt = retargeters[kind]
         clear = clearance.for_clip(game) if clearance is not None and game in CLEAR else None
         spread = clearance.for_clip(game) if clearance is not None and game in SPREAD else None
         keys, measures = rt.clip(
             name, loop, locomotion, CALM.get(game, ()), clear, upright=game in UPRIGHT, spread=spread,
         )
+        if game in SIP:
+            keys = rt.sip(keys, *SIP[game])
         times = put([(t,) for t, _, _ in keys], "SCALAR", minmax=True)
         samplers, channels = [], []
         for k in sorted(rt.bones, key=lambda b: out_index[b]):
@@ -1843,6 +2006,8 @@ def build(sources, target, clips=CLIPS, clearance=None):
             extras["calmed"] = list(CALM[game])
         if game in UPRIGHT:
             extras["upright"] = True
+        if game in SIP:
+            extras["sip"] = SIP[game][0]
         extras.update(measures)
         animations.append({"name": game, "channels": channels, "samplers": samplers, "extras": extras})
         summary.append((game, kind, name, keys[-1][0], len(keys), measures))
@@ -1894,9 +2059,13 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--ual1", required=True, help="UAL1 AnimationLibrary_Godot_Standard.glb")
     parser.add_argument("--ual2", required=True, help="UAL2 UAL2_Standard.glb")
-    parser.add_argument("--cmu", required=True, help="the run: run_cycle.bvh, from tools/run_cycle.py (CMU joint names)")
-    parser.add_argument("--sprint", required=True, help="the sprint: sprint_cycle.bvh, from tools/run_cycle.py --gait sprint")
-    parser.add_argument("--target", required=True, help="a character's model.gltf (its skeleton)")
+    parser.add_argument(
+        "--append",
+        help="an earlier output to keep byte for byte and add only the newer clips to; its bones are the target",
+    )
+    parser.add_argument("--cmu", required=False, help="the run: run_cycle.bvh, from tools/run_cycle.py (CMU joint names)")
+    parser.add_argument("--sprint", required=False, help="the sprint: sprint_cycle.bvh, from tools/run_cycle.py --gait sprint")
+    parser.add_argument("--target", required=False, help="a character's model.gltf (its skeleton)")
     parser.add_argument("-o", "--output", required=True, help="the animation GLB to write")
     parser.add_argument(
         "--model",
@@ -1911,20 +2080,28 @@ def main(argv=None):
         help="a model.gltf whose chest only the talking hands must clear (repeat for each)",
     )
     args = parser.parse_args(argv)
+    if args.append is None and not (args.cmu and args.sprint and args.target):
+        parser.error("--cmu, --sprint and --target are required unless --append is given")
+    if args.append is not None and args.target is not None:
+        parser.error("--append takes its bones from the file it appends to: leave out --target")
     try:
         sources = {
             "ual1": Source(read_file(args.ual1, glbtrim.MAX_INPUT_BYTES), "ual1"),
             "ual2": Source(read_file(args.ual2, glbtrim.MAX_INPUT_BYTES), "ual2"),
-            "cmu": BvhSource(
-                read_file(args.cmu, glbtrim.MAX_INPUT_BYTES), os.path.splitext(os.path.basename(args.cmu))[0]
-            ),
-            "sprint": BvhSource(
-                read_file(args.sprint, glbtrim.MAX_INPUT_BYTES), os.path.splitext(os.path.basename(args.sprint))[0]
-            ),
         }
-        target = read_target(read_file(args.target, MAX_TARGET_BYTES))
+        for kind, path in (("cmu", args.cmu), ("sprint", args.sprint)):
+            if path:
+                sources[kind] = BvhSource(
+                    read_file(path, glbtrim.MAX_INPUT_BYTES), os.path.splitext(os.path.basename(path))[0]
+                )
+        base = None
+        if args.append is not None:
+            base = glbtrim.read_glb(read_file(args.append, glbtrim.MAX_INPUT_BYTES))
+            target = Skeleton(base[0])
+        else:
+            target = read_target(read_file(args.target, MAX_TARGET_BYTES))
         clearance = Clearance(sorted(args.model), sorted(args.talker)) if args.model or args.talker else None
-        doc, blob, summary = build(sources, target, clearance=clearance)
+        doc, blob, summary = build(sources, target, clearance=clearance, base=base)
     except (RetargetError, glbtrim.TrimError, OSError) as e:
         print(f"retarget: {e}", file=sys.stderr)
         return 1

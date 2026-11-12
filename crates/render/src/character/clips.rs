@@ -59,10 +59,19 @@ pub enum Clip {
     Water,
     Chop,
     WalkCarry,
+    /// Sentado, conversando con las manos adelante: el que juega al truco o
+    /// charla a la mesa.
+    SitTalk,
+    /// Sentado, llevándose el vaso de la mano derecha a la boca una vez cada
+    /// tanto: el que toma.
+    SitDrink,
+    /// Sentado, llevándose el cigarrillo de la mano derecha a la boca una vez
+    /// cada tanto, los dedos cruzando la boca: el que fuma.
+    SitSmoke,
 }
 
 impl Clip {
-    pub const COUNT: usize = 17;
+    pub const COUNT: usize = 20;
 
     /// Todos los clips, en el orden del archivo.
     pub const ALL: [Self; Self::COUNT] = [
@@ -83,6 +92,9 @@ impl Clip {
         Self::Water,
         Self::Chop,
         Self::WalkCarry,
+        Self::SitTalk,
+        Self::SitDrink,
+        Self::SitSmoke,
     ];
 
     /// El nombre del clip en el archivo.
@@ -105,6 +117,9 @@ impl Clip {
             Self::Water => "water",
             Self::Chop => "chop",
             Self::WalkCarry => "walk_carry",
+            Self::SitTalk => "sit_talk",
+            Self::SitDrink => "sit_drink",
+            Self::SitSmoke => "sit_smoke",
         }
     }
 

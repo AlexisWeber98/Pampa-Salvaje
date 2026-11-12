@@ -1196,16 +1196,19 @@ fn the_pulperias_counter_and_tables_are_set_with_a_register_glasses_and_cards() 
         // La caja registradora de bronce y los vasos, sobre el mostrador.
         assert!(on(counter, Surface::Bronze) > 0, "{v}: no register");
         assert!(on(counter, Surface::Glass) > 0, "{v}: no glasses");
-        for table in room
+        // Los naipes, en la mesa del truco que eligió el interior y en
+        // ninguna otra: ahí se sientan los que juegan.
+        for (index, table) in room
             .furniture
             .iter()
             .filter(|f| f.kind == FurnitureKind::Table)
+            .enumerate()
         {
             assert!(on(table, Surface::Glass) > 0, "{v}: a bare table");
-            if on(table, Surface::Painted(Paint::LimeWhite)) > 0 {
-                cards += 1;
-            }
+            let dealt = on(table, Surface::Painted(Paint::LimeWhite)) > 0;
+            assert_eq!(dealt, room.card_table == Some(index), "{v}: table {index}");
+            cards += usize::from(dealt);
         }
     }
-    assert!(cards > 0, "someone plays truco");
+    assert_eq!(cards, 6, "someone plays truco in every pulpería");
 }
