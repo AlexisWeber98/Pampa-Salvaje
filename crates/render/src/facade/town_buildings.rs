@@ -131,7 +131,9 @@ pub fn building(lot: &Lot) -> Option<Shape> {
     shape.set_streaks(streaks(lot));
     match lot.building.kind {
         BuildingKind::House => house(&mut shape, (w, d, h), v, lot),
-        BuildingKind::GeneralStore => store(&mut shape, (w, d, h), v, lot.store, lot.veranda),
+        BuildingKind::GeneralStore | BuildingKind::Pulperia => {
+            store(&mut shape, (w, d, h), v, lot.store, lot.veranda)
+        }
         BuildingKind::PoliceStation => police(&mut shape, (w, d, h), v),
         BuildingKind::Church => church(&mut shape, (w, d, h), v),
         BuildingKind::Station => station(&mut shape, (w, d, h), v),
@@ -188,8 +190,8 @@ pub(crate) fn wear(lot: &Lot) -> Option<f32> {
         BuildingKind::Bank | BuildingKind::TownHall => 0.12 + 0.1 * jitter,
         BuildingKind::Church | BuildingKind::PoliceStation => 0.3 + 0.15 * jitter,
         BuildingKind::Station => 0.4 + 0.15 * jitter,
-        BuildingKind::GeneralStore if lot.store == StoreStyle::GeneralStore => 0.35 + 0.2 * jitter,
-        BuildingKind::GeneralStore => 0.7 + 0.25 * jitter,
+        BuildingKind::GeneralStore => 0.35 + 0.2 * jitter,
+        BuildingKind::Pulperia => 0.7 + 0.25 * jitter,
         BuildingKind::House if lot.outskirts => 0.6 + 0.4 * jitter,
         BuildingKind::House => 0.2 + 0.5 * jitter,
         BuildingKind::Shed | BuildingKind::GrainStore => 0.5 + 0.3 * jitter,
@@ -218,8 +220,8 @@ pub(crate) fn damp(lot: &Lot) -> f32 {
     let chance = match lot.building.kind {
         BuildingKind::Bank | BuildingKind::TownHall => 0.0,
         BuildingKind::Church | BuildingKind::PoliceStation | BuildingKind::Station => 0.4,
-        BuildingKind::GeneralStore if lot.store == StoreStyle::GeneralStore => 0.45,
-        BuildingKind::GeneralStore => 0.9,
+        BuildingKind::GeneralStore => 0.45,
+        BuildingKind::Pulperia => 0.9,
         BuildingKind::House if lot.outskirts => 0.85,
         // Las casas: pocas de las recién pintadas, casi todas las más
         // gastadas.
@@ -260,6 +262,7 @@ pub(crate) fn paints_its_joinery(lot: &Lot) -> bool {
             !cottage && !(v >> 14).is_multiple_of(4)
         }
         BuildingKind::GeneralStore
+        | BuildingKind::Pulperia
         | BuildingKind::PoliceStation
         | BuildingKind::Church
         | BuildingKind::Bank

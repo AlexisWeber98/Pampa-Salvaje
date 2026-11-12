@@ -241,6 +241,7 @@ impl Plugin for ErrandPlugin {
             .init_resource::<Approach>()
             .init_resource::<SceneShot>()
             .init_resource::<MapTarget>()
+            .init_resource::<pampa_render::MapReach>()
             .init_resource::<LedAway>()
             .init_resource::<LooseHorse>()
             .init_resource::<GameWorld>()
@@ -263,6 +264,7 @@ impl Plugin for ErrandPlugin {
                     crate::wallet::show_money,
                     unlock_on_mount,
                     announce_unlocks,
+                    crate::abilities::reveal_map,
                 )
                     .chain()
                     .after(DrivePlayer),

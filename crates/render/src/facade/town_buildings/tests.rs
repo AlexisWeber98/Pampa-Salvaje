@@ -51,7 +51,7 @@ fn street() -> Vec<Lot> {
         for v in 0..6 {
             lots.push(Lot {
                 store,
-                ..lot(BuildingKind::GeneralStore, (16.0, 14.0, 5.0), v)
+                ..lot(kind_of(store), (16.0, 14.0, 5.0), v)
             });
         }
     }
@@ -108,7 +108,8 @@ fn masonry_fronts_stay_inside_their_footprints() {
                 continue;
             }
             let over_street = p.z > half_d;
-            if lot.building.kind == BuildingKind::GeneralStore && over_street {
+            let store = matches!(lot.building.kind, BuildingKind::GeneralStore | BuildingKind::Pulperia);
+            if store && over_street {
                 // La galería: bajo la cornisa, dentro de la galería de core.
                 assert!(p.y < h - 0.5, "{surface:?} at {p} over the sidewalk");
                 assert!(p.z < half_d + lot.veranda + 0.1, "{surface:?} at {p}");
@@ -197,7 +198,7 @@ fn a_store_parapet_stands_solid_behind_its_sign() {
     for store in [StoreStyle::GeneralStore, StoreStyle::Pulperia] {
         let lot = Lot {
             store,
-            ..lot(BuildingKind::GeneralStore, (16.0, 14.0, 5.0), 1)
+            ..lot(kind_of(store), (16.0, 14.0, 5.0), 1)
         };
         let shape = building(&lot).unwrap();
         let (w, d, h) = (16.0, 14.0, 5.0);
@@ -455,7 +456,7 @@ fn the_civic_buildings_are_kept_better_than_the_pulperia_and_the_outskirts() {
     let police = range(lot(BuildingKind::PoliceStation, size, 0));
     let pulperia = range(Lot {
         store: StoreStyle::Pulperia,
-        ..lot(BuildingKind::GeneralStore, size, 0)
+        ..lot(BuildingKind::Pulperia, size, 0)
     });
     let outskirts = range(Lot {
         outskirts: true,
@@ -522,7 +523,7 @@ fn every_building_type_wears_its_own_finish_and_weathers() {
         .map(|v| {
             shape(Lot {
                 store: StoreStyle::Pulperia,
-                ..lot(BuildingKind::GeneralStore, (16.0, 14.0, 5.0), v)
+                ..lot(BuildingKind::Pulperia, (16.0, 14.0, 5.0), v)
             })
         })
         .collect();
@@ -644,7 +645,7 @@ fn the_outskirts_have_wooden_ranchos_casillas_and_mud_and_straw_ranchos() {
 fn town_buildings_keep_to_their_triangle_budgets() {
     for lot in street() {
         let tris = building(&lot).unwrap().triangles();
-        if lot.store == StoreStyle::Pulperia && lot.building.kind == BuildingKind::GeneralStore {
+        if lot.building.kind == BuildingKind::Pulperia {
             // Su sala amueblada, aparte: mostrador con reja, estantes con
             // botellas, tres mesas, seis bancos, dos barriles y el farol;
             // 7.2k a 8.7k al escribir esto, casi la mitad en botellas.
@@ -660,7 +661,9 @@ fn town_buildings_keep_to_their_triangle_budgets() {
             // Con persianas de tablillas, rejillas de hierro, puertas de
             // tableros y la mugre en decals: 5.5k la comisaría al escribir
             // esto.
-            BuildingKind::GeneralStore | BuildingKind::PoliceStation => 1500..=7000,
+            BuildingKind::GeneralStore | BuildingKind::Pulperia | BuildingKind::PoliceStation => {
+                1500..=7000
+            }
             // Almohadillado, dentículos, arcos y balaustrada: dos o tres por
             // pueblo, 4.3k al escribir esto.
             BuildingKind::Bank => 3000..=7000,
@@ -769,7 +772,7 @@ fn preview_town_street() {
     let dir = std::path::PathBuf::from(dir);
     let pulperia = Lot {
         store: StoreStyle::Pulperia,
-        ..lot(BuildingKind::GeneralStore, (14.0, 14.0, 5.0), 2)
+        ..lot(BuildingKind::Pulperia, (14.0, 14.0, 5.0), 2)
     };
     // Una casa de cada acabado nuevo: las cinco pinturas, el ladrillo encalado
     // y el revoque descascarándose del ladrillo (el acabado es `variant % 16`).
@@ -860,7 +863,7 @@ fn the_pulperias_middle_door_stands_open_and_every_other_door_keeps_its_leaves()
         for store in [StoreStyle::GeneralStore, StoreStyle::Pulperia] {
             let shape = building(&Lot {
                 store,
-                ..lot(BuildingKind::GeneralStore, (16.0, 14.0, 5.0), v)
+                ..lot(kind_of(store), (16.0, 14.0, 5.0), v)
             })
             .unwrap();
             let open = store == StoreStyle::Pulperia;
@@ -896,7 +899,7 @@ fn pulperia_lot((w, d): (f32, f32), front: Side, v: u32) -> Lot {
     };
     let mut lot = Lot {
         store: StoreStyle::Pulperia,
-        ..lot(BuildingKind::GeneralStore, (w, d, 5.0), v)
+        ..lot(BuildingKind::Pulperia, (w, d, 5.0), v)
     };
     lot.building.footprint = Aabb::from_center_size(GroundVec2::ZERO, size);
     lot.building.front = front;
@@ -1006,8 +1009,7 @@ fn a_pulperia_is_the_same_room_whichever_way_it_faces() {
 #[test]
 fn only_a_pulperia_has_an_interior() {
     for lot in street().into_iter().chain(yard()) {
-        let pulperia =
-            lot.building.kind == BuildingKind::GeneralStore && lot.store == StoreStyle::Pulperia;
+        let pulperia = lot.building.kind == BuildingKind::Pulperia;
         assert_eq!(
             interior(&lot).is_some(),
             pulperia,
@@ -1102,4 +1104,12 @@ fn the_lamps_flame_burns_on_its_brass_font_inside_its_glass_chimney() {
         assert!(lo.y < 0.0 && hi.y > 0.1 && lo.x > -0.05 && hi.x < 0.05);
     }
     assert!(lamp_flame(&lot(BuildingKind::GeneralStore, (16.0, 14.0, 5.0), 1)).is_none());
+}
+
+/// El tipo de edificio de un comercio de estilo `store`.
+fn kind_of(store: StoreStyle) -> BuildingKind {
+    match store {
+        StoreStyle::Pulperia => BuildingKind::Pulperia,
+        StoreStyle::GeneralStore => BuildingKind::GeneralStore,
+    }
 }

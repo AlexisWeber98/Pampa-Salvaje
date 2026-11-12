@@ -437,7 +437,7 @@ mod tests {
     use super::*;
     use crate::collision::Circle;
     use crate::places::StoreStyle;
-    use crate::town::{BuildingKind, TownConfig, TownLayout, TownSize};
+    use crate::town::{BuildingKind, TownConfig, TownLayout};
     use crate::world::World;
     use crate::{Rider, Terrain};
 
@@ -448,21 +448,30 @@ mod tests {
     fn store(t: &TownLayout) -> &Building {
         t.buildings
             .iter()
-            .find(|b| b.kind == BuildingKind::GeneralStore)
+            .find(|b| b.kind == BuildingKind::Pulperia)
             .unwrap()
     }
 
     #[test]
-    fn only_a_small_towns_store_is_a_pulperia_with_an_interior() {
+    fn a_town_has_a_pulperia_with_an_interior_and_an_almacen_apart() {
         let t = castex();
-        assert_eq!(StoreStyle::of(t.size), StoreStyle::Pulperia);
         let (b, inside) = t.pulperia().expect("Castex has a pulpería");
         assert_eq!(b, store(&t));
+        assert_eq!(StoreStyle::of(b.kind), Some(StoreStyle::Pulperia));
         assert_eq!(inside, Interior::of(b));
-        let mut big = t.clone();
-        big.size = TownSize::Big;
-        assert_eq!(big.pulperia(), None);
-        assert_eq!(big.colliders(), big.obstacles());
+        // Su almacén de ramos generales es otro edificio.
+        let almacen = t
+            .buildings
+            .iter()
+            .find(|a| a.kind == BuildingKind::GeneralStore)
+            .expect("Castex has an almacén");
+        assert_ne!(almacen.footprint, b.footprint);
+        assert_eq!(StoreStyle::of(almacen.kind), Some(StoreStyle::GeneralStore));
+        // Sin pulpería, nada se recorre por dentro.
+        let mut none = t.clone();
+        none.buildings.retain(|a| a.kind != BuildingKind::Pulperia);
+        assert_eq!(none.pulperia(), None);
+        assert_eq!(none.colliders(), none.obstacles());
     }
 
     #[test]

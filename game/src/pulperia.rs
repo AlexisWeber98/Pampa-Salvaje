@@ -399,15 +399,17 @@ mod tests {
 
     #[test]
     fn the_shut_doors_are_shared_with_render_by_town() {
-        // Un pueblo grande sin pulpería primero: la de Castex es la puerta 0
-        // pero el pueblo 1.
-        let pico = TownLayout::generate(&pampa_core::town::TownConfig {
+        // Un pueblo sin pulpería primero (se le saca la suya): la de Castex es
+        // la puerta 0 pero el pueblo 1.
+        let mut pico = TownLayout::generate(&pampa_core::town::TownConfig {
             name: "General Pico".into(),
             blocks: (8, 8),
             origin: GroundVec2::new(3000.0, 0.0),
             ..pampa_core::town::TownConfig::castex()
         })
         .unwrap();
+        pico.buildings
+            .retain(|b| b.kind != pampa_core::BuildingKind::Pulperia);
         assert!(pico.pulperia().is_none());
         let (mut app, _) = app(-3.0, TimeOfDay::hm(12, 0));
         let castex = app.world().resource::<WorldTowns>().0[0].clone();

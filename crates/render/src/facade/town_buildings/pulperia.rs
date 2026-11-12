@@ -17,7 +17,7 @@
 
 use bevy::prelude::*;
 use pampa_core::pulperia::{FurnitureKind, Interior};
-use pampa_core::{Aabb, BuildingKind, StoreStyle};
+use pampa_core::{Aabb, BuildingKind};
 
 use super::super::italianate::{FANLIGHT, leaf_spans, panelled_leaf};
 use super::super::materials::{Livery, Surface};
@@ -80,11 +80,9 @@ pub(crate) fn interior(lot: &Lot) -> Option<Shape> {
     Some(shape)
 }
 
-/// La sala de core de `lot`, si es una pulpería (el almacén de un pueblo
-/// pequeño).
+/// La sala de core de `lot`, si es una pulpería.
 fn room(lot: &Lot) -> Option<Interior> {
-    (lot.building.kind == BuildingKind::GeneralStore && lot.store == StoreStyle::Pulperia)
-        .then(|| Interior::of(&lot.building))
+    (lot.building.kind == BuildingKind::Pulperia).then(|| Interior::of(&lot.building))
 }
 
 /// Dónde arde la mecha del farol que cuelga en el medio de `room`, la sala

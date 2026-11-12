@@ -70,7 +70,7 @@ pub use hud::{HudAnnouncement, HudHint, HudMoney, HudObjective, HudPlugin, HudRi
 pub use inventory::{InventoryContents, InventoryPlugin, InventoryView};
 pub use lagoon::{LagoonPlugin, LagoonReeds, LagoonWater};
 pub use lamps::{LampGlass, LampLight, LampPlugin, LampPost, WorldLamps};
-pub use minimap::{MapIcon, MapTarget, MinimapPlugin};
+pub use minimap::{MapIcon, MapReach, MapTarget, MinimapPlugin};
 pub use pulperia::{IndoorDim, PulperiaRenderPlugin, PulperiaShut};
 pub use rail::{LineTrack, RailPlugin, WorldRail};
 pub use road::{CrossingPart, RoadPlugin, RoadSurface, SignpostPart};

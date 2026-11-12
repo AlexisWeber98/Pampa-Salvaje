@@ -110,8 +110,9 @@ impl BoardStyle {
     /// Un aspecto acorde a la época para cada lugar destacado.
     pub fn for_place(kind: PlaceKind) -> Self {
         match kind {
-            // Friso verde oscuro con letras doradas.
-            PlaceKind::GeneralStore => Self {
+            // Friso verde oscuro con letras doradas (la pulpería conserva el
+            // que tenía como comercio de la plaza).
+            PlaceKind::GeneralStore | PlaceKind::Pulperia => Self {
                 board: [38, 64, 46],
                 frame: [92, 66, 40],
                 ink: [214, 178, 92],
@@ -494,6 +495,7 @@ fn mount_height(town: &TownLayout, kind: PlaceKind, sign: &Sign) -> (f32, f32) {
     match kind {
         // En el parapeto de falsa fachada sobre la galería.
         PlaceKind::GeneralStore => (wall(BuildingKind::GeneralStore) + 1.1, 1.8),
+        PlaceKind::Pulperia => (wall(BuildingKind::Pulperia) + 1.1, 1.8),
         // Sobre la puerta.
         PlaceKind::PoliceStation => (3.45, 1.4),
         // En el campanario, sobre la puerta.

@@ -1,7 +1,8 @@
 //! El primer encargo: Don Hidalgo, en la plaza del pueblo donde el jugador baja
 //! del tren, lo manda a presentarse ante el comisario Elías Farach en la
-//! comisaría de otro pueblo, y le presta el caballo atado en el almacén de
-//! ramos generales para el viaje. En ese pueblo, Bairoletto espera sentado en
+//! comisaría de otro pueblo, y le presta el caballo atado en el palenque
+//! principal del pueblo ([`crate::town::hitched_store`]: el almacén, o la
+//! pulpería donde no hay almacén) para el viaje. En ese pueblo, Bairoletto espera sentado en
 //! la pulpería, y a una cuadra de ella el Viejo Amadeo vende quesos en su
 //! puesto de la vereda ([`Stall`]).
 //!
@@ -917,7 +918,7 @@ mod tests {
         let mut plain = towns.clone();
         plain[1]
             .buildings
-            .retain(|b| b.kind != crate::BuildingKind::GeneralStore);
+            .retain(|b| b.kind != crate::BuildingKind::Pulperia);
         let e = Errand::new(&plain, 0, 1).unwrap();
         let (door, _) = plain[1].police_door().unwrap();
         let far = assert_stall_on_a_sidewalk(&plain[1], &e, door);

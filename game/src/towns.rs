@@ -218,22 +218,33 @@ mod tests {
         assert_eq!(links, [(1, 0), (0, 2), (2, 3), (2, 4)]);
         assert_eq!(loaded.line.branches.len(), 1);
         assert_eq!(loaded.line.branches[0].towns, [2, 4]);
-        // Los almacenes de los pueblos pequeños son pulperías (la de Castex,
-        // "La Colonia"); los de Pico, almacenes de ramos generales.
+        // Todo pueblo tiene su pulpería (la de Castex, "La Colonia") y, salvo
+        // los muy chicos (usuario, 2026-11-11: "en Monte Nievas o Metileo, que
+        // son muy chicos solo tendra pulpería, no tendra almacen de ramos
+        // generales"), un almacén de ramos generales aparte.
         for town in &loaded.towns {
-            let expected = if town.name == "Eduardo Castex" {
-                "LA COLONIA"
-            } else if town.size == TownSize::Small {
-                "PULPERÍA"
-            } else {
-                "ALMACÉN DE RAMOS GENERALES"
+            let places = town.places();
+            let named = |kind: PlaceKind| -> Vec<&str> {
+                places
+                    .iter()
+                    .filter(|p| p.kind == kind)
+                    .map(|p| p.name.as_str())
+                    .collect()
             };
-            for store in town
-                .places()
-                .iter()
-                .filter(|p| p.kind == PlaceKind::GeneralStore)
-            {
-                assert_eq!(store.name, expected, "{}", town.name);
+            let pulperia = if town.name == "Eduardo Castex" {
+                "LA COLONIA"
+            } else {
+                "PULPERÍA"
+            };
+            assert_eq!(named(PlaceKind::Pulperia), [pulperia], "{}", town.name);
+            let almacenes = named(PlaceKind::GeneralStore);
+            if matches!(town.name.as_str(), "Monte Nievas" | "Metileo") {
+                assert!(almacenes.is_empty(), "{}: {almacenes:?}", town.name);
+            } else {
+                assert!(!almacenes.is_empty(), "{} has no almacén", town.name);
+            }
+            for almacen in almacenes {
+                assert_eq!(almacen, "ALMACÉN DE RAMOS GENERALES", "{}", town.name);
             }
         }
         // Se coloca la Laguna La Arocena, apartada de todo.
@@ -392,10 +403,12 @@ mod tests {
         let loaded = crate::shipped_world::loaded();
         let metileo = &loaded.towns[2];
         assert_eq!(metileo.name, "Metileo");
-        // Un apeadero: unas pocas casas alrededor de su almacén, sin comisaría.
+        // Un apeadero: unas pocas casas alrededor de su pulpería, sin
+        // comisaría ni almacén.
         let count = |kind| metileo.buildings.iter().filter(|b| b.kind == kind).count();
         assert_eq!(count(BuildingKind::PoliceStation), 0);
-        assert_eq!(count(BuildingKind::GeneralStore), 1);
+        assert_eq!(count(BuildingKind::Pulperia), 1);
+        assert_eq!(count(BuildingKind::GeneralStore), 0);
         assert!((3..=15).contains(&(count(BuildingKind::House) + count(BuildingKind::Shed))));
         let train = LineTrain::new(&loaded.line, &loaded.towns, Timetable::default()).unwrap();
         let station = train.station_of_town(2).expect("Metileo is a station");
@@ -927,7 +940,7 @@ mod tests {
                     .map(|p| p.name.as_str())
                     .collect()
             };
-            assert_eq!(named(PlaceKind::GeneralStore), ["PULPERÍA"]);
+            assert_eq!(named(PlaceKind::Pulperia), ["PULPERÍA"]);
             assert_eq!(named(PlaceKind::PoliceStation).len(), 1);
             assert_eq!(named(PlaceKind::Plaza).len(), 1);
             assert_eq!(named(PlaceKind::Station), ["ESTACIÓN CALEUFÚ"]);
@@ -939,7 +952,7 @@ mod tests {
             assert!(houses >= 8, "{houses}");
             // La pulpería y la comisaría están a varias manzanas de distancia.
             let at = |kind: PlaceKind| places.iter().find(|p| p.kind == kind).unwrap().center();
-            let apart = at(PlaceKind::GeneralStore) - at(PlaceKind::PoliceStation);
+            let apart = at(PlaceKind::Pulperia) - at(PlaceKind::PoliceStation);
             let pitch = 40.0 + 10.0;
             assert!(apart.x.abs().max(apart.y.abs()) >= 1.9 * pitch, "{apart:?}");
         }

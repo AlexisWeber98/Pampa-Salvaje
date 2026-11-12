@@ -1475,7 +1475,6 @@ struct Job {
 /// ubicado sobre `terrain`.
 fn lots(town: &TownLayout, terrain: &Terrain) -> Vec<Job> {
     let grid = town.grid();
-    let store = StoreStyle::of(town.size);
     town.buildings
         .iter()
         .enumerate()
@@ -1495,7 +1494,8 @@ fn lots(town: &TownLayout, terrain: &Terrain) -> Vec<Job> {
                     by_rail: town
                         .railway
                         .is_some_and(|r| r.distance(c) < town_buildings::CASILLA_REACH),
-                    store,
+                    // El de su propio comercio: la pulpería o el almacén.
+                    store: StoreStyle::of(building.kind).unwrap_or(StoreStyle::GeneralStore),
                     veranda: town.hitching_post.veranda,
                 },
                 base: world_from_ground(c, terrain.height(c.x, c.y)),
@@ -1858,7 +1858,14 @@ mod tests {
         for (town, pulperia) in [(small, true), (big, false)] {
             let jobs: Vec<Job> = lots(&town, &terrain)
                 .into_iter()
-                .filter(|j| j.lot.building.kind == BuildingKind::GeneralStore)
+                .filter(|j| {
+                    j.lot.building.kind
+                        == if pulperia {
+                            BuildingKind::Pulperia
+                        } else {
+                            BuildingKind::GeneralStore
+                        }
+                })
                 .collect();
             let built = build_lots(&jobs, &[]);
             assert!(!built.is_empty(), "{}", town.name);
@@ -1885,7 +1892,10 @@ mod tests {
             ..TownConfig::castex()
         })
         .unwrap();
-        for (town, pulperia) in [(small, true), (big, false)] {
+        // Todo pueblo tiene su pulpería; uno sin ella no construye ninguna.
+        let mut none = big.clone();
+        none.buildings.retain(|b| b.kind != BuildingKind::Pulperia);
+        for (town, pulperia) in [(small, true), (big, true), (none, false)] {
             let built = build_lots(&lots(&town, &terrain), &[]);
             let parts: Vec<&PulperiaParts> =
                 built.iter().filter_map(|b| b.pulperia.as_ref()).collect();

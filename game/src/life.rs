@@ -720,7 +720,7 @@ fn spawn_horsemen(commands: &mut Commands, riders: &TownRiders, town: usize, wor
     }
 }
 
-/// El pelaje del caballo atado en el almacén de `town`: el alazán de Don Hidalgo
+/// El pelaje del caballo atado en el palenque principal de `town`: el alazán de Don Hidalgo
 /// en su pueblo (el caballo que presta); si no, uno sembrado a partir del
 /// pueblo.
 pub fn tethered_coat(layout: &TownLayout, cast: &Cast, town: usize) -> Coat {

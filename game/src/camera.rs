@@ -1673,12 +1673,12 @@ mod tests {
         let town = TownLayout::castex_inspired();
         let world = World::with_town(Terrain::default(), &town);
         let occluders = CameraOccluders::from_town(&town, &world.terrain);
-        // En la calle, de espaldas al frente del almacén de ramos generales,
-        // mirando a la plaza.
+        // En la calle, de espaldas al frente del comercio de la plaza (la
+        // pulpería de un pueblo chico), mirando a la plaza.
         let store = town
             .buildings
             .iter()
-            .find(|b| b.kind == pampa_core::BuildingKind::GeneralStore)
+            .find(|b| b.kind == pampa_core::BuildingKind::Pulperia)
             .unwrap()
             .footprint;
         let spawn = PlayerSpawn {

@@ -1,7 +1,8 @@
 //! El inventario en pantalla: I lo abre y lo cierra sobre el juego, que sigue
 //! andando detrás. Muestra la plata de [`PlayerWallet`] (escrita igual que en
 //! el HUD) y las cosas de [`PlayerItems`], y se mantiene al día mientras está
-//! abierto: si Lisandro recibe o entrega algo, el panel cambia. Durante una
+//! abierto: si Lisandro recibe o entrega algo, el panel cambia. El menú de pausa
+//! lo cierra (ver `crate::menu`). Durante una
 //! escena ([`ControlLock`]) la I no hace nada.
 
 use bevy::prelude::*;

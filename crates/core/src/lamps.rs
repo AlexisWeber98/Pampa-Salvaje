@@ -492,7 +492,7 @@ fn keep_outs(town: &TownLayout) -> Vec<Aabb> {
             facade + across * StreetLamps::DOOR_HALF_WIDTH,
             facade + n * StreetLamps::DOOR_REACH - across * StreetLamps::DOOR_HALF_WIDTH,
         ));
-        if b.kind == BuildingKind::GeneralStore {
+        if matches!(b.kind, BuildingKind::GeneralStore | BuildingKind::Pulperia) {
             let deep = town.hitching_post.veranda + 0.3;
             keep.push(between(
                 facade + across * (wide + 0.3),
