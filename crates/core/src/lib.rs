@@ -41,6 +41,7 @@ pub mod rider;
 mod rng;
 pub mod road;
 pub mod settlement;
+pub mod shop;
 pub mod story;
 pub mod terrain;
 pub mod town;

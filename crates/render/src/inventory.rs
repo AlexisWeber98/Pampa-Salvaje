@@ -3,11 +3,13 @@
 //! categorías del documento `mecánicas` ("Alimentos", "Objetos de misión") y
 //! la plata. Cada cosa lleva su dibujo y su nombre.
 //!
-//! El panel es una hoja del mismo papel y la misma tinta que el HUD, montada en
-//! una tapa de cuero oscuro, con el título en Rye y el resto en IM Fell
-//! English ([`Typefaces`]). Los dibujos son grabados pequeños pintados aquí
-//! mismo, en tinta sobre colores planos: una cuña de queso de campo, un sobre
-//! lacrado y dos pesos de plata.
+//! El panel es de cuero ([`crate::leather`]): la tapa con su costura y la letra
+//! estampada, crema, con los títulos dorados; el título en Rye y el resto en IM
+//! Fell English ([`Typefaces`]). Cada cosa y la plata llevan su ícono
+//! renderizado de un modelo 3D por `tools/item_icons.py` ([`icon_file`],
+//! `assets/textures/ui/items/`); sin los archivos (en las pruebas) quedan los
+//! grabados pintados aquí mismo, en tinta sobre colores planos: una cuña de
+//! queso de campo, un sobre lacrado, dos pesos de plata y un paquete atado.
 //!
 //! El juego abre y cierra el panel mediante [`InventoryView`]: con contenido se
 //! muestra, `None` lo oculta; el panel se rehace cada vez que cambia.
@@ -18,20 +20,16 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use pampa_core::{Item, Items};
 
-use crate::hud::{LINE_PX, ink_font, panel_colors};
+use crate::hud::LINE_PX;
+use crate::leather::{CREAM, GOLD, Leather, cover, load_leather, stamped, stitched};
 use crate::typeface::Typefaces;
 
 /// Tamaño de fuente del título del panel, en píxeles lógicos.
 pub const TITLE_PX: f32 = 30.0;
 /// Lado de un dibujo en pantalla, en píxeles lógicos.
-const ICON_PX: f32 = 44.0;
+const ICON_PX: f32 = 52.0;
 /// Lado de la textura de un dibujo, en píxeles.
 const ICON_SIZE: usize = 96;
-/// El cuero de la tapa y su costura.
-const LEATHER: Color = Color::srgb(0.29, 0.18, 0.11);
-const LEATHER_EDGE: Color = Color::srgb(0.12, 0.07, 0.04);
-/// El título de una sección: tinta parda, más suave que la del texto.
-const HEADING: Color = Color::srgb(0.42, 0.24, 0.13);
 /// La pista de tecla al pie.
 pub const CLOSE_HINT: &str = "I: cerrar";
 /// El título del renglón de la plata.
@@ -66,20 +64,64 @@ pub struct InventoryHeading;
 #[derive(Component, Debug)]
 pub struct InventoryEntry;
 
-/// Las texturas de los dibujos; por defecto (sin `Assets<Image>`) quedan
-/// vacías.
+/// El ícono renderizado de `item` (por `tools/item_icons.py`, de un modelo 3D),
+/// bajo `assets/`.
+pub fn icon_file(item: Item) -> &'static str {
+    match item {
+        Item::Letter => "textures/ui/items/letter.png",
+        Item::Cheese => "textures/ui/items/cheese.png",
+        Item::CaneGlass => "textures/ui/items/cane_glass.png",
+        Item::GinGlass => "textures/ui/items/gin_glass.png",
+        Item::WineGlass => "textures/ui/items/wine_glass.png",
+        Item::CaneBottle => "textures/ui/items/cane_bottle.png",
+        Item::Tobacco => "textures/ui/items/tobacco.png",
+        Item::Matches => "textures/ui/items/matches.png",
+        Item::Biscuit => "textures/ui/items/biscuit.png",
+        Item::Yerba => "textures/ui/items/yerba.png",
+        Item::Sugar => "textures/ui/items/sugar.png",
+        Item::Jerky => "textures/ui/items/jerky.png",
+        Item::Flour => "textures/ui/items/flour.png",
+        Item::Candles => "textures/ui/items/candles.png",
+        Item::Knife => "textures/ui/items/knife.png",
+        Item::Axe => "textures/ui/items/axe.png",
+        Item::Shovel => "textures/ui/items/shovel.png",
+        Item::Maneador => "textures/ui/items/maneador.png",
+        Item::Lasso => "textures/ui/items/lasso.png",
+        Item::Alpargatas => "textures/ui/items/alpargatas.png",
+        Item::Poncho => "textures/ui/items/poncho.png",
+        Item::Revolver => "textures/ui/items/revolver.png",
+        Item::Winchester => "textures/ui/items/winchester.png",
+        Item::Cartridges => "textures/ui/items/cartridges.png",
+    }
+}
+
+/// El ícono renderizado de la plata: dos pesos de plata.
+pub const COINS_FILE: &str = "textures/ui/items/coins.png";
+
+/// Las texturas de los dibujos: los íconos renderizados si hay un
+/// `AssetServer`, si no los grabados pintados; por defecto (sin
+/// `Assets<Image>`) quedan vacías.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct InventoryIcons {
+    /// Los íconos renderizados ([`icon_file`]), cargados del disco.
+    pub files: std::collections::HashMap<Item, Handle<Image>>,
     pub cheese: Handle<Image>,
     pub letter: Handle<Image>,
     pub coins: Handle<Image>,
+    /// Un paquete de papel atado: por ahora, lo comprado en la pulpería y el
+    /// almacén.
+    pub parcel: Handle<Image>,
 }
 
 impl InventoryIcons {
     fn of(&self, item: Item) -> Handle<Image> {
+        if let Some(file) = self.files.get(&item) {
+            return file.clone();
+        }
         match item {
             Item::Cheese => self.cheese.clone(),
             Item::Letter => self.letter.clone(),
+            _ => self.parcel.clone(),
         }
     }
 }
@@ -92,7 +134,8 @@ impl Plugin for InventoryPlugin {
         app.init_resource::<Typefaces>()
             .init_resource::<InventoryView>()
             .init_resource::<InventoryIcons>()
-            .add_systems(Startup, (paint_icons, spawn_panel).chain())
+            .init_resource::<Leather>()
+            .add_systems(Startup, (paint_icons, load_leather, spawn_panel).chain())
             .add_systems(PostUpdate, update_panel);
     }
 }
@@ -113,18 +156,37 @@ fn icon_image(pixels: Vec<u8>) -> Image {
     image
 }
 
-fn paint_icons(images: Option<ResMut<Assets<Image>>>, mut icons: ResMut<InventoryIcons>) {
+fn paint_icons(
+    images: Option<ResMut<Assets<Image>>>,
+    server: Option<Res<AssetServer>>,
+    mut icons: ResMut<InventoryIcons>,
+) {
     let Some(mut images) = images else {
         return;
     };
+    let files = server
+        .as_ref()
+        .map(|server| {
+            Item::ALL
+                .iter()
+                .map(|&item| (item, server.load(icon_file(item))))
+                .collect()
+        })
+        .unwrap_or_default();
+    let coins = match &server {
+        Some(server) => server.load(COINS_FILE),
+        None => images.add(icon_image(paint(ICON_SIZE, coins))),
+    };
     *icons = InventoryIcons {
+        files,
         cheese: images.add(icon_image(paint(ICON_SIZE, cheese))),
         letter: images.add(icon_image(paint(ICON_SIZE, letter))),
-        coins: images.add(icon_image(paint(ICON_SIZE, coins))),
+        coins,
+        parcel: images.add(icon_image(paint(ICON_SIZE, parcel))),
     };
 }
 
-fn spawn_panel(mut commands: Commands) {
+fn spawn_panel(mut commands: Commands, leather: Res<Leather>) {
     commands
         .spawn((
             Name::new("Inventory"),
@@ -142,45 +204,29 @@ fn spawn_panel(mut commands: Commands) {
             GlobalZIndex(5),
         ))
         .with_child((
-            // La tapa de cuero, con su borde oscuro.
-            Node {
-                border: UiRect::all(Val::Px(2.0)),
-                padding: UiRect::all(Val::Px(9.0)),
-                ..default()
-            },
-            BackgroundColor(LEATHER),
-            BorderColor::all(LEATHER_EDGE),
-            BoxShadow::new(
-                Color::srgba(0.0, 0.0, 0.0, 0.55),
-                Val::Px(6.0),
-                Val::Px(8.0),
-                Val::Px(0.0),
-                Val::Px(14.0),
-            ),
+            cover(&leather),
             children![(
                 InventorySheet,
-                Node {
+                stitched(Node {
                     flex_direction: FlexDirection::Column,
                     min_width: Val::Px(340.0),
-                    border: UiRect::all(Val::Px(3.0)),
                     padding: UiRect::axes(Val::Px(22.0), Val::Px(16.0)),
                     row_gap: Val::Px(6.0),
                     ..default()
-                },
-                panel_colors(),
+                }),
             )],
         ));
 }
 
-/// Una línea de tinta de lado a lado de la hoja, bajo el título.
-fn rule() -> impl Bundle {
+/// Una línea dorada de lado a lado, bajo el título.
+pub(crate) fn rule() -> impl Bundle {
     (
         Node {
-            height: Val::Px(2.0),
+            height: Val::Px(1.0),
             margin: UiRect::vertical(Val::Px(4.0)),
             ..default()
         },
-        BackgroundColor(ink_font(&Handle::default(), LINE_PX).1.0),
+        BackgroundColor(GOLD),
     )
 }
 
@@ -207,12 +253,10 @@ fn update_panel(
         return;
     };
     let heading = |text: &str| {
-        let (font, _) = ink_font(&faces.italic, LINE_PX);
         (
             InventoryHeading,
             Text::new(text),
-            font,
-            TextColor(HEADING),
+            stamped(&faces.italic, LINE_PX, GOLD),
             Node {
                 margin: UiRect::top(Val::Px(8.0)),
                 ..default()
@@ -239,7 +283,7 @@ fn update_panel(
                 (
                     InventoryEntry,
                     Text::new(text),
-                    ink_font(&faces.body, LINE_PX)
+                    stamped(&faces.body, LINE_PX, CREAM)
                 ),
             ],
         )
@@ -249,7 +293,7 @@ fn update_panel(
         commands.entity(sheet).with_children(|sheet| {
             sheet.spawn((
                 Text::new("Inventario"),
-                ink_font(&faces.display, TITLE_PX),
+                stamped(&faces.display, TITLE_PX, GOLD),
                 Node {
                     align_self: AlignSelf::Center,
                     ..default()
@@ -258,15 +302,15 @@ fn update_panel(
             sheet.spawn(rule());
             for (category, items) in contents.items.by_category() {
                 sheet.spawn(heading(category.name()));
-                for item in items {
-                    sheet.spawn(entry(icons.of(item), item.name()));
+                for (item, count) in items {
+                    sheet.spawn(entry(icons.of(item), &counted(item.name(), count)));
                 }
             }
             sheet.spawn(heading(MONEY_HEADING));
             sheet.spawn(entry(icons.coins.clone(), &contents.money));
             sheet.spawn((
                 Text::new(CLOSE_HINT),
-                ink_font(&faces.italic, LINE_PX * 0.8),
+                stamped(&faces.italic, LINE_PX * 0.8, CREAM),
                 Node {
                     align_self: AlignSelf::End,
                     margin: UiRect::top(Val::Px(10.0)),
@@ -274,6 +318,15 @@ fn update_panel(
                 },
             ));
         });
+    }
+}
+
+/// El renglón de una cosa: su nombre, y cuántas si lleva más de una.
+pub fn counted(name: &str, count: u32) -> String {
+    if count > 1 {
+        format!("{name} × {count}")
+    } else {
+        name.to_string()
     }
 }
 
@@ -517,6 +570,61 @@ fn coins(p: Vec2) -> Option<Rgba> {
         .or_else(|| coin(p, Vec2::new(0.64, 0.62), 0.30).map(|c| darker(c, 0.82)))
 }
 
+/// Un paquete de papel de estraza, atado en cruz con hilo, visto de arriba y
+/// de costado.
+fn parcel(p: Vec2) -> Option<Rgba> {
+    let top = [
+        Vec2::new(0.14, 0.40),
+        Vec2::new(0.52, 0.24),
+        Vec2::new(0.88, 0.38),
+        Vec2::new(0.50, 0.54),
+    ];
+    let front = [
+        Vec2::new(0.14, 0.40),
+        Vec2::new(0.50, 0.54),
+        Vec2::new(0.50, 0.80),
+        Vec2::new(0.14, 0.66),
+    ];
+    let side = [
+        Vec2::new(0.50, 0.54),
+        Vec2::new(0.88, 0.38),
+        Vec2::new(0.88, 0.64),
+        Vec2::new(0.50, 0.80),
+    ];
+    let paper = rgb(196, 160, 112);
+    let string = rgb(236, 226, 196);
+    // El hilo, en cruz por el medio de cada cara.
+    let strings = [
+        (Vec2::new(0.33, 0.32), Vec2::new(0.69, 0.46)),
+        (Vec2::new(0.70, 0.31), Vec2::new(0.32, 0.47)),
+        (Vec2::new(0.32, 0.47), Vec2::new(0.32, 0.73)),
+        (Vec2::new(0.69, 0.46), Vec2::new(0.69, 0.72)),
+    ];
+    if [&top[..], &front[..], &side[..]]
+        .iter()
+        .any(|f| to_outline(p, f) < LINE)
+    {
+        return Some(INK);
+    }
+    let face = if inside(p, &top) {
+        paper
+    } else if inside(p, &front) {
+        darker(paper, 0.88)
+    } else if inside(p, &side) {
+        if hatched(p, 0.045) {
+            darker(paper, 0.62)
+        } else {
+            darker(paper, 0.76)
+        }
+    } else {
+        return None;
+    };
+    if strings.iter().any(|(a, b)| to_segment(p, *a, *b) < 0.014) {
+        return Some(string);
+    }
+    Some(face)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -602,6 +710,18 @@ mod tests {
         app.world_mut().resource_mut::<InventoryView>().0 = None;
         app.update();
         assert_eq!(read(&mut app).1, Display::None, "hidden when closed");
+    }
+
+    #[test]
+    fn every_rendered_icon_is_in_the_assets() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let files: Vec<&str> = Item::ALL.into_iter().map(icon_file).chain([COINS_FILE]).collect();
+        let unique: std::collections::HashSet<&&str> = files.iter().collect();
+        assert_eq!(unique.len(), Item::ALL.len() + 1, "one icon each: {files:?}");
+        for file in files {
+            let path = assets.join(file);
+            assert!(path.is_file(), "{}", path.display());
+        }
     }
 
     #[test]

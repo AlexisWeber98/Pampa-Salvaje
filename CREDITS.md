@@ -10,6 +10,7 @@ Pampa Salvaje is mostly built procedurally in code. These are the third-party as
 | Grass Ground | Charlotte Baglioni, Poly Haven (https://polyhaven.com/a/grass_ground) | CC0 1.0 | `assets/textures/ground/grass_ground/` | 2K maps renamed, height packed in the ORM; the pampa's grass layer, toned by the vertex colour in the ground shader |
 | Dry Mud Field 001 | Rob Tuytel, Rico Cilliers, Poly Haven (https://polyhaven.com/a/dry_mud_field_001) | CC0 1.0 | `assets/textures/ground/dry_mud_field_001/` | 2K maps renamed, height packed in the ORM; bare loess in pampa blots, towns, road verges and lagoon mud |
 | Dirt | Charlotte Baglioni, Poly Haven (https://polyhaven.com/a/dirt) | CC0 1.0 | `assets/textures/ground/dirt/` | 2K maps renamed, height packed in the ORM (downloaded 2026-11-04); the compacted earth of dirt roads and town streets, 2 m a tile, toned by the vertex colour in the road shader |
+| Brown Leather | Rob Tuytel, Poly Haven (https://polyhaven.com/a/brown_leather) | CC0 1.0 | `assets/textures/ui/leather/` | 1K albedo only (downloaded 2026-11-12); the leather of the inventory and the shop list |
 | Ground 102 | ambientCG (https://ambientcg.com/view?id=Ground102) | CC0 1.0 | `assets/textures/ground/Ground102/` | Converted to 512×512 PNM; the dirt roads' surface when the 2K Dirt maps are missing, tinted and feathered at the edges in the game |
 
 The ambientCG maps were converted to 512×512 PPM/PGM for loading; the Poly Haven layers are KTX2. See `assets/textures/ground/CREDITS.md` for details.
@@ -92,6 +93,19 @@ See `assets/models/vegetation/quaternius-ultimate-nature/CREDITS.md` for the ful
 | Wooden Ladder | Miroslav Turura, Poly Haven (https://polyhaven.com/a/wooden_ladder) | CC0 1.0 | `assets/models/props/polyhaven/wooden_ladder/` | None |
 
 See `assets/models/props/polyhaven/CREDITS.md` for details.
+
+| Asset | Author / source | Licence | Where | Changes |
+|---|---|---|---|---|
+| Wooden Axe 03 | Ulan Cabanilla, Poly Haven (https://polyhaven.com/a/wooden_axe_03) | CC0 1.0 | `assets/textures/ui/items/axe.png` | 1K glTF (not kept) rendered to an inventory icon by `tools/item_icons.py` |
+| Rusted Spade 01 | Blemonade, Poly Haven (https://polyhaven.com/a/rusted_spade_01) | CC0 1.0 | `assets/textures/ui/items/shovel.png` | 1K glTF (not kept) rendered to an inventory icon |
+| Fish Knife | Mateusz Sadek, Poly Haven (https://polyhaven.com/a/fish_knife) | CC0 1.0 | `assets/textures/ui/items/knife.png` | 1K glTF (not kept) rendered to an inventory icon |
+| Wooden Candlestick | Josh Dean, Poly Haven (https://polyhaven.com/a/wooden_candlestick) | CC0 1.0 | `assets/textures/ui/items/candles.png` | 1K glTF (not kept) rendered to an inventory icon |
+| Wine Bottles 01 | Rico Cilliers, Jurita Burger, Poly Haven (https://polyhaven.com/a/wine_bottles_01) | CC0 1.0 | `assets/textures/ui/items/cane_bottle.png` | 1K glTF (not kept): one bottle, its label removed, the wine turned to caña, rendered to an inventory icon |
+| Brown Leather | Rob Tuytel, Poly Haven (https://polyhaven.com/a/brown_leather) | CC0 1.0 | `assets/textures/ui/items/tobacco.png` | 2K albedo and normal (not kept), darkened, on the tobacco pouch modelled in `tools/item_icons.py` |
+| Rough Linen | colormass, Rico Cilliers, Poly Haven (https://polyhaven.com/a/rough_linen) | CC0 1.0 | `assets/textures/ui/items/flour.png`, `alpargatas.png` | 2K diffuse and normal (not kept): the flour sack's cotton and the alpargatas' canvas, modelled in `tools/item_icons.py` |
+| Poly Wool Herringbone | colormass, Rico Cilliers, Poly Haven (https://polyhaven.com/a/poly_wool_herringbone) | CC0 1.0 | `assets/textures/ui/items/poncho.png` | 2K normal map only (not kept), the weave of the poncho modelled in `tools/item_icons.py` |
+
+The other inventory icons are our own models, made in `tools/item_icons.py` (CC0). See `assets/textures/ui/items/CREDITS.md` for details.
 
 | Asset | Author / source | Licence | Where | Changes |
 |---|---|---|---|---|

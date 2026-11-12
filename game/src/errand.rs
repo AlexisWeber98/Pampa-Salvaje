@@ -811,7 +811,7 @@ fn see_off(
 /// [`Approach`]), el jugador no maneja y la cámara encuadra a quien habla con
 /// él; durante la escena Lisandro se vuelve hacia él ([`WalkPath::face`]).
 /// Fuera de una escena, todo vuelve a la normalidad.
-fn frame_scene(
+pub(crate) fn frame_scene(
     conversation: Res<Conversation>,
     approach: Res<Approach>,
     errand: Option<Res<ErrandRun>>,
