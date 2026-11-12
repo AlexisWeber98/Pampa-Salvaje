@@ -24,6 +24,8 @@
 //!   normal;
 //! - `fauna`: cuántos animales de cada tipo viven alrededor del jugador;
 //! - `unlock all`: todas las habilidades ([`PlayerAbilities`]);
+//! - `money N`: N pesos más en la plata del jugador ([`PlayerWallet`]), con
+//!   centavos si hacen falta (`money 2,50`), para probar las compras;
 //! - `models on` / `models off`: dibuja a Hidalgo, Farach y Bairoletto como los
 //!   modelos de MakeHuman (por defecto) o de vuelta como las viejas figuras
 //!   rígidas ([`CharacterModelsShown`]; solo esta consola los desactiva);
@@ -76,7 +78,7 @@ const TURBO_ACCELERATION: f32 = 10.0;
 const SEARCH: f32 = 300.0;
 
 /// Lo que la consola enumera con `help`.
-pub const HELP: [&str; 13] = [
+pub const HELP: [&str; 14] = [
     "goto lake, pico, castex, nievas, metileo, caleufu",
     "goto ranch, ranch castex, ranch pico, herd",
     "goto gato, puma, yaguarete: face the nearest",
@@ -84,6 +86,7 @@ pub const HELP: [&str; 13] = [
     "horse: a saddled horse alongside",
     "fauna: the animals nearby",
     "unlock all: every ability",
+    "money N: N more pesos, as in money 2,50",
     "models on, off: MakeHuman or old figures",
     "time HH or HH:MM: move the clock on",
     "turbo on, off: gallop at 70 kmh",
@@ -107,6 +110,8 @@ pub enum Command {
     /// Cuenta los animales alrededor del jugador.
     Fauna,
     UnlockAll,
+    /// Le da al jugador esta plata, además de la que tiene.
+    Money(pampa_core::Money),
     /// Dibuja a las personas del encargo como los modelos de MakeHuman (o no).
     Models(bool),
     /// Adelanta el reloj hasta esta hora del día (hoy o mañana).
@@ -140,6 +145,20 @@ pub enum Destination {
     Point(GroundVec2),
 }
 
+/// Una suma escrita en pesos, con o sin centavos ("10", "2,50", "0.5").
+fn pesos(text: &str) -> Option<pampa_core::Money> {
+    let (whole, cents) = text.split_once([',', '.']).unwrap_or((text, ""));
+    let pesos: u32 = whole.parse().ok()?;
+    let centavos = match cents.len() {
+        0 => 0,
+        1 => cents.parse::<u32>().ok()? * 10,
+        2 => cents.parse().ok()?,
+        _ => return None,
+    };
+    pesos.checked_mul(100)?;
+    Some(pampa_core::Money::new(pesos, centavos))
+}
+
 /// Lee una línea escrita; `Err` es la línea a mostrar en su lugar.
 pub fn parse(line: &str) -> Result<Command, String> {
     let lower = line.trim().to_lowercase();
@@ -164,6 +183,10 @@ pub fn parse(line: &str) -> Result<Command, String> {
             Ok(zoom) if zoom.is_finite() && zoom > 0.0 => Ok(Command::Zoom(zoom)),
             _ => Err(format!("not a zoom: {n}")),
         },
+        ["money"] => Err("usage: money N, as in money 10 or money 2,50".into()),
+        ["money", amount] => pesos(amount)
+            .map(Command::Money)
+            .ok_or_else(|| format!("not an amount: {amount}")),
         ["time"] => Err("usage: time HH, or time HH:MM".into()),
         ["time", time] => time_of_day(time)
             .map(Command::Time)
@@ -536,10 +559,11 @@ fn run_entered(
     mut commands: Commands,
     mut console: ResMut<Console>,
     (towns, settlements, mut world, mut focus): Places,
-    (mut abilities, mut unlocked, mut clock): (
+    (mut abilities, mut unlocked, mut clock, mut wallet): (
         ResMut<PlayerAbilities>,
         MessageWriter<Unlocked>,
         Option<ResMut<WorldClock>>,
+        Option<ResMut<crate::wallet::PlayerWallet>>,
     ),
     mut players: Query<(&mut Player, &mut Transform, Has<OnTrain>)>,
     (mut horses, mut models, mut tuning): (
@@ -659,6 +683,13 @@ fn run_entered(
                 }
                 console.print("everything unlocked");
             }
+            Command::Money(amount) => match wallet.as_mut() {
+                Some(wallet) => {
+                    wallet.0.earn(amount);
+                    console.print(format!("now {}", wallet.0));
+                }
+                None => console.print("no wallet"),
+            },
             Command::Time(_) if aboard => console.print("not on the train: get off first"),
             Command::Time(time) => match clock.as_mut() {
                 Some(clock) => {
@@ -848,6 +879,10 @@ mod tests {
         assert_eq!(parse("  Horse "), Ok(Command::Horse));
         assert_eq!(parse("fauna"), Ok(Command::Fauna));
         assert_eq!(parse("unlock all"), Ok(Command::UnlockAll));
+        assert_eq!(parse("money 10"), Ok(Command::Money(pampa_core::Money::new(10, 0))));
+        assert_eq!(parse("money 2,50"), Ok(Command::Money(pampa_core::Money::new(2, 50))));
+        assert_eq!(parse("money 0.5"), Ok(Command::Money(pampa_core::Money::new(0, 50))));
+        assert!(parse("money").is_err() && parse("money diez").is_err() && parse("money 1,234").is_err());
         assert_eq!(parse("time 21"), Ok(Command::Time(TimeOfDay::hm(21, 0))));
         assert_eq!(parse("Time 5:30"), Ok(Command::Time(TimeOfDay::hm(5, 30))));
         assert!(parse("time").is_err());
@@ -1328,6 +1363,12 @@ mod tests {
         crate::ride::testing::press(&mut app, crate::errand::INTERACT_KEY);
         assert_eq!(rider(&mut app).travel(), Travel::OnFoot);
         // Todas las habilidades desbloqueadas: ahora lo deja subir.
+        enter(&mut app, "money 2,50");
+        enter(&mut app, "money 1");
+        assert_eq!(
+            app.world().resource::<crate::wallet::PlayerWallet>().0,
+            pampa_core::Money::new(3, 50)
+        );
         enter(&mut app, "unlock all");
         let abilities = app.world().resource::<PlayerAbilities>().0;
         assert!(Ability::ALL.iter().all(|&a| abilities.has(a)));

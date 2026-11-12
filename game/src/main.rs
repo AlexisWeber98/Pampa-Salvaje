@@ -21,6 +21,7 @@ mod plant_collision;
 mod player;
 mod pulperia;
 mod ride;
+mod shop;
 #[cfg(test)]
 mod settlement_tests;
 mod timetable;
@@ -382,6 +383,7 @@ fn main() {
         inventory::InventoryPlugin,
         timetable::TimetablePlugin,
         pulperia::PulperiaPlugin,
+        shop::ShopPlugin,
         HudPlugin,
         pampa_render::SubtitlePlugin,
     ))
