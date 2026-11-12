@@ -37,6 +37,11 @@ pub enum RoadKind {
     /// laguna, que termina en un pequeño retorno junto al agua (usuario,
     /// 2026-10-23).
     Lagoon,
+    /// Un camino vecinal: una calle pública recta sobre una línea de la
+    /// mensura ([`crate::Survey::vecinales`]), para que todo campo tenga
+    /// salida a un camino (usuario, 2026-11-11). `from` y `to` son el pueblo
+    /// más cercano a su punto medio.
+    Vecinal,
 }
 
 /// Un camino: entre dos pueblos, o una huella rural que sale de uno.
@@ -439,6 +444,13 @@ impl RoadNetwork {
     /// camino que nombra el pueblo del otro extremo (`names` contiene los
     /// nombres de los pueblos).
     pub fn new(roads: Vec<Road>, names: &[&str]) -> Self {
+        let mut network = Self::indexed(roads);
+        network.signposts = network.place_signposts(names);
+        network
+    }
+
+    /// La red de `roads`, indexada, sin carteles indicadores.
+    fn indexed(roads: Vec<Road>) -> Self {
         let mut network = Self {
             roads,
             ..Self::default()
@@ -466,8 +478,205 @@ impl RoadNetwork {
             }
             network.lengths.push(along);
         }
-        network.signposts = network.place_signposts(names);
         network
+    }
+
+    /// Distancia mínima entre un camino vecinal y un camino que no cruza en
+    /// ángulo, en metros: lo bastante para que sus alambrados no se pisen.
+    pub const VECINAL_CLEARANCE: f32 = 2.0 * crate::FenceLayout::ROADSIDE + 4.0;
+    /// El camino vecinal más corto, en metros.
+    pub const VECINAL_MIN: f32 = 250.0;
+    /// Un camino vecinal se corta junto a otro camino solo si corre casi
+    /// paralelo a él (el coseno del ángulo entre los dos, 25°); en un ángulo
+    /// mayor lo cruza.
+    pub const VECINAL_PARALLEL: f32 = 0.9;
+
+    /// Esta red con un camino vecinal a lo largo de cada línea de la mensura
+    /// `survey` que eligen sus [`Survey::vecinales`] (con la semilla de
+    /// terreno `seed`). Cada línea se corta donde llegaría a un pueblo, a una
+    /// laguna, a la vía (no la cruza) o donde correría al lado de otro camino
+    /// en lugar de cruzarlo; quedan los tramos de al menos
+    /// [`Self::VECINAL_MIN`], cada uno comprobado. Los carteles indicadores se
+    /// conservan.
+    pub fn with_vecinales(
+        self,
+        survey: &crate::Survey,
+        seed: u32,
+        towns: &[TownLayout],
+        line: &RailLine,
+        bounds: WorldBounds,
+        lagoons: &[Lagoon],
+    ) -> (Self, Vec<RoadError>) {
+        let track = Track::of(line, towns);
+        let margin = Self::CUT_REACH + 1.0;
+        let lo = bounds.min + Vec2::new(margin, margin);
+        let hi = bounds.max - Vec2::new(margin, margin);
+        let (vx, vy) = survey.vecinales(seed);
+        let lines = vx
+            .iter()
+            .map(|&i| survey.xs[i])
+            .filter(|&x| x > lo.x && x < hi.x)
+            .map(|x| (Vec2::new(x, lo.y), Vec2::new(x, hi.y)))
+            .chain(
+                vy.iter()
+                    .map(|&j| survey.ys[j])
+                    .filter(|&y| y > lo.y && y < hi.y)
+                    .map(|y| (Vec2::new(lo.x, y), Vec2::new(hi.x, y))),
+            );
+        let bands: Vec<Aabb> = towns
+            .iter()
+            .map(|t| t.leveled().expanded(Self::CUT_REACH + 1.0))
+            .chain(lagoons.iter().map(|l| l.keep_out().expanded(Self::CUT_REACH)))
+            .collect();
+        let mut roads = Vec::new();
+        let mut errors = Vec::new();
+        for (start, end) in lines {
+            let length = start.distance(end);
+            let along = (end - start) * (1.0 / length);
+            let n = (length / Self::STEP).floor() as usize;
+            let point = |k: usize| start + along * (k as f32 * Self::STEP);
+            // El camino casi paralelo junto a `p`, y el punto de su línea
+            // central más cercano a `p`.
+            let parallel = |p: Vec2| {
+                self.nearest_piece(p, Self::VECINAL_CLEARANCE)
+                    .filter(|(dir, _)| dir.dot(along).abs() >= Self::VECINAL_PARALLEL)
+                    .map(|(_, at)| at)
+            };
+            let clear = |p: Vec2| {
+                bands.iter().all(|b| !b.contains_point(p))
+                    && track.signed(p).0.abs() >= Self::NEAR_RAIL + 10.0
+                    && parallel(p).is_none()
+            };
+            let mut k = 0;
+            while k <= n {
+                if !clear(point(k)) {
+                    k += 1;
+                    continue;
+                }
+                let first = k;
+                while k <= n && clear(point(k)) {
+                    k += 1;
+                }
+                let bare: Vec<Vec2> = (first..k).map(point).collect();
+                if bare.len() < 2 || bare[0].distance(*bare.last().unwrap()) < Self::VECINAL_MIN {
+                    continue;
+                }
+                // Donde se corta junto a otro camino (uno casi paralelo, o
+                // uno que pasa junto a la vía o a un pueblo donde se corta),
+                // empalma con él: un último tramo corto hasta su línea
+                // central, así la calle tiene salida.
+                // Primero siguiendo recto por la línea hasta el otro camino;
+                // si no lo encuentra, hasta su punto más cercano, siempre
+                // hacia adelante (nunca un rulo hacia atrás).
+                let joint = |p: Vec2, ahead: Vec2| {
+                    let straight = (1..=8).find_map(|k| {
+                        let q = p + ahead * (k as f32 * Self::STEP);
+                        self.nearest_piece(q, Self::STEP / 2.0).map(|(_, at)| at)
+                    });
+                    straight
+                        .or_else(|| {
+                            self.nearest_piece(p, Self::VECINAL_CLEARANCE)
+                                .map(|(_, at)| at)
+                        })
+                        .filter(|&at| (at - p).dot(ahead) > 0.5)
+                };
+                // El empalme se suaviza como los demás caminos ([`chaikin`]),
+                // para que sus alambrados no corten la curva por adentro.
+                // Si el otro camino viene de costado o de atrás, la punta se
+                // acorta de a un paso hasta que quede adelante.
+                let reach = |points: &[Vec2], ahead: Vec2| {
+                    (0..=4).find_map(|trim| {
+                        let at = points.len().checked_sub(1 + trim)?;
+                        (at >= 4).then_some(())?;
+                        joint(points[at], ahead).map(|j| (at + 1, j))
+                    })
+                };
+                let mut path = bare.clone();
+                if let Some((keep, at)) = reach(&path, along) {
+                    path.truncate(keep);
+                    let mut tail = path.split_off(keep - 4);
+                    tail.push(at);
+                    path.extend(chaikin(tail, 3));
+                }
+                path.reverse();
+                if let Some((keep, at)) = reach(&path, along * -1.0) {
+                    path.truncate(keep);
+                    let mut tail = path.split_off(keep - 4);
+                    tail.push(at);
+                    path.extend(chaikin(tail, 3));
+                }
+                path.reverse();
+                let middle = path[path.len() / 2];
+                let town = towns
+                    .iter()
+                    .enumerate()
+                    .min_by(|a, b| {
+                        let d = |t: &TownLayout| t.leveled().closest_point(middle).distance(middle);
+                        d(a.1).total_cmp(&d(b.1))
+                    })
+                    .map_or(0, |(i, _)| i);
+                let last = *path.last().unwrap();
+                let road = Road {
+                    kind: RoadKind::Vecinal,
+                    from: town,
+                    to: town,
+                    ends: [
+                        RoadEnd {
+                            at: path[0],
+                            out: along * -1.0,
+                        },
+                        RoadEnd { at: last, out: along },
+                    ],
+                    path,
+                    crossings: Vec::new(),
+                };
+                // Un empalme que se acercaría a la vía o a un pueblo se deja:
+                // la calle queda cortada.
+                let result = check(&road, towns, bounds, &track).map(|()| road.clone()).or_else(|_| {
+                    let bare = Road {
+                        ends: [
+                            RoadEnd {
+                                at: bare[0],
+                                out: along * -1.0,
+                            },
+                            RoadEnd {
+                                at: *bare.last().unwrap(),
+                                out: along,
+                            },
+                        ],
+                        path: bare.clone(),
+                        ..road
+                    };
+                    check(&bare, towns, bounds, &track).map(|()| bare)
+                });
+                match result {
+                    Ok(road) => roads.push(road),
+                    Err(error) => errors.push(error),
+                }
+            }
+        }
+        let signposts = self.signposts;
+        let mut all = self.roads;
+        all.extend(roads);
+        let mut network = Self::indexed(all);
+        network.signposts = signposts;
+        (network, errors)
+    }
+
+    /// La dirección unitaria del tramo de camino más cercano a `p`, si hay uno
+    /// a menos de `reach` (como mucho [`Self::INDEX_REACH`]), y su punto más
+    /// cercano a `p`.
+    fn nearest_piece(&self, p: Vec2, reach: f32) -> Option<(Vec2, Vec2)> {
+        self.nearby(p)
+            .map(|piece| (segment_distance(p, piece.a, piece.b), piece))
+            .filter(|(d, _)| *d < reach)
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, piece)| {
+                let d = piece.b - piece.a;
+                let span = d.dot(d).max(1e-6);
+                let t = ((p - piece.a).dot(d) / span).clamp(0.0, 1.0);
+                (d * (1.0 / span.sqrt()), piece.a + d * t)
+            })
     }
 
     /// Los tramos rectos de todos los caminos, en el orden de los caminos.
@@ -498,9 +707,47 @@ impl RoadNetwork {
     }
 
     /// Distancia exacta desde `p` hasta la línea central de camino más cercana
-    /// (infinita si no hay caminos). Revisa todos los tramos: para pruebas y
-    /// consultas poco frecuentes; ver [`Self::near`] para la versión barata.
+    /// (infinita si no hay caminos). Recorre las celdas del índice en anillos
+    /// alrededor de `p` hasta que ningún tramo sin ver puede estar más cerca:
+    /// ver [`Self::near`] para la versión con alcance.
     pub fn distance(&self, p: Vec2) -> f32 {
+        // Todo tramo a menos de `INDEX_REACH` de `p` está en su celda.
+        if let Some(d) = self.near(p, Self::INDEX_REACH) {
+            return d;
+        }
+        if self.pieces.is_empty() || !(p.x.is_finite() && p.y.is_finite()) {
+            return self.distance_by_all(p);
+        }
+        // Un tramo está en las celdas de su propio recorrido, así que uno que
+        // no apareció hasta el anillo `r` está a más de `(r - 1) * CELL`.
+        let (cx, cy) = cell_of(p);
+        let mut best = f32::INFINITY;
+        for r in 0..=Self::RING_LIMIT {
+            let ring = (-r..=r).flat_map(|d| {
+                let edge = [(d, -r), (d, r), (-r, d), (r, d)];
+                edge.into_iter().take(if r == 0 { 1 } else { 4 })
+            });
+            for (dx, dy) in ring {
+                if let Some(list) = self.cells.get(&(cx + dx, cy + dy)) {
+                    for &i in list {
+                        let s = &self.pieces[i as usize];
+                        best = best.min(segment_distance(p, s.a, s.b));
+                    }
+                }
+            }
+            if best <= (r - 1).max(0) as f32 * Self::CELL {
+                return best;
+            }
+        }
+        self.distance_by_all(p)
+    }
+
+    /// Cuántos anillos de celdas recorre [`Self::distance`] antes de revisar
+    /// todos los tramos: unos 16 km.
+    const RING_LIMIT: i32 = 512;
+
+    /// [`Self::distance`] revisando todos los tramos.
+    fn distance_by_all(&self, p: Vec2) -> f32 {
         self.pieces
             .iter()
             .map(|s| segment_distance(p, s.a, s.b))
@@ -513,6 +760,16 @@ impl RoadNetwork {
     pub fn near(&self, p: Vec2, reach: f32) -> Option<f32> {
         let reach = reach.min(Self::INDEX_REACH);
         self.nearby(p)
+            .map(|s| segment_distance(p, s.a, s.b))
+            .filter(|&d| d <= reach)
+            .min_by(f32::total_cmp)
+    }
+
+    /// [`Self::near`] contando solo los caminos que no son el número `road`.
+    pub(crate) fn near_other(&self, p: Vec2, reach: f32, road: usize) -> Option<f32> {
+        let reach = reach.min(Self::INDEX_REACH);
+        self.nearby(p)
+            .filter(|s| s.road as usize != road)
             .map(|s| segment_distance(p, s.a, s.b))
             .filter(|&d| d <= reach)
             .min_by(f32::total_cmp)
@@ -1308,6 +1565,7 @@ fn check(
         RoadKind::Rural => "the open land".to_string(),
         RoadKind::Street => name(road.to),
         RoadKind::Lagoon => "its lagoon".to_string(),
+        RoadKind::Vecinal => "the survey line".to_string(),
     };
     let margin = RoadNetwork::CUT_REACH;
     let inside = road.path.iter().all(|p| {
@@ -1822,6 +2080,31 @@ pub(crate) mod tests {
                 .iter()
                 .all(|r| !(r.kind == RoadKind::Rural && r.from == 0))
         );
+    }
+
+    #[test]
+    fn the_distance_far_from_every_road_is_the_exact_one() {
+        let (towns, line, roads) = shipped_roads();
+        let bounds = WorldConfig::default().bounds();
+        let seed = crate::Terrain::default().seed;
+        let survey = crate::Survey::new(WorldConfig::default(), seed);
+        let (vecinal, _) = roads
+            .clone()
+            .with_vecinales(&survey, seed, &towns, &line, bounds, &[]);
+        let mut rng = Rng::new(9, 9);
+        let mut far = 0;
+        for network in [&roads, &vecinal] {
+            for _ in 0..400 {
+                let p = Vec2::new(
+                    rng.range(bounds.min.x, bounds.max.x),
+                    rng.range(bounds.min.y, bounds.max.y),
+                );
+                let exact = network.distance_by_all(p);
+                far += usize::from(exact > RoadNetwork::INDEX_REACH);
+                assert_eq!(network.distance(p), exact, "{p:?}");
+            }
+        }
+        assert!(far > 200, "{far}");
     }
 
     #[test]
