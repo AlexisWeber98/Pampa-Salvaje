@@ -30,8 +30,14 @@ use crate::{Aabb, FlatArea, Heading, Terrain, Vec2};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BuildingKind {
     House,
-    /// "Almacén de ramos generales": el comercio general del pueblo.
+    /// "Almacén de ramos generales": el comercio general del pueblo, donde se
+    /// compran víveres, herramientas y armas.
     GeneralStore,
+    /// La pulpería: despacho de bebidas, naipes y compañía, que se recorre por
+    /// dentro ([`crate::pulperia`]). Todo pueblo tiene una y un almacén
+    /// (usuario, 2026-11-11): en un pueblo chico la pulpería es el comercio de
+    /// la plaza y el almacén se suma aparte; en uno grande, al revés.
+    Pulperia,
     PoliceStation,
     Church,
     Station,
@@ -1367,10 +1373,7 @@ impl TownLayout {
             .map(|b| b.footprint)
             .collect();
 
-        let store = buildings
-            .iter()
-            .find(|b| b.kind == BuildingKind::GeneralStore)
-            .expect("every town has a general store");
+        let store = &buildings[hitched_store(&buildings).expect("every town has a store")];
         let hitching_post = hitching_post(store, veranda_depth(grid.street));
         let (w, h) = main.span();
         let mut town = Self {
@@ -1573,26 +1576,34 @@ impl TownLayout {
             .collect()
     }
 
-    /// La pulpería del pueblo, si es un pueblo chico
-    /// ([`crate::places::StoreStyle::Pulperia`]), con su interior.
+    /// La pulpería del pueblo ([`BuildingKind::Pulperia`]), con su interior.
     pub fn pulperia(&self) -> Option<(&Building, crate::pulperia::Interior)> {
-        if crate::places::StoreStyle::of(self.size) != crate::places::StoreStyle::Pulperia {
-            return None;
-        }
         let store = self
             .buildings
             .iter()
-            .find(|b| b.kind == BuildingKind::GeneralStore)?;
+            .find(|b| b.kind == BuildingKind::Pulperia)?;
         Some((store, crate::pulperia::Interior::of(store)))
     }
 
+    /// Los locales del pueblo que se recorren por dentro (la pulpería y los
+    /// almacenes: [`crate::pulperia::walks_in`]), cada uno con su índice en
+    /// [`Self::buildings`] y su interior.
+    pub fn rooms(&self) -> impl Iterator<Item = (usize, &Building, crate::pulperia::Interior)> {
+        self.buildings
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| crate::pulperia::walks_in(b.kind))
+            .map(|(i, b)| (i, b, crate::pulperia::Interior::of(b)))
+    }
+
     /// Con qué chocan de verdad las personas, los caballos y la cámara: los
-    /// [`Self::obstacles`], salvo que la huella de la pulpería se cambia por sus
-    /// paredes, con el hueco de la puerta, y sus muebles. Ubicar cosas
-    /// alrededor sigue usando [`Self::obstacles`], con la huella entera.
+    /// [`Self::obstacles`], salvo que la huella de cada local que se recorre
+    /// ([`Self::rooms`]) se cambia por sus paredes, con el hueco de la puerta,
+    /// y sus muebles. Ubicar cosas alrededor sigue usando
+    /// [`Self::obstacles`], con la huella entera.
     pub fn colliders(&self) -> Vec<Aabb> {
         let mut out = self.obstacles();
-        if let Some((store, inside)) = self.pulperia() {
+        for (_, store, inside) in self.rooms() {
             // Los edificios van primero en los obstáculos: la primera caja
             // igual a su huella es la suya.
             if let Some(i) = out.iter().position(|o| *o == store.collider()) {
@@ -2203,7 +2214,12 @@ fn place_landmarks(
         rest.push(s);
     }
     let reserved: Vec<(usize, usize)> = station.iter().map(|s| s.block).collect();
-    let main_store = disperse(grid, plaza, store.0, &placed, &reserved);
+    let mut main_store = disperse(grid, plaza, store.0, &placed, &reserved);
+    // En un pueblo chico el comercio de la plaza es la pulpería (La Colonia,
+    // en Eduardo Castex); el almacén se suma al final.
+    if size == TownSize::Small {
+        main_store.kind = BuildingKind::Pulperia;
+    }
     placed.push(main_store);
     let mut first = vec![main_store, church];
     let extra_stores = size.general_stores() - 1 - usize::from(size != TownSize::Small);
@@ -2263,6 +2279,32 @@ fn place_landmarks(
         placed.push(bank);
         rest.push(bank);
     }
+    // El otro comercio, también sin mover nada: el almacén de un pueblo chico,
+    // la pulpería de uno grande, lejos de los demás edificios cívicos. Un
+    // pueblo muy chico (menos de [`ALMACEN_BLOCKS`] manzanas: Monte Nievas,
+    // Metileo) tiene solo su pulpería; uno sin manzana a esa distancia
+    // (Caleufú) lo pone en la más alejada de todos aunque quede al lado de
+    // otro (usuario, 2026-11-11).
+    let second = if size == TownSize::Small {
+        BuildingKind::GeneralStore
+    } else {
+        BuildingKind::Pulperia
+    };
+    let spaced = |l: &Landmark| {
+        placed
+            .iter()
+            .all(|p| blocks_apart(p.block, l.block) >= CIVIC_SPACING)
+    };
+    let room = size != TownSize::Small || grid.cols * grid.rows >= ALMACEN_BLOCKS;
+    if room {
+        // `disperse` ya prefiere la manzana más alejada cuando ninguna
+        // respeta la separación.
+        let shop = Some(disperse(grid, plaza, second, &placed, &reserved))
+            .filter(spaced)
+            .unwrap_or_else(|| disperse(grid, plaza, second, &placed, &station_blocks));
+        placed.push(shop);
+        rest.push(shop);
+    }
     first.extend(rest);
     (first, station)
 }
@@ -2278,6 +2320,12 @@ struct Institutions {
     banks: usize,
     town_hall: bool,
 }
+
+/// Manzanas mínimas de un pueblo chico para tener un almacén de ramos
+/// generales además de su pulpería: Caleufú (4 x 4) y Eduardo Castex (5 x 4)
+/// lo tienen; Monte Nievas (4 x 3) y Metileo (3 x 3), muy chicos, no (usuario,
+/// 2026-11-11).
+pub const ALMACEN_BLOCKS: usize = 16;
 
 /// Manzanas entre dos edificios cívicos, como mínimo: nunca uno al lado del
 /// otro.
@@ -2570,12 +2618,27 @@ fn building(kind: BuildingKind, footprint: Aabb, height: f32, front: Side) -> Bu
     }
 }
 
+/// El índice del comercio con el palenque principal del pueblo
+/// ([`TownLayout::hitching_post`], donde Don Hidalgo ata su alazán): el primer
+/// almacén de ramos generales o, en un pueblo que no tiene (Monte Nievas,
+/// Metileo), su pulpería.
+pub fn hitched_store(buildings: &[Building]) -> Option<usize> {
+    buildings
+        .iter()
+        .position(|b| b.kind == BuildingKind::GeneralStore)
+        .or_else(|| {
+            buildings
+                .iter()
+                .position(|b| b.kind == BuildingKind::Pulperia)
+        })
+}
+
 /// Proporciones de la huella de un punto de referencia sobre una manzana de
 /// referencia de 40 m: inicio y fin a lo largo de su borde sobre la calle,
 /// profundidad dentro de la manzana y altura de pared.
 fn landmark_shape(kind: BuildingKind) -> (f32, f32, f32, f32) {
     match kind {
-        BuildingKind::GeneralStore => (12.0, 28.0, 14.0, 5.0),
+        BuildingKind::GeneralStore | BuildingKind::Pulperia => (12.0, 28.0, 14.0, 5.0),
         BuildingKind::PoliceStation => (13.0, 27.0, 12.0, 4.5),
         // Banco: un frente de 12 m, alto y profundo, con su salón de atención.
         BuildingKind::Bank => (14.0, 26.0, 16.0, 6.2),
@@ -2893,10 +2956,7 @@ impl TownLayout {
     /// edificios. Una ciudad ata un caballo a una mitad de ellos elegida por
     /// semilla, como mucho [`Palenque::MAX_HORSES`].
     fn place_palenques(&self) -> Vec<Palenque> {
-        let first_store = self
-            .buildings
-            .iter()
-            .position(|b| b.kind == BuildingKind::GeneralStore);
+        let first_store = hitched_store(&self.buildings);
         // Terreno del que se mantiene lejos un palenque, con la separación que
         // necesita cada uno.
         let trunk = Vec2::new(2.0 * TREE_TRUNK_RADIUS, 2.0 * TREE_TRUNK_RADIUS);
@@ -2936,6 +2996,7 @@ impl TownLayout {
             let wanted = matches!(
                 b.kind,
                 BuildingKind::GeneralStore
+                    | BuildingKind::Pulperia
                     | BuildingKind::PoliceStation
                     | BuildingKind::Church
                     | BuildingKind::Station
@@ -3155,7 +3216,7 @@ impl ShadeGround {
         for b in town
             .buildings
             .iter()
-            .filter(|b| b.kind == BuildingKind::GeneralStore)
+            .filter(|b| matches!(b.kind, BuildingKind::GeneralStore | BuildingKind::Pulperia))
         {
             let n = crate::places::side_normal(b.front);
             let side = Vec2::new(-n.y, n.x);
@@ -3399,7 +3460,7 @@ impl TownLayout {
                 };
                 let around = b.footprint.expanded(ShadeTree::LANDMARK_REACH);
                 for n in 0..trees {
-                    yard(&mut ground, &mut out, around, 0x1000 + 4 * k as u32 + n, 24);
+                    yard(&mut ground, &mut out, around, 0x1000 + 4 * k as u32 + n, 96);
                 }
             }
         }
@@ -3862,12 +3923,20 @@ pub(crate) mod tests {
     fn has_the_institutions_of_a_railway_town() {
         for (c, t) in sample_configs().iter().zip(sample_towns()) {
             let railway = usize::from(c.railway.is_some());
+            // Un pueblo chico: su pulpería en la plaza y un almacén si entra;
+            // una ciudad, sus dos almacenes y una pulpería si entra.
             let (stores, police) = match c.size() {
-                TownSize::Small => (1, 1),
-                TownSize::Big => (2, 1),
-                TownSize::VeryBig => (2, 2),
+                TownSize::Small => (0..=1, 1),
+                TownSize::Big => (2..=2, 1),
+                TownSize::VeryBig => (2..=2, 2),
             };
-            assert_eq!(count(&t, BuildingKind::GeneralStore), stores, "{}", c.name);
+            let general = count(&t, BuildingKind::GeneralStore);
+            assert!(stores.contains(&general), "{}: {general}", c.name);
+            let pulperias = count(&t, BuildingKind::Pulperia);
+            assert!(pulperias <= 1, "{}", c.name);
+            if c.size() == TownSize::Small {
+                assert_eq!(pulperias, 1, "{}", c.name);
+            }
             assert_eq!(count(&t, BuildingKind::PoliceStation), police, "{}", c.name);
             assert_eq!(count(&t, BuildingKind::Church), 1, "{}", c.name);
             for kind in [BuildingKind::Station, BuildingKind::Platform] {
@@ -4076,11 +4145,13 @@ pub(crate) mod tests {
     #[test]
     fn landmarks_face_the_plaza_from_neighboring_blocks() {
         for (c, t) in sample_configs().iter().zip(sample_towns()) {
-            for kind in [
-                BuildingKind::GeneralStore,
-                BuildingKind::PoliceStation,
-                BuildingKind::Church,
-            ] {
+            // El comercio de la plaza: la pulpería en un pueblo chico.
+            let store = if c.size() == TownSize::Small {
+                BuildingKind::Pulperia
+            } else {
+                BuildingKind::GeneralStore
+            };
+            for kind in [store, BuildingKind::PoliceStation, BuildingKind::Church] {
                 let b = find(&t, kind).unwrap();
                 // Su fachada mira hacia la plaza.
                 let to_plaza = t.plaza.center() - b.footprint.center();
@@ -4110,7 +4181,10 @@ pub(crate) mod tests {
             .filter(|b| {
                 matches!(
                     b.kind,
-                    BuildingKind::GeneralStore | BuildingKind::PoliceStation | BuildingKind::Church
+                    BuildingKind::GeneralStore
+                        | BuildingKind::Pulperia
+                        | BuildingKind::PoliceStation
+                        | BuildingKind::Church
                 )
             })
             .collect()
@@ -4136,8 +4210,15 @@ pub(crate) mod tests {
                 for b in &buildings[k + 1..] {
                     let d = a.footprint.center() - b.footprint.center();
                     let apart = d.x.abs().max(d.y.abs());
-                    // Al menos una manzana entera de por medio, no una calle.
-                    assert!(apart > pitch, "{}: {a:?} by {b:?}", c.name);
+                    // Al menos una manzana entera de por medio, no una calle;
+                    // salvo el almacén de un pueblo chico sin manzana a esa
+                    // distancia (Caleufú, usuario 2026-11-11), en otra
+                    // manzana.
+                    let almacen = t.size == TownSize::Small
+                        && (a.kind == BuildingKind::GeneralStore
+                            || b.kind == BuildingKind::GeneralStore);
+                    let least = if almacen { 0.5 * pitch } else { pitch };
+                    assert!(apart > least, "{}: {a:?} by {b:?}", c.name);
                     if a.kind == b.kind {
                         assert!(apart > same, "{}: two {:?} {apart} m apart", c.name, a.kind);
                     }
@@ -4145,9 +4226,10 @@ pub(crate) mod tests {
             }
         }
         // La dispersión no es casualidad de los ejemplos: un pueblo chico
-        // también mantiene separados su almacén, su comisaría y su iglesia.
+        // también mantiene separados su pulpería, su almacén, su comisaría y
+        // su iglesia.
         let t = TownLayout::castex_inspired();
-        assert_eq!(civic(&t).len(), 3);
+        assert_eq!(civic(&t).len(), 4);
     }
 
     /// General Pico tal como lo distribuye `assets/world/towns.ron`, salvo su
@@ -4906,7 +4988,8 @@ pub(crate) mod tests {
     #[test]
     fn a_horse_is_tied_in_front_of_the_general_store() {
         for (c, t) in sample_configs().iter().zip(sample_towns()) {
-            let store = find(&t, BuildingKind::GeneralStore).unwrap();
+            // El almacén, o la pulpería de un pueblo que no tiene almacén.
+            let store = &t.buildings[hitched_store(&t.buildings).unwrap()];
             let post = t.hitching_post;
             let horse = post.horse;
             // En la calle a la que mira el almacén, justo más allá de su
@@ -5312,7 +5395,8 @@ pub(crate) mod tests {
             assert_eq!(t.station_plaza, None, "{}", c.name);
             assert_eq!(t.plazas().count(), 1, "{}", c.name);
             assert_eq!(plaza_span(&c, &t), (1, 1), "{}", c.name);
-            assert_eq!(count(&t, BuildingKind::GeneralStore), 1, "{}", c.name);
+            assert_eq!(count(&t, BuildingKind::Pulperia), 1, "{}", c.name);
+            assert!(count(&t, BuildingKind::GeneralStore) <= 1, "{}", c.name);
             // Una, salvo que se reemplace (Monte Nievas no tiene ninguna).
             let police = c.police_stations.unwrap_or(1);
             assert_eq!(count(&t, BuildingKind::PoliceStation), police, "{}", c.name);
@@ -5352,19 +5436,25 @@ pub(crate) mod tests {
         // aldea, no cambia. Los dos Eduardo Castex se volvieron a fijar
         // cuando su pulpería pasó a llamarse "LA COLONIA" (2026-11-10, acto
         // 4): el cartel forma parte de la huella digital; los demás no
-        // cambian.
+        // cambian. Los once se volvieron a fijar cuando todo pueblo pasó a
+        // tener una pulpería y, si entra, un almacén de ramos generales aparte
+        // (2026-11-11): el comercio de la plaza de un pueblo chico es la
+        // pulpería, el almacén se suma al final y el palenque principal sigue
+        // al almacén. Tres (Este, Oeste, Sin tren) se volvieron a fijar cuando
+        // el almacén de un pueblo chico sin manzana a la distancia de los
+        // edificios cívicos pasó a ponerse igual, en la más alejada.
         let pinned = [
-            0xbd5c_a792_8123_334c,
-            0x35e8_cd03_36f4_474f,
-            0x0ee2_dc82_373e_6dac,
-            0x9ae4_22ce_389c_9bee,
-            0x4d89_5840_612f_7b5e,
-            0xec1d_b647_4e8a_e8f5,
-            0x827d_0fc8_ed44_6625,
-            0x1bf5_0523_a5ba_8526,
-            0xfa7e_dbf1_1241_c8b3,
-            0x6539_591a_c794_baad,
-            0x9d3d_1086_0de3_d91b,
+            0x3df5_c850_6704_2ca6,
+            0xa036_c79c_5c44_7f45,
+            0x4d5e_32ac_1ccc_b199,
+            0xd9ec_0ea9_8ae1_db30,
+            0xdf55_376f_615a_17f0,
+            0xfa8f_3ec8_bbfd_3f57,
+            0x0c0f_0b28_54f9_2277,
+            0x860a_fdbf_bfec_f4c8,
+            0x0170_6326_0227_d7b5,
+            0x3edc_a1a7_eec3_195c,
+            0xc5ff_84cf_3d1f_dcb2,
         ];
         let configs = small_configs();
         assert_eq!(configs.len(), pinned.len());
@@ -5396,14 +5486,18 @@ pub(crate) mod tests {
             // Todo lo demás que necesita un pueblo sigue ahí.
             let default = TownLayout::generate(&c).unwrap();
             assert_eq!(count(&t, BuildingKind::Church), 1, "{}", c.name);
-            assert_eq!(
-                count(&t, BuildingKind::GeneralStore),
-                count(&default, BuildingKind::GeneralStore),
-                "{}",
-                c.name
-            );
+            // El comercio de la plaza no se mueve; el almacén que se suma al
+            // final puede tomar la manzana que dejó la comisaría.
+            let plaza_store = |t: &TownLayout| {
+                let kind = if t.size == TownSize::Small {
+                    BuildingKind::Pulperia
+                } else {
+                    BuildingKind::GeneralStore
+                };
+                find(t, kind).map(|b| b.footprint)
+            };
+            assert_eq!(plaza_store(&t), plaza_store(&default), "{}", c.name);
             assert_eq!(t.plaza, default.plaza, "{}", c.name);
-            assert_eq!(t.hitching_post, default.hitching_post, "{}", c.name);
         }
     }
 
@@ -6001,13 +6095,11 @@ pub(crate) mod tests {
 
     /// Los edificios que tienen un palenque además del palenque del almacén.
     fn wants_palenque(t: &TownLayout, k: usize) -> bool {
-        let first_store = t
-            .buildings
-            .iter()
-            .position(|b| b.kind == BuildingKind::GeneralStore);
+        let first_store = hitched_store(&t.buildings);
         matches!(
             t.buildings[k].kind,
             BuildingKind::GeneralStore
+                | BuildingKind::Pulperia
                 | BuildingKind::PoliceStation
                 | BuildingKind::Church
                 | BuildingKind::Station

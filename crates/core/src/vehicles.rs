@@ -151,10 +151,7 @@ pub fn parked_in(layout: &TownLayout) -> Vec<Parked> {
     let count = parked_count(Paving::of(layout.blocks()), rng.unit());
     let obstacles = layout.obstacles();
     let mut parked: Vec<Parked> = Vec::new();
-    let store = layout
-        .buildings
-        .iter()
-        .position(|b| b.kind == BuildingKind::GeneralStore);
+    let store = crate::town::hitched_store(&layout.buildings);
     let fronts: Vec<(usize, Aabb)> = store
         .map(|b| (b, layout.hitching_post.rail))
         .into_iter()

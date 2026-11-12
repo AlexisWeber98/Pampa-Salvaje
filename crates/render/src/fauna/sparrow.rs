@@ -594,7 +594,7 @@ mod tests {
             outskirts: edge < OUTSKIRTS,
             // Solo elige entre ranchos simples, que no tienen pretil.
             by_rail: false,
-            store: StoreStyle::of(town.size),
+            store: StoreStyle::GeneralStore,
             veranda: town.hitching_post.veranda,
         };
         let shape = building(&lot)?;

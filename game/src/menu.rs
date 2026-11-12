@@ -48,7 +48,9 @@ use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::prelude::*;
 use bevy::render::view::ColorGrading;
 use pampa_render::Typefaces;
+use pampa_render::minimap::MinimapRoot;
 
+use crate::inventory::InventoryOpen;
 use crate::sound::{MAX_STEP, SoundSettings};
 
 /// La música de los menús, relativa a la raíz de assets.
@@ -239,7 +241,7 @@ impl Plugin for MenuPlugin {
             .init_resource::<Typefaces>()
             .add_systems(Startup, spawn_menu)
             .add_systems(PreUpdate, read_keys.after(InputSystems).in_set(MenuKeys))
-            .add_systems(Update, (hold_world, grey_world, play_music))
+            .add_systems(Update, (hold_world, grey_world, play_music, hide_overlays))
             .add_systems(PostUpdate, draw_menu)
             .add_systems(Last, save_on_exit);
     }
@@ -513,6 +515,28 @@ fn hold_world(menu: Res<Menu>, mut time: ResMut<Time<Virtual>>) {
         } else {
             time.unpause();
         }
+    }
+}
+
+/// Oculta el minimapa y cierra el inventario mientras hay un menú abierto, para
+/// que nunca se dibujen sobre él; al reanudar, el minimapa vuelve como estaba
+/// (chico o ampliado) y el inventario queda cerrado.
+fn hide_overlays(
+    menu: Res<Menu>,
+    mut maps: Query<&mut Visibility, With<MinimapRoot>>,
+    inventory: Option<ResMut<InventoryOpen>>,
+) {
+    let open = menu.screen.is_some();
+    let shown = if open {
+        Visibility::Hidden
+    } else {
+        Visibility::Inherited
+    };
+    for mut visibility in &mut maps {
+        visibility.set_if_neq(shown);
+    }
+    if open && let Some(mut inventory) = inventory {
+        inventory.set_if_neq(InventoryOpen(false));
     }
 }
 
@@ -847,6 +871,23 @@ mod tests {
         press(&mut app, KeyCode::Escape);
         assert_eq!(menu(&app).screen, None);
         assert!(!paused(&app));
+    }
+
+    #[test]
+    fn the_pause_hides_the_minimap_and_closes_the_inventory_and_the_map_comes_back() {
+        let mut app = app(false);
+        app.insert_resource(InventoryOpen(true));
+        let map = app.world_mut().spawn((MinimapRoot, Node::default())).id();
+        app.update();
+        let visibility = |app: &App| *app.world().get::<Visibility>(map).unwrap();
+        assert_eq!(visibility(&app), Visibility::Inherited);
+        press(&mut app, KeyCode::Escape);
+        assert_eq!(visibility(&app), Visibility::Hidden);
+        assert!(!app.world().resource::<InventoryOpen>().0);
+        press(&mut app, KeyCode::Escape);
+        assert_eq!(menu(&app).screen, None);
+        assert_eq!(visibility(&app), Visibility::Inherited);
+        assert!(!app.world().resource::<InventoryOpen>().0);
     }
 
     #[test]

@@ -7,6 +7,7 @@ use bevy::app::AnimationSystems;
 use bevy::camera::visibility::VisibilitySystems;
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
+use pampa_core::pulperia::Pastime;
 use pampa_core::{AnimationState, Heading};
 
 use super::clips::{load_character_clips, read_reference};
@@ -48,8 +49,10 @@ pub enum CharacterVisual {
     /// `Transform` de la entidad es la parte de arriba del asiento, con el piso
     /// [`BENCH_HEIGHT`](super::rider::BENCH_HEIGHT) más abajo, y el rumbo de su
     /// [`VisualPose`], hacia dónde mira. Solo se dibuja con modelo
-    /// ([`model_name`](super::model::model_name)), como un conductor.
-    Seated(FigureKind),
+    /// ([`model_name`](super::model::model_name)), como un conductor. Pasa el
+    /// rato con su [`Pastime`]: quieto, jugando al truco, fumando, tomando o
+    /// conversando.
+    Seated(FigureKind, Pastime),
 }
 
 /// La entidad hija con la que dibuja un [`CharacterVisual`] (el cuerpo de una
@@ -98,6 +101,7 @@ impl Plugin for CharacterVisualPlugin {
                     load_character_models,
                     load_character_clips,
                     load_recado,
+                    super::pastime::make_kit,
                 ),
             )
             .add_systems(
@@ -112,6 +116,12 @@ impl Plugin for CharacterVisualPlugin {
                     read_reference,
                 )
                     .chain(),
+            )
+            .add_systems(Update, super::pastime::hold_things)
+            .add_systems(
+                PostUpdate,
+                (super::pastime::drift_smoke, super::pastime::tilt_glasses)
+                    .after(TransformSystems::Propagate),
             )
             .add_systems(
                 PostUpdate,
@@ -196,9 +206,14 @@ fn attach_visuals(
             CharacterVisual::Mounted { rider, coat } => {
                 spawn_horse(&mut commands, entity, coat, Some(rider), true)
             }
-            CharacterVisual::Seated(kind) => {
-                spawn_sitter(&mut commands, models.as_deref(), entity, kind, pose.heading)
-            }
+            CharacterVisual::Seated(kind, pastime) => spawn_sitter(
+                &mut commands,
+                models.as_deref(),
+                entity,
+                kind,
+                pastime,
+                pose.heading,
+            ),
         };
         commands.entity(body).insert(VisualPart);
     }
@@ -213,6 +228,7 @@ fn spawn_sitter(
     models: Option<&CharacterModels>,
     entity: Entity,
     kind: FigureKind,
+    pastime: Pastime,
     heading: Heading,
 ) -> Entity {
     let seat = commands
@@ -233,7 +249,7 @@ fn spawn_sitter(
                 kind,
                 seed: entity.index_u32(),
             },
-            OnBench,
+            OnBench(pastime),
             Transform::from_matrix(Mat4::from(seat_transform(Vec3::ZERO))),
             // Se dibuja una vez sentado: su escena se crea parada en reposo.
             Visibility::Hidden,
@@ -590,7 +606,7 @@ mod tests {
         let me = app
             .world_mut()
             .spawn((
-                CharacterVisual::Seated(FigureKind::townsfolk(3)),
+                CharacterVisual::Seated(FigureKind::townsfolk(3), Pastime::Rest),
                 VisualPose {
                     heading,
                     ..default()

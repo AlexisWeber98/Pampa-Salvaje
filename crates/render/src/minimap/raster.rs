@@ -190,7 +190,6 @@ pub mod palette {
     pub const ROAD: [u8; 4] = [168, 124, 76, 255];
     pub const INK: [u8; 4] = [40, 30, 24, 255];
     pub const PLAYER: [u8; 4] = [196, 40, 28, 255];
-    pub const WALKER: [u8; 4] = [48, 40, 96, 255];
     pub const TRAIN: [u8; 4] = [28, 26, 26, 255];
     pub const TARGET: [u8; 4] = [232, 176, 32, 255];
     /// Árboles: un punto verde oscuro cada uno.
@@ -367,6 +366,7 @@ fn paint_town_buildings(map: &mut Canvas, town: &TownLayout, frame: &MapFrame) {
         let color = match building.kind {
             BuildingKind::House => palette::HOUSE,
             BuildingKind::GeneralStore
+            | BuildingKind::Pulperia
             | BuildingKind::PoliceStation
             | BuildingKind::Church
             | BuildingKind::Station
@@ -683,18 +683,18 @@ pub fn place_initial(kind: PlaceKind) -> char {
     kind.name().chars().next().unwrap_or(' ')
 }
 
-/// Las cosas en vivo que se marcan en el mapa en este frame.
+/// Las cosas en vivo que se marcan en el mapa en este frame. La gente no se
+/// marca: el mapa no muestra dónde está cada persona en tiempo real.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Markers {
     pub player: Option<(GroundVec2, Heading)>,
-    pub walkers: Vec<GroundVec2>,
     pub cars: Vec<PlacedCar>,
     /// Adónde envía el mandado al jugador, si a algún lado.
     pub target: Option<GroundVec2>,
 }
 
 /// Limpia `canvas` y dibuja los marcadores: los vagones del tren como barras
-/// oscuras, los peatones como puntos (omitidos fuera del mapa), el destino del
+/// oscuras (omitidos fuera del mapa), el destino del
 /// mandado como un rombo dorado y el jugador como una flecha según su rumbo. El
 /// destino y el jugador se fijan en el borde cuando están afuera, así que
 /// señalan el camino. Devuelve la posición del marcador del jugador, si la hay.
@@ -715,9 +715,6 @@ pub fn draw_markers(canvas: &mut Canvas, frame: &MapFrame, markers: &Markers) ->
             let p = c + dir * (k as f32 - steps as f32 / 2.0) * (2.0 * half / steps.max(1) as f32);
             square(canvas, p, 1, palette::TRAIN);
         }
-    }
-    for &walker in markers.walkers.iter().filter(|&&w| frame.contains(w)) {
-        square(canvas, frame.to_map(walker), 1, palette::WALKER);
     }
     if let Some(target) = markers.target {
         let (at, _) = frame.to_map_clamped(target);
@@ -1180,14 +1177,13 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn marks_walkers_and_train_cars_and_clamps_the_player() {
+    fn marks_train_cars_and_clamps_the_player() {
         let frame = MapFrame {
             center: GroundVec2::ZERO,
             half_extent: 100.0,
             size_px: 200,
         };
         let mut canvas = Canvas::new(200);
-        let walker = GroundVec2::new(-50.0, -50.0);
         let car = PlacedCar {
             kind: CarKind::Boxcar,
             center: GroundVec2::new(0.0, 60.0),
@@ -1202,14 +1198,11 @@ pub(crate) mod tests {
         };
         let markers = Markers {
             player: Some((GroundVec2::new(500.0, 0.0), Heading::from_radians(0.0))),
-            walkers: vec![walker, GroundVec2::new(400.0, 400.0)],
             cars: vec![car, away],
             target: None,
         };
         let player = draw_markers(&mut canvas, &frame, &markers).unwrap();
         assert!(close(player, Vec2::new(200.0 - EDGE, 100.0)));
-        let w = frame.to_map(walker);
-        assert_eq!(canvas.get(w.x as usize, w.y as usize), palette::WALKER);
         let c = frame.to_map(car.center);
         assert_eq!(canvas.get(c.x as usize, c.y as usize), palette::TRAIN);
         assert_eq!(
@@ -1223,7 +1216,7 @@ pub(crate) mod tests {
             0,
             "cars off the rails are not drawn"
         );
-        // Los peatones fuera del mapa dejan la esquina sin tocar.
+        // Nada fuera del mapa toca la esquina.
         assert_eq!(canvas.get(199, 0)[3], 0);
     }
 
