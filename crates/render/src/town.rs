@@ -1661,10 +1661,10 @@ fn spawn_built(
                 Part::Plaza(index) => e.insert(TownPlaza(index)),
             };
         }
-        if let Some(parts) = b.pulperia {
+        if let (Some(parts), Part::Building(index)) = (b.pulperia, b.part) {
             spawn_pulperia(
                 commands,
-                (root, town),
+                (root, town, index),
                 b.transform,
                 parts,
                 range,
@@ -1700,12 +1700,12 @@ fn spawn_built(
     }
 }
 
-/// Crea bajo `root` las hojas y el farol de la pulpería del pueblo `town`,
-/// ubicada en `building`: cada hoja, un pivote abierto de día con sus mallas
+/// Crea bajo `root` las hojas y el farol del local `room` (la pulpería o un
+/// almacén) del pueblo `town`, ubicado en `building`: cada hoja, un pivote abierto de día con sus mallas
 /// gastadas, y el farol, en el lugar de su llama.
 fn spawn_pulperia(
     commands: &mut Commands,
-    (root, town): (Entity, usize),
+    (root, town, room): (Entity, usize, usize),
     building: Transform,
     parts: PulperiaParts,
     range: &VisibilityRange,
@@ -1715,14 +1715,14 @@ fn spawn_pulperia(
     let flame = building.transform_point(parts.flame);
     commands.spawn((
         Name::new("Pulperia lamp"),
-        PulperiaLamp { town, flame },
+        PulperiaLamp { town, room, flame },
         Transform::from_translation(flame),
         Visibility::default(),
         range.clone(),
         ChildOf(root),
     ));
     for (hinge, leaf) in parts.leaves {
-        let pivot = PulperiaLeaf::new(town, building, hinge);
+        let pivot = PulperiaLeaf::new((town, room), building, hinge);
         let transform = pivot.transform();
         let pivot = commands
             .spawn((
@@ -1855,17 +1855,15 @@ mod tests {
             ..TownConfig::castex()
         })
         .unwrap();
-        for (town, pulperia) in [(small, true), (big, false)] {
+        // La pulpería y el almacén tienen sala; el banco, no.
+        for (town, kind, pulperia) in [
+            (small, BuildingKind::Pulperia, true),
+            (big.clone(), BuildingKind::GeneralStore, true),
+            (big, BuildingKind::Bank, false),
+        ] {
             let jobs: Vec<Job> = lots(&town, &terrain)
                 .into_iter()
-                .filter(|j| {
-                    j.lot.building.kind
-                        == if pulperia {
-                            BuildingKind::Pulperia
-                        } else {
-                            BuildingKind::GeneralStore
-                        }
-                })
+                .filter(|j| j.lot.building.kind == kind)
                 .collect();
             let built = build_lots(&jobs, &[]);
             assert!(!built.is_empty(), "{}", town.name);
@@ -1876,14 +1874,14 @@ mod tests {
                 let room = meshes
                     .iter()
                     .any(|(s, m)| *s == Surface::Paving && !weathers(m));
-                assert_eq!(room, pulperia, "{}", town.name);
+                assert_eq!(room, pulperia, "{} {kind:?}", town.name);
                 assert_eq!(meshes.iter().any(|(_, m)| !weathers(m)), pulperia);
             }
         }
     }
 
     #[test]
-    fn only_a_pulperia_is_built_with_its_leaves_and_lamp() {
+    fn only_the_pulperia_and_the_almacenes_are_built_with_their_leaves_and_lamp() {
         let terrain = Terrain::default();
         let small = TownLayout::generate(&TownConfig::castex()).unwrap();
         let big = TownLayout::generate(&TownConfig {
@@ -1892,14 +1890,16 @@ mod tests {
             ..TownConfig::castex()
         })
         .unwrap();
-        // Todo pueblo tiene su pulpería; uno sin ella no construye ninguna.
+        // Castex, su pulpería y su almacén; Pico, su pulpería y sus dos
+        // almacenes; un pueblo sin ninguno de ellos no construye ninguna.
         let mut none = big.clone();
-        none.buildings.retain(|b| b.kind != BuildingKind::Pulperia);
-        for (town, pulperia) in [(small, true), (big, true), (none, false)] {
+        none.buildings
+            .retain(|b| !matches!(b.kind, BuildingKind::Pulperia | BuildingKind::GeneralStore));
+        for (town, rooms) in [(small, 2), (big, 3), (none, 0)] {
             let built = build_lots(&lots(&town, &terrain), &[]);
             let parts: Vec<&PulperiaParts> =
                 built.iter().filter_map(|b| b.pulperia.as_ref()).collect();
-            assert_eq!(parts.len(), usize::from(pulperia), "{}", town.name);
+            assert_eq!(parts.len(), rooms, "{}", town.name);
             for p in parts {
                 assert_eq!(p.leaves.len(), 2);
                 assert!(

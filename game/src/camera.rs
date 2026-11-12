@@ -341,10 +341,11 @@ impl CameraOccluders {
     /// sobre el suelo la mantiene por encima.
     pub fn from_town(town: &TownLayout, terrain: &Terrain) -> Self {
         let ground = |p: GroundVec2| terrain.height(p.x, p.y);
-        let pulperia = town.pulperia();
-        // La pulpería se camina por adentro: una columna por pared y una losa
-        // en su cielorraso, en lugar de una columna sobre toda su huella.
-        let inside = pulperia.iter().flat_map(|(store, inside)| {
+        let rooms: Vec<_> = town.rooms().collect();
+        // La pulpería y los almacenes se caminan por adentro: una columna por
+        // pared y una losa en su cielorraso, en lugar de una columna sobre
+        // toda su huella.
+        let inside = rooms.iter().flat_map(|(_, store, inside)| {
             let g = ground(store.footprint.center());
             let walls = inside
                 .walls
@@ -360,7 +361,7 @@ impl CameraOccluders {
             .buildings
             .iter()
             .filter(|b| b.kind != BuildingKind::Platform)
-            .filter(|b| pulperia.as_ref().is_none_or(|(store, _)| b != store))
+            .filter(|b| rooms.iter().all(|(_, store, _)| b != store))
             .map(|b| {
                 // Su collider: las paredes de un galpón, no sus aleros, bajo
                 // los cuales puede pararse el jugador.
@@ -381,16 +382,16 @@ impl CameraOccluders {
     }
 }
 
-/// La puerta de la pulpería sobre cuyo piso está parado `at`, tapada para la
+/// La puerta del local (la pulpería o un almacén) sobre cuyo piso está parado
+/// `at`, tapada para la
 /// cámara: adentro, la cámara se queda en la sala en lugar de salir a la calle
 /// por el hueco. Afuera o en el umbral no hay ninguna, así que al cruzarlo la
 /// cámara nunca arranca dentro de un oclusor.
 fn room_door(towns: Option<&WorldTowns>, at: GroundVec2, world: &World) -> Option<Occluder> {
     let town = towns?.0.iter().find(|t| t.extent().contains_point(at))?;
-    let (store, inside) = town.pulperia()?;
-    if !inside.floor.contains_point(at) {
-        return None;
-    }
+    let (_, store, inside) = town
+        .rooms()
+        .find(|(_, _, inside)| inside.floor.contains_point(at))?;
     let g = world.ground_height(store.footprint.center());
     Some(Occluder::column(
         inside.doorway(),
@@ -1918,12 +1919,16 @@ mod tests {
                 .iter()
                 .all(|o| o.footprint != platform.footprint)
         );
-        // La pulpería: una columna por pared y su cielorraso, no una por
-        // edificio.
-        let pulperia = town.pulperia().map_or(0, |(_, inside)| inside.walls.len());
+        // La pulpería y el almacén: una columna por pared y su cielorraso, no
+        // una por edificio.
+        let rooms: Vec<usize> = town
+            .rooms()
+            .map(|(_, _, inside)| inside.walls.len())
+            .collect();
+        assert_eq!(rooms.len(), 2);
         assert_eq!(
             occluders.0.len(),
-            town.buildings.len() - 1 + town.canopies().len() + pulperia
+            town.buildings.len() - 1 + town.canopies().len() + rooms.iter().sum::<usize>()
         );
         let (position, heading) = town.platform_spot().unwrap();
         let top = world.ground_height(position);

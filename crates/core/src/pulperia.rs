@@ -1,7 +1,8 @@
-//! El interior de una pulpería, el almacén de un pueblo chico
-//! ([`crate::places::StoreStyle::Pulperia`]): se entra caminando por la puerta
-//! del medio del frente, y adentro hay un mostrador, estantes, barriles, mesas
-//! y bancos.
+//! El interior de los locales que se recorren ([`walks_in`]): se entra
+//! caminando por la puerta del medio del frente. En la pulpería hay un
+//! mostrador con reja, estantes, barriles, mesas y bancos; en el almacén de
+//! ramos generales, un mostrador largo, estantes hasta el techo, bolsas,
+//! barriles, monturas y herramientas, y ninguna mesa.
 //!
 //! La huella del edificio sigue siendo sólida para ubicar cosas alrededor
 //! (palenques, faroles, árboles, vehículos: [`TownLayout::obstacles`]); solo la
@@ -21,7 +22,7 @@
 use crate::clock::TimeOfDay;
 use crate::places::side_normal;
 use crate::rng::Rng;
-use crate::town::Building;
+use crate::town::{Building, BuildingKind};
 use crate::{Aabb, Heading, Rider, Vec2};
 
 /// Cuánto queda la cara de afuera de las paredes hacia adentro de la huella,
@@ -37,6 +38,32 @@ const DOOR_TOP: f32 = 3.4;
 /// Cuánto más baja que la pared queda la puerta, en metros.
 const DOOR_BELOW_EAVES: f32 = 1.3;
 
+/// Cuánto hay entre el mostrador del almacén y sus estantes, en metros (el
+/// lugar del almacenero).
+const ALMACEN_BEHIND: f32 = 1.4;
+/// La profundidad de los estantes del almacén, en metros.
+const GOODS_DEPTH: f32 = 0.5;
+/// Cuánto queda entre lo alto de los estantes del almacén y el cielorraso, en
+/// metros: llegan al techo.
+const GOODS_BELOW_CEILING: f32 = 0.3;
+/// Una pila de bolsas, a lo largo y a lo hondo, en metros.
+const SACKS: (f32, f32) = (1.4, 0.9);
+/// El caballete de las monturas, a lo largo de la pared y hacia adentro, en
+/// metros.
+const SADDLERY: (f32, f32) = (2.2, 0.8);
+/// El tablero de las herramientas, a lo largo de la pared y hacia adentro, en
+/// metros.
+const TOOLS: (f32, f32) = (2.4, 0.3);
+/// La mitad del paso libre desde la puerta hasta el mostrador del almacén,
+/// en metros.
+const ALMACEN_AISLE: f32 = 1.3;
+
+/// Si `kind` es un local que se recorre por dentro: la pulpería y el almacén
+/// de ramos generales.
+pub fn walks_in(kind: BuildingKind) -> bool {
+    matches!(kind, BuildingKind::Pulperia | BuildingKind::GeneralStore)
+}
+
 /// El ancho del pasillo detrás del extremo del mostrador, en metros.
 const COUNTER_PASSAGE: f32 = 2.0;
 /// Cuánto hay entre el mostrador y los estantes, en metros (el lugar del
@@ -49,6 +76,9 @@ const TABLE: (f32, f32) = (1.6, 0.8);
 const BENCH: (f32, f32) = (1.6, 0.35);
 /// Entre el canto de la mesa y el banco, en metros.
 const BENCH_GAP: f32 = 0.1;
+/// El paso libre entre el banco de atrás de una mesa y el mostrador, en
+/// metros.
+const TABLE_AISLE: f32 = 0.9;
 /// Dónde se sienta cada uno sobre un banco, a cada lado de su centro.
 const SEAT_OFFSET: f32 = 0.4;
 /// La altura de los bancos, en metros: la parte de arriba del asiento sobre el
@@ -106,6 +136,18 @@ pub enum FurnitureKind {
     Barrel,
     Table,
     Bench,
+    /// El mostrador largo del almacén, de madera, sin reja.
+    ShopCounter,
+    /// Los estantes del almacén, hasta el techo, con mercadería: latas,
+    /// paquetes, frascos y piezas de tela.
+    Goods,
+    /// Una pila de bolsas de yerba, harina y azúcar sobre el piso.
+    Sacks,
+    /// Un caballete con monturas, riendas y lazos colgados.
+    Saddlery,
+    /// Un tablero en la pared con herramientas colgadas: palas, azadas,
+    /// hachas y serruchos.
+    Tools,
 }
 
 /// Un mueble: con qué chocan las personas y qué tan alto es.
@@ -146,32 +188,53 @@ pub struct Interior {
     pub floor: Aabb,
     /// La altura del cielorraso sobre el piso, en metros.
     pub ceiling: f32,
+    /// Dónde atiende el pulpero o el almacenero: detrás del mostrador, de
+    /// cara a la calle.
+    pub keeper: Keeper,
+}
+
+/// Dónde está parado quien atiende un local, y hacia dónde mira.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Keeper {
+    pub position: Vec2,
+    pub facing: Heading,
+}
+
+/// Cuánto detrás del mostrador se para quien atiende, desde su canto de
+/// adentro, en metros.
+const KEEPER_BEHIND: f32 = 0.55;
+
+/// Quien atiende en `(u, v)` del marco `frame`, de cara a la calle.
+fn keeper(frame: &Frame, u: f32, v: f32) -> Keeper {
+    let n = frame.n;
+    Keeper {
+        position: frame.point(u, v),
+        facing: Heading::from_radians(n.y.atan2(n.x)),
+    }
 }
 
 impl Interior {
-    /// El interior de `store`, dentro de su huella.
+    /// El interior de `store`, dentro de su huella: el de una pulpería si lo
+    /// es, el de un almacén de ramos generales si no ([`walks_in`]).
     pub fn of(store: &Building) -> Self {
-        let frame = Frame::of(store);
-        let (width, depth) = (frame.width, frame.depth);
-        let half = width / 2.0;
-        let outer = half - PROUD;
-        let inner = outer - WALL;
-        let (front, back) = (PROUD + WALL, depth - PROUD - WALL);
-        let jamb = DOOR_WIDTH / 2.0;
-        let walls = vec![
-            frame.rect(-outer, -jamb, PROUD, front),
-            frame.rect(jamb, outer, PROUD, front),
-            frame.rect(-outer, outer, back, depth - PROUD),
-            frame.rect(-outer, -inner, front, back),
-            frame.rect(inner, outer, front, back),
-        ];
-        let door = Door {
-            center: frame.point(0.0, PROUD),
-            outward: frame.n,
-            width: DOOR_WIDTH,
-            height: (store.height - DOOR_BELOW_EAVES).min(DOOR_TOP),
-        };
+        if store.kind == BuildingKind::Pulperia {
+            Self::pulperia(store)
+        } else {
+            Self::almacen(store)
+        }
+    }
 
+    /// La pulpería: el mostrador con su reja, la estantería del fondo, dos
+    /// barriles y tres mesas con sus bancos.
+    fn pulperia(store: &Building) -> Self {
+        let Shell {
+            frame,
+            inner,
+            front,
+            back,
+            walls,
+            door,
+        } = Shell::of(store);
         let mut furniture = Vec::new();
         let mut put = |kind, (u0, u1, v0, v1): (f32, f32, f32, f32), height| {
             furniture.push(Furniture {
@@ -215,8 +278,12 @@ impl Interior {
             (side, front + 2.65),
             (side, front + 6.05),
         ];
+        // Una mesa va solo si queda paso entre sus bancos y el mostrador: en una
+        // sala poco profunda, la de atrás no entra.
+        let reach = TABLE.1 / 2.0 + BENCH_GAP + BENCH.1 + TABLE_AISLE;
+        let tables = tables.into_iter().filter(|&(_, v)| v + reach <= counter);
         let mut seats = Vec::new();
-        for (table, (u, v)) in tables.into_iter().enumerate() {
+        for (table, (u, v)) in tables.enumerate() {
             let (tu, tv) = (TABLE.0 / 2.0, TABLE.1 / 2.0);
             put(FurnitureKind::Table, (u - tu, u + tu, v - tv, v + tv), 0.75);
             for sign in [-1.0, 1.0] {
@@ -248,6 +315,114 @@ impl Interior {
             seats,
             floor: frame.rect(-inner, inner, front, back),
             ceiling: store.height,
+            // Junto a la ventanilla de la reja, cerca del paso al fondo.
+            keeper: keeper(
+                &frame,
+                inner - COUNTER_PASSAGE - 1.2,
+                counter + COUNTER_DEPTH + KEEPER_BEHIND,
+            ),
+        }
+    }
+
+    /// El almacén de ramos generales: un mostrador largo de lado a lado, con
+    /// el paso al fondo en un extremo; estantes hasta el techo contra el
+    /// fondo y la pared de la izquierda; bolsas y barriles frente al
+    /// mostrador; las monturas contra la pared de la derecha y el tablero de
+    /// las herramientas contra el frente. Sin mesas: ahí se compra, no se queda.
+    fn almacen(store: &Building) -> Self {
+        let Shell {
+            frame,
+            inner,
+            front,
+            back,
+            walls,
+            door,
+        } = Shell::of(store);
+        let mut furniture = Vec::new();
+        let mut put = |kind, (u0, u1, v0, v1): (f32, f32, f32, f32), height| {
+            furniture.push(Furniture {
+                kind,
+                footprint: frame.rect(u0, u1, v0, v1),
+                height,
+            });
+        };
+        let tall = store.height - GOODS_BELOW_CEILING;
+        put(
+            FurnitureKind::Goods,
+            (-inner, inner, back - GOODS_DEPTH, back),
+            tall,
+        );
+        let counter = back - GOODS_DEPTH - ALMACEN_BEHIND - COUNTER_DEPTH;
+        put(
+            FurnitureKind::ShopCounter,
+            (
+                -inner,
+                inner - COUNTER_PASSAGE,
+                counter,
+                counter + COUNTER_DEPTH,
+            ),
+            1.0,
+        );
+        // Lo que se despacha del piso queda a un metro del mostrador, para
+        // acercarse a atender.
+        let shop_floor = counter - 1.0;
+        // La pared de la izquierda: estantes desde un metro de la puerta
+        // hasta donde empiezan las bolsas.
+        let sacks_v = shop_floor - SACKS.1;
+        put(
+            FurnitureKind::Goods,
+            (-inner, -inner + GOODS_DEPTH, front + 1.0, sacks_v - 0.6),
+            tall,
+        );
+        // Bolsas a la izquierda del paso y barriles a la derecha, frente al
+        // mostrador.
+        let left = -inner + GOODS_DEPTH + 0.3;
+        let mut u = left;
+        while u + SACKS.0 <= -ALMACEN_AISLE {
+            put(
+                FurnitureKind::Sacks,
+                (u, u + SACKS.0, sacks_v, shop_floor),
+                0.7,
+            );
+            u += SACKS.0 + 0.2;
+        }
+        let r = BARREL / 2.0;
+        let mut u = ALMACEN_AISLE;
+        while u + BARREL <= inner - COUNTER_PASSAGE {
+            let v = shop_floor - r;
+            put(FurnitureKind::Barrel, (u, u + BARREL, v - r, v + r), 0.9);
+            u += BARREL + 0.1;
+        }
+        // Las monturas contra la pared de la derecha, cerca de la puerta, si
+        // caben antes de los barriles; el tablero de las herramientas contra
+        // el frente, a la derecha de la puerta.
+        let saddles = front + 1.0;
+        if saddles + SADDLERY.0 <= shop_floor - BARREL - 0.8 {
+            put(
+                FurnitureKind::Saddlery,
+                (inner - SADDLERY.1, inner, saddles, saddles + SADDLERY.0),
+                1.1,
+            );
+        }
+        let tools = ALMACEN_AISLE + 0.2;
+        let end = (tools + TOOLS.0).min(inner - SADDLERY.1 - 0.2);
+        if end - tools >= 1.0 {
+            put(
+                FurnitureKind::Tools,
+                (tools, end, front, front + TOOLS.1),
+                2.2,
+            );
+        }
+
+        Self {
+            door,
+            walls,
+            furniture,
+            seats: Vec::new(),
+            floor: frame.rect(-inner, inner, front, back),
+            ceiling: store.height,
+            // En el medio del mostrador, frente a la puerta.
+            keeper: keeper(&frame, 0.0, counter + COUNTER_DEPTH + KEEPER_BEHIND),
         }
     }
 
@@ -392,6 +567,52 @@ impl Interior {
     }
 }
 
+/// Lo que comparten todas las salas: las paredes con el hueco de la puerta del
+/// medio del frente, en el marco del edificio.
+struct Shell {
+    frame: Frame,
+    /// La cara de adentro de las paredes de los costados, a cada lado del eje.
+    inner: f32,
+    /// La cara de adentro de la pared del frente.
+    front: f32,
+    /// La cara de adentro de la pared del fondo.
+    back: f32,
+    walls: Vec<Aabb>,
+    door: Door,
+}
+
+impl Shell {
+    fn of(store: &Building) -> Self {
+        let frame = Frame::of(store);
+        let (width, depth) = (frame.width, frame.depth);
+        let outer = width / 2.0 - PROUD;
+        let inner = outer - WALL;
+        let (front, back) = (PROUD + WALL, depth - PROUD - WALL);
+        let jamb = DOOR_WIDTH / 2.0;
+        let walls = vec![
+            frame.rect(-outer, -jamb, PROUD, front),
+            frame.rect(jamb, outer, PROUD, front),
+            frame.rect(-outer, outer, back, depth - PROUD),
+            frame.rect(-outer, -inner, front, back),
+            frame.rect(inner, outer, front, back),
+        ];
+        let door = Door {
+            center: frame.point(0.0, PROUD),
+            outward: frame.n,
+            width: DOOR_WIDTH,
+            height: (store.height - DOOR_BELOW_EAVES).min(DOOR_TOP),
+        };
+        Self {
+            frame,
+            inner,
+            front,
+            back,
+            walls,
+            door,
+        }
+    }
+}
+
 /// El marco propio de un edificio: `u` a lo largo del frente, `v` hacia
 /// adentro desde el borde de la calle.
 struct Frame {
@@ -467,87 +688,229 @@ mod tests {
             .expect("Castex has an almacén");
         assert_ne!(almacen.footprint, b.footprint);
         assert_eq!(StoreStyle::of(almacen.kind), Some(StoreStyle::GeneralStore));
-        // Sin pulpería, nada se recorre por dentro.
+        // Sin pulpería ni almacén, nada se recorre por dentro.
         let mut none = t.clone();
         none.buildings.retain(|a| a.kind != BuildingKind::Pulperia);
         assert_eq!(none.pulperia(), None);
+        assert!(
+            none.colliders() != none.obstacles(),
+            "the almacén still walks in"
+        );
+        none.buildings.retain(|a| !walks_in(a.kind));
+        assert_eq!(none.rooms().count(), 0);
         assert_eq!(none.colliders(), none.obstacles());
     }
 
     #[test]
     fn people_walk_in_through_the_door_but_not_through_the_walls_or_a_horse() {
         let t = castex();
-        let (b, inside) = t.pulperia().unwrap();
         let world = World::with_town(Terrain::default(), &t);
         let person = Circle {
             radius: Rider::PERSON_RADIUS,
         };
         let settle = |collider: Circle, p: Vec2| world.resolve(collider, p, |_| {});
-        let door = inside.door;
-        // En el umbral y adentro, en el paso de la puerta: nada lo empuja.
-        for v in [0.0, 1.0, 4.0] {
-            let p = door.center - door.outward * v;
-            assert!(b.footprint.contains_point(p));
-            assert_eq!(settle(person, p), p, "{v} m in");
+        // La pulpería y el almacén.
+        assert_eq!(t.rooms().count(), 2);
+        for (_, b, inside) in t.rooms() {
+            let door = inside.door;
+            // En el umbral y adentro, en el paso de la puerta: nada lo empuja.
+            for v in [0.0, 1.0, 4.0] {
+                let p = door.center - door.outward * v;
+                assert!(b.footprint.contains_point(p));
+                assert_eq!(settle(person, p), p, "{:?}: {v} m in", b.kind);
+            }
+            // Contra el frente, a un costado de la puerta: queda afuera.
+            let wall = door.center + Vec2::new(-door.outward.y, door.outward.x) * 3.0;
+            let pushed = settle(person, wall - door.outward * 0.2);
+            assert!((pushed - wall).dot(door.outward) >= Rider::PERSON_RADIUS - 1e-3);
+            // Un caballo no entra por la puerta.
+            let horse = Circle {
+                radius: Rider::COLLIDER_RADIUS,
+            };
+            let at = door.center - door.outward * 0.3;
+            assert_ne!(settle(horse, at), at);
         }
-        // Contra el frente, a un costado de la puerta: queda afuera.
-        let wall = door.center + Vec2::new(-door.outward.y, door.outward.x) * 3.0;
-        let pushed = settle(person, wall - door.outward * 0.2);
-        assert!((pushed - wall).dot(door.outward) >= Rider::PERSON_RADIUS - 1e-3);
-        // Un caballo no entra por la puerta.
-        let horse = Circle {
-            radius: Rider::COLLIDER_RADIUS,
-        };
-        let at = door.center - door.outward * 0.3;
-        assert_ne!(settle(horse, at), at);
     }
 
     #[test]
     fn walls_and_furniture_stay_inside_the_footprint_and_leave_the_door_clear() {
         for t in crate::town::tests::sample_towns() {
-            let Some((b, inside)) = t.pulperia() else {
-                continue;
-            };
-            assert!(inside.door.height > 2.0 && inside.door.height <= b.height);
-            let doorway = Aabb::from_center_size(
-                inside.door.center - inside.door.outward * 2.0,
-                Vec2::new(DOOR_WIDTH - 0.01, DOOR_WIDTH - 0.01),
-            );
-            for o in inside.obstacles() {
-                assert!(b.footprint.contains(&o), "{}: {o:?}", t.name);
-                assert!(!o.intersects(&doorway), "{}: {o:?}", t.name);
+            for (_, b, inside) in t.rooms() {
+                assert!(inside.door.height > 2.0 && inside.door.height <= b.height);
+                let doorway = Aabb::from_center_size(
+                    inside.door.center - inside.door.outward * 2.0,
+                    Vec2::new(DOOR_WIDTH - 0.01, DOOR_WIDTH - 0.01),
+                );
+                for o in inside.obstacles() {
+                    assert!(b.footprint.contains(&o), "{}: {o:?}", t.name);
+                    assert!(!o.intersects(&doorway), "{}: {o:?}", t.name);
+                }
+                // El hueco calza entre los dos tramos del frente.
+                let doorway = inside.doorway();
+                assert!(b.footprint.contains(&doorway), "{}", t.name);
+                let size = doorway.size();
+                let (wide, deep) = (size.x.max(size.y), size.x.min(size.y));
+                assert!((wide - DOOR_WIDTH).abs() < 1e-4, "{}: {size:?}", t.name);
+                assert!((deep - WALL).abs() < 1e-4, "{}: {size:?}", t.name);
+                let touching = inside
+                    .walls
+                    .iter()
+                    .filter(|w| w.expanded(1e-3).intersects(&doorway))
+                    .count();
+                assert_eq!(touching, 2, "{}", t.name);
+                for f in &inside.furniture {
+                    assert!(inside.floor.contains(&f.footprint), "{}: {f:?}", t.name);
+                }
+                for s in &inside.seats {
+                    // Junto a una mesa, mirándola.
+                    let table = inside
+                        .furniture
+                        .iter()
+                        .filter(|f| f.kind == FurnitureKind::Table)
+                        .map(|f| f.footprint.center())
+                        .min_by(|a, b| a.distance(s.position).total_cmp(&b.distance(s.position)))
+                        .unwrap();
+                    let to = table - s.position;
+                    let to = to * (1.0 / to.length());
+                    assert!(s.facing.forward().dot(to) > 0.7, "{}: {s:?}", t.name);
+                }
+                // Tres mesas de cuatro, o dos si la sala es poco profunda; el
+                // almacén, ninguna.
+                let seats: &[usize] = if b.kind == BuildingKind::Pulperia {
+                    &[8, 12]
+                } else {
+                    &[0]
+                };
+                assert!(seats.contains(&inside.seats.len()), "{}", t.name);
+                // Ningún mueble se encima con otro.
+                for (i, f) in inside.furniture.iter().enumerate() {
+                    for g in &inside.furniture[i + 1..] {
+                        assert!(
+                            !f.footprint.expanded(-1e-3).intersects(&g.footprint),
+                            "{}: {f:?} / {g:?}",
+                            t.name
+                        );
+                    }
+                }
             }
-            // El hueco calza entre los dos tramos del frente.
-            let doorway = inside.doorway();
-            assert!(b.footprint.contains(&doorway), "{}", t.name);
-            let size = doorway.size();
-            let (wide, deep) = (size.x.max(size.y), size.x.min(size.y));
-            assert!((wide - DOOR_WIDTH).abs() < 1e-4, "{}: {size:?}", t.name);
-            assert!((deep - WALL).abs() < 1e-4, "{}: {size:?}", t.name);
-            let touching = inside
-                .walls
-                .iter()
-                .filter(|w| w.expanded(1e-3).intersects(&doorway))
-                .count();
-            assert_eq!(touching, 2, "{}", t.name);
-            for f in &inside.furniture {
-                assert!(inside.floor.contains(&f.footprint), "{}: {f:?}", t.name);
-            }
-            for s in &inside.seats {
-                // Junto a una mesa, mirándola.
-                let table = inside
+        }
+    }
+
+    #[test]
+    fn whoever_keeps_the_room_stands_behind_the_counter_on_free_floor_facing_the_door() {
+        let mut rooms = 0;
+        for t in crate::town::tests::sample_towns() {
+            for (_, b, inside) in t.rooms() {
+                rooms += 1;
+                let k = inside.keeper;
+                let door = inside.door;
+                let depth = |p: Vec2| (door.center - p).dot(door.outward);
+                assert!(inside.floor.contains_point(k.position), "{}", t.name);
+                let body = Aabb::from_center_size(
+                    k.position,
+                    Vec2::new(2.0 * Rider::PERSON_RADIUS, 2.0 * Rider::PERSON_RADIUS),
+                );
+                for o in inside.obstacles() {
+                    assert!(!o.intersects(&body), "{} {:?}: {o:?}", t.name, b.kind);
+                }
+                // Detrás del mostrador: más adentro que él, y frente a él.
+                let counter = inside
                     .furniture
                     .iter()
-                    .filter(|f| f.kind == FurnitureKind::Table)
-                    .map(|f| f.footprint.center())
-                    .min_by(|a, b| a.distance(s.position).total_cmp(&b.distance(s.position)))
-                    .unwrap();
-                let to = table - s.position;
-                let to = to * (1.0 / to.length());
-                assert!(s.facing.forward().dot(to) > 0.7, "{}: {s:?}", t.name);
+                    .find(|f| matches!(f.kind, FurnitureKind::Counter | FurnitureKind::ShopCounter))
+                    .unwrap()
+                    .footprint;
+                assert!(depth(k.position) > depth(counter.center()) + COUNTER_DEPTH / 2.0);
+                let across = Vec2::new(-door.outward.y, door.outward.x);
+                let span = |a: Aabb| {
+                    let (p, q) = (a.min.dot(across), a.max.dot(across));
+                    (p.min(q), p.max(q))
+                };
+                let (lo, hi) = span(counter);
+                let at = k.position.dot(across);
+                assert!(at > lo && at < hi, "{}: along the counter", t.name);
+                assert!(k.facing.forward().dot(door.outward) > 0.99, "{}", t.name);
             }
-            assert_eq!(inside.seats.len(), 12);
         }
+        assert!(rooms >= 4, "{rooms}");
+    }
+
+    #[test]
+    fn an_almacen_has_a_long_counter_goods_to_the_ceiling_and_a_clear_way_to_it() {
+        let mut almacenes = 0;
+        for t in crate::town::tests::sample_towns() {
+            for (_, b, inside) in t.rooms() {
+                if b.kind != BuildingKind::GeneralStore {
+                    continue;
+                }
+                almacenes += 1;
+                let count = |k| inside.furniture.iter().filter(|f| f.kind == k).count();
+                for k in [
+                    FurnitureKind::ShopCounter,
+                    FurnitureKind::Goods,
+                    FurnitureKind::Sacks,
+                    FurnitureKind::Barrel,
+                    FurnitureKind::Saddlery,
+                    FurnitureKind::Tools,
+                ] {
+                    assert!(count(k) > 0, "{}: no {k:?}", t.name);
+                }
+                for k in [
+                    FurnitureKind::Table,
+                    FurnitureKind::Bench,
+                    FurnitureKind::Counter,
+                ] {
+                    assert_eq!(count(k), 0, "{}: {k:?}", t.name);
+                }
+                let along = |a: Aabb| {
+                    let n = inside.door.outward;
+                    a.size().dot(Vec2::new(n.y, n.x)).abs()
+                };
+                let counter = inside
+                    .furniture
+                    .iter()
+                    .find(|f| f.kind == FurnitureKind::ShopCounter)
+                    .unwrap();
+                assert!(
+                    along(counter.footprint) >= 0.6 * along(inside.floor),
+                    "{}: a long counter",
+                    t.name
+                );
+                for g in inside
+                    .furniture
+                    .iter()
+                    .filter(|f| f.kind == FurnitureKind::Goods)
+                {
+                    assert!(
+                        g.height >= inside.ceiling - GOODS_BELOW_CEILING - 1e-4,
+                        "{}: up to the ceiling",
+                        t.name
+                    );
+                }
+                // Ningún mueble se encima con otro.
+                for (i, f) in inside.furniture.iter().enumerate() {
+                    for g in &inside.furniture[i + 1..] {
+                        assert!(
+                            !f.footprint.expanded(-1e-3).intersects(&g.footprint),
+                            "{}: {f:?} / {g:?}",
+                            t.name
+                        );
+                    }
+                }
+                // De la puerta al mostrador, el paso queda libre.
+                let door = inside.door;
+                let to_counter = (door.center - counter.footprint.center()).dot(door.outward)
+                    - COUNTER_DEPTH / 2.0;
+                for step in 1..((to_counter - 0.1) as i32) {
+                    let p = door.center - door.outward * step as f32;
+                    let path = Aabb::from_center_size(p, Vec2::new(0.9, 0.9));
+                    for o in inside.obstacles() {
+                        assert!(!o.intersects(&path), "{}: {p:?} blocked by {o:?}", t.name);
+                    }
+                }
+            }
+        }
+        assert!(almacenes >= 2, "{almacenes}");
     }
 
     #[test]
@@ -662,14 +1025,16 @@ mod tests {
     #[test]
     fn placement_keeps_the_whole_footprint_solid() {
         let t = castex();
-        let (b, inside) = t.pulperia().unwrap();
-        assert!(t.obstacles().contains(&b.collider()));
         let colliders = t.colliders();
-        assert!(!colliders.contains(&b.collider()));
-        assert!(inside.obstacles().all(|o| colliders.contains(&o)));
-        assert_eq!(
-            colliders.len(),
-            t.obstacles().len() - 1 + inside.obstacles().count()
-        );
+        let mut swapped = 0;
+        for (_, b, inside) in t.rooms() {
+            assert!(t.obstacles().contains(&b.collider()));
+            assert!(!colliders.contains(&b.collider()));
+            assert!(inside.obstacles().all(|o| colliders.contains(&o)));
+            swapped += inside.obstacles().count();
+        }
+        let rooms = t.rooms().count();
+        assert_eq!(rooms, 2, "the pulpería and the almacén");
+        assert_eq!(colliders.len(), t.obstacles().len() - rooms + swapped);
     }
 }

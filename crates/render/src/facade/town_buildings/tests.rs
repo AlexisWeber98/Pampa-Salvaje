@@ -108,7 +108,10 @@ fn masonry_fronts_stay_inside_their_footprints() {
                 continue;
             }
             let over_street = p.z > half_d;
-            let store = matches!(lot.building.kind, BuildingKind::GeneralStore | BuildingKind::Pulperia);
+            let store = matches!(
+                lot.building.kind,
+                BuildingKind::GeneralStore | BuildingKind::Pulperia
+            );
             if store && over_street {
                 // La galería: bajo la cornisa, dentro de la galería de core.
                 assert!(p.y < h - 0.5, "{surface:?} at {p} over the sidewalk");
@@ -645,13 +648,26 @@ fn the_outskirts_have_wooden_ranchos_casillas_and_mud_and_straw_ranchos() {
 fn town_buildings_keep_to_their_triangle_budgets() {
     for lot in street() {
         let tris = building(&lot).unwrap().triangles();
-        if lot.building.kind == BuildingKind::Pulperia {
-            // Su sala amueblada, aparte: mostrador con reja, estantes con
-            // botellas, tres mesas, seis bancos, dos barriles y el farol;
-            // 7.2k a 8.7k al escribir esto, casi la mitad en botellas.
+        if lot.building.kind == BuildingKind::GeneralStore {
+            // Su sala, aparte: estantes hasta el techo con mercadería en dos
+            // paredes, el mostrador largo con balanza y vitrina, bolsas,
+            // barriles, monturas, herramientas y el farol; 18.9k a 22.4k al
+            // escribir esto, casi todo en la mercadería de los estantes.
             let room = interior(&lot).map_or(0, |s| s.triangles());
             assert!(
-                (4000..=10000).contains(&room),
+                (12000..=24000).contains(&room),
+                "almacén {:#x}: {room} triangles inside",
+                lot.variant
+            );
+        }
+        if lot.building.kind == BuildingKind::Pulperia {
+            // Su sala amueblada, aparte: mostrador con reja, estantes con
+            // botellas, tres mesas, seis bancos, dos barriles, el farol, y la
+            // caja registradora, vasos, botellas, frascos y naipes encima;
+            // 8.2k a 9.7k al escribir esto, casi la mitad en botellas.
+            let room = interior(&lot).map_or(0, |s| s.triangles());
+            assert!(
+                (4000..=12000).contains(&room),
                 "pulpería {:#x}: {room} triangles inside",
                 lot.variant
             );
@@ -855,7 +871,7 @@ fn fills_door(shape: &Shape, surface: Surface, x: f32, face: f32) -> bool {
 }
 
 #[test]
-fn the_pulperias_middle_door_stands_open_and_every_other_door_keeps_its_leaves() {
+fn a_shops_middle_door_stands_open_and_every_other_door_keeps_its_leaves() {
     // Un frente de 16 m: cinco vanos, puertas en el 0, el 2 y el 4.
     let face = 14.0 / 2.0 - PROUD;
     let side = (16.0 - 2.0 * PROUD) * 2.0 / 5.0;
@@ -866,11 +882,10 @@ fn the_pulperias_middle_door_stands_open_and_every_other_door_keeps_its_leaves()
                 ..lot(kind_of(store), (16.0, 14.0, 5.0), v)
             })
             .unwrap();
-            let open = store == StoreStyle::Pulperia;
+            // Se entra a los dos por la puerta del medio.
             for surface in [Surface::Recess, Surface::Door] {
-                assert_eq!(
-                    fills_door(&shape, surface, 0.0, face),
-                    !open,
+                assert!(
+                    !fills_door(&shape, surface, 0.0, face),
                     "{store:?} {v}: {surface:?} in the middle door"
                 );
                 for x in [-side, side] {
@@ -1007,12 +1022,15 @@ fn a_pulperia_is_the_same_room_whichever_way_it_faces() {
 }
 
 #[test]
-fn only_a_pulperia_has_an_interior() {
+fn only_the_pulperia_and_the_almacen_have_an_interior() {
     for lot in street().into_iter().chain(yard()) {
-        let pulperia = lot.building.kind == BuildingKind::Pulperia;
+        let walks_in = matches!(
+            lot.building.kind,
+            BuildingKind::Pulperia | BuildingKind::GeneralStore
+        );
         assert_eq!(
             interior(&lot).is_some(),
-            pulperia,
+            walks_in,
             "{:?}",
             lot.building.kind
         );
@@ -1034,6 +1052,8 @@ fn the_pulperias_leaves_close_its_middle_door_like_the_others_and_swing_clear_of
     let face = 14.0 / 2.0 - PROUD;
     let back = 0.45 * 0.5;
     let top = (5.0f32 - 1.3).min(3.4) - FANLIGHT;
+    // La puerta de la derecha, del mismo ancho, en el vano 4 de cinco.
+    let side = (16.0 - 2.0 * PROUD) * 2.0 / 5.0;
     for v in 0..6 {
         let lot = pulperia_lot((16.0, 14.0), Side::South, v);
         let general = building(&Lot {
@@ -1047,10 +1067,11 @@ fn the_pulperias_leaves_close_its_middle_door_like_the_others_and_swing_clear_of
         for leaf in &leaves {
             let points = leaf.shape.points(Surface::Door);
             assert!(!points.is_empty());
-            // Las mismas hojas que las de un almacén en esa puerta.
+            // Las mismas hojas que las de la puerta de la derecha.
             for p in &points {
+                let there = *p + Vec3::X * side;
                 assert!(
-                    doors.iter().any(|q| q.distance(*p) < 1e-4),
+                    doors.iter().any(|q| q.distance(there) < 1e-4),
                     "{v}: {p} is not a door leaf"
                 );
             }
@@ -1076,8 +1097,10 @@ fn the_pulperias_leaves_close_its_middle_door_like_the_others_and_swing_clear_of
             }
         }
     }
+    // El almacén también se abre; el banco no tiene hojas que se muevan.
     let store = lot(BuildingKind::GeneralStore, (16.0, 14.0, 5.0), 1);
-    assert!(leaves(&store).is_none(), "a general store keeps its leaves");
+    assert!(leaves(&store).is_some(), "an almacén swings its leaves too");
+    assert!(leaves(&lot(BuildingKind::Bank, BANK, 4)).is_none());
 }
 
 #[test]
@@ -1103,7 +1126,8 @@ fn the_lamps_flame_burns_on_its_brass_font_inside_its_glass_chimney() {
         let (lo, hi) = bounds(&tube);
         assert!(lo.y < 0.0 && hi.y > 0.1 && lo.x > -0.05 && hi.x < 0.05);
     }
-    assert!(lamp_flame(&lot(BuildingKind::GeneralStore, (16.0, 14.0, 5.0), 1)).is_none());
+    assert!(lamp_flame(&lot(BuildingKind::GeneralStore, (16.0, 14.0, 5.0), 1)).is_some());
+    assert!(lamp_flame(&lot(BuildingKind::Bank, (16.0, 14.0, 6.2), 1)).is_none());
 }
 
 /// El tipo de edificio de un comercio de estilo `store`.
@@ -1112,4 +1136,76 @@ fn kind_of(store: StoreStyle) -> BuildingKind {
         StoreStyle::Pulperia => BuildingKind::Pulperia,
         StoreStyle::GeneralStore => BuildingKind::GeneralStore,
     }
+}
+
+#[test]
+fn the_almacens_shelves_reach_the_ceiling_and_its_counter_has_no_grille() {
+    for v in 0..6 {
+        let almacen = lot(BuildingKind::GeneralStore, (16.0, 14.0, 5.0), v);
+        let pulperia = pulperia_lot((16.0, 14.0), Side::South, v);
+        let high = |lot: &Lot, surface| {
+            let room = interior(lot).unwrap();
+            room.points(surface)
+                .into_iter()
+                .filter(|p| p.y > 3.0)
+                .collect::<Vec<_>>()
+        };
+        // La cornisa pintada de los estantes, arriba de todo; la pulpería no
+        // tiene nada pintado tan alto.
+        assert!(!high(&almacen, Surface::Door).is_empty(), "{v}");
+        assert!(high(&pulperia, Surface::Door).is_empty(), "{v}");
+        // De hierro tan alto, solo la varilla y los brazos del farol:
+        // ninguna reja.
+        let flame = lamp_flame(&almacen).unwrap();
+        for p in high(&almacen, Surface::Steel) {
+            let off = Vec2::new(p.x - flame.x, p.z - flame.z).length();
+            assert!(off < 0.3, "{v}: iron at {p}");
+        }
+        assert!(
+            high(&pulperia, Surface::Steel).len() > 20,
+            "{v}: the pulpería keeps its grille"
+        );
+    }
+}
+
+#[test]
+fn the_pulperias_counter_and_tables_are_set_with_a_register_glasses_and_cards() {
+    use pampa_core::pulperia::{FurnitureKind, Interior};
+    let mut cards = 0;
+    for v in 0..6 {
+        let lot = pulperia_lot((16.0, 14.0), Side::South, v);
+        let room = Interior::of(&lot.building);
+        let inside = interior(&lot).unwrap();
+        let local = |a: Aabb| (Vec2::new(a.min.x, -a.max.y), Vec2::new(a.max.x, -a.min.y));
+        let on = |f: &pampa_core::pulperia::Furniture, surface: Surface| {
+            let (lo, hi) = local(f.footprint);
+            let top = ROOM_FLOOR + f.height;
+            inside
+                .points(surface)
+                .into_iter()
+                .filter(|p| {
+                    p.x > lo.x && p.x < hi.x && p.z > lo.y && p.z < hi.y && p.y > top - 1e-3
+                })
+                .count()
+        };
+        let counter = room
+            .furniture
+            .iter()
+            .find(|f| f.kind == FurnitureKind::Counter)
+            .unwrap();
+        // La caja registradora de bronce y los vasos, sobre el mostrador.
+        assert!(on(counter, Surface::Bronze) > 0, "{v}: no register");
+        assert!(on(counter, Surface::Glass) > 0, "{v}: no glasses");
+        for table in room
+            .furniture
+            .iter()
+            .filter(|f| f.kind == FurnitureKind::Table)
+        {
+            assert!(on(table, Surface::Glass) > 0, "{v}: a bare table");
+            if on(table, Surface::Painted(Paint::LimeWhite)) > 0 {
+                cards += 1;
+            }
+        }
+    }
+    assert!(cards > 0, "someone plays truco");
 }

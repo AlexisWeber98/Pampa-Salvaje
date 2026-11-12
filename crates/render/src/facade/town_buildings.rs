@@ -802,9 +802,9 @@ fn store(shape: &mut Shape, (w, d, h): (f32, f32, f32), v: u32, style: StoreStyl
         grilles: !general,
         hoods: general,
         transom: true,
-        // Se entra a la pulpería por la puerta del medio, que core deja
-        // abierta (`pampa_core::pulperia::Interior::door`).
-        open_middle: !general,
+        // Se entra a la pulpería y al almacén por la puerta del medio, que
+        // core deja abierta (`pampa_core::pulperia::Interior::door`).
+        open_middle: true,
     };
     italianate(shape, &walls, &f, v);
     let (roof, posts) = if general {

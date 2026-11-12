@@ -3,7 +3,11 @@
 //! cielorraso de tablas sobre tirantes, el mostrador con su reja de hierro
 //! hasta el techo, la estantería del fondo con botellas, ginebras cuadradas,
 //! cajones y damajuanas forradas de paja, dos barriles junto al mostrador,
-//! tres mesas con sus bancos y un farol de querosén colgado en el medio.
+//! tres mesas con sus bancos y un farol de querosén colgado en el medio; sobre
+//! el mostrador, la caja registradora, vasos y frascos, y sobre las mesas,
+//! vasos, botellas y a veces los naipes de un truco. El
+//! almacén de ramos generales tiene la misma puerta, el mismo piso, cielorraso
+//! y farol, y sus propios muebles ([`almacen`]).
 //!
 //! Cada mueble está donde core lo pone ([`Interior::of`]), así que la sala
 //! dibujada y la que choca no se separan nunca. Es una forma aparte, sin el
@@ -15,12 +19,14 @@
 //! y el tubo de vidrio del farol, que brilla con su llama ([`lamp_chimney`],
 //! [`lamp_flame`]). Las mueve y las enciende [`crate::pulperia`].
 
+mod almacen;
+
 use bevy::prelude::*;
-use pampa_core::pulperia::{FurnitureKind, Interior};
-use pampa_core::{Aabb, BuildingKind};
+use pampa_core::Aabb;
+use pampa_core::pulperia::{FurnitureKind, Interior, walks_in};
 
 use super::super::italianate::{FANLIGHT, leaf_spans, panelled_leaf};
-use super::super::materials::{Livery, Surface};
+use super::super::materials::{Livery, Paint, Surface};
 use super::super::shape::{Shape, Weather};
 use super::{Lot, damp, paints_its_joinery, store_middle_door, streaks, wear, yaw};
 use crate::coords::world_from_ground;
@@ -52,8 +58,8 @@ impl Rect {
     }
 }
 
-/// La sala amueblada de la pulpería de `lot` en su propio espacio (el frente
-/// en `+Z`), o `None` si `lot` no es una pulpería.
+/// La sala amueblada de la pulpería o el almacén de `lot` en su propio
+/// espacio (el frente en `+Z`), o `None` si `lot` no se recorre por dentro.
 pub(crate) fn interior(lot: &Lot) -> Option<Shape> {
     let room = room(lot)?;
     let local = |a: Aabb| local_rect(lot, a);
@@ -62,27 +68,46 @@ pub(crate) fn interior(lot: &Lot) -> Option<Shape> {
     let mut shape = Shape::default();
     floor_and_ceiling(&mut shape, floor, ceiling);
     let mut barrels = 0;
+    let mut tables = 0;
     for f in &room.furniture {
         let r = local(f.footprint);
         let top = ROOM_FLOOR + f.height;
         match f.kind {
-            FurnitureKind::Counter => counter(&mut shape, r, top, ceiling),
+            FurnitureKind::Counter => {
+                counter(&mut shape, r, top, ceiling);
+                counter_things(&mut shape, r, top);
+            }
             FurnitureKind::Shelves => shelves(&mut shape, r, top, lot.variant),
             FurnitureKind::Barrel => {
                 barrel(&mut shape, r, top, barrels == 0);
                 barrels += 1;
             }
-            FurnitureKind::Table => table(&mut shape, r, top),
+            FurnitureKind::Table => {
+                table(&mut shape, r, top);
+                table_things(&mut shape, r, top, tables, lot.variant);
+                tables += 1;
+            }
             FurnitureKind::Bench => bench(&mut shape, r, top),
+            FurnitureKind::ShopCounter => almacen::shop_counter(&mut shape, r, top),
+            FurnitureKind::Goods => {
+                let wall = almacen::Against::of(r, floor);
+                almacen::goods(&mut shape, wall, f.height, lot.variant);
+            }
+            FurnitureKind::Sacks => almacen::sacks(&mut shape, r, top),
+            FurnitureKind::Saddlery => {
+                almacen::saddlery(&mut shape, almacen::Against::of(r, floor), top)
+            }
+            FurnitureKind::Tools => almacen::tools(&mut shape, almacen::Against::of(r, floor), top),
         }
     }
     kerosene_lamp(&mut shape, lamp_at(lot, &room), ceiling);
     Some(shape)
 }
 
-/// La sala de core de `lot`, si es una pulpería.
+/// La sala de core de `lot`, si es un local que se recorre: la pulpería o un
+/// almacén ([`walks_in`]).
 fn room(lot: &Lot) -> Option<Interior> {
-    (lot.building.kind == BuildingKind::Pulperia).then(|| Interior::of(&lot.building))
+    walks_in(lot.building.kind).then(|| Interior::of(&lot.building))
 }
 
 /// Dónde arde la mecha del farol que cuelga en el medio de `room`, la sala
@@ -235,6 +260,14 @@ fn floor_and_ceiling(shape: &mut Shape, r: Rect, ceiling: f32) {
 /// que sobresale hacia los parroquianos, y encima la reja de hierro hasta el
 /// cielorraso, con su ventanilla para pasar la mercadería.
 fn counter(shape: &mut Shape, r: Rect, top: f32, ceiling: f32) {
+    counter_body(shape, r, top);
+    grille(shape, r, top, ceiling);
+}
+
+/// El cuerpo de madera de un mostrador sobre `r`, de `top` de alto, con el
+/// lado de los clientes en `z1`: el zócalo oscuro, el frente pintado con sus
+/// montantes y travesaños, y la tapa de tablón que sobresale.
+fn counter_body(shape: &mut Shape, r: Rect, top: f32) {
     let y0 = ROOM_FLOOR;
     let base = y0 + 0.12;
     let under = top - 0.05;
@@ -283,6 +316,11 @@ fn counter(shape: &mut Shape, r: Rect, top: f32, ceiling: f32) {
         top,
         0.05,
     );
+}
+
+/// La reja de hierro del mostrador de la pulpería sobre `r`, de su tapa a
+/// `top` hasta el cielorraso a `ceiling`.
+fn grille(shape: &mut Shape, r: Rect, top: f32, ceiling: f32) {
     // La reja: barrotes cuadrados entre planchuelas, sobre el canto de
     // adelante del mostrador, y una ventanilla cerca del paso del pulpero.
     let z = r.z1 - 0.15;
@@ -667,4 +705,207 @@ pub(crate) fn lamp_chimney() -> Shape {
         12,
     );
     shape
+}
+
+/// Lo que hay sobre el mostrador de la pulpería sobre `r`, de `top` de alto:
+/// la caja registradora entre la ventanilla y el paso al fondo; junto a la
+/// ventanilla, una botella y vasos para servir; y en la otra punta, un frasco
+/// de caramelos y otro de aceitunas.
+fn counter_things(shape: &mut Shape, r: Rect, top: f32) {
+    let z = (r.z0 + r.z1) / 2.0;
+    cash_register(shape, Vec3::new(r.x1 - 0.45, top, z - 0.05));
+    let window = r.x1 - 1.2;
+    bottle(shape, Vec3::new(window - 0.2, top, z - 0.1));
+    for (dx, dz) in [(0.0, 0.05), (0.12, -0.08), (0.22, 0.1)] {
+        glass(shape, Vec3::new(window + dx, top, z + dz));
+    }
+    for (k, fill) in [Paint::Terracotta, Paint::GreyBlue].into_iter().enumerate() {
+        jar(shape, Vec3::new(r.x0 + 0.3 + 0.3 * k as f32, top, z), fill);
+    }
+}
+
+/// Lo que hay sobre la mesa `index` de la pulpería, sobre `r` y de `top` de
+/// alto, según la semilla `v`: vasos con una botella, o los naipes de un
+/// truco a medio jugar con los vasos de los que juegan.
+fn table_things(shape: &mut Shape, r: Rect, top: f32, index: usize, v: u32) {
+    let (x, z) = r.center();
+    let long_x = r.x1 - r.x0 > r.z1 - r.z0;
+    // A lo largo de la mesa, hacia cada cabecera.
+    let along = |t: f32, a: f32| {
+        if long_x {
+            Vec3::new(x + t, top, z + a)
+        } else {
+            Vec3::new(x + a, top, z + t)
+        }
+    };
+    let cards = (index as u32 + v) % 3 == 1;
+    if cards {
+        // El mazo, las cartas de cada mano boca abajo y las tiradas en el
+        // medio, cada una un poco torcida.
+        let card = |shape: &mut Shape, at: Vec3, turn: f32, back: bool| {
+            let surface = if back {
+                Surface::Painted(Paint::Terracotta)
+            } else {
+                Surface::Painted(Paint::LimeWhite)
+            };
+            shape.cuboid(
+                surface,
+                Transform::from_translation(at + Vec3::Y * 0.002)
+                    .with_rotation(Quat::from_rotation_y(turn))
+                    .with_scale(Vec3::new(0.06, 0.003, 0.09)),
+                false,
+            );
+        };
+        shape.cuboid(
+            Surface::Painted(Paint::Terracotta),
+            Transform::from_translation(along(-0.5, 0.0) + Vec3::Y * 0.012)
+                .with_rotation(Quat::from_rotation_y(0.2))
+                .with_scale(Vec3::new(0.06, 0.024, 0.09)),
+            false,
+        );
+        for (k, t) in [-0.25, 0.25].into_iter().enumerate() {
+            for c in 0..3 {
+                let a = (c as f32 - 1.0) * 0.04;
+                card(
+                    shape,
+                    along(t, a + 0.18 - 0.36 * k as f32),
+                    0.3 * (c as f32 - 1.0),
+                    true,
+                );
+            }
+        }
+        for (k, t) in [-0.06, 0.02, 0.1].into_iter().enumerate() {
+            card(
+                shape,
+                along(t, 0.02 * k as f32),
+                0.5 * k as f32 - 0.4,
+                false,
+            );
+        }
+        for t in [-0.6, 0.6] {
+            glass(shape, along(t, 0.2));
+        }
+        return;
+    }
+    let n = 2 + (pick(index as u32, 7, v) * 3.0) as usize;
+    for k in 0..n {
+        let t = -0.55 + 1.1 * k as f32 / (n - 1).max(1) as f32;
+        let side = if k % 2 == 0 { 0.2 } else { -0.2 };
+        glass(shape, along(t, side));
+    }
+    if pick(index as u32, 8, v) < 0.7 {
+        bottle(shape, along(0.05, 0.0));
+    } else {
+        gin_bottle(shape, along(0.05, 0.0));
+    }
+}
+
+/// Un vaso de vidrio grueso, sin tapa, parado en `at`.
+fn glass(shape: &mut Shape, at: Vec3) {
+    shape.lathe(
+        Surface::Glass,
+        Transform::from_translation(at),
+        &[(0.0, 0.0), (0.03, 0.0), (0.037, 0.1)],
+        8,
+    );
+}
+
+/// Un frasco de vidrio con tapa de lata parado en `at`, lleno de caramelos o
+/// aceitunas del color `fill`.
+fn jar(shape: &mut Shape, at: Vec3, fill: Paint) {
+    let place = Transform::from_translation(at);
+    shape.lathe(
+        Surface::Painted(fill),
+        place,
+        &[(0.0, 0.01), (0.075, 0.01), (0.075, 0.17), (0.0, 0.19)],
+        8,
+    );
+    shape.lathe(
+        Surface::Glass,
+        place,
+        &[(0.08, 0.0), (0.085, 0.2), (0.06, 0.24)],
+        8,
+    );
+    shape.lathe(
+        Surface::Sheet,
+        place,
+        &[(0.064, 0.235), (0.064, 0.27), (0.0, 0.27)],
+        8,
+    );
+}
+
+/// Una caja registradora de bronce labrado parada sobre el mostrador en `at`,
+/// con las teclas hacia el que atiende (`-Z`): el cajón abajo, el cuerpo con
+/// tres hileras de teclas negras en escalera, el visor
+/// arriba con su vidrio y la manivela al costado.
+fn cash_register(shape: &mut Shape, at: Vec3) {
+    let p = |x: f32, y: f32, z: f32| at + Vec3::new(x, y, z);
+    solid(
+        shape,
+        Surface::Bronze,
+        p(-0.22, 0.0, -0.18),
+        p(0.22, 0.1, 0.18),
+    );
+    shape.beam(
+        Surface::Bronze,
+        p(-0.06, 0.05, -0.185),
+        p(0.06, 0.05, -0.185),
+        0.015,
+    );
+    shape.chamfered(
+        Surface::Bronze,
+        p(-0.2, 0.1, -0.02),
+        p(0.2, 0.34, 0.16),
+        0.03,
+    );
+    for row in 0..3 {
+        let (y, z) = (0.13 + 0.06 * row as f32, -0.15 + 0.045 * row as f32);
+        solid(
+            shape,
+            Surface::Bronze,
+            p(-0.2, 0.1, z - 0.02),
+            p(0.2, y, z + 0.03),
+        );
+        for k in 0..6 {
+            let x = -0.15 + 0.06 * k as f32;
+            solid(
+                shape,
+                Surface::Livery(Livery::Black),
+                p(x - 0.015, y, z - 0.015),
+                p(x + 0.015, y + 0.035, z + 0.015),
+            );
+        }
+    }
+    shape.chamfered(
+        Surface::Bronze,
+        p(-0.12, 0.34, 0.0),
+        p(0.12, 0.46, 0.12),
+        0.02,
+    );
+    for z in [-0.002, 0.122] {
+        solid(
+            shape,
+            Surface::Glass,
+            p(-0.09, 0.37, z - 0.003),
+            p(0.09, 0.43, z + 0.003),
+        );
+    }
+    shape.beam(
+        Surface::Steel,
+        p(0.2, 0.22, 0.06),
+        p(0.27, 0.22, 0.06),
+        0.02,
+    );
+    shape.beam(
+        Surface::Steel,
+        p(0.27, 0.22, 0.06),
+        p(0.27, 0.12, 0.0),
+        0.018,
+    );
+    shape.beam(
+        Surface::Livery(Livery::Black),
+        p(0.27, 0.12, 0.0),
+        p(0.32, 0.12, 0.0),
+        0.03,
+    );
 }

@@ -1585,13 +1585,25 @@ impl TownLayout {
         Some((store, crate::pulperia::Interior::of(store)))
     }
 
+    /// Los locales del pueblo que se recorren por dentro (la pulpería y los
+    /// almacenes: [`crate::pulperia::walks_in`]), cada uno con su índice en
+    /// [`Self::buildings`] y su interior.
+    pub fn rooms(&self) -> impl Iterator<Item = (usize, &Building, crate::pulperia::Interior)> {
+        self.buildings
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| crate::pulperia::walks_in(b.kind))
+            .map(|(i, b)| (i, b, crate::pulperia::Interior::of(b)))
+    }
+
     /// Con qué chocan de verdad las personas, los caballos y la cámara: los
-    /// [`Self::obstacles`], salvo que la huella de la pulpería se cambia por sus
-    /// paredes, con el hueco de la puerta, y sus muebles. Ubicar cosas
-    /// alrededor sigue usando [`Self::obstacles`], con la huella entera.
+    /// [`Self::obstacles`], salvo que la huella de cada local que se recorre
+    /// ([`Self::rooms`]) se cambia por sus paredes, con el hueco de la puerta,
+    /// y sus muebles. Ubicar cosas alrededor sigue usando
+    /// [`Self::obstacles`], con la huella entera.
     pub fn colliders(&self) -> Vec<Aabb> {
         let mut out = self.obstacles();
-        if let Some((store, inside)) = self.pulperia() {
+        for (_, store, inside) in self.rooms() {
             // Los edificios van primero en los obstáculos: la primera caja
             // igual a su huella es la suya.
             if let Some(i) = out.iter().position(|o| *o == store.collider()) {
@@ -2614,7 +2626,11 @@ pub fn hitched_store(buildings: &[Building]) -> Option<usize> {
     buildings
         .iter()
         .position(|b| b.kind == BuildingKind::GeneralStore)
-        .or_else(|| buildings.iter().position(|b| b.kind == BuildingKind::Pulperia))
+        .or_else(|| {
+            buildings
+                .iter()
+                .position(|b| b.kind == BuildingKind::Pulperia)
+        })
 }
 
 /// Proporciones de la huella de un punto de referencia sobre una manzana de
