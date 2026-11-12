@@ -1,9 +1,10 @@
-//! Las pulperías abren y cierran ([`pampa_core::pulperia::is_open`]). De día
+//! Las pulperías y los almacenes abren y cierran
+//! ([`pampa_core::pulperia::is_open`]). De día
 //! la puerta del medio queda abierta y se entra caminando, sin ninguna tecla.
 //! De noche se cierra en cuanto el jugador no está adentro ni en el umbral, y
 //! su hueco pasa a ser una pared en la colisión del mundo, y render cierra sus
-//! hojas ([`PulperiaShut`], por pueblo). Parado frente a la
-//! puerta cerrada, F golpea y el pulpero contesta desde adentro, como
+//! hojas ([`PulperiaShut`], por local). Parado frente a la puerta cerrada, F
+//! golpea y el pulpero (o el almacenero) contesta desde adentro, como
 //! subtítulo.
 //!
 //! F es la tecla de contexto compartida ([`INTERACT_KEY`]): golpear la toma
@@ -15,7 +16,7 @@
 
 use bevy::prelude::*;
 use pampa_core::pulperia::{Interior, is_open};
-use pampa_core::{Aabb, Travel, Vec2 as GroundVec2};
+use pampa_core::{Aabb, BuildingKind, Travel, Vec2 as GroundVec2};
 use pampa_render::hud::{LINE_PX, ink_font, panel_colors};
 use pampa_render::subtitle::duration;
 use pampa_render::{PulperiaShut, Subtitle, SubtitleLine, Typefaces, WorldClock, WorldTowns};
@@ -24,8 +25,10 @@ use crate::errand::{FClaims, INTERACT_KEY};
 use crate::player::{ControlLock, GameWorld, Player};
 use crate::ride::OnTrain;
 
-/// Quién contesta un golpe a la puerta cerrada.
+/// Quién contesta un golpe a la puerta cerrada de la pulpería.
 pub const PULPERO: &str = "Pulpero";
+/// Quién contesta un golpe a la puerta cerrada de un almacén.
+pub const ALMACENERO: &str = "Almacenero";
 /// Lo que contesta (un borrador, a revisar).
 pub const CLOSED_LINE: &str = "¡Está cerrado! Vuelva mañana, que a esta hora no se atiende.";
 /// Qué tan cerca de la puerta, del lado de la calle, se golpea, en metros.
@@ -47,10 +50,14 @@ struct KnockPrompt;
 #[derive(Resource, Debug, Default)]
 pub struct PulperiaDoors(pub Vec<PulperiaDoor>);
 
-/// La puerta de la pulpería del pueblo `town` (su índice en [`WorldTowns`]).
+/// La puerta del local `building` (la pulpería o un almacén, por su índice en
+/// los `buildings`) del pueblo `town` (su índice en [`WorldTowns`]).
 #[derive(Debug, Clone)]
 pub struct PulperiaDoor {
     pub town: usize,
+    pub building: usize,
+    /// Si es un almacén: contesta el almacenero, no el pulpero.
+    pub almacen: bool,
     pub inside: Interior,
     /// Si está cerrada en la colisión del mundo y en [`PulperiaShut`].
     pub shut: bool,
@@ -103,9 +110,11 @@ fn shut_at_night(
             .0
             .iter()
             .enumerate()
-            .filter_map(|(town, t)| {
-                t.pulperia().map(|(_, inside)| PulperiaDoor {
+            .flat_map(|(town, t)| {
+                t.rooms().map(move |(building, b, inside)| PulperiaDoor {
                     town,
+                    building,
+                    almacen: b.kind == BuildingKind::GeneralStore,
                     inside,
                     shut: false,
                 })
@@ -122,10 +131,10 @@ fn shut_at_night(
         let doorway: Aabb = door.inside.doorway();
         if want {
             world.0.obstacles.push(doorway);
-            shared.0.insert(door.town);
+            shared.0.insert((door.town, door.building));
         } else {
             world.0.obstacles.remove(&doorway);
-            shared.0.remove(&door.town);
+            shared.0.remove(&(door.town, door.building));
         }
         door.shut = want;
     }
@@ -134,13 +143,15 @@ fn shut_at_night(
 /// La puerta cerrada de una pulpería frente a la cual está parado `at`. Con
 /// el jugador adentro o en el umbral la puerta nunca está cerrada, así que
 /// solo se golpea desde la vereda.
-fn shut_door_at(doors: &PulperiaDoors, at: GroundVec2) -> Option<&Interior> {
-    doors.0.iter().find_map(|door| {
-        (door.shut && at.distance(door.inside.door.center) <= KNOCK_RANGE).then_some(&door.inside)
-    })
+fn shut_door_at(doors: &PulperiaDoors, at: GroundVec2) -> Option<&PulperiaDoor> {
+    doors
+        .0
+        .iter()
+        .find(|door| door.shut && at.distance(door.inside.door.center) <= KNOCK_RANGE)
 }
 
-/// F frente a una puerta cerrada: golpea, y el pulpero contesta. También
+/// F frente a una puerta cerrada: golpea, y el pulpero o el almacenero
+/// contesta. También
 /// decide si se muestra el aviso.
 #[allow(clippy::too_many_arguments)]
 fn knock(
@@ -151,36 +162,39 @@ fn knock(
     lock: Option<Res<ControlLock>>,
     players: Query<(&Player, Has<OnTrain>)>,
     (mut subtitle, mut hint): (ResMut<Subtitle>, ResMut<KnockHint>),
-    mut left: Local<f32>,
+    (mut left, mut said): (Local<f32>, Local<Option<SubtitleLine>>),
 ) {
-    let answer = SubtitleLine {
-        speaker: PULPERO.to_string(),
-        text: CLOSED_LINE.to_string(),
-    };
     if *left > 0.0 {
         *left -= time.delta_secs();
-        if *left <= 0.0 && subtitle.0.as_ref() == Some(&answer) {
+        if *left <= 0.0 && subtitle.0 == *said {
             subtitle.0 = None;
         }
     }
     // Donde F golpea: a pie, frente a una puerta cerrada, con la F libre.
-    let can = players.single().ok().is_some_and(|(player, aboard)| {
+    let door = players.single().ok().and_then(|(player, aboard)| {
         let rider = &player.rider;
-        !aboard
+        let free = !aboard
             && rider.travel() == Travel::OnFoot
             && !lock.is_some_and(|l| l.0)
-            && shut_door_at(&doors, rider.position).is_some()
-            && !claims.taken(rider.position)
+            && !claims.taken(rider.position);
+        free.then(|| shut_door_at(&doors, rider.position)).flatten()
     });
     let mut keys = keys;
-    if can && keys.as_ref().is_some_and(|k| k.just_pressed(INTERACT_KEY)) {
+    if let Some(door) = door
+        && keys.as_ref().is_some_and(|k| k.just_pressed(INTERACT_KEY))
+    {
         if let Some(keys) = keys.as_mut() {
             keys.clear_just_pressed(INTERACT_KEY);
         }
         *left = duration(CLOSED_LINE);
+        let answer = SubtitleLine {
+            speaker: if door.almacen { ALMACENERO } else { PULPERO }.to_string(),
+            text: CLOSED_LINE.to_string(),
+        };
+        *said = Some(answer.clone());
         subtitle.0 = Some(answer);
     }
-    hint.set_if_neq(KnockHint(can && *left <= 0.0));
+    hint.set_if_neq(KnockHint(door.is_some() && *left <= 0.0));
 }
 
 /// El aviso, oculto hasta que [`KnockHint`] lo pide.
@@ -398,16 +412,18 @@ mod tests {
     }
 
     #[test]
-    fn the_shut_doors_are_shared_with_render_by_town() {
-        // Un pueblo grande sin pulpería primero: la de Castex es la puerta 0
-        // pero el pueblo 1.
-        let pico = TownLayout::generate(&pampa_core::town::TownConfig {
+    fn the_shut_doors_are_shared_with_render_by_town_and_building() {
+        // Un pueblo sin pulpería primero (se le saca la suya, le quedan sus
+        // almacenes): la pulpería de Castex es del pueblo 1.
+        let mut pico = TownLayout::generate(&pampa_core::town::TownConfig {
             name: "General Pico".into(),
             blocks: (8, 8),
             origin: GroundVec2::new(3000.0, 0.0),
             ..pampa_core::town::TownConfig::castex()
         })
         .unwrap();
+        pico.buildings
+            .retain(|b| b.kind != pampa_core::BuildingKind::Pulperia);
         assert!(pico.pulperia().is_none());
         let (mut app, _) = app(-3.0, TimeOfDay::hm(12, 0));
         let castex = app.world().resource::<WorldTowns>().0[0].clone();
@@ -416,7 +432,20 @@ mod tests {
         let shut = |app: &App| app.world().resource::<PulperiaShut>().0.clone();
         assert!(shut(&app).is_empty(), "open by day");
         set_time(&mut app, TimeOfDay::hm(23, 0));
-        assert_eq!(shut(&app), [1].into());
+        let towns = app.world().resource::<WorldTowns>().0.clone();
+        let every: std::collections::BTreeSet<(usize, usize)> = towns
+            .iter()
+            .enumerate()
+            .flat_map(|(t, town)| town.rooms().map(move |(b, _, _)| (t, b)))
+            .collect();
+        let pico_almacenes = towns[0]
+            .buildings
+            .iter()
+            .filter(|b| b.kind == pampa_core::BuildingKind::GeneralStore)
+            .count();
+        assert!(pico_almacenes >= 1);
+        assert_eq!(every.len(), pico_almacenes + 2, "and Castex's two");
+        assert_eq!(shut(&app), every);
         set_time(&mut app, TimeOfDay::hm(7, 0));
         assert!(shut(&app).is_empty(), "open again in the morning");
     }

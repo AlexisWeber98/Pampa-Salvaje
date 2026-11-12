@@ -1,8 +1,9 @@
 //! El minimapa en la esquina superior derecha: el pueblo más cercano al jugador
 //! (por distancia a su extensión) dibujado a partir de los datos de
 //! `pampa-core`, con el norte arriba, titulado con su nombre, con marcadores en
-//! vivo para el jugador, los peatones y los vagones del tren de la línea dentro
-//! del mapa, y el destino del mandado ([`MapTarget`]) fijado en el borde
+//! vivo para el jugador y los vagones del tren de la línea dentro del mapa (la
+//! gente no se marca: el mapa no muestra dónde está cada persona en tiempo
+//! real), y el destino del mandado ([`MapTarget`]) fijado en el borde
 //! mientras está fuera del mapa. Una rosa de los vientos (N, E, S, O) en la
 //! esquina inferior izquierda muestra la orientación del mapa: el mapa tiene el
 //! norte arriba, así que la rosa queda fija y la flecha del jugador muestra el
@@ -30,7 +31,11 @@
 //! centro (bien dentro de su borde), nunca por frame. Una segunda imagen
 //! transparente del mismo tamaño se redibuja en cada frame solo con los
 //! marcadores. Ambas son nodos de imagen de UI apilados dentro de un panel con
-//! marco. `M` alterna entre el mapa de la esquina y uno ampliado y centrado.
+//! marco. `M` alterna entre el mapa de la esquina y uno ampliado y centrado,
+//! que muestra [`WIDE_RADIUS`] alrededor del jinete o, con [`MapReach::Whole`]
+//! (todo desbloqueado), todo el mapa del juego, en una capa propia que se vuelve
+//! a pintar en el lugar solo al ampliar, al cambiar el alcance o cuando el
+//! jinete se alejó [`WIDE_RECENTER`] metros de su centro.
 
 pub mod raster;
 
@@ -119,7 +124,10 @@ fn settlement_distance(settlements: Option<&SettlementLayout>, p: GroundVec2) ->
 /// su `Transform`; el rumbo del jugador, de su [`VisualPose`].
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MapIcon {
+    /// El jugador: una flecha según su rumbo.
     Player,
+    /// Una persona del pueblo: no se marca, porque el mapa no muestra dónde
+    /// está la gente en tiempo real.
     Walker,
 }
 
@@ -128,6 +136,23 @@ pub enum MapIcon {
 /// actualizado.
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
 pub struct MapTarget(pub Option<GroundVec2>);
+
+/// Metros alrededor del jinete que muestra el mapa ampliado en el juego normal:
+/// unos 2 km de lado, no todo el mapa. Ajustable.
+pub const WIDE_RADIUS: f32 = 1000.0;
+/// Metros que el jinete puede alejarse del centro del mapa ampliado antes de
+/// que se vuelva a pintar a su alrededor.
+pub const WIDE_RECENTER: f32 = 250.0;
+
+/// Cuánto muestra el mapa ampliado. El juego lo mantiene actualizado.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
+pub enum MapReach {
+    /// [`WIDE_RADIUS`] alrededor del jinete.
+    #[default]
+    Around,
+    /// Todo el mapa del juego: el cuadrado jugable dado.
+    Whole(pampa_core::Aabb),
+}
 
 /// El estado del minimapa: el pueblo mostrado y su encuadre, la capa de
 /// marcadores y si está ampliado.
@@ -154,6 +179,11 @@ pub struct Minimap {
     field: Option<Handle<Image>>,
     /// Cuántas veces se pintó la capa de campo.
     pub field_paints: usize,
+    /// El encuadre del mapa ampliado mientras se muestra ([`MapReach`]);
+    /// `None` con el mapa chico.
+    pub wide: Option<MapFrame>,
+    /// La capa del mapa ampliado, que se vuelve a pintar en el lugar.
+    wide_layer: Option<Handle<Image>>,
 }
 
 /// El nodo de imagen que muestra la capa del pueblo.
@@ -318,6 +348,8 @@ fn spawn_minimap(
         bases: HashMap::from([(index, base)]),
         field: None,
         field_paints: 0,
+        wide: None,
+        wide_layer: None,
     });
 }
 
@@ -429,6 +461,55 @@ fn show_field(
     }
 }
 
+/// El encuadre del mapa ampliado para un jinete en `at`: todo el mapa del
+/// juego, o [`WIDE_RADIUS`] alrededor del jinete.
+fn wide_frame(reach: MapReach, at: Option<GroundVec2>) -> Option<MapFrame> {
+    match reach {
+        MapReach::Around => at.map(|center| MapFrame {
+            center,
+            half_extent: WIDE_RADIUS,
+            size_px: MAP_PX,
+        }),
+        MapReach::Whole(world) => {
+            let size = world.max - world.min;
+            Some(MapFrame {
+                center: (world.min + world.max) * 0.5,
+                half_extent: size.x.max(size.y) / 2.0,
+                size_px: MAP_PX,
+            })
+        }
+    }
+}
+
+/// Muestra el mapa ampliado en `frame`, volviendo a pintar en el lugar su capa
+/// (agregándola la primera vez).
+fn show_wide(
+    minimap: &mut Minimap,
+    (towns, overlay): (&WorldTowns, &Overlay),
+    frame: MapFrame,
+    images: &mut Assets<Image>,
+    bases: &mut Query<&mut ImageNode, With<MinimapBase>>,
+) {
+    minimap.wide = Some(frame);
+    minimap.frame = frame;
+    let pixels = rasterize_field(&towns.0, overlay, &frame).pixels;
+    let wide = match &minimap.wide_layer {
+        Some(handle) => {
+            if let Some(mut image) = images.get_mut(handle) {
+                image.data = Some(pixels);
+            }
+            handle.clone()
+        }
+        None => minimap
+            .wide_layer
+            .insert(images.add(map_image(pixels)))
+            .clone(),
+    };
+    for mut node in bases {
+        node.image = wide.clone();
+    }
+}
+
 /// Lo que el minimapa lee del mundo: pueblos, trenes, la línea del ferrocarril,
 /// los caminos (que lleva el terreno) y los asentamientos.
 type WorldLayers<'a> = (
@@ -442,7 +523,7 @@ type WorldLayers<'a> = (
 fn update_markers(
     minimap: Option<ResMut<Minimap>>,
     (towns, trains, rail, terrain, settlements): WorldLayers,
-    target: Option<Res<MapTarget>>,
+    (target, reach): (Option<Res<MapTarget>>, Option<Res<MapReach>>),
     icons: Query<(&MapIcon, &Transform, Option<&VisualPose>)>,
     mut bases: Query<&mut ImageNode, With<MinimapBase>>,
     mut images: ResMut<Assets<Image>>,
@@ -454,10 +535,41 @@ fn update_markers(
         .iter()
         .find(|(icon, _, _)| **icon == MapIcon::Player)
         .map(|(_, transform, _)| ground_of(transform.translation));
-    if let (Some(towns), Some(at)) = (&towns, player)
+    let lines = || {
+        (
+            links(rail.as_deref()),
+            roads(terrain.as_deref()),
+            lagoons(terrain.as_deref()),
+            bay_platforms(rail.as_deref()),
+        )
+    };
+    let layout = settlements.as_deref().map(|s| &s.0);
+    if minimap.enlarged {
+        let reach = reach.map(|r| *r).unwrap_or_default();
+        if let (Some(towns), Some(frame)) = (&towns, wide_frame(reach, player)) {
+            // Solo al ampliar, al cambiar el alcance o con el jinete lejos del
+            // centro se vuelve a pintar.
+            let repaint = minimap.wide.is_none_or(|shown| {
+                shown.half_extent != frame.half_extent
+                    || shown.center.distance(frame.center) > WIDE_RECENTER
+            });
+            if repaint {
+                let lines = lines();
+                let overlay = overlay(&lines, layout);
+                show_wide(
+                    &mut minimap,
+                    (towns, &overlay),
+                    frame,
+                    &mut images,
+                    &mut bases,
+                );
+            }
+        }
+    } else if let (Some(towns), Some(at)) = (&towns, player)
         && let Some(nearest) = nearest_town(&towns.0, at)
     {
-        let layout = settlements.as_deref().map(|s| &s.0);
+        // De vuelta del mapa ampliado, el encuadre chico se vuelve a mostrar.
+        let back = minimap.wide.take().is_some();
         // `nearest_town` ordena los pueblos por la distancia a su extensión, la
         // misma medida que lee el modo, nunca por sus centros.
         let mode = next_mode(
@@ -467,19 +579,16 @@ fn update_markers(
         );
         // Solo un cambio de encuadre, o un jinete lejos del centro del encuadre
         // de campo, vuelve a pintar una capa.
-        let repaint = match mode {
-            MapMode::Town => minimap.mode != MapMode::Town || nearest != minimap.town,
-            MapMode::Field => {
-                minimap.mode != MapMode::Field || minimap.frame.center.distance(at) > FIELD_RECENTER
-            }
-        };
+        let repaint = back
+            || match mode {
+                MapMode::Town => minimap.mode != MapMode::Town || nearest != minimap.town,
+                MapMode::Field => {
+                    minimap.mode != MapMode::Field
+                        || minimap.frame.center.distance(at) > FIELD_RECENTER
+                }
+            };
         if repaint {
-            let lines = (
-                links(rail.as_deref()),
-                roads(terrain.as_deref()),
-                lagoons(terrain.as_deref()),
-                bay_platforms(rail.as_deref()),
-            );
+            let lines = lines();
             let overlay = overlay(&lines, layout);
             let sources = (&**towns, &overlay);
             match mode {
@@ -509,7 +618,8 @@ fn update_markers(
                 let heading = pose.map(|p| p.heading).unwrap_or_default();
                 markers.player = Some((at, heading));
             }
-            MapIcon::Walker => markers.walkers.push(at),
+            // La gente no se marca: nada de posiciones en tiempo real.
+            MapIcon::Walker => {}
         }
     }
     let minimap = &mut *minimap;
@@ -1004,6 +1114,94 @@ mod tests {
         assert_eq!(app.world().resource::<Assets<Image>>().len(), images);
         app.update();
         assert_eq!(app.world().resource::<Minimap>().field_paints, 2);
+    }
+
+    /// Un jugador en el centro del pueblo y el mapa ampliado con M.
+    fn enlarged_round(app: &mut App) -> (Entity, GroundVec2, MapFrame, Handle<Image>) {
+        let at = app.world().resource::<WorldTowns>().0[0].extent().center();
+        let player = app
+            .world_mut()
+            .spawn((
+                MapIcon::Player,
+                Transform::from_translation(crate::world_from_ground(at, 0.0)),
+            ))
+            .id();
+        app.update();
+        let town_frame = app.world().resource::<Minimap>().frame;
+        let town_base = base_image(app);
+        press(app, TOGGLE_KEY);
+        app.update();
+        // Sin `InputPlugin`, la tecla queda recién apretada hasta borrarla.
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .clear();
+        (player, at, town_frame, town_base)
+    }
+
+    #[test]
+    fn the_enlarged_map_shows_a_few_kilometres_round_the_rider_and_m_brings_the_town_back() {
+        let mut app = headless_app();
+        let (player, at, town_frame, town_base) = enlarged_round(&mut app);
+        let minimap = app.world().resource::<Minimap>();
+        assert_eq!(
+            minimap.frame,
+            MapFrame {
+                center: at,
+                half_extent: WIDE_RADIUS,
+                size_px: MAP_PX
+            }
+        );
+        assert_ne!(base_image(&mut app), town_base);
+        // Moviéndose poco no se vuelve a pintar; lejos, se centra en el jinete.
+        let near = at + GroundVec2::new(WIDE_RECENTER - 50.0, 0.0);
+        move_to(&mut app, player, near);
+        assert_eq!(app.world().resource::<Minimap>().frame.center, at);
+        let far = at + GroundVec2::new(WIDE_RECENTER + 50.0, 0.0);
+        move_to(&mut app, player, far);
+        assert_eq!(app.world().resource::<Minimap>().frame.center, far);
+        // M de nuevo, de vuelta junto al pueblo: el encuadre del pueblo, con
+        // su capa guardada.
+        move_to(&mut app, player, at);
+        press(&mut app, TOGGLE_KEY);
+        app.update();
+        let minimap = app.world().resource::<Minimap>();
+        assert!(!minimap.enlarged);
+        assert_eq!(minimap.frame, town_frame);
+        assert_eq!(base_image(&mut app), town_base);
+    }
+
+    #[test]
+    fn with_everything_unlocked_the_enlarged_map_shows_the_whole_world() {
+        let mut app = headless_app();
+        let world = pampa_core::Aabb {
+            min: GroundVec2::new(-4000.0, -4000.0),
+            max: GroundVec2::new(4000.0, 4000.0),
+        };
+        app.insert_resource(MapReach::Whole(world));
+        enlarged_round(&mut app);
+        let frame = app.world().resource::<Minimap>().frame;
+        assert_eq!(frame.center, GroundVec2::ZERO);
+        assert_eq!(frame.half_extent, 4000.0);
+        for corner in [world.min, world.max] {
+            assert!(frame.contains(corner), "{corner:?} off the map");
+        }
+    }
+
+    #[test]
+    fn townsfolk_are_not_marked_on_the_map() {
+        let mut app = headless_app();
+        let at = app.world().resource::<WorldTowns>().0[0].plaza.center();
+        app.world_mut().spawn((
+            MapIcon::Walker,
+            Transform::from_translation(crate::world_from_ground(at, 0.0)),
+        ));
+        app.update();
+        let minimap = app.world().resource::<Minimap>();
+        let m = minimap.frame.to_map(at);
+        let images = app.world().resource::<Assets<Image>>();
+        let data = images.get(&minimap.markers).unwrap().data.as_ref().unwrap();
+        let i = (m.y as usize * MAP_PX + m.x as usize) * 4;
+        assert_eq!(data[i + 3], 0, "a townsperson is marked");
     }
 
     #[test]

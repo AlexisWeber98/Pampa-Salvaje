@@ -241,6 +241,7 @@ impl Plugin for ErrandPlugin {
             .init_resource::<Approach>()
             .init_resource::<SceneShot>()
             .init_resource::<MapTarget>()
+            .init_resource::<pampa_render::MapReach>()
             .init_resource::<LedAway>()
             .init_resource::<LooseHorse>()
             .init_resource::<GameWorld>()
@@ -263,6 +264,7 @@ impl Plugin for ErrandPlugin {
                     crate::wallet::show_money,
                     unlock_on_mount,
                     announce_unlocks,
+                    crate::abilities::reveal_map,
                 )
                     .chain()
                     .after(DrivePlayer),
@@ -809,7 +811,7 @@ fn see_off(
 /// [`Approach`]), el jugador no maneja y la cámara encuadra a quien habla con
 /// él; durante la escena Lisandro se vuelve hacia él ([`WalkPath::face`]).
 /// Fuera de una escena, todo vuelve a la normalidad.
-fn frame_scene(
+pub(crate) fn frame_scene(
     conversation: Res<Conversation>,
     approach: Res<Approach>,
     errand: Option<Res<ErrandRun>>,
@@ -861,7 +863,7 @@ fn face_each_other(
         let home = errand.0.standing(npc.npc);
         let toward = lisandro - home.position;
         let mine = partner == Some(npc.npc) && toward.length() > 1e-3;
-        if let CharacterVisual::Seated(_) = visual {
+        if let CharacterVisual::Seated(..) = visual {
             if mine {
                 let gaze = turn_toward(pose.heading, toward).clamp(-GAZE_MAX, GAZE_MAX);
                 commands.entity(entity).insert(Gaze(gaze));
@@ -1444,7 +1446,7 @@ mod tests {
         let tano = npc_entity(&mut app, Npc::Bairoletto);
         assert_eq!(
             app.world().get::<CharacterVisual>(tano),
-            Some(&CharacterVisual::Seated(FigureKind::Bairoletto))
+            Some(&CharacterVisual::Seated(FigureKind::Bairoletto, pampa_core::pulperia::Pastime::Rest))
         );
         let at = app.world().get::<Transform>(tano).unwrap().translation;
         assert_eq!(GroundVec2::new(at.x, -at.z), inside.seats[seat].position);
@@ -1483,7 +1485,7 @@ mod tests {
             risen = rising.0;
             assert_eq!(
                 app.world().get::<CharacterVisual>(tano),
-                Some(&CharacterVisual::Seated(FigureKind::Bairoletto))
+                Some(&CharacterVisual::Seated(FigureKind::Bairoletto, pampa_core::pulperia::Pastime::Rest))
             );
             assert_eq!(
                 app.world().get::<Transform>(tano).unwrap().translation,

@@ -10,6 +10,7 @@ Se mueven con clips de animación, todos en un único archivo compartido, `anima
 - cada clip de caminata se ajusta al ritmo de la velocidad sobre el suelo, según las piernas de la persona frente a las del protagonista, para que los pies queden quietos sobre el suelo y las personas más bajas den pasos más cortos y rápidos;
 - la caminata es la caminata de juego del paquete, que la herramienta endereza hasta convertirla en una caminata de calle tranquila y erguida (rodillas más rectas, el torso arriba, los hombros abajo, los brazos balanceándose a los costados), con un tranco más largo;
 - Farach espera con los brazos cruzados, y quien habla lo hace con las manos;
+- en la pulpería, sentados, los parroquianos juegan al truco o conversan con las manos adelante (`sit_talk`), toman llevándose el vaso a la boca (`sit_drink`) o fuman con los dedos cruzando la boca (`sit_smoke`), con el vaso, el cigarrillo humeante o los naipes en la mano (`crates/render/src/character/pastime.rs`);
 - cada persona empieza sus clips en su propio punto;
 - la cabeza mira alrededor por encima del clip;
 - un jinete reproduce solo el clip sentado: un clip con peso cero igual fija los huesos que solo él anima.
@@ -36,7 +37,7 @@ python3 -I tools/retarget.py \
   -o assets/characters/animations/humanoid.glb
 ```
 
-La salida es determinista. Imprime cada clip con su duración y, para las caminatas y carreras, la velocidad sobre el suelo y el tranco que midió. El `Clip::ground_speed` del juego (`crates/render/src/character/clips.rs`) debe coincidir con ellos; un test lo comprueba. Las líneas `--model` indican los hombres cuyo pecho deben esquivar los brazos cruzados y las manos que hablan; las líneas `--talker`, los vecinos, cuyo pecho solo deben esquivar las manos que hablan (nunca cruzan los brazos). Los clips de pie también se calman para sacarlos de la guardia de boxeador de los paquetes (ver `tools/README.md`). Reconstruir los clips después de reconstruir cualquier modelo.
+Para agregar clips nuevos sin tocar los que ya están, `--append assets/characters/animations/humanoid.glb` en lugar de `--cmu`, `--sprint` y `--target` (ver `tools/README.md`). La salida es determinista. Imprime cada clip con su duración y, para las caminatas y carreras, la velocidad sobre el suelo y el tranco que midió. El `Clip::ground_speed` del juego (`crates/render/src/character/clips.rs`) debe coincidir con ellos; un test lo comprueba. Las líneas `--model` indican los hombres cuyo pecho deben esquivar los brazos cruzados y las manos que hablan; las líneas `--talker`, los vecinos, cuyo pecho solo deben esquivar las manos que hablan (nunca cruzan los brazos). Los clips de pie también se calman para sacarlos de la guardia de boxeador de los paquetes (ver `tools/README.md`). Reconstruir los clips después de reconstruir cualquier modelo.
 
 ## Reconstruir un modelo
 

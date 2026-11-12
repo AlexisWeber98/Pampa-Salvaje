@@ -1,5 +1,5 @@
-//! Lo que cambia en una pulpería mientras se juega, sobre la sala que dibuja
-//! el kit de fachadas (`facade::town_buildings::interior`).
+//! Lo que cambia en una pulpería o un almacén mientras se juega, sobre la sala
+//! que dibuja el kit de fachadas (`facade::town_buildings::interior`).
 //!
 //! - **Las hojas de la puerta del medio** ([`PulperiaLeaf`]): las dos hojas de
 //!   tableros, cada una su propia entidad, se abren de día un cuarto de vuelta
@@ -32,17 +32,20 @@ use crate::lamps::{KEROSENE, lamp_glow};
 use crate::terrain::WorldTerrain;
 use crate::town::WorldTowns;
 
-/// Los pueblos (por su índice en [`WorldTowns`]) cuya pulpería tiene la puerta
-/// del medio cerrada. Lo escribe el juego; render solo mueve las hojas.
+/// Los locales que se recorren (la pulpería y los almacenes) con la puerta
+/// del medio cerrada, cada uno como `(pueblo, edificio)`: el índice del pueblo
+/// en [`WorldTowns`] y el del edificio en sus `buildings`. Lo escribe el
+/// juego; render solo mueve las hojas.
 #[derive(Resource, Debug, Clone, Default, PartialEq, Eq)]
-pub struct PulperiaShut(pub BTreeSet<usize>);
+pub struct PulperiaShut(pub BTreeSet<(usize, usize)>);
 
-/// Una hoja de la puerta del medio de la pulpería del pueblo `town`: un
-/// pivote con sus mallas de hijas, cerradas en el espacio propio del
-/// edificio, que gira sobre su bisagra.
+/// Una hoja de la puerta del medio del local `room` (su índice en los
+/// `buildings`) del pueblo `town`: un pivote con sus mallas de hijas,
+/// cerradas en el espacio propio del edificio, que gira sobre su bisagra.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct PulperiaLeaf {
     pub town: usize,
+    pub room: usize,
     /// Dónde está el edificio en el mundo.
     building: Transform,
     hinge: Hinge,
@@ -52,9 +55,10 @@ pub struct PulperiaLeaf {
 
 impl PulperiaLeaf {
     /// Una hoja abierta, como está de día.
-    pub(crate) fn new(town: usize, building: Transform, hinge: Hinge) -> Self {
+    pub(crate) fn new((town, room): (usize, usize), building: Transform, hinge: Hinge) -> Self {
         Self {
             town,
+            room,
             building,
             hinge,
             open: 1.0,
@@ -75,11 +79,13 @@ impl PulperiaLeaf {
     }
 }
 
-/// El farol de la pulpería del pueblo `town`, con el lugar del mundo donde
-/// arde su mecha. Lleva su tubo de vidrio luminoso.
+/// El farol del local `room` (la pulpería o un almacén, por su índice en los
+/// `buildings`) del pueblo `town`, con el lugar del mundo donde arde su mecha.
+/// Lleva su tubo de vidrio luminoso.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct PulperiaLamp {
     pub town: usize,
+    pub room: usize,
     pub flame: Vec3,
 }
 
@@ -235,7 +241,7 @@ fn swing_leaves(
 ) {
     let step = time.delta_secs() / SWING_SECONDS;
     for (mut leaf, mut transform) in &mut leaves {
-        let target = if shut.0.contains(&leaf.town) {
+        let target = if shut.0.contains(&(leaf.town, leaf.room)) {
             0.0
         } else {
             1.0
@@ -323,8 +329,8 @@ fn rooms(towns: &WorldTowns, terrain: &WorldTerrain) -> Vec<Room> {
     towns
         .0
         .iter()
-        .filter_map(|town| town.pulperia())
-        .map(|(building, inside)| {
+        .flat_map(|town| town.rooms())
+        .map(|(_, building, inside)| {
             let c = building.footprint.center();
             let base = terrain.0.height(c.x, c.y);
             Room {
@@ -414,9 +420,21 @@ mod tests {
         q.iter(app.world()).map(|(l, t)| (*l, *t)).collect()
     }
 
+    /// El índice de la pulpería de Castex en sus edificios.
+    fn pulperia_index() -> usize {
+        castex()
+            .rooms()
+            .find(|(_, b, _)| b.kind == pampa_core::BuildingKind::Pulperia)
+            .unwrap()
+            .0
+    }
+
+    /// El farol de la pulpería.
     fn lamp(app: &mut App) -> PulperiaLamp {
         let mut q = app.world_mut().query::<&PulperiaLamp>();
-        *q.single(app.world()).unwrap()
+        *q.iter(app.world())
+            .find(|l| l.room == pulperia_index())
+            .unwrap()
     }
 
     /// Una cámara en `at`, en el mundo.
@@ -440,11 +458,21 @@ mod tests {
     }
 
     #[test]
-    fn a_pulperia_has_its_two_leaves_and_its_lamp() {
+    fn the_pulperia_and_the_almacen_each_have_their_two_leaves_and_their_lamp() {
         let mut app = app(TimeOfDay::hm(12, 0));
         let leaves = leaves(&mut app);
-        assert_eq!(leaves.len(), 2);
+        let rooms: Vec<usize> = castex().rooms().map(|(i, _, _)| i).collect();
+        assert_eq!(rooms.len(), 2, "Castex's pulpería and almacén");
+        for room in &rooms {
+            let mine = leaves.iter().filter(|(l, _)| l.room == *room).count();
+            assert_eq!(mine, 2, "room {room}");
+        }
+        assert_eq!(leaves.len(), 4);
         assert!(leaves.iter().all(|(l, _)| l.town == 0));
+        let mut q = app.world_mut().query::<&PulperiaLamp>();
+        let mut lamps: Vec<usize> = q.iter(app.world()).map(|l| l.room).collect();
+        lamps.sort();
+        assert_eq!(lamps, rooms);
         assert_eq!(lamp(&mut app).town, 0);
         // Cada hoja, sus mallas gastadas debajo del pivote.
         let mut q = app
@@ -470,14 +498,27 @@ mod tests {
                 leaf.building.mul_transform(leaf.hinge.pose(1.0))
             ));
         }
-        app.world_mut().resource_mut::<PulperiaShut>().0.insert(0);
+        // Se cierra la pulpería; el almacén sigue abierto.
+        let shut = pulperia_index();
+        app.world_mut()
+            .resource_mut::<PulperiaShut>()
+            .0
+            .insert((0, shut));
         app.update();
         // Gira de a poco.
         for (leaf, _) in leaves(&mut app) {
-            assert!(leaf.open() > 0.0 && leaf.open() < 1.0, "{}", leaf.open());
+            if leaf.room == shut {
+                assert!(leaf.open() > 0.0 && leaf.open() < 1.0, "{}", leaf.open());
+            } else {
+                assert_eq!(leaf.open(), 1.0, "the almacén stays open");
+            }
         }
         frames(&mut app, SWING_SECONDS);
         for (leaf, transform) in leaves(&mut app) {
+            if leaf.room != shut {
+                assert_eq!(leaf.open(), 1.0, "the almacén stays open");
+                continue;
+            }
             assert_eq!(leaf.open(), 0.0);
             assert!(same(transform, leaf.building), "shut in its door");
         }

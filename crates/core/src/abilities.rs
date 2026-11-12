@@ -4,8 +4,9 @@
 //!
 //! Montar es la primera: antes de que el protagonista monte por primera vez el
 //! caballo de Don Hidalgo (el que él presta), ningún otro caballo lo deja
-//! subir; a partir de entonces, cualquier caballo lo hace. El lazo, las armas y
-//! los autos quedan para más adelante.
+//! subir; a partir de entonces, cualquier caballo lo hace. El lazo, las armas,
+//! los autos y el comercio (comprarles al pulpero y al almacenero) quedan para
+//! más adelante.
 
 /// Algo que el protagonista puede aprender a hacer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -18,11 +19,20 @@ pub enum Ability {
     Weapons,
     /// Conducir autos.
     Cars,
+    /// Comerciar: comprarles al pulpero y al almacenero. Lo enseña Evaristo en
+    /// su rancho.
+    Trade,
 }
 
 impl Ability {
     /// Todas las habilidades, en el orden en que se listan.
-    pub const ALL: [Self; 4] = [Self::Ride, Self::Lasso, Self::Weapons, Self::Cars];
+    pub const ALL: [Self; 5] = [
+        Self::Ride,
+        Self::Lasso,
+        Self::Weapons,
+        Self::Cars,
+        Self::Trade,
+    ];
 
     fn bit(self) -> u8 {
         1 << self as u8
@@ -35,6 +45,7 @@ impl Ability {
             Self::Lasso => "Ahora podés usar el lazo",
             Self::Weapons => "Ahora podés usar armas",
             Self::Cars => "Ahora podés manejar autos",
+            Self::Trade => "Ahora podés comprar en la pulpería y el almacén",
         }
     }
 }
@@ -106,7 +117,10 @@ mod tests {
         let mut abilities = Abilities::default();
         abilities.unlock(Ability::Ride);
         let new = abilities.unlock_all();
-        assert_eq!(new, [Ability::Lasso, Ability::Weapons, Ability::Cars]);
+        assert_eq!(
+            new,
+            [Ability::Lasso, Ability::Weapons, Ability::Cars, Ability::Trade]
+        );
         assert_eq!(abilities, Abilities::all());
         assert!(abilities.unlock_all().is_empty());
     }

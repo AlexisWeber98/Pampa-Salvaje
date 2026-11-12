@@ -18,6 +18,7 @@ pub mod finish;
 pub mod gait;
 pub mod horse;
 pub mod model;
+pub mod pastime;
 pub mod rider;
 pub mod rig;
 pub mod tack;

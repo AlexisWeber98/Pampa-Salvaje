@@ -29,7 +29,7 @@
                 Receive(Letter),
                 Say(Hidalgo, "Y llévese estos tres pesos, por si lo hacen esperar o le piden algo pa’ atenderlo."),
                 Earn(pesos: 3),
-                Say(Hidalgo, "El tren ya se fue, m’hijo. Lleve mi caballo, el alazán atado en el almacén."),
+                Say(Hidalgo, "El tren ya se fue, m’hijo. Lleve mi caballo, el alazán atado en la pulpería."),
             ],
         ),
         (

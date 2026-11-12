@@ -264,6 +264,20 @@ pub struct Patron {
     pub seat: usize,
 }
 
+/// Quien atiende un local del pueblo `town`: el pulpero o el almacenero del
+/// edificio `room` (su índice en los `buildings`), parado detrás del
+/// mostrador, de cara a la calle ([`pulperia::Interior::keeper`]). Está
+/// siempre, abierto o cerrado, y se va con su pueblo.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Keeper {
+    pub town: usize,
+    pub room: usize,
+}
+
+/// Se mezcla con la semilla de la gente de cada pueblo para elegir el aspecto
+/// de quien atiende cada local.
+const KEEPER_SEED: u32 = 0x6b65_6570;
+
 /// Se mezcla con la semilla de la gente de cada pueblo para sentar a los
 /// parroquianos de su pulpería.
 const PATRONS_SEED: u32 = 0x7061_7472;
@@ -379,6 +393,7 @@ type Residents<'a> = (
     Option<&'a ParkedVehicle>,
     Option<&'a Patron>,
     Option<&'a StallTown>,
+    Option<&'a Keeper>,
 );
 
 /// Crea a la gente y el caballo atado de los pueblos que acaban de activarse, y
@@ -394,7 +409,7 @@ fn populate_towns(
         return;
     };
     let wanted: BTreeSet<usize> = live_towns(&crowds, active.as_deref()).into_iter().collect();
-    for (entity, walker, horse, palenque, npc, leaving, horseman, vehicle, patron, stall) in
+    for (entity, walker, horse, palenque, npc, leaving, horseman, vehicle, patron, stall, keeper) in
         &residents
     {
         let town = walker
@@ -406,7 +421,8 @@ fn populate_towns(
             .or(horseman.map(|h| h.town))
             .or(vehicle.map(|v| v.town))
             .or(patron.map(|p| p.town))
-            .or(stall.map(|s| s.0));
+            .or(stall.map(|s| s.0))
+            .or(keeper.map(|k| k.town));
         if town.is_some_and(|t| !wanted.contains(&t)) {
             commands.entity(entity).despawn();
         }
@@ -443,6 +459,9 @@ fn populate_towns(
                     .with_rotation(Quat::from_rotation_y(stall.facing.radians())),
             ));
         }
+        if let Some(layout) = towns.as_ref().and_then(|t| t.0.get(town)) {
+            spawn_keepers(&mut commands, layout, town, &world);
+        }
         let pulperia = towns.as_ref().and_then(|t| t.0.get(town)?.pulperia());
         if let Some((store, inside)) = pulperia {
             for sitter in cast.1.iter().filter(|a| a.town == town) {
@@ -453,7 +472,7 @@ fn populate_towns(
                         town,
                         npc: sitter.npc,
                     },
-                    CharacterVisual::Seated(npc_figure(sitter.npc)),
+                    CharacterVisual::Seated(npc_figure(sitter.npc), pampa_core::pulperia::Pastime::Rest),
                     VisualPose {
                         heading: seat.facing,
                         ..default()
@@ -515,7 +534,7 @@ fn seat_patrons(
                     town,
                     seat: patron.seat,
                 },
-                CharacterVisual::Seated(FigureKind::townsfolk(patron.look)),
+                CharacterVisual::Seated(FigureKind::townsfolk(patron.look), patron.pastime),
                 VisualPose {
                     heading: seat.facing,
                     ..default()
@@ -626,6 +645,31 @@ fn turn_toward(heading: Heading, toward: Vec2, max: f32) -> Heading {
     heading.rotated(delta.clamp(-max, max))
 }
 
+/// Quien atiende cada local de `layout` (la pulpería y los almacenes),
+/// parado en el piso de ladrillo detrás de su mostrador, con un aspecto de
+/// vecino propio del pueblo y del local.
+fn spawn_keepers(commands: &mut Commands, layout: &TownLayout, town: usize, world: &GameWorld) {
+    for (room, store, inside) in layout.rooms() {
+        let mix = (crowd_seed(layout.seed) ^ KEEPER_SEED)
+            .wrapping_add(room as u32)
+            .wrapping_mul(0x9e37_79b9);
+        let keeper = inside.keeper;
+        commands.spawn((
+            Name::new(format!("Keeper {town}.{room}")),
+            Keeper { town, room },
+            CharacterVisual::Figure(FigureKind::townsfolk((mix >> 24) as u8)),
+            VisualPose {
+                heading: keeper.facing,
+                ..default()
+            },
+            Transform::from_translation(world_from_ground(
+                keeper.position,
+                pulperia_floor(store, world),
+            )),
+        ));
+    }
+}
+
 /// Una persona del encargo parada, quieta donde la puso el encargo.
 fn spawn_standing_npc(commands: &mut Commands, npc: Npc, standing: Standing, world: &GameWorld) {
     let at = standing.position;
@@ -720,7 +764,7 @@ fn spawn_horsemen(commands: &mut Commands, riders: &TownRiders, town: usize, wor
     }
 }
 
-/// El pelaje del caballo atado en el almacén de `town`: el alazán de Don Hidalgo
+/// El pelaje del caballo atado en el palenque principal de `town`: el alazán de Don Hidalgo
 /// en su pueblo (el caballo que presta); si no, uno sembrado a partir del
 /// pueblo.
 pub fn tethered_coat(layout: &TownLayout, cast: &Cast, town: usize) -> Coat {
@@ -1545,10 +1589,15 @@ mod tests {
                 world_from_ground(seat.position, floor + pampa_core::pulperia::BENCH_HEIGHT)
             );
             assert_eq!(pose.heading, seat.facing);
-            assert!(
-                matches!(visual, CharacterVisual::Seated(FigureKind::Townsfolk(_))),
-                "{visual:?}"
-            );
+            // Juega al truco quien se sienta a la mesa de los naipes; los
+            // demás fuman, toman o conversan.
+            use pampa_core::pulperia::Pastime;
+            let CharacterVisual::Seated(FigureKind::Townsfolk(_), pastime) = *visual else {
+                panic!("{visual:?}");
+            };
+            let at_cards = Some(seat.table) == inside.card_table;
+            assert_eq!(pastime == Pastime::Cards, at_cards, "{visual:?}");
+            assert_ne!(pastime, Pastime::Rest, "{visual:?}");
         }
         // Con el jugador adentro nadie aparece ni desaparece, aunque caiga la
         // tarde.
@@ -1579,6 +1628,50 @@ mod tests {
         app.insert_resource(ActiveTowns(activation));
         app.update();
         assert!(patrons(&mut app).is_empty());
+    }
+
+    #[test]
+    fn a_keeper_stands_behind_each_counter_and_leaves_with_the_town() {
+        let mut app = town_app();
+        app.update();
+        let town = app.world().resource::<WorldTowns>().0[0].clone();
+        let world = app.world().resource::<GameWorld>().0.clone();
+        let keepers = |app: &mut App| {
+            let mut query = app
+                .world_mut()
+                .query::<(&Keeper, &Transform, &VisualPose, &CharacterVisual)>();
+            query
+                .iter(app.world())
+                .map(|(k, t, p, v)| (*k, *t, *p, *v))
+                .collect::<Vec<_>>()
+        };
+        let found = keepers(&mut app);
+        let rooms: Vec<_> = town.rooms().collect();
+        assert_eq!(rooms.len(), 2, "the pulpería and the almacén");
+        assert_eq!(found.len(), rooms.len());
+        for (index, store, inside) in &rooms {
+            let (keeper, transform, pose, visual) = found
+                .iter()
+                .find(|(k, ..)| k.room == *index)
+                .expect("one keeper per room");
+            assert_eq!(keeper.town, 0);
+            let middle = store.footprint.center();
+            let floor = world.terrain.height(middle.x, middle.y) + pampa_core::pulperia::FLOOR_RISE;
+            assert_eq!(
+                transform.translation,
+                world_from_ground(inside.keeper.position, floor)
+            );
+            assert_eq!(pose.heading, inside.keeper.facing);
+            assert!(
+                matches!(visual, CharacterVisual::Figure(FigureKind::Townsfolk(_))),
+                "{visual:?}"
+            );
+        }
+        let mut activation = TownActivation::default();
+        activation.update(&[town], Vec2::new(1.0e6, 1.0e6));
+        app.insert_resource(ActiveTowns(activation));
+        app.update();
+        assert!(keepers(&mut app).is_empty());
     }
 
     #[test]
@@ -1705,7 +1798,7 @@ mod tests {
                 ),
                 (
                     Npc::Bairoletto,
-                    CharacterVisual::Seated(FigureKind::Bairoletto)
+                    CharacterVisual::Seated(FigureKind::Bairoletto, pampa_core::pulperia::Pastime::Rest)
                 )
             ]
         );
@@ -1784,7 +1877,7 @@ mod tests {
                         town: 0,
                         npc: Npc::Bairoletto
                     },
-                    CharacterVisual::Seated(FigureKind::Bairoletto),
+                    CharacterVisual::Seated(FigureKind::Bairoletto, pampa_core::pulperia::Pastime::Rest),
                     Transform::from_translation(world_from_ground(seat.position, bench))
                 )]
             );

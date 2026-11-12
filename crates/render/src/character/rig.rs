@@ -39,6 +39,7 @@
 use bevy::animation::{AnimatedBy, AnimationTargetId};
 use bevy::prelude::*;
 use pampa_core::AnimationState;
+use pampa_core::pulperia::Pastime;
 
 use super::clips::{
     CharacterClips, Clip, Reference, STRIDES, TURN_STEP_RADIUS, idle_for, locomotion, phase_offset,
@@ -72,16 +73,31 @@ pub const PLAYED: [Clip; 6] = [
 /// igual fija los huesos que solo él anima.
 pub const SEATED: Clip = Clip::Drive;
 
-/// El clip de una persona sentada en un banco ([`OnBench`]), sin riendas: las
-/// manos descansan en el regazo.
+/// El clip de una persona sentada en un banco ([`OnBench`]) quieta, sin
+/// riendas: las manos descansan en el regazo.
 pub const AT_REST: Clip = Clip::SitIdle;
 
+/// El clip de quien está sentado en un banco pasando el rato con `pastime`:
+/// quieto, [`AT_REST`]; jugando al truco o conversando, con las manos
+/// adelante; tomando o fumando, llevándose el vaso o el cigarrillo a la boca.
+pub fn bench_clip(pastime: Pastime) -> Clip {
+    match pastime {
+        Pastime::Rest => AT_REST,
+        Pastime::Cards | Pastime::Chat => Clip::SitTalk,
+        Pastime::Drink => Clip::SitDrink,
+        Pastime::Smoke => Clip::SitSmoke,
+    }
+}
+
 /// Los clips que reproduce un modelo: el de una persona sentada (`seated`, ver
-/// [`SEATED`] y [`AT_REST`]; en un banco, también la espera de pie, a la que
-/// pasa al pararse: ver [`Rising`]), o los de una persona a pie.
+/// [`SEATED`] y [`bench_clip`]; en un banco, también la espera de pie, a la
+/// que pasa al pararse: ver [`Rising`]), o los de una persona a pie.
 pub fn played(seated: Option<Clip>) -> &'static [Clip] {
     match seated {
         Some(AT_REST) => &[AT_REST, Clip::Idle],
+        Some(Clip::SitTalk) => &[Clip::SitTalk, Clip::Idle],
+        Some(Clip::SitDrink) => &[Clip::SitDrink, Clip::Idle],
+        Some(Clip::SitSmoke) => &[Clip::SitSmoke, Clip::Idle],
         Some(_) => &[SEATED],
         None => &PLAYED,
     }
@@ -188,12 +204,13 @@ pub fn seated_targets(clip: Clip) -> [f32; Clip::COUNT] {
     out
 }
 
-/// El peso que debe tener cada clip para una persona sentada en un banco que se
-/// paró `rise` ([`Rising`]): de [`AT_REST`] a la espera de pie.
-pub fn rising_targets(rise: f32) -> [f32; Clip::COUNT] {
+/// El peso que debe tener cada clip para una persona sentada en un banco con
+/// el clip `bench` ([`bench_clip`]) que se paró `rise` ([`Rising`]): de él a
+/// la espera de pie.
+pub fn rising_targets(bench: Clip, rise: f32) -> [f32; Clip::COUNT] {
     let rise = rise.clamp(0.0, 1.0);
     let mut out = [0.0; Clip::COUNT];
-    out[AT_REST.index()] = 1.0 - rise;
+    out[bench.index()] = 1.0 - rise;
     out[Clip::Idle.index()] = rise;
     out
 }
@@ -276,7 +293,7 @@ type ModelRig = (
     &'static GlobalTransform,
     &'static mut Transform,
     Option<&'static Riding>,
-    Has<OnBench>,
+    Option<&'static OnBench>,
 );
 
 /// Quién es un modelo y qué reproduce: a pie, el tipo y la semilla de su
@@ -299,13 +316,13 @@ fn who(
     }
 }
 
-/// El clip de un modelo sentado: [`AT_REST`] en un banco, [`SEATED`] con las
-/// riendas; ninguno a pie.
-fn seated_clip(riding: bool, on_bench: bool) -> Option<Clip> {
-    match (riding, on_bench) {
+/// El clip de un modelo sentado: en un banco, el de lo que hace ahí
+/// ([`bench_clip`]); [`SEATED`] con las riendas; ninguno a pie.
+fn seated_clip(riding: bool, bench: Option<&OnBench>) -> Option<Clip> {
+    match (riding, bench) {
         (false, _) => None,
-        (true, true) => Some(AT_REST),
-        (true, false) => Some(SEATED),
+        (true, Some(b)) => Some(bench_clip(b.0)),
+        (true, None) => Some(SEATED),
     }
 }
 
@@ -328,8 +345,9 @@ pub(super) fn drive_rigs(
 ) {
     let dt = time.delta_secs();
     let eye = view_eye(cameras);
-    for (child_of, mut rig, at, mut transform, riding, on_bench) in &mut rigs {
-        let seated = seated_clip(riding.is_some(), on_bench);
+    for (child_of, mut rig, at, mut transform, riding, bench) in &mut rigs {
+        let on_bench = bench.is_some();
+        let seated = seated_clip(riding.is_some(), bench);
         let figure = bodies
             .get(child_of.parent())
             .ok()
@@ -353,7 +371,7 @@ pub(super) fn drive_rigs(
             _ => 0.0,
         };
         if on_bench {
-            goal = rising_targets(rise);
+            goal = rising_targets(seated.unwrap_or(AT_REST), rise);
         }
         let distance = eye.map_or(0.0, |e| e.distance(at.translation()));
         // La visibilidad solo se conoce con una cámara dibujando. Un jinete
@@ -496,6 +514,27 @@ mod tests {
     use crate::character::clips::{JOG_BAND, Reference};
     use crate::character::{CharacterVisual, CharacterVisualPlugin};
     use crate::fauna::FREEZE_FAR;
+
+    #[test]
+    fn each_pastime_plays_its_seated_clip_and_rises_into_the_standing_idle() {
+        use Pastime::*;
+        for (pastime, clip) in [
+            (Rest, Clip::SitIdle),
+            (Cards, Clip::SitTalk),
+            (Chat, Clip::SitTalk),
+            (Smoke, Clip::SitSmoke),
+            (Drink, Clip::SitDrink),
+        ] {
+            assert_eq!(seated_clip(true, Some(&OnBench(pastime))), Some(clip));
+            assert_eq!(played(Some(clip)), &[clip, Clip::Idle]);
+            let half = rising_targets(clip, 0.5);
+            assert_eq!((half[clip.index()], half[Clip::Idle.index()]), (0.5, 0.5));
+            assert_eq!(half.iter().sum::<f32>(), 1.0, "{pastime:?}");
+        }
+        // Con las riendas, el clip de montar; a pie, ninguno.
+        assert_eq!(seated_clip(true, None), Some(SEATED));
+        assert_eq!(seated_clip(false, Some(&OnBench(Cards))), None);
+    }
 
     #[test]
     fn each_person_plays_their_idle_standing_and_the_strides_moving() {

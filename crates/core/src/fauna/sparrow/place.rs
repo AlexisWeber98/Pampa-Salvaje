@@ -219,7 +219,7 @@ pub fn town_sparrows(
     for b in town
         .buildings
         .iter()
-        .filter(|b| b.kind == BuildingKind::GeneralStore)
+        .filter(|b| matches!(b.kind, BuildingKind::GeneralStore | BuildingKind::Pulperia))
         .take(3)
     {
         let out = outward(b.front);
@@ -427,7 +427,7 @@ mod tests {
         let stores: Vec<Aabb> = town
             .buildings
             .iter()
-            .filter(|b| b.kind == BuildingKind::GeneralStore)
+            .filter(|b| matches!(b.kind, BuildingKind::GeneralStore | BuildingKind::Pulperia))
             .map(|b| b.footprint.expanded(Sidewalk::WIDTH + 1.0))
             .collect();
         assert!(

@@ -50,6 +50,9 @@ GAME_CLIPS = [
     "water",
     "chop",
     "walk_carry",
+    "sit_talk",
+    "sit_drink",
+    "sit_smoke",
 ]
 
 
@@ -562,6 +565,16 @@ class Output(unittest.TestCase):
         times = back["accessors"][back["animations"][0]["samplers"][0]["input"]]
         self.assertEqual((times["min"], times["max"]), ([0.0], [1.0]))
 
+    def test_appending_keeps_the_earlier_file_and_gives_the_whole_build(self):
+        whole = R.build({"ual1": source()}, target(), self.CLIPS)
+        first = R.build({"ual1": source()}, target(), self.CLIPS[:1])
+        base = first[:2]
+        doc, blob, summary = R.build({"ual1": source()}, R.Skeleton(base[0]), self.CLIPS, base=base)
+        self.assertEqual(glbtrim.write_glb(doc, blob), glbtrim.write_glb(*whole[:2]))
+        self.assertEqual([s[0] for s in summary], ["again"])
+        with self.assertRaisesRegex(R.RetargetError, "holds"):
+            R.build({"ual1": source()}, R.Skeleton(base[0]), self.CLIPS[1:], base=base)
+
     def test_bad_inputs_are_refused(self):
         rt = R.Retargeter(source(), target())
         with self.assertRaisesRegex(R.RetargetError, "no clip"):
@@ -727,6 +740,61 @@ class Shipped(unittest.TestCase, WalkPosture):
             else:
                 pelvis = values
         return [({n: v[k] for n, v in rotations.items()}, pelvis[k]) for k in range(len(pelvis))]
+
+    def test_the_drink_and_the_smoke_bring_the_right_hand_to_the_mouth_once_a_loop(self):
+        # At the mouth the wrist is where SIP puts it and the fingers point
+        # at its aim: up past the lips with a glass, across the mouth with a
+        # cigarette. Everything else is the seated rest, untouched.
+        tk = R.Skeleton(self.doc)
+        idle = self.keys("sit_idle")
+        n = len(idle) - 1
+
+        def world(rotations, pelvis):
+            rots, trans = list(tk.rest_r), list(tk.rest_t)
+            for name, q in rotations.items():
+                rots[tk.find(name)] = q
+            trans[tk.find("pelvis")] = pelvis
+            return tk.world(rots, trans)[1]
+
+        def from_head(head, at):
+            # Right hand: out to its side is -X.
+            return R.add(head, (-at[0], at[1], at[2]))
+
+        for game, (side, wrist_at, aim, palm_to) in R.SIP.items():
+            self.assertEqual(side, "r")
+            keys = self.keys(game)
+            self.assertEqual(len(keys), n * R.SIP_CYCLES + 1, game)
+            a = next(a for a in self.doc["animations"] if a["name"] == game)
+            self.assertEqual(a["extras"]["sip"], "r")
+            times = glbtrim.read_accessor(self.doc, self.blob, a["samplers"][0]["input"])
+            up = 0
+            for k, ((rotations, pelvis), (t,)) in enumerate(zip(keys, times)):
+                base_rotations, _ = idle[k % n]
+                share = R.sip_share(t)
+                moved = {"upperarm_r", "lowerarm_r", "hand_r"} if share > 0.0 else set()
+                for name, q in rotations.items():
+                    if name not in moved:
+                        self.assertLess(R.qangle(q, base_rotations[name]), 2e-3, (game, t, name))
+                p = world(rotations, pelvis)
+                head, wrist, knuckle = (p[tk.find(b)] for b in ("head", "hand_r", "middle_01_r"))
+                if share == 1.0:
+                    up += 1
+                    self.assertLess(R.length(R.sub(wrist, from_head(head, wrist_at))), 0.02, (game, t))
+                    fingers = R.unit(R.sub(knuckle, wrist))
+                    toward = R.unit(R.sub(from_head(head, aim), wrist))
+                    self.assertGreater(R.dot(fingers, toward), 0.97, (game, t))
+                    # The smoker's palm faces the face; the drinker's the
+                    # middle of the body (right hand: +X), the glass in view.
+                    palm = R.palm_of(p, tk, "r")
+                    to = R.sub(head, wrist) if palm_to is None else (-palm_to[0], palm_to[1], palm_to[2])
+                    self.assertGreater(R.dot(palm, R.unit(R.off_axis(to, fingers))), 0.9, (game, t))
+                elif share == 0.0:
+                    self.assertLess(wrist[1], head[1] - 0.4, (game, t))
+            self.assertGreater(up, 30, game)
+        # The smoker's fingers cross the mouth to the other side; the
+        # drinker's point up.
+        self.assertLess(R.SIP["sit_smoke"][2][0], 0.0)
+        self.assertGreater(R.SIP["sit_drink"][2][1], R.SIP["sit_smoke"][2][1])
 
     def test_folded_arms_and_talking_hands_stay_out_of_every_chest(self):
         # The forearms and hands (not the pinched inside of the elbow) of
@@ -1183,6 +1251,17 @@ class Capture(unittest.TestCase):
 
 
 class Command(unittest.TestCase):
+    def test_append_refuses_a_target_and_a_missing_source(self):
+        err = io.StringIO()
+        with redirect_stderr(err), self.assertRaises(SystemExit) as stop:
+            R.main(["--ual1", "/nonexistent.glb", "--ual2", "/nonexistent.glb", "--append", SHIPPED,
+                    "--target", PROTAGONIST, "-o", os.devnull])
+        self.assertEqual(stop.exception.code, 2)
+        self.assertIn("leave out --target", err.getvalue())
+        # Appending a clip whose source was not given is a one-line error.
+        with self.assertRaisesRegex(R.RetargetError, "needs the cmu source"):
+            R.build({"ual1": source()}, target(), [("jog", "cmu", "run_cycle", True, True)])
+
     def test_a_bad_input_is_one_line_on_stderr(self):
         err = io.StringIO()
         with redirect_stderr(err), redirect_stdout(io.StringIO()):

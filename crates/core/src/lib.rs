@@ -41,6 +41,7 @@ pub mod rider;
 mod rng;
 pub mod road;
 pub mod settlement;
+pub mod shop;
 pub mod story;
 pub mod terrain;
 pub mod town;
@@ -80,7 +81,7 @@ pub use obstacles::StaticObstacles;
 pub use placement::{PlacementError, place_towns};
 pub use places::{
     BANK_NAMES, NAMED_PULPERIAS, Place, PlaceKind, STATION_WALL_INSET, Sign, SignMount, StoreStyle,
-    TIMETABLE_BOARD_HEIGHT, TIMETABLE_BOARD_WIDTH, station_bays, store_sign,
+    TIMETABLE_BOARD_HEIGHT, TIMETABLE_BOARD_WIDTH, station_bays, pulperia_sign,
 };
 pub use pose::{HorseGait, JointAngles, MOTION_CLOCK_PERIOD, tick_clock};
 pub use rail::{
@@ -105,7 +106,7 @@ pub use terrain::{FlatArea, Terrain};
 pub use town::{
     Building, BuildingKind, Canopy, Floor, HitchingPost, PLAZA_MONUMENT, PLAZA_PATH_CLEARANCE,
     PLAZA_PATH_WIDTH, PlazaPlacement, Railway, RailwayConfig, Side, TetheredHorse, TownConfig,
-    TownConfigError, TownLayout, TownSize, plaza_monument, plaza_paths,
+    TownConfigError, TownLayout, TownSize, hitched_store, plaza_monument, plaza_paths,
 };
 pub use town_riders::{TownRider, TownRiders};
 pub use townsfolk::{Sidewalks, StreetGraph, Townsfolk, Townsperson};
