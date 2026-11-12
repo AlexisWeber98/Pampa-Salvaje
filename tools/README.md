@@ -726,3 +726,20 @@ FORCE=1 sh tools/textures_to_ktx2.sh $V/ox_body/ $V/ox_hair/   # y hosco/overo.j
 Cada GLB tiene el nodo `Body` y un vacío por rueda (`Wheel.L`/`Wheel.R`, o `Wheel.FL`/`FR`/`RL`/`RR`) en su maza, cada uno con su malla y su malla liviana `_LOD` (30 %), y los marcadores `Seat` y `Animal.N`. El origen es el suelo bajo los animales (en el Ford T, entre los ejes), mirando hacia -Y. Unos 14 500 triángulos el sulky, 20 400 el carretón, 17 900 la carreta y 26 100 el Ford T; 8 500 la guarnición y 2 600 el yugo. `--preview` renderiza con Cycles una hoja de vistas (lado, 3/4 de frente y 3/4 de atrás) con el caballo y el buey propios caminando con sus mapas del juego.
 
 Tests: `python3 -I -B -m unittest discover -s tools -p test_vehicle.py` (los marcadores y los radios que lee el juego, las ruedas apoyadas en el suelo, los materiales y los mapas).
+
+## `item_icons.py`: los íconos del inventario, renderizados de modelos 3D
+
+`item_icons.py` renderiza en Blender un ícono por cada cosa del inventario (`pampa_core::Item`) y otro para la plata, en `assets/textures/ui/items/NOMBRE.png`; el juego los carga con `pampa_render::inventory::icon_file` (y `COINS_FILE`):
+
+```sh
+blender -b --factory-startup --python tools/item_icons.py -- \
+  --polyhaven ~/Downloads/polyhaven -o assets/textures/ui/items \
+  [--only NOMBRE ...] [--size 256] [--samples 96]
+```
+
+Cada ícono es un modelo solo en una escena vacía, a su tamaño real, encuadrado por una cámara ortográfica un poco desde arriba y de tres cuartos, con la misma luz para todos (una principal cálida, un relleno frío y un contraluz) y renderizado con Cycles sobre fondo transparente (PNG RGBA de `--size` px). Las cosas de tapa ancha y plana bajan un poco la exposición para que la luz de arriba no las queme.
+
+- **De Poly Haven** (CC0, `ICONS`): el hacha, la pala, el cuchillo, la vela y la botella de caña, de sus glTF 1K (`ID/ID_1k.gltf` bajo `--polyhaven`).
+- **Modelados aquí** (`MODELS`, obra propia, en Python dentro del script): los vasos de caña, ginebra (facetado) y vino; el tabaco en su tabaquera con el librito de papel de armar; la caja de fósforos; la galleta de campo; el queso; la yerba en bolsa de papel madera, el azúcar en su cucurucho de papel azul, la harina en bolsa de algodón atada y el charqui atado con hilo; el maneador y el lazo trenzado con su argolla, enrollados y colgados; las alpargatas; el poncho pampa doblado; el revólver (Colt de 1873), la carabina Winchester de 1892 y la caja de 25 balas .44-40; la carta de presentación lacrada y dos pesos de plata (el patacón). Los materiales son nodos procedurales; el cuero de la tabaquera, el algodón de la harina, la lona de las alpargatas y la lana del poncho usan además texturas de Poly Haven (`brown_leather`, `rough_linen`, `poly_wool_herringbone`, PNG 2K bajo `--polyhaven`).
+
+Los modelos y texturas de Poly Haven no se guardan en el repositorio, solo los íconos; los créditos están en `assets/textures/ui/items/CREDITS.md`. Los glTF y PNG descargados se tratan como datos no confiables: los lee el importador de Blender y `--factory-startup` impide que corran scripts. El azar de los modelos propios tiene semilla, así que cada corrida da los mismos íconos. Costo: unos 40 s los 25 íconos en una CPU de 12 hilos. Para revisarlos sobre el cuero del inventario: `montage -background '#4a2c16' assets/textures/ui/items/*.png -geometry 52x52+8+8 /tmp/icons.png`.
