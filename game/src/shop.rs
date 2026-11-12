@@ -158,8 +158,18 @@ fn talk(
             subtitle.0 = None;
         }
     }
-    if open.0.is_some() {
+    if let Some(counter) = open.0 {
         hint.set_if_neq(ShopHint(None));
+        // Si el local ya no está abierto (el pueblo se descargó), la lista se
+        // cierra y el protagonista queda libre.
+        let still = doors
+            .0
+            .iter()
+            .any(|d| d.town == counter.town && d.building == counter.building && !d.shut);
+        if !still {
+            open.0 = None;
+            lock.0 = false;
+        }
         return;
     }
     let door = players.single().ok().and_then(|(player, aboard)| {
@@ -270,11 +280,7 @@ fn show(
         let money = wallet.as_ref().map(|w| w.0).unwrap_or_default();
         let abilities = abilities.as_ref().map(|a| a.0).unwrap_or_default();
         ShopContents {
-            title: match counter.shop {
-                Shop::Pulperia => "Pulpería",
-                Shop::Almacen => "Almacén de ramos generales",
-            }
-            .to_string(),
+            title: counter.shop.title().to_string(),
             money: money.to_string(),
             rows: counter
                 .shop
@@ -576,6 +582,18 @@ mod tests {
         assert!(view(&app).is_some());
         // Al salir, el jugador vuelve a moverse.
         press(&mut app, LEAVE_KEY);
+        assert!(!locked(&app));
+    }
+
+    #[test]
+    fn the_list_closes_and_frees_the_player_when_the_shop_goes_away() {
+        let mut app = app(false, 1.9, Money::new(3, 0), trader());
+        press(&mut app, INTERACT_KEY);
+        assert!(view(&app).is_some() && locked(&app));
+        // El pueblo se descarga con la lista abierta: su local ya no está.
+        app.world_mut().resource_mut::<PulperiaDoors>().0.clear();
+        app.update();
+        assert_eq!(view(&app), None);
         assert!(!locked(&app));
     }
 

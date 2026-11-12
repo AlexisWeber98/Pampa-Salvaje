@@ -82,6 +82,14 @@ impl Shop {
         }
     }
 
+    /// El nombre del local, como lo titula su lista.
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Pulperia => "Pulpería",
+            Self::Almacen => "Almacén de ramos generales",
+        }
+    }
+
     /// Cómo saluda quien atiende cuando el protagonista se acerca.
     pub fn greeting(self) -> &'static str {
         match self {
