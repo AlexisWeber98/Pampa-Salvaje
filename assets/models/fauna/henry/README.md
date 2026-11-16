@@ -22,10 +22,16 @@ O=assets/models/fauna/henry/horse_body
 python3 -I tools/henry_coats.py ~/Downloads/sketchfab/henry_horse assets/models/fauna/henry
 for coat in zaino tordillo overo alazan bayo; do
   t=$(mktemp -d)
-  cp $O/$coat.jpg $t/color.jpg
-  cp $O/normal_gl.jpg $O/roughness.jpg $t/
-  sh tools/textures_to_ktx2.sh $t && mv $t/color.ktx2 $O/$coat.ktx2
-  rm -r $t
+  cp "$O/$coat.jpg" "$t/color.jpg" &&
+    cp "$O/normal_gl.jpg" "$O/roughness.jpg" "$t/" &&
+    sh tools/textures_to_ktx2.sh "$t" &&
+    mv "$t/color.ktx2" "$O/$coat.ktx2"
+  ok=$?
+  rm -r "$t"
+  if [ $ok -ne 0 ]; then
+    echo "henry coats: $coat failed, $O/$coat.ktx2 is stale" >&2
+    break
+  fi
 done
 ```
 
