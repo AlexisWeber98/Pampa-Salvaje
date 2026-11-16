@@ -359,6 +359,8 @@ El GLB lleva dos materiales lisos, `Body` y `Feathers`; el juego les pone los ma
 
 ## `horse.py`: el caballo criollo modelado en Blender
 
+> Reemplazado en el juego por el caballo de henrysteve973 (`henry_horse.py`). `Coat::color_at`, que nombra esta sección, ya no existe en Rust: los pelajes se pintan ahora en `henry_coats.py` (`coat_rgb`).
+
 `horse.py` modela, arma, pinta y anima el caballo criollo por script en Blender (probado con Blender 5.2), con las mismas piezas de `animal_rig.py` que el ñandú y al piso de calidad de la v13. Es el caballo del juego (los de corral y los ensillados), en `assets/models/fauna/own/` (la v20, aprobada por el usuario el 2026-10-30); reemplaza a `assets/models/fauna/quaternius/horse.glb`. Para volver a generarlo:
 
 ```sh
@@ -422,6 +424,20 @@ Lo que hace:
 - **Reporte.** Imprime los triángulos, las articulaciones, los límites en `Idle_1` y, por clip, la duración, el movimiento de `BN_Root_01_01`, la altura de la pelvis, el vaso más bajo y, en los ciclos en el lugar (`CYCLES`), la velocidad medida en los vasos apoyados (el centro de cada herradura, a menos de 5 cm de su punto más bajo y yendo hacia atrás). La tabla de los clips está en `assets/models/fauna/henry/README.md`.
 
 Tests: `python3 -I -B -m unittest discover -s tools -p test_henry_horse.py` arma una descarga sintética mínima (un caballo girado y escalado como los envoltorios de Sketchfab, con montura, estribo y dos clips) y comprueba los nombres de los clips, que se quitan la montura y los estribos (y que se rechaza un estribo con peso), que el resultado con skinning es el original en metros, que mira hacia +Z parado en el suelo, el orden de los clips sin canales de escala, el rechazo de un `.bin` fuera de la carpeta y el tamaño de las texturas.
+
+## `henry_coats.py`: los pelajes criollos sobre el caballo de henrysteve973
+
+El caballo de henrysteve973 trae pintado su propio overo; el juego necesita los cinco pelajes de `Coat` (zaino, tordillo, overo, alazán y bayo). Como con la vaca y el toro, cada pelaje se hornea en un mapa de color del cuerpo, `horse_body/<pelaje>.jpg` de 2048², que el juego dibuja en `Horse` (`Paint::Map`): así los bordes del blanco del overo y los rodados del tordillo quedan tan nítidos como el mapa, y no como colores por vértice de los 7.353 vértices del cuerpo. Usa numpy y ImageMagick 7, y `henry_horse.py` para leer la descarga; hay que ejecutarlo aislado, después de `henry_horse.py` (lee el `color.jpg` que este escribe). La salida es determinista. La receta, con la conversión a KTX2, está en `assets/models/fauna/henry/README.md`.
+
+```sh
+python3 -I tools/henry_coats.py ~/Downloads/sketchfab/henry_horse assets/models/fauna/henry [--coat overo] [--size 1024]
+```
+
+- **Geometría** (`geometry`). Rasteriza el caballo parado (el primer cuadro de `Idle_1`, como `henry_horse.py` lo ubica) sobre las UV del cuerpo: cada texel recibe su punto y su normal en el marco del cuerpo del juego (metros a la escala del juego, +X adelante, +Y arriba, +Z a la derecha del caballo, como `body_point` en `livestock.rs`). Las UV del cuerpo no se repiten (los dos lados tienen sus propios texels), así que un pelaje puede ser asimétrico. Los texels a menos de `MARGIN` (8) de una cara toman el punto del texel cubierto más cercano, sin pasar de un borde de la imagen al otro, para que los mips no mezclen el fondo en las costuras.
+- **El pelo sin el overo** (`fur_detail`). La luminancia lineal de cada texel del mapa de henrysteve973 dividida por la media local (`DETAIL_RADIUS`, 40 texels) de su propia clase de pelo, blanco o pardo, con una máscara suave (`hair_masks`, por el croma y el valor): queda el dibujo del pelo, los surcos y la oclusión, sin las manchas. En la franja de los bordes de las manchas viejas (`EDGE_RADIUS`, 6 texels), donde el pelo es más oscuro y se mezclan las dos clases, ese detalle se difumina para que no se lea el contorno del overo original. Las encías, la lengua y el interior de los ollares (rosados) quedan como los pintó henrysteve973.
+- **Pelajes** (`COATS`, `coat_rgb`). Los colores son los del pelaje del caballo anterior (`Coat` en `horse.rs`), con el lomo y lo alto del cuello más oscuros, el vientre, la cinchera y los ijares más claros y manchones suaves (`depth`); los cabos oscuros desde la rodilla y el garrón (`POINTS_HEIGHT`, con el borde irregular) y el vaso (`HOOF_TOP`); el hocico de piel oscura (`MUZZLE_AT`). El overo: grandes manchas blancas de borde ondulado en la panza, los costados, la grupa derecha, las paletas y el cuello (`OVERO_BLOBS`), con medias blancas en la mano izquierda y la pata derecha sobre vasos claros. El tordillo: rodados claros y redondos de unos 10 cm (`DAPPLE_CELL`, celdas de Voronoi en 3D) dentro de una red más oscura, en el costillar y los cuartos, con la cabeza más clara. El bayo: la raya de mula oscura a lo largo del lomo y los cabos negros. Cada mapa es el pelaje por el detalle del pelo, en luz lineal.
+
+Tests: `python3 -I -B -m unittest discover -s tools -p test_henry_coats.py` pinta un caballo sustituto (el de los tests de Rust de los colores por vértice que esta herramienta reemplazó) y comprueba que los pelajes se distinguen entre sí, la profundidad del lomo y del vientre, los cabos y la raya del bayo, que algo del blanco del overo se ve desde cada vista de tres cuartos y sus medias, y los rodados del tordillo; que el detalle del pelo borra las manchas pero conserva el dibujo del pelo y el rosado; y la rasterización y su margen sobre un cuadrado.
 
 ## `cattle.py`: la vaca y el toro modelados en Blender
 

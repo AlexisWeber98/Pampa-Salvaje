@@ -13,10 +13,11 @@
 //! (esperas, pastoreo, caminata y carrera). El caballo (los de corral y los
 //! ensillados) es el "Horse" de henrysteve973 (CC BY 4.0,
 //! `tools/henry_horse.py`, en `assets/models/fauna/henry/`): su esqueleto
-//! `BN_*` y sus clips, con su piel overo, su crin, su copete y su cola en
-//! tarjetas con alpha test que se dibujan a cualquier distancia, y sus
-//! herraduras ([`HENRY_CLIPS`], [`HORSE_WITHERS`]); los pelajes criollos
-//! todavía no se pintan sobre él. La vaca y el toro también son propios
+//! `BN_*` y sus clips, su crin, su copete y su cola en tarjetas con alpha
+//! test que se dibujan a cualquier distancia, y sus herraduras
+//! ([`HENRY_CLIPS`], [`HORSE_WITHERS`]); cada pelaje criollo viene horneado
+//! en un mapa de color propio de su cuerpo (`tools/henry_coats.py`,
+//! [`Paint::Map`]) en lugar de su piel overo. La vaca y el toro también son propios
 //! (`tools/cattle.py`, el caballo con anatomía bovina): cada pelaje
 //! (Hereford, Angus, overo y Shorthorn rosillo) viene horneado en un mapa de
 //! color propio del cuerpo ([`Paint::Map`]), y además de su malla completa
@@ -68,13 +69,13 @@ use std::time::Duration;
 use bevy::animation::{graph::AnimationNodeIndex, transition::AnimationTransitions};
 use bevy::camera::visibility::VisibilityRange;
 use bevy::gltf::{GltfAssetLabel, GltfMaterialName, GltfMeshName};
-use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldAssetRoot, WorldInstanceReady};
 use pampa_core::fauna::{CritterKind, Leap};
 use pampa_core::{CowCoat, Heading};
 
 use super::{Animal, AnimalPose, AnimalSeed, Gait};
+use crate::character::Coat;
 
 use crate::AssetRoot;
 use crate::facade::materials::{MAPS, load_map_with};
@@ -1037,13 +1038,12 @@ pub enum Paint {
     Keep,
     /// Un color liso.
     Flat(Color),
-    /// Blanco, con el color en los vertices de la copia de la mesh del cuerpo
-    /// para este pelaje ([`coat_color_at`]).
-    Vertex,
     /// No se dibuja (los cuernos del Angus mocho).
     Hidden,
     /// Blanco, con el pelaje horneado en el mapa de color de su conjunto (los
-    /// vacunos, [`coat_map_name`]); sin ese mapa, este color liso.
+    /// vacunos, [`coat_map_name`]; los caballos,
+    /// [`Coat::map_name`](crate::character::Coat::map_name)); sin ese mapa,
+    /// este color liso.
     Map(Color),
 }
 
@@ -1056,11 +1056,11 @@ pub enum Paint {
 /// pecho, la línea de abajo y las patas blancas; un Angus, todo negro y
 /// mocho; un overo, blanco con manchas negras, con la cara y las patas
 /// negras; un Shorthorn rosillo, de pelos colorados y blancos mezclados.
-/// Caballos (los nombres del caballo propio anterior: el de henrysteve973
-/// llama `Horse` a su cuerpo y se dibuja con su propio pelaje, [`Paint::Keep`]):
-/// `Main` es el cuerpo (colores por vertex, de
-/// los pelajes criollos, [`Coat`](crate::character::Coat)), `Hair` la crin y la
-/// cola, y `Main_Dark` y `Main_Light` partes de la cabeza.
+/// Caballos (el de henrysteve973): `Horse` es el cuerpo, con el pelaje
+/// criollo ([`Coat`](crate::character::Coat)) horneado en su mapa por
+/// `tools/henry_coats.py` ([`Paint::Map`]: sin él, el color del cuerpo);
+/// `Hair` la crin, el copete y la cola, en el color de la crin; las
+/// herraduras (`Horseshoe`) y las córneas, como son.
 pub fn paint(animal: Animal, material: &str) -> Paint {
     let rgb = |c: [u8; 3]| Paint::Flat(Color::srgb_u8(c[0], c[1], c[2]));
     match animal {
@@ -1115,13 +1115,11 @@ pub fn paint(animal: Animal, material: &str) -> Paint {
             }
         }
         Animal::Horse(coat) => match material {
-            "Main" => Paint::Vertex,
+            "Horse" => {
+                let c = coat.body();
+                Paint::Map(Color::srgb_u8(c[0], c[1], c[2]))
+            }
             "Hair" => rgb(coat.mane()),
-            "Main_Dark" => rgb(coat.points()),
-            "Main_Light" => rgb(coat.head()),
-            "Hooves" => rgb(coat.hoof()),
-            // La piel desnuda de los ollares y de la boca.
-            "Muzzle" => rgb([48, 42, 38]),
             _ => Paint::Keep,
         },
         // El zorro gris, los felinos, las rapaces y la liebre: su único pelaje
@@ -1132,18 +1130,26 @@ pub fn paint(animal: Animal, material: &str) -> Paint {
     }
 }
 
-/// El color por vertex del cuerpo de `animal` en `p` (en metros, marco del
-/// cuerpo), mirando hacia `normal`, como RGBA lineal. Solo para los materiales
-/// [`Paint::Vertex`].
-pub fn coat_color_at(animal: Animal, p: Vec3, normal: Vec3) -> [f32; 4] {
-    let srgb = match animal {
-        Animal::Horse(coat) => coat.color_at(p, normal),
-        // Los demás no tienen materiales por vertex.
-        _ => [255, 255, 255],
-    };
-    Color::srgb_u8(srgb[0], srgb[1], srgb[2])
-        .to_linear()
-        .to_f32_array()
+/// El nombre del mapa del pelaje de `animal` dentro del conjunto de su
+/// cuerpo, si su pelaje está horneado en uno: los vacunos
+/// ([`coat_map_name`]) y los caballos
+/// ([`Coat::map_name`](crate::character::Coat::map_name)).
+pub fn animal_coat_map(animal: Animal) -> Option<&'static str> {
+    match animal {
+        Animal::Cow(coat) | Animal::Bull(coat) => Some(coat_map_name(coat)),
+        Animal::Horse(coat) => Some(coat.map_name()),
+        _ => None,
+    }
+}
+
+/// Los mapas de pelaje horneados en el conjunto `set`: los cuatro vacunos en
+/// el cuerpo de la vaca y del toro, los cinco criollos en el del caballo.
+fn coat_maps_of(set: &str) -> Vec<&'static str> {
+    match set {
+        "cow_body" | "bull_body" => CowCoat::ALL.map(coat_map_name).to_vec(),
+        "henry_body" => Coat::ALL.map(Coat::map_name).to_vec(),
+        _ => Vec::new(),
+    }
 }
 
 /// Una especie cargada: su escena, sus clips y su grafo compartido.
@@ -1177,18 +1183,17 @@ impl LivestockModels {
 #[derive(Resource, Debug, Default)]
 pub struct CoatCache {
     materials: HashMap<(AssetId<StandardMaterial>, Animal), Handle<StandardMaterial>>,
-    meshes: HashMap<(AssetId<Mesh>, Animal), Handle<Mesh>>,
     /// Los mapas de cada conjunto de [`SKIN_SETS`] que se encontró.
     skins: HashMap<&'static str, SkinMaps>,
-    /// Los mapas de color de los pelajes vacunos que se encontraron, por
-    /// conjunto y pelaje ([`coat_map_name`]).
-    coat_maps: HashMap<(&'static str, CowCoat), Handle<Image>>,
+    /// Los mapas de color de los pelajes que se encontraron, por conjunto y
+    /// nombre del mapa ([`animal_coat_map`]).
+    coat_maps: HashMap<(&'static str, &'static str), Handle<Image>>,
 }
 
 impl CoatCache {
-    /// Las copias por pelaje creadas hasta ahora: materiales, y después meshes.
-    pub fn len(&self) -> (usize, usize) {
-        (self.materials.len(), self.meshes.len())
+    /// Las copias de materiales por pelaje creadas hasta ahora.
+    pub fn material_count(&self) -> usize {
+        self.materials.len()
     }
 }
 
@@ -1244,11 +1249,11 @@ pub(super) fn load_livestock(
             let [color, normal, orm] =
                 paths.map(|(path, srgb)| load_map_with(&server, &path, srgb, clamped()));
             cache.skins.insert(set, SkinMaps { color, normal, orm });
-            for coat in CowCoat::ALL {
-                let path = skin_path(set, coat_map_name(coat));
-                if matches!(set, "cow_body" | "bull_body") && root.0.join(&path).is_file() {
+            for name in coat_maps_of(set) {
+                let path = skin_path(set, name);
+                if root.0.join(&path).is_file() {
                     let map = load_map_with(&server, &path, true, clamped());
-                    cache.coat_maps.insert((set, coat), map);
+                    cache.coat_maps.insert((set, name), map);
                 }
             }
         }
@@ -1330,11 +1335,7 @@ pub(super) fn swap_in_livestock(
 }
 
 /// Con qué tiñe [`dress_livestock`].
-type Stores<'w> = (
-    ResMut<'w, CoatCache>,
-    ResMut<'w, Assets<StandardMaterial>>,
-    ResMut<'w, Assets<Mesh>>,
-);
+type Stores<'w> = (ResMut<'w, CoatCache>, ResMut<'w, Assets<StandardMaterial>>);
 
 /// Prepara un modelo en el momento en que se crea su escena: el rango
 /// compartido en sus meshes, su pelaje y el grafo de la especie en su
@@ -1343,7 +1344,7 @@ type Stores<'w> = (
 pub(super) fn dress_livestock(
     ready: On<WorldInstanceReady>,
     mut commands: Commands,
-    (mut cache, mut materials, mut meshes): Stores,
+    (mut cache, mut materials): Stores,
     models: Option<Res<LivestockModels>>,
     roots: Query<(&ChildOf, &LivestockModel)>,
     animals: Query<&Animal>,
@@ -1374,7 +1375,7 @@ pub(super) fn dress_livestock(
         .collect();
     let (player, probes) = dress_meshes(
         &mut commands,
-        (&mut cache, &mut materials, &mut meshes),
+        (&mut cache, &mut materials),
         root,
         (animal, model.species),
         &children,
@@ -1414,18 +1415,14 @@ fn is_light(name: Option<&GltfMeshName>) -> bool {
 
 /// Prepara las meshes del modelo creado bajo `root` como `animal` (de
 /// `species`): el rango compartido de los accesorios, los materiales teñidos
-/// del pelaje y el cuerpo con colores por vertex (copias creadas una vez por
-/// pelaje, en `cache`), y las partes ocultas ocultas. Devuelve la entidad con
+/// o con el mapa de su pelaje (copias creadas una vez por pelaje, en
+/// `cache`), y las partes ocultas ocultas. Devuelve la entidad con
 /// su reproductor de animación y las meshes dibujadas (sus sondas de
 /// visibilidad). Los modelos de los caballos ensillados se preparan igual (ver
 /// [`horse`](crate::character::horse)).
 pub(crate) fn dress_meshes(
     commands: &mut Commands,
-    (cache, materials, meshes): (
-        &mut CoatCache,
-        &mut Assets<StandardMaterial>,
-        &mut Assets<Mesh>,
-    ),
+    (cache, materials): (&mut CoatCache, &mut Assets<StandardMaterial>),
     root: Entity,
     (animal, species): (Animal, Species),
     children: &Query<&Children>,
@@ -1445,7 +1442,9 @@ pub(crate) fn dress_meshes(
         if has_player {
             player = Some(entity);
         }
-        let Some(mesh) = mesh else { continue };
+        if mesh.is_none() {
+            continue;
+        }
         let mut part = commands.entity(entity);
         if has_light {
             part.try_insert(light_range(&range, is_light(mesh_name)));
@@ -1455,12 +1454,9 @@ pub(crate) fn dress_meshes(
         let paint = name.map_or(Paint::Keep, |n| paint(animal, &n.0));
         let skin = name.and_then(|n| species.skin(&n.0));
         let maps = skin.and_then(|s| cache.skins.get(s.set).cloned());
-        let coat_map = match (animal, skin) {
-            (Animal::Cow(coat) | Animal::Bull(coat), Some(s)) => {
-                cache.coat_maps.get(&(s.set, coat)).cloned()
-            }
-            _ => None,
-        };
+        let coat_map = skin
+            .zip(animal_coat_map(animal))
+            .and_then(|(s, name)| cache.coat_maps.get(&(s.set, name)).cloned());
         // Las tarjetas de plumas sin sus mapas serían rectángulos lisos.
         if paint == Paint::Hidden || skin.is_some_and(|s| s.masked) && maps.is_none() {
             part.try_insert(Visibility::Hidden);
@@ -1483,7 +1479,6 @@ pub(crate) fn dress_meshes(
                     // crin del caballo).
                     match paint {
                         Paint::Flat(color) => m.base_color = color,
-                        Paint::Vertex => m.base_color = Color::WHITE,
                         // El pelaje horneado reemplaza la luminancia neutra
                         // (que ya lleva multiplicada).
                         Paint::Map(color) => match coat_map {
@@ -1500,49 +1495,8 @@ pub(crate) fn dress_meshes(
                 .clone();
             part.try_insert(MeshMaterial3d(tinted));
         }
-        if paint == Paint::Vertex {
-            let key = (mesh.0.id(), animal);
-            let coloured = match cache.meshes.get(&key) {
-                Some(h) => Some(h.clone()),
-                None => meshes
-                    .get(&mesh.0)
-                    .map(|m| coat_mesh(m, animal, species))
-                    .map(|m| {
-                        let h = meshes.add(m);
-                        cache.meshes.insert(key, h.clone());
-                        h
-                    }),
-            };
-            if let Some(coloured) = coloured {
-                part.try_insert(Mesh3d(coloured));
-            }
-        }
     }
     (player, probes)
-}
-
-/// `mesh` con cada vertex coloreado para el pelaje de `animal`.
-fn coat_mesh(mesh: &Mesh, animal: Animal, species: Species) -> Mesh {
-    let mut out = mesh.clone();
-    let positions = match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
-        Some(VertexAttributeValues::Float32x3(p)) => p.clone(),
-        _ => Vec::new(),
-    };
-    let normals = match mesh.attribute(Mesh::ATTRIBUTE_NORMAL) {
-        Some(VertexAttributeValues::Float32x3(n)) => n.clone(),
-        _ => vec![[0.0, 0.0, 1.0]; positions.len()],
-    };
-    let colors: Vec<[f32; 4]> = positions
-        .iter()
-        .zip(normals.iter().chain(std::iter::repeat(&[0.0, 0.0, 1.0])))
-        .map(|(p, n)| {
-            let at = body_point(species, Vec3::from(*p));
-            let normal = body_point(species, Vec3::from(*n)).normalize_or_zero();
-            coat_color_at(animal, at, normal)
-        })
-        .collect();
-    out.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
-    out
 }
 
 /// Un modelo tal como lo ve [`drive_livestock`].
@@ -1654,6 +1608,7 @@ mod tests {
     use crate::character::Coat;
     use crate::gltf::tests::{root, settle, unfinished_app};
     use bevy::camera::visibility::VisibilityRange;
+    use bevy::mesh::VertexAttributeValues;
     use pampa_core::fauna::CritterKind;
 
     fn standing(gait: Gait, speed: f32) -> AnimalPose {
@@ -2179,20 +2134,25 @@ mod tests {
                 );
             }
         }
-        // Los caballos toman los pelajes criollos: el cuerpo en colores por
-        // vertex, la crin en su color.
+        // Los caballos toman los pelajes criollos: el cuerpo, cada uno con su
+        // mapa horneado (`tools/henry_coats.py`), distinto del de los demás;
+        // la crin y la cola en su color; las herraduras como son.
+        let mut names = std::collections::HashSet::new();
         for coat in Coat::ALL {
-            assert_eq!(tint(Animal::Horse(coat), "Main"), Paint::Vertex);
+            assert!(matches!(tint(Animal::Horse(coat), "Horse"), Paint::Map(_)));
+            let path = root().0.join(skin_path("henry_body", coat.map_name()));
+            assert!(path.is_file(), "{}", path.display());
+            assert!(names.insert(coat.map_name()), "{coat:?}");
             let m = coat.mane();
             assert_eq!(
                 tint(Animal::Horse(coat), "Hair"),
                 Paint::Flat(Color::srgb_u8(m[0], m[1], m[2]))
             );
-            let p = Vec3::new(0.0, 1.1, 0.4);
-            let c = coat.color_at(p, Vec3::Z);
-            let want = Color::srgb_u8(c[0], c[1], c[2]).to_linear().to_f32_array();
-            assert_eq!(coat_color_at(Animal::Horse(coat), p, Vec3::Z), want);
+            assert_eq!(tint(Animal::Horse(coat), "Horseshoe"), Paint::Keep);
         }
+        // Sin su mapa, el alazán de Don Hidalgo es colorado.
+        let alazan = srgb(tint(Animal::Horse(Coat::HIDALGO), "Horse"));
+        assert!(alazan.red > alazan.green * 1.6, "{alazan:?}");
     }
 
     /// Los modelos incluidos, cargados en modo headless.
@@ -2690,6 +2650,8 @@ mod tests {
         // La crin y la cola son su silueta: no se quitan de lejos.
         assert!(rig.detail.is_empty(), "{:?}", rig.detail);
         let mane = coat.mane();
+        let coat_map =
+            world.resource::<CoatCache>().coat_maps[&("henry_body", coat.map_name())].clone();
         let mut seen = Vec::new();
         let mut parts = world.query::<(
             &Mesh3d,
@@ -2707,12 +2669,14 @@ mod tests {
                 .unwrap()
                 .attribute(Mesh::ATTRIBUTE_COLOR)
                 .is_some();
+            assert!(!coloured, "{}: no vertex colours", name.0);
             match name.0.as_str() {
-                "Main" => {
-                    assert!(m.base_color_texture.is_some() && m.normal_map_texture.is_some());
+                "Horse" => {
+                    // El pelaje, en su propio mapa, sin teñir.
+                    assert_eq!(m.base_color_texture.as_ref(), Some(&coat_map));
+                    assert!(m.normal_map_texture.is_some());
                     assert_eq!(m.base_color, Color::WHITE);
                     assert_eq!(m.alpha_mode, AlphaMode::Opaque);
-                    assert!(coloured, "the coat in its vertex colours");
                 }
                 "Hair" => {
                     assert!(m.base_color_texture.is_some());
@@ -2724,20 +2688,19 @@ mod tests {
                         Color::srgb_u8(mane[0], mane[1], mane[2]),
                         "tinted with the mane"
                     );
-                    assert!(!coloured);
                 }
-                // Las partes de un solo color, con los mismos mapas.
-                "Main_Dark" | "Main_Light" | "Muzzle" | "Hooves" => {
-                    assert!(m.base_color_texture.is_some(), "{}", name.0);
-                    assert_eq!(m.alpha_mode, AlphaMode::Opaque);
-                    assert_ne!(m.base_color, Color::WHITE, "{}", name.0);
-                    assert!(!coloured);
+                // Las herraduras, con sus propios mapas.
+                "Horseshoe" => {
+                    assert!(m.base_color_texture.is_some());
+                    assert_ne!(m.base_color_texture.as_ref(), Some(&coat_map));
                 }
                 _ => assert!(m.base_color_texture.is_none(), "{}", name.0),
             }
             seen.push(name.0.clone());
         }
-        assert!(seen.contains(&"Main".to_string()) && seen.contains(&"Hair".to_string()));
+        for part in ["Horse", "Hair", "Horseshoe"] {
+            assert!(seen.iter().any(|s| s == part), "{part}: {seen:?}");
+        }
     }
 
     #[test]
@@ -2785,8 +2748,13 @@ mod tests {
         // copias por pelaje se crean una vez por pelaje: los dos Angus
         // comparten las suyas.
         let props = crate::settlement::ranges()[1].clone();
-        let angus_map =
-            world.resource::<CoatCache>().coat_maps[&("cow_body", CowCoat::Angus)].clone();
+        let angus_map = world.resource::<CoatCache>().coat_maps
+            [&("cow_body", coat_map_name(CowCoat::Angus))]
+            .clone();
+        let tordillo_map = world.resource::<CoatCache>().coat_maps
+            [&("henry_body", Coat::Tordillo.map_name())]
+            .clone();
+        let mut horse_bodies = 0;
         let mut parts = world.query::<(
             &Mesh3d,
             &MeshMaterial3d<StandardMaterial>,
@@ -2796,7 +2764,7 @@ mod tests {
             &GltfMeshName,
         )>();
         let mut angus_main = std::collections::HashSet::new();
-        let (mut horns_hidden, mut light, mut coloured_meshes) = (0, 0, 0);
+        let (mut horns_hidden, mut light) = (0, 0);
         for (mesh, material, name, range, visibility, mesh_name) in parts.iter(world) {
             let cattle = mesh_name.0.starts_with("Cow");
             let is_light = mesh_name.0.ends_with(LIGHT_SUFFIX);
@@ -2824,29 +2792,36 @@ mod tests {
                     angus_main.insert(material.0.id());
                 }
             }
+            if name.0 == "Horse" {
+                // El tordillo, con su pelaje horneado en su mapa, sin teñir.
+                assert_eq!(m.base_color, Color::WHITE);
+                assert_eq!(m.base_color_texture.as_ref(), Some(&tordillo_map));
+                assert!(m.normal_map_texture.is_some());
+                horse_bodies += 1;
+            }
             if cattle && name.0 == "Hair" {
                 assert_eq!(m.alpha_mode, AlphaMode::Mask(LEAF_CUTOFF));
                 assert!(!is_light, "no hair cards far off");
             }
+            // Ninguna mesh lleva colores por vertex: los pelajes están en los
+            // mapas.
             let coloured = world
                 .resource::<Assets<Mesh>>()
                 .get(&mesh.0)
                 .unwrap()
                 .attribute(Mesh::ATTRIBUTE_COLOR)
                 .is_some();
-            assert!(!coloured || !cattle && name.0 == "Main", "{}", mesh_name.0);
-            coloured_meshes += usize::from(coloured);
+            assert!(!coloured, "{}", mesh_name.0);
         }
         assert_eq!(angus_main.len(), 1, "one shared Angus hide");
+        assert_eq!(horse_bodies, 1, "the horse wears its coat");
         // Los Angus son mochos, de cerca y de lejos.
         assert_eq!(horns_hidden, 4, "the Angus are polled");
         assert!(light >= 4, "every head of cattle has its light mesh");
-        let (materials, meshes) = world.resource::<CoatCache>().len();
         // Dos pelajes de vaca, un toro overo y un caballo, unos pocos
-        // materiales cada uno; solo el cuerpo del caballo lleva colores por
-        // vertex.
+        // materiales cada uno.
+        let materials = world.resource::<CoatCache>().material_count();
         assert!(materials <= 4 * 8, "{materials}");
-        assert_eq!((meshes, coloured_meshes), (1, 1));
 
         // Una cámara lejos: cada animal se congela y se le quita su grafo.
         world.spawn((Camera3d::default(), Transform::from_xyz(0.0, 2.0, 500.0)));

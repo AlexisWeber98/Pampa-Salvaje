@@ -50,12 +50,14 @@
 //! caballo fuera de la vista o lejos conserva su última pose, pero nunca el del
 //! jugador.
 //!
-//! Los pelajes se pintan en los colores por vertex del modelo según dónde está
-//! cada vertex en el caballo parado ([`Coat::color_at`]), así que las manchas,
-//! los rodados y la raya de mula del bayo recorren el cuerpo; el pigmento se
-//! sombrea además con la forma del caballo (el lomo y lo alto del cuello más
-//! oscuros, el vientre y los ijares más claros, manchones suaves), y los mapas
-//! del cuerpo agregan el pelo, los surcos de los músculos y el brillo.
+//! Cada pelaje está horneado en su propio mapa de color del cuerpo
+//! ([`Coat::map_name`], `tools/henry_coats.py`): el color según dónde está
+//! cada texel en el caballo parado, así que las manchas, los rodados y la raya
+//! de mula del bayo recorren el cuerpo; el pigmento se sombrea además con la
+//! forma del caballo (el lomo y lo alto del cuello más oscuros, el vientre y
+//! los ijares más claros, manchones suaves), por el pelo del mapa de
+//! henrysteve973 sin sus manchas; el mapa normal agrega los surcos de los
+//! músculos.
 
 use bevy::animation::graph::AnimationGraphHandle;
 use bevy::ecs::system::SystemParam;
@@ -114,7 +116,24 @@ impl Coat {
         Self::ALL[(h % Self::ALL.len() as u32) as usize]
     }
 
-    fn body(self) -> Rgb {
+    /// El nombre del mapa de este pelaje en el conjunto del cuerpo del
+    /// caballo (`henry/horse_body/<nombre>.ktx2`): `tools/henry_coats.py`
+    /// hornea en él el pelaje entero (las manchas del overo, los rodados del
+    /// tordillo, la raya de mula del bayo, los cabos oscuros, el lomo más
+    /// oscuro y el vientre más claro) por el pelo del caballo de henrysteve973.
+    pub fn map_name(self) -> &'static str {
+        match self {
+            Self::Zaino => "zaino",
+            Self::Tordillo => "tordillo",
+            Self::Overo => "overo",
+            Self::Alazan => "alazan",
+            Self::Bayo => "bayo",
+        }
+    }
+
+    /// El color del cuerpo, el que se dibuja si falta el mapa del pelaje: el
+    /// `body` de `COATS` en `tools/henry_coats.py`.
+    pub(crate) fn body(self) -> Rgb {
         match self {
             Self::Zaino => [78, 50, 34],
             Self::Tordillo => [118, 118, 114],
@@ -127,7 +146,7 @@ impl Coat {
     /// La crin y la cola: negras en el zaino y el bayo, blanquecinas en el
     /// tordillo, rubias en el alazán y más oscuras que el pelaje en el overo;
     /// siempre apartadas del pelaje, para que la crin no se pierda contra el
-    /// cuello. Tiñe el mapa neutro de las tarjetas de pelo (`horse_hair`).
+    /// cuello. Tiñe el mapa neutro de las tarjetas de pelo (`henry_hair`).
     pub(crate) fn mane(self) -> Rgb {
         match self {
             Self::Zaino | Self::Bayo => [34, 28, 24],
@@ -136,112 +155,6 @@ impl Coat {
             Self::Alazan => [214, 150, 92],
         }
     }
-
-    /// La parte baja de las patas, más oscura en la mayoría de los pelajes.
-    pub(crate) fn points(self) -> Rgb {
-        match self {
-            Self::Zaino => [44, 32, 26],
-            Self::Tordillo => [92, 92, 90],
-            Self::Overo => [142, 84, 48],
-            Self::Alazan => [132, 70, 38],
-            Self::Bayo => [40, 32, 26],
-        }
-    }
-
-    /// La cabeza, un poco más clara en el tordillo.
-    pub(crate) fn head(self) -> Rgb {
-        match self {
-            Self::Tordillo => [150, 150, 146],
-            _ => self.body(),
-        }
-    }
-
-    pub(crate) fn hoof(self) -> Rgb {
-        match self {
-            Self::Tordillo | Self::Overo => [78, 68, 58],
-            _ => [38, 32, 28],
-        }
-    }
-
-    /// El color de un vertex del pelaje en `p` sobre el caballo parado, con su
-    /// superficie mirando hacia `normal`.
-    pub fn color_at(self, p: Vec3, normal: Vec3) -> Rgb {
-        const WHITE: Rgb = [232, 228, 218];
-        if p.y < POINTS_HEIGHT {
-            // Medias del overo en la mano izquierda y en la pata derecha.
-            let stocking = (p.x > 0.0 && p.z < 0.0) || (p.x < 0.0 && p.z > 0.0);
-            if self == Self::Overo && stocking {
-                return WHITE;
-            }
-            return self.points();
-        }
-        let c = match self {
-            // El blanco no tiene pigmento que sombrear.
-            Self::Overo if overo_patch(p) => return WHITE,
-            Self::Tordillo if dapple(p) => [178, 176, 170],
-            // La raya de mula del bayo, desde la cruz hasta la cola.
-            Self::Bayo if normal.y > 0.6 && p.z.abs() < 0.05 && (-0.8..0.45).contains(&p.x) => {
-                [104, 76, 46]
-            }
-            _ => self.body(),
-        };
-        let k = depth(p, normal);
-        c.map(|v| (v as f32 * k).round().clamp(0.0, 255.0) as u8)
-    }
-}
-
-/// La profundidad del pelaje en `p` (mirando hacia `normal`): un factor que
-/// multiplica su color, como en un caballo de verdad, cuyo pelo es más oscuro
-/// a lo largo del lomo y en lo alto del cuello y más claro en el vientre, la
-/// cinchera y los ijares, con manchones suaves del tamaño de una parte del
-/// cuerpo para que ninguna zona sea de un solo color plano.
-fn depth(p: Vec3, normal: Vec3) -> f32 {
-    let smooth = |t: f32| {
-        let t = t.clamp(0.0, 1.0);
-        t * t * (3.0 - 2.0 * t)
-    };
-    // El lomo y la grupa, mirando hacia arriba.
-    let topline = smooth((normal.y - 0.35) / 0.45) * smooth((p.y - 1.15) / 0.2);
-    // Lo alto del cuello, delante de la cruz.
-    let crest =
-        smooth((p.x - 0.45) / 0.2) * smooth((p.y - 1.35) / 0.15) * smooth((normal.y + 0.1) / 0.5);
-    // El vientre y la cinchera, mirando hacia abajo, y los ijares.
-    let under = smooth((-normal.y - 0.15) / 0.5) * smooth((1.3 - p.y) / 0.2);
-    let flank = smooth((normal.z.abs() - 0.6) / 0.3) * smooth((1.15 - p.y) / 0.15);
-    let mottle = (p.x * 3.1 + 1.3).sin() * (p.y * 2.7 + 0.4).sin() * (p.z * 3.4 + 2.2).sin()
-        + 0.5 * (p.x * 7.3 - p.z * 5.9 + 0.7).sin() * (p.y * 6.1 + 1.9).cos();
-    1.0 - 0.16 * topline - 0.12 * crest + 0.12 * under + 0.06 * flank + 0.06 * mottle
-}
-
-/// Por debajo de esta altura (en m) las patas muestran los cabos del pelaje.
-const POINTS_HEIGHT: f32 = 0.5;
-
-/// El blanco del overo: grandes manchas en la panza, en ambos costados, en el
-/// lado derecho de la grupa, en ambas paletas y a ambos lados del cuello, así
-/// que algo de blanco se ve desde cualquier lado.
-fn overo_patch(p: Vec3) -> bool {
-    const BLOBS: [([f32; 3], [f32; 3]); 8] = [
-        ([0.0, 0.8, 0.0], [0.5, 0.2, 0.4]),
-        ([-0.15, 1.08, -0.26], [0.36, 0.26, 0.16]),
-        ([0.12, 1.02, 0.26], [0.38, 0.32, 0.18]),
-        ([-0.56, 1.18, 0.24], [0.22, 0.22, 0.16]),
-        ([0.78, 1.5, -0.12], [0.2, 0.24, 0.12]),
-        ([0.52, 1.1, 0.22], [0.2, 0.26, 0.14]),
-        ([0.9, 1.62, 0.1], [0.18, 0.2, 0.1]),
-        ([0.45, 1.0, -0.22], [0.2, 0.26, 0.14]),
-    ];
-    BLOBS.iter().any(|(c, r)| {
-        let d = (p - Vec3::from(*c)) / Vec3::from(*r);
-        d.length_squared() < 1.0
-    })
-}
-
-/// Los rodados del tordillo: un patrón de interferencia 3D barato.
-fn dapple(p: Vec3) -> bool {
-    let a = (p.x * 23.0 + (p.z * 17.0).sin()).sin();
-    let b = (p.y * 21.0 + (p.x * 13.0).cos()).sin();
-    let c = (p.z * 19.0 + p.y * 7.0).sin();
-    a * b * c > 0.12
 }
 
 /// A qué distancia (en m) están los vasos de un caballo del centro de un giro
@@ -816,7 +729,6 @@ pub(super) struct HorseScene<'w, 's> {
 pub(super) struct HorseStores<'w> {
     cache: Option<ResMut<'w, CoatCache>>,
     materials: ResMut<'w, Assets<StandardMaterial>>,
-    meshes: ResMut<'w, Assets<Mesh>>,
     models: Option<Res<'w, LivestockModels>>,
 }
 
@@ -849,7 +761,6 @@ pub(super) fn dress_horse(
     let HorseStores {
         cache: Some(cache),
         materials,
-        meshes,
         ..
     } = &mut stores
     else {
@@ -857,7 +768,7 @@ pub(super) fn dress_horse(
     };
     let (player, probes) = dress_meshes(
         &mut commands,
-        (cache, materials, meshes),
+        (cache, materials),
         root,
         (Animal::Horse(body.coat), Species::Horse),
         &scene.children,
@@ -1223,94 +1134,8 @@ pub(super) fn drive_horses(
 pub(crate) mod tests {
     use super::*;
 
-    /// La superficie de un caballo sustituto: puntos en su costillar, su grupa
-    /// y sus paletas (un tubo a lo largo de +X alrededor de 1.14 m de altura),
-    /// su cuello y sus cuatro patas, cada uno con su normal hacia afuera.
-    fn coat_points() -> Vec<(Vec3, Vec3)> {
-        let mut out = Vec::new();
-        for i in 0..40 {
-            let x = -0.85 + 1.45 * i as f32 / 39.0;
-            for k in 0..32 {
-                let a = k as f32 / 32.0 * std::f32::consts::TAU;
-                let n = Vec3::new(0.0, a.cos(), a.sin());
-                out.push((Vec3::new(x, 1.14 + 0.29 * n.y, 0.23 * n.z), n));
-            }
-        }
-        for i in 0..20 {
-            let t = i as f32 / 19.0;
-            let c = Vec3::new(0.5 + 0.45 * t, 1.3 + 0.45 * t, 0.0);
-            for k in 0..16 {
-                let a = k as f32 / 16.0 * std::f32::consts::TAU;
-                let n = Vec3::new(-0.7 * a.cos(), 0.7 * a.cos(), a.sin()).normalize();
-                out.push((c + n * 0.13, n));
-            }
-        }
-        for (x, z) in [(0.55, -0.17), (0.55, 0.17), (-0.65, -0.17), (-0.65, 0.17)] {
-            for j in 0..20 {
-                for k in 0..10 {
-                    let a = k as f32 / 10.0 * std::f32::consts::TAU;
-                    let n = Vec3::new(a.cos(), 0.0, a.sin());
-                    out.push((Vec3::new(x, 0.9 * j as f32 / 19.0, z) + n * 0.06, n));
-                }
-            }
-        }
-        out
-    }
-
-    fn coat_colors(coat: Coat) -> Vec<(Vec3, Vec3, Rgb)> {
-        coat_points()
-            .into_iter()
-            .map(|(p, n)| (p, n, coat.color_at(p, n)))
-            .collect()
-    }
-
     fn luma(c: Rgb) -> f32 {
         0.3 * c[0] as f32 + 0.59 * c[1] as f32 + 0.11 * c[2] as f32
-    }
-
-    #[test]
-    fn every_coat_looks_different() {
-        let mean = |coat| {
-            let v: Vec<_> = coat_colors(coat)
-                .into_iter()
-                .filter(|(p, _, _)| p.y > POINTS_HEIGHT)
-                .collect();
-            let sum = v.iter().fold(Vec3::ZERO, |s, (_, _, c)| {
-                s + Vec3::new(c[0] as f32, c[1] as f32, c[2] as f32)
-            });
-            sum / v.len() as f32
-        };
-        for (i, a) in Coat::ALL.iter().enumerate() {
-            for b in &Coat::ALL[i + 1..] {
-                let d = mean(*a).distance(mean(*b));
-                assert!(d > 20.0, "{a:?} vs {b:?}: {d}");
-            }
-        }
-    }
-
-    #[test]
-    fn every_coat_has_depth_a_darker_topline_lighter_underside_and_soft_mottling() {
-        for coat in Coat::ALL {
-            // El costillar, de la cruz a la grupa, sin manchas blancas.
-            let barrel: Vec<(Vec3, Vec3, f32)> = coat_colors(coat)
-                .into_iter()
-                .filter(|(p, _, c)| {
-                    (-0.6..0.4).contains(&p.x) && p.y > 0.9 && *c != [232, 228, 218]
-                })
-                .map(|(p, n, c)| (p, n, luma(c)))
-                .collect();
-            let mut l: Vec<f32> = barrel.iter().map(|b| b.2).collect();
-            l.sort_by(f32::total_cmp);
-            let mean = l.iter().sum::<f32>() / l.len() as f32;
-            let spread = (l[l.len() * 95 / 100] - l[l.len() * 5 / 100]) / mean;
-            let side = |f: &dyn Fn(Vec3) -> bool| {
-                let v: Vec<f32> = barrel.iter().filter(|b| f(b.1)).map(|b| b.2).collect();
-                v.iter().sum::<f32>() / v.len() as f32
-            };
-            let (top, belly) = (side(&|n| n.y > 0.8), side(&|n| n.y < -0.6));
-            assert!(spread > 0.15, "{coat:?}: a flat coat ({spread})");
-            assert!(top < belly * 0.88, "{coat:?}: topline {top}, belly {belly}");
-        }
     }
 
     #[test]
@@ -1325,66 +1150,6 @@ pub(crate) mod tests {
             let apart = (mane - body).abs() / mane.max(body);
             assert!(apart > 1.0 / 3.0, "{coat:?}: mane {mane}, coat {body}");
         }
-    }
-
-    #[test]
-    fn the_bayo_has_black_points_and_a_dorsal_stripe() {
-        let all = coat_colors(Coat::Bayo);
-        let legs: Vec<_> = all.iter().filter(|(p, _, _)| p.y < 0.4).collect();
-        assert!(!legs.is_empty());
-        assert!(legs.iter().all(|(_, _, c)| luma(*c) < 60.0), "black legs");
-        let flank = all
-            .iter()
-            .filter(|(p, n, _)| p.y > 0.9 && n.z.abs() > 0.8 && p.x < 0.45);
-        assert!(flank.clone().count() > 20);
-        assert!(flank.clone().all(|(_, _, c)| luma(*c) > 140.0), "sandy");
-        assert!(luma(Coat::Bayo.mane()) < 60.0, "black mane and tail");
-        let stripe: Vec<_> = all
-            .iter()
-            .filter(|(p, n, _)| n.y > 0.8 && p.z.abs() < 0.02 && (-0.6..0.2).contains(&p.x))
-            .collect();
-        assert!(stripe.len() >= 3, "{}", stripe.len());
-        assert!(
-            stripe.iter().all(|(_, _, c)| luma(*c) < 100.0),
-            "a dark stripe"
-        );
-        assert!(
-            coat_colors(Coat::Alazan)
-                .iter()
-                .all(|(_, _, c)| *c != [104, 76, 46]),
-            "the other coats have none"
-        );
-    }
-
-    #[test]
-    fn the_overo_shows_white_patches_from_every_three_quarter_view() {
-        let all = coat_colors(Coat::Overo);
-        for (x, z) in [(1.0, 1.0), (1.0, -1.0), (-1.0, 1.0), (-1.0, -1.0)] {
-            let toward = Vec3::new(x, 0.6, z).normalize();
-            let seen: Vec<_> = all
-                .iter()
-                .filter(|(p, n, _)| n.dot(toward) > 0.3 && p.y > POINTS_HEIGHT)
-                .collect();
-            let white = seen.iter().filter(|(_, _, c)| luma(*c) > 200.0).count();
-            let share = white as f32 / seen.len() as f32;
-            assert!((0.08..0.7).contains(&share), "from ({x}, {z}): {share}");
-        }
-        assert_ne!(Coat::Overo.hoof(), Coat::Zaino.hoof());
-    }
-
-    #[test]
-    fn the_tordillo_is_dappled() {
-        let barrel: Vec<_> = coat_colors(Coat::Tordillo)
-            .into_iter()
-            .filter(|(p, _, _)| p.y > 0.8)
-            .collect();
-        let light = barrel.iter().filter(|(_, _, c)| luma(*c) > 160.0).count();
-        let dark = barrel.iter().filter(|(_, _, c)| luma(*c) < 130.0).count();
-        let n = barrel.len();
-        assert!(
-            light * 7 > n && dark * 7 > n,
-            "{light} light, {dark} dark of {n}"
-        );
     }
 
     #[test]
