@@ -54,8 +54,10 @@ pub struct BumpTracker {
 }
 
 impl BumpTracker {
-    /// Velocidad mínima del jinete que cuenta como empujón, en m/s.
-    pub const MIN_SPEED: f32 = 1.5;
+    /// Velocidad mínima del jinete que cuenta como empujón, en m/s: por
+    /// debajo del paso del caballo (4,5 km/h), para que empujar caminando
+    /// cuente.
+    pub const MIN_SPEED: f32 = 1.0;
     /// Segundos antes de que el mismo peatón vuelva a quejarse.
     pub const COOLDOWN: f32 = 6.0;
 
@@ -149,8 +151,8 @@ mod tests {
     fn severity_follows_the_gait() {
         let p = RiderParams::default();
         assert_eq!(BumpSeverity::from_speed(0.0, &p), None);
-        assert_eq!(BumpSeverity::from_speed(1.0, &p), None, "a crawl");
-        assert_eq!(BumpSeverity::from_speed(1.49, &p), None);
+        assert_eq!(BumpSeverity::from_speed(0.5, &p), None, "a crawl");
+        assert_eq!(BumpSeverity::from_speed(0.99, &p), None);
         assert_eq!(
             BumpSeverity::from_speed(BumpTracker::MIN_SPEED, &p),
             Some(BumpSeverity::Walk)
@@ -164,8 +166,8 @@ mod tests {
             Some(BumpSeverity::Gallop)
         );
         // Chocar a alguien marcha atrás también cuenta según la velocidad.
-        assert_eq!(BumpSeverity::from_speed(-2.0, &p), Some(BumpSeverity::Walk));
-        for speed in [2.0, 5.0, 11.0] {
+        assert_eq!(BumpSeverity::from_speed(-1.2, &p), Some(BumpSeverity::Walk));
+        for speed in [1.2, 2.0, 5.0, 11.0] {
             let animation = AnimationState::from_speed(speed, p.walk_max);
             let gallop = BumpSeverity::from_speed(speed, &p) == Some(BumpSeverity::Gallop);
             assert_eq!(gallop, animation == AnimationState::Gallop, "{speed}");
@@ -190,10 +192,10 @@ mod tests {
             assert!(t.register(&[3], 9.0, &p).is_empty());
         }
         // Otra persona todavía puede quejarse.
-        assert_eq!(t.register(&[1], 2.0, &p).len(), 1);
+        assert_eq!(t.register(&[1], 1.2, &p).len(), 1);
         t.tick(0.06);
         assert_eq!(
-            t.register(&[3], 2.0, &p),
+            t.register(&[3], 1.2, &p),
             [BumpEvent {
                 walker: 3,
                 severity: BumpSeverity::Walk

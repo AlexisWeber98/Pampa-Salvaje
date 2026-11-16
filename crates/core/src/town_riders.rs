@@ -80,8 +80,9 @@ pub struct TownRiders {
 /// Distancia de la línea central de la calle a la que va un jinete, a su
 /// izquierda, en metros: dentro de la calzada de 5 m de las calles de 12 m.
 pub const LANE: f32 = 1.2;
-/// Ritmos al paso (un caballo camina a unos 1,7 m/s), en m/s.
-pub const WALK: (f32, f32) = (1.4, 1.9);
+/// Ritmos al paso, en m/s: hasta los 4,5 km/h del caballo del jugador
+/// (`RiderParams::walk_max`), lo que camina el clip sin estirar.
+pub const WALK: (f32, f32) = (1.0, 4.5 / 3.6);
 /// Aceleración y frenada, en m/s².
 const ACCEL: f32 = 2.0;
 /// Cuánto mira hacia adelante un jinete para frenar, más allá de los cuerpos

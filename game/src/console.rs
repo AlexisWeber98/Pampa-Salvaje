@@ -157,7 +157,10 @@ fn pesos(text: &str) -> Option<pampa_core::Money> {
     };
     // Cuenta en centavos sin pasarse de 32 bits: una suma enorme se rechaza
     // en lugar de desbordar.
-    pesos.checked_mul(100)?.checked_add(centavos).map(pampa_core::Money)
+    pesos
+        .checked_mul(100)?
+        .checked_add(centavos)
+        .map(pampa_core::Money)
 }
 
 /// Lee una línea escrita; `Err` es la línea a mostrar en su lugar.
@@ -880,12 +883,28 @@ mod tests {
         assert_eq!(parse("  Horse "), Ok(Command::Horse));
         assert_eq!(parse("fauna"), Ok(Command::Fauna));
         assert_eq!(parse("unlock all"), Ok(Command::UnlockAll));
-        assert_eq!(parse("money 10"), Ok(Command::Money(pampa_core::Money::new(10, 0))));
-        assert_eq!(parse("money 2,50"), Ok(Command::Money(pampa_core::Money::new(2, 50))));
-        assert_eq!(parse("money 0.5"), Ok(Command::Money(pampa_core::Money::new(0, 50))));
-        assert!(parse("money").is_err() && parse("money diez").is_err() && parse("money 1,234").is_err());
+        assert_eq!(
+            parse("money 10"),
+            Ok(Command::Money(pampa_core::Money::new(10, 0)))
+        );
+        assert_eq!(
+            parse("money 2,50"),
+            Ok(Command::Money(pampa_core::Money::new(2, 50)))
+        );
+        assert_eq!(
+            parse("money 0.5"),
+            Ok(Command::Money(pampa_core::Money::new(0, 50)))
+        );
+        assert!(
+            parse("money").is_err()
+                && parse("money diez").is_err()
+                && parse("money 1,234").is_err()
+        );
         // La plata entra en 32 bits de centavos: lo que no entra se rechaza.
-        assert_eq!(parse("money 42949672,95"), Ok(Command::Money(pampa_core::Money(u32::MAX))));
+        assert_eq!(
+            parse("money 42949672,95"),
+            Ok(Command::Money(pampa_core::Money(u32::MAX)))
+        );
         assert!(parse("money 42949672,96").is_err() && parse("money 42949673").is_err());
         assert_eq!(parse("time 21"), Ok(Command::Time(TimeOfDay::hm(21, 0))));
         assert_eq!(parse("Time 5:30"), Ok(Command::Time(TimeOfDay::hm(5, 30))));

@@ -91,10 +91,7 @@ impl Plugin for ShopPlugin {
             .init_resource::<Subtitle>()
             .init_resource::<Typefaces>()
             .add_systems(Startup, spawn_hint)
-            .add_systems(
-                PreUpdate,
-                leave.after(InputSystems).before(MenuKeys),
-            )
+            .add_systems(PreUpdate, leave.after(InputSystems).before(MenuKeys))
             .add_systems(
                 Update,
                 (talk, choose, show)
@@ -108,7 +105,11 @@ impl Plugin for ShopPlugin {
 }
 
 fn shop_of(door: &PulperiaDoor) -> Shop {
-    if door.almacen { Shop::Almacen } else { Shop::Pulperia }
+    if door.almacen {
+        Shop::Almacen
+    } else {
+        Shop::Pulperia
+    }
 }
 
 fn keeper_of(shop: Shop) -> &'static str {
@@ -174,10 +175,8 @@ fn talk(
     }
     let door = players.single().ok().and_then(|(player, aboard)| {
         let rider = &player.rider;
-        let free = !aboard
-            && rider.travel() == Travel::OnFoot
-            && !lock.0
-            && !claims.taken(rider.position);
+        let free =
+            !aboard && rider.travel() == Travel::OnFoot && !lock.0 && !claims.taken(rider.position);
         free.then(|| counter_at(&doors, rider.position)).flatten()
     });
     hint.set_if_neq(ShopHint(door.map(|d| talk_hint(d.almacen))));
@@ -339,7 +338,11 @@ fn draw_hint(
         return;
     }
     for (mut node, children) in &mut prompts {
-        node.display = if hint.0.is_some() { Display::Flex } else { Display::None };
+        node.display = if hint.0.is_some() {
+            Display::Flex
+        } else {
+            Display::None
+        };
         let line = children
             .first()
             .and_then(|frame| frames.get(*frame).ok())
@@ -358,7 +361,9 @@ mod tests {
     use crate::player::{PlayerPlugin, PlayerSpawn};
     use crate::pulperia::PulperiaPlugin;
     use bevy::time::TimeUpdateStrategy;
-    use pampa_core::{Abilities, GameClock, Heading, Item, Items, Money, Terrain, TimeOfDay, TownLayout, World};
+    use pampa_core::{
+        Abilities, GameClock, Heading, Item, Items, Money, Terrain, TimeOfDay, TownLayout, World,
+    };
     use pampa_render::{WorldClock, WorldTowns};
     use std::time::Duration;
 
@@ -394,23 +399,28 @@ mod tests {
         }
         if real {
             app.add_plugins(bevy::input::InputPlugin)
-                .add_plugins(crate::menu::MenuPlugin { title: false, settings: None });
+                .add_plugins(crate::menu::MenuPlugin {
+                    title: false,
+                    settings: None,
+                });
         } else {
             app.init_resource::<ButtonInput<KeyCode>>();
         }
-        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(1.0 / 60.0)))
-            .insert_resource(GameWorld(World::with_town(Terrain::default(), &town)))
-            .insert_resource(WorldTowns(vec![town.clone()]))
-            .insert_resource(WorldClock(GameClock::at(TimeOfDay::hm(12, 0))))
-            .insert_resource(PlayerSpawn {
-                position: at,
-                heading: Heading::from_radians(0.0),
-                travel: Travel::OnFoot,
-            })
-            .insert_resource(PlayerWallet(money))
-            .insert_resource(PlayerItems(Items::default()))
-            .insert_resource(PlayerAbilities(abilities))
-            .add_plugins((PlayerPlugin, PulperiaPlugin, ShopPlugin));
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(
+            1.0 / 60.0,
+        )))
+        .insert_resource(GameWorld(World::with_town(Terrain::default(), &town)))
+        .insert_resource(WorldTowns(vec![town.clone()]))
+        .insert_resource(WorldClock(GameClock::at(TimeOfDay::hm(12, 0))))
+        .insert_resource(PlayerSpawn {
+            position: at,
+            heading: Heading::from_radians(0.0),
+            travel: Travel::OnFoot,
+        })
+        .insert_resource(PlayerWallet(money))
+        .insert_resource(PlayerItems(Items::default()))
+        .insert_resource(PlayerAbilities(abilities))
+        .add_plugins((PlayerPlugin, PulperiaPlugin, ShopPlugin));
         app.update();
         app.update();
         app
@@ -423,7 +433,9 @@ mod tests {
     }
 
     fn press(app: &mut App, key: KeyCode) {
-        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(key);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(key);
         app.update();
         let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
         keys.release(key);
@@ -477,7 +489,10 @@ mod tests {
         assert_eq!(list.money, "$ 0,30");
         assert_eq!(list.rows.len(), 7);
         assert_eq!(list.selected, 0);
-        assert_eq!((list.rows[0].name.as_str(), list.rows[0].price.as_str()), ("Vaso de caña", "$ 0,10"));
+        assert_eq!(
+            (list.rows[0].name.as_str(), list.rows[0].price.as_str()),
+            ("Vaso de caña", "$ 0,10")
+        );
         assert!(locked(&app));
         assert_eq!(hint(&app), None, "no hint while buying");
 
@@ -487,7 +502,13 @@ mod tests {
         press(&mut app, INTERACT_KEY);
         assert_eq!(said(&app), Some(("Pulpero".into(), "Ahí tiene.".into())));
         assert_eq!(app.world().resource::<PlayerWallet>().0, Money::new(0, 15));
-        assert_eq!(app.world().resource::<PlayerItems>().0.count(Item::GinGlass), 1);
+        assert_eq!(
+            app.world()
+                .resource::<PlayerItems>()
+                .0
+                .count(Item::GinGlass),
+            1
+        );
         assert_eq!(view(&app).unwrap().money, "$ 0,15");
 
         // La botella de caña ($ 0,80) no alcanza: apagada, y F no la compra.
@@ -497,9 +518,18 @@ mod tests {
         assert_eq!(list.selected, 3);
         assert!(!list.rows[3].available && list.rows[0].available);
         press(&mut app, INTERACT_KEY);
-        assert_eq!(said(&app), Some(("Pulpero".into(), "No le alcanza la plata, amigo.".into())));
+        assert_eq!(
+            said(&app),
+            Some(("Pulpero".into(), "No le alcanza la plata, amigo.".into()))
+        );
         assert_eq!(app.world().resource::<PlayerWallet>().0, Money::new(0, 15));
-        assert_eq!(app.world().resource::<PlayerItems>().0.count(Item::CaneBottle), 0);
+        assert_eq!(
+            app.world()
+                .resource::<PlayerItems>()
+                .0
+                .count(Item::CaneBottle),
+            0
+        );
 
         // W desde el primero vuelve al último.
         for _ in 0..4 {
@@ -528,8 +558,20 @@ mod tests {
             press(&mut app, KeyCode::KeyS);
         }
         press(&mut app, INTERACT_KEY);
-        assert_eq!(said(&app), Some(("Almacenero".into(), "Armas no le vendo a cualquiera.".into())));
-        assert_eq!(app.world().resource::<PlayerItems>().0.count(Item::Revolver), 0);
+        assert_eq!(
+            said(&app),
+            Some((
+                "Almacenero".into(),
+                "Armas no le vendo a cualquiera.".into()
+            ))
+        );
+        assert_eq!(
+            app.world()
+                .resource::<PlayerItems>()
+                .0
+                .count(Item::Revolver),
+            0
+        );
     }
 
     #[test]
@@ -572,12 +614,19 @@ mod tests {
         press(&mut app, INTERACT_KEY);
         assert!(view(&app).is_some());
         let before = at(&mut app);
-        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyS);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyS);
         for _ in 0..30 {
             app.update();
         }
-        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().release(KeyCode::KeyS);
-        assert!(at(&mut app).distance(before) < 1e-3, "walked away from the counter");
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(KeyCode::KeyS);
+        assert!(
+            at(&mut app).distance(before) < 1e-3,
+            "walked away from the counter"
+        );
         assert!(locked(&app));
         assert!(view(&app).is_some());
         // Al salir, el jugador vuelve a moverse.

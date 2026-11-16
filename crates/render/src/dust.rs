@@ -33,7 +33,8 @@ use bevy::transform::TransformSystems;
 use pampa_core::town::Walk;
 use pampa_core::{Terrain, TownLayout, Vec2 as GroundVec2};
 
-use crate::character::gait::{Bone, HorseBones, PLANTED};
+use crate::character::bones::TOE_STANDING;
+use crate::character::horse::HorseJoints;
 use crate::character::{FigureBody, HorseBody, HorseRig, VisualPose};
 use crate::fauna::livestock::view_eye;
 use crate::flora::jitter;
@@ -50,11 +51,14 @@ pub const POOL: usize = 160;
 /// una bocanada ya no se distingue.
 pub const EMIT_RADIUS: f32 = 70.0;
 
-/// A qué altura sobre su apoyo en reposo cuenta un vaso como apoyado, en
-/// metros: la holgura con la que la marcha lo deja bajar ([`PLANTED`]).
-const TOUCH: f32 = PLANTED;
+/// A qué altura sobre su apoyo cuenta un vaso como apoyado, en metros del
+/// modelo: la punta del vaso ([`HorseJoint::Toe`](crate::character::bones::HorseJoint))
+/// apoyada está a [`TOE_STANDING`], y las de las patas traseras de la
+/// caminata bajan solo hasta 0.10 m.
+const TOUCH: f32 = 0.03;
 /// A qué altura sobre su apoyo un vaso cuenta como levantado otra vez, en
-/// metros: la histéresis evita contar dos pisadas en un vaso que tiembla.
+/// metros del modelo: la histéresis evita contar dos pisadas en un vaso que
+/// tiembla. Las puntas de los vasos de la caminata suben al menos a 0.17 m.
 const LIFT: f32 = 0.06;
 
 /// Metros que rueda una rueda entre dos bocanadas.
@@ -497,7 +501,8 @@ struct DustPuff {
 }
 
 /// Si los vasos de un caballo están apoyados, en el orden de
-/// [`LEGS`](crate::character::gait::LEGS), o `None` mientras no patea (ver
+/// [`HorseJoint::TOES`](crate::character::bones::HorseJoint::TOES), o `None`
+/// mientras no patea (ver
 /// [`hoof_step`]); en la raíz de su modelo.
 #[derive(Component, Debug, Clone, Copy)]
 struct Hooves(Option<[bool; 4]>);
@@ -713,7 +718,7 @@ fn kick_hooves(
     mut rigs: Query<(
         Entity,
         &HorseRig,
-        &HorseBones,
+        &HorseJoints,
         &GlobalTransform,
         &ChildOf,
         Option<&mut Hooves>,
@@ -722,7 +727,7 @@ fn kick_hooves(
     globals: Query<&GlobalTransform>,
 ) {
     let eye = view_eye(cameras);
-    for (entity, rig, bones, root, child_of, hooves) in &mut rigs {
+    for (entity, rig, joints, root, child_of, hooves) in &mut rigs {
         let Some(mut hooves) = hooves else {
             commands.entity(entity).insert(Hooves(None));
             continue;
@@ -732,15 +737,15 @@ fn kick_hooves(
         };
         let kicking = !rig.frozen && rig.started && near_eye(eye, root.translation());
         let ends = globals
-            .get_many(std::array::from_fn::<_, 4, _>(|leg| {
-                bones.bones[Bone::End(leg).index()]
-            }))
+            .get_many(joints.toes)
             .map(|e| e.map(GlobalTransform::translation))
             .ok()
             .filter(|_| kicking);
-        let into_body = root.affine().inverse();
+        // La altura de cada punta en el marco del modelo, sobre la de un vaso
+        // apoyado.
+        let into_model = root.affine().inverse();
         let height = ends.map(|ends| {
-            std::array::from_fn(|leg| into_body.transform_point3(ends[leg]).y - bones.standing[leg])
+            std::array::from_fn(|leg| into_model.transform_point3(ends[leg]).y - TOE_STANDING)
         });
         let touched = hoof_step(&mut hooves.0, height);
         let Some(ends) = ends else {
@@ -1069,6 +1074,48 @@ mod tests {
         // Ya a la vista, la próxima pisada cuenta.
         hoof_step(&mut planted, Some(up));
         assert_eq!(hoof_step(&mut planted, Some(down)), [true; 4]);
+    }
+
+    #[test]
+    fn a_galloping_horse_kicks_at_each_of_its_toes_as_it_lands() {
+        use crate::character::bones::HorseJoint;
+        use crate::character::horse::tests::{named, ride, saddled_every};
+        use crate::character::{CharacterVisual, Coat, FigureKind};
+        // El caballo del jugador nunca se congela, aunque la cámara del test
+        // no calcule qué ve.
+        let rider = CharacterVisual::Mounted {
+            rider: FigureKind::Protagonist,
+            coat: Coat::Bayo,
+        };
+        let (mut app, me) = saddled_every(rider, 12.2, 10);
+        app.init_resource::<Kicks>()
+            .add_systems(PostUpdate, kick_hooves.after(TransformSystems::Propagate));
+        app.world_mut()
+            .spawn((Camera3d::default(), Transform::from_xyz(0.0, 2.0, 8.0)));
+        let carrier = app.world().get::<Children>(me).unwrap()[0];
+        let mut legs = [0; 4];
+        for _ in 0..120 {
+            ride(&mut app, me, 12.2);
+            let world = app.world();
+            let toes = HorseJoint::TOES.map(|t| {
+                let e = named(world, carrier, t.name());
+                world.get::<GlobalTransform>(e).unwrap().translation()
+            });
+            for kick in world.resource::<Kicks>().pending() {
+                assert_eq!(kick.source, Source::Hoof);
+                // En la punta de un vaso de este frame, apoyado.
+                let leg = (0..4)
+                    .find(|&l| toes[l].distance(kick.at) < 1e-4)
+                    .unwrap_or_else(|| panic!("{:?} off the toes {toes:?}", kick.at));
+                assert!(kick.at.y < 0.15, "{:?} in the air", kick.at);
+                let t = kick.travel;
+                assert!((t.length() - 1.0).abs() < 1e-4 && t.y == 0.0, "{t}");
+                legs[leg] += 1;
+            }
+            app.world_mut().resource_mut::<Kicks>().pending.clear();
+        }
+        // Unos 4 trancos en 1.2 s: cada vaso pisa en cada uno.
+        assert!(legs.iter().all(|&n| (2..=6).contains(&n)), "{legs:?}");
     }
 
     #[test]

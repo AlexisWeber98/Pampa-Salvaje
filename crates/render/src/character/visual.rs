@@ -14,7 +14,9 @@ use super::clips::{load_character_clips, read_reference};
 use super::fade::fade_people;
 use super::figure::{FigureKind, FigureKit, body_rotation, spawn_figure, update_figures};
 use super::finish::Palette;
-use super::horse::{Coat, dress_horse, drive_horses, fit_horses, spawn_horse, swap_in_horses};
+use super::horse::{
+    Coat, dress_horse, drive_horses, fit_horses, ground_horses, spawn_horse, swap_in_horses,
+};
 use super::model::{
     CharacterModel, CharacterModels, CharacterModelsShown, ModelPending, attach_model,
     dress_character, load_character_models, swap_in_character_models, toggle_character_models,
@@ -133,7 +135,7 @@ impl Plugin for CharacterVisualPlugin {
             .add_systems(PostUpdate, fade_people.after(attach_visuals))
             .add_systems(
                 PostUpdate,
-                (fit_rigs, fit_horses, pose_riders)
+                (fit_rigs, fit_horses, ground_horses, pose_riders)
                     .chain()
                     .after(AnimationSystems)
                     .before(TransformSystems::Propagate),

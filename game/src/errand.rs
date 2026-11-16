@@ -198,6 +198,12 @@ pub const WALK_UP: f32 = 1.0;
 /// segundos: si algo lo traba, deja de caminar y vuelve a manejar.
 pub const APPROACH_SECONDS: f32 = 20.0;
 
+/// A qué ritmo vuelve Lisandro a caballo hasta Amadeo cuando lo llama, en
+/// m/s: al trote (10,8 km/h), porque al paso del caballo (4,5 km/h) la vuelta
+/// después de pasarlo al galope no cabe en [`APPROACH_SECONDS`] (usuario,
+/// 2026-11-16).
+pub const HAIL_TROT: f32 = 10.8 / 3.6;
+
 /// La conversación en curso, si la hay. Una nueva la reemplaza.
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct Conversation(pub Option<Talk>);
@@ -381,7 +387,10 @@ fn hail(
         return;
     }
     if let Some(way) = errand.0.hail(at, travel) {
-        *path = WalkPath::along(way);
+        *path = WalkPath {
+            pace: (travel == Travel::Riding).then_some(HAIL_TROT),
+            ..WalkPath::along(way)
+        };
         approach.npc = Some(Npc::Amadeo);
         return;
     }
@@ -1446,7 +1455,10 @@ mod tests {
         let tano = npc_entity(&mut app, Npc::Bairoletto);
         assert_eq!(
             app.world().get::<CharacterVisual>(tano),
-            Some(&CharacterVisual::Seated(FigureKind::Bairoletto, pampa_core::pulperia::Pastime::Rest))
+            Some(&CharacterVisual::Seated(
+                FigureKind::Bairoletto,
+                pampa_core::pulperia::Pastime::Rest
+            ))
         );
         let at = app.world().get::<Transform>(tano).unwrap().translation;
         assert_eq!(GroundVec2::new(at.x, -at.z), inside.seats[seat].position);
@@ -1485,7 +1497,10 @@ mod tests {
             risen = rising.0;
             assert_eq!(
                 app.world().get::<CharacterVisual>(tano),
-                Some(&CharacterVisual::Seated(FigureKind::Bairoletto, pampa_core::pulperia::Pastime::Rest))
+                Some(&CharacterVisual::Seated(
+                    FigureKind::Bairoletto,
+                    pampa_core::pulperia::Pastime::Rest
+                ))
             );
             assert_eq!(
                 app.world().get::<Transform>(tano).unwrap().translation,

@@ -308,7 +308,7 @@ mod tests {
     #[test]
     fn brushing_past_at_a_crawl_says_nothing() {
         let crawl = RiderParams {
-            walk_max: 1.0,
+            walk_max: 0.8,
             ..default()
         };
         let mut app = app(crawl);

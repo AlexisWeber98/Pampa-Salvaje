@@ -20,7 +20,11 @@
 //! alrededor; cuando dejan de llegar chunks y todas las texturas están
 //! cargadas, se asientan unos frames más y se guarda `<name>.png` en
 //! `PAMPA_SHOTS_DIR` (por defecto `shots`). `PAMPA_SHOTS_WAIT` fija esos frames
-//! de asentamiento (por defecto 90).
+//! de asentamiento (por defecto 90). `PAMPA_SHOTS_STEP=<ms>` hace que cada frame
+//! avance el reloj del juego esos milisegundos fijos, sin importar cuánto tarde
+//! de verdad (guardar un PNG frena el frame), así una ráfaga a caballo se puede
+//! armar como un video parejo: con `PAMPA_SHOTS_WAIT=1` y `PAMPA_SHOTS_STEP=33.3`,
+//! una captura cada 1/30 s de juego.
 //!
 //! **Capturas a caballo.** Una línea que termina en un andar ([`Gait`]:
 //! `walk`, `gallop`, `jump`, `stop` o `tied`) monta al jugador y lo hace andar
@@ -65,6 +69,7 @@ pub fn enabled() -> bool {
 use bevy::asset::LoadState;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
+use bevy::time::TimeUpdateStrategy;
 use bevy::transform::TransformSystems;
 use pampa_core::{BASE_RATE, TimeOfDay, Vec2 as GroundVec2};
 use pampa_render::{
@@ -217,6 +222,10 @@ impl ShotsPlugin {
     }
 }
 
+/// El paso fijo del reloj del juego por frame (`PAMPA_SHOTS_STEP`).
+#[derive(Resource, Debug, Clone, Copy)]
+struct ShotStep(std::time::Duration);
+
 /// El recorrido en curso.
 #[derive(Resource, Debug)]
 pub struct Tour {
@@ -240,6 +249,15 @@ pub struct Tour {
 impl Plugin for Tour {
     fn build(&self, app: &mut App) {
         std::fs::create_dir_all(&self.dir).ok();
+        if let Some(ms) = std::env::var("PAMPA_SHOTS_STEP")
+            .ok()
+            .and_then(|s| s.parse::<f64>().ok())
+            .filter(|ms| *ms > 0.0)
+        {
+            let step = std::time::Duration::from_secs_f64(ms / 1000.0);
+            app.insert_resource(ShotStep(step))
+                .insert_resource(TimeUpdateStrategy::ManualDuration(step));
+        }
         app.insert_resource(Tour {
             shots: self.shots.clone(),
             dir: self.dir.clone(),
@@ -397,7 +415,20 @@ fn take_shot(
     materials: Res<Assets<StandardMaterial>>,
     server: Res<AssetServer>,
     mut exit: MessageWriter<AppExit>,
+    (step, mut clock): (Option<Res<ShotStep>>, Option<ResMut<TimeUpdateStrategy>>),
 ) {
+    // Con un paso fijo, el reloj del juego no avanza mientras se guarda una
+    // captura (eso lleva una cantidad variable de frames), así cada captura
+    // queda exactamente `wait` pasos después de la anterior.
+    let mut hold = |held: bool| {
+        if let (Some(step), Some(clock)) = (&step, clock.as_mut()) {
+            **clock = TimeUpdateStrategy::ManualDuration(if held {
+                std::time::Duration::ZERO
+            } else {
+                step.0
+            });
+        }
+    };
     let Some(shot) = tour.shots.get(tour.index) else {
         exit.write(AppExit::Success);
         return;
@@ -411,6 +442,7 @@ fn take_shot(
             tour.requested = false;
             tour.stable = 0;
             tour.waited = 0;
+            hold(false);
         }
         return;
     }
@@ -449,6 +481,7 @@ fn take_shot(
             .spawn(Screenshot::primary_window())
             .observe(save_to_disk(path));
         tour.requested = true;
+        hold(true);
     }
 }
 
