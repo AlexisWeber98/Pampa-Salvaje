@@ -386,8 +386,9 @@ pub const CART_SHARE: f32 = 0.6;
 pub const LANE: f32 = 1.4;
 /// Cuánto más se corre un viajero para pasar a alguien, en metros.
 const DODGE: f32 = 2.5;
-/// Ritmos al paso, en m/s.
-const WALK: (f32, f32) = (1.5, 1.9);
+/// Ritmos al paso, en m/s: hasta los 4,5 km/h del caballo del jugador
+/// (`RiderParams::walk_max`), lo que camina el clip sin estirar.
+const WALK: (f32, f32) = (1.0, 4.5 / 3.6);
 /// Ritmos al trote, en m/s.
 const TROT: (f32, f32) = (3.5, 4.5);
 /// El paso de una yunta de bueyes, en m/s.

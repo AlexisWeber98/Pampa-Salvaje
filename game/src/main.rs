@@ -21,9 +21,9 @@ mod plant_collision;
 mod player;
 mod pulperia;
 mod ride;
-mod shop;
 #[cfg(test)]
 mod settlement_tests;
+mod shop;
 mod timetable;
 mod towns;
 mod travellers;

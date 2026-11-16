@@ -472,7 +472,10 @@ fn populate_towns(
                         town,
                         npc: sitter.npc,
                     },
-                    CharacterVisual::Seated(npc_figure(sitter.npc), pampa_core::pulperia::Pastime::Rest),
+                    CharacterVisual::Seated(
+                        npc_figure(sitter.npc),
+                        pampa_core::pulperia::Pastime::Rest,
+                    ),
                     VisualPose {
                         heading: seat.facing,
                         ..default()
@@ -1798,7 +1801,10 @@ mod tests {
                 ),
                 (
                     Npc::Bairoletto,
-                    CharacterVisual::Seated(FigureKind::Bairoletto, pampa_core::pulperia::Pastime::Rest)
+                    CharacterVisual::Seated(
+                        FigureKind::Bairoletto,
+                        pampa_core::pulperia::Pastime::Rest
+                    )
                 )
             ]
         );
@@ -1877,7 +1883,10 @@ mod tests {
                         town: 0,
                         npc: Npc::Bairoletto
                     },
-                    CharacterVisual::Seated(FigureKind::Bairoletto, pampa_core::pulperia::Pastime::Rest),
+                    CharacterVisual::Seated(
+                        FigureKind::Bairoletto,
+                        pampa_core::pulperia::Pastime::Rest
+                    ),
                     Transform::from_translation(world_from_ground(seat.position, bench))
                 )]
             );

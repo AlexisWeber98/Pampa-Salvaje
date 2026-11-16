@@ -9,8 +9,8 @@ use std::path::Path;
 use bevy::prelude::*;
 use pampa_content::load_towns_or_builtin;
 use pampa_core::{
-    Lagoon, PlaceKind, RailLine, RoadNetwork, Survey, Terrain, TownLayout, WorldConfig, place_lagoons,
-    place_towns,
+    Lagoon, PlaceKind, RailLine, RoadNetwork, Survey, Terrain, TownLayout, WorldConfig,
+    place_lagoons, place_towns,
 };
 use pampa_render::lettering::{self, Face};
 

@@ -1994,7 +1994,7 @@ pub(crate) mod tests {
                 throttle: 1.0,
                 ..Default::default()
             };
-            for _ in 0..300 {
+            for _ in 0..600 {
                 rider.step(input, &RiderParams::default(), world, 1.0 / 60.0);
             }
             let into = (rider.position - gate.at).dot(out);
@@ -2135,7 +2135,7 @@ pub(crate) mod tests {
                 throttle: 1.0,
                 ..Default::default()
             };
-            for _ in 0..600 {
+            for _ in 0..60 * 20 {
                 rider.step(input, &RiderParams::default(), world, 1.0 / 60.0);
             }
             let through = (rider.position - o.at).dot(across);

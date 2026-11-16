@@ -964,7 +964,7 @@ mod tests {
             let heading = crate::Heading::from_radians(c.road.y.atan2(c.road.x));
             let mut rider = crate::Rider::new(start, heading, &world);
             let mut on_deck = None;
-            for _ in 0..60 * 20 {
+            for _ in 0..60 * 40 {
                 let input = crate::RiderInput {
                     throttle: 1.0,
                     ..Default::default()

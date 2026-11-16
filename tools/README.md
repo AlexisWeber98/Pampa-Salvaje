@@ -398,6 +398,31 @@ Los pasos, todos deterministas:
 
 Costo para la iGPU Renoir: 11.944 triángulos por caballo (7.200 del cuerpo, 4.296 de pelo con alpha test, 448 de los ojos), dos conjuntos de mapas de 1024² (la luminancia con el tono del lomo, el vientre y manchones suaves, los surcos oscurecidos por la oclusión al 60 %, el pelo en vetas y la rugosidad entre 0.45 y 0.9 a lo largo del pelo; como el ñandú, unos 8 MB de video entre los dos con sus mips, compartidos por todos los caballos). En el juego (`Species::skin`), `horse_body` viste `Main` (por los colores por vertex del pelaje) y las partes de un solo color (`Main_Dark`, `Main_Light`, `Muzzle`, `Hooves`, por su color), y `horse_hair` viste `Hair` con alpha test, por ambos lados con la normal del dorso invertida y teñido con la crin del pelaje; las tarjetas de pelo se dibujan a cualquier distancia. Una corrida completa tarda unos 4 minutos en la CPU.
 
+## `henry_horse.py`: el caballo de henrysteve973 (Sketchfab) para el juego
+
+Convierte el "Horse" de henrysteve973 (Sketchfab, CC BY 4.0, descargado como glTF) en `assets/models/fauna/henry/`: `horse.glb` y las fuentes JPG de los conjuntos `horse_body/`, `horse_hair/` y `horse_shoe/`, que `textures_to_ktx2.sh` convierte a KTX2. Usa solo la biblioteca estándar de Python 3 (y `glbtrim.py` para leer y escribir), más ImageMagick 7 (`magick`) para las texturas; no necesita Blender. La descarga se trata como datos no confiables: tamaños acotados, cada índice comprobado, el `.bin` solo como un nombre de archivo simple en la misma carpeta, y nada se ejecuta. La salida es determinista. Hay que ejecutarlo aislado:
+
+```sh
+python3 -I tools/henry_horse.py ~/Downloads/sketchfab/henry_horse assets/models/fauna/henry
+FORCE=1 sh tools/textures_to_ktx2.sh assets/models/fauna/henry/horse_body \
+  assets/models/fauna/henry/horse_hair assets/models/fauna/henry/horse_shoe
+```
+
+| Opción | Significado |
+|---|---|
+| `--no-textures` | escribe solo `horse.glb` |
+| `--no-report` | no mide los clips (la medición tarda unos 30 segundos) |
+
+Lo que hace:
+
+- **Malla.** Junta el cuerpo, las tarjetas de pelo, las córneas y las herraduras en una mesh con skinning `Horse`, una primitiva por material (`MATERIALS`: `Horse`, `Hair`, `Cornea`, `Horseshoe`), y deja afuera la montura y la brida (material `Saddle`) y los huesos de los estribos (`DROP_JOINTS`), que se rechazan si un vértice que queda depende de ellos. Conserva las normales, las tangentes y la primera UV; `Hair` sale con alpha test.
+- **Escala y orientación.** Los nodos envoltorio de Sketchfab y la escala 0,1 de la armadura se hornean en el esqueleto: la raíz `_rootJoint` queda en la identidad, ninguna articulación tiene escala, las traslaciones se escalan y las matrices de bind inversas quedan rígidas. Los envoltorios dejan el caballo en decímetros (la nuca a 2,03 unidades), así que `METRES` lo lleva a metros. Después se gira sobre Y para que la cabeza mire hacia +Z (de la pelvis a la cabeza) y se mueve para que, en el primer cuadro de `Idle_1`, el punto más bajo quede en y = 0 y el centro de las cuatro herraduras en el origen, como el caballo propio. El resultado con skinning es exactamente el del original con esa transformación, cuadro por cuadro.
+- **Clips.** Conserva los 28, con los nombres limpios (`clean_clip_name`: sin `Skeleton|` ni el número de adelante, `Ilde` corregido a `Idle_1`–`Idle_3`, `S.Jump` como `S_Jump`) en el orden fijo de `CLIPS`; los siete primeros ocupan los lugares de los clips del caballo propio. Descarta los canales de escala (todos 1 en el original) y se niega a seguir si uno no lo es.
+- **Texturas** (`TEXTURES`). Cuerpo y pelo a 2048² (el cuerpo viene a 4096², el pelo a 2048²), herraduras a 512² (su tamaño): el doble de los 1024² del caballo propio, porque este único modelo viste a todos los caballos del juego y la regla del proyecto es el máximo realismo. Nunca se agranda una imagen. El original no trae rugosidad: `roughness.jpg` es su factor parejo, 0,82. El atlas del pelo es gris sobre negro y sin alfa: el gris es la cobertura, así que `opacity.jpg` lo lleva a blanco entre el 4 % y el 30 % (`HAIR_LEVELS`). Cada normal map pasa por la prueba del rotacional de `dae2gltf.py`: el del cuerpo y el del pelo son OpenGL; el de las herraduras es DirectX y se le invierte el verde.
+- **Reporte.** Imprime los triángulos, las articulaciones, los límites en `Idle_1` y, por clip, la duración, el movimiento de `BN_Root_01_01`, la altura de la pelvis, el vaso más bajo y, en los ciclos en el lugar (`CYCLES`), la velocidad medida en los vasos apoyados (el centro de cada herradura, a menos de 5 cm de su punto más bajo y yendo hacia atrás). La tabla de los clips está en `assets/models/fauna/henry/README.md`.
+
+Tests: `python3 -I -B -m unittest discover -s tools -p test_henry_horse.py` arma una descarga sintética mínima (un caballo girado y escalado como los envoltorios de Sketchfab, con montura, estribo y dos clips) y comprueba los nombres de los clips, que se quitan la montura y los estribos (y que se rechaza un estribo con peso), que el resultado con skinning es el original en metros, que mira hacia +Z parado en el suelo, el orden de los clips sin canales de escala, el rechazo de un `.bin` fuera de la carpeta y el tamaño de las texturas.
+
 ## `cattle.py`: la vaca y el toro modelados en Blender
 
 `cattle.py` modela, arma, pinta y anima la vaca y el toro de la estancia de 1919 por script en Blender (probado con Blender 5.2), al piso de calidad de la v13. Es el caballo con anatomía bovina: `animal_rig.Steps` ejecuta `horse.py` sin su `main()` y le reemplaza los nombres (el esqueleto, la escultura, las regiones del pelaje, el tono, los pesos, las tarjetas de pelo, la cara de la cabeza, los planes de marcha y las funciones de los clips), así que la escultura horneada, la IK de las patas, las marchas, los músculos y las vistas previas son los mismos pasos que los del caballo. Son la vaca y el toro del juego (la v6, aprobada el 2026-10-31), en `assets/models/fauna/own/`; reemplazan a la vaca y el toro de Quaternius, que se borraron. Para volver a generarlos (unos 6 minutos cada uno en la CPU):

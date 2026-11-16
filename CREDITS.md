@@ -125,6 +125,16 @@ See `assets/models/third-party/3td-starter-pack/CREDITS.md` for details.
 
 See `assets/models/fauna/quaternius/CREDITS.md` for details.
 
+### Horse by henrysteve973
+
+This work is based on "Horse" (https://sketchfab.com/3d-models/horse-a6f860e43e364619bccb174a1ac7d0c9) by henrysteve973 (https://sketchfab.com/henrysteve973) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+
+| Asset | Author / source | Licence | Where | Changes |
+|---|---|---|---|---|
+| Horse (animated, 28 clips) | henrysteve973, Sketchfab (https://sketchfab.com/3d-models/horse-a6f860e43e364619bccb174a1ac7d0c9) | CC BY 4.0 (attribution required) | `assets/models/fauna/henry/` | Converted by `tools/henry_horse.py` (downloaded 2026-11-13): the saddle, the bridle and the stirrup bones removed; the wrapper transforms and the armature scale baked into a skeleton in metres, facing +Z and standing on the ground; the clips renamed (the "Ilde" typo fixed) and reordered; the textures shrunk to 2048 px (body and hair) and 512 px (horseshoes), the hair's grey turned into an opacity map, the horseshoes' normal map turned from DirectX to OpenGL, and converted to KTX2 |
+
+See `assets/models/fauna/henry/CREDITS.md` for details.
+
 ### Raptor feather scans and face photographs
 
 The chimango and carancho models (`tools/raptor.py`) are modelled and painted procedurally. Since v4 (2026-11-03), the feather atlas and the heads also carry real pixels from the sources below. `tools/raptor.py --scans DIR --faces DIR` bakes them into each species' `*_feathers` atlas and `*_body` colour map. The game draws the birds with these maps: they ship as KTX2 (with their JPG sources) in `assets/models/fauna/own/chimango_body/`, `chimango_feathers/`, `carancho_body/` and `carancho_feathers/`, next to `chimango.glb` and `carancho.glb`.

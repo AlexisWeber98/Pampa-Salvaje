@@ -157,9 +157,11 @@ mod tests {
         };
         run(&mut r, jog, &p, &world, 4.0);
         assert!((r.speed - jog_speed).abs() < 1e-4, "jog {}", r.speed);
-        // Más lento que un caballo a cualquiera de los dos ritmos.
+        // Al trote, más lento que un caballo al galope; al paso camina más
+        // rápido que él (el caballo camina a 4,5 km/h, usuario, 2026-11-16).
         let horse = RiderParams::default();
-        assert!(p.walk_max < horse.walk_max && p.gallop_max < horse.gallop_max / 2.0);
+        assert!(p.gallop_max < horse.gallop_max / 2.0);
+        assert!(p.walk_max > horse.walk_max);
     }
 
     #[test]

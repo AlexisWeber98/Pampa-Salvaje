@@ -117,8 +117,9 @@ pub struct ControlLock(pub bool);
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct WalkPath {
     pub points: Vec<GroundVec2>,
-    /// Más despacio que el paso de la marcha, en m/s (entrar tímido a un
-    /// lugar); `None`, al paso.
+    /// Otro ritmo que el paso de la marcha, en m/s: más despacio (entrar
+    /// tímido a un lugar) o más rápido (volver al trote a caballo); `None`,
+    /// al paso.
     pub pace: Option<f32>,
     /// Hacia dónde se vuelve cuando no camina: hacia quien le habla.
     pub face: Option<GroundVec2>,
@@ -157,8 +158,8 @@ const ON_COURSE: f32 = 0.6;
 
 /// La intención que lleva a `rider` por `path`, quitando los puntos ya
 /// alcanzados: girar hacia el próximo (todo lo que alcanza en `dt` con
-/// `params`) y andar si ya lo tiene casi enfrente, sin pasar del paso (ni de
-/// `pace`) y frenando a tiempo para detenerse en el último; sin puntos,
+/// `params`) y andar si ya lo tiene casi enfrente, sin pasar de su ritmo
+/// (`pace`, o el paso) y frenando a tiempo para detenerse en el último; sin puntos,
 /// volverse en el lugar hacia `face`.
 fn walk_along(path: &mut WalkPath, rider: &Rider, params: &RiderParams, dt: f32) -> RiderInput {
     let points = &mut path.points;
@@ -191,13 +192,14 @@ fn walk_along(path: &mut WalkPath, rider: &Rider, params: &RiderParams, dt: f32)
         .windows(2)
         .map(|w| w[0].distance(w[1]))
         .sum();
-    if rider.speed > params.walk_max + ARRIVAL_SPEED / 2.0 {
-        // Más rápido que el paso (al galope, corriendo): primero lo deja, sin
+    let pace = path.pace.unwrap_or(params.walk_max);
+    if rider.speed > pace.max(params.walk_max) + ARRIVAL_SPEED / 2.0 {
+        // Más rápido que su ritmo (al galope, corriendo): primero lo deja, sin
         // tirones y derecho, sin doblar de golpe; después vuelve.
         return RiderInput::default();
     }
     let stopping = (2.0 * params.friction * left).sqrt();
-    let top = path.pace.unwrap_or(params.walk_max).min(stopping);
+    let top = pace.min(stopping);
     let on_course = delta.abs() < ON_COURSE;
     RiderInput {
         throttle: if on_course && rider.speed < top {
@@ -206,6 +208,8 @@ fn walk_along(path: &mut WalkPath, rider: &Rider, params: &RiderParams, dt: f32)
             0.0
         },
         turn,
+        // Por encima del paso, la marcha rápida lo deja pasar de él.
+        gallop: top > params.walk_max,
         ..default()
     }
 }

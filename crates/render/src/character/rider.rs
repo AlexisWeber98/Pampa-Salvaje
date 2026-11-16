@@ -218,8 +218,8 @@ pub const STANDING: f32 = 0.05;
 
 /// La velocidad que corresponde a un paso completo, en m/s, para el asiento al
 /// paso y el balanceo del brazo libre. Acoplado a la lógica:
-/// `pampa_core::RiderParams::walk_max`.
-pub const WALK_TOP: f32 = 3.0;
+/// `pampa_core::RiderParams::walk_max` (4,5 km/h).
+pub const WALK_TOP: f32 = 4.5 / 3.6;
 
 /// El desplazamiento del peso estando quieto: su período, en segundos, es el
 /// primero más la semilla del jinete módulo el segundo (7–9 s), y su amplitud,

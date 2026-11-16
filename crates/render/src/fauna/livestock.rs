@@ -10,11 +10,13 @@
 //! continuo con su plumaje horneado de una escultura densa en mapas KTX2
 //! (color, normal map y ORM, [`Skin`]), tarjetas de plumas sueltas con alpha
 //! test que solo se dibujan cerca ([`DETAIL_FAR`]), y sus propios clips
-//! (esperas, pastoreo, caminata y carrera). El caballo criollo (los de corral
-//! y los ensillados) también es propio (`tools/horse.py`): su rig copia el de
-//! Quaternius, con su piel vestida con mapas KTX2 que multiplican los colores
-//! del pelaje y su crin, su copete y su cola en tarjetas con alpha test que se
-//! dibujan a cualquier distancia. La vaca y el toro también son propios
+//! (esperas, pastoreo, caminata y carrera). El caballo (los de corral y los
+//! ensillados) es el "Horse" de henrysteve973 (CC BY 4.0,
+//! `tools/henry_horse.py`, en `assets/models/fauna/henry/`): su esqueleto
+//! `BN_*` y sus clips, con su piel overo, su crin, su copete y su cola en
+//! tarjetas con alpha test que se dibujan a cualquier distancia, y sus
+//! herraduras ([`HENRY_CLIPS`], [`HORSE_WITHERS`]); los pelajes criollos
+//! todavía no se pintan sobre él. La vaca y el toro también son propios
 //! (`tools/cattle.py`, el caballo con anatomía bovina): cada pelaje
 //! (Hereford, Angus, overo y Shorthorn rosillo) viene horneado en un mapa de
 //! color propio del cuerpo ([`Paint::Map`]), y además de su malla completa
@@ -83,11 +85,16 @@ use bevy::image::CompressedImageFormatSupport;
 /// Dónde viven los modelos de animales de Quaternius, bajo el [`AssetRoot`].
 pub const LIVESTOCK_DIR: &str = "models/fauna/quaternius";
 /// Dónde viven los modelos propios, hechos con los scripts de Blender de
-/// `tools/` (el ñandú, `tools/rhea.py`; el caballo, `tools/horse.py`; la vaca
+/// `tools/` (el ñandú, `tools/rhea.py`; el caballo anterior, `tools/horse.py`,
+/// que ya no se dibuja; la vaca
 /// y el toro, `tools/cattle.py`; el zorro, `tools/fox.py`; los felinos,
 /// `tools/felid.py`; las rapaces, `tools/raptor.py`; la liebre,
 /// `tools/hare.py`), bajo el [`AssetRoot`].
 pub const OWN_DIR: &str = "models/fauna/own";
+
+/// La carpeta del caballo de henrysteve973 (`tools/henry_horse.py`), el
+/// caballo del juego, bajo el [`AssetRoot`].
+pub const HENRY_DIR: &str = "models/fauna/henry";
 
 /// Hasta esta distancia de la cámara se dibujan las tarjetas de detalle de un
 /// modelo que las tiene (las plumas sueltas del ñandú), en metros; más lejos solo queda el cuerpo,
@@ -170,11 +177,12 @@ pub struct Skin {
 pub const FEATHER_TRANSMISSION: f32 = 0.45;
 
 /// Los conjuntos de mapas de los modelos propios.
-pub const SKIN_SETS: [&str; 21] = [
+pub const SKIN_SETS: [&str; 22] = [
     "rhea_body",
     "rhea_feathers",
-    "horse_body",
-    "horse_hair",
+    "henry_body",
+    "henry_hair",
+    "henry_shoe",
     "cow_body",
     "bull_body",
     "cattle_hair",
@@ -194,9 +202,14 @@ pub const SKIN_SETS: [&str; 21] = [
     "hare_hair",
 ];
 
-/// La ruta del mapa `name` del conjunto `set`, bajo el [`AssetRoot`].
+/// La ruta del mapa `name` del conjunto `set`, bajo el [`AssetRoot`]: los
+/// conjuntos `henry_*` son los del caballo, en [`HENRY_DIR`]
+/// (`henry_body` es `horse_body/`); los demás, en [`OWN_DIR`].
 pub fn skin_path(set: &str, name: &str) -> String {
-    format!("{OWN_DIR}/{set}/{name}.ktx2")
+    match set.strip_prefix("henry_") {
+        Some(part) => format!("{HENRY_DIR}/horse_{part}/{name}.ktx2"),
+        None => format!("{OWN_DIR}/{set}/{name}.ktx2"),
+    }
 }
 
 /// El mapa de color de un pelaje vacuno, dentro del conjunto del cuerpo de la
@@ -294,17 +307,59 @@ pub const FENCE_LEAP_SECONDS: f32 = 84.0 / 48.0;
 /// el clip, se vuelve a medir.
 pub const LEAP_CLIP: (f32, f32) = (10.0 / 84.0, 58.0 / 84.0);
 
-/// La velocidad sobre el suelo que muestra el clip `Walk` del caballo a tamaño
-/// real, en m/s: el deslizamiento medio hacia atrás de la punta de cada vaso
-/// (`FF.*_end`, `FFB.*_end`) mientras está a menos de 1.5 cm de su punto más
-/// bajo, a lo largo de todo el ciclo (1.17 s), promediado entre los cuatro: los
-/// delanteros a 1.24 m/s y los traseros a 1.23 (el caballo propio,
-/// `tools/horse.py`; el de Quaternius mostraba 1.09 por este método).
-pub const HORSE_WALK_SPEED: f32 = 1.23;
-/// Lo mismo para su clip `Gallop` (0.58 s, unos 4.15 m por zancada): los vasos
-/// delanteros a unos 7.14 m/s y los traseros a unos 7.06 (el de Quaternius,
-/// 3.94).
-pub const HORSE_GALLOP_SPEED: f32 = 7.10;
+/// La velocidad sobre el suelo que muestra el clip `Walk` del caballo de
+/// henrysteve973, en metros del modelo por segundo: cuánto se deslizan hacia
+/// atrás los vasos apoyados (el centro de cada herradura, a menos de 5 cm de
+/// su punto más bajo y yendo hacia atrás), muestreado a 96 por segundo a lo
+/// largo del ciclo de 1 s (el reporte de `tools/henry_horse.py`). El juego la
+/// escala con la especie ([`Species::scale`]): 0.92 m/s.
+pub const HORSE_WALK_SPEED: f32 = 0.98;
+/// Lo mismo para su clip `Gallop` (1.000 s con el cuadro que
+/// `tools/henry_horse.py` le agrega para cerrar el ciclo, unos 4.5 m por
+/// zancada del modelo, a mano derecha): 4.22 m/s en el juego.
+pub const HORSE_GALLOP_SPEED: f32 = 4.50;
+/// La altura a la cruz del caballo de henrysteve973, en metros del modelo: lo
+/// más alto del lomo sobre la línea media donde empieza la crin (1.60–1.61 m,
+/// a unos 30 cm por delante del origen), en el primer cuadro de `Idle_1` (la
+/// articulación de la cruz, `BN_Spine_03_05_05`, queda 23 cm más abajo, dentro
+/// del cuerpo, a 1.37 m).
+pub const HORSE_WITHERS: f32 = 1.60;
+
+/// Los clips del caballo de henrysteve973, en el orden de su archivo
+/// (`CLIPS` en `tools/henry_horse.py`, ver `henry/README.md`): los siete
+/// primeros en los lugares de [`Clip::ALL`]; del resto, el juego reproduce el
+/// salto corto ([`Clip::ShortJump`]) y el aterrizaje al galope
+/// ([`Clip::JumpRun`]). Los demás se cargan solo si algún día se usan.
+pub const HENRY_CLIPS: [&str; 28] = [
+    "Idle_1",
+    "Idle_2",
+    "Idle_3",
+    "Eat",
+    "Walk",
+    "Gallop",
+    "Jump",
+    "Jump_Land",
+    "Jump_Run",
+    "S_Jump",
+    "Walk_L",
+    "Walk_R",
+    "Gallop_L",
+    "Gallop_R",
+    "Run_Stop",
+    "Attack_1",
+    "Attack_2",
+    "Buck_1",
+    "Buck_2",
+    "Buck_3",
+    "Arise",
+    "Sleep",
+    "Falling",
+    "Fallen",
+    "Death",
+    "Swim",
+    "Swim_L",
+    "Swim_R",
+];
 
 /// La velocidad sobre el suelo que muestra el clip `Walk` de la vaca y del
 /// toro propios (`tools/cattle.py`), en metros del modelo por segundo, medida
@@ -460,7 +515,7 @@ impl Species {
         let name = match self {
             Self::Cow => return format!("{OWN_DIR}/cow.glb"),
             Self::Bull => return format!("{OWN_DIR}/bull.glb"),
-            Self::Horse => return format!("{OWN_DIR}/horse.glb"),
+            Self::Horse => return format!("{HENRY_DIR}/horse.glb"),
             Self::Fox => return format!("{OWN_DIR}/fox.glb"),
             Self::GatoMontes => return format!("{OWN_DIR}/gato.glb"),
             Self::Puma => return format!("{OWN_DIR}/puma.glb"),
@@ -479,7 +534,8 @@ impl Species {
     }
 
     /// Los clips del archivo, en orden: los siete del ganado (el zorro y los
-    /// felinos, además, el salto de un alambrado, `Fence_Leap`), o los pocos
+    /// felinos, además, el salto de un alambrado, `Fence_Leap`), los 28 del
+    /// caballo ([`HENRY_CLIPS`]), o los pocos
     /// que traen las rapaces (el planeo, el aleteo y el planeo en un giro
     /// inclinado a la izquierda y a la derecha) y el ñandú (dos esperas, el
     /// pastoreo, la caminata y la carrera).
@@ -495,7 +551,8 @@ impl Species {
                 "Gallop_Jump",
                 "Fence_Leap",
             ],
-            Self::Cow | Self::Bull | Self::Horse | Self::Hare => &[
+            Self::Horse => &HENRY_CLIPS,
+            Self::Cow | Self::Bull | Self::Hare => &[
                 "Idle",
                 "Idle_2",
                 "Idle_Headlow",
@@ -510,11 +567,10 @@ impl Species {
     }
 
     /// Los mapas que viste su material `material`, si los tiene: el cuerpo
-    /// del ñandú y sus tarjetas de plumas; la piel del caballo (`Main`, cuyos
-    /// mapas neutros multiplican los colores por vertex del pelaje, y las
-    /// partes de un solo color, que los multiplican por el suyo: los cabos, la
-    /// frente, el interior del hocico y los vasos) y su crin, su copete y su
-    /// cola (`Hair`, teñidos con el color de la crin del pelaje); el cuero de
+    /// del ñandú y sus tarjetas de plumas; el cuerpo del caballo (`Horse`, con
+    /// el pelaje overo propio del modelo), su crin, su copete y su cola
+    /// (`Hair`, tarjetas con alpha test) y sus herraduras (`Horseshoe`); el
+    /// cuero de
     /// la vaca y del toro (`Main`, que además cambia su color por el mapa de
     /// su pelaje, [`Paint::Map`]) y sus partes de un solo color (la ubre, el
     /// morro, las pezuñas y los cuernos), y la borla de la cola, los rulos de
@@ -526,10 +582,9 @@ impl Species {
         let (set, masked, detail, strands) = match (self, material) {
             (Self::Nandu, "Body") => ("rhea_body", false, false, false),
             (Self::Nandu, "Feathers") => ("rhea_feathers", true, true, false),
-            (Self::Horse, "Main" | "Main_Dark" | "Main_Light" | "Muzzle" | "Hooves") => {
-                ("horse_body", false, false, false)
-            }
-            (Self::Horse, "Hair") => ("horse_hair", true, false, true),
+            (Self::Horse, "Horse") => ("henry_body", false, false, false),
+            (Self::Horse, "Hair") => ("henry_hair", true, false, true),
+            (Self::Horse, "Horseshoe") => ("henry_shoe", false, false, false),
             (Self::Cow, "Main" | "Main_Light" | "Muzzle" | "Hooves" | "Horns") => {
                 ("cow_body", false, false, false)
             }
@@ -565,7 +620,8 @@ impl Species {
     /// El índice de animación glTF que reproduce `clip`: el mismo en los
     /// modelos de siete clips o más (los que no saltan alambrados no tienen
     /// `Fence_Leap` ni los giros: su lugar lo toma `Gallop_Jump`, que nunca
-    /// los pide); en las rapaces, las esperas son su planeo, la marcha su
+    /// los pide; tampoco el salto corto ni el aterrizaje del caballo); en el
+    /// caballo, los de [`HENRY_CLIPS`] por nombre; en las rapaces, las esperas son su planeo, la marcha su
     /// aleteo (el "galope" de un ave) y los giros los suyos; en el ñandú, la
     /// espera con la cabeza baja y el comer son su pastoreo, el galope su
     /// carrera y los giros su espera.
@@ -576,15 +632,35 @@ impl Species {
                 Clip::Idle2 => 1,
                 Clip::IdleHeadlow | Clip::Eating => 2,
                 Clip::Walk => 3,
-                Clip::Gallop | Clip::GallopJump | Clip::FenceLeap => 4,
+                Clip::Gallop
+                | Clip::GallopJump
+                | Clip::FenceLeap
+                | Clip::ShortJump
+                | Clip::JumpRun => 4,
             };
         }
         if self.bird() {
             return match clip {
                 Clip::Idle | Clip::Idle2 | Clip::IdleHeadlow | Clip::Eating => 0,
-                Clip::Walk | Clip::Gallop | Clip::GallopJump | Clip::FenceLeap => 1,
+                Clip::Walk
+                | Clip::Gallop
+                | Clip::GallopJump
+                | Clip::FenceLeap
+                | Clip::ShortJump
+                | Clip::JumpRun => 1,
                 Clip::BankLeft => 2,
                 Clip::BankRight => 3,
+            };
+        }
+        if self == Self::Horse {
+            return match clip {
+                Clip::JumpRun => 8,
+                Clip::ShortJump => 9,
+                // Las esperas, el comer, la caminata, el galope y el salto
+                // ocupan los primeros siete lugares; los clips que nunca pide,
+                // el del salto.
+                c if c.index() < CLIP_COUNT => c.index(),
+                _ => Clip::GallopJump.index(),
             };
         }
         let count = self.clip_names().len();
@@ -604,7 +680,7 @@ impl Species {
             // Los modelos propios están en metros.
             Self::Cow => COW_WITHERS,
             Self::Bull => BULL_WITHERS,
-            Self::Horse => 1.5,
+            Self::Horse => HORSE_WITHERS,
             Self::Fox => FOX_WITHERS,
             Self::GatoMontes => GATO_WITHERS,
             Self::Puma => PUMA_WITHERS,
@@ -653,7 +729,7 @@ impl Species {
     pub fn walk_speed(self) -> f32 {
         match self {
             Self::Cow | Self::Bull => CATTLE_WALK_SPEED * self.scale(),
-            Self::Horse => HORSE_WALK_SPEED,
+            Self::Horse => HORSE_WALK_SPEED * self.scale(),
             Self::Fox => FOX_WALK_SPEED * self.scale(),
             Self::GatoMontes => GATO_WALK_SPEED * self.scale(),
             Self::Puma => PUMA_WALK_SPEED * self.scale(),
@@ -671,7 +747,7 @@ impl Species {
     pub fn gallop_speed(self) -> f32 {
         match self {
             Self::Cow | Self::Bull => CATTLE_GALLOP_SPEED * self.scale(),
-            Self::Horse => HORSE_GALLOP_SPEED,
+            Self::Horse => HORSE_GALLOP_SPEED * self.scale(),
             Self::Fox => FOX_GALLOP_SPEED * self.scale(),
             Self::GatoMontes => GATO_GALLOP_SPEED * self.scale(),
             Self::Puma => PUMA_GALLOP_SPEED * self.scale(),
@@ -697,15 +773,14 @@ impl Species {
 
     /// Lo más rápido que se reproduce su galope respecto de cómo se creó: los
     /// animales chicos dan pasos más rápidos que lo que muestran sus clips.
-    /// El puma y el yaguareté, como el galope del caballo
-    /// ([`GALLOP_RATE`](crate::character::horse::GALLOP_RATE)), a lo sumo el
-    /// doble: su pique ya alarga la zancada, así que a su velocidad de huida
+    /// El puma y el yaguareté, a lo sumo el doble (como el galope del caballo
+    /// propio anterior): su pique ya alarga la zancada, así que a su velocidad de huida
     /// lo reproducen 1.76 y 1.58 veces más rápido. El gato montés, más
     /// rápido ([`GATO_GALLOP_RATE`]).
     pub const fn max_pace(self) -> f32 {
         match self {
             Self::Cow | Self::Bull | Self::Horse => 1.6,
-            Self::Puma | Self::Yaguarete => crate::character::horse::GALLOP_RATE.1,
+            Self::Puma | Self::Yaguarete => 2.0,
             Self::GatoMontes => GATO_GALLOP_RATE,
             _ => 2.5,
         }
@@ -742,11 +817,23 @@ pub enum Clip {
     /// las rapaces.
     BankLeft,
     BankRight,
+    /// El salto corto del caballo (`S.Jump`, el salto entero de un obstáculo
+    /// bajo): su bajada y su aterrizaje terminan el salto, y si se detiene,
+    /// también lo que sigue en el suelo (ver
+    /// [`horse`](crate::character::horse)). Solo lo trae el caballo.
+    ShortJump,
+    /// El aterrizaje de un salto del caballo que sigue galopando
+    /// (`Jump_Run`): se reproduce desde el apoyo de las manos y termina en el
+    /// primer cuadro del galope. Solo lo trae el caballo.
+    JumpRun,
 }
 
 /// Cuántos clips contienen todos los modelos de ganado (la longitud de
 /// [`Clip::ALL`]).
 pub const CLIP_COUNT: usize = 7;
+
+/// Cuántos clips se cargan de cada modelo (la longitud de [`Clip::LOADED`]).
+pub const LOADED_COUNT: usize = CLIP_COUNT + 5;
 
 impl Clip {
     pub const ALL: [Self; CLIP_COUNT] = [
@@ -762,7 +849,7 @@ impl Clip {
     /// Los que se cargan de cada modelo, en el orden de sus nodos en el grafo
     /// ([`SpeciesModel::nodes`]): [`Clip::ALL`], el salto de un alambrado y
     /// los giros de las rapaces.
-    pub const LOADED: [Self; CLIP_COUNT + 3] = [
+    pub const LOADED: [Self; LOADED_COUNT] = [
         Self::Idle,
         Self::Idle2,
         Self::IdleHeadlow,
@@ -773,6 +860,8 @@ impl Clip {
         Self::FenceLeap,
         Self::BankLeft,
         Self::BankRight,
+        Self::ShortJump,
+        Self::JumpRun,
     ];
 
     /// El nombre del clip en el archivo glTF.
@@ -788,6 +877,8 @@ impl Clip {
             Self::FenceLeap => "Fence_Leap",
             Self::BankLeft => "Bank_L",
             Self::BankRight => "Bank_R",
+            Self::ShortJump => "S_Jump",
+            Self::JumpRun => "Jump_Run",
         }
     }
 
@@ -965,7 +1056,9 @@ pub enum Paint {
 /// pecho, la línea de abajo y las patas blancas; un Angus, todo negro y
 /// mocho; un overo, blanco con manchas negras, con la cara y las patas
 /// negras; un Shorthorn rosillo, de pelos colorados y blancos mezclados.
-/// Caballos: `Main` es el cuerpo (colores por vertex, de
+/// Caballos (los nombres del caballo propio anterior: el de henrysteve973
+/// llama `Horse` a su cuerpo y se dibuja con su propio pelaje, [`Paint::Keep`]):
+/// `Main` es el cuerpo (colores por vertex, de
 /// los pelajes criollos, [`Coat`](crate::character::Coat)), `Hair` la crin y la
 /// cola, y `Main_Dark` y `Main_Light` partes de la cabeza.
 pub fn paint(animal: Animal, material: &str) -> Paint {
@@ -1720,6 +1813,42 @@ mod tests {
     }
 
     #[test]
+    fn the_horse_plays_henrys_clips_and_its_jump_chain() {
+        let species = Species::Horse;
+        assert!(species.path().starts_with(HENRY_DIR), "{}", species.path());
+        let clip = |c| species.clip_names()[species.animation(c)];
+        for (c, name) in [
+            (Clip::Idle, "Idle_1"),
+            (Clip::Idle2, "Idle_2"),
+            (Clip::IdleHeadlow, "Idle_3"),
+            (Clip::Eating, "Eat"),
+            (Clip::Walk, "Walk"),
+            (Clip::Gallop, "Gallop"),
+            // El salto: el despegue y la subida, la bajada del salto corto y
+            // el aterrizaje al galope (S3).
+            (Clip::GallopJump, "Jump"),
+            (Clip::ShortJump, "S_Jump"),
+            (Clip::JumpRun, "Jump_Run"),
+            // Nunca los pide: el salto en su lugar.
+            (Clip::FenceLeap, "Jump"),
+            (Clip::BankLeft, "Jump"),
+        ] {
+            assert_eq!(clip(c), name, "{c:?}");
+        }
+        // Los demás animales no traen el salto corto ni el aterrizaje: su salto en su lugar.
+        for other in [
+            Species::Cow,
+            Species::Puma,
+            Species::Nandu,
+            Species::Chimango,
+        ] {
+            let jump = other.animation(Clip::GallopJump);
+            assert_eq!(other.animation(Clip::JumpRun), jump, "{other:?}");
+            assert_eq!(other.animation(Clip::ShortJump), jump, "{other:?}");
+        }
+    }
+
+    #[test]
     fn the_nandu_plays_its_own_graze_walk_and_run() {
         let species = Species::of(Animal::Nandu).expect("a model");
         let clip = |c| species.clip_names()[species.animation(c)];
@@ -2092,6 +2221,62 @@ mod tests {
         (app, handles)
     }
 
+    /// Las posiciones de `mesh` con el skinning de `skin` en la pose de
+    /// reposo de sus articulaciones: la de los vertex en los modelos propios;
+    /// en el caballo de henrysteve973 los vertex vienen en otra pose
+    /// (`henry/README.md`), y el reposo es un caballo parado.
+    fn at_rest(world: &World, skin: &bevy::gltf::GltfSkin, mesh: &Mesh) -> Vec<Vec3> {
+        let Some(VertexAttributeValues::Float32x3(p)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+        else {
+            panic!("positions")
+        };
+        let (
+            Some(VertexAttributeValues::Uint16x4(joints)),
+            Some(VertexAttributeValues::Float32x4(weights)),
+        ) = (
+            mesh.attribute(Mesh::ATTRIBUTE_JOINT_INDEX),
+            mesh.attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT),
+        )
+        else {
+            return p.iter().map(|p| Vec3::from(*p)).collect();
+        };
+        let nodes = world.resource::<Assets<bevy::gltf::GltfNode>>();
+        // Cada nodo compuesto con sus padres hasta la raíz.
+        let ids: HashMap<_, _> = nodes.iter().collect();
+        let parent_of: HashMap<_, _> = nodes
+            .iter()
+            .flat_map(|(id, n)| n.children.iter().map(move |c| (c.id(), id)))
+            .collect();
+        let world_of = |mut id| {
+            let mut m = Mat4::IDENTITY;
+            loop {
+                m = ids[&id].transform.to_matrix() * m;
+                match parent_of.get(&id) {
+                    Some(&p) => id = p,
+                    None => return m,
+                }
+            }
+        };
+        let ibm = world
+            .resource::<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>()
+            .get(&skin.inverse_bind_matrices)
+            .unwrap();
+        let joint: Vec<Mat4> = skin
+            .joints
+            .iter()
+            .zip(ibm.iter())
+            .map(|(j, b)| world_of(j.id()) * *b)
+            .collect();
+        p.iter()
+            .zip(joints.iter().zip(weights))
+            .map(|(p, (j, w))| {
+                (0..4)
+                    .map(|k| w[k] * joint[j[k] as usize].transform_point3(Vec3::from(*p)))
+                    .sum()
+            })
+            .collect()
+    }
+
     #[test]
     fn every_model_loads_skinned_with_its_clips_at_life_size() {
         let (app, handles) = loaded();
@@ -2139,9 +2324,9 @@ mod tests {
                 .get(&gltf.skins[0])
                 .unwrap();
             let joints = match species {
-                // Los 50 de Quaternius más la crin, el copete, la cola, la
-                // cara y los seis músculos (`tools/horse.py` `MUSCLES`).
-                Species::Horse => 68,
+                // Los 100 `BN_*` del caballo de henrysteve973 menos los dos
+                // huesos de cada estribo (`tools/henry_horse.py`).
+                Species::Horse => 96,
                 // Los nombres de Quaternius con dos huesos por oreja, la
                 // mandíbula y nueve de cola (`tools/fox.py`, `tools/felid.py`).
                 Species::Fox | Species::GatoMontes | Species::Puma | Species::Yaguarete => 49,
@@ -2180,12 +2365,11 @@ mod tests {
                     .get(&primitive.mesh)
                     .unwrap();
                 triangles += m.indices().map_or(0, |i| i.len() / 3);
-                let Some(VertexAttributeValues::Float32x3(p)) =
-                    m.attribute(Mesh::ATTRIBUTE_POSITION)
-                else {
-                    panic!("positions")
-                };
-                points.extend(p.iter().map(|p| body_point(species, Vec3::from(*p))));
+                points.extend(
+                    at_rest(world, skin, m)
+                        .into_iter()
+                        .map(|p| body_point(species, p)),
+                );
             }
             let (lo, hi) = points.iter().fold((f32::MAX, f32::MIN), |(lo, hi), b| {
                 (lo.min(b.x), hi.max(b.x))
@@ -2207,7 +2391,9 @@ mod tests {
             );
             let budget = match species {
                 Species::Nandu => 6_500,
-                Species::Horse => 12_500,
+                // 20.049: el cuerpo 12.602, las tarjetas de pelo 6.103, las
+                // córneas y las herraduras (`henry/README.md`).
+                Species::Horse => 20_500,
                 // La vaca 8.192, el toro 8.792.
                 Species::Cow | Species::Bull => 9_000,
                 // 12.524: el cuerpo unos 5.200, las tarjetas de pelo y los ojos.
@@ -2284,9 +2470,19 @@ mod tests {
                     | Species::Carancho
                     | Species::Hare
             ) {
-                // Sus mapas necesitan UV y tangentes en cada primitiva.
+                // Sus mapas necesitan UV y tangentes en cada primitiva que
+                // lleva mapas (las córneas del caballo no llevan).
                 let m = world.resource::<Assets<Mesh>>();
                 for primitive in &mesh.primitives {
+                    let material = gltf
+                        .named_materials
+                        .iter()
+                        .find(|(_, h)| primitive.material.as_ref() == Some(*h))
+                        .map(|(name, _)| &**name);
+                    if species == Species::Horse && material.and_then(|n| species.skin(n)).is_none()
+                    {
+                        continue;
+                    }
                     let p = m.get(&primitive.mesh).unwrap();
                     assert!(p.attribute(Mesh::ATTRIBUTE_UV_0).is_some());
                     assert!(p.attribute(Mesh::ATTRIBUTE_TANGENT).is_some());
@@ -2296,16 +2492,7 @@ mod tests {
                 Species::Cow | Species::Bull => {
                     &["Main", "Main_Light", "Muzzle", "Hooves", "Horns", "Hair"]
                 }
-                Species::Horse => &[
-                    "Main",
-                    "Hair",
-                    "Main_Dark",
-                    "Main_Light",
-                    "Muzzle",
-                    "Hooves",
-                    "Eye_Black",
-                    "Eye_White",
-                ],
+                Species::Horse => &["Horse", "Hair", "Cornea", "Horseshoe"],
                 Species::Fox
                 | Species::GatoMontes
                 | Species::Puma
@@ -2443,6 +2630,48 @@ mod tests {
         app.update();
         app.update();
         assert!(!shown(app.world()), "far");
+    }
+
+    #[test]
+    fn a_corral_horse_wears_henrys_maps_with_its_hair_masked_at_any_distance() {
+        let mut app = fauna_app();
+        app.world_mut()
+            .spawn((Animal::Horse(Coat::Alazan), AnimalSeed(3)));
+        until_rigged(&mut app, 1);
+        app.update();
+        let world = app.world_mut();
+        let rig = world
+            .query::<&LivestockRig>()
+            .single(world)
+            .unwrap()
+            .clone();
+        assert!(rig.detail.is_empty(), "the mane is its silhouette");
+        let mut seen = Vec::new();
+        let mut parts = world.query::<(&MeshMaterial3d<StandardMaterial>, &GltfMaterialName)>();
+        for (material, name) in parts.iter(world) {
+            let m = world
+                .resource::<Assets<StandardMaterial>>()
+                .get(&material.0)
+                .unwrap();
+            let textured = m.base_color_texture.is_some() && m.normal_map_texture.is_some();
+            match name.0.as_str() {
+                "Horse" | "Horseshoe" => {
+                    assert!(textured, "{}", name.0);
+                    assert_eq!(m.alpha_mode, AlphaMode::Opaque, "{}", name.0);
+                }
+                "Hair" => {
+                    assert!(textured);
+                    assert_eq!(m.alpha_mode, AlphaMode::Mask(LEAF_CUTOFF));
+                    assert!(m.double_sided && m.cull_mode.is_none());
+                }
+                // Los ojos, casi negros, sin mapas.
+                other => assert_eq!(other, "Cornea"),
+            }
+            seen.push(name.0.clone());
+        }
+        seen.sort();
+        seen.dedup();
+        assert_eq!(seen, ["Cornea", "Hair", "Horse", "Horseshoe"]);
     }
 
     #[test]

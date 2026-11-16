@@ -40,7 +40,9 @@ impl Default for RiderParams {
             acceleration: 4.0,
             braking: 8.0,
             friction: 3.0,
-            walk_max: 3.0,
+            // 4,5 km/h: el clip de caminata del caballo sin estirar
+            // (usuario, 2026-11-16; antes era 3 m/s, 10,8 km/h).
+            walk_max: 4.5 / 3.6,
             // 49 km/h (usuario, 2026-10-29; antes era 44).
             gallop_max: 49.0 / 3.6,
             sprint_max: 49.0 / 3.6,
