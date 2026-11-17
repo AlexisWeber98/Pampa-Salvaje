@@ -27,6 +27,12 @@ pub enum HorseJoint {
     /// La cruz: el último hueso del lomo, del que cuelgan las manos y el
     /// cuello.
     Withers,
+    /// El lomo bajo la montura: el hueso que lleva la piel del asiento, del
+    /// que cuelgan los estribos y sobre el que se sienta el jinete.
+    Back,
+    /// Los huesos del cuello sobre los que se apoyan las riendas, desde la
+    /// cabeza (`0`, detrás de la nuca) hacia la cruz (`2`).
+    Neck(usize),
     /// La nuca: la articulación de la cabeza con el cuello.
     Poll,
     /// El labio superior, en la punta del hocico.
@@ -61,6 +67,12 @@ impl HorseJoint {
             Self::Root => "BN_Root_01_01",
             Self::Croup => "BN_Spine_00_02_02",
             Self::Withers => "BN_Spine_03_05_05",
+            Self::Back => "BN_Spine_01_03_03",
+            Self::Neck(k) => [
+                "BN_Neck_03_012_012",
+                "BN_Neck_02_011_011",
+                "BN_Neck_01_07_07",
+            ][k.min(2)],
             Self::Poll => "BN_Head_00_016_015",
             Self::UpperLip => "BN_UP_Lip_030_029",
             Self::Upper(l) => leg(
@@ -138,7 +150,10 @@ mod tests {
         let mut parent = std::collections::HashMap::new();
         for node in file.nodes() {
             for c in node.children() {
-                parent.insert(c.name().unwrap_or_default(), node.name().unwrap_or_default());
+                parent.insert(
+                    c.name().unwrap_or_default(),
+                    node.name().unwrap_or_default(),
+                );
             }
         }
         let below = |joint: HorseJoint, above: HorseJoint| {
@@ -180,8 +195,12 @@ mod tests {
             }
         }
         assert!(below(HorseJoint::UpperLip, HorseJoint::Poll));
-        assert!(below(HorseJoint::Poll, HorseJoint::Withers));
-        assert!(below(HorseJoint::Withers, HorseJoint::Croup));
+        assert!(below(HorseJoint::Poll, HorseJoint::Neck(0)));
+        assert!(below(HorseJoint::Neck(0), HorseJoint::Neck(1)));
+        assert!(below(HorseJoint::Neck(1), HorseJoint::Neck(2)));
+        assert!(below(HorseJoint::Neck(2), HorseJoint::Withers));
+        assert!(below(HorseJoint::Withers, HorseJoint::Back));
+        assert!(below(HorseJoint::Back, HorseJoint::Croup));
         assert!(below(HorseJoint::Croup, HorseJoint::Root));
     }
 }

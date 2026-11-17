@@ -7,10 +7,14 @@ script, and skin them to its rig.
         --textures assets/models/tack [--preview DIR]
     FORCE=1 sh tools/textures_to_ktx2.sh assets/models/tack/tack_recado assets/models/tack/tack_wool
 
-It loads ``assets/models/fauna/own/horse.glb`` at rest and builds every piece
-on its skin, in the frame the game fits its own tack in
-(``pampa_render::character::tack``: +X the horse's front, +Y up, +Z its
-right; in Blender, after the glTF import, that is -Y, +Z and -X):
+It loads henry's horse (``assets/models/fauna/henry/horse.glb``) standing
+as in the first frame of ``Idle_1`` (``REST_CLIP``: its glTF rest pose has the
+head down by the hooves) and builds every piece on its skin, in the frame the
+game fits its own tack in (``pampa_render::character::tack``: +X the horse's
+front, +Y up, +Z its right, in game metres, ``SCALE`` times the file's; in
+Blender, after the glTF import, that is -Y, +Z and -X). The exported
+armature rests in that pose, so the game fits its own tack on the same
+standing horse (``tack::Recado::pose``).
 
 - the **bastos**: two stuffed suela rolls along the spine, resting on the
   carona (``UNDER`` off the skin, where the game's carona ends), longer than
@@ -35,7 +39,10 @@ right; in Blender, after the glTF import, that is -Y, +Z and -X):
   groove.
 
 Every piece is skinned like the horse's skin underneath it
-(``animal_rig.transfer_weights``), so it bends with every clip. Small
+(``animal_rig.transfer_weights``), so it bends with every clip; then every
+clip a saddled horse plays (``SADDLED_CLIPS``) is posed in numpy exactly as
+the game poses it (``Glb``) and each vertex the moving skin came too close
+to is lifted off it. Small
 marker meshes (``Mark_ReinL``, ``Mark_ReinR``, ``Mark_Seat``) tell the game
 where the reins start and where the rider sits; it does not draw them.
 
@@ -60,16 +67,31 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tack as T  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-HORSE = os.path.join(HERE, "..", "assets", "models", "fauna", "own", "horse.glb")
+HORSE = os.path.join(HERE, "..", "assets", "models", "fauna", "henry", "horse.glb")
+# The game draws henry's horse at 1.5 m to the withers, 1.60 in its file
+# (``livestock::HORSE_WITHERS``): the body frame is the file's times this.
+SCALE = 1.5 / 1.60
+# The pose the recado is modelled on and its armature rests in: the horse
+# standing, at the start of its idle.
+REST_CLIP = "Idle_1"
+# The clips a saddled horse plays (never ``Eat``: saddled horses do not
+# graze; ``Jump_Land`` is not used).
+SADDLED_CLIPS = ("Idle_1", "Idle_2", "Idle_3", "Walk", "Gallop", "Jump", "S_Jump", "Jump_Run")
+FPS = 24
+# The ones that are not the jump.
+GAITS = tuple(c for c in SADDLED_CLIPS if "Jump" not in c)
 
 # ---------------------------------------------------------------------------
 # Profiles, in the game's body frame: ``t`` metres along the barrel axis
 # (0 at the girth, + forward), ``theta`` radians round it from the top
 # (+ to the right), heights in metres off the skin along the ray.
 
-# The barrel axis (game ``Axis::BARREL``) and a mean radius of the barrel
-# under the saddle, to turn angles into metres.
-AXIS_HEIGHT = 1.14
+# The barrel axis (game ``Axis::BARREL``): from the girth, a hand behind the
+# lowest point of the back and about four behind the elbow, at the height of
+# the middle of the barrel (top 1.459 m, belly 0.870 m there); and a mean
+# radius of the barrel under the saddle, to turn angles into metres.
+GIRTH_X = 0.1
+AXIS_HEIGHT = 1.19
 REACH = 0.33
 # Where the game's carona ends: the recado rests on it.
 UNDER = 0.062
@@ -83,6 +105,151 @@ SOBREPUESTO_AROUND = 0.8
 SOBREPUESTO_THICK = 0.004
 # Where the rider sits (game ``tack::SEAT_X``).
 SEAT_X = -0.02
+
+
+# ---------------------------------------------------------------------------
+# The horse posed as the game poses it: the GLB's nodes, skin and clips, in
+# numpy (glTF semantics: linear keys, slerped rotations, linear blend
+# skinning). Points come out in the file's frame (x the horse's left, y up,
+# z forward, file metres).
+
+_COMPONENTS = {5126: np.float32, 5125: np.uint32, 5123: np.uint16, 5121: np.uint8}
+_WIDTH = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4, "MAT4": 16}
+
+
+def quat_matrix(q):
+    x, y, z, w = q
+    return np.array(
+        [
+            [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+        ]
+    )
+
+
+def slerp(a, b, f):
+    a, b = np.asarray(a, float), np.asarray(b, float)
+    d = float(a @ b)
+    if d < 0:
+        b, d = -b, -d
+    if d > 0.9995:
+        q = a + (b - a) * f
+    else:
+        th = math.acos(d)
+        q = (math.sin((1 - f) * th) * a + math.sin(f * th) * b) / math.sin(th)
+    return q / np.linalg.norm(q)
+
+
+class Glb:
+    """A skinned GLB (one skin), posed like the game poses it."""
+
+    def __init__(self, path):
+        import json
+        import struct
+
+        with open(path, "rb") as f:
+            data = f.read()
+        size = struct.unpack("<I", data[12:16])[0]
+        self.doc = json.loads(data[20 : 20 + size])
+        at = 20 + size
+        self.bin = data[at + 8 : at + 8 + struct.unpack("<I", data[at : at + 4])[0]]
+        self.nodes = self.doc["nodes"]
+        self.names = [n.get("name", "") for n in self.nodes]
+        self.parent = {c: i for i, n in enumerate(self.nodes) for c in n.get("children", [])}
+        skin = self.doc["skins"][0]
+        self.joints = skin["joints"]
+        self.ibm = self._read(skin["inverseBindMatrices"]).reshape(-1, 4, 4).transpose(0, 2, 1)
+        self.prims = []
+        for mesh in self.doc["meshes"]:
+            for p in mesh["primitives"]:
+                a = p["attributes"]
+                self.prims.append(
+                    (
+                        self.doc["materials"][p["material"]]["name"],
+                        self._read(a["POSITION"]).astype(float),
+                        self._read(a["JOINTS_0"]).astype(int),
+                        self._read(a["WEIGHTS_0"]).astype(float),
+                    )
+                )
+        self.clips = {a["name"]: a for a in self.doc.get("animations", [])}
+
+    def _read(self, i):
+        a = self.doc["accessors"][i]
+        view = self.doc["bufferViews"][a["bufferView"]]
+        kind, width = _COMPONENTS[a["componentType"]], _WIDTH[a["type"]]
+        at = view.get("byteOffset", 0) + a.get("byteOffset", 0)
+        out = np.frombuffer(self.bin, kind, a["count"] * width, at)
+        if a.get("normalized") and kind != np.float32:
+            out = out / np.iinfo(kind).max
+        return out.reshape(a["count"], width) if width > 1 else out
+
+    def duration(self, clip):
+        a = self.clips[clip]
+        return max(float(self._read(s["input"])[-1]) for s in a["samplers"])
+
+    def worlds(self, clip=None, time=0.0):
+        """Every node's world matrix (4x4, file frame) at ``time`` of
+        ``clip``; ``None``: the nodes' rest."""
+        local = [
+            [
+                np.array(n.get("translation", (0, 0, 0)), float),
+                np.array(n.get("rotation", (0, 0, 0, 1)), float),
+                np.array(n.get("scale", (1, 1, 1)), float),
+            ]
+            for n in self.nodes
+        ]
+        if clip is not None:
+            a = self.clips[clip]
+            for ch in a["channels"]:
+                s = a["samplers"][ch["sampler"]]
+                times, values = self._read(s["input"]), self._read(s["output"])
+                k = int(np.clip(np.searchsorted(times, time), 1, len(times) - 1))
+                f = float(np.clip((time - times[k - 1]) / max(times[k] - times[k - 1], 1e-9), 0, 1))
+                path = ch["target"]["path"]
+                slot = {"translation": 0, "rotation": 1, "scale": 2}[path]
+                if path == "rotation":
+                    local[ch["target"]["node"]][slot] = slerp(values[k - 1], values[k], f)
+                else:
+                    local[ch["target"]["node"]][slot] = values[k - 1] * (1 - f) + values[k] * f
+        out = [None] * len(self.nodes)
+
+        def world(i):
+            if out[i] is None:
+                t, r, sc = local[i]
+                m = np.eye(4)
+                m[:3, :3] = quat_matrix(r) * sc
+                m[:3, 3] = t
+                p = self.parent.get(i)
+                out[i] = m if p is None else world(p) @ m
+            return out[i]
+
+        return [world(i) for i in range(len(self.nodes))]
+
+    def skinned(self, worlds, materials=None):
+        """The vertices of the primitives with ``materials`` (all: ``None``)
+        skinned by the node ``worlds``, in primitive order."""
+        skin = np.stack([worlds[j] @ self.ibm[k] for k, j in enumerate(self.joints)])
+        out = []
+        for name, pos, joints, weights in self.prims:
+            if materials is not None and name not in materials:
+                continue
+            ph = np.c_[pos, np.ones(len(pos))]
+            acc = np.zeros((len(pos), 3))
+            for c in range(4):
+                acc += weights[:, c : c + 1] * np.einsum("nij,nj->ni", skin[joints[:, c]], ph)[:, :3]
+            out.append(acc)
+        return np.concatenate(out)
+
+    def joint_world(self, name, worlds):
+        return worlds[self.names.index(name)]
+
+
+def to_body(raw):
+    """File points (x the horse's left, y up, z forward) in the game's body
+    frame (``livestock::body_point``)."""
+    raw = np.asarray(raw, float)
+    return np.stack([raw[..., 2], raw[..., 1], -raw[..., 0]], -1) * SCALE
 
 
 def _smooth(e0, e1, x):
@@ -340,11 +507,25 @@ def build(out_glb, textures=None, preview=None):
     import animal_rig as rig
 
     rig.reset()
-    bpy.ops.import_scene.gltf(filepath=os.path.abspath(HORSE))
+    # The nodes' own rest (henry's bind pose is not one the game ever shows).
+    bpy.ops.import_scene.gltf(filepath=os.path.abspath(HORSE), guess_original_bind_pose=False)
     arm = next(o for o in bpy.data.objects if o.type == "ARMATURE")
-    arm.data.pose_position = "REST"
     body = next(o for o in bpy.data.objects if o.type == "MESH")
-    skin_mats = {"Main", "Main_Dark", "Main_Light", "Muzzle", "Hooves"}
+    if not (_identity(arm.matrix_world) and _identity(body.matrix_world)):
+        raise SystemExit("recado: the horse's armature and body must sit at the origin")
+    # The armature rests standing as at the start of REST_CLIP, and the body
+    # stands so with it, in game metres (``_scaled``) while the pieces are
+    # built; they go back to the file's metres before the export.
+    horse = Glb(HORSE)
+    stand = horse.worlds(REST_CLIP, 0.0)
+    _rest_on(arm, horse, stand)
+    arm.data.pose_position = "REST"
+    co = _scaled(horse.skinned(stand))
+    if len(co) != len(body.data.vertices):
+        raise SystemExit("recado: the horse's vertices are not the GLB's")
+    body.data.vertices.foreach_set("co", co.ravel())
+    body.data.update()
+    skin_mats = SKIN
     mats = [s.material.name if s.material else "" for s in body.material_slots]
     mesh = body.data
     verts = [body.matrix_world @ v.co for v in mesh.vertices]
@@ -356,7 +537,7 @@ def build(out_glb, textures=None, preview=None):
         return Vector((-right, -t, up))
 
     def ray(t, theta):
-        origin = Vector((0.0, -t, AXIS_HEIGHT))
+        origin = Vector((0.0, -(GIRTH_X + t), AXIS_HEIGHT))
         d = Vector((-math.sin(theta), 0.0, math.cos(theta)))
         hit = bvh.ray_cast(origin, d)
         return (hit[0] if hit[0] is not None else origin + d * 0.3), d
@@ -586,28 +767,32 @@ def build(out_glb, textures=None, preview=None):
     objects.append(cards)
 
     # --- the cabezada -------------------------------------------------------
+    # The corners of the mouth: where the line between the skin the jaw
+    # carries (the lower lip and the chin) and the skin of the head turns
+    # from the mouth's slit up the cheek, on the outside of the lips.
     gi = {g.name: g.index for g in body.vertex_groups}
-
-    def weight(v, group):
-        for g in v.groups:
-            if g.group == gi[group]:
-                return g.weight
-        return 0.0
-
-    # The corners of the mouth: where the lower lip meets the upper one,
-    # furthest back, on the outside of the lips.
+    jaw = {gi[n] for n in JAW}
+    lower = [sum(g.weight for g in v.groups if g.group in jaw) > 0.5 for v in mesh.vertices]
+    at = [body.matrix_world @ v.co for v in mesh.vertices]
+    tip = max((at[i] for poly in polys for i in poly), key=lambda p: -p.y)
     corners = {}
     for s in (-1.0, 1.0):
-        cand = [
-            (body.matrix_world @ v.co)
-            for v in mesh.vertices
-            if weight(v, "LipLower") > 0.2 and weight(v, "LipUpper") > 0.15 and (body.matrix_world @ v.co).x * s > 0.035
-        ]
-        joint = max(cand, key=lambda p: p.y)
+        line = []
+        for poly in mesh.polygons:
+            if mats[poly.material_index] not in skin_mats:
+                continue
+            ring = list(poly.vertices)
+            for i, j in zip(ring, ring[1:] + ring[:1]):
+                mid = (at[i] + at[j]) / 2
+                if lower[i] != lower[j] and mid.x * s > 0.035 and (mid - tip).length < 0.2:
+                    line.append(mid)
+        joint = min(line, key=lambda p: p.z)
         hit = bvh.ray_cast(Vector((0.0, joint.y, joint.z)), Vector((s, 0.0, 0.0)))[0]
         corners[s] = hit if hit is not None else joint
         print(f"recado: mouth corner {s:+.0f} at {tuple(round(c, 3) for c in corners[s])}")
-    face = (Vector((0.0, -1.43, 1.42)) - Vector((0.0, -1.05, 1.75))).normalized()
+    # The guides below were measured on the standing horse: the line of the
+    # face from the forehead to the nose, the cheekbones and the throat.
+    face = (Vector((0.0, -1.421, 1.324)) - Vector((0.0, -1.2, 1.769))).normalized()
     up = Vector((0.0, -face.z, face.y)) if face.y < 0 else Vector((0.0, face.z, -face.y))
     if up.z < 0:
         up = -up
@@ -670,33 +855,33 @@ def build(out_glb, textures=None, preview=None):
         _outward(obj)
         return obj
 
-    eyes = {s: Vector((s * 0.096, -1.188, 1.728)) for s in (-1.0, 1.0)}
     # The bit's top eye, on the skin above the corner, where the quijera
     # buckles.
     top_eye = {s: on_skin(corners[s] + up * 0.03, 0.004)[0] for s in (-1.0, 1.0)}
-    cheek_top = {s: Vector((s * 0.112, -1.045, 1.64)) for s in (-1.0, 1.0)}
+    # Behind the eye and below the ear, on each side of the poll.
+    cheek_top = {s: Vector((s * 0.104, -1.19, 1.686)) for s in (-1.0, 1.0)}
     strap(
         "Testera",
-        [cheek_top[-1], Vector((-0.09, -1.034, 1.80)), Vector((0.0, -1.03, 1.90)), Vector((0.09, -1.034, 1.80)), cheek_top[1]],
+        [cheek_top[-1], Vector((-0.084, -1.192, 1.816)), Vector((0.0, -1.196, 1.896)), Vector((0.084, -1.192, 1.816)), cheek_top[1]],
         0.018,
         0.003,
     )
     strap(
         "Frontalera",
         # Across the forehead between the ears, clear of their hollows.
-        [Vector((-0.036, -1.155, 1.79)), Vector((-0.02, -1.156, 1.8)), Vector((0.0, -1.157, 1.805)), Vector((0.02, -1.156, 1.8)), Vector((0.036, -1.155, 1.79))],
+        [Vector((-0.033, -1.268, 1.748)), Vector((-0.019, -1.27, 1.755)), Vector((0.0, -1.271, 1.759)), Vector((0.019, -1.27, 1.755)), Vector((0.033, -1.268, 1.748))],
         0.022,
         0.003,
     )
     for s in (-1.0, 1.0):
         strap(
             "Quijera_" + ("L" if s > 0 else "R"),
-            [cheek_top[s], Vector((s * 0.125, -1.11, 1.585)), Vector((s * 0.115, -1.2, 1.53)), Vector((s * 0.09, -1.27, 1.49)), top_eye[s]],
+            [cheek_top[s], Vector((s * 0.116, -1.228, 1.611)), Vector((s * 0.107, -1.282, 1.524)), Vector((s * 0.084, -1.324, 1.458)), top_eye[s]],
             0.022,
             0.004,
         )
     # The muserola: round the nose, about two fingers below the cheekbones.
-    centre = Vector((0.0, -1.27, 1.6))
+    centre = Vector((0.0, -1.33, 1.543))
     a_dir = Vector((1.0, 0.0, 0.0))
     b_dir = face.cross(a_dir).normalized()
     ring = []
@@ -708,7 +893,7 @@ def build(out_glb, textures=None, preview=None):
     strap("Muserola", ring + ring[:1], 0.025, 0.005, loop=True, samples=1)
     strap(
         "Fiador",
-        [cheek_top[-1], Vector((-0.085, -1.0, 1.55)), Vector((0.0, -0.985, 1.49)), Vector((0.085, -1.0, 1.55)), cheek_top[1]],
+        [cheek_top[-1], Vector((-0.079, -1.156, 1.639)), Vector((0.0, -1.143, 1.6)), Vector((0.079, -1.156, 1.639)), cheek_top[1]],
         0.015,
         0.003,
     )
@@ -771,24 +956,26 @@ def build(out_glb, textures=None, preview=None):
         c = corners[s] + x * 0.007
         path = [c + up * 0.03, c, c - up * 0.025 + back * 0.004, c - up * 0.045 + back * 0.01, c - up * 0.062 + back * 0.014]
         # The shank lies on the lips; only its ring hangs free below them.
-        path = [on_skin(p, 0.006)[0] for p in path[:-1]] + [out_of_skin(path[-1], 0.006)]
+        # Its inner face a few millimetres off the lips, which work under it
+        # in the idles.
+        path = [on_skin(p, 0.0075)[0] for p in path[:-1]] + [out_of_skin(path[-1], 0.0075)]
         freno_parts.append(tube(path, (0.0035, 0.0065), x, 8))
         freno_parts.append(torus(top_eye[s] + x * 0.002, x, 0.009, 0.005))
         ring_c = out_of_skin(c - up * (0.062 + 0.016) + back * 0.016, 0.012)
         rein_rings[s] = ring_c
         freno_parts.append(torus(ring_c, x, 0.017, 0.006))
     v, f, u = merge(freno_parts)
-    # Nada del hierro por dentro de los labios: cada vertex a 3 mm de la
-    # piel, como mínimo.
-    v = [out_of_skin(p, 0.003) if (p - bvh.find_nearest(p)[0]).length < 0.03 else p for p in v]
+    # None of the iron inside the lips: every vertex at least 4.5 mm off the
+    # skin (the lips work under it in the idles).
+    v = [out_of_skin(p, 0.0045) if (p - bvh.find_nearest(p)[0]).length < 0.03 else p for p in v]
     obj = make("Freno", v, f, u, "Freno")
     v, f, u = tube([corners[-1], corners[1]], (0.006, 0.006), up, 8)
     make("Bocado", v, f, u, "Freno")
     # The barbada: under the chin groove from one top eye to the other.
-    chin = bvh.ray_cast(Vector((0.0, -1.3, 1.0)), Vector((0.0, 0.0, 1.0)))[0]
+    chin = bvh.ray_cast(Vector((0.0, -1.314, 1.06)), Vector((0.0, 0.0, 1.0)))[0]
     strap(
         "Barbada",
-        [top_eye[-1], Vector((-0.05, -1.3, chin.z + 0.012)), chin, Vector((0.05, -1.3, chin.z + 0.012)), top_eye[1]],
+        [top_eye[-1], Vector((-0.046, -1.314, chin.z + 0.012)), chin, Vector((0.046, -1.314, chin.z + 0.012)), top_eye[1]],
         0.012,
         0.004,
         ends_free=(0, -1),
@@ -806,11 +993,20 @@ def build(out_glb, textures=None, preview=None):
     marker("Mark_Seat", p + d * (float(sobrepuesto(np.array(SEAT_X), np.array(0.0))) + SOBREPUESTO_THICK))
 
     # --- skin them ---------------------------------------------------------------
+    # From the skin alone: never the weights of the mane's or the forelock's
+    # cards, nor the eyes'.
+    import bmesh
+
+    skin = body.copy()
+    skin.data = body.data.copy()
+    bpy.context.collection.objects.link(skin)
+    bm = bmesh.new()
+    bm.from_mesh(skin.data)
+    bmesh.ops.delete(bm, geom=[f for f in bm.faces if mats[f.material_index] not in skin_mats], context="FACES")
+    bm.to_mesh(skin.data)
+    bm.free()
     for obj in objects:
-        rig.transfer_weights(body, obj, arm)
-        # Only the bones that bend the skin: never the legs' IK controls.
-        for g in [g for g in obj.vertex_groups if g.name.startswith(CONTROLS)]:
-            obj.vertex_groups.remove(g)
+        rig.transfer_weights(skin, obj, arm)
         if obj.name in BACK:
             stray = {}
             for v in obj.data.vertices:
@@ -820,46 +1016,47 @@ def build(out_glb, textures=None, preview=None):
                         stray[name] = stray.get(name, 0) + 1
             if stray:
                 print(f"recado: {obj.name}: vertices weighted off the trunk: {stray}")
-            _trunk_only(obj, body, rigid=obj.name in TREE)
+            _trunk_only(obj, body)
         if obj.name == "Testera":
-            # On the poll and the forehead: the head, the top of the neck and
-            # the forelock's root in the proportions of the skin under them,
-            # never the ears nor the mane, which move on their own beside and
-            # behind them.
-            for g in [g for g in obj.vertex_groups if g.name.startswith(("Ear", "Mane"))]:
+            # On the poll and the forehead: the head and the top of the neck
+            # in the proportions of the skin under them, never the ears nor
+            # the mane, which move on their own beside and behind them.
+            for g in [g for g in obj.vertex_groups if g.name.startswith(LOOSE)]:
                 obj.vertex_groups.remove(g)
             for v in obj.data.vertices:
                 if sum(g.weight for g in v.groups) < 1e-4:
-                    obj.vertex_groups["Head"].add([v.index], 1.0, "REPLACE")
+                    obj.vertex_groups[HEAD].add([v.index], 1.0, "REPLACE")
             bpy.ops.object.select_all(action="DESELECT")
             obj.select_set(True)
             bpy.context.view_layer.objects.active = obj
             bpy.ops.object.vertex_group_normalize_all(lock_active=False)
         if obj.name in SKULL:
-            # On the skull, behind and in front of the ears: the head carries
-            # them whole (the poll's skin, half neck, pinches when the head
-            # goes down to graze).
+            # On the skull, between the ears: the head carries them whole.
             for g in list(obj.vertex_groups):
                 obj.vertex_groups.remove(g)
-            obj.vertex_groups.new(name="Head").add(list(range(len(obj.data.vertices))), 1.0, "REPLACE")
+            obj.vertex_groups.new(name=HEAD).add(list(range(len(obj.data.vertices))), 1.0, "REPLACE")
         bpy.ops.object.select_all(action="DESELECT")
         obj.select_set(True)
         bpy.context.view_layer.objects.active = obj
         bpy.ops.object.vertex_group_limit_total(group_select_mode="ALL", limit=4)
         bpy.ops.object.vertex_group_normalize_all(lock_active=False)
+    bpy.data.objects.remove(skin)
     straps = [o for o in objects if o.data.materials and o.data.materials[0].name in ("Cabezada", "Freno") and o.name != "Bocado"]
+    pose = (horse, stand, skin_mats)
     # A few millimetres more than the clips need: the game also turns the
     # head and the neck by code, toward the reins.
-    _settle([o for o in straps if o.name == "Testera"], body, arm, skin_mats, 0.0035)
+    _settle([o for o in straps if o.name == "Testera"], body, pose, 0.0035, most=0.006)
     # The browband's ends sit in front of the ears, which turn forward.
-    _settle([o for o in straps if o.name == "Frontalera"], body, arm, skin_mats, 0.0035)
-    _settle([o for o in straps if o.name not in ("Testera", "Frontalera", "Fiador")], body, arm, skin_mats, 0.0035)
+    _settle([o for o in straps if o.name == "Frontalera"], body, pose, 0.0035)
+    _settle([o for o in straps if o.name not in ("Testera", "Frontalera", "Fiador")], body, pose, 0.0035)
     # The shoulder blades and the loins move under the seat at the gallop:
     # the recado gives way to them where they rise.
     seat = [o for o in objects if o.name in ("Bastos", "Cojinillo", "Sobrepuesto", "Vellon")]
-    _settle_pass(seat, body, arm, skin_mats, 0.014, reweight=False)
-    # Under the throat the neck folds more when ridden than in any clip.
-    _settle([o for o in straps if o.name == "Fiador"], body, arm, skin_mats, 0.0035)
+    _settle_pass(seat, body, pose, 0.014, reweight=False)
+    # Under the throat the neck folds more when ridden than in any clip; in
+    # the jump the throat folds shut over the strap for a moment, as it
+    # would over a real one (clearing that would hang it 5 cm off the throat).
+    _settle([o for o in straps if o.name == "Fiador"], body, pose, 0.0035, clips=GAITS)
     for obj in objects:
         empty = sum(1 for v in obj.data.vertices if sum(g.weight for g in v.groups) < 1e-4)
         if empty:
@@ -872,51 +1069,125 @@ def build(out_glb, textures=None, preview=None):
         write_maps(textures)
     if preview:
         _preview(preview, arm, body, kept)
+    # Back to the file's metres, where the armature rests.
+    for obj in kept:
+        if not _identity(obj.matrix_world):
+            raise SystemExit(f"recado: {obj.name} must sit at the origin")
+        co = np.empty(len(obj.data.vertices) * 3)
+        obj.data.vertices.foreach_get("co", co)
+        obj.data.vertices.foreach_set("co", co / SCALE)
+        obj.data.update()
     bpy.data.objects.remove(body)
     rig.export(os.path.abspath(out_glb), [])
 
 
-# The rig's control bones (IK targets and poles): they carry no skin.
-CONTROLS = ("IK", "Pole", "FF")
+# The horse's skin (not its hair, its corneas nor its shoes).
+SKIN = {"Horse"}
+# The bone of the head, and the ones that move on their own on it and the
+# neck: the ears and the mane.
+HEAD = "BN_Head_00_016_015"
+LOOSE = ("BN_L_Ear", "BN_R_Ear", "BN_Hair")
+# The bones of the lower jaw: the skin they carry is the lower lip and the
+# chin.
+JAW = ("BN_Jaw_027_026", "BN_BT_Lip_028_027")
 # The straps that ride the skull alone.
 SKULL = ("Frontalera",)
-# The pieces on the back, and the only bones that carry them: the trunk,
-# never the neck (a roll 10 cm above the withers weighted to the neck swings
-# up 40 cm when the head goes down to graze).
+# The pieces on the back, and the only bones that carry them: the spine from
+# the croup to behind the withers, never the neck (its first bone, at the
+# withers, lifts with the head) nor the belly's.
 BACK = ("Bastos", "Cojinillo", "Sobrepuesto", "Vellon")
-TRUNK = ("Body", "Torso", "Torso2", "Torso3")
-# The saddle tree itself (the bastos and the sobrepuesto on them) is stiff:
-# every vertex takes the same, mean trunk weights.
+TRUNK = ("BN_Spine_00_02_02", "BN_Spine_01_03_03", "BN_Spine_02_04_04")
+# The saddle tree itself (the bastos and the sobrepuesto on them) is stiff,
+# every vertex with the same weights: it rides the bone under the seat, with a
+# tenth of the one in front, whose withers rise under its front ends. With the
+# mean weights of the skin under it (a fifth of the croup's bone, nearly half
+# the withers') its ends rock 3.3 cm over the skin in henry's idles; so, 1.1.
 TREE = ("Bastos", "Sobrepuesto")
+TREE_WEIGHTS = {"BN_Spine_01_03_03": 0.9, "BN_Spine_02_04_04": 0.1}
+# Blender's frame from the glTF file's: (x, y, z) -> (x, -z, y).
+_TO_BLENDER = np.array([[1.0, 0, 0, 0], [0, 0, -1, 0], [0, 1, 0, 0], [0, 0, 0, 1]])
 
 
-def _trunk_only(obj, body, rigid=False):
+def _identity(m):
+    return all(abs(m[i][j] - float(i == j)) < 1e-6 for i in range(4) for j in range(4))
+
+
+def _scaled(raw):
+    """File points in Blender's frame, in game metres."""
+    raw = np.asarray(raw, float)
+    return np.stack([raw[:, 0], -raw[:, 2], raw[:, 1]], 1) * SCALE
+
+
+def _unscaled(points):
+    """Blender points in game metres back in the file's frame."""
+    p = np.asarray(points, float) / SCALE
+    return np.stack([p[:, 0], p[:, 2], -p[:, 1]], 1)
+
+
+def _rest_on(arm, horse, worlds):
+    """Moves every bone of ``arm`` (as imported, resting in the nodes' rest)
+    to rest in the pose of the node ``worlds``: each bone as its joint
+    moves from one to the other."""
+    import bpy
+    from mathutils import Matrix
+
+    rest = horse.worlds()
+    to_b, from_b = _TO_BLENDER, np.linalg.inv(_TO_BLENDER)
+    bpy.ops.object.select_all(action="DESELECT")
+    bpy.context.view_layer.objects.active = arm
+    bpy.ops.object.mode_set(mode="EDIT")
+    bones = arm.data.edit_bones
+    for b in bones:
+        b.use_connect = False
+    was = {b.name: np.array(b.matrix) for b in bones}
+    for b in bones:
+        k = horse.names.index(b.name)
+        move = to_b @ worlds[k] @ np.linalg.inv(rest[k]) @ from_b
+        b.matrix = Matrix((move @ was[b.name]).tolist())
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+
+def _trunk_skin(body):
+    """The skin vertices the trunk bones carry: each one's place and its trunk
+    weights."""
+    names = {g.index: g.name for g in body.vertex_groups}
+    out = []
+    for v in body.data.vertices:
+        w = {names[g.group]: g.weight for g in v.groups if names[g.group] in TRUNK and g.weight > 0}
+        if w:
+            out.append((body.matrix_world @ v.co, w))
+    return out
+
+
+def _trunk_only(obj, body):
     """Keeps only the trunk bones' weights on ``obj``, normalised; a vertex
     left with none takes the weights of the nearest skin vertex that has
-    trunk weights. ``rigid``: every vertex then takes the mean of them all,
-    so the piece moves whole."""
-    bones = TRUNK
+    trunk weights. The saddle tree's pieces (``TREE``) move whole with
+    ``TREE_WEIGHTS``; the wool lies on the tree over the back and on the skin
+    down the flanks, so its weights go from the one to the other between the
+    bastos and the hem."""
+    tree = TREE_WEIGHTS
     groups = {g.index: g.name for g in obj.vertex_groups}
-    body_names = {g.index: g.name for g in body.vertex_groups}
-    trunk_skin = []
-    for v in body.data.vertices:
-        w = {body_names[g.group]: g.weight for g in v.groups if body_names[g.group] in bones and g.weight > 0}
-        if w:
-            trunk_skin.append((body.matrix_world @ v.co, w))
+    trunk_skin = _trunk_skin(body)
     weights = []
     for v in obj.data.vertices:
-        w = {groups[g.group]: g.weight for g in v.groups if groups[g.group] in bones and g.weight > 0}
+        w = {groups[g.group]: g.weight for g in v.groups if groups[g.group] in TRUNK and g.weight > 0}
+        p = obj.matrix_world @ v.co
         if not w:
-            p = obj.matrix_world @ v.co
             w = min(trunk_skin, key=lambda s: (s[0] - p).length_squared)[1]
         total = sum(w.values())
-        weights.append({k: x / total for k, x in w.items()})
-    if rigid:
-        mean = {}
-        for w in weights:
-            for k, x in w.items():
-                mean[k] = mean.get(k, 0.0) + x / len(weights)
-        weights = [mean] * len(weights)
+        w = {k: x / total for k, x in w.items()}
+        if obj.name in TREE:
+            w = dict(tree)
+        else:
+            # Round the barrel from the top (game ``Axis::BARREL``); the locks
+            # of wool hang from the hem, and move with it.
+            theta = abs(math.atan2(-p.x, p.z - AXIS_HEIGHT))
+            if obj.name == "Vellon":
+                theta = min(theta, COJINILLO_AROUND)
+            free = float(_smooth(1.0, 1.6, theta))
+            w = {k: tree.get(k, 0.0) * (1 - free) + w.get(k, 0.0) * free for k in set(tree) | set(w)}
+        weights.append(w)
     for v, w in zip(obj.data.vertices, weights):
         for g in list(v.groups):
             obj.vertex_groups[g.group].remove([v.index])
@@ -925,84 +1196,78 @@ def _trunk_only(obj, body, rigid=False):
             group.add([v.index], weight, "REPLACE")
 
 
-def _settle(objects, body, arm, skin_mats, gap, most=1.0):
-    """Plays every clip of the horse twice over ``objects`` (skinned to its
-    rig). First, a vertex the moving skin ever came closer to than ``gap``
-    takes the weights of the skin that came closest, so it rides on it (the
-    ears turn and the jaw chews under the straps and the bit); then each
-    vertex still too close is lifted off the skin at rest, along its normal,
-    by as much as it was."""
-    ears = False
-    if not any(o.name in SKULL for o in objects):
-        _settle_pass(objects, body, arm, skin_mats, gap, reweight=True, freeze_ears=ears)
-    _settle_pass(objects, body, arm, skin_mats, gap, reweight=False, freeze_ears=ears, most=most)
+def _settle(objects, body, pose, gap, most=1.0, clips=SADDLED_CLIPS, reweight=True):
+    """Poses the horse in every clip a saddled horse plays under ``objects``
+    (skinned to its rig). First, a vertex the moving skin ever came closer
+    to than ``gap`` takes the weights of the skin that came closest, so it
+    rides on it (the ears turn and the jaw chews under the straps and the
+    bit); then each vertex still too close is lifted off the standing skin,
+    along its normal, by as much as it was, ``most`` in all."""
+    if reweight and not any(o.name in SKULL for o in objects):
+        _settle_pass(objects, body, pose, gap, reweight=True, clips=clips)
+    # A lift along the standing skin's normal is not always the way out of
+    # the skin of another pose: lift again until no vertex needs more.
+    lifted = {o.name: np.zeros(len(o.data.vertices)) for o in objects}
+    for _ in range(4):
+        if _settle_pass(objects, body, pose, gap, reweight=False, most=most, lifted=lifted, clips=clips) < 0.0005:
+            break
 
 
-def _settle_pass(objects, body, arm, skin_mats, gap, reweight, freeze_ears=False, most=1.0):
-    import bpy
+def _skin_of(obj, horse):
+    """``obj``'s four heaviest joints (indices into the horse's skin) and
+    their weights, per vertex, normalised."""
+    joint = {horse.names[j]: k for k, j in enumerate(horse.joints)}
+    groups = {g.index: joint.get(g.name) for g in obj.vertex_groups}
+    n = len(obj.data.vertices)
+    joints, weights = np.zeros((n, 4), int), np.zeros((n, 4))
+    for i, v in enumerate(obj.data.vertices):
+        heavy = sorted(((g.weight, groups[g.group]) for g in v.groups if g.weight > 0 and groups[g.group] is not None), reverse=True)
+        for c, (w, k) in enumerate(heavy[:4]):
+            joints[i, c], weights[i, c] = k, w
+    total = weights.sum(1, keepdims=True)
+    return joints, np.divide(weights, total, out=np.zeros_like(weights), where=total > 0)
+
+
+def _settle_pass(objects, body, pose, gap, reweight, most=1.0, lifted=None, clips=SADDLED_CLIPS):
+    from mathutils import Vector
     from mathutils.bvhtree import BVHTree
 
-    scene = bpy.context.scene
-    # The clips a saddled horse plays (a saddled horse never grazes: Eating
-    # is for the corral horses, which go bare).
-    actions = [a for a in bpy.data.actions if "Eating" not in a.name]
+    horse, stand, skin_mats = pose
     mats = [s.material.name if s.material else "" for s in body.material_slots]
-    margin = {o.name: [1.0] * len(o.data.vertices) for o in objects}
+    skin_polys = [p for p in body.data.polygons if mats[p.material_index] in skin_mats]
+    polys = [tuple(p.vertices) for p in skin_polys]
+    poly_of = [p.index for p in skin_polys]
+    unstand = np.stack([np.linalg.inv(stand[j]) for j in horse.joints])
+    pieces = []
+    for obj in objects:
+        at = np.array([tuple(obj.matrix_world @ v.co) for v in obj.data.vertices])
+        pieces.append((obj, np.c_[_unscaled(at), np.ones(len(at))], *_skin_of(obj, horse)))
+    margin = {o.name: np.ones(len(o.data.vertices)) for o in objects}
     closest = {o.name: [None] * len(o.data.vertices) for o in objects}
-    poly_of = [p.index for p in body.data.polygons if mats[p.material_index] in skin_mats]
-    arm.data.pose_position = "POSE"
-    arm.animation_data_create()
-    # One clip at a time: the importer stashes every clip in NLA tracks.
-    for track in list(arm.animation_data.nla_tracks):
-        arm.animation_data.nla_tracks.remove(track)
-    for action in actions:
-        arm.animation_data.action = action
-        f0, f1 = (int(f) for f in action.frame_range)
-        for frame in range(f0, f1 + 1, 2):
-            scene.frame_set(frame)
-            if freeze_ears:
-                # The ears turn in front of the crownpiece and the mane swings
-                # behind it, not through it: the skull under it is what it
-                # must clear.
-                for pb in arm.pose.bones:
-                    if pb.name.startswith(("Ear", "Mane", "Forelock")):
-                        pb.matrix_basis.identity()
-                bpy.context.view_layer.update()
-            dg = bpy.context.evaluated_depsgraph_get()
-            ev = body.evaluated_get(dg)
-            m = ev.to_mesh()
-            verts = [body.matrix_world @ v.co for v in m.vertices]
-            polys = [tuple(p.vertices) for p in m.polygons if mats[p.material_index] in skin_mats]
-            bvh = BVHTree.FromPolygons(verts, polys)
-            ev.to_mesh_clear()
-            for obj in objects:
-                eo = obj.evaluated_get(dg)
-                om = eo.to_mesh()
+    poses = 0
+    for clip in clips:
+        for frame in range(0, int(round(horse.duration(clip) * FPS)) + 1, 2):
+            worlds = horse.worlds(clip, frame / FPS)
+            bvh = BVHTree.FromPolygons([Vector(p) for p in _scaled(horse.skinned(worlds))], polys)
+            moved = np.stack([worlds[j] for j in horse.joints]) @ unstand
+            poses += 1
+            for obj, at, joints, weights in pieces:
+                m = np.einsum("nc,ncij->nij", weights, moved[joints])
+                now = _scaled(np.einsum("nij,nj->ni", m, at)[:, :3])
                 worst = margin[obj.name]
-                for i, v in enumerate(om.vertices):
-                    p = obj.matrix_world @ v.co
-                    loc, n, face, d = bvh.find_nearest(p)
+                for i, p in enumerate(now):
+                    loc, n, face, d = bvh.find_nearest(Vector(p))
                     if loc is None:
                         continue
-                    sd = d if (p - loc).dot(n) >= 0 else -d
+                    sd = d if (Vector(p) - loc).dot(n) >= 0 else -d
                     if sd < worst[i]:
                         worst[i] = sd
                         closest[obj.name][i] = poly_of[face]
-                eo.to_mesh_clear()
-    arm.animation_data.action = None
-    for pb in arm.pose.bones:
-        pb.matrix_basis.identity()
-    arm.data.pose_position = "REST"
-    scene.frame_set(0)
-    dg = bpy.context.evaluated_depsgraph_get()
-    rest = body.evaluated_get(dg).to_mesh()
-    verts = [body.matrix_world @ v.co for v in rest.vertices]
-    polys = [tuple(p.vertices) for p in rest.polygons if mats[p.material_index] in skin_mats]
+    verts = [body.matrix_world @ v.co for v in body.data.vertices]
     bvh = BVHTree.FromPolygons(verts, polys)
-    body.evaluated_get(dg).to_mesh_clear()
     if reweight:
         names = {g.index: g.name for g in body.vertex_groups}
-        moved = 0
+        count = 0
         for obj in objects:
             for i, v in enumerate(obj.data.vertices):
                 face = closest[obj.name][i]
@@ -1013,28 +1278,32 @@ def _settle_pass(objects, body, arm, skin_mats, gap, reweight, freeze_ears=False
                 for vi in corners:
                     for g in body.data.vertices[vi].groups:
                         name = names[g.group]
-                        if name.startswith(CONTROLS):
-                            continue
                         weights[name] = weights.get(name, 0.0) + g.weight / len(corners)
                 for g in list(v.groups):
                     obj.vertex_groups[g.group].remove([i])
                 for name, w in sorted(weights.items(), key=lambda kv: -kv[1])[:4]:
                     group = obj.vertex_groups.get(name) or obj.vertex_groups.new(name=name)
                     group.add([i], w, "REPLACE")
-                moved += 1
-        print(f"recado: {moved} vertices now ride the skin that moves under them")
-        return
-    lifted = 0
+                count += 1
+        print(f"recado: {count} vertices now ride the skin that moves under them")
+        return 0.0
+    if lifted is None:
+        lifted = {o.name: np.zeros(len(o.data.vertices)) for o in objects}
+    count, most_now = 0, 0.0
     for obj in objects:
+        done = lifted[obj.name]
         for i, v in enumerate(obj.data.vertices):
-            need = min(gap - margin[obj.name][i], most)
+            need = min(gap - margin[obj.name][i], most - done[i])
             if need > 0:
                 p = obj.matrix_world @ v.co
                 _, n, _, _ = bvh.find_nearest(p)
                 v.co = obj.matrix_world.inverted() @ (p + n * need)
-                lifted += 1
-    worst = max((gap - m for o in objects for m in margin[o.name]), default=0.0)
-    print(f"recado: lifted {lifted} vertices of {', '.join(o.name for o in objects)} clear of the moving skin over {len(actions)} clips (at most {min(worst, most) * 100:.1f} cm)")
+                done[i] += need
+                count += 1
+                most_now = max(most_now, need)
+    still = max((gap - float(m.min()) for m in margin.values()), default=0.0)
+    print(f"recado: lifted {count} vertices of {', '.join(o.name for o in objects)} clear of the moving skin over {poses} poses by at most {most_now * 100:.1f} cm (the skin came {still * 100:.1f} cm too close)")
+    return most_now
 
 
 def _round_corner(t, th, along, around, r):
@@ -1112,13 +1381,16 @@ def _preview(out_dir, arm, body, objects):
     for i in range(len(body.data.materials)):
         body.data.materials[i] = coat
     shots = [
-        ("side.png", None, 1, (2.6, 0.1, 1.4), (0.0, -0.05, 1.25), 50),
-        ("front3q.png", None, 1, (1.9, -2.0, 1.7), (0.0, -0.2, 1.25), 50),
-        ("rear3q.png", None, 1, (1.8, 2.1, 1.8), (0.0, 0.0, 1.25), 50),
-        ("seat.png", None, 1, (0.9, 0.35, 1.8), (0.0, -0.03, 1.3), 50),
-        ("seat_low.png", None, 1, (0.85, 0.0, 1.2), (0.0, -0.03, 1.3), 45),
-        ("head.png", None, 1, (1.15, -1.45, 1.75), (0.0, -1.2, 1.58), 45),
-        ("head_front.png", None, 1, (0.75, -2.2, 1.85), (0.0, -1.22, 1.58), 45),
+        ("side.png", None, 1, (2.6, 0.0, 1.45), (0.0, -0.15, 1.3), 50),
+        ("front3q.png", None, 1, (1.9, -2.1, 1.75), (0.0, -0.3, 1.3), 50),
+        ("rear3q.png", None, 1, (1.8, 2.0, 1.85), (0.0, -0.1, 1.3), 50),
+        ("seat.png", None, 1, (0.9, 0.25, 1.85), (0.0, -0.13, 1.35), 50),
+        ("seat_low.png", None, 1, (0.85, -0.1, 1.25), (0.0, -0.13, 1.35), 45),
+        ("head.png", None, 1, (1.15, -1.6, 1.8), (0.0, -1.3, 1.6), 45),
+        ("head_front.png", None, 1, (0.75, -2.3, 1.85), (0.0, -1.3, 1.6), 45),
+        ("head_low.png", None, 1, (0.9, -1.75, 1.3), (0.0, -1.3, 1.45), 40),
+        ("mouth.png", None, 1, (0.55, -1.5, 1.42), (0.0, -1.34, 1.42), 50),
+        ("mouth_r.png", None, 1, (-0.55, -1.5, 1.42), (0.0, -1.34, 1.42), 50),
     ]
     rig.render_previews(out_dir, arm, shots, size=(900, 700))
 
